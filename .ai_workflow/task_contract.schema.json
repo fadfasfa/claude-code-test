@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "三 AI 协作工作流交接契约标准与异常枚举 (Task Contract)",
+  "type": "object",
+  "properties": {
+    "task_input_from_claude": {
+      "type": "object",
+      "description": "架构长 Claude 下发给执行器 Qwen 的强制指令结构",
+      "properties": {
+        "task_id": { "type": "string" },
+        "risk_level": { "enum": ["L1_PARTIAL", "L2_FULL_OVERWRITE", "L3_MANUAL_REVIEW"] },
+        "target_file": { "type": "string" },
+        "modification_strategy": { "enum": ["FULL_REPLACEMENT", "PATCH"] },
+        "payload_content": { "type": "string", "description": "L2级别必须是目标文件的完整替换文本" },
+        "test_command": { "type": "string", "description": "必须执行的测试命令" }
+      },
+      "required": ["task_id", "risk_level", "target_file", "modification_strategy", "payload_content", "test_command"]
+    },
+    "execution_output_from_qwen": {
+      "type": "object",
+      "description": "执行器 Qwen 返回的强制状态机结果",
+      "properties": {
+        "status": { "enum": ["SUCCESS", "ERROR"] },
+        "error_code": {
+          "description": "异常状态枚举表（单路径流转依据）",
+          "enum": [
+            "SUCCESS",
+            "ERR_DIRTY_WORKSPACE",
+            "ERR_FILE_NOT_FOUND",
+            "ERR_AST_VERIFY_FAILED",
+            "ERR_TEST_FAILED"
+          ]
+        },
+        "raw_output": { "type": "string", "description": "测试命令或检查脚本的原始输出，禁止总结" }
+      },
+      "required": ["status", "error_code", "raw_output"]
+    }
+  }
+}

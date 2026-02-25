@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l \"c:/Users/apple/claude code test/run\"/*.py)",
+      "Bash(cmd /c '\"\"c:\\\\Users\\\\apple\\\\claude code test\\\\run\\\\.venv\\\\Scripts\\\\pyinstaller.exe\"\" Hextech.spec')",
+      "Bash(\"c:\\\\Users\\\\apple\\\\claude code test\\\\run\\\\.venv\\\\Scripts\\\\python.exe\" -m PyInstaller Hextech.spec --noconfirm)",
+      "Bash(python -c:*)",
+      "Bash(python .ai_workflow/post_check_diff.py:*)",
+      "Bash(echo:*)"
+    ]
+  }
+}
