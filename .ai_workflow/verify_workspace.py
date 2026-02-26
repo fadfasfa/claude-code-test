@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
-import os, sys, subprocess, json, shutil, fnmatch
+import os, sys, subprocess, json, shutil, fnmatch, re
 from typing import Dict, List, Set, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 
 if sys.platform == 'win32':
     import io
@@ -160,6 +159,51 @@ def execute_atomic_revert(unauthorized: Dict, base_commit: str) -> bool:
     print(f"✅ 已执行安全回滚，案发现场快照已保存至：{backup_path}")
     return True
 
+def cleanup_stale_backups(backup_dir=".ai_workflow/backup", max_days=7, max_keep=30):
+    """静默清理过期快照：严格按正则匹配，双重淘汰（>7 天 或 超出 30 个），忽略占用报错"""
+    if not os.path.exists(backup_dir):
+        return
+
+    valid_snapshots = []
+    pattern = re.compile(r"^\d{8}_\d{6}$")
+    now = datetime.now()
+
+    # 1. 严格筛选合法的快照目录
+    for item in os.listdir(backup_dir):
+        if pattern.match(item):
+            item_path = os.path.join(backup_dir, item)
+            if os.path.isdir(item_path):
+                try:
+                    folder_time = datetime.strptime(item, "%Y%m%d_%H%M%S")
+                    valid_snapshots.append((item_path, folder_time))
+                except ValueError:
+                    continue
+
+    # 按时间从新到老排序
+    valid_snapshots.sort(key=lambda x: x[1], reverse=True)
+
+    to_delete = []
+    kept_count = 0
+
+    # 2. 状态机筛选淘汰名单
+    for path, f_time in valid_snapshots:
+        # 规则 1: 超过 7 天直接淘汰
+        if now - f_time > timedelta(days=max_days):
+            to_delete.append(path)
+        else:
+            # 规则 2: 没超 7 天，但名额已满 30 个，淘汰
+            if kept_count >= max_keep:
+                to_delete.append(path)
+            else:
+                kept_count += 1
+
+    # 3. 机械执行删除，静默跳过占用
+    for path in to_delete:
+        try:
+            shutil.rmtree(path)
+        except Exception:
+            pass  # 发生 PermissionError 或其他占用报错时直接静默跳过
+
 def main():
     whitelist = load_whitelist(".ai_workflow/whitelist.txt")
     auth_paths = get_claude_auth_paths(".ai_workflow/current_contract.json")
@@ -188,7 +232,7 @@ def main():
                 code_content = f.read()
             is_safe, violations = check_dangerous_calls(code_content)
             if not is_safe:
-                print(f"🚫 [拦截] {ast_file} 触发高危动作: {violations}")
+                print(f"🚫 [拦截] {ast_file} 触发高危动作：{violations}")
                 unauthorized[ast_file] = "DANGEROUS_CODE"
                 continue # 命中第一防线，直接拉黑并跳过第二防线
 
@@ -205,8 +249,9 @@ def main():
     if unauthorized:
         print("❌ 发现未授权或未通过审查的修改，执行回滚...")
         for k in unauthorized: 
-            print(f" - {k} [阻断原因: {unauthorized[k]}]")
+            print(f" - {k} [阻断原因：{unauthorized[k]}]")
         execute_atomic_revert(unauthorized, base_commit)
+        cleanup_stale_backups()
         sys.exit(1)
 
     print("✅ 验证通过")
