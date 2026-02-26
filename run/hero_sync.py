@@ -6,6 +6,8 @@ import time
 import threading
 import urllib3
 import logging
+import tempfile
+import shutil
 from logging.handlers import RotatingFileHandler
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -73,41 +75,47 @@ def sync_hero_data():
         session = get_advanced_session()
         try:
             v_url = "https://ddragon.leagueoflegends.com/api/versions.json"
-            curr_ver = session.get(v_url, verify=True, timeout=10).json()[0]
-
+            curr_ver_raw = session.get(v_url, verify=True, timeout=10)
+            curr_ver_raw.raise_for_status()
+            curr_ver = curr_ver_raw.json()[0]
             local_ver = ""
             if os.path.exists(VERSION_FILE):
                 with open(VERSION_FILE, "r", encoding="utf-8") as f:
                     local_ver = f.read().strip()
-
             files_exist = all(os.path.exists(f) for f in [CORE_DATA_FILE, AUGMENT_MAP_FILE])
-
             if local_ver == curr_ver and files_exist:
                 _last_sync_time = now
                 return True
-
             d_url = f"https://ddragon.leagueoflegends.com/cdn/{curr_ver}/data/zh_CN/champion.json"
-            resp = session.get(d_url, verify=True, timeout=10).json()
-
+            resp_raw = session.get(d_url, verify=True, timeout=10)
+            resp_raw.raise_for_status()
+            resp = resp_raw.json()
+            if not isinstance(resp, dict) or 'data' not in resp:
+                raise ValueError(f"官方 API 返回数据格式异常，缺少 'data' 节点：{type(resp)}")
             core_data = {}
             for v in resp['data'].values():
+                if not all(k in v for k in ('key', 'name', 'title', 'id')):
+                    continue
                 core_data[str(v['key'])] = {
                     "name": v['name'],
                     "title": v['title'],
                     "en_name": v['id']
                 }
-
-            # 【P3 修复】恢复双源备份节点，主源失败时自动切换
             aug_sources = [
                 "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json",
                 "https://apexlol.info/data/aram-mayhem-augments.zh_cn.json"
             ]
             aug_map = {}
             rarity_to_tier = {0: "白银", 1: "黄金", 2: "棱彩", 3: "棱彩"}
-
             for src in aug_sources:
                 try:
-                    aug_data = session.get(src, verify=True, timeout=10).json()
+                    aug_raw = session.get(src, verify=True, timeout=10)
+                    aug_raw.raise_for_status()
+                    aug_data = aug_raw.json()
+
+                    if not isinstance(aug_data, (dict, list)):
+                        continue
+
                     items = aug_data if isinstance(aug_data, list) else aug_data.values()
                     for v in items:
                         name = v.get('displayName', '').strip()
@@ -116,23 +124,29 @@ def sync_hero_data():
                             aug_map[name] = tier_str
                     if aug_map:
                         break
-                except Exception as e:
-                    logger.warning(f"⚠️ 节点 {src} 不可用，切换备用... ({e})")
+                except (Exception):
                     continue
-
-            with open(CORE_DATA_FILE, "w", encoding="utf-8") as f:
+            # 原子化极速写入
+            tmp_core = CORE_DATA_FILE + ".tmp"
+            with open(tmp_core, "w", encoding="utf-8") as f:
                 json.dump(core_data, f, ensure_ascii=False, indent=4)
+            shutil.move(tmp_core, CORE_DATA_FILE)
             if aug_map:
-                with open(AUGMENT_MAP_FILE, "w", encoding="utf-8") as f:
+                tmp_aug = AUGMENT_MAP_FILE + ".tmp"
+                with open(tmp_aug, "w", encoding="utf-8") as f:
                     json.dump(aug_map, f, ensure_ascii=False, indent=4)
-            with open(VERSION_FILE, "w", encoding="utf-8") as f:
+                shutil.move(tmp_aug, AUGMENT_MAP_FILE)
+            tmp_ver = VERSION_FILE + ".tmp"
+            with open(tmp_ver, "w", encoding="utf-8") as f:
                 f.write(curr_ver)
-
+            shutil.move(tmp_ver, VERSION_FILE)
             _last_sync_time = time.time()
-            logger.info(f"✅ 数据同步完成，版本：{curr_ver}，词缀：{len(aug_map)} 条")
             return True
-        except Exception as e:
+        except (requests.RequestException, json.JSONDecodeError, ValueError, KeyError) as e:
             logger.error(f"🚨 同步引擎故障：{e}")
+            return False
+        except Exception as e:
+            logger.exception(f"🚨 同步引擎发生未预期致命故障：{e}")
             return False
 
 # 【P1 修复】load_* 函数增加文件存在性前置检查，文件丢失时击穿 TTL 强制重同步

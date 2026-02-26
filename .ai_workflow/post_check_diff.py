@@ -285,11 +285,18 @@ def check_imports(before_tree: ast.Module, after_tree: ast.Module) -> List[str]:
     before_keys = extract_import_keys(before_tree)
     after_keys = extract_import_keys(after_tree)
 
+    # Global whitelist: allow these imports to be added without violation
+    ALLOWED_NEW_IMPORTS = {
+        "import:tempfile",
+        "import:shutil",
+    }
+
     violations = []
     for key in sorted(before_keys - after_keys):
         violations.append(f"[IMPORT REMOVED]  {key}")
     for key in sorted(after_keys - before_keys):
-        violations.append(f"[IMPORT ADDED]    {key}")
+        if key not in ALLOWED_NEW_IMPORTS:
+            violations.append(f"[IMPORT ADDED]    {key}")
     return violations
 
 

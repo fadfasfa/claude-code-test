@@ -9,6 +9,7 @@ import re
 import urllib3
 import logging
 import threading
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hero_sync import get_advanced_session, CONFIG_DIR, load_augment_map, load_champion_core_data
 
@@ -43,8 +44,15 @@ def calc_dynamic_score(row):
 def cleanup_old_csvs():
     """清理过期战报，仅保留最近3天"""
     files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv"))
-    # 增加正则严格过滤，防止误删用户自定义或非标准命名的文件
-    valid_files = [f for f in files if re.match(r"Hextech_Data_\d{4}-\d{2}-\d{2}\.csv$", os.path.basename(f))]
+    valid_files = []
+    for f in files:
+        m = re.match(r"Hextech_Data_(\d{4}-\d{2}-\d{2})\.csv$", os.path.basename(f))
+        if m:
+            try:
+                datetime.strptime(m.group(1), "%Y-%m-%d")
+                valid_files.append(f)
+            except ValueError:
+                pass
     
     if len(valid_files) <= 3:
         return
@@ -164,7 +172,9 @@ def main_scraper(stop_event=None):
             ascending=[True, True, False],
             inplace=True
         )
-        df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+        tmp_csv = output_csv + ".tmp"
+        df.to_csv(tmp_csv, index=False, encoding='utf-8-sig')
+        shutil.move(tmp_csv, output_csv)
         update_status_file()
         cleanup_old_csvs()
         logging.info(f"✅ 抓取结束，固化至: {output_csv}")

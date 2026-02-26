@@ -3,6 +3,7 @@ import glob
 import json
 import sys
 import pandas as pd
+import unicodedata
 from hero_sync import BASE_DIR, CONFIG_DIR
 
 if os.name == 'nt': os.system('')  # 激活 Windows 终端 ANSI 色彩支持
@@ -21,6 +22,9 @@ def init_core_data():
         try:
             CORE_DATA = load_champion_core_data()
             CHAMP_NAME_MAP = {v["name"]: v["title"] for k, v in CORE_DATA.items()}
+        except (json.JSONDecodeError, KeyError, ValueError):
+            CORE_DATA = {}
+            CHAMP_NAME_MAP = {}
         except Exception:
             CORE_DATA = {}
             CHAMP_NAME_MAP = {}
@@ -53,12 +57,16 @@ def get_latest_csv():
     files.sort(key=os.path.getmtime, reverse=True)
     return files[0]
 
+def get_char_width(char):
+    # F(Fullwidth), W(Wide) 宽度设为 2，其余设为 1
+    return 2 if unicodedata.east_asian_width(char) in ('F', 'W') else 1
+
 def align_text(text, width):
     text = str(text)
     cur_len = 0
     res = ""
     for char in text:
-        char_w = 2 if ord(char) > 127 else 1
+        char_w = get_char_width(char)
         if cur_len + char_w > width: break
         res += char
         cur_len += char_w
@@ -100,7 +108,7 @@ def add_new_alias(new_alias, official_names):
     print("请选择您的操作：\n [任意键] 只是打错了，重新输入\n [2] 我要将该词添加为某个英雄的新外号")
     try:
         choice = input("👉 请选择 (2/任意键): ").strip()
-    except Exception: return None
+    except (EOFError, KeyboardInterrupt): return None
     if choice != '2': return None
 
     target_input = input("👉 请输入该英雄的官方名称或系统中已有的外号 (例如: 皇子): ").strip()
@@ -117,7 +125,7 @@ def add_new_alias(new_alias, official_names):
             aliases[target_hero].append(new_alias)
         with open(os.path.join(CONFIG_DIR, "hero_aliases.json"), "w", encoding="utf-8") as f:
             json.dump(aliases, f, ensure_ascii=False, indent=4)
-        _alias_cache = aliases  # 直接更新缓存，无需重新读取磁盘
+        _alias_cache = None  # 状态锁定：必须逐字保留，确保缓存失效
         print(f"🎉 添加成功！")
         return target_hero
     return None
@@ -262,7 +270,7 @@ def get_official_hero_name(user_input, official_names):
     try:
         idx = int(input(f"👉 请输入序号选择: ")) - 1
         return results[idx]
-    except Exception: return None
+    except (ValueError, IndexError): return None
 
 def display_hero_hextech(df, hero_name, target_tier=None, is_from_ui=False):
     global GLOBAL_LAST_HERO

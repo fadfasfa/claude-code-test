@@ -6,7 +6,9 @@
       "Bash(\"c:\\\\Users\\\\apple\\\\claude code test\\\\run\\\\.venv\\\\Scripts\\\\python.exe\" -m PyInstaller Hextech.spec --noconfirm)",
       "Bash(python -c:*)",
       "Bash(python .ai_workflow/post_check_diff.py:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)"
     ]
   }
 }

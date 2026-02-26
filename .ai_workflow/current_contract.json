@@ -1,0 +1,10 @@
+{
+  "task_input_from_claude": {
+    "task_id": "manual_scraper_hardening",
+    "risk_level": "L1_PARTIAL",
+    "target_file": "run/hextech_scraper.py",
+    "modification_strategy": "PATCH",
+    "payload_content": "Implement atomic CSV writing and robust date cleanup.",
+    "test_command": "python -m py_compile run/hextech_scraper.py"
+  }
+}
