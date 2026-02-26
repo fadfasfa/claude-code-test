@@ -6,9 +6,8 @@ if sys.platform == 'win32':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-DEFAULT_IGNORE_PATTERNS = ['__pycache__', '.pyc', '.pyo', '.eggs', '*.egg-info', '.pytest_cache', '.claude/', 'claude/']
+DEFAULT_IGNORE_PATTERNS = ['__pycache__', '.pyc', '.pyo', '.eggs', '*.egg-info', '.pytest_cache', '.claude/', 'claude/', 'backup/']
 BACKUP_DIR = ".ai_workflow/backup"
-
 def get_current_commit_sha() -> str:
     result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace")
     return result.stdout.strip()
@@ -135,10 +134,10 @@ def execute_atomic_revert(unauthorized: Dict, base_commit: str) -> bool:
     # 2. 物理拷贝原始文件
     for file_path in unauthorized.keys():
         if os.path.exists(file_path):
-            dest_path = os.path.join(backup_path, file_path)
-            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-            shutil.copy2(file_path, dest_path)
-
+            if os.path.isfile(file_path):  # <--- 新增这行防御逻辑，只拷贝文件
+                dest_path = os.path.join(backup_path, file_path)
+                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                shutil.copy2(file_path, dest_path)
     # 3. 生成留存追溯凭证 manifest.json
     manifest = {
         "timestamp": timestamp,

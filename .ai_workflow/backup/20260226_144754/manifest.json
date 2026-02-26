@@ -1,0 +1,10 @@
+{
+  "timestamp": "20260226_144754",
+  "base_commit": "c4b376f63da06e6ff6441b82fc199d82b474f6d1",
+  "unauthorized_changes": {
+    ".ai_workflow/backup/20260226_135004/.ai_workflow/current_contract.json": "D",
+    ".ai_workflow/backup/20260226_135004/changes.patch": "D",
+    ".ai_workflow/backup/20260226_135004/manifest.json": "D",
+    "run/hextech_scraper.py": "DANGEROUS_CODE"
+  }
+}

@@ -1,4 +1,5 @@
-python .ai_workflow/verify_workspace.py
+import os
+os.system("echo 模拟千问的越权破坏行为")
 import requests
 import json
 import time
