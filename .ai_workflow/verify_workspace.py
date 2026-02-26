@@ -170,9 +170,42 @@ def main():
         sys.exit(0)
 
     unauthorized, pending_ast = categorize_changes(changes, whitelist, auth_paths)
+
+    # ----------------- 【新增：双重审查网关】 -----------------
+    if pending_ast:
+        print(f"🔍 触发深度审查，正在扫描 {len(pending_ast)} 个文件...")
+        # 临时将当前目录加入环境变量，以便导入 pre_execution_check
+        if ".ai_workflow" not in sys.path:
+            sys.path.insert(0, ".ai_workflow")
+        from pre_execution_check import check_dangerous_calls
+
+        for ast_file in pending_ast:
+            if not os.path.exists(ast_file):
+                continue
+            
+            # 防线一：静态恶意指令扫描
+            with open(ast_file, "r", encoding="utf-8") as f:
+                code_content = f.read()
+            is_safe, violations = check_dangerous_calls(code_content)
+            if not is_safe:
+                print(f"🚫 [拦截] {ast_file} 触发高危动作: {violations}")
+                unauthorized[ast_file] = "DANGEROUS_CODE"
+                continue # 命中第一防线，直接拉黑并跳过第二防线
+
+            # 防线二：结构退化审查 (AST 比对)
+            # 使用 sys.executable 确保调用同一虚拟环境的 Python
+            diff_cmd = [sys.executable, ".ai_workflow/post_check_diff.py", ast_file, "--ref", base_commit]
+            result = subprocess.run(diff_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if result.returncode != 0:
+                # 若脚本退出码不为 0，视为结构遭破坏
+                print(f"🚫 [拦截] {ast_file} 发生 AST 结构退化/异常:\n{result.stdout.strip()}")
+                unauthorized[ast_file] = "AST_DEGRADED"
+    # --------------------------------------------------------
+
     if unauthorized:
-        print("❌ 发现未授权修改，执行回滚...")
-        for k in unauthorized: print(f" - {k}")
+        print("❌ 发现未授权或未通过审查的修改，执行回滚...")
+        for k in unauthorized: 
+            print(f" - {k} [阻断原因: {unauthorized[k]}]")
         execute_atomic_revert(unauthorized, base_commit)
         sys.exit(1)
 
