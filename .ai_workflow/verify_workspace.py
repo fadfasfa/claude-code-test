@@ -72,11 +72,28 @@ def load_whitelist(filepath: str) -> Dict[str, str]:
             wl[pattern] = level
     return wl
 
-def categorize_changes(changes: List[Dict], whitelist: Dict[str, str]) -> Tuple:
+def get_claude_auth_paths(contract_path: str) -> Set[str]:
+    """读取最高控制权契约，返回当前授权的路径集合"""
+    try:
+        if not os.path.exists(contract_path): return set()
+        with open(contract_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            sudo_config = data.get("claude_sudo", {})
+            if sudo_config.get("session_active") is True:
+                return set(sudo_config.get("authorized_paths", []))
+    except Exception:
+        pass
+    return set()
+
+def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_paths: Set[str]) -> Tuple:
     unauthorized = {}
     pending_ast = []
 
     def match_level(path: str):
+        # 【核心拦截】如果路径在 Claude Sudo 授权名单中，直接赋予最高通行证
+        if path in auth_paths:
+            return "LOOSE"
+            
         for pattern, level in whitelist.items():
             if fnmatch.fnmatch(path, pattern) or path == pattern:
                 return level
@@ -104,29 +121,59 @@ def categorize_changes(changes: List[Dict], whitelist: Dict[str, str]) -> Tuple:
 
     return unauthorized, pending_ast
 
-def execute_atomic_revert(unauthorized: Dict) -> bool:
+def execute_atomic_revert(unauthorized: Dict, base_commit: str) -> bool:
     if not unauthorized: return False
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = os.path.join(BACKUP_DIR, timestamp)
+    os.makedirs(backup_path, exist_ok=True)
+
+    # 1. 生成 Patch 文件
+    patch_file = os.path.join(backup_path, "changes.patch")
+    with open(patch_file, "w", encoding="utf-8") as f:
+        subprocess.run(["git", "diff", "HEAD", "--"] + list(unauthorized.keys()), stdout=f, text=True)
+
+    # 2. 物理拷贝原始文件
+    for file_path in unauthorized.keys():
+        if os.path.exists(file_path):
+            dest_path = os.path.join(backup_path, file_path)
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            shutil.copy2(file_path, dest_path)
+
+    # 3. 生成留存追溯凭证 manifest.json
+    manifest = {
+        "timestamp": timestamp,
+        "base_commit": base_commit,
+        "unauthorized_changes": unauthorized
+    }
+    manifest_file = os.path.join(backup_path, "manifest.json")
+    with open(manifest_file, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+    # 4. 执行原有回滚逻辑
     stash_msg = f"ai_workflow_snapshot_{timestamp}"
     subprocess.run(["git", "stash", "push", "-u", "-m", stash_msg, "--"] + list(unauthorized.keys()), capture_output=True)
 
     for file_path in unauthorized.keys():
         subprocess.run(["git", "checkout", "HEAD", "--", file_path], capture_output=True)
-    print("✅ 已执行安全回滚")
+
+    print(f"✅ 已执行安全回滚，案发现场快照已保存至：{backup_path}")
     return True
 
 def main():
     whitelist = load_whitelist(".ai_workflow/whitelist.txt")
+    auth_paths = get_claude_auth_paths(".ai_workflow/current_contract.json")
     changes, base_commit = get_comprehensive_changes()
+    
     if not changes:
         print("✅ 工作区无变动")
         sys.exit(0)
 
-    unauthorized, pending_ast = categorize_changes(changes, whitelist)
+    unauthorized, pending_ast = categorize_changes(changes, whitelist, auth_paths)
     if unauthorized:
         print("❌ 发现未授权修改，执行回滚...")
         for k in unauthorized: print(f" - {k}")
-        execute_atomic_revert(unauthorized)
+        execute_atomic_revert(unauthorized, base_commit)
         sys.exit(1)
 
     print("✅ 验证通过")

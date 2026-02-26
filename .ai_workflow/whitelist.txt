@@ -1,3 +1,4 @@
+.ai_workflow/current_contract.json        [LOOSE]
 .ai_workflow/whitelist.txt                [STRICT]
 .ai_workflow/verify_workspace.py          [STRICT]
 .ai_workflow/post_check_diff.py           [STRICT]
