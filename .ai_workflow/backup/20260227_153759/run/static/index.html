@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>极地大乱斗 - 英雄 T 度榜</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 玻璃拟态背景 */
+        .glass {
+            background: rgba(30, 30, 40, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .glass-hover:hover {
+            background: rgba(40, 40, 55, 0.8);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        /* 隐藏滚动条但保留功能 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 text-white">
+    <!-- 顶部搜索栏 -->
+    <header class="sticky top-0 z-50 glass border-b border-gray-700">
+        <div class="max-w-7xl mx-auto px-4 py-4">
+            <div class="flex items-center justify-between gap-4">
+                <h1 class="text-xl font-bold text-purple-400 whitespace-nowrap">极地大乱斗 T 度榜</h1>
+                <div class="flex-1 max-w-xl">
+                    <input
+                        type="text"
+                        id="searchInput"
+                        placeholder="搜索英雄..."
+                        class="w-full px-4 py-2 rounded-lg glass text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                </div>
+                <div id="wsStatus" class="flex items-center gap-2 text-xs">
+                    <span class="w-2 h-2 bg-gray-500 rounded-full"></span>
+                    <span class="text-gray-400">连接中</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主内容区 -->
+    <main class="max-w-7xl mx-auto px-4 py-6">
+        <!-- 五大阶层容器 -->
+        <div id="tierContainer" class="space-y-6">
+            <!-- 动态生成各阶层 -->
+        </div>
+
+        <!-- 暂无数据提示 -->
+        <div id="noDataTip" class="hidden text-center py-20">
+            <div class="text-gray-500 text-lg">暂无数据</div>
+            <div class="text-gray-600 text-sm mt-2">请等待数据加载或检查后端服务</div>
+        </div>
+
+        <!-- 加载中动画 -->
+        <div id="loadingSpinner" class="text-center py-20">
+            <div class="inline-block w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+            <div class="text-gray-400 mt-4">加载中...</div>
+        </div>
+    </main>
+
+    <script>
+        // ========== 配置 ==========
+        const API_BASE = window.location.origin;
+        const WS_URL = 'ws://' + window.location.host;
+
+        // 五大阶层定义（按综合分数划分）- 金到红色卡
+        const TIERS = [
+            { id: 't0', name: '夯', color: 'from-yellow-400 to-yellow-600', borderColor: 'border-yellow-400', minScore: 1.5 },
+            { id: 't1', name: '顶级', color: 'from-orange-400 to-orange-600', borderColor: 'border-orange-400', minScore: 0.8 },
+            { id: 't2', name: '人上人', color: 'from-red-400 to-red-600', borderColor: 'border-red-400', minScore: 0.3 },
+            { id: 't3', name: 'NPC', color: 'from-red-600 to-red-800', borderColor: 'border-red-600', minScore: -0.3 },
+            { id: 't4', name: '拉', color: 'from-red-800 to-red-950', borderColor: 'border-red-800', minScore: -Infinity }
+        ];
+
+        // 全局状态
+        let allChampions = [];
+        let heroAliases = {};
+        let ws = null;
+        let reconnectTimer = null;
+
+        // ========== 工具函数 ==========
+        /**
+         * 获取英雄头像 URL
+         */
+        function getChampionAvatar(name) {
+            // 尝试从别名映射中获取英文名数组
+            const aliasArray = heroAliases[name];
+            let enName = name;
+
+            if (aliasArray && Array.isArray(aliasArray)) {
+                // 遍历别名数组，寻找第一个纯英文且长度大于2的元素
+                for (const alias of aliasArray) {
+                    if (/^[a-zA-Z]+$/.test(alias) && alias.length > 2) {
+                        enName = alias;
+                        break;
+                    }
+                }
+            }
+
+            // 格式化英文名：首字母大写，其余小写
+            enName = enName.charAt(0).toUpperCase() + enName.slice(1).toLowerCase();
+
+            // --- 新增：官方 CDN 驼峰命名异常打补丁 ---
+            const CDN_EXCEPTIONS = {
+                'Leesin': 'LeeSin',
+                'Xinzhao': 'XinZhao',
+                'Jarvaniv': 'JarvanIV',
+                'Wukong': 'MonkeyKing',
+                'Renata': 'Renata',
+                'Kogmaw': 'KogMaw',
+                'Reksai': 'RekSai',
+                'Kaisa': 'Kaisa',
+                'Aurelionsol': 'AurelionSol',
+                'Tahmkench': 'TahmKench',
+                'Tf': 'TwistedFate',
+                'Missfortune': 'MissFortune',
+                'Masteryi': 'MasterYi',
+                'Drmundo': 'DrMundo',
+                'Velkoz': 'VelKoz',
+                'Belveth': 'Belveth',
+                'Ksnate': 'KSante'
+            };
+
+            if (CDN_EXCEPTIONS[enName]) {
+                enName = CDN_EXCEPTIONS[enName];
+            }
+            // ------------------------------------------
+
+            return `https://game.gtimg.cn/images/lol/act/img/champion/${enName}.png`;
+        }
+
+        /**
+         * 格式化数字显示
+         */
+        function formatPercent(num) {
+            return (num * 100).toFixed(1) + '%';
+        }
+
+        function formatNumber(num, decimals = 2) {
+            return num.toFixed(decimals);
+        }
+
+        /**
+         * 根据分数获取阶层
+         */
+        function getTier(score) {
+            for (const tier of TIERS) {
+                if (score >= tier.minScore) {
+                    return tier;
+                }
+            }
+            return TIERS[TIERS.length - 1];
+        }
+
+        // ========== 渲染逻辑 ==========
+        /**
+         * 渲染英雄卡片
+         */
+        function createChampionCard(champion, index) {
+            const avatarUrl = getChampionAvatar(champion.英雄名称);
+            const tier = getTier(champion.综合分数);
+
+            return `
+                <div
+                    class="glass glass-hover rounded-lg p-3 cursor-pointer transition-all duration-200 transform hover:scale-105 border-l-4 ${tier.borderColor}"
+                    onclick="window.location.href='detail.html?hero=${encodeURIComponent(champion.英雄名称)}'"
+                    style="animation-delay: ${index * 50}ms"
+                >
+                    <div class="flex items-center gap-3">
+                        <img
+                            src="${avatarUrl}"
+                            alt="${champion.英雄名称}"
+                            class="w-12 h-12 rounded-lg object-cover bg-gray-800"
+                            onerror="this.src='https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/profile-icons/29.jpg'; this.onerror=null;"
+                        />
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-white truncate">${champion.英雄名称}</span>
+                            </div>
+                            <div class="flex items-center gap-4 text-xs text-gray-400 mt-1">
+                                <span>胜率：<span class="${champion.贝叶斯胜率 > 0.5 ? 'text-green-400' : 'text-gray-400'}">${formatPercent(champion.贝叶斯胜率)}</span></span>
+                                <span>出场：<span class="text-gray-300">${formatPercent(champion.英雄出场率)}</span></span>
+                                <span>评分：<span class="text-purple-400 font-semibold">${formatNumber(champion.综合分数, 2)}</span></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        /**
+         * 渲染各阶层列表
+         */
+        function renderTiers(champions) {
+            const container = document.getElementById('tierContainer');
+            container.innerHTML = '';
+
+            // 按分数排序
+            const sorted = [...champions].sort((a, b) => b.综合分数 - a.综合分数);
+
+            // 按阶层分组
+            const tierGroups = {};
+            TIERS.forEach(t => tierGroups[t.id] = []);
+
+            sorted.forEach(champ => {
+                const tier = getTier(champ.综合分数);
+                tierGroups[tier.id].push(champ);
+            });
+
+            // 渲染每个阶层
+            TIERS.forEach(tier => {
+                const champs = tierGroups[tier.id];
+                if (champs.length === 0) return;
+
+                const tierHTML = `
+                    <div class="glass rounded-xl overflow-hidden">
+                        <div class="bg-gradient-to-r ${tier.color} px-4 py-3">
+                            <div class="flex items-center justify-between">
+                                <h2 class="text-lg font-bold text-white">${tier.name}</h2>
+                                <span class="text-sm text-white/80">${champs.length} 位英雄</span>
+                            </div>
+                        </div>
+                        <div class="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            ${champs.map((c, i) => createChampionCard(c, i)).join('')}
+                        </div>
+                    </div>
+                `;
+                container.innerHTML += tierHTML;
+            });
+        }
+
+        /**
+         * 搜索过滤
+         */
+        function filterChampions(searchTerm) {
+            if (!searchTerm.trim()) {
+                renderTiers(allChampions);
+                return;
+            }
+
+            const lowerSearch = searchTerm.toLowerCase();
+            const filtered = allChampions.filter(c => {
+                // 英雄官方名包含搜索词
+                if (c.英雄名称.toLowerCase().includes(lowerSearch)) {
+                    return true;
+                }
+                // 别名数组中任一元素包含搜索词
+                const aliasArray = heroAliases[c.英雄名称];
+                if (aliasArray && Array.isArray(aliasArray)) {
+                    for (const alias of aliasArray) {
+                        if (alias.toLowerCase().includes(lowerSearch)) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            });
+
+            if (filtered.length === 0) {
+                document.getElementById('tierContainer').innerHTML = `
+                    <div class="text-center py-20 text-gray-500">
+                        没有找到匹配的英雄
+                    </div>
+                `;
+            } else {
+                renderTiers(filtered);
+            }
+        }
+
+        // ========== 数据获取 ==========
+        /**
+         * 加载英雄数据
+         */
+        async function loadChampions() {
+            const spinner = document.getElementById('loadingSpinner');
+            const noData = document.getElementById('noDataTip');
+            const container = document.getElementById('tierContainer');
+
+            try {
+                // 先获取别名数据
+                try {
+                    const aliasesResponse = await fetch(`${API_BASE}/api/aliases`);
+                    if (aliasesResponse.ok) {
+                        heroAliases = await aliasesResponse.json();
+                    }
+                } catch (e) {
+                    console.warn('获取英雄别名失败:', e);
+                }
+
+                const response = await fetch(`${API_BASE}/api/champions`);
+                if (!response.ok) throw new Error('HTTP error');
+
+                const data = await response.json();
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    spinner.classList.add('hidden');
+                    noData.classList.remove('hidden');
+                    return;
+                }
+
+                allChampions = data;
+                spinner.classList.add('hidden');
+                noData.classList.add('hidden');
+                container.classList.remove('hidden');
+                renderTiers(data);
+
+            } catch (error) {
+                console.error('加载英雄数据失败:', error);
+                spinner.classList.add('hidden');
+                noData.classList.remove('hidden');
+                document.querySelector('#noDataTip .text-lg').textContent = '数据加载失败';
+                document.querySelector('#noDataTip .text-sm').textContent = '请确保后端服务已启动';
+            }
+        }
+
+        // ========== WebSocket 连接 ==========
+        /**
+         * 建立 WebSocket 连接
+         */
+        function connectWebSocket() {
+            const wsStatus = document.getElementById('wsStatus');
+
+            try {
+                ws = new WebSocket(WS_URL + '/ws');
+
+                ws.onopen = () => {
+                    console.log('WebSocket 连接已建立');
+                    wsStatus.innerHTML = `
+                        <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                        <span class="text-green-400">已连接</span>
+                    `;
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket 连接已关闭');
+                    wsStatus.innerHTML = `
+                        <span class="w-2 h-2 bg-red-500 rounded-full"></span>
+                        <span class="text-red-400">已断开</span>
+                    `;
+                    // 断线重连
+                    reconnectTimer = setTimeout(connectWebSocket, 3000);
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket 错误:', error);
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        console.log('收到 WebSocket 消息:', message);
+
+                        if (message.type === 'navigate') {
+                            window.location.href = message.url;
+                        } else if (message.type === 'champion_update') {
+                            console.log('收到英雄更新通知，英雄 IDs:', message.champion_ids);
+                            // 简单处理：刷新当前页面数据
+                            loadChampions();
+                        }
+                    } catch (e) {
+                        console.error('解析 WebSocket 消息失败:', e);
+                    }
+                };
+
+            } catch (error) {
+                console.error('创建 WebSocket 连接失败:', error);
+                reconnectTimer = setTimeout(connectWebSocket, 3000);
+            }
+        }
+
+        // ========== 初始化 ==========
+        document.addEventListener('DOMContentLoaded', () => {
+            // 加载数据
+            loadChampions();
+
+            // 建立 WebSocket 连接
+            connectWebSocket();
+
+            // 绑定搜索事件
+            document.getElementById('searchInput').addEventListener('input', (e) => {
+                filterChampions(e.target.value);
+            });
+        });
+
+        // 页面卸载时清理
+        window.addEventListener('beforeunload', () => {
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            if (ws) ws.close();
+        });
+    </script>
+</body>
+</html>

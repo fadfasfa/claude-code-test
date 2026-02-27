@@ -1,0 +1,11 @@
+{
+  "timestamp": "20260227_121602",
+  "base_commit": "8be0a15fd0df691b0346e892179860f9261b21b4",
+  "unauthorized_changes": {
+    "run/config/hero_aliases.json": "M",
+    "run/static/index.html": "M",
+    "logic_verify.py": "A",
+    "run/hextech_query.py": "DANGEROUS_CODE",
+    "run/web_server.py": "AST_DEGRADED"
+  }
+}
