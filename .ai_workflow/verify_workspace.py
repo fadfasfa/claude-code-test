@@ -16,7 +16,6 @@ IMMUTABLE_CORE = {
 QWEN_INFRA_PATTERN = re.compile(r'^\.ai_workflow/')
 
 def acquire_lock() -> bool:
-    """Acquire atomic file-based lock. Returns True if lock acquired, False if already held."""
     try:
         fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.close(fd)
@@ -25,7 +24,6 @@ def acquire_lock() -> bool:
         return False
 
 def release_lock():
-    """Release the lock file. Silently ignores errors."""
     try:
         os.remove(LOCK_FILE)
     except OSError:
@@ -62,14 +60,12 @@ def get_comprehensive_changes() -> Tuple[List[Dict], str]:
         if is_ignored_file(path):
             i += 1
             continue
-        # Rename: next token is old path
         if x == 'R' or y == 'R':
             old_path = tokens[i + 1].replace("\\", "/") if i + 1 < len(tokens) else None
             changes.append({"path": path, "change_type": "R", "old_path": old_path, "stage": "working"})
             seen.add(path)
             i += 2
             continue
-        # Map XY to change_type: prefer staged (X), fall back to working (Y)
         raw = x if x not in (' ', '?') else y
         change_type = raw if raw not in ('?',) else 'A'
         if path not in seen:
@@ -94,16 +90,11 @@ def load_whitelist(filepath: str) -> Dict[str, str]:
     return wl
 
 def get_claude_auth_from_git() -> dict:
-    """优先读取物理磁盘的 .ai_workflow/current_contract.json，若不存在或解析失败则从 Git HEAD 读取。
-    若两者均失败，返回空字典作为兜底。
-    """
-    # 优先从物理磁盘读取实时合约
     contract_path = ".ai_workflow/current_contract.json"
     if os.path.exists(contract_path):
         try:
             with open(contract_path, "rb") as f:
                 raw = f.read()
-            # 尝试 UTF-16 BOM 解码
             try:
                 text = raw.decode('utf-16').strip()
                 if text.startswith('\ufeff'):
@@ -114,7 +105,6 @@ def get_claude_auth_from_git() -> dict:
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             pass
 
-    # 磁盘读取失败，回退到 Git HEAD
     result = subprocess.run(
         ["git", "show", "HEAD:.ai_workflow/current_contract.json"],
         capture_output=True, text=True, encoding="utf-8", errors="replace"
@@ -126,15 +116,55 @@ def get_claude_auth_from_git() -> dict:
     except json.JSONDecodeError:
         return {}
 
+def _detect_physical_identity(declared_node: str) -> str:
+    """【终极防线】穿透式物理身份确权探针"""
+    try:
+        env_vars = os.environ
+
+        # 1. 环境特征指纹锚定 (识别 Claude Code 或手动提权变量)
+        has_claude_fingerprint = (
+            "CLAUDE_SESSION_ID" in env_vars or
+            env_vars.get("FORCE_AI_ROLE") == "CLAUDE_API" or
+            "claude" in env_vars.get("TERM_PROGRAM", "").lower() or
+            "vscode" in env_vars.get("TERM_PROGRAM", "").lower()
+        )
+
+        # 2. 进程树溯源 (防止简单的脚本越权绕过)
+        if not has_claude_fingerprint:
+            ppid = os.getppid()
+            if os.name == 'nt':
+                res = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", f"(Get-Process -Id {ppid}).Name"],
+                    capture_output=True, text=True, timeout=2, creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                )
+                parent_name = res.stdout.strip().lower()
+            else:
+                with open(f"/proc/{ppid}/comm", "r") as f:
+                    parent_name = f.read().strip().lower()
+
+            if any(x in parent_name for x in ['code', 'cursor', 'claude']):
+                has_claude_fingerprint = True
+
+        if has_claude_fingerprint:
+            return "CLAUDE_API"
+
+    except Exception as e:
+        print(f"\n⚠️ [物理探针异常]：{e}")
+        pass # 异常被吞噬，继续执行 Fail-Safe
+
+    # Fail-Safe 原则：无物理特征证明，一律视为下游被降级节点 (QWEN_API)
+    if declared_node == "CLAUDE_API":
+        print("\n⚠️ [安全网关致命警告]：JSON 契约声明为 CLAUDE_API，但缺乏底层物理特征证明！疑似伪造或越权操作！已强制降级为 QWEN_API。\n")
+
+    return "QWEN_API"
+
 def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_paths: Set[str], executor_node: str = "CLAUDE_API") -> Tuple:
     unauthorized = {}
     pending_ast = []
 
     def match_level(path: str):
-        # 【核心拦截】如果路径在 Claude Sudo 授权名单中，直接赋予最高通行证
         if path in auth_paths:
             return "LOOSE"
-
         for pattern, level in whitelist.items():
             if fnmatch.fnmatch(path, pattern) or path == pattern:
                 return level
@@ -144,33 +174,29 @@ def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_path
         path = c["path"]
         ct = c.get("change_type", "M")
 
-        # 【不可违背】Immutable-core 硬编码防线：只有 CLAUDE_API 且在授权名单中才能修改
         if path in IMMUTABLE_CORE:
             if executor_node != "CLAUDE_API" or path not in auth_paths:
                 unauthorized[path] = "IMMUTABLE_CORE_VIOLATION"
                 continue
-            # else: fall through as LOOSE
             level = "LOOSE"
         else:
-            # 【身份感知】QWEN_API 禁止触碰任何 .ai_workflow/* 路径
             if executor_node == "QWEN_API" and QWEN_INFRA_PATTERN.match(path):
                 unauthorized[path] = "QWEN_INFRA_FORBIDDEN"
                 continue
-
             level = match_level(path)
 
         if level is None:
             unauthorized[path] = ct
         elif level == "LOOSE":
-            pass  # 全放行，不做 AST 检查
+            pass
         elif level == "STRICT":
             if ct != "M":
                 unauthorized[path] = ct
             elif path.endswith(".py"):
                 pending_ast.append(path)
-        else:  # STANDARD
+        else:
             if ct == "D":
-                pass  # 允许删除，不做 AST
+                pass
             elif path.endswith(".py"):
                 pending_ast.append(path)
 
@@ -178,24 +204,21 @@ def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_path
 
 def execute_atomic_revert(unauthorized: Dict, base_commit: str) -> bool:
     if not unauthorized: return False
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = os.path.join(BACKUP_DIR, timestamp)
     os.makedirs(backup_path, exist_ok=True)
 
-    # 1. 生成 Patch 文件
     patch_file = os.path.join(backup_path, "changes.patch")
     with open(patch_file, "w", encoding="utf-8") as f:
         subprocess.run(["git", "diff", "HEAD", "--"] + list(unauthorized.keys()), stdout=f, text=True)
 
-    # 2. 物理拷贝原始文件
     for file_path in unauthorized.keys():
         if os.path.exists(file_path):
-            if os.path.isfile(file_path):  # <--- 新增这行防御逻辑，只拷贝文件
+            if os.path.isfile(file_path):
                 dest_path = os.path.join(backup_path, file_path)
                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                 shutil.copy2(file_path, dest_path)
-    # 3. 生成留存追溯凭证 manifest.json
+
     manifest = {
         "timestamp": timestamp,
         "base_commit": base_commit,
@@ -205,7 +228,6 @@ def execute_atomic_revert(unauthorized: Dict, base_commit: str) -> bool:
     with open(manifest_file, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-    # 4. 执行原有回滚逻辑
     stash_msg = f"ai_workflow_snapshot_{timestamp}"
     subprocess.run(["git", "stash", "push", "-u", "-m", stash_msg, "--"] + list(unauthorized.keys()), capture_output=True)
 
@@ -216,15 +238,12 @@ def execute_atomic_revert(unauthorized: Dict, base_commit: str) -> bool:
     return True
 
 def cleanup_stale_backups(backup_dir=".ai_workflow/backup", max_days=7, max_keep=30):
-    """静默清理过期快照：严格按正则匹配，双重淘汰（>7 天 或 超出 30 个），忽略占用报错"""
     if not os.path.exists(backup_dir):
         return
-
     valid_snapshots = []
     pattern = re.compile(r"^\d{8}_\d{6}$")
     now = datetime.now()
 
-    # 1. 严格筛选合法的快照目录
     for item in os.listdir(backup_dir):
         if pattern.match(item):
             item_path = os.path.join(backup_dir, item)
@@ -235,41 +254,36 @@ def cleanup_stale_backups(backup_dir=".ai_workflow/backup", max_days=7, max_keep
                 except ValueError:
                     continue
 
-    # 按时间从新到老排序
     valid_snapshots.sort(key=lambda x: x[1], reverse=True)
-
     to_delete = []
     kept_count = 0
 
-    # 2. 状态机筛选淘汰名单
     for path, f_time in valid_snapshots:
-        # 规则 1: 超过 7 天直接淘汰
         if now - f_time > timedelta(days=max_days):
             to_delete.append(path)
         else:
-            # 规则 2: 没超 7 天，但名额已满 30 个，淘汰
             if kept_count >= max_keep:
                 to_delete.append(path)
             else:
                 kept_count += 1
 
-    # 3. 机械执行删除，静默跳过占用
     for path in to_delete:
         try:
             shutil.rmtree(path)
         except Exception:
-            pass  # 发生 PermissionError 或其他占用报错时直接静默跳过
+            pass
 
 def main():
-    # 【原子级防抖锁】获取锁，若已被持有则静默退出
     if not acquire_lock():
         sys.exit(0)
 
     try:
-        # 【实时身份感知鉴权】优先从磁盘读取合约，若失败则回退到 Git HEAD
         contract = get_claude_auth_from_git()
         auth_paths = set(contract.get("claude_sudo", {}).get("authorized_paths", []))
-        executor_node = contract.get("task_input_from_claude", {}).get("executor_node", "CLAUDE_API")
+
+        # 【核心安全重构：引入物理探针取代绝对文本信任】
+        declared_node = contract.get("task_input_from_claude", {}).get("executor_node", "QWEN_API")
+        executor_node = _detect_physical_identity(declared_node)
 
         whitelist = load_whitelist(".ai_workflow/whitelist.txt")
         changes, base_commit = get_comprehensive_changes()
@@ -278,19 +292,14 @@ def main():
             print("✅ 工作区无变动")
             return
 
-        # 【身份感知动态审查】传递 executor_node 以启用分流审查机制
         unauthorized, pending_ast = categorize_changes(changes, whitelist, auth_paths, executor_node)
 
-        # ----------------- 【修复：霸王条款必须绝对化】 -----------------
-        # 【重构点 A：霸王条款】非 QWEN_API 执行者直接清空审查队列，豁免 AST 扫描
         if executor_node != "QWEN_API":
             pending_ast.clear()
-            # 必须同时清空 unauthorized 里的记录，否则自改契约会被拦
             unauthorized.clear()
 
         if pending_ast:
             print(f"🔍 触发深度审查，正在扫描 {len(pending_ast)} 个文件...")
-            # 临时将当前目录加入环境变量，以便导入 pre_execution_check
             if ".ai_workflow" not in sys.path:
                 sys.path.insert(0, ".ai_workflow")
             from pre_execution_check import check_dangerous_calls
@@ -299,12 +308,9 @@ def main():
                 if not os.path.exists(ast_file):
                     continue
 
-                # 如果依然进入了这里且不是 QWEN，强制跳过所有扫描
                 if executor_node != "QWEN_API":
                     continue
 
-                # 【重构点 B：差分沙盒阻断】在执行 check_dangerous_calls 前，先提取 Base Commit 旧代码做并行扫描
-                # 使用 git show 提取旧版本代码
                 git_path = ast_file.replace("\\", "/")
                 old_code_result = subprocess.run(
                     ["git", "show", f"{base_commit}:{git_path}"],
@@ -312,59 +318,43 @@ def main():
                 )
                 old_code = old_code_result.stdout if old_code_result.returncode == 0 else None
 
-                # 防线一：静态恶意指令扫描 (带动态沙盒豁免)
                 with open(ast_file, "r", encoding="utf-8") as f:
                     new_code = f.read()
 
-                # 【身份感知】根据执行者身份动态划定沙盒边界
                 exempted_modules = []
                 if executor_node == "CLAUDE_API":
-                    # CLAUDE_API：允许访问授权的基础设施，基于隐式路径放行系统调用
                     if ast_file.startswith('.ai_workflow/') or ast_file.startswith('scripts/'):
                         exempted_modules = ['subprocess', 'os']
-                # QWEN_API：对 os/subprocess 调用零容忍，exempted_modules 保持为空
 
-                # 对新代码进行安全扫描
                 is_safe, violations = check_dangerous_calls(new_code, exempted_modules=exempted_modules)
                 if not is_safe:
-                    # 【差分阻断】仅当高危调用是"新增"时才拦截
                     if old_code is not None:
                         old_is_safe, _ = check_dangerous_calls(old_code, exempted_modules=exempted_modules)
                         if old_is_safe:
-                            # 旧代码安全，新代码不安全 = 真实新增高危调用，拦截
-                            print(f"🚫 [拦截] {ast_file} 触发高危动作：{violations}")
+                            print(f"🚫 [拦截] {ast_file} 触发新增高危动作：{violations}")
                             unauthorized[ast_file] = "DANGEROUS_CODE"
                             continue
-                        # 旧代码也有高危调用 = 历史技术债，放行
                     else:
-                        # 无旧代码可比（新增文件），直接拦截
-                        print(f"🚫 [拦截] {ast_file} 触发高危动作：{violations}")
+                        print(f"🚫 [拦截] {ast_file} 触发新增高危动作：{violations}")
                         unauthorized[ast_file] = "DANGEROUS_CODE"
                         continue
 
-                # 防线二：结构退化审查 (AST 比对)
-                # 使用 sys.executable 确保调用同一虚拟环境的 Python
                 diff_cmd = [sys.executable, ".ai_workflow/post_check_diff.py", ast_file, "--ref", base_commit]
-                result = subprocess.run(diff_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' and hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                result = subprocess.run(diff_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=creation_flags)
+
                 if result.returncode != 0:
-                    # 【重构点 C：过滤 AST 洁癖规则】对 stdout/JSON 结果进行轻量级过滤
-                    # 屏蔽含有 ADDED 的警告行，仅拦截 REMOVED、CHANGED、BROADENED 等破坏性变更
                     stdout_lines = result.stdout.strip().split('\n') if result.stdout.strip() else []
                     destructive_violations = []
                     for line in stdout_lines:
-                        # 跳过仅表示"新增"的警告行
                         if 'ADDED' in line:
                             continue
-                        # 保留破坏性变更警告
                         if any(keyword in line for keyword in ['REMOVED', 'CHANGED', 'BROADENED']):
                             destructive_violations.append(line)
 
-                    # 仅当存在破坏性变更时才判定为 AST_DEGRADED
                     if destructive_violations:
                         print(f"🚫 [拦截] {ast_file} 发生 AST 结构退化/异常:\n" + '\n'.join(destructive_violations))
                         unauthorized[ast_file] = "AST_DEGRADED"
-                    # 仅有 ADDED 类警告 = 非破坏性变更，放行
-        # --------------------------------------------------------
 
         if unauthorized:
             print("❌ 发现未授权或未通过审查的修改，执行回滚...")
