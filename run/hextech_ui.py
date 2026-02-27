@@ -5,6 +5,7 @@ import ctypes
 import json
 import psutil
 import requests
+import subprocess
 import urllib3
 import base64
 import pandas as pd
@@ -35,17 +36,18 @@ class HextechUI:
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception: pass
-            
-        self.stop_event = threading.Event()   
-        self.pause_event = threading.Event()  
+
+        self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
         self.threads = []
-        
+        self.backend_process = None  # 后端进程引用
+
         self.session = get_advanced_session()
-        self.core_data = load_champion_core_data() 
-        
+        self.core_data = load_champion_core_data()
+
         self.check_and_sync_data()
         self.df = self.load_data()
-        
+
         self.port, self.token = None, None
         self.current_hero_ids = set()
         self.image_cache = {}
@@ -69,16 +71,52 @@ class HextechUI:
         self.root.geometry("320x600")
         self.root.configure(bg="#1e1e2e")
         self.root.attributes('-alpha', 0.85, '-topmost', True)
-        self.root.overrideredirect(True) 
+        self.root.overrideredirect(True)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self._build_ui()
         self._init_core_engine()
+        self._start_backend()  # 自动启动后端
 
     def _init_core_engine(self):
         t2 = threading.Thread(target=self.window_sync_loop, daemon=True)
         self.threads.append(t2)
         t2.start()
+
+    def _start_backend(self):
+        """Auto-start backend web server process."""
+        try:
+            if hasattr(sys, '_MEIPASS'):
+                # PyInstaller bundled environment: start self
+                cmd = [sys.executable]
+            else:
+                # Development environment: start web_server.py
+                cmd = [sys.executable, os.path.join(os.path.dirname(__file__), "web_server.py")]
+
+            self.backend_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            logging.info(f"后端进程已启动 (PID: {self.backend_process.pid})")
+        except Exception as e:
+            logging.error(f"启动后端失败: {e}")
+
+    def _wait_backend_ready(self, timeout=10):
+        """Poll localhost:8000 until backend is ready."""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                response = requests.get("http://localhost:8000", timeout=1)
+                if response.status_code in (200, 404):  # 404 is ok if page exists
+                    logging.info("后端已就绪")
+                    return True
+            except requests.exceptions.RequestException:
+                pass
+            time.sleep(0.5)
+        logging.warning("后端启动超时")
+        return False
 
     def _run_terminal(self):
         pass
@@ -187,14 +225,43 @@ class HextechUI:
         pass
 
     def toggle_web(self, event=None):
+        """Open browser after checking backend health."""
         try:
-            webbrowser.open("http://localhost:8000")
+            # Show status
+            if self.status_label.winfo_exists():
+                self.status_label.config(text="正在初始化引擎...", fg="#f38ba8")
+                self.root.update()
+
+            # Wait for backend to be ready
+            if self._wait_backend_ready(timeout=10):
+                webbrowser.open("http://localhost:8000")
+                if self.status_label.winfo_exists():
+                    self.status_label.config(text="", fg="#a6adc8")
+            else:
+                if self.status_label.winfo_exists():
+                    self.status_label.config(text="❌ 后端启动失败", fg="#f38ba8")
+
         except Exception as e:
-            print(f"\n⚠️ 打开浏览器失败: {e}")
+            logging.error(f"打开浏览器失败: {e}")
+            if self.status_label.winfo_exists():
+                self.status_label.config(text="❌ 打开失败", fg="#f38ba8")
 
     def on_close(self):
         print("\n[System] 收到退出信号，正在等待数据安全落盘...")
         self.stop_event.set()
+
+        # 强制杀掉后端进程
+        if self.backend_process:
+            try:
+                parent = psutil.Process(self.backend_process.pid)
+                # Kill entire process tree to ensure no orphaned processes
+                for child in parent.children(recursive=True):
+                    child.kill()
+                parent.kill()
+                logging.info("后端进程已强制关闭")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
         for t in self.threads:
             if t.is_alive():
                 t.join(timeout=2)

@@ -191,11 +191,27 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
                 'icon': _generate_hextech_icon_url(row['海克斯名称'], row.get('海克斯阶级', '棱彩'))
             })
 
+        # ========== 新增 top_20_overall 字段 ==========
+        # 无视等级分类，按综合得分倒序排列，截取前 20 项
+        top_20_data = hero_data.sort_values(by='综合得分', ascending=False).head(20)
+        top_20_overall = []
+        for _, row in top_20_data.iterrows():
+            top_20_overall.append({
+                '海克斯名称': str(row['海克斯名称']),
+                '海克斯阶级': str(row.get('海克斯阶级', '棱彩')),
+                '海克斯胜率': float(row['海克斯胜率']) if pd.notna(row['海克斯胜率']) else 0.0,
+                '海克斯出场率': float(row['海克斯出场率']) if pd.notna(row['海克斯出场率']) else 0.0,
+                '胜率差': float(row['胜率差']) if pd.notna(row['胜率差']) else 0.0,
+                '综合得分': float(row['综合得分']) if pd.notna(row['综合得分']) else 0.0,
+                'icon': _generate_hextech_icon_url(row['海克斯名称'], row.get('海克斯阶级', '棱彩'))
+            })
+
         return {
             'comprehensive': comprehensive_list,
-            'winrate_only': winrate_list
+            'winrate_only': winrate_list,
+            'top_20_overall': top_20_overall
         }
 
     except Exception:
         # 安全降级，返回空列表
-        return {'comprehensive': [], 'winrate_only': []}
+        return {'comprehensive': [], 'winrate_only': [], 'top_20_overall': []}

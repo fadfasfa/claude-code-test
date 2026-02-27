@@ -106,6 +106,7 @@ def get_claude_auth_from_git() -> dict:
             # 尝试 UTF-16 BOM 解码
             try:
                 text = raw.decode('utf-16').strip()
+                # 移除可能的 BOM 和空白字符
                 if text.startswith('\ufeff'):
                     text = text[1:]
             except UnicodeDecodeError:

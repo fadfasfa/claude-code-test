@@ -153,13 +153,13 @@
             '格雷福斯': 'Graves'
         };
 
-        // 五大阶层定义（按综合分数划分）
+        // 五大阶层定义（按综合分数划分）- 阶梯级渐变色：赛博暗金 → 深渊暗红
         const TIERS = [
-            { id: 't0', name: '夯', color: 'from-red-600 to-red-800', borderColor: 'border-red-500', minScore: 1.5 },
-            { id: 't1', name: '顶级', color: 'from-orange-500 to-orange-700', borderColor: 'border-orange-400', minScore: 0.8 },
-            { id: 't2', name: '人上人', color: 'from-yellow-500 to-yellow-700', borderColor: 'border-yellow-400', minScore: 0.3 },
-            { id: 't3', name: 'NPC', color: 'from-gray-500 to-gray-700', borderColor: 'border-gray-400', minScore: -0.3 },
-            { id: 't4', name: '拉', color: 'from-blue-600 to-blue-800', borderColor: 'border-blue-500', minScore: -Infinity }
+            { id: 't0', name: '夯', color: 'from-[#FFD700] to-[#B8860B]', borderColor: 'border-[#FFD700]', textColor: 'text-[#FFD700]', minScore: 1.5 },
+            { id: 't1', name: '顶级', color: 'from-[#FFA500] to-[#FF8C00]', borderColor: 'border-[#FFA500]', textColor: 'text-[#FFA500]', minScore: 0.8 },
+            { id: 't2', name: '人上人', color: 'from-[#FFD700] to-[#DAA520]', borderColor: 'border-[#FFD700]', textColor: 'text-[#DAA520]', minScore: 0.3 },
+            { id: 't3', name: 'NPC', color: 'from-[#CD5C5C] to-[#A52A2A]', borderColor: 'border-[#CD5C5C]', textColor: 'text-[#CD5C5C]', minScore: -0.3 },
+            { id: 't4', name: '拉', color: 'from-[#8B0000] to-[#5C0000]', borderColor: 'border-[#8B0000]', textColor: 'text-[#8B0000]', minScore: -Infinity }
         ];
 
         // 全局状态
@@ -177,6 +177,17 @@
             // 特殊处理：如果包含空格，尝试合并
             enName = enName.replace(/\s+/g, '');
             return `https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/${enName}.png`;
+        }
+
+        /**
+         * 图片加载失败时的 CDN 兜底 URL
+         */
+        function getFallbackAvatar(name) {
+            // 尝试从映射表获取英文名
+            let enName = CHAMPION_PINYIN[name] || name;
+            enName = enName.replace(/\s+/g, '');
+            // 腾讯官方 CDN 头像
+            return `https://game.gtimg.cn/images/lol/act/img/champion/${enName}.png`;
         }
 
         /**
@@ -209,6 +220,8 @@
         function createChampionCard(champion, index) {
             const avatarUrl = getChampionAvatar(champion.英雄名称);
             const tier = getTier(champion.综合分数);
+            const heroName = champion.英雄名称;
+            const enName = (CHAMPION_PINYIN[heroName] || heroName).replace(/\s+/g, '');
 
             return `
                 <div
@@ -219,13 +232,13 @@
                     <div class="flex items-center gap-3">
                         <img
                             src="${avatarUrl}"
-                            alt="${champion.英雄名称}"
+                            alt="${heroName}"
                             class="w-12 h-12 rounded-lg object-cover bg-gray-800"
-                            onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>${champion.英雄名称[0]}</text></svg>'"
+                            onerror="let n=(CHAMPION_PINYIN[this.alt]||this.alt).replace(/\\s+/g,''); this.onerror=null; this.src='https://game.gtimg.cn/images/lol/act/img/champion/'+n+'.png'; this.onerror=null; this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>'+this.alt[0]+'</text></svg>';"
                         />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
-                                <span class="font-bold text-white truncate">${champion.英雄名称}</span>
+                                <span class="font-bold text-white truncate">${heroName}</span>
                                 <span class="text-xs px-2 py-0.5 rounded bg-gradient-to-r ${tier.color} text-white font-semibold">
                                     ${tier.name}
                                 </span>

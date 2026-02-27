@@ -1,0 +1,8 @@
+{
+  "timestamp": "20260227_160012",
+  "base_commit": "8be0a15fd0df691b0346e892179860f9261b21b4",
+  "unauthorized_changes": {
+    ".ai_workflow/current_contract.json": "IMMUTABLE_CORE_VIOLATION",
+    "run/hextech_query.py": "DANGEROUS_CODE"
+  }
+}

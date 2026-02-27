@@ -1,0 +1,8 @@
+{
+  "timestamp": "20260227_163334",
+  "base_commit": "5989d339f0a473727fdaddf26a79c4ed5a6b8a19",
+  "unauthorized_changes": {
+    ".ai_workflow/current_contract.json": "IMMUTABLE_CORE_VIOLATION",
+    ".ai_workflow/verify_workspace.py": "QWEN_INFRA_FORBIDDEN"
+  }
+}

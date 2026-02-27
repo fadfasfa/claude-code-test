@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import os
+import sys
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -13,13 +14,21 @@ import psutil
 import requests
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from data_processor import process_champions_data, process_hextechs_data
 from hextech_query import get_latest_csv
 
 logging.basicConfig(level=logging.INFO)
+
+# ── Resource path resolution for PyInstaller ──────────────────────────────────
+
+def get_resource_path(relative_path: str) -> str:
+    """Get resource path, handling PyInstaller bundled environment."""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(__file__), relative_path)
 
 # ── CSV hot-reload cache ──────────────────────────────────────────────────────
 
@@ -185,12 +194,22 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Static files — frontend assets served from run/static/
-_static_dir = os.path.join(os.path.dirname(__file__), "static")
+_static_dir = get_resource_path("static")
 os.makedirs(_static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
+# Assets directory for images and other resources
+_assets_dir = get_resource_path("assets")
+os.makedirs(_assets_dir, exist_ok=True)
+app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+
 
 # ── API routes ────────────────────────────────────────────────────────────────
+
+@app.get("/")
+async def read_index():
+    """Serve index.html for root path."""
+    return FileResponse(os.path.join(_static_dir, "index.html"))
 
 @app.get("/api/champions")
 async def api_champions():

@@ -56,13 +56,28 @@
 
     <!-- 主内容区 -->
     <main class="max-w-7xl mx-auto px-4 py-6">
+        <!-- 切换控制台 -->
+        <div class="glass rounded-xl p-4 mb-6">
+            <div class="flex items-center justify-center gap-4">
+                <button onclick="switchView('top20')" id="btn-top20" class="px-6 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-purple-800 text-white font-semibold hover:from-purple-500 hover:to-purple-700 transition-all">
+                    综合 Top20
+                </button>
+                <button onclick="switchView('tiered')" id="btn-tiered" class="px-6 py-2 rounded-lg glass text-gray-300 font-semibold hover:bg-gray-700 transition-all">
+                    按等级分类
+                </button>
+                <button onclick="switchView('winrate')" id="btn-winrate" class="px-6 py-2 rounded-lg glass text-gray-300 font-semibold hover:bg-gray-700 transition-all">
+                    纯胜率榜
+                </button>
+            </div>
+        </div>
+
         <!-- 双列布局 -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- 左列：综合 Z-Score 推荐 -->
             <div class="glass rounded-xl overflow-hidden">
                 <div class="bg-gradient-to-r from-purple-600 to-purple-800 px-4 py-3">
-                    <h2 class="text-lg font-bold text-white">综合 Z-Score 推荐</h2>
-                    <p class="text-xs text-purple-200 mt-1">平衡胜率与出场率的智能推荐</p>
+                    <h2 id="leftTitle" class="text-lg font-bold text-white">综合 Top20</h2>
+                    <p id="leftDesc" class="text-xs text-purple-200 mt-1">综合推荐得分前 20</p>
                 </div>
                 <div id="comprehensiveList" class="p-4 space-y-3">
                     <!-- 动态生成 -->
@@ -72,8 +87,8 @@
             <!-- 右列：纯胜率暴力榜 -->
             <div class="glass rounded-xl overflow-hidden">
                 <div class="bg-gradient-to-r from-red-600 to-red-800 px-4 py-3">
-                    <h2 class="text-lg font-bold text-white">纯胜率暴力榜</h2>
-                    <p class="text-xs text-red-200 mt-1">只看胜率，暴力美学</p>
+                    <h2 id="rightTitle" class="text-lg font-bold text-white">纯胜率暴力榜</h2>
+                    <p id="rightDesc" class="text-xs text-red-200 mt-1">只看胜率，暴力美学</p>
                 </div>
                 <div id="winrateList" class="p-4 space-y-3">
                     <!-- 动态生成 -->
@@ -103,6 +118,8 @@
         let ws = null;
         let reconnectTimer = null;
         let currentHero = '';
+        let hextechData = null;  // 存储原始数据
+        let currentView = 'top20';  // 当前视图：'top20', 'tiered', 'winrate'
 
         // ========== 工具函数 ==========
         /**
@@ -172,7 +189,7 @@
                             src="${iconUrl}"
                             alt="${hextech.海克斯名称}"
                             class="w-12 h-12 rounded-lg object-cover bg-gray-800"
-                            onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%234a148c%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%239c27b0%22 font-size=%2240%22>?</text></svg>'"
+                            onerror="let d='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%234a148c%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%239c27b0%22 font-size=%2240%22>?</text></svg>'; this.onerror=null; this.src=d;"
                         />
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
@@ -209,26 +226,112 @@
          * 渲染海克斯列表
          */
         function renderHextechs(data) {
+            hextechData = data;  // 存储原始数据
+            renderCurrentView();
+        }
+
+        /**
+         * 渲染当前视图
+         */
+        function renderCurrentView() {
+            if (!hextechData) return;
+
             const compList = document.getElementById('comprehensiveList');
             const winList = document.getElementById('winrateList');
+            const leftTitle = document.getElementById('leftTitle');
+            const leftDesc = document.getElementById('leftDesc');
+            const rightTitle = document.getElementById('rightTitle');
+            const rightDesc = document.getElementById('rightDesc');
 
-            // 渲染综合推荐
-            if (data.comprehensive && data.comprehensive.length > 0) {
-                compList.innerHTML = data.comprehensive
-                    .map((h, i) => createHextechCard(h, i, true))
-                    .join('');
-            } else {
-                compList.innerHTML = '<div class="text-gray-500 text-center py-8">暂无数据</div>';
+            // 更新按钮状态
+            document.querySelectorAll('#btn-top20, #btn-tiered, #btn-winrate').forEach(btn => {
+                btn.classList.remove('bg-gradient-to-r', 'from-purple-600', 'to-purple-800', 'text-white');
+                btn.classList.add('glass', 'text-gray-300');
+            });
+            const activeBtn = document.getElementById(`btn-${currentView}`);
+            if (activeBtn) {
+                activeBtn.classList.remove('glass', 'text-gray-300');
+                activeBtn.classList.add('bg-gradient-to-r', 'from-purple-600', 'to-purple-800', 'text-white');
             }
 
-            // 渲染纯胜率榜
-            if (data.winrate_only && data.winrate_only.length > 0) {
-                winList.innerHTML = data.winrate_only
-                    .map((h, i) => createHextechCard(h, i))
-                    .join('');
-            } else {
-                winList.innerHTML = '<div class="text-gray-500 text-center py-8">暂无数据</div>';
+            // 默认双列视图：左 top20，右胜率
+            if (currentView === 'top20') {
+                leftTitle.textContent = '综合 Top20';
+                leftDesc.textContent = '综合推荐得分前 20';
+                rightTitle.textContent = '纯胜率暴力榜';
+                rightDesc.textContent = '只看胜率，暴力美学';
+
+                if (hextechData.top_20_overall && hextechData.top_20_overall.length > 0) {
+                    compList.innerHTML = hextechData.top_20_overall
+                        .map((h, i) => createHextechCard(h, i, true))
+                        .join('');
+                } else {
+                    compList.innerHTML = '<div class="text-gray-500 text-center py-8">暂无数据</div>';
+                }
+
+                if (hextechData.winrate_only && hextechData.winrate_only.length > 0) {
+                    winList.innerHTML = hextechData.winrate_only
+                        .map((h, i) => createHextechCard(h, i))
+                        .join('');
+                } else {
+                    winList.innerHTML = '<div class="text-gray-500 text-center py-8">暂无数据</div>';
+                }
             }
+            // 按等级分类视图
+            else if (currentView === 'tiered') {
+                leftTitle.textContent = '棱彩阶';
+                leftDesc.textContent = '最高等级海克斯';
+                rightTitle.textContent = '黄金阶';
+                rightDesc.textContent = '中等等级海克斯';
+
+                const prismatic = (hextechData.comprehensive || []).filter(h => ['棱彩', '彩色'].includes(h.海克斯阶级));
+                const gold = (hextechData.comprehensive || []).filter(h => h.海克斯阶级 === '金色');
+                const silver = (hextechData.comprehensive || []).filter(h => h.海克斯阶级 === '银色');
+
+                compList.innerHTML = prismatic.length > 0
+                    ? prismatic.map((h, i) => createHextechCard(h, i, true)).join('')
+                    : '<div class="text-gray-500 text-center py-8">暂无数据</div>';
+
+                if (gold.length > 0) {
+                    winList.innerHTML = gold.map((h, i) => createHextechCard(h, i)).join('');
+                } else if (silver.length > 0) {
+                    winList.innerHTML = silver.map((h, i) => createHextechCard(h, i)).join('');
+                } else {
+                    winList.innerHTML = '<div class="text-gray-500 text-center py-8">暂无数据</div>';
+                }
+            }
+            // 纯胜率榜视图
+            else if (currentView === 'winrate') {
+                leftTitle.textContent = '纯胜率榜';
+                leftDesc.textContent = '按胜率降序排列';
+                rightTitle.textContent = '胜率差提升榜';
+                rightDesc.textContent = '按胜率差降序排列';
+
+                if (hextechData.winrate_only && hextechData.winrate_only.length > 0) {
+                    winList.innerHTML = hextechData.winrate_only
+                        .map((h, i) => createHextechCard(h, i))
+                        .join('');
+                } else {
+                    winList.innerHTML = '<div class="text-gray-500 text-center py-8">暂无数据</div>';
+                }
+
+                // 胜率差榜单：过滤胜率差 >=0 的数据
+                const winrateDiffList = (hextechData.comprehensive || [])
+                    .filter(h => h.胜率差 >= 0)
+                    .sort((a, b) => b.胜率差 - a.胜率差);
+
+                compList.innerHTML = winrateDiffList.length > 0
+                    ? winrateDiffList.map((h, i) => createHextechCard(h, i, true)).join('')
+                    : '<div class="text-gray-500 text-center py-8">暂无数据</div>';
+            }
+        }
+
+        /**
+         * 切换视图
+         */
+        function switchView(view) {
+            currentView = view;
+            renderCurrentView();
         }
 
         // ========== 数据获取 ==========
@@ -251,7 +354,8 @@
                 const data = await response.json();
 
                 // 检查是否为空数据
-                const hasData = (data.comprehensive && data.comprehensive.length > 0) ||
+                const hasData = (data.top_20_overall && data.top_20_overall.length > 0) ||
+                               (data.comprehensive && data.comprehensive.length > 0) ||
                                (data.winrate_only && data.winrate_only.length > 0);
 
                 if (!hasData) {
