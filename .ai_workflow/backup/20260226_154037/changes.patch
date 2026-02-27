@@ -1,0 +1,39 @@
+diff --git a/run/hextech_scraper.py b/run/hextech_scraper.py
+index 8d54d91..db30271 100644
+--- a/run/hextech_scraper.py
++++ b/run/hextech_scraper.py
+@@ -46,21 +46,27 @@ def cleanup_old_csvs():
+     """清理过期战报，仅保留最近3天"""
+     files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv"))
+     valid_files = []
++    now = datetime.now()
++
+     for f in files:
+         m = re.match(r"Hextech_Data_(\d{4}-\d{2}-\d{2})\.csv$", os.path.basename(f))
+         if m:
+             try:
+-                datetime.strptime(m.group(1), "%Y-%m-%d")
+-                valid_files.append(f)
++                file_date = datetime.strptime(m.group(1), "%Y-%m-%d")
++                # 严格校验：日期必须是合法日期且与今天相差不超过3天
++                if (now - file_date).days <= 3:
++                    valid_files.append((f, file_date))
+             except ValueError:
++                # 日期格式不合法（如 2024-02-30），跳过
+                 pass
+-    
++
+     if len(valid_files) <= 3:
+         return
+-    # 按文件名中的日期字符串排序，而非按修改时间
+-    # Hextech_Data_YYYY-MM-DD.csv 格式天然适合字典序降序排列
+-    valid_files.sort(key=lambda f: os.path.basename(f), reverse=True)
+-    for f in valid_files[3:]:
++
++    # 按日期对象排序（非字典序），确保跨月文件正确排序
++    valid_files.sort(key=lambda x: x[1], reverse=True)
++
++    for f, _ in valid_files[3:]:
+         try:
+             os.remove(f)
+             logging.info(f"🗑️ 已清理过期战报: {os.path.basename(f)}")

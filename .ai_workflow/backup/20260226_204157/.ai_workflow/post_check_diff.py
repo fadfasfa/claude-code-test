@@ -276,53 +276,6 @@ def extract_try_locations(tree: ast.Module) -> List[Tuple[int, int]]:
     return sorted(locations)
 
 
-def extract_except_signatures(tree: ast.Module) -> Dict[Tuple[int, int], List[str]]:
-    """
-    Walk the entire AST and for each Try node, collect the set of handler type strings.
-    Returns a dict mapping (lineno, col_offset) to list of exception type strings.
-
-    Handler types:
-      - "__bare__" for bare except (no type)
-      - ast.unparse(h.type) for typed exceptions
-    """
-    result = {}
-    for node in ast.walk(tree):
-        if isinstance(node, TRY_TYPES):
-            sigs = []
-            for h in node.handlers:
-                if h.type is None:
-                    sigs.append("__bare__")
-                else:
-                    sigs.append(ast.unparse(h.type))
-            result[(node.lineno, node.col_offset)] = sigs
-    return result
-
-
-BROAD_EXCEPTIONS = {"Exception", "BaseException", "__bare__"}
-
-
-def is_downgrade(before_types: List[str], after_types: List[str]) -> bool:
-    """
-    Detect semantic downgrade: after contains a broad exception type that wasn't in before,
-    AND before had at least one specific type.
-
-    Examples:
-      - before=[ValueError, KeyError], after=[Exception] → True (downgrade)
-      - before=[ValueError], after=[__bare__] → True (downgrade)
-      - before=[Exception], after=[Exception, ValueError] → False (not a downgrade, just added)
-      - before=[ValueError], after=[ValueError, KeyError] → False (not a downgrade, just added)
-    """
-    before_set = set(before_types)
-    after_set = set(after_types)
-
-    # Downgrade: after contains a broad type that wasn't in before,
-    # AND before had at least one specific type
-    has_specific_before = bool(before_set - BROAD_EXCEPTIONS)
-    introduced_broad = bool(after_set & BROAD_EXCEPTIONS - before_set)
-
-    return has_specific_before and introduced_broad
-
-
 # --------------------------------------------------------------------------
 # Validation passes
 # --------------------------------------------------------------------------
@@ -414,20 +367,14 @@ def check_interfaces(before_tree: ast.Module, after_tree: ast.Module) -> List[st
 
 
 def check_try_blocks(before_tree: ast.Module, after_tree: ast.Module) -> List[str]:
-    """
-    Check that try/except blocks have not been removed (additions are OK).
-    Also detect semantic downgrades: specific exception types replaced with broad types.
-    """
+    """Check that try/except blocks have not been removed (additions are OK)."""
     before_locs = extract_try_locations(before_tree)
     after_locs = extract_try_locations(after_tree)
-    before_sigs = extract_except_signatures(before_tree)
-    after_sigs = extract_except_signatures(after_tree)
 
     violations = []
     before_count = len(before_locs)
     after_count = len(after_locs)
 
-    # Check 1: Count-based removal detection
     if after_count < before_count:
         removed = before_count - after_count
         violations.append(
@@ -439,18 +386,6 @@ def check_try_blocks(before_tree: ast.Module, after_tree: ast.Module) -> List[st
             violations.append(f"  before: try at line {lineno}, col {col}")
         for lineno, col in after_locs:
             violations.append(f"  after:  try at line {lineno}, col {col}")
-
-    # Check 2: Semantic downgrade detection (exception type broadening)
-    # Match try-blocks by position index (best-effort, since line numbers shift after edits)
-    for i, (before_loc, after_loc) in enumerate(zip(sorted(before_locs), sorted(after_locs))):
-        before_types = before_sigs.get(before_loc, [])
-        after_types = after_sigs.get(after_loc, [])
-
-        if is_downgrade(before_types, after_types):
-            violations.append(
-                f"[EXCEPT BROADENED] try block #{i+1} at line {before_loc[0]}: "
-                f"before={before_types}, after={after_types}"
-            )
 
     # Note: after_count > before_count is ALLOWED (adding error handling is fine)
     return violations

@@ -1,0 +1,102 @@
+diff --git a/run/hextech_scraper.py b/run/hextech_scraper.py
+index 8d54d91..d8b0a10 100644
+--- a/run/hextech_scraper.py
++++ b/run/hextech_scraper.py
+@@ -3,7 +3,7 @@ import requests
+ import json
+ import time
+ import pandas as pd
+-from datetime import datetime
++from datetime import datetime, timedelta
+ import os
+ import glob
+ import re
+@@ -43,29 +43,35 @@ def calc_dynamic_score(row):
+     return wr_diff * w_win + row['海克斯出场率'] * (1.0 - w_win)
+ 
+ def cleanup_old_csvs():
+-    """清理过期战报，仅保留最近3天"""
++    """清理过期战报，仅保留最近 3 天"""
+     files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv"))
+     valid_files = []
++    now = datetime.now()
++
+     for f in files:
+         m = re.match(r"Hextech_Data_(\d{4}-\d{2}-\d{2})\.csv$", os.path.basename(f))
+         if m:
++            date_str = m.group(1)
+             try:
+-                datetime.strptime(m.group(1), "%Y-%m-%d")
+-                valid_files.append(f)
++                file_date = datetime.strptime(date_str, "%Y-%m-%d").date()
++                cutoff_date = now.date() - timedelta(days=3)
++                if file_date >= cutoff_date:
++                    valid_files.append((f, file_date))
+             except ValueError:
+                 pass
+-    
++
+     if len(valid_files) <= 3:
+         return
+-    # 按文件名中的日期字符串排序，而非按修改时间
+-    # Hextech_Data_YYYY-MM-DD.csv 格式天然适合字典序降序排列
+-    valid_files.sort(key=lambda f: os.path.basename(f), reverse=True)
+-    for f in valid_files[3:]:
++
++    # Sort by datetime object descending (most recent first)
++    valid_files.sort(key=lambda x: x[1], reverse=True)
++
++    for filepath, _ in valid_files[3:]:
+         try:
+-            os.remove(f)
+-            logging.info(f"🗑️ 已清理过期战报: {os.path.basename(f)}")
++            os.remove(filepath)
++            logging.info(f"🗑️ 已清理过期战报：{os.path.basename(filepath)}")
+         except Exception as e:
+-            logging.error(f"清理失败 {f}: {e}")
++            logging.error(f"清理失败 {filepath}: {e}")
+ 
+ def main_scraper(stop_event=None):
+     current_date = datetime.now().strftime('%Y-%m-%d')
+@@ -91,7 +97,7 @@ def main_scraper(stop_event=None):
+             verify=True
+         ).json()
+ 
+-        # 【P2修复】严格按真实 augment ID 建立映射，过滤掉无 id 字段的条目
++        # 【P2 修复】严格按真实 augment ID 建立映射，过滤掉无 id 字段的条目
+         aug_id_map = {
+             str(v['id']): v.get('displayName', '').strip()
+             for v in (aug_data if isinstance(aug_data, list) else aug_data.values())
+@@ -103,7 +109,7 @@ def main_scraper(stop_event=None):
+             verify=True
+         ).json()
+     except Exception as e:
+-        logging.error(f"🚨 抓取端握手异常: {e}")
++        logging.error(f"🚨 抓取端握手异常：{e}")
+         return False
+ 
+     all_rows = []
+@@ -129,7 +135,7 @@ def main_scraper(stop_event=None):
+                             pick = float(obj.get('pick_rate', 0))
+                             if win > 0 and pick >= FRESHNESS_THRESHOLD:
+                                 champ_rows.append({
+-                                    "英雄ID": c_id,
++                                    "英雄 ID": c_id,
+                                     "英雄名称": c_name,
+                                     "英雄评级": champ.get('tier', 'T3'),
+                                     "英雄胜率": float(champ.get('winRate', 0)),
+@@ -178,11 +184,11 @@ def main_scraper(stop_event=None):
+         shutil.move(tmp_csv, output_csv)
+         update_status_file()
+         cleanup_old_csvs()
+-        logging.info(f"✅ 抓取结束，固化至: {output_csv}")
++        logging.info(f"✅ 抓取结束，固化至：{output_csv}")
+         return True
+     else:
+         logging.error("🚨 抓取任务未能生成有效数据，请检查网络或数据源。")
+         return False
+ 
+ if __name__ == "__main__":
+-    main_scraper()
+\ No newline at end of file
++    main_scraper()

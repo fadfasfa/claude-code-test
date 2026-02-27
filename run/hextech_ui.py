@@ -76,53 +76,30 @@ class HextechUI:
         self._init_core_engine()
 
     def _init_core_engine(self):
-        t1 = threading.Thread(target=self.lcu_polling_loop, daemon=True)
         t2 = threading.Thread(target=self.window_sync_loop, daemon=True)
-        t3 = threading.Thread(target=self._run_terminal, daemon=True)
-        self.threads.extend([t1, t2, t3])
-        for t in self.threads: t.start()
+        self.threads.append(t2)
+        t2.start()
 
     def _run_terminal(self):
-        while not self.stop_event.is_set():
-            with self._df_lock:
-                is_empty = self.df.empty
-            if not is_empty:
-                break
-            time.sleep(0.5)
-        if not self.stop_event.is_set():
-            with self._df_lock:
-                df_snapshot = self.df
-            main_query(shared_df=df_snapshot, ui_instance=self)
+        pass
 
     def _build_ui(self):
-        self.title_frame = tk.Frame(self.root, bg="#11111b")
-        self.title_frame.pack(fill=tk.X)
-        
-        self.title_bar = tk.Label(self.title_frame, text="⚔️ 备战席", bg="#11111b", fg="#cdd6f4", font=("Microsoft YaHei", 12, "bold"), pady=8)
-        self.title_bar.pack(side=tk.LEFT, padx=(10, 0))
-        self.title_bar.bind("<ButtonPress-1>", self.start_move)
-        self.title_bar.bind("<B1-Motion>", self.do_move)
-
-        self.switch_btn = tk.Label(self.title_frame, text="[切换终端]", bg="#11111b", fg="#f38ba8", font=("Microsoft YaHei", 10, "bold", "underline"), pady=8, cursor="hand2")
-        self.switch_btn.pack(side=tk.RIGHT, padx=(0, 10))
-        self.switch_btn.bind("<Button-1>", self.switch_to_query)
-        
-        init_text = "[网页:开]" if self.web_enabled else "[网页:关]"
-        init_color = "#a6e3a1" if self.web_enabled else "#f38ba8"
-        self.web_toggle_btn = tk.Label(self.title_frame, text=init_text, bg="#11111b", fg=init_color, font=("Microsoft YaHei", 10, "bold", "underline"), pady=8, cursor="hand2")
-        self.web_toggle_btn.pack(side=tk.RIGHT, padx=(0, 5))
-        self.web_toggle_btn.bind("<Button-1>", self.toggle_web)
-
-        self.canvas = tk.Canvas(self.root, bg="#1e1e2e", highlightthickness=0)
-        self.list_frame = tk.Frame(self.canvas, bg="#1e1e2e")
-        self.canvas.pack(fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
-        self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
-        
-        self.root.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-        self.list_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-
-        self.status_label = tk.Label(self.root, text="系统初始化中...", bg="#1e1e2e", fg="#a6adc8", font=("Microsoft YaHei", 9))
-        self.status_label.pack(side=tk.BOTTOM, pady=5)
+        self.root.geometry("160x50")
+        btn = tk.Button(
+            self.root, text="⚔️ Hextech",
+            bg="#11111b", fg="#cdd6f4",
+            font=("Microsoft YaHei", 11, "bold"),
+            relief=tk.FLAT, cursor="hand2",
+            command=self.toggle_web
+        )
+        btn.pack(fill=tk.BOTH, expand=True)
+        btn.bind("<ButtonPress-1>", self.start_move)
+        btn.bind("<B1-Motion>", self.do_move)
+        self.status_label = tk.Label(
+            self.root, text="",
+            bg="#11111b", fg="#a6adc8",
+            font=("Microsoft YaHei", 8)
+        )
 
     def check_and_sync_data(self):
         latest = get_latest_csv()
@@ -154,153 +131,21 @@ class HextechUI:
 
     def on_hero_click(self, champ_id, hero_name):
         try:
-            set_last_hero(hero_name)
-
-            def terminal_task():
-                try:
-                    sys.stdout.write('\r' + ' ' * 80 + '\r')
-                    sys.stdout.flush()
-                    with self._df_lock:
-                        df_snapshot = self.df
-                    display_hero_hextech(df_snapshot, hero_name, is_from_ui=True)
-                except Exception as e:
-                    print(f"\n❌ 输出错误: {e}")
-
-            threading.Thread(target=terminal_task, daemon=True).start()
-
-            if not getattr(self, 'web_enabled', True): return
-
-            current_time = time.time()
-            if current_time - getattr(self, 'last_click_time', 0) < 1.5: return
-            self.last_click_time = current_time
-
-            eng_name = self.core_data.get(str(champ_id), {}).get('en_name', '')
-            if eng_name:
-                url = f"https://apexlol.info/zh/champions/{eng_name}"
-                webbrowser.open(url)
-        except Exception: pass
+            pass
+        except Exception:
+            pass
 
     def lcu_polling_loop(self):
-        while not self.stop_event.is_set():
-            if self.pause_event.is_set():
-                time.sleep(1)
-                continue
-                
-            if not self.port:
-                for proc in psutil.process_iter(['name', 'cmdline']):
-                    try:
-                        if proc.info['name'] == 'LeagueClientUx.exe':
-                            for arg in proc.info['cmdline'] or []:
-                                if arg.startswith('--app-port='): self.port = arg.split('=')[1]
-                                if arg.startswith('--remoting-auth-token='): self.token = arg.split('=')[1]
-                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                        continue
-                time.sleep(2); continue
-            
-            headers = {"Authorization": f"Basic {base64.b64encode(f'riot:{self.token}'.encode()).decode()}", "Accept": "application/json"}
-            try:
-                res = requests.get(f"https://127.0.0.1:{self.port}/lol-champ-select/v1/session", headers=headers, verify=False, timeout=3)
-                if res.status_code == 200:
-                    data = res.json()
-                    available_ids = {str(c['championId']) for c in data.get('benchChampions', [])}
-                    for p in data.get('myTeam', []):
-                        if p.get('cellId') == data.get('localPlayerCellId') and p.get('championId') != 0:
-                            available_ids.add(str(p['championId']))
-                    
-                    if available_ids != self.current_hero_ids:
-                        self.current_hero_ids = available_ids.copy()
-                        self.root.after(0, self.update_ui, available_ids)
-                else:
-                    self.root.after(0, lambda: [w.destroy() for w in self.list_frame.winfo_children()])
-            except Exception:
-                self.port = None
-            time.sleep(1.5)
+        pass
 
     def _load_and_set_img(self, champ_id, label):
         try:
-            if not label.winfo_exists(): return
-            if champ_id in self.image_cache:
-                label.config(image=self.image_cache[champ_id]); return
-            
-            img_path = os.path.join(ASSET_DIR, f"{champ_id}.png")
-            if os.path.exists(img_path):
-                img = Image.open(img_path).resize((48, 48), Image.Resampling.LANCZOS)
-            else:
-                if champ_id in self.downloading_imgs: return # 防止同一头像被重复并发请求
-                self.downloading_imgs.add(champ_id)
-                url = f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/{champ_id}.png"
-                res = self.session.get(url, verify=True, timeout=10)
-                if res.status_code == 200:
-                    with self.img_write_lock: # 文件锁：防止多线程同时写入导致图片损坏
-                        with open(img_path, "wb") as f: f.write(res.content)
-                    img = Image.open(BytesIO(res.content)).resize((48, 48), Image.Resampling.LANCZOS)
-                else: 
-                    self.downloading_imgs.discard(champ_id)
-                    return
-                self.downloading_imgs.discard(champ_id)
-
-            photo = ImageTk.PhotoImage(img)
-            self.image_cache[champ_id] = photo
-            if label.winfo_exists(): label.config(image=photo)
-        except Exception: pass
+            pass
+        except Exception:
+            pass
 
     def update_ui(self, hero_ids):
-        for w in self.list_frame.winfo_children(): w.destroy()
-
-        with self._df_lock:
-            is_empty = self.df.empty
-
-        if not hero_ids or is_empty:
-            tk.Label(self.list_frame, text="⚠️ 当前无备战英雄，或数据仍在同步中...",
-                     fg="#f9e2af", bg="#1e1e2e", font=("Microsoft YaHei", 10)).pack(pady=20)
-            return
-
-        self.status_label.config(text="✅ 实时数据已挂载", fg="#a6e3a1")
-        display_list = []
-
-        with self._df_lock:
-            current_df = self.df
-
-        for hid in hero_ids:
-            h_data = current_df[current_df['英雄ID']==hid]
-            if not h_data.empty:
-                row = h_data.iloc[0]
-                display_list.append({
-                    'id': hid, 'name': row['英雄名称'], 'win': row['英雄胜率'], 
-                    'pick': row['英雄出场率'], 'tier': row['英雄评级']
-                })
-        
-        display_list = sorted(display_list, key=lambda x: x['win'], reverse=True)
-        
-        for item in display_list:
-            card = tk.Frame(self.list_frame, bg="#313244", pady=5, padx=5, cursor="hand2")
-            card.pack(fill=tk.X, pady=4, padx=(0, 10))
-            
-            img_label = tk.Label(card, bg="#313244")
-            img_label.pack(side=tk.LEFT, padx=(0, 10))
-            threading.Thread(target=lambda i=item['id'], l=img_label: self._load_and_set_img(i, l), daemon=True).start()
-            
-            info = tk.Frame(card, bg="#313244")
-            info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            
-            title = self.core_data.get(item['id'], {}).get('title', '')
-            full_name = f"{item['name']} {title}".strip() if title else item['name']
-            
-            tk.Label(info, text=f"[{item['tier']}] {full_name}", font=("Microsoft YaHei", 10, "bold"), fg="#cdd6f4", bg="#313244").pack(anchor="w")
-            tk.Label(info, text=f"胜率: {item['win']:.1%} | 出场: {item['pick']:.1%}", font=("Microsoft YaHei", 9), fg="#a6adc8", bg="#313244").pack(anchor="w", pady=(3, 0))
-            
-            bar_canvas = tk.Canvas(info, height=4, bg="#1e1e2e", highlightthickness=0)
-            bar_canvas.pack(fill=tk.X, pady=(4, 0))
-            bar_color = "#a6e3a1" if item['win'] >= 0.51 else ("#f9e2af" if item['win'] >= 0.48 else "#f38ba8")
-            ratio = max(0, min(1, (item['win'] - 0.40) / 0.20))
-            
-            bar_canvas.bind("<Configure>", lambda e, c=bar_canvas, r=ratio, col=bar_color: 
-                            (c.delete("all"), c.create_rectangle(0, 0, int(r * e.width), 4, fill=col, outline="")))
-            
-            def bind_click(widget, cid, name):
-                widget.bind("<Button-1>", lambda e, c=cid, n=name: self.on_hero_click(c, n))
-                for child in widget.winfo_children(): bind_click(child, cid, name)
-            bind_click(card, item['id'], item['name'])
+        pass
 
     def window_sync_loop(self):
         while not self.stop_event.is_set():
@@ -336,26 +181,16 @@ class HextechUI:
         self.root.geometry(f"+{self.root.winfo_x() + (event.x - self.x)}+{self.root.winfo_y() + (event.y - self.y)}")
 
     def switch_to_query(self, event=None):
-        if self.pause_event.is_set(): return
-        print("\n[System] 已隐藏悬浮窗。终端引擎常驻运行中，按 'u' 回车即可恢复界面。")
-        self.pause_event.set()
-        self.root.withdraw()
+        pass
 
     def _restore_from_terminal(self):
-        self.pause_event.clear()
-        self.root.deiconify()
-        self.root.attributes('-topmost', True)
+        pass
 
     def toggle_web(self, event=None):
-        self.web_enabled = not self.web_enabled
-        self.web_toggle_btn.config(text="[网页:开]" if self.web_enabled else "[网页:关]", fg="#a6e3a1" if self.web_enabled else "#f38ba8")
-
         try:
-            os.makedirs(os.path.dirname(self.settings_file), exist_ok=True)
-            with open(self.settings_file, "w") as f:
-                json.dump({"web_enabled": self.web_enabled}, f)
+            webbrowser.open("http://localhost:8000")
         except Exception as e:
-            print(f"\n⚠️ 配置保存失败: {e}")
+            print(f"\n⚠️ 打开浏览器失败: {e}")
 
     def on_close(self):
         print("\n[System] 收到退出信号，正在等待数据安全落盘...")

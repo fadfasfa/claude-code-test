@@ -12,9 +12,10 @@
         "target_file": { "type": "string" },
         "modification_strategy": { "enum": ["FULL_REPLACEMENT", "PATCH"] },
         "payload_content": { "type": "string", "description": "L2级别必须是目标文件的完整替换文本" },
-        "test_command": { "type": "string", "description": "必须执行的测试命令" }
+        "test_command": { "type": "string", "description": "必须执行的测试命令" },
+        "executor_node": { "enum": ["CLAUDE_API", "QWEN_API"], "description": "执行本次任务的 AI 节点身份标识" }
       },
-      "required": ["task_id", "risk_level", "target_file", "modification_strategy", "payload_content", "test_command"]
+      "required": ["task_id", "risk_level", "target_file", "modification_strategy", "payload_content", "test_command", "executor_node"]
     },
     "execution_output_from_qwen": {
       "type": "object",

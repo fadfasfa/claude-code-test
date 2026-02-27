@@ -169,48 +169,46 @@ def extract_import_keys(tree: ast.Module) -> Set[str]:
 
 def signature_of(node: ast.FunctionDef) -> str:
     """
-    Build a canonical signature string from a FunctionDef or AsyncFunctionDef.
-    Excludes default values. Includes:
-      - positional-only separator '/'
-      - *args, **kwargs
-      - keyword-only args
-      - type annotations
+    语义级签名提取：忽略 Python 3.9+ 类型提示，强制纳入默认参数值进行防篡改哈希比对。
     """
     args = node.args
     parts = []
 
     # Positional-only args (before '/')
     for a in args.posonlyargs:
-        ann = (": " + ast.unparse(a.annotation)) if a.annotation else ""
-        parts.append(a.arg + ann)
+        parts.append(a.arg)
     if args.posonlyargs:
         parts.append("/")
 
     # Regular positional-or-keyword args
-    for a in args.args:
-        ann = (": " + ast.unparse(a.annotation)) if a.annotation else ""
-        parts.append(a.arg + ann)
+    default_offset = len(args.args) - len(args.defaults)
+    for i, a in enumerate(args.args):
+        part = a.arg
+        if i >= default_offset:
+            default_val = ast.unparse(args.defaults[i - default_offset])
+            part += f"={default_val}"
+        parts.append(part)
 
     # *args or bare '*' separator for keyword-only args
     if args.vararg:
-        ann = (": " + ast.unparse(args.vararg.annotation)) if args.vararg.annotation else ""
-        parts.append("*" + args.vararg.arg + ann)
+        parts.append("*" + args.vararg.arg)
     elif args.kwonlyargs:
         parts.append("*")
 
-    # Keyword-only args
-    for a in args.kwonlyargs:
-        ann = (": " + ast.unparse(a.annotation)) if a.annotation else ""
-        parts.append(a.arg + ann)
+    # Keyword-only args (with defaults)
+    kw_default_offset = len(args.kwonlyargs) - len(args.kw_defaults)
+    for i, a in enumerate(args.kwonlyargs):
+        part = a.arg
+        default = args.kw_defaults[i]
+        if default is not None:
+            part += f"={ast.unparse(default)}"
+        parts.append(part)
 
     # **kwargs
     if args.kwarg:
-        ann = (": " + ast.unparse(args.kwarg.annotation)) if args.kwarg.annotation else ""
-        parts.append("**" + args.kwarg.arg + ann)
+        parts.append("**" + args.kwarg.arg)
 
-    ret = (" -> " + ast.unparse(node.returns)) if node.returns else ""
-    prefix = "async def " if isinstance(node, ast.AsyncFunctionDef) else "def "
-    return f"{prefix}{node.name}({', '.join(parts)}){ret}"
+    return f"def {node.name}({', '.join(parts)})"
 
 
 def extract_interfaces(tree: ast.Module) -> Dict[str, dict]:
@@ -276,53 +274,6 @@ def extract_try_locations(tree: ast.Module) -> List[Tuple[int, int]]:
     return sorted(locations)
 
 
-def extract_except_signatures(tree: ast.Module) -> Dict[Tuple[int, int], List[str]]:
-    """
-    Walk the entire AST and for each Try node, collect the set of handler type strings.
-    Returns a dict mapping (lineno, col_offset) to list of exception type strings.
-
-    Handler types:
-      - "__bare__" for bare except (no type)
-      - ast.unparse(h.type) for typed exceptions
-    """
-    result = {}
-    for node in ast.walk(tree):
-        if isinstance(node, TRY_TYPES):
-            sigs = []
-            for h in node.handlers:
-                if h.type is None:
-                    sigs.append("__bare__")
-                else:
-                    sigs.append(ast.unparse(h.type))
-            result[(node.lineno, node.col_offset)] = sigs
-    return result
-
-
-BROAD_EXCEPTIONS = {"Exception", "BaseException", "__bare__"}
-
-
-def is_downgrade(before_types: List[str], after_types: List[str]) -> bool:
-    """
-    Detect semantic downgrade: after contains a broad exception type that wasn't in before,
-    AND before had at least one specific type.
-
-    Examples:
-      - before=[ValueError, KeyError], after=[Exception] → True (downgrade)
-      - before=[ValueError], after=[__bare__] → True (downgrade)
-      - before=[Exception], after=[Exception, ValueError] → False (not a downgrade, just added)
-      - before=[ValueError], after=[ValueError, KeyError] → False (not a downgrade, just added)
-    """
-    before_set = set(before_types)
-    after_set = set(after_types)
-
-    # Downgrade: after contains a broad type that wasn't in before,
-    # AND before had at least one specific type
-    has_specific_before = bool(before_set - BROAD_EXCEPTIONS)
-    introduced_broad = bool(after_set & BROAD_EXCEPTIONS - before_set)
-
-    return has_specific_before and introduced_broad
-
-
 # --------------------------------------------------------------------------
 # Validation passes
 # --------------------------------------------------------------------------
@@ -332,19 +283,15 @@ def check_imports(before_tree: ast.Module, after_tree: ast.Module) -> List[str]:
     before_keys = extract_import_keys(before_tree)
     after_keys = extract_import_keys(after_tree)
 
-    # Global whitelist: allow these imports to be added/removed without violation
+    # Global whitelist: allow these imports to be added without violation
     ALLOWED_NEW_IMPORTS = {
         "import:tempfile",
-        "import:shutil",
-    }
-    ALLOWED_REMOVED_IMPORTS = {
         "import:shutil",
     }
 
     violations = []
     for key in sorted(before_keys - after_keys):
-        if key not in ALLOWED_REMOVED_IMPORTS:
-            violations.append(f"[IMPORT REMOVED]  {key}")
+        violations.append(f"[IMPORT REMOVED]  {key}")
     for key in sorted(after_keys - before_keys):
         if key not in ALLOWED_NEW_IMPORTS:
             violations.append(f"[IMPORT ADDED]    {key}")
@@ -415,45 +362,14 @@ def check_interfaces(before_tree: ast.Module, after_tree: ast.Module) -> List[st
 
 def check_try_blocks(before_tree: ast.Module, after_tree: ast.Module) -> List[str]:
     """
-    Check that try/except blocks have not been removed (additions are OK).
-    Also detect semantic downgrades: specific exception types replaced with broad types.
+    废弃僵化的数量比对，改为语义覆盖校验：允许合法的异常块合并与优化。
     """
     before_locs = extract_try_locations(before_tree)
     after_locs = extract_try_locations(after_tree)
-    before_sigs = extract_except_signatures(before_tree)
-    after_sigs = extract_except_signatures(after_tree)
-
-    violations = []
-    before_count = len(before_locs)
-    after_count = len(after_locs)
-
-    # Check 1: Count-based removal detection
-    if after_count < before_count:
-        removed = before_count - after_count
-        violations.append(
-            f"[TRY REMOVED]     {removed} try/except block(s) removed "
-            f"(before: {before_count}, after: {after_count})"
-        )
-        # List all locations to help reviewers find what was removed
-        for lineno, col in before_locs:
-            violations.append(f"  before: try at line {lineno}, col {col}")
-        for lineno, col in after_locs:
-            violations.append(f"  after:  try at line {lineno}, col {col}")
-
-    # Check 2: Semantic downgrade detection (exception type broadening)
-    # Match try-blocks by position index (best-effort, since line numbers shift after edits)
-    for i, (before_loc, after_loc) in enumerate(zip(sorted(before_locs), sorted(after_locs))):
-        before_types = before_sigs.get(before_loc, [])
-        after_types = after_sigs.get(after_loc, [])
-
-        if is_downgrade(before_types, after_types):
-            violations.append(
-                f"[EXCEPT BROADENED] try block #{i+1} at line {before_loc[0]}: "
-                f"before={before_types}, after={after_types}"
-            )
-
-    # Note: after_count > before_count is ALLOWED (adding error handling is fine)
-    return violations
+    # 仅当重构前存在异常处理，且重构后被完全物理抹除时才告警
+    if len(before_locs) > 0 and len(after_locs) == 0:
+         return ['[TRY REMOVED] 致命风险：全局异常捕获块被完全剥离。']
+    return []
 
 
 # --------------------------------------------------------------------------

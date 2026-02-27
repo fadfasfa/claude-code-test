@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(run.venvScriptspython.exe .ai_workflowpost_check_diff.py --help)",
+      "Bash(./run/.venv/Scripts/python.exe ./.ai_workflow/post_check_diff.py --help)",
+      "Bash(./run/.venv/Scripts/python.exe -m py_compile .ai_workflow/pre_execution_check.py)",
+      "Bash(./run/.venv/Scripts/python.exe -m py_compile .ai_workflow/verify_workspace.py)",
+      "Bash(./run/.venv/Scripts/python.exe -m py_compile run/hextech_scraper.py)",
+      "Bash(./run/.venv/Scripts/python.exe .ai_workflow/verify_workspace.py)"
+    ]
+  }
+}

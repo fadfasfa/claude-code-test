@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>英雄海克斯详情 - 极地大乱斗</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 玻璃拟态背景 */
+        .glass {
+            background: rgba(30, 30, 40, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .glass-hover:hover {
+            background: rgba(40, 40, 55, 0.8);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        /* 隐藏滚动条但保留功能 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        /* 海克斯阶级颜色 */
+        .tier-prismatic { border-color: #a855f7; }  /* 棱彩 - 紫色 */
+        .tier-gold { border-color: #eab308; }       /* 金色 - 黄色 */
+        .tier-silver { border-color: #94a3b8; }     /* 银色 - 灰色 */
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 text-white">
+    <!-- 顶部导航栏 -->
+    <header class="sticky top-0 z-50 glass border-b border-gray-700">
+        <div class="max-w-7xl mx-auto px-4 py-4">
+            <div class="flex items-center gap-4">
+                <!-- 返回首页按钮 -->
+                <a href="index.html" class="flex items-center gap-2 text-purple-400 hover:text-purple-300 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                    </svg>
+                    <span>返回首页</span>
+                </a>
+                <!-- 英雄名称 -->
+                <h1 id="heroName" class="text-xl font-bold text-purple-400"></h1>
+                <!-- WebSocket 状态 -->
+                <div id="wsStatus" class="ml-auto flex items-center gap-2 text-xs">
+                    <span class="w-2 h-2 bg-gray-500 rounded-full"></span>
+                    <span class="text-gray-400">连接中</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主内容区 -->
+    <main class="max-w-7xl mx-auto px-4 py-6">
+        <!-- 双列布局 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- 左列：综合 Z-Score 推荐 -->
+            <div class="glass rounded-xl overflow-hidden">
+                <div class="bg-gradient-to-r from-purple-600 to-purple-800 px-4 py-3">
+                    <h2 class="text-lg font-bold text-white">综合 Z-Score 推荐</h2>
+                    <p class="text-xs text-purple-200 mt-1">平衡胜率与出场率的智能推荐</p>
+                </div>
+                <div id="comprehensiveList" class="p-4 space-y-3">
+                    <!-- 动态生成 -->
+                </div>
+            </div>
+
+            <!-- 右列：纯胜率暴力榜 -->
+            <div class="glass rounded-xl overflow-hidden">
+                <div class="bg-gradient-to-r from-red-600 to-red-800 px-4 py-3">
+                    <h2 class="text-lg font-bold text-white">纯胜率暴力榜</h2>
+                    <p class="text-xs text-red-200 mt-1">只看胜率，暴力美学</p>
+                </div>
+                <div id="winrateList" class="p-4 space-y-3">
+                    <!-- 动态生成 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 暂无数据提示 -->
+        <div id="noDataTip" class="hidden text-center py-20">
+            <div class="text-gray-500 text-lg">暂无数据</div>
+            <div class="text-gray-600 text-sm mt-2">该英雄可能没有足够的海克斯数据</div>
+        </div>
+
+        <!-- 加载中动画 -->
+        <div id="loadingSpinner" class="text-center py-20">
+            <div class="inline-block w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+            <div class="text-gray-400 mt-4">加载海克斯数据中...</div>
+        </div>
+    </main>
+
+    <script>
+        // ========== 配置 ==========
+        const API_BASE = window.location.origin;
+        const WS_URL = 'ws://' + window.location.host;
+
+        // 全局状态
+        let ws = null;
+        let reconnectTimer = null;
+        let currentHero = '';
+
+        // ========== 工具函数 ==========
+        /**
+         * 获取海克斯图标 URL
+         */
+        function getHextechIcon(hextechName, tier) {
+            // 阶级映射
+            const tierMap = {
+                '棱彩': 'prismatic',
+                '彩色': 'prismatic',
+                '金色': 'gold',
+                '银色': 'silver'
+            };
+
+            const tierEn = tierMap[tier] || 'prismatic';
+            // 去除空格与标点，转小写
+            const cleanName = hextechName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '').toLowerCase();
+
+            return `https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/cherry_${tierEn}_${cleanName}.png`;
+        }
+
+        /**
+         * 获取海克斯阶级边框样式
+         */
+        function getTierBorderClass(tier) {
+            const tierClassMap = {
+                '棱彩': 'tier-prismatic',
+                '彩色': 'tier-prismatic',
+                '金色': 'tier-gold',
+                '银色': 'tier-silver'
+            };
+            return tierClassMap[tier] || 'tier-prismatic';
+        }
+
+        /**
+         * 格式化胜率百分比
+         */
+        function formatPercent(num) {
+            return (num * 100).toFixed(1) + '%';
+        }
+
+        /**
+         * 格式化胜率差（带正负号）
+         */
+        function formatWinrateDiff(diff) {
+            const sign = diff >= 0 ? '+' : '';
+            const color = diff >= 0 ? 'text-green-400' : 'text-red-400';
+            return `<span class="${color}">${sign}${(diff * 100).toFixed(1)}%</span>`;
+        }
+
+        // ========== 渲染逻辑 ==========
+        /**
+         * 渲染海克斯卡片
+         */
+        function createHextechCard(hextech, index, showDiff = false) {
+            const iconUrl = hextech.icon || getHextechIcon(hextech.海克斯名称, hextech.海克斯阶级);
+            const borderClass = getTierBorderClass(hextech.海克斯阶级);
+            const isPositiveDiff = hextech.胜率差 >= 0;
+
+            return `
+                <div
+                    class="glass glass-hover rounded-lg p-3 border-l-4 ${borderClass} transition-all duration-200"
+                    style="animation-delay: ${index * 50}ms"
+                >
+                    <div class="flex items-center gap-3">
+                        <img
+                            src="${iconUrl}"
+                            alt="${hextech.海克斯名称}"
+                            class="w-12 h-12 rounded-lg object-cover bg-gray-800"
+                            onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%234a148c%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%239c27b0%22 font-size=%2240%22>?</text></svg>'"
+                        />
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <span class="font-bold text-white truncate">${hextech.海克斯名称}</span>
+                                <span class="text-xs px-2 py-0.5 rounded ${getTierBadgeClass(hextech.海克斯阶级)} text-white font-semibold">
+                                    ${hextech.海克斯阶级}
+                                </span>
+                            </div>
+                            <div class="flex items-center gap-4 text-xs text-gray-400 mt-1">
+                                <span>胜率：<span class="${hextech.海克斯胜率 > 0.5 ? 'text-green-400' : 'text-gray-400'}">${formatPercent(hextech.海克斯胜率)}</span></span>
+                                <span>出场：<span class="text-gray-300">${formatPercent(hextech.海克斯出场率)}</span></span>
+                                ${showDiff ? `<span>提升：${formatWinrateDiff(hextech.胜率差)}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        /**
+         * 获取海克斯阶级徽章样式
+         */
+        function getTierBadgeClass(tier) {
+            const badgeClassMap = {
+                '棱彩': 'bg-gradient-to-r from-purple-500 to-purple-700',
+                '彩色': 'bg-gradient-to-r from-purple-500 to-purple-700',
+                '金色': 'bg-gradient-to-r from-yellow-500 to-yellow-700',
+                '银色': 'bg-gradient-to-r from-gray-500 to-gray-700'
+            };
+            return badgeClassMap[tier] || 'bg-gradient-to-r from-purple-500 to-purple-700';
+        }
+
+        /**
+         * 渲染海克斯列表
+         */
+        function renderHextechs(data) {
+            const compList = document.getElementById('comprehensiveList');
+            const winList = document.getElementById('winrateList');
+
+            // 渲染综合推荐
+            if (data.comprehensive && data.comprehensive.length > 0) {
+                compList.innerHTML = data.comprehensive
+                    .map((h, i) => createHextechCard(h, i, true))
+                    .join('');
+            } else {
+                compList.innerHTML = '<div class="text-gray-500 text-center py-8">暂无数据</div>';
+            }
+
+            // 渲染纯胜率榜
+            if (data.winrate_only && data.winrate_only.length > 0) {
+                winList.innerHTML = data.winrate_only
+                    .map((h, i) => createHextechCard(h, i))
+                    .join('');
+            } else {
+                winList.innerHTML = '<div class="text-gray-500 text-center py-8">暂无数据</div>';
+            }
+        }
+
+        // ========== 数据获取 ==========
+        /**
+         * 加载海克斯数据
+         */
+        async function loadHextechs(heroName) {
+            const spinner = document.getElementById('loadingSpinner');
+            const noData = document.getElementById('noDataTip');
+            const mainGrid = document.querySelector('.grid');
+
+            try {
+                const encodedName = encodeURIComponent(heroName);
+                const response = await fetch(`${API_BASE}/api/champion/${encodedName}/hextechs`);
+
+                if (!response.ok) {
+                    throw new Error('HTTP error');
+                }
+
+                const data = await response.json();
+
+                // 检查是否为空数据
+                const hasData = (data.comprehensive && data.comprehensive.length > 0) ||
+                               (data.winrate_only && data.winrate_only.length > 0);
+
+                if (!hasData) {
+                    spinner.classList.add('hidden');
+                    noData.classList.remove('hidden');
+                    return;
+                }
+
+                spinner.classList.add('hidden');
+                noData.classList.add('hidden');
+                renderHextechs(data);
+
+            } catch (error) {
+                console.error('加载海克斯数据失败:', error);
+                spinner.classList.add('hidden');
+                noData.classList.remove('hidden');
+                document.querySelector('#noDataTip .text-lg').textContent = '数据加载失败';
+                document.querySelector('#noDataTip .text-sm').textContent = '请确保后端服务已启动';
+            }
+        }
+
+        // ========== WebSocket 连接 ==========
+        /**
+         * 建立 WebSocket 连接
+         */
+        function connectWebSocket() {
+            const wsStatus = document.getElementById('wsStatus');
+
+            try {
+                ws = new WebSocket(WS_URL + '/ws');
+
+                ws.onopen = () => {
+                    console.log('WebSocket 连接已建立');
+                    wsStatus.innerHTML = `
+                        <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                        <span class="text-green-400">已连接</span>
+                    `;
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket 连接已关闭');
+                    wsStatus.innerHTML = `
+                        <span class="w-2 h-2 bg-red-500 rounded-full"></span>
+                        <span class="text-red-400">已断开</span>
+                    `;
+                    // 断线重连
+                    reconnectTimer = setTimeout(connectWebSocket, 3000);
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket 错误:', error);
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        console.log('收到 WebSocket 消息:', message);
+
+                        if (message.type === 'champion_update') {
+                            console.log('收到英雄更新通知，英雄 IDs:', message.champion_ids);
+                            // 检查当前英雄是否在更新列表中（如果有 ID 映射的话）
+                            // 简单处理：在控制台打印日志
+                        }
+                    } catch (e) {
+                        console.error('解析 WebSocket 消息失败:', e);
+                    }
+                };
+
+            } catch (error) {
+                console.error('创建 WebSocket 连接失败:', error);
+                reconnectTimer = setTimeout(connectWebSocket, 3000);
+            }
+        }
+
+        // ========== 初始化 ==========
+        document.addEventListener('DOMContentLoaded', () => {
+            // 解析 URL 参数获取英雄名称
+            const urlParams = new URLSearchParams(window.location.search);
+            const hero = urlParams.get('hero');
+
+            if (!hero) {
+                document.getElementById('loadingSpinner').innerHTML = `
+                    <div class="text-gray-400">未指定英雄参数</div>
+                    <a href="index.html" class="text-purple-400 hover:underline mt-4 inline-block">返回首页</a>
+                `;
+                return;
+            }
+
+            currentHero = hero;
+            document.getElementById('heroName').textContent = hero;
+
+            // 加载海克斯数据
+            loadHextechs(hero);
+
+            // 建立 WebSocket 连接
+            connectWebSocket();
+        });
+
+        // 页面卸载时清理
+        window.addEventListener('beforeunload', () => {
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            if (ws) ws.close();
+        });
+    </script>
+</body>
+</html>

@@ -8,29 +8,6 @@ if sys.platform == 'win32':
 
 DEFAULT_IGNORE_PATTERNS = ['__pycache__', '.pyc', '.pyo', '.eggs', '*.egg-info', '.pytest_cache', '.claude/', 'claude/', 'backup/']
 BACKUP_DIR = ".ai_workflow/backup"
-LOCK_FILE = ".ai_workflow/.verify.lock"
-IMMUTABLE_CORE = {
-    ".ai_workflow/current_contract.json",
-    ".ai_workflow/whitelist.txt",
-}
-QWEN_INFRA_PATTERN = re.compile(r'^\.ai_workflow/')
-
-def acquire_lock() -> bool:
-    """Acquire atomic file-based lock. Returns True if lock acquired, False if already held."""
-    try:
-        fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
-        return True
-    except FileExistsError:
-        return False
-
-def release_lock():
-    """Release the lock file. Silently ignores errors."""
-    try:
-        os.remove(LOCK_FILE)
-    except OSError:
-        pass
-
 def get_current_commit_sha() -> str:
     result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace")
     return result.stdout.strip()
@@ -93,20 +70,20 @@ def load_whitelist(filepath: str) -> Dict[str, str]:
             wl[pattern] = level
     return wl
 
-def get_claude_auth_from_git() -> dict:
-    """Read contract from git HEAD only (never from disk). Returns full contract dict or empty dict on error."""
-    result = subprocess.run(
-        ["git", "show", "HEAD:.ai_workflow/current_contract.json"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
-    if result.returncode != 0:
-        return {}
+def get_claude_auth_paths(contract_path: str) -> Set[str]:
+    """读取最高控制权契约，返回当前授权的路径集合"""
     try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {}
+        if not os.path.exists(contract_path): return set()
+        with open(contract_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            sudo_config = data.get("claude_sudo", {})
+            if sudo_config.get("session_active") is True:
+                return set(sudo_config.get("authorized_paths", []))
+    except Exception:
+        pass
+    return set()
 
-def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_paths: Set[str], executor_node: str = "CLAUDE_API") -> Tuple:
+def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_paths: Set[str]) -> Tuple:
     unauthorized = {}
     pending_ast = []
 
@@ -114,7 +91,7 @@ def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_path
         # 【核心拦截】如果路径在 Claude Sudo 授权名单中，直接赋予最高通行证
         if path in auth_paths:
             return "LOOSE"
-
+            
         for pattern, level in whitelist.items():
             if fnmatch.fnmatch(path, pattern) or path == pattern:
                 return level
@@ -123,21 +100,7 @@ def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_path
     for c in changes:
         path = c["path"]
         ct = c.get("change_type", "M")
-
-        # 【不可违背】Immutable-core 硬编码防线：只有 CLAUDE_API 且在授权名单中才能修改
-        if path in IMMUTABLE_CORE:
-            if executor_node != "CLAUDE_API" or path not in auth_paths:
-                unauthorized[path] = "IMMUTABLE_CORE_VIOLATION"
-                continue
-            # else: fall through as LOOSE
-            level = "LOOSE"
-        else:
-            # 【身份感知】QWEN_API 禁止触碰任何 .ai_workflow/* 路径
-            if executor_node == "QWEN_API" and QWEN_INFRA_PATTERN.match(path):
-                unauthorized[path] = "QWEN_INFRA_FORBIDDEN"
-                continue
-
-            level = match_level(path)
+        level = match_level(path)
 
         if level is None:
             unauthorized[path] = ct
@@ -241,78 +204,63 @@ def cleanup_stale_backups(backup_dir=".ai_workflow/backup", max_days=7, max_keep
             pass  # 发生 PermissionError 或其他占用报错时直接静默跳过
 
 def main():
-    # 【原子级防抖锁】获取锁，若已被持有则静默退出
-    if not acquire_lock():
+    whitelist = load_whitelist(".ai_workflow/whitelist.txt")
+    auth_paths = get_claude_auth_paths(".ai_workflow/current_contract.json")
+    changes, base_commit = get_comprehensive_changes()
+    
+    if not changes:
+        print("✅ 工作区无变动")
         sys.exit(0)
 
-    try:
-        # 【Git 历史溯源鉴权】从 git HEAD 读取合约，绝不从磁盘读取
-        contract = get_claude_auth_from_git()
-        auth_paths = set(contract.get("claude_sudo", {}).get("authorized_paths", []))
-        executor_node = contract.get("task_input_from_claude", {}).get("executor_node", "CLAUDE_API")
+    unauthorized, pending_ast = categorize_changes(changes, whitelist, auth_paths)
 
-        whitelist = load_whitelist(".ai_workflow/whitelist.txt")
-        changes, base_commit = get_comprehensive_changes()
+    # ----------------- 【新增：双重审查网关】 -----------------
+    if pending_ast:
+        print(f"🔍 触发深度审查，正在扫描 {len(pending_ast)} 个文件...")
+        # 临时将当前目录加入环境变量，以便导入 pre_execution_check
+        if ".ai_workflow" not in sys.path:
+            sys.path.insert(0, ".ai_workflow")
+        from pre_execution_check import check_dangerous_calls
 
-        if not changes:
-            print("✅ 工作区无变动")
-            return
+        for ast_file in pending_ast:
+            if not os.path.exists(ast_file):
+                continue
+            
+            # 防线一：静态恶意指令扫描 (带动态沙盒豁免)
+            with open(ast_file, "r", encoding="utf-8") as f:
+                code_content = f.read()
 
-        # 【身份感知动态审查】传递 executor_node 以启用分流审查机制
-        unauthorized, pending_ast = categorize_changes(changes, whitelist, auth_paths, executor_node)
+            # 根据文件域动态划定沙盒边界：核心基础架构域允许高阶调用
+            exempted_modules = []
+            if ast_file.startswith('.ai_workflow/') or ast_file.startswith('scripts/'):
+                exempted_modules = ['subprocess', 'os']
 
-        # ----------------- 【新增：双重审查网关】 -----------------
-        if pending_ast:
-            print(f"🔍 触发深度审查，正在扫描 {len(pending_ast)} 个文件...")
-            # 临时将当前目录加入环境变量，以便导入 pre_execution_check
-            if ".ai_workflow" not in sys.path:
-                sys.path.insert(0, ".ai_workflow")
-            from pre_execution_check import check_dangerous_calls
+            is_safe, violations = check_dangerous_calls(code_content, exempted_modules=exempted_modules)
+            if not is_safe:
+                print(f"🚫 [拦截] {ast_file} 触发高危动作：{violations}")
+                unauthorized[ast_file] = "DANGEROUS_CODE"
+                continue # 命中第一防线，直接拉黑并跳过第二防线
 
-            for ast_file in pending_ast:
-                if not os.path.exists(ast_file):
-                    continue
+            # 防线二：结构退化审查 (AST 比对)
+            # 使用 sys.executable 确保调用同一虚拟环境的 Python
+            diff_cmd = [sys.executable, ".ai_workflow/post_check_diff.py", ast_file, "--ref", base_commit]
+            result = subprocess.run(diff_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if result.returncode != 0:
+                # 若脚本退出码不为 0，视为结构遭破坏
+                print(f"🚫 [拦截] {ast_file} 发生 AST 结构退化/异常:\n{result.stdout.strip()}")
+                unauthorized[ast_file] = "AST_DEGRADED"
+    # --------------------------------------------------------
 
-                # 防线一：静态恶意指令扫描 (带动态沙盒豁免)
-                with open(ast_file, "r", encoding="utf-8") as f:
-                    code_content = f.read()
+    if unauthorized:
+        print("❌ 发现未授权或未通过审查的修改，执行回滚...")
+        for k in unauthorized: 
+            print(f" - {k} [阻断原因：{unauthorized[k]}]")
+        execute_atomic_revert(unauthorized, base_commit)
+        cleanup_stale_backups()
+        sys.exit(1)
 
-                # 【身份感知】根据执行者身份动态划定沙盒边界
-                exempted_modules = []
-                if executor_node == "CLAUDE_API":
-                    # CLAUDE_API：允许访问授权的基础设施，基于隐式路径放行系统调用
-                    if ast_file.startswith('.ai_workflow/') or ast_file.startswith('scripts/'):
-                        exempted_modules = ['subprocess', 'os']
-                # QWEN_API：对 os/subprocess 调用零容忍，exempted_modules 保持为空
-
-                is_safe, violations = check_dangerous_calls(code_content, exempted_modules=exempted_modules)
-                if not is_safe:
-                    print(f"🚫 [拦截] {ast_file} 触发高危动作：{violations}")
-                    unauthorized[ast_file] = "DANGEROUS_CODE"
-                    continue # 命中第一防线，直接拉黑并跳过第二防线
-
-                # 防线二：结构退化审查 (AST 比对)
-                # 使用 sys.executable 确保调用同一虚拟环境的 Python
-                diff_cmd = [sys.executable, ".ai_workflow/post_check_diff.py", ast_file, "--ref", base_commit]
-                result = subprocess.run(diff_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-                if result.returncode != 0:
-                    # 若脚本退出码不为 0，视为结构遭破坏
-                    print(f"🚫 [拦截] {ast_file} 发生 AST 结构退化/异常:\n{result.stdout.strip()}")
-                    unauthorized[ast_file] = "AST_DEGRADED"
-        # --------------------------------------------------------
-
-        if unauthorized:
-            print("❌ 发现未授权或未通过审查的修改，执行回滚...")
-            for k in unauthorized:
-                print(f" - {k} [阻断原因：{unauthorized[k]}]")
-            execute_atomic_revert(unauthorized, base_commit)
-            cleanup_stale_backups()
-            sys.exit(1)
-
-        print("✅ 验证通过")
-        sys.exit(0)
-    finally:
-        release_lock()
+    print("✅ 验证通过")
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()

@@ -302,35 +302,11 @@ def display_hero_hextech(df, hero_name, target_tier=None, is_from_ui=False):
 
 def main_query(shared_df=None, ui_instance=None):
     global GLOBAL_LAST_HERO
-    print("="*60 + "\n 🛡️ Hextech 终端查询端 (引擎已挂载)\n" + "="*60)
-    if shared_df is not None and not shared_df.empty:
-        df = shared_df
-    else:
-        latest = get_latest_csv()
-        if not latest: return 
-        df = pd.read_csv(latest)
-    official_names = df['英雄名称'].unique().tolist()
-    while True:
-        try:
-            prompt = "\n👉 【输入】称号/别名"
-            if GLOBAL_LAST_HERO: prompt += f" | 快捷: 1/2/3查【{GLOBAL_LAST_HERO}】"
-            prompt += " (q退出, u悬浮窗): "
-            u_in = input(prompt).strip().lower()
-            if not u_in: continue
-            if u_in == 'q': return 
-            if u_in == 'u':
-                if ui_instance: ui_instance.root.after(0, ui_instance._restore_from_terminal)
-                continue
-            
-            # 快捷键支持
-            if GLOBAL_LAST_HERO and u_in in ['1', '2', '3', '白银', '黄金', '棱彩']:
-                display_hero_hextech(df, GLOBAL_LAST_HERO, target_tier=u_in)
-                continue
-
-            hero_name = get_official_hero_name(u_in, official_names)
-            if not hero_name: hero_name = add_new_alias(u_in, official_names)
-            if hero_name: display_hero_hextech(df, hero_name)
-        except (EOFError, KeyboardInterrupt): return
+    print("="*60 + "\n 🛡️ Hextech 终端查询端 (已迁移至 Web 端)\n" + "="*60)
+    try:
+        return
+    except (EOFError, KeyboardInterrupt):
+        return
 
 if __name__ == "__main__":
     main_query()

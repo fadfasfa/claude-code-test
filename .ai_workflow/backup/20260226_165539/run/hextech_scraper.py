@@ -9,6 +9,7 @@ import re
 import urllib3
 import logging
 import threading
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hero_sync import get_advanced_session, CONFIG_DIR, load_augment_map, load_champion_core_data
 
@@ -35,66 +36,27 @@ def update_status_file():
     with open(os.path.join(CONFIG_DIR, "scraper_status.json"), "w") as f:
         json.dump({"last_success_time": time.time()}, f)
 
+def calc_dynamic_score(row):
+    wr_diff = row['胜率差']
+    w_win = min(1.0, 0.6 + abs(wr_diff) * 2.5) if wr_diff < 0 else 0.6
+    return wr_diff * w_win + row['海克斯出场率'] * (1.0 - w_win)
+
 def cleanup_old_csvs():
-    """清理过期战报与残留临时文件，仅保留最近 3 天的有效数据"""
+    """清理过期战报，仅保留最近3天的合法文件"""
     files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv"))
-    tmp_files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv.tmp"))
     now = datetime.now()
-
-    # AST 审查点：将原本的嵌套 try 块合并优化为一个，验证新的语义级防线不会误报
-    for f in files + tmp_files:
-        try:
-            m = re.search(r"Hextech_Data_(\d{4}-\d{2}-\d{2})", os.path.basename(f))
-            if not m: continue
-            file_date = datetime.strptime(m.group(1), "%Y-%m-%d")
-
-            is_stale_csv = f.endswith('.csv') and (now - file_date).days > 3
-            is_stale_tmp = f.endswith('.tmp') and (now - file_date).days > 1
-
-            if is_stale_csv or is_stale_tmp:
-                os.remove(f)
-                logging.info(f"🗑️ 已清理过期/残留文件：{os.path.basename(f)}")
-        except Exception as e:
-            logging.error(f"清理文件异常 {f}: {e}")
-
-def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_id: str, champ_name: str, champ_data: dict) -> list:
-    """
-    Parse raw HTML for one champion and return a list of row dicts.
-    Raises ValueError if regex yields no matches or JSON parsing fails.
-    """
-    cleaned = html.replace('\\\\"', '"')
-    matches = re.findall(r'"(\d+)":\{([^\{\}]*?"win_rate"[^\{\}]*?)\}', cleaned)
-    if not matches:
-        raise ValueError("regex returned no matches")
-
-    rows = []
-    for aug_id, inner in matches:
-        try:
-            data = json.loads("{" + inner + "}")
-        except json.JSONDecodeError as e:
-            raise ValueError(f"JSON parse failed for aug_id={aug_id}: {e}")
-
-        web_name = aug_id_map.get(aug_id, "")
-        local_tier = truth_dict.get(web_name)
-        if not web_name or not local_tier:
-            continue
-
-        win = float(data.get('win_rate', 0))
-        pick = float(data.get('pick_rate', 0))
-        if win > 0 and pick >= FRESHNESS_THRESHOLD:
-            rows.append({
-                "英雄 ID": champ_id,
-                "英雄名称": champ_name,
-                "英雄评级": champ_data.get('tier', 'T3'),
-                "英雄胜率": float(champ_data.get('winRate', 0)),
-                "英雄出场率": float(champ_data.get('pickRate', 0)),
-                "海克斯阶级": local_tier,
-                "海克斯名称": web_name,
-                "海克斯胜率": win,
-                "海克斯出场率": pick
-            })
-
-    return rows
+    for f in files:
+        m = re.match(r"Hextech_Data_(\d{4}-\d{2}-\d{2})\.csv$", os.path.basename(f))
+        if m:
+            try:
+                # 严格的时间戳校验，过滤脏文件
+                file_date = datetime.strptime(m.group(1), "%Y-%m-%d")
+                # 纯数字计算，不使用非法的 timedelta 引入
+                if (now - file_date).days > 3:
+                    os.remove(f)
+                    logging.info(f"🗑️ 已清理过期战报: {os.path.basename(f)}")
+            except Exception as e:
+                logging.error(f"清理或解析失败 {f}: {e}")
 
 def main_scraper(stop_event=None):
     current_date = datetime.now().strftime('%Y-%m-%d')
@@ -120,6 +82,7 @@ def main_scraper(stop_event=None):
             verify=True
         ).json()
 
+        # 【P2修复】严格按真实 augment ID 建立映射，过滤掉无 id 字段的条目
         aug_id_map = {
             str(v['id']): v.get('displayName', '').strip()
             for v in (aug_data if isinstance(aug_data, list) else aug_data.values())
@@ -131,7 +94,7 @@ def main_scraper(stop_event=None):
             verify=True
         ).json()
     except Exception as e:
-        logging.error(f"🚨 抓取端握手异常：{e}")
+        logging.error(f"🚨 抓取端握手异常: {e}")
         return False
 
     all_rows = []
@@ -145,24 +108,44 @@ def main_scraper(stop_event=None):
         try:
             res = session.get(url, timeout=10, verify=True)
             if res.status_code == 200:
-                try:
-                    champ_rows = extract_champion_stats(res.text, aug_id_map, truth_dict, c_id, c_name, champ)
-                except ValueError as e:
-                    logging.warning(f"[{c_name}] aug parse failed: {e}")
-        except Exception as e:
-            logging.error(f"[{c_name}] HTTP fetch failed: {e}")
-
+                html = res.text.replace('\\"', '"')
+                matches = re.findall(r'"(\d+)":\{([^{}]*?"win_rate"[^{}]*?)\}', html)
+                for aug_id, inner in matches:
+                    web_name = aug_id_map.get(aug_id, "")
+                    local_tier = truth_dict.get(web_name)
+                    if web_name and local_tier:
+                        try:
+                            obj = json.loads("{" + inner + "}")
+                            win = float(obj.get('win_rate', 0))
+                            pick = float(obj.get('pick_rate', 0))
+                            if win > 0 and pick >= FRESHNESS_THRESHOLD:
+                                champ_rows.append({
+                                    "英雄ID": c_id,
+                                    "英雄名称": c_name,
+                                    "英雄评级": champ.get('tier', 'T3'),
+                                    "英雄胜率": float(champ.get('winRate', 0)),
+                                    "英雄出场率": float(champ.get('pickRate', 0)),
+                                    "海克斯阶级": local_tier,
+                                    "海克斯名称": web_name,
+                                    "海克斯胜率": win,
+                                    "海克斯出场率": pick
+                                })
+                        except Exception:
+                            continue
+        except Exception:
+            pass
         return c_name, champ_rows
 
     logging.info(f"🚀 启动 8 线程抓取池，共 {len(stats_list)} 名英雄...")
     with ThreadPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(fetch_champ, c) for c in stats_list]
         for f in as_completed(futures):
+            # 新增：实时侦测 UI 传来的退出信号
             if stop_event and stop_event.is_set():
                 logging.info("🛑 收到用户强制退出信号，正在销毁爬虫线程池...")
                 for fut in futures:
-                    fut.cancel()
-                executor.shutdown(wait=False)
+                    fut.cancel() # 取消所有尚未开始的任务
+                executor.shutdown(wait=False) # 立即切断，不等待当前任务结束
                 return False
 
             try:
@@ -170,49 +153,27 @@ def main_scraper(stop_event=None):
                 with lock:
                     if rows:
                         all_rows.extend(rows)
-            except Exception as e:
-                logging.error(f"Thread result collection failed: {e}")
+            except Exception: pass
 
     if all_rows:
         df = pd.DataFrame(all_rows)
         df['胜率差'] = df['海克斯胜率'] - df['英雄胜率']
-
-        # Z-Score vectorized scoring (85/15 split)
-        wr_std = df['胜率差'].std()
-        pr_std = df['海克斯出场率'].std()
-        if wr_std == 0:
-            wr_std = 1
-        if pr_std == 0:
-            pr_std = 1
-
-        z_wr = (df['胜率差'] - df['胜率差'].mean()) / wr_std
-        z_pr = (df['海克斯出场率'] - df['海克斯出场率'].mean()) / pr_std
-
-        # 85/15 split: positive wr_diff adds pick-rate bonus, negative subtracts it
-        sign_mask = df['胜率差'].apply(lambda x: 1 if x >= 0 else -1)
-        df['综合得分'] = z_wr * 0.85 + z_pr * 0.15 * sign_mask
-
+        df['综合得分'] = df.apply(calc_dynamic_score, axis=1)
         df.sort_values(
             by=['英雄名称', '海克斯阶级', '综合得分'],
             ascending=[True, True, False],
             inplace=True
         )
-
-        # Data integrity fuse: reject if data volume is too low
-        if len(df) < 300:
-            logging.error(f"数据熔断：有效行数 {len(df)} < 300，拒绝覆盖 CSV")
-            return False
-
+        
         # --- 原子化写入逻辑开始 ---
         tmp_csv = output_csv + ".tmp"
         df.to_csv(tmp_csv, index=False, encoding='utf-8-sig')
-        # 引入 OS 级原子替换（测试沙盒豁免度）
-        os.replace(tmp_csv, output_csv)
+        shutil.move(tmp_csv, output_csv)
         # --- 原子化写入逻辑结束 ---
-
+        
         update_status_file()
         cleanup_old_csvs()
-        logging.info(f"✅ 抓取结束，固化至：{output_csv}")
+        logging.info(f"✅ 抓取结束，固化至: {output_csv}")
         return True
     else:
         logging.error("🚨 抓取任务未能生成有效数据，请检查网络或数据源。")

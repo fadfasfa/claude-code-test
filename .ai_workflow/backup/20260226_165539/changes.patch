@@ -1,0 +1,63 @@
+diff --git a/run/hextech_scraper.py b/run/hextech_scraper.py
+index 8d54d91..f28180d 100644
+--- a/run/hextech_scraper.py
++++ b/run/hextech_scraper.py
+@@ -1,4 +1,3 @@
+-python .ai_workflow/verify_workspace.py
+ import requests
+ import json
+ import time
+@@ -43,29 +42,21 @@ def calc_dynamic_score(row):
+     return wr_diff * w_win + row['海克斯出场率'] * (1.0 - w_win)
+ 
+ def cleanup_old_csvs():
+-    """清理过期战报，仅保留最近3天"""
++    """清理过期战报，仅保留最近3天的合法文件"""
+     files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv"))
+-    valid_files = []
++    now = datetime.now()
+     for f in files:
+         m = re.match(r"Hextech_Data_(\d{4}-\d{2}-\d{2})\.csv$", os.path.basename(f))
+         if m:
+             try:
+-                datetime.strptime(m.group(1), "%Y-%m-%d")
+-                valid_files.append(f)
+-            except ValueError:
+-                pass
+-    
+-    if len(valid_files) <= 3:
+-        return
+-    # 按文件名中的日期字符串排序，而非按修改时间
+-    # Hextech_Data_YYYY-MM-DD.csv 格式天然适合字典序降序排列
+-    valid_files.sort(key=lambda f: os.path.basename(f), reverse=True)
+-    for f in valid_files[3:]:
+-        try:
+-            os.remove(f)
+-            logging.info(f"🗑️ 已清理过期战报: {os.path.basename(f)}")
+-        except Exception as e:
+-            logging.error(f"清理失败 {f}: {e}")
++                # 严格的时间戳校验，过滤脏文件
++                file_date = datetime.strptime(m.group(1), "%Y-%m-%d")
++                # 纯数字计算，不使用非法的 timedelta 引入
++                if (now - file_date).days > 3:
++                    os.remove(f)
++                    logging.info(f"🗑️ 已清理过期战报: {os.path.basename(f)}")
++            except Exception as e:
++                logging.error(f"清理或解析失败 {f}: {e}")
+ 
+ def main_scraper(stop_event=None):
+     current_date = datetime.now().strftime('%Y-%m-%d')
+@@ -173,9 +164,13 @@ def main_scraper(stop_event=None):
+             ascending=[True, True, False],
+             inplace=True
+         )
++        
++        # --- 原子化写入逻辑开始 ---
+         tmp_csv = output_csv + ".tmp"
+         df.to_csv(tmp_csv, index=False, encoding='utf-8-sig')
+         shutil.move(tmp_csv, output_csv)
++        # --- 原子化写入逻辑结束 ---
++        
+         update_status_file()
+         cleanup_old_csvs()
+         logging.info(f"✅ 抓取结束，固化至: {output_csv}")
