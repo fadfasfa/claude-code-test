@@ -5,7 +5,7 @@
 .ai_workflow/pre_execution_check.py       [LOOSE]
 run/hero_sync.py                          [STANDARD]
 run/hextech_query.py                      [STANDARD]
-run/hextech_scraper.py                    [LOOSE]
+run/hextech_scraper.py                    [STANDARD]
 tests/*                                   [LOOSE]
 scripts/*                                 [LOOSE]
 QuantProject/decision_engine.py           [STANDARD]
