@@ -1,4 +1,5 @@
 import os, sys, subprocess, json, shutil, fnmatch, re
+import hmac, hashlib, copy
 from typing import Dict, List, Set, Tuple
 from datetime import datetime, timedelta
 
@@ -78,7 +79,8 @@ def load_whitelist(filepath: str) -> Dict[str, str]:
     if not os.path.exists(filepath):
         return {}
     wl = {}
-    with open(filepath, "r", encoding="utf-8") as f:
+    # 【乱码免疫装甲】增加 errors="replace" 防止遭遇非 UTF-8 字符时崩溃
+    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
@@ -88,6 +90,46 @@ def load_whitelist(filepath: str) -> Dict[str, str]:
             level = parts[1].strip("[]") if len(parts) > 1 else "STANDARD"
             wl[pattern] = level
     return wl
+
+def verify_contract_identity(contract_data: dict) -> str:
+    """【高阶密码学闭环】基于 HMAC-SHA256 的零信任鉴权"""
+    declared_node = contract_data.get("task_input_from_claude", {}).get("executor_node", "QWEN_API")
+
+    # 如果主动声明为低权限，直接放行（无需耗费算力验签）
+    if declared_node == "QWEN_API":
+        return "QWEN_API"
+
+    secret_file = ".ai_workflow/.secret_key"
+    if not os.path.exists(secret_file):
+        print("\n⚠️ [安全网关致命警告]：缺少本地密钥文件，拒绝特权提升！已强制降级为 QWEN_API。\n")
+        return "QWEN_API"
+
+    try:
+        with open(secret_file, "r", encoding="utf-8") as f:
+            secret = f.read().strip()
+
+        provided_signature = contract_data.get("signature")
+        if not provided_signature:
+            print("\n⚠️ [安全网关致命警告]：契约缺少 HMAC 签名，疑似伪造！已强制降级为 QWEN_API。\n")
+            return "QWEN_API"
+
+        # 剥离签名本身以重构原始摘要载荷
+        data_to_verify = copy.deepcopy(contract_data)
+        del data_to_verify["signature"]
+
+        payload_str = json.dumps(data_to_verify, sort_keys=True, separators=(',', ':'))
+        expected_signature = hmac.new(secret.encode('utf-8'), payload_str.encode('utf-8'), hashlib.sha256).hexdigest()
+
+        # 防止时序攻击的恒定时间比较
+        if hmac.compare_digest(expected_signature, provided_signature):
+            return declared_node
+        else:
+            print("\n⚠️ [安全网关致命警告]：契约 HMAC 签名校验失败，文件被非法篡改！已强制降级为 QWEN_API。\n")
+            return "QWEN_API"
+
+    except Exception as e:
+        print(f"\n⚠️ [验签环境异常]：{e}。已强制降级为 QWEN_API。\n")
+        return "QWEN_API"
 
 def get_claude_auth_from_git() -> dict:
     contract_path = ".ai_workflow/current_contract.json"
@@ -100,7 +142,7 @@ def get_claude_auth_from_git() -> dict:
                 if text.startswith('\ufeff'):
                     text = text[1:]
             except UnicodeDecodeError:
-                text = raw.decode('utf-8')
+                text = raw.decode('utf-8', errors="replace")
             return json.loads(text)
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             pass
@@ -116,47 +158,7 @@ def get_claude_auth_from_git() -> dict:
     except json.JSONDecodeError:
         return {}
 
-def _detect_physical_identity(declared_node: str) -> str:
-    """【终极防线】穿透式物理身份确权探针"""
-    try:
-        env_vars = os.environ
 
-        # 1. 环境特征指纹锚定 (识别 Claude Code 或手动提权变量)
-        has_claude_fingerprint = (
-            "CLAUDE_SESSION_ID" in env_vars or
-            env_vars.get("FORCE_AI_ROLE") == "CLAUDE_API" or
-            "claude" in env_vars.get("TERM_PROGRAM", "").lower() or
-            "vscode" in env_vars.get("TERM_PROGRAM", "").lower()
-        )
-
-        # 2. 进程树溯源 (防止简单的脚本越权绕过)
-        if not has_claude_fingerprint:
-            ppid = os.getppid()
-            if os.name == 'nt':
-                res = subprocess.run(
-                    ["powershell", "-NoProfile", "-Command", f"(Get-Process -Id {ppid}).Name"],
-                    capture_output=True, text=True, timeout=2, creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-                )
-                parent_name = res.stdout.strip().lower()
-            else:
-                with open(f"/proc/{ppid}/comm", "r") as f:
-                    parent_name = f.read().strip().lower()
-
-            if any(x in parent_name for x in ['code', 'cursor', 'claude']):
-                has_claude_fingerprint = True
-
-        if has_claude_fingerprint:
-            return "CLAUDE_API"
-
-    except Exception as e:
-        print(f"\n⚠️ [物理探针异常]：{e}")
-        pass # 异常被吞噬，继续执行 Fail-Safe
-
-    # Fail-Safe 原则：无物理特征证明，一律视为下游被降级节点 (QWEN_API)
-    if declared_node == "CLAUDE_API":
-        print("\n⚠️ [安全网关致命警告]：JSON 契约声明为 CLAUDE_API，但缺乏底层物理特征证明！疑似伪造或越权操作！已强制降级为 QWEN_API。\n")
-
-    return "QWEN_API"
 
 def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_paths: Set[str], executor_node: str = "CLAUDE_API") -> Tuple:
     unauthorized = {}
@@ -281,9 +283,8 @@ def main():
         contract = get_claude_auth_from_git()
         auth_paths = set(contract.get("claude_sudo", {}).get("authorized_paths", []))
 
-        # 【核心安全重构：引入物理探针取代绝对文本信任】
-        declared_node = contract.get("task_input_from_claude", {}).get("executor_node", "QWEN_API")
-        executor_node = _detect_physical_identity(declared_node)
+        # 【高阶密码学闭环：HMAC 验签取代物理探针】
+        executor_node = verify_contract_identity(contract)
 
         whitelist = load_whitelist(".ai_workflow/whitelist.txt")
         changes, base_commit = get_comprehensive_changes()
