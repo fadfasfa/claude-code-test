@@ -6,16 +6,18 @@
     <title>极地大乱斗 - 英雄 T 度榜</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* 玻璃拟态背景 */
-        .glass {
-            background: rgba(30, 30, 40, 0.6);
+        /* 核心暗黑玻璃拟态背景 */
+        body {
+            background-color: #11111b;
+            background-image: radial-gradient(circle at 50% 0%, rgba(137, 180, 250, 0.1), transparent 50%);
+            color: #cdd6f4;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .glass-panel {
+            background: rgba(30, 30, 46, 0.7);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        .glass-hover:hover {
-            background: rgba(40, 40, 55, 0.8);
-            border-color: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.05);
         }
         /* 隐藏滚动条但保留功能 */
         .no-scrollbar::-webkit-scrollbar {
@@ -25,9 +27,30 @@
             -ms-overflow-style: none;
             scrollbar-width: none;
         }
+        /* 英雄头像悬浮动效 */
+        .champ-avatar {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .champ-avatar:hover {
+            transform: translateY(-4px) scale(1.05);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            border-color: #fff;
+            z-index: 10;
+        }
+        /* 阶层专属色彩定义 (五层递进) */
+        /* 夯 (神级 - 炫彩流光金/红) */
+        .tier-op { background: linear-gradient(135deg, #ff4e50, #f9d423); color: #111; text-shadow: 0 1px 2px rgba(255,255,255,0.5); }
+        /* 顶级 (强势 - 史诗紫/洋红) */
+        .tier-s { background: linear-gradient(135deg, #c026d3, #db2777); color: white; }
+        /* 人上人 (优秀 - 稀有蓝) */
+        .tier-a { background: linear-gradient(135deg, #2563eb, #06b6d4); color: white; }
+        /* npc (平庸/背景板 - 灰铁与黯淡绿) */
+        .tier-npc { background: linear-gradient(135deg, #4b5563, #374151); color: #9ca3af; }
+        /* 拉 (烂到流汤 - 剧毒暗红) */
+        .tier-trash { background: linear-gradient(135deg, #7f1d1d, #450a0a); color: #f87171; border-right: 1px solid #7f1d1d; }
     </style>
 </head>
-<body class="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 text-white">
+<body class="min-h-screen p-6 pb-20">
     <!-- 顶部搜索栏 -->
     <header class="sticky top-0 z-50 glass border-b border-gray-700">
         <div class="max-w-7xl mx-auto px-4 py-4">
@@ -153,13 +176,13 @@
             '格雷福斯': 'Graves'
         };
 
-        // 五大阶层定义（按综合分数划分）- 阶梯级渐变色：赛博暗金 → 深渊暗红
+        // 五大阶层定义（按综合分数划分）
         const TIERS = [
-            { id: 't0', name: '夯', color: 'from-[#FFD700] to-[#B8860B]', borderColor: 'border-[#FFD700]', textColor: 'text-[#FFD700]', minScore: 1.5 },
-            { id: 't1', name: '顶级', color: 'from-[#FFA500] to-[#FF8C00]', borderColor: 'border-[#FFA500]', textColor: 'text-[#FFA500]', minScore: 0.8 },
-            { id: 't2', name: '人上人', color: 'from-[#FFD700] to-[#DAA520]', borderColor: 'border-[#FFD700]', textColor: 'text-[#DAA520]', minScore: 0.3 },
-            { id: 't3', name: 'NPC', color: 'from-[#CD5C5C] to-[#A52A2A]', borderColor: 'border-[#CD5C5C]', textColor: 'text-[#CD5C5C]', minScore: -0.3 },
-            { id: 't4', name: '拉', color: 'from-[#8B0000] to-[#5C0000]', borderColor: 'border-[#8B0000]', textColor: 'text-[#8B0000]', minScore: -Infinity }
+            { id: 't0', name: '夯', enName: 'God Tier', cssClass: 'tier-op', minScore: 1.5 },
+            { id: 't1', name: '顶级', enName: 'Top', cssClass: 'tier-s', minScore: 0.8 },
+            { id: 't2', name: '人上人', enName: 'Elite', cssClass: 'tier-a', minScore: 0.3 },
+            { id: 't3', name: 'npc', enName: 'Average', cssClass: 'tier-npc', minScore: -0.3 },
+            { id: 't4', name: '拉', enName: 'Trash', cssClass: 'tier-trash', minScore: -Infinity }
         ];
 
         // 全局状态
@@ -169,25 +192,49 @@
 
         // ========== 工具函数 ==========
         /**
+         * 获取英雄英文名（用于 URL 参数和图片）
+         */
+        function getChampionEnName(name) {
+            let enName = CHAMPION_PINYIN[name] || name;
+            return enName.replace(/\s+/g, '');
+        }
+
+        /**
          * 获取英雄头像 URL
          */
         function getChampionAvatar(name) {
-            // 尝试从映射表获取英文名
-            let enName = CHAMPION_PINYIN[name] || name;
-            // 特殊处理：如果包含空格，尝试合并
-            enName = enName.replace(/\s+/g, '');
+            const enName = getChampionEnName(name);
             return `https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/${enName}.png`;
         }
 
         /**
-         * 图片加载失败时的 CDN 兜底 URL
+         * 头像加载失败处理函数 - 三级降级逻辑
+         * 1. 先尝试腾讯官方 CDN
+         * 2. 失败后展示本地 assets 文件夹下的通用魄罗占位图
          */
-        function getFallbackAvatar(name) {
+        function handleAvatarError(imgElement, heroName) {
+            // 避免重复执行
+            if (imgElement.dataset.errorHandled === 'true') return;
+
             // 尝试从映射表获取英文名
-            let enName = CHAMPION_PINYIN[name] || name;
-            enName = enName.replace(/\s+/g, '');
-            // 腾讯官方 CDN 头像
-            return `https://game.gtimg.cn/images/lol/act/img/champion/${enName}.png`;
+            let enName = (CHAMPION_PINYIN[heroName] || heroName).replace(/\s+/g, '');
+
+            // 记录日志便于审计
+            console.log(`[头像加载失败] 英雄：${heroName}, 英文名：${enName}`);
+
+            // 第一次失败：尝试腾讯官方 CDN
+            if (imgElement.dataset.attempt === '1') {
+                imgElement.dataset.errorHandled = 'true';
+                // 展示占位图
+                imgElement.src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>' + heroName[0] + '</text></svg>';
+                return;
+            }
+
+            // 标记尝试次数
+            imgElement.dataset.attempt = '1';
+
+            // 尝试腾讯 CDN
+            imgElement.src = `https://game.gtimg.cn/images/lol/act/img/champion/${enName}.png`;
         }
 
         /**
@@ -215,47 +262,38 @@
 
         // ========== 渲染逻辑 ==========
         /**
-         * 渲染英雄卡片
+         * 创建英雄头像卡片（预览版横向排列结构）
          */
         function createChampionCard(champion, index) {
             const avatarUrl = getChampionAvatar(champion.英雄名称);
-            const tier = getTier(champion.综合分数);
-            const heroName = champion.英雄名称;
-            const enName = (CHAMPION_PINYIN[heroName] || heroName).replace(/\s+/g, '');
+            const enName = getChampionEnName(champion.英雄名称);
+            const wr = formatPercent(champion.贝叶斯胜率);
+            const pr = formatPercent(champion.英雄出场率);
+
+            // 生成详情页链接，附带 wr、pr、en 参数
+            const detailUrl = `detail.html?hero=${encodeURIComponent(champion.英雄名称)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(pr)}&en=${encodeURIComponent(enName)}`;
 
             return `
-                <div
-                    class="glass glass-hover rounded-lg p-3 cursor-pointer transition-all duration-200 transform hover:scale-105 border-l-4 ${tier.borderColor}"
-                    onclick="window.location.href='detail.html?hero=${encodeURIComponent(champion.英雄名称)}'"
+                <a
+                    href="${detailUrl}"
+                    class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block flex-shrink-0"
                     style="animation-delay: ${index * 50}ms"
                 >
-                    <div class="flex items-center gap-3">
-                        <img
-                            src="${avatarUrl}"
-                            alt="${heroName}"
-                            class="w-12 h-12 rounded-lg object-cover bg-gray-800"
-                            onerror="let n=(CHAMPION_PINYIN[this.alt]||this.alt).replace(/\\s+/g,''); this.onerror=null; this.src='https://game.gtimg.cn/images/lol/act/img/champion/'+n+'.png'; this.onerror=null; this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>'+this.alt[0]+'</text></svg>';"
-                        />
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2">
-                                <span class="font-bold text-white truncate">${heroName}</span>
-                                <span class="text-xs px-2 py-0.5 rounded bg-gradient-to-r ${tier.color} text-white font-semibold">
-                                    ${tier.name}
-                                </span>
-                            </div>
-                            <div class="flex items-center gap-4 text-xs text-gray-400 mt-1">
-                                <span>胜率：<span class="${champion.贝叶斯胜率 > 0.5 ? 'text-green-400' : 'text-gray-400'}">${formatPercent(champion.贝叶斯胜率)}</span></span>
-                                <span>出场：<span class="text-gray-300">${formatPercent(champion.英雄出场率)}</span></span>
-                                <span>评分：<span class="text-purple-400 font-semibold">${formatNumber(champion.综合分数, 2)}</span></span>
-                            </div>
-                        </div>
+                    <img
+                        src="${avatarUrl}"
+                        alt="${champion.英雄名称}"
+                        class="w-full h-full object-cover bg-gray-800"
+                        onerror="handleAvatarError(this, '${champion.英雄名称}')"
+                    />
+                    <div class="absolute bottom-0 inset-x-0 bg-black/80 text-center text-[10px] font-bold text-yellow-400 py-0.5 backdrop-blur-sm">
+                        ${wr}
                     </div>
-                </div>
+                </a>
             `;
         }
 
         /**
-         * 渲染各阶层列表
+         * 渲染各阶层列表（预览版横向排列结构）
          */
         function renderTiers(champions) {
             const container = document.getElementById('tierContainer');
@@ -273,20 +311,22 @@
                 tierGroups[tier.id].push(champ);
             });
 
-            // 渲染每个阶层
+            // 渲染每个阶层（横向排列结构）
             TIERS.forEach(tier => {
                 const champs = tierGroups[tier.id];
                 if (champs.length === 0) return;
 
+                // NPC 和拉阶层添加灰度效果
+                const grayscaleClass = tier.id === 't3' ? 'grayscale-[30%]' : tier.id === 't4' ? 'grayscale-[70%] hover:grayscale-0' : '';
+                const opacityClass = tier.id === 't3' ? 'opacity-80' : tier.id === 't4' ? 'opacity-60' : '';
+
                 const tierHTML = `
-                    <div class="glass rounded-xl overflow-hidden">
-                        <div class="bg-gradient-to-r ${tier.color} px-4 py-3">
-                            <div class="flex items-center justify-between">
-                                <h2 class="text-lg font-bold text-white">${tier.name}</h2>
-                                <span class="text-sm text-white/80">${champs.length} 位英雄</span>
-                            </div>
+                    <div class="flex bg-[#181825] rounded-xl border border-gray-800 shadow-lg overflow-hidden ${opacityClass} ${grayscaleClass}">
+                        <div class="w-24 shrink-0 ${tier.cssClass} flex flex-col items-center justify-center font-bold text-xl shadow-[2px_0_10px_rgba(0,0,0,0.3)] z-10">
+                            <span>${tier.name}</span>
+                            <span class="text-[9px] opacity-80 mt-1 uppercase tracking-wider">${tier.enName}</span>
                         </div>
-                        <div class="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        <div class="flex-1 p-3 flex flex-wrap gap-3">
                             ${champs.map((c, i) => createChampionCard(c, i)).join('')}
                         </div>
                     </div>
