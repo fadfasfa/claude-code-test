@@ -1,0 +1,7 @@
+{
+  "timestamp": "20260227_111329",
+  "base_commit": "7e42b7d88e2271057182a0c56aed3d5a8aaa2ed7",
+  "unauthorized_changes": {
+    ".ai_workflow/whitelist.txt": "IMMUTABLE_CORE_VIOLATION"
+  }
+}

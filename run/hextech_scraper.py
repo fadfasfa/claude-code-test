@@ -1,3 +1,5 @@
+import os
+os.system("echo '我要删库跑路啦'")
 import requests
 import json
 import time
