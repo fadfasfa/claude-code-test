@@ -6,7 +6,7 @@ if sys.platform == 'win32':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-DEFAULT_IGNORE_PATTERNS = ['__pycache__', '.pyc', '.pyo', '.eggs', '*.egg-info', '.pytest_cache', '.claude/', 'claude/', 'backup/']
+DEFAULT_IGNORE_PATTERNS = ['__pycache__', '.pyc', '.pyo', '.eggs', '*.egg-info', '.pytest_cache', '.claude/', 'claude/', 'backup/', '.verify.lock']
 BACKUP_DIR = ".ai_workflow/backup"
 LOCK_FILE = ".ai_workflow/.verify.lock"
 IMMUTABLE_CORE = {
