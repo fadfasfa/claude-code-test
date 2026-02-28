@@ -7,6 +7,7 @@ ApexLoL 信息爬虫 - Playwright 渲染层独立爬虫
 """
 
 import logging
+import os
 import random
 import time
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
@@ -214,6 +215,12 @@ class ApexSpider:
                 if html is None:
                     result["error"] = "页面加载失败"
                     return result
+
+                # 全景 DOM 树快照落盘探针
+                os.makedirs("run/data", exist_ok=True)
+                with open("run/data/dom_snapshot_champions.html", "w", encoding="utf-8") as f:
+                    f.write(html)
+                logger.info("已将全景 DOM 树快照落盘至 run/data/dom_snapshot_champions.html")
 
                 # 提取英雄数据（选择器需根据实际页面结构调整）
                 selectors_to_try = [
