@@ -44,14 +44,12 @@ VERSIONS_TO_TRY = [
     {"os_type": "web", "version": "999.0.0"},
     {"os_type": "web", "version": "1.3.1"},
     {"os_type": "web", "version": "1.0.0"},
-    {"os_type": "android", "version": "1.3.1"},
 ]
 
 # 请求参数配置
 PARAMS_CONFIGS = [
     {"limit": "20", "offset": "0", "is_new_user": "0"},
     {"limit": "20", "offset": "0"},
-    {"page": "1", "page_size": "20"},
 ]
 
 
@@ -134,6 +132,9 @@ async def _make_request(endpoint: str, headers: dict, params: dict):
                     return json_data
                 else:
                     logger.warning("⚠️  result 字段为空")
+                    # 保存空响应数据以供分析
+                    save_data(json_data, "data/heybox_empty_result.json")
+                    logger.info(f"已保存空响应数据到 data/heybox_empty_result.json")
 
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP 错误：{e}")
