@@ -3,10 +3,10 @@
 核心模块：全资产仓位决策引擎 (decision_engine.py)
 功能：读取本地数据，计算策略信号，输出 ASCII 兼容报告
 """
-import os
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from pathlib import Path
 import warnings
 
 # 引入统一配置
@@ -21,8 +21,8 @@ except Exception:
 
 def load_stooq_data(asset_name):
     """安全读取并重采样本地数据 - 模糊列名匹配"""
-    path = os.path.join(DATA_DIR, FILES[asset_name])
-    if not os.path.exists(path):
+    path = Path(DATA_DIR) / FILES[asset_name]
+    if not path.exists():
         return None
     try:
         df = pd.read_csv(path)

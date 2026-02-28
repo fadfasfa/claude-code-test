@@ -3,17 +3,18 @@
 核心模块：多线程数据并发更新器 (update_stooq_fast.py)
 功能：从 Stooq 自动获取全资产历史数据，采用增量合并机制防止重复计算。
 """
-import os
 import requests
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import time
+from pathlib import Path
+from io import StringIO
 
 # 引入统一配置
 from config import DATA_DIR, ASSETS_MAPPING
 
-os.makedirs(DATA_DIR, exist_ok=True)
+Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -24,7 +25,7 @@ def is_data_up_to_date(file_path):
     检查本地数据是否已经是最新（以当前交易日为准）。
     返回 True 表示已最新，False 表示需要更新。
     """
-    if not os.path.exists(file_path):
+    if not Path(file_path).exists():
         return False
     try:
         df = pd.read_csv(file_path)
@@ -56,7 +57,7 @@ def fetch_and_merge_data(asset_name, config):
     """单线程下载并合并数据函数 - 带重试机制"""
     stooq_code = config['stooq_code']
     file_name = config['file']
-    file_path = os.path.join(DATA_DIR, file_name)
+    file_path = Path(DATA_DIR) / file_name
 
     if is_data_up_to_date(file_path):
         return f"[跳过] {asset_name:<4} 数据已是最新，触发防重复机制。"
@@ -113,7 +114,7 @@ def fetch_and_merge_data(asset_name, config):
             new_df.set_index('Data', inplace=True)
 
             # 增量合并逻辑
-            if os.path.exists(file_path):
+            if Path(file_path).exists():
                 old_df = pd.read_csv(file_path)
                 # [多语言兼容] 模糊列名匹配
                 old_date_col = None
