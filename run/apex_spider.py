@@ -7,6 +7,7 @@ ApexLoL 信息爬虫 - Playwright 渲染层独立爬虫
 """
 
 import logging
+import json
 import os
 import random
 import time
@@ -186,7 +187,7 @@ class ApexSpider:
 
     def crawl_champion_list(self) -> dict:
         """
-        爬取英雄列表数据
+        爬取英雄列表数据（包含名称和详情页 URL）
 
         Returns:
             英雄数据字典
@@ -216,23 +217,39 @@ class ApexSpider:
                     result["error"] = "页面加载失败"
                     return result
 
-                # 提取英雄数据（精准选择器）
-                selectors_to_try = [".champ-card .name"]
+                # 定位英雄卡片并提取名称和 URL
+                champ_cards = page.locator('.champ-card').all()
+                logger.info(f"找到 {len(champ_cards)} 个英雄卡片")
 
-                for selector in selectors_to_try:
-                    champions = self.extract_all_text(page, selector, url)
-                    if champions:
-                        logger.info(f"成功提取 {len(champions)} 个英雄")
-                        result["champions"] = champions
-                        result["success"] = True
-                        break
+                champions = []
+                for card in champ_cards:
+                    try:
+                        # 提取英雄名称
+                        name_locator = card.locator('.name')
+                        if name_locator.is_visible(timeout=3000):
+                            name = name_locator.inner_text(timeout=3000).strip()
+                            # 提取 href 属性
+                            href = card.get_attribute('href', timeout=3000)
+                            if href:
+                                # 拼接完整 URL
+                                if href.startswith('/'):
+                                    full_url = f"https://apexlol.info{href}"
+                                elif href.startswith('http'):
+                                    full_url = href
+                                else:
+                                    full_url = f"https://apexlol.info/{href}"
+                                champions.append({"name": name, "url": full_url})
+                                logger.info(f"提取英雄：{name} -> {full_url}")
+                    except Exception as e:
+                        logger.warning(f"单个英雄卡片提取失败：{str(e)}")
+                        continue
 
-                if not result["success"]:
-                    logger.warning(f"未找到匹配的英雄元素，尝试备用选择器")
-                    # 尝试提取页面标题作为兜底
-                    page_title = self.extract_text(page, "title", url)
-                    if page_title:
-                        logger.info(f"页面标题：{page_title}")
+                if champions:
+                    logger.info(f"成功提取 {len(champions)} 个英雄（含 URL）")
+                    result["champions"] = champions
+                    result["success"] = True
+                else:
+                    logger.warning("未找到匹配的英雄元素")
 
                 browser.close()
 
@@ -406,21 +423,44 @@ def main():
     logger.info("爬虫执行完成")
     logger.info("=" * 50)
 
-    # 提取海克斯协同方案（不祥之刃）
+    # 全量遍历英雄列表并提取海克斯协同方案
     logger.info("-" * 30)
-    logger.info("【任务 3】提取海克斯协同方案")
-    test_url = "https://apexlol.info/zh/champions/Katarina"
-    synergies = spider.extract_hextech_synergies(test_url)
-    if synergies:
-        logger.info(f"成功提取 {len(synergies)} 个协同方案：")
-        for i, synergy in enumerate(synergies, 1):
-            if synergy.strip():
-                logger.info(f"  [{i}] {synergy}")
+    logger.info("【任务 3】全量提取海克斯协同方案")
+
+    # 初始化最终数据字典
+    final_data = {}
+
+    # 获取英雄列表
+    champions = champion_result.get("champions", [])
+    if champions:
+        # 测试模式：只抓取前 3 个英雄（移除 [:3] 以抓取全量 172 个英雄）
+        test_champions = champions[:3]  # 移除 [:3] 以抓取全量 172 个英雄
+        logger.info(f"开始遍历 {len(test_champions)} 个英雄的海克斯协同方案...")
+
+        for champ in test_champions:
+            champ_name = champ["name"]
+            champ_url = champ["url"]
+            logger.info(f"正在提取 [{champ_name}] 的协同方案：{champ_url}")
+
+            synergies = spider.extract_hextech_synergies(champ_url)
+            final_data[champ_name] = synergies
+
+            logger.info(f"[{champ_name}] 提取完成，共 {len(synergies)} 个协同方案")
+
+        # 持久化到 JSON 文件
+        os.makedirs("run/data", exist_ok=True)
+        output_path = "run/data/apex_hextech_data.json"
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(final_data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"数据已保存至：{output_path}")
+        logger.info(f"总计抓取 {len(final_data)} 个英雄的海克斯数据")
     else:
-        logger.warning("未找到符合条件的协同方案")
+        logger.error("英雄列表为空，无法提取协同方案")
 
     return {
-        "champions": champion_result
+        "champions": champion_result,
+        "hextech_data": final_data
     }
 
 
