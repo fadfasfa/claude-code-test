@@ -256,6 +256,20 @@ async def api_champion_hextechs(name: str):
     df = get_df()
     return JSONResponse(content=process_hextechs_data(df, name))
 
+@app.get("/api/synergies/{champ_id}")
+async def api_synergies(champ_id: str):
+    """获取英雄协同数据 API。读取 apex_hextech_data.json 返回对应英雄的 synergies 列表。"""
+    json_path = get_resource_path("data/apex_hextech_data.json")
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        synergy_data = data.get(champ_id, {})
+        synergies = synergy_data.get("synergies", [])
+        return JSONResponse(content={"synergies": synergies})
+    except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
+        logging.warning(f"读取协同数据失败：{e}")
+        return JSONResponse(content={"synergies": []})
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)

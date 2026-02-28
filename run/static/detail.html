@@ -106,6 +106,13 @@
                 </div>
             </div>
         </section>
+
+        <section class="glass-panel rounded-2xl p-6 mt-8">
+            <h2 class="text-xl font-bold text-white mb-4">📚 英雄协同推荐</h2>
+            <div id="synergyContainer" class="space-y-2">
+                <div class="text-center py-10 text-gray-400">加载中...</div>
+            </div>
+        </section>
     </main>
 
     <script>
@@ -114,6 +121,7 @@
         const WS_URL = window.location.protocol === 'file:' ? 'ws://localhost:8000' : 'ws://' + (window.location.host || 'localhost:8000');
         let hextechData = null;
         let currentView = 'all';
+        let synergyData = null;
 
         // 解析 URL 参数并渲染头部
         const urlParams = new URLSearchParams(window.location.search);
@@ -270,8 +278,41 @@
         // 初始化
         window.onload = () => {
             loadHextechs();
+            loadSynergies();
             connectWS();
         };
+
+        // 加载协同数据
+        async function loadSynergies() {
+            const container = document.getElementById('synergyContainer');
+            if (!heroId) {
+                container.innerHTML = '<div class="text-center py-10 text-gray-400">无英雄 ID</div>';
+                return;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId)}`);
+                const data = await res.json();
+                synergyData = data.synergies || [];
+
+                if (synergyData.length === 0) {
+                    container.innerHTML = '<div class="text-center py-10 text-gray-400">暂无协同数据</div>';
+                    return;
+                }
+
+                container.innerHTML = '<ul class="space-y-2">' +
+                    synergyData.map(item => `<li class="glass-panel p-3 rounded-lg text-sm text-gray-300">${escapeHtml(item)}</li>`).join('') +
+                    '</ul>';
+            } catch (err) {
+                console.error('加载协同数据失败:', err);
+                container.innerHTML = '<div class="text-center py-10 text-red-400">加载失败</div>';
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
     </script>
 </body>
 </html>
