@@ -5,6 +5,33 @@ import os
 import json
 from typing import List, Dict, Any
 
+# 导入英雄映射数据加载函数
+from hero_sync import load_champion_core_data
+
+# 全局缓存映射数据
+_champion_core_cache = None
+
+def _get_champion_maps():
+    """获取英雄名称到 ID/英文名的映射缓存"""
+    global _champion_core_cache
+    if _champion_core_cache is None:
+        try:
+            _champion_core_cache = load_champion_core_data()
+        except Exception as e:
+            logging.warning(f"加载英雄核心数据失败：{e}")
+            _champion_core_cache = {}
+
+    # 构建 name_to_id 和 name_to_en 映射
+    name_to_id = {}
+    name_to_en = {}
+    for key, value in _champion_core_cache.items():
+        name = value.get('name', '')
+        en_name = value.get('en_name', '')
+        if name:
+            name_to_id[name] = key
+            name_to_en[name] = en_name
+    return name_to_id, name_to_en
+
 
 def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
     """
@@ -17,6 +44,9 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
     """
     if df.empty:
         return []
+
+    # 获取英雄映射数据
+    name_to_id, name_to_en = _get_champion_maps()
 
     try:
         # 创建副本避免修改原始数据
