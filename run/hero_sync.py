@@ -28,6 +28,7 @@ LOG_FILE = os.path.join(CONFIG_DIR, "hextech_system.log")
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
 CORE_DATA_FILE = os.path.join(CONFIG_DIR, "Champion_Core_Data.json")
 AUGMENT_MAP_FILE = os.path.join(CONFIG_DIR, "Augment_Full_Map.json")
+AUGMENT_ICON_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
 
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(ASSET_DIR, exist_ok=True)
@@ -59,7 +60,7 @@ def get_advanced_session():
         status_forcelist=[500, 502, 503, 504],
         allowed_methods=["GET"]
     )
-    adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
+    adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=25, pool_maxsize=25)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
@@ -106,6 +107,7 @@ def sync_hero_data():
                 "https://apexlol.info/data/aram-mayhem-augments.zh_cn.json"
             ]
             aug_map = {}
+            aug_icon_map = {}
             rarity_to_tier = {0: "白银", 1: "黄金", 2: "棱彩", 3: "棱彩"}
             for src in aug_sources:
                 try:
@@ -122,6 +124,10 @@ def sync_hero_data():
                         tier_str = rarity_to_tier.get(v.get('rarity', -1))
                         if name and tier_str:
                             aug_map[name] = tier_str
+                        # 提取海克斯图标路径
+                        icon_path = v.get('iconSmall') or v.get('iconPath') or v.get('icon')
+                        if name and icon_path:
+                            aug_icon_map[name] = icon_path
                     if aug_map:
                         break
                 except (Exception):
@@ -136,6 +142,11 @@ def sync_hero_data():
                 with open(tmp_aug, "w", encoding="utf-8") as f:
                     json.dump(aug_map, f, ensure_ascii=False, indent=4)
                 shutil.move(tmp_aug, AUGMENT_MAP_FILE)
+            if aug_icon_map:
+                tmp_icon = AUGMENT_ICON_FILE + ".tmp"
+                with open(tmp_icon, "w", encoding="utf-8") as f:
+                    json.dump(aug_icon_map, f, ensure_ascii=False, indent=4)
+                shutil.move(tmp_icon, AUGMENT_ICON_FILE)
             tmp_ver = VERSION_FILE + ".tmp"
             with open(tmp_ver, "w", encoding="utf-8") as f:
                 f.write(curr_ver)
