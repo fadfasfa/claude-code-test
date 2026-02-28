@@ -64,7 +64,7 @@ class ApexSpider:
             headless: 是否无头模式，默认 True
         """
         self.headless = headless
-        self.base_url = "https://apexlol.info"
+        self.base_url = "https://apexlol.info/zh"
         self.user_agent = get_random_user_agent()
         logger.info(f"ApexSpider 初始化完成，User-Agent: {self.user_agent[:50]}...")
 
