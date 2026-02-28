@@ -137,6 +137,24 @@ def sync_hero_data():
             with open(tmp_core, "w", encoding="utf-8") as f:
                 json.dump(core_data, f, ensure_ascii=False, indent=4)
             shutil.move(tmp_core, CORE_DATA_FILE)
+
+            # ========== 本地头像静默补全逻辑 ==========
+            # 遍历核心数据，检查并下载缺失的英雄头像
+            for key, v in core_data.items():
+                asset_path = os.path.join(ASSET_DIR, f"{key}.png")
+                if not os.path.exists(asset_path):
+                    try:
+                        # 构造官方图片 URL
+                        img_url = f"https://ddragon.leagueoflegends.com/cdn/{curr_ver}/img/champion/{v['en_name']}.png"
+                        img_resp = session.get(img_url, verify=True, timeout=10)
+                        if img_resp.status_code == 200:
+                            with open(asset_path, "wb") as img_f:
+                                img_f.write(img_resp.content)
+                    except (Exception) as e:
+                        # 单张图片下载失败不阻塞主流程
+                        logger.warning(f"头像下载失败：{v['name']} ({key}) - {e}")
+                        pass
+
             if aug_map:
                 tmp_aug = AUGMENT_MAP_FILE + ".tmp"
                 with open(tmp_aug, "w", encoding="utf-8") as f:
