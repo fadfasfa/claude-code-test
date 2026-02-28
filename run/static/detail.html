@@ -285,33 +285,47 @@
         // 加载协同数据
         async function loadSynergies() {
             const container = document.getElementById('synergyContainer');
+            // 首先验证 heroId 是否有效
             if (!heroId) {
+                console.error('[Synergy] 未获取到英雄 ID (champ_id)');
                 container.innerHTML = '<div class="text-center py-10 text-gray-400">无英雄 ID</div>';
                 return;
             }
+            console.log('[Synergy] 开始加载英雄协同数据，champ_id =', heroId);
             try {
                 const res = await fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId)}`);
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                }
                 const data = await res.json();
                 synergyData = data.synergies || [];
+                console.log('[Synergy] 加载完成，共', synergyData.length, '条记录');
 
                 if (synergyData.length === 0) {
                     container.innerHTML = '<div class="text-center py-10 text-gray-400">暂无协同数据</div>';
                     return;
                 }
 
-                container.innerHTML = '<ul class="space-y-2">' +
-                    synergyData.map(item => `<li class="glass-panel p-3 rounded-lg text-sm text-gray-300">${escapeHtml(item)}</li>`).join('') +
-                    '</ul>';
+                // 生成协同列表 HTML
+                const listHtml = synergyData.map(item =>
+                    `<li class="glass-panel p-3 rounded-lg text-sm text-gray-300">${escapeHtml(item)}</li>`
+                ).join('');
+                container.innerHTML = '<ul class="space-y-2">' + listHtml + '</ul>';
             } catch (err) {
-                console.error('加载协同数据失败:', err);
+                console.error('[Synergy] 加载协同数据失败:', err);
                 container.innerHTML = '<div class="text-center py-10 text-red-400">加载失败</div>';
             }
         }
 
         function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return String(text).replace(/[&<>"']/g, m => map[m]);
         }
     </script>
 </body>
