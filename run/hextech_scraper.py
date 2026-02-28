@@ -27,7 +27,7 @@ def check_execution_permission():
             last_run = json.load(f).get("last_success_time", 0)
             if datetime.fromtimestamp(now).date() > datetime.fromtimestamp(last_run).date():
                 return True, "跨天自动同步..."
-            if (now - last_run) / 3600 >= 8:
+            if (now - last_run) / 3600 >= 4:
                 return True, "数据过时，执行同步..."
             return False, "数据尚在有效期内，跳过抓取。"
     except Exception:
