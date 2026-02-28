@@ -351,13 +351,13 @@ def main():
                     continue
 
         # 持久化到 JSON 文件
-        os.makedirs("run/data", exist_ok=True)
-        output_path = "run/data/apex_hextech_data.json"
+        os.makedirs("run/config", exist_ok=True)
+        output_path = "run/config/Champion_Synergy.json"
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(final_data, f, ensure_ascii=False, indent=2)
 
-        logger.info(f"数据已保存至：{output_path}")
-        logger.info(f"总计抓取 {len(final_data)} 个英雄的海克斯数据")
+        logger.info(f"Data saved to: {output_path}")
+        logger.info(f"Total heroes captured: {len(final_data)}")
     else:
         logger.error("英雄列表为空，无法提取协同方案")
 
