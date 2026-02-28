@@ -6,7 +6,7 @@
 from pathlib import Path
 
 # 动态生成 BASE_DIR 路径 (基于物理路径 C:\QuantProject)
-BASE_DIR = Path(r"C:\QuantProject")
+BASE_DIR = Path(r"C:\Users\apple\claude code test\QuantProject")
 
 # 数据目录与日志文件路径
 DATA_DIR = BASE_DIR / "data"
