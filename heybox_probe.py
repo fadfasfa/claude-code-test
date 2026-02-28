@@ -9,6 +9,7 @@ import asyncio
 import json
 import random
 import logging
+import time
 from pathlib import Path
 
 import httpx
@@ -24,8 +25,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 目标 URL（使用最新版本号）
-TARGET_URL = "https://api.xiaoheihe.cn/game/web/all_recommend/games/"
+# 目标 URL 列表（尝试多个端点）
+TARGET_ENDPOINTS = [
+    "https://api.xiaoheihe.cn/game/web/all_recommend/games/",
+    "https://api.xiaoheihe.cn/game/web/game_recommend/",
+    "https://api.xiaoheihe.cn/webapi/game/web/all_recommend/games/",
+]
 
 # User-Agent 池（Scraper-Ninja 逻辑）
 USER_AGENTS = [
@@ -66,56 +71,65 @@ async def probe_heybox():
         "limit": "20",
         "offset": "0",
         "is_new_user": "0",
+        # 添加时间戳防止缓存
+        "_timestamp": int(time.time() * 1000),
     }
 
     logger.info(f"使用 User-Agent: {random_ua[:50]}...")
-    logger.info(f"目标 URL: {TARGET_URL}")
-    logger.info(f"请求参数：{params}")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            response = await client.get(TARGET_URL, headers=headers, params=params)
+    # 尝试多个端点
+    for endpoint in TARGET_ENDPOINTS:
+        logger.info(f"探测端点：{endpoint}")
+        logger.info(f"请求参数：{params}")
 
-            # 记录响应头信息
-            logger.info(f"响应状态码：{response.status_code}")
-            logger.info(f"响应头：{dict(response.headers)}")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.get(endpoint, headers=headers, params=params)
 
-            # 处理 403 和签名错误
-            if response.status_code == 403:
-                logger.error("⚠️  收到 403 Forbidden 响应")
-                logger.error(f"完整响应头：{dict(response.headers)}")
-                return None
+                # 记录响应头信息
+                logger.info(f"响应状态码：{response.status_code}")
+                logger.info(f"响应头：{dict(response.headers)}")
 
-            # 检查签名错误（通常返回特定错误码）
-            if response.status_code == 200:
-                data = response.json()
-                # 检查是否有签名相关的错误码
-                if data.get('code') not in [0, None, '0']:
-                    logger.error(f"⚠️  接口返回错误码：{data.get('code')}")
-                    logger.error(f"错误信息：{data.get('message', 'Unknown')}")
+                # 处理 403 和签名错误
+                if response.status_code == 403:
+                    logger.error("⚠️  收到 403 Forbidden 响应")
                     logger.error(f"完整响应头：{dict(response.headers)}")
-                    return None
+                    continue
 
-            response.raise_for_status()
+                # 检查签名错误（通常返回特定错误码）
+                if response.status_code == 200:
+                    data = response.json()
+                    # 检查是否有签名相关的错误码
+                    if data.get('code') not in [0, None, '0']:
+                        logger.error(f"⚠️  接口返回错误码：{data.get('code')}")
+                        logger.error(f"错误信息：{data.get('message', 'Unknown')}")
+                        logger.error(f"完整响应头：{dict(response.headers)}")
+                        continue
 
-            # 获取 JSON 数据
-            json_data = response.json()
+                response.raise_for_status()
 
-            logger.info("✓ 成功获取数据")
+                # 获取 JSON 数据
+                json_data = response.json()
 
-            return json_data
+                logger.info("✓ 成功获取数据")
 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP 错误：{e}")
-            logger.error(f"完整响应头：{dict(e.response.headers)}")
-            return None
-        except httpx.RequestError as e:
-            logger.error(f"请求错误：{e}")
-            return None
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON 解析错误：{e}")
-            logger.error(f"响应内容：{response.text[:500]}")
-            return None
+                # 检查 result 是否为空
+                if json_data.get('result'):
+                    logger.info("✓ result 字段包含数据")
+                    return json_data
+                else:
+                    logger.warning("⚠️  result 字段为空，尝试下一个端点")
+
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP 错误：{e}")
+                logger.error(f"完整响应头：{dict(e.response.headers)}")
+            except httpx.RequestError as e:
+                logger.error(f"请求错误：{e}")
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON 解析错误：{e}")
+                logger.error(f"响应内容：{response.text[:500]}")
+
+    return None
 
 
 def save_data(data: dict, output_path: str = "data/heybox_sample.json"):
