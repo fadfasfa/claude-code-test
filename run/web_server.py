@@ -179,15 +179,45 @@ def urllib3_disable_warnings():
         pass
 
 
+# ── CSV file watcher loop ─────────────────────────────────────────────────────
+
+_last_csv_mtime = 0.0
+
+async def csv_watcher_loop():
+    """
+    Async CSV file watcher loop. Polls the latest CSV file every 3 seconds
+    and broadcasts a 'data_updated' message via WebSocket when the file is modified.
+    """
+    global _last_csv_mtime
+    while True:
+        try:
+            latest = get_latest_csv()
+            if latest and os.path.exists(latest):
+                current_mtime = os.path.getmtime(latest)
+                if current_mtime > _last_csv_mtime and _last_csv_mtime != 0.0:
+                    logging.info(f"CSV 文件更新：{os.path.basename(latest)}")
+                    await manager.broadcast({'type': 'data_updated'})
+                _last_csv_mtime = current_mtime
+        except (OSError, IOError) as e:
+            logging.warning(f"CSV watcher error: {e}")
+        await asyncio.sleep(3)
+
+
 # ── FastAPI app + lifespan ────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(lcu_polling_loop())
+    task1 = asyncio.create_task(lcu_polling_loop())
+    task2 = asyncio.create_task(csv_watcher_loop())
     yield
-    task.cancel()
+    task1.cancel()
+    task2.cancel()
     try:
-        await task
+        await task1
+    except asyncio.CancelledError:
+        pass
+    try:
+        await task2
     except asyncio.CancelledError:
         pass
 
