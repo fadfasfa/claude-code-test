@@ -26,9 +26,7 @@ def check_dangerous_calls(code: str, exempted_modules: List[str] = None) -> Tupl
         if isinstance(node, ast.Call):
             call_str = get_call_string(node)
             if call_str in DANGEROUS_CALLS:
-                module_name = get_module_name(call_str)
-                if module_name and module_name in exempted_modules:
-                    continue
+                # 关键：函数调用必须强制拦截，不允许因为模块豁免而放行
                 violations.append(f"禁止调用 {call_str}: {DANGEROUS_CALLS[call_str]}")
 
         if isinstance(node, ast.Import):

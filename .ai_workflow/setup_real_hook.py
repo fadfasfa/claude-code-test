@@ -45,13 +45,14 @@ from pre_execution_check import check_dangerous_calls
 
 file_path = r'$file'.replace(chr(92), '/')
 try:
+    # 豁免 .ai_workflow/ 和 scripts/ 目录中的文件（基础设施代码允许使用危险调用）
+    if file_path.startswith('.ai_workflow/') or file_path.startswith('scripts/'):
+        sys.exit(0)
+
     with open(file_path, 'r', encoding='utf-8') as f:
         code = f.read()
-    # Apply exemption rules for infrastructure files
-    exempted_modules = []
-    if file_path.startswith('.ai_workflow/') or file_path.startswith('scripts/'):
-        exempted_modules = ['subprocess', 'os']
-    safe, violations = check_dangerous_calls(code, exempted_modules=exempted_modules)
+    # 普通代码不允许任何危险调用
+    safe, violations = check_dangerous_calls(code, exempted_modules=[])
     if not safe:
         print(f'[HOOK-INTERCEPT] Git Hook AST intercept [{file_path}]:')
         for violation in violations:

@@ -120,14 +120,18 @@ def verify_contract_identity(contract_data: dict) -> str:
         payload_str = json.dumps(data_to_verify, sort_keys=True, separators=(',', ':'))
         expected_signature = hmac.new(secret.encode('utf-8'), payload_str.encode('utf-8'), hashlib.sha256).hexdigest()
 
-        # 防止时序攻击的恒定时间比较，同时清理签名中的隐藏空白字符
-        if hmac.compare_digest(expected_signature.strip(), provided_signature.strip()):
+        # 防止时序攻击的恒定时间比较，同时清理签名中的隐藏空白字符（换行符、空格等）
+        # 这很关键：Windows CRLF 和 Linux LF 差异可能导致签名末尾包含换行符
+        expected_sig_clean = expected_signature.strip()
+        provided_sig_clean = provided_signature.strip()
+
+        if hmac.compare_digest(expected_sig_clean, provided_sig_clean):
             return declared_node
         else:
             if contract_data.get("__from_git_history"):
                 print("\n[WARNING] Git history contract detected, signature invalid, auto-downgrade to QWEN_API per zero-trust principle\n")
                 return "QWEN_API"
-            print("\n[WARNING] Contract HMAC signature verification failed, file tampered! Forced downgrade to QWEN_API.\n")
+            print("\n[WARNING] Contract HMAC signature verification failed (signature mismatch or key rotation). Forced downgrade to QWEN_API.\n")
             return "QWEN_API"
 
     except Exception as e:
@@ -143,14 +147,17 @@ def get_claude_auth_from_git() -> dict:
         try:
             with open(contract_path, "rb") as f:
                 raw = f.read()
+            # 优先尝试 UTF-8 解码
             try:
                 text = raw.decode('utf-8').strip()
             except UnicodeDecodeError:
+                # 退回到 UTF-16
                 try:
                     text = raw.decode('utf-16').strip()
                     if text.startswith('\ufeff'):
                         text = text[1:]
                 except UnicodeDecodeError:
+                    # 最后尝试 GBK（容错）
                     text = raw.decode('gbk', errors="replace")
             return json.loads(text)
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
@@ -306,10 +313,6 @@ def main():
 
         unauthorized, pending_ast = categorize_changes(changes, whitelist, auth_paths, executor_node)
 
-        if executor_node != "QWEN_API":
-            pending_ast.clear()
-            unauthorized.clear()
-
         if pending_ast:
             print(f"[SCAN] Starting deep review, scanning {len(pending_ast)} files...")
             if ".ai_workflow" not in sys.path:
@@ -320,7 +323,9 @@ def main():
                 if not os.path.exists(ast_file):
                     continue
 
-                if executor_node != "QWEN_API":
+                # 关键：.ai_workflow/ 和 scripts/ 目录中的文件被豁免 AST 扫描
+                # 这些目录中的基础设施代码允许使用危险调用
+                if ast_file.startswith('.ai_workflow/') or ast_file.startswith('scripts/'):
                     continue
 
                 git_path = ast_file.replace("\\", "/")
@@ -333,15 +338,11 @@ def main():
                 with open(ast_file, "r", encoding="utf-8") as f:
                     new_code = f.read()
 
-                exempted_modules = []
-                if executor_node == "CLAUDE_API":
-                    if ast_file.startswith('.ai_workflow/') or ast_file.startswith('scripts/'):
-                        exempted_modules = ['subprocess', 'os']
-
-                is_safe, violations = check_dangerous_calls(new_code, exempted_modules=exempted_modules)
+                # 对于普通代码，不允许任何危险调用
+                is_safe, violations = check_dangerous_calls(new_code, exempted_modules=[])
                 if not is_safe:
                     if old_code is not None:
-                        old_is_safe, _ = check_dangerous_calls(old_code, exempted_modules=exempted_modules)
+                        old_is_safe, _ = check_dangerous_calls(old_code, exempted_modules=[])
                         if old_is_safe:
                             print(f"[INTERCEPT] {ast_file} triggered new dangerous action: {violations}")
                             unauthorized[ast_file] = "DANGEROUS_CODE"
