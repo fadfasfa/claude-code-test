@@ -7,7 +7,6 @@ ApexLoL 信息爬虫 - Playwright 渲染层独立爬虫
 """
 
 import logging
-import os
 import random
 import time
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
@@ -216,19 +215,8 @@ class ApexSpider:
                     result["error"] = "页面加载失败"
                     return result
 
-                # 全景 DOM 树快照落盘探针
-                os.makedirs("run/data", exist_ok=True)
-                with open("run/data/dom_snapshot_champions.html", "w", encoding="utf-8") as f:
-                    f.write(html)
-                logger.info("已将全景 DOM 树快照落盘至 run/data/dom_snapshot_champions.html")
-
-                # 提取英雄数据（选择器需根据实际页面结构调整）
-                selectors_to_try = [
-                    ".champion-item",
-                    ".champion",
-                    "[data-champion]",
-                    ".champion-list li",
-                ]
+                # 提取英雄数据（精准选择器）
+                selectors_to_try = [".champ-card .name"]
 
                 for selector in selectors_to_try:
                     champions = self.extract_all_text(page, selector, url)
@@ -346,25 +334,24 @@ def main():
     else:
         logger.error(f"英雄列表爬取失败：{champion_result.get('error')}")
 
-    # 爬取比赛历史
-    logger.info("-" * 30)
-    logger.info("【任务 2】爬取比赛历史")
-    match_result = spider.crawl_match_history()
-
-    if match_result["success"]:
-        logger.info(f"比赛历史爬取成功，共 {len(match_result['matches'])} 条数据")
-        for match in match_result["matches"][:3]:  # 只显示前 3 个
-            logger.info(f"  - {match}")
-    else:
-        logger.error(f"比赛历史爬取失败：{match_result.get('error')}")
+    # 爬取比赛历史（该站点无 matches 路由，已禁用）
+    # logger.info("-" * 30)
+    # logger.info("【任务 2】爬取比赛历史")
+    # match_result = spider.crawl_match_history()
+    #
+    # if match_result["success"]:
+    #     logger.info(f"比赛历史爬取成功，共 {len(match_result['matches'])} 条数据")
+    #     for match in match_result["matches"][:3]:
+    #         logger.info(f"  - {match}")
+    # else:
+    #     logger.error(f"比赛历史爬取失败：{match_result.get('error')}")
 
     logger.info("=" * 50)
     logger.info("爬虫执行完成")
     logger.info("=" * 50)
 
     return {
-        "champions": champion_result,
-        "matches": match_result
+        "champions": champion_result
     }
 
 
