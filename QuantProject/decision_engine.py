@@ -3,6 +3,7 @@
 核心模块：全资产仓位决策引擎 (decision_engine.py)
 功能：读取本地数据，计算策略信号，输出 ASCII 兼容报告
 """
+import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -11,6 +12,17 @@ import warnings
 
 # 引入统一配置
 from config import DATA_DIR, LOG_FILE, FILES, ALLOCATION_WEIGHTS
+
+# 配置调试日志
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(Path(DATA_DIR).parent / 'decision_engine.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # 严格物理环境与容错基准
 warnings.filterwarnings('ignore')
@@ -22,12 +34,21 @@ except Exception:
 def load_stooq_data(asset_name):
     """安全读取并重采样本地数据 - 模糊列名匹配"""
     path = Path(DATA_DIR) / FILES[asset_name]
+    logger.debug(f"[{asset_name}] 加载数据文件：{path}")
+
     if not path.exists():
+        logger.warning(f"[{asset_name}] 数据文件不存在：{path}")
         return None
+
     try:
-        df = pd.read_csv(path)
+        # [性能优化] 分块读取大文件，减少内存占用
+        df = pd.read_csv(path, low_memory=True)
+        logger.debug(f"[{asset_name}] 读取完成，行数：{len(df)}, 列数：{len(df.columns)}")
+
         if df.empty:
+            logger.warning(f"[{asset_name}] 数据文件为空")
             return None
+
         # [多语言兼容] 模糊列名映射
         d_col = None
         c_col = None
@@ -39,34 +60,45 @@ def load_stooq_data(asset_name):
                 c_col = col
 
         if d_col is None or c_col is None:
-            print(f"[ERROR] {asset_name} 列名匹配失败：{list(df.columns)}")
+            logger.error(f"[{asset_name}] 列名匹配失败：{list(df.columns)}")
             return None
 
         df[d_col] = pd.to_datetime(df[d_col], errors='coerce')
         df = df.dropna(subset=[d_col])
+
         if df.empty:
+            logger.warning(f"[{asset_name}] 日期转换后数据为空")
             return None
+
         df = df.set_index(d_col).sort_index()
         m = df[c_col].resample('ME').last()
+        logger.debug(f"[{asset_name}] 重采样完成，数据点数：{len(m)}, 最新日期：{m.index[-1]}")
         return m
-    except (FileNotFoundError, pd.errors.EmptyDataError):
+    except (FileNotFoundError, pd.errors.EmptyDataError) as e:
+        logger.warning(f"[{asset_name}] 文件读取异常：{type(e).__name__}")
         return None
     except Exception as e:
-        print(f"[ERROR] 数据加载失败 {asset_name}: {type(e).__name__} - {e}")
+        logger.error(f"[{asset_name}] 数据加载失败：{type(e).__name__} - {e}")
         return None
 
 def main():
+    logger.info("=" * 60)
+    logger.info("启动全资产仓位决策引擎")
+    logger.info("=" * 60)
+
     print("\n" + "="*115)
     raw_input = input(">>> [资金管理] 请输入您的实盘总资金 (按回车默认纯百分比模式): ")
     raw_input = raw_input.strip().replace(',', '')
-    
+
     try:
         total_capital = float(raw_input) if raw_input else 0.0
+        logger.info(f"用户输入总资金：${total_capital:,.2f}")
     except ValueError:
+        logger.warning(f"用户输入格式错误：'{raw_input}'，使用默认值 0.0")
         print("[-] 输入格式错误，系统退回纯百分比模式。")
         total_capital = 0.0
 
-    total_deployed_cash = 0.0  
+    total_deployed_cash = 0.0
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     report_lines = []
     
@@ -77,14 +109,21 @@ def main():
     report_lines.append("-" * 115)
 
     # 1. SPY: Sigmoid Smooth
+    logger.info("开始处理 SPY (Sigmoid Smooth 策略)...")
     spy = load_stooq_data('SPY')
     if spy is not None and len(spy) >= 12:
         last, ma12 = spy.iloc[-1], spy.rolling(12).mean().iloc[-1]
         dev = (last / ma12) - 1
         w = np.clip(1 / (1 + np.exp(-50 * dev)), 0, 1)
-        if dev >= 0.1: w = 1.0
-        elif dev <= -0.1: w = 0.0
-        
+        if dev >= 0.1:
+            w = 1.0
+            logger.debug(f"[SPY] 触发强多头条件：偏离度 {dev:.2%} >= 10%")
+        elif dev <= -0.1:
+            w = 0.0
+            logger.debug(f"[SPY] 触发强空头条件：偏离度 {dev:.2%} <= -10%")
+        else:
+            logger.debug(f"[SPY] Sigmoid 平滑：偏离度={dev:.2%}, 权重={w:.2%}")
+
         cap_limit = total_capital * ALLOCATION_WEIGHTS['SPY']
         target_amt = w * cap_limit
         total_deployed_cash += target_amt
@@ -92,6 +131,7 @@ def main():
         report_lines.append(f"{'SPY':<6} | {'Sigmoid':<16} | {ALLOCATION_WEIGHTS['SPY']:<8.2%} | {last:>8.2f} | {w:>8.1%} | {amt_str:>16} | 偏离度: {dev:.2%}")
 
     # 2. QQQ & 3. EWJ: Combo Adaptive
+    logger.info("开始处理 QQQ 和 EWJ (Combo Adaptive 策略)...")
     for asset in ['QQQ', 'EWJ']:
         data = load_stooq_data(asset)
         if data is not None and len(data) >= 12:
@@ -121,6 +161,7 @@ def main():
             report_lines.append(f"{asset:<6} | {'Combo Adaptive':<16} | {ALLOCATION_WEIGHTS[asset]:<8.2%} | {last:>8.2f} | {w_combo:>8.1%} | {amt_str:>16} | Vol:{vol:.1%} Alpha:{alpha:.2f}")
 
     # 4. XAU: Trend Discrete
+    logger.info("开始处理 XAU (Trend Discrete 策略)...")
     xau = load_stooq_data('XAU')
     if xau is not None and len(xau) >= 15:
         last = xau.iloc[-1]
@@ -138,6 +179,7 @@ def main():
         report_lines.append(f"{'XAU':<6} | {'Trend Discrete':<16} | {ALLOCATION_WEIGHTS['XAU']:<8.2%} | {last:>8.2f} | {w:>8.1%} | {amt_str:>16} | MA15底线: {m15:.2f}")
 
     # 5. BTC: Trend Discrete Fast (MA6)
+    logger.info("开始处理 BTC (Trend Fast MA6 策略)...")
     btc = load_stooq_data('BTC')
     if btc is not None and len(btc) >= 6:
         last, ma6_b = btc.iloc[-1], btc.rolling(6).mean().iloc[-1]
