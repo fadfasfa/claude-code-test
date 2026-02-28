@@ -140,7 +140,7 @@ class HextechUI:
         )
 
     def check_and_sync_data(self):
-        """无条件启动数据同步线程，将过期决策权下放给 scraper."""
+        # 无条件触发后台静默同步，保证每次启动UI都是最新数据
         t = threading.Thread(target=self._silent_sync, daemon=True)
         t.start()
 
