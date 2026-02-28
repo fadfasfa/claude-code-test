@@ -7,6 +7,7 @@ ApexLoL 信息爬虫 - Playwright 渲染层独立爬虫
 """
 
 import logging
+import os
 import random
 import time
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
@@ -245,6 +246,52 @@ class ApexSpider:
 
         return result
 
+    def probe_champion_detail(self, detail_url: str) -> bool:
+        """
+        探针方法：获取英雄详情页的 DOM 快照
+
+        Args:
+            detail_url: 英雄详情页 URL
+
+        Returns:
+            成功返回 True，失败返回 False
+        """
+        logger.info(f"开始执行英雄详情页探针：{detail_url}")
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=self.headless)
+                context = browser.new_context(
+                    user_agent=self.user_agent,
+                    viewport={"width": 1920, "height": 1080}
+                )
+                page = context.new_page()
+
+                # 加载详情页
+                html = self.fetch_page(detail_url, page)
+                if html is None:
+                    logger.error(f"详情页加载失败：{detail_url}")
+                    browser.close()
+                    return False
+
+                # 确保目录存在
+                output_dir = "run/data"
+                os.makedirs(output_dir, exist_ok=True)
+
+                # 落盘 DOM 快照
+                output_path = os.path.join(output_dir, "dom_snapshot_detail.html")
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(html)
+
+                logger.info(f"DOM 快照已成功保存至：{output_path}")
+
+                browser.close()
+                return True
+
+        except Exception as e:
+            logger.error(f"探针执行异常 - URL: {detail_url}, 错误：{str(e)}")
+            return False
+
     def crawl_match_history(self, match_id: str = None) -> dict:
         """
         爬取比赛历史数据
@@ -349,6 +396,16 @@ def main():
     logger.info("=" * 50)
     logger.info("爬虫执行完成")
     logger.info("=" * 50)
+
+    # 执行英雄详情页探针测试（不祥之刃）
+    logger.info("-" * 30)
+    logger.info("【任务 3】执行英雄详情页探针")
+    test_url = "https://apexlol.info/zh/champions/Katarina"
+    probe_success = spider.probe_champion_detail(test_url)
+    if probe_success:
+        logger.info("探针执行成功，DOM 快照已落盘")
+    else:
+        logger.error("探针执行失败")
 
     return {
         "champions": champion_result
