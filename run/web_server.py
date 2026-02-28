@@ -53,7 +53,7 @@ def get_df() -> pd.DataFrame:
     if latest != _csv_cache.path or current_mtime != _csv_cache.mtime:
         try:
             df = pd.read_csv(latest, dtype={"英雄ID": str})
-            df.columns = df.columns.str.strip()  # 清洗表头空格
+            df.columns = df.columns.str.replace(' ', '')  # 暴力清除表头所有空格（包括中间空格）
             df["英雄ID"] = df["英雄ID"].str.strip().str.replace(".0", "", regex=False)
             _csv_cache.path = latest
             _csv_cache.mtime = current_mtime

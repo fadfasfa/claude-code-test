@@ -122,7 +122,7 @@ class HextechUI:
         latest = get_latest_csv()
         if not latest: return pd.DataFrame()
         df = pd.read_csv(latest, dtype={'英雄 ID': str})
-        df.columns = df.columns.str.strip()  # 清洗表头空格
+        df.columns = df.columns.str.replace(' ', '')  # 暴力清除表头所有空格（包括中间空格）
         df['英雄 ID'] = df['英雄 ID'].str.strip().str.replace('.0', '', regex=False)
         return df
 
