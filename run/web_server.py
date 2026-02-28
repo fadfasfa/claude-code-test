@@ -19,6 +19,25 @@ from fastapi.staticfiles import StaticFiles
 
 from data_processor import process_champions_data, process_hextechs_data
 from hextech_query import get_latest_csv
+from hero_sync import load_champion_core_data
+
+# 全局英雄核心数据缓存
+_champion_core_cache = None
+
+def get_champion_name(champ_id: int) -> str:
+    """根据英雄 ID 获取中文名，使用缓存避免重复加载"""
+    global _champion_core_cache
+    if _champion_core_cache is None:
+        try:
+            _champion_core_cache = load_champion_core_data()
+        except Exception as e:
+            logging.warning(f"加载英雄核心数据失败：{e}")
+            _champion_core_cache = {}
+
+    champ_id_str = str(champ_id)
+    if champ_id_str in _champion_core_cache:
+        return _champion_core_cache[champ_id_str].get('name', '')
+    return ''
 
 logging.basicConfig(level=logging.INFO)
 
@@ -93,7 +112,7 @@ manager = ConnectionManager()
 
 # ── LCU polling (async) ───────────────────────────────────────────────────────
 
-_lcu_state = {"port": None, "token": None, "current_ids": set()}
+_lcu_state = {"port": None, "token": None, "current_ids": set(), "local_champ_id": None, "local_champ_name": None}
 
 def _scan_lcu_process() -> tuple:
     """Blocking psutil scan for LeagueClientUx.exe process."""
@@ -116,6 +135,11 @@ async def lcu_polling_loop():
     """
     Async LCU polling loop. Polls LCU session endpoint and broadcasts
     champion ID changes via WebSocket.
+
+    新增本地玩家专属追踪：
+    - 提取 myTeam 数组中 cellId 等于 localPlayerCellId 的玩家
+    - 若该玩家的 championId 大于 0，且与上一次循环的 championId 不同，则广播精准事件
+    - 使用状态机变量防止同一英雄重复广播
     """
     urllib3_disable_warnings()
     while True:
@@ -144,6 +168,8 @@ async def lcu_polling_loop():
 
             if res.status_code == 200:
                 data = res.json()
+
+                # ========== 全局可用英雄扫描（原有逻辑） ==========
                 available_ids = {
                     str(c["championId"])
                     for c in data.get("benchChampions", [])
@@ -162,6 +188,37 @@ async def lcu_polling_loop():
                         "champion_ids": list(available_ids),
                         "timestamp": time.time(),
                     })
+
+                # ========== 本地玩家英雄锁定精准追踪（新增逻辑） ==========
+                local_cell_id = data.get("localPlayerCellId")
+                local_champion_id = None
+
+                # 提取 myTeam 数组中 cellId 等于 localPlayerCellId 的玩家
+                for p in data.get("myTeam", []):
+                    if p.get("cellId") == local_cell_id:
+                        local_champion_id = p.get("championId")
+                        break
+
+                # 若该玩家的 championId 大于 0，且与上一次循环的 championId 不同
+                if local_champion_id and local_champion_id > 0:
+                    prev_champ_id = _lcu_state.get("local_champ_id")
+
+                    if prev_champ_id != local_champion_id:
+                        _lcu_state["local_champ_id"] = local_champion_id
+
+                        # 利用 core_data 字典将其转换为英雄中文名
+                        hero_name = get_champion_name(local_champion_id)
+                        _lcu_state["local_champ_name"] = hero_name
+
+                        logging.info(f"本地玩家锁定英雄：{hero_name} (ID={local_champion_id})")
+
+                        # 通过 WebSocket 追加广播精准事件
+                        await manager.broadcast({
+                            "type": "local_player_locked",
+                            "champion_id": local_champion_id,
+                            "hero_name": hero_name,
+                        })
+
             else:
                 _lcu_state["port"] = None
 
