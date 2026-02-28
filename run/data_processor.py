@@ -1,5 +1,8 @@
 import pandas as pd
 import numpy as np
+import logging
+import os
+import json
 from typing import List, Dict, Any
 
 
@@ -84,36 +87,61 @@ def _generate_hextech_icon_url(hextech_name: str, tier: str) -> str:
     """
     生成海克斯官方 CDN 图片 URL
 
-    格式：https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/cherry_[阶级英文]_[海克斯英文名去除空格与标点].png
+    优先读取 config/Augment_Icon_Map.json 获取图标路径。
+    若匹配到路径且以 /lol-game-data/assets/ 开头，返回 CommunityDragon CDN URL。
+    如果找不到，继续使用原有的 fallback 逻辑。
     """
-    # 阶级映射
+    # 尝试读取图标映射文件
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_dir = os.path.join(base_dir, "config")
+    icon_map_file = os.path.join(config_dir, "Augment_Icon_Map.json")
+
+    icon_path = None
+    if os.path.exists(icon_map_file):
+        try:
+            with open(icon_map_file, "r", encoding="utf-8") as f:
+                icon_map = json.load(f)
+            icon_path = icon_map.get(hextech_name)
+        except (Exception):
+            pass
+
+    # 如果找到图标路径且符合格式，转换为 CommunityDragon URL
+    if icon_path and icon_path.startswith("/lol-game-data/assets/"):
+        # 去掉 /lol-game-data/assets/ 前缀，转小写
+        relative_path = icon_path[len("/lol-game-data/assets/"):]
+        return f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/{relative_path.lower()}"
+
+    # Fallback 逻辑：生成默认 URL
     tier_map = {
         '棱彩': 'prismatic',
         '彩色': 'prismatic',
         '银色': 'silver',
         '金色': 'gold',
-        '棱彩': 'prismatic'
     }
-
     tier_en = tier_map.get(str(tier), 'prismatic')
-
-    # 去除空格与标点，转小写
     clean_name = ''.join(c.lower() for c in str(hextech_name) if c.isalnum())
-
     return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/cherry_{tier_en}_{clean_name}.png"
 
 
 def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[str, Any]]]:
     """
-    计算单英雄专属海克斯（返回包含 'comprehensive' 和 'winrate_only' 两个 key 的字典）
+    计算单英雄专属海克斯，返回包含四个独立数组 + 排序视图的字典
 
     算法逻辑：
     1. 过滤掉出场率低于 0.0005 的幽灵数据
     2. 综合 Z-Score 推荐：胜率差>=0 时 Z_胜率*0.85 + Z_出场*0.15；胜率差<0 时 Z_胜率*0.85 - Z_出场*0.15
     3. 纯胜率极值榜单（按海克斯胜率降序）
+    4. 按阶级分离（Prismatic/Gold/Silver），每个阶级同时支持综合得分和纯胜率排序
     """
     if df.empty:
-        return {'comprehensive': [], 'winrate_only': []}
+        return {
+            'top_10_overall': [],
+            'comprehensive': [],
+            'winrate_only': [],
+            'Prismatic': [],
+            'Gold': [],
+            'Silver': []
+        }
 
     try:
         # 创建副本避免修改原始数据
@@ -122,18 +150,39 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
         # 确保必要列存在
         required_cols = ['英雄名称', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差']
         if not all(col in data.columns for col in required_cols):
-            return {'comprehensive': [], 'winrate_only': []}
+            return {
+                'top_10_overall': [],
+                'comprehensive': [],
+                'winrate_only': [],
+                'Prismatic': [],
+                'Gold': [],
+                'Silver': []
+            }
 
         # ========== 过滤指定英雄 ==========
         hero_data = data[data['英雄名称'] == name].copy()
         if hero_data.empty:
-            return {'comprehensive': [], 'winrate_only': []}
+            return {
+                'top_10_overall': [],
+                'comprehensive': [],
+                'winrate_only': [],
+                'Prismatic': [],
+                'Gold': [],
+                'Silver': []
+            }
 
         # ========== 过滤幽灵数据（出场率 < 0.0005） ==========
         ghost_threshold = 0.0005
         hero_data = hero_data[hero_data['海克斯出场率'] >= ghost_threshold].copy()
         if hero_data.empty:
-            return {'comprehensive': [], 'winrate_only': []}
+            return {
+                'top_10_overall': [],
+                'comprehensive': [],
+                'winrate_only': [],
+                'Prismatic': [],
+                'Gold': [],
+                'Silver': []
+            }
 
         # ========== Z-Score 计算 ==========
         # 胜率差 Z-Score
@@ -164,54 +213,80 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
 
         hero_data['综合得分'] = hero_data.apply(calc_comprehensive_score, axis=1)
 
-        # ========== 综合榜单（降序） ==========
+        # ========== 辅助函数：生成海克斯卡片 ==========
+        def build_hextech_card(row, include_score=True):
+            card = {
+                '海克斯名称': str(row['海克斯名称']),
+                '海克斯阶级': str(row.get('海克斯阶级', '棱彩')),
+                '海克斯胜率': float(row['海克斯胜率']) if pd.notna(row['海克斯胜率']) else 0.0,
+                '海克斯出场率': float(row['海克斯出场率']) if pd.notna(row['海克斯出场率']) else 0.0,
+                '胜率差': float(row['胜率差']) if pd.notna(row['胜率差']) else 0.0,
+                'icon': _generate_hextech_icon_url(row['海克斯名称'], row.get('海克斯阶级', '棱彩'))
+            }
+            if include_score:
+                card['综合得分'] = float(row['综合得分']) if pd.notna(row['综合得分']) else 0.0
+            return card
+
+        # ========== top_10_overall：不计阶级，按综合得分前 10 ==========
+        top_10_data = hero_data.sort_values(by='综合得分', ascending=False).head(10)
+        top_10_overall = []
+        for _, row in top_10_data.iterrows():
+            top_10_overall.append(build_hextech_card(row, include_score=True))
+
+        # ========== 综合榜单（向后兼容） ==========
         comp_data = hero_data.sort_values(by='综合得分', ascending=False)
         comprehensive_list = []
         for _, row in comp_data.iterrows():
-            comprehensive_list.append({
-                '海克斯名称': str(row['海克斯名称']),
-                '海克斯阶级': str(row.get('海克斯阶级', '棱彩')),
-                '海克斯胜率': float(row['海克斯胜率']) if pd.notna(row['海克斯胜率']) else 0.0,
-                '海克斯出场率': float(row['海克斯出场率']) if pd.notna(row['海克斯出场率']) else 0.0,
-                '胜率差': float(row['胜率差']) if pd.notna(row['胜率差']) else 0.0,
-                '综合得分': float(row['综合得分']) if pd.notna(row['综合得分']) else 0.0,
-                'icon': _generate_hextech_icon_url(row['海克斯名称'], row.get('海克斯阶级', '棱彩'))
-            })
+            comprehensive_list.append(build_hextech_card(row, include_score=True))
 
-        # ========== 纯胜率榜单（降序） ==========
+        # ========== 纯胜率榜单（向后兼容） ==========
         winrate_data = hero_data.sort_values(by='海克斯胜率', ascending=False)
         winrate_list = []
         for _, row in winrate_data.iterrows():
-            winrate_list.append({
-                '海克斯名称': str(row['海克斯名称']),
-                '海克斯阶级': str(row.get('海克斯阶级', '棱彩')),
-                '海克斯胜率': float(row['海克斯胜率']) if pd.notna(row['海克斯胜率']) else 0.0,
-                '海克斯出场率': float(row['海克斯出场率']) if pd.notna(row['海克斯出场率']) else 0.0,
-                '胜率差': float(row['胜率差']) if pd.notna(row['胜率差']) else 0.0,
-                'icon': _generate_hextech_icon_url(row['海克斯名称'], row.get('海克斯阶级', '棱彩'))
-            })
+            winrate_list.append(build_hextech_card(row, include_score=False))
 
-        # ========== 新增 top_20_overall 字段 ==========
-        # 无视等级分类，按综合得分倒序排列，截取前 20 项
-        top_20_data = hero_data.sort_values(by='综合得分', ascending=False).head(20)
-        top_20_overall = []
-        for _, row in top_20_data.iterrows():
-            top_20_overall.append({
-                '海克斯名称': str(row['海克斯名称']),
-                '海克斯阶级': str(row.get('海克斯阶级', '棱彩')),
-                '海克斯胜率': float(row['海克斯胜率']) if pd.notna(row['海克斯胜率']) else 0.0,
-                '海克斯出场率': float(row['海克斯出场率']) if pd.notna(row['海克斯出场率']) else 0.0,
-                '胜率差': float(row['胜率差']) if pd.notna(row['胜率差']) else 0.0,
-                '综合得分': float(row['综合得分']) if pd.notna(row['综合得分']) else 0.0,
-                'icon': _generate_hextech_icon_url(row['海克斯名称'], row.get('海克斯阶级', '棱彩'))
-            })
+        # ========== 分阶级数组 ==========
+        def build_tier_array(tier_name):
+            """为指定阶级生成数组"""
+            # 兼容多种阶级名称
+            tier_variants = {
+                'Prismatic': ['棱彩', '彩色'],
+                'Gold': ['金色', '黄金'],
+                'Silver': ['银色', '白银']
+            }
+
+            variants = tier_variants.get(tier_name, [])
+            tier_data = hero_data[hero_data['海克斯阶级'].isin(variants)].copy()
+
+            # 按综合得分排序
+            tier_data_by_score = tier_data.sort_values(by='综合得分', ascending=False)
+            result = []
+            for _, row in tier_data_by_score.iterrows():
+                result.append(build_hextech_card(row, include_score=True))
+
+            return result
+
+        prismatic_list = build_tier_array('Prismatic')
+        gold_list = build_tier_array('Gold')
+        silver_list = build_tier_array('Silver')
 
         return {
+            'top_10_overall': top_10_overall,
             'comprehensive': comprehensive_list,
             'winrate_only': winrate_list,
-            'top_20_overall': top_20_overall
+            'Prismatic': prismatic_list,
+            'Gold': gold_list,
+            'Silver': silver_list
         }
 
-    except Exception:
+    except Exception as e:
+        logging.error(f"处理海克斯数据异常: {e}")
         # 安全降级，返回空列表
-        return {'comprehensive': [], 'winrate_only': [], 'top_20_overall': []}
+        return {
+            'top_10_overall': [],
+            'comprehensive': [],
+            'winrate_only': [],
+            'Prismatic': [],
+            'Gold': [],
+            'Silver': []
+        }
