@@ -2,16 +2,28 @@ import ast
 from typing import List, Tuple
 
 DANGEROUS_CALLS = {
-    'os.system': '执行系统命令', 'os.popen': '执行系统命令',
-    'subprocess.call': '执行子进程', 'subprocess.run': '执行子进程',
-    'subprocess.Popen': '执行子进程',
-    'eval': '动态执行代码',
-    'exec': '动态执行代码', 'compile': '编译代码',
-    '__import__': '动态导入', 'pickle.loads': '不安全的反序列化',
-    'pickle.load': '不安全的反序列化'
+    'os.system': 'System command execution',
+    'os.popen': 'System command execution',
+    'subprocess.call': 'Subprocess execution',
+    'subprocess.run': 'Subprocess execution',
+    'subprocess.Popen': 'Subprocess execution',
+    'eval': 'Dynamic code execution',
+    'exec': 'Dynamic code execution',
+    'compile': 'Code compilation',
+    '__import__': 'Dynamic import',
+    'getattr': 'Dynamic attribute access (Potential Sandbox Escape)',
+    'setattr': 'Dynamic attribute modification',
+    'delattr': 'Dynamic attribute deletion',
+    'globals': 'Global namespace access',
+    'locals': 'Local namespace access',
+    'pickle.loads': 'Insecure deserialization',
+    'pickle.load': 'Insecure deserialization'
 }
 
-# 豁免模块列表：允许某些模块在特定文件中使用
+DANGEROUS_ATTRS = {
+    '__class__', '__subclasses__', '__bases__', '__mro__', '__globals__', '__builtins__'
+}
+
 EXEMPTED_MODULES = []
 
 def check_dangerous_calls(code: str, exempted_modules: List[str] = None) -> Tuple[bool, List[str]]:
@@ -19,29 +31,30 @@ def check_dangerous_calls(code: str, exempted_modules: List[str] = None) -> Tupl
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
-        return False, [f"语法错误：{e}"]
+        return False, [f"[AST-ERROR] Syntax error: {e}"]
 
     violations = []
     for node in ast.walk(tree):
+        # 1. 拦截高危函数调用 (包含反射与执行)
         if isinstance(node, ast.Call):
             call_str = get_call_string(node)
             if call_str in DANGEROUS_CALLS:
-                # 关键：函数调用必须强制拦截，不允许因为模块豁免而放行
-                violations.append(f"禁止调用 {call_str}: {DANGEROUS_CALLS[call_str]}")
+                violations.append(f"[AST-VIOLATION] Forbidden call {call_str}: {DANGEROUS_CALLS[call_str]}")
 
+        # 2. 拦截底层反射属性访问 (切断沙箱逃逸核心路径)
+        if isinstance(node, ast.Attribute):
+            if node.attr in DANGEROUS_ATTRS:
+                violations.append(f"[AST-VIOLATION] Forbidden attribute access: {node.attr}")
+
+        # 3. 拦截高危模块导入
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name in ['subprocess'] and alias.name not in exempted_modules:
-                    violations.append(f"禁止高危导入：{alias.name}")
+                if alias.name in ['subprocess', 'os', 'sys', 'pickle'] and alias.name not in exempted_modules:
+                    violations.append(f"[AST-VIOLATION] Forbidden import: {alias.name}")
 
         if isinstance(node, ast.ImportFrom):
-            if node.module == 'subprocess' and node.module not in exempted_modules:
-                violations.append(f"禁止从高危模块导入：{node.module}")
-            elif node.module == 'os':
-                dangerous_os = {'system', 'popen'}
-                for alias in node.names:
-                    if (alias.name in dangerous_os or alias.name == '*') and 'os' not in exempted_modules:
-                        violations.append(f"禁止从 os 导入高危函数：{alias.name}")
+            if node.module in ['subprocess', 'os', 'sys', 'pickle'] and node.module not in exempted_modules:
+                violations.append(f"[AST-VIOLATION] Forbidden import from: {node.module}")
 
     return len(violations) == 0, violations
 
@@ -51,10 +64,4 @@ def get_call_string(node: ast.Call) -> str:
     elif isinstance(node.func, ast.Attribute):
         if isinstance(node.func.value, ast.Name):
             return f"{node.func.value.id}.{node.func.attr}"
-    return ""
-
-def get_module_name(call_str: str) -> str:
-    """Extract module name from call string (e.g., 'subprocess.run' -> 'subprocess')"""
-    if '.' in call_str:
-        return call_str.split('.')[0]
     return ""
