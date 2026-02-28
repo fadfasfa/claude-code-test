@@ -24,8 +24,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 目标 URL
-TARGET_URL = "https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=999.0.0"
+# 目标 URL（使用最新版本号）
+TARGET_URL = "https://api.xiaoheihe.cn/game/web/all_recommend/games/"
 
 # User-Agent 池（Scraper-Ninja 逻辑）
 USER_AGENTS = [
@@ -61,6 +61,8 @@ async def probe_heybox():
 
     # 额外参数（用于获取实际数据）
     params = {
+        "os_type": "web",
+        "version": "1.3.1",  # 尝试使用新版本号
         "limit": "20",
         "offset": "0",
         "is_new_user": "0",
