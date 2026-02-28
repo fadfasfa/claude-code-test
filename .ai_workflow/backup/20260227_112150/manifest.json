@@ -1,7 +1,0 @@
-{
-  "timestamp": "20260227_112150",
-  "base_commit": "8be0a15fd0df691b0346e892179860f9261b21b4",
-  "unauthorized_changes": {
-    "run/hextech_scraper.py": "DANGEROUS_CODE"
-  }
-}

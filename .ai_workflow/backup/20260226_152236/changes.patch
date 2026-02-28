@@ -1,9 +1,0 @@
-diff --git a/run/hextech_scraper.py b/run/hextech_scraper.py
-index 2974955..8d54d91 100644
---- a/run/hextech_scraper.py
-+++ b/run/hextech_scraper.py
-@@ -1,3 +1,4 @@
-+python .ai_workflow/verify_workspace.py
- import requests
- import json
- import time

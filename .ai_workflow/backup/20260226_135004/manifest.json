@@ -1,7 +1,0 @@
-{
-  "timestamp": "20260226_135004",
-  "base_commit": "d36da1793b52c0211eb45b9f76be29e2d5112dc1",
-  "unauthorized_changes": {
-    ".ai_workflow/current_contract.json": "M"
-  }
-}

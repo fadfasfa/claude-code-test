@@ -11,6 +11,7 @@
     ]
   },
   "task_input_from_claude": {
-    "executor_node": "QWEN_API"
-  }
+    "executor_node": "CLAUDE_API"
+  },
+  "signature": "792fc7fd5681a03a4d0064e0b25ae88751180eecca5c52ee6b9c7a9f6dfba9c7"
 }

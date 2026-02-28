@@ -1,7 +1,0 @@
-{
-  "timestamp": "20260226_165539",
-  "base_commit": "e8119672fafeb695b7a16f40e9421cba50fb4e2c",
-  "unauthorized_changes": {
-    "run/hextech_scraper.py": "AST_DEGRADED"
-  }
-}

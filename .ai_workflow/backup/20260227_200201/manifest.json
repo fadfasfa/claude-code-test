@@ -1,8 +1,0 @@
-{
-  "timestamp": "20260227_200201",
-  "base_commit": "88407f785bfa898911475edc0f34dc8f41f50d60",
-  "unauthorized_changes": {
-    ".ai_workflow/verify_workspace.py": "QWEN_INFRA_FORBIDDEN",
-    "run/hextech_scraper.py": "AST_DEGRADED"
-  }
-}

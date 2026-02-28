@@ -1,0 +1,179 @@
+2026-02-28 09:37:09,396 - INFO - ==================================================
+2026-02-28 09:37:09,396 - INFO - 小黑盒 Web 接口探针启动
+2026-02-28 09:37:09,396 - INFO - ==================================================
+2026-02-28 09:37:09,396 - INFO - 随机延迟：1.51 秒
+2026-02-28 09:37:10,922 - INFO - 使用 User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb...
+2026-02-28 09:37:10,922 - INFO - 目标 URL: https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=999.0.0
+2026-02-28 09:37:11,683 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=999.0.0 "HTTP/1.1 200 OK"
+2026-02-28 09:37:11,685 - INFO - 响应状态码：200
+2026-02-28 09:37:11,685 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:37:15 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:37:11,686 - INFO - ✓ 成功获取数据
+2026-02-28 09:37:11,688 - INFO - ✓ 数据已保存至：data/heybox_sample.json
+2026-02-28 09:37:11,688 - INFO - 数据预览:
+2026-02-28 09:37:11,688 - INFO - {
+  "status": "ok",
+  "msg": "",
+  "version": "1.0",
+  "result": {}
+}...
+2026-02-28 09:37:11,688 - INFO - ==================================================
+2026-02-28 09:37:11,688 - INFO - 探针执行完毕
+2026-02-28 09:37:11,688 - INFO - ==================================================
+2026-02-28 09:45:30,259 - INFO - ==================================================
+2026-02-28 09:45:30,259 - INFO - 小黑盒 Web 接口探针启动
+2026-02-28 09:45:30,259 - INFO - ==================================================
+2026-02-28 09:45:30,259 - INFO - 随机延迟：2.36 秒
+2026-02-28 09:45:32,623 - INFO - 使用 User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb...
+2026-02-28 09:45:32,623 - INFO - 目标 URL: https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=999.0.0
+2026-02-28 09:45:32,623 - INFO - 请求参数：{'limit': '20', 'offset': '0', 'is_new_user': '0'}
+2026-02-28 09:45:33,463 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?limit=20&offset=0&is_new_user=0 "HTTP/1.1 200 OK"
+2026-02-28 09:45:33,465 - INFO - 响应状态码：200
+2026-02-28 09:45:33,465 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:45:36 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:45:33,465 - INFO - ✓ 成功获取数据
+2026-02-28 09:45:33,469 - INFO - ✓ 数据已保存至：data/heybox_sample.json
+2026-02-28 09:45:33,469 - INFO - 数据预览:
+2026-02-28 09:45:33,469 - INFO - {
+  "status": "ok",
+  "msg": "",
+  "version": "1.0",
+  "result": {}
+}...
+2026-02-28 09:45:33,469 - INFO - ==================================================
+2026-02-28 09:45:33,469 - INFO - 探针执行完毕
+2026-02-28 09:45:33,469 - INFO - ==================================================
+2026-02-28 09:46:36,323 - INFO - ==================================================
+2026-02-28 09:46:36,323 - INFO - 小黑盒 Web 接口探针启动
+2026-02-28 09:46:36,323 - INFO - ==================================================
+2026-02-28 09:46:36,323 - INFO - 随机延迟：2.83 秒
+2026-02-28 09:46:39,169 - INFO - 使用 User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36...
+2026-02-28 09:46:39,169 - INFO - 目标 URL: https://api.xiaoheihe.cn/game/web/all_recommend/games/
+2026-02-28 09:46:39,169 - INFO - 请求参数：{'os_type': 'web', 'version': '1.3.1', 'limit': '20', 'offset': '0', 'is_new_user': '0'}
+2026-02-28 09:46:40,108 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=1.3.1&limit=20&offset=0&is_new_user=0 "HTTP/1.1 200 OK"
+2026-02-28 09:46:40,109 - INFO - 响应状态码：200
+2026-02-28 09:46:40,109 - INFO - 响应头：{'server': 'openresty/1.19.3.1', 'date': 'Sat, 28 Feb 2026 01:46:43 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:46:40,109 - INFO - ✓ 成功获取数据
+2026-02-28 09:46:40,113 - INFO - ✓ 数据已保存至：data/heybox_sample.json
+2026-02-28 09:46:40,113 - INFO - 数据预览:
+2026-02-28 09:46:40,113 - INFO - {
+  "status": "ok",
+  "msg": "",
+  "version": "1.0",
+  "result": {}
+}...
+2026-02-28 09:46:40,113 - INFO - ==================================================
+2026-02-28 09:46:40,113 - INFO - 探针执行完毕
+2026-02-28 09:46:40,113 - INFO - ==================================================
+2026-02-28 09:50:39,311 - INFO - ==================================================
+2026-02-28 09:50:39,311 - INFO - 小黑盒 Web 接口探针启动
+2026-02-28 09:50:39,311 - INFO - ==================================================
+2026-02-28 09:50:39,311 - INFO - 随机延迟：2.25 秒
+2026-02-28 09:50:41,560 - INFO - 使用 User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36...
+2026-02-28 09:50:41,560 - INFO - 探测端点：https://api.xiaoheihe.cn/game/web/all_recommend/games/
+2026-02-28 09:50:41,561 - INFO - 请求参数：{'os_type': 'web', 'version': '1.3.1', 'limit': '20', 'offset': '0', 'is_new_user': '0', '_timestamp': 1772243441560}
+2026-02-28 09:50:42,367 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=1.3.1&limit=20&offset=0&is_new_user=0&_timestamp=1772243441560 "HTTP/1.1 200 OK"
+2026-02-28 09:50:42,368 - INFO - 响应状态码：200
+2026-02-28 09:50:42,368 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:50:45 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:50:42,368 - INFO - ✓ 成功获取数据
+2026-02-28 09:50:42,368 - WARNING - ⚠️  result 字段为空，尝试下一个端点
+2026-02-28 09:50:42,368 - INFO - 探测端点：https://api.xiaoheihe.cn/game/web/game_recommend/
+2026-02-28 09:50:42,368 - INFO - 请求参数：{'os_type': 'web', 'version': '1.3.1', 'limit': '20', 'offset': '0', 'is_new_user': '0', '_timestamp': 1772243441560}
+2026-02-28 09:50:43,091 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/game_recommend/?os_type=web&version=1.3.1&limit=20&offset=0&is_new_user=0&_timestamp=1772243441560 "HTTP/1.1 404 Not Found"
+2026-02-28 09:50:43,091 - INFO - 响应状态码：404
+2026-02-28 09:50:43,091 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:50:46 GMT', 'content-type': 'text/html; charset=utf-8', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip'}
+2026-02-28 09:50:43,092 - ERROR - HTTP 错误：Client error '404 Not Found' for url 'https://api.xiaoheihe.cn/game/web/game_recommend/?os_type=web&version=1.3.1&limit=20&offset=0&is_new_user=0&_timestamp=1772243441560'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+2026-02-28 09:50:43,092 - ERROR - 完整响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:50:46 GMT', 'content-type': 'text/html; charset=utf-8', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip'}
+2026-02-28 09:50:43,092 - INFO - 探测端点：https://api.xiaoheihe.cn/webapi/game/web/all_recommend/games/
+2026-02-28 09:50:43,092 - INFO - 请求参数：{'os_type': 'web', 'version': '1.3.1', 'limit': '20', 'offset': '0', 'is_new_user': '0', '_timestamp': 1772243441560}
+2026-02-28 09:50:43,837 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/webapi/game/web/all_recommend/games/?os_type=web&version=1.3.1&limit=20&offset=0&is_new_user=0&_timestamp=1772243441560 "HTTP/1.1 404 Not Found"
+2026-02-28 09:50:43,837 - INFO - 响应状态码：404
+2026-02-28 09:50:43,838 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:50:47 GMT', 'content-type': 'text/html; charset=utf-8', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip'}
+2026-02-28 09:50:43,838 - ERROR - HTTP 错误：Client error '404 Not Found' for url 'https://api.xiaoheihe.cn/webapi/game/web/all_recommend/games/?os_type=web&version=1.3.1&limit=20&offset=0&is_new_user=0&_timestamp=1772243441560'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+2026-02-28 09:50:43,838 - ERROR - 完整响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:50:47 GMT', 'content-type': 'text/html; charset=utf-8', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'content-encoding': 'gzip'}
+2026-02-28 09:50:43,840 - ERROR - ✗ 数据获取失败，请检查日志中的响应头信息
+2026-02-28 09:50:43,840 - INFO - ==================================================
+2026-02-28 09:50:43,840 - INFO - 探针执行完毕
+2026-02-28 09:50:43,840 - INFO - ==================================================
+2026-02-28 09:52:37,399 - INFO - ==================================================
+2026-02-28 09:52:37,399 - INFO - 小黑盒 Web 接口探针启动
+2026-02-28 09:52:37,400 - INFO - ==================================================
+2026-02-28 09:52:37,400 - INFO - 随机延迟：1.34 秒
+2026-02-28 09:52:38,744 - INFO - 使用 User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36...
+2026-02-28 09:52:38,744 - INFO - 探测端点：https://api.xiaoheihe.cn/game/web/all_recommend/games/
+2026-02-28 09:52:38,744 - INFO - 尝试参数：{'os_type': 'web', 'version': '999.0.0', 'limit': '20', 'offset': '0', 'is_new_user': '0'}
+2026-02-28 09:52:39,541 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=999.0.0&limit=20&offset=0&is_new_user=0 "HTTP/1.1 200 OK"
+2026-02-28 09:52:39,542 - INFO - 响应状态码：200
+2026-02-28 09:52:39,543 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:52:42 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:39,543 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:39,543 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:39,545 - INFO - 尝试参数：{'os_type': 'web', 'version': '999.0.0', 'limit': '20', 'offset': '0'}
+2026-02-28 09:52:40,332 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=999.0.0&limit=20&offset=0 "HTTP/1.1 200 OK"
+2026-02-28 09:52:40,333 - INFO - 响应状态码：200
+2026-02-28 09:52:40,333 - INFO - 响应头：{'server': 'openresty/1.19.3.1', 'date': 'Sat, 28 Feb 2026 01:52:43 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:40,333 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:40,333 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:40,336 - INFO - 尝试参数：{'os_type': 'web', 'version': '999.0.0', 'page': '1', 'page_size': '20'}
+2026-02-28 09:52:41,237 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=999.0.0&page=1&page_size=20 "HTTP/1.1 200 OK"
+2026-02-28 09:52:41,238 - INFO - 响应状态码：200
+2026-02-28 09:52:41,238 - INFO - 响应头：{'server': 'openresty/1.19.3.1', 'date': 'Sat, 28 Feb 2026 01:52:44 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:41,239 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:41,239 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:41,241 - INFO - 尝试参数：{'os_type': 'web', 'version': '1.3.1', 'limit': '20', 'offset': '0', 'is_new_user': '0'}
+2026-02-28 09:52:42,060 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=1.3.1&limit=20&offset=0&is_new_user=0 "HTTP/1.1 200 OK"
+2026-02-28 09:52:42,061 - INFO - 响应状态码：200
+2026-02-28 09:52:42,061 - INFO - 响应头：{'server': 'openresty/1.19.3.1', 'date': 'Sat, 28 Feb 2026 01:52:45 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:42,061 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:42,061 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:42,063 - INFO - 尝试参数：{'os_type': 'web', 'version': '1.3.1', 'limit': '20', 'offset': '0'}
+2026-02-28 09:52:43,019 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=1.3.1&limit=20&offset=0 "HTTP/1.1 200 OK"
+2026-02-28 09:52:43,020 - INFO - 响应状态码：200
+2026-02-28 09:52:43,020 - INFO - 响应头：{'server': 'openresty/1.19.3.1', 'date': 'Sat, 28 Feb 2026 01:52:46 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:43,020 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:43,020 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:43,023 - INFO - 尝试参数：{'os_type': 'web', 'version': '1.3.1', 'page': '1', 'page_size': '20'}
+2026-02-28 09:52:43,916 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=1.3.1&page=1&page_size=20 "HTTP/1.1 200 OK"
+2026-02-28 09:52:43,917 - INFO - 响应状态码：200
+2026-02-28 09:52:43,917 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:52:47 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:43,917 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:43,917 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:43,919 - INFO - 尝试参数：{'os_type': 'web', 'version': '1.0.0', 'limit': '20', 'offset': '0', 'is_new_user': '0'}
+2026-02-28 09:52:44,760 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=1.0.0&limit=20&offset=0&is_new_user=0 "HTTP/1.1 200 OK"
+2026-02-28 09:52:44,760 - INFO - 响应状态码：200
+2026-02-28 09:52:44,760 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:52:48 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:44,761 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:44,761 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:44,763 - INFO - 尝试参数：{'os_type': 'web', 'version': '1.0.0', 'limit': '20', 'offset': '0'}
+2026-02-28 09:52:45,632 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=1.0.0&limit=20&offset=0 "HTTP/1.1 200 OK"
+2026-02-28 09:52:45,633 - INFO - 响应状态码：200
+2026-02-28 09:52:45,633 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:52:48 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:45,633 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:45,633 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:45,635 - INFO - 尝试参数：{'os_type': 'web', 'version': '1.0.0', 'page': '1', 'page_size': '20'}
+2026-02-28 09:52:46,503 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=web&version=1.0.0&page=1&page_size=20 "HTTP/1.1 200 OK"
+2026-02-28 09:52:46,504 - INFO - 响应状态码：200
+2026-02-28 09:52:46,504 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:52:49 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:46,504 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:46,504 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:46,507 - INFO - 尝试参数：{'os_type': 'android', 'version': '1.3.1', 'limit': '20', 'offset': '0', 'is_new_user': '0'}
+2026-02-28 09:52:47,465 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=android&version=1.3.1&limit=20&offset=0&is_new_user=0 "HTTP/1.1 200 OK"
+2026-02-28 09:52:47,466 - INFO - 响应状态码：200
+2026-02-28 09:52:47,466 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:52:50 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:47,466 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:47,466 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:47,469 - INFO - 尝试参数：{'os_type': 'android', 'version': '1.3.1', 'limit': '20', 'offset': '0'}
+2026-02-28 09:52:48,424 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=android&version=1.3.1&limit=20&offset=0 "HTTP/1.1 200 OK"
+2026-02-28 09:52:48,425 - INFO - 响应状态码：200
+2026-02-28 09:52:48,425 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:52:51 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:48,425 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:48,425 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:48,428 - INFO - 尝试参数：{'os_type': 'android', 'version': '1.3.1', 'page': '1', 'page_size': '20'}
+2026-02-28 09:52:49,332 - INFO - HTTP Request: GET https://api.xiaoheihe.cn/game/web/all_recommend/games/?os_type=android&version=1.3.1&page=1&page_size=20 "HTTP/1.1 200 OK"
+2026-02-28 09:52:49,333 - INFO - 响应状态码：200
+2026-02-28 09:52:49,333 - INFO - 响应头：{'server': 'openresty/1.21.4.3', 'date': 'Sat, 28 Feb 2026 01:52:52 GMT', 'content-type': 'application/json', 'transfer-encoding': 'chunked', 'connection': 'keep-alive', 'access-control-allow-credentials': 'true', 'access-control-allow-headers': 'Content-Type, Access-Control-Allow-Headers, Authorization, X-Requested-With, X-Rylai-Service-Tag', 'access-control-allow-methods': 'POST, GET, DELETE, OPTIONS', 'access-control-allow-origin': 'https://www.xiaoheihe.cn', 'strict-transport-security': 'max-age=31536000', 'x-download-options': 'noopen', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src *; style-src 'unsafe-inline' *; font-src 'self' data: blob: *; img-src 'self' data: blob: *; script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: *; connect-src * data: blob:; media-src 'self' blob: * data: *; frame-src * webcompt: heybox: maxjia:", 'referrer-policy': 'strict-origin-when-cross-origin', 'x-permitted-cross-domain-policies': 'none', 'content-encoding': 'gzip'}
+2026-02-28 09:52:49,333 - INFO - ✓ 成功获取数据
+2026-02-28 09:52:49,333 - WARNING - ⚠️  result 字段为空
+2026-02-28 09:52:49,336 - ERROR - ✗ 数据获取失败，请检查日志中的响应头信息
+2026-02-28 09:52:49,336 - INFO - ==================================================
+2026-02-28 09:52:49,336 - INFO - 探针执行完毕
+2026-02-28 09:52:49,336 - INFO - ==================================================

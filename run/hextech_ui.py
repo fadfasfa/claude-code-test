@@ -123,7 +123,7 @@ class HextechUI:
         if not latest: return pd.DataFrame()
         df = pd.read_csv(latest, dtype={'英雄 ID': str})  # CSV 原始表头带空格，用于读取
         df.columns = df.columns.str.replace(' ', '')  # 暴力清除表头所有空格（包括中间空格）
-        df['英雄 ID'] = df['英雄 ID'].str.strip().str.replace('.0', '', regex=False)
+        df['英雄ID'] = df['英雄ID'].astype(str).str.strip().str.replace('.0', '', regex=False)
         return df
 
     def on_hero_click(self, champ_id, hero_name):

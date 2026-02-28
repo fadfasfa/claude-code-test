@@ -535,3 +535,18 @@
 2026-02-28 09:14:11,765 [INFO] CSV reloaded: Hextech_Data_2026-02-23.csv
 2026-02-28 09:19:54,820 [INFO] CSV reloaded: Hextech_Data_2026-02-23.csv
 2026-02-28 09:45:31,533 [INFO] CSV reloaded: Hextech_Data_2026-02-23.csv
+2026-02-28 16:06:22,378 [INFO] 📡 跨天自动同步...
+2026-02-28 16:06:22,704 [INFO] 后端进程已启动 (PID: 29736)
+2026-02-28 16:06:22,952 [INFO] 🚀 启动 16 线程超频抓取池，共 172 名英雄...
+2026-02-28 16:06:33,564 [INFO] 🗑️ 已清理过期/残留文件：Hextech_Data_2026-02-23.csv
+2026-02-28 16:06:33,564 [INFO] 🗑️ 已清理过期/残留文件：Hextech_Data_2026-02-24.csv
+2026-02-28 16:06:33,564 [INFO] ✅ 抓取结束，固化至：c:\Users\apple\claude code test\run\config\Hextech_Data_2026-02-28.csv
+2026-02-28 16:06:35,732 [INFO] CSV 文件更新：Hextech_Data_2026-02-28.csv
+2026-02-28 16:07:54,900 [WARNING] LCU poll error: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+2026-02-28 16:15:11,798 [INFO] ☕ 数据尚在有效期内，跳过抓取。
+2026-02-28 16:15:47,142 [INFO] ☕ 数据尚在有效期内，跳过抓取。
+2026-02-28 17:50:09,883 [INFO] ☕ 数据尚在有效期内，跳过抓取。
+2026-02-28 18:03:20,033 [INFO] ☕ 数据尚在有效期内，跳过抓取。
+2026-02-28 18:07:54,330 [INFO] ☕ 数据尚在有效期内，跳过抓取。
+2026-02-28 18:09:13,657 [INFO] ☕ 数据尚在有效期内，跳过抓取。
+2026-02-28 18:21:26,312 [INFO] ☕ 数据尚在有效期内，跳过抓取。

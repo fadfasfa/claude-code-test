@@ -84,10 +84,9 @@
                         <span class="ml-auto text-xs font-normal text-gray-500 uppercase tracking-widest">胜率与热度的完美平衡</span>
                     </h2>
                     <div class="flex text-xs font-bold text-gray-500 border-b border-gray-800 pb-2 mb-2 px-2">
-                        <div class="w-[50%]">排名 / 海克斯</div>
-                        <div class="w-[15%] text-right">综合胜率</div>
-                        <div class="w-[15%] text-right">出场率</div>
-                        <div class="w-[20%] text-right">胜率差</div>
+                        <div class="w-[55%]">排名 / 海克斯</div>
+                        <div class="w-[20%] text-right">综合胜率</div>
+                        <div class="w-[25%] text-right">出场率</div>
                     </div>
                     <div id="compList" class="space-y-1"></div>
                 </div>
@@ -131,21 +130,21 @@
         const heroWR = urlParams.get('wr');
         const heroPR = urlParams.get('pr');
 
+        // 渲染头部数据
         if(hero) document.getElementById('heroName').textContent = hero;
         if(heroWR) document.getElementById('heroWR').textContent = heroWR;
         if(heroPR) document.getElementById('heroPR').textContent = heroPR;
 
+        // 渲染背景原画和头像 - 使用 ddragon 高清资源
         if(enName) {
             document.getElementById('headerBg').style.backgroundImage = `url('https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${enName}_0.jpg')`;
-        } else {
-            document.getElementById('headerBg').style.backgroundColor = '#181825';
-        }
-
-        // 设置头像 - 使用本地 assets 目录
-        if(heroId) {
+            document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/${enName}.png`;
+        } else if(heroId) {
+            // 降级：使用本地 assets 目录
             document.getElementById('heroAvatar').src = `/assets/${heroId}.png`;
         } else {
-            // 降级：如果没有 ID，显示占位图
+            // 降级：显示占位图
+            document.getElementById('headerBg').style.backgroundColor = '#181825';
             document.getElementById('heroAvatar').src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>?</text></svg>';
         }
 
@@ -169,11 +168,11 @@
             return 'tier-silver';
         }
 
-        // 渲染单行卡片 HTML
+        // 渲染单行卡片 HTML - 匹配预览版紧凑 list-row 布局
         function createHextechCard(hextech, index, showDiff = false) {
-            const iconUrl = hextech.icon || `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/chest.png`;
+            const iconUrl = hextech.icon || `https://raw.communitydragon.org/latest/plugins/rcp-be-lolgame-data/global/default/v1/hextech-images/chest.png`;
             const tierClass = getTierBarClass(hextech.海克斯阶级);
-            
+
             // 排名颜色逻辑
             let rankColor = 'text-gray-500 font-bold';
             if(index === 0) rankColor = 'text-yellow-400 font-black text-base drop-shadow-md';
@@ -182,25 +181,18 @@
 
             const wr = (hextech.海克斯胜率 * 100).toFixed(1) + '%';
             const pr = (hextech.海克斯出场率 * 100).toFixed(1) + '%';
-            const diffNum = hextech.胜率差 * 100;
-            const diffStr = (diffNum >= 0 ? '+' : '') + diffNum.toFixed(1) + '%';
-            const diffColor = diffNum >= 0 ? 'text-green-400' : 'text-red-400';
 
-            let diffHtml = showDiff ? `<div class="w-[20%] text-right font-mono ${diffColor} text-xs">${diffStr}</div>` : '';
-            let rightWrWidth = showDiff ? 'w-[15%]' : 'w-[20%]';
-            let rightPrWidth = showDiff ? 'w-[15%]' : 'w-[25%]';
-
+            // 紧凑布局：统一宽度分配，不再显示胜率差列
             return `
             <div class="list-row flex items-center justify-between p-2 border-b border-white/5">
-                <div class="flex items-center space-x-3 ${showDiff ? 'w-[50%]' : 'w-[55%]'}">
+                <div class="flex items-center space-x-3 w-[55%]">
                     <span class="${rankColor} w-4 text-right italic">${index + 1}</span>
                     <div class="w-1.5 h-8 rounded-full ${tierClass} shrink-0"></div>
-                    <img src="${iconUrl}" onerror="this.src='https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/chest.png'" class="w-8 h-8 rounded-md border border-gray-700 shadow-sm object-cover bg-gray-900 shrink-0">
+                    <img src="${iconUrl}" onerror="this.src='https://raw.communitydragon.org/latest/plugins/rcp-be-lolgame-data/global/default/v1/hextech-images/chest.png'" class="w-8 h-8 rounded-md border border-gray-700 shadow-sm object-cover bg-gray-900 shrink-0">
                     <span class="font-bold text-gray-200 truncate text-sm">${hextech.海克斯名称}</span>
                 </div>
-                <div class="${rightWrWidth} text-right font-mono ${showDiff ? 'text-green-400' : 'text-cyan-400'} font-bold">${wr}</div>
-                <div class="${rightPrWidth} text-right font-mono ${showDiff ? 'text-gray-400' : 'text-red-400'}">${pr}</div>
-                ${diffHtml}
+                <div class="w-[20%] text-right font-mono text-green-400 font-bold">${wr}</div>
+                <div class="w-[25%] text-right font-mono text-gray-400">${pr}</div>
             </div>
             `;
         }
@@ -235,8 +227,8 @@
             } else {
                 noDataTip.classList.add('hidden');
                 dataContainer.classList.remove('hidden');
-                compList.innerHTML = leftData.map((h, i) => createHextechCard(h, i, true)).join('');
-                winList.innerHTML = rightData.map((h, i) => createHextechCard(h, i, false)).join('');
+                compList.innerHTML = leftData.map((h, i) => createHextechCard(h, i)).join('');
+                winList.innerHTML = rightData.map((h, i) => createHextechCard(h, i)).join('');
             }
         }
 
