@@ -423,6 +423,41 @@ def main():
     logger.info("爬虫执行完成")
     logger.info("=" * 50)
 
+    # 加载本地配置文件
+    logger.info("-" * 30)
+    logger.info("【任务 2】加载本地英雄配置")
+
+    core_data_path = "run/config/Champion_Core_Data.json"
+    aliases_path = "run/config/hero_aliases.json"
+
+    try:
+        with open(core_data_path, "r", encoding="utf-8") as f:
+            core_data = json.load(f)
+        logger.info(f"核心数据加载成功：{len(core_data)} 个英雄")
+    except Exception as e:
+        logger.error(f"核心数据加载失败：{e}")
+        core_data = {}
+
+    try:
+        with open(aliases_path, "r", encoding="utf-8") as f:
+            hero_aliases = json.load(f)
+        logger.info(f"别名数据加载成功：{len(hero_aliases)} 个英雄")
+    except Exception as e:
+        logger.error(f"别名数据加载失败：{e}")
+        hero_aliases = {}
+
+    # 构建 name_to_core 查找字典
+    name_to_core = {}
+    for champ_id, champ_info in core_data.items():
+        name = champ_info.get("name")
+        if name:
+            name_to_core[name] = {
+                "id": champ_id,
+                "title": champ_info.get("title", ""),
+                "en_name": champ_info.get("en_name", "")
+            }
+    logger.info(f"构建名称索引：{len(name_to_core)} 个英雄")
+
     # 全量遍历英雄列表并提取海克斯协同方案
     logger.info("-" * 30)
     logger.info("【任务 3】全量提取海克斯协同方案")
@@ -440,10 +475,34 @@ def main():
         for champ in test_champions:
             champ_name = champ["name"]
             champ_url = champ["url"]
-            logger.info(f"正在提取 [{champ_name}] 的协同方案：{champ_url}")
 
+            # 通过名称匹配核心数据
+            if champ_name not in name_to_core:
+                logger.warning(f"未找到英雄 [{champ_name}] 的核心数据，跳过")
+                continue
+
+            core_info = name_to_core[champ_name]
+            champ_id = core_info["id"]
+
+            # 获取别名（从 hero_aliases 反向查找）
+            aliases = []
+            for alias_name, alias_list in hero_aliases.items():
+                if alias_name == champ_name:
+                    aliases = alias_list
+                    break
+
+            logger.info(f"正在提取 [{champ_name}] 的协同方案：{champ_url}")
             synergies = spider.extract_hextech_synergies(champ_url)
-            final_data[champ_name] = synergies
+
+            # 合并数据结构
+            final_data[champ_id] = {
+                "id": champ_id,
+                "name": champ_name,
+                "title": core_info["title"],
+                "en_name": core_info["en_name"],
+                "aliases": aliases,
+                "synergies": synergies
+            }
 
             logger.info(f"[{champ_name}] 提取完成，共 {len(synergies)} 个协同方案")
 
