@@ -117,7 +117,7 @@
          * 获取英雄头像 URL - 使用本地 assets 目录
          */
         function getChampionAvatar(champion) {
-            const heroId = champion.英雄 ID || '';
+            const heroId = champion['英雄 ID'] || '';
             if (heroId) {
                 return `/assets/${heroId}.png`;
             }
@@ -165,11 +165,11 @@
          */
         function createChampionCard(champion, index) {
             const avatarUrl = getChampionAvatar(champion);
-            const wr = formatPercent(champion.贝叶斯胜率);
-            const pr = formatPercent(champion.英雄出场率);
+            const wr = formatPercent(champion['贝叶斯胜率']);
+            const pr = formatPercent(champion['英雄出场率']);
 
             // 生成详情页链接，附带 wr、pr、id、en 参数
-            const detailUrl = `detail.html?hero=${encodeURIComponent(champion.英雄名称)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(pr)}&id=${encodeURIComponent(champion.英雄 ID || '')}&en=${encodeURIComponent(champion.英文名 || '')}`;
+            const detailUrl = `detail.html?hero=${encodeURIComponent(champion['英雄名称'])}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(pr)}&id=${encodeURIComponent(champion['英雄 ID'] || '')}&en=${encodeURIComponent(champion['英文名'] || '')}`;
 
             return `
                 <a
@@ -179,9 +179,9 @@
                 >
                     <img
                         src="${avatarUrl}"
-                        alt="${champion.英雄名称}"
+                        alt="${champion['英雄名称']}"
                         class="w-full h-full object-cover bg-gray-800"
-                        onerror="handleAvatarError(this, '${champion.英雄名称}')"
+                        onerror="handleAvatarError(this, '${champion['英雄名称']}')"
                     />
                     <div class="absolute bottom-0 inset-x-0 bg-black/80 text-center text-[10px] font-bold text-yellow-400 py-0.5 backdrop-blur-sm">
                         ${wr}
@@ -198,14 +198,14 @@
             container.innerHTML = '';
 
             // 按分数排序
-            const sorted = [...champions].sort((a, b) => b.综合分数 - a.综合分数);
+            const sorted = [...champions].sort((a, b) => b['综合分数'] - a['综合分数']);
 
             // 按阶层分组
             const tierGroups = {};
             TIERS.forEach(t => tierGroups[t.id] = []);
 
             sorted.forEach(champ => {
-                const tier = getTier(champ.综合分数);
+                const tier = getTier(champ['综合分数']);
                 tierGroups[tier.id].push(champ);
             });
 
@@ -243,7 +243,7 @@
             }
 
             const filtered = allChampions.filter(c =>
-                c.英雄名称.toLowerCase().includes(searchTerm.toLowerCase())
+                c['英雄名称'].toLowerCase().includes(searchTerm.toLowerCase())
             );
 
             if (filtered.length === 0) {
