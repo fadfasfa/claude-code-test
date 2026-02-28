@@ -140,11 +140,9 @@ class HextechUI:
         )
 
     def check_and_sync_data(self):
-        latest = get_latest_csv()
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        if not latest or today_str not in latest:
-            t = threading.Thread(target=self._silent_sync, daemon=True)
-            t.start()
+        """无条件启动数据同步线程，将过期决策权下放给 scraper."""
+        t = threading.Thread(target=self._silent_sync, daemon=True)
+        t.start()
 
     def _silent_sync(self):
         try:
