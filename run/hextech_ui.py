@@ -5,14 +5,11 @@ import ctypes
 import json
 import psutil
 import requests
-import subprocess
 import urllib3
 import base64
 import pandas as pd
 import win32gui
-import sys
 import os
-import webbrowser
 import logging
 from io import BytesIO
 from PIL import Image, ImageTk
@@ -40,7 +37,6 @@ class HextechUI:
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
         self.threads = []
-        self.backend_process = None  # 后端进程引用
 
         self.session = get_advanced_session()
         self.core_data = load_champion_core_data()
@@ -76,47 +72,11 @@ class HextechUI:
 
         self._build_ui()
         self._init_core_engine()
-        self._start_backend()  # 自动启动后端
 
     def _init_core_engine(self):
         t2 = threading.Thread(target=self.window_sync_loop, daemon=True)
         self.threads.append(t2)
         t2.start()
-
-    def _start_backend(self):
-        """Auto-start backend web server process."""
-        try:
-            if hasattr(sys, '_MEIPASS'):
-                # PyInstaller bundled environment: start self
-                cmd = [sys.executable]
-            else:
-                # Development environment: start web_server.py
-                cmd = [sys.executable, os.path.join(os.path.dirname(__file__), "web_server.py")]
-
-            self.backend_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            )
-            logging.info(f"后端进程已启动 (PID: {self.backend_process.pid})")
-        except Exception as e:
-            logging.error(f"启动后端失败: {e}")
-
-    def _wait_backend_ready(self, timeout=10):
-        """Poll localhost:8000 until backend is ready."""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                response = requests.get("http://localhost:8000", timeout=1)
-                if response.status_code in (200, 404):  # 404 is ok if page exists
-                    logging.info("后端已就绪")
-                    return True
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(0.5)
-        logging.warning("后端启动超时")
-        return False
 
     def _run_terminal(self):
         pass
@@ -140,7 +100,7 @@ class HextechUI:
         )
 
     def check_and_sync_data(self):
-        # 无条件触发后台静默同步，保证每次启动UI都是最新数据
+        # 无条件触发后台静默同步，保证每次启动 UI 都是最新数据
         t = threading.Thread(target=self._silent_sync, daemon=True)
         t.start()
 
@@ -161,8 +121,9 @@ class HextechUI:
     def load_data(self):
         latest = get_latest_csv()
         if not latest: return pd.DataFrame()
-        df = pd.read_csv(latest, dtype={'英雄ID': str})
-        df['英雄ID'] = df['英雄ID'].str.strip().str.replace('.0', '', regex=False)
+        df = pd.read_csv(latest, dtype={'英雄 ID': str})
+        df.columns = df.columns.str.strip()  # 清洗表头空格
+        df['英雄 ID'] = df['英雄 ID'].str.strip().str.replace('.0', '', regex=False)
         return df
 
     def on_hero_click(self, champ_id, hero_name):
@@ -191,13 +152,13 @@ class HextechUI:
                 hwnd_client = win32gui.FindWindow(None, "League of Legends")
                 hwnd_game = win32gui.FindWindow(None, "League of Legends (TM) Client")
 
-                if hwnd_game: 
+                if hwnd_game:
                     self.root.withdraw()
                 elif hwnd_client:
                     fg_window = win32gui.GetForegroundWindow()
                     is_client_fg = (fg_window == hwnd_client)
                     is_self_fg = ("Hextech" in win32gui.GetWindowText(fg_window))
-                    
+
                     if is_client_fg or is_self_fg:
                         self.root.deiconify()
                         self.root.attributes('-topmost', True)
@@ -223,42 +184,19 @@ class HextechUI:
         pass
 
     def toggle_web(self, event=None):
-        """Open browser after checking backend health."""
+        """Open browser to access backend (requires manually started backend server)."""
         try:
-            # Show status
+            webbrowser.open("http://localhost:8000")
             if self.status_label.winfo_exists():
-                self.status_label.config(text="正在初始化引擎...", fg="#f38ba8")
-                self.root.update()
-
-            # Wait for backend to be ready
-            if self._wait_backend_ready(timeout=10):
-                webbrowser.open("http://localhost:8000")
-                if self.status_label.winfo_exists():
-                    self.status_label.config(text="", fg="#a6adc8")
-            else:
-                if self.status_label.winfo_exists():
-                    self.status_label.config(text="❌ 后端启动失败", fg="#f38ba8")
-
+                self.status_label.config(text="已打开浏览器", fg="#a6adc8")
         except Exception as e:
-            logging.error(f"打开浏览器失败: {e}")
+            logging.error(f"打开浏览器失败：{e}")
             if self.status_label.winfo_exists():
                 self.status_label.config(text="❌ 打开失败", fg="#f38ba8")
 
     def on_close(self):
         print("\n[System] 收到退出信号，正在等待数据安全落盘...")
         self.stop_event.set()
-
-        # 强制杀掉后端进程
-        if self.backend_process:
-            try:
-                parent = psutil.Process(self.backend_process.pid)
-                # Kill entire process tree to ensure no orphaned processes
-                for child in parent.children(recursive=True):
-                    child.kill()
-                parent.kill()
-                logging.info("后端进程已强制关闭")
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
 
         for t in self.threads:
             if t.is_alive():
