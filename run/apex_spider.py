@@ -246,17 +246,18 @@ class ApexSpider:
 
         return result
 
-    def probe_champion_detail(self, detail_url: str) -> bool:
+    def extract_hextech_synergies(self, detail_url: str) -> list:
         """
-        探针方法：获取英雄详情页的 DOM 快照
+        提取英雄详情页的海克斯协同方案（带'强力联动'或'陷阱'标签）
 
         Args:
             detail_url: 英雄详情页 URL
 
         Returns:
-            成功返回 True，失败返回 False
+            协同方案列表，每个元素为扁平化的文本行
         """
-        logger.info(f"开始执行英雄详情页探针：{detail_url}")
+        logger.info(f"开始提取海克斯协同方案：{detail_url}")
+        result = []
 
         try:
             with sync_playwright() as p:
@@ -272,25 +273,33 @@ class ApexSpider:
                 if html is None:
                     logger.error(f"详情页加载失败：{detail_url}")
                     browser.close()
-                    return False
+                    return result
 
-                # 确保目录存在
-                output_dir = "run/data"
-                os.makedirs(output_dir, exist_ok=True)
+                # 定位卡片并提取内容
+                cards = page.locator('.interaction-grid > div').all()
+                logger.info(f"找到 {len(cards)} 个交互卡片")
 
-                # 落盘 DOM 快照
-                output_path = os.path.join(output_dir, "dom_snapshot_detail.html")
-                with open(output_path, "w", encoding="utf-8") as f:
-                    f.write(html)
-
-                logger.info(f"DOM 快照已成功保存至：{output_path}")
+                for card in cards:
+                    try:
+                        text = card.inner_text()
+                        # 检查是否包含目标标签
+                        if '强力联动' in text or '陷阱' in text:
+                            # 扁平化处理：只保留非空行
+                            flattened = " | ".join([line.strip() for line in text.split('\n') if line.strip()])
+                            if flattened:
+                                result.append(flattened)
+                                logger.info(f"提取到协同方案：{flattened[:50]}...")
+                    except Exception as e:
+                        logger.warning(f"单个卡片提取失败：{str(e)}")
+                        continue
 
                 browser.close()
-                return True
+                logger.info(f"成功提取 {len(result)} 个海克斯协同方案")
+                return result
 
         except Exception as e:
-            logger.error(f"探针执行异常 - URL: {detail_url}, 错误：{str(e)}")
-            return False
+            logger.error(f"提取异常 - URL: {detail_url}, 错误：{str(e)}")
+            return result
 
     def crawl_match_history(self, match_id: str = None) -> dict:
         """
@@ -397,15 +406,18 @@ def main():
     logger.info("爬虫执行完成")
     logger.info("=" * 50)
 
-    # 执行英雄详情页探针测试（不祥之刃）
+    # 提取海克斯协同方案（不祥之刃）
     logger.info("-" * 30)
-    logger.info("【任务 3】执行英雄详情页探针")
+    logger.info("【任务 3】提取海克斯协同方案")
     test_url = "https://apexlol.info/zh/champions/Katarina"
-    probe_success = spider.probe_champion_detail(test_url)
-    if probe_success:
-        logger.info("探针执行成功，DOM 快照已落盘")
+    synergies = spider.extract_hextech_synergies(test_url)
+    if synergies:
+        logger.info(f"成功提取 {len(synergies)} 个协同方案：")
+        for i, synergy in enumerate(synergies, 1):
+            if synergy.strip():
+                logger.info(f"  [{i}] {synergy}")
     else:
-        logger.error("探针执行失败")
+        logger.warning("未找到符合条件的协同方案")
 
     return {
         "champions": champion_result
