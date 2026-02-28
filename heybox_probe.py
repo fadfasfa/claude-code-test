@@ -56,14 +56,23 @@ async def probe_heybox():
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Referer": "https://www.xiaoheihe.cn/",
         "Origin": "https://www.xiaoheihe.cn",
+        "x-client-type": "web",
+    }
+
+    # 额外参数（用于获取实际数据）
+    params = {
+        "limit": "20",
+        "offset": "0",
+        "is_new_user": "0",
     }
 
     logger.info(f"使用 User-Agent: {random_ua[:50]}...")
     logger.info(f"目标 URL: {TARGET_URL}")
+    logger.info(f"请求参数：{params}")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            response = await client.get(TARGET_URL, headers=headers)
+            response = await client.get(TARGET_URL, headers=headers, params=params)
 
             # 记录响应头信息
             logger.info(f"响应状态码：{response.status_code}")
