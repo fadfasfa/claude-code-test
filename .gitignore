@@ -1,8 +1,0 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-
-# Secret Key - 防止密钥泄露
-.ai_workflow/.secret_key

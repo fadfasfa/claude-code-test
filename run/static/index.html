@@ -96,6 +96,7 @@
         // ========== 配置 ==========
         const API_BASE = window.location.origin;
         const WS_URL = 'ws://' + window.location.host;
+        let ddragonVersion = '14.3.1';
 
         // 英雄头像 CDN 映射（常用英雄拼音映射）
         const CHAMPION_PINYIN = {
@@ -204,7 +205,7 @@
          */
         function getChampionAvatar(name) {
             const enName = getChampionEnName(name);
-            return `https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/${enName}.png`;
+            return `https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${enName}.png`;
         }
 
         /**
@@ -361,6 +362,23 @@
 
         // ========== 数据获取 ==========
         /**
+         * 获取最新的游戏版本号
+         */
+        async function fetchLatestVersion() {
+            try {
+                const response = await fetch('https://ddragon.leagueoflegends.com/api/versions.json');
+                if (!response.ok) throw new Error('HTTP error');
+                const versions = await response.json();
+                if (Array.isArray(versions) && versions.length > 0) {
+                    ddragonVersion = versions[0];
+                    console.log('获取到最新 ddragon 版本:', ddragonVersion);
+                }
+            } catch (error) {
+                console.error('获取最新版本号失败，使用默认版本 14.3.1:', error);
+            }
+        }
+
+        /**
          * 加载英雄数据
          */
         async function loadChampions() {
@@ -450,8 +468,10 @@
 
         // ========== 初始化 ==========
         document.addEventListener('DOMContentLoaded', () => {
-            // 加载数据
-            loadChampions();
+            // 先获取最新版本号，再加载数据
+            fetchLatestVersion().then(() => {
+                loadChampions();
+            });
 
             // 建立 WebSocket 连接
             connectWebSocket();

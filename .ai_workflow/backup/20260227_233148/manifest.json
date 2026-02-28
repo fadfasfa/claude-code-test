@@ -1,0 +1,11 @@
+{
+  "timestamp": "20260227_233148",
+  "base_commit": "b581e806f90b3f2ce0a99c28bcf97215037dd217",
+  "unauthorized_changes": {
+    ".ai_workflow/.claude.md": "QWEN_INFRA_FORBIDDEN",
+    ".ai_workflow/current_contract.json": "IMMUTABLE_CORE_VIOLATION",
+    "changes.patch": "A",
+    "manifest.json": "A",
+    "run/config/Hextech_Data_2026-02-27.csv": "A"
+  }
+}

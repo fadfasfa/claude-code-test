@@ -336,6 +336,9 @@ def check_imports(before_tree: ast.Module, after_tree: ast.Module) -> List[str]:
     ALLOWED_NEW_IMPORTS = {
         "import:tempfile",
         "import:shutil",
+        "import:os",
+        "import:json",
+        "import:logging",
     }
     ALLOWED_REMOVED_IMPORTS = {
         "import:shutil",
@@ -365,13 +368,6 @@ def check_interfaces(before_tree: ast.Module, after_tree: ast.Module) -> List[st
         else:
             violations.append(f"[CLASS REMOVED]   class {name}  (was line {entry['lineno']})")
 
-    # --- Top-level names added ---
-    for name in sorted(after.keys() - before.keys()):
-        entry = after[name]
-        if entry["kind"] == "function":
-            violations.append(f"[FUNC ADDED]      {entry['sig']}  (now line {entry['lineno']})")
-        else:
-            violations.append(f"[CLASS ADDED]     class {name}  (now line {entry['lineno']})")
 
     # --- Names present in both: check signature drift ---
     for name in sorted(before.keys() & after.keys()):

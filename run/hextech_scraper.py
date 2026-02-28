@@ -9,6 +9,8 @@ import re
 import urllib3
 import logging
 import threading
+import random
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hero_sync import get_advanced_session, CONFIG_DIR, load_augment_map, load_champion_core_data
 
@@ -56,43 +58,58 @@ def cleanup_old_csvs():
                 logging.info(f"🗑️ 已清理过期/残留文件：{os.path.basename(f)}")
         except Exception as e:
             logging.error(f"清理文件异常 {f}: {e}")
-
 def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_id: str, champ_name: str, champ_data: dict) -> list:
     """
-    Parse raw HTML for one champion and return a list of row dicts.
-    Raises ValueError if regex yields no matches or JSON parsing fails.
+    RSC Payload 一次性发现算法：O(N) 复杂度全局扫描，内存字典匹配。
+    无异常抛出，未匹配的海克斯 ID 直接静默过滤。
     """
-    cleaned = html.replace('\\\\"', '"')
-    matches = re.findall(r'"(\d+)":\{([^\{\}]*?"win_rate"[^\{\}]*?)\}', cleaned)
-    if not matches:
-        raise ValueError("regex returned no matches")
-
     rows = []
-    for aug_id, inner in matches:
-        try:
-            data = json.loads("{" + inner + "}")
-        except json.JSONDecodeError as e:
-            raise ValueError(f"JSON parse failed for aug_id={aug_id}: {e}")
 
-        web_name = aug_id_map.get(aug_id, "")
-        local_tier = truth_dict.get(web_name)
-        if not web_name or not local_tier:
-            continue
+    # 步骤 1：清理文本 - 去转义
+    cleaned_html = html.replace('\\"', '"').replace('\\\\', '\\')
 
-        win = float(data.get('win_rate', 0))
-        pick = float(data.get('pick_rate', 0))
-        if win > 0 and pick >= FRESHNESS_THRESHOLD:
-            rows.append({
-                "英雄 ID": champ_id,
-                "英雄名称": champ_name,
-                "英雄评级": champ_data.get('tier', 'T3'),
-                "英雄胜率": float(champ_data.get('winRate', 0)),
-                "英雄出场率": float(champ_data.get('pickRate', 0)),
-                "海克斯阶级": local_tier,
-                "海克斯名称": web_name,
-                "海克斯胜率": win,
-                "海克斯出场率": pick
-            })
+    # 步骤 2：一次性全局扫描 - 捞出所有符合结构的数据
+    # 正则捕获：海克斯 ID + win_rate + pick_rate
+    universal_pattern = re.compile(
+        r'"(\d{4})"\s*:\s*\{[^{}]*?"(?:winRate|win_rate)"\s*:\s*"?([\d.]+)"?[^{}]*?"(?:pickRate|pick_rate)"\s*:\s*"?([\d.]+)"?',
+        re.DOTALL
+    )
+
+    # 步骤 3：字典内存匹配 - O(1) 查找
+    for match in universal_pattern.finditer(cleaned_html):
+        mid = match.group(1)
+        if mid in aug_id_map:
+            try:
+                win = float(match.group(2))
+                pick = float(match.group(3))
+
+                # 应用阈值过滤
+                if win > 0 and pick >= FRESHNESS_THRESHOLD:
+                    web_name = aug_id_map.get(mid, "")
+                    local_tier = truth_dict.get(web_name)
+                    if web_name and local_tier:
+                        rows.append({
+                            "英雄 ID": champ_id,
+                            "英雄名称": champ_name,
+                            "英雄评级": champ_data.get('tier', 'T3'),
+                            "英雄胜率": float(champ_data.get('winRate', 0)),
+                            "英雄出场率": float(champ_data.get('pickRate', 0)),
+                            "海克斯阶级": local_tier,
+                            "海克斯名称": web_name,
+                            "海克斯胜率": win,
+                            "海克斯出场率": pick
+                        })
+            except (ValueError, IndexError, AttributeError) as e:
+                # 记录详细错误日志：包含局部变量快照与堆栈追踪
+                chunk_start = max(0, cleaned_html.find(mid) - 50)
+                chunk_end = min(len(cleaned_html), cleaned_html.find(mid) + len(mid) + 150)
+                chunk_snapshot = cleaned_html[chunk_start:chunk_end].replace('\n', '\\n')[:200]
+                logging.warning(
+                    f"[{champ_name}] 海克斯 ID={mid} 解析失败：{e} | "
+                    f"上下文快照：{chunk_snapshot} | "
+                    f"堆栈：{traceback.format_exc().strip()}"
+                )
+                continue
 
     return rows
 
@@ -120,10 +137,10 @@ def main_scraper(stop_event=None):
             verify=True
         ).json()
 
+        # 适配新的 JSON 结构：直接以海克斯 ID（外层 Key）为标识遍历嵌套字典
         aug_id_map = {
-            str(v['id']): v.get('displayName', '').strip()
-            for v in (aug_data if isinstance(aug_data, list) else aug_data.values())
-            if v.get('id')
+            str(k): v.get('displayName', '').strip()
+            for k, v in aug_data.items()
         }
 
         stats_list = session.get(
@@ -143,19 +160,21 @@ def main_scraper(stop_event=None):
         url = f"https://hextech.dtodo.cn/zh-CN/champion-stats/{c_id}"
         champ_rows = []
         try:
+            # 请求调度超频模式：激进延迟规避特征检测
+            time.sleep(random.uniform(0.1, 0.3))
             res = session.get(url, timeout=10, verify=True)
             if res.status_code == 200:
                 try:
                     champ_rows = extract_champion_stats(res.text, aug_id_map, truth_dict, c_id, c_name, champ)
                 except ValueError as e:
-                    logging.warning(f"[{c_name}] aug parse failed: {e}")
+                    logging.warning(f"[{c_name}] aug 解析失败：{e}")
         except Exception as e:
-            logging.error(f"[{c_name}] HTTP fetch failed: {e}")
+            logging.error(f"[{c_name}] HTTP 获取失败：{e}")
 
         return c_name, champ_rows
 
-    logging.info(f"🚀 启动 8 线程抓取池，共 {len(stats_list)} 名英雄...")
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    logging.info(f"🚀 启动 16 线程超频抓取池，共 {len(stats_list)} 名英雄...")
+    with ThreadPoolExecutor(max_workers=16) as executor:
         futures = [executor.submit(fetch_champ, c) for c in stats_list]
         for f in as_completed(futures):
             if stop_event and stop_event.is_set():

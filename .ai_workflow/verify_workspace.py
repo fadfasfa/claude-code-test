@@ -124,10 +124,16 @@ def verify_contract_identity(contract_data: dict) -> str:
         if hmac.compare_digest(expected_signature, provided_signature):
             return declared_node
         else:
+            if contract_data.get("__from_git_history"):
+                print("\n⚠️ [读取到历史 Git 合约，签名失效，基于零信任原则自动降级为 QWEN_API]\n")
+                return "QWEN_API"
             print("\n⚠️ [安全网关致命警告]：契约 HMAC 签名校验失败，文件被非法篡改！已强制降级为 QWEN_API。\n")
             return "QWEN_API"
 
     except Exception as e:
+        if contract_data.get("__from_git_history"):
+            print("\n⚠️ [读取到历史 Git 合约，签名失效，基于零信任原则自动降级为 QWEN_API]\n")
+            return "QWEN_API"
         print(f"\n⚠️ [验签环境异常]：{e}。已强制降级为 QWEN_API。\n")
         return "QWEN_API"
 
@@ -138,11 +144,14 @@ def get_claude_auth_from_git() -> dict:
             with open(contract_path, "rb") as f:
                 raw = f.read()
             try:
-                text = raw.decode('utf-16').strip()
-                if text.startswith('\ufeff'):
-                    text = text[1:]
+                text = raw.decode('utf-8').strip()
             except UnicodeDecodeError:
-                text = raw.decode('utf-8', errors="replace")
+                try:
+                    text = raw.decode('utf-16').strip()
+                    if text.startswith('\ufeff'):
+                        text = text[1:]
+                except UnicodeDecodeError:
+                    text = raw.decode('gbk', errors="replace")
             return json.loads(text)
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             pass
@@ -154,7 +163,9 @@ def get_claude_auth_from_git() -> dict:
     if result.returncode != 0:
         return {}
     try:
-        return json.loads(result.stdout)
+        contract = json.loads(result.stdout)
+        contract["__from_git_history"] = True
+        return contract
     except json.JSONDecodeError:
         return {}
 

@@ -211,6 +211,11 @@ async def read_index():
     """Serve index.html for root path."""
     return FileResponse(os.path.join(_static_dir, "index.html"))
 
+@app.get("/detail.html")
+async def read_detail():
+    """Serve detail.html for detail page path."""
+    return FileResponse(os.path.join(_static_dir, "detail.html"))
+
 @app.get("/api/champions")
 async def api_champions():
     df = get_df()

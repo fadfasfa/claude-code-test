@@ -1,0 +1,15 @@
+{
+  "claude_sudo": {
+    "session_active": true,
+    "authorized_paths": [
+      ".ai_workflow/verify_workspace.py",
+      ".ai_workflow/whitelist.txt",
+      ".ai_workflow/current_contract.json",
+      ".ai_workflow/toggle_executor.py"
+    ]
+  },
+  "task_input_from_claude": {
+    "executor_node": "CLAUDE_API"
+  },
+  "signature": "0c7c45ebdf9c72405109b209a0474c021b4bf079e8b9fc0d81fc16bee801b4f0"
+}
