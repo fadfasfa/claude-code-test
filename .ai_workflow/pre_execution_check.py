@@ -4,6 +4,7 @@ from typing import List, Tuple
 DANGEROUS_CALLS = {
     'os.system': '执行系统命令', 'os.popen': '执行系统命令',
     'subprocess.call': '执行子进程', 'subprocess.run': '执行子进程',
+    'subprocess.Popen': '执行子进程',
     'eval': '动态执行代码',
     'exec': '动态执行代码', 'compile': '编译代码',
     '__import__': '动态导入', 'pickle.loads': '不安全的反序列化',
@@ -11,10 +12,10 @@ DANGEROUS_CALLS = {
 }
 
 # 豁免模块列表：允许某些模块在特定文件中使用
-EXEMPTED_MODULES = ['subprocess']  # subprocess 允许用于启动后端进程
+EXEMPTED_MODULES = []
 
 def check_dangerous_calls(code: str, exempted_modules: List[str] = None) -> Tuple[bool, List[str]]:
-    exempted_modules = exempted_modules or EXEMPTED_MODULES
+    exempted_modules = exempted_modules if exempted_modules is not None else EXEMPTED_MODULES
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
@@ -25,6 +26,9 @@ def check_dangerous_calls(code: str, exempted_modules: List[str] = None) -> Tupl
         if isinstance(node, ast.Call):
             call_str = get_call_string(node)
             if call_str in DANGEROUS_CALLS:
+                module_name = get_module_name(call_str)
+                if module_name and module_name in exempted_modules:
+                    continue
                 violations.append(f"禁止调用 {call_str}: {DANGEROUS_CALLS[call_str]}")
 
         if isinstance(node, ast.Import):
@@ -49,4 +53,10 @@ def get_call_string(node: ast.Call) -> str:
     elif isinstance(node.func, ast.Attribute):
         if isinstance(node.func.value, ast.Name):
             return f"{node.func.value.id}.{node.func.attr}"
+    return ""
+
+def get_module_name(call_str: str) -> str:
+    """Extract module name from call string (e.g., 'subprocess.run' -> 'subprocess')"""
+    if '.' in call_str:
+        return call_str.split('.')[0]
     return ""

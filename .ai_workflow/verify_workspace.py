@@ -101,7 +101,7 @@ def verify_contract_identity(contract_data: dict) -> str:
 
     secret_file = ".ai_workflow/.secret_key"
     if not os.path.exists(secret_file):
-        print("\n⚠️ [安全网关致命警告]：缺少本地密钥文件，拒绝特权提升！已强制降级为 QWEN_API。\n")
+        print("\n[WARNING] Secret key file missing, refusing privilege escalation! Forced downgrade to QWEN_API.\n")
         return "QWEN_API"
 
     try:
@@ -110,7 +110,7 @@ def verify_contract_identity(contract_data: dict) -> str:
 
         provided_signature = contract_data.get("signature")
         if not provided_signature:
-            print("\n⚠️ [安全网关致命警告]：契约缺少 HMAC 签名，疑似伪造！已强制降级为 QWEN_API。\n")
+            print("\n[WARNING] Contract missing HMAC signature, suspected forgery! Forced downgrade to QWEN_API.\n")
             return "QWEN_API"
 
         # 剥离签名本身以重构原始摘要载荷
@@ -120,21 +120,21 @@ def verify_contract_identity(contract_data: dict) -> str:
         payload_str = json.dumps(data_to_verify, sort_keys=True, separators=(',', ':'))
         expected_signature = hmac.new(secret.encode('utf-8'), payload_str.encode('utf-8'), hashlib.sha256).hexdigest()
 
-        # 防止时序攻击的恒定时间比较
-        if hmac.compare_digest(expected_signature, provided_signature):
+        # 防止时序攻击的恒定时间比较，同时清理签名中的隐藏空白字符
+        if hmac.compare_digest(expected_signature.strip(), provided_signature.strip()):
             return declared_node
         else:
             if contract_data.get("__from_git_history"):
-                print("\n⚠️ [读取到历史 Git 合约，签名失效，基于零信任原则自动降级为 QWEN_API]\n")
+                print("\n[WARNING] Git history contract detected, signature invalid, auto-downgrade to QWEN_API per zero-trust principle\n")
                 return "QWEN_API"
-            print("\n⚠️ [安全网关致命警告]：契约 HMAC 签名校验失败，文件被非法篡改！已强制降级为 QWEN_API。\n")
+            print("\n[WARNING] Contract HMAC signature verification failed, file tampered! Forced downgrade to QWEN_API.\n")
             return "QWEN_API"
 
     except Exception as e:
         if contract_data.get("__from_git_history"):
-            print("\n⚠️ [读取到历史 Git 合约，签名失效，基于零信任原则自动降级为 QWEN_API]\n")
+            print("\n[WARNING] Git history contract detected, signature invalid, auto-downgrade to QWEN_API per zero-trust principle\n")
             return "QWEN_API"
-        print(f"\n⚠️ [验签环境异常]：{e}。已强制降级为 QWEN_API。\n")
+        print(f"\n[WARNING] Signature verification environment error: {e}. Forced downgrade to QWEN_API.\n")
         return "QWEN_API"
 
 def get_claude_auth_from_git() -> dict:
@@ -247,7 +247,7 @@ def execute_atomic_revert(unauthorized: Dict, base_commit: str) -> bool:
     for file_path in unauthorized.keys():
         subprocess.run(["git", "checkout", "HEAD", "--", file_path], capture_output=True)
 
-    print(f"✅ 已执行安全回滚，案发现场快照已保存至：{backup_path}")
+    print(f"[SUCCESS] Security rollback executed, incident snapshot saved to: {backup_path}")
     return True
 
 def cleanup_stale_backups(backup_dir=".ai_workflow/backup", max_days=7, max_keep=30):
@@ -301,7 +301,7 @@ def main():
         changes, base_commit = get_comprehensive_changes()
 
         if not changes:
-            print("✅ 工作区无变动")
+            print("[SUCCESS] No changes in workspace")
             return
 
         unauthorized, pending_ast = categorize_changes(changes, whitelist, auth_paths, executor_node)
@@ -311,7 +311,7 @@ def main():
             unauthorized.clear()
 
         if pending_ast:
-            print(f"🔍 触发深度审查，正在扫描 {len(pending_ast)} 个文件...")
+            print(f"[SCAN] Starting deep review, scanning {len(pending_ast)} files...")
             if ".ai_workflow" not in sys.path:
                 sys.path.insert(0, ".ai_workflow")
             from pre_execution_check import check_dangerous_calls
@@ -343,11 +343,11 @@ def main():
                     if old_code is not None:
                         old_is_safe, _ = check_dangerous_calls(old_code, exempted_modules=exempted_modules)
                         if old_is_safe:
-                            print(f"🚫 [拦截] {ast_file} 触发新增高危动作：{violations}")
+                            print(f"[INTERCEPT] {ast_file} triggered new dangerous action: {violations}")
                             unauthorized[ast_file] = "DANGEROUS_CODE"
                             continue
                     else:
-                        print(f"🚫 [拦截] {ast_file} 触发新增高危动作：{violations}")
+                        print(f"[INTERCEPT] {ast_file} triggered new dangerous action: {violations}")
                         unauthorized[ast_file] = "DANGEROUS_CODE"
                         continue
 
@@ -365,18 +365,18 @@ def main():
                             destructive_violations.append(line)
 
                     if destructive_violations:
-                        print(f"🚫 [拦截] {ast_file} 发生 AST 结构退化/异常:\n" + '\n'.join(destructive_violations))
+                        print(f"[INTERCEPT] {ast_file} AST structure degraded/abnormal:\n" + '\n'.join(destructive_violations))
                         unauthorized[ast_file] = "AST_DEGRADED"
 
         if unauthorized:
-            print("❌ 发现未授权或未通过审查的修改，执行回滚...")
+            print("[ERROR] Found unauthorized or unapproved changes, executing rollback...")
             for k in unauthorized:
-                print(f" - {k} [阻断原因：{unauthorized[k]}]")
+                print(f" - {k} [Reason: {unauthorized[k]}]")
             execute_atomic_revert(unauthorized, base_commit)
             cleanup_stale_backups()
             sys.exit(1)
 
-        print("✅ 验证通过")
+        print("[SUCCESS] Verification passed")
         sys.exit(0)
     finally:
         release_lock()
