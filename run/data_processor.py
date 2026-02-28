@@ -68,6 +68,8 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
         for _, row in data.iterrows():
             result.append({
                 '英雄名称': str(row['英雄名称']),
+                '英雄 ID': name_to_id.get(str(row['英雄名称']), ''),
+                '英文名': name_to_en.get(str(row['英雄名称']), ''),
                 '英雄胜率': float(row['英雄胜率']) if pd.notna(row['英雄胜率']) else 0.0,
                 '英雄出场率': float(row['英雄出场率']) if pd.notna(row['英雄出场率']) else 0.0,
                 '贝叶斯胜率': float(row['贝叶斯胜率']) if pd.notna(row['贝叶斯胜率']) else 0.0,
@@ -213,6 +215,9 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
 
         hero_data['综合得分'] = hero_data.apply(calc_comprehensive_score, axis=1)
 
+        # ========== 综合得分防爆盾（NaN 填充） ==========
+        hero_data['综合得分'] = hero_data['综合得分'].fillna(0.0)
+
         # ========== 辅助函数：生成海克斯卡片 ==========
         def build_hextech_card(row, include_score=True):
             card = {
@@ -258,8 +263,8 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
             variants = tier_variants.get(tier_name, [])
             tier_data = hero_data[hero_data['海克斯阶级'].isin(variants)].copy()
 
-            # 按综合得分排序
-            tier_data_by_score = tier_data.sort_values(by='综合得分', ascending=False)
+            # 按综合得分排序并截取前 10
+            tier_data_by_score = tier_data.sort_values(by='综合得分', ascending=False).head(10)
             result = []
             for _, row in tier_data_by_score.iterrows():
                 result.append(build_hextech_card(row, include_score=True))
