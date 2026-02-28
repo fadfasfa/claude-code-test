@@ -206,8 +206,8 @@ def main_scraper(stop_event=None):
         url = f"https://hextech.dtodo.cn/zh-CN/champion-stats/{c_id}"
         champ_rows = []
         try:
-            # 深度随机休眠：模拟人类请求时序（1.5-3.5 秒）
-            time.sleep(random.uniform(1.5, 3.5))
+            # 随机休眠：模拟人类请求时序（0.5-1.5 秒，平衡防封禁与效率）
+            time.sleep(random.uniform(0.5, 1.5))
 
             # 使用重试机制获取数据
             res = fetch_with_retry(session, url)
