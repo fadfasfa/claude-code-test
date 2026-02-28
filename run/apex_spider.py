@@ -72,6 +72,7 @@ class ApexSpider:
         try:
             logger.info(f"正在加载页面：{url}")
             response = self.session.get(url, timeout=10)
+            response.encoding = 'utf-8'
 
             if response.status_code != 200:
                 logger.error(f"页面返回状态码异常：{response.status_code}, URL: {url}")
@@ -283,13 +284,14 @@ def main():
 
         # 构建任务字典：URL -> 英雄信息
         task_map = {}
+        skipped_names = []
         for champ in champions:
             champ_name = champ["name"]
             champ_url = champ["url"]
 
             # 通过名称匹配核心数据
             if champ_name not in name_to_core:
-                logger.warning(f"未找到英雄 [{champ_name}] 的核心数据，跳过")
+                skipped_names.append(champ_name)
                 continue
 
             core_info = name_to_core[champ_name]
@@ -305,6 +307,15 @@ def main():
                 "en_name": core_info["en_name"],
                 "aliases": aliases
             }
+
+        # 调试信息
+        if skipped_names:
+            logger.warning(f"未匹配的英雄名称数: {len(skipped_names)}")
+            if len(skipped_names) <= 10:
+                for name in skipped_names[:5]:
+                    logger.warning(f"  示例: {repr(name)}")
+
+        logger.info(f"成功匹配 {len(task_map)} 个英雄用于并发抓取")
 
         # 使用 ThreadPoolExecutor 进行并发抓取
         with ThreadPoolExecutor(max_workers=16) as executor:
