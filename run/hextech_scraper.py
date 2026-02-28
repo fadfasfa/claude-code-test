@@ -17,6 +17,49 @@ from hero_sync import get_advanced_session, CONFIG_DIR, load_augment_map, load_c
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 FRESHNESS_THRESHOLD = 0.0005
 
+# ========== 防封禁 UA 池（5 种主流浏览器） ==========
+USER_AGENT_POOL = [
+    # Chrome 120 on Windows 10
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    # Firefox 121 on Windows 10
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    # Edge 120 on Windows 10
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+    # Safari 17 on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    # Chrome 120 on macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
+def get_random_ua():
+    """从 UA 池中随机选择一个 User-Agent"""
+    return random.choice(USER_AGENT_POOL)
+
+
+def fetch_with_retry(session, url, max_retries=3, timeout=10):
+    """
+    带指数退避的重试机制
+    捕获 HTTPError 或 ConnectionError，在最大重试次数内以递增的时间间隔（2s, 4s, 8s）进行重试
+    """
+    last_exception = None
+    for attempt in range(max_retries):
+        try:
+            # 动态注入随机 UA
+            headers = {"User-Agent": get_random_ua()}
+            response = session.get(url, headers=headers, timeout=timeout, verify=True)
+            response.raise_for_status()
+            return response
+        except (requests.exceptions.HTTPError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                # 指数退避：2^attempt 秒
+                wait_time = 2 ** (attempt + 1)
+                logging.warning(f"请求 {url} 失败 (尝试 {attempt + 1}/{max_retries}): {e}，{wait_time}秒后重试...")
+                time.sleep(wait_time)
+            else:
+                logging.warning(f"请求 {url} 失败，已达最大重试次数 {max_retries}: {e}")
+    return None
+
 def check_execution_permission():
     status_file = os.path.join(CONFIG_DIR, "scraper_status.json")
     now = time.time()
@@ -55,7 +98,7 @@ def cleanup_old_csvs():
 
             if is_stale_csv or is_stale_tmp:
                 os.remove(f)
-                logging.info(f"🗑️ 已清理过期/残留文件：{os.path.basename(f)}")
+                logging.info(f"已清理过期/残留文件：{os.path.basename(f)}")
         except Exception as e:
             logging.error(f"清理文件异常 {f}: {e}")
 def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_id: str, champ_name: str, champ_data: dict) -> list:
@@ -119,23 +162,25 @@ def main_scraper(stop_event=None):
 
     can_run, msg = check_execution_permission()
     if not can_run:
-        logging.info(f"☕ {msg}")
+        logging.info(f"数据尚在有效期内，跳过抓取：{msg}")
         return False
 
-    logging.info(f"📡 {msg}")
+    logging.info(f"启动抓取任务：{msg}")
     truth_dict = load_augment_map()
     core_data = load_champion_core_data()
     if not truth_dict or not core_data:
-        logging.error("🚨 基础数据加载失败，终止抓取。")
+        logging.error("基础数据加载失败，终止抓取。")
         return False
 
     session = get_advanced_session()
 
     try:
-        aug_data = session.get(
-            "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json",
-            verify=True
-        ).json()
+        # 使用重试机制获取 JSON 数据
+        aug_response = fetch_with_retry(session, "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json")
+        if aug_response is None:
+            logging.error("获取海克斯配置数据失败")
+            return False
+        aug_data = aug_response.json()
 
         # 适配新的 JSON 结构：直接以海克斯 ID（外层 Key）为标识遍历嵌套字典
         aug_id_map = {
@@ -143,12 +188,13 @@ def main_scraper(stop_event=None):
             for k, v in aug_data.items()
         }
 
-        stats_list = session.get(
-            "https://hextech.dtodo.cn/data/champions-stats.json",
-            verify=True
-        ).json()
+        stats_response = fetch_with_retry(session, "https://hextech.dtodo.cn/data/champions-stats.json")
+        if stats_response is None:
+            logging.error("获取英雄统计数据失败")
+            return False
+        stats_list = stats_response.json()
     except Exception as e:
-        logging.error(f"🚨 抓取端握手异常：{e}")
+        logging.error(f"抓取端握手异常：{e}")
         return False
 
     all_rows = []
@@ -160,25 +206,31 @@ def main_scraper(stop_event=None):
         url = f"https://hextech.dtodo.cn/zh-CN/champion-stats/{c_id}"
         champ_rows = []
         try:
-            # 请求调度超频模式：激进延迟规避特征检测
-            time.sleep(random.uniform(0.1, 0.3))
-            res = session.get(url, timeout=10, verify=True)
-            if res.status_code == 200:
+            # 深度随机休眠：模拟人类请求时序（1.5-3.5 秒）
+            time.sleep(random.uniform(1.5, 3.5))
+
+            # 使用重试机制获取数据
+            res = fetch_with_retry(session, url)
+
+            # 强化解析前校验：判断返回值是否有效
+            if res is not None and res.status_code == 200 and len(res.text) > 0:
                 try:
                     champ_rows = extract_champion_stats(res.text, aug_id_map, truth_dict, c_id, c_name, champ)
                 except ValueError as e:
-                    logging.warning(f"[{c_name}] aug 解析失败：{e}")
+                    # 变量快照捕获
+                    logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
         except Exception as e:
-            logging.error(f"[{c_name}] HTTP 获取失败：{e}")
+            # 变量快照捕获
+            logging.error(f"[{c_name}] HTTP 获取失败：{e} | URL={url} | 堆栈={traceback.format_exc().strip()}")
 
         return c_name, champ_rows
 
-    logging.info(f"🚀 启动 16 线程超频抓取池，共 {len(stats_list)} 名英雄...")
+    logging.info(f"启动 16 线程超频抓取池，共 {len(stats_list)} 名英雄...")
     with ThreadPoolExecutor(max_workers=16) as executor:
         futures = [executor.submit(fetch_champ, c) for c in stats_list]
         for f in as_completed(futures):
             if stop_event and stop_event.is_set():
-                logging.info("🛑 收到用户强制退出信号，正在销毁爬虫线程池...")
+                logging.info("收到用户强制退出信号，正在销毁爬虫线程池...")
                 for fut in futures:
                     fut.cancel()
                 executor.shutdown(wait=False)
@@ -231,10 +283,10 @@ def main_scraper(stop_event=None):
 
         update_status_file()
         cleanup_old_csvs()
-        logging.info(f"✅ 抓取结束，固化至：{output_csv}")
+        logging.info(f"抓取结束，固化至：{output_csv}")
         return True
     else:
-        logging.error("🚨 抓取任务未能生成有效数据，请检查网络或数据源。")
+        logging.error("抓取任务未能生成有效数据，请检查网络或数据源。")
         return False
 
 if __name__ == "__main__":
