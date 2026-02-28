@@ -94,88 +94,9 @@
 
     <script>
         // ========== 配置 ==========
-        const API_BASE = window.location.origin;
-        const WS_URL = 'ws://' + window.location.host;
-        let ddragonVersion = '14.3.1';
-
-        // 英雄头像 CDN 映射（常用英雄拼音映射）
-        const CHAMPION_PINYIN = {
-            '亚索': 'Yasuo', '永恩': 'Yone', '阿狸': 'Ahri', '阿卡丽': 'Akali',
-            '卡莎': 'Kaisa', '伊泽瑞尔': 'Ezreal', '拉克丝': 'Lux', '金克丝': 'Jinx',
-            '崔丝塔娜': 'Tristana', '凯特琳': 'Caitlyn', '厄斐琉斯': 'Aphelios',
-            '薇恩': 'Vayne', '德莱文': 'Draven', '卢锡安': 'Lucian', '艾希': 'Ashe',
-            '女警': 'Caitlyn', '小炮': 'Tristana', 'EZ': 'Ezreal',
-            '盖伦': 'Garen', '诺手': 'Darius', '鳄鱼': 'Renekton', '腕豪': 'Sett',
-            '瑟提': 'Sett', '奥恩': 'Ornn', '熔岩巨兽': 'Malphite', '石头人': 'Malphite',
-            '阿木木': 'Amumu', '蒙多': 'Mundo', '塞恩': 'Sion', '亡灵战神': 'Sion',
-            '内瑟斯': 'Nasus', '狗头': 'Nasus', '沃利贝尔': 'Volibear', '狗熊': 'Volibear',
-            '弗雷尔卓德之心': 'Braum', '布隆': 'Braum', '蕾欧娜': 'Leona', '日女': 'Leona',
-            '曙光女神': 'Leona', '潘森': 'Pantheon', '赵信': 'XinZhao', '嘉文四世': 'JarvanIV',
-            '皇子': 'JarvanIV', '李青': 'LeeSin', '盲僧': 'LeeSin', '盲仔': 'LeeSin',
-            '蔚': 'Vi', '蔚': 'Vi', '卡密尔': 'Camille', '青钢影': 'Camille',
-            '菲奥娜': 'Fiora', '剑姬': 'Fiora', '贾克斯': 'Jax', '武器大师': 'Jax',
-            '武器': 'Jax', '艾瑞莉娅': 'Irelia', '刀妹': 'Irelia', '瑞文': 'Riven',
-            '放逐之刃': 'Riven', '凯尔': 'Kayle', '天使': 'Kayle', '莫德凯撒': 'Mordekaiser',
-            '铁男': 'Mordekaiser', '兰博': 'Rumble', '机械公敌': 'Rumble',
-            '凯南': 'Kennen', '狂暴之心': 'Kennen', '提莫': 'Teemo', '迅捷斥候': 'Teemo',
-            '杰斯': 'Jayce', '未来守护者': 'Jayce', '维克托': 'Viktor', '机械先驱': 'Viktor',
-            '辛吉德': 'Singed', '炼金': 'Singed', '兰顿': 'Random', // 占位
-            '萨勒芬妮': 'Seraphine', '歌姬': 'Seraphine', '娑娜': 'Sona', '琴女': 'Sona',
-            '索拉卡': 'Soraka', '奶妈': 'Soraka', '悠米': 'Yuumi', '猫咪': 'Yuumi',
-            '卡尔玛': 'Karma', '天启者': 'Karma', '露露': 'Lulu', '发条魔灵': 'Orianna',
-            '发条': 'Orianna', '奥莉安娜': 'Orianna', '维克兹': 'VelKoz', '大眼': 'VelKoz',
-            '马尔扎哈': 'Malzahar', '蚂蚱': 'Malzahar', '安妮': 'Annie', '黑暗之女': 'Annie',
-            '布兰德': 'Brand', '火男': 'Brand', '泽拉斯': 'Xerath', '远古巫灵': 'Xerath',
-            '吉格斯': 'Ziggs', '炸弹人': 'Ziggs', '维迦': 'Veigar', '小法师': 'Veigar',
-            '瑞兹': 'Ryze', '符文法师': 'Ryze', '卡西奥佩娅': 'Cassiopeia', '魔蛇': 'Cassiopeia',
-            '蛇女': 'Cassiopeia', '弗拉基米尔': 'Vladimir', '吸血鬼': 'Vladimir',
-            '辛德拉': 'Syndra', '暗黑元首': 'Syndra', '球女': 'Syndra', '奥瑞利安索尔': 'AurelionSol',
-            '龙王': 'AurelionSol', '塔莉垭': 'Taliyah', '岩雀': 'Taliyah',
-            '艾克': 'Ekko', '时间刺客': 'Ekko', '卡萨丁': 'Kassadin', '虚空行者': 'Kassadin',
-            '菲兹': 'Fizz', '小鱼人': 'Fizz', '黛安娜': 'Diana', '皎月': 'Diana',
-            '皎月女神': 'Diana', '卡特琳娜': 'Katarina', '不祥之刃': 'Katarina', '卡特': 'Katarina',
-            '泰隆': 'Talon', '男刀': 'Talon', '乐芙兰': 'LeBlanc', '妖姬': 'LeBlanc',
-            '诡术妖姬': 'LeBlanc', '劫': 'Zed', '影流之主': 'Zed',
-            '伊芙琳': 'Evelynn', '寡妇': 'Evelynn', '卡兹克': 'Khazix', '螳螂': 'Khazix',
-            '雷恩加尔': 'Rengar', '狮子狗': 'Rengar', '赫卡里姆': 'Hecarim', '人马': 'Hecarim',
-            '沃里克': 'Warwick', '狼人': 'Warwick', '图奇': 'Twitch', '老鼠': 'Twitch',
-            '瘟疫之源': 'Twitch', '克格莫': 'KogMaw', '大嘴': 'KogMaw', '虚空先知': 'Malzahar',
-            '艾翁': 'Ivern', '翠神': 'Ivern', '尼科': 'Neeko', '万花通灵': 'Neeko',
-            '佐伊': 'Zoe', '暮光星灵': 'Zoe', '阿兹尔': 'Azir', '沙漠皇帝': 'Azir',
-            '库奇': 'Corki', '飞机': 'Corki', '英勇投弹手': 'Corki',
-            '格雷福斯': 'Graves', '男枪': 'Graves', '法外狂徒': 'Graves',
-            '金克丝': 'Jinx', '暴走萝莉': 'Jinx', '卡莉丝塔': 'Kalista', '复仇之矛': 'Kalista',
-            '滑板鞋': 'Kalista', '莎弥拉': 'Samira', '沙漠玫瑰': 'Samira',
-            '泽丽': 'Zeri', '霓虹灯': 'Zeri', '霞': 'Xayah', '逆羽': 'Xayah',
-            '洛': 'Rakan', '幻翎': 'Rakan',
-            '俄洛伊': 'Illaoi', '海兽祭司': 'Illaoi', '章鱼妈': 'Illaoi',
-            '斯维因': 'Swain', '诺克萨斯统领': 'Swain', '乌鸦': 'Swain',
-            '奎因': 'Quinn', '华洛': 'Quinn', '德玛西亚之翼': 'Quinn',
-            '塔姆': 'TahmKench', '河流之王': 'TahmKench', '蛤蟆': 'TahmKench',
-            '俄洛伊': 'Illaoi', '派克': 'Pyke', '血港鬼影': 'Pyke',
-            '千珏': 'Kindred', '永猎双子': 'Kindred', '伊莉丝': 'Elise', '蜘蛛': 'Elise',
-            '蜘蛛女皇': 'Elise', '古拉加斯': 'Gragas', '酒桶': 'Gragas',
-            '艾尼维亚': 'Anivia', '冰鸟': 'Anivia', '晶灿飞鸟': 'Anivia',
-            '迦娜': 'Janna', '风女': 'Janna', '风暴之怒': 'Janna',
-            '库奇': 'Corki', '黑默丁格': 'Heimerdinger', '大头': 'Heimerdinger',
-            '大发明家': 'Heimerdinger', '纳什男爵': 'Baron', // 占位
-            '悠米': 'Yuumi', '魔法猫咪': 'Yuumi',
-            '艾希': 'Ashe', '寒冰射手': 'Ashe', '寒冰': 'Ashe',
-            '泰达米尔': 'Tryndamere', '蛮族之王': 'Tryndamere', '蛮王': 'Tryndamere',
-            '特朗德尔': 'Trundle', '巨魔之王': 'Trundle', '巨魔': 'Trundle',
-            '沃利贝尔': 'Volibear', '不灭狂雷': 'Volibear',
-            '李青': 'LeeSin', '盲僧': 'LeeSin',
-            '卡莎': 'Kaisa', '虚空之女': 'Kaisa',
-            '虚空之女': 'Kaisa',
-            '卑尔维斯': 'Belveth', '女皇': 'Belveth',
-            '纳亚菲利': 'Naafiri', '百裂冥犬': 'Naafiri', '狗头': 'Nasus',
-            '奎桑提': 'KSante', '纳祖芒': 'KSante',
-            '茂凯': 'Maokai', '扭曲树精': 'Maokai', '大树': 'Maokai',
-            '拉莫斯': 'Rammus', '披甲龙龟': 'Rammus', '龙龟': 'Rammus',
-            '希瓦娜': 'Shyvana', '龙血武姬': 'Shyvana', '龙女': 'Shyvana',
-            '波比': 'Poppy', '圣锤之毅': 'Poppy',
-            '格雷福斯': 'Graves'
-        };
+        // 修复本地直开 Bug：file: 协议下使用 localhost
+        const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000' : window.location.origin;
+        const WS_URL = window.location.protocol === 'file:' ? 'ws://localhost:8000' : 'ws://' + (window.location.host || 'localhost:8000');
 
         // 五大阶层定义（按综合分数划分）
         const TIERS = [
@@ -193,49 +114,26 @@
 
         // ========== 工具函数 ==========
         /**
-         * 获取英雄英文名（用于 URL 参数和图片）
+         * 获取英雄头像 URL - 使用本地 assets 目录
          */
-        function getChampionEnName(name) {
-            let enName = CHAMPION_PINYIN[name] || name;
-            return enName.replace(/\s+/g, '');
+        function getChampionAvatar(champion) {
+            const heroId = champion.英雄 ID || '';
+            if (heroId) {
+                return `/assets/${heroId}.png`;
+            }
+            // 降级：如果没有 ID，返回默认占位图
+            return 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>?</text></svg>';
         }
 
         /**
-         * 获取英雄头像 URL
-         */
-        function getChampionAvatar(name) {
-            const enName = getChampionEnName(name);
-            return `https://ddragon.leagueoflegends.com/cdn/${ddragonVersion}/img/champion/${enName}.png`;
-        }
-
-        /**
-         * 头像加载失败处理函数 - 三级降级逻辑
-         * 1. 先尝试腾讯官方 CDN
-         * 2. 失败后展示本地 assets 文件夹下的通用魄罗占位图
+         * 头像加载失败处理函数 - 直接显示默认底图
          */
         function handleAvatarError(imgElement, heroName) {
             // 避免重复执行
             if (imgElement.dataset.errorHandled === 'true') return;
-
-            // 尝试从映射表获取英文名
-            let enName = (CHAMPION_PINYIN[heroName] || heroName).replace(/\s+/g, '');
-
-            // 记录日志便于审计
-            console.log(`[头像加载失败] 英雄：${heroName}, 英文名：${enName}`);
-
-            // 第一次失败：尝试腾讯官方 CDN
-            if (imgElement.dataset.attempt === '1') {
-                imgElement.dataset.errorHandled = 'true';
-                // 展示占位图
-                imgElement.src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>' + heroName[0] + '</text></svg>';
-                return;
-            }
-
-            // 标记尝试次数
-            imgElement.dataset.attempt = '1';
-
-            // 尝试腾讯 CDN
-            imgElement.src = `https://game.gtimg.cn/images/lol/act/img/champion/${enName}.png`;
+            imgElement.dataset.errorHandled = 'true';
+            // 展示占位图
+            imgElement.src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>' + (heroName ? heroName[0] : '?') + '</text></svg>';
         }
 
         /**
@@ -266,13 +164,12 @@
          * 创建英雄头像卡片（预览版横向排列结构）
          */
         function createChampionCard(champion, index) {
-            const avatarUrl = getChampionAvatar(champion.英雄名称);
-            const enName = getChampionEnName(champion.英雄名称);
+            const avatarUrl = getChampionAvatar(champion);
             const wr = formatPercent(champion.贝叶斯胜率);
             const pr = formatPercent(champion.英雄出场率);
 
-            // 生成详情页链接，附带 wr、pr、en 参数
-            const detailUrl = `detail.html?hero=${encodeURIComponent(champion.英雄名称)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(pr)}&en=${encodeURIComponent(enName)}`;
+            // 生成详情页链接，附带 wr、pr、id、en 参数
+            const detailUrl = `detail.html?hero=${encodeURIComponent(champion.英雄名称)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(pr)}&id=${encodeURIComponent(champion.英雄 ID || '')}&en=${encodeURIComponent(champion.英文名 || '')}`;
 
             return `
                 <a
@@ -362,23 +259,6 @@
 
         // ========== 数据获取 ==========
         /**
-         * 获取最新的游戏版本号
-         */
-        async function fetchLatestVersion() {
-            try {
-                const response = await fetch('https://ddragon.leagueoflegends.com/api/versions.json');
-                if (!response.ok) throw new Error('HTTP error');
-                const versions = await response.json();
-                if (Array.isArray(versions) && versions.length > 0) {
-                    ddragonVersion = versions[0];
-                    console.log('获取到最新 ddragon 版本:', ddragonVersion);
-                }
-            } catch (error) {
-                console.error('获取最新版本号失败，使用默认版本 14.3.1:', error);
-            }
-        }
-
-        /**
          * 加载英雄数据
          */
         async function loadChampions() {
@@ -454,6 +334,9 @@
                             console.log('收到英雄更新通知，英雄 IDs:', message.champion_ids);
                             // 简单处理：刷新当前页面数据
                             loadChampions();
+                        } else if (message.type === 'data_updated') {
+                            console.log('收到 CSV 数据更新通知，自动热重载...');
+                            loadChampions();
                         }
                     } catch (e) {
                         console.error('解析 WebSocket 消息失败:', e);
@@ -468,10 +351,8 @@
 
         // ========== 初始化 ==========
         document.addEventListener('DOMContentLoaded', () => {
-            // 先获取最新版本号，再加载数据
-            fetchLatestVersion().then(() => {
-                loadChampions();
-            });
+            // 加载数据
+            loadChampions();
 
             // 建立 WebSocket 连接
             connectWebSocket();

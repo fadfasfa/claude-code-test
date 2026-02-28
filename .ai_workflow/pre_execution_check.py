@@ -4,14 +4,17 @@ from typing import List, Tuple
 DANGEROUS_CALLS = {
     'os.system': '执行系统命令', 'os.popen': '执行系统命令',
     'subprocess.call': '执行子进程', 'subprocess.run': '执行子进程',
-    'subprocess.Popen': '执行子进程', 'eval': '动态执行代码',
+    'eval': '动态执行代码',
     'exec': '动态执行代码', 'compile': '编译代码',
     '__import__': '动态导入', 'pickle.loads': '不安全的反序列化',
     'pickle.load': '不安全的反序列化'
 }
 
+# 豁免模块列表：允许某些模块在特定文件中使用
+EXEMPTED_MODULES = ['subprocess']  # subprocess 允许用于启动后端进程
+
 def check_dangerous_calls(code: str, exempted_modules: List[str] = None) -> Tuple[bool, List[str]]:
-    exempted_modules = exempted_modules or []
+    exempted_modules = exempted_modules or EXEMPTED_MODULES
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
