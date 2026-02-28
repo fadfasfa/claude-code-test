@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 # 目标 URL 列表（尝试多个端点）
 TARGET_ENDPOINTS = [
     "https://api.xiaoheihe.cn/game/web/all_recommend/games/",
-    "https://api.xiaoheihe.cn/game/web/game_recommend/",
-    "https://api.xiaoheihe.cn/webapi/game/web/all_recommend/games/",
 ]
 
 # User-Agent 池（Scraper-Ninja 逻辑）
@@ -39,6 +37,21 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+]
+
+# 版本号和参数配置
+VERSIONS_TO_TRY = [
+    {"os_type": "web", "version": "999.0.0"},
+    {"os_type": "web", "version": "1.3.1"},
+    {"os_type": "web", "version": "1.0.0"},
+    {"os_type": "android", "version": "1.3.1"},
+]
+
+# 请求参数配置
+PARAMS_CONFIGS = [
+    {"limit": "20", "offset": "0", "is_new_user": "0"},
+    {"limit": "20", "offset": "0"},
+    {"page": "1", "page_size": "20"},
 ]
 
 
@@ -64,53 +77,55 @@ async def probe_heybox():
         "x-client-type": "web",
     }
 
-    # 额外参数（用于获取实际数据）
-    params = {
-        "os_type": "web",
-        "version": "1.3.1",  # 尝试使用新版本号
-        "limit": "20",
-        "offset": "0",
-        "is_new_user": "0",
-        # 添加时间戳防止缓存
-        "_timestamp": int(time.time() * 1000),
-    }
-
     logger.info(f"使用 User-Agent: {random_ua[:50]}...")
 
     # 尝试多个端点
     for endpoint in TARGET_ENDPOINTS:
         logger.info(f"探测端点：{endpoint}")
-        logger.info(f"请求参数：{params}")
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.get(endpoint, headers=headers, params=params)
+        # 尝试多个版本配置
+        for version_config in VERSIONS_TO_TRY:
+            # 尝试多个参数配置
+            for params_config in PARAMS_CONFIGS:
+                params = {**version_config, **params_config}
+                logger.info(f"尝试参数：{params}")
 
-                # 记录响应头信息
-                logger.info(f"响应状态码：{response.status_code}")
-                logger.info(f"响应头：{dict(response.headers)}")
+                result = await _make_request(endpoint, headers, params)
+                if result:
+                    return result
 
-                # 处理 403 和签名错误
-                if response.status_code == 403:
-                    logger.error("⚠️  收到 403 Forbidden 响应")
+    return None
+
+
+async def _make_request(endpoint: str, headers: dict, params: dict):
+    """
+    发起请求并处理响应
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.get(endpoint, headers=headers, params=params)
+
+            # 记录响应头信息
+            logger.info(f"响应状态码：{response.status_code}")
+            logger.info(f"响应头：{dict(response.headers)}")
+
+            # 处理 403 和签名错误
+            if response.status_code == 403:
+                logger.error("⚠️  收到 403 Forbidden 响应")
+                logger.error(f"完整响应头：{dict(response.headers)}")
+                return None
+
+            # 检查签名错误（通常返回特定错误码）
+            if response.status_code == 200:
+                data = response.json()
+                # 检查是否有签名相关的错误码
+                if data.get('code') not in [0, None, '0']:
+                    logger.error(f"⚠️  接口返回错误码：{data.get('code')}")
+                    logger.error(f"错误信息：{data.get('message', 'Unknown')}")
                     logger.error(f"完整响应头：{dict(response.headers)}")
-                    continue
+                    return None
 
-                # 检查签名错误（通常返回特定错误码）
-                if response.status_code == 200:
-                    data = response.json()
-                    # 检查是否有签名相关的错误码
-                    if data.get('code') not in [0, None, '0']:
-                        logger.error(f"⚠️  接口返回错误码：{data.get('code')}")
-                        logger.error(f"错误信息：{data.get('message', 'Unknown')}")
-                        logger.error(f"完整响应头：{dict(response.headers)}")
-                        continue
-
-                response.raise_for_status()
-
-                # 获取 JSON 数据
                 json_data = response.json()
-
                 logger.info("✓ 成功获取数据")
 
                 # 检查 result 是否为空
@@ -118,16 +133,16 @@ async def probe_heybox():
                     logger.info("✓ result 字段包含数据")
                     return json_data
                 else:
-                    logger.warning("⚠️  result 字段为空，尝试下一个端点")
+                    logger.warning("⚠️  result 字段为空")
 
-            except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP 错误：{e}")
-                logger.error(f"完整响应头：{dict(e.response.headers)}")
-            except httpx.RequestError as e:
-                logger.error(f"请求错误：{e}")
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON 解析错误：{e}")
-                logger.error(f"响应内容：{response.text[:500]}")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP 错误：{e}")
+            logger.error(f"完整响应头：{dict(e.response.headers)}")
+        except httpx.RequestError as e:
+            logger.error(f"请求错误：{e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON 解析错误：{e}")
+            logger.error(f"响应内容：{response.text[:500]}")
 
     return None
 
