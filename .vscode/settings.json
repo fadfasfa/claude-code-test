@@ -1,3 +1,20 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+  "terminal.integrated.profiles.windows": {
+    "Claude-Architect (Admin)": {
+      "source": "PowerShell",
+      "icon": "brain"
+    },
+    "Qwen-Executor (Standard)": {
+      "source": "PowerShell",
+      "icon": "terminal-powershell"
+    },
+    "Gemini-Auditor (Standard)": {
+      "source": "PowerShell",
+      "icon": "eye",
+      "env": {
+        "GEMINI_API_KEY": "AIzaSyCLhaRRCbTlyxf-555vv1gXqRy_xWLdI2U"
+      }
+    }
+  },
+  "python-envs.defaultEnvManager": "ms-python.python:system"
 }
