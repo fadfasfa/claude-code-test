@@ -71,15 +71,29 @@ def get_df() -> pd.DataFrame:
 
     if latest != _csv_cache.path or current_mtime != _csv_cache.mtime:
         try:
-            df = pd.read_csv(latest, dtype={"英雄ID": str})
+            # 移除 dtype 强约束，让 pandas 自动推断类型
+            df = pd.read_csv(latest)
             df.columns = df.columns.str.replace(' ', '')  # 暴力清除表头所有空格（包括中间空格）
-            df["英雄ID"] = df["英雄ID"].str.strip().str.replace(".0", "", regex=False)
+
+            # 容错遍历：检查带空格和不带空格的列名变体
+            id_column = None
+            for col_name in ['英雄 ID', '英雄 ID']:
+                if col_name in df.columns:
+                    id_column = col_name
+                    break
+
+            # 若找到 ID 列，先转换为字符串类型，再执行字符串操作
+            if id_column is not None:
+                df[id_column] = df[id_column].astype(str).str.strip().str.replace('.0', '', regex=False)
+
             _csv_cache.path = latest
             _csv_cache.mtime = current_mtime
             _csv_cache.df = df
-            logging.info(f"CSV reloaded: {os.path.basename(latest)}")
+            logging.info(f"CSV 重新加载成功：{os.path.basename(latest)}")
         except Exception as e:
-            logging.error(f"CSV reload failed: {e}")
+            logging.error(f"CSV 重新加载失败：{e}")
+            # 安全降级：返回上一次缓存的 DataFrame 或空 DataFrame
+            return _csv_cache.df
     return _csv_cache.df
 
 
