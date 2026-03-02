@@ -1,0 +1,27 @@
+{
+  "last_learned": "2026-03-02T17:07:42.171477",
+  "engine_version": "V2.0_AST_GIT_AWARE_SAFE",
+  "file_security_suggestions": {
+    "test_logic.py": "STRICT",
+    ".ai_workflow/audit_dispatch.py": "STRICT",
+    ".ai_workflow/gemini_evaluator.py": "STRICT",
+    ".ai_workflow/learn_from_history.py": "STRICT",
+    ".ai_workflow/post_check_diff.py": "STRICT",
+    ".ai_workflow/review_manager.py": "STRICT",
+    ".ai_workflow/setup_real_hook.py": "STRICT",
+    ".ai_workflow/verify_workspace.py": "STRICT",
+    "heybox/heybox_browser.py": "STANDARD",
+    "heybox/heybox_probe.py": "STANDARD",
+    "QuantProject/config.py": "STANDARD",
+    "QuantProject/decision_engine.py": "STANDARD",
+    "QuantProject/update_stooq_fast.py": "STANDARD",
+    "run/apex_spider.py": "STRICT",
+    "run/data_processor.py": "STRICT",
+    "run/hero_sync.py": "STRICT",
+    "run/hextech_query.py": "STRICT",
+    "run/hextech_scraper.py": "STRICT",
+    "run/hextech_ui.py": "STANDARD",
+    "run/web_server.py": "STRICT",
+    "scripts/gemini_reviewer.py": "STRICT"
+  }
+}
