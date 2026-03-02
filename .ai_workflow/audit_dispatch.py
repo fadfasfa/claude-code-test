@@ -1,19 +1,32 @@
 import os
 import sys
-import google.generativeai as genai
+import subprocess
+from google import genai
 from dotenv import load_dotenv
 
 load_dotenv(".ai_workflow/.env")
 
 def get_gemini_response(prompt, api_key):
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-pro"))
-    response = model.generate_content(prompt)
+    # 迁移至 2026 最新版 genai SDK
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
+        contents=prompt,
+    )
     return response.text
 
 def main():
-    diff_content = os.popen("git diff HEAD").read()
-    if not diff_content:
+    # 【Win-Encoding-Safe】强制使用 subprocess 并指定 UTF-8 替换模式，彻底消除 GBK 崩溃
+    result = subprocess.run(
+        ["git", "diff", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        errors='replace'
+    )
+    diff_content = result.stdout
+
+    if not diff_content.strip():
         print("[INFO] No code changes detected, skipping audit.")
         return
 
@@ -48,7 +61,7 @@ def main():
 
         except Exception as e:
             if i == 0:
-                print(f"[WARNING] Free tier quota possibly exhausted or error, switching to paid tier...")
+                print(f"[WARNING] Free tier error or quota exhausted, switching to paid tier...")
             else:
                 print(f"[ERROR] All auditors offline: {str(e)}")
                 sys.exit(1)
