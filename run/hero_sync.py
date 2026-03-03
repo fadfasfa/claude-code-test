@@ -44,6 +44,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def _normalize_name(name: str) -> str:
+    """归一化名称用于模糊匹配（移除空格、标点，转小写）"""
+    import re
+    name = str(name).lower()
+    name = re.sub(r'[\s\-\_\(\)\[\]\'\"\.]', '', name)
+    return name
+
 # ================= TTL 缓存机制 =================
 _last_sync_time = 0
 SYNC_TTL = 3600  # 缓存有效期：1 小时
@@ -55,10 +62,14 @@ def get_advanced_session():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept-Language": "zh-CN,zh;q=0.9"
     })
+    # 增强重试策略：5 次重试，指数退避，支持 5xx/429/连接错误
     retry_strategy = Retry(
-        total=3, backoff_factor=1,
-        status_forcelist=[500, 502, 503, 504],
-        allowed_methods=["GET"]
+        total=5,
+        backoff_factor=0.5,
+        status_forcelist=[500, 502, 503, 504, 429],
+        allowed_methods=["GET", "POST"],
+        raise_on_status=False,
+        respect_retry_after_header=True
     )
     adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=25, pool_maxsize=25)
     session.mount("https://", adapter)
@@ -106,9 +117,16 @@ def sync_hero_data():
                 "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json",
                 "https://apexlol.info/data/aram-mayhem-augments.zh_cn.json"
             ]
+            # 备用数据源（英文）：用于降级抓取图标映射
+            aug_sources_en = [
+                "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/data/v1/augments.json",
+                "https://raw.communitydragon.org/latest/cdrag/augments.json"
+            ]
             aug_map = {}
             aug_icon_map = {}
             rarity_to_tier = {0: "白银", 1: "黄金", 2: "棱彩", 3: "棱彩"}
+
+            # 优先抓取中文数据源
             for src in aug_sources:
                 try:
                     aug_raw = session.get(src, verify=True, timeout=10)
@@ -132,6 +150,37 @@ def sync_hero_data():
                         break
                 except (Exception):
                     continue
+
+            # 如果中文源未获取到图标，尝试从英文源降级抓取
+            if not aug_icon_map:
+                logger.info("中文数据源未获取到图标，尝试从 CommunityDragon 降级抓取...")
+                for src in aug_sources_en:
+                    try:
+                        aug_raw = session.get(src, verify=True, timeout=15)
+                        aug_raw.raise_for_status()
+                        aug_data = aug_raw.json()
+
+                        if not isinstance(aug_data, list):
+                            continue
+
+                        for v in aug_data:
+                            name = v.get('name', '') or v.get('displayName', '')
+                            icon_path = v.get('iconSmall') or v.get('icon') or v.get('iconPath')
+                            if name and icon_path:
+                                # 尝试匹配中文名称
+                                for cn_name, tier in aug_map.items():
+                                    # 简单匹配：比较移除空格后的名称
+                                    if _normalize_name(cn_name) == _normalize_name(name):
+                                        aug_icon_map[cn_name] = icon_path
+                                        break
+                                # 也保存英文原名映射
+                                aug_icon_map[name] = icon_path
+                        if aug_icon_map:
+                            logger.info(f"从 CommunityDragon 成功抓取 {len(aug_icon_map)} 个图标")
+                            break
+                    except (Exception) as e:
+                        logger.debug(f"CommunityDragon 数据源抓取失败：{src} - {e}")
+                        continue
             # 原子化极速写入
             tmp_core = CORE_DATA_FILE + ".tmp"
             with open(tmp_core, "w", encoding="utf-8") as f:
@@ -140,20 +189,42 @@ def sync_hero_data():
 
             # ========== 本地头像静默补全逻辑 ==========
             # 遍历核心数据，检查并下载缺失的英雄头像
+            # 使用专用下载会话（图片下载专用重试策略）
+            img_session = get_advanced_session()
+            img_session.headers.update({
+                "Referer": "https://leagueoflegends.com"
+            })
+            downloaded_count = 0
+            failed_count = 0
             for key, v in core_data.items():
                 asset_path = os.path.join(ASSET_DIR, f"{key}.png")
                 if not os.path.exists(asset_path):
                     try:
                         # 构造官方图片 URL
                         img_url = f"https://ddragon.leagueoflegends.com/cdn/{curr_ver}/img/champion/{v['en_name']}.png"
-                        img_resp = session.get(img_url, verify=True, timeout=10)
-                        if img_resp.status_code == 200:
+                        img_resp = img_session.get(img_url, verify=True, timeout=15)
+                        if img_resp is not None and img_resp.status_code == 200:
                             with open(asset_path, "wb") as img_f:
                                 img_f.write(img_resp.content)
+                            downloaded_count += 1
+                        else:
+                            # 尝试备用 URL（小写 ID）
+                            img_url_backup = f"https://ddragon.leagueoflegends.com/cdn/{curr_ver}/img/champion/{v['en_name'].lower()}.png"
+                            img_resp = img_session.get(img_url_backup, verify=True, timeout=15)
+                            if img_resp is not None and img_resp.status_code == 200:
+                                with open(asset_path, "wb") as img_f:
+                                    img_f.write(img_resp.content)
+                                downloaded_count += 1
+                            else:
+                                failed_count += 1
+                                logger.warning(f"头像下载失败：{v['name']} ({key})")
                     except (Exception) as e:
                         # 单张图片下载失败不阻塞主流程
-                        logger.warning(f"头像下载失败：{v['name']} ({key}) - {e}")
+                        failed_count += 1
+                        logger.debug(f"头像下载异常：{v['name']} ({key}) - {e}")
                         pass
+            if downloaded_count > 0 or failed_count > 0:
+                logger.info(f"头像同步完成：下载{downloaded_count}个，失败{failed_count}个")
 
             if aug_map:
                 tmp_aug = AUGMENT_MAP_FILE + ".tmp"

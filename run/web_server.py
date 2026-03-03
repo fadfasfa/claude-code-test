@@ -233,12 +233,26 @@ async def lcu_polling_loop():
                             "hero_name": hero_name,
                         })
 
+            elif res.status_code == 404:
+                # [状态机修复] 不在选人阶段时：保留端口，但必须清空上一局的英雄缓存，防止下局选同英雄不触发
+                if _lcu_state.get('local_champ_id') is not None:
+                    _lcu_state['local_champ_id'] = None
+                    _lcu_state['local_champ_name'] = None
+                    _lcu_state['current_ids'] = set()
+            elif res.status_code in (401, 403):
+                # Token 失效，需要重新获取
+                _lcu_state['port'] = None
+                _lcu_state['token'] = None
             else:
-                _lcu_state["port"] = None
+                _lcu_state['port'] = None
 
+        except requests.exceptions.ConnectionError as e:
+            # 仅在物理网络断开或进程关闭时才清空端口
+            logging.warning(f"LCU 连接断开：{e}")
+            _lcu_state["port"] = None
+            _lcu_state["token"] = None
         except Exception as e:
             logging.warning(f"LCU poll error: {e}")
-            _lcu_state["port"] = None
 
         await asyncio.sleep(1.5)
 

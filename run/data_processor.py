@@ -17,6 +17,8 @@ _hextech_cache_pool: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
 _champion_cache_pool: Dict[str, List[Dict[str, Any]]] = {}
 # 缓存元数据：{df_hash: {'row_count': int, 'timestamp': float}}
 _cache_metadata: Dict[str, Dict[str, Any]] = {}
+# 英雄核心数据缓存（用于名称映射）
+_champion_core_cache: Optional[Dict[str, Any]] = None
 
 # 缓存配置
 MAX_CACHE_SIZE = 100  # 最大缓存条目数
@@ -221,27 +223,37 @@ def _generate_hextech_icon_url(hextech_name: str, tier: str) -> str:
     """
     生成海克斯官方 CDN 图片 URL
 
-    优先读取 config/Augment_Icon_Map.json 获取图标路径。
-    若匹配到路径且以 /lol-game-data/assets/ 开头，返回 CommunityDragon CDN URL。
-    如果找不到，继续使用原有的 fallback 逻辑。
+    优先级：
+    1. 读取 config/Augment_Icon_Map.json 获取精确匹配
+    2. 在 JSON 中模糊搜索匹配（名称归一化）
+    3. 尝试 CommunityDragon 标准命名
+    4. Fallback 到通用命名格式
     """
-    # 尝试读取图标映射文件
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config_dir = os.path.join(base_dir, "config")
     icon_map_file = os.path.join(config_dir, "Augment_Icon_Map.json")
 
     icon_path = None
+
+    # 尝试精确匹配
     if os.path.exists(icon_map_file):
         try:
             with open(icon_map_file, "r", encoding="utf-8") as f:
                 icon_map = json.load(f)
             icon_path = icon_map.get(hextech_name)
+
+            # 模糊匹配：归一化名称后重试
+            if icon_path is None:
+                normalized_name = _normalize_hextech_name(hextech_name)
+                for key, path in icon_map.items():
+                    if _normalize_hextech_name(key) == normalized_name:
+                        icon_path = path
+                        break
         except (Exception):
             pass
 
     # 如果找到图标路径且符合格式，转换为 CommunityDragon URL
     if icon_path and icon_path.startswith("/lol-game-data/assets/"):
-        # 去掉 /lol-game-data/assets/ 前缀，转小写
         relative_path = icon_path[len("/lol-game-data/assets/"):]
         return f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/{relative_path.lower()}"
 
@@ -255,6 +267,17 @@ def _generate_hextech_icon_url(hextech_name: str, tier: str) -> str:
     tier_en = tier_map.get(str(tier), 'prismatic')
     clean_name = ''.join(c.lower() for c in str(hextech_name) if c.isalnum())
     return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/cherry_{tier_en}_{clean_name}.png"
+
+
+def _normalize_hextech_name(name: str) -> str:
+    """
+    归一化海克斯名称，用于模糊匹配
+    移除空格、标点，转为小写
+    """
+    import re
+    name = str(name).lower()
+    name = re.sub(r'[\s\-\_\(\)\[\]\'\"\.]', '', name)
+    return name
 
 
 def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[str, Any]]]:
@@ -407,8 +430,13 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
             winrate_list.append(build_hextech_card(row, include_score=False))
 
         # ========== 分阶级数组 ==========
-        def build_tier_array(tier_name):
-            """为指定阶级生成数组"""
+        def build_tier_array(tier_name, limit=None):
+            """为指定阶级生成数组
+
+            Args:
+                tier_name: 阶级名称 (Prismatic/Gold/Silver)
+                limit: 返回数量限制，None 表示不限制
+            """
             # 兼容多种阶级名称
             tier_variants = {
                 'Prismatic': ['棱彩', '彩色'],
@@ -419,8 +447,10 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
             variants = tier_variants.get(tier_name, [])
             tier_data = hero_data[hero_data['海克斯阶级'].isin(variants)].copy()
 
-            # 按综合得分排序并截取前 10
-            tier_data_by_score = tier_data.sort_values(by='综合得分', ascending=False).head(10)
+            # 按综合得分排序并截取
+            tier_data_by_score = tier_data.sort_values(by='综合得分', ascending=False)
+            if limit is not None:
+                tier_data_by_score = tier_data_by_score.head(limit)
             result = []
             for _, row in tier_data_by_score.iterrows():
                 result.append(build_hextech_card(row, include_score=True))
