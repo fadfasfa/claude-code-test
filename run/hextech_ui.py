@@ -42,7 +42,7 @@ class HextechUI:
         df.columns = df.columns.str.replace(' ', '')
 
         # 动态容错：获取去除了空格的 ID 列名
-        id_col = '英雄 ID' if '英雄 ID' in df.columns else '英雄 ID'
+        id_col = '英雄ID' if '英雄ID' in df.columns else '英雄 ID'
         if id_col in df.columns:
             df[id_col] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
         return df

@@ -1,6 +1,17 @@
 import os
 import sys
 import subprocess
+
+# 【Win-Encoding-Safe】强制 stdin/stdout/stderr 为 UTF-8
+if sys.platform == 'win32':
+    try:
+        sys.stdin.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+    # 设置环境变量，确保 subprocess 使用 UTF-8
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
 from google import genai
 from dotenv import load_dotenv
 
@@ -68,7 +79,7 @@ def main():
             if i == 0:
                 print(f"[WARNING] Free tier error or quota exhausted, switching to paid tier...")
             else:
-                print(f"[ERROR] All auditors offline: {str(e)}")
+                print(f"[ERROR] All auditors offline: {repr(e).encode('utf-8', errors='replace').decode('utf-8')}")
                 sys.exit(1)
 
 if __name__ == "__main__":
