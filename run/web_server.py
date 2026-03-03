@@ -126,7 +126,7 @@ manager = ConnectionManager()
 
 # ── LCU polling (async) ───────────────────────────────────────────────────────
 
-_lcu_state = {"port": None, "token": None, "current_ids": set(), "local_champ_id": None, "local_champ_name": None}
+_lcu_state = {"port": None, "token": None, "current_ids": set(), "local_champ_id": None, "local_champ_name": None, "consecutive_404_count": 0}
 
 def _scan_lcu_process() -> tuple:
     """Blocking psutil scan for LeagueClientUx.exe process."""
@@ -147,13 +147,15 @@ def _scan_lcu_process() -> tuple:
 
 async def lcu_polling_loop():
     """
-    Async LCU polling loop. Polls LCU session endpoint and broadcasts
-    champion ID changes via WebSocket.
+    Async LCU 轮询循环。轮询 LCU 会话端点并通过 WebSocket 广播英雄 ID 变化。
 
     新增本地玩家专属追踪：
     - 提取 myTeam 数组中 cellId 等于 localPlayerCellId 的玩家
     - 若该玩家的 championId 大于 0，且与上一次循环的 championId 不同，则广播精准事件
     - 使用状态机变量防止同一英雄重复广播
+
+    自愈机制：
+    - 连续 5 次 404 错误后自动重置端口和令牌，重新探测 LCU 进程
     """
     urllib3_disable_warnings()
     while True:
@@ -163,6 +165,7 @@ async def lcu_polling_loop():
                 if port:
                     _lcu_state["port"] = port
                     _lcu_state["token"] = token
+                    logging.info(f"检测到 LCU 进程：port={port}")
                 else:
                     await asyncio.sleep(2)
                     continue
@@ -182,6 +185,8 @@ async def lcu_polling_loop():
 
             if res.status_code == 200:
                 data = res.json()
+                # 成功响应，重置 404 计数器
+                _lcu_state["consecutive_404_count"] = 0
 
                 # ========== 全局可用英雄扫描（原有逻辑） ==========
                 available_ids = {
@@ -234,16 +239,29 @@ async def lcu_polling_loop():
                         })
 
             elif res.status_code == 404:
-                # [状态机修复] 不在选人阶段时：保留端口，但必须清空上一局的英雄缓存，防止下局选同英雄不触发
+                # 不在选人阶段，累计 404 错误次数
+                _lcu_state["consecutive_404_count"] = _lcu_state.get("consecutive_404_count", 0) + 1
+
+                # 清空上一局的英雄缓存，防止下局选同英雄不触发
                 if _lcu_state.get('local_champ_id') is not None:
                     _lcu_state['local_champ_id'] = None
                     _lcu_state['local_champ_name'] = None
                     _lcu_state['current_ids'] = set()
+
+                # 连续 5 次 404 错误，触发自愈重置
+                if _lcu_state["consecutive_404_count"] >= 5:
+                    logging.warning(f"LCU 连续 {_lcu_state['consecutive_404_count']} 次 404，触发自愈重置端口/令牌")
+                    _lcu_state['port'] = None
+                    _lcu_state['token'] = None
+                    _lcu_state['consecutive_404_count'] = 0
+
             elif res.status_code in (401, 403):
                 # Token 失效，需要重新获取
+                logging.warning("LCU Token 失效 (401/403)，重置连接状态")
                 _lcu_state['port'] = None
                 _lcu_state['token'] = None
             else:
+                logging.warning(f"LCU 响应异常：status={res.status_code}，重置端口")
                 _lcu_state['port'] = None
 
         except requests.exceptions.ConnectionError as e:
@@ -252,7 +270,7 @@ async def lcu_polling_loop():
             _lcu_state["port"] = None
             _lcu_state["token"] = None
         except Exception as e:
-            logging.warning(f"LCU poll error: {e}")
+            logging.warning(f"LCU 轮询异常：{e}")
 
         await asyncio.sleep(1.5)
 
