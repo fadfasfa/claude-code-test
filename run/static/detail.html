@@ -21,12 +21,37 @@
         .tier-prismatic { background: linear-gradient(to bottom, #fde047, #ef4444); box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }
         .tier-gold { background: linear-gradient(to bottom, #facc15, #ca8a04); box-shadow: 0 0 8px rgba(202, 138, 4, 0.4); }
         .tier-silver { background: linear-gradient(to bottom, #cbd5e1, #64748b); }
-        
+
         /* 列表悬浮高亮 */
         .list-row { transition: all 0.2s; }
         .list-row:hover { background-color: rgba(255, 255, 255, 0.05); transform: translateX(4px); border-radius: 0.5rem; }
-        
-        /* 隐藏滚动条 */
+
+        /* 自定义滚动条样式 (美化版) */
+        .scroll-container::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        .scroll-container::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+        }
+        .scroll-container::-webkit-scrollbar-thumb {
+            background: rgba(137, 180, 250, 0.3);
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        .scroll-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(137, 180, 250, 0.5);
+        }
+        .scroll-container {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(137, 180, 250, 0.3) rgba(0, 0, 0, 0.2);
+        }
+
+        /* 平滑滚动 */
+        html { scroll-behavior: smooth; }
+
+        /* 隐藏滚动条 (兼容旧版) */
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
@@ -88,7 +113,7 @@
                         <div class="w-[20%] text-right">综合胜率</div>
                         <div class="w-[25%] text-right">出场率</div>
                     </div>
-                    <div id="compList" class="space-y-1"></div>
+                    <div id="compList" class="space-y-1 scroll-container" style="max-height: 400px; overflow-y: auto;"></div>
                 </div>
 
                 <div>
@@ -101,7 +126,7 @@
                         <div class="w-[20%] text-right">极值胜率</div>
                         <div class="w-[25%] text-right">出场率</div>
                     </div>
-                    <div id="winList" class="space-y-1"></div>
+                    <div id="winList" class="space-y-1 scroll-container" style="max-height: 400px; overflow-y: auto;"></div>
                 </div>
             </div>
         </section>
@@ -188,7 +213,11 @@
                 <div class="flex items-center space-x-3 w-[55%]">
                     <span class="${rankColor} w-4 text-right italic">${index + 1}</span>
                     <div class="w-1.5 h-8 rounded-full ${tierClass} shrink-0"></div>
-                    <img src="${iconUrl}" onerror="this.src='https://raw.communitydragon.org/latest/plugins/rcp-be-lolgame-data/global/default/v1/hextech-images/chest.png'" class="w-8 h-8 rounded-md border border-gray-700 shadow-sm object-cover bg-gray-900 shrink-0">
+                    <img src="${iconUrl}"
+                         alt="${hextech.海克斯名称}"
+                         loading="lazy"
+                         onerror="this.src='https://raw.communitydragon.org/latest/plugins/rcp-be-lolgame-data/global/default/v1/hextech-images/chest.png'; this.onerror=null;"
+                         class="w-8 h-8 rounded-md border border-gray-700 shadow-sm object-cover bg-gray-900 shrink-0">
                     <span class="font-bold text-gray-200 truncate text-sm">${hextech.海克斯名称}</span>
                 </div>
                 <div class="w-[20%] text-right font-mono text-green-400 font-bold">${wr}</div>
@@ -217,9 +246,9 @@
                 rightData = tierData.slice().sort((a, b) => b.海克斯胜率 - a.海克斯胜率);
             }
 
-            // Top10 硬裁切防线
-            leftData = leftData.slice(0, 10);
-            rightData = rightData.slice(0, 10);
+            // 不再硬裁切，让滚动容器处理全量数据
+            // leftData = leftData.slice(0, 10);
+            // rightData = rightData.slice(0, 10);
 
             if (leftData.length === 0 && rightData.length === 0) {
                 dataContainer.classList.add('hidden');
