@@ -37,9 +37,14 @@ class HextechUI:
         latest = get_latest_csv()
         if not latest:
             return pd.DataFrame()
-        df = pd.read_csv(latest, dtype={'英雄 ID': str})
+        # 移除强约束，防止由于列名含空格导致 read_csv 阶段直接报错
+        df = pd.read_csv(latest)
         df.columns = df.columns.str.replace(' ', '')
-        df['英雄 ID'] = df['英雄 ID'].astype(str).str.strip().str.replace('.0', '', regex=False)
+
+        # 动态容错：获取去除了空格的 ID 列名
+        id_col = '英雄 ID' if '英雄 ID' in df.columns else '英雄 ID'
+        if id_col in df.columns:
+            df[id_col] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
         return df
 
     def load_synergy_data(self):

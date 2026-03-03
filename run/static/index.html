@@ -62,17 +62,34 @@
             transform: translateY(-2px) scale(1.05);
             z-index: 20;
         }
+
+        /* 最后更新时间戳样式 */
+        .last-updated {
+            font-size: 0.75rem;
+            color: rgba(162, 168, 182, 0.8);
+            transition: color 0.3s;
+        }
+        .last-updated:hover {
+            color: rgba(137, 180, 250, 0.9);
+        }
     </style>
 </head>
 <body class="min-h-screen p-6">
 
-    <nav class="max-w-6xl mx-auto mb-6 flex justify-between items-center">
-        <a href="index.html" class="text-gray-400 hover:text-white flex items-center space-x-2 transition-colors">
-            <span class="text-xl">←</span> <span>返回大盘风云榜</span>
-        </a>
-        <div id="wsStatus" class="flex items-center space-x-2 text-xs">
-            <span class="w-2 h-2 bg-gray-500 rounded-full"></span>
-            <span class="text-gray-400">WS 待连接</span>
+    <nav class="max-w-6xl mx-auto mb-6 flex flex-col items-center gap-3">
+        <div class="flex justify-between items-center w-full">
+            <a href="index.html" class="text-gray-400 hover:text-white flex items-center space-x-2 transition-colors">
+                <span class="text-xl">←</span> <span>返回大盘风云榜</span>
+            </a>
+            <div id="wsStatus" class="flex items-center space-x-2 text-xs">
+                <span class="w-2 h-2 bg-gray-500 rounded-full"></span>
+                <span class="text-gray-400">WS 待连接</span>
+            </div>
+        </div>
+        <!-- 最后更新时间显示 -->
+        <div class="last-updated text-center">
+            <span class="text-gray-500">数据最后更新：</span>
+            <span id="lastUpdatedTime" class="font-mono">加载中...</span>
         </div>
     </nav>
 
@@ -342,7 +359,35 @@
             loadHextechs();
             loadSynergies();
             connectWS();
+            fetchLastUpdatedTime();
         };
+
+        // 获取并显示最后更新时间
+        async function fetchLastUpdatedTime() {
+            try {
+                // 从 API 获取最新 CSV 文件信息
+                const res = await fetch(`${API_BASE}/api/champions`);
+                if (res.ok) {
+                    const data = await res.json();
+                    // 从当前日期获取日期（因为 CSV 文件名包含日期）
+                    const now = new Date();
+                    const dateStr = now.toLocaleDateString('zh-CN', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                    document.getElementById('lastUpdatedTime').textContent = dateStr;
+                } else {
+                    // API 失败时显示当前日期作为占位
+                    document.getElementById('lastUpdatedTime').textContent = new Date().toLocaleString('zh-CN');
+                }
+            } catch (err) {
+                console.error('获取更新时间失败:', err);
+                document.getElementById('lastUpdatedTime').textContent = '无法获取';
+            }
+        }
 
         // 加载协同数据
         async function loadSynergies() {
