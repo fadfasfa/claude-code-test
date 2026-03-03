@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from data_processor import process_champions_data, process_hextechs_data
 from hextech_query import get_latest_csv
-from hero_sync import load_champion_core_data
+from hero_sync import load_champion_core_data, CONFIG_DIR
 
 # 全局英雄核心数据缓存
 _champion_core_cache = None
@@ -75,9 +75,9 @@ def get_df() -> pd.DataFrame:
             df = pd.read_csv(latest)
             df.columns = df.columns.str.replace(' ', '')  # 暴力清除表头所有空格（包括中间空格）
 
-            # 容错遍历：检查带空格和不带空格的列名变体
+            # 容错遍历：检查移除空格后的列名变体
             id_column = None
-            for col_name in ['英雄 ID', '英雄 ID']:
+            for col_name in ['英雄 ID', '英雄 id']:
                 if col_name in df.columns:
                     id_column = col_name
                     break
@@ -125,6 +125,9 @@ manager = ConnectionManager()
 
 
 # ── LCU polling (async) ───────────────────────────────────────────────────────
+
+# 全局开关变量：防止在未请求的情况下强制广播跳转事件
+AUTO_JUMP_ENABLED = False
 
 _lcu_state = {"port": None, "token": None, "current_ids": set(), "local_champ_id": None, "local_champ_name": None, "consecutive_404_count": 0}
 
@@ -231,12 +234,15 @@ async def lcu_polling_loop():
 
                         logging.info(f"本地玩家锁定英雄：{hero_name} (ID={local_champion_id})")
 
-                        # 通过 WebSocket 追加广播精准事件
-                        await manager.broadcast({
-                            "type": "local_player_locked",
-                            "champion_id": local_champion_id,
-                            "hero_name": hero_name,
-                        })
+                        # 通过 WebSocket 追加广播精准事件（受 AUTO_JUMP_ENABLED 开关控制）
+                        if AUTO_JUMP_ENABLED:
+                            await manager.broadcast({
+                                "type": "local_player_locked",
+                                "champion_id": local_champion_id,
+                                "hero_name": hero_name,
+                            })
+                        else:
+                            logging.debug(f"AUTO_JUMP_ENABLED = False，已阻止自动跳转广播")
 
             elif res.status_code == 404:
                 # 不在选人阶段，累计 404 错误次数
@@ -362,8 +368,8 @@ async def api_champion_hextechs(name: str):
 
 @app.get("/api/synergies/{champ_id}")
 async def api_synergies(champ_id: str):
-    """获取英雄协同数据 API。读取 apex_hextech_data.json 返回对应英雄的 synergies 列表。"""
-    json_path = get_resource_path("data/apex_hextech_data.json")
+    """获取英雄协同数据 API。读取 Champion_Synergy.json 返回对应英雄的 synergies 列表。"""
+    json_path = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -388,3 +394,4 @@ async def websocket_endpoint(ws: WebSocket):
 
 if __name__ == "__main__":
     uvicorn.run("web_server:app", host="0.0.0.0", port=8000, reload=False)
+# 测试 Gemini 唤醒

@@ -330,6 +330,9 @@
             ws.onmessage = (e) => {
                 try {
                     const message = JSON.parse(e.data);
+                    // [DEBUG-02] 打印接收到的 WebSocket 消息
+                    console.log("WebSocket Received:", message);
+
                     if (message.type === 'champion_update') {
                         // 仅高亮，不跳转
                         activeChampionIds = new Set(message.champion_ids.map(String));
@@ -344,8 +347,9 @@
                             const wr = (heroData['贝叶斯胜率'] * 100).toFixed(1) + '%';
                             const pr = (heroData['英雄出场率'] * 100).toFixed(1) + '%';
                             const enName = heroData['英文名'] || CHAMPION_PINYIN[heroName] || '';
-                            // 增加 &auto=1 触发震动流光动画
-                            window.location.href = `detail.html?hero=${encodeURIComponent(heroName)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(pr)}&id=${encodeURIComponent(heroData['英雄 ID'] || '')}&en=${encodeURIComponent(enName)}&auto=1`;
+                            // [DEBUG-03] 暂时注释掉自动跳转，观察数据是否成功加载
+                            // window.location.href = `detail.html?hero=${encodeURIComponent(heroName)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(pr)}&id=${encodeURIComponent(heroData['英雄 ID'] || '')}&en=${encodeURIComponent(enName)}&auto=1`;
+                            console.log('捕获 local_player_locked 事件，已阻止自动跳转，英雄:', heroName);
                         }
                     }
                 } catch (e) {

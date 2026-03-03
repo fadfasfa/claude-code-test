@@ -133,6 +133,9 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
     if df.empty:
         return []
 
+    # [DEBUG-01] 打印 DataFrame 列名
+    logging.info(f"Processing columns: {df.columns.tolist()}")
+
     # ========== 缓存检查 ==========
     df_hash = _compute_df_hash(df)
     cached_result = _get_from_cache(_champion_cache_pool, df_hash)
@@ -148,11 +151,12 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
         # 创建副本避免修改原始数据
         data = df.copy()
         # ========== 数据降维去重 ==========
-        # CSV 是“英雄-海克斯”粒度，计算英雄大盘前必须去重
+        # CSV 是”英雄-海克斯”粒度，计算英雄大盘前必须去重
         data = data[['英雄名称', '英雄胜率', '英雄出场率']].drop_duplicates(subset=['英雄名称']).copy()
-        # 确保必要列存在
+        # 确保必要列存在（支持”英雄ID”和”英雄 ID”等变体）
         required_cols = ['英雄名称', '英雄胜率', '英雄出场率']
         if not all(col in data.columns for col in required_cols):
+            logging.warning(f"缺少必要列，当前列：{data.columns.tolist()}")
             return []
 
         # ========== 微量贝叶斯平滑 ==========
@@ -280,6 +284,20 @@ def _normalize_hextech_name(name: str) -> str:
     return name
 
 
+def _has_column_variant(df: pd.DataFrame, variants: List[str]) -> bool:
+    """
+    检查 DataFrame 列中是否存在给定的变体列名
+
+    Args:
+        df: DataFrame
+        variants: 列名变体列表，例如 ['英雄ID', '英雄 ID']
+
+    Returns:
+        是否存在任何一个变体
+    """
+    return any(var in df.columns for var in variants)
+
+
 def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[str, Any]]]:
     """
     计算单英雄专属海克斯，返回包含四个独立数组 + 排序视图的字典
@@ -294,6 +312,9 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
     - 使用 (英雄名，df_hash) 作为缓存键
     - 同一英雄数据未变化时直接返回缓存（O(1) 复杂度）
     """
+    # [DEBUG-01] 打印 DataFrame 列名
+    logging.info(f"Processing columns: {df.columns.tolist()}")
+
     if df.empty:
         return {
             'top_10_overall': [],
@@ -318,8 +339,15 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
 
         # 确保必要列存在
         required_cols = ['英雄名称', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差']
-        if not all(col in data.columns for col in required_cols):
-            logging.warning(f"缺少必要列，当前列：{data.columns.tolist()}")
+        missing_cols = [col for col in required_cols if col not in data.columns]
+
+        # 特殊兼容性处理：对"英雄ID"和"英雄 ID"等变体进行不敏感匹配
+        # （可选列，不在 required_cols 中，但如果存在任何变体则可用）
+        id_variants = ['英雄ID', '英雄 ID', '英雄 id']
+        has_id_column = _has_column_variant(data, id_variants)
+
+        if missing_cols:
+            logging.warning(f"缺少必要列 {missing_cols}，当前列：{data.columns.tolist()}")
             return {
                 'top_10_overall': [],
                 'comprehensive': [],

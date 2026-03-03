@@ -6,7 +6,9 @@
       "Bash(./run/.venv/Scripts/python.exe -m py_compile .ai_workflow/pre_execution_check.py)",
       "Bash(./run/.venv/Scripts/python.exe -m py_compile .ai_workflow/verify_workspace.py)",
       "Bash(./run/.venv/Scripts/python.exe -m py_compile run/hextech_scraper.py)",
-      "Bash(./run/.venv/Scripts/python.exe .ai_workflow/verify_workspace.py)"
+      "Bash(./run/.venv/Scripts/python.exe .ai_workflow/verify_workspace.py)",
+      "Bash(chmod 755 .ai_workflow)",
+      "Bash(git config --unset core.hooksPath)"
     ]
   }
 }
