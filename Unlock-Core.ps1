@@ -1,18 +1,8 @@
-# Hextech System - Full Infrastructure Unlock Script
-$core = @(".ai_workflow", ".git\hooks", "scripts")
+Write-Host "Removing High Integrity physical lock..." -ForegroundColor Yellow
 
-foreach ($c in $core) {
-    if (Test-Path $c) {
-        # Take ownership
-        takeown /f $c /r /d y
-        # Remove deny rules
-        icacls $c /remove:d "BUILTIN\Users" /t /c /q
-        # Set to Medium Integrity
-        icacls $c /setintegritylevel Medium
-        # Grant Full Access to current user
-        icacls $c /grant "${env:USERNAME}:F" /t /q
-        Write-Host " [SUCCESS] $c is UNLOCKED." -ForegroundColor Yellow
-    } else {
-        Write-Host " [SKIP] Path $c not found." -ForegroundColor Gray
-    }
-}
+# Revert to Medium Integrity (Read & Write allowed)
+icacls ".ai_workflow" /setintegritylevel "(OI)(CI)M"
+icacls "scripts" /setintegritylevel "(OI)(CI)M"
+icacls ".git\hooks" /setintegritylevel "(OI)(CI)M"
+
+Write-Host "Core unlocked! Status: Read & Write allowed" -ForegroundColor Green

@@ -1,16 +1,8 @@
-# Hextech System - Full Infrastructure Lock Script
-$core = @(".ai_workflow", ".git\hooks", "scripts")
+Write-Host "Applying High Integrity physical lock..." -ForegroundColor Cyan
 
-foreach ($c in $core) {
-    if (Test-Path $c) {
-        # Set to High Integrity
-        icacls $c /setintegritylevel High
-        # Deny Write/Delete for standard Users
-        icacls $c /deny "BUILTIN\Users:(OI)(CI)(W,D)"
-        # Grant Read-Only access
-        icacls $c /grant "BUILTIN\Users:(OI)(CI)R"
-        Write-Host " [SUCCESS] $c is LOCKED (Physical Lockdown Active)." -ForegroundColor Green
-    } else {
-        Write-Host " [SKIP] Path $c not found." -ForegroundColor Gray
-    }
-}
+# Apply High Integrity (Read & Execute only for standard users)
+icacls ".ai_workflow" /setintegritylevel "(OI)(CI)H"
+icacls "scripts" /setintegritylevel "(OI)(CI)H"
+icacls ".git\hooks" /setintegritylevel "(OI)(CI)H"
+
+Write-Host "Core locked! Status: No-Write-Up (Read-Only mode active)" -ForegroundColor Green
