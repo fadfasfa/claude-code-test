@@ -54,6 +54,19 @@
         /* 隐藏滚动条 (兼容旧版) */
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* 震动流光动画 */
+        @keyframes autoLockFlash {
+            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); transform: scale(1); border-color: transparent; }
+            20% { box-shadow: 0 0 30px 5px rgba(59, 130, 246, 0.8); transform: scale(1.02); border-color: #3b82f6; }
+            40% { transform: scale(0.99); }
+            60% { transform: scale(1.01); }
+            80% { box-shadow: 0 0 15px 2px rgba(59, 130, 246, 0.4); transform: scale(1); border-color: rgba(255, 255, 255, 0.05); }
+            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); transform: scale(1); border-color: rgba(255, 255, 255, 0.05); }
+        }
+        .anim-auto-lock {
+            animation: autoLockFlash 0.8s ease-out forwards;
+        }
     </style>
 </head>
 <body class="min-h-screen p-6">
@@ -69,10 +82,10 @@
     </nav>
 
     <main class="max-w-6xl mx-auto">
-        <header class="glass-panel rounded-2xl p-6 mb-8 flex items-center space-x-6 relative overflow-hidden">
+        <header class="glass-panel rounded-2xl p-6 mb-8 flex items-center space-x-6 relative overflow-hidden" id="mainHeader">
             <div id="headerBg" class="absolute right-0 top-0 bottom-0 w-1/2 opacity-20 bg-cover bg-left"></div>
             <img id="heroAvatar" src="" class="w-20 h-20 rounded-xl border-2 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.3)] relative z-10 bg-gray-900 object-cover">
-            
+
             <div class="relative z-10">
                 <div class="flex items-center space-x-3 mb-1">
                     <h1 id="heroName" class="text-3xl font-black text-white">加载中...</h1>
@@ -146,6 +159,18 @@
         let hextechData = null;
         let currentView = 'all';
         let synergyData = null;
+        let ws = null;
+
+        // 悬浮窗单例防多开管控
+        const tabId = Math.random().toString(36).substring(2, 9);
+        const bc = new BroadcastChannel('hextech_nexus_channel');
+        bc.onmessage = (e) => {
+            if (e.data.type === 'new_tab_opened' && e.data.id !== tabId) {
+                document.body.innerHTML = '<div class="flex items-center justify-center h-screen text-gray-500 text-xl font-bold">✨ 已在新的悬浮窗中唤醒，本窗口已自动休眠。</div>';
+                if (window.wsInstance) window.wsInstance.close();
+            }
+        };
+        bc.postMessage({ type: 'new_tab_opened', id: tabId });
 
         // 解析 URL 参数并渲染头部
         const urlParams = new URLSearchParams(window.location.search);
@@ -154,6 +179,7 @@
         const heroId = urlParams.get('id');
         const heroWR = urlParams.get('wr');
         const heroPR = urlParams.get('pr');
+        const isAuto = urlParams.get('auto');
 
         // 渲染头部数据
         if(hero) document.getElementById('heroName').textContent = hero;
@@ -165,12 +191,15 @@
             document.getElementById('headerBg').style.backgroundImage = `url('https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${enName}_0.jpg')`;
             document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/${enName}.png`;
         } else if(heroId) {
-            // 降级：使用本地 assets 目录
             document.getElementById('heroAvatar').src = `/assets/${heroId}.png`;
         } else {
-            // 降级：显示占位图
             document.getElementById('headerBg').style.backgroundColor = '#181825';
             document.getElementById('heroAvatar').src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>?</text></svg>';
+        }
+
+        // 判断是否触发动画
+        if (isAuto === '1') {
+            document.getElementById('mainHeader').classList.add('anim-auto-lock');
         }
 
         // 切换标签页
@@ -186,19 +215,18 @@
             renderCurrentView();
         }
 
-        // 获取阶级CSS
+        // 获取阶级 CSS
         function getTierBarClass(tier) {
             if(tier.includes('棱彩') || tier.includes('彩色') || tier === 'Prismatic') return 'tier-prismatic';
             if(tier.includes('金') || tier === 'Gold') return 'tier-gold';
             return 'tier-silver';
         }
 
-        // 渲染单行卡片 HTML - 匹配预览版紧凑 list-row 布局
-        function createHextechCard(hextech, index, showDiff = false) {
+        // 渲染单行卡片 HTML
+        function createHextechCard(hextech, index) {
             const iconUrl = hextech.icon || `https://raw.communitydragon.org/latest/plugins/rcp-be-lolgame-data/global/default/v1/hextech-images/chest.png`;
             const tierClass = getTierBarClass(hextech.海克斯阶级);
 
-            // 排名颜色逻辑
             let rankColor = 'text-gray-500 font-bold';
             if(index === 0) rankColor = 'text-yellow-400 font-black text-base drop-shadow-md';
             else if(index === 1) rankColor = 'text-gray-300 font-bold';
@@ -207,7 +235,6 @@
             const wr = (hextech.海克斯胜率 * 100).toFixed(1) + '%';
             const pr = (hextech.海克斯出场率 * 100).toFixed(1) + '%';
 
-            // 紧凑布局：统一宽度分配，不再显示胜率差列
             return `
             <div class="list-row flex items-center justify-between p-2 border-b border-white/5">
                 <div class="flex items-center space-x-3 w-[55%]">
@@ -246,9 +273,8 @@
                 rightData = tierData.slice().sort((a, b) => b.海克斯胜率 - a.海克斯胜率);
             }
 
-            // 不再硬裁切，让滚动容器处理全量数据
-            // leftData = leftData.slice(0, 10);
-            // rightData = rightData.slice(0, 10);
+            leftData = leftData.slice(0, 10);
+            rightData = rightData.slice(0, 10);
 
             if (leftData.length === 0 && rightData.length === 0) {
                 dataContainer.classList.add('hidden');
@@ -280,18 +306,25 @@
             }
         }
 
-        // WebSocket 逻辑
+        // WebSocket 逻辑 - 支持跨局连跳
         function connectWS() {
-            const ws = new WebSocket(WS_URL + '/ws');
+            ws = new WebSocket(WS_URL + '/ws');
+            window.wsInstance = ws;
             const status = document.getElementById('wsStatus');
             ws.onopen = () => { status.innerHTML = '<span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span><span class="text-green-400">已连接</span>'; };
             ws.onclose = () => { status.innerHTML = '<span class="w-2 h-2 bg-red-500 rounded-full"></span><span class="text-red-400">已断开</span>'; setTimeout(connectWS, 3000); };
             ws.onmessage = (e) => {
-                const msg = JSON.parse(e.data);
-                if (msg.type === 'champion_update') console.log('Client champion update trigger');
-                else if (msg.type === 'data_updated') {
-                    console.log('收到 CSV 数据更新通知，自动热重载...');
-                    loadHextechs();
+                try {
+                    const msg = JSON.parse(e.data);
+                    if (msg.type === 'data_updated') {
+                        console.log('收到 CSV 数据更新通知，自动热重载...');
+                        loadHextechs();
+                    } else if (msg.type === 'local_player_locked') {
+                        // 若玩家在详情页挂机，下一局锁定新英雄时自动连跳
+                        window.location.href = `detail.html?hero=${encodeURIComponent(msg.hero_name)}&id=${encodeURIComponent(msg.champion_id)}&auto=1`;
+                    }
+                } catch (e) {
+                    console.error(e);
                 }
             };
         }
@@ -306,7 +339,6 @@
         // 加载协同数据
         async function loadSynergies() {
             const container = document.getElementById('synergyContainer');
-            // 首先验证 heroId 是否有效
             if (!heroId) {
                 console.error('[Synergy] 未获取到英雄 ID (champ_id)');
                 container.innerHTML = '<div class="text-center py-10 text-gray-400">无英雄 ID</div>';
@@ -327,7 +359,6 @@
                     return;
                 }
 
-                // 生成协同列表 HTML
                 const listHtml = synergyData.map(item =>
                     `<li class="glass-panel p-3 rounded-lg text-sm text-gray-300">${escapeHtml(item)}</li>`
                 ).join('');
