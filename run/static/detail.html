@@ -124,17 +124,34 @@
             </div>
 
             <div id="dataContainer" class="grid grid-cols-12 gap-1 hidden">
-                <!-- 左侧 10 列：海克斯矩阵（6 列超紧凑网格） -->
+                <!-- 左侧 10 列：海克斯列表（三列布局） -->
                 <div class="col-span-10">
-                    <div id="compList" class="grid grid-cols-6 gap-0.5 scroll-container" style="max-height: 650px; overflow-y: auto;"></div>
+                    <div id="compList" class="flex flex-col gap-1 scroll-container" style="max-height: 650px; overflow-y: auto;"></div>
                 </div>
 
-                <!-- 右侧 2 列：联动推荐卡片流（sticky） -->
+                <!-- 右侧 2 列：Tab 容器区域（sticky） -->
                 <div class="col-span-2">
                     <div class="sticky top-4">
-                        <h2 class="text-xs font-bold text-yellow-400 mb-2">⚡ 联动</h2>
-                        <div id="filteredSynergyContainer" class="space-y-1 max-h-[600px] overflow-y-auto">
+                        <!-- Tab 导航 -->
+                        <div class="flex gap-1 mb-3 border-b border-gray-800 pb-2">
+                            <button onclick="switchTab('hextech')" class="tab-nav px-3 py-1 text-xs font-bold text-white bg-blue-600 rounded-t" data-tab="hextech">⚡ 联动</button>
+                            <button onclick="switchTab('skills')" class="tab-nav px-3 py-1 text-xs font-bold text-gray-400 hover:text-white rounded-t" data-tab="skills">🎯 技能</button>
+                            <button onclick="switchTab('items')" class="tab-nav px-3 py-1 text-xs font-bold text-gray-400 hover:text-white rounded-t" data-tab="items">🛡️ 出装</button>
+                        </div>
+
+                        <!-- 海克斯联动容器 -->
+                        <div id="hextechTabContent" class="space-y-1 max-h-[600px] overflow-y-auto">
                             <div class="text-xs text-gray-400 text-center py-2">选择阶级后显示</div>
+                        </div>
+
+                        <!-- 技能加点容器（隐藏） -->
+                        <div id="skillsTabContent" class="hidden space-y-1 max-h-[600px] overflow-y-auto">
+                            <div class="text-xs text-gray-400 text-center py-2">敬请期待</div>
+                        </div>
+
+                        <!-- 出装推荐容器（隐藏） -->
+                        <div id="itemsTabContent" class="hidden space-y-1 max-h-[600px] overflow-y-auto">
+                            <div class="text-xs text-gray-400 text-center py-2">敬请期待</div>
                         </div>
                     </div>
                 </div>
@@ -159,6 +176,7 @@
         let activeArray = null;  // ✅ 新增：活跃数据源引用
         let synergyData = null;
         let ws = null;
+        let activeTab = 'hextech';  // ✅ Tab 状态机：当前活跃 Tab
 
         // 悬浮窗单例防多开管控
         const tabId = Math.random().toString(36).substring(2, 9);
@@ -192,7 +210,7 @@
         // 渲染背景原画和头像 - 优先级：本地 > ddragon
         if(heroId) {
             // 优先尝试本地 assets
-            document.getElementById('heroAvatar').src = `/assets/${heroId}.png`;
+            document.getElementById('heroAvatar').src = `./assets/${heroId}.png`;
         } else if(enName) {
             document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/${enName}.png`;
         } else {
@@ -238,6 +256,35 @@
             renderCurrentView();
         }
 
+        // Tab 切换函数
+        function switchTab(tabId) {
+            activeTab = tabId;
+            // 隐藏所有 Tab 内容
+            document.getElementById('hextechTabContent').classList.add('hidden');
+            document.getElementById('skillsTabContent').classList.add('hidden');
+            document.getElementById('itemsTabContent').classList.add('hidden');
+
+            // 显示当前 Tab 内容
+            const tabMap = {
+                'hextech': 'hextechTabContent',
+                'skills': 'skillsTabContent',
+                'items': 'itemsTabContent'
+            };
+            const contentId = tabMap[tabId];
+            if (contentId) {
+                document.getElementById(contentId).classList.remove('hidden');
+            }
+
+            // 更新 Tab 按钮样式
+            document.querySelectorAll('.tab-nav').forEach(btn => {
+                btn.className = 'tab-nav px-3 py-1 text-xs font-bold text-gray-400 hover:text-white rounded-t';
+            });
+            const activeTabBtn = document.querySelector(`[data-tab="${tabId}"]`);
+            if (activeTabBtn) {
+                activeTabBtn.className = 'tab-nav px-3 py-1 text-xs font-bold text-white bg-blue-600 rounded-t';
+            }
+        }
+
         // 获取阶级 CSS
         function getTierBarClass(tier) {
             if(tier.includes('棱彩') || tier.includes('彩色') || tier === 'Prismatic') return 'tier-prismatic';
@@ -245,7 +292,7 @@
             return 'tier-silver';
         }
 
-        // 渲染超极致紧凑卡片 HTML（网格形式）
+        // 渲染海克斯列表行（三列布局）
         function createHextechCard(hextech, index) {
             const iconUrl = hextech.icon || `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/chest.png`;
             const tierClass = getTierBarClass(hextech.海克斯阶级);
@@ -254,24 +301,26 @@
             const pr = (hextech.海克斯出场率 * 100).toFixed(1);
 
             return `
-            <div class="flex flex-col items-center p-1 rounded border border-gray-700 bg-[#1e1e2e] hover:bg-[#252535] transition-colors h-fit">
-                <!-- 阶级色条（超小） -->
-                <div class="w-full h-0.5 rounded-full ${tierClass} mb-1"></div>
+            <div class="list-row flex items-center p-3 rounded border border-gray-700 bg-[#1e1e2e] hover:bg-[#252535] transition-colors gap-3">
+                <!-- 左侧：海克斯图文（50%） -->
+                <div class="flex items-center gap-2 flex-1 w-[50%]">
+                    <div class="w-0.5 h-8 rounded-full ${tierClass}"></div>
+                    <img src="${iconUrl}"
+                         alt="${hextech.海克斯名称}"
+                         loading="lazy"
+                         onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 fill=%22%23666%22 font-size=%2220%22>H</text></svg>'; this.onerror=null;"
+                         class="w-8 h-8 rounded border border-gray-600 object-cover bg-gray-900 flex-shrink-0">
+                    <div class="text-sm font-bold text-gray-300 truncate" title="${hextech.海克斯名称}">${hextech.海克斯名称}</div>
+                </div>
 
-                <!-- 图标 -->
-                <img src="${iconUrl}"
-                     alt="${hextech.海克斯名称}"
-                     loading="lazy"
-                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 fill=%22%23666%22 font-size=%2220%22>H</text></svg>'; this.onerror=null;"
-                     class="w-10 h-10 rounded border border-gray-600 object-cover bg-gray-900 mb-1">
+                <!-- 中间：胜率（25%） -->
+                <div class="w-[25%] text-right">
+                    <div class="text-sm font-bold text-green-400">${wr}%</div>
+                </div>
 
-                <!-- 名称（截断） -->
-                <div class="text-[10px] font-bold text-gray-300 text-center truncate w-full px-0.5 mb-0.5 leading-tight" title="${hextech.海克斯名称}">${hextech.海克斯名称}</div>
-
-                <!-- 数据 -->
-                <div class="text-[9px] text-center w-full leading-tight">
-                    <div class="text-green-400 font-bold">${wr}%</div>
-                    <div class="text-gray-400">${pr}%</div>
+                <!-- 右侧：出场率（25%） -->
+                <div class="w-[25%] text-right">
+                    <div class="text-sm text-gray-400">${pr}%</div>
                 </div>
             </div>
             `;
@@ -319,9 +368,9 @@
             }
         }
 
-        // 级联过滤函数：卡片式联动推荐
+        // 级联过滤函数：紧凑型卡片式联动推荐
         function updateFilteredSynergies(tier) {
-            const container = document.getElementById('filteredSynergyContainer');
+            const container = document.getElementById('hextechTabContent');
             if (!synergyData || synergyData.length === 0) {
                 container.innerHTML = '<div class="text-xs text-gray-400 text-center py-1">暂无</div>';
                 return;
@@ -350,13 +399,11 @@
                 return;
             }
 
-            // 渲染卡片式联动列表
+            // 渲染紧凑型卡片列表
             const listHtml = filtered.map(item => {
                 const isTrap = /陷阱|慎选|不推荐|避免|bug|问题/.test(item);
-                const borderClass = isTrap ? 'border border-red-500 bg-red-950/40' : 'border border-blue-500/30 bg-blue-950/20';
-                // 极致缩小文本
-                const shortText = item.substring(0, 40) + (item.length > 40 ? '...' : '');
-                return `<div class="glass-panel p-1 rounded text-[9px] text-gray-300 ${borderClass} truncate" title="${escapeHtml(item)}">${escapeHtml(shortText)}</div>`;
+                const borderClass = isTrap ? 'border-l-2 border-l-red-500 bg-red-950/30' : 'border-l-2 border-l-blue-500 bg-blue-950/20';
+                return `<div class="glass-panel p-2 rounded text-xs text-gray-300 ${borderClass} line-clamp-2 hover:line-clamp-none" title="${escapeHtml(item)}">${escapeHtml(item)}</div>`;
             }).join('');
 
             container.innerHTML = listHtml;
