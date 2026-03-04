@@ -1,57 +1,62 @@
 #!/bin/bash
-# Git pre-commit hook for AST security scanning
-
-# 获取所有暂存的 Python 文件
 staged_files=$(git diff --cached --name-only | grep '\.py$')
-
-# 如果没有暂存的 Python 文件，直接通过
 if [ -z "$staged_files" ]; then
     exit 0
 fi
 
-# 对每个暂存文件进行 AST 扫描
 failed=0
-while IFS= read -r file; do
-    # 跳过已删除的文件
-    if [ ! -f "$file" ]; then
-        continue
-    fi
+for file in $staged_files; do
+    if [! -f "$file" ]; then continue; fi
 
-    # 执行 AST 安全扫描
     python -c "
 import sys
-sys.path.insert(0, '.ai_workflow')
-from pre_execution_check import check_dangerous_calls
+import os
 
-file_path = r'$file'.replace(chr(92), '/')
+sys.path.insert(0, os.path.join(os.getcwd(), '.ai_workflow'))
+
 try:
-    # 豁免 .ai_workflow/ 和 scripts/ 目录中的文件（基础设施代码允许使用危险调用）
-    if file_path.startswith('.ai_workflow/') or file_path.startswith('scripts/'):
-        sys.exit(0)
+    from pre_execution_check import check_dangerous_calls
+except ImportError as e:
+    print(f' Failed to import module: {e}')
+    sys.exit(1)
 
+file_path = '$file'
+if file_path.startswith('.ai_workflow/') or file_path.startswith('scripts/'):
+    sys.exit(0)
+
+try:
     with open(file_path, 'r', encoding='utf-8') as f:
         code = f.read()
-    # 普通代码不允许任何危险调用
-    safe, violations = check_dangerous_calls(code, exempted_modules=[])
-    if not safe:
-        print(f'[HOOK-INTERCEPT] Git Hook AST intercept [{file_path}]:')
-        for violation in violations:
-            print(f'   - {violation}')
+    is_safe, violations = check_dangerous_calls(code, exempted_modules=)
+    if not is_safe:
+        print(f' AST intercept [{file_path}]:')
+        for v in violations:
+            print(f'  - {v}')
         sys.exit(1)
 except Exception as e:
-    print(f'[ERROR] Error scanning {file_path}: {e}')
+    print(f' Scanner exception: {e}')
     sys.exit(1)
-" "$file"
-
+"
     if [ $? -ne 0 ]; then
         failed=1
     fi
-done <<< "$staged_files"
+done
 
-if [ $failed -eq 1 ]; then
-    echo "[ERROR] Git pre-commit hook check failed, commit aborted"
+if [ $failed -ne 0 ]; then
+    echo " Git pre-commit hook check failed, commit aborted"
     exit 1
 fi
 
-echo "[SUCCESS] AST security scan passed"
+echo " AST security scan passed. Waking up Cloud Brain (Gemini)..."
+
+# ==========================================
+# 唤醒云端 Gemini 进行语义审查
+# ==========================================
+python.ai_workflow/audit_dispatch.py
+if [ $? -ne 0 ]; then
+    echo " Cloud Brain rejected the commit or encountered an error."
+    exit 1
+fi
+
+echo " Cloud Audit Passed! Commit successful."
 exit 0

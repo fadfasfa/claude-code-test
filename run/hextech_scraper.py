@@ -126,6 +126,15 @@ def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_
                 win = float(match.group(2))
                 pick = float(match.group(3))
 
+                # ========== 数值安全补丁：量纲检查 ==========
+                # 如果出场率大于 1.0，说明数据以百分数表示（0-100），需要转换为小数（0-1）
+                if pick > 1.0:
+                    pick = pick / 100.0
+                    logging.debug(f"[量纲转换] 海克斯 ID={mid}，出场率从百分数转换为小数：{pick*100:.1f}% -> {pick:.4f}")
+
+                # 确保出场率不超过 1.0（容错上限）
+                pick = min(1.0, pick)
+
                 # 应用阈值过滤
                 if win > 0 and pick >= FRESHNESS_THRESHOLD:
                     web_name = aug_id_map.get(mid, "")

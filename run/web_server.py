@@ -127,7 +127,7 @@ manager = ConnectionManager()
 # ── LCU polling (async) ───────────────────────────────────────────────────────
 
 # 全局开关变量：防止在未请求的情况下强制广播跳转事件
-AUTO_JUMP_ENABLED = False
+AUTO_JUMP_ENABLED = True
 
 _lcu_state = {"port": None, "token": None, "current_ids": set(), "local_champ_id": None, "local_champ_name": None, "consecutive_404_count": 0}
 
@@ -394,4 +394,4 @@ async def websocket_endpoint(ws: WebSocket):
 
 if __name__ == "__main__":
     uvicorn.run("web_server:app", host="0.0.0.0", port=8000, reload=False)
-# 测试 Gemini 唤醒
+# test

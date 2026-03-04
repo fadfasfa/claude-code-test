@@ -231,7 +231,7 @@ def _generate_hextech_icon_url(hextech_name: str, tier: str) -> str:
     1. 读取 config/Augment_Icon_Map.json 获取精确匹配
     2. 在 JSON 中模糊搜索匹配（名称归一化）
     3. 尝试 CommunityDragon 标准命名
-    4. Fallback 到通用命名格式
+    4. Fallback 到标准化的 cherry_{tier}_{name}.png 格式
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config_dir = os.path.join(base_dir, "config")
@@ -256,20 +256,43 @@ def _generate_hextech_icon_url(hextech_name: str, tier: str) -> str:
         except (Exception):
             pass
 
-    # 如果找到图标路径且符合格式，转换为 CommunityDragon URL
-    if icon_path and icon_path.startswith("/lol-game-data/assets/"):
-        relative_path = icon_path[len("/lol-game-data/assets/"):]
-        return f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/{relative_path.lower()}"
+    # 如果找到图标路径，尝试转换为合法 CDN URL
+    if icon_path:
+        # ========== 路径适配 1：CommunityDragon 游戏资源路径 ==========
+        if icon_path.startswith("/lol-game-data/assets/"):
+            relative_path = icon_path[len("/lol-game-data/assets/"):]
+            return f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/{relative_path.lower()}"
 
-    # Fallback 逻辑：生成默认 URL
+        # ========== 路径适配 2：CommunityDragon augments 数据路径 ==========
+        if icon_path.startswith("/data/v1/augments/") or "/augments/" in icon_path:
+            # 提取文件名
+            file_name = icon_path.split('/')[-1] if '/' in icon_path else icon_path
+            return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{file_name.lower()}"
+
+        # ========== 路径适配 3：完整 URL（已是 HTTP/HTTPS） ==========
+        if icon_path.startswith("http://") or icon_path.startswith("https://"):
+            return icon_path
+
+        # ========== 路径适配 4：相对路径补全 ==========
+        if icon_path and not icon_path.startswith("/"):
+            return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{icon_path.lower()}"
+
+    # Fallback 逻辑：生成标准化 URL
+    # 阶级映射
     tier_map = {
         '棱彩': 'prismatic',
         '彩色': 'prismatic',
+        '白银': 'silver',
         '银色': 'silver',
+        '黄金': 'gold',
         '金色': 'gold',
     }
     tier_en = tier_map.get(str(tier), 'prismatic')
+
+    # 名称标准化：仅保留英文字母和数字
     clean_name = ''.join(c.lower() for c in str(hextech_name) if c.isalnum())
+
+    # 生成标准格式 URL
     return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/cherry_{tier_en}_{clean_name}.png"
 
 

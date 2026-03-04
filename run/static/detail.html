@@ -99,10 +99,10 @@
 
         <section class="glass-panel rounded-2xl p-6 min-h-[400px]">
             <div class="flex space-x-2 border-b border-gray-800 pb-4 mb-6">
-                <button id="tab-all" onclick="switchView('all')" class="tab-btn px-5 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">全部阶级 Top 10</button>
-                <button id="tab-Prismatic" onclick="switchView('Prismatic')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">🌈 棱彩专属</button>
-                <button id="tab-Gold" onclick="switchView('Gold')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">🥇 黄金专属</button>
-                <button id="tab-Silver" onclick="switchView('Silver')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">🥈 白银专属</button>
+                <button id="tab-all" onclick="switchView('all')" class="tab-btn px-5 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">全部海克斯</button>
+                <button id="tab-Prismatic" onclick="switchView('Prismatic')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">棱彩</button>
+                <button id="tab-Gold" onclick="switchView('Gold')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">黄金</button>
+                <button id="tab-Silver" onclick="switchView('Silver')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">白银</button>
             </div>
 
             <div id="loadingSpinner" class="text-center py-20">
@@ -115,31 +115,30 @@
                 <div class="text-gray-600 text-sm mt-2">该阶级可能样本过少或被系统过滤</div>
             </div>
 
-            <div id="dataContainer" class="grid grid-cols-2 gap-8 hidden">
-                <div>
-                    <h2 class="text-lg font-bold text-blue-400 mb-4 flex items-center">
-                        <span class="mr-2">🏆</span> 综合 Z-Score 推荐
-                        <span class="ml-auto text-xs font-normal text-gray-500 uppercase tracking-widest">胜率与热度的完美平衡</span>
-                    </h2>
-                    <div class="flex text-xs font-bold text-gray-500 border-b border-gray-800 pb-2 mb-2 px-2">
-                        <div class="w-[55%]">排名 / 海克斯</div>
-                        <div class="w-[20%] text-right">综合胜率</div>
-                        <div class="w-[25%] text-right">出场率</div>
+            <div id="dataContainer" class="grid grid-cols-12 gap-6 hidden">
+                <!-- 左侧 75%：海克斯矩阵 -->
+                <div class="col-span-9">
+                    <div>
+                        <h2 class="text-lg font-bold text-blue-400 mb-4 flex items-center">
+                            <span class="mr-2">🏆</span> 海克斯矩阵（按综合得分排序）
+                        </h2>
+                        <div class="flex text-xs font-bold text-gray-500 border-b border-gray-800 pb-2 mb-2 px-2">
+                            <div class="w-[55%]">排名 / 海克斯</div>
+                            <div class="w-[20%] text-right">综合胜率</div>
+                            <div class="w-[25%] text-right">出场率</div>
+                        </div>
+                        <div id="compList" class="space-y-1 scroll-container" style="max-height: 600px; overflow-y: auto;"></div>
                     </div>
-                    <div id="compList" class="space-y-1 scroll-container" style="max-height: 400px; overflow-y: auto;"></div>
                 </div>
 
-                <div>
-                    <h2 class="text-lg font-bold text-red-400 mb-4 flex items-center">
-                        <span class="mr-2">📈</span> 纯胜率暴力榜
-                        <span class="ml-auto text-xs font-normal text-gray-500 uppercase tracking-widest">绝活哥与天胡专属</span>
-                    </h2>
-                    <div class="flex text-xs font-bold text-gray-500 border-b border-gray-800 pb-2 mb-2 px-2">
-                        <div class="w-[55%]">排名 / 海克斯</div>
-                        <div class="w-[20%] text-right">极值胜率</div>
-                        <div class="w-[25%] text-right">出场率</div>
+                <!-- 右侧 25%：联动推荐（sticky） -->
+                <div class="col-span-3">
+                    <div class="sticky top-6">
+                        <h2 class="text-lg font-bold text-yellow-400 mb-4">⚡ 联动推荐</h2>
+                        <div id="filteredSynergyContainer" class="space-y-2 max-h-[600px] overflow-y-auto">
+                            <div class="text-xs text-gray-400 text-center py-4">选择阶级后显示</div>
+                        </div>
                     </div>
-                    <div id="winList" class="space-y-1 scroll-container" style="max-height: 400px; overflow-y: auto;"></div>
                 </div>
             </div>
         </section>
@@ -257,34 +256,81 @@
         function renderCurrentView() {
             if (!hextechData) return;
             const compList = document.getElementById('compList');
-            const winList = document.getElementById('winList');
             const dataContainer = document.getElementById('dataContainer');
             const noDataTip = document.getElementById('noDataTip');
 
             let leftData = [];
-            let rightData = [];
 
             if (currentView === 'all') {
-                leftData = hextechData.top_10_overall || [];
-                rightData = hextechData.winrate_only || [];
+                // 全量显示：将所有三个阶级的数据合并，按综合得分排序
+                const allData = [
+                    ...(hextechData.Prismatic || []),
+                    ...(hextechData.Gold || []),
+                    ...(hextechData.Silver || [])
+                ];
+                leftData = allData.sort((a, b) => (b.综合得分 || 0) - (a.综合得分 || 0));
             } else {
+                // 选择特定阶级：全量显示该阶级的所有数据
                 const tierData = hextechData[currentView] || [];
                 leftData = tierData.slice().sort((a, b) => (b.综合得分 || 0) - (a.综合得分 || 0));
-                rightData = tierData.slice().sort((a, b) => b.海克斯胜率 - a.海克斯胜率);
             }
 
-            leftData = leftData.slice(0, 10);
-            rightData = rightData.slice(0, 10);
+            // ✅ 关键改动：移除 .slice(0, 10) 限制，显示全量数据
+            // leftData = leftData.slice(0, 10);  // 已删除
 
-            if (leftData.length === 0 && rightData.length === 0) {
+            if (leftData.length === 0) {
                 dataContainer.classList.add('hidden');
                 noDataTip.classList.remove('hidden');
             } else {
                 noDataTip.classList.add('hidden');
                 dataContainer.classList.remove('hidden');
                 compList.innerHTML = leftData.map((h, i) => createHextechCard(h, i)).join('');
-                winList.innerHTML = rightData.map((h, i) => createHextechCard(h, i)).join('');
+
+                // ✅ 级联过滤：更新右侧联动区，仅显示当前阶级的联动
+                updateFilteredSynergies(currentView);
             }
+        }
+
+        // 级联过滤函数：根据当前选中的阶级，过滤并显示相关联动
+        function updateFilteredSynergies(tier) {
+            const container = document.getElementById('filteredSynergyContainer');
+            if (!synergyData || synergyData.length === 0) {
+                container.innerHTML = '<div class="text-xs text-gray-400 text-center py-4">暂无协同数据</div>';
+                return;
+            }
+
+            // 阶级关键词映射
+            const tierKeywords = {
+                'all': null,  // 不过滤
+                'Prismatic': ['棱彩'],
+                'Gold': ['黄金', '金色'],
+                'Silver': ['白银', '银色']
+            };
+
+            const keywords = tierKeywords[tier];
+            let filtered = synergyData;
+
+            // 如果选中的不是"全部"，则过滤包含该阶级关键词的联动
+            if (keywords) {
+                filtered = synergyData.filter(item => {
+                    return keywords.some(kw => item.includes(kw));
+                });
+            }
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="text-xs text-gray-400 text-center py-4">该阶级暂无推荐</div>';
+                return;
+            }
+
+            // 渲染过滤后的联动列表
+            const listHtml = filtered.map(item => {
+                const isTrap = /陷阱|慎选|不推荐|避免|bug|问题/.test(item);
+                const borderClass = isTrap ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-blue-500';
+                const bgClass = isTrap ? 'bg-red-950/20' : '';
+                return `<div class="glass-panel p-2 rounded text-xs text-gray-300 ${borderClass} ${bgClass}">${escapeHtml(item)}</div>`;
+            }).join('');
+
+            container.innerHTML = listHtml;
         }
 
         // API 数据请求
@@ -359,10 +405,17 @@
                     return;
                 }
 
-                const listHtml = synergyData.map(item =>
-                    `<li class="glass-panel p-3 rounded-lg text-sm text-gray-300">${escapeHtml(item)}</li>`
-                ).join('');
+                // 全量显示所有协同数据（不限制数量）
+                const listHtml = synergyData.map(item => {
+                    const isTrap = /陷阱|慎选|不推荐|避免|bug|问题/.test(item);
+                    const borderClass = isTrap ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-blue-500';
+                    const bgClass = isTrap ? 'bg-red-950/20' : '';
+                    return `<li class="glass-panel p-3 rounded-lg text-sm text-gray-300 ${borderClass} ${bgClass}">${escapeHtml(item)}</li>`;
+                }).join('');
                 container.innerHTML = '<ul class="space-y-2">' + listHtml + '</ul>';
+
+                // 初始化右侧联动区的级联过滤
+                updateFilteredSynergies(currentView);
             } catch (err) {
                 console.error('[Synergy] 加载协同数据失败:', err);
                 container.innerHTML = '<div class="text-center py-10 text-red-400">加载失败</div>';

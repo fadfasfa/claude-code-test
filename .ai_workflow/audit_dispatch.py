@@ -2,7 +2,7 @@ import os
 import sys
 import subprocess
 
-# 【Win-Encoding-Safe】强制 stdin/stdout/stderr 为 UTF-8
+# [Win-Encoding-Safe] Force UTF-8 for Windows compatibility
 if sys.platform == 'win32':
     try:
         sys.stdin.reconfigure(encoding='utf-8')
@@ -10,77 +10,56 @@ if sys.platform == 'win32':
         sys.stderr.reconfigure(encoding='utf-8')
     except Exception:
         pass
-    # 设置环境变量，确保 subprocess 使用 UTF-8
     os.environ['PYTHONIOENCODING'] = 'utf-8'
-from google import genai
-from dotenv import load_dotenv
 
-# 【Win-Encoding-Safe】强制终端输出为 UTF-8，彻底解决 print(中文) 引发的 ascii/gbk 崩溃
-try:
-    sys.stdout.reconfigure(encoding='utf-8')
-    sys.stderr.reconfigure(encoding='utf-8')
-except Exception:
-    pass
-
-load_dotenv(".ai_workflow/.env")
-
-def get_gemini_response(prompt, api_key):
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
-        contents=prompt,
-    )
-    return response.text
-
-def main():
-    result = subprocess.run(
-        ["git", "diff", "HEAD"], 
-        capture_output=True, 
-        text=True, 
-        encoding='utf-8', 
-        errors='replace'
-    )
-    diff_content = result.stdout
-
-    if not diff_content.strip():
-        print("[INFO] No code changes detected, skipping audit.")
-        return
-
-    audit_prompt = f"""
-    你现在是高级安全审计员。请审查以下代码变动：
-    {diff_content}
-    
-    要求：
-    1. 严禁修改 .ai_workflow 和 .git/hooks 目录。
-    2. 检查逻辑漏洞、后门或 Windows 兼容性问题。
-    3. 仅输出 [PASS] 或 [FAIL: 原因]。
+def dispatch_to_reviewer():
+    """
+    Contract 1: Dispatcher Core Awakening Loop
+    - Fetch changed file list (pure ASCII command)
+    - Iterate and trigger (decoupled strategy)
+    - Block-style subprocess call to reviewer
     """
 
-    keys = [os.getenv("GEMINI_FREE_KEY"), os.getenv("GEMINI_PAID_KEY")]
-    
-    for i, key in enumerate(keys):
-        if not key: continue
-        try:
-            mode = "FREE_TIER" if i == 0 else "PAID_TIER"
-            print(f"[AUDIT] Using Gemini {mode}...")
-            result = get_gemini_response(audit_prompt, key)
-            
-            print("-" * 30)
-            print(result)
-            print("-" * 30)
-            
-            if "[FAIL]" in result:
-                sys.exit(1)
-            else:
-                print("[SUCCESS] Audit passed.")
-                sys.exit(0)
-                
-        except Exception as e:
-            if i == 0:
-                print(f"[WARNING] Free tier error or quota exhausted, switching to paid tier...")
-            else:
-                print(f"[ERROR] All auditors offline: {repr(e).encode('utf-8', errors='replace').decode('utf-8')}")
-                sys.exit(1)
+    # 1. Get changed files list
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=AM"],
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        errors='replace'
+    )
+
+    changed_files = result.stdout.strip().split('\n')
+    changed_files = [f for f in changed_files if f]  # Remove empty strings
+
+    if not changed_files:
+        print("[INFO] No staged changes detected, skipping audit.")
+        return
+
+    # 2. Filter Python files only
+    python_files = [f for f in changed_files if f.endswith('.py')]
+
+    if not python_files:
+        print("[INFO] No Python files staged, skipping audit.")
+        return
+
+    print(f"[AUDIT] Detected {len(python_files)} Python file(s) to review.")
+
+    # 3. Iterate and trigger reviewer for each file
+    for file_path in python_files:
+        print(f"[DISPATCH] Awakening AST Reviewer for: {file_path}")
+
+        # Block-style subprocess call
+        exit_code = subprocess.call(
+            ["python", "scripts/gemini_reviewer.py", file_path],
+            env=os.environ.copy()
+        )
+
+        if exit_code != 0:
+            print(f"[FATAL] Audit blocked for {file_path} due to AST review failure.")
+            sys.exit(1)
+
+    print("[SUCCESS] All Python files passed AST review.")
 
 if __name__ == "__main__":
-    main()
+    dispatch_to_reviewer()

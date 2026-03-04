@@ -56,12 +56,54 @@ def _get_champion_image_url(en_name: str, version: str) -> list:
     """
     生成冠军头像图片的多个候选 URL（按优先级排序）
     返回 URL 列表，按下载优先级从高到低排列
+
+    支持强制 ID 映射，处理官方 API 与本地数据的命名差异
     """
     urls = []
+
+    # ========== 强制 ID 映射表：处理命名差异 ==========
+    force_id_mapping = {
+        "Fiddlesticks": "FiddleSticks",
+        "Belveth": "BelVeth",
+        "Chogath": "ChoGath",
+        "Khazix": "KhaZix",
+        "Kogmaw": "KogMaw",
+        "Leblanc": "LeBlanc",
+        "Malphite": "Malphite",
+        "Mordekaiser": "Mordekaiser",
+        "Nashor": "Nasus",  # 特殊别名
+        "Nocturne": "Nocturne",
+        "Orianna": "Orianna",
+        "Pantheon": "Pantheon",
+        "Sejuani": "Sejuani",
+        "Shyvana": "Shyvana",
+        "Sion": "Sion",
+        "Tahmkench": "TahmKench",
+        "Twitch": "Twitch",
+        "Udyr": "Udyr",
+        "Urgot": "Urgot",
+        "Vayne": "Vayne",
+        "Veigar": "Veigar",
+        "Velkoz": "VelKoz",
+        "Warwick": "Warwick",
+        "Xinzhao": "XinZhao",
+        "Yasuo": "Yasuo",
+        "Zed": "Zed",
+        "Zilean": "Zilean",
+        "Zyra": "Zyra",
+    }
+
     # 标准格式
     urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{en_name}.png")
     # 小写格式（某些英雄 ID 需要）
     urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{en_name.lower()}.png")
+
+    # 尝试强制映射版本
+    if en_name in force_id_mapping:
+        mapped_name = force_id_mapping[en_name]
+        urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{mapped_name}.png")
+        urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{mapped_name.lower()}.png")
+
     # 特殊英雄名称映射（处理已知的命名差异）
     special_mappings = {
         "MonkeyKing": "monkeking",  # 旧版 ID
@@ -81,9 +123,11 @@ def _get_champion_image_url(en_name: str, version: str) -> list:
     if en_name in special_mappings:
         alt_name = special_mappings[en_name]
         urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{alt_name}.png")
+
     # 备用 CDN 源
     for alt_name in [en_name, en_name.lower(), special_mappings.get(en_name, en_name).lower()]:
         urls.append(f"https://cdn.communitydragon.org/{version}/champion/{alt_name}/image")
+
     return urls
 
 
@@ -285,6 +329,11 @@ def sync_hero_data():
                 f.write(curr_ver)
             shutil.move(tmp_ver, VERSION_FILE)
             _last_sync_time = time.time()
+
+            # ========== 启动后强制补全缺失的本地头像 ==========
+            logger.info("启动头像补全流程，修复缺失资源...")
+            cleanup_missing_assets(max_retries=3)
+
             return True
         except (requests.RequestException, json.JSONDecodeError, ValueError, KeyError) as e:
             logger.error(f"🚨 同步引擎故障：{e}")
