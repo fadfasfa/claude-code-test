@@ -4,7 +4,15 @@ import json
 import logging
 import random
 import time
+import os
+from pathlib import Path
 from datetime import datetime
+
+# [Dynamic-Path-Standard] 计算项目根目录和数据路径
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR.mkdir(exist_ok=True)
 
 # [Win-Encoding-Safe] 配置日志
 logging.basicConfig(
@@ -12,7 +20,7 @@ logging.basicConfig(
     format='[%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('data/heybox_wiki.log', encoding='utf-8')
+        logging.FileHandler(DATA_DIR / 'heybox_wiki.log', encoding='utf-8')
     ]
 )
 logger = logging.getLogger("HeyboxProbe")
@@ -69,11 +77,12 @@ class WikiScraper:
                 
                 data = response.json()
                 logger.info(f"[SUCCESS] Status: {data.get('status')}")
-                
-                # 持久化存储 [Python-Debugger] 
-                with open('data/heybox_wiki_sample.json', 'w', encoding='utf-8') as f:
+
+                # 持久化存储 [Python-Debugger]
+                output_file = DATA_DIR / 'heybox_wiki_sample.json'
+                with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
-                logger.info("[SUCCESS] Data saved to data/heybox_wiki_sample.json")
+                logger.info(f"[SUCCESS] Data saved to {output_file}")
 
             except httpx.HTTPStatusError as e:
                 logger.error(f"[ERROR] HTTP Error: {e.response.status_code}")

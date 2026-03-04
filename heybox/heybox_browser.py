@@ -5,14 +5,14 @@ import random
 from pathlib import Path
 from playwright.async_api import async_playwright
 
-# [Relative-Path-Standard] 自动锚定当前脚本所在目录
+# [Relative-Path-Standard] 自动锚定当前脚本所在目�?
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
 # 自动创建数据目录
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# [Win-Encoding-Safe] 日志配置，使用相对路径
+# [Win-Encoding-Safe] 日志配置，使用相对路�?
 logging.basicConfig(
     level=logging.INFO,
     format='[%(levelname)s] %(message)s',
@@ -76,7 +76,8 @@ async def run_scraper():
         except Exception as e:
             logger.error(f"[FATAL] Runtime Error: {str(e)}")
         finally:
-            await browser.close()
+            if "browser" in locals():
+                await browser.close()
             logger.info("[END] Browser session closed.")
 
 if __name__ == "__main__":
