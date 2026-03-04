@@ -39,6 +39,22 @@ def get_champion_name(champ_id: int) -> str:
         return _champion_core_cache[champ_id_str].get('name', '')
     return ''
 
+def get_champion_info(champ_id: int) -> tuple:
+    """获取英雄 ID 对应的中文名和英文名，返回 (name, en_name)"""
+    global _champion_core_cache
+    if _champion_core_cache is None:
+        try:
+            _champion_core_cache = load_champion_core_data()
+        except Exception as e:
+            logging.warning(f"加载英雄核心数据失败：{e}")
+            _champion_core_cache = {}
+
+    champ_id_str = str(champ_id)
+    if champ_id_str in _champion_core_cache:
+        data = _champion_core_cache[champ_id_str]
+        return data.get('name', ''), data.get('en_name', '')
+    return '', ''
+
 logging.basicConfig(level=logging.INFO)
 
 # ── Resource path resolution for PyInstaller ──────────────────────────────────
@@ -228,8 +244,8 @@ async def lcu_polling_loop():
                     if prev_champ_id != local_champion_id:
                         _lcu_state["local_champ_id"] = local_champion_id
 
-                        # 利用 core_data 字典将其转换为英雄中文名
-                        hero_name = get_champion_name(local_champion_id)
+                        # 利用 core_data 字典将其转换为英雄中文名和英文名
+                        hero_name, en_name = get_champion_info(local_champion_id)
                         _lcu_state["local_champ_name"] = hero_name
 
                         logging.info(f"本地玩家锁定英雄：{hero_name} (ID={local_champion_id})")
@@ -240,6 +256,7 @@ async def lcu_polling_loop():
                                 "type": "local_player_locked",
                                 "champion_id": local_champion_id,
                                 "hero_name": hero_name,
+                                "en_name": en_name,
                             })
                         else:
                             logging.debug(f"AUTO_JUMP_ENABLED = False，已阻止自动跳转广播")

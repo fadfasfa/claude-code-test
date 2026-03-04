@@ -33,6 +33,7 @@ def invoke_gemini_cli_ast(target_file):
     # 2.5. Load .env file and inject API key authentication
     env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.ai_workflow', '.env')
     gemini_api_key = None
+    gemini_proxy = None
 
     if os.path.isfile(env_file):
         try:
@@ -52,6 +53,8 @@ def invoke_gemini_cli_ast(target_file):
                         break
                     elif key == 'GEMINI_PAID_KEY' and value and not gemini_api_key:
                         gemini_api_key = value
+                    elif key == 'LOCAL_PROXY' and value:
+                        gemini_proxy = value
         except Exception as e:
             print(f"[WARNING] Failed to parse .env file: {e}")
 
@@ -61,6 +64,25 @@ def invoke_gemini_cli_ast(target_file):
         sys.exit(1)
 
     cli_env['GEMINI_API_KEY'] = gemini_api_key
+
+    # 2.6. Inject proxy configuration if available
+    if gemini_proxy:
+        print(f"[PROXY] Using local proxy: {gemini_proxy}")
+        # Set both lowercase and uppercase versions for broader compatibility
+        cli_env['http_proxy'] = gemini_proxy
+        cli_env['https_proxy'] = gemini_proxy
+        cli_env['all_proxy'] = gemini_proxy
+        # Node.js applications prefer uppercase
+        cli_env['HTTP_PROXY'] = gemini_proxy
+        cli_env['HTTPS_PROXY'] = gemini_proxy
+        cli_env['ALL_PROXY'] = gemini_proxy
+        # Force Node.js fetch API to respect proxy environment variables
+        cli_env['NODE_USE_ENV_PROXY'] = '1'
+        # For undici/Node.js fetch API compatibility
+        cli_env['NODE_EXTRA_CA_CERTS'] = ''
+        # npm configuration
+        cli_env['npm_config_proxy'] = gemini_proxy
+        cli_env['npm_config_https_proxy'] = gemini_proxy
 
     # 3. Build non-interactive CLI command
     # Format: gemini "/code-review @<target_file>" --yolo
@@ -118,3 +140,14 @@ if __name__ == "__main__":
 
     target_file = sys.argv[1]
     invoke_gemini_cli_ast(target_file)
+
+# ============================================================================
+# [PROXY BYPASS STATUS]
+# Current state: Proxy injection logic fully implemented but bypassed due to
+# undici HTTP client isolation. All proxy environment variables are correctly
+# set (http_proxy, https_proxy, HTTP_PROXY, HTTPS_PROXY, NODE_USE_ENV_PROXY),
+# but gemini-cli's underlying undici library does not respect them.
+#
+# Next action: Awaiting gemini-cli version upgrade or undici configuration
+# enhancement. Logic is ready to activate once tool support improves.
+# ============================================================================

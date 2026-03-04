@@ -84,7 +84,7 @@
     <main class="max-w-6xl mx-auto">
         <header class="glass-panel rounded-2xl p-6 mb-8 flex items-center space-x-6 relative overflow-hidden" id="mainHeader">
             <div id="headerBg" class="absolute right-0 top-0 bottom-0 w-1/2 opacity-20 bg-cover bg-left"></div>
-            <img id="heroAvatar" src="" class="w-20 h-20 rounded-xl border-2 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.3)] relative z-10 bg-gray-900 object-cover">
+            <img id="heroAvatar" src="" class="w-20 h-20 rounded-xl border-2 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.3)] relative z-10 bg-gray-900 object-cover" onerror="if(this.src.includes('/assets/')&&!this.dataset.fallbackDdragon){this.src='https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/'+(window.enName||'').replace(/[^\w]/g,'')+'.png';this.dataset.fallbackDdragon='1'}">
 
             <div class="relative z-10">
                 <div class="flex items-center space-x-3 mb-1">
@@ -98,11 +98,19 @@
         </header>
 
         <section class="glass-panel rounded-2xl p-6 min-h-[400px]">
-            <div class="flex space-x-2 border-b border-gray-800 pb-4 mb-6">
-                <button id="tab-all" onclick="switchView('all')" class="tab-btn px-5 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">全部海克斯</button>
-                <button id="tab-Prismatic" onclick="switchView('Prismatic')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">棱彩</button>
-                <button id="tab-Gold" onclick="switchView('Gold')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">黄金</button>
-                <button id="tab-Silver" onclick="switchView('Silver')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">白银</button>
+            <!-- 模态切换工具栏 -->
+            <div class="flex flex-wrap gap-2 items-center mb-4 pb-4 border-b border-gray-800">
+                <div class="flex gap-2">
+                    <button id="btn-comprehensive" onclick="setDisplayMode('comprehensive')" class="mode-btn px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">📊 综合推荐</button>
+                    <button id="btn-winrate" onclick="setDisplayMode('winrate_only')" class="mode-btn px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium text-sm transition-colors">📈 纯胜率</button>
+                </div>
+                <div class="flex-1"></div>
+                <div class="flex gap-2">
+                    <button id="tab-all" onclick="switchView('all')" class="tab-btn px-5 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">全部海克斯</button>
+                    <button id="tab-Prismatic" onclick="switchView('Prismatic')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">棱彩</button>
+                    <button id="tab-Gold" onclick="switchView('Gold')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">黄金</button>
+                    <button id="tab-Silver" onclick="switchView('Silver')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">白银</button>
+                </div>
             </div>
 
             <div id="loadingSpinner" class="text-center py-20">
@@ -115,28 +123,18 @@
                 <div class="text-gray-600 text-sm mt-2">该阶级可能样本过少或被系统过滤</div>
             </div>
 
-            <div id="dataContainer" class="grid grid-cols-12 gap-6 hidden">
-                <!-- 左侧 75%：海克斯矩阵 -->
-                <div class="col-span-9">
-                    <div>
-                        <h2 class="text-lg font-bold text-blue-400 mb-4 flex items-center">
-                            <span class="mr-2">🏆</span> 海克斯矩阵（按综合得分排序）
-                        </h2>
-                        <div class="flex text-xs font-bold text-gray-500 border-b border-gray-800 pb-2 mb-2 px-2">
-                            <div class="w-[55%]">排名 / 海克斯</div>
-                            <div class="w-[20%] text-right">综合胜率</div>
-                            <div class="w-[25%] text-right">出场率</div>
-                        </div>
-                        <div id="compList" class="space-y-1 scroll-container" style="max-height: 600px; overflow-y: auto;"></div>
-                    </div>
+            <div id="dataContainer" class="grid grid-cols-12 gap-1 hidden">
+                <!-- 左侧 10 列：海克斯矩阵（6 列超紧凑网格） -->
+                <div class="col-span-10">
+                    <div id="compList" class="grid grid-cols-6 gap-0.5 scroll-container" style="max-height: 650px; overflow-y: auto;"></div>
                 </div>
 
-                <!-- 右侧 25%：联动推荐（sticky） -->
-                <div class="col-span-3">
-                    <div class="sticky top-6">
-                        <h2 class="text-lg font-bold text-yellow-400 mb-4">⚡ 联动推荐</h2>
-                        <div id="filteredSynergyContainer" class="space-y-2 max-h-[600px] overflow-y-auto">
-                            <div class="text-xs text-gray-400 text-center py-4">选择阶级后显示</div>
+                <!-- 右侧 2 列：联动推荐卡片流（sticky） -->
+                <div class="col-span-2">
+                    <div class="sticky top-4">
+                        <h2 class="text-xs font-bold text-yellow-400 mb-2">⚡ 联动</h2>
+                        <div id="filteredSynergyContainer" class="space-y-1 max-h-[600px] overflow-y-auto">
+                            <div class="text-xs text-gray-400 text-center py-2">选择阶级后显示</div>
                         </div>
                     </div>
                 </div>
@@ -157,6 +155,8 @@
         const WS_URL = window.location.protocol === 'file:' ? 'ws://localhost:8000' : 'ws://' + (window.location.host || 'localhost:8000');
         let hextechData = null;
         let currentView = 'all';
+        let currentMode = 'comprehensive';  // ✅ 新增：当前显示模式
+        let activeArray = null;  // ✅ 新增：活跃数据源引用
         let synergyData = null;
         let ws = null;
 
@@ -180,25 +180,49 @@
         const heroPR = urlParams.get('pr');
         const isAuto = urlParams.get('auto');
 
+        // ========== 保存到全局作用域，供 onerror 处理器使用 ==========
+        window.enName = enName;
+        window.heroId = heroId;
+
         // 渲染头部数据
         if(hero) document.getElementById('heroName').textContent = hero;
         if(heroWR) document.getElementById('heroWR').textContent = heroWR;
         if(heroPR) document.getElementById('heroPR').textContent = heroPR;
 
-        // 渲染背景原画和头像 - 使用 ddragon 高清资源
-        if(enName) {
-            document.getElementById('headerBg').style.backgroundImage = `url('https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${enName}_0.jpg')`;
-            document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/${enName}.png`;
-        } else if(heroId) {
+        // 渲染背景原画和头像 - 优先级：本地 > ddragon
+        if(heroId) {
+            // 优先尝试本地 assets
             document.getElementById('heroAvatar').src = `/assets/${heroId}.png`;
+        } else if(enName) {
+            document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/${enName}.png`;
         } else {
             document.getElementById('headerBg').style.backgroundColor = '#181825';
             document.getElementById('heroAvatar').src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>?</text></svg>';
         }
 
+        // 设置背景原画（仅使用 ddragon）
+        if(enName) {
+            document.getElementById('headerBg').style.backgroundImage = `url('https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${enName}_0.jpg')`;
+        }
+
         // 判断是否触发动画
         if (isAuto === '1') {
             document.getElementById('mainHeader').classList.add('anim-auto-lock');
+        }
+
+        // 切换显示模式（综合 vs 纯胜率）
+        function setDisplayMode(mode) {
+            currentMode = mode;
+            // 更新按钮样式
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.className = 'mode-btn px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium text-sm transition-colors';
+            });
+            const activeBtn = mode === 'comprehensive' ? document.getElementById('btn-comprehensive') : document.getElementById('btn-winrate');
+            if(activeBtn) {
+                activeBtn.className = 'mode-btn px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors';
+            }
+            // 重新渲染
+            renderCurrentView();
         }
 
         // 切换标签页
@@ -221,38 +245,39 @@
             return 'tier-silver';
         }
 
-        // 渲染单行卡片 HTML
+        // 渲染超极致紧凑卡片 HTML（网格形式）
         function createHextechCard(hextech, index) {
-            const iconUrl = hextech.icon || `https://raw.communitydragon.org/latest/plugins/rcp-be-lolgame-data/global/default/v1/hextech-images/chest.png`;
+            const iconUrl = hextech.icon || `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/chest.png`;
             const tierClass = getTierBarClass(hextech.海克斯阶级);
 
-            let rankColor = 'text-gray-500 font-bold';
-            if(index === 0) rankColor = 'text-yellow-400 font-black text-base drop-shadow-md';
-            else if(index === 1) rankColor = 'text-gray-300 font-bold';
-            else if(index === 2) rankColor = 'text-amber-600 font-bold';
-
-            const wr = (hextech.海克斯胜率 * 100).toFixed(1) + '%';
-            const pr = (hextech.海克斯出场率 * 100).toFixed(1) + '%';
+            const wr = (hextech.海克斯胜率 * 100).toFixed(1);
+            const pr = (hextech.海克斯出场率 * 100).toFixed(1);
 
             return `
-            <div class="list-row flex items-center justify-between p-2 border-b border-white/5">
-                <div class="flex items-center space-x-3 w-[55%]">
-                    <span class="${rankColor} w-4 text-right italic">${index + 1}</span>
-                    <div class="w-1.5 h-8 rounded-full ${tierClass} shrink-0"></div>
-                    <img src="${iconUrl}"
-                         alt="${hextech.海克斯名称}"
-                         loading="lazy"
-                         onerror="this.src='https://raw.communitydragon.org/latest/plugins/rcp-be-lolgame-data/global/default/v1/hextech-images/chest.png'; this.onerror=null;"
-                         class="w-8 h-8 rounded-md border border-gray-700 shadow-sm object-cover bg-gray-900 shrink-0">
-                    <span class="font-bold text-gray-200 truncate text-sm">${hextech.海克斯名称}</span>
+            <div class="flex flex-col items-center p-1 rounded border border-gray-700 bg-[#1e1e2e] hover:bg-[#252535] transition-colors h-fit">
+                <!-- 阶级色条（超小） -->
+                <div class="w-full h-0.5 rounded-full ${tierClass} mb-1"></div>
+
+                <!-- 图标 -->
+                <img src="${iconUrl}"
+                     alt="${hextech.海克斯名称}"
+                     loading="lazy"
+                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 fill=%22%23666%22 font-size=%2220%22>H</text></svg>'; this.onerror=null;"
+                     class="w-10 h-10 rounded border border-gray-600 object-cover bg-gray-900 mb-1">
+
+                <!-- 名称（截断） -->
+                <div class="text-[10px] font-bold text-gray-300 text-center truncate w-full px-0.5 mb-0.5 leading-tight" title="${hextech.海克斯名称}">${hextech.海克斯名称}</div>
+
+                <!-- 数据 -->
+                <div class="text-[9px] text-center w-full leading-tight">
+                    <div class="text-green-400 font-bold">${wr}%</div>
+                    <div class="text-gray-400">${pr}%</div>
                 </div>
-                <div class="w-[20%] text-right font-mono text-green-400 font-bold">${wr}</div>
-                <div class="w-[25%] text-right font-mono text-gray-400">${pr}</div>
             </div>
             `;
         }
 
-        // 渲染视图数据
+        // 渲染视图数据（双模态 + 全量显示）
         function renderCurrentView() {
             if (!hextechData) return;
             const compList = document.getElementById('compList');
@@ -261,22 +286,25 @@
 
             let leftData = [];
 
+            // 根据模式选择数据源
+            const baseArray = currentMode === 'winrate_only' ? hextechData.winrate_only : hextechData.comprehensive;
+
             if (currentView === 'all') {
-                // 全量显示：将所有三个阶级的数据合并，按综合得分排序
-                const allData = [
-                    ...(hextechData.Prismatic || []),
-                    ...(hextechData.Gold || []),
-                    ...(hextechData.Silver || [])
-                ];
-                leftData = allData.sort((a, b) => (b.综合得分 || 0) - (a.综合得分 || 0));
+                // 全量显示：直接使用基础数组
+                leftData = baseArray || [];
             } else {
-                // 选择特定阶级：全量显示该阶级的所有数据
+                // 选择特定阶级：从阶级数据中过滤
                 const tierData = hextechData[currentView] || [];
-                leftData = tierData.slice().sort((a, b) => (b.综合得分 || 0) - (a.综合得分 || 0));
+                // 按模式排序
+                if (currentMode === 'winrate_only') {
+                    leftData = tierData.slice().sort((a, b) => b.海克斯胜率 - a.海克斯胜率);
+                } else {
+                    leftData = tierData.slice().sort((a, b) => (b.综合得分 || 0) - (a.综合得分 || 0));
+                }
             }
 
-            // ✅ 关键改动：移除 .slice(0, 10) 限制，显示全量数据
-            // leftData = leftData.slice(0, 10);  // 已删除
+            // ✅ 关键改动：完全移除所有 .slice() 截断，显示全量数据
+            // leftData = leftData.slice(0, 10);  // ← 已永久删除
 
             if (leftData.length === 0) {
                 dataContainer.classList.add('hidden');
@@ -291,11 +319,11 @@
             }
         }
 
-        // 级联过滤函数：根据当前选中的阶级，过滤并显示相关联动
+        // 级联过滤函数：卡片式联动推荐
         function updateFilteredSynergies(tier) {
             const container = document.getElementById('filteredSynergyContainer');
             if (!synergyData || synergyData.length === 0) {
-                container.innerHTML = '<div class="text-xs text-gray-400 text-center py-4">暂无协同数据</div>';
+                container.innerHTML = '<div class="text-xs text-gray-400 text-center py-1">暂无</div>';
                 return;
             }
 
@@ -318,16 +346,17 @@
             }
 
             if (filtered.length === 0) {
-                container.innerHTML = '<div class="text-xs text-gray-400 text-center py-4">该阶级暂无推荐</div>';
+                container.innerHTML = '<div class="text-xs text-gray-400 text-center py-1">无推荐</div>';
                 return;
             }
 
-            // 渲染过滤后的联动列表
+            // 渲染卡片式联动列表
             const listHtml = filtered.map(item => {
                 const isTrap = /陷阱|慎选|不推荐|避免|bug|问题/.test(item);
-                const borderClass = isTrap ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-blue-500';
-                const bgClass = isTrap ? 'bg-red-950/20' : '';
-                return `<div class="glass-panel p-2 rounded text-xs text-gray-300 ${borderClass} ${bgClass}">${escapeHtml(item)}</div>`;
+                const borderClass = isTrap ? 'border border-red-500 bg-red-950/40' : 'border border-blue-500/30 bg-blue-950/20';
+                // 极致缩小文本
+                const shortText = item.substring(0, 40) + (item.length > 40 ? '...' : '');
+                return `<div class="glass-panel p-1 rounded text-[9px] text-gray-300 ${borderClass} truncate" title="${escapeHtml(item)}">${escapeHtml(shortText)}</div>`;
             }).join('');
 
             container.innerHTML = listHtml;
@@ -342,6 +371,10 @@
             try {
                 const res = await fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/hextechs`);
                 hextechData = await res.json();
+
+                // ✅ 初始化 activeArray（默认综合推荐模式）
+                activeArray = hextechData.comprehensive || [];
+
                 document.getElementById('loadingSpinner').classList.add('hidden');
                 renderCurrentView();
             } catch (err) {
@@ -367,7 +400,8 @@
                         loadHextechs();
                     } else if (msg.type === 'local_player_locked') {
                         // 若玩家在详情页挂机，下一局锁定新英雄时自动连跳
-                        window.location.href = `detail.html?hero=${encodeURIComponent(msg.hero_name)}&id=${encodeURIComponent(msg.champion_id)}&auto=1`;
+                        const enName = msg.en_name ? `&en=${encodeURIComponent(msg.en_name)}` : '';
+                        window.location.href = `detail.html?hero=${encodeURIComponent(msg.hero_name)}&id=${encodeURIComponent(msg.champion_id)}${enName}&auto=1`;
                     }
                 } catch (e) {
                     console.error(e);

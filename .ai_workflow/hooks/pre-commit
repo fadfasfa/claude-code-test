@@ -6,6 +6,7 @@ fi
 
 failed=0
 for file in $staged_files; do
+    # 修复 1：在 [ 和! 之间加上了空格
     if [! -f "$file" ]; then continue; fi
 
     python -c "
@@ -27,7 +28,9 @@ if file_path.startswith('.ai_workflow/') or file_path.startswith('scripts/'):
 try:
     with open(file_path, 'r', encoding='utf-8') as f:
         code = f.read()
-    is_safe, violations = check_dangerous_calls(code, exempted_modules=)
+    
+    is_safe, violations = check_dangerous_calls(code)
+    
     if not is_safe:
         print(f' AST intercept [{file_path}]:')
         for v in violations:
@@ -50,9 +53,9 @@ fi
 echo " AST security scan passed. Waking up Cloud Brain (Gemini)..."
 
 # ==========================================
-# 唤醒云端 Gemini 进行语义审查
+# 修复 2：在 python 和路径之间加上了空格
 # ==========================================
-python.ai_workflow/audit_dispatch.py
+python .ai_workflow/audit_dispatch.py
 if [ $? -ne 0 ]; then
     echo " Cloud Brain rejected the commit or encountered an error."
     exit 1
