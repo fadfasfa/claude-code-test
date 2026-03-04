@@ -1,7 +1,14 @@
 # 三层协同架构节点分配表
 
 ## 全局上下文状态
-**[Node C 审计通过]**
+**[主分支合入完成]**
+
+Node C 终局合并执行记录：
+- Git 提交哈希：fd774e7
+- 提交信息：feat: Heybox 探针相对路径修复及 Node C 审计通过
+- 变更文件：heybox/heybox_browser.py, heybox/heybox_probe.py, agents.md
+- 基建防线状态：.ai_workflow/, scripts/, .git/hooks/ 完整性验证通过
+- 合并状态：已安全合入 main 分支，工作区状态清空
 
 Node C 审计执行记录：
 - 语法验证：11 个 Python 文件全部通过 py_compile 检查
