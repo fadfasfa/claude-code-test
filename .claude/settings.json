@@ -9,7 +9,9 @@
       "Bash(./run/.venv/Scripts/python.exe .ai_workflow/verify_workspace.py)",
       "Bash(chmod 755 .ai_workflow)",
       "Bash(git config --unset core.hooksPath)",
-      "Bash(gemini \"/code-review @run/static/detail.html\" --yolo)"
+      "Bash(gemini \"/code-review @run/static/detail.html\" --yolo)",
+      "Bash(ping -c 1 github.com)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File Lock-Core.ps1)"
     ]
   }
 }
