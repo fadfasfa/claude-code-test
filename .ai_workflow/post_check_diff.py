@@ -170,47 +170,43 @@ def extract_import_keys(tree: ast.Module) -> Set[str]:
 def signature_of(node: ast.FunctionDef) -> str:
     """
     Build a canonical signature string from a FunctionDef or AsyncFunctionDef.
-    Excludes default values. Includes:
+    Excludes default values and type annotations. Includes:
       - positional-only separator '/'
       - *args, **kwargs
       - keyword-only args
-      - type annotations
+
+    Type annotations are stripped to allow lightweight code fixes (e.g., Type Hint additions)
+    without triggering signature mismatch errors.
     """
     args = node.args
     parts = []
 
     # Positional-only args (before '/')
     for a in args.posonlyargs:
-        ann = (": " + ast.unparse(a.annotation)) if a.annotation else ""
-        parts.append(a.arg + ann)
+        parts.append(a.arg)
     if args.posonlyargs:
         parts.append("/")
 
     # Regular positional-or-keyword args
     for a in args.args:
-        ann = (": " + ast.unparse(a.annotation)) if a.annotation else ""
-        parts.append(a.arg + ann)
+        parts.append(a.arg)
 
     # *args or bare '*' separator for keyword-only args
     if args.vararg:
-        ann = (": " + ast.unparse(args.vararg.annotation)) if args.vararg.annotation else ""
-        parts.append("*" + args.vararg.arg + ann)
+        parts.append("*" + args.vararg.arg)
     elif args.kwonlyargs:
         parts.append("*")
 
     # Keyword-only args
     for a in args.kwonlyargs:
-        ann = (": " + ast.unparse(a.annotation)) if a.annotation else ""
-        parts.append(a.arg + ann)
+        parts.append(a.arg)
 
     # **kwargs
     if args.kwarg:
-        ann = (": " + ast.unparse(args.kwarg.annotation)) if args.kwarg.annotation else ""
-        parts.append("**" + args.kwarg.arg + ann)
+        parts.append("**" + args.kwarg.arg)
 
-    ret = (" -> " + ast.unparse(node.returns)) if node.returns else ""
     prefix = "async def " if isinstance(node, ast.AsyncFunctionDef) else "def "
-    return f"{prefix}{node.name}({', '.join(parts)}){ret}"
+    return f"{prefix}{node.name}({', '.join(parts)})"
 
 
 def extract_interfaces(tree: ast.Module) -> Dict[str, dict]:

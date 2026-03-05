@@ -1,30 +1,14 @@
 # 三层协同架构节点分配表
 
 ## 全局上下文状态
-**[主分支合入完成]**
+**[Node C 审计通过]**
 
-Node C 终局合并执行记录：
-- Git 提交哈希：fd774e7
-- 提交信息：feat: Heybox 探针相对路径修复及 Node C 审计通过
-- 变更文件：heybox/heybox_browser.py, heybox/heybox_probe.py, agents.md
-- 基建防线状态：.ai_workflow/, scripts/, .git/hooks/ 完整性验证通过
-- 合并状态：已安全合入 main 分支，工作区状态清空
+Node A 已完成详情页的三个 Step 视觉重构：
+1. Step 1：英雄头像三级降级策略（本地 → CDN → SVG）
+2. Step 2：左侧 30% 紧凑版数据矩阵（五列布局）
+3. Step 3：右侧联动卡片结构化解析（大卡片式渲染）
 
-Node C 审计执行记录：
-- 语法验证：11 个 Python 文件全部通过 py_compile 检查
-- AST 解析：heybox_probe.py 结构完整无缺陷
-- 路径契约：所有相对路径已替换为 Path 动态计算
-- 编码契约：日志与文件操作均显式声明 UTF-8
-- 资源管理：异步 HTTP 客户端使用 async with 正确释放
-
-Node A 已完成路径硬编码修复，修复内容：
-- 消除 heybox/heybox_probe.py 中所有纯文本相对路径
-- 引入 Path 动态路径计算
-- 确保 data 目录在运行时自动创建
-
-修复已通过 Python 语法验证，现请 Node C 进行最终审计。
-
----
+修改已通过 JavaScript 语法验证，现请 Node C 进行最终审计。
 
 ## 节点职责与权限
 

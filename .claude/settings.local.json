@@ -12,7 +12,8 @@
       "Bash(git add .)",
       "Bash(git commit:*)",
       "Bash(npm show:*)",
-      "Bash(git config --list)"
+      "Bash(git config --list)",
+      "Bash(test -f scripts/gemini_reviewer.py)"
     ]
   }
 }

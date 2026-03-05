@@ -375,15 +375,14 @@ class GeminiEvaluator:
             except Exception as e:
                 last_error = str(e)
 
-                # 指数退避
+                # [修订版] 指数退避与 Full Jitter (防惊群效应)
                 if attempt < max_retries - 1:
-                    delay = min(
-                        self.config["base_delay"] * (2 ** attempt),
-                        self.config["max_delay"]
-                    )
-                    # 添加抖动
                     import random
-                    delay += random.uniform(0, delay * 0.1)
+                    # 计算上限: min(T_max, t_0 * (2^n))
+                    cap = min(self.config["max_delay"], self.config["base_delay"] * (2 ** attempt))
+                    # Full Jitter 核心公式: t = random(0, cap)
+                    delay = random.uniform(0, cap)
+                    print(f"[API_BACKOFF] Rate limit or error encountered. Full Jitter backing off for {delay:.2f}s...")
                     time.sleep(delay)
 
         # 所有重试失败

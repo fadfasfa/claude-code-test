@@ -1,24 +1,33 @@
 import ast
+import re
 from typing import List, Tuple
 
-# 【放权版】仅拦截致命的动态执行与底层类反射，允许 os, sys 等正常业务操作
-DANGEROUS_CALLS = {
-    'eval': 'Dynamic code execution',
-    'exec': 'Dynamic code execution',
-    'compile': 'Code compilation'
-}
+# 危险调用与属性拦截 (原有逻辑)
+DANGEROUS_CALLS = {'eval': 'Dynamic code execution', 'exec': 'Dynamic code execution', 'compile': 'Code compilation'}
+DANGEROUS_ATTRS = {'__class__', '__subclasses__'}
 
-DANGEROUS_ATTRS = {
-    '__class__', '__subclasses__'
+# 【新增】高危密钥与凭证正则表达式基准字典
+SECRET_PATTERNS = {
+    'Google_API_Key': re.compile(r'AIza[0-9A-Za-z-_]{35}'),
+    'Aliyun_DashScope_Key': re.compile(r'sk-[a-zA-Z0-9]{32,}'),
+    'AWS_Access_Key': re.compile(r'AKIA[0-9A-Z]{16}'),
+    'Generic_Private_Key': re.compile(r'-----BEGIN (RSA|OPENSSH|DSA|EC|PGP) PRIVATE KEY-----')
 }
 
 def check_dangerous_calls(code: str, exempted_modules: List[str] = None) -> Tuple[bool, List[str]]:
+    violations = []
+    
+    # 1. 静态密钥嗅探 (文本层)
+    for key_type, pattern in SECRET_PATTERNS.items():
+        if pattern.search(code):
+            violations.append(f"[SECURITY-VIOLATION] Detected hardcoded secret: {key_type}. Forbidden by BeforeTool policy.")
+
+    # 2. AST 结构扫描 (逻辑层)
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
         return False, [f"[AST-ERROR] Syntax error: {e}"]
 
-    violations = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             call_str = get_call_string(node)
@@ -29,7 +38,6 @@ def check_dangerous_calls(code: str, exempted_modules: List[str] = None) -> Tupl
             if node.attr in DANGEROUS_ATTRS:
                 violations.append(f"[AST-VIOLATION] Forbidden attribute access: {node.attr}")
 
-        # 彻底放开了对 os / sys 的拦截，现在只拦截 subprocess 和 pickle
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name in ['subprocess', 'pickle'] and (not exempted_modules or alias.name not in exempted_modules):

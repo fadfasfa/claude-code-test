@@ -474,7 +474,6 @@ def main():
     parser.add_argument("--max-retries", type=int, default=3, help="API 失败时最大重试次数")
     parser.add_argument("--max-iterations", type=int, default=3, help="Reflect-Refine 最大迭代次数")
     parser.add_argument("--json", action="store_true", help="以 JSON 格式输出结果")
-    parser.add_argument("--auto-reject", action="store_true", help="自动执行打回操作")
 
     args = parser.parse_args()
 
@@ -515,29 +514,6 @@ def main():
         print(json.dumps(output, ensure_ascii=False, indent=2))
     else:
         print(manager.generate_report(result))
-
-    # 自动打回
-    if args.auto_reject:
-        blocked = [d for d in result.decisions if d.blocked or d.requires_human]
-        if blocked:
-            # 获取 base commit
-            result_proc = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace"
-            )
-            base_commit = result_proc.stdout.strip()
-
-            executed, reason = manager.execute_rejection(
-                decisions=blocked,
-                base_commit=base_commit
-            )
-
-            if executed:
-                print(f"\n[REJECT] 已执行打回：{reason}")
-                sys.exit(1)
 
     # 根据审查结果设置退出码
     blocked = [d for d in result.decisions if d.blocked]
