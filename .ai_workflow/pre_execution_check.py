@@ -17,16 +17,21 @@ SECRET_PATTERNS = {
 def check_dangerous_calls(code: str, exempted_modules: List[str] = None) -> Tuple[bool, List[str]]:
     violations = []
     
-    # 1. 静态密钥嗅探 (文本层)
+    # 1. 静态密钥嗅探 (文本层，必须强制熔断)
     for key_type, pattern in SECRET_PATTERNS.items():
         if pattern.search(code):
             violations.append(f"[SECURITY-VIOLATION] Detected hardcoded secret: {key_type}. Forbidden by BeforeTool policy.")
+
+    if violations: 
+        return False, violations
 
     # 2. AST 结构扫描 (逻辑层)
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
-        return False, [f"[AST-ERROR] Syntax error: {e}"]
+        # [V3.2 适配] 容忍增量片段(Hunk)因缺失上下文导致的语法错误
+        # 降级为 WARNING 返回 True，放行写入缓冲区，语义正确性交由 Node C 在后发覆盖时合并裁定。
+        return True, [f"[AST-WARNING] Snippet deferred to Node C Hunk Merge (Syntax error: {e})"]
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):

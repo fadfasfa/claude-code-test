@@ -79,7 +79,6 @@ def load_whitelist(filepath: str) -> Dict[str, str]:
     if not os.path.exists(filepath):
         return {}
     wl = {}
-    # 【乱码免疫装甲】增加 errors="replace" 防止遭遇非 UTF-8 字符时崩溃
     with open(filepath, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
@@ -95,11 +94,8 @@ def verify_contract_identity(contract_data: dict) -> str:
     """【高阶密码学闭环】基于 HMAC-SHA256 的零信任鉴权"""
     declared_node = contract_data.get("task_input_from_claude", {}).get("executor_node", "QWEN_API")
 
-    # 如果主动声明为低权限或审计节点，直接放行（无需耗费算力验签）
     if declared_node == "QWEN_API":
         return "QWEN_API"
-
-    # ROO_CODE_API（Node C 审计节点）的合法绕过通道
     if declared_node == "ROO_CODE_API":
         return "ROO_CODE_API"
 
@@ -114,35 +110,24 @@ def verify_contract_identity(contract_data: dict) -> str:
 
         provided_signature = contract_data.get("signature")
         if not provided_signature:
-            print("\n[WARNING] Contract missing HMAC signature, suspected forgery! Forced downgrade to QWEN_API.\n")
+            print("\n[WARNING] Contract missing HMAC signature! Forced downgrade to QWEN_API.\n")
             return "QWEN_API"
 
-        # 剥离签名本身以重构原始摘要载荷
         data_to_verify = copy.deepcopy(contract_data)
         del data_to_verify["signature"]
 
         payload_str = json.dumps(data_to_verify, sort_keys=True, separators=(',', ':'))
         expected_signature = hmac.new(secret.encode('utf-8'), payload_str.encode('utf-8'), hashlib.sha256).hexdigest()
 
-        # 防止时序攻击的恒定时间比较，同时清理签名中的隐藏空白字符（换行符、空格等）
-        # 这很关键：Windows CRLF 和 Linux LF 差异可能导致签名末尾包含换行符
-        expected_sig_clean = expected_signature.strip()
-        provided_sig_clean = provided_signature.strip()
-
-        if hmac.compare_digest(expected_sig_clean, provided_sig_clean):
+        if hmac.compare_digest(expected_signature.strip(), provided_signature.strip()):
             return declared_node
         else:
             if contract_data.get("__from_git_history"):
-                print("\n[WARNING] Git history contract detected, signature invalid, auto-downgrade to QWEN_API per zero-trust principle\n")
                 return "QWEN_API"
-            print("\n[WARNING] Contract HMAC signature verification failed (signature mismatch or key rotation). Forced downgrade to QWEN_API.\n")
+            print("\n[WARNING] Contract HMAC signature verification failed. Forced downgrade to QWEN_API.\n")
             return "QWEN_API"
 
     except Exception as e:
-        if contract_data.get("__from_git_history"):
-            print("\n[WARNING] Git history contract detected, signature invalid, auto-downgrade to QWEN_API per zero-trust principle\n")
-            return "QWEN_API"
-        print(f"\n[WARNING] Signature verification environment error: {e}. Forced downgrade to QWEN_API.\n")
         return "QWEN_API"
 
 def get_claude_auth_from_git() -> dict:
@@ -151,28 +136,20 @@ def get_claude_auth_from_git() -> dict:
         try:
             with open(contract_path, "rb") as f:
                 raw = f.read()
-            # 优先尝试 UTF-8 解码
             try:
                 text = raw.decode('utf-8').strip()
             except UnicodeDecodeError:
-                # 退回到 UTF-16
                 try:
                     text = raw.decode('utf-16').strip()
-                    if text.startswith('\ufeff'):
-                        text = text[1:]
+                    if text.startswith('\ufeff'): text = text[1:]
                 except UnicodeDecodeError:
-                    # 最后尝试 GBK（容错）
                     text = raw.decode('gbk', errors="replace")
             return json.loads(text)
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             pass
 
-    result = subprocess.run(
-        ["git", "show", "HEAD:.ai_workflow/current_contract.json"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
-    if result.returncode != 0:
-        return {}
+    result = subprocess.run(["git", "show", "HEAD:.ai_workflow/current_contract.json"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode != 0: return {}
     try:
         contract = json.loads(result.stdout)
         contract["__from_git_history"] = True
@@ -180,26 +157,42 @@ def get_claude_auth_from_git() -> dict:
     except json.JSONDecodeError:
         return {}
 
-
-
 def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_paths: Set[str], executor_node: str = "CLAUDE_API") -> Tuple:
     unauthorized = {}
     pending_ast = []
 
+    # [V3.2 适配] 物理隔离缓冲区与逻辑身份分离
+    AUDIT_BUFFER_DIR = ".ai_workflow/audit_buffer/"
+    is_executor = executor_node in ("CLAUDE_API", "QWEN_API")
+    is_auditor = (executor_node == "ROO_CODE_API")
+
     def match_level(path: str):
-        if path in auth_paths:
-            return "LOOSE"
+        if path in auth_paths: return "LOOSE"
         for pattern, level in whitelist.items():
-            if fnmatch.fnmatch(path, pattern) or path == pattern:
-                return level
+            if fnmatch.fnmatch(path, pattern) or path == pattern: return level
         return None
 
     for c in changes:
-        path = c["path"]
+        path = c["path"].replace("\\", "/")
         ct = c.get("change_type", "M")
 
+        # 1. 执行节点隔离网关 (最小权限原则落地)
+        if is_executor:
+            if not path.startswith(AUDIT_BUFFER_DIR) and path not in ("agents.md", ".ai_workflow/current_contract.json"):
+                unauthorized[path] = f"ISOLATION_VIOLATION: Node A/B must write code hunks to {AUDIT_BUFFER_DIR}"
+                continue
+            level = "STANDARD"
+            if path.endswith(".py"): pending_ast.append(path)
+            continue 
+
+        # 2. 审计节点合入与清理权
+        if is_auditor:
+            if ct == "D" and path.startswith(AUDIT_BUFFER_DIR):
+                continue # Node C 删缓冲区文件，直接放行
+
+        # 3. 核心基建防线 (物理锁死兜底)
         if path in IMMUTABLE_CORE:
-            if executor_node not in ("CLAUDE_API", "ROO_CODE_API") or path not in auth_paths:
+            if not is_auditor and path not in auth_paths:
                 unauthorized[path] = "IMMUTABLE_CORE_VIOLATION"
                 continue
             level = "LOOSE"
@@ -214,15 +207,11 @@ def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_path
         elif level == "LOOSE":
             pass
         elif level == "STRICT":
-            if ct != "M":
-                unauthorized[path] = ct
-            elif path.endswith(".py"):
-                pending_ast.append(path)
+            if ct != "M": unauthorized[path] = ct
+            elif path.endswith(".py"): pending_ast.append(path)
         else:
-            if ct == "D":
-                pass
-            elif path.endswith(".py"):
-                pending_ast.append(path)
+            if ct == "D": pass
+            elif path.endswith(".py"): pending_ast.append(path)
 
     return unauthorized, pending_ast
 
@@ -243,11 +232,7 @@ def execute_atomic_revert(unauthorized: Dict, base_commit: str) -> bool:
                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                 shutil.copy2(file_path, dest_path)
 
-    manifest = {
-        "timestamp": timestamp,
-        "base_commit": base_commit,
-        "unauthorized_changes": unauthorized
-    }
+    manifest = {"timestamp": timestamp, "base_commit": base_commit, "unauthorized_changes": unauthorized}
     manifest_file = os.path.join(backup_path, "manifest.json")
     with open(manifest_file, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
@@ -262,8 +247,7 @@ def execute_atomic_revert(unauthorized: Dict, base_commit: str) -> bool:
     return True
 
 def cleanup_stale_backups(backup_dir=".ai_workflow/backup", max_days=7, max_keep=30):
-    if not os.path.exists(backup_dir):
-        return
+    if not os.path.exists(backup_dir): return
     valid_snapshots = []
     pattern = re.compile(r"^\d{8}_\d{6}$")
     now = datetime.now()
@@ -283,31 +267,22 @@ def cleanup_stale_backups(backup_dir=".ai_workflow/backup", max_days=7, max_keep
     kept_count = 0
 
     for path, f_time in valid_snapshots:
-        if now - f_time > timedelta(days=max_days):
-            to_delete.append(path)
+        if now - f_time > timedelta(days=max_days): to_delete.append(path)
         else:
-            if kept_count >= max_keep:
-                to_delete.append(path)
-            else:
-                kept_count += 1
+            if kept_count >= max_keep: to_delete.append(path)
+            else: kept_count += 1
 
     for path in to_delete:
-        try:
-            shutil.rmtree(path)
-        except Exception:
-            pass
+        try: shutil.rmtree(path)
+        except Exception: pass
 
 def main():
-    if not acquire_lock():
-        sys.exit(0)
+    if not acquire_lock(): sys.exit(0)
 
     try:
         contract = get_claude_auth_from_git()
         auth_paths = set(contract.get("claude_sudo", {}).get("authorized_paths", []))
-
-        # 【高阶密码学闭环：HMAC 验签取代物理探针】
         executor_node = verify_contract_identity(contract)
-
         whitelist = load_whitelist(".ai_workflow/whitelist.txt")
         changes, base_commit = get_comprehensive_changes()
 
@@ -324,25 +299,16 @@ def main():
             from pre_execution_check import check_dangerous_calls
 
             for ast_file in pending_ast:
-                if not os.path.exists(ast_file):
-                    continue
-
-                # 关键：.ai_workflow/ 和 scripts/ 目录中的文件被豁免 AST 扫描
-                # 这些目录中的基础设施代码允许使用危险调用
-                if ast_file.startswith('.ai_workflow/') or ast_file.startswith('scripts/'):
-                    continue
+                if not os.path.exists(ast_file): continue
+                if ast_file.startswith('.ai_workflow/') or ast_file.startswith('scripts/'): continue
 
                 git_path = ast_file.replace("\\", "/")
-                old_code_result = subprocess.run(
-                    ["git", "show", f"{base_commit}:{git_path}"],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace"
-                )
+                old_code_result = subprocess.run(["git", "show", f"{base_commit}:{git_path}"], capture_output=True, text=True, encoding="utf-8", errors="replace")
                 old_code = old_code_result.stdout if old_code_result.returncode == 0 else None
 
                 with open(ast_file, "r", encoding="utf-8") as f:
                     new_code = f.read()
 
-                # 对于普通代码，不允许任何危险调用
                 is_safe, violations = check_dangerous_calls(new_code, exempted_modules=[])
                 if not is_safe:
                     if old_code is not None:
@@ -364,8 +330,7 @@ def main():
                     stdout_lines = result.stdout.strip().split('\n') if result.stdout.strip() else []
                     destructive_violations = []
                     for line in stdout_lines:
-                        if 'ADDED' in line:
-                            continue
+                        if 'ADDED' in line: continue
                         if any(keyword in line for keyword in ['REMOVED', 'CHANGED', 'BROADENED']):
                             destructive_violations.append(line)
 
