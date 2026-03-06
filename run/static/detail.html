@@ -90,10 +90,12 @@
                      let stage = this.dataset.fallbackStage || '0';
                      if (stage === '0') {
                          // Stage 1: 本地 assets 404，尝试 DDragon CDN
+                         console.error('[Asset-Fail] ID:', window.heroId, 'Stage: local-miss');
                          this.src = 'https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/' + (window.enName || '').replace(/[^\w]/g, '') + '.png';
                          this.dataset.fallbackStage = '1';
                      } else if (stage === '1') {
                          // Stage 2: CDN 404，降级到 Canvas 动态渲染占位符
+                         console.error('[Asset-Fail] ID:', window.heroId, 'Stage: cdn-miss');
                          if (window.handleAssetMissing) {
                              window.handleAssetMissing(this, window.heroName || '?', 'avatar', '');
                          }

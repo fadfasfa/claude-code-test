@@ -3,7 +3,7 @@
 ## 全局上下文与调度配置
 * **分配节点与精细化算力路由**: Node A (Claude 4.6 Opus)
 * **需求收敛锁**: 已锁定
-* **全局上下文状态**: `[阶段一: 待执行]`
+* **全局上下文状态**: `[Node C 审计通过]`
 * **实战任务**: 资产重定向错误自愈与前端追踪
 
 ---
@@ -25,11 +25,11 @@
 
 ## 确定性执行清单与 Git 靶点映射
 
-- [ ] **Step 1: 后端错误兜底重构**
+- [x] **Step 1: 后端错误兜底重构**
   - **Git Target File**: `run/web_server.py`
   - **指令**: 定位到 `/assets/{id}.png` 路由。在 `RedirectResponse` 失败的异常捕获块中，增加一个最后的 `return` 语句，返回占位图 URL：`https://placehold.co/120x120?text=Missing`。
 
-- [ ] **Step 2: 前端调试链路注入**
+- [x] **Step 2: 前端调试链路注入**
   - **Git Target File**: `run/static/detail.html`
   - **指令**: 在处理头像加载的 `onerror` 状态机中，增加 `console.error('[Asset-Fail] ID:', id)` 逻辑，以便在控制台留下追踪线索。
 
