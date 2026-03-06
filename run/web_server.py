@@ -13,8 +13,8 @@ import pandas as pd
 import psutil
 import requests
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from data_processor import process_champions_data, process_hextechs_data
@@ -358,7 +358,7 @@ app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 # Assets directory for images and other resources
 _assets_dir = get_resource_path("assets")
 os.makedirs(_assets_dir, exist_ok=True)
-app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+# Note: /assets route is now handled by custom route below for fallback support
 
 
 # ── API routes ────────────────────────────────────────────────────────────────
@@ -373,6 +373,28 @@ async def read_detail():
     """Serve detail.html for detail page path."""
     return FileResponse(os.path.join(_static_dir, "detail.html"))
 
+@app.get("/assets/{filename}")
+async def get_asset(filename: str):
+    """Serve asset files with DDragon CDN fallback if local file is missing."""
+    local_path = os.path.join(_assets_dir, filename)
+    if os.path.exists(local_path):
+        return FileResponse(local_path)
+    # File missing, redirect to DDragon official CDN
+    # Extract champion name from filename (e.g., "1.png" -> need to lookup)
+    # For direct champion images, redirect to ddragon
+    if filename.endswith('.png'):
+        champ_name = filename[:-4]  # Remove .png extension
+        # Try to lookup champion name from core data
+        champ_id = champ_name
+        champ_name = get_champion_name(champ_id)
+        if champ_name:
+            en_name = get_champion_info(champ_id)[1]
+            if en_name:
+                ddragon_url = f"https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/{en_name}.png"
+                return RedirectResponse(url=ddragon_url, status_code=307)
+    # Fallback: return placeholder
+    return JSONResponse(content={"error": "Asset not found"}, status_code=404)
+
 @app.get("/api/champions")
 async def api_champions():
     df = get_df()
@@ -385,13 +407,32 @@ async def api_champion_hextechs(name: str):
 
 @app.get("/api/synergies/{champ_id}")
 async def api_synergies(champ_id: str):
-    """获取英雄协同数据 API。读取 Champion_Synergy.json 返回对应英雄的 synergies 列表。"""
+    """获取英雄协同数据 API。读取 Champion_Synergy.json 返回对应英雄的 synergies 列表。
+
+    支持 aliases（别名）的模糊匹配支持，确保前端传递名称或 ID 都能准确获取数据。
+    """
     json_path = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
+
+        # 尝试直接匹配 champ_id
         synergy_data = data.get(champ_id, {})
-        synergies = synergy_data.get("synergies", [])
+
+        # 如果直接匹配失败，尝试别名模糊匹配
+        if not synergy_data:
+            for key, value in data.items():
+                # 检查别名字段
+                aliases = value.get("aliases", [])
+                if champ_id in aliases or champ_id.lower() in [a.lower() for a in aliases]:
+                    synergy_data = value
+                    break
+                # 检查是否是 ID 与名称的匹配（尝试将 champ_id 与 key 进行模糊匹配）
+                if champ_id.lower() == key.lower():
+                    synergy_data = value
+                    break
+
+        synergies = synergy_data.get("synergies", []) if synergy_data else []
         return JSONResponse(content={"synergies": synergies})
     except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
         logging.warning(f"读取协同数据失败：{e}")

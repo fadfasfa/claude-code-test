@@ -11,7 +11,10 @@
       "Bash(git config --unset core.hooksPath)",
       "Bash(gemini \"/code-review @run/static/detail.html\" --yolo)",
       "Bash(ping -c 1 github.com)",
-      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File Lock-Core.ps1)"
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File Lock-Core.ps1)",
+      "Bash(\"/c/Users/apple/claudecode/run/static/test_canvas.html\":*)",
+      "Bash(\"/c/Users/apple/claudecode/run/static/NODE_C_AUDIT_REPORT.md\":*)",
+      "Bash(cat:*)"
     ]
   }
 }
