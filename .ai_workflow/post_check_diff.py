@@ -140,16 +140,51 @@ def is_downgrade(before_types: List[str], after_types: List[str]) -> bool:
     introduced_broad = bool(after_set & BROAD_EXCEPTIONS - before_set)
     return has_specific_before and introduced_broad
 
+STDLIB_MODULES = {
+    "abc", "ast", "asyncio", "base64", "builtins", "collections", "concurrent",
+    "contextlib", "copy", "csv", "dataclasses", "datetime", "decimal", "difflib",
+    "email", "enum", "fileinput", "fnmatch", "fractions", "ftplib", "functools",
+    "gc", "getpass", "glob", "gzip", "hashlib", "heapq", "hmac", "html", "http",
+    "imaplib", "importlib", "inspect", "io", "itertools", "json", "keyword",
+    "linecache", "locale", "logging", "math", "mimetypes", "multiprocessing",
+    "numbers", "operator", "os", "pathlib", "pickle", "platform", "pprint",
+    "queue", "random", "re", "shlex", "shutil", "signal", "smtplib", "socket",
+    "sqlite3", "ssl", "stat", "statistics", "string", "struct", "subprocess",
+    "sys", "tempfile", "textwrap", "threading", "time", "timeit", "tkinter",
+    "traceback", "types", "typing", "unittest", "urllib", "uuid", "warnings",
+    "weakref", "xml", "xmlrpc", "zipfile", "zipimport", "zlib",
+}
+
+def _extract_root_module(key: str) -> Optional[str]:
+    """从 import key 中解析根模块名。相对导入返回 None 表示直接放行。"""
+    if key.startswith("import:"):
+        module = key[len("import:"):].split(" as ")[0]
+        return module.split(".")[0]
+    elif key.startswith("from:"):
+        parts = key.split(":")
+        if len(parts) >= 2:
+            module = parts[1]
+            if module.startswith("."):
+                return None  # 相对导入，一律放行
+            return module.split(".")[0]
+    return key
+
+def _is_stdlib_import(key: str) -> bool:
+    """判断 import key 是否属于标准库导入。"""
+    root = _extract_root_module(key)
+    if root is None:
+        return True  # 相对导入，放行
+    return root in STDLIB_MODULES
+
 def check_imports(before_tree: ast.Module, after_tree: ast.Module) -> List[str]:
     before_keys = extract_import_keys(before_tree)
     after_keys = extract_import_keys(after_tree)
-    ALLOWED_NEW_IMPORTS = {"import:tempfile", "import:shutil", "import:os", "import:json", "import:logging"}
     ALLOWED_REMOVED_IMPORTS = {"import:shutil"}
     violations = []
     for key in sorted(before_keys - after_keys):
         if key not in ALLOWED_REMOVED_IMPORTS: violations.append(f"[IMPORT REMOVED]  {key}")
     for key in sorted(after_keys - before_keys):
-        if key not in ALLOWED_NEW_IMPORTS: violations.append(f"[IMPORT ADDED]    {key}")
+        if not _is_stdlib_import(key): violations.append(f"[IMPORT ADDED]    {key}")
     return violations
 
 def check_interfaces(before_tree: ast.Module, after_tree: ast.Module) -> List[str]:
