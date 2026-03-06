@@ -1,42 +1,42 @@
-# 三层协同架构节点分配表 (V4.4 实战)
+## 任务状态机契约 (agents.md)
 
-## 全局上下文与调度配置
-* **分配节点与精细化算力路由**: Node A (Claude 4.6 Opus)
-* **需求收敛锁**: 已锁定
-* **全局上下文状态**: `[Node C 审计通过]`
-* **实战任务**: 资产重定向错误自愈与前端追踪
+分配节点：[Node A / Node B / Node C]
+路由决策依据：[结合能力画像，说明任务特性与节点的匹配逻辑]
+全局上下文状态：[意图已锁定待执行 / 增量代码已暂存 / 待 Node C 终审 / CRITICAL 熔断挂起]
 
 ---
 
-## 节点职责与任务阶段
+### 前置条件 (Pre-conditions)
+- HMAC 契约签名：[已核验 / 待核验]
+- DACL 状态：[上锁（日常模式） / 已解锁（破冰模式）]
+- pre_merge_snapshot.txt：[已生成 / 待生成]
+- STASH_CREATED 标记：[true / false / 待写入]
 
-### 🤖 Node A (Claude Code) - 当前执行节点
-- **权限边界**：受限于 DACL 物理锁，严禁修改 `.ai_workflow/` 目录与基建脚本。仅拥有业务靶点文件的修改权。
-- **核心动作**：直接修改工作区代码 -> 精准 `git add <target_files>` -> 执行条件 Stash 压栈 -> 移交交权。
-
-### 👤 人类 (UAT 验收器) - 阶段二
-- **验收点**：当状态变为 `[待UAT]` 时，启动本地服务并故意访问一个不存在的资产 ID，观察前端是否正常显示占位图，且浏览器控制台是否输出了追踪日志。
-
-### 👁️ Node C (Roo Code) - 阶段三
-- **终审判官**：待人类 UAT 通过后接管。直接对 Git 暂存区执行语义审查。
-- **闭环动作**：生成 Commit Message 并执行 `git commit`。随后依据 `STASH_CREATED` 标记执行 `git stash pop`，恢复人类物理现场。
+### 后置条件 (Post-conditions)
+- [任务完成后，必须满足的可观测逻辑结果]
 
 ---
 
-## 确定性执行清单与 Git 靶点映射
+### 确定性执行清单
 
-- [x] **Step 1: 后端错误兜底重构**
-  - **Git Target File**: `run/web_server.py`
-  - **指令**: 定位到 `/assets/{id}.png` 路由。在 `RedirectResponse` 失败的异常捕获块中，增加一个最后的 `return` 语句，返回占位图 URL：`https://placehold.co/120x120?text=Missing`。
-
-- [x] **Step 2: 前端调试链路注入**
-  - **Git Target File**: `run/static/detail.html`
-  - **指令**: 在处理头像加载的 `onerror` 状态机中，增加 `console.error('[Asset-Fail] ID:', id)` 逻辑，以便在控制台留下追踪线索。
+- [ ] Step N: [物理动作描述]
+  - 目标文件：[绝对路径]
+  - 结构化指令：[非保姆级，描述意图与约束，严禁粘贴完整实现代码]
+  - 风险提示：[该步骤的已知边界情况，必填]
 
 ---
 
-## 状态流转规约 (Node A 必读)
-1. 上述靶点修改完成后，**严禁全量添加**。必须显式执行 `git add run/web_server.py run/static/detail.html`。
-2. 执行 `git status --porcelain` 检查工作区。若有未暂存改动，执行 `git stash push --keep-index -m "AI_WIP"` 并向 `.ai_workflow/STASH_CREATED` 写入 `true`；否则写入 `false`。
-3. 将本契约的【全局上下文状态】修改为 `[待UAT]`。
-4. 在终端输出完毕信号后，主动断开进程休眠。
+### Node C 终审记录（由 Node C 填写）
+- 审查结论：[通过 / CRITICAL 熔断 / 待审查]
+- 风险清单摘要：[INFO / WARNING / CRITICAL 条目]
+- 熔断原因（如有）：[具体描述]
+
+---
+
+### 冲突避免与底层防线
+
+- 语言规约：执行节点必须唯一使用简体中文（除代码块外）进行终端交互与日志输出。
+- 权限隔离：执行节点禁止修改 DACL 保护范围内的文件（`.git/hooks/*`、`verify_workspace.py`、`Lock-Core.ps1`、`run_task.ps1`、`audit_log.txt`、`pre_merge_snapshot.txt`）。
+- 破冰规约：基建文件修改必须由人类启动破冰规约：执行 `Unlock-Core.ps1` → `git commit --no-verify -m "[INFRA-BYPASS] ..."` → `Lock-Core.ps1`。
+- 范围控制：阶段三 CRITICAL 熔断后，子分支 A 的 `git add` 严禁全量，必须指定 `<target_files>`。
+- 状态机闭环：`git stash pop` 执行前必须检查 `STASH_CREATED` 标记，标记为 `false` 时跳过 pop。
