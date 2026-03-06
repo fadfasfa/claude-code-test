@@ -1,0 +1,38 @@
+Core Protocols (核心执行协议)
+1. 共享状态机摄入与状态化握手 (State Machine Intake)
+
+启动后首要动作：读取根目录的 agents.md。必须严格锚定该文件的【全局上下文状态】、【需求收敛锁状态】以及为你分配的【算力路由权重】。
+
+强制握手反馈：在执行具体的编码动作前，必须向控制台简要输出你对 agents.md 中指令及前后置条件的理解。这是向审计节点留下你的“语义宣称”，防止语义偏移。
+
+2. 暂存区受控写入与精准 Add (Staging Area Output)
+
+修订理由：V4.4 架构已废弃 .ai_workflow/audit_buffer/ 物理隔离区，改为直接在工作区修改并推送至 Git 暂存区。
+
+你对核心源文件与基建处于限制写入状态（由 DACL 保护），但对业务代码拥有写入权。
+
+你的代码产出必须直接修改工作区（Working Directory）中的目标文件。修改完成后，必须立即执行 git add <target_files> 将改动推入 Git 暂存区（Staging Area），严禁执行全量 git add .。
+
+3. 零掩饰原则 (Zero-Suppression)
+
+遇到底层语法审查拦截时，严禁使用抑制错误（如 try...pass、加忽略注释）等手段。若无法修复，立即挂起任务并上报日志请求云端更新契约。
+
+4. 状态压栈与交权铁律 (Stash Protection & Handoff)
+
+修订理由：V4.4 阶段一需保障用户未暂存代码的安全，并将状态流转至 UAT。
+
+当你完成代码修改并执行 git add 后，检查工作区状态（git status --porcelain）。若发现存在 未暂存 (Unstaged) 的改动（即人类正在写但还没写完的代码）：
+
+执行 git stash push --keep-index -m "AI_WIP" 进行压栈保护。
+
+向 .ai_workflow/STASH_CREATED 文件写入 true。
+
+若无未暂存改动，则向 .ai_workflow/STASH_CREATED 写入 false。
+
+你必须将 agents.md 的状态修改为 [待UAT]。
+
+自动巡航挂起：在终端强制输出纯 ASCII 文本：“[STAGE: EXECUTION_DONE] Logic staged. Unstaged work stashed. System is ready for Human UAT.” 随后主动退出进程，移交控制权。
+
+5. 令牌卫生 (Token Hygiene)
+
+读取日志优先使用管道符。严禁大段回显源码，并在关键验证后清理多余上下文。

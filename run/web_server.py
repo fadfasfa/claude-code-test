@@ -392,8 +392,8 @@ async def get_asset(filename: str):
             if en_name:
                 ddragon_url = f"https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/{en_name}.png"
                 return RedirectResponse(url=ddragon_url, status_code=307)
-    # Fallback: redirect to placeholder image
-    return RedirectResponse(url="https://placehold.co/120x120?text=Missing", status_code=307)
+    # Fallback: return placeholder
+    return JSONResponse(content={"error": "Asset not found"}, status_code=404)
 
 @app.get("/api/champions")
 async def api_champions():

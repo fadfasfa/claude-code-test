@@ -1,3 +1,6 @@
 [2026-03-06 16:15:47] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
 Message: [INFRA-BYPASS] 落地 V4.4 审查基建与状态机重构
 ------------------------------------------------
+[2026-03-06 20:10:06] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
+Message: chore: V4.4 强制破冰与契约更新 [INFRA-BYPASS]
+------------------------------------------------
