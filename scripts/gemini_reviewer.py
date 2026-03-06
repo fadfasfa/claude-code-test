@@ -120,8 +120,8 @@ def invoke_gemini_cli_ast(target_file):
 
         # 5. Parse closed-loop gateway
         if "[FAIL]" in output or "致命逻辑漏洞" in output or result.returncode != 0:
-            print(f"[BLOCKED] AST review failed for {target_file}")
-            sys.exit(1)
+            print(f"[CRITICAL 熔断] AST 审查拦截，语义存在致命逻辑风险: {target_file}")
+            sys.exit(2)
         else:
             print(f"[PASSED] AST review passed for {target_file}")
             sys.exit(0)

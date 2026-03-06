@@ -174,6 +174,7 @@ def check_interfaces(before_tree: ast.Module, after_tree: ast.Module) -> List[st
             if b_entry["sig"] != a_entry["sig"]:
                 violations.append(f"[SIG CHANGED]     before: {b_entry['sig']}")
                 violations.append(f"                  after:  {a_entry['sig']}")
+                violations.append("[CRITICAL 熔断建议] 检测到核心签名变更或高危异常处理，强制中断自动合并。")
         elif b_entry["kind"] == "class":
             b_methods = b_entry["methods"]
             a_methods = a_entry["methods"]
@@ -189,6 +190,7 @@ def check_interfaces(before_tree: ast.Module, after_tree: ast.Module) -> List[st
                 if bm["sig"] != am["sig"]:
                     violations.append(f"[SIG CHANGED]     before: {bm['sig']}")
                     violations.append(f"                  after:  {am['sig']}")
+                    violations.append("[CRITICAL 熔断建议] 检测到核心签名变更或高危异常处理，强制中断自动合并。")
     return violations
 
 def check_try_blocks(before_tree: ast.Module, after_tree: ast.Module) -> List[str]:
@@ -213,6 +215,7 @@ def check_try_blocks(before_tree: ast.Module, after_tree: ast.Module) -> List[st
         after_types = after_sigs.get(after_loc, [])
         if is_downgrade(before_types, after_types):
             violations.append(f"[EXCEPT BROADENED] try block #{i+1} at line {before_loc[0]}: before={before_types}, after={after_types}")
+            violations.append("[CRITICAL 熔断建议] 检测到核心签名变更或高危异常处理，强制中断自动合并。")
 
     return violations
 

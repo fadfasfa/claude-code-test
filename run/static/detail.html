@@ -138,34 +138,16 @@
             </div>
 
             <div id="dataContainer" class="flex gap-4 hidden">
-                <!-- 左侧 30%：紧凑版海克斯列表 -->
-                <div class="w-[30%] flex-shrink-0">
+                <!-- 左侧 45%：紧凑版海克斯列表 -->
+                <div class="w-[45%] flex-shrink-0">
                     <div id="compList" class="flex flex-col gap-1 scroll-container" style="max-height: 650px; overflow-y: auto;"></div>
                 </div>
 
-                <!-- 右侧 70%：联动详情与标签页容器（sticky） -->
-                <div class="flex-1">
-                    <div class="sticky top-4">
-                        <!-- Tab 导航 -->
-                        <div class="flex gap-1 mb-3 border-b border-gray-800 pb-2">
-                            <button onclick="switchTab('hextech')" class="tab-nav px-3 py-1 text-xs font-bold text-white bg-blue-600 rounded-t" data-tab="hextech">⚡ 联动</button>
-                            <button onclick="switchTab('skills')" class="tab-nav px-3 py-1 text-xs font-bold text-gray-400 hover:text-white rounded-t" data-tab="skills">🎯 技能</button>
-                            <button onclick="switchTab('items')" class="tab-nav px-3 py-1 text-xs font-bold text-gray-400 hover:text-white rounded-t" data-tab="items">🛡️ 出装</button>
-                        </div>
-
-                        <!-- 海克斯联动容器 -->
-                        <div id="hextechTabContent" class="space-y-1 max-h-[600px] overflow-y-auto">
-                            <div class="text-xs text-gray-400 text-center py-2">选择阶级后显示</div>
-                        </div>
-
-                        <!-- 技能加点容器（隐藏） -->
-                        <div id="skillsTabContent" class="hidden space-y-1 max-h-[600px] overflow-y-auto">
-                            <div class="text-xs text-gray-400 text-center py-2">敬请期待</div>
-                        </div>
-
-                        <!-- 出装推荐容器（隐藏） -->
-                        <div id="itemsTabContent" class="hidden space-y-1 max-h-[600px] overflow-y-auto">
-                            <div class="text-xs text-gray-400 text-center py-2">敬请期待</div>
+                <!-- 右侧 55%：联动文章垂直滚动容器 -->
+                <div class="w-[55%]">
+                    <div id="synergyArticleScroll" class="space-y-3 max-h-[650px] overflow-y-auto scroll-container">
+                        <div class="glass-panel rounded-xl p-4">
+                            <div class="text-sm text-gray-400 text-center">选择左侧海克斯查看联动文章</div>
                         </div>
                     </div>
                 </div>

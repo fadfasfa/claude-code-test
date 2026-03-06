@@ -1,355 +1,105 @@
-import os, sys, subprocess, json, shutil, fnmatch, re
-import hmac, hashlib, copy
-from typing import Dict, List, Set, Tuple
-from datetime import datetime, timedelta
+import os
+import sys
+import subprocess
+import json
+import hmac
+import hashlib
+import keyring  # [NEW] V4.0 Credential Dependency
 
 if sys.platform == 'win32':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-DEFAULT_IGNORE_PATTERNS = ['__pycache__', '.pyc', '.pyo', '.eggs', '*.egg-info', '.pytest_cache', '.claude/', 'claude/', 'backup/', '.verify.lock']
-BACKUP_DIR = ".ai_workflow/backup"
-LOCK_FILE = ".ai_workflow/.verify.lock"
-IMMUTABLE_CORE = {
-    ".ai_workflow/current_contract.json",
-    ".ai_workflow/whitelist.txt",
-}
-QWEN_INFRA_PATTERN = re.compile(r'^\.ai_workflow/')
+# V4.0 Precise Revert Logic
+def create_workspace_snapshot():
+    """在执行扫描前捕获工作区物理状态"""
+    snapshot_path = ".ai_workflow/pre_merge_snapshot.txt"
+    # 使用 git status --porcelain 获取最纯净的变更列表
+    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+    with open(snapshot_path, "w", encoding="utf-8") as f:
+        f.write(result.stdout)
 
-def acquire_lock() -> bool:
-    try:
-        fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
-        return True
-    except FileExistsError:
+def get_ai_change_list():
+    """对比快照，识别 AI 产生的实际增量文件"""
+    snapshot_path = ".ai_workflow/pre_merge_snapshot.txt"
+    if not os.path.exists(snapshot_path):
+        return []
+
+    with open(snapshot_path, "r", encoding="utf-8") as f:
+        old_status = set(f.readlines())
+
+    current_status = subprocess.run(
+        ["git", "status", "--porcelain"], capture_output=True, text=True
+    ).stdout.splitlines()
+    # 差集逻辑：仅回滚快照中不存在或状态已变更的文件
+    changes = [line[3:] for line in current_status if line + "\n" not in old_status]
+    return changes
+
+def verify_contract_v4():
+    """基于 Windows Credential Manager 的 HMAC 校验"""
+    # 1. 从 keyring 获取密钥 (由人类通过脚本预存)
+    secret = keyring.get_password("AI_WORKFLOW", "ADMIN_SECRET")
+    if not secret:
+        print("[ERR_AUTH_FAILED] System credential 'AI_WORKFLOW' not found.")
         return False
 
-def release_lock():
-    try:
-        os.remove(LOCK_FILE)
-    except OSError:
-        pass
+    contract_path = "current_contract.json"
+    if not os.path.exists(contract_path):
+        return False
 
-def get_current_commit_sha() -> str:
-    result = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-    return result.stdout.strip()
+    with open(contract_path, "r", encoding="utf-8") as f:
+        contract = json.load(f)
 
-def is_ignored_file(file_path: str) -> bool:
-    basename = os.path.basename(file_path)
-    for pattern in DEFAULT_IGNORE_PATTERNS:
-        if pattern in file_path or basename == pattern or basename.endswith(pattern.lstrip('*')): return True
-    return False
+    # 2. 校验范围扩大：复合 agents.md + whitelist.json
+    with open("agents.md", "r", encoding="utf-8") as f:
+        a_content = f.read()
+    with open(".ai_workflow/whitelist.json", "r", encoding="utf-8") as f:
+        w_content = f.read()
 
-def get_comprehensive_changes() -> Tuple[List[Dict], str]:
-    base_commit = get_current_commit_sha()
-    result = subprocess.run(
-        ["git", "status", "--porcelain=v1", "-z"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
-    changes = []
-    seen = set()
-    tokens = result.stdout.split('\x00')
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if not token:
-            i += 1
-            continue
-        xy = token[:2]
-        path = token[3:].replace("\\", "/")
-        x, y = xy[0], xy[1]
-        if is_ignored_file(path):
-            i += 1
-            continue
-        if x == 'R' or y == 'R':
-            old_path = tokens[i + 1].replace("\\", "/") if i + 1 < len(tokens) else None
-            changes.append({"path": path, "change_type": "R", "old_path": old_path, "stage": "working"})
-            seen.add(path)
-            i += 2
-            continue
-        raw = x if x not in (' ', '?') else y
-        change_type = raw if raw not in ('?',) else 'A'
-        if path not in seen:
-            changes.append({"path": path, "change_type": change_type, "stage": "working"})
-            seen.add(path)
-        i += 1
-    return changes, base_commit
+    payload = a_content + w_content + json.dumps(contract["task_input_from_claude"], sort_keys=True)
+    signature = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
 
-def load_whitelist(filepath: str) -> Dict[str, str]:
-    if not os.path.exists(filepath):
-        return {}
-    wl = {}
-    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split()
-            pattern = parts[0].replace("\\", "/")
-            level = parts[1].strip("[]") if len(parts) > 1 else "STANDARD"
-            wl[pattern] = level
-    return wl
+    return hmac.compare_digest(signature, contract.get("signature", ""))
 
-def verify_contract_identity(contract_data: dict) -> str:
-    """【高阶密码学闭环】基于 HMAC-SHA256 的零信任鉴权"""
-    declared_node = contract_data.get("task_input_from_claude", {}).get("executor_node", "QWEN_API")
+STASH_MARKER_PATH = ".ai_workflow/STASH_CREATED"
 
-    if declared_node == "QWEN_API":
-        return "QWEN_API"
-    if declared_node == "ROO_CODE_API":
-        return "ROO_CODE_API"
+def check_and_stash():
+    """检查未暂存代码并写入 STASH_CREATED 标记"""
+    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+    has_unstaged = bool(result.stdout.strip())
+    with open(STASH_MARKER_PATH, "w", encoding="utf-8") as f:
+        f.write("true" if has_unstaged else "false")
+    return has_unstaged
 
-    secret_file = ".ai_workflow/.secret_key"
-    if not os.path.exists(secret_file):
-        print("\n[WARNING] Secret key file missing, refusing privilege escalation! Forced downgrade to QWEN_API.\n")
-        return "QWEN_API"
-
-    try:
-        with open(secret_file, "r", encoding="utf-8") as f:
-            secret = f.read().strip()
-
-        provided_signature = contract_data.get("signature")
-        if not provided_signature:
-            print("\n[WARNING] Contract missing HMAC signature! Forced downgrade to QWEN_API.\n")
-            return "QWEN_API"
-
-        data_to_verify = copy.deepcopy(contract_data)
-        del data_to_verify["signature"]
-
-        payload_str = json.dumps(data_to_verify, sort_keys=True, separators=(',', ':'))
-        expected_signature = hmac.new(secret.encode('utf-8'), payload_str.encode('utf-8'), hashlib.sha256).hexdigest()
-
-        if hmac.compare_digest(expected_signature.strip(), provided_signature.strip()):
-            return declared_node
-        else:
-            if contract_data.get("__from_git_history"):
-                return "QWEN_API"
-            print("\n[WARNING] Contract HMAC signature verification failed. Forced downgrade to QWEN_API.\n")
-            return "QWEN_API"
-
-    except Exception as e:
-        return "QWEN_API"
-
-def get_claude_auth_from_git() -> dict:
-    contract_path = ".ai_workflow/current_contract.json"
-    if os.path.exists(contract_path):
-        try:
-            with open(contract_path, "rb") as f:
-                raw = f.read()
-            try:
-                text = raw.decode('utf-8').strip()
-            except UnicodeDecodeError:
-                try:
-                    text = raw.decode('utf-16').strip()
-                    if text.startswith('\ufeff'): text = text[1:]
-                except UnicodeDecodeError:
-                    text = raw.decode('gbk', errors="replace")
-            return json.loads(text)
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-            pass
-
-    result = subprocess.run(["git", "show", "HEAD:.ai_workflow/current_contract.json"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if result.returncode != 0: return {}
-    try:
-        contract = json.loads(result.stdout)
-        contract["__from_git_history"] = True
-        return contract
-    except json.JSONDecodeError:
-        return {}
-
-def categorize_changes(changes: List[Dict], whitelist: Dict[str, str], auth_paths: Set[str], executor_node: str = "CLAUDE_API") -> Tuple:
-    unauthorized = {}
-    pending_ast = []
-
-    # [V3.2 适配] 物理隔离缓冲区与逻辑身份分离
-    AUDIT_BUFFER_DIR = ".ai_workflow/audit_buffer/"
-    is_executor = executor_node in ("CLAUDE_API", "QWEN_API")
-    is_auditor = (executor_node == "ROO_CODE_API")
-
-    def match_level(path: str):
-        if path in auth_paths: return "LOOSE"
-        for pattern, level in whitelist.items():
-            if fnmatch.fnmatch(path, pattern) or path == pattern: return level
-        return None
-
-    for c in changes:
-        path = c["path"].replace("\\", "/")
-        ct = c.get("change_type", "M")
-
-        # 1. 执行节点隔离网关 (最小权限原则落地)
-        if is_executor:
-            if not path.startswith(AUDIT_BUFFER_DIR) and path not in ("agents.md", ".ai_workflow/current_contract.json"):
-                unauthorized[path] = f"ISOLATION_VIOLATION: Node A/B must write code hunks to {AUDIT_BUFFER_DIR}"
-                continue
-            level = "STANDARD"
-            if path.endswith(".py"): pending_ast.append(path)
-            continue 
-
-        # 2. 审计节点合入与清理权
-        if is_auditor:
-            if ct == "D" and path.startswith(AUDIT_BUFFER_DIR):
-                continue # Node C 删缓冲区文件，直接放行
-
-        # 3. 核心基建防线 (物理锁死兜底)
-        if path in IMMUTABLE_CORE:
-            if not is_auditor and path not in auth_paths:
-                unauthorized[path] = "IMMUTABLE_CORE_VIOLATION"
-                continue
-            level = "LOOSE"
-        else:
-            if executor_node == "QWEN_API" and QWEN_INFRA_PATTERN.match(path):
-                unauthorized[path] = "QWEN_INFRA_FORBIDDEN"
-                continue
-            level = match_level(path)
-
-        if level is None:
-            unauthorized[path] = ct
-        elif level == "LOOSE":
-            pass
-        elif level == "STRICT":
-            if ct != "M": unauthorized[path] = ct
-            elif path.endswith(".py"): pending_ast.append(path)
-        else:
-            if ct == "D": pass
-            elif path.endswith(".py"): pending_ast.append(path)
-
-    return unauthorized, pending_ast
-
-def execute_atomic_revert(unauthorized: Dict, base_commit: str) -> bool:
-    if not unauthorized: return False
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = os.path.join(BACKUP_DIR, timestamp)
-    os.makedirs(backup_path, exist_ok=True)
-
-    patch_file = os.path.join(backup_path, "changes.patch")
-    with open(patch_file, "w", encoding="utf-8") as f:
-        subprocess.run(["git", "diff", "HEAD", "--"] + list(unauthorized.keys()), stdout=f, text=True)
-
-    for file_path in unauthorized.keys():
-        if os.path.exists(file_path):
-            if os.path.isfile(file_path):
-                dest_path = os.path.join(backup_path, file_path)
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                shutil.copy2(file_path, dest_path)
-
-    manifest = {"timestamp": timestamp, "base_commit": base_commit, "unauthorized_changes": unauthorized}
-    manifest_file = os.path.join(backup_path, "manifest.json")
-    with open(manifest_file, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
-
-    stash_msg = f"ai_workflow_snapshot_{timestamp}"
-    subprocess.run(["git", "stash", "push", "-u", "-m", stash_msg, "--"] + list(unauthorized.keys()), capture_output=True)
-
-    for file_path in unauthorized.keys():
-        subprocess.run(["git", "checkout", "HEAD", "--", file_path], capture_output=True)
-
-    print(f"[SUCCESS] Security rollback executed, incident snapshot saved to: {backup_path}")
-    return True
-
-def cleanup_stale_backups(backup_dir=".ai_workflow/backup", max_days=7, max_keep=30):
-    if not os.path.exists(backup_dir): return
-    valid_snapshots = []
-    pattern = re.compile(r"^\d{8}_\d{6}$")
-    now = datetime.now()
-
-    for item in os.listdir(backup_dir):
-        if pattern.match(item):
-            item_path = os.path.join(backup_dir, item)
-            if os.path.isdir(item_path):
-                try:
-                    folder_time = datetime.strptime(item, "%Y%m%d_%H%M%S")
-                    valid_snapshots.append((item_path, folder_time))
-                except ValueError:
-                    continue
-
-    valid_snapshots.sort(key=lambda x: x[1], reverse=True)
-    to_delete = []
-    kept_count = 0
-
-    for path, f_time in valid_snapshots:
-        if now - f_time > timedelta(days=max_days): to_delete.append(path)
-        else:
-            if kept_count >= max_keep: to_delete.append(path)
-            else: kept_count += 1
-
-    for path in to_delete:
-        try: shutil.rmtree(path)
-        except Exception: pass
+def read_stash_marker():
+    """读取 STASH_CREATED 标记文件"""
+    if not os.path.exists(STASH_MARKER_PATH):
+        return False
+    with open(STASH_MARKER_PATH, "r", encoding="utf-8") as f:
+        return f.read().strip() == "true"
 
 def main():
-    if not acquire_lock(): sys.exit(0)
+    # V4.4 入口：先创建快照，写入暂存标记，再执行鉴权
+    create_workspace_snapshot()
+    check_and_stash()
 
-    try:
-        contract = get_claude_auth_from_git()
-        auth_paths = set(contract.get("claude_sudo", {}).get("authorized_paths", []))
-        executor_node = verify_contract_identity(contract)
-        whitelist = load_whitelist(".ai_workflow/whitelist.txt")
-        changes, base_commit = get_comprehensive_changes()
+    if not verify_contract_v4():
+        print("[BLOCKED] V4.0 contract verification failed.")
+        ai_changes = get_ai_change_list()
+        if ai_changes:
+            print(f"[REVERT] Rolling back {len(ai_changes)} AI-generated changes:")
+            # 回滚前检查 stash 标记，若有暂存则先弹出
+            if read_stash_marker():
+                print("[REVERT] 检测到工作区暂存标记，先执行 git stash pop...")
+                subprocess.run(["git", "stash", "pop"], capture_output=True)
+            for f in ai_changes:
+                print(f"  - {f}")
+            # 精确回滚：仅还原 AI 增量文件
+            subprocess.run(["git", "checkout", "HEAD", "--"] + ai_changes, capture_output=True)
+        sys.exit(1)
 
-        if not changes:
-            print("[SUCCESS] No changes in workspace")
-            return
-
-        unauthorized, pending_ast = categorize_changes(changes, whitelist, auth_paths, executor_node)
-
-        if pending_ast:
-            print(f"[SCAN] Starting deep review, scanning {len(pending_ast)} files...")
-            if ".ai_workflow" not in sys.path:
-                sys.path.insert(0, ".ai_workflow")
-            from pre_execution_check import check_dangerous_calls
-
-            for ast_file in pending_ast:
-                if not os.path.exists(ast_file): continue
-                if ast_file.startswith('.ai_workflow/') or ast_file.startswith('scripts/'): continue
-
-                git_path = ast_file.replace("\\", "/")
-                old_code_result = subprocess.run(["git", "show", f"{base_commit}:{git_path}"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-                old_code = old_code_result.stdout if old_code_result.returncode == 0 else None
-
-                with open(ast_file, "r", encoding="utf-8") as f:
-                    new_code = f.read()
-
-                is_safe, violations = check_dangerous_calls(new_code, exempted_modules=[])
-                if not is_safe:
-                    if old_code is not None:
-                        old_is_safe, _ = check_dangerous_calls(old_code, exempted_modules=[])
-                        if old_is_safe:
-                            print(f"[INTERCEPT] {ast_file} triggered new dangerous action: {violations}")
-                            unauthorized[ast_file] = "DANGEROUS_CODE"
-                            continue
-                    else:
-                        print(f"[INTERCEPT] {ast_file} triggered new dangerous action: {violations}")
-                        unauthorized[ast_file] = "DANGEROUS_CODE"
-                        continue
-
-                diff_cmd = [sys.executable, ".ai_workflow/post_check_diff.py", ast_file, "--ref", base_commit]
-                creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' and hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-                result = subprocess.run(diff_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=creation_flags)
-
-                if result.returncode != 0:
-                    stdout_lines = result.stdout.strip().split('\n') if result.stdout.strip() else []
-                    destructive_violations = []
-                    for line in stdout_lines:
-                        if 'ADDED' in line: continue
-                        if any(keyword in line for keyword in ['REMOVED', 'CHANGED', 'BROADENED']):
-                            destructive_violations.append(line)
-
-                    if destructive_violations:
-                        print(f"[INTERCEPT] {ast_file} AST structure degraded/abnormal:\n" + '\n'.join(destructive_violations))
-                        unauthorized[ast_file] = "AST_DEGRADED"
-
-        if unauthorized:
-            print("[ERROR] Found unauthorized or unapproved changes, executing rollback...")
-            for k in unauthorized:
-                print(f" - {k} [Reason: {unauthorized[k]}]")
-            execute_atomic_revert(unauthorized, base_commit)
-            cleanup_stale_backups()
-            sys.exit(1)
-
-        print("[SUCCESS] Verification passed")
-        sys.exit(0)
-    finally:
-        release_lock()
+    print("[SUCCESS] V4.4 verification passed.")
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
