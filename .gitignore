@@ -1,7 +1,5 @@
-# 屏蔽 V4.4 运行时产生的所有临时碎片文件
-*.bak
+﻿*.bak
 *.workbak
 pre_merge_snapshot.txt
 .ai_workflow/pre_merge_snapshot.txt
-.claude/*.workbak
 **/__pycache__/
