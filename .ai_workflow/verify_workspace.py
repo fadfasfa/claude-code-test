@@ -64,7 +64,15 @@ def verify_contract_v4():
 STASH_MARKER_PATH = ".ai_workflow/STASH_CREATED"
 
 def check_and_stash():
-    """检查未暂存代码并写入 STASH_CREATED 标记"""
+    """V4.4: 幂等写入 STASH_CREATED 标记，防止重复 stash"""
+    # 幂等性保障：若标记已为 true，跳过重复 stash
+    if os.path.exists(STASH_MARKER_PATH):
+        with open(STASH_MARKER_PATH, "r", encoding="utf-8") as f:
+            existing = f.read().strip()
+        if existing == "true":
+            print("[STASH] Marker already set to true, skipping duplicate stash.")
+            return True
+
     result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
     has_unstaged = bool(result.stdout.strip())
     with open(STASH_MARKER_PATH, "w", encoding="utf-8") as f:
@@ -86,16 +94,24 @@ def main():
     if not verify_contract_v4():
         print("[BLOCKED] V4.0 contract verification failed.")
         ai_changes = get_ai_change_list()
+
+        # V4.4 强化回滚：鉴权失败时，必须先还原用户现场 (stash pop)，再抹除 AI 改动
+        stash_was_created = read_stash_marker()
+
+        if stash_was_created:
+            print("[REVERT] 检测到 STASH_CREATED=true，先执行 git stash pop 还原用户现场...")
+            pop_result = subprocess.run(["git", "stash", "pop"], capture_output=True, text=True)
+            if pop_result.returncode != 0:
+                print(f"[WARNING] git stash pop failed: {pop_result.stderr.strip()}")
+
         if ai_changes:
             print(f"[REVERT] Rolling back {len(ai_changes)} AI-generated changes:")
-            # 回滚前检查 stash 标记，若有暂存则先弹出
-            if read_stash_marker():
-                print("[REVERT] 检测到工作区暂存标记，先执行 git stash pop...")
-                subprocess.run(["git", "stash", "pop"], capture_output=True)
             for f in ai_changes:
                 print(f"  - {f}")
-            # 精确回滚：仅还原 AI 增量文件
-            subprocess.run(["git", "checkout", "HEAD", "--"] + ai_changes, capture_output=True)
+            # V4.4 精确回滚：先解除暂存区，再还原工作区
+            subprocess.run(["git", "restore", "--staged", "--"] + ai_changes, capture_output=True)
+            subprocess.run(["git", "checkout", "--"] + ai_changes, capture_output=True)
+
         sys.exit(1)
 
     print("[SUCCESS] V4.4 verification passed.")

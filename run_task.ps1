@@ -1,19 +1,27 @@
-# run_task.ps1 - V4.4 基建启动器
-# 用途：HMAC 校验 → 工作区快照 → AI 节点唤醒
+# V4.4 启动器：环境初始化与快照固化
+$ErrorActionPreference = "Stop"
 
-# Step 1: HMAC 契约校验
-Write-Host "[LAUNCHER] 执行 HMAC 契约校验..."
+# 1. 执行 HMAC 签名校验与 Stash 状态准备
+#
+Write-Host "[LAUNCHER] Starting environment check..." -ForegroundColor Cyan
 python .ai_workflow/verify_workspace.py
 $verifyResult = $LASTEXITCODE
 
-# Step 2: 校验通过则创建工作区快照
 if ($verifyResult -eq 0) {
-    Write-Host "[LAUNCHER] 校验通过，创建工作区快照..."
+    Write-Host "[LAUNCHER] Verification Passed." -ForegroundColor Green
+    
+    # 2. 执行物理快照固化
+    #
+    Write-Host "[LAUNCHER] Creating workspace snapshot..." -ForegroundColor Gray
     git status --porcelain > pre_merge_snapshot.txt
-    Write-Host "[LAUNCHER] 快照已写入 pre_merge_snapshot.txt"
+    
+    Write-Host "------------------------------------------------"
+    Write-Host "[SUCCESS] Environment Ready for Node A." -ForegroundColor Cyan
+    Write-Host "Please invoke Claude Code now." -ForegroundColor Yellow
+    Write-Host "------------------------------------------------"
+    
+    # [AI 唤醒占位符]
 } else {
-    Write-Host "[LAUNCHER] 校验失败 (exit code: $verifyResult)，流程中止。"
-    exit $verifyResult
+    Write-Host "[LAUNCHER] Verification Failed (code: $verifyResult). Aborting." -ForegroundColor Red
+    exit 1
 }
-
-# [AI 唤醒占位符] 在此启动 Claude Code 或其他节点
