@@ -4,3 +4,12 @@ Message: [INFRA-BYPASS] 落地 V4.4 审查基建与状态机重构
 [2026-03-06 20:10:06] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
 Message: chore: V4.4 强制破冰与契约更新 [INFRA-BYPASS]
 ------------------------------------------------
+[2026-03-06 22:21:43] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
+Message: chore: 物理清场与 V4.4 环境归零 [INFRA-BYPASS]
+------------------------------------------------
+[2026-03-06 23:20:29] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
+Message: [INFRA-BYPASS] 白名单补录标准库 datetime 模块
+------------------------------------------------
+[2026-03-06 23:32:55] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
+Message: [INFRA-BYPASS] 扩展标准库白名单至全量 stdlib；精准化 DACL 保护范围至根目录核心文件
+------------------------------------------------

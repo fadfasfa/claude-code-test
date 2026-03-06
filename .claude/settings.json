@@ -14,7 +14,9 @@
       "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File Lock-Core.ps1)",
       "Bash(\"/c/Users/apple/claudecode/run/static/test_canvas.html\":*)",
       "Bash(\"/c/Users/apple/claudecode/run/static/NODE_C_AUDIT_REPORT.md\":*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(powershell -ExecutionPolicy Bypass -File Unlock-Core.ps1)",
+      "Bash(powershell -ExecutionPolicy Bypass -File Lock-Core.ps1)"
     ]
   }
 }
