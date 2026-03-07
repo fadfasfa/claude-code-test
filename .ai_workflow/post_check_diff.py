@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Post-change AST validator for Python source files.
-[V3.2 Adapted for Hunk Merging Tolerance]
+[V5.0 - Three-dot diff + SEC-001 getattr/eval injection detection]
 """
 
 import ast
@@ -132,10 +132,12 @@ def extract_except_signatures(tree: ast.Module) -> Dict[Tuple[int, int], List[st
     return result
 
 def get_changed_python_files(base_branch: str, target_branch: str) -> List[str]:
-    """获取两个分支之间变更的 Python 文件列表。"""
+    """获取两个分支之间变更的 Python 文件列表（三点语法：基于共同祖先）。"""
     try:
+        # V5.0: 强制使用三点语法 (main...branch) 提取增量
+        # 三点语法基于 merge-base，能正确处理 base 分支在 fork 后的新提交
         result = subprocess.run(
-            ["git", "diff", f"{base_branch}..{target_branch}", "--name-only", "--diff-filter=AM"],
+            ["git", "diff", f"{base_branch}...{target_branch}", "--name-only", "--diff-filter=AM"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
@@ -275,6 +277,54 @@ def check_try_blocks(before_tree: ast.Module, after_tree: ast.Module) -> List[st
 
     return violations
 
+
+# --- V5.0: SEC-001 安全扫描 (getattr/eval 注入检测) ---
+
+def check_sec001_injection(tree: ast.Module, filename: str = "<unknown>") -> List[str]:
+    """
+    [SEC-001] 检测 AST 中的 getattr/eval 动态调用注入风险。
+
+    规则:
+      - eval() 调用: 任何对 eval 的直接调用均视为高危
+      - getattr(obj, user_input): 第二参数为变量（非字面量）时视为高危
+      - exec() 调用: 同 eval，任何直接调用均视为高危
+    """
+    violations = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+
+        func = node.func
+
+        # 检测直接调用: eval(...) / exec(...)
+        if isinstance(func, ast.Name) and func.id in ("eval", "exec"):
+            violations.append(
+                f"[SEC-001] [{filename}:{node.lineno}] "
+                f"检测到 {func.id}() 动态调用 — 高危注入风险"
+            )
+
+        # 检测属性调用: builtins.eval(...) 等
+        elif isinstance(func, ast.Attribute) and func.attr in ("eval", "exec"):
+            violations.append(
+                f"[SEC-001] [{filename}:{node.lineno}] "
+                f"检测到 *.{func.attr}() 动态调用 — 高危注入风险"
+            )
+
+        # 检测 getattr(obj, variable) — 第二参数为非字面量时告警
+        elif isinstance(func, ast.Name) and func.id == "getattr":
+            if len(node.args) >= 2:
+                second_arg = node.args[1]
+                # 若第二参数是字面量字符串，认为是安全的静态访问
+                if not isinstance(second_arg, ast.Constant) or not isinstance(second_arg.value, str):
+                    violations.append(
+                        f"[SEC-001] [{filename}:{node.lineno}] "
+                        f"检测到 getattr() 第二参数为动态值 — 属性注入风险"
+                    )
+
+    return violations
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Post-change AST validator for Python source files.")
     parser.add_argument("target_file", nargs="?", default=None, help="Target file path (git mode). Compared against --ref version.")
@@ -309,6 +359,8 @@ def main() -> None:
                 violations.extend(check_imports(before_tree, after_tree))
                 violations.extend(check_interfaces(before_tree, after_tree))
                 violations.extend(check_try_blocks(before_tree, after_tree))
+                # V5.0: SEC-001 getattr/eval 注入检测（仅扫描 after_tree）
+                violations.extend(check_sec001_injection(after_tree, target_file))
 
                 if violations:
                     # 为每个文件的违规项添加文件前缀
@@ -348,6 +400,9 @@ def main() -> None:
         violations.extend(check_imports(before_tree, after_tree))
         violations.extend(check_interfaces(before_tree, after_tree))
         violations.extend(check_try_blocks(before_tree, after_tree))
+        # V5.0: SEC-001 getattr/eval 注入检测（仅扫描 after_tree）
+        target_name = args.target_file or args.after or "<unknown>"
+        violations.extend(check_sec001_injection(after_tree, target_name))
 
         if violations:
             emit_fail("\n".join(violations))
