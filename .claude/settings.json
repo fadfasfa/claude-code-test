@@ -20,7 +20,10 @@
       "Bash(git checkout -b ai-upgrade-ast-validator)",
       "Bash(git add test_file.py)",
       "Bash(git checkout main)",
-      "Bash(git checkout ai-upgrade-ast-validator)"
+      "Bash(git checkout ai-upgrade-ast-validator)",
+      "Bash(git checkout -b ai-task-hello-world)",
+      "Bash(git add hello_world.py)",
+      "Bash(git checkout -b ai-task-hello-world-fix)"
     ]
   }
 }
