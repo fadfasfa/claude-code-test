@@ -131,6 +131,27 @@ def extract_except_signatures(tree: ast.Module) -> Dict[Tuple[int, int], List[st
             result[(node.lineno, node.col_offset)] = sigs
     return result
 
+def get_changed_python_files(base_branch: str, target_branch: str) -> List[str]:
+    """获取两个分支之间变更的 Python 文件列表。"""
+    try:
+        result = subprocess.run(
+            ["git", "diff", f"{base_branch}..{target_branch}", "--name-only", "--diff-filter=AM"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        if result.returncode != 0:
+            emit_fatal(f"git diff failed: {result.stderr.strip()}")
+
+        # 过滤出以 .py 结尾的文件，并统一使用正斜杠
+        files = []
+        for line in result.stdout.strip().split('\n'):
+            if line.strip() and line.strip().endswith('.py'):
+                # 统一使用正斜杠处理 Windows 路径分隔符差异
+                normalized_path = line.strip().replace("\\", "/")
+                files.append(normalized_path)
+        return files
+    except Exception as e:
+        emit_fatal(f"Failed to get changed Python files: {str(e)}")
+
 BROAD_EXCEPTIONS = {"Exception", "BaseException", "__bare__"}
 
 def is_downgrade(before_types: List[str], after_types: List[str]) -> bool:
@@ -260,30 +281,78 @@ def main() -> None:
     parser.add_argument("--ref", default="HEAD", help="Git ref for 'before' snapshot (default: HEAD).")
     parser.add_argument("--before", default=None, help="Path to original file (diff mode, requires --after).")
     parser.add_argument("--after", default=None, help="Path to modified file (diff mode, requires --before).")
+    parser.add_argument("--branch", default=None, help="Branch name to compare against base branch for batch processing.")
+    parser.add_argument("--base", default="main", help="Base branch for comparison (default: main).")
     args = parser.parse_args()
 
-    if args.before is not None or args.after is not None:
-        if args.before is None or args.after is None:
-            emit_fatal("Diff mode requires both --before and --after arguments.")
-        if args.target_file is not None:
-            emit_fatal("Cannot combine positional target_file with --before/--after.")
+    if args.branch is not None:
+        # 批量处理模式：基于分支差异
+        if args.target_file is not None or args.before is not None or args.after is not None:
+            emit_fatal("批量模式 (--branch) 不能与其他文件参数同时使用。")
+
+        changed_files = get_changed_python_files(args.base, args.branch)
+        if not changed_files:
+            # 无 Python 文件变动时优雅退出
+            print("未检测到 Python 文件变更，跳过 AST 审计。", file=sys.stderr)
+            emit_pass()
+
+        all_violations = []
+        for target_file in changed_files:
+            try:
+                # 为每个文件执行原有的验证逻辑
+                before_src = get_source_git(target_file, args.base)
+                after_src = get_source_file(target_file)
+                before_tree = parse_source(before_src, "before")
+                after_tree = parse_source(after_src, "after")
+
+                violations = []
+                violations.extend(check_imports(before_tree, after_tree))
+                violations.extend(check_interfaces(before_tree, after_tree))
+                violations.extend(check_try_blocks(before_tree, after_tree))
+
+                if violations:
+                    # 为每个文件的违规项添加文件前缀
+                    prefixed_violations = [f"[{target_file}] {v}" for v in violations]
+                    all_violations.extend(prefixed_violations)
+
+            except SystemExit as e:
+                # 捕获 emit_fatal 调用，但继续处理其他文件
+                if e.code == 2:  # 解析失败
+                    all_violations.append(f"[{target_file}] 解析失败，跳过此文件。")
+                else:
+                    raise e
+            except Exception as e:
+                all_violations.append(f"[{target_file}] 处理异常: {str(e)}")
+
+        if all_violations:
+            emit_fail("\n".join(all_violations))
+        else:
+            emit_pass()
+
     else:
-        if args.target_file is None:
-            emit_fatal("Provide either: (1) target_file [--ref REF], or (2) --before ORIG --after MODIFIED")
+        # 原有单文件模式（向后兼容）
+        if args.before is not None or args.after is not None:
+            if args.before is None or args.after is None:
+                emit_fatal("Diff mode requires both --before and --after arguments.")
+            if args.target_file is not None:
+                emit_fatal("Cannot combine positional target_file with --before/--after.")
+        else:
+            if args.target_file is None:
+                emit_fatal("Provide either: (1) target_file [--ref REF], or (2) --before ORIG --after MODIFIED")
 
-    before_src, after_src = resolve_sources(args)
-    before_tree = parse_source(before_src, "before")
-    after_tree = parse_source(after_src, "after")
+        before_src, after_src = resolve_sources(args)
+        before_tree = parse_source(before_src, "before")
+        after_tree = parse_source(after_src, "after")
 
-    violations = []
-    violations.extend(check_imports(before_tree, after_tree))
-    violations.extend(check_interfaces(before_tree, after_tree))
-    violations.extend(check_try_blocks(before_tree, after_tree))
+        violations = []
+        violations.extend(check_imports(before_tree, after_tree))
+        violations.extend(check_interfaces(before_tree, after_tree))
+        violations.extend(check_try_blocks(before_tree, after_tree))
 
-    if violations:
-        emit_fail("\n".join(violations))
-    else:
-        emit_pass()
+        if violations:
+            emit_fail("\n".join(violations))
+        else:
+            emit_pass()
 
 if __name__ == "__main__":
     main()
