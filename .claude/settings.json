@@ -16,7 +16,11 @@
       "Bash(\"/c/Users/apple/claudecode/run/static/NODE_C_AUDIT_REPORT.md\":*)",
       "Bash(cat:*)",
       "Bash(powershell -ExecutionPolicy Bypass -File Unlock-Core.ps1)",
-      "Bash(powershell -ExecutionPolicy Bypass -File Lock-Core.ps1)"
+      "Bash(powershell -ExecutionPolicy Bypass -File Lock-Core.ps1)",
+      "Bash(git checkout -b ai-upgrade-ast-validator)",
+      "Bash(git add test_file.py)",
+      "Bash(git checkout main)",
+      "Bash(git checkout ai-upgrade-ast-validator)"
     ]
   }
 }

@@ -13,3 +13,9 @@ Message: [INFRA-BYPASS] 白名单补录标准库 datetime 模块
 [2026-03-06 23:32:55] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
 Message: [INFRA-BYPASS] 扩展标准库白名单至全量 stdlib；精准化 DACL 保护范围至根目录核心文件
 ------------------------------------------------
+[2026-03-06 23:37:36] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
+Message: [INFRA-BYPASS] 白名单补录标准库 datetime 模块
+------------------------------------------------
+[2026-03-07 10:26:32] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
+Message: [INFRA-BYPASS] 扩展标准库白名单至全量 stdlib；精准化 DACL 保护范围至根目录核心文件
+------------------------------------------------
