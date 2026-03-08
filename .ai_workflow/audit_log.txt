@@ -31,3 +31,6 @@ Message: [INFRA-BYPASS] 升级 V5.0 防线与基建引擎 [wf-id: wf-infra-v5-up
 [2026-03-08 10:53:13] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
 Message: chore: 升级至 V5.0 安全机制，清理 V4.x 残留文件 [INFRA-BYPASS] [wf-id: wf-infra-v5upgrade-20260308]
 ------------------------------------------------
+[2026-03-08 15:35:42] INFRA-BYPASS: user=apple branch=main commit=09ef9cf391cc4381a6b4dbf20c89ae020f122e24
+  msg: chore: V5.1 修正 audit_log 路径 + uat_pass 纳入保护 + pre-commit 重构 [INFRA-BYPASS] [wf-id: wf-infra-v51-20260308]
+------------------------------------------------
