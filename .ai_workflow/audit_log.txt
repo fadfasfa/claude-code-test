@@ -25,3 +25,6 @@ Message: [INFRA-BYPASS] 更新基建模板与配置
 [2026-03-07 11:46:45] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
 Message: [INFRA-BYPASS] 更新审计日志
 ------------------------------------------------
+[2026-03-07 22:24:07] BYPASS_DETECTED: User apple committed infra changes via --no-verify.
+Message: [INFRA-BYPASS] 升级 V5.0 防线与基建引擎 [wf-id: wf-infra-v5-upgrade-20260307]
+------------------------------------------------

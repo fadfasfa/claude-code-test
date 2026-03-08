@@ -1,7 +1,72 @@
 ## 任务状态机契约 (agents.md)
 
 workflow_id：[wf-infra-v5-upgrade-20260307]
+contract_version：[v1.0]## 任务状态机契约 (agents.md)
+
+workflow_id：[wf-<描述>-<YYYYMMDD>]
 contract_version：[v1.0]
+token_budget：max_cost_cny: <N> / max_retries: 5
+分配节点：[Node A（Opus 档） / Node A（Sonnet 档） / Node B（Sonnet 档） / Node B（Haiku 档）]
+路由决策依据：[结合能力画像，说明任务分类与节点档位的匹配逻辑；若涉及敏感路径须注明强制升档原因]
+全局上下文状态：[意图已锁定待执行 / 待审 / 执行失败待修订 / UAT通过待终审 / Node C 审计通过 / CRITICAL 熔断挂起]
+UAT_Status：[未开始]
+Branch_Name：[ai-task-<描述>-<YYYYMMDD>]
+Target_Files：[目标文件列表，使用相对路径，相对于项目根目录，禁止绝对路径]
+
+---
+
+### 前置条件 (Pre-conditions)
+- HMAC 契约签名：[已核验 / 待核验]
+- DACL 状态：[上锁（日常模式） / 已解锁（破冰模式）]
+
+### 后置条件 (Post-conditions)
+- [任务完成后，必须满足的可观测逻辑结果]
+
+### Verification_Command
+[针对本任务的验证命令，云端填写时**无需**附加 --junitxml 参数，执行节点协议 4 会自动追加]
+示例：pytest heybox/tests/test_user_api.py -v
+
+### Verification_Artifact
+[执行节点回填：.ai_workflow/test_result.xml（含 commit_hash 属性）]
+
+### Verification_Result
+[执行节点原子回填，格式：pytest PASSED (N/M) @ YYYY-MM-DDTHH:mm:ss（辅助可读，非 Node C 的信任依据）]
+
+### Thought_Log（事件序列，执行节点每 Step 完成后强制实时写入，禁止延迟批量回填）
+- [Step N | YYYY-MM-DDTHH:mm:ss] 修改 <文件>：<一句话说明为什么这么改，覆盖哪个边界情况>
+
+---
+
+### 确定性执行清单
+
+- [ ] Step N: [物理动作描述]
+  - 目标文件：[相对路径，相对于项目根目录]
+  - 结构化指令：[非保姆级，描述意图与约束，严禁粘贴完整实现代码]
+  - 风险提示：[该步骤的已知边界情况，必填]
+
+---
+
+### Node C 终审记录（由 Node C 填写）
+- 审查结论：[通过 / CRITICAL 熔断 / 待审查]
+- 当前修复重试次数：[0/5]
+- 风险清单摘要：[INFO / WARNING / CRITICAL 条目]
+- 熔断原因（如有）：无
+- UAT_Status 读取值：[未开始 / 已通过]（Node C 只读，不写入）
+
+---
+
+### 冲突避免与底层防线
+
+- 语言规约：执行节点必须唯一使用简体中文（除代码块外）进行终端交互与日志输出。
+- 权限隔离（通用）：执行节点禁止修改 DACL 保护范围内的文件（`.git/hooks/*`、`.ai_workflow/`、`Lock-Core.ps1`、`Unlock-Core.ps1`、`run_task.ps1`、`audit_log.txt`）。
+- 权限隔离（agents.md 受控豁免）：执行节点对 agents.md 仅持有以下两种合法写入权：（a）协议 0 触发时的完整覆写；（b）协议 4 原子写入 `Verification_Result` 与 `全局上下文状态` 两字段。Node C 仅持有：正则替换 `全局上下文状态` 为指定终态、精准替换 `当前修复重试次数`。`UAT_Status` 字段由人类专属写入，任何节点均无权修改。
+- 破冰规约：基建文件修改必须由人类启动破冰规约：执行 `Unlock-Core.ps1` → `git commit --no-verify -m "[INFRA-BYPASS] ..."` → `Lock-Core.ps1`。
+- 范围控制：所有 `git add` 严禁全量，必须指定 `Target_Files` 中的目标文件。
+- 分支隔离：所有代码修改必须在契约指定的任务分支（`Branch_Name`）内进行，禁止直接修改 main 分支。
+
+### 节点间协议层引用
+本契约执行期间，所有节点必须遵守 workflow_v4.6.md 中"节点间协议层"章节定义的写权限矩阵、阶段交接信号规范与合法状态转移规则。
+
 token_budget：max_cost_cny: 50 / max_retries: 5
 分配节点：[Node A（Opus 档）]
 路由决策依据：[本次任务涉及底层鉴权体系（verify_workspace.py）、DACL 防御纵深（Lock-Core.ps1）及静态扫描核心（post_check_diff.py）的重构，命中级别 A 敏感基建路径，强制升档以确保高风险基建操作的安全性与准确性。]
