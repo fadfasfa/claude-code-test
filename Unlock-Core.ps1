@@ -1,21 +1,23 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Hextech Nexus - Core Infrastructure Unlock (V5.0)
-    对称还原 Lock-Core.ps1 V5.0 的四阶段防御纵深
+    Hextech Nexus - Core Infrastructure Unlock (V5.1)
+    对称还原 Lock-Core.ps1 V5.1 的四阶段防御纵深
 
 .DESCRIPTION
     严格按 Lock-Core.ps1 的逆序撤销所有防御规则：
-    阶段 4 逆向: audit_log.txt MIC 标签降回 Medium
-    阶段 3 逆向: 移除 audit_log.txt 的 Deny WriteData/Delete 规则
+    阶段 4 逆向: .ai_workflow\audit_log.txt MIC 标签降回 Medium
+    阶段 3 逆向: 移除 .ai_workflow\audit_log.txt 的 Deny WriteData/Delete 规则
     阶段 2 逆向: 移除目录级 Deny Delete/Rename DACL 规则
     阶段 1 逆向: 所有受保护文件/目录 MIC 标签降回 Medium
 
-    执行完成后工作空间恢复可写状态。
-    [警告] 基建修改完成后必须立即执行 Lock-Core.ps1 重新锁定。
-
 .PARAMETER WhatIf
     模拟执行模式，仅输出将要执行的操作，不实际修改权限。
+
+.NOTES
+    V5.1 变更：
+    - $auditLogFile 路径修正为 .ai_workflow\audit_log.txt（与 Lock-Core.ps1 V5.1 一致）
+    - $protectedFiles 新增 uat_pass.ps1
 #>
 
 param(
@@ -26,14 +28,14 @@ $ErrorActionPreference = "Stop"
 
 # --- 配置区（必须与 Lock-Core.ps1 保持一致）---
 $protectedDirs  = @(".ai_workflow", ".git\hooks")
-$protectedFiles = @("agents.md", "Lock-Core.ps1", "Unlock-Core.ps1", "run_task.ps1")
-$auditLogFile   = "audit_log.txt"
+$protectedFiles = @("agents.md", "Lock-Core.ps1", "Unlock-Core.ps1", "run_task.ps1", "uat_pass.ps1")
+$auditLogFile   = ".ai_workflow\audit_log.txt"   # V5.1: 修正为实际路径
 
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 function Write-Step {
     param([string]$Message, [string]$Color = "Cyan")
-    Write-Host "[Unlock-Core V5.0] $Message" -ForegroundColor $Color
+    Write-Host "[Unlock-Core V5.1] $Message" -ForegroundColor $Color
 }
 
 function Write-WhatIf {

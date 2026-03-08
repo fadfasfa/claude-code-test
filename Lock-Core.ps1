@@ -1,17 +1,22 @@
 ﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Hextech Nexus - Core Infrastructure Lock (V5.0)
+    Hextech Nexus - Core Infrastructure Lock (V5.1)
     DACL + MIC 双重防御纵深锁控脚本
 
 .DESCRIPTION
     1. 对核心基建目录设置 High Integrity MIC 标签（向下继承）
     2. 对 .ai_workflow/ 和 .git/hooks/ 设置目录级 Deny Delete + Deny Rename（防 DACL rename 绕过）
-    3. 对 audit_log.txt 设置仅追加模式（Deny WriteData/Delete，Allow AppendData）
+    3. 对 .ai_workflow/audit_log.txt 设置仅追加模式（Deny WriteData/Delete，Allow AppendData）
     4. 对根目录核心文件设置 High Integrity 单文件锁
 
 .PARAMETER WhatIf
     模拟执行模式，仅输出将要执行的操作，不实际修改权限。
+
+.NOTES
+    V5.1 变更：
+    - $auditLogFile 路径修正为 .ai_workflow\audit_log.txt（与 post-commit hook 一致）
+    - $protectedFiles 新增 uat_pass.ps1（UAT_Status 唯一写入入口，防篡改）
 #>
 
 param(
@@ -21,16 +26,16 @@ param(
 $ErrorActionPreference = "Stop"
 
 # --- 配置区 ---
-$protectedDirs = @(".ai_workflow", ".git\hooks")
-$protectedFiles = @("agents.md", "Lock-Core.ps1", "Unlock-Core.ps1", "run_task.ps1")
-$auditLogFile = "audit_log.txt"
+$protectedDirs  = @(".ai_workflow", ".git\hooks")
+$protectedFiles = @("agents.md", "Lock-Core.ps1", "Unlock-Core.ps1", "run_task.ps1", "uat_pass.ps1")
+$auditLogFile   = ".ai_workflow\audit_log.txt"   # V5.1: 修正为实际路径
 
 # 获取当前用户身份（用于 DACL 规则绑定）
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 function Write-Step {
     param([string]$Message, [string]$Color = "Cyan")
-    Write-Host "[Lock-Core V5.0] $Message" -ForegroundColor $Color
+    Write-Host "[Lock-Core V5.1] $Message" -ForegroundColor $Color
 }
 
 function Write-WhatIf {
@@ -38,7 +43,7 @@ function Write-WhatIf {
     Write-Host "  [WhatIf] $Message" -ForegroundColor DarkYellow
 }
 
-# --- 阶段 1: MIC 高完整性标签（原有逻辑保留） ---
+# --- 阶段 1: MIC 高完整性标签 ---
 Write-Step "阶段 1: 应用 High Integrity MIC 标签..."
 
 foreach ($dir in $protectedDirs) {
@@ -67,14 +72,8 @@ foreach ($file in $protectedFiles) {
     }
 }
 
-# --- 阶段 2: 目录级 Deny Delete / Deny Rename (防 DACL rename 绕过) ---
+# --- 阶段 2: 目录级 Deny Delete / Deny Rename ---
 Write-Step "阶段 2: 配置目录级 Deny Delete / Deny Rename 规则..."
-
-# FileSystemRights 枚举映射:
-#   Delete         = 0x00010000  (删除对象本身)
-#   DeleteSubdirectoriesAndFiles = 0x00000040 (删除子项)
-# 注意: Windows NTFS 没有独立的 "Rename" 权限，Rename 操作需要源目录的 Delete 权限
-# 因此 Deny Delete 同时阻止了 Rename 操作
 
 $denyDeleteRights = [System.Security.AccessControl.FileSystemRights]::Delete -bor `
                     [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
@@ -86,7 +85,7 @@ foreach ($dir in $protectedDirs) {
     }
 
     if ($WhatIf) {
-        Write-WhatIf "Deny Delete+DeleteSubdirectoriesAndFiles -> $dir/ (用户: $currentUser, 继承: ContainerInherit+ObjectInherit)"
+        Write-WhatIf "Deny Delete+DeleteSubdirectoriesAndFiles -> $dir/ (用户: $currentUser)"
     } else {
         $acl = Get-Acl $dir
         $denyRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
@@ -105,7 +104,7 @@ foreach ($dir in $protectedDirs) {
 # --- 阶段 3: audit_log.txt 仅追加模式 ---
 Write-Step "阶段 3: 配置 $auditLogFile 仅追加权限..."
 
-# 确保 audit_log.txt 存在
+# 确保 audit_log.txt 存在（路径为 .ai_workflow\audit_log.txt）
 if (-not (Test-Path $auditLogFile)) {
     if ($WhatIf) {
         Write-WhatIf "New-Item $auditLogFile (创建空审计日志文件)"
@@ -121,7 +120,6 @@ if ($WhatIf) {
 } else {
     $acl = Get-Acl $auditLogFile
 
-    # Deny WriteData (覆写) 和 Delete
     $denyWriteDelete = New-Object System.Security.AccessControl.FileSystemAccessRule(
         $currentUser,
         ([System.Security.AccessControl.FileSystemRights]::WriteData -bor [System.Security.AccessControl.FileSystemRights]::Delete),
@@ -131,7 +129,6 @@ if ($WhatIf) {
     )
     $acl.AddAccessRule($denyWriteDelete)
 
-    # Allow AppendData (追加写入)
     $allowAppend = New-Object System.Security.AccessControl.FileSystemAccessRule(
         $currentUser,
         [System.Security.AccessControl.FileSystemRights]::AppendData,
@@ -145,7 +142,7 @@ if ($WhatIf) {
     Write-Step "  Deny(WriteData+Delete) + Allow(AppendData) -> $auditLogFile" "Green"
 }
 
-# --- 阶段 4: 设置 audit_log.txt 的 MIC 标签 ---
+# --- 阶段 4: audit_log.txt MIC 标签 ---
 Write-Step "阶段 4: 锁定 $auditLogFile MIC 标签..."
 
 if ($WhatIf) {
@@ -159,7 +156,8 @@ if ($WhatIf) {
 Write-Host ""
 Write-Step "===== 锁控完成 =====" "Green"
 Write-Step "受保护目录: $($protectedDirs -join ', ')" "Green"
-Write-Step "受保护文件: $($protectedFiles -join ', '), $auditLogFile" "Green"
+Write-Step "受保护文件: $($protectedFiles -join ', ')" "Green"
+Write-Step "受保护审计日志: $auditLogFile" "Green"
 Write-Step "防御层级: MIC(H) + DACL(Deny Delete/Rename) + 审计日志仅追加" "Green"
 Write-Host ""
 Write-Host "工作空间目录 (heybox/, QuantProject/, run/, .vscode/) 保持完全可写。" -ForegroundColor Yellow
