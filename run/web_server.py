@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import time
+import webbrowser
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import List
@@ -16,6 +17,7 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from data_processor import process_champions_data, process_hextechs_data
 from hextech_query import get_latest_csv
@@ -54,6 +56,12 @@ def get_champion_info(champ_id: int) -> tuple:
         data = _champion_core_cache[champ_id_str]
         return data.get('name', ''), data.get('en_name', '')
     return '', ''
+
+# ── Request models ─────────────────────────────────────────────────────────────
+
+class RedirectRequest(BaseModel):
+    hero_id: str
+    hero_name: str
 
 logging.basicConfig(level=logging.INFO)
 
@@ -437,6 +445,41 @@ async def api_synergies(champ_id: str):
     except (FileNotFoundError, json.JSONDecodeError, Exception) as e:
         logging.warning(f"读取协同数据失败：{e}")
         return JSONResponse(content={"synergies": []})
+
+@app.post("/api/redirect")
+async def api_redirect(req: RedirectRequest):
+    """处理悬浮窗点击英雄的重定向请求。
+
+    根据活跃 WebSocket 连接数决定行为：
+    - 无连接时：打开新浏览器窗口
+    - 有连接时：广播 local_player_locked 事件触发前端热跳转
+    """
+    # 获取英雄信息（中文名和英文名）
+    try:
+        hero_name, en_name = get_champion_info(int(req.hero_id))
+    except (ValueError, TypeError):
+        # 如果 hero_id 无法转换为整数，使用空字符串
+        hero_name, en_name = '', ''
+
+    # 如果获取不到英雄信息，使用请求中的名称作为后备
+    if not hero_name:
+        hero_name = req.hero_name
+
+    # 检查 WebSocket 连接池
+    if len(manager.active) == 0:
+        # 无 WebSocket 连接，打开新浏览器窗口
+        url = f"http://127.0.0.1:8000/detail.html?hero={req.hero_name}&id={req.hero_id}&en={en_name}&auto=1"
+        webbrowser.open(url)
+        return JSONResponse(content={"status": "opened_browser"})
+    else:
+        # 有 WebSocket 连接，广播事件触发前端热跳转
+        await manager.broadcast({
+            "type": "local_player_locked",
+            "champion_id": req.hero_id,
+            "hero_name": req.hero_name,
+            "en_name": en_name
+        })
+        return JSONResponse(content={"status": "broadcast_sent"})
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):

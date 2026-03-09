@@ -183,16 +183,11 @@ class HextechUI:
             if current_time - getattr(self, 'last_click_time', 0) < 1.5: return
             self.last_click_time = current_time
 
-            eng_name = self.core_data.get(str(champ_id), {}).get('en_name', '')
-            if eng_name:
-                url = f"https://apexlol.info/zh/champions/{eng_name}"
-                webbrowser.open(url)
-
             # 融合 HTTP POST /api/redirect 请求
             try:
-                requests.post("http://localhost:5000/api/redirect",
-                             data={"hero_id": champ_id, "hero_name": hero_name},
-                             timeout=3)
+                requests.post("http://127.0.0.1:8000/api/redirect",
+                             json={"hero_id": champ_id, "hero_name": hero_name},
+                             timeout=1)
             except Exception:
                 pass
         except Exception: pass
@@ -291,13 +286,14 @@ class HextechUI:
                 if not h_data.empty:
                     row = h_data.iloc[0]
                     # 使用多重回退获取数据
+                    id_val = row.get(id_col, row.get('英雄 ID', row.get('ID', hid)))
                     name = row.get('英雄名称', row.get('英雄名', '未知'))
                     win = float(row.get('英雄胜率', row.get('胜率', 0.5)))
                     pick = float(row.get('英雄出场率', row.get('出场率', 0.1)))
                     tier = row.get('英雄评级', row.get('评级', 'T?'))
 
                     display_list.append({
-                        'id': hid, 'name': name, 'win': win,
+                        'id': id_val, 'name': name, 'win': win,
                         'pick': pick, 'tier': tier
                     })
 
