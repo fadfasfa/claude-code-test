@@ -1,0 +1,7 @@
+{
+  "version": "5.0",
+  "agents_md_sha256": "b9ed8ab9a3bfad23b9beb4510275e964fc3d1d080019a679412e74cfed860b34",
+  "agents_md_git_hash": "16d53e6594a205a6f15fb8dada08c88dbe797fdd",
+  "hmac_signature": "907fa06a530713f481203ffc9406e2ccecd3c55672c44fa4307c4cfc4c5416bc",
+  "anchor_source": "verify_workspace.py"
+}

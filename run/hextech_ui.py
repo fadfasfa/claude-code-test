@@ -96,10 +96,6 @@ class HextechUI:
         self.title_bar.bind("<ButtonPress-1>", self.start_move)
         self.title_bar.bind("<B1-Motion>", self.do_move)
 
-        self.switch_btn = tk.Label(self.title_frame, text="[切换终端]", bg="#11111b", fg="#f38ba8", font=("Microsoft YaHei", 10, "bold", "underline"), pady=8, cursor="hand2")
-        self.switch_btn.pack(side=tk.RIGHT, padx=(0, 10))
-        self.switch_btn.bind("<Button-1>", self.switch_to_query)
-
 
         self.canvas = tk.Canvas(self.root, bg="#1e1e2e", highlightthickness=0)
         self.list_frame = tk.Frame(self.canvas, bg="#1e1e2e")
@@ -342,12 +338,6 @@ class HextechUI:
     def start_move(self, event): self.x, self.y = event.x, event.y
     def do_move(self, event):
         self.root.geometry(f"+{self.root.winfo_x() + (event.x - self.x)}+{self.root.winfo_y() + (event.y - self.y)}")
-
-    def switch_to_query(self, event=None):
-        if self.pause_event.is_set(): return
-        print("\n[System] 已隐藏悬浮窗。终端引擎常驻运行中，按 'u' 回车即可恢复界面。")
-        self.pause_event.set()
-        self.root.withdraw()
 
     def _restore_from_terminal(self):
         self.pause_event.clear()

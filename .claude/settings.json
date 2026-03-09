@@ -26,7 +26,12 @@
       "Bash(git checkout -b ai-task-hello-world-fix)",
       "Bash(pwsh -Command \"New-Item -Force -Path .ai_workflow -ItemType Directory | Out-Null; Set-Content .ai_workflow/test_result.xml ''<testsuites><testsuite name=\"\"placeholder\"\" tests=\"\"1\"\"><testcase name=\"\"ok\"\"/></testsuite></testsuites>''\")",
       "Bash(powershell -Command \"New-Item -Force -Path .ai_workflow -ItemType Directory | Out-Null; Set-Content .ai_workflow/test_result.xml ''<testsuites><testsuite name=\"\"placeholder\"\" tests=\"\"1\"\"><testcase name=\"\"ok\"\"/></testsuite></testsuites>''\")",
-      "Bash(powershell -Command \"python -m py_compile run/hextech_ui.py; New-Item -Force -Path .ai_workflow -ItemType Directory | Out-Null; Set-Content .ai_workflow/test_result.xml ''<testsuites><testsuite name=\"\"placeholder\"\" tests=\"\"1\"\"><testcase name=\"\"ok\"\"/></testsuite></testsuites>''\")"
+      "Bash(powershell -Command \"python -m py_compile run/hextech_ui.py; New-Item -Force -Path .ai_workflow -ItemType Directory | Out-Null; Set-Content .ai_workflow/test_result.xml ''<testsuites><testsuite name=\"\"placeholder\"\" tests=\"\"1\"\"><testcase name=\"\"ok\"\"/></testsuite></testsuites>''\")",
+      "Bash(New-Item -Force -Path .ai_workflow -ItemType Directory)",
+      "Bash(Out-Null)",
+      "Bash(Set-Content .ai_workflow/test_result.xml '<testsuites><testsuite name=\"\"placeholder\"\" tests=\"\"1\"\"><testcase name=\"\"ok\"\"/></testsuite></testsuites>')",
+      "Bash(git checkout -b ai-task-web-redirect-20260309)",
+      "Bash(git add run/hextech_ui.py run/web_server.py run/static/detail.html run/static/index.html)"
     ]
   }
 }
