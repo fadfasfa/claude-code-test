@@ -1,0 +1,11 @@
+{
+  "schema_version": "5.2",
+  "workflow_id": "wf-ui-recovery-20260309",
+  "execution_status": "done",
+  "audit_status": "pending",
+  "uat_status": "pending",
+  "merge_status": "pending",
+  "retry_count": 0,
+  "verification_result": "passed",
+  "verification_artifact": ".ai_workflow/test_result.xml"
+}
