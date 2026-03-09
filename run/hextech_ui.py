@@ -55,14 +55,6 @@ class HextechUI:
         self.downloading_imgs = set()
         self._df_lock = threading.Lock()  # 保护 self.df 的多线程读写
 
-        # 读取本地开关配置
-        self.settings_file = os.path.join(BASE_DIR, "config", "user_settings.json")
-        self.web_enabled = True
-        if os.path.exists(self.settings_file):
-            try:
-                with open(self.settings_file, "r") as f:
-                    self.web_enabled = json.load(f).get("web_enabled", True)
-            except Exception: pass
 
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
@@ -108,11 +100,6 @@ class HextechUI:
         self.switch_btn.pack(side=tk.RIGHT, padx=(0, 10))
         self.switch_btn.bind("<Button-1>", self.switch_to_query)
 
-        init_text = "[网页:开]" if self.web_enabled else "[网页:关]"
-        init_color = "#a6e3a1" if self.web_enabled else "#f38ba8"
-        self.web_toggle_btn = tk.Label(self.title_frame, text=init_text, bg="#11111b", fg=init_color, font=("Microsoft YaHei", 10, "bold", "underline"), pady=8, cursor="hand2")
-        self.web_toggle_btn.pack(side=tk.RIGHT, padx=(0, 5))
-        self.web_toggle_btn.bind("<Button-1>", self.toggle_web)
 
         self.canvas = tk.Canvas(self.root, bg="#1e1e2e", highlightthickness=0)
         self.list_frame = tk.Frame(self.canvas, bg="#1e1e2e")
@@ -176,12 +163,6 @@ class HextechUI:
                     print(f"\n❌ 输出错误: {e}")
 
             threading.Thread(target=terminal_task, daemon=True).start()
-
-            if not getattr(self, 'web_enabled', True): return
-
-            current_time = time.time()
-            if current_time - getattr(self, 'last_click_time', 0) < 1.5: return
-            self.last_click_time = current_time
 
             # 融合 HTTP POST /api/redirect 请求
             try:
@@ -373,16 +354,6 @@ class HextechUI:
         self.root.deiconify()
         self.root.attributes('-topmost', True)
 
-    def toggle_web(self, event=None):
-        self.web_enabled = not self.web_enabled
-        self.web_toggle_btn.config(text="[网页:开]" if self.web_enabled else "[网页:关]", fg="#a6e3a1" if self.web_enabled else "#f38ba8")
-
-        try:
-            os.makedirs(os.path.dirname(self.settings_file), exist_ok=True)
-            with open(self.settings_file, "w") as f:
-                json.dump({"web_enabled": self.web_enabled}, f)
-        except Exception as e:
-            print(f"\n⚠️ 配置保存失败: {e}")
 
     def start_background_scraper(self):
         """启动 4 小时循环的后台抓取守护线程"""

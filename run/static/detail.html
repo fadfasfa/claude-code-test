@@ -157,12 +157,6 @@
             </div>
         </section>
 
-        <section class="glass-panel rounded-2xl p-6 mt-8">
-            <h2 class="text-xl font-bold text-white mb-4">📚 英雄协同推荐</h2>
-            <div id="synergyContainer" class="space-y-2">
-                <div class="text-center py-10 text-gray-400">加载中...</div>
-            </div>
-        </section>
     </main>
 
     <script>
@@ -428,83 +422,6 @@
             renderSynergyArticles(filtered, container);
         }
 
-        // Step 2: 联动文章字符串解析引擎
-        function renderSynergyArticles(data, container) {
-            if (!container) container = document.getElementById('synergyArticleScroll');
-
-            const html = data.map(item => {
-                const parts = item.split('|').map(p => p.trim()).filter(p => p);
-
-                // 容错保护：防止数组越界
-                if (parts.length < 1) {
-                    return '<div class="glass-panel rounded-xl p-4 text-sm text-red-400">数据格式异常：无法解析</div>';
-                }
-
-                // 解析映射关系
-                const title = safeGet(parts, 0, '未知标题');
-                const tier = safeGet(parts, 1, '未知阶级');
-                const rating = safeGet(parts, 2, '-');
-                const author = safeGet(parts, 6, '佚名');
-                // parts[parts.length-1] 为核心解析文章，需做越界保护
-                const article = safeGet(parts, parts.length - 1, '无内容');
-
-                const isTrap = /陷阱 | 慎选 | 不推荐 | 避免|bug|问题/.test(item);
-
-                // 阶级样式映射
-                let tierBgClass = 'bg-gray-700/20';
-                let tierTextClass = 'text-gray-400';
-                if (tier.includes('棱彩') || tier.includes('彩')) {
-                    tierBgClass = 'bg-gradient-to-r from-yellow-600/20 to-red-600/20';
-                    tierTextClass = 'text-yellow-400';
-                } else if (tier.includes('金') || tier.includes('黄')) {
-                    tierBgClass = 'bg-yellow-600/20';
-                    tierTextClass = 'text-yellow-500';
-                } else if (tier.includes('银') || tier.includes('白')) {
-                    tierBgClass = 'bg-gray-500/20';
-                    tierTextClass = 'text-gray-400';
-                }
-
-                // 评级 Badge 样式
-                let ratingBgClass = 'bg-blue-600/20 text-blue-400';
-                if (rating === 'S' || rating === 'S 级') {
-                    ratingBgClass = 'bg-red-600/20 text-red-400';
-                } else if (rating === 'A' || rating === 'A 级') {
-                    ratingBgClass = 'bg-orange-600/20 text-orange-400';
-                }
-
-                return `
-                <div class="glass-panel rounded-xl p-4 ${isTrap ? 'border border-red-500/30' : 'border border-blue-500/10'} hover:bg-[#252535] transition-colors">
-                    <!-- 标题区 -->
-                    <div class="flex items-center gap-2 mb-3">
-                        <h3 class="text-lg font-bold text-white flex-1 truncate">${escapeHtml(title)}</h3>
-                        <span class="inline-block px-2 py-1 text-xs font-bold rounded ${tierBgClass} ${tierTextClass}">${escapeHtml(tier)}</span>
-                        ${rating && rating !== '-' ? `<span class="inline-block px-2 py-1 text-xs font-bold rounded ${ratingBgClass}">${escapeHtml(rating)}</span>` : ''}
-                    </div>
-
-                    <!-- 作者署名 -->
-                    <div class="text-xs text-gray-500 mb-3 flex items-center gap-2">
-                        <span class="opacity-60">✒️</span>
-                        <span>${escapeHtml(author)}</span>
-                    </div>
-
-                    <!-- 核心文章段落 -->
-                    <div class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">
-                        ${escapeHtml(article)}
-                    </div>
-                </div>
-                `;
-            }).join('');
-
-            container.innerHTML = html;
-        }
-
-        // 安全获取数组元素（防止越界）
-        function safeGet(arr, index, defaultValue) {
-            if (!arr || !Array.isArray(arr)) return defaultValue;
-            if (index < 0 || index >= arr.length) return defaultValue;
-            return arr[index] || defaultValue;
-        }
-
         // API 数据请求
         async function loadHextechs() {
             if (!hero) {
@@ -555,49 +472,9 @@
         // 初始化
         window.onload = () => {
             loadHextechs();
-            loadSynergies();
             connectWS();
         };
 
-        // 加载协同数据
-        async function loadSynergies() {
-            const container = document.getElementById('synergyContainer');
-            if (!heroId) {
-                console.error('[Synergy] 未获取到英雄 ID (champ_id)');
-                container.innerHTML = '<div class="text-center py-10 text-gray-400">无英雄 ID</div>';
-                return;
-            }
-            console.log('[Synergy] 开始加载英雄协同数据，champ_id =', heroId);
-            try {
-                const res = await fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId)}`);
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-                }
-                const data = await res.json();
-                synergyData = data.synergies || [];
-                console.log('[Synergy] 加载完成，共', synergyData.length, '条记录');
-
-                if (synergyData.length === 0) {
-                    container.innerHTML = '<div class="text-center py-10 text-gray-400">暂无协同数据</div>';
-                    return;
-                }
-
-                // 全量显示所有协同数据（不限制数量）
-                const listHtml = synergyData.map(item => {
-                    const isTrap = /陷阱|慎选|不推荐|避免|bug|问题/.test(item);
-                    const borderClass = isTrap ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-blue-500';
-                    const bgClass = isTrap ? 'bg-red-950/20' : '';
-                    return `<li class="glass-panel p-3 rounded-lg text-sm text-gray-300 ${borderClass} ${bgClass}">${escapeHtml(item)}</li>`;
-                }).join('');
-                container.innerHTML = '<ul class="space-y-2">' + listHtml + '</ul>';
-
-                // 初始化右侧联动区的级联过滤
-                updateFilteredSynergies(currentView);
-            } catch (err) {
-                console.error('[Synergy] 加载协同数据失败:', err);
-                container.innerHTML = '<div class="text-center py-10 text-red-400">加载失败</div>';
-            }
-        }
 
         function escapeHtml(text) {
             const map = {
