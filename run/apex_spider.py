@@ -69,26 +69,54 @@ class ApexSpider:
         Returns:
             页面 HTML 内容，失败返回 None
         """
-        try:
-            logger.info(f"正在加载页面：{url}")
-            response = self.session.get(url, timeout=10)
-            response.encoding = 'utf-8'
+        # 配置重试参数
+        max_retries = 3
+        backoff_factor = 0.5
+        retryable_status_codes = {429, 500, 502, 503, 504}
 
-            if response.status_code != 200:
-                logger.error(f"页面返回状态码异常：{response.status_code}, URL: {url}")
+        for attempt in range(max_retries + 1):
+            try:
+                logger.info(f"正在加载页面：{url} (尝试 {attempt + 1}/{max_retries + 1})")
+                response = self.session.get(url, timeout=10)
+                response.encoding = 'utf-8'
+
+                if response.status_code == 200:
+                    return response.text
+                elif response.status_code in retryable_status_codes and attempt < max_retries:
+                    # 计算退避延迟
+                    delay = backoff_factor * (2 ** attempt)
+                    logger.warning(f"页面返回可重试状态码：{response.status_code}, URL: {url}, "
+                                  f"将在 {delay:.2f} 秒后重试...")
+                    import time
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"页面返回状态码异常：{response.status_code}, URL: {url}")
+                    return None
+
+            except requests.Timeout:
+                if attempt < max_retries:
+                    delay = backoff_factor * (2 ** attempt)
+                    logger.warning(f"页面加载超时 - URL: {url}, 将在 {delay:.2f} 秒后重试...")
+                    import time
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"页面加载超时 - URL: {url}")
+                    return None
+            except requests.RequestException as e:
+                if attempt < max_retries:
+                    delay = backoff_factor * (2 ** attempt)
+                    logger.warning(f"页面加载失败 - URL: {url}, 错误：{str(e)}, 将在 {delay:.2f} 秒后重试...")
+                    import time
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"页面加载失败 - URL: {url}, 错误：{str(e)}")
+                    return None
+            except Exception as e:
+                logger.error(f"页面加载异常 - URL: {url}, 错误：{str(e)}")
                 return None
-
-            return response.text
-
-        except requests.Timeout:
-            logger.error(f"页面加载超时 - URL: {url}")
-            return None
-        except requests.RequestException as e:
-            logger.error(f"页面加载失败 - URL: {url}, 错误：{str(e)}")
-            return None
-        except Exception as e:
-            logger.error(f"页面加载异常 - URL: {url}, 错误：{str(e)}")
-            return None
 
     def crawl_champion_list(self) -> dict:
         """
@@ -258,17 +286,45 @@ def main():
         logger.error(f"别名数据加载失败：{e}")
         hero_aliases = {}
 
-    # 构建 name_to_core 查找字典
-    name_to_core = {}
+    # 构建输出用的完整数据字典 core_info_dict，包含英雄的所有核心字段并合并对应的 aliases 列表
+    core_info_dict = {}
     for champ_id, champ_info in core_data.items():
         name = champ_info.get("name")
         if name:
-            name_to_core[name] = {
+            core_info_dict[champ_id] = {
                 "id": champ_id,
+                "name": name,
                 "title": champ_info.get("title", ""),
-                "en_name": champ_info.get("en_name", "")
+                "en_name": champ_info.get("en_name", ""),
+                "aliases": hero_aliases.get(name, [])
             }
-    logger.info(f"构建名称索引：{len(name_to_core)} 个英雄")
+
+    # 构建专用于网页名称匹配的 search_index
+    # 遍历核心数据，将英雄的 name, title, en_name 进行正则化清洗（转小写、去除空格和特殊符号）后作为 Key，映射到英雄 ID
+    # 严格约束：不得将 aliases 中的缩写加入 search_index，以防止匹配污染
+    search_index = {}
+    for champ_id, champ_info in core_info_dict.items():
+        # 清洗函数：转小写、去除空格和特殊符号
+        def normalize_name(name_str):
+            if not name_str:
+                return ""
+            return name_str.replace(" ", "").replace("-", "").replace("'", "").replace(".", "").lower()
+
+        # 添加 name, title, en_name 到 search_index
+        names_to_index = [
+            champ_info["name"],
+            champ_info["title"],
+            champ_info["en_name"]
+        ]
+
+        for name_field in names_to_index:
+            if name_field:
+                normalized = normalize_name(name_field)
+                if normalized:
+                    search_index[normalized] = champ_id
+
+    logger.info(f"构建核心数据字典：{len(core_info_dict)} 个英雄")
+    logger.info(f"构建搜索索引：{len(search_index)} 个关键词")
 
     # 全量遍历英雄列表并提取海克斯协同方案（使用 ThreadPoolExecutor 并发）
     logger.info("-" * 30)
@@ -285,27 +341,33 @@ def main():
         # 构建任务字典：URL -> 英雄信息
         task_map = {}
         skipped_names = []
+
+        # 清洗函数：转小写、去除空格和特殊符号
+        def normalize_name(name_str):
+            if not name_str:
+                return ""
+            return name_str.replace(" ", "").replace("-", "").replace("'", "").replace(".", "").lower()
+
         for champ in champions:
             champ_name = champ["name"]
             champ_url = champ["url"]
 
-            # 通过名称匹配核心数据
-            if champ_name not in name_to_core:
+            # 对网页提取的 champ_name 执行与 Step 2 相同的正则化清洗，然后去 search_index 中查找对应的英雄 ID
+            normalized_champ_name = normalize_name(champ_name)
+            champ_id = search_index.get(normalized_champ_name)
+
+            if not champ_id:
                 skipped_names.append(champ_name)
                 continue
 
-            core_info = name_to_core[champ_name]
-            champ_id = core_info["id"]
-
-            # 获取别名
-            aliases = hero_aliases.get(champ_name, [])
-
+            # 从 core_info_dict 取出完整信息组装任务
+            core_info = core_info_dict[champ_id]
             task_map[champ_url] = {
-                "name": champ_name,
+                "name": core_info["name"],
                 "id": champ_id,
                 "title": core_info["title"],
                 "en_name": core_info["en_name"],
-                "aliases": aliases
+                "aliases": core_info["aliases"]
             }
 
         # 调试信息
@@ -317,8 +379,8 @@ def main():
 
         logger.info(f"成功匹配 {len(task_map)} 个英雄用于并发抓取")
 
-        # 使用 ThreadPoolExecutor 进行并发抓取
-        with ThreadPoolExecutor(max_workers=16) as executor:
+        # 使用 ThreadPoolExecutor 进行并发抓取（将 max_workers=16 下调为 max_workers=8）
+        with ThreadPoolExecutor(max_workers=8) as executor:
             # 提交所有任务
             future_to_url = {
                 executor.submit(spider.extract_hextech_synergies, url): url

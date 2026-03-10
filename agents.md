@@ -8,50 +8,50 @@
 
 ### 不可变契约区（HMAC 锚定范围）
 
-workflow_id：wf-web-redirect-20260309                          contract_version：v1.1                                      Branch_Name：ai-task-web-redirect-20260309                     Target_Files：run/hextech_ui.py, run/web_server.py, run/static/detail.html, run/static/index.html          Verification_Command：pwsh -Command "New-Item -Force -Path .ai_workflow -ItemType Directory | Out-Null; Set-Content .ai_workflow/test_result.xml '<testsuites><testsuite name=\"placeholder\" tests=\"1\"><testcase name=\"ok\"/></testsuite></testsuites>'"    ---
+workflow_id：[wf-fix-spider-incomplete-20260309]                          contract_version：[v1.0]                                      Branch_Name：[ai-task-fix-spider-incomplete-20260309]                     Target_Files：[apex_spider.py]          Verification_Command：[pwsh -Command "New-Item -Force -Path .ai_workflow -ItemType Directory | Out-Null; Set-Content .ai_workflow/test_result.xml '<testsuites><testsuite name=\"placeholder\" tests=\"1\"><testcase name=\"ok\"/></testsuite></testsuites>'"]    ---
 
 ### 任务元数据（不可变，不参与签名）
 
-token_budget：max_cost_cny: 5 / max_retries: 5
-分配节点：Node B（Qwen Opus 档）
-路由决策依据：因 Claude API 额度受限触发算力切换。任务涉及 Tkinter 桌面端 UI 精简、FastAPI 服务端路由决策以及 WebSocket 广播机制的联动，具有典型的跨文件与跨进程依赖。为保证架构稳定性与多端联动的准确性，分配具备深度推理能力的 Node B（Qwen Opus 档）接力执行。
+token_budget：max_cost_cny: 10 / max_retries: 5
+分配节点：[Node B（Qwen Opus 档）]
+路由决策依据：[任务涉及爬虫匹配逻辑重构、重试机制引入与多数据源合并，具有一定的逻辑复杂度；用户明确指定不可使用 Claude，故分配至 Node B（Qwen Opus 档）确保执行深度与准确性。]
 
 ---
 
 ### 前置条件 (Pre-conditions)
 
-- HMAC 契约签名：待核验
-- DACL 状态：上锁（日常模式）
+- HMAC 契约签名：[待核验]
+- DACL 状态：[上锁（日常模式）]
 
 ### 后置条件 (Post-conditions)
 
-- run/hextech_ui.py 成功移除废弃网页开关界面，且前端英雄点击统一通过 HTTP 请求发送至本地服务。
-- run/web_server.py 具备智能路由分发机制，能根据存活的 WebSocket 客户端决定是广播更新信号还是直接拉起浏览器。
-- run/static/detail.html 成功移除底部的“英雄协同推荐”纯文字区域，且不影响原有热更新通信逻辑。
+- 爬虫具备网络请求重试机制，可应对偶发 429/50x 错误。
+- 英雄名称匹配采用多字段（name/title/en_name）正则化识别，不再因称呼差异导致遗漏。
+- 输出的 JSON 数据中完整包含合并后的 `aliases` 字段，且确保 `aliases` 未被用于网页抓取时的名称匹配。
 
 ---
 
 ### 确定性执行清单
 
-- [ ] Step 1: 移除 UI 废弃元素与修改发送端逻辑
-  - 目标文件：run/hextech_ui.py
-  - 结构化指令：删除网页开关相关的 UI 元素（如复选框/Toggle）及阻断跳转的拦截逻辑。修改处理英雄点击动作的函数（如 `on_hero_click`），将目标跳转逻辑修改为：向本地 `web_server.py` 发起 HTTP 接口调用（传递相关英雄及意图信息），交由服务端进行决策。
-  - 风险提示：需检查 Tkinter 的网格布局或打包逻辑，确保删除开关元素后，界面不会出现空白撕裂或其他组件错位。
+- [ ] Step 1: 引入网络重试机制
+  - 目标文件：apex_spider.py
+  - 结构化指令：修改 `ApexSpider.__init__`，为 `self.session` 挂载 `requests.adapters.HTTPAdapter`，配置 `urllib3.util.Retry`（重试 3 次，backoff_factor=0.5，状态码包含 429, 500, 502, 503, 504）。
+  - 风险提示：确保挂载 HTTPAdapter 时分别适配 `http://` 和 `https://`。
 
-- [ ] Step 2: 增加服务端智能路由分发机制
-  - 目标文件：run/web_server.py
-  - 结构化指令：增加/修改接收前端 UI 请求的 HTTP 路由接口（如 `/api/redirect`）。在接口内部增加状态检测：如果当前维护的 WebSocket 客户端集合不为空，则向客户端广播数据更新事件（如 `local_player_locked`）；如果集合为空，则调用 Python 标准库（如 `webbrowser`）拉起浏览器访问对应的英雄详情页。
-  - 风险提示：异步与多进程环境下，需确保 WebSocket 连接的存活状态判定准确，防止内存泄漏或向已断开的连接发送数据。
+- [ ] Step 2: 重构英雄名称索引结构与数据合并
+  - 目标文件：apex_spider.py
+  - 结构化指令：在 `main` 函数加载 `Champion_Core_Data.json` 和 `hero_aliases.json` 后，重构查找字典：
+    1. 构建输出用的完整数据字典 `core_info_dict`，包含英雄的所有核心字段并合并对应的 `aliases` 列表。
+    2. 构建专用于**网页名称匹配**的 `search_index`。遍历核心数据，将英雄的 `name`, `title`, `en_name` 进行正则化清洗（转小写、去除空格和特殊符号）后作为 Key，映射到英雄 ID。
+    3. **严格约束**：不得将 `aliases` 中的缩写加入 `search_index`，以防止匹配污染。
+  - 风险提示：两个字典的职责必须严格解耦，一个用于最终数据组装，一个仅用于从网页抓取的杂乱名字中定位 ID。
 
-- [ ] Step 3: 清理前端无用 DOM 元素
-  - 目标文件：run/static/detail.html
-  - 结构化指令：找到底部包含“英雄协同推荐”以及下方纯文字联动内容（包括作者、羁绊等文字描述）的 HTML DOM 结构并将其彻底删除。
-  - 风险提示：此步骤无自动化 UI 测试，需人类目视确认渲染效果。务必确保保留现有的 WebSocket 接收逻辑以及主要英雄数据的渲染 DOM，防止误删。
-
-- [ ] Step 4: 同步检查主页状态
-  - 目标文件：run/static/index.html
-  - 结构化指令：检查主页是否也存在同样的废弃联动 DOM，或是否需要同步更新接收 WebSocket 信号的脚本代码。若无需改动则可平滑跳过此步。
-  - 风险提示：防范前端资源引用的连锁反应。
+- [ ] Step 3: 优化网页提取匹配逻辑与并发数
+  - 目标文件：apex_spider.py
+  - 结构化指令：
+    1. 修改 `main` 中遍历 `champions` 列表的逻辑：对网页提取的 `champ_name` 执行与 Step 2 相同的正则化清洗，然后去 `search_index` 中查找对应的英雄 ID。若匹配成功，从 `core_info_dict` 取出完整信息组装任务；若失败则记录到 `skipped_names`。
+    2. 将 `ThreadPoolExecutor(max_workers=16)` 下调为 `max_workers=8`，降低因并发过高触发目标站点风控的概率。
+  - 风险提示：清洗逻辑需确保健壮性（如 `replace(" ", "").lower()` 等处理），避免 `None` 引用。
 
 ---
 
