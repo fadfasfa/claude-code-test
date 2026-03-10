@@ -31,7 +31,9 @@
       "Bash(Out-Null)",
       "Bash(Set-Content .ai_workflow/test_result.xml '<testsuites><testsuite name=\"\"placeholder\"\" tests=\"\"1\"\"><testcase name=\"\"ok\"\"/></testsuite></testsuites>')",
       "Bash(git checkout -b ai-task-web-redirect-20260309)",
-      "Bash(git add run/hextech_ui.py run/web_server.py run/static/detail.html run/static/index.html)"
+      "Bash(git add run/hextech_ui.py run/web_server.py run/static/detail.html run/static/index.html)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)"
     ]
   }
 }

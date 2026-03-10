@@ -1,5 +1,0 @@
-﻿*.bak
-*.workbak
-pre_merge_snapshot.txt
-.ai_workflow/pre_merge_snapshot.txt
-**/__pycache__/

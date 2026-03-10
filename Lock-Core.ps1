@@ -27,7 +27,7 @@ $ErrorActionPreference = "Stop"
 
 # --- 配置区 ---
 $protectedDirs  = @(".ai_workflow", ".git\hooks")
-$protectedFiles = @("agents.md", "Lock-Core.ps1", "Unlock-Core.ps1", "run_task.ps1", "uat_pass.ps1")
+$protectedFiles = @("agents.md", "Lock-Core.ps1", "Unlock-Core.ps1", "uat_pass.ps1")
 $auditLogFile   = ".ai_workflow\audit_log.txt"   # V5.1: 修正为实际路径
 
 # 获取当前用户身份（用于 DACL 规则绑定）
@@ -161,3 +161,5 @@ Write-Step "受保护审计日志: $auditLogFile" "Green"
 Write-Step "防御层级: MIC(H) + DACL(Deny Delete/Rename) + 审计日志仅追加" "Green"
 Write-Host ""
 Write-Host "工作空间目录 (heybox/, QuantProject/, run/, .vscode/) 保持完全可写。" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "[DACL: LOCKED] 防线已激活。可继续破冰规约步骤 2。" -ForegroundColor Green

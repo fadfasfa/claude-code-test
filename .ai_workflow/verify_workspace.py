@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Hextech Nexus - Workspace Verification & Contract Anchoring Engine (V5.0)
+Hextech Nexus - Workspace Verification & Contract Anchoring Engine (V5.1)
 
 功能:
   1. HMAC 契约签名校验（基于 agents.md 关键字段）
@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 
 # --- 路径配置 ---
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent  # 脚本部署于项目根目录
 AGENTS_MD = REPO_ROOT / "agents.md"
 WORKFLOW_DIR = REPO_ROOT / ".ai_workflow"
 CONTRACT_HASH_FILE = WORKFLOW_DIR / ".contract_hash"
@@ -103,7 +103,7 @@ def write_contract_hash(sha256_hash: str, git_hash: str, hmac_sig: str) -> None:
     """将哈希锚定信息写入受保护的缓存文件。"""
     WORKFLOW_DIR.mkdir(parents=True, exist_ok=True)
     anchor_data = {
-        "version": "5.0",
+        "version": "5.1",
         "agents_md_sha256": sha256_hash,
         "agents_md_git_hash": git_hash,
         "hmac_signature": hmac_sig,
@@ -192,7 +192,7 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Hextech Nexus 工作区鉴权与契约锚定引擎 V5.0"
+        description="Hextech Nexus 工作区鉴权与契约锚定引擎 V5.1"
     )
     parser.add_argument(
         "--anchor-only",
@@ -223,7 +223,7 @@ def main() -> None:
 
     # 默认模式：先锚定，再校验
     result = do_anchor(raw_content)
-    print(f"[SYSTEM] V5.0 鉴权防线已激活", file=sys.stderr)
+    print(f"[SYSTEM] V5.1 鉴权防线已激活", file=sys.stderr)
     print(f"  SHA-256:  {result['sha256']}", file=sys.stderr)
     print(f"  Git Hash: {result['git_hash']}", file=sys.stderr)
     print(f"  HMAC:     {result['hmac'][:16]}...", file=sys.stderr)

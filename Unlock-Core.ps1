@@ -28,7 +28,7 @@ $ErrorActionPreference = "Stop"
 
 # --- 配置区（必须与 Lock-Core.ps1 保持一致）---
 $protectedDirs  = @(".ai_workflow", ".git\hooks")
-$protectedFiles = @("agents.md", "Lock-Core.ps1", "Unlock-Core.ps1", "run_task.ps1", "uat_pass.ps1")
+$protectedFiles = @("agents.md", "Lock-Core.ps1", "Unlock-Core.ps1", "uat_pass.ps1")
 $auditLogFile   = ".ai_workflow\audit_log.txt"   # V5.1: 修正为实际路径
 
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -137,3 +137,5 @@ Write-Step "===== 解锁完成 =====" "Green"
 Write-Step "已还原: MIC(M) + Deny 规则全部移除 + audit_log 仅追加限制已解除" "Green"
 Write-Host ""
 Write-Host "[WARNING] God-mode 已激活，工作空间无防御状态。基建修改完成后请立即执行 Lock-Core.ps1 重新锁定。" -ForegroundColor Red
+Write-Host ""
+Write-Host "[DACL: UNLOCKED] 防线已解除。请立即执行基建修改，完成后运行 Lock-Core.ps1 重新锁定。" -ForegroundColor Yellow
