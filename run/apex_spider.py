@@ -11,6 +11,8 @@ import json
 import os
 import random
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -38,6 +40,21 @@ def get_random_user_agent() -> str:
     return random.choice(USER_AGENTS)
 
 
+def normalize_name(name_str: str) -> str:
+    """
+    正则化英雄名称：转小写、去除空格和特殊符号
+    
+    Args:
+        name_str: 原始名称字符串
+        
+    Returns:
+        清洗后的名称字符串
+    """
+    if not name_str:
+        return ""
+    return name_str.replace(" ", "").replace("-", "").replace("'", "").replace(".", "").lower()
+
+
 class ApexSpider:
     """
     ApexLoL 轻量级爬虫类
@@ -50,14 +67,28 @@ class ApexSpider:
         """
         初始化爬虫
 
-        创建 requests.Session() 并挂载随机 User-Agent
+        创建 requests.Session() 并挂载随机 User-Agent，配置 HTTP 重试机制
         """
         self.base_url = "https://apexlol.info/zh"
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": get_random_user_agent()
         })
-        logger.info(f"ApexSpider 初始化完成，User-Agent: {self.session.headers['User-Agent'][:50]}...")
+        
+        # 配置重试策略：重试 3 次，backoff_factor=0.5，针对 429 和 50x 状态码
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "POST"]
+        )
+        
+        # 为 http 和 https 协议分别挂载适配器
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+        
+        logger.info(f"ApexSpider 初始化完成，User-Agent: {self.session.headers['User-Agent'][:50]}...，重试机制已启用")
 
     def fetch_page(self, url: str) -> str:
         """
@@ -304,12 +335,6 @@ def main():
     # 严格约束：不得将 aliases 中的缩写加入 search_index，以防止匹配污染
     search_index = {}
     for champ_id, champ_info in core_info_dict.items():
-        # 清洗函数：转小写、去除空格和特殊符号
-        def normalize_name(name_str):
-            if not name_str:
-                return ""
-            return name_str.replace(" ", "").replace("-", "").replace("'", "").replace(".", "").lower()
-
         # 添加 name, title, en_name 到 search_index
         names_to_index = [
             champ_info["name"],
@@ -341,12 +366,6 @@ def main():
         # 构建任务字典：URL -> 英雄信息
         task_map = {}
         skipped_names = []
-
-        # 清洗函数：转小写、去除空格和特殊符号
-        def normalize_name(name_str):
-            if not name_str:
-                return ""
-            return name_str.replace(" ", "").replace("-", "").replace("'", "").replace(".", "").lower()
 
         for champ in champions:
             champ_name = champ["name"]
