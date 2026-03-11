@@ -90,7 +90,7 @@
                      let stage = this.dataset.fallbackStage || '0';
                      if (stage === '0') {
                          // Stage 1: 本地 assets 404，尝试 DDragon CDN
-                         this.src = 'https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/' + (window.enName || '').replace(/[^\w]/g, '') + '.png';
+                         this.src = 'https://ddragon.leagueoflegends.com/cdn/' + (window.ddVersion || '14.3.1') + '/img/champion/' + (window.enName || '').replace(/[^\w]/g, '') + '.png';
                          this.dataset.fallbackStage = '1';
                      } else if (stage === '1') {
                          // Stage 2: CDN 404，降级到 Canvas 动态渲染占位符
@@ -163,13 +163,20 @@
         // 修复本地直开 Bug：file: 协议下使用 localhost
         const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000' : window.location.origin;
         const WS_URL = window.location.protocol === 'file:' ? 'ws://localhost:8000' : 'ws://' + (window.location.host || 'localhost:8000');
+        // DDragon 版本号（动态获取，fallback 硬编码）
+        let ddVersion = '14.3.1';
+        window.ddVersion = ddVersion;
+        fetch('https://ddragon.leagueoflegends.com/api/versions.json')
+            .then(r => r.json())
+            .then(v => { if (v && v[0]) { ddVersion = v[0]; window.ddVersion = ddVersion; } })
+            .catch(() => {});
+
         let hextechData = null;
         let currentView = 'all';
         let currentMode = 'comprehensive';  // ✅ 新增：当前显示模式
         let activeArray = null;  // ✅ 新增：活跃数据源引用
         let synergyData = null;
         let ws = null;
-        let activeTab = 'hextech';  // ✅ Tab 状态机：当前活跃 Tab
 
         // 悬浮窗单例防多开管控
         const tabId = Math.random().toString(36).substring(2, 9);
@@ -206,7 +213,7 @@
             // 优先尝试本地 assets
             document.getElementById('heroAvatar').src = `./assets/${heroId}.png`;
         } else if(enName) {
-            document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/${enName}.png`;
+            document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/${ddVersion}/img/champion/${enName}.png`;
         } else {
             document.getElementById('headerBg').style.backgroundColor = '#181825';
             document.getElementById('heroAvatar').src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>?</text></svg>';
@@ -248,35 +255,6 @@
                 activeBtn.className = 'tab-btn px-5 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors';
             }
             renderCurrentView();
-        }
-
-        // Tab 切换函数
-        function switchTab(tabId) {
-            activeTab = tabId;
-            // 隐藏所有 Tab 内容
-            document.getElementById('synergyArticleScroll').classList.add('hidden');
-            document.getElementById('skillsTabContent').classList.add('hidden');
-            document.getElementById('itemsTabContent').classList.add('hidden');
-
-            // 显示当前 Tab 内容
-            const tabMap = {
-                'hextech': 'hextechTabContent',
-                'skills': 'skillsTabContent',
-                'items': 'itemsTabContent'
-            };
-            const contentId = tabMap[tabId];
-            if (contentId) {
-                document.getElementById(contentId).classList.remove('hidden');
-            }
-
-            // 更新 Tab 按钮样式
-            document.querySelectorAll('.tab-nav').forEach(btn => {
-                btn.className = 'tab-nav px-3 py-1 text-xs font-bold text-gray-400 hover:text-white rounded-t';
-            });
-            const activeTabBtn = document.querySelector(`[data-tab="${tabId}"]`);
-            if (activeTabBtn) {
-                activeTabBtn.className = 'tab-nav px-3 py-1 text-xs font-bold text-white bg-blue-600 rounded-t';
-            }
         }
 
         // 获取阶级 CSS
@@ -418,8 +396,24 @@
                 return;
             }
 
-            // 渲染联动文章：调用 renderSynergyArticles
+            // 渲染联动文章
             renderSynergyArticles(filtered, container);
+        }
+
+        // 渲染联动文章卡片
+        function renderSynergyArticles(articles, container) {
+            if (!articles || articles.length === 0) {
+                container.innerHTML = '<div class="glass-panel rounded-xl p-4"><div class="text-sm text-gray-400 text-center">暂无联动文章</div></div>';
+                return;
+            }
+            container.innerHTML = articles.map((article, idx) => {
+                const safeContent = escapeHtml(article);
+                return `
+                    <div class="glass-panel rounded-xl p-4 hover:border-blue-500/30 transition-colors">
+                        <div class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">${safeContent}</div>
+                    </div>
+                `;
+            }).join('');
         }
 
         // API 数据请求
@@ -463,8 +457,8 @@
                         const enName = msg.en_name ? `&en=${encodeURIComponent(msg.en_name)}` : '';
                         window.location.href = `detail.html?hero=${encodeURIComponent(msg.hero_name)}&id=${encodeURIComponent(msg.champion_id)}${enName}&auto=1`;
                     }
-                } catch (e) {
-                    console.error(e);
+                } catch (err) {
+                    console.error(err);
                 }
             };
         }

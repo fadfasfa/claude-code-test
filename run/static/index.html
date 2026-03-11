@@ -106,6 +106,13 @@
         const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000' : window.location.origin;
         const WS_URL = window.location.protocol === 'file:' ? 'ws://localhost:8000' : 'ws://' + (window.location.host || 'localhost:8000');
 
+        // DDragon 版本号（动态获取，fallback 硬编码）
+        let ddVersion = '14.3.1';
+        fetch('https://ddragon.leagueoflegends.com/api/versions.json')
+            .then(r => r.json())
+            .then(v => { if (v && v[0]) ddVersion = v[0]; })
+            .catch(() => {});
+
         // 全局状态
         let allChampions = [];
         let activeChampionIds = new Set();
@@ -242,7 +249,7 @@
             // 头像 URL 优先级：ddragon > assets
             let avatarUrl;
             if (enName) {
-                avatarUrl = `https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/${enName}.png`;
+                avatarUrl = `https://ddragon.leagueoflegends.com/cdn/${ddVersion}/img/champion/${enName}.png`;
             } else if (heroId) {
                 avatarUrl = `./assets/${heroId}.png`;
             } else {
@@ -360,12 +367,15 @@
                 const filtered = allChampions.filter(c => {
                     const name = c['英雄名称'] || '';
                     const enName = c['英文名'] || '';
-                    // 检查是否在 CHAMPION_PINYIN 字典中
+                    // 检查是否在 CHAMPION_PINYIN 字典中（支持英文名 / 大写首字母缩写）
                     const pinyinMatch = Object.entries(CHAMPION_PINYIN).find(([cn, en]) => {
+                        // 英文名前缀匹配
                         if (en.toLowerCase().startsWith(query)) return true;
-                        // 检查拼音首字母
+                        // 大写字母首字母缩写匹配（如 LeeSin -> LS, ls）
                         const initials = en.replace(/[a-z]/g, '').toLowerCase();
-                        if (initials.startsWith(query)) return true;
+                        if (initials && initials.startsWith(query)) return true;
+                        // 中文别名匹配
+                        if (cn.includes(query)) return true;
                         return false;
                     });
 

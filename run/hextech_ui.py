@@ -12,11 +12,16 @@ import win32gui
 import sys
 import os
 import webbrowser
+from urllib.parse import quote
 import logging
 from io import BytesIO
 from PIL import Image, ImageTk
 from datetime import datetime
 from hero_sync import BASE_DIR, ASSET_DIR
+
+# Web server 端口（与 web_server.py 保持一致，可通过环境变量覆盖）
+SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
+_WEB_BASE = f"http://127.0.0.1:{SERVER_PORT}"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -145,29 +150,56 @@ class HextechUI:
         return df
 
     def on_hero_click(self, champ_id, hero_name):
+        """处理英雄卡片点击事件。
+
+        行为：
+        1. 在终端输出英雄海克斯信息（独立线程）
+        2. 向 web_server 发送 /api/redirect 请求，由服务端决定热跳转或打开浏览器（独立线程）
+        3. 若 web_server 未运行（请求失败），在本地直接降级打开浏览器详情页
+        """
         try:
             set_last_hero(hero_name)
+        except Exception:
+            pass
 
-            def terminal_task():
-                try:
-                    sys.stdout.write('\r' + ' ' * 80 + '\r')
-                    sys.stdout.flush()
-                    with self._df_lock:
-                        df_snapshot = self.df
-                    display_hero_hextech(df_snapshot, hero_name, is_from_ui=True)
-                except Exception as e:
-                    print(f"\n❌ 输出错误: {e}")
-
-            threading.Thread(target=terminal_task, daemon=True).start()
-
-            # 融合 HTTP POST /api/redirect 请求
+        def terminal_task():
             try:
-                requests.post("http://127.0.0.1:8000/api/redirect",
-                             json={"hero_id": champ_id, "hero_name": hero_name},
-                             timeout=1)
+                sys.stdout.write('\r' + ' ' * 80 + '\r')
+                sys.stdout.flush()
+                with self._df_lock:
+                    df_snapshot = self.df
+                display_hero_hextech(df_snapshot, hero_name, is_from_ui=True)
+            except Exception as e:
+                print(f"\n❌ 输出错误: {e}")
+
+        threading.Thread(target=terminal_task, daemon=True).start()
+
+        def redirect_task():
+            """后台发送跳转请求，失败时本地降级打开浏览器。"""
+            # 获取英雄英文名（用于 CDN 头像等参数）
+            en_name = self.core_data.get(str(champ_id), {}).get('en_name', '')
+            try:
+                resp = requests.post(
+                    f"{_WEB_BASE}/api/redirect",
+                    json={"hero_id": str(champ_id), "hero_name": hero_name},
+                    timeout=1,
+                )
+                # 服务端成功接管，无需本地处理
+                if resp.status_code == 200:
+                    return
             except Exception:
                 pass
-        except Exception: pass
+            # 降级：web_server 未运行或请求失败，直接打开浏览器详情页
+            url = (
+                f"{_WEB_BASE}/detail.html"
+                f"?hero={quote(hero_name)}"
+                f"&id={champ_id}"
+                f"&en={quote(en_name)}"
+                f"&auto=1"
+            )
+            webbrowser.open(url)
+
+        threading.Thread(target=redirect_task, daemon=True).start()
 
     def lcu_polling_loop(self):
         while not self.stop_event.is_set():
