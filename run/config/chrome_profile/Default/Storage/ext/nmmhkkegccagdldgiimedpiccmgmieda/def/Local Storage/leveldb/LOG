@@ -1,3 +1,2 @@
-2026/03/12-15:04:58.615 46c Reusing MANIFEST C:\Users\apple\claudecode\run\config\chrome_profile\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Local Storage\leveldb/MANIFEST-000001
-2026/03/12-15:04:58.618 46c Recovering log #3
-2026/03/12-15:04:58.630 46c Reusing old log C:\Users\apple\claudecode\run\config\chrome_profile\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Local Storage\leveldb/000003.log 
+2026/03/12-17:35:08.096 8b64 Creating DB c:\Users\apple\claudecode\run\config\chrome_profile\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Local Storage\leveldb since it was missing.
+2026/03/12-17:35:08.144 8b64 Reusing MANIFEST c:\Users\apple\claudecode\run\config\chrome_profile\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Local Storage\leveldb/MANIFEST-000001

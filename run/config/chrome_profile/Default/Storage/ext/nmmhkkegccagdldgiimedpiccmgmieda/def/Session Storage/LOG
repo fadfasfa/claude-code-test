@@ -1,3 +1,2 @@
-2026/03/12-15:05:13.730 46c Reusing MANIFEST C:\Users\apple\claudecode\run\config\chrome_profile\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Session Storage/MANIFEST-000001
-2026/03/12-15:05:13.731 46c Recovering log #3
-2026/03/12-15:05:13.734 46c Reusing old log C:\Users\apple\claudecode\run\config\chrome_profile\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Session Storage/000003.log 
+2026/03/12-17:35:23.218 8b64 Creating DB c:\Users\apple\claudecode\run\config\chrome_profile\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Session Storage since it was missing.
+2026/03/12-17:35:23.230 8b64 Reusing MANIFEST c:\Users\apple\claudecode\run\config\chrome_profile\Default\Storage\ext\nmmhkkegccagdldgiimedpiccmgmieda\def\Session Storage/MANIFEST-000001

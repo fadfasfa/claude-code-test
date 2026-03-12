@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hextech 极地枢纽 - 全英雄 T 度风云榜</title>
+    <!-- CDN预连接与资源预加载 -->
+    <link rel="preconnect" href="https://ddragon.leagueoflegends.com">
+    <link rel="preconnect" href="https://raw.communitydragon.org">
+    <link rel="preload" href="https://cdn.tailwindcss.com" as="script">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
@@ -259,7 +263,7 @@
             return `
                 <a
                     href="${detailUrl}"
-                    class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 cursor-pointer block flex-shrink-0 ${isHighlighted}"
+                    class="champ-avatar relative w-16 h-16 sm:w-18 sm:h-18 rounded-lg overflow-hidden border-2 cursor-pointer block flex-shrink-0 ${isHighlighted}"
                     style="animation-delay: ${index * 30}ms"
                     title="${champion['英雄名称']} (${wr})"
                 >
