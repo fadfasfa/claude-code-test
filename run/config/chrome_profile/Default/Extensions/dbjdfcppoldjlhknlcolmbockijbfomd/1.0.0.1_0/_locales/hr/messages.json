@@ -1,0 +1,18 @@
+{
+   "ExtnDescription": {
+      "Description": "Extension Description",
+      "message": "Postavite Microsoft Bing kao svoju zadanu početnu stranicu i zadanu tražilicu"
+   },
+   "ExtnMarket": {
+      "Description": "Market",
+      "message": "hr-hr"
+   },
+   "ExtnName": {
+      "Description": "Extension name",
+      "message": "Pretraživanje na tražilici Bing i početna stranica"
+   },
+   "HomePage": {
+      "Description": "Homepage",
+      "message": "hr"
+   }
+}

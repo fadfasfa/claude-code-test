@@ -1,0 +1,18 @@
+{
+   "ExtnDescription": {
+      "Description": "Extension Description",
+      "message": "تعيين Bing Microsoft كصفحة رئيسية افتراضية ومحرك بحث افتراضي لديك"
+   },
+   "ExtnMarket": {
+      "Description": "Market",
+      "message": "ar-sa"
+   },
+   "ExtnName": {
+      "Description": "Extension name",
+      "message": "بحث Bing والصفحة الرئيسية"
+   },
+   "HomePage": {
+      "Description": "Homepage",
+      "message": "ar"
+   }
+}

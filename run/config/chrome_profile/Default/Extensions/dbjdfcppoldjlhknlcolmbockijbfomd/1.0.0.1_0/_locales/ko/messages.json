@@ -1,0 +1,18 @@
+{
+   "ExtnDescription": {
+      "Description": "Extension Description",
+      "message": "기본 홈페이지 및 기본 검색 엔진으로 Microsoft Bing 설정"
+   },
+   "ExtnMarket": {
+      "Description": "Market",
+      "message": "ko-kr"
+   },
+   "ExtnName": {
+      "Description": "Extension name",
+      "message": "Bing Search 및 홈페이지"
+   },
+   "HomePage": {
+      "Description": "Homepage",
+      "message": "ko"
+   }
+}

@@ -1,0 +1,18 @@
+{
+   "ExtnDescription": {
+      "Description": "Extension Description",
+      "message": "Defineix el Microsoft Bing com a pàgina d'inici per defecte i motor de cerca per defecte"
+   },
+   "ExtnMarket": {
+      "Description": "Market",
+      "message": "ca-es"
+   },
+   "ExtnName": {
+      "Description": "Extension name",
+      "message": "Cerca del Bing i pàgina d'inici"
+   },
+   "HomePage": {
+      "Description": "Homepage",
+      "message": "ca"
+   }
+}

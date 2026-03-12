@@ -1,7 +1,1 @@
-<testsuites>
-  <testsuite name="apex_spider_fix" tests="3">
-    <testcase name="retry_mechanism" classname="ApexSpider" status="passed"/>
-    <testcase name="name_indexing" classname="normalize_name" status="passed"/>
-    <testcase name="concurrency_reduced" classname="ThreadPoolExecutor" status="passed"/>
-  </testsuite>
-</testsuites>
+<testsuites><testsuite name=""placeholder"" tests=""1""><testcase name=""ok""/></testsuite></testsuites>

@@ -1,0 +1,18 @@
+{
+   "ExtnDescription": {
+      "Description": "Extension Description",
+      "message": "A Microsoft Bing beállítása alapértelmezett kezdőlapként és alapértelmezett keresőmotorként"
+   },
+   "ExtnMarket": {
+      "Description": "Market",
+      "message": "hu-hu"
+   },
+   "ExtnName": {
+      "Description": "Extension name",
+      "message": "Bing Search és kezdőlap"
+   },
+   "HomePage": {
+      "Description": "Homepage",
+      "message": "hu"
+   }
+}

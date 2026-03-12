@@ -1,0 +1,18 @@
+{
+   "ExtnDescription": {
+      "Description": "Extension Description",
+      "message": "Microsoft Bing'i varsayılan giriş sayfanız ve varsayılan arama altyapınız olarak ayarlayın"
+   },
+   "ExtnMarket": {
+      "Description": "Market",
+      "message": "tr-tr"
+   },
+   "ExtnName": {
+      "Description": "Extension name",
+      "message": "Bing Arama ve Giriş Sayfası"
+   },
+   "HomePage": {
+      "Description": "Homepage",
+      "message": "tr"
+   }
+}

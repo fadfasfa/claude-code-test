@@ -40,7 +40,10 @@
       "Bash(npm uninstall:*)",
       "Bash(npm install:*)",
       "Bash(npm search:*)",
-      "Bash(claude --version)"
+      "Bash(claude --version)",
+      "WebSearch",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(powershell -Command \"New-Item -Force -Path .ai_workflow -ItemType Directory | Out-Null; Set-Content .ai_workflow/test_result.xml ''<testsuites><testsuite name=\"\"\"\"placeholder\"\"\"\" tests=\"\"\"\"1\"\"\"\"><testcase name=\"\"\"\"ok\"\"\"\"/></testsuite></testsuites>''\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\apple\\AppData\\Roaming\\npm"

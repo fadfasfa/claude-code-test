@@ -1,2 +1,5 @@
-2026/03/12-14:31:19.886 8da0 Creating DB c:\Users\apple\claudecode\run\config\chrome_profile\Default\Sync Data\LevelDB since it was missing.
-2026/03/12-14:31:19.891 8da0 Reusing MANIFEST c:\Users\apple\claudecode\run\config\chrome_profile\Default\Sync Data\LevelDB/MANIFEST-000001
+2026/03/12-15:04:55.397 6174 Creating DB C:\Users\apple\claudecode\run\config\chrome_profile\Default\Sync Data\LevelDB since it was missing.
+2026/03/12-15:04:55.403 6174 Reusing MANIFEST C:\Users\apple\claudecode\run\config\chrome_profile\Default\Sync Data\LevelDB/MANIFEST-000001
+2026/03/12-15:06:41.083 8aec Level-0 table #5: started
+2026/03/12-15:06:41.121 8aec Level-0 table #5: 145852 bytes OK
+2026/03/12-15:06:41.129 8aec Delete type=0 #3

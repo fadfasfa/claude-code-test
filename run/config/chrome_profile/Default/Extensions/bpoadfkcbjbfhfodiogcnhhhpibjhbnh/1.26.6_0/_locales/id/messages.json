@@ -1,0 +1,116 @@
+{
+   "PdfProFile": {
+      "message": "Terjemahan PDF Pro berbasis AI"
+   },
+   "babelDOC": {
+      "message": "BabelDOC Pertahankan Tata Letak PDF"
+   },
+   "brandDescription": {
+      "message": "Situs Terjemahan Gratis, Terjemahkan PDF & Epub eBook, Terjemahkan Subtitle Video dalam Bilingual"
+   },
+   "brandDescriptionForSafari": {
+      "message": "Situs Terjemahan Gratis, Terjemahkan PDF & Epub eBook, Terjemahkan Subtitle Video dalam Bilingual"
+   },
+   "brandName": {
+      "message": "Immersive Translate - Terjemahkan Web & PDF"
+   },
+   "openAboutPage": {
+      "message": "Tentang / Masukan/Sponsor"
+   },
+   "openAiWritingModal": {
+      "message": "Buka Modal AI Tulis"
+   },
+   "openEbookBuilder": {
+      "message": "Buat eBook EPUB Dwibahasa"
+   },
+   "openEbookViewer": {
+      "message": "Baca buku elektronik lokal"
+   },
+   "openOptionsPage": {
+      "message": "Buka Halaman Pengaturan"
+   },
+   "shortBrandName": {
+      "message": "Immersive Translate"
+   },
+   "textTranslate": {
+      "message": "Terjemahan Teks"
+   },
+   "toggleMouseHoverTranslateDirectly": {
+      "message": "Aktifkan atau nonaktifkan sementara terjemahan langsung saat mouse diarahkan ke halaman"
+   },
+   "toggleOnlyTransation": {
+      "message": "Beralih ke mode hanya terjemahan"
+   },
+   "toggleSidePanel": {
+      "message": "Buka/Tutup Panel Samping"
+   },
+   "toggleTranslatePage": {
+      "message": "Terjemahkan ke {targetLanguage}"
+   },
+   "toggleTranslatePageOfficialPage": {
+      "message": "Terjemahkan Halaman Web/Tampilkan Teks Asli"
+   },
+   "toggleTranslateTheMainPage": {
+      "message": "Terjemahkan halaman utama/Tampilkan teks asli"
+   },
+   "toggleTranslateTheWholePage": {
+      "message": "Terjemahkan seluruh halaman/Tampilkan teks asli"
+   },
+   "toggleTranslateToThePageEndImmediately": {
+      "message": "Langsung terjemahkan hingga bagian bawah halaman/Tampilkan teks asli"
+   },
+   "toggleTranslationMask": {
+      "message": "Alihkan efek blur pada teks terjemahan (mode belajar) untuk halaman saat ini"
+   },
+   "toggleVideoSubtitlePreTranslation": {
+      "message": "Beralih Subtitle Video dengan Fitur Immersive Translation"
+   },
+   "translateInputBox": {
+      "message": "Terjemahkan isi kotak input saat ini"
+   },
+   "translateLocalHtmlFile": {
+      "message": "Terjemahkan File HTML/txt"
+   },
+   "translateLocalPdfFile": {
+      "message": "Terjemahkan File PDF lokal"
+   },
+   "translateLocalSubtitleFile": {
+      "message": "Terjemahkan File Subtitle Lokal"
+   },
+   "translateMangaMenuId": {
+      "message": "Terjemahkan gambar/pulihkan gambar"
+   },
+   "translateText": {
+      "message": "Terjemahkan \"{text}\""
+   },
+   "translateWithBing": {
+      "message": "Terjemahkan halaman saat ini dengan Microsoft Translator"
+   },
+   "translateWithClaude": {
+      "message": "Gunakan Claude sementara untuk menerjemahkan halaman saat ini."
+   },
+   "translateWithCustom1": {
+      "message": "Gunakan sementara layanan terjemahan kustom untuk menerjemahkan halaman saat ini(1)"
+   },
+   "translateWithCustom2": {
+      "message": "Gunakan sementara layanan terjemahan kustom untuk menerjemahkan halaman saat ini(2)"
+   },
+   "translateWithCustom3": {
+      "message": "Gunakan sementara layanan terjemahan kustom untuk menerjemahkan halaman saat ini(3)"
+   },
+   "translateWithDeepL": {
+      "message": "Terjemahkan halaman saat ini dengan DeepL"
+   },
+   "translateWithGemini": {
+      "message": "Terjemahkan halaman saat ini dengan Gemini"
+   },
+   "translateWithGoogle": {
+      "message": "Terjemahkan halaman saat ini dengan Google"
+   },
+   "translateWithOpenAI": {
+      "message": "Terjemahkan halaman saat ini dengan OpenAI"
+   },
+   "translateWithTransmart": {
+      "message": "Terjemahkan halaman saat ini dengan Tencent Translator"
+   }
+}

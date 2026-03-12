@@ -1,0 +1,47 @@
+{
+   "action": {
+      "default_icon": {
+         "128": "src/icon/logo_128.png"
+      }
+   },
+   "background": {
+      "service_worker": "service-worker-loader.js",
+      "type": "module"
+   },
+   "content_scripts": [ {
+      "all_frames": false,
+      "css": [ "assets/index-B5Hq_dWx.css" ],
+      "js": [ "assets/index.ts-loader-CqamP8g4.js" ],
+      "matches": [ "https://www.youtube.com/*", "https://chat.openai.com/*" ],
+      "run_at": "document_end"
+   } ],
+   "default_locale": "en",
+   "description": "__MSG_shortDesc__",
+   "externally_connectable": {
+      "matches": [ "https://yt-to-text.com/*" ]
+   },
+   "host_permissions": [ "https://www.youtube.com/*" ],
+   "icons": {
+      "128": "src/icon/logo_128.png",
+      "16": "src/icon/logo_16.png",
+      "48": "src/icon/logo_48.png",
+      "64": "src/icon/logo_64.png",
+      "96": "src/icon/logo_96.png"
+   },
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0rmMDfg8uyg+/odYg9GCQQlfchvSimbZ4oZJ840qXadAFpSvfHiWIzin/TU2jwLCo+PMtFZhIcg7b0eoDLKUsLz7rog8ZZosakpxPIODPYi523EdOgVWZNG+N6TDC9fn6SY4/g/ozb9mv34XD3m7oeVRrl7B+jFwF+15R+JvBIgUejG8p7gZUBLoPMDwW+gNrw01/rj0AfSs1zafgp3vxqDWvCIJPyUhqWNJ8PxwUgUfImLcMxp2aGthd47pslbWi20UHAyT1Jh/mCHxcoDfaJChYxQftiAXIEcgMG7VqTKXPakVjy45lClXm99jysKfDxV0qXZ87p7MVUIb6lM6gQIDAQAB",
+   "manifest_version": 3,
+   "name": "__MSG_appName__",
+   "oauth2": {
+      "client_id": "529109100933-9bt73c55glc5lg7j6jk714udlebt2fc5.apps.googleusercontent.com",
+      "scopes": [ "https://www.googleapis.com/auth/userinfo.email" ]
+   },
+   "permissions": [ "identity", "storage", "scripting" ],
+   "update_url": "https://clients2.google.com/service/update2/crx",
+   "version": "0.0.6.0",
+   "version_name": "0.0.6",
+   "web_accessible_resources": [ {
+      "matches": [ "https://chat.openai.com/*", "https://www.youtube.com/*" ],
+      "resources": [ "assets/chunk-QIZ4XBKF-VRnrky6M.js", "assets/index.ts-BCcDxTVs.js" ],
+      "use_dynamic_url": false
+   } ]
+}
