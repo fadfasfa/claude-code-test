@@ -1,4 +1,4 @@
-﻿#Requires -RunAsAdministrator
+#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
     Hextech Nexus - Core Infrastructure Unlock (V5.3)
@@ -20,7 +20,7 @@ $ErrorActionPreference = "Stop"
 
 # --- V5.3 配置区 ---
 $protectedDirs  = @(".git\hooks")
-$protectedFiles = @("Lock-Core.ps1", "Unlock-Core.ps1", "uat_pass.ps1", "run_verification.ps1")
+$protectedFiles = @("Lock-Core.ps1", "Unlock-Core.ps1", "run_verification.ps1") # uat_pass.ps1 已随 UAT 机制废除（V5.3）
 $auditLogFile   = ".ai_workflow\audit_log.txt"
 $legacyItems    = @("agents.md", ".ai_workflow") # 用于清理 V5.1/V5.2 遗留锁
 

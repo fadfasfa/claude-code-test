@@ -266,8 +266,18 @@
 
         // 渲染海克斯列表行（紧凑型五列布局）
         function createHextechCard(hextech, index) {
-            const iconUrl = hextech.icon || `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/chest.png`;
+            let iconFilename = window.augmentIconMap ? window.augmentIconMap[hextech.海克斯名称] : null;
+            if (!iconFilename) {
+                 const cleanName = hextech.海克斯名称.toLowerCase().replace(/[^a-z0-9]/g, '');
+                 iconFilename = `${cleanName}.png`;
+            }
+            const iconUrl = hextech.icon || `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/${encodeURIComponent(iconFilename)}`;
             const tierClass = getTierBarClass(hextech.海克斯阶级);
+
+            let iconBgClass = 'bg-[#181a26]';
+            if (hextech.海克斯阶级.includes('棱彩') || hextech.海克斯阶级 === 'Prismatic') iconBgClass = 'bg-gradient-to-br from-[#2bd5c2]/30 to-[#2bd5c2]/5';
+            else if (hextech.海克斯阶级.includes('金') || hextech.海克斯阶级 === 'Gold') iconBgClass = 'bg-gradient-to-br from-[#d4af37]/30 to-[#d4af37]/5';
+            else if (hextech.海克斯阶级.includes('银') || hextech.海克斯阶级 === 'Silver') iconBgClass = 'bg-gradient-to-br from-[#8c9ba5]/30 to-[#8c9ba5]/5';
 
             const wr = (hextech.海克斯胜率 * 100).toFixed(1);
             const pr = (hextech.海克斯出场率 * 100).toFixed(1);
@@ -290,20 +300,15 @@
                              const tier = this.dataset.hextechTier || '';
                              const name = this.dataset.hextechName || '';
                              if (stage === '0') {
-                                 // Stage 1: 尝试 CommunityDragon CDN（标准化路径格式）
-                                 const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-                                 this.src = 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/' + cleanName + '.png';
-                                 this.dataset.fallbackStage = '1';
-                             } else if (stage === '1') {
-                                 // Stage 2: Canvas 动态渲染几何图案
+                                 // Stage 1: Canvas 动态渲染几何图案
                                  if (window.handleAssetMissing) {
                                      window.handleAssetMissing(this, name, 'hextech', tier);
                                  }
-                                 this.dataset.fallbackStage = '2';
+                                 this.dataset.fallbackStage = '1';
                                  this.onerror = null;
                              }
                          }).call(this)"
-                         class="w-10 h-10 rounded-lg border border-gray-600 object-cover bg-gray-900 flex-shrink-0 shadow-md">
+                         class="w-10 h-10 rounded-lg border border-gray-600 object-cover ${iconBgClass} flex-shrink-0 shadow-md">
                 </div>
 
                 <!-- 列4：海克斯名称 (flex-1 truncate) -->
@@ -423,16 +428,28 @@
                     
                     let author = "佚名";
                     let content = "";
+                    let isOriginal = false;
 
                     // 解析作者与描述内容
                     if (parts.length > 5) {
                         const nextPart = parts[5];
-                        if (nextPart.startsWith('作者：')) {
+                        let contentStartIndex = 5;
+                        if (nextPart.startsWith('作者：') || nextPart.startsWith('作者:')) {
                             author = nextPart.substring(3).trim();
-                            content = parts.slice(6).join(' | ');
-                        } else {
-                            content = parts.slice(5).join(' | ');
+                            contentStartIndex = 6;
+                            if (parts.length > 6 && parts[6] === '原创') {
+                                isOriginal = true;
+                                contentStartIndex = 7;
+                            }
+                        } else if (nextPart === '原创') {
+                            isOriginal = true;
+                            contentStartIndex = 6;
+                            if (parts.length > 6 && (parts[6].startsWith('作者：') || parts[6].startsWith('作者:'))) {
+                                author = parts[6].substring(3).trim();
+                                contentStartIndex = 7;
+                            }
                         }
+                        content = parts.slice(contentStartIndex).join(' | ');
                     }
 
                     // 级别权重映射
@@ -459,6 +476,7 @@
                         upvotes: upvotes,
                         downvotes: downvotes,
                         author: author,
+                        isOriginal: isOriginal,
                         content: content,
                         fallbackScore: fallbackScore
                     };
@@ -486,68 +504,117 @@
                 }
 
                 // 评级颜色逻辑
-                let badgeClass = 'bg-gray-700 text-gray-200';
-                if (item.gradeScore >= 5) badgeClass = 'bg-gradient-to-r from-yellow-500 to-yellow-600 text-yellow-50 font-bold'; // SS / S
-                else if (item.gradeScore === 4) badgeClass = 'bg-gradient-to-r from-purple-500 to-purple-600 text-white font-bold'; // A
-                else if (item.gradeScore === 3) badgeClass = 'bg-gradient-to-r from-blue-500 to-blue-600 text-white font-bold'; // B
-                else if (item.gradeScore <= 2) badgeClass = 'bg-red-900/80 text-red-200 border-red-700 border'; // C / D 陷阱
+                let badgeBg = 'bg-[#8c9ba5]';
+                let badgeText = 'text-[#000000]';
+                if (item.gradeScore >= 5) {
+                    badgeBg = 'bg-[#ebd55b]';
+                    badgeText = 'text-[#000000]';
+                } else if (item.gradeScore === 4) {
+                    badgeBg = 'bg-[#9a73d1]';
+                    badgeText = 'text-[#ffffff]';
+                } else if (item.gradeScore === 3) {
+                    badgeBg = 'bg-[#4b7cf3]';
+                    badgeText = 'text-[#ffffff]';
+                }
 
                 // 阶级图床地址预测渲染
-                const cleanName = item.name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '');
-                const iconUrl = `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/${encodeURIComponent(item.name.toLowerCase().replace(/[^a-z0-9]/g, ''))}.png`;
+                let iconFilename = window.augmentIconMap ? window.augmentIconMap[item.name] : null;
+                if (!iconFilename) iconFilename = `${item.name.toLowerCase().replace(/[^a-z0-9]/g, '')}.png`;
+                const iconUrl = `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/${encodeURIComponent(iconFilename)}`;
 
-                const bgAccent = item.gradeScore >= 5 ? 'bg-[rgba(234,179,8,0.03)] border-yellow-500/20' : 'bg-[#181825] border-gray-800';
+                // 不同评阶图标的发光效果与内部填充底色
+                let iconBorderColor = 'border-gray-500';
+                let iconBgClass = 'bg-[#0a0a0f]';
+                if (item.tier.includes('棱彩') || item.tier === 'Prismatic') {
+                    iconBorderColor = 'border-[#2bd5c2]';
+                    iconBgClass = 'bg-gradient-to-br from-[#2bd5c2]/30 to-[#0a0a0f]';
+                }
+                else if (item.tier.includes('金') || item.tier === 'Gold') {
+                    iconBorderColor = 'border-[#d4af37]';
+                    iconBgClass = 'bg-gradient-to-br from-[#d4af37]/30 to-[#0a0a0f]';
+                }
+                else if (item.tier.includes('银') || item.tier === 'Silver') {
+                    iconBorderColor = 'border-[#8c9ba5]';
+                    iconBgClass = 'bg-gradient-to-br from-[#8c9ba5]/30 to-[#0a0a0f]';
+                }
+
+                // 标签上色辅助函数
+                const getTagStyle = (tag) => {
+                    if (tag.includes('强力联动')) return 'border border-[#2bd5c2]/40 text-[#2bd5c2] bg-[#2bd5c2]/10';
+                    if (tag.includes('娱乐')) return 'border border-[#9a73d1]/40 text-[#9a73d1] bg-[#9a73d1]/10';
+                    if (tag.includes('陷阱')) return 'border border-[#e28544]/40 text-[#e28544] bg-[#e28544]/10';
+                    return 'border border-gray-500/40 text-gray-400 bg-gray-500/10';
+                };
 
                 return `
-                    <div class="flex flex-col p-4 rounded-xl border ${bgAccent} hover:border-blue-500/40 transition-colors gap-3 relative overflow-hidden group">
-                        
-                        <div class="flex justify-between items-start">
-                            <div class="flex items-center gap-3">
-                                <!-- 图标 -->
-                                <div class="relative w-12 h-12 flex-shrink-0">
-                                    <div class="absolute inset-0 bg-gradient-to-br from-gray-700 to-gray-900 rounded-lg"></div>
-                                    <img src="${iconUrl}" 
-                                         alt="${item.name}" 
-                                         class="absolute inset-0 w-full h-full object-cover rounded-lg border border-gray-600 shadow-sm"
-                                         onerror="this.style.display='none'">
-                                </div>
-                                <!-- 名称与阶层 -->
-                                <div class="flex flex-col justify-center">
-                                    <div class="text-base font-bold text-gray-100">${item.name}</div>
-                                    <div class="text-xs text-gray-500">${item.tier}</div>
-                                </div>
-                            </div>
-                            
-                            <!-- 赞踩与作者信息区 -->
-                            <div class="flex flex-col items-end gap-1">
-                                <div class="flex items-center gap-2 bg-black/40 px-2 py-1 rounded-full border border-gray-700/50">
-                                    <div class="flex items-center gap-1 text-green-400 text-xs font-semibold">
-                                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z"></path></svg>
-                                        ${item.upvotes}
-                                    </div>
-                                    <span class="w-px h-3 bg-gray-600"></span>
-                                    <div class="flex items-center gap-1 text-red-400 text-xs font-semibold">
-                                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M18 9.5a1.5 1.5 0 11-3 0v-6a1.5 1.5 0 013 0v6zM14 9.667v-5.43a2 2 0 00-1.105-1.79l-.05-.025A4 4 0 0011.055 2H5.64a2 2 0 00-1.962 1.608l-1.2 6A2 2 0 004.44 12H8v4a2 2 0 002 2 1 1 0 001-1v-.667a4 4 0 01.8-2.4l1.4-1.866a4 4 0 00.8-2.4z"></path></svg>
-                                        ${item.downvotes}
-                                    </div>
-                                </div>
-                                ${item.author !== '佚名' ? `<div class="text-[10px] text-gray-500 mt-1">作者: ${item.author}</div>` : ''}
-                            </div>
-                        </div>
+<div class="p-[1px] bg-[#202738] mb-4" style="clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));">
+    <div class="bg-[#0b0e14] p-5 flex gap-4" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px)); min-height: 110px;">
+        
+        <!-- 左侧 Icon -->
+        <div class="w-14 h-14 flex-shrink-0 border-2 ${iconBorderColor} p-[1.5px] bg-[#0a0a0f] rounded-lg relative">
+            <img src="${iconUrl}" 
+                 data-hextech-name="${item.name}"
+                 data-hextech-tier="${item.tier}"
+                 class="w-full h-full object-cover rounded-[5px] ${iconBgClass}"
+                 onerror="(() => {
+                     let stage = this.dataset.fallbackStage || '0';
+                     const tier = this.dataset.hextechTier || '';
+                     const name = this.dataset.hextechName || '';
+                     if (stage === '0') {
+                         if (window.handleAssetMissing) {
+                             window.handleAssetMissing(this, name, 'hextech', tier);
+                         }
+                         this.dataset.fallbackStage = '1';
+                         this.onerror = null;
+                     }
+                 }).call(this)">
+        </div>
 
-                        <!-- 评级和标签行 -->
-                        <div class="flex items-center gap-2 mt-1">
-                            <span class="px-2 py-0.5 rounded shadow-sm text-xs ${badgeClass}">${item.grade}评估</span>
-                            ${item.tags.map(tag => `
-                                <span class="px-2 py-0.5 rounded border border-blue-500/30 bg-blue-900/20 text-blue-300 text-xs shadow-sm">${tag}</span>
-                            `).join('')}
+        <!-- 右侧内容列 -->
+        <div class="flex flex-col flex-grow">
+            <!-- 头部（名称、标签、赞踩与作者） -->
+            <div class="flex items-start justify-between w-full">
+                
+                <!-- 名、阶梯与标签 -->
+                <div class="flex flex-col">
+                    <div class="flex items-center gap-2.5 flex-wrap">
+                        <span class="text-white text-[16px] font-bold tracking-wide leading-none">${item.name}</span>
+                        <div class="${badgeBg} px-1.5 h-[20px] rounded flex items-center shadow-sm">
+                            <span class="${badgeText} text-[11px] font-black">${item.grade}</span>
+                            <span class="${badgeText} opacity-70 text-[10px] font-black ml-[1px] pt-[1px]">?</span>
                         </div>
+                        ${item.tags.map(tag => `<div class="${getTagStyle(tag)} px-1.5 h-[20px] rounded flex items-center text-[10px] font-bold">${tag}</div>`).join('')}
+                    </div>
+                    <div class="text-[#8c9ba5] text-[11px] mt-1.5 leading-none">
+                        ${item.tier}
+                    </div>
+                </div>
 
-                        <!-- 正文描述 -->
-                        <div class="text-sm text-gray-300 leading-relaxed mt-1 break-words">
-                            ${escapeHtml(item.content)}
+                <!-- 赞踩与作者 -->
+                <div class="flex items-center gap-3 mt-[-2px]">
+                    <div class="flex items-center bg-[#1e2333] border border-[#2a3040] rounded-full overflow-hidden h-[24px]">
+                        <div class="flex items-center gap-1.5 px-3 h-full border-r border-[#2a3040]">
+                            <svg class="w-3.5 h-3.5 text-[#507c59] fill-current" viewBox="0 0 16 16"><path d="M3 1.5A.5.5 0 0 1 3.5 1h9a.5.5 0 0 1 .4.82l-2 2.68 2 2.68a.5.5 0 0 1-.4.82h-9v6.5a.5.5 0 0 1-1 0v-13z"/></svg>
+                            <span class="text-[#8c9ba5] text-[12px] font-medium pt-0.5">${item.upvotes}</span>
+                        </div>
+                        <div class="flex items-center gap-1.5 px-3 h-full">
+                            <svg class="w-3.5 h-3.5 text-[#c29845] fill-current" viewBox="0 0 16 16"><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.605.69-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                            <span class="text-[#8c9ba5] text-[12px] font-medium pt-0.5">${item.downvotes}</span>
                         </div>
                     </div>
+                    ${item.author ? `<div class="text-[#8c9ba5] text-[12px] flex items-center">作者: ${item.author} ${item.isOriginal ? '<span class="bg-[#ebd55b] text-black px-1 py-[1px] rounded-[3px] ml-1.5 text-[10px] font-black tracking-wide leading-none pt-[3px]">原创</span>' : ''}</div>` : ''}
+                </div>
+
+            </div>
+
+            <!-- 正文 -->
+            <div class="text-[#b3b9c6] text-[14px] leading-relaxed mt-3 w-content">
+                ${escapeHtml(item.content)}
+            </div>
+
+        </div>
+    </div>
+</div>
                 `;
             }).join('');
 
@@ -561,15 +628,17 @@
                 return;
             }
             try {
-                // 并行加载海克斯数据和联动数据
-                const [hextechRes, synergyRes] = await Promise.all([
+                // 并行加载海克斯数据、联动数据、图标映射字典
+                const [hextechRes, synergyRes, iconMapRes] = await Promise.all([
                     fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/hextechs`),
-                    fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId || hero)}`)
+                    fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId || hero)}`),
+                    fetch(`${API_BASE}/api/augment_icon_map`)
                 ]);
 
                 hextechData = await hextechRes.json();
                 const synergyResult = await synergyRes.json();
                 synergyData = synergyResult.synergies || [];
+                window.augmentIconMap = await iconMapRes.json();
 
                 // ✅ 初始化 activeArray（默认综合推荐模式）
                 activeArray = hextechData.comprehensive || [];

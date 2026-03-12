@@ -539,6 +539,18 @@ async def api_champion_hextechs(name: str):
     df = get_df()
     return JSONResponse(content=process_hextechs_data(df, name))
 
+@app.get("/api/augment_icon_map")
+async def api_augment_icon_map():
+    """获取海克斯图标映射文件。"""
+    try:
+        icon_map_path = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
+        with open(icon_map_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return JSONResponse(content=data)
+    except Exception as e:
+        logger.warning(f"读取 Augment_Icon_Map.json 失败：{e}")
+        return JSONResponse(content={})
+
 @app.get("/api/synergies/{champ_id}")
 async def api_synergies(champ_id: str):
     """获取英雄协同数据 API。读取 Champion_Synergy.json 返回对应英雄的 synergies 列表。

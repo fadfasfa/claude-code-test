@@ -219,8 +219,8 @@
                 const champs = tierGroups[tier.id];
                 if (champs.length === 0) return;
 
-                const grayscaleClass = tier.id === 't3' ? 'grayscale-[30%]' : tier.id === 't4' ? 'grayscale-[70%]' : '';
-                const opacityClass = tier.id === 't3' ? 'opacity-80' : tier.id === 't4' ? 'opacity-60' : '';
+                const grayscaleClass = '';
+                const opacityClass = '';
 
                 const champHTML = champs.map((c, i) => createChampionCard(c, i)).join('');
 

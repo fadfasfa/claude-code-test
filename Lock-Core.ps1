@@ -1,4 +1,4 @@
-﻿#Requires -RunAsAdministrator
+#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
     Hextech Nexus - Core Infrastructure Lock (V5.3)
@@ -19,7 +19,7 @@ $ErrorActionPreference = "Stop"
 
 # --- V5.3 配置区 ---
 $protectedDirs  = @(".git\hooks")  # 已移除 .ai_workflow
-$protectedFiles = @("Lock-Core.ps1", "Unlock-Core.ps1", "uat_pass.ps1", "run_verification.ps1") # 已移除 agents.md
+$protectedFiles = @("Lock-Core.ps1", "Unlock-Core.ps1", "run_verification.ps1") # 已移除 agents.md / uat_pass.ps1（V5.3 UAT废除）
 $auditLogFile   = ".ai_workflow\audit_log.txt"
 
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name

@@ -1,4 +1,4 @@
-# run_verification.ps1 — Hextech Nexus 验证 Wrapper V5.2
+# run_verification.ps1 — Hextech Nexus 验证 Wrapper V5.3
 # 用法：.\run_verification.ps1 -Caller executor
 # 职责：读取 Verification_Command → 追加 junitxml → 执行 → 更新 runtime_state.json
 
