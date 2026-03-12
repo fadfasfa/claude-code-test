@@ -619,5 +619,47 @@ async def websocket_endpoint(ws: WebSocket):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def _open_chrome():
+    """在 Chrome 中打开应用，支持远程调试端口 9222。"""
+    import subprocess
+    import sys
+
+    chrome_path = None
+
+    # Windows Chrome 路径候选
+    chrome_candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe",
+        r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe",
+        r"%PROGRAMFILES(x86)%\Google\Chrome\Application\chrome.exe",
+    ]
+
+    for path in chrome_candidates:
+        expanded = os.path.expandvars(path)
+        if os.path.exists(expanded):
+            chrome_path = expanded
+            break
+
+    if chrome_path:
+        url = f"http://127.0.0.1:{SERVER_PORT}"
+        try:
+            # 启动 Chrome，启用远程调试端口 9222
+            subprocess.Popen([
+                chrome_path,
+                f"--remote-debugging-port=9222",
+                f"--user-data-dir={os.path.join(CONFIG_DIR, 'chrome_profile')}",
+                url
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logger.info(f"Chrome 已启动: {url} (远程调试: 9222)")
+        except Exception as e:
+            logger.warning(f"无法启动 Chrome: {e}")
+    else:
+        logger.warning("未找到 Chrome 安装路径，使用系统默认浏览器")
+        webbrowser.open(f"http://127.0.0.1:{SERVER_PORT}")
+
+
 if __name__ == "__main__":
+    # 在启动服务器前打开 Chrome
+    _open_chrome()
     uvicorn.run("web_server:app", host="127.0.0.1", port=SERVER_PORT, reload=False)

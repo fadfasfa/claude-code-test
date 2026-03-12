@@ -13,7 +13,11 @@
       "Bash(git commit:*)",
       "Bash(npm show:*)",
       "Bash(git config --list)",
-      "Bash(test -f scripts/gemini_reviewer.py)"
+      "Bash(test -f scripts/gemini_reviewer.py)",
+      "Bash(chrome:*)",
+      "Bash(start:*)",
+      "Bash(powershell -Command \"Start-Process chrome:*)",
+      "Bash(gitnexus impact:*)"
     ]
   }
 }

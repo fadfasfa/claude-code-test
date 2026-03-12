@@ -33,7 +33,17 @@
       "Bash(git checkout -b ai-task-web-redirect-20260309)",
       "Bash(git add run/hextech_ui.py run/web_server.py run/static/detail.html run/static/index.html)",
       "Bash(git checkout:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Read(//c/Users/apple/AppData/Roaming/npm/node_modules/gitnexus/**)",
+      "Read(//c/Users/apple/AppData/Roaming/npm/**)",
+      "Bash(~/AppData/Roaming/npm/gitnexus --help)",
+      "Bash(npm uninstall:*)",
+      "Bash(npm install:*)",
+      "Bash(npm search:*)",
+      "Bash(claude --version)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\apple\\AppData\\Roaming\\npm"
     ]
   }
 }
