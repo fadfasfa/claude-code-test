@@ -1,11 +1,12 @@
 {
-    "schema_version":  "5.2",
-    "workflow_id":  "wf-fix-spider-incomplete-20260309",
-    "execution_status":  "completed",
-    "audit_status":  "idle",
-    "uat_status":  "passed",
-    "merge_status":  "ready",
-    "retry_count":  0,
-    "verification_result":  "passed",
-    "verification_artifact":  ".ai_workflow/test_result.xml"
+  "workflow_id": "wf-sec-tighten-20260311",
+  "execution_status": "in_progress",
+  "current_step": 1,
+  "verification_result": "not_run",
+  "verification_artifact": "",
+  "audit_status": "pending",
+  "merge_status": "pending",
+  "retry_count": 0,
+  "uat_status": "not_started",
+  "last_updated": "2026-03-11T21:14:25+08:00"
 }

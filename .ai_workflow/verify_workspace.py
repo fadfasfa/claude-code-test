@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 
 # --- 路径配置 ---
-REPO_ROOT = Path(__file__).resolve().parent  # 脚本部署于项目根目录
+REPO_ROOT = Path(__file__).resolve().parent.parent  # 脚本部署于 .ai_workflow/ 子目录，上溯一级至项目根
 AGENTS_MD = REPO_ROOT / "agents.md"
 WORKFLOW_DIR = REPO_ROOT / ".ai_workflow"
 CONTRACT_HASH_FILE = WORKFLOW_DIR / ".contract_hash"
