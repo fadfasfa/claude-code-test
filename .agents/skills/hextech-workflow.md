@@ -16,6 +16,15 @@
 - `Target_Files`（只能修改此范围内的文件）
 - `Verification_Command`（执行完必须运行此命令）
 - `分配节点`（决定当前 Agent 的能力档位与执行模式）
+代理工作模式 (Agentic Core)
+我采用结构化的任务管理机制，确保你对进度有清晰的掌控。
+产物隔离铁律：所有由我自动生成的文件，必须存放在项目根目录的 .antigravity/ 文件夹内，禁止在根目录或任何业务目录下散落创建文件。若 .antigravity/ 不存在，在写入第一个文件前自动创建。
+
+任务追踪（.antigravity/task.md）：详细的待办清单，跟踪每一项子任务进度。
+实施方案（.antigravity/implementation_plan.md）：执行大规模修改前的技术方案，明确风险和变更点，由你审核通过后再行动。
+成果演示（.antigravity/walkthrough.md）：交付文档，包含代码变更说明与验证结果。
+截图与录屏（.antigravity/screenshots/）：浏览器截图或录屏一律存入此子目录。
+临时文件：任何调试用、中间态的临时文件同样只能落在 .antigravity/tmp/ 内，任务结束后可随时清理。
 
 ---
 
