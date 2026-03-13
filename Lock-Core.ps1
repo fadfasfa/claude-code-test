@@ -79,6 +79,18 @@ foreach ($dir in $protectedDirs) {
     }
 }
 
+
+# --- 阶段 2b: .git/hooks/ 追加 Deny-Write（防止执行节点写入恶意钩子）---
+Write-Step "阶段 2b: 配置 .git/hooks/ Deny-Write 规则..."
+$hooksDir = ".git\\hooks"
+if (Test-Path $hooksDir) {
+    if ($WhatIf) { Write-WhatIf "icacls \"$hooksDir\" /deny \"*S-1-1-0:(OI)(CI)W,AD,WD\"" }
+    else {
+        icacls $hooksDir /deny "*S-1-1-0:(OI)(CI)W,AD,WD" /q | Out-Null
+        Write-Step "  Deny-Write(OI)(CI) -> .git/hooks/" "Green"
+    }
+} else { Write-Step "  [SKIP] .git/hooks/ 不存在" "Yellow" }
+
 # --- 阶段 3: audit_log.txt 仅追加模式 ---
 Write-Step "阶段 3: 配置 $auditLogFile 仅追加权限..."
 # 确保文件存在，防止空跑报错

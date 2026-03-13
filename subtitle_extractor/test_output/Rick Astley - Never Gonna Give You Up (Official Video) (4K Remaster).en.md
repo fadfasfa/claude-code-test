@@ -1,0 +1,246 @@
+# 视频字幕
+
+## [00:00:01.360 - 00:00:03.040]
+
+[♪♪♪]
+
+## [00:00:18.640 - 00:00:21.880]
+
+♪ We're no strangers to love ♪
+
+## [00:00:22.640 - 00:00:26.960]
+
+♪ You know the rules and so do I ♪
+
+## [00:00:27.040 - 00:00:31.040]
+
+♪ A full commitment's what I'm thinking of ♪
+
+## [00:00:31.120 - 00:00:35.080]
+
+♪ You wouldn't get this from any other guy ♪
+
+## [00:00:35.160 - 00:00:39.520]
+
+♪ I just wanna tell you how I'm feeling ♪
+
+## [00:00:40.520 - 00:00:42.920]
+
+♪ Gotta make you understand ♪
+
+## [00:00:43.000 - 00:00:45.120]
+
+♪ Never gonna give you up ♪
+
+## [00:00:45.200 - 00:00:47.080]
+
+♪ Never gonna let you down ♪
+
+## [00:00:47.320 - 00:00:51.120]
+
+♪ Never gonna run around and desert you ♪
+
+## [00:00:51.480 - 00:00:53.480]
+
+♪ Never gonna make you cry ♪
+
+## [00:00:53.600 - 00:00:55.520]
+
+♪ Never gonna say goodbye ♪
+
+## [00:00:55.720 - 00:00:59.360]
+
+♪ Never gonna tell a lie and hurt you ♪
+
+## [00:01:00.800 - 00:01:04.800]
+
+♪ We've known each other for so long ♪
+
+## [00:01:04.880 - 00:01:09.040]
+
+♪ Your heart's been aching but you're too shy to say it ♪
+
+## [00:01:09.120 - 00:01:12.960]
+
+♪ Inside we both know what's been going ♪
+
+## [00:01:13.360 - 00:01:17.200]
+
+♪ We know the game and we're gonna play it ♪
+
+## [00:01:17.400 - 00:01:22.040]
+
+♪ And if you ask me how I'm feeling ♪
+
+## [00:01:22.400 - 00:01:25.240]
+
+♪ Don't tell me you're too blind to see ♪
+
+## [00:01:25.320 - 00:01:27.280]
+
+♪ Never gonna give you up ♪
+
+## [00:01:27.360 - 00:01:29.320]
+
+♪ Never gonna let you down ♪
+
+## [00:01:29.440 - 00:01:33.720]
+
+♪ Never gonna run around and desert you ♪
+
+## [00:01:33.800 - 00:01:35.600]
+
+♪ Never gonna make you cry ♪
+
+## [00:01:35.760 - 00:01:38.000]
+
+♪ Never gonna say goodbye ♪
+
+## [00:01:38.080 - 00:01:42.040]
+
+♪ Never gonna tell a lie and hurt you ♪
+
+## [00:01:42.200 - 00:01:44.120]
+
+♪ Never gonna give you up ♪
+
+## [00:01:44.280 - 00:01:46.360]
+
+♪ Never gonna let you down ♪
+
+## [00:01:46.480 - 00:01:50.080]
+
+♪ Never gonna run around and desert you ♪
+
+## [00:01:50.760 - 00:01:52.720]
+
+♪ Never gonna make you cry ♪
+
+## [00:01:52.800 - 00:01:54.680]
+
+♪ Never gonna say goodbye ♪
+
+## [00:01:54.960 - 00:01:58.760]
+
+♪ Never gonna tell a lie and hurt you ♪
+
+## [00:01:59.840 - 00:02:02.960]
+
+♪ (Ooh, give you up) ♪
+
+## [00:02:03.720 - 00:02:07.360]
+
+♪ (Ooh, give you up) ♪
+
+## [00:02:08.480 - 00:02:10.120]
+
+♪ Never gonna give, never gonna give ♪
+
+## [00:02:10.240 - 00:02:11.560]
+
+♪ (Give you up) ♪
+
+## [00:02:12.480 - 00:02:14.240]
+
+♪ Never gonna give, never gonna give ♪
+
+## [00:02:14.360 - 00:02:15.920]
+
+♪ (Give you up) ♪
+
+## [00:02:16.760 - 00:02:21.080]
+
+♪ We've known each other for so long ♪
+
+## [00:02:21.200 - 00:02:25.200]
+
+♪ Your heart's been aching but you're too shy to say it ♪
+
+## [00:02:25.280 - 00:02:29.120]
+
+♪ Inside we both know what's been going ♪
+
+## [00:02:29.520 - 00:02:33.200]
+
+♪ We know the game and we're gonna play it ♪
+
+## [00:02:33.360 - 00:02:38.040]
+
+♪ I just wanna tell you how I'm feeling ♪
+
+## [00:02:38.640 - 00:02:41.320]
+
+♪ Gotta make you understand ♪
+
+## [00:02:41.400 - 00:02:43.360]
+
+♪ Never gonna give you up ♪
+
+## [00:02:43.440 - 00:02:45.640]
+
+♪ Never gonna let you down ♪
+
+## [00:02:45.720 - 00:02:49.720]
+
+♪ Never gonna run around and desert you ♪
+
+## [00:02:49.800 - 00:02:51.640]
+
+♪ Never gonna make you cry ♪
+
+## [00:02:51.800 - 00:02:53.960]
+
+♪ Never gonna say goodbye ♪
+
+## [00:02:54.040 - 00:02:57.600]
+
+♪ Never gonna tell a lie and hurt you ♪
+
+## [00:02:58.200 - 00:03:00.240]
+
+♪ Never gonna give you up ♪
+
+## [00:03:00.320 - 00:03:02.440]
+
+♪ Never gonna let you down ♪
+
+## [00:03:02.520 - 00:03:06.640]
+
+♪ Never gonna run around and desert you ♪
+
+## [00:03:06.720 - 00:03:08.720]
+
+♪ Never gonna make you cry ♪
+
+## [00:03:08.840 - 00:03:10.720]
+
+♪ Never gonna say goodbye ♪
+
+## [00:03:10.840 - 00:03:15.200]
+
+♪ Never gonna tell a lie and hurt you ♪
+
+## [00:03:15.280 - 00:03:17.120]
+
+♪ Never gonna give you up ♪
+
+## [00:03:17.200 - 00:03:19.240]
+
+♪ Never gonna let you down ♪
+
+## [00:03:19.400 - 00:03:23.120]
+
+♪ Never gonna run around and desert you ♪
+
+## [00:03:23.360 - 00:03:25.600]
+
+♪ Never gonna make you cry ♪
+
+## [00:03:25.680 - 00:03:27.840]
+
+♪ Never gonna say goodbye ♪
+
+## [00:03:27.920 - 00:03:31.320]
+
+♪ Never gonna tell a lie and hurt you ♪
+

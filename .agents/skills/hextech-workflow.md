@@ -153,12 +153,32 @@ $yc | ConvertTo-Json -Depth 5 | Set-Content .ai_workflow/yellow_cards.json
 
 ## 协议 4 — 完工验证与交权
 
+> **副作用清理**：由 Node C 在审计打回/熔断时执行 `git clean -fd` 统一清除，执行节点不承担此职责。
+
 ```powershell
 .\run_verification.ps1 -Caller executor
 ```
 
-- exit 0 → `[STAGE: EXECUTION_DONE]`，**主动退出进程**
-- exit 非0，自修复 < 3 次 → `[THOUGHT: SELF-FIX N]`，修复后确认 diff 在 Target_Files 内，重跑
+- exit 0 → 执行以下步骤后再输出 `[STAGE: EXECUTION_DONE]`，**主动退出进程**
+
+  **① 追加变更记录到 PROJECT.md**（若项目根目录存在该文件）：
+  ```powershell
+  $projectDoc = "PROJECT.md"
+  if (Test-Path $projectDoc) {
+      $wfId      = (Select-String -Path agents.md -Pattern 'workflow_id：\[([^\]]+)\]').Matches[0].Groups[1].Value
+      $today     = Get-Date -Format "yyyy-MM-dd"
+      $targets   = (Select-String -Path agents.md -Pattern '  - (.+)').Matches | ForEach-Object { $_.Groups[1].Value } | Join-String -Separator ", "
+      $objective = (Select-String -Path agents.md -Pattern '任务目标：(.+)').Matches[0].Groups[1].Value
+      $row = "| $today | $wfId | $objective | $targets |"
+      $content = Get-Content $projectDoc -Raw
+      $content = $content -replace '(\| :--- \| :--- \| :--- \| :--- \|)', "`$1`n$row"
+      Set-Content $projectDoc $content -NoNewline
+      Write-Host "[PROJECT.md: CHANGELOG_UPDATED]"
+  } else {
+      Write-Host "[PROJECT.md: NOT_FOUND] 跳过变更记录更新"
+  }
+  ```
+- exit 非0，自修复 < 3 次 → `[THOUGHT: SELF-FIX N]`，先在 `runtime_state.json` 中将 `retry_count += 1`，修复后确认 diff 在 Target_Files 内，重跑
 - exit 非0，自修复 = 3 次 → `execution_status = "failed"`，输出完整堆栈，挂起
 
 ---

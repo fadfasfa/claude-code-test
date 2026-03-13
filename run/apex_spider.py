@@ -245,16 +245,27 @@ class ApexSpider:
             # 解析 HTML
             soup = BeautifulSoup(html, 'html.parser')
 
-            # 定位卡片并提取内容
-            cards = soup.select('.interaction-grid > div')
+            # 定位卡片并提取内容 - 更新选择器以匹配新的DOM结构
+            cards = soup.select('.interaction-card')
             logger.info(f"找到 {len(cards)} 个交互卡片")
 
             for card in cards:
                 try:
-                    # 使用 get_text 提取文本，以 ' | ' 分隔多行
-                    text = card.get_text(separator=' | ', strip=True)
-                    # 检查是否包含目标标签
-                    if '强力联动' in text or '陷阱' in text:
+                    # 检查卡片是否包含协同方案标签（强力联动或陷阱）
+                    has_synergy_tag = False
+
+                    # 查找标签元素 - 基于CSS类名判断协同方案类型
+                    tag_elements = card.select('span.tag-badge')
+                    for tag_elem in tag_elements:
+                        classes = tag_elem.get('class', [])
+                        # 检查是否有协同方案相关的类名
+                        if 'tag-synergy' in classes or 'tag-trap' in classes or 'tag-fun' in classes:
+                            has_synergy_tag = True
+                            break
+
+                    if has_synergy_tag:
+                        # 使用 get_text 提取文本，以 ' | ' 分隔多行
+                        text = card.get_text(separator=' | ', strip=True)
                         if text:
                             result.append(text)
                             logger.info(f"提取到协同方案：{text[:50]}...")

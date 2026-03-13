@@ -115,3 +115,10 @@ foreach ($item in $legacyItems) {
 # --- 完成报告 ---
 Write-Host "`n===== 解锁完成 =====" -ForegroundColor Green
 Write-Host "[WARNING] God-mode 已激活，工作空间无防御状态。基建修改完成后请立即执行 Lock-Core.ps1 重新锁定。`n" -ForegroundColor Red
+
+# 解除 .git/hooks/ Deny-Write（与 Lock-Core 阶段 2b 对应）
+if (Test-Path ".git\\hooks") {
+    icacls ".git\\hooks" /remove:d "*S-1-1-0" /T /C /Q 2>$null | Out-Null
+    Write-Host "[UNLOCK] .git/hooks/ Deny-Write 已解除"
+}
+
