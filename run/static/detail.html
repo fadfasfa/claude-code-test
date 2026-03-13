@@ -271,7 +271,8 @@
                  const cleanName = hextech.海克斯名称.toLowerCase().replace(/[^a-z0-9]/g, '');
                  iconFilename = `${cleanName}.png`;
             }
-            const iconUrl = hextech.icon || `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/${encodeURIComponent(iconFilename)}`;
+            // 使用 /assets/ 路由，让后端处理 CDN 重定向
+            const iconUrl = hextech.icon || `./assets/${encodeURIComponent(hextech.海克斯名称)}.png`;
             const tierClass = getTierBarClass(hextech.海克斯阶级);
 
             let iconBgClass = 'bg-[#181a26]';
@@ -517,10 +518,8 @@
                     badgeText = 'text-[#ffffff]';
                 }
 
-                // 阶级图床地址预测渲染
-                let iconFilename = window.augmentIconMap ? window.augmentIconMap[item.name] : null;
-                if (!iconFilename) iconFilename = `${item.name.toLowerCase().replace(/[^a-z0-9]/g, '')}.png`;
-                const iconUrl = `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/hextech-images/${encodeURIComponent(iconFilename)}`;
+                // 使用 /assets/ 路由，让后端处理 CDN 重定向
+                const iconUrl = `./assets/${encodeURIComponent(item.name)}.png`;
 
                 // 不同评阶图标的发光效果与内部填充底色
                 let iconBorderColor = 'border-gray-500';

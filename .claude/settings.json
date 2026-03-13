@@ -43,7 +43,8 @@
       "Bash(claude --version)",
       "WebSearch",
       "Bash(curl -s http://localhost:8000/)",
-      "Bash(powershell -Command \"New-Item -Force -Path .ai_workflow -ItemType Directory | Out-Null; Set-Content .ai_workflow/test_result.xml ''<testsuites><testsuite name=\"\"\"\"placeholder\"\"\"\" tests=\"\"\"\"1\"\"\"\"><testcase name=\"\"\"\"ok\"\"\"\"/></testsuite></testsuites>''\")"
+      "Bash(powershell -Command \"New-Item -Force -Path .ai_workflow -ItemType Directory | Out-Null; Set-Content .ai_workflow/test_result.xml ''<testsuites><testsuite name=\"\"\"\"placeholder\"\"\"\" tests=\"\"\"\"1\"\"\"\"><testcase name=\"\"\"\"ok\"\"\"\"/></testsuite></testsuites>''\")",
+      "Bash(curl -I https://raw.communitydragon.org/latest/game/assets/ux/augments/ApexInventor_small.png)"
     ],
     "additionalDirectories": [
       "C:\\Users\\apple\\AppData\\Roaming\\npm"

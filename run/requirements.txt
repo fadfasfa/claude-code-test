@@ -1,2 +1,2 @@
-pandas, requests, Pillow, psutil, pywin32
+wpandas, requests, Pillow, psutil, pywin32
 fastapi[standard]

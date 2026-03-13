@@ -505,6 +505,8 @@ async def get_asset(filename: str):
 
     安全机制：使用 realpath + normcase 验证请求路径是否在 _assets_dir 内，
     阻止通过 ../ 进行目录遍历攻击（LFI 防御）。
+
+    新增：海克斯图标支持 - 根据 Augment_Icon_Map.json 映射到 CommunityDragon CDN
     """
     local_path = os.path.join(_assets_dir, filename)
     # ── LFI 防御：解析真实路径并验证是否在 assets 目录内 ──
@@ -515,7 +517,36 @@ async def get_asset(filename: str):
         return JSONResponse(content={"error": "Forbidden"}, status_code=403)
     if os.path.exists(local_path):
         return FileResponse(local_path)
-    # File missing, try DDragon CDN fallback for champion images
+    # File missing, try different CDN fallbacks
+
+    # 1. 海克斯图标处理 - 检查是否为海克斯图标文件
+    if filename.endswith('.png') and not filename[:-4].isdigit():
+        # 可能是海克斯图标，尝试从 Augment_Icon_Map.json 获取映射
+        try:
+            icon_map_path = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
+            with open(icon_map_path, "r", encoding="utf-8") as f:
+                icon_map = json.load(f)
+
+            # 尝试匹配海克斯名称（移除 .png 后缀）
+            hextech_name = filename[:-4]
+            if hextech_name in icon_map:
+                # 找到映射，构建 CommunityDragon URL
+                cdn_filename = icon_map[hextech_name]
+                communitydragon_url = f"https://raw.communitydragon.org/latest/game/assets/ux/augments/{cdn_filename}"
+                return RedirectResponse(url=communitydragon_url, status_code=307)
+            else:
+                # 尝试清理名称后匹配
+                clean_name = hextech_name.lower().replace(' ', '').replace('-', '')
+                for name, mapped_filename in icon_map.items():
+                    clean_mapped = name.lower().replace(' ', '').replace('-', '')
+                    if clean_name == clean_mapped:
+                        communitydragon_url = f"https://raw.communitydragon.org/latest/game/assets/ux/augments/{mapped_filename}"
+                        return RedirectResponse(url=communitydragon_url, status_code=307)
+                        break
+        except Exception as e:
+            logger.debug(f"海克斯图标映射失败：{e}")
+
+    # 2. 英雄头像处理 - 原有逻辑
     if filename.endswith('.png'):
         file_stem = filename[:-4]  # e.g. "123" (英雄 ID)
         hero_name = get_champion_name(file_stem)
@@ -631,47 +662,37 @@ async def websocket_endpoint(ws: WebSocket):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def _open_chrome():
-    """在 Chrome 中打开应用，支持远程调试端口 9222。"""
-    import subprocess
-    import sys
+def find_available_port(start_port=8000, max_attempts=50):
+    """Find an available port starting from start_port."""
+    import socket
 
-    chrome_path = None
-
-    # Windows Chrome 路径候选
-    chrome_candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe",
-        r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe",
-        r"%PROGRAMFILES(x86)%\Google\Chrome\Application\chrome.exe",
-    ]
-
-    for path in chrome_candidates:
-        expanded = os.path.expandvars(path)
-        if os.path.exists(expanded):
-            chrome_path = expanded
-            break
-
-    if chrome_path:
-        url = f"http://127.0.0.1:{SERVER_PORT}"
+    for port_offset in range(max_attempts):
+        port = start_port + port_offset
         try:
-            # 启动 Chrome，启用远程调试端口 9222
-            subprocess.Popen([
-                chrome_path,
-                f"--remote-debugging-port=9222",
-                f"--user-data-dir={os.path.join(CONFIG_DIR, 'chrome_profile')}",
-                url
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            logger.info(f"Chrome 已启动: {url} (远程调试: 9222)")
-        except Exception as e:
-            logger.warning(f"无法启动 Chrome: {e}")
-    else:
-        logger.warning("未找到 Chrome 安装路径，使用系统默认浏览器")
-        webbrowser.open(f"http://127.0.0.1:{SERVER_PORT}")
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('127.0.0.1', port))
+                return port
+        except OSError:
+            continue
+    raise RuntimeError(f"Could not find available port in range {start_port}-{start_port + max_attempts - 1}")
+
+def _open_chrome():
+    """在系统默认浏览器中打开应用，复用现有用户会话。"""
+    url = f"http://127.0.0.1:{SERVER_PORT}"
+    try:
+        # 使用系统默认浏览器，复用现有用户会话
+        webbrowser.open(url)
+        logger.info(f"已在默认浏览器中打开: {url}")
+    except Exception as e:
+        logger.warning(f"无法打开默认浏览器: {e}")
 
 
 if __name__ == "__main__":
-    # 在启动服务器前打开 Chrome
+    # 在启动服务器前找到可用端口
+    actual_port = find_available_port(SERVER_PORT)
+    if actual_port != SERVER_PORT:
+        logger.info(f"Port {SERVER_PORT} is occupied, using port {actual_port} instead")
+
+    # 在启动服务器前打开浏览器
     _open_chrome()
-    uvicorn.run("web_server:app", host="127.0.0.1", port=SERVER_PORT, reload=False)
+    uvicorn.run("web_server:app", host="127.0.0.1", port=actual_port, reload=False)
