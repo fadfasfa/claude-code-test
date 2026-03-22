@@ -6,6 +6,7 @@ import json
 import hashlib
 import time
 from typing import List, Dict, Any, Optional, Tuple
+from urllib.parse import quote
 
 # 导入英雄映射数据加载函数
 from hero_sync import load_champion_core_data
@@ -307,6 +308,41 @@ def _normalize_hextech_name(name: str) -> str:
     return name
 
 
+def _build_local_hextech_icon_url(hextech_name: str) -> str:
+    """
+    统一返回本地 /assets 路径，避免浏览器直接请求 CommunityDragon。
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_dir = os.path.join(base_dir, "config")
+    icon_map_file = os.path.join(config_dir, "Augment_Icon_Map.json")
+
+    request_name = str(hextech_name).strip()
+    asset_name = request_name
+
+    if os.path.exists(icon_map_file):
+        try:
+            with open(icon_map_file, "r", encoding="utf-8") as f:
+                icon_map = json.load(f)
+
+            mapped_value = icon_map.get(request_name)
+            if mapped_value is None:
+                normalized_name = _normalize_hextech_name(request_name)
+                for key, value in icon_map.items():
+                    if _normalize_hextech_name(key) == normalized_name:
+                        mapped_value = value
+                        break
+
+            if mapped_value:
+                asset_name = str(mapped_value).split("/")[-1].strip()
+        except Exception:
+            pass
+
+    if not asset_name.lower().endswith(".png"):
+        asset_name = f"{asset_name}.png"
+
+    return f"/assets/{quote(asset_name, safe='')}"
+
+
 def _has_column_variant(df: pd.DataFrame, variants: List[str]) -> bool:
     """
     检查 DataFrame 列中是否存在给定的变体列名
@@ -456,7 +492,7 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
                 '海克斯胜率': float(row['海克斯胜率']) if pd.notna(row['海克斯胜率']) else 0.0,
                 '海克斯出场率': float(row['海克斯出场率']) if pd.notna(row['海克斯出场率']) else 0.0,
                 '胜率差': float(row['胜率差']) if pd.notna(row['胜率差']) else 0.0,
-                'icon': _generate_hextech_icon_url(row['海克斯名称'], row.get('海克斯阶级', '棱彩'))
+                'icon': _build_local_hextech_icon_url(row['海克斯名称'])
             }
             if include_score:
                 card['综合得分'] = float(row['综合得分']) if pd.notna(row['综合得分']) else 0.0

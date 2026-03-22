@@ -30,7 +30,7 @@ os.makedirs(ASSET_DIR, exist_ok=True)
 try:
     from hextech_query import get_latest_csv, display_hero_hextech, main_query, set_last_hero
     from hero_sync import load_champion_core_data, get_advanced_session
-    from hextech_scraper import main_scraper
+    from backend_refresh import refresh_backend_data
 except ImportError:
     print("❌ 缺少核心依赖模块，请确保文件结构完整。")
     sys.exit(1)
@@ -114,15 +114,12 @@ class HextechUI:
         self.status_label.pack(side=tk.BOTTOM, pady=5)
 
     def check_and_sync_data(self):
-        latest = get_latest_csv()
-        today_str = datetime.now().strftime('%Y-%m-%d')
-        if not latest or today_str not in latest:
-            t = threading.Thread(target=self._silent_sync, daemon=True)
-            t.start()
+        t = threading.Thread(target=self._silent_sync, daemon=True)
+        t.start()
 
     def _silent_sync(self):
         try:
-            main_scraper(self.stop_event)
+            refresh_backend_data(force=False, stop_event=self.stop_event)
             if self.stop_event.is_set(): return
 
             new_df = self.load_data()
@@ -382,7 +379,7 @@ class HextechUI:
         def scraper_loop():
             while not self.stop_event.is_set():
                 try:
-                    main_scraper(self.stop_event)
+                    refresh_backend_data(force=False, stop_event=self.stop_event)
                     if self.stop_event.is_set(): return
 
                     new_df = self.load_data()

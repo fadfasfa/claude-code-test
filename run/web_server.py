@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote, unquote
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -26,7 +27,7 @@ from pydantic import BaseModel
 from data_processor import process_champions_data, process_hextechs_data
 from hextech_query import get_latest_csv
 from hero_sync import load_champion_core_data, CONFIG_DIR
-from hextech_scraper import main_scraper
+from backend_refresh import refresh_backend_data
 
 # ── 模块日志（不再重复调用 basicConfig，依赖 hero_sync 的全局配置） ─────────
 logger = logging.getLogger(__name__)
@@ -84,6 +85,8 @@ def _get_ddragon_version() -> str:
 
 
 _augment_icon_map_cache: Tuple[float, dict] = (0.0, {})
+_augment_prefetch_lock = threading.Lock()
+_augment_prefetch_mtime = 0.0
 
 
 def _normalize_augment_name(name: str) -> str:
@@ -140,6 +143,7 @@ def _find_augment_icon_filename(icon_map: dict, lookup_name: str) -> Optional[st
 def _iter_augment_icon_urls(icon_filename: str):
     filename = _normalize_augment_filename(icon_filename)
     templates = [
+        "https://cdn.dtodo.cn/hextech/augment-icons/{filename}",
         "https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{filename}",
         "https://raw.communitydragon.org/latest/game/assets/ux/augments/{filename}",
         "https://raw.communitydragon.org/pbe/game/assets/ux/cherry/augments/icons/{filename}",
@@ -181,6 +185,45 @@ def _ensure_augment_icon_cached(icon_filename: str) -> Optional[str]:
                 pass
 
     return None
+
+
+def _prefetch_augment_icons(force: bool = False) -> None:
+    global _augment_prefetch_mtime
+
+    icon_map_path = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
+    try:
+        current_mtime = os.path.getmtime(icon_map_path)
+    except OSError:
+        return
+
+    with _augment_prefetch_lock:
+        if not force and _augment_prefetch_mtime == current_mtime:
+            return
+        _augment_prefetch_mtime = current_mtime
+
+    icon_map = _load_augment_icon_map()
+    filenames = {
+        _normalize_augment_filename(value)
+        for value in icon_map.values()
+        if _normalize_augment_filename(value)
+    }
+
+    if not filenames:
+        return
+
+    logger.info(f"开始预缓存海克斯图标，共 {len(filenames)} 个")
+    max_workers = min(8, len(filenames))
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="augment-cache") as executor:
+        futures = {
+            executor.submit(_ensure_augment_icon_cached, filename): filename
+            for filename in sorted(filenames)
+        }
+        for future in as_completed(futures):
+            filename = futures[future]
+            try:
+                future.result()
+            except Exception as e:
+                logger.debug(f"预缓存海克斯图标失败：{filename} -> {e}")
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -546,8 +589,15 @@ async def csv_watcher_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时后台运行爬虫（不阻塞服务启动，check_execution_permission 防止频繁触发）
-    scraper_thread = threading.Thread(target=main_scraper, daemon=True, name="scraper-startup")
+    scraper_thread = threading.Thread(
+        target=refresh_backend_data,
+        kwargs={"force": False},
+        daemon=True,
+        name="backend-refresh-startup",
+    )
     scraper_thread.start()
+    augment_thread = threading.Thread(target=_prefetch_augment_icons, daemon=True, name="augment-icon-prefetch")
+    augment_thread.start()
     task1 = asyncio.create_task(lcu_polling_loop())
     task2 = asyncio.create_task(csv_watcher_loop())
     yield

@@ -1,1 +1,3 @@
 {"files_touched":[],"ts":"2026-03-12T15:59:40","change_reason":"重新执行协议0.5，按照纯中文规约汇报当前状态","test_impact":"none","step":"协议0.5：探索与确认爆炸半径","risk_note":"目标Vue文件在当前仓库缺失，无法彻底完成影响面分析"}
+{"ts":"2026-03-22T14:31:50","step":"post-commit AST scan","commit":"b179e2426ee7bf536524e6e31facfcbed3f69526","branch":"rescue-ui","status":"PASSED","violations":"none|"}
+{"ts":"2026-03-22T15:03:55+08:00","step":"augment-icon-tile-style","files_touched":["run/static/detail.html"],"status":"PASSED","verification":"playwright computed styles + compileall","notes":"缁熶竴宸︿晶鍒楄〃涓庡彸渚ц鎯呴〉娴峰厠鏂浘鏍囦负 contain + padded tile 鏍峰紡"}

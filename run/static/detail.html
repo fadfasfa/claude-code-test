@@ -39,6 +39,129 @@
         /* 列表悬浮高亮 */
         .list-row {
             transition: all 0.2s;
+            content-visibility: auto;
+            contain-intrinsic-size: 72px;
+        }
+
+        .hextech-card {
+            content-visibility: auto;
+            contain-intrinsic-size: 180px;
+        }
+
+        .augment-icon-shell {
+            position: relative;
+            flex-shrink: 0;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(180deg, rgba(14, 18, 28, 0.98), rgba(8, 10, 16, 0.98));
+            box-shadow:
+                0 10px 22px rgba(0, 0, 0, 0.28),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+        }
+
+        .augment-icon-shell::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.10), transparent 38%),
+                linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 42%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .augment-icon-shell img {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            padding: 11%;
+        }
+
+        .augment-icon-shell--list {
+            width: 46px;
+            height: 46px;
+            border-radius: 14px;
+            border: 2px solid rgba(var(--augment-accent), 0.95);
+        }
+
+        .augment-icon-shell--detail {
+            width: 68px;
+            height: 68px;
+            border-radius: 18px;
+            border: 2px solid rgba(var(--augment-accent), 0.95);
+        }
+
+        img[data-hextech-name] {
+            object-fit: contain !important;
+            background: linear-gradient(180deg, rgba(14, 18, 28, 0.98), rgba(8, 10, 16, 0.98));
+            box-shadow:
+                0 10px 22px rgba(0, 0, 0, 0.28),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+        }
+
+        .list-row img[data-hextech-name] {
+            width: 46px !important;
+            height: 46px !important;
+            padding: 11%;
+            border-radius: 14px;
+            border: 2px solid rgba(120, 130, 150, 0.95);
+        }
+
+        .hextech-card .w-14.h-14.flex-shrink-0 {
+            width: 68px !important;
+            height: 68px !important;
+            border-radius: 18px !important;
+            border-width: 2px !important;
+            background: linear-gradient(180deg, rgba(14, 18, 28, 0.98), rgba(8, 10, 16, 0.98)) !important;
+            box-shadow:
+                0 10px 22px rgba(0, 0, 0, 0.28),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+        }
+
+        .hextech-card .w-14.h-14.flex-shrink-0 > img[data-hextech-name] {
+            width: 100% !important;
+            height: 100% !important;
+            padding: 11%;
+            background: transparent !important;
+            border: none !important;
+            border-radius: 14px;
+        }
+
+        img[data-hextech-tier*="棱彩"],
+        img[data-hextech-tier="Prismatic"] {
+            border-color: rgba(43, 213, 194, 0.95) !important;
+            box-shadow:
+                0 0 0 1px rgba(43, 213, 194, 0.15),
+                0 10px 22px rgba(0, 0, 0, 0.28),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+        }
+
+        img[data-hextech-tier*="黄金"],
+        img[data-hextech-tier="Gold"] {
+            border-color: rgba(212, 175, 55, 0.95) !important;
+            box-shadow:
+                0 0 0 1px rgba(212, 175, 55, 0.14),
+                0 10px 22px rgba(0, 0, 0, 0.28),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+        }
+
+        img[data-hextech-tier*="白银"],
+        img[data-hextech-tier="Silver"] {
+            border-color: rgba(140, 155, 165, 0.95) !important;
+            box-shadow:
+                0 0 0 1px rgba(140, 155, 165, 0.14),
+                0 10px 22px rgba(0, 0, 0, 0.28),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.03);
         }
 
         .list-row:hover {
@@ -339,10 +462,56 @@
             return 'tier-silver';
         }
 
+        function toLocalAugmentIconUrl(iconUrl, hextechName) {
+            if (iconUrl && !/^https?:\/\//i.test(iconUrl)) {
+                return iconUrl;
+            }
+
+            if (iconUrl) {
+                try {
+                    const parsedUrl = new URL(iconUrl, window.location.origin);
+                    const fileName = parsedUrl.pathname.split('/').pop();
+                    if (fileName) {
+                        return `./assets/${encodeURIComponent(decodeURIComponent(fileName))}`;
+                    }
+                } catch (_) {}
+            }
+
+            return `./assets/${encodeURIComponent(hextechName)}.png`;
+        }
+
+        function getAugmentTierAccent(tier) {
+            const tierName = tier || '';
+            if (tierName.includes('棱彩') || tierName === 'Prismatic') return '43 213 194';
+            if (tierName.includes('黄金') || tierName === 'Gold') return '212 175 55';
+            if (tierName.includes('白银') || tierName === 'Silver') return '140 155 165';
+            return '120 130 150';
+        }
+
+        function renderAugmentIcon(iconUrl, hextechName, tier, variant = 'list') {
+            const localIconUrl = toLocalAugmentIconUrl(iconUrl, hextechName);
+            const accent = getAugmentTierAccent(tier);
+            const shellClass = variant === 'detail'
+                ? 'augment-icon-shell augment-icon-shell--detail'
+                : 'augment-icon-shell augment-icon-shell--list';
+
+            return `
+                <div class="${shellClass}" style="--augment-accent: ${accent};">
+                    <img src="${localIconUrl}"
+                         alt="${hextechName}"
+                         loading="lazy"
+                         decoding="async"
+                         data-hextech-name="${hextechName}"
+                         data-hextech-tier="${tier || ''}"
+                         onerror="this.onerror=null; this.src=createPlaceholder(this.dataset.hextechName || this.alt || '?');">
+                </div>
+            `;
+        }
+
         // 渲染海克斯列表行（紧凑型五列布局）
         function createHextechCard(hextech, index) {
             // 使用 /assets/ 路由，让后端处理 CommunityDragon CDN 重定向
-            const iconUrl = hextech.icon || `./assets/${encodeURIComponent(hextech.海克斯名称)}.png`;
+            const iconUrl = toLocalAugmentIconUrl(hextech.icon, hextech.海克斯名称);
             const tierClass = getTierBarClass(hextech.海克斯阶级);
 
             let iconBgClass = 'bg-[#181a26]';
@@ -364,6 +533,7 @@
                     <img src="${iconUrl}"
                          alt="${hextech.海克斯名称}"
                          loading="lazy"
+                         decoding="async"
                          data-hextech-tier="${hextech.海克斯阶级}"
                          data-hextech-name="${hextech.海克斯名称}"
                          onerror="this.onerror=null; this.src=createPlaceholder(this.dataset.hextechName || this.alt || '?');"
@@ -604,7 +774,7 @@
                 };
 
                 return `
-<div class="p-[1px] bg-[#202738] mb-4" style="clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));">
+<div class="hextech-card p-[1px] bg-[#202738] mb-4" style="clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));">
     <div class="bg-[#0b0e14] p-5 flex gap-4" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px)); min-height: 110px;">
         
         <!-- 左侧 Icon -->
@@ -612,6 +782,7 @@
             <img src="${iconUrl}" 
                  data-hextech-name="${item.name}"
                  data-hextech-tier="${item.tier}"
+                 decoding="async"
                  class="w-full h-full object-cover rounded-[5px] ${iconBgClass}"
                  onerror="this.onerror=null; this.src=createPlaceholder(this.dataset.hextechName || this.alt || '?');">
         </div>

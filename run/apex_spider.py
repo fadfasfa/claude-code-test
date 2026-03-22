@@ -16,6 +16,9 @@ from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_DIR = os.path.join(BASE_DIR, "config")
+
 # 配置日志系统
 logging.basicConfig(
     level=logging.INFO,
@@ -309,8 +312,8 @@ def main():
     logger.info("-" * 30)
     logger.info("【任务 2】加载本地英雄配置")
 
-    core_data_path = "run/config/Champion_Core_Data.json"
-    aliases_path = "run/config/hero_aliases.json"
+    core_data_path = os.path.join(CONFIG_DIR, "Champion_Core_Data.json")
+    aliases_path = os.path.join(CONFIG_DIR, "hero_aliases.json")
 
     try:
         with open(core_data_path, "r", encoding="utf-8") as f:
@@ -443,8 +446,8 @@ def main():
                     continue
 
         # 持久化到 JSON 文件
-        os.makedirs("run/config", exist_ok=True)
-        output_path = "run/config/Champion_Synergy.json"
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        output_path = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(final_data, f, ensure_ascii=False, indent=2)
 
