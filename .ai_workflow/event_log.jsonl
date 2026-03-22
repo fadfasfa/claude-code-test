@@ -6,3 +6,4 @@
 {"step":"执行修改","files":["run/static/detail.html"],"reason":"统一海克斯图标样式","ts":"2026-03-22T16:55:18"}
 {"step":"修改海克斯增幅器专属发光背景","files":["run/static/detail.html"],"reason":"提高不同阶级海克斯视觉辨识度","ts":"2026-03-22T18:49:51"}
 {"step":"修正 CSS rgba 变量语法","files":["run/static/detail.html"],"reason":"修复失去光效问题","ts":"2026-03-22T18:53:18"}
+{"step":"重构海克斯阶级专属光效样式","files":["run/static/detail.html"],"reason":"解决不同阶级颜色发光渲染失效以及效果不明显（尤其是棱彩）的问题","ts":"2026-03-22T18:58:51"}
