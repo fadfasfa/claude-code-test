@@ -1,5 +1,6 @@
 import tkinter as tk
 import threading
+import subprocess
 import time
 import ctypes
 import json
@@ -61,6 +62,9 @@ class HextechUI:
         self._df_lock = threading.Lock()  # 保护 self.df 的多线程读写
 
 
+        self.web_process = None
+        self._start_web_server()
+
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
         self.root.geometry("320x600")
@@ -72,6 +76,26 @@ class HextechUI:
         self._build_ui()
         self._init_core_engine()
         self.start_background_scraper()
+
+    def _start_web_server(self):
+        """静默拉起后端的 web_server.py（不阻塞 UI 线程）"""
+        try:
+            import sys
+            import os
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            web_script = os.path.join(script_dir, "web_server.py")
+            startupinfo = None
+            if os.name == 'nt':
+                import subprocess
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            self.web_process = subprocess.Popen(
+                [sys.executable, web_script],
+                startupinfo=startupinfo,
+                cwd=script_dir
+            )
+        except Exception as e:
+            print(f"\n❌ 启动 web_server.py 失败: {e}")
 
     def _init_core_engine(self):
         t1 = threading.Thread(target=self.lcu_polling_loop, daemon=True)
@@ -406,6 +430,11 @@ class HextechUI:
         for t in self.threads:
             if t.is_alive():
                 t.join(timeout=2)
+        if getattr(self, 'web_process', None):
+            try:
+                self.web_process.terminate()
+            except Exception:
+                pass
         self.root.destroy()
 
 if __name__ == "__main__":

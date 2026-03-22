@@ -818,9 +818,9 @@ def find_available_port(start_port=8000, max_attempts=50):
             continue
     raise RuntimeError(f"Could not find available port in range {start_port}-{start_port + max_attempts - 1}")
 
-def _open_chrome():
+def _open_chrome(port: int):
     """在系统默认浏览器中打开应用，复用现有用户会话。"""
-    url = f"http://127.0.0.1:{SERVER_PORT}"
+    url = f"http://127.0.0.1:{port}"
     try:
         # 使用系统默认浏览器，复用现有用户会话
         webbrowser.open(url)
@@ -836,5 +836,5 @@ if __name__ == "__main__":
         logger.info(f"Port {SERVER_PORT} is occupied, using port {actual_port} instead")
 
     # 在启动服务器前打开浏览器
-    _open_chrome()
+    _open_chrome(actual_port)
     uvicorn.run("web_server:app", host="127.0.0.1", port=actual_port, reload=False)

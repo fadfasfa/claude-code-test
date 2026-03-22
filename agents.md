@@ -2,30 +2,15 @@
 
 ### 范围
 
-项目路径：[相对路径，新项目必须是新建文件夹]
-执行环境：[Claude Code / Antigravity + 档位]
-Branch_Name：[ai-task-<描述>-<YYYYMMDD>]
+项目路径：.
+执行环境：Claude Sonnet 4.6 (Thinking)
+Branch_Name：ai-task-fix-web-ui-startup-20260322
 
 Target_Files：
-  - [文件相对路径]
+  - run/hextech_ui.py
+  - run/web_server.py
 
 ### 目标功能
 
-[逐条列出本次要实现或修改的功能]
-[执行中途决策层确认的新需求直接追加到此处]
-[执行端发现并经决策层同意的范围扩展，Target_Files 同步追加，目标功能节同步说明原因]
-
----
-
-## 待机态（/RECOVER 专用）
-
-项目路径：[待填写]
-执行环境：[待填写]
-Branch_Name：[待填写]
-
-Target_Files：
-  - [待填写]
-
-### 目标功能
-
-[待填写]
+1. 修复 run/hextech_ui.py 无法独立挂载/唤起 Web 界面服务的问题（通过子进程拉起 web_server.py）
+2. 修复 run/web_server.py 中动态端口切换后，浏览器唤出依然指向旧端口的 Bug
