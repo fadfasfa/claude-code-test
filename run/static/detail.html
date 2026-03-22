@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -13,63 +14,121 @@
             color: #cdd6f4;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
+
         .glass-panel {
             background: rgba(30, 30, 46, 0.7);
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
+
         /* 海克斯阶级竖条指示器 */
-        .tier-prismatic { background: linear-gradient(to bottom, #fde047, #ef4444); box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }
-        .tier-gold { background: linear-gradient(to bottom, #facc15, #ca8a04); box-shadow: 0 0 8px rgba(202, 138, 4, 0.4); }
-        .tier-silver { background: linear-gradient(to bottom, #cbd5e1, #64748b); }
+        .tier-prismatic {
+            background: linear-gradient(to bottom, #fde047, #ef4444);
+            box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+        }
+
+        .tier-gold {
+            background: linear-gradient(to bottom, #facc15, #ca8a04);
+            box-shadow: 0 0 8px rgba(202, 138, 4, 0.4);
+        }
+
+        .tier-silver {
+            background: linear-gradient(to bottom, #cbd5e1, #64748b);
+        }
 
         /* 列表悬浮高亮 */
-        .list-row { transition: all 0.2s; }
-        .list-row:hover { background-color: rgba(255, 255, 255, 0.05); transform: translateX(4px); border-radius: 0.5rem; }
+        .list-row {
+            transition: all 0.2s;
+        }
+
+        .list-row:hover {
+            background-color: rgba(255, 255, 255, 0.05);
+            transform: translateX(4px);
+            border-radius: 0.5rem;
+        }
 
         /* 自定义滚动条样式 (美化版) */
         .scroll-container::-webkit-scrollbar {
             width: 8px;
             height: 8px;
         }
+
         .scroll-container::-webkit-scrollbar-track {
             background: rgba(0, 0, 0, 0.2);
             border-radius: 4px;
         }
+
         .scroll-container::-webkit-scrollbar-thumb {
             background: rgba(137, 180, 250, 0.3);
             border-radius: 4px;
             transition: background 0.2s;
         }
+
         .scroll-container::-webkit-scrollbar-thumb:hover {
             background: rgba(137, 180, 250, 0.5);
         }
+
         .scroll-container {
             scrollbar-width: thin;
             scrollbar-color: rgba(137, 180, 250, 0.3) rgba(0, 0, 0, 0.2);
         }
 
         /* 平滑滚动 */
-        html { scroll-behavior: smooth; }
+        html {
+            scroll-behavior: smooth;
+        }
 
         /* 隐藏滚动条 (兼容旧版) */
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
 
         /* 震动流光动画 */
         @keyframes autoLockFlash {
-            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); transform: scale(1); border-color: transparent; }
-            20% { box-shadow: 0 0 30px 5px rgba(59, 130, 246, 0.8); transform: scale(1.02); border-color: #3b82f6; }
-            40% { transform: scale(0.99); }
-            60% { transform: scale(1.01); }
-            80% { box-shadow: 0 0 15px 2px rgba(59, 130, 246, 0.4); transform: scale(1); border-color: rgba(255, 255, 255, 0.05); }
-            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); transform: scale(1); border-color: rgba(255, 255, 255, 0.05); }
+            0% {
+                box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+                transform: scale(1);
+                border-color: transparent;
+            }
+
+            20% {
+                box-shadow: 0 0 30px 5px rgba(59, 130, 246, 0.8);
+                transform: scale(1.02);
+                border-color: #3b82f6;
+            }
+
+            40% {
+                transform: scale(0.99);
+            }
+
+            60% {
+                transform: scale(1.01);
+            }
+
+            80% {
+                box-shadow: 0 0 15px 2px rgba(59, 130, 246, 0.4);
+                transform: scale(1);
+                border-color: rgba(255, 255, 255, 0.05);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+                transform: scale(1);
+                border-color: rgba(255, 255, 255, 0.05);
+            }
         }
+
         .anim-auto-lock {
             animation: autoLockFlash 0.8s ease-out forwards;
         }
     </style>
 </head>
+
 <body class="min-h-screen p-6">
 
     <nav class="max-w-6xl mx-auto mb-6 flex justify-between items-center">
@@ -83,10 +142,12 @@
     </nav>
 
     <main class="max-w-6xl mx-auto">
-        <header class="glass-panel rounded-2xl p-6 mb-8 flex items-center space-x-6 relative overflow-hidden" id="mainHeader">
+        <header class="glass-panel rounded-2xl p-6 mb-8 flex items-center space-x-6 relative overflow-hidden"
+            id="mainHeader">
             <div id="headerBg" class="absolute right-0 top-0 bottom-0 w-1/2 opacity-20 bg-cover bg-left"></div>
-            <img id="heroAvatar" src="" class="w-20 h-20 rounded-xl border-2 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.3)] relative z-10 bg-gray-900 object-cover"
-                 onerror="(() => {
+            <img id="heroAvatar" src=""
+                class="w-20 h-20 rounded-xl border-2 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.3)] relative z-10 bg-gray-900 object-cover"
+                onerror="(() => {
                      let stage = this.dataset.fallbackStage || '0';
                      if (stage === '0') {
                          // Stage 1: 本地 assets 404，尝试 DDragon CDN
@@ -100,16 +161,17 @@
                          this.dataset.fallbackStage = '2';
                          this.onerror = null;  // 禁止无限递归
                      }
-                 }).call(this)"
-            >
+                 }).call(this)">
 
             <div class="relative z-10">
                 <div class="flex items-center space-x-3 mb-1">
                     <h1 id="heroName" class="text-3xl font-black text-white">加载中...</h1>
                 </div>
                 <div class="flex space-x-6 text-sm mt-2">
-                    <p><span class="text-gray-400">贝叶斯胜率:</span> <span id="heroWR" class="text-green-400 font-bold text-lg">-</span></p>
-                    <p><span class="text-gray-400">全服出场率:</span> <span id="heroPR" class="text-white font-bold text-lg">-</span></p>
+                    <p><span class="text-gray-400">贝叶斯胜率:</span> <span id="heroWR"
+                            class="text-green-400 font-bold text-lg">-</span></p>
+                    <p><span class="text-gray-400">全服出场率:</span> <span id="heroPR"
+                            class="text-white font-bold text-lg">-</span></p>
                 </div>
             </div>
         </header>
@@ -118,20 +180,30 @@
             <!-- 模态切换工具栏 -->
             <div class="flex flex-wrap gap-2 items-center mb-4 pb-4 border-b border-gray-800">
                 <div class="flex gap-2">
-                    <button id="btn-comprehensive" onclick="setDisplayMode('comprehensive')" class="mode-btn px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">📊 综合推荐</button>
-                    <button id="btn-winrate" onclick="setDisplayMode('winrate_only')" class="mode-btn px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium text-sm transition-colors">📈 纯胜率</button>
+                    <button id="btn-comprehensive" onclick="setDisplayMode('comprehensive')"
+                        class="mode-btn px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">📊
+                        综合推荐</button>
+                    <button id="btn-winrate" onclick="setDisplayMode('winrate_only')"
+                        class="mode-btn px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium text-sm transition-colors">📈
+                        纯胜率</button>
                 </div>
                 <div class="flex-1"></div>
                 <div class="flex gap-2">
-                    <button id="tab-all" onclick="switchView('all')" class="tab-btn px-5 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">全部海克斯</button>
-                    <button id="tab-Prismatic" onclick="switchView('Prismatic')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">棱彩</button>
-                    <button id="tab-Gold" onclick="switchView('Gold')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">黄金</button>
-                    <button id="tab-Silver" onclick="switchView('Silver')" class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">白银</button>
+                    <button id="tab-all" onclick="switchView('all')"
+                        class="tab-btn px-5 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">全部海克斯</button>
+                    <button id="tab-Prismatic" onclick="switchView('Prismatic')"
+                        class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">棱彩</button>
+                    <button id="tab-Gold" onclick="switchView('Gold')"
+                        class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">黄金</button>
+                    <button id="tab-Silver" onclick="switchView('Silver')"
+                        class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">白银</button>
                 </div>
             </div>
 
             <div id="loadingSpinner" class="text-center py-20">
-                <div class="inline-block w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                <div
+                    class="inline-block w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin">
+                </div>
                 <div class="text-gray-400 mt-4 font-bold tracking-widest">提纯海克斯数据中...</div>
             </div>
 
@@ -143,12 +215,15 @@
             <div id="dataContainer" class="flex gap-4 hidden">
                 <!-- 左侧 45%：紧凑版海克斯列表 -->
                 <div class="w-[45%] flex-shrink-0">
-                    <div id="compList" class="flex flex-col gap-4 scroll-container" style="max-height: 650px; overflow-y: auto; padding-right: 8px;"></div>
+                    <div id="compList" class="flex flex-col gap-4 scroll-container"
+                        style="max-height: 650px; overflow-y: auto; padding-right: 8px;"></div>
                 </div>
 
                 <!-- 右侧 55%：联动文章垂直滚动容器 -->
                 <div class="w-[55%]">
-                    <div id="synergyArticleScroll" class="flex flex-col gap-4 max-h-[650px] overflow-y-auto scroll-container" style="padding-right: 8px;">
+                    <div id="synergyArticleScroll"
+                        class="flex flex-col gap-4 max-h-[650px] overflow-y-auto scroll-container"
+                        style="padding-right: 8px;">
                         <div class="glass-panel rounded-xl p-4">
                             <div class="text-sm text-gray-400 text-center">选择左侧海克斯查看联动文章</div>
                         </div>
@@ -169,7 +244,7 @@
         fetch('https://ddragon.leagueoflegends.com/api/versions.json')
             .then(r => r.json())
             .then(v => { if (v && v[0]) { ddVersion = v[0]; window.ddVersion = ddVersion; } })
-            .catch(() => {});
+            .catch(() => { });
 
         let hextechData = null;
         let currentView = 'all';
@@ -204,15 +279,15 @@
         window.heroName = hero;  // 保存英雄中文名供占位图使用
 
         // 渲染头部数据
-        if(hero) document.getElementById('heroName').textContent = hero;
-        if(heroWR) document.getElementById('heroWR').textContent = heroWR;
-        if(heroPR) document.getElementById('heroPR').textContent = heroPR;
+        if (hero) document.getElementById('heroName').textContent = hero;
+        if (heroWR) document.getElementById('heroWR').textContent = heroWR;
+        if (heroPR) document.getElementById('heroPR').textContent = heroPR;
 
         // 渲染背景原画和头像 - 优先级：本地 > ddragon
-        if(heroId) {
+        if (heroId) {
             // 优先尝试本地 assets
             document.getElementById('heroAvatar').src = `./assets/${heroId}.png`;
-        } else if(enName) {
+        } else if (enName) {
             document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/${ddVersion}/img/champion/${enName}.png`;
         } else {
             document.getElementById('headerBg').style.backgroundColor = '#181825';
@@ -220,7 +295,7 @@
         }
 
         // 设置背景原画（仅使用 ddragon）
-        if(enName) {
+        if (enName) {
             document.getElementById('headerBg').style.backgroundImage = `url('https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${enName}_0.jpg')`;
         }
 
@@ -237,7 +312,7 @@
                 btn.className = 'mode-btn px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium text-sm transition-colors';
             });
             const activeBtn = mode === 'comprehensive' ? document.getElementById('btn-comprehensive') : document.getElementById('btn-winrate');
-            if(activeBtn) {
+            if (activeBtn) {
                 activeBtn.className = 'mode-btn px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors';
             }
             // 重新渲染
@@ -251,7 +326,7 @@
                 btn.className = 'tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors';
             });
             const activeBtn = document.getElementById(`tab-${view}`);
-            if(activeBtn) {
+            if (activeBtn) {
                 activeBtn.className = 'tab-btn px-5 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors';
             }
             renderCurrentView();
@@ -259,19 +334,14 @@
 
         // 获取阶级 CSS
         function getTierBarClass(tier) {
-            if(tier.includes('棱彩') || tier.includes('彩色') || tier === 'Prismatic') return 'tier-prismatic';
-            if(tier.includes('金') || tier === 'Gold') return 'tier-gold';
+            if (tier.includes('棱彩') || tier.includes('彩色') || tier === 'Prismatic') return 'tier-prismatic';
+            if (tier.includes('金') || tier === 'Gold') return 'tier-gold';
             return 'tier-silver';
         }
 
         // 渲染海克斯列表行（紧凑型五列布局）
         function createHextechCard(hextech, index) {
-            let iconFilename = window.augmentIconMap ? window.augmentIconMap[hextech.海克斯名称] : null;
-            if (!iconFilename) {
-                 const cleanName = hextech.海克斯名称.toLowerCase().replace(/[^a-z0-9]/g, '');
-                 iconFilename = `${cleanName}.png`;
-            }
-            // 使用 /assets/ 路由，让后端处理 CDN 重定向
+            // 使用 /assets/ 路由，让后端处理 CommunityDragon CDN 重定向
             const iconUrl = hextech.icon || `./assets/${encodeURIComponent(hextech.海克斯名称)}.png`;
             const tierClass = getTierBarClass(hextech.海克斯阶级);
 
@@ -296,19 +366,7 @@
                          loading="lazy"
                          data-hextech-tier="${hextech.海克斯阶级}"
                          data-hextech-name="${hextech.海克斯名称}"
-                         onerror="(() => {
-                             let stage = this.dataset.fallbackStage || '0';
-                             const tier = this.dataset.hextechTier || '';
-                             const name = this.dataset.hextechName || '';
-                             if (stage === '0') {
-                                 // Stage 1: Canvas 动态渲染几何图案
-                                 if (window.handleAssetMissing) {
-                                     window.handleAssetMissing(this, name, 'hextech', tier);
-                                 }
-                                 this.dataset.fallbackStage = '1';
-                                 this.onerror = null;
-                             }
-                         }).call(this)"
+                         onerror="this.parentElement.style.visibility='hidden'; this.onerror=null;"
                          class="w-10 h-10 rounded-lg border border-gray-600 object-cover ${iconBgClass} flex-shrink-0 shadow-md">
                 </div>
 
@@ -426,7 +484,7 @@
                     const upvoteMatches = upvotesStr.match(/(\d+)\s*\|\s*(\d+)/) || ['0', '0', '0'];
                     const upvotes = parseInt(upvoteMatches[1] || '0');
                     const downvotes = parseInt(upvoteMatches[2] || '0');
-                    
+
                     let author = "佚名";
                     let content = "";
                     let isOriginal = false;
@@ -555,18 +613,7 @@
                  data-hextech-name="${item.name}"
                  data-hextech-tier="${item.tier}"
                  class="w-full h-full object-cover rounded-[5px] ${iconBgClass}"
-                 onerror="(() => {
-                     let stage = this.dataset.fallbackStage || '0';
-                     const tier = this.dataset.hextechTier || '';
-                     const name = this.dataset.hextechName || '';
-                     if (stage === '0') {
-                         if (window.handleAssetMissing) {
-                             window.handleAssetMissing(this, name, 'hextech', tier);
-                         }
-                         this.dataset.fallbackStage = '1';
-                         this.onerror = null;
-                     }
-                 }).call(this)">
+                 onerror="this.parentElement.style.visibility='hidden'; this.onerror=null;">
         </div>
 
         <!-- 右侧内容列 -->
@@ -720,4 +767,5 @@
         }
     </script>
 </body>
+
 </html>

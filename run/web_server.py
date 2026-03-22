@@ -4,8 +4,10 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import webbrowser
+from urllib.parse import unquote
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple
@@ -24,6 +26,7 @@ from pydantic import BaseModel
 from data_processor import process_champions_data, process_hextechs_data
 from hextech_query import get_latest_csv
 from hero_sync import load_champion_core_data, CONFIG_DIR
+from hextech_scraper import main_scraper
 
 # ── 模块日志（不再重复调用 basicConfig，依赖 hero_sync 的全局配置） ─────────
 logger = logging.getLogger(__name__)
@@ -442,6 +445,9 @@ async def csv_watcher_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 启动时后台运行爬虫（不阻塞服务启动，check_execution_permission 防止频繁触发）
+    scraper_thread = threading.Thread(target=main_scraper, daemon=True, name="scraper-startup")
+    scraper_thread.start()
     task1 = asyncio.create_task(lcu_polling_loop())
     task2 = asyncio.create_task(csv_watcher_loop())
     yield
@@ -528,7 +534,7 @@ async def get_asset(filename: str):
                 icon_map = json.load(f)
 
             # 尝试匹配海克斯名称（移除 .png 后缀）
-            hextech_name = filename[:-4]
+            hextech_name = unquote(filename[:-4])
             if hextech_name in icon_map:
                 # 找到映射，构建 CommunityDragon URL
                 cdn_filename = icon_map[hextech_name]

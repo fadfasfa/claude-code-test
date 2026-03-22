@@ -252,10 +252,10 @@
 
             // 头像 URL 优先级：ddragon > assets
             let avatarUrl;
-            if (enName) {
-                avatarUrl = `https://ddragon.leagueoflegends.com/cdn/${ddVersion}/img/champion/${enName}.png`;
-            } else if (heroId) {
+            if (heroId) {
                 avatarUrl = `./assets/${heroId}.png`;
+            } else if (enName) {
+                avatarUrl = `https://ddragon.leagueoflegends.com/cdn/${ddVersion}/img/champion/${enName}.png`;
             } else {
                 avatarUrl = createPlaceholder(champion['英雄名称']);
             }
