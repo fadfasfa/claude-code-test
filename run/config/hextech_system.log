@@ -2390,3 +2390,62 @@
 2026-03-22 15:35:06,748 [INFO] Processing columns: ['英雄ID', '英雄名称', '英雄评级', '英雄胜率', '英雄出场率', '海克斯阶级', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差', '综合得分']
 2026-03-22 15:35:08,071 [INFO] Processing columns: ['英雄ID', '英雄名称', '英雄评级', '英雄胜率', '英雄出场率', '海克斯阶级', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差', '综合得分']
 2026-03-22 15:35:08,218 [INFO] Champion_Synergy.json 重新加载成功
+2026-03-22 16:13:54,510 [INFO] 已在默认浏览器中打开: http://127.0.0.1:8000
+2026-03-22 16:13:54,579 [INFO] 开始统一刷新后端数据
+2026-03-22 16:13:54,580 [INFO] 开始预缓存海克斯图标，共 198 个
+2026-03-22 16:13:54,657 [INFO] CSV 重新加载成功：Hextech_Data_2026-03-22.csv
+2026-03-22 16:13:55,115 [INFO] Processing columns: ['英雄ID', '英雄名称', '英雄评级', '英雄胜率', '英雄出场率', '海克斯阶级', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差', '综合得分']
+2026-03-22 16:13:55,673 [INFO] Champion_Synergy.json 仍在有效期内，跳过重新抓取
+2026-03-22 16:13:55,674 [INFO] 数据尚在有效期内，跳过抓取：数据尚在有效期内，跳过抓取。
+2026-03-22 16:13:55,674 [INFO] 后端刷新完成：hero_sync=True, synergy_started=True, hextech=True
+2026-03-22 16:13:58,813 [INFO] Processing columns: ['英雄ID', '英雄名称', '英雄评级', '英雄胜率', '英雄出场率', '海克斯阶级', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差', '综合得分']
+2026-03-22 16:13:58,987 [INFO] Champion_Synergy.json 重新加载成功
+2026-03-22 16:16:58,766 [INFO] 检测到 LCU 进程：port=60285
+2026-03-22 16:17:00,800 [WARNING] Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPSConnection(host='127.0.0.1', port=60285): Failed to establish a new connection: [WinError 10061] 由于目标计算机积极拒绝，无法连接。")': /lol-champ-select/v1/session
+2026-03-22 16:17:03,446 [WARNING] Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPSConnection(host='127.0.0.1', port=60285): Failed to establish a new connection: [WinError 10061] 由于目标计算机积极拒绝，无法连接。")': /lol-champ-select/v1/session
+2026-03-22 16:17:05,480 [WARNING] LCU 连接断开：HTTPSConnectionPool(host='127.0.0.1', port=60285): Max retries exceeded with url: /lol-champ-select/v1/session (Caused by NewConnectionError("HTTPSConnection(host='127.0.0.1', port=60285): Failed to establish a new connection: [WinError 10061] 由于目标计算机积极拒绝，无法连接。"))
+2026-03-22 16:17:07,006 [INFO] 检测到 LCU 进程：port=60285
+2026-03-22 16:17:13,087 [WARNING] LCU 连续 5 次 404，触发自愈重置端口/令牌
+2026-03-22 16:17:14,610 [INFO] 检测到 LCU 进程：port=60285
+2026-03-22 16:17:19,972 [INFO] 开始统一刷新后端数据
+2026-03-22 16:17:19,973 [INFO] Champion_Synergy.json 仍在有效期内，跳过重新抓取
+2026-03-22 16:17:19,973 [INFO] 数据尚在有效期内，跳过抓取：数据尚在有效期内，跳过抓取。
+2026-03-22 16:17:19,973 [INFO] 后端刷新完成：hero_sync=True, synergy_started=True, hextech=True
+2026-03-22 16:17:20,435 [INFO] 开始统一刷新后端数据
+2026-03-22 16:17:20,435 [INFO] Champion_Synergy.json 仍在有效期内，跳过重新抓取
+2026-03-22 16:17:20,436 [INFO] 数据尚在有效期内，跳过抓取：数据尚在有效期内，跳过抓取。
+2026-03-22 16:17:20,436 [INFO] 后端刷新完成：hero_sync=True, synergy_started=True, hextech=True
+2026-03-22 16:17:38,824 [INFO] 开始统一刷新后端数据
+2026-03-22 16:17:38,824 [INFO] Champion_Synergy.json 仍在有效期内，跳过重新抓取
+2026-03-22 16:17:38,826 [INFO] 数据尚在有效期内，跳过抓取：数据尚在有效期内，跳过抓取。
+2026-03-22 16:17:38,826 [INFO] 后端刷新完成：hero_sync=True, synergy_started=True, hextech=True
+2026-03-22 16:17:39,176 [INFO] 开始统一刷新后端数据
+2026-03-22 16:17:39,176 [INFO] Champion_Synergy.json 仍在有效期内，跳过重新抓取
+2026-03-22 16:17:39,176 [INFO] 数据尚在有效期内，跳过抓取：数据尚在有效期内，跳过抓取。
+2026-03-22 16:17:39,177 [INFO] 后端刷新完成：hero_sync=True, synergy_started=True, hextech=True
+2026-03-22 16:19:02,958 [INFO] 已在默认浏览器中打开: http://127.0.0.1:8000
+2026-03-22 16:19:03,008 [INFO] 开始统一刷新后端数据
+2026-03-22 16:19:03,013 [INFO] 开始预缓存海克斯图标，共 198 个
+2026-03-22 16:19:03,070 [INFO] CSV 重新加载成功：Hextech_Data_2026-03-22.csv
+2026-03-22 16:19:03,070 [INFO] 检测到 LCU 进程：port=60285
+2026-03-22 16:19:03,528 [INFO] Champion_Synergy.json 仍在有效期内，跳过重新抓取
+2026-03-22 16:19:03,529 [INFO] 数据尚在有效期内，跳过抓取：数据尚在有效期内，跳过抓取。
+2026-03-22 16:19:03,530 [INFO] 后端刷新完成：hero_sync=True, synergy_started=True, hextech=True
+2026-03-22 16:19:03,537 [INFO] Processing columns: ['英雄ID', '英雄名称', '英雄评级', '英雄胜率', '英雄出场率', '海克斯阶级', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差', '综合得分']
+2026-03-22 16:19:04,924 [INFO] Processing columns: ['英雄ID', '英雄名称', '英雄评级', '英雄胜率', '英雄出场率', '海克斯阶级', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差', '综合得分']
+2026-03-22 16:19:05,039 [INFO] Champion_Synergy.json 重新加载成功
+2026-03-22 16:19:09,145 [WARNING] LCU 连续 5 次 404，触发自愈重置端口/令牌
+2026-03-22 16:19:10,674 [INFO] 检测到 LCU 进程：port=60285
+2026-03-22 16:19:16,727 [WARNING] LCU 连续 5 次 404，触发自愈重置端口/令牌
+2026-03-22 16:19:18,250 [INFO] 检测到 LCU 进程：port=60285
+2026-03-22 16:19:26,050 [WARNING] LCU 连续 5 次 404，触发自愈重置端口/令牌
+2026-03-22 16:39:28,392 [INFO] 已在默认浏览器中打开: http://127.0.0.1:8000
+2026-03-22 16:39:28,450 [INFO] 开始统一刷新后端数据
+2026-03-22 16:39:28,451 [INFO] 开始预缓存海克斯图标，共 198 个
+2026-03-22 16:39:28,507 [INFO] CSV 重新加载成功：Hextech_Data_2026-03-22.csv
+2026-03-22 16:39:28,981 [INFO] Processing columns: ['英雄ID', '英雄名称', '英雄评级', '英雄胜率', '英雄出场率', '海克斯阶级', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差', '综合得分']
+2026-03-22 16:39:29,289 [INFO] Champion_Synergy.json 仍在有效期内，跳过重新抓取
+2026-03-22 16:39:29,290 [INFO] 数据尚在有效期内，跳过抓取：数据尚在有效期内，跳过抓取。
+2026-03-22 16:39:29,291 [INFO] 后端刷新完成：hero_sync=True, synergy_started=True, hextech=True
+2026-03-22 16:39:34,781 [INFO] Processing columns: ['英雄ID', '英雄名称', '英雄评级', '英雄胜率', '英雄出场率', '海克斯阶级', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差', '综合得分']
+2026-03-22 16:39:34,970 [INFO] Champion_Synergy.json 重新加载成功

@@ -2,30 +2,30 @@
 
 ### 范围
 
-项目路径：C:\Users\apple\claudecode\run
-执行环境：Antigravity 轻量档（Gemini 3 Flash）
-Branch_Name：ai-task-fix-augment-icon-map-20260320
+项目路径：[相对路径，新项目必须是新建文件夹]
+执行环境：[Claude Code / Antigravity + 档位]
+Branch_Name：[ai-task-<描述>-<YYYYMMDD>]
 
 Target_Files：
-  - config/Augment_Icon_Map.json
+  - [文件相对路径]
 
 ### 目标功能
 
-1. 访问 CommunityDragon 资源目录索引页：
-   https://raw.communitydragon.org/latest/game/assets/ux/augments/
-   获取该目录下所有文件名列表。
+[逐条列出本次要实现或修改的功能]
+[执行中途决策层确认的新需求直接追加到此处]
+[执行端发现并经决策层同意的范围扩展，Target_Files 同步追加，目标功能节同步说明原因]
 
-2. 在文件名列表中查找以下三个海克斯对应的正确文件名：
-   - 暴击飞弹（当前映射值：CriticalMissile_small.png）
-   - 升级：无尽之刃（当前映射值：UpgradeIE_small.png）
-   - 逃跑计划（当前映射值：EscapePlan_small.png）
-   匹配策略：忽略大小写，搜索关键词 critical、missile、ie、escape、plan 等。
+---
 
-3. 将 config/Augment_Icon_Map.json 中上述三条的值更新为正确文件名。
-   仅修改这三条，不得改动其他任何字段。
+## 待机态（/RECOVER 专用）
 
-### 验收标准
+项目路径：[待填写]
+执行环境：[待填写]
+Branch_Name：[待填写]
 
-- 在浏览器中直接访问以下格式的 URL 均返回 200：
-  https://raw.communitydragon.org/latest/game/assets/ux/augments/<新文件名>
-- Augment_Icon_Map.json 格式合法（有效 JSON，无多余逗号）
+Target_Files：
+  - [待填写]
+
+### 目标功能
+
+[待填写]
