@@ -1,12 +1,9 @@
 {
-  "workflow_id": "wf-sec-tighten-20260311",
-  "execution_status": "in_progress",
-  "current_step": 1,
-  "verification_result": "not_run",
-  "verification_artifact": "",
-  "audit_status": "failed",
-  "merge_status": "blocked",
-  "retry_count": 0,
-  "uat_status": "not_started",
-  "last_updated": "2026-03-13T04:45:15+08:00"
+    "audit_status":  "idle",
+    "workflow_id":  "hextech-style-01",
+    "merge_status":  "blocked",
+    "schema_version":  "6.0",
+    "execution_status":  "running",
+    "retry_count":  0,
+    "is_new_project":  true
 }

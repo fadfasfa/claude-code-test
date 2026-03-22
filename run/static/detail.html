@@ -448,11 +448,6 @@
             const iconUrl = toLocalAugmentIconUrl(hextech.icon, hextech.海克斯名称);
             const tierClass = getTierBarClass(hextech.海克斯阶级);
 
-            let iconBgClass = 'bg-[#181a26]';
-            if (hextech.海克斯阶级.includes('棱彩') || hextech.海克斯阶级 === 'Prismatic') iconBgClass = 'bg-gradient-to-br from-[#2bd5c2]/30 to-[#2bd5c2]/5';
-            else if (hextech.海克斯阶级.includes('金') || hextech.海克斯阶级 === 'Gold') iconBgClass = 'bg-gradient-to-br from-[#d4af37]/30 to-[#d4af37]/5';
-            else if (hextech.海克斯阶级.includes('银') || hextech.海克斯阶级 === 'Silver') iconBgClass = 'bg-gradient-to-br from-[#8c9ba5]/30 to-[#8c9ba5]/5';
-
             const wr = (hextech.海克斯胜率 * 100).toFixed(1);
             const pr = (hextech.海克斯出场率 * 100).toFixed(1);
 
@@ -464,14 +459,7 @@
                 <!-- 列2-3：竖条+小图标 (w-8 h-8) -->
                 <div class="flex items-center gap-2 flex-shrink-0">
                     <div class="w-1 h-6 rounded-full ${tierClass}"></div>
-                    <img src="${iconUrl}"
-                         alt="${hextech.海克斯名称}"
-                         loading="lazy"
-                         decoding="async"
-                         data-hextech-tier="${hextech.海克斯阶级}"
-                         data-hextech-name="${hextech.海克斯名称}"
-                         onerror="this.onerror=null; this.src=createPlaceholder(this.dataset.hextechName || this.alt || '?');"
-                         class="w-10 h-10 rounded-lg border border-gray-600 object-cover ${iconBgClass} flex-shrink-0 shadow-md">
+                    ${renderAugmentIcon(iconUrl, hextech.海克斯名称, hextech.海克斯阶级, 'list')}
                 </div>
 
                 <!-- 列4：海克斯名称 (flex-1 truncate) -->
@@ -683,22 +671,6 @@
                 // 使用 /assets/ 路由，让后端处理 CDN 重定向
                 const iconUrl = `./assets/${encodeURIComponent(item.name)}.png`;
 
-                // 不同评阶图标的发光效果与内部填充底色
-                let iconBorderColor = 'border-gray-500';
-                let iconBgClass = 'bg-[#0a0a0f]';
-                if (item.tier.includes('棱彩') || item.tier === 'Prismatic') {
-                    iconBorderColor = 'border-[#2bd5c2]';
-                    iconBgClass = 'bg-gradient-to-br from-[#2bd5c2]/30 to-[#0a0a0f]';
-                }
-                else if (item.tier.includes('金') || item.tier === 'Gold') {
-                    iconBorderColor = 'border-[#d4af37]';
-                    iconBgClass = 'bg-gradient-to-br from-[#d4af37]/30 to-[#0a0a0f]';
-                }
-                else if (item.tier.includes('银') || item.tier === 'Silver') {
-                    iconBorderColor = 'border-[#8c9ba5]';
-                    iconBgClass = 'bg-gradient-to-br from-[#8c9ba5]/30 to-[#0a0a0f]';
-                }
-
                 // 标签上色辅助函数
                 const getTagStyle = (tag) => {
                     if (tag.includes('强力联动')) return 'border border-[#2bd5c2]/40 text-[#2bd5c2] bg-[#2bd5c2]/10';
@@ -712,14 +684,7 @@
     <div class="bg-[#0b0e14] p-5 flex gap-4" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px)); min-height: 110px;">
         
         <!-- 左侧 Icon -->
-        <div class="w-14 h-14 flex-shrink-0 border-2 ${iconBorderColor} p-[1.5px] bg-[#0a0a0f] rounded-lg relative">
-            <img src="${iconUrl}" 
-                 data-hextech-name="${item.name}"
-                 data-hextech-tier="${item.tier}"
-                 decoding="async"
-                 class="w-full h-full object-cover rounded-[5px] ${iconBgClass}"
-                 onerror="this.onerror=null; this.src=createPlaceholder(this.dataset.hextechName || this.alt || '?');">
-        </div>
+        ${renderAugmentIcon(iconUrl, item.name, item.tier, 'detail')}
 
         <!-- 右侧内容列 -->
         <div class="flex flex-col flex-grow">
