@@ -1,129 +1,135 @@
-# Hextech Nexus 项目文档
+# 🔮 Hextech Nexus
 
-## 1. 项目概览
+> 面向《英雄联盟》ARAM / 海克斯系统的本地数据抓取、分析与可视化伴生套件。
 
-Hextech Nexus 是一个面向《英雄联盟》ARAM/海克斯数据分析的本地工具集，核心目标是把社区数据、官方数据和本地缓存整合起来，提供可查询、可视化、可同步的分析体验。
+## 1. 核心概览
 
-它主要覆盖四类能力：
+Hextech Nexus 的核心目标是整合社区海克斯梯队数据、官方 API 及本地客户端状态，提供从**静默后台抓取**到**动态桌面悬浮**的全链路分析体验。
 
-- 英雄数据同步
-- 海克斯数据抓取与分析
-- 本地 Web 控制台
-- 桌面悬浮查询界面
+**核心能力：**
+- 🔄 **数据同步**：英雄与海克斯数据的多源清洗融合
+- 🖥️ **本地 Web 控制台**：基于 FastAPI 的高性能数据面板
+- 🖱️ **伴生悬浮窗**：自动识别 LCU（游戏客户端）状态的透明悬浮层
 
-## 2. 目录结构
+---
 
-| 路径 | 作用 |
-| --- | --- |
-| `web_server.py` | 本地 FastAPI 服务，负责网页端接口、静态资源、WebSocket 推送和 LCU 联动 |
-| `hextech_scraper.py` | 海克斯数据抓取器，负责抓取外部数据源、落盘 CSV、更新状态文件 |
-| `data_processor.py` | 数据处理核心，负责英雄与海克斯榜单计算、缓存和图标 URL 生成 |
-| `hero_sync.py` | 英雄核心数据同步模块，负责 DDragon 版本追踪、头像下载和配置文件刷新 |
-| `backend_refresh.py` | 后端数据统一刷新入口，编排 hero_sync、apex_spider、hextech_scraper 的执行顺序 |
-| `apex_spider.py` | 英雄协同数据爬虫，抛出 Champion_Synergy.json |
-| `hextech_query.py` | 交互式查询入口，负责命令行检索、别名解析和结果展示 |
-| `hextech_ui.py` | 桌面悬浮窗界面 |
-| `capture.py` | 自动化截图脚本，便于前端验收和回归记录 |
-| `config/` | JSON、CSV、日志和运行状态文件 |
-| `assets/` | 本地英雄头像与海克斯图标资源 |
-| `static/` | Web 前端页面与静态脚本样式 |
+## 2. 架构与数据流
 
-## 3. 运行方式
-
-### Web 控制台
-
-```bash
-python run/web_server.py
-```
-
-启动后会自动打开浏览器，并在默认端口 `8000` 提供服务。
-
-### 桌面悬浮窗
-
-```bash
-python run/hextech_ui.py
-```
-
-### 数据查询
-
-```bash
-python run/hextech_query.py
-```
-
-### 数据抓取
-
-```bash
-python run/hextech_scraper.py
-```
-
-## 4. 数据流
+本系统分为四层：**数据获取层** -> **存储处理层** -> **服务调度层** -> **视图表现层**。
 
 ```mermaid
 flowchart TD
-    A[外部数据源] --> B[hextech_scraper.py]
-    B --> C[(config/Hextech_Data_*.csv)]
-    C --> D[data_processor.py]
-    D --> E[web_server.py]
-    D --> F[hextech_query.py]
-    E --> G[static 页面]
-    E --> H[WebSocket / LCU]
+    %% 数据源
+    Net_Riot[Riot/CDragon]
+    Net_Comm[社区数据源]
+    
+    %% 获取层
+    subgraph 获取层
+        Spider1[hero_sync.py]
+        Spider2[hextech_scraper.py]
+        Spider3[apex_spider.py]
+    end
+    
+    %% 调度与存储层
+    subgraph 核心调度与存储
+        Refresh[backend_refresh.py]
+        Store[(config/ 缓存文件与 CSV)]
+        Processor[data_processor.py]
+    end
+    
+    %% 服务与视图层
+    subgraph 应用与呈现
+        Web[web_server.py]
+        UI[hextech_ui.py]
+        Query[hextech_query.py]
+        WebUI[static 前端页面]
+    end
+    
+    %% 关系连线
+    Net_Riot --> Spider1
+    Net_Comm --> Spider2 & Spider3
+    Refresh --> Spider1 & Spider2 & Spider3
+    Spider1 & Spider2 & Spider3 --> Store
+    Store --> Processor
+    Processor --> Web & Query & UI
+    Web --> WebUI
+    UI -. 子进程拉起 .-> Web
+    UI -. WebSocket 热更新 .-> Web
 ```
 
-### 关键链路
+### 关键运转机制
+1. **自动化调度**：`hextech_ui.py` 会定期触发 `backend_refresh.py`。
+2. **非阻塞更新**：刷新脚本更新 CSV。`web_server.py` 的 FileWatcher 捕获变更后，触发 WebSocket 广播，使前端（如果已打开）无缝热更新。
+3. **伴生联动**：悬浮窗拦截用户操作，指令 `web_server.py` 控制浏览器进行对应英雄信息的热跳转。
 
-- `hextech_scraper.py` 定时抓取或更新海克斯数据，生成 CSV。
-- `web_server.py` 读取最新 CSV 和配置文件，渲染网页端内容。
-- `data_processor.py` 根据最新数据计算榜单，并为海克斯拼接图标 URL。
-- `hero_sync.py` 负责英雄基础数据和头像资源同步。
+---
 
-## 5. 配置文件
+## 3. 模块组件说明
 
-| 文件 | 说明 |
-| --- | --- |
-| `config/Champion_Core_Data.json` | 英雄 ID、中文名和英文名映射 |
-| `config/Champion_Synergy.json` | 英雄协同数据 |
-| `config/Augment_Full_Map.json` | 海克斯中文名与标准名映射 |
-| `config/Augment_Icon_Map.json` | 海克斯中文名与图标文件名映射 |
-| `config/hero_aliases.json` | 英雄别名表 |
-| `config/hero_version.txt` | 当前 DDragon 版本号 |
-| `config/scraper_status.json` | 抓取状态记录 |
-| `config/user_settings.json` | 本地用户设置 |
+| 组件分类 | 脚本文件 | 核心职责说明 |
+| :--- | :--- | :--- |
+| **表现层** | `hextech_ui.py` | 基于 Tkinter 的透明桌面悬浮窗，负责追踪 LCU 端口与拦截前端焦点。自带生命周期管理，启动时会自动在后台拉起 `web_server.py` 子进程。 |
+| **表现层** | `hextech_query.py` | CLI 命令行模式交互式查询入口，供终端极客使用。 |
+| **服务层** | `web_server.py` | FastAPI 本地服务端。提供 API 接口、静态页面分发、网络图片代理以及长连接 WebSocket 推送服务。 |
+| **调度层** | `backend_refresh.py` | 中央编排器。统一管理并触发底层所有的抓取任务序列。 |
+| **抓取层** | `hextech_scraper.py` | 抓取外部站点海克斯胜率等数据，清洗落盘至 CSV。 |
+| **抓取层** | `hero_sync.py` | 负责从 DDragon 抓取英雄头像资产及同步 `Champion_Core_Data.json`。 |
+| **抓取层** | `apex_spider.py` | 独立英雄协同数据分析模块。 |
+| **处理层** | `data_processor.py` | 读取 `config` 资产目录，拼接资源链，输出标准 JSON 供 Web 层消费。 |
 
-## 6. 依赖说明
+---
 
-建议安装以下依赖：
+## 4. 快速运行指引
 
-```bash
-pip install -r run/requirements.txt
+建议统一在项目根目录（运行环境应位于外层，即 `python run/xxx.py`）执行操作。
+
+### 推荐模式：伴生唤起
+```powershell
+python run/hextech_ui.py
+```
+> **说明**：此命令为玩家日常主要入口。挂载后，工具将自动隐藏并在检测到进入选人界面时浮出；同时它会在**后台自动拉起 Web 服务器**。点击悬浮窗英雄会直接调用浏览器查阅分析报表。
+
+### 独立 Web 服务
+```powershell
+python run/web_server.py
+```
+> **说明**：独立后台启动，默认自动寻找可用端口（优先 8000）并在浏览器中弹出控制台主页。
+
+### 纯数据命令面板
+```powershell
+python run/hextech_query.py
 ```
 
-当前项目核心依赖包括：
+---
 
-- `pandas`
-- `numpy`
-- `requests`
-- `Pillow`
-- `psutil`
-- `pywin32`
-- `selenium`
-- `fastapi[standard]`
+## 5. 存储资产与配置 (config & assets)
 
-## 7. 已知约束
+系统在 `run/config/` 下维护着自己的运行时账本：
 
-- 图标 URL 依赖 `config/Augment_Icon_Map.json` 的准确映射。
-- Web 端默认会尝试访问 CommunityDragon 资源，需要网络可用。
-- `capture.py` 依赖 Selenium 和本地浏览器驱动。
-- 该项目基于 Windows 环境特性较多，`pywin32` 与部分 LCU 相关逻辑在其他平台上可能不可用。
+- **`Champion_Core_Data.json`**：ID 映射的核心字典。
+- **`Augment_Icon_Map.json`**：海克斯中英文对译及本地图标哈希映射表（UI的图源基石）。
+- **`Hextech_Data_*.csv`**：抓取器定期沉积的持久化面板数据。
+- **`scraper_status.json` / `hero_version.txt`**：爬虫断点及当前同步的 DDragon 版本锚点。
 
-## 8. 维护建议
+在 `run/assets/` 下：
+- **头像缓存区**：系统首次匹配未命中时静默下载的所有 `.png` 图标。
 
-- 新增或修改海克斯图标时，优先同步更新 `config/Augment_Icon_Map.json`。
-- 修改数据处理逻辑时，尽量保持 `data_processor.py` 的缓存键策略不变。
-- 新增页面或接口时，补充 `web_server.py` 中对应的静态资源和返回路径说明。
-- 如果抓取源结构变化，优先调整 `hextech_scraper.py`，再回看 `PROJECT.md` 和 `README.md`。
+---
 
-## 9. 变更记录
+## 6. 环境依赖与约束限制
 
-| 日期 | 变更原因 | 摘要 |
-| --- | --- | --- |
-| 2026-03-22 | 调试修复 + 文档重构 | 删除 `backend_refresh.py` 重复函数；修复 `Augment_Icon_Map.json` 5 条损坏映射；补全目录说明 |
+**核心依赖配置**：
+请通过 `pip install -r run/requirements.txt` 完成安装。其中包括：`fastapi`, `uvicorn`, `pandas`, `requests`, `psutil`, `Pillow`, `pywin32`。
+
+**已知限制**：
+- ✅ **操作系统特异性**：悬浮窗依托于 `pywin32` 获取 LeagueClient 等窗口句柄与焦点跟踪，**强依赖 Windows 环境**。
+- ✅ **冷启动延迟**：如果在极其纯净的环境下首次运行，同步 DDragon 并落盘可能导致 UI 与浏览器显示数秒的空白期。
+- ✅ **LFI 防御机制**：Web 层有严苛的路径审查，禁止将任意文件移入 `assets` 并期望通过路由越权访问。
+
+---
+
+## 7. 变更记录
+
+| 日期 | 执行节点 | 变更原因 | 摘要 | 影响文件 |
+| :--- | :--- | :--- | :--- | :--- |
+| 2026-03-22 | ai-task-fix-web | bug修复 / 重构 | 修复 hextech_ui.py 无法独立挂载/唤起 Web 界面服务的问题；重构重组项目文档架构与模块层级说明 | `hextech_ui.py`<br>`web_server.py`<br>`PROJECT.md` |
