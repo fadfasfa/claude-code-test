@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 核心模块：多线程数据并发更新器 (update_stooq_fast.py)
-功能：从 Stooq 自动获取全资产历史数据，采用增量合并机制防止重复计算。
+功能：从 yfinance (首选) 或 Stooq 自动获取全资产历史数据，采用增量合并机制防止重复计算。
 """
 import requests
 import pandas as pd
@@ -10,6 +10,7 @@ from datetime import datetime
 import time
 from pathlib import Path
 from io import StringIO
+import yfinance as yf
 
 # 引入统一配置
 from config import DATA_DIR, ASSETS_MAPPING
@@ -53,8 +54,37 @@ def is_data_up_to_date(file_path):
     except Exception:
         return False
 
+def fetch_yfinance_data(yf_code, asset_name):
+    """使用 yfinance 获取历史数据"""
+    try:
+        ticker = yf.Ticker(yf_code)
+        df = ticker.history(period="max")
+        if df is None or df.empty:
+            return None
+            
+        df.reset_index(inplace=True)
+        # yfinance 返回的 index 是 Date，列有 Open, High, Low, Close, Volume 等
+        # 需要重命名为波兰语格式以兼容原架构
+        header_mapping = {
+            'Date': 'Data',
+            'Close': 'Zamkniecie'
+        }
+        df.rename(columns=header_mapping, inplace=True)
+        
+        if 'Data' in df.columns:
+            # 去除时区信息，与原来的保持一致
+            if pd.api.types.is_datetime64tz_dtype(df['Data']):
+                df['Data'] = df['Data'].dt.tz_localize(None)
+            df['Data'] = pd.to_datetime(df['Data'])
+            
+        return df
+    except Exception as e:
+        print(f"[DEBUG] yfinance 获取 {asset_name} 失败: {e}")
+        return None
+
 def fetch_and_merge_data(asset_name, config):
-    """单线程下载并合并数据函数 - 带重试机制"""
+    """单线程下载并合并数据函数 - 混合下载策略"""
+    yf_code = config.get('yf_code')
     stooq_code = config['stooq_code']
     file_name = config['file']
     file_path = Path(DATA_DIR) / file_name
@@ -62,103 +92,96 @@ def fetch_and_merge_data(asset_name, config):
     if is_data_up_to_date(file_path):
         return f"[跳过] {asset_name:<4} 数据已是最新，触发防重复机制。"
 
-    url = f"https://stooq.com/q/d/l/?s={stooq_code}&i=d"
-
-    # [重试机制] 3 次自动重试，每次间隔 5 秒
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = requests.get(url, headers=HEADERS, timeout=15)
-            response.raise_for_status()
-
-            # 解析内存中的 CSV 数据
-            from io import StringIO
-            new_df = pd.read_csv(StringIO(response.text))
-
-            # [多语言兼容] 模糊列名映射：标准化波兰语/英语表头
-            header_mapping = {
-                'Date': 'Data', 'date': 'Data', 'data': 'Data',
-                'Close': 'Zamkniecie', 'close': 'Zamkniecie', 'zamkniecie': 'Zamkniecie'
-            }
-            new_df.rename(columns=header_mapping, inplace=True)
-
-            # [健壮性校验] 强制检查核心列是否存在
-            if 'Data' not in new_df.columns or 'Zamkniecie' not in new_df.columns:
-                if attempt < max_retries:
-                    print(f"[重试] {asset_name:<4} 第 {attempt} 次表头匹配失败，等待 5 秒后重试...")
+    # 优先使用 yfinance 获取全量数据（速度快且无反爬限制）
+    new_df = None
+    if yf_code:
+        new_df = fetch_yfinance_data(yf_code, asset_name)
+        
+    # 如果 yfinance 失败，降级到 stooq 获取
+    if new_df is None or new_df.empty:
+        print(f"[降级] {asset_name:<4} 尝试使用备用数据源 Stooq...")
+        url = f"https://stooq.com/q/d/l/?s={stooq_code}&i=d"
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.get(url, headers=HEADERS, timeout=15)
+                response.raise_for_status()
+                
+                new_df = pd.read_csv(StringIO(response.text))
+                header_mapping = {
+                    'Date': 'Data', 'date': 'Data', 'data': 'Data',
+                    'Close': 'Zamkniecie', 'close': 'Zamkniecie', 'zamkniecie': 'Zamkniecie'
+                }
+                new_df.rename(columns=header_mapping, inplace=True)
+                
+                if 'Data' not in new_df.columns or 'Zamkniecie' not in new_df.columns:
+                    new_df = None
                     time.sleep(5)
                     continue
-                # [日志快照] 打印原始列名供审计
-                print(f"[!] {asset_name:<4} 表头匹配失败，原始列名：{list(new_df.columns)}")
-                return f"[失败] {asset_name:<4} 表头匹配失败。当前列名：{list(new_df.columns)}"
-
-            # [Scraper-Ninja] 防御性数据校验：防止空数据污染
-            if len(new_df) < 5:
-                if attempt < max_retries:
-                    print(f"[重试] {asset_name:<4} 第 {attempt} 次获取数据不足，等待 5 秒后重试...")
+                    
+                if len(new_df) < 5:
+                    new_df = None
                     time.sleep(5)
                     continue
-                return f"[失败] {asset_name:<4} 获取到的数据不足 (仅 {len(new_df)} 条)，拒绝污染本地数据。"
-
-            if new_df.empty:
-                if attempt < max_retries:
-                    print(f"[重试] {asset_name:<4} 第 {attempt} 次获取数据为空，等待 5 秒后重试...")
-                    time.sleep(5)
-                    continue
-                # [日志快照] 打印完整 URL 供用户手动校验
-                print(f"[!] {asset_name:<4} 数据获取失败，请手动在浏览器打开校验：{url}")
-                return f"[失败] {asset_name:<4} 获取到的数据为空或格式不匹配。"
-
-            # [多语言兼容] 设置索引
-            new_df['Data'] = pd.to_datetime(new_df['Data'])
-            new_df.set_index('Data', inplace=True)
-
-            # 增量合并逻辑
-            if Path(file_path).exists():
-                old_df = pd.read_csv(file_path)
-                # [多语言兼容] 模糊列名匹配
-                old_date_col = None
-                for col in old_df.columns:
-                    if col.lower() in ['data', 'date', 'index']:
-                        old_date_col = col
-                        break
-                if old_date_col is None:
-                    return f"[系统错误] {asset_name:<4} 本地数据列名匹配失败：{list(old_df.columns)}"
-                old_df[old_date_col] = pd.to_datetime(old_df[old_date_col])
-                old_df.set_index(old_date_col, inplace=True)
-
-                # 合并并去重，保留最新的记录
-                combined_df = pd.concat([old_df, new_df])
-                combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
-            else:
-                combined_df = new_df
-
-            # 按时间排序后保存回 CSV
-            combined_df.sort_index(inplace=True)
-            combined_df.reset_index(inplace=True)
-            combined_df.to_csv(file_path, index=False)
-
-            return f"[成功] {asset_name:<4} 更新完毕。最新数据点：{combined_df['Data'].iloc[-1].date()}"
-
-        except requests.exceptions.RequestException as e:
-            if attempt < max_retries:
-                print(f"[重试] {asset_name:<4} 第 {attempt} 次网络请求失败，等待 5 秒后重试...")
+                    
+                break
+            except Exception as e:
+                new_df = None
                 time.sleep(5)
-            else:
-                return f"[网络错误] {asset_name:<4} 请求失败：{e}"
-        except Exception as e:
-            print(f"[DEBUG] {asset_name:<4} 异常详情：{type(e).__name__} - {e}")
-            return f"[系统错误] {asset_name:<4} 处理异常：{e}"
+        
+        if new_df is None or new_df.empty:
+            return f"[失败] {asset_name:<4} 所有的备选数据源(Stooq/yfinance)获取数据均失败。"
 
-    return f"[失败] {asset_name:<4} 重试 {max_retries} 次后仍无法获取数据。"
+    # 处理与保存获得的 new_df
+    try:
+        new_df['Data'] = pd.to_datetime(new_df['Data'])
+        new_df.set_index('Data', inplace=True)
+        
+        # 为了防污染，过滤不必要的列或进行整理
+        cols_to_keep = ['Zamkniecie']
+        for col in ['Open', 'High', 'Low', 'Volume']:
+            if col in new_df.columns:
+                cols_to_keep.append(col)
+                
+        new_df = new_df[[col for col in cols_to_keep if col in new_df.columns]]
+            
+        # 增量合并逻辑
+        if Path(file_path).exists():
+            old_df = pd.read_csv(file_path)
+            
+            old_date_col = None
+            for col in old_df.columns:
+                if col.lower() in ['data', 'date', 'index']:
+                    old_date_col = col
+                    break
+                    
+            if old_date_col is None:
+                return f"[系统错误] {asset_name:<4} 本地数据列名匹配失败。"
+                
+            old_df[old_date_col] = pd.to_datetime(old_df[old_date_col])
+            old_df.set_index(old_date_col, inplace=True)
+
+            combined_df = pd.concat([old_df, new_df])
+            combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
+        else:
+            combined_df = new_df
+
+        # 按时间排序后保存回 CSV
+        combined_df.sort_index(inplace=True)
+        combined_df.reset_index(inplace=True)
+        combined_df.to_csv(file_path, index=False)
+
+        return f"[成功] {asset_name:<4} 更新完毕。最新数据点：{combined_df['Data'].iloc[-1].date()}"
+    except Exception as e:
+        return f"[系统错误] {asset_name:<4} 数据处理保存异常：{e}"
 
 def main():
     print("=" * 60)
-    print("启动 Stooq 全资产数据多线程并发更新...")
+    print("启动全资产数据多线程并发更新 (优先使用 yfinance)...")
     print("=" * 60)
 
-    # 采用多线程并发执行
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    # 采用多线程并发执行 (5个资产)
+    with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_asset = {
             executor.submit(fetch_and_merge_data, asset, cfg): asset
             for asset, cfg in ASSETS_MAPPING.items()

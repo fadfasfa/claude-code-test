@@ -55,7 +55,8 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            background: rgba(10, 12, 16, 0.98);
+            background: rgba(5, 8, 12, 0.98);
+            --augment-accent: 43, 213, 194;
         }
 
         .augment-icon-shell::before {
@@ -93,27 +94,30 @@
         }
 
         .tier-shell-prismatic {
-            border-color: #da70d6 !important;
-            box-shadow: 0 0 16px rgba(218, 112, 214, 0.5), 0 10px 22px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1), inset 0 0 0 1px rgba(255,255,255,0.05) !important;
+            --augment-accent: 34, 211, 238;
+            border-color: #22d3ee !important;
+            box-shadow: 0 0 18px rgba(34, 211, 238, 0.5), 0 10px 22px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1), inset 0 0 0 1px rgba(255,255,255,0.05) !important;
         }
         .tier-shell-prismatic::before {
-            background: radial-gradient(circle at 0% 0%, rgba(218, 112, 214, 0.4) 0%, transparent 60%), linear-gradient(135deg, rgba(43, 213, 194, 0.25) 0%, transparent 80%) !important;
+            background: radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.42) 0%, transparent 60%), linear-gradient(135deg, rgba(167, 139, 250, 0.22) 0%, transparent 80%) !important;
         }
 
         .tier-shell-gold {
-            border-color: #d4af37 !important;
-            box-shadow: 0 0 12px rgba(212, 175, 55, 0.4), 0 10px 22px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05) !important;
+            --augment-accent: 244, 191, 36;
+            border-color: #f4bf24 !important;
+            box-shadow: 0 0 12px rgba(244, 191, 36, 0.42), 0 10px 22px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05) !important;
         }
         .tier-shell-gold::before {
-            background: radial-gradient(circle at 0% 0%, rgba(212, 175, 55, 0.35) 0%, transparent 60%), linear-gradient(135deg, rgba(212, 175, 55, 0.15) 0%, transparent 50%) !important;
+            background: radial-gradient(circle at 0% 0%, rgba(244, 191, 36, 0.36) 0%, transparent 60%), linear-gradient(135deg, rgba(244, 191, 36, 0.15) 0%, transparent 50%) !important;
         }
 
         .tier-shell-silver {
-            border-color: #8c9ba5 !important;
-            box-shadow: 0 0 8px rgba(140, 155, 165, 0.25), 0 10px 22px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05) !important;
+            --augment-accent: 148, 163, 184;
+            border-color: #94a3b8 !important;
+            box-shadow: 0 0 8px rgba(148, 163, 184, 0.28), 0 10px 22px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05) !important;
         }
         .tier-shell-silver::before {
-            background: radial-gradient(circle at 0% 0%, rgba(140, 155, 165, 0.25) 0%, transparent 60%), linear-gradient(135deg, rgba(140, 155, 165, 0.1) 0%, transparent 50%) !important;
+            background: radial-gradient(circle at 0% 0%, rgba(148, 163, 184, 0.26) 0%, transparent 60%), linear-gradient(135deg, rgba(148, 163, 184, 0.1) 0%, transparent 50%) !important;
         }
 
 
@@ -700,8 +704,8 @@
                 };
 
                 return `
-<div class="hextech-card p-[1px] bg-[#202738] mb-4" style="clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));">
-    <div class="bg-[#0b0e14] p-5 flex gap-4" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px)); min-height: 110px;">
+<div class="hextech-card p-[1px] bg-[#151d2a] mb-4" style="clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));">
+    <div class="bg-[#060b10] p-5 flex gap-4" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px)); min-height: 110px;">
         
         <!-- 左侧 Icon -->
         ${renderAugmentIcon(iconUrl, item.name, item.tier, 'detail')}
