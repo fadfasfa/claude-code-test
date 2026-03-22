@@ -417,10 +417,10 @@
 
         function getAugmentTierAccent(tier) {
             const tierName = tier || '';
-            if (tierName.includes('棱彩') || tierName === 'Prismatic') return '43 213 194';
-            if (tierName.includes('黄金') || tierName === 'Gold') return '212 175 55';
-            if (tierName.includes('白银') || tierName === 'Silver') return '140 155 165';
-            return '120 130 150';
+            if (tierName.includes('棱彩') || tierName === 'Prismatic') return '43, 213, 194';
+            if (tierName.includes('黄金') || tierName === 'Gold') return '212, 175, 55';
+            if (tierName.includes('白银') || tierName === 'Silver') return '140, 155, 165';
+            return '120, 130, 150';
         }
 
         function renderAugmentIcon(iconUrl, hextechName, tier, variant = 'list') {
