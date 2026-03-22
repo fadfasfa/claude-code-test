@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 import webbrowser
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple
@@ -81,6 +81,106 @@ def _get_ddragon_version() -> str:
     except (OSError, IOError):
         logger.debug("无法读取 hero_version.txt，使用备用版本号")
     return "14.3.1"
+
+
+_augment_icon_map_cache: Tuple[float, dict] = (0.0, {})
+
+
+def _normalize_augment_name(name: str) -> str:
+    name = str(name).lower()
+    for token in (" ", "-", "_", "(", ")", "[", "]", "'", '"', "."):
+        name = name.replace(token, "")
+    return name
+
+
+def _normalize_augment_filename(value: str) -> str:
+    return os.path.basename(str(value).strip()).lower()
+
+
+def _load_augment_icon_map() -> dict:
+    global _augment_icon_map_cache
+
+    icon_map_path = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
+    try:
+        current_mtime = os.path.getmtime(icon_map_path)
+    except OSError:
+        return _augment_icon_map_cache[1]
+
+    cached_mtime, cached_data = _augment_icon_map_cache
+    if cached_mtime == current_mtime and cached_data:
+        return cached_data
+
+    try:
+        with open(icon_map_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            _augment_icon_map_cache = (current_mtime, data)
+            return data
+    except Exception as e:
+        logger.warning(f"读取 Augment_Icon_Map.json 失败：{e}")
+
+    return cached_data
+
+
+def _find_augment_icon_filename(icon_map: dict, lookup_name: str) -> Optional[str]:
+    if not icon_map or not lookup_name:
+        return None
+
+    direct = icon_map.get(lookup_name)
+    if direct:
+        return _normalize_augment_filename(direct)
+
+    normalized_lookup = _normalize_augment_name(lookup_name)
+    for key, value in icon_map.items():
+        if _normalize_augment_name(key) == normalized_lookup:
+            return _normalize_augment_filename(value)
+    return None
+
+
+def _iter_augment_icon_urls(icon_filename: str):
+    filename = _normalize_augment_filename(icon_filename)
+    templates = [
+        "https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{filename}",
+        "https://raw.communitydragon.org/latest/game/assets/ux/augments/{filename}",
+        "https://raw.communitydragon.org/pbe/game/assets/ux/cherry/augments/icons/{filename}",
+        "https://raw.communitydragon.org/pbe/game/assets/ux/augments/{filename}",
+    ]
+    for template in templates:
+        yield template.format(filename=filename)
+
+
+def _ensure_augment_icon_cached(icon_filename: str) -> Optional[str]:
+    normalized_filename = _normalize_augment_filename(icon_filename)
+    if not normalized_filename:
+        return None
+
+    target_path = os.path.join(_assets_dir, normalized_filename)
+    if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+        return target_path
+
+    tmp_path = target_path + ".tmp"
+    for url in _iter_augment_icon_urls(normalized_filename):
+        try:
+            response = requests.get(url, stream=True, timeout=15)
+            if response.status_code != 200:
+                continue
+
+            with open(tmp_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            os.replace(tmp_path, target_path)
+            return target_path
+        except Exception as e:
+            logger.debug(f"下载海克斯图标失败：{url} -> {e}")
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+
+    return None
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -507,12 +607,12 @@ async def favicon():
 
 @app.get("/assets/{filename}")
 async def get_asset(filename: str):
-    """Serve asset files with DDragon CDN fallback if local file is missing.
+    """Serve asset files with local caching for augment icons and DDragon fallback for heroes.
 
     安全机制：使用 realpath + normcase 验证请求路径是否在 _assets_dir 内，
     阻止通过 ../ 进行目录遍历攻击（LFI 防御）。
 
-    新增：海克斯图标支持 - 根据 Augment_Icon_Map.json 映射到 CommunityDragon CDN
+    新增：海克斯图标支持 - 优先本地缓存，缺失时由服务端下载后再本地返回。
     """
     local_path = os.path.join(_assets_dir, filename)
     # ── LFI 防御：解析真实路径并验证是否在 assets 目录内 ──
@@ -523,36 +623,24 @@ async def get_asset(filename: str):
         return JSONResponse(content={"error": "Forbidden"}, status_code=403)
     if os.path.exists(local_path):
         return FileResponse(local_path)
-    # File missing, try different CDN fallbacks
-
-    # 1. 海克斯图标处理 - 检查是否为海克斯图标文件
+    # File missing, try augment icon cache first.
     if filename.endswith('.png') and not filename[:-4].isdigit():
-        # 可能是海克斯图标，尝试从 Augment_Icon_Map.json 获取映射
         try:
-            icon_map_path = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
-            with open(icon_map_path, "r", encoding="utf-8") as f:
-                icon_map = json.load(f)
+            icon_map = _load_augment_icon_map()
+            requested_stem = unquote(filename[:-4])
+            mapped_filename = _find_augment_icon_filename(icon_map, requested_stem)
 
-            # 尝试匹配海克斯名称（移除 .png 后缀）
-            hextech_name = unquote(filename[:-4])
-            if hextech_name in icon_map:
-                # 找到映射，构建 CommunityDragon URL
-                cdn_filename = icon_map[hextech_name]
-                communitydragon_url = f"https://raw.communitydragon.org/latest/game/assets/ux/augments/{cdn_filename}"
-                return RedirectResponse(url=communitydragon_url, status_code=307)
-            else:
-                # 尝试清理名称后匹配
-                clean_name = hextech_name.lower().replace(' ', '').replace('-', '')
-                for name, mapped_filename in icon_map.items():
-                    clean_mapped = name.lower().replace(' ', '').replace('-', '')
-                    if clean_name == clean_mapped:
-                        communitydragon_url = f"https://raw.communitydragon.org/latest/game/assets/ux/augments/{mapped_filename}"
-                        return RedirectResponse(url=communitydragon_url, status_code=307)
-                        break
+            # If the request itself already looks like an icon filename, cache that directly.
+            if not mapped_filename:
+                mapped_filename = _normalize_augment_filename(filename)
+
+            cached_path = _ensure_augment_icon_cached(mapped_filename)
+            if cached_path and os.path.exists(cached_path):
+                return FileResponse(cached_path)
         except Exception as e:
-            logger.debug(f"海克斯图标映射失败：{e}")
+            logger.debug(f"海克斯图标本地缓存失败：{e}")
 
-    # 2. 英雄头像处理 - 原有逻辑
+    # 英雄头像处理 - 原有逻辑
     if filename.endswith('.png'):
         file_stem = filename[:-4]  # e.g. "123" (英雄 ID)
         hero_name = get_champion_name(file_stem)
@@ -580,9 +668,7 @@ async def api_champion_hextechs(name: str):
 async def api_augment_icon_map():
     """获取海克斯图标映射文件。"""
     try:
-        icon_map_path = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
-        with open(icon_map_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = _load_augment_icon_map()
         return JSONResponse(content=data)
     except Exception as e:
         logger.warning(f"读取 Augment_Icon_Map.json 失败：{e}")

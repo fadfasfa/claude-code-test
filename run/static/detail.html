@@ -366,7 +366,7 @@
                          loading="lazy"
                          data-hextech-tier="${hextech.海克斯阶级}"
                          data-hextech-name="${hextech.海克斯名称}"
-                         onerror="this.parentElement.style.visibility='hidden'; this.onerror=null;"
+                         onerror="this.onerror=null; this.src=createPlaceholder(this.dataset.hextechName || this.alt || '?');"
                          class="w-10 h-10 rounded-lg border border-gray-600 object-cover ${iconBgClass} flex-shrink-0 shadow-md">
                 </div>
 
@@ -613,7 +613,7 @@
                  data-hextech-name="${item.name}"
                  data-hextech-tier="${item.tier}"
                  class="w-full h-full object-cover rounded-[5px] ${iconBgClass}"
-                 onerror="this.parentElement.style.visibility='hidden'; this.onerror=null;">
+                 onerror="this.onerror=null; this.src=createPlaceholder(this.dataset.hextechName || this.alt || '?');">
         </div>
 
         <!-- 右侧内容列 -->
