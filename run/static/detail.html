@@ -55,9 +55,10 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(180deg, rgba(14, 18, 28, 0.98), rgba(8, 10, 16, 0.98));
+            background: rgba(10, 12, 16, 0.98);
             box-shadow:
-                0 10px 22px rgba(0, 0, 0, 0.28),
+                0 0 12px rgba(var(--augment-accent), 0.25),
+                0 10px 22px rgba(0, 0, 0, 0.4),
                 inset 0 1px 0 rgba(255, 255, 255, 0.05),
                 inset 0 0 0 1px rgba(255, 255, 255, 0.03);
         }
@@ -67,8 +68,8 @@
             position: absolute;
             inset: 0;
             background:
-                radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.10), transparent 38%),
-                linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 42%);
+                radial-gradient(circle at 0% 0%, rgba(var(--augment-accent), 0.35) 0%, transparent 60%),
+                linear-gradient(135deg, rgba(var(--augment-accent), 0.15) 0%, transparent 50%);
             pointer-events: none;
             z-index: 0;
         }
