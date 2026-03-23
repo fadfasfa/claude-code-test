@@ -7,3 +7,8 @@
 {"ts":"2026-03-22T19:20:10","step":"post-commit AST scan","commit":"fa7188102e1b02e73906c19f6a8c073d5f029c32","branch":"ai-task-fix-web-ui-startup-20260322","status":"PASSED","violations":"none|"}
 {"step":"Refactoring documentation","files":["run/PROJECT.md"],"reason":"Rewrite project documentation logic","ts":"2026-03-22T19:22:45"}
 {"step":"Adjust detail view hextech icon contrast and tier border colors","files":["run/static/detail.html"],"reason":"Lower background brightness so tier colors stand out and align border palette with reference screenshot","ts":"2026-03-22T19:33:00"}
+{"step":"Boost prismatic hextech contrast","files":["run/static/detail.html"],"reason":"Increase prismatic icon辨识度 with stronger multicolor border and halo while leaving gold/silver unchanged","ts":"2026-03-22T19:40:00"}
+{"step":"Refine prismatic icon center highlight","files":["run/static/detail.html"],"reason":"Keep the border unchanged and move prismatic emphasis to the center background/highlight for a cleaner look","ts":"2026-03-22T19:46:00"}
+{"step":"Darken prismatic center card","files":["run/static/detail.html"],"reason":"Reduce prismatic background brightness and halo so the center icon reads clearly without overbright borders","ts":"2026-03-22T19:52:00"}
+{"step":"Normalize augment icon source to CommunityDragon","files":["run/web_server.py"],"reason":"Use a single upstream channel for augment icons and refresh cached assets on startup when the source marker is missing or outdated","ts":"2026-03-22T20:05:00"}
+{"ts":"2026-03-22T22:46:41","step":"post-commit AST scan","commit":"779785358716d56da8caf910c0286c3260d1e3e9","branch":"ai-task-fix-web-ui-startup-20260322","status":"PASSED","violations":"none|"}

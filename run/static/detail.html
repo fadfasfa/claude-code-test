@@ -57,6 +57,7 @@
             justify-content: center;
             background: rgba(5, 8, 12, 0.98);
             --augment-accent: 43, 213, 194;
+            isolation: isolate;
         }
 
         .augment-icon-shell::before {
@@ -95,11 +96,24 @@
 
         .tier-shell-prismatic {
             --augment-accent: 34, 211, 238;
-            border-color: #22d3ee !important;
-            box-shadow: 0 0 18px rgba(34, 211, 238, 0.5), 0 10px 22px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1), inset 0 0 0 1px rgba(255,255,255,0.05) !important;
+            border-color: rgba(34, 211, 238, 0.82) !important;
+            background:
+                radial-gradient(circle at 48% 40%, rgba(255, 255, 255, 0.05) 0%, transparent 26%),
+                radial-gradient(circle at 18% 16%, rgba(34, 211, 238, 0.06) 0%, transparent 24%),
+                linear-gradient(160deg, rgba(4, 6, 10, 0.995) 0%, rgba(2, 3, 6, 0.998) 100%) !important;
+            box-shadow:
+                0 0 0 1px rgba(255, 255, 255, 0.04),
+                0 0 10px rgba(34, 211, 238, 0.28),
+                0 0 16px rgba(168, 85, 247, 0.08),
+                0 10px 22px rgba(0,0,0,0.5),
+                inset 0 1px 0 rgba(255,255,255,0.06),
+                inset 0 0 0 1px rgba(255,255,255,0.03) !important;
         }
         .tier-shell-prismatic::before {
-            background: radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.42) 0%, transparent 60%), linear-gradient(135deg, rgba(167, 139, 250, 0.22) 0%, transparent 80%) !important;
+            background:
+                radial-gradient(circle at 24% 20%, rgba(255, 255, 255, 0.08) 0%, transparent 22%),
+                radial-gradient(circle at 70% 26%, rgba(34, 211, 238, 0.18) 0%, transparent 28%),
+                linear-gradient(135deg, rgba(34, 211, 238, 0.06) 0%, rgba(168, 85, 247, 0.05) 48%, transparent 90%) !important;
         }
 
         .tier-shell-gold {

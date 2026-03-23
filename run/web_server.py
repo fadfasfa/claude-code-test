@@ -29,32 +29,34 @@ from hextech_query import get_latest_csv
 from hero_sync import load_champion_core_data, CONFIG_DIR
 from backend_refresh import refresh_backend_data
 
-# ── 模块日志（不再重复调用 basicConfig，依赖 hero_sync 的全局配置） ─────────
+# 鈹€鈹€ 妯″潡鏃ュ織锛堜笉鍐嶉噸澶嶈皟鐢?basicConfig锛屼緷璧?hero_sync 鐨勫叏灞€閰嶇疆锛?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 logger = logging.getLogger(__name__)
 
-# ── 常量 ──────────────────────────────────────────────────────────────────────
+# 鈹€鈹€ 甯搁噺 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
+AUGMENT_ICON_SOURCE_FILE = os.path.join(CONFIG_DIR, "augment_icon_source.txt")
+AUGMENT_ICON_SOURCE_ID = "communitydragon"
 
-# ── 英雄核心数据缓存 ─────────────────────────────────────────────────────────
+# 鈹€鈹€ 鑻遍泟鏍稿績鏁版嵁缂撳瓨 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 _champion_core_cache: Optional[dict] = None
 
 
 def _ensure_champion_cache() -> dict:
-    """确保英雄核心数据缓存已加载，返回缓存字典（消除重复的缓存初始化代码）。"""
+    """纭繚鑻遍泟鏍稿績鏁版嵁缂撳瓨宸插姞杞斤紝杩斿洖缂撳瓨瀛楀吀锛堟秷闄ら噸澶嶇殑缂撳瓨鍒濆鍖栦唬鐮侊級銆?""
     global _champion_core_cache
     if _champion_core_cache is None:
         try:
             _champion_core_cache = load_champion_core_data()
         except Exception as e:
-            logger.warning(f"加载英雄核心数据失败：{e}")
+            logger.warning(f"鍔犺浇鑻遍泟鏍稿績鏁版嵁澶辫触锛歿e}")
             _champion_core_cache = {}
     return _champion_core_cache
 
 
 def get_champion_name(champ_id: str) -> str:
-    """根据英雄 ID（字符串）获取中文名，使用缓存避免重复加载。"""
+    """鏍规嵁鑻遍泟 ID锛堝瓧绗︿覆锛夎幏鍙栦腑鏂囧悕锛屼娇鐢ㄧ紦瀛橀伩鍏嶉噸澶嶅姞杞姐€?""
     cache = _ensure_champion_cache()
     champ_id_str = str(champ_id)
     if champ_id_str in cache:
@@ -63,7 +65,7 @@ def get_champion_name(champ_id: str) -> str:
 
 
 def get_champion_info(champ_id: str) -> Tuple[str, str]:
-    """获取英雄 ID 对应的中文名和英文名，返回 (name, en_name)。"""
+    """鑾峰彇鑻遍泟 ID 瀵瑰簲鐨勪腑鏂囧悕鍜岃嫳鏂囧悕锛岃繑鍥?(name, en_name)銆?""
     cache = _ensure_champion_cache()
     champ_id_str = str(champ_id)
     if champ_id_str in cache:
@@ -73,14 +75,14 @@ def get_champion_info(champ_id: str) -> Tuple[str, str]:
 
 
 def _get_ddragon_version() -> str:
-    """从 config/hero_version.txt 读取当前 DDragon 版本号，读取失败时返回备用版本。"""
+    """浠?config/hero_version.txt 璇诲彇褰撳墠 DDragon 鐗堟湰鍙凤紝璇诲彇澶辫触鏃惰繑鍥炲鐢ㄧ増鏈€?""
     try:
         with open(VERSION_FILE, "r", encoding="utf-8") as f:
             version = f.read().strip()
             if version:
                 return version
     except (OSError, IOError):
-        logger.debug("无法读取 hero_version.txt，使用备用版本号")
+        logger.debug("鏃犳硶璇诲彇 hero_version.txt锛屼娇鐢ㄥ鐢ㄧ増鏈彿")
     return "14.3.1"
 
 
@@ -120,9 +122,24 @@ def _load_augment_icon_map() -> dict:
             _augment_icon_map_cache = (current_mtime, data)
             return data
     except Exception as e:
-        logger.warning(f"读取 Augment_Icon_Map.json 失败：{e}")
+        logger.warning(f"璇诲彇 Augment_Icon_Map.json 澶辫触锛歿e}")
 
     return cached_data
+
+
+def _read_augment_icon_source_marker() -> str:
+    try:
+        with open(AUGMENT_ICON_SOURCE_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except (OSError, IOError):
+        return ""
+
+
+def _write_augment_icon_source_marker(source_id: str) -> None:
+    tmp_path = AUGMENT_ICON_SOURCE_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(source_id)
+    os.replace(tmp_path, AUGMENT_ICON_SOURCE_FILE)
 
 
 def _find_augment_icon_filename(icon_map: dict, lookup_name: str) -> Optional[str]:
@@ -143,8 +160,7 @@ def _find_augment_icon_filename(icon_map: dict, lookup_name: str) -> Optional[st
 def _iter_augment_icon_urls(icon_filename: str):
     filename = _normalize_augment_filename(icon_filename)
     templates = [
-        "https://cdn.dtodo.cn/hextech/augment-icons/{filename}",
-        "https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{filename}",
+        # 缁熶竴浣跨敤 CommunityDragon 浣滀负娴峰厠鏂浘鏍囧敮涓€涓婃父锛岄伩鍏嶆贩鐢ㄩ暅鍍忔簮瀵艰嚧椋庢牸涓嶄竴鑷淬€?        "https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{filename}",
         "https://raw.communitydragon.org/latest/game/assets/ux/augments/{filename}",
         "https://raw.communitydragon.org/pbe/game/assets/ux/cherry/augments/icons/{filename}",
         "https://raw.communitydragon.org/pbe/game/assets/ux/augments/{filename}",
@@ -153,13 +169,13 @@ def _iter_augment_icon_urls(icon_filename: str):
         yield template.format(filename=filename)
 
 
-def _ensure_augment_icon_cached(icon_filename: str) -> Optional[str]:
+def _ensure_augment_icon_cached(icon_filename: str, force_refresh: bool = False) -> Optional[str]:
     normalized_filename = _normalize_augment_filename(icon_filename)
     if not normalized_filename:
         return None
 
     target_path = os.path.join(_assets_dir, normalized_filename)
-    if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+    if not force_refresh and os.path.exists(target_path) and os.path.getsize(target_path) > 0:
         return target_path
 
     tmp_path = target_path + ".tmp"
@@ -176,7 +192,7 @@ def _ensure_augment_icon_cached(icon_filename: str) -> Optional[str]:
             os.replace(tmp_path, target_path)
             return target_path
         except Exception as e:
-            logger.debug(f"下载海克斯图标失败：{url} -> {e}")
+            logger.debug(f"涓嬭浇娴峰厠鏂浘鏍囧け璐ワ細{url} -> {e}")
         finally:
             try:
                 if os.path.exists(tmp_path):
@@ -211,11 +227,11 @@ def _prefetch_augment_icons(force: bool = False) -> None:
     if not filenames:
         return
 
-    logger.info(f"开始预缓存海克斯图标，共 {len(filenames)} 个")
+    logger.info(f"寮€濮嬮缂撳瓨娴峰厠鏂浘鏍囷紝鍏?{len(filenames)} 涓?)
     max_workers = min(8, len(filenames))
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="augment-cache") as executor:
         futures = {
-            executor.submit(_ensure_augment_icon_cached, filename): filename
+            executor.submit(_ensure_augment_icon_cached, filename, force): filename
             for filename in sorted(filenames)
         }
         for future in as_completed(futures):
@@ -223,17 +239,24 @@ def _prefetch_augment_icons(force: bool = False) -> None:
             try:
                 future.result()
             except Exception as e:
-                logger.debug(f"预缓存海克斯图标失败：{filename} -> {e}")
+                logger.debug(f"棰勭紦瀛樻捣鍏嬫柉鍥炬爣澶辫触锛歿filename} -> {e}")
+
+    if force:
+        try:
+            _write_augment_icon_source_marker(AUGMENT_ICON_SOURCE_ID)
+        except Exception as e:
+            logger.debug(f"写入海克斯图标来源标记失败：{e}")
 
 
-# ── Request models ─────────────────────────────────────────────────────────────
+
+# 鈹€鈹€ Request models 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 class RedirectRequest(BaseModel):
     hero_id: str
     hero_name: str
 
 
-# ── Resource path resolution for PyInstaller ──────────────────────────────────
+# 鈹€鈹€ Resource path resolution for PyInstaller 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def get_resource_path(relative_path: str) -> str:
     """Get resource path, handling PyInstaller bundled environment."""
@@ -242,7 +265,7 @@ def get_resource_path(relative_path: str) -> str:
     return os.path.join(os.path.dirname(__file__), relative_path)
 
 
-# ── CSV hot-reload cache ──────────────────────────────────────────────────────
+# 鈹€鈹€ CSV hot-reload cache 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 @dataclass
 class CSVCache:
@@ -265,37 +288,37 @@ def get_df() -> pd.DataFrame:
 
     if latest != _csv_cache.path or current_mtime != _csv_cache.mtime:
         try:
-            # 移除 dtype 强约束，让 pandas 自动推断类型
+            # 绉婚櫎 dtype 寮虹害鏉燂紝璁?pandas 鑷姩鎺ㄦ柇绫诲瀷
             df = pd.read_csv(latest)
-            df.columns = df.columns.str.replace(' ', '')  # 暴力清除表头所有空格（包括中间空格）
+            df.columns = df.columns.str.replace(' ', '')  # 鏆村姏娓呴櫎琛ㄥご鎵€鏈夌┖鏍硷紙鍖呮嫭涓棿绌烘牸锛?
 
-            # 容错遍历：检查移除空格后的列名变体
+            # 瀹归敊閬嶅巻锛氭鏌ョЩ闄ょ┖鏍煎悗鐨勫垪鍚嶅彉浣?
             id_column = None
-            for col_name in ['英雄ID', '英雄id']:
+            for col_name in ['鑻遍泟ID', '鑻遍泟id']:
                 if col_name in df.columns:
                     id_column = col_name
                     break
 
-            # 若找到 ID 列，先转换为字符串类型，再执行字符串操作
+            # 鑻ユ壘鍒?ID 鍒楋紝鍏堣浆鎹负瀛楃涓茬被鍨嬶紝鍐嶆墽琛屽瓧绗︿覆鎿嶄綔
             if id_column is not None:
                 df[id_column] = df[id_column].astype(str).str.strip().str.replace('.0', '', regex=False)
 
             _csv_cache.path = latest
             _csv_cache.mtime = current_mtime
             _csv_cache.df = df
-            logger.info(f"CSV 重新加载成功：{os.path.basename(latest)}")
+            logger.info(f"CSV 閲嶆柊鍔犺浇鎴愬姛锛歿os.path.basename(latest)}")
         except Exception as e:
-            logger.error(f"CSV 重新加载失败：{e}")
-            # 安全降级：返回上一次缓存的 DataFrame 或空 DataFrame
+            logger.error(f"CSV 閲嶆柊鍔犺浇澶辫触锛歿e}")
+            # 瀹夊叏闄嶇骇锛氳繑鍥炰笂涓€娆＄紦瀛樼殑 DataFrame 鎴栫┖ DataFrame
             return _csv_cache.df
     return _csv_cache.df
 
 
-# ── JSON cache for synergy data ───────────────────────────────────────────────
+# 鈹€鈹€ JSON cache for synergy data 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 @dataclass
 class JSONFileCache:
-    """通用 JSON 文件缓存，基于 mtime 自动重新加载。"""
+    """閫氱敤 JSON 鏂囦欢缂撳瓨锛屽熀浜?mtime 鑷姩閲嶆柊鍔犺浇銆?""
     path: str = ""
     mtime: float = 0.0
     data: dict = field(default_factory=dict)
@@ -304,7 +327,7 @@ _synergy_cache = JSONFileCache()
 
 
 def _get_synergy_data() -> dict:
-    """返回缓存的协同数据，文件更新时自动重新加载。"""
+    """杩斿洖缂撳瓨鐨勫崗鍚屾暟鎹紝鏂囦欢鏇存柊鏃惰嚜鍔ㄩ噸鏂板姞杞姐€?""
     json_path = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
     try:
         current_mtime = os.path.getmtime(json_path)
@@ -318,14 +341,14 @@ def _get_synergy_data() -> dict:
             _synergy_cache.path = json_path
             _synergy_cache.mtime = current_mtime
             _synergy_cache.data = data
-            logger.info("Champion_Synergy.json 重新加载成功")
+            logger.info("Champion_Synergy.json 閲嶆柊鍔犺浇鎴愬姛")
         except Exception as e:
-            logger.error(f"Champion_Synergy.json 加载失败：{e}")
+            logger.error(f"Champion_Synergy.json 鍔犺浇澶辫触锛歿e}")
             return _synergy_cache.data
     return _synergy_cache.data
 
 
-# ── WebSocket connection manager ──────────────────────────────────────────────
+# 鈹€鈹€ WebSocket connection manager 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 class ConnectionManager:
     def __init__(self):
@@ -343,7 +366,7 @@ class ConnectionManager:
                 self.active.remove(ws)
 
     async def broadcast(self, message: dict):
-        # 持锁快照，释放后再逐一发送（避免在迭代时列表被 connect/disconnect 修改）
+        # 鎸侀攣蹇収锛岄噴鏀惧悗鍐嶉€愪竴鍙戦€侊紙閬垮厤鍦ㄨ凯浠ｆ椂鍒楄〃琚?connect/disconnect 淇敼锛?
         async with self._lock:
             snapshot = list(self.active)
         dead = []
@@ -361,15 +384,15 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-# ── LCU polling (async) ───────────────────────────────────────────────────────
+# 鈹€鈹€ LCU polling (async) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-# 全局开关变量：防止在未请求的情况下强制广播跳转事件
+# 鍏ㄥ眬寮€鍏冲彉閲忥細闃叉鍦ㄦ湭璇锋眰鐨勬儏鍐典笅寮哄埗骞挎挱璺宠浆浜嬩欢
 AUTO_JUMP_ENABLED = True
 
 
 @dataclass
 class LCUState:
-    """LCU 连接状态机（替代原始 dict，提供属性访问和类型安全）。"""
+    """LCU 杩炴帴鐘舵€佹満锛堟浛浠ｅ師濮?dict锛屾彁渚涘睘鎬ц闂拰绫诲瀷瀹夊叏锛夈€?""
     port: Optional[str] = None
     token: Optional[str] = None
     current_ids: Set[str] = field(default_factory=set)
@@ -381,7 +404,7 @@ _lcu_state = LCUState()
 
 
 def _create_lcu_session() -> requests.Session:
-    """创建带重试策略的 LCU 专用 HTTP Session（连接复用，避免每次轮询握手）。"""
+    """鍒涘缓甯﹂噸璇曠瓥鐣ョ殑 LCU 涓撶敤 HTTP Session锛堣繛鎺ュ鐢紝閬垮厤姣忔杞鎻℃墜锛夈€?""
     session = requests.Session()
     retry_strategy = Retry(
         total=2,
@@ -395,7 +418,7 @@ def _create_lcu_session() -> requests.Session:
     session.mount("http://", adapter)
     return session
 
-# 模块级 LCU 会话复用
+# 妯″潡绾?LCU 浼氳瘽澶嶇敤
 _lcu_session = _create_lcu_session()
 
 
@@ -418,7 +441,7 @@ def _scan_lcu_process() -> tuple:
 
 
 def _urllib3_disable_warnings():
-    """Suppress urllib3 SSL warnings（仅需在启动时调用一次）。"""
+    """Suppress urllib3 SSL warnings锛堜粎闇€鍦ㄥ惎鍔ㄦ椂璋冪敤涓€娆★級銆?""
     try:
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -428,15 +451,15 @@ def _urllib3_disable_warnings():
 
 async def lcu_polling_loop():
     """
-    Async LCU 轮询循环。轮询 LCU 会话端点并通过 WebSocket 广播英雄 ID 变化。
+    Async LCU 杞寰幆銆傝疆璇?LCU 浼氳瘽绔偣骞堕€氳繃 WebSocket 骞挎挱鑻遍泟 ID 鍙樺寲銆?
 
-    新增本地玩家专属追踪：
-    - 提取 myTeam 数组中 cellId 等于 localPlayerCellId 的玩家
-    - 若该玩家的 championId 大于 0，且与上一次循环的 championId 不同，则广播精准事件
-    - 使用状态机变量防止同一英雄重复广播
+    鏂板鏈湴鐜╁涓撳睘杩借釜锛?
+    - 鎻愬彇 myTeam 鏁扮粍涓?cellId 绛変簬 localPlayerCellId 鐨勭帺瀹?
+    - 鑻ヨ鐜╁鐨?championId 澶т簬 0锛屼笖涓庝笂涓€娆″惊鐜殑 championId 涓嶅悓锛屽垯骞挎挱绮惧噯浜嬩欢
+    - 浣跨敤鐘舵€佹満鍙橀噺闃叉鍚屼竴鑻遍泟閲嶅骞挎挱
 
-    自愈机制：
-    - 连续 5 次 404 错误后自动重置端口和令牌，重新探测 LCU 进程
+    鑷剤鏈哄埗锛?
+    - 杩炵画 5 娆?404 閿欒鍚庤嚜鍔ㄩ噸缃鍙ｅ拰浠ょ墝锛岄噸鏂版帰娴?LCU 杩涚▼
     """
     _urllib3_disable_warnings()
     while True:
@@ -446,7 +469,7 @@ async def lcu_polling_loop():
                 if port:
                     _lcu_state.port = port
                     _lcu_state.token = token
-                    logger.info(f"检测到 LCU 进程：port={port}")
+                    logger.info(f"妫€娴嬪埌 LCU 杩涚▼锛歱ort={port}")
                 else:
                     await asyncio.sleep(2)
                     continue
@@ -466,10 +489,10 @@ async def lcu_polling_loop():
 
             if res.status_code == 200:
                 data = res.json()
-                # 成功响应，重置 404 计数器
+                # 鎴愬姛鍝嶅簲锛岄噸缃?404 璁℃暟鍣?
                 _lcu_state.consecutive_404_count = 0
 
-                # ========== 全局可用英雄扫描（原有逻辑） ==========
+                # ========== 鍏ㄥ眬鍙敤鑻遍泟鎵弿锛堝師鏈夐€昏緫锛?==========
                 available_ids = {
                     str(c["championId"])
                     for c in data.get("benchChampions", [])
@@ -489,30 +512,30 @@ async def lcu_polling_loop():
                         "timestamp": time.time(),
                     })
 
-                # ========== 本地玩家英雄锁定精准追踪（新增逻辑） ==========
+                # ========== 鏈湴鐜╁鑻遍泟閿佸畾绮惧噯杩借釜锛堟柊澧為€昏緫锛?==========
                 local_cell_id = data.get("localPlayerCellId")
                 local_champion_id = None
 
-                # 提取 myTeam 数组中 cellId 等于 localPlayerCellId 的玩家
+                # 鎻愬彇 myTeam 鏁扮粍涓?cellId 绛変簬 localPlayerCellId 鐨勭帺瀹?
                 for p in data.get("myTeam", []):
                     if p.get("cellId") == local_cell_id:
                         local_champion_id = p.get("championId")
                         break
 
-                # 若该玩家的 championId 大于 0，且与上一次循环的 championId 不同
+                # 鑻ヨ鐜╁鐨?championId 澶т簬 0锛屼笖涓庝笂涓€娆″惊鐜殑 championId 涓嶅悓
                 if local_champion_id and local_champion_id > 0:
                     prev_champ_id = _lcu_state.local_champ_id
 
                     if prev_champ_id != local_champion_id:
                         _lcu_state.local_champ_id = local_champion_id
 
-                        # 利用 core_data 字典将其转换为英雄中文名和英文名
+                        # 鍒╃敤 core_data 瀛楀吀灏嗗叾杞崲涓鸿嫳闆勪腑鏂囧悕鍜岃嫳鏂囧悕
                         hero_name, en_name = get_champion_info(str(local_champion_id))
                         _lcu_state.local_champ_name = hero_name
 
-                        logger.info(f"本地玩家锁定英雄：{hero_name} (ID={local_champion_id})")
+                        logger.info(f"鏈湴鐜╁閿佸畾鑻遍泟锛歿hero_name} (ID={local_champion_id})")
 
-                        # 通过 WebSocket 追加广播精准事件（受 AUTO_JUMP_ENABLED 开关控制）
+                        # 閫氳繃 WebSocket 杩藉姞骞挎挱绮惧噯浜嬩欢锛堝彈 AUTO_JUMP_ENABLED 寮€鍏虫帶鍒讹級
                         if AUTO_JUMP_ENABLED:
                             await manager.broadcast({
                                 "type": "local_player_locked",
@@ -521,62 +544,62 @@ async def lcu_polling_loop():
                                 "en_name": en_name,
                             })
                         else:
-                            logger.debug("AUTO_JUMP_ENABLED = False，已阻止自动跳转广播")
+                            logger.debug("AUTO_JUMP_ENABLED = False锛屽凡闃绘鑷姩璺宠浆骞挎挱")
 
             elif res.status_code == 404:
-                # 不在选人阶段，累计 404 错误次数
+                # 涓嶅湪閫変汉闃舵锛岀疮璁?404 閿欒娆℃暟
                 _lcu_state.consecutive_404_count += 1
 
-                # 清空上一局的英雄缓存，防止下局选同英雄不触发
+                # 娓呯┖涓婁竴灞€鐨勮嫳闆勭紦瀛橈紝闃叉涓嬪眬閫夊悓鑻遍泟涓嶈Е鍙?
                 if _lcu_state.local_champ_id is not None:
                     _lcu_state.local_champ_id = None
                     _lcu_state.local_champ_name = None
                     _lcu_state.current_ids = set()
 
-                # 连续 5 次 404 错误，触发自愈重置
+                # 杩炵画 5 娆?404 閿欒锛岃Е鍙戣嚜鎰堥噸缃?
                 if _lcu_state.consecutive_404_count >= 5:
-                    logger.warning(f"LCU 连续 {_lcu_state.consecutive_404_count} 次 404，触发自愈重置端口/令牌")
+                    logger.warning(f"LCU 杩炵画 {_lcu_state.consecutive_404_count} 娆?404锛岃Е鍙戣嚜鎰堥噸缃鍙?浠ょ墝")
                     _lcu_state.port = None
                     _lcu_state.token = None
                     _lcu_state.consecutive_404_count = 0
 
             elif res.status_code in (401, 403):
-                # Token 失效，需要重新获取
-                logger.warning("LCU Token 失效 (401/403)，重置连接状态")
+                # Token 澶辨晥锛岄渶瑕侀噸鏂拌幏鍙?
+                logger.warning("LCU Token 澶辨晥 (401/403)锛岄噸缃繛鎺ョ姸鎬?)
                 _lcu_state.port = None
                 _lcu_state.token = None
             else:
-                logger.warning(f"LCU 响应异常：status={res.status_code}，重置端口")
+                logger.warning(f"LCU 鍝嶅簲寮傚父锛歴tatus={res.status_code}锛岄噸缃鍙?)
                 _lcu_state.port = None
 
         except requests.exceptions.ConnectionError as e:
-            # 仅在物理网络断开或进程关闭时才清空端口
-            logger.warning(f"LCU 连接断开：{e}")
+            # 浠呭湪鐗╃悊缃戠粶鏂紑鎴栬繘绋嬪叧闂椂鎵嶆竻绌虹鍙?
+            logger.warning(f"LCU 杩炴帴鏂紑锛歿e}")
             _lcu_state.port = None
             _lcu_state.token = None
         except Exception as e:
-            logger.warning(f"LCU 轮询异常：{e}")
+            logger.warning(f"LCU 杞寮傚父锛歿e}")
 
         await asyncio.sleep(1.5)
 
 
-# ── CSV file watcher loop ─────────────────────────────────────────────────────
+# 鈹€鈹€ CSV file watcher loop 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 async def csv_watcher_loop():
     """
     Async CSV file watcher loop. Polls the latest CSV file every 3 seconds
     and broadcasts a 'data_updated' message via WebSocket when the file is modified.
 
-    复用 _csv_cache.mtime 检测变更，不再维护独立的 _last_csv_mtime 全局变量。
+    澶嶇敤 _csv_cache.mtime 妫€娴嬪彉鏇达紝涓嶅啀缁存姢鐙珛鐨?_last_csv_mtime 鍏ㄥ眬鍙橀噺銆?
     """
     prev_mtime = 0.0
     while True:
         try:
-            # 调用 get_df() 触发缓存更新，然后比较 mtime 是否变化
+            # 璋冪敤 get_df() 瑙﹀彂缂撳瓨鏇存柊锛岀劧鍚庢瘮杈?mtime 鏄惁鍙樺寲
             get_df()
             current_mtime = _csv_cache.mtime
             if current_mtime > prev_mtime and prev_mtime != 0.0:
-                logger.info(f"CSV 文件更新：{os.path.basename(_csv_cache.path)}")
+                logger.info(f"CSV 鏂囦欢鏇存柊锛歿os.path.basename(_csv_cache.path)}")
                 await manager.broadcast({'type': 'data_updated'})
             prev_mtime = current_mtime
         except (OSError, IOError) as e:
@@ -584,11 +607,11 @@ async def csv_watcher_loop():
         await asyncio.sleep(3)
 
 
-# ── FastAPI app + lifespan ────────────────────────────────────────────────────
+# 鈹€鈹€ FastAPI app + lifespan 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动时后台运行爬虫（不阻塞服务启动，check_execution_permission 防止频繁触发）
+    # 鍚姩鏃跺悗鍙拌繍琛岀埇铏紙涓嶉樆濉炴湇鍔″惎鍔紝check_execution_permission 闃叉棰戠箒瑙﹀彂锛?
     scraper_thread = threading.Thread(
         target=refresh_backend_data,
         kwargs={"force": False},
@@ -596,7 +619,13 @@ async def lifespan(app: FastAPI):
         name="backend-refresh-startup",
     )
     scraper_thread.start()
-    augment_thread = threading.Thread(target=_prefetch_augment_icons, daemon=True, name="augment-icon-prefetch")
+    needs_augment_refresh = _read_augment_icon_source_marker() != AUGMENT_ICON_SOURCE_ID
+    augment_thread = threading.Thread(
+        target=_prefetch_augment_icons,
+        kwargs={"force": needs_augment_refresh},
+        daemon=True,
+        name="augment-icon-prefetch",
+    )
     augment_thread.start()
     task1 = asyncio.create_task(lcu_polling_loop())
     task2 = asyncio.create_task(csv_watcher_loop())
@@ -614,7 +643,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# Static files — frontend assets served from run/static/
+# Static files 鈥?frontend assets served from run/static/
 _static_dir = get_resource_path("static")
 os.makedirs(_static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
@@ -625,7 +654,7 @@ os.makedirs(_assets_dir, exist_ok=True)
 # Note: /assets route is now handled by custom route below for fallback support
 
 
-# ── API routes ────────────────────────────────────────────────────────────────
+# 鈹€鈹€ API routes 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 @app.get("/")
 async def read_index():
@@ -659,17 +688,17 @@ async def favicon():
 async def get_asset(filename: str):
     """Serve asset files with local caching for augment icons and DDragon fallback for heroes.
 
-    安全机制：使用 realpath + normcase 验证请求路径是否在 _assets_dir 内，
-    阻止通过 ../ 进行目录遍历攻击（LFI 防御）。
+    瀹夊叏鏈哄埗锛氫娇鐢?realpath + normcase 楠岃瘉璇锋眰璺緞鏄惁鍦?_assets_dir 鍐咃紝
+    闃绘閫氳繃 ../ 杩涜鐩綍閬嶅巻鏀诲嚮锛圠FI 闃插尽锛夈€?
 
-    新增：海克斯图标支持 - 优先本地缓存，缺失时由服务端下载后再本地返回。
+    鏂板锛氭捣鍏嬫柉鍥炬爣鏀寔 - 浼樺厛鏈湴缂撳瓨锛岀己澶辨椂鐢辨湇鍔＄涓嬭浇鍚庡啀鏈湴杩斿洖銆?
     """
     local_path = os.path.join(_assets_dir, filename)
-    # ── LFI 防御：解析真实路径并验证是否在 assets 目录内 ──
+    # 鈹€鈹€ LFI 闃插尽锛氳В鏋愮湡瀹炶矾寰勫苟楠岃瘉鏄惁鍦?assets 鐩綍鍐?鈹€鈹€
     real_requested = os.path.normcase(os.path.realpath(local_path))
     real_assets_dir = os.path.normcase(os.path.realpath(_assets_dir))
     if not real_requested.startswith(real_assets_dir + os.sep) and real_requested != real_assets_dir:
-        logger.warning(f"目录遍历攻击被阻断：{filename} -> {real_requested}")
+        logger.warning(f"鐩綍閬嶅巻鏀诲嚮琚樆鏂細{filename} -> {real_requested}")
         return JSONResponse(content={"error": "Forbidden"}, status_code=403)
     if os.path.exists(local_path):
         return FileResponse(local_path)
@@ -688,11 +717,11 @@ async def get_asset(filename: str):
             if cached_path and os.path.exists(cached_path):
                 return FileResponse(cached_path)
         except Exception as e:
-            logger.debug(f"海克斯图标本地缓存失败：{e}")
+            logger.debug(f"娴峰厠鏂浘鏍囨湰鍦扮紦瀛樺け璐ワ細{e}")
 
-    # 英雄头像处理 - 原有逻辑
+    # 鑻遍泟澶村儚澶勭悊 - 鍘熸湁閫昏緫
     if filename.endswith('.png'):
-        file_stem = filename[:-4]  # e.g. "123" (英雄 ID)
+        file_stem = filename[:-4]  # e.g. "123" (鑻遍泟 ID)
         hero_name = get_champion_name(file_stem)
         if hero_name:
             _, en_name = get_champion_info(file_stem)
@@ -700,8 +729,8 @@ async def get_asset(filename: str):
                 version = _get_ddragon_version()
                 ddragon_url = f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{en_name}.png"
                 return RedirectResponse(url=ddragon_url, status_code=307)
-        # 无法映射到 CDN，记录日志便于运维排查
-        logger.debug(f"本地资源缺失且无法映射到 CDN：{filename}")
+        # 鏃犳硶鏄犲皠鍒?CDN锛岃褰曟棩蹇椾究浜庤繍缁存帓鏌?
+        logger.debug(f"鏈湴璧勬簮缂哄け涓旀棤娉曟槧灏勫埌 CDN锛歿filename}")
     return JSONResponse(content={"error": "Asset not found"}, status_code=404)
 
 @app.get("/api/champions")
@@ -716,37 +745,37 @@ async def api_champion_hextechs(name: str):
 
 @app.get("/api/augment_icon_map")
 async def api_augment_icon_map():
-    """获取海克斯图标映射文件。"""
+    """鑾峰彇娴峰厠鏂浘鏍囨槧灏勬枃浠躲€?""
     try:
         data = _load_augment_icon_map()
         return JSONResponse(content=data)
     except Exception as e:
-        logger.warning(f"读取 Augment_Icon_Map.json 失败：{e}")
+        logger.warning(f"璇诲彇 Augment_Icon_Map.json 澶辫触锛歿e}")
         return JSONResponse(content={})
 
 @app.get("/api/synergies/{champ_id}")
 async def api_synergies(champ_id: str):
-    """获取英雄协同数据 API。读取 Champion_Synergy.json 返回对应英雄的 synergies 列表。
+    """鑾峰彇鑻遍泟鍗忓悓鏁版嵁 API銆傝鍙?Champion_Synergy.json 杩斿洖瀵瑰簲鑻遍泟鐨?synergies 鍒楄〃銆?
 
-    支持 aliases（别名）的模糊匹配支持，确保前端传递名称或 ID 都能准确获取数据。
+    鏀寔 aliases锛堝埆鍚嶏級鐨勬ā绯婂尮閰嶆敮鎸侊紝纭繚鍓嶇浼犻€掑悕绉版垨 ID 閮借兘鍑嗙‘鑾峰彇鏁版嵁銆?
     """
     try:
         data = _get_synergy_data()
         if not data:
             return JSONResponse(content={"synergies": []})
 
-        # 尝试直接匹配 champ_id
+        # 灏濊瘯鐩存帴鍖归厤 champ_id
         synergy_data = data.get(champ_id, {})
 
-        # 如果直接匹配失败，尝试别名模糊匹配
+        # 濡傛灉鐩存帴鍖归厤澶辫触锛屽皾璇曞埆鍚嶆ā绯婂尮閰?
         if not synergy_data:
             for key, value in data.items():
-                # 检查别名字段
+                # 妫€鏌ュ埆鍚嶅瓧娈?
                 aliases = value.get("aliases", [])
                 if champ_id in aliases or champ_id.lower() in [a.lower() for a in aliases]:
                     synergy_data = value
                     break
-                # 检查是否是 ID 与名称的匹配（尝试将 champ_id 与 key 进行模糊匹配）
+                # 妫€鏌ユ槸鍚︽槸 ID 涓庡悕绉扮殑鍖归厤锛堝皾璇曞皢 champ_id 涓?key 杩涜妯＄硦鍖归厤锛?
                 if champ_id.lower() == key.lower():
                     synergy_data = value
                     break
@@ -754,36 +783,36 @@ async def api_synergies(champ_id: str):
         synergies = synergy_data.get("synergies", []) if synergy_data else []
         return JSONResponse(content={"synergies": synergies})
     except Exception as e:
-        logger.warning(f"读取协同数据失败：{e}")
+        logger.warning(f"璇诲彇鍗忓悓鏁版嵁澶辫触锛歿e}")
         return JSONResponse(content={"synergies": []})
 
 @app.post("/api/redirect")
 async def api_redirect(req: RedirectRequest):
-    """处理悬浮窗点击英雄的重定向请求。
+    """澶勭悊鎮诞绐楃偣鍑昏嫳闆勭殑閲嶅畾鍚戣姹傘€?
 
-    根据活跃 WebSocket 连接数决定行为：
-    - 无连接时：打开新浏览器窗口
-    - 有连接时：广播 local_player_locked 事件触发前端热跳转
+    鏍规嵁娲昏穬 WebSocket 杩炴帴鏁板喅瀹氳涓猴細
+    - 鏃犺繛鎺ユ椂锛氭墦寮€鏂版祻瑙堝櫒绐楀彛
+    - 鏈夎繛鎺ユ椂锛氬箍鎾?local_player_locked 浜嬩欢瑙﹀彂鍓嶇鐑烦杞?
     """
-    # 获取英雄信息（中文名和英文名）
+    # 鑾峰彇鑻遍泟淇℃伅锛堜腑鏂囧悕鍜岃嫳鏂囧悕锛?
     try:
         hero_name, en_name = get_champion_info(req.hero_id)
     except (ValueError, TypeError):
-        # hero_id 异常，使用空字符串
+        # hero_id 寮傚父锛屼娇鐢ㄧ┖瀛楃涓?
         hero_name, en_name = '', ''
 
-    # 如果获取不到英雄信息，使用请求中的名称作为后备
+    # 濡傛灉鑾峰彇涓嶅埌鑻遍泟淇℃伅锛屼娇鐢ㄨ姹備腑鐨勫悕绉颁綔涓哄悗澶?
     if not hero_name:
         hero_name = req.hero_name
 
-    # 检查 WebSocket 连接池
+    # 妫€鏌?WebSocket 杩炴帴姹?
     if len(manager.active) == 0:
-        # 无 WebSocket 连接，打开新浏览器窗口
+        # 鏃?WebSocket 杩炴帴锛屾墦寮€鏂版祻瑙堝櫒绐楀彛
         url = f"http://127.0.0.1:{SERVER_PORT}/detail.html?hero={req.hero_name}&id={req.hero_id}&en={en_name}&auto=1"
         webbrowser.open(url)
         return JSONResponse(content={"status": "opened_browser"})
     else:
-        # 有 WebSocket 连接，广播事件触发前端热跳转
+        # 鏈?WebSocket 杩炴帴锛屽箍鎾簨浠惰Е鍙戝墠绔儹璺宠浆
         await manager.broadcast({
             "type": "local_player_locked",
             "champion_id": req.hero_id,
@@ -802,7 +831,7 @@ async def websocket_endpoint(ws: WebSocket):
         await manager.disconnect(ws)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# 鈹€鈹€ Entry point 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 def find_available_port(start_port=8000, max_attempts=50):
     """Find an available port starting from start_port."""
@@ -819,22 +848,22 @@ def find_available_port(start_port=8000, max_attempts=50):
     raise RuntimeError(f"Could not find available port in range {start_port}-{start_port + max_attempts - 1}")
 
 def _open_chrome(port: int):
-    """在系统默认浏览器中打开应用，复用现有用户会话。"""
+    """鍦ㄧ郴缁熼粯璁ゆ祻瑙堝櫒涓墦寮€搴旂敤锛屽鐢ㄧ幇鏈夌敤鎴蜂細璇濄€?""
     url = f"http://127.0.0.1:{port}"
     try:
-        # 使用系统默认浏览器，复用现有用户会话
+        # 浣跨敤绯荤粺榛樿娴忚鍣紝澶嶇敤鐜版湁鐢ㄦ埛浼氳瘽
         webbrowser.open(url)
-        logger.info(f"已在默认浏览器中打开: {url}")
+        logger.info(f"宸插湪榛樿娴忚鍣ㄤ腑鎵撳紑: {url}")
     except Exception as e:
-        logger.warning(f"无法打开默认浏览器: {e}")
+        logger.warning(f"鏃犳硶鎵撳紑榛樿娴忚鍣? {e}")
 
 
 if __name__ == "__main__":
-    # 在启动服务器前找到可用端口
+    # 鍦ㄥ惎鍔ㄦ湇鍔″櫒鍓嶆壘鍒板彲鐢ㄧ鍙?
     actual_port = find_available_port(SERVER_PORT)
     if actual_port != SERVER_PORT:
         logger.info(f"Port {SERVER_PORT} is occupied, using port {actual_port} instead")
 
-    # 在启动服务器前打开浏览器
+    # 鍦ㄥ惎鍔ㄦ湇鍔″櫒鍓嶆墦寮€娴忚鍣?
     _open_chrome(actual_port)
     uvicorn.run("web_server:app", host="127.0.0.1", port=actual_port, reload=False)
