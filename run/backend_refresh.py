@@ -54,53 +54,56 @@ def _should_refresh_synergy(force: bool) -> bool:
         return True
 
 
+def _stop_requested(stop_event) -> bool:
+    return bool(stop_event is not None and stop_event.is_set())
+
 
 def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
     """
-    Clean override of the backend refresh entry point.
+    Refresh shared runtime data used by both the desktop UI and the web layer.
 
-    Hero data is refreshed first. Synergy scraping is started in a background
-    thread so it cannot block the hextech CSV refresh.
+    Hero data is refreshed first. Synergy scraping is then started in a
+    background thread so it cannot block the hextech CSV refresh.
     """
     with _refresh_lock:
         lock_fd = _acquire_file_lock()
         if lock_fd is None:
-            logger.info("后台刷新已在进行中，跳过本次请求")
+            logger.info("后台刷新已在进行中，跳过本次请求。")
             return False
 
         try:
-            logger.info("开始统一刷新后端数据")
+            logger.info("开始刷新后端运行数据。")
             hero_ok = sync_hero_data()
-            if stop_event is not None and stop_event.is_set():
-                logger.info("刷新在英雄基础数据后被中止")
+            if _stop_requested(stop_event):
+                logger.info("刷新在英雄基础数据完成后被中止。")
                 return False
 
-            synergy_was_started = False
             synergy_needed = _should_refresh_synergy(force)
+            synergy_started = False
             if synergy_needed:
-                logger.info("触发 Champion_Synergy.json 重新抓取（后台线程）")
+                logger.info("触发 Champion_Synergy.json 后台刷新。")
 
                 def _synergy_worker() -> None:
                     try:
                         run_apex_spider()
                         if os.path.exists(_synergy_file):
-                            logger.info("Champion_Synergy.json 刷新完成")
+                            logger.info("Champion_Synergy.json 刷新完成。")
                         else:
-                            logger.warning("Champion_Synergy.json 线程结束但文件未生成")
-                    except Exception as exc:
-                        logger.exception(f"Champion_Synergy.json 刷新失败：{exc}")
+                            logger.warning("协同刷新线程结束，但 Champion_Synergy.json 未生成。")
+                    except Exception:
+                        logger.exception("Champion_Synergy.json 刷新失败。")
 
                 threading.Thread(
                     target=_synergy_worker,
                     daemon=True,
                     name="apex-spider-refresh",
                 ).start()
-                synergy_was_started = True
+                synergy_started = True
             else:
-                logger.info("Champion_Synergy.json 仍在有效期内，跳过重新抓取")
+                logger.info("Champion_Synergy.json 仍在有效期内，跳过刷新。")
 
-            if stop_event is not None and stop_event.is_set():
-                logger.info("刷新在协同数据后被中止")
+            if _stop_requested(stop_event):
+                logger.info("刷新在协同数据阶段后被中止。")
                 return False
 
             hextech_result = bool(main_scraper(stop_event))
@@ -111,7 +114,7 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
             logger.info(
                 "后端刷新完成：hero_sync=%s, synergy_started=%s, hextech=%s",
                 hero_ok,
-                synergy_was_started or not synergy_needed,
+                synergy_started or not synergy_needed,
                 hextech_result,
             )
             return bool(hero_ok and hextech_result)
