@@ -14,17 +14,45 @@ from urllib3.util.retry import Retry
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+
+def _get_script_dir() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def bootstrap_runtime_environment() -> str:
+    """标准化运行时根目录，兼容终端、VS 插件和打包 exe。"""
+    runtime_base = os.getenv("HEXTECH_BASE_DIR", "").strip()
+    if runtime_base:
+        runtime_base = os.path.abspath(runtime_base)
+    elif getattr(sys, 'frozen', False):
+        runtime_base = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        runtime_base = _get_script_dir()
+
+    script_dir = _get_script_dir()
+    for candidate in (runtime_base, script_dir):
+        if candidate and candidate not in sys.path:
+            sys.path.insert(0, candidate)
+
+    try:
+        os.chdir(runtime_base)
+    except OSError:
+        pass
+
+    return runtime_base
+
 # ================= 动态路径网关 (OneFile 完美适配) =================
 def get_resource_dir():
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
         return sys._MEIPASS
-    return os.path.dirname(os.path.abspath(__file__))
+    return _get_script_dir()
+
+
+RUNTIME_BASE_DIR = bootstrap_runtime_environment()
 
 
 def get_base_dir():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return RUNTIME_BASE_DIR
 
 RESOURCE_DIR = get_resource_dir()
 BASE_DIR = get_base_dir()

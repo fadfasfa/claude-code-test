@@ -100,6 +100,8 @@ class HextechUI:
         """在后台启动 web_server.py，不阻塞 UI 主线程。"""
         try:
             startupinfo = None
+            child_env = os.environ.copy()
+            child_env["HEXTECH_BASE_DIR"] = BASE_DIR
             if os.name == 'nt':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -107,14 +109,14 @@ class HextechUI:
                 command = [sys.executable, "--web-server"]
                 cwd = BASE_DIR
             else:
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                web_script = os.path.join(script_dir, "web_server.py")
+                web_script = os.path.join(BASE_DIR, "web_server.py")
                 command = [sys.executable, web_script]
-                cwd = script_dir
+                cwd = BASE_DIR
             self.web_process = subprocess.Popen(
                 command,
                 startupinfo=startupinfo,
-                cwd=cwd
+                cwd=cwd,
+                env=child_env,
             )
             global _WEB_BASE
             _WEB_BASE = _resolve_web_base(timeout=5.0)

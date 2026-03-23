@@ -30,7 +30,7 @@ from pydantic import BaseModel
 
 from data_processor import process_champions_data, process_hextechs_data
 from hextech_query import get_latest_csv
-from hero_sync import load_champion_core_data, CONFIG_DIR
+from hero_sync import BASE_DIR, CONFIG_DIR, RESOURCE_DIR, load_champion_core_data
 from backend_refresh import refresh_backend_data
 
 # 记录本模块的运行日志。
@@ -451,9 +451,15 @@ class RedirectRequest(BaseModel):
 
 def get_resource_path(relative_path: str) -> str:
     """返回 PyInstaller 兼容的资源路径。"""
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.dirname(__file__), relative_path)
+    candidates = [
+        os.path.join(RESOURCE_DIR, relative_path),
+        os.path.join(BASE_DIR, relative_path),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
 
 
 def _html_file_response(filename: str) -> FileResponse:
