@@ -1,1 +1,16 @@
 .gitnexus
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+
+# Hextech local build artifacts
+run/build/
+run/dist/
+
+# Hextech runtime state
+run/config/backend_refresh.lock
+run/config/hextech_system.log
+run/config/scraper_status.json
+run/config/web_server_port.txt
