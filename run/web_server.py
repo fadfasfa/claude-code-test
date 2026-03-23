@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -40,11 +42,15 @@ WEB_PORT_FILE = os.path.join(CONFIG_DIR, "web_server_port.txt")
 ACTIVE_WEB_PORT = SERVER_PORT
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
 AUGMENT_ICON_SOURCE_FILE = os.path.join(CONFIG_DIR, "augment_icon_source.txt")
+BROWSER_PROFILE_DIR = os.path.join(CONFIG_DIR, "browser_profile")
 # 增强器图标来源标记，用于判断是否需要重新预取资源。
 AUGMENT_ICON_SOURCE_ID = "apexlol"
 APEXLOL_HEXTECH_INDEX_URL = "https://apexlol.info/zh/hextech/"
 APEXLOL_HEXTECH_IMAGE_URL = "https://apexlol.info/images/hextech/{slug}.webp"
 APEXLOL_HEXTECH_MAP_FILE = os.path.join(CONFIG_DIR, "Augment_Apexlol_Map.json")
+
+_managed_browser_process: Optional[subprocess.Popen] = None
+_managed_browser_lock = threading.Lock()
 
 
 def _write_active_web_port(port: int) -> None:
@@ -52,6 +58,109 @@ def _write_active_web_port(port: int) -> None:
     with open(tmp_path, "w", encoding="utf-8") as f:
         f.write(str(port))
     os.replace(tmp_path, WEB_PORT_FILE)
+
+
+def _iter_browser_candidates() -> List[str]:
+    configured = os.getenv("HEXTECH_BROWSER")
+    candidates = []
+    if configured:
+        candidates.append(configured)
+    candidates.extend(["msedge", "chrome", "brave"])
+    resolved: List[str] = []
+    for candidate in candidates:
+        path = shutil.which(candidate)
+        if path and path not in resolved:
+            resolved.append(path)
+    return resolved
+
+
+def _terminate_managed_browser() -> bool:
+    global _managed_browser_process
+
+    proc = _managed_browser_process
+    if proc is None:
+        return False
+
+    _managed_browser_process = None
+    if proc.poll() is not None:
+        return True
+
+    try:
+        parent = psutil.Process(proc.pid)
+    except psutil.Error:
+        return False
+
+    try:
+        children = parent.children(recursive=True)
+    except psutil.Error:
+        children = []
+
+    for child in children:
+        try:
+            child.terminate()
+        except psutil.Error:
+            pass
+    psutil.wait_procs(children, timeout=2)
+
+    try:
+        parent.terminate()
+        parent.wait(timeout=2)
+    except psutil.TimeoutExpired:
+        try:
+            parent.kill()
+        except psutil.Error:
+            pass
+    except psutil.Error:
+        return False
+
+    return True
+
+
+def _open_managed_browser(url: str, replace_existing: bool = False) -> bool:
+    global _managed_browser_process
+
+    os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+
+    with _managed_browser_lock:
+        existing = _managed_browser_process
+        if existing is not None and existing.poll() is not None:
+            _managed_browser_process = None
+            existing = None
+
+        if replace_existing and existing is not None:
+            _terminate_managed_browser()
+
+        for browser_path in _iter_browser_candidates():
+            cmd = [
+                browser_path,
+                f"--app={url}",
+                "--new-window",
+                f"--user-data-dir={BROWSER_PROFILE_DIR}",
+            ]
+            try:
+                _managed_browser_process = subprocess.Popen(cmd)
+                logger.info("已启动受管浏览器窗口：%s", url)
+                return True
+            except OSError as e:
+                logger.debug("启动浏览器 %s 失败：%s", browser_path, e)
+
+    try:
+        webbrowser.open(url)
+        logger.info("已通过系统默认浏览器打开：%s", url)
+        return True
+    except Exception as e:
+        logger.warning("打开浏览器失败：%s", e)
+        return False
+
+
+def _build_detail_url(hero_id: str, hero_name: str, en_name: str) -> str:
+    return (
+        f"http://127.0.0.1:{ACTIVE_WEB_PORT}/detail.html"
+        f"?hero={quote(hero_name or '', safe='')}"
+        f"&id={quote(str(hero_id), safe='')}"
+        f"&en={quote(en_name or '', safe='')}"
+        f"&auto=1"
+    )
 
 # 懒加载英雄核心数据缓存。
 
@@ -896,10 +1005,6 @@ async def api_synergies(champ_id: str):
 async def api_redirect(req: RedirectRequest):
     """处理前端点击后的重定向。"""
 
-
-
-
-
     # 先尝试从英雄 ID 还原中英文名。
     try:
         hero_name, en_name = get_champion_info(req.hero_id)
@@ -913,16 +1018,10 @@ async def api_redirect(req: RedirectRequest):
 
     # 当前没有 WebSocket 连接时，直接由服务端打开详情页。
     if len(manager.active) == 0:
-        # 将中文名、ID 和英文名都做 URL 编码，避免乱码。
-        url = (
-            f"http://127.0.0.1:{ACTIVE_WEB_PORT}/detail.html"
-            f"?hero={quote(hero_name or req.hero_name, safe='')}"
-            f"&id={quote(str(req.hero_id), safe='')}"
-            f"&en={quote(en_name, safe='')}"
-            f"&auto=1"
-        )
-        webbrowser.open(url)
-        return JSONResponse(content={"status": "opened_browser"})
+        url = _build_detail_url(req.hero_id, hero_name or req.hero_name, en_name)
+        if _open_managed_browser(url, replace_existing=True):
+            return JSONResponse(content={"status": "opened_browser"})
+        return JSONResponse(content={"status": "open_browser_failed"}, status_code=500)
     else:
         # 有 WebSocket 在线时，直接广播给前端页面处理。
         await manager.broadcast({
@@ -962,15 +1061,12 @@ def find_available_port(start_port=8000, max_attempts=50):
 def _open_chrome(port: int):
     # 打开浏览器访问当前 Web 服务。
     url = f"http://127.0.0.1:{port}"
-    try:
-
-        webbrowser.open(url)
-        logger.info("已打开浏览器：%s", url)
-    except Exception as e:
-        logger.warning("打开浏览器失败：%s", e)
+    _open_managed_browser(url, replace_existing=True)
 
 
-if __name__ == "__main__":
+def run_web_server() -> None:
+    global ACTIVE_WEB_PORT
+
     # 启动时先找可用端口，避免端口占用导致服务直接失败。
     actual_port = find_available_port(SERVER_PORT)
     if actual_port != SERVER_PORT:
@@ -981,3 +1077,7 @@ if __name__ == "__main__":
     _write_active_web_port(ACTIVE_WEB_PORT)
     _open_chrome(actual_port)
     uvicorn.run("web_server:app", host="127.0.0.1", port=actual_port, reload=False)
+
+
+if __name__ == "__main__":
+    run_web_server()

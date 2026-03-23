@@ -1,22 +1,41 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
 
+hiddenimports = [
+    "pandas",
+    "numpy",
+    "requests",
+    "PIL",
+    "PIL._tkinter_finder",
+    "PIL.ImageTk",
+    "win32gui",
+    "win32con",
+    "psutil",
+    "fastapi",
+    "starlette",
+    "pydantic",
+    "uvicorn",
+    "uvicorn.logging",
+    "uvicorn.loops.auto",
+    "uvicorn.protocols.http.auto",
+    "uvicorn.protocols.websockets.auto",
+    "uvicorn.lifespan.on",
+]
+hiddenimports += collect_submodules("uvicorn")
+
 a = Analysis(
-    ['hextech_ui.py'],  # 这里是我们系统的绝对主入口
-    pathex=[],
+    ["hextech_ui.py"],
+    pathex=["."],
     binaries=[],
-    datas=[],
-    # 【核心防御】：强制挂载所有隐式依赖，防止在别的电脑上闪退
-    hiddenimports=[
-        'pandas',
-        'requests',
-        'PIL',
-        'PIL._tkinter_finder',
-        'win32gui',
-        'win32con',
-        'psutil'
+    datas=[
+        ("static", "static"),
+        ("assets", "assets"),
+        ("config", "config"),
     ],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -31,23 +50,29 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
-    name='Hextech伴生终端',    # 生成的 EXE 文件名
+    exclude_binaries=True,
+    name="Hextech伴生终端",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,                # 开启 UPX 压缩（如果已安装），减小体积
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    # 【生命线】：必须保持为 True！否则您的 1、2、3 快捷查询和拼音检索将直接报 EOFError 崩溃
-    console=True,            
+    upx=True,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='NONE'              # 如果您有专属的 .ico 图标，可以把 'NONE' 改为 '你的图标名.ico'
+    icon="NONE",
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="Hextech伴生终端",
 )

@@ -15,14 +15,23 @@ from urllib3.util.retry import Retry
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ================= 动态路径网关 (OneFile 完美适配) =================
+def get_resource_dir():
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def get_base_dir():
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
 
+RESOURCE_DIR = get_resource_dir()
 BASE_DIR = get_base_dir()
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 ASSET_DIR = os.path.join(BASE_DIR, "assets")
+BUNDLED_CONFIG_DIR = os.path.join(RESOURCE_DIR, "config")
+BUNDLED_ASSET_DIR = os.path.join(RESOURCE_DIR, "assets")
 
 LOG_FILE = os.path.join(CONFIG_DIR, "hextech_system.log")
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
@@ -32,6 +41,27 @@ AUGMENT_ICON_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
 
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(ASSET_DIR, exist_ok=True)
+
+
+def _seed_runtime_dir(source_dir: str, target_dir: str) -> None:
+    if not os.path.isdir(source_dir):
+        return
+
+    os.makedirs(target_dir, exist_ok=True)
+    for entry in os.listdir(source_dir):
+        src_path = os.path.join(source_dir, entry)
+        dst_path = os.path.join(target_dir, entry)
+        if os.path.exists(dst_path):
+            continue
+        if os.path.isdir(src_path):
+            shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src_path, dst_path)
+
+
+if getattr(sys, 'frozen', False):
+    _seed_runtime_dir(BUNDLED_CONFIG_DIR, CONFIG_DIR)
+    _seed_runtime_dir(BUNDLED_ASSET_DIR, ASSET_DIR)
 
 # 日志防膨胀处理 (最大 1MB, 保留 1 份备份)
 logging.basicConfig(

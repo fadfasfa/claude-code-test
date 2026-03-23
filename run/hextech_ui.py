@@ -99,19 +99,22 @@ class HextechUI:
     def _start_web_server(self):
         """在后台启动 web_server.py，不阻塞 UI 主线程。"""
         try:
-            import sys
-            import os
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            web_script = os.path.join(script_dir, "web_server.py")
             startupinfo = None
             if os.name == 'nt':
-                import subprocess
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            if getattr(sys, "frozen", False):
+                command = [sys.executable, "--web-server"]
+                cwd = BASE_DIR
+            else:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                web_script = os.path.join(script_dir, "web_server.py")
+                command = [sys.executable, web_script]
+                cwd = script_dir
             self.web_process = subprocess.Popen(
-                [sys.executable, web_script],
+                command,
                 startupinfo=startupinfo,
-                cwd=script_dir
+                cwd=cwd
             )
             global _WEB_BASE
             _WEB_BASE = _resolve_web_base(timeout=5.0)
@@ -242,18 +245,21 @@ class HextechUI:
             """后台发起跳转请求，失败时回退到本地浏览器。"""
             # 先尝试让 web_server 接管跳转，接管失败再走本地兜底。
             en_name = self.core_data.get(str(champ_id), {}).get("en_name", "")
-            web_base = _resolve_web_base(timeout=0.5)
-            try:
-                resp = requests.post(
-                    f"{web_base}/api/redirect",
-                    json={"hero_id": str(champ_id), "hero_name": hero_name},
-                    timeout=1,
-                )
-                # 服务端成功接管跳转时，本地无需再处理。
-                if resp.status_code == 200:
-                    return
-            except Exception:
-                logger.debug("请求 /api/redirect 失败，回退到本地浏览器打开。", exc_info=True)
+            for _ in range(3):
+                web_base = _resolve_web_base(timeout=1.0)
+                try:
+                    resp = requests.post(
+                        f"{web_base}/api/redirect",
+                        json={"hero_id": str(champ_id), "hero_name": hero_name},
+                        timeout=1.5,
+                    )
+                    # 服务端成功接管跳转时，本地无需再处理。
+                    if resp.status_code == 200:
+                        return
+                except Exception:
+                    logger.debug("请求 /api/redirect 失败，准备重试。", exc_info=True)
+                time.sleep(0.4)
+            logger.debug("请求 /api/redirect 多次失败，回退到本地浏览器打开。")
             # web_server 不可用时，直接打开详情页。
             url = (
                 f"{web_base}/detail.html"
@@ -480,4 +486,8 @@ class HextechUI:
         self.root.destroy()
 
 if __name__ == "__main__":
-    HextechUI().root.mainloop()
+    if "--web-server" in sys.argv:
+        from web_server import run_web_server
+        run_web_server()
+    else:
+        HextechUI().root.mainloop()
