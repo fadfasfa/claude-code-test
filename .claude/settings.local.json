@@ -19,7 +19,9 @@
       "Bash(powershell -Command \"Start-Process chrome:*)",
       "Bash(gitnexus impact:*)",
       "Bash(dir subtitle_extractor /s)",
-      "Bash(powershell \"Get-ChildItem -Path subtitle_extractor -Recurse | Measure-Object -Property Length -Sum\")"
+      "Bash(powershell \"Get-ChildItem -Path subtitle_extractor -Recurse | Measure-Object -Property Length -Sum\")",
+      "Bash(code --list-extensions --show-versions)",
+      "Bash(where claude:*)"
     ]
   }
 }

@@ -11,6 +11,17 @@ description: "Execute the Hextech V6.1 protocol for repositories governed by an 
 
 支持三执行端并行：Claude Code（cc）/ Antigravity（ag）/ Codex（cx），每端使用独立状态文件和 event log，通过分支前缀物理隔离。
 
+## 共享技能配置
+
+**技能路径**: `c:/Users/apple/.claude/skills/` (50 个技能)
+
+**共享配置文件**: `.claude/shared/skill_paths.json`
+
+**各端适配**:
+- **Claude Code (cc)**: 已自动识别，无需配置
+- **Antigravity (ag)**: 需在 `.claude/settings.json` 中添加 `skillSearchPaths`
+- **Codex (cx)**: 需在 `.claude/settings.json` 中添加 `skillSearchPaths`
+
 ## 触发条件
 
 出现以下任意内容时立即启用本技能：

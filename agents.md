@@ -1,120 +1,40 @@
-## 工作范围 (agents.md) — V6.0
+## 工作范围 (agents.md) — V6.1
 
 ### 范围
 
-项目路径：.
-执行环境：Claude Sonnet 4.6 (Thinking)
-Branch_Name：ai-task-fix-web-ui-startup-20260322
+项目路径：[相对路径，新项目必须是新建文件夹]
+执行环境：[Claude Code / Antigravity + 档位 / Codex]
+执行端标识：[cc / ag / cx]
+
+Branch_Name：[<执行端标识>-task-<描述>-<YYYYMMDD>]
+> 命名铁律：
+>   Claude Code  → cc-task-<描述>-<YYYYMMDD>
+>   Antigravity  → ag-task-<描述>-<YYYYMMDD>
+>   Codex        → cx-task-<描述>-<YYYYMMDD>
+> 执行端不得使用其他端的前缀，Node C 会校验前缀与 executor 字段是否匹配。
 
 Target_Files：
-  - run/hextech_ui.py
-  - run/web_server.py
-  - run/PROJECT.md
+  - [文件相对路径]
 
 ### 目标功能
 
-1. 修复 run/hextech_ui.py 无法独立挂载/唤起 Web 界面服务的问题（通过子进程拉起 web_server.py）
-2. 修复 run/web_server.py 中动态端口切换后，浏览器唤出依然指向旧端口的 Bug
-3. 扩展范围：重构 `run/PROJECT.md` 项目文档，梳理并优化当前架构与模块说明
+[逐条列出本次要实现或修改的功能]
+[执行中途决策层确认的新需求直接追加到此处]
+[执行端发现并经决策层同意的范围扩展，Target_Files 同步追加，目标功能节同步说明原因]
+[自助模式下执行端自行追加的范围扩展（[AGENTS.MD: SELF-UPDATED]），同样记录在此，Node C 审计时同等有效]
 
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
+---
 
-This project is indexed by GitNexus as **claudecode** (301 symbols, 770 relationships, 23 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+## 待机态（/RECOVER 专用）
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+项目路径：[待填写]
+执行环境：[待填写]
+执行端标识：[待填写]
+Branch_Name：[待填写]
 
-## Always Do
+Target_Files：
+  - [待填写]
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+### 目标功能
 
-## When Debugging
-
-1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
-2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/claudecode/process/{processName}` — trace the full execution flow step by step
-4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
-
-## When Refactoring
-
-- **Renaming**: MUST use `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` first. Review the preview — graph edits are safe, text_search edits need manual review. Then run with `dry_run: false`.
-- **Extracting/Splitting**: MUST run `gitnexus_context({name: "target"})` to see all incoming/outgoing refs, then `gitnexus_impact({target: "target", direction: "upstream"})` to find all external callers before moving code.
-- After any refactor: run `gitnexus_detect_changes({scope: "all"})` to verify only expected files changed.
-
-## Never Do
-
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-
-## Tools Quick Reference
-
-| Tool | When to use | Command |
-|------|-------------|---------|
-| `query` | Find code by concept | `gitnexus_query({query: "auth validation"})` |
-| `context` | 360-degree view of one symbol | `gitnexus_context({name: "validateUser"})` |
-| `impact` | Blast radius before editing | `gitnexus_impact({target: "X", direction: "upstream"})` |
-| `detect_changes` | Pre-commit scope check | `gitnexus_detect_changes({scope: "staged"})` |
-| `rename` | Safe multi-file rename | `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` |
-| `cypher` | Custom graph queries | `gitnexus_cypher({query: "MATCH ..."})` |
-
-## Impact Risk Levels
-
-| Depth | Meaning | Action |
-|-------|---------|--------|
-| d=1 | WILL BREAK — direct callers/importers | MUST update these |
-| d=2 | LIKELY AFFECTED — indirect deps | Should test |
-| d=3 | MAY NEED TESTING — transitive | Test if critical path |
-
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/claudecode/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/claudecode/clusters` | All functional areas |
-| `gitnexus://repo/claudecode/processes` | All execution flows |
-| `gitnexus://repo/claudecode/process/{name}` | Step-by-step execution trace |
-
-## Self-Check Before Finishing
-
-Before completing any code modification task, verify:
-1. `gitnexus_impact` was run for all modified symbols
-2. No HIGH/CRITICAL risk warnings were ignored
-3. `gitnexus_detect_changes()` confirms changes match expected scope
-4. All d=1 (WILL BREAK) dependents were updated
-
-## Keeping the Index Fresh
-
-After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
-
-```bash
-npx gitnexus analyze
-```
-
-If the index previously included embeddings, preserve them by adding `--embeddings`:
-
-```bash
-npx gitnexus analyze --embeddings
-```
-
-To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.embeddings` field shows the count (0 means no embeddings). **Running analyze without `--embeddings` will delete any previously generated embeddings.**
-
-> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->
+[待填写]
