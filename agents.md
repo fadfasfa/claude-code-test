@@ -2,26 +2,22 @@
 
 ### 范围
 
-项目路径：[相对路径，新项目必须是新建文件夹]
-执行环境：[Claude Code / Antigravity + 档位 / Codex]
-执行端标识：[cc / ag / cx]
+项目路径：.
+执行环境：Claude Code
+执行端标识：cc
 
-Branch_Name：[<执行端标识>-task-<描述>-<YYYYMMDD>]
-> 命名铁律：
->   Claude Code  → cc-task-<描述>-<YYYYMMDD>
->   Antigravity  → ag-task-<描述>-<YYYYMMDD>
->   Codex        → cx-task-<描述>-<YYYYMMDD>
-> 执行端不得使用其他端的前缀，Node C 会校验前缀与 executor 字段是否匹配。
+Branch_Name：cc-task-skill-config-20260324
 
 Target_Files：
-  - [文件相对路径]
+  - .claude/settings.json
 
 ### 目标功能
 
-[逐条列出本次要实现或修改的功能]
-[执行中途决策层确认的新需求直接追加到此处]
-[执行端发现并经决策层同意的范围扩展，Target_Files 同步追加，目标功能节同步说明原因]
-[自助模式下执行端自行追加的范围扩展（[AGENTS.MD: SELF-UPDATED]），同样记录在此，Node C 审计时同等有效]
+1. 读取现有的 `.claude/settings.json` 文件内容。
+2. 将共享技能路径 `"c:/Users/apple/.claude/skills/"` 注入到 `skillSearchPaths` 数组中。如果该数组不存在则创建；如果已存在该路径则保持现状。
+3. 严格保留现有的 `permissions` 配置节点及其内部的所有 `Bash` 权限白名单（共 21 条），绝对禁止覆盖或删除原有权限配置。
+4. 维持同目录下的 `.claude/settings.local.json` 现状不变。
+5. 完成合并后保存文件，确保 JSON 格式合法。
 
 ---
 
