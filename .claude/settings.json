@@ -1,7 +1,7 @@
 {
   "skillSearchPaths": [
-    "c:/Users/apple/.codex/skills/",
-    "c:/Users/apple/.claude/skills/"
+    "c:/Users/apple/.claude/skills/",
+    "c:/Users/apple/.codex/skills/"
   ],
   "permissions": {
     "allow": [
