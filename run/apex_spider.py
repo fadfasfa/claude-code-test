@@ -1,10 +1,6 @@
-# -*- coding: utf-8 -*-
-"""
-ApexLoL 信息爬虫 - 轻量级并发爬虫 (requests + BeautifulSoup)
-
-针对 apexlol.info 的轻量级爬虫，采用 requests 静态获取 + BeautifulSoup 解析，
-配合 ThreadPoolExecutor 实现 16 线程并发极速抓取。
-"""
+# 海克斯信息爬虫
+# 这是一个轻量级并发爬虫，使用请求库获取页面内容，再用网页解析库提取数据，
+# 并配合线程池实现多线程快速抓取。
 
 import logging
 import json
@@ -27,7 +23,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 常见 PC 浏览器 User-Agent 池
+# 常见桌面浏览器请求标识池
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -39,46 +35,29 @@ USER_AGENTS = [
 
 
 def get_random_user_agent() -> str:
-    """获取随机 User-Agent"""
+    # 获取随机请求标识
     return random.choice(USER_AGENTS)
 
 
 def normalize_name(name_str: str) -> str:
-    """
-    正则化英雄名称：转小写、去除空格和特殊符号
-    
-    Args:
-        name_str: 原始名称字符串
-        
-    Returns:
-        清洗后的名称字符串
-    """
+    # 规范化英雄名称，统一为小写并去掉空格和特殊符号
     if not name_str:
         return ""
     return name_str.replace(" ", "").replace("-", "").replace("'", "").replace(".", "").lower()
 
 
 class ApexSpider:
-    """
-    ApexLoL 轻量级爬虫类
-
-    使用 requests 进行 HTTP 请求，BeautifulSoup 进行 HTML 解析。
-    支持 ThreadPoolExecutor 并发处理，极速抓取静态页面。
-    """
+    # 轻量级爬虫类，使用请求库进行网络请求，并支持线程池并发抓取静态页面。
 
     def __init__(self):
-        """
-        初始化爬虫
-
-        创建 requests.Session() 并挂载随机 User-Agent，配置 HTTP 重试机制
-        """
+        # 初始化爬虫，创建 Session 并挂载随机请求头和重试机制
         self.base_url = "https://apexlol.info/zh"
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": get_random_user_agent()
         })
         
-        # 配置重试策略：重试 3 次，backoff_factor=0.5，针对 429 和 50x 状态码
+        # 配置重试策略：重试 3 次，退避因子为 0.5，针对 429 和服务器错误状态码
         retry_strategy = Retry(
             total=3,
             backoff_factor=0.5,
@@ -86,7 +65,7 @@ class ApexSpider:
             allowed_methods=["GET", "POST"]
         )
         
-        # 为 http 和 https 协议分别挂载适配器
+        # 为普通和加密协议分别挂载适配器
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
@@ -94,16 +73,7 @@ class ApexSpider:
         logger.info(f"ApexSpider 初始化完成，User-Agent: {self.session.headers['User-Agent'][:50]}...，重试机制已启用")
 
     def fetch_page(self, url: str) -> str:
-        """
-        获取页面内容
-
-        Args:
-            url: 目标 URL
-
-        Returns:
-            页面 HTML 内容，失败返回 None
-        """
-        # 配置重试参数
+        # 获取页面内容，失败返回 None
         max_retries = 3
         backoff_factor = 0.5
         retryable_status_codes = {429, 500, 502, 503, 504}
@@ -153,12 +123,7 @@ class ApexSpider:
                 return None
 
     def crawl_champion_list(self) -> dict:
-        """
-        爬取英雄列表数据（包含名称和详情页 URL）
-
-        Returns:
-            英雄数据字典
-        """
+        # 爬取英雄列表，返回名称和详情页地址
         url = f"{self.base_url}/champions"
         logger.info(f"开始爬取英雄列表：{url}")
 
@@ -176,10 +141,10 @@ class ApexSpider:
                 result["error"] = "页面加载失败"
                 return result
 
-            # 解析 HTML
+            # 解析网页内容
             soup = BeautifulSoup(html, 'html.parser')
 
-            # 定位英雄卡片并提取名称和 URL
+            # 定位英雄卡片并提取名称和地址
             champ_cards = soup.select('.champ-card')
             logger.info(f"找到 {len(champ_cards)} 个英雄卡片")
 
@@ -193,10 +158,10 @@ class ApexSpider:
 
                     name = name_elem.get_text(strip=True)
 
-                    # 提取 href 属性
+                    # 提取链接属性
                     href = card.get('href')
                     if href:
-                        # 拼接完整 URL
+                        # 拼接完整地址
                         if href.startswith('/'):
                             full_url = f"https://apexlol.info{href}"
                         elif href.startswith('http'):
@@ -226,15 +191,7 @@ class ApexSpider:
         return result
 
     def extract_hextech_synergies(self, detail_url: str) -> list:
-        """
-        提取英雄详情页的海克斯协同方案（带'强力联动'或'陷阱'标签）
-
-        Args:
-            detail_url: 英雄详情页 URL
-
-        Returns:
-            协同方案列表，每个元素为扁平化的文本行
-        """
+        # 提取英雄详情页中的海克斯协同方案
         logger.info(f"开始提取海克斯协同方案：{detail_url}")
         result = []
 
@@ -245,10 +202,10 @@ class ApexSpider:
                 logger.error(f"详情页加载失败：{detail_url}")
                 return result
 
-            # 解析 HTML
+            # 解析网页内容
             soup = BeautifulSoup(html, 'html.parser')
 
-            # 定位卡片并提取内容 - 更新选择器以匹配新的DOM结构
+            # 定位卡片并提取内容，更新选择器以匹配新的页面结构
             cards = soup.select('.interaction-card')
             logger.info(f"找到 {len(cards)} 个交互卡片")
 
@@ -257,7 +214,7 @@ class ApexSpider:
                     # 检查卡片是否包含协同方案标签（强力联动或陷阱）
                     has_synergy_tag = False
 
-                    # 查找标签元素 - 基于CSS类名判断协同方案类型
+                    # 查找标签元素，基于样式类判断协同方案类型
                     tag_elements = card.select('span.tag-badge')
                     for tag_elem in tag_elements:
                         classes = tag_elem.get('class', [])
@@ -267,7 +224,7 @@ class ApexSpider:
                             break
 
                     if has_synergy_tag:
-                        # 使用 get_text 提取文本，以 ' | ' 分隔多行
+                        # 使用文本提取函数，并以“ | ”分隔多行
                         text = card.get_text(separator=' | ', strip=True)
                         if text:
                             result.append(text)
@@ -285,7 +242,7 @@ class ApexSpider:
 
 
 def main():
-    """主函数"""
+    # 主函数入口
     logger.info("=" * 50)
     logger.info("ApexLoL 超频并发爬虫启动")
     logger.info("=" * 50)
@@ -295,7 +252,7 @@ def main():
 
     # 爬取英雄列表
     logger.info("-" * 30)
-    logger.info("【任务 1】爬取英雄列表")
+    logger.info("（任务 1）爬取英雄列表")
     champion_result = spider.crawl_champion_list()
 
     if champion_result["success"]:
@@ -310,7 +267,7 @@ def main():
 
     # 加载本地配置文件
     logger.info("-" * 30)
-    logger.info("【任务 2】加载本地英雄配置")
+    logger.info("（任务 2）加载本地英雄配置")
 
     core_data_path = os.path.join(CONFIG_DIR, "Champion_Core_Data.json")
     aliases_path = os.path.join(CONFIG_DIR, "hero_aliases.json")
@@ -331,7 +288,7 @@ def main():
         logger.error(f"别名数据加载失败：{e}")
         hero_aliases = {}
 
-    # 构建输出用的完整数据字典 core_info_dict，包含英雄的所有核心字段并合并对应的 aliases 列表
+    # 构建输出用的完整数据字典，包含核心字段和别名列表
     core_info_dict = {}
     for champ_id, champ_info in core_data.items():
         name = champ_info.get("name")
@@ -344,12 +301,10 @@ def main():
                 "aliases": hero_aliases.get(name, [])
             }
 
-    # 构建专用于网页名称匹配的 search_index
-    # 遍历核心数据，将英雄的 name, title, en_name 进行正则化清洗（转小写、去除空格和特殊符号）后作为 Key，映射到英雄 ID
-    # 严格约束：不得将 aliases 中的缩写加入 search_index，以防止匹配污染
+    # 构建网页名称匹配索引，只使用名称、称号和英文名
     search_index = {}
     for champ_id, champ_info in core_info_dict.items():
-        # 添加 name, title, en_name 到 search_index
+        # 将名称、称号和英文名加入搜索索引
         names_to_index = [
             champ_info["name"],
             champ_info["title"],
@@ -365,19 +320,19 @@ def main():
     logger.info(f"构建核心数据字典：{len(core_info_dict)} 个英雄")
     logger.info(f"构建搜索索引：{len(search_index)} 个关键词")
 
-    # 全量遍历英雄列表并提取海克斯协同方案（使用 ThreadPoolExecutor 并发）
+    # 全量遍历英雄列表并提取海克斯协同方案，使用线程池并发执行
     logger.info("-" * 30)
-    logger.info("【任务 3】全量提取海克斯协同方案（16 线程并发）")
+    logger.info("（任务 3）全量提取海克斯协同方案（16 线程并发）")
 
     # 初始化最终数据字典
     final_data = {}
 
-    # 获取英雄列表（全量，移除之前的 [:3] 限制）
+    # 获取英雄列表（全量，移除之前的[:3]限制）
     champions = champion_result.get("champions", [])
     if champions:
         logger.info(f"开始遍历 {len(champions)} 个英雄的海克斯协同方案（并发处理）...")
 
-        # 构建任务字典：URL -> 英雄信息
+        # 构建任务字典：地址对应英雄信息
         task_map = {}
         skipped_names = []
 
@@ -385,7 +340,7 @@ def main():
             champ_name = champ["name"]
             champ_url = champ["url"]
 
-            # 对网页提取的 champ_name 执行与 Step 2 相同的正则化清洗，然后去 search_index 中查找对应的英雄 ID
+            # 对网页提取的英雄名做同样清洗，再去搜索索引中查找编号
             normalized_champ_name = normalize_name(champ_name)
             champ_id = search_index.get(normalized_champ_name)
 
@@ -393,7 +348,7 @@ def main():
                 skipped_names.append(champ_name)
                 continue
 
-            # 从 core_info_dict 取出完整信息组装任务
+            # 从核心信息字典中取出完整信息并组装任务
             core_info = core_info_dict[champ_id]
             task_map[champ_url] = {
                 "name": core_info["name"],
@@ -412,7 +367,7 @@ def main():
 
         logger.info(f"成功匹配 {len(task_map)} 个英雄用于并发抓取")
 
-        # 使用 ThreadPoolExecutor 进行并发抓取（将 max_workers=16 下调为 max_workers=8）
+        # 使用线程池进行并发抓取（将工作线程数从 16 调整为 8）
         with ThreadPoolExecutor(max_workers=8) as executor:
             # 提交所有任务
             future_to_url = {
@@ -445,13 +400,13 @@ def main():
                     logger.error(f"并发任务异常 - URL: {champ_url}, 错误：{str(e)}")
                     continue
 
-        # 持久化到 JSON 文件
+        # 持久化到数据文件
         os.makedirs(CONFIG_DIR, exist_ok=True)
         output_path = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(final_data, f, ensure_ascii=False, indent=2)
 
-        logger.info(f"Data saved to: {output_path}")
+        logger.info(f"数据已保存到：{output_path}")
         logger.info(f"Total heroes captured: {len(final_data)}")
     else:
         logger.error("英雄列表为空，无法提取协同方案")

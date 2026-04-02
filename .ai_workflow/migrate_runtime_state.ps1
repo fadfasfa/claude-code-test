@@ -5,7 +5,7 @@
 $oldFile = ".ai_workflow\runtime_state.json"
 
 if (-not (Test-Path $oldFile)) {
-    Write-Host "[SKIP] $oldFile 不存在，无需迁移" -ForegroundColor Yellow
+    Write-Host "[跳过] $oldFile 不存在，无需迁移" -ForegroundColor Yellow
     exit 0
 }
 
@@ -26,7 +26,7 @@ $base = @{
 foreach ($ep in @("cc", "ag", "cx")) {
     $target = ".ai_workflow\runtime_state_$ep.json"
     if (Test-Path $target) {
-        Write-Host "[SKIP] $target 已存在，跳过（不覆盖）" -ForegroundColor Yellow
+        Write-Host "[跳过] $target 已存在，跳过（不覆盖）" -ForegroundColor Yellow
         continue
     }
     $state = $base.Clone()
@@ -39,11 +39,11 @@ foreach ($ep in @("cc", "ag", "cx")) {
         $state["workflow_id"]      = ""
     }
     $state | ConvertTo-Json | Set-Content $target -Encoding UTF8
-    Write-Host "[DONE] 已生成 $target" -ForegroundColor Green
+    Write-Host "[完成] 已生成 $target" -ForegroundColor Green
 }
 
 # 备份旧文件（不删除，保留供参考）
 $backup = ".ai_workflow\runtime_state.json.v60bak"
 Copy-Item $oldFile $backup -Force
-Write-Host "[BACKUP] 旧文件已备份至 $backup" -ForegroundColor Cyan
+Write-Host "[备份] 旧文件已备份至 $backup" -ForegroundColor Cyan
 Write-Host "`n迁移完成。确认三个新文件内容正确后，可手动删除旧文件和备份。" -ForegroundColor Green

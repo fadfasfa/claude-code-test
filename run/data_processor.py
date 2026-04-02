@@ -12,21 +12,21 @@ from urllib.parse import quote
 from hero_sync import load_champion_core_data
 
 # ========== 全局缓存池 ==========
-# 海克斯计算结果缓存：{(hero_name, df_hash): result_dict}
+# 海克斯计算结果缓存：{(英雄名, 数据表哈希): 结果字典}
 _hextech_cache_pool: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
-# 英雄大盘计算结果缓存：{df_hash: result_list}
+# 英雄大盘计算结果缓存：{数据表哈希: 结果列表}
 _champion_cache_pool: Dict[str, List[Dict[str, Any]]] = {}
-# 缓存元数据：{df_hash: {'row_count': int, 'timestamp': float}}
+# 缓存元数据：记录行数与时间戳
 _cache_metadata: Dict[str, Dict[str, Any]] = {}
 # 英雄核心数据缓存（用于名称映射）
 _champion_core_cache: Optional[Dict[str, Any]] = None
 
 # 缓存配置
 MAX_CACHE_SIZE = 100  # 最大缓存条目数
-CACHE_TTL = 300.0  # 缓存生存时间（秒）
+CACHE_TTL = 300.0  # 缓存有效时间（秒）
 
 def _get_champion_maps():
-    """获取英雄名称到 ID/英文名的映射缓存"""
+    # 获取英雄名称到编号和英文名的映射缓存。
     global _champion_core_cache
     if _champion_core_cache is None:
         try:
@@ -35,7 +35,7 @@ def _get_champion_maps():
             logging.warning(f"加载英雄核心数据失败：{e}")
             _champion_core_cache = {}
 
-    # 构建 name_to_id 和 name_to_en 映射
+    # 构建名称到编号和英文名的映射
     name_to_id = {}
     name_to_en = {}
     for key, value in _champion_core_cache.items():
@@ -48,16 +48,15 @@ def _get_champion_maps():
 
 
 def _compute_df_hash(df: pd.DataFrame) -> str:
-    """
-    计算 DataFrame 的特征哈希值
-    使用行数 + 列名 + 首尾行数据组合生成哈希，平衡性能与准确性
-    """
+    # 计算数据表的特征哈希值。
+    #
+    # 使用行数、列名和首尾行数据组合生成哈希，在性能和准确性之间取得平衡。
     try:
         # 获取关键特征
         row_count = len(df)
         col_hash = hashlib.md5(str(tuple(df.columns)).encode()).hexdigest()[:8]
 
-        # 采样首行数据（如果存在）
+        # 采样首尾行数据
         sample_data = ""
         if row_count > 0:
             sample_data = str(df.iloc[0].tolist()) + str(df.iloc[-1].tolist())
@@ -71,21 +70,21 @@ def _compute_df_hash(df: pd.DataFrame) -> str:
 
 
 def _get_from_cache(cache_pool: dict, key) -> Optional[Any]:
-    """从缓存池获取数据，检查 TTL"""
+    # 从缓存池获取数据，并检查有效期。
     if key in cache_pool:
         meta = _cache_metadata.get(key, {})
         # 检查缓存是否过期
         if CACHE_TTL <= 0 or (time.time() - meta.get('timestamp', 0)) < CACHE_TTL:
             return cache_pool[key]
         else:
-            # 过期缓存清理
+            # 清理过期缓存
             cache_pool.pop(key, None)
             _cache_metadata.pop(key, None)
     return None
 
 
 def _set_to_cache(cache_pool: dict, key, value: Any, df: pd.DataFrame) -> None:
-    """设置缓存并更新元数据，实现 LRU 淘汰策略"""
+    # 设置缓存并更新元数据，实现最近最少使用淘汰。
     # 检查缓存大小，超出则淘汰最旧条目
     if len(cache_pool) >= MAX_CACHE_SIZE:
         oldest_key = next(iter(cache_pool))
@@ -100,15 +99,14 @@ def _set_to_cache(cache_pool: dict, key, value: Any, df: pd.DataFrame) -> None:
 
 
 def _invalidate_stale_caches(df: pd.DataFrame) -> None:
-    """
-    失效过时缓存
-    当数据行数发生显著变化时，清理相关缓存
-    """
+    # 失效过时缓存。
+    #
+    # 当数据行数发生显著变化时，清理相关缓存。
     current_rows = len(df)
     stale_keys = []
 
     for key, meta in _cache_metadata.items():
-        # 行数差异超过 10% 视为数据已更新
+        # 行数发生变化时，视为数据已更新
         if meta.get('row_count', 0) != current_rows:
             stale_keys.append(key)
 
@@ -119,22 +117,20 @@ def _invalidate_stale_caches(df: pd.DataFrame) -> None:
 
 
 def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
-    """
-    计算全英雄大盘 T 度列表（微量贝叶斯 + Z-Score）
-
-    算法逻辑：
-    1. 应用微量贝叶斯平滑公式（及格出场率阈值=0.005）
-    2. 计算 Z-Score 进行 80/20 赋分（英雄总分 = Z_贝叶斯胜率 * 0.80 + Z_出场率 * 0.20）
-    3. 按分数降序排序
-
-    缓存策略：
-    - 使用 DataFrame 特征哈希作为缓存键
-    - 若数据未变化，直接返回缓存结果（O(1) 复杂度）
-    """
+    # 计算全英雄大盘榜单。
+    #
+    # 算法逻辑：
+    # 1. 应用贝叶斯平滑公式
+    # 2. 计算标准分后按八二比例赋分
+    # 3. 按分数降序排序
+    #
+    # 缓存策略：
+    # - 使用数据表特征哈希作为缓存键
+    # - 若数据未变化，直接返回缓存结果
     if df.empty:
         return []
 
-    # [DEBUG-01] 打印 DataFrame 列名
+    # 调试输出：打印数据表列名
     logging.info(f"Processing columns: {df.columns.tolist()}")
 
     # ========== 缓存检查 ==========
@@ -149,19 +145,19 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
 
     try:
         # ========== 数据降维去重 ==========
-        # 创建副本避免修改原始数据
+        # 创建副本，避免修改原始数据
         data = df.copy()
         # ========== 数据降维去重 ==========
-        # CSV 是”英雄-海克斯”粒度，计算英雄大盘前必须去重
+        # 数据表是“英雄-海克斯”粒度，计算英雄大盘前必须去重
         data = data[['英雄名称', '英雄胜率', '英雄出场率']].drop_duplicates(subset=['英雄名称']).copy()
-        # 确保必要列存在（支持”英雄ID”和”英雄 ID”等变体）
+        # 确保必要列存在，支持不同编号字段变体
         required_cols = ['英雄名称', '英雄胜率', '英雄出场率']
         if not all(col in data.columns for col in required_cols):
             logging.warning(f"缺少必要列，当前列：{data.columns.tolist()}")
             return []
 
-        # ========== 微量贝叶斯平滑 ==========
-        # 及格出场率阈值 = 0.005 (0.5%)
+        # ========== 贝叶斯平滑 ==========
+        # 及格出场率阈值为 0.005
         min_pick_rate = 0.005
         avg_winrate = data['英雄胜率'].mean()
 
@@ -172,23 +168,23 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
             data['英雄胜率'] * data['英雄出场率'] + avg_winrate * min_pick_rate
         ) / (data['英雄出场率'] + min_pick_rate)
 
-        # ========== Z-Score 标准化 ==========
-        # 计算贝叶斯胜率的 Z-Score
+        # ========== 标准分处理 ==========
+        # 计算贝叶斯胜率的标准分
         bayes_mean = data['贝叶斯胜率'].mean()
         bayes_std = data['贝叶斯胜率'].std()
         if bayes_std == 0 or np.isnan(bayes_std):
-            bayes_std = 1  # 防除零
+            bayes_std = 1  # 防止除零
         data['Z_贝叶斯胜率'] = (data['贝叶斯胜率'] - bayes_mean) / bayes_std
 
-        # 计算出场率的 Z-Score
+        # 计算出场率的标准分
         pick_mean = data['英雄出场率'].mean()
         pick_std = data['英雄出场率'].std()
         if pick_std == 0 or np.isnan(pick_std):
-            pick_std = 1  # 防除零
+            pick_std = 1  # 防止除零
         data['Z_出场率'] = (data['英雄出场率'] - pick_mean) / pick_std
 
-        # ========== 80/20 综合赋分 ==========
-        # 英雄总分 = Z_贝叶斯胜率 * 0.80 + Z_出场率 * 0.20
+        # ========== 八二综合赋分 ==========
+        # 英雄总分 = 标准分_贝叶斯胜率 * 0.80 + 标准分_出场率 * 0.20
         data['综合分数'] = data['Z_贝叶斯胜率'] * 0.80 + data['Z_出场率'] * 0.20
 
         # ========== 排序并输出 ==========
@@ -218,22 +214,20 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
 
 
 def _clear_champion_cache():
-    """手动清空英雄大盘缓存（用于强制刷新）"""
+    # 手动清空英雄大盘缓存，用于强制刷新。
     global _champion_cache_pool, _cache_metadata
     _champion_cache_pool.clear()
     _cache_metadata.clear()
 
 
 def _generate_hextech_icon_url(hextech_name: str, tier: str) -> str:
-    """
-    生成海克斯官方 CDN 图片 URL
-
-    优先级：
-    1. 读取 config/Augment_Icon_Map.json 获取精确匹配
-    2. 在 JSON 中模糊搜索匹配（名称归一化）
-    3. 尝试 CommunityDragon 标准命名
-    4. Fallback 到标准化的 cherry_{tier}_{name}.png 格式
-    """
+    # 生成海克斯官方 CDN 图片 URL
+    #
+    # 优先级：
+    # 1. 读取 config/Augment_Icon_Map.json 获取精确匹配
+    # 2. 在 JSON 中模糊搜索匹配（名称归一化）
+    # 3. 尝试 CommunityDragon 标准命名
+    # 4. Fallback 到标准化的 cherry_{tier}_{name}.png 格式
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config_dir = os.path.join(base_dir, "config")
     icon_map_file = os.path.join(config_dir, "Augment_Icon_Map.json")
@@ -257,20 +251,20 @@ def _generate_hextech_icon_url(hextech_name: str, tier: str) -> str:
         except (Exception):
             pass
 
-    # 如果找到图标路径，尝试转换为合法 CDN URL
+    # 如果找到图标路径，尝试转换为合法资源地址
     if icon_path:
-        # ========== 路径适配 1：CommunityDragon 游戏资源路径 ==========
+        # ========== 路径适配 1：社区资源游戏路径 ==========
         if icon_path.startswith("/lol-game-data/assets/"):
             relative_path = icon_path[len("/lol-game-data/assets/"):]
             return f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/{relative_path.lower()}"
 
-        # ========== 路径适配 2：CommunityDragon augments 数据路径 ==========
+        # ========== 路径适配 2：社区资源增强器数据路径 ==========
         if icon_path.startswith("/data/v1/augments/") or "/augments/" in icon_path:
             # 提取文件名
             file_name = icon_path.split('/')[-1] if '/' in icon_path else icon_path
             return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{file_name.lower()}"
 
-        # ========== 路径适配 3：完整 URL（已是 HTTP/HTTPS） ==========
+        # ========== 路径适配 3：完整地址（已是超文本或加密超文本） ==========
         if icon_path.startswith("http://") or icon_path.startswith("https://"):
             return icon_path
 
@@ -278,7 +272,7 @@ def _generate_hextech_icon_url(hextech_name: str, tier: str) -> str:
         if icon_path and not icon_path.startswith("/"):
             return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{icon_path.lower()}"
 
-    # Fallback 逻辑：生成标准化 URL
+    # 回退逻辑：生成标准化地址
     # 阶级映射
     tier_map = {
         '棱彩': 'prismatic',
@@ -293,15 +287,13 @@ def _generate_hextech_icon_url(hextech_name: str, tier: str) -> str:
     # 名称标准化：仅保留英文字母和数字
     clean_name = ''.join(c.lower() for c in str(hextech_name) if c.isalnum())
 
-    # 生成标准格式 URL
+    # 生成标准格式地址
     return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/cherry_{tier_en}_{clean_name}.png"
 
 
 def _normalize_hextech_name(name: str) -> str:
-    """
-    归一化海克斯名称，用于模糊匹配
-    移除空格、标点，转为小写
-    """
+    # 归一化海克斯名称，用于模糊匹配
+    # 移除空格、标点，转为小写
     import re
     name = str(name).lower()
     name = re.sub(r'[\s\-\_\(\)\[\]\'\"\.]', '', name)
@@ -309,9 +301,7 @@ def _normalize_hextech_name(name: str) -> str:
 
 
 def _build_local_hextech_icon_url(hextech_name: str) -> str:
-    """
-    统一返回本地 /assets 路径，避免浏览器直接请求 CommunityDragon。
-    """
+    # 统一返回本地 /assets 路径，避免浏览器直接请求 CommunityDragon。
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config_dir = os.path.join(base_dir, "config")
     icon_map_file = os.path.join(config_dir, "Augment_Icon_Map.json")
@@ -344,34 +334,13 @@ def _build_local_hextech_icon_url(hextech_name: str) -> str:
 
 
 def _has_column_variant(df: pd.DataFrame, variants: List[str]) -> bool:
-    """
-    检查 DataFrame 列中是否存在给定的变体列名
-
-    Args:
-        df: DataFrame
-        variants: 列名变体列表，例如 ['英雄ID', '英雄 ID']
-
-    Returns:
-        是否存在任何一个变体
-    """
+    # 检查 DataFrame 中是否存在给定的列名变体
     return any(var in df.columns for var in variants)
 
 
 def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    计算单英雄专属海克斯，返回包含四个独立数组 + 排序视图的字典
-
-    算法逻辑：
-    1. 动态置信度衰减惩罚：弃用硬编码的 0.0005 幽灵数据过滤，改用基于出场率的平滑衰减
-    2. 综合 Z-Score 推荐：胜率差>=0 时 Z_胜率*0.85 + Z_出场*0.15；胜率差<0 时 Z_胜率*0.85 - Z_出场*0.15
-    3. 纯胜率极值榜单（按海克斯胜率降序）
-    4. 按阶级分离（Prismatic/Gold/Silver），每个阶级同时支持综合得分和纯胜率排序
-
-    缓存策略：
-    - 使用 (英雄名，df_hash) 作为缓存键
-    - 同一英雄数据未变化时直接返回缓存（O(1) 复杂度）
-    """
-    # [DEBUG-01] 打印 DataFrame 列名
+    # 计算单英雄海克斯结果，返回总榜、综合榜、纯胜率榜和分阶级榜单
+    # 计算时会引入置信度衰减，避免低样本数据干扰排序
     logging.info(f"Processing columns: {df.columns.tolist()}")
 
     if df.empty:
@@ -400,8 +369,8 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
         required_cols = ['英雄名称', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差']
         missing_cols = [col for col in required_cols if col not in data.columns]
 
-        # 特殊兼容性处理：对"英雄ID"和"英雄 ID"等变体进行不敏感匹配
-        # （可选列，不在 required_cols 中，但如果存在任何变体则可用）
+        # 特殊兼容性处理：对不同编号字段变体进行不敏感匹配
+        # 这些列不是必填项，但如果存在任何变体就可用
         id_variants = ['英雄ID', '英雄 ID', '英雄 id']
         has_id_column = _has_column_variant(data, id_variants)
 
@@ -429,33 +398,30 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
                 'Silver': []
             }
 
-        # ========== 动态置信度衰减惩罚（替代硬编码的 0.0005 过滤） ==========
-        # 旧逻辑：ghost_threshold = 0.0005; hero_data = hero_data[hero_data['海克斯出场率'] >= ghost_threshold]
-        # 新逻辑：使用平滑衰减因子，让低样本高胜率的海克斯分数自然下降，避免错杀
-        # 衰减因子 = 1 / (1 + (threshold / pick_rate)^2)
-        # 当出场率远低于阈值时，因子趋近于 0；当出场率高于阈值时，因子趋近于 1
+        # ========== 动态置信度衰减惩罚（替代硬编码过滤） ==========
+        # 采用平滑衰减因子，让低样本高胜率数据自然降权
         confidence_threshold = 0.001  # 置信度阈值（0.1%）
 
         def apply_confidence_penalty(row):
-            """计算动态置信度惩罚因子"""
+            # 计算动态置信度惩罚因子
             pick_rate = row['海克斯出场率']
             if pick_rate <= 0:
                 return 0.0
-            # 使用 Sigmoid 型衰减曲线
+            # 使用平滑衰减曲线
             penalty = 1.0 / (1.0 + (confidence_threshold / pick_rate) ** 2)
             return penalty
 
         hero_data['置信度因子'] = hero_data.apply(apply_confidence_penalty, axis=1)
 
-        # ========== Z-Score 计算 ==========
-        # 胜率差 Z-Score
+        # ========== 标准分计算 ==========
+        # 胜率差标准分
         wr_diff_mean = hero_data['胜率差'].mean()
         wr_diff_std = hero_data['胜率差'].std()
         if wr_diff_std == 0 or np.isnan(wr_diff_std):
             wr_diff_std = 1
         hero_data['Z_胜率差'] = (hero_data['胜率差'] - wr_diff_mean) / wr_diff_std
 
-        # 出场率 Z-Score
+        # 出场率标准分
         pick_mean = hero_data['海克斯出场率'].mean()
         pick_std = hero_data['海克斯出场率'].std()
         if pick_std == 0 or np.isnan(pick_std):
@@ -463,8 +429,7 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
         hero_data['Z_出场率'] = (hero_data['海克斯出场率'] - pick_mean) / pick_std
 
         # ========== 综合得分计算（带置信度衰减） ==========
-        # 基础逻辑：胜率差>=0 时 Z_胜率*0.85 + Z_出场*0.15；胜率差<0 时 Z_胜率*0.85 - Z_出场*0.15
-        # 新增：乘以置信度因子，让低样本数据自然衰减
+        # 基于胜率差和出场率计算综合得分，再乘以置信度因子
         def calc_comprehensive_score(row):
             z_wr = row['Z_胜率差']
             z_pr = row['Z_出场率']
@@ -481,7 +446,7 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
 
         hero_data['综合得分'] = hero_data.apply(calc_comprehensive_score, axis=1)
 
-        # ========== 综合得分防爆盾（NaN 填充） ==========
+        # ========== 综合得分容错处理（空值填充） ==========
         hero_data['综合得分'] = hero_data['综合得分'].fillna(0.0)
 
         # ========== 辅助函数：生成海克斯卡片 ==========
@@ -498,7 +463,7 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
                 card['综合得分'] = float(row['综合得分']) if pd.notna(row['综合得分']) else 0.0
             return card
 
-        # ========== top_10_overall：不计阶级，按综合得分前 10 ==========
+        # ========== 前十总榜：不计阶级，按综合得分取前 10 ==========
         top_10_data = hero_data.sort_values(by='综合得分', ascending=False).head(10)
         top_10_overall = []
         for _, row in top_10_data.iterrows():
@@ -518,13 +483,7 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
 
         # ========== 分阶级数组 ==========
         def build_tier_array(tier_name, limit=None):
-            """为指定阶级生成数组
-
-            Args:
-                tier_name: 阶级名称 (Prismatic/Gold/Silver)
-                limit: 返回数量限制，None 表示不限制
-            """
-            # 兼容多种阶级名称
+            # 为指定阶级生成数组
             tier_variants = {
                 'Prismatic': ['棱彩', '彩色'],
                 'Gold': ['金色', '黄金'],
@@ -574,7 +533,7 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
         }
 
 def clear_hextech_cache():
-    """手动清空海克斯缓存（用于强制刷新）"""
+    # 手动清空海克斯缓存（用于强制刷新）
     global _hextech_cache_pool, _cache_metadata
     _hextech_cache_pool.clear()
     _cache_metadata.clear()

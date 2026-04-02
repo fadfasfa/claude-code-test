@@ -1,7 +1,5 @@
-/* Inter 字体引入 */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
-/* ── CSS 变量：等级色系 + 降级方案 ────────────────────────── */
 :root {
     --c-bg-deep: #08080f;
     --c-bg-card: rgba(14, 14, 22, 0.8);
@@ -9,7 +7,6 @@
     --c-text-primary: #e2e8f0;
     --c-text-muted: #64748b;
 
-    /* 等级品牌色 */
     --c-ss-1: #ff4e50;
     --c-ss-2: #f9d423;
     --c-ss-glow: rgba(249, 212, 35, 0.35);
@@ -31,7 +28,6 @@
     --c-trap-glow: rgba(153, 27, 27, 0.2);
 }
 
-/* ── 全局基础 ────────────────────────────────────────────── */
 body {
     background-color: var(--c-bg-deep);
     background-image:
@@ -41,14 +37,12 @@ body {
     font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
-/* ── 搜索框 ──────────────────────────────────────────────── */
 .search-input:focus {
     outline: none;
     border-color: #6366f1;
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
 }
 
-/* ── 加载动画 ────────────────────────────────────────────── */
 .spinner {
     border: 4px solid rgba(99, 102, 241, 0.3);
     border-top-color: #6366f1;
@@ -59,13 +53,11 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── 自定义滚动条 ────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.3); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.5); }
 
-/* ── 阶层行容器：深度玻璃拟态 + 变量驱动流光边框 ─────────── */
 .tier-row {
     display: flex;
     min-height: 140px;
@@ -82,7 +74,6 @@ body {
     transform: translateY(-2px);
 }
 
-/* ── 阶层标签（左侧竖条）── F12 源码级参数 ───────────────── */
 .tier-label {
     width: 96px;
     flex-shrink: 0;
@@ -105,9 +96,7 @@ body {
     font-weight: 600;
 }
 
-/* ── 各等级专属色彩 + CSS 变量驱动发光边框过渡 ─────────────── */
 
-/* SS 级（夯）- 金红渐变 */
 .tier-ss .tier-label {
     background: linear-gradient(160deg, var(--c-ss-1), var(--c-ss-2));
     color: #111;
@@ -126,7 +115,6 @@ body {
     border-color: var(--border-color);
 }
 
-/* S 级（顶级）- 紫粉渐变 */
 .tier-s .tier-label {
     background: linear-gradient(160deg, var(--c-s-1), var(--c-s-2));
     color: white;
@@ -144,7 +132,6 @@ body {
     border-color: var(--border-color);
 }
 
-/* A 级（人上人）- 蓝青渐变 */
 .tier-a .tier-label {
     background: linear-gradient(160deg, var(--c-a-1), var(--c-a-2));
     color: white;
@@ -162,7 +149,6 @@ body {
     border-color: var(--border-color);
 }
 
-/* B 级（npc）- 暗灰 */
 .tier-b .tier-label {
     background: linear-gradient(160deg, var(--c-b-1), var(--c-b-2));
     color: #9ca3af;
@@ -181,7 +167,6 @@ body {
     border-color: var(--border-color);
 }
 
-/* 陷阱 级（拉）- 暗红 */
 .tier-trap .tier-label {
     background: linear-gradient(160deg, var(--c-trap-1), var(--c-trap-2));
     color: #f87171;
@@ -202,7 +187,6 @@ body {
     filter: grayscale(20%);
 }
 
-/* ── 英雄卡片网格容器 ── 64px 行高级大间距 ───────────────── */
 .tier-champions {
     flex: 1;
     padding: 20px 24px;
@@ -214,7 +198,6 @@ body {
     line-height: 64px;
 }
 
-/* ── 英雄头像卡片 ────────────────────────────────────────── */
 .champ-card {
     position: relative;
     width: 64px;
@@ -250,7 +233,6 @@ body {
     background: #12121f;
 }
 
-/* 底部胜率标签 */
 .champ-card .wr-label {
     position: absolute;
     bottom: -2px;
@@ -267,7 +249,6 @@ body {
     border: 1px solid rgba(251, 191, 36, 0.15);
 }
 
-/* 等级角标 (右上角) */
 .champ-card .tier-badge {
     position: absolute;
     top: -4px;
@@ -304,7 +285,6 @@ body {
     color: #fca5a5;
 }
 
-/* ── 高亮可用英雄 ────────────────────────────────────────── */
 .champ-highlight .champ-img-wrap {
     box-shadow: 0 0 18px 3px rgba(234, 179, 8, 0.6) !important;
     border-color: #facc15 !important;
@@ -314,7 +294,6 @@ body {
     z-index: 15;
 }
 
-/* ── 入场动画 ────────────────────────────────────────────── */
 @keyframes fadeSlideIn {
     from {
         opacity: 0;

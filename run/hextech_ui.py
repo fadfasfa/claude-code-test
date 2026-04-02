@@ -20,7 +20,7 @@ from PIL import Image, ImageTk
 from datetime import datetime
 from hero_sync import BASE_DIR, ASSET_DIR, CONFIG_DIR
 
-# Web 服务端口与 web_server.py 保持一致，可通过环境变量覆盖。
+# 网页服务端口与后端服务保持一致，可通过环境变量覆盖。
 SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
 _WEB_BASE = f"http://127.0.0.1:{SERVER_PORT}"
 
@@ -41,7 +41,7 @@ def _resolve_web_base(timeout: float = 5.0) -> str:
         time.sleep(0.1)
     return f"http://127.0.0.1:{SERVER_PORT}"
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequest警告)
 
 os.makedirs(ASSET_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ class HextechUI:
         self.start_background_scraper()
 
     def _start_web_server(self):
-        """在后台启动 web_server.py，不阻塞 UI 主线程。"""
+    # 在后台启动网页服务，不阻塞界面主线程。
         try:
             startupinfo = None
             child_env = os.environ.copy()
@@ -121,7 +121,7 @@ class HextechUI:
             global _WEB_BASE
             _WEB_BASE = _resolve_web_base(timeout=5.0)
         except Exception as e:
-            print(f"\n启动 web_server.py 失败: {e}")
+            print(f"\n启动网页服务失败: {e}")
 
     def _init_core_engine(self):
         t1 = threading.Thread(target=self.lcu_polling_loop, daemon=True)
@@ -208,7 +208,7 @@ class HextechUI:
         if not latest: return pd.DataFrame()
         df = pd.read_csv(latest)
         df.columns = df.columns.str.replace(' ', '')
-        # 动态查找 ID 列并处理
+        # 动态查找编号列并处理
         id_col = None
         for col in df.columns:
             if '英雄ID' in col or 'ID' in col:
@@ -219,12 +219,11 @@ class HextechUI:
         return df
 
     def on_hero_click(self, champ_id, hero_name):
-        """处理英雄卡片点击。
-
-        1. 先在终端输出英雄海克斯信息。
-        2. 优先请求 web_server 的 /api/redirect。
-        3. 如果 web_server 不可用，则本地降级打开详情页。
-        """
+    # 处理英雄卡片点击。
+    #
+    # 1. 先在终端输出英雄海克斯信息。
+    # 2. 优先请求网页服务的跳转接口。
+    # 3. 如果网页服务不可用，则本地降级打开详情页。
 
         try:
             set_last_hero(hero_name)
@@ -244,8 +243,8 @@ class HextechUI:
         threading.Thread(target=terminal_task, daemon=True).start()
 
         def redirect_task():
-            """后台发起跳转请求，失败时回退到本地浏览器。"""
-            # 先尝试让 web_server 接管跳转，接管失败再走本地兜底。
+    # 后台发起跳转请求，失败时回退到本地浏览器。
+    # 先尝试让网页服务接管跳转，失败后再走本地兜底。
             en_name = self.core_data.get(str(champ_id), {}).get("en_name", "")
             for _ in range(3):
                 web_base = _resolve_web_base(timeout=1.0)
@@ -262,7 +261,7 @@ class HextechUI:
                     logger.debug("请求 /api/redirect 失败，准备重试。", exc_info=True)
                 time.sleep(0.4)
             logger.debug("请求 /api/redirect 多次失败，回退到本地浏览器打开。")
-            # web_server 不可用时，直接打开详情页。
+            # 网页服务不可用时，直接打开详情页。
             url = (
                 f"{web_base}/detail.html"
                 f"?hero={quote(hero_name)}"
@@ -357,7 +356,7 @@ class HextechUI:
             current_df = self.df
 
         for hid in hero_ids:
-            # 动态查找 ID 列。
+            # 动态查找编号列。
             id_col = None
             for col in current_df.columns:
                 if '英雄ID' in col or 'ID' in col:
@@ -453,7 +452,7 @@ class HextechUI:
 
 
     def start_background_scraper(self):
-        """启动每 4 小时循环一次的后台抓取线程。"""
+    # 启动每 4 小时循环一次的后台抓取线程。
         def scraper_loop():
             while not self.stop_event.is_set():
                 try:
@@ -465,7 +464,7 @@ class HextechUI:
                     logger.exception("定时后台刷新失败。")
                     self._run_on_ui_thread(lambda: self._set_status("后台刷新失败", "#f38ba8"))
 
-                # 等待 4 小时（14400 秒）。
+                # 等待 4 小时，也就是 14400 秒。
                 for _ in range(14400):
                     if self.stop_event.is_set():
                         break

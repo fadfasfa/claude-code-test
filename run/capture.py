@@ -11,4 +11,4 @@ driver.get("http://127.0.0.1:8000/detail.html?hero=%E4%BA%9A%E7%B4%A2&en=Yasuo&i
 time.sleep(4)
 driver.save_screenshot(r"c:\Users\apple\claudecode\.ai_workflow\frontend_artifact\ui_screenshot.png")
 driver.quit()
-print('Screenshot saved successfully')
+print('截图已成功保存')

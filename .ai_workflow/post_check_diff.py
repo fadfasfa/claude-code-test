@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""
-Post-change AST validator for Python source files.
-[V6.0 - 记录模式：扫描结果写入 event_log，不阻断提交]
-
-变更说明（V5.0 -> V6.0）：
-  - 移除提交阻断逻辑（emit_fail 不再触发 exit 1）
-  - 扫描结果统一由调用方（post-commit hook）写入 event_log.jsonl
-  - SEC-001 命中时输出结构化 JSON 供 hook 识别并写入 yellow_cards
-  - 保留全部检测逻辑：AST diff + SEC-001 eval/exec/getattr 注入检测
-"""
+#
+# Post-change AST validator for Python source files.
+# [V6.0 - 记录模式：扫描结果写入 event_log，不阻断提交]
+#
+# 变更说明（V5.0 -> V6.0）：
+# - 移除提交阻断逻辑（emit_fail 不再触发 exit 1）
+# - 扫描结果统一由调用方（post-commit hook）写入 event_log.jsonl
+# - SEC-001 命中时输出结构化 JSON 供 hook 识别并写入 yellow_cards
+# - 保留全部检测逻辑：AST diff + SEC-001 eval/exec/getattr 注入检测
+#
 
 import ast
 import json
@@ -24,7 +24,7 @@ def emit_pass() -> None:
     sys.exit(0)
 
 def emit_result(violations: List[str]) -> None:
-    """V6.0: 输出结构化结果，exit 0 表示无违规，exit 1 表示有违规（供 hook 读取，不再是阻断信号）。"""
+    # V6.0: 输出结构化结果，exit 0 表示无违规，exit 1 表示有违规（供 hook 读取，不再是阻断信号）。
     has_sec001 = any("[SEC-001]" in v for v in violations)
     print(json.dumps({
         "status": "WARNING" if violations else "PASSED",
@@ -50,11 +50,11 @@ def get_source_git(target_file: str, ref: str) -> str:
     if result.returncode != 0:
         if "fatal: Path" in result.stderr or "exists on disk, but not in" in result.stderr:
             return ""
-        emit_fatal(f"git show {ref}:{git_path} failed (exit {result.returncode}): {result.stderr.strip()}")
+        emit_fatal(f"git show {ref}:{git_path} 失败（退出码 {result.returncode}）：{result.stderr.strip()}")
     return result.stdout
 
 def get_source_file(path: str) -> str:
-    if not os.path.isfile(path): emit_fatal(f"File not found: {path}")
+    if not os.path.isfile(path): emit_fatal(f"文件不存在：{path}")
     with open(path, "r", encoding="utf-8", errors="replace") as f: return f.read()
 
 def resolve_sources(args: argparse.Namespace) -> Tuple[str, str]:
@@ -144,14 +144,14 @@ def get_changed_python_files(base_branch: str, target_branch: str) -> List[str]:
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
-            emit_fatal(f"git diff failed: {result.stderr.strip()}")
+            emit_fatal(f"git diff 失败：{result.stderr.strip()}")
         files = []
         for line in result.stdout.strip().split('\n'):
             if line.strip() and line.strip().endswith('.py'):
                 files.append(line.strip().replace("\\", "/"))
         return files
     except Exception as e:
-        emit_fatal(f"Failed to get changed Python files: {str(e)}")
+        emit_fatal(f"获取变更的 Python 文件失败：{str(e)}")
 
 BROAD_EXCEPTIONS = {"Exception", "BaseException", "__bare__"}
 
@@ -317,13 +317,13 @@ def main() -> None:
 
     else:
         if args.before is not None or args.after is not None:
-            if args.before is None or args.after is None:
-                emit_fatal("Diff mode requires both --before and --after arguments.")
-            if args.target_file is not None:
-                emit_fatal("Cannot combine positional target_file with --before/--after.")
-        else:
-            if args.target_file is None:
-                emit_fatal("Provide either: (1) target_file [--ref REF], or (2) --before ORIG --after MODIFIED")
+        if args.before is None or args.after is None:
+            emit_fatal("差异模式需要同时提供 --before 和 --after 参数。")
+        if args.target_file is not None:
+            emit_fatal("不能同时使用位置参数 target_file 和 --before/--after。")
+    else:
+        if args.target_file is None:
+            emit_fatal("请提供以下两种方式之一：1. target_file [--ref REF]；2. --before 原始文件 --after 修改后文件")
 
         before_src, after_src = resolve_sources(args)
         before_tree = parse_source(before_src, "before")

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-核心模块：多线程数据并发更新器 (update_stooq_fast.py)
-功能：从 yfinance (首选) 或 Stooq 自动获取全资产历史数据，采用增量合并机制防止重复计算。
-"""
+#
+# 核心模块：多线程数据并发更新器 (update_stooq_fast.py)
+# 功能：从 yfinance (首选) 或 Stooq 自动获取全资产历史数据，采用增量合并机制防止重复计算。
+#
 import requests
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,10 +22,10 @@ HEADERS = {
 }
 
 def is_data_up_to_date(file_path):
-    """
-    检查本地数据是否已经是最新（以当前交易日为准）。
-    返回 True 表示已最新，False 表示需要更新。
-    """
+    #
+    # 检查本地数据是否已经是最新（以当前交易日为准）。
+    # 返回 True 表示已最新，False 表示需要更新。
+    #
     if not Path(file_path).exists():
         return False
     try:
@@ -55,7 +55,7 @@ def is_data_up_to_date(file_path):
         return False
 
 def fetch_yfinance_data(yf_code, asset_name):
-    """使用 yfinance 获取历史数据"""
+    # 使用 yfinance 获取历史数据
     try:
         ticker = yf.Ticker(yf_code)
         df = ticker.history(period="max")
@@ -79,11 +79,11 @@ def fetch_yfinance_data(yf_code, asset_name):
             
         return df
     except Exception as e:
-        print(f"[DEBUG] yfinance 获取 {asset_name} 失败: {e}")
+        print(f"[调试] yfinance 获取 {asset_name} 失败：{e}")
         return None
 
 def fetch_and_merge_data(asset_name, config):
-    """单线程下载并合并数据函数 - 混合下载策略"""
+    # 单线程下载并合并数据函数 - 混合下载策略
     yf_code = config.get('yf_code')
     stooq_code = config['stooq_code']
     file_name = config['file']

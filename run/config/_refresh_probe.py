@@ -1,4 +1,4 @@
-﻿import traceback
+import traceback
 from backend_refresh import refresh_backend_data
 
 try:

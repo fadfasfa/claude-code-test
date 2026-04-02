@@ -59,12 +59,10 @@ def _stop_requested(stop_event) -> bool:
 
 
 def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
-    """
-    Refresh shared runtime data used by both the desktop UI and the web layer.
-
-    Hero data is refreshed first. Synergy scraping is then started in a
-    background thread so it cannot block the hextech CSV refresh.
-    """
+    # 刷新桌面界面和网页层共享的运行数据。
+    #
+    # 先刷新英雄基础数据，再在后台线程中启动协同数据抓取，
+    # 这样不会阻塞海克斯数据的刷新流程。
     with _refresh_lock:
         lock_fd = _acquire_file_lock()
         if lock_fd is None:

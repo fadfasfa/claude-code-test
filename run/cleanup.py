@@ -1,7 +1,4 @@
-#!/usr/bin/env python3
-"""
-清理项目工作痕迹和临时文件
-"""
+# 清理项目工作痕迹和临时文件
 
 import os
 import shutil
@@ -18,18 +15,18 @@ def print_step(msg: str):
 
 
 def cleanup_pycache():
-    """清理 __pycache__ 目录和 .pyc 文件"""
+    # 清理缓存目录和编译文件。
     print_step("清理 Python 缓存文件")
     count = 0
 
-    # 删除所有 __pycache__ 目录
+    # 删除所有缓存目录
     for pycache in BASE_DIR.rglob("__pycache__"):
         if pycache.is_dir():
             shutil.rmtree(pycache)
             count += 1
             print(f"  [删除] {pycache.relative_to(BASE_DIR)}")
 
-    # 删除所有 .pyc 文件
+    # 删除所有编译文件
     for pyc in BASE_DIR.rglob("*.pyc"):
         if pyc.is_file():
             pyc.unlink()
@@ -37,13 +34,13 @@ def cleanup_pycache():
             print(f"  [删除] {pyc.relative_to(BASE_DIR)}")
 
     if count == 0:
-        print("  [OK] 无可清理的缓存文件")
+        print("  [成功] 无可清理的缓存文件")
     else:
-        print(f"  [OK] 已清理 {count} 个缓存文件/目录")
+        print(f"  [成功] 已清理 {count} 个缓存文件/目录")
 
 
 def cleanup_build_artifacts():
-    """清理打包生成的临时文件"""
+    # 清理打包生成的临时文件。
     print_step("清理打包临时文件")
 
     files_to_delete = [
@@ -61,34 +58,34 @@ def cleanup_build_artifacts():
             print(f"  [删除] {filename}")
 
     if count == 0:
-        print("  [OK] 无可清理的打包临时文件")
+        print("  [成功] 无可清理的打包临时文件")
     else:
-        print(f"  [OK] 已清理 {count} 个打包临时文件")
+        print(f"  [成功] 已清理 {count} 个打包临时文件")
 
 
 def cleanup_log_files():
-    """清理日志文件"""
+    # 清理日志文件
     print_step("清理日志文件")
 
-    # 删除 config 目录下的日志文件
+    # 删除配置目录下的日志文件
     config_dir = BASE_DIR / "config"
     if config_dir.exists():
         for log_file in config_dir.glob("*.log"):
             log_file.unlink()
             print(f"  [删除] {log_file.relative_to(BASE_DIR)}")
 
-    # 删除 dist 目录中的日志文件
+    # 删除输出目录中的日志文件
     dist_dir = BASE_DIR / "dist"
     if dist_dir.exists():
         for log_file in dist_dir.rglob("*.log"):
             log_file.unlink()
             print(f"  [删除] {log_file.relative_to(BASE_DIR)}")
 
-    print("  [OK] 已清理日志文件")
+    print("  [成功] 已清理日志文件")
 
 
 def cleanup_build_dir():
-    """清理 build 目录"""
+    # 清理构建目录。
     print_step("清理 build 目录")
 
     build_dir = BASE_DIR / "build"
@@ -96,11 +93,11 @@ def cleanup_build_dir():
         shutil.rmtree(build_dir)
         print(f"  [删除] {build_dir}")
     else:
-        print("  [OK] build 目录不存在")
+        print("  [成功] build 目录不存在")
 
 
 def check_remaining_files():
-    """检查剩余的关键文件"""
+    # 检查剩余的关键文件
     print_step("检查剩余关键文件")
 
     essential_files = [
@@ -127,7 +124,7 @@ def check_remaining_files():
         status = "[保留]" if exists else "[缺失]"
         print(f"  {status} {item}")
 
-    print("  [OK] 关键文件检查完成")
+    print("  [成功] 关键文件检查完成")
 
 
 def main():
@@ -149,7 +146,7 @@ def main():
         print("  - 如需重新打包，请运行: python build.py")
 
     except Exception as e:
-        print(f"\n  [错误] 清理失败: {e}")
+        print(f"\n  [错误] 清理失败：{e}")
         import traceback
         traceback.print_exc()
 

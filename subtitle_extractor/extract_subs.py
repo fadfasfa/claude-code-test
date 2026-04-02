@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""
-视频字幕批量提取工具
-基于 faster-whisper 实现无字幕视频自动分离音频并转录为 Markdown 格式
-"""
+#
+# 视频字幕批量提取工具
+# 自动分离音频并转录为文稿，再整理成 Markdown 格式
+#
 
 import os
 import sys
@@ -13,36 +13,19 @@ from faster_whisper import WhisperModel
 
 
 def extract_audio_from_video(video_path, audio_path):
-    """
-    从视频文件中提取音频
-
-    Args:
-        video_path (str): 视频文件路径
-        audio_path (str): 输出音频文件路径
-    """
+    # 从视频文件中提取音频
     try:
         video = VideoFileClip(video_path)
         video.audio.write_audiofile(audio_path, verbose=False, logger=None)
         video.close()
         return True
     except Exception as e:
-        print(f"Error extracting audio from {video_path}: {e}")
+        print(f"从 {video_path} 提取音频失败：{e}")
         return False
 
 
 def transcribe_audio(audio_path, model_size="base", device="cpu"):
-    """
-    使用 faster-whisper 转录音频
-
-    Args:
-        audio_path (str): 音频文件路径
-        model_size (str): 模型大小 (tiny, base, small, medium, large)
-        device (str): 运行设备 (cpu, cuda)
-
-    Returns:
-        list: 包含时间戳和文本的段落列表
-    """
-    # 根据设备类型选择合适的计算类型
+    # 使用转录模型处理音频
     if device == "cuda":
         compute_type = "float16"
     else:  # device == "cpu"
@@ -53,20 +36,12 @@ def transcribe_audio(audio_path, model_size="base", device="cpu"):
         segments, _ = model.transcribe(audio_path, word_timestamps=True)
         return list(segments)
     except Exception as e:
-        print(f"Error transcribing audio {audio_path}: {e}")
+        print(f"音频转写失败：{audio_path}，原因：{e}")
         return []
 
 
 def segments_to_markdown(segments):
-    """
-    将转录段落转换为 Markdown 格式
-
-    Args:
-        segments (list): 转录段落列表
-
-    Returns:
-        str: Markdown 格式的文本
-    """
+    # 将转录段落转换为 Markdown 格式
     markdown_content = "# 视频字幕\n\n"
 
     for segment in segments:
@@ -80,15 +55,7 @@ def segments_to_markdown(segments):
 
 
 def format_timestamp(seconds):
-    """
-    将秒数格式化为 HH:MM:SS.mmm 格式
-
-    Args:
-        seconds (float): 秒数
-
-    Returns:
-        str: 格式化的时间戳
-    """
+    # 将秒数格式化为 HH:MM:SS.mmm 格式
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
@@ -98,16 +65,8 @@ def format_timestamp(seconds):
 
 
 def process_video_file(video_path, output_dir, model_size="base", device="cpu"):
-    """
-    处理单个视频文件
-
-    Args:
-        video_path (Path): 视频文件路径
-        output_dir (Path): 输出目录
-        model_size (str): 模型大小
-        device (str): 运行设备
-    """
-    print(f"Processing: {video_path}")
+    # 处理单个视频文件
+    print(f"正在处理：{video_path}")
 
     # 创建临时音频文件
     audio_path = output_dir / f"{video_path.stem}_temp.wav"
@@ -115,14 +74,14 @@ def process_video_file(video_path, output_dir, model_size="base", device="cpu"):
 
     # 提取音频
     if not extract_audio_from_video(str(video_path), str(audio_path)):
-        print(f"Failed to extract audio from {video_path}")
+        print(f"从 {video_path} 提取音频失败")
         return
 
     # 转录音频
     segments = transcribe_audio(str(audio_path), model_size, device)
 
     if not segments:
-        print(f"Failed to transcribe audio from {video_path}")
+        print(f"音频转写失败：{video_path}")
         # 清理临时音频文件
         if audio_path.exists():
             audio_path.unlink()
@@ -139,20 +98,11 @@ def process_video_file(video_path, output_dir, model_size="base", device="cpu"):
     if audio_path.exists():
         audio_path.unlink()
 
-    print(f"Successfully processed: {video_path} -> {md_path}")
+    print(f"处理成功：{video_path} -> {md_path}")
 
 
 def process_directory(input_dir, output_dir, model_size="base", device="cpu", extensions=None):
-    """
-    处理目录中的所有视频文件
-
-    Args:
-        input_dir (Path): 输入目录
-        output_dir (Path): 输出目录
-        model_size (str): 模型大小
-        device (str): 运行设备
-        extensions (list): 支持的视频文件扩展名
-    """
+    # 处理目录中的所有视频文件
     if extensions is None:
         extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
 
@@ -166,10 +116,10 @@ def process_directory(input_dir, output_dir, model_size="base", device="cpu", ex
         video_files.extend(input_dir.rglob(f"*{ext.upper()}"))
 
     if not video_files:
-        print(f"No video files found in {input_dir}")
+        print(f"未在 {input_dir} 中找到视频文件")
         return
 
-    print(f"Found {len(video_files)} video files to process")
+    print(f"找到 {len(video_files)} 个视频文件待处理")
 
     # 处理每个视频文件
     for video_file in video_files:
@@ -192,7 +142,7 @@ def main():
     output_path = Path(args.output)
 
     if not input_path.exists():
-        print(f"Error: Input path {input_path} does not exist")
+        print(f"错误：输入路径 {input_path} 不存在")
         sys.exit(1)
 
     if input_path.is_file():
