@@ -1,10 +1,1 @@
-{
-  "schema_version": "6.1",
-  "workflow_id": "agents.md",
-  "endpoint": "cx",
-  "execution_status": "done",
-  "audit_status": "idle",
-  "merge_status": "blocked",
-  "retry_count": 0,
-  "is_new_project": false
-}
+{"execution_status":"done","audit_status":"done","workflow_id":"self-review-run","endpoint":"cx","is_new_project":true,"schema_version":"6.1","merge_status":"n/a","retry_count":0}

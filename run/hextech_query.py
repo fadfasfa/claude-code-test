@@ -3,8 +3,8 @@ import glob
 import json
 import sys
 import pandas as pd
-import unicodedata
 from hero_sync import BASE_DIR, CONFIG_DIR, CORE_DATA_FILE
+from alias_utils import normalize_alias_token, unique_alias_tokens
 
 if os.name == 'nt': os.system('')  # 启用 Windows 终端颜色输出。
 RESET = "\033[0m"
@@ -29,29 +29,6 @@ def init_core_data():
 
 GLOBAL_LAST_HERO = None
 _alias_cache = None
-
-
-def _normalize_alias_token(value):
-    token = unicodedata.normalize("NFKC", str(value or "")).lower().strip()
-    return "".join(ch for ch in token if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
-
-
-def _unique_alias_tokens(*groups):
-    seen = set()
-    result = []
-    for group in groups:
-        if not group:
-            continue
-        if isinstance(group, (str, bytes)):
-            values = [group]
-        else:
-            values = list(group)
-        for value in values:
-            token = _normalize_alias_token(value)
-            if token and token not in seen:
-                seen.add(token)
-                result.append(token)
-    return result
 
 def set_last_hero(name):
     global GLOBAL_LAST_HERO
@@ -193,7 +170,7 @@ def build_default_aliases():
                 continue
             title = v.get("title")
             en = v.get("en_name", "")
-            aliases[name] = _unique_alias_tokens(
+            aliases[name] = unique_alias_tokens(
                 [name, title, en],
                 v.get("aliases", []),
             )
@@ -342,11 +319,11 @@ def build_default_aliases():
 
     for official_title, nicks in supplemental.items():
         aliases.setdefault(official_title, [])
-        aliases[official_title] = _unique_alias_tokens(aliases[official_title], nicks)
+        aliases[official_title] = unique_alias_tokens(aliases[official_title], nicks)
 
     for official_title, nicks in hardcoded.items():
         aliases.setdefault(official_title, [])
-        aliases[official_title] = _unique_alias_tokens(aliases[official_title], nicks)
+        aliases[official_title] = unique_alias_tokens(aliases[official_title], nicks)
     return aliases
 
 
@@ -360,19 +337,19 @@ def load_hero_aliases():
 
 def get_official_hero_name(user_input, official_names):
     init_core_data()
-    u_in = _normalize_alias_token(user_input)
+    u_in = normalize_alias_token(user_input)
     hero_aliases = load_hero_aliases()
     potential = set()
     for title, aliases in hero_aliases.items():
-        normalized_aliases = [_normalize_alias_token(alias) for alias in aliases]
+        normalized_aliases = [normalize_alias_token(alias) for alias in aliases]
         if any(u_in == alias or u_in in alias or alias in u_in for alias in normalized_aliases if alias):
             for official_name in official_names:
                 if title == official_name:
                     potential.add(official_name)
     for name in official_names:
         title = CHAMP_NAME_MAP.get(name, "")
-        normalized_name = _normalize_alias_token(name)
-        normalized_title = _normalize_alias_token(title)
+        normalized_name = normalize_alias_token(name)
+        normalized_title = normalize_alias_token(title)
         if (
             u_in in normalized_name
             or u_in in normalized_title

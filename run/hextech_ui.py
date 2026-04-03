@@ -78,6 +78,8 @@ class HextechUI:
         self.img_write_lock = threading.Lock()
         self.downloading_imgs = set()
         self._df_lock = threading.Lock()  # 保护 self.df 的并发读写。
+        self._window_topmost = False
+        self._window_visible = False
 
 
         self.web_process = None
@@ -87,9 +89,10 @@ class HextechUI:
         self.root.title("Hextech 伴生系统")
         self.root.geometry("320x600")
         self.root.configure(bg="#1e1e2e")
-        self.root.attributes('-alpha', 0.85, '-topmost', True)
+        self.root.attributes('-alpha', 0.85, '-topmost', False)
         self.root.overrideredirect(True)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.withdraw()
 
         self._build_ui()
         self._init_core_engine()
@@ -180,6 +183,34 @@ class HextechUI:
             return True
         except tk.TclError:
             return False
+
+    def _set_window_topmost(self, enabled: bool) -> None:
+        if self._window_topmost == enabled:
+            return
+        try:
+            self.root.attributes('-topmost', enabled)
+            if enabled:
+                self.root.lift()
+            self._window_topmost = enabled
+        except tk.TclError:
+            logger.debug("切换窗口置顶状态失败。", exc_info=True)
+
+    def _show_overlay(self, topmost: bool = True) -> None:
+        try:
+            self.root.deiconify()
+            self._set_window_topmost(topmost)
+            self.root.update_idletasks()
+            self._window_visible = True
+        except tk.TclError:
+            logger.debug("显示悬浮窗失败。", exc_info=True)
+
+    def _hide_overlay(self) -> None:
+        try:
+            self._set_window_topmost(False)
+            self.root.withdraw()
+            self._window_visible = False
+        except tk.TclError:
+            logger.debug("隐藏悬浮窗失败。", exc_info=True)
 
     def _reload_data_into_ui(self, status_text, status_color):
         new_df = self.load_data()
@@ -420,23 +451,22 @@ class HextechUI:
                 hwnd_game = win32gui.FindWindow(None, "League of Legends (TM) Client")
 
                 if hwnd_game:
-                    self.root.withdraw()
+                    self._hide_overlay()
                 elif hwnd_client:
                     fg_window = win32gui.GetForegroundWindow()
                     is_client_fg = (fg_window == hwnd_client)
                     is_self_fg = ("Hextech" in win32gui.GetWindowText(fg_window))
 
                     if is_client_fg or is_self_fg:
-                        self.root.deiconify()
-                        self.root.attributes('-topmost', True)
+                        self._show_overlay(topmost=True)
                         if not getattr(self, '_init_pos', False) and is_client_fg:
                             rect = win32gui.GetWindowRect(hwnd_client)
                             self.root.geometry(f"320x600+{rect[2]}+{rect[1]}")
                             self._init_pos = True
                     else:
-                        self.root.withdraw()
+                        self._hide_overlay()
                 else:
-                    self.root.withdraw()
+                    self._hide_overlay()
             except Exception:
                 logger.exception("窗口同步循环异常。")
             time.sleep(0.5)
@@ -447,8 +477,7 @@ class HextechUI:
 
     def _restore_from_terminal(self):
         self.pause_event.clear()
-        self.root.deiconify()
-        self.root.attributes('-topmost', True)
+        self._show_overlay(topmost=True)
 
 
     def start_background_scraper(self):
