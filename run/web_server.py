@@ -3,14 +3,11 @@ import base64
 import json
 import logging
 import os
-import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
-import unicodedata
-from html import unescape
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote, unquote
@@ -29,6 +26,13 @@ from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from alias_utils import dedupe_alias_texts
+from icon_resolver import (
+    ensure_augment_icon_cached,
+    find_augment_icon_filename,
+    load_apexlol_hextech_map,
+    load_augment_icon_map,
+)
 from data_processor import process_champions_data, process_hextechs_data
 from hextech_query import get_latest_csv, load_hero_aliases
 from hero_sync import BASE_DIR, CONFIG_DIR, RESOURCE_DIR, load_champion_core_data
@@ -43,12 +47,10 @@ WEB_PORT_FILE = os.path.join(CONFIG_DIR, "web_server_port.txt")
 ACTIVE_WEB_PORT = SERVER_PORT
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
 AUGMENT_ICON_SOURCE_FILE = os.path.join(CONFIG_DIR, "augment_icon_source.txt")
+AUGMENT_ICON_AUDIT_FILE = os.path.join(CONFIG_DIR, "augment_icon_audit.jsonl")
 BROWSER_PROFILE_DIR = os.path.join(CONFIG_DIR, "browser_profile")
 # 图标来源标记。
 AUGMENT_ICON_SOURCE_ID = "apexlol"
-APEXLOL_HEXTECH_INDEX_URL = "https://apexlol.info/zh/hextech/"
-APEXLOL_HEXTECH_IMAGE_URL = "https://apexlol.info/images/hextech/{slug}.webp"
-APEXLOL_HEXTECH_MAP_FILE = os.path.join(CONFIG_DIR, "Augment_Apexlol_Map.json")
 
 _managed_browser_process: Optional[subprocess.Popen] = None
 _managed_browser_lock = threading.Lock()
@@ -209,163 +211,8 @@ def _get_ddragon_version() -> str:
     return "14.3.1"
 
 
-_augment_icon_map_cache: Tuple[float, dict] = (0.0, {})
 _augment_prefetch_lock = threading.Lock()
 _augment_prefetch_mtime = 0.0
-
-
-def _normalize_augment_name(name: str) -> str:
-    name = str(name).lower()
-    for token in (" ", "-", "_", "(", ")", "[", "]", "'", '"', "."):
-        name = name.replace(token, "")
-    return name
-
-
-def _normalize_alias_token(value: str) -> str:
-    token = unicodedata.normalize("NFKC", str(value or "")).lower().strip()
-    return "".join(ch for ch in token if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
-
-
-def _dedupe_alias_tokens(*groups) -> List[str]:
-    seen = set()
-    result: List[str] = []
-    for group in groups:
-        if not group:
-            continue
-        if isinstance(group, (str, bytes)):
-            values = [group]
-        else:
-            values = list(group)
-        for alias in values:
-            alias_text = str(alias).strip()
-            if not alias_text:
-                continue
-            token = _normalize_alias_token(alias_text)
-            if not token or token in seen:
-                continue
-            seen.add(token)
-            result.append(alias_text)
-    return result
-
-
-def _normalize_augment_filename(value: str) -> str:
-    return os.path.basename(str(value).strip()).lower()
-
-
-def _load_augment_icon_map() -> dict:
-    global _augment_icon_map_cache
-
-    icon_map_path = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
-    try:
-        current_mtime = os.path.getmtime(icon_map_path)
-    except OSError:
-        return _augment_icon_map_cache[1]
-
-    cached_mtime, cached_data = _augment_icon_map_cache
-    if cached_mtime == current_mtime and cached_data:
-        return cached_data
-
-    try:
-        with open(icon_map_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            _augment_icon_map_cache = (current_mtime, data)
-            return data
-    except Exception as e:
-        logger.warning("增强器图标映射加载失败：%s", e)
-
-    return cached_data
-
-
-_apexlol_hextech_map_cache: Tuple[float, dict] = (0.0, {})
-_apexlol_hextech_map_lock = threading.Lock()
-
-
-def _strip_html_tags(text: str) -> str:
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = unescape(text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _normalize_apexlol_hextech_slug(value: str) -> str:
-    value = str(value).strip()
-    return value.lstrip("/").split("?")[0].split("#")[0]
-
-
-def _load_apexlol_hextech_map(force_refresh: bool = False) -> dict:
-    global _apexlol_hextech_map_cache
-
-    with _apexlol_hextech_map_lock:
-        cached_mtime, cached_data = _apexlol_hextech_map_cache
-        if not force_refresh and cached_data:
-            return cached_data
-
-    if not force_refresh and os.path.exists(APEXLOL_HEXTECH_MAP_FILE):
-        try:
-            current_mtime = os.path.getmtime(APEXLOL_HEXTECH_MAP_FILE)
-            cached_mtime, cached_data = _apexlol_hextech_map_cache
-            if cached_mtime == current_mtime and cached_data:
-                return cached_data
-            with open(APEXLOL_HEXTECH_MAP_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict) and data:
-                _apexlol_hextech_map_cache = (current_mtime, data)
-                return data
-        except Exception as e:
-            logger.debug("读取 apexlol 海克斯图标映射失败：%s", e)
-
-    try:
-        response = requests.get(
-            APEXLOL_HEXTECH_INDEX_URL,
-            timeout=20,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
-        response.raise_for_status()
-        html = response.text
-    except Exception as e:
-        logger.warning("获取 apexlol 海克斯图标映射失败：%s", e)
-        return cached_data
-
-    name_to_slug: dict = {}
-    for match in re.finditer(r'href="/zh/hextech/([^"]+)"[^>]*>(.*?)</a>', html, re.S | re.I):
-        slug = _normalize_apexlol_hextech_slug(match.group(1))
-        inner_html = match.group(2)
-        title = _strip_html_tags(inner_html)
-        if not slug or not title:
-            continue
-        # 优先保留首次出现的准确名称。
-        name_to_slug.setdefault(title, slug)
-        normalized_title = _normalize_augment_name(title)
-        name_to_slug.setdefault(normalized_title, slug)
-
-    if name_to_slug:
-        try:
-            tmp_path = APEXLOL_HEXTECH_MAP_FILE + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(name_to_slug, f, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, APEXLOL_HEXTECH_MAP_FILE)
-            _apexlol_hextech_map_cache = (time.time(), name_to_slug)
-        except Exception as e:
-            logger.debug("写入 apexlol 海克斯图标映射失败：%s", e)
-        return name_to_slug
-
-    return cached_data
-
-
-def _resolve_apexlol_hextech_icon_url(hextech_name: str) -> str:
-    slug_map = _load_apexlol_hextech_map()
-    candidates = [
-        str(hextech_name).strip(),
-        _normalize_augment_name(hextech_name),
-    ]
-    slug = ""
-    for candidate in candidates:
-        if candidate in slug_map:
-            slug = slug_map[candidate]
-            break
-    if slug:
-        return APEXLOL_HEXTECH_IMAGE_URL.format(slug=slug)
-    return ""
 
 
 def _read_augment_icon_source_marker() -> str:
@@ -383,6 +230,7 @@ def _write_augment_icon_source_marker(source_id: str) -> None:
     os.replace(tmp_path, AUGMENT_ICON_SOURCE_FILE)
 
 
+<<<<<<< HEAD
 def _find_augment_icon_filename(icon_map: dict, lookup_name: str) -> Optional[str]:
     if not icon_map or not lookup_name:
         return None
@@ -445,6 +293,9 @@ def _ensure_augment_icon_cached(icon_filename: str, force_refresh: bool = False)
 
 
 def _prefetch_augment_icons(force_map_refresh: bool = False) -> None:
+=======
+def _prefetch_augment_icons(force: bool = False) -> None:
+>>>>>>> cx-refactor-shared-modules
     global _augment_prefetch_mtime
 
     with _augment_prefetch_lock:
@@ -453,8 +304,13 @@ def _prefetch_augment_icons(force_map_refresh: bool = False) -> None:
         _augment_prefetch_mtime = time.time()
 
     try:
+<<<<<<< HEAD
         icon_map = _load_apexlol_hextech_map(force_refresh=force_map_refresh)
         logger.info("已预热 apexlol 海克斯图标映射，共 %s 项", len(icon_map))
+=======
+        icon_map = load_apexlol_hextech_map(CONFIG_DIR, force_refresh=force)
+        logger.debug("已预热 apexlol 海克斯图标映射，共 %s 项", len(icon_map))
+>>>>>>> cx-refactor-shared-modules
     except Exception as e:
         logger.debug("预热 apexlol 海克斯图标映射失败：%s", e)
 
@@ -463,6 +319,113 @@ def _prefetch_augment_icons(force_map_refresh: bool = False) -> None:
             _write_augment_icon_source_marker(AUGMENT_ICON_SOURCE_ID)
         except Exception as e:
             logger.debug("记录强化符文图标来源标记失败：%s", e)
+
+
+def _append_augment_icon_audit(record: dict) -> None:
+    # 审计记录只追加到 JSONL，方便后续排查每次启动的缺图和修复结果。
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    payload = dict(record)
+    payload.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()))
+    line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    with open(AUGMENT_ICON_AUDIT_FILE, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def _audit_and_repair_augment_icons(force_map_refresh: bool = False) -> dict:
+    # 启动时扫描海克斯图标映射，缺失则自动补抓并汇总写入审计文件。
+    start_time = time.time()
+    icon_map = {}
+    repaired_items = []
+    failed_items = []
+
+    try:
+        icon_map = load_augment_icon_map(CONFIG_DIR, force_refresh=force_map_refresh)
+    except Exception as e:
+        record = {
+            "kind": "augment_icon_audit",
+            "status": "error",
+            "force_map_refresh": force_map_refresh,
+            "error": str(e),
+            "duration_ms": round((time.time() - start_time) * 1000, 2),
+        }
+        _append_augment_icon_audit(record)
+        logger.error("海克斯图标自检失败：%s", e)
+        return record
+
+    missing_before = []
+    checked = 0
+    for raw_name, raw_filename in sorted(icon_map.items(), key=lambda item: item[0]):
+        checked += 1
+        filename = find_augment_icon_filename(icon_map, raw_name)
+        if not filename:
+            filename = find_augment_icon_filename(icon_map, raw_filename) or raw_filename
+        filename = str(filename or "").strip()
+        if not filename:
+            failed_items.append({
+                "name": raw_name,
+                "reason": "无法解析图标文件名",
+            })
+            continue
+
+        asset_path = os.path.join(_assets_dir, filename)
+        if os.path.exists(asset_path) and os.path.getsize(asset_path) > 0:
+            continue
+
+        missing_before.append({
+            "name": raw_name,
+            "filename": filename,
+        })
+        try:
+            cached_path = ensure_augment_icon_cached(filename, asset_dir=_assets_dir)
+            if cached_path and os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+                repaired_items.append({
+                    "name": raw_name,
+                    "filename": filename,
+                    "path": os.path.basename(cached_path),
+                })
+            else:
+                failed_items.append({
+                    "name": raw_name,
+                    "filename": filename,
+                    "reason": "远程抓取未返回可用文件",
+                })
+        except Exception as e:
+            failed_items.append({
+                "name": raw_name,
+                "filename": filename,
+                "reason": str(e),
+            })
+
+    record = {
+        "kind": "augment_icon_audit",
+        "status": "ok" if not failed_items else "partial_failure",
+        "force_map_refresh": force_map_refresh,
+        "map_entries": len(icon_map),
+        "checked": checked,
+        "missing_before_count": len(missing_before),
+        "missing_before_sample": missing_before[:20],
+        "repaired_count": len(repaired_items),
+        "repaired_sample": repaired_items[:20],
+        "failed_count": len(failed_items),
+        "failed_items": failed_items,
+        "duration_ms": round((time.time() - start_time) * 1000, 2),
+    }
+    _append_augment_icon_audit(record)
+
+    if failed_items:
+        logger.error(
+            "海克斯图标自检存在失败：缺失=%s，修复=%s，失败=%s",
+            len(missing_before),
+            len(repaired_items),
+            len(failed_items),
+        )
+    return record
+
+
+def _startup_augment_icon_maintenance(force_map_refresh: bool = False) -> None:
+    # 先预热图标映射，再执行缺图自检，保证页面开启前尽量完成修复。
+    _prefetch_augment_icons(force=force_map_refresh)
+    _audit_and_repair_augment_icons(force_map_refresh=False)
 
 
 
@@ -849,10 +812,15 @@ async def lifespan(app: FastAPI):
     scraper_thread.start()
     needs_augment_refresh = _read_augment_icon_source_marker() != AUGMENT_ICON_SOURCE_ID
     augment_thread = threading.Thread(
+<<<<<<< HEAD
         target=_prefetch_augment_icons,
         kwargs={"force_map_refresh": needs_augment_refresh},
+=======
+        target=_startup_augment_icon_maintenance,
+        kwargs={"force": needs_augment_refresh},
+>>>>>>> cx-refactor-shared-modules
         daemon=True,
-        name="augment-icon-prefetch",
+        name="augment-icon-maintenance",
     )
     augment_thread.start()
     task1 = asyncio.create_task(lcu_polling_loop())
@@ -915,12 +883,6 @@ async def favicon():
 @app.get("/assets/{filename}")
 async def get_asset(filename: str):
     # 按文件名返回资源；本地不存在时尝试增强器映射或官方资源回退。
-
-    # 规范化路径，防止目录穿越。
-
-
-
-
     local_path = os.path.join(_assets_dir, filename)
     # 增强器图标优先走映射表并缓存到本地。
     real_requested = os.path.normcase(os.path.realpath(local_path))
@@ -930,18 +892,12 @@ async def get_asset(filename: str):
         return JSONResponse(content={"error": "禁止访问"}, status_code=403)
     if os.path.exists(local_path):
         return FileResponse(local_path)
-            # 若映射表没有命中，直接把请求名当作图标文件名。
     if filename.endswith('.png') and not filename[:-4].isdigit():
         try:
-            icon_map = _load_augment_icon_map()
+            icon_map = load_augment_icon_map(CONFIG_DIR)
             requested_stem = unquote(filename[:-4])
-            mapped_filename = _find_augment_icon_filename(icon_map, requested_stem)
-
-            # 未命中时，按原始文件名继续尝试缓存。
-            if not mapped_filename:
-                mapped_filename = _normalize_augment_filename(filename)
-
-            cached_path = _ensure_augment_icon_cached(mapped_filename)
+            mapped_filename = find_augment_icon_filename(icon_map, requested_stem) or filename
+            cached_path = ensure_augment_icon_cached(mapped_filename, asset_dir=_assets_dir)
             if cached_path and os.path.exists(cached_path):
                 return FileResponse(cached_path)
         except Exception as e:
@@ -979,7 +935,7 @@ async def api_champion_aliases():
             hero_name = value.get("name", "")
             title = value.get("title", "")
             en_name = value.get("en_name", "")
-            aliases = _dedupe_alias_tokens(
+            aliases = dedupe_alias_texts(
                 [hero_name, en_name, title],
                 value.get("aliases", []),
                 alias_map.get(hero_name, []),
@@ -1002,28 +958,15 @@ async def api_champion_aliases():
 @app.get("/api/champion/{name}/hextechs")
 async def api_champion_hextechs(name: str):
     df = get_df()
-    payload = process_hextechs_data(df, name)
-
-    def _rewrite_icons(items):
-        for item in items or []:
-            if not isinstance(item, dict):
-                continue
-            icon_url = _resolve_apexlol_hextech_icon_url(item.get("海克斯名称", ""))
-            if icon_url:
-                item["icon"] = icon_url
-
-    for key in ("top_10_overall", "comprehensive", "winrate_only", "Prismatic", "Gold", "Silver"):
-        _rewrite_icons(payload.get(key))
-
-    return JSONResponse(content=payload)
+    return JSONResponse(content=process_hextechs_data(df, name))
 
 @app.get("/api/augment_icon_map")
 async def api_augment_icon_map():
     # 返回海克斯图标映射，供前端或调试页查找。
     try:
-        raw_map = _load_apexlol_hextech_map()
+        raw_map = load_apexlol_hextech_map(CONFIG_DIR)
         data = {
-            name: APEXLOL_HEXTECH_IMAGE_URL.format(slug=slug)
+            name: f"https://apexlol.info/images/hextech/{slug}.webp"
             for name, slug in raw_map.items()
         }
         return JSONResponse(content=data)
