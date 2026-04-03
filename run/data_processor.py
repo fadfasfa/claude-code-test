@@ -1,14 +1,12 @@
 import pandas as pd
 import numpy as np
 import logging
-import os
-import json
 import hashlib
 import time
 from typing import List, Dict, Any, Optional, Tuple
-from urllib.parse import quote
 
 from hero_sync import load_champion_core_data
+from icon_resolver import build_local_augment_icon_url
 
 # 全局缓存。
 _hextech_cache_pool: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
@@ -172,109 +170,6 @@ def _clear_champion_cache():
     _cache_metadata.clear()
 
 
-def _generate_hextech_icon_url(hextech_name: str, tier: str) -> str:
-    # 生成海克斯图片 URL，按本地映射和 CDN 依次回退。
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    config_dir = os.path.join(base_dir, "config")
-    icon_map_file = os.path.join(config_dir, "Augment_Icon_Map.json")
-
-    icon_path = None
-
-    if os.path.exists(icon_map_file):
-        try:
-            with open(icon_map_file, "r", encoding="utf-8") as f:
-                icon_map = json.load(f)
-            icon_path = icon_map.get(hextech_name)
-
-            if icon_path is None:
-                normalized_name = _normalize_hextech_name(hextech_name)
-                for key, path in icon_map.items():
-                    if _normalize_hextech_name(key) == normalized_name:
-                        icon_path = path
-                        break
-        except (Exception):
-            pass
-
-    if icon_path:
-        if icon_path.startswith("/lol-game-data/assets/"):
-            relative_path = icon_path[len("/lol-game-data/assets/"):]
-            return f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/{relative_path.lower()}"
-
-        # ========== 路径适配 2：社区资源增强器数据路径 ==========
-        if icon_path.startswith("/data/v1/augments/") or "/augments/" in icon_path:
-            # 提取文件名
-            file_name = icon_path.split('/')[-1] if '/' in icon_path else icon_path
-            return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{file_name.lower()}"
-
-        # ========== 路径适配 3：完整地址（已是超文本或加密超文本） ==========
-        if icon_path.startswith("http://") or icon_path.startswith("https://"):
-            return icon_path
-
-        # ========== 路径适配 4：相对路径补全 ==========
-        if icon_path and not icon_path.startswith("/"):
-            return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{icon_path.lower()}"
-
-    # 回退逻辑：生成标准化地址
-    # 阶级映射
-    tier_map = {
-        '棱彩': 'prismatic',
-        '彩色': 'prismatic',
-        '白银': 'silver',
-        '银色': 'silver',
-        '黄金': 'gold',
-        '金色': 'gold',
-    }
-    tier_en = tier_map.get(str(tier), 'prismatic')
-
-    # 名称标准化：仅保留英文字母和数字
-    clean_name = ''.join(c.lower() for c in str(hextech_name) if c.isalnum())
-
-    # 生成标准格式地址
-    return f"https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/cherry_{tier_en}_{clean_name}.png"
-
-
-def _normalize_hextech_name(name: str) -> str:
-    # 归一化海克斯名称，用于模糊匹配
-    # 移除空格、标点，转为小写
-    import re
-    name = str(name).lower()
-    name = re.sub(r'[\s\-\_\(\)\[\]\'\"\.]', '', name)
-    return name
-
-
-def _build_local_hextech_icon_url(hextech_name: str) -> str:
-    # 统一返回本地 /assets 路径，避免浏览器直接请求 CommunityDragon。
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    config_dir = os.path.join(base_dir, "config")
-    icon_map_file = os.path.join(config_dir, "Augment_Icon_Map.json")
-
-    request_name = str(hextech_name).strip()
-    asset_name = request_name
-
-    if os.path.exists(icon_map_file):
-        try:
-            with open(icon_map_file, "r", encoding="utf-8") as f:
-                icon_map = json.load(f)
-
-            mapped_value = icon_map.get(request_name)
-            if mapped_value is None:
-                normalized_name = _normalize_hextech_name(request_name)
-                for key, value in icon_map.items():
-                    if _normalize_hextech_name(key) == normalized_name:
-                        mapped_value = value
-                        break
-
-            if mapped_value:
-                asset_name = str(mapped_value).split("/")[-1].strip()
-        except Exception:
-            pass
-
-    if not asset_name.lower().endswith(".png"):
-        asset_name = f"{asset_name}.png"
-
-    return f"/assets/{quote(asset_name, safe='')}"
-
-
 def _has_column_variant(df: pd.DataFrame, variants: List[str]) -> bool:
     # 检查 DataFrame 中是否存在给定的列名变体
     return any(var in df.columns for var in variants)
@@ -399,7 +294,7 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
                 '海克斯胜率': float(row['海克斯胜率']) if pd.notna(row['海克斯胜率']) else 0.0,
                 '海克斯出场率': float(row['海克斯出场率']) if pd.notna(row['海克斯出场率']) else 0.0,
                 '胜率差': float(row['胜率差']) if pd.notna(row['胜率差']) else 0.0,
-                'icon': _build_local_hextech_icon_url(row['海克斯名称'])
+                'icon': build_local_augment_icon_url(row['海克斯名称'])
             }
             if include_score:
                 card['综合得分'] = float(row['综合得分']) if pd.notna(row['综合得分']) else 0.0

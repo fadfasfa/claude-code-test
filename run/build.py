@@ -78,11 +78,11 @@ VSVersionInfo(
     VarFileInfo([VarStruct('Translation', [0x0409, 1200])])
   ]
 )
-# version_file.write_text(version_content, encoding='utf-8')
-# print_check(f"版本信息已生成: {version_file}")
-# return version_file
-#
-#
+"""
+    version_file.write_text(version_content, encoding='utf-8')
+    print_check(f"版本信息已生成: {version_file}")
+    return version_file
+
     # 使用打包工具构建可执行文件
     print_step("构建可执行文件")
 
@@ -230,11 +230,10 @@ Hextech 伴生系统
 1. 是否以管理员权限运行
 2. 防火墙是否阻止网络访问
 3. Python 依赖是否完整安装
+"""
+    readme.write_text(readme_content, encoding='utf-8')
+    print_check(f"使用文档已生成: {readme}")
 
-# readme.write_text(readme_content, encoding='utf-8')
-# print_check(f"使用文档已生成: {readme}")
-#
-#
     # 最终清理和优化
     print_step("最终优化")
 

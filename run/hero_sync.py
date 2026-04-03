@@ -12,6 +12,10 @@ import unicodedata
 from logging.handlers import RotatingFileHandler
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from typing import Optional
+
+from alias_utils import dedupe_alias_texts
+from icon_resolver import normalize_augment_name
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -87,39 +91,6 @@ def _seed_runtime_dir(source_dir: str, target_dir: str) -> None:
             shutil.copy2(src_path, dst_path)
 
 
-def _normalize_alias_token(value: str) -> str:
-    token = unicodedata.normalize("NFKC", str(value or "")).lower().strip()
-    return "".join(ch for ch in token if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
-
-
-def _dedupe_alias_list(*groups, excluded_tokens=None) -> list:
-    seen = set()
-    excluded = set()
-    if excluded_tokens:
-        for token in excluded_tokens:
-            normalized = _normalize_alias_token(token)
-            if normalized:
-                excluded.add(normalized)
-    result = []
-    for group in groups:
-        if not group:
-            continue
-        if isinstance(group, (str, bytes)):
-            values = [group]
-        else:
-            values = list(group)
-        for alias in values:
-            alias_text = str(alias).strip()
-            if not alias_text:
-                continue
-            token = _normalize_alias_token(alias_text)
-            if not token or token in seen or token in excluded:
-                continue
-            seen.add(token)
-            result.append(alias_text)
-    return result
-
-
 def _load_existing_champion_aliases() -> dict:
     if not os.path.exists(CORE_DATA_FILE):
         return {}
@@ -145,7 +116,7 @@ def _load_existing_champion_aliases() -> dict:
         cleaned_aliases = []
         raw_aliases = entry.get("aliases", [])
         if isinstance(raw_aliases, list):
-            cleaned_aliases = _dedupe_alias_list(
+            cleaned_aliases = dedupe_alias_texts(
                 raw_aliases,
                 excluded_tokens=[hero_name, entry.get("title", ""), entry.get("en_name", "")],
             )
@@ -169,13 +140,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-def _normalize_name(name: str) -> str:
-    # 规范化名称，便于模糊匹配。
-    import re
-    name = str(name).lower()
-    name = re.sub(r'[\s\-\_\(\)\[\]\'\"\.]', '', name)
-    return name
 
 
 def _get_champion_image_url(en_name: str, version: str) -> list:
@@ -288,6 +252,9 @@ def get_advanced_session():
 def sync_hero_data():
     global _last_sync_time
 
+    cleanup_core_data = None
+    sync_succeeded = False
+
     with _sync_lock:
         now = time.time()
         if now - _last_sync_time < SYNC_TTL:
@@ -303,7 +270,10 @@ def sync_hero_data():
             if os.path.exists(VERSION_FILE):
                 with open(VERSION_FILE, "r", encoding="utf-8") as f:
                     local_ver = f.read().strip()
-            files_exist = all(os.path.exists(f) for f in [CORE_DATA_FILE, AUGMENT_MAP_FILE])
+            files_exist = all(
+                os.path.exists(f)
+                for f in [CORE_DATA_FILE, AUGMENT_MAP_FILE, AUGMENT_ICON_FILE]
+            )
             if local_ver == curr_ver and files_exist:
                 _last_sync_time = now
                 return True
@@ -323,10 +293,10 @@ def sync_hero_data():
                     "name": hero_name,
                     "title": v['title'],
                     "en_name": v['id'],
-                    "aliases": _dedupe_alias_list(
+                    "aliases": dedupe_alias_texts(
                         existing_aliases.get(hero_name, []),
                         excluded_tokens=[hero_name, v['title'], v['id']],
-                    )
+                    ),
                 }
             aug_sources = [
                 "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json",
@@ -385,7 +355,7 @@ def sync_hero_data():
                                     # 尝试匹配中文名称
                                 for cn_name, tier in aug_map.items():
                                     # 简单匹配：比较去空格后的名称
-                                    if _normalize_name(cn_name) == _normalize_name(name):
+                                    if normalize_augment_name(cn_name) == normalize_augment_name(name):
                                         aug_icon_map[cn_name] = icon_path
                                         break
                                 # 也保存英文原名映射
@@ -410,7 +380,7 @@ def sync_hero_data():
                 "Referer": "https://leagueoflegends.com"
             })
             downloaded_count = 0
-            失败_downloads = []  # 记录下载失败的 ID
+            failed_downloads = []  # 记录下载失败的 ID
             for key, v in core_data.items():
                 asset_path = os.path.join(ASSET_DIR, f"{key}.png")
                 if not os.path.exists(asset_path):
@@ -418,9 +388,9 @@ def sync_hero_data():
                     if success:
                         downloaded_count += 1
                     else:
-                        失败_downloads.append((key, v['name'], v['en_name']))
+                        failed_downloads.append((key, v['name'], v['en_name']))
 
-            if downloaded_count > 0 or 失败_downloads:
+            if downloaded_count > 0 or failed_downloads:
                 logger.info(f"头像同步完成：下载{downloaded_count}个，失败{len(failed_downloads)}个")
 
             if aug_map:
@@ -438,18 +408,22 @@ def sync_hero_data():
                 f.write(curr_ver)
             shutil.move(tmp_ver, VERSION_FILE)
             _last_sync_time = time.time()
-
-            # ========== 启动后强制补全缺失的本地头像 ==========
-            logger.info("启动头像补全流程，修复缺失资源...")
-            cleanup_missing_assets(max_retries=3)
-
-            return True
+            cleanup_core_data = core_data
+            sync_succeeded = True
         except (requests.RequestException, json.JSONDecodeError, ValueError, KeyError) as e:
             logger.error(f"🚨 同步引擎故障：{e}")
             return False
         except Exception as e:
             logger.exception(f"🚨 同步引擎发生未预期致命故障：{e}")
             return False
+
+    if sync_succeeded and cleanup_core_data:
+        # 在释放同步锁后再补资源，避免 cleanup_missing_assets 触发重入锁。
+        logger.info("启动头像补全流程，修复缺失资源...")
+        cleanup_missing_assets(max_retries=3, core_data=cleanup_core_data)
+        return True
+
+    return sync_succeeded
 
 # （高优先级修复）加载函数增加文件存在性检查，文件丢失时强制重新同步
 def load_champion_core_data():
@@ -477,7 +451,16 @@ def get_system_status():
     return {"status": "ok", "module": "hero_sync"}
 
 
-def cleanup_missing_assets(max_retries: int = 3) -> list:
+def _collect_missing_assets(core_data: dict) -> list:
+    missing_assets = []
+    for key, v in core_data.items():
+        asset_path = os.path.join(ASSET_DIR, f"{key}.png")
+        if not os.path.exists(asset_path):
+            missing_assets.append((key, v['name'], v['en_name']))
+    return missing_assets
+
+
+def cleanup_missing_assets(max_retries: int = 3, core_data: Optional[dict] = None) -> list:
     # 清理并重新下载缺失的英雄头像资源。
     #
     # 参数：
@@ -485,7 +468,8 @@ def cleanup_missing_assets(max_retries: int = 3) -> list:
     #
     # 返回：
     # 仍然缺失的资源列表 [(key, name, en_name), ...]
-    core_data = load_champion_core_data()
+    if core_data is None:
+        core_data = load_champion_core_data()
     if not core_data:
         logger.error("无法加载冠军核心数据，无法执行清理")
         return []
@@ -502,11 +486,7 @@ def cleanup_missing_assets(max_retries: int = 3) -> list:
     })
 
     # 查找缺失的资源
-    missing_assets = []
-    for key, v in core_data.items():
-        asset_path = os.path.join(ASSET_DIR, f"{key}.png")
-        if not os.path.exists(asset_path):
-            missing_assets.append((key, v['name'], v['en_name']))
+    missing_assets = _collect_missing_assets(core_data)
 
     if not missing_assets:
         logger.info("没有缺失的资源文件")
