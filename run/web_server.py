@@ -444,21 +444,21 @@ def _ensure_augment_icon_cached(icon_filename: str, force_refresh: bool = False)
     return None
 
 
-def _prefetch_augment_icons(force: bool = False) -> None:
+def _prefetch_augment_icons(force_map_refresh: bool = False) -> None:
     global _augment_prefetch_mtime
 
     with _augment_prefetch_lock:
-        if not force and _augment_prefetch_mtime:
+        if not force_map_refresh and _augment_prefetch_mtime:
             return
         _augment_prefetch_mtime = time.time()
 
     try:
-        icon_map = _load_apexlol_hextech_map(force_refresh=force)
+        icon_map = _load_apexlol_hextech_map(force_refresh=force_map_refresh)
         logger.info("已预热 apexlol 海克斯图标映射，共 %s 项", len(icon_map))
     except Exception as e:
         logger.debug("预热 apexlol 海克斯图标映射失败：%s", e)
 
-    if force:
+    if force_map_refresh:
         try:
             _write_augment_icon_source_marker(AUGMENT_ICON_SOURCE_ID)
         except Exception as e:
@@ -850,7 +850,7 @@ async def lifespan(app: FastAPI):
     needs_augment_refresh = _read_augment_icon_source_marker() != AUGMENT_ICON_SOURCE_ID
     augment_thread = threading.Thread(
         target=_prefetch_augment_icons,
-        kwargs={"force": needs_augment_refresh},
+        kwargs={"force_map_refresh": needs_augment_refresh},
         daemon=True,
         name="augment-icon-prefetch",
     )
