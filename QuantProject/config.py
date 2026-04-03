@@ -12,6 +12,18 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 LOG_FILE = BASE_DIR / "position_history.txt"
 
+# 数据同步策略
+# 以交易日为单位判断本地数据是否足够新鲜，避免每次启动都触发联网抓取。
+DATA_FRESHNESS_BUSINESS_DAYS = 2
+
+# 发生增量同步时，默认回看最近多少天的数据，避免全量拉取。
+UPDATE_LOOKBACK_DAYS = 45
+
+# 外部数据源网络容错参数
+YFINANCE_TIMEOUT_SECONDS = 12
+STOOQ_TIMEOUT_SECONDS = 10
+STOOQ_MAX_RETRIES = 2
+
 # 全资产映射配置 (Stooq 代码与本地文件名)
 ASSETS_MAPPING = {
     'SPY': {'stooq_code': 'spy.us', 'yf_code': 'SPY', 'file': 'spy_us_d.csv'},

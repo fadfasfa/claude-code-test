@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 #
 # Post-change AST validator for Python source files.
-# [V6.0 - 记录模式：扫描结果写入 event_log，不阻断提交]
+# [V7.0 - 分级处置模式：BLOCK / DENY / WARN，敏感路径解析失败升级为 AUDIT-DENY]
 #
-# 变更说明（V5.0 -> V6.0）：
-# - 移除提交阻断逻辑（emit_fail 不再触发 exit 1）
-# - 扫描结果统一由调用方（post-commit hook）写入 event_log.jsonl
-# - SEC-001 命中时输出结构化 JSON 供 hook 识别并写入 yellow_cards
-# - 保留全部检测逻辑：AST diff + SEC-001 eval/exec/getattr 注入检测
+# 变更说明（V6.0 -> V7.0）：
+# - [优先级1] 引入三级处置：BLOCK（立即阻断）/ DENY（等待审计）/ WARN（仅告警）
+# - [优先级2] 敏感路径命中时禁止降级处置，解析失败直接 AUDIT-DENY
+# - [优先级4] 新增 SEC-002 secrets/凭据硬编码检测
+# - [优先级4] 新增 SEC-003 危险调用检测（shell=True / yaml.load / pickle.loads）
+# - 修复 V6.0 main() 中 --before/--after 分支的缩进语法错误
 #
 
 import ast
 import json
+import re
 import subprocess
 import sys
 import argparse
@@ -20,28 +22,111 @@ from typing import Dict, List, Set, Tuple, Optional
 
 TRY_TYPES = (ast.Try, ast.TryStar) if hasattr(ast, "TryStar") else (ast.Try,)
 
+# ============================================================
+# 分级处置常量（优先级1）
+# ============================================================
+SEV_BLOCK = "BLOCK"   # 命中后立即阻断，不等审计
+SEV_DENY  = "DENY"    # 高风险，等待 Node C 审计后决定
+SEV_WARN  = "WARN"    # 低风险，仅记录告警
+
+# 各规则对应的默认严重级别
+RULE_SEVERITY: Dict[str, str] = {
+    "SEC-001": SEV_BLOCK,  # eval/exec/动态 getattr 注入
+    "SEC-002": SEV_BLOCK,  # secrets / 凭据硬编码
+    "SEC-003": SEV_DENY,   # shell=True / yaml.load / pickle.loads
+    "IMPORT ADDED":    SEV_WARN,
+    "FUNC REMOVED":    SEV_DENY,
+    "CLASS REMOVED":   SEV_DENY,
+    "SIG CHANGED":     SEV_DENY,
+    "METHOD REMOVED":  SEV_DENY,
+    "METHOD ADDED":    SEV_WARN,
+    "TRY REMOVED":     SEV_DENY,
+    "EXCEPT BROADENED":SEV_DENY,
+}
+
+def get_rule_severity(violation: str) -> str:
+    for rule_tag, sev in RULE_SEVERITY.items():
+        if f"[{rule_tag}]" in violation or violation.startswith(f"[{rule_tag}"):
+            return sev
+    return SEV_WARN
+
+def aggregate_severity(violations: List[str]) -> Optional[str]:
+    if not violations:
+        return None
+    sevs = [get_rule_severity(v) for v in violations]
+    if SEV_BLOCK in sevs:
+        return SEV_BLOCK
+    if SEV_DENY in sevs:
+        return SEV_DENY
+    return SEV_WARN
+
+# ============================================================
+# 敏感路径注册表（优先级2）
+# ============================================================
+SENSITIVE_PATHS: Set[str] = {
+    "lock-core.ps1",
+    "unlock-core.ps1",
+    ".git/hooks/post-commit",
+    ".git/hooks/pre-commit",
+    ".git/hooks/pre-push",
+    ".ai_workflow/audit_log.txt",
+    ".ai_workflow/runtime_state_cc.json",
+    ".ai_workflow/runtime_state_ag.json",
+    ".ai_workflow/runtime_state_cx.json",
+    ".ai_workflow/post_check_diff.py",
+}
+
+def is_sensitive_path(filename: str) -> bool:
+    normalized = filename.replace("\\", "/").lower()
+    for sp in SENSITIVE_PATHS:
+        if normalized.endswith(sp.lower()):
+            return True
+    return False
+
+# ============================================================
+# 输出函数
+# ============================================================
 def emit_pass() -> None:
     sys.exit(0)
 
-def emit_result(violations: List[str]) -> None:
-    # V6.0: 输出结构化结果，exit 0 表示无违规，exit 1 表示有违规（供 hook 读取，不再是阻断信号）。
+def emit_result(violations: List[str], is_sensitive: bool = False) -> None:
+    """
+    V7.0 分级输出：
+    - 敏感路径 + 有违规 → 强制 BLOCK
+    - 普通路径 → 按规则聚合严重级别
+    """
+    severity = aggregate_severity(violations)
+    if is_sensitive and violations:
+        severity = SEV_BLOCK  # 敏感路径不允许降级
+
     has_sec001 = any("[SEC-001]" in v for v in violations)
+
     print(json.dumps({
-        "status": "WARNING" if violations else "PASSED",
+        "status":    "WARNING" if violations else "PASSED",
+        "severity":  severity,          # BLOCK / DENY / WARN / null
         "sec001_hit": has_sec001,
-        "violations": violations
+        "is_sensitive_path": is_sensitive,
+        "violations": violations,
     }, ensure_ascii=False))
     sys.exit(1 if violations else 0)
 
-def emit_fatal(raw_output: str) -> None:
+def emit_fatal(raw_output: str, is_sensitive: bool = False) -> None:
+    """
+    V7.0：敏感路径解析失败 → AUDIT-DENY（不能当作"扫过了"）
+    """
+    status = "AUDIT-DENY" if is_sensitive else "PARSE_ERROR"
     print(json.dumps({
-        "status": "PARSE_ERROR",
+        "status":     status,
         "error_code": "ERR_PARSE_FAILED",
-        "raw_output": raw_output
+        "is_sensitive_path": is_sensitive,
+        "raw_output": raw_output,
     }, ensure_ascii=False))
     sys.exit(2)
 
-def get_source_git(target_file: str, ref: str) -> str:
+# ============================================================
+# Git / 文件读取
+# ============================================================
+def get_source_git(target_file: str, ref: str, is_sensitive: bool = False) -> str:
     git_path = target_file.replace("\\", "/")
     result = subprocess.run(
         ["git", "show", f"{ref}:{git_path}"],
@@ -50,19 +135,30 @@ def get_source_git(target_file: str, ref: str) -> str:
     if result.returncode != 0:
         if "fatal: Path" in result.stderr or "exists on disk, but not in" in result.stderr:
             return ""
-        emit_fatal(f"git show {ref}:{git_path} 失败（退出码 {result.returncode}）：{result.stderr.strip()}")
+        emit_fatal(
+            f"git show {ref}:{git_path} 失败（退出码 {result.returncode}）：{result.stderr.strip()}",
+            is_sensitive=is_sensitive,
+        )
     return result.stdout
 
-def get_source_file(path: str) -> str:
-    if not os.path.isfile(path): emit_fatal(f"文件不存在：{path}")
-    with open(path, "r", encoding="utf-8", errors="replace") as f: return f.read()
+def get_source_file(path: str, is_sensitive: bool = False) -> str:
+    if not os.path.isfile(path):
+        emit_fatal(f"文件不存在：{path}", is_sensitive=is_sensitive)
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read()
 
-def resolve_sources(args: argparse.Namespace) -> Tuple[str, str]:
+def resolve_sources(args: argparse.Namespace, is_sensitive: bool) -> Tuple[str, str]:
     if args.before is not None:
-        return get_source_file(args.before), get_source_file(args.after)
+        return (
+            get_source_file(args.before, is_sensitive),
+            get_source_file(args.after,  is_sensitive),
+        )
     else:
         ref = args.ref or "HEAD"
-        return get_source_git(args.target_file, ref), get_source_file(args.target_file)
+        return (
+            get_source_git(args.target_file, ref,       is_sensitive),
+            get_source_file(args.target_file,           is_sensitive),
+        )
 
 def parse_source(source: str, label: str) -> ast.Module:
     try:
@@ -70,6 +166,9 @@ def parse_source(source: str, label: str) -> ast.Module:
     except SyntaxError:
         return ast.Module(body=[], type_ignores=[])
 
+# ============================================================
+# 检测逻辑（原有）
+# ============================================================
 def extract_import_keys(tree: ast.Module) -> Set[str]:
     keys = set()
     for node in tree.body:
@@ -115,9 +214,7 @@ def extract_interfaces(tree: ast.Module) -> Dict[str, dict]:
                         "sig": signature_of(item), "lineno": item.lineno,
                         "decorators": [ast.unparse(d) for d in item.decorator_list],
                     }
-            result[node.name] = {
-                "kind": "class", "lineno": node.lineno, "methods": methods,
-            }
+            result[node.name] = {"kind": "class", "lineno": node.lineno, "methods": methods}
     return result
 
 def extract_try_locations(tree: ast.Module) -> List[Tuple[int, int]]:
@@ -271,43 +368,109 @@ def check_sec001_injection(tree: ast.Module, filename: str = "<unknown>") -> Lis
                     )
     return violations
 
+# ============================================================
+# SEC-002：secrets / 凭据硬编码检测（优先级4，BLOCK 级）
+# ============================================================
+_SECRET_PATTERNS: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r'(?i)(api[_\-]?key|apikey)\s*[=:]\s*["\']?[A-Za-z0-9_\-]{16,}'), "API Key"),
+    (re.compile(r'(?i)(access[_\-]?token|auth[_\-]?token|bearer)\s*[=:]\s*["\']?[A-Za-z0-9_\-\.]{16,}'), "Token"),
+    (re.compile(r'(?i)(password|passwd|pwd)\s*[=:]\s*["\'][^"\']{6,}["\']'), "Password"),
+    (re.compile(r'(?i)(secret[_\-]?key|client[_\-]?secret)\s*[=:]\s*["\'][^"\']{6,}["\']'), "Secret"),
+    (re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'), "PEM Private Key"),
+    (re.compile(r'(?i)(connection[_\-]?string|connstr|dsn)\s*[=:]\s*["\'][^"\']{10,}["\']'), "Connection String"),
+    (re.compile(r'(?i)(aws_secret|aws_access_key_id)\s*[=:]\s*["\']?[A-Za-z0-9+/]{16,}'), "AWS Credential"),
+    (re.compile(r'ghp_[A-Za-z0-9]{36}'), "GitHub Token"),
+    (re.compile(r'sk-[A-Za-z0-9]{32,}'), "OpenAI Key"),
+]
 
+def check_sec002_secrets(source: str, filename: str = "<unknown>") -> List[str]:
+    violations = []
+    for lineno, line in enumerate(source.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("//"):
+            continue  # 跳过注释行
+        for pattern, label in _SECRET_PATTERNS:
+            if pattern.search(line):
+                violations.append(
+                    f"[SEC-002] [{filename}:{lineno}] 检测到疑似 {label} 硬编码 — secrets 泄露风险"
+                )
+                break  # 每行只报一次
+    return violations
+
+# ============================================================
+# SEC-003：危险调用检测（DENY 级）
+# ============================================================
+def check_sec003_dangerous(tree: ast.Module, filename: str = "<unknown>") -> List[str]:
+    violations = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        # subprocess(..., shell=True)
+        for kw in node.keywords:
+            if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                violations.append(
+                    f"[SEC-003] [{filename}:{node.lineno}] 检测到 shell=True — 命令注入风险"
+                )
+        # yaml.load(...)  →  建议 safe_load
+        if isinstance(func, ast.Attribute) and func.attr == "load":
+            if isinstance(func.value, ast.Name) and func.value.id == "yaml":
+                violations.append(
+                    f"[SEC-003] [{filename}:{node.lineno}] 检测到 yaml.load() — 建议改用 yaml.safe_load()"
+                )
+        # pickle.loads / pickle.load
+        if isinstance(func, ast.Attribute) and func.attr in ("loads", "load"):
+            if isinstance(func.value, ast.Name) and func.value.id == "pickle":
+                violations.append(
+                    f"[SEC-003] [{filename}:{node.lineno}] 检测到 pickle.{func.attr}() — 反序列化风险"
+                )
+    return violations
+
+# ============================================================
+# 主函数
+# ============================================================
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Post-change AST validator (V6.0 记录模式).")
+    parser = argparse.ArgumentParser(description="Post-change AST validator (V7.0 分级处置).")
     parser.add_argument("target_file", nargs="?", default=None)
-    parser.add_argument("--ref", default="HEAD")
+    parser.add_argument("--ref",    default="HEAD")
     parser.add_argument("--before", default=None)
-    parser.add_argument("--after", default=None)
+    parser.add_argument("--after",  default=None)
     parser.add_argument("--branch", default=None)
-    parser.add_argument("--base", default="main")
+    parser.add_argument("--base",   default="main")
     args = parser.parse_args()
 
+    # ------ 批量模式（--branch）------
     if args.branch is not None:
         if args.target_file is not None or args.before is not None or args.after is not None:
             emit_fatal("批量模式 (--branch) 不能与其他文件参数同时使用。")
 
         changed_files = get_changed_python_files(args.base, args.branch)
         if not changed_files:
-            print(json.dumps({"status": "PASSED", "sec001_hit": False, "violations": []}))
+            print(json.dumps({"status": "PASSED", "severity": None, "sec001_hit": False, "violations": []}))
             emit_pass()
 
         all_violations = []
         for target_file in changed_files:
+            sensitive = is_sensitive_path(target_file)
             try:
-                before_src = get_source_git(target_file, args.base)
-                after_src = get_source_file(target_file)
+                before_src = get_source_git(target_file, args.base, sensitive)
+                after_src  = get_source_file(target_file, sensitive)
                 before_tree = parse_source(before_src, "before")
-                after_tree = parse_source(after_src, "after")
+                after_tree  = parse_source(after_src,  "after")
                 violations = []
                 violations.extend(check_imports(before_tree, after_tree))
                 violations.extend(check_interfaces(before_tree, after_tree))
                 violations.extend(check_try_blocks(before_tree, after_tree))
                 violations.extend(check_sec001_injection(after_tree, target_file))
+                violations.extend(check_sec002_secrets(after_src,  target_file))
+                violations.extend(check_sec003_dangerous(after_tree, target_file))
                 if violations:
-                    all_violations.extend([f"[{target_file}] {v}" for v in violations])
+                    prefix = f"[SENSITIVE] [{target_file}]" if sensitive else f"[{target_file}]"
+                    all_violations.extend([f"{prefix} {v}" for v in violations])
             except SystemExit as e:
                 if e.code == 2:
-                    all_violations.append(f"[{target_file}] 解析失败，跳过此文件。")
+                    msg = f"解析失败{'（敏感路径 → AUDIT-DENY）' if sensitive else '，跳过此文件'}"
+                    all_violations.append(f"[{target_file}] {msg}")
                 else:
                     raise e
             except Exception as e:
@@ -315,28 +478,38 @@ def main() -> None:
 
         emit_result(all_violations)
 
+    # ------ 单文件模式 ------
     else:
+        # 修复 V6.0 缩进错误：--before/--after 分支
         if args.before is not None or args.after is not None:
-        if args.before is None or args.after is None:
-            emit_fatal("差异模式需要同时提供 --before 和 --after 参数。")
-        if args.target_file is not None:
-            emit_fatal("不能同时使用位置参数 target_file 和 --before/--after。")
-    else:
-        if args.target_file is None:
-            emit_fatal("请提供以下两种方式之一：1. target_file [--ref REF]；2. --before 原始文件 --after 修改后文件")
+            if args.before is None or args.after is None:
+                emit_fatal("差异模式需要同时提供 --before 和 --after 参数。")
+            if args.target_file is not None:
+                emit_fatal("不能同时使用位置参数 target_file 和 --before/--after。")
+        else:
+            if args.target_file is None:
+                emit_fatal(
+                    "请提供以下两种方式之一：\n"
+                    "  1. target_file [--ref REF]\n"
+                    "  2. --before 原始文件 --after 修改后文件"
+                )
 
-        before_src, after_src = resolve_sources(args)
+        target_name = args.target_file or args.after or "<unknown>"
+        sensitive   = is_sensitive_path(target_name)
+
+        before_src, after_src = resolve_sources(args, sensitive)
         before_tree = parse_source(before_src, "before")
-        after_tree = parse_source(after_src, "after")
+        after_tree  = parse_source(after_src,  "after")
 
         violations = []
         violations.extend(check_imports(before_tree, after_tree))
         violations.extend(check_interfaces(before_tree, after_tree))
         violations.extend(check_try_blocks(before_tree, after_tree))
-        target_name = args.target_file or args.after or "<unknown>"
         violations.extend(check_sec001_injection(after_tree, target_name))
+        violations.extend(check_sec002_secrets(after_src,   target_name))
+        violations.extend(check_sec003_dangerous(after_tree, target_name))
 
-        emit_result(violations)
+        emit_result(violations, is_sensitive=sensitive)
 
 
 if __name__ == "__main__":

@@ -6,14 +6,22 @@
 import requests
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 from pathlib import Path
 from io import StringIO
 import yfinance as yf
 
 # 引入统一配置
-from config import DATA_DIR, ASSETS_MAPPING
+from config import (
+    ASSETS_MAPPING,
+    DATA_DIR,
+    DATA_FRESHNESS_BUSINESS_DAYS,
+    STOOQ_MAX_RETRIES,
+    STOOQ_TIMEOUT_SECONDS,
+    UPDATE_LOOKBACK_DAYS,
+    YFINANCE_TIMEOUT_SECONDS,
+)
 
 Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -21,44 +29,58 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-def is_data_up_to_date(file_path):
-    #
-    # 检查本地数据是否已经是最新（以当前交易日为准）。
-    # 返回 True 表示已最新，False 表示需要更新。
-    #
+def get_latest_local_date(file_path):
     if not Path(file_path).exists():
-        return False
+        return None
     try:
         df = pd.read_csv(file_path)
-        # [多语言兼容] 模糊列名匹配
         date_col = None
-        price_col = None
         for col in df.columns:
             col_lower = col.lower()
             if col_lower in ['data', 'date', 'index']:
                 date_col = col
-            if col_lower in ['zamkniecie', 'close']:
-                price_col = col
 
-        if date_col is None or price_col is None:
-            return False
+        if date_col is None or df.empty:
+            return None
 
-        latest_date_str = str(df[date_col].max())
-        latest_date = pd.to_datetime(latest_date_str).date()
-
-        # 简单逻辑：如果本地数据的最后一条日期 >= 昨天，则认为已最新
-        # (考虑到时差和周末，这里可以设定一个合理的阈值，暂以当前日期前 2 天为例)
-        if (datetime.now().date() - latest_date).days <= 2:
-            return True
-        return False
+        dates = pd.to_datetime(df[date_col], errors='coerce').dropna()
+        if dates.empty:
+            return None
+        return dates.max().date()
     except Exception:
+        return None
+
+def is_data_up_to_date(file_path, latest_date=None):
+    if latest_date is None:
+        latest_date = get_latest_local_date(file_path)
+    if latest_date is None:
         return False
 
-def fetch_yfinance_data(yf_code, asset_name):
+    today = datetime.now().date()
+    if latest_date >= today:
+        return True
+
+    # 以交易日而不是自然日判断是否需要刷新，避免周一早晨因为周末差值而误触发全量更新。
+    business_days = len(pd.bdate_range(latest_date, today))
+    return business_days <= DATA_FRESHNESS_BUSINESS_DAYS
+
+def fetch_yfinance_data(yf_code, asset_name, start_date=None):
     # 使用 yfinance 获取历史数据
     try:
-        ticker = yf.Ticker(yf_code)
-        df = ticker.history(period="max")
+        kwargs = {
+            "interval": "1d",
+            "auto_adjust": False,
+            "actions": False,
+            "progress": False,
+            "threads": False,
+            "timeout": YFINANCE_TIMEOUT_SECONDS,
+        }
+        if start_date is None:
+            kwargs["period"] = "max"
+        else:
+            kwargs["start"] = start_date
+            kwargs["end"] = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        df = yf.download(yf_code, **kwargs)
         if df is None or df.empty:
             return None
             
@@ -88,23 +110,27 @@ def fetch_and_merge_data(asset_name, config):
     stooq_code = config['stooq_code']
     file_name = config['file']
     file_path = Path(DATA_DIR) / file_name
+    latest_local_date = get_latest_local_date(file_path)
 
-    if is_data_up_to_date(file_path):
+    if is_data_up_to_date(file_path, latest_local_date):
         return f"[跳过] {asset_name:<4} 数据已是最新，触发防重复机制。"
 
-    # 优先使用 yfinance 获取全量数据（速度快且无反爬限制）
+    # 优先使用 yfinance 获取最近窗口数据（速度快且无反爬限制）
     new_df = None
     if yf_code:
-        new_df = fetch_yfinance_data(yf_code, asset_name)
+        if latest_local_date is None:
+            new_df = fetch_yfinance_data(yf_code, asset_name)
+        else:
+            start_date = (latest_local_date - timedelta(days=UPDATE_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+            new_df = fetch_yfinance_data(yf_code, asset_name, start_date=start_date)
         
     # 如果 yfinance 失败，降级到 stooq 获取
     if new_df is None or new_df.empty:
         print(f"[降级] {asset_name:<4} 尝试使用备用数据源 Stooq...")
         url = f"https://stooq.com/q/d/l/?s={stooq_code}&i=d"
-        max_retries = 3
-        for attempt in range(1, max_retries + 1):
+        for attempt in range(1, STOOQ_MAX_RETRIES + 1):
             try:
-                response = requests.get(url, headers=HEADERS, timeout=15)
+                response = requests.get(url, headers=HEADERS, timeout=STOOQ_TIMEOUT_SECONDS)
                 response.raise_for_status()
                 
                 new_df = pd.read_csv(StringIO(response.text))
@@ -116,18 +142,19 @@ def fetch_and_merge_data(asset_name, config):
                 
                 if 'Data' not in new_df.columns or 'Zamkniecie' not in new_df.columns:
                     new_df = None
-                    time.sleep(5)
+                    time.sleep(2)
                     continue
                     
                 if len(new_df) < 5:
                     new_df = None
-                    time.sleep(5)
+                    time.sleep(2)
                     continue
                     
                 break
             except Exception as e:
                 new_df = None
-                time.sleep(5)
+                if attempt < STOOQ_MAX_RETRIES:
+                    time.sleep(2)
         
         if new_df is None or new_df.empty:
             return f"[失败] {asset_name:<4} 所有的备选数据源(Stooq/yfinance)获取数据均失败。"
@@ -177,11 +204,11 @@ def fetch_and_merge_data(asset_name, config):
 
 def main():
     print("=" * 60)
-    print("启动全资产数据多线程并发更新 (优先使用 yfinance)...")
+    print("启动全资产数据按需同步 (本地最新则跳过，优先使用 yfinance 增量窗口)...")
     print("=" * 60)
 
     # 采用多线程并发执行 (5个资产)
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=min(5, len(ASSETS_MAPPING))) as executor:
         future_to_asset = {
             executor.submit(fetch_and_merge_data, asset, cfg): asset
             for asset, cfg in ASSETS_MAPPING.items()

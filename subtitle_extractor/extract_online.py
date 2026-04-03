@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-#
-# 在线视频字幕提取工具
-# 优先下载官方字幕，若没有字幕则下载音频并转录为文本
-#
+# 在线视频字幕提取工具。
+# 优先使用官方字幕，缺失时回退到音频转写。
 
 import os
 import sys
@@ -14,11 +12,10 @@ from extract_subs import transcribe_audio, segments_to_markdown
 
 
 def download_subtitles_from_url(url, output_dir, languages=None):
-    # 从在线视频链接下载官方字幕
+    # 下载官方字幕。
     if languages is None:
         languages = ['zh', 'en']
 
-    # yt-dlp 配置
     ydl_opts = {
         'skip_download': True,
         'writesubtitles': True,
@@ -33,7 +30,7 @@ def download_subtitles_from_url(url, output_dir, languages=None):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
 
-            # 检查是否下载了字幕
+            # 检查字幕下载结果。
             if 'requested_subtitles' in info and info['requested_subtitles']:
                 for lang, sub_info in info['requested_subtitles'].items():
                     if 'filepath' in sub_info:
@@ -50,32 +47,28 @@ def download_subtitles_from_url(url, output_dir, languages=None):
 
 
 def convert_srt_to_markdown(srt_path):
-    # 将 SRT 字幕转换为 Markdown 格式
+    # 将 SRT 转为 Markdown。
     try:
         with open(srt_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
         markdown_content = "# 视频字幕\n\n"
 
-        # 解析 SRT 格式
+        # 解析 SRT。
         blocks = content.strip().split('\n\n')
         for block in blocks:
             lines = block.strip().split('\n')
             if len(lines) >= 3:
-                # 第一行是序号，跳过
-                # 第二行是时间戳
                 timestamp_line = lines[1]
                 if ' --> ' in timestamp_line:
                     start_time, end_time = timestamp_line.split(' --> ')
-                    # 转换时间格式为 HH:MM:SS.mmm
                     start_formatted = convert_srt_timestamp(start_time)
                     end_formatted = convert_srt_timestamp(end_time)
 
-                    # 剩余行是文本
                     text_lines = lines[2:]
                     text = ' '.join(text_lines).strip()
 
-                    if text:  # 只有非空文本才添加
+                    if text:
                         markdown_content += f"## [{start_formatted} - {end_formatted}]\n\n{text}\n\n"
 
         return markdown_content
@@ -86,14 +79,14 @@ def convert_srt_to_markdown(srt_path):
 
 
 def convert_srt_timestamp(srt_time):
-    # 将 SRT 时间戳转换为 HH:MM:SS.mmm 格式
+    # 将 SRT 时间戳转为统一格式。
     if ',' in srt_time:
         return srt_time.replace(',', '.')
     return srt_time
 
 
 def download_audio_from_url(url, output_dir):
-    # 从在线视频链接下载最优音频流
+    # 下载最优音频流。
     ydl_opts = {
         'format': 'bestaudio/best',
         'postprocessors': [{
@@ -110,9 +103,7 @@ def download_audio_from_url(url, output_dir):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
 
-            # 获取下载的音频文件路径
             audio_file = ydl.prepare_filename(info)
-            # yt-dlp 会自动添加 .wav 扩展名
             audio_file = os.path.splitext(audio_file)[0] + '.wav'
 
             if os.path.exists(audio_file):
@@ -125,32 +116,30 @@ def download_audio_from_url(url, output_dir):
 
 
 def process_online_video(url, output_dir, model_size="base", device="cpu", languages=None):
-    # 处理在线视频
+    # 处理在线视频。
     print(f"正在处理在线视频：{url}")
 
-    # 确保输出目录存在
+    # 确保输出目录存在。
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if languages is None:
         languages = ['zh', 'en']
 
-    # 首先尝试下载官方字幕
+    # 先尝试官方字幕。
     print("正在检查官方字幕...")
     success, result = download_subtitles_from_url(url, output_dir, languages)
 
     if success:
         print(f"官方字幕已下载：{result}")
-        # 转换为 Markdown 格式
+        # 转换为 Markdown。
         markdown_content = convert_srt_to_markdown(result)
         if markdown_content:
-            # 生成输出文件名
             md_filename = Path(result).stem + '.md'
             md_path = output_dir / md_filename
 
             with open(md_path, 'w', encoding='utf-8') as f:
                 f.write(markdown_content)
 
-            # 清理临时 SRT 文件
             os.remove(result)
 
             print(f"处理成功：{url} -> {md_path}")
@@ -162,7 +151,7 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
         print(f"未找到官方字幕：{result}")
         print("正在下载音频流以进行转写...")
 
-        # 下载音频流
+        # 下载音频流。
         success, result = download_audio_from_url(url, output_dir)
         if not success:
             print(f"音频下载失败：{result}")
@@ -171,28 +160,24 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
         audio_path = result
         print(f"音频已下载：{audio_path}")
 
-        # 使用 faster-whisper 进行转录
+        # 使用 faster-whisper 转录。
         segments = transcribe_audio(audio_path, model_size, device)
 
         if not segments:
             print("音频转写失败")
-            # 清理音频文件
             if os.path.exists(audio_path):
                 os.remove(audio_path)
             return False
 
-        # 生成 Markdown
+        # 生成 Markdown。
         markdown_content = segments_to_markdown(segments)
 
-        # 生成输出文件名
         md_filename = Path(audio_path).stem + '.md'
         md_path = output_dir / md_filename
 
-        # 写入 Markdown 文件
         with open(md_path, 'w', encoding='utf-8') as f:
             f.write(markdown_content)
 
-        # 清理音频文件
         if os.path.exists(audio_path):
             os.remove(audio_path)
 

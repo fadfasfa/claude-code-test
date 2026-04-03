@@ -1,4 +1,4 @@
-# 清理项目工作痕迹和临时文件
+# 清理项目工作痕迹和临时文件。
 
 import os
 import shutil
@@ -19,14 +19,12 @@ def cleanup_pycache():
     print_step("清理 Python 缓存文件")
     count = 0
 
-    # 删除所有缓存目录
     for pycache in BASE_DIR.rglob("__pycache__"):
         if pycache.is_dir():
             shutil.rmtree(pycache)
             count += 1
             print(f"  [删除] {pycache.relative_to(BASE_DIR)}")
 
-    # 删除所有编译文件
     for pyc in BASE_DIR.rglob("*.pyc"):
         if pyc.is_file():
             pyc.unlink()
@@ -64,17 +62,15 @@ def cleanup_build_artifacts():
 
 
 def cleanup_log_files():
-    # 清理日志文件
+    # 清理日志文件。
     print_step("清理日志文件")
 
-    # 删除配置目录下的日志文件
     config_dir = BASE_DIR / "config"
     if config_dir.exists():
         for log_file in config_dir.glob("*.log"):
             log_file.unlink()
             print(f"  [删除] {log_file.relative_to(BASE_DIR)}")
 
-    # 删除输出目录中的日志文件
     dist_dir = BASE_DIR / "dist"
     if dist_dir.exists():
         for log_file in dist_dir.rglob("*.log"):
@@ -97,7 +93,7 @@ def cleanup_build_dir():
 
 
 def check_remaining_files():
-    # 检查剩余的关键文件
+    # 检查剩余的关键文件。
     print_step("检查剩余关键文件")
 
     essential_files = [

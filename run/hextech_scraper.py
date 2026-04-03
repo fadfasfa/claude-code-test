@@ -14,36 +14,28 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hero_sync import get_advanced_session, CONFIG_DIR, load_augment_map, load_champion_core_data
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequest警告)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 FRESHNESS_THRESHOLD = 0.0005
 
-# ========== 防封禁请求标识池（5 种主流浏览器） ==========
+# 请求标识池。
 USER_AGENT_POOL = [
-    # 适用于常见桌面环境的浏览器请求标识
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    # 适用于常见桌面环境的浏览器请求标识
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    # 适用于常见桌面环境的浏览器请求标识
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-    # 适用于常见桌面环境的浏览器请求标识
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-    # 适用于常见桌面环境的浏览器请求标识
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 ]
 
 def get_random_ua():
-    # 从请求标识池中随机选择一个标识。
+    # 随机选择请求标识。
     return random.choice(USER_AGENT_POOL)
 
 
 def fetch_with_retry(session, url, max_retries=3, timeout=10):
-    # 带指数退避的重试机制。
-    #
-    # 捕获网络和请求异常，在最大重试次数内按递增间隔重试。
+    # 指数退避重试。
     last_exception = None
     for attempt in range(max_retries):
         try:
-            # 动态注入随机请求标识
             headers = {"User-Agent": get_random_ua()}
             response = session.get(url, headers=headers, timeout=timeout, verify=True)
             response.raise_for_status()
@@ -51,7 +43,6 @@ def fetch_with_retry(session, url, max_retries=3, timeout=10):
         except (requests.exceptions.HTTPError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             last_exception = e
             if attempt < max_retries - 1:
-                # 按指数方式增加等待时间
                 wait_time = 2 ** (attempt + 1)
                 logging.warning(f"请求 {url} 失败 (尝试 {attempt + 1}/{max_retries}): {e}，{wait_time}秒后重试...")
                 time.sleep(wait_time)
@@ -80,12 +71,11 @@ def update_status_file():
         json.dump({"last_success_time": time.time()}, f)
 
 def cleanup_old_csvs():
-    # 清理过期数据和残留临时文件，仅保留最近 3 天的有效数据。
+    # 清理过期数据和残留临时文件。
     files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv"))
     tmp_files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv.tmp"))
     now = datetime.now()
 
-    # 审查点：这里把嵌套异常处理合并为一个，避免重复分支干扰判断。
     for f in files + tmp_files:
         try:
             m = re.search(r"Hextech_Data_(\d{4}-\d{2}-\d{2})", os.path.basename(f))
@@ -101,22 +91,16 @@ def cleanup_old_csvs():
         except Exception as e:
             logging.error(f"清理文件异常 {f}: {e}")
 def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_id: str, champ_name: str, champ_data: dict) -> list:
-    # 一次性扫描页面内容并通过内存字典完成匹配。
-    #
-    # 未匹配到的海克斯编号会直接跳过，不向上抛出异常。
+    # 扫描页面并用内存字典完成匹配。
     rows = []
 
-    # 第一步：清理文本并去掉转义符
     cleaned_html = html.replace('\\"', '"').replace('\\\\', '\\')
 
-    # 第二步：一次性全局扫描，提取所有符合结构的数据
-    # 正则捕获海克斯编号、胜率和出场率
     universal_pattern = re.compile(
         r'"(\d{4})"\s*:\s*\{[^{}]*?"(?:winRate|win_rate)"\s*:\s*"?([\d.]+)"?[^{}]*?"(?:pickRate|pick_rate)"\s*:\s*"?([\d.]+)"?',
         re.DOTALL
     )
 
-    # 第三步：使用字典进行常量时间匹配
     for match in universal_pattern.finditer(cleaned_html):
         mid = match.group(1)
         if mid in aug_id_map:
@@ -124,16 +108,12 @@ def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_
                 win = float(match.group(2))
                 pick = float(match.group(3))
 
-                # ========== 数值安全处理：检查量纲 ==========
-                # 如果出场率大于 1.0，说明数据使用百分数表示，需要转换为小数
                 if pick > 1.0:
                     pick = pick / 100.0
                     logging.debug(f"[量纲转换] 海克斯 ID={mid}，出场率从百分数转换为小数：{pick*100:.1f}% -> {pick:.4f}")
 
-                # 确保出场率不超过 1.0
                 pick = min(1.0, pick)
 
-                # 应用阈值过滤
                 if win > 0 and pick >= FRESHNESS_THRESHOLD:
                     web_name = aug_id_map.get(mid, "")
                     local_tier = truth_dict.get(web_name)
@@ -150,7 +130,6 @@ def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_
                             "海克斯出场率": pick
                         })
             except (ValueError, IndexError, AttributeError) as e:
-                # 记录详细错误日志，包含局部上下文和堆栈信息
                 chunk_start = max(0, cleaned_html.find(mid) - 50)
                 chunk_end = min(len(cleaned_html), cleaned_html.find(mid) + len(mid) + 150)
                 chunk_snapshot = cleaned_html[chunk_start:chunk_end].replace('\n', '\\n')[:200]
@@ -182,14 +161,12 @@ def main_scraper(stop_event=None):
     session = get_advanced_session()
 
     try:
-        # 使用重试机制获取数据
         aug_response = fetch_with_retry(session, "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json")
         if aug_response is None:
             logging.error("获取海克斯配置数据失败")
             return False
         aug_data = aug_response.json()
 
-        # 适配新的数据结构，直接按海克斯编号遍历外层字典
         aug_id_map = {
             str(k): v.get('displayName', '').strip()
             for k, v in aug_data.items()
@@ -213,21 +190,16 @@ def main_scraper(stop_event=None):
         url = f"https://hextech.dtodo.cn/zh-CN/champion-stats/{c_id}"
         champ_rows = []
         try:
-            # 随机休眠，用于模拟自然请求节奏
             time.sleep(random.uniform(0.5, 1.5))
 
-            # 使用重试机制获取数据
             res = fetch_with_retry(session, url)
 
-            # 解析前先检查返回值是否有效
             if res is not None and res.status_code == 200 and len(res.text) > 0:
                 try:
                     champ_rows = extract_champion_stats(res.text, aug_id_map, truth_dict, c_id, c_name, champ)
                 except ValueError as e:
-                    # 捕获当前上下文
                     logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
         except Exception as e:
-            # 捕获当前上下文
             logging.error(f"[{c_name}] HTTP 获取失败：{e} | URL={url} | 堆栈={traceback.format_exc().strip()}")
 
         return c_name, champ_rows
@@ -255,7 +227,6 @@ def main_scraper(stop_event=None):
         df = pd.DataFrame(all_rows)
         df['胜率差'] = df['海克斯胜率'] - df['英雄胜率']
 
-        # 向量化计算综合分数（八五比十五）
         wr_std = df['胜率差'].std()
         pr_std = df['海克斯出场率'].std()
         if wr_std == 0:

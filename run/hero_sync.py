@@ -8,11 +8,12 @@ import urllib3
 import logging
 import tempfile
 import shutil
+import unicodedata
 from logging.handlers import RotatingFileHandler
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequest警告)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def _get_script_dir() -> str:
@@ -20,7 +21,7 @@ def _get_script_dir() -> str:
 
 
 def bootstrap_runtime_environment() -> str:
-    # 标准化运行时根目录，兼容终端、编辑器和打包程序。
+    # 规范运行时根目录，兼容终端、编辑器和打包程序。
     runtime_base = os.getenv("HEXTECH_BASE_DIR", "").strip()
     if runtime_base:
         runtime_base = os.path.abspath(runtime_base)
@@ -41,7 +42,6 @@ def bootstrap_runtime_environment() -> str:
 
     return runtime_base
 
-# ================= 动态路径网关 =================
 def get_resource_dir():
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
         return sys._MEIPASS
@@ -87,11 +87,79 @@ def _seed_runtime_dir(source_dir: str, target_dir: str) -> None:
             shutil.copy2(src_path, dst_path)
 
 
+def _normalize_alias_token(value: str) -> str:
+    token = unicodedata.normalize("NFKC", str(value or "")).lower().strip()
+    return "".join(ch for ch in token if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def _dedupe_alias_list(*groups, excluded_tokens=None) -> list:
+    seen = set()
+    excluded = set()
+    if excluded_tokens:
+        for token in excluded_tokens:
+            normalized = _normalize_alias_token(token)
+            if normalized:
+                excluded.add(normalized)
+    result = []
+    for group in groups:
+        if not group:
+            continue
+        if isinstance(group, (str, bytes)):
+            values = [group]
+        else:
+            values = list(group)
+        for alias in values:
+            alias_text = str(alias).strip()
+            if not alias_text:
+                continue
+            token = _normalize_alias_token(alias_text)
+            if not token or token in seen or token in excluded:
+                continue
+            seen.add(token)
+            result.append(alias_text)
+    return result
+
+
+def _load_existing_champion_aliases() -> dict:
+    if not os.path.exists(CORE_DATA_FILE):
+        return {}
+
+    try:
+        with open(CORE_DATA_FILE, "r", encoding="utf-8") as f:
+            existing_core = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+
+    if not isinstance(existing_core, dict):
+        return {}
+
+    alias_map = {}
+    for entry in existing_core.values():
+        if not isinstance(entry, dict):
+            continue
+
+        hero_name = str(entry.get("name", "")).strip()
+        if not hero_name:
+            continue
+
+        cleaned_aliases = []
+        raw_aliases = entry.get("aliases", [])
+        if isinstance(raw_aliases, list):
+            cleaned_aliases = _dedupe_alias_list(
+                raw_aliases,
+                excluded_tokens=[hero_name, entry.get("title", ""), entry.get("en_name", "")],
+            )
+
+        alias_map[hero_name] = cleaned_aliases
+
+    return alias_map
+
+
 if getattr(sys, 'frozen', False):
     _seed_runtime_dir(BUNDLED_CONFIG_DIR, CONFIG_DIR)
     _seed_runtime_dir(BUNDLED_ASSET_DIR, ASSET_DIR)
 
-# 日志防膨胀处理，最大一兆字节，保留一份备份
+# 日志输出做滚动保留。
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -111,12 +179,9 @@ def _normalize_name(name: str) -> str:
 
 
 def _get_champion_image_url(en_name: str, version: str) -> list:
-    # 生成英雄头像图片的多个候选地址。
-    #
-    # 返回的地址列表按优先级从高到低排序，并兼容不同命名差异。
+    # 生成英雄头像候选地址，按优先级排序。
     urls = []
 
-    # ========== 强制编号映射表：处理命名差异 ==========
     force_id_mapping = {
         "Fiddlesticks": "FiddleSticks",
         "Belveth": "BelVeth",
@@ -148,18 +213,14 @@ def _get_champion_image_url(en_name: str, version: str) -> list:
         "Zyra": "Zyra",
     }
 
-    # 标准格式
     urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{en_name}.png")
-    # 小写格式，兼容部分资源命名
     urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{en_name.lower()}.png")
 
-    # 尝试使用强制映射版本
     if en_name in force_id_mapping:
         mapped_name = force_id_mapping[en_name]
         urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{mapped_name}.png")
         urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{mapped_name.lower()}.png")
 
-    # 特殊英雄名称映射，用于处理已知差异
     special_mappings = {
         "MonkeyKing": "monkeking",  # 旧版 ID
         "AurelionSol": "aurelionsol",  # 连写版本
@@ -179,7 +240,6 @@ def _get_champion_image_url(en_name: str, version: str) -> list:
         alt_name = special_mappings[en_name]
         urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{alt_name}.png")
 
-    # 备用资源源
     for alt_name in [en_name, en_name.lower(), special_mappings.get(en_name, en_name).lower()]:
         urls.append(f"https://cdn.communitydragon.org/{version}/champion/{alt_name}/image")
 
@@ -188,15 +248,6 @@ def _get_champion_image_url(en_name: str, version: str) -> list:
 
 def _download_champion_image(session, version: str, en_name: str, asset_path: str) -> bool:
     # 下载英雄头像图片。
-    #
-    # 参数：
-    # session：请求会话对象
-    # version：游戏版本号
-    # en_name：英雄英文名
-    # asset_path：保存路径
-    #
-    # 返回：
-    # 是否下载成功
     urls = _get_champion_image_url(en_name, version)
     for img_url in urls:
         try:
@@ -210,9 +261,8 @@ def _download_champion_image(session, version: str, en_name: str, asset_path: st
     return False
 
 
-# ================= 有效期缓存机制 =================
 _last_sync_time = 0
-SYNC_TTL = 3600  # 缓存有效期：1 小时
+SYNC_TTL = 3600
 _sync_lock = threading.Lock()
 
 def get_advanced_session():
@@ -263,14 +313,20 @@ def sync_hero_data():
             resp = resp_raw.json()
             if not isinstance(resp, dict) or 'data' not in resp:
                 raise ValueError(f"官方 API 返回数据格式异常，缺少 'data' 节点：{type(resp)}")
+            existing_aliases = _load_existing_champion_aliases()
             core_data = {}
             for v in resp['data'].values():
                 if not all(k in v for k in ('key', 'name', 'title', 'id')):
                     continue
+                hero_name = v['name']
                 core_data[str(v['key'])] = {
-                    "name": v['name'],
+                    "name": hero_name,
                     "title": v['title'],
-                    "en_name": v['id']
+                    "en_name": v['id'],
+                    "aliases": _dedupe_alias_list(
+                        existing_aliases.get(hero_name, []),
+                        excluded_tokens=[hero_name, v['title'], v['id']],
+                    )
                 }
             aug_sources = [
                 "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json",

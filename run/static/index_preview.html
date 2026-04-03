@@ -34,6 +34,11 @@
             border-color: #fff;
             z-index: 10;
         }
+
+        .preview-match {
+            outline: 2px solid rgba(59, 130, 246, 0.85);
+            box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3), 0 0 22px rgba(59, 130, 246, 0.18);
+        }
     </style>
 </head>
 <body class="min-h-screen p-6 pb-20">
@@ -46,91 +51,101 @@
         
         <div class="relative w-full max-w-2xl group">
             <div class="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
-            <input type="text" placeholder="搜英雄看海克斯... (支持拼音如: ys / 外号如: 快乐风男)" 
+            <input id="previewSearchInput" type="text" placeholder="搜英雄看海克斯... (支持拼音如: ys / 外号如: 快乐风男)" 
                    class="relative w-full bg-[#181825] border-2 border-gray-700 text-lg rounded-full py-4 px-6 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-all shadow-xl">
             <span class="absolute right-6 top-4 text-2xl opacity-70">搜索</span>
         </div>
         <p class="text-xs text-gray-500 font-mono tracking-widest">实时数据已应用「微量贝叶斯平滑+Z-Score」提纯</p>
+        <p id="previewSearchStatus" class="text-xs text-blue-300/80 font-mono tracking-widest">输入 ys、亚索、Yasuo 或 快乐风男</p>
     </header>
 
     <main class="max-w-5xl mx-auto space-y-3">
 
-        <div class="flex bg-[#181825] rounded-xl border border-gray-800 shadow-lg overflow-hidden">
+        <div class="flex bg-[#181825] rounded-xl border border-gray-800 shadow-lg overflow-hidden" data-preview-row>
             <div class="w-24 shrink-0 tier-op flex flex-col items-center justify-center font-black text-2xl shadow-[2px_0_10px_rgba(0,0,0,0.5)] z-10">
                 <span>夯</span>
                 <span class="text-[10px] font-bold opacity-70 mt-1 uppercase tracking-wider">God Tier</span>
             </div>
             <div class="flex-1 p-3 flex flex-wrap gap-3 bg-gradient-to-r from-[rgba(255,78,80,0.05)] to-transparent">
-                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block">
+                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block"
+                   data-preview-card data-preview-name="亚索" data-preview-terms="ys,yasuo,亚索,快乐风男,疾风剑豪">
                     <img src="https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/Yasuo.png" class="w-full h-full object-cover">
                     <div class="absolute bottom-0 inset-x-0 bg-black/80 text-center text-[10px] font-bold text-yellow-400 py-0.5 backdrop-blur-sm">58.2%</div>
                 </a>
-                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block">
+                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block"
+                   data-preview-card data-preview-name="萨勒芬妮" data-preview-terms="sfl,seraphine,萨勒芬妮,轮椅女">
                     <img src="https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/Seraphine.png" class="w-full h-full object-cover">
                     <div class="absolute bottom-0 inset-x-0 bg-black/80 text-center text-[10px] font-bold text-yellow-400 py-0.5 backdrop-blur-sm">57.9%</div>
                 </a>
             </div>
         </div>
 
-        <div class="flex bg-[#181825] rounded-xl border border-gray-800 shadow-lg overflow-hidden opacity-95">
+        <div class="flex bg-[#181825] rounded-xl border border-gray-800 shadow-lg overflow-hidden opacity-95" data-preview-row>
             <div class="w-24 shrink-0 tier-s flex flex-col items-center justify-center font-bold text-xl shadow-[2px_0_10px_rgba(0,0,0,0.3)] z-10">
                 <span>顶级</span>
                 <span class="text-[9px] opacity-80 mt-1 uppercase tracking-wider">Top</span>
             </div>
             <div class="flex-1 p-3 flex flex-wrap gap-3">
-                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block">
+                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block"
+                   data-preview-card data-preview-name="金克丝" data-preview-terms="jks,jinx,金克丝,暴走萝莉">
                     <img src="https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/Jinx.png" class="w-full h-full object-cover">
                     <div class="absolute bottom-0 inset-x-0 bg-black/70 text-center text-[10px] font-bold text-green-400 py-0.5">53.5%</div>
                 </a>
-                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block">
+                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block"
+                   data-preview-card data-preview-name="墨菲特" data-preview-terms="mf,malphite,墨菲特,石头人">
                     <img src="https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/Malphite.png" class="w-full h-full object-cover">
                     <div class="absolute bottom-0 inset-x-0 bg-black/70 text-center text-[10px] font-bold text-green-400 py-0.5">52.8%</div>
                 </a>
             </div>
         </div>
 
-        <div class="flex bg-[#181825] rounded-xl border border-gray-800 shadow-lg overflow-hidden opacity-90">
+        <div class="flex bg-[#181825] rounded-xl border border-gray-800 shadow-lg overflow-hidden opacity-90" data-preview-row>
             <div class="w-24 shrink-0 tier-a flex flex-col items-center justify-center font-bold text-lg z-10">
                 <span>人上人</span>
                 <span class="text-[9px] opacity-80 mt-1 uppercase tracking-wider">Elite</span>
             </div>
             <div class="flex-1 p-3 flex flex-wrap gap-3">
-                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block">
+                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block"
+                   data-preview-card data-preview-name="伊泽瑞尔" data-preview-terms="ez,ezreal,伊泽瑞尔,探险家">
                     <img src="https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/Ezreal.png" class="w-full h-full object-cover">
                     <div class="absolute bottom-0 inset-x-0 bg-black/70 text-center text-[10px] font-bold text-blue-300 py-0.5">50.5%</div>
                 </a>
-                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block">
+                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block"
+                   data-preview-card data-preview-name="李青" data-preview-terms="ms,leesin,lee sin,李青,盲僧,瞎子">
                     <img src="https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/LeeSin.png" class="w-full h-full object-cover">
                     <div class="absolute bottom-0 inset-x-0 bg-black/70 text-center text-[10px] font-bold text-blue-300 py-0.5">50.1%</div>
                 </a>
             </div>
         </div>
 
-        <div class="flex bg-[#181825] rounded-xl border border-gray-800 shadow-lg overflow-hidden opacity-80 grayscale-[30%]">
+        <div class="flex bg-[#181825] rounded-xl border border-gray-800 shadow-lg overflow-hidden opacity-80 grayscale-[30%]" data-preview-row>
             <div class="w-24 shrink-0 tier-npc flex flex-col items-center justify-center font-bold text-lg z-10">
                 <span class="tracking-widest">npc</span>
                 <span class="text-[9px] opacity-60 mt-1 uppercase tracking-wider">Average</span>
             </div>
             <div class="flex-1 p-3 flex flex-wrap gap-3 bg-gray-900/30">
-                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block opacity-80 hover:opacity-100">
+                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block opacity-80 hover:opacity-100"
+                   data-preview-card data-preview-name="薇恩" data-preview-terms="vn,vayne,薇恩,暗夜猎手">
                     <img src="https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/Vayne.png" class="w-full h-full object-cover">
                     <div class="absolute bottom-0 inset-x-0 bg-black/70 text-center text-[10px] font-bold text-gray-400 py-0.5">48.5%</div>
                 </a>
-                 <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block opacity-80 hover:opacity-100">
+                 <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block opacity-80 hover:opacity-100"
+                    data-preview-card data-preview-name="阿卡丽" data-preview-terms="akali,阿卡丽,离群之刺">
                     <img src="https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/Akali.png" class="w-full h-full object-cover">
                     <div class="absolute bottom-0 inset-x-0 bg-black/70 text-center text-[10px] font-bold text-gray-400 py-0.5">46.2%</div>
                 </a>
             </div>
         </div>
 
-        <div class="flex bg-[#11111b] rounded-xl border border-red-900/50 shadow-lg overflow-hidden opacity-60 grayscale-[70%] hover:grayscale-0 transition-all duration-300">
+        <div class="flex bg-[#11111b] rounded-xl border border-red-900/50 shadow-lg overflow-hidden opacity-60 grayscale-[70%] hover:grayscale-0 transition-all duration-300" data-preview-row>
             <div class="w-24 shrink-0 tier-trash flex flex-col items-center justify-center font-bold text-2xl z-10">
                 <span>拉</span>
                 <span class="text-[9px] opacity-80 mt-1 uppercase tracking-wider">Trash</span>
             </div>
             <div class="flex-1 p-3 flex flex-wrap gap-3 bg-red-900/10 relative overflow-hidden">
                 <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc0JyBoZWlnaHQ9JzQnPjxyZWN0IHdpZHRoPSc0JyBoZWlnaHQ9JzQnIGZpbGw9JyNmZmYnIGZpbGwtb3BhY2l0eT0nMC4wNScvPjwvc3ZnPg==')] opacity-20 pointer-events-none"></div>
-                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block z-10">
+                <a href="#" class="champ-avatar relative w-14 h-14 rounded-lg overflow-hidden border-2 border-transparent cursor-pointer block z-10"
+                   data-preview-card data-preview-name="悠米" data-preview-terms="yuumi,悠米,魔法猫咪">
                     <img src="https://ddragon.leagueoflegends.com/cdn/14.3.1/img/champion/Yuumi.png" class="w-full h-full object-cover">
                     <div class="absolute bottom-0 inset-x-0 bg-red-900/90 text-center text-[10px] font-bold text-red-300 py-0.5">42.1%</div>
                 </a>
@@ -138,5 +153,175 @@
         </div>
 
     </main>
+      <script>
+          (() => {
+              const input = document.getElementById('previewSearchInput');
+              const status = document.getElementById('previewSearchStatus');
+              const rows = Array.from(document.querySelectorAll('[data-preview-row]'));
+              const aliasLookup = new Map();
+
+              function normalize(value) {
+                  return String(value || '')
+                      .toLowerCase()
+                      .replace(/[\s·_\-()/【】\[\]（）]/g, '')
+                      .trim();
+              }
+
+              function matchesToken(token, normalizedQuery) {
+                  if (!token || !normalizedQuery) {
+                      return false;
+                  }
+                  if (token === normalizedQuery) {
+                      return true;
+                  }
+                  if (normalizedQuery.length === 1) {
+                      return token.includes(normalizedQuery);
+                  }
+                  if (normalizedQuery.length <= 2) {
+                      return token.startsWith(normalizedQuery);
+                  }
+                  return token.includes(normalizedQuery);
+              }
+
+              function registerAliasBucket(record) {
+                  const rawTerms = [
+                      record.heroName,
+                      record.title,
+                      record.enName,
+                      ...(Array.isArray(record.aliases) ? record.aliases : []),
+                  ];
+                  const terms = rawTerms.map(normalize).filter(Boolean);
+                  if (terms.length === 0) {
+                      return;
+                  }
+
+                  terms.forEach((term) => {
+                      const bucket = aliasLookup.get(term) || new Set();
+                      terms.forEach((item) => bucket.add(item));
+                      aliasLookup.set(term, bucket);
+                  });
+              }
+
+              function loadAliasPayload() {
+                  return fetch('/api/champion_aliases')
+                      .then((res) => (res.ok ? res.json() : null))
+                      .catch(() => null)
+                      .then((payload) => {
+                          if (Array.isArray(payload) && payload.length > 0) {
+                              return payload;
+                          }
+
+                          return fetch('../config/Champion_Core_Data.json')
+                              .then((res) => (res.ok ? res.json() : {}))
+                              .catch(() => ({}))
+                              .then((fallbackData) => {
+                                  if (!fallbackData || typeof fallbackData !== 'object') {
+                                      return [];
+                                  }
+
+                                  return Object.values(fallbackData).map((entry) => ({
+                                      title: entry.name || '',
+                                      heroName: entry.title || '',
+                                      enName: entry.en_name || '',
+                                      aliases: Array.isArray(entry.aliases) ? entry.aliases : [],
+                                  }));
+                              });
+                      });
+              }
+
+              loadAliasPayload()
+                  .then((payload) => {
+                      if (!Array.isArray(payload)) return;
+                      payload.forEach(registerAliasBucket);
+                      applySearch(input ? input.value : '');
+                  })
+                  .catch(() => {});
+
+              function matchesCard(card, normalizedQuery) {
+                  const terms = String(card.dataset.previewTerms || '')
+                      .split(',')
+                      .map(normalize)
+                      .filter(Boolean);
+                  const heroName = normalize(card.dataset.previewName || '');
+                  const title = normalize(card.getAttribute('title') || '');
+                  const aliasTerms = new Set();
+                  [heroName, title].forEach((key) => {
+                      const bucket = aliasLookup.get(key);
+                      if (bucket) {
+                          bucket.forEach((term) => aliasTerms.add(term));
+                      }
+                  });
+                  const searchBlob = [heroName, title, ...terms, ...aliasTerms].filter(Boolean);
+                  return searchBlob.some((term) => matchesToken(term, normalizedQuery));
+              }
+
+            function applySearch(rawQuery) {
+                const normalizedQuery = normalize(rawQuery);
+                let firstMatch = null;
+
+                rows.forEach((row) => {
+                    const cards = Array.from(row.querySelectorAll('[data-preview-card]'));
+                    let rowHasMatch = false;
+
+                    cards.forEach((card) => {
+                        const matched = !normalizedQuery || matchesCard(card, normalizedQuery);
+                        card.classList.toggle('hidden', !matched);
+                        card.classList.toggle('preview-match', matched && !!normalizedQuery);
+                        if (matched) {
+                            rowHasMatch = true;
+                            if (!firstMatch) firstMatch = card;
+                        }
+                    });
+
+                    row.classList.toggle('hidden', !!normalizedQuery && !rowHasMatch);
+                });
+
+                if (status) {
+                    if (!normalizedQuery) {
+                        status.textContent = '输入 ys、亚索、Yasuo 或 快乐风男';
+                    } else if (firstMatch) {
+                        const heroName = firstMatch.dataset.previewName || '目标英雄';
+                        status.textContent = `已匹配：${heroName}`;
+                    } else {
+                        status.textContent = '未找到匹配英雄';
+                    }
+                }
+
+                if (firstMatch && normalizedQuery) {
+                    firstMatch.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                }
+            }
+
+            if (input) {
+                input.addEventListener('compositionstart', () => {
+                    input.dataset.composing = '1';
+                });
+                input.addEventListener('compositionend', () => {
+                    input.dataset.composing = '';
+                    applySearch(input.value);
+                });
+                input.addEventListener('input', () => {
+                    if (input.dataset.composing === '1') return;
+                    applySearch(input.value);
+                });
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (e.isComposing || input.dataset.composing === '1') {
+                            input.dataset.composing = '';
+                            applySearch(e.target.value);
+                            return;
+                        }
+                        applySearch(e.target.value);
+                    }
+                });
+                input.addEventListener('blur', () => {
+                    input.dataset.composing = '';
+                });
+            }
+
+            applySearch('');
+        })();
+    </script>
 </body>
 </html>

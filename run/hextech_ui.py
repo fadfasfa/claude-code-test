@@ -20,7 +20,7 @@ from PIL import Image, ImageTk
 from datetime import datetime
 from hero_sync import BASE_DIR, ASSET_DIR, CONFIG_DIR
 
-# 网页服务端口与后端服务保持一致，可通过环境变量覆盖。
+# 网页服务端口，可通过环境变量覆盖。
 SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
 _WEB_BASE = f"http://127.0.0.1:{SERVER_PORT}"
 
@@ -41,7 +41,7 @@ def _resolve_web_base(timeout: float = 5.0) -> str:
         time.sleep(0.1)
     return f"http://127.0.0.1:{SERVER_PORT}"
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequest警告)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 os.makedirs(ASSET_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ class HextechUI:
         self.last_click_time = 0
         self.img_write_lock = threading.Lock()
         self.downloading_imgs = set()
-        self._df_lock = threading.Lock()  # 保护 self.df 的多线程读写。
+        self._df_lock = threading.Lock()  # 保护 self.df 的并发读写。
 
 
         self.web_process = None
@@ -97,7 +97,7 @@ class HextechUI:
         self.start_background_scraper()
 
     def _start_web_server(self):
-    # 在后台启动网页服务，不阻塞界面主线程。
+        # 后台启动网页服务，避免阻塞界面线程。
         try:
             startupinfo = None
             child_env = os.environ.copy()
@@ -208,7 +208,7 @@ class HextechUI:
         if not latest: return pd.DataFrame()
         df = pd.read_csv(latest)
         df.columns = df.columns.str.replace(' ', '')
-        # 动态查找编号列并处理
+        # 查找编号列并规范化格式。
         id_col = None
         for col in df.columns:
             if '英雄ID' in col or 'ID' in col:
@@ -219,11 +219,11 @@ class HextechUI:
         return df
 
     def on_hero_click(self, champ_id, hero_name):
-    # 处理英雄卡片点击。
-    #
-    # 1. 先在终端输出英雄海克斯信息。
-    # 2. 优先请求网页服务的跳转接口。
-    # 3. 如果网页服务不可用，则本地降级打开详情页。
+        # 处理英雄卡片点击。
+        #
+        # 1. 先在终端输出英雄海克斯信息。
+        # 2. 优先请求网页服务的跳转接口。
+        # 3. 如果网页服务不可用，则本地降级打开详情页。
 
         try:
             set_last_hero(hero_name)
@@ -243,8 +243,8 @@ class HextechUI:
         threading.Thread(target=terminal_task, daemon=True).start()
 
         def redirect_task():
-    # 后台发起跳转请求，失败时回退到本地浏览器。
-    # 先尝试让网页服务接管跳转，失败后再走本地兜底。
+            # 后台发起跳转请求，失败时回退到本地浏览器。
+            # 先尝试让网页服务接管跳转，失败后再走本地兜底。
             en_name = self.core_data.get(str(champ_id), {}).get("en_name", "")
             for _ in range(3):
                 web_base = _resolve_web_base(timeout=1.0)
@@ -392,7 +392,7 @@ class HextechUI:
             info = tk.Frame(card, bg="#313244")
             info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-            title = self.core_data.get(item['id'], {}).get('title', '')
+            title = self.core_data.get(str(item['id']), {}).get('title', '')
             full_name = f"{item['name']} {title}".strip() if title else item['name']
 
             tk.Label(info, text=f"[{item['tier']}] {full_name}", font=("Microsoft YaHei", 10, "bold"), fg="#cdd6f4", bg="#313244").pack(anchor="w")
@@ -452,7 +452,7 @@ class HextechUI:
 
 
     def start_background_scraper(self):
-    # 启动每 4 小时循环一次的后台抓取线程。
+        # 启动每 4 小时循环一次的后台抓取线程。
         def scraper_loop():
             while not self.stop_event.is_set():
                 try:

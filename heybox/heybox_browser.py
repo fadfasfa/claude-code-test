@@ -5,14 +5,14 @@ import random
 from pathlib import Path
 from playwright.async_api import async_playwright
 
-# 自动锚定当前脚本所在目录
+# 脚本根目录。
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
-# 自动创建数据目录
+# 确保数据目录存在。
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# 日志配置，使用相对路径
+# 日志输出到控制台和文件。
 logging.basicConfig(
     level=logging.INFO,
     format='[%(levelname)s] %(message)s',
@@ -27,7 +27,6 @@ async def run_scraper():
     async with async_playwright() as p:
         logger.info("[启动] 正在启动 Chromium（便携模式）...")
         
-        # 注入真实环境指纹
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             viewport={'width': 1920, 'height': 1080},
@@ -35,18 +34,15 @@ async def run_scraper():
         )
         page = await context.new_page()
 
-        # 目标：小黑盒《三角洲行动》百科页
         target_url = "https://www.xiaoheihe.cn/wiki/203"
         
         try:
             logger.info(f"[导航] 正在加载 {target_url}...")
             await page.goto(target_url, wait_until="networkidle", timeout=30000)
 
-            # 等待数据渲染
             logger.info("[等待] 正在等待脚本渲染...")
             await page.wait_for_timeout(3000)
 
-            # 执行 DOM 提取逻辑
             content_data = await page.evaluate("""() => {
                 const titles = Array.from(document.querySelectorAll('.wiki-module-title')).map(el => el.innerText);
                 const items = Array.from(document.querySelectorAll('.wiki-item-name')).map(el => el.innerText);
@@ -62,7 +58,6 @@ async def run_scraper():
                     "payload": content_data
                 }
                 
-                # [Relative-Path-Standard] 写入数据文件
                 output_file = DATA_DIR / "heybox_wiki_browser.json"
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(output, f, indent=2, ensure_ascii=False)

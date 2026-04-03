@@ -20,12 +20,12 @@ if !errorlevel! neq 0 (
 
 :: 3. 运行数据更新
 echo ==================================================
-echo [1/2] 正在连接 Stooq 校验最新行情数据...
+echo [1/2] 正在检查本地行情并按需同步增量数据...
 echo ==================================================
 python update_stooq_fast.py
 if !errorlevel! neq 0 (
     color 0C
-    echo [-] 数据同步失败，请检查网络或 Stooq 状态。
+    echo [-] 数据同步失败，请检查网络或数据源状态。
     pause
     exit /b !errorlevel!
 )
@@ -33,7 +33,7 @@ if !errorlevel! neq 0 (
 :: 4. 运行决策引擎
 echo.
 echo ==================================================
-echo [2/2] 数据校验完毕，正在生成决策...
+echo [2/2] 数据准备完毕，正在生成决策...
 echo ==================================================
 python decision_engine.py
 if !errorlevel! neq 0 (

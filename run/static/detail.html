@@ -42,13 +42,10 @@
 
         .list-row {
             transition: all 0.2s;
-            content-visibility: auto;
-            contain-intrinsic-size: 72px;
         }
 
         .hextech-card {
-            content-visibility: auto;
-            contain-intrinsic-size: 180px;
+            /* 保持正常布局，避免滚动时触发浏览器的内容可见性回补。 */
         }
 
         .augment-icon-shell {
@@ -198,10 +195,14 @@
         .scroll-container {
             scrollbar-width: thin;
             scrollbar-color: rgba(137, 180, 250, 0.3) rgba(0, 0, 0, 0.2);
+            overscroll-behavior: contain;
+            overflow-anchor: none;
+            touch-action: pan-y;
+            scrollbar-gutter: stable both-edges;
         }
 
         html {
-            scroll-behavior: smooth;
+            scroll-behavior: auto;
         }
 
         .no-scrollbar::-webkit-scrollbar {
@@ -336,13 +337,13 @@
             <div id="dataContainer" class="flex gap-4 hidden">
                 <div class="w-[45%] flex-shrink-0">
                     <div id="compList" class="flex flex-col gap-4 scroll-container"
-                        style="max-height: 650px; overflow-y: auto; padding-right: 8px;"></div>
+                        style="max-height: 650px; overflow-y: auto; padding-right: 8px; overscroll-behavior: contain; overflow-anchor: none;"></div>
                 </div>
 
                 <div class="w-[55%]">
                     <div id="synergyArticleScroll"
                         class="flex flex-col gap-4 max-h-[650px] overflow-y-auto scroll-container"
-                        style="padding-right: 8px;">
+                        style="padding-right: 8px; overscroll-behavior: contain; overflow-anchor: none;">
                         <div class="glass-panel rounded-xl p-4">
                             <div class="text-sm text-gray-400 text-center">选择左侧海克斯查看联动文章</div>
                         </div>
@@ -737,6 +738,29 @@
             container.innerHTML = html;
         }
 
+        function trapWheelOnScrollContainer(container) {
+            if (!container || container.dataset.wheelTrapBound === '1') {
+                return;
+            }
+
+            container.dataset.wheelTrapBound = '1';
+            container.addEventListener('wheel', (event) => {
+                const scrollTop = container.scrollTop;
+                const maxScrollTop = container.scrollHeight - container.clientHeight;
+                const deltaY = event.deltaY || 0;
+                const scrollingUp = deltaY < 0;
+                const scrollingDown = deltaY > 0;
+                const atTop = scrollTop <= 0;
+                const atBottom = scrollTop >= maxScrollTop - 1;
+                const canScroll = (scrollingUp && !atTop) || (scrollingDown && !atBottom);
+
+                if (!canScroll) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+            }, { passive: false });
+        }
+
         async function loadHextechs() {
             if (!hero) {
                 document.getElementById('loadingSpinner').innerHTML = '<div class="text-red-400">错误：未获取到英雄名称</div>';
@@ -789,6 +813,8 @@
         }
 
         window.onload = () => {
+            trapWheelOnScrollContainer(document.getElementById('compList'));
+            trapWheelOnScrollContainer(document.getElementById('synergyArticleScroll'));
             loadHextechs();
             connectWS();
         };

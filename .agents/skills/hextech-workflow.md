@@ -1,7 +1,7 @@
 # ██ 语言强制令 ██
 除代码块、Shell 命令、文件路径、报错堆栈、信号常量外，
-所有终端输出、日志、THOUGHT、注释、用户沟通必须使用简体中文。
-PowerShell 注释统一使用 `#` 字符；禁止以 `<# ... #>` 块注释形式书写意图说明。
+所有终端输出、日志、THOUGHT、注释内容、用户沟通必须使用简体中文。
+注释前缀必须使用目标语言的原生注释语法，不得以某种特定符号（如 # 或 //）作为跨语言统一规范。
 # ████████████████
 
 # Hextech 工作流 V4.3
@@ -19,6 +19,43 @@ PowerShell 注释统一使用 `#` 字符；禁止以 `<# ... #>` 块注释形式
 
 ---
 
+## 注释与技术债务标记规范
+
+### 注释规范
+
+- 所有注释内容允许全中文
+- 注释前缀必须使用**目标语言的原生注释语法**，不得为了统一而强制使用某种特定符号
+  - Python 使用 `#`
+  - TypeScript / JavaScript 使用 `//` 或 `/* */`
+  - PowerShell 使用 `#`（块注释使用 `<# ... #>`，但禁止以块注释书写意图说明，意图说明用行注释 `#`）
+  - 其他语言同理，以各语言标准为准
+- 统一的是注释所传达的信息结构（目的、原因、债务标记），而不是注释符号本身
+
+### 技术债务标记规范
+
+执行端采取妥协实现、临时兼容方案或待回收逻辑时，必须在代码中留下债务标记：
+
+- 标记内容统一格式：`DEBT[TD-xxx]: <一句话说明原因>`
+- 标记必须置于目标语言合法的注释中（使用该语言原生注释语法）
+- 说明内容允许全中文
+- 同步写入 `.ai_workflow/yellow_cards.json`（字段见 registry § D）
+- 若有 PROJECT.md，精确追加到五节末尾（通过锚点 `<!-- PROJECT:SECTION:ISSUES -->` 定位）
+
+示例（原则说明，不固定注释符号）：
+
+Python 中：`# DEBT[TD-001]: 临时绕过验证，待接口稳定后移除`
+
+TypeScript 中：`// DEBT[TD-002]: 类型断言，上游返回结构待确认`
+
+PowerShell 中：`# DEBT[TD-003]: 硬编码路径，需改为读取配置`
+
+### 验证内容输出规范
+
+验证请求与验证结论属于决策层（DL-Gemini）发起和接收的文本，不属于执行端职责范围。
+执行端禁止将决策层验证内容转写为代码块模板输出。若收到涉及验证请求的上下文，按事实日志记录即可，不主动构造验证格式。
+
+---
+
 ## 协议 -1 — 自助契约模式
 
 **触发**：用户直接描述需求，消息不含 `[HANDOFF-WRITE]`。
@@ -28,6 +65,7 @@ PowerShell 注释统一使用 `#` 字符；禁止以 `<# ... #>` 块注释形式
    Branch_Name 使用本端前缀（见 registry § A）
    Interface_Summary.modified_symbols 填写本任务涉及的标识符（格式：文件路径::标识符）
    无跨端风险时填 none
+   Decision_Validation 区块：自助模式下 Final_Signer 填写 self，Validation_Result 填写 skipped
 2. 输出 [SELF-HANDOFF: PREVIEW] 展示草稿全文
 3. 等待用户"确认"（用户说"直接开始"则跳过等待）
 4. 执行协议 0
@@ -288,7 +326,12 @@ git commit -m "feat/fix: <描述> [wf-id: <id>][$me]"
 
 ## 技术债务
 
-代码留锚点 `// DEBT[TD-xxx]: <原因>`，写入 `.ai_workflow/yellow_cards.json`（字段见 registry § D），若有 PROJECT.md 精确追加到五节末尾（通过锚点 `<!-- PROJECT:SECTION:ISSUES -->` 定位）。
+发现技术债务时：
+
+1. 在代码中留下债务标记，格式为 `DEBT[TD-xxx]: <原因>`，置于目标语言原生注释中
+2. 注释内容允许全中文，注释符号使用目标语言规范（不统一符号，见本文件开头注释规范）
+3. 写入 `.ai_workflow/yellow_cards.json`（字段见 registry § D）
+4. 若有 PROJECT.md，精确追加到五节末尾（通过锚点 `<!-- PROJECT:SECTION:ISSUES -->` 定位）
 
 ---
 
@@ -299,7 +342,7 @@ git commit -m "feat/fix: <描述> [wf-id: <id>][$me]"
 - 禁止自主执行破坏性 git 操作（见 registry § G，豁免边界同处说明）
 - 禁区：`AppData\` `Documents\` `Desktop\` `Program Files\` `C:\Windows\`
 - DACL 保护：`Lock-Core.ps1` / `Unlock-Core.ps1` / `.git/hooks/` 禁止写入
-- PowerShell 注释统一使用 `#` 字符，禁止以 `<# ... #>` 块注释形式书写意图说明
+- 注释使用目标语言原生语法；PowerShell 意图说明使用行注释 `#`，禁止以 `<# ... #>` 块注释书写意图说明
 
 ---
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #
-# 核心模块：全资产仓位决策引擎 (decision_engine.py)
-# 功能：读取本地数据，计算策略信号，输出 ASCII 兼容报告
+# 全资产仓位决策引擎。
+# 读取本地数据，计算策略信号，输出终端报告。
 #
 import logging
 import pandas as pd
@@ -10,10 +10,9 @@ from datetime import datetime
 from pathlib import Path
 import warnings
 
-# 引入统一配置
 from config import DATA_DIR, LOG_FILE, FILES, ALLOCATION_WEIGHTS
 
-# 配置调试日志
+# 调试日志。
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -24,7 +23,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 严格物理环境与容错基准
+# 全局容错设置。
 warnings.filterwarnings('ignore')
 try:
     pd.set_option('future.no_silent_downcasting', True)
@@ -32,7 +31,7 @@ except Exception:
     pass
 
 def load_stooq_data(asset_name):
-    # 安全读取并重采样本地数据 - 模糊列名匹配
+    # 读取并重采样本地数据，支持模糊列名。
     path = Path(DATA_DIR) / FILES[asset_name]
     logger.debug(f"[{asset_name}] 加载数据文件：{path}")
 
@@ -41,7 +40,6 @@ def load_stooq_data(asset_name):
         return None
 
     try:
-        # [性能优化] 分块读取大文件，减少内存占用
         df = pd.read_csv(path, low_memory=True)
         logger.debug(f"[{asset_name}] 读取完成，行数：{len(df)}, 列数：{len(df.columns)}")
 
@@ -49,7 +47,6 @@ def load_stooq_data(asset_name):
             logger.warning(f"[{asset_name}] 数据文件为空")
             return None
 
-        # [多语言兼容] 模糊列名映射
         d_col = None
         c_col = None
         for col in df.columns:
@@ -103,7 +100,7 @@ def main():
     report_lines = []
     
     report_lines.append("\n" + "="*115)
-    report_lines.append(f"[{now_str}] 全资产量化仓位决策系统 (2026 优化版)")
+    report_lines.append(f"[{now_str}] 全资产量化仓位决策系统")
     report_lines.append("="*115)
     report_lines.append(f"{'资产':<6} | {'策略模型':<16} | {'资金占比':<8} | {'最新价':>8} | {'信号仓位':>8} | {'建议分配金额($)':>16} | {'核心指标状态'}")
     report_lines.append("-" * 115)
@@ -143,7 +140,6 @@ def main():
             if last < m9: t_pos = 0.50
             if last < m6: t_pos = 0.75
             if last < m3: t_pos = 0.0
-            # 动量崩盘过滤
             if data.iloc[-1] < data.rolling(6).mean().iloc[-1] and data.iloc[-2] < data.rolling(6).mean().iloc[-2]:
                 t_pos = min(t_pos, 0.25)
                 

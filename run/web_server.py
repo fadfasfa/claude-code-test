@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 from html import unescape
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -29,21 +30,21 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from data_processor import process_champions_data, process_hextechs_data
-from hextech_query import get_latest_csv
+from hextech_query import get_latest_csv, load_hero_aliases
 from hero_sync import BASE_DIR, CONFIG_DIR, RESOURCE_DIR, load_champion_core_data
 from backend_refresh import refresh_backend_data
 
-# 记录本模块的运行日志。
+# 模块日志。
 logger = logging.getLogger(__name__)
 
-# 网页服务默认监听 8000，必要时可通过环境变量覆盖。
+# 网页服务默认端口，可通过环境变量覆盖。
 SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
 WEB_PORT_FILE = os.path.join(CONFIG_DIR, "web_server_port.txt")
 ACTIVE_WEB_PORT = SERVER_PORT
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
 AUGMENT_ICON_SOURCE_FILE = os.path.join(CONFIG_DIR, "augment_icon_source.txt")
 BROWSER_PROFILE_DIR = os.path.join(CONFIG_DIR, "browser_profile")
-# 增强器图标来源标记，用于判断是否需要重新预取资源。
+# 图标来源标记。
 AUGMENT_ICON_SOURCE_ID = "apexlol"
 APEXLOL_HEXTECH_INDEX_URL = "https://apexlol.info/zh/hextech/"
 APEXLOL_HEXTECH_IMAGE_URL = "https://apexlol.info/images/hextech/{slug}.webp"
@@ -162,13 +163,11 @@ def _build_detail_url(hero_id: str, hero_name: str, en_name: str) -> str:
         f"&auto=1"
     )
 
-# 延迟加载英雄核心数据缓存。
-
 _champion_core_cache: Optional[dict] = None
 
 
 def _ensure_champion_cache() -> dict:
-    # 从共享缓存中读取英雄核心数据，减少重复读盘。
+    # 懒加载英雄核心数据，减少重复读取。
     global _champion_core_cache
     if _champion_core_cache is None:
         try:
@@ -180,7 +179,7 @@ def _ensure_champion_cache() -> dict:
 
 
 def get_champion_name(champ_id: str) -> str:
-    # 根据英雄编号读取中文名。
+    # 根据英雄 ID 读取中文名。
     cache = _ensure_champion_cache()
     champ_id_str = str(champ_id)
     if champ_id_str in cache:
@@ -189,7 +188,7 @@ def get_champion_name(champ_id: str) -> str:
 
 
 def get_champion_info(champ_id: str) -> Tuple[str, str]:
-    # 同时返回中文名和英文名，供页面和回退逻辑共用。
+    # 返回中文名和英文名。
     cache = _ensure_champion_cache()
     champ_id_str = str(champ_id)
     if champ_id_str in cache:
@@ -199,7 +198,7 @@ def get_champion_info(champ_id: str) -> Tuple[str, str]:
 
 
 def _get_ddragon_version() -> str:
-    # 从本地版本文件读取版本号，失败时回退默认值。
+    # 读取本地版本号，失败时使用默认值。
     try:
         with open(VERSION_FILE, "r", encoding="utf-8") as f:
             version = f.read().strip()
@@ -220,6 +219,33 @@ def _normalize_augment_name(name: str) -> str:
     for token in (" ", "-", "_", "(", ")", "[", "]", "'", '"', "."):
         name = name.replace(token, "")
     return name
+
+
+def _normalize_alias_token(value: str) -> str:
+    token = unicodedata.normalize("NFKC", str(value or "")).lower().strip()
+    return "".join(ch for ch in token if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def _dedupe_alias_tokens(*groups) -> List[str]:
+    seen = set()
+    result: List[str] = []
+    for group in groups:
+        if not group:
+            continue
+        if isinstance(group, (str, bytes)):
+            values = [group]
+        else:
+            values = list(group)
+        for alias in values:
+            alias_text = str(alias).strip()
+            if not alias_text:
+                continue
+            token = _normalize_alias_token(alias_text)
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            result.append(alias_text)
+    return result
 
 
 def _normalize_augment_filename(value: str) -> str:
@@ -649,7 +675,7 @@ def _urllib3_disable_warnings():
     # 忽略本地客户端自签名证书告警。
     try:
         import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequest警告)
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     except Exception:
         pass
 
@@ -939,6 +965,39 @@ async def get_asset(filename: str):
 async def api_champions():
     df = get_df()
     return JSONResponse(content=process_champions_data(df))
+
+
+@app.get("/api/champion_aliases")
+async def api_champion_aliases():
+    # 返回英雄别名索引，供前端搜索与终端保持一致。
+    try:
+        core_data = load_champion_core_data()
+        alias_map = load_hero_aliases()
+        payload = []
+
+        for value in core_data.values():
+            hero_name = value.get("name", "")
+            title = value.get("title", "")
+            en_name = value.get("en_name", "")
+            aliases = _dedupe_alias_tokens(
+                [hero_name, en_name, title],
+                value.get("aliases", []),
+                alias_map.get(hero_name, []),
+                alias_map.get(title, []),
+            )
+
+            payload.append({
+                "heroName": hero_name,
+                "title": title,
+                "enName": en_name,
+                "aliases": aliases,
+            })
+
+        payload.sort(key=lambda item: item.get("heroName", ""))
+        return JSONResponse(content=payload)
+    except Exception as e:
+        logger.warning("英雄别名索引读取失败：%s", e)
+        return JSONResponse(content=[])
 
 @app.get("/api/champion/{name}/hextechs")
 async def api_champion_hextechs(name: str):

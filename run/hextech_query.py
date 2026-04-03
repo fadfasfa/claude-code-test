@@ -4,14 +4,12 @@ import json
 import sys
 import pandas as pd
 import unicodedata
-from hero_sync import BASE_DIR, CONFIG_DIR
+from hero_sync import BASE_DIR, CONFIG_DIR, CORE_DATA_FILE
 
-if os.name == 'nt': os.system('')  # 启用 Windows 终端的颜色输出支持
+if os.name == 'nt': os.system('')  # 启用 Windows 终端颜色输出。
 RESET = "\033[0m"
 
-# ==================================================
-# 延迟加载基础数据，降低启动耗时
-# ==================================================
+# 延迟加载基础数据，降低启动耗时。
 CORE_DATA = None
 CHAMP_NAME_MAP = {}
 
@@ -31,6 +29,29 @@ def init_core_data():
 
 GLOBAL_LAST_HERO = None
 _alias_cache = None
+
+
+def _normalize_alias_token(value):
+    token = unicodedata.normalize("NFKC", str(value or "")).lower().strip()
+    return "".join(ch for ch in token if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def _unique_alias_tokens(*groups):
+    seen = set()
+    result = []
+    for group in groups:
+        if not group:
+            continue
+        if isinstance(group, (str, bytes)):
+            values = [group]
+        else:
+            values = list(group)
+        for value in values:
+            token = _normalize_alias_token(value)
+            if token and token not in seen:
+                seen.add(token)
+                result.append(token)
+    return result
 
 def set_last_hero(name):
     global GLOBAL_LAST_HERO
@@ -58,7 +79,7 @@ def get_latest_csv():
     return files[0]
 
 def get_char_width(char):
-    # 全角和宽字符按 2 计算，其余按 1 计算
+    # 全角和宽字符按 2 计算，其余按 1 计算。
     return 2 if unicodedata.east_asian_width(char) in ('F', 'W') else 1
 
 def align_text(text, width):
@@ -108,42 +129,74 @@ def add_new_alias(new_alias, official_names):
     print("请选择您的操作：\n [任意键] 只是打错了，重新输入\n [2] 我要将该词添加为某个英雄的新外号")
     try:
         choice = input("请 请选择 (2/任意键): ").strip()
-    except (EOFError, KeyboardInterrupt): return None
-    if choice != '2': return None
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if choice != '2':
+        return None
 
     target_input = input("请 请输入该英雄的官方名称或系统中已有的外号 (例如: 皇子): ").strip()
     target_hero = get_official_hero_name(target_input, official_names)
 
-    if not target_hero: return None
+    if not target_hero:
+        return None
 
     confirm = input(f"请 确认要将 \"{new_alias}\" 永久添加为（{target_hero}）的外号吗？(y/n): ").strip().lower()
     if confirm == 'y':
-        global _alias_cache
-        aliases = load_hero_aliases()
-        if target_hero not in aliases: aliases[target_hero] = []
-        if new_alias not in aliases[target_hero]:
-            aliases[target_hero].append(new_alias)
-        with open(os.path.join(CONFIG_DIR, "hero_aliases.json"), "w", encoding="utf-8") as f:
-            json.dump(aliases, f, ensure_ascii=False, indent=4)
-        _alias_cache = None  # 状态锁定：必须逐字保留，确保缓存失效
-        print(f"成功 添加成功！")
+        global CORE_DATA, CHAMP_NAME_MAP, _alias_cache
+        from hero_sync import load_champion_core_data
+
+        try:
+            core_data = load_champion_core_data()
+        except Exception:
+            return None
+
+        target_key = None
+        for champ_id, champ_info in core_data.items():
+            if str(champ_info.get("name", "")).strip() == target_hero:
+                target_key = champ_id
+                break
+
+        if not target_key:
+            return None
+
+        target_entry = dict(core_data.get(target_key, {}))
+        aliases = target_entry.get("aliases", [])
+        if not isinstance(aliases, list):
+            aliases = []
+        if new_alias not in aliases:
+            aliases.append(new_alias)
+        target_entry["aliases"] = aliases
+        core_data[target_key] = target_entry
+
+        tmp_path = CORE_DATA_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(core_data, f, ensure_ascii=False, indent=4)
+        os.replace(tmp_path, CORE_DATA_FILE)
+
+        CORE_DATA = None
+        CHAMP_NAME_MAP = {}
+        _alias_cache = None
+        print("成功 添加成功！")
         return target_hero
     return None
 
+
 def build_default_aliases():
-    print("\n警告 正在检测到英雄外号库丢失，启动智能重建引擎...")
+    print("\n警告 正在重建英雄别名索引...")
     aliases = {}
     try:
         from hero_sync import load_champion_core_data
         core_data = load_champion_core_data()
-        for k, v in core_data.items():
+        for _, v in core_data.items():
             name = v.get("name")
+            if not name:
+                continue
             title = v.get("title")
-            en = v.get("en_name", "").lower()
-            if title:
-                if title not in aliases: aliases[title] = []
-                if name and name not in aliases[title]: aliases[title].append(name)
-                if en and en not in aliases[title]: aliases[title].append(en)
+            en = v.get("en_name", "")
+            aliases[name] = _unique_alias_tokens(
+                [name, title, en],
+                v.get("aliases", []),
+            )
     except Exception as e:
         print(f"警告 核心数据提取失败: {e}")
 
@@ -206,7 +259,7 @@ def build_default_aliases():
         "无双剑姬": ["jj", "fiora", "剑姬"],
         "皮城执法官": ["w", "vi", "蔚"],
         "沙漠皇帝": ["sh", "azir", "沙皇", "黄鸡"],
-        "海妖祭司": ["cm", "illaoi", "触手妈"],
+        "海兽祭司": ["cm", "illaoi", "触手妈"],
         "戏命师": ["jh", "jhin", "瘸子"],
         "暴走萝莉": ["jks", "jinx", "金克丝"],
         "河流之王": ["hm", "tahmkench", "蛤蟆"],
@@ -224,53 +277,122 @@ def build_default_aliases():
         "百裂冥犬": ["nfl", "nafiri", "狗"],
         "炽炎雏龙": ["smd", "smolder", "小火龙"]
     }
-    
+
+    supplemental = {
+        "远古恐惧": ["稻草人", "草人", "fiddlesticks"],
+        "蒸汽机器人": ["机器人", "布里茨", "blitzcrank"],
+        "弗雷尔卓德之心": ["布隆", "braum"],
+        "蜘蛛女皇": ["蜘蛛", "elise"],
+        "无双剑姬": ["剑姬", "fiora"],
+        "潮汐海灵": ["小鱼人", "鱼人", "fizz"],
+        "正义巨像": ["加里奥", "galio"],
+        "海洋之灾": ["船长", "gp", "gangplank"],
+        "灵罗娃娃": ["格温", "剪刀妹", "gwen"],
+        "大发明家": ["大头", "黑默丁格", "heimerdinger"],
+        "海兽祭司": ["触手妈", "俄洛伊", "illaoi"],
+        "戏命师": ["烬", "四哥", "jhin"],
+        "暴走萝莉": ["金克丝", "jinx"],
+        "死亡颂唱者": ["死歌", "karthus"],
+        "虚空行者": ["卡萨丁", "kassadin"],
+        "不祥之刃": ["卡特", "katarina"],
+        "审判天使": ["天使", "kayle"],
+        "狂暴之心": ["凯南", "kennen"],
+        "永猎双子": ["千珏", "kindred"],
+        "暴怒骑士": ["克烈", "kled"],
+        "诡术妖姬": ["妖姬", "leblanc"],
+        "含羞蓓蕾": ["莉莉娅", "lillia"],
+        "冰霜女巫": ["冰女", "lissandra"],
+        "仙灵女巫": ["露露", "lulu"],
+        "米利欧": ["米利欧", "milio"],
+        "铁铠冥魂": ["铁男", "mordekaiser"],
+        "万花通灵": ["妮蔻", "neeko"],
+        "永恒梦魇": ["梦魇", "nocturne"],
+        "不羁之悦": ["尼菈", "nilah"],
+        "圣锤之毅": ["波比", "poppy"],
+        "元素女皇": ["奇亚娜", "qiyana"],
+        "德玛西亚之翼": ["奎因", "quinn"],
+        "炼金男爵": ["烈娜塔", "renata", "renataglasc"],
+        "镕铁少女": ["芮尔", "rell"],
+        "机械公敌": ["兰博", "rumble"],
+        "荒漠皇帝": ["沙皇", "azir", "阿兹尔"],
+        "虚空女皇": ["卑尔维斯", "女皇", "belveth"],
+        "生化魔人": ["扎克", "果冻", "zac"],
+        "影流之主": ["劫", "zed"],
+        "暮光星灵": ["佐伊", "zoe"],
+        "青钢影": ["卡蜜尔", "camille"],
+        "魔蛇之拥": ["蛇女", "cassiopeia"],
+        "皎月女神": ["皎月", "diana"],
+        "双界灵兔": ["阿萝拉", "aurora"],
+        "安蓓萨": ["安蓓萨", "ambessa"],
+        "梅尔": ["梅尔", "mel"],
+        "贝蕾亚": ["贝蕾亚", "briar"],
+        "纳祖芒荣耀": ["奎桑提", "ksante", "k'sante"],
+        "疾风剑豪": ["风男"],
+        "解脱者": ["蒜男"],
+        "腕豪": ["劲夫"],
+        "雪原双子": ["雪人"],
+        "河流之王": ["塔姆"],
+        "盲僧": ["李青"],
+        "皮城女警": ["凯特琳"],
+        "虚空之女": ["Kaisa", "Kai'Sa"],
+        "复仇之矛": ["卡莉丝塔"],
+        "德玛西亚皇子": ["嘉文"],
+        "酒桶": ["古拉加斯"]
+    }
+
+    for official_title, nicks in supplemental.items():
+        aliases.setdefault(official_title, [])
+        aliases[official_title] = _unique_alias_tokens(aliases[official_title], nicks)
+
     for official_title, nicks in hardcoded.items():
-        if official_title in aliases:
-            for nick in nicks:
-                if nick not in aliases[official_title]:
-                    aliases[official_title].append(nick)
-        else:
-            aliases[official_title] = nicks
+        aliases.setdefault(official_title, [])
+        aliases[official_title] = _unique_alias_tokens(aliases[official_title], nicks)
     return aliases
+
 
 def load_hero_aliases():
     global _alias_cache
     if _alias_cache is not None:
         return _alias_cache
-    alias_file = os.path.join(CONFIG_DIR, "hero_aliases.json")
-    if not os.path.exists(alias_file):
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        default_aliases = build_default_aliases()
-        with open(alias_file, "w", encoding="utf-8") as f:
-            json.dump(default_aliases, f, ensure_ascii=False, indent=4)
-        _alias_cache = default_aliases
-        return _alias_cache
-    with open(alias_file, "r", encoding="utf-8") as f:
-        _alias_cache = json.load(f)
+    _alias_cache = build_default_aliases()
     return _alias_cache
+
 
 def get_official_hero_name(user_input, official_names):
     init_core_data()
-    u_in = user_input.lower().strip()
+    u_in = _normalize_alias_token(user_input)
     hero_aliases = load_hero_aliases()
     potential = set()
     for title, aliases in hero_aliases.items():
-        if u_in in aliases:
+        normalized_aliases = [_normalize_alias_token(alias) for alias in aliases]
+        if any(u_in == alias or u_in in alias or alias in u_in for alias in normalized_aliases if alias):
             for official_name in official_names:
-                if title == official_name: potential.add(official_name)
+                if title == official_name:
+                    potential.add(official_name)
     for name in official_names:
         title = CHAMP_NAME_MAP.get(name, "")
-        if u_in in name.lower() or u_in in str(title).lower(): potential.add(name)
+        normalized_name = _normalize_alias_token(name)
+        normalized_title = _normalize_alias_token(title)
+        if (
+            u_in in normalized_name
+            or u_in in normalized_title
+            or normalized_name in u_in
+            or normalized_title in u_in
+        ):
+            potential.add(name)
     results = sorted(list(potential))
-    if not results: return None
-    if len(results) == 1: return results[0]
+    if not results:
+        return None
+    if len(results) == 1:
+        return results[0]
     print(f"\n[?] 匹配到多个英雄:")
-    for i, res in enumerate(results, 1): print(f" [{i}] {res}")
+    for i, res in enumerate(results, 1):
+        print(f" [{i}] {res}")
     try:
         idx = int(input(f"请 请输入序号选择: ")) - 1
         return results[idx]
-    except (ValueError, IndexError): return None
+    except (ValueError, IndexError):
+        return None
 
 def display_hero_hextech(df, hero_name, target_tier=None, is_from_ui=False):
     global GLOBAL_LAST_HERO
