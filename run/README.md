@@ -23,7 +23,7 @@ python hextech_ui.py
 # 仅启动 Web 服务
 python web_server.py
 
-# 终端查询模式
+# 后端数据整理模式
 python hextech_query.py
 ```
 
@@ -50,7 +50,7 @@ run/
 ├── cleanup.py              # 清理脚本
 ├── data_processor.py       # 前端展示数据编排
 ├── hero_sync.py            # 英雄基础数据同步
-├── hextech_query.py        # 终端查询入口
+├── hextech_query.py        # 后端数据整理入口
 ├── hextech_scraper.py      # 海克斯数据抓取
 ├── hextech_ui.py           # 桌面伴生界面
 ├── icon_resolver.py        # 图标映射与缓存
@@ -78,6 +78,29 @@ run/
 - `hextech_ui.py` 会在启动后自动拉起 `web_server.py`，并通过 `config/web_server_port.txt` 读取实际端口，因此桌面模式和 Web 模式共用同一套本地服务。
 - 图标与别名规则由 `alias_utils.py`、`icon_resolver.py` 统一处理，避免多处重复实现。
 - `web_server.py` 启动后会自动检查海克斯图标缓存，缺失时会自动抓取并把结果写入 `config/augment_icon_audit.jsonl`。
+- 详情页海克斯图像链路是“后端 `icon` 字段 -> 本地 `assets/` -> canvas 占位图”三段回退，避免单点资源失败导致整页失图。
+- 右侧联动文章区也复用同一套 `augment_icon_map`，不再硬拼 `./assets/{名称}.png`，避免别名条目继续落到占位图。
+
+## 图像验证
+
+建议在修复后至少抽检以下英雄详情页：
+
+- 星界游神
+- 异画师
+- 诡术妖姬
+- 狂战士
+- 死亡颂唱者
+
+验证标准：
+
+- 每个海克斯条目都能渲染出 `<img>`。
+- 图片无持续 404，最终都能显示本地图标或占位图。
+- 浏览器控制台没有 `Unexpected token`、`createPlaceholder is not defined` 等脚本错误。
+
+本次已验证的样本：
+
+- 左侧海克斯图标链路：星界游神、异画师、诡术妖姬、狂战士、死亡颂唱者
+- 右侧联动文章图标链路：双界灵兔（Aurora）详情页中的 `水豚空降`
 
 ## 清理说明
 

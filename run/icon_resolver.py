@@ -44,6 +44,48 @@ def normalize_augment_filename(value: str) -> str:
     return os.path.basename(str(value).strip()).lower()
 
 
+def find_existing_augment_asset_filename(asset_dir: Optional[str], candidate_filename: str) -> Optional[str]:
+    """在本地资源目录中解析出实际存在的增强器图标文件名。"""
+    asset_dir = _resolve_assets_dir(asset_dir)
+    candidate = normalize_augment_filename(candidate_filename)
+    if not candidate:
+        return None
+
+    direct_path = os.path.join(asset_dir, candidate)
+    if os.path.exists(direct_path):
+        return os.path.basename(direct_path)
+
+    candidate_stem = os.path.splitext(candidate)[0]
+    normalized_candidate_stem = normalize_augment_name(candidate_stem)
+    best_match = None
+    try:
+        for entry in os.scandir(asset_dir):
+            if not entry.is_file():
+                continue
+
+            entry_name = entry.name
+            entry_norm = normalize_augment_filename(entry_name)
+            if entry_norm == candidate:
+                return entry_name
+
+            entry_stem = os.path.splitext(entry_name)[0]
+            entry_stem_norm = normalize_augment_name(entry_stem)
+            if entry_stem_norm == normalized_candidate_stem:
+                return entry_name
+            if (
+                best_match is None
+                and (
+                    entry_stem_norm.startswith(normalized_candidate_stem)
+                    or normalized_candidate_stem.startswith(entry_stem_norm)
+                )
+            ):
+                best_match = entry_name
+    except OSError:
+        return None
+
+    return best_match
+
+
 def load_augment_icon_map(config_dir: Optional[str] = None, force_refresh: bool = False) -> dict:
     global _ICON_MAP_CACHE
     config_dir = _resolve_config_dir(config_dir)
@@ -77,18 +119,24 @@ def load_augment_icon_map(config_dir: Optional[str] = None, force_refresh: bool 
     return _ICON_MAP_CACHE[2]
 
 
-def find_augment_icon_filename(icon_map: dict, lookup_name: str) -> Optional[str]:
+def find_augment_icon_filename(
+    icon_map: dict,
+    lookup_name: str,
+    asset_dir: Optional[str] = None,
+) -> Optional[str]:
     if not icon_map or not lookup_name:
         return None
 
     direct = icon_map.get(lookup_name)
     if direct:
-        return normalize_augment_filename(direct)
+        local_filename = find_existing_augment_asset_filename(asset_dir, direct)
+        return local_filename or normalize_augment_filename(direct)
 
     normalized_lookup = normalize_augment_name(lookup_name)
     for key, value in icon_map.items():
         if normalize_augment_name(key) == normalized_lookup:
-            return normalize_augment_filename(value)
+            local_filename = find_existing_augment_asset_filename(asset_dir, value)
+            return local_filename or normalize_augment_filename(value)
     return None
 
 
@@ -108,7 +156,15 @@ def build_local_augment_icon_url(hextech_name: str, config_dir: Optional[str] = 
                     mapped_value = value
                     break
         if mapped_value:
-            asset_name = str(mapped_value).split("/")[-1].strip()
+            resolved_name = find_existing_augment_asset_filename(
+                os.path.join(config_dir, "..", "assets"),
+                str(mapped_value).split("/")[-1].strip(),
+            )
+            asset_name = resolved_name or str(mapped_value).split("/")[-1].strip()
+        else:
+            apexlol_url = resolve_apexlol_hextech_icon_url(request_name, config_dir=config_dir)
+            if apexlol_url:
+                return apexlol_url
 
     if not asset_name.lower().endswith(".png"):
         asset_name = f"{asset_name}.png"
