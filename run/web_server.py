@@ -230,91 +230,21 @@ def _write_augment_icon_source_marker(source_id: str) -> None:
     os.replace(tmp_path, AUGMENT_ICON_SOURCE_FILE)
 
 
-<<<<<<< HEAD
-def _find_augment_icon_filename(icon_map: dict, lookup_name: str) -> Optional[str]:
-    if not icon_map or not lookup_name:
-        return None
-
-    direct = icon_map.get(lookup_name)
-    if direct:
-        return _normalize_augment_filename(direct)
-
-    normalized_lookup = _normalize_augment_name(lookup_name)
-    for key, value in icon_map.items():
-        if _normalize_augment_name(key) == normalized_lookup:
-            return _normalize_augment_filename(value)
-    return None
-
-
-def _iter_augment_icon_urls(icon_filename: str):
-    filename = _normalize_augment_filename(icon_filename)
-    templates = [
-        # 按优先级尝试多个社区资源地址。
-        "https://raw.communitydragon.org/latest/game/assets/ux/augments/{filename}",
-        "https://raw.communitydragon.org/pbe/game/assets/ux/cherry/augments/icons/{filename}",
-        "https://raw.communitydragon.org/pbe/game/assets/ux/augments/{filename}",
-    ]
-    for template in templates:
-        yield template.format(filename=filename)
-
-
-def _ensure_augment_icon_cached(icon_filename: str, force_refresh: bool = False) -> Optional[str]:
-    normalized_filename = _normalize_augment_filename(icon_filename)
-    if not normalized_filename:
-        return None
-
-    target_path = os.path.join(_assets_dir, normalized_filename)
-    if not force_refresh and os.path.exists(target_path) and os.path.getsize(target_path) > 0:
-        return target_path
-
-    tmp_path = target_path + ".tmp"
-    for url in _iter_augment_icon_urls(normalized_filename):
-        try:
-            response = requests.get(url, stream=True, timeout=15)
-            if response.status_code != 200:
-                continue
-
-            with open(tmp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            os.replace(tmp_path, target_path)
-            return target_path
-        except Exception as e:
-            logger.debug("缓存强化符文图标失败：%s -> %s", url, e)
-        finally:
-            try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except OSError:
-                pass
-
-    return None
-
-
-def _prefetch_augment_icons(force_map_refresh: bool = False) -> None:
-=======
-def _prefetch_augment_icons(force: bool = False) -> None:
->>>>>>> cx-refactor-shared-modules
+def _prefetch_augment_icons(force_refresh: bool = False) -> None:
     global _augment_prefetch_mtime
 
     with _augment_prefetch_lock:
-        if not force_map_refresh and _augment_prefetch_mtime:
+        if not force_refresh and _augment_prefetch_mtime:
             return
         _augment_prefetch_mtime = time.time()
 
     try:
-<<<<<<< HEAD
-        icon_map = _load_apexlol_hextech_map(force_refresh=force_map_refresh)
-        logger.info("已预热 apexlol 海克斯图标映射，共 %s 项", len(icon_map))
-=======
-        icon_map = load_apexlol_hextech_map(CONFIG_DIR, force_refresh=force)
+        icon_map = load_apexlol_hextech_map(CONFIG_DIR, force_refresh=force_refresh)
         logger.debug("已预热 apexlol 海克斯图标映射，共 %s 项", len(icon_map))
->>>>>>> cx-refactor-shared-modules
     except Exception as e:
         logger.debug("预热 apexlol 海克斯图标映射失败：%s", e)
 
-    if force_map_refresh:
+    if force_refresh:
         try:
             _write_augment_icon_source_marker(AUGMENT_ICON_SOURCE_ID)
         except Exception as e:
@@ -422,10 +352,10 @@ def _audit_and_repair_augment_icons(force_map_refresh: bool = False) -> dict:
     return record
 
 
-def _startup_augment_icon_maintenance(force_map_refresh: bool = False) -> None:
+def _startup_augment_icon_maintenance(force: bool = False) -> None:
     # 先预热图标映射，再执行缺图自检，保证页面开启前尽量完成修复。
-    _prefetch_augment_icons(force=force_map_refresh)
-    _audit_and_repair_augment_icons(force_map_refresh=False)
+    _prefetch_augment_icons(force_refresh=force)
+    _audit_and_repair_augment_icons(force_map_refresh=force)
 
 
 
@@ -812,13 +742,8 @@ async def lifespan(app: FastAPI):
     scraper_thread.start()
     needs_augment_refresh = _read_augment_icon_source_marker() != AUGMENT_ICON_SOURCE_ID
     augment_thread = threading.Thread(
-<<<<<<< HEAD
-        target=_prefetch_augment_icons,
-        kwargs={"force_map_refresh": needs_augment_refresh},
-=======
         target=_startup_augment_icon_maintenance,
         kwargs={"force": needs_augment_refresh},
->>>>>>> cx-refactor-shared-modules
         daemon=True,
         name="augment-icon-maintenance",
     )

@@ -75,6 +75,7 @@ run/
 
 - 首次启动会自动创建 `config/` 和 `assets/` 目录。
 - `hero_sync.py` 负责同步核心缓存，`web_server.py` 和 `hextech_ui.py` 都依赖这些本地文件。
+- `hextech_ui.py` 会在启动后自动拉起 `web_server.py`，并通过 `config/web_server_port.txt` 读取实际端口，因此桌面模式和 Web 模式共用同一套本地服务。
 - 图标与别名规则由 `alias_utils.py`、`icon_resolver.py` 统一处理，避免多处重复实现。
 - `web_server.py` 启动后会自动检查海克斯图标缓存，缺失时会自动抓取并把结果写入 `config/augment_icon_audit.jsonl`。
 
