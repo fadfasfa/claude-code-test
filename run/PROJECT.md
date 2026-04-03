@@ -180,6 +180,7 @@ data_processor.py
 
 | 日期 | workflow_id | 执行端 | 变更原因 | 变更摘要 | 影响文件 | 审计结果 | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2026-04-03 | cx-fix-ui-web-startup | cx | 启动修复 / 文档同步 | 清理 `web_server.py` 中残留的合并冲突标记，恢复桌面 UI 与 Web 服务的导入和启动链路，并补充运行文档 | `web_server.py`、`PROJECT.md`、`README.md` | done | 当前分支待推送 |
 | 2026-04-03 | cx-refactor-shared-modules | cx | 重构 / 文档补齐 | 抽取别名与图标解析共享模块，修正同步链路，并补齐项目文档 | `alias_utils.py`、`icon_resolver.py`、`hero_sync.py`、`web_server.py`、`data_processor.py`、`hextech_query.py` | done | 当前分支未提交 |
 | 2026-04-03 | cx-refactor-shared-modules | cx | 海克斯图标维护 | 新增海克斯图标自检、自动抓取与 JSONL 审计记录，前端不再承担海克斯图标兜底 | `web_server.py`、`static/detail.html`、`static/canvas_fallback.js`、`.gitignore` | done | 自检结果写入 `config/augment_icon_audit.jsonl` |
 
@@ -190,5 +191,6 @@ data_processor.py
 
 - 变更缓存 schema、别名规则或图标映射时，优先同步更新 `hero_sync.py`、`web_server.py`、`hextech_query.py` 和本文件。
 - 变更海克斯图标来源、缓存或自检逻辑时，优先同步更新 `icon_resolver.py`、`web_server.py` 和 `config/augment_icon_audit.jsonl` 的记录格式说明。
+- 变更桌面 UI 或 Web 启动链路时，优先同步检查 `hextech_ui.py` 的子进程拉起逻辑、`web_server.py` 的导入路径与 `config/web_server_port.txt` 的端口落盘行为。
 - 新增入口脚本或工具文件时，及时补充“文件职责清单”和“关键依赖与影响范围”。
 - 若未来出现新的临时测试文件或预览页，先确认是否有代码引用，再决定删除。
