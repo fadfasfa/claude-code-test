@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,7 @@ from alias_utils import dedupe_alias_texts
 from icon_resolver import (
     ensure_augment_icon_cached,
     find_augment_icon_filename,
+    find_existing_augment_asset_filename,
     load_apexlol_hextech_map,
     load_augment_icon_map,
 )
@@ -819,12 +821,20 @@ async def get_asset(filename: str):
         return FileResponse(local_path)
     if filename.endswith('.png') and not filename[:-4].isdigit():
         try:
+            file_stem = unquote(filename[:-4])
             icon_map = load_augment_icon_map(CONFIG_DIR)
-            requested_stem = unquote(filename[:-4])
-            mapped_filename = find_augment_icon_filename(icon_map, requested_stem) or filename
-            cached_path = ensure_augment_icon_cached(mapped_filename, asset_dir=_assets_dir)
-            if cached_path and os.path.exists(cached_path):
-                return FileResponse(cached_path)
+            mapped_filename = find_augment_icon_filename(icon_map, file_stem, asset_dir=_assets_dir)
+            if mapped_filename:
+                cached_path = ensure_augment_icon_cached(mapped_filename, asset_dir=_assets_dir)
+                if cached_path and os.path.exists(cached_path):
+                    return FileResponse(cached_path)
+            local_fallback = find_existing_augment_asset_filename(_assets_dir, filename)
+            if local_fallback:
+                return FileResponse(os.path.join(_assets_dir, local_fallback))
+            elif re.fullmatch(r"[A-Za-z0-9._-]+", file_stem):
+                cached_path = ensure_augment_icon_cached(filename, asset_dir=_assets_dir)
+                if cached_path and os.path.exists(cached_path):
+                    return FileResponse(cached_path)
         except Exception as e:
             logger.debug("远程资源缓存失败：%s", e)
 

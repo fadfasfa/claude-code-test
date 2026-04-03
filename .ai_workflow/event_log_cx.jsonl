@@ -14,3 +14,8 @@
 >>>>>>> cx-refactor-shared-modules
 {"ts":"2026-04-03T17:42:25","endpoint":"cx","step":"fix_ui_web_startup","files":["run/web_server.py"],"reason":"清理 web_server.py 中残留的 Git 冲突标记，并统一图标维护逻辑为共享 icon_resolver 实现，解除 ui/web 启动阶段的语法阻断"}
 {"ts":"2026-04-03T17:44:00","step":"post-commit AST scan","endpoint":"cx","commit":"dd46d02809d6cc0e4ee13064e311d57a2efccb71","branch":"cx-fix-ui-web-startup","status":"PASSED","violations":"none|"}
+{"ts":"2026-04-03T22:03:41.9843223+08:00","endpoint":"cx","step":"git checkout -b cx-scratch","files":[],"reason":"按用户要求派生新分支"}
+{"endpoint":"cx","ts":"2026-04-03T22:23:45.4711090+08:00","files":["run/hextech_query.py"],"step":"hextech_query静默后端化并验证数据传递","reason":"移除独立终端展示入口，保留 shared_df -> payload 的后端数据链路"}
+{"ts":"2026-04-03T22:25:21.6935897+08:00","files":["run/README.md","run/PROJECT.md"],"endpoint":"cx","reason":"统一 hextech_query.py 在文档中的旧介绍，改为后端数据整理入口并同步项目职责描述","step":"unify-hextech_query-docs"}
+{"endpoint":"cx","step":"修复 remaining augment icon fallback","status":"validated","files":["run/icon_resolver.py","run/web_server.py"],"ts":"2026-04-03T22:48:09+08:00","reason":"将长文件名映射回退到本地短文件，修复自我毁灭、魔法飞弹、俯冲轰炸的前端显示"}
+{"reason":"联动文章区之前硬编码 ./assets/{name}.png，导致水豚空降仍然走占位图；改为优先使用 augment_icon_map 的真实图源","ts":"2026-04-03T23:06:40+08:00","endpoint":"cx","status":"validated","files":["run/static/detail.html"],"step":"修复联动文章图标解析"}

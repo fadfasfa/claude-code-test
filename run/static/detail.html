@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hextech 极地枢纽 - 英雄海克斯矩阵</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="canvas_fallback.js"></script>
     <style>
         body {
             background-color: #11111b;
@@ -36,7 +37,6 @@
         .tier-silver {
             background: linear-gradient(to bottom, #d8e1ef, #64748b);
             box-shadow: 0 0 8px rgba(148, 163, 184, 0.18);
-        }
         }
 
         .list-row {
@@ -472,15 +472,10 @@
                 <div class="${shellClass}">
                     <img src="${safeIconUrl}"
                          alt="${safeHextechName}"
-                         loading="lazy"
-<<<<<<< HEAD
                          decoding="async"
                          data-hextech-name="${safeHextechName}"
                          data-hextech-tier="${safeTier}"
-                         onerror="this.onerror=null; this.src=createPlaceholder(this.dataset.hextechName || this.alt || '?');">
-=======
-                         decoding="async" />
->>>>>>> cx-refactor-shared-modules
+                         onerror="if (window.handleAssetMissing) { window.handleAssetMissing(this, this.dataset.hextechName || this.alt || '?', 'generic', this.dataset.hextechTier || ''); } else { this.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; viewBox=&quot;0 0 100 100&quot;><rect fill=&quot;%23333&quot; width=&quot;100&quot; height=&quot;100&quot;/><text x=&quot;50&quot; y=&quot;55&quot; text-anchor=&quot;middle&quot; fill=&quot;%23666&quot; font-size=&quot;34&quot; font-family=&quot;Arial&quot;>' + ((this.dataset.hextechName || this.alt || '?').charAt(0)) + '</text></svg>'); }">
                 </div>
             `;
         }
@@ -683,7 +678,9 @@
                     badgeText = 'text-[#ffffff]';
                 }
 
-                const iconUrl = `./assets/${encodeURIComponent(item.name)}.png`;
+                const iconUrl = window.augmentIconMap && window.augmentIconMap[item.name]
+                    ? window.augmentIconMap[item.name]
+                    : `./assets/${encodeURIComponent(item.name)}.png`;
                 const safeName = escapeHtml(item.name);
                 const safeTier = escapeHtml(item.tier);
                 const safeGrade = escapeHtml(item.grade);

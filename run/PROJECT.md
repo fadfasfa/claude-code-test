@@ -13,9 +13,10 @@ Hextech 伴生系统是一个本地运行的《英雄联盟》数据分析工具
 
 - 自动同步英雄基础数据、海克斯数据、协同数据和图标映射。
 - 启动时自动自检海克斯图标缓存，缺失则自动抓取并写入审计日志。
+- 详情页海克斯图像优先使用后端 `icon` 字段，失败时回退到本地 `assets/`，再退到 canvas 占位图，保证前端可见性。
 - 提供桌面伴生界面，跟随游戏窗口状态显示或隐藏。
 - 提供本地 Web 服务，用于列表页、详情页和 API 查询。
-- 提供终端查询入口和打包脚本，方便本地使用与分发。
+- 提供后端数据整理入口和打包脚本，方便本地使用与分发。
 
 ### 3. 技术栈
 
@@ -47,7 +48,7 @@ Hextech 伴生系统是一个本地运行的《英雄联盟》数据分析工具
 | `web_server.py` | api / service | 本地 Web 服务、静态资源、API 聚合 | `hero_sync.py`、`data_processor.py`、`hextech_query.py` | 浏览器、前端页面 |
 | `hero_sync.py` | service / util | 英雄核心数据同步、版本检查、头像与图标映射生成 | Riot / LCU、CommunityDragon、Apexlol | `config/`、`assets/` |
 | `data_processor.py` | util | 处理英雄和海克斯数据，拼装前端所需结构 | CSV / JSON 缓存 | `web_server.py` |
-| `hextech_query.py` | script / util | 终端查询、别名索引、CSV 定位 | `config/`、`hero_sync.py` | 终端输出、`web_server.py` |
+| `hextech_query.py` | script / util | 后端数据整理、别名索引、CSV 定位 | `config/`、`hero_sync.py` | 结构化数据、`web_server.py` |
 | `alias_utils.py` | util | 英雄别名归一化、去重 | 传入别名集合 | `hero_sync.py`、`hextech_query.py`、`web_server.py` |
 | `icon_resolver.py` | util | 增强符文图标映射、缓存与回退 URL | `config/`、远程图标源 | `hero_sync.py`、`data_processor.py`、`web_server.py` |
 | `backend_refresh.py` | worker | 后台刷新调度 | 本地缓存、数据处理器 | UI / Web 刷新 |
@@ -143,7 +144,7 @@ data_processor.py
 | `hero_sync.py` | 数据同步、缓存生成 | `web_server.py`、`hextech_query.py`、`data_processor.py` | 文件存在性、版本短路、网络失败回退 |
 | `web_server.py` | API 与静态页展示 | 浏览器前端、桌面 UI | 路由兼容、资源路径、缓存刷新 |
 | `data_processor.py` | 前端展示数据结构 | Web 列表页、详情页 | 字段名、排序、图标 URL |
-| `hextech_query.py` | 终端查询与别名索引 | UI 搜索、查询一致性 | 别名归一化、模糊匹配 |
+| `hextech_query.py` | 后端数据整理与别名索引 | UI 搜索、查询一致性 | 别名归一化、模糊匹配 |
 
 ### 3. 对外接口清单（可选）
 
@@ -181,6 +182,7 @@ data_processor.py
 | 日期 | workflow_id | 执行端 | 变更原因 | 变更摘要 | 影响文件 | 审计结果 | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 2026-04-03 | cx-fix-ui-web-startup | cx | 启动修复 / 文档同步 | 清理 `web_server.py` 中残留的合并冲突标记，恢复桌面 UI 与 Web 服务的导入和启动链路，并补充运行文档 | `web_server.py`、`PROJECT.md`、`README.md` | done | 当前分支待推送 |
+| 2026-04-03 | cx-scratch | cx | 海克斯图像修复 / 文档同步 | 修复详情页海克斯图像合并冲突，补齐图标回退脚本，并修正联动文章区的图标解析，增加多英雄端到端验证说明 | `static/detail.html`、`icon_resolver.py`、`web_server.py`、`PROJECT.md`、`README.md` | done | 已验证左侧海克斯与右侧联动文章图标链路 |
 | 2026-04-03 | cx-refactor-shared-modules | cx | 重构 / 文档补齐 | 抽取别名与图标解析共享模块，修正同步链路，并补齐项目文档 | `alias_utils.py`、`icon_resolver.py`、`hero_sync.py`、`web_server.py`、`data_processor.py`、`hextech_query.py` | done | 当前分支未提交 |
 | 2026-04-03 | cx-refactor-shared-modules | cx | 海克斯图标维护 | 新增海克斯图标自检、自动抓取与 JSONL 审计记录，前端不再承担海克斯图标兜底 | `web_server.py`、`static/detail.html`、`static/canvas_fallback.js`、`.gitignore` | done | 自检结果写入 `config/augment_icon_audit.jsonl` |
 
