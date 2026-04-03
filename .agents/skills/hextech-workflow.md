@@ -386,21 +386,43 @@ if ($lines -gt 10) { <# 移动最旧的 ($lines-10) 条至 PROJECT_history.md #>
 # 禁止整对象重写（见 registry § C 字段所有权表）
 $state = Get-Content ".ai_workflow/runtime_state_$me.json" -Raw | ConvertFrom-Json
 $state.execution_status = "done"
+# V5.0：audit_status / merge_status 不再由执行端写入，由 GitHub PR 状态反映
 $state | ConvertTo-Json -Depth 4 | Set-Content ".ai_workflow/runtime_state_$me.json"
 
 # 写后读回校验
 $_v = Get-Content ".ai_workflow/runtime_state_$me.json" -Raw | ConvertFrom-Json
 if ($_v.execution_status -ne "done") {
-    Write-Warning "[WARN] runtime_state 写入校验失败：请手动将 execution_status 置为 done 后再唤醒 Node C"
+    Write-Warning "[WARN] runtime_state 写入校验失败：请手动将 execution_status 置为 done"
 }
 
 git add PROJECT.md PROJECT_history.md ".ai_workflow/runtime_state_$me.json"
 git commit -m "docs: update PROJECT.md and mark done [<workflow_id>][$me]"
+
+# V5.0：推送分支，由云端 Codex 自动审查 PR，不再手动触发 Node C
+git push origin <Branch_Name>
 ```
 
 若 PROJECT.md 不存在：输出 `[PROJECT.MD: MISSING]`，建议运行 /PROJECT-REVIEW。
 
-输出 `[STAGE: DONE][<端>] 人工验收通过，等待 Node C 审计`，**主动退出进程**。
+输出 `[STAGE: DONE][<端>] 验收通过，已推送分支。请在 GitHub 开 PR，Codex 将自动触发审查。`，**主动退出进程**。
+
+---
+
+## § PR-TEMPLATE — PR 描述模板
+
+协议 4 完工后，人类在 GitHub 开 PR 时使用以下描述格式（供 Codex 定位契约）：
+
+```
+---
+workflow_id: <端>-task-<描述>-<YYYYMMDD>
+endpoint: <cc / cx>
+agents_md_path: agents.md
+event_log_path: .ai_workflow/event_log_<端>.jsonl
+review_rules: .agents/codex_review_rules.md
+---
+
+<本次变更的人类可读说明>
+```
 
 ---
 

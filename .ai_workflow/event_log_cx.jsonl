@@ -12,3 +12,5 @@
 {"ts":"2026-04-03T15:05:00+08:00","endpoint":"cx","step":"workflow-wrapup","files":["run/alias_utils.py","run/icon_resolver.py","run/hero_sync.py","run/hextech_query.py","run/data_processor.py","run/web_server.py"],"reason":"抽取共享别名与图标解析模块，收口 web_server/hextech_query/data_processor 的重复逻辑，并完成语法校验"}
 {"ts":"2026-04-03T15:57:09","step":"post-commit AST scan","endpoint":"cx","commit":"70babd183e253e16110513bca30dd0f166fd9581","branch":"cx-refactor-shared-modules","status":"PASSED","violations":"none|"}
 >>>>>>> cx-refactor-shared-modules
+{"ts":"2026-04-03T17:42:25","endpoint":"cx","step":"fix_ui_web_startup","files":["run/web_server.py"],"reason":"清理 web_server.py 中残留的 Git 冲突标记，并统一图标维护逻辑为共享 icon_resolver 实现，解除 ui/web 启动阶段的语法阻断"}
+{"ts":"2026-04-03T17:44:00","step":"post-commit AST scan","endpoint":"cx","commit":"dd46d02809d6cc0e4ee13064e311d57a2efccb71","branch":"cx-fix-ui-web-startup","status":"PASSED","violations":"none|"}
