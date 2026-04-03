@@ -3,3 +3,4 @@
 {"ts":"2026-04-03T00:00:00+08:00","endpoint":"cx","step":"rebuild-alias-and-apexlol-map","files":["run/config/Champion_Core_Data.json","run/config/Augment_Apexlol_Map.json","run/hero_sync.py","run/web_server.py"],"reason":"全量清理英雄别名重复，重建 Apexlol 海克斯映射为可读 UTF-8 JSON，并修正别名加载逻辑"}
 {"ts":"2026-04-03T00:20:00+08:00","endpoint":"cx","step":"restore-champion-aliases-after-cleanup","files":["run/config/Champion_Core_Data.json","run/hero_sync.py"],"reason":"在清除 core-field 重复后，重新从 hextech_query.py 的本地别名表恢复可用 aliases，避免数据文件被误清空"}
 {"ts":"2026-04-03T16:35:00+08:00","endpoint":"cx","step":"fix-xss-in-static-renderers","files":["run/static/detail.html","run/static/index.html"],"reason":"修复海克斯卡片和英雄卡片的 HTML/属性注入点，避免未转义数据进入 innerHTML 和 onerror"}
+{"ts":"2026-04-03T16:41:04","step":"post-commit AST scan","endpoint":"cx","commit":"ab0aed93f5eb16c7dfec9350cda93c552e37fb59","branch":"cx-fix-two-vulns-20260403","status":"PASSED","violations":"none|"}
