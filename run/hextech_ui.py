@@ -18,29 +18,48 @@ import logging
 from io import BytesIO
 from PIL import Image, ImageTk
 from datetime import datetime
-from hero_sync import BASE_DIR, ASSET_DIR
+from hero_sync import BASE_DIR, ASSET_DIR, CONFIG_DIR
 
-# Web server 端口（与 web_server.py 保持一致，可通过环境变量覆盖）
+# 网页服务端口与后端服务保持一致，可通过环境变量覆盖。
 SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
 _WEB_BASE = f"http://127.0.0.1:{SERVER_PORT}"
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+WEB_PORT_FILE = os.path.join(CONFIG_DIR, "web_server_port.txt")
+
+
+def _resolve_web_base(timeout: float = 5.0) -> str:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with open(WEB_PORT_FILE, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            port = int(raw)
+            if 1 <= port <= 65535:
+                return f"http://127.0.0.1:{port}"
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.1)
+    return f"http://127.0.0.1:{SERVER_PORT}"
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequest警告)
 
 os.makedirs(ASSET_DIR, exist_ok=True)
+logger = logging.getLogger(__name__)
 
 try:
     from hextech_query import get_latest_csv, display_hero_hextech, main_query, set_last_hero
     from hero_sync import load_champion_core_data, get_advanced_session
     from backend_refresh import refresh_backend_data
 except ImportError:
-    print("❌ 缺少核心依赖模块，请确保文件结构完整。")
+    print("缺少核心依赖模块，请确认文件结构完整。")
     sys.exit(1)
 
 class HextechUI:
     def __init__(self):
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        except Exception: pass
+        except Exception:
+            logger.debug("设置 DPI 感知失败。", exc_info=True)
 
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
@@ -49,7 +68,6 @@ class HextechUI:
         self.session = get_advanced_session()
         self.core_data = load_champion_core_data()
 
-        self.check_and_sync_data()
         self.df = self.load_data()
 
         self.port, self.token = None, None
@@ -59,7 +77,7 @@ class HextechUI:
         self.last_click_time = 0
         self.img_write_lock = threading.Lock()
         self.downloading_imgs = set()
-        self._df_lock = threading.Lock()  # 保护 self.df 的多线程读写
+        self._df_lock = threading.Lock()  # 保护 self.df 的多线程读写。
 
 
         self.web_process = None
@@ -75,27 +93,35 @@ class HextechUI:
 
         self._build_ui()
         self._init_core_engine()
+        self.check_and_sync_data()
         self.start_background_scraper()
 
     def _start_web_server(self):
-        """静默拉起后端的 web_server.py（不阻塞 UI 线程）"""
+    # 在后台启动网页服务，不阻塞界面主线程。
         try:
-            import sys
-            import os
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            web_script = os.path.join(script_dir, "web_server.py")
             startupinfo = None
+            child_env = os.environ.copy()
+            child_env["HEXTECH_BASE_DIR"] = BASE_DIR
             if os.name == 'nt':
-                import subprocess
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            if getattr(sys, "frozen", False):
+                command = [sys.executable, "--web-server"]
+                cwd = BASE_DIR
+            else:
+                web_script = os.path.join(BASE_DIR, "web_server.py")
+                command = [sys.executable, web_script]
+                cwd = BASE_DIR
             self.web_process = subprocess.Popen(
-                [sys.executable, web_script],
+                command,
                 startupinfo=startupinfo,
-                cwd=script_dir
+                cwd=cwd,
+                env=child_env,
             )
+            global _WEB_BASE
+            _WEB_BASE = _resolve_web_base(timeout=5.0)
         except Exception as e:
-            print(f"\n❌ 启动 web_server.py 失败: {e}")
+            print(f"\n启动网页服务失败: {e}")
 
     def _init_core_engine(self):
         t1 = threading.Thread(target=self.lcu_polling_loop, daemon=True)
@@ -120,7 +146,7 @@ class HextechUI:
         self.title_frame = tk.Frame(self.root, bg="#11111b")
         self.title_frame.pack(fill=tk.X)
 
-        self.title_bar = tk.Label(self.title_frame, text="⚔️ 备战席", bg="#11111b", fg="#cdd6f4", font=("Microsoft YaHei", 12, "bold"), pady=8)
+        self.title_bar = tk.Label(self.title_frame, text="备战席", bg="#11111b", fg="#cdd6f4", font=("Microsoft YaHei", 12, "bold"), pady=8)
         self.title_bar.pack(side=tk.LEFT, padx=(10, 0))
         self.title_bar.bind("<ButtonPress-1>", self.start_move)
         self.title_bar.bind("<B1-Motion>", self.do_move)
@@ -141,26 +167,48 @@ class HextechUI:
         t = threading.Thread(target=self._silent_sync, daemon=True)
         t.start()
 
+    def _set_status(self, text, color):
+        if hasattr(self, "status_label") and self.status_label.winfo_exists():
+            self.status_label.config(text=text, fg=color)
+
+    def _run_on_ui_thread(self, callback):
+        root = getattr(self, "root", None)
+        if root is None:
+            return False
+        try:
+            root.after(0, callback)
+            return True
+        except tk.TclError:
+            return False
+
+    def _reload_data_into_ui(self, status_text, status_color):
+        new_df = self.load_data()
+
+        def _update_on_main():
+            with self._df_lock:
+                self.df = new_df
+            self._set_status(status_text, status_color)
+
+        if not self._run_on_ui_thread(_update_on_main):
+            with self._df_lock:
+                self.df = new_df
+
     def _silent_sync(self):
         try:
             refresh_backend_data(force=False, stop_event=self.stop_event)
-            if self.stop_event.is_set(): return
-
-            new_df = self.load_data()
-            def _update_on_main():
-                with self._df_lock:
-                    self.df = new_df
-                if self.status_label.winfo_exists():
-                    self.status_label.config(text="✅ 数据同步完成", fg="#a6e3a1")
-            self.root.after(0, _update_on_main)
-        except Exception: pass
+            if self.stop_event.is_set():
+                return
+            self._reload_data_into_ui("数据同步完成", "#a6e3a1")
+        except Exception:
+            logger.exception("启动阶段后台刷新失败。")
+            self._run_on_ui_thread(lambda: self._set_status("数据同步失败", "#f38ba8"))
 
     def load_data(self):
         latest = get_latest_csv()
         if not latest: return pd.DataFrame()
         df = pd.read_csv(latest)
         df.columns = df.columns.str.replace(' ', '')
-        # 动态查找 ID 列并处理
+        # 动态查找编号列并处理
         id_col = None
         for col in df.columns:
             if '英雄ID' in col or 'ID' in col:
@@ -171,17 +219,16 @@ class HextechUI:
         return df
 
     def on_hero_click(self, champ_id, hero_name):
-        """处理英雄卡片点击事件。
+    # 处理英雄卡片点击。
+    #
+    # 1. 先在终端输出英雄海克斯信息。
+    # 2. 优先请求网页服务的跳转接口。
+    # 3. 如果网页服务不可用，则本地降级打开详情页。
 
-        行为：
-        1. 在终端输出英雄海克斯信息（独立线程）
-        2. 向 web_server 发送 /api/redirect 请求，由服务端决定热跳转或打开浏览器（独立线程）
-        3. 若 web_server 未运行（请求失败），在本地直接降级打开浏览器详情页
-        """
         try:
             set_last_hero(hero_name)
         except Exception:
-            pass
+            logger.debug("记录最近一次英雄选择失败。", exc_info=True)
 
         def terminal_task():
             try:
@@ -191,28 +238,32 @@ class HextechUI:
                     df_snapshot = self.df
                 display_hero_hextech(df_snapshot, hero_name, is_from_ui=True)
             except Exception as e:
-                print(f"\n❌ 输出错误: {e}")
+                print(f"\n输出错误: {e}")
 
         threading.Thread(target=terminal_task, daemon=True).start()
 
         def redirect_task():
-            """后台发送跳转请求，失败时本地降级打开浏览器。"""
-            # 获取英雄英文名（用于 CDN 头像等参数）
-            en_name = self.core_data.get(str(champ_id), {}).get('en_name', '')
-            try:
-                resp = requests.post(
-                    f"{_WEB_BASE}/api/redirect",
-                    json={"hero_id": str(champ_id), "hero_name": hero_name},
-                    timeout=1,
-                )
-                # 服务端成功接管，无需本地处理
-                if resp.status_code == 200:
-                    return
-            except Exception:
-                pass
-            # 降级：web_server 未运行或请求失败，直接打开浏览器详情页
+    # 后台发起跳转请求，失败时回退到本地浏览器。
+    # 先尝试让网页服务接管跳转，失败后再走本地兜底。
+            en_name = self.core_data.get(str(champ_id), {}).get("en_name", "")
+            for _ in range(3):
+                web_base = _resolve_web_base(timeout=1.0)
+                try:
+                    resp = requests.post(
+                        f"{web_base}/api/redirect",
+                        json={"hero_id": str(champ_id), "hero_name": hero_name},
+                        timeout=1.5,
+                    )
+                    # 服务端成功接管跳转时，本地无需再处理。
+                    if resp.status_code == 200:
+                        return
+                except Exception:
+                    logger.debug("请求 /api/redirect 失败，准备重试。", exc_info=True)
+                time.sleep(0.4)
+            logger.debug("请求 /api/redirect 多次失败，回退到本地浏览器打开。")
+            # 网页服务不可用时，直接打开详情页。
             url = (
-                f"{_WEB_BASE}/detail.html"
+                f"{web_base}/detail.html"
                 f"?hero={quote(hero_name)}"
                 f"&id={champ_id}"
                 f"&en={quote(en_name)}"
@@ -268,12 +319,12 @@ class HextechUI:
             if os.path.exists(img_path):
                 img = Image.open(img_path).resize((48, 48), Image.Resampling.LANCZOS)
             else:
-                if champ_id in self.downloading_imgs: return # 防止同一头像被重复并发请求
+                if champ_id in self.downloading_imgs: return  # 防止同一头像重复下载。
                 self.downloading_imgs.add(champ_id)
                 url = f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/{champ_id}.png"
                 res = self.session.get(url, verify=True, timeout=10)
                 if res.status_code == 200:
-                    with self.img_write_lock: # 文件锁：防止多线程同时写入导致图片损坏
+                    with self.img_write_lock:  # 文件锁：避免并发写入损坏图片。
                         with open(img_path, "wb") as f: f.write(res.content)
                     img = Image.open(BytesIO(res.content)).resize((48, 48), Image.Resampling.LANCZOS)
                 else:
@@ -284,7 +335,8 @@ class HextechUI:
             photo = ImageTk.PhotoImage(img)
             self.image_cache[champ_id] = photo
             if label.winfo_exists(): label.config(image=photo)
-        except Exception: pass
+        except Exception:
+            logger.exception("加载英雄头像失败：champ_id=%s", champ_id)
 
     def update_ui(self, hero_ids):
         for w in self.list_frame.winfo_children(): w.destroy()
@@ -293,18 +345,18 @@ class HextechUI:
             is_empty = self.df.empty
 
         if not hero_ids or is_empty:
-            tk.Label(self.list_frame, text="⚠️ 当前无备战英雄，或数据仍在同步中...",
+            tk.Label(self.list_frame, text="当前没有可用英雄，或数据仍在同步中...",
                      fg="#f9e2af", bg="#1e1e2e", font=("Microsoft YaHei", 10)).pack(pady=20)
             return
 
-        self.status_label.config(text="✅ 实时数据已挂载", fg="#a6e3a1")
+        self.status_label.config(text="实时数据已挂载", fg="#a6e3a1")
         display_list = []
 
         with self._df_lock:
             current_df = self.df
 
         for hid in hero_ids:
-            # 动态查找 ID 列
+            # 动态查找编号列。
             id_col = None
             for col in current_df.columns:
                 if '英雄ID' in col or 'ID' in col:
@@ -315,7 +367,7 @@ class HextechUI:
                 h_data = current_df[current_df[id_col]==hid]
                 if not h_data.empty:
                     row = h_data.iloc[0]
-                    # 使用多重回退获取数据
+                    # 兼容多个字段名，优先使用更完整的数据。
                     id_val = row.get(id_col, row.get('英雄 ID', row.get('ID', hid)))
                     name = row.get('英雄名称', row.get('英雄名', '未知'))
                     win = float(row.get('英雄胜率', row.get('胜率', 0.5)))
@@ -385,7 +437,8 @@ class HextechUI:
                         self.root.withdraw()
                 else:
                     self.root.withdraw()
-            except Exception: pass
+            except Exception:
+                logger.exception("窗口同步循环异常。")
             time.sleep(0.5)
 
     def start_move(self, event): self.x, self.y = event.x, event.y
@@ -399,23 +452,19 @@ class HextechUI:
 
 
     def start_background_scraper(self):
-        """启动 4 小时循环的后台抓取守护线程"""
+    # 启动每 4 小时循环一次的后台抓取线程。
         def scraper_loop():
             while not self.stop_event.is_set():
                 try:
                     refresh_backend_data(force=False, stop_event=self.stop_event)
                     if self.stop_event.is_set(): return
 
-                    new_df = self.load_data()
-                    def _update_on_main():
-                        with self._df_lock:
-                            self.df = new_df
-                        if self.status_label.winfo_exists():
-                            self.status_label.config(text="✅ 数据同步完成", fg="#a6e3a1")
-                    self.root.after(0, _update_on_main)
-                except Exception: pass
+                    self._reload_data_into_ui("数据同步完成", "#a6e3a1")
+                except Exception:
+                    logger.exception("定时后台刷新失败。")
+                    self._run_on_ui_thread(lambda: self._set_status("后台刷新失败", "#f38ba8"))
 
-                # 等待 4 小时 (14400 秒)
+                # 等待 4 小时，也就是 14400 秒。
                 for _ in range(14400):
                     if self.stop_event.is_set():
                         break
@@ -438,4 +487,8 @@ class HextechUI:
         self.root.destroy()
 
 if __name__ == "__main__":
-    HextechUI().root.mainloop()
+    if "--web-server" in sys.argv:
+        from web_server import run_web_server
+        run_web_server()
+    else:
+        HextechUI().root.mainloop()

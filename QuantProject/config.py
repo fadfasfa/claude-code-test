@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-核心配置模块：全系统统一配置中心 (config.py)
-提供 BASE_DIR、DATA_DIR、ASSETS_MAPPING、ALLOCATION_WEIGHTS 真值定义
-"""
+#
+# 核心配置模块：全系统统一配置中心 (config.py)
+# 提供 BASE_DIR、DATA_DIR、ASSETS_MAPPING、ALLOCATION_WEIGHTS 真值定义
+#
 from pathlib import Path
 
 # 动态生成 BASE_DIR 路径

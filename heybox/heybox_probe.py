@@ -41,14 +41,14 @@ class WikiScraper:
         self.cookies = {}
 
     async def _init_session(self, client):
-        """[Scraper-Ninja] 捕获 Initial Cookies"""
+    # 捕获初始 Cookie
         try:
-            logger.info("[INIT] Requesting homepage to capture cookies...")
+            logger.info("[初始化] 正在访问主页以捕获 Cookie...")
             resp = await client.get("https://www.xiaoheihe.cn/", timeout=10.0)
             self.cookies.update(resp.cookies)
-            logger.info(f"[INIT] Captured {len(self.cookies)} cookies.")
+            logger.info(f"[初始化] 已捕获 {len(self.cookies)} 个 Cookie。")
         except Exception as e:
-            logger.error(f"[INIT] Cookie capture failed: {str(e)}")
+            logger.error(f"[初始化] Cookie 获取失败：{str(e)}")
 
     async def probe_wiki(self):
         async with httpx.AsyncClient(headers=self.headers, follow_redirects=True) as client:
@@ -56,7 +56,7 @@ class WikiScraper:
             
             # 随机延迟防止指纹封禁
             delay = random.uniform(2, 4)
-            logger.info(f"[WAIT] Sleeping for {delay:.2f}s...")
+            logger.info(f"[等待] 正在休眠 {delay:.2f} 秒...")
             await asyncio.sleep(delay)
 
             # 目标百科端点 (Wiki ID 203 探测)
@@ -71,27 +71,27 @@ class WikiScraper:
             self.headers["User-Agent"] = random.choice(self.ua_pool)
             
             try:
-                logger.info(f"[PROBE] Target: {target_url}")
+                logger.info(f"[探测] 目标：{target_url}")
                 response = await client.get(target_url, params=params, cookies=self.cookies)
                 response.raise_for_status()
                 
                 data = response.json()
-                logger.info(f"[SUCCESS] Status: {data.get('status')}")
+                logger.info(f"[成功] 状态：{data.get('status')}")
 
                 # 持久化存储 [Python-Debugger]
                 output_file = DATA_DIR / 'heybox_wiki_sample.json'
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
-                logger.info(f"[SUCCESS] Data saved to {output_file}")
+                logger.info(f"[成功] 数据已保存到 {output_file}")
 
             except httpx.HTTPStatusError as e:
-                logger.error(f"[ERROR] HTTP Error: {e.response.status_code}")
-                logger.debug(f"[DEBUG] Headers: {e.response.headers}")
+                logger.error(f"[错误] HTTP 错误：{e.response.status_code}")
+                logger.debug(f"[调试] 响应头：{e.response.headers}")
             except Exception as e:
-                logger.error(f"[FATAL] Traceback: {str(e)}")
+                logger.error(f"[致命] 错误堆栈：{str(e)}")
 
 if __name__ == "__main__":
     logger.info("="*50)
-    logger.info("Heybox Wiki Probe System Starting")
+    logger.info("小黑盒百科探测程序启动")
     logger.info("="*50)
     asyncio.run(WikiScraper().probe_wiki())

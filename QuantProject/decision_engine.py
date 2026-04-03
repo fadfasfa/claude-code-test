@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-核心模块：全资产仓位决策引擎 (decision_engine.py)
-功能：读取本地数据，计算策略信号，输出 ASCII 兼容报告
-"""
+#
+# 核心模块：全资产仓位决策引擎 (decision_engine.py)
+# 功能：读取本地数据，计算策略信号，输出 ASCII 兼容报告
+#
 import logging
 import pandas as pd
 import numpy as np
@@ -32,7 +32,7 @@ except Exception:
     pass
 
 def load_stooq_data(asset_name):
-    """安全读取并重采样本地数据 - 模糊列名匹配"""
+    # 安全读取并重采样本地数据 - 模糊列名匹配
     path = Path(DATA_DIR) / FILES[asset_name]
     logger.debug(f"[{asset_name}] 加载数据文件：{path}")
 
@@ -206,7 +206,7 @@ def main():
     try:
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(full_report)
-        print(f"[OK] 本次决议及调仓金额已自动归档至 -> {LOG_FILE}")
+        print(f"[成功] 本次决议及调仓金额已自动归档至：{LOG_FILE}")
     except Exception as e:
         print(f"[-] 警告：日志保存失败 -> {str(e)}")
 

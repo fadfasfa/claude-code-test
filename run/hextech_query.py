@@ -6,11 +6,11 @@ import pandas as pd
 import unicodedata
 from hero_sync import BASE_DIR, CONFIG_DIR
 
-if os.name == 'nt': os.system('')  # 激活 Windows 终端 ANSI 色彩支持
+if os.name == 'nt': os.system('')  # 启用 Windows 终端的颜色输出支持
 RESET = "\033[0m"
 
 # ==================================================
-# 懒加载基础数据（解决启动慢）
+# 延迟加载基础数据，降低启动耗时
 # ==================================================
 CORE_DATA = None
 CHAMP_NAME_MAP = {}
@@ -58,7 +58,7 @@ def get_latest_csv():
     return files[0]
 
 def get_char_width(char):
-    # F(Fullwidth), W(Wide) 宽度设为 2，其余设为 1
+    # 全角和宽字符按 2 计算，其余按 1 计算
     return 2 if unicodedata.east_asian_width(char) in ('F', 'W') else 1
 
 def align_text(text, width):
@@ -104,19 +104,19 @@ def print_side_by_side_table(df_source, title, limit=None):
         print(f"{l_color}{l_content}{RESET if l_color else ''}  ||  {r_color}{r_content}{RESET if r_color else ''}")
 
 def add_new_alias(new_alias, official_names):
-    print(f"\n❌ 未匹配到对应英雄: \"{new_alias}\"")
+    print(f"\n错误 未匹配到对应英雄: \"{new_alias}\"")
     print("请选择您的操作：\n [任意键] 只是打错了，重新输入\n [2] 我要将该词添加为某个英雄的新外号")
     try:
-        choice = input("👉 请选择 (2/任意键): ").strip()
+        choice = input("请 请选择 (2/任意键): ").strip()
     except (EOFError, KeyboardInterrupt): return None
     if choice != '2': return None
 
-    target_input = input("👉 请输入该英雄的官方名称或系统中已有的外号 (例如: 皇子): ").strip()
+    target_input = input("请 请输入该英雄的官方名称或系统中已有的外号 (例如: 皇子): ").strip()
     target_hero = get_official_hero_name(target_input, official_names)
 
     if not target_hero: return None
 
-    confirm = input(f"👉 确认要将 \"{new_alias}\" 永久添加为【{target_hero}】的外号吗？(y/n): ").strip().lower()
+    confirm = input(f"请 确认要将 \"{new_alias}\" 永久添加为（{target_hero}）的外号吗？(y/n): ").strip().lower()
     if confirm == 'y':
         global _alias_cache
         aliases = load_hero_aliases()
@@ -126,12 +126,12 @@ def add_new_alias(new_alias, official_names):
         with open(os.path.join(CONFIG_DIR, "hero_aliases.json"), "w", encoding="utf-8") as f:
             json.dump(aliases, f, ensure_ascii=False, indent=4)
         _alias_cache = None  # 状态锁定：必须逐字保留，确保缓存失效
-        print(f"🎉 添加成功！")
+        print(f"成功 添加成功！")
         return target_hero
     return None
 
 def build_default_aliases():
-    print("\n⚠️ 正在检测到英雄外号库丢失，启动智能重建引擎...")
+    print("\n警告 正在检测到英雄外号库丢失，启动智能重建引擎...")
     aliases = {}
     try:
         from hero_sync import load_champion_core_data
@@ -145,7 +145,7 @@ def build_default_aliases():
                 if name and name not in aliases[title]: aliases[title].append(name)
                 if en and en not in aliases[title]: aliases[title].append(en)
     except Exception as e:
-        print(f"⚠️ 核心数据提取失败: {e}")
+        print(f"警告 核心数据提取失败: {e}")
 
     hardcoded = {
         "诺克萨斯之手": ["ns", "nuoshou", "诺手", "大白腿"],
@@ -268,7 +268,7 @@ def get_official_hero_name(user_input, official_names):
     print(f"\n[?] 匹配到多个英雄:")
     for i, res in enumerate(results, 1): print(f" [{i}] {res}")
     try:
-        idx = int(input(f"👉 请输入序号选择: ")) - 1
+        idx = int(input(f"请 请输入序号选择: ")) - 1
         return results[idx]
     except (ValueError, IndexError): return None
 
@@ -278,7 +278,7 @@ def display_hero_hextech(df, hero_name, target_tier=None, is_from_ui=False):
     
     hero_data = df[df['英雄名称'] == hero_name].copy()
     if hero_data.empty: 
-        print(f"❌ 未在最新战报中找到 {hero_name} 的数据。")
+        print(f"错误 未在最新战报中找到 {hero_name} 的数据。")
         return
         
     h_win = hero_data.iloc[0]['英雄胜率']
@@ -290,19 +290,19 @@ def display_hero_hextech(df, hero_name, target_tier=None, is_from_ui=False):
         t_name = tier_map.get(str(target_tier))
         if t_name:
             tier_data = hero_data[hero_data['海克斯阶级'] == t_name]
-            if not tier_data.empty: print_side_by_side_table(tier_data, f"📊 【{hero_name}】— {t_name}阶级战报")
+            if not tier_data.empty: print_side_by_side_table(tier_data, f"综合推荐 （{hero_name}）- {t_name}阶级战报")
     else:
-        print_side_by_side_table(hero_data, f"👑 【{hero_name}】{stats_str} 全阶级 Top 25", limit=25)
+        print_side_by_side_table(hero_data, f"尊享 （{hero_name}）{stats_str} 全阶级 Top 25", limit=25)
 
     if is_from_ui:
-        prompt = "\n👉 【输入】称号/别名"
-        if GLOBAL_LAST_HERO: prompt += f" | 快捷: 1/2/3查【{GLOBAL_LAST_HERO}】"
+        prompt = "\n请 （输入）称号/别名"
+        if GLOBAL_LAST_HERO: prompt += f" | 快捷: 1/2/3查（{GLOBAL_LAST_HERO}）"
         prompt += " (q退出, u悬浮窗): "
         print(prompt, end="", flush=True)
 
 def main_query(shared_df=None, ui_instance=None):
     global GLOBAL_LAST_HERO
-    print("="*60 + "\n 🛡️ Hextech 终端查询端 (已迁移至 Web 端)\n" + "="*60)
+    print("="*60 + "\n 终端 Hextech 终端查询端 (已迁移至 Web 端)\n" + "="*60)
     try:
         return
     except (EOFError, KeyboardInterrupt):

@@ -12,17 +12,54 @@ from logging.handlers import RotatingFileHandler
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequest警告)
 
-# ================= 动态路径网关 (OneFile 完美适配) =================
-def get_base_dir():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
+
+def _get_script_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
+
+def bootstrap_runtime_environment() -> str:
+    # 标准化运行时根目录，兼容终端、编辑器和打包程序。
+    runtime_base = os.getenv("HEXTECH_BASE_DIR", "").strip()
+    if runtime_base:
+        runtime_base = os.path.abspath(runtime_base)
+    elif getattr(sys, 'frozen', False):
+        runtime_base = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        runtime_base = _get_script_dir()
+
+    script_dir = _get_script_dir()
+    for candidate in (runtime_base, script_dir):
+        if candidate and candidate not in sys.path:
+            sys.path.insert(0, candidate)
+
+    try:
+        os.chdir(runtime_base)
+    except OSError:
+        pass
+
+    return runtime_base
+
+# ================= 动态路径网关 =================
+def get_resource_dir():
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return sys._MEIPASS
+    return _get_script_dir()
+
+
+RUNTIME_BASE_DIR = bootstrap_runtime_environment()
+
+
+def get_base_dir():
+    return RUNTIME_BASE_DIR
+
+RESOURCE_DIR = get_resource_dir()
 BASE_DIR = get_base_dir()
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 ASSET_DIR = os.path.join(BASE_DIR, "assets")
+BUNDLED_CONFIG_DIR = os.path.join(RESOURCE_DIR, "config")
+BUNDLED_ASSET_DIR = os.path.join(RESOURCE_DIR, "assets")
 
 LOG_FILE = os.path.join(CONFIG_DIR, "hextech_system.log")
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
@@ -33,7 +70,28 @@ AUGMENT_ICON_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(ASSET_DIR, exist_ok=True)
 
-# 日志防膨胀处理 (最大 1MB, 保留 1 份备份)
+
+def _seed_runtime_dir(source_dir: str, target_dir: str) -> None:
+    if not os.path.isdir(source_dir):
+        return
+
+    os.makedirs(target_dir, exist_ok=True)
+    for entry in os.listdir(source_dir):
+        src_path = os.path.join(source_dir, entry)
+        dst_path = os.path.join(target_dir, entry)
+        if os.path.exists(dst_path):
+            continue
+        if os.path.isdir(src_path):
+            shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src_path, dst_path)
+
+
+if getattr(sys, 'frozen', False):
+    _seed_runtime_dir(BUNDLED_CONFIG_DIR, CONFIG_DIR)
+    _seed_runtime_dir(BUNDLED_ASSET_DIR, ASSET_DIR)
+
+# 日志防膨胀处理，最大一兆字节，保留一份备份
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -45,7 +103,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def _normalize_name(name: str) -> str:
-    """归一化名称用于模糊匹配（移除空格、标点，转小写）"""
+    # 规范化名称，便于模糊匹配。
     import re
     name = str(name).lower()
     name = re.sub(r'[\s\-\_\(\)\[\]\'\"\.]', '', name)
@@ -53,15 +111,12 @@ def _normalize_name(name: str) -> str:
 
 
 def _get_champion_image_url(en_name: str, version: str) -> list:
-    """
-    生成冠军头像图片的多个候选 URL（按优先级排序）
-    返回 URL 列表，按下载优先级从高到低排列
-
-    支持强制 ID 映射，处理官方 API 与本地数据的命名差异
-    """
+    # 生成英雄头像图片的多个候选地址。
+    #
+    # 返回的地址列表按优先级从高到低排序，并兼容不同命名差异。
     urls = []
 
-    # ========== 强制 ID 映射表：处理命名差异 ==========
+    # ========== 强制编号映射表：处理命名差异 ==========
     force_id_mapping = {
         "Fiddlesticks": "FiddleSticks",
         "Belveth": "BelVeth",
@@ -95,16 +150,16 @@ def _get_champion_image_url(en_name: str, version: str) -> list:
 
     # 标准格式
     urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{en_name}.png")
-    # 小写格式（某些英雄 ID 需要）
+    # 小写格式，兼容部分资源命名
     urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{en_name.lower()}.png")
 
-    # 尝试强制映射版本
+    # 尝试使用强制映射版本
     if en_name in force_id_mapping:
         mapped_name = force_id_mapping[en_name]
         urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{mapped_name}.png")
         urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{mapped_name.lower()}.png")
 
-    # 特殊英雄名称映射（处理已知的命名差异）
+    # 特殊英雄名称映射，用于处理已知差异
     special_mappings = {
         "MonkeyKing": "monkeking",  # 旧版 ID
         "AurelionSol": "aurelionsol",  # 连写版本
@@ -124,7 +179,7 @@ def _get_champion_image_url(en_name: str, version: str) -> list:
         alt_name = special_mappings[en_name]
         urls.append(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{alt_name}.png")
 
-    # 备用 CDN 源
+    # 备用资源源
     for alt_name in [en_name, en_name.lower(), special_mappings.get(en_name, en_name).lower()]:
         urls.append(f"https://cdn.communitydragon.org/{version}/champion/{alt_name}/image")
 
@@ -132,18 +187,16 @@ def _get_champion_image_url(en_name: str, version: str) -> list:
 
 
 def _download_champion_image(session, version: str, en_name: str, asset_path: str) -> bool:
-    """
-    下载冠军头像图片
-
-    Args:
-        session: requests 会话对象
-        version: 游戏版本号
-        en_name: 英雄英文名称
-        asset_path: 保存路径
-
-    Returns:
-        bool: 下载是否成功
-    """
+    # 下载英雄头像图片。
+    #
+    # 参数：
+    # session：请求会话对象
+    # version：游戏版本号
+    # en_name：英雄英文名
+    # asset_path：保存路径
+    #
+    # 返回：
+    # 是否下载成功
     urls = _get_champion_image_url(en_name, version)
     for img_url in urls:
         try:
@@ -157,7 +210,7 @@ def _download_champion_image(session, version: str, en_name: str, asset_path: st
     return False
 
 
-# ================= TTL 缓存机制 =================
+# ================= 有效期缓存机制 =================
 _last_sync_time = 0
 SYNC_TTL = 3600  # 缓存有效期：1 小时
 _sync_lock = threading.Lock()
@@ -168,7 +221,7 @@ def get_advanced_session():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept-Language": "zh-CN,zh;q=0.9"
     })
-    # 增强重试策略：5 次重试，指数退避，支持 5xx/429/连接错误
+    # 增强重试策略：最多重试 5 次，支持常见网络错误
     retry_strategy = Retry(
         total=5,
         backoff_factor=0.5,
@@ -223,7 +276,7 @@ def sync_hero_data():
                 "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json",
                 "https://apexlol.info/data/aram-mayhem-augments.zh_cn.json"
             ]
-            # 备用数据源（英文）：用于降级抓取图标映射
+            # 备用英文数据源，用于降级抓取图标映射
             aug_sources_en = [
                 "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/data/v1/augments.json",
                 "https://raw.communitydragon.org/latest/cdrag/augments.json"
@@ -257,7 +310,7 @@ def sync_hero_data():
                 except (Exception):
                     continue
 
-            # 如果中文源未获取到图标，尝试从英文源降级抓取
+            # 如果中文源没有图标，再尝试英文源
             if not aug_icon_map:
                 logger.info("中文数据源未获取到图标，尝试从 CommunityDragon 降级抓取...")
                 for src in aug_sources_en:
@@ -273,9 +326,9 @@ def sync_hero_data():
                             name = v.get('name', '') or v.get('displayName', '')
                             icon_path = v.get('iconSmall') or v.get('icon') or v.get('iconPath')
                             if name and icon_path:
-                                # 尝试匹配中文名称
+                                    # 尝试匹配中文名称
                                 for cn_name, tier in aug_map.items():
-                                    # 简单匹配：比较移除空格后的名称
+                                    # 简单匹配：比较去空格后的名称
                                     if _normalize_name(cn_name) == _normalize_name(name):
                                         aug_icon_map[cn_name] = icon_path
                                         break
@@ -287,7 +340,7 @@ def sync_hero_data():
                     except (Exception) as e:
                         logger.debug(f"CommunityDragon 数据源抓取失败：{src} - {e}")
                         continue
-            # 原子化极速写入
+            # 原子化写入
             tmp_core = CORE_DATA_FILE + ".tmp"
             with open(tmp_core, "w", encoding="utf-8") as f:
                 json.dump(core_data, f, ensure_ascii=False, indent=4)
@@ -295,13 +348,13 @@ def sync_hero_data():
 
             # ========== 本地头像静默补全逻辑 ==========
             # 遍历核心数据，检查并下载缺失的英雄头像
-            # 使用专用下载会话（图片下载专用重试策略）
+            # 使用专用下载会话
             img_session = get_advanced_session()
             img_session.headers.update({
                 "Referer": "https://leagueoflegends.com"
             })
             downloaded_count = 0
-            failed_downloads = []  # 记录下载失败的 ID
+            失败_downloads = []  # 记录下载失败的 ID
             for key, v in core_data.items():
                 asset_path = os.path.join(ASSET_DIR, f"{key}.png")
                 if not os.path.exists(asset_path):
@@ -309,9 +362,9 @@ def sync_hero_data():
                     if success:
                         downloaded_count += 1
                     else:
-                        failed_downloads.append((key, v['name'], v['en_name']))
+                        失败_downloads.append((key, v['name'], v['en_name']))
 
-            if downloaded_count > 0 or failed_downloads:
+            if downloaded_count > 0 or 失败_downloads:
                 logger.info(f"头像同步完成：下载{downloaded_count}个，失败{len(failed_downloads)}个")
 
             if aug_map:
@@ -342,12 +395,12 @@ def sync_hero_data():
             logger.exception(f"🚨 同步引擎发生未预期致命故障：{e}")
             return False
 
-# 【P1 修复】load_* 函数增加文件存在性前置检查，文件丢失时击穿 TTL 强制重同步
+# （高优先级修复）加载函数增加文件存在性检查，文件丢失时强制重新同步
 def load_champion_core_data():
     global _last_sync_time
     if not os.path.exists(CORE_DATA_FILE):
         with _sync_lock:
-            _last_sync_time = 0  # 击穿 TTL，强制重新同步
+            _last_sync_time = 0  # 强制重新同步
     if not sync_hero_data():
         return {}
     with open(CORE_DATA_FILE, "r", encoding="utf-8") as f:
@@ -357,7 +410,7 @@ def load_augment_map():
     global _last_sync_time
     if not os.path.exists(AUGMENT_MAP_FILE):
         with _sync_lock:
-            _last_sync_time = 0  # 击穿 TTL，强制重新同步
+            _last_sync_time = 0  # 强制重新同步
     if not sync_hero_data():
         return {}
     with open(AUGMENT_MAP_FILE, "r", encoding="utf-8") as f:
@@ -369,15 +422,13 @@ def get_system_status():
 
 
 def cleanup_missing_assets(max_retries: int = 3) -> list:
-    """
-    清理并重新下载缺失的英雄头像资源
-
-    Args:
-        max_retries: 单个资源最大重试次数
-
-    Returns:
-        list: 仍然缺失的资源 ID 列表 [(key, name, en_name), ...]
-    """
+    # 清理并重新下载缺失的英雄头像资源。
+    #
+    # 参数：
+    # max_retries：单个资源最大重试次数
+    #
+    # 返回：
+    # 仍然缺失的资源列表 [(key, name, en_name), ...]
     core_data = load_champion_core_data()
     if not core_data:
         logger.error("无法加载冠军核心数据，无法执行清理")
@@ -424,19 +475,17 @@ def cleanup_missing_assets(max_retries: int = 3) -> list:
             still_missing.append((key, name, en_name))
             logger.warning(f"  [重试失败] {name} ({key}) - 仍缺失")
 
-    # 输出 ASCII 表格
+    # 输出表格
     _print_missing_assets_table(still_missing)
 
     return still_missing
 
 
 def _print_missing_assets_table(missing_list: list):
-    """
-    打印缺失资源的 ASCII 表格
-
-    Args:
-        missing_list: 缺失资源列表 [(key, name, en_name), ...]
-    """
+    # 打印缺失资源表格。
+    #
+    # 参数：
+    # missing_list：缺失资源列表 [(key, name, en_name), ...]
     if not missing_list:
         logger.info("=" * 50)
         logger.info("所有资源文件已完整下载！")
@@ -448,7 +497,7 @@ def _print_missing_assets_table(missing_list: list):
     name_width = max(len(item[1]) for item in missing_list)
     en_width = max(len(item[2]) for item in missing_list)
 
-    # 限制列宽以防过长
+    # 限制列宽，避免内容过长
     key_width = min(key_width, 10)
     name_width = min(name_width, 20)
     en_width = min(en_width, 20)

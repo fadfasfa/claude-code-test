@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""
-在线视频字幕提取工具
-基于 yt-dlp 实现在线视频 URL 解析，优先下载官方字幕，若无官方字幕则下载音频流并使用 faster-whisper 进行转录
-"""
+#
+# 在线视频字幕提取工具
+# 优先下载官方字幕，若没有字幕则下载音频并转录为文本
+#
 
 import os
 import sys
@@ -14,17 +14,7 @@ from extract_subs import transcribe_audio, segments_to_markdown
 
 
 def download_subtitles_from_url(url, output_dir, languages=None):
-    """
-    从在线视频 URL 下载官方字幕
-
-    Args:
-        url (str): 视频 URL
-        output_dir (Path): 输出目录
-        languages (list): 优先下载的语言列表，默认为 ['zh', 'en']
-
-    Returns:
-        tuple: (bool, str) - (是否成功下载字幕, 字幕文件路径或错误信息)
-    """
+    # 从在线视频链接下载官方字幕
     if languages is None:
         languages = ['zh', 'en']
 
@@ -51,24 +41,16 @@ def download_subtitles_from_url(url, output_dir, languages=None):
                         if os.path.exists(subtitle_file):
                             return True, subtitle_file
 
-                return False, "No subtitles found for the specified languages"
+                return False, "未找到指定语言的字幕"
             else:
-                return False, "No subtitles available for this video"
+                return False, "该视频没有可用字幕"
 
     except Exception as e:
-        return False, f"Error downloading subtitles: {e}"
+        return False, f"下载字幕失败： {e}"
 
 
 def convert_srt_to_markdown(srt_path):
-    """
-    将 SRT 字幕文件转换为 Markdown 格式
-
-    Args:
-        srt_path (str): SRT 文件路径
-
-    Returns:
-        str: Markdown 格式的字幕内容
-    """
+    # 将 SRT 字幕转换为 Markdown 格式
     try:
         with open(srt_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -99,39 +81,19 @@ def convert_srt_to_markdown(srt_path):
         return markdown_content
 
     except Exception as e:
-        print(f"Error converting SRT to Markdown: {e}")
+        print(f"将 SRT 转换为 Markdown 时出错： {e}")
         return None
 
 
 def convert_srt_timestamp(srt_time):
-    """
-    将 SRT 时间戳格式 (HH:MM:SS,mmm) 转换为 HH:MM:SS.mmm 格式
-
-    Args:
-        srt_time (str): SRT 时间戳
-
-    Returns:
-        str: 格式化的时间戳
-    """
-    # SRT 格式: HH:MM:SS,mmm
-    # 目标格式: HH:MM:SS.mmm
+    # 将 SRT 时间戳转换为 HH:MM:SS.mmm 格式
     if ',' in srt_time:
         return srt_time.replace(',', '.')
     return srt_time
 
 
 def download_audio_from_url(url, output_dir):
-    """
-    从在线视频 URL 下载最优音频流
-
-    Args:
-        url (str): 视频 URL
-        output_dir (Path): 输出目录
-
-    Returns:
-        tuple: (bool, str) - (是否成功下载音频, 音频文件路径或错误信息)
-    """
-    # yt-dlp 配置 - 只下载最佳音频
+    # 从在线视频链接下载最优音频流
     ydl_opts = {
         'format': 'bestaudio/best',
         'postprocessors': [{
@@ -156,24 +118,15 @@ def download_audio_from_url(url, output_dir):
             if os.path.exists(audio_file):
                 return True, audio_file
             else:
-                return False, "Audio file not found after download"
+                return False, "下载后未找到音频文件"
 
     except Exception as e:
-        return False, f"Error downloading audio: {e}"
+        return False, f"下载音频失败： {e}"
 
 
 def process_online_video(url, output_dir, model_size="base", device="cpu", languages=None):
-    """
-    处理在线视频 URL
-
-    Args:
-        url (str): 视频 URL
-        output_dir (Path): 输出目录
-        model_size (str): Whisper 模型大小
-        device (str): 运行设备
-        languages (list): 优先下载的字幕语言
-    """
-    print(f"Processing online video: {url}")
+    # 处理在线视频
+    print(f"正在处理在线视频：{url}")
 
     # 确保输出目录存在
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -182,11 +135,11 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
         languages = ['zh', 'en']
 
     # 首先尝试下载官方字幕
-    print("Checking for official subtitles...")
+    print("正在检查官方字幕...")
     success, result = download_subtitles_from_url(url, output_dir, languages)
 
     if success:
-        print(f"Official subtitles downloaded: {result}")
+        print(f"官方字幕已下载：{result}")
         # 转换为 Markdown 格式
         markdown_content = convert_srt_to_markdown(result)
         if markdown_content:
@@ -200,29 +153,29 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
             # 清理临时 SRT 文件
             os.remove(result)
 
-            print(f"Successfully processed: {url} -> {md_path}")
+            print(f"处理成功：{url} -> {md_path}")
             return True
         else:
-            print("Failed to convert subtitles to Markdown format")
+            print("字幕转换为 Markdown 失败")
             return False
     else:
-        print(f"No official subtitles found: {result}")
-        print("Downloading audio stream for transcription...")
+        print(f"未找到官方字幕：{result}")
+        print("正在下载音频流以进行转写...")
 
         # 下载音频流
         success, result = download_audio_from_url(url, output_dir)
         if not success:
-            print(f"Failed to download audio: {result}")
+            print(f"音频下载失败：{result}")
             return False
 
         audio_path = result
-        print(f"Audio downloaded: {audio_path}")
+        print(f"音频已下载：{audio_path}")
 
         # 使用 faster-whisper 进行转录
         segments = transcribe_audio(audio_path, model_size, device)
 
         if not segments:
-            print("Failed to transcribe audio")
+            print("音频转写失败")
             # 清理音频文件
             if os.path.exists(audio_path):
                 os.remove(audio_path)
@@ -243,7 +196,7 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
-        print(f"Successfully processed: {url} -> {md_path}")
+        print(f"处理成功：{url} -> {md_path}")
         return True
 
 

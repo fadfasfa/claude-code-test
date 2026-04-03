@@ -21,22 +21,25 @@
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        /* 海克斯阶级竖条指示器 */
         .tier-prismatic {
-            background: linear-gradient(to bottom, #fde047, #ef4444);
-            box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+            background: linear-gradient(180deg, #fef3c7 0%, #f59e0b 36%, #fb7185 72%, #22d3ee 100%);
+            box-shadow:
+                0 0 0 1px rgba(255, 255, 255, 0.08),
+                0 0 12px rgba(251, 191, 36, 0.38),
+                0 0 16px rgba(34, 211, 238, 0.16);
         }
 
         .tier-gold {
-            background: linear-gradient(to bottom, #facc15, #ca8a04);
-            box-shadow: 0 0 8px rgba(202, 138, 4, 0.4);
+            background: linear-gradient(to bottom, #f8d66d, #c9830f);
+            box-shadow: 0 0 8px rgba(202, 138, 4, 0.34);
         }
 
         .tier-silver {
-            background: linear-gradient(to bottom, #cbd5e1, #64748b);
+            background: linear-gradient(to bottom, #d8e1ef, #64748b);
+            box-shadow: 0 0 8px rgba(148, 163, 184, 0.18);
+        }
         }
 
-        /* 列表悬浮高亮 */
         .list-row {
             transition: all 0.2s;
             content-visibility: auto;
@@ -55,8 +58,13 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            background: rgba(5, 8, 12, 0.98);
+            background: linear-gradient(180deg, rgba(6, 9, 14, 0.99) 0%, rgba(3, 5, 9, 0.99) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.04);
             --augment-accent: 43, 213, 194;
+            isolation: isolate;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.05),
+                inset 0 0 0 1px rgba(0, 0, 0, 0.18);
         }
 
         .augment-icon-shell::before {
@@ -70,6 +78,27 @@
             z-index: 0;
         }
 
+        .augment-icon-shell::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            pointer-events: none;
+            z-index: 2;
+            padding: 1px;
+            background: linear-gradient(145deg,
+                    rgba(255, 255, 255, 0.20) 0%,
+                    rgba(255, 255, 255, 0.04) 26%,
+                    rgba(255, 255, 255, 0.01) 56%,
+                    rgba(255, 255, 255, 0.10) 100%);
+            -webkit-mask:
+                linear-gradient(#fff 0 0) content-box,
+                linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+            opacity: 0.58;
+        }
+
         .augment-icon-shell img {
             position: relative;
             z-index: 1;
@@ -77,6 +106,7 @@
             height: 100%;
             object-fit: contain;
             padding: 11%;
+            filter: saturate(1.04) contrast(1.02) brightness(1.02);
         }
 
         .augment-icon-shell--list {
@@ -95,11 +125,27 @@
 
         .tier-shell-prismatic {
             --augment-accent: 34, 211, 238;
-            border-color: #22d3ee !important;
-            box-shadow: 0 0 18px rgba(34, 211, 238, 0.5), 0 10px 22px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1), inset 0 0 0 1px rgba(255,255,255,0.05) !important;
+            --augment-accent-2: 168, 85, 247;
+            border-color: rgba(34, 211, 238, 0.82) !important;
+            background:
+                radial-gradient(circle at 26% 20%, rgba(255, 255, 255, 0.14) 0%, transparent 20%),
+                radial-gradient(circle at 72% 22%, rgba(34, 211, 238, 0.16) 0%, transparent 26%),
+                radial-gradient(circle at 52% 88%, rgba(168, 85, 247, 0.14) 0%, transparent 30%),
+                linear-gradient(160deg, rgba(14, 18, 26, 0.996) 0%, rgba(7, 10, 16, 0.998) 48%, rgba(11, 16, 24, 0.994) 100%) !important;
+            box-shadow:
+                0 0 0 1px rgba(255, 255, 255, 0.04),
+                0 0 12px rgba(34, 211, 238, 0.30),
+                0 0 18px rgba(168, 85, 247, 0.12),
+                0 12px 24px rgba(0, 0, 0, 0.55),
+                inset 0 1px 0 rgba(255, 255, 255, 0.08),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.03) !important;
         }
         .tier-shell-prismatic::before {
-            background: radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.42) 0%, transparent 60%), linear-gradient(135deg, rgba(167, 139, 250, 0.22) 0%, transparent 80%) !important;
+            background:
+                radial-gradient(circle at 24% 18%, rgba(255, 255, 255, 0.14) 0%, transparent 22%),
+                radial-gradient(circle at 70% 24%, rgba(34, 211, 238, 0.20) 0%, transparent 28%),
+                radial-gradient(circle at 64% 76%, rgba(168, 85, 247, 0.16) 0%, transparent 24%),
+                linear-gradient(135deg, rgba(34, 211, 238, 0.08) 0%, rgba(168, 85, 247, 0.08) 46%, transparent 90%) !important;
         }
 
         .tier-shell-gold {
@@ -129,7 +175,6 @@
             border-radius: 0.5rem;
         }
 
-        /* 自定义滚动条样式 (美化版) */
         .scroll-container::-webkit-scrollbar {
             width: 8px;
             height: 8px;
@@ -155,12 +200,10 @@
             scrollbar-color: rgba(137, 180, 250, 0.3) rgba(0, 0, 0, 0.2);
         }
 
-        /* 平滑滚动 */
         html {
             scroll-behavior: smooth;
         }
 
-        /* 隐藏滚动条 (兼容旧版) */
         .no-scrollbar::-webkit-scrollbar {
             display: none;
         }
@@ -170,7 +213,6 @@
             scrollbar-width: none;
         }
 
-        /* 震动流光动画 */
         @keyframes autoLockFlash {
             0% {
                 box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
@@ -215,7 +257,7 @@
 
     <nav class="max-w-6xl mx-auto mb-6 flex justify-between items-center">
         <a href="index.html" class="text-gray-400 hover:text-white flex items-center space-x-2 transition-colors">
-            <span class="text-xl">←</span> <span>返回大盘风云榜</span>
+            <span class="text-xl">返回</span> <span>返回大盘风云榜</span>
         </a>
         <div id="wsStatus" class="flex items-center space-x-2 text-xs">
             <span class="w-2 h-2 bg-gray-500 rounded-full"></span>
@@ -232,16 +274,14 @@
                 onerror="(() => {
                      let stage = this.dataset.fallbackStage || '0';
                      if (stage === '0') {
-                         // Stage 1: 本地 assets 404，尝试 DDragon CDN
                          this.src = 'https://ddragon.leagueoflegends.com/cdn/' + (window.ddVersion || '14.3.1') + '/img/champion/' + (window.enName || '').replace(/[^\w]/g, '') + '.png';
                          this.dataset.fallbackStage = '1';
                      } else if (stage === '1') {
-                         // Stage 2: CDN 404，降级到 Canvas 动态渲染占位符
                          if (window.handleAssetMissing) {
                              window.handleAssetMissing(this, window.heroName || '?', 'avatar', '');
                          }
-                         this.dataset.fallbackStage = '2';
-                         this.onerror = null;  // 禁止无限递归
+                          this.dataset.fallbackStage = '2';
+                          this.onerror = null;
                      }
                  }).call(this)">
 
@@ -259,14 +299,13 @@
         </header>
 
         <section class="glass-panel rounded-2xl p-6 min-h-[400px]">
-            <!-- 模态切换工具栏 -->
             <div class="flex flex-wrap gap-2 items-center mb-4 pb-4 border-b border-gray-800">
                 <div class="flex gap-2">
                     <button id="btn-comprehensive" onclick="setDisplayMode('comprehensive')"
-                        class="mode-btn px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">📊
+                        class="mode-btn px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">综合推荐
                         综合推荐</button>
                     <button id="btn-winrate" onclick="setDisplayMode('winrate_only')"
-                        class="mode-btn px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium text-sm transition-colors">📈
+                        class="mode-btn px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium text-sm transition-colors">纯胜率
                         纯胜率</button>
                 </div>
                 <div class="flex-1"></div>
@@ -295,13 +334,11 @@
             </div>
 
             <div id="dataContainer" class="flex gap-4 hidden">
-                <!-- 左侧 45%：紧凑版海克斯列表 -->
                 <div class="w-[45%] flex-shrink-0">
                     <div id="compList" class="flex flex-col gap-4 scroll-container"
                         style="max-height: 650px; overflow-y: auto; padding-right: 8px;"></div>
                 </div>
 
-                <!-- 右侧 55%：联动文章垂直滚动容器 -->
                 <div class="w-[55%]">
                     <div id="synergyArticleScroll"
                         class="flex flex-col gap-4 max-h-[650px] overflow-y-auto scroll-container"
@@ -317,10 +354,8 @@
     </main>
 
     <script>
-        // 修复本地直开 Bug：file: 协议下使用 localhost
         const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000' : window.location.origin;
         const WS_URL = window.location.protocol === 'file:' ? 'ws://localhost:8000' : 'ws://' + (window.location.host || 'localhost:8000');
-        // DDragon 版本号（动态获取，fallback 硬编码）
         let ddVersion = '14.3.1';
         window.ddVersion = ddVersion;
         fetch('https://ddragon.leagueoflegends.com/api/versions.json')
@@ -330,23 +365,21 @@
 
         let hextechData = null;
         let currentView = 'all';
-        let currentMode = 'comprehensive';  // ✅ 新增：当前显示模式
-        let activeArray = null;  // ✅ 新增：活跃数据源引用
+        let currentMode = 'comprehensive';
+        let activeArray = null;
         let synergyData = null;
         let ws = null;
 
-        // 悬浮窗单例防多开管控
         const tabId = Math.random().toString(36).substring(2, 9);
         const bc = new BroadcastChannel('hextech_nexus_channel');
         bc.onmessage = (e) => {
             if (e.data.type === 'new_tab_opened' && e.data.id !== tabId) {
-                document.body.innerHTML = '<div class="flex items-center justify-center h-screen text-gray-500 text-xl font-bold">✨ 已在新的悬浮窗中唤醒，本窗口已自动休眠。</div>';
+                document.body.innerHTML = '<div class="flex items-center justify-center h-screen text-gray-500 text-xl font-bold">已唤醒 已在新的悬浮窗中唤醒，本窗口已自动休眠。</div>';
                 if (window.wsInstance) window.wsInstance.close();
             }
         };
         bc.postMessage({ type: 'new_tab_opened', id: tabId });
 
-        // 解析 URL 参数并渲染头部
         const urlParams = new URLSearchParams(window.location.search);
         const hero = urlParams.get('hero');
         const enName = urlParams.get('en');
@@ -355,19 +388,15 @@
         const heroPR = urlParams.get('pr');
         const isAuto = urlParams.get('auto');
 
-        // ========== 保存到全局作用域，供 onerror 处理器使用 ==========
         window.enName = enName;
         window.heroId = heroId;
-        window.heroName = hero;  // 保存英雄中文名供占位图使用
+        window.heroName = hero;
 
-        // 渲染头部数据
         if (hero) document.getElementById('heroName').textContent = hero;
         if (heroWR) document.getElementById('heroWR').textContent = heroWR;
         if (heroPR) document.getElementById('heroPR').textContent = heroPR;
 
-        // 渲染背景原画和头像 - 优先级：本地 > ddragon
         if (heroId) {
-            // 优先尝试本地 assets
             document.getElementById('heroAvatar').src = `./assets/${heroId}.png`;
         } else if (enName) {
             document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/${ddVersion}/img/champion/${enName}.png`;
@@ -376,20 +405,16 @@
             document.getElementById('heroAvatar').src = 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23333%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2240%22>?</text></svg>';
         }
 
-        // 设置背景原画（仅使用 ddragon）
         if (enName) {
             document.getElementById('headerBg').style.backgroundImage = `url('https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${enName}_0.jpg')`;
         }
 
-        // 判断是否触发动画
         if (isAuto === '1') {
             document.getElementById('mainHeader').classList.add('anim-auto-lock');
         }
 
-        // 切换显示模式（综合 vs 纯胜率）
         function setDisplayMode(mode) {
             currentMode = mode;
-            // 更新按钮样式
             document.querySelectorAll('.mode-btn').forEach(btn => {
                 btn.className = 'mode-btn px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium text-sm transition-colors';
             });
@@ -397,11 +422,9 @@
             if (activeBtn) {
                 activeBtn.className = 'mode-btn px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors';
             }
-            // 重新渲染
             renderCurrentView();
         }
 
-        // 切换标签页
         function switchView(view) {
             currentView = view;
             document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -414,7 +437,6 @@
             renderCurrentView();
         }
 
-        // 获取阶级 CSS
         function getTierBarClass(tier) {
             if (tier.includes('棱彩') || tier.includes('彩色') || tier === 'Prismatic') return 'tier-prismatic';
             if (tier.includes('金') || tier === 'Gold') return 'tier-gold';
@@ -422,18 +444,8 @@
         }
 
         function toLocalAugmentIconUrl(iconUrl, hextechName) {
-            if (iconUrl && !/^https?:\/\//i.test(iconUrl)) {
-                return iconUrl;
-            }
-
             if (iconUrl) {
-                try {
-                    const parsedUrl = new URL(iconUrl, window.location.origin);
-                    const fileName = parsedUrl.pathname.split('/').pop();
-                    if (fileName) {
-                        return `./assets/${encodeURIComponent(decodeURIComponent(fileName))}`;
-                    }
-                } catch (_) {}
+                return iconUrl;
             }
 
             return `./assets/${encodeURIComponent(hextechName)}.png`;
@@ -466,9 +478,7 @@
             `;
         }
 
-        // 渲染海克斯列表行（紧凑型五列布局）
         function createHextechCard(hextech, index) {
-            // 使用 /assets/ 路由，让后端处理 CommunityDragon CDN 重定向
             const iconUrl = toLocalAugmentIconUrl(hextech.icon, hextech.海克斯名称);
             const tierClass = getTierBarClass(hextech.海克斯阶级);
 
@@ -477,26 +487,21 @@
 
             return `
             <div class="list-row flex items-center p-2 rounded border border-gray-700 bg-[#1e1e2e] hover:bg-[#252535] transition-colors gap-2">
-                <!-- 列1：排名序号 (w-6) -->
                 <div class="w-6 text-center text-xs font-bold text-gray-500">${index + 1}</div>
 
-                <!-- 列2-3：竖条+小图标 (w-8 h-8) -->
                 <div class="flex items-center gap-2 flex-shrink-0">
                     <div class="w-1 h-6 rounded-full ${tierClass}"></div>
                     ${renderAugmentIcon(iconUrl, hextech.海克斯名称, hextech.海克斯阶级, 'list')}
                 </div>
 
-                <!-- 列4：海克斯名称 (flex-1 truncate) -->
                 <div class="flex-1 truncate ml-2">
                     <div class="text-sm font-bold text-gray-200 truncate" title="${hextech.海克斯名称}">${hextech.海克斯名称}</div>
                 </div>
 
-                <!-- 列5：胜率 (w-14 text-right) -->
                 <div class="w-16 text-right">
                     <div class="text-sm font-bold text-green-400">${wr}%</div>
                 </div>
 
-                <!-- 列6：出场率 (w-12 text-right) -->
                 <div class="w-14 text-right">
                     <div class="text-xs text-gray-400">${pr}%</div>
                 </div>
@@ -504,7 +509,6 @@
             `;
         }
 
-        // 渲染视图数据（双模态 + 全量显示）
         function renderCurrentView() {
             if (!hextechData) return;
             const compList = document.getElementById('compList');
@@ -513,16 +517,12 @@
 
             let leftData = [];
 
-            // 根据模式选择数据源
             const baseArray = currentMode === 'winrate_only' ? hextechData.winrate_only : hextechData.comprehensive;
 
             if (currentView === 'all') {
-                // 全量显示：直接使用基础数组
                 leftData = baseArray || [];
             } else {
-                // 选择特定阶级：从阶级数据中过滤
                 const tierData = hextechData[currentView] || [];
-                // 按模式排序
                 if (currentMode === 'winrate_only') {
                     leftData = tierData.slice().sort((a, b) => b.海克斯胜率 - a.海克斯胜率);
                 } else {
@@ -530,8 +530,6 @@
                 }
             }
 
-            // ✅ 关键改动：完全移除所有 .slice() 截断，显示全量数据
-            // leftData = leftData.slice(0, 10);  // ← 已永久删除
 
             if (leftData.length === 0) {
                 dataContainer.classList.add('hidden');
@@ -541,12 +539,10 @@
                 dataContainer.classList.remove('hidden');
                 compList.innerHTML = leftData.map((h, i) => createHextechCard(h, i)).join('');
 
-                // ✅ 级联过滤：更新右侧联动区，仅显示当前阶级的联动
                 updateFilteredSynergies(currentView);
             }
         }
 
-        // 级联过滤函数：重构为大卡片式联动推荐
         function updateFilteredSynergies(tier) {
             const container = document.getElementById('synergyArticleScroll');
             if (!synergyData || synergyData.length === 0) {
@@ -554,9 +550,8 @@
                 return;
             }
 
-            // 阶级关键词映射
             const tierKeywords = {
-                'all': null,  // 不过滤
+                'all': null,
                 'Prismatic': ['棱彩'],
                 'Gold': ['黄金', '金色'],
                 'Silver': ['白银', '银色']
@@ -565,7 +560,6 @@
             const keywords = tierKeywords[tier];
             let filtered = synergyData;
 
-            // 如果选中的不是"全部"，则过滤包含该阶级关键词的联动
             if (keywords) {
                 filtered = synergyData.filter(item => {
                     return keywords.some(kw => item.includes(kw));
@@ -577,18 +571,15 @@
                 return;
             }
 
-            // 渲染联动文章
             renderSynergyArticles(filtered, container);
         }
 
-        // 渲染联动文章卡片
         function renderSynergyArticles(articles, container) {
             if (!articles || articles.length === 0) {
                 container.innerHTML = '<div class="glass-panel rounded-xl p-4"><div class="text-sm text-gray-400 text-center">暂无联动文章</div></div>';
                 return;
             }
 
-            // 解析与结构化联动数据
             const parsedArticles = articles.map(str => {
                 const parts = str.split('|').map(s => s.trim());
                 if (parts.length >= 4) {
@@ -605,7 +596,6 @@
                     let content = "";
                     let isOriginal = false;
 
-                    // 解析作者与描述内容
                     if (parts.length > 5) {
                         const nextPart = parts[5];
                         let contentStartIndex = 5;
@@ -627,7 +617,6 @@
                         content = parts.slice(contentStartIndex).join(' | ');
                     }
 
-                    // 级别权重映射
                     const gradeVal = gradeStr.toUpperCase();
                     let gradeScore = 0;
                     if (gradeVal.includes('SS')) gradeScore = 6;
@@ -637,7 +626,6 @@
                     else if (gradeVal.includes('C')) gradeScore = 2;
                     else if (gradeVal.includes('D')) gradeScore = 1;
 
-                    // 查找对应海克斯的基础数据以获取胜率或综合得分作为次排序键
                     const baseHex = hextechData ? (hextechData.comprehensive || []).find(h => h.海克斯名称 === nameInfo) : null;
                     const fallbackScore = baseHex ? (baseHex.综合得分 || baseHex.海克斯胜率 || 0) : 0;
 
@@ -659,7 +647,6 @@
                 return { original: str, name: "未知联动", gradeScore: -1, fallbackScore: 0, content: str };
             });
 
-            // 排序逻辑：主键（评级降序），次键（基础胜率/得分降序）
             parsedArticles.sort((a, b) => {
                 if (b.gradeScore !== a.gradeScore) {
                     return b.gradeScore - a.gradeScore;
@@ -667,10 +654,8 @@
                 return b.fallbackScore - a.fallbackScore;
             });
 
-            // 生成卡片 HTML
             const html = parsedArticles.map(item => {
                 if (item.gradeScore === -1) {
-                    // 非标准格式兜底展示
                     return `
                         <div class="glass-panel rounded-xl p-4 border border-gray-800 hover:border-blue-500/30 transition-colors">
                             <div class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">${escapeHtml(item.content)}</div>
@@ -678,7 +663,6 @@
                     `;
                 }
 
-                // 评级颜色逻辑
                 let badgeBg = 'bg-[#8c9ba5]';
                 let badgeText = 'text-[#000000]';
                 if (item.gradeScore >= 5) {
@@ -692,10 +676,8 @@
                     badgeText = 'text-[#ffffff]';
                 }
 
-                // 使用 /assets/ 路由，让后端处理 CDN 重定向
                 const iconUrl = `./assets/${encodeURIComponent(item.name)}.png`;
 
-                // 标签上色辅助函数
                 const getTagStyle = (tag) => {
                     if (tag.includes('强力联动')) return 'border border-[#2bd5c2]/40 text-[#2bd5c2] bg-[#2bd5c2]/10';
                     if (tag.includes('娱乐')) return 'border border-[#9a73d1]/40 text-[#9a73d1] bg-[#9a73d1]/10';
@@ -707,15 +689,11 @@
 <div class="hextech-card p-[1px] bg-[#151d2a] mb-4" style="clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));">
     <div class="bg-[#060b10] p-5 flex gap-4" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px)); min-height: 110px;">
         
-        <!-- 左侧 Icon -->
         ${renderAugmentIcon(iconUrl, item.name, item.tier, 'detail')}
 
-        <!-- 右侧内容列 -->
         <div class="flex flex-col flex-grow">
-            <!-- 头部（名称、标签、赞踩与作者） -->
             <div class="flex items-start justify-between w-full">
                 
-                <!-- 名、阶梯与标签 -->
                 <div class="flex flex-col">
                     <div class="flex items-center gap-2.5 flex-wrap">
                         <span class="text-white text-[16px] font-bold tracking-wide leading-none">${item.name}</span>
@@ -730,7 +708,6 @@
                     </div>
                 </div>
 
-                <!-- 赞踩与作者 -->
                 <div class="flex items-center gap-3 mt-[-2px]">
                     <div class="flex items-center bg-[#1e2333] border border-[#2a3040] rounded-full overflow-hidden h-[24px]">
                         <div class="flex items-center gap-1.5 px-3 h-full border-r border-[#2a3040]">
@@ -747,7 +724,6 @@
 
             </div>
 
-            <!-- 正文 -->
             <div class="text-[#b3b9c6] text-[14px] leading-relaxed mt-3 w-content">
                 ${escapeHtml(item.content)}
             </div>
@@ -761,14 +737,12 @@
             container.innerHTML = html;
         }
 
-        // API 数据请求
         async function loadHextechs() {
             if (!hero) {
                 document.getElementById('loadingSpinner').innerHTML = '<div class="text-red-400">错误：未获取到英雄名称</div>';
                 return;
             }
             try {
-                // 并行加载海克斯数据、联动数据、图标映射字典
                 const [hextechRes, synergyRes, iconMapRes] = await Promise.all([
                     fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/hextechs`),
                     fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId || hero)}`),
@@ -780,7 +754,6 @@
                 synergyData = synergyResult.synergies || [];
                 window.augmentIconMap = await iconMapRes.json();
 
-                // ✅ 初始化 activeArray（默认综合推荐模式）
                 activeArray = hextechData.comprehensive || [];
 
                 document.getElementById('loadingSpinner').classList.add('hidden');
@@ -793,7 +766,6 @@
             }
         }
 
-        // WebSocket 逻辑 - 支持跨局连跳
         function connectWS() {
             ws = new WebSocket(WS_URL + '/ws');
             window.wsInstance = ws;
@@ -807,7 +779,6 @@
                         console.log('收到 CSV 数据更新通知，自动热重载...');
                         loadHextechs();
                     } else if (msg.type === 'local_player_locked') {
-                        // 若玩家在详情页挂机，下一局锁定新英雄时自动连跳
                         const enName = msg.en_name ? `&en=${encodeURIComponent(msg.en_name)}` : '';
                         window.location.href = `detail.html?hero=${encodeURIComponent(msg.hero_name)}&id=${encodeURIComponent(msg.champion_id)}${enName}&auto=1`;
                     }
@@ -817,7 +788,6 @@
             };
         }
 
-        // 初始化
         window.onload = () => {
             loadHextechs();
             connectWS();
@@ -835,10 +805,8 @@
             return String(text).replace(/[&<>"']/g, m => map[m]);
         }
 
-        // Step 3: 生成带英雄首字母的彩色 SVG 占位图
         function createPlaceholder(initial) {
             const initials = (initial || '?').charAt(0).toUpperCase();
-            // 生成哈希颜色
             const hue = initials.charCodeAt(0) * 13 % 360;
             const color1 = `hsl(${hue}, 70%, 40%)`;
             const color2 = `hsl(${(hue + 40) % 360}, 70%, 50%)`;

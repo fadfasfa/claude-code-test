@@ -3,9 +3,13 @@ import base64
 import json
 import logging
 import os
+import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
+from html import unescape
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote, unquote
@@ -26,35 +30,157 @@ from pydantic import BaseModel
 
 from data_processor import process_champions_data, process_hextechs_data
 from hextech_query import get_latest_csv
-from hero_sync import load_champion_core_data, CONFIG_DIR
+from hero_sync import BASE_DIR, CONFIG_DIR, RESOURCE_DIR, load_champion_core_data
 from backend_refresh import refresh_backend_data
 
-# ── 模块日志（不再重复调用 basicConfig，依赖 hero_sync 的全局配置） ─────────
+# 记录本模块的运行日志。
 logger = logging.getLogger(__name__)
 
-# ── 常量 ──────────────────────────────────────────────────────────────────────
+# 网页服务默认监听 8000，必要时可通过环境变量覆盖。
 SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
+WEB_PORT_FILE = os.path.join(CONFIG_DIR, "web_server_port.txt")
+ACTIVE_WEB_PORT = SERVER_PORT
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
+AUGMENT_ICON_SOURCE_FILE = os.path.join(CONFIG_DIR, "augment_icon_source.txt")
+BROWSER_PROFILE_DIR = os.path.join(CONFIG_DIR, "browser_profile")
+# 增强器图标来源标记，用于判断是否需要重新预取资源。
+AUGMENT_ICON_SOURCE_ID = "apexlol"
+APEXLOL_HEXTECH_INDEX_URL = "https://apexlol.info/zh/hextech/"
+APEXLOL_HEXTECH_IMAGE_URL = "https://apexlol.info/images/hextech/{slug}.webp"
+APEXLOL_HEXTECH_MAP_FILE = os.path.join(CONFIG_DIR, "Augment_Apexlol_Map.json")
 
-# ── 英雄核心数据缓存 ─────────────────────────────────────────────────────────
+_managed_browser_process: Optional[subprocess.Popen] = None
+_managed_browser_lock = threading.Lock()
+
+
+def _write_active_web_port(port: int) -> None:
+    tmp_path = WEB_PORT_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(str(port))
+    os.replace(tmp_path, WEB_PORT_FILE)
+
+
+def _iter_browser_candidates() -> List[str]:
+    configured = os.getenv("HEXTECH_BROWSER")
+    candidates = []
+    if configured:
+        candidates.append(configured)
+    candidates.extend(["msedge", "chrome", "brave"])
+    resolved: List[str] = []
+    for candidate in candidates:
+        path = shutil.which(candidate)
+        if path and path not in resolved:
+            resolved.append(path)
+    return resolved
+
+
+def _terminate_managed_browser() -> bool:
+    global _managed_browser_process
+
+    proc = _managed_browser_process
+    if proc is None:
+        return False
+
+    _managed_browser_process = None
+    if proc.poll() is not None:
+        return True
+
+    try:
+        parent = psutil.Process(proc.pid)
+    except psutil.Error:
+        return False
+
+    try:
+        children = parent.children(recursive=True)
+    except psutil.Error:
+        children = []
+
+    for child in children:
+        try:
+            child.terminate()
+        except psutil.Error:
+            pass
+    psutil.wait_procs(children, timeout=2)
+
+    try:
+        parent.terminate()
+        parent.wait(timeout=2)
+    except psutil.TimeoutExpired:
+        try:
+            parent.kill()
+        except psutil.Error:
+            pass
+    except psutil.Error:
+        return False
+
+    return True
+
+
+def _open_managed_browser(url: str, replace_existing: bool = False) -> bool:
+    global _managed_browser_process
+
+    os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+
+    with _managed_browser_lock:
+        existing = _managed_browser_process
+        if existing is not None and existing.poll() is not None:
+            _managed_browser_process = None
+            existing = None
+
+        if replace_existing and existing is not None:
+            _terminate_managed_browser()
+
+        for browser_path in _iter_browser_candidates():
+            cmd = [
+                browser_path,
+                f"--app={url}",
+                "--new-window",
+                f"--user-data-dir={BROWSER_PROFILE_DIR}",
+            ]
+            try:
+                _managed_browser_process = subprocess.Popen(cmd)
+                logger.info("已启动受管浏览器窗口：%s", url)
+                return True
+            except OSError as e:
+                logger.debug("启动浏览器 %s 失败：%s", browser_path, e)
+
+    try:
+        webbrowser.open(url)
+        logger.info("已通过系统默认浏览器打开：%s", url)
+        return True
+    except Exception as e:
+        logger.warning("打开浏览器失败：%s", e)
+        return False
+
+
+def _build_detail_url(hero_id: str, hero_name: str, en_name: str) -> str:
+    return (
+        f"http://127.0.0.1:{ACTIVE_WEB_PORT}/detail.html"
+        f"?hero={quote(hero_name or '', safe='')}"
+        f"&id={quote(str(hero_id), safe='')}"
+        f"&en={quote(en_name or '', safe='')}"
+        f"&auto=1"
+    )
+
+# 延迟加载英雄核心数据缓存。
 
 _champion_core_cache: Optional[dict] = None
 
 
 def _ensure_champion_cache() -> dict:
-    """确保英雄核心数据缓存已加载，返回缓存字典（消除重复的缓存初始化代码）。"""
+    # 从共享缓存中读取英雄核心数据，减少重复读盘。
     global _champion_core_cache
     if _champion_core_cache is None:
         try:
             _champion_core_cache = load_champion_core_data()
         except Exception as e:
-            logger.warning(f"加载英雄核心数据失败：{e}")
+            logger.warning("英雄核心数据加载失败：%s", e)
             _champion_core_cache = {}
     return _champion_core_cache
 
 
 def get_champion_name(champ_id: str) -> str:
-    """根据英雄 ID（字符串）获取中文名，使用缓存避免重复加载。"""
+    # 根据英雄编号读取中文名。
     cache = _ensure_champion_cache()
     champ_id_str = str(champ_id)
     if champ_id_str in cache:
@@ -63,7 +189,7 @@ def get_champion_name(champ_id: str) -> str:
 
 
 def get_champion_info(champ_id: str) -> Tuple[str, str]:
-    """获取英雄 ID 对应的中文名和英文名，返回 (name, en_name)。"""
+    # 同时返回中文名和英文名，供页面和回退逻辑共用。
     cache = _ensure_champion_cache()
     champ_id_str = str(champ_id)
     if champ_id_str in cache:
@@ -73,14 +199,14 @@ def get_champion_info(champ_id: str) -> Tuple[str, str]:
 
 
 def _get_ddragon_version() -> str:
-    """从 config/hero_version.txt 读取当前 DDragon 版本号，读取失败时返回备用版本。"""
+    # 从本地版本文件读取版本号，失败时回退默认值。
     try:
         with open(VERSION_FILE, "r", encoding="utf-8") as f:
             version = f.read().strip()
             if version:
                 return version
     except (OSError, IOError):
-        logger.debug("无法读取 hero_version.txt，使用备用版本号")
+        logger.debug("无法读取 hero_version.txt，改用内置版本。")
     return "14.3.1"
 
 
@@ -120,9 +246,115 @@ def _load_augment_icon_map() -> dict:
             _augment_icon_map_cache = (current_mtime, data)
             return data
     except Exception as e:
-        logger.warning(f"读取 Augment_Icon_Map.json 失败：{e}")
+        logger.warning("增强器图标映射加载失败：%s", e)
 
     return cached_data
+
+
+_apexlol_hextech_map_cache: Tuple[float, dict] = (0.0, {})
+_apexlol_hextech_map_lock = threading.Lock()
+
+
+def _strip_html_tags(text: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_apexlol_hextech_slug(value: str) -> str:
+    value = str(value).strip()
+    return value.lstrip("/").split("?")[0].split("#")[0]
+
+
+def _load_apexlol_hextech_map(force_refresh: bool = False) -> dict:
+    global _apexlol_hextech_map_cache
+
+    with _apexlol_hextech_map_lock:
+        cached_mtime, cached_data = _apexlol_hextech_map_cache
+        if not force_refresh and cached_data:
+            return cached_data
+
+    if not force_refresh and os.path.exists(APEXLOL_HEXTECH_MAP_FILE):
+        try:
+            current_mtime = os.path.getmtime(APEXLOL_HEXTECH_MAP_FILE)
+            cached_mtime, cached_data = _apexlol_hextech_map_cache
+            if cached_mtime == current_mtime and cached_data:
+                return cached_data
+            with open(APEXLOL_HEXTECH_MAP_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and data:
+                _apexlol_hextech_map_cache = (current_mtime, data)
+                return data
+        except Exception as e:
+            logger.debug("读取 apexlol 海克斯图标映射失败：%s", e)
+
+    try:
+        response = requests.get(
+            APEXLOL_HEXTECH_INDEX_URL,
+            timeout=20,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        response.raise_for_status()
+        html = response.text
+    except Exception as e:
+        logger.warning("获取 apexlol 海克斯图标映射失败：%s", e)
+        return cached_data
+
+    name_to_slug: dict = {}
+    for match in re.finditer(r'href="/zh/hextech/([^"]+)"[^>]*>(.*?)</a>', html, re.S | re.I):
+        slug = _normalize_apexlol_hextech_slug(match.group(1))
+        inner_html = match.group(2)
+        title = _strip_html_tags(inner_html)
+        if not slug or not title:
+            continue
+        # 优先保留首次出现的准确名称。
+        name_to_slug.setdefault(title, slug)
+        normalized_title = _normalize_augment_name(title)
+        name_to_slug.setdefault(normalized_title, slug)
+
+    if name_to_slug:
+        try:
+            tmp_path = APEXLOL_HEXTECH_MAP_FILE + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(name_to_slug, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, APEXLOL_HEXTECH_MAP_FILE)
+            _apexlol_hextech_map_cache = (time.time(), name_to_slug)
+        except Exception as e:
+            logger.debug("写入 apexlol 海克斯图标映射失败：%s", e)
+        return name_to_slug
+
+    return cached_data
+
+
+def _resolve_apexlol_hextech_icon_url(hextech_name: str) -> str:
+    slug_map = _load_apexlol_hextech_map()
+    candidates = [
+        str(hextech_name).strip(),
+        _normalize_augment_name(hextech_name),
+    ]
+    slug = ""
+    for candidate in candidates:
+        if candidate in slug_map:
+            slug = slug_map[candidate]
+            break
+    if slug:
+        return APEXLOL_HEXTECH_IMAGE_URL.format(slug=slug)
+    return ""
+
+
+def _read_augment_icon_source_marker() -> str:
+    try:
+        with open(AUGMENT_ICON_SOURCE_FILE, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except (OSError, IOError):
+        return ""
+
+
+def _write_augment_icon_source_marker(source_id: str) -> None:
+    tmp_path = AUGMENT_ICON_SOURCE_FILE + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(source_id)
+    os.replace(tmp_path, AUGMENT_ICON_SOURCE_FILE)
 
 
 def _find_augment_icon_filename(icon_map: dict, lookup_name: str) -> Optional[str]:
@@ -143,8 +375,7 @@ def _find_augment_icon_filename(icon_map: dict, lookup_name: str) -> Optional[st
 def _iter_augment_icon_urls(icon_filename: str):
     filename = _normalize_augment_filename(icon_filename)
     templates = [
-        "https://cdn.dtodo.cn/hextech/augment-icons/{filename}",
-        "https://raw.communitydragon.org/latest/game/assets/ux/cherry/augments/icons/{filename}",
+        # 按优先级尝试多个社区资源地址。
         "https://raw.communitydragon.org/latest/game/assets/ux/augments/{filename}",
         "https://raw.communitydragon.org/pbe/game/assets/ux/cherry/augments/icons/{filename}",
         "https://raw.communitydragon.org/pbe/game/assets/ux/augments/{filename}",
@@ -153,13 +384,13 @@ def _iter_augment_icon_urls(icon_filename: str):
         yield template.format(filename=filename)
 
 
-def _ensure_augment_icon_cached(icon_filename: str) -> Optional[str]:
+def _ensure_augment_icon_cached(icon_filename: str, force_refresh: bool = False) -> Optional[str]:
     normalized_filename = _normalize_augment_filename(icon_filename)
     if not normalized_filename:
         return None
 
     target_path = os.path.join(_assets_dir, normalized_filename)
-    if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+    if not force_refresh and os.path.exists(target_path) and os.path.getsize(target_path) > 0:
         return target_path
 
     tmp_path = target_path + ".tmp"
@@ -176,7 +407,7 @@ def _ensure_augment_icon_cached(icon_filename: str) -> Optional[str]:
             os.replace(tmp_path, target_path)
             return target_path
         except Exception as e:
-            logger.debug(f"下载海克斯图标失败：{url} -> {e}")
+            logger.debug("缓存强化符文图标失败：%s -> %s", url, e)
         finally:
             try:
                 if os.path.exists(tmp_path):
@@ -190,59 +421,56 @@ def _ensure_augment_icon_cached(icon_filename: str) -> Optional[str]:
 def _prefetch_augment_icons(force: bool = False) -> None:
     global _augment_prefetch_mtime
 
-    icon_map_path = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
-    try:
-        current_mtime = os.path.getmtime(icon_map_path)
-    except OSError:
-        return
-
     with _augment_prefetch_lock:
-        if not force and _augment_prefetch_mtime == current_mtime:
+        if not force and _augment_prefetch_mtime:
             return
-        _augment_prefetch_mtime = current_mtime
+        _augment_prefetch_mtime = time.time()
 
-    icon_map = _load_augment_icon_map()
-    filenames = {
-        _normalize_augment_filename(value)
-        for value in icon_map.values()
-        if _normalize_augment_filename(value)
-    }
+    try:
+        icon_map = _load_apexlol_hextech_map(force_refresh=force)
+        logger.info("已预热 apexlol 海克斯图标映射，共 %s 项", len(icon_map))
+    except Exception as e:
+        logger.debug("预热 apexlol 海克斯图标映射失败：%s", e)
 
-    if not filenames:
-        return
-
-    logger.info(f"开始预缓存海克斯图标，共 {len(filenames)} 个")
-    max_workers = min(8, len(filenames))
-    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="augment-cache") as executor:
-        futures = {
-            executor.submit(_ensure_augment_icon_cached, filename): filename
-            for filename in sorted(filenames)
-        }
-        for future in as_completed(futures):
-            filename = futures[future]
-            try:
-                future.result()
-            except Exception as e:
-                logger.debug(f"预缓存海克斯图标失败：{filename} -> {e}")
+    if force:
+        try:
+            _write_augment_icon_source_marker(AUGMENT_ICON_SOURCE_ID)
+        except Exception as e:
+            logger.debug("记录强化符文图标来源标记失败：%s", e)
 
 
-# ── Request models ─────────────────────────────────────────────────────────────
+
+# 请求体：前端点击英雄后发送到跳转接口。
 
 class RedirectRequest(BaseModel):
     hero_id: str
     hero_name: str
 
 
-# ── Resource path resolution for PyInstaller ──────────────────────────────────
+# 打包环境兼容的资源路径解析。
 
 def get_resource_path(relative_path: str) -> str:
-    """Get resource path, handling PyInstaller bundled environment."""
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.dirname(__file__), relative_path)
+    # 返回打包环境兼容的资源路径。
+    candidates = [
+        os.path.join(RESOURCE_DIR, relative_path),
+        os.path.join(BASE_DIR, relative_path),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0]
 
 
-# ── CSV hot-reload cache ──────────────────────────────────────────────────────
+def _html_file_response(filename: str) -> FileResponse:
+    # 返回网页文件并显式声明中文编码，避免浏览器乱码。
+    return FileResponse(
+        os.path.join(_static_dir, filename),
+        media_type="text/html; charset=utf-8",
+    )
+
+
+# 数据表文件缓存，减少重复读盘。
 
 @dataclass
 class CSVCache:
@@ -254,7 +482,7 @@ _csv_cache = CSVCache()
 
 
 def get_df() -> pd.DataFrame:
-    """Return cached DataFrame, reloading if the CSV file has been modified."""
+    # 返回最新的英雄数据表。
     latest = get_latest_csv()
     if not latest:
         return pd.DataFrame()
@@ -265,37 +493,37 @@ def get_df() -> pd.DataFrame:
 
     if latest != _csv_cache.path or current_mtime != _csv_cache.mtime:
         try:
-            # 移除 dtype 强约束，让 pandas 自动推断类型
+            # 直接读取数据表，让解析库自行推断列类型。
             df = pd.read_csv(latest)
-            df.columns = df.columns.str.replace(' ', '')  # 暴力清除表头所有空格（包括中间空格）
+            # 清理列名中的空格，兼容不同来源的数据表。
 
-            # 容错遍历：检查移除空格后的列名变体
+            # 动态定位英雄编号列。
             id_column = None
-            for col_name in ['英雄ID', '英雄id']:
+            for col_name in ["英雄ID", "英雄 ID"]:
                 if col_name in df.columns:
                     id_column = col_name
                     break
 
-            # 若找到 ID 列，先转换为字符串类型，再执行字符串操作
+            # 将“123.0”这类编号还原为纯文本。
             if id_column is not None:
                 df[id_column] = df[id_column].astype(str).str.strip().str.replace('.0', '', regex=False)
 
             _csv_cache.path = latest
             _csv_cache.mtime = current_mtime
             _csv_cache.df = df
-            logger.info(f"CSV 重新加载成功：{os.path.basename(latest)}")
+            logger.info("CSV refreshed: %s", os.path.basename(latest))
         except Exception as e:
-            logger.error(f"CSV 重新加载失败：{e}")
-            # 安全降级：返回上一次缓存的 DataFrame 或空 DataFrame
+            logger.error("CSV 刷新失败：%s", e)
+            # 读取失败时复用旧缓存，避免页面抖动。
             return _csv_cache.df
     return _csv_cache.df
 
 
-# ── JSON cache for synergy data ───────────────────────────────────────────────
+# 结构化数据缓存。
 
 @dataclass
 class JSONFileCache:
-    """通用 JSON 文件缓存，基于 mtime 自动重新加载。"""
+    # 记录数据文件的路径、修改时间和解析结果。
     path: str = ""
     mtime: float = 0.0
     data: dict = field(default_factory=dict)
@@ -304,7 +532,7 @@ _synergy_cache = JSONFileCache()
 
 
 def _get_synergy_data() -> dict:
-    """返回缓存的协同数据，文件更新时自动重新加载。"""
+    # 读取并缓存协同数据文件。
     json_path = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
     try:
         current_mtime = os.path.getmtime(json_path)
@@ -318,14 +546,14 @@ def _get_synergy_data() -> dict:
             _synergy_cache.path = json_path
             _synergy_cache.mtime = current_mtime
             _synergy_cache.data = data
-            logger.info("Champion_Synergy.json 重新加载成功")
+            logger.info("Champion_Synergy.json cache refreshed")
         except Exception as e:
-            logger.error(f"Champion_Synergy.json 加载失败：{e}")
+            logger.error("协同数据文件加载失败：%s", e)
             return _synergy_cache.data
     return _synergy_cache.data
 
 
-# ── WebSocket connection manager ──────────────────────────────────────────────
+# 网页套接字连接管理。
 
 class ConnectionManager:
     def __init__(self):
@@ -343,7 +571,7 @@ class ConnectionManager:
                 self.active.remove(ws)
 
     async def broadcast(self, message: dict):
-        # 持锁快照，释放后再逐一发送（避免在迭代时列表被 connect/disconnect 修改）
+    # 先拷贝连接列表，再广播，避免遍历时被并发修改。
         async with self._lock:
             snapshot = list(self.active)
         dead = []
@@ -361,15 +589,15 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-# ── LCU polling (async) ───────────────────────────────────────────────────────
+# 本地客户端轮询状态与连接管理。
 
-# 全局开关变量：防止在未请求的情况下强制广播跳转事件
+# 是否在检测到本地锁定英雄时自动跳转详情页。
 AUTO_JUMP_ENABLED = True
 
 
 @dataclass
 class LCUState:
-    """LCU 连接状态机（替代原始 dict，提供属性访问和类型安全）。"""
+    # 保存当前连接、会话和英雄选择状态。
     port: Optional[str] = None
     token: Optional[str] = None
     current_ids: Set[str] = field(default_factory=set)
@@ -381,7 +609,7 @@ _lcu_state = LCUState()
 
 
 def _create_lcu_session() -> requests.Session:
-    """创建带重试策略的 LCU 专用 HTTP Session（连接复用，避免每次轮询握手）。"""
+    # 复用带重试的会话，降低临时失败带来的抖动。
     session = requests.Session()
     retry_strategy = Retry(
         total=2,
@@ -395,12 +623,12 @@ def _create_lcu_session() -> requests.Session:
     session.mount("http://", adapter)
     return session
 
-# 模块级 LCU 会话复用
+# 本地客户端请求复用会话。
 _lcu_session = _create_lcu_session()
 
 
 def _scan_lcu_process() -> tuple:
-    """Blocking psutil scan for LeagueClientUx.exe process."""
+    # 扫描本地客户端进程并提取端口和令牌。
     for proc in psutil.process_iter(["name", "cmdline"]):
         try:
             if proc.info["name"] == "LeagueClientUx.exe":
@@ -418,26 +646,25 @@ def _scan_lcu_process() -> tuple:
 
 
 def _urllib3_disable_warnings():
-    """Suppress urllib3 SSL warnings（仅需在启动时调用一次）。"""
+    # 忽略本地客户端自签名证书告警。
     try:
         import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequest警告)
     except Exception:
         pass
 
 
 async def lcu_polling_loop():
-    """
-    Async LCU 轮询循环。轮询 LCU 会话端点并通过 WebSocket 广播英雄 ID 变化。
-
-    新增本地玩家专属追踪：
-    - 提取 myTeam 数组中 cellId 等于 localPlayerCellId 的玩家
-    - 若该玩家的 championId 大于 0，且与上一次循环的 championId 不同，则广播精准事件
-    - 使用状态机变量防止同一英雄重复广播
-
-    自愈机制：
-    - 连续 5 次 404 错误后自动重置端口和令牌，重新探测 LCU 进程
-    """
+    # 持续轮询本地客户端会话。
+    #
+    # - 读取当前可选英雄列表。
+    # - 找到本地玩家的英雄编号。
+    # - 向前端广播选角变化。
+    # - 连续异常时自动重置连接状态。
+    #
+    # 轮询失败时会继续重试，不会让服务退出。
+    #
+    #
     _urllib3_disable_warnings()
     while True:
         try:
@@ -446,7 +673,7 @@ async def lcu_polling_loop():
                 if port:
                     _lcu_state.port = port
                     _lcu_state.token = token
-                    logger.info(f"检测到 LCU 进程：port={port}")
+                    logger.info("已检测到 LCU 连接，端口=%s", port)
                 else:
                     await asyncio.sleep(2)
                     continue
@@ -466,10 +693,10 @@ async def lcu_polling_loop():
 
             if res.status_code == 200:
                 data = res.json()
-                # 成功响应，重置 404 计数器
+                # 成功响应后重置 404 计数。
                 _lcu_state.consecutive_404_count = 0
 
-                # ========== 全局可用英雄扫描（原有逻辑） ==========
+                # 收集当前可选英雄编号。
                 available_ids = {
                     str(c["championId"])
                     for c in data.get("benchChampions", [])
@@ -489,30 +716,30 @@ async def lcu_polling_loop():
                         "timestamp": time.time(),
                     })
 
-                # ========== 本地玩家英雄锁定精准追踪（新增逻辑） ==========
+                # 找到本地玩家所在的格子。
                 local_cell_id = data.get("localPlayerCellId")
                 local_champion_id = None
 
-                # 提取 myTeam 数组中 cellId 等于 localPlayerCellId 的玩家
+                # 在队伍列表中按格子编号找到本地玩家。
                 for p in data.get("myTeam", []):
                     if p.get("cellId") == local_cell_id:
                         local_champion_id = p.get("championId")
                         break
 
-                # 若该玩家的 championId 大于 0，且与上一次循环的 championId 不同
+                # 英雄编号大于 0 才表示已经锁定英雄。
                 if local_champion_id and local_champion_id > 0:
                     prev_champ_id = _lcu_state.local_champ_id
 
                     if prev_champ_id != local_champion_id:
                         _lcu_state.local_champ_id = local_champion_id
 
-                        # 利用 core_data 字典将其转换为英雄中文名和英文名
+                        # 读取英雄中英文名，供广播和日志使用。
                         hero_name, en_name = get_champion_info(str(local_champion_id))
                         _lcu_state.local_champ_name = hero_name
 
-                        logger.info(f"本地玩家锁定英雄：{hero_name} (ID={local_champion_id})")
+                        logger.info("LCU 已锁定英雄：%s (ID=%s)", hero_name, local_champion_id)
 
-                        # 通过 WebSocket 追加广播精准事件（受 AUTO_JUMP_ENABLED 开关控制）
+                        # 首次锁定时通知前端页面。
                         if AUTO_JUMP_ENABLED:
                             await manager.broadcast({
                                 "type": "local_player_locked",
@@ -521,74 +748,72 @@ async def lcu_polling_loop():
                                 "en_name": en_name,
                             })
                         else:
-                            logger.debug("AUTO_JUMP_ENABLED = False，已阻止自动跳转广播")
+                            logger.debug("AUTO_JUMP_ENABLED = False; skipping automatic jump broadcast")
 
             elif res.status_code == 404:
-                # 不在选人阶段，累计 404 错误次数
+                # 返回 404，说明会话暂时不存在或已切换。
                 _lcu_state.consecutive_404_count += 1
 
-                # 清空上一局的英雄缓存，防止下局选同英雄不触发
+                # 清空本地英雄状态，等待下一次会话恢复。
                 if _lcu_state.local_champ_id is not None:
                     _lcu_state.local_champ_id = None
                     _lcu_state.local_champ_name = None
                     _lcu_state.current_ids = set()
 
-                # 连续 5 次 404 错误，触发自愈重置
+                # 连续 5 次 404 后，主动重置连接信息。
                 if _lcu_state.consecutive_404_count >= 5:
-                    logger.warning(f"LCU 连续 {_lcu_state.consecutive_404_count} 次 404，触发自愈重置端口/令牌")
+                    logger.warning("LCU 连续返回 404 五次，重置连接状态（count=%s）", _lcu_state.consecutive_404_count)
                     _lcu_state.port = None
                     _lcu_state.token = None
                     _lcu_state.consecutive_404_count = 0
 
             elif res.status_code in (401, 403):
-                # Token 失效，需要重新获取
-                logger.warning("LCU Token 失效 (401/403)，重置连接状态")
+                # 令牌失效或未授权，重新扫描进程并获取新会话。
+                logger.warning("LCU token 失效或未授权（401/403），重置连接状态。")
                 _lcu_state.port = None
                 _lcu_state.token = None
             else:
-                logger.warning(f"LCU 响应异常：status={res.status_code}，重置端口")
+                logger.warning("LCU 响应异常状态码=%s，重置连接状态。", res.status_code)
                 _lcu_state.port = None
 
         except requests.exceptions.ConnectionError as e:
-            # 仅在物理网络断开或进程关闭时才清空端口
-            logger.warning(f"LCU 连接断开：{e}")
+            logger.warning("LCU 连接错误：%s", e)
             _lcu_state.port = None
             _lcu_state.token = None
         except Exception as e:
-            logger.warning(f"LCU 轮询异常：{e}")
+            logger.warning("LCU 轮询失败：%s", e)
 
         await asyncio.sleep(1.5)
 
 
-# ── CSV file watcher loop ─────────────────────────────────────────────────────
+# 数据表变更轮询。
 
 async def csv_watcher_loop():
-    """
-    Async CSV file watcher loop. Polls the latest CSV file every 3 seconds
-    and broadcasts a 'data_updated' message via WebSocket when the file is modified.
+    # 每 3 秒检查一次数据表是否更新。
+    #
+    # 如果文件发生变化，则向前端广播 `data_updated`。
+    #
 
-    复用 _csv_cache.mtime 检测变更，不再维护独立的 _last_csv_mtime 全局变量。
-    """
     prev_mtime = 0.0
     while True:
         try:
-            # 调用 get_df() 触发缓存更新，然后比较 mtime 是否变化
+            # 触发数据刷新，更新缓存时间。
             get_df()
             current_mtime = _csv_cache.mtime
             if current_mtime > prev_mtime and prev_mtime != 0.0:
-                logger.info(f"CSV 文件更新：{os.path.basename(_csv_cache.path)}")
+                logger.info("CSV 已更新：%s", os.path.basename(_csv_cache.path))
                 await manager.broadcast({'type': 'data_updated'})
             prev_mtime = current_mtime
         except (OSError, IOError) as e:
-            logger.warning(f"CSV watcher error: {e}")
+            logger.warning("CSV 监视器错误：%s", e)
         await asyncio.sleep(3)
 
 
-# ── FastAPI app + lifespan ────────────────────────────────────────────────────
+# 网页服务生命周期管理。
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动时后台运行爬虫（不阻塞服务启动，check_execution_permission 防止频繁触发）
+    # 启动时并行执行后台刷新、图标预取和轮询任务。
     scraper_thread = threading.Thread(
         target=refresh_backend_data,
         kwargs={"force": False},
@@ -596,7 +821,13 @@ async def lifespan(app: FastAPI):
         name="backend-refresh-startup",
     )
     scraper_thread.start()
-    augment_thread = threading.Thread(target=_prefetch_augment_icons, daemon=True, name="augment-icon-prefetch")
+    needs_augment_refresh = _read_augment_icon_source_marker() != AUGMENT_ICON_SOURCE_ID
+    augment_thread = threading.Thread(
+        target=_prefetch_augment_icons,
+        kwargs={"force": needs_augment_refresh},
+        daemon=True,
+        name="augment-icon-prefetch",
+    )
     augment_thread.start()
     task1 = asyncio.create_task(lcu_polling_loop())
     task2 = asyncio.create_task(csv_watcher_loop())
@@ -614,73 +845,73 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# Static files — frontend assets served from run/static/
+# 挂载静态资源目录，提供前端文件。
 _static_dir = get_resource_path("static")
 os.makedirs(_static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
-# Assets directory for images and other resources
+# 运行时下载的图片和兜底资源都放在资源目录。
 _assets_dir = get_resource_path("assets")
 os.makedirs(_assets_dir, exist_ok=True)
-# Note: /assets route is now handled by custom route below for fallback support
+# 这里的资源既包含英雄头像，也包含增强器图标缓存。
 
 
-# ── API routes ────────────────────────────────────────────────────────────────
+# 页面与接口路由。
 
 @app.get("/")
 async def read_index():
-    """Serve index.html for root path."""
-    return FileResponse(os.path.join(_static_dir, "index.html"))
+    # 返回首页文件。
+    return _html_file_response("index.html")
 
 @app.get("/index.html")
 async def read_index_explicit():
-    """Serve index.html for explicit /index.html path."""
-    return FileResponse(os.path.join(_static_dir, "index.html"))
+    # 显式访问首页路径时也返回首页。
+    return _html_file_response("index.html")
 
 @app.get("/detail.html")
 async def read_detail():
-    """Serve detail.html for detail page path."""
-    return FileResponse(os.path.join(_static_dir, "detail.html"))
+    # 返回详情页文件。
+    return _html_file_response("detail.html")
 
 @app.get("/canvas_fallback.js")
 async def read_canvas_fallback():
-    """Serve canvas_fallback.js from static directory (referenced by HTML without /static/ prefix)."""
+    # 返回画布降级脚本，供网页中的图表降级使用。
     js_path = os.path.join(_static_dir, "canvas_fallback.js")
     if os.path.exists(js_path):
         return FileResponse(js_path, media_type="application/javascript")
-    return JSONResponse(content={"error": "Not found"}, status_code=404)
+    return JSONResponse(content={"error": "未找到"}, status_code=404)
 
 @app.get("/favicon.ico")
 async def favicon():
-    """Return empty 204 for favicon to suppress browser console 404 errors."""
+    # 返回空的站点图标响应，避免 404 噪音。
     return Response(status_code=204)
 
 @app.get("/assets/{filename}")
 async def get_asset(filename: str):
-    """Serve asset files with local caching for augment icons and DDragon fallback for heroes.
+    # 按文件名返回资源；本地不存在时尝试增强器映射或官方资源回退。
 
-    安全机制：使用 realpath + normcase 验证请求路径是否在 _assets_dir 内，
-    阻止通过 ../ 进行目录遍历攻击（LFI 防御）。
+    # 规范化路径，防止目录穿越。
 
-    新增：海克斯图标支持 - 优先本地缓存，缺失时由服务端下载后再本地返回。
-    """
+
+
+
     local_path = os.path.join(_assets_dir, filename)
-    # ── LFI 防御：解析真实路径并验证是否在 assets 目录内 ──
+    # 增强器图标优先走映射表并缓存到本地。
     real_requested = os.path.normcase(os.path.realpath(local_path))
     real_assets_dir = os.path.normcase(os.path.realpath(_assets_dir))
     if not real_requested.startswith(real_assets_dir + os.sep) and real_requested != real_assets_dir:
-        logger.warning(f"目录遍历攻击被阻断：{filename} -> {real_requested}")
-        return JSONResponse(content={"error": "Forbidden"}, status_code=403)
+        logger.warning("已阻止目录遍历：%s -> %s", filename, real_requested)
+        return JSONResponse(content={"error": "禁止访问"}, status_code=403)
     if os.path.exists(local_path):
         return FileResponse(local_path)
-    # File missing, try augment icon cache first.
+            # 若映射表没有命中，直接把请求名当作图标文件名。
     if filename.endswith('.png') and not filename[:-4].isdigit():
         try:
             icon_map = _load_augment_icon_map()
             requested_stem = unquote(filename[:-4])
             mapped_filename = _find_augment_icon_filename(icon_map, requested_stem)
 
-            # If the request itself already looks like an icon filename, cache that directly.
+            # 未命中时，按原始文件名继续尝试缓存。
             if not mapped_filename:
                 mapped_filename = _normalize_augment_filename(filename)
 
@@ -688,11 +919,11 @@ async def get_asset(filename: str):
             if cached_path and os.path.exists(cached_path):
                 return FileResponse(cached_path)
         except Exception as e:
-            logger.debug(f"海克斯图标本地缓存失败：{e}")
+            logger.debug("远程资源缓存失败：%s", e)
 
-    # 英雄头像处理 - 原有逻辑
+    # 普通英雄头像尝试从官方资源源回退。
     if filename.endswith('.png'):
-        file_stem = filename[:-4]  # e.g. "123" (英雄 ID)
+        file_stem = filename[:-4]  # 这里的文件名形如“123.png”。
         hero_name = get_champion_name(file_stem)
         if hero_name:
             _, en_name = get_champion_info(file_stem)
@@ -700,9 +931,9 @@ async def get_asset(filename: str):
                 version = _get_ddragon_version()
                 ddragon_url = f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{en_name}.png"
                 return RedirectResponse(url=ddragon_url, status_code=307)
-        # 无法映射到 CDN，记录日志便于运维排查
-        logger.debug(f"本地资源缺失且无法映射到 CDN：{filename}")
-    return JSONResponse(content={"error": "Asset not found"}, status_code=404)
+        logger.debug("资源本地不存在，DDragon 回退也失败：%s", filename)
+
+    return JSONResponse(content={"error": "资源未找到"}, status_code=404)
 
 @app.get("/api/champions")
 async def api_champions():
@@ -712,41 +943,58 @@ async def api_champions():
 @app.get("/api/champion/{name}/hextechs")
 async def api_champion_hextechs(name: str):
     df = get_df()
-    return JSONResponse(content=process_hextechs_data(df, name))
+    payload = process_hextechs_data(df, name)
+
+    def _rewrite_icons(items):
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            icon_url = _resolve_apexlol_hextech_icon_url(item.get("海克斯名称", ""))
+            if icon_url:
+                item["icon"] = icon_url
+
+    for key in ("top_10_overall", "comprehensive", "winrate_only", "Prismatic", "Gold", "Silver"):
+        _rewrite_icons(payload.get(key))
+
+    return JSONResponse(content=payload)
 
 @app.get("/api/augment_icon_map")
 async def api_augment_icon_map():
-    """获取海克斯图标映射文件。"""
+    # 返回海克斯图标映射，供前端或调试页查找。
     try:
-        data = _load_augment_icon_map()
+        raw_map = _load_apexlol_hextech_map()
+        data = {
+            name: APEXLOL_HEXTECH_IMAGE_URL.format(slug=slug)
+            for name, slug in raw_map.items()
+        }
         return JSONResponse(content=data)
     except Exception as e:
-        logger.warning(f"读取 Augment_Icon_Map.json 失败：{e}")
+        logger.warning("apexlol 海克斯图标映射读取失败：%s", e)
         return JSONResponse(content={})
 
 @app.get("/api/synergies/{champ_id}")
 async def api_synergies(champ_id: str):
-    """获取英雄协同数据 API。读取 Champion_Synergy.json 返回对应英雄的 synergies 列表。
+    # 返回英雄协同数据。
 
-    支持 aliases（别名）的模糊匹配支持，确保前端传递名称或 ID 都能准确获取数据。
-    """
+
+
     try:
         data = _get_synergy_data()
         if not data:
             return JSONResponse(content={"synergies": []})
 
-        # 尝试直接匹配 champ_id
+        # 先按英雄编号精确匹配。
         synergy_data = data.get(champ_id, {})
 
-        # 如果直接匹配失败，尝试别名模糊匹配
+        # 再尝试通过别名匹配。
         if not synergy_data:
             for key, value in data.items():
-                # 检查别名字段
+                # 先检查别名列表。
                 aliases = value.get("aliases", [])
                 if champ_id in aliases or champ_id.lower() in [a.lower() for a in aliases]:
                     synergy_data = value
                     break
-                # 检查是否是 ID 与名称的匹配（尝试将 champ_id 与 key 进行模糊匹配）
+                # 再检查键本身。
                 if champ_id.lower() == key.lower():
                     synergy_data = value
                     break
@@ -754,36 +1002,32 @@ async def api_synergies(champ_id: str):
         synergies = synergy_data.get("synergies", []) if synergy_data else []
         return JSONResponse(content={"synergies": synergies})
     except Exception as e:
-        logger.warning(f"读取协同数据失败：{e}")
+        logger.warning("协同数据查询失败：%s", e)
         return JSONResponse(content={"synergies": []})
 
 @app.post("/api/redirect")
 async def api_redirect(req: RedirectRequest):
-    """处理悬浮窗点击英雄的重定向请求。
+    # 处理前端点击后的重定向。
 
-    根据活跃 WebSocket 连接数决定行为：
-    - 无连接时：打开新浏览器窗口
-    - 有连接时：广播 local_player_locked 事件触发前端热跳转
-    """
-    # 获取英雄信息（中文名和英文名）
+    # 先尝试从英雄编号还原中英文名。
     try:
         hero_name, en_name = get_champion_info(req.hero_id)
     except (ValueError, TypeError):
-        # hero_id 异常，使用空字符串
+        # 编号不是合法文本时，回退为空字符串。
         hero_name, en_name = '', ''
 
-    # 如果获取不到英雄信息，使用请求中的名称作为后备
+    # 如果中文名缺失，退回前端传来的名称。
     if not hero_name:
         hero_name = req.hero_name
 
-    # 检查 WebSocket 连接池
+    # 当前没有前端连接时，直接由服务端打开详情页。
     if len(manager.active) == 0:
-        # 无 WebSocket 连接，打开新浏览器窗口
-        url = f"http://127.0.0.1:{SERVER_PORT}/detail.html?hero={req.hero_name}&id={req.hero_id}&en={en_name}&auto=1"
-        webbrowser.open(url)
-        return JSONResponse(content={"status": "opened_browser"})
+        url = _build_detail_url(req.hero_id, hero_name or req.hero_name, en_name)
+        if _open_managed_browser(url, replace_existing=True):
+            return JSONResponse(content={"status": "opened_browser"})
+        return JSONResponse(content={"status": "浏览器打开失败"}, status_code=500)
     else:
-        # 有 WebSocket 连接，广播事件触发前端热跳转
+        # 有前端在线时，直接广播给页面处理。
         await manager.broadcast({
             "type": "local_player_locked",
             "champion_id": req.hero_id,
@@ -802,10 +1046,10 @@ async def websocket_endpoint(ws: WebSocket):
         await manager.disconnect(ws)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# 端口探测与浏览器启动。
 
 def find_available_port(start_port=8000, max_attempts=50):
-    """Find an available port starting from start_port."""
+    # 从起始端口开始查找可用端口。
     import socket
 
     for port_offset in range(max_attempts):
@@ -816,25 +1060,28 @@ def find_available_port(start_port=8000, max_attempts=50):
                 return port
         except OSError:
             continue
-    raise RuntimeError(f"Could not find available port in range {start_port}-{start_port + max_attempts - 1}")
+    raise RuntimeError(f"未能在端口范围 {start_port}-{start_port + max_attempts - 1} 找到可用端口")
 
 def _open_chrome(port: int):
-    """在系统默认浏览器中打开应用，复用现有用户会话。"""
+    # 打开浏览器访问当前网页服务。
     url = f"http://127.0.0.1:{port}"
-    try:
-        # 使用系统默认浏览器，复用现有用户会话
-        webbrowser.open(url)
-        logger.info(f"已在默认浏览器中打开: {url}")
-    except Exception as e:
-        logger.warning(f"无法打开默认浏览器: {e}")
+    _open_managed_browser(url, replace_existing=True)
+
+
+def run_web_server() -> None:
+    global ACTIVE_WEB_PORT
+
+    # 启动时先找可用端口，避免端口占用导致服务直接失败。
+    actual_port = find_available_port(SERVER_PORT)
+    if actual_port != SERVER_PORT:
+        logger.info("端口 %s 已被占用，改用端口 %s", SERVER_PORT, actual_port)
+
+    # 将实际端口写回配置，供界面程序动态读取。
+    ACTIVE_WEB_PORT = actual_port
+    _write_active_web_port(ACTIVE_WEB_PORT)
+    _open_chrome(actual_port)
+    uvicorn.run("web_server:app", host="127.0.0.1", port=actual_port, reload=False)
 
 
 if __name__ == "__main__":
-    # 在启动服务器前找到可用端口
-    actual_port = find_available_port(SERVER_PORT)
-    if actual_port != SERVER_PORT:
-        logger.info(f"Port {SERVER_PORT} is occupied, using port {actual_port} instead")
-
-    # 在启动服务器前打开浏览器
-    _open_chrome(actual_port)
-    uvicorn.run("web_server:app", host="127.0.0.1", port=actual_port, reload=False)
+    run_web_server()
