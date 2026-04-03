@@ -6,3 +6,4 @@
 {"endpoint":"cx","ts":"2026-04-03T14:30:56","reason":"identified review findings","files":["run\\\\hero_sync.py","run\\\\web_server.py","run\\\\data_processor.py","run\\\\backend_refresh.py"],"step":"review_completed"}
 {"endpoint":"cx","ts":"2026-04-03T14:36:48","reason":"fixed icon-map short-circuit, reentrant cleanup deadlock, nameerror, and build syntax errors","step":"fix_review_findings","files":["run\\hero_sync.py","run\\build.py"]}
 {"ts":"2026-04-03T15:05:00+08:00","endpoint":"cx","step":"workflow-wrapup","files":["run/alias_utils.py","run/icon_resolver.py","run/hero_sync.py","run/hextech_query.py","run/data_processor.py","run/web_server.py"],"reason":"抽取共享别名与图标解析模块，收口 web_server/hextech_query/data_processor 的重复逻辑，并完成语法校验"}
+{"ts":"2026-04-03T15:57:09","step":"post-commit AST scan","endpoint":"cx","commit":"70babd183e253e16110513bca30dd0f166fd9581","branch":"cx-refactor-shared-modules","status":"PASSED","violations":"none|"}
