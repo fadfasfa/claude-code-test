@@ -461,16 +461,26 @@
         function renderAugmentIcon(iconUrl, hextechName, tier, variant = 'list') {
             const localIconUrl = toLocalAugmentIconUrl(iconUrl, hextechName);
             const tierClass = getAugmentTierClass(tier);
+            const safeHextechName = escapeHtml(hextechName);
+            const safeTier = escapeHtml(tier || '');
+            const safeIconUrl = escapeHtml(localIconUrl);
             const shellClass = variant === 'detail'
                 ? `augment-icon-shell augment-icon-shell--detail ${tierClass}`
                 : `augment-icon-shell augment-icon-shell--list ${tierClass}`;
 
             return `
                 <div class="${shellClass}">
-                    <img src="${localIconUrl}"
-                         alt="${hextechName}"
+                    <img src="${safeIconUrl}"
+                         alt="${safeHextechName}"
                          loading="lazy"
+<<<<<<< HEAD
+                         decoding="async"
+                         data-hextech-name="${safeHextechName}"
+                         data-hextech-tier="${safeTier}"
+                         onerror="this.onerror=null; this.src=createPlaceholder(this.dataset.hextechName || this.alt || '?');">
+=======
                          decoding="async" />
+>>>>>>> cx-refactor-shared-modules
                 </div>
             `;
         }
@@ -482,7 +492,7 @@
             const wr = (hextech.海克斯胜率 * 100).toFixed(1);
             const pr = (hextech.海克斯出场率 * 100).toFixed(1);
 
-            return `
+                return `
             <div class="list-row flex items-center p-2 rounded border border-gray-700 bg-[#1e1e2e] hover:bg-[#252535] transition-colors gap-2">
                 <div class="w-6 text-center text-xs font-bold text-gray-500">${index + 1}</div>
 
@@ -492,7 +502,7 @@
                 </div>
 
                 <div class="flex-1 truncate ml-2">
-                    <div class="text-sm font-bold text-gray-200 truncate" title="${hextech.海克斯名称}">${hextech.海克斯名称}</div>
+                    <div class="text-sm font-bold text-gray-200 truncate" title="${escapeHtml(hextech.海克斯名称)}">${escapeHtml(hextech.海克斯名称)}</div>
                 </div>
 
                 <div class="w-16 text-right">
@@ -674,6 +684,10 @@
                 }
 
                 const iconUrl = `./assets/${encodeURIComponent(item.name)}.png`;
+                const safeName = escapeHtml(item.name);
+                const safeTier = escapeHtml(item.tier);
+                const safeGrade = escapeHtml(item.grade);
+                const safeAuthor = escapeHtml(item.author);
 
                 const getTagStyle = (tag) => {
                     if (tag.includes('强力联动')) return 'border border-[#2bd5c2]/40 text-[#2bd5c2] bg-[#2bd5c2]/10';
@@ -693,15 +707,15 @@
                 
                 <div class="flex flex-col">
                     <div class="flex items-center gap-2.5 flex-wrap">
-                        <span class="text-white text-[16px] font-bold tracking-wide leading-none">${item.name}</span>
+                        <span class="text-white text-[16px] font-bold tracking-wide leading-none">${safeName}</span>
                         <div class="${badgeBg} px-1.5 h-[20px] rounded flex items-center shadow-sm">
-                            <span class="${badgeText} text-[11px] font-black">${item.grade}</span>
+                            <span class="${badgeText} text-[11px] font-black">${safeGrade}</span>
                             <span class="${badgeText} opacity-70 text-[10px] font-black ml-[1px] pt-[1px]">?</span>
                         </div>
-                        ${item.tags.map(tag => `<div class="${getTagStyle(tag)} px-1.5 h-[20px] rounded flex items-center text-[10px] font-bold">${tag}</div>`).join('')}
+                        ${item.tags.map(tag => `<div class="${getTagStyle(tag)} px-1.5 h-[20px] rounded flex items-center text-[10px] font-bold">${escapeHtml(tag)}</div>`).join('')}
                     </div>
                     <div class="text-[#8c9ba5] text-[11px] mt-1.5 leading-none">
-                        ${item.tier}
+                        ${safeTier}
                     </div>
                 </div>
 
@@ -716,7 +730,7 @@
                             <span class="text-[#8c9ba5] text-[12px] font-medium pt-0.5">${item.downvotes}</span>
                         </div>
                     </div>
-                    ${item.author ? `<div class="text-[#8c9ba5] text-[12px] flex items-center">作者: ${item.author} ${item.isOriginal ? '<span class="bg-[#ebd55b] text-black px-1 py-[1px] rounded-[3px] ml-1.5 text-[10px] font-black tracking-wide leading-none pt-[3px]">原创</span>' : ''}</div>` : ''}
+                    ${item.author ? `<div class="text-[#8c9ba5] text-[12px] flex items-center">作者: ${safeAuthor} ${item.isOriginal ? '<span class="bg-[#ebd55b] text-black px-1 py-[1px] rounded-[3px] ml-1.5 text-[10px] font-black tracking-wide leading-none pt-[3px]">原创</span>' : ''}</div>` : ''}
                 </div>
 
             </div>

@@ -2,8 +2,13 @@
 {"ts":"2026-04-02T21:35:30+08:00","files":["run/hextech_ui.py"],"step":"fix-hextech-ui-syntax","endpoint":"cx","reason":"修复 hextech_ui.py 的缩进损坏并修正英雄名称键类型，恢复文件可解析性"}
 {"ts":"2026-04-03T00:00:00+08:00","endpoint":"cx","step":"rebuild-alias-and-apexlol-map","files":["run/config/Champion_Core_Data.json","run/config/Augment_Apexlol_Map.json","run/hero_sync.py","run/web_server.py"],"reason":"全量清理英雄别名重复，重建 Apexlol 海克斯映射为可读 UTF-8 JSON，并修正别名加载逻辑"}
 {"ts":"2026-04-03T00:20:00+08:00","endpoint":"cx","step":"restore-champion-aliases-after-cleanup","files":["run/config/Champion_Core_Data.json","run/hero_sync.py"],"reason":"在清除 core-field 重复后，重新从 hextech_query.py 的本地别名表恢复可用 aliases，避免数据文件被误清空"}
+<<<<<<< HEAD
+{"ts":"2026-04-03T16:35:00+08:00","endpoint":"cx","step":"fix-xss-in-static-renderers","files":["run/static/detail.html","run/static/index.html"],"reason":"修复海克斯卡片和英雄卡片的 HTML/属性注入点，避免未转义数据进入 innerHTML 和 onerror"}
+{"ts":"2026-04-03T16:41:04","step":"post-commit AST scan","endpoint":"cx","commit":"ab0aed93f5eb16c7dfec9350cda93c552e37fb59","branch":"cx-fix-two-vulns-20260403","status":"PASSED","violations":"none|"}
+=======
 {"endpoint":"cx","ts":"2026-04-03T14:29:57","files":["run"],"reason":"review run folder code","step":"contract_written"}
 {"endpoint":"cx","ts":"2026-04-03T14:30:56","reason":"identified review findings","files":["run\\\\hero_sync.py","run\\\\web_server.py","run\\\\data_processor.py","run\\\\backend_refresh.py"],"step":"review_completed"}
 {"endpoint":"cx","ts":"2026-04-03T14:36:48","reason":"fixed icon-map short-circuit, reentrant cleanup deadlock, nameerror, and build syntax errors","step":"fix_review_findings","files":["run\\hero_sync.py","run\\build.py"]}
 {"ts":"2026-04-03T15:05:00+08:00","endpoint":"cx","step":"workflow-wrapup","files":["run/alias_utils.py","run/icon_resolver.py","run/hero_sync.py","run/hextech_query.py","run/data_processor.py","run/web_server.py"],"reason":"抽取共享别名与图标解析模块，收口 web_server/hextech_query/data_processor 的重复逻辑，并完成语法校验"}
 {"ts":"2026-04-03T15:57:09","step":"post-commit AST scan","endpoint":"cx","commit":"70babd183e253e16110513bca30dd0f166fd9581","branch":"cx-refactor-shared-modules","status":"PASSED","violations":"none|"}
+>>>>>>> cx-refactor-shared-modules
