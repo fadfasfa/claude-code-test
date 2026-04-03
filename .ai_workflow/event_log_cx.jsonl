@@ -19,3 +19,4 @@
 {"ts":"2026-04-03T22:25:21.6935897+08:00","files":["run/README.md","run/PROJECT.md"],"endpoint":"cx","reason":"统一 hextech_query.py 在文档中的旧介绍，改为后端数据整理入口并同步项目职责描述","step":"unify-hextech_query-docs"}
 {"endpoint":"cx","step":"修复 remaining augment icon fallback","status":"validated","files":["run/icon_resolver.py","run/web_server.py"],"ts":"2026-04-03T22:48:09+08:00","reason":"将长文件名映射回退到本地短文件，修复自我毁灭、魔法飞弹、俯冲轰炸的前端显示"}
 {"reason":"联动文章区之前硬编码 ./assets/{name}.png，导致水豚空降仍然走占位图；改为优先使用 augment_icon_map 的真实图源","ts":"2026-04-03T23:06:40+08:00","endpoint":"cx","status":"validated","files":["run/static/detail.html"],"step":"修复联动文章图标解析"}
+{"ts":"2026-04-03T23:07:49","step":"post-commit AST scan","endpoint":"cx","commit":"01a011063b1a4f1ae9e3f2ac2440f703db32fc83","branch":"cx-scratch","status":"PASSED","violations":"none|"}

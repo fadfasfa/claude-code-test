@@ -34,6 +34,31 @@ def set_last_hero(name):
     global GLOBAL_LAST_HERO
     GLOBAL_LAST_HERO = name
 
+def _normalize_query_df(shared_df=None):
+    if shared_df is None:
+        latest_csv = get_latest_csv()
+        if not latest_csv:
+            return pd.DataFrame(), None
+        df = pd.read_csv(latest_csv)
+        source = latest_csv
+    elif isinstance(shared_df, pd.DataFrame):
+        df = shared_df.copy()
+        source = "shared_df"
+    else:
+        df = pd.DataFrame(shared_df).copy()
+        source = "shared_df"
+
+    if not df.empty:
+        df.columns = df.columns.str.replace(' ', '')
+        id_col = None
+        for col in df.columns:
+            if '英雄ID' in col or 'ID' in col:
+                id_col = col
+                break
+        if id_col:
+            df[id_col] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
+    return df, source
+
 def get_highlight_color(row):
     wr_diff = row['胜率差']
     if wr_diff < 0:
@@ -401,11 +426,22 @@ def display_hero_hextech(df, hero_name, target_tier=None, is_from_ui=False):
 
 def main_query(shared_df=None, ui_instance=None):
     global GLOBAL_LAST_HERO
-    print("="*60 + "\n 终端 Hextech 终端查询端 (已迁移至 Web 端)\n" + "="*60)
-    try:
-        return
-    except (EOFError, KeyboardInterrupt):
-        return
+    df, source = _normalize_query_df(shared_df)
+    payload = {
+        "source": source,
+        "row_count": int(len(df)),
+        "column_names": list(df.columns),
+        "last_hero": GLOBAL_LAST_HERO,
+        "has_data": not df.empty,
+    }
+
+    if ui_instance is not None:
+        try:
+            setattr(ui_instance, "backend_query_snapshot", payload)
+        except Exception:
+            pass
+
+    return payload
 
 if __name__ == "__main__":
-    main_query()
+    sys.exit(0)
