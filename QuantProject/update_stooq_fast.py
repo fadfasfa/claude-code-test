@@ -60,6 +60,20 @@ def normalize_price_frame(df):
     frame = df.copy()
     frame.columns = [col[0] if isinstance(col, tuple) else col for col in frame.columns]
 
+    # 先统一日期列的时区，再做标准化命名，避免 yfinance 的 tz-aware Date 混入后续合并。
+    date_col = None
+    for col in frame.columns:
+        if str(col).lower() in ['date', 'data', 'index']:
+            date_col = col
+            break
+
+    if date_col is None:
+        return None
+
+    frame[date_col] = pd.to_datetime(frame[date_col], errors='coerce')
+    if pd.api.types.is_datetime64tz_dtype(frame[date_col]):
+        frame[date_col] = frame[date_col].dt.tz_localize(None)
+
     # 统一日期列与收盘列命名。
     header_mapping = {
         'Date': 'Data',
@@ -75,6 +89,8 @@ def normalize_price_frame(df):
         return None
 
     frame['Data'] = pd.to_datetime(frame['Data'], errors='coerce')
+    if pd.api.types.is_datetime64tz_dtype(frame['Data']):
+        frame['Data'] = frame['Data'].dt.tz_localize(None)
     frame['Zamkniecie'] = pd.to_numeric(frame['Zamkniecie'], errors='coerce')
 
     keep_cols = ['Data', 'Zamkniecie']
