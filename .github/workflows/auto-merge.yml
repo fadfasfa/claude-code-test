@@ -23,6 +23,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify AUDIT-VERDICT PASS
+        run: |
+          REVIEW_BODY="${{ github.event.review.body }}"
+          if ! echo "$REVIEW_BODY" | grep -q '\[AUDIT-VERDICT: PASS\]'; then
+            echo "::error::Codex approved but missing [AUDIT-VERDICT: PASS] signal in review body. Blocking auto-merge."
+            exit 1
+          fi
+
       - name: Verify PR is mergeable
         id: check_mergeable
         env:
@@ -85,13 +93,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          PR_BODY=$(gh pr view "${{ github.event.pull_request.number }}" --json body --jq '.body // ""')
+          PR_BODY=$(gh pr view "${{ github.event.pull_request.number }}" --json body --jq '.body // ""' | tr -d '\r')
 
-          HAS_WORKFLOW_ID=$(echo "$PR_BODY" | grep -cE 'workflow_id:\s*\S+' || true)
-          HAS_AGENTS_PATH=$(echo "$PR_BODY" | grep -cE 'agents_md_path:\s*agents\.md' || true)
+          if [ -f agents.md ]; then
+            ACTUAL_TASK_ID=$(grep -E '^task_id:[[:space:]]*' agents.md | head -n 1 | sed 's/^task_id:[[:space:]]*//' | tr -d '\r')
+          else
+            ACTUAL_TASK_ID=""
+          fi
+
+          if [ -n "$ACTUAL_TASK_ID" ]; then
+            HAS_WORKFLOW_ID=$(echo "$PR_BODY" | grep -cE "^workflow_id:[[:space:]]*${ACTUAL_TASK_ID}[[:space:]]*$" || true)
+          else
+            HAS_WORKFLOW_ID=0
+          fi
+          
+          HAS_AGENTS_PATH=$(echo "$PR_BODY" | grep -cE '^agents_md_path:[[:space:]]*agents\.md[[:space:]]*$' || true)
 
           if [ "$HAS_WORKFLOW_ID" -eq 0 ] || [ "$HAS_AGENTS_PATH" -eq 0 ]; then
-            echo "::notice::PR description does not contain workflow_id and agents_md_path: agents.md. Skipping standby reset."
+            echo "::notice::PR description does not contain valid workflow_id and agents_md_path. Skipping standby reset."
             echo "is_hextech=false" >> "$GITHUB_OUTPUT"
           else
             echo "is_hextech=true" >> "$GITHUB_OUTPUT"
@@ -121,6 +140,9 @@ jobs:
         run: |
           mkdir -p .ai_workflow/agents_history
           archive_path=".ai_workflow/agents_history/${{ steps.meta.outputs.task_id }}.md"
+          if [ -f "$archive_path" ]; then
+            archive_path=".ai_workflow/agents_history/${{ steps.meta.outputs.task_id }}_${{ github.run_id }}.md"
+          fi
           cp agents.md "$archive_path"
 
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

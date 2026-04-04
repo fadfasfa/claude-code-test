@@ -55,13 +55,14 @@ fi
 
 # --- 检测远端是否已经回到 standby（优先使用远端版本） ---
 remote_status=""
+current_branch=""
 if git rev-parse --git-dir > /dev/null 2>&1; then
   current_branch=$(git branch --show-current 2>/dev/null || echo "main")
   remote_status=$(git show "origin/${current_branch}:${AGENTS_FILE}" 2>/dev/null \
     | grep -E '^status:' | head -n 1 | sed 's/^status:[[:space:]]*//' || true)
 fi
 
-if [ "$remote_status" = "standby" ]; then
+if [ "$remote_status" = "standby" ] && [ -n "$current_branch" ]; then
   # 远端已是 standby，直接覆盖本地
   git checkout "origin/${current_branch}" -- "$AGENTS_FILE" 2>/dev/null || true
   log "Local agents.md synced from remote standby."

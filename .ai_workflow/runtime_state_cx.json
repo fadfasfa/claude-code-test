@@ -1,1 +1,29 @@
-{"schema_version":"6.1","workflow_id":"cx-test-ecc-invoke","endpoint":"cx","execution_status":"done","audit_status":"ready_for_review","merge_status":"n/a","retry_count":0,"is_new_project":true}
+{
+  "schema_version": "5.3",
+  "endpoint": "cc",
+  "workflow_id": "",
+  "task_type": "code",
+  "execution_status": "idle",
+  "retry_count": 0,
+  "is_new_project": false,
+  "interface_summary": {
+    "modified_symbols": [],
+    "affected_files": []
+  }
+}
+EOF
+
+cat > .ai_workflow/runtime_state_cx.json << 'EOF'
+{
+  "schema_version": "5.3",
+  "endpoint": "cx",
+  "workflow_id": "",
+  "task_type": "code",
+  "execution_status": "idle",
+  "retry_count": 0,
+  "is_new_project": false,
+  "interface_summary": {
+    "modified_symbols": [],
+    "affected_files": []
+  }
+}

@@ -22,6 +22,7 @@
 | :--- | :--- |
 | `task_mode: dual-end-integration` | cc + cx 双端都修改过同一 workflow，需要跨端行为一致性审查 |
 | `task_mode: frontend-integration` | Antigravity 生成的前端代码即将纳入主项目（一律强制，无 risk_level 豁免）|
+| `task_mode: standard` | 命中 `workflow_registry.md § G` 中定义的 `standard_gate_trigger_conditions` 路径白名单时自动触发 |
 
 ---
 
