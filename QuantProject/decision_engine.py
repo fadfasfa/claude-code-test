@@ -42,7 +42,9 @@ def _fmt_price(value):
 def _fmt_pct(value):
     return f"{value:.1%}" if _is_finite_number(value) else "N/A"
 
-def _fmt_amount(value):
+def _fmt_amount(value, capital_enabled):
+    if not capital_enabled:
+        return "N/A"
     return f"{value:,.2f}" if _is_finite_number(value) else "N/A"
 
 def _safe_last(series):
@@ -126,6 +128,7 @@ def main():
         print("[-] 输入格式错误，系统退回纯百分比模式。")
         total_capital = 0.0
 
+    capital_enabled = total_capital > 0
     total_deployed_cash = 0.0
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     report_lines = []
@@ -138,7 +141,7 @@ def main():
 
     def append_row(asset, model, capital_weight, last_price, signal_weight, target_amt, status):
         report_lines.append(
-            f"{asset:<6} | {model:<16} | {capital_weight:<8.2%} | {_fmt_price(last_price):>8} | {_fmt_pct(signal_weight):>8} | {_fmt_amount(target_amt):>16} | {status}"
+            f"{asset:<6} | {model:<16} | {capital_weight:<8.2%} | {_fmt_price(last_price):>8} | {_fmt_pct(signal_weight):>8} | {_fmt_amount(target_amt, capital_enabled):>16} | {status}"
         )
 
     # 1. SPY: Sigmoid Smooth
