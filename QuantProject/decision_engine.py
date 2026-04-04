@@ -30,6 +30,31 @@ try:
 except Exception:
     pass
 
+def _is_finite_number(value):
+    try:
+        return value is not None and np.isfinite(float(value))
+    except Exception:
+        return False
+
+def _fmt_price(value):
+    return f"{value:,.2f}" if _is_finite_number(value) else "N/A"
+
+def _fmt_pct(value):
+    return f"{value:.1%}" if _is_finite_number(value) else "N/A"
+
+def _fmt_amount(value, capital_enabled):
+    if not capital_enabled:
+        return "N/A"
+    return f"{value:,.2f}" if _is_finite_number(value) else "N/A"
+
+def _safe_last(series):
+    if series is None:
+        return np.nan
+    cleaned = pd.to_numeric(series, errors='coerce').dropna()
+    if cleaned.empty:
+        return np.nan
+    return cleaned.iloc[-1]
+
 def load_stooq_data(asset_name):
     # 读取并重采样本地数据，支持模糊列名。
     path = Path(DATA_DIR) / FILES[asset_name]
@@ -61,14 +86,22 @@ def load_stooq_data(asset_name):
             return None
 
         df[d_col] = pd.to_datetime(df[d_col], errors='coerce')
+        df[c_col] = pd.to_numeric(df[c_col], errors='coerce')
         df = df.dropna(subset=[d_col])
+        df = df.dropna(subset=[c_col])
+        df = df[[d_col, c_col]].drop_duplicates(subset=[d_col], keep='last')
 
         if df.empty:
             logger.warning(f"[{asset_name}] 日期转换后数据为空")
             return None
 
         df = df.set_index(d_col).sort_index()
+        df = df[~df.index.duplicated(keep='last')]
         m = df[c_col].resample('ME').last()
+        m = m.dropna()
+        if m.empty:
+            logger.warning(f"[{asset_name}] 重采样后数据为空")
+            return None
         logger.debug(f"[{asset_name}] 重采样完成，数据点数：{len(m)}, 最新日期：{m.index[-1]}")
         return m
     except (FileNotFoundError, pd.errors.EmptyDataError) as e:
@@ -95,6 +128,7 @@ def main():
         print("[-] 输入格式错误，系统退回纯百分比模式。")
         total_capital = 0.0
 
+    capital_enabled = total_capital > 0
     total_deployed_cash = 0.0
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     report_lines = []
@@ -105,87 +139,115 @@ def main():
     report_lines.append(f"{'资产':<6} | {'策略模型':<16} | {'资金占比':<8} | {'最新价':>8} | {'信号仓位':>8} | {'建议分配金额($)':>16} | {'核心指标状态'}")
     report_lines.append("-" * 115)
 
+    def append_row(asset, model, capital_weight, last_price, signal_weight, target_amt, status):
+        report_lines.append(
+            f"{asset:<6} | {model:<16} | {capital_weight:<8.2%} | {_fmt_price(last_price):>8} | {_fmt_pct(signal_weight):>8} | {_fmt_amount(target_amt, capital_enabled):>16} | {status}"
+        )
+
     # 1. SPY: Sigmoid Smooth
     logger.info("开始处理 SPY (Sigmoid Smooth 策略)...")
     spy = load_stooq_data('SPY')
     if spy is not None and len(spy) >= 12:
-        last, ma12 = spy.iloc[-1], spy.rolling(12).mean().iloc[-1]
-        dev = (last / ma12) - 1
-        w = np.clip(1 / (1 + np.exp(-50 * dev)), 0, 1)
-        if dev >= 0.1:
-            w = 1.0
-            logger.debug(f"[SPY] 触发强多头条件：偏离度 {dev:.2%} >= 10%")
-        elif dev <= -0.1:
-            w = 0.0
-            logger.debug(f"[SPY] 触发强空头条件：偏离度 {dev:.2%} <= -10%")
-        else:
-            logger.debug(f"[SPY] Sigmoid 平滑：偏离度={dev:.2%}, 权重={w:.2%}")
+        last = _safe_last(spy)
+        ma12_series = spy.rolling(12, min_periods=12).mean()
+        ma12 = _safe_last(ma12_series)
+        if _is_finite_number(last) and _is_finite_number(ma12) and ma12 != 0:
+            dev = (last / ma12) - 1
+            w = np.clip(1 / (1 + np.exp(-50 * dev)), 0, 1)
+            if dev >= 0.1:
+                w = 1.0
+                logger.debug(f"[SPY] 触发强多头条件：偏离度 {dev:.2%} >= 10%")
+            elif dev <= -0.1:
+                w = 0.0
+                logger.debug(f"[SPY] 触发强空头条件：偏离度 {dev:.2%} <= -10%")
+            else:
+                logger.debug(f"[SPY] Sigmoid 平滑：偏离度={dev:.2%}, 权重={w:.2%}")
 
-        cap_limit = total_capital * ALLOCATION_WEIGHTS['SPY']
-        target_amt = w * cap_limit
-        total_deployed_cash += target_amt
-        amt_str = f"{target_amt:,.2f}" if total_capital > 0 else "N/A"
-        report_lines.append(f"{'SPY':<6} | {'Sigmoid':<16} | {ALLOCATION_WEIGHTS['SPY']:<8.2%} | {last:>8.2f} | {w:>8.1%} | {amt_str:>16} | 偏离度: {dev:.2%}")
+            cap_limit = total_capital * ALLOCATION_WEIGHTS['SPY']
+            target_amt = w * cap_limit
+            total_deployed_cash += target_amt
+            append_row('SPY', 'Sigmoid', ALLOCATION_WEIGHTS['SPY'], last, w, target_amt, f"偏离度: {dev:.2%}")
+        else:
+            append_row('SPY', 'Sigmoid', ALLOCATION_WEIGHTS['SPY'], last, 0.0, 0.0, "数据无效")
+    else:
+        append_row('SPY', 'Sigmoid', ALLOCATION_WEIGHTS['SPY'], np.nan, 0.0, 0.0, "数据不足")
 
     # 2. QQQ & 3. EWJ: Combo Adaptive
     logger.info("开始处理 QQQ 和 EWJ (Combo Adaptive 策略)...")
     for asset in ['QQQ', 'EWJ']:
         data = load_stooq_data(asset)
         if data is not None and len(data) >= 12:
-            last = data.iloc[-1]
-            m3, m6, m9, m12 = [data.rolling(i).mean().iloc[-1] for i in [3, 6, 9, 12]]
-            
-            t_pos = 1.0
-            if last < m12: t_pos = 0.25
-            if last < m9: t_pos = 0.50
-            if last < m6: t_pos = 0.75
-            if last < m3: t_pos = 0.0
-            if data.iloc[-1] < data.rolling(6).mean().iloc[-1] and data.iloc[-2] < data.rolling(6).mean().iloc[-2]:
-                t_pos = min(t_pos, 0.25)
-                
-            dev_q = (last / m12) - 1
-            s_pos = np.clip(1/(1+np.exp(-50*dev_q)), 0, 1) if abs(dev_q) < 0.1 else (1.0 if dev_q >= 0.1 else 0.0)
-            
-            vol = data.pct_change().iloc[-3:].std() * np.sqrt(12)
-            alpha = np.clip((vol - 0.1) / 0.2, 0.2, 0.9)
-            w_combo = alpha * t_pos + (1 - alpha) * s_pos
-            
-            cap_limit = total_capital * ALLOCATION_WEIGHTS[asset]
-            target_amt = w_combo * cap_limit
-            total_deployed_cash += target_amt
-            amt_str = f"{target_amt:,.2f}" if total_capital > 0 else "N/A"
-            report_lines.append(f"{asset:<6} | {'Combo Adaptive':<16} | {ALLOCATION_WEIGHTS[asset]:<8.2%} | {last:>8.2f} | {w_combo:>8.1%} | {amt_str:>16} | Vol:{vol:.1%} Alpha:{alpha:.2f}")
+            last = _safe_last(data)
+            m3, m6, m9, m12 = [_safe_last(data.rolling(i, min_periods=i).mean()) for i in [3, 6, 9, 12]]
+
+            if all(_is_finite_number(v) for v in [last, m3, m6, m9, m12]):
+                t_pos = 1.0
+                if last < m12: t_pos = 0.25
+                if last < m9: t_pos = 0.50
+                if last < m6: t_pos = 0.75
+                if last < m3: t_pos = 0.0
+                if len(data) >= 2:
+                    prev = pd.to_numeric(data.iloc[-2:], errors='coerce')
+                    prev_m6 = data.rolling(6, min_periods=6).mean().iloc[-2:]
+                    if pd.notna(prev.iloc[-1]) and pd.notna(prev.iloc[-2]) and pd.notna(prev_m6.iloc[-1]) and pd.notna(prev_m6.iloc[-2]):
+                        if prev.iloc[-1] < prev_m6.iloc[-1] and prev.iloc[-2] < prev_m6.iloc[-2]:
+                            t_pos = min(t_pos, 0.25)
+
+                dev_q = (last / m12) - 1
+                s_pos = np.clip(1/(1+np.exp(-50*dev_q)), 0, 1) if abs(dev_q) < 0.1 else (1.0 if dev_q >= 0.1 else 0.0)
+
+                vol = data.pct_change().iloc[-3:].std() * np.sqrt(12)
+                alpha = np.clip((vol - 0.1) / 0.2, 0.2, 0.9) if _is_finite_number(vol) else 0.2
+                w_combo = alpha * t_pos + (1 - alpha) * s_pos
+
+                cap_limit = total_capital * ALLOCATION_WEIGHTS[asset]
+                target_amt = w_combo * cap_limit
+                total_deployed_cash += target_amt
+                append_row(asset, 'Combo Adaptive', ALLOCATION_WEIGHTS[asset], last, w_combo, target_amt, f"Vol:{_fmt_pct(vol)} Alpha:{alpha:.2f}")
+            else:
+                append_row(asset, 'Combo Adaptive', ALLOCATION_WEIGHTS[asset], last, 0.0, 0.0, "数据无效")
+        else:
+            append_row(asset, 'Combo Adaptive', ALLOCATION_WEIGHTS[asset], np.nan, 0.0, 0.0, "数据不足")
 
     # 4. XAU: Trend Discrete
     logger.info("开始处理 XAU (Trend Discrete 策略)...")
     xau = load_stooq_data('XAU')
     if xau is not None and len(xau) >= 15:
-        last = xau.iloc[-1]
-        m6, m9, m12, m15 = [xau.rolling(i).mean().iloc[-1] for i in [6, 9, 12, 15]]
-        w = 1.0
-        if last < m15: w = 0.0
-        elif last < m12: w = 0.25
-        elif last < m9: w = 0.50
-        elif last < m6: w = 0.75
-        
-        cap_limit = total_capital * ALLOCATION_WEIGHTS['XAU']
-        target_amt = w * cap_limit
-        total_deployed_cash += target_amt
-        amt_str = f"{target_amt:,.2f}" if total_capital > 0 else "N/A"
-        report_lines.append(f"{'XAU':<6} | {'Trend Discrete':<16} | {ALLOCATION_WEIGHTS['XAU']:<8.2%} | {last:>8.2f} | {w:>8.1%} | {amt_str:>16} | MA15底线: {m15:.2f}")
+        last = _safe_last(xau)
+        m6, m9, m12, m15 = [_safe_last(xau.rolling(i, min_periods=i).mean()) for i in [6, 9, 12, 15]]
+        if all(_is_finite_number(v) for v in [last, m6, m9, m12, m15]):
+            w = 1.0
+            if last < m15: w = 0.0
+            elif last < m12: w = 0.25
+            elif last < m9: w = 0.50
+            elif last < m6: w = 0.75
+
+            cap_limit = total_capital * ALLOCATION_WEIGHTS['XAU']
+            target_amt = w * cap_limit
+            total_deployed_cash += target_amt
+            append_row('XAU', 'Trend Discrete', ALLOCATION_WEIGHTS['XAU'], last, w, target_amt, f"MA15底线: {m15:.2f}")
+        else:
+            append_row('XAU', 'Trend Discrete', ALLOCATION_WEIGHTS['XAU'], last, 0.0, 0.0, "数据无效")
+    else:
+        append_row('XAU', 'Trend Discrete', ALLOCATION_WEIGHTS['XAU'], np.nan, 0.0, 0.0, "数据不足")
 
     # 5. BTC: Trend Discrete Fast (MA6)
     logger.info("开始处理 BTC (Trend Fast MA6 策略)...")
     btc = load_stooq_data('BTC')
     if btc is not None and len(btc) >= 6:
-        last, ma6_b = btc.iloc[-1], btc.rolling(6).mean().iloc[-1]
-        w_btc = 1.0 if last > ma6_b else 0.0
-        
-        cap_limit = total_capital * ALLOCATION_WEIGHTS['BTC']
-        target_amt = w_btc * cap_limit
-        total_deployed_cash += target_amt
-        amt_str = f"{target_amt:,.2f}" if total_capital > 0 else "N/A"
-        report_lines.append(f"{'BTC':<6} | {'Trend Fast MA6':<16} | {ALLOCATION_WEIGHTS['BTC']:<8.2%} | {last:>8.2f} | {w_btc:>8.1%} | {amt_str:>16} | MA6动量线: {ma6_b:.2f}")
+        last = _safe_last(btc)
+        ma6_b = _safe_last(btc.rolling(6, min_periods=6).mean())
+        if all(_is_finite_number(v) for v in [last, ma6_b]):
+            w_btc = 1.0 if last > ma6_b else 0.0
+
+            cap_limit = total_capital * ALLOCATION_WEIGHTS['BTC']
+            target_amt = w_btc * cap_limit
+            total_deployed_cash += target_amt
+            append_row('BTC', 'Trend Fast MA6', ALLOCATION_WEIGHTS['BTC'], last, w_btc, target_amt, f"MA6动量线: {ma6_b:.2f}")
+        else:
+            append_row('BTC', 'Trend Fast MA6', ALLOCATION_WEIGHTS['BTC'], last, 0.0, 0.0, "数据无效")
+    else:
+        append_row('BTC', 'Trend Fast MA6', ALLOCATION_WEIGHTS['BTC'], np.nan, 0.0, 0.0, "数据不足")
 
     report_lines.append("-" * 115)
     

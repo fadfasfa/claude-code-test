@@ -25,6 +25,8 @@ from config import (
 
 Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
 
+CANONICAL_COLUMNS = ['Data', 'Zamkniecie', 'Open', 'High', 'Low', 'Volume']
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
@@ -49,6 +51,67 @@ def get_latest_local_date(file_path):
         return dates.max().date()
     except Exception:
         return None
+
+def normalize_price_frame(df):
+    # 仅保留单资产标准列，避免历史合并把多标的残留列写回单资产 CSV。
+    if df is None or df.empty:
+        return None
+
+    frame = df.copy()
+    frame.columns = [col[0] if isinstance(col, tuple) else col for col in frame.columns]
+
+    # 先统一日期列的时区，再做标准化命名，避免 yfinance 的 tz-aware Date 混入后续合并。
+    date_col = None
+    for col in frame.columns:
+        if str(col).lower() in ['date', 'data', 'index']:
+            date_col = col
+            break
+
+    if date_col is None:
+        return None
+
+    frame[date_col] = pd.to_datetime(frame[date_col], errors='coerce')
+    if pd.api.types.is_datetime64tz_dtype(frame[date_col]):
+        frame[date_col] = frame[date_col].dt.tz_localize(None)
+
+    # 统一日期列与收盘列命名。
+    header_mapping = {
+        'Date': 'Data',
+        'date': 'Data',
+        'data': 'Data',
+        'Close': 'Zamkniecie',
+        'close': 'Zamkniecie',
+        'zamkniecie': 'Zamkniecie',
+    }
+    frame.rename(columns=header_mapping, inplace=True)
+
+    if 'Data' not in frame.columns or 'Zamkniecie' not in frame.columns:
+        return None
+
+    frame['Data'] = pd.to_datetime(frame['Data'], errors='coerce')
+    if pd.api.types.is_datetime64tz_dtype(frame['Data']):
+        frame['Data'] = frame['Data'].dt.tz_localize(None)
+    frame['Zamkniecie'] = pd.to_numeric(frame['Zamkniecie'], errors='coerce')
+
+    keep_cols = ['Data', 'Zamkniecie']
+    for col in ['Open', 'High', 'Low', 'Volume']:
+        if col in frame.columns:
+            frame[col] = pd.to_numeric(frame[col], errors='coerce')
+            keep_cols.append(col)
+
+    frame = frame[keep_cols]
+    frame = frame.dropna(subset=['Data', 'Zamkniecie'])
+    if frame.empty:
+        return None
+
+    frame = frame.sort_values('Data')
+    frame = frame.drop_duplicates(subset=['Data'], keep='last')
+    frame = frame.reset_index(drop=True)
+
+    # 统一输出列顺序，额外列不再保留。
+    ordered_cols = [col for col in CANONICAL_COLUMNS if col in frame.columns]
+    frame = frame[ordered_cols]
+    return frame
 
 def is_data_up_to_date(file_path, latest_date=None):
     if latest_date is None:
@@ -87,19 +150,11 @@ def fetch_yfinance_data(yf_code, asset_name, start_date=None):
         df.reset_index(inplace=True)
         # yfinance 返回的 index 是 Date，列有 Open, High, Low, Close, Volume 等
         # 需要重命名为波兰语格式以兼容原架构
-        header_mapping = {
-            'Date': 'Data',
-            'Close': 'Zamkniecie'
-        }
-        df.rename(columns=header_mapping, inplace=True)
-        
         if 'Data' in df.columns:
             # 去除时区信息，与原来的保持一致
-            if pd.api.types.is_datetime64tz_dtype(df['Data']):
+            if isinstance(df['Data'].dtype, pd.DatetimeTZDtype):
                 df['Data'] = df['Data'].dt.tz_localize(None)
-            df['Data'] = pd.to_datetime(df['Data'])
-            
-        return df
+        return normalize_price_frame(df)
     except Exception as e:
         print(f"[调试] yfinance 获取 {asset_name} 失败：{e}")
         return None
@@ -161,41 +216,33 @@ def fetch_and_merge_data(asset_name, config):
 
     # 处理与保存获得的 new_df
     try:
-        new_df['Data'] = pd.to_datetime(new_df['Data'])
+        new_df = normalize_price_frame(new_df)
+        if new_df is None or new_df.empty:
+            return f"[失败] {asset_name:<4} 获取到的数据为空或无效。"
+
         new_df.set_index('Data', inplace=True)
-        
-        # 为了防污染，过滤不必要的列或进行整理
-        cols_to_keep = ['Zamkniecie']
-        for col in ['Open', 'High', 'Low', 'Volume']:
-            if col in new_df.columns:
-                cols_to_keep.append(col)
-                
-        new_df = new_df[[col for col in cols_to_keep if col in new_df.columns]]
+        new_df = new_df[[col for col in new_df.columns if col in CANONICAL_COLUMNS and col != 'Data']]
             
         # 增量合并逻辑
         if Path(file_path).exists():
             old_df = pd.read_csv(file_path)
-            
-            old_date_col = None
-            for col in old_df.columns:
-                if col.lower() in ['data', 'date', 'index']:
-                    old_date_col = col
-                    break
-                    
-            if old_date_col is None:
+            old_df = normalize_price_frame(old_df)
+
+            if old_df is None or old_df.empty:
                 return f"[系统错误] {asset_name:<4} 本地数据列名匹配失败。"
-                
-            old_df[old_date_col] = pd.to_datetime(old_df[old_date_col])
-            old_df.set_index(old_date_col, inplace=True)
+            
+            old_df.set_index('Data', inplace=True)
 
             combined_df = pd.concat([old_df, new_df])
             combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
         else:
             combined_df = new_df
 
+        combined_df = combined_df.dropna(subset=['Zamkniecie'])
         # 按时间排序后保存回 CSV
         combined_df.sort_index(inplace=True)
         combined_df.reset_index(inplace=True)
+        combined_df = combined_df[[col for col in CANONICAL_COLUMNS if col in combined_df.columns]]
         combined_df.to_csv(file_path, index=False)
 
         return f"[成功] {asset_name:<4} 更新完毕。最新数据点：{combined_df['Data'].iloc[-1].date()}"
