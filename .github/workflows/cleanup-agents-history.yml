@@ -41,6 +41,7 @@ jobs:
           python3 - <<'PY'
           import fnmatch
           import os
+          import subprocess
           import time
           from pathlib import Path
 
@@ -53,6 +54,7 @@ jobs:
           print(f"RETAIN_DAYS={retain_days}")
           print(f"RETAIN_COUNT={retain_count}")
           print("WHITELIST_PATTERNS=" + ",".join(whitelist_patterns))
+          print("AGE_SOURCE=git_first_commit_timestamp")
 
           if not history_dir.is_dir():
               print("No history directory found. Skip.")
@@ -69,12 +71,37 @@ jobs:
           def is_whitelisted(path: Path) -> bool:
               return any(fnmatch.fnmatch(path.name, pattern) for pattern in whitelist_patterns)
 
+          def archive_epoch(path: Path) -> int | None:
+              rel = path.as_posix()
+              created = subprocess.run(
+                  ["git", "log", "--diff-filter=A", "--follow", "--format=%ct", "--", rel],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              )
+              created_lines = [line.strip() for line in created.stdout.splitlines() if line.strip()]
+              if created_lines:
+                  return int(created_lines[0])
+
+              fallback = subprocess.run(
+                  ["git", "log", "-1", "--format=%ct", "--", rel],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              )
+              fallback_lines = [line.strip() for line in fallback.stdout.splitlines() if line.strip()]
+              if fallback_lines:
+                  return int(fallback_lines[0])
+
+              return None
+
           whitelist_files = [p for p in all_files if is_whitelisted(p)]
           managed_files = [p for p in all_files if not is_whitelisted(p)]
+          archive_epochs = {path: archive_epoch(path) for path in all_files}
 
           print("Before cleanup:")
           for path in all_files:
-              print(f" - {path}")
+              print(f" - {path} created_at={archive_epochs[path]}")
 
           delete_before = time.time() - retain_days * 24 * 60 * 60
 
@@ -82,7 +109,12 @@ jobs:
           kept = []
 
           for path in managed_files:
-              if path.stat().st_mtime < delete_before:
+              created_at = archive_epochs[path]
+              if created_at is None:
+                  kept.append(path)
+                  continue
+
+              if created_at < delete_before:
                   path.unlink()
                   deleted.append(str(path))
               else:
@@ -95,7 +127,11 @@ jobs:
           else:
               print("Deleted by age: none")
 
-          kept = sorted((p for p in kept if p.exists()), key=lambda p: p.stat().st_mtime, reverse=True)
+          kept = sorted(
+              (p for p in kept if p.exists()),
+              key=lambda p: archive_epochs[p] or 0,
+              reverse=True,
+          )
           if len(kept) > retain_count:
               trim_targets = kept[retain_count:]
               print("Deleted by count:")

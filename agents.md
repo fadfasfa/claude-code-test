@@ -1,4 +1,4 @@
-## 任务态（workflow maintenance enhancement）
+## 任务态（PR #13 review follow-up）
 
 task_id: cx-task-maintain-workflow-cleanup-and-comment-merge-20260405
 task_type: code
@@ -10,7 +10,7 @@ project_path: .
 executor: cx
 status: active
 created_at: 2026-04-05T04:02:00.1996053+08:00
-last_updated_at: 2026-04-05T04:02:00.1996053+08:00
+last_updated_at: 2026-04-05T04:20:09.3415707+08:00
 current_branch: cx-task-maintain-workflow-cleanup-and-comment-merge-20260405
 current_review_path: PR
 
@@ -19,11 +19,11 @@ Contributors:
 - cx
 
 active_task_id: cx-task-maintain-workflow-cleanup-and-comment-merge-20260405
-last_merged_task_id: cx-task-auto-merge-smoke-20260405-v2
-last_merged_at: 2026-04-05T03:17:32.4293904+08:00
+last_merged_task_id: cx-task-fix-auto-merge-review-path-20260405
+last_merged_at: 2026-04-04T20:00:58Z
 default_base_branch: main
 default_branch_policy_for_ad_hoc: on-demand
-merge_archive_path: .ai_workflow/agents_history/cx-task-auto-merge-smoke-20260405-v2.md
+merge_archive_path: .ai_workflow/agents_history/cx-task-fix-auto-merge-review-path-20260405.md
 
 initial_target_files:
 - .github/workflows/auto-merge.yml
@@ -55,9 +55,10 @@ effective_modified_symbols:
 - none
 
 effective_goals:
-- 从 standby 激活本次工作流维护增强任务
-- cleanup 仅清理 `.ai_workflow/agents_history/*.md`，并保护白名单文件
-- auto-merge 前半段切换为 Codex comment signal 驱动，保留最小审计条件
+- 将 auto-merge 前半段恢复为 `pull_request_review` 驱动
+- 保留 reviewer identity / PASS 审计条件并补齐 `statuses: read` 权限
+- cleanup 改用 archive 文件首次进入 git 历史的时间判断年龄与数量保留
+- 吸收 `main` 的 standby 基线并解除当前 PR 的 `agents.md` 冲突
 
 ---
 
@@ -95,6 +96,30 @@ execution_ledger:
       - agents.md
       - PROJECT.md
       - .ai_workflow/event_log_cx.jsonl
+  - ts: 2026-04-05T04:20:09.3415707+08:00
+    type: MERGE_CONFLICT_RECONCILED
+    summary: "吸收 main 最新 standby 基线并解决 PR #13 的 agents.md 冲突"
+    files:
+      - agents.md
+  - ts: 2026-04-05T04:20:10.3415707+08:00
+    type: AUTO_MERGE_SIGNAL_PATCHED
+    summary: "将 auto-merge 前半段恢复为 pull_request_review 驱动并补齐 statuses: read"
+    files:
+      - .github/workflows/auto-merge.yml
+  - ts: 2026-04-05T04:20:11.3415707+08:00
+    type: CLEANUP_WORKFLOW_ADDED_OR_UPDATED
+    summary: "cleanup 改用 archive 文件首次进入 git 历史的时间判断保留年龄"
+    files:
+      - .github/workflows/cleanup-agents-history.yml
+  - ts: 2026-04-05T04:20:12.3415707+08:00
+    type: READY_FOR_REVIEW
+    summary: "完成 review follow-up 修复并准备重新请求 Codex review"
+    files:
+      - .github/workflows/auto-merge.yml
+      - .github/workflows/cleanup-agents-history.yml
+      - agents.md
+      - PROJECT.md
+      - .ai_workflow/event_log_cx.jsonl
 
 ---
 
@@ -112,8 +137,8 @@ Human_Validation_Reason: none
 ## 待机态（可复用壳）
 
 active_task_id: cx-task-maintain-workflow-cleanup-and-comment-merge-20260405
-last_merged_task_id: cx-task-auto-merge-smoke-20260405-v2
-last_merged_at: 2026-04-05T03:17:32.4293904+08:00
+last_merged_task_id: cx-task-fix-auto-merge-review-path-20260405
+last_merged_at: 2026-04-04T20:00:58Z
 default_base_branch: main
 default_branch_policy_for_ad_hoc: on-demand
-merge_archive_path: .ai_workflow/agents_history/cx-task-auto-merge-smoke-20260405-v2.md
+merge_archive_path: .ai_workflow/agents_history/cx-task-fix-auto-merge-review-path-20260405.md
