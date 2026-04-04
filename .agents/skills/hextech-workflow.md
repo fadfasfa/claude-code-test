@@ -13,7 +13,9 @@
 
 端标识、分支前缀、状态文件、Event Log 映射见 `workflow_registry_v4.3.md § A`。合法执行端：`cc` / `cx`。
 
-> **Antigravity 不是执行端**，仅运行 Node C 审计，不参与协议 0-4。
+> **Antigravity V5.0 双模式说明**：
+> - **Advisory Mode**：不参与协议 0–4，随时按需安全扫描 / 前端生成，给出建议，不阻断流程。
+> - **Gate Mode**：当 `Task_Mode=dual-end-integration`（cc+cx 都参与）或 `Task_Mode=frontend-integration` 时，**必须**在 push PR 前完成 Antigravity Gate 审查并获得 `[AG-REVIEW-PASS]`。人类负责触发审查（见 `decision_playbooks_v5.0.md § B-3 / B-4`）。
 
 启动后读取本端标识，所有操作使用对应文件，禁止读写其他端的状态文件和日志。
 
@@ -370,6 +372,27 @@ Get-ChildItem -Recurse -Include "*.pyc","*.pyo" | Remove-Item -Force -ErrorActio
 - 收到问题描述 → 修复；修复次数 < 3 → 重跑自检再出 READY_FOR_REVIEW
 - 修复次数 = 3 → `execution_status = "failed"` → `[HALT: EXECUTION_FAILED][<端>]`，输出完整报错，挂起
 
+**验收通过后立即自动执行（无需等待）**：
+
+```powershell
+# 自动更新 PROJECT.md 并推送，人类说"验收通过"后执行端立即处理
+# 1. 更新 PROJECT.md 变更记录（见协议 4）
+# 2. 推送分支
+git push origin <Branch_Name>
+Write-Output "[AUTO-PUSH: DONE] 分支已推送：<Branch_Name>"
+
+# 3. 若 Task_Mode = dual-end-integration，发出集成信号
+$agentContent = Get-Content "agents.md" -Raw
+if ($agentContent -match "Task_Mode.*dual-end-integration" -or
+    ($agentContent -match "Contributors" -and $agentContent -match "\bcc\b" -and $agentContent -match "\bcx\b")) {
+    Write-Output "[AG-REVIEW-REQUIRED] workflow_id: <id>"
+    Write-Output "双端集成任务，请人类触发 Antigravity Gate Mode 审查后再开 PR。"
+    Write-Output "审查通过后在集成分支开 PR，PR 描述须含 antigravity_report_path。"
+} else {
+    Write-Output "[STAGE: DONE][<端>] 验收通过，分支已推送。请在 GitHub 开 PR，Codex 将自动触发审查。"
+}
+```
+
 ---
 
 ## 协议 4 — 完工记录
@@ -398,8 +421,9 @@ if ($_v.execution_status -ne "done") {
 git add PROJECT.md PROJECT_history.md ".ai_workflow/runtime_state_$me.json"
 git commit -m "docs: update PROJECT.md and mark done [<workflow_id>][$me]"
 
-# V5.0：推送分支，由云端 Codex 自动审查 PR，不再手动触发 Node C
-git push origin <Branch_Name>
+# V5.0：push 已在协议 3 验收通过时自动完成（见 [AUTO-PUSH: DONE]）
+# 若协议 3 推送失败，在此补推：
+# git push origin <Branch_Name>
 ```
 
 若 PROJECT.md 不存在：输出 `[PROJECT.MD: MISSING]`，建议运行 /PROJECT-REVIEW。
@@ -412,16 +436,53 @@ git push origin <Branch_Name>
 
 协议 4 完工后，人类在 GitHub 开 PR 时使用以下描述格式（供 Codex 定位契约）：
 
+**单端任务（standard）**：
 ```
 ---
 workflow_id: <端>-task-<描述>-<YYYYMMDD>
+branch_role: execution
 endpoint: <cc / cx>
+contributors: [cc] 或 [cx]
 agents_md_path: agents.md
-event_log_path: .ai_workflow/event_log_<端>.jsonl
+event_log_paths:
+  - .ai_workflow/event_log_<端>.jsonl
 review_rules: .agents/codex_review_rules.md
 ---
 
 <本次变更的人类可读说明>
+```
+
+**双端集成任务（dual-end-integration）**：
+```
+---
+workflow_id: int-task-<描述>-<YYYYMMDD>
+branch_role: integration
+contributors: [cc, cx]
+agents_md_path: agents.md
+event_log_paths:
+  - .ai_workflow/event_log_cc.jsonl
+  - .ai_workflow/event_log_cx.jsonl
+antigravity_report_path: .ai_workflow/ag_review_<workflow_id>.md
+review_rules: .agents/codex_review_rules.md
+---
+
+<本次集成的人类可读说明>
+```
+
+**前端集成任务（frontend-integration）**：
+```
+---
+workflow_id: <端>-task-<描述>-<YYYYMMDD>
+branch_role: execution
+task_mode: frontend-integration
+contributors: [ag, cc] 或 [ag, cx]
+agents_md_path: agents.md
+event_log_paths:
+  - .ai_workflow/event_log_<端>.jsonl
+review_rules: .agents/codex_review_rules.md
+---
+
+<前端变更的人类可读说明>
 ```
 
 ---
