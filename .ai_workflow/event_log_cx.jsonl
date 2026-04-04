@@ -16,3 +16,6 @@
 {"ts":"2026-04-05T00:10:02.0000000+08:00","endpoint":"cx","step":"branch_created","files":["cx-task-workflow-smoke-test-20260405-v2"],"reason":"创建第二轮测试分支用于验证 merge 后 standby reset"}
 {"ts":"2026-04-05T00:10:03.0000000+08:00","endpoint":"cx","step":"ready_for_review","files":["agents.md","PROJECT.md",".ai_workflow/runtime_state_cx.json",".ai_workflow/event_log_cx.jsonl"],"reason":"完成第二轮契约写入与提交前自检准备"}
 {"ts":"2026-04-05T02:42:05.7041048+08:00","endpoint":"cx","step":"task_card_timestamp_aligned","files":["agents.md",".ai_workflow/event_log_cx.jsonl"],"reason":"修复 v2 任务卡 created_at/last_updated_at 与 v2 事件时间不一致，确保审计回放可关联"}
+{"ts":"2026-04-05T03:17:32.4293904+08:00","endpoint":"cx","step":"task_created","files":["agents.md","PROJECT.md",".ai_workflow/event_log_cx.jsonl"],"reason":"创建 auto-merge smoke test v2 任务，目标仅验证 review -> merge 链路"}
+{"ts":"2026-04-05T03:17:33.4293904+08:00","endpoint":"cx","step":"branch_created","files":["cx-task-auto-merge-smoke-20260405-v2"],"reason":"创建 required 分支用于进入 PR 审查链路"}
+{"ts":"2026-04-05T03:17:34.4293904+08:00","endpoint":"cx","step":"ready_for_review","files":["agents.md","PROJECT.md",".ai_workflow/event_log_cx.jsonl"],"reason":"完成最小变更并准备由 Codex review 驱动自动合并"}
