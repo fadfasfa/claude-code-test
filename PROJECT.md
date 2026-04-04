@@ -86,6 +86,7 @@
 | 2026-04-05 | bootstrap-workflow-20260405 | cx | 初始化 `PROJECT.md`，将 `agents.md` 切换到 V5.3 standby 壳 | `agents.md`, `PROJECT.md` | 无 | WF-003, WF-004 | pending | 作为工作流基础设施落地起点 |
 | 2026-04-05 | cx-task-workflow-smoke-test-20260405 | cx | 工作流闭环验证：激活任务、修复 `runtime_state_cx.json` 为合法 JSON、同步 `agents.md` 与事件日志 | `agents.md`, `PROJECT.md`, `.ai_workflow/runtime_state_cx.json`, `.ai_workflow/event_log_cx.jsonl` | 无 | WF-003, WF-004 | pending | 本条仅用于验证工作流链路，不是业务功能开发；同时记录 runtime_state 修复事实 |
 | 2026-04-05 | cx-task-workflow-smoke-test-20260405-v2 | cx | 第二轮工作流闭环验证：在修复后的 auto-merge 链路上验证 merge 后 standby reset | `agents.md`, `PROJECT.md`, `.ai_workflow/runtime_state_cx.json`, `.ai_workflow/event_log_cx.jsonl` | 无 | WF-003, WF-004 | pending | 本轮仅验证合并后自动归档与重置，不扩展业务范围 |
+| 2026-04-05 | cx-task-auto-merge-smoke-20260405-v2 | cx | 极小 smoke test：仅验证 auto-merge review -> merge 链路，不触碰 post-merge-reset | `agents.md`, `PROJECT.md`, `.ai_workflow/event_log_cx.jsonl` | 无 | WF-003, WF-004 | pending | 本轮任务卡与事件日志保持一致，PR 仅做最小无风险变更 |
 
 ---
 
