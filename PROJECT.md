@@ -25,6 +25,7 @@
 | `PROJECT.md` | 项目总账 | 记录项目总览、关键文件职责、依赖影响、风险与变更记录 |
 | `.ai_workflow/runtime_state_cx.json` | 运行状态文件 | 记录 Codex 端当前运行状态 |
 | `.ai_workflow/event_log_cx.jsonl` | 事件日志 | 记录 Codex 端任务相关事件 |
+| `.github/workflows/cleanup-agents-history.yml` | 归档清理工作流 | 按保留天数与保留数量清理 `.ai_workflow/agents_history/*.md`，并保护白名单归档 |
 | `.ai_workflow/scripts/post-merge-sync.sh` | 本地同步脚本 | 合并或 pull 后将本地任务状态同步回 standby |
 | `.agents/` | 代理/规则目录 | 存放补充代理定义或辅助规则 |
 | `.claude/` | 工具配置目录 | 存放 Claude 侧配置或辅助文件 |
@@ -59,8 +60,9 @@
 | `PROJECT.md` | 项目级审计与变更记录 | 影响后续维护与任务追踪 | 任务完成前是否更新；记录是否完整 |
 | `.ai_workflow/runtime_state_cx.json` | 执行端状态识别 | 影响恢复、继续执行、审计对账 | schema 是否正确；状态是否与任务一致 |
 | `.ai_workflow/event_log_cx.jsonl` | 执行过程留痕 | 影响问题追踪与合规审计 | 事件是否连续；是否与 agents 台账一致 |
+| `.github/workflows/cleanup-agents-history.yml` | 归档清理与保留策略 | 影响 `.ai_workflow/agents_history` 的生命周期 | 白名单是否永不删除；仅作用于 `.md` 历史文件 |
+| `.github/workflows/auto-merge.yml` | comment-signal auto-merge 与待机重置 | 影响 PR comment 触发、自动合并与合并后归档 | 是否只接受 PR comment；审计条件是否保留 |
 | `.ai_workflow/scripts/post-merge-sync.sh` | 本地待机同步 | 影响 pull 后本地状态是否正确 | 是否已安装到 `.git/hooks/post-merge` |
-| `.github/workflows/auto-merge.yml` | 远端自动归档与重置 | 影响 merge 后是否能自动回 standby | 当前仓库需确认该文件已实际推送 |
 
 ---
 
@@ -88,6 +90,7 @@
 | 2026-04-05 | cx-task-workflow-smoke-test-20260405-v2 | cx | 第二轮工作流闭环验证：在修复后的 auto-merge 链路上验证 merge 后 standby reset | `agents.md`, `PROJECT.md`, `.ai_workflow/runtime_state_cx.json`, `.ai_workflow/event_log_cx.jsonl` | 无 | WF-003, WF-004 | pending | 本轮仅验证合并后自动归档与重置，不扩展业务范围 |
 | 2026-04-05 | cx-task-auto-merge-smoke-20260405-v2 | cx | 极小 smoke test：仅验证 auto-merge review -> merge 链路，不触碰 post-merge-reset | `agents.md`, `PROJECT.md`, `.ai_workflow/event_log_cx.jsonl` | 无 | WF-003, WF-004 | pending | 本轮任务卡与事件日志保持一致，PR 仅做最小无风险变更 |
 | 2026-04-05 | cx-task-fix-auto-merge-review-path-20260405 | cx | review-triggered auto-merge 前半段修复：补齐 debug 输出并放宽 review-state 门槛以匹配当前 Codex 集成 | `.github/workflows/auto-merge.yml`, `agents.md`, `PROJECT.md`, `.ai_workflow/event_log_cx.jsonl` | 无 | WF-003, WF-004 | pending | 本次仅诊断并修复 review->auto-merge 前半段，不改 post-merge-reset |
+| 2026-04-05 | cx-task-maintain-workflow-cleanup-and-comment-merge-20260405 | cx | 工作流维护增强：新增带白名单保护的归档清理，并将 auto-merge 前半段切换为 Codex comment signal 驱动 | `.github/workflows/auto-merge.yml`, `.github/workflows/cleanup-agents-history.yml`, `agents.md`, `PROJECT.md`, `.ai_workflow/event_log_cx.jsonl` | cleanup 白名单、comment signal 驱动 | WF-003, WF-004 | pending | 本轮仅调整工作流维护链路，不改业务目录 |
 
 ---
 

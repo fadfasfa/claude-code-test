@@ -1,0 +1,138 @@
+name: Cleanup archived agents history
+
+on:
+  schedule:
+    # 每周日 UTC 03:17 跑一次
+    - cron: '17 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      retain_days:
+        description: 'Delete archive files older than N days'
+        required: false
+        default: '30'
+      retain_count:
+        description: 'Keep at most newest N archive files'
+        required: false
+        default: '50'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup-agents-history:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Cleanup .ai_workflow/agents_history
+        shell: bash
+        env:
+          HISTORY_DIR: .ai_workflow/agents_history
+          RETAIN_DAYS: ${{ github.event.inputs.retain_days || '30' }}
+          RETAIN_COUNT: ${{ github.event.inputs.retain_count || '50' }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import fnmatch
+          import os
+          import time
+          from pathlib import Path
+
+          history_dir = Path(os.environ["HISTORY_DIR"])
+          retain_days = int(os.environ["RETAIN_DAYS"])
+          retain_count = int(os.environ["RETAIN_COUNT"])
+          whitelist_patterns = ["pinned-*.md", "keep-*.md", "whitelist-*.md"]
+
+          print(f"HISTORY_DIR={history_dir}")
+          print(f"RETAIN_DAYS={retain_days}")
+          print(f"RETAIN_COUNT={retain_count}")
+          print("WHITELIST_PATTERNS=" + ",".join(whitelist_patterns))
+
+          if not history_dir.is_dir():
+              print("No history directory found. Skip.")
+              raise SystemExit(0)
+
+          all_files = sorted(
+              p for p in history_dir.glob("*.md")
+              if p.is_file()
+          )
+          if not all_files:
+              print("No archive files found. Skip.")
+              raise SystemExit(0)
+
+          def is_whitelisted(path: Path) -> bool:
+              return any(fnmatch.fnmatch(path.name, pattern) for pattern in whitelist_patterns)
+
+          whitelist_files = [p for p in all_files if is_whitelisted(p)]
+          managed_files = [p for p in all_files if not is_whitelisted(p)]
+
+          print("Before cleanup:")
+          for path in all_files:
+              print(f" - {path}")
+
+          delete_before = time.time() - retain_days * 24 * 60 * 60
+
+          deleted = []
+          kept = []
+
+          for path in managed_files:
+              if path.stat().st_mtime < delete_before:
+                  path.unlink()
+                  deleted.append(str(path))
+              else:
+                  kept.append(path)
+
+          if deleted:
+              print("Deleted by age:")
+              for item in deleted:
+                  print(f" - {item}")
+          else:
+              print("Deleted by age: none")
+
+          kept = sorted((p for p in kept if p.exists()), key=lambda p: p.stat().st_mtime, reverse=True)
+          if len(kept) > retain_count:
+              trim_targets = kept[retain_count:]
+              print("Deleted by count:")
+              for path in trim_targets:
+                  path.unlink()
+                  print(f" - {path}")
+          else:
+              print("Deleted by count: none")
+
+          print("Whitelist preserved:")
+          for path in whitelist_files:
+              print(f" - {path}")
+
+          print("After cleanup:")
+          for path in sorted(history_dir.glob("*.md")):
+              if path.is_file():
+                  print(f" - {path}")
+
+          print("Cleanup scope limited to .ai_workflow/agents_history/*.md")
+          PY
+
+      - name: Commit cleanup changes
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add .ai_workflow/agents_history
+
+          if git diff --cached --quiet; then
+            echo "No cleanup changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: cleanup archived agents history"
+          git push origin HEAD:"$DEFAULT_BRANCH"
