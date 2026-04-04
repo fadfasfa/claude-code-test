@@ -1,24 +1,42 @@
-[HANDOFF-WRITE]
-Task_Type: {code | retrieval}
-Execution_End: {cc | cx}
-Workflow_ID: {执行端标识}-task-{任务描述}-{YYYYMMDD}
-Project_Path: {项目相对路径}
-Branch_Name: {执行端前缀}/{分支描述}
-Execution_Env: {如 Win11 / PowerShell / VS Code}
+task_id: cc-task-test-20260404
+task_type: code
+execution_mode: ad-hoc
+branch_policy: on-demand
+branch_name: none
+base_branch: main
+project_path: .
+executor: cc
+status: active
+created_at: 2026-04-04T00:00:00
+last_updated_at: 2026-04-04T00:00:00
+current_branch: none
+current_review_path: none
 
-[Target_Files]
-{相对路径/文件1.ext}
-{相对路径/文件2.ext}
+Task_Mode: standard
+Contributors:
+  - cx
 
-[Interface_Summary]
-Modified_Symbols:
-- {受影响的类名/函数名/接口名}
+initial_target_files:
+  - README.md
 
-[Target_Goals]
-- {功能目标1：仅描述 What 和 Scope，禁止出现 How}
-- {功能目标2：明确边界与验收标准}
+initial_modified_symbols:
+  - none
 
-[Decision_Validation]
-Final_Signer: DL-Gemini
-Validation_Result: {passed | skipped}
-Human_Validation_Required: {yes | no}
+initial_goals:
+  - 调整 README 一行说明
+
+effective_target_files:
+  - README.md
+
+effective_modified_symbols:
+  - none
+
+effective_goals:
+  - 调整 README 一行说明
+
+execution_ledger:
+  - ts: 2026-04-04T00:00:00
+    type: TASK_CREATED
+    summary: 初始化测试任务
+    files:
+      - README.md
