@@ -1,7 +1,7 @@
 {
   "schema_version": "5.3",
   "endpoint": "cx",
-  "workflow_id": "cx-task-workflow-smoke-test-20260405",
+  "workflow_id": "cx-task-workflow-smoke-test-20260405-v2",
   "task_type": "code",
   "execution_status": "running",
   "retry_count": 0,
