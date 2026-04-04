@@ -19,3 +19,8 @@
 {"ts":"2026-04-05T03:17:32.4293904+08:00","endpoint":"cx","step":"task_created","files":["agents.md","PROJECT.md",".ai_workflow/event_log_cx.jsonl"],"reason":"创建 auto-merge smoke test v2 任务，目标仅验证 review -> merge 链路"}
 {"ts":"2026-04-05T03:17:33.4293904+08:00","endpoint":"cx","step":"branch_created","files":["cx-task-auto-merge-smoke-20260405-v2"],"reason":"创建 required 分支用于进入 PR 审查链路"}
 {"ts":"2026-04-05T03:17:34.4293904+08:00","endpoint":"cx","step":"ready_for_review","files":["agents.md","PROJECT.md",".ai_workflow/event_log_cx.jsonl"],"reason":"完成最小变更并准备由 Codex review 驱动自动合并"}
+{"ts":"2026-04-05T03:43:18.2079768+08:00","endpoint":"cx","step":"task_created","files":["agents.md","PROJECT.md",".ai_workflow/event_log_cx.jsonl"],"reason":"创建 review-triggered auto-merge path fix 任务，目标是诊断并修复前半段链路"}
+{"ts":"2026-04-05T03:43:19.2079768+08:00","endpoint":"cx","step":"branch_created","files":["cx-task-fix-auto-merge-review-path-20260405"],"reason":"创建 required 分支用于 review 链路诊断"}
+{"ts":"2026-04-05T03:43:20.2079768+08:00","endpoint":"cx","step":"diagnosis_started","files":[".github/workflows/auto-merge.yml","agents.md","PROJECT.md",".ai_workflow/event_log_cx.jsonl"],"reason":"开始区分 PR comment / review submitted / approved review，并核对当前 Codex 集成的实际事件形态"}
+{"ts":"2026-04-05T03:43:21.2079768+08:00","endpoint":"cx","step":"workflow_patched","files":[".github/workflows/auto-merge.yml"],"reason":"修复 auto-merge 前半段链路的 review-state 判定与 debug 输出"}
+{"ts":"2026-04-05T03:43:22.2079768+08:00","endpoint":"cx","step":"ready_for_review","files":[".github/workflows/auto-merge.yml","agents.md","PROJECT.md",".ai_workflow/event_log_cx.jsonl"],"reason":"完成最小修复并准备进入 PR 审查链路"}

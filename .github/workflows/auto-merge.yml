@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'pull_request_review' &&
-      github.event.review.state == 'approved' &&
+      contains(fromJson('["approved","commented"]'), github.event.review.state) &&
       contains(fromJson('["codex[bot]","chatgpt-codex-connector[bot]"]'), github.event.review.user.login)
 
     permissions:
@@ -26,12 +26,14 @@ jobs:
       - name: Debug review identity
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
           REVIEW_STATE: ${{ github.event.review.state }}
           REVIEW_LOGIN: ${{ github.event.review.user.login }}
           REVIEW_TYPE: ${{ github.event.review.user.type }}
           REVIEW_BODY: ${{ github.event.review.body }}
         run: |
           printf 'github.event_name=%s\n' "$EVENT_NAME"
+          printf 'github.event.action=%s\n' "$EVENT_ACTION"
           printf 'github.event.review.state=%s\n' "$REVIEW_STATE"
           printf 'github.event.review.user.login=%s\n' "$REVIEW_LOGIN"
           printf 'github.event.review.user.type=%s\n' "$REVIEW_TYPE"
