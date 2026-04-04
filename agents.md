@@ -9,8 +9,8 @@ base_branch: main
 project_path: .
 executor: cx
 status: active
-created_at: 2026-04-05T00:00:00
-last_updated_at: 2026-04-05T00:00:00
+created_at: 2026-04-05T00:10:01
+last_updated_at: 2026-04-05T02:42:05.7041048+08:00
 current_branch: cx-task-workflow-smoke-test-20260405-v2
 current_review_path: none
 
