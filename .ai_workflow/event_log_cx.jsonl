@@ -12,3 +12,6 @@
 {"ts":"2026-04-05T00:00:01.0000000+08:00","endpoint":"cx","step":"task_created","files":["agents.md","PROJECT.md",".ai_workflow/runtime_state_cx.json",".ai_workflow/event_log_cx.jsonl"],"reason":"创建最小闭环验证任务 cx-task-workflow-smoke-test-20260405"}
 {"ts":"2026-04-05T00:00:02.0000000+08:00","endpoint":"cx","step":"branch_created","files":["cx-task-workflow-smoke-test-20260405"],"reason":"创建最小测试分支用于工作流闭环验证"}
 {"ts":"2026-04-05T00:00:03.0000000+08:00","endpoint":"cx","step":"ready_for_review","files":["agents.md","PROJECT.md",".ai_workflow/runtime_state_cx.json",".ai_workflow/event_log_cx.jsonl"],"reason":"完成最小改动、自检与提交前准备"}
+{"ts":"2026-04-05T00:10:01.0000000+08:00","endpoint":"cx","step":"task_created","files":["agents.md","PROJECT.md",".ai_workflow/runtime_state_cx.json",".ai_workflow/event_log_cx.jsonl"],"reason":"创建第二轮最小闭环验证任务 cx-task-workflow-smoke-test-20260405-v2"}
+{"ts":"2026-04-05T00:10:02.0000000+08:00","endpoint":"cx","step":"branch_created","files":["cx-task-workflow-smoke-test-20260405-v2"],"reason":"创建第二轮测试分支用于验证 merge 后 standby reset"}
+{"ts":"2026-04-05T00:10:03.0000000+08:00","endpoint":"cx","step":"ready_for_review","files":["agents.md","PROJECT.md",".ai_workflow/runtime_state_cx.json",".ai_workflow/event_log_cx.jsonl"],"reason":"完成第二轮契约写入与提交前自检准备"}
