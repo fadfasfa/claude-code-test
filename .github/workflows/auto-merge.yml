@@ -12,7 +12,7 @@ jobs:
     if: |
       github.event_name == 'pull_request_review' &&
       github.event.review.state == 'approved' &&
-      github.event.review.user.login == 'codex[bot]'
+      contains(fromJson('["codex[bot]","chatgpt-codex-connector[bot]"]'), github.event.review.user.login)
 
     permissions:
       pull-requests: write
@@ -22,6 +22,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Debug review identity
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          REVIEW_LOGIN: ${{ github.event.review.user.login }}
+          REVIEW_TYPE: ${{ github.event.review.user.type }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+        run: |
+          printf 'github.event_name=%s\n' "$EVENT_NAME"
+          printf 'github.event.review.state=%s\n' "$REVIEW_STATE"
+          printf 'github.event.review.user.login=%s\n' "$REVIEW_LOGIN"
+          printf 'github.event.review.user.type=%s\n' "$REVIEW_TYPE"
+          printf 'github.event.review.body=%s\n' "$REVIEW_BODY"
 
       - name: Verify AUDIT-VERDICT PASS
         run: |
