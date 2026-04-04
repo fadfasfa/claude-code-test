@@ -9,3 +9,6 @@
 {"ts":"2026-04-04T18:45:05.1059265+08:00","endpoint":"cx","step":"figma_exec_session_failure_persists","files":[".ai_workflow/event_log_cx.jsonl"],"reason":"codex exec 仍无法在会话中稳定调用 Figma MCP whoami，但原生 Figma 连接器可用"}
 {"ts":"2026-04-04T18:45:05.1060000+08:00","endpoint":"cx","step":"connector_verification_complete","files":[".ai_workflow/runtime_state_cx.json",".ai_workflow/event_log_cx.jsonl"],"reason":"完成 Linear/Figma/GitHub 连接器可用性验证与配置修复尝试"}
 {"ts":"2026-04-04T19:35:15.2545620+08:00","endpoint":"cx","step":"github_retry_with_plugin_auth","files":[".ai_workflow/event_log_cx.jsonl"],"reason":"GitHub 插件层已连接并可读取 profile，但 codex exec 仍因当前进程未设置 CODEX_GITHUB_PERSONAL_ACCESS_TOKEN 而不可用"}
+{"ts":"2026-04-05T00:00:01.0000000+08:00","endpoint":"cx","step":"task_created","files":["agents.md","PROJECT.md",".ai_workflow/runtime_state_cx.json",".ai_workflow/event_log_cx.jsonl"],"reason":"创建最小闭环验证任务 cx-task-workflow-smoke-test-20260405"}
+{"ts":"2026-04-05T00:00:02.0000000+08:00","endpoint":"cx","step":"branch_created","files":["cx-task-workflow-smoke-test-20260405"],"reason":"创建最小测试分支用于工作流闭环验证"}
+{"ts":"2026-04-05T00:00:03.0000000+08:00","endpoint":"cx","step":"ready_for_review","files":["agents.md","PROJECT.md",".ai_workflow/runtime_state_cx.json",".ai_workflow/event_log_cx.jsonl"],"reason":"完成最小改动、自检与提交前准备"}

@@ -1,29 +1,23 @@
 {
   "schema_version": "5.3",
-  "endpoint": "cc",
-  "workflow_id": "",
-  "task_type": "code",
-  "execution_status": "idle",
-  "retry_count": 0,
-  "is_new_project": false,
-  "interface_summary": {
-    "modified_symbols": [],
-    "affected_files": []
-  }
-}
-EOF
-
-cat > .ai_workflow/runtime_state_cx.json << 'EOF'
-{
-  "schema_version": "5.3",
   "endpoint": "cx",
-  "workflow_id": "",
+  "workflow_id": "cx-task-workflow-smoke-test-20260405",
   "task_type": "code",
-  "execution_status": "idle",
+  "execution_status": "running",
   "retry_count": 0,
   "is_new_project": false,
   "interface_summary": {
-    "modified_symbols": [],
-    "affected_files": []
+    "modified_symbols": [
+      "agents.md",
+      "PROJECT.md",
+      ".ai_workflow/runtime_state_cx.json",
+      ".ai_workflow/event_log_cx.jsonl"
+    ],
+    "affected_files": [
+      "agents.md",
+      "PROJECT.md",
+      ".ai_workflow/runtime_state_cx.json",
+      ".ai_workflow/event_log_cx.jsonl"
+    ]
   }
 }

@@ -84,6 +84,7 @@
 | 日期 | task_id | 执行端 | 最终改动 | 最终有效范围 | 范围变动/新增需求 | 遗留债务 | 审计结果 | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 2026-04-05 | bootstrap-workflow-20260405 | cx | 初始化 `PROJECT.md`，将 `agents.md` 切换到 V5.3 standby 壳 | `agents.md`, `PROJECT.md` | 无 | WF-003, WF-004 | pending | 作为工作流基础设施落地起点 |
+| 2026-04-05 | cx-task-workflow-smoke-test-20260405 | cx | 工作流闭环验证：激活任务、修复 `runtime_state_cx.json` 为合法 JSON、同步 `agents.md` 与事件日志 | `agents.md`, `PROJECT.md`, `.ai_workflow/runtime_state_cx.json`, `.ai_workflow/event_log_cx.jsonl` | 无 | WF-003, WF-004 | pending | 本条仅用于验证工作流链路，不是业务功能开发；同时记录 runtime_state 修复事实 |
 
 ---
 
