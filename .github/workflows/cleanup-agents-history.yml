@@ -54,7 +54,7 @@ jobs:
           print(f"RETAIN_DAYS={retain_days}")
           print(f"RETAIN_COUNT={retain_count}")
           print("WHITELIST_PATTERNS=" + ",".join(whitelist_patterns))
-          print("AGE_SOURCE=git_first_commit_timestamp")
+          print("AGE_SOURCE=git_oldest_add_timestamp")
 
           if not history_dir.is_dir():
               print("No history directory found. Skip.")
@@ -81,7 +81,7 @@ jobs:
               )
               created_lines = [line.strip() for line in created.stdout.splitlines() if line.strip()]
               if created_lines:
-                  return int(created_lines[0])
+                  return int(created_lines[-1])
 
               fallback = subprocess.run(
                   ["git", "log", "-1", "--format=%ct", "--", rel],

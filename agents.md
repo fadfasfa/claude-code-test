@@ -10,7 +10,7 @@ project_path: .
 executor: cx
 status: active
 created_at: 2026-04-05T04:02:00.1996053+08:00
-last_updated_at: 2026-04-05T04:20:09.3415707+08:00
+last_updated_at: 2026-04-05T17:41:44.2399500+08:00
 current_branch: cx-task-maintain-workflow-cleanup-and-comment-merge-20260405
 current_review_path: PR
 
@@ -57,7 +57,7 @@ effective_modified_symbols:
 effective_goals:
 - 将 auto-merge 前半段恢复为 `pull_request_review` 驱动
 - 保留 reviewer identity / PASS 审计条件并补齐 `statuses: read` 权限
-- cleanup 改用 archive 文件首次进入 git 历史的时间判断年龄与数量保留
+- cleanup 改用 archive 文件在 git 历史中的 oldest add timestamp 判断年龄与数量保留
 - 吸收 `main` 的 standby 基线并解除当前 PR 的 `agents.md` 冲突
 
 ---
@@ -116,6 +116,19 @@ execution_ledger:
     summary: "完成 review follow-up 修复并准备重新请求 Codex review"
     files:
       - .github/workflows/auto-merge.yml
+      - .github/workflows/cleanup-agents-history.yml
+      - agents.md
+      - PROJECT.md
+      - .ai_workflow/event_log_cx.jsonl
+  - ts: 2026-04-05T17:41:44.2399500+08:00
+    type: CLEANUP_WORKFLOW_ADDED_OR_UPDATED
+    summary: "将 cleanup 的归档年龄基准从 newest-first add entry 修正为 oldest add entry"
+    files:
+      - .github/workflows/cleanup-agents-history.yml
+  - ts: 2026-04-05T17:41:45.2399500+08:00
+    type: READY_FOR_REVIEW
+    summary: "完成 oldest add timestamp 修复并准备推送到 PR #13"
+    files:
       - .github/workflows/cleanup-agents-history.yml
       - agents.md
       - PROJECT.md
