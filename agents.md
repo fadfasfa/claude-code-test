@@ -10,7 +10,7 @@ project_path: .
 executor: cx
 status: active
 created_at: 2026-04-05T04:02:00.1996053+08:00
-last_updated_at: 2026-04-05T17:41:44.2399500+08:00
+last_updated_at: 2026-04-05T17:57:05.0360541+08:00
 current_branch: cx-task-maintain-workflow-cleanup-and-comment-merge-20260405
 current_review_path: PR
 
@@ -56,7 +56,7 @@ effective_modified_symbols:
 
 effective_goals:
 - 将 auto-merge 前半段恢复为 `pull_request_review` 驱动
-- 保留 reviewer identity / PASS 审计条件并补齐 `statuses: read` 权限
+- 保留 reviewer identity / PASS 审计条件并让非目标 reviewer 直接 skip
 - cleanup 改用 archive 文件在 git 历史中的 oldest add timestamp 判断年龄与数量保留
 - 吸收 `main` 的 standby 基线并解除当前 PR 的 `agents.md` 冲突
 
@@ -129,6 +129,25 @@ execution_ledger:
     type: READY_FOR_REVIEW
     summary: "完成 oldest add timestamp 修复并准备推送到 PR #13"
     files:
+      - .github/workflows/cleanup-agents-history.yml
+      - agents.md
+      - PROJECT.md
+      - .ai_workflow/event_log_cx.jsonl
+  - ts: 2026-04-05T17:57:05.0360541+08:00
+    type: AUTO_MERGE_SIGNAL_PATCHED
+    summary: "将非白名单 reviewer 从 failure 调整为 skip，并保留 debug step"
+    files:
+      - .github/workflows/auto-merge.yml
+  - ts: 2026-04-05T17:57:06.0360541+08:00
+    type: CLEANUP_WORKFLOW_ADDED_OR_UPDATED
+    summary: "cleanup 仅在 agents_history 目录存在时才 git add，不存在时正常 no-op 退出"
+    files:
+      - .github/workflows/cleanup-agents-history.yml
+  - ts: 2026-04-05T17:57:07.0360541+08:00
+    type: READY_FOR_REVIEW
+    summary: "完成 reviewer skip 与 cleanup no-op 修复并准备推送到 PR #13"
+    files:
+      - .github/workflows/auto-merge.yml
       - .github/workflows/cleanup-agents-history.yml
       - agents.md
       - PROJECT.md

@@ -40,7 +40,15 @@ jobs:
           printf 'github.event.review.user.type=%s\n' "$REVIEW_TYPE"
           printf 'github.event.review.body=%s\n' "$REVIEW_BODY"
 
+      - name: Skip non-target reviewer
+        if: |
+          !contains(fromJson('["codex[bot]","chatgpt-codex-connector[bot]"]'), github.event.review.user.login)
+        run: |
+          echo "Skipping auto-merge for non-target reviewer: ${{ github.event.review.user.login }}"
+
       - name: Verify review signal and bot identity
+        if: |
+          contains(fromJson('["codex[bot]","chatgpt-codex-connector[bot]"]'), github.event.review.user.login)
         shell: bash
         env:
           REVIEW_STATE: ${{ github.event.review.state }}
@@ -48,11 +56,6 @@ jobs:
           REVIEW_BODY: ${{ github.event.review.body }}
         run: |
           set -euo pipefail
-
-          if [[ "$REVIEW_LOGIN" != "codex[bot]" && "$REVIEW_LOGIN" != "chatgpt-codex-connector[bot]" ]]; then
-            echo "::error::Review author is not an allowed Codex bot identity: $REVIEW_LOGIN"
-            exit 1
-          fi
 
           if [[ "$REVIEW_STATE" != "approved" && "$REVIEW_STATE" != "commented" ]]; then
             echo "::error::Unsupported review state for auto-merge: $REVIEW_STATE"
@@ -65,6 +68,8 @@ jobs:
           fi
 
       - name: Verify PR audit conditions
+        if: |
+          contains(fromJson('["codex[bot]","chatgpt-codex-connector[bot]"]'), github.event.review.user.login)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -113,6 +118,8 @@ jobs:
           fi
 
       - name: Auto-merge PR
+        if: |
+          contains(fromJson('["codex[bot]","chatgpt-codex-connector[bot]"]'), github.event.review.user.login)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

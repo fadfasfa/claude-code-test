@@ -163,7 +163,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add .ai_workflow/agents_history
+          if [ -d ".ai_workflow/agents_history" ]; then
+            git add .ai_workflow/agents_history
+          else
+            echo "No history directory to stage."
+          fi
 
           if git diff --cached --quiet; then
             echo "No cleanup changes to commit."
