@@ -94,6 +94,7 @@
 | 2026-04-05 | cx-task-maintain-workflow-cleanup-and-comment-merge-20260405 | cx | review follow-up：恢复 `pull_request_review` 驱动、补 `statuses: read`、cleanup 改用 archive 文件首次入库的 git 时间，并解决与 `main` 的 `agents.md` 冲突 | `.github/workflows/auto-merge.yml`, `.github/workflows/cleanup-agents-history.yml`, `agents.md`, `PROJECT.md`, `.ai_workflow/event_log_cx.jsonl` | review 反馈修复、可靠时间基准、冲突解除 | WF-003, WF-004 | pending | 本轮不新开 PR，直接在 PR #13 分支继续修复 |
 | 2026-04-05 | cx-task-maintain-workflow-cleanup-and-comment-merge-20260405 | cx | cleanup 时间戳 follow-up：将 git add 时间选择从 newest-first 修正为 oldest add entry，避免同名文件重建后年龄被错误重置 | `.github/workflows/cleanup-agents-history.yml`, `agents.md`, `PROJECT.md`, `.ai_workflow/event_log_cx.jsonl` | oldest add timestamp 修复 | WF-003, WF-004 | pending | 本轮仍在 PR #13 分支上做最小补丁，不新增 PR |
 | 2026-04-05 | cx-task-maintain-workflow-cleanup-and-comment-merge-20260405 | cx | review guard/no-op follow-up：非白名单 reviewer 改为 skip，不再把 workflow 打成 failure；cleanup 在目录不存在时跳过 git add 并正常 no-op 退出 | `.github/workflows/auto-merge.yml`, `.github/workflows/cleanup-agents-history.yml`, `agents.md`, `PROJECT.md`, `.ai_workflow/event_log_cx.jsonl` | reviewer skip、目录缺失 no-op | WF-003, WF-004 | pending | 本轮继续在 PR #13 分支做最小修复，不新增 PR |
+| 2026-04-05 | cx-task-final-auto-merge-verify-20260405 | cx | 最终 auto-merge 验证：仅在 `PROJECT.md` 追加一条安全审计记录，并同步本端任务卡与运行留痕 | `PROJECT.md`, `agents.md`, `.ai_workflow/runtime_state_cx.json`, `.ai_workflow/event_log_cx.jsonl` | 无 | WF-003, WF-004 | pending | 本轮不触碰 `.github/workflows/*`，仅用于确认主线修复后的 auto-merge 是否恢复生效 |
 
 ---
 

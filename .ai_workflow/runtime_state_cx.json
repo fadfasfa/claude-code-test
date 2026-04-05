@@ -1,21 +1,21 @@
 {
   "schema_version": "5.3",
   "endpoint": "cx",
-  "workflow_id": "cx-task-workflow-smoke-test-20260405-v2",
+  "workflow_id": "cx-task-final-auto-merge-verify-20260405",
   "task_type": "code",
   "execution_status": "running",
   "retry_count": 0,
   "is_new_project": false,
   "interface_summary": {
     "modified_symbols": [
-      "agents.md",
       "PROJECT.md",
+      "agents.md",
       ".ai_workflow/runtime_state_cx.json",
       ".ai_workflow/event_log_cx.jsonl"
     ],
     "affected_files": [
-      "agents.md",
       "PROJECT.md",
+      "agents.md",
       ".ai_workflow/runtime_state_cx.json",
       ".ai_workflow/event_log_cx.jsonl"
     ]
