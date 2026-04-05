@@ -4,7 +4,8 @@
 # version: 5.3
 #
 # 用途：
-#   在 git pull / git merge 后对齐本地 agents.md 为 standby 态。
+#   在本地 git pull / git merge 后对齐本地 agents.md 为 standby 态。
+#   当前仓库以本地优先工作流为主；本脚本负责本地归档与 standby reset。
 #   可作为 .git/hooks/post-merge 钩子使用，也可手动执行。
 #
 # 安装为 git hook（可选）：
@@ -53,7 +54,7 @@ else
   log "Archived current agents.md to: ${archive_path}"
 fi
 
-# --- 检测远端是否已经回到 standby（优先使用远端版本） ---
+# --- 若同分支远端内容已是 standby，可直接复用；否则生成本地 standby 壳 ---
 remote_status=""
 current_branch=""
 if git rev-parse --git-dir > /dev/null 2>&1; then
@@ -63,13 +64,13 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
 fi
 
 if [ "$remote_status" = "standby" ] && [ -n "$current_branch" ]; then
-  # 远端已是 standby，直接覆盖本地
+  # 同分支远端已是 standby，直接复用该版本
   git checkout "origin/${current_branch}" -- "$AGENTS_FILE" 2>/dev/null || true
   log "Local agents.md synced from remote standby."
   exit 0
 fi
 
-# --- 远端未回到 standby，或无法读取远端 —— 生成本地 standby 壳 ---
+# --- 远端不可复用或未处于 standby —— 生成本地 standby 壳 ---
 # 以下结构与 agents_template.md 逐字同构
 warn "Remote standby not detected. Generating local standby shell from template."
 

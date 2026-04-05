@@ -1,8 +1,9 @@
 ## 工作范围 (agents.md) — Hextech
 > version: 5.3
 > status: standby
-> 本文件为长期任务总表；待机时保留最近一次合并的归档指针，供下次任务复用。
+> 本文件表示当前仓库的 standby 状态；待机时保留最近一次本地合并或归档的指针，供下次任务复用。
 > retrieval 任务默认不生成代码契约，但可按需写入轻量记录。
+> 当前主流程为本地优先：默认允许直接在 main 工作，若风险超出预期再切换临时分支。
 
 ---
 
@@ -14,8 +15,8 @@ execution_mode: ad-hoc
 branch_policy: on-demand
 branch_name: none
 base_branch: main
-project_path: [待填写]
-executor: [待填写]
+project_path: C:\Users\apple\claudecode
+executor: cx
 status: standby
 created_at: 2026-04-05T10:37:47Z
 last_updated_at: 2026-04-05T10:37:47Z
@@ -59,7 +60,7 @@ effective_goals:
 execution_ledger:
   - ts: 2026-04-05T10:37:47Z
     type: RESET_TO_STANDBY
-    summary: "本地 post-merge-sync 执行后回到 standby（前任务: cx-task-final-auto-merge-verify-20260405）"
+    summary: "本地 post-merge-sync 执行后回到 standby（前任务归档: cx-task-final-auto-merge-verify-20260405）"
     files:
       - none
 
@@ -77,6 +78,8 @@ Human_Validation_Reason: none
 ---
 
 ## 待机态（可复用壳）
+
+> 当前仅表示仓库处于待机壳，不预设 PR review、auto-merge 或云端 reset 为默认收尾方式。
 
 active_task_id: none
 last_merged_task_id: cx-task-final-auto-merge-verify-20260405

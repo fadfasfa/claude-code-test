@@ -1,23 +1,42 @@
 {
   "schema_version": "5.3",
   "endpoint": "cx",
-  "workflow_id": "cx-task-final-auto-merge-verify-20260405",
+  "workflow_id": "repo-standby-local-first",
   "task_type": "code",
-  "execution_status": "running",
+  "execution_status": "standby",
+  "lifecycle_stage": "standby",
+  "task_phase": "idle",
+  "workspace_mode": "local-first",
   "retry_count": 0,
   "is_new_project": false,
+  "active_context": {
+    "status": "standby",
+    "current_task_id": "none",
+    "current_branch": "main",
+    "preferred_execution_path": "work_on_main_unless_risk_expands",
+    "fallback_path": "create_temp_branch_then_merge_back_to_main"
+  },
+  "archive_context": {
+    "last_archived_task_id": "cx-task-final-auto-merge-verify-20260405",
+    "last_archived_at": "2026-04-05T10:37:47Z",
+    "archive_path": ".ai_workflow/agents_history/local-cx-task-final-auto-merge-verify-20260405.md"
+  },
   "interface_summary": {
     "modified_symbols": [
       "PROJECT.md",
       "agents.md",
       ".ai_workflow/runtime_state_cx.json",
-      ".ai_workflow/event_log_cx.jsonl"
+      ".ai_workflow/event_log_cx.jsonl",
+      ".ai_workflow/scripts/post-merge-sync.sh",
+      ".github/workflows/cleanup-agents-history.yml"
     ],
     "affected_files": [
       "PROJECT.md",
       "agents.md",
       ".ai_workflow/runtime_state_cx.json",
-      ".ai_workflow/event_log_cx.jsonl"
+      ".ai_workflow/event_log_cx.jsonl",
+      ".ai_workflow/scripts/post-merge-sync.sh",
+      ".github/workflows/cleanup-agents-history.yml"
     ]
   }
 }
