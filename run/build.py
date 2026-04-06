@@ -258,13 +258,34 @@ def final_cleanup(exe_dir: Path) -> Path:
             f.unlink()
             print_check(f"已删除：{f.name}")
 
-    # 重命名输出目录为更清晰的名称
-    final_dir = DIST_DIR / f"Hextech_伴生系统_{datetime.now().strftime('%Y%m%d')}"
-    if exe_dir != final_dir:
-        exe_dir.rename(final_dir)
-        print_check(f"输出目录：{final_dir}")
+    # 重命名输出目录为更清晰的名称。
+    base_name = f"Hextech_伴生系统_{datetime.now().strftime('%Y%m%d')}"
+    final_dir = DIST_DIR / base_name
+    suffix = 1
+    while final_dir.exists() and final_dir != exe_dir:
+        final_dir = DIST_DIR / f"{base_name}_{suffix}"
+        suffix += 1
 
-    return final_dir
+    if exe_dir == final_dir:
+        return final_dir
+
+    try:
+        shutil.move(str(exe_dir), str(final_dir))
+        print_check(f"输出目录：{final_dir}")
+        return final_dir
+    except PermissionError as exc:
+        print_warn(f"目录重命名失败，尝试复制输出目录：{exc}")
+    except OSError as exc:
+        print_warn(f"目录移动失败，尝试复制输出目录：{exc}")
+
+    try:
+        shutil.copytree(exe_dir, final_dir)
+        print_warn(f"已改为复制模式输出目录：{final_dir}")
+        return final_dir
+    except OSError as exc:
+        print_warn(f"复制输出目录也失败，保留原始目录：{exc}")
+        print_warn(f"请直接使用原始输出目录：{exe_dir}")
+        return exe_dir
 
 
 def main():

@@ -123,6 +123,23 @@ Advisory Mode 不受本节“格式强制”约束，除非被明确升级为 Ga
 > - `workflow_registry.md § G` 是 Gate Mode 触发条件的唯一权威来源。
 > - 本文件不得自行扩展新的强制触发条件。
 
+## 临时产物清理约束
+
+审查过程中允许生成临时静态检查日志文件用于中间分析，例如：
+- `tmp_flake8.log`
+- `tmp_pylint.log`
+
+若这些文件不属于最终交付物、未被用户明确要求保留、且未被后续流程显式引用，则 Antigravity 在审查结果生成完成后必须自动删除它们。
+
+最终应保留的审查产物仅包括：
+- `.ai_workflow/ag_review_<task_id>.md`
+- 其他由用户明确要求保留的审查证据文件
+
+不得将临时 lint 日志作为默认长期产物留在仓库根目录。
+在任何审查任务结束前，若存在以下临时文件且不需保留，必须执行清理：
+- `tmp_flake8.log`
+- `tmp_pylint.log`
+
 ---
 
 ## 六、Gate Mode 输入（Antigravity 审查前由人类提供）

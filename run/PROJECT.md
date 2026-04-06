@@ -14,6 +14,7 @@ Hextech 伴生系统是一个本地运行的《英雄联盟》数据分析工具
 - 自动同步英雄基础数据、海克斯数据、协同数据和图标映射。
 - 启动时自动自检海克斯图标缓存，缺失则自动抓取并写入审计日志。
 - 详情页海克斯图像优先使用后端 `icon` 字段，失败时回退到本地 `assets/`，再退到 canvas 占位图，保证前端可见性。
+- 详情页海克斯悬浮窗采用单例 DOM + 纯文本安全渲染，展示阶段 A 补齐的 `tooltip_plain`，并对动态占位符做弱化降级。
 - 提供桌面伴生界面，跟随游戏窗口状态显示或隐藏。
 - 提供本地 Web 服务，用于列表页、详情页和 API 查询。
 - 提供后端数据整理入口和打包脚本，方便本地使用与分发。
@@ -113,6 +114,7 @@ flowchart TD
 - 生产者：`hextech_scraper.py`
 - 消费者：`data_processor.py`、`web_server.py`
 - 存储位置：`file`
+- 典型字段：`海克斯名称`、`海克斯阶级`、`海克斯胜率`、`海克斯出场率`、`胜率差`、`海克斯Tooltip`、`海克斯描述`
 - 变更影响：榜单、推荐、详情页数据都会跟着变化
 
 ---
@@ -185,6 +187,7 @@ data_processor.py
 | 2026-04-03 | cx-scratch | cx | 海克斯图像修复 / 文档同步 | 修复详情页海克斯图像合并冲突，补齐图标回退脚本，并修正联动文章区的图标解析，增加多英雄端到端验证说明 | `static/detail.html`、`icon_resolver.py`、`web_server.py`、`PROJECT.md`、`README.md` | done | 已验证左侧海克斯与右侧联动文章图标链路 |
 | 2026-04-03 | cx-refactor-shared-modules | cx | 重构 / 文档补齐 | 抽取别名与图标解析共享模块，修正同步链路，并补齐项目文档 | `alias_utils.py`、`icon_resolver.py`、`hero_sync.py`、`web_server.py`、`data_processor.py`、`hextech_query.py` | done | 当前分支未提交 |
 | 2026-04-03 | cx-refactor-shared-modules | cx | 海克斯图标维护 | 新增海克斯图标自检、自动抓取与 JSONL 审计记录，前端不再承担海克斯图标兜底 | `web_server.py`、`static/detail.html`、`static/canvas_fallback.js`、`.gitignore` | done | 自检结果写入 `config/augment_icon_audit.jsonl` |
+| 2026-04-06 | frontend-task-hextech-tooltip-20260406 | cx | 前端集成 / 文档同步 | 详情页海克斯悬浮窗改为单例 DOM + 纯文本安全渲染，消费 `tooltip_plain` 并保留占位符弱化展示 | `static/detail.html`、`PROJECT.md`、`README.md` | done | 已验证 hover 显示与 XSS 防护 |
 
 ---
 

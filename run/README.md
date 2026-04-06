@@ -64,7 +64,7 @@ run/
 ## 常用接口
 
 - `GET /api/champions`：英雄列表
-- `GET /api/champion/{name}/hextechs`：英雄海克斯推荐
+- `GET /api/champion/{name}/hextechs`：英雄海克斯推荐，返回 `comprehensive`、`winrate_only`、`top_10_overall` 及分阶级数组；单条海克斯对象包含 `tooltip` 与 `tooltip_plain`
 - `GET /api/champion_aliases`：英雄别名索引
 - `GET /api/augment_icon_map`：海克斯图标映射
 - `GET /api/synergies/{champ_id}`：英雄协同数据
@@ -79,6 +79,7 @@ run/
 - 图标与别名规则由 `alias_utils.py`、`icon_resolver.py` 统一处理，避免多处重复实现。
 - `web_server.py` 启动后会自动检查海克斯图标缓存，缺失时会自动抓取并把结果写入 `config/augment_icon_audit.jsonl`。
 - 详情页海克斯图像链路是“后端 `icon` 字段 -> 本地 `assets/` -> canvas 占位图”三段回退，避免单点资源失败导致整页失图。
+- 详情页悬浮窗只消费 `tooltip_plain`，并以单例 DOM 安全渲染纯文本描述，避免 HTML 注入风险。
 - 右侧联动文章区也复用同一套 `augment_icon_map`，不再硬拼 `./assets/{名称}.png`，避免别名条目继续落到占位图。
 
 ## 图像验证
@@ -96,6 +97,7 @@ run/
 - 每个海克斯条目都能渲染出 `<img>`。
 - 图片无持续 404，最终都能显示本地图标或占位图。
 - 浏览器控制台没有 `Unexpected token`、`createPlaceholder is not defined` 等脚本错误。
+- 海克斯悬浮窗 hover 时能显示标题、纯文本描述和 `?` 占位符弱化效果，且不会插入脚本节点。
 
 本次已验证的样本：
 

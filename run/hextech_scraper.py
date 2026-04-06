@@ -31,6 +31,82 @@ def get_random_ua():
     return random.choice(USER_AGENT_POOL)
 
 
+def _clean_augment_text(value) -> str:
+    # 统一清洗文本字段，避免空白干扰后续拼接。
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text
+
+
+def _extract_augment_meta(raw_item: dict) -> dict:
+    # 提取增强符文描述信息；tooltip 缺失时回退 description。
+    description = _clean_augment_text(
+        raw_item.get("description")
+        or raw_item.get("desc")
+    )
+    tooltip = _clean_augment_text(
+        raw_item.get("tooltip")
+        or raw_item.get("toolTip")
+        or raw_item.get("tips")
+    )
+    if not tooltip:
+        tooltip = description
+    spell_values = _extract_spell_values(raw_item)
+    return {
+        "description": description,
+        "tooltip": tooltip,
+        "spell_values": spell_values,
+    }
+
+
+def _extract_spell_values(raw_item: dict) -> dict:
+    # 提取增强符文中的可替换数值，用于后续 tooltip_plain 占位符解析。
+    values = {}
+
+    def append_value(name, value):
+        key = _clean_augment_text(name)
+        if not key:
+            return
+        try:
+            values[key] = float(value)
+        except (TypeError, ValueError):
+            return
+
+    def consume_mapping(mapping):
+        if not isinstance(mapping, dict):
+            return
+        for key, val in mapping.items():
+            if isinstance(val, (int, float)):
+                append_value(key, val)
+            elif isinstance(val, list):
+                # 兼容 [100, 120, ...] 这种多等级数组，取首个有效数值。
+                for item in val:
+                    if isinstance(item, (int, float)):
+                        append_value(key, item)
+                        break
+
+    consume_mapping(raw_item.get("spellDataValues"))
+    consume_mapping(raw_item.get("DataValues"))
+    consume_mapping(raw_item.get("dataValues"))
+    consume_mapping(raw_item.get("mDataValues"))
+
+    effects = raw_item.get("mEffects")
+    if isinstance(effects, dict):
+        consume_mapping(effects)
+    elif isinstance(effects, list):
+        for entry in effects:
+            if isinstance(entry, dict):
+                name = entry.get("name") or entry.get("key") or entry.get("id")
+                val = entry.get("value") or entry.get("values") or entry.get("amount")
+                if isinstance(val, list):
+                    val = next((x for x in val if isinstance(x, (int, float))), None)
+                if isinstance(val, (int, float)):
+                    append_value(name, val)
+
+    return values
+
+
 def fetch_with_retry(session, url, max_retries=3, timeout=10):
     # 指数退避重试。
     for attempt in range(max_retries):
@@ -90,7 +166,15 @@ def cleanup_old_csvs():
             logging.error(f"清理文件异常 {f}: {e}")
 
 
-def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_id: str, champ_name: str, champ_data: dict) -> list:
+def extract_champion_stats(
+    html: str,
+    aug_id_map: dict,
+    aug_meta_map: dict,
+    truth_dict: dict,
+    champ_id: str,
+    champ_name: str,
+    champ_data: dict,
+) -> list:
     # 扫描页面并用内存字典完成匹配。
     rows = []
 
@@ -117,7 +201,9 @@ def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_
                 if win > 0 and pick >= FRESHNESS_THRESHOLD:
                     web_name = aug_id_map.get(mid, "")
                     local_tier = truth_dict.get(web_name)
+                    aug_meta = aug_meta_map.get(mid, {})
                     if web_name and local_tier:
+                        values_map = aug_meta.get("spell_values", {})
                         rows.append({
                             "英雄 ID": champ_id,
                             "英雄名称": champ_name,
@@ -126,6 +212,9 @@ def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_
                             "英雄出场率": float(champ_data.get('pickRate', 0)),
                             "海克斯阶级": local_tier,
                             "海克斯名称": web_name,
+                            "海克斯描述": aug_meta.get("description", ""),
+                            "海克斯Tooltip": aug_meta.get("tooltip", ""),
+                            "海克斯数值": json.dumps(values_map, ensure_ascii=False, separators=(",", ":")),
                             "海克斯胜率": win,
                             "海克斯出场率": pick
                         })
@@ -167,10 +256,13 @@ def main_scraper(stop_event=None):
             return False
         aug_data = aug_response.json()
 
-        aug_id_map = {
-            str(k): v.get('displayName', '').strip()
-            for k, v in aug_data.items()
-        }
+        aug_id_map = {}
+        aug_meta_map = {}
+        for raw_key, raw_item in aug_data.items():
+            item = raw_item if isinstance(raw_item, dict) else {}
+            aug_id = str(raw_key)
+            aug_id_map[aug_id] = _clean_augment_text(item.get('displayName'))
+            aug_meta_map[aug_id] = _extract_augment_meta(item)
 
         stats_response = fetch_with_retry(session, "https://hextech.dtodo.cn/data/champions-stats.json")
         if stats_response is None:
@@ -196,7 +288,15 @@ def main_scraper(stop_event=None):
 
             if res is not None and res.status_code == 200 and len(res.text) > 0:
                 try:
-                    champ_rows = extract_champion_stats(res.text, aug_id_map, truth_dict, c_id, c_name, champ)
+                    champ_rows = extract_champion_stats(
+                        res.text,
+                        aug_id_map,
+                        aug_meta_map,
+                        truth_dict,
+                        c_id,
+                        c_name,
+                        champ
+                    )
                 except ValueError as e:
                     logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
         except requests.RequestException as e:

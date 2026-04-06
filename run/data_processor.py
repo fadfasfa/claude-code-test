@@ -3,6 +3,11 @@ import numpy as np
 import logging
 import hashlib
 import time
+import re
+import ast
+import operator
+import json
+from html import unescape
 from typing import List, Dict, Any, Optional, Tuple
 
 from hero_sync import load_champion_core_data
@@ -175,6 +180,136 @@ def _has_column_variant(df: pd.DataFrame, variants: List[str]) -> bool:
     return any(var in df.columns for var in variants)
 
 
+_HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+_PLACEHOLDER_PATTERN = re.compile(r"@([^@]+)@")
+_SAFE_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+def _strip_html_text(raw_text: Any) -> str:
+    # 将 tooltip 中的 HTML 转换为纯文本，便于前端兜底展示。
+    if raw_text is None:
+        return ""
+    text = str(raw_text).strip()
+    if not text:
+        return ""
+    text = unescape(text)
+    text = _HTML_TAG_PATTERN.sub("", text)
+    text = text.replace("\u00a0", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _format_number(value: float) -> str:
+    # 数值格式化：整数直接输出，浮点最多保留 3 位并去尾零。
+    if value is None:
+        return "?"
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def _parse_value_map(raw_values: Any) -> Dict[str, float]:
+    # 解析 CSV 中存储的海克斯数值映射。
+    if raw_values is None or (isinstance(raw_values, float) and pd.isna(raw_values)):
+        return {}
+    if isinstance(raw_values, dict):
+        payload = raw_values
+    else:
+        text = str(raw_values).strip()
+        if not text:
+            return {}
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+    result = {}
+    if not isinstance(payload, dict):
+        return result
+    for key, value in payload.items():
+        try:
+            result[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _eval_safe_expr(expr: str) -> Optional[float]:
+    # 对只包含基础四则运算的表达式做安全求值。
+    try:
+        node = ast.parse(expr, mode="eval").body
+    except SyntaxError:
+        return None
+
+    def _calc(n):
+        if isinstance(n, ast.BinOp):
+            left = _calc(n.left)
+            right = _calc(n.right)
+            op = _SAFE_OPS.get(type(n.op))
+            if op is None:
+                raise ValueError("unsupported operator")
+            return op(left, right)
+        if isinstance(n, ast.UnaryOp):
+            val = _calc(n.operand)
+            op = _SAFE_OPS.get(type(n.op))
+            if op is None:
+                raise ValueError("unsupported unary operator")
+            return op(val)
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)):
+            return float(n.value)
+        raise ValueError("unsupported expression node")
+
+    try:
+        return float(_calc(node))
+    except Exception:
+        return None
+
+
+def _resolve_placeholder_token(token: str, value_map: Dict[str, float]) -> str:
+    # 将占位符 token 解析为真实数值，解析失败时返回问号占位。
+    content = token.strip()
+    if not content:
+        return "?"
+
+    # 直接变量命中，例如 @ItemHaste@
+    if content in value_map:
+        return _format_number(value_map[content])
+
+    # 表达式变量替换，例如 @DamageAmp*100@
+    expr = content
+    for name in sorted(value_map.keys(), key=len, reverse=True):
+        expr = re.sub(rf"\b{re.escape(name)}\b", str(value_map[name]), expr)
+
+    # 仅保留数字、运算符和括号，防止任意注入。
+    if not re.fullmatch(r"[0-9eE\.\+\-\*/\(\)\s]+", expr):
+        return "?"
+
+    value = _eval_safe_expr(expr)
+    if value is None or np.isnan(value) or np.isinf(value):
+        return "?"
+    return _format_number(value)
+
+
+def _render_tooltip_plain(raw_tooltip: Any, raw_values: Any) -> str:
+    # 先去 HTML，再替换占位符为真实数值或安全占位。
+    base_text = _strip_html_text(raw_tooltip)
+    if not base_text:
+        return ""
+    value_map = _parse_value_map(raw_values)
+
+    def repl(match):
+        token = match.group(1)
+        return _resolve_placeholder_token(token, value_map)
+
+    return _PLACEHOLDER_PATTERN.sub(repl, base_text)
+
+
 def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[str, Any]]]:
     # 计算单英雄海克斯结果，返回总榜、综合榜、纯胜率榜和分阶级榜单
     # 计算时会引入置信度衰减，避免低样本数据干扰排序
@@ -283,13 +418,20 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
 
         # ========== 辅助函数：生成海克斯卡片 ==========
         def build_hextech_card(row, include_score=True):
+            tooltip_raw = row.get('海克斯Tooltip', '')
+            if pd.isna(tooltip_raw) or str(tooltip_raw).strip() == '':
+                tooltip_raw = row.get('海克斯描述', '')
+            tooltip_raw = '' if pd.isna(tooltip_raw) else str(tooltip_raw)
+            tooltip_plain = _render_tooltip_plain(tooltip_raw, row.get('海克斯数值', ''))
             card = {
                 '海克斯名称': str(row['海克斯名称']),
                 '海克斯阶级': str(row.get('海克斯阶级', '棱彩')),
                 '海克斯胜率': float(row['海克斯胜率']) if pd.notna(row['海克斯胜率']) else 0.0,
                 '海克斯出场率': float(row['海克斯出场率']) if pd.notna(row['海克斯出场率']) else 0.0,
                 '胜率差': float(row['胜率差']) if pd.notna(row['胜率差']) else 0.0,
-                'icon': build_local_augment_icon_url(row['海克斯名称'])
+                'icon': build_local_augment_icon_url(row['海克斯名称']),
+                'tooltip': tooltip_raw.strip(),
+                'tooltip_plain': tooltip_plain
             }
             if include_score:
                 card['综合得分'] = float(row['综合得分']) if pd.notna(row['综合得分']) else 0.0
