@@ -3,7 +3,6 @@ import threading
 import subprocess
 import time
 import ctypes
-import json
 import psutil
 import requests
 import urllib3
@@ -17,7 +16,6 @@ from urllib.parse import quote
 import logging
 from io import BytesIO
 from PIL import Image, ImageTk
-from datetime import datetime
 from hero_sync import BASE_DIR, ASSET_DIR, CONFIG_DIR
 
 # 网页服务端口，可通过环境变量覆盖。
@@ -348,20 +346,23 @@ class HextechUI:
 
             img_path = os.path.join(ASSET_DIR, f"{champ_id}.png")
             if os.path.exists(img_path):
-                img = Image.open(img_path).resize((48, 48), Image.Resampling.LANCZOS)
+                with Image.open(img_path) as raw_img:
+                    img = raw_img.resize((48, 48), Image.Resampling.LANCZOS)
             else:
                 if champ_id in self.downloading_imgs: return  # 防止同一头像重复下载。
                 self.downloading_imgs.add(champ_id)
                 url = f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/{champ_id}.png"
-                res = self.session.get(url, verify=True, timeout=10)
-                if res.status_code == 200:
+                try:
+                    res = self.session.get(url, verify=True, timeout=10)
+                    if res.status_code != 200:
+                        return
                     with self.img_write_lock:  # 文件锁：避免并发写入损坏图片。
-                        with open(img_path, "wb") as f: f.write(res.content)
-                    img = Image.open(BytesIO(res.content)).resize((48, 48), Image.Resampling.LANCZOS)
-                else:
+                        with open(img_path, "wb") as f:
+                            f.write(res.content)
+                    with Image.open(BytesIO(res.content)) as raw_img:
+                        img = raw_img.resize((48, 48), Image.Resampling.LANCZOS)
+                finally:
                     self.downloading_imgs.discard(champ_id)
-                    return
-                self.downloading_imgs.discard(champ_id)
 
             photo = ImageTk.PhotoImage(img)
             self.image_cache[champ_id] = photo

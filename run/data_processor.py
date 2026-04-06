@@ -156,6 +156,7 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
                 'Z_出场率': float(row['Z_出场率']) if pd.notna(row['Z_出场率']) else 0.0
             })
 
+        _set_to_cache(_champion_cache_pool, df_hash, result, df)
         return result
 
     except Exception as e:
@@ -165,7 +166,6 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
 
 def _clear_champion_cache():
     # 手动清空英雄大盘缓存。
-    global _champion_cache_pool, _cache_metadata
     _champion_cache_pool.clear()
     _cache_metadata.clear()
 
@@ -205,11 +205,6 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
         # 确保必要列存在
         required_cols = ['英雄名称', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差']
         missing_cols = [col for col in required_cols if col not in data.columns]
-
-        # 特殊兼容性处理：对不同编号字段变体进行不敏感匹配
-        # 这些列不是必填项，但如果存在任何变体就可用
-        id_variants = ['英雄ID', '英雄 ID', '英雄 id']
-        has_id_column = _has_column_variant(data, id_variants)
 
         if missing_cols:
             logging.warning(f"缺少必要列 {missing_cols}，当前列：{data.columns.tolist()}")
@@ -371,6 +366,5 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
 
 def clear_hextech_cache():
     # 手动清空海克斯缓存（用于强制刷新）
-    global _hextech_cache_pool, _cache_metadata
     _hextech_cache_pool.clear()
     _cache_metadata.clear()

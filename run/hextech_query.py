@@ -2,8 +2,9 @@ import os
 import glob
 import json
 import sys
+import unicodedata
 import pandas as pd
-from hero_sync import BASE_DIR, CONFIG_DIR, CORE_DATA_FILE
+from hero_sync import CONFIG_DIR, CORE_DATA_FILE
 from alias_utils import normalize_alias_token, unique_alias_tokens
 
 if os.name == 'nt': os.system('')  # 启用 Windows 终端颜色输出。
@@ -387,11 +388,11 @@ def get_official_hero_name(user_input, official_names):
         return None
     if len(results) == 1:
         return results[0]
-    print(f"\n[?] 匹配到多个英雄:")
+    print("\n[?] 匹配到多个英雄:")
     for i, res in enumerate(results, 1):
         print(f" [{i}] {res}")
     try:
-        idx = int(input(f"请 请输入序号选择: ")) - 1
+        idx = int(input("请 请输入序号选择: ")) - 1
         return results[idx]
     except (ValueError, IndexError):
         return None
@@ -425,7 +426,6 @@ def display_hero_hextech(df, hero_name, target_tier=None, is_from_ui=False):
         print(prompt, end="", flush=True)
 
 def main_query(shared_df=None, ui_instance=None):
-    global GLOBAL_LAST_HERO
     df, source = _normalize_query_df(shared_df)
     payload = {
         "source": source,

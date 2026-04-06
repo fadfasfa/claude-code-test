@@ -6,9 +6,7 @@ import time
 import threading
 import urllib3
 import logging
-import tempfile
 import shutil
-import unicodedata
 from logging.handlers import RotatingFileHandler
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -353,7 +351,7 @@ def sync_hero_data():
                             icon_path = v.get('iconSmall') or v.get('icon') or v.get('iconPath')
                             if name and icon_path:
                                     # 尝试匹配中文名称
-                                for cn_name, tier in aug_map.items():
+                                for cn_name in aug_map:
                                     # 简单匹配：比较去空格后的名称
                                     if normalize_augment_name(cn_name) == normalize_augment_name(name):
                                         aug_icon_map[cn_name] = icon_path

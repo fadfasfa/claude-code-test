@@ -1,6 +1,5 @@
 # 清理项目工作痕迹和临时文件。
 
-import os
 import shutil
 from pathlib import Path
 

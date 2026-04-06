@@ -3,7 +3,6 @@
 # - 优化 PyInstaller 配置避免系统拦截
 # - 自动生成版本信息
 
-import os
 import sys
 import shutil
 import subprocess
@@ -83,7 +82,9 @@ VSVersionInfo(
     print_check(f"版本信息已生成: {version_file}")
     return version_file
 
-    # 使用打包工具构建可执行文件
+
+def build_exe(version_file: Path) -> Path:
+    # 使用打包工具构建可执行文件。
     print_step("构建可执行文件")
 
     # 优化后的打包命令
@@ -116,10 +117,16 @@ VSVersionInfo(
     ]
 
     print(f"  执行命令：{' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=BASE_DIR, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        print_error(f"构建失败：\n{result.stderr}")
+    try:
+        subprocess.run(
+            cmd,
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print_error(f"构建失败：\n{exc.stderr}")
         sys.exit(1)
 
     print_check("构建成功")
@@ -141,7 +148,8 @@ def sign_exe(exe_dir: Path):
         result = subprocess.run(
             ["signtool", "sign", "/?"],
             capture_output=True,
-            text=True
+            text=True,
+            check=False,
         )
         signtool_available = result.returncode == 0
     except FileNotFoundError:
@@ -178,14 +186,19 @@ def sign_exe(exe_dir: Path):
             cmd.extend(["/n", "Hextech Nexus"])
 
         print(f"  尝试签名：{ts_url}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
         if result.returncode == 0:
             print_check(f"签名成功（时间戳：{ts_url}）")
 
             # 验证签名
             verify_cmd = ["signtool", "verify", "/v", "/pa", str(exe_path)]
-            verify_result = subprocess.run(verify_cmd, capture_output=True, text=True)
+            verify_result = subprocess.run(
+                verify_cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
 
             if verify_result.returncode == 0:
                 print_check("签名验证通过")
@@ -234,7 +247,9 @@ Hextech 伴生系统
     readme.write_text(readme_content, encoding='utf-8')
     print_check(f"使用文档已生成: {readme}")
 
-    # 最终清理和优化
+
+def final_cleanup(exe_dir: Path) -> Path:
+    # 最终清理和优化。
     print_step("最终优化")
 
     # 删除不必要的调试文件

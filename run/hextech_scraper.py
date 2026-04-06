@@ -33,7 +33,6 @@ def get_random_ua():
 
 def fetch_with_retry(session, url, max_retries=3, timeout=10):
     # 指数退避重试。
-    last_exception = None
     for attempt in range(max_retries):
         try:
             headers = {"User-Agent": get_random_ua()}
@@ -41,7 +40,6 @@ def fetch_with_retry(session, url, max_retries=3, timeout=10):
             response.raise_for_status()
             return response
         except (requests.exceptions.HTTPError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            last_exception = e
             if attempt < max_retries - 1:
                 wait_time = 2 ** (attempt + 1)
                 logging.warning(f"请求 {url} 失败 (尝试 {attempt + 1}/{max_retries}): {e}，{wait_time}秒后重试...")
@@ -56,18 +54,18 @@ def check_execution_permission():
     if not os.path.exists(status_file):
         return True, "首次运行，启动抓取..."
     try:
-        with open(status_file, "r") as f:
+        with open(status_file, "r", encoding="utf-8") as f:
             last_run = json.load(f).get("last_success_time", 0)
             if datetime.fromtimestamp(now).date() > datetime.fromtimestamp(last_run).date():
                 return True, "跨天自动同步..."
             if (now - last_run) / 3600 >= 4:
                 return True, "数据过时，执行同步..."
             return False, "数据尚在有效期内，跳过抓取。"
-    except Exception:
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return True, "状态文件异常，强制刷新..."
 
 def update_status_file():
-    with open(os.path.join(CONFIG_DIR, "scraper_status.json"), "w") as f:
+    with open(os.path.join(CONFIG_DIR, "scraper_status.json"), "w", encoding="utf-8") as f:
         json.dump({"last_success_time": time.time()}, f)
 
 def cleanup_old_csvs():
@@ -90,6 +88,8 @@ def cleanup_old_csvs():
                 logging.info(f"已清理过期/残留文件：{os.path.basename(f)}")
         except Exception as e:
             logging.error(f"清理文件异常 {f}: {e}")
+
+
 def extract_champion_stats(html: str, aug_id_map: dict, truth_dict: dict, champ_id: str, champ_name: str, champ_data: dict) -> list:
     # 扫描页面并用内存字典完成匹配。
     rows = []
@@ -177,7 +177,7 @@ def main_scraper(stop_event=None):
             logging.error("获取英雄统计数据失败")
             return False
         stats_list = stats_response.json()
-    except Exception as e:
+    except (requests.RequestException, ValueError, json.JSONDecodeError) as e:
         logging.error(f"抓取端握手异常：{e}")
         return False
 
@@ -199,7 +199,7 @@ def main_scraper(stop_event=None):
                     champ_rows = extract_champion_stats(res.text, aug_id_map, truth_dict, c_id, c_name, champ)
                 except ValueError as e:
                     logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
-        except Exception as e:
+        except requests.RequestException as e:
             logging.error(f"[{c_name}] HTTP 获取失败：{e} | URL={url} | 堆栈={traceback.format_exc().strip()}")
 
         return c_name, champ_rows
