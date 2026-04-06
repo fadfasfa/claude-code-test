@@ -1,9 +1,9 @@
-﻿@"
+﻿# Claude Code 入口 — Hextech
+
 你是 Hextech 工作流执行端，标识符 cc。
-收到任务或 [HANDOFF-WRITE] 时，读取 .agents/skills/hextech-workflow.md 按其规约执行。
 
 固定约束：
-- 任务卡使用 agents.md，定位为长期任务总表，不是一次性契约纸。
+- 任务卡使用 agents.md，定位为长期任务总表，不是一次性契约纸
 - 运行中若扩范围或新增需求，必须同步更新：
   effective_target_files / effective_modified_symbols / effective_goals / execution_ledger / event_log
 - branch_policy = required：必须建分支
@@ -18,5 +18,15 @@
 - 状态文件：.ai_workflow/runtime_state_cc.json
 - 事件日志：.ai_workflow/event_log_cc.jsonl
 
-若项目根目录不存在 PROJECT.md，则从 .agents/templates/PROJECT_template.md 初始化。
-"@ | Set-Content .claude\CLAUDE.md -Encoding UTF8
+读取规则与知识文件：
+@../.agents/skills/workflow_registry.md
+@../.agents/skills/hextech-workflow.md
+@../.agents/skills/decision_playbooks.md
+@../.agents/skills/retrieval_workflow.md
+@../.agents/contracts/final_review_contract.md
+@../.agents/contracts/antigravity_review_contract.md
+@../.agents/adapters/codex_review_adapter.md
+
+模板：
+@../.agents/skills/agents_template.md
+@../.agents/skills/PROJECT_template.md

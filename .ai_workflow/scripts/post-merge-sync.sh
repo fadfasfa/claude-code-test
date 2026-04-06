@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
 # post-merge-sync.sh — Hextech 本地合并后同步脚本
-# version: 5.3
+# version: 6.0
 #
 # 用途：
-#   在本地 git pull / git merge 后对齐本地 agents.md 为 standby 态。
-#   当前仓库以本地优先工作流为主；本脚本负责本地归档与 standby reset。
+#   在 git pull / git merge 后对齐本地 agents.md 为 standby 态。
+#   实现 finish-task 统一收尾节点的本地入口。
 #   可作为 .git/hooks/post-merge 钩子使用，也可手动执行。
 #
 # 安装为 git hook（可选）：
@@ -54,7 +54,7 @@ else
   log "Archived current agents.md to: ${archive_path}"
 fi
 
-# --- 若同分支远端内容已是 standby，可直接复用；否则生成本地 standby 壳 ---
+# --- 检测远端是否已经回到 standby（优先使用远端版本） ---
 remote_status=""
 current_branch=""
 if git rev-parse --git-dir > /dev/null 2>&1; then
@@ -64,24 +64,24 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
 fi
 
 if [ "$remote_status" = "standby" ] && [ -n "$current_branch" ]; then
-  # 同分支远端已是 standby，直接复用该版本
+  # 远端已是 standby，直接覆盖本地
   git checkout "origin/${current_branch}" -- "$AGENTS_FILE" 2>/dev/null || true
   log "Local agents.md synced from remote standby."
   exit 0
 fi
 
-# --- 远端不可复用或未处于 standby —— 生成本地 standby 壳 ---
-# 以下结构与 agents_template.md 逐字同构
-warn "Remote standby not detected. Generating local standby shell from template."
+# --- 远端未回到 standby，或无法读取远端 —— 生成本地 standby 壳 ---
+# v6: 以下结构与 agents_template.md v6 同构（含 branch_lock 重置）
+warn "Remote standby not detected. Generating local standby shell (v6 finish-task)."
 
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 BASE_BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
 
 cat > "$AGENTS_FILE" <<STANDBY_EOF
 ## 工作范围 (agents.md) — Hextech
-> version: 5.3
+> version: 6.0
 > status: standby
-> 本文件为长期任务总表；待机时保留最近一次合并的归档指针，供下次任务复用。
+> 本文件为长期任务总表；待机时保留最近一次完成的归档指针，供下次任务复用。
 > retrieval 任务默认不生成代码契约，但可按需写入轻量记录。
 
 ---
@@ -105,6 +105,24 @@ current_review_path: none
 Task_Mode: standard
 Contributors:
   - [待填写]
+
+---
+
+## 分支锁（显式独占模型）
+
+branch_lock:
+  owner: none
+  status: free
+  acquired_at: none
+  session_id: none
+
+---
+
+## 审查与完工元数据
+
+review_mode: none
+reviewer_role: none
+completion_mode: local-main
 
 ---
 
@@ -139,34 +157,43 @@ effective_goals:
 execution_ledger:
   - ts: ${NOW}
     type: RESET_TO_STANDBY
-    summary: "本地 post-merge-sync 执行后回到 standby（前任务: ${task_id}）"
+    summary: "本地 post-merge-sync 执行后回到 standby（finish-task; 前任务: ${task_id}）"
     files:
       - none
 
 ---
 
-## Decision_Validation
+## Planning_Validation（规划签署）
 
-Final_Signer: self
-Validation_Sources:
+Planning_Signer: self
+Planning_Sources:
   - none
-Validation_Result: skipped
+Planning_Result: skipped
 Human_Validation_Required: no
 Human_Validation_Reason: none
+
+---
+
+## Final_Review_Record（完工审查）
+
+Review_Executor: none
+Review_Verdict: skipped
+Review_Timestamp: none
+Review_Signal: none
 
 ---
 
 ## 待机态（可复用壳）
 
 active_task_id: none
-last_merged_task_id: ${task_id}
-last_merged_at: ${NOW}
+last_completed_task_id: ${task_id}
+last_completed_at: ${NOW}
 default_base_branch: ${BASE_BRANCH}
 default_branch_policy_for_ad_hoc: on-demand
-merge_archive_path: ${archive_path}
+archive_path: ${archive_path}
 STANDBY_EOF
 
-log "Local agents.md reset to standby. Archive: ${archive_path}"
+log "Local agents.md reset to standby (v6 finish-task). Archive: ${archive_path}"
 
 # --- 清理已合并的本地分支 ---
 log "Cleaning up merged local branches..."
@@ -179,4 +206,4 @@ git branch --merged "${BASE_BRANCH}" 2>/dev/null \
       fi
     done
 
-log "Post-merge sync complete."
+log "Post-merge sync complete (finish-task)."
