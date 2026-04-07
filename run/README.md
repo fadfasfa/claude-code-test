@@ -4,7 +4,14 @@
 
 ## 项目概述
 
-Hextech 伴生系统是一个本地运行的《英雄联盟》数据分析工具，提供英雄数据同步、海克斯推荐展示、桌面伴生界面和本地 Web 查询。
+Hextech 伴生系统是一个本地运行的《英雄联盟》数据分析工具，提供英雄基础资料、海克斯推荐、桌面伴生界面和本地 Web 查询。
+
+当前 `run/` 已收敛为源码侧调试/生成目录：
+
+- `hextech_ui.py`、`web_server.py`：根目录兼容入口，实际逻辑位于 `app/ui/launcher.py` 和 `app/api/launcher.py`。
+- `build.py`：唯一打包入口。
+- `services/`：同步、抓取、预计算和运行时编排主层。
+- `tools/`：仅保留被 `build.py` 调用的内部工具，不再作为独立 CLI 暴露。
 
 ## 快速开始
 
@@ -23,8 +30,6 @@ python hextech_ui.py
 # 仅启动 Web 服务
 python web_server.py
 
-# 后端数据整理模式
-python hextech_query.py
 ```
 
 ### 打包
@@ -35,85 +40,55 @@ python build.py
 
 打包说明：
 
-- 当前默认产物是 `PyInstaller --onedir` 的最小运行壳。
-- 打包时只内置 `static/` 前端资源，不再预打包 `config/` 和 `assets/`。
-- 首次启动会自动创建 `config/`、`assets/`，并在后台拉取英雄数据、海克斯 CSV、联动文章和图标缓存。
-- `dist/_internal/` 是 PyInstaller 运行时依赖目录，不应手工删除其中单个文件。
-
-### 清理缓存
-
-```powershell
-python cleanup.py
-```
+- 当前默认产物是 `PyInstaller --onedir`。
+- 打包白名单会内置 `static/`、稳定 `config/` 资源和稳定 `assets/` 图片资源。
+- 默认内置的稳定配置包括：`Champion_Core_Data.json`、`Champion_Alias_Index.json`、`Augment_Icon_Manifest.json` 及兼容图标映射文件。
+- `Hextech_Data_*.csv`、`Champion_Hextech_Cache.json`、`Champion_List_Cache.json`、`Champion_Synergy.json`、运行日志和端口文件不会打包。
+- 运行时读取顺序为：包内稳定资源 -> 本地运行目录覆盖资源 -> 在线刷新生成资源。
+- 打包产物首次离线启动时，首页搜索、英雄头像和海克斯图标映射应可直接使用；高频战报数据只在源码调试链或后台刷新链中补齐。
+- 打包产物只面向最终用户运行桌面程序，不暴露抓取、查询、清理或测试入口。
 
 ## 目录结构
 
 ```text
 run/
-├── alias_utils.py          # 英雄别名归一化与去重
-├── apex_spider.py          # 协同数据抓取
-├── backend_refresh.py      # 后台刷新调度
-├── build.py                # 打包脚本
-├── cleanup.py              # 清理脚本
-├── data_processor.py       # 前端展示数据编排
-├── champion_aliases.py     # 首页搜索专用别名索引读取与归一
-├── hero_sync.py            # 英雄基础数据同步
-├── hextech_query.py        # 后端数据整理入口
-├── hextech_scraper.py      # 海克斯数据抓取
-├── hextech_ui.py           # 桌面伴生界面
-├── icon_resolver.py        # 图标映射与缓存
-├── requirements.txt        # 依赖列表
-└── static/                 # Web 前端资源
-    ├── detail.html
-    └── index.html
+├── app/                            # 入口与核心包
+│   ├── core/                       # 共享别名 / 数据处理 / 运行时读取
+│   ├── ui/                         # 桌面 launcher
+│   └── api/                        # Web launcher
+├── services/                       # 同步 / 抓取 / 预计算 / 运行时编排主层
+│   ├── sync_hero_data.py           # 英雄基础资料与稳定资源落地
+│   ├── scrape_hextech.py           # 海克斯抓取
+│   ├── scrape_synergy.py           # 协同抓取
+│   ├── scrape_augments.py          # 海克斯图标与目录补齐
+│   ├── runtime_precomputed_cache.py# 预计算 API 缓存
+│   ├── runtime_query.py            # 查询/归一逻辑
+│   └── data_pipeline.py            # 抓取编排
+├── tools/                          # 内部构建工具
+├── build.py                        # 唯一打包入口
+├── hextech_ui.py                   # 根目录桌面薄壳
+├── web_server.py                   # 根目录 Web 薄壳
+└── static/                         # Web 前端资源
 ```
 
 ## 常用接口
 
 - `GET /api/champions`：英雄列表
-- `GET /api/champion/{name}/hextechs`：英雄海克斯推荐，返回 `comprehensive`、`winrate_only`、`top_10_overall` 及分阶级数组；单条海克斯对象包含 `tooltip` 与 `tooltip_plain`
-- `GET /api/champion_aliases`：首页搜索专用的英雄别名索引，只供搜索联想和快捷检索使用
+- `GET /api/champion/{name}/hextechs`：英雄海克斯推荐
+- `GET /api/champion_aliases`：首页搜索专用英雄别名索引
 - `GET /api/augment_icon_map`：兼容保留的海克斯图标映射投影
+- `GET /api/live_state`：当前 LCU 英雄选择状态
 - `GET /api/synergies/{champ_id}`：英雄协同数据
 - `POST /api/redirect`：浏览器跳转控制
 - `GET /ws`：实时事件推送
 
 ## 运行说明
 
-- 首次启动会自动创建 `config/` 和 `assets/` 目录。
-- 首次启动即使没有本地 `Hextech_Data_*.csv`，首页 `GET /api/champions` 也会先走远端轻量快照，避免页面长时间空白；完整海克斯数据会在后台继续生成。
-- `hero_sync.py` 负责同步核心缓存，`web_server.py` 和 `hextech_ui.py` 都依赖这些本地文件。
-- `hextech_ui.py` 会在启动后自动拉起 `web_server.py`，并通过 `config/web_server_port.txt` 读取实际端口，因此桌面模式和 Web 模式共用同一套本地服务。
-- 图标与别名规则由 `alias_utils.py`、`icon_resolver.py` 统一处理，避免多处重复实现。
-- `web_server.py` 启动后会自动检查海克斯统一目录与图标缓存；缺失项会在后台补齐，日志默认只保留任务级成功/失败摘要。
-- `champion_aliases.py` 只负责读取和归一化 `config/Champion_Alias_Index.json`，不写回、不生成，且只服务首页搜索联想。
-- `backend_refresh.py` 会清理死进程遗留的 `backend_refresh.lock`，避免异常退出后长时间卡住首轮刷新。
-- `Augment_Icon_Manifest.json` 是运行时唯一海克斯目录，统一承载图标、阶级、tooltip 与纯文本 tooltip。
-- 详情页悬浮窗只消费 `tooltip_plain`，并以单例 DOM 安全渲染纯文本描述，避免 HTML 注入风险。
-- 右侧联动文章区和左侧榜单都优先消费详情接口返回的 `icon`，缺图时只保留真实失败状态，不再绘制占位图。
-
-## 图像验证
-
-建议在修复后至少抽检以下英雄详情页：
-
-- 星界游神
-- 异画师
-- 诡术妖姬
-- 狂战士
-- 死亡颂唱者
-
-验证标准：
-
-- 每个海克斯条目都能渲染出 `<img>`。
-- 图片无持续脚本占位回退，缺图时不会再绘制假图。
-- 浏览器控制台没有 `Unexpected token`、占位图回退或资源错误处理相关脚本错误。
-- 海克斯悬浮窗 hover 时能显示标题和纯文本描述，且不会插入脚本节点。
-
-本次已验证的样本：
-
-- 左侧海克斯图标链路：星界游神、异画师、诡术妖姬、狂战士、死亡颂唱者
-- 右侧联动文章图标链路：双界灵兔（Aurora）详情页中的 `水豚空降`
-
-## 清理说明
-
-仓库中不保留预览页或临时截图脚本。若要清理本地运行缓存，使用 `cleanup.py`，不要手工删除 `config/` 中的核心缓存文件。
+- `app/core/runtime_data.py` 是桌面、Web 和服务层共用的数据读取层。
+- `backend_refresh.py` 统一负责编排英雄基础同步、海克斯刷新、协同刷新和图标补齐。
+- `hextech_ui.py` 现在只是根目录兼容壳，实际桌面启动逻辑在 `app/ui/launcher.py`；`web_server.py` 也是同类兼容壳，实际 Web 启动逻辑在 `app/api/launcher.py`。
+- `app/core/champion_aliases.py` 是唯一的首页别名标准源，查询归一逻辑已经下沉到 `services/runtime_query.py`。
+- `app/core/data_processor.py` 负责把运行时数据整理成前端展示结构，供 Web 侧和薄壳入口复用。
+- 打包时生成 `build/_bundle_runtime/bundle_manifest.json`，用于明确哪些稳定资源被白名单内置。
+- 若本地目录已有更新版稳定资源，运行时会优先使用本地版本而不是包内副本。
+- 本次重构已完成桌面壳 / Web 壳启动 smoke test，当前文档描述与代码路径以 `app/core` 和 launcher 为准。

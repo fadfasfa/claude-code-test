@@ -17,6 +17,18 @@ version_info.txt
 
 # Logs
 *.log
+config/hextech_system.log
+config/web_server_test.log
+config/web_server_test.err.log
+config/scraper_status.json
+config/startup_status.json
+config/web_server_port.txt
+
+# Runtime caches
+config/Hextech_Data_*.csv
+config/Champion_Hextech_Cache.json
+config/Champion_List_Cache.json
+config/Champion_Synergy.json
 
 # IDE
 .vscode/
@@ -35,3 +47,4 @@ venv/
 ENV/
 env/
 .venv
+.gitnexus

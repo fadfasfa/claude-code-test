@@ -12,9 +12,9 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from urllib.parse import quote
 
-from augment_icon_refresh import build_augment_catalog_lookup
-from hero_sync import load_champion_core_data
 from icon_resolver import build_local_augment_icon_url, normalize_augment_name
+from services.scrape_augments import build_augment_catalog_lookup
+from services.sync_hero_data import load_champion_core_data
 
 # 全局缓存。
 _hextech_cache_pool: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}

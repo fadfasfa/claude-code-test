@@ -8,16 +8,20 @@ from typing import Optional
 
 import psutil
 
-from apex_spider import main as run_apex_spider
-from augment_icon_refresh import (
-    is_augment_icon_prefetch_ready,
-    manifest_has_incomplete_entries,
-    run_augment_icon_prefetch,
-)
-from hero_sync import AUGMENT_ICON_FILE, AUGMENT_MAP_FILE, CONFIG_DIR, CORE_DATA_FILE, sync_hero_data
-from hextech_query import get_latest_csv
-from hextech_scraper import main_scraper
+from services.sync_hero_data import CONFIG_DIR
 from log_utils import log_task_summary
+from app.core.runtime_data import get_latest_csv
+from services.data_pipeline import (
+    SYNERGY_FILE as _synergy_file,
+    is_augment_icon_prefetch_ready,
+    is_first_run,
+    manifest_has_incomplete_entries,
+    run_augment_refresh,
+    run_hero_sync,
+    run_hextech_refresh,
+    run_synergy_refresh,
+    should_refresh_synergy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +29,6 @@ _refresh_lock = threading.Lock()
 _state_lock = threading.Lock()
 _refresh_lock_file = os.path.join(CONFIG_DIR, "backend_refresh.lock")
 _startup_status_file = os.path.join(CONFIG_DIR, "startup_status.json")
-_synergy_file = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
 _synergy_stale_after = 24 * 3600
 _stale_lock_after = 15 * 60
 
@@ -91,15 +94,7 @@ def _set_task_state(task_name: str, running: bool) -> None:
         payload["in_progress_tasks"] = tasks
         _write_status_file(payload)
 def _is_first_run(force: bool = False) -> bool:
-    if force:
-        return True
-
-    core_files_ready = all(
-        os.path.exists(path)
-        for path in (CORE_DATA_FILE, AUGMENT_MAP_FILE, AUGMENT_ICON_FILE, _synergy_file)
-    )
-    latest_csv = get_latest_csv()
-    return not core_files_ready or not latest_csv or not os.path.exists(latest_csv)
+    return is_first_run(force=force)
 
 
 def _read_lock_payload() -> tuple[Optional[int], Optional[float]]:
@@ -157,12 +152,7 @@ def _release_file_lock(fd: int) -> None:
 
 
 def _should_refresh_synergy(force: bool) -> bool:
-    if force or not os.path.exists(_synergy_file):
-        return True
-    try:
-        return (time.time() - os.path.getmtime(_synergy_file)) > _synergy_stale_after
-    except OSError:
-        return True
+    return should_refresh_synergy(force=force, stale_after_seconds=_synergy_stale_after)
 
 
 def _stop_requested(stop_event) -> bool:
@@ -174,8 +164,7 @@ def _run_synergy_task(stop_event=None) -> bool:
     try:
         if _stop_requested(stop_event):
             return False
-        run_apex_spider()
-        ok = os.path.exists(_synergy_file)
+        ok = run_synergy_refresh()
         _update_status(synergy_ready=ok)
         return ok
     except Exception as e:
@@ -191,7 +180,7 @@ def _run_hextech_task(stop_event=None) -> bool:
     try:
         if _stop_requested(stop_event):
             return False
-        ok = bool(main_scraper(stop_event))
+        ok = bool(run_hextech_refresh(stop_event))
         if not ok:
             latest_csv = get_latest_csv()
             ok = bool(latest_csv and os.path.exists(latest_csv))
@@ -209,11 +198,7 @@ def _run_augment_icon_task(force_refresh: bool, stop_event=None) -> bool:
     started_at = time.time()
     _set_task_state("augment_icons", True)
     try:
-        result = run_augment_icon_prefetch(
-            force_refresh=force_refresh,
-            stop_event=stop_event,
-            max_workers=8,
-        )
+        result = run_augment_refresh(force_refresh=force_refresh, stop_event=stop_event)
         ready = bool(result.get("ready"))
         _update_status(augment_icons_prefetched=ready)
         log_task_summary(
@@ -253,7 +238,7 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
                 "last_error": "",
             })
 
-            hero_ok = sync_hero_data()
+            hero_ok = run_hero_sync()
             _update_status(hero_ready=hero_ok)
             _set_task_state("hero_sync", False)
             if not hero_ok:
