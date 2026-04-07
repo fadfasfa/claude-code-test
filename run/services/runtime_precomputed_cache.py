@@ -12,13 +12,9 @@ import pandas as pd
 
 from app.core.data_processor import process_champions_data, process_hextechs_data
 from app.core.runtime_data import get_latest_csv, normalize_runtime_df
+from services.sync_hero_data import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
-
-CONFIG_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "config",
-)
 CHAMPION_LIST_CACHE_FILE = os.path.join(CONFIG_DIR, "Champion_List_Cache.json")
 HEXTECH_DETAIL_CACHE_FILE = os.path.join(CONFIG_DIR, "Champion_Hextech_Cache.json")
 HEXTECH_DETAIL_CACHE_DIR = os.path.join(CONFIG_DIR, "Champion_Hextech_Cache")

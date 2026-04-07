@@ -3,9 +3,11 @@ import threading
 import subprocess
 import time
 import ctypes
+import base64
 import requests
 import pandas as pd
 import win32gui
+import psutil
 import sys
 import os
 import webbrowser
@@ -44,6 +46,15 @@ def _resolve_web_base(timeout: float = 5.0) -> str:
         time.sleep(0.1)
     return f"http://127.0.0.1:{SERVER_PORT}"
 
+
+def _disable_lcu_https_warning() -> None:
+    try:
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except Exception:
+        pass
+
 os.makedirs(ASSET_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)
 
@@ -72,6 +83,8 @@ class HextechUI:
 
         self.current_hero_ids = set()
         self.image_cache = {}
+        self._lcu_port = None
+        self._lcu_token = None
 
         self.last_click_time = 0
         self.img_write_lock = threading.Lock()
@@ -97,6 +110,65 @@ class HextechUI:
         self._init_core_engine()
         self.check_and_sync_data()
         self.start_background_scraper()
+
+    def _scan_lcu_process(self):
+        for proc in psutil.process_iter(["name", "cmdline"]):
+            try:
+                if proc.info["name"] == "LeagueClientUx.exe":
+                    port, token = None, None
+                    for arg in proc.info["cmdline"] or []:
+                        if arg.startswith("--app-port="):
+                            port = arg.split("=", 1)[1]
+                        if arg.startswith("--remoting-auth-token="):
+                            token = arg.split("=", 1)[1]
+                    if port and token:
+                        return port, token
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+        return None, None
+
+    def _poll_lcu_live_ids(self):
+        if not self._lcu_port or not self._lcu_token:
+            port, token = self._scan_lcu_process()
+            if not port or not token:
+                self._lcu_port = None
+                self._lcu_token = None
+                return None
+            self._lcu_port = port
+            self._lcu_token = token
+
+        auth = base64.b64encode(f"riot:{self._lcu_token}".encode()).decode()
+        headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
+        url = f"https://127.0.0.1:{self._lcu_port}/lol-champ-select/v1/session"
+
+        try:
+            res = self.session.get(url, headers=headers, verify=False, timeout=2.5)
+        except requests.exceptions.RequestException:
+            self._lcu_port = None
+            self._lcu_token = None
+            return None
+
+        if res.status_code == 404:
+            return set()
+        if res.status_code in (401, 403):
+            self._lcu_port = None
+            self._lcu_token = None
+            return None
+        if res.status_code != 200:
+            self._lcu_port = None
+            return None
+
+        try:
+            payload = res.json()
+        except ValueError:
+            return None
+
+        available_ids = {str(c.get("championId")) for c in payload.get("benchChampions", [])}
+        local_cell_id = payload.get("localPlayerCellId")
+        for player in payload.get("myTeam", []):
+            if player.get("cellId") == local_cell_id and player.get("championId"):
+                available_ids.add(str(player.get("championId")))
+        return {champ_id for champ_id in available_ids if champ_id and champ_id != "0"}
 
     def _start_web_server(self):
         # 后台启动网页服务，避免阻塞界面线程。
@@ -293,25 +365,35 @@ class HextechUI:
         threading.Thread(target=redirect_task, daemon=True).start()
 
     def lcu_polling_loop(self):
+        _disable_lcu_https_warning()
         while not self.stop_event.is_set():
             if self.pause_event.is_set():
                 time.sleep(1)
                 continue
 
+            available_ids = None
             try:
                 web_base = _resolve_web_base(timeout=1.0)
                 res = self.session.get(f"{web_base}/api/live_state", timeout=2)
                 if res.status_code == 200:
                     data = res.json()
-                    available_ids = {str(champ_id) for champ_id in data.get('champion_ids', [])}
-
-                    if available_ids != self.current_hero_ids:
-                        self.current_hero_ids = available_ids.copy()
-                        self.root.after(0, self.update_ui, available_ids)
-                else:
-                    self.root.after(0, lambda: [w.destroy() for w in self.list_frame.winfo_children()])
+                    available_ids = {
+                        str(champ_id)
+                        for champ_id in data.get("champion_ids", [])
+                        if str(champ_id).strip()
+                    }
             except Exception:
-                self.current_hero_ids = set()
+                available_ids = None
+
+            if available_ids is None:
+                available_ids = self._poll_lcu_live_ids()
+
+            if available_ids is None:
+                available_ids = set()
+
+            if available_ids != self.current_hero_ids:
+                self.current_hero_ids = available_ids.copy()
+                self.root.after(0, self.update_ui, available_ids)
             time.sleep(1.5)
 
     def _load_and_set_img(self, champ_id, label):
