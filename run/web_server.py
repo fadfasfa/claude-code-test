@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -25,18 +26,24 @@ from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from alias_utils import dedupe_alias_texts
+from champion_aliases import load_champion_alias_index
 from icon_resolver import (
     ensure_augment_icon_cached,
-    find_augment_icon_filename,
     find_existing_augment_asset_filename,
-    load_apexlol_hextech_map,
-    load_augment_icon_map,
+    resolve_apexlol_hextech_icon_url,
+)
+from augment_icon_refresh import (
+    find_augment_catalog_entry,
+    load_augment_icon_manifest,
 )
 from data_processor import process_champions_data, process_hextechs_data
-from hextech_query import get_latest_csv, load_hero_aliases
-from hero_sync import BASE_DIR, CONFIG_DIR, RESOURCE_DIR, load_champion_core_data
-from backend_refresh import refresh_backend_data
+from hextech_query import get_latest_csv
+from hero_sync import BASE_DIR, CONFIG_DIR, RESOURCE_DIR, get_advanced_session, load_augment_map, load_champion_core_data
+from hextech_scraper import _clean_augment_text, extract_champion_stats, fetch_with_retry
+from backend_refresh import get_startup_status, refresh_backend_data
+from log_utils import ensure_utf8_stdio
+
+ensure_utf8_stdio()
 
 # 模块日志。
 logger = logging.getLogger(__name__)
@@ -46,14 +53,12 @@ SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
 WEB_PORT_FILE = os.path.join(CONFIG_DIR, "web_server_port.txt")
 ACTIVE_WEB_PORT = SERVER_PORT
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
-AUGMENT_ICON_SOURCE_FILE = os.path.join(CONFIG_DIR, "augment_icon_source.txt")
-AUGMENT_ICON_AUDIT_FILE = os.path.join(CONFIG_DIR, "augment_icon_audit.jsonl")
 BROWSER_PROFILE_DIR = os.path.join(CONFIG_DIR, "browser_profile")
-# 图标来源标记。
-AUGMENT_ICON_SOURCE_ID = "apexlol"
 
 _managed_browser_process: Optional[subprocess.Popen] = None
 _managed_browser_lock = threading.Lock()
+_augment_cache_pending: Set[str] = set()
+_augment_cache_pending_lock = threading.Lock()
 
 
 def _write_active_web_port(port: int) -> None:
@@ -61,6 +66,79 @@ def _write_active_web_port(port: int) -> None:
     with open(tmp_path, "w", encoding="utf-8") as f:
         f.write(str(port))
     os.replace(tmp_path, WEB_PORT_FILE)
+
+
+def _resolve_remote_augment_icon_url(catalog_entry: Optional[dict], fallback_name: str) -> str:
+    if catalog_entry:
+        manifest_filename = str(catalog_entry.get("filename", "")).strip().lower()
+        if manifest_filename:
+            remote_filename = manifest_filename
+            if remote_filename.count(".") > 1:
+                remote_filename = remote_filename.split(".", 1)[0] + ".png"
+            return f"https://cdn.dtodo.cn/hextech/augment-icons/{quote(remote_filename, safe='')}"
+        manifest_url = str(catalog_entry.get("icon_url", "")).strip()
+        if manifest_url and not manifest_url.startswith("/assets/"):
+            return manifest_url
+        augment_name = str(catalog_entry.get("name", "")).strip() or fallback_name
+    else:
+        augment_name = fallback_name
+
+    remote_url = resolve_apexlol_hextech_icon_url(augment_name, config_dir=CONFIG_DIR)
+    if remote_url and not remote_url.startswith("/assets/"):
+        return remote_url
+    return ""
+
+
+def _download_augment_icon_from_remote(augment_name: str, icon_filename: str) -> Optional[str]:
+    remote_url = _resolve_remote_augment_icon_url({"name": augment_name, "filename": icon_filename}, augment_name)
+    if not remote_url:
+        return None
+
+    os.makedirs(_assets_dir, exist_ok=True)
+    target_path = os.path.join(_assets_dir, icon_filename)
+    tmp_path = target_path + ".tmp"
+    try:
+        response = requests.get(remote_url, stream=True, timeout=15)
+        if response.status_code != 200:
+            return None
+        with open(tmp_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        os.replace(tmp_path, target_path)
+        return target_path
+    except Exception:
+        return None
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+def _queue_augment_icon_cache(icon_filename: str, augment_name: str = "") -> None:
+    normalized = str(icon_filename or "").strip()
+    if not normalized:
+        return
+
+    with _augment_cache_pending_lock:
+        if normalized in _augment_cache_pending:
+            return
+        _augment_cache_pending.add(normalized)
+
+    def _worker() -> None:
+        try:
+            cached_path = ensure_augment_icon_cached(normalized, asset_dir=_assets_dir)
+            if cached_path and os.path.exists(cached_path):
+                return
+            if augment_name:
+                _download_augment_icon_from_remote(augment_name, normalized)
+        finally:
+            with _augment_cache_pending_lock:
+                _augment_cache_pending.discard(normalized)
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _iter_browser_candidates() -> List[str]:
@@ -199,6 +277,54 @@ def get_champion_info(champ_id: str) -> Tuple[str, str]:
     return '', ''
 
 
+def _resolve_core_hero_record(query: str) -> Optional[dict]:
+    normalized_query = str(query or "").strip().lower()
+    if not normalized_query:
+        return None
+
+    cache = _ensure_champion_cache()
+    for champ_id, value in cache.items():
+        hero_name = str(value.get("name", "")).strip()
+        title = str(value.get("title", "")).strip()
+        en_name = str(value.get("en_name", "")).strip()
+        candidates = {
+            hero_name.lower(),
+            title.lower(),
+            en_name.lower(),
+            str(champ_id).strip().lower(),
+        }
+        if normalized_query in candidates:
+            return {
+                "heroId": str(champ_id),
+                "heroName": hero_name,
+                "title": title,
+                "enName": en_name,
+            }
+    return None
+
+
+def _resolve_canonical_hero_name(query: str) -> str:
+    record = _resolve_core_hero_record(query)
+    if record:
+        return str(record.get("heroName", "")).strip()
+    return str(query or "").strip()
+
+def _resolve_champion_id(query: str) -> str:
+    raw_query = str(query or "").strip()
+    if not raw_query:
+        return ""
+    if raw_query.isdigit():
+        return raw_query
+
+    record = _resolve_core_hero_record(raw_query)
+    if record:
+        hero_id = str(record.get("heroId", "")).strip()
+        if hero_id:
+            return hero_id
+
+    return ""
+
+
 def _get_ddragon_version() -> str:
     # 读取本地版本号，失败时使用默认值。
     try:
@@ -209,154 +335,6 @@ def _get_ddragon_version() -> str:
     except (OSError, IOError):
         logger.debug("无法读取 hero_version.txt，改用内置版本。")
     return "14.3.1"
-
-
-_augment_prefetch_lock = threading.Lock()
-_augment_prefetch_mtime = 0.0
-
-
-def _read_augment_icon_source_marker() -> str:
-    try:
-        with open(AUGMENT_ICON_SOURCE_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except (OSError, IOError):
-        return ""
-
-
-def _write_augment_icon_source_marker(source_id: str) -> None:
-    tmp_path = AUGMENT_ICON_SOURCE_FILE + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        f.write(source_id)
-    os.replace(tmp_path, AUGMENT_ICON_SOURCE_FILE)
-
-
-def _prefetch_augment_icons(force_refresh: bool = False) -> None:
-    global _augment_prefetch_mtime
-
-    with _augment_prefetch_lock:
-        if not force_refresh and _augment_prefetch_mtime:
-            return
-        _augment_prefetch_mtime = time.time()
-
-    try:
-        icon_map = load_apexlol_hextech_map(CONFIG_DIR, force_refresh=force_refresh)
-        logger.debug("已预热 apexlol 海克斯图标映射，共 %s 项", len(icon_map))
-    except Exception as e:
-        logger.debug("预热 apexlol 海克斯图标映射失败：%s", e)
-
-    if force_refresh:
-        try:
-            _write_augment_icon_source_marker(AUGMENT_ICON_SOURCE_ID)
-        except Exception as e:
-            logger.debug("记录强化符文图标来源标记失败：%s", e)
-
-
-def _append_augment_icon_audit(record: dict) -> None:
-    # 审计记录只追加到 JSONL，方便后续排查每次启动的缺图和修复结果。
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    payload = dict(record)
-    payload.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()))
-    line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    with open(AUGMENT_ICON_AUDIT_FILE, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
-
-
-def _audit_and_repair_augment_icons(force_map_refresh: bool = False) -> dict:
-    # 启动时扫描海克斯图标映射，缺失则自动补抓并汇总写入审计文件。
-    start_time = time.time()
-    icon_map = {}
-    repaired_items = []
-    failed_items = []
-
-    try:
-        icon_map = load_augment_icon_map(CONFIG_DIR, force_refresh=force_map_refresh)
-    except Exception as e:
-        record = {
-            "kind": "augment_icon_audit",
-            "status": "error",
-            "force_map_refresh": force_map_refresh,
-            "error": str(e),
-            "duration_ms": round((time.time() - start_time) * 1000, 2),
-        }
-        _append_augment_icon_audit(record)
-        logger.error("海克斯图标自检失败：%s", e)
-        return record
-
-    missing_before = []
-    checked = 0
-    for raw_name, raw_filename in sorted(icon_map.items(), key=lambda item: item[0]):
-        checked += 1
-        filename = find_augment_icon_filename(icon_map, raw_name)
-        if not filename:
-            filename = find_augment_icon_filename(icon_map, raw_filename) or raw_filename
-        filename = str(filename or "").strip()
-        if not filename:
-            failed_items.append({
-                "name": raw_name,
-                "reason": "无法解析图标文件名",
-            })
-            continue
-
-        asset_path = os.path.join(_assets_dir, filename)
-        if os.path.exists(asset_path) and os.path.getsize(asset_path) > 0:
-            continue
-
-        missing_before.append({
-            "name": raw_name,
-            "filename": filename,
-        })
-        try:
-            cached_path = ensure_augment_icon_cached(filename, asset_dir=_assets_dir)
-            if cached_path and os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
-                repaired_items.append({
-                    "name": raw_name,
-                    "filename": filename,
-                    "path": os.path.basename(cached_path),
-                })
-            else:
-                failed_items.append({
-                    "name": raw_name,
-                    "filename": filename,
-                    "reason": "远程抓取未返回可用文件",
-                })
-        except Exception as e:
-            failed_items.append({
-                "name": raw_name,
-                "filename": filename,
-                "reason": str(e),
-            })
-
-    record = {
-        "kind": "augment_icon_audit",
-        "status": "ok" if not failed_items else "partial_failure",
-        "force_map_refresh": force_map_refresh,
-        "map_entries": len(icon_map),
-        "checked": checked,
-        "missing_before_count": len(missing_before),
-        "missing_before_sample": missing_before[:20],
-        "repaired_count": len(repaired_items),
-        "repaired_sample": repaired_items[:20],
-        "failed_count": len(failed_items),
-        "failed_items": failed_items,
-        "duration_ms": round((time.time() - start_time) * 1000, 2),
-    }
-    _append_augment_icon_audit(record)
-
-    if failed_items:
-        logger.error(
-            "海克斯图标自检存在失败：缺失=%s，修复=%s，失败=%s",
-            len(missing_before),
-            len(repaired_items),
-            len(failed_items),
-        )
-    return record
-
-
-def _startup_augment_icon_maintenance(force: bool = False) -> None:
-    # 先预热图标映射，再执行缺图自检，保证页面开启前尽量完成修复。
-    _prefetch_augment_icons(force_refresh=force)
-    _audit_and_repair_augment_icons(force_map_refresh=force)
-
 
 
 # 请求体：前端点击英雄后发送到跳转接口。
@@ -430,12 +408,175 @@ def get_df() -> pd.DataFrame:
             _csv_cache.path = latest
             _csv_cache.mtime = current_mtime
             _csv_cache.df = df
-            logger.info("CSV refreshed: %s", os.path.basename(latest))
+            logger.info("CSV 已刷新：%s", os.path.basename(latest))
         except Exception as e:
             logger.error("CSV 刷新失败：%s", e)
             # 读取失败时复用旧缓存，避免页面抖动。
             return _csv_cache.df
     return _csv_cache.df
+
+
+async def _get_df_with_refresh(timeout: float = 25.0) -> pd.DataFrame:
+    # 打包版首次启动可能没有本地 CSV，这里主动触发一次刷新并等待结果。
+    df = get_df()
+    if not df.empty:
+        return df
+
+    await asyncio.to_thread(refresh_backend_data, False)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        df = get_df()
+        if not df.empty:
+            return df
+        await asyncio.sleep(0.5)
+    return df
+
+
+def _get_live_champion_snapshot_df(force_refresh: bool = False) -> pd.DataFrame:
+    # 当完整 CSV 尚未生成时，使用轻量英雄统计快照先撑起首页。
+    cache_path = "live_champion_snapshot"
+    now = time.time()
+    if (
+        not force_refresh
+        and _champion_snapshot_cache.path == cache_path
+        and _champion_snapshot_cache.data
+        and (now - _champion_snapshot_cache.mtime) < 180
+    ):
+        payload = _champion_snapshot_cache.data
+    else:
+        try:
+            session = get_advanced_session()
+            response = session.get(
+                "https://hextech.dtodo.cn/data/champions-stats.json",
+                timeout=12,
+                verify=True,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, list):
+                return pd.DataFrame()
+            _champion_snapshot_cache.path = cache_path
+            _champion_snapshot_cache.mtime = now
+            _champion_snapshot_cache.data = payload
+        except Exception as e:
+            logger.warning("轻量英雄快照拉取失败：%s", e)
+            return pd.DataFrame()
+
+    core_data = load_champion_core_data()
+    rows = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        champ_id = str(item.get("championId", "")).strip()
+        hero_info = core_data.get(champ_id, {})
+        hero_name = hero_info.get("name", "")
+        if not hero_name:
+            continue
+        try:
+            rows.append({
+                "英雄名称": hero_name,
+                "英雄胜率": float(item.get("winRate", 0) or 0),
+                "英雄出场率": float(item.get("pickRate", 0) or 0),
+            })
+        except (TypeError, ValueError):
+            continue
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+def _get_live_hextech_snapshot_df(hero_name: str, force_refresh: bool = False) -> pd.DataFrame:
+    # 完整 CSV 尚未就绪时，直接抓当前英雄的远端数据，优先让左侧海克斯排序可用。
+    hero_name = _resolve_canonical_hero_name(hero_name)
+    if not hero_name:
+        return pd.DataFrame()
+
+    cache_path = f"live_hextech_snapshot::{hero_name}"
+    now = time.time()
+    if (
+        not force_refresh
+        and _live_hextech_cache.path == cache_path
+        and _live_hextech_cache.data
+        and (now - _live_hextech_cache.mtime) < 180
+    ):
+        rows = _live_hextech_cache.data.get("rows", [])
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    core_data = load_champion_core_data()
+    champ_id = None
+    for key, value in core_data.items():
+        if str(value.get("name", "")).strip() == hero_name:
+            champ_id = str(key)
+            break
+    if not champ_id:
+        return pd.DataFrame()
+
+    truth_dict = load_augment_map()
+    if not truth_dict:
+        return pd.DataFrame()
+
+    session = get_advanced_session()
+    try:
+        aug_response = fetch_with_retry(
+            session,
+            "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json",
+            timeout=6,
+        )
+        stats_response = fetch_with_retry(
+            session,
+            "https://hextech.dtodo.cn/data/champions-stats.json",
+            timeout=6,
+        )
+        if aug_response is None or stats_response is None:
+            return pd.DataFrame()
+
+        aug_data = aug_response.json()
+        stats_list = stats_response.json()
+        if not isinstance(aug_data, dict) or not isinstance(stats_list, list):
+            return pd.DataFrame()
+
+        aug_id_map = {}
+        for raw_key, raw_item in aug_data.items():
+            item = raw_item if isinstance(raw_item, dict) else {}
+            aug_id = str(raw_key)
+            aug_id_map[aug_id] = _clean_augment_text(item.get("displayName"))
+
+        champ_stats = next(
+            (item for item in stats_list if str(item.get("championId", "")).strip() == champ_id),
+            None,
+        )
+        if not champ_stats:
+            return pd.DataFrame()
+
+        detail_response = fetch_with_retry(
+            session,
+            f"https://hextech.dtodo.cn/zh-CN/champion-stats/{champ_id}",
+            timeout=6,
+        )
+        if detail_response is None or detail_response.status_code != 200 or not detail_response.text:
+            return pd.DataFrame()
+
+        rows = extract_champion_stats(
+            detail_response.text,
+            aug_id_map,
+            truth_dict,
+            champ_id,
+            hero_name,
+            champ_stats,
+        )
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        df["胜率差"] = df["海克斯胜率"] - df["英雄胜率"]
+        _live_hextech_cache.path = cache_path
+        _live_hextech_cache.mtime = now
+        _live_hextech_cache.data = {"rows": rows}
+        logger.info("单英雄海克斯快照已就绪：hero=%s rows=%s", hero_name, len(rows))
+        return df
+    except Exception as e:
+        logger.warning("单英雄海克斯快照拉取失败：hero=%s error=%s", hero_name, e)
+        return pd.DataFrame()
 
 
 # 结构化数据缓存。
@@ -448,6 +589,8 @@ class JSONFileCache:
     data: dict = field(default_factory=dict)
 
 _synergy_cache = JSONFileCache()
+_champion_snapshot_cache = JSONFileCache()
+_live_hextech_cache = JSONFileCache()
 
 
 def _get_synergy_data() -> dict:
@@ -465,7 +608,7 @@ def _get_synergy_data() -> dict:
             _synergy_cache.path = json_path
             _synergy_cache.mtime = current_mtime
             _synergy_cache.data = data
-            logger.info("Champion_Synergy.json cache refreshed")
+            logger.info("Champion_Synergy.json 缓存已刷新")
         except Exception as e:
             logger.error("协同数据文件加载失败：%s", e)
             return _synergy_cache.data
@@ -667,7 +810,7 @@ async def lcu_polling_loop():
                                 "en_name": en_name,
                             })
                         else:
-                            logger.debug("AUTO_JUMP_ENABLED = False; skipping automatic jump broadcast")
+                            logger.debug("自动跳转已关闭，跳过本地锁定广播。")
 
             elif res.status_code == 404:
                 # 返回 404，说明会话暂时不存在或已切换。
@@ -732,7 +875,7 @@ async def csv_watcher_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动时并行执行后台刷新、图标预取和轮询任务。
+    # 启动时执行后台刷新和轮询任务。
     scraper_thread = threading.Thread(
         target=refresh_backend_data,
         kwargs={"force": False},
@@ -740,14 +883,6 @@ async def lifespan(app: FastAPI):
         name="backend-refresh-startup",
     )
     scraper_thread.start()
-    needs_augment_refresh = _read_augment_icon_source_marker() != AUGMENT_ICON_SOURCE_ID
-    augment_thread = threading.Thread(
-        target=_startup_augment_icon_maintenance,
-        kwargs={"force": needs_augment_refresh},
-        daemon=True,
-        name="augment-icon-maintenance",
-    )
-    augment_thread.start()
     task1 = asyncio.create_task(lcu_polling_loop())
     task2 = asyncio.create_task(csv_watcher_loop())
     yield
@@ -792,14 +927,6 @@ async def read_detail():
     # 返回详情页文件。
     return _html_file_response("detail.html")
 
-@app.get("/canvas_fallback.js")
-async def read_canvas_fallback():
-    # 返回画布降级脚本，供网页中的图表降级使用。
-    js_path = os.path.join(_static_dir, "canvas_fallback.js")
-    if os.path.exists(js_path):
-        return FileResponse(js_path, media_type="application/javascript")
-    return JSONResponse(content={"error": "未找到"}, status_code=404)
-
 @app.get("/favicon.ico")
 async def favicon():
     # 返回空的站点图标响应，避免 404 噪音。
@@ -807,9 +934,8 @@ async def favicon():
 
 @app.get("/assets/{filename}")
 async def get_asset(filename: str):
-    # 按文件名返回资源；本地不存在时尝试增强器映射或官方资源回退。
+    # 按文件名返回资源；海克斯图标优先走本地缓存，不命中时立即回退远端并后台补缓存。
     local_path = os.path.join(_assets_dir, filename)
-    # 增强器图标优先走映射表并缓存到本地。
     real_requested = os.path.normcase(os.path.realpath(local_path))
     real_assets_dir = os.path.normcase(os.path.realpath(_assets_dir))
     if not real_requested.startswith(real_assets_dir + os.sep) and real_requested != real_assets_dir:
@@ -820,19 +946,28 @@ async def get_asset(filename: str):
     if filename.endswith('.png') and not filename[:-4].isdigit():
         try:
             file_stem = unquote(filename[:-4])
-            icon_map = load_augment_icon_map(CONFIG_DIR)
-            mapped_filename = find_augment_icon_filename(icon_map, file_stem, asset_dir=_assets_dir)
-            if mapped_filename:
-                cached_path = ensure_augment_icon_cached(mapped_filename, asset_dir=_assets_dir)
-                if cached_path and os.path.exists(cached_path):
-                    return FileResponse(cached_path)
+            catalog_entry = find_augment_catalog_entry(file_stem, CONFIG_DIR)
+            if catalog_entry:
+                augment_name = str(catalog_entry.get("name", "")).strip() or file_stem
+                mapped_filename = str(catalog_entry.get("filename", "")).strip()
+                if mapped_filename:
+                    local_mapped = find_existing_augment_asset_filename(_assets_dir, mapped_filename)
+                    if local_mapped:
+                        return FileResponse(os.path.join(_assets_dir, local_mapped))
+                    _queue_augment_icon_cache(mapped_filename, augment_name)
+
+                remote_icon_url = _resolve_remote_augment_icon_url(catalog_entry, augment_name)
+                if remote_icon_url:
+                    return RedirectResponse(url=remote_icon_url, status_code=307)
+
             local_fallback = find_existing_augment_asset_filename(_assets_dir, filename)
             if local_fallback:
                 return FileResponse(os.path.join(_assets_dir, local_fallback))
-            elif re.fullmatch(r"[A-Za-z0-9._-]+", file_stem):
-                cached_path = ensure_augment_icon_cached(filename, asset_dir=_assets_dir)
-                if cached_path and os.path.exists(cached_path):
-                    return FileResponse(cached_path)
+            if re.fullmatch(r"[A-Za-z0-9._-]+", file_stem):
+                _queue_augment_icon_cache(filename, file_stem)
+            remote_icon_url = _resolve_remote_augment_icon_url(catalog_entry, file_stem)
+            if remote_icon_url:
+                return RedirectResponse(url=remote_icon_url, status_code=307)
         except Exception as e:
             logger.debug("远程资源缓存失败：%s", e)
 
@@ -853,35 +988,35 @@ async def get_asset(filename: str):
 @app.get("/api/champions")
 async def api_champions():
     df = get_df()
+    if not df.empty:
+        return JSONResponse(content=process_champions_data(df))
+
+    # 完整 CSV 不存在时，首页先使用轻量快照，避免长时间空白。
+    threading.Thread(
+        target=refresh_backend_data,
+        kwargs={"force": False},
+        daemon=True,
+        name="api-champions-refresh",
+    ).start()
+
+    snapshot_df = await asyncio.to_thread(_get_live_champion_snapshot_df)
+    if not snapshot_df.empty:
+        return JSONResponse(content=process_champions_data(snapshot_df))
+
+    df = await _get_df_with_refresh()
     return JSONResponse(content=process_champions_data(df))
+
+
+@app.get("/api/startup_status")
+async def api_startup_status():
+    return JSONResponse(content=get_startup_status())
 
 
 @app.get("/api/champion_aliases")
 async def api_champion_aliases():
-    # 返回英雄别名索引，供前端搜索与终端保持一致。
+    # 返回首页搜索专用的静态英雄别名索引。
     try:
-        core_data = load_champion_core_data()
-        alias_map = load_hero_aliases()
-        payload = []
-
-        for value in core_data.values():
-            hero_name = value.get("name", "")
-            title = value.get("title", "")
-            en_name = value.get("en_name", "")
-            aliases = dedupe_alias_texts(
-                [hero_name, en_name, title],
-                value.get("aliases", []),
-                alias_map.get(hero_name, []),
-                alias_map.get(title, []),
-            )
-
-            payload.append({
-                "heroName": hero_name,
-                "title": title,
-                "enName": en_name,
-                "aliases": aliases,
-            })
-
+        payload = load_champion_alias_index()
         payload.sort(key=lambda item: item.get("heroName", ""))
         return JSONResponse(content=payload)
     except Exception as e:
@@ -890,47 +1025,55 @@ async def api_champion_aliases():
 
 @app.get("/api/champion/{name}/hextechs")
 async def api_champion_hextechs(name: str):
-    df = get_df()
-    return JSONResponse(content=process_hextechs_data(df, name))
+    canonical_name = _resolve_canonical_hero_name(name)
+    df = await _get_df_with_refresh()
+    if df.empty:
+        live_df = await asyncio.to_thread(_get_live_hextech_snapshot_df, canonical_name)
+        if not live_df.empty:
+            return JSONResponse(content=process_hextechs_data(live_df, canonical_name))
+    return JSONResponse(content=process_hextechs_data(df, canonical_name))
 
 @app.get("/api/augment_icon_map")
 async def api_augment_icon_map():
     # 返回海克斯图标映射，供前端或调试页查找。
     try:
-        raw_map = load_apexlol_hextech_map(CONFIG_DIR)
-        data = {
-            name: f"https://apexlol.info/images/hextech/{slug}.webp"
-            for name, slug in raw_map.items()
-        }
+        manifest = load_augment_icon_manifest(CONFIG_DIR)
+        data = {}
+        for item in manifest:
+            name = str(item.get("name", "")).strip()
+            filename = str(item.get("filename", "")).strip()
+            remote_icon_url = str(item.get("icon_url", "")).strip()
+            if not name:
+                continue
+            if filename:
+                data[name] = f"/assets/{quote(filename, safe='')}"
+            elif remote_icon_url:
+                data[name] = remote_icon_url
         return JSONResponse(content=data)
     except Exception as e:
-        logger.warning("apexlol 海克斯图标映射读取失败：%s", e)
+        logger.warning("统一海克斯目录图标映射读取失败：%s", e)
         return JSONResponse(content={})
 
 @app.get("/api/synergies/{champ_id}")
 async def api_synergies(champ_id: str):
     # 返回英雄协同数据。
-
-
-
     try:
         data = _get_synergy_data()
         if not data:
             return JSONResponse(content={"synergies": []})
 
-        # 先按英雄编号精确匹配。
-        synergy_data = data.get(champ_id, {})
+        resolved_champ_id = _resolve_champion_id(champ_id)
+        canonical_name = _resolve_canonical_hero_name(champ_id).lower()
 
-        # 再尝试通过别名匹配。
+        # 只按主编号、主名、称号、英文名归一后的结果匹配，不接入首页搜索别名索引。
+        synergy_data = data.get(resolved_champ_id or champ_id, {})
         if not synergy_data:
             for key, value in data.items():
-                # 先检查别名列表。
-                aliases = value.get("aliases", [])
-                if champ_id in aliases or champ_id.lower() in [a.lower() for a in aliases]:
-                    synergy_data = value
-                    break
-                # 再检查键本身。
-                if champ_id.lower() == key.lower():
+                if (
+                    str(champ_id).lower() == key.lower()
+                    or str(resolved_champ_id).lower() == key.lower()
+                    or (canonical_name and canonical_name == key.lower())
+                ):
                     synergy_data = value
                     break
 
@@ -1015,7 +1158,14 @@ def run_web_server() -> None:
     ACTIVE_WEB_PORT = actual_port
     _write_active_web_port(ACTIVE_WEB_PORT)
     _open_chrome(actual_port)
-    uvicorn.run("web_server:app", host="127.0.0.1", port=actual_port, reload=False)
+    uvicorn.run(
+        "web_server:app",
+        host="127.0.0.1",
+        port=actual_port,
+        reload=False,
+        access_log=False,
+        log_level="warning",
+    )
 
 
 if __name__ == "__main__":

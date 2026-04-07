@@ -10,8 +10,11 @@ import json
 from html import unescape
 from typing import List, Dict, Any, Optional, Tuple
 
+from urllib.parse import quote
+
+from augment_icon_refresh import build_augment_catalog_lookup
 from hero_sync import load_champion_core_data
-from icon_resolver import build_local_augment_icon_url
+from icon_resolver import build_local_augment_icon_url, normalize_augment_name
 
 # 全局缓存。
 _hextech_cache_pool: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
@@ -105,7 +108,7 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
     if df.empty:
         return []
 
-    logging.info(f"Processing columns: {df.columns.tolist()}")
+    logging.info("处理英雄数据列：%s", df.columns.tolist())
 
     df_hash = _compute_df_hash(df)
     cached_result = _get_from_cache(_champion_cache_pool, df_hash)
@@ -310,10 +313,18 @@ def _render_tooltip_plain(raw_tooltip: Any, raw_values: Any) -> str:
     return _PLACEHOLDER_PATTERN.sub(repl, base_text)
 
 
+def _build_catalog_icon_url(entry: Optional[Dict[str, Any]], hextech_name: str) -> str:
+    if entry:
+        filename = str(entry.get("filename", "")).strip()
+        if filename:
+            return f"/assets/{quote(filename, safe='')}"
+    return build_local_augment_icon_url(hextech_name)
+
+
 def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[str, Any]]]:
     # 计算单英雄海克斯结果，返回总榜、综合榜、纯胜率榜和分阶级榜单
     # 计算时会引入置信度衰减，避免低样本数据干扰排序
-    logging.info(f"Processing columns: {df.columns.tolist()}")
+    logging.info("处理海克斯数据列：%s", df.columns.tolist())
 
     if df.empty:
         return {
@@ -336,6 +347,7 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
     try:
         # 创建副本避免修改原始数据
         data = df.copy()
+        catalog_lookup = build_augment_catalog_lookup()
 
         # 确保必要列存在
         required_cols = ['英雄名称', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差']
@@ -418,18 +430,35 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
 
         # ========== 辅助函数：生成海克斯卡片 ==========
         def build_hextech_card(row, include_score=True):
-            tooltip_raw = row.get('海克斯Tooltip', '')
-            if pd.isna(tooltip_raw) or str(tooltip_raw).strip() == '':
-                tooltip_raw = row.get('海克斯描述', '')
-            tooltip_raw = '' if pd.isna(tooltip_raw) else str(tooltip_raw)
-            tooltip_plain = _render_tooltip_plain(tooltip_raw, row.get('海克斯数值', ''))
+            augment_name = str(row['海克斯名称'])
+            catalog_entry = catalog_lookup.get(augment_name) or catalog_lookup.get(normalize_augment_name(augment_name))
+            tooltip_raw = ""
+            tooltip_plain = ""
+            tier_name = str(row.get('海克斯阶级', '棱彩'))
+            icon_url = build_local_augment_icon_url(augment_name)
+
+            if catalog_entry:
+                tooltip_raw = str(catalog_entry.get("tooltip") or catalog_entry.get("description") or "").strip()
+                tooltip_plain = str(catalog_entry.get("tooltip_plain") or "").strip()
+                tier_name = str(catalog_entry.get("tier") or tier_name).strip() or tier_name
+                icon_url = _build_catalog_icon_url(catalog_entry, augment_name)
+
+            if not tooltip_raw:
+                tooltip_raw = row.get('海克斯Tooltip', '')
+                if pd.isna(tooltip_raw) or str(tooltip_raw).strip() == '':
+                    tooltip_raw = row.get('海克斯描述', '')
+                tooltip_raw = '' if pd.isna(tooltip_raw) else str(tooltip_raw)
+
+            if not tooltip_plain:
+                tooltip_plain = _render_tooltip_plain(tooltip_raw, row.get('海克斯数值', ''))
+
             card = {
-                '海克斯名称': str(row['海克斯名称']),
-                '海克斯阶级': str(row.get('海克斯阶级', '棱彩')),
+                '海克斯名称': augment_name,
+                '海克斯阶级': tier_name,
                 '海克斯胜率': float(row['海克斯胜率']) if pd.notna(row['海克斯胜率']) else 0.0,
                 '海克斯出场率': float(row['海克斯出场率']) if pd.notna(row['海克斯出场率']) else 0.0,
                 '胜率差': float(row['胜率差']) if pd.notna(row['胜率差']) else 0.0,
-                'icon': build_local_augment_icon_url(row['海克斯名称']),
+                'icon': icon_url,
                 'tooltip': tooltip_raw.strip(),
                 'tooltip_plain': tooltip_plain
             }

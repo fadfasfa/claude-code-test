@@ -13,6 +13,17 @@ from datetime import datetime
 BASE_DIR = Path(__file__).parent
 DIST_DIR = BASE_DIR / "dist"
 BUILD_DIR = BASE_DIR / "build"
+EXCLUDED_MODULES = [
+    "tkinter.test",
+    "unittest",
+    "pydoc",
+    "scipy",
+    "matplotlib",
+    "botocore",
+    "boto3",
+    "s3transfer",
+    "jmespath",
+]
 
 
 def print_step(msg: str):
@@ -31,6 +42,42 @@ def print_warn(msg: str):
     print(f"  [警告] {msg}")
 
 
+def _cleanup_python_caches() -> None:
+    # 清理源码目录里的 Python 字节码缓存，避免工作区脏污，也避免误以为会被打包。
+    removed_dirs = 0
+    removed_files = 0
+
+    for cache_dir in BASE_DIR.rglob("__pycache__"):
+        if cache_dir.is_dir():
+            shutil.rmtree(cache_dir, ignore_errors=True)
+            removed_dirs += 1
+
+    for pattern in ("*.pyc", "*.pyo"):
+        for pyc_file in BASE_DIR.rglob(pattern):
+            if pyc_file.is_file():
+                try:
+                    pyc_file.unlink()
+                    removed_files += 1
+                except OSError:
+                    pass
+
+    print_check(f"已清理 Python 缓存目录 {removed_dirs} 个，缓存文件 {removed_files} 个")
+
+
+def _prepare_runtime_bundle() -> None:
+    # 打包时只保留运行壳和静态页面，数据与缓存一律在首次启动后自动拉取。
+    print_step("准备最小运行资源")
+
+    bundle_static_dir = BUILD_DIR / "_bundle_static"
+    if bundle_static_dir.exists():
+        shutil.rmtree(bundle_static_dir)
+    shutil.copytree(BASE_DIR / "static", bundle_static_dir)
+
+    print_check("静态页面已复制到临时打包目录")
+    print_warn("config 目录不再打包，运行后将自动生成并刷新最新数据")
+    print_warn("assets 目录不再打包，缺失图标将在运行期自动缓存")
+
+
 def cleanup():
     # 清理旧的构建产物
     print_step("清理旧构建文件")
@@ -38,6 +85,7 @@ def cleanup():
         if d.exists():
             shutil.rmtree(d)
             print_check(f"已删除：{d}")
+    _cleanup_python_caches()
     print_check("清理完成")
 
 
@@ -87,6 +135,10 @@ def build_exe(version_file: Path) -> Path:
     # 使用打包工具构建可执行文件。
     print_step("构建可执行文件")
 
+    bundle_static_dir = BUILD_DIR / "_bundle_static"
+    if not bundle_static_dir.exists():
+        _prepare_runtime_bundle()
+
     # 优化后的打包命令
     cmd = [
         "pyinstaller",
@@ -97,9 +149,7 @@ def build_exe(version_file: Path) -> Path:
         "--console",
         "--icon", "NONE",
         "--version-file", str(version_file),
-        "--add-data", "static;static",
-        "--add-data", "assets;assets",
-        "--add-data", "config;config",
+        "--add-data", f"{bundle_static_dir};static",
         "--hidden-import", "pandas",
         "--hidden-import", "numpy",
         "--hidden-import", "requests",
@@ -110,11 +160,11 @@ def build_exe(version_file: Path) -> Path:
         "--hidden-import", "fastapi",
         "--hidden-import", "uvicorn",
         "--collect-submodules", "uvicorn",
-        "--exclude-module", "tkinter.test",
-        "--exclude-module", "unittest",
-        "--exclude-module", "pydoc",
         "hextech_ui.py"
     ]
+
+    for module_name in EXCLUDED_MODULES:
+        cmd.extend(["--exclude-module", module_name])
 
     print(f"  执行命令：{' '.join(cmd)}")
     try:
@@ -258,6 +308,10 @@ def final_cleanup(exe_dir: Path) -> Path:
             f.unlink()
             print_check(f"已删除：{f.name}")
 
+    bundle_temp_dir = BUILD_DIR / "_bundle_static"
+    if bundle_temp_dir.exists():
+        shutil.rmtree(bundle_temp_dir, ignore_errors=True)
+
     # 重命名输出目录为更清晰的名称。
     base_name = f"Hextech_伴生系统_{datetime.now().strftime('%Y%m%d')}"
     final_dir = DIST_DIR / base_name
@@ -297,6 +351,9 @@ def main():
     try:
         # 1. 清理
         cleanup()
+
+        # 1.1 准备最小资源集
+        _prepare_runtime_bundle()
 
         # 2. 生成版本信息
         version_file = generate_version_info()

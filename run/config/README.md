@@ -7,11 +7,13 @@
 - `Augment_Apexlol_Map.json`
   - 海克斯/强化符文名称到 ApexLoL 图标 slug 的映射缓存。
   - 由 `run/web_server.py` 在启动时预热，并在需要时自动刷新。
-  - 前端通过 `/api/augment_icon_map` 读取它生成可访问的图标 URL。
 - `Augment_Full_Map.json`
   - 强化符文名称到品质/阶级的完整映射。
 - `Augment_Icon_Map.json`
   - 强化符文名称到本地图标文件名的映射。
+- `Augment_Icon_Manifest.json`
+  - 海克斯统一目录，包含名称、品质、图标文件名、tooltip、纯文本 tooltip、数值映射等运行时字段。
+  - 由海克斯图像下载/目录刷新逻辑自动生成，作为批量预缓存、接口输出和展示层合并的单一数据源。
 - `Champion_Core_Data.json`
   - 英雄核心资料，包括名称、别称和英文名。
 - `Champion_Synergy.json`
@@ -31,4 +33,5 @@
 
 - 新增或更新这类文件时，写入请保持 UTF-8 无 BOM。
 - 如果文件是运行时缓存，优先由代码写入，不要手工维护业务含义。
+- `Augment_Full_Map.json` 与 `Augment_Icon_Map.json` 仍可作为冷启动输入，但运行时主链路应优先读取 `Augment_Icon_Manifest.json`。
 - 如果文件内容看起来像乱码，先检查是不是编码问题，再判断是不是数据源本身缺失。

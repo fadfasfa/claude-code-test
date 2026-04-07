@@ -7,8 +7,9 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
-from typing import Dict, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 from urllib.parse import quote
 
 import requests
@@ -18,6 +19,10 @@ _ICON_MAP_CACHE: Tuple[str, float, dict] = ("", 0.0, {})
 _APEXLOL_MAP_CACHE: Tuple[str, float, dict] = ("", 0.0, {})
 _ICON_MAP_LOCK = threading.Lock()
 _APEXLOL_MAP_LOCK = threading.Lock()
+_THREAD_LOCAL = threading.local()
+_ICON_FAILURE_CACHE: Dict[str, float] = {}
+_ICON_FAILURE_CACHE_LOCK = threading.Lock()
+_FAILURE_TTL_SECONDS = 180
 
 
 def _default_runtime_dir() -> str:
@@ -183,6 +188,41 @@ def _iter_augment_icon_urls(icon_filename: str):
         yield template.format(filename=filename)
 
 
+def _get_download_session() -> requests.Session:
+    session = getattr(_THREAD_LOCAL, "download_session", None)
+    if session is None:
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0"})
+        _THREAD_LOCAL.download_session = session
+    return session
+
+
+def _clear_augment_icon_failure(icon_filename: str) -> None:
+    with _ICON_FAILURE_CACHE_LOCK:
+        _ICON_FAILURE_CACHE.pop(normalize_augment_filename(icon_filename), None)
+
+
+def _should_skip_failed_icon(icon_filename: str, force_refresh: bool) -> bool:
+    if force_refresh:
+        return False
+
+    normalized = normalize_augment_filename(icon_filename)
+    now = time.time()
+    with _ICON_FAILURE_CACHE_LOCK:
+        failed_at = _ICON_FAILURE_CACHE.get(normalized)
+        if failed_at is None:
+            return False
+        if (now - failed_at) < _FAILURE_TTL_SECONDS:
+            return True
+        _ICON_FAILURE_CACHE.pop(normalized, None)
+    return False
+
+
+def _mark_augment_icon_failure(icon_filename: str) -> None:
+    with _ICON_FAILURE_CACHE_LOCK:
+        _ICON_FAILURE_CACHE[normalize_augment_filename(icon_filename)] = time.time()
+
+
 def ensure_augment_icon_cached(
     icon_filename: str,
     asset_dir: Optional[str] = None,
@@ -196,14 +236,17 @@ def ensure_augment_icon_cached(
     target_path = os.path.join(asset_dir, normalized_filename)
     # 已存在且非空时直接复用缓存，避免重复下载。
     if not force_refresh and os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+        _clear_augment_icon_failure(normalized_filename)
         return target_path
+    if _should_skip_failed_icon(normalized_filename, force_refresh):
+        return None
 
     os.makedirs(asset_dir, exist_ok=True)
     tmp_path = target_path + ".tmp"
     for url in _iter_augment_icon_urls(normalized_filename):
         try:
             # 依次尝试多个 CommunityDragon 变体地址，哪个可用就落哪个。
-            response = requests.get(url, stream=True, timeout=15)
+            response = _get_download_session().get(url, stream=True, timeout=15)
             if response.status_code != 200:
                 continue
 
@@ -212,6 +255,7 @@ def ensure_augment_icon_cached(
                     if chunk:
                         f.write(chunk)
             os.replace(tmp_path, target_path)
+            _clear_augment_icon_failure(normalized_filename)
             return target_path
         except Exception:
             pass
@@ -222,7 +266,66 @@ def ensure_augment_icon_cached(
             except OSError:
                 pass
 
+    _mark_augment_icon_failure(normalized_filename)
     return None
+
+
+def batch_prefetch_augment_icons(
+    icon_filenames: Iterable[str],
+    asset_dir: Optional[str] = None,
+    force_refresh: bool = False,
+    max_workers: int = 8,
+    stop_event=None,
+) -> dict:
+    asset_dir = _resolve_assets_dir(asset_dir)
+    unique_filenames = []
+    seen = set()
+    for raw_name in icon_filenames:
+        normalized = normalize_augment_filename(raw_name)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_filenames.append(normalized)
+
+    result = {
+        "total": len(unique_filenames),
+        "success": 0,
+        "failed": 0,
+        "failed_files": [],
+    }
+    if not unique_filenames:
+        return result
+
+    workers = max(1, min(max_workers, len(unique_filenames)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_filename = {
+            executor.submit(
+                ensure_augment_icon_cached,
+                filename,
+                asset_dir,
+                force_refresh,
+            ): filename
+            for filename in unique_filenames
+        }
+        for future in as_completed(future_to_filename):
+            if stop_event is not None and stop_event.is_set():
+                for pending in future_to_filename:
+                    pending.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
+                break
+
+            filename = future_to_filename[future]
+            try:
+                cached_path = future.result()
+                if cached_path and os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+                    result["success"] += 1
+                else:
+                    result["failed"] += 1
+                    result["failed_files"].append(filename)
+            except Exception:
+                result["failed"] += 1
+                result["failed_files"].append(filename)
+    return result
 
 
 def _normalize_apexlol_hextech_slug(value: str) -> str:

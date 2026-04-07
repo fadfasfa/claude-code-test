@@ -13,6 +13,7 @@ import random
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hero_sync import get_advanced_session, CONFIG_DIR, load_augment_map, load_champion_core_data
+from log_utils import log_task_summary
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 FRESHNESS_THRESHOLD = 0.0005
@@ -169,7 +170,6 @@ def cleanup_old_csvs():
 def extract_champion_stats(
     html: str,
     aug_id_map: dict,
-    aug_meta_map: dict,
     truth_dict: dict,
     champ_id: str,
     champ_name: str,
@@ -201,9 +201,7 @@ def extract_champion_stats(
                 if win > 0 and pick >= FRESHNESS_THRESHOLD:
                     web_name = aug_id_map.get(mid, "")
                     local_tier = truth_dict.get(web_name)
-                    aug_meta = aug_meta_map.get(mid, {})
                     if web_name and local_tier:
-                        values_map = aug_meta.get("spell_values", {})
                         rows.append({
                             "英雄 ID": champ_id,
                             "英雄名称": champ_name,
@@ -212,9 +210,6 @@ def extract_champion_stats(
                             "英雄出场率": float(champ_data.get('pickRate', 0)),
                             "海克斯阶级": local_tier,
                             "海克斯名称": web_name,
-                            "海克斯描述": aug_meta.get("description", ""),
-                            "海克斯Tooltip": aug_meta.get("tooltip", ""),
-                            "海克斯数值": json.dumps(values_map, ensure_ascii=False, separators=(",", ":")),
                             "海克斯胜率": win,
                             "海克斯出场率": pick
                         })
@@ -232,15 +227,16 @@ def extract_champion_stats(
     return rows
 
 def main_scraper(stop_event=None):
+    started_at = time.time()
     current_date = datetime.now().strftime('%Y-%m-%d')
     output_csv = os.path.join(CONFIG_DIR, f"Hextech_Data_{current_date}.csv")
 
     can_run, msg = check_execution_permission()
     if not can_run:
-        logging.info(f"数据尚在有效期内，跳过抓取：{msg}")
+        logging.info("海克斯抓取跳过：%s", msg)
         return False
 
-    logging.info(f"启动抓取任务：{msg}")
+    logging.info("海克斯抓取开始：%s", msg)
     truth_dict = load_augment_map()
     core_data = load_champion_core_data()
     if not truth_dict or not core_data:
@@ -257,12 +253,10 @@ def main_scraper(stop_event=None):
         aug_data = aug_response.json()
 
         aug_id_map = {}
-        aug_meta_map = {}
         for raw_key, raw_item in aug_data.items():
             item = raw_item if isinstance(raw_item, dict) else {}
             aug_id = str(raw_key)
             aug_id_map[aug_id] = _clean_augment_text(item.get('displayName'))
-            aug_meta_map[aug_id] = _extract_augment_meta(item)
 
         stats_response = fetch_with_retry(session, "https://hextech.dtodo.cn/data/champions-stats.json")
         if stats_response is None:
@@ -291,7 +285,6 @@ def main_scraper(stop_event=None):
                     champ_rows = extract_champion_stats(
                         res.text,
                         aug_id_map,
-                        aug_meta_map,
                         truth_dict,
                         c_id,
                         c_name,
@@ -304,7 +297,7 @@ def main_scraper(stop_event=None):
 
         return c_name, champ_rows
 
-    logging.info(f"启动 16 线程超频抓取池，共 {len(stats_list)} 名英雄...")
+    logging.info("海克斯抓取执行中：heroes=%s workers=%s", len(stats_list), 16)
     with ThreadPoolExecutor(max_workers=16) as executor:
         futures = [executor.submit(fetch_champ, c) for c in stats_list]
         for f in as_completed(futures):
@@ -361,10 +354,22 @@ def main_scraper(stop_event=None):
 
         update_status_file()
         cleanup_old_csvs()
-        logging.info(f"抓取结束，固化至：{output_csv}")
+        log_task_summary(
+            logging.getLogger(__name__),
+            task="海克斯抓取",
+            started_at=started_at,
+            success=True,
+            detail=f"rows={len(df)} output={os.path.basename(output_csv)}",
+        )
         return True
     else:
-        logging.error("抓取任务未能生成有效数据，请检查网络或数据源。")
+        log_task_summary(
+            logging.getLogger(__name__),
+            task="海克斯抓取",
+            started_at=started_at,
+            success=False,
+            detail="error=no_valid_rows",
+        )
         return False
 
 if __name__ == "__main__":
