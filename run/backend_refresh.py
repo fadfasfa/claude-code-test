@@ -18,16 +18,23 @@ from hero_sync import AUGMENT_ICON_FILE, AUGMENT_MAP_FILE, CONFIG_DIR, CORE_DATA
 from hextech_query import get_latest_csv
 from hextech_scraper import main_scraper
 from log_utils import log_task_summary
+from precomputed_api_cache import (
+    load_precomputed_champion_list,
+    has_precomputed_hextech_cache,
+    rebuild_precomputed_api_cache_from_latest_csv,
+)
 
 logger = logging.getLogger(__name__)
 
 _refresh_lock = threading.Lock()
 _state_lock = threading.Lock()
+_scheduled_lock = threading.Lock()
 _refresh_lock_file = os.path.join(CONFIG_DIR, "backend_refresh.lock")
 _startup_status_file = os.path.join(CONFIG_DIR, "startup_status.json")
 _synergy_file = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
 _synergy_stale_after = 24 * 3600
 _stale_lock_after = 15 * 60
+_scheduled_refresh_thread: Optional[threading.Thread] = None
 
 
 def _now_iso() -> str:
@@ -41,6 +48,7 @@ def _default_status() -> dict:
         "hextech_ready": False,
         "synergy_ready": False,
         "augment_icons_prefetched": False,
+        "api_cache_ready": False,
         "in_progress_tasks": [],
         "last_error": "",
         "updated_at": _now_iso(),
@@ -243,12 +251,14 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
 
         first_run = _is_first_run(force=force)
         try:
+            api_cache_ready = bool(load_precomputed_champion_list()) and has_precomputed_hextech_cache()
             _write_status_file({
                 "first_run": first_run,
                 "hero_ready": False,
                 "hextech_ready": bool(get_latest_csv()),
                 "synergy_ready": os.path.exists(_synergy_file),
                 "augment_icons_prefetched": is_augment_icon_prefetch_ready(),
+                "api_cache_ready": api_cache_ready,
                 "in_progress_tasks": ["hero_sync"],
                 "last_error": "",
             })
@@ -295,6 +305,10 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
                 _update_status(hextech_ready=bool(get_latest_csv()))
 
             latest_csv = get_latest_csv()
+            api_cache_ready = bool(load_precomputed_champion_list()) and has_precomputed_hextech_cache()
+            if latest_csv and os.path.exists(latest_csv) and (force or not api_cache_ready):
+                api_cache_ready = bool(rebuild_precomputed_api_cache_from_latest_csv())
+            _update_status(api_cache_ready=api_cache_ready)
             final_status = get_startup_status()
             refresh_ok = bool(hero_ok and (hextech_result or bool(latest_csv and os.path.exists(latest_csv))))
             log_task_summary(
@@ -312,3 +326,27 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
             return refresh_ok
         finally:
             _release_file_lock(lock_fd)
+
+
+def schedule_backend_refresh(
+    *,
+    force: bool = False,
+    stop_event=None,
+    thread_name: str = "backend-refresh",
+) -> bool:
+    # 统一后台刷新入口，避免 UI、API 和生命周期重复起线程抢同一把锁。
+    global _scheduled_refresh_thread
+
+    with _scheduled_lock:
+        if _scheduled_refresh_thread is not None and _scheduled_refresh_thread.is_alive():
+            return False
+
+        thread = threading.Thread(
+            target=refresh_backend_data,
+            kwargs={"force": force, "stop_event": stop_event},
+            daemon=True,
+            name=thread_name,
+        )
+        _scheduled_refresh_thread = thread
+        thread.start()
+        return True

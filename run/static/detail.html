@@ -340,7 +340,7 @@
                 <div
                     class="inline-block w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin">
                 </div>
-                <div class="text-gray-400 mt-4 font-bold tracking-widest">提纯海克斯数据中...</div>
+                <div class="text-gray-400 mt-4 font-bold tracking-widest">加载海克斯数据中...</div>
             </div>
 
             <div id="noDataTip" class="hidden text-center py-20">
@@ -824,25 +824,32 @@
             }, { passive: false });
         }
 
+        async function loadSynergies() {
+            try {
+                const synergyRes = await fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId || hero)}`);
+                const synergyResult = await synergyRes.json();
+                synergyData = synergyResult.synergies || [];
+                updateFilteredSynergies(currentView);
+            } catch (err) {
+                console.error(err);
+                synergyData = [];
+                updateFilteredSynergies(currentView);
+            }
+        }
+
         async function loadHextechs() {
             if (!hero) {
                 document.getElementById('loadingSpinner').innerHTML = '<div class="text-red-400">错误：未获取到英雄名称</div>';
                 return;
             }
             try {
-                const [hextechRes, synergyRes] = await Promise.all([
-                    fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/hextechs`),
-                    fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId || hero)}`)
-                ]);
-
+                const hextechRes = await fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/hextechs`);
                 hextechData = await hextechRes.json();
-                const synergyResult = await synergyRes.json();
-                synergyData = synergyResult.synergies || [];
-
                 activeArray = hextechData.comprehensive || [];
 
                 document.getElementById('loadingSpinner').classList.add('hidden');
                 renderCurrentView();
+                loadSynergies();
             } catch (err) {
                 console.error(err);
                 document.getElementById('loadingSpinner').classList.add('hidden');

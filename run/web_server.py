@@ -40,8 +40,13 @@ from data_processor import process_champions_data, process_hextechs_data
 from hextech_query import get_latest_csv
 from hero_sync import BASE_DIR, CONFIG_DIR, RESOURCE_DIR, get_advanced_session, load_augment_map, load_champion_core_data
 from hextech_scraper import _clean_augment_text, extract_champion_stats, fetch_with_retry
-from backend_refresh import get_startup_status, refresh_backend_data
+from backend_refresh import get_startup_status, schedule_backend_refresh
 from log_utils import ensure_utf8_stdio
+from precomputed_api_cache import (
+    load_precomputed_champion_list,
+    load_precomputed_hextech_for_hero,
+)
+from runtime_data import CachedDataFrameLoader
 
 ensure_utf8_stdio()
 
@@ -59,6 +64,7 @@ _managed_browser_process: Optional[subprocess.Popen] = None
 _managed_browser_lock = threading.Lock()
 _augment_cache_pending: Set[str] = set()
 _augment_cache_pending_lock = threading.Lock()
+BACKGROUND_REFRESH_INTERVAL_SECONDS = 4 * 3600
 
 
 def _write_active_web_port(port: int) -> None:
@@ -367,53 +373,20 @@ def _html_file_response(filename: str) -> FileResponse:
     )
 
 
-# 数据表文件缓存，减少重复读盘。
-
-@dataclass
-class CSVCache:
-    path: str = ""
-    mtime: float = 0.0
-    df: pd.DataFrame = field(default_factory=pd.DataFrame)
-
-_csv_cache = CSVCache()
+_csv_loader = CachedDataFrameLoader(get_latest_csv)
 
 
 def get_df() -> pd.DataFrame:
     # 返回最新的英雄数据表。
-    latest = get_latest_csv()
-    if not latest:
-        return pd.DataFrame()
     try:
-        current_mtime = os.path.getmtime(latest)
-    except OSError:
-        return _csv_cache.df
-
-    if latest != _csv_cache.path or current_mtime != _csv_cache.mtime:
-        try:
-            # 直接读取数据表，让解析库自行推断列类型。
-            df = pd.read_csv(latest)
-            # 清理列名中的空格，兼容不同来源的数据表。
-
-            # 动态定位英雄编号列。
-            id_column = None
-            for col_name in ["英雄ID", "英雄 ID"]:
-                if col_name in df.columns:
-                    id_column = col_name
-                    break
-
-            # 将“123.0”这类编号还原为纯文本。
-            if id_column is not None:
-                df[id_column] = df[id_column].astype(str).str.strip().str.replace('.0', '', regex=False)
-
-            _csv_cache.path = latest
-            _csv_cache.mtime = current_mtime
-            _csv_cache.df = df
-            logger.info("CSV 已刷新：%s", os.path.basename(latest))
-        except Exception as e:
-            logger.error("CSV 刷新失败：%s", e)
-            # 读取失败时复用旧缓存，避免页面抖动。
-            return _csv_cache.df
-    return _csv_cache.df
+        previous_key = _csv_loader.cache_key
+        df = _csv_loader.get_df()
+        if _csv_loader.cache_key != previous_key and _csv_loader.cached_path:
+            logger.info("CSV 已刷新：%s", os.path.basename(_csv_loader.cached_path))
+        return df
+    except Exception as e:
+        logger.error("CSV 刷新失败：%s", e)
+        return pd.DataFrame()
 
 
 async def _get_df_with_refresh(timeout: float = 25.0) -> pd.DataFrame:
@@ -422,7 +395,7 @@ async def _get_df_with_refresh(timeout: float = 25.0) -> pd.DataFrame:
     if not df.empty:
         return df
 
-    await asyncio.to_thread(refresh_backend_data, False)
+    schedule_backend_refresh(force=False, thread_name="backend-refresh-demand")
     deadline = time.time() + timeout
     while time.time() < deadline:
         df = get_df()
@@ -861,9 +834,9 @@ async def csv_watcher_loop():
         try:
             # 触发数据刷新，更新缓存时间。
             get_df()
-            current_mtime = _csv_cache.mtime
+            current_mtime = _csv_loader.cached_mtime
             if current_mtime > prev_mtime and prev_mtime != 0.0:
-                logger.info("CSV 已更新：%s", os.path.basename(_csv_cache.path))
+                logger.info("CSV 已更新：%s", os.path.basename(_csv_loader.cached_path))
                 await manager.broadcast({'type': 'data_updated'})
             prev_mtime = current_mtime
         except (OSError, IOError) as e:
@@ -871,23 +844,29 @@ async def csv_watcher_loop():
         await asyncio.sleep(3)
 
 
+async def backend_refresh_loop():
+    schedule_backend_refresh(force=False, thread_name="backend-refresh-startup")
+    while True:
+        await asyncio.sleep(BACKGROUND_REFRESH_INTERVAL_SECONDS)
+        schedule_backend_refresh(force=False, thread_name="backend-refresh-periodic")
+
+
 # 网页服务生命周期管理。
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时执行后台刷新和轮询任务。
-    scraper_thread = threading.Thread(
-        target=refresh_backend_data,
-        kwargs={"force": False},
-        daemon=True,
-        name="backend-refresh-startup",
-    )
-    scraper_thread.start()
+    task0 = asyncio.create_task(backend_refresh_loop())
     task1 = asyncio.create_task(lcu_polling_loop())
     task2 = asyncio.create_task(csv_watcher_loop())
     yield
+    task0.cancel()
     task1.cancel()
     task2.cancel()
+    try:
+        await task0
+    except asyncio.CancelledError:
+        pass
     try:
         await task1
     except asyncio.CancelledError:
@@ -987,17 +966,16 @@ async def get_asset(filename: str):
 
 @app.get("/api/champions")
 async def api_champions():
+    cached_champions = load_precomputed_champion_list()
+    if cached_champions:
+        return JSONResponse(content=cached_champions)
+
     df = get_df()
     if not df.empty:
         return JSONResponse(content=process_champions_data(df))
 
     # 完整 CSV 不存在时，首页先使用轻量快照，避免长时间空白。
-    threading.Thread(
-        target=refresh_backend_data,
-        kwargs={"force": False},
-        daemon=True,
-        name="api-champions-refresh",
-    ).start()
+    schedule_backend_refresh(force=False, thread_name="api-champions-refresh")
 
     snapshot_df = await asyncio.to_thread(_get_live_champion_snapshot_df)
     if not snapshot_df.empty:
@@ -1010,6 +988,20 @@ async def api_champions():
 @app.get("/api/startup_status")
 async def api_startup_status():
     return JSONResponse(content=get_startup_status())
+
+
+@app.get("/api/live_state")
+async def api_live_state():
+    champion_ids = sorted(
+        _lcu_state.current_ids,
+        key=lambda item: int(item) if str(item).isdigit() else str(item),
+    )
+    return JSONResponse(content={
+        "connected": bool(_lcu_state.port and _lcu_state.token),
+        "champion_ids": champion_ids,
+        "local_champion_id": _lcu_state.local_champ_id,
+        "local_champ_name": _lcu_state.local_champ_name,
+    })
 
 
 @app.get("/api/champion_aliases")
@@ -1026,6 +1018,10 @@ async def api_champion_aliases():
 @app.get("/api/champion/{name}/hextechs")
 async def api_champion_hextechs(name: str):
     canonical_name = _resolve_canonical_hero_name(name)
+    cached_payload = load_precomputed_hextech_for_hero(canonical_name)
+    if cached_payload:
+        return JSONResponse(content=cached_payload)
+
     df = await _get_df_with_refresh()
     if df.empty:
         live_df = await asyncio.to_thread(_get_live_hextech_snapshot_df, canonical_name)
@@ -1157,7 +1153,8 @@ def run_web_server() -> None:
     # 将实际端口写回配置，供界面程序动态读取。
     ACTIVE_WEB_PORT = actual_port
     _write_active_web_port(ACTIVE_WEB_PORT)
-    _open_chrome(actual_port)
+    if os.getenv("HEXTECH_OPEN_BROWSER", "1").lower() not in {"0", "false", "no"}:
+        _open_chrome(actual_port)
     uvicorn.run(
         "web_server:app",
         host="127.0.0.1",

@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlparse, urlunparse
-from log_utils import install_summary_logging, log_task_summary
+from log_utils import get_unified_log_file, install_summary_logging, log_task_summary
 
 def _get_script_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
@@ -50,7 +50,11 @@ OUTPUT_LOCK_POLL_INTERVAL_SECONDS = 0.2
 # 日志配置。
 install_summary_logging(
     level=logging.INFO,
-    fmt='%(asctime)s - %(levelname)s - %(message)s',
+    fmt='%(asctime)s [%(source)s] %(message)s',
+    handlers=[
+        logging.FileHandler(get_unified_log_file(), encoding='utf-8'),
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger(__name__)
 

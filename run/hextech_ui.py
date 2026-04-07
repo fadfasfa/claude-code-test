@@ -3,10 +3,7 @@ import threading
 import subprocess
 import time
 import ctypes
-import psutil
 import requests
-import urllib3
-import base64
 import pandas as pd
 import win32gui
 import sys
@@ -17,6 +14,7 @@ import logging
 from io import BytesIO
 from PIL import Image, ImageTk
 from hero_sync import BASE_DIR, ASSET_DIR, CONFIG_DIR
+from runtime_data import CachedDataFrameLoader, detect_hero_id_column
 
 # 网页服务端口，可通过环境变量覆盖。
 SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
@@ -39,15 +37,12 @@ def _resolve_web_base(timeout: float = 5.0) -> str:
         time.sleep(0.1)
     return f"http://127.0.0.1:{SERVER_PORT}"
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 os.makedirs(ASSET_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)
 
 try:
     from hextech_query import get_latest_csv, display_hero_hextech, main_query, set_last_hero
     from hero_sync import load_champion_core_data, get_advanced_session
-    from backend_refresh import refresh_backend_data
 except ImportError:
     print("缺少核心依赖模块，请确认文件结构完整。")
     sys.exit(1)
@@ -65,10 +60,11 @@ class HextechUI:
 
         self.session = get_advanced_session()
         self.core_data = load_champion_core_data()
+        self._data_loader = CachedDataFrameLoader(get_latest_csv)
+        self._data_cache_key = ("", 0.0)
 
         self.df = self.load_data()
-
-        self.port, self.token = None, None
+        self._applied_data_cache_key = self._data_cache_key
         self.current_hero_ids = set()
         self.image_cache = {}
 
@@ -103,6 +99,7 @@ class HextechUI:
             startupinfo = None
             child_env = os.environ.copy()
             child_env["HEXTECH_BASE_DIR"] = BASE_DIR
+            child_env["HEXTECH_OPEN_BROWSER"] = "0"
             if os.name == 'nt':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -128,7 +125,8 @@ class HextechUI:
         t1 = threading.Thread(target=self.lcu_polling_loop, daemon=True)
         t2 = threading.Thread(target=self.window_sync_loop, daemon=True)
         t3 = threading.Thread(target=self._run_terminal, daemon=True)
-        self.threads.extend([t1, t2, t3])
+        t4 = threading.Thread(target=self._watch_data_loop, daemon=True)
+        self.threads.extend([t1, t2, t3, t4])
         for t in self.threads: t.start()
 
     def _run_terminal(self):
@@ -165,8 +163,7 @@ class HextechUI:
         self.status_label.pack(side=tk.BOTTOM, pady=5)
 
     def check_and_sync_data(self):
-        t = threading.Thread(target=self._silent_sync, daemon=True)
-        t.start()
+        self._set_status("等待网页服务同步数据...", "#a6adc8")
 
     def _set_status(self, text, color):
         if hasattr(self, "status_label") and self.status_label.winfo_exists():
@@ -216,36 +213,24 @@ class HextechUI:
         def _update_on_main():
             with self._df_lock:
                 self.df = new_df
+                self._applied_data_cache_key = self._data_cache_key
             self._set_status(status_text, status_color)
 
         if not self._run_on_ui_thread(_update_on_main):
             with self._df_lock:
                 self.df = new_df
+                self._applied_data_cache_key = self._data_cache_key
 
     def _silent_sync(self):
-        try:
-            refresh_backend_data(force=False, stop_event=self.stop_event)
-            if self.stop_event.is_set():
-                return
-            self._reload_data_into_ui("数据同步完成", "#a6e3a1")
-        except Exception:
-            logger.exception("启动阶段后台刷新失败。")
-            self._run_on_ui_thread(lambda: self._set_status("数据同步失败", "#f38ba8"))
+        return
 
     def load_data(self):
-        latest = get_latest_csv()
-        if not latest: return pd.DataFrame()
-        df = pd.read_csv(latest)
-        df.columns = df.columns.str.replace(' ', '')
-        # 查找编号列并规范化格式。
-        id_col = None
-        for col in df.columns:
-            if '英雄ID' in col or 'ID' in col:
-                id_col = col
-                break
-        if id_col:
-            df[id_col] = df[id_col].astype(str).str.strip().str.replace('.0', '', regex=False)
-        return df
+        previous_key = self._data_loader.cache_key
+        df = self._data_loader.get_df()
+        self._data_cache_key = self._data_loader.cache_key
+        if self._data_cache_key != previous_key and not df.empty:
+            logger.info("UI 已装载最新 CSV：%s", os.path.basename(self._data_loader.cached_path))
+        return df.copy()
 
     def on_hero_click(self, champ_id, hero_name):
         # 处理英雄卡片点击。
@@ -308,35 +293,39 @@ class HextechUI:
                 time.sleep(1)
                 continue
 
-            if not self.port:
-                for proc in psutil.process_iter(['name', 'cmdline']):
-                    try:
-                        if proc.info['name'] == 'LeagueClientUx.exe':
-                            for arg in proc.info['cmdline'] or []:
-                                if arg.startswith('--app-port='): self.port = arg.split('=')[1]
-                                if arg.startswith('--remoting-auth-token='): self.token = arg.split('=')[1]
-                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                        continue
-                time.sleep(2); continue
-
-            headers = {"Authorization": f"Basic {base64.b64encode(f'riot:{self.token}'.encode()).decode()}", "Accept": "application/json"}
             try:
-                res = requests.get(f"https://127.0.0.1:{self.port}/lol-champ-select/v1/session", headers=headers, verify=False, timeout=3)
-                if res.status_code == 200:
-                    data = res.json()
-                    available_ids = {str(c['championId']) for c in data.get('benchChampions', [])}
-                    for p in data.get('myTeam', []):
-                        if p.get('cellId') == data.get('localPlayerCellId') and p.get('championId') != 0:
-                            available_ids.add(str(p['championId']))
+                web_base = _resolve_web_base(timeout=1.0)
+                res = self.session.get(f"{web_base}/api/live_state", timeout=2)
+                if res.status_code != 200:
+                    raise RuntimeError(f"bad status: {res.status_code}")
 
-                    if available_ids != self.current_hero_ids:
-                        self.current_hero_ids = available_ids.copy()
-                        self.root.after(0, self.update_ui, available_ids)
-                else:
-                    self.root.after(0, lambda: [w.destroy() for w in self.list_frame.winfo_children()])
+                payload = res.json()
+                available_ids = {
+                    str(champion_id)
+                    for champion_id in payload.get('champion_ids', [])
+                    if str(champion_id).strip()
+                }
+                if available_ids != self.current_hero_ids:
+                    self.current_hero_ids = available_ids.copy()
+                    self.root.after(0, self.update_ui, available_ids)
             except Exception:
-                self.port = None
+                if self.current_hero_ids:
+                    self.current_hero_ids = set()
+                    self.root.after(0, self.update_ui, set())
             time.sleep(1.5)
+
+    def _watch_data_loop(self):
+        while not self.stop_event.is_set():
+            try:
+                self.load_data()
+                if (
+                    self._data_cache_key != ("", 0.0)
+                    and self._data_cache_key != self._applied_data_cache_key
+                ):
+                    self._reload_data_into_ui("数据同步完成", "#a6e3a1")
+            except Exception:
+                logger.exception("轮询本地数据快照失败。")
+            time.sleep(2)
 
     def _load_and_set_img(self, champ_id, label):
         try:
@@ -351,7 +340,8 @@ class HextechUI:
             else:
                 if champ_id in self.downloading_imgs: return  # 防止同一头像重复下载。
                 self.downloading_imgs.add(champ_id)
-                url = f"https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/champion-icons/{champ_id}.png"
+                web_base = _resolve_web_base(timeout=1.0)
+                url = f"{web_base}/assets/{quote(str(champ_id))}.png"
                 try:
                     res = self.session.get(url, verify=True, timeout=10)
                     if res.status_code != 200:
@@ -387,14 +377,8 @@ class HextechUI:
         with self._df_lock:
             current_df = self.df
 
+        id_col = detect_hero_id_column(current_df)
         for hid in hero_ids:
-            # 动态查找编号列。
-            id_col = None
-            for col in current_df.columns:
-                if '英雄ID' in col or 'ID' in col:
-                    id_col = col
-                    break
-
             if id_col:
                 h_data = current_df[current_df[id_col]==hid]
                 if not h_data.empty:
@@ -482,26 +466,7 @@ class HextechUI:
 
 
     def start_background_scraper(self):
-        # 启动每 4 小时循环一次的后台抓取线程。
-        def scraper_loop():
-            while not self.stop_event.is_set():
-                try:
-                    refresh_backend_data(force=False, stop_event=self.stop_event)
-                    if self.stop_event.is_set(): return
-
-                    self._reload_data_into_ui("数据同步完成", "#a6e3a1")
-                except Exception:
-                    logger.exception("定时后台刷新失败。")
-                    self._run_on_ui_thread(lambda: self._set_status("后台刷新失败", "#f38ba8"))
-
-                # 等待 4 小时，也就是 14400 秒。
-                for _ in range(14400):
-                    if self.stop_event.is_set():
-                        break
-                    time.sleep(1)
-
-        scraper_thread = threading.Thread(target=scraper_loop, daemon=True)
-        scraper_thread.start()
+        return
 
     def on_close(self):
         print("\n[System] 收到退出信号，正在等待数据安全落盘...")

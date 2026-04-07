@@ -17,6 +17,8 @@ version_info.txt
 
 # Logs
 *.log
+config/Champion_List_Cache.json
+config/Champion_Hextech_Cache.json
 
 # IDE
 .vscode/

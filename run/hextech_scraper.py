@@ -263,18 +263,31 @@ def main_scraper(stop_event=None):
             logging.error("获取英雄统计数据失败")
             return False
         stats_list = stats_response.json()
+        champion_cache = build_precomputed_champion_list_from_stats(stats_list, core_data)
+        if champion_cache:
+            write_precomputed_champion_list(champion_cache, "champions-stats.json")
     except (requests.RequestException, ValueError, json.JSONDecodeError) as e:
         logging.error(f"抓取端握手异常：{e}")
         return False
 
     all_rows = []
+    precomputed_hextech = {}
     lock = threading.Lock()
+    from augment_icon_refresh import build_augment_catalog_lookup
+    from data_processor import process_hextechs_data
+    from precomputed_api_cache import (
+        build_precomputed_champion_list_from_stats,
+        write_precomputed_champion_list,
+        write_precomputed_hextech_map,
+    )
+    catalog_lookup = build_augment_catalog_lookup()
 
     def fetch_champ(champ):
         c_id = str(champ.get('championId', ''))
         c_name = core_data.get(c_id, {}).get("name", c_id)
         url = f"https://hextech.dtodo.cn/zh-CN/champion-stats/{c_id}"
         champ_rows = []
+        hero_payload = None
         try:
             time.sleep(random.uniform(0.5, 1.5))
 
@@ -290,12 +303,20 @@ def main_scraper(stop_event=None):
                         c_name,
                         champ
                     )
+                    if champ_rows:
+                        hero_payload = process_hextechs_data(
+                            pd.DataFrame(champ_rows),
+                            c_name,
+                            catalog_lookup=catalog_lookup,
+                            use_runtime_cache=False,
+                            log_columns=False,
+                        )
                 except ValueError as e:
                     logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
         except requests.RequestException as e:
             logging.error(f"[{c_name}] HTTP 获取失败：{e} | URL={url} | 堆栈={traceback.format_exc().strip()}")
 
-        return c_name, champ_rows
+        return c_name, champ_rows, hero_payload
 
     logging.info("海克斯抓取执行中：heroes=%s workers=%s", len(stats_list), 16)
     with ThreadPoolExecutor(max_workers=16) as executor:
@@ -309,10 +330,12 @@ def main_scraper(stop_event=None):
                 return False
 
             try:
-                _, rows = f.result()
+                hero_name, rows, hero_payload = f.result()
                 with lock:
                     if rows:
                         all_rows.extend(rows)
+                        if hero_payload:
+                            precomputed_hextech[hero_name] = hero_payload
             except Exception as e:
                 logging.error(f"线程结果收集失败：{e}")
 
@@ -351,6 +374,9 @@ def main_scraper(stop_event=None):
         # 使用操作系统级原子替换
         os.replace(tmp_csv, output_csv)
         # --- 原子化写入结束 ---
+
+        if precomputed_hextech:
+            write_precomputed_hextech_map(precomputed_hextech, os.path.basename(output_csv))
 
         update_status_file()
         cleanup_old_csvs()
