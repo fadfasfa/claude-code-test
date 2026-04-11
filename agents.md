@@ -91,7 +91,7 @@ merge_archive_path: .ai_workflow/agents_history/local-cx-task-final-auto-merge-v
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **claudecode** (826 symbols, 2295 relationships, 67 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **claudecode** (889 symbols, 2461 relationships, 71 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

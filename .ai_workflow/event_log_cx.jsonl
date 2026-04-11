@@ -54,3 +54,8 @@
 {"ts":"2026-04-07T20:45:25","step":"post-commit AST scan","endpoint":"cx","commit":"8e8eab5d94201be3de93de0f832a73d57b3fead6","branch":"cx-run-dedup-services-20260407","status":"PASSED","violations":"none|"}
 {"ts":"2026-04-07T21:02:21","step":"post-commit AST scan","endpoint":"cx","commit":"07e36c59b413293341da8046ea072dd01c9af504","branch":"cx-run-dedup-services-20260407","status":"PASSED","violations":"none|"}
 {"ts":"2026-04-11T12:52:51","step":"post-commit AST scan","endpoint":"cx","commit":"cc49f98913e7d4b1f1ceee2ace961e880c0df637","branch":"cx-run-dedup-services-20260407","status":"PASSED","violations":"none|"}
+{"ts":"2026-04-11T18:24:19","step":"post-commit AST scan","endpoint":"cx","commit":"f93b8c07b359508746c11ce58682c996f8392f1a","branch":"cx-ARCH-REFACTOR-DOMAIN-ISOLATION-20260412","status":"PASSED","violations":"none|"}
+{"ts":"2026-04-11T18:28:50","step":"post-commit AST scan","endpoint":"cx","commit":"f6986d7de9a9f909b9705a0e4dc5ed2ecee89a4f","branch":"cx-ARCH-REFACTOR-DOMAIN-ISOLATION-20260412","status":"PASSED","violations":"none|"}
+{"ts":"2026-04-11T18:43:34","step":"post-commit AST scan","endpoint":"cx","commit":"21dcc9d714593ee0f3bca205f0156c1cb9fd1277","branch":"cx-ARCH-REFACTOR-DOMAIN-ISOLATION-20260412","status":"PASSED","violations":"none|"}
+{"ts":"2026-04-11T20:35:49","step":"post-commit AST scan","endpoint":"cx","commit":"e7e8533cfa0705d4576248214bb689c350fbfbe4","branch":"cx-portable-manifest-startup-fix","status":"PASSED","violations":"none|"}
+{"ts":"2026-04-12T01:13:06","step":"post-commit AST scan","endpoint":"cx","commit":"4f3884ba974e2132df0f2e87908f8078a7510e19","branch":"cx-remove-old-cdn-fallback","status":"PASSED","violations":"none|"}
