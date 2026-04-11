@@ -1,4 +1,30 @@
-"""稳定资源同步与运行时环境引导。"""
+"""稳定资源同步与运行时环境引导。
+
+文件职责：
+- 初始化运行目录与 bundle 资源播种
+- 同步英雄核心资料、海克斯映射和版本号
+- 后台补齐英雄头像等稳定资源
+
+核心输入：
+- Data Dragon、Hextech、CommunityDragon 等远端资源
+- 本地 `config/`、`assets/` 和包内稳定资源
+
+核心输出：
+- `Champion_Core_Data.json`
+- `Augment_Full_Map.json`
+- `Augment_Icon_Map.json`
+- `hero_version.txt`
+
+主要依赖：
+- `processing.alias_utils`
+- `scraping.icon_resolver`
+- `tools.runtime_bundle`
+- `tools.log_utils`
+
+维护提醒：
+- 这里负责稳定资源层，不负责高频战报 CSV 与协同数据抓取
+- 新增持久化文件时，要同步评估 bundle 白名单和冷启动兼容性
+"""
 
 import requests
 import json
@@ -29,7 +55,7 @@ def _get_script_dir() -> str:
 
 
 def bootstrap_runtime_environment() -> str:
-    # 规范运行时根目录，兼容终端、编辑器和打包程序。
+    """规范运行时根目录，兼容终端、编辑器与打包程序入口。"""
     runtime_base = os.getenv("HEXTECH_BASE_DIR", "").strip()
     if runtime_base:
         runtime_base = os.path.abspath(runtime_base)
@@ -217,6 +243,7 @@ _sync_lock = threading.Lock()
 _hero_asset_sync_thread: Optional[threading.Thread] = None
 
 def get_advanced_session():
+    """创建带重试和统一请求头的会话，供稳定资源同步链路复用。"""
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -278,6 +305,7 @@ def _sync_champion_assets_async(core_data: dict, version: str) -> None:
     _hero_asset_sync_thread.start()
 
 def sync_hero_data():
+    """同步英雄核心资料、海克斯映射与版本文件，并在成功后异步补头像资源。"""
     global _last_sync_time
     sync_succeeded = False
     current_version = ""
@@ -442,8 +470,8 @@ def sync_hero_data():
         _sync_champion_assets_async(core_data, current_version)
     return sync_succeeded
 
-# （高优先级修复）加载函数增加文件存在性检查，文件丢失时强制重新同步
 def load_champion_core_data():
+    """读取英雄核心资料；文件缺失时强制触发一次稳定资源同步。"""
     global _last_sync_time
     if not os.path.exists(CORE_DATA_FILE):
         with _sync_lock:
@@ -454,6 +482,7 @@ def load_champion_core_data():
         return json.load(f)
 
 def load_augment_map():
+    """读取海克斯等级映射；文件缺失时强制触发一次稳定资源同步。"""
     global _last_sync_time
     if not os.path.exists(AUGMENT_MAP_FILE):
         with _sync_lock:
@@ -478,13 +507,7 @@ def _collect_missing_assets(core_data: dict) -> list:
 
 
 def cleanup_missing_assets(max_retries: int = 3, core_data: Optional[dict] = None) -> list:
-    # 清理并重新下载缺失的英雄头像资源。
-    #
-    # 参数：
-    # max_retries：单个资源最大重试次数
-    #
-    # 返回：
-    # 仍然缺失的资源列表 [(key, name, en_name), ...]
+    """扫描并补齐缺失的英雄头像资源，返回仍失败的资源清单。"""
     if core_data is None:
         core_data = load_champion_core_data()
     if not core_data:

@@ -1,4 +1,26 @@
-"""海克斯图标查找、缓存与远端兜底。"""
+"""海克斯图标查找、缓存与远端兜底。
+
+文件职责：
+- 统一解析海克斯图标文件名、清单缓存和本地资源路径
+- 在本地图标缺失时执行 CommunityDragon / apexlol 远端回退
+
+核心输入：
+- `Augment_Icon_Map.json`
+- `Augment_Apexlol_Map.json`
+- 本地 `assets/` 目录
+
+核心输出：
+- 本地图标文件名
+- 本地图标 URL 或远端兜底 URL
+- 批量预取结果
+
+主要依赖：
+- 本地 `config/` 和 `assets/`
+- CommunityDragon 与 apexlol
+
+维护提醒：
+- 资源缓存策略和失败 TTL 要与 Web / UI 热路径一起评估，避免重复下载
+"""
 
 from __future__ import annotations
 
@@ -49,6 +71,7 @@ def normalize_augment_filename(value: str) -> str:
 
 
 def find_existing_augment_asset_filename(asset_dir: Optional[str], candidate_filename: str) -> Optional[str]:
+    """在本地资源目录中查找最匹配的海克斯图标文件名。"""
     asset_dir = _resolve_assets_dir(asset_dir)
     candidate = normalize_augment_filename(candidate_filename)
     if not candidate:
@@ -84,6 +107,7 @@ def find_existing_augment_asset_filename(asset_dir: Optional[str], candidate_fil
 
 
 def load_augment_icon_map(config_dir: Optional[str] = None, force_refresh: bool = False) -> dict:
+    """读取海克斯图标映射并按文件 mtime 做内存缓存。"""
     global _ICON_MAP_CACHE
     config_dir = _resolve_config_dir(config_dir)
     icon_map_path = os.path.join(config_dir, "Augment_Icon_Map.json")
@@ -133,6 +157,7 @@ def find_augment_icon_filename(icon_map: dict, lookup_name: str, asset_dir: Opti
 
 
 def build_local_augment_icon_url(hextech_name: str, config_dir: Optional[str] = None) -> str:
+    """优先返回本地图标 URL；本地无命中时回退 apexlol 远端图标地址。"""
     config_dir = _resolve_config_dir(config_dir)
     request_name = str(hextech_name).strip()
     asset_name = request_name
@@ -208,6 +233,7 @@ def _mark_augment_icon_failure(icon_filename: str) -> None:
 
 
 def ensure_augment_icon_cached(icon_filename: str, asset_dir: Optional[str] = None, force_refresh: bool = False) -> Optional[str]:
+    """确保指定海克斯图标已缓存在本地资源目录，必要时执行远端下载。"""
     asset_dir = _resolve_assets_dir(asset_dir)
     normalized_filename = normalize_augment_filename(icon_filename)
     if not normalized_filename:
@@ -254,6 +280,7 @@ def batch_prefetch_augment_icons(
     max_workers: int = 8,
     stop_event=None,
 ) -> dict:
+    """并发预取一批海克斯图标，并返回成功/失败统计。"""
     asset_dir = _resolve_assets_dir(asset_dir)
     unique_filenames = []
     seen = set()
@@ -301,6 +328,7 @@ def _normalize_apexlol_hextech_slug(value: str) -> str:
 
 
 def load_apexlol_hextech_map(config_dir: Optional[str] = None, force_refresh: bool = False) -> dict:
+    """加载或抓取 apexlol 海克斯 slug 映射，供远端图标兜底使用。"""
     global _APEXLOL_MAP_CACHE
     config_dir = _resolve_config_dir(config_dir)
     map_path = os.path.join(config_dir, "Augment_Apexlol_Map.json")
@@ -370,6 +398,7 @@ def load_apexlol_hextech_map(config_dir: Optional[str] = None, force_refresh: bo
 
 
 def resolve_apexlol_hextech_icon_url(hextech_name: str, config_dir: Optional[str] = None) -> str:
+    """把海克斯名称解析成 apexlol 图标 URL，作为本地图标缺失时的最终回退。"""
     slug_map = load_apexlol_hextech_map(config_dir=config_dir)
     candidates = [str(hextech_name).strip(), normalize_augment_name(hextech_name)]
     for candidate in candidates:

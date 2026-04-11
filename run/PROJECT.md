@@ -18,6 +18,7 @@ Hextech 伴生系统是一个本地运行的《英雄联盟》数据查询工具
   - `processing/`：本地数据处理
   - `scraping/`：远端抓取、自愈和稳定资源同步
   - `tools/`：开发、构建与发布工具
+- Python 模块统一采用“模块头注释 + 关键函数短 docstring”维护规范
 
 ### 2. 核心功能
 
@@ -143,6 +144,7 @@ flowchart TD
 | 日期 | workflow_id | 执行端 | 变更原因 | 变更摘要 | 影响文件 | 审计结果 | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 2026-04-11 | cx-run-web-ui-performance-refactor | cx | Web / UI 结构收口、注释统一、文档同步 | 将 Web 拆为启动壳 / 路由层 / 运行时层，将桌面端拆为 UI 主类 / 运行时辅助层，修正 `dev_checks.py` 执行入口，并把 `README.md` / `PROJECT.md` 更新为当前真实结构 | `display/web_server.py`、`display/web_api.py`、`display/web_runtime.py`、`display/hextech_ui.py`、`display/ui_runtime.py`、`tools/dev_checks.py`、`README.md`、`PROJECT.md` | passed | 已完成编译、自检与导入验证 |
+| 2026-04-11 | cx-run-commentary-and-doc-harden | cx | 为 `run/` Python 模块补统一模块头和关键函数说明，收紧运行与打包文档 | 统一补充 Web 生命周期、LCU 轮询、CSV/快照读取、UI 后台线程、资源缓存回退和打包主流程的 docstring，并同步维护文档说明 | `display/web_runtime.py`、`display/ui_runtime.py`、`processing/runtime_store.py`、`processing/orchestrator.py`、`scraping/version_sync.py`、`scraping/icon_resolver.py`、`tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`README.md`、`PROJECT.md` | pending | 本轮只改注释与文档，不调整运行逻辑 |
 
 ---
 

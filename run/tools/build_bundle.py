@@ -2,8 +2,24 @@ from __future__ import annotations
 
 """发布包构建工具。
 
-负责把稳定资源、静态页面和必要配置打入 bundle，并生成 PyInstaller 构建命令。
-与运行时逻辑分离，所有依赖和排除列表都在这里统一维护，避免入口脚本分散配置。
+文件职责：
+- 串联构建前清理、bundle 白名单准备、PyInstaller 打包和产物整理
+
+核心输入：
+- `tools.bundle_manifest`
+- `tools.cleanup_runtime`
+- 根目录稳定资源和入口脚本
+
+核心输出：
+- `dist/` 下按日期整理的可分发目录
+
+主要依赖：
+- PyInstaller
+- bundle manifest 和 runtime bundle 准备逻辑
+
+维护提醒：
+- 这里负责打包主流程，不负责运行时资源读写
+- 新增隐藏依赖、白名单或排除模块时，要同步更新文档和开发自检
 """
 
 import shutil
@@ -51,6 +67,7 @@ def print_warn(msg: str):
 
 
 def cleanup() -> None:
+    """清理历史构建输出和 Python 缓存，保证打包环境干净。"""
     print_step("清理旧构建文件")
     for target in cleanup_build_outputs():
         print_check(f"已删除：{target}")
@@ -59,6 +76,7 @@ def cleanup() -> None:
 
 
 def generate_version_info() -> Path:
+    """生成供 PyInstaller 注入的 Windows 版本信息文件。"""
     print_step("生成版本信息")
     version_file = BASE_DIR / "version_info.txt"
     version_content = f"""# UTF-8
@@ -99,6 +117,7 @@ VSVersionInfo(
 
 
 def prepare_runtime_bundle() -> Path:
+    """生成 bundle 运行时白名单目录，供构建命令直接打入产物。"""
     print_step("准备稳定基础资源")
     bundle_root = prepare_bundle_runtime(BASE_DIR, BUILD_DIR)
     print_check("静态页面已加入打包白名单")
@@ -109,6 +128,7 @@ def prepare_runtime_bundle() -> Path:
 
 
 def build_exe(version_file: Path, bundle_root: Path) -> Path:
+    """执行 PyInstaller 主构建流程，并返回原始产物目录。"""
     print_step("构建可执行文件")
     cmd = [
         "pyinstaller",
@@ -156,6 +176,7 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
 
 
 def finalize_output(exe_dir: Path) -> Path:
+    """整理最终输出目录，移除旧重复目录并按日期命名产物。"""
     print_step("最终优化")
     final_dir = DIST_DIR / f"Hextech_伴生系统_{datetime.now().strftime('%Y%m%d')}"
     if final_dir.exists():
@@ -169,6 +190,7 @@ def finalize_output(exe_dir: Path) -> Path:
 
 
 def main():
+    """打包工具主流程入口。"""
     print("\n" + "=" * 60)
     print("  Hextech 伴生系统打包程序")
     print(f"  构建时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

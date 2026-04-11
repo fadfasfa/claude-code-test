@@ -2,8 +2,25 @@ from __future__ import annotations
 
 """打包白名单清单生成器。
 
-负责枚举稳定配置、图片资源和静态页面，并生成 bundle manifest，
-供构建流程和打包后运行时共同消费。
+文件职责：
+- 枚举稳定配置、静态页面和图片资源
+- 生成构建期与运行期共用的 bundle manifest
+
+核心输入：
+- `config/`
+- `assets/`
+- `display/static/`
+
+核心输出：
+- bundle manifest 字典
+- `_bundle_runtime/` 目录结构
+
+主要依赖：
+- `shutil`
+- `json`
+
+维护提醒：
+- 这里只白名单稳定资源，不应把高频运行态文件误打进包里
 """
 
 import json
@@ -35,6 +52,7 @@ def iter_stable_asset_files(asset_dir: Path) -> Iterable[Path]:
 
 
 def build_bundle_manifest(base_dir: Path) -> dict:
+    """基于当前目录结构生成稳定资源白名单 manifest。"""
     config_dir = base_dir / "config"
     asset_dir = base_dir / "assets"
     static_dir = base_dir / "display" / "static"
@@ -55,6 +73,7 @@ def build_bundle_manifest(base_dir: Path) -> dict:
 
 
 def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
+    """把 manifest 对应的稳定资源复制到临时 bundle 目录。"""
     bundle_root = build_dir / "_bundle_runtime"
     if bundle_root.exists():
         shutil.rmtree(bundle_root)

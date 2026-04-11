@@ -2,8 +2,23 @@ from __future__ import annotations
 
 """运行时数据定位与 DataFrame 缓存。
 
-集中管理 CSV 优先级、资源定位、DataFrame 归一和预计算缓存访问入口，
-为 Web / UI / 处理层提供统一的数据读取面。
+文件职责：
+- 统一管理运行时文件定位、CSV 读取优先级和 DataFrame 缓存
+
+核心输入：
+- 运行目录 `config/`
+- 打包内稳定资源目录 `RESOURCE_DIR`
+
+核心输出：
+- 标准化后的 DataFrame
+- 运行时文件路径解析结果
+
+主要依赖：
+- `scraping.version_sync`
+- `processing.precomputed_cache`
+
+维护提醒：
+- Web 和 UI 对 CSV 的读取都应经由这里，避免各自实现路径和缓存策略
 """
 
 import glob
@@ -19,6 +34,7 @@ from scraping.version_sync import CONFIG_DIR, RESOURCE_DIR
 
 
 def runtime_priority_paths(relative_name: str) -> list[str]:
+    """返回运行时优先路径列表，先查本地持久化目录，再查 bundle 内置资源。"""
     runtime_path = Path(CONFIG_DIR) / relative_name
     bundled_path = Path(RESOURCE_DIR) / "config" / relative_name
     candidates = [str(runtime_path)]
@@ -29,6 +45,7 @@ def runtime_priority_paths(relative_name: str) -> list[str]:
 
 
 def resolve_runtime_file(relative_name: str) -> Optional[str]:
+    """按运行时优先级解析一个文件的实际可用路径。"""
     for candidate in runtime_priority_paths(relative_name):
         if os.path.exists(candidate):
             return candidate
@@ -36,6 +53,7 @@ def resolve_runtime_file(relative_name: str) -> Optional[str]:
 
 
 def get_latest_csv() -> Optional[str]:
+    """返回最新战报 CSV 的路径，供 Web、UI 和预计算缓存共用。"""
     files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv"))
     if not files:
         return None
@@ -52,6 +70,7 @@ def detect_hero_id_column(df: pd.DataFrame) -> Optional[str]:
 
 
 def normalize_runtime_df(df: pd.DataFrame) -> pd.DataFrame:
+    """统一列名和英雄 ID 字段格式，降低上层视图适配分支。"""
     if df.empty:
         return df
 
@@ -94,6 +113,7 @@ class CachedDataFrameLoader:
         return self._cache.mtime
 
     def get_df(self, force_refresh: bool = False) -> pd.DataFrame:
+        """按文件路径与 mtime 做缓存，必要时重新解析最新 CSV。"""
         latest = self._latest_path_getter()
         if not latest:
             return pd.DataFrame()

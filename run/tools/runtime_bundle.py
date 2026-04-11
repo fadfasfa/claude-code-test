@@ -2,7 +2,21 @@ from __future__ import annotations
 
 """打包后稳定资源播种工具。
 
-负责把 bundle 内置的稳定资源按需播种到运行目录，避免冷启动缺少基础配置或图片。
+文件职责：
+- 在打包产物首次运行时，把 bundle 内置的稳定资源播种到运行目录
+
+核心输入：
+- bundle manifest
+- bundle 内 `config/` 与 `assets/`
+
+核心输出：
+- 运行目录中的稳定配置和图片资源
+
+主要依赖：
+- `tools.bundle_manifest`
+
+维护提醒：
+- 只补缺失文件，不覆盖运行中已生成的新文件
 """
 
 import json
@@ -28,6 +42,7 @@ def seed_bundled_resources(
     runtime_config_dir: str | Path,
     runtime_asset_dir: str | Path,
 ) -> None:
+    """按 manifest 把 bundle 稳定资源播种到运行目录，仅补缺失文件。"""
     bundle_base = Path(bundle_root)
     if not bundle_base.exists():
         return

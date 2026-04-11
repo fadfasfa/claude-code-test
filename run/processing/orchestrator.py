@@ -2,8 +2,21 @@ from __future__ import annotations
 
 """运行时编排层。
 
-这个模块把抓取、自愈、预计算缓存重建等后台能力收敛成少量入口，
-供桌面端、Web 端和开发验证脚本统一调用。
+文件职责：
+- 收敛抓取、自愈、预计算缓存重建和启动状态判断等后台编排入口
+
+核心输入：
+- 当前运行目录中的核心配置、CSV 和自愈状态
+
+核心输出：
+- 统一的后台刷新入口与就绪状态判断结果
+
+主要依赖：
+- `scraping.*`
+- `processing.precomputed_cache`
+
+维护提醒：
+- 上层只应调用这里暴露的编排入口，不应在 UI 或 Web 中直接拼装多段抓取流程
 """
 
 import os
@@ -90,6 +103,11 @@ def rebuild_api_cache_if_needed(force: bool = False) -> bool:
 
 
 def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
+    """执行一次运行时自愈与后台刷新。
+
+    这个入口用于 Web 启动、自检和桌面后台线程；它本身不直接拼接多段抓取逻辑，
+    而是委托 `heal_missing_artifacts` 按缺失产物清单执行最小修复。
+    """
     report = heal_missing_artifacts(force=force, stop_event=stop_event)
     repaired = set(report.get("repaired", []))
     if force or repaired:

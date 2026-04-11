@@ -1,11 +1,25 @@
 """Web 服务运行时支撑层。
 
-这个模块承载 Web 服务的长生命周期状态和热路径辅助逻辑，包括：
-- 端口写回、受管浏览器打开与资源目录定位
-- LCU 轮询、CSV 监视与 WebSocket 广播
-- 运行时缓存、冷启动快照和资源回退
+文件职责：
+- 承载 Web 服务的长生命周期状态和请求热路径辅助逻辑
+- 统一管理 LCU 轮询、CSV 监视、冷启动快照和资源缓存回退
 
-这里不定义 FastAPI 路由，只为路由层和启动壳提供高复用、低耦合的运行时能力。
+核心输入：
+- 本地 `config/` 与 `assets/` 目录
+- LCU 本地接口、远端快照接口和海克斯图标资源
+
+核心输出：
+- Web API 可直接消费的运行时数据、缓存结果和广播事件
+
+主要依赖：
+- `processing.runtime_store`
+- `processing.orchestrator`
+- `scraping.version_sync`
+- `scraping.icon_resolver`
+
+维护提醒：
+- 这里不定义 FastAPI 路由，只提供路由层和启动壳依赖的运行时能力
+- 涉及轮询频率、缓存 TTL 和资源回退策略的改动都应优先回归 Web 热路径
 """
 
 from __future__ import annotations
@@ -117,6 +131,7 @@ def write_active_web_port(port: int) -> None:
 
 
 def resolve_remote_augment_icon_url(catalog_entry: Optional[dict], fallback_name: str) -> str:
+    """解析海克斯图标的远端兜底地址，优先使用目录清单，再回退到 apexlol。"""
     if catalog_entry:
         manifest_filename = str(catalog_entry.get("filename", "")).strip().lower()
         if manifest_filename:
@@ -138,6 +153,7 @@ def resolve_remote_augment_icon_url(catalog_entry: Optional[dict], fallback_name
 
 
 def download_augment_icon_from_remote(augment_name: str, icon_filename: str) -> Optional[str]:
+    """按文件名把远端海克斯图标下载到本地资源目录。"""
     remote_url = resolve_remote_augment_icon_url({"name": augment_name, "filename": icon_filename}, augment_name)
     if not remote_url:
         return None
@@ -165,6 +181,7 @@ def download_augment_icon_from_remote(augment_name: str, icon_filename: str) -> 
 
 
 def queue_augment_icon_cache(icon_filename: str, augment_name: str = "") -> None:
+    """把图标缓存任务放入后台线程，避免接口热路径阻塞。"""
     normalized = str(icon_filename or "").strip()
     if not normalized:
         return
@@ -379,6 +396,7 @@ def get_ddragon_version() -> str:
 
 
 def get_df() -> pd.DataFrame:
+    """读取最新战报 CSV，并复用内存缓存避免重复解析。"""
     try:
         return _csv_loader.get_df()
     except Exception as exc:
@@ -387,6 +405,7 @@ def get_df() -> pd.DataFrame:
 
 
 async def get_df_with_refresh(timeout: float = 25.0) -> pd.DataFrame:
+    """在 CSV 缺失时触发一次后台刷新，并在超时前轮询等待结果。"""
     df = get_df()
     if not df.empty:
         return df
@@ -414,6 +433,7 @@ _live_hextech_cache = JSONFileCache()
 
 
 def get_live_champion_snapshot_df(force_refresh: bool = False) -> pd.DataFrame:
+    """读取远端轻量英雄快照，作为冷启动或本地 CSV 缺失时的回退数据源。"""
     cache_path = "live_champion_snapshot"
     now = time.time()
     if (
@@ -468,6 +488,7 @@ def get_live_champion_snapshot_df(force_refresh: bool = False) -> pd.DataFrame:
 
 
 def get_live_hextech_snapshot_df(hero_name: str, force_refresh: bool = False) -> pd.DataFrame:
+    """按单英雄拉取海克斯快照，并缓存短周期结果用于详情页回退。"""
     hero_name = resolve_canonical_hero_name(hero_name)
     if not hero_name:
         return pd.DataFrame()
@@ -709,6 +730,7 @@ def _urllib3_disable_warnings() -> None:
 
 
 async def lcu_polling_loop() -> None:
+    """持续轮询 LCU 选人会话，并把英雄可用集与锁定事件广播给前端。"""
     _urllib3_disable_warnings()
     while True:
         try:
@@ -799,6 +821,7 @@ async def lcu_polling_loop() -> None:
 
 
 async def csv_watcher_loop() -> None:
+    """监视最新战报 CSV 的修改时间，并在文件切换后广播数据刷新事件。"""
     prev_mtime = 0.0
     while True:
         try:
@@ -815,6 +838,11 @@ async def csv_watcher_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_app):
+    """Web 生命周期钩子。
+
+    启动时拉起一次后台自愈/刷新，并创建 LCU 与 CSV 两条长生命周期任务；
+    退出时统一取消这些后台任务，避免悬挂协程。
+    """
     scraper_thread = threading.Thread(
         target=refresh_backend_data,
         kwargs={"force": False},
@@ -855,4 +883,3 @@ def maybe_open_browser(port: int) -> None:
     if os.getenv("HEXTECH_OPEN_BROWSER", "1").lower() in {"0", "false", "no"}:
         return
     open_managed_browser(f"http://127.0.0.1:{port}", replace_existing=True)
-

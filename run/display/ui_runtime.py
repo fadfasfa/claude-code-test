@@ -1,12 +1,22 @@
 """桌面 UI 运行时辅助层。
 
-这个模块承载桌面端的后台协同逻辑，包括：
-- Web 服务拉起与端口解析
-- LCU / Web live_state 轮询
-- 终端查询线程、后台刷新线程、窗口同步线程
-- 头像下载与图片缓存
+文件职责：
+- 承载桌面端后台线程、窗口联动和资源加载等非纯界面逻辑
 
-它不负责 Tk 组件结构定义，只操作 `HextechUI` 已持有的状态与控件。
+核心输入：
+- `HextechUI` 主类持有的状态、控件和会话对象
+- Web live_state、LCU 本地接口和本地图片资源
+
+核心输出：
+- 桌面端后台刷新、英雄联动、图片缓存和窗口状态同步
+
+主要依赖：
+- `processing.query_terminal`
+- `scraping.version_sync`
+
+维护提醒：
+- Tk 组件结构仍应留在 `display.hextech_ui`
+- 新增后台线程、轮询或资源下载逻辑优先集中在本文件
 """
 
 from __future__ import annotations
@@ -174,6 +184,7 @@ def run_terminal_loop(ui: "HextechUI") -> None:
 
 
 def run_silent_sync(ui: "HextechUI", refresh_backend_data) -> None:
+    """启动阶段执行一次静默刷新，并在完成后把结果回灌到 UI。"""
     try:
         refresh_backend_data(force=False, stop_event=ui.stop_event)
         if ui.stop_event.is_set():
@@ -231,6 +242,7 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
 
 
 def lcu_polling_loop(ui: "HextechUI") -> None:
+    """优先读取 Web live_state，失败时回退本地 LCU，持续同步可用英雄集合。"""
     disable_lcu_https_warning()
     while not ui.stop_event.is_set():
         if ui.pause_event.is_set():
@@ -259,6 +271,7 @@ def lcu_polling_loop(ui: "HextechUI") -> None:
 
 
 def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
+    """加载英雄头像，优先命中本地缓存，缺失时远端下载后回写到本地。"""
     try:
         if not label.winfo_exists():
             return
@@ -296,6 +309,7 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
 
 
 def window_sync_loop(ui: "HextechUI") -> None:
+    """根据客户端和游戏窗口前后台状态控制伴生窗口显隐与吸附。"""
     while not ui.stop_event.is_set():
         if ui.pause_event.is_set():
             time.sleep(1)
@@ -327,6 +341,7 @@ def window_sync_loop(ui: "HextechUI") -> None:
 
 
 def start_background_scraper(ui: "HextechUI", refresh_backend_data) -> None:
+    """启动桌面端后台刷新线程，按固定周期执行自愈和数据同步。"""
     def scraper_loop():
         while not ui.stop_event.is_set():
             try:
