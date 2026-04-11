@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+"""发布包构建工具。
+
+负责把稳定资源、静态页面和必要配置打入 bundle，并生成 PyInstaller 构建命令。
+与运行时逻辑分离，所有依赖和排除列表都在这里统一维护，避免入口脚本分散配置。
+"""
+
 import shutil
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from services.bundle_manifest import prepare_bundle_runtime
+from tools.bundle_manifest import prepare_bundle_runtime
 from tools.cleanup_runtime import cleanup_build_outputs, cleanup_python_caches
 
 
@@ -126,6 +132,7 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
         "--hidden-import", "psutil",
         "--hidden-import", "fastapi",
         "--hidden-import", "uvicorn",
+        "--hidden-import", "filelock",
         "--collect-submodules", "uvicorn",
         "hextech_ui.py",
     ]
