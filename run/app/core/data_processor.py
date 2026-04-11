@@ -103,18 +103,25 @@ def _invalidate_stale_caches(df: pd.DataFrame) -> None:
         _cache_metadata.pop(key, None)
 
 
-def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
+def process_champions_data(
+    df: pd.DataFrame,
+    *,
+    use_runtime_cache: bool = True,
+    log_columns: bool = True,
+) -> List[Dict[str, Any]]:
     # 计算全英雄榜单，按贝叶斯平滑和标准分综合排序。
     if df.empty:
         return []
 
-    logging.info("处理英雄数据列：%s", df.columns.tolist())
+    if log_columns:
+        logging.info("处理英雄数据列：%s", df.columns.tolist())
 
     df_hash = _compute_df_hash(df)
-    cached_result = _get_from_cache(_champion_cache_pool, df_hash)
-    if cached_result is not None:
-        logging.debug(f"命中英雄大盘缓存，哈希={df_hash}")
-        return cached_result
+    if use_runtime_cache:
+        cached_result = _get_from_cache(_champion_cache_pool, df_hash)
+        if cached_result is not None:
+            logging.debug(f"命中英雄大盘缓存，哈希={df_hash}")
+            return cached_result
 
     # 获取英雄映射数据
     name_to_id, name_to_en = _get_champion_maps()
@@ -164,7 +171,8 @@ def process_champions_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
                 'Z_出场率': float(row['Z_出场率']) if pd.notna(row['Z_出场率']) else 0.0
             })
 
-        _set_to_cache(_champion_cache_pool, df_hash, result, df)
+        if use_runtime_cache:
+            _set_to_cache(_champion_cache_pool, df_hash, result, df)
         return result
 
     except Exception as e:
@@ -321,10 +329,18 @@ def _build_catalog_icon_url(entry: Optional[Dict[str, Any]], hextech_name: str) 
     return build_local_augment_icon_url(hextech_name)
 
 
-def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[str, Any]]]:
+def process_hextechs_data(
+    df: pd.DataFrame,
+    name: str,
+    *,
+    catalog_lookup: Optional[Dict[str, Any]] = None,
+    use_runtime_cache: bool = True,
+    log_columns: bool = True,
+) -> Dict[str, List[Dict[str, Any]]]:
     # 计算单英雄海克斯结果，返回总榜、综合榜、纯胜率榜和分阶级榜单
     # 计算时会引入置信度衰减，避免低样本数据干扰排序
-    logging.info("处理海克斯数据列：%s", df.columns.tolist())
+    if log_columns:
+        logging.info("处理海克斯数据列：%s", df.columns.tolist())
 
     if df.empty:
         return {
@@ -339,15 +355,16 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
     # ========== 缓存检查 ==========
     df_hash = _compute_df_hash(df)
     cache_key = (name, df_hash)
-    cached_result = _get_from_cache(_hextech_cache_pool, cache_key)
-    if cached_result is not None:
-        logging.debug(f"命中海克斯缓存，英雄={name}, 哈希={df_hash}")
-        return cached_result
+    if use_runtime_cache:
+        cached_result = _get_from_cache(_hextech_cache_pool, cache_key)
+        if cached_result is not None:
+            logging.debug(f"命中海克斯缓存，英雄={name}, 哈希={df_hash}")
+            return cached_result
 
     try:
         # 创建副本避免修改原始数据
         data = df.copy()
-        catalog_lookup = build_augment_catalog_lookup()
+        effective_catalog_lookup = catalog_lookup or build_augment_catalog_lookup()
 
         # 确保必要列存在
         required_cols = ['英雄名称', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差']
@@ -431,7 +448,7 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
         # ========== 辅助函数：生成海克斯卡片 ==========
         def build_hextech_card(row, include_score=True):
             augment_name = str(row['海克斯名称'])
-            catalog_entry = catalog_lookup.get(augment_name) or catalog_lookup.get(normalize_augment_name(augment_name))
+            catalog_entry = effective_catalog_lookup.get(augment_name) or effective_catalog_lookup.get(normalize_augment_name(augment_name))
             tooltip_raw = ""
             tooltip_plain = ""
             tier_name = str(row.get('海克斯阶级', '棱彩'))
@@ -520,7 +537,8 @@ def process_hextechs_data(df: pd.DataFrame, name: str) -> Dict[str, List[Dict[st
         }
 
         # ========== 缓存结果 ==========
-        _set_to_cache(_hextech_cache_pool, cache_key, result, df)
+        if use_runtime_cache:
+            _set_to_cache(_hextech_cache_pool, cache_key, result, df)
         return result
 
     except Exception as e:

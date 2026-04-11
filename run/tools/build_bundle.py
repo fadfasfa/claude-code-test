@@ -154,6 +154,9 @@ def finalize_output(exe_dir: Path) -> Path:
     if final_dir.exists():
         shutil.rmtree(final_dir)
     shutil.move(str(exe_dir), str(final_dir))
+    legacy_duplicate_dir = BUILD_DIR / "Hextech伴生终端"
+    if legacy_duplicate_dir.exists():
+        shutil.rmtree(legacy_duplicate_dir, ignore_errors=True)
     print_check(f"输出目录：{final_dir}")
     return final_dir
 
