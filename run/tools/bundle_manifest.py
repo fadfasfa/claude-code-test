@@ -33,8 +33,6 @@ STABLE_CONFIG_FILES = (
     "Champion_Core_Data.json",
     "Champion_Alias_Index.json",
     "Augment_Icon_Manifest.json",
-    "Augment_Icon_Map.json",
-    "Augment_Full_Map.json",
     "Augment_Apexlol_Map.json",
     "hero_version.txt",
 )

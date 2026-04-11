@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from processing.runtime_store import get_latest_csv
 import scraping.version_sync as version_sync
@@ -29,6 +29,7 @@ from scraping.version_sync import (
     ASSET_DIR,
     CONFIG_DIR,
     AUGMENT_ICON_FILE,
+    AUGMENT_MANIFEST_FILE,
     AUGMENT_MAP_FILE,
     CORE_DATA_FILE,
     VERSION_FILE,
@@ -61,7 +62,11 @@ def _latest_csv_ready() -> bool:
 
 
 def _core_data_ready() -> bool:
-    return all(os.path.exists(path) for path in (CORE_DATA_FILE, AUGMENT_MAP_FILE, AUGMENT_ICON_FILE, VERSION_FILE))
+    augment_data_ready = (
+        os.path.exists(AUGMENT_MANIFEST_FILE)
+        or (os.path.exists(AUGMENT_MAP_FILE) and os.path.exists(AUGMENT_ICON_FILE))
+    )
+    return os.path.exists(CORE_DATA_FILE) and os.path.exists(VERSION_FILE) and augment_data_ready
 
 
 def _augment_manifest_ready() -> bool:
@@ -134,47 +139,52 @@ def _heal_images() -> bool:
 def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alias_index: bool = False) -> dict:
     del include_alias_index
     report = HealReport()
-    with FileLock(str(LOCK_FILE), timeout=30):
-        missing = detect_missing_artifacts()
-        core_assets_missing = not _core_data_ready()
+    try:
+        with FileLock(str(LOCK_FILE), timeout=1):
+            missing = detect_missing_artifacts()
+            core_assets_missing = not _core_data_ready()
 
-        if force or missing.get("champion_core") or core_assets_missing:
-            report.requested.append("champion_core")
-            if _heal_champion_core():
-                report.repaired.append("champion_core")
-            else:
-                report.failed.append("champion_core")
+            if force or missing.get("champion_core") or core_assets_missing:
+                report.requested.append("champion_core")
+                if _heal_champion_core():
+                    report.repaired.append("champion_core")
+                else:
+                    report.failed.append("champion_core")
 
-        if force or missing.get("hextech_rankings"):
-            report.requested.append("hextech_rankings")
-            if _heal_hero_rankings(stop_event=stop_event):
-                report.repaired.append("hextech_rankings")
-            else:
-                report.failed.append("hextech_rankings")
+            if force or missing.get("hextech_rankings"):
+                report.requested.append("hextech_rankings")
+                if _heal_hero_rankings(stop_event=stop_event):
+                    report.repaired.append("hextech_rankings")
+                else:
+                    report.failed.append("hextech_rankings")
 
-        if force or missing.get("synergy_data"):
-            report.requested.append("synergy_data")
-            if _heal_synergy_data():
-                report.repaired.append("synergy_data")
-            else:
-                report.failed.append("synergy_data")
+            if force or missing.get("synergy_data"):
+                report.requested.append("synergy_data")
+                if _heal_synergy_data():
+                    report.repaired.append("synergy_data")
+                else:
+                    report.failed.append("synergy_data")
 
-        # `augment_catalog` can be missing because source maps are gone, even if an
-        # older manifest still looks complete. Use the initial snapshot so a prior
-        # champion-core repair does not hide the need to rebuild the manifest.
-        if force or missing.get("augment_catalog"):
-            report.requested.append("augment_catalog")
-            if _heal_augment_catalog(force=force, stop_event=stop_event):
-                report.repaired.append("augment_catalog")
-            else:
-                report.failed.append("augment_catalog")
+            # `augment_catalog` can be missing because source maps are gone, even if an
+            # older manifest still looks complete. Use the initial snapshot so a prior
+            # champion-core repair does not hide the need to rebuild the manifest.
+            if force or missing.get("augment_catalog"):
+                report.requested.append("augment_catalog")
+                if _heal_augment_catalog(force=force, stop_event=stop_event):
+                    report.repaired.append("augment_catalog")
+                else:
+                    report.failed.append("augment_catalog")
 
-        if force or missing.get("images"):
-            report.requested.append("images")
-            if _heal_images():
-                report.repaired.append("images")
-            else:
-                report.failed.append("images")
+            if force or missing.get("images"):
+                report.requested.append("images")
+                if _heal_images():
+                    report.repaired.append("images")
+                else:
+                    report.failed.append("images")
+    except Timeout:
+        payload = report.as_dict()
+        logger.info("heal_worker skipped: another repair is already running: %s", json.dumps(payload, ensure_ascii=False))
+        return payload
 
     payload = report.as_dict()
     message = "heal_worker completed: %s"

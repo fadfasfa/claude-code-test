@@ -157,7 +157,14 @@ def _load_full_map(config_dir: str) -> dict:
         if isinstance(raw_full_map, dict):
             return raw_full_map
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        pass
+        manifest = _read_manifest_file(os.path.join(config_dir, "Augment_Icon_Manifest.json"), config_dir)
+        tier_map = {}
+        for item in manifest:
+            name = _clean_augment_text(item.get("name"))
+            tier = _clean_augment_text(item.get("tier"))
+            if name and tier:
+                tier_map[name] = tier
+        return tier_map
     return {}
 
 
@@ -263,6 +270,13 @@ def _write_augment_icon_manifest(manifest: list[dict]) -> None:
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     os.replace(tmp_path, AUGMENT_ICON_MANIFEST_FILE)
+    for legacy_name in ("Augment_Icon_Map.json", "Augment_Full_Map.json"):
+        legacy_path = os.path.join(CONFIG_DIR, legacy_name)
+        try:
+            if os.path.exists(legacy_path):
+                os.remove(legacy_path)
+        except OSError:
+            logger.debug("删除旧版海克斯映射失败：%s", legacy_path, exc_info=True)
     global _AUGMENT_ICON_MANIFEST_CACHE, _AUGMENT_LOOKUP_CACHE
     now = os.path.getmtime(AUGMENT_ICON_MANIFEST_FILE)
     _AUGMENT_ICON_MANIFEST_CACHE = (AUGMENT_ICON_MANIFEST_FILE, now, manifest)
