@@ -12,9 +12,9 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from urllib.parse import quote
 
-from augment_icon_refresh import build_augment_catalog_lookup
-from hero_sync import load_champion_core_data
 from icon_resolver import build_local_augment_icon_url, normalize_augment_name
+from services.scrape_augments import build_augment_catalog_lookup
+from services.sync_hero_data import load_champion_core_data
 
 # 全局缓存。
 _hextech_cache_pool: Dict[Tuple[str, str], Dict[str, List[Dict[str, Any]]]] = {}
@@ -364,7 +364,7 @@ def process_hextechs_data(
     try:
         # 创建副本避免修改原始数据
         data = df.copy()
-        catalog_lookup = catalog_lookup or build_augment_catalog_lookup()
+        effective_catalog_lookup = catalog_lookup or build_augment_catalog_lookup()
 
         # 确保必要列存在
         required_cols = ['英雄名称', '海克斯名称', '海克斯胜率', '海克斯出场率', '胜率差']
@@ -448,7 +448,7 @@ def process_hextechs_data(
         # ========== 辅助函数：生成海克斯卡片 ==========
         def build_hextech_card(row, include_score=True):
             augment_name = str(row['海克斯名称'])
-            catalog_entry = catalog_lookup.get(augment_name) or catalog_lookup.get(normalize_augment_name(augment_name))
+            catalog_entry = effective_catalog_lookup.get(augment_name) or effective_catalog_lookup.get(normalize_augment_name(augment_name))
             tooltip_raw = ""
             tooltip_plain = ""
             tier_name = str(row.get('海克斯阶级', '棱彩'))

@@ -7,10 +7,9 @@ import os
 from typing import Dict, List, Optional
 
 from alias_utils import dedupe_alias_texts, normalize_alias_token
+from services.sync_hero_data import CONFIG_DIR
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_DIR = os.path.join(BASE_DIR, "config")
 CHAMPION_ALIAS_INDEX_FILE = os.path.join(CONFIG_DIR, "Champion_Alias_Index.json")
 
 _ALIAS_INDEX_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
