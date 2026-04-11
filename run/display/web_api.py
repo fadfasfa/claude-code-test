@@ -10,10 +10,9 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import threading
 from urllib.parse import quote, unquote
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
@@ -115,12 +114,7 @@ def register_routes(app: FastAPI) -> None:
         if not df.empty:
             return JSONResponse(content=process_champions_data(df))
 
-        threading.Thread(
-            target=web_runtime.refresh_backend_data,
-            kwargs={"force": False},
-            daemon=True,
-            name="api-champions-refresh",
-        ).start()
+        web_runtime.request_background_refresh(force=False)
 
         snapshot_df = await asyncio.to_thread(web_runtime.get_live_champion_snapshot_df)
         if not snapshot_df.empty:
@@ -205,7 +199,12 @@ def register_routes(app: FastAPI) -> None:
             return JSONResponse(content={"synergies": []})
 
     @app.post("/api/redirect")
-    async def api_redirect(req: RedirectRequest):
+    async def api_redirect(req: RedirectRequest, request: Request):
+        origin = request.headers.get("origin")
+        if not web_runtime.is_allowed_local_origin(origin):
+            web_runtime.logger.warning("已拒绝非本地来源的 redirect 请求：origin=%s", origin)
+            return JSONResponse(content={"error": "forbidden_origin"}, status_code=status.HTTP_403_FORBIDDEN)
+
         try:
             hero_name, en_name = web_runtime.get_champion_info(req.hero_id)
         except (ValueError, TypeError):
@@ -232,6 +231,11 @@ def register_routes(app: FastAPI) -> None:
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
+        origin = ws.headers.get("origin")
+        if not web_runtime.is_allowed_local_origin(origin):
+            web_runtime.logger.warning("已拒绝非本地来源的 WebSocket 连接：origin=%s", origin)
+            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
         await web_runtime.manager.connect(ws)
         try:
             while True:

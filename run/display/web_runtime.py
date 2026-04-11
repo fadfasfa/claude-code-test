@@ -29,6 +29,7 @@ import base64
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -36,8 +37,9 @@ import time
 import webbrowser
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Set, Tuple
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import pandas as pd
 import psutil
@@ -78,12 +80,19 @@ _managed_browser_process: Optional[subprocess.Popen] = None
 _managed_browser_lock = threading.Lock()
 _augment_cache_pending: Set[str] = set()
 _augment_cache_pending_lock = threading.Lock()
+_augment_cache_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="augment-cache")
+_augment_cache_max_pending = 64
 _csv_loader = CachedDataFrameLoader(get_latest_csv)
 _startup_status_file = get_startup_status_file()
 _active_web_port = SERVER_PORT
 _static_dir: Optional[str] = None
 _assets_dir: Optional[str] = None
 _champion_core_cache: Optional[dict] = None
+_background_refresh_lock = threading.Lock()
+_background_refresh_inflight = False
+
+_SAFE_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_SAFE_ASSET_RE = re.compile(r"^[A-Za-z0-9._-]+\.png$")
 
 
 def _get_resource_path(relative_path: str) -> str:
@@ -112,6 +121,30 @@ def get_assets_dir() -> str:
         _assets_dir = _get_resource_path("assets")
         os.makedirs(_assets_dir, exist_ok=True)
     return _assets_dir
+
+
+def is_safe_png_asset_name(filename: str) -> bool:
+    """校验海克斯图标文件名只包含安全字符，并固定为 png。"""
+    raw_value = str(filename or "").strip()
+    normalized = os.path.basename(raw_value)
+    if not raw_value or normalized != raw_value:
+        return False
+    return bool(_SAFE_ASSET_RE.fullmatch(normalized))
+
+
+def is_allowed_local_origin(origin: str | None) -> bool:
+    """校验浏览器来源是否来自本机页面。
+
+    允许无 `Origin` 的原生客户端请求；浏览器侧请求则只接受 localhost / 127.0.0.1 / ::1。
+    """
+    if not origin:
+        return True
+    try:
+        parsed = urlparse(origin)
+    except Exception:
+        return False
+    host = str(parsed.hostname or "").strip().lower()
+    return host in _SAFE_LOCAL_HOSTS
 
 
 def get_active_web_port() -> int:
@@ -154,11 +187,21 @@ def resolve_remote_augment_icon_url(catalog_entry: Optional[dict], fallback_name
 
 def download_augment_icon_from_remote(augment_name: str, icon_filename: str) -> Optional[str]:
     """按文件名把远端海克斯图标下载到本地资源目录。"""
-    remote_url = resolve_remote_augment_icon_url({"name": augment_name, "filename": icon_filename}, augment_name)
+    safe_filename = os.path.basename(str(icon_filename or "").strip())
+    if not is_safe_png_asset_name(safe_filename):
+        logger.warning("已拒绝不安全的海克斯图标文件名：%s", icon_filename)
+        return None
+
+    remote_url = resolve_remote_augment_icon_url({"name": augment_name, "filename": safe_filename}, augment_name)
     if not remote_url:
         return None
 
-    target_path = os.path.join(get_assets_dir(), icon_filename)
+    target_path = os.path.join(get_assets_dir(), safe_filename)
+    real_target = os.path.normcase(os.path.realpath(target_path))
+    real_assets_dir = os.path.normcase(os.path.realpath(get_assets_dir()))
+    if not real_target.startswith(real_assets_dir + os.sep):
+        logger.warning("已阻止图标缓存目录穿越：%s -> %s", safe_filename, real_target)
+        return None
     tmp_path = target_path + ".tmp"
     try:
         response = requests.get(remote_url, stream=True, timeout=15)
@@ -182,12 +225,15 @@ def download_augment_icon_from_remote(augment_name: str, icon_filename: str) -> 
 
 def queue_augment_icon_cache(icon_filename: str, augment_name: str = "") -> None:
     """把图标缓存任务放入后台线程，避免接口热路径阻塞。"""
-    normalized = str(icon_filename or "").strip()
-    if not normalized:
+    normalized = os.path.basename(str(icon_filename or "").strip())
+    if not normalized or not is_safe_png_asset_name(normalized):
         return
 
     with _augment_cache_pending_lock:
         if normalized in _augment_cache_pending:
+            return
+        if len(_augment_cache_pending) >= _augment_cache_max_pending:
+            logger.warning("海克斯图标缓存排队已达上限，拒绝追加：%s", normalized)
             return
         _augment_cache_pending.add(normalized)
 
@@ -202,7 +248,33 @@ def queue_augment_icon_cache(icon_filename: str, augment_name: str = "") -> None
             with _augment_cache_pending_lock:
                 _augment_cache_pending.discard(normalized)
 
-    threading.Thread(target=_worker, daemon=True).start()
+    _augment_cache_executor.submit(_worker)
+
+
+def request_background_refresh(force: bool = False) -> bool:
+    """按单飞模式触发后台刷新，避免接口并发下重复创建刷新线程。"""
+    global _background_refresh_inflight
+    with _background_refresh_lock:
+        if _background_refresh_inflight:
+            return False
+        _background_refresh_inflight = True
+
+    def _worker() -> None:
+        global _background_refresh_inflight
+        try:
+            refresh_backend_data(force=force)
+        except Exception:
+            logger.exception("后台刷新线程执行失败。")
+        finally:
+            with _background_refresh_lock:
+                _background_refresh_inflight = False
+
+    threading.Thread(
+        target=_worker,
+        daemon=True,
+        name="background-refresh-singleflight",
+    ).start()
+    return True
 
 
 def _iter_browser_candidates() -> List[str]:

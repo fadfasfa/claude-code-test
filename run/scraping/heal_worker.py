@@ -168,8 +168,15 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
             else:
                 report.failed.append("images")
 
-    logger.error("heal_worker completed: %s", json.dumps(report.as_dict(), ensure_ascii=False))
-    return report.as_dict()
+    payload = report.as_dict()
+    message = "heal_worker completed: %s"
+    if report.failed:
+        logger.error(message, json.dumps(payload, ensure_ascii=False))
+    elif report.repaired or report.requested:
+        logger.warning(message, json.dumps(payload, ensure_ascii=False))
+    else:
+        logger.info(message, json.dumps(payload, ensure_ascii=False))
+    return payload
 
 
 def heal_once(force: bool = False, stop_event=None) -> dict:
