@@ -47,6 +47,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from processing.view_adapter import process_hextechs_data
 from processing.runtime_store import CachedDataFrameLoader, get_latest_csv
 from scraping.augment_catalog import find_augment_catalog_entry
 from scraping.full_hextech_scraper import _clean_augment_text, extract_champion_stats, fetch_with_retry
@@ -59,6 +60,9 @@ from scraping.version_sync import (
     BASE_DIR,
     CONFIG_DIR,
     RESOURCE_DIR,
+    HEXTECH_AUGMENT_METADATA_URLS,
+    HEXTECH_CHAMPION_STATS_URLS,
+    build_hextech_detail_urls,
     get_advanced_session,
     load_augment_map,
     load_champion_core_data,
@@ -90,6 +94,11 @@ _assets_dir: Optional[str] = None
 _champion_core_cache: Optional[dict] = None
 _background_refresh_lock = threading.Lock()
 _background_refresh_inflight = False
+_preloaded_hextech_lock = threading.Lock()
+_preloaded_hextech_payloads: dict[str, dict] = {}
+_preloaded_hextech_pending: Set[str] = set()
+_preloaded_hextech_signature: Tuple[str, float] = ("", 0.0)
+_preloaded_hextech_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="hextech-preload")
 
 _SAFE_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _SAFE_ASSET_RE = re.compile(r"^[A-Za-z0-9._-]+\.png$")
@@ -164,16 +173,13 @@ def write_active_web_port(port: int) -> None:
 
 
 def resolve_remote_augment_icon_url(catalog_entry: Optional[dict], fallback_name: str) -> str:
-    """解析海克斯图标的远端兜底地址，优先使用目录清单，再回退到 apexlol。"""
+    """解析海克斯图标的远端兜底地址。
+
+    只保留显式远端地址与 apexlol 兜底，不再回退旧的 CDN 域名。
+    """
     if catalog_entry:
-        manifest_filename = str(catalog_entry.get("filename", "")).strip().lower()
-        if manifest_filename:
-            remote_filename = manifest_filename
-            if remote_filename.count(".") > 1:
-                remote_filename = remote_filename.split(".", 1)[0] + ".png"
-            return f"https://cdn.dtodo.cn/hextech/augment-icons/{quote(remote_filename, safe='')}"
         manifest_url = str(catalog_entry.get("icon_url", "")).strip()
-        if manifest_url and not manifest_url.startswith("/assets/"):
+        if manifest_url.startswith("http://") or manifest_url.startswith("https://"):
             return manifest_url
         augment_name = str(catalog_entry.get("name", "")).strip() or fallback_name
     else:
@@ -476,6 +482,84 @@ def get_df() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _get_runtime_df_signature() -> Tuple[str, float]:
+    return (_csv_loader.cached_path, _csv_loader.cached_mtime)
+
+
+def clear_preloaded_hextech_payloads() -> None:
+    with _preloaded_hextech_lock:
+        _preloaded_hextech_payloads.clear()
+        _preloaded_hextech_pending.clear()
+        global _preloaded_hextech_signature
+        _preloaded_hextech_signature = ("", 0.0)
+
+
+def get_preloaded_hextech_payload(hero_name: str) -> Optional[dict]:
+    canonical_name = resolve_canonical_hero_name(hero_name)
+    if not canonical_name:
+        return None
+
+    current_signature = _get_runtime_df_signature()
+    with _preloaded_hextech_lock:
+        global _preloaded_hextech_signature
+        if _preloaded_hextech_signature != current_signature:
+            _preloaded_hextech_payloads.clear()
+            _preloaded_hextech_pending.clear()
+            _preloaded_hextech_signature = current_signature
+            return None
+
+        payload = _preloaded_hextech_payloads.get(canonical_name)
+        return payload if isinstance(payload, dict) else None
+
+
+def queue_preload_hextech_payloads(hero_names: List[str]) -> bool:
+    canonical_names = []
+    for raw_name in hero_names:
+        canonical_name = resolve_canonical_hero_name(raw_name)
+        if canonical_name and canonical_name not in canonical_names:
+            canonical_names.append(canonical_name)
+    if not canonical_names:
+        return False
+
+    df = get_df()
+    if df.empty:
+        return False
+
+    current_signature = _get_runtime_df_signature()
+    with _preloaded_hextech_lock:
+        global _preloaded_hextech_signature
+        if _preloaded_hextech_signature != current_signature:
+            _preloaded_hextech_payloads.clear()
+            _preloaded_hextech_pending.clear()
+            _preloaded_hextech_signature = current_signature
+
+        queued_any = False
+        for canonical_name in canonical_names:
+            if canonical_name in _preloaded_hextech_payloads or canonical_name in _preloaded_hextech_pending:
+                continue
+            _preloaded_hextech_pending.add(canonical_name)
+            queued_any = True
+
+            def _worker(target_name: str = canonical_name, df_snapshot: pd.DataFrame = df.copy(), signature: Tuple[str, float] = current_signature) -> None:
+                try:
+                    payload = process_hextechs_data(df_snapshot, target_name, use_runtime_cache=True, log_columns=False)
+                    if not isinstance(payload, dict) or not payload.get("comprehensive"):
+                        return
+                    with _preloaded_hextech_lock:
+                        if _preloaded_hextech_signature != signature:
+                            return
+                        _preloaded_hextech_payloads[target_name] = payload
+                except Exception:
+                    logger.exception("海克斯预热失败：hero=%s", target_name)
+                finally:
+                    with _preloaded_hextech_lock:
+                        _preloaded_hextech_pending.discard(target_name)
+
+            _preloaded_hextech_executor.submit(_worker)
+
+    return queued_any
+
+
 async def get_df_with_refresh(timeout: float = 25.0) -> pd.DataFrame:
     """在 CSV 缺失时触发一次后台刷新，并在超时前轮询等待结果。"""
     df = get_df()
@@ -518,13 +602,18 @@ def get_live_champion_snapshot_df(force_refresh: bool = False) -> pd.DataFrame:
     else:
         try:
             session = get_advanced_session()
-            response = session.get(
-                "https://hextech.dtodo.cn/data/champions-stats.json",
-                timeout=12,
-                verify=True,
-            )
-            response.raise_for_status()
-            payload = response.json()
+            response = None
+            payload = None
+            for url in HEXTECH_CHAMPION_STATS_URLS:
+                try:
+                    response = session.get(url, timeout=12, verify=True)
+                    response.raise_for_status()
+                    payload = response.json()
+                    if isinstance(payload, list):
+                        break
+                    payload = None
+                except Exception:
+                    payload = None
             if not isinstance(payload, list):
                 return pd.DataFrame()
             _champion_snapshot_cache.path = cache_path
@@ -591,16 +680,28 @@ def get_live_hextech_snapshot_df(hero_name: str, force_refresh: bool = False) ->
 
     session = get_advanced_session()
     try:
-        aug_response = fetch_with_retry(
-            session,
-            "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json",
-            timeout=6,
-        )
-        stats_response = fetch_with_retry(
-            session,
-            "https://hextech.dtodo.cn/data/champions-stats.json",
-            timeout=6,
-        )
+        aug_response = None
+        for url in HEXTECH_AUGMENT_METADATA_URLS:
+            candidate = fetch_with_retry(session, url, timeout=6)
+            if candidate is None:
+                continue
+            try:
+                if isinstance(candidate.json(), dict):
+                    aug_response = candidate
+                    break
+            except Exception:
+                continue
+        stats_response = None
+        for url in HEXTECH_CHAMPION_STATS_URLS:
+            candidate = fetch_with_retry(session, url, timeout=6)
+            if candidate is None:
+                continue
+            try:
+                if isinstance(candidate.json(), list):
+                    stats_response = candidate
+                    break
+            except Exception:
+                continue
         if aug_response is None or stats_response is None:
             return pd.DataFrame()
 
@@ -622,11 +723,11 @@ def get_live_hextech_snapshot_df(hero_name: str, force_refresh: bool = False) ->
         if not champ_stats:
             return pd.DataFrame()
 
-        detail_response = fetch_with_retry(
-            session,
-            f"https://hextech.dtodo.cn/zh-CN/champion-stats/{champ_id}",
-            timeout=6,
-        )
+        detail_response = None
+        for url in build_hextech_detail_urls(champ_id):
+            detail_response = fetch_with_retry(session, url, timeout=6)
+            if detail_response is not None and detail_response.status_code == 200 and detail_response.text:
+                break
         if detail_response is None or detail_response.status_code != 200 or not detail_response.text:
             return pd.DataFrame()
 
@@ -833,6 +934,13 @@ async def lcu_polling_loop() -> None:
 
                 if available_ids != _lcu_state.current_ids:
                     _lcu_state.current_ids = available_ids.copy()
+                    preload_names = []
+                    for champion_id in available_ids:
+                        hero_name, _ = get_champion_info(str(champion_id))
+                        if hero_name:
+                            preload_names.append(hero_name)
+                    if preload_names:
+                        await asyncio.to_thread(queue_preload_hextech_payloads, preload_names)
                     await manager.broadcast(
                         {
                             "type": "champion_update",
@@ -870,6 +978,7 @@ async def lcu_polling_loop() -> None:
                     _lcu_state.local_champ_id = None
                     _lcu_state.local_champ_name = None
                     _lcu_state.current_ids = set()
+                    clear_preloaded_hextech_payloads()
                 if _lcu_state.consecutive_404_count >= 5:
                     logger.warning("LCU 连续返回 404 五次，重置连接状态（count=%s）", _lcu_state.consecutive_404_count)
                     _lcu_state.port = None
@@ -877,13 +986,16 @@ async def lcu_polling_loop() -> None:
                     _lcu_state.consecutive_404_count = 0
             elif res.status_code in (401, 403):
                 logger.warning("LCU token 失效或未授权（401/403），重置连接状态。")
+                clear_preloaded_hextech_payloads()
                 _lcu_state.port = None
                 _lcu_state.token = None
             else:
                 logger.warning("LCU 响应异常状态码=%s，重置连接状态。", res.status_code)
+                clear_preloaded_hextech_payloads()
                 _lcu_state.port = None
         except requests.exceptions.ConnectionError as exc:
             logger.warning("LCU 连接错误：%s", exc)
+            clear_preloaded_hextech_payloads()
             _lcu_state.port = None
             _lcu_state.token = None
         except Exception as exc:

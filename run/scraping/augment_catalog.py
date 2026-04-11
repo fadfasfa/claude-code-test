@@ -13,7 +13,12 @@ from html import unescape
 from typing import Dict, Iterable, Optional
 
 from scraping.full_hextech_scraper import _clean_augment_text, _extract_augment_meta
-from scraping.version_sync import ASSET_DIR, CONFIG_DIR, get_advanced_session
+from scraping.version_sync import (
+    ASSET_DIR,
+    CONFIG_DIR,
+    HEXTECH_AUGMENT_METADATA_URLS,
+    get_advanced_session,
+)
 from scraping.icon_resolver import (
     batch_prefetch_augment_icons,
     ensure_augment_icon_cached,
@@ -29,8 +34,10 @@ AUGMENT_ICON_SOURCE_FILE = os.path.join(CONFIG_DIR, "augment_icon_source.txt")
 AUGMENT_ICON_AUDIT_FILE = os.path.join(CONFIG_DIR, "augment_icon_audit.jsonl")
 AUGMENT_ICON_MANIFEST_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Manifest.json")
 AUGMENT_ICON_SOURCE_ID = "apexlol"
-AUGMENT_METADATA_URL = "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json"
+AUGMENT_METADATA_URLS = HEXTECH_AUGMENT_METADATA_URLS
 MANIFEST_SCHEMA_VERSION = 2
+_MIN_VALID_MANIFEST_ENTRIES = 50
+_MAX_EMPTY_TEXT_RATIO = 0.35
 _AUGMENT_ICON_MANIFEST_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
 _AUGMENT_LOOKUP_CACHE: tuple[str, float, dict] = ("", 0.0, {})
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
@@ -171,12 +178,21 @@ def _load_full_map(config_dir: str) -> dict:
 def _fetch_remote_augment_metadata() -> dict:
     metadata = {}
     session = get_advanced_session()
-    try:
-        response = session.get(AUGMENT_METADATA_URL, timeout=12, verify=True)
-        response.raise_for_status()
-        payload = response.json()
-    except Exception as e:
-        logger.warning("海克斯远端元数据拉取失败：%s", e)
+    payload = None
+    last_error = None
+    rarity_to_tier = {0: "白银", 1: "黄金", 2: "棱彩", 3: "棱彩"}
+    for url in AUGMENT_METADATA_URLS:
+        try:
+            response = session.get(url, timeout=12, verify=True)
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, dict):
+                break
+            payload = None
+        except Exception as e:
+            last_error = e
+    if payload is None:
+        logger.warning("海克斯远端元数据拉取失败：%s", last_error)
         return metadata
 
     if not isinstance(payload, dict):
@@ -189,10 +205,22 @@ def _fetch_remote_augment_metadata() -> dict:
             continue
         meta = _extract_augment_meta(item)
         spell_values = meta.get("spell_values", {})
+        filename = os.path.basename(
+            str(
+                item.get("iconSmall")
+                or item.get("filename")
+                or item.get("icon")
+                or item.get("iconLarge")
+                or ""
+            ).strip()
+        ).lower()
         normalized = {
             "description": _clean_augment_text(meta.get("description")),
             "tooltip": _clean_augment_text(meta.get("tooltip")),
             "spell_values": spell_values if isinstance(spell_values, dict) else {},
+            "tier": rarity_to_tier.get(item.get("rarity", -1), ""),
+            "filename": filename,
+            "icon_url": f"/assets/{filename}" if filename else "",
         }
         normalized["tooltip_plain"] = _render_tooltip_plain(
             normalized["tooltip"] or normalized["description"],
@@ -286,9 +314,27 @@ def _write_augment_icon_manifest(manifest: list[dict]) -> None:
 def _manifest_needs_rebuild(manifest: list[dict]) -> bool:
     if not manifest:
         return True
+    if len(manifest) < _MIN_VALID_MANIFEST_ENTRIES:
+        return True
     sample = manifest[0]
     required = {"schema_version", "icon_url", "description", "tooltip_plain", "spell_values", "status", "updated_at"}
-    return any(field not in sample for field in required)
+    if any(field not in sample for field in required):
+        return True
+
+    empty_text_entries = 0
+    missing_icon_entries = 0
+    for item in manifest:
+        if not _clean_augment_text(item.get("description")) and not _clean_augment_text(item.get("tooltip")):
+            empty_text_entries += 1
+        if not _clean_augment_text(item.get("icon_url")) and not _clean_augment_text(item.get("filename")):
+            missing_icon_entries += 1
+
+    entry_count = len(manifest)
+    if entry_count and (empty_text_entries / entry_count) > _MAX_EMPTY_TEXT_RATIO:
+        return True
+    if entry_count and (missing_icon_entries / entry_count) > _MAX_EMPTY_TEXT_RATIO:
+        return True
+    return False
 
 
 def _manifest_is_stale(manifest_path: str) -> bool:
@@ -321,23 +367,52 @@ def build_augment_icon_manifest(
     full_map = _load_full_map(config_dir)
     existing_manifest = _read_manifest_file(os.path.join(config_dir, "Augment_Icon_Manifest.json"), config_dir)
     existing_by_name = {item["name"]: item for item in existing_manifest if item.get("name")}
-    remote_metadata = _fetch_remote_augment_metadata() if force_refresh else {}
+    remote_metadata = _fetch_remote_augment_metadata()
 
-    all_names = sorted(set(icon_map) | set(full_map) | set(existing_by_name))
+    filtered_icon_map = {}
+    for name, filename in icon_map.items():
+        normalized_name = normalize_augment_name(name)
+        if len(normalized_name) <= 1 and name not in remote_metadata:
+            continue
+        filtered_icon_map[name] = filename
+
+    filtered_full_map = {}
+    for name, tier in full_map.items():
+        normalized_name = normalize_augment_name(name)
+        if len(normalized_name) <= 1 and name not in remote_metadata:
+            continue
+        filtered_full_map[name] = tier
+
+    filtered_existing_by_name = {}
+    for name, item in existing_by_name.items():
+        normalized_name = normalize_augment_name(name)
+        if len(normalized_name) <= 1 and name not in remote_metadata:
+            continue
+        filtered_existing_by_name[name] = item
+
+    all_names = sorted(set(filtered_icon_map) | set(filtered_full_map) | set(filtered_existing_by_name) | set(remote_metadata))
     manifest = []
     for name in all_names:
-        existing = existing_by_name.get(name, {})
-        raw_filename = icon_map.get(name) or existing.get("filename", "")
-        filename = os.path.basename(str(raw_filename).strip()).lower()
+        existing = filtered_existing_by_name.get(name, {})
         remote_meta = remote_metadata.get(name) or remote_metadata.get(normalize_augment_name(name)) or {}
+        raw_filename = filtered_icon_map.get(name) or existing.get("filename", "") or remote_meta.get("filename", "")
+        filename = os.path.basename(str(raw_filename).strip()).lower()
+        tier = _clean_augment_text(filtered_full_map.get(name) or existing.get("tier") or remote_meta.get("tier"))
+        icon_url = _clean_augment_text(
+            existing.get("icon_url")
+            or remote_meta.get("icon_url")
+            or (f"/assets/{filename}" if filename else "")
+        )
+        if not icon_url and name:
+            icon_url = resolve_apexlol_hextech_icon_url(name, config_dir=config_dir)
 
         entry = {
             "schema_version": MANIFEST_SCHEMA_VERSION,
             "name": name,
-            "tier": _clean_augment_text(full_map.get(name) or existing.get("tier")),
+            "tier": tier,
             "filename": filename,
             "local_path": os.path.join(ASSET_DIR, filename) if filename else "",
-            "icon_url": f"/assets/{filename}" if filename else resolve_apexlol_hextech_icon_url(name, config_dir=config_dir),
+            "icon_url": icon_url,
             "description": _clean_augment_text(remote_meta.get("description") or existing.get("description")),
             "tooltip": _clean_augment_text(remote_meta.get("tooltip") or existing.get("tooltip")),
             "tooltip_plain": _clean_augment_text(remote_meta.get("tooltip_plain") or existing.get("tooltip_plain")),
@@ -368,11 +443,12 @@ def load_augment_icon_manifest(
             return cached_data
 
     manifest = _read_manifest_file(manifest_path, config_dir)
-    if manifest and not force_refresh and not _manifest_is_stale(manifest_path):
+    if manifest and not force_refresh and not _manifest_is_stale(manifest_path) and not _manifest_needs_rebuild(manifest):
         _AUGMENT_ICON_MANIFEST_CACHE = (manifest_path, os.path.getmtime(manifest_path), manifest)
         return manifest
 
-    return build_augment_icon_manifest(config_dir=config_dir, force_refresh=force_refresh)
+    should_force_refresh = force_refresh or not manifest or _manifest_is_stale(manifest_path) or _manifest_needs_rebuild(manifest)
+    return build_augment_icon_manifest(config_dir=config_dir, force_refresh=should_force_refresh)
 
 
 def build_augment_catalog_lookup(
@@ -457,8 +533,12 @@ def manifest_has_incomplete_entries(
     manifest = load_augment_icon_manifest(config_dir=config_dir, force_refresh=force_refresh)
     if not manifest:
         return True
+    if len(manifest) < _MIN_VALID_MANIFEST_ENTRIES:
+        return True
     for item in manifest:
         if str(item.get("status", "")).strip() != "ready":
+            return True
+        if not _clean_augment_text(item.get("description")) and not _clean_augment_text(item.get("tooltip")):
             return True
     return False
 

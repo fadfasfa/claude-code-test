@@ -15,7 +15,7 @@
       "StaticRatio": 0.625
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -32,7 +32,7 @@
       "RangedRangeIncrease": 50.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -72,7 +72,7 @@
       "StartingBaseDamage": 25.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -91,7 +91,7 @@
       "SpellHealthCost": 0.05000000074505806
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -115,7 +115,7 @@
       "MeleeAttackRange": 200.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -133,7 +133,7 @@
       "MinionSizeIncrease": 0.4000000059604645
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -147,7 +147,7 @@
     "tooltip_plain": "即刻：获得【无用大棒】。需求：持有【灭世者的死亡之帽】和【中娅沙漏】。奖励：获得【沃格勒特的巫师帽】。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -163,7 +163,7 @@
       "TakedownsNeeded": 18.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -177,7 +177,7 @@
     "tooltip_plain": "即刻：获得一个【斑比的熔渣】并且你可以购买2件献祭装备。需求：持有【日炎圣盾】和【璀璨回响】。奖励：【日炎圣盾】和【璀璨回响】组合成【虚空献祭】。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -194,7 +194,7 @@
       "StackThreshold": 300.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -213,7 +213,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -232,7 +232,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -246,7 +246,7 @@
     "tooltip_plain": "按下【回城】能够回到基地，购买装备并且获得强化符文。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -263,7 +263,7 @@
       "InvulnDuration": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -285,7 +285,7 @@
       "Remnant_Spawn_Cooldown": 0.75
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -303,7 +303,7 @@
       "ShredDuration": 4.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -321,7 +321,7 @@
       "Dot_Cooldown": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -338,7 +338,7 @@
       "PercentMaxHPDamage": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -354,7 +354,7 @@
       "Haste": 175.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -370,7 +370,7 @@
       "HealShieldAmp": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -386,7 +386,7 @@
       "SoulsToAdd": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -402,7 +402,7 @@
       "CritChance": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -419,7 +419,7 @@
       "SlowDuration": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -437,7 +437,25 @@
       "RootDuration": 1.25
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "冰霜幽灵",
+    "tier": "白银",
+    "filename": "frostwraith_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\frostwraith_small.png",
+    "icon_url": "/assets/frostwraith_small.png",
+    "description": "每@Cooldown@秒，<keywordMajor>自动施放</keywordMajor>@RootDuration@秒<status>禁锢</status>给附近的敌人们。<br>",
+    "tooltip": "每@Cooldown@秒，<keywordMajor>自动施放</keywordMajor>@RootDuration@秒<status>禁锢</status>给附近的敌人们。<br><br>已禁锢敌人：@f2@",
+    "tooltip_plain": "每6.5秒，自动施放1.25秒禁锢给附近的敌人们。已禁锢敌人：?",
+    "spell_values": {
+      "Cooldown": 6.5,
+      "Radius": 450.0,
+      "RootDuration": 1.25
+    },
+    "status": "ready",
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -454,7 +472,7 @@
       "PercentPenConversion": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -470,7 +488,7 @@
       "TotalHits": 8.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -486,7 +504,7 @@
       "UpgradeCD": 45.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -503,7 +521,7 @@
       "UpgradeCD": 30.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -521,7 +539,7 @@
       "UpgradedGoldAmount": 50.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -539,7 +557,7 @@
       "CritChanceToDamage": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -559,7 +577,7 @@
       "MissingHealthStackAmount": 0.004999999888241291
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -575,7 +593,7 @@
       "GoldPerTick": 12.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -596,7 +614,7 @@
       "TenacityDuration": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -613,7 +631,7 @@
       "HealMaxHP": 0.03500000014901161
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -631,7 +649,7 @@
       "PercentInc": 2.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -649,7 +667,7 @@
       "UpgradedGrievousAmount": 0.800000011920929
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -673,7 +691,7 @@
       "TicksPerSecond": 4.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -696,7 +714,7 @@
       "TickRate": 0.25
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -715,7 +733,7 @@
       "SecondMissileDelay": 0.15000000596046448
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -729,7 +747,7 @@
     "tooltip_plain": "你的暴击施加一次额外的%i:OnHit%攻击特效。获得?暴击几率。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -749,7 +767,7 @@
       "CrtiChance": 0.15000000596046448
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -765,7 +783,7 @@
       "StackModifier": 0.75
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -781,7 +799,7 @@
       "MaxHealthPercentageHeal": 0.009999999776482582
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -797,7 +815,7 @@
       "ADRatio": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -819,7 +837,7 @@
       "bADRatio": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -836,7 +854,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -854,7 +872,7 @@
       "MoveSpeed": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -870,7 +888,7 @@
       "OmniVamp": 0.25
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -890,7 +908,7 @@
       "UltimateHaste": 30.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -906,7 +924,7 @@
       "Cooldown": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -922,7 +940,7 @@
       "BonusDamagePerMSDifference": 0.0010000000474974513
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -938,7 +956,23 @@
       "BaseCooldown": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "回力ok镖",
+    "tier": "黄金",
+    "filename": "okboomerang_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\okboomerang_small.png",
+    "icon_url": "/assets/okboomerang_small.png",
+    "description": "每@BaseCooldown@秒朝着一个附近的敌人<keywordMajor>自动施放</keywordMajor>投掷一个回力镖。",
+    "tooltip": "每@BaseCooldown@秒朝着一个附近的敌人<keywordMajor>自动施放</keywordMajor>投掷一个回力镖，对命中的敌人们造成@Damage@自适应伤害。<br><br>已造成的伤害：@f2@",
+    "tooltip_plain": "每10秒朝着一个附近的敌人自动施放投掷一个回力镖，对命中的敌人们造成?自适应伤害。已造成的伤害：?",
+    "spell_values": {
+      "BaseCooldown": 10.0
+    },
+    "status": "ready",
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -957,7 +991,7 @@
       "ShieldingAmp": 0.3499999940395355
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -977,7 +1011,7 @@
       "Radius": 650.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1011,7 +1045,7 @@
       "TimeBetweenHits": 4.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1030,7 +1064,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1048,7 +1082,7 @@
       "BaseRegen": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1066,7 +1100,7 @@
       "SizeIncrement": 0.05000000074505806
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1096,7 +1130,7 @@
       "ShieldRatioAD": 0.3499999940395355
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1114,7 +1148,7 @@
       "TakedownWindow": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1130,7 +1164,7 @@
       "ADAmp": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1152,7 +1186,7 @@
       "PerwaveDamageCD": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1170,7 +1204,7 @@
       "SlowAmount": -0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1192,7 +1226,7 @@
       "TotalLoops": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1210,7 +1244,7 @@
       "MovementSpeed": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1236,7 +1270,7 @@
       "UpgradeTotalGoldValue": 1000.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1259,7 +1293,7 @@
       "StealthDuration": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1279,7 +1313,7 @@
       "MamaRadius": 400.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1296,7 +1330,7 @@
       "TooltipCDR": 50.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1312,7 +1346,7 @@
       "APToHasteConversion": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1328,7 +1362,7 @@
       "AmountOfStatAnvils": 4.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1344,7 +1378,7 @@
       "AmountOfStatAnvils": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1360,7 +1394,7 @@
       "AmountOfStatAnvils": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1374,7 +1408,7 @@
     "tooltip_plain": "你获得【山脉龙魂】，在脱离战斗之后获得持续一小段时间的护盾值。已生成的护盾值总和：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1395,7 +1429,7 @@
       "XLargeBonusDamage": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1412,7 +1446,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1428,7 +1462,7 @@
       "APFlat": 70.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1447,7 +1481,7 @@
       "HatMRAdd": 8.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1467,7 +1501,7 @@
       "SizeAmp": 0.25
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1484,7 +1518,7 @@
       "ShieldDuration": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1505,7 +1539,7 @@
       "Slow_Duration": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1521,7 +1555,7 @@
       "AbilityHaste": 60.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1540,7 +1574,7 @@
       "SlowDuration": 1.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1559,7 +1593,7 @@
       "ShieldDuration": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1575,7 +1609,7 @@
       "AbilityHasteToMSConversion": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1591,7 +1625,7 @@
       "HealShieldAmp": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1608,7 +1642,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1631,7 +1665,7 @@
       "SlowAmount": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1648,7 +1682,7 @@
       "Range": 500.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1675,7 +1709,7 @@
       "TimeUntilNextStackFromSameSpell": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1693,7 +1727,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1712,7 +1746,7 @@
       "Style_Duration": 6.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1730,7 +1764,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1747,7 +1781,7 @@
       "IncFrequency": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1763,7 +1797,7 @@
       "ProcMultiplier": 1.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1780,7 +1814,7 @@
       "SpinHaste": 30.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1796,7 +1830,7 @@
       "HealthRatioPer1000Units": 0.009999999776482582
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1813,7 +1847,7 @@
       "StartingHaste": 60.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1831,7 +1865,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1848,7 +1882,7 @@
       "Health": 1500.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1865,7 +1899,7 @@
       "MSAmount": 300.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1884,7 +1918,7 @@
       "MaxStack": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1904,7 +1938,7 @@
       "CrtiChance": 0.25
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1921,7 +1955,7 @@
       "RangedRangeIncrease": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1938,7 +1972,7 @@
       "RangedRangeIncrease": 150.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1958,7 +1992,7 @@
       "OmniVamp": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -1972,7 +2006,7 @@
     "tooltip_plain": "在你阵亡时，朝击杀你的敌人发动一辆列车，对它命中的每个敌人造成?物理伤害。这个列车不会停下。你的火车头已对?个敌方英雄造成了总计?伤害。它“意外”击杀了?个。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2006,7 +2040,7 @@
       "StartingSoulsPerAugment": 8.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2023,7 +2057,7 @@
       "MovementSpeed": 0.6000000238418579
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2042,7 +2076,7 @@
       "VFXHighDamageThreshold": 500.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2061,7 +2095,7 @@
       "SizeAmp": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2078,7 +2112,7 @@
       "HealToDamageConversion": 0.699999988079071
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2096,7 +2130,7 @@
       "Radius": 300.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2114,7 +2148,7 @@
       "Lethality": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2135,7 +2169,7 @@
       "PerwaveDamageCD": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2149,7 +2183,7 @@
     "tooltip_plain": "%i:OnHit%攻击特效消耗?法力值以造成?魔法伤害，这个伤害可以暴击。已造成的伤害：?已消耗的法力值：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2165,7 +2199,7 @@
       "TargetCurrentHealthRatio": 0.10000000149011612
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2179,7 +2213,7 @@
     "tooltip_plain": "周期性地使你的下一个伤害型技能或攻击触发一道闪电爆裂，连锁穿过敌人以造成伤害和减速。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2193,7 +2227,7 @@
     "tooltip_plain": "获得【海洋龙魂】，在对敌方英雄造成伤害后提供高额的生命和法力回复。已造成的治疗效果：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2209,7 +2243,7 @@
       "Omnivamp": 0.15000000596046448
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2225,7 +2259,7 @@
       "InitialAmpPercent": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2239,7 +2273,7 @@
     "tooltip_plain": "将你的所有强化符文变为随机的棱彩阶强化符文。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2260,7 +2294,7 @@
       "bHealthRatio": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2277,7 +2311,7 @@
       "PercentMaxHPDamagePer5Seconds": 0.019999999552965164
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2306,7 +2340,7 @@
       "SecondaryDelay": 0.4000000059604645
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2322,7 +2356,7 @@
       "AttackSpeed": 0.6000000238418579
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2339,7 +2373,7 @@
       "HealPercentage": 0.11999999731779099
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2353,7 +2387,7 @@
     "tooltip_plain": "每第4次攻击发射4个爆竹以造成?魔法伤害。已造成的伤害：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2371,7 +2405,7 @@
       "ProcCooldown": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2385,7 +2419,7 @@
     "tooltip_plain": "你获得炼狱龙魂，使用技能或攻击命中敌人时造成额外伤害。已造成的伤害：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2401,7 +2435,7 @@
       "ProcCooldown": 0.75
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2417,7 +2451,7 @@
       "StackDuration": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2435,7 +2469,7 @@
       "InverseRate": 0.6000000238418579
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2453,7 +2487,7 @@
       "ResistsPerStack": 12.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2467,7 +2501,7 @@
     "tooltip_plain": "获得?暴击几率和?攻击速度。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2489,7 +2523,7 @@
       "SSSDamage": 1500.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2506,7 +2540,7 @@
       "TrueDamagePerc": 0.15000000596046448
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2524,7 +2558,7 @@
       "CritDamage": 1.4500000476837158
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2546,7 +2580,7 @@
       "SlowPercent": 15.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2562,7 +2596,7 @@
       "ConvertCap": 99999.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2578,7 +2612,7 @@
       "CritToHasteConversion": 0.4000000059604645
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2594,7 +2628,7 @@
       "AFAmp": 0.25
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2612,7 +2646,7 @@
       "RangedOnHitARRatio": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2629,7 +2663,7 @@
       "HealMultiplier": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2665,7 +2699,7 @@
       "SparkMaxAngle": 50.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2685,7 +2719,7 @@
       "WarningDelay": 2.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2702,7 +2736,7 @@
       "InvulnerabilityDuration": 1.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2718,7 +2752,7 @@
       "APRatio": 0.75
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2739,7 +2773,7 @@
       "SizeAmp": 0.4000000059604645
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2756,7 +2790,7 @@
       "MinCDR": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2772,7 +2806,7 @@
       "PercentPen": 0.18000000715255737
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2790,7 +2824,7 @@
       "SnipeDistance": 700.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2808,7 +2842,7 @@
       "WEnemySlow": 60.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2832,7 +2866,7 @@
       "MSBuff": 150.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2848,7 +2882,23 @@
       "Haste_Per_AS": 0.6499999761581421
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "纯粹主义者术师",
+    "tier": "白银",
+    "filename": "puristcaster_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\puristcaster_small.png",
+    "icon_url": "/assets/puristcaster_small.png",
+    "description": "获得百分比冷却缩减并将你的所有<attackSpeed>攻击速度</attackSpeed>转化为技能急速。",
+    "tooltip": "获得@Calc_CDR@冷却缩减并将你的所有<attackSpeed>攻击速度</attackSpeed>转化为技能急速。(当前：@f1.1@技能急速)。<br><br><rules>转化率：@Haste_Per_AS@技能急速每<attackSpeed>1%攻击速度</attackSpeed></rules>",
+    "tooltip_plain": "获得?冷却缩减并将你的所有攻击速度转化为技能急速。(当前：?技能急速)。转化率：0.65技能急速每1%攻击速度",
+    "spell_values": {
+      "Haste_Per_AS": 0.6499999761581421
+    },
+    "status": "ready",
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2865,7 +2915,7 @@
       "SlowResist": 0.4000000059604645
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2882,7 +2932,7 @@
       "UnstoppableDuration": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2898,7 +2948,7 @@
       "Cooldown": 75.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2917,7 +2967,7 @@
       "Cooldown": 20.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2933,7 +2983,7 @@
       "DamageReduction": 0.15000000596046448
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2953,7 +3003,7 @@
       "SizeReductionPerStack": 0.03999999910593033
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2971,7 +3021,7 @@
       "MSBuff": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -2989,7 +3039,7 @@
       "SnipeDistance": 700.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3009,7 +3059,7 @@
       "Radius": 350.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3030,7 +3080,7 @@
       "ShieldRatioBHealth": 0.10000000149011612
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3051,7 +3101,7 @@
       "WarningDelay": 2.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3070,7 +3120,7 @@
       "ShieldFromHealPercentage": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3086,7 +3136,7 @@
       "Cooldown": 1.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3106,7 +3156,7 @@
       "Slow_Duration": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3123,7 +3173,7 @@
       "InitialHS": 25.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3141,7 +3191,7 @@
       "MSDuration": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3158,7 +3208,7 @@
       "HealthThreshold": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3175,7 +3225,7 @@
       "Stacks_Max": 6.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3189,7 +3239,7 @@
     "tooltip_plain": "获得1个随机棱彩阶强化符文。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3208,7 +3258,7 @@
       "Augment2SilverChance": 30.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3222,7 +3272,7 @@
     "tooltip_plain": "获得1个随机黄金阶强化符文。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3241,7 +3291,7 @@
       "StartingAPIfSecondAugment": 40.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3259,7 +3309,7 @@
       "ShieldBase": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3278,7 +3328,7 @@
       "StackDuration": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3308,7 +3358,7 @@
       "TimeToCastE2": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3328,7 +3378,7 @@
       "OnHitRatio": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3349,7 +3399,7 @@
       "SlowDuration": 1.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3370,7 +3420,7 @@
       "SizeMod": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3387,7 +3437,7 @@
       "SpeedPerHit": 200.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3403,7 +3453,7 @@
       "HealthPercent": 0.03500000014901161
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3436,7 +3486,7 @@
       "SlowPercentage": 80.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3457,7 +3507,7 @@
       "RectHalfWidth": 60.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3475,7 +3525,7 @@
       "SlowDuration": 1.25
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3493,7 +3543,7 @@
       "FlashCooldown": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3512,7 +3562,7 @@
       "TotalASValue": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3529,7 +3579,7 @@
       "SummonerHaste": 70.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3546,7 +3596,7 @@
       "ShieldDuration": 2500.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3562,7 +3612,7 @@
       "AbilityHaste": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3576,7 +3626,7 @@
     "tooltip_plain": "{{Cherry_BuffBuddies_Summary}}余烬之冠：普攻会灼烧和减速敌方英雄。在非战斗状态下，治疗你的一部分最大生命值。洞悉之冠：获得技能急速，并且每秒回复法力值和能量值。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3592,7 +3642,7 @@
       "EAbilityHaste": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3608,7 +3658,7 @@
       "WAbilityHaste": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3625,7 +3675,7 @@
       "QReducedAbilityHaste": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3639,7 +3689,7 @@
     "tooltip_plain": "你的治疗效果和护盾效果还会提升目标?护甲和魔法抗性，这些加成持续3秒。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3653,7 +3703,7 @@
     "tooltip_plain": "你的攻击会处决低于?最大生命值的敌方英雄, 回复你?生命值并击退敌人们。在着陆，或与一个敌人或地形产生碰撞时，这个被击退的敌人将爆炸，对附近的敌人们造成?魔法伤害。这些爆炸可以连锁。被飞身踢的敌人数量：?获得治疗的总和：?已造成的伤害：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3670,7 +3720,7 @@
       "Poro_Augment_Amp": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3689,7 +3739,7 @@
       "SpawnFrequency_Seconds": 3.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3707,7 +3757,7 @@
       "InverseRate": 1.666659951210022
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3727,7 +3777,7 @@
       "NumberOfMissiles": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3757,7 +3807,7 @@
       "GRWindow": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3776,7 +3826,7 @@
       "HealthThreshold": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   },
   {
     "schema_version": 2,
@@ -3796,6 +3846,6 @@
       "MaxMult": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-04-11T15:43:31+0800"
+    "updated_at": "2026-04-12T00:39:10+0800"
   }
 ]

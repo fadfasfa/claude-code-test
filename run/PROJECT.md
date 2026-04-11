@@ -143,6 +143,8 @@ flowchart TD
 
 | 日期 | workflow_id | 执行端 | 变更原因 | 变更摘要 | 影响文件 | 审计结果 | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2026-04-12 | cx-select-phase-hextech-preload | cx | 加速英雄海克斯详情页切换，不改接口数据格式 | 新增选人阶段按可选英雄预热海克斯详情 payload 的内存缓存，详情接口优先命中预热缓存，其次命中预计算缓存，离开选人后清空内存预热结果 | `display/web_runtime.py`、`display/web_api.py`、`PROJECT.md` | passed | 已验证 payload 结构一致，预热后读取耗时显著低于首轮实时计算 |
+| 2026-04-12 | cx-remove-old-cdn-fallback | cx | 清理海克斯图标残留旧 CDN 回退并补充验证 | 将 `display/web_runtime.py` 的远端图标回退收口为显式远端地址与 apexlol 兜底，移除 `cdn.dtodo.cn` 残留，并复核海克斯描述、图标与清单恢复情况后准备打包 | `display/web_runtime.py`、`PROJECT.md`、`config/Augment_Icon_Manifest.json` | pending | 本轮以收尾和打包为主 |
 | 2026-04-11 | cx-run-web-ui-performance-refactor | cx | Web / UI 结构收口、注释统一、文档同步 | 将 Web 拆为启动壳 / 路由层 / 运行时层，将桌面端拆为 UI 主类 / 运行时辅助层，修正 `dev_checks.py` 执行入口，并把 `README.md` / `PROJECT.md` 更新为当前真实结构 | `display/web_server.py`、`display/web_api.py`、`display/web_runtime.py`、`display/hextech_ui.py`、`display/ui_runtime.py`、`tools/dev_checks.py`、`README.md`、`PROJECT.md` | passed | 已完成编译、自检与导入验证 |
 | 2026-04-11 | cx-run-commentary-and-doc-harden | cx | 为 `run/` Python 模块补统一模块头和关键函数说明，收紧运行与打包文档 | 统一补充 Web 生命周期、LCU 轮询、CSV/快照读取、UI 后台线程、资源缓存回退和打包主流程的 docstring，并同步维护文档说明 | `display/web_runtime.py`、`display/ui_runtime.py`、`processing/runtime_store.py`、`processing/orchestrator.py`、`scraping/version_sync.py`、`scraping/icon_resolver.py`、`tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`README.md`、`PROJECT.md` | pending | 本轮只改注释与文档，不调整运行逻辑 |
 

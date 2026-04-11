@@ -105,6 +105,28 @@ CORE_DATA_FILE = os.path.join(CONFIG_DIR, "Champion_Core_Data.json")
 AUGMENT_MAP_FILE = os.path.join(CONFIG_DIR, "Augment_Full_Map.json")
 AUGMENT_ICON_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
 AUGMENT_MANIFEST_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Manifest.json")
+HEXTECH_PRIMARY_BASE_URL = "https://aramgg.com"
+HEXTECH_FALLBACK_BASE_URL = "https://hextech.dtodo.cn"
+HEXTECH_AUGMENT_METADATA_URLS = (
+    f"{HEXTECH_PRIMARY_BASE_URL}/data/aram-mayhem-augments.zh_cn.json",
+    f"{HEXTECH_FALLBACK_BASE_URL}/data/aram-mayhem-augments.zh_cn.json",
+    "https://apexlol.info/data/aram-mayhem-augments.zh_cn.json",
+)
+HEXTECH_CHAMPION_STATS_URLS = (
+    f"{HEXTECH_PRIMARY_BASE_URL}/data/champions-stats.json",
+    f"{HEXTECH_FALLBACK_BASE_URL}/data/champions-stats.json",
+)
+
+
+def build_hextech_detail_url(champ_id: str, base_url: str = HEXTECH_PRIMARY_BASE_URL) -> str:
+    return f"{str(base_url).rstrip('/')}/zh-CN/champion-stats/{champ_id}"
+
+
+def build_hextech_detail_urls(champ_id: str) -> tuple[str, str]:
+    return (
+        build_hextech_detail_url(champ_id, HEXTECH_PRIMARY_BASE_URL),
+        build_hextech_detail_url(champ_id, HEXTECH_FALLBACK_BASE_URL),
+    )
 
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(ASSET_DIR, exist_ok=True)
@@ -396,10 +418,7 @@ def sync_hero_data():
                         excluded_tokens=[hero_name, v['title'], v['id']],
                     ),
                 }
-            aug_sources = [
-                "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json",
-                "https://apexlol.info/data/aram-mayhem-augments.zh_cn.json"
-            ]
+            aug_sources = list(HEXTECH_AUGMENT_METADATA_URLS)
             # 备用英文数据源，用于降级抓取图标映射
             aug_sources_en = [
                 "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/data/v1/augments.json",
