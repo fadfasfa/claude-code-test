@@ -138,7 +138,9 @@ def start_web_server_process(web_port_file: str):
     startupinfo = None
     child_env = os.environ.copy()
     child_env["HEXTECH_BASE_DIR"] = BASE_DIR
-    child_env["HEXTECH_OPEN_BROWSER"] = "0"
+    # Desktop startup should open the companion web page automatically.
+    # Packaged builds rely on the child web server process to launch the page.
+    child_env.pop("HEXTECH_OPEN_BROWSER", None)
     if os.name == "nt":
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW

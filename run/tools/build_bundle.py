@@ -27,6 +27,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from tools.bundle_manifest import prepare_bundle_runtime
 from tools.cleanup_runtime import cleanup_build_outputs, cleanup_python_caches
@@ -35,6 +36,9 @@ from tools.cleanup_runtime import cleanup_build_outputs, cleanup_python_caches
 BASE_DIR = Path(__file__).resolve().parent.parent
 DIST_DIR = BASE_DIR / "dist"
 BUILD_DIR = BASE_DIR / "build"
+APP_EXE_NAME = "Hextech伴生终端.exe"
+LAUNCHER_NAME = "启动 Hextech.bat"
+FIRST_RUN_GUIDE_NAME = "README_首次使用.txt"
 EXCLUDED_MODULES = [
     "tkinter.test",
     "unittest",
@@ -175,8 +179,59 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
     return DIST_DIR / "Hextech伴生终端"
 
 
-def finalize_output(exe_dir: Path) -> Path:
-    """整理最终输出目录，移除旧重复目录并按日期命名产物。"""
+def write_portable_launcher(final_dir: Path) -> Path:
+    """生成便携包启动脚本，确保从任意解压目录都能正确启动。"""
+    launcher_path = final_dir / LAUNCHER_NAME
+    launcher_content = (
+        "@echo off\r\n"
+        "setlocal\r\n"
+        "cd /d \"%~dp0\"\r\n"
+        f"start \"\" \"{APP_EXE_NAME}\"\r\n"
+    )
+    launcher_path.write_text(launcher_content, encoding="utf-8")
+    return launcher_path
+
+
+def write_first_run_guide(final_dir: Path) -> Path:
+    """生成面向熟人分发的首次使用说明。"""
+    guide_path = final_dir / FIRST_RUN_GUIDE_NAME
+    guide_content = """Hextech 伴生系统 首次使用说明
+
+1. 先把整个压缩包完整解压，不要只拿出单个 exe。
+2. 解压后，直接双击“启动 Hextech.bat”。
+3. 如果系统提示拦截：
+   - 这是 Windows 对未签名应用的保护提示，不代表程序本身损坏。
+   - 请在提示页里选择“更多信息”后再选择“仍要运行”（如果系统给出这个入口）。
+4. 如果还是打不开：
+   - 请把整个文件夹放到普通目录后再试，例如 D 盘或你自己新建的工作目录。
+   - 不要放在只读、受限或同步中的目录里。
+
+说明：
+- 这是未签名的便携版，适合熟人或测试用户使用。
+- 首次运行时，程序会自动补齐部分运行时数据。
+"""
+    guide_path.write_text(guide_content, encoding="utf-8")
+    return guide_path
+
+
+def create_portable_zip(final_dir: Path) -> Path:
+    """把最终目录压缩为便于发送的便携包。"""
+    zip_path = DIST_DIR / f"{final_dir.name}_portable.zip"
+    if zip_path.exists():
+        zip_path.unlink()
+
+    with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zf:
+        for path in final_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.name.endswith(".log") or path.name.endswith(".lock"):
+                continue
+            zf.write(path, arcname=str(Path(final_dir.name) / path.relative_to(final_dir)))
+    return zip_path
+
+
+def finalize_output(exe_dir: Path) -> tuple[Path, Path]:
+    """整理最终输出目录，补便携入口，并生成 zip 便携包。"""
     print_step("最终优化")
     final_dir = DIST_DIR / f"Hextech_伴生系统_{datetime.now().strftime('%Y%m%d')}"
     if final_dir.exists():
@@ -185,8 +240,12 @@ def finalize_output(exe_dir: Path) -> Path:
     legacy_duplicate_dir = BUILD_DIR / "Hextech伴生终端"
     if legacy_duplicate_dir.exists():
         shutil.rmtree(legacy_duplicate_dir, ignore_errors=True)
+    write_portable_launcher(final_dir)
+    write_first_run_guide(final_dir)
+    zip_path = create_portable_zip(final_dir)
     print_check(f"输出目录：{final_dir}")
-    return final_dir
+    print_check(f"便携压缩包：{zip_path}")
+    return final_dir, zip_path
 
 
 def main():
@@ -199,7 +258,10 @@ def main():
     bundle_root = prepare_runtime_bundle()
     version_file = generate_version_info()
     exe_dir = build_exe(version_file, bundle_root)
-    final_dir = finalize_output(exe_dir)
+    final_dir, zip_path = finalize_output(exe_dir)
     print_step("打包完成")
     print(f"  输出目录：{final_dir}")
-    print(f"  主程序：{final_dir / 'Hextech伴生终端.exe'}")
+    print(f"  主程序：{final_dir / APP_EXE_NAME}")
+    print(f"  启动脚本：{final_dir / LAUNCHER_NAME}")
+    print(f"  首次说明：{final_dir / FIRST_RUN_GUIDE_NAME}")
+    print(f"  便携压缩包：{zip_path}")

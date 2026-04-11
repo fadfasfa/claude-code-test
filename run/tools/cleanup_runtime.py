@@ -23,6 +23,8 @@ VOLATILE_CONFIG_FILES = (
     "startup_status.json",
     "web_server_port.txt",
     "hextech_system.log",
+    "hextech_runtime_summary.log",
+    "hextech_error.log",
     "web_server_test.err.log",
     "web_server_test.log",
 )

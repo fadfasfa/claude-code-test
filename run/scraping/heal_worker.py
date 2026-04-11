@@ -12,9 +12,10 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from processing.runtime_store import get_latest_csv
+import scraping.version_sync as version_sync
 from scraping.augment_catalog import (
     build_augment_icon_manifest,
     is_augment_icon_prefetch_ready,
@@ -28,6 +29,7 @@ from scraping.version_sync import (
     ASSET_DIR,
     CONFIG_DIR,
     AUGMENT_ICON_FILE,
+    AUGMENT_MANIFEST_FILE,
     AUGMENT_MAP_FILE,
     CORE_DATA_FILE,
     VERSION_FILE,
@@ -60,7 +62,11 @@ def _latest_csv_ready() -> bool:
 
 
 def _core_data_ready() -> bool:
-    return all(os.path.exists(path) for path in (CORE_DATA_FILE, AUGMENT_MAP_FILE, AUGMENT_ICON_FILE, VERSION_FILE))
+    augment_data_ready = (
+        os.path.exists(AUGMENT_MANIFEST_FILE)
+        or (os.path.exists(AUGMENT_MAP_FILE) and os.path.exists(AUGMENT_ICON_FILE))
+    )
+    return os.path.exists(CORE_DATA_FILE) and os.path.exists(VERSION_FILE) and augment_data_ready
 
 
 def _augment_manifest_ready() -> bool:
@@ -105,12 +111,10 @@ def _heal_synergy_data() -> bool:
 
 
 def _heal_augment_catalog(force: bool = False, stop_event=None) -> bool:
-    if force:
-        manifest = build_augment_icon_manifest(force_refresh=True)
-    else:
-        manifest = load_augment_icon_manifest()
-        if not manifest:
-            manifest = build_augment_icon_manifest(force_refresh=False)
+    # Always rebuild the manifest from current source maps during healing.
+    # This avoids preserving an older manifest that still looks complete while
+    # the underlying augment map files were just recreated.
+    manifest = build_augment_icon_manifest(force_refresh=force)
     if not manifest:
         return False
     result = run_augment_icon_prefetch(force_refresh=force, stop_event=stop_event, max_workers=8)
@@ -118,6 +122,9 @@ def _heal_augment_catalog(force: bool = False, stop_event=None) -> bool:
 
 
 def _heal_champion_core() -> bool:
+    if not _core_data_ready():
+        with version_sync._sync_lock:
+            version_sync._last_sync_time = 0
     return bool(sync_hero_data() and os.path.exists(CORE_DATA_FILE))
 
 
@@ -132,41 +139,52 @@ def _heal_images() -> bool:
 def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alias_index: bool = False) -> dict:
     del include_alias_index
     report = HealReport()
-    with FileLock(str(LOCK_FILE), timeout=30):
-        if force or not _core_data_ready():
-            report.requested.append("champion_core")
-            if _heal_champion_core():
-                report.repaired.append("champion_core")
-            else:
-                report.failed.append("champion_core")
+    try:
+        with FileLock(str(LOCK_FILE), timeout=1):
+            missing = detect_missing_artifacts()
+            core_assets_missing = not _core_data_ready()
 
-        if force or not _latest_csv_ready():
-            report.requested.append("hextech_rankings")
-            if _heal_hero_rankings(stop_event=stop_event):
-                report.repaired.append("hextech_rankings")
-            else:
-                report.failed.append("hextech_rankings")
+            if force or missing.get("champion_core") or core_assets_missing:
+                report.requested.append("champion_core")
+                if _heal_champion_core():
+                    report.repaired.append("champion_core")
+                else:
+                    report.failed.append("champion_core")
 
-        if force or not os.path.exists(os.path.join(CONFIG_DIR, "Champion_Synergy.json")):
-            report.requested.append("synergy_data")
-            if _heal_synergy_data():
-                report.repaired.append("synergy_data")
-            else:
-                report.failed.append("synergy_data")
+            if force or missing.get("hextech_rankings"):
+                report.requested.append("hextech_rankings")
+                if _heal_hero_rankings(stop_event=stop_event):
+                    report.repaired.append("hextech_rankings")
+                else:
+                    report.failed.append("hextech_rankings")
 
-        if force or not _augment_manifest_ready():
-            report.requested.append("augment_catalog")
-            if _heal_augment_catalog(force=force, stop_event=stop_event):
-                report.repaired.append("augment_catalog")
-            else:
-                report.failed.append("augment_catalog")
+            if force or missing.get("synergy_data"):
+                report.requested.append("synergy_data")
+                if _heal_synergy_data():
+                    report.repaired.append("synergy_data")
+                else:
+                    report.failed.append("synergy_data")
 
-        if force or not _image_assets_ready():
-            report.requested.append("images")
-            if _heal_images():
-                report.repaired.append("images")
-            else:
-                report.failed.append("images")
+            # `augment_catalog` can be missing because source maps are gone, even if an
+            # older manifest still looks complete. Use the initial snapshot so a prior
+            # champion-core repair does not hide the need to rebuild the manifest.
+            if force or missing.get("augment_catalog"):
+                report.requested.append("augment_catalog")
+                if _heal_augment_catalog(force=force, stop_event=stop_event):
+                    report.repaired.append("augment_catalog")
+                else:
+                    report.failed.append("augment_catalog")
+
+            if force or missing.get("images"):
+                report.requested.append("images")
+                if _heal_images():
+                    report.repaired.append("images")
+                else:
+                    report.failed.append("images")
+    except Timeout:
+        payload = report.as_dict()
+        logger.info("heal_worker skipped: another repair is already running: %s", json.dumps(payload, ensure_ascii=False))
+        return payload
 
     payload = report.as_dict()
     message = "heal_worker completed: %s"

@@ -111,6 +111,7 @@ def load_augment_icon_map(config_dir: Optional[str] = None, force_refresh: bool 
     global _ICON_MAP_CACHE
     config_dir = _resolve_config_dir(config_dir)
     icon_map_path = os.path.join(config_dir, "Augment_Icon_Map.json")
+    manifest_path = os.path.join(config_dir, "Augment_Icon_Manifest.json")
 
     with _ICON_MAP_LOCK:
         cached_path, cached_mtime, cached_data = _ICON_MAP_CACHE
@@ -124,7 +125,7 @@ def load_augment_icon_map(config_dir: Optional[str] = None, force_refresh: bool 
     try:
         current_mtime = os.path.getmtime(icon_map_path)
     except OSError:
-        return _ICON_MAP_CACHE[2]
+        return _load_augment_icon_map_from_manifest(manifest_path)
 
     try:
         with open(icon_map_path, "r", encoding="utf-8") as f:
@@ -136,7 +137,28 @@ def load_augment_icon_map(config_dir: Optional[str] = None, force_refresh: bool 
     except Exception:
         pass
 
-    return _ICON_MAP_CACHE[2]
+    return _load_augment_icon_map_from_manifest(manifest_path)
+
+
+def _load_augment_icon_map_from_manifest(manifest_path: str) -> dict:
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return _ICON_MAP_CACHE[2]
+
+    if not isinstance(manifest, list):
+        return _ICON_MAP_CACHE[2]
+
+    data = {}
+    for item in manifest:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        filename = normalize_augment_filename(item.get("filename", ""))
+        if name and filename:
+            data[name] = filename
+    return data
 
 
 def find_augment_icon_filename(icon_map: dict, lookup_name: str, asset_dir: Optional[str] = None) -> Optional[str]:

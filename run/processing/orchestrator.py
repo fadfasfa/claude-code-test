@@ -38,6 +38,7 @@ from scraping.augment_catalog import (
 )
 from scraping.version_sync import (
     AUGMENT_ICON_FILE,
+    AUGMENT_MANIFEST_FILE,
     AUGMENT_MAP_FILE,
     CONFIG_DIR,
     CORE_DATA_FILE,
@@ -51,12 +52,16 @@ SYNERGY_FILE = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
 def is_first_run(force: bool = False) -> bool:
     if force:
         return True
+    augment_data_ready = (
+        os.path.exists(AUGMENT_MANIFEST_FILE)
+        or (os.path.exists(AUGMENT_MAP_FILE) and os.path.exists(AUGMENT_ICON_FILE))
+    )
     core_files_ready = all(
         os.path.exists(path)
-        for path in (CORE_DATA_FILE, AUGMENT_MAP_FILE, AUGMENT_ICON_FILE, SYNERGY_FILE)
+        for path in (CORE_DATA_FILE, SYNERGY_FILE)
     )
     latest_csv = get_latest_csv()
-    return not core_files_ready or not latest_csv or not os.path.exists(latest_csv)
+    return not core_files_ready or not augment_data_ready or not latest_csv or not os.path.exists(latest_csv)
 
 
 def should_refresh_synergy(force: bool, stale_after_seconds: int) -> bool:

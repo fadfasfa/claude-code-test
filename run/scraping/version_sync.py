@@ -42,7 +42,13 @@ from typing import Optional
 
 from processing.alias_utils import dedupe_alias_texts
 from scraping.icon_resolver import normalize_augment_name
-from tools.log_utils import ensure_utf8_stdio, install_summary_logging
+from tools.log_utils import (
+    MaxLevelFilter,
+    ensure_utf8_stdio,
+    get_error_log_file,
+    get_runtime_summary_log_file,
+    install_summary_logging,
+)
 from tools.runtime_bundle import seed_bundled_resources
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -92,11 +98,13 @@ RESOURCE_DIR = get_resource_dir()
 BASE_DIR = get_base_dir()
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 ASSET_DIR = os.path.join(BASE_DIR, "assets")
-LOG_FILE = os.path.join(CONFIG_DIR, "hextech_system.log")
+SUMMARY_LOG_FILE = get_runtime_summary_log_file()
+ERROR_LOG_FILE = get_error_log_file()
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
 CORE_DATA_FILE = os.path.join(CONFIG_DIR, "Champion_Core_Data.json")
 AUGMENT_MAP_FILE = os.path.join(CONFIG_DIR, "Augment_Full_Map.json")
 AUGMENT_ICON_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
+AUGMENT_MANIFEST_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Manifest.json")
 
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(ASSET_DIR, exist_ok=True)
@@ -143,12 +151,36 @@ if getattr(sys, 'frozen', False):
     )
 
 # 日志输出做滚动保留。
+summary_handler = RotatingFileHandler(
+    SUMMARY_LOG_FILE,
+    maxBytes=1024 * 1024,
+    backupCount=1,
+    encoding="utf-8",
+)
+summary_handler.setLevel(logging.INFO)
+summary_handler.addFilter(MaxLevelFilter(logging.INFO))
+summary_handler._hextech_preserve_level = True
+
+error_handler = RotatingFileHandler(
+    ERROR_LOG_FILE,
+    maxBytes=1024 * 1024,
+    backupCount=1,
+    encoding="utf-8",
+)
+error_handler.setLevel(logging.WARNING)
+error_handler._hextech_preserve_level = True
+
+stream_handler = logging.StreamHandler()
+stream_handler.setLevel(logging.WARNING)
+stream_handler._hextech_preserve_level = True
+
 install_summary_logging(
     level=logging.INFO,
     fmt='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        RotatingFileHandler(LOG_FILE, maxBytes=1024*1024, backupCount=1, encoding='utf-8'),
-        logging.StreamHandler()
+        summary_handler,
+        error_handler,
+        stream_handler,
     ],
 )
 logger = logging.getLogger(__name__)
@@ -316,9 +348,12 @@ def sync_hero_data():
             return True
 
         session = get_advanced_session()
-        files_exist = all(
-            os.path.exists(f)
-            for f in [CORE_DATA_FILE, AUGMENT_MAP_FILE, AUGMENT_ICON_FILE]
+        files_exist = os.path.exists(CORE_DATA_FILE) and (
+            (
+                os.path.exists(AUGMENT_MAP_FILE)
+                and os.path.exists(AUGMENT_ICON_FILE)
+            )
+            or os.path.exists(AUGMENT_MANIFEST_FILE)
         )
         local_ver = ""
         if os.path.exists(VERSION_FILE):
@@ -449,6 +484,7 @@ def sync_hero_data():
             with open(tmp_ver, "w", encoding="utf-8") as f:
                 f.write(curr_ver)
             shutil.move(tmp_ver, VERSION_FILE)
+            _cleanup_legacy_augment_maps_if_manifest_exists()
             _last_sync_time = time.time()
             sync_succeeded = True
         except (requests.RequestException, json.JSONDecodeError, ValueError, KeyError) as e:
@@ -484,13 +520,47 @@ def load_champion_core_data():
 def load_augment_map():
     """读取海克斯等级映射；文件缺失时强制触发一次稳定资源同步。"""
     global _last_sync_time
-    if not os.path.exists(AUGMENT_MAP_FILE):
+    if not os.path.exists(AUGMENT_MAP_FILE) and not os.path.exists(AUGMENT_MANIFEST_FILE):
         with _sync_lock:
             _last_sync_time = 0  # 强制重新同步
     if not sync_hero_data():
         return {}
-    with open(AUGMENT_MAP_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    if os.path.exists(AUGMENT_MAP_FILE):
+        with open(AUGMENT_MAP_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return _load_augment_tier_map_from_manifest()
+
+
+def _load_augment_tier_map_from_manifest() -> dict:
+    try:
+        with open(AUGMENT_MANIFEST_FILE, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+
+    if not isinstance(manifest, list):
+        return {}
+
+    tier_map = {}
+    for item in manifest:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        tier = str(item.get("tier", "")).strip()
+        if name and tier:
+            tier_map[name] = tier
+    return tier_map
+
+
+def _cleanup_legacy_augment_maps_if_manifest_exists() -> None:
+    if not os.path.exists(AUGMENT_MANIFEST_FILE):
+        return
+    for legacy_path in (AUGMENT_MAP_FILE, AUGMENT_ICON_FILE):
+        try:
+            if os.path.exists(legacy_path):
+                os.remove(legacy_path)
+        except OSError:
+            logger.debug("删除旧版海克斯映射失败：%s", legacy_path, exc_info=True)
 
 # ================= 系统状态探针 =================
 def get_system_status():

@@ -45,6 +45,7 @@ python build.py
 ## 打包说明
 
 - 默认产物为 `PyInstaller --onedir`
+- 默认发布形态为“未签名便携包”，适合熟人或测试用户分发
 - 打包白名单会内置：
   - `display/static/`
   - 稳定 `config/` 资源
@@ -63,6 +64,22 @@ python build.py
   - `web_server_port.txt`
   - 运行日志
 - 运行时读取顺序为：包内稳定资源 -> 本地运行目录覆盖资源 -> 在线刷新生成资源
+- `dist/` 下会同时生成：
+  - 目录版 `Hextech_伴生系统_YYYYMMDD/`
+  - 便携压缩包 `Hextech_伴生系统_YYYYMMDD_portable.zip`
+- 便携目录根级会自动补齐：
+  - `Hextech伴生终端.exe`
+  - `启动 Hextech.bat`
+  - `README_首次使用.txt`
+
+### 便携分发说明
+
+- 发给熟人时，优先发送 `_portable.zip`
+- 对方只需要：
+  - 解压整个压缩包
+  - 双击 `启动 Hextech.bat`
+- 当前版本未做 Windows 代码签名，因此部分系统仍可能触发 Smart App Control / SmartScreen 拦截
+- 这个限制不能仅靠仓库内代码彻底消除；当前方案只负责把资源、入口和首次使用说明整理成便携包
 
 ## 目录结构
 
