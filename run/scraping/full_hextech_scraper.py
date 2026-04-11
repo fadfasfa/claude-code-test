@@ -16,6 +16,9 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from scraping.version_sync import (
     CONFIG_DIR,
+    HEXTECH_AUGMENT_METADATA_URLS,
+    HEXTECH_CHAMPION_STATS_URLS,
+    build_hextech_detail_urls,
     get_advanced_session,
     load_augment_map,
     load_champion_core_data,
@@ -253,7 +256,17 @@ def main_scraper(stop_event=None):
     session = get_advanced_session()
 
     try:
-        aug_response = fetch_with_retry(session, "https://hextech.dtodo.cn/data/aram-mayhem-augments.zh_cn.json")
+        aug_response = None
+        for url in HEXTECH_AUGMENT_METADATA_URLS:
+            candidate = fetch_with_retry(session, url)
+            if candidate is None:
+                continue
+            try:
+                if isinstance(candidate.json(), dict):
+                    aug_response = candidate
+                    break
+            except Exception:
+                continue
         if aug_response is None:
             logging.error("获取海克斯配置数据失败")
             return False
@@ -265,7 +278,17 @@ def main_scraper(stop_event=None):
             aug_id = str(raw_key)
             aug_id_map[aug_id] = _clean_augment_text(item.get('displayName'))
 
-        stats_response = fetch_with_retry(session, "https://hextech.dtodo.cn/data/champions-stats.json")
+        stats_response = None
+        for url in HEXTECH_CHAMPION_STATS_URLS:
+            candidate = fetch_with_retry(session, url)
+            if candidate is None:
+                continue
+            try:
+                if isinstance(candidate.json(), list):
+                    stats_response = candidate
+                    break
+            except Exception:
+                continue
         if stats_response is None:
             logging.error("获取英雄统计数据失败")
             return False
@@ -280,12 +303,17 @@ def main_scraper(stop_event=None):
     def fetch_champ(champ):
         c_id = str(champ.get('championId', ''))
         c_name = core_data.get(c_id, {}).get("name", c_id)
-        url = f"https://hextech.dtodo.cn/zh-CN/champion-stats/{c_id}"
         champ_rows = []
+        url = ""
         try:
             time.sleep(random.uniform(0.5, 1.5))
 
-            res = fetch_with_retry(session, url)
+            res = None
+            for candidate_url in build_hextech_detail_urls(c_id):
+                url = candidate_url
+                res = fetch_with_retry(session, url)
+                if res is not None and res.status_code == 200 and res.text:
+                    break
 
             if res is not None and res.status_code == 200 and len(res.text) > 0:
                 try:

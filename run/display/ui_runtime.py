@@ -257,7 +257,17 @@ def lcu_polling_loop(ui: "HextechUI") -> None:
             res = ui.session.get(f"{web_base}/api/live_state", timeout=2)
             if res.status_code == 200:
                 data = res.json()
-                available_ids = {str(champ_id) for champ_id in data.get("champion_ids", []) if str(champ_id).strip()}
+                web_ids = {str(champ_id) for champ_id in data.get("champion_ids", []) if str(champ_id).strip()}
+                local_champion_id = data.get("local_champion_id")
+                has_local_champion = False
+                if isinstance(local_champion_id, int):
+                    has_local_champion = local_champion_id > 0
+                else:
+                    local_text = str(local_champion_id or "").strip()
+                    has_local_champion = bool(local_text and local_text != "0")
+
+                if web_ids or has_local_champion:
+                    available_ids = web_ids
         except Exception:
             available_ids = None
 

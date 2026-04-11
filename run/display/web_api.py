@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import threading
 from urllib.parse import quote, unquote
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
@@ -17,10 +18,15 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel
 
 from processing.alias_search import load_manual_alias_index
+from processing.orchestrator import rebuild_api_cache_if_needed
+from processing.runtime_store import load_precomputed_hextech_for_hero
 from processing.view_adapter import process_champions_data, process_hextechs_data
 from scraping.augment_catalog import load_augment_icon_manifest
 from scraping.version_sync import CONFIG_DIR
 from . import web_runtime
+
+_api_cache_rebuild_lock = threading.Lock()
+_api_cache_rebuild_inflight = False
 
 
 class RedirectRequest(BaseModel):
@@ -28,6 +34,31 @@ class RedirectRequest(BaseModel):
 
     hero_id: str
     hero_name: str
+
+
+def _request_precomputed_hextech_rebuild() -> bool:
+    global _api_cache_rebuild_inflight
+    with _api_cache_rebuild_lock:
+        if _api_cache_rebuild_inflight:
+            return False
+        _api_cache_rebuild_inflight = True
+
+    def _worker() -> None:
+        global _api_cache_rebuild_inflight
+        try:
+            rebuild_api_cache_if_needed(force=False)
+        except Exception:
+            web_runtime.logger.exception("预计算海克斯缓存后台重建失败。")
+        finally:
+            with _api_cache_rebuild_lock:
+                _api_cache_rebuild_inflight = False
+
+    threading.Thread(
+        target=_worker,
+        daemon=True,
+        name="precomputed-hextech-cache-rebuild",
+    ).start()
+    return True
 
 
 def _html_file_response(filename: str) -> FileResponse:
@@ -144,6 +175,16 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/api/champion/{name}/hextechs")
     async def api_champion_hextechs(name: str):
         canonical_name = web_runtime.resolve_canonical_hero_name(name)
+        preloaded_payload = web_runtime.get_preloaded_hextech_payload(canonical_name)
+        if isinstance(preloaded_payload, dict) and preloaded_payload.get("comprehensive"):
+            return JSONResponse(content=preloaded_payload)
+
+        precomputed_payload = load_precomputed_hextech_for_hero(canonical_name)
+        if isinstance(precomputed_payload, dict) and precomputed_payload.get("comprehensive"):
+            web_runtime.request_background_refresh(force=False)
+            return JSONResponse(content=precomputed_payload)
+        _request_precomputed_hextech_rebuild()
+
         df = await web_runtime.get_df_with_refresh()
         if df.empty:
             live_df = await asyncio.to_thread(web_runtime.get_live_hextech_snapshot_df, canonical_name)
