@@ -25,6 +25,9 @@ NOISY_MESSAGE_PATTERNS = (
     "[重试中]",
     "缺失资源列表",
     "共缺失 ",
+    "已检测到 LCU 连接，端口=",
+    "Champion_Synergy.json 缓存已刷新",
+    "CSV 已更新：",
 )
 
 
@@ -44,11 +47,31 @@ class SourceNameFilter(logging.Filter):
         return True
 
 
+class MaxLevelFilter(logging.Filter):
+    def __init__(self, max_level: int):
+        super().__init__()
+        self.max_level = max_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno <= self.max_level
+
+
 def get_unified_log_file() -> str:
+    return get_runtime_summary_log_file()
+
+
+def get_runtime_summary_log_file() -> str:
     base_dir = Path(__file__).resolve().parent.parent
     config_dir = base_dir / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
-    return str(config_dir / "hextech_system.log")
+    return str(config_dir / "hextech_runtime_summary.log")
+
+
+def get_error_log_file() -> str:
+    base_dir = Path(__file__).resolve().parent.parent
+    config_dir = base_dir / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return str(config_dir / "hextech_error.log")
 
 
 def ensure_utf8_stdio() -> None:
@@ -79,10 +102,11 @@ def install_summary_logging(
         if not root.handlers:
             logging.basicConfig(level=logging.WARNING, format=fmt)
         for handler in root.handlers:
-            if isinstance(handler, logging.FileHandler):
-                handler.setLevel(logging.ERROR)
-            else:
-                handler.setLevel(logging.WARNING)
+            if not getattr(handler, "_hextech_preserve_level", False):
+                if isinstance(handler, logging.FileHandler):
+                    handler.setLevel(logging.ERROR)
+                else:
+                    handler.setLevel(logging.WARNING)
             if not any(isinstance(existing, SummaryOnlyFilter) for existing in handler.filters):
                 handler.addFilter(summary_filter)
             if not any(isinstance(existing, SourceNameFilter) for existing in handler.filters):
@@ -96,10 +120,11 @@ def install_summary_logging(
     if not any(isinstance(existing, SourceNameFilter) for existing in root.filters):
         root.addFilter(source_filter)
     for handler in root.handlers:
-        if isinstance(handler, logging.FileHandler):
-            handler.setLevel(logging.ERROR)
-        else:
-            handler.setLevel(logging.WARNING)
+        if not getattr(handler, "_hextech_preserve_level", False):
+            if isinstance(handler, logging.FileHandler):
+                handler.setLevel(logging.ERROR)
+            else:
+                handler.setLevel(logging.WARNING)
         if not any(isinstance(existing, SummaryOnlyFilter) for existing in handler.filters):
             handler.addFilter(summary_filter)
         if not any(isinstance(existing, SourceNameFilter) for existing in handler.filters):

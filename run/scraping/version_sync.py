@@ -42,7 +42,13 @@ from typing import Optional
 
 from processing.alias_utils import dedupe_alias_texts
 from scraping.icon_resolver import normalize_augment_name
-from tools.log_utils import ensure_utf8_stdio, install_summary_logging
+from tools.log_utils import (
+    MaxLevelFilter,
+    ensure_utf8_stdio,
+    get_error_log_file,
+    get_runtime_summary_log_file,
+    install_summary_logging,
+)
 from tools.runtime_bundle import seed_bundled_resources
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -92,7 +98,8 @@ RESOURCE_DIR = get_resource_dir()
 BASE_DIR = get_base_dir()
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 ASSET_DIR = os.path.join(BASE_DIR, "assets")
-LOG_FILE = os.path.join(CONFIG_DIR, "hextech_system.log")
+SUMMARY_LOG_FILE = get_runtime_summary_log_file()
+ERROR_LOG_FILE = get_error_log_file()
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
 CORE_DATA_FILE = os.path.join(CONFIG_DIR, "Champion_Core_Data.json")
 AUGMENT_MAP_FILE = os.path.join(CONFIG_DIR, "Augment_Full_Map.json")
@@ -143,12 +150,36 @@ if getattr(sys, 'frozen', False):
     )
 
 # 日志输出做滚动保留。
+summary_handler = RotatingFileHandler(
+    SUMMARY_LOG_FILE,
+    maxBytes=1024 * 1024,
+    backupCount=1,
+    encoding="utf-8",
+)
+summary_handler.setLevel(logging.INFO)
+summary_handler.addFilter(MaxLevelFilter(logging.INFO))
+summary_handler._hextech_preserve_level = True
+
+error_handler = RotatingFileHandler(
+    ERROR_LOG_FILE,
+    maxBytes=1024 * 1024,
+    backupCount=1,
+    encoding="utf-8",
+)
+error_handler.setLevel(logging.WARNING)
+error_handler._hextech_preserve_level = True
+
+stream_handler = logging.StreamHandler()
+stream_handler.setLevel(logging.WARNING)
+stream_handler._hextech_preserve_level = True
+
 install_summary_logging(
     level=logging.INFO,
     fmt='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        RotatingFileHandler(LOG_FILE, maxBytes=1024*1024, backupCount=1, encoding='utf-8'),
-        logging.StreamHandler()
+        summary_handler,
+        error_handler,
+        stream_handler,
     ],
 )
 logger = logging.getLogger(__name__)
