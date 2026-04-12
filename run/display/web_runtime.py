@@ -32,6 +32,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -127,7 +128,12 @@ def get_static_dir() -> str:
 def get_assets_dir() -> str:
     global _assets_dir
     if _assets_dir is None:
-        _assets_dir = _get_resource_path("assets")
+        # 冻结包里 `_MEIPASS/assets` 只是只读的捆绑副本；
+        # 运行时补齐和缓存头像必须落到 exe 同级目录，保证 Web 端和桌面端看到同一份资源。
+        if getattr(sys, "frozen", False):
+            _assets_dir = os.path.join(BASE_DIR, "assets")
+        else:
+            _assets_dir = _get_resource_path("assets")
         os.makedirs(_assets_dir, exist_ok=True)
     return _assets_dir
 

@@ -287,8 +287,14 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
     try:
         if not label.winfo_exists():
             return
+
+        def _publish_cached(photo) -> None:
+            if label.winfo_exists():
+                label.config(image=photo)
+
         if champ_id in ui.image_cache:
-            label.config(image=ui.image_cache[champ_id])
+            cached_photo = ui.image_cache[champ_id]
+            ui._run_on_ui_thread(lambda p=cached_photo: _publish_cached(p))
             return
 
         img_path = os.path.join(ASSET_DIR, f"{champ_id}.png")
@@ -312,10 +318,15 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
             finally:
                 ui.downloading_imgs.discard(champ_id)
 
-        photo = ImageTk.PhotoImage(img)
-        ui.image_cache[champ_id] = photo
-        if label.winfo_exists():
-            label.config(image=photo)
+        safe_img = img.copy()
+
+        def _publish_loaded(image_obj=safe_img) -> None:
+            photo = ImageTk.PhotoImage(image_obj)
+            ui.image_cache[champ_id] = photo
+            if label.winfo_exists():
+                label.config(image=photo)
+
+        ui._run_on_ui_thread(_publish_loaded)
     except Exception:
         logger.exception("加载英雄头像失败：champ_id=%s", champ_id)
 
