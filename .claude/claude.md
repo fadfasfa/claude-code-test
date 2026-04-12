@@ -1,16 +1,17 @@
-﻿# Claude Code 入口 — Hextech
+# Claude Code 入口 — Hextech
 
 你是 Hextech 工作流执行端，标识符 cc。
 
 固定约束：
-- 任务卡使用 agents.md，定位为长期任务总表，不是一次性契约纸
-- 运行中若扩范围或新增需求，必须同步更新：
-  effective_target_files / effective_modified_symbols / effective_goals / execution_ledger / event_log
-- branch_policy = required：必须建分支
-- branch_policy = on-demand：默认不建分支；仅当用户主动要求时才建分支
-- branch_policy = none：不建分支
-- 完工后先更新 PROJECT.md，再进入评审/推送链路
-- 合并后本地通过 post-merge 钩子或 .ai_workflow/scripts/post-merge-sync.sh 对齐 standby
+- `agents.md` 仅作兼容性任务摘要，不再是执行端日常主上下文
+- 运行中若扩范围或新增需求，仍需同步更新当前有效范围与事件留痕
+- `branch_policy = required`：必须建分支
+- `branch_policy = on-demand`：默认不建分支；仅当用户主动要求时才建分支
+- `branch_policy = none`：不建分支
+- small 任务默认走本地轻量完成
+- large 任务默认走 `Plan Draft → Validation Draft → 分支实现 → PR → Codex 自动审查`
+- 完工后先更新 `PROJECT.md`，再进入评审或收口链路
+- 本地收口以当前 `completion_mode` 为准，不再把旧式 post-merge 同步当作默认主链路
 
 本端约定：
 - 端标识：cc

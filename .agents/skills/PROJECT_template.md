@@ -44,7 +44,7 @@
 <!-- PROJECT:SECTION:CHANGELOG -->
 ## 六、变更记录
 
-> 每次任务完成后，必须先更新本节，再提交 docs commit，再 push。
+> 每次任务完成后，必须先更新本节，再做后续发布动作。
 
 | 日期 | task_id | 执行端 | 最终改动 | 最终有效范围 | 范围变动/新增需求 | 遗留债务 | 审计结果 | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -55,6 +55,6 @@
 <!-- PROJECT:SECTION:MAINTENANCE -->
 ## 七、维护规则
 
-- `PROJECT.md` 是项目级总账，`agents.md` 是任务级总账
-- 修改完成后必须先更新 `PROJECT.md`，再提交 docs commit，再 push
+- `PROJECT.md` 是项目级总账，`agents.md` 是兼容性任务摘要
+- 修改完成后应先更新 `PROJECT.md`，再进入后续合并或发布动作
 - 若任务从 ad-hoc 升格为正式交付，PROJECT 记录中必须体现升格结果

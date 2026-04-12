@@ -1,60 +1,32 @@
-# Hextech 伴生系统项目文档
+# 项目文档 — run
 
 <!-- PROJECT:SECTION:OVERVIEW -->
 ## 一、项目总览
 
-Hextech 伴生系统是一个本地运行的《英雄联盟》数据查询工具，目标是把英雄基础资料、海克斯数据、协同数据和图标资源同步到本地，并通过桌面界面和 Web 页面提供快速查询。
+`run/` 是 Hextech 伴生系统的实际运行目录，负责桌面伴生界面、本地 Web 页面、API、数据处理、远端抓取、自愈与打包发布。
 
-### 1. 当前架构方向
+当前结构以真实代码为准，核心分层如下：
 
-- 入口兼容保持不变：`build.py`、`hextech_ui.py`、`web_server.py`
-- 展示层按性能优先拆为：
-  - Web 启动壳
-  - Web 路由层
-  - Web 运行时层
-  - 桌面 UI 主类
-  - 桌面运行时辅助层
-- 数据与抓取链路继续分为：
-  - `processing/`：本地数据处理
-  - `scraping/`：远端抓取、自愈和稳定资源同步
-  - `tools/`：开发、构建与发布工具
-- Python 模块统一采用“模块头注释 + 关键函数短 docstring”维护规范
-
-### 2. 核心功能
-
-- 自动同步英雄核心资料、海克斯排行榜、协同数据与图标目录
-- 提供桌面伴生界面，跟随游戏窗口状态显示或隐藏
-- 提供本地 Web 页面、HTTP API 与 WebSocket 事件推送
-- 支持冷启动快照回退、图标本地缓存与远端兜底
-- 打包时内置稳定基础资源，高频数据保留为运行时刷新
+- `display/`：展示与启动层
+- `processing/`：本地数据处理与视图适配层
+- `scraping/`：远端抓取、自愈和稳定资源同步层
+- `tools/`：打包、清理、日志与开发自检工具层
 
 ---
 
 <!-- PROJECT:SECTION:FILES -->
 ## 二、文件职责清单
 
-### 1. 顶层入口
-
 | 文件 | 类型 | 职责 |
 | :--- | :--- | :--- |
 | `build.py` | thin entry | 打包入口薄壳，委托 `tools.build_bundle` |
 | `hextech_ui.py` | thin entry | 桌面启动薄壳，委托 `display.hextech_ui` |
 | `web_server.py` | thin entry | Web 启动薄壳，委托 `display.web_server` |
-
-### 2. 展示层
-
-| 文件 | 类型 | 职责 |
-| :--- | :--- | :--- |
 | `display/hextech_ui.py` | ui | 桌面 UI 主类、控件结构与交互入口 |
-| `display/ui_runtime.py` | ui runtime | 桌面端后台线程、LCU 轮询、窗口同步、头像加载 |
+| `display/ui_runtime.py` | ui runtime | 桌面后台线程、LCU 轮询、窗口同步、头像加载 |
 | `display/web_server.py` | web launcher | FastAPI 应用创建与 Uvicorn 启动 |
 | `display/web_api.py` | web api | 路由、请求模型与接口编排 |
 | `display/web_runtime.py` | web runtime | Web 生命周期、LCU、缓存、浏览器与资源回退 |
-
-### 3. 数据处理层
-
-| 文件 | 类型 | 职责 |
-| :--- | :--- | :--- |
 | `processing/runtime_store.py` | runtime | CSV 与运行时文件定位、DataFrame 缓存与归一 |
 | `processing/view_adapter.py` | adapter | 首页榜单与海克斯详情数据适配 |
 | `processing/precomputed_cache.py` | cache | 预计算 API 缓存读写 |
@@ -62,11 +34,6 @@ Hextech 伴生系统是一个本地运行的《英雄联盟》数据查询工具
 | `processing/alias_search.py` | alias | 首页别名索引读取 |
 | `processing/alias_utils.py` | alias | 别名归一与去重 |
 | `processing/orchestrator.py` | orchestrator | 后台刷新、自愈与缓存重建编排 |
-
-### 4. 抓取与自愈层
-
-| 文件 | 类型 | 职责 |
-| :--- | :--- | :--- |
 | `scraping/version_sync.py` | sync | 稳定资源同步与运行环境引导 |
 | `scraping/full_hextech_scraper.py` | scraper | 海克斯数据抓取 |
 | `scraping/full_synergy_scraper.py` | scraper | 协同数据抓取 |
@@ -74,11 +41,6 @@ Hextech 伴生系统是一个本地运行的《英雄联盟》数据查询工具
 | `scraping/icon_resolver.py` | icon | 海克斯图标查找、缓存与远端兜底 |
 | `scraping/heal_worker.py` | heal | 缺失关键产物自愈修复 |
 | `scraping/augment_common.py` | helper | 海克斯目录公共辅助 |
-
-### 5. 工具层
-
-| 文件 | 类型 | 职责 |
-| :--- | :--- | :--- |
 | `tools/build_bundle.py` | build tool | 打包主流程、版本文件和产物整理 |
 | `tools/bundle_manifest.py` | build tool | 稳定资源白名单与 manifest 生成 |
 | `tools/runtime_bundle.py` | runtime tool | 打包后稳定资源播种 |
@@ -141,12 +103,10 @@ flowchart TD
 <!-- PROJECT:SECTION:CHANGELOG -->
 ## 六、变更记录
 
-| 日期 | workflow_id | 执行端 | 变更原因 | 变更摘要 | 影响文件 | 审计结果 | 备注 |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 2026-04-12 | cx-select-phase-hextech-preload | cx | 加速英雄海克斯详情页切换，不改接口数据格式 | 新增选人阶段按可选英雄预热海克斯详情 payload 的内存缓存，详情接口优先命中预热缓存，其次命中预计算缓存，离开选人后清空内存预热结果 | `display/web_runtime.py`、`display/web_api.py`、`PROJECT.md` | passed | 已验证 payload 结构一致，预热后读取耗时显著低于首轮实时计算 |
-| 2026-04-12 | cx-remove-old-cdn-fallback | cx | 清理海克斯图标残留旧 CDN 回退并补充验证 | 将 `display/web_runtime.py` 的远端图标回退收口为显式远端地址与 apexlol 兜底，移除 `cdn.dtodo.cn` 残留，并复核海克斯描述、图标与清单恢复情况后准备打包 | `display/web_runtime.py`、`PROJECT.md`、`config/Augment_Icon_Manifest.json` | pending | 本轮以收尾和打包为主 |
-| 2026-04-11 | cx-run-web-ui-performance-refactor | cx | Web / UI 结构收口、注释统一、文档同步 | 将 Web 拆为启动壳 / 路由层 / 运行时层，将桌面端拆为 UI 主类 / 运行时辅助层，修正 `dev_checks.py` 执行入口，并把 `README.md` / `PROJECT.md` 更新为当前真实结构 | `display/web_server.py`、`display/web_api.py`、`display/web_runtime.py`、`display/hextech_ui.py`、`display/ui_runtime.py`、`tools/dev_checks.py`、`README.md`、`PROJECT.md` | passed | 已完成编译、自检与导入验证 |
-| 2026-04-11 | cx-run-commentary-and-doc-harden | cx | 为 `run/` Python 模块补统一模块头和关键函数说明，收紧运行与打包文档 | 统一补充 Web 生命周期、LCU 轮询、CSV/快照读取、UI 后台线程、资源缓存回退和打包主流程的 docstring，并同步维护文档说明 | `display/web_runtime.py`、`display/ui_runtime.py`、`processing/runtime_store.py`、`processing/orchestrator.py`、`scraping/version_sync.py`、`scraping/icon_resolver.py`、`tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`README.md`、`PROJECT.md` | pending | 本轮只改注释与文档，不调整运行逻辑 |
+| 日期 | task_id | 执行端 | 最终改动 | 最终有效范围 | 范围变动/新增需求 | 遗留债务 | 审计结果 | 备注 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2026-04-12 | cx-task-run-project-doc-refresh-20260412 | cx | 按新模板收口 `run/` 项目文档，补齐文件职责、数据流、风险与变更记录 | `run/PROJECT.md` | 无 | TD-001, TD-002, ARCH-001 | pending | 本轮只更新文档，不调整运行逻辑 |
+| 2026-04-11 | cx-run-web-ui-performance-refactor | cx | Web / UI 结构收口、注释统一、文档同步 | `display/*`, `tools/dev_checks.py`, `README.md`, `PROJECT.md` | Web/UI 模块拆分 | TD-001, TD-002, ARCH-001 | passed | 已完成编译、自检与导入验证 |
 
 ---
 

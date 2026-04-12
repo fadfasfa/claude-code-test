@@ -1,5 +1,5 @@
 # Hextech Nexus — 部署手册
-> version: 6.0
+> version: 7.1-lite
 > 人类速查文档。
 
 ---
@@ -8,27 +8,18 @@
 
 ```
 决策层主节点（DL-Gemini）
-    ↓ 形成完整 core，签发任务卡
-执行层（cc / cx / human）
+  小任务：伴随式指导 + 局部验收
+  大任务：读 PROJECT.md → Plan Draft → Validation Draft → 签发任务卡 → 派工
 
-本地优先模式（主力模式）：
-  小任务：写 agents.md → 执行 → finish-task → standby
-  大任务：写 agents.md → 建分支（获取分支锁）→ 执行 → finish-task → standby
-
-远端 PR 链路（已退役 / Future Integration）：
-  写 agents.md → 建分支 → 执行 → 更新 PROJECT.md → push → PR → 审查 → 自动合并 → finish-task
-
-检索任务：
-  默认不建分支、不建 PR
-  可选在 agents.md 记一条轻量记录（retrieval_ledger_entry）
+执行层（Codex 主执行 / human 可承接）
+审查层：大任务 PR 默认使用 Codex 自动审查入口
 ```
 
-### 关键设计原则
-
-- **执行身份用于追溯，不用于最终审查准入**
-- **最终审查只对变更结果负责，不对执行端品牌负责**
-- **并发控制**：分支锁（branch_lock）防止同分支并写；文件交集规则（active_tasks_index）负责并发调度。真正的并行准入主条件是“文件是否重叠”。
-- **统一收尾**：所有完工路径（本地/PR）汇入同一 finish-task 节点
+**核心原则**
+- 执行身份用于追溯，不用于审查准入
+- 审查只对变更结果负责
+- 统一收口由 `completion_mode` 决定，不再依赖旧的锁式同步流程
+- 文档即交付物：代码改动必须同步更新 `PROJECT.md`，复杂逻辑必须补注释
 
 ---
 
@@ -36,91 +27,60 @@
 
 | 文件 | 作用 |
 | :--- | :--- |
-| `workflow_registry.md` | 唯一 SSOT |
+| `workflow_registry.md` | 唯一 SSOT（常量 / 路由 / 信号） |
 | `gemini_setting_core.md` | 决策层主节点规则 |
-| `agents_template.md` | 长期任务总表模板（v6 含 branch_lock / review_mode / completion_mode） |
-| `decision_playbooks.md` | 命令剧本 + SOP（含统一 finish-task） |
+| `agents_template.md` | 兼容性任务摘要模板 |
+| `decision_playbooks.md` | 命令剧本 + SOP |
 | `hextech-workflow.md` | 执行端协议 |
 | `retrieval_workflow.md` | 检索任务独立链路 |
-| `final_review_contract.md` | **审查者无关的统一审查合同**（v6 新增）|
-| `codex_review_adapter.md` | Codex PR 审查适配器（实现 final_review_contract）|
+| `final_review_contract.md` | 审查者无关的统一审查合同 |
+| `codex_review_adapter.md` | Codex PR 审查适配器 |
 | `antigravity_review_contract.md` | Antigravity Gate 审查契约 |
-| `auto-merge.yml` | *(已退役)* CI 自动合并 + 远端 finish-task |
-| `.ai_workflow/scripts/post-merge-sync.sh` | 本地合并后 finish-task |
 
 ---
 
-## 三、最短工作流
+## 三、主工作流
 
 ### 小任务（本地直接完成）
 
-1. 人类直接给需求
-2. 执行端生成 `execution_mode=ad-hoc`、`branch_policy=on-demand`、`completion_mode=local-main` 的任务卡
-3. 默认不建分支，输出 `[BRANCH: DEFERRED]`
-4. 执行完成后调用 finish-task（`active → done-local → archived → standby`）
+1. 执行端直接在 main 上工作（`ad-hoc` / `on-demand` / `local-main`）
+2. 决策端伴随指导、纠偏、局部验收
+3. 完成后按 `completion_mode` 做本地收口
+4. 复杂逻辑补注释，`PROJECT.md` 同步更新
 
-### 大任务（分支）
+### 大任务（分支 + PR，默认路径）
 
-1. 人类描述需求
-2. DL-Gemini 输出 `execution_mode=contract`、`branch_policy=required` 的任务卡
-3. 执行端建分支（获取 branch_lock）执行
-4. 先更新 `PROJECT.md`
-5. 完工方式：
-   - **本地合并（默认）**：`completion_mode=local-merge`，手动 merge 后 finish-task
-   - *(已退役)* **PR 审查**：`completion_mode=PR-merge`，push → PR → 审查 → 自动合并 → finish-task
+1. DL-Gemini 读取 `PROJECT.md` 和本地代码现状
+2. 输出 `Plan Draft`，发给外部 AI 交叉验证
+3. 收敛后交给 Codex plan mode 定稿
+4. DL-Gemini 签发 `contract` / `required` / `PR-merge` 任务卡
+5. 执行端建分支执行
+6. 更新 `PROJECT.md`，补必要注释
+7. `push → PR → Codex 自动审查 → merge`
 
-### 非契约代码任务
+### 大任务（本地合并，降级选项）
 
-1. 人类直接给需求
-2. 执行端默认生成 `execution_mode=ad-hoc`、`branch_policy=on-demand` 的任务卡
-3. 默认不建分支，输出 `[BRANCH: DEFERRED]`
-4. **仅当用户主动要求**（说"开分支"/"建分支"/"提交 PR"/"push"/"发起评审"）时才升格建分支并进入 PR 链路
-5. 涉及敏感路径时执行端必须以风险提示告知用户，但不得自动升格
+步骤 1–6 同上，第 4 步改为 `completion_mode: local-merge`。
+
+### 非契约小代码任务
+
+1. 执行端生成 `ad-hoc` / `on-demand` 任务摘要，默认不建分支
+2. 仅当用户明确要求时才升格建分支并进入 PR 链路
+3. 涉及敏感路径时以风险提示告知用户，不自动升格
 
 ### 检索任务
 
-1. `task_type = retrieval`
-2. 默认不建分支、不建 PR、不写 runtime_state
-3. 可选在 `agents.md` 按 `retrieval_ledger_entry` schema 记轻量检索记录
-4. 输出带 citation 的结果
+1. `task_type: retrieval`，不建分支、不建 PR
+2. 输出带 citation 的结果
+3. 不挂回 `agents.md` 的主工作流
+
+### 文件生成接口（Claude / Claude Code）
+
+大任务中作为验证端和文件生成接口：接收 `Plan Draft` 做交叉验证，接收 `File Change Spec` 生成目标文件草稿。不负责拍板，不改 spec 未列入的文件。Codex 负责 diff 审核和集成验收。
 
 ---
 
-## 四、统一收尾（finish-task）
+## 四、执行端硬要求
 
-所有完工路径汇入同一 finish-task 节点：
-
-1. 归档当前 `agents.md` → `.ai_workflow/agents_history/<task_id>.md`
-2. 在 `execution_ledger` 追加 `TASK_FINISHED`
-3. 填写 `Final_Review_Record`
-4. 更新 `PROJECT.md`
-5. 释放分支锁
-6. 用待机壳覆盖 `agents.md`
-7. 可选删已完成分支
-
-### 三种入口
-
-| 入口 | 触发方式 |
-|:---|:---|
-| 本地 main 完成 | 执行端完成后直接调用 |
-| 本地分支合并后 | `post-merge-sync.sh` 或手动调用 |
-| 远端 PR merge 后 | *(已退役)* `auto-merge.yml` 自动执行 |
-
-> 注意：远端 PR GitHub Actions 本期已停用，全面推进本地优先模式。
-> 安装钩子：`cp .ai_workflow/scripts/post-merge-sync.sh .git/hooks/post-merge && chmod +x .git/hooks/post-merge`
-
----
-
-## 五、PR 描述建议字段
-
-提交 Hextech 工作流 PR 时，描述中建议包含以下字段（v6 不再是唯一阻断条件，但有助于自动化处理）：
-
-```
-task_id: <task_id>
-task_type: code
-execution_mode: <contract | ad-hoc>
-branch_policy: <required | on-demand>
-completion_mode: PR-merge
-task_mode: <standard | dual-end-integration | frontend-integration>
-event_log_paths: <路径列表>
-```
+1. 代码改动必须同步更新 `PROJECT.md`
+2. 以下情况必须补注释或文档：新增复杂条件分支 / 修改关键数据流 / 修改鉴权安全逻辑 / 引入临时兼容逻辑 / 修复意图不明显的问题

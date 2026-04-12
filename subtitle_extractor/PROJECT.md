@@ -1,28 +1,29 @@
-# 视频字幕提取项目文档
+# 项目文档 — subtitle_extractor
 
-`subtitle_extractor/` 是一个面向本地视频和在线视频的字幕提取工具目录。它的目标很明确：优先拿到现成字幕，拿不到就把音频转成 Markdown 字幕。
+<!-- PROJECT:SECTION:OVERVIEW -->
+## 一、项目总览
 
-## 项目目标
+`subtitle_extractor/` 是一个本地字幕提取工具目录，面向本地视频文件和在线视频 URL。项目目标是优先拿到现成字幕，拿不到就把音频转成 Markdown 字幕。
 
-- 支持本地视频文件和目录批量处理。
-- 支持在线视频 URL 解析。
-- 优先下载官方字幕，减少转录成本。
-- 没有官方字幕时，自动回退到音频转录。
-- 输出统一的 Markdown 时间轴字幕文件。
+---
 
-## 目录职责
+<!-- PROJECT:SECTION:FILES -->
+## 二、文件职责清单
 
-| 路径 | 作用 |
-| --- | --- |
-| `subtitle_extractor/extract_subs.py` | 本地视频字幕提取主入口。 |
-| `subtitle_extractor/extract_online.py` | 在线视频字幕提取主入口。 |
-| `subtitle_extractor/PROJECT.md` | 项目文档。 |
-| `subtitle_extractor/requirements.txt` | Python 依赖。 |
-| `subtitle_extractor/test_output/` | 测试输出目录。 |
+| 文件 | 类型 | 职责 |
+| :--- | :--- | :--- |
+| `extract_subs.py` | 主入口 | 本地视频 / 目录批量字幕提取 |
+| `extract_online.py` | 主入口 | 在线视频字幕提取与下载回退 |
+| `requirements.txt` | 依赖 | Python 运行依赖 |
+| `PROJECT.md` | 项目文档 | 项目总览、职责、风险与变更记录 |
+| `test_output/` | 输出目录 | 测试或示例输出 |
 
-## 处理流程
+---
 
-### 本地文件
+<!-- PROJECT:SECTION:DATAFLOW -->
+## 三、数据生产、存储与流转
+
+### 本地文件链路
 
 ```mermaid
 flowchart TD
@@ -33,7 +34,7 @@ flowchart TD
     D --> F["清理临时音频"]
 ```
 
-### 在线视频
+### 在线视频链路
 
 ```mermaid
 flowchart TD
@@ -47,85 +48,44 @@ flowchart TD
     G --> I["清理临时音频"]
 ```
 
-## 核心模块
+---
 
-### `extract_subs.py`
+<!-- PROJECT:SECTION:DEPENDENCIES -->
+## 四、关键依赖与影响范围
 
-- 支持单文件和目录递归处理。
-- 支持 `.mp4`、`.avi`、`.mov`、`.mkv`、`.wmv`、`.flv`、`.webm`。
-- 先提取音频，再用 `faster-whisper` 转录。
-- 转录结果会写成 `# 视频字幕` 风格的 Markdown。
-- 临时音频文件会在成功后删除。
+| 改动文件 | 直接影响 | 潜在级联影响 | 审计关注点 |
+| :--- | :--- | :--- | :--- |
+| `extract_subs.py` | 本地字幕提取主流程 | 输出格式、临时音频清理 | 本地文件是否按时清理 |
+| `extract_online.py` | 在线字幕下载与回退 | 字幕优先级、音频转录路径 | 官方字幕 / 音频回退是否清晰 |
+| `requirements.txt` | 环境可安装性 | 运行失败、版本冲突 | 依赖是否完整 |
 
-### `extract_online.py`
+---
 
-- 先用 `yt-dlp` 检测和下载字幕。
-- 字幕优先语言默认为 `zh`、`en`。
-- 如果没有字幕，自动下载最佳音频流。
-- 下载后调用 `extract_subs.py` 中的转录逻辑生成 Markdown。
-- 处理完成后会清理临时 SRT 或 WAV 文件。
+<!-- PROJECT:SECTION:ISSUES -->
+## 五、已知问题、风险与技术债务
 
-## 输出格式
+| 编号 | 类型 | 问题描述 | 影响文件 | 优先级 | 状态 | 建议方案 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| ST-001 | 依赖可用性 | `moviepy`、`faster-whisper`、`yt-dlp` 都依赖本地环境是否安装完整 | 全项目 | 中 | 已知 | 在 README 或安装说明中保持依赖列表同步 |
+| ST-002 | 临时文件清理 | 音频 / SRT 临时文件需要在失败与成功路径都清理 | `extract_subs.py`、`extract_online.py` | 中 | 已知 | 保持失败分支的清理逻辑 |
+| ST-003 | 平台兼容 | 不同平台视频格式和编码差异较大 | `extract_subs.py`、`extract_online.py` | 低 | 已知 | 新增平台支持时先补测试样例 |
 
-输出文件统一采用 Markdown 时间轴结构：
+---
 
-```markdown
-# 视频字幕
+<!-- PROJECT:SECTION:CHANGELOG -->
+## 六、变更记录
 
-## [00:00:00.000 - 00:00:05.123]
+| 日期 | task_id | 执行端 | 最终改动 | 最终有效范围 | 范围变动/新增需求 | 遗留债务 | 审计结果 | 备注 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2026-04-12 | cx-task-subtitle-extractor-project-doc-refresh-20260412 | cx | 按新模板重写字幕提取项目文档，补齐职责、数据流与风险说明 | `subtitle_extractor/PROJECT.md` | 无 | ST-001, ST-002, ST-003 | pending | 本轮只更新文档，不修改脚本逻辑 |
+| 2026-03-25 | docs-template-refresh | cx | 按最新模板重写项目文档结构 | `PROJECT.md` | 无 | ST-001, ST-002, ST-003 | pending | 保留原有功能说明并补齐流程、依赖和维护说明 |
 
-第一段字幕内容。
+---
 
-## [00:00:05.124 - 00:00:10.456]
+<!-- PROJECT:SECTION:MAINTENANCE -->
+## 七、维护规则
 
-第二段字幕内容。
-```
-
-时间戳使用 `HH:MM:SS.mmm` 格式，便于后续人工整理和二次加工。
-
-## 使用方式
-
-### 安装依赖
-
-```bash
-pip install -r requirements.txt
-```
-
-### 本地视频
-
-```bash
-python extract_subs.py input_video.mp4 -o output_dir
-python extract_subs.py /path/to/videos -o output_dir
-python extract_subs.py input_video.mp4 -d cuda
-python extract_subs.py input_video.mp4 -m large
-```
-
-### 在线视频
-
-```bash
-python extract_online.py "https://youtube.com/watch?v=..." -o output_dir
-python extract_online.py "URL" -l zh en ja
-python extract_online.py "URL" -d cuda -m medium
-```
-
-## 依赖与环境
-
-- Python 3.8+。
-- `faster-whisper` 用于音频转录。
-- `yt-dlp` 用于在线视频解析和字幕下载。
-- `moviepy` 用于本地视频音频提取。
-- 可选 CUDA 环境用于加速转录。
-
-## 维护要点
-
-- 不要把临时音频和临时 SRT 文件留在输出目录里。
-- 修改输出格式时，要同时检查 `extract_subs.py` 和 `extract_online.py`。
-- 新增视频平台支持时，优先放到 `extract_online.py`，避免污染本地文件处理逻辑。
-- 如果要扩展字幕格式，先确认 Markdown 输出是否仍然能被后续流程接受。
-
-## 最近变更
-
-| 日期 | 变更 |
-| --- | --- |
-| 2026-03-14 | 整理本地与在线字幕提取流程，统一输出为 Markdown。 |
-| 2026-03-25 | 按最新模板重写项目文档结构，补齐流程、依赖和维护说明。 |
+- 修改输出格式时，要同时检查 `extract_subs.py` 和 `extract_online.py`
+- 新增视频平台支持时，优先放到 `extract_online.py`
+- 临时音频和临时 SRT 文件必须在成功与失败路径都清理
+- 若要扩展字幕格式，先确认 Markdown 输出仍能被后续流程接受
