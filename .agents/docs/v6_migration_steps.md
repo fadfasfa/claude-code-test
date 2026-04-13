@@ -1,4 +1,7 @@
-# Hextech V6.2 → V7.0-lite 迁移要点
+# Hextech V6.2 → V7.1-lite 迁移要点
+
+> 本文件仅供历史迁移 / 审计追溯，不代表当前 canonical 工作流。
+> 当前主流程以 `.agents/` 下的 7.1-lite 文档为准。
 
 ## 一、主轴切换
 
@@ -7,7 +10,7 @@
 - `agents.md` 被当作日常主上下文
 - 检索任务可选回写任务台账
 
-新设计（v7.0-lite）：
+新设计（v7.1-lite）：
 - 执行身份用于追溯，不用于最终审查准入
 - `agents.md` 降级为兼容性任务摘要
 - small 任务默认本地完成，large 任务走 Plan Draft → 验证 → 分支实现 → PR → Codex 审查

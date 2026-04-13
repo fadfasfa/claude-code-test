@@ -11,7 +11,7 @@
   小任务：伴随式指导 + 局部验收
   大任务：读 PROJECT.md → Plan Draft → Validation Draft → 签发任务卡 → 派工
 
-执行层（Codex 主执行 / human 可承接）
+执行层（Codex 主执行 / Antigravity 高难前端执行 / Claude 与 Claude Code 文件生成接口 / human 可承接）
 审查层：大任务 PR 默认使用 Codex 自动审查入口
 ```
 

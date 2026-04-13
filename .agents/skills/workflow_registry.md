@@ -48,7 +48,7 @@ PROJECT_history.md
 
 ```json
 {
-  "schema_version": "7.0",
+  "schema_version": "7.1-lite",
   "endpoint": "<cc | cx>",
   "workflow_id": "",
   "task_type": "<code>",
@@ -95,7 +95,7 @@ Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式
 | `code` | 代码修改任务 |
 | `retrieval` | 检索任务 |
 
-### 2. task_scale（v6.1）
+### 2. task_scale（v7.1-lite）
 
 | task_scale | 含义 | 决策端行为 |
 | :--- | :--- | :--- |
@@ -125,7 +125,7 @@ Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式
 | `local-merge` | 本地分支手动合并后完成（大任务可选降级）|
 | `PR-merge` | 远端 PR merge 后完成（**大任务默认**）|
 
-### 6. 推荐组合（v7.0-lite）
+### 6. 推荐组合（v7.1-lite）
 
 | 任务场景 | task_type | task_scale | execution_mode | branch_policy | completion_mode |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -141,8 +141,8 @@ Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式
 
 | 信号 | 含义 |
 | :--- | :--- |
-| `[AGENTS.MD: UPDATED]` | 当前有效范围或台账已更新 |
-| `[AGENTS.MD: SELF-UPDATED]` | 自助模式下已同步更新当前有效范围和台账 |
+| `[AGENTS.MD: UPDATED]` | 当前有效范围或兼容性摘要已更新 |
+| `[AGENTS.MD: SELF-UPDATED]` | 自助模式下已同步更新当前有效范围和兼容性摘要 |
 | `[PLAN-DRAFT: READY]` | 计划稿已形成，可传给验证器或 Codex plan mode |
 | `[VALIDATION-DRAFT: READY]` | 验证稿已形成，可转发给其他 AI |
 | `[VALIDATION: PARTIAL]` | 已收到部分验证结果，但仍存在冲突或缺口 |
@@ -229,7 +229,7 @@ Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式
 
 ## § H — agents.md 状态枚举
 
-> **v7.0-lite 定位变更**：agents.md 降级为兼容性任务摘要。small 任务默认不要求写；large 任务或进 PR 时可选写简版。审查不再因未写 agents.md 而 deny。
+> **v7.1-lite 定位变更**：agents.md 降级为兼容性任务摘要。small 任务默认不要求写；large 任务或进 PR 时可选写简版。审查不再因未写 agents.md 而 deny。
 
 | 状态 | 含义 |
 | :--- | :--- |
