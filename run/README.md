@@ -1,6 +1,7 @@
 # Hextech 伴生系统运行指南
 
 主项目文档位于当前目录的 `PROJECT.md`。
+默认入口脚本保持为根目录下的 `hextech_ui.py` 与 `web_server.py` 薄壳。
 
 ## 项目概述
 
