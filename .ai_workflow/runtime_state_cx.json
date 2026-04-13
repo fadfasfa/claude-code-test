@@ -1,1 +1,1 @@
-{"is_new_project":false,"retry_count":0,"schema_version":"6.1","endpoint":"cx","merge_status":"blocked","execution_status":"done","workflow_id":"cx-fix-run-security-audit-20260413","audit_status":"idle"}
+{"schema_version": "6.1", "workflow_id": "cx-task-fix-quantproject-sync-20260413", "endpoint": "cx", "execution_status": "running", "audit_status": "self_checked", "merge_status": "blocked", "retry_count": 0, "is_new_project": false}

@@ -3,6 +3,7 @@
 # 核心配置模块：全系统统一配置中心 (config.py)
 # 提供 BASE_DIR、DATA_DIR、ASSETS_MAPPING、ALLOCATION_WEIGHTS 真值定义
 #
+import os
 from pathlib import Path
 
 # 动态生成 BASE_DIR 路径
@@ -23,8 +24,11 @@ UPDATE_LOOKBACK_DAYS = 45
 
 # 外部数据源网络容错参数
 YFINANCE_TIMEOUT_SECONDS = 12
+YFINANCE_MAX_RETRIES = 3
+YFINANCE_RETRY_BACKOFF_SECONDS = 2
 STOOQ_TIMEOUT_SECONDS = 10
 STOOQ_MAX_RETRIES = 2
+STOOQ_API_KEY = os.getenv("QUANTPROJECT_STOOQ_API_KEY", "").strip()
 MAX_DOWNLOAD_WORKERS = 5
 
 # 输入与数据安全边界
