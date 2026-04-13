@@ -137,7 +137,10 @@ def fetch_stooq_data(stooq_code):
                 print(f"[调试] Stooq {stooq_code} 当前要求 apikey，已跳过备用源。")
                 return None
             if not is_stooq_csv_response(response.text):
-                print(f"[调试] Stooq {stooq_code} 返回非 CSV 响应，已跳过备用源。")
+                print(f"[调试] Stooq {stooq_code} 返回非 CSV 响应，第 {attempt} 次重试前继续等待。")
+                if attempt < STOOQ_MAX_RETRIES:
+                    time.sleep(2)
+                    continue
                 return None
             frame = normalize_price_frame(read_csv_text(response.text))
             if frame is None or len(frame) < 5 or not validate_price_frame(frame):

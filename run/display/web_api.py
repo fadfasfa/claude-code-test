@@ -308,8 +308,8 @@ def register_routes(app: FastAPI) -> None:
         request_token = str(ws.headers.get(web_runtime.REQUEST_TOKEN_HEADER, "")).strip() or str(
             ws.cookies.get(web_runtime.HTTP_SESSION_COOKIE, "")
         ).strip()
-        if request_token and request_token != web_runtime.get_request_auth_token():
-            web_runtime.logger.warning("已拒绝携带无效 token 的 WebSocket 连接。")
+        if request_token != web_runtime.get_request_auth_token():
+            web_runtime.logger.warning("已拒绝缺少或无效 token 的 WebSocket 连接。")
             await ws.close(code=status.WS_1008_POLICY_VIOLATION)
             return
         await web_runtime.manager.connect(ws)
