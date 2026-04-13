@@ -1,6 +1,7 @@
 # Hextech 工作流
 > version: 7.1-lite
-> `agents.md` 仅是兼容性任务摘要，不是执行端日常主上下文。
+> `PROJECT.md` 负责项目/工作区稳定说明，`AGENTS.md` 负责仓库级稳定规则。
+> 根 `agents.md` 已删除；仅在需要临时任务产物或历史兼容输出时使用 `agents_template.md`。
 > 共享常量统一见 `workflow_registry.md`。
 
 ---
@@ -9,7 +10,7 @@
 
 **触发**：用户直接描述需求，消息不含 `[HANDOFF-WRITE]`。
 
-1. 按 `agents_template.md` 生成轻量任务摘要草稿
+1. 仅在明确需要临时任务产物时，按 `agents_template.md` 生成轻量任务摘要草稿
 2. 默认 `execution_mode=ad-hoc`，`branch_policy=on-demand`，`completion_mode=local-main`
 3. 默认不建分支
 4. 用户确认后进入执行流程
@@ -67,6 +68,6 @@
 
 ## 协议 3 — 兼容性说明
 
-- `agents.md` 仅保留兼容性摘要与轻量说明
+- `agents_template.md` 仅保留临时任务产物或历史兼容输出格式
 - 不再把旧锁、旧索引、旧同步脚本或旧式待机复位动作作为工作流强依赖
 - 本文件只定义执行骨架，不定义项目级实例文件

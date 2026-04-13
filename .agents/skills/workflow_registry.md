@@ -40,6 +40,8 @@
 .ai_workflow/agents_history/*.md
 PROJECT.md
 PROJECT_history.md
+AGENTS.md
+.agents/archive/*.md
 ```
 
 ---
@@ -141,8 +143,8 @@ Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式
 
 | 信号 | 含义 |
 | :--- | :--- |
-| `[AGENTS.MD: UPDATED]` | 当前有效范围或兼容性摘要已更新 |
-| `[AGENTS.MD: SELF-UPDATED]` | 自助模式下已同步更新当前有效范围和兼容性摘要 |
+| `[TASK-SUMMARY: UPDATED]` | 临时任务摘要或兼容性输出已更新 |
+| `[TASK-SUMMARY: SELF-UPDATED]` | 自助模式下已同步更新临时任务摘要 |
 | `[PLAN-DRAFT: READY]` | 计划稿已形成，可传给验证器或 Codex plan mode |
 | `[VALIDATION-DRAFT: READY]` | 验证稿已形成，可转发给其他 AI |
 | `[VALIDATION: PARTIAL]` | 已收到部分验证结果，但仍存在冲突或缺口 |
@@ -227,26 +229,15 @@ Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式
 
 ---
 
-## § H — agents.md 状态枚举
+## § H — 临时任务摘要产物
 
-> **v7.1-lite 定位变更**：agents.md 降级为兼容性任务摘要。small 任务默认不要求写；large 任务或进 PR 时可选写简版。审查不再因未写 agents.md 而 deny。
+> 默认流程不生成根 `agents.md`。仅在明确需要临时任务产物或历史兼容输出时，才使用 `.agents/skills/agents_template.md` 生成一次性摘要。
 
-| 状态 | 含义 |
-| :--- | :--- |
-| `standby` | 待机，可复用壳 |
-| `active` | 正在执行 |
-| `review-ready` | 已准备进入评审链路（仅 PR 流用到）|
-| `done-local` | 本地完成，不进 PR |
-| `merged` | 已合并（仅 PR 流用到）|
-| `archived` | 已归档 |
-
-### 三条主干完工路径
-
-| 路径 | 状态流转 | completion_mode |
-|:---|:---|:---|
-| 大任务分支 + PR（**默认**）| `standby → active → review-ready → merged → archived` | `PR-merge` |
-| 大任务分支 + 本地合并（可选降级）| `standby → active → review-ready(可选) → done-local → archived` | `local-merge` |
-| 小任务 main 直接完成（**默认**）| `standby → active → done-local → archived` | `local-main` |
+| 产物 | 含义 | 处理方式 |
+| :--- | :--- | :--- |
+| 临时任务摘要 | 仅用于当前任务沟通和验证 | 可选生成，不作为常驻输入 |
+| 历史兼容输出 | 仅用于旧格式读取或迁移桥接 | 应尽快迁移到现行格式 |
+| 归档摘要 | 已完成任务的历史记录 | 存放到 `.ai_workflow/agents_history/` |
 
 ---
 

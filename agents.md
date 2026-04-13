@@ -1,131 +1,59 @@
-# 兼容性任务摘要 — Hextech
+# 仓库级稳定规则 — Hextech
 > version: 7.1-lite
->
-> 本文件仅用于兼容性摘要，不是执行端日常主上下文。
-> small 任务通常不需要；large 任务或 PR 辅助时可写简版。
-> 检索任务不进入代码任务台账，不写入本文件。
+> 本文件只定义稳定规则、角色边界和 review 入口，不承载项目结构说明、任务态、会话态或执行态。
 
 ---
 
-## 任务头
+## 一、权威分工
 
-task_id: [none | <id>]
-task_type: [code | retrieval]
-task_scale: [small | large]
-execution_mode: [contract | ad-hoc]
-branch_policy: [required | on-demand | none]
-completion_mode: [local-main | local-merge | PR-merge]
-task_mode: [standard | dual-end-integration | frontend-integration]
-summary: [一句话说明任务目标]
-effective_scope:
-  - [当前有效范围]
-review_mode: [off | gate | normal]
+- `PROJECT.md`：项目/工作区稳定说明，记录结构、职责、数据流、风险、技术债务与近期变更原则
+- `AGENTS.md`：仓库级稳定规则、角色边界与 review 入口
+- `.agents/contracts/final_review_contract.md`：结果导向审查合同
+- `.agents/adapters/codex_review_adapter.md`：Codex 专属审查适配层
+- `.agents/contracts/antigravity_review_contract.md`：Antigravity 审查契约
 
 ---
 
-## 说明
+## 二、角色边界
 
-- 本文件只保留轻量摘要，不保留待机壳、旧锁态、post-merge 收尾或重型台账。
-- 需要更完整的任务卡时，请使用 `.agents/skills/agents_template.md`。
+- Codex：主执行端；large 任务 PR 的主审查入口
+- Antigravity：高难前端执行端、前端专项审查节点、周期性大型审计角色
+- Claude / Claude Code：文件生成与辅助验证接口，不作为当前主执行端
+- retrieval：独立检索任务，不进入代码任务链路
 
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
+---
 
-This project is indexed by GitNexus as **claudecode** (1130 symbols, 2979 relationships, 92 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+## 三、审查基线
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+- 审查只看结果和证据：`diff`、任务说明、测试结果、必要时的 `PROJECT.md` 同步证据、必要时的 Antigravity 证据
+- 旧台账、旧锁态、旧索引、旧待机壳不作为核心输入
+- 复杂改动必须同步检查 `PROJECT.md`
+- 高风险前端接入必须具备 Antigravity 证据
+- 审查不做风格挑刺，只抓实质问题
 
-## Always Do
+---
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+## 四、已退出主流程的机制
 
-## When Debugging
+- `branch_lock`
+- `active_tasks_index`
+- `post-merge-sync`
+- `finish-task standby reset`
+- 根 `agents.md`
+- 重型待机壳、恢复壳和大台账式任务壳
+- 新增复杂状态机
+- 任何把历史兼容壳复活成默认主流程的做法
 
-1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
-2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/claudecode/process/{processName}` — trace the full execution flow step by step
-4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
+---
 
-## When Refactoring
+## 五、Hooks 约束
 
-- **Renaming**: MUST use `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` first. Review the preview — graph edits are safe, text_search edits need manual review. Then run with `dry_run: false`.
-- **Extracting/Splitting**: MUST run `gitnexus_context({name: "target"})` to see all incoming/outgoing refs, then `gitnexus_impact({target: "target", direction: "upstream"})` to find all external callers before moving code.
-- After any refactor: run `gitnexus_detect_changes({scope: "all"})` to verify only expected files changed.
-
-## Never Do
-
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-
-## Tools Quick Reference
-
-| Tool | When to use | Command |
-|------|-------------|---------|
-| `query` | Find code by concept | `gitnexus_query({query: "auth validation"})` |
-| `context` | 360-degree view of one symbol | `gitnexus_context({name: "validateUser"})` |
-| `impact` | Blast radius before editing | `gitnexus_impact({target: "X", direction: "upstream"})` |
-| `detect_changes` | Pre-commit scope check | `gitnexus_detect_changes({scope: "staged"})` |
-| `rename` | Safe multi-file rename | `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` |
-| `cypher` | Custom graph queries | `gitnexus_cypher({query: "MATCH ..."})` |
-
-## Impact Risk Levels
-
-| Depth | Meaning | Action |
-|-------|---------|--------|
-| d=1 | WILL BREAK — direct callers/importers | MUST update these |
-| d=2 | LIKELY AFFECTED — indirect deps | Should test |
-| d=3 | MAY NEED TESTING — transitive | Test if critical path |
-
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/claudecode/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/claudecode/clusters` | All functional areas |
-| `gitnexus://repo/claudecode/processes` | All execution flows |
-| `gitnexus://repo/claudecode/process/{name}` | Step-by-step execution trace |
-
-## Self-Check Before Finishing
-
-Before completing any code modification task, verify:
-1. `gitnexus_impact` was run for all modified symbols
-2. No HIGH/CRITICAL risk warnings were ignored
-3. `gitnexus_detect_changes()` confirms changes match expected scope
-4. All d=1 (WILL BREAK) dependents were updated
-
-## Keeping the Index Fresh
-
-After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
-
-```bash
-npx gitnexus analyze
-```
-
-If the index previously included embeddings, preserve them by adding `--embeddings`:
-
-```bash
-npx gitnexus analyze --embeddings
-```
-
-To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.embeddings` field shows the count (0 means no embeddings). **Running analyze without `--embeddings` will delete any previously generated embeddings.**
-
-> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->
+- 仓库内的有效 hook 不得修改 `agents.md`
+- 仓库内的有效 hook 不得生成 standby/reset 壳
+- 仓库内的有效 hook 不得维护 lock/index 语义
+- 如需保留 hook，只能保留无副作用检查逻辑
+## Antigravity
+- Antigravity is a manual specialist reviewer for high-risk frontend work and periodic audits.
+- It is not a second automatic PR review chain.
+- When frontend-risk Gate conditions are met, the PR must include `antigravity_report_path` pointing to `.ai_workflow/ag_review_<task_id>.md`.
+- Codex remains the default automatic PR reviewer.

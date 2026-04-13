@@ -1,117 +1,45 @@
 # -*- coding: utf-8 -*-
 #
-# 核心模块：多线程数据并发更新器 (update_stooq_fast.py)
-# 功能：从 yfinance (首选) 或 Stooq 自动获取全资产历史数据，采用增量合并机制防止重复计算。
+# 核心模块：多线程数据并发更新器。
+# 功能：从 yfinance (首选) 或 Stooq 获取全资产历史数据，采用增量合并机制防止重复计算。
 #
-import requests
-import pandas as pd
+from __future__ import annotations
+
+import json
+import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-import time
-from pathlib import Path
-from io import StringIO
+
+import pandas as pd
+import requests
 import yfinance as yf
 
-# 引入统一配置
 from config import (
     ASSETS_MAPPING,
     DATA_DIR,
     DATA_FRESHNESS_BUSINESS_DAYS,
+    MAX_DOWNLOAD_WORKERS,
     STOOQ_MAX_RETRIES,
     STOOQ_TIMEOUT_SECONDS,
+    SYNC_STATUS_FILE,
     UPDATE_LOOKBACK_DAYS,
     YFINANCE_TIMEOUT_SECONDS,
 )
-
-Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
-
-CANONICAL_COLUMNS = ['Data', 'Zamkniecie', 'Open', 'High', 'Low', 'Volume']
+from data_io import (
+    CANONICAL_COLUMNS,
+    asset_file_path,
+    get_latest_local_date,
+    normalize_price_frame,
+    read_csv_text,
+    validate_price_frame,
+    write_csv_with_checksum,
+)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-def get_latest_local_date(file_path):
-    if not Path(file_path).exists():
-        return None
-    try:
-        df = pd.read_csv(file_path)
-        date_col = None
-        for col in df.columns:
-            col_lower = col.lower()
-            if col_lower in ['data', 'date', 'index']:
-                date_col = col
-
-        if date_col is None or df.empty:
-            return None
-
-        dates = pd.to_datetime(df[date_col], errors='coerce').dropna()
-        if dates.empty:
-            return None
-        return dates.max().date()
-    except Exception:
-        return None
-
-def normalize_price_frame(df):
-    # 仅保留单资产标准列，避免历史合并把多标的残留列写回单资产 CSV。
-    if df is None or df.empty:
-        return None
-
-    frame = df.copy()
-    frame.columns = [col[0] if isinstance(col, tuple) else col for col in frame.columns]
-
-    # 先统一日期列的时区，再做标准化命名，避免 yfinance 的 tz-aware Date 混入后续合并。
-    date_col = None
-    for col in frame.columns:
-        if str(col).lower() in ['date', 'data', 'index']:
-            date_col = col
-            break
-
-    if date_col is None:
-        return None
-
-    frame[date_col] = pd.to_datetime(frame[date_col], errors='coerce')
-    if pd.api.types.is_datetime64tz_dtype(frame[date_col]):
-        frame[date_col] = frame[date_col].dt.tz_localize(None)
-
-    # 统一日期列与收盘列命名。
-    header_mapping = {
-        'Date': 'Data',
-        'date': 'Data',
-        'data': 'Data',
-        'Close': 'Zamkniecie',
-        'close': 'Zamkniecie',
-        'zamkniecie': 'Zamkniecie',
-    }
-    frame.rename(columns=header_mapping, inplace=True)
-
-    if 'Data' not in frame.columns or 'Zamkniecie' not in frame.columns:
-        return None
-
-    frame['Data'] = pd.to_datetime(frame['Data'], errors='coerce')
-    if pd.api.types.is_datetime64tz_dtype(frame['Data']):
-        frame['Data'] = frame['Data'].dt.tz_localize(None)
-    frame['Zamkniecie'] = pd.to_numeric(frame['Zamkniecie'], errors='coerce')
-
-    keep_cols = ['Data', 'Zamkniecie']
-    for col in ['Open', 'High', 'Low', 'Volume']:
-        if col in frame.columns:
-            frame[col] = pd.to_numeric(frame[col], errors='coerce')
-            keep_cols.append(col)
-
-    frame = frame[keep_cols]
-    frame = frame.dropna(subset=['Data', 'Zamkniecie'])
-    if frame.empty:
-        return None
-
-    frame = frame.sort_values('Data')
-    frame = frame.drop_duplicates(subset=['Data'], keep='last')
-    frame = frame.reset_index(drop=True)
-
-    # 统一输出列顺序，额外列不再保留。
-    ordered_cols = [col for col in CANONICAL_COLUMNS if col in frame.columns]
-    frame = frame[ordered_cols]
-    return frame
 
 def is_data_up_to_date(file_path, latest_date=None):
     if latest_date is None:
@@ -123,12 +51,11 @@ def is_data_up_to_date(file_path, latest_date=None):
     if latest_date >= today:
         return True
 
-    # 以交易日而不是自然日判断是否需要刷新，避免周一早晨因为周末差值而误触发全量更新。
     business_days = len(pd.bdate_range(latest_date, today))
     return business_days <= DATA_FRESHNESS_BUSINESS_DAYS
 
+
 def fetch_yfinance_data(yf_code, asset_name, start_date=None):
-    # 使用 yfinance 获取历史数据
     try:
         kwargs = {
             "interval": "1d",
@@ -143,34 +70,64 @@ def fetch_yfinance_data(yf_code, asset_name, start_date=None):
         else:
             kwargs["start"] = start_date
             kwargs["end"] = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
         df = yf.download(yf_code, **kwargs)
         if df is None or df.empty:
             return None
-            
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
         df.reset_index(inplace=True)
-        # yfinance 返回的 index 是 Date，列有 Open, High, Low, Close, Volume 等
-        # 需要重命名为波兰语格式以兼容原架构
-        if 'Data' in df.columns:
-            # 去除时区信息，与原来的保持一致
-            if isinstance(df['Data'].dtype, pd.DatetimeTZDtype):
-                df['Data'] = df['Data'].dt.tz_localize(None)
         return normalize_price_frame(df)
-    except Exception as e:
-        print(f"[调试] yfinance 获取 {asset_name} 失败：{e}")
+    except Exception as exc:
+        print(f"[调试] yfinance 获取 {asset_name} 失败：{exc}")
         return None
 
+
+def fetch_stooq_data(stooq_code):
+    url = f"https://stooq.com/q/d/l/?s={stooq_code}&i=d"
+    for attempt in range(1, STOOQ_MAX_RETRIES + 1):
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=STOOQ_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            frame = normalize_price_frame(read_csv_text(response.text))
+            if frame is None or len(frame) < 5 or not validate_price_frame(frame):
+                frame = None
+                time.sleep(2)
+                continue
+            return frame
+        except Exception:
+            if attempt < STOOQ_MAX_RETRIES:
+                time.sleep(2)
+    return None
+
+
+def merge_frames(old_df, new_df):
+    old_df = normalize_price_frame(old_df)
+    new_df = normalize_price_frame(new_df)
+    if old_df is None or old_df.empty:
+        return new_df
+    if new_df is None or new_df.empty:
+        return old_df
+
+    old_df = old_df.set_index("Data")
+    new_df = new_df.set_index("Data")
+    combined_df = pd.concat([old_df, new_df])
+    combined_df = combined_df[~combined_df.index.duplicated(keep="last")]
+    combined_df = combined_df.dropna(subset=["Zamkniecie"])
+    combined_df.sort_index(inplace=True)
+    combined_df.reset_index(inplace=True)
+    return combined_df[[col for col in CANONICAL_COLUMNS if col in combined_df.columns]]
+
+
 def fetch_and_merge_data(asset_name, config):
-    # 单线程下载并合并数据函数 - 混合下载策略
-    yf_code = config.get('yf_code')
-    stooq_code = config['stooq_code']
-    file_name = config['file']
-    file_path = Path(DATA_DIR) / file_name
+    yf_code = config.get("yf_code")
+    stooq_code = config["stooq_code"]
+    file_path = asset_file_path(asset_name)
     latest_local_date = get_latest_local_date(file_path)
 
     if is_data_up_to_date(file_path, latest_local_date):
         return f"[跳过] {asset_name:<4} 数据已是最新，触发防重复机制。"
 
-    # 优先使用 yfinance 获取最近窗口数据（速度快且无反爬限制）
     new_df = None
     if yf_code:
         if latest_local_date is None:
@@ -178,95 +135,68 @@ def fetch_and_merge_data(asset_name, config):
         else:
             start_date = (latest_local_date - timedelta(days=UPDATE_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
             new_df = fetch_yfinance_data(yf_code, asset_name, start_date=start_date)
-        
-    # 如果 yfinance 失败，降级到 stooq 获取
+
     if new_df is None or new_df.empty:
         print(f"[降级] {asset_name:<4} 尝试使用备用数据源 Stooq...")
-        url = f"https://stooq.com/q/d/l/?s={stooq_code}&i=d"
-        for attempt in range(1, STOOQ_MAX_RETRIES + 1):
-            try:
-                response = requests.get(url, headers=HEADERS, timeout=STOOQ_TIMEOUT_SECONDS)
-                response.raise_for_status()
-                
-                new_df = pd.read_csv(StringIO(response.text))
-                header_mapping = {
-                    'Date': 'Data', 'date': 'Data', 'data': 'Data',
-                    'Close': 'Zamkniecie', 'close': 'Zamkniecie', 'zamkniecie': 'Zamkniecie'
-                }
-                new_df.rename(columns=header_mapping, inplace=True)
-                
-                if 'Data' not in new_df.columns or 'Zamkniecie' not in new_df.columns:
-                    new_df = None
-                    time.sleep(2)
-                    continue
-                    
-                if len(new_df) < 5:
-                    new_df = None
-                    time.sleep(2)
-                    continue
-                    
-                break
-            except Exception as e:
-                new_df = None
-                if attempt < STOOQ_MAX_RETRIES:
-                    time.sleep(2)
-        
-        if new_df is None or new_df.empty:
-            return f"[失败] {asset_name:<4} 所有的备选数据源(Stooq/yfinance)获取数据均失败。"
+        new_df = fetch_stooq_data(stooq_code)
 
-    # 处理与保存获得的 new_df
+    if new_df is None or new_df.empty or not validate_price_frame(new_df):
+        return f"[失败] {asset_name:<4} 所有的备选数据源(Stooq/yfinance)获取数据均失败。"
+
     try:
-        new_df = normalize_price_frame(new_df)
-        if new_df is None or new_df.empty:
-            return f"[失败] {asset_name:<4} 获取到的数据为空或无效。"
-
-        new_df.set_index('Data', inplace=True)
-        new_df = new_df[[col for col in new_df.columns if col in CANONICAL_COLUMNS and col != 'Data']]
-            
-        # 增量合并逻辑
-        if Path(file_path).exists():
+        if file_path.exists():
             old_df = pd.read_csv(file_path)
-            old_df = normalize_price_frame(old_df)
-
-            if old_df is None or old_df.empty:
-                return f"[系统错误] {asset_name:<4} 本地数据列名匹配失败。"
-            
-            old_df.set_index('Data', inplace=True)
-
-            combined_df = pd.concat([old_df, new_df])
-            combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
+            combined_df = merge_frames(old_df, new_df)
         else:
-            combined_df = new_df
+            combined_df = normalize_price_frame(new_df)
 
-        combined_df = combined_df.dropna(subset=['Zamkniecie'])
-        # 按时间排序后保存回 CSV
-        combined_df.sort_index(inplace=True)
-        combined_df.reset_index(inplace=True)
-        combined_df = combined_df[[col for col in CANONICAL_COLUMNS if col in combined_df.columns]]
-        combined_df.to_csv(file_path, index=False)
+        if combined_df is None or combined_df.empty or not validate_price_frame(combined_df):
+            return f"[系统错误] {asset_name:<4} 数据处理后为空或无效。"
 
+        write_csv_with_checksum(combined_df, file_path)
         return f"[成功] {asset_name:<4} 更新完毕。最新数据点：{combined_df['Data'].iloc[-1].date()}"
-    except Exception as e:
-        return f"[系统错误] {asset_name:<4} 数据处理保存异常：{e}"
+    except Exception as exc:
+        return f"[系统错误] {asset_name:<4} 数据处理保存异常：{exc}"
+
+
+def write_sync_status(results):
+    SYNC_STATUS_FILE.write_text(
+        json.dumps(
+            {
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "results": results,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
 
 def main():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     print("=" * 60)
     print("启动全资产数据按需同步 (本地最新则跳过，优先使用 yfinance 增量窗口)...")
     print("=" * 60)
 
-    # 采用多线程并发执行 (5个资产)
-    with ThreadPoolExecutor(max_workers=min(5, len(ASSETS_MAPPING))) as executor:
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(MAX_DOWNLOAD_WORKERS, len(ASSETS_MAPPING))) as executor:
         future_to_asset = {
             executor.submit(fetch_and_merge_data, asset, cfg): asset
             for asset, cfg in ASSETS_MAPPING.items()
         }
-
         for future in as_completed(future_to_asset):
+            asset = future_to_asset[future]
             result = future.result()
+            results[asset] = "success" if result.startswith("[成功]") or result.startswith("[跳过]") else "failed"
             print(result)
 
+    write_sync_status(results)
     print("=" * 60)
     print("所有更新任务执行完毕。")
+    if any(status == "failed" for status in results.values()):
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

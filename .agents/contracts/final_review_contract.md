@@ -1,7 +1,7 @@
 # 最终审查合同 — Hextech
 > version: 7.1-lite
 > 本文件定义审查标准，不绑定任何特定审查执行器。
-> 审查只看变更结果、任务说明与必要证据，不把旧台账或锁态当作核心必需输入。
+> 审查只看变更结果、任务说明与必要证据，不把旧台账、旧锁态或旧索引当作核心必需输入。
 
 ---
 
@@ -18,8 +18,8 @@
 | `diff` | PR diff 或本地 git diff | 是 |
 | `task_context_summary` | PR 描述、审查请求或任务说明摘要 | 是 |
 | `test_results` | 必要测试结果、CI 结果或本地验证结论 | 是 |
+| `project_notes` | `PROJECT.md`、PR 描述中的补充上下文或项目说明摘要 | 复杂改动时必需 |
 | `antigravity_report` | `.ai_workflow/ag_review_<task_id>.md` | 仅在 Gate 触发时需要 |
-| `project_notes` | `PROJECT.md` 或任务说明中的补充上下文 | 否 |
 | `AGENTS.md_rules` | 仓库级稳定规则说明（如存在） | 否 |
 
 `task_context_summary` 建议至少包含：
@@ -31,12 +31,18 @@
 - `task_mode`
 - `effective_scope_summary`
 
+`project_notes` 的最低要求：
+- 小改动可以只给出简要说明
+- 复杂改动必须说明 `PROJECT.md` 是否已同步更新
+- 若复杂改动未改 `PROJECT.md`，必须在说明里给出明确理由
+
 读取顺序：
 1. `diff`
 2. `task_context_summary`
 3. `test_results`
-4. `antigravity_report`（如有）
-5. `project_notes` / `AGENTS.md_rules`（如有）
+4. `project_notes`
+5. `antigravity_report`（如有）
+6. `AGENTS.md_rules`（如有）
 
 ---
 
@@ -46,8 +52,14 @@
 |:---|:---|
 | `CONTEXT_MISMATCH` | diff、PR 描述、任务说明之间出现明显冲突 |
 | `SCOPE_VIOLATION` | diff 文件超出任务上下文允许范围 |
+| `PROJECT_SYNC_MISSING` | 复杂改动未同步 `PROJECT.md`，且没有给出明确豁免理由 |
 | `SECURITY_BLOCK` | 命中安全模式检测（见第四节） |
 | `TEST_BYPASS` | 检测到测试绕过（见第五节） |
+
+复杂改动通常满足以下任一条件：
+- diff 涉及 4 个及以上文件
+- diff 跨越 2 个及以上目录
+- diff 涉及 `.agents/**`、`.claude/**`、`.git/hooks/**`、`PROJECT.md`、审查合同或适配层
 
 命中任一 → `[REVIEW-VERDICT: DENY <原因码>]`
 
@@ -104,6 +116,8 @@
 - `review_mode` 为 `gate`
 - 命中安全检测（SEC-00x）
 - 涉及鉴权/权限变更
+
+当 `task_mode = frontend-integration` 且命中重要前端场景时，`antigravity_report` 必须存在且含 `[AG-REVIEW-PASS]`。
 
 双条件均满足时：必须存在 Gate 报告且含 `[AG-REVIEW-PASS]`，否则 → `[REVIEW-VERDICT: DENY AG-REVIEW-MISSING]`
 

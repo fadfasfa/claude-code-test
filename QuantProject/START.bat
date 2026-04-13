@@ -18,6 +18,19 @@ if !errorlevel! neq 0 (
     exit /b !errorlevel!
 )
 
+:: 2.1 关键依赖预检
+python -c "import pandas, numpy, requests, yfinance" >nul 2>&1
+if !errorlevel! neq 0 (
+    echo [!] 检测到缺失依赖，正在尝试自动安装...
+    python -m pip install pandas numpy requests yfinance -q
+    if !errorlevel! neq 0 (
+        color 0C
+        echo [-] 依赖安装失败，请检查 pip 或网络环境。
+        pause
+        exit /b !errorlevel!
+    )
+)
+
 :: 3. 运行数据更新
 echo ==================================================
 echo [1/2] 正在检查本地行情并按需同步增量数据...
