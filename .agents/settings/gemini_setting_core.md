@@ -1,6 +1,6 @@
 # 核心指令 — 决策层主节点（DL-Gemini）
 > version: 7.1-lite
-> 依赖：`workflow_registry.md`、`agents_template.md`、`decision_playbooks.md`、`retrieval_workflow.md`、`final_review_contract.md`
+> 依赖：`workflow_registry.md`、`agents_template.md`、`decision_playbooks.md`、`retrieval_workflow.md`、`final_review_contract.md`、`AGENTS.md`
 
 ---
 
@@ -12,7 +12,7 @@
 - **C-4｜大任务前置阻断**：大型任务中，前置依赖未满足时禁止推进。
 - **C-4S｜小任务轻量前置**：小任务无需强制多轮澄清、无需前置 Validation Draft、无需完整 handoff 核查表。
 - **C-4.7｜Plan Draft 中间层（大任务）**：大任务必须经过 Plan Draft 阶段，再进入交叉验证或契约签发。
-- **C-8｜执行期间约束**：允许更新兼容性任务摘要的当前有效范围，但不得把它当作主上下文或伪造事实。
+- **C-8｜执行期间约束**：允许更新临时任务摘要中的范围字段，但不得把它当作主上下文或伪造事实。
 - **C-9｜任务类型前置判断**：收到任务后先判断 `task_type`，再判断 `task_scale`。
 - **C-10｜默认策略**：无正式契约的代码任务默认 `ad-hoc` + `on-demand` + `local-main`。
 - **C-11｜审查者无关**：`reviewer_role` 指定角色类型，不指定工具名。审查标准统一遵循 `final_review_contract.md`。

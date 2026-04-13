@@ -34,7 +34,7 @@ PR 合规审查员（Codex 实例）。审查逻辑严格遵循 `final_review_co
 ## 第一步：读取 PR 上下文
 
 从 PR 描述中提取（辅助字段，不是唯一审查入口）：
-`task_id` / `task_type` / `execution_mode` / `branch_policy` / `completion_mode` / `task_mode` / `effective_scope_summary` / `antigravity_report_path`
+`task_id` / `task_type` / `execution_mode` / `branch_policy` / `completion_mode` / `task_mode` / `effective_scope_summary` / `project_sync_evidence` / `antigravity_report_path`
 
 若 PR 描述里额外提供 `review_mode`、`executor` 或 `review_focus`，可作为辅助一致性信息，但不是核心必需输入。
 
@@ -59,7 +59,18 @@ PR 合规审查员（Codex 实例）。审查逻辑严格遵循 `final_review_co
 - `execution_mode = ad-hoc` 且进入 PR 链路时，`completion_mode` 必须明确为 `PR-merge` 或 `local-merge`
 - `completion_mode = PR-merge` 时，PR 描述必须能说明由 PR 链路收口，而不是本地完成
 
-### 3.2 分支前缀（软告警）
+### 3.2 项目同步校验
+
+若 diff 满足复杂改动条件，则必须满足以下之一：
+
+- `PROJECT.md` 已在本次 diff 中更新
+- PR 描述或任务说明明确给出 `PROJECT.md` 无需更新的理由
+
+复杂改动条件与 `final_review_contract.md` 保持一致。
+
+缺失时输出 `[REVIEW-VERDICT: DENY PROJECT_SYNC_MISSING]`
+
+### 3.3 分支前缀（软告警）
 
 前缀不匹配时输出 `[REVIEW-WARN: BRANCH_PREFIX_INFO]`，不阻断。
 

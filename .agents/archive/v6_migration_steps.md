@@ -1,7 +1,7 @@
 # Hextech V6.2 → V7.1-lite 迁移要点
 
 > 本文件仅供历史迁移 / 审计追溯，不代表当前 canonical 工作流。
-> 当前主流程以 `.agents/` 下的 7.1-lite 文档为准。
+> 当前主流程以 `PROJECT.md`、`AGENTS.md` 与 `.agents/` 下的 7.1-lite 文档为准。
 
 ## 一、主轴切换
 
@@ -12,9 +12,9 @@
 
 新设计（v7.1-lite）：
 - 执行身份用于追溯，不用于最终审查准入
-- `agents.md` 降级为兼容性任务摘要
+- 根 `agents.md` 已删除；仅在需要临时任务产物或历史兼容输出时使用 `agents_template.md`
 - small 任务默认本地完成，large 任务走 Plan Draft → 验证 → 分支实现 → PR → Codex 审查
-- 检索任务完全独立，不再回写 `agents.md`
+- 检索任务完全独立，不再回写根 `agents.md`
 
 ## 二、退役项
 
@@ -33,7 +33,7 @@
 - 任务上下文摘要
 - 必要的 event_log / 额外证据
 
-不再把 `agents.md` / `execution_ledger` / `branch_lock_state` / `active_tasks_index` 当作核心必需输入。
+不再把根 `agents.md` / `execution_ledger` / `branch_lock_state` / `active_tasks_index` 当作核心必需输入。
 
 ## 四、Antigravity 定位
 
@@ -53,6 +53,6 @@
 
 ## 六、兼容性说明
 
-- `PROJECT.md` 继续作为项目级总览
-- `agents.md` 仅保留兼容性摘要
+- `PROJECT.md` 继续作为项目级稳定说明
+- `AGENTS.md` 作为仓库级稳定规则与 review 入口
 - 旧版文件可作为历史参考，不作为本轮执行约束

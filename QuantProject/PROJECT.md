@@ -14,8 +14,10 @@
 | :--- | :--- | :--- |
 | `START.bat` | 启动脚本 | 一键创建目录、同步行情并运行决策引擎 |
 | `config.py` | 配置模块 | 定义数据目录、文件映射、权重和同步参数 |
+| `data_io.py` | 数据访问层 | 统一处理 CSV 归一化、校验和、列名识别与月度序列装载 |
+| `strategies/*.py` | 策略层 | 按资产拆分策略实现，通过注册表统一装配 |
 | `update_stooq_fast.py` | 数据同步模块 | 按需刷新行情数据，优先 yfinance，失败后降级 Stooq |
-| `decision_engine.py` | 决策引擎 | 读取本地数据并计算各资产仓位建议 |
+| `decision_engine.py` | 调度层 | 装配策略、生成仓位建议并输出报告/归档 |
 | `README.md` | 说明文档 | 用户侧运行说明与策略简介 |
 | `data/*.csv` | 行情数据 | 各资产历史价格数据 |
 | `position_history.txt` | 历史归档 | 追加保存仓位决策结果 |
@@ -50,8 +52,10 @@ flowchart TD
 | 改动文件 | 直接影响 | 潜在级联影响 | 审计关注点 |
 | :--- | :--- | :--- | :--- |
 | `config.py` | 资产映射、文件命名、权重与同步参数 | 数据同步和决策引擎 | 权重与文件名是否一致 |
+| `data_io.py` | CSV 标准化、校验和、月度序列读取 | 数据同步和决策引擎 | 列名兼容性与完整性校验是否一致 |
+| `strategies/*.py` | 各资产策略计算逻辑 | 决策输出与回测结果 | 阈值是否保持既有语义 |
 | `update_stooq_fast.py` | 行情同步、增量刷新逻辑 | `data/*.csv` 可靠性 | yfinance / Stooq 回退是否稳定 |
-| `decision_engine.py` | 仓位信号和终端报告 | `position_history.txt`、决策解释 | 策略阈值是否被误改 |
+| `decision_engine.py` | 策略调度和终端报告 | `position_history.txt`、决策解释 | 调度流程是否保持行为不变 |
 | `START.bat` | 本地启动顺序 | 用户实际执行体验 | 目录创建与错误提示是否清晰 |
 
 ---
@@ -63,7 +67,9 @@ flowchart TD
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | QP-001 | 数据源依赖 | yfinance / Stooq 都依赖外部网络，短时波动会影响同步 | `update_stooq_fast.py` | 中 | 已知 | 保留双源回退和超时参数 |
 | QP-002 | 配置硬编码 | 资产权重与映射目前写在 `config.py` 中 | `config.py` | 中 | 已知 | 后续可拆成独立配置文件或表驱动格式 |
-| QP-003 | 日志增长 | `decision_engine.log` 和 `position_history.txt` 会持续增长 | 日志与历史文件 | 低 | 已知 | 以后可考虑轮转或归档策略 |
+| QP-003 | 日志增长 | `decision_engine.log` 和 `position_history.txt` 会持续增长 | 日志与历史文件 | 中 | 部分缓解 | 已增加日志轮转，历史文本归档仍待进一步轮转 |
+| QP-004 | 同步契约薄弱 | 数据同步与决策读取之间原本缺少显式校验与状态文件 | `update_stooq_fast.py`, `decision_engine.py`, `data_io.py` | 中 | 部分缓解 | 已补 `sync_status.json` 与 CSV SHA256 校验，后续可继续加 schema 版本 |
+| QP-005 | 注册表仍需手工维护 | 新增资产时仍需同步更新 `config.py` 和 `strategies/registry.py` | `config.py`, `strategies/registry.py` | 低 | 已知 | 后续可继续演进为表驱动注册 |
 
 ---
 
@@ -72,6 +78,8 @@ flowchart TD
 
 | 日期 | task_id | 执行端 | 最终改动 | 最终有效范围 | 范围变动/新增需求 | 遗留债务 | 审计结果 | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2026-04-13 | cx-fix-run-security-audit-20260413-arch | cx | 拆分 `data_io.py` 与 `strategies/`，将 `decision_engine.py` 重构为调度层，`update_stooq_fast.py` 改为复用共享数据层 | `QuantProject/data_io.py`, `QuantProject/strategies/*.py`, `QuantProject/decision_engine.py`, `QuantProject/update_stooq_fast.py`, `QuantProject/README.md`, `QuantProject/PROJECT.md` | 无 | QP-005 | passed | 本轮以最小行为变化完成架构收敛 |
+| 2026-04-13 | cx-fix-run-security-audit-20260413 | cx | 修复 QQQ/EWJ 趋势判断覆盖 bug，补输入边界、日志脱敏/轮转、CSV 校验和、同步状态文件、结构化决策归档与启动依赖检查 | `QuantProject/config.py`, `QuantProject/update_stooq_fast.py`, `QuantProject/decision_engine.py`, `QuantProject/START.bat`, `QuantProject/PROJECT.md` | 无 | QP-002, QP-004 | passed | 依据 `quantproject_audit_report.md` 落地高优先级修复 |
 | 2026-04-12 | cx-task-quantproject-project-doc-init-20260412 | cx | 新建 `QuantProject/PROJECT.md`，补齐项目总览、数据流与风险说明 | `QuantProject/PROJECT.md` | 无 | QP-001, QP-002, QP-003 | pending | 本轮只写文档，不修改量化脚本 |
 
 ---
