@@ -57,14 +57,14 @@ def _compute_df_hash(df: pd.DataFrame) -> str:
     # 基于行数、列名和边界数据计算轻量哈希。
     try:
         row_count = len(df)
-        col_hash = hashlib.md5(str(tuple(df.columns)).encode()).hexdigest()[:8]
+        col_hash = hashlib.sha256(str(tuple(df.columns)).encode()).hexdigest()[:8]
 
         sample_data = ""
         if row_count > 0:
             sample_data = str(df.iloc[0].tolist()) + str(df.iloc[-1].tolist())
 
         hash_input = f"{row_count}|{col_hash}|{sample_data}"
-        return hashlib.md5(hash_input.encode()).hexdigest()[:16]
+        return hashlib.sha256(hash_input.encode()).hexdigest()[:16]
     except Exception as e:
         logging.warning(f"计算 DataFrame 哈希失败：{e}")
         return str(id(df))

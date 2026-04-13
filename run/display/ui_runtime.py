@@ -46,7 +46,18 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
+
+
+def _load_server_port() -> int:
+    raw_port = str(os.getenv("HEXTECH_PORT", "8000")).strip()
+    try:
+        port = int(raw_port)
+    except ValueError:
+        return 8000
+    return port if 1024 <= port <= 65535 else 8000
+
+
+SERVER_PORT = _load_server_port()
 
 
 def resolve_web_base(web_port_file: str, timeout: float = 5.0) -> str:
@@ -62,15 +73,6 @@ def resolve_web_base(web_port_file: str, timeout: float = 5.0) -> str:
             pass
         time.sleep(0.1)
     return f"http://127.0.0.1:{SERVER_PORT}"
-
-
-def disable_lcu_https_warning() -> None:
-    try:
-        import urllib3
-
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    except Exception:
-        pass
 
 
 def scan_lcu_process() -> tuple:
@@ -223,6 +225,7 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
                 resp = requests.post(
                     f"{web_base}/api/redirect",
                     json={"hero_id": str(champ_id), "hero_name": hero_name},
+                    headers={"Origin": web_base, "X-Hextech-Token": ui.session.cookies.get("hextech_local_token", "")},
                     timeout=1.5,
                 )
                 if resp.status_code == 200:
@@ -245,7 +248,6 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
 
 def lcu_polling_loop(ui: "HextechUI") -> None:
     """优先读取 Web live_state，失败时回退本地 LCU，持续同步可用英雄集合。"""
-    disable_lcu_https_warning()
     while not ui.stop_event.is_set():
         if ui.pause_event.is_set():
             time.sleep(1)
