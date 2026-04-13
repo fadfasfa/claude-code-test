@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from threading import Lock
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
@@ -20,10 +21,13 @@ from config import (
     DATA_DIR,
     DATA_FRESHNESS_BUSINESS_DAYS,
     MAX_DOWNLOAD_WORKERS,
+    STOOQ_API_KEY,
     STOOQ_MAX_RETRIES,
     STOOQ_TIMEOUT_SECONDS,
     SYNC_STATUS_FILE,
     UPDATE_LOOKBACK_DAYS,
+    YFINANCE_MAX_RETRIES,
+    YFINANCE_RETRY_BACKOFF_SECONDS,
     YFINANCE_TIMEOUT_SECONDS,
 )
 from data_io import (
@@ -39,6 +43,7 @@ from data_io import (
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
+YFINANCE_DOWNLOAD_LOCK = Lock()
 
 
 def is_data_up_to_date(file_path, latest_date=None):
@@ -55,40 +60,88 @@ def is_data_up_to_date(file_path, latest_date=None):
     return business_days <= DATA_FRESHNESS_BUSINESS_DAYS
 
 
-def fetch_yfinance_data(yf_code, asset_name, start_date=None):
-    try:
-        kwargs = {
-            "interval": "1d",
-            "auto_adjust": False,
-            "actions": False,
-            "progress": False,
-            "threads": False,
-            "timeout": YFINANCE_TIMEOUT_SECONDS,
-        }
-        if start_date is None:
-            kwargs["period"] = "max"
-        else:
-            kwargs["start"] = start_date
-            kwargs["end"] = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+def _download_from_yfinance(yf_code, kwargs):
+    # yfinance 当前版本在多线程并发调用时存在不稳定行为，这里串行化下载阶段。
+    with YFINANCE_DOWNLOAD_LOCK:
+        return yf.download(yf_code, **kwargs)
 
-        df = yf.download(yf_code, **kwargs)
-        if df is None or df.empty:
-            return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df.reset_index(inplace=True)
-        return normalize_price_frame(df)
-    except Exception as exc:
-        print(f"[调试] yfinance 获取 {asset_name} 失败：{exc}")
-        return None
+
+def fetch_yfinance_data(yf_code, asset_name, start_date=None, allow_full_history_fallback=True):
+    kwargs = {
+        "interval": "1d",
+        "auto_adjust": False,
+        "actions": False,
+        "progress": False,
+        "threads": False,
+        "timeout": YFINANCE_TIMEOUT_SECONDS,
+    }
+    if start_date is None:
+        kwargs["period"] = "max"
+    else:
+        kwargs["start"] = start_date
+        kwargs["end"] = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    last_error = None
+    for attempt in range(1, YFINANCE_MAX_RETRIES + 1):
+        try:
+            df = _download_from_yfinance(yf_code, kwargs)
+            if df is None or df.empty:
+                last_error = ValueError("empty response")
+            else:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                df = df.reset_index()
+                normalized = normalize_price_frame(df)
+                if normalized is not None and not normalized.empty:
+                    return normalized
+                last_error = ValueError("normalized frame is empty")
+        except Exception as exc:
+            last_error = exc
+
+        if attempt < YFINANCE_MAX_RETRIES:
+            time.sleep(YFINANCE_RETRY_BACKOFF_SECONDS)
+
+    if start_date is not None and allow_full_history_fallback:
+        print(f"[降级] {asset_name:<4} yfinance 增量窗口失败，回退到全量历史。")
+        return fetch_yfinance_data(
+            yf_code,
+            asset_name,
+            start_date=None,
+            allow_full_history_fallback=False,
+        )
+
+    if last_error is not None:
+        print(f"[调试] yfinance 获取 {asset_name} 失败：{last_error}")
+    return None
+
+
+def build_stooq_url(stooq_code):
+    url = f"https://stooq.com/q/d/l/?s={stooq_code}&i=d"
+    if STOOQ_API_KEY:
+        url = f"{url}&apikey={STOOQ_API_KEY}"
+    return url
+
+
+def is_stooq_csv_response(response_text):
+    text = response_text.lstrip()
+    return text.startswith("Date,") or text.startswith("date,")
 
 
 def fetch_stooq_data(stooq_code):
-    url = f"https://stooq.com/q/d/l/?s={stooq_code}&i=d"
+    url = build_stooq_url(stooq_code)
     for attempt in range(1, STOOQ_MAX_RETRIES + 1):
         try:
             response = requests.get(url, headers=HEADERS, timeout=STOOQ_TIMEOUT_SECONDS)
             response.raise_for_status()
+            if "Get your apikey" in response.text:
+                print(f"[调试] Stooq {stooq_code} 当前要求 apikey，已跳过备用源。")
+                return None
+            if not is_stooq_csv_response(response.text):
+                print(f"[调试] Stooq {stooq_code} 返回非 CSV 响应，第 {attempt} 次重试前继续等待。")
+                if attempt < STOOQ_MAX_RETRIES:
+                    time.sleep(2)
+                    continue
+                return None
             frame = normalize_price_frame(read_csv_text(response.text))
             if frame is None or len(frame) < 5 or not validate_price_frame(frame):
                 frame = None

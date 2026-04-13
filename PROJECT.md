@@ -95,6 +95,7 @@
 
 | 日期 | task_id | 执行端 | 最终改动 | 最终有效范围 | 范围变动/新增需求 | 遗留债务 | 审计结果 | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2026-04-13 | cx-task-fix-quantproject-sync-20260413 | cx | 修复 `QuantProject` 数据同步在多线程下调用 yfinance 的不稳定问题，并补 Stooq apikey 检测，恢复 `SPY/QQQ/XAU` 获取链路 | `QuantProject/`, `PROJECT.md` | 无 | WS-003 | pending | 本轮只修同步链路，不调整量化策略口径 |
 | 2026-04-13 | cx-task-fix-run-security-audit-20260413 | cx | 修复 `run/` 安全审计中的本地接口认证、Origin/重定向/路径校验、环境变量约束与原子写入问题 | `run/display/`, `run/scraping/`, `run/processing/`, `PROJECT.md` | 无 | WS-001, WS-002, WS-003 | pending | 本轮聚焦高危入口收口与最小验证 |
 | 2026-04-13 | cx-task-hextech-lite-finalization-rebuild-20260413 | cx | 将根入口收敛为 `PROJECT.md` + `AGENTS.md`，删除根 `agents.md`，并将规则层与历史层拆分 | `PROJECT.md`, `AGENTS.md`, `.agents/`, `.claude/`, `.git/hooks/` | 删除根兼容壳、收口历史说明 | WS-001, WS-002, WS-003 | pending | 本轮重点是结构收敛与规则分层 |
 | 2026-04-13 | cx-task-agents-entry-smoke-2-20260413 | cx | 第二轮 smoke PR：同步根入口关系，确保 `PROJECT.md` 与 `AGENTS.md` 不再指向根 `agents.md` | `PROJECT.md`, `AGENTS.md` | 无 | WS-001, WS-002, WS-003 | pending | 仅用于验证入口同步与自动 review 行为 |
