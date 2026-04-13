@@ -36,6 +36,31 @@ class RedirectRequest(BaseModel):
     hero_name: str
 
 
+def _attach_local_auth_cookie(response: Response) -> Response:
+    response.set_cookie(
+        key=web_runtime.HTTP_SESSION_COOKIE,
+        value=web_runtime.get_request_auth_token(),
+        httponly=True,
+        samesite="strict",
+        secure=False,
+    )
+    return response
+
+
+def _extract_request_token(request: Request) -> str:
+    header_token = str(request.headers.get(web_runtime.REQUEST_TOKEN_HEADER, "")).strip()
+    if header_token:
+        return header_token
+    return str(request.cookies.get(web_runtime.HTTP_SESSION_COOKIE, "")).strip()
+
+
+def _safe_asset_response(assets_dir: str, filename: str):
+    safe_path = web_runtime.safe_join_under_dir(assets_dir, filename)
+    if not safe_path or not os.path.exists(safe_path):
+        return JSONResponse(content={"error": "禁止访问"}, status_code=403)
+    return FileResponse(safe_path)
+
+
 def _request_precomputed_hextech_rebuild() -> bool:
     global _api_cache_rebuild_inflight
     with _api_cache_rebuild_lock:
@@ -62,10 +87,10 @@ def _request_precomputed_hextech_rebuild() -> bool:
 
 
 def _html_file_response(filename: str) -> FileResponse:
-    return FileResponse(
+    return _attach_local_auth_cookie(FileResponse(
         os.path.join(web_runtime.get_static_dir(), filename),
         media_type="text/html; charset=utf-8",
-    )
+    ))
 
 
 def register_routes(app: FastAPI) -> None:
@@ -88,14 +113,12 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/assets/{filename}")
     async def get_asset(filename: str):
         assets_dir = web_runtime.get_assets_dir()
-        local_path = os.path.join(assets_dir, filename)
-        real_requested = os.path.normcase(os.path.realpath(local_path))
-        real_assets_dir = os.path.normcase(os.path.realpath(assets_dir))
-        if not real_requested.startswith(real_assets_dir + os.sep) and real_requested != real_assets_dir:
-            web_runtime.logger.warning("已阻止目录遍历：%s -> %s", filename, real_requested)
+        safe_path = web_runtime.safe_join_under_dir(assets_dir, filename)
+        if not safe_path:
+            web_runtime.logger.warning("已阻止目录遍历：%s", filename)
             return JSONResponse(content={"error": "禁止访问"}, status_code=403)
-        if os.path.exists(local_path):
-            return FileResponse(local_path)
+        if os.path.exists(safe_path):
+            return FileResponse(safe_path)
 
         if filename.endswith(".png") and not filename[:-4].isdigit():
             catalog_entry = None
@@ -108,7 +131,7 @@ def register_routes(app: FastAPI) -> None:
                     if mapped_filename:
                         local_mapped = web_runtime.find_existing_augment_asset_filename(assets_dir, mapped_filename)
                         if local_mapped:
-                            return FileResponse(os.path.join(assets_dir, local_mapped))
+                            return _safe_asset_response(assets_dir, local_mapped)
                         web_runtime.queue_augment_icon_cache(mapped_filename, augment_name)
 
                     remote_icon_url = web_runtime.resolve_remote_augment_icon_url(catalog_entry, augment_name)
@@ -117,14 +140,14 @@ def register_routes(app: FastAPI) -> None:
 
                 local_fallback = web_runtime.find_existing_augment_asset_filename(assets_dir, filename)
                 if local_fallback:
-                    return FileResponse(os.path.join(assets_dir, local_fallback))
+                    return _safe_asset_response(assets_dir, local_fallback)
                 if re.fullmatch(r"[A-Za-z0-9._-]+", file_stem):
                     web_runtime.queue_augment_icon_cache(filename, file_stem)
                 remote_icon_url = web_runtime.resolve_remote_augment_icon_url(catalog_entry, file_stem)
                 if remote_icon_url:
                     return RedirectResponse(url=remote_icon_url, status_code=307)
             except Exception as exc:
-                web_runtime.logger.debug("远程资源缓存失败：%s", exc)
+                web_runtime.logger.warning("远程资源缓存失败：%s", exc)
 
         if filename.endswith(".png"):
             file_stem = filename[:-4]
@@ -133,8 +156,9 @@ def register_routes(app: FastAPI) -> None:
                 _, en_name = web_runtime.get_champion_info(file_stem)
                 if en_name:
                     version = web_runtime.get_ddragon_version()
-                    ddragon_url = f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{en_name}.png"
-                    return RedirectResponse(url=ddragon_url, status_code=307)
+                    if version:
+                        ddragon_url = f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{en_name}.png"
+                        return RedirectResponse(url=ddragon_url, status_code=307)
             web_runtime.logger.debug("资源本地不存在，DDragon 回退也失败：%s", filename)
 
         return JSONResponse(content={"error": "资源未找到"}, status_code=404)
@@ -156,11 +180,11 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/startup_status")
     async def api_startup_status():
-        return JSONResponse(content=web_runtime.get_startup_status())
+        return _attach_local_auth_cookie(JSONResponse(content=web_runtime.get_startup_status()))
 
     @app.get("/api/live_state")
     async def api_live_state():
-        return JSONResponse(content=web_runtime.get_live_state_payload())
+        return _attach_local_auth_cookie(JSONResponse(content=web_runtime.get_live_state_payload()))
 
     @app.get("/api/champion_aliases")
     async def api_champion_aliases():
@@ -245,6 +269,10 @@ def register_routes(app: FastAPI) -> None:
         if not web_runtime.is_allowed_local_origin(origin):
             web_runtime.logger.warning("已拒绝非本地来源的 redirect 请求：origin=%s", origin)
             return JSONResponse(content={"error": "forbidden_origin"}, status_code=status.HTTP_403_FORBIDDEN)
+        request_token = _extract_request_token(request)
+        if request_token != web_runtime.get_request_auth_token():
+            web_runtime.logger.warning("已拒绝缺少有效 token 的 redirect 请求。")
+            return JSONResponse(content={"error": "forbidden_token"}, status_code=status.HTTP_403_FORBIDDEN)
 
         try:
             hero_name, en_name = web_runtime.get_champion_info(req.hero_id)
@@ -275,6 +303,13 @@ def register_routes(app: FastAPI) -> None:
         origin = ws.headers.get("origin")
         if not web_runtime.is_allowed_local_origin(origin):
             web_runtime.logger.warning("已拒绝非本地来源的 WebSocket 连接：origin=%s", origin)
+            await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        request_token = str(ws.headers.get(web_runtime.REQUEST_TOKEN_HEADER, "")).strip() or str(
+            ws.cookies.get(web_runtime.HTTP_SESSION_COOKIE, "")
+        ).strip()
+        if request_token != web_runtime.get_request_auth_token():
+            web_runtime.logger.warning("已拒绝缺少有效 token 的 WebSocket 连接。")
             await ws.close(code=status.WS_1008_POLICY_VIOLATION)
             return
         await web_runtime.manager.connect(ws)

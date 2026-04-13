@@ -29,6 +29,7 @@ import os
 import re
 import threading
 import time
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from typing import Dict, Iterable, Optional, Tuple
@@ -45,6 +46,7 @@ _THREAD_LOCAL = threading.local()
 _ICON_FAILURE_CACHE: Dict[str, float] = {}
 _ICON_FAILURE_CACHE_LOCK = threading.Lock()
 _FAILURE_TTL_SECONDS = 180
+_ICON_WRITE_LOCK = threading.Lock()
 
 
 def _default_runtime_dir() -> str:
@@ -269,27 +271,31 @@ def ensure_augment_icon_cached(icon_filename: str, asset_dir: Optional[str] = No
         return None
 
     os.makedirs(asset_dir, exist_ok=True)
-    tmp_path = target_path + ".tmp"
     for url in _iter_augment_icon_urls(normalized_filename):
         try:
             response = _get_download_session().get(url, stream=True, timeout=15)
             if response.status_code != 200:
                 continue
-            with open(tmp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            os.replace(tmp_path, target_path)
+            with _ICON_WRITE_LOCK:
+                fd, tmp_path = tempfile.mkstemp(prefix="augment-cache-", suffix=".tmp", dir=asset_dir)
+                try:
+                    with os.fdopen(fd, "wb") as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                    os.replace(tmp_path, target_path)
+                finally:
+                    try:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                    except OSError:
+                        pass
             _clear_augment_icon_failure(normalized_filename)
             return target_path
-        except Exception:
-            pass
-        finally:
-            try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except OSError:
-                pass
+        except requests.RequestException:
+            continue
+        except OSError:
+            continue
 
     _mark_augment_icon_failure(normalized_filename)
     return None

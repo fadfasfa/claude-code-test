@@ -32,9 +32,9 @@ import os
 import sys
 import time
 import threading
-import urllib3
 import logging
 import shutil
+import tempfile
 from logging.handlers import RotatingFileHandler
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -50,8 +50,6 @@ from tools.log_utils import (
     install_summary_logging,
 )
 from tools.runtime_bundle import seed_bundled_resources
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 ensure_utf8_stdio()
 
@@ -74,11 +72,6 @@ def bootstrap_runtime_environment() -> str:
     for candidate in (runtime_base, script_dir):
         if candidate and candidate not in sys.path:
             sys.path.insert(0, candidate)
-
-    try:
-        os.chdir(runtime_base)
-    except OSError:
-        pass
 
     return runtime_base
 
@@ -450,7 +443,7 @@ def sync_hero_data():
                             aug_icon_map[name] = icon_path
                     if aug_map:
                         break
-                except (Exception):
+                except (requests.RequestException, ValueError, TypeError, json.JSONDecodeError):
                     continue
 
             # 如果中文源没有图标，再尝试英文源
@@ -480,29 +473,33 @@ def sync_hero_data():
                         if aug_icon_map:
                             logger.info(f"从 CommunityDragon 成功抓取 {len(aug_icon_map)} 个图标")
                             break
-                    except (Exception) as e:
+                    except (requests.RequestException, ValueError, TypeError, json.JSONDecodeError) as e:
                         logger.debug(f"CommunityDragon 数据源抓取失败：{src} - {e}")
                         continue
             # 原子化写入
-            tmp_core = CORE_DATA_FILE + ".tmp"
-            with open(tmp_core, "w", encoding="utf-8") as f:
+            core_dir = os.path.dirname(CORE_DATA_FILE)
+            fd, tmp_core = tempfile.mkstemp(prefix="core-data-", suffix=".tmp", dir=core_dir)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(core_data, f, ensure_ascii=False, indent=4)
-            shutil.move(tmp_core, CORE_DATA_FILE)
+            os.replace(tmp_core, CORE_DATA_FILE)
 
             if aug_map:
-                tmp_aug = AUGMENT_MAP_FILE + ".tmp"
-                with open(tmp_aug, "w", encoding="utf-8") as f:
+                aug_dir = os.path.dirname(AUGMENT_MAP_FILE)
+                fd, tmp_aug = tempfile.mkstemp(prefix="augment-map-", suffix=".tmp", dir=aug_dir)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
                     json.dump(aug_map, f, ensure_ascii=False, indent=4)
-                shutil.move(tmp_aug, AUGMENT_MAP_FILE)
+                os.replace(tmp_aug, AUGMENT_MAP_FILE)
             if aug_icon_map:
-                tmp_icon = AUGMENT_ICON_FILE + ".tmp"
-                with open(tmp_icon, "w", encoding="utf-8") as f:
+                icon_dir = os.path.dirname(AUGMENT_ICON_FILE)
+                fd, tmp_icon = tempfile.mkstemp(prefix="augment-icon-", suffix=".tmp", dir=icon_dir)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
                     json.dump(aug_icon_map, f, ensure_ascii=False, indent=4)
-                shutil.move(tmp_icon, AUGMENT_ICON_FILE)
-            tmp_ver = VERSION_FILE + ".tmp"
-            with open(tmp_ver, "w", encoding="utf-8") as f:
+                os.replace(tmp_icon, AUGMENT_ICON_FILE)
+            ver_dir = os.path.dirname(VERSION_FILE)
+            fd, tmp_ver = tempfile.mkstemp(prefix="hero-version-", suffix=".tmp", dir=ver_dir)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(curr_ver)
-            shutil.move(tmp_ver, VERSION_FILE)
+            os.replace(tmp_ver, VERSION_FILE)
             _cleanup_legacy_augment_maps_if_manifest_exists()
             _last_sync_time = time.time()
             sync_succeeded = True

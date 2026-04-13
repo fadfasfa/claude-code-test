@@ -35,12 +35,14 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import webbrowser
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Set, Tuple
 from urllib.parse import quote, urlparse
+from secrets import token_urlsafe
 
 import pandas as pd
 import psutil
@@ -75,11 +77,22 @@ ensure_utf8_stdio()
 
 logger = logging.getLogger(__name__)
 
-SERVER_PORT = int(os.getenv("HEXTECH_PORT", "8000"))
+def _load_server_port() -> int:
+    raw_port = str(os.getenv("HEXTECH_PORT", "8000")).strip()
+    try:
+        port = int(raw_port)
+    except ValueError:
+        return 8000
+    return port if 1024 <= port <= 65535 else 8000
+
+
+SERVER_PORT = _load_server_port()
 WEB_PORT_FILE = os.path.join(CONFIG_DIR, "web_server_port.txt")
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
 BROWSER_PROFILE_DIR = os.path.join(CONFIG_DIR, "browser_profile")
 AUTO_JUMP_ENABLED = True
+HTTP_SESSION_COOKIE = "hextech_local_token"
+REQUEST_TOKEN_HEADER = "x-hextech-token"
 
 _managed_browser_process: Optional[subprocess.Popen] = None
 _managed_browser_lock = threading.Lock()
@@ -100,9 +113,18 @@ _preloaded_hextech_payloads: dict[str, dict] = {}
 _preloaded_hextech_pending: Set[str] = set()
 _preloaded_hextech_signature: Tuple[str, float] = ("", 0.0)
 _preloaded_hextech_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="hextech-preload")
+_request_auth_token = token_urlsafe(24)
 
 _SAFE_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _SAFE_ASSET_RE = re.compile(r"^[A-Za-z0-9._-]+\.png$")
+_SAFE_HERO_ID_RE = re.compile(r"^\d{1,6}$")
+_SAFE_NAME_RE = re.compile(r"^[\w\u4e00-\u9fff .'\-]{1,64}$")
+_ALLOWED_REDIRECT_HOSTS = {"apexlol.info", "www.apexlol.info", "ddragon.leagueoflegends.com", "raw.communitydragon.org", "cdn.communitydragon.org"}
+_lcu_warning_logged = False
+
+
+def get_request_auth_token() -> str:
+    return _request_auth_token
 
 
 def _get_resource_path(relative_path: str) -> str:
@@ -150,10 +172,10 @@ def is_safe_png_asset_name(filename: str) -> bool:
 def is_allowed_local_origin(origin: str | None) -> bool:
     """校验浏览器来源是否来自本机页面。
 
-    允许无 `Origin` 的原生客户端请求；浏览器侧请求则只接受 localhost / 127.0.0.1 / ::1。
+    只接受来自本机页面的浏览器请求；缺失 `Origin` 的请求一律拒绝。
     """
     if not origin:
-        return True
+        return False
     try:
         parsed = urlparse(origin)
     except Exception:
@@ -172,10 +194,36 @@ def set_active_web_port(port: int) -> None:
 
 
 def write_active_web_port(port: int) -> None:
-    tmp_path = WEB_PORT_FILE + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
+    fd, tmp_path = tempfile.mkstemp(prefix="web-port-", suffix=".tmp", dir=os.path.dirname(WEB_PORT_FILE))
+    try:
+        os.chmod(tmp_path, 0o600)
+    except OSError:
+        pass
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(str(port))
     os.replace(tmp_path, WEB_PORT_FILE)
+
+
+def safe_join_under_dir(base_dir: str, filename: str) -> Optional[str]:
+    local_path = os.path.join(base_dir, filename)
+    real_requested = os.path.normcase(os.path.realpath(local_path))
+    real_assets_dir = os.path.normcase(os.path.realpath(base_dir))
+    if real_requested == real_assets_dir:
+        return None
+    if not real_requested.startswith(real_assets_dir + os.sep):
+        return None
+    return local_path
+
+
+def is_safe_redirect_url(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except Exception:
+        return False
+    if parsed.scheme not in {"https"}:
+        return False
+    host = str(parsed.hostname or "").strip().lower()
+    return host in _ALLOWED_REDIRECT_HOSTS
 
 
 def resolve_remote_augment_icon_url(catalog_entry: Optional[dict], fallback_name: str) -> str:
@@ -185,14 +233,14 @@ def resolve_remote_augment_icon_url(catalog_entry: Optional[dict], fallback_name
     """
     if catalog_entry:
         manifest_url = str(catalog_entry.get("icon_url", "")).strip()
-        if manifest_url.startswith("http://") or manifest_url.startswith("https://"):
+        if is_safe_redirect_url(manifest_url):
             return manifest_url
         augment_name = str(catalog_entry.get("name", "")).strip() or fallback_name
     else:
         augment_name = fallback_name
 
     remote_url = resolve_apexlol_hextech_icon_url(augment_name, config_dir=CONFIG_DIR)
-    if remote_url and not remote_url.startswith("/assets/"):
+    if remote_url and not remote_url.startswith("/assets/") and is_safe_redirect_url(remote_url):
         return remote_url
     return ""
 
@@ -208,13 +256,12 @@ def download_augment_icon_from_remote(augment_name: str, icon_filename: str) -> 
     if not remote_url:
         return None
 
-    target_path = os.path.join(get_assets_dir(), safe_filename)
-    real_target = os.path.normcase(os.path.realpath(target_path))
-    real_assets_dir = os.path.normcase(os.path.realpath(get_assets_dir()))
-    if not real_target.startswith(real_assets_dir + os.sep):
-        logger.warning("已阻止图标缓存目录穿越：%s -> %s", safe_filename, real_target)
+    target_path = safe_join_under_dir(get_assets_dir(), safe_filename)
+    if not target_path:
+        logger.warning("已阻止图标缓存目录穿越：%s", safe_filename)
         return None
-    tmp_path = target_path + ".tmp"
+    fd, tmp_path = tempfile.mkstemp(prefix="augment-", suffix=".tmp", dir=os.path.dirname(target_path))
+    os.close(fd)
     try:
         response = requests.get(remote_url, stream=True, timeout=15)
         if response.status_code != 200:
@@ -290,10 +337,14 @@ def request_background_refresh(force: bool = False) -> bool:
 
 
 def _iter_browser_candidates() -> List[str]:
-    configured = os.getenv("HEXTECH_BROWSER")
+    configured = str(os.getenv("HEXTECH_BROWSER", "")).strip()
     candidates = []
     if configured:
-        candidates.append(configured)
+        configured_path = shutil.which(configured) if not os.path.isabs(configured) else configured
+        if configured_path and os.path.isfile(configured_path):
+            candidates.append(configured_path)
+        else:
+            logger.warning("已忽略不合法的 HEXTECH_BROWSER 配置：%s", configured)
     candidates.extend(["msedge", "chrome", "brave"])
     resolved: List[str] = []
     for candidate in candidates:
@@ -345,10 +396,21 @@ def _terminate_managed_browser() -> bool:
     return True
 
 
+def is_safe_internal_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    return parsed.scheme == "http" and str(parsed.hostname or "").strip() == "127.0.0.1"
+
+
 def open_managed_browser(url: str, replace_existing: bool = False) -> bool:
     global _managed_browser_process
 
     os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+    if not is_safe_internal_url(url):
+        logger.warning("已拒绝启动非本地浏览器地址：%s", url)
+        return False
 
     with _managed_browser_lock:
         existing = _managed_browser_process
@@ -383,11 +445,20 @@ def open_managed_browser(url: str, replace_existing: bool = False) -> bool:
 
 
 def build_detail_url(hero_id: str, hero_name: str, en_name: str) -> str:
+    normalized_id = str(hero_id or "").strip()
+    normalized_name = str(hero_name or "").strip()
+    normalized_en_name = str(en_name or "").strip()
+    if not _SAFE_HERO_ID_RE.fullmatch(normalized_id):
+        raise ValueError("invalid_hero_id")
+    if normalized_name and not _SAFE_NAME_RE.fullmatch(normalized_name):
+        raise ValueError("invalid_hero_name")
+    if normalized_en_name and not _SAFE_NAME_RE.fullmatch(normalized_en_name):
+        raise ValueError("invalid_en_name")
     return (
         f"http://127.0.0.1:{get_active_web_port()}/detail.html"
-        f"?hero={quote(hero_name or '', safe='')}"
-        f"&id={quote(str(hero_id), safe='')}"
-        f"&en={quote(en_name or '', safe='')}"
+        f"?hero={quote(normalized_name, safe='')}"
+        f"&id={quote(normalized_id, safe='')}"
+        f"&en={quote(normalized_en_name, safe='')}"
         f"&auto=1"
     )
 
@@ -475,8 +546,8 @@ def get_ddragon_version() -> str:
             if version:
                 return version
     except (OSError, IOError):
-        logger.debug("无法读取 hero_version.txt，改用内置版本。")
-    return "14.3.1"
+        logger.debug("无法读取 hero_version.txt，跳过 DDragon 回退。")
+    return ""
 
 
 def get_df() -> pd.DataFrame:
@@ -813,8 +884,13 @@ class ConnectionManager:
     def __init__(self):
         self.active: List = []
         self._lock = asyncio.Lock()
+        self.max_connections = 50
 
     async def connect(self, ws) -> None:
+        async with self._lock:
+            if len(self.active) >= self.max_connections:
+                await ws.close(code=1013, reason="too_many_connections")
+                return
         await ws.accept()
         async with self._lock:
             self.active.append(ws)
@@ -854,14 +930,16 @@ class LCUState:
 
 
 _lcu_state = LCUState()
+_lcu_state_lock = threading.RLock()
 
 
 def get_live_state_payload() -> dict:
-    return {
-        "champion_ids": sorted(_lcu_state.current_ids),
-        "local_champion_id": _lcu_state.local_champ_id,
-        "local_champion_name": _lcu_state.local_champ_name,
-    }
+    with _lcu_state_lock:
+        return {
+            "champion_ids": sorted(_lcu_state.current_ids),
+            "local_champion_id": _lcu_state.local_champ_id,
+            "local_champion_name": _lcu_state.local_champ_name,
+        }
 
 
 def _create_lcu_session() -> requests.Session:
@@ -899,47 +977,59 @@ def _scan_lcu_process() -> tuple:
     return None, None
 
 
-def _urllib3_disable_warnings() -> None:
-    try:
-        import urllib3
-
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    except Exception:
-        pass
+def _log_lcu_tls_warning_once() -> None:
+    global _lcu_warning_logged
+    if _lcu_warning_logged:
+        return
+    logger.info("LCU 本地 HTTPS 使用自签名证书，仅对 127.0.0.1 请求关闭证书校验。")
+    _lcu_warning_logged = True
 
 
 async def lcu_polling_loop() -> None:
     """持续轮询 LCU 选人会话，并把英雄可用集与锁定事件广播给前端。"""
-    _urllib3_disable_warnings()
     while True:
         try:
-            if not _lcu_state.port:
+            with _lcu_state_lock:
+                current_port = _lcu_state.port
+                current_token = _lcu_state.token
+            if not current_port:
                 port, token = await asyncio.to_thread(_scan_lcu_process)
                 if port:
-                    _lcu_state.port = port
-                    _lcu_state.token = token
+                    with _lcu_state_lock:
+                        _lcu_state.port = port
+                        _lcu_state.token = token
                     logger.info("已检测到 LCU 连接，端口=%s", port)
+                    current_port = port
+                    current_token = token
                 else:
                     await asyncio.sleep(2)
                     continue
 
-            auth = base64.b64encode(f"riot:{_lcu_state.token}".encode()).decode()
+            if not current_token or not current_port:
+                await asyncio.sleep(2)
+                continue
+            auth = base64.b64encode(f"riot:{current_token}".encode()).decode()
             headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
-            url = f"https://127.0.0.1:{_lcu_state.port}/lol-champ-select/v1/session"
+            url = f"https://127.0.0.1:{current_port}/lol-champ-select/v1/session"
 
+            _log_lcu_tls_warning_once()
             res = await asyncio.to_thread(_lcu_session.get, url, headers=headers, verify=False, timeout=3)
 
             if res.status_code == 200:
                 data = res.json()
-                _lcu_state.consecutive_404_count = 0
+                with _lcu_state_lock:
+                    _lcu_state.consecutive_404_count = 0
 
                 available_ids = {str(c["championId"]) for c in data.get("benchChampions", [])}
                 for player in data.get("myTeam", []):
                     if player.get("cellId") == data.get("localPlayerCellId") and player.get("championId") != 0:
                         available_ids.add(str(player["championId"]))
 
-                if available_ids != _lcu_state.current_ids:
-                    _lcu_state.current_ids = available_ids.copy()
+                with _lcu_state_lock:
+                    ids_changed = available_ids != _lcu_state.current_ids
+                    if ids_changed:
+                        _lcu_state.current_ids = available_ids.copy()
+                if ids_changed:
                     preload_names = []
                     for champion_id in available_ids:
                         hero_name, _ = get_champion_info(str(champion_id))
@@ -963,11 +1053,14 @@ async def lcu_polling_loop() -> None:
                         break
 
                 if local_champion_id and local_champion_id > 0:
-                    prev_champ_id = _lcu_state.local_champ_id
+                    with _lcu_state_lock:
+                        prev_champ_id = _lcu_state.local_champ_id
                     if prev_champ_id != local_champion_id:
-                        _lcu_state.local_champ_id = local_champion_id
+                        with _lcu_state_lock:
+                            _lcu_state.local_champ_id = local_champion_id
                         hero_name, en_name = get_champion_info(str(local_champion_id))
-                        _lcu_state.local_champ_name = hero_name
+                        with _lcu_state_lock:
+                            _lcu_state.local_champ_name = hero_name
                         logger.info("LCU 已锁定英雄：%s (ID=%s)", hero_name, local_champion_id)
                         if AUTO_JUMP_ENABLED:
                             await manager.broadcast(
@@ -979,31 +1072,39 @@ async def lcu_polling_loop() -> None:
                                 }
                             )
             elif res.status_code == 404:
-                _lcu_state.consecutive_404_count += 1
-                if _lcu_state.local_champ_id is not None:
-                    _lcu_state.local_champ_id = None
-                    _lcu_state.local_champ_name = None
-                    _lcu_state.current_ids = set()
+                with _lcu_state_lock:
+                    _lcu_state.consecutive_404_count += 1
+                    has_local_champ = _lcu_state.local_champ_id is not None
+                    if has_local_champ:
+                        _lcu_state.local_champ_id = None
+                        _lcu_state.local_champ_name = None
+                        _lcu_state.current_ids = set()
+                    consecutive_404_count = _lcu_state.consecutive_404_count
+                if has_local_champ:
                     clear_preloaded_hextech_payloads()
-                if _lcu_state.consecutive_404_count >= 5:
-                    logger.warning("LCU 连续返回 404 五次，重置连接状态（count=%s）", _lcu_state.consecutive_404_count)
-                    _lcu_state.port = None
-                    _lcu_state.token = None
-                    _lcu_state.consecutive_404_count = 0
+                if consecutive_404_count >= 5:
+                    logger.warning("LCU 连续返回 404 五次，重置连接状态（count=%s）", consecutive_404_count)
+                    with _lcu_state_lock:
+                        _lcu_state.port = None
+                        _lcu_state.token = None
+                        _lcu_state.consecutive_404_count = 0
             elif res.status_code in (401, 403):
                 logger.warning("LCU token 失效或未授权（401/403），重置连接状态。")
                 clear_preloaded_hextech_payloads()
-                _lcu_state.port = None
-                _lcu_state.token = None
+                with _lcu_state_lock:
+                    _lcu_state.port = None
+                    _lcu_state.token = None
             else:
                 logger.warning("LCU 响应异常状态码=%s，重置连接状态。", res.status_code)
                 clear_preloaded_hextech_payloads()
-                _lcu_state.port = None
+                with _lcu_state_lock:
+                    _lcu_state.port = None
         except requests.exceptions.ConnectionError as exc:
             logger.warning("LCU 连接错误：%s", exc)
             clear_preloaded_hextech_payloads()
-            _lcu_state.port = None
-            _lcu_state.token = None
+            with _lcu_state_lock:
+                _lcu_state.port = None
+                _lcu_state.token = None
         except Exception as exc:
             logger.warning("LCU 轮询失败：%s", exc)
 

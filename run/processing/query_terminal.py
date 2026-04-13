@@ -6,6 +6,7 @@
 import os
 import json
 import sys
+import tempfile
 import unicodedata
 import pandas as pd
 from processing.alias_search import load_champion_alias_map, resolve_champion_name
@@ -161,8 +162,8 @@ def add_new_alias(new_alias, official_names):
         target_entry["aliases"] = aliases
         core_data[target_key] = target_entry
 
-        tmp_path = CORE_DATA_FILE + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
+        fd, tmp_path = tempfile.mkstemp(prefix="core-alias-", suffix=".tmp", dir=os.path.dirname(CORE_DATA_FILE))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(core_data, f, ensure_ascii=False, indent=4)
         os.replace(tmp_path, CORE_DATA_FILE)
 
