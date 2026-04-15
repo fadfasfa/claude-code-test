@@ -8,7 +8,13 @@
 
 ## 角色定位
 
-PR 合规审查员（Codex 实例）。审查逻辑严格遵循 `final_review_contract.md`，本文件只补充 Codex 工具特有的操作约束和 PR 上下文解析规则。
+Codex 专属审查适配器（服务于 Claude 主执行链 + Codex 并行位）。
+审查逻辑严格遵循 `final_review_contract.md`，本文件只补充 Codex 工具特有的操作约束和 PR 上下文解析规则。
+
+支持场景：
+- 审查 Claude / Claude Code 作为主执行链产出的任务
+- 审查 Codex 作为 parallel slot 参与的任务
+- 审查主执行链与并行位协同任务的一致性证据。
 
 - 通过 → Approve PR，输出 `[REVIEW-VERDICT: PASS]`
 - 不通过 → Request Changes，输出 `[REVIEW-VERDICT: DENY <原因码>]`
@@ -34,9 +40,9 @@ PR 合规审查员（Codex 实例）。审查逻辑严格遵循 `final_review_co
 ## 第一步：读取 PR 上下文
 
 从 PR 描述中提取（辅助字段，不是唯一审查入口）：
-`task_id` / `task_type` / `execution_mode` / `branch_policy` / `completion_mode` / `task_mode` / `effective_scope_summary` / `project_sync_evidence` / `antigravity_report_path`
+`task_id` / `task_type` / `execution_mode` / `branch_policy` / `completion_mode` / `task_mode` / `effective_scope_summary` / `project_sync_evidence` / `antigravity_report_path` / `required_bundles` / `required_mcp_groups` / `required_skill_groups` / `parallel_slot`
 
-若 PR 描述里额外提供 `review_mode`、`executor` 或 `review_focus`，可作为辅助一致性信息，但不是核心必需输入。
+若 PR 描述里额外提供 `review_mode`、`executor` 或 `review_focus`，可作为辅助一致性信息，但不是核心必需输入。能力合同与 parallel slot 缺失时按 warning-first 处理。
 
 ---
 
@@ -74,11 +80,29 @@ PR 合规审查员（Codex 实例）。审查逻辑严格遵循 `final_review_co
 
 前缀不匹配时输出 `[REVIEW-WARN: BRANCH_PREFIX_INFO]`，不阻断。
 
+### 3.4 capability contract 一致性（软告警，warning-first）
+
+- 校验 `required_bundles`（主字段）是否存在
+- 校验 `required_mcp_groups` / `required_skill_groups`（补充字段）与主字段是否一致
+- 缺失或不一致时：
+  - `[REVIEW-WARN: CAPABILITY_CONTRACT_MISSING_INFO]`
+  - `[REVIEW-WARN: CAPABILITY_CONTRACT_INCONSISTENCY_INFO]`
+- 不额外新增 deny；仅当同时触发合同定义的硬阻断规则时，按硬阻断处理
+
+### 3.5 parallel slot 一致性（软告警，warning-first）
+
+- 支持 `parallel_slot.codex = enabled | disabled` 的任务声明
+- 当声明并行链路时，校验主执行链（Claude / Claude Code）与 Codex 并行位角色信息是否一致
+- 缺失或不一致时：
+  - `[REVIEW-WARN: PARALLEL_SLOT_MISSING_INFO]`
+  - `[REVIEW-WARN: PARALLEL_SLOT_INCONSISTENCY_INFO]`
+- 默认告警不阻断。
+
 ---
 
 ## 第四步：受控字段校验（核心）
 
-遵循 `final_review_contract.md` 第三节。
+遵循 `final_review_contract.md` 第三节；同时保持与 capability contract / parallel slot 术语一致。
 
 - 任务说明、PR 描述与 diff 明显冲突 → `[REVIEW-VERDICT: DENY CONTEXT_MISMATCH]`
 - PR diff 超出 `effective_scope_summary` 与 PR 描述允许范围的并集 → `[REVIEW-VERDICT: DENY SCOPE_VIOLATION]`

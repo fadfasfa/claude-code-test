@@ -20,15 +20,36 @@
 
 ---
 
-## § A.1 — 执行端角色说明
+## § A.1 — 执行端角色说明（vNext）
 
 | 执行端 | 定位 |
 | :--- | :--- |
-| Codex | 主执行端；大任务 PR 唯一自动审查入口 |
+| Claude / Claude Code | 主执行端（默认）；负责任务实现、收口与主链路推进 |
+| Codex | 并行独立任务位（可双开选项）；按需并行分担，不再是默认主路径 |
 | Antigravity | 高难前端执行端 + 前端专项审查 + 周期性大型审计 |
-| Claude / Claude Code | 文件生成接口；承接文件级改动说明（File Change Spec）输出 |
 
 > Antigravity 不承接普通后端执行或普通小任务 review。
+> Obsidian 作为 Claude Code 的长期知识助手能力接入，不改变 Codex 的并行位属性。
+
+### § A.2 — 知识增强能力组（Obsidian）
+
+- Obsidian 归属 Claude Code 主执行链路的长期知识助手位
+- 在 capability contract 中通过 `required_mcp_groups` 声明 `obsidian`
+- `obsidian` 不作为 Codex 默认依赖；仅在任务显式声明时由并行位使用
+- 现有能力合同层继续保留：
+  - `required_bundles`（主字段）
+  - `required_mcp_groups`（补充字段）
+  - `required_skill_groups`（补充字段）
+
+---
+
+### § A.3 — 默认执行策略（vNext）
+
+- 默认执行端：Claude / Claude Code
+- 并行扩展端：Codex（显式派发时启用）
+- 角色翻转后，已有 bundle/capability 合同改动视为过渡层，继续沿用并承接后续收口
+
+> 不回滚既有三字段能力模型与主从关系。
 
 ---
 
@@ -73,18 +94,67 @@ retrieval 任务默认不写 runtime_state。
 | 阶段 | 含义 | 适用任务规模 |
 | :--- | :--- | :--- |
 | `requirement-refine` | 多轮需求精炼，未形成可签发任务 | large（small 任务可跳过）|
+| `visual-explore` | 界面概念比选、布局方案、样板图 / prompt 产出；**UI-heavy 大任务必经阶段** | large（UI-heavy 必须；其他可跳过）|
 | `plan-draft` | 已读取 PROJECT.md 和代码现状，形成文件级计划稿，等待交叉验证与执行器定稿 | large（必须经过此阶段）|
 | `validation-draft` | 正式契约前的交叉验证稿（以 Plan Draft 为输入底稿）| large（满足条件时）|
 | `handoff` | 已满足签发条件，输出正式契约 | large + small |
+
+### visual-explore 阶段说明
+
+`visual-explore` 是 UI-heavy 大任务在 `plan-draft` 之前的必经探索层：
+
+- **适用**：UI-heavy 的 large 任务，或用户明确要求先看样板图 / 概念方案
+- **输入**：用户需求描述 + 已知约束
+- **输出**：视觉方案集 / nano banana 样板图 / prompt 包 / 视觉说明 / 交互差异说明
+- **首选产物**：若用户在本阶段明确要求"直接出图"，且当前环境支持 nano banana，则**默认首选产物是图片**，不是文字契约
+- **信号**：`[VISUAL-EXPLORE: READY]`（方案就绪，等待用户选定）/ `[VISUAL-EXPLORE: FROZEN]`（用户已选定方案，可推进 plan-draft）
+- **禁止输出**：正式契约、branch、review、File Change Spec、handoff yaml、可运行代码
+- **推进门槛**：用户选定某一方案，且关键交互 / 数据边界已闭环，才允许从 `visual-explore` 进入 `plan-draft`
+
+**推荐链路（UI-heavy 大任务）**：
+```
+requirement-refine → visual-explore → plan-draft → validation-draft → handoff
+```
+
+**普通大任务链路**：
+```
+requirement-refine → plan-draft → validation-draft → handoff
+```
 
 ### plan-draft 阶段说明
 
 Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式契约之间：
 
-- **输入**：`PROJECT.md` + 本地代码现状（通过 GitNexus）+ 需求精炼结论
+- **输入**：`PROJECT.md` + 本地代码现状（通过 GitNexus）+ 需求精炼结论（UI-heavy 任务还需已冻结的视觉方案）
 - **输出**：文件级计划稿（背景 / 现状 / 涉及文件 / 改法 / 风险 / 交叉验证问题清单）
 - **信号**：`[PLAN-DRAFT: READY]`
 - **可传递给**：GPT / Claude 做交叉验证，或直接传给 Codex plan mode
+
+### 能力字段（任务卡最小集）
+
+以下字段用于声明任务所需能力，适用于 Plan Draft / Validation Draft / Handoff / File Change Spec 链路透传：
+
+- `required_bundles`：主字段（主真相），声明任务必须具备的 bundle
+- `required_mcp_groups`：补充字段，仅补充 MCP 能力依赖（当前已证据化能力组：`gitnexus`）
+- `required_skill_groups`：补充字段，仅补充 skill 级能力分组
+
+主从关系约束：
+- 三字段不得形成平行真相
+- 若出现冲突，以 `required_bundles` 为准
+- `required_mcp_groups` 与 `required_skill_groups` 仅可细化，不可越权扩张 `required_bundles` 范围
+
+最小示例：
+
+```yaml
+required_bundles:
+  - everything-claude-code
+required_mcp_groups:
+  - gitnexus
+required_skill_groups:
+  - plan-validation
+```
+
+在输出 `[PLAN-DRAFT: READY]`、`[VALIDATION-DRAFT: READY]`、`[FILE-CHANGE-SPEC: READY]` 相关产物时，必须携带这三字段。
 
 ---
 
@@ -102,7 +172,7 @@ Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式
 | task_scale | 含义 | 决策端行为 |
 | :--- | :--- | :--- |
 | `small` | 小型任务（≤3 文件，无跨模块影响）| 伴随式指导 + 局部验收，不阻断 Codex |
-| `large` | 大型任务（≥4 文件，或有架构/接口影响）| 规划中枢：读项目 → Plan Draft → 验证 → 派工 |
+| `large` | 大型任务（≥4 文件，或有架构/接口影响）| 规划中枢：读项目 → （视需）Visual Explore → Plan Draft → 验证 → 派工 |
 
 ### 3. execution_mode
 
@@ -127,15 +197,18 @@ Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式
 | `local-merge` | 本地分支手动合并后完成（大任务可选降级）|
 | `PR-merge` | 远端 PR merge 后完成（**大任务默认**）|
 
-### 6. 推荐组合（v7.1-lite）
+### 6. 推荐组合（vNext）
 
 | 任务场景 | task_type | task_scale | execution_mode | branch_policy | completion_mode |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| 正式代码任务（大任务）| `code` | `large` | `contract` | `required` | `PR-merge`（**默认**；无远端条件时可降级 `local-merge`）|
-| 非契约小任务 | `code` | `small` | `ad-hoc` | `on-demand` | `local-main`（**默认**）|
+| 正式代码任务（大任务，默认由 Claude Code 执行）| `code` | `large` | `contract` | `required` | `PR-merge`（**默认**；无远端条件时可降级 `local-merge`）|
+| 非契约小任务（默认由 Claude Code 执行） | `code` | `small` | `ad-hoc` | `on-demand` | `local-main`（**默认**）|
 | 检索任务 | `retrieval` | — | `ad-hoc` | `none` | `local-main` |
+| 并行独立任务位（Codex，显式派发） | `code` | `small/large` | `ad-hoc` 或 `contract` | `on-demand` 或 `required` | `local-main/local-merge/PR-merge` |
 
-> **大任务 PR 是 Codex 自动审查的唯一入口**；若降级为本地合并或本地完成，只需在任务说明或 PROJECT.md 中记录原因，不再依赖旧台账。
+> 默认主执行端为 Claude / Claude Code。
+> Codex 为并行独立任务位（可双开），仅在显式派发时启用，不再是默认主路径。
+> 既有能力合同层作为过渡层继续保留，不回滚：`required_bundles`（主字段）+ `required_mcp_groups` / `required_skill_groups`（补充字段）。
 
 ---
 
@@ -145,6 +218,8 @@ Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式
 | :--- | :--- |
 | `[TASK-SUMMARY: UPDATED]` | 临时任务摘要或兼容性输出已更新 |
 | `[TASK-SUMMARY: SELF-UPDATED]` | 自助模式下已同步更新临时任务摘要 |
+| `[VISUAL-EXPLORE: READY]` | 视觉方案已产出，等待用户选定 |
+| `[VISUAL-EXPLORE: FROZEN]` | 用户已选定视觉方案，交互/数据边界已闭环，可推进 plan-draft |
 | `[PLAN-DRAFT: READY]` | 计划稿已形成，可传给验证器或 Codex plan mode |
 | `[VALIDATION-DRAFT: READY]` | 验证稿已形成，可转发给其他 AI |
 | `[VALIDATION: PARTIAL]` | 已收到部分验证结果，但仍存在冲突或缺口 |
@@ -177,6 +252,9 @@ Plan Draft 是大型任务的必经中间层，介于 validation-draft 和正式
    - 禁止输出任务卡代码块
 5. `review_mode = gate`
    - 必须满足 Gate 触发条件或显式人工指定，不得凭习惯进入
+6. `[VISUAL-EXPLORE: FROZEN]` 外显条件
+   - 用户明确选定某一视觉方案，且关键交互 / 数据边界已确认
+   - 触发后才解除 C-4.8 的视觉探索阻断
 
 #### 成功态输出最小化规范
 - 成功态：只输出"请粘贴到：<目标端口>" + 单个 yaml 代码块

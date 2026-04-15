@@ -100,6 +100,7 @@
 | 2026-04-13 | cx-task-hextech-lite-finalization-rebuild-20260413 | cx | 将根入口收敛为 `PROJECT.md` + `AGENTS.md`，删除根 `agents.md`，并将规则层与历史层拆分 | `PROJECT.md`, `AGENTS.md`, `.agents/`, `.claude/`, `.git/hooks/` | 删除根兼容壳、收口历史说明 | WS-001, WS-002, WS-003 | pending | 本轮重点是结构收敛与规则分层 |
 | 2026-04-13 | cx-task-agents-entry-smoke-2-20260413 | cx | 第二轮 smoke PR：同步根入口关系，确保 `PROJECT.md` 与 `AGENTS.md` 不再指向根 `agents.md` | `PROJECT.md`, `AGENTS.md` | 无 | WS-001, WS-002, WS-003 | pending | 仅用于验证入口同步与自动 review 行为 |
 | 2026-04-12 | cx-task-workspace-project-doc-refresh-20260412 | cx | 将根项目总账重写为工作区级索引，统一列出 Hextech canonical 文档与各子项目职责 | `PROJECT.md`, `.claude/CLAUDE.md`, `.ai_workflow/` 说明性文件 | 无 | WS-001, WS-002, WS-003 | pending | 本轮仅更新文档与口径，不动业务代码 |
+| 2026-04-15 | cc-task-skill-boundary-governance-20260415 | cc | 收口 Claude 默认 skill 暴露面到 `~/.claude/skills/` + `~/.claude/skills-shared/`，并在 workflow/规则层落地能力字段三元组（主字段 `required_bundles`）与 legacy-compat-bridge 标记 | `.claude/settings.json`, `.agents/skills/workflow_registry.md`, `.agents/skills/decision_playbooks.md`, `.agents/skills/agents_template.md`, `.agents/settings/gemini_setting_core.md`, `AGENTS.md`, `.agents/skills/hextech-workflow.md`, `PROJECT.md` | 无 | WS-002 | pending | 本轮不改用户级 settings、不动代理链、不改 final_review_contract 正文 |
 
 ---
 

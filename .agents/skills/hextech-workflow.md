@@ -64,10 +64,23 @@
 - `retrieval` 任务走 `retrieval_workflow.md`
 - `review_mode: gate` 仅在满足 `workflow_registry.md` 的 Gate 条件时启用
 
+### 2.A 能力字段执行前置
+
+进入 handoff 前，任务产物必须具备并透传：
+- `required_bundles`（主字段，主真相）
+- `required_mcp_groups`（补充字段）
+- `required_skill_groups`（补充字段）
+
+主从关系：
+- 以 `required_bundles` 为准
+- 补充字段不得形成平行真相
+- 缺主字段时按 `[HANDOFF-BLOCKED]` 处理
+
 ---
 
 ## 协议 3 — 兼容性说明
 
 - `agents_template.md` 仅保留临时任务产物或历史兼容输出格式
+- `legacy-compat-bridge` 仅用于兼容桥接，不作为默认执行前提
 - 不再把旧锁、旧索引、旧同步脚本或旧式待机复位动作作为工作流强依赖
 - 本文件只定义执行骨架，不定义项目级实例文件

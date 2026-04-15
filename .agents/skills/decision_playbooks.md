@@ -29,8 +29,10 @@
 1. 一句话重述当前理解
 2. 拆出未明确的关键维度
 3. 一次性提出 3–7 个高价值澄清问题
-4. 重复直到达到“外部 AI 可脱离上下文独立验证”的精度
-5. 进入 Plan Draft 或 Validation Draft 阶段
+4. 重复直到达到"外部 AI 可脱离上下文独立验证"的精度
+5. 根据任务类型决定下一阶段：
+   - 若任务为 UI-heavy 且视觉方案未冻结 → 进入 `visual-explore`，不得直接跳入 Plan Draft 或 Validation Draft
+   - 若非 UI-heavy，或 UI-heavy 但视觉方案已冻结 → 进入 `plan-draft` / `validation-draft`
 
 ---
 
@@ -41,8 +43,15 @@
 **流程**：
 1. 以 Plan Draft 为底稿生成 Validation Draft
 2. 转发给外部 AI，等待结构化验证结果
-3. DL-Gemini 只做“收敛与比较”，不直接把任一外部结论当最终真理
+3. DL-Gemini 只做"收敛与比较"，不直接把任一外部结论当最终真理
 4. 验证完成后才签发正式契约
+
+**能力字段要求（必须透传）**：
+- `required_bundles`（主字段）
+- `required_mcp_groups`（补充字段）
+- `required_skill_groups`（补充字段）
+
+主从关系：以 `required_bundles` 为准，其余两项仅补充，不得形成平行真相。
 
 ---
 
@@ -54,7 +63,7 @@ Validation Draft 须满足：不是任务卡 / 不含 yaml 契约 / 不含代码
 
 ### B-0.4 LARGE_TASK_PLAN SOP
 
-**触发**：`task_scale = large`，或用户明确要求“先出计划”。
+**触发**：`task_scale = large`，或用户明确要求"先出计划"。
 
 **步骤**：
 
@@ -62,10 +71,61 @@ Validation Draft 须满足：不是任务卡 / 不含 yaml 契约 / 不含代码
 2. **形成 Plan Draft**：输出 `[PLAN-DRAFT: READY]`
 3. **发给外部 AI 交叉验证**：以 Plan Draft 为底稿生成 Validation Draft
 4. **收敛验证意见**：汇总共识与分歧；存在阻断性分歧时输出 `[VALIDATION-BLOCKED]`
-5. **交给 Codex plan mode 定稿**：用户确认后签发正式任务卡
-6. **签发正式任务卡**：`contract` / `required` / `PR-merge`（无远端条件时可降级 `local-merge`）
+5. **交给 Claude Code 定稿并执行主链路**：用户确认后签发正式任务卡
+6. **Codex 并行位（可选）**：仅在显式派发时作为并行独立任务位参与
+7. **签发正式任务卡**：`contract` / `required` / `PR-merge`（无远端条件时可降级 `local-merge`）
 
 限制：Plan Draft 和 Validation Draft 不含代码；决策端只输出 What / Scope / 风险，不输出 How。
+
+**能力字段要求（必须透传）**：
+- `required_bundles`（主字段）
+- `required_mcp_groups`（补充字段）
+- `required_skill_groups`（补充字段）
+
+主从关系：以 `required_bundles` 为准；`required_mcp_groups` / `required_skill_groups` 仅补充。
+
+默认知识增强能力组（Claude Code）：
+- `required_mcp_groups` 默认包含 `obsidian`
+- `obsidian` 不作为 Codex 默认依赖，仅在并行位显式声明时使用。
+
+---
+
+### B-0.5 VISUAL_EXPLORATION SOP
+
+**触发条件（命中任意一项即进入本 SOP）**：
+- 用户要求样板图 / 视觉稿 / 概念图
+- 用户要求多个布局方案或"几个方向让我选"
+- 用户要求生成图片 prompt 或 prompt 包
+- 用户要求"具体图片""给我几张图"
+- UI 结构尚未定稿
+- 交互方式尚未收敛
+- 用户明确说"先看图再决定"
+
+**强制规则**：
+- 当用户明确要求出图，且当前对话环境已开启 nano banana 时，**必须优先直接调用 nano banana 生成样板图**，不得以"我来给你写 prompt 让别的模型画"作为第一反应。
+- 不得跳过出图直接推进 Plan Draft / Validation Draft / 正式契约。
+- 不得把"应该出图"的请求降级成单纯文字契约或派工 YAML。
+- 若当前环境**无法**直接调用 nano banana，必须明确说明"当前无法直接出图，因此退化为 prompt 包/视觉说明"，不能假装已生成图片。
+- 同一轮适合先给 2~4 个概念图时，优先给图，再给文字说明。
+
+**允许输出**：
+- 2~6 个界面概念方案
+- 每个方案的详细视觉描述
+- 直接调用 nano banana 产出的样板图
+- 面向图像模型的 prompt 包
+- 组件结构和交互差异说明
+- 选择建议
+
+**禁止输出**：
+- 任务契约
+- handoff yaml
+- File Change Spec
+- "确认后签发任务卡"之类的推进语句
+- 可运行代码
+
+**阶段推进规则**：
+- 只有当用户**选定**某一视觉方案，且关键交互 / 数据边界已闭环，才允许从 `visual-explore` 进入 `plan-draft`。
+- 用户仍在看图选方向时，**必须停留在 visual-explore**，不得自行升级到开发签发。
 
 ---
 
@@ -75,7 +135,7 @@ Validation Draft 须满足：不是任务卡 / 不含 yaml 契约 / 不含代码
 
 1. 写入轻量任务摘要（可选）：`ad-hoc` / `on-demand` / `local-main`
 2. 默认不建分支，内部记为 deferred
-3. **仅当用户主动发出以下指令之一时**才升格：说“开分支”/“建分支”/“提交 PR”/“push”/“发起评审”
+3. **仅当用户主动发出以下指令之一时**才升格：说"开分支"/"建分支"/"提交 PR"/"push"/"发起评审"
 4. 涉及敏感路径时以风险提示告知用户，不自动升格
 5. 升格时同步更新：`branch_policy` / `branch_name` / `current_review_path` / `review_mode` / `completion_mode`
 
@@ -83,9 +143,11 @@ Validation Draft 须满足：不是任务卡 / 不含 yaml 契约 / 不含代码
 
 ### B-1.1 未确认态 SOP（大任务）
 
-允许输出：需求重述 / 缺失依赖列表 / 1–7 个澄清问题 / 转交核查指令 / Validation Draft（满足 B-0.2 条件时）
+允许输出：需求重述 / 缺失依赖列表 / 1–7 个澄清问题 / 转交核查指令 / Validation Draft（满足 B-0.2 条件时）/ `visual-explore` 产物（样板图 / nano banana 图片 / prompt 包 / 视觉说明）
 
 禁止输出：任务卡字段 / `[HANDOFF 核查表]` / `[DL-VALIDATION-PASS]` / 任务卡代码块 / 实现方案 / 可运行代码
+
+> **UI-heavy 限制**：若任务为 UI-heavy 且 `visual-explore` 未冻结，不得直接跳到 Validation Draft 或正式签发。
 
 ---
 
@@ -106,6 +168,19 @@ Validation Draft 须满足：不是任务卡 / 不含 yaml 契约 / 不含代码
 
 失败态：输出 `[HANDOFF-BLOCKED]` + 逐条缺失项列表，不输出契约代码块。
 
+执行目标规则：
+- 默认目标执行端为 Claude / Claude Code
+- Codex 仅作为显式派发的并行独立任务位（parallel slot）
+
+能力字段校验：
+- 契约、Plan Draft、Validation Draft、File Change Spec 在 handoff 前必须携带：
+  - `required_bundles`
+  - `required_mcp_groups`
+  - `required_skill_groups`
+- 若缺 `required_bundles`，视为主字段缺失，必须 `[HANDOFF-BLOCKED]`
+- 若补充字段与主字段冲突，以 `required_bundles` 为准，并在缺失项中提示冲突
+- `required_mcp_groups` 应默认包含 `obsidian`（Claude Code 知识增强）；并行 Codex 位仅在显式声明时继承
+
 ---
 
 ### B-1.4 FILE_CHANGE_SPEC SOP
@@ -117,7 +192,16 @@ Validation Draft 须满足：不是任务卡 / 不含 yaml 契约 / 不含代码
 ```markdown
 # File Change Spec
 task_id: <id>
-target_executor: claude | claude-code
+target_executor: claude-code
+parallel_slot:
+  codex: <enabled | disabled>
+required_bundles:
+  - <bundle>
+required_mcp_groups:
+  - gitnexus
+  - obsidian
+required_skill_groups:
+  - file-generation
 
 ## 文件：<路径>
 ### 当前职责
@@ -129,7 +213,8 @@ target_executor: claude | claude-code
 ### 验收点
 ```
 
-文件生成接口按 spec 生成目标文件，不负责拍板，不改 spec 未列入的文件。Codex 负责 diff 审核、跑测试、集成修补。
+文件生成接口按 spec 生成目标文件，不负责拍板，不改 spec 未列入的文件。
+Codex 仅在 `parallel_slot.codex = enabled` 时作为并行独立任务位参与。
 
 ---
 

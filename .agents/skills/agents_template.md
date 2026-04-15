@@ -20,6 +20,9 @@ execution_mode: [contract | ad-hoc]
 branch_policy: [required | on-demand | none]
 completion_mode: [local-main | local-merge | PR-merge]
 task_mode: [standard | dual-end-integration | frontend-integration]
+required_bundles: [<主字段，任务所需 bundle 列表>]
+required_mcp_groups: [<补充字段，MCP 能力组，例如 gitnexus>]
+required_skill_groups: [<补充字段，skill 分组>]
 
 ---
 
@@ -38,3 +41,4 @@ review_mode: [off | gate | normal]
 - 本文件仅保留轻量任务卡摘要。
 - 不记录分支锁、待机壳、阻塞状态、PAUSE/RESUME 或重型台账。
 - 不承担执行收口和审查强依赖职责。
+- 能力字段主从关系：`required_bundles` 为主字段；`required_mcp_groups` / `required_skill_groups` 仅补充，不得形成平行真相。

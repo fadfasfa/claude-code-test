@@ -12,12 +12,34 @@
 
 ---
 
-## 二、角色边界
+## 二、角色边界（vNext）
 
-- Codex：主执行端；large 任务 PR 的主审查入口
+- Claude / Claude Code：主执行端（默认）；负责任务实现、主链路推进与收口
+- Codex：并行独立任务位（可双开选项）；按需并行分担，不再是默认主路径
 - Antigravity：高难前端执行端、前端专项审查节点、周期性大型审计角色
-- Claude / Claude Code：文件生成与辅助验证接口，不作为当前主执行端
 - retrieval：独立检索任务，不进入代码任务链路
+
+### 二.A Obsidian 长期知识助手位
+
+- Obsidian 归属 Claude Code 主执行链路的长期知识助手能力
+- 在 capability contract 中通过 `required_mcp_groups` 的 `obsidian` 声明接入
+- `obsidian` 不作为 Codex 默认依赖；仅在并行任务显式声明时启用
+
+> 已落地能力合同层作为角色翻转过渡层继续保留：
+> - `required_bundles`（主字段）
+> - `required_mcp_groups`（补充字段）
+> - `required_skill_groups`（补充字段）
+
+---
+
+## 三、Bundle 可见性治理语义
+
+- `default_exposed`：`everything-claude-code`
+- `explicit_shared`：`shared-validation-docsync`、`shared-retrieval`
+- `codex_only`：`codex-execution-review`（Claude 侧停止默认暴露）
+- `legacy`：`legacy-compat-bridge`（仅兼容桥接，不作为默认执行前提）
+
+> 治理语义写入规则层，不写入 `.claude/settings*.json` 非运行字段。
 
 ---
 
