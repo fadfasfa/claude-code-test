@@ -1,0 +1,355 @@
+{
+  "items": [
+    {
+      "entity_type": "class",
+      "entity_id": "tactical",
+      "display_name": "战术兵",
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Tactical"
+      ]
+    },
+    {
+      "entity_type": "class",
+      "entity_id": "assault",
+      "display_name": "突击兵",
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Assault"
+      ]
+    },
+    {
+      "entity_type": "class",
+      "entity_id": "vanguard",
+      "display_name": "先锋兵",
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Vanguard"
+      ]
+    },
+    {
+      "entity_type": "class",
+      "entity_id": "bulwark",
+      "display_name": "重装兵",
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bulwark"
+      ]
+    },
+    {
+      "entity_type": "class",
+      "entity_id": "sniper",
+      "display_name": "狙击兵",
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Sniper"
+      ]
+    },
+    {
+      "entity_type": "class",
+      "entity_id": "heavy",
+      "display_name": "特战兵",
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy"
+      ]
+    },
+    {
+      "entity_type": "class",
+      "entity_id": "techmarine",
+      "display_name": "技术军士",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: class absent from Game8 class list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Techmarine"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "auto-bolt-rifle",
+      "display_name": "自动爆弹步枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Techmarine] Game8=[Tactical]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Auto_Bolt_Rifle"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "bolt-carbine",
+      "display_name": "爆弹卡宾枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Vanguard, Sniper] Game8=[Tactical, Sniper]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Carbine"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "bolt-pistol",
+      "display_name": "爆弹手枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Assault, Vanguard, Bulwark, Sniper, Heavy, Techmarine] Game8=[Tactical, Assault, Vanguard, Bulwark, Sniper, Heavy]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Pistol"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "bolt-rifle",
+      "display_name": "爆弹步枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Techmarine] Game8=[Tactical]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Rifle"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "combat-knife",
+      "display_name": "战斗匕首",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Vanguard, Sniper, Techmarine] Game8=[Vanguard, Sniper]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Combat_Knife"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "heavy-bolt-pistol",
+      "display_name": "重型爆弹手枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Assault, Vanguard, Bulwark, Sniper, Heavy, Techmarine] Game8=[Assault]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Bolt_Pistol"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "heavy-bolt-rifle",
+      "display_name": "重型爆弹步枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Heavy, Techmarine] Game8=[Tactical]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Bolt_Rifle"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "heavy-firearms-melee",
+      "display_name": "重型武器近战",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Firearms_Melee"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "inferno-pistol",
+      "display_name": "炼狱手枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Inferno_Pistol"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "instigator-bolt-carbine",
+      "display_name": "煽动者爆弹卡宾枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Vanguard, Sniper] Game8=[Vanguard]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Instigator_Bolt_Carbine"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "neo-volkite-pistol",
+      "display_name": "新式沃尔凯特手枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Neo-Volkite_Pistol"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "occulus-bolt-carbine",
+      "display_name": "奥库勒斯爆弹卡宾枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Vanguard, Techmarine] Game8=[Vanguard]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Occulus_Bolt_Carbine"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "omnissiah-axe",
+      "display_name": "欧姆弥赛亚之斧",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Omnissiah_Axe"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "plasma-incinerator",
+      "display_name": "等离子焚化枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Techmarine] Game8=[Tactical]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Plasma_Incinerator"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "plasma-pistol",
+      "display_name": "等离子手枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Assault, Bulwark, Heavy, Techmarine] Game8=[Bulwark, Heavy]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Plasma_Pistol"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "power-axe",
+      "display_name": "动力斧",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Power_Axe"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "power-sword",
+      "display_name": "动力剑",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Assault, Bulwark, Techmarine] Game8=[Bulwark]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Power_Sword"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "pyreblaster",
+      "display_name": "烈焰喷射枪",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Pyreblaster"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "pyrecannon",
+      "display_name": "烈焰炮",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Pyrecannon"
+      ]
+    },
+    {
+      "entity_type": "weapon",
+      "entity_id": "thunder-hammer",
+      "display_name": "雷霆战锤",
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Assault, Bulwark] Game8=[Assault]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Thunder_Hammer"
+      ]
+    }
+  ]
+}

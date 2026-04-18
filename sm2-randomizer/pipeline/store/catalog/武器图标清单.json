@@ -1,0 +1,149 @@
+{
+  "weapons": [
+    {
+      "slug": "auto-bolt-rifle",
+      "image_key": "weapon_auto-bolt-rifle_img",
+      "asset_path": "weapons/icons/auto-bolt-rifle.png"
+    },
+    {
+      "slug": "bolt-carbine",
+      "image_key": "weapon_bolt-carbine_img",
+      "asset_path": "weapons/icons/bolt-carbine.png"
+    },
+    {
+      "slug": "bolt-pistol",
+      "image_key": "weapon_bolt-pistol_img",
+      "asset_path": "weapons/icons/bolt-pistol.png"
+    },
+    {
+      "slug": "bolt-rifle",
+      "image_key": "weapon_bolt-rifle_img",
+      "asset_path": "weapons/icons/bolt-rifle.png"
+    },
+    {
+      "slug": "bolt-sniper-rifle",
+      "image_key": "weapon_bolt-sniper-rifle_img",
+      "asset_path": "weapons/icons/bolt-sniper-rifle.png"
+    },
+    {
+      "slug": "chainsword",
+      "image_key": "weapon_chainsword_img",
+      "asset_path": "weapons/icons/chainsword.png"
+    },
+    {
+      "slug": "combat-knife",
+      "image_key": "weapon_combat-knife_img",
+      "asset_path": "weapons/icons/combat-knife.png"
+    },
+    {
+      "slug": "heavy-bolt-pistol",
+      "image_key": "weapon_heavy-bolt-pistol_img",
+      "asset_path": "weapons/icons/heavy-bolt-pistol.png"
+    },
+    {
+      "slug": "heavy-bolt-rifle",
+      "image_key": "weapon_heavy-bolt-rifle_img",
+      "asset_path": "weapons/icons/heavy-bolt-rifle.png"
+    },
+    {
+      "slug": "heavy-bolter",
+      "image_key": "weapon_heavy-bolter_img",
+      "asset_path": "weapons/icons/heavy-bolter.png"
+    },
+    {
+      "slug": "heavy-firearms-melee",
+      "image_key": "weapon_heavy-firearms-melee_img",
+      "asset_path": "weapons/icons/heavy-firearms-melee.png"
+    },
+    {
+      "slug": "heavy-plasma-incinerator",
+      "image_key": "weapon_heavy-plasma-incinerator_img",
+      "asset_path": "weapons/icons/heavy-plasma-incinerator.png"
+    },
+    {
+      "slug": "inferno-pistol",
+      "image_key": "weapon_inferno-pistol_img",
+      "asset_path": "weapons/icons/inferno-pistol.png"
+    },
+    {
+      "slug": "instigator-bolt-carbine",
+      "image_key": "weapon_instigator-bolt-carbine_img",
+      "asset_path": "weapons/icons/instigator-bolt-carbine.png"
+    },
+    {
+      "slug": "las-fusil",
+      "image_key": "weapon_las-fusil_img",
+      "asset_path": "weapons/icons/las-fusil.png"
+    },
+    {
+      "slug": "melta-rifle",
+      "image_key": "weapon_melta-rifle_img",
+      "asset_path": "weapons/icons/melta-rifle.png"
+    },
+    {
+      "slug": "multi-melta",
+      "image_key": "weapon_multi-melta_img",
+      "asset_path": "weapons/icons/multi-melta.png"
+    },
+    {
+      "slug": "neo-volkite-pistol",
+      "image_key": "weapon_neo-volkite-pistol_img",
+      "asset_path": "weapons/icons/neo-volkite-pistol.png"
+    },
+    {
+      "slug": "occulus-bolt-carbine",
+      "image_key": "weapon_occulus-bolt-carbine_img",
+      "asset_path": "weapons/icons/occulus-bolt-carbine.png"
+    },
+    {
+      "slug": "omnissiah-axe",
+      "image_key": "weapon_omnissiah-axe_img",
+      "asset_path": "weapons/icons/omnissiah-axe.png"
+    },
+    {
+      "slug": "plasma-incinerator",
+      "image_key": "weapon_plasma-incinerator_img",
+      "asset_path": "weapons/icons/plasma-incinerator.png"
+    },
+    {
+      "slug": "plasma-pistol",
+      "image_key": "weapon_plasma-pistol_img",
+      "asset_path": "weapons/icons/plasma-pistol.png"
+    },
+    {
+      "slug": "power-axe",
+      "image_key": "weapon_power-axe_img",
+      "asset_path": "weapons/icons/power-axe.png"
+    },
+    {
+      "slug": "power-fist",
+      "image_key": "weapon_power-fist_img",
+      "asset_path": "weapons/icons/power-fist.png"
+    },
+    {
+      "slug": "power-sword",
+      "image_key": "weapon_power-sword_img",
+      "asset_path": "weapons/icons/power-sword.png"
+    },
+    {
+      "slug": "pyreblaster",
+      "image_key": "weapon_pyreblaster_img",
+      "asset_path": "weapons/icons/pyreblaster.png"
+    },
+    {
+      "slug": "pyrecannon",
+      "image_key": "weapon_pyrecannon_img",
+      "asset_path": "weapons/icons/pyrecannon.png"
+    },
+    {
+      "slug": "stalker-bolt-rifle",
+      "image_key": "weapon_stalker-bolt-rifle_img",
+      "asset_path": "weapons/icons/stalker-bolt-rifle.png"
+    },
+    {
+      "slug": "thunder-hammer",
+      "image_key": "weapon_thunder-hammer_img",
+      "asset_path": "weapons/icons/thunder-hammer.png"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "summary": {
+    "class_count": 7,
+    "weapon_count": 30,
+    "primary_count": 17,
+    "secondary_count": 5,
+    "melee_count": 8,
+    "talent_class_count": 7,
+    "talent_missing_description_count": 0,
+    "structure_issue_count": 0,
+    "semantic_issue_count": 0,
+    "issue_count": 0
+  },
+  "talent_missing_description_by_class": {},
+  "structure_issues": [],
+  "semantic_issues": [],
+  "issues": []
+}

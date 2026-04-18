@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SM2 Randomizer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,500,0,0"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="app-topbar">
+      <div class="brand-shell">
+        <span class="material-symbols-outlined brand-icon" aria-hidden="true">terminal</span>
+        <div class="brand-copy">
+          <p class="brand-kicker">Machine Spirit Protocol</p>
+          <h1>星际战士 2 配置抽取</h1>
+        </div>
+      </div>
+
+      <nav id="squad-tabs" class="squad-tabs" aria-label="小队切换"></nav>
+
+      <div class="topbar-icons" aria-hidden="true">
+        <button class="icon-shell" type="button" tabindex="-1">
+          <span class="material-symbols-outlined">settings</span>
+        </button>
+        <button class="icon-shell" type="button" tabindex="-1">
+          <span class="material-symbols-outlined">terminal</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <section class="hero-column">
+        <article class="hero-card">
+          <div class="hero-card__texture" aria-hidden="true"></div>
+          <div class="hero-card__frame" aria-hidden="true"></div>
+          <img id="class-image" alt="职业图" />
+          <div id="class-image-placeholder" class="hero-card__placeholder">
+            <span class="material-symbols-outlined">shield_person</span>
+            <p>等待机魂锁定职业轮廓</p>
+          </div>
+          <div class="hero-card__overlay">
+            <p id="current-member-label" class="overlay-kicker">小队 1</p>
+            <h2 id="class-name">等待抽取</h2>
+            <p id="class-role" class="overlay-role">等待数据</p>
+            <p id="class-tagline" class="overlay-copy">请选择一名成员后再抽取。</p>
+            <div class="hero-meter" aria-hidden="true">
+              <span id="save-progress-bar"></span>
+            </div>
+          </div>
+        </article>
+
+        <button id="draw-class-button" class="primary-action" type="button">
+          <span class="material-symbols-outlined" aria-hidden="true">autorenew</span>
+          随机化职业
+        </button>
+      </section>
+
+      <section class="command-column">
+        <article class="module-shell">
+          <div class="module-header">
+            <h3>
+              <span class="material-symbols-outlined" aria-hidden="true">precision_manufacturing</span>
+              军械库分配
+            </h3>
+            <button id="reroll-loadout-button" class="ghost-action" type="button">
+              <span class="material-symbols-outlined" aria-hidden="true">shuffle</span>
+              随机化武器
+            </button>
+          </div>
+          <div id="weapon-grid" class="weapon-grid"></div>
+        </article>
+
+        <article class="module-shell talent-shell">
+          <div class="module-header">
+            <h3>
+              <span class="material-symbols-outlined" aria-hidden="true">grid_view</span>
+              天赋矩阵协议
+            </h3>
+            <button id="reroll-talents-button" class="ghost-action strong" type="button">
+              随机化天赋
+            </button>
+          </div>
+          <div id="talent-grid" class="talent-grid"></div>
+          <div class="module-note">
+            <p id="talent-status">等待生成</p>
+          </div>
+        </article>
+      </section>
+
+      <aside class="modifiers-column">
+        <article class="modifier-shell strategy-shell">
+          <div class="module-header tight">
+            <h3>
+              <span class="material-symbols-outlined" aria-hidden="true">tactic</span>
+              战场词条池
+            </h3>
+            <div class="counter-group">
+              <span id="positive-count" class="counter-chip positive">0</span>
+              <span id="negative-count" class="counter-chip danger">0</span>
+            </div>
+          </div>
+          <div class="modifier-controls">
+            <button id="draw-positive-button" class="modifier-action positive" type="button">
+              <span class="material-symbols-outlined" aria-hidden="true">add_circle</span>
+              抽正面词条
+            </button>
+            <button id="draw-negative-button" class="modifier-action danger" type="button">
+              <span class="material-symbols-outlined" aria-hidden="true">dangerous</span>
+              抽负面词条
+            </button>
+          </div>
+          <div id="modifier-feed" class="modifier-feed"></div>
+          <p id="modifier-warning" class="warning-text"></p>
+        </article>
+      </aside>
+    </main>
+
+    <div id="talent-tooltip-layer" class="talent-tooltip-layer" hidden></div>
+    <div id="modifier-tooltip-layer" class="modifier-tooltip-layer" hidden></div>
+
+    <footer class="app-footer">
+      <div class="footer-copy">
+        <span class="footer-mark">© 第41千年协议</span>
+        <p id="footer-status" class="footer-status">等待小队配置</p>
+      </div>
+      <div class="footer-actions">
+        <button id="reset-current-button" class="footer-button" type="button">重置当前成员</button>
+        <button id="save-config-button" class="footer-button" type="button">保存配置</button>
+        <button id="reset-all-button" class="footer-button primary" type="button">重置所有配置</button>
+      </div>
+    </footer>
+
+    <script src="./main.js"></script>
+  </body>
+</html>

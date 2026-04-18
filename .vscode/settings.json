@@ -1,6 +1,0 @@
-{
-    "python.defaultInterpreterPath": "C:\\Users\\apple\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
-    "python.terminal.activateEnvInSelectedTerminal": true,
-    "files.encoding": "utf8",
-    "python-envs.defaultEnvManager": "ms-python.python:system"
-}

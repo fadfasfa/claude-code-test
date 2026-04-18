@@ -1,0 +1,4 @@
+[CONFIG-CHANGE] 2026-04-17T09:43:29+08:00 .claude config modified
+{"ts": "2026-04-17T09:46:40.976182+08:00", "endpoint": "cc", "phase": "bash", "message": "[PATH-GUARD] blocked backup path command: ls C:/Users/apple/OneDrive/Desktop/各个设定及工作流"}
+{"ts": "2026-04-17T10:11:06.302933+08:00", "endpoint": "cc", "phase": "bash", "message": "[PATH-WARN] git -C \"C:/Users/apple/OneDrive/Desktop/各个设定及工作流/gem\" status --short && git -C \"C:/Users/apple/OneDrive/Desktop/各个设定及工作流/gem\" log --oneline -5"}
+{"ts": "2026-04-17T10:11:06.352040+08:00", "endpoint": "cc", "phase": "bash", "message": "[PATH-GUARD] blocked backup path command: git -C \"C:/Users/apple/OneDrive/Desktop/各个设定及工作流/gem\" status --short && git -C \"C:/Users/apple/OneDrive/Desktop/各个设定及工作流/gem\" log --oneline -5"}

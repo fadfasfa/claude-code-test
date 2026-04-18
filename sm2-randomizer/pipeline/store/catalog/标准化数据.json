@@ -1,0 +1,1152 @@
+{
+  "meta": {
+    "source": "data/raw/原始抓取数据.json",
+    "version_anchor": "Update 12.0 / Techmarine",
+    "anchor_sources": [
+      "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0"
+    ],
+    "slug_key": "slug",
+    "image_strategy": {
+      "classes": "3-5 local images per class slug",
+      "weapons": "single local outline icon per weapon slug"
+    }
+  },
+  "classes": [
+    {
+      "name": "战术兵",
+      "display_name": "战术兵",
+      "slug": "tactical",
+      "original_name": "Tactical",
+      "image_key": "class_tactical_img",
+      "asset_dir": "classes/战术兵",
+      "role": "战术支援",
+      "tagline": "标准化战斗编组核心，适合大多数任务场景。",
+      "class_image_official": "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+      "class_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/8/8a/Class_tactical.jpeg/revision/latest?cb=20240930152007",
+      "class_ability": "Auspex Scan",
+      "character_name": "",
+      "primary": [
+        "Auto Bolt Rifle",
+        "Bolt Rifle",
+        "Heavy Bolt Rifle",
+        "Stalker Bolt Rifle",
+        "Bolt Carbine",
+        "Plasma Incinerator",
+        "Melta Rifle",
+        "Pyreblaster"
+      ],
+      "secondary": [
+        "Bolt Pistol",
+        "Heavy Bolt Pistol",
+        "Plasma Pistol"
+      ],
+      "melee": [
+        "Combat Knife",
+        "Chainsword"
+      ],
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Tactical"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "class_image_official_candidates": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_ShopCard.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/twomarinesfromspacewithbigsworddamn.png",
+        "https://static.wikia.nocookie.net/spacemarine2/images/8/8a/Class_tactical.jpeg/revision/latest?cb=20240930152007"
+      ]
+    },
+    {
+      "name": "突击兵",
+      "display_name": "突击兵",
+      "slug": "assault",
+      "original_name": "Assault",
+      "image_key": "class_assault_img",
+      "asset_dir": "classes/突击兵",
+      "role": "突击先锋",
+      "tagline": "高机动近战压制单位，快速切入高威胁区域。",
+      "class_image_official": "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+      "class_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/6/6b/Class_assault.jpeg/revision/latest?cb=20240930151949",
+      "class_ability": "Jump Pack",
+      "character_name": "",
+      "primary": [],
+      "secondary": [
+        "Bolt Pistol",
+        "Heavy Bolt Pistol",
+        "Plasma Pistol",
+        "Inferno Pistol",
+        "Neo-Volkite Pistol"
+      ],
+      "melee": [
+        "Chainsword",
+        "Thunder Hammer",
+        "Power Fist",
+        "Power Sword",
+        "Power Axe"
+      ],
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Assault"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "class_image_official_candidates": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__36_.png",
+        "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_ShopCard.jpg",
+        "https://static.wikia.nocookie.net/spacemarine2/images/6/6b/Class_assault.jpeg/revision/latest?cb=20240930151949"
+      ]
+    },
+    {
+      "name": "先锋兵",
+      "display_name": "先锋兵",
+      "slug": "vanguard",
+      "original_name": "Vanguard",
+      "image_key": "class_vanguard_img",
+      "asset_dir": "classes/先锋兵",
+      "role": "前锋渗透",
+      "tagline": "擅长快速接敌与机动骚扰，兼顾突破与收割。",
+      "class_image_official": "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+      "class_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/8/89/Class_vanguard.jpeg/revision/latest?cb=20240930151913",
+      "class_ability": "Grapnel Launcher",
+      "character_name": "",
+      "primary": [
+        "Instigator Bolt Carbine",
+        "Bolt Carbine",
+        "Occulus Bolt Carbine",
+        "Melta Rifle"
+      ],
+      "secondary": [
+        "Bolt Pistol",
+        "Heavy Bolt Pistol",
+        "Inferno Pistol",
+        "Neo-Volkite Pistol"
+      ],
+      "melee": [
+        "Combat Knife",
+        "Chainsword",
+        "Power Axe"
+      ],
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Vanguard"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "class_image_official_candidates": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__36_.png",
+        "https://medias.community.focus-entmt.com/forums/mzulft/communityeventjustplaythegamelol.png",
+        "https://static.wikia.nocookie.net/spacemarine2/images/8/89/Class_vanguard.jpeg/revision/latest?cb=20240930151913"
+      ]
+    },
+    {
+      "name": "重装兵",
+      "display_name": "重装兵",
+      "slug": "bulwark",
+      "original_name": "Bulwark",
+      "image_key": "class_bulwark_img",
+      "asset_dir": "classes/重装兵",
+      "role": "壁垒守护",
+      "tagline": "以防御与队伍保护为核心的前排单位。",
+      "class_image_official": "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+      "class_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/2/21/Class_bulwark.jpeg/revision/latest?cb=20240930152025",
+      "class_ability": "Chapter Banner",
+      "character_name": "",
+      "primary": [],
+      "secondary": [
+        "Bolt Pistol",
+        "Heavy Bolt Pistol",
+        "Plasma Pistol",
+        "Neo-Volkite Pistol"
+      ],
+      "melee": [
+        "Thunder Hammer",
+        "Chainsword",
+        "Power Fist",
+        "Power Sword",
+        "Power Axe"
+      ],
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bulwark"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "class_image_official_candidates": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/twomarinesfromspacewithbigsworddamn.png",
+        "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_1_Year_Anniversary_store_capsule_vertical.jpg",
+        "https://static.wikia.nocookie.net/spacemarine2/images/2/21/Class_bulwark.jpeg/revision/latest?cb=20240930152025"
+      ]
+    },
+    {
+      "name": "狙击兵",
+      "display_name": "狙击兵",
+      "slug": "sniper",
+      "original_name": "Sniper",
+      "image_key": "class_sniper_img",
+      "asset_dir": "classes/狙击兵",
+      "role": "远程精确",
+      "tagline": "专注高价值目标清除与远程压制。",
+      "class_image_official": "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+      "class_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/a/a1/Class_sniper.jpeg/revision/latest?cb=20240930151958",
+      "class_ability": "Camo Cloak",
+      "character_name": "",
+      "primary": [
+        "Stalker Bolt Rifle",
+        "Instigator Bolt Carbine",
+        "Bolt Sniper Rifle",
+        "Bolt Carbine",
+        "Las Fusil"
+      ],
+      "secondary": [
+        "Bolt Pistol",
+        "Heavy Bolt Pistol",
+        "Inferno Pistol"
+      ],
+      "melee": [
+        "Combat Knife"
+      ],
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Sniper"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "class_image_official_candidates": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__36_.png",
+        "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_2_Year_Anniversary_store_capsule_vertical.jpg",
+        "https://static.wikia.nocookie.net/spacemarine2/images/a/a1/Class_sniper.jpeg/revision/latest?cb=20240930151958"
+      ]
+    },
+    {
+      "name": "特战兵",
+      "display_name": "特战兵",
+      "slug": "heavy",
+      "original_name": "Heavy",
+      "image_key": "class_heavy_img",
+      "asset_dir": "classes/特战兵",
+      "role": "重装火力",
+      "tagline": "提供持续火力压制与重型武器输出。",
+      "class_image_official": "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+      "class_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/5/5a/Class_heavy.jpeg/revision/latest?cb=20240930152016",
+      "class_ability": "Iron Halo",
+      "character_name": "",
+      "primary": [
+        "Heavy Bolt Rifle",
+        "Heavy Bolter",
+        "Heavy Plasma Incinerator",
+        "Multi-Melta",
+        "Pyrecannon"
+      ],
+      "secondary": [
+        "Bolt Pistol",
+        "Heavy Bolt Pistol",
+        "Plasma Pistol",
+        "Inferno Pistol"
+      ],
+      "melee": [
+        "Heavy Firearms Melee"
+      ],
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "missing",
+      "review_priority": "high",
+      "review_reasons": [
+        "Missing fields: class_role_text"
+      ],
+      "class_image_official_candidates": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/twomarinesfromspacewithbigsworddamn.png",
+        "https://medias.community.focus-entmt.com/forums/mzulft/communityeventjustplaythegamelol.png",
+        "https://static.wikia.nocookie.net/spacemarine2/images/5/5a/Class_heavy.jpeg/revision/latest?cb=20240930152016"
+      ]
+    },
+    {
+      "name": "技术军士",
+      "display_name": "技术军士",
+      "slug": "techmarine",
+      "original_name": "Techmarine",
+      "image_key": "class_techmarine_img",
+      "asset_dir": "classes/技术军士",
+      "role": "机械神甫",
+      "tagline": "兼顾技术支援与特种装备调配的战斗单位。",
+      "class_image_official": "https://medias.community.focus-entmt.com/forums/mzulft/SpaceMarine2_PatchNote_12_TechMarine_1920x1080.jpg",
+      "class_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/1/17/Class_engineer.png/revision/latest?cb=20260203145958",
+      "class_ability": "Servo-Gun",
+      "character_name": "",
+      "primary": [
+        "Auto Bolt Rifle",
+        "Bolt Rifle",
+        "Heavy Bolt Rifle",
+        "Plasma Incinerator",
+        "Occulus Bolt Carbine"
+      ],
+      "secondary": [
+        "Bolt Pistol",
+        "Heavy Bolt Pistol",
+        "Plasma Pistol",
+        "Inferno Pistol",
+        "Neo-Volkite Pistol"
+      ],
+      "melee": [
+        "Combat Knife",
+        "Power Sword",
+        "Power Axe",
+        "Omnissiah Axe"
+      ],
+      "notes": [
+        "[CONFLICT] Game8 missing / outdated: class absent from Game8 class list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Techmarine"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: class absent from Game8 class list."
+      ],
+      "class_image_official_candidates": [
+        "https://medias.community.focus-entmt.com/forums/mzulft/SpaceMarine2_PatchNote_12_TechMarine_1920x1080.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/5_10-1.png",
+        "https://medias.community.focus-entmt.com/forums/mzulft/2_11.png",
+        "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__33_.png",
+        "https://static.wikia.nocookie.net/spacemarine2/images/1/17/Class_engineer.png/revision/latest?cb=20260203145958"
+      ]
+    }
+  ],
+  "weapons": [
+    {
+      "name": "自动爆弹步枪",
+      "original_name": "Auto Bolt Rifle",
+      "slug": "auto-bolt-rifle",
+      "image_key": "weapon_auto-bolt-rifle_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/3/36/Auto_Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164232",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/3/36/Auto_Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164232",
+      "slot_type": "primary",
+      "available_classes": [
+        "Tactical",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Techmarine] Game8=[Tactical]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Auto_Bolt_Rifle"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Techmarine] Game8=[Tactical]"
+      ]
+    },
+    {
+      "name": "爆弹卡宾枪",
+      "original_name": "Bolt Carbine",
+      "slug": "bolt-carbine",
+      "image_key": "weapon_bolt-carbine_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/e/e5/Bolt_Carbine_Standard-Issue.jpg/revision/latest?cb=20240930164239",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/e/e5/Bolt_Carbine_Standard-Issue.jpg/revision/latest?cb=20240930164239",
+      "slot_type": "primary",
+      "available_classes": [
+        "Tactical",
+        "Vanguard",
+        "Sniper"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Vanguard, Sniper] Game8=[Tactical, Sniper]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Carbine"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Vanguard, Sniper] Game8=[Tactical, Sniper]"
+      ]
+    },
+    {
+      "name": "爆弹手枪",
+      "original_name": "Bolt Pistol",
+      "slug": "bolt-pistol",
+      "image_key": "weapon_bolt-pistol_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/2/2d/Bolt_Pistol_Standard-Issue.jpg/revision/latest?cb=20240930164247",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/2/2d/Bolt_Pistol_Standard-Issue.jpg/revision/latest?cb=20240930164247",
+      "slot_type": "secondary",
+      "available_classes": [
+        "Tactical",
+        "Assault",
+        "Vanguard",
+        "Bulwark",
+        "Sniper",
+        "Heavy",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Assault, Vanguard, Bulwark, Sniper, Heavy, Techmarine] Game8=[Tactical, Assault, Vanguard, Bulwark, Sniper, Heavy]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Pistol"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Assault, Vanguard, Bulwark, Sniper, Heavy, Techmarine] Game8=[Tactical, Assault, Vanguard, Bulwark, Sniper, Heavy]"
+      ]
+    },
+    {
+      "name": "爆弹步枪",
+      "original_name": "Bolt Rifle",
+      "slug": "bolt-rifle",
+      "image_key": "weapon_bolt-rifle_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/6/69/Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164253",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/6/69/Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164253",
+      "slot_type": "primary",
+      "available_classes": [
+        "Tactical",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Techmarine] Game8=[Tactical]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Rifle"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Techmarine] Game8=[Tactical]"
+      ]
+    },
+    {
+      "name": "爆弹狙击步枪",
+      "original_name": "Bolt Sniper Rifle",
+      "slug": "bolt-sniper-rifle",
+      "image_key": "weapon_bolt-sniper-rifle_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/c/c1/Bolt_Sniper_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164300",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/c/c1/Bolt_Sniper_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164300",
+      "slot_type": "primary",
+      "available_classes": [
+        "Sniper"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Sniper_Rifle"
+      ],
+      "source_confidence": "medium",
+      "needs_review": false,
+      "review_type": "",
+      "review_priority": "",
+      "review_reasons": []
+    },
+    {
+      "name": "链锯剑",
+      "original_name": "Chainsword",
+      "slug": "chainsword",
+      "image_key": "weapon_chainsword_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/2/26/Chainsword_Standard-Issue.jpg/revision/latest?cb=20240930164306",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/2/26/Chainsword_Standard-Issue.jpg/revision/latest?cb=20240930164306",
+      "slot_type": "melee",
+      "available_classes": [
+        "Tactical",
+        "Assault",
+        "Vanguard",
+        "Bulwark"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Chainsword"
+      ],
+      "source_confidence": "medium",
+      "needs_review": false,
+      "review_type": "",
+      "review_priority": "",
+      "review_reasons": []
+    },
+    {
+      "name": "战斗匕首",
+      "original_name": "Combat Knife",
+      "slug": "combat-knife",
+      "image_key": "weapon_combat-knife_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/a/a6/Combat_Knife_Standard-Issue.jpg/revision/latest?cb=20240930164312",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/a/a6/Combat_Knife_Standard-Issue.jpg/revision/latest?cb=20240930164312",
+      "slot_type": "melee",
+      "available_classes": [
+        "Tactical",
+        "Vanguard",
+        "Sniper",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Vanguard, Sniper, Techmarine] Game8=[Vanguard, Sniper]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Combat_Knife"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Vanguard, Sniper, Techmarine] Game8=[Vanguard, Sniper]"
+      ]
+    },
+    {
+      "name": "重型爆弹手枪",
+      "original_name": "Heavy Bolt Pistol",
+      "slug": "heavy-bolt-pistol",
+      "image_key": "weapon_heavy-bolt-pistol_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/3/36/Heavy_Bolt_Pistol_Standard-Issue.jpg/revision/latest?cb=20240930164318",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/3/36/Heavy_Bolt_Pistol_Standard-Issue.jpg/revision/latest?cb=20240930164318",
+      "slot_type": "secondary",
+      "available_classes": [
+        "Tactical",
+        "Assault",
+        "Vanguard",
+        "Bulwark",
+        "Sniper",
+        "Heavy",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Assault, Vanguard, Bulwark, Sniper, Heavy, Techmarine] Game8=[Assault]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Bolt_Pistol"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Assault, Vanguard, Bulwark, Sniper, Heavy, Techmarine] Game8=[Assault]"
+      ]
+    },
+    {
+      "name": "重型爆弹步枪",
+      "original_name": "Heavy Bolt Rifle",
+      "slug": "heavy-bolt-rifle",
+      "image_key": "weapon_heavy-bolt-rifle_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/0/08/Heavy_Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164324",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/0/08/Heavy_Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164324",
+      "slot_type": "primary",
+      "available_classes": [
+        "Tactical",
+        "Heavy",
+        "Techmarine"
+      ],
+      "mode_restriction": "Heavy (PvE only)",
+      "description_short": "",
+      "notes": [
+        "Heavy (PvE only)",
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Heavy, Techmarine] Game8=[Tactical]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Bolt_Rifle"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Heavy, Techmarine] Game8=[Tactical]"
+      ]
+    },
+    {
+      "name": "重型爆弹枪",
+      "original_name": "Heavy Bolter",
+      "slug": "heavy-bolter",
+      "image_key": "weapon_heavy-bolter_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/e/eb/Heavy_Bolter_Standard-Issue.jpg/revision/latest?cb=20240930164331",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/e/eb/Heavy_Bolter_Standard-Issue.jpg/revision/latest?cb=20240930164331",
+      "slot_type": "primary",
+      "available_classes": [
+        "Heavy"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Bolter"
+      ],
+      "source_confidence": "medium",
+      "needs_review": false,
+      "review_type": "",
+      "review_priority": "",
+      "review_reasons": []
+    },
+    {
+      "name": "重型武器近战",
+      "original_name": "Heavy Firearms Melee",
+      "slug": "heavy-firearms-melee",
+      "image_key": "weapon_heavy-firearms-melee_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/0/00/Class_sb_tactical.png/revision/latest/scale-to-width-down/28?cb=20240930152729",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/0/00/Class_sb_tactical.png/revision/latest/scale-to-width-down/28?cb=20240930152729",
+      "slot_type": "melee",
+      "available_classes": [
+        "Heavy"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Firearms_Melee"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ]
+    },
+    {
+      "name": "重型等离子焚化枪",
+      "original_name": "Heavy Plasma Incinerator",
+      "slug": "heavy-plasma-incinerator",
+      "image_key": "weapon_heavy-plasma-incinerator_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/f/fc/Heavy_Plasma_Incinerator_Standard-Issue.jpg/revision/latest?cb=20240930164337",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/f/fc/Heavy_Plasma_Incinerator_Standard-Issue.jpg/revision/latest?cb=20240930164337",
+      "slot_type": "primary",
+      "available_classes": [
+        "Heavy"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Plasma_Incinerator"
+      ],
+      "source_confidence": "medium",
+      "needs_review": false,
+      "review_type": "",
+      "review_priority": "",
+      "review_reasons": []
+    },
+    {
+      "name": "炼狱手枪",
+      "original_name": "Inferno Pistol",
+      "slug": "inferno-pistol",
+      "image_key": "weapon_inferno-pistol_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/4/48/Wpn_perk_firepower.png/revision/latest?cb=20250921023727",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/4/48/Wpn_perk_firepower.png/revision/latest?cb=20250921023727",
+      "slot_type": "secondary",
+      "available_classes": [
+        "Assault",
+        "Vanguard",
+        "Sniper",
+        "Heavy",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Inferno_Pistol"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ]
+    },
+    {
+      "name": "煽动者爆弹卡宾枪",
+      "original_name": "Instigator Bolt Carbine",
+      "slug": "instigator-bolt-carbine",
+      "image_key": "weapon_instigator-bolt-carbine_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/3/37/Instigator_Bolt_Carbine_Standard-Issue.jpg/revision/latest?cb=20240930164342",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/3/37/Instigator_Bolt_Carbine_Standard-Issue.jpg/revision/latest?cb=20240930164342",
+      "slot_type": "primary",
+      "available_classes": [
+        "Vanguard",
+        "Sniper"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Vanguard, Sniper] Game8=[Vanguard]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Instigator_Bolt_Carbine"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Vanguard, Sniper] Game8=[Vanguard]"
+      ]
+    },
+    {
+      "name": "激光长铳",
+      "original_name": "Las Fusil",
+      "slug": "las-fusil",
+      "image_key": "weapon_las-fusil_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/2/2f/Las_Fusil_Standard-Issue.jpg/revision/latest?cb=20240930164348",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/2/2f/Las_Fusil_Standard-Issue.jpg/revision/latest?cb=20240930164348",
+      "slot_type": "primary",
+      "available_classes": [
+        "Sniper"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Las_Fusil"
+      ],
+      "source_confidence": "medium",
+      "needs_review": false,
+      "review_type": "",
+      "review_priority": "",
+      "review_reasons": []
+    },
+    {
+      "name": "熔炉步枪",
+      "original_name": "Melta Rifle",
+      "slug": "melta-rifle",
+      "image_key": "weapon_melta-rifle_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/6/60/Melta_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164354",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/6/60/Melta_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164354",
+      "slot_type": "primary",
+      "available_classes": [
+        "Tactical",
+        "Vanguard"
+      ],
+      "mode_restriction": "Vanguard (PvE only)",
+      "description_short": "",
+      "notes": [
+        "Vanguard (PvE only)"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Melta_Rifle"
+      ],
+      "source_confidence": "medium",
+      "needs_review": false,
+      "review_type": "",
+      "review_priority": "",
+      "review_reasons": []
+    },
+    {
+      "name": "多重熔炉枪",
+      "original_name": "Multi-Melta",
+      "slug": "multi-melta",
+      "image_key": "weapon_multi-melta_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/a/af/Multi-Melta_Standard-Issue.jpg/revision/latest?cb=20240930164400",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/a/af/Multi-Melta_Standard-Issue.jpg/revision/latest?cb=20240930164400",
+      "slot_type": "primary",
+      "available_classes": [
+        "Heavy"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Multi-Melta"
+      ],
+      "source_confidence": "medium",
+      "needs_review": false,
+      "review_type": "",
+      "review_priority": "",
+      "review_reasons": []
+    },
+    {
+      "name": "新式沃尔凯特手枪",
+      "original_name": "Neo-Volkite Pistol",
+      "slug": "neo-volkite-pistol",
+      "image_key": "weapon_neo-volkite-pistol_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/b/b1/Neo-Volkite_Pistol_Standard-Issue.jpg/revision/latest?cb=20241112151716",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/b/b1/Neo-Volkite_Pistol_Standard-Issue.jpg/revision/latest?cb=20241112151716",
+      "slot_type": "secondary",
+      "available_classes": [
+        "Assault",
+        "Vanguard",
+        "Bulwark",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Neo-Volkite_Pistol"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ]
+    },
+    {
+      "name": "奥库勒斯爆弹卡宾枪",
+      "original_name": "Occulus Bolt Carbine",
+      "slug": "occulus-bolt-carbine",
+      "image_key": "weapon_occulus-bolt-carbine_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/c/c3/Occulus_Bolt_Carbine_Standard-Issue.jpg/revision/latest?cb=20240930164406",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/c/c3/Occulus_Bolt_Carbine_Standard-Issue.jpg/revision/latest?cb=20240930164406",
+      "slot_type": "primary",
+      "available_classes": [
+        "Vanguard",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Vanguard, Techmarine] Game8=[Vanguard]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Occulus_Bolt_Carbine"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Vanguard, Techmarine] Game8=[Vanguard]"
+      ]
+    },
+    {
+      "name": "欧姆弥赛亚之斧",
+      "original_name": "Omnissiah Axe",
+      "slug": "omnissiah-axe",
+      "image_key": "weapon_omnissiah-axe_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/8/80/Toothpick.png/revision/latest/scale-to-width-down/185?cb=20260108033444",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/8/80/Toothpick.png/revision/latest/scale-to-width-down/185?cb=20260108033444",
+      "slot_type": "melee",
+      "available_classes": [
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Omnissiah_Axe"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ]
+    },
+    {
+      "name": "等离子焚化枪",
+      "original_name": "Plasma Incinerator",
+      "slug": "plasma-incinerator",
+      "image_key": "weapon_plasma-incinerator_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/0/0e/Plasma_Incinerator_Standard-Issue.jpg/revision/latest?cb=20240930164414",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/0/0e/Plasma_Incinerator_Standard-Issue.jpg/revision/latest?cb=20240930164414",
+      "slot_type": "primary",
+      "available_classes": [
+        "Tactical",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Techmarine] Game8=[Tactical]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Plasma_Incinerator"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Techmarine] Game8=[Tactical]"
+      ]
+    },
+    {
+      "name": "等离子手枪",
+      "original_name": "Plasma Pistol",
+      "slug": "plasma-pistol",
+      "image_key": "weapon_plasma-pistol_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/4/43/Plasma_Pistol_Standard-Issue.jpg/revision/latest?cb=20240930164419",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/4/43/Plasma_Pistol_Standard-Issue.jpg/revision/latest?cb=20240930164419",
+      "slot_type": "secondary",
+      "available_classes": [
+        "Tactical",
+        "Assault",
+        "Bulwark",
+        "Heavy",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Assault, Bulwark, Heavy, Techmarine] Game8=[Bulwark, Heavy]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Plasma_Pistol"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Tactical, Assault, Bulwark, Heavy, Techmarine] Game8=[Bulwark, Heavy]"
+      ]
+    },
+    {
+      "name": "动力斧",
+      "original_name": "Power Axe",
+      "slug": "power-axe",
+      "image_key": "weapon_power-axe_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/7/72/Wpn_perk_endless_whirl.png/revision/latest?cb=20251004093116",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/7/72/Wpn_perk_endless_whirl.png/revision/latest?cb=20251004093116",
+      "slot_type": "melee",
+      "available_classes": [
+        "Assault",
+        "Vanguard",
+        "Bulwark",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Power_Axe"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ]
+    },
+    {
+      "name": "动力拳",
+      "original_name": "Power Fist",
+      "slug": "power-fist",
+      "image_key": "weapon_power-fist_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/6/6a/Power_Fist_Standard-Issue.jpg/revision/latest?cb=20240930172217",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/6/6a/Power_Fist_Standard-Issue.jpg/revision/latest?cb=20240930172217",
+      "slot_type": "melee",
+      "available_classes": [
+        "Assault",
+        "Bulwark"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Power_Fist"
+      ],
+      "source_confidence": "medium",
+      "needs_review": false,
+      "review_type": "",
+      "review_priority": "",
+      "review_reasons": []
+    },
+    {
+      "name": "动力剑",
+      "original_name": "Power Sword",
+      "slug": "power-sword",
+      "image_key": "weapon_power-sword_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/b/bd/Power_Sword_Standard-Issue.jpg/revision/latest?cb=20240930164430",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/b/bd/Power_Sword_Standard-Issue.jpg/revision/latest?cb=20240930164430",
+      "slot_type": "melee",
+      "available_classes": [
+        "Assault",
+        "Bulwark",
+        "Techmarine"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Assault, Bulwark, Techmarine] Game8=[Bulwark]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Power_Sword"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Assault, Bulwark, Techmarine] Game8=[Bulwark]"
+      ]
+    },
+    {
+      "name": "烈焰喷射枪",
+      "original_name": "Pyreblaster",
+      "slug": "pyreblaster",
+      "image_key": "weapon_pyreblaster_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/1/16/Wpn_perk_heating.png/revision/latest?cb=20250921025401",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/1/16/Wpn_perk_heating.png/revision/latest?cb=20250921025401",
+      "slot_type": "primary",
+      "available_classes": [
+        "Tactical"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Pyreblaster"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ]
+    },
+    {
+      "name": "烈焰炮",
+      "original_name": "Pyrecannon",
+      "slug": "pyrecannon",
+      "image_key": "weapon_pyrecannon_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/1/16/Wpn_perk_heating.png/revision/latest?cb=20250921025401",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/1/16/Wpn_perk_heating.png/revision/latest?cb=20250921025401",
+      "slot_type": "primary",
+      "available_classes": [
+        "Heavy"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Pyrecannon"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Game8 missing / outdated: weapon absent from Game8 weapon list."
+      ]
+    },
+    {
+      "name": "潜猎者爆弹步枪",
+      "original_name": "Stalker Bolt Rifle",
+      "slug": "stalker-bolt-rifle",
+      "image_key": "weapon_stalker-bolt-rifle_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/b/b3/Stalker_Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164436",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/b/b3/Stalker_Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164436",
+      "slot_type": "primary",
+      "available_classes": [
+        "Tactical",
+        "Sniper"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Stalker_Bolt_Rifle"
+      ],
+      "source_confidence": "medium",
+      "needs_review": false,
+      "review_type": "",
+      "review_priority": "",
+      "review_reasons": []
+    },
+    {
+      "name": "雷霆战锤",
+      "original_name": "Thunder Hammer",
+      "slug": "thunder-hammer",
+      "image_key": "weapon_thunder-hammer_img",
+      "weapon_image_official": "https://static.wikia.nocookie.net/spacemarine2/images/3/38/Thunder_Hammer_Standard-Issue.jpg/revision/latest?cb=20240930164444",
+      "weapon_image_wiki": "https://static.wikia.nocookie.net/spacemarine2/images/3/38/Thunder_Hammer_Standard-Issue.jpg/revision/latest?cb=20240930164444",
+      "slot_type": "melee",
+      "available_classes": [
+        "Assault",
+        "Bulwark"
+      ],
+      "mode_restriction": "",
+      "description_short": "",
+      "notes": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Assault, Bulwark] Game8=[Assault]"
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Thunder_Hammer"
+      ],
+      "source_confidence": "low",
+      "needs_review": true,
+      "review_type": "conflict",
+      "review_priority": "high",
+      "review_reasons": [
+        "[CONFLICT] Fandom!=Game8 classes: Fandom=[Assault, Bulwark] Game8=[Assault]"
+      ]
+    }
+  ],
+  "strategy_terms": []
+}

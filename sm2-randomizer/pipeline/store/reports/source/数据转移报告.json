@@ -1,0 +1,29 @@
+{
+  "summary": {
+    "class_count": 7,
+    "weapon_count": 29,
+    "class_manifest_count": 7,
+    "weapon_manifest_count": 29,
+    "conflict_count": 21,
+    "missing_class_image_count": 6,
+    "missing_weapon_icon_count": 29,
+    "review_queue_count": 27,
+    "upgrade_warning_count": 0
+  },
+  "outputs": {
+    "normalized": "data/normalized/标准化数据.json",
+    "class_manifest": "data/manifests/职业图片清单.json",
+    "weapon_manifest": "data/manifests/武器图标清单.json",
+    "talent_manifest": "data/manifests/按职业分组天赋图标.json",
+    "talent_index": "data/manifests/天赋图标索引.json",
+    "class_weapon_map": "data/manifests/职业武器映射.json",
+    "official_assets": "data/manifests/官方候选资源.json",
+    "review_queue": "data/validation/待复核队列.json",
+    "front_display": "data/normalized/前端展示数据.json"
+  },
+  "upgrade_warnings": [],
+  "notes": [
+    "图片资源统一位于 assets/。",
+    "缺失图片不会阻断转移，但会在摘要中统计。"
+  ]
+}

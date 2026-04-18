@@ -1,0 +1,193 @@
+{
+  "version_anchor": "Update 12.0 / Techmarine",
+  "slug_key": "slug",
+  "layer_contract": {
+    "rules": "pipeline/rules/extraction_rules.json",
+    "raw": "pipeline/out/source/wiki/原始抓取数据.json",
+    "normalized": "pipeline/out/source/catalog/标准化数据.json",
+    "validation": "pipeline/out/source/reports/*"
+  },
+  "sources": {
+    "official": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+    "fandom": "https://spacemarine2.fandom.com",
+    "game8": "https://game8.co/games/Warhammer-40000-Space-Marine-2"
+  },
+  "source_priority": [
+    "official",
+    "fandom",
+    "game8"
+  ],
+  "contract_rules": {
+    "required_classes": [
+      "tactical",
+      "assault",
+      "vanguard",
+      "bulwark",
+      "sniper",
+      "heavy",
+      "techmarine"
+    ],
+    "required_weapons": [
+      "omnissiah-axe"
+    ],
+    "primary_must_be_empty": [
+      "assault",
+      "bulwark"
+    ],
+    "conflict_prefix": "[CONFLICT]",
+    "notes_must_preserve_restrictions": true,
+    "restriction_patterns": [
+      "PvE only",
+      "PvP"
+    ]
+  },
+  "source_confidence_allowed_values": [
+    "high",
+    "medium",
+    "low"
+  ],
+  "source_confidence_rules": {
+    "high": "At least two trusted sources agree without key conflicts, or official anchor confirms the field.",
+    "medium": "Only one primary source is available, or minor differences do not affect the key field.",
+    "low": "Source conflict, inferred key field, parse degradation, or only weak-source extraction."
+  },
+  "needs_review_strict_mode": true,
+  "review_type_allowed_values": [
+    "conflict",
+    "missing",
+    "parse_degraded",
+    "low_confidence",
+    "binding_pending"
+  ],
+  "review_priority_allowed_values": [
+    "high",
+    "medium",
+    "low"
+  ],
+  "review_queue_contract": {
+    "required_fields": [
+      "entity_type",
+      "entity_id",
+      "display_name",
+      "review_type",
+      "review_priority",
+      "review_reasons",
+      "source_pages"
+    ]
+  },
+  "slug_policy": {
+    "separator": "-",
+    "lowercase": true,
+    "trim_punctuation": true,
+    "preserve_meaningful_terms": true,
+    "conflict_strategy": "reuse_existing_slug_or_review"
+  },
+  "compatibility_policy": {
+    "allow_missing_raw_fields": true,
+    "default_values": {
+      "parse_warnings": [],
+      "parse_degraded": false,
+      "missing_fields": [],
+      "source_pages": []
+    },
+    "upgrade_warning_target": "pipeline/out/source/reports/数据转移报告.json"
+  },
+  "allowed_fields": {
+    "raw_class": [
+      "name",
+      "slug_candidate",
+      "image_key",
+      "image_url",
+      "class_role_text",
+      "class_ability",
+      "character_name",
+      "weapons",
+      "notes",
+      "source_pages",
+      "source_type",
+      "parse_warnings",
+      "parse_degraded",
+      "missing_fields"
+    ],
+    "raw_weapon": [
+      "name",
+      "slug_candidate",
+      "image_key",
+      "image_url",
+      "slot_type",
+      "allowed_classes",
+      "mode_restriction_candidates",
+      "description_short",
+      "notes",
+      "source_pages",
+      "source_type",
+      "parse_warnings",
+      "parse_degraded",
+      "missing_fields"
+    ],
+    "raw_official_asset": [
+      "asset_id",
+      "asset_type",
+      "title",
+      "candidate_page",
+      "image_hint",
+      "remote_url",
+      "intended_bind",
+      "copyright_note",
+      "notes",
+      "source_pages",
+      "source_type",
+      "parse_warnings",
+      "parse_degraded",
+      "missing_fields"
+    ],
+    "normalized_class": [
+      "name",
+      "slug",
+      "image_key",
+      "asset_dir",
+      "role",
+      "tagline",
+      "class_image_official",
+      "class_image_wiki",
+      "class_ability",
+      "character_name",
+      "primary",
+      "secondary",
+      "melee",
+      "notes",
+      "source_pages"
+    ],
+    "normalized_weapon": [
+      "name",
+      "slug",
+      "image_key",
+      "weapon_image_official",
+      "weapon_image_wiki",
+      "slot_type",
+      "available_classes",
+      "mode_restriction",
+      "description_short",
+      "notes",
+      "source_pages"
+    ],
+    "validation_review_item": [
+      "entity_type",
+      "entity_id",
+      "display_name",
+      "review_type",
+      "review_priority",
+      "review_reasons",
+      "source_pages"
+    ]
+  },
+  "asset_policy": {
+    "class_images_per_slug": {
+      "min": 3,
+      "max": 5
+    },
+    "weapon_icon_variant": "single_outline_icon",
+    "official_assets_are_candidate_pool": true,
+    "auto_binding_enabled": false
+  }
+}

@@ -1,0 +1,312 @@
+{
+  "items": [
+    {
+      "slug": "auto-bolt-rifle",
+      "excel_name": "自动爆弹步枪",
+      "image_formula": "=DISPIMG(\"ID_94116E2CF0374974B38D2D2E2C146B72\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "自动爆弹步枪.png",
+      "asset_path": "weapons/icons/主武器/自动爆弹步枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "bolt-carbine",
+      "excel_name": "爆弹卡宾枪",
+      "image_formula": "=DISPIMG(\"ID_D53D0CB664184BB9A9E8D0485CF632C0\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "爆弹卡宾枪.png",
+      "asset_path": "weapons/icons/主武器/爆弹卡宾枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "bolt-pistol",
+      "excel_name": "爆弹手枪",
+      "image_formula": "=DISPIMG(\"ID_F159F95F481D4338822838F5A7F22FAC\",1)",
+      "source_sheet": "副武器",
+      "asset_file_name": "爆弹手枪.png",
+      "asset_path": "weapons/icons/副手/爆弹手枪.png",
+      "category": "ranged",
+      "directory_label": "副手"
+    },
+    {
+      "slug": "bolt-rifle",
+      "excel_name": "爆弹步枪",
+      "image_formula": "=DISPIMG(\"ID_905036B919204912AC2E77D0BFCB8529\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "爆弹步枪.png",
+      "asset_path": "weapons/icons/主武器/爆弹步枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "bolt-sniper-rifle",
+      "excel_name": "爆弹狙击步枪",
+      "image_formula": "=DISPIMG(\"ID_1F17FB30125643AE8546E3AC0D63A2C9\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "爆弹狙击步枪.png",
+      "asset_path": "weapons/icons/主武器/爆弹狙击步枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "heavy-bolt-pistol",
+      "excel_name": "重爆弹手枪",
+      "image_formula": "=DISPIMG(\"ID_1EA769FD78674F238592E9781514FCF5\",1)",
+      "source_sheet": "副武器",
+      "asset_file_name": "重爆弹手枪.png",
+      "asset_path": "weapons/icons/副手/重爆弹手枪.png",
+      "category": "ranged",
+      "directory_label": "副手"
+    },
+    {
+      "slug": "heavy-bolt-rifle",
+      "excel_name": "重型爆弹步枪",
+      "image_formula": "=DISPIMG(\"ID_7C1CF1D005A043998AD9EAE738F36350\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "重型爆弹步枪.png",
+      "asset_path": "weapons/icons/主武器/重型爆弹步枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "heavy-bolter",
+      "excel_name": "重型爆弹枪",
+      "image_formula": "=DISPIMG(\"ID_8F84941DE26D460E99BFAEFEC3D0B000\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "重型爆弹枪.png",
+      "asset_path": "weapons/icons/主武器/重型爆弹枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "heavy-plasma-incinerator",
+      "excel_name": "重型等离子焚化枪",
+      "image_formula": "=DISPIMG(\"ID_0DD1BF43779E4E00935DEDCD09891D8D\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "重型等离子焚化枪.png",
+      "asset_path": "weapons/icons/主武器/重型等离子焚化枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "inferno-pistol",
+      "excel_name": "地狱火手枪",
+      "image_formula": "=DISPIMG(\"ID_8AFE810737D6497CB18E016E5D1A6840\",1)",
+      "source_sheet": "副武器",
+      "asset_file_name": "地狱火手枪.png",
+      "asset_path": "weapons/icons/副手/地狱火手枪.png",
+      "category": "ranged",
+      "directory_label": "副手"
+    },
+    {
+      "slug": "instigator-bolt-carbine",
+      "excel_name": "煽动者爆弹卡宾枪",
+      "image_formula": "=DISPIMG(\"ID_F44435B06420494380CA7E101DF822F9\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "煽动者爆弹卡宾枪.png",
+      "asset_path": "weapons/icons/主武器/煽动者爆弹卡宾枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "las-fusil",
+      "excel_name": "激光燧发枪",
+      "image_formula": "=DISPIMG(\"ID_088EAC1E37574B33B18597AD7BCBCCDE\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "激光燧发枪.png",
+      "asset_path": "weapons/icons/主武器/激光燧发枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "melta-rifle",
+      "excel_name": "热熔步枪",
+      "image_formula": "=DISPIMG(\"ID_4DC45F73BB784440978122F3D8552868\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "热熔步枪.png",
+      "asset_path": "weapons/icons/主武器/热熔步枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "multi-melta",
+      "excel_name": "多管热熔",
+      "image_formula": "=DISPIMG(\"ID_C2CADAF95C284E5A917C647C21777D2E\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "多管热熔.png",
+      "asset_path": "weapons/icons/主武器/多管热熔.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "neo-volkite-pistol",
+      "excel_name": "高能爆燃手枪",
+      "image_formula": "=DISPIMG(\"ID_1EF6470A50094CC48054EF0AEC461117\",1)",
+      "source_sheet": "副武器",
+      "asset_file_name": "高能爆燃手枪.png",
+      "asset_path": "weapons/icons/副手/高能爆燃手枪.png",
+      "category": "ranged",
+      "directory_label": "副手"
+    },
+    {
+      "slug": "occulus-bolt-carbine",
+      "excel_name": "全知者爆弹卡宾枪",
+      "image_formula": "=DISPIMG(\"ID_1DE8C63882E84E7889AF1A0C421B495F\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "全知者爆弹卡宾枪.png",
+      "asset_path": "weapons/icons/主武器/全知者爆弹卡宾枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "plasma-incinerator",
+      "excel_name": "等离子焚化枪",
+      "image_formula": "=DISPIMG(\"ID_0DD1BF43779E4E00935DEDCD09891D8D\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "等离子焚化枪.png",
+      "asset_path": "weapons/icons/主武器/等离子焚化枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "plasma-pistol",
+      "excel_name": "等离子手枪",
+      "image_formula": "=DISPIMG(\"ID_2221DA815D04484387C3221A7E08B441\",1)",
+      "source_sheet": "副武器",
+      "asset_file_name": "等离子手枪.png",
+      "asset_path": "weapons/icons/副手/等离子手枪.png",
+      "category": "ranged",
+      "directory_label": "副手"
+    },
+    {
+      "slug": "pyreblaster",
+      "excel_name": "焚焰枪",
+      "image_formula": "=DISPIMG(\"ID_C9B7CB68721A492F9B8E0BD728E072F8\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "焚焰枪.png",
+      "asset_path": "weapons/icons/主武器/焚焰枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "pyrecannon",
+      "excel_name": "焚焰炮",
+      "image_formula": "=DISPIMG(\"ID_8DBAACD5A1414D878B3AA220B442518C\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "焚焰炮.png",
+      "asset_path": "weapons/icons/主武器/焚焰炮.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "stalker-bolt-rifle",
+      "excel_name": "追猎者爆弹步枪",
+      "image_formula": "=DISPIMG(\"ID_F57DCB0DEE9E44C3B217D9E7E1F60477\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "追猎者爆弹步枪.png",
+      "asset_path": "weapons/icons/主武器/追猎者爆弹步枪.png",
+      "category": "ranged",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "chainsword",
+      "excel_name": "链锯剑",
+      "image_formula": "=DISPIMG(\"ID_76E0C583F8414AD5B9F0E0EE0F91D111\",1)",
+      "source_sheet": "主页-近战武器",
+      "asset_file_name": "链锯剑.png",
+      "asset_path": "weapons/icons/近战/链锯剑.png",
+      "category": "melee",
+      "directory_label": "近战"
+    },
+    {
+      "slug": "combat-knife",
+      "excel_name": "匕首",
+      "image_formula": "=DISPIMG(\"ID_E25C9709D406475CA574913376428832\",1)",
+      "source_sheet": "主页-近战武器",
+      "asset_file_name": "战斗匕首.png",
+      "asset_path": "weapons/icons/近战/战斗匕首.png",
+      "category": "melee",
+      "directory_label": "近战"
+    },
+    {
+      "slug": "power-axe",
+      "excel_name": "动力斧",
+      "image_formula": "=DISPIMG(\"ID_FAFD5FC1A6704912A27A00BAB6860654\",1)",
+      "source_sheet": "主页-近战武器",
+      "asset_file_name": "动力斧.png",
+      "asset_path": "weapons/icons/近战/动力斧.png",
+      "category": "melee",
+      "directory_label": "近战"
+    },
+    {
+      "slug": "power-fist",
+      "excel_name": "动力拳",
+      "image_formula": "=DISPIMG(\"ID_7614E479D0384FE1AFA42BC040339EE7\",1)",
+      "source_sheet": "主页-近战武器",
+      "asset_file_name": "动力拳.png",
+      "asset_path": "weapons/icons/近战/动力拳.png",
+      "category": "melee",
+      "directory_label": "近战"
+    },
+    {
+      "slug": "power-sword",
+      "excel_name": "动力剑",
+      "image_formula": "=DISPIMG(\"ID_8E789D3F786B4C92942401600651498E\",1)",
+      "source_sheet": "主页-近战武器",
+      "asset_file_name": "动力剑.png",
+      "asset_path": "weapons/icons/近战/动力剑.png",
+      "category": "melee",
+      "directory_label": "近战"
+    },
+    {
+      "slug": "thunder-hammer",
+      "excel_name": "雷霆锤",
+      "image_formula": "=DISPIMG(\"ID_2C4BB6A52FA546759D59AF5EA454D6A2\",1)",
+      "source_sheet": "主页-近战武器",
+      "asset_file_name": "雷霆锤.png",
+      "asset_path": "weapons/icons/近战/雷霆锤.png",
+      "category": "melee",
+      "directory_label": "近战"
+    },
+    {
+      "slug": "heavy-firearms-melee",
+      "excel_name": "重武器近战",
+      "image_formula": "=DISPIMG(\"ID_B09DB1F5857D414BA280BF1A4232496E\",1)",
+      "source_sheet": "主页-近战武器",
+      "asset_file_name": "重武器近战.png",
+      "asset_path": "weapons/icons/近战/重武器近战.png",
+      "category": "melee",
+      "directory_label": "近战"
+    },
+    {
+      "slug": "omnissiah-axe",
+      "excel_name": "欧姆尼赛亚战斧",
+      "image_formula": "=DISPIMG(\"ID_37F39FFFD78140ADB247AF90644F7720\",1)",
+      "source_sheet": "主页-近战武器",
+      "asset_file_name": "欧姆尼赛亚战斧.png",
+      "asset_path": "weapons/icons/近战/欧姆尼赛亚战斧.png",
+      "category": "melee",
+      "directory_label": "近战"
+    },
+    {
+      "slug": "marksman-bolt-carbine",
+      "excel_name": "神射手卡宾枪",
+      "image_formula": "=DISPIMG(\"ID_BB50F31D943A4F69B5AF3D039B1809D2\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "神射手卡宾枪.png",
+      "asset_path": "weapons/icons/主武器/神射手卡宾枪.png",
+      "directory_label": "主武器"
+    },
+    {
+      "slug": "twin-linked-melta-gun",
+      "excel_name": "双联热熔枪",
+      "image_formula": "=DISPIMG(\"ID_9556FE0AC6F94BCEA68CC3656534977D\",1)",
+      "source_sheet": "主武器",
+      "asset_file_name": "双联热熔枪.png",
+      "asset_path": "weapons/icons/主武器/双联热熔枪.png",
+      "directory_label": "主武器"
+    }
+  ]
+}

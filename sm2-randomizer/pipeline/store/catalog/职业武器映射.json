@@ -1,0 +1,162 @@
+{
+  "classes": [
+    {
+      "class_name": "Tactical",
+      "slug_candidate": "tactical",
+      "weapons": {
+        "primary": [
+          "Auto Bolt Rifle",
+          "Bolt Rifle",
+          "Heavy Bolt Rifle",
+          "Stalker Bolt Rifle",
+          "Bolt Carbine",
+          "Plasma Incinerator",
+          "Melta Rifle",
+          "Pyreblaster"
+        ],
+        "secondary": [
+          "Bolt Pistol",
+          "Heavy Bolt Pistol",
+          "Plasma Pistol"
+        ],
+        "melee": [
+          "Combat Knife",
+          "Chainsword"
+        ]
+      }
+    },
+    {
+      "class_name": "Assault",
+      "slug_candidate": "assault",
+      "weapons": {
+        "primary": [],
+        "secondary": [
+          "Bolt Pistol",
+          "Heavy Bolt Pistol",
+          "Plasma Pistol",
+          "Inferno Pistol",
+          "Neo-Volkite Pistol"
+        ],
+        "melee": [
+          "Chainsword",
+          "Thunder Hammer",
+          "Power Fist",
+          "Power Sword",
+          "Power Axe"
+        ]
+      }
+    },
+    {
+      "class_name": "Vanguard",
+      "slug_candidate": "vanguard",
+      "weapons": {
+        "primary": [
+          "Instigator Bolt Carbine",
+          "Bolt Carbine",
+          "Occulus Bolt Carbine",
+          "Melta Rifle"
+        ],
+        "secondary": [
+          "Bolt Pistol",
+          "Heavy Bolt Pistol",
+          "Inferno Pistol",
+          "Neo-Volkite Pistol"
+        ],
+        "melee": [
+          "Combat Knife",
+          "Chainsword",
+          "Power Axe"
+        ]
+      }
+    },
+    {
+      "class_name": "Bulwark",
+      "slug_candidate": "bulwark",
+      "weapons": {
+        "primary": [],
+        "secondary": [
+          "Bolt Pistol",
+          "Heavy Bolt Pistol",
+          "Plasma Pistol",
+          "Neo-Volkite Pistol"
+        ],
+        "melee": [
+          "Thunder Hammer",
+          "Chainsword",
+          "Power Fist",
+          "Power Sword",
+          "Power Axe"
+        ]
+      }
+    },
+    {
+      "class_name": "Sniper",
+      "slug_candidate": "sniper",
+      "weapons": {
+        "primary": [
+          "Stalker Bolt Rifle",
+          "Instigator Bolt Carbine",
+          "Bolt Sniper Rifle",
+          "Bolt Carbine",
+          "Las Fusil"
+        ],
+        "secondary": [
+          "Bolt Pistol",
+          "Heavy Bolt Pistol",
+          "Inferno Pistol"
+        ],
+        "melee": [
+          "Combat Knife"
+        ]
+      }
+    },
+    {
+      "class_name": "Heavy",
+      "slug_candidate": "heavy",
+      "weapons": {
+        "primary": [
+          "Heavy Bolt Rifle",
+          "Heavy Bolter",
+          "Heavy Plasma Incinerator",
+          "Multi-Melta",
+          "Pyrecannon"
+        ],
+        "secondary": [
+          "Bolt Pistol",
+          "Heavy Bolt Pistol",
+          "Plasma Pistol",
+          "Inferno Pistol"
+        ],
+        "melee": [
+          "Heavy Firearms Melee"
+        ]
+      }
+    },
+    {
+      "class_name": "Techmarine",
+      "slug_candidate": "techmarine",
+      "weapons": {
+        "primary": [
+          "Auto Bolt Rifle",
+          "Bolt Rifle",
+          "Heavy Bolt Rifle",
+          "Plasma Incinerator",
+          "Occulus Bolt Carbine"
+        ],
+        "secondary": [
+          "Bolt Pistol",
+          "Heavy Bolt Pistol",
+          "Plasma Pistol",
+          "Inferno Pistol",
+          "Neo-Volkite Pistol"
+        ],
+        "melee": [
+          "Combat Knife",
+          "Power Sword",
+          "Power Axe",
+          "Omnissiah Axe"
+        ]
+      }
+    }
+  ]
+}

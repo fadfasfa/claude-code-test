@@ -1,0 +1,160 @@
+{
+  "items": [
+    {
+      "slug": "power-sword",
+      "excel_name": "动力剑",
+      "slot_type": "melee"
+    },
+    {
+      "slug": "power-fist",
+      "excel_name": "动力拳",
+      "slot_type": "melee"
+    },
+    {
+      "slug": "power-axe",
+      "excel_name": "动力斧",
+      "slot_type": "melee"
+    },
+    {
+      "slug": "combat-knife",
+      "excel_name": "匕首",
+      "slot_type": "melee"
+    },
+    {
+      "slug": "omnissiah-axe",
+      "excel_name": "欧姆尼赛亚战斧",
+      "slot_type": "melee"
+    },
+    {
+      "slug": "heavy-firearms-melee",
+      "excel_name": "重武器近战",
+      "slot_type": "melee"
+    },
+    {
+      "slug": "chainsword",
+      "excel_name": "链锯剑",
+      "slot_type": "melee"
+    },
+    {
+      "slug": "thunder-hammer",
+      "excel_name": "雷霆锤",
+      "slot_type": "melee"
+    },
+    {
+      "slug": "occulus-bolt-carbine",
+      "excel_name": "全知者爆弹卡宾枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "twin-linked-melta-gun",
+      "excel_name": "双联热熔枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "multi-melta",
+      "excel_name": "多管热熔",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "las-fusil",
+      "excel_name": "激光燧发枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "melta-rifle",
+      "excel_name": "热熔步枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "pyreblaster",
+      "excel_name": "焚焰枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "pyrecannon",
+      "excel_name": "焚焰炮",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "instigator-bolt-carbine",
+      "excel_name": "煽动者爆弹卡宾枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "bolt-carbine",
+      "excel_name": "爆弹卡宾枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "bolt-rifle",
+      "excel_name": "爆弹步枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "bolt-sniper-rifle",
+      "excel_name": "爆弹狙击步枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "marksman-bolt-carbine",
+      "excel_name": "神射手卡宾枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "plasma-incinerator",
+      "excel_name": "等离子焚化枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "auto-bolt-rifle",
+      "excel_name": "自动爆弹步枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "stalker-bolt-rifle",
+      "excel_name": "追猎者爆弹步枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "heavy-bolter",
+      "excel_name": "重型爆弹枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "heavy-bolt-rifle",
+      "excel_name": "重型爆弹步枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "heavy-plasma-incinerator",
+      "excel_name": "重型等离子焚化枪",
+      "slot_type": "primary"
+    },
+    {
+      "slug": "inferno-pistol",
+      "excel_name": "地狱火手枪",
+      "slot_type": "secondary"
+    },
+    {
+      "slug": "bolt-pistol",
+      "excel_name": "爆弹手枪",
+      "slot_type": "secondary"
+    },
+    {
+      "slug": "plasma-pistol",
+      "excel_name": "等离子手枪",
+      "slot_type": "secondary"
+    },
+    {
+      "slug": "heavy-bolt-pistol",
+      "excel_name": "重爆弹手枪",
+      "slot_type": "secondary"
+    },
+    {
+      "slug": "neo-volkite-pistol",
+      "excel_name": "高能爆燃手枪",
+      "slot_type": "secondary"
+    }
+  ],
+  "notes": "去重后的 Excel 武器清单，仅保留运行层使用的基础武器名。"
+}

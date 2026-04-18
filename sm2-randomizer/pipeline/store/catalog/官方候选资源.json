@@ -1,0 +1,685 @@
+{
+  "assets": [
+    {
+      "asset_id": "official-class-tactical",
+      "asset_type": "class",
+      "title": "Tactical official candidate",
+      "candidate_page": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+      "image_hint": "Tactical class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/8/8a/Class_tactical.jpeg/revision/latest?cb=20240930152007",
+      "intended_bind": "tactical",
+      "copyright_note": "Games Workshop intellectual property used under license.",
+      "notes": [
+        "Candidate asset only. No automatic binding in this task.",
+        "Bound from class wiki image."
+      ],
+      "source_pages": [
+        "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0"
+      ]
+    },
+    {
+      "asset_id": "official-class-assault",
+      "asset_type": "class",
+      "title": "Assault official candidate",
+      "candidate_page": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+      "image_hint": "Assault class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/6/6b/Class_assault.jpeg/revision/latest?cb=20240930151949",
+      "intended_bind": "assault",
+      "copyright_note": "Games Workshop intellectual property used under license.",
+      "notes": [
+        "Candidate asset only. No automatic binding in this task.",
+        "Bound from class wiki image."
+      ],
+      "source_pages": [
+        "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0"
+      ]
+    },
+    {
+      "asset_id": "official-class-vanguard",
+      "asset_type": "class",
+      "title": "Vanguard official candidate",
+      "candidate_page": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+      "image_hint": "Vanguard class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/8/89/Class_vanguard.jpeg/revision/latest?cb=20240930151913",
+      "intended_bind": "vanguard",
+      "copyright_note": "Games Workshop intellectual property used under license.",
+      "notes": [
+        "Candidate asset only. No automatic binding in this task.",
+        "Bound from class wiki image."
+      ],
+      "source_pages": [
+        "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0"
+      ]
+    },
+    {
+      "asset_id": "official-class-bulwark",
+      "asset_type": "class",
+      "title": "Bulwark official candidate",
+      "candidate_page": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+      "image_hint": "Bulwark class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/2/21/Class_bulwark.jpeg/revision/latest?cb=20240930152025",
+      "intended_bind": "bulwark",
+      "copyright_note": "Games Workshop intellectual property used under license.",
+      "notes": [
+        "Candidate asset only. No automatic binding in this task.",
+        "Bound from class wiki image."
+      ],
+      "source_pages": [
+        "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0"
+      ]
+    },
+    {
+      "asset_id": "official-class-sniper",
+      "asset_type": "class",
+      "title": "Sniper official candidate",
+      "candidate_page": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+      "image_hint": "Sniper class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/a/a1/Class_sniper.jpeg/revision/latest?cb=20240930151958",
+      "intended_bind": "sniper",
+      "copyright_note": "Games Workshop intellectual property used under license.",
+      "notes": [
+        "Candidate asset only. No automatic binding in this task.",
+        "Bound from class wiki image."
+      ],
+      "source_pages": [
+        "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0"
+      ]
+    },
+    {
+      "asset_id": "official-class-heavy",
+      "asset_type": "class",
+      "title": "Heavy official candidate",
+      "candidate_page": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+      "image_hint": "Heavy class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/5/5a/Class_heavy.jpeg/revision/latest?cb=20240930152016",
+      "intended_bind": "heavy",
+      "copyright_note": "Games Workshop intellectual property used under license.",
+      "notes": [
+        "Candidate asset only. No automatic binding in this task.",
+        "Bound from class wiki image."
+      ],
+      "source_pages": [
+        "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0"
+      ]
+    },
+    {
+      "asset_id": "official-class-techmarine",
+      "asset_type": "class",
+      "title": "Techmarine official candidate",
+      "candidate_page": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+      "image_hint": "Techmarine class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/1/17/Class_engineer.png/revision/latest?cb=20260203145958",
+      "intended_bind": "techmarine",
+      "copyright_note": "Games Workshop intellectual property used under license.",
+      "notes": [
+        "Candidate asset only. No automatic binding in this task.",
+        "Bound from class wiki image."
+      ],
+      "source_pages": [
+        "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-auto-bolt-rifle",
+      "asset_type": "weapon",
+      "title": "Auto Bolt Rifle wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Auto_Bolt_Rifle",
+      "image_hint": "Auto Bolt Rifle weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/3/36/Auto_Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164232",
+      "intended_bind": "auto-bolt-rifle",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Auto_Bolt_Rifle"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-bolt-carbine",
+      "asset_type": "weapon",
+      "title": "Bolt Carbine wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Bolt_Carbine",
+      "image_hint": "Bolt Carbine weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/e/e5/Bolt_Carbine_Standard-Issue.jpg/revision/latest?cb=20240930164239",
+      "intended_bind": "bolt-carbine",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Carbine"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-bolt-pistol",
+      "asset_type": "weapon",
+      "title": "Bolt Pistol wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Bolt_Pistol",
+      "image_hint": "Bolt Pistol weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/2/2d/Bolt_Pistol_Standard-Issue.jpg/revision/latest?cb=20240930164247",
+      "intended_bind": "bolt-pistol",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Pistol"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-bolt-rifle",
+      "asset_type": "weapon",
+      "title": "Bolt Rifle wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Bolt_Rifle",
+      "image_hint": "Bolt Rifle weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/6/69/Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164253",
+      "intended_bind": "bolt-rifle",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Rifle"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-bolt-sniper-rifle",
+      "asset_type": "weapon",
+      "title": "Bolt Sniper Rifle wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Bolt_Sniper_Rifle",
+      "image_hint": "Bolt Sniper Rifle weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/c/c1/Bolt_Sniper_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164300",
+      "intended_bind": "bolt-sniper-rifle",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bolt_Sniper_Rifle"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-chainsword",
+      "asset_type": "weapon",
+      "title": "Chainsword wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Chainsword",
+      "image_hint": "Chainsword weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/2/26/Chainsword_Standard-Issue.jpg/revision/latest?cb=20240930164306",
+      "intended_bind": "chainsword",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Chainsword"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-combat-knife",
+      "asset_type": "weapon",
+      "title": "Combat Knife wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Combat_Knife",
+      "image_hint": "Combat Knife weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/a/a6/Combat_Knife_Standard-Issue.jpg/revision/latest?cb=20240930164312",
+      "intended_bind": "combat-knife",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Combat_Knife"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-heavy-bolt-pistol",
+      "asset_type": "weapon",
+      "title": "Heavy Bolt Pistol wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Heavy_Bolt_Pistol",
+      "image_hint": "Heavy Bolt Pistol weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/3/36/Heavy_Bolt_Pistol_Standard-Issue.jpg/revision/latest?cb=20240930164318",
+      "intended_bind": "heavy-bolt-pistol",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Bolt_Pistol"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-heavy-bolt-rifle",
+      "asset_type": "weapon",
+      "title": "Heavy Bolt Rifle wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Heavy_Bolt_Rifle",
+      "image_hint": "Heavy Bolt Rifle weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/0/08/Heavy_Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164324",
+      "intended_bind": "heavy-bolt-rifle",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Bolt_Rifle"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-heavy-bolter",
+      "asset_type": "weapon",
+      "title": "Heavy Bolter wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Heavy_Bolter",
+      "image_hint": "Heavy Bolter weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/e/eb/Heavy_Bolter_Standard-Issue.jpg/revision/latest?cb=20240930164331",
+      "intended_bind": "heavy-bolter",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Bolter"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-heavy-firearms-melee",
+      "asset_type": "weapon",
+      "title": "Heavy Firearms Melee wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Heavy_Firearms_Melee",
+      "image_hint": "Heavy Firearms Melee weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/0/00/Class_sb_tactical.png/revision/latest/scale-to-width-down/28?cb=20240930152729",
+      "intended_bind": "heavy-firearms-melee",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Firearms_Melee"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-heavy-plasma-incinerator",
+      "asset_type": "weapon",
+      "title": "Heavy Plasma Incinerator wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Heavy_Plasma_Incinerator",
+      "image_hint": "Heavy Plasma Incinerator weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/f/fc/Heavy_Plasma_Incinerator_Standard-Issue.jpg/revision/latest?cb=20240930164337",
+      "intended_bind": "heavy-plasma-incinerator",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy_Plasma_Incinerator"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-inferno-pistol",
+      "asset_type": "weapon",
+      "title": "Inferno Pistol wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Inferno_Pistol",
+      "image_hint": "Inferno Pistol weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/4/48/Wpn_perk_firepower.png/revision/latest?cb=20250921023727",
+      "intended_bind": "inferno-pistol",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Inferno_Pistol"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-instigator-bolt-carbine",
+      "asset_type": "weapon",
+      "title": "Instigator Bolt Carbine wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Instigator_Bolt_Carbine",
+      "image_hint": "Instigator Bolt Carbine weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/3/37/Instigator_Bolt_Carbine_Standard-Issue.jpg/revision/latest?cb=20240930164342",
+      "intended_bind": "instigator-bolt-carbine",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Instigator_Bolt_Carbine"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-las-fusil",
+      "asset_type": "weapon",
+      "title": "Las Fusil wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Las_Fusil",
+      "image_hint": "Las Fusil weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/2/2f/Las_Fusil_Standard-Issue.jpg/revision/latest?cb=20240930164348",
+      "intended_bind": "las-fusil",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Las_Fusil"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-melta-rifle",
+      "asset_type": "weapon",
+      "title": "Melta Rifle wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Melta_Rifle",
+      "image_hint": "Melta Rifle weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/6/60/Melta_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164354",
+      "intended_bind": "melta-rifle",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Melta_Rifle"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-multi-melta",
+      "asset_type": "weapon",
+      "title": "Multi-Melta wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Multi-Melta",
+      "image_hint": "Multi-Melta weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/a/af/Multi-Melta_Standard-Issue.jpg/revision/latest?cb=20240930164400",
+      "intended_bind": "multi-melta",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Multi-Melta"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-neo-volkite-pistol",
+      "asset_type": "weapon",
+      "title": "Neo-Volkite Pistol wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Neo-Volkite_Pistol",
+      "image_hint": "Neo-Volkite Pistol weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/b/b1/Neo-Volkite_Pistol_Standard-Issue.jpg/revision/latest?cb=20241112151716",
+      "intended_bind": "neo-volkite-pistol",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Neo-Volkite_Pistol"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-occulus-bolt-carbine",
+      "asset_type": "weapon",
+      "title": "Occulus Bolt Carbine wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Occulus_Bolt_Carbine",
+      "image_hint": "Occulus Bolt Carbine weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/c/c3/Occulus_Bolt_Carbine_Standard-Issue.jpg/revision/latest?cb=20240930164406",
+      "intended_bind": "occulus-bolt-carbine",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Occulus_Bolt_Carbine"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-omnissiah-axe",
+      "asset_type": "weapon",
+      "title": "Omnissiah Axe wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Omnissiah_Axe",
+      "image_hint": "Omnissiah Axe weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/8/80/Toothpick.png/revision/latest/scale-to-width-down/185?cb=20260108033444",
+      "intended_bind": "omnissiah-axe",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Omnissiah_Axe"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-plasma-incinerator",
+      "asset_type": "weapon",
+      "title": "Plasma Incinerator wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Plasma_Incinerator",
+      "image_hint": "Plasma Incinerator weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/0/0e/Plasma_Incinerator_Standard-Issue.jpg/revision/latest?cb=20240930164414",
+      "intended_bind": "plasma-incinerator",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Plasma_Incinerator"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-plasma-pistol",
+      "asset_type": "weapon",
+      "title": "Plasma Pistol wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Plasma_Pistol",
+      "image_hint": "Plasma Pistol weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/4/43/Plasma_Pistol_Standard-Issue.jpg/revision/latest?cb=20240930164419",
+      "intended_bind": "plasma-pistol",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Plasma_Pistol"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-power-axe",
+      "asset_type": "weapon",
+      "title": "Power Axe wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Power_Axe",
+      "image_hint": "Power Axe weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/7/72/Wpn_perk_endless_whirl.png/revision/latest?cb=20251004093116",
+      "intended_bind": "power-axe",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Power_Axe"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-power-fist",
+      "asset_type": "weapon",
+      "title": "Power Fist wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Power_Fist",
+      "image_hint": "Power Fist weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/6/6a/Power_Fist_Standard-Issue.jpg/revision/latest?cb=20240930172217",
+      "intended_bind": "power-fist",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Power_Fist"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-power-sword",
+      "asset_type": "weapon",
+      "title": "Power Sword wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Power_Sword",
+      "image_hint": "Power Sword weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/b/bd/Power_Sword_Standard-Issue.jpg/revision/latest?cb=20240930164430",
+      "intended_bind": "power-sword",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Power_Sword"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-pyreblaster",
+      "asset_type": "weapon",
+      "title": "Pyreblaster wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Pyreblaster",
+      "image_hint": "Pyreblaster weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/1/16/Wpn_perk_heating.png/revision/latest?cb=20250921025401",
+      "intended_bind": "pyreblaster",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Pyreblaster"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-pyrecannon",
+      "asset_type": "weapon",
+      "title": "Pyrecannon wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Pyrecannon",
+      "image_hint": "Pyrecannon weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/1/16/Wpn_perk_heating.png/revision/latest?cb=20250921025401",
+      "intended_bind": "pyrecannon",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Pyrecannon"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-stalker-bolt-rifle",
+      "asset_type": "weapon",
+      "title": "Stalker Bolt Rifle wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Stalker_Bolt_Rifle",
+      "image_hint": "Stalker Bolt Rifle weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/b/b3/Stalker_Bolt_Rifle_Standard-Issue.jpg/revision/latest?cb=20240930164436",
+      "intended_bind": "stalker-bolt-rifle",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Stalker_Bolt_Rifle"
+      ]
+    },
+    {
+      "asset_id": "wiki-weapon-thunder-hammer",
+      "asset_type": "weapon",
+      "title": "Thunder Hammer wiki image",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Thunder_Hammer",
+      "image_hint": "Thunder Hammer weapon image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/3/38/Thunder_Hammer_Standard-Issue.jpg/revision/latest?cb=20240930164444",
+      "intended_bind": "thunder-hammer",
+      "copyright_note": "Sourced from SM2 wiki imagery for reference display.",
+      "notes": [
+        "Bound from weapon wiki image."
+      ],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Thunder_Hammer"
+      ]
+    },
+    {
+      "asset_id": "class::tactical::https://static.wikia.nocookie.net/spacemarine2/images/8/8a/class-tactical.jpeg/revision/latest?cb=20240930152007",
+      "asset_type": "class_image",
+      "title": "Tactical",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Tactical",
+      "image_hint": "wiki class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/8/8a/Class_tactical.jpeg/revision/latest?cb=20240930152007",
+      "intended_bind": "Tactical",
+      "copyright_note": "fandom wiki",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Tactical"
+      ]
+    },
+    {
+      "asset_id": "class::assault::https://static.wikia.nocookie.net/spacemarine2/images/6/6b/class-assault.jpeg/revision/latest?cb=20240930151949",
+      "asset_type": "class_image",
+      "title": "Assault",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Assault",
+      "image_hint": "wiki class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/6/6b/Class_assault.jpeg/revision/latest?cb=20240930151949",
+      "intended_bind": "Assault",
+      "copyright_note": "fandom wiki",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Assault"
+      ]
+    },
+    {
+      "asset_id": "class::vanguard::https://static.wikia.nocookie.net/spacemarine2/images/8/89/class-vanguard.jpeg/revision/latest?cb=20240930151913",
+      "asset_type": "class_image",
+      "title": "Vanguard",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
+      "image_hint": "wiki class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/8/89/Class_vanguard.jpeg/revision/latest?cb=20240930151913",
+      "intended_bind": "Vanguard",
+      "copyright_note": "fandom wiki",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Vanguard"
+      ]
+    },
+    {
+      "asset_id": "class::bulwark::https://static.wikia.nocookie.net/spacemarine2/images/2/21/class-bulwark.jpeg/revision/latest?cb=20240930152025",
+      "asset_type": "class_image",
+      "title": "Bulwark",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
+      "image_hint": "wiki class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/2/21/Class_bulwark.jpeg/revision/latest?cb=20240930152025",
+      "intended_bind": "Bulwark",
+      "copyright_note": "fandom wiki",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Bulwark"
+      ]
+    },
+    {
+      "asset_id": "class::sniper::https://static.wikia.nocookie.net/spacemarine2/images/a/a1/class-sniper.jpeg/revision/latest?cb=20240930151958",
+      "asset_type": "class_image",
+      "title": "Sniper",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Sniper",
+      "image_hint": "wiki class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/a/a1/Class_sniper.jpeg/revision/latest?cb=20240930151958",
+      "intended_bind": "Sniper",
+      "copyright_note": "fandom wiki",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Sniper"
+      ]
+    },
+    {
+      "asset_id": "class::heavy::https://static.wikia.nocookie.net/spacemarine2/images/5/5a/class-heavy.jpeg/revision/latest?cb=20240930152016",
+      "asset_type": "class_image",
+      "title": "Heavy",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Heavy",
+      "image_hint": "wiki class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/5/5a/Class_heavy.jpeg/revision/latest?cb=20240930152016",
+      "intended_bind": "Heavy",
+      "copyright_note": "fandom wiki",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Heavy"
+      ]
+    },
+    {
+      "asset_id": "class::techmarine::https://static.wikia.nocookie.net/spacemarine2/images/1/17/class-engineer.png/revision/latest?cb=20260203145958",
+      "asset_type": "class_image",
+      "title": "Techmarine",
+      "candidate_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
+      "image_hint": "wiki class image",
+      "remote_url": "https://static.wikia.nocookie.net/spacemarine2/images/1/17/Class_engineer.png/revision/latest?cb=20260203145958",
+      "intended_bind": "Techmarine",
+      "copyright_note": "fandom wiki",
+      "notes": [],
+      "source_pages": [
+        "https://spacemarine2.fandom.com/wiki/Techmarine"
+      ]
+    }
+  ]
+}

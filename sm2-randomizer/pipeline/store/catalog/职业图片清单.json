@@ -1,0 +1,81 @@
+{
+  "classes": [
+    {
+      "slug": "tactical",
+      "image_key": "class_tactical_img",
+      "asset_dir": "classes/战术兵",
+      "local_images": [
+        "cover.png"
+      ],
+      "default_image": "cover.png",
+      "target_count": 5,
+      "source_page": "https://spacemarine2.fandom.com/wiki/Tactical"
+    },
+    {
+      "slug": "assault",
+      "image_key": "class_assault_img",
+      "asset_dir": "classes/突击兵",
+      "local_images": [
+        "cover.png"
+      ],
+      "default_image": "cover.png",
+      "target_count": 5,
+      "source_page": "https://spacemarine2.fandom.com/wiki/Assault"
+    },
+    {
+      "slug": "vanguard",
+      "image_key": "class_vanguard_img",
+      "asset_dir": "classes/先锋兵",
+      "local_images": [
+        "cover.png"
+      ],
+      "default_image": "cover.png",
+      "target_count": 5,
+      "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard"
+    },
+    {
+      "slug": "bulwark",
+      "image_key": "class_bulwark_img",
+      "asset_dir": "classes/重装兵",
+      "local_images": [
+        "cover.png"
+      ],
+      "default_image": "cover.png",
+      "target_count": 5,
+      "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark"
+    },
+    {
+      "slug": "sniper",
+      "image_key": "class_sniper_img",
+      "asset_dir": "classes/狙击兵",
+      "local_images": [
+        "cover.png"
+      ],
+      "default_image": "cover.png",
+      "target_count": 5,
+      "source_page": "https://spacemarine2.fandom.com/wiki/Sniper"
+    },
+    {
+      "slug": "heavy",
+      "image_key": "class_heavy_img",
+      "asset_dir": "classes/特战兵",
+      "local_images": [
+        "cover.png"
+      ],
+      "default_image": "cover.png",
+      "target_count": 5,
+      "source_page": "https://spacemarine2.fandom.com/wiki/Heavy"
+    },
+    {
+      "slug": "techmarine",
+      "image_key": "class_techmarine_img",
+      "asset_dir": "classes/技术军士",
+      "local_images": [
+        "cover.png"
+      ],
+      "default_image": "cover.png",
+      "target_count": 5,
+      "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine"
+    }
+  ]
+}

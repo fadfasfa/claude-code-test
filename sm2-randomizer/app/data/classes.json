@@ -1,0 +1,583 @@
+{
+  "classes": [
+    {
+      "slug": "assault",
+      "name": "突击兵",
+      "role": "突击先锋",
+      "tagline": "高机动近战压制单位，快速切入高威胁区域。",
+      "summary": "高机动近战压制单位，快速切入高威胁区域。",
+      "class_ability": "Jump Pack",
+      "image_path": "classes/突击兵/cover.png",
+      "loadout_pools": {
+        "primary": [],
+        "secondary": [
+          {
+            "slug": "bolt-pistol",
+            "name": "爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/爆弹手枪.png"
+          },
+          {
+            "slug": "heavy-bolt-pistol",
+            "name": "重爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/重爆弹手枪.png"
+          },
+          {
+            "slug": "plasma-pistol",
+            "name": "等离子手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/等离子手枪.png"
+          },
+          {
+            "slug": "inferno-pistol",
+            "name": "地狱火手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/地狱火手枪.png"
+          },
+          {
+            "slug": "neo-volkite-pistol",
+            "name": "高能爆燃手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/高能爆燃手枪.png"
+          }
+        ],
+        "melee": [
+          {
+            "slug": "chainsword",
+            "name": "链锯剑",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/链锯剑.png"
+          },
+          {
+            "slug": "thunder-hammer",
+            "name": "雷霆锤",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/雷霆锤.png"
+          },
+          {
+            "slug": "power-fist",
+            "name": "动力拳",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/动力拳.png"
+          },
+          {
+            "slug": "power-sword",
+            "name": "动力剑",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/动力剑.png"
+          },
+          {
+            "slug": "power-axe",
+            "name": "动力斧",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/动力斧.png"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "bulwark",
+      "name": "重装兵",
+      "role": "壁垒守护",
+      "tagline": "以防御与队伍保护为核心的前排单位。",
+      "summary": "以防御与队伍保护为核心的前排单位。",
+      "class_ability": "Chapter Banner",
+      "image_path": "classes/重装兵/cover.png",
+      "loadout_pools": {
+        "primary": [],
+        "secondary": [
+          {
+            "slug": "bolt-pistol",
+            "name": "爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/爆弹手枪.png"
+          },
+          {
+            "slug": "heavy-bolt-pistol",
+            "name": "重爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/重爆弹手枪.png"
+          },
+          {
+            "slug": "plasma-pistol",
+            "name": "等离子手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/等离子手枪.png"
+          },
+          {
+            "slug": "neo-volkite-pistol",
+            "name": "高能爆燃手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/高能爆燃手枪.png"
+          }
+        ],
+        "melee": [
+          {
+            "slug": "thunder-hammer",
+            "name": "雷霆锤",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/雷霆锤.png"
+          },
+          {
+            "slug": "chainsword",
+            "name": "链锯剑",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/链锯剑.png"
+          },
+          {
+            "slug": "power-fist",
+            "name": "动力拳",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/动力拳.png"
+          },
+          {
+            "slug": "power-sword",
+            "name": "动力剑",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/动力剑.png"
+          },
+          {
+            "slug": "power-axe",
+            "name": "动力斧",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/动力斧.png"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "heavy",
+      "name": "特战兵",
+      "role": "重装火力",
+      "tagline": "提供持续火力压制与重型武器输出。",
+      "summary": "提供持续火力压制与重型武器输出。",
+      "class_ability": "Iron Halo",
+      "image_path": "classes/特战兵/cover.png",
+      "loadout_pools": {
+        "primary": [
+          {
+            "slug": "heavy-bolt-rifle",
+            "name": "重型爆弹步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/重型爆弹步枪.png"
+          },
+          {
+            "slug": "heavy-bolter",
+            "name": "重型爆弹枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/重型爆弹枪.png"
+          },
+          {
+            "slug": "heavy-plasma-incinerator",
+            "name": "重型等离子焚化枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/重型等离子焚化枪.png"
+          },
+          {
+            "slug": "multi-melta",
+            "name": "多管热熔",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/多管热熔.png"
+          },
+          {
+            "slug": "pyrecannon",
+            "name": "焚焰炮",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/焚焰炮.png"
+          }
+        ],
+        "secondary": [
+          {
+            "slug": "bolt-pistol",
+            "name": "爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/爆弹手枪.png"
+          },
+          {
+            "slug": "heavy-bolt-pistol",
+            "name": "重爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/重爆弹手枪.png"
+          },
+          {
+            "slug": "plasma-pistol",
+            "name": "等离子手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/等离子手枪.png"
+          },
+          {
+            "slug": "inferno-pistol",
+            "name": "地狱火手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/地狱火手枪.png"
+          }
+        ],
+        "melee": [
+          {
+            "slug": "heavy-firearms-melee",
+            "name": "重武器近战",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/重武器近战.png"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "sniper",
+      "name": "狙击兵",
+      "role": "远程精确",
+      "tagline": "专注高价值目标清除与远程压制。",
+      "summary": "专注高价值目标清除与远程压制。",
+      "class_ability": "Camo Cloak",
+      "image_path": "classes/狙击兵/cover.png",
+      "loadout_pools": {
+        "primary": [
+          {
+            "slug": "stalker-bolt-rifle",
+            "name": "追猎者爆弹步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/追猎者爆弹步枪.png"
+          },
+          {
+            "slug": "instigator-bolt-carbine",
+            "name": "煽动者爆弹卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/煽动者爆弹卡宾枪.png"
+          },
+          {
+            "slug": "bolt-sniper-rifle",
+            "name": "爆弹狙击步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/爆弹狙击步枪.png"
+          },
+          {
+            "slug": "bolt-carbine",
+            "name": "爆弹卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/爆弹卡宾枪.png"
+          },
+          {
+            "slug": "las-fusil",
+            "name": "激光燧发枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/激光燧发枪.png"
+          },
+          {
+            "slug": "marksman-bolt-carbine",
+            "name": "神射手卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/神射手卡宾枪.png"
+          }
+        ],
+        "secondary": [
+          {
+            "slug": "bolt-pistol",
+            "name": "爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/爆弹手枪.png"
+          },
+          {
+            "slug": "heavy-bolt-pistol",
+            "name": "重爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/重爆弹手枪.png"
+          },
+          {
+            "slug": "inferno-pistol",
+            "name": "地狱火手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/地狱火手枪.png"
+          }
+        ],
+        "melee": [
+          {
+            "slug": "combat-knife",
+            "name": "战斗匕首",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/战斗匕首.png"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "tactical",
+      "name": "战术兵",
+      "role": "战术支援",
+      "tagline": "标准化战斗编组核心，适合大多数任务场景。",
+      "summary": "标准化战斗编组核心，适合大多数任务场景。",
+      "class_ability": "Auspex Scan",
+      "image_path": "classes/战术兵/cover.png",
+      "loadout_pools": {
+        "primary": [
+          {
+            "slug": "auto-bolt-rifle",
+            "name": "自动爆弹步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/自动爆弹步枪.png"
+          },
+          {
+            "slug": "bolt-rifle",
+            "name": "爆弹步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/爆弹步枪.png"
+          },
+          {
+            "slug": "heavy-bolt-rifle",
+            "name": "重型爆弹步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/重型爆弹步枪.png"
+          },
+          {
+            "slug": "stalker-bolt-rifle",
+            "name": "追猎者爆弹步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/追猎者爆弹步枪.png"
+          },
+          {
+            "slug": "bolt-carbine",
+            "name": "爆弹卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/爆弹卡宾枪.png"
+          },
+          {
+            "slug": "plasma-incinerator",
+            "name": "等离子焚化枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/等离子焚化枪.png"
+          },
+          {
+            "slug": "melta-rifle",
+            "name": "热熔步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/热熔步枪.png"
+          },
+          {
+            "slug": "pyreblaster",
+            "name": "焚焰枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/焚焰枪.png"
+          }
+        ],
+        "secondary": [
+          {
+            "slug": "bolt-pistol",
+            "name": "爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/爆弹手枪.png"
+          },
+          {
+            "slug": "heavy-bolt-pistol",
+            "name": "重爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/重爆弹手枪.png"
+          },
+          {
+            "slug": "plasma-pistol",
+            "name": "等离子手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/等离子手枪.png"
+          }
+        ],
+        "melee": [
+          {
+            "slug": "combat-knife",
+            "name": "战斗匕首",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/战斗匕首.png"
+          },
+          {
+            "slug": "chainsword",
+            "name": "链锯剑",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/链锯剑.png"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "techmarine",
+      "name": "技术军士",
+      "role": "机械神甫",
+      "tagline": "兼顾技术支援与特种装备调配的战斗单位。",
+      "summary": "兼顾技术支援与特种装备调配的战斗单位。",
+      "class_ability": "Servo-Gun",
+      "image_path": "classes/技术军士/cover.png",
+      "loadout_pools": {
+        "primary": [
+          {
+            "slug": "auto-bolt-rifle",
+            "name": "自动爆弹步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/自动爆弹步枪.png"
+          },
+          {
+            "slug": "bolt-rifle",
+            "name": "爆弹步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/爆弹步枪.png"
+          },
+          {
+            "slug": "heavy-bolt-rifle",
+            "name": "重型爆弹步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/重型爆弹步枪.png"
+          },
+          {
+            "slug": "plasma-incinerator",
+            "name": "等离子焚化枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/等离子焚化枪.png"
+          },
+          {
+            "slug": "occulus-bolt-carbine",
+            "name": "全知者爆弹卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/全知者爆弹卡宾枪.png"
+          }
+        ],
+        "secondary": [
+          {
+            "slug": "bolt-pistol",
+            "name": "爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/爆弹手枪.png"
+          },
+          {
+            "slug": "heavy-bolt-pistol",
+            "name": "重爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/重爆弹手枪.png"
+          },
+          {
+            "slug": "plasma-pistol",
+            "name": "等离子手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/等离子手枪.png"
+          },
+          {
+            "slug": "inferno-pistol",
+            "name": "地狱火手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/地狱火手枪.png"
+          },
+          {
+            "slug": "neo-volkite-pistol",
+            "name": "高能爆燃手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/高能爆燃手枪.png"
+          }
+        ],
+        "melee": [
+          {
+            "slug": "combat-knife",
+            "name": "战斗匕首",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/战斗匕首.png"
+          },
+          {
+            "slug": "power-sword",
+            "name": "动力剑",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/动力剑.png"
+          },
+          {
+            "slug": "power-axe",
+            "name": "动力斧",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/动力斧.png"
+          },
+          {
+            "slug": "omnissiah-axe",
+            "name": "欧姆尼赛亚战斧",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/欧姆尼赛亚战斧.png"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "vanguard",
+      "name": "先锋兵",
+      "role": "前锋渗透",
+      "tagline": "擅长快速接敌与机动骚扰，兼顾突破与收割。",
+      "summary": "擅长快速接敌与机动骚扰，兼顾突破与收割。",
+      "class_ability": "Grapnel Launcher",
+      "image_path": "classes/先锋兵/cover.png",
+      "loadout_pools": {
+        "primary": [
+          {
+            "slug": "instigator-bolt-carbine",
+            "name": "煽动者爆弹卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/煽动者爆弹卡宾枪.png"
+          },
+          {
+            "slug": "bolt-carbine",
+            "name": "爆弹卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/爆弹卡宾枪.png"
+          },
+          {
+            "slug": "occulus-bolt-carbine",
+            "name": "全知者爆弹卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/全知者爆弹卡宾枪.png"
+          },
+          {
+            "slug": "melta-rifle",
+            "name": "热熔步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/热熔步枪.png"
+          }
+        ],
+        "secondary": [
+          {
+            "slug": "bolt-pistol",
+            "name": "爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/爆弹手枪.png"
+          },
+          {
+            "slug": "heavy-bolt-pistol",
+            "name": "重爆弹手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/重爆弹手枪.png"
+          },
+          {
+            "slug": "inferno-pistol",
+            "name": "地狱火手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/地狱火手枪.png"
+          },
+          {
+            "slug": "neo-volkite-pistol",
+            "name": "高能爆燃手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/高能爆燃手枪.png"
+          }
+        ],
+        "melee": [
+          {
+            "slug": "combat-knife",
+            "name": "战斗匕首",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/战斗匕首.png"
+          },
+          {
+            "slug": "chainsword",
+            "name": "链锯剑",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/链锯剑.png"
+          },
+          {
+            "slug": "power-axe",
+            "name": "动力斧",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/动力斧.png"
+          }
+        ]
+      }
+    }
+  ]
+}

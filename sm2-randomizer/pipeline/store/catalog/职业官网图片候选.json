@@ -1,0 +1,82 @@
+{
+  "classes": [
+    {
+      "slug": "tactical",
+      "职业名": "战术兵",
+      "官网图片候选": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_ShopCard.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/twomarinesfromspacewithbigsworddamn.png",
+        "https://static.wikia.nocookie.net/spacemarine2/images/8/8a/Class_tactical.jpeg/revision/latest?cb=20240930152007"
+      ],
+      "随机展示数": 4
+    },
+    {
+      "slug": "assault",
+      "职业名": "突击兵",
+      "官网图片候选": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__36_.png",
+        "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_ShopCard.jpg",
+        "https://static.wikia.nocookie.net/spacemarine2/images/6/6b/Class_assault.jpeg/revision/latest?cb=20240930151949"
+      ],
+      "随机展示数": 4
+    },
+    {
+      "slug": "vanguard",
+      "职业名": "先锋兵",
+      "官网图片候选": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__36_.png",
+        "https://medias.community.focus-entmt.com/forums/mzulft/communityeventjustplaythegamelol.png",
+        "https://static.wikia.nocookie.net/spacemarine2/images/8/89/Class_vanguard.jpeg/revision/latest?cb=20240930151913"
+      ],
+      "随机展示数": 4
+    },
+    {
+      "slug": "bulwark",
+      "职业名": "重装兵",
+      "官网图片候选": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/twomarinesfromspacewithbigsworddamn.png",
+        "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_1_Year_Anniversary_store_capsule_vertical.jpg",
+        "https://static.wikia.nocookie.net/spacemarine2/images/2/21/Class_bulwark.jpeg/revision/latest?cb=20240930152025"
+      ],
+      "随机展示数": 4
+    },
+    {
+      "slug": "sniper",
+      "职业名": "狙击兵",
+      "官网图片候选": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__36_.png",
+        "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_2_Year_Anniversary_store_capsule_vertical.jpg",
+        "https://static.wikia.nocookie.net/spacemarine2/images/a/a1/Class_sniper.jpeg/revision/latest?cb=20240930151958"
+      ],
+      "随机展示数": 4
+    },
+    {
+      "slug": "heavy",
+      "职业名": "特战兵",
+      "官网图片候选": [
+        "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/twomarinesfromspacewithbigsworddamn.png",
+        "https://medias.community.focus-entmt.com/forums/mzulft/communityeventjustplaythegamelol.png",
+        "https://static.wikia.nocookie.net/spacemarine2/images/5/5a/Class_heavy.jpeg/revision/latest?cb=20240930152016"
+      ],
+      "随机展示数": 4
+    },
+    {
+      "slug": "techmarine",
+      "职业名": "技术军士",
+      "官网图片候选": [
+        "https://medias.community.focus-entmt.com/forums/mzulft/SpaceMarine2_PatchNote_12_TechMarine_1920x1080.jpg",
+        "https://medias.community.focus-entmt.com/forums/mzulft/5_10-1.png",
+        "https://medias.community.focus-entmt.com/forums/mzulft/2_11.png",
+        "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__33_.png",
+        "https://static.wikia.nocookie.net/spacemarine2/images/1/17/Class_engineer.png/revision/latest?cb=20260203145958"
+      ],
+      "随机展示数": 5
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "items": [
+    {
+      "slug": "combat-knife",
+      "preferred_asset_name": "战斗匕首",
+      "slot_type": "melee",
+      "notes": "按当前中文命名要求覆盖 Excel 的“匕首”。"
+    }
+  ]
+}

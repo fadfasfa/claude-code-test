@@ -1,0 +1,17 @@
+{
+  "name": "sm2-data-scraping",
+  "version": "1.0.0",
+  "private": true,
+  "description": "星际战士2 Wiki 结构抓取的过渡期 Node 依赖配置",
+  "main": "scrape_wiki.js",
+  "scripts": {
+    "scrape": "node scrape_wiki.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "axios": "^1.8.4",
+    "cheerio": "^1.0.0"
+  }
+}

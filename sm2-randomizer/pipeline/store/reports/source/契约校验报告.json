@@ -1,0 +1,18 @@
+{
+  "summary": {
+    "class_count": 7,
+    "weapon_count": 29,
+    "official_asset_count": 36,
+    "review_queue_count": 27,
+    "error_count": 0,
+    "warning_count": 0,
+    "source_confidence_allowed": [
+      "high",
+      "low",
+      "medium"
+    ]
+  },
+  "issues": [],
+  "review_queue_file": "data/validation/待复核队列.json",
+  "rules_file": "processing/rules/extraction_rules.json"
+}

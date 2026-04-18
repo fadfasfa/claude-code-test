@@ -1,31 +1,42 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8080",
+    "ANTHROPIC_API_KEY": "pwd",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.4",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.3-codex",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.4-mini",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "GPT-5.4",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION": "复杂任务主力模型",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "GPT-5.3 Codex",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION": "日常编码默认模型",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "GPT-5.4 Mini",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION": "轻量快速模型"
+  },
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/apple/.claude/**)",
+      "Read(//c/Users/apple/.claude/skills/**)",
+      "Bash(git *)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(node *)",
+      "Bash(npm *)",
+      "Bash(bash *)",
+      "WebFetch(domain:127.0.0.1)",
+      "WebFetch(domain:localhost)",
+      "Bash(playwright screenshot *)"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "model": "opus[1m]",
+  "effortLevel": "medium",
+  "skipDangerousModePermissionPrompt": true,
   "skillSearchPaths": [
     "c:/Users/apple/.claude/skills/",
     "c:/Users/apple/.claude/skills-shared/"
   ],
-  "permissions": {
-    "allow": [
-      "Bash(wc -l \"c:/Users/apple/claude code test/run\"/*.py)",
-      "Bash(cmd /c '\"\"c:\\\\Users\\\\apple\\\\claude code test\\\\run\\\\.venv\\\\Scripts\\\\pyinstaller.exe\"\" Hextech.spec')",
-      "Bash(\"c:\\\\Users\\\\apple\\\\claude code test\\\\run\\\\.venv\\\\Scripts\\\\python.exe\" -m PyInstaller Hextech.spec --noconfirm)",
-      "Bash(python -c:*)",
-      "Bash(python .ai_workflow/post_check_diff.py:*)",
-      "Bash(echo:*)",
-      "Bash(python:*)",
-      "Bash(python3:*)",
-      "Bash(git add .)",
-      "Bash(git commit:*)",
-      "Bash(npm show:*)",
-      "Bash(git config --list)",
-      "Bash(test -f scripts/gemini_reviewer.py)",
-      "Bash(chrome:*)",
-      "Bash(start:*)",
-      "Bash(powershell -Command \"Start-Process chrome:*)",
-      "Bash(gitnexus impact:*)",
-      "Bash(dir subtitle_extractor /s)",
-      "Bash(powershell \"Get-ChildItem -Path subtitle_extractor -Recurse | Measure-Object -Property Length -Sum\")",
-      "Bash(code --list-extensions --show-versions)",
-      "Bash(where claude:*)"
-    ]
-  }
+  "additionalDirectories": [],
+  "enabledPlugins": {},
+  "extraKnownMarketplaces": {}
 }

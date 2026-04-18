@@ -1,0 +1,37 @@
+{
+  "mode": "hybrid_now_wiki_ready",
+  "class_fields": {
+    "slug": "wiki",
+    "display_name": "manual",
+    "role": "manual_or_front_display",
+    "tagline": "manual_or_front_display",
+    "class_ability": "wiki",
+    "summary": "wiki",
+    "class_images": "wiki_candidates_plus_local_assets",
+    "skills": "manual",
+    "loadouts": "wiki_structure",
+    "strategy_terms": "manual"
+  },
+  "weapon_fields": {
+    "slug": "wiki",
+    "display_name": "excel_or_current_chinese_fallback",
+    "original_name": "wiki",
+    "slot_type": "wiki",
+    "available_classes": "wiki",
+    "mode_restriction": "wiki",
+    "description_short": "wiki",
+    "image": "excel",
+    "notes": "wiki"
+  },
+  "talent_fields": {
+    "grid_position": "wiki",
+    "title": "manual_or_wiki",
+    "description": "manual_or_wiki",
+    "icon": "wiki_plus_local_assets"
+  },
+  "global_fields": {
+    "strategy_terms": "manual_or_excel",
+    "version_anchor": "wiki",
+    "source_meta": "pipeline"
+  }
+}

@@ -15,3 +15,9 @@ run/config/augment_icon_audit.jsonl
 run/config/hextech_system.log
 run/config/scraper_status.json
 run/config/web_server_port.txt
+
+# sm2-randomizer rebuildable artifacts
+sm2-randomizer/**/__pycache__/
+sm2-randomizer/pipeline/sources/wiki/node_modules/
+sm2-randomizer/pipeline/out/source/reports/perk_dom_dumps/
+sm2-randomizer/pipeline/out/source/reports/screen.png
