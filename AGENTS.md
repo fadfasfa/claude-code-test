@@ -8,6 +8,9 @@
 
 - `PROJECT.md`：项目/工作区稳定说明，记录结构、职责、数据流、风险、技术债务与近期变更原则
 - `AGENTS.md`：仓库级稳定规则、角色边界与 review 入口
+- `CLAUDE.md`：Claude Code 在本仓的根入口提醒
+- `agent_tooling_baseline.md`：skill + CLI 基线与能力边界
+- `work_area_registry.md`：工作区注册表与新增工作区登记模板
 - 审查主输入：`diff`、任务说明、测试结果、必要时的 `PROJECT.md` 同步证据、必要时的 Antigravity 证据
 
 ---
@@ -61,3 +64,17 @@
 - 根 `agents.md`
 - 重型待机壳、恢复壳和大台账式任务壳
 - 新增复杂状态机
+- 历史 `.agents/*` workflow/contract 文档已从活跃工作树退役；后续如需重构，基于 git history 重建，而不是继续把旧路径当入口
+
+---
+
+## 五、Work-Area Selection And Write Boundaries
+
+- 本仓是多工作区仓；先在 `work_area_registry.md` 确认目标工作区，再开始写入。
+- 默认允许跨仓读取；默认只允许在当前目标工作区目录树内写入。
+- 未明确目标工作区时，只允许只读探查并列出候选工作区，不得直接写文件。
+- 仓库根目录不是默认业务写入区；没有明确仓库治理任务时，不在根目录写业务文件。
+- 禁止跨工作区写入；不要为某个工作区任务改写别的工作区。
+- 禁止在根目录创建抓取脚本目录、业务目录、输出目录、MCP 配置目录，禁止擅自安装 MCP 或写入 `.mcp.json`。
+- 处理某个工作区任务时，从该工作区目录启动工具；Codex 默认使用 `codex --cd <work_area_path>`，默认不要使用 `--add-dir`。
+- 当前仓不需要项目级 `.codex/config.toml`；从仓库根启动时，默认只做只读探查或仓库治理，不做业务实现。
