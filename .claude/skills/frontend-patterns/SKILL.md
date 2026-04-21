@@ -1,4 +1,4 @@
-<!-- adapted-from-upstream: C:\Users\apple\.agents\skills\frontend-patterns\SKILL.md -->
+<!-- adopted-into-repo-baseline -->
 ---
 name: frontend-patterns
 description: Project-level frontend guidance that favors existing UI patterns, accessibility, and verification evidence.

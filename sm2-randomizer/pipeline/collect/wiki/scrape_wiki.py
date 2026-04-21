@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""抓取并生成 Wiki 源数据与审阅产物。
+
+职责边界：仅写入 pipeline 的 source/catalog/reports 层，不直接写运行时数据目录。
+"""
+
 import json
 import re
 import sys
@@ -22,8 +27,8 @@ RAW_OUTPUT_PATH = PIPELINE_STORE_RAW_WIKI_DIR / "原始抓取数据.json"
 CLASS_WEAPON_MAP_OUTPUT_PATH = PIPELINE_STORE_CATALOG_DIR / "职业武器映射.json"
 TABLE_OUTPUT_PATH = PIPELINE_STORE_REPORTS_SOURCE_DIR / "人工审阅表.md"
 TALENT_IMPORT_PATH = PIPELINE_STORE_RAW_EXCEL_DIR / "天赋技能效果.json"
-TALENT_GRID_COLS = 3
-TALENT_GRID_ROWS = 8
+TALENT_GRID_COLS = 8
+TALENT_GRID_ROWS = 3
 TALENT_SLOT_COUNT = TALENT_GRID_COLS * TALENT_GRID_ROWS
 CLASS_NAME_MAP = {
     "Tactical": "战术兵",
@@ -192,12 +197,25 @@ def extract_description_short(soup: BeautifulSoup) -> str:
     return normalize_whitespace(paragraph.get_text(" ") if paragraph else "")
 
 
+def _clean_role_text(value: str) -> str:
+    text = normalize_whitespace(value)
+    if not text:
+        return ""
+    text = re.sub(r"\bCodename\b.*$", "", text, flags=re.I).strip()
+    text = re.sub(r"\bName\b.*$", "", text, flags=re.I).strip()
+    text = re.sub(r"\bAbility\b.*$", "", text, flags=re.I).strip()
+    text = normalize_whitespace(text)
+    return "" if len(text) < 2 else text
+
+
 def extract_role_text(soup: BeautifulSoup) -> str:
     node = find_infobox_value(soup, "description")
     if node:
-        return normalize_whitespace(node.get_text(" "))
+        cleaned = _clean_role_text(node.get_text(" "))
+        if cleaned:
+            return cleaned
     paragraph = soup.select_one(".mw-parser-output p")
-    return normalize_whitespace(paragraph.get_text(" ") if paragraph else "")
+    return _clean_role_text(paragraph.get_text(" ") if paragraph else "")
 
 
 def extract_ability_text(soup: BeautifulSoup) -> str:
@@ -438,66 +456,155 @@ def normalize_chinese_class_name(english_name: str) -> str:
     return CLASS_NAME_MAP.get(english_name, english_name)
 
 
-def extract_perk_tree_talents(page_html: str) -> list[dict[str, str]]:
+def extract_perk_tree_talents(page_html: str) -> list[dict[str, Any]]:
     soup = BeautifulSoup(page_html, "html.parser")
-    results: list[dict[str, str]] = []
-    for node in soup.select('.perktree-table .sm2-tooltip'):
-        english_name = normalize_whitespace(node.get('data-title') or node.get_text(' '))
-        img = node.select_one('img')
-        icon_url = (img.get('data-src') or img.get('src') or '') if img else ''
-        image_key = img.get('data-image-key') or '' if img else ''
-        if english_name:
-            results.append({"english_name": english_name, "icon_url": icon_url, "image_key": image_key})
-    return uniq(results)
+    table = soup.select_one("table.perktree-table")
+    if not table:
+        return []
+
+    results: list[dict[str, Any]] = []
+    rows = table.select("tr")
+    for row_index, row in enumerate(rows[1:1 + TALENT_GRID_ROWS], start=1):
+        cells = row.find_all("td", recursive=False)
+        for col_index, cell in enumerate(cells[:TALENT_GRID_COLS], start=1):
+            node = cell.select_one(".sm2-tooltip")
+            if not node:
+                continue
+            english_name = normalize_whitespace(node.get("data-title") or node.get_text(" "))
+            img = node.select_one("img")
+            icon_url = (img.get("data-src") or img.get("src") or "") if img else ""
+            image_key = img.get("data-image-key") or "" if img else ""
+            if not english_name:
+                continue
+            results.append(
+                {
+                    "english_name": english_name,
+                    "icon_url": icon_url,
+                    "image_key": image_key,
+                    "col": col_index,
+                    "row": row_index,
+                    "grid_label": f"{col_index}/{row_index}",
+                }
+            )
+    return results
 
 
-def merge_talent_seeds_with_page_data(class_record: dict[str, Any], rows_by_class: dict[str, list[dict[str, Any]]], page_talents: list[dict[str, str]]) -> list[dict[str, Any]]:
-    class_name = normalize_chinese_class_name(class_record['name'])
-    chinese_rows = rows_by_class.get(class_name, [])
-    items: list[dict[str, Any]] = []
-    for index, item in enumerate(page_talents[:TALENT_SLOT_COUNT]):
-        row = chinese_rows[index] if index < len(chinese_rows) else {}
-        items.append({
-            "english_name": item.get("english_name", ""),
-            "chinese_name": normalize_whitespace(row.get("talent_name_raw", "")),
-            "description": normalize_whitespace(row.get("description", "")),
-            "icon_url": item.get("icon_url", ""),
-            "image_key": item.get("image_key", ""),
-            "index": index,
-        })
-    return items
+def extract_perk_list_descriptions(page_html: str) -> dict[str, str]:
+    soup = BeautifulSoup(page_html, "html.parser")
+    descriptions: dict[str, str] = {}
+    for table in soup.select("table.perklist-table"):
+        for row in table.select("tr"):
+            cells = row.find_all("td", recursive=False)
+            if len(cells) < 3:
+                continue
+            perk_name = normalize_whitespace(cells[1].get_text(" "))
+            description = normalize_whitespace(cells[2].get_text(" "))
+            if perk_name and description:
+                descriptions[perk_name] = description
+    return descriptions
 
 
-def build_real_talent_seeds(class_record: dict[str, Any], rows_by_class: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
-    page = fetch_fandom_page(class_record['name'])
-    page_talents = extract_perk_tree_talents(page['html'])
-    return merge_talent_seeds_with_page_data(class_record, rows_by_class, page_talents) if page_talents else []
+def extract_talent_layout_from_page(page_html: str) -> list[dict[str, Any]]:
+    layout_items = extract_perk_tree_talents(page_html)
+    descriptions = extract_perk_list_descriptions(page_html)
+    for item in layout_items:
+        item["description_en"] = descriptions.get(item["english_name"], "")
+    return layout_items
 
 
-def talent_coords(index: int) -> tuple[int, int]:
-    col = (index // TALENT_GRID_ROWS) + 1
-    row = (index % TALENT_GRID_ROWS) + 1
-    return col, row
+def build_rows_by_name(rows_by_class: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, dict[str, Any]]]:
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    for class_name, rows in rows_by_class.items():
+        mapping: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            talent_name = normalize_whitespace(row.get("talent_name_raw"))
+            if talent_name:
+                mapping[talent_name] = row
+        result[class_name] = mapping
+    return result
+
+
+def fallback_description_is_usable(value: Any) -> bool:
+    text = normalize_whitespace(value)
+    return bool(text and text != "/")
+
+
+def resolve_row_by_english_name(
+    english_name: str,
+    rows_by_name: dict[str, dict[str, Any]],
+    fallback_by_name: dict[str, Any],
+) -> dict[str, Any]:
+    fallback = fallback_by_name.get(english_name, {}) if isinstance(fallback_by_name, dict) else {}
+    fallback_zh_name = normalize_whitespace(fallback.get("talent_name_zh") or fallback.get("talent_name"))
+    if fallback_zh_name and fallback_zh_name in rows_by_name:
+        return rows_by_name[fallback_zh_name]
+    if fallback_zh_name:
+        for row_name, row in rows_by_name.items():
+            if fallback_zh_name in row_name or row_name in fallback_zh_name:
+                return row
+    return {}
+
+
+def resolve_layout_talent_seeds(
+    class_record: dict[str, Any],
+    rows_by_class: dict[str, list[dict[str, Any]]],
+    fallback_by_name: dict[str, Any],
+) -> list[dict[str, Any]]:
+    page = fetch_fandom_page(class_record["name"])
+    class_name = normalize_chinese_class_name(class_record["name"])
+    rows_by_name = build_rows_by_name(rows_by_class).get(class_name, {})
+    layout_items = extract_talent_layout_from_page(page["html"])
+    seeds: list[dict[str, Any]] = []
+    for item in layout_items:
+        matched_row = resolve_row_by_english_name(item["english_name"], rows_by_name, fallback_by_name)
+        seeds.append(
+            {
+                "english_name": item.get("english_name", ""),
+                "chinese_name": normalize_whitespace(matched_row.get("talent_name_raw", "")),
+                "description": normalize_whitespace(matched_row.get("description", "")),
+                "description_en": item.get("description_en", ""),
+                "icon_url": item.get("icon_url", ""),
+                "image_key": item.get("image_key", ""),
+                "col": int(item.get("col", 0) or 0),
+                "row": int(item.get("row", 0) or 0),
+                "grid_label": str(item.get("grid_label", "")).strip(),
+                "source_url": page["url"],
+            }
+        )
+    return seeds
+
+
+def build_real_talent_seeds(
+    class_record: dict[str, Any],
+    rows_by_class: dict[str, list[dict[str, Any]]],
+    fallback_by_name: dict[str, Any],
+) -> list[dict[str, Any]]:
+    return resolve_layout_talent_seeds(class_record, rows_by_class, fallback_by_name)
 
 
 def build_talent_payload(classes: list[dict[str, Any]]) -> dict[str, Any]:
     rows_by_class = load_talent_rows_by_class()
     talents_by_class: dict[str, list[dict[str, Any]]] = {}
     for class_record in classes:
-        seeds = build_real_talent_seeds(class_record, rows_by_class)
+        seeds = build_real_talent_seeds(class_record, rows_by_class, {})
         items: list[dict[str, Any]] = []
         for item in seeds:
-            col, row = talent_coords(int(item.get("index", 0)))
+            col = int(item.get("col", 0) or 0)
+            row = int(item.get("row", 0) or 0)
+            if not col or not row:
+                continue
             items.append({
                 "class_name": normalize_chinese_class_name(class_record["name"]),
                 "english_name": item.get("english_name", ""),
                 "chinese_name": item.get("chinese_name", ""),
-                "description": item.get("description", ""),
+                "description": item.get("description", "") or item.get("description_en", ""),
                 "icon_url": item.get("icon_url", ""),
                 "image_key": item.get("image_key", ""),
                 "col": col,
                 "row": row,
-                "grid_label": f"{col}/{row}",
+                "grid_label": str(item.get("grid_label", "")).strip() or f"{col}/{row}",
             })
         talents_by_class[class_record["name"]] = items
     return {"classes": talents_by_class, "manual_action_items": []}
@@ -676,7 +783,6 @@ def build_raw_payload(classes: list[dict[str, Any]], weapons: list[dict[str, Any
     conflict_count += sum(len([note for note in entry["notes"] if str(note).startswith(CONFLICT_PREFIX)]) for entry in raw_weapons)
     return {
         "meta": {
-            "generated_at": requests.utils.datetime_to_header(requests.utils.parse_header_links('<dummy>; rel="self"')[0].get('dummy', '')) if False else None,
             "version_anchor": VERSION_ANCHOR,
             "official_anchor": official_anchor,
             "sources": {

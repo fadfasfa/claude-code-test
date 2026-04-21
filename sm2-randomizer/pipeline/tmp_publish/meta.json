@@ -1,7 +1,7 @@
 {
   "build": {
     "version": "Update 12.0 / Techmarine",
-    "generated_at": "2026-04-18T13:47:00.705522+00:00",
+    "generated_at": "2026-04-20T13:30:21.191951+00:00",
     "source_mode": "hybrid_now_wiki_ready",
     "source_coverage": {
       "classes": 7,
@@ -595,6 +595,282 @@
       "core_tags": [],
       "aliases": [],
       "type": "negative"
+    },
+    {
+      "key": "reduced-vitality",
+      "label": "状态欠佳：最大生命值大幅下降",
+      "name": "状态欠佳",
+      "detail": "状态欠佳：玩家最大生命值-50%",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "survival-training",
+      "label": "生存训练：缓冲生命机制被禁用",
+      "name": "生存训练",
+      "detail": "生存训练：禁用缓冲生命值机制，玩家倒地不再被施加重伤状态",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "thick-skinned",
+      "label": "皮糙肉厚：敌人更难被控制/击",
+      "name": "皮糙肉厚",
+      "detail": "皮糙肉厚：强化敌人霸体，需要进行被设定好的固定次数(3)的攻击后才允许被控制/击退",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "class-nerf",
+      "label": "削弱特定兵种：特定角色被重度",
+      "name": "削弱特定兵种",
+      "detail": "削弱特定兵种：最大生命值、远程武器、近战、道具伤害降低50%[乘算]，且移除角色招架格挡能力",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "killer-instinct",
+      "label": "杀手本能：技能恢复路径受限",
+      "name": "杀手本能",
+      "detail": "杀手本能：禁止技能恢复充能，仅能通过击杀恢复：每击杀恢复2.5%技能充能",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "detonation-risk",
+      "label": "引爆风险：爆炸物威胁显著增强",
+      "name": "引爆风险",
+      "detail": "引爆风险：地图生成三倍数量爆炸物，爆炸范围增加100%，伤害增加100%",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "info_deprivation_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "relentless-pursuit",
+      "label": "紧追不舍：高压追击敌额外加入",
+      "name": "紧追不舍",
+      "detail": "紧追不舍：刷怪包中增加一只阿尔法利卡特；最低刷新冷却时间120秒",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "effective-taunt",
+      "label": "有效嘲讽：怪潮额外生成暴怒精",
+      "name": "有效嘲讽",
+      "detail": "有效嘲讽：怪潮生成时必定生成至少2个暴怒状态精英",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "armor-depleted",
+      "label": "护甲耗尽：护甲资源被压缩",
+      "name": "护甲耗尽",
+      "detail": "护甲耗尽：玩家只能拥有1格护甲，且禁用护甲碎片掉落",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "cannon-fodder-wave",
+      "label": "砍瓜切菜：敌群结构改为炮灰倾",
+      "name": "砍瓜切菜",
+      "detail": "砍瓜切菜：降低60%精英生成数量，增加100%炮灰敌人生成数量，100%小型敌人生成数量",
+      "risk_level": "advisory",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "no-ammo-pickups",
+      "label": "无弹可拾：常规弹药补给被禁用",
+      "name": "无弹可拾",
+      "detail": "无弹可拾：地图不再生成弹药补充，但近战击杀会恢复弹药（2%）",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "rationed-supply",
+      "label": "定量配给：补给箱被替换为弹药",
+      "name": "定量配给",
+      "detail": "定量配给：地图不再生成弹药箱，但弹药盒生成数量翻倍",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "gear-malfunction",
+      "label": "装备故障：道具使用被禁用",
+      "name": "装备故障",
+      "detail": "装备故障：禁用道具",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "no-apothecary",
+      "label": "无药剂师：激励剂被禁用",
+      "name": "无药剂师",
+      "detail": "无药剂师：禁用激励剂",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "friendly-fire",
+      "label": "可疑行为：友伤机制被启用",
+      "name": "可疑行为",
+      "detail": "可疑行为：启用远程与道具的友伤，这些伤害会被减少60%，爆炸物伤害为55%，",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "wipe_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "armor-malfunction",
+      "label": "装甲故障：闪避失误会反噬自身",
+      "name": "装甲故障",
+      "detail": "装甲故障：非完美闪避的闪避动作会使玩家受到0.67点技能伤害",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "explosive-trap",
+      "label": "爆炸陷阱：精英死亡会触发爆炸",
+      "name": "爆炸陷阱",
+      "detail": "爆炸陷阱：精英及以上敌人死亡时会产生半径为10米的范围伤害来攻击玩家（5点近战伤害）",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "info_deprivation_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "tidal-onslaught",
+      "label": "海啸来袭：单波敌潮规模拉满",
+      "name": "海啸来袭",
+      "detail": "海啸来袭：每次生成敌潮只生成原版设定最大规模的敌潮，但敌潮生成冷却时间增加30%",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "atrophy",
+      "label": "机能萎缩：倒地会永久衰减生命",
+      "name": "机能萎缩",
+      "detail": "机能萎缩：倒地不会让玩家死亡，但每次倒地都会使玩家减少25%最大生命值25%，最低减少至10%最大生命值",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "tyrant-aura",
+      "label": "王霸之气：终极敌人显著增强",
+      "name": "王霸之气",
+      "detail": "王霸之气：终极敌人增加100%生命值和33%所造成的伤害[乘算]",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "reinforced-skull",
+      "label": "强化头颅：爆头路线被压制",
+      "name": "强化头颅",
+      "detail": "强化头颅：敌人免疫爆头伤害，但最大生命值减少35%[乘算]",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "double-boss",
+      "label": "双倍强敌：终极敌人数量翻倍",
+      "name": "双倍强敌",
+      "detail": "双倍强敌：双倍终极敌人数量",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "unyielding-enemies",
+      "label": "坚韧敌人：敌人不再受眩晕控制",
+      "name": "坚韧敌人",
+      "detail": "坚韧敌人：移除敌人的眩晕状态机制，使其受到致命伤害立即死亡，且最大生命值减少35%[乘算]",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "postmortem-growth",
+      "label": "死后增生：高阶敌死亡后继续增",
+      "name": "死后增生",
+      "detail": "死后增生：精英级以上混沌敌人/泰伦敌人在死后会生成混沌颅骨/孢子雷",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
     }
   ],
   "negative_modifier_rules": {
@@ -804,6 +1080,167 @@
         ],
         "risk_level": "high_risk",
         "message": "人困马乏、迟则生变、强化敌人会形成时间型凸增长压力，不能同抽。"
+      },
+      {
+        "keys": [
+          "battlefield-instinct",
+          "warp-shadow",
+          "detonation-risk"
+        ],
+        "risk_level": "high_risk",
+        "message": "战场本能、亚空间阴影、引爆风险会显著放大低可见度爆炸失误，不能同抽。"
+      },
+      {
+        "keys": [
+          "battlefield-instinct",
+          "warp-shadow",
+          "explosive-trap"
+        ],
+        "risk_level": "high_risk",
+        "message": "战场本能、亚空间阴影、爆炸陷阱会显著放大低可见度爆炸失误，不能同抽。"
+      },
+      {
+        "keys": [
+          "battlefield-instinct",
+          "warp-shadow",
+          "friendly-fire"
+        ],
+        "risk_level": "high_risk",
+        "message": "战场本能、亚空间阴影、可疑行为会显著放大误伤与判断失误，不能同抽。"
+      },
+      {
+        "keys": [
+          "shared-suffering",
+          "reactor-breach",
+          "explosive-trap"
+        ],
+        "risk_level": "high_risk",
+        "message": "有难同当、微反应器破裂、爆炸陷阱会叠加死亡连锁，不能同抽。"
+      },
+      {
+        "keys": [
+          "shared-suffering",
+          "friendly-fire",
+          "reactor-breach"
+        ],
+        "risk_level": "high_risk",
+        "message": "有难同当、可疑行为、微反应器破裂会形成高强度连锁团灭，不能同抽。"
+      },
+      {
+        "keys": [
+          "fatigued",
+          "escalation",
+          "tyrant-aura"
+        ],
+        "risk_level": "high_risk",
+        "message": "人困马乏、迟则生变、王霸之气会把时间压力推到非线性高位，不能同抽。"
+      },
+      {
+        "keys": [
+          "special-challenge",
+          "call-reinforcements",
+          "effective-taunt"
+        ],
+        "risk_level": "high_risk",
+        "message": "特种挑战、召唤增援、有效嘲讽会同时放大精英与特种压力，不能同抽。"
+      },
+      {
+        "keys": [
+          "special-challenge",
+          "call-reinforcements",
+          "relentless-pursuit"
+        ],
+        "risk_level": "high_risk",
+        "message": "特种挑战、召唤增援、紧追不舍会形成持续高压追击链，不能同抽。"
+      },
+      {
+        "keys": [
+          "special-challenge",
+          "double-boss",
+          "tyrant-aura"
+        ],
+        "risk_level": "high_risk",
+        "message": "特种挑战、双倍强敌、王霸之气会让高阶敌压力过载，不能同抽。"
+      },
+      {
+        "keys": [
+          "elite-challenge",
+          "cunning-enemies",
+          "thick-skinned"
+        ],
+        "risk_level": "high_risk",
+        "message": "精英挑战、机智敌人、皮糙肉厚会让精英处理窗口过小，不能同抽。"
+      },
+      {
+        "keys": [
+          "double-boss",
+          "tyrant-aura",
+          "unyielding-enemies"
+        ],
+        "risk_level": "high_risk",
+        "message": "双倍强敌、王霸之气、坚韧敌人会让终极敌处理成本失控，不能同抽。"
+      },
+      {
+        "keys": [
+          "postmortem-growth",
+          "elite-challenge",
+          "special-challenge"
+        ],
+        "risk_level": "high_risk",
+        "message": "死后增生、精英挑战、特种挑战会放大高阶敌死后增生链，不能同抽。"
+      },
+      {
+        "keys": [
+          "armor-depleted",
+          "no-apothecary",
+          "reduced-vitality"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "护甲耗尽、无药剂师、状态欠佳会把生存资源压到过低，不能同抽。"
+      },
+      {
+        "keys": [
+          "armor-depleted",
+          "armor-malfunction",
+          "reduced-vitality"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "护甲耗尽、装甲故障、状态欠佳会放大闪避失误的死亡成本，不能同抽。"
+      },
+      {
+        "keys": [
+          "no-apothecary",
+          "survival-training",
+          "reduced-vitality"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "无药剂师、生存训练、状态欠佳会同时压缩恢复与生命上限，不能同抽。"
+      },
+      {
+        "keys": [
+          "class-nerf",
+          "pressure-attack",
+          "gun-strike-out"
+        ],
+        "risk_level": "high_risk",
+        "message": "削弱特定兵种、加紧攻击、枪袭出局会让止损链路对特定职业近乎失效，不能同抽。"
+      },
+      {
+        "keys": [
+          "class-nerf",
+          "high-responsibility"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "削弱特定兵种和责任重大可能让指定承压玩家无解，不能同抽。"
+      },
+      {
+        "keys": [
+          "friendly-fire",
+          "minefield",
+          "warp-storm"
+        ],
+        "risk_level": "high_risk",
+        "message": "可疑行为、遍地踩雷、亚空间风暴会放大混乱场景中的误伤链，不能同抽。"
       }
     ],
     "quota_limits": {
@@ -918,6 +1355,78 @@
       "前后夹击：近身夹击密度增加": "pincer-attack",
       "前后夹击": "pincer-attack",
       "前后夹击：在地图中会同时刷出两种敌人派系混战": "pincer-attack",
+      "状态欠佳：最大生命值大幅下降": "reduced-vitality",
+      "状态欠佳": "reduced-vitality",
+      "状态欠佳：玩家最大生命值-50%": "reduced-vitality",
+      "生存训练：缓冲生命机制被禁用": "survival-training",
+      "生存训练": "survival-training",
+      "生存训练：禁用缓冲生命值机制，玩家倒地不再被施加重伤状态": "survival-training",
+      "皮糙肉厚：敌人更难被控制/击退": "thick-skinned",
+      "皮糙肉厚": "thick-skinned",
+      "皮糙肉厚：强化敌人霸体，需要进行被设定好的固定次数(3)的攻击后才允许被控制/击退": "thick-skinned",
+      "削弱特定兵种：特定角色被重度削弱": "class-nerf",
+      "削弱特定兵种": "class-nerf",
+      "削弱特定兵种：最大生命值、远程武器、近战、道具伤害降低50%[乘算]，且移除角色招架格挡能力": "class-nerf",
+      "杀手本能：技能恢复路径受限": "killer-instinct",
+      "杀手本能": "killer-instinct",
+      "杀手本能：禁止技能恢复充能，仅能通过击杀恢复：每击杀恢复2.5%技能充能": "killer-instinct",
+      "引爆风险：爆炸物威胁显著增强": "detonation-risk",
+      "引爆风险": "detonation-risk",
+      "引爆风险：地图生成三倍数量爆炸物，爆炸范围增加100%，伤害增加100%": "detonation-risk",
+      "紧追不舍：高压追击敌额外加入": "relentless-pursuit",
+      "紧追不舍": "relentless-pursuit",
+      "紧追不舍：刷怪包中增加一只阿尔法利卡特；最低刷新冷却时间120秒": "relentless-pursuit",
+      "有效嘲讽：怪潮额外生成暴怒精英": "effective-taunt",
+      "有效嘲讽": "effective-taunt",
+      "有效嘲讽：怪潮生成时必定生成至少2个暴怒状态精英": "effective-taunt",
+      "护甲耗尽：护甲资源被压缩": "armor-depleted",
+      "护甲耗尽": "armor-depleted",
+      "护甲耗尽：玩家只能拥有1格护甲，且禁用护甲碎片掉落": "armor-depleted",
+      "砍瓜切菜：敌群结构改为炮灰倾斜": "cannon-fodder-wave",
+      "砍瓜切菜": "cannon-fodder-wave",
+      "砍瓜切菜：降低60%精英生成数量，增加100%炮灰敌人生成数量，100%小型敌人生成数量": "cannon-fodder-wave",
+      "无弹可拾：常规弹药补给被禁用": "no-ammo-pickups",
+      "无弹可拾": "no-ammo-pickups",
+      "无弹可拾：地图不再生成弹药补充，但近战击杀会恢复弹药（2%）": "no-ammo-pickups",
+      "定量配给：补给箱被替换为弹药盒": "rationed-supply",
+      "定量配给": "rationed-supply",
+      "定量配给：地图不再生成弹药箱，但弹药盒生成数量翻倍": "rationed-supply",
+      "装备故障：道具使用被禁用": "gear-malfunction",
+      "装备故障": "gear-malfunction",
+      "装备故障：禁用道具": "gear-malfunction",
+      "无药剂师：激励剂被禁用": "no-apothecary",
+      "无药剂师": "no-apothecary",
+      "无药剂师：禁用激励剂": "no-apothecary",
+      "可疑行为：友伤机制被启用": "friendly-fire",
+      "可疑行为": "friendly-fire",
+      "可疑行为：启用远程与道具的友伤，这些伤害会被减少60%，爆炸物伤害为55%，": "friendly-fire",
+      "装甲故障：闪避失误会反噬自身": "armor-malfunction",
+      "装甲故障": "armor-malfunction",
+      "装甲故障：非完美闪避的闪避动作会使玩家受到0.67点技能伤害": "armor-malfunction",
+      "爆炸陷阱：精英死亡会触发爆炸": "explosive-trap",
+      "爆炸陷阱": "explosive-trap",
+      "爆炸陷阱：精英及以上敌人死亡时会产生半径为10米的范围伤害来攻击玩家（5点近战伤害）": "explosive-trap",
+      "海啸来袭：单波敌潮规模拉满": "tidal-onslaught",
+      "海啸来袭": "tidal-onslaught",
+      "海啸来袭：每次生成敌潮只生成原版设定最大规模的敌潮，但敌潮生成冷却时间增加30%": "tidal-onslaught",
+      "机能萎缩：倒地会永久衰减生命上限": "atrophy",
+      "机能萎缩": "atrophy",
+      "机能萎缩：倒地不会让玩家死亡，但每次倒地都会使玩家减少25%最大生命值25%，最低减少至10%最大生命值": "atrophy",
+      "王霸之气：终极敌人显著增强": "tyrant-aura",
+      "王霸之气": "tyrant-aura",
+      "王霸之气：终极敌人增加100%生命值和33%所造成的伤害[乘算]": "tyrant-aura",
+      "强化头颅：爆头路线被压制": "reinforced-skull",
+      "强化头颅": "reinforced-skull",
+      "强化头颅：敌人免疫爆头伤害，但最大生命值减少35%[乘算]": "reinforced-skull",
+      "双倍强敌：终极敌人数量翻倍": "double-boss",
+      "双倍强敌": "double-boss",
+      "双倍强敌：双倍终极敌人数量": "double-boss",
+      "坚韧敌人：敌人不再受眩晕控制": "unyielding-enemies",
+      "坚韧敌人": "unyielding-enemies",
+      "坚韧敌人：移除敌人的眩晕状态机制，使其受到致命伤害立即死亡，且最大生命值减少35%[乘算]": "unyielding-enemies",
+      "死后增生：高阶敌死亡后继续增生": "postmortem-growth",
+      "死后增生": "postmortem-growth",
+      "死后增生：精英级以上混沌敌人/泰伦敌人在死后会生成混沌颅骨/孢子雷": "postmortem-growth",
       "同进同退：20 米内无法回甲": "same-step",
       "分开行动：20 米外无法回甲": "split-up",
       "近视：10 米外远程输出受压": "myopia",
@@ -927,7 +1436,14 @@
       "机智敌人：高威胁敌处理窗口更": "cunning-enemies",
       "加紧攻击：处决/枪决止损窗口": "pressure-attack",
       "只此一命：复活/容错收紧": "one-life-only",
-      "腐化圣物：关键目标失败成本升": "corrupted-relic"
+      "腐化圣物：关键目标失败成本升": "corrupted-relic",
+      "皮糙肉厚：敌人更难被控制/击": "thick-skinned",
+      "削弱特定兵种：特定角色被重度": "class-nerf",
+      "有效嘲讽：怪潮额外生成暴怒精": "effective-taunt",
+      "砍瓜切菜：敌群结构改为炮灰倾": "cannon-fodder-wave",
+      "定量配给：补给箱被替换为弹药": "rationed-supply",
+      "机能萎缩：倒地会永久衰减生命": "atrophy",
+      "死后增生：高阶敌死亡后继续增": "postmortem-growth"
     }
   }
 }

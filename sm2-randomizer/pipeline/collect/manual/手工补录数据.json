@@ -1,207 +1,7 @@
 {
   "meta": {
-    "description": "Manual supplement data for display/static-driven runtime payloads.",
-    "priority": "manual_over_raw"
-  },
-  "classes": [
-    {
-      "slug": "tactical",
-      "name": "战术兵",
-      "role": "战术支援",
-      "tagline": "标准化战斗编组核心，适合大多数任务场景。"
-    },
-    {
-      "slug": "assault",
-      "name": "突击兵",
-      "role": "突击先锋",
-      "tagline": "高机动近战压制单位，快速切入高威胁区域。"
-    },
-    {
-      "slug": "vanguard",
-      "name": "先锋兵",
-      "role": "前锋渗透",
-      "tagline": "擅长快速接敌与机动骚扰，兼顾突破与收割。"
-    },
-    {
-      "slug": "bulwark",
-      "name": "重装兵",
-      "role": "壁垒守护",
-      "tagline": "以防御与队伍保护为核心的前排单位。"
-    },
-    {
-      "slug": "sniper",
-      "name": "狙击兵",
-      "role": "远程精确",
-      "tagline": "专注高价值目标清除与远程压制。"
-    },
-    {
-      "slug": "heavy",
-      "name": "特战兵",
-      "role": "重装火力",
-      "tagline": "提供持续火力压制与重型武器输出。"
-    },
-    {
-      "slug": "techmarine",
-      "name": "技术军士",
-      "role": "机械神甫",
-      "tagline": "兼顾技术支援与特种装备调配的战斗单位。"
-    }
-  ],
-  "weapons": [
-    {
-      "slug": "auto-bolt-rifle",
-      "name": "自动爆弹步枪"
-    },
-    {
-      "slug": "bolt-carbine",
-      "name": "爆弹卡宾枪"
-    },
-    {
-      "slug": "bolt-pistol",
-      "name": "爆弹手枪"
-    },
-    {
-      "slug": "bolt-rifle",
-      "name": "爆弹步枪"
-    },
-    {
-      "slug": "bolt-sniper-rifle",
-      "name": "爆弹狙击步枪"
-    },
-    {
-      "slug": "chainsword",
-      "name": "链锯剑"
-    },
-    {
-      "slug": "combat-knife",
-      "name": "战斗匕首"
-    },
-    {
-      "slug": "heavy-bolt-pistol",
-      "name": "重型爆弹手枪"
-    },
-    {
-      "slug": "heavy-bolt-rifle",
-      "name": "重型爆弹步枪"
-    },
-    {
-      "slug": "heavy-bolter",
-      "name": "重型爆弹枪"
-    },
-    {
-      "slug": "heavy-firearms-melee",
-      "name": "重型武器近战"
-    },
-    {
-      "slug": "heavy-plasma-incinerator",
-      "name": "重型等离子焚化枪"
-    },
-    {
-      "slug": "inferno-pistol",
-      "name": "炼狱手枪"
-    },
-    {
-      "slug": "instigator-bolt-carbine",
-      "name": "煽动者爆弹卡宾枪"
-    },
-    {
-      "slug": "las-fusil",
-      "name": "激光长铳"
-    },
-    {
-      "slug": "melta-rifle",
-      "name": "熔炉步枪"
-    },
-    {
-      "slug": "multi-melta",
-      "name": "多重熔炉枪"
-    },
-    {
-      "slug": "neo-volkite-pistol",
-      "name": "新式沃尔凯特手枪"
-    },
-    {
-      "slug": "occulus-bolt-carbine",
-      "name": "奥库勒斯爆弹卡宾枪"
-    },
-    {
-      "slug": "omnissiah-axe",
-      "name": "欧姆弥赛亚之斧"
-    },
-    {
-      "slug": "plasma-incinerator",
-      "name": "等离子焚化枪"
-    },
-    {
-      "slug": "plasma-pistol",
-      "name": "等离子手枪"
-    },
-    {
-      "slug": "power-axe",
-      "name": "动力斧"
-    },
-    {
-      "slug": "power-fist",
-      "name": "动力拳"
-    },
-    {
-      "slug": "power-sword",
-      "name": "动力剑"
-    },
-    {
-      "slug": "pyreblaster",
-      "name": "烈焰喷射枪"
-    },
-    {
-      "slug": "pyrecannon",
-      "name": "烈焰炮"
-    },
-    {
-      "slug": "stalker-bolt-rifle",
-      "name": "潜猎者爆弹步枪"
-    },
-    {
-      "slug": "thunder-hammer",
-      "name": "雷霆战锤"
-    }
-  ],
-  "职业官网图片候选": {
-    "战术兵": [
-      "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
-      "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_ShopCard.jpg",
-      "https://medias.community.focus-entmt.com/forums/mzulft/twomarinesfromspacewithbigsworddamn.png"
-    ],
-    "突击兵": [
-      "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
-      "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__36_.png",
-      "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_ShopCard.jpg"
-    ],
-    "先锋兵": [
-      "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
-      "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__36_.png",
-      "https://medias.community.focus-entmt.com/forums/mzulft/communityeventjustplaythegamelol.png"
-    ],
-    "重装兵": [
-      "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
-      "https://medias.community.focus-entmt.com/forums/mzulft/twomarinesfromspacewithbigsworddamn.png",
-      "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_1_Year_Anniversary_store_capsule_vertical.jpg"
-    ],
-    "狙击兵": [
-      "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
-      "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__36_.png",
-      "https://cdn.focus-home.com/fhi-fastforward-admin/resources/games/warhammer-40000-space-marine-2/images/SM2_2_Year_Anniversary_store_capsule_vertical.jpg"
-    ],
-    "特战兵": [
-      "https://medias.community.focus-entmt.com/universes/feature/banner-background-desktop/background-banner-sm2-v2.jpg",
-      "https://medias.community.focus-entmt.com/forums/mzulft/twomarinesfromspacewithbigsworddamn.png",
-      "https://medias.community.focus-entmt.com/forums/mzulft/communityeventjustplaythegamelol.png"
-    ],
-    "技术军士": [
-      "https://medias.community.focus-entmt.com/forums/mzulft/SpaceMarine2_PatchNote_12_TechMarine_1920x1080.jpg",
-      "https://medias.community.focus-entmt.com/forums/mzulft/5_10-1.png",
-      "https://medias.community.focus-entmt.com/forums/mzulft/2_11.png",
-      "https://medias.community.focus-entmt.com/forums/mzulft/STEAM_-_Transitions__33_.png"
-    ]
+    "description": "Manual fallback data for Excel-derived strategy terms only.",
+    "priority": "excel_fallback_only"
   },
   "strategy_terms": [],
   "negative_modifier_pool": [
@@ -592,6 +392,282 @@
         "前后夹击",
         "前后夹击：在地图中会同时刷出两种敌人派系混战"
       ]
+    },
+    {
+      "key": "reduced-vitality",
+      "label": "状态欠佳：最大生命值大幅下降",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [
+        "状态欠佳",
+        "状态欠佳：玩家最大生命值-50%"
+      ]
+    },
+    {
+      "key": "survival-training",
+      "label": "生存训练：缓冲生命机制被禁用",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [
+        "生存训练",
+        "生存训练：禁用缓冲生命值机制，玩家倒地不再被施加重伤状态"
+      ]
+    },
+    {
+      "key": "thick-skinned",
+      "label": "皮糙肉厚：敌人更难被控制/击退",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [
+        "皮糙肉厚",
+        "皮糙肉厚：强化敌人霸体，需要进行被设定好的固定次数(3)的攻击后才允许被控制/击退"
+      ]
+    },
+    {
+      "key": "class-nerf",
+      "label": "削弱特定兵种：特定角色被重度削弱",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [
+        "削弱特定兵种",
+        "削弱特定兵种：最大生命值、远程武器、近战、道具伤害降低50%[乘算]，且移除角色招架格挡能力"
+      ]
+    },
+    {
+      "key": "killer-instinct",
+      "label": "杀手本能：技能恢复路径受限",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [
+        "杀手本能",
+        "杀手本能：禁止技能恢复充能，仅能通过击杀恢复：每击杀恢复2.5%技能充能"
+      ]
+    },
+    {
+      "key": "detonation-risk",
+      "label": "引爆风险：爆炸物威胁显著增强",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "info_deprivation_chain"
+      ],
+      "aliases": [
+        "引爆风险",
+        "引爆风险：地图生成三倍数量爆炸物，爆炸范围增加100%，伤害增加100%"
+      ]
+    },
+    {
+      "key": "relentless-pursuit",
+      "label": "紧追不舍：高压追击敌额外加入",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [
+        "紧追不舍",
+        "紧追不舍：刷怪包中增加一只阿尔法利卡特；最低刷新冷却时间120秒"
+      ]
+    },
+    {
+      "key": "effective-taunt",
+      "label": "有效嘲讽：怪潮额外生成暴怒精英",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [
+        "有效嘲讽",
+        "有效嘲讽：怪潮生成时必定生成至少2个暴怒状态精英"
+      ]
+    },
+    {
+      "key": "armor-depleted",
+      "label": "护甲耗尽：护甲资源被压缩",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [
+        "护甲耗尽",
+        "护甲耗尽：玩家只能拥有1格护甲，且禁用护甲碎片掉落"
+      ]
+    },
+    {
+      "key": "cannon-fodder-wave",
+      "label": "砍瓜切菜：敌群结构改为炮灰倾斜",
+      "risk_level": "advisory",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [
+        "砍瓜切菜",
+        "砍瓜切菜：降低60%精英生成数量，增加100%炮灰敌人生成数量，100%小型敌人生成数量"
+      ]
+    },
+    {
+      "key": "no-ammo-pickups",
+      "label": "无弹可拾：常规弹药补给被禁用",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [
+        "无弹可拾",
+        "无弹可拾：地图不再生成弹药补充，但近战击杀会恢复弹药（2%）"
+      ]
+    },
+    {
+      "key": "rationed-supply",
+      "label": "定量配给：补给箱被替换为弹药盒",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [
+        "定量配给",
+        "定量配给：地图不再生成弹药箱，但弹药盒生成数量翻倍"
+      ]
+    },
+    {
+      "key": "gear-malfunction",
+      "label": "装备故障：道具使用被禁用",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [
+        "装备故障",
+        "装备故障：禁用道具"
+      ]
+    },
+    {
+      "key": "no-apothecary",
+      "label": "无药剂师：激励剂被禁用",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [
+        "无药剂师",
+        "无药剂师：禁用激励剂"
+      ]
+    },
+    {
+      "key": "friendly-fire",
+      "label": "可疑行为：友伤机制被启用",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "wipe_chain"
+      ],
+      "aliases": [
+        "可疑行为",
+        "可疑行为：启用远程与道具的友伤，这些伤害会被减少60%，爆炸物伤害为55%，"
+      ]
+    },
+    {
+      "key": "armor-malfunction",
+      "label": "装甲故障：闪避失误会反噬自身",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [
+        "装甲故障",
+        "装甲故障：非完美闪避的闪避动作会使玩家受到0.67点技能伤害"
+      ]
+    },
+    {
+      "key": "explosive-trap",
+      "label": "爆炸陷阱：精英死亡会触发爆炸",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "info_deprivation_chain"
+      ],
+      "aliases": [
+        "爆炸陷阱",
+        "爆炸陷阱：精英及以上敌人死亡时会产生半径为10米的范围伤害来攻击玩家（5点近战伤害）"
+      ]
+    },
+    {
+      "key": "tidal-onslaught",
+      "label": "海啸来袭：单波敌潮规模拉满",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [
+        "海啸来袭",
+        "海啸来袭：每次生成敌潮只生成原版设定最大规模的敌潮，但敌潮生成冷却时间增加30%"
+      ]
+    },
+    {
+      "key": "atrophy",
+      "label": "机能萎缩：倒地会永久衰减生命上限",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [
+        "机能萎缩",
+        "机能萎缩：倒地不会让玩家死亡，但每次倒地都会使玩家减少25%最大生命值25%，最低减少至10%最大生命值"
+      ]
+    },
+    {
+      "key": "tyrant-aura",
+      "label": "王霸之气：终极敌人显著增强",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [
+        "王霸之气",
+        "王霸之气：终极敌人增加100%生命值和33%所造成的伤害[乘算]"
+      ]
+    },
+    {
+      "key": "reinforced-skull",
+      "label": "强化头颅：爆头路线被压制",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [
+        "强化头颅",
+        "强化头颅：敌人免疫爆头伤害，但最大生命值减少35%[乘算]"
+      ]
+    },
+    {
+      "key": "double-boss",
+      "label": "双倍强敌：终极敌人数量翻倍",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [
+        "双倍强敌",
+        "双倍强敌：双倍终极敌人数量"
+      ]
+    },
+    {
+      "key": "unyielding-enemies",
+      "label": "坚韧敌人：敌人不再受眩晕控制",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [
+        "坚韧敌人",
+        "坚韧敌人：移除敌人的眩晕状态机制，使其受到致命伤害立即死亡，且最大生命值减少35%[乘算]"
+      ]
+    },
+    {
+      "key": "postmortem-growth",
+      "label": "死后增生：高阶敌死亡后继续增生",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [
+        "死后增生",
+        "死后增生：精英级以上混沌敌人/泰伦敌人在死后会生成混沌颅骨/孢子雷"
+      ]
     }
   ],
   "negative_modifier_rules": {
@@ -801,6 +877,167 @@
         ],
         "risk_level": "high_risk",
         "message": "人困马乏、迟则生变、强化敌人会形成时间型凸增长压力，不能同抽。"
+      },
+      {
+        "keys": [
+          "battlefield-instinct",
+          "warp-shadow",
+          "detonation-risk"
+        ],
+        "risk_level": "high_risk",
+        "message": "战场本能、亚空间阴影、引爆风险会显著放大低可见度爆炸失误，不能同抽。"
+      },
+      {
+        "keys": [
+          "battlefield-instinct",
+          "warp-shadow",
+          "explosive-trap"
+        ],
+        "risk_level": "high_risk",
+        "message": "战场本能、亚空间阴影、爆炸陷阱会显著放大低可见度爆炸失误，不能同抽。"
+      },
+      {
+        "keys": [
+          "battlefield-instinct",
+          "warp-shadow",
+          "friendly-fire"
+        ],
+        "risk_level": "high_risk",
+        "message": "战场本能、亚空间阴影、可疑行为会显著放大误伤与判断失误，不能同抽。"
+      },
+      {
+        "keys": [
+          "shared-suffering",
+          "reactor-breach",
+          "explosive-trap"
+        ],
+        "risk_level": "high_risk",
+        "message": "有难同当、微反应器破裂、爆炸陷阱会叠加死亡连锁，不能同抽。"
+      },
+      {
+        "keys": [
+          "shared-suffering",
+          "friendly-fire",
+          "reactor-breach"
+        ],
+        "risk_level": "high_risk",
+        "message": "有难同当、可疑行为、微反应器破裂会形成高强度连锁团灭，不能同抽。"
+      },
+      {
+        "keys": [
+          "fatigued",
+          "escalation",
+          "tyrant-aura"
+        ],
+        "risk_level": "high_risk",
+        "message": "人困马乏、迟则生变、王霸之气会把时间压力推到非线性高位，不能同抽。"
+      },
+      {
+        "keys": [
+          "special-challenge",
+          "call-reinforcements",
+          "effective-taunt"
+        ],
+        "risk_level": "high_risk",
+        "message": "特种挑战、召唤增援、有效嘲讽会同时放大精英与特种压力，不能同抽。"
+      },
+      {
+        "keys": [
+          "special-challenge",
+          "call-reinforcements",
+          "relentless-pursuit"
+        ],
+        "risk_level": "high_risk",
+        "message": "特种挑战、召唤增援、紧追不舍会形成持续高压追击链，不能同抽。"
+      },
+      {
+        "keys": [
+          "special-challenge",
+          "double-boss",
+          "tyrant-aura"
+        ],
+        "risk_level": "high_risk",
+        "message": "特种挑战、双倍强敌、王霸之气会让高阶敌压力过载，不能同抽。"
+      },
+      {
+        "keys": [
+          "elite-challenge",
+          "cunning-enemies",
+          "thick-skinned"
+        ],
+        "risk_level": "high_risk",
+        "message": "精英挑战、机智敌人、皮糙肉厚会让精英处理窗口过小，不能同抽。"
+      },
+      {
+        "keys": [
+          "double-boss",
+          "tyrant-aura",
+          "unyielding-enemies"
+        ],
+        "risk_level": "high_risk",
+        "message": "双倍强敌、王霸之气、坚韧敌人会让终极敌处理成本失控，不能同抽。"
+      },
+      {
+        "keys": [
+          "postmortem-growth",
+          "elite-challenge",
+          "special-challenge"
+        ],
+        "risk_level": "high_risk",
+        "message": "死后增生、精英挑战、特种挑战会放大高阶敌死后增生链，不能同抽。"
+      },
+      {
+        "keys": [
+          "armor-depleted",
+          "no-apothecary",
+          "reduced-vitality"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "护甲耗尽、无药剂师、状态欠佳会把生存资源压到过低，不能同抽。"
+      },
+      {
+        "keys": [
+          "armor-depleted",
+          "armor-malfunction",
+          "reduced-vitality"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "护甲耗尽、装甲故障、状态欠佳会放大闪避失误的死亡成本，不能同抽。"
+      },
+      {
+        "keys": [
+          "no-apothecary",
+          "survival-training",
+          "reduced-vitality"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "无药剂师、生存训练、状态欠佳会同时压缩恢复与生命上限，不能同抽。"
+      },
+      {
+        "keys": [
+          "class-nerf",
+          "pressure-attack",
+          "gun-strike-out"
+        ],
+        "risk_level": "high_risk",
+        "message": "削弱特定兵种、加紧攻击、枪袭出局会让止损链路对特定职业近乎失效，不能同抽。"
+      },
+      {
+        "keys": [
+          "class-nerf",
+          "high-responsibility"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "削弱特定兵种和责任重大可能让指定承压玩家无解，不能同抽。"
+      },
+      {
+        "keys": [
+          "friendly-fire",
+          "minefield",
+          "warp-storm"
+        ],
+        "risk_level": "high_risk",
+        "message": "可疑行为、遍地踩雷、亚空间风暴会放大混乱场景中的误伤链，不能同抽。"
       }
     ],
     "quota_limits": {
@@ -809,266 +1046,5 @@
       "spawnball_chain": 2,
       "info_deprivation_chain": 1
     }
-  },
-  "class_skill_entries": {
-    "战术兵": [
-      {
-        "skill_name": "占卜盒扫描",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "10m",
-        "description": "CD:91s/被扫描标记的目标会被施加50%远程武器易伤&近战易伤效果[乘算](终极敌人为20%)，道具易伤[乘算]需要天赋解锁 ；              注：战术兵天赋树中予以占卜盒易伤额外加成的技能均与基础值进行加算"
-      },
-      {
-        "skill_name": "浩大余波",
-        "damage": "400",
-        "damage_type": "电击",
-        "radius": "10m",
-        "description": "/"
-      }
-    ],
-    "突击兵": [
-      {
-        "skill_name": "震地重击",
-        "damage": "/",
-        "damage_type": "近战",
-        "radius": "10m",
-        "description": "CD:83s（两层总共）"
-      },
-      {
-        "skill_name": "火焰之翼",
-        "damage": "100",
-        "damage_type": "技能近战",
-        "radius": "0.5m",
-        "description": "/"
-      },
-      {
-        "skill_name": "冲上云霄",
-        "damage": "80",
-        "damage_type": "技能",
-        "radius": "5m",
-        "description": "最大打击数为20，从1米外开始衰减伤害，到5米处伤害变为0"
-      },
-      {
-        "skill_name": "强势消耗",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "被冲刺攻击命中的目标会被施加25%的全面易伤效果[加算]"
-      },
-      {
-        "skill_name": "狂怒打击",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "允许触发的招式：突击兵专属的飞行背包猛冲攻击"
-      },
-      {
-        "skill_name": "怒气腾飞",
-        "damage": "19.44",
-        "damage_type": "技能近战",
-        "radius": "7m",
-        "description": "除开所有冲刺攻击外，未被算作冲刺攻击的撤步还击也能触发该天赋所携带的独立的范围伤害"
-      }
-    ],
-    "先锋兵": [
-      {
-        "skill_name": "近战勇士",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "这个团队天赋除了15%近战伤害加成（加算），还有一条增加15%抓钩飞踢伤害的代码"
-      },
-      {
-        "skill_name": "抓钩飞踢",
-        "damage": "112.8",
-        "damage_type": "技能近战",
-        "radius": "2.5m",
-        "description": "CD:91s（两层总共）"
-      },
-      {
-        "skill_name": "冲击扩散",
-        "damage": "50%飞踢伤害",
-        "damage_type": "技能近战",
-        "radius": "5m",
-        "description": "这个技能不会对飞踢的命中的主目标造成伤害"
-      },
-      {
-        "skill_name": "连带伤害",
-        "damage": "60",
-        "damage_type": "技能近战",
-        "radius": "0.5m",
-        "description": "这个技能不会对飞踢的命中的主目标造成伤害"
-      },
-      {
-        "skill_name": "矛头所指",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "被飞踢攻击命中的目标会被施加15%的远程武器易伤效果[加算]"
-      },
-      {
-        "skill_name": "殃及池鱼",
-        "damage": "200",
-        "damage_type": "技能近战",
-        "radius": "10m",
-        "description": "/"
-      }
-    ],
-    "重装兵": [
-      {
-        "skill_name": "震慑光环",
-        "damage": "120",
-        "damage_type": "技能近战",
-        "radius": "5m",
-        "description": "/"
-      },
-      {
-        "skill_name": "战团旗帜",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "10m",
-        "description": "CD:125s"
-      },
-      {
-        "skill_name": "恐惧冲击",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "处在重装兵产生的任何电击手雷范围伤害内的目标会被施加25%远程武器易伤&近战易伤效果[乘算]"
-      },
-      {
-        "skill_name": "蔑视护甲",
-        "damage": "4",
-        "damage_type": "技能",
-        "radius": "10m",
-        "description": "可反伤的远程攻击伤害值调整器：枪虫-90%，吞噬枪-60%，自动枪邪教徒-70%，狙击枪邪教徒+1000%，火枪红字战士-98%，千子巫师+350%，刈魂炮终结者-50%，动力剑终结者+100%"
-      },
-      {
-        "skill_name": "纯粹意志",
-        "damage": "4",
-        "damage_type": "技能",
-        "radius": "10m",
-        "description": "伤害每0.33秒一跳"
-      },
-      {
-        "skill_name": "震荡之力",
-        "damage": "19.44",
-        "damage_type": "技能近战",
-        "radius": "7m",
-        "description": "怒气腾飞就是复制粘贴这个技能,所以除了额外的盾击增伤外，加成内容都一样，这个技能同样会增加你的冲刺攻击的伤害"
-      }
-    ],
-    "狙击兵": [
-      {
-        "skill_name": "破隐射击",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "职业被动与定向射击天赋所产生的破隐增伤持续0.33秒"
-      },
-      {
-        "skill_name": "迷彩斗篷",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "CD:90s/每秒消耗10%充能/连续使用充能消耗：第四次+5%，第五次+10%，第六次+20%，第11次+100%/连用判定间隔:10s"
-      },
-      {
-        "skill_name": "出其不意",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "5m",
-        "description": "给范围内敌人施加持续10秒的50%移动速度减少效果"
-      }
-    ],
-    "特战兵": [
-      {
-        "skill_name": "帝国怒火",
-        "damage": "400",
-        "damage_type": "爆炸物",
-        "radius": "10m",
-        "description": "最大攻击数为20，从6米外开始衰减伤害，到10米处伤害变为10%"
-      },
-      {
-        "skill_name": "钢铁光环",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "CD:67s/每秒消耗6.7%充能"
-      },
-      {
-        "skill_name": "保持攻势",
-        "damage": "2",
-        "damage_type": "技能近战",
-        "radius": "5m",
-        "description": "伤害每0.1秒一跳，这个伤害并不限定光环特效处，而是角色5米半径内均有伤害"
-      }
-    ],
-    "技术军士": [
-      {
-        "skill_name": "指定目标",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "被肩炮攻击命中的目标会被施加15%的全面易伤效果[加算]"
-      },
-      {
-        "skill_name": "强援在旁",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "15m",
-        "description": "范围内友军获得15%远程武器伤害[加算]，15%近战伤害[加算]与25%伤害减免"
-      },
-      {
-        "skill_name": "有序破坏",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "被技术军士造成的道具伤害命中的目标会被施加25%的全面易伤效果[加算]"
-      },
-      {
-        "skill_name": "欧姆尼赛亚之怒",
-        "damage": "/",
-        "damage_type": "/",
-        "radius": "/",
-        "description": "被技术军士肩炮伤害命中的敌人会被施加燃烧状态[每击附加100点燃烧异常值]"
-      },
-      {
-        "skill_name": "爆弹肩炮",
-        "damage": "4/N6:(16)",
-        "damage_type": "子弹/技能",
-        "radius": "/",
-        "description": "CD:72s/爆头倍率1.0 / 每分钟发射量350 / 每次射击消耗4%充能"
-      },
-      {
-        "skill_name": "狙击肩炮",
-        "damage": "27/N6(108)",
-        "damage_type": "重型子弹/技能",
-        "radius": "/",
-        "description": "CD:83s/爆头倍率1.0 / 每分钟发射量200 / 每次射击消耗20%充能"
-      },
-      {
-        "skill_name": "等离子肩炮",
-        "damage": "8/N6:(32)",
-        "damage_type": "等离子/技能",
-        "radius": "/",
-        "description": "CD:83s / 每分钟发射量100 / 每次射击消耗10%充能"
-      },
-      {
-        "skill_name": "狼蛛炮台",
-        "damage": "9.6",
-        "damage_type": "炮台子弹",
-        "radius": "/",
-        "description": "爆头倍率1.0 / 每分钟发射量450 / 200HP / 若HP低于25%，技术军士会在维修炮台时将其恢复至最大生命值的25% / 承受6倍伤害"
-      },
-      {
-        "skill_name": "狼蛛炮台殉爆",
-        "damage": "44",
-        "damage_type": "爆炸物",
-        "radius": "10m",
-        "description": "/"
-      }
-    ]
   }
 }

@@ -1,5 +1,8 @@
 .gitnexus
 
+# Claude agent temporary worktrees
+.claude/worktrees/
+
 # Python caches
 __pycache__/
 *.pyc

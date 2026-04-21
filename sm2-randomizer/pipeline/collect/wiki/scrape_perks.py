@@ -59,8 +59,8 @@ TALENT_MANIFEST_FILE = PIPELINE_STORE_CATALOG_DIR / "按职业分组天赋图标
 MANUAL_ACTION_REPORT = PIPELINE_STORE_REPORTS_SOURCE_DIR / "天赋手动补图清单.json"
 DOM_DUMP_DIR = PIPELINE_STORE_REPORTS_SOURCE_DIR / "perk_dom_dumps"
 
-TALENT_GRID_COLS = 3
-TALENT_GRID_ROWS = 8
+TALENT_GRID_COLS = 8
+TALENT_GRID_ROWS = 3
 TALENT_SLOT_COUNT = TALENT_GRID_COLS * TALENT_GRID_ROWS
 TARGET_CLASS_IMAGE_COUNT = 5
 WIKI_ORIGIN = "https://spacemarine2.fandom.com"
@@ -110,7 +110,43 @@ def wiki_api_get_json(params: dict[str, Any], *, retries: int = 4) -> dict[str, 
 
 
 def fetch_perks_from_wiki_api(class_title: str) -> list[dict[str, Any]]:
-    parsed = wiki_api_get_json({"action": "parse", "page": class_title, "prop": "wikitext"})
+    parsed = wiki_api_get_json({"action": "parse", "page": class_title, "prop": "text|wikitext"})
+    html_text = str(parsed.get("parse", {}).get("text", {}).get("*", "")).strip()
+    if html_text:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html_text, "html.parser")
+        table = soup.select_one("table.perktree-table")
+        if table:
+            perks: list[dict[str, Any]] = []
+            rows = table.select("tr")[1:1 + TALENT_GRID_ROWS]
+            for row_index, row in enumerate(rows, start=1):
+                cells = row.find_all("td", recursive=False)[:TALENT_GRID_COLS]
+                for col_index, cell in enumerate(cells, start=1):
+                    node = cell.select_one(".sm2-tooltip")
+                    if not node:
+                        continue
+                    img = node.select_one("img")
+                    english_name = str(node.get("data-title") or node.get_text(" ") or "").strip()
+                    if not english_name:
+                        continue
+                    desc_raw = str(node.get("title") or node.get("data-text") or "").strip()
+                    perks.append(
+                        {
+                            "english_name": english_name,
+                            "icon_url": normalize_asset_url(str((img.get("data-src") or img.get("src") or "") if img else "").strip()),
+                            "image_key": str((img.get("data-image-key") or "") if img else "").strip(),
+                            "description_raw": desc_raw,
+                            "description_plain": strip_html_text(desc_raw),
+                            "source_section": "api:PerkTable",
+                            "source_title": class_title,
+                            "col": col_index,
+                            "row": row_index,
+                            "grid_label": f"{col_index}/{row_index}",
+                        }
+                    )
+            if perks:
+                return perks
+
     wikitext = str(parsed.get("parse", {}).get("wikitext", {}).get("*", "")).strip()
     if not wikitext:
         return []
@@ -127,7 +163,7 @@ def fetch_perks_from_wiki_api(class_title: str) -> list[dict[str, Any]]:
             break
 
     perks: list[dict[str, Any]] = []
-    for slug in slugs:
+    for index, slug in enumerate(slugs):
         expanded = wiki_api_get_json(
             {
                 "action": "expandtemplates",
@@ -141,6 +177,7 @@ def fetch_perks_from_wiki_api(class_title: str) -> list[dict[str, Any]]:
         name_raw, _, desc_raw = expanded_text.partition("||")
         english_name = strip_wiki_text(name_raw) or slug.replace("-", " ").title()
         description_plain = strip_wiki_text(desc_raw)
+        col, row = talent_coords(index)
         perks.append(
             {
                 "english_name": english_name,
@@ -150,6 +187,9 @@ def fetch_perks_from_wiki_api(class_title: str) -> list[dict[str, Any]]:
                 "description_plain": description_plain,
                 "source_section": "api:PerkTable",
                 "source_title": class_title,
+                "col": col,
+                "row": row,
+                "grid_label": f"{col}/{row}",
             }
         )
     return perks
@@ -272,28 +312,46 @@ def extract_class_summary(page) -> str:
 def extract_perks_from_page(page) -> list[dict[str, Any]]:
     perks = page.evaluate(
         """
-        () => Array.from(document.querySelectorAll('.perktree-table .sm2-tooltip')).map((node) => {
-          const img = node.querySelector('img');
-          const tooltipNode = node.querySelector('.tooltip, .sm2-tooltip__content, [role="tooltip"]');
-          const sectionNode = node.closest('section, table, .tabbertab, .perktree-table');
-          return {
-            english_name: (node.getAttribute('data-title') || node.textContent || '').trim(),
-            icon_url: img?.getAttribute('data-src') || img?.getAttribute('src') || '',
-            image_key: img?.getAttribute('data-image-key') || '',
-            description_raw: tooltipNode?.innerHTML || node.getAttribute('data-description') || '',
-            source_section: sectionNode?.getAttribute('data-source') || sectionNode?.getAttribute('id') || sectionNode?.querySelector('h2,h3,h4')?.textContent || '',
-            source_title: document.querySelector('h1')?.textContent?.trim() || ''
-          };
-        }).filter((item) => item.english_name)
+        () => {
+          const table = document.querySelector('table.perktree-table');
+          if (!table) return [];
+          const rows = Array.from(table.querySelectorAll('tr')).slice(1, 4);
+          const items = [];
+          rows.forEach((row, rowIndex) => {
+            const cells = Array.from(row.querySelectorAll(':scope > td')).slice(0, 8);
+            cells.forEach((cell, colIndex) => {
+              const node = cell.querySelector('.sm2-tooltip');
+              if (!node) return;
+              const img = node.querySelector('img');
+              const col = colIndex + 1;
+              const rowNum = rowIndex + 1;
+              items.push({
+                english_name: (node.getAttribute('data-title') || node.textContent || '').trim(),
+                icon_url: img?.getAttribute('data-src') || img?.getAttribute('src') || '',
+                image_key: img?.getAttribute('data-image-key') || '',
+                description_raw: node.getAttribute('title') || node.getAttribute('data-text') || '',
+                source_section: 'perktree-table',
+                source_title: document.querySelector('h1')?.textContent?.trim() || '',
+                col,
+                row: rowNum,
+                grid_label: `${col}/${rowNum}`
+              });
+            });
+          });
+          return items;
+        }
         """
     )
     unique: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, int, int]] = set()
     for item in perks:
         english_name = str(item.get("english_name", "")).strip()
-        if not english_name or english_name in seen:
+        col = int(item.get("col", 0) or 0)
+        row = int(item.get("row", 0) or 0)
+        key = (english_name, col, row)
+        if not english_name or not col or not row or key in seen:
             continue
-        seen.add(english_name)
+        seen.add(key)
         description_raw = str(item.get("description_raw", "")).strip()
         unique.append(
             {
@@ -304,6 +362,9 @@ def extract_perks_from_page(page) -> list[dict[str, Any]]:
                 "description_plain": strip_html_text(description_raw),
                 "source_section": str(item.get("source_section", "")).strip(),
                 "source_title": str(item.get("source_title", "")).strip(),
+                "col": col,
+                "row": row,
+                "grid_label": str(item.get("grid_label", "")).strip() or f"{col}/{row}",
             }
         )
     return unique[:TALENT_SLOT_COUNT]
@@ -411,31 +472,34 @@ def choose_cover_file(asset_dir: Path) -> str:
 
 
 def build_existing_talent_maps() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    catalog_payload = read_json(TALENT_MANIFEST_FILE, {"classes": []})
-
-    by_class_index: dict[str, dict[str, Any]] = {}
-    by_class_name: dict[str, dict[str, Any]] = {}
-    for class_entry in catalog_payload.get("classes", []):
+    payload = read_json(TALENT_MANIFEST_FILE, {"classes": []})
+    classes = payload.get("classes", []) if isinstance(payload, dict) else []
+    fallback_by_index_map: dict[str, dict[str, Any]] = {}
+    fallback_by_name_map: dict[str, dict[str, Any]] = {}
+    for class_entry in classes:
         if not isinstance(class_entry, dict):
             continue
         class_slug = str(class_entry.get("class_slug", "")).strip()
-        class_name = str(class_entry.get("class_name", "")).strip()
-        index_map: dict[str, Any] = {}
-        name_map: dict[str, Any] = {}
+        if not class_slug:
+            continue
+        by_index: dict[str, Any] = {}
+        by_name: dict[str, Any] = {}
         for talent in class_entry.get("talents", []):
             if not isinstance(talent, dict):
                 continue
             grid_label = str(talent.get("grid_label", "")).strip()
-            talent_name = str(talent.get("talent_name", "")).strip()
             if grid_label:
-                index_map[grid_label] = talent
-            if talent_name:
-                name_map[talent_name] = talent
-        if class_slug:
-            by_class_index[class_slug] = index_map
-            by_class_name[class_slug] = name_map
+                by_index[grid_label] = talent
+            english_name = str(talent.get("talent_name_en", "")).strip()
+            if english_name:
+                by_name[english_name] = talent
+        fallback_by_index_map[class_slug] = by_index
+        fallback_by_name_map[class_slug] = by_name
+    return fallback_by_index_map, fallback_by_name_map
 
-    return by_class_index, by_class_name
+
+def _ignore_legacy_talent_fallbacks() -> None:
+    return None
 
 
 def build_talent_entry(
@@ -448,19 +512,14 @@ def build_talent_entry(
     fallback_by_name: dict[str, Any],
 ) -> dict[str, Any]:
     english_name = str(perk.get("english_name", "")).strip()
-    preferred_grid_label = str(perk.get("preferred_grid_label", "")).strip()
-    if preferred_grid_label and "/" in preferred_grid_label:
-        col_text, row_text = preferred_grid_label.split("/", 1)
-        col = int(col_text)
-        row = int(row_text)
-        grid_label = preferred_grid_label
-    else:
-        col, row = talent_coords(index)
-        grid_label = f"{col}/{row}"
+    explicit_col = int(perk.get("col", 0) or 0)
+    explicit_row = int(perk.get("row", 0) or 0)
+    col, row = (explicit_col, explicit_row) if explicit_col and explicit_row else talent_coords(index)
+    grid_label = str(perk.get("grid_label", "")).strip() or f"{col}/{row}"
     fallback: dict[str, Any] = {}
     if english_name:
         fallback = fallback_by_name.get(english_name, {})
-    if not fallback and not preferred_grid_label:
+    if not fallback:
         fallback = fallback_by_index.get(grid_label, {})
 
     talent_slug = slugify(english_name) or str(fallback.get("talent_slug", "")).strip() or f"talent-{index + 1}"
@@ -489,8 +548,8 @@ def build_talent_entry(
         "source_title": str(perk.get("source_title", "")).strip(),
         "download_status": "pending",
         "download_attempts": 0,
-        "description": description_plain or "",
-        "description_raw": description_raw or description_plain or "",
+        "description": description_plain or clean_placeholder(perk.get("description_en", "")) or "",
+        "description_raw": description_raw or description_plain or clean_placeholder(perk.get("description_en", "")) or "",
     }
 
 
@@ -592,38 +651,32 @@ def ensure_class_cover(
 
 
 def synthesize_perks_from_local(class_name: str, fallback_by_index: dict[str, Any]) -> list[dict[str, Any]]:
-    cleanup_redundant_talent_svgs(class_name)
-    asset_dir = APP_ASSETS_DIR / "talents" / class_name
-    items_by_grid: dict[str, tuple[int, int, dict[str, Any]]] = {}
-    for file_name in list_local_files(asset_dir):
-        match = _FILENAME_TALENT_RE.match(file_name)
-        if not match:
-            continue
-        col = int(match.group("col"))
-        row = int(match.group("row"))
-        grid_label = f"{col}/{row}"
-        fallback = fallback_by_index.get(grid_label, {})
-        english_name = match.group("slug").replace("-", " ").title()
-        sort_key = ((col - 1) * TALENT_GRID_ROWS) + row
-        extension_score = 0 if file_name.lower().endswith(".png") else 1
-        candidate = (
-            sort_key,
-            extension_score,
+    items: list[dict[str, Any]] = []
+    if not isinstance(fallback_by_index, dict):
+        return items
+    ordered = sorted(
+        [item for item in fallback_by_index.values() if isinstance(item, dict)],
+        key=lambda item: (int(item.get("row", 0) or 0), int(item.get("col", 0) or 0)),
+    )
+    for fallback in ordered:
+        english_name = str(fallback.get("talent_name_en", "")).strip()
+        description_raw = clean_placeholder(fallback.get("description_raw", ""))
+        description_plain = clean_placeholder(fallback.get("description", ""))
+        items.append(
             {
                 "english_name": english_name,
-                "icon_url": "",
-                "image_key": "",
-                "description_raw": "",
-                "description_plain": "",
+                "icon_url": str(fallback.get("icon_url", "")).strip(),
+                "image_key": str(fallback.get("image_key", "")).strip(),
+                "description_raw": description_raw or description_plain,
+                "description_plain": description_plain or description_raw,
                 "source_section": str(fallback.get("source_section", "")).strip(),
                 "source_title": str(fallback.get("source_title", "")).strip(),
-                "preferred_grid_label": grid_label,
-            },
+                "col": int(fallback.get("col", 0) or 0),
+                "row": int(fallback.get("row", 0) or 0),
+                "grid_label": str(fallback.get("grid_label", "")).strip(),
+            }
         )
-        current = items_by_grid.get(grid_label)
-        if current is None or candidate[1] < current[1]:
-            items_by_grid[grid_label] = candidate
-    return [item for _, _, item in sorted(items_by_grid.values(), key=lambda pair: pair[0])][:TALENT_SLOT_COUNT]
+    return items
 
 
 def page_perk_lookup(perks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -667,19 +720,23 @@ def scrape_class(
     api_perks = fetch_perks_from_wiki_api(class_title)
     perks = page_perks if len(page_perks) >= TALENT_SLOT_COUNT else api_perks
     local_perks = synthesize_perks_from_local(class_name, fallback_by_index)
-    if len(local_perks) >= TALENT_SLOT_COUNT and not force_download:
-        perks = local_perks[:TALENT_SLOT_COUNT]
-        page_lookup = page_perk_lookup(page_perks or api_perks)
-        for index, local_perk in enumerate(perks):
-            matched_page_perk = page_lookup.get(slugify(str(local_perk.get("english_name", "")).strip()))
-            if not matched_page_perk:
-                continue
-            perks[index] = {
-                **local_perk,
-                **matched_page_perk,
-                "preferred_grid_label": local_perk.get("preferred_grid_label", ""),
-            }
-    elif not perks:
+    if not perks:
+        perks = local_perks
+    if perks:
+        by_name = {str(item.get('english_name', '')).strip(): item for item in perks if isinstance(item, dict) and str(item.get('english_name', '')).strip()}
+        enriched: list[dict[str, Any]] = []
+        for english_name, matched in sorted(by_name.items(), key=lambda pair: (int(pair[1].get('row', 0) or 0), int(pair[1].get('col', 0) or 0))):
+            fallback = fallback_by_name.get(english_name, {}) if isinstance(fallback_by_name, dict) else {}
+            merged = {**fallback, **matched}
+            if fallback.get('talent_name_zh'):
+                merged['talent_name_zh'] = fallback.get('talent_name_zh')
+            if fallback.get('talent_name') and not merged.get('talent_name'):
+                merged['talent_name'] = fallback.get('talent_name')
+            if fallback.get('description') and not merged.get('description_plain'):
+                merged['description_plain'] = fallback.get('description')
+            enriched.append(merged)
+        perks = enriched if enriched else perks
+    elif local_perks:
         perks = local_perks
     talents: list[dict[str, Any]] = []
     for index, perk in enumerate(perks):

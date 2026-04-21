@@ -1,7 +1,7 @@
 {
   "build": {
     "version": "Update 12.0 / Techmarine",
-    "generated_at": "2026-04-18T13:23:57.047845+00:00",
+    "generated_at": "2026-04-19T15:16:41.821239+00:00",
     "source_mode": "hybrid_now_wiki_ready",
     "source_coverage": {
       "classes": 7,
@@ -208,7 +208,7 @@
   "negative_modifier_pool": [
     {
       "key": "same-step",
-      "label": "同进同退：20 米内无法回甲",
+      "label": "同进同退",
       "name": "同进同退",
       "detail": "同进同退：若20米内没有队友则禁止恢复护甲与缓冲生命值",
       "risk_level": "must_exclude",
@@ -218,7 +218,7 @@
     },
     {
       "key": "split-up",
-      "label": "分开行动：20 米外无法回甲",
+      "label": "分开行动",
       "name": "分开行动",
       "detail": "分开行动：若20米内有队友则禁止恢复护甲与缓冲生命值",
       "risk_level": "must_exclude",
@@ -228,7 +228,7 @@
     },
     {
       "key": "myopia",
-      "label": "近视：10 米外远程输出受压",
+      "label": "近视",
       "name": "近视",
       "detail": "近视：距玩家10米外的敌人承受的远程武器伤害降低75%[乘算]",
       "risk_level": "must_exclude",
@@ -238,7 +238,7 @@
     },
     {
       "key": "hyperopia",
-      "label": "远视：10 米内远程输出受压",
+      "label": "远视",
       "name": "远视",
       "detail": "远视：距玩家10米内的敌人承受的远程武器伤害降低75%[乘算]",
       "risk_level": "must_exclude",
@@ -518,7 +518,7 @@
     },
     {
       "key": "fatigued",
-      "label": "人困马乏：拖久后玩家越来越脆",
+      "label": "人困马乏",
       "name": "人困马乏",
       "detail": "人困马乏：玩家每240秒增加10%承伤，可叠加10层[总值作乘算]",
       "risk_level": "advisory",
@@ -540,7 +540,7 @@
     },
     {
       "key": "reinforced-enemies",
-      "label": "强化敌人：基础敌对强度上调",
+      "label": "强化敌人",
       "name": "强化敌人",
       "detail": "[乘算]强化敌人：敌人增加25%生命值和25%造成的伤害",
       "risk_level": "advisory",
@@ -552,7 +552,7 @@
     },
     {
       "key": "one-life-only",
-      "label": "只此一命：复活/容错收紧",
+      "label": "只此一命",
       "name": "只此一命",
       "detail": "只此一命：禁止复活机制，禁用圣物",
       "risk_level": "mid_high_risk",
@@ -588,7 +588,7 @@
     },
     {
       "key": "pincer-attack",
-      "label": "前后夹击：近身夹击密度增加",
+      "label": "前后夹击",
       "name": "前后夹击",
       "detail": "前后夹击：在地图中会同时刷出两种敌人派系混战",
       "risk_level": "mid_high_risk",

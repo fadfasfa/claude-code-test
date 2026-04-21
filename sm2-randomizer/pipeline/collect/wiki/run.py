@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Wiki 采集统一入口。
+
+负责按固定顺序编排结构抓取与资源抓取，支持按参数跳过子步骤。
+输入为命令行参数，输出为对应子脚本的退出码。
+"""
+
 import argparse
 import subprocess
 import sys

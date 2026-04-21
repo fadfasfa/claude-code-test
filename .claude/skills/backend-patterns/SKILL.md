@@ -1,4 +1,4 @@
-<!-- adapted-from-upstream: C:\Users\apple\.agents\skills\backend-patterns\SKILL.md -->
+<!-- adopted-into-repo-baseline -->
 ---
 name: backend-patterns
 description: Project-level backend guidance focused on existing service boundaries, data flow, and safe incremental change.

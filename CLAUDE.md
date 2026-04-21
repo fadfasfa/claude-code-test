@@ -1,16 +1,26 @@
-# Claude Code Repo Entry
+# claudecode
 
-- 这是本仓的 Claude Code 入口文件，先遵守这里，再按需读取 `AGENTS.md`。
-- `AGENTS.md` 仍是当前 workflow / contract 的主要来源；本阶段不在这里覆盖旧的分支或 worktree 语义。
-- 历史 `.agents/*` workflow/contract 文档已退役；若看到旧路径引用，不把旧 `.agents/*` 当活跃入口。
-- 实现前先看仓库现状、已有脚本、现有技能和相关文档。
-- 当前阶段只做能力层基线：优先 CLI、先验证再完成、不自动 push / PR / merge / rebase，除非用户明确要求。
-- 项目级 Claude 技能放在 `.claude/skills/`，按需显式使用。
+## What This Repo Is
 
-## Work-Area Guardrails
+- 多工作区代码与数据仓；`run/`、`sm2-randomizer/`、`QuantProject/` 等各自独立运行。
+- 仓库根默认只做入口阅读、只读探查和仓库治理，不把根目录当业务实现区。
 
-- 先确认目标工作区；没有明确要求时，不在仓库根目录写业务文件。
-- 默认只在当前目标工作区写入；不要为某个工作区任务改写别的工作区。
-- 从仓库根启动时，只做只读探查、仓库治理或文档治理；从工作区目录启动时，才做该工作区实现。
-- 浏览器自动化默认走 Playwright CLI，不安装 Playwright MCP。
-- 未明确允许时，不新增 `.mcp.json`、`playwright-mcp/`、`mcp/` 或其他 MCP 目录。
+## How It Runs
+
+- 读取顺序：`CLAUDE.md` -> `AGENTS.md` -> `PROJECT.md` -> `work_area_registry.md` -> `agent_tooling_baseline.md`
+- 先在 `work_area_registry.md` 选目标工作区，再进入对应目录执行实现或验证。
+- `.claude/` 只放项目级 settings、skills 和预留接口，不是仓库入口。
+
+## Things That Bite You
+
+- 从仓库根启动时，不直接做工作区实现；根目录只允许只读探查或仓库治理。
+- `.ai_workflow/*`、`.claude/worktrees/*`、旧 `.agents/*`、`archive/**`、`.gitnexus/**` 都按历史残留处理，不作为当前依据。
+- 不新增项目级 `.codex/config.toml`、`.mcp.json`、`playwright-mcp/` 或其他 MCP 目录。
+- 计划批准后，如果发现自己写多了、写坏了、需要缩回最小改动，应直接自行收口并继续；只有遇到 blocker、权限拦截、跨边界风险或 scope 变化时才暂停汇报。
+
+## Commands
+
+```powershell
+Get-Content .\work_area_registry.md
+git status --short
+```

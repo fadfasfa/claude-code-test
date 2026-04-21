@@ -302,7 +302,7 @@
     {
       "slug": "twin-linked-melta-gun",
       "excel_name": "双联热熔枪",
-      "image_formula": "=DISPIMG(\"ID_9556FE0AC6F94BCEA68CC3656534977D\",1)",
+      "image_formula": "",
       "source_sheet": "主武器",
       "asset_file_name": "双联热熔枪.png",
       "asset_path": "weapons/icons/主武器/双联热熔枪.png",

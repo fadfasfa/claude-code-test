@@ -1,0 +1,16 @@
+:root {
+  --icon-font: "Segoe UI Symbol", "Arial Unicode MS", "Noto Sans Symbols 2", sans-serif;
+}
+
+.material-symbols-outlined {
+  font-family: var(--icon-font);
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.2em;
+}

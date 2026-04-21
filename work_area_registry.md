@@ -10,6 +10,7 @@ Default rules:
 - New work areas must be registered here before implementation starts.
 - Adding a new work area does not automatically justify a project-level `.codex/config.toml`.
 - Adding a new work area does not automatically justify a work-area-specific `CLAUDE.md`.
+- These rules define default rule sources and write boundaries; they do not block normal read access to current-task files inside the current work area.
 
 ## Registered Work Areas
 
@@ -31,6 +32,7 @@ Default rules:
 - For Claude Code, start from the work area directory for implementation tasks.
 - When starting from the repository root, limit activity to read-only exploration or repository governance.
 - Do not create scraping directories, output directories, MCP directories, or business files at the repository root without explicit repository-governance intent.
+- For repository-governance tasks, do not treat Desktop / OneDrive support-layer documents as default reference sources unless the user explicitly asks for audit, comparison, or migration work.
 
 ## New Work Area Registration Template
 

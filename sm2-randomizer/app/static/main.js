@@ -1,14 +1,22 @@
 (function () {
+  const DATA_BASE_PATH = "../data";
+  const ASSET_BASE_PATH = "../assets";
   const DATA_FILES = Object.freeze({
-    classes: "../data/classes.json",
-    talents: "../data/talents.json",
-    meta: "../data/meta.json"
+    classes: `${DATA_BASE_PATH}/classes.json`,
+    talents: `${DATA_BASE_PATH}/talents.json`,
+    meta: `${DATA_BASE_PATH}/meta.json`
   });
 
   const MAX_MODIFIER_COUNT = 12;
   const MODIFIER_CAP_NOTICE = `已达到 ${MAX_MODIFIER_COUNT} 条策略词条上限`;
   const TALENT_VISUAL_COLUMNS = 8;
   const TALENT_VISUAL_ROWS = 3;
+  const ICON_BY_SLOT = Object.freeze({
+    "主武器": "◎",
+    "副武器": "◈",
+    "近战武器": "⚔"
+  });
+  const MODIFIER_CARD_REMOVE_ICON = "×";
 
   const state = {
     classes: [],
@@ -89,13 +97,17 @@
     };
   }
 
+  function resolveAssetPath(assetPath) {
+    return assetPath ? `${ASSET_BASE_PATH}/${assetPath}` : "";
+  }
+
   function resolveClassImage(entry) {
-    return entry && entry.image_path ? `../assets/${entry.image_path}` : "";
+    return entry && entry.image_path ? resolveAssetPath(entry.image_path) : "";
   }
 
   function resolveWeaponImage(entry) {
     const assetPath = entry && entry.image_path;
-    return assetPath ? `../assets/${assetPath}` : "";
+    return resolveAssetPath(assetPath);
   }
 
   function pickLoadout(list) {
@@ -116,7 +128,7 @@
     const byVisualColumn = new Map();
 
     (talentGroup.nodes || []).forEach((item) => {
-      const visualColumn = Number(item.row || 0);
+      const visualColumn = Number(item.col || 0);
       if (!byVisualColumn.has(visualColumn)) {
         byVisualColumn.set(visualColumn, []);
       }
@@ -252,12 +264,25 @@
     return modifierLabel(value).split("：")[0];
   }
 
+  const MODIFIER_DETAIL_DIRECT_LIMIT = 72;
+  const MODIFIER_DETAIL_HARD_LIMIT = 96;
+
   function summarizeModifierBody(value) {
     const body = String(value || "").trim();
     if (!body) {
       return "暂无简述";
     }
-    return body;
+    if (body.length <= MODIFIER_DETAIL_DIRECT_LIMIT) {
+      return body;
+    }
+    if (body.length <= MODIFIER_DETAIL_HARD_LIMIT) {
+      return body;
+    }
+    const clauses = body.split(/[：；。]/).map((part) => part.trim()).filter(Boolean);
+    if (clauses.length) {
+      return `${clauses[0]}…`;
+    }
+    return `${body.slice(0, MODIFIER_DETAIL_DIRECT_LIMIT)}…`;
   }
 
   function getPositiveModifierPool() {
@@ -595,6 +620,7 @@
       <p class="modifier-tooltip__kicker">${escapeHtml(card.dataset.tooltipKicker || "")}</p>
       <h4>${escapeHtml(card.dataset.tooltipTitle || "")}</h4>
       ${card.dataset.tooltipMeta ? `<p class="modifier-tooltip__meta">${escapeHtml(card.dataset.tooltipMeta)}</p>` : ""}
+      <hr style="border: 0; border-top: 1px solid rgba(164, 140, 122, 0.18); margin: 8px 0;" />
       <p class="modifier-tooltip__body">${escapeHtml(card.dataset.tooltipBody || "")}</p>
     `;
     layer.hidden = false;
@@ -646,10 +672,10 @@
     if (value && typeof value === "object") {
       const label = String((value.label || value.name || "")).trim();
       if (label) {
-        return titleOfModifier(label) || "未命名因子";
+        return label || "未命名因子";
       }
     }
-    return titleOfModifier(value) || "未命名因子";
+    return modifierLabel(value).trim() || "未命名因子";
   }
 
   function resolveModifierDetail(value) {
@@ -671,13 +697,16 @@
         : "";
     const displayTitle = resolveModifierTitle(modifier);
     const tooltipBody = resolveModifierDetail(modifier);
+    
+    const titleBeforeColon = modifierLabel(modifier).split("：")[0].trim() || displayTitle;
+
     return {
       id: ++modifierIdSeed,
       type: normalizedType,
       key,
       displayTitle,
-      displaySummary: summarizeModifierBody(tooltipBody),
-      tooltipTitle: displayTitle,
+      displaySummary: tooltipBody,
+      tooltipTitle: titleBeforeColon,
       tooltipMeta: modifierTypeMeta({ ...(modifier || {}), type: normalizedType }),
       tooltipBody
     };
@@ -685,28 +714,32 @@
 
   function renderSquadTabs() {
     const root = document.getElementById("squad-tabs");
-    root.innerHTML = state.team.map((player, index) => {
-      const entry = state.classLookup[player.classSlug];
-      const meta = entry ? entry.name : "待配置";
-      const status = player.confirmed
-        ? "已确认"
-        : !player.classSlug
-          ? "待抽职业"
-          : !player.hasDrawnLoadout
-            ? "待抽武器"
-            : !player.hasDrawnTalents
-              ? "待抽天赋"
-              : "可保存";
-      const activeClass = index === state.activeIndex ? "active" : "";
+    root.hidden = false;
+    document.querySelector(".app-topbar")?.classList.remove("tabs-hidden");
+
+    let tabsHtml = "";
+    for (let i = 0; i < state.team.length; i++) {
+      const player = state.team[i];
+      const isActive = i === state.activeIndex;
+      const classEntry = player.classSlug ? state.classLookup[player.classSlug] : null;
+      
+      let statusText = classEntry ? classEntry.name : "待分配";
+      
+      const isReady = player.classSlug && player.hasDrawnLoadout && player.hasDrawnTalents;
       const confirmedClass = player.confirmed ? "confirmed" : "";
-      return `
-        <button type="button" class="squad-tab ${activeClass} ${confirmedClass}" data-player-index="${index}">
-          <span class="squad-tab__label">小队 ${index + 1}</span>
-          <span class="squad-tab__meta">${escapeHtml(meta)}</span>
-          <span class="squad-tab__status">${escapeHtml(status)}</span>
+      const indicatorColor = isReady ? "#4ade80" : "#ef4444"; // 绿色 (三件全抽) / 红色 (未全抽)
+
+      tabsHtml += `
+        <button class="squad-tab ${isActive ? "active" : ""} ${confirmedClass}" type="button" data-player-index="${i}">
+          <span class="squad-tab__label">
+            小队成员 ${i + 1}
+            <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background-color:${indicatorColor}; margin-left:4px; box-shadow: 0 0 6px ${indicatorColor}; position:relative; top:-2px;"></span>
+          </span>
+          <span class="squad-tab__status">${statusText}</span>
         </button>
       `;
-    }).join("");
+    }
+    root.innerHTML = tabsHtml;
   }
 
   function renderHero() {
@@ -721,26 +754,24 @@
     image.style.display = hasImage ? "block" : "none";
     placeholder.style.display = hasImage ? "none" : "grid";
 
+    const heroCard = document.querySelector(".hero-card");
+    heroCard?.classList.toggle("has-class", hasImage);
+    document.getElementById("class-image-title").textContent = hasImage ? "" : "等待抽取";
+
     document.getElementById("current-member-label").textContent = player.confirmed
-      ? `小队 ${state.activeIndex + 1} · 已确认`
-      : `小队 ${state.activeIndex + 1} · 当前成员`;
+      ? "当前成员 · 已确认"
+      : "当前成员";
     document.getElementById("class-name").textContent = entry ? entry.name : "等待抽取";
     document.getElementById("class-role").textContent = entry ? (entry.role || "未定义角色") : "等待数据";
     document.getElementById("class-tagline").textContent = entry
       ? (entry.tagline || buildPlayerStatus(player))
-      : "请选择一名成员后再抽取。";
+      : "等待职业抽取后显示说明。";
     document.getElementById("save-progress-bar").style.width = `${Math.max((confirmedCount() / state.team.length) * 100, 4)}%`;
   }
 
   function renderWeaponGrid() {
     const player = currentPlayer();
     const entry = currentClass();
-    const iconBySlot = {
-      "主武器": "hardware",
-      "副武器": "9mp",
-      "近战武器": "swords"
-    };
-
     const weaponSlots = [
       ["主武器", player.primary],
       ["副武器", player.secondary],
@@ -775,7 +806,7 @@
           <div class="weapon-card__art">
             ${image
               ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(title)}" />`
-              : `<span class="material-symbols-outlined" aria-hidden="true">${escapeHtml(iconBySlot[label])}</span>`}
+              : `<span class="material-symbols-outlined" aria-hidden="true">${escapeHtml(ICON_BY_SLOT[label] || "•")}</span>`}
           </div>
           <p class="weapon-card__hint">${escapeHtml(hint)}</p>
         </article>
@@ -784,8 +815,8 @@
   }
 
   function renderTalentCell(visualColumn, visualRow, item, isActive) {
-    const gridLabel = `${visualRow}/${visualColumn}`;
-    const image = item && item.icon_path ? `../assets/${item.icon_path}` : "";
+    const gridLabel = `${visualColumn}/${visualRow}`;
+    const image = item && item.icon_path ? resolveAssetPath(item.icon_path) : "";
     const displayName = item ? resolveTalentDisplayName(item) : "等待灌注";
     const metaLine = item ? resolveTalentMetaLine(item, gridLabel) : "";
     const description = item ? normalizeTalentDescription(item) : "";
@@ -822,8 +853,8 @@
     hideTalentTooltip();
 
     (talentGroup.nodes || []).forEach((item) => {
-      const visualColumn = Number(item.row || 0);
-      const visualRow = Number(item.col || 0);
+      const visualColumn = Number(item.col || 0);
+      const visualRow = Number(item.row || 0);
       const key = `${visualColumn}:${visualRow}`;
       matrixLookup.set(key, item);
     });
@@ -849,39 +880,62 @@
     bindTalentTooltipTargets();
   }
 
+  function renderModifierBody(summary) {
+    const body = String(summary || "").trim();
+    if (!body) {
+      return '<div style="display: block; width: 100%; color: #e5e2e1; font-size: 0.8rem; line-height: 1.3em; max-height: 2.6em; white-space: normal; overflow: hidden; word-break: break-word;">暂无简述</div>';
+    }
+    
+    const colonMatch = body.match(/^(.*?)(：|:)(\s*.*)$/);
+    let formattedBody = escapeHtml(body);
+    if (colonMatch) {
+      formattedBody = `<strong style="font-weight: 700; color: #ffffff;">${escapeHtml(colonMatch[1])}</strong>${escapeHtml(colonMatch[2])}${escapeHtml(colonMatch[3])}`;
+    }
+
+    return `<div style="display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; width: 100%; color: #e5e2e1; font-size: 0.8rem; line-height: 1.3em; max-height: 2.6em; white-space: normal; overflow: hidden; word-break: break-word; align-self: center;">${formattedBody}</div>`;
+  }
+
+  function renderModifierCard(item, wrapClass = "modifier-slot") {
+    const type = item.type === "negative" ? "negative" : "positive";
+    const icon = type === "positive" ? "verified_user" : "dangerous";
+    return `
+      <div class="${wrapClass}">
+        <article
+          class="modifier-card ${type}"
+          tabindex="0"
+          data-tooltip-kicker="${escapeHtml(type === "positive" ? "正面策略词条" : "负面策略词条")}"
+        data-tooltip-title="${escapeHtml(item.tooltipTitle)}"
+        data-tooltip-meta="${escapeHtml(item.tooltipMeta)}"
+        data-tooltip-body="${escapeHtml(item.tooltipBody)}"
+      >
+        <button type="button" class="modifier-card__remove" data-remove-modifier-id="${item.id}" aria-label="删除${escapeHtml(item.displayTitle)}">
+          <span class="material-symbols-outlined" aria-hidden="true">${MODIFIER_CARD_REMOVE_ICON}</span>
+        </button>
+        <div class="modifier-card__content">
+          ${renderModifierBody(item.displaySummary)}
+        </div>
+      </article>
+      </div>
+    `;
+  }
+
   function renderModifierCards(items) {
     if (!items.length) {
       return `<div class="modifier-empty">当前还没有已抽取的战场词条。</div>`;
     }
 
-    return items.map((item) => {
-      const type = item.type === "negative" ? "negative" : "positive";
-      const icon = type === "positive" ? "verified_user" : "dangerous";
-      return `
-        <article
-          class="modifier-card ${type}"
-          tabindex="0"
-          data-tooltip-kicker="${escapeHtml(type === "positive" ? "正面策略词条" : "负面策略词条")}"
-          data-tooltip-title="${escapeHtml(item.tooltipTitle)}"
-          data-tooltip-meta="${escapeHtml(item.tooltipMeta)}"
-          data-tooltip-body="${escapeHtml(item.tooltipBody)}"
-        >
-          <button type="button" class="modifier-card__remove" data-remove-modifier-id="${item.id}" aria-label="删除${escapeHtml(item.displayTitle)}">
-            <span class="material-symbols-outlined" aria-hidden="true">close</span>
-          </button>
-          <span class="material-symbols-outlined modifier-card__icon" aria-hidden="true">${icon}</span>
-          <div class="modifier-card__content">
-            <p class="modifier-card__title">${escapeHtml(item.displayTitle)}</p>
-            <p class="modifier-card__body">${escapeHtml(item.displaySummary)}</p>
-          </div>
-        </article>
-      `;
-    }).join("");
+    return items.map((item) => renderModifierCard(item, "modifier-list__item")).join("");
   }
 
   function renderModifiers() {
     hideModifierTooltip();
-    document.getElementById("modifier-feed").innerHTML = renderModifierCards(state.modifierFeed);
+    const feed = document.getElementById("modifier-feed");
+    feed.innerHTML = state.modifierFeed.length
+      ? `<div class="modifier-list">${renderModifierCards(state.modifierFeed)}</div>`
+      : renderModifierCards(state.modifierFeed);
+    feed.className = state.modifierFeed.length
+      ? "modifier-feed"
+      : "modifier-feed modifier-feed--empty";
     document.getElementById("positive-count").textContent = String(state.modifiers.positive.length);
     document.getElementById("negative-count").textContent = String(state.modifiers.negative.length);
     document.getElementById("modifier-warning").textContent = state.warning;
@@ -1020,6 +1074,6 @@
   bindEvents();
   initialize().catch((error) => {
     console.error(error);
-    document.getElementById("footer-status").textContent = "初始化失败，请先运行 pipeline/transforms/build_runtime_data.py。";
+    document.getElementById("footer-status").textContent = "初始化失败，请先运行 pipeline/compute/build_runtime_data.py。";
   });
 })();

@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+"""候选运行数据发布控制入口。
+
+负责候选与当前运行数据的差异生成、应用/清理决策及候选目录生命周期管理。
+"""
+
 import argparse
 import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
-from pipeline.common import APP_DATA_DIR, PIPELINE_TMP_PUBLISH_DIR, VALIDATION_REPORT_FILE, read_json, write_json
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from pipeline.common import APP_DATA_DIR, PIPELINE_TMP_PUBLISH_DIR, VALIDATION_REPORT_FILE, read_json, write_json
 from pipeline.compute.validate_runtime_data import validate_runtime_data
 
 RUNTIME_FILES = ("classes.json", "talents.json", "meta.json")

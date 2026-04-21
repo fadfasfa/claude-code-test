@@ -8,8 +8,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 APP_DIR = BASE_DIR / "app"
 APP_DATA_DIR = APP_DIR / "data"
 APP_ASSETS_DIR = APP_DIR / "assets"
-DEBUG_DIR = BASE_DIR / "debug"
-DOCS_DIR = BASE_DIR / "docs"
 
 PIPELINE_DIR = BASE_DIR / "pipeline"
 PIPELINE_COLLECT_DIR = PIPELINE_DIR / "collect"
@@ -45,8 +43,6 @@ def ensure_directories() -> None:
         APP_DIR,
         APP_DATA_DIR,
         APP_ASSETS_DIR,
-        DEBUG_DIR,
-        DOCS_DIR,
         PIPELINE_DIR,
         PIPELINE_COLLECT_DIR,
         PIPELINE_COLLECT_WIKI_DIR,

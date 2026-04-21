@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""Excel 采集统一入口。
+
+负责调用 Excel 导入脚本并透传退出码，用于在统一流水线中稳定编排 Excel 刷新步骤。
+"""
+
 import subprocess
 import sys
 from pathlib import Path

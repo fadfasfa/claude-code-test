@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""运行期数据契约校验入口。
+
+校验 classes/talents/meta 三个运行文件的结构、语义与资源路径一致性，并输出校验报告。
+"""
+
 import argparse
 from pathlib import Path
 import re
@@ -20,12 +25,21 @@ EXPECTED_WEAPON_COUNT = 30
 EXPECTED_TALENT_CLASS_COUNT = 7
 EXPECTED_TALENT_NODE_COUNT = 24
 EXPECTED_TALENT_GRID = {
-    "cols": 3,
-    "rows": 8,
+    "cols": 8,
+    "rows": 3,
     "label_format": "col/row",
     "order": "column-major",
 }
 FORBIDDEN_RUNTIME_FIELDS = {"description_raw", "source_meta", "field_source_policy", "strategy_terms", "strategy_modifier_pools"}
+CLASS_SLUG_TO_ZH_NAME = {
+    "tactical": "战术兵",
+    "assault": "突击兵",
+    "vanguard": "先锋兵",
+    "bulwark": "重装兵",
+    "sniper": "狙击兵",
+    "heavy": "特战兵",
+    "techmarine": "技术军士",
+}
 REQUIRED_RUNTIME_FILES = ("classes.json", "talents.json", "meta.json")
 LEGACY_RUNTIME_FILES = ("loadouts.json", "talent_details.json")
 MAX_NEGATIVE_LABEL_LENGTH = 14
@@ -105,9 +119,14 @@ def _load_manual_skill_descriptions() -> set[str]:
     return values
 
 
-def validate_runtime_data(target_dir: Path | None = None, report_path: Path | None = None) -> dict:
+def validate_runtime_data(
+    target_dir: Path | None = None,
+    report_path: Path | None = None,
+    assets_dir: Path | None = None,
+) -> dict:
     ensure_directories()
     runtime_dir = target_dir or APP_DATA_DIR
+    resolved_assets_dir = assets_dir or APP_ASSETS_DIR
     payloads = {name: read_json(runtime_dir / name, {}) for name in REQUIRED_RUNTIME_FILES}
     structure_issues: list[dict[str, str]] = []
     semantic_issues: list[dict[str, str]] = []
@@ -155,7 +174,7 @@ def validate_runtime_data(target_dir: Path | None = None, report_path: Path | No
         image_path = entry.get("image_path")
         if not _is_local_asset_path(image_path):
             structure_issues.append(_issue("error", "CLASS_IMAGE_PATH", f"{slug} 缺少合法本地职业图：{image_path}"))
-        elif not (APP_ASSETS_DIR / str(image_path)).exists():
+        elif not (resolved_assets_dir / str(image_path)).exists():
             structure_issues.append(_issue("error", "CLASS_IMAGE_FILE", f"{slug} 职业图文件不存在：{image_path}"))
 
         for forbidden in FORBIDDEN_CLASS_FIELDS:
@@ -186,7 +205,7 @@ def validate_runtime_data(target_dir: Path | None = None, report_path: Path | No
                 if not _is_local_asset_path(image_path):
                     structure_issues.append(_issue("error", "WEAPON_IMAGE_PATH", f"{slug}.{slot}.{weapon_slug} 缺少合法本地图标"))
                     continue
-                if not (APP_ASSETS_DIR / str(image_path)).exists():
+                if not (resolved_assets_dir / str(image_path)).exists():
                     structure_issues.append(_issue("error", "WEAPON_IMAGE_FILE", f"{weapon_slug} 图标文件不存在：{image_path}"))
                 if "original_name" in item:
                     structure_issues.append(_issue("error", "FORBIDDEN_WEAPON_FIELD", f"{slug}.{slot}.{weapon_slug} 不应包含字段：original_name"))
@@ -261,8 +280,14 @@ def validate_runtime_data(target_dir: Path | None = None, report_path: Path | No
             icon_path = node.get("icon_path")
             if not _is_local_asset_path(icon_path):
                 structure_issues.append(_issue("error", "TALENT_ICON_PATH", f"{class_slug}/{talent_slug} 缺少合法本地图标"))
-            elif not (APP_ASSETS_DIR / str(icon_path)).exists():
-                structure_issues.append(_issue("error", "TALENT_ICON_FILE", f"{class_slug}/{talent_slug} 图标文件不存在：{icon_path}"))
+            else:
+                normalized_icon_path = str(icon_path)
+                expected_class_name = CLASS_SLUG_TO_ZH_NAME.get(class_slug, class_name)
+                expected_prefix = f"talents/{expected_class_name}/"
+                if not normalized_icon_path.startswith(expected_prefix):
+                    structure_issues.append(_issue("error", "TALENT_ICON_NAMING", f"{class_slug}/{talent_slug} 图标路径未落到中文目录：{icon_path}"))
+                if not (resolved_assets_dir / normalized_icon_path).exists():
+                    structure_issues.append(_issue("error", "TALENT_ICON_FILE", f"{class_slug}/{talent_slug} 图标文件不存在：{icon_path}"))
             zh_name = str(node.get("talent_name_zh", "") or "").strip()
             en_name = str(node.get("talent_name_en", "") or "").strip()
             if zh_name and zh_name == en_name and zh_name.isascii():
@@ -380,6 +405,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate runtime contract files against the expected app/data schema.")
     parser.add_argument("--target-dir", default=str(APP_DATA_DIR), help="Directory containing classes.json, talents.json, and meta.json.")
     parser.add_argument("--report-path", default=str(VALIDATION_REPORT_FILE), help="Where to write the validation report JSON.")
+    parser.add_argument("--assets-dir", default=str(APP_ASSETS_DIR), help="Directory containing runtime asset files referenced by image_path/icon_path.")
     return parser.parse_args()
 
 
@@ -388,4 +414,5 @@ if __name__ == "__main__":
     validate_runtime_data(
         target_dir=Path(args.target_dir).resolve(),
         report_path=Path(args.report_path).resolve(),
+        assets_dir=Path(args.assets_dir).resolve(),
     )

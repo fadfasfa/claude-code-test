@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""多源数据归并入口。
+
+将 Wiki/Excel/人工补录数据按策略聚合为统一中间结果，供运行期构建步骤消费。
+"""
+
 from datetime import datetime, UTC
 from pathlib import Path
 import sys
@@ -334,8 +339,8 @@ def merge_sources() -> dict[str, Any]:
     field_policy = read_json(FIELD_SOURCE_POLICY_FILE, {})
     extraction_rules = read_json(EXTRACTION_RULES_FILE, {})
 
-    manual_class_by_slug = _index_by(_safe_list(manual.get("classes")), "slug")
-    manual_weapon_by_slug = _index_by(_safe_list(manual.get("weapons")), "slug")
+    manual_class_by_slug: dict[str, dict[str, Any]] = {}
+    manual_weapon_by_slug: dict[str, dict[str, Any]] = {}
     wiki_class_by_slug = _index_by(_safe_list(wiki_raw.get("classes")), "slug_candidate")
     wiki_weapon_by_slug = _index_by(_safe_list(wiki_raw.get("weapons")), "slug_candidate")
     class_manifest_by_slug = _index_by(_safe_list(class_manifest.get("classes")), "slug")

@@ -1,79 +1,47 @@
 # Agent Tooling Baseline
 
-This file is the Phase 1 single source of truth for capability-layer setup only. It does not replace workflow contracts.
+This file is the repo-side capability baseline note, not the global source of truth.
+
+Global CC / CX skill / CLI / rule / hook facts are maintained in:
+
+- `C:\Users\apple\OneDrive\Desktop\各个设定及工作流\_support\cc_cx_skill_cli_inventory.md`
 
 ## Claude Code
 
 - Global entry: `C:\Users\apple\.claude\CLAUDE.md`
+- Global proxy entry: `C:\Users\apple\.claude\settings.json`
 - Repo entry: `C:\Users\apple\claudecode\CLAUDE.md`
-- Global skills:
-  - `brainstorming`
-  - `systematic-debugging`
-  - `search-first`
+- Global skills and hooks: see the inventory above.
 - Repo skills:
-  - `verification-before-completion`
-  - `requesting-code-review`
-  - `frontend-patterns`
-  - `backend-patterns`
   - `api-design`
+  - `backend-patterns`
+  - `frontend-patterns`
   - `python-patterns`
   - `python-testing`
+  - `requesting-code-review`
+  - `verification-before-completion`
+- Karpathy perspective skill belongs to Claude Code global only; this repo only keeps repo-specific skills.
+- Disabled by baseline: plugins = 0, MCP = 0 at repo layer.
+- This repository does not define an active proxy endpoint for Claude Code.
+- Claude Code proxy wiring is inherited from global `~/.claude/settings.json`.
+- Do not write `6984`, `HTTPS_PROXY`, or `tls.proxy_url` into this repository's active entry files.
 
 ## Codex
 
-- Global entry: `C:\Users\apple\.codex\AGENTS.md`
-- Global skills:
-  - `brainstorming`
-  - `systematic-debugging`
-  - `verification-before-completion`
-  - `repo-scan-and-plan`
-  - `diff-self-review`
-  - `search-first`
-- Core operating defaults:
-  - CLI-first
-  - MCP-last
-  - no hooks
-  - no global MCP
+- Global instruction root: `C:\Users\apple\AGENTS.md`
+- Global config: `C:\Users\apple\.codex\config.toml`
+- Global skills / discipline / compat layering: see the inventory above.
+- Repo defaults:
+  - no project-level `.codex/config.toml`
+  - plugins = 0
+  - MCP = 0
+  - hooks = 0
   - no automatic worktree
   - no automatic branch creation
+- Codex reads repo entry docs and workspace docs, but does not rely on repo-local method skills.
 
-## Workspace Write Boundaries
+## Workspace Boundaries
 
 - `claudecode` is a multi-work-area repository.
-- Claude and Codex may read across the repository by default.
-- Write access is scoped to the current target work area unless the user explicitly expands scope.
-- The repository root is for governance files, not default business output.
-- Do not add `.mcp.json`, project-level Codex config, or per-work-area rule files by default.
-
-## Disabled or Deferred
-
-- Claude Code plugins
-- Codex plugins
-- Global MCP servers
-- Hooks
-- Automatic worktree creation
-- Automatic branch creation for every large task
-- TDD activation
-
-## Proxy and Provider Handling
-
-- Preserve current working provider/auth/proxy wiring.
-- Do not hardcode new proxy endpoints into global templates.
-- Keep proxy examples in documentation-only template files.
-
-## TDD
-
-- TDD is interface-only in Phase 1.
-- Reserved names:
-  - `tdd-workflow`
-  - `test-driven-development`
-  - `red-green-refactor`
-
-## Antigravity
-
-- Current status: manual lane only.
-- Allowed uses:
-  - explicit frontend refactor requests
-  - explicit review requests
-  - explicit text-assistance requests
-- Not part of default routing, gate, or automatic dispatch.
+- Rule-source priority and write boundaries are defined in repo-root `AGENTS.md`, `PROJECT.md`, and `work_area_registry.md`.
+- This file records capability constraints only: no project-level `.codex/config.toml`, no `.mcp.json`, and no per-work-area rule files by default.

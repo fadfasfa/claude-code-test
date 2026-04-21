@@ -1,0 +1,30 @@
+{
+  "summary": {
+    "class_count": 7,
+    "weapon_count": 30,
+    "primary_count": 17,
+    "secondary_count": 5,
+    "melee_count": 8,
+    "talent_class_count": 7,
+    "talent_missing_description_count": 0,
+    "structure_issue_count": 1,
+    "semantic_issue_count": 0,
+    "issue_count": 1
+  },
+  "talent_missing_description_by_class": {},
+  "structure_issues": [
+    {
+      "level": "error",
+      "code": "NEGATIVE_MODIFIER_CONFLICT_KEY",
+      "message": "冲突规则引用了未知 key：embrace-the-blast"
+    }
+  ],
+  "semantic_issues": [],
+  "issues": [
+    {
+      "level": "error",
+      "code": "NEGATIVE_MODIFIER_CONFLICT_KEY",
+      "message": "冲突规则引用了未知 key：embrace-the-blast"
+    }
+  ]
+}

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+"""构建运行期候选数据。
+
+将 merge 后的多源结果收敛为 app/data 契约下的最小三文件，并清理历史遗留运行文件。
+"""
+
 import argparse
 from pathlib import Path
 import re
@@ -14,8 +19,8 @@ from pipeline.common import APP_DATA_DIR, MANUAL_SOURCE_FILE, PIPELINE_TMP_PUBLI
 from pipeline.compute.merge_sources import merge_sources
 
 RUNTIME_TALENT_GRID_SPEC = {
-    "cols": 3,
-    "rows": 8,
+    "cols": 8,
+    "rows": 3,
     "label_format": "col/row",
     "order": "column-major",
 }
@@ -282,6 +287,9 @@ def _sanitize_talent_node(
     if description and description in blocked_descriptions:
         description = None
     description = talent_description_zh_map.get((class_slug, talent_slug), description)
+    icon_path = _clean_optional_text(item.get("icon_path"))
+    if icon_path:
+        icon_path = icon_path.replace("\\", "/")
     return {
         "talent_slug": talent_slug,
         "col": col,
@@ -290,7 +298,7 @@ def _sanitize_talent_node(
         "talent_name": talent_name_zh or talent_name_en or talent_slug,
         "talent_name_en": talent_name_en or None,
         "talent_name_zh": talent_name_zh,
-        "icon_path": _clean_optional_text(item.get("icon_path")),
+        "icon_path": icon_path,
         "description": description,
     }
 

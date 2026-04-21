@@ -2,7 +2,7 @@
   "version_anchor": "Update 12.0 / Techmarine",
   "slug_key": "slug",
   "layer_contract": {
-    "rules": "pipeline/rules/extraction_rules.json",
+    "rules": "pipeline/collect/rules/extraction_rules.json",
     "raw": "pipeline/out/source/wiki/原始抓取数据.json",
     "normalized": "pipeline/out/source/catalog/标准化数据.json",
     "validation": "pipeline/out/source/reports/*"

@@ -2,10 +2,10 @@
   "classes": [
     {
       "slug": "assault",
-      "name": "突击兵",
-      "role": "突击先锋",
-      "tagline": "高机动近战压制单位，快速切入高威胁区域。",
-      "summary": "高机动近战压制单位，快速切入高威胁区域。",
+      "name": "Assault",
+      "role": "Assault",
+      "tagline": null,
+      "summary": null,
       "class_ability": "Jump Pack",
       "image_path": "classes/突击兵/cover.png",
       "loadout_pools": {
@@ -78,10 +78,10 @@
     },
     {
       "slug": "bulwark",
-      "name": "重装兵",
-      "role": "壁垒守护",
-      "tagline": "以防御与队伍保护为核心的前排单位。",
-      "summary": "以防御与队伍保护为核心的前排单位。",
+      "name": "Bulwark",
+      "role": "Bulwark",
+      "tagline": null,
+      "summary": null,
       "class_ability": "Chapter Banner",
       "image_path": "classes/重装兵/cover.png",
       "loadout_pools": {
@@ -148,10 +148,10 @@
     },
     {
       "slug": "heavy",
-      "name": "特战兵",
-      "role": "重装火力",
-      "tagline": "提供持续火力压制与重型武器输出。",
-      "summary": "提供持续火力压制与重型武器输出。",
+      "name": "Heavy",
+      "role": "Heavy",
+      "tagline": null,
+      "summary": null,
       "class_ability": "Iron Halo",
       "image_path": "classes/特战兵/cover.png",
       "loadout_pools": {
@@ -225,10 +225,10 @@
     },
     {
       "slug": "sniper",
-      "name": "狙击兵",
-      "role": "远程精确",
-      "tagline": "专注高价值目标清除与远程压制。",
-      "summary": "专注高价值目标清除与远程压制。",
+      "name": "Sniper",
+      "role": "Sniper",
+      "tagline": null,
+      "summary": null,
       "class_ability": "Camo Cloak",
       "image_path": "classes/狙击兵/cover.png",
       "loadout_pools": {
@@ -302,10 +302,10 @@
     },
     {
       "slug": "tactical",
-      "name": "战术兵",
-      "role": "战术支援",
-      "tagline": "标准化战斗编组核心，适合大多数任务场景。",
-      "summary": "标准化战斗编组核心，适合大多数任务场景。",
+      "name": "Tactical",
+      "role": "Tactical",
+      "tagline": null,
+      "summary": null,
       "class_ability": "Auspex Scan",
       "image_path": "classes/战术兵/cover.png",
       "loadout_pools": {
@@ -397,10 +397,10 @@
     },
     {
       "slug": "techmarine",
-      "name": "技术军士",
-      "role": "机械神甫",
-      "tagline": "兼顾技术支援与特种装备调配的战斗单位。",
-      "summary": "兼顾技术支援与特种装备调配的战斗单位。",
+      "name": "Techmarine",
+      "role": "Techmarine",
+      "tagline": null,
+      "summary": null,
       "class_ability": "Servo-Gun",
       "image_path": "classes/技术军士/cover.png",
       "loadout_pools": {
@@ -498,10 +498,10 @@
     },
     {
       "slug": "vanguard",
-      "name": "先锋兵",
-      "role": "前锋渗透",
-      "tagline": "擅长快速接敌与机动骚扰，兼顾突破与收割。",
-      "summary": "擅长快速接敌与机动骚扰，兼顾突破与收割。",
+      "name": "Vanguard",
+      "role": "Vanguard",
+      "tagline": null,
+      "summary": null,
       "class_ability": "Grapnel Launcher",
       "image_path": "classes/先锋兵/cover.png",
       "loadout_pools": {

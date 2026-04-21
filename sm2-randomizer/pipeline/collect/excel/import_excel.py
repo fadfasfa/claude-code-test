@@ -25,6 +25,7 @@ from pipeline.common import (
     PIPELINE_STORE_RAW_EXCEL_DIR,
     build_weapon_asset_path,
     load_weapon_image_name_overrides,
+    read_json,
     resolve_weapon_asset_name,
     sanitize_asset_name,
     weapon_slot_directory,
@@ -139,7 +140,7 @@ CANONICAL_EXCEL_WEAPON_ITEMS: dict[str, dict[str, str]] = {
     "twin-linked-melta-gun": {"excel_name": "双联热熔枪", "source_sheet": "主武器"},
 }
 HERO_TITLE_FILL_RGB = "FF7030A0"
-EXCEL_NON_HERO_TITLE_EXCEPTIONS = {"双联热熔枪"}
+EXCEL_NON_HERO_TITLE_EXCEPTIONS: set[str] = set()
 
 
 def _is_excluded_weapon_block_name(display_name: str) -> bool:
@@ -160,13 +161,6 @@ def _is_hero_weapon_block(*, display_name: str, title_fill_rgb: str) -> bool:
     return _is_excluded_weapon_block_name(display_name)
 
 
-def _read_json(path: Path, default: Any) -> Any:
-    if not path.exists():
-        return default
-    with path.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
-
 def _normalize_text(value: str) -> str:
     return unicodedata.normalize("NFKC", str(value or "")).strip().lower()
 
@@ -181,7 +175,7 @@ def _extract_dispimg_id(formula: str) -> str:
 
 
 def _load_workbook_sheet_rows() -> dict[str, list[list[str]]]:
-    payload = _read_json(EXCEL_EXPORT_FILE, [])
+    payload = read_json(EXCEL_EXPORT_FILE, [])
     sheet_rows: dict[str, list[list[str]]] = {}
     for entry in payload:
         if not isinstance(entry, dict):
@@ -542,8 +536,8 @@ def _build_clean_excel_exports(items: list[dict[str, Any]]) -> None:
 
 
 def import_weapon_icons() -> dict[str, Any]:
-    image_map = _read_json(WEAPON_IMAGE_MAP_FILE, {"items": []})
-    manifest = _read_json(WEAPON_MANIFEST_FILE, {"weapons": []})
+    image_map = read_json(WEAPON_IMAGE_MAP_FILE, {"items": []})
+    manifest = read_json(WEAPON_MANIFEST_FILE, {"weapons": []})
     sheet_rows = _load_workbook_sheet_rows()
     slug_formula_lookup = _build_slug_formula_lookup()
     image_lookup = _build_dispimg_binary_lookup()
