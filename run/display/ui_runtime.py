@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+_preload_status_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ui-preload-status")
 
 
 def _load_server_port() -> int:
@@ -199,6 +201,234 @@ def run_silent_sync(ui: "HextechUI", refresh_backend_data) -> None:
         ui._run_on_ui_thread(lambda: ui._set_status("数据同步失败", "#f38ba8"))
 
 
+def _set_click_status(ui: "HextechUI", text: str, color: str) -> None:
+    ui._hero_click_status = text
+    ui._run_on_ui_thread(lambda: ui._set_status(text, color))
+
+
+def _refresh_preload_ready(ui: "HextechUI", hero_name: str) -> bool:
+    normalized_hero = str(hero_name or "").strip()
+    if not normalized_hero:
+        return False
+    web_base = resolve_web_base(ui.web_port_file, timeout=1.0)
+    request_token = ui.session.cookies.get("hextech_local_token", "")
+    try:
+        response = requests.get(
+            f"{web_base}/api/champion/{quote(normalized_hero)}/preload_status",
+            headers={"Origin": web_base, "X-Hextech-Token": request_token},
+            timeout=1.0,
+        )
+        if response.status_code != 200:
+            return False
+        payload = response.json()
+        is_ready = bool(payload.get("ready"))
+        with ui._hero_preload_lock:
+            ui._hero_preload_ready[normalized_hero] = is_ready
+            if payload.get("pending"):
+                ui._hero_preload_pending.add(normalized_hero)
+            else:
+                ui._hero_preload_pending.discard(normalized_hero)
+        return is_ready
+    except Exception:
+        logger.debug("刷新英雄预热状态失败：hero=%s", normalized_hero, exc_info=True)
+        return False
+
+
+def _record_redirect_success(ui: "HextechUI", web_base: str) -> None:
+    ui._last_redirect_success_base = web_base
+    ui._last_redirect_success_at = time.time()
+
+
+def _resolve_redirect_base(ui: "HextechUI") -> str:
+    if ui._last_redirect_success_base and (time.time() - ui._last_redirect_success_at) < 60.0:
+        return ui._last_redirect_success_base
+    return resolve_web_base(ui.web_port_file, timeout=1.0)
+
+
+def _store_live_state_marker(ui: "HextechUI", payload: dict, source: str) -> None:
+    ui._last_live_state_version = int(payload.get("state_version", -1) or -1)
+    ui._last_live_state_updated_at = float(payload.get("updated_at", 0.0) or 0.0)
+    ui._last_live_state_source = source
+
+
+def _is_newer_live_state(ui: "HextechUI", payload: dict, source: str) -> bool:
+    state_version = int(payload.get("state_version", -1) or -1)
+    updated_at = float(payload.get("updated_at", 0.0) or 0.0)
+    if source != "web":
+        return True
+    if state_version > ui._last_live_state_version:
+        return True
+    if state_version == ui._last_live_state_version and updated_at > ui._last_live_state_updated_at:
+        return True
+    return False
+
+
+def _sync_preload_state_for_candidates(ui: "HextechUI", hero_names: list[str]) -> None:
+    if not hero_names:
+        return
+    normalized_names = [str(name).strip() for name in hero_names if str(name).strip()]
+    with ui._hero_preload_lock:
+        removed_names = [name for name in ui._hero_preload_ready.keys() if name not in normalized_names]
+        for name in removed_names:
+            ui._hero_preload_ready.pop(name, None)
+            ui._hero_preload_pending.discard(name)
+
+
+def _post_redirect(ui: "HextechUI", web_base: str, champ_id, hero_name, en_name: str) -> bool:
+    request_token = ui.session.cookies.get("hextech_local_token", "")
+    response = requests.post(
+        f"{web_base}/api/redirect",
+        json={"hero_id": str(champ_id), "hero_name": hero_name},
+        headers={"Origin": web_base, "X-Hextech-Token": request_token},
+        timeout=1.5,
+    )
+    if response.status_code != 200:
+        return False
+    _record_redirect_success(ui, web_base)
+    return True
+
+
+def _open_detail_fallback(web_base: str, champ_id, hero_name: str, en_name: str) -> None:
+    url = (
+        f"{web_base}/detail.html"
+        f"?hero={quote(hero_name)}"
+        f"&id={champ_id}"
+        f"&en={quote(en_name)}"
+        f"&auto=1"
+        f"&detailFirst=1"
+    )
+    webbrowser.open(url)
+
+
+def _resolve_candidate_hero_names(ui: "HextechUI", available_ids: set[str]) -> list[str]:
+    hero_names = []
+    for hero_id in available_ids:
+        core_entry = ui.core_data.get(str(hero_id), {}) if isinstance(ui.core_data, dict) else {}
+        hero_name = str(core_entry.get("name", "")).strip()
+        if hero_name and hero_name not in hero_names:
+            hero_names.append(hero_name)
+    return hero_names
+
+
+def _apply_candidate_update(ui: "HextechUI", available_ids: set[str], *, source: str, payload: dict | None = None) -> None:
+    if payload and not _is_newer_live_state(ui, payload, source):
+        return
+    if payload:
+        _store_live_state_marker(ui, payload, source)
+    hero_names = _resolve_candidate_hero_names(ui, available_ids)
+    _sync_preload_state_for_candidates(ui, hero_names)
+    if available_ids != ui.current_hero_ids:
+        ui.current_hero_ids = available_ids.copy()
+        if hero_names:
+            _queue_ui_preload(ui, hero_names)
+        ui.root.after(0, ui.update_ui, available_ids)
+    elif hero_names:
+        _queue_ui_preload(ui, hero_names)
+
+
+def _fetch_web_live_state(ui: "HextechUI") -> tuple[set[str] | None, dict | None]:
+    web_base = _resolve_redirect_base(ui)
+    response = ui.session.get(f"{web_base}/api/live_state", timeout=2)
+    if response.status_code != 200:
+        return None, None
+    payload = response.json()
+    web_ids = {str(champ_id) for champ_id in payload.get("champion_ids", []) if str(champ_id).strip()}
+    local_champion_id = payload.get("local_champion_id")
+    has_local_champion = False
+    if isinstance(local_champion_id, int):
+        has_local_champion = local_champion_id > 0
+    else:
+        local_text = str(local_champion_id or "").strip()
+        has_local_champion = bool(local_text and local_text != "0")
+    if web_ids or has_local_champion:
+        return web_ids, payload
+    return set(), payload
+
+
+def _sync_candidate_ids(ui: "HextechUI", available_ids: set[str] | None, *, source: str, payload: dict | None = None) -> None:
+    if available_ids is None:
+        return
+    _apply_candidate_update(ui, available_ids, source=source, payload=payload)
+
+
+def _fallback_live_state(ui: "HextechUI") -> set[str] | None:
+    return poll_lcu_live_ids(ui)
+
+
+def _handle_redirect_attempt(ui: "HextechUI", champ_id, hero_name: str, en_name: str) -> bool:
+    web_base = _resolve_redirect_base(ui)
+    try:
+        return _post_redirect(ui, web_base, champ_id, hero_name, en_name)
+    except Exception:
+        logger.debug("请求 /api/redirect 失败，准备重试。", exc_info=True)
+        return False
+
+
+def _drain_preload_pending(ui: "HextechUI") -> None:
+    with ui._hero_preload_lock:
+        pending_names = list(ui._hero_preload_pending)
+    for hero_name in pending_names:
+        _refresh_preload_ready(ui, hero_name)
+
+
+def _wait_for_redirect_ready(ui: "HextechUI", hero_name: str) -> bool:
+    normalized_hero = str(hero_name or "").strip()
+    if not normalized_hero:
+        return False
+    deadline = time.time() + ui._hero_click_gate_timeout
+    while time.time() < deadline and not ui.stop_event.is_set():
+        if _refresh_preload_ready(ui, normalized_hero):
+            return True
+        time.sleep(ui._hero_click_gate_poll_interval)
+    return _refresh_preload_ready(ui, normalized_hero)
+
+
+def _normalize_hero_name(hero_name: str) -> str:
+    return str(hero_name or "").strip()
+
+
+def _mark_preload_pending(ui: "HextechUI", hero_names: list[str]) -> None:
+    with ui._hero_preload_lock:
+        for hero_name in hero_names:
+            ui._hero_preload_pending.add(hero_name)
+            ui._hero_preload_ready.setdefault(hero_name, False)
+
+
+def _queue_preload_worker(ui: "HextechUI", hero_names: list[str]) -> None:
+    web_base = _resolve_redirect_base(ui)
+    request_token = ui.session.cookies.get("hextech_local_token", "")
+    for hero_name in hero_names:
+        try:
+            requests.post(
+                f"{web_base}/api/champion/{quote(hero_name)}/preload",
+                headers={"Origin": web_base, "X-Hextech-Token": request_token},
+                timeout=1.0,
+            )
+        except Exception:
+            logger.debug("候选英雄预热请求失败：hero=%s", hero_name, exc_info=True)
+        _refresh_preload_ready(ui, hero_name)
+
+
+def _submit_preload(ui: "HextechUI", hero_names: list[str]) -> None:
+    _preload_status_executor.submit(lambda: _queue_preload_worker(ui, hero_names))
+
+
+def _queue_ui_preload(ui: "HextechUI", hero_names: list[str]) -> None:
+    normalized_names = []
+    for hero_name in hero_names:
+        normalized = _normalize_hero_name(hero_name)
+        if normalized and normalized not in normalized_names:
+            normalized_names.append(normalized)
+    if not normalized_names:
+        return
+    _mark_preload_pending(ui, normalized_names)
+    _submit_preload(ui, normalized_names)
+
+
+def _wait_for_required_preload(ui: "HextechUI", hero_name: str) -> bool:
+    return _wait_for_redirect_ready(ui, hero_name)
+
+
 def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
     try:
         set_last_hero(hero_name)
@@ -218,7 +448,90 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
     threading.Thread(target=terminal_task, daemon=True).start()
 
     def redirect_task():
+        normalized_hero = _normalize_hero_name(hero_name)
         en_name = ui.core_data.get(str(champ_id), {}).get("en_name", "")
+        _set_click_status(ui, f"正在准备 {normalized_hero}...", "#f9e2af")
+        if not _wait_for_required_preload(ui, normalized_hero):
+            logger.debug("英雄必要预热未在门限内完成，按兜底路径继续：hero=%s", normalized_hero)
+        for _ in range(3):
+            if _handle_redirect_attempt(ui, champ_id, hero_name, en_name):
+                _set_click_status(ui, f"已跳转 {normalized_hero}", "#a6e3a1")
+                return
+            time.sleep(0.4)
+        logger.debug("请求 /api/redirect 多次失败，回退到本地浏览器打开。")
+        fallback_base = _resolve_redirect_base(ui)
+        _set_click_status(ui, f"本地回退打开 {normalized_hero}", "#f9e2af")
+        _open_detail_fallback(fallback_base, champ_id, hero_name, en_name)
+
+    threading.Thread(target=redirect_task, daemon=True).start()
+
+
+def _queue_ui_preload(ui: "HextechUI", hero_names: list[str]) -> None:
+    normalized_names = []
+    for hero_name in hero_names:
+        normalized = str(hero_name or "").strip()
+        if normalized and normalized not in normalized_names:
+            normalized_names.append(normalized)
+    if not normalized_names:
+        return
+
+    with ui._hero_preload_lock:
+        for hero_name in normalized_names:
+            ui._hero_preload_pending.add(hero_name)
+            ui._hero_preload_ready.setdefault(hero_name, False)
+
+    def _worker() -> None:
+        web_base = resolve_web_base(ui.web_port_file, timeout=1.0)
+        for hero_name in normalized_names:
+            try:
+                requests.post(
+                    f"{web_base}/api/champion/{quote(hero_name)}/preload",
+                    headers={"Origin": web_base, "X-Hextech-Token": ui.session.cookies.get("hextech_local_token", "")},
+                    timeout=1.0,
+                )
+            except Exception:
+                logger.debug("候选英雄预热请求失败：hero=%s", hero_name, exc_info=True)
+            _refresh_preload_ready(ui, hero_name)
+
+    _preload_status_executor.submit(_worker)
+
+
+def _wait_for_required_preload(ui: "HextechUI", hero_name: str) -> bool:
+    normalized_hero = str(hero_name or "").strip()
+    if not normalized_hero:
+        return False
+    deadline = time.time() + ui._hero_click_gate_timeout
+    while time.time() < deadline and not ui.stop_event.is_set():
+        if _refresh_preload_ready(ui, normalized_hero):
+            return True
+        time.sleep(ui._hero_click_gate_poll_interval)
+    return _refresh_preload_ready(ui, normalized_hero)
+
+
+def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
+    try:
+        set_last_hero(hero_name)
+    except Exception:
+        logger.debug("记录最近一次英雄选择失败。", exc_info=True)
+
+    def terminal_task():
+        try:
+            sys.stdout.write("\r" + " " * 80 + "\r")
+            sys.stdout.flush()
+            with ui._df_lock:
+                df_snapshot = ui.df
+            display_hero_hextech(df_snapshot, hero_name, is_from_ui=True)
+        except Exception as exc:
+            print(f"\n输出错误: {exc}")
+
+    threading.Thread(target=terminal_task, daemon=True).start()
+
+    def redirect_task():
+        normalized_hero = str(hero_name or "").strip()
+        en_name = ui.core_data.get(str(champ_id), {}).get("en_name", "")
+        _set_click_status(ui, f"正在准备 {normalized_hero}...", "#f9e2af")
+        if not _wait_for_required_preload(ui, normalized_hero):
+            logger.debug("英雄必要预热未在门限内完成，按兜底路径继续：hero=%s", normalized_hero)
         for _ in range(3):
             web_base = resolve_web_base(ui.web_port_file, timeout=1.0)
             try:
@@ -229,6 +542,7 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
                     timeout=1.5,
                 )
                 if resp.status_code == 200:
+                    _set_click_status(ui, f"已跳转 {normalized_hero}", "#a6e3a1")
                     return
             except Exception:
                 logger.debug("请求 /api/redirect 失败，准备重试。", exc_info=True)
@@ -240,7 +554,9 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
             f"&id={champ_id}"
             f"&en={quote(en_name)}"
             f"&auto=1"
+            f"&detailFirst=1"
         )
+        _set_click_status(ui, f"本地回退打开 {normalized_hero}", "#f9e2af")
         webbrowser.open(url)
 
     threading.Thread(target=redirect_task, daemon=True).start()
@@ -254,33 +570,25 @@ def lcu_polling_loop(ui: "HextechUI") -> None:
             continue
 
         available_ids = None
+        payload = None
         try:
-            web_base = resolve_web_base(ui.web_port_file, timeout=1.0)
-            res = ui.session.get(f"{web_base}/api/live_state", timeout=2)
-            if res.status_code == 200:
-                data = res.json()
-                web_ids = {str(champ_id) for champ_id in data.get("champion_ids", []) if str(champ_id).strip()}
-                local_champion_id = data.get("local_champion_id")
-                has_local_champion = False
-                if isinstance(local_champion_id, int):
-                    has_local_champion = local_champion_id > 0
-                else:
-                    local_text = str(local_champion_id or "").strip()
-                    has_local_champion = bool(local_text and local_text != "0")
-
-                if web_ids or has_local_champion:
-                    available_ids = web_ids
+            available_ids, payload = _fetch_web_live_state(ui)
         except Exception:
             available_ids = None
+            payload = None
 
         if available_ids is None:
-            available_ids = poll_lcu_live_ids(ui)
+            available_ids = _fallback_live_state(ui)
+            payload = None
+            source = "lcu"
+        else:
+            source = "web"
+
         if available_ids is None:
             available_ids = set()
 
-        if available_ids != ui.current_hero_ids:
-            ui.current_hero_ids = available_ids.copy()
-            ui.root.after(0, ui.update_ui, available_ids)
+        _sync_candidate_ids(ui, available_ids, source=source, payload=payload)
+        _drain_preload_pending(ui)
         time.sleep(1.5)
 
 
@@ -334,36 +642,165 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
 
 
 def window_sync_loop(ui: "HextechUI") -> None:
-    """根据客户端和游戏窗口前后台状态控制伴生窗口显隐与吸附。"""
+    """根据客户端和游戏窗口状态控制伴生窗口显隐、置顶与持续跟随。"""
+    manual_follow_cooldown = 8.0
+    hide_grace_seconds = 1.0
+    follow_resume_distance = 32
+    last_visible_at = 0.0
+    last_client_interaction_at = 0.0
+    last_client_hwnd = None
+
+    def _foreground_belongs_to_client(hwnd: int | None, foreground_hwnd: int | None) -> bool:
+        if not hwnd or not foreground_hwnd:
+            return False
+        if foreground_hwnd == hwnd:
+            return True
+        try:
+            return win32gui.IsChild(hwnd, foreground_hwnd)
+        except Exception:
+            return False
+
+    def _has_recent_client_context(now_ts: float) -> bool:
+        return (now_ts - last_client_interaction_at) < hide_grace_seconds
+
+    def _target_overlay_position(client_rect: tuple[int, int, int, int]) -> tuple[int, int]:
+        return (int(client_rect[2]), int(client_rect[1]))
+
+    def _client_rect_jump_detected(current_rect: tuple[int, int, int, int], previous_rect: tuple[int, int, int, int] | None) -> bool:
+        if not previous_rect:
+            return False
+        return (
+            abs(current_rect[0] - previous_rect[0]) > follow_resume_distance
+            or abs(current_rect[1] - previous_rect[1]) > follow_resume_distance
+            or abs(current_rect[2] - previous_rect[2]) > follow_resume_distance
+            or abs(current_rect[3] - previous_rect[3]) > follow_resume_distance
+        )
+
+    def _update_overlay_position(target_pos: tuple[int, int]) -> None:
+        ui._run_on_ui_thread(lambda pos=target_pos: ui._move_overlay_to(pos[0], pos[1]))
+
+    def _should_keep_overlay_visible(client_active: bool, overlay_active: bool, now_ts: float) -> bool:
+        return client_active or overlay_active or _has_recent_client_context(now_ts)
+
+    def _set_client_interaction(now_ts: float, hwnd: int | None) -> None:
+        nonlocal last_client_interaction_at, last_client_hwnd
+        last_client_interaction_at = now_ts
+        last_client_hwnd = hwnd
+
+    def _reset_client_tracking() -> None:
+        nonlocal last_client_hwnd
+        last_client_hwnd = None
+        ui._last_client_rect = None
+
+    def _resume_follow_if_ready(client_rect: tuple[int, int, int, int], target_pos: tuple[int, int]) -> None:
+        client_jump_detected = _client_rect_jump_detected(client_rect, ui._last_client_rect)
+        if client_jump_detected and ui._manual_follow_cooldown_elapsed(manual_follow_cooldown):
+            ui._resume_auto_follow()
+        if ui._auto_follow_enabled:
+            _update_overlay_position(target_pos)
+        elif ui._manual_follow_cooldown_elapsed(manual_follow_cooldown):
+            ui._resume_auto_follow()
+            _update_overlay_position(target_pos)
+
+    def _sync_overlay_follow(client_rect: tuple[int, int, int, int], should_show_overlay: bool) -> None:
+        if not should_show_overlay:
+            ui._last_client_rect = client_rect
+            return
+        rect_changed = client_rect != ui._last_client_rect
+        target_pos = _target_overlay_position(client_rect)
+        if rect_changed:
+            _resume_follow_if_ready(client_rect, target_pos)
+        ui._last_client_rect = client_rect
+
+    def _set_overlay_visibility(should_show_overlay: bool, should_keep_topmost: bool, now_ts: float) -> None:
+        if should_show_overlay:
+            nonlocal last_visible_at
+            last_visible_at = now_ts
+            ui._show_overlay(topmost=should_keep_topmost)
+            return
+        if ui._window_visible and (now_ts - last_visible_at) < hide_grace_seconds:
+            ui._set_window_topmost(False)
+            return
+        ui._hide_overlay()
+
+    def _update_client_visibility(now_ts: float, hwnd_client: int | None, client_visible: bool, client_active: bool) -> None:
+        if client_visible and client_active:
+            _set_client_interaction(now_ts, hwnd_client)
+        elif not client_visible:
+            _reset_client_tracking()
+
+    def _is_same_client_window(hwnd: int | None) -> bool:
+        return bool(hwnd and last_client_hwnd and hwnd == last_client_hwnd)
+
+    def _overlay_active() -> bool:
+        return ui._window_visible and is_self_fg
+
+    def _resolve_overlay_policy(client_visible: bool, game_visible: bool, client_active: bool, overlay_active: bool, now_ts: float) -> tuple[bool, bool]:
+        if game_visible:
+            return False, False
+        if not client_visible:
+            return False, False
+        should_show = _should_keep_overlay_visible(client_active, overlay_active, now_ts)
+        return should_show, client_active
+
+    def _sync_for_client(hwnd_client: int | None, client_visible: bool, should_show_overlay: bool) -> None:
+        if not client_visible or not hwnd_client:
+            _reset_client_tracking()
+            if ui._manual_follow_cooldown_elapsed(manual_follow_cooldown):
+                ui._resume_auto_follow()
+            return
+        client_rect = win32gui.GetWindowRect(hwnd_client)
+        _sync_overlay_follow(client_rect, should_show_overlay)
+
+    def _client_active(is_client_fg: bool) -> bool:
+        return is_client_fg
+
+    def _client_or_overlay_active(is_client_fg: bool, is_self_fg_value: bool) -> tuple[bool, bool]:
+        client_active = _client_active(is_client_fg)
+        overlay_active = ui._window_visible and is_self_fg_value
+        return client_active, overlay_active
+
+    def _resolve_client_visibility(hwnd_client: int | None) -> bool:
+        return bool(hwnd_client and win32gui.IsWindowVisible(hwnd_client) and not win32gui.IsIconic(hwnd_client))
+
+    def _resolve_game_visibility(hwnd_game: int | None) -> bool:
+        return bool(hwnd_game and win32gui.IsWindowVisible(hwnd_game))
+
+    def _resolve_foreground_title(foreground_hwnd: int | None) -> str:
+        return win32gui.GetWindowText(foreground_hwnd) if foreground_hwnd else ""
+
+    def _resolve_self_fg(foreground_title: str) -> bool:
+        return "Hextech" in foreground_title
+
+    def _resolve_client_fg(hwnd_client: int | None, foreground_hwnd: int | None) -> bool:
+        return _foreground_belongs_to_client(hwnd_client, foreground_hwnd)
+
+    def _loop_once(now_ts: float) -> None:
+        hwnd_client = win32gui.FindWindow(None, "League of Legends")
+        hwnd_game = win32gui.FindWindow(None, "League of Legends (TM) Client")
+        fg_window = win32gui.GetForegroundWindow()
+        fg_title = _resolve_foreground_title(fg_window)
+        is_client_fg = _resolve_client_fg(hwnd_client, fg_window)
+        is_self_fg = _resolve_self_fg(fg_title)
+        game_visible = _resolve_game_visibility(hwnd_game)
+        client_visible = _resolve_client_visibility(hwnd_client)
+        client_active, overlay_active = _client_or_overlay_active(is_client_fg, is_self_fg)
+        _update_client_visibility(now_ts, hwnd_client, client_visible, client_active)
+        should_show_overlay, should_keep_topmost = _resolve_overlay_policy(client_visible, game_visible, client_active, overlay_active, now_ts)
+        _set_overlay_visibility(should_show_overlay, should_keep_topmost, now_ts)
+        _sync_for_client(hwnd_client, client_visible, should_show_overlay)
+
+
     while not ui.stop_event.is_set():
         if ui.pause_event.is_set():
             time.sleep(1)
             continue
         try:
-            hwnd_client = win32gui.FindWindow(None, "League of Legends")
-            hwnd_game = win32gui.FindWindow(None, "League of Legends (TM) Client")
-
-            if hwnd_game:
-                ui._hide_overlay()
-            elif hwnd_client:
-                fg_window = win32gui.GetForegroundWindow()
-                is_client_fg = fg_window == hwnd_client
-                is_self_fg = "Hextech" in win32gui.GetWindowText(fg_window)
-
-                if is_client_fg or is_self_fg:
-                    ui._show_overlay(topmost=True)
-                    if not getattr(ui, "_init_pos", False) and is_client_fg:
-                        rect = win32gui.GetWindowRect(hwnd_client)
-                        ui.root.geometry(f"320x600+{rect[2]}+{rect[1]}")
-                        ui._init_pos = True
-                else:
-                    ui._hide_overlay()
-            else:
-                ui._hide_overlay()
+            now = time.time()
+            _loop_once(now)
         except Exception:
             logger.exception("窗口同步循环异常。")
-        time.sleep(0.5)
-
+        time.sleep(0.2)
 
 def start_background_scraper(ui: "HextechUI", refresh_backend_data) -> None:
     """启动桌面端后台刷新线程，按固定周期执行自愈和数据同步。"""

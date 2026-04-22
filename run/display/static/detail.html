@@ -872,7 +872,8 @@
                         loadHextechs();
                     } else if (msg.type === 'local_player_locked') {
                         const enName = msg.en_name ? `&en=${encodeURIComponent(msg.en_name)}` : '';
-                        window.location.href = `detail.html?hero=${encodeURIComponent(msg.hero_name)}&id=${encodeURIComponent(msg.champion_id)}${enName}&auto=1`;
+                        const detailFirst = msg.detail_first ? '&detailFirst=1' : '';
+                        window.location.href = `detail.html?hero=${encodeURIComponent(msg.hero_name)}&id=${encodeURIComponent(msg.champion_id)}${enName}&auto=1${detailFirst}`;
                     }
                 } catch (err) {
                     console.error(err);

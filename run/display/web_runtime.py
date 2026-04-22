@@ -927,6 +927,8 @@ class LCUState:
     local_champ_id: Optional[int] = None
     local_champ_name: Optional[str] = None
     consecutive_404_count: int = 0
+    state_version: int = 0
+    updated_at: float = 0.0
 
 
 _lcu_state = LCUState()
@@ -939,6 +941,8 @@ def get_live_state_payload() -> dict:
             "champion_ids": sorted(_lcu_state.current_ids),
             "local_champion_id": _lcu_state.local_champ_id,
             "local_champion_name": _lcu_state.local_champ_name,
+            "state_version": _lcu_state.state_version,
+            "updated_at": _lcu_state.updated_at,
         }
 
 
@@ -1029,6 +1033,8 @@ async def lcu_polling_loop() -> None:
                     ids_changed = available_ids != _lcu_state.current_ids
                     if ids_changed:
                         _lcu_state.current_ids = available_ids.copy()
+                        _lcu_state.state_version += 1
+                        _lcu_state.updated_at = time.time()
                 if ids_changed:
                     preload_names = []
                     for champion_id in available_ids:
@@ -1058,10 +1064,15 @@ async def lcu_polling_loop() -> None:
                     if prev_champ_id != local_champion_id:
                         with _lcu_state_lock:
                             _lcu_state.local_champ_id = local_champion_id
+                            _lcu_state.state_version += 1
+                            _lcu_state.updated_at = time.time()
                         hero_name, en_name = get_champion_info(str(local_champion_id))
                         with _lcu_state_lock:
                             _lcu_state.local_champ_name = hero_name
+                            _lcu_state.updated_at = time.time()
                         logger.info("LCU 已锁定英雄：%s (ID=%s)", hero_name, local_champion_id)
+                        if hero_name:
+                            await asyncio.to_thread(request_preload_hextech_payload, hero_name)
                         if AUTO_JUMP_ENABLED:
                             await manager.broadcast(
                                 {
@@ -1069,8 +1080,12 @@ async def lcu_polling_loop() -> None:
                                     "champion_id": local_champion_id,
                                     "hero_name": hero_name,
                                     "en_name": en_name,
+                                    "detail_first": True,
                                 }
                             )
+
+                    elif prev_champ_id == local_champion_id and AUTO_JUMP_ENABLED and hero_name:
+                        await asyncio.to_thread(request_preload_hextech_payload, hero_name)
             elif res.status_code == 404:
                 with _lcu_state_lock:
                     _lcu_state.consecutive_404_count += 1
