@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import threading
+import time
 
 import tkinter as tk
 from processing.runtime_store import CachedDataFrameLoader, detect_hero_id_column, get_latest_csv
@@ -64,6 +65,21 @@ class HextechUI:
         self._df_lock = threading.Lock()
         self._window_topmost = False
         self._window_visible = False
+        self._auto_follow_enabled = True
+        self._manual_move_timestamp = 0.0
+        self._last_client_rect = None
+        self._last_overlay_target_pos = None
+        self._hero_preload_ready = {}
+        self._hero_preload_pending = set()
+        self._hero_preload_lock = threading.Lock()
+        self._hero_click_gate_timeout = 1.2
+        self._hero_click_gate_poll_interval = 0.05
+        self._hero_click_status = ""
+        self._last_live_state_version = -1
+        self._last_live_state_updated_at = 0.0
+        self._last_live_state_source = ""
+        self._last_redirect_success_base = ""
+        self._last_redirect_success_at = 0.0
 
         self.web_process = None
         self._start_web_server()
@@ -295,9 +311,37 @@ class HextechUI:
 
     def start_move(self, event):
         self.x, self.y = event.x, event.y
+        self._auto_follow_enabled = False
+        self._manual_move_timestamp = time.time()
 
     def do_move(self, event):
-        self.root.geometry(f"+{self.root.winfo_x() + (event.x - self.x)}+{self.root.winfo_y() + (event.y - self.y)}")
+        next_x = self.root.winfo_x() + (event.x - self.x)
+        next_y = self.root.winfo_y() + (event.y - self.y)
+        self.root.geometry(f"+{next_x}+{next_y}")
+        self._last_overlay_target_pos = (next_x, next_y)
+        self._manual_move_timestamp = time.time()
+
+
+    def _move_overlay_to(self, x: int, y: int) -> None:
+        try:
+            current_pos = (self.root.winfo_x(), self.root.winfo_y())
+            target_pos = (int(x), int(y))
+            if current_pos == target_pos:
+                return
+            self.root.geometry(f"+{target_pos[0]}+{target_pos[1]}")
+            self._last_overlay_target_pos = target_pos
+        except tk.TclError:
+            logger.debug("更新悬浮窗位置失败。", exc_info=True)
+
+    def _resume_auto_follow(self) -> None:
+        self._auto_follow_enabled = True
+        self._manual_move_timestamp = 0.0
+        self._last_client_rect = None
+
+    def _manual_follow_cooldown_elapsed(self, cooldown_seconds: float) -> bool:
+        if self._manual_move_timestamp <= 0:
+            return True
+        return (time.time() - self._manual_move_timestamp) >= cooldown_seconds
 
     def _restore_from_terminal(self):
         self.pause_event.clear()

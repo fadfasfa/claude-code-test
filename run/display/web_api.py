@@ -282,10 +282,13 @@ def register_routes(app: FastAPI) -> None:
         if not hero_name:
             hero_name = req.hero_name
 
+        canonical_name = web_runtime.resolve_canonical_hero_name(hero_name or req.hero_name)
+        web_runtime.request_preload_hextech_payload(canonical_name)
+
         if len(web_runtime.manager.active) == 0:
             url = web_runtime.build_detail_url(req.hero_id, hero_name or req.hero_name, en_name)
             if web_runtime.open_managed_browser(url, replace_existing=True):
-                return JSONResponse(content={"status": "opened_browser"})
+                return JSONResponse(content={"status": "opened_browser", "detail_first": True})
             return JSONResponse(content={"status": "浏览器打开失败"}, status_code=500)
 
         await web_runtime.manager.broadcast(
@@ -294,9 +297,10 @@ def register_routes(app: FastAPI) -> None:
                 "champion_id": req.hero_id,
                 "hero_name": req.hero_name,
                 "en_name": en_name,
+                "detail_first": True,
             }
         )
-        return JSONResponse(content={"status": "broadcast_sent"})
+        return JSONResponse(content={"status": "broadcast_sent", "detail_first": True})
 
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):
