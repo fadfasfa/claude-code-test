@@ -2,9 +2,12 @@
 
 # Claude agent temporary worktrees
 .claude/worktrees/
+.claude/settings.local.json
+.claude/hooks/.debug/
 
 # Python caches
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 
@@ -13,6 +16,7 @@ run/build/
 run/dist/
 
 # Hextech runtime state
+run/data/**
 run/config/backend_refresh.lock
 run/config/augment_icon_audit.jsonl
 run/config/hextech_system.log
@@ -24,3 +28,14 @@ sm2-randomizer/**/__pycache__/
 sm2-randomizer/pipeline/sources/wiki/node_modules/
 sm2-randomizer/pipeline/out/source/reports/perk_dom_dumps/
 sm2-randomizer/pipeline/out/source/reports/screen.png
+
+# Local secrets, logs, and temporary output
+.env
+.env.*
+secrets/
+*.log
+coverage/
+.learnings/*
+!.learnings/LEARNINGS.md
+.tmp/
+tmp/

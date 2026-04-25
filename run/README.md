@@ -1,4 +1,4 @@
-# Hextech 伴生系统运行指南
+﻿# Hextech 伴生系统运行指南
 
 主项目文档位于当前目录的 `PROJECT.md`。
 
@@ -17,6 +17,7 @@
 - `processing/`：本地数据处理与视图适配层
 - `scraping/`：远端抓取、自愈和稳定资源同步层
 - `tools/`：打包、清理、日志与开发自检工具层
+- `data/`：本地运行生成 / 下载缓存与运行输出，不作为当前仓库追踪源数据；稳定源数据应保留在明确的 `config/`、`assets/` 或静态资源入口。
 
 ## 快速开始
 
@@ -161,6 +162,8 @@ run/
   负责统一日志过滤、source 标识和 UTF-8 终端输出
 - `tools/dev_checks.py`
   负责本地结构校验、日志契约校验和打包配置自检，不属于正式测试框架
+
+Repository-level Claude Code learning-loop tooling lives under `.claude/tools/learning-loop/`.
 
 ### 运行约束
 

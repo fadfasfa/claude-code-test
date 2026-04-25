@@ -1,36 +1,114 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8080",
     "ANTHROPIC_API_KEY": "pwd",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.4",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.3-codex",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.4-mini",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "GPT-5.4",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.4",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.3-codex-spark",
+    "ANTHROPIC_MODEL": "gpt-5.5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "GPT-5.5",
     "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION": "复杂任务主力模型",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "GPT-5.3 Codex",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "GPT-5.4",
     "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION": "日常编码默认模型",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "GPT-5.4 Mini",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION": "轻量快速模型"
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "GPT-5.3 Codex",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION": "轻量快速模型",
+    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+    "CLAUDE_CODE_FORK_SUBAGENT": "0"
   },
   "permissions": {
     "allow": [
       "Read(//c/Users/apple/.claude/**)",
       "Read(//c/Users/apple/.claude/skills/**)",
-      "Bash(git *)",
-      "Bash(python *)",
-      "Bash(python3 *)",
-      "Bash(node *)",
-      "Bash(npm *)",
-      "Bash(bash *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git rev-parse*)",
+      "Bash(git branch --show-current*)",
+      "Bash(git grep*)",
       "WebFetch(domain:127.0.0.1)",
       "WebFetch(domain:localhost)",
       "Bash(playwright screenshot *)"
     ],
+    "deny": [
+      "PowerShell(Remove-Item*)",
+      "PowerShell(rm -r*)",
+      "PowerShell(rm -rf*)",
+      "PowerShell(del *)",
+      "PowerShell(rmdir *)",
+      "PowerShell(git clean*)",
+      "PowerShell(git reset --hard*)",
+      "PowerShell(git branch -D*)",
+      "PowerShell(git worktree remove --force*)",
+      "PowerShell(Invoke-WebRequest*)",
+      "PowerShell(iwr *)",
+      "PowerShell(irm *)",
+      "PowerShell(curl *)",
+      "PowerShell(wget *)",
+      "PowerShell(Stop-Process*)",
+      "PowerShell(taskkill*)",
+      "PowerShell(Set-ExecutionPolicy*)",
+      "PowerShell(npm install -g*)",
+      "PowerShell(winget install*)",
+      "PowerShell(Set-Content *C:\\Users\\apple\\.claude*)",
+      "PowerShell(Set-Content *C:\\Users\\apple\\.codex*)",
+      "PowerShell(Add-Content *C:\\Users\\apple\\.claude*)",
+      "PowerShell(Add-Content *C:\\Users\\apple\\.codex*)",
+      "PowerShell(Out-File *C:\\Users\\apple\\.claude*)",
+      "PowerShell(Out-File *C:\\Users\\apple\\.codex*)",
+      "Bash(rm -r*)",
+      "Bash(rm -rf*)",
+      "Bash(git clean*)",
+      "Bash(git reset --hard*)",
+      "Bash(git branch -D*)",
+      "Bash(git worktree remove --force*)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(npm install -g*)",
+      "Bash(winget install*)"
+    ],
     "defaultMode": "acceptEdits"
+  },
+  "hooks": {
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/apple/claudecode/.claude/hooks/self-improvement-error-log.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\apple\\claudecode\\.claude\\hooks\\worktree-governor-create.ps1\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\apple\\claudecode\\.claude\\hooks\\block-raw-worktree-bash.ps1\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
   },
   "model": "opus[1m]",
   "effortLevel": "medium",
-  "skipDangerousModePermissionPrompt": true,
+  "skipDangerousModePermissionPrompt": false,
   "skillSearchPaths": [
     "c:/Users/apple/.claude/skills/",
     "c:/Users/apple/.claude/skills-shared/"

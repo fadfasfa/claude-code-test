@@ -1,85 +1,33 @@
-# Git Worktree 方案（cc/cx 手工流程）
+# Git Worktree Policy
 
-本仓库采用「手工 Git worktree + 薄包装脚本」方案，原因如下：
-- 避免依赖 Claude 的 `WorktreeCreate` / `SessionEnd` hooks 参与生命周期管理。
-- 让工作流可回放、可审计、可撤销：任何操作都来自可阅读的本地脚本，不依赖隐式自动化。
-- 与仓库内多工作区场景一致：按任务创建临时隔离环境，主树保持清晰。
+本文件是 `claudecode` worktree 口径唯一详细说明。入口文件只保留短规则或指向。
 
-## 目录约定
+## 分类
 
-### 兄弟目录（sibling worktree root）
-默认放在：
+- `directed`：用户明确要求创建隔离工作树；branch `wt-directed-<purpose>`；path `C:\Users\apple\_worktrees\claudecode\directed\<purpose>`。
+- `auto`：agent 临时隔离工作树；branch `wt-auto-cc-<yyyymmdd-hhmm>-<purpose>-<id>`；path `C:\Users\apple\_worktrees\claudecode\auto\<branch>`。
+- `legacy`：`worktree-agent-*`、nested `.claude/worktrees/**`、random adjective names、bare `agent-*`；不允许新增。
+- 已存在的 locked legacy worktree 是历史残留；本仓不会自动清理，清理必须另起人工确认任务。
+- `keep`：`worktree-run-scraping-refactor-phase1`；不自动清理。
 
-- `<repo-parent>\<repo-name>.worktrees\`
+## 目的
 
-示例（当前仓库为 `C:\Users\apple\claudecode`）：
+- 保护本地当前进度，避免被动切分支。
+- 避免 agent 直接污染当前工作区。
+- 为较大任务提供隔离执行区。
+- 任务完成、审查、合并、本地同步后，才进入人工确认的无用树清理。
 
-- `C:\Users\apple\claudecode.worktrees\`
+## Hook 边界
 
-### 命名约定
+- 自动 hook 只保留 `WorktreeCreate` 命名校验和 `PreToolUse` 裸 `git worktree` / 危险 shell 命令拦截。
+- `WorktreeRemove`、`SessionEnd` 不自动清理 worktree。
+- 删除 / 清理 worktree 不属于默认自动机制；必须人工确认或作为专门 final cleanup step 手动处理。
 
-- worktree 目录名：`<type>-<topic>`
-- branch：`cc/<type>/<topic>`
-- Claude session：`cc-<type>-<topic>`
+## 手动工具
 
-推荐的 `type`：
-
-- `task`
-- `hotfix`
-- `review`
-- `spike`
-
-### topic 规范
-
-- 自动 slug 化为小写
-- 非字母数字字符统一替换为 `-`
-- 连续 `-` 折叠
-- 去掉首尾 `-`
-
-## 标准流程
-
-1. 创建
-   - 使用 `scripts/git/ccw-new.ps1 -Type <type> -Topic <topic>`
-2. 进入
-   - `cd <worktree path>`
-3. 启动 Claude
-   - `claude -n <session>`
-4. 合并
-   - 任务完成后按正常流程合并分支
-5. GC
-   - 完成回收前执行 `scripts/git/ccw-gc.ps1`
-
-> 说明：脚本不会自动启动 Claude，不会自动装依赖，不会自动复制 `.env` / `.env.local`。
-
-## 使用限制
-
-- 同一本地分支不要在多个 worktree 中占用。
-- 每个新 worktree 都要自行初始化依赖（venv / node_modules）与本地工具链。
-- 本方案不自动复制本地配置文件（如 `.env` / `.env.local`）。
-
-## 命令示例
-
-### 创建新 worktree
 ```powershell
-.\scripts\git\ccw-new.ps1 -Type task -Topic "retry-cache"
+.\.claude\tools\worktree-governor\new_worktree.ps1 -Owner directed -Purpose scraping-refactor-phase1 -DryRun
+.\.claude\tools\worktree-governor\new_worktree.ps1 -Owner auto -Purpose review-diff -DryRun
 ```
 
-### 指定 base 与 root
-```powershell
-.\scripts\git\ccw-new.ps1 -Type review -Topic "ui-polish" -Base origin/main -Root "D:\wt\claudecode"
-```
-
-### 列出仓库 worktree
-```powershell
-.\scripts\git\ccw-ls.ps1
-```
-
-### 查看可清理项（dry-run）
-```powershell
-.\scripts\git\ccw-gc.ps1
-```
-
-### 执行清理
-```powershell
-.\scripts\git\ccw-gc.ps1 -Apply
-```
+不使用 `-DryRun` 创建 worktree 前，必须有明确人工指令。
