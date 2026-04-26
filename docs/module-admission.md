@@ -63,7 +63,7 @@
 ### read-text-pages-guard
 
 - 名称：`read-text-pages-guard`
-- 类型：repo-local PreToolUse hook。
+- 类型：disabled / experimental repo-local PreToolUse hook。
 - 解决什么问题：将 Markdown/text/code 文件 Read 调用里的 unsupported `pages` 字段从 `updatedInput` 移除，避免 Read 被工具系统判定失败后触发错误写入 fallback。
 - 不解决什么问题：不读取文件、不写计划文件、不替代正常 Read、不处理 PDF Read 的 pages。
 - 触发条件：PreToolUse `Read`，且 `file_path` 后缀是 `.md`、`.txt`、`.json`、`.py`、`.ps1`、`.html`、`.css`、`.js`、`.ts`、`.tsx`、`.jsx`、`.yaml` 或 `.yml`，并且 tool input 包含 `pages` 字段。
@@ -76,13 +76,13 @@
 - 如何删除：删除 `.claude/hooks/block-read-pages-for-text.ps1` 并移除 settings entry。
 - 最小验证命令：用 JSON payload 模拟 `Read` Markdown with empty `pages`，确认 exit 0 且 stdout JSON 含不带 `pages` 的 `updatedInput`；模拟普通 Markdown Read 和 PDF pages Read，确认 exit 0 且不修改。
 - 为什么不能用现有模块解决：文档规则依赖模型自律，blocking hook 会导致 Read 失败并放大 fallback 写入风险。
-- 状态：已接受 repo-local safety hook。
+- 状态：disabled / experimental；真实 Claude Code 会话仍出现 `pages: ""` invalid parameter，且 hook debug log 未记录触发，说明当前 CC/VS 面板 Read 参数问题不能靠 blocking/normalizing hook 稳定修复。业务修改前必须改用更保守流程：先只读 `Grep` / `Glob` / PowerShell `Get-Content` 查看，再由用户确认是否允许脚本化补丁。
 
 ### scan-agent-worktrees
 
 - 名称：`scan-agent-worktrees`
 - 类型：repo-local read-only PowerShell tool and slash commands。
-- 解决什么问题：为 `/scan-agent-worktrees` 和 `/work` 提供只读 agent worktree / `wt-auto-*` branch 状态报告。
+- 解决什么问题：为日常短入口 `/work` 和显式长别名 `/scan-agent-worktrees` 提供语义一致的只读 agent worktree / `wt-auto-*` branch 状态报告。
 - 不解决什么问题：不清理 worktree、不删除 branch、不删除文件、不替代用户确认。
 - 触发条件：用户运行 `/scan-agent-worktrees` 或 `/work`，或明确要求只读扫描 agent worktree / `wt-auto-*` branch。
 - 会读哪些路径：`git worktree list --porcelain`、`git branch --list "wt-auto-*"`、`C:\Users\apple\_worktrees\claudecode\.registry\*.json`，以及 `sweep_agent_branches.ps1` dry-run JSON 输出。

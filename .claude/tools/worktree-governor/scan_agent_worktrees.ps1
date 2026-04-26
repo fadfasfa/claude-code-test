@@ -17,6 +17,11 @@ $ErrorActionPreference = "Stop"
 $RegistryRoot = Join-Path $ManagedRoot ".registry"
 $SweepScript = Join-Path $RepoRoot ".claude\tools\worktree-governor\sweep_agent_branches.ps1"
 
+function As-Array($Value) {
+  if ($null -eq $Value) { return @() }
+  return @($Value)
+}
+
 function Invoke-Git {
   param([string[]]$ArgumentList)
   $oldErrorActionPreference = $ErrorActionPreference
@@ -150,13 +155,14 @@ function Find-MarkerForWorktree {
 
 function Write-Section {
   param([string]$Title, [object[]]$Items)
+  $safeItems = @(As-Array $Items)
   Write-Output ""
   Write-Output $Title
-  if (-not $Items -or $Items.Count -eq 0) {
+  if ($safeItems.Count -eq 0) {
     Write-Output "- none"
     return
   }
-  foreach ($item in $Items) {
+  foreach ($item in $safeItems) {
     Write-Output ("- " + (($item | ConvertTo-Json -Depth 8 -Compress)))
   }
 }
@@ -165,9 +171,9 @@ if (-not (Test-Path -LiteralPath $RepoRoot)) {
   throw "RepoRoot does not exist: $RepoRoot"
 }
 
-$worktrees = @(Read-Worktrees)
-$branches = @(Get-LocalAutoBranches)
-$markers = @(Read-RegistryMarkers)
+$worktrees = @(As-Array (Read-Worktrees))
+$branches = @(As-Array (Get-LocalAutoBranches))
+$markers = @(As-Array (Read-RegistryMarkers))
 $checkedOutBranches = @{}
 foreach ($worktree in $worktrees) {
   if (-not [string]::IsNullOrWhiteSpace($worktree.Branch)) {
@@ -235,7 +241,10 @@ $noRegistry = @()
 
 foreach ($branch in $branches) {
   if ($checkedOutBranches.ContainsKey($branch)) { continue }
-  $branchMarkers = if ($markersByBranch.ContainsKey($branch)) { @($markersByBranch[$branch]) } else { @() }
+  $branchMarkers = @()
+  if ($markersByBranch.ContainsKey($branch)) {
+    $branchMarkers = @(As-Array $markersByBranch[$branch])
+  }
   if ($branchMarkers.Count -eq 0) {
     $noRegistry += [pscustomobject]@{ Branch = $branch; Reason = "no-registry-marker" }
     continue
@@ -279,10 +288,12 @@ if (Test-Path -LiteralPath $SweepScript) {
     $ErrorActionPreference = $oldErrorActionPreference
   }
   $decisionCount = $null
+  $sweepDecisions = @()
   if ($sweepExit -eq 0 -and -not [string]::IsNullOrWhiteSpace(($sweepOutput -join ""))) {
     try {
       $parsed = $sweepOutput | ConvertFrom-Json
-      $decisionCount = @($parsed).Count
+      $sweepDecisions = @(As-Array $parsed)
+      $decisionCount = $sweepDecisions.Count
     }
     catch {
       $decisionCount = $null

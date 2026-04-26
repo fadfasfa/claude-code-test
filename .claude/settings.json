@@ -106,16 +106,6 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\apple\\claudecode\\.claude\\hooks\\block-read-pages-for-text.ps1\"",
-            "timeout": 15
-          }
-        ]
-      },
-      {
         "matcher": "",
         "hooks": [
           {
