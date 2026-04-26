@@ -5,7 +5,7 @@
 - `.tmp` 临时目录清理
 - `.learnings/ERRORS.md` 到 `.learnings/LEARNINGS.md` 的经验精炼
 
-这两个流程都应通过项目级 slash command 启动：
+这两个流程都应通过项目级 skill-style slash command 启动。入口位于 `.claude/skills/`，可在 Claude Code 交互 UI 中直接调用：
 
 ```text
 /maintenance
@@ -16,7 +16,7 @@
 /promote-learning apply <learning-id> <docs|skills|entry>
 ```
 
-Slash commands 更适合经常重复的一段提示或固定流程入口；skills 更适合复杂能力、脚本和多文件知识组织。这个定期维护入口属于固定触发流程，所以使用 `/maintenance`，不新增 hook，也不强塞 skill。
+本仓使用 skill-style slash command 承载这些固定维护入口：`/maintenance` 负责只读盘点和候选生成，`/promote-learning` 负责稳定 learning 的晋升审查。它们不是 SessionStart 注入，也不会自动删除、写入或提交。
 
 ## 1. `.tmp` 临时目录清理
 

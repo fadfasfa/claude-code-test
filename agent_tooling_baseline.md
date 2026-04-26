@@ -36,6 +36,8 @@
 - `resume-active-task`
 - `module-admission`
 - `frontend-polish-lite`
+- `maintenance`
+- `promote-learning`
 - `review-diff`
 - `self-improvement-promotion`
 

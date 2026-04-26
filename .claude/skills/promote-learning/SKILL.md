@@ -1,13 +1,14 @@
 ---
-description: 审查 LEARNINGS 是否应晋升到 docs、skills 或入口规则
-argument-hint: "[plan|apply] [learning-id] [docs|skills|entry]"
+name: promote-learning
+description: "审查 LEARNINGS 是否晋升到 docs、skills 或入口规则；用户手动通过 /promote-learning 调用。"
+disable-model-invocation: true
 ---
 
-# Learning 晋升审查命令
+# promote-learning
 
 你正在执行 claudecode 的 learning 晋升审查流程。
 
-该命令用于判断 `.learnings/LEARNINGS.md` 中的稳定经验是否应晋升到：
+该 skill 用于判断 `.learnings/LEARNINGS.md` 中的稳定经验是否应晋升到：
 
 - `docs/**`
 - `.claude/skills/**`
@@ -18,18 +19,13 @@ argument-hint: "[plan|apply] [learning-id] [docs|skills|entry]"
 
 默认只输出晋升建议和 patch plan，不直接修改规则层。
 
-## 参数
+## 调用方式
 
-用户参数为：`$ARGUMENTS`
+用户手动通过 skill-style slash command 调用：
 
-支持模式：
-
-- 空参数：
-  审查所有 LEARNINGS，输出晋升候选。
-- `plan <learning-id> <docs|skills|entry>`：
-  为指定 learning 输出精确 patch plan。
-- `apply <learning-id> <docs|skills|entry>`：
-  只有当用户在本轮明确要求 apply 时，才允许执行最小修改。
+- `/promote-learning`：审查所有 LEARNINGS，输出晋升候选。
+- `/promote-learning plan <learning-id> <docs|skills|entry>`：为指定 learning 输出精确 patch plan。
+- `/promote-learning apply <learning-id> <docs|skills|entry>`：只有当用户明确输入 apply，且当前任务授权允许写入时，才允许执行最小修改。
 
 如果参数不清楚，停止并要求用户指定 learning-id 和目标层级。
 
@@ -165,7 +161,7 @@ argument-hint: "[plan|apply] [learning-id] [docs|skills|entry]"
 
 ## Apply 边界
 
-`apply` 只在用户本轮明确要求 `apply <learning-id> <docs|skills|entry>` 时允许执行。
+`apply` 只在用户本轮明确要求 `/promote-learning apply <learning-id> <docs|skills|entry>` 时允许执行。
 
 执行时仍必须保持最小修改：
 

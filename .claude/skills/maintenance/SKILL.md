@@ -1,15 +1,27 @@
 ---
-description: 定期维护 .tmp 临时目录与 ERRORS 到 LEARNINGS 的精炼候选
-argument-hint: "[tmp|learning]"
+name: maintenance
+description: "定期维护 .tmp，并从 ERRORS 提炼 LEARNINGS 候选；用户手动通过 /maintenance 调用。"
+disable-model-invocation: true
 ---
 
-# 定期维护命令
+# maintenance
 
-你正在执行 claudecode 的定期维护流程。该命令只做盘点和候选生成，默认不删除、不写入、不提交。
+你正在执行 claudecode 的定期维护流程。该 skill 只做盘点和候选生成，默认不删除、不写入、不提交。
+
+## 调用方式
+
+用户手动通过 skill-style slash command 调用：
+
+- `/maintenance`：同时执行 `.tmp` 盘点和 learning 候选精炼。
+- `/maintenance tmp`：只执行 `.tmp` 盘点。
+- `/maintenance learning`：只执行 learning 候选精炼。
+
+如果用户输入不是上述语义，停止并说明只支持空参数、`tmp` 或 `learning`。
 
 ## 范围
 
 允许读取：
+
 - `.tmp/**`
 - `.learnings/ERRORS.md`
 - `.learnings/LEARNINGS.md`
@@ -18,6 +30,7 @@ argument-hint: "[tmp|learning]"
 - 当前仓库 Git 状态
 
 禁止处理：
+
 - `run/**`
 - `QuantProject/**`
 - `sm2-randomizer/**`
@@ -26,6 +39,7 @@ argument-hint: "[tmp|learning]"
 - `C:\Users\apple\kb/**`
 
 禁止动作：
+
 - 不删除文件
 - 不清空 `ERRORS.md`
 - 不自动写入 `LEARNINGS.md`
@@ -51,15 +65,6 @@ argument-hint: "[tmp|learning]"
 读取 Markdown / text 文件时，不传 PDF page 参数。避免一次性读取超大范围。
 
 若 Read 因空 PDF page、行号范围或工具参数失败，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。只读验收优先搜索和分段读取，不做全文件暴力读取。
-
-## 参数
-
-用户参数为：`$ARGUMENTS`
-
-- 如果参数为空：同时执行 `.tmp` 盘点和 learning 候选精炼。
-- 如果参数为 `tmp`：只执行 `.tmp` 盘点。
-- 如果参数为 `learning`：只执行 learning 候选精炼。
-- 如果参数不是上述值：停止并说明只支持 `tmp` / `learning` / 空参数。
 
 ## A. `.tmp` 盘点流程
 
@@ -152,10 +157,10 @@ argument-hint: "[tmp|learning]"
 
 ## 二次确认规则
 
-- `.tmp` 清理：本命令只能输出清理计划。真正删除必须由用户另行明确确认具体路径。
-- `LEARNINGS` 晋升：本命令只能输出候选 learning。真正写入 `.learnings/LEARNINGS.md` 必须由用户确认具体候选条目。
-- 规则、skill、hook、tool 或 docs 改动：本命令只能提出建议，不能自动修改。
-- 即使用户要求继续维护，也不能把本命令升级为自动 cleanup、auto-loop 或 commit 流程。
+- `.tmp` 清理：本 skill 只能输出清理计划。真正删除必须由用户另行明确确认具体路径。
+- `LEARNINGS` 晋升：本 skill 只能输出候选 learning。真正写入 `.learnings/LEARNINGS.md` 必须由用户确认具体候选条目。
+- 规则、skill、hook、tool 或 docs 改动：本 skill 只能提出建议，不能自动修改。
+- 即使用户要求继续维护，也不能把本 skill 升级为自动 cleanup、auto-loop 或 commit 流程。
 
 ## 收尾
 
