@@ -125,8 +125,7 @@ def prepare_runtime_bundle() -> Path:
     print_step("准备稳定基础资源")
     bundle_root = prepare_bundle_runtime(BASE_DIR, BUILD_DIR)
     print_check("静态页面已加入打包白名单")
-    print_check("稳定 data/static 已加入打包白名单")
-    print_check("稳定 data/indexes 已加入打包白名单")
+    print_check("稳定 config 已加入打包白名单")
     print_check("稳定 assets 已加入打包白名单")
     print_warn("高频战报 CSV、预计算缓存、协同数据和运行日志不会打包")
     return bundle_root
@@ -145,9 +144,7 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
         "--icon", "NONE",
         "--version-file", str(version_file),
         "--add-data", f"{bundle_root / 'static'};static",
-        "--add-data", f"{bundle_root / 'data' / 'static'};data/static",
-        "--add-data", f"{bundle_root / 'data' / 'indexes'};data/indexes",
-        "--add-data", f"{bundle_root / 'data' / 'processed'};data/processed",
+        "--add-data", f"{bundle_root / 'config'};config",
         "--add-data", f"{bundle_root / 'assets'};assets",
         "--add-data", f"{bundle_root / 'bundle_manifest.json'};.",
         "--hidden-import", "pandas",
@@ -263,9 +260,8 @@ def main():
     exe_dir = build_exe(version_file, bundle_root)
     final_dir, zip_path = finalize_output(exe_dir)
     print_step("打包完成")
-    print_check(f"目录产物：{final_dir}")
-    print_check(f"压缩产物：{zip_path}")
-
-
-if __name__ == "__main__":
-    main()
+    print(f"  输出目录：{final_dir}")
+    print(f"  主程序：{final_dir / APP_EXE_NAME}")
+    print(f"  启动脚本：{final_dir / LAUNCHER_NAME}")
+    print(f"  首次说明：{final_dir / FIRST_RUN_GUIDE_NAME}")
+    print(f"  便携压缩包：{zip_path}")

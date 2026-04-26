@@ -7,10 +7,10 @@ import os
 from typing import Dict, List, Optional
 
 from processing.alias_utils import dedupe_alias_texts, normalize_alias_token
-from processing.runtime_store import resolve_stable_file
+from scraping.version_sync import CONFIG_DIR
 
 
-CHAMPION_ALIAS_INDEX_NAME = "Champion_Alias_Index.json"
+CHAMPION_ALIAS_INDEX_FILE = os.path.join(CONFIG_DIR, "Champion_Alias_Index.json")
 
 _ALIAS_INDEX_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
 
@@ -37,26 +37,25 @@ def load_champion_alias_index(force_refresh: bool = False) -> list[dict]:
     """读取首页搜索专用的英雄别名索引，文件缺失时返回空列表。"""
     global _ALIAS_INDEX_CACHE
 
-    alias_index_file = resolve_stable_file(CHAMPION_ALIAS_INDEX_NAME)
-    if not alias_index_file:
+    if not os.path.exists(CHAMPION_ALIAS_INDEX_FILE):
         return []
 
     try:
-        current_mtime = os.path.getmtime(alias_index_file)
+        current_mtime = os.path.getmtime(CHAMPION_ALIAS_INDEX_FILE)
         if (
             not force_refresh
-            and _ALIAS_INDEX_CACHE[0] == alias_index_file
+            and _ALIAS_INDEX_CACHE[0] == CHAMPION_ALIAS_INDEX_FILE
             and _ALIAS_INDEX_CACHE[1] == current_mtime
             and _ALIAS_INDEX_CACHE[2]
         ):
             return _ALIAS_INDEX_CACHE[2]
 
-        with open(alias_index_file, "r", encoding="utf-8") as f:
+        with open(CHAMPION_ALIAS_INDEX_FILE, "r", encoding="utf-8") as f:
             payload = json.load(f)
         if not isinstance(payload, list):
             payload = []
         records = [_normalize_record(item) for item in payload if isinstance(item, dict)]
-        _ALIAS_INDEX_CACHE = (alias_index_file, current_mtime, records)
+        _ALIAS_INDEX_CACHE = (CHAMPION_ALIAS_INDEX_FILE, current_mtime, records)
         return records
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return []

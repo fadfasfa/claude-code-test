@@ -1,4 +1,4 @@
-﻿"""英雄海克斯排名抓取器。"""
+"""英雄海克斯排名抓取器。"""
 
 import requests
 import json
@@ -14,8 +14,8 @@ import threading
 import random
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from processing.runtime_store import runtime_data_path
 from scraping.version_sync import (
+    CONFIG_DIR,
     HEXTECH_AUGMENT_METADATA_URLS,
     HEXTECH_CHAMPION_STATS_URLS,
     build_hextech_detail_urls,
@@ -136,7 +136,7 @@ def fetch_with_retry(session, url, max_retries=3, timeout=10):
     return None
 
 def check_execution_permission():
-    status_file = runtime_data_path("scraper_status.json")
+    status_file = os.path.join(CONFIG_DIR, "scraper_status.json")
     now = time.time()
     if not os.path.exists(status_file):
         return True, "首次运行，启动抓取..."
@@ -152,15 +152,13 @@ def check_execution_permission():
         return True, "状态文件异常，强制刷新..."
 
 def update_status_file():
-    with open(runtime_data_path("scraper_status.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(CONFIG_DIR, "scraper_status.json"), "w", encoding="utf-8") as f:
         json.dump({"last_success_time": time.time()}, f)
 
 def cleanup_old_csvs():
     # 清理过期数据和残留临时文件。
-    raw_hextech_dir = os.path.dirname(runtime_data_path("Hextech_Data_placeholder.csv"))
-    os.makedirs(raw_hextech_dir, exist_ok=True)
-    files = glob.glob(os.path.join(raw_hextech_dir, "Hextech_Data_*.csv"))
-    tmp_files = glob.glob(os.path.join(raw_hextech_dir, "Hextech_Data_*.csv.tmp"))
+    files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv"))
+    tmp_files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv.tmp"))
     now = datetime.now()
 
     for f in files + tmp_files:
@@ -189,7 +187,6 @@ def extract_champion_stats(
 ) -> list:
     # 扫描页面并用内存字典完成匹配。
     rows = []
-    seen_augments = set()
 
     cleaned_html = html.replace('\\"', '"').replace('\\\\', '\\')
 
@@ -214,9 +211,7 @@ def extract_champion_stats(
                 if win > 0 and pick >= FRESHNESS_THRESHOLD:
                     web_name = aug_id_map.get(mid, "")
                     local_tier = truth_dict.get(web_name)
-                    augment_key = (champ_id, web_name)
-                    if web_name and local_tier and augment_key not in seen_augments:
-                        seen_augments.add(augment_key)
+                    if web_name and local_tier:
                         rows.append({
                             "英雄 ID": champ_id,
                             "英雄名称": champ_name,
@@ -244,9 +239,7 @@ def extract_champion_stats(
 def main_scraper(stop_event=None):
     started_at = time.time()
     current_date = datetime.now().strftime('%Y-%m-%d')
-    raw_hextech_dir = os.path.dirname(runtime_data_path("Hextech_Data_placeholder.csv"))
-    os.makedirs(raw_hextech_dir, exist_ok=True)
-    output_csv = runtime_data_path(f"Hextech_Data_{current_date}.csv")
+    output_csv = os.path.join(CONFIG_DIR, f"Hextech_Data_{current_date}.csv")
 
     can_run, msg = check_execution_permission()
     if not can_run:
@@ -360,7 +353,6 @@ def main_scraper(stop_event=None):
 
     if all_rows:
         df = pd.DataFrame(all_rows)
-        df = df.drop_duplicates(subset=['英雄名称', '海克斯名称']).copy()
         df['胜率差'] = df['海克斯胜率'] - df['英雄胜率']
 
         wr_std = df['胜率差'].std()

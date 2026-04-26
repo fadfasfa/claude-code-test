@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+
 NOISY_MESSAGE_PATTERNS = (
     "GET /assets/",
     "提取英雄：",
@@ -60,15 +61,17 @@ def get_unified_log_file() -> str:
 
 
 def get_runtime_summary_log_file() -> str:
-    runtime_dir = Path(__file__).resolve().parent.parent / "data" / "runtime"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    return str(runtime_dir / "hextech_runtime_summary.log")
+    base_dir = Path(__file__).resolve().parent.parent
+    config_dir = base_dir / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return str(config_dir / "hextech_runtime_summary.log")
 
 
 def get_error_log_file() -> str:
-    runtime_dir = Path(__file__).resolve().parent.parent / "data" / "runtime"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    return str(runtime_dir / "hextech_error.log")
+    base_dir = Path(__file__).resolve().parent.parent
+    config_dir = base_dir / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return str(config_dir / "hextech_error.log")
 
 
 def ensure_utf8_stdio() -> None:

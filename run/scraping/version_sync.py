@@ -90,20 +90,14 @@ def get_base_dir():
 RESOURCE_DIR = get_resource_dir()
 BASE_DIR = get_base_dir()
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
-DATA_DIR = os.path.join(BASE_DIR, "data")
-DATA_RAW_DIR = os.path.join(DATA_DIR, "raw")
-DATA_STATIC_DIR = os.path.join(DATA_DIR, "static")
-DATA_PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
-DATA_INDEXES_DIR = os.path.join(DATA_DIR, "indexes")
-DATA_AUDIT_DIR = os.path.join(DATA_DIR, "audit")
 ASSET_DIR = os.path.join(BASE_DIR, "assets")
 SUMMARY_LOG_FILE = get_runtime_summary_log_file()
 ERROR_LOG_FILE = get_error_log_file()
-VERSION_FILE = os.path.join(DATA_STATIC_DIR, "hero_version.txt")
-CORE_DATA_FILE = os.path.join(DATA_STATIC_DIR, "Champion_Core_Data.json")
-AUGMENT_MAP_FILE = os.path.join(DATA_STATIC_DIR, "Augment_Full_Map.json")
-AUGMENT_ICON_FILE = os.path.join(DATA_STATIC_DIR, "Augment_Icon_Map.json")
-AUGMENT_MANIFEST_FILE = os.path.join(DATA_STATIC_DIR, "Augment_Icon_Manifest.json")
+VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
+CORE_DATA_FILE = os.path.join(CONFIG_DIR, "Champion_Core_Data.json")
+AUGMENT_MAP_FILE = os.path.join(CONFIG_DIR, "Augment_Full_Map.json")
+AUGMENT_ICON_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
+AUGMENT_MANIFEST_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Manifest.json")
 HEXTECH_PRIMARY_BASE_URL = "https://aramgg.com"
 HEXTECH_FALLBACK_BASE_URL = "https://hextech.dtodo.cn"
 HEXTECH_AUGMENT_METADATA_URLS = (
@@ -128,12 +122,6 @@ def build_hextech_detail_urls(champ_id: str) -> tuple[str, str]:
     )
 
 os.makedirs(CONFIG_DIR, exist_ok=True)
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(DATA_RAW_DIR, exist_ok=True)
-os.makedirs(DATA_STATIC_DIR, exist_ok=True)
-os.makedirs(DATA_PROCESSED_DIR, exist_ok=True)
-os.makedirs(DATA_INDEXES_DIR, exist_ok=True)
-os.makedirs(DATA_AUDIT_DIR, exist_ok=True)
 os.makedirs(ASSET_DIR, exist_ok=True)
 def _load_existing_champion_aliases() -> dict:
     if not os.path.exists(CORE_DATA_FILE):
@@ -281,13 +269,6 @@ def _get_champion_image_url(en_name: str, version: str) -> list:
     return urls
 
 
-def is_champion_asset_valid(asset_path: str) -> bool:
-    try:
-        return os.path.exists(asset_path) and os.path.getsize(asset_path) > 0
-    except OSError:
-        return False
-
-
 def _download_champion_image(session, version: str, en_name: str, asset_path: str) -> bool:
     # 下载英雄头像图片。
     urls = _get_champion_image_url(en_name, version)
@@ -297,8 +278,7 @@ def _download_champion_image(session, version: str, en_name: str, asset_path: st
             if img_resp is not None and img_resp.status_code == 200:
                 with open(asset_path, "wb") as img_f:
                     img_f.write(img_resp.content)
-                if is_champion_asset_valid(asset_path):
-                    return True
+                return True
         except Exception:
             continue
     return False
@@ -345,7 +325,7 @@ def _sync_champion_assets_async(core_data: dict, version: str) -> None:
             failed_downloads = []
             for key, v in core_data.items():
                 asset_path = os.path.join(ASSET_DIR, f"{key}.png")
-                if is_champion_asset_valid(asset_path):
+                if os.path.exists(asset_path) and os.path.getsize(asset_path) > 0:
                     continue
                 success = _download_champion_image(img_session, version, v['en_name'], asset_path)
                 if success:
@@ -542,17 +522,12 @@ def sync_hero_data():
         _sync_champion_assets_async(core_data, current_version)
     return sync_succeeded
 
-def reset_sync_ttl() -> None:
-    """清空稳定资源同步 TTL，让下一次同步请求立即生效。"""
-    global _last_sync_time
-    with _sync_lock:
-        _last_sync_time = 0
-
-
 def load_champion_core_data():
     """读取英雄核心资料；文件缺失时强制触发一次稳定资源同步。"""
+    global _last_sync_time
     if not os.path.exists(CORE_DATA_FILE):
-        reset_sync_ttl()
+        with _sync_lock:
+            _last_sync_time = 0  # 强制重新同步
     if not sync_hero_data():
         return {}
     with open(CORE_DATA_FILE, "r", encoding="utf-8") as f:
@@ -560,8 +535,10 @@ def load_champion_core_data():
 
 def load_augment_map():
     """读取海克斯等级映射；文件缺失时强制触发一次稳定资源同步。"""
+    global _last_sync_time
     if not os.path.exists(AUGMENT_MAP_FILE) and not os.path.exists(AUGMENT_MANIFEST_FILE):
-        reset_sync_ttl()
+        with _sync_lock:
+            _last_sync_time = 0  # 强制重新同步
     if not sync_hero_data():
         return {}
     if os.path.exists(AUGMENT_MAP_FILE):
@@ -610,7 +587,7 @@ def _collect_missing_assets(core_data: dict) -> list:
     missing_assets = []
     for key, v in core_data.items():
         asset_path = os.path.join(ASSET_DIR, f"{key}.png")
-        if not is_champion_asset_valid(asset_path):
+        if not os.path.exists(asset_path):
             missing_assets.append((key, v['name'], v['en_name']))
     return missing_assets
 

@@ -54,7 +54,7 @@ def _default_runtime_dir() -> str:
 
 
 def _resolve_config_dir(config_dir: Optional[str]) -> str:
-    return config_dir or os.path.join(_default_runtime_dir(), "data", "static")
+    return config_dir or os.path.join(_default_runtime_dir(), "config")
 
 
 def _resolve_assets_dir(asset_dir: Optional[str]) -> str:
@@ -256,13 +256,6 @@ def _mark_augment_icon_failure(icon_filename: str) -> None:
         _ICON_FAILURE_CACHE[normalize_augment_filename(icon_filename)] = time.time()
 
 
-def is_augment_icon_asset_valid(asset_path: str) -> bool:
-    try:
-        return os.path.exists(asset_path) and os.path.getsize(asset_path) > 0
-    except OSError:
-        return False
-
-
 def ensure_augment_icon_cached(icon_filename: str, asset_dir: Optional[str] = None, force_refresh: bool = False) -> Optional[str]:
     """确保指定海克斯图标已缓存在本地资源目录，必要时执行远端下载。"""
     asset_dir = _resolve_assets_dir(asset_dir)
@@ -271,7 +264,7 @@ def ensure_augment_icon_cached(icon_filename: str, asset_dir: Optional[str] = No
         return None
 
     target_path = os.path.join(asset_dir, normalized_filename)
-    if not force_refresh and is_augment_icon_asset_valid(target_path):
+    if not force_refresh and os.path.exists(target_path) and os.path.getsize(target_path) > 0:
         _clear_augment_icon_failure(normalized_filename)
         return target_path
     if _should_skip_failed_icon(normalized_filename, force_refresh):
@@ -346,7 +339,7 @@ def batch_prefetch_augment_icons(
             filename = future_to_filename[future]
             try:
                 cached_path = future.result()
-                if cached_path and is_augment_icon_asset_valid(cached_path):
+                if cached_path and os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
                     result["success"] += 1
                 else:
                     result["failed"] += 1

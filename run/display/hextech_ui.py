@@ -13,21 +13,17 @@ import threading
 import time
 
 import tkinter as tk
-from processing.runtime_store import (
-    CachedDataFrameLoader,
-    detect_hero_id_column,
-    get_latest_csv,
-    runtime_data_path,
-)
+from processing.runtime_store import CachedDataFrameLoader, detect_hero_id_column, get_latest_csv
 from scraping.version_sync import (
     ASSET_DIR,
+    CONFIG_DIR,
     get_advanced_session,
     load_champion_core_data,
 )
 
 from . import ui_runtime
 
-WEB_PORT_FILE = runtime_data_path("web_server_port.txt")
+WEB_PORT_FILE = os.path.join(CONFIG_DIR, "web_server_port.txt")
 
 os.makedirs(ASSET_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)

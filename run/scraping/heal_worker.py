@@ -1,4 +1,4 @@
-﻿"""运行时自愈调度器。
+"""运行时自愈调度器。
 
 在恢复 `run/scraping/` 包路径时提供最小自愈能力，供当前 `processing/` 与 `display/`
 层安全调用，不要求一次性回滚全部历史目录结构。
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from processing.runtime_store import get_latest_csv, resolve_runtime_file, runtime_data_path
+from processing.runtime_store import get_latest_csv
 import scraping.version_sync as version_sync
 from scraping.augment_catalog import (
     build_augment_icon_manifest,
@@ -27,20 +27,19 @@ from scraping.full_hextech_scraper import main_scraper
 from scraping.full_synergy_scraper import main as run_synergy_scraper
 from scraping.version_sync import (
     ASSET_DIR,
+    CONFIG_DIR,
     AUGMENT_ICON_FILE,
     AUGMENT_MANIFEST_FILE,
     AUGMENT_MAP_FILE,
     CORE_DATA_FILE,
     VERSION_FILE,
     cleanup_missing_assets,
-    is_champion_asset_valid,
     load_champion_core_data,
-    reset_sync_ttl,
     sync_hero_data,
 )
 
 logger = logging.getLogger(__name__)
-LOCK_FILE = Path(runtime_data_path("heal_worker.lock"))
+LOCK_FILE = Path(CONFIG_DIR) / "heal_worker.lock"
 
 
 @dataclass
@@ -48,32 +47,12 @@ class HealReport:
     requested: list[str] = field(default_factory=list)
     repaired: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
-    skipped: list[str] = field(default_factory=list)
-    statuses: dict[str, str] = field(default_factory=dict)
-
-    def mark_requested(self, artifact: str) -> None:
-        self.requested.append(artifact)
-        self.statuses[artifact] = "requested"
-
-    def mark_repaired(self, artifact: str) -> None:
-        self.repaired.append(artifact)
-        self.statuses[artifact] = "repaired"
-
-    def mark_failed(self, artifact: str) -> None:
-        self.failed.append(artifact)
-        self.statuses[artifact] = "failed"
-
-    def mark_skipped(self, artifact: str, reason: str = "skipped") -> None:
-        self.skipped.append(artifact)
-        self.statuses[artifact] = reason
 
     def as_dict(self) -> dict:
         return {
             "requested": list(self.requested),
             "repaired": list(self.repaired),
             "failed": list(self.failed),
-            "skipped": list(self.skipped),
-            "statuses": dict(self.statuses),
         }
 
 
@@ -101,7 +80,7 @@ def _image_assets_ready() -> bool:
         return False
     for key in core_data.keys():
         asset_path = Path(ASSET_DIR) / f"{key}.png"
-        if not is_champion_asset_valid(str(asset_path)):
+        if not asset_path.exists():
             return False
     return True
 
@@ -110,7 +89,7 @@ def detect_missing_artifacts() -> dict:
     latest_csv = get_latest_csv()
     return {
         "hextech_rankings": not _latest_csv_ready(),
-        "synergy_data": resolve_runtime_file("Champion_Synergy.json") is None,
+        "synergy_data": not os.path.exists(os.path.join(CONFIG_DIR, "Champion_Synergy.json")),
         "augment_catalog": not _core_data_ready() or not _augment_manifest_ready(),
         "champion_core": not os.path.exists(CORE_DATA_FILE),
         "images": not _image_assets_ready(),
@@ -128,7 +107,7 @@ def _heal_hero_rankings(stop_event=None) -> bool:
 def _heal_synergy_data() -> bool:
     if not run_synergy_scraper():
         return False
-    return resolve_runtime_file("Champion_Synergy.json") is not None
+    return os.path.exists(os.path.join(CONFIG_DIR, "Champion_Synergy.json"))
 
 
 def _heal_augment_catalog(force: bool = False, stop_event=None) -> bool:
@@ -144,7 +123,8 @@ def _heal_augment_catalog(force: bool = False, stop_event=None) -> bool:
 
 def _heal_champion_core() -> bool:
     if not _core_data_ready():
-        reset_sync_ttl()
+        with version_sync._sync_lock:
+            version_sync._last_sync_time = 0
     return bool(sync_hero_data() and os.path.exists(CORE_DATA_FILE))
 
 
@@ -162,32 +142,46 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
     try:
         with FileLock(str(LOCK_FILE), timeout=1):
             missing = detect_missing_artifacts()
-            requested_repairs = {
-                "champion_core": bool(force or missing.get("champion_core") or not _core_data_ready()),
-                "hextech_rankings": bool(missing.get("hextech_rankings")),
-                "synergy_data": bool(missing.get("synergy_data")),
-                "augment_catalog": bool(missing.get("augment_catalog")),
-                "images": bool(missing.get("images")),
-            }
-            repair_actions = {
-                "champion_core": lambda: _heal_champion_core(),
-                "hextech_rankings": lambda: _heal_hero_rankings(stop_event=stop_event),
-                "synergy_data": _heal_synergy_data,
-                "augment_catalog": lambda: _heal_augment_catalog(force=False, stop_event=stop_event),
-                "images": _heal_images,
-            }
+            core_assets_missing = not _core_data_ready()
 
-            for artifact, should_repair in requested_repairs.items():
-                if not should_repair:
-                    report.mark_skipped(artifact, "not_needed")
-                    continue
-                report.mark_requested(artifact)
-                if repair_actions[artifact]():
-                    report.mark_repaired(artifact)
+            if force or missing.get("champion_core") or core_assets_missing:
+                report.requested.append("champion_core")
+                if _heal_champion_core():
+                    report.repaired.append("champion_core")
                 else:
-                    report.mark_failed(artifact)
+                    report.failed.append("champion_core")
+
+            if force or missing.get("hextech_rankings"):
+                report.requested.append("hextech_rankings")
+                if _heal_hero_rankings(stop_event=stop_event):
+                    report.repaired.append("hextech_rankings")
+                else:
+                    report.failed.append("hextech_rankings")
+
+            if force or missing.get("synergy_data"):
+                report.requested.append("synergy_data")
+                if _heal_synergy_data():
+                    report.repaired.append("synergy_data")
+                else:
+                    report.failed.append("synergy_data")
+
+            # `augment_catalog` can be missing because source maps are gone, even if an
+            # older manifest still looks complete. Use the initial snapshot so a prior
+            # champion-core repair does not hide the need to rebuild the manifest.
+            if force or missing.get("augment_catalog"):
+                report.requested.append("augment_catalog")
+                if _heal_augment_catalog(force=force, stop_event=stop_event):
+                    report.repaired.append("augment_catalog")
+                else:
+                    report.failed.append("augment_catalog")
+
+            if force or missing.get("images"):
+                report.requested.append("images")
+                if _heal_images():
+                    report.repaired.append("images")
+                else:
+                    report.failed.append("images")
     except Timeout:
-        report.mark_skipped("heal_worker", "lock_busy")
         payload = report.as_dict()
         logger.info("heal_worker skipped: another repair is already running: %s", json.dumps(payload, ensure_ascii=False))
         return payload

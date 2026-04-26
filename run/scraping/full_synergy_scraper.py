@@ -1,4 +1,4 @@
-﻿"""海克斯联动数据抓取器。"""
+"""海克斯联动数据抓取器。"""
 
 import logging
 import json
@@ -14,7 +14,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlparse, urlunparse
-from processing.runtime_store import runtime_data_path
 from tools.log_utils import install_summary_logging, log_task_summary
 
 def _get_script_dir() -> str:
@@ -31,10 +30,8 @@ def _bootstrap_runtime_base_dir() -> str:
 
 
 BASE_DIR = _bootstrap_runtime_base_dir()
-DATA_DIR = os.path.join(BASE_DIR, "data")
-STATIC_DIR = os.path.join(DATA_DIR, "static")
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
-STATIC_PATH = Path(STATIC_DIR)
+CONFIG_PATH = Path(CONFIG_DIR)
 ALLOWED_CONFIG_FILES = {
     "Champion_Core_Data.json",
     "hero_aliases.json",
@@ -98,18 +95,15 @@ def _sanitize_url_for_log(url: str) -> str:
 
 
 def _resolve_config_path(filename: str) -> Path:
-    # 将稳定配置文件限制在 data/static，运行态输出写入 data/runtime。
+    # 将配置文件限制在固定白名单内，避免路径穿越。
     if filename not in ALLOWED_CONFIG_FILES:
         raise ValueError(f"不允许访问的配置文件：{filename}")
 
-    if filename == "Champion_Synergy.json":
-        return Path(runtime_data_path(filename)).resolve()
-
-    base_path = STATIC_PATH
-    resolved = (base_path / filename).resolve()
-    if base_path.resolve() not in resolved.parents:
+    resolved = (CONFIG_PATH / filename).resolve()
+    if CONFIG_PATH.resolve() not in resolved.parents:
         raise ValueError(f"配置文件路径越界：{filename}")
     return resolved
+
 
 def _load_json_file(filename: str, expected_kind: str) -> dict:
     # 读取受限配置文件并做基本结构校验。
@@ -141,7 +135,6 @@ def _load_json_file(filename: str, expected_kind: str) -> dict:
 @contextmanager
 def _output_file_lock(lock_path: Path, timeout_seconds: int = OUTPUT_LOCK_TIMEOUT_SECONDS):
     # 用锁文件串行化输出，避免并发实例同时写入。
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout_seconds
     lock_fd = None
 

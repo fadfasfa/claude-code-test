@@ -50,19 +50,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from processing.precomputed_cache import (
-    load_champion_id_name_map,
-    resolve_champion_detail_name,
-    resolve_synergy_key,
-)
 from processing.view_adapter import process_hextechs_data
-from processing.runtime_store import (
-    CachedDataFrameLoader,
-    get_latest_csv,
-    resolve_runtime_file,
-    resolve_stable_file,
-    runtime_data_path,
-)
+from processing.runtime_store import CachedDataFrameLoader, get_latest_csv
 from scraping.augment_catalog import find_augment_catalog_entry
 from scraping.full_hextech_scraper import _clean_augment_text, extract_champion_stats, fetch_with_retry
 from scraping.icon_resolver import (
@@ -98,9 +87,9 @@ def _load_server_port() -> int:
 
 
 SERVER_PORT = _load_server_port()
-WEB_PORT_FILE = runtime_data_path("web_server_port.txt")
-VERSION_FILE_NAME = "hero_version.txt"
-BROWSER_PROFILE_DIR = runtime_data_path("browser_profile")
+WEB_PORT_FILE = os.path.join(CONFIG_DIR, "web_server_port.txt")
+VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
+BROWSER_PROFILE_DIR = os.path.join(CONFIG_DIR, "browser_profile")
 AUTO_JUMP_ENABLED = True
 HTTP_SESSION_COOKIE = "hextech_local_token"
 REQUEST_TOKEN_HEADER = "x-hextech-token"
@@ -486,35 +475,16 @@ def ensure_champion_cache() -> dict:
 
 
 def get_champion_name(champ_id: str) -> str:
-    champ_id_str = str(champ_id).strip()
-    if not champ_id_str:
-        return ""
-    id_name_map = load_champion_id_name_map()
-    record = id_name_map.get(champ_id_str)
-    if isinstance(record, dict):
-        hero_name = str(record.get("heroName", "")).strip()
-        if hero_name:
-            return hero_name
-
     cache = ensure_champion_cache()
+    champ_id_str = str(champ_id)
     if champ_id_str in cache:
         return cache[champ_id_str].get("name", "")
     return ""
 
 
 def get_champion_info(champ_id: str) -> Tuple[str, str]:
-    champ_id_str = str(champ_id).strip()
-    if not champ_id_str:
-        return "", ""
-    id_name_map = load_champion_id_name_map()
-    record = id_name_map.get(champ_id_str)
-    if isinstance(record, dict):
-        hero_name = str(record.get("heroName", "")).strip()
-        en_name = str(record.get("enName", "")).strip()
-        if hero_name or en_name:
-            return hero_name, en_name
-
     cache = ensure_champion_cache()
+    champ_id_str = str(champ_id)
     if champ_id_str in cache:
         data = cache[champ_id_str]
         return data.get("name", ""), data.get("en_name", "")
@@ -548,10 +518,6 @@ def resolve_core_hero_record(query: str) -> Optional[dict]:
 
 
 def resolve_canonical_hero_name(query: str) -> str:
-    resolved_name = resolve_champion_detail_name(query)
-    if resolved_name and resolved_name != str(query or "").strip():
-        return resolved_name
-
     record = resolve_core_hero_record(query)
     if record:
         return str(record.get("heroName", "")).strip()
@@ -565,10 +531,6 @@ def resolve_champion_id(query: str) -> str:
     if raw_query.isdigit():
         return raw_query
 
-    resolved_id = resolve_synergy_key(raw_query)
-    if resolved_id.isdigit():
-        return resolved_id
-
     record = resolve_core_hero_record(raw_query)
     if record:
         hero_id = str(record.get("heroId", "")).strip()
@@ -578,11 +540,8 @@ def resolve_champion_id(query: str) -> str:
 
 
 def get_ddragon_version() -> str:
-    version_file = resolve_stable_file(VERSION_FILE_NAME)
-    if not version_file:
-        return ""
     try:
-        with open(version_file, "r", encoding="utf-8") as f:
+        with open(VERSION_FILE, "r", encoding="utf-8") as f:
             version = f.read().strip()
             if version:
                 return version
@@ -873,9 +832,7 @@ def get_live_hextech_snapshot_df(hero_name: str, force_refresh: bool = False) ->
 
 
 def get_synergy_data() -> dict:
-    json_path = resolve_runtime_file("Champion_Synergy.json")
-    if not json_path:
-        return _synergy_cache.data
+    json_path = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
     try:
         current_mtime = os.path.getmtime(json_path)
     except OSError:
@@ -1179,7 +1136,6 @@ async def csv_watcher_loop() -> None:
             if current_mtime > prev_mtime and prev_mtime != 0.0:
                 logger.info("CSV 已更新：%s", os.path.basename(_csv_loader.cached_path))
                 await manager.broadcast({"type": "data_updated"})
-                request_background_refresh(force=False)
             prev_mtime = current_mtime
         except (OSError, IOError) as exc:
             logger.warning("CSV 监视器错误：%s", exc)
