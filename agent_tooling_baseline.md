@@ -18,6 +18,7 @@
   - `PostToolUseFailure`：self-improvement raw error 捕获
 - Hooks 必须保持为安全机制或轻量提醒机制。它们不能变成调度器、自动继续引擎或业务文件写入器。
 - 仓库 env 使用 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` 和 `CLAUDE_CODE_FORK_SUBAGENT=0` 禁用后台 / fork worktree 派生。
+- 只读 Explore / review subagent 不是 worktree 触发条件；只有明确隔离执行或已接受计划批准 worktree 时，才允许进入 `WorktreeCreate`。
 
 ## Repo Skills
 
@@ -69,6 +70,8 @@ Subagents 只允许用于边界清晰的旁路工作：
 - 明确计划中、文件所有权互不重叠的窄范围实现
 
 不要让并发 subagents 编辑同一文件、共享 settings、hooks、worktree policy 或共享数据契约。
+
+只读 Explore / review subagent 默认不创建 worktree；worktree hook 失败时只能降级为主线程只读搜索或报告 blocker，不能绕过 hook。
 
 ## 外部 AI 验证层
 

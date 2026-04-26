@@ -1,8 +1,8 @@
 <#
-中文简介：repo-local PreToolUse 安全拦截 hook。
-什么时候读：需要理解本仓如何拦截危险 shell/git/worktree 命令时读取。
-约束什么：拦截 recursive delete、git clean/reset、global config 写入、未经治理的 worktree 操作等高风险命令。
-不负责什么：不调度任务，不自动继续执行，不修改业务文件，不替代人工确认。
+Repo-local PreToolUse safety hook.
+Purpose: block dangerous shell/git/worktree commands.
+Guards: recursive delete, git clean/reset, global config writes, and unmanaged worktree operations.
+Non-goals: no task dispatch, no auto-continue, no business-file edits, no replacement for human confirmation.
 #>
 
 Set-StrictMode -Version Latest
@@ -12,13 +12,13 @@ function Write-Err([string]$Message) {
   [Console]::Error.WriteLine($Message)
 }
 
-# 统一阻断出口：只报告原因并以非零码退出，不执行任何修复或调度。
+# Unified block exit: report the reason and return non-zero; do not repair or dispatch.
 function Block([string]$Reason) {
   Write-Err "worktree-governor: blocked unsafe shell command. $Reason Use approved repo-local tooling or ask explicitly."
   exit 2
 }
 
-# 从不同 Claude Code hook payload 形态中读取字段，兼容顶层和 tool_input。
+# Extract fields from top-level and tool_input Claude Code hook payload shapes.
 function Get-JsonField($Object, [string[]]$Names) {
   if (-not $Object) { return $null }
   foreach ($name in $Names) {
@@ -27,7 +27,7 @@ function Get-JsonField($Object, [string[]]$Names) {
   return $null
 }
 
-# 识别 heredoc 终止符，后续命令切段会跳过 heredoc body，避免误拦截脚本正文。
+# Detect heredoc terminators so command segmentation can skip heredoc bodies.
 function Get-HeredocTerminatorFromLine([string]$Line) {
   $inSingle = $false
   $inDouble = $false
@@ -94,7 +94,7 @@ function Get-HeredocTerminatorFromLine([string]$Line) {
   return $null
 }
 
-# 移除 heredoc body，只保留外层命令结构；输入输出都是命令文本。
+# Remove heredoc bodies and keep only the outer command structure.
 function Remove-HeredocBodies([string]$Text) {
   $lines = ($Text -replace "`r", "").Split("`n")
   $filtered = New-Object System.Collections.Generic.List[string]
@@ -118,7 +118,7 @@ function Remove-HeredocBodies([string]$Text) {
   return ($filtered -join "`n")
 }
 
-# 将当前切段加入 segments；空白段会被丢弃。
+# Add the current segment when non-empty.
 function Add-Segment([System.Collections.Generic.List[string]]$Segments, [System.Text.StringBuilder]$Current) {
   $text = $Current.ToString().Trim()
   if (-not [string]::IsNullOrWhiteSpace($text)) {
@@ -127,7 +127,7 @@ function Add-Segment([System.Collections.Generic.List[string]]$Segments, [System
   $Current.Clear() | Out-Null
 }
 
-# 按 shell 分隔符切分命令，同时尊重引号和 heredoc；输出用于逐段风险匹配。
+# Split shell commands on separators while respecting quotes and heredocs.
 function Get-CommandSegments([string]$Text) {
   $source = Remove-HeredocBodies $Text
   $segments = New-Object System.Collections.Generic.List[string]
@@ -203,7 +203,7 @@ function Get-CommandSegments([string]$Text) {
   return $segments
 }
 
-# 匹配单个命令段，允许前缀环境变量赋值，例如 FOO=bar git clean。
+# Match a single segment, allowing prefix environment assignments like FOO=bar git clean.
 function Test-SegmentMatch([string]$Segment, [string]$Pattern) {
   $prefix = '^\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*)=(?:"[^"]*"|''[^'']*''|[^\s;|&]+)\s+)*'
   return $Segment -match ($prefix + $Pattern)

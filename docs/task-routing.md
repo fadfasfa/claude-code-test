@@ -72,6 +72,8 @@ Subagents 是可选项，只在工作能被清晰界定时有用。
 - review
 - 文件所有权明确、互不重叠的实现切片
 
+只读 Explore / review subagent 不得默认创建 worktree。只有用户明确要求隔离执行，或已接受任务计划中明确批准 worktree 时，才允许触发 `WorktreeCreate`。
+
 不适合用于：
 
 - critical path 上的紧急阻塞工作
@@ -93,6 +95,8 @@ Subagents 是可选项，只在工作能被清晰界定时有用。
 小型 docs/rules 编辑、本地 bug 修复或只读盘点不需要 worktree。
 
 不带 `-DryRun` 创建 worktree 前，必须有明确用户指令。删除 worktree 永远需要人工确认。
+
+如果 worktree hook 失败，只能降级为主线程只读搜索或报告 blocker；不得绕过 hook 手动创建 worktree。
 
 ## 什么时候需要 PR Review
 

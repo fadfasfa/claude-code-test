@@ -1,8 +1,8 @@
 <#
-中文简介：repo-local WorktreeCreate hook，负责把 Claude Code worktree 请求收束到受管路径和命名规则。
-什么时候读：需要理解本仓 worktree 创建护栏时读取。
-约束什么：禁止从已有 worktree 内嵌套创建，限制 directed/auto 命名，并把新 worktree 放到受管根目录。
-不负责什么：不删除 worktree，不清理 legacy worktree，不替代人工确认。
+Repo-local WorktreeCreate hook.
+Purpose: constrain Claude Code worktree requests to managed paths and names.
+Guards: prevent nested worktrees, enforce directed/auto names, and place new worktrees under managed roots.
+Non-goals: no worktree deletion, no legacy cleanup, no replacement for human confirmation.
 #>
 
 Set-StrictMode -Version Latest
@@ -18,13 +18,13 @@ function Write-Err([string]$Message) {
   [Console]::Error.WriteLine($Message)
 }
 
-# 统一失败出口：报告原因并停止当前 hook，不做自动修复。
+# Unified failure exit: report the reason and stop this hook; do not auto-fix.
 function Fail([string]$Message, [int]$Code = 2) {
   Write-Err $Message
   exit $Code
 }
 
-# 兼容 WSL 风格路径，统一转换为 Windows 路径文本。
+# Convert WSL-style paths to Windows path text.
 function Convert-PathText([string]$PathText) {
   if ([string]::IsNullOrWhiteSpace($PathText)) { return "" }
   if ($PathText -match '^/mnt/([a-zA-Z])/(.*)$') {
@@ -33,14 +33,14 @@ function Convert-PathText([string]$PathText) {
   return $PathText
 }
 
-# 解析为绝对路径并去掉末尾分隔符，用于后续边界判断。
+# Resolve to an absolute path and trim trailing separators for boundary checks.
 function Normalize-PathText([string]$PathText) {
   $converted = Convert-PathText $PathText
   if ([string]::IsNullOrWhiteSpace($converted)) { return "" }
   return ([System.IO.Path]::GetFullPath($converted)).TrimEnd('\', '/')
 }
 
-# 判断 Child 是否位于 Parent 之下；输入输出都是路径文本，不访问业务文件内容。
+# Return whether Child is under Parent using path text only; do not read business files.
 function Test-UnderPath([string]$Child, [string]$Parent) {
   $c = Normalize-PathText $Child
   $p = Normalize-PathText $Parent
@@ -49,7 +49,7 @@ function Test-UnderPath([string]$Child, [string]$Parent) {
     $c.StartsWith($p + "\", [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-# 从不同事件 payload 形态里提取字段。
+# Extract a field from different event payload shapes.
 function Get-JsonField($Object, [string[]]$Names) {
   if (-not $Object) { return $null }
   foreach ($name in $Names) {
@@ -60,7 +60,7 @@ function Get-JsonField($Object, [string[]]$Names) {
   return $null
 }
 
-# 将 session id 压缩为安全短标识，用于 auto worktree 分支名。
+# Compress session id to a safe short token for auto worktree branch names.
 function Get-ShortSessionId([string]$SessionId) {
   $sid = ($SessionId.ToLowerInvariant() -replace '[^a-z0-9]', '')
   if ([string]::IsNullOrWhiteSpace($sid)) { return "nosession" }

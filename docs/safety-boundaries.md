@@ -98,6 +98,10 @@ Hooks 不得：
 - 修改全局配置
 - 变成复杂 workflow engine
 
+只读 Explore / 审查 agent 不得默认创建 worktree。只有用户明确要求隔离执行，或已接受计划中明确批准 worktree，才允许触发 `WorktreeCreate`。
+
+如果 worktree hook 失败，不得绕过 hook 手动创建 worktree；只能降级为主线程只读搜索，或报告需要修复 hook 的 blocker。
+
 `stop-guard-lite` 在用户明确批准写 Stop hook 前，仍只是模块卡候选。
 
 ## 前端边界
