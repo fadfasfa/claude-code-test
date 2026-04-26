@@ -17,7 +17,7 @@
 - `processing/`：本地数据处理与视图适配层
 - `scraping/`：远端抓取、自愈和稳定资源同步层
 - `tools/`：打包、清理、日志与开发自检工具层
-- `data/`：本地运行生成 / 下载缓存与运行输出，不作为当前仓库追踪源数据；稳定源数据应保留在明确的 `config/`、`assets/` 或静态资源入口。
+- `data/`：本地运行生成 / 下载缓存与运行输出，不作为当前仓库追踪源数据；`data/raw/` 存放 `Hextech_Data_*.csv` 等高频原始战报，`data/runtime/` 存放状态、API 缓存、锁、浏览器 profile 和生成型协同数据。稳定源数据应保留在明确的 `config/`、`assets/` 或静态资源入口。
 
 ## 快速开始
 
@@ -64,7 +64,7 @@ python build.py
   - `startup_status.json`
   - `web_server_port.txt`
   - 运行日志
-- 运行时读取顺序为：包内稳定资源 -> 本地运行目录覆盖资源 -> 在线刷新生成资源
+- 稳定配置读取顺序为：本地 `config/` 覆盖资源 -> 包内稳定资源；高频 CSV 只从运行原始数据目录 `data/raw/` 读取，状态、缓存、锁、profile 和生成型协同数据写入 `data/runtime/`，旧 `config/` 同名文件仅作为历史兼容读取或清理对象。
 - `dist/` 下会同时生成：
   - 目录版 `Hextech_伴生系统_YYYYMMDD/`
   - 便携压缩包 `Hextech_伴生系统_YYYYMMDD_portable.zip`

@@ -12,6 +12,8 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = BASE_DIR / "config"
+RUNTIME_RAW_DATA_DIR = BASE_DIR / "data" / "raw"
+RUNTIME_DIR = BASE_DIR / "data" / "runtime"
 BUILD_DIR = BASE_DIR / "build"
 DIST_DIR = BASE_DIR / "dist"
 
@@ -30,8 +32,23 @@ VOLATILE_CONFIG_FILES = (
 )
 
 VOLATILE_CONFIG_GLOBS = (
-    "Hextech_Data_*.csv",
     "*.log",
+)
+
+VOLATILE_RAW_DATA_GLOBS = (
+    "Hextech_Data_*.csv",
+)
+
+VOLATILE_RUNTIME_FILES = (
+    RUNTIME_DIR / "state" / "scraper_status.json",
+    RUNTIME_DIR / "state" / "startup_status.json",
+    RUNTIME_DIR / "state" / "web_server_port.txt",
+    RUNTIME_DIR / "cache" / "Champion_List_Cache.json",
+    RUNTIME_DIR / "cache" / "Champion_Hextech_Cache.json",
+    RUNTIME_DIR / "cache" / "Champion_Hextech_Cache",
+    RUNTIME_DIR / "locks" / "heal_worker.lock",
+    RUNTIME_DIR / "persisted" / "Champion_Synergy.json",
+    RUNTIME_DIR / "profile" / "browser_profile",
 )
 
 
@@ -73,6 +90,23 @@ def cleanup_runtime_outputs() -> list[Path]:
                 else:
                     target.unlink()
                 removed.append(target)
+
+    for pattern in VOLATILE_RAW_DATA_GLOBS:
+        for target in RUNTIME_RAW_DATA_DIR.glob(pattern):
+            if target.exists():
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+                else:
+                    target.unlink()
+                removed.append(target)
+
+    for target in VOLATILE_RUNTIME_FILES:
+        if target.exists():
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                target.unlink()
+            removed.append(target)
 
     return removed
 

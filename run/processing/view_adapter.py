@@ -31,6 +31,30 @@ _champion_core_cache: Optional[Dict[str, Any]] = None
 # 缓存配置。
 MAX_CACHE_SIZE = 100
 CACHE_TTL = 300.0
+EMPTY_HEXTECH_RESULT = {
+    'top_10_overall': [],
+    'comprehensive': [],
+    'winrate_only': [],
+    'Prismatic': [],
+    'Gold': [],
+    'Silver': []
+}
+
+
+def _empty_hextech_result() -> Dict[str, List[Dict[str, Any]]]:
+    return {key: list(value) for key, value in EMPTY_HEXTECH_RESULT.items()}
+
+
+def _validate_runtime_schema(df: pd.DataFrame, source: str) -> bool:
+    try:
+        from processing.runtime_store import validate_runtime_csv_schema
+
+        validate_runtime_csv_schema(df, source=source)
+        return True
+    except ValueError as exc:
+        logging.warning(str(exc))
+        return False
+
 
 def _get_champion_maps():
     # 构建英雄名称到 ID/英文名的映射。
@@ -118,6 +142,8 @@ def process_champions_data(
     # 计算全英雄榜单，按贝叶斯平滑和标准分综合排序。
     if df.empty:
         return []
+    if not _validate_runtime_schema(df, "process_champions_data"):
+        return []
 
     if log_columns:
         logging.info("处理英雄数据列：%s", df.columns.tolist())
@@ -140,7 +166,7 @@ def process_champions_data(
             logging.warning(f"缺少必要列，当前列：{data.columns.tolist()}")
             return []
 
-        min_pick_rate = 0.005
+        min_pick_rate = 0.00075
         avg_winrate = data['英雄胜率'].mean()
 
         data['贝叶斯胜率'] = (
@@ -349,14 +375,9 @@ def process_hextechs_data(
         logging.info("处理海克斯数据列：%s", df.columns.tolist())
 
     if df.empty:
-        return {
-            'top_10_overall': [],
-            'comprehensive': [],
-            'winrate_only': [],
-            'Prismatic': [],
-            'Gold': [],
-            'Silver': []
-        }
+        return _empty_hextech_result()
+    if not _validate_runtime_schema(df, "process_hextechs_data"):
+        return _empty_hextech_result()
 
     # ========== 缓存检查 ==========
     df_hash = _compute_df_hash(df)
@@ -378,27 +399,13 @@ def process_hextechs_data(
 
         if missing_cols:
             logging.warning(f"缺少必要列 {missing_cols}，当前列：{data.columns.tolist()}")
-            return {
-                'top_10_overall': [],
-                'comprehensive': [],
-                'winrate_only': [],
-                'Prismatic': [],
-                'Gold': [],
-                'Silver': []
-            }
+            return _empty_hextech_result()
 
         # ========== 过滤指定英雄 ==========
         hero_data = data[data['英雄名称'] == name].copy()
         if hero_data.empty:
             logging.warning(f"英雄 '{name}' 无数据")
-            return {
-                'top_10_overall': [],
-                'comprehensive': [],
-                'winrate_only': [],
-                'Prismatic': [],
-                'Gold': [],
-                'Silver': []
-            }
+            return _empty_hextech_result()
 
         # ========== 动态置信度衰减惩罚（替代硬编码过滤） ==========
         # 采用平滑衰减因子，让低样本高胜率数据自然降权
@@ -550,14 +557,7 @@ def process_hextechs_data(
     except Exception as e:
         logging.error(f"处理海克斯数据异常: {e}")
         # 安全降级，返回空列表
-        return {
-            'top_10_overall': [],
-            'comprehensive': [],
-            'winrate_only': [],
-            'Prismatic': [],
-            'Gold': [],
-            'Silver': []
-        }
+        return _empty_hextech_result()
 
 def clear_hextech_cache():
     # 手动清空海克斯缓存（用于强制刷新）

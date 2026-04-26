@@ -26,15 +26,31 @@ import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from scraping.version_sync import CONFIG_DIR, RESOURCE_DIR
+from scraping.version_sync import BASE_DIR, CONFIG_DIR, RESOURCE_DIR
+
+CSV_ENCODING = "utf-8-sig"
+CSV_FILENAME_PATTERN = "Hextech_Data_*.csv"
+CSV_REQUIRED_COLUMNS = (
+    "英雄ID",
+    "英雄名称",
+    "英雄评级",
+    "英雄胜率",
+    "英雄出场率",
+    "海克斯阶级",
+    "海克斯名称",
+    "海克斯胜率",
+    "海克斯出场率",
+    "胜率差",
+    "综合得分",
+)
 
 
 def runtime_priority_paths(relative_name: str) -> list[str]:
-    """返回运行时优先路径列表，先查本地持久化目录，再查 bundle 内置资源。"""
+    """返回稳定配置优先路径列表，先查本地配置目录，再查 bundle 内置资源。"""
     runtime_path = Path(CONFIG_DIR) / relative_name
     bundled_path = Path(RESOURCE_DIR) / "config" / relative_name
     candidates = [str(runtime_path)]
@@ -42,6 +58,84 @@ def runtime_priority_paths(relative_name: str) -> list[str]:
     if bundled not in candidates:
         candidates.append(bundled)
     return candidates
+
+
+def get_runtime_root_dir() -> Path:
+    """返回运行态可变数据根目录。"""
+    return Path(BASE_DIR) / "data" / "runtime"
+
+
+def get_runtime_state_dir() -> Path:
+    """返回运行态状态文件目录。"""
+    return get_runtime_root_dir() / "state"
+
+
+def get_runtime_cache_dir() -> Path:
+    """返回运行态缓存目录。"""
+    return get_runtime_root_dir() / "cache"
+
+
+def get_runtime_lock_dir() -> Path:
+    """返回运行态锁文件目录。"""
+    return get_runtime_root_dir() / "locks"
+
+
+def get_runtime_profile_dir() -> Path:
+    """返回运行态浏览器 profile 目录。"""
+    return get_runtime_root_dir() / "profile"
+
+
+def get_runtime_persisted_dir() -> Path:
+    """返回运行态生成型持久化数据目录。"""
+    return get_runtime_root_dir() / "persisted"
+
+
+def _join_under_dir(base_dir: Path, relative_name: str) -> Path:
+    """拼接受控运行路径，拒绝绝对路径和上级目录穿越。"""
+    candidate = (base_dir / relative_name).resolve()
+    root = base_dir.resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError(f"运行态路径越界：{relative_name}")
+    return candidate
+
+
+def build_runtime_state_path(filename: str) -> str:
+    """生成运行态状态文件路径。"""
+    return str(_join_under_dir(get_runtime_state_dir(), filename))
+
+
+def build_runtime_cache_path(filename: str) -> str:
+    """生成运行态缓存文件路径。"""
+    return str(_join_under_dir(get_runtime_cache_dir(), filename))
+
+
+def build_runtime_lock_path(filename: str) -> str:
+    """生成运行态锁文件路径。"""
+    return str(_join_under_dir(get_runtime_lock_dir(), filename))
+
+
+def build_runtime_profile_path(dirname: str) -> str:
+    """生成运行态 profile 目录路径。"""
+    return str(_join_under_dir(get_runtime_profile_dir(), dirname))
+
+
+def build_runtime_persisted_path(filename: str) -> str:
+    """生成运行态生成型持久化文件路径。"""
+    return str(_join_under_dir(get_runtime_persisted_dir(), filename))
+
+
+def runtime_data_fallback_paths(runtime_path: str, legacy_relative_name: str) -> list[str]:
+    """返回 data/runtime 优先、旧 config 兼容的读取路径列表。"""
+    candidates = [runtime_path, str(_join_under_dir(Path(CONFIG_DIR), legacy_relative_name))]
+    return list(dict.fromkeys(candidates))
+
+
+def resolve_runtime_data_file(runtime_path: str, legacy_relative_name: str) -> Optional[str]:
+    """解析运行态可变数据文件，优先 data/runtime，兼容旧 config。"""
+    for candidate in runtime_data_fallback_paths(runtime_path, legacy_relative_name):
+        if os.path.exists(candidate):
+            return candidate
+    return None
 
 
 def resolve_runtime_file(relative_name: str) -> Optional[str]:
@@ -52,13 +146,58 @@ def resolve_runtime_file(relative_name: str) -> Optional[str]:
     return None
 
 
+def get_runtime_data_dir() -> Path:
+    """返回高频运行数据目录，避免战报 CSV 继续混入稳定配置目录。"""
+    return Path(BASE_DIR) / "data" / "raw"
+
+
+def build_daily_csv_path(date_str: str) -> str:
+    """按统一命名规则生成每日战报 CSV 路径。"""
+    return str(get_runtime_data_dir() / f"Hextech_Data_{date_str}.csv")
+
+
+def iter_runtime_csv_files() -> list[str]:
+    """列出运行原始数据目录中的战报 CSV 文件。"""
+    return glob.glob(str(get_runtime_data_dir() / CSV_FILENAME_PATTERN))
+
+
 def get_latest_csv() -> Optional[str]:
     """返回最新战报 CSV 的路径，供 Web、UI 和预计算缓存共用。"""
-    files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv"))
+    files = iter_runtime_csv_files()
     if not files:
         return None
     files.sort(key=os.path.getmtime, reverse=True)
     return files[0]
+
+
+def validate_runtime_csv_schema(
+    df: pd.DataFrame,
+    source: str = "",
+    required_columns: Sequence[str] = CSV_REQUIRED_COLUMNS,
+) -> None:
+    """校验运行 CSV 的核心列，避免下游计算阶段才暴露 KeyError。"""
+    if df.empty:
+        return
+    missing = [col for col in required_columns if col not in df.columns]
+    if missing:
+        detail = f"，source={source}" if source else ""
+        raise ValueError(f"运行 CSV 缺少核心列：{missing}{detail}，当前列：{df.columns.tolist()}")
+
+
+def load_runtime_csv(path: str) -> pd.DataFrame:
+    """按统一编码读取并标准化运行 CSV。"""
+    df = pd.read_csv(path, encoding=CSV_ENCODING)
+    normalized = normalize_runtime_df(df)
+    validate_runtime_csv_schema(normalized, source=os.path.basename(path))
+    return normalized
+
+
+def load_latest_runtime_df() -> pd.DataFrame:
+    """读取最新运行 CSV；没有 CSV 时返回空 DataFrame。"""
+    latest = get_latest_csv()
+    if not latest:
+        return pd.DataFrame()
+    return load_runtime_csv(latest)
 
 
 def detect_hero_id_column(df: pd.DataFrame) -> Optional[str]:
@@ -129,11 +268,10 @@ class CachedDataFrameLoader:
                 or latest != self._cache.path
                 or current_mtime != self._cache.mtime
             ):
-                df = pd.read_csv(latest)
                 self._cache = DataFrameCache(
                     path=latest,
                     mtime=current_mtime,
-                    df=normalize_runtime_df(df),
+                    df=load_runtime_csv(latest),
                 )
             return self._cache.df
 
@@ -157,14 +295,36 @@ def has_precomputed_hextech_cache() -> bool:
 
 
 __all__ = [
+    "CSV_ENCODING",
+    "CSV_FILENAME_PATTERN",
+    "CSV_REQUIRED_COLUMNS",
     "CachedDataFrameLoader",
     "DataFrameCache",
+    "build_daily_csv_path",
+    "build_runtime_cache_path",
+    "build_runtime_lock_path",
+    "build_runtime_persisted_path",
+    "build_runtime_profile_path",
+    "build_runtime_state_path",
     "detect_hero_id_column",
     "get_latest_csv",
+    "get_runtime_cache_dir",
+    "get_runtime_data_dir",
+    "get_runtime_lock_dir",
+    "get_runtime_persisted_dir",
+    "get_runtime_profile_dir",
+    "get_runtime_root_dir",
+    "get_runtime_state_dir",
     "has_precomputed_hextech_cache",
+    "iter_runtime_csv_files",
+    "load_latest_runtime_df",
     "load_precomputed_champion_list",
     "load_precomputed_hextech_for_hero",
+    "load_runtime_csv",
     "normalize_runtime_df",
+    "resolve_runtime_data_file",
     "resolve_runtime_file",
+    "runtime_data_fallback_paths",
     "runtime_priority_paths",
+    "validate_runtime_csv_schema",
 ]

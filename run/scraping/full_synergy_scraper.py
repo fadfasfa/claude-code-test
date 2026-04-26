@@ -12,6 +12,8 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
+
+from processing.runtime_store import build_runtime_persisted_path
 from typing import Optional
 from urllib.parse import urljoin, urlparse, urlunparse
 from tools.log_utils import install_summary_logging, log_task_summary
@@ -561,7 +563,7 @@ def main():
             executor.shutdown(wait=False, cancel_futures=True)
 
         # 持久化到数据文件
-        output_path = _resolve_config_path("Champion_Synergy.json")
+        output_path = build_runtime_persisted_path("Champion_Synergy.json")
         lock_path = output_path.with_suffix(output_path.suffix + ".lock")
         with _output_file_lock(lock_path):
             _atomic_write_json(output_path, final_data)
