@@ -31,6 +31,8 @@
 
 业务写入前，先以 `work_area_registry.md` 作为稳定注册表。
 
+如果用户已经指定工作区，例如 `run/`，先只检索 `work_area_registry.md` 中该工作区条目，再列该工作区一级目录。不要把 `Glob run/**/*` 或同类全量递归搜索作为第一步；先按 `display`、`processing`、`scraping`、`tools` 等子区缩小范围，只有明确需要时才扩大 Glob。
+
 ## 工作流文档
 
 | 文件 | 用途 |

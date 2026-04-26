@@ -51,7 +51,9 @@
 
 避免一次性读取超大范围。优先使用目录枚举、`rg`、`Select-String`、`Get-Content -TotalCount` 或小范围分段读取来确认候选位置和少量上下文。
 
-若 Read 因空 PDF page、行号范围、空参数或工具参数失败，失败一次后禁止用相同参数重试。立即改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。
+若 Read 因空 PDF page、行号范围、空参数或工具参数失败，失败一次后禁止用相同参数重试。立即改用 `rg`、`Select-String`、`Get-Content -TotalCount` 或 scoped `Get-Content` 小范围行读取。
+
+对大型工作区先搜索关键词和目录结构，不全量读文件。已知 `target_work_area` 时，先检索 `work_area_registry.md` 中该工作区条目，再列工作区一级目录；不要把 `Glob <work_area>/**/*` 作为第一步。只有明确需要更多候选文件时，才扩大 Glob 或跨子区搜索。
 
 严格只读验收或 smoke test 中，不主动执行预期会失败的 Bash，也不通过危险失败试探来证明 hook 生效。
 

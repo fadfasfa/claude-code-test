@@ -13,6 +13,8 @@
 5. `agent_tooling_baseline.md`
 6. 相关 `docs/*.md`
 
+入口文件不是每次都要全量读取。普通任务优先读取中文头部简介、目录、目标工作区相关段落和相关小节；已知 `target_work_area` 时，只搜索该工作区相关段落。不要默认 `Read` `AGENTS.md`、`PROJECT.md` 或 `work_area_registry.md` 的 1-2000 行，也不要把完整入口链全文件读取当作启动固定动作。`Read` 因参数、行号或范围失败一次后，不得用相同参数重试，应改用 `rg`、`Select-String`、`Get-Content -TotalCount` 或小范围行读取。
+
 `.claude/` 存放 repo-local settings、skills、hooks 和 tools。它不能替代根目录入口文件。
 
 ## 默认流程
@@ -47,9 +49,9 @@
 ## 常用入口文档
 
 ```powershell
-Get-Content .\work_area_registry.md
-Get-Content .\docs\task-routing.md
-Get-Content .\docs\safety-boundaries.md
-Get-Content .\docs\continuous-execution.md
+Select-String .\work_area_registry.md -Pattern '<target_work_area>'
+Get-Content .\docs\task-routing.md -TotalCount 120
+Get-Content .\docs\safety-boundaries.md -TotalCount 120
+Get-Content .\docs\continuous-execution.md -TotalCount 120
 git status --short --branch
 ```

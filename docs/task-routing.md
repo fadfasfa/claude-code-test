@@ -14,6 +14,14 @@
 
 如果路由不清，先选择较轻路径；只有证据表明任务需要时才升级。
 
+## target_work_area 读取策略
+
+如果用户已指定工作区，例如 `run/`，先只检索 `work_area_registry.md` 中该工作区条目，确认 `target_work_area` 和默认写入边界。不要直接 `Glob run/**/*` 作为第一步。
+
+进入工作区后，先列一级目录，再按任务关键词缩到 `display`、`processing`、`scraping`、`tools`、`docs` 或测试目录等子区。只有当前子区证据不足、目标文件仍不明确或验证需要时，才扩大 Glob 或跨子区搜索。
+
+普通任务不默认全量读取 `AGENTS.md`、`PROJECT.md`、`work_area_registry.md` 或 `agent_tooling_baseline.md`；优先读取中文头部简介、目录、相关小节和目标工作区段落。
+
 ## 什么时候需要计划
 
 以下情况不需要正式计划：
