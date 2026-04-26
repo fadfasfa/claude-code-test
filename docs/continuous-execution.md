@@ -62,14 +62,15 @@
 
 - 不主动执行预期会失败的 Bash 命令。
 - 不做危险命令试探，包括删除、清理、reset、stash、force remove、安装或写全局层的 dry-run 伪验证。
+- 只读 smoke test 只验证可启动和边界，不通过故意失败的命令或错误参数试探 hook。
 - 如果必须运行可能失败的命令，先说明 `PostToolUseFailure` hook 可能把失败记录写入 `.learnings/ERRORS.md`，并获得用户确认。
 - 这只补充执行边界说明，不改变现有 hook 逻辑。
 
 ## Markdown / Text 读取 fallback
 
-读取 Markdown / text 文件时，不传 PDF page 参数。避免一次性读取超大范围。
+读取 Markdown / text 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。避免一次性读取超大范围。
 
-若 Read 因空 PDF page、行号范围或工具参数失败，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。只读验收优先搜索和分段读取，不做全文件暴力读取。
+若 Read 因空 PDF page、行号范围、空参数或工具参数失败，失败一次后禁止用相同参数重试，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。只读验收优先搜索和分段读取，不做全文件暴力读取。
 
 ## Blocker 报告
 

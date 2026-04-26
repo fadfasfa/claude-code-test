@@ -47,9 +47,13 @@
 
 ## 读取边界
 
-读取 Markdown / text 文件时，不传 PDF page 参数。避免一次性读取超大范围。
+读取 Markdown / text 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。
 
-若 Read 因空 PDF page、行号范围或工具参数失败，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。只读验收优先搜索和分段读取，不做全文件暴力读取。
+避免一次性读取超大范围。优先使用目录枚举、`rg`、`Select-String`、`Get-Content -TotalCount` 或小范围分段读取来确认候选位置和少量上下文。
+
+若 Read 因空 PDF page、行号范围、空参数或工具参数失败，失败一次后禁止用相同参数重试。立即改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。
+
+严格只读验收或 smoke test 中，不主动执行预期会失败的 Bash，也不通过危险失败试探来证明 hook 生效。
 
 ## Windows tooling 边界
 

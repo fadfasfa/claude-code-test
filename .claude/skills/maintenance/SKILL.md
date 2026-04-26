@@ -35,7 +35,8 @@ disable-model-invocation: true
 - `/maintenance tmp` 只读取 `.tmp/**`、`.gitignore` 和必要的 git ignore 状态。
 - `/maintenance learning` 只读取 `.learnings/ERRORS.md`、`.learnings/LEARNINGS.md` 和 `.claude/tools/learning-loop/**` 只读工具。
 - 不使用全文件大范围 Read；优先使用目录枚举、`rg`、`Select-String`、`Get-Content -TotalCount` 或分段读取。
-- Read 因 pages、行号或工具参数失败时，不重复同类错误调用，改用 scoped 命令。
+- 读取 Markdown / text 文件时，不传 PDF `pages` 参数，不传空 `pages`，也不混用 PDF 专用参数。
+- Read 因 `pages`、行号范围、空参数或工具参数失败时，失败一次后禁止用相同参数重试，立即改用 scoped 命令读取。
 
 禁止处理：
 
@@ -70,9 +71,9 @@ disable-model-invocation: true
 
 ## Markdown / Text 读取 fallback
 
-读取 Markdown / text 文件时，不传 PDF page 参数。避免一次性读取超大范围。
+读取 Markdown / text 文件时，不传 PDF `pages` 参数或空 `pages` 参数。避免一次性读取超大范围。
 
-若 Read 因空 PDF page、行号范围或工具参数失败，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。只读验收优先搜索和分段读取，不做全文件暴力读取。
+若 Read 因空 PDF page、行号范围或工具参数失败，失败一次后不再使用同一组错误参数重试，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。只读验收优先搜索和分段读取，不做全文件暴力读取。
 
 ## A. `.tmp` 盘点流程
 

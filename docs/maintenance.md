@@ -18,6 +18,16 @@
 
 本仓只保留两个维护入口：`/maintenance` 负责只读盘点和 `ERRORS → LEARNINGS` 候选生成，`/promote-learning` 负责稳定 learning 的第二阶段晋升审查。它们不是 SessionStart 注入，也不会自动删除、写入或提交。
 
+## 入口读取边界
+
+`/maintenance` 和 `/promote-learning` 是窄范围只读维护入口。它们不应为了盘点而读取完整仓库入口链，也不应默认读取 `AGENTS.md`、`CLAUDE.md`、`PROJECT.md`、`work_area_registry.md` 或 `agent_tooling_baseline.md`。
+
+`/maintenance tmp` 只读取 `.tmp/**`、`.gitignore` 和必要的 git ignore 状态。`/maintenance learning` 只读取 `.learnings/ERRORS.md`、`.learnings/LEARNINGS.md` 和 `.claude/tools/learning-loop/**` 只读工具。
+
+`/promote-learning` 默认只读取 `.learnings/LEARNINGS.md`。只有目标层级明确是 `docs`、`skills` 或 `entry` 时，才分别小范围读取目标 docs、目标 `SKILL.md` 或 `AGENTS.md` / `CLAUDE.md` / `PROJECT.md`。
+
+只读 smoke test 只验证入口可启动、参数分支和读取边界，不做危险失败试探，不故意传错 Read 参数，不主动运行预期会失败的 Bash。
+
 ## 1. `.tmp` 临时目录清理
 
 `.tmp/` 是 ignored 运行态目录，不属于规则层，不应提交。

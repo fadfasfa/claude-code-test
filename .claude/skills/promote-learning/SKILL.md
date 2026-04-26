@@ -15,7 +15,6 @@ disable-model-invocation: true
 - `AGENTS.md`
 - `CLAUDE.md`
 - `PROJECT.md`
-- `README.md`
 
 默认只输出晋升建议和 patch plan，不直接修改规则层。
 
@@ -37,18 +36,20 @@ disable-model-invocation: true
 
 `plan` 模式只读取目标层级相关文件的小范围内容：
 
-- `docs`：读取相关 `docs/*.md` 的候选位置和少量上下文。
-- `skills`：读取相关 `.claude/skills/**/SKILL.md` 的候选位置和少量上下文。
-- `entry`：只读取用户指定或目标明确的 `AGENTS.md`、`CLAUDE.md`、`PROJECT.md`、`README.md` 或 `agent_tooling_baseline.md`。
+- `docs`：只有目标层级是 `docs` 时，才读取相关目标 `docs/*.md` 的候选位置和少量上下文。
+- `skills`：只有目标层级是 `skills` 时，才读取相关目标 `.claude/skills/**/SKILL.md` 的候选位置和少量上下文。
+- `entry`：只有目标层级是 `entry` 时，才小范围读取 `AGENTS.md`、`CLAUDE.md` 或 `PROJECT.md` 的候选位置和少量上下文。
 
 读取规则：
 
-- 不默认读取完整入口链。
-- 不重复读取 `AGENTS.md`、`CLAUDE.md` 或 `PROJECT.md`，除非目标层级明确是 `entry`。
-- 不默认读取 `.learnings/ERRORS.md`；只有用户明确要求核对来源时才可小范围读取。
+- 默认只读取 `.learnings/LEARNINGS.md`。
+- 不默认读取完整入口链，包括 `AGENTS.md`、`CLAUDE.md`、`PROJECT.md`、`work_area_registry.md` 和 `agent_tooling_baseline.md`。
+- 不读取 `AGENTS.md`、`CLAUDE.md` 或 `PROJECT.md`，除非目标层级明确是 `entry`。
+- 不默认读取 `.learnings/ERRORS.md`，也不读取 `ERRORS.md` 做初次提炼；只有用户明确要求核对来源时才可小范围读取。
 - 不处理 `ERRORS.md` 到 `LEARNINGS.md` 的初次提炼；该步骤由 `/maintenance learning` 处理。
-- 读取 Markdown / text 文件时，不传 PDF page 参数。避免一次性读取超大范围。
-- 若 Read 因空 PDF page、行号范围或工具参数失败，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取；只读验收优先搜索和分段读取，不做全文件暴力读取。
+- 不使用全文件大范围 Read；优先使用 `rg`、`Select-String`、`Get-Content -TotalCount` 或小范围分段读取。
+- 读取 Markdown / text 文件时，不传 PDF `pages` 参数，不传空 `pages`，也不混用 PDF 专用参数。
+- 若 Read 因空 PDF page、行号范围或工具参数失败，失败一次后禁止用相同参数重试，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。
 
 ## 禁止读取或处理
 
@@ -175,6 +176,6 @@ disable-model-invocation: true
 
 - `docs`：只更新相关 `docs/*.md`。
 - `skills`：只更新用户确认的 `.claude/skills/**/SKILL.md`。
-- `entry`：只更新用户确认的 `AGENTS.md`、`CLAUDE.md`、`PROJECT.md` 或 `README.md`。
+- `entry`：只更新用户确认的 `AGENTS.md`、`CLAUDE.md` 或 `PROJECT.md`。
 
 不得顺手迁移其他 learning，不得清空 `ERRORS.md`，不得提交。
