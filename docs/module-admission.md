@@ -64,9 +64,9 @@
 
 - 名称：`read-text-pages-guard`
 - 类型：repo-local PreToolUse hook。
-- 解决什么问题：阻断 Markdown/text/code 文件的 Read 调用携带 PDF `pages` 参数，避免 Read 被工具系统判定失败后触发错误写入 fallback。
+- 解决什么问题：将 Markdown/text/code 文件 Read 调用里的 unsupported `pages` 字段从 `updatedInput` 移除，避免 Read 被工具系统判定失败后触发错误写入 fallback。
 - 不解决什么问题：不读取文件、不写计划文件、不替代正常 Read、不处理 PDF Read 的 pages。
-- 触发条件：PreToolUse `Read`，且 `file_path` 后缀是 `.md`、`.txt`、`.json`、`.py`、`.ps1`、`.html`、`.css` 或 `.js`，并且 tool input 包含 `pages` 字段。
+- 触发条件：PreToolUse `Read`，且 `file_path` 后缀是 `.md`、`.txt`、`.json`、`.py`、`.ps1`、`.html`、`.css`、`.js`、`.ts`、`.tsx`、`.jsx`、`.yaml` 或 `.yml`，并且 tool input 包含 `pages` 字段。
 - 会读哪些路径：无；只读取 hook stdin payload。
 - 会写哪些路径：无。
 - 是否安装依赖：否。
@@ -74,9 +74,27 @@
 - 是否影响 git/worktree/global/kb：不影响 worktree/global/kb；只在当前 repo 的 `.claude/settings.json` 注册 repo-local hook。
 - 如何禁用：从 `.claude/settings.json` 移除对应 `PreToolUse` `Read` hook entry。
 - 如何删除：删除 `.claude/hooks/block-read-pages-for-text.ps1` 并移除 settings entry。
-- 最小验证命令：用 JSON payload 模拟 `Read` Markdown with empty `pages`，确认 exit 2；模拟普通 Markdown Read 和 PDF pages Read，确认 exit 0。
-- 为什么不能用现有模块解决：文档规则依赖模型自律，不能在工具调用前阻断错误参数。
+- 最小验证命令：用 JSON payload 模拟 `Read` Markdown with empty `pages`，确认 exit 0 且 stdout JSON 含不带 `pages` 的 `updatedInput`；模拟普通 Markdown Read 和 PDF pages Read，确认 exit 0 且不修改。
+- 为什么不能用现有模块解决：文档规则依赖模型自律，blocking hook 会导致 Read 失败并放大 fallback 写入风险。
 - 状态：已接受 repo-local safety hook。
+
+### scan-agent-worktrees
+
+- 名称：`scan-agent-worktrees`
+- 类型：repo-local read-only PowerShell tool and slash commands。
+- 解决什么问题：为 `/scan-agent-worktrees` 和 `/work` 提供只读 agent worktree / `wt-auto-*` branch 状态报告。
+- 不解决什么问题：不清理 worktree、不删除 branch、不删除文件、不替代用户确认。
+- 触发条件：用户运行 `/scan-agent-worktrees` 或 `/work`，或明确要求只读扫描 agent worktree / `wt-auto-*` branch。
+- 会读哪些路径：`git worktree list --porcelain`、`git branch --list "wt-auto-*"`、`C:\Users\apple\_worktrees\claudecode\.registry\*.json`，以及 `sweep_agent_branches.ps1` dry-run JSON 输出。
+- 会写哪些路径：无。
+- 是否安装依赖：否。
+- 是否运行浏览器：否。
+- 是否影响 git/worktree/global/kb：不影响；只读查询 git/worktree/registry 状态，不执行 cleanup。
+- 如何禁用：不运行 slash command；或删除 `.claude/commands/scan-agent-worktrees.md` 和 `.claude/commands/work.md`。
+- 如何删除：删除命令文件和 `.claude/tools/worktree-governor/scan_agent_worktrees.ps1`。
+- 最小验证命令：parse 脚本；运行扫描前后比较 `git worktree list --porcelain` 与 `git branch --list "wt-auto-*"` 数量不变。
+- 为什么不能用现有模块解决：`sweep_agent_branches.ps1` 是 branch sweep dry-run/apply 工具；VS slash command 需要一个只读扫描入口和 `/work` 别名。
+- 状态：已接受 repo-local read-only command/tool。
 
 ### resume-active-task
 

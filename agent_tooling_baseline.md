@@ -15,7 +15,7 @@
 - 当前通过 settings 启用的 repo hooks：
   - `WorktreeCreate`：worktree owner 判定、命名护栏和 repo 外 registry marker 写入
   - `WorktreeRemove`：只清理 clean `owner=agent` ephemeral worktree，保留 branch
-  - `PreToolUse`：裸 shell/worktree 危险命令拦截；Markdown/text/code `Read` 携带 `pages` 参数时阻断
+  - `PreToolUse`：裸 shell/worktree 危险命令拦截；Markdown/text/code `Read` 携带 `pages` 参数时移除 unsupported `pages` 字段并允许继续
   - `PostToolUseFailure`：self-improvement raw error 捕获
 - Hooks 必须保持为安全机制或轻量提醒机制。它们不能变成调度器、自动继续引擎或业务文件写入器。
 - 仓库 env 使用 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` 和 `CLAUDE_CODE_FORK_SUBAGENT=0` 禁用后台 / fork worktree 派生。
@@ -56,11 +56,13 @@
 
 - 详细策略：`docs/git-worktree-policy.md`
 - worktree helper：`.claude/tools/worktree-governor/new_worktree.ps1`
+- read-only scanner：`.claude/tools/worktree-governor/scan_agent_worktrees.ps1`
 - 用户显式长期 worktree 只认 helper `-Owner directed`，或 WorktreeCreate name 显式带 `directed-` / `user-`。
 - 普通 Agent / Explore / review / subagent / `isolation: "worktree"` 自动创建的 worktree 一律视为 `owner=agent` ephemeral，并写入 `C:\Users\apple\_worktrees\claudecode\.registry\*.json`。
 - `WorktreeRemove` 只允许对 clean `owner=agent`、`protected=false`、位于 auto root 的 worktree 执行非 force `git worktree remove <path>`；dirty 时只报告 blocker；branch 不自动删除。
 - `owner=user` 或 `protected=true` 的 persistent worktree 永远跳过自动清理。
 - agent branch sweep helper：`.claude/tools/worktree-governor/sweep_agent_branches.ps1`。它是手动工具，不接 hook；只基于 repo 外 registry 和 `git worktree list --porcelain` 处理 `owner=agent` / `protected=false` / `wt-auto-*` branches，默认 dry-run，显式 `-Apply` 也只能使用 `git branch -d`。
+- Slash commands：`/scan-agent-worktrees` 和 `/work` 当前都只运行只读扫描，不清理 worktree 或 branch。
 - 旧 nested `.claude/worktrees/**` 不是当前工作流来源，也不得作为新工作的模板。
 - `scripts/git/ccw-*` 当前是 legacy/manual tooling，不进入自动 hook contract。
 
