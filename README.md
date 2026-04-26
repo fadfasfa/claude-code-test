@@ -12,6 +12,12 @@
 - `docs/task-routing.md`：小 / 中 / 大任务路由
 - `docs/safety-boundaries.md`：安全边界
 
+## 定期维护
+
+本仓提供项目级 Claude Code 命令：`/maintenance`。
+
+用于定期盘点 `.tmp` 临时目录，并从 `.learnings/ERRORS.md` 提炼候选经验。该命令默认只读，不删除、不写入、不提交。详见 `docs/maintenance.md`。
+
 ## 运行模型
 
 - 小任务和明确 bug 修复走轻量 patch-and-verify 流程。
