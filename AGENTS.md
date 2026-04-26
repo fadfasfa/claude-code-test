@@ -1,27 +1,75 @@
-# 仓库级稳定规则 — claudecode
-> 本文件只定义 agent 执行、读写边界和审查边界。仓库结构索引看 `PROJECT.md`，能力层基线看 `agent_tooling_baseline.md`。
+# claudecode Agent Rules
 
-## 一、默认规则链
+`claudecode` is a multi-purpose development repository. It hosts several independent work areas plus repo-local Claude Code workflow rules. The repository root is a governance and routing surface, not the default place for business implementation.
 
-- `AGENTS.md`、`CLAUDE.md`、`PROJECT.md`、`work_area_registry.md`、`agent_tooling_baseline.md` 是本仓默认规则源。
-- 上述限制只约束默认规则依据，不限制为完成当前任务而按需读取当前工作区文件。
-- 其他路径不是默认规则依据。
-- Desktop / OneDrive / “各个设定及工作流” 支持层仅在用户显式要求审计、比对或迁移时读取。
-- 历史或残留路径如 `.ai_workflow/*`、`.claude/worktrees/*`、旧 `.agents/*`、`archive/**`、`.gitnexus/**` 只按 historical note / residual check 处理，不作为默认规则源或默认参考源。
+## Rule Chain
 
-## 二、工作区读写边界
+For generic agent or Codex-style sessions, read these repo-local files before changing code or workflow files. Claude Code sessions start at `CLAUDE.md`, then follow this file; that is the same rule chain with a Claude-specific entrypoint.
 
-- 本仓是多工作区仓；先在 `work_area_registry.md` 确认目标工作区，再开始写入。
-- 默认允许跨仓读取；默认只允许在当前目标工作区目录树内写入。
-- 当前任务涉及的当前工作区文件，仍可按需读取。
-- 未明确目标工作区时，只允许只读探查并列出候选工作区，不得直接写文件。
-- 仓库根目录不是默认业务写入区；没有明确仓库治理任务时，不在根目录写业务文件。
-- 禁止跨工作区写入；不要为某个工作区任务改写别的工作区。
-- 禁止在根目录创建抓取脚本目录、业务目录、输出目录、MCP 配置目录，禁止擅自安装 MCP 或写入 `.mcp.json`。
-- 当前仓不需要项目级 `.codex/config.toml`；从仓库根启动时，默认只做只读探查或仓库治理，不做业务实现。
+1. `AGENTS.md`
+2. `CLAUDE.md`
+3. `PROJECT.md`
+4. `work_area_registry.md`
+5. `agent_tooling_baseline.md`
+6. Relevant files under `docs/`
 
-## 三、审查边界
+This repository does not inherit `kb` workflow. `kb` can be read only when the user explicitly asks for boundary comparison or pollution-risk checks. Do not modify `kb` from this repo workflow.
 
-- 审查主输入是 `diff`、任务说明、验证结果，以及必要时的 `PROJECT.md` 同步证据。
-- 审查不以旧 runtime state、旧 contract 文档、历史快照或外围台账作为默认依据。
-- 审查优先判断是否违反当前轻基线：默认规则源、工作区写边界、`plugin=0`、`MCP=0`、`hooks=0`。
+This repository also does not modify global Claude Code, Codex, Superpowers, ECC, CLI, VS plugin, Codex App, Codex Proxy, global hooks, or global skills unless the user starts a separate global-layer task.
+
+## Task Routing
+
+Use `docs/task-routing.md` as the detailed routing rule.
+
+- Small tasks and clear bug fixes use the lightweight path: confirm target work area, inspect the narrow files, patch, run the closest useful verification, report.
+- Medium tasks use a short plan plus explicit verification. TDD, worktree, subagents, and PR review are optional and should be justified by risk.
+- Large tasks are the only default path for requirement narrowing, decomposition, worktree isolation, TDD, subagent parallel work, and PR-style review.
+- Do not apply heavy workflow to trivial edits, docs-only cleanup, obvious typos, or one-file low-risk fixes.
+
+## Write Boundaries
+
+- Pick a `target_work_area` from `work_area_registry.md` before business implementation.
+- If the target is unclear, stay read-only and list candidate work areas.
+- Root files may be edited only for explicit repo governance, routing, safety, or documentation tasks.
+- Do not cross-write between `run/`, `sm2-randomizer/`, `QuantProject/`, `heybox/`, `qm-run-demo/`, or other work areas unless the user explicitly scopes a cross-work-area task.
+- Dirty worktrees must be grouped and understood before editing. Never use `reset`, `clean`, or `stash` to make the tree easier to handle.
+
+## Git Rules
+
+`git add` and `git commit` may proceed only when all of these are true:
+
+- The user explicitly authorized them in the accepted plan.
+- The diff range is clear.
+- The diff contains only current-task files.
+- The commit message is confirmed or the plan contains a precise template.
+- The dirty tree has no unrelated user changes mixed into the commit range.
+
+Always stop for human confirmation before `push`, PR creation, `merge`, `reset`, `clean`, `rebase`, `stash`, or `git worktree remove`.
+
+## Continuous Execution
+
+Use `docs/continuous-execution.md` for long-running task governance.
+
+- The active-task ledger path is `.tmp/active-task/current.md`.
+- The ledger is runtime state only. It is not a rules file, not learning, and never authorizes dangerous operations.
+- A Stop hook may only remind when the ledger says the accepted plan is unfinished.
+- StopFailure may only log failure context.
+- Hooks must not auto-dispatch, auto-continue, or modify business files.
+
+## Module Admission
+
+Use `docs/module-admission.md` before adding repo-local workflow modules, hooks, tools, Playwright configuration, validation scripts, or skills beyond the current accepted scope.
+
+Any module admission card must state what it solves, what it does not solve, trigger conditions, read paths, write paths, dependency/install behavior, browser behavior, git/worktree/global/kb impact, disable/delete path, minimal validation command, and why existing modules are insufficient.
+
+## Frontend Capability
+
+Playwright and `frontend-polish-lite` are claudecode-only, coding-only frontend validation tools. They do not enter global core, do not enter `kb`, do not write global hooks, and do not run for every task.
+
+Use them only for frontend tasks involving UI interaction, page behavior, screenshots, visual regression, responsive layout, or obvious accessibility checks.
+
+## ECC and Superpowers
+
+ECC is not an active workflow source for this repository. Only claudecode-local ECC residue may be inventoried here; global ECC retirement is a separate task.
+
+Superpowers is not enabled as a default SessionStart workflow in this repository. Superpowers/TDD can be considered only as an explicit, task-scoped coding route after module admission and user confirmation.

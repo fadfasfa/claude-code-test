@@ -28,7 +28,7 @@
       "Bash(git grep*)",
       "WebFetch(domain:127.0.0.1)",
       "WebFetch(domain:localhost)",
-      "Bash(playwright screenshot *)"
+      "Bash(playwright --version)"
     ],
     "deny": [
       "PowerShell(Remove-Item*)",

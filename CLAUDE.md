@@ -1,26 +1,54 @@
 # claudecode
 
-## What This Repo Is
+`claudecode` is a multi-work-area development repository. It contains repo governance files plus independent coding/data work areas such as `run/`, `sm2-randomizer/`, `QuantProject/`, `heybox/`, `qm-run-demo/`, and `subtitle_extractor/`.
 
-- 多工作区代码与数据仓；`run/`、`sm2-randomizer/`、`QuantProject/` 等各自独立运行。
-- 仓库根默认只做入口阅读、只读探查和仓库治理，不把根目录当业务实现区。
+The repository root is the workflow entry and routing layer. It is not the default business implementation directory.
 
-## How It Runs
+## Claude Code Read Order
 
-- 读取顺序：`CLAUDE.md` -> `AGENTS.md` -> `PROJECT.md` -> `work_area_registry.md` -> `agent_tooling_baseline.md`
-- 先在 `work_area_registry.md` 选目标工作区，再进入对应目录执行实现或验证。
-- `.claude/` 只放项目级 settings、skills 和预留接口，不是仓库入口。
+1. `CLAUDE.md`
+2. `AGENTS.md`
+3. `PROJECT.md`
+4. `work_area_registry.md`
+5. `agent_tooling_baseline.md`
+6. Relevant `docs/*.md`
 
-## Things That Bite You
+`.claude/` stores repo-local settings, skills, hooks, and tools. It is not a replacement for the root entry files.
 
-- 从仓库根启动时，不直接做工作区实现；根目录只允许只读探查或仓库治理。
-- `.ai_workflow/*`、`.claude/worktrees/*`、旧 `.agents/*`、`archive/**`、`.gitnexus/**` 都按历史残留处理，不作为当前依据。
-- 不新增项目级 `.codex/config.toml`、`.mcp.json`、`playwright-mcp/` 或其他 MCP 目录。
-- 计划批准后，如果发现自己写多了、写坏了、需要缩回最小改动，应直接自行收口并继续；只有遇到 blocker、权限拦截、跨边界风险或 scope 变化时才暂停汇报。
+## Default Flow
 
-## Commands
+- Small task: identify target work area, inspect narrow context, patch, run nearest verification, report.
+- Medium task: write a brief plan, confirm assumptions when needed, patch in a narrow range, verify, report.
+- Large task: narrow requirements, split work, decide whether a worktree is needed, decide whether TDD is needed, optionally use subagents for bounded side work, and close with PR-style review.
+
+Use `docs/task-routing.md` for the detailed decision table.
+
+## Boundaries
+
+- This repo does not inherit `kb` ingest/wiki workflow.
+- Do not modify `C:\Users\apple\kb` from this repo workflow.
+- Do not modify global Claude Code, Codex, Superpowers, ECC, CLI, VS plugin, Codex App, Codex Proxy, global hooks, global skills, or global AGENTS/CLAUDE files from this repo workflow.
+- Do not create project-level `.codex/config.toml`, `.mcp.json`, `playwright-mcp/`, or other MCP directories.
+- Do not enable full Superpowers SessionStart or ECC.
+
+## Work Area Rule
+
+Before business implementation, declare the `target_work_area` using `work_area_registry.md`.
+
+If the task only changes repo governance files, the target is `repo-root-governance`. If the target is unclear, stay read-only and list candidates.
+
+## Continuous Execution
+
+For accepted multi-step plans, use `.tmp/active-task/current.md` only as a runtime ledger. It is ignored, not learning, not a rules source, and cannot authorize dangerous operations.
+
+Continue through already approved safe steps. Stop for blockers, scope changes, unclear dirty-tree ranges, dangerous git operations, global/kb boundary risk, dependency installation, or unclear user intent.
+
+## Useful Entry Docs
 
 ```powershell
 Get-Content .\work_area_registry.md
-git status --short
+Get-Content .\docs\task-routing.md
+Get-Content .\docs\safety-boundaries.md
+Get-Content .\docs\continuous-execution.md
+git status --short --branch
 ```

@@ -38,4 +38,5 @@ coverage/
 .learnings/*
 !.learnings/LEARNINGS.md
 .tmp/
+.tmp/active-task/**
 tmp/
