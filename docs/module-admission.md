@@ -96,6 +96,24 @@
 - 为什么不能用现有模块解决：`sweep_agent_branches.ps1` 是 branch sweep dry-run/apply 工具；VS slash command 需要一个只读扫描入口，清理必须用户另行显式确认。
 - 状态：已接受 repo-local read-only command/tool。
 
+### ship-task-pr
+
+- 名称：`ship-task-pr`
+- 类型：repo-local PowerShell tool and slash command。
+- 解决什么问题：把当前任务改动通过受控 wrapper 整理成 branch、commit、`git push -u origin <branch>` 和 GitHub PR。
+- 不解决什么问题：不做 worktree/branch 清理、不复用 `/scan-agent-worktrees`、不绕过用户 staging 意图、不放开裸 `git push`。
+- 触发条件：用户显式运行 `/ship-task-pr <title>` 或 `/ship-task-pr --branch <branch-name> --title "<title>"`。
+- 会读哪些路径：当前 repo 的 `git status`、staged diff、unstaged diff、`origin` remote、base branch、`gh --version`。
+- 会写哪些路径：当前任务 staged 文件对应的 commit、必要时创建本地 branch、`.tmp/pr/<branch>/body.md`、远端 `origin/<branch>` 和 GitHub PR；本地权限配置只写 ignored `.claude/settings.local.json`。
+- 是否安装依赖：否；要求现有 `git` 和 `gh` 可用。
+- 是否运行浏览器：否。
+- 是否影响 git/worktree/global/kb：影响本仓 git branch / commit / remote branch / PR；不删除 branch/worktree，不修改 global/kb。
+- 如何禁用：删除 `.claude/commands/ship-task-pr.md`，并从 `.claude/settings.local.json` 移除对应 wrapper allow。
+- 如何删除：删除 `.claude/tools/pr/ship_task_pr.ps1`、`.claude/commands/ship-task-pr.md` 和相关文档记录；保留历史 commit/PR 由 GitHub/Git 管理，不由工具清理。
+- 最小验证命令：PowerShell / pwsh parse；`-DryRun`；slug 生成；危险 branch 拒绝；无 staged diff 停止；blocked paths 不会被 stage；`git diff --check`；`git diff --cached --check`。
+- 为什么不能用现有模块解决：`/scan-agent-worktrees` 是只读扫描入口，不能承载 push/PR；裸 git 命令缺少本仓提交范围、blocked path 和远端写入护栏。
+- 状态：已接受 repo-local explicit remote-write command/tool。
+
 ### resume-active-task
 
 - 名称：`resume-active-task`

@@ -68,6 +68,15 @@
 - 旧 nested `.claude/worktrees/**` 不是当前工作流来源，也不得作为新工作的模板。
 - `scripts/git/ccw-*` 当前是 legacy/manual tooling，不进入自动 hook contract。
 
+## Task PR Shipping
+
+- Slash command：`/ship-task-pr` 是显式远端写入入口，用于把当前任务改动整理成语义化分支、commit、`git push -u origin <branch>` 和 GitHub PR。
+- Wrapper：`.claude/tools/pr/ship_task_pr.ps1`。用户调用 `/ship-task-pr` 本身视为本次 push / PR 的明确授权，但只授权该受控 wrapper。
+- `/scan-agent-worktrees` 仍然只读；不得复用它承载 push、PR、删除或清理语义。
+- 裸 `git push` 仍不默认放开；本地权限只允许精确 wrapper 命令，不允许 `PowerShell(*)`、`powershell.exe *`、`pwsh *`、`git *` 或 `git push*`。
+- wrapper 禁止 force push、push `main` / `master`、删除 branch/worktree、`git reset --hard`、`git clean`，并拒绝提交 `.claude/settings.local.json`、`.tmp/**`、日志文件、`node_modules/**` 和 `.venv/**`。
+- PR body 生成到 ignored `.tmp/pr/<branch>/body.md`，不纳入提交。
+
 ## Subagents
 
 Subagents 只允许用于边界清晰的旁路工作：

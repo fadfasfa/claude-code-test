@@ -82,6 +82,10 @@
 - `git stash`
 - manual `git worktree remove`
 
+唯一例外：用户显式调用 `/ship-task-pr` 时，该调用本身视为本次 `git push -u origin <branch>` 和 `gh pr create` 的明确授权，但只能通过 `.claude\tools\pr\ship_task_pr.ps1` wrapper 执行。裸 `git push` 仍不默认放开，`main` / `master`、force push、delete push、mirror/all push 仍禁止。
+
+`/ship-task-pr` 还必须拒绝把 `.claude/settings.local.json`、`.tmp/**`、日志文件、`node_modules/**` 或 `.venv/**` 纳入提交，并且不得执行 `git reset --hard`、`git clean`、删除 branch 或删除 worktree。
+
 ## Hook 边界
 
 Repo hooks 只能是：
@@ -109,6 +113,8 @@ Hooks 不得：
 agent branch sweep 不接入 hook，不改变 worktree cleanup 基线；只能基于 repo 外 registry 和 `git worktree list --porcelain` 判定。显式 `-Apply` 也只允许 `git branch -d`，不得使用 `git branch -D`，不得删除有 upstream、origin 同名远端、仍被 checkout、缺少 registry marker、`owner=user` 或 `protected=true` 的分支。
 
 `/scan-agent-worktrees` 是唯一只读扫描入口；它只扫描 agent worktree / `wt-auto-*` branch，不删除 branch，不删除 worktree，不运行 `sweep -Apply`。清理必须用户另行显式确认。
+
+`/ship-task-pr` 是独立的显式远端写入入口，不复用 `/scan-agent-worktrees`。它只能通过受控 wrapper 创建分支、commit、push 和 PR；不得扩展 scan 命令的只读语义。
 
 `stop-guard-lite` 在用户明确批准写 Stop hook 前，仍只是模块卡候选。
 
