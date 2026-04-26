@@ -45,6 +45,12 @@
 
 提交或暂存前，先按用途分组 diff，并确认当前任务的精确文件范围。
 
+## 读取边界
+
+读取 Markdown / text 文件时，不传 PDF page 参数。避免一次性读取超大范围。
+
+若 Read 因空 PDF page、行号范围或工具参数失败，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。只读验收优先搜索和分段读取，不做全文件暴力读取。
+
 ## Git 确认边界
 
 `git add` 和 `git commit` 只允许在已接受计划内执行，并且必须有明确用户授权和清晰 diff 范围。
@@ -90,7 +96,7 @@ Playwright 和 `frontend-polish-lite` 是 claudecode-only、coding-only tools。
 
 ## ECC 与 Superpowers 边界
 
-ECC 不是本仓当前工作流来源。可以盘点本地 ECC residue，但删除或归档需要单独批准的 cleanup plan。
+ECC 已剔除；不得作为默认能力或候选模块恢复。未来重新引入必须重新走模块准入卡。
 
 Superpowers 不是默认 SessionStart。Superpowers/TDD 只能在准入和确认后作为 task-scoped 路线。
 
@@ -98,4 +104,4 @@ Superpowers 不是默认 SessionStart。Superpowers/TDD 只能在准入和确认
 
 `kb` 是知识库工作流，不能继承 claudecode 开发流程。
 
-不得把 TDD、worktree、PR、subagent-driven development、agent-first、commit-first、Playwright、frontend-polish-lite、ECC cleanup 或 claudecode self-improvement flow 推入 `kb`。
+不得把 TDD、worktree、PR、subagent-driven development、agent-first、commit-first、Playwright、frontend-polish-lite 或 claudecode self-improvement flow 推入 `kb`。

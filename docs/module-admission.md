@@ -168,20 +168,20 @@
 - 为什么不能用现有模块解决：在需要稳定命令前，ad hoc CLI 已足够。
 - 状态：写入任何 config 或 script 前必须另给 future card。
 
-### claudecode-ecc-residue-retirement
+### claudecode-ecc-retired
 
-- 名称：`claudecode-ecc-residue-retirement`
-- 类型：repo-local cleanup proposal。
-- 解决什么问题：盘点并分类 `C:\Users\apple\claudecode` 内的 ECC residue。
-- 不解决什么问题：全局 ECC 退休、全局文件删除、active CLI 变更。
-- 触发条件：用户启动 claudecode-local ECC cleanup 任务。
-- 会读哪些路径：repo-local docs、settings、hooks、skills、tools。
-- 会写哪些路径：先写 cleanup report；删除 / 归档需要后续确认。
+- 名称：`claudecode-ecc-retired`
+- 类型：retired capability record。
+- 解决什么问题：明确 ECC 已从 claudecode active 规则层剔除。
+- 不解决什么问题：不提供 ECC cleanup workflow，不恢复 ECC，不处理全局历史 archive/cache。
+- 触发条件：无默认触发；未来重新引入 ECC 必须另开任务并重新走模块准入卡。
+- 会读哪些路径：仅在明确审计任务中读取 repo-local 规则层。
+- 会写哪些路径：无默认写入。
 - 是否安装依赖：否。
 - 是否运行浏览器：否。
-- 是否影响 git/worktree/global/kb：仅 repo-local；不影响 global/kb。
-- 如何禁用：不运行 cleanup。
-- 如何删除：后续任务中只删除已批准的 claudecode-local residue。
-- 最小验证命令：在 repo-local text files 中搜索 `ECC` / `Enhanced Context Craft`。
-- 为什么不能用现有模块解决：通用安全文档不分类删除 / 归档 / 备份候选。
-- 状态：仅提案；本任务不删除。
+- 是否影响 git/worktree/global/kb：不影响 worktree/global/kb。
+- 如何禁用：保持不调用、不注册、不安装。
+- 如何删除：保留本退休记录即可；不得把它恢复为候选模块。
+- 最小验证命令：在 repo-local 规则层搜索 `ECC` / `Enhanced Context Craft`，确认没有 active hook、tool、skill 或 settings 配置。
+- 为什么不能用现有模块解决：这是退休边界记录，不是可运行模块。
+- 状态：已剔除；不得作为默认能力或候选模块恢复。

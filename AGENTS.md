@@ -71,6 +71,6 @@ Playwright 和 `frontend-polish-lite` 只属于 `claudecode`，且只用于 codi
 
 ## ECC 与 Superpowers
 
-ECC 不是本仓当前工作流来源。本仓只允许盘点 claudecode-local 的 ECC 残留；全局 ECC 退休是单独任务。
+ECC 已剔除；不得作为默认能力或候选模块恢复。未来重新引入必须重新走模块准入卡。
 
 Superpowers 不作为本仓默认 SessionStart 工作流。Superpowers/TDD 只能在完成模块准入并获得用户确认后，作为明确的任务级 coding 路由使用。

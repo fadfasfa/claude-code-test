@@ -65,6 +65,12 @@
 - 如果必须运行可能失败的命令，先说明 `PostToolUseFailure` hook 可能把失败记录写入 `.learnings/ERRORS.md`，并获得用户确认。
 - 这只补充执行边界说明，不改变现有 hook 逻辑。
 
+## Markdown / Text 读取 fallback
+
+读取 Markdown / text 文件时，不传 PDF page 参数。避免一次性读取超大范围。
+
+若 Read 因空 PDF page、行号范围或工具参数失败，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。只读验收优先搜索和分段读取，不做全文件暴力读取。
+
 ## Blocker 报告
 
 无法安全继续时，生成 blocker 报告。

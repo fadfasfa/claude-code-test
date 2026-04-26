@@ -48,4 +48,4 @@
 - 不用本仓重构全局 Claude Code / Codex 配置。
 - 不用本仓重构 `kb`。
 - 不把 coding-only 工作流推广到 `kb`。
-- 不让 Superpowers、ECC、Playwright、TDD、worktree、PR 或 subagent 流程成为所有任务的强制默认项。
+- 不让 Superpowers、Playwright、TDD、worktree、PR 或 subagent 流程成为所有任务的强制默认项；ECC 已剔除，不作为默认能力或候选模块恢复。
