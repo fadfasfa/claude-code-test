@@ -16,14 +16,20 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from processing.runtime_store import get_latest_csv, normalize_runtime_df
+from processing.runtime_store import (
+    build_runtime_cache_path,
+    get_latest_csv,
+    load_runtime_csv,
+    normalize_runtime_df,
+    resolve_runtime_data_file,
+)
 from processing.view_adapter import process_champions_data, process_hextechs_data
 from scraping.version_sync import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
-CHAMPION_LIST_CACHE_FILE = os.path.join(CONFIG_DIR, "Champion_List_Cache.json")
-HEXTECH_DETAIL_CACHE_FILE = os.path.join(CONFIG_DIR, "Champion_Hextech_Cache.json")
-HEXTECH_DETAIL_CACHE_DIR = os.path.join(CONFIG_DIR, "Champion_Hextech_Cache")
+CHAMPION_LIST_CACHE_FILE = build_runtime_cache_path("Champion_List_Cache.json")
+HEXTECH_DETAIL_CACHE_FILE = build_runtime_cache_path("Champion_Hextech_Cache.json")
+HEXTECH_DETAIL_CACHE_DIR = build_runtime_cache_path("Champion_Hextech_Cache")
 
 _cache_lock = threading.Lock()
 _champion_cache_state: Dict[str, Any] = {"path": "", "mtime": 0.0, "data": []}
@@ -49,6 +55,10 @@ def _atomic_write_json(path: str, payload: dict) -> None:
     os.replace(tmp_path, path)
 
 
+def _resolve_cache_file(path: str, legacy_relative_name: str) -> str:
+    return resolve_runtime_data_file(path, legacy_relative_name) or path
+
+
 def _read_wrapped_json(path: str, default: Any) -> Any:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -62,25 +72,26 @@ def _read_wrapped_json(path: str, default: Any) -> Any:
 
 def load_precomputed_champion_list() -> List[dict]:
     with _cache_lock:
-        mtime = _safe_mtime(CHAMPION_LIST_CACHE_FILE)
+        cache_file = _resolve_cache_file(CHAMPION_LIST_CACHE_FILE, "Champion_List_Cache.json")
+        mtime = _safe_mtime(cache_file)
         if (
             mtime
-            and _champion_cache_state["path"] == CHAMPION_LIST_CACHE_FILE
+            and _champion_cache_state["path"] == cache_file
             and _champion_cache_state["mtime"] == mtime
         ):
             return list(_champion_cache_state["data"])
 
-        data = _read_wrapped_json(CHAMPION_LIST_CACHE_FILE, [])
+        data = _read_wrapped_json(cache_file, [])
         if isinstance(data, list):
             _champion_cache_state.update(
-                {"path": CHAMPION_LIST_CACHE_FILE, "mtime": mtime, "data": data}
+                {"path": cache_file, "mtime": mtime, "data": data}
             )
             return list(data)
         return []
 
 
 def has_precomputed_hextech_cache() -> bool:
-    return bool(_safe_mtime(HEXTECH_DETAIL_CACHE_FILE))
+    return bool(_safe_mtime(_resolve_cache_file(HEXTECH_DETAIL_CACHE_FILE, "Champion_Hextech_Cache.json")))
 
 
 def load_precomputed_hextech_for_hero(hero_name: str) -> Optional[dict]:
@@ -89,18 +100,19 @@ def load_precomputed_hextech_for_hero(hero_name: str) -> Optional[dict]:
         return None
 
     with _cache_lock:
-        mtime = _safe_mtime(HEXTECH_DETAIL_CACHE_FILE)
+        cache_file = _resolve_cache_file(HEXTECH_DETAIL_CACHE_FILE, "Champion_Hextech_Cache.json")
+        mtime = _safe_mtime(cache_file)
         if (
             mtime
-            and _hextech_cache_state["path"] == HEXTECH_DETAIL_CACHE_FILE
+            and _hextech_cache_state["path"] == cache_file
             and _hextech_cache_state["mtime"] == mtime
         ):
             payload = _hextech_cache_state["data"]
         else:
-            payload = _read_wrapped_json(HEXTECH_DETAIL_CACHE_FILE, {})
+            payload = _read_wrapped_json(cache_file, {})
             if isinstance(payload, dict):
                 _hextech_cache_state.update(
-                    {"path": HEXTECH_DETAIL_CACHE_FILE, "mtime": mtime, "data": payload}
+                    {"path": cache_file, "mtime": mtime, "data": payload}
                 )
             else:
                 payload = {}
@@ -131,7 +143,7 @@ def rebuild_precomputed_api_cache_from_latest_csv() -> bool:
         return False
 
     try:
-        df = normalize_runtime_df(pd.read_csv(latest_csv))
+        df = load_runtime_csv(latest_csv)
     except Exception as exc:
         logger.warning("读取最新 CSV 失败，无法重建本地 API 缓存：%s", exc)
         return False

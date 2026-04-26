@@ -51,7 +51,14 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from processing.view_adapter import process_hextechs_data
-from processing.runtime_store import CachedDataFrameLoader, get_latest_csv
+from processing.runtime_store import (
+    CachedDataFrameLoader,
+    build_runtime_persisted_path,
+    build_runtime_profile_path,
+    build_runtime_state_path,
+    get_latest_csv,
+    resolve_runtime_data_file,
+)
 from scraping.augment_catalog import find_augment_catalog_entry
 from scraping.full_hextech_scraper import _clean_augment_text, extract_champion_stats, fetch_with_retry
 from scraping.icon_resolver import (
@@ -87,9 +94,9 @@ def _load_server_port() -> int:
 
 
 SERVER_PORT = _load_server_port()
-WEB_PORT_FILE = os.path.join(CONFIG_DIR, "web_server_port.txt")
+WEB_PORT_FILE = build_runtime_state_path("web_server_port.txt")
 VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
-BROWSER_PROFILE_DIR = os.path.join(CONFIG_DIR, "browser_profile")
+BROWSER_PROFILE_DIR = build_runtime_profile_path("browser_profile")
 AUTO_JUMP_ENABLED = True
 HTTP_SESSION_COOKIE = "hextech_local_token"
 REQUEST_TOKEN_HEADER = "x-hextech-token"
@@ -194,6 +201,7 @@ def set_active_web_port(port: int) -> None:
 
 
 def write_active_web_port(port: int) -> None:
+    os.makedirs(os.path.dirname(WEB_PORT_FILE), exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(prefix="web-port-", suffix=".tmp", dir=os.path.dirname(WEB_PORT_FILE))
     try:
         os.chmod(tmp_path, 0o600)
@@ -832,7 +840,13 @@ def get_live_hextech_snapshot_df(hero_name: str, force_refresh: bool = False) ->
 
 
 def get_synergy_data() -> dict:
-    json_path = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
+    json_path = resolve_runtime_data_file(
+        build_runtime_persisted_path("Champion_Synergy.json"),
+        "Champion_Synergy.json",
+    )
+    if not json_path:
+        return _synergy_cache.data
+
     try:
         current_mtime = os.path.getmtime(json_path)
     except OSError:

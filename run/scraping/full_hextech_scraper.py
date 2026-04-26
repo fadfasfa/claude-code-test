@@ -14,6 +14,11 @@ import threading
 import random
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from processing.runtime_store import (
+    CSV_ENCODING,
+    build_daily_csv_path,
+    get_runtime_data_dir,
+)
 from scraping.version_sync import (
     CONFIG_DIR,
     HEXTECH_AUGMENT_METADATA_URLS,
@@ -23,6 +28,7 @@ from scraping.version_sync import (
     load_augment_map,
     load_champion_core_data,
 )
+from tools.atomic_io import atomic_write_csv
 from tools.log_utils import log_task_summary
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -136,9 +142,12 @@ def fetch_with_retry(session, url, max_retries=3, timeout=10):
     return None
 
 def check_execution_permission():
-    status_file = os.path.join(CONFIG_DIR, "scraper_status.json")
+    status_file = resolve_runtime_data_file(
+        build_runtime_state_path("scraper_status.json"),
+        "scraper_status.json",
+    )
     now = time.time()
-    if not os.path.exists(status_file):
+    if not status_file or not os.path.exists(status_file):
         return True, "首次运行，启动抓取..."
     try:
         with open(status_file, "r", encoding="utf-8") as f:
@@ -152,13 +161,16 @@ def check_execution_permission():
         return True, "状态文件异常，强制刷新..."
 
 def update_status_file():
-    with open(os.path.join(CONFIG_DIR, "scraper_status.json"), "w", encoding="utf-8") as f:
+    status_file = build_runtime_state_path("scraper_status.json")
+    os.makedirs(os.path.dirname(status_file), exist_ok=True)
+    with open(status_file, "w", encoding="utf-8") as f:
         json.dump({"last_success_time": time.time()}, f)
 
 def cleanup_old_csvs():
     # 清理过期数据和残留临时文件。
-    files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv"))
-    tmp_files = glob.glob(os.path.join(CONFIG_DIR, "Hextech_Data_*.csv.tmp"))
+    csv_dir = get_runtime_data_dir()
+    files = glob.glob(str(csv_dir / "Hextech_Data_*.csv"))
+    tmp_files = glob.glob(str(csv_dir / ".Hextech_Data_*.csv.tmp"))
     now = datetime.now()
 
     for f in files + tmp_files:
@@ -239,7 +251,7 @@ def extract_champion_stats(
 def main_scraper(stop_event=None):
     started_at = time.time()
     current_date = datetime.now().strftime('%Y-%m-%d')
-    output_csv = os.path.join(CONFIG_DIR, f"Hextech_Data_{current_date}.csv")
+    output_csv = build_daily_csv_path(current_date)
 
     can_run, msg = check_execution_permission()
     if not can_run:
@@ -380,12 +392,7 @@ def main_scraper(stop_event=None):
             logging.error(f"数据熔断：有效行数 {len(df)} < 300，拒绝覆盖 CSV")
             return False
 
-        # --- 原子化写入开始 ---
-        tmp_csv = output_csv + ".tmp"
-        df.to_csv(tmp_csv, index=False, encoding='utf-8-sig')
-        # 使用操作系统级原子替换
-        os.replace(tmp_csv, output_csv)
-        # --- 原子化写入结束 ---
+        atomic_write_csv(output_csv, df, index=False, encoding=CSV_ENCODING)
 
         update_status_file()
         cleanup_old_csvs()
