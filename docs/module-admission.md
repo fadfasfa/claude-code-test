@@ -114,6 +114,42 @@
 - 为什么不能用现有模块解决：`/scan-agent-worktrees` 是只读扫描入口，不能承载 push/PR；裸 git 命令缺少本仓提交范围、blocked path 和远端写入护栏。
 - 状态：已接受 repo-local explicit remote-write command/tool。
 
+### local-methodology-entrypoints
+
+- 名称：`local-methodology-entrypoints`
+- 类型：repo-local slash commands and policy doc。
+- 解决什么问题：在不全量安装 Superpowers 的前提下，为 brainstorm、TDD 和本地 PR Review 提供轻量入口。
+- 不解决什么问题：不安装 Superpowers、不启用 SessionStart hook、不启用插件 `code-reviewer`、不替代任务验收。
+- 触发条件：用户运行 `/brainstorm-task`、`/tdd-task` 或 `/review-pr-local`。
+- 会读哪些路径：`docs/agent-methodology-policy.md`、相关任务文件、当前 git diff；TDD 时读取目标工作区现有测试入口。
+- 会写哪些路径：`/brainstorm-task` 默认不写；`/tdd-task` 只在明确开发/修 bug 时写当前任务文件；`/review-pr-local` 默认不写，可选只写 ignored `.tmp/pr-review/<branch>.md`。
+- 是否安装依赖：否。
+- 是否运行浏览器：否。
+- 是否影响 git/worktree/global/kb：不影响 global/kb；默认不创建 branch/worktree；`/review-pr-local` 只读 git，不 push、不提交。
+- 如何禁用：不运行对应 slash command；或删除 `.claude/commands/brainstorm-task.md`、`.claude/commands/tdd-task.md`、`.claude/commands/review-pr-local.md`。
+- 如何删除：删除命令文件、`.claude/agents/local-pr-reviewer.md`、`.claude/tools/pr/review_local_pr.ps1` 和 `docs/agent-methodology-policy.md` 中对应说明。
+- 最小验证命令：PowerShell / pwsh parse `review_local_pr.ps1`；运行脚本默认 `-NoWrite`；`git diff --check`；`git diff --cached --check`。
+- 为什么不能用现有模块解决：现有 `review-diff` 是 skill；本轮需要 Claude Code slash command、本地只读 agent 和明确替代云端 Codex PR Review 的入口。
+- 状态：已接受 repo-local methodology command set。
+
+### local-pr-reviewer
+
+- 名称：`local-pr-reviewer`
+- 类型：repo-local read-only agent and optional PowerShell helper。
+- 解决什么问题：用本地只读 agent 审查当前分支相对 base 的 git diff，替代云端 Codex PR Review。
+- 不解决什么问题：不改代码、不提交、不 push、不向 GitHub 发布 review、不 merge。
+- 触发条件：用户运行 `/review-pr-local`，或明确要求本地只读 PR/diff 审查。
+- 会读哪些路径：`git status --short`、`git rev-parse --abbrev-ref HEAD`、`git diff --stat <base>...HEAD`、`git diff --name-status <base>...HEAD`、`git diff <base>...HEAD`、`git log --oneline <base>..HEAD`，以及 diff 涉及文件。
+- 会写哪些路径：默认无；用户显式要求时只写 ignored `.tmp/pr-review/<branch>.md`。
+- 是否安装依赖：否。
+- 是否运行浏览器：否。
+- 是否影响 git/worktree/global/kb：只读 git；不影响 worktree/global/kb。
+- 如何禁用：不运行 `/review-pr-local`；或删除 `.claude/commands/review-pr-local.md`。
+- 如何删除：删除 `.claude/agents/local-pr-reviewer.md`、`.claude/commands/review-pr-local.md`、`.claude/tools/pr/review_local_pr.ps1` 和相关文档记录。
+- 最小验证命令：PowerShell / pwsh parse；运行 `.claude\tools\pr\review_local_pr.ps1 -Base origin/main` 默认 `-NoWrite`，确认 `.tmp/pr-review` 不新增文件。
+- 为什么不能用现有模块解决：云端 Codex PR Review 不再作为默认审查面；本仓需要一个只读、本地、可检查 diff 输入的替代入口。
+- 状态：已接受 repo-local read-only review agent/tool。
+
 ### resume-active-task
 
 - 名称：`resume-active-task`

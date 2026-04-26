@@ -54,6 +54,16 @@
 
 详细路由见 `docs/task-routing.md`。
 
+## Methodology Commands
+
+- 方法策略文档：`docs/agent-methodology-policy.md`。
+- Superpowers 当前不全量启用；未来试装也只允许 local scope / 单仓试验，不允许 user/global 默认启用，不启用 SessionStart hook 自动注入，不默认启用插件 `code-reviewer`。
+- Slash command：`/brainstorm-task` 只做需求澄清、方案比较和风险列举；默认不改文件、不创建分支、不启动 worktree。
+- Slash command：`/tdd-task` 只用于明确开发 / 修 bug / 高风险行为变更；先定位现有测试体系，没有测试体系时只提出最小测试方案，不为文档、规则、小脚本维护强行 TDD。
+- Slash command：`/review-pr-local` 调用 `.claude/agents/local-pr-reviewer.md` 做本地只读 PR 审查，审查当前分支相对 base 的 git diff，替代云端 Codex PR Review。
+- Review helper：`.claude/tools/pr/review_local_pr.ps1` 只收集 `git status --short`、`git rev-parse --abbrev-ref HEAD`、`git diff --stat <base>...HEAD`、`git diff --name-status <base>...HEAD`、`git diff <base>...HEAD` 和 `git log --oneline <base>..HEAD`。
+- `/review-pr-local` 不运行 `gh pr review --submit`、`gh pr merge` 或 `git push`，不提交，不改代码；可选报告只能写入 ignored `.tmp/pr-review/<branch>.md`。
+
 ## Worktree
 
 - 详细策略：`docs/git-worktree-policy.md`
@@ -99,7 +109,7 @@ Subagents 只允许用于边界清晰的旁路工作：
 
 TDD 是 coding-only 选项，不是默认规则。只在高风险行为变更、容易回归的模块，或测试是最清晰控制面的较大任务中使用。
 
-Superpowers 不作为本仓默认 SessionStart 工作流。Superpowers/TDD 只在完成模块准入并获得用户确认后，作为任务级候选路线。
+Superpowers 不作为本仓默认 SessionStart 工作流，也不全量安装。Brainstorm、TDD 和 PR Review 先采用本仓轻量命令与本地只读 agent。
 
 ## Playwright 与前端
 
