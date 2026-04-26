@@ -20,6 +20,7 @@ The repository root is the workflow entry and routing layer. It is not the defau
 - Small task: identify target work area, inspect narrow context, patch, run nearest verification, report.
 - Medium task: write a brief plan, confirm assumptions when needed, patch in a narrow range, verify, report.
 - Large task: narrow requirements, split work, decide whether a worktree is needed, decide whether TDD is needed, optionally use subagents for bounded side work, and close with PR-style review.
+- For large tasks, a lightweight brainstorm / option comparison may happen before the detailed plan to narrow direction; brainstorm itself does not replace the acceptance plan, task split, or verification.
 
 Use `docs/task-routing.md` for the detailed decision table.
 

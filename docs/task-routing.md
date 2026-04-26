@@ -10,6 +10,8 @@ This document decides how much workflow a `claudecode` task needs.
 | Medium | Multiple files in one work area, behavior change with local risk, unclear test entrypoint, moderate UI/API change | Short plan, identify verification, patch in small steps, verify, report |
 | Large | Cross-work-area change, shared data contract, major refactor, migration, release/PR work, high rollback cost, unclear requirements | Requirements narrowing, decomposition, checkpoints, optional worktree, optional TDD, optional subagents, PR-style review |
 
+For large tasks, a lightweight brainstorm / option comparison may happen before the detailed plan to narrow direction; brainstorm itself does not replace the acceptance plan, task split, or verification.
+
 If the route is unclear, choose the lighter route first and escalate only when evidence shows the task needs it.
 
 ## When A Plan Is Needed

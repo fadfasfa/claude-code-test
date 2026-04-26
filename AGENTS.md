@@ -24,6 +24,7 @@ Use `docs/task-routing.md` as the detailed routing rule.
 - Small tasks and clear bug fixes use the lightweight path: confirm target work area, inspect the narrow files, patch, run the closest useful verification, report.
 - Medium tasks use a short plan plus explicit verification. TDD, worktree, subagents, and PR review are optional and should be justified by risk.
 - Large tasks are the only default path for requirement narrowing, decomposition, worktree isolation, TDD, subagent parallel work, and PR-style review.
+- For large tasks, a lightweight brainstorm / option comparison may happen before the detailed plan to narrow direction; brainstorm itself does not replace the acceptance plan, task split, or verification.
 - Do not apply heavy workflow to trivial edits, docs-only cleanup, obvious typos, or one-file low-risk fixes.
 
 ## Write Boundaries
