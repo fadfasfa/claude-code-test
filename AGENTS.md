@@ -1,76 +1,76 @@
-# claudecode Agent Rules
+# claudecode Agent 规则
 
-`claudecode` is a multi-purpose development repository. It hosts several independent work areas plus repo-local Claude Code workflow rules. The repository root is a governance and routing surface, not the default place for business implementation.
+`claudecode` 是一个多功能开发仓库。它包含多个相互独立的业务工作区，也包含本仓 repo-local 的 Claude Code 工作流规则。仓库根目录是治理与任务路由控制面，不是默认业务实现目录。
 
-## Rule Chain
+## 规则读取链
 
-For generic agent or Codex-style sessions, read these repo-local files before changing code or workflow files. Claude Code sessions start at `CLAUDE.md`, then follow this file; that is the same rule chain with a Claude-specific entrypoint.
+通用 agent 或 Codex 风格会话在改代码或改工作流文件前，先读这些 repo-local 文件。Claude Code 会话从 `CLAUDE.md` 进入，再跟随本文件；两者属于同一条规则链，只是入口不同。
 
 1. `AGENTS.md`
 2. `CLAUDE.md`
 3. `PROJECT.md`
 4. `work_area_registry.md`
 5. `agent_tooling_baseline.md`
-6. Relevant files under `docs/`
+6. 相关 `docs/` 文件
 
-This repository does not inherit `kb` workflow. `kb` can be read only when the user explicitly asks for boundary comparison or pollution-risk checks. Do not modify `kb` from this repo workflow.
+本仓不继承 `kb` 工作流。只有用户明确要求做边界对比或污染风险检查时，才可只读参考 `kb`。不得从本仓工作流修改 `kb`。
 
-This repository also does not modify global Claude Code, Codex, Superpowers, ECC, CLI, VS plugin, Codex App, Codex Proxy, global hooks, or global skills unless the user starts a separate global-layer task.
+本仓也不修改全局 Claude Code、Codex、Superpowers、ECC、CLI、VS 插件、Codex App、Codex Proxy、全局 hooks 或全局 skills；除非用户另起一个全局层任务。
 
-## Task Routing
+## 任务路由
 
-Use `docs/task-routing.md` as the detailed routing rule.
+详细路由规则见 `docs/task-routing.md`。
 
-- Small tasks and clear bug fixes use the lightweight path: confirm target work area, inspect the narrow files, patch, run the closest useful verification, report.
-- Medium tasks use a short plan plus explicit verification. TDD, worktree, subagents, and PR review are optional and should be justified by risk.
-- Large tasks are the only default path for requirement narrowing, decomposition, worktree isolation, TDD, subagent parallel work, and PR-style review.
-- For large tasks, a lightweight brainstorm / option comparison may happen before the detailed plan to narrow direction; brainstorm itself does not replace the acceptance plan, task split, or verification.
-- Do not apply heavy workflow to trivial edits, docs-only cleanup, obvious typos, or one-file low-risk fixes.
+- 小任务和明确 bug 修复走轻量路径：确认目标工作区，读取窄范围文件，修改，运行最近的有效验证，报告结果。
+- 中任务走简短计划和明确验证。TDD、worktree、subagent、PR review 都是可选项，只有风险足够时才启用。
+- 大任务才默认进入需求收敛、任务拆分、worktree 隔离、TDD、subagent 并行和 PR-style review。
+- 对大任务，进入详细计划前可先做轻量 brainstorm / 方案比较，用于收敛方向；brainstorm 本身不得替代验收计划、任务拆分或验证。
+- 不要把重流程套到琐碎编辑、纯文档清理、明显错字或单文件低风险修复上。
 
-## Write Boundaries
+## 写入边界
 
-- Pick a `target_work_area` from `work_area_registry.md` before business implementation.
-- If the target is unclear, stay read-only and list candidate work areas.
-- Root files may be edited only for explicit repo governance, routing, safety, or documentation tasks.
-- Do not cross-write between `run/`, `sm2-randomizer/`, `QuantProject/`, `heybox/`, `qm-run-demo/`, or other work areas unless the user explicitly scopes a cross-work-area task.
-- Dirty worktrees must be grouped and understood before editing. Never use `reset`, `clean`, or `stash` to make the tree easier to handle.
+- 业务实现前，先从 `work_area_registry.md` 选择 `target_work_area`。
+- 如果目标不清楚，保持只读并列出候选工作区。
+- 根目录文件只在明确的仓库治理、路由、安全或文档任务中修改。
+- 除非用户明确指定跨工作区任务，不要在 `run/`、`sm2-randomizer/`、`QuantProject/`、`heybox/`、`qm-run-demo/` 或其他工作区之间交叉写入。
+- 脏工作树必须先按用途分组并理解来源。不得为了方便处理而使用 `reset`、`clean` 或 `stash`。
 
-## Git Rules
+## Git 规则
 
-`git add` and `git commit` may proceed only when all of these are true:
+只有同时满足以下条件时，才可以执行 `git add` 和 `git commit`：
 
-- The user explicitly authorized them in the accepted plan.
-- The diff range is clear.
-- The diff contains only current-task files.
-- The commit message is confirmed or the plan contains a precise template.
-- The dirty tree has no unrelated user changes mixed into the commit range.
+- 用户已在接受的计划中明确授权。
+- diff 范围清晰。
+- diff 只包含当前任务文件。
+- commit message 已确认，或计划里已有精确模板。
+- dirty tree 没有把无关用户改动混进本次提交范围。
 
-Always stop for human confirmation before `push`, PR creation, `merge`, `reset`, `clean`, `rebase`, `stash`, or `git worktree remove`.
+执行 `push`、创建 PR、`merge`、`reset`、`clean`、`rebase`、`stash` 或 `git worktree remove` 前，必须停下等待人工确认。
 
-## Continuous Execution
+## 连续执行
 
-Use `docs/continuous-execution.md` for long-running task governance.
+长任务治理见 `docs/continuous-execution.md`。
 
-- The active-task ledger path is `.tmp/active-task/current.md`.
-- The ledger is runtime state only. It is not a rules file, not learning, and never authorizes dangerous operations.
-- A Stop hook may only remind when the ledger says the accepted plan is unfinished.
-- StopFailure may only log failure context.
-- Hooks must not auto-dispatch, auto-continue, or modify business files.
+- active-task ledger 路径是 `.tmp/active-task/current.md`。
+- ledger 只是运行态记录。它不是规则文件，不是 learning，也不能授权危险操作。
+- Stop hook 只能在 ledger 显示已接受计划未完成时做轻量提醒。
+- StopFailure 只能记录失败上下文。
+- hooks 不得自动派发任务、自动继续执行或修改业务文件。
 
-## Module Admission
+## 模块准入
 
-Use `docs/module-admission.md` before adding repo-local workflow modules, hooks, tools, Playwright configuration, validation scripts, or skills beyond the current accepted scope.
+新增或扩展 repo-local 工作流模块、hooks、tools、Playwright 配置、验证脚本，或超出当前确认范围的 skills 前，先使用 `docs/module-admission.md`。
 
-Any module admission card must state what it solves, what it does not solve, trigger conditions, read paths, write paths, dependency/install behavior, browser behavior, git/worktree/global/kb impact, disable/delete path, minimal validation command, and why existing modules are insufficient.
+模块准入卡必须说明：解决什么、不解决什么、触发条件、读取路径、写入路径、是否安装依赖、是否运行浏览器、对 git/worktree/global/kb 的影响、如何禁用、如何删除、最小验证命令，以及为什么现有模块不足。
 
-## Frontend Capability
+## 前端能力
 
-Playwright and `frontend-polish-lite` are claudecode-only, coding-only frontend validation tools. They do not enter global core, do not enter `kb`, do not write global hooks, and do not run for every task.
+Playwright 和 `frontend-polish-lite` 只属于 `claudecode`，且只用于 coding-only 前端验证。它们不进入全局 core，不进入 `kb`，不写全局 hooks，也不用于所有任务。
 
-Use them only for frontend tasks involving UI interaction, page behavior, screenshots, visual regression, responsive layout, or obvious accessibility checks.
+只在前端任务涉及 UI 交互、页面行为、截图、视觉回归、响应式布局或明显可访问性检查时使用。
 
-## ECC and Superpowers
+## ECC 与 Superpowers
 
-ECC is not an active workflow source for this repository. Only claudecode-local ECC residue may be inventoried here; global ECC retirement is a separate task.
+ECC 不是本仓当前工作流来源。本仓只允许盘点 claudecode-local 的 ECC 残留；全局 ECC 退休是单独任务。
 
-Superpowers is not enabled as a default SessionStart workflow in this repository. Superpowers/TDD can be considered only as an explicit, task-scoped coding route after module admission and user confirmation.
+Superpowers 不作为本仓默认 SessionStart 工作流。Superpowers/TDD 只能在完成模块准入并获得用户确认后，作为明确的任务级 coding 路由使用。

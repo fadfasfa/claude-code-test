@@ -1,51 +1,51 @@
-# claudecode Project Map
+# claudecode 项目地图
 
-`claudecode` is a multi-functional local development repository. It is not a single application and not a knowledge-base workflow repository.
+`claudecode` 是一个多功能本地开发仓库。它不是单一应用，也不是知识库工作流仓库。
 
-## Root Role
+## 根目录职责
 
-The repository root contains:
+仓库根目录包含：
 
-- Stable repo entry files: `AGENTS.md`, `CLAUDE.md`, `PROJECT.md`, `README.md`
-- Work-area registry: `work_area_registry.md`
-- Capability baseline: `agent_tooling_baseline.md`
-- Repo-local workflow docs: `docs/`
-- Repo-local Claude Code surfaces: `.claude/settings.json`, `.claude/hooks/`, `.claude/skills/`, `.claude/tools/`
+- 稳定入口文件：`AGENTS.md`、`CLAUDE.md`、`PROJECT.md`、`README.md`
+- 工作区注册表：`work_area_registry.md`
+- 能力基线：`agent_tooling_baseline.md`
+- repo-local 工作流文档：`docs/`
+- repo-local Claude Code 表面：`.claude/settings.json`、`.claude/hooks/`、`.claude/skills/`、`.claude/tools/`
 
-Root files may be changed for repo governance and workflow refactoring. Business implementation belongs in the selected work area.
+根目录文件只用于仓库治理和工作流重构。业务实现应落在选定工作区内。
 
-## Work Areas
+## 工作区
 
-| Path | Role |
+| 路径 | 职责 |
 | :--- | :--- |
-| `run/` | Hextech runtime, scraping, processing, display, and tools |
-| `sm2-randomizer/` | Space Marine 2 randomizer app and data pipeline |
-| `QuantProject/` | Quant strategy/data workspace |
-| `heybox/` | Local scraping scripts |
-| `qm-run-demo/` | Demo/runtime variant workspace |
-| `subtitle_extractor/` | Subtitle extraction workspace |
-| `.claude/` | Repo-local Claude Code settings, skills, hooks, and tools |
-| `.learnings/` | Repo-local learning log and ignored raw error inputs |
-| `.tmp/` | Ignored runtime scratch space |
-| `docs/` | Repo-local workflow, safety, routing, and validation policies |
+| `run/` | Hextech runtime、scraping、processing、display 和 tools |
+| `sm2-randomizer/` | Space Marine 2 randomizer 应用和数据 pipeline |
+| `QuantProject/` | 量化策略 / 数据工作区 |
+| `heybox/` | 本地 scraping 脚本 |
+| `qm-run-demo/` | demo/runtime 变体工作区 |
+| `subtitle_extractor/` | 字幕提取工作区 |
+| `.claude/` | repo-local Claude Code settings、skills、hooks 和 tools |
+| `.learnings/` | repo-local learning 记录和 ignored raw error 输入 |
+| `.tmp/` | ignored 运行态临时空间 |
+| `docs/` | repo-local 工作流、安全、路由和验证策略 |
 
-Use `work_area_registry.md` as the stable registry before business writes.
+业务写入前，先以 `work_area_registry.md` 作为稳定注册表。
 
-## Workflow Docs
+## 工作流文档
 
-| File | Purpose |
+| 文件 | 用途 |
 | :--- | :--- |
-| `docs/task-routing.md` | Small / medium / large task routing |
-| `docs/safety-boundaries.md` | Repo, git, hook, global, and kb safety boundaries |
-| `docs/module-admission.md` | Module admission card template and current module cards |
-| `docs/continuous-execution.md` | Active-task ledger and resume/stop rules |
-| `docs/frontend-validation.md` | Lightweight frontend validation workflow |
-| `docs/playwright-policy.md` | claudecode-only Playwright policy |
-| `docs/git-worktree-policy.md` | Detailed worktree classification and guardrails |
+| `docs/task-routing.md` | 小 / 中 / 大任务路由 |
+| `docs/safety-boundaries.md` | 仓库、git、hook、global、kb 安全边界 |
+| `docs/module-admission.md` | 模块准入卡模板和当前模块卡 |
+| `docs/continuous-execution.md` | active-task ledger 与 resume/stop 规则 |
+| `docs/frontend-validation.md` | 轻量前端验证工作流 |
+| `docs/playwright-policy.md` | claudecode-only Playwright 策略 |
+| `docs/git-worktree-policy.md` | 详细 worktree 分类和护栏 |
 
-## Non-Goals
+## 非目标
 
-- Do not use this repo to refactor global Claude Code / Codex configuration.
-- Do not use this repo to refactor `kb`.
-- Do not promote coding-only workflow into `kb`.
-- Do not make Superpowers, ECC, Playwright, TDD, worktree, PR, or subagent flow mandatory for every task.
+- 不用本仓重构全局 Claude Code / Codex 配置。
+- 不用本仓重构 `kb`。
+- 不把 coding-only 工作流推广到 `kb`。
+- 不让 Superpowers、ECC、Playwright、TDD、worktree、PR 或 subagent 流程成为所有任务的强制默认项。

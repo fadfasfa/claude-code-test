@@ -1,30 +1,30 @@
 # claudecode
 
-`claudecode` is a multi-purpose local development repository. It contains several independent work areas plus repo-local Claude Code workflow rules.
+`claudecode` 是一个多功能本地开发仓库。它包含多个独立工作区，也包含 repo-local Claude Code 工作流规则。
 
-## Entry Points
+## 入口
 
-- `AGENTS.md`: agent rules, boundaries, git confirmation rules
-- `CLAUDE.md`: Claude Code entry and read order
-- `PROJECT.md`: repository map
-- `work_area_registry.md`: business work-area registry
-- `agent_tooling_baseline.md`: repo-local tooling baseline
-- `docs/task-routing.md`: small / medium / large task routing
-- `docs/safety-boundaries.md`: safety boundaries
+- `AGENTS.md`：agent 规则、边界、git 确认规则
+- `CLAUDE.md`：Claude Code 入口和读取顺序
+- `PROJECT.md`：仓库地图
+- `work_area_registry.md`：业务工作区注册表
+- `agent_tooling_baseline.md`：repo-local tooling baseline
+- `docs/task-routing.md`：小 / 中 / 大任务路由
+- `docs/safety-boundaries.md`：安全边界
 
-## Operating Model
+## 运行模型
 
-- Small tasks and clear bug fixes use a lightweight patch-and-verify flow.
-- Medium tasks use a short plan and explicit verification.
-- Large tasks are the path for requirement narrowing, decomposition, worktree isolation, TDD, subagent parallelism, and PR-style review.
+- 小任务和明确 bug 修复走轻量 patch-and-verify 流程。
+- 中任务走简短计划和明确验证。
+- 大任务才进入需求收敛、轻量 brainstorm / 方案比较、任务拆分、worktree 隔离、TDD、subagent 并行和 PR-style review。
 
-This repo does not inherit `kb` workflow and does not modify global Claude Code / Codex / Superpowers / ECC layers.
+本仓不继承 `kb` 工作流，也不修改全局 Claude Code / Codex / Superpowers / ECC 层。
 
-## Before Business Edits
+## 业务修改前
 
-1. Check `git status --short --branch`.
-2. Read `work_area_registry.md`.
-3. Declare the `target_work_area`.
-4. Use the nearest repo-native verification.
+1. 检查 `git status --short --branch`。
+2. 读取 `work_area_registry.md`。
+3. 声明 `target_work_area`。
+4. 使用最近的 repo-native 验证。
 
-Do not use heavy workflow for trivial changes.
+不要把重流程用于琐碎修改。

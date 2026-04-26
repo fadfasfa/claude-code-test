@@ -1,27 +1,27 @@
 # Agent Tooling Baseline
 
-This file records the repo-local capability baseline for `claudecode`. It is not the global source of truth and must not be used to modify global Claude Code, Codex, Superpowers, ECC, CLI, VS plugin, Codex App, or Codex Proxy configuration.
+本文件记录 `claudecode` 的 repo-local 能力基线。它不是全局真相源，也不得用于修改全局 Claude Code、Codex、Superpowers、ECC、CLI、VS 插件、Codex App 或 Codex Proxy 配置。
 
-## Scope
+## 范围
 
-- Repo scope: `C:\Users\apple\claudecode`
-- Boundary reference only: `C:\Users\apple\kb`
-- Forbidden from this repo workflow unless the user starts a separate global task: `C:\Users\apple\.claude`, `C:\Users\apple\.codex`, global hooks, global skills, global AGENTS/CLAUDE files, CLI installs, VS plugins, Codex App, Codex Proxy, global Superpowers/ECC installs.
+- 仓库范围：`C:\Users\apple\claudecode`
+- 只读边界参考：`C:\Users\apple\kb`
+- 除非用户另起全局任务，否则本仓工作流禁止修改：`C:\Users\apple\.claude`、`C:\Users\apple\.codex`、全局 hooks、全局 skills、全局 AGENTS/CLAUDE 文件、CLI 安装、VS 插件、Codex App、Codex Proxy、全局 Superpowers/ECC 安装。
 
 ## Claude Code
 
-- Repo entry: `C:\Users\apple\claudecode\CLAUDE.md`
-- Repo settings: `.claude/settings.json`
-- Repo hooks currently active through settings:
-  - `WorktreeCreate`: worktree naming guard
-  - `PreToolUse`: unsafe raw shell/worktree command block
-  - `PostToolUseFailure`: self-improvement raw error capture
-- Hooks must remain safety or lightweight reminder mechanisms. They must not become schedulers, auto-continue engines, or business-file writers.
-- Repo env disables background/fork worktree spawning with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` and `CLAUDE_CODE_FORK_SUBAGENT=0`.
+- 仓库入口：`C:\Users\apple\claudecode\CLAUDE.md`
+- 仓库 settings：`.claude/settings.json`
+- 当前通过 settings 启用的 repo hooks：
+  - `WorktreeCreate`：worktree 命名护栏
+  - `PreToolUse`：裸 shell/worktree 危险命令拦截
+  - `PostToolUseFailure`：self-improvement raw error 捕获
+- Hooks 必须保持为安全机制或轻量提醒机制。它们不能变成调度器、自动继续引擎或业务文件写入器。
+- 仓库 env 使用 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` 和 `CLAUDE_CODE_FORK_SUBAGENT=0` 禁用后台 / fork worktree 派生。
 
 ## Repo Skills
 
-Existing repo-local skills:
+现有 repo-local skills：
 
 - `api-design`
 - `backend-patterns`
@@ -31,7 +31,7 @@ Existing repo-local skills:
 - `requesting-code-review`
 - `verification-before-completion`
 
-Workflow entry skills added for this repo layer:
+本仓新增的工作流入口 skills：
 
 - `resume-active-task`
 - `module-admission`
@@ -39,68 +39,68 @@ Workflow entry skills added for this repo layer:
 - `review-diff`
 - `self-improvement-promotion`
 
-These skills are on-demand workflow entries. They are not automatic SessionStart injections and are not inherited by `kb`.
+这些 skills 是按需工作流入口。它们不是自动 SessionStart 注入，也不被 `kb` 继承。
 
-## Task Weight
+## 任务重量
 
-- Small tasks: no forced plan, TDD, worktree, subagent, or PR review.
-- Medium tasks: short plan and verification; heavier tools only when risk justifies them.
-- Large tasks: requirement narrowing, decomposition, optional worktree, optional TDD, optional subagent parallelism, and PR-style review.
+- 小任务：不强制计划、TDD、worktree、subagent 或 PR review。
+- 中任务：需要简短计划和验证；只有风险足够时才启用更重工具。
+- 大任务：需求收敛、轻量 brainstorm / 方案比较、任务拆分、可选 worktree、可选 TDD、可选 subagent 并行和 PR-style review。
 
-Detailed routing lives in `docs/task-routing.md`.
+详细路由见 `docs/task-routing.md`。
 
 ## Worktree
 
-- Detailed policy: `docs/git-worktree-policy.md`
-- Worktree helper: `.claude/tools/worktree-governor/new_worktree.ps1`
-- Worktree creation requires purpose and owner. Running without `-DryRun` requires explicit user instruction.
-- Worktree removal always requires human confirmation.
-- Legacy nested `.claude/worktrees/**` are not active workflow sources and must not be used as templates for new work.
+- 详细策略：`docs/git-worktree-policy.md`
+- worktree helper：`.claude/tools/worktree-governor/new_worktree.ps1`
+- 创建 worktree 需要 purpose 和 owner。不带 `-DryRun` 真实创建前，必须有明确用户指令。
+- 删除 worktree 永远需要人工确认。
+- 旧 nested `.claude/worktrees/**` 不是当前工作流来源，也不得作为新工作的模板。
 
 ## Subagents
 
-Subagents are allowed only for bounded side work:
+Subagents 只允许用于边界清晰的旁路工作：
 
-- read-only exploration
-- test entrypoint discovery
-- failure attribution
+- 只读探索
+- 测试入口发现
+- 失败归因
 - review
-- narrow implementation with disjoint file ownership when explicitly planned
+- 明确计划中、文件所有权互不重叠的窄范围实现
 
-Do not use concurrent subagents to edit the same file, shared settings, hooks, worktree policy, or shared data contracts.
+不要让并发 subagents 编辑同一文件、共享 settings、hooks、worktree policy 或共享数据契约。
 
-## TDD and Superpowers
+## TDD 与 Superpowers
 
-TDD is a coding-only option, not a default rule. Use it for high-risk behavior changes, regression-prone modules, or large tasks where tests are the clearest control surface.
+TDD 是 coding-only 选项，不是默认规则。只在高风险行为变更、容易回归的模块，或测试是最清晰控制面的较大任务中使用。
 
-Superpowers is not enabled as a default SessionStart workflow in this repository. Superpowers/TDD remains a task-scoped candidate only after module admission and user confirmation.
+Superpowers 不作为本仓默认 SessionStart 工作流。Superpowers/TDD 只在完成模块准入并获得用户确认后，作为任务级候选路线。
 
-## Playwright and Frontend
+## Playwright 与前端
 
-Playwright CLI is claudecode-only and coding-only. It is not global core, not `kb`, not a global hook, and not a default step for all tasks.
+Playwright CLI 只属于 claudecode，且只用于 coding-only 前端验证。它不是 global core，不属于 `kb`，不是全局 hook，也不是所有任务的默认步骤。
 
-Current machine discovery found a Playwright CLI on PATH, but this repository should not install dependencies, add Playwright config, or add frontend validation scripts without a module admission card.
+当前机器发现 PATH 上有 Playwright CLI，但本仓不得在没有模块准入卡的情况下安装依赖、添加 Playwright config 或添加前端验证脚本。
 
-Use `frontend-polish-lite` only for frontend tasks that need UI interaction, screenshot, responsive, visual, or accessibility checks.
+只有前端任务需要 UI 交互、截图、响应式、视觉或可访问性检查时，才使用 `frontend-polish-lite`。
 
 ## ECC
 
-ECC is retired as a workflow source for this repository. This repo may inventory claudecode-local ECC residue, but must not edit global ECC installations or global settings. Any cleanup proposal must separate delete, archive, and backup candidates before file changes.
+ECC 已作为本仓工作流来源退休。本仓可以盘点 claudecode-local 的 ECC 残留，但不得编辑全局 ECC 安装或全局 settings。任何清理提案都必须在改文件前区分删除、归档和保留备份候选。
 
 ## Self-Improvement
 
-- Tracked repo learning: `.learnings/LEARNINGS.md`
-- Ignored raw error input: `.learnings/ERRORS.md`
-- Runtime task ledger: `.tmp/active-task/current.md`
+- tracked repo learning：`.learnings/LEARNINGS.md`
+- ignored raw error input：`.learnings/ERRORS.md`
+- runtime task ledger：`.tmp/active-task/current.md`
 
-Raw logs and ledgers are not rules and must not be promoted automatically. Repo learning promotion uses the `self-improvement-promotion` skill and requires a user-reviewed checklist before changing tracked learning.
+Raw logs 和 ledgers 都不是规则，不能自动晋升。Repo learning 晋升使用 `self-improvement-promotion` skill，并且在修改 tracked learning 前需要用户审查清单。
 
-Self-improvement must not modify `kb` or global layers from this repo workflow.
+Self-improvement 不得从本仓工作流修改 `kb` 或全局层。
 
 ## Codex
 
-- Codex reads repo entry docs and workspace docs.
-- No project-level `.codex/config.toml`.
-- Repo layer keeps plugins = 0, MCP = 0, Codex hooks = 0.
-- Codex does not create worktrees or branches automatically.
-- Codex does not push, PR, merge, rebase, stash, reset, clean, or remove worktrees without explicit user confirmation.
+- Codex 读取仓库入口文档和 workspace 文档。
+- 不创建项目级 `.codex/config.toml`。
+- 仓库层保持 plugins = 0、MCP = 0、Codex hooks = 0。
+- Codex 不自动创建 worktree 或分支。
+- 未经明确人工确认，Codex 不执行 push、PR、merge、rebase、stash、reset、clean 或 remove worktree。

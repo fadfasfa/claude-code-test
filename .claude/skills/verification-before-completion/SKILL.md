@@ -6,27 +6,31 @@ description: Require concrete verification evidence before claiming a task is co
 
 # verification-before-completion
 
-Use this skill before marking any implementation task as done.
+中文简介：本 skill 用于任何实现任务完成前的验证关口。它要求提供具体 verification evidence；不负责强制 TDD、清理 worktree、修改 hooks 或改变全局 Claude Code settings。
 
-## Required behavior
+## 什么时候使用
 
-1. For behavior changes, bug fixes, or refactors that affect runtime paths, first locate the nearest existing test; when a small regression test is feasible, add or update it before changing implementation.
-2. For docs, comments, read-only reviews, or pure organization-only changes, new tests are optional, but the final report must say why no test was added.
-3. Choose verification in this order: nearest test -> changed module test -> smoke / fast verification -> full test suite.
-4. Until the test entrypoint is confirmed, use read-only discovery only; do not install dependencies, initialize a new test framework, download from the network, or change global config.
-5. Run the narrowest relevant verification commands for the change and inspect the output rather than assuming success.
-6. In the final summary, report the exact commands run, test scope, result, and failure summary; if verification cannot run, say exactly why.
-7. Distinguish pre-existing failures from failures introduced by the current change whenever output or a baseline comparison allows it.
+在声明任何 implementation task 完成前使用。
 
-## Read fallback protocol
+## 必要行为
 
-- If the Read tool fails twice in a row for the same file, stop repeating the same Read call.
-- Fall back to a read-only route such as PowerShell `Get-Content`, a Python read-only script, `git show` / `git diff`, or smaller ranged reads.
-- If fallback reading still fails, report the blocker and do not guess at file contents.
+1. 对影响 runtime paths 的行为变更、bug 修复或 refactor，先定位最近的现有 test；如果小型 regression test 可行，在改实现前添加或更新。
+2. 对 docs、comments、read-only reviews 或纯组织调整，新增测试可选，但 final report 必须说明为什么没有加测试。
+3. 验证选择顺序：nearest test -> changed module test -> smoke / fast verification -> full test suite。
+4. test entrypoint 确认前只做只读探索；不安装依赖、不初始化新 test framework、不从网络下载、不改 global config。
+5. 运行与变更最相关、最窄的验证命令，并检查输出，不假设成功。
+6. final summary 报告精确命令、测试范围、结果和失败摘要；如果无法验证，说明准确原因。
+7. 只要输出或 baseline comparison 支持，就区分 pre-existing failures 和当前变更引入的 failures。
 
-## Rules
+## 读取失败 fallback
 
-- Never claim completion without evidence.
-- Prefer repo-native commands and existing test scripts.
-- Do not add hooks, MCP requirements, worktrees, forced branch logic, or TDD enforcement.
-- Do not clean, reset, stash, push, change hooks, change global Claude Code settings, or handle locked worktrees for the sake of testing.
+- 如果 Read tool 连续两次读取同一文件失败，停止重复同样的 Read 调用。
+- 改用只读路线，例如 PowerShell `Get-Content`、Python read-only script、`git show` / `git diff` 或更小范围读取。
+- 如果 fallback 仍失败，报告 blocker，不猜测文件内容。
+
+## 规则
+
+- 没有证据时，永远不要宣称完成。
+- 优先 repo-native commands 和已有 test scripts。
+- 不添加 hooks、MCP requirements、worktrees、forced branch logic 或 TDD enforcement。
+- 不为了测试而 clean、reset、stash、push、改 hooks、改 global Claude Code settings 或处理 locked worktrees。

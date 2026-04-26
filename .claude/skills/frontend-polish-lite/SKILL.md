@@ -6,11 +6,15 @@ description: Lightweight claudecode-only frontend UI polish and validation for v
 
 # frontend-polish-lite
 
-Use this skill for frontend tasks that need UI polish or validation.
+中文简介：本 skill 是 claudecode-only 的轻量前端微调与验收入口。它用于视觉、响应式、交互状态和 accessibility smoke checks；不负责完整 design system、产品重设计、依赖安装或所有任务默认视觉 QA。
 
-## Scope
+## 什么时候使用
 
-Check:
+当前端任务需要 UI polish 或 validation 时使用。
+
+## 检查范围
+
+检查：
 
 - visual hierarchy
 - spacing
@@ -24,36 +28,36 @@ Check:
 
 ## Playwright
 
-Use Playwright only when it helps the current task.
+只有 Playwright 能帮助当前任务时才使用。
 
-Allowed:
+允许：
 
 - `playwright --version`
-- screenshot / headed / trace validation against a local or file URL
-- writing screenshots or traces under ignored `.tmp/`
+- 对 local URL 或 file URL 做 screenshot / headed / trace validation
+- 将截图或 trace 写到 ignored `.tmp/`
 
-Not allowed without a module admission card and user confirmation:
+没有模块准入卡和用户确认时，禁止：
 
-- installing Playwright
-- adding `playwright.config.*`
-- adding npm scripts or validation scripts
-- adding hooks
-- adding MCP
-- making Playwright a default step for all tasks
+- 安装 Playwright
+- 添加 `playwright.config.*`
+- 添加 npm scripts 或 validation scripts
+- 添加 hooks
+- 添加 MCP
+- 让 Playwright 成为所有任务的默认步骤
 
-## Rules
+## 规则
 
-- This skill is claudecode-only.
-- Do not apply it to `kb`.
-- Do not write global hooks or global skills.
-- Do not turn a lightweight polish pass into a full design system.
-- Do not redesign the product unless the user asks.
+- 本 skill 只属于 `claudecode`。
+- 不应用到 `kb`。
+- 不写 global hooks 或 global skills。
+- 不把轻量 polish pass 变成完整 design system。
+- 用户未要求时不重设计产品。
 
-## Completion Report
+## 完成报告
 
-Include:
+包含：
 
-- what changed
-- how it was validated
-- whether Playwright was used
-- whether human visual confirmation is still needed
+- 改了什么
+- 如何验证
+- 是否使用 Playwright
+- 是否仍需要人工视觉确认

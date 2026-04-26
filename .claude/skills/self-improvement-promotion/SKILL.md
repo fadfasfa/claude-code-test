@@ -6,26 +6,30 @@ description: Promote claudecode repo-local learning candidates from raw logs int
 
 # self-improvement-promotion
 
-Use this skill when the user asks to review or promote repo-local learnings.
+中文简介：本 skill 用于把 claudecode repo-local raw logs 中的候选经验晋升为 tracked learning。它只负责人工审查后的 repo-local learning；不负责自动 global learning、自动更新 `kb` 或提交 raw logs。
 
-## Sources
+## 什么时候使用
 
-- Raw error cache: `.learnings/ERRORS.md`
-- Tracked repo learning: `.learnings/LEARNINGS.md`
-- Relevant repo-local skills/hooks/tools/docs
+用户要求 review 或 promote repo-local learnings 时使用。
 
-## Rules
+## 来源
 
-- Raw logs are ignored inputs, not git content.
-- Do not auto-promote learnings.
-- Do not write global learning from this repo workflow.
-- Do not modify `kb`.
-- Do not mix runtime ledger entries with learning.
-- Promote only stable, reusable, repo-local lessons.
+- Raw error cache：`.learnings/ERRORS.md`
+- Tracked repo learning：`.learnings/LEARNINGS.md`
+- 相关 repo-local skills/hooks/tools/docs
 
-## Promotion Checklist
+## 规则
 
-For each candidate, report:
+- Raw logs 是 ignored inputs，不是 git content。
+- 不自动晋升 learnings。
+- 不从本仓工作流写 global learning。
+- 不修改 `kb`。
+- 不把 runtime ledger entries 和 learning 混在一起。
+- 只晋升稳定、可复用、repo-local 的经验。
+
+## 晋升清单
+
+每个候选项都报告：
 
 - source
 - repeated or one-off
@@ -35,6 +39,6 @@ For each candidate, report:
 - risk of overgeneralization
 - whether user confirmation is required
 
-## Write Boundary
+## 写入边界
 
-Only update `.learnings/LEARNINGS.md` after the user confirms the candidate list.
+只有用户确认候选清单后，才更新 `.learnings/LEARNINGS.md`。

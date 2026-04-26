@@ -1,7 +1,7 @@
 #!/bin/bash
-# Repo-local Claude Code hook: persist failed Bash calls to ./.learnings/ERRORS.md.
-# Authoritative event in this environment: PostToolUseFailure, matcher: Bash.
-# This wrapper is intentionally repo-local; global skill scripts remain unchanged.
+# 中文简介：repo-local Claude Code hook，把失败的 Bash 调用追加到 ./.learnings/ERRORS.md。
+# 触发条件：PostToolUseFailure，matcher: Bash。
+# 安全边界：只写本仓 ignored raw error cache 和本地 debug log；不修复错误、不调度任务、不修改 global/kb。
 
 set +e
 
@@ -34,6 +34,9 @@ else
 fi
 
 "$PYTHON_BIN" - "$PROJECT_DIR" "$PAYLOAD_FILE" "$DEBUG_LOG" <<'PY'
+# 中文简介：解析 Claude Code failure payload，去重并截断写入 repo-local raw error cache。
+# 输入：project_dir、payload_file、debug_log。
+# 输出：必要时更新 .learnings/ERRORS.md；任何内部异常只写 debug log 并返回 0。
 import datetime as _dt
 import hashlib
 import json
@@ -80,6 +83,7 @@ def _nested(mapping, *keys):
 
 
 def _debug(debug_log, **record):
+    """向 ignored debug log 写诊断；失败时静默，避免 hook 阻塞主流程。"""
     try:
         os.makedirs(os.path.dirname(debug_log), exist_ok=True)
         record.setdefault("timestamp", _dt.datetime.now().astimezone().isoformat(timespec="seconds"))
@@ -118,6 +122,7 @@ def _entry_error_first_line(entry):
 
 
 def _dedupe_key(cwd, command, error_text):
+    """基于 cwd、规范化命令和首条错误行生成稳定去重键。"""
     material = {
         "cwd": _as_text(cwd),
         "command": _normalize_command(command),
@@ -169,12 +174,14 @@ def _trim_to_limits(entries):
 
 
 def _write_errors(errors_path, entries):
+    """将错误条目写回 ERRORS.md，并强制执行条目数和文件大小上限。"""
     content, _ = _trim_to_limits(entries)
     with open(errors_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)
 
 
 def main():
+    """主入口：只处理 Bash 的 PostToolUseFailure，并把失败信息落到本仓 raw cache。"""
     project_dir = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.getcwd()
     payload_path = sys.argv[2]
     debug_log = sys.argv[3]

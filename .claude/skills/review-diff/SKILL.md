@@ -6,32 +6,36 @@ description: Review a claudecode diff for behavior risk, boundary violations, ve
 
 # review-diff
 
-Use this skill when the user asks for a review, before a commit, or after a medium/large patch.
+中文简介：本 skill 用于审查 claudecode diff 的行为风险、边界风险、验证缺口和提交就绪度。它负责 review report；不负责创建 PR、push、merge、rebase、stash、reset、clean 或删除 worktree。
 
-## Inputs
+## 什么时候使用
 
-Inspect:
+用户要求 review、提交前，或 medium/large patch 之后使用。
+
+## 输入
+
+检查：
 
 - `git status --short --branch`
 - `git diff --stat`
 - `git diff -- <current-task-files>`
-- relevant docs/tests for the changed area
+- 变更区域相关 docs/tests
 - verification output
 
-## Review Order
+## Review 顺序
 
-1. Boundary violations: global, `kb`, wrong work area, hooks/settings, dependency install, dirty-tree mixing.
-2. Behavioral risks: regressions, missing edge cases, broken contracts.
-3. Verification gaps: missing or weak command evidence.
-4. Commit readiness: diff scope, unrelated files, message availability.
+1. 边界违规：global、`kb`、错误工作区、hooks/settings、依赖安装、dirty-tree 混入。
+2. 行为风险：regression、缺少 edge cases、破坏 contract。
+3. 验证缺口：缺少或较弱的 command evidence。
+4. 提交就绪度：diff scope、无关文件、message availability。
 
-## Rules
+## 规则
 
-- Findings first, ordered by severity.
-- Keep line/file references specific.
-- Do not create PRs, push, merge, rebase, stash, reset, clean, or remove worktrees.
-- Do not stage or commit unless the user already authorized it in the plan and the diff scope is clean.
+- findings 优先，按严重程度排序。
+- 文件 / 行引用要具体。
+- 不创建 PR、不 push、不 merge、不 rebase、不 stash、不 reset、不 clean、不 remove worktree。
+- 除非用户已经在计划中授权且 diff scope 干净，否则不 stage、不 commit。
 
-## Output
+## 输出
 
-If issues exist, list findings first. If no issues are found, say so and identify remaining test or review risk.
+如果存在问题，先列 findings。如果没有发现问题，明确说明，并指出剩余测试或 review 风险。

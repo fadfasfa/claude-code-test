@@ -1,3 +1,10 @@
+<!--
+中文简介：本文件是 claudecode repo-local 的 tracked learning 记录。
+什么时候读：做 self-improvement、复盘重复问题、准备晋升规则时读取。
+约束什么：只记录经过人工审查或明确保留价值的 repo-local 经验。
+不负责什么：不保存 raw error log，不作为全局 learning，不写入 kb。
+-->
+
 ## [LRN-20260423-001] best_practice
 
 **Logged**: 2026-04-23T21:35:00+08:00

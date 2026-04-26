@@ -6,19 +6,23 @@ description: Project-level Python guidance focused on readability, small interfa
 
 # python-patterns
 
-Use this skill for Python code in this repo.
+中文简介：本 skill 用于本仓 Python 代码修改。它约束可读性、窄接口、中文文件头和关键 docstring；不负责新增 hook、MCP、worktree 自动化或强制 branch 流程。
 
-## Documentation and comments
+## 什么时候使用
 
-- New Python source files must start with a concise 中文（Chinese） module-level description of purpose and runtime boundary.
-- Add docstrings to key functions, classes, and script entrypoints when their role, inputs, side effects, or safety boundary is not obvious from names.
-- Hooks, tools, and workflow-control scripts must document their safety boundary and what they must not modify.
-- Do not pile up comments that merely repeat obvious code behavior.
+处理本仓 Python code 时使用。
 
-## Rules
+## 文档和注释
 
-- Prefer clear functions, explicit names, and narrow modules.
-- Reuse existing helpers before adding new abstractions.
-- Keep type hints and docstrings aligned with local conventions.
-- Validate with existing lint, test, or execution commands when relevant.
-- No hooks, MCP dependencies, worktree automation, or forced branch flow.
+- 新 Python source files 必须以简短中文 module-level description 开头，说明目的和 runtime boundary。
+- 关键函数、类和 script entrypoints 在角色、输入、副作用或安全边界不明显时，应添加 docstring。
+- Hooks、tools 和 workflow-control scripts 必须说明安全边界，以及它们不得修改什么。
+- 不堆砌重复明显代码行为的注释。
+
+## 规则
+
+- 优先清晰函数、显式命名和窄模块。
+- 新增抽象前先复用已有 helpers。
+- type hints 和 docstrings 与本地风格保持一致。
+- 相关时用已有 lint、test 或 execution commands 验证。
+- 不新增 hooks、MCP dependencies、worktree automation 或 forced branch flow。

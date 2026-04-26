@@ -1,18 +1,18 @@
-# Continuous Execution
+# 连续执行治理
 
-The goal is to keep Claude Code moving through an accepted plan until a clear endpoint, while preserving safety boundaries.
+本文件说明 Claude Code 在计划被确认后如何持续推进到明确终点，同时保留安全边界。
 
-## Runtime Ledger
+## 运行态 Ledger
 
-Path:
+路径：
 
 ```text
 .tmp/active-task/current.md
 ```
 
-The ledger is ignored runtime state. It is not a rules layer, not learning, not a commit artifact, and not an authorization token.
+这个 ledger 是 ignored 运行态记录。它不是规则层，不是 learning，不是提交产物，也不是授权凭证。
 
-Recommended ledger fields:
+推荐字段：
 
 ```markdown
 # Active Task
@@ -30,78 +30,78 @@ Recommended ledger fields:
 - Resume notes:
 ```
 
-## Continue Automatically
+## 可以自动继续的情况
 
-Continue without asking again when:
+同时满足以下条件时，可以不重复询问并继续执行：
 
-- the user has accepted a plan
-- the next step is inside the accepted scope
-- the write paths are current-task files inside `C:\Users\apple\claudecode`
-- no install/uninstall/upgrade is needed
-- no global or `kb` write is needed
-- no dangerous git operation is needed
-- dirty-tree ownership is clear
-- verification commands are read/status/test/smoke commands within scope
+- 用户已经接受计划。
+- 下一步仍在已接受范围内。
+- 写入路径是 `C:\Users\apple\claudecode` 内的当前任务文件。
+- 不需要安装、卸载或升级依赖。
+- 不需要写全局层或 `kb`。
+- 不涉及危险 git 操作。
+- dirty-tree 所属关系清晰。
+- 验证命令是范围内的 read/status/test/smoke 命令。
 
-## Stop And Ask
+## 必须停下询问的情况
 
-Stop for user confirmation when:
+出现以下情况时，必须停下等待用户确认：
 
-- scope changes
-- target work area is unclear
-- dirty tree includes unrelated user changes in the same files
-- dependency install/uninstall/upgrade is needed
-- global layer or `kb` would need modification
-- Playwright config/script/hook/tool changes are needed without a module card
-- git operation is `push`, PR, `merge`, `reset`, `clean`, `rebase`, `stash`, or `worktree remove`
-- `git add` / `git commit` lacks explicit plan authorization, clear diff range, or confirmed message
+- 范围变化。
+- 目标工作区不清楚。
+- dirty tree 在同一文件里混有无关用户改动。
+- 需要安装、卸载或升级依赖。
+- 需要修改全局层或 `kb`。
+- 需要新增 Playwright config/script/hook/tool，但还没有模块准入卡。
+- git 操作是 `push`、PR、`merge`、`reset`、`clean`、`rebase`、`stash` 或 `worktree remove`。
+- `git add` / `git commit` 缺少计划授权、清晰 diff 范围或已确认 message。
 
-## Blocker Report
+## Blocker 报告
 
-Generate a blocker report when progress cannot continue safely.
+无法安全继续时，生成 blocker 报告。
 
-Include:
+报告应包含：
 
-- blocked step
-- exact reason
-- files/commands involved
-- current repository status if relevant
-- safe options
-- what confirmation is needed
+- 被阻塞的步骤
+- 准确原因
+- 涉及的文件 / 命令
+- 必要时包含当前仓库状态
+- 安全选项
+- 需要用户确认的内容
 
-## Handoff Draft
+## 交接稿
 
-Generate a handoff draft when:
+以下情况需要生成交接稿：
 
-- context is getting too long
-- the task is paused by the user
-- a long command or external process cannot finish in this turn
-- work must move to another session
+- 上下文过长。
+- 用户暂停任务。
+- 长命令或外部进程无法在本轮完成。
+- 工作需要转移到另一轮会话。
 
-The handoff should include goal, accepted plan, completed items, current files touched, verification already run, next step, and remaining confirmations.
+交接稿应包含目标、已接受计划、已完成项、当前触碰文件、已运行验证、下一步和剩余确认项。
 
-## Resume After Interruption
+## 中断后恢复
 
-On resume:
+恢复时：
 
-1. Read `AGENTS.md`, `CLAUDE.md`, and this document.
-2. Read `.tmp/active-task/current.md` if it exists.
-3. Run `git status --short --branch`.
-4. Compare ledger scope against the current dirty tree.
-5. Continue only if the next step is still safe and in scope.
-6. Otherwise produce a blocker or handoff report.
+1. 读取 `AGENTS.md`、`CLAUDE.md` 和本文件。
+2. 如果 `.tmp/active-task/current.md` 存在，读取它。
+3. 运行 `git status --short --branch`。
+4. 将 ledger 范围和当前 dirty tree 对照。
+5. 只有下一步仍安全且在范围内时才继续。
+6. 否则生成 blocker 或交接稿。
 
-## Stop Hook Policy
+## Stop Hook 策略
 
-`stop-guard-lite` is only a candidate until explicitly approved.
+`stop-guard-lite` 在明确批准前只是候选模块。
 
-If approved later:
+如果后续获批：
 
-- Stop hook may read `.tmp/active-task/current.md`.
-- If the ledger says the plan is unfinished, it may remind the agent to continue, write a handoff, or explain a blocker.
-- It must not auto-run commands.
-- It must not auto-continue the session.
-- It must not edit business files.
-- StopFailure may only log failure context.
+- Stop hook 可以读取 `.tmp/active-task/current.md`。
+- 如果 ledger 显示计划未完成，它只能提醒 agent 继续、写交接稿或说明 blocker。
+- 它不得自动运行命令。
+- 它不得自动继续会话。
+- 它不得编辑业务文件。
+- StopFailure 只能记录失败上下文。
 
-Dangerous operations always remain manual-confirmation actions.
+危险操作始终保留人工确认。

@@ -1,19 +1,19 @@
-# Safety Boundaries
+# 安全边界
 
-This document defines boundaries for `claudecode` repo-local work.
+本文件定义 `claudecode` repo-local 工作的边界。
 
-## Repository Scope
+## 仓库范围
 
-Allowed write scope in this workflow:
+本工作流允许写入：
 
 - `C:\Users\apple\claudecode\**`
 
-Read-only boundary references when explicitly needed:
+只有明确需要时，才可只读参考：
 
 - `C:\Users\apple\kb\**`
-- global Claude Code / Codex configuration paths
+- 全局 Claude Code / Codex 配置路径
 
-Forbidden from this repo workflow unless the user starts a separate task:
+除非用户另起单独任务，否则本仓工作流禁止修改：
 
 - `C:\Users\apple\.claude\**`
 - `C:\Users\apple\.codex\**`
@@ -27,29 +27,29 @@ Forbidden from this repo workflow unless the user starts a separate task:
 - global hooks
 - global AGENTS / CLAUDE files
 
-## Work-Area Boundary
+## 工作区边界
 
-Before business implementation, choose `target_work_area` from `work_area_registry.md`.
+业务实现前，从 `work_area_registry.md` 选择 `target_work_area`。
 
-If the task is repo governance, use `repo-root-governance`.
+如果任务是 repo governance，使用 `repo-root-governance`。
 
-If the target is unclear:
+如果目标不清楚：
 
-1. stay read-only
-2. list candidate work areas
-3. ask for direction only if a safe assumption is not possible
+1. 保持只读。
+2. 列出候选工作区。
+3. 只有无法做安全假设时才询问方向。
 
-## Dirty Tree Boundary
+## Dirty Tree 边界
 
-The current repository may contain unrelated user changes. Do not revert, reset, stash, clean, or overwrite them.
+当前仓库可能包含无关用户改动。不得 revert、reset、stash、clean 或覆盖这些改动。
 
-Before committing or staging, group the diff by purpose and confirm the current task's exact file range.
+提交或暂存前，先按用途分组 diff，并确认当前任务的精确文件范围。
 
-## Git Confirmation Boundary
+## Git 确认边界
 
-`git add` and `git commit` are allowed only inside an accepted plan with explicit user authorization and a clear diff range.
+`git add` 和 `git commit` 只允许在已接受计划内执行，并且必须有明确用户授权和清晰 diff 范围。
 
-Always ask before:
+以下操作前必须询问：
 
 - `git push`
 - PR creation
@@ -60,42 +60,42 @@ Always ask before:
 - `git stash`
 - `git worktree remove`
 
-## Hook Boundary
+## Hook 边界
 
-Repo hooks may only be:
+Repo hooks 只能是：
 
 - safety blocks
 - naming guards
 - lightweight reminders
 - raw failure logging
 
-Hooks must not:
+Hooks 不得：
 
-- schedule tasks
-- auto-continue execution
-- modify business files
-- install dependencies
-- change global config
-- become a complex workflow engine
+- 调度任务
+- 自动继续执行
+- 修改业务文件
+- 安装依赖
+- 修改全局配置
+- 变成复杂 workflow engine
 
-`stop-guard-lite` remains a module-card candidate until the user explicitly approves writing a Stop hook.
+`stop-guard-lite` 在用户明确批准写 Stop hook 前，仍只是模块卡候选。
 
-## Frontend Boundary
+## 前端边界
 
-Playwright and `frontend-polish-lite` are claudecode-only, coding-only tools.
+Playwright 和 `frontend-polish-lite` 是 claudecode-only、coding-only tools。
 
-They do not enter global core, do not enter `kb`, do not write global hooks, and do not run for every task.
+它们不进入 global core，不进入 `kb`，不写 global hooks，也不用于所有任务。
 
-Use them only for frontend UI interaction, page behavior, visual, responsive, or accessibility checks.
+只在前端 UI interaction、page behavior、visual、responsive 或 accessibility checks 中使用。
 
-## ECC and Superpowers Boundary
+## ECC 与 Superpowers 边界
 
-ECC is not an active workflow source for this repo. Local ECC residue may be inventoried, but deletion or archiving requires a separate approved cleanup plan.
+ECC 不是本仓当前工作流来源。可以盘点本地 ECC residue，但删除或归档需要单独批准的 cleanup plan。
 
-Superpowers is not default SessionStart. Superpowers/TDD can only be task-scoped after admission and confirmation.
+Superpowers 不是默认 SessionStart。Superpowers/TDD 只能在准入和确认后作为 task-scoped 路线。
 
-## kb Boundary
+## kb 边界
 
-`kb` is a knowledge-base workflow and must not inherit claudecode development flow.
+`kb` 是知识库工作流，不能继承 claudecode 开发流程。
 
-Do not push TDD, worktree, PR, subagent-driven development, agent-first, commit-first, Playwright, frontend-polish-lite, ECC cleanup, or claudecode self-improvement flow into `kb`.
+不得把 TDD、worktree、PR、subagent-driven development、agent-first、commit-first、Playwright、frontend-polish-lite、ECC cleanup 或 claudecode self-improvement flow 推入 `kb`。

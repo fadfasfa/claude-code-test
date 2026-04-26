@@ -1,6 +1,6 @@
-# Git Worktree Policy
+# Git Worktree 策略
 
-本文件是 `claudecode` worktree 口径唯一详细说明。入口文件只保留短规则或指向。
+本文件是 `claudecode` worktree 口径的唯一详细说明。入口文件只保留短规则或指向。
 
 ## 分类
 

@@ -1,110 +1,110 @@
-# Task Routing
+# 任务路由
 
-This document decides how much workflow a `claudecode` task needs.
+本文件决定 `claudecode` 任务需要多重的工作流。
 
-## Default Classifier
+## 默认分类器
 
-| Task class | Signals | Flow |
+| 任务级别 | 信号 | 流程 |
 | :--- | :--- | :--- |
-| Small | One narrow file or doc, obvious bug, typo, small config/doc clarification, no shared contract change | Confirm target, inspect narrow context, patch, run closest useful verification, report |
-| Medium | Multiple files in one work area, behavior change with local risk, unclear test entrypoint, moderate UI/API change | Short plan, identify verification, patch in small steps, verify, report |
-| Large | Cross-work-area change, shared data contract, major refactor, migration, release/PR work, high rollback cost, unclear requirements | Requirements narrowing, decomposition, checkpoints, optional worktree, optional TDD, optional subagents, PR-style review |
+| Small | 单个窄文件或文档、明显 bug、错字、小配置 / 文档澄清、不改变共享契约 | 确认目标，读取窄范围上下文，修改，运行最近的有效验证，报告 |
+| Medium | 同一工作区内多文件、局部风险行为变更、测试入口不清、中等 UI/API 变更 | 简短计划，识别验证方式，小步修改，验证，报告 |
+| Large | 跨工作区变更、共享数据契约、重大重构、迁移、release/PR 工作、高回滚成本、需求不清 | 需求收敛、任务拆分、checkpoint、可选 worktree、可选 TDD、可选 subagents、PR-style review |
 
-For large tasks, a lightweight brainstorm / option comparison may happen before the detailed plan to narrow direction; brainstorm itself does not replace the acceptance plan, task split, or verification.
+对大任务，进入详细计划前可先做轻量 brainstorm / 方案比较，用于收敛方向；brainstorm 本身不得替代验收计划、任务拆分或验证。
 
-If the route is unclear, choose the lighter route first and escalate only when evidence shows the task needs it.
+如果路由不清，先选择较轻路径；只有证据表明任务需要时才升级。
 
-## When A Plan Is Needed
+## 什么时候需要计划
 
-No formal plan is needed for:
+以下情况不需要正式计划：
 
-- trivial text edits
-- one-line fixes
-- narrow docs cleanup
-- read-only inventory
-- obvious local bug fixes where the command path is clear
+- 琐碎文本编辑
+- 一行修复
+- 窄范围 docs cleanup
+- 只读盘点
+- 命令路径清晰的明显本地 bug 修复
 
-A short plan is needed for:
+以下情况需要简短计划：
 
 - medium tasks
-- multiple files in one work area
-- any task touching workflow docs, hooks, skills, tools, or settings
-- frontend changes requiring visual validation
-- data contract changes
+- 同一工作区内多文件
+- 任何触碰 workflow docs、hooks、skills、tools 或 settings 的任务
+- 需要视觉验证的前端变更
+- 数据契约变更
 
-A detailed plan is needed for:
+以下情况需要详细计划：
 
 - large tasks
 - worktree use
 - TDD route
 - subagent parallel implementation
 - PR/release route
-- risky cleanup or migration
+- 高风险 cleanup 或 migration
 
-## When TDD Is Needed
+## 什么时候需要 TDD
 
-Use TDD or test-first only when it materially controls risk:
+只有 TDD 或 test-first 能实际控制风险时才使用：
 
-- bug has a clear regression shape
-- shared API/data contract may regress
-- large refactor with existing tests
-- parser, serializer, routing, or state-machine behavior is changing
+- bug 具有清晰 regression 形状
+- shared API/data contract 可能回归
+- 具有现有测试的大型重构
+- parser、serializer、routing 或 state-machine 行为发生变化
 
-Do not force TDD for docs-only tasks, exploratory reads, tiny UI copy edits, or tasks with no practical local test harness.
+不要为 docs-only 任务、探索性读取、微小 UI 文案修改或没有实用本地测试框架的任务强制 TDD。
 
-## When Subagents Are Needed
+## 什么时候需要 Subagents
 
-Subagents are optional and only useful when the work can be bounded.
+Subagents 是可选项，只在工作能被清晰界定时有用。
 
-Use them for:
+适合用于：
 
-- read-only codebase exploration
+- 只读代码库探索
 - test discovery
 - failure attribution
 - review
-- disjoint implementation slices when ownership is explicit
+- 文件所有权明确、互不重叠的实现切片
 
-Do not use them for:
+不适合用于：
 
-- urgent blocking work on the critical path
-- same-file concurrent edits
-- settings, hooks, worktree policy, or shared data contracts unless explicitly planned
-- tasks where coordination overhead is larger than the work
+- critical path 上的紧急阻塞工作
+- 同一文件并发编辑
+- settings、hooks、worktree policy 或 shared data contracts，除非明确计划
+- 协调成本高于工作本身的任务
 
-## When Worktree Is Needed
+## 什么时候需要 Worktree
 
-Use `docs/git-worktree-policy.md`.
+见 `docs/git-worktree-policy.md`。
 
-Worktree is usually needed only when:
+通常只有以下情况需要 worktree：
 
-- the current tree has unrelated changes that block safe edits
-- the task is large enough to need isolation
-- the user explicitly asks for isolated execution
-- parallel implementation needs separate branches or trees
+- 当前 tree 有无关改动，阻碍安全编辑
+- 任务大到需要隔离
+- 用户明确要求隔离执行
+- 并行实现需要单独 branch 或 tree
 
-Worktree is not needed for small docs/rules edits, local bug fixes, or read-only inventory.
+小型 docs/rules 编辑、本地 bug 修复或只读盘点不需要 worktree。
 
-Creating a worktree without `-DryRun` requires explicit user instruction. Removing a worktree always requires human confirmation.
+不带 `-DryRun` 创建 worktree 前，必须有明确用户指令。删除 worktree 永远需要人工确认。
 
-## When PR Review Is Needed
+## 什么时候需要 PR Review
 
-PR-style review is appropriate for:
+PR-style review 适用于：
 
 - large task completion
-- behavior changes with high blast radius
-- cross-work-area changes
-- changes that will be pushed or reviewed externally
-- workflow/safety changes that affect future agent behavior
+- blast radius 高的行为变更
+- 跨工作区变更
+- 需要 push 或外部 review 的变更
+- 会影响未来 agent 行为的 workflow/safety 变更
 
-PR review is not required for trivial docs edits, small local fixes, or read-only reports.
+琐碎 docs 编辑、小型本地修复或只读报告不需要 PR review。
 
-## Verification Floor
+## 验证底线
 
-Every non-read-only task needs a completion report with:
+任何非只读任务的完成报告都需要包含：
 
 - changed files
-- exact verification command or reason no command was relevant
+- 精确验证命令，或说明为什么没有相关命令
 - result
 - remaining risk
 
-Use `verification-before-completion` for implementation tasks.
+实现任务使用 `verification-before-completion`。

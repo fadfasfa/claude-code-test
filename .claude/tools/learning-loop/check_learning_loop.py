@@ -1,3 +1,10 @@
+"""中文简介：repo-local self-improvement 只读检查工具。
+
+什么时候读：需要确认本仓 learning/error/hook wiring 或准备 self-improvement 晋升时读取。
+约束什么：只汇总 repo-local settings、hook、learning 文件和最近错误条目。
+不负责什么：不修改规则、不写 global/kb、不自动晋升 learning、不修复错误。
+"""
+
 from __future__ import annotations
 
 import json
@@ -25,11 +32,14 @@ LOGGED_AT_PATTERN = re.compile(r"^\*\*Logged\*\*:\s+(.+)$", re.MULTILINE)
 
 @dataclass(frozen=True)
 class ErrorEntry:
+    """单条 raw error 的摘要，供报告展示最近错误使用。"""
+
     entry_id: str
     timestamp: str
 
 
 def load_settings() -> list[dict[str, Any]]:
+    """读取 repo-local settings 文件；不存在的 settings.local.json 会被跳过。"""
     settings: list[dict[str, Any]] = []
     for settings_path in SETTINGS_PATHS:
         if settings_path.exists():
@@ -38,6 +48,7 @@ def load_settings() -> list[dict[str, Any]]:
 
 
 def iter_hook_commands(settings_items: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """从 Claude Code settings 中提取 hook event 和 command，不执行命令。"""
     commands: list[tuple[str, str]] = []
     for settings in settings_items:
         hooks = settings.get("hooks")
@@ -62,17 +73,20 @@ def iter_hook_commands(settings_items: list[dict[str, Any]]) -> list[tuple[str, 
 
 
 def has_visible_skill(commands: list[tuple[str, str]], skill_name: str) -> bool:
+    """检查 hook command 文本中是否出现某个 skill 路径，仅用于可见性提示。"""
     needle = f"/{skill_name}/"
     return any(needle in command.replace("\\", "/") for _, command in commands)
 
 
 def is_repo_local_path(path_text: str) -> bool:
+    """判断 hook command 是否指向本仓 .claude/hooks，避免误把全局 hook 当成本仓 hook。"""
     normalized = path_text.replace("\\", "/").lower()
     repo_hooks_path = REPO_HOOKS_DIR.as_posix().lower()
     return normalized.startswith(repo_hooks_path) or f" {repo_hooks_path}" in normalized or repo_hooks_path + "/" in normalized
 
 
 def repo_relative(path: Path) -> str:
+    """尽量把路径转成仓库相对路径，失败时保留原路径文本。"""
     try:
         return path.resolve().relative_to(REPO_ROOT).as_posix()
     except ValueError:
@@ -80,10 +94,12 @@ def repo_relative(path: Path) -> str:
 
 
 def describe_path(path: Path) -> str:
+    """同时输出仓库相对路径和绝对路径，方便人工核对 wiring。"""
     return f"{repo_relative(path)} ({path.resolve().as_posix()})"
 
 
 def parse_error_entries() -> list[ErrorEntry]:
+    """解析 ignored ERRORS.md 的错误条目摘要；不修改 raw log。"""
     if not ERRORS_PATH.exists():
         return []
 
@@ -107,6 +123,7 @@ def parse_error_entries() -> list[ErrorEntry]:
 
 
 def print_hook_summary(commands: list[tuple[str, str]]) -> None:
+    """打印 settings 中当前可见的 hook 命令。"""
     print("当前生效 hook 文件位置:")
     if not commands:
         print("- 未找到 hook 配置")
@@ -116,6 +133,7 @@ def print_hook_summary(commands: list[tuple[str, str]]) -> None:
 
 
 def print_skill_visibility(commands: list[tuple[str, str]]) -> None:
+    """打印历史 self-improvement 相关 skill 是否通过 hook command 暴露。"""
     print("skill 可见性:")
     for skill_name in ("self-improvement", "pre-flight-check", "context-surfing"):
         visible = "yes" if has_visible_skill(commands, skill_name) else "no"
@@ -123,6 +141,7 @@ def print_skill_visibility(commands: list[tuple[str, str]]) -> None:
 
 
 def print_learning_files() -> None:
+    """打印 repo-local learning/error 文件存在性。"""
     print("repo-local 文件存在性:")
     for path in (*SETTINGS_PATHS, ERROR_LOG_HOOK_PATH, LEARNINGS_PATH, ERRORS_PATH, FEATURE_REQUESTS_PATH):
         exists = "yes" if path.exists() else "no"
@@ -130,6 +149,7 @@ def print_learning_files() -> None:
 
 
 def print_error_summary(entries: list[ErrorEntry]) -> None:
+    """打印最近 raw error 摘要，避免输出完整错误体。"""
     print(f"ERRORS.md 条目数: {len(entries)}")
     print("最近 3 条错误条目:")
     if not entries:
@@ -140,6 +160,7 @@ def print_error_summary(entries: list[ErrorEntry]) -> None:
 
 
 def print_repo_local_hook_status(commands: list[tuple[str, str]]) -> None:
+    """报告当前 settings 是否实际使用 repo-local hook。"""
     repo_local_commands = [command for _, command in commands if is_repo_local_path(command)]
     print(f"当前是否使用 repo-local hook: {'yes' if repo_local_commands else 'no'}")
     for command in repo_local_commands:
@@ -147,6 +168,7 @@ def print_repo_local_hook_status(commands: list[tuple[str, str]]) -> None:
 
 
 def main() -> None:
+    """只读检查入口：收集 settings、hook、learning 和 raw error 摘要后打印报告。"""
     settings = load_settings()
     commands = iter_hook_commands(settings)
     entries = parse_error_entries()

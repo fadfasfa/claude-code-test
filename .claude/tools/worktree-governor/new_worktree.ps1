@@ -1,3 +1,10 @@
+<#
+中文简介：repo-local 手动 worktree 创建工具。
+什么时候读：需要人工创建 directed/auto worktree 或 dry-run 查看路径时读取。
+约束什么：根据 Owner/Purpose 生成受管 branch/path，默认支持 -DryRun，真实创建前需要明确用户指令。
+不负责什么：不删除 worktree，不清理 legacy worktree，不修改 global/kb。
+#>
+
 param(
   [Parameter(Mandatory = $true)]
   [ValidateSet("directed", "auto")]
@@ -20,15 +27,18 @@ $ManagedRoot = "C:\Users\apple\_worktrees\claudecode"
 $DirectedRoot = Join-Path $ManagedRoot "directed"
 $AutoRoot = Join-Path $ManagedRoot "auto"
 
+# 统一失败出口：报告错误并终止，不做自动回滚或清理。
 function Fail([string]$Message) {
   Write-Error $Message
   exit 1
 }
 
+# 标准化路径文本，便于比较 worktree 是否位于受管根目录下。
 function Normalize-PathText([string]$PathText) {
   return ([System.IO.Path]::GetFullPath($PathText)).TrimEnd('\', '/')
 }
 
+# 判断 Child 是否在 Parent 内，避免从已有 worktree 内创建嵌套 worktree。
 function Test-UnderPath([string]$Child, [string]$Parent) {
   $c = Normalize-PathText $Child
   $p = Normalize-PathText $Parent
@@ -36,6 +46,7 @@ function Test-UnderPath([string]$Child, [string]$Parent) {
     $c.StartsWith($p + "\", [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+# 把用户提供的 Purpose 收敛为安全 slug，用于 branch 和 path。
 function Get-Slug([string]$Text) {
   $slug = $Text.ToLowerInvariant() -replace '[^a-z0-9]+', '-'
   $slug = ($slug -replace '-{2,}', '-').Trim('-')

@@ -1,56 +1,56 @@
-# Playwright Policy
+# Playwright 策略
 
-Playwright is a claudecode-only, coding-only frontend validation capability.
+Playwright 是 claudecode-only、coding-only 的前端验证能力。
 
-It does not enter:
+它不进入：
 
 - global core
 - `kb`
 - global hooks
-- default flow for every task
+- 所有任务的默认流程
 
-## Current Discovery
+## 当前发现
 
-Phase 0 discovery found a Playwright CLI on PATH:
+Phase 0 发现 PATH 上有 Playwright CLI：
 
 ```text
 C:\Users\apple\AppData\Local\Programs\Python\Python311\Scripts\playwright.exe
 Version 1.58.0
 ```
 
-No root-level `playwright.config.*` was found. Existing `package.json` / `package-lock.json` files are in work-area or legacy worktree paths, notably `sm2-randomizer\pipeline\collect\wiki`.
+未发现 root-level `playwright.config.*`。已有 `package.json` / `package-lock.json` 位于工作区或 legacy worktree 路径，尤其是 `sm2-randomizer\pipeline\collect\wiki`。
 
-This repository must not install Playwright or add Playwright configuration/scripts without a module admission card.
+没有模块准入卡时，本仓不得安装 Playwright，也不得添加 Playwright configuration/scripts。
 
-## Trigger Conditions
+## 触发条件
 
-Use Playwright only for:
+Playwright 只用于：
 
-- frontend tasks
-- UI interaction checks
-- page behavior checks
+- 前端任务
+- UI interaction 检查
+- page behavior 检查
 - screenshot validation
 - responsive checks
 - trace/debug validation
-- visual regression investigation
+- visual regression 调查
 
-Do not use Playwright for backend, docs, data, repo-governance-only, or `kb` tasks unless the user explicitly asks.
+后端、docs、data、repo-governance-only 或 `kb` 任务默认不使用 Playwright，除非用户明确要求。
 
-## Allowed Scope
+## 允许范围
 
-- Read current task frontend files.
-- Run browser validation only when a local or file URL is available and the task needs it.
-- Write screenshots/traces only under ignored runtime paths such as `.tmp/`.
+- 读取当前任务前端文件。
+- 只有本地 URL 或 file URL 可用且任务需要时，才运行浏览器验证。
+- screenshot/trace 只写到 `.tmp/` 等 ignored runtime 路径。
 
-## Forbidden Scope
+## 禁止范围
 
-- No global Playwright install.
-- No repo dependency install without confirmation.
-- No global hooks.
-- No `kb` validation policy.
-- No Playwright MCP.
-- No automatic all-task validation.
+- 不做全局 Playwright install。
+- 未确认前不安装 repo dependency。
+- 不写 global hooks。
+- 不创建 `kb` validation policy。
+- 不启用 Playwright MCP。
+- 不做所有任务自动验证。
 
-## Future Config Or Script
+## 未来 Config 或 Script
 
-Any future `playwright.config.*`, npm script, PowerShell helper, or hook must first pass `docs/module-admission.md`.
+任何未来的 `playwright.config.*`、npm script、PowerShell helper 或 hook，都必须先通过 `docs/module-admission.md`。
