@@ -90,34 +90,43 @@ def get_runtime_persisted_dir() -> Path:
     return get_runtime_root_dir() / "persisted"
 
 
+def _join_under_dir(base_dir: Path, relative_name: str) -> Path:
+    """拼接受控运行路径，拒绝绝对路径和上级目录穿越。"""
+    candidate = (base_dir / relative_name).resolve()
+    root = base_dir.resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError(f"运行态路径越界：{relative_name}")
+    return candidate
+
+
 def build_runtime_state_path(filename: str) -> str:
     """生成运行态状态文件路径。"""
-    return str(get_runtime_state_dir() / filename)
+    return str(_join_under_dir(get_runtime_state_dir(), filename))
 
 
 def build_runtime_cache_path(filename: str) -> str:
     """生成运行态缓存文件路径。"""
-    return str(get_runtime_cache_dir() / filename)
+    return str(_join_under_dir(get_runtime_cache_dir(), filename))
 
 
 def build_runtime_lock_path(filename: str) -> str:
     """生成运行态锁文件路径。"""
-    return str(get_runtime_lock_dir() / filename)
+    return str(_join_under_dir(get_runtime_lock_dir(), filename))
 
 
 def build_runtime_profile_path(dirname: str) -> str:
     """生成运行态 profile 目录路径。"""
-    return str(get_runtime_profile_dir() / dirname)
+    return str(_join_under_dir(get_runtime_profile_dir(), dirname))
 
 
 def build_runtime_persisted_path(filename: str) -> str:
     """生成运行态生成型持久化文件路径。"""
-    return str(get_runtime_persisted_dir() / filename)
+    return str(_join_under_dir(get_runtime_persisted_dir(), filename))
 
 
 def runtime_data_fallback_paths(runtime_path: str, legacy_relative_name: str) -> list[str]:
     """返回 data/runtime 优先、旧 config 兼容的读取路径列表。"""
-    candidates = [runtime_path, str(Path(CONFIG_DIR) / legacy_relative_name)]
+    candidates = [runtime_path, str(_join_under_dir(Path(CONFIG_DIR), legacy_relative_name))]
     return list(dict.fromkeys(candidates))
 
 
