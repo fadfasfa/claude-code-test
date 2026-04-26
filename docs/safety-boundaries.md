@@ -27,6 +27,8 @@
 - global hooks
 - global AGENTS / CLAUDE files
 
+当前 repo 任务不得默认写 `C:\Users\apple\.claude\plans\*.md`。计划审批通过 ExitPlanMode 或对话提交完成；如需计划落盘，只能写 repo 内 `.tmp/active-task/current.md`。全局 `.claude\plans` 写入必须由用户显式要求，且不能把 PowerShell `Set-Content` 当作默认 fallback。
+
 ## 工作区边界
 
 业务实现前，从 `work_area_registry.md` 选择 `target_work_area`。
@@ -47,11 +49,11 @@
 
 ## 读取边界
 
-读取 Markdown / text 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。
+读取 Markdown / text / code 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。
 
 避免一次性读取超大范围。优先使用目录枚举、`rg`、`Select-String`、`Get-Content -TotalCount` 或小范围分段读取来确认候选位置和少量上下文。
 
-若 Read 因空 PDF page、行号范围、空参数或工具参数失败，失败一次后禁止用相同参数重试。立即改用 `rg`、`Select-String`、`Get-Content -TotalCount` 或 scoped `Get-Content` 小范围行读取。
+若 Read 失败且原因是空 `pages`、`pages` 参数不适用于 Markdown/text/code、行号范围、空参数或工具参数失败，失败一次后禁止用相同参数重试。Markdown/text/code 的主线程只读 fallback 是 `Get-Content -LiteralPath <path> -Encoding UTF8 -Raw`；该 fallback 只能读取文件，不得写文件。
 
 对大型工作区先搜索关键词和目录结构，不全量读文件。已知 `target_work_area` 时，先检索 `work_area_registry.md` 中该工作区条目，再列工作区一级目录；不要把 `Glob <work_area>/**/*` 作为第一步。只有明确需要更多候选文件时，才扩大 Glob 或跨子区搜索。
 

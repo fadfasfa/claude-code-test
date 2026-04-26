@@ -54,6 +54,8 @@
 长任务治理见 `docs/continuous-execution.md`。
 
 - active-task ledger 路径是 `.tmp/active-task/current.md`。
+- 当前 repo 任务不得把 `C:\Users\apple\.claude\plans\*.md` 当作必须写入的运行态计划文件；计划审批通过 ExitPlanMode 或对话完成。
+- 如确实需要计划落盘，只能写 repo 内 `.tmp/active-task/current.md`；写全局 `.claude\plans` 必须由用户显式提出。
 - ledger 只是运行态记录。它不是规则文件，不是 learning，也不能授权危险操作。
 - Stop hook 只能在 ledger 显示已接受计划未完成时做轻量提醒。
 - StopFailure 只能记录失败上下文。

@@ -12,6 +12,10 @@
 
 这个 ledger 是 ignored 运行态记录。它不是规则层，不是 learning，不是提交产物，也不是授权凭证。
 
+当前 repo 任务不得把 `C:\Users\apple\.claude\plans\*.md` 当作必须写入的运行态文件。计划审批通过 ExitPlanMode 或对话提交完成，不强制落盘到全局 plans。
+
+如确实需要计划落盘，只能写当前 repo 内的 `.tmp/active-task/current.md`。写入全局 `.claude\plans` 必须由用户显式要求，且不能用 PowerShell `Set-Content` 作为默认 fallback。
+
 推荐字段：
 
 ```markdown
@@ -68,9 +72,17 @@
 
 ## Markdown / Text 读取 fallback
 
-读取 Markdown / text 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。避免一次性读取超大范围。
+读取 Markdown / text / code 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。避免一次性读取超大范围。
 
-若 Read 因空 PDF page、行号范围、空参数或工具参数失败，失败一次后禁止用相同参数重试，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。只读验收优先搜索和分段读取，不做全文件暴力读取。
+若 Read 失败且原因是空 `pages`、`pages` 参数不适用于 Markdown/text/code、行号范围、空参数或工具参数失败，失败一次后禁止用相同参数重试。
+
+Markdown/text/code 只读 fallback 固定为主线程只读命令：
+
+```powershell
+Get-Content -LiteralPath <path> -Encoding UTF8 -Raw
+```
+
+该 fallback 只能读取文件，不得写文件；不得顺手改用 `Set-Content`、`Add-Content` 或 `Out-File` 作为计划文件写入 fallback。
 
 读取失败不等于任务 blocker。先降级到 scoped read：目录枚举、关键词搜索、`Get-Content -TotalCount`、小范围行读取或目标工作区条目检索。
 

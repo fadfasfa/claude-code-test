@@ -60,6 +60,24 @@
 - 为什么不能用现有模块解决：规则和 skills 依赖 agent 自律；轻量 Stop reminder 用于捕捉意外过早停止。
 - 状态：仅提案；没有新的用户确认前不得写 hook。
 
+### read-text-pages-guard
+
+- 名称：`read-text-pages-guard`
+- 类型：repo-local PreToolUse hook。
+- 解决什么问题：阻断 Markdown/text/code 文件的 Read 调用携带 PDF `pages` 参数，避免 Read 被工具系统判定失败后触发错误写入 fallback。
+- 不解决什么问题：不读取文件、不写计划文件、不替代正常 Read、不处理 PDF Read 的 pages。
+- 触发条件：PreToolUse `Read`，且 `file_path` 后缀是 `.md`、`.txt`、`.json`、`.py`、`.ps1`、`.html`、`.css` 或 `.js`，并且 tool input 包含 `pages` 字段。
+- 会读哪些路径：无；只读取 hook stdin payload。
+- 会写哪些路径：无。
+- 是否安装依赖：否。
+- 是否运行浏览器：否。
+- 是否影响 git/worktree/global/kb：不影响 worktree/global/kb；只在当前 repo 的 `.claude/settings.json` 注册 repo-local hook。
+- 如何禁用：从 `.claude/settings.json` 移除对应 `PreToolUse` `Read` hook entry。
+- 如何删除：删除 `.claude/hooks/block-read-pages-for-text.ps1` 并移除 settings entry。
+- 最小验证命令：用 JSON payload 模拟 `Read` Markdown with empty `pages`，确认 exit 2；模拟普通 Markdown Read 和 PDF pages Read，确认 exit 0。
+- 为什么不能用现有模块解决：文档规则依赖模型自律，不能在工具调用前阻断错误参数。
+- 状态：已接受 repo-local safety hook。
+
 ### resume-active-task
 
 - 名称：`resume-active-task`
