@@ -154,3 +154,75 @@ Before each tool call, validate required fields and remove empty optional fields
 - Pattern-Key: workflow.control-plane-defaults
 
 ---
+
+## [LRN-20260426-001] best_practice
+
+**Logged**: 2026-04-26T00:00:00+08:00
+**Priority**: high
+**Status**: pending
+**Area**: tooling
+
+### Summary
+Windows native Python 不应直接使用 `/c/Users/...` 这类 Bash 风格路径。
+
+### Details
+在本仓 Windows 环境中，传给 native Python、`pathlib`、PowerShell 或文件工具参数的路径如果使用 `/c/Users/...`，可能被解析成 `\c\Users\...` 并触发 `FileNotFoundError`。Bash 风格路径只适合 shell 层；跨到 Windows-native 工具时，需要使用 `C:/Users/...`、工具原生绝对路径，或先做路径归一化。
+
+### Suggested Action
+编写 Windows-native Python/PowerShell 辅助命令或工具参数时，优先使用 Windows 可解析绝对路径；不要把 Git Bash/MSYS 路径原样传入 native Python。
+
+### Metadata
+- Source: self-improvement-promotion review of .learnings/ERRORS.md
+- Related Files: .learnings/ERRORS.md
+- Tags: windows, python, paths, tooling
+- Pattern-Key: tooling.windows-native-paths
+
+---
+
+## [LRN-20260426-002] workflow_boundary
+
+**Logged**: 2026-04-26T00:00:00+08:00
+**Priority**: high
+**Status**: pending
+**Area**: workflow
+
+### Summary
+严格只读任务中应避免主动运行预期可能失败的 Bash 命令。
+
+### Details
+本仓配置了 `PostToolUseFailure` 的 Bash failure hook；失败的 Bash 调用会写入 `.learnings/ERRORS.md`。因此，当用户明确要求 strict read-only audit、不得写 `ERRORS`、不得修改文件或类似约束时，主动运行可能失败的 Bash 命令会把“只读探索”变成写入 raw log 的副作用。
+
+### Suggested Action
+严格只读任务优先使用 Read、Grep、Glob 等不会触发 Bash failure log 的工具；如果必须运行可能失败的 Bash，先说明它可能写入 `.learnings/ERRORS.md` 并取得用户确认。
+
+### Metadata
+- Source: self-improvement-promotion review of strict read-only audit risk
+- Related Files: .claude/hooks/self-improvement-error-log.sh, .learnings/ERRORS.md
+- Tags: read-only, bash, hooks, errors, workflow
+- Pattern-Key: workflow.strict-readonly-bash-failure-hook
+
+---
+
+## [LRN-20260426-003] best_practice
+
+**Logged**: 2026-04-26T00:00:00+08:00
+**Priority**: high
+**Status**: pending
+**Area**: tooling
+
+### Summary
+Windows 控制台输出中文、替换字符或大段文本时要显式控制编码和输出范围。
+
+### Details
+在本仓 Windows 环境中，用 Python 暴力打印中文、替换字符或大型 Markdown 内容时，默认 GBK 控制台可能触发 `UnicodeEncodeError`，并让本来只需读取片段的审查变成失败命令。优先使用专用读取工具或分段查询；必须用 Python 输出时，显式设置 UTF-8 输出或限制为 ASCII-safe 摘要。
+
+### Suggested Action
+不要用 Python 一次性打印大型中文文件；优先使用 Read/Grep 分段读取。确需脚本输出时，设置 UTF-8 输出并控制输出长度。
+
+### Metadata
+- Source: self-improvement-promotion review of .learnings/ERRORS.md
+- Related Files: .learnings/ERRORS.md
+- Tags: windows, encoding, python, unicode, tooling
+- Pattern-Key: tooling.windows-console-utf8-bounded-output
+
+---

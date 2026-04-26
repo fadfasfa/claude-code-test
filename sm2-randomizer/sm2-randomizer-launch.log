@@ -1,0 +1,129 @@
+Process started in PID=7664
+Process started in PID=7664
+Frozen=False
+Frozen=False
+Executable=C:\Users\apple\AppData\Local\Programs\Python\Python313\python.exe
+Executable=C:\Users\apple\AppData\Local\Programs\Python\Python313\python.exe
+CWD=C:\Users\apple\claudecode
+CWD=C:\Users\apple\claudecode
+LogFile=C:\Users\apple\claudecode\sm2-randomizer\sm2-randomizer-launch.log
+LogFile=C:\Users\apple\claudecode\sm2-randomizer\sm2-randomizer-launch.log
+Serving SM2 Randomizer from: C:\Users\apple\claudecode\sm2-randomizer
+Serving SM2 Randomizer from: C:\Users\apple\claudecode\sm2-randomizer
+Mode: source
+Mode: source
+No fixed port requested, using 53231.
+No fixed port requested, using 53231.
+App URL:  http://127.0.0.1:53231/app/static/
+App URL:  http://127.0.0.1:53231/app/static/
+Root URL: http://127.0.0.1:53231/
+Root URL: http://127.0.0.1:53231/
+Opened browser via os.startfile: http://127.0.0.1:53231/app/static/
+Opened browser via os.startfile: http://127.0.0.1:53231/app/static/
+HTTP GET: raw=/app/static/ rewritten=/app/static/ local=C:\Users\apple\claudecode\sm2-randomizer\app\static
+HTTP GET: raw=/app/static/ rewritten=/app/static/ local=C:\Users\apple\claudecode\sm2-randomizer\app\static
+127.0.0.1 - - [23/Apr/2026 10:41:04] "GET /app/static/ HTTP/1.1" 200 -
+HTTP GET: raw=/app/static/fonts.css?v=3 rewritten=/app/static/fonts.css local=C:\Users\apple\claudecode\sm2-randomizer\app\static\fonts.css
+HTTP GET: raw=/app/static/fonts.css?v=3 rewritten=/app/static/fonts.css local=C:\Users\apple\claudecode\sm2-randomizer\app\static\fonts.css
+127.0.0.1 - - [23/Apr/2026 10:41:04] "GET /app/static/fonts.css?v=3 HTTP/1.1" 200 -
+HTTP GET: raw=/app/static/styles.css?v=3 rewritten=/app/static/styles.css local=C:\Users\apple\claudecode\sm2-randomizer\app\static\styles.css
+HTTP GET: raw=/app/static/styles.css?v=3 rewritten=/app/static/styles.css local=C:\Users\apple\claudecode\sm2-randomizer\app\static\styles.css
+127.0.0.1 - - [23/Apr/2026 10:41:04] "GET /app/static/styles.css?v=3 HTTP/1.1" 200 -
+HTTP GET: raw=/app/static/main.js?v=3 rewritten=/app/static/main.js local=C:\Users\apple\claudecode\sm2-randomizer\app\static\main.js
+HTTP GET: raw=/app/static/main.js?v=3 rewritten=/app/static/main.js local=C:\Users\apple\claudecode\sm2-randomizer\app\static\main.js
+127.0.0.1 - - [23/Apr/2026 10:41:04] "GET /app/static/main.js?v=3 HTTP/1.1" 200 -
+HTTP GET: raw=/app/data/talents.json rewritten=/app/data/talents.json local=C:\Users\apple\claudecode\sm2-randomizer\app\data\talents.json
+HTTP GET: raw=/app/data/talents.json rewritten=/app/data/talents.json local=C:\Users\apple\claudecode\sm2-randomizer\app\data\talents.json
+127.0.0.1 - - [23/Apr/2026 10:41:04] "GET /app/data/talents.json HTTP/1.1" 200 -
+HTTP GET: raw=/app/data/classes.json rewritten=/app/data/classes.json local=C:\Users\apple\claudecode\sm2-randomizer\app\data\classes.json
+HTTP GET: raw=/app/data/classes.json rewritten=/app/data/classes.json local=C:\Users\apple\claudecode\sm2-randomizer\app\data\classes.json
+127.0.0.1 - - [23/Apr/2026 10:41:04] "GET /app/data/classes.json HTTP/1.1" 200 -
+HTTP GET: raw=/app/data/meta.json rewritten=/app/data/meta.json local=C:\Users\apple\claudecode\sm2-randomizer\app\data\meta.json
+HTTP GET: raw=/app/data/meta.json rewritten=/app/data/meta.json local=C:\Users\apple\claudecode\sm2-randomizer\app\data\meta.json
+127.0.0.1 - - [23/Apr/2026 10:41:04] "GET /app/data/meta.json HTTP/1.1" 200 -
+HTTP GET: raw=/favicon.ico rewritten=/favicon.ico local=C:\Users\apple\claudecode\sm2-randomizer\favicon.ico
+HTTP GET: raw=/favicon.ico rewritten=/favicon.ico local=C:\Users\apple\claudecode\sm2-randomizer\favicon.ico
+127.0.0.1 - - [23/Apr/2026 10:41:04] "GET /favicon.ico HTTP/1.1" 404 -
+HTTP GET: raw=/app/assets/classes/%E7%89%B9%E6%88%98%E5%85%B5/cover.png rewritten=/app/assets/classes/%E7%89%B9%E6%88%98%E5%85%B5/cover.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\classes\特战兵\cover.png
+HTTP GET: raw=/app/assets/classes/%E7%89%B9%E6%88%98%E5%85%B5/cover.png rewritten=/app/assets/classes/%E7%89%B9%E6%88%98%E5%85%B5/cover.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\classes\特战兵\cover.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/classes/%E7%89%B9%E6%88%98%E5%85%B5/cover.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r1_restoration.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r1_restoration.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c1r1_restoration.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r1_restoration.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r1_restoration.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c1r1_restoration.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r1_restoration.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r1_enhanced-force.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r1_enhanced-force.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c3r1_enhanced-force.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r1_enhanced-force.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r1_enhanced-force.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c3r1_enhanced-force.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r1_encompassing-aegis.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r1_encompassing-aegis.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c4r1_encompassing-aegis.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r1_encompassing-aegis.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r1_encompassing-aegis.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c4r1_encompassing-aegis.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r1_thermal-boost.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r1_thermal-boost.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c2r1_thermal-boost.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r1_thermal-boost.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r1_thermal-boost.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c2r1_thermal-boost.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r1_enhanced-force.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r1_adamant-will.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r1_adamant-will.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c5r1_adamant-will.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r1_adamant-will.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r1_adamant-will.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c5r1_adamant-will.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r1_encompassing-aegis.png HTTP/1.1" 200 -
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r1_thermal-boost.png HTTP/1.1" 200 -
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r1_adamant-will.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r3_strategic-stand.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r3_strategic-stand.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c2r3_strategic-stand.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r3_strategic-stand.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r3_strategic-stand.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c2r3_strategic-stand.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r3_strategic-stand.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r3_bonds-of-brotherhood.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r3_bonds-of-brotherhood.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c4r3_bonds-of-brotherhood.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r3_bonds-of-brotherhood.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r3_bonds-of-brotherhood.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c4r3_bonds-of-brotherhood.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r3_bonds-of-brotherhood.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r2_fortitude.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r2_fortitude.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c2r2_fortitude.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r2_fortitude.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r2_fortitude.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c2r2_fortitude.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r3_power-regulator.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r3_power-regulator.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c6r3_power-regulator.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r3_power-regulator.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r3_power-regulator.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c6r3_power-regulator.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r3_power-regulator.png HTTP/1.1" 200 -
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c2r2_fortitude.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r2_field-adjustment.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r2_field-adjustment.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c6r2_field-adjustment.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r2_field-adjustment.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r2_field-adjustment.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c6r2_field-adjustment.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r2_field-adjustment.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r2_consecutive-execution.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r2_consecutive-execution.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c5r2_consecutive-execution.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r2_consecutive-execution.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r2_consecutive-execution.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c5r2_consecutive-execution.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r2_consecutive-execution.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r2_multi-kill.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r2_multi-kill.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c1r2_multi-kill.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r2_multi-kill.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r2_multi-kill.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c1r2_multi-kill.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r2_multi-kill.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r3_conversion-field.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r3_conversion-field.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c8r3_conversion-field.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r3_conversion-field.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r3_conversion-field.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c8r3_conversion-field.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r3_emperor-s-protection.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r3_emperor-s-protection.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c5r3_emperor-s-protection.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r3_emperor-s-protection.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r3_emperor-s-protection.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c5r3_emperor-s-protection.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r3_conversion-field.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r3_wrath-of-the-imperium.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r3_wrath-of-the-imperium.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c7r3_wrath-of-the-imperium.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r3_wrath-of-the-imperium.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r3_wrath-of-the-imperium.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c7r3_wrath-of-the-imperium.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c5r3_emperor-s-protection.png HTTP/1.1" 200 -
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r3_wrath-of-the-imperium.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r1_obdurate-bastion.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r1_obdurate-bastion.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c6r1_obdurate-bastion.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r1_obdurate-bastion.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r1_obdurate-bastion.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c6r1_obdurate-bastion.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c6r1_obdurate-bastion.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r1_offensive-capability.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r1_offensive-capability.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c8r1_offensive-capability.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r1_offensive-capability.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r1_offensive-capability.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c8r1_offensive-capability.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r1_offensive-capability.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r2_brute-force.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r2_brute-force.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c7r2_brute-force.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r2_brute-force.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r2_brute-force.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c7r2_brute-force.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r2_brute-force.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r3_versatility.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r3_versatility.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c3r3_versatility.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r3_versatility.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r3_versatility.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c3r3_versatility.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r2_overwhelming-power.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r2_overwhelming-power.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c3r2_overwhelming-power.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r2_overwhelming-power.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r2_overwhelming-power.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c3r2_overwhelming-power.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r2_additional-supplies.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r2_additional-supplies.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c4r2_additional-supplies.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r2_additional-supplies.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r2_additional-supplies.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c4r2_additional-supplies.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r3_versatility.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r1_saving-grace.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r1_saving-grace.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c7r1_saving-grace.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r1_saving-grace.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r1_saving-grace.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c7r1_saving-grace.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r3_auxiliary-ammunition.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r3_auxiliary-ammunition.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c1r3_auxiliary-ammunition.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r3_auxiliary-ammunition.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r3_auxiliary-ammunition.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c1r3_auxiliary-ammunition.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c4r2_additional-supplies.png HTTP/1.1" 200 -
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c3r2_overwhelming-power.png HTTP/1.1" 200 -
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c7r1_saving-grace.png HTTP/1.1" 200 -
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c1r3_auxiliary-ammunition.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r2_coolant-reserve.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r2_coolant-reserve.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c8r2_coolant-reserve.png
+HTTP GET: raw=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r2_coolant-reserve.png rewritten=/app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r2_coolant-reserve.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\talents\特战兵\c8r2_coolant-reserve.png
+127.0.0.1 - - [23/Apr/2026 10:41:06] "GET /app/assets/talents/%E7%89%B9%E6%88%98%E5%85%B5/c8r2_coolant-reserve.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/weapons/icons/%E4%B8%BB%E6%AD%A6%E5%99%A8/%E7%84%9A%E7%84%B0%E7%82%AE.png rewritten=/app/assets/weapons/icons/%E4%B8%BB%E6%AD%A6%E5%99%A8/%E7%84%9A%E7%84%B0%E7%82%AE.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\weapons\icons\主武器\焚焰炮.png
+HTTP GET: raw=/app/assets/weapons/icons/%E4%B8%BB%E6%AD%A6%E5%99%A8/%E7%84%9A%E7%84%B0%E7%82%AE.png rewritten=/app/assets/weapons/icons/%E4%B8%BB%E6%AD%A6%E5%99%A8/%E7%84%9A%E7%84%B0%E7%82%AE.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\weapons\icons\主武器\焚焰炮.png
+127.0.0.1 - - [23/Apr/2026 10:41:07] "GET /app/assets/weapons/icons/%E4%B8%BB%E6%AD%A6%E5%99%A8/%E7%84%9A%E7%84%B0%E7%82%AE.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/weapons/icons/%E5%89%AF%E6%89%8B/%E7%88%86%E5%BC%B9%E6%89%8B%E6%9E%AA.png rewritten=/app/assets/weapons/icons/%E5%89%AF%E6%89%8B/%E7%88%86%E5%BC%B9%E6%89%8B%E6%9E%AA.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\weapons\icons\副手\爆弹手枪.png
+HTTP GET: raw=/app/assets/weapons/icons/%E5%89%AF%E6%89%8B/%E7%88%86%E5%BC%B9%E6%89%8B%E6%9E%AA.png rewritten=/app/assets/weapons/icons/%E5%89%AF%E6%89%8B/%E7%88%86%E5%BC%B9%E6%89%8B%E6%9E%AA.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\weapons\icons\副手\爆弹手枪.png
+127.0.0.1 - - [23/Apr/2026 10:41:07] "GET /app/assets/weapons/icons/%E5%89%AF%E6%89%8B/%E7%88%86%E5%BC%B9%E6%89%8B%E6%9E%AA.png HTTP/1.1" 200 -
+HTTP GET: raw=/app/assets/weapons/icons/%E8%BF%91%E6%88%98/%E9%87%8D%E6%AD%A6%E5%99%A8%E8%BF%91%E6%88%98.png rewritten=/app/assets/weapons/icons/%E8%BF%91%E6%88%98/%E9%87%8D%E6%AD%A6%E5%99%A8%E8%BF%91%E6%88%98.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\weapons\icons\近战\重武器近战.png
+HTTP GET: raw=/app/assets/weapons/icons/%E8%BF%91%E6%88%98/%E9%87%8D%E6%AD%A6%E5%99%A8%E8%BF%91%E6%88%98.png rewritten=/app/assets/weapons/icons/%E8%BF%91%E6%88%98/%E9%87%8D%E6%AD%A6%E5%99%A8%E8%BF%91%E6%88%98.png local=C:\Users\apple\claudecode\sm2-randomizer\app\assets\weapons\icons\近战\重武器近战.png
