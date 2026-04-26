@@ -37,6 +37,15 @@ argument-hint: "[tmp|learning]"
 - 不 commit
 - 不 push
 
+## 严格只读验收模式
+
+当用户要求 strict read-only audit、只读验收或类似模式时：
+
+- 不主动执行预期会失败的 Bash。
+- 不做危险命令试探。
+- 如果必须运行可能失败的命令，先说明 `PostToolUseFailure` hook 可能写入 `.learnings/ERRORS.md`，并获得用户确认。
+- 这不改变现有 hook 逻辑，只是补充边界说明。
+
 ## 参数
 
 用户参数为：`$ARGUMENTS`
