@@ -70,6 +70,10 @@ Subagents 只允许用于边界清晰的旁路工作：
 
 不要让并发 subagents 编辑同一文件、共享 settings、hooks、worktree policy 或共享数据契约。
 
+## 外部 AI 验证层
+
+本仓所说云端 / 外部 AI 验证层，指 Gemini / Claude / GPT 网页端或外部模型用于审查、对照和需求收敛；不是 Codex Cloud 任务派发机制。不要把网页端 AI 验证误写成 Codex Cloud 执行流。
+
 ## TDD 与 Superpowers
 
 TDD 是 coding-only 选项，不是默认规则。只在高风险行为变更、容易回归的模块，或测试是最清晰控制面的较大任务中使用。

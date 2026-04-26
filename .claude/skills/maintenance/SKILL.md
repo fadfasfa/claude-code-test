@@ -29,6 +29,14 @@ disable-model-invocation: true
 - `.gitignore`
 - 当前仓库 Git 状态
 
+读取范围规则：
+
+- `/maintenance` 默认不读取 `AGENTS.md`、`CLAUDE.md`、`PROJECT.md`、`work_area_registry.md`、`agent_tooling_baseline.md`。
+- `/maintenance tmp` 只读取 `.tmp/**`、`.gitignore` 和必要的 git ignore 状态。
+- `/maintenance learning` 只读取 `.learnings/ERRORS.md`、`.learnings/LEARNINGS.md` 和 `.claude/tools/learning-loop/**` 只读工具。
+- 不使用全文件大范围 Read；优先使用目录枚举、`rg`、`Select-String`、`Get-Content -TotalCount` 或分段读取。
+- Read 因 pages、行号或工具参数失败时，不重复同类错误调用，改用 scoped 命令。
+
 禁止处理：
 
 - `run/**`

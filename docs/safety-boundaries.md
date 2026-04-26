@@ -51,6 +51,14 @@
 
 若 Read 因空 PDF page、行号范围或工具参数失败，应改用 scoped `Get-Content`、`Select-String` 或 `rg` 进行小范围读取。只读验收优先搜索和分段读取，不做全文件暴力读取。
 
+## Windows tooling 边界
+
+- Windows native Python / PowerShell 不应直接使用 `/c/Users/...` Bash 风格路径。
+- 进入 native Python、PowerShell 或文件工具参数时，使用 `C:/Users/...` 或 Windows 可解析路径。
+- 中文、替换字符、大段 Markdown 输出在 Windows 控制台可能触发编码问题。
+- 优先用 Read、Grep、`rg`、`Select-String` 分段读取；必须用 Python 输出时显式控制 UTF-8 或限制输出范围。
+- 不用 Python 暴力打印大型中文文件。
+
 ## Git 确认边界
 
 `git add` 和 `git commit` 只允许在已接受计划内执行，并且必须有明确用户授权和清晰 diff 范围。
