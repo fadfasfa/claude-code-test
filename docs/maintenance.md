@@ -16,7 +16,7 @@
 /promote-learning apply <learning-id> <docs|skills|entry>
 ```
 
-本仓使用 skill-style slash command 承载这些固定维护入口：`/maintenance` 负责只读盘点和候选生成，`/promote-learning` 负责稳定 learning 的晋升审查。它们不是 SessionStart 注入，也不会自动删除、写入或提交。
+本仓只保留两个维护入口：`/maintenance` 负责只读盘点和 `ERRORS → LEARNINGS` 候选生成，`/promote-learning` 负责稳定 learning 的第二阶段晋升审查。它们不是 SessionStart 注入，也不会自动删除、写入或提交。
 
 ## 1. `.tmp` 临时目录清理
 
@@ -59,6 +59,8 @@
 `.learnings/ERRORS.md` 是 ignored raw error cache，不是稳定规则层。
 
 `.learnings/LEARNINGS.md` 用于保存已经确认有复用价值的经验。
+
+`/maintenance learning` 已承接旧独立 learning promotion skill 的职责：从 `ERRORS.md` 分组提炼候选 learning，只输出候选和确认问题，不写入 `LEARNINGS.md`。
 
 正确流向：
 

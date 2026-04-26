@@ -14,7 +14,7 @@ disable-model-invocation: true
 
 - `/maintenance`：同时执行 `.tmp` 盘点和 learning 候选精炼。
 - `/maintenance tmp`：只执行 `.tmp` 盘点。
-- `/maintenance learning`：只执行 learning 候选精炼。
+- `/maintenance learning`：只执行 `ERRORS → LEARNINGS` 候选精炼。
 
 如果用户输入不是上述语义，停止并说明只支持空参数、`tmp` 或 `learning`。
 
@@ -104,43 +104,63 @@ disable-model-invocation: true
 
 ## B. ERRORS → LEARNINGS 精炼流程
 
+`/maintenance learning` 承接旧独立 learning promotion skill 的职责：只把 ignored raw error cache 精炼为 tracked learning 候选，不负责 `LEARNINGS → docs / skills / entry` 的第二阶段晋升审查。
+
 执行只读检查：
 
 1. 读取 `.learnings/ERRORS.md`。
 2. 读取 `.learnings/LEARNINGS.md`。
 3. 如果 `.claude/tools/learning-loop/check_learning_loop.py` 存在，可运行它做只读汇总。
 4. 从 `ERRORS.md` 中提炼候选 learning，但不要写入。
+5. 不把 `.tmp/active-task/current.md` 或其他 runtime ledger 当作 learning 来源。
+
+错误分组方式：
+
+- 按 source、触发场景、工具/命令、失败签名和可复现性分组。
+- 标记每组是 repeated 还是 one-off。
+- 标记是否有 repo-local 复用价值。
+- 标记是否存在过度泛化风险。
+- 已被现有 `LEARNINGS.md` 覆盖的内容列为重复，不再生成新候选。
 
 候选 learning 格式：
 
 ```text
 ## 候选 L<N>：一句话标题
 
+- 来源：
+- 分组判断：repeated / one-off
 - 触发场景：
 - 失败模式：
 - 稳定结论：
 - 后续规则：
+- repo-local 复用价值：
+- 拟写入文本：
+- 过度泛化风险：
 - 不适用范围：
-- 是否建议晋升：
+- 是否建议写入 LEARNINGS：
 ```
 
-晋升规则：
+建议写入 LEARNINGS：
 
-可以建议晋升：
+可以建议写入：
 
 - 同类错误重复出现
 - 能形成可执行判断规则
 - 对后续任务有复用价值
 - 不是一次性环境故障
 - 不会导致规则膨胀
+- 不是具体业务文件细节
+- 不与现有 `LEARNINGS.md` 重复
 
-不建议晋升：
+不建议写入：
 
 - 单次偶发失败
 - 已修复且低复现概率的路径错误
 - 具体业务文件细节
 - 临时网络/依赖波动
 - 只适用于某一次任务的操作记录
+- 已被 `LEARNINGS.md` 或现有规则覆盖的内容
+- 风险是把一次任务上下文过度泛化为长期规则
 
 输出格式：
 
@@ -161,6 +181,7 @@ disable-model-invocation: true
 - `LEARNINGS` 晋升：本 skill 只能输出候选 learning。真正写入 `.learnings/LEARNINGS.md` 必须由用户确认具体候选条目。
 - 规则、skill、hook、tool 或 docs 改动：本 skill 只能提出建议，不能自动修改。
 - 即使用户要求继续维护，也不能把本 skill 升级为自动 cleanup、auto-loop 或 commit 流程。
+- 高阶晋升：`LEARNINGS → docs / skills / entry` 由 `/promote-learning` 处理，不在本 skill 中执行。
 
 ## 收尾
 

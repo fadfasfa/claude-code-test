@@ -14,9 +14,9 @@
 
 ## 定期维护
 
-本仓提供项目级 skill-style slash command：`/maintenance`。
+本仓只保留两个项目级维护入口：`/maintenance` 和 `/promote-learning`。
 
-用于定期盘点 `.tmp` 临时目录，并从 `.learnings/ERRORS.md` 提炼候选经验。该命令默认只读，不删除、不写入、不提交。详见 `docs/maintenance.md`。
+`/maintenance` 用于定期盘点 `.tmp` 临时目录，并通过 `/maintenance learning` 从 `.learnings/ERRORS.md` 提炼候选经验。该命令默认只读，不删除、不写入、不提交。详见 `docs/maintenance.md`。
 
 稳定 learning 需要审查是否晋升到 docs、skills 或入口规则时，使用 skill-style slash command `/promote-learning`；默认只输出 patch plan。
 

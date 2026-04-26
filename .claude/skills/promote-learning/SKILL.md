@@ -1,6 +1,6 @@
 ---
 name: promote-learning
-description: "审查 LEARNINGS 是否晋升到 docs、skills 或入口规则；用户手动通过 /promote-learning 调用。"
+description: "审查稳定 LEARNINGS 是否晋升到 docs、skills 或入口规则；用户手动通过 /promote-learning 调用。"
 disable-model-invocation: true
 ---
 
@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 你正在执行 claudecode 的 learning 晋升审查流程。
 
-该 skill 用于判断 `.learnings/LEARNINGS.md` 中的稳定经验是否应晋升到：
+该 skill 只用于判断 `.learnings/LEARNINGS.md` 中的稳定经验是否应晋升到：
 
 - `docs/**`
 - `.claude/skills/**`
@@ -32,7 +32,7 @@ disable-model-invocation: true
 ## 允许读取
 
 - `.learnings/LEARNINGS.md`
-- `.learnings/ERRORS.md`
+- `.learnings/ERRORS.md`（仅在用户明确要求核对来源时读取；默认不读取 ERRORS 做初次提炼）
 - `docs/**`
 - `.claude/skills/**/SKILL.md`
 - `AGENTS.md`
@@ -55,6 +55,7 @@ disable-model-invocation: true
 ## 禁止动作
 
 - 不自动晋升
+- 不从 `ERRORS.md` 提炼初次 learning
 - 不把单次错误晋升为规则
 - 不把具体业务细节晋升为通用规则
 - 不修改 hooks / tools，除非用户明确指定
@@ -68,9 +69,9 @@ disable-model-invocation: true
 
 ## 晋升层级
 
-### 1. ERRORS → LEARNINGS
+### 1. ERRORS → LEARNINGS 不在本 skill 处理
 
-由 `/maintenance` 处理。这里不负责。
+由 `/maintenance learning` 处理。这里不读取 `ERRORS.md` 生成初次候选。
 
 ### 2. LEARNINGS → docs
 

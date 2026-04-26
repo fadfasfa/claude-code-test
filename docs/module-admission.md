@@ -132,23 +132,23 @@
 - 为什么不能用现有模块解决：`requesting-code-review` 面向发起审查请求；本模块提供本地 diff review 清单。
 - 状态：已接受 repo-local skill。
 
-### self-improvement-promotion
+### maintenance learning
 
-- 名称：`self-improvement-promotion`
-- 类型：repo-local skill。
-- 解决什么问题：把本地 raw error / learning 输入整理为经过用户审查的 repo learning 候选。
-- 不解决什么问题：自动 global learning、自动更新 kb、提交 raw logs。
-- 触发条件：用户要求 review/promote learnings，或任务产生重复 repo-local errors。
-- 会读哪些路径：`.learnings/ERRORS.md`、`.learnings/LEARNINGS.md`、相关 repo-local skills/hooks/tools。
-- 会写哪些路径：用户确认后只写 `.learnings/LEARNINGS.md`；raw logs 永不进入 git。
+- 名称：`/maintenance learning`
+- 类型：repo-local skill mode。
+- 解决什么问题：把本地 raw error cache 分组整理为经过用户审查的 repo learning 候选。
+- 不解决什么问题：自动 global learning、自动更新 kb、提交 raw logs、把 `LEARNINGS` 晋升到 docs / skills / entry。
+- 触发条件：用户要求精炼 `ERRORS → LEARNINGS` 候选，或任务产生重复 repo-local errors 后需要定期维护。
+- 会读哪些路径：`.learnings/ERRORS.md`、`.learnings/LEARNINGS.md`、`.claude/tools/learning-loop/**`。
+- 会写哪些路径：默认不写；用户确认候选后才允许另行写 `.learnings/LEARNINGS.md`。
 - 是否安装依赖：否。
 - 是否运行浏览器：否。
 - 是否影响 git/worktree/global/kb：不影响 global/kb。
-- 如何禁用：不调用该 skill。
-- 如何删除：删除 `.claude/skills/self-improvement-promotion/`。
+- 如何禁用：不调用 `/maintenance learning`。
+- 如何删除：修改 `.claude/skills/maintenance/SKILL.md` 移除 learning mode。
 - 最小验证命令：`git check-ignore -v .learnings/ERRORS.md`
-- 为什么不能用现有模块解决：现有错误日志只负责捕获 raw data，不负责人工审查晋升。
-- 状态：已接受 repo-local skill。
+- 为什么不能用现有模块解决：旧独立 learning promotion skill 已退役；`/promote-learning` 只处理 `LEARNINGS → docs / skills / entry`。
+- 状态：已接受 repo-local skill mode。
 
 ### playwright-config-or-script
 
