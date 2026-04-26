@@ -47,7 +47,7 @@
 - commit message 已确认，或计划里已有精确模板。
 - dirty tree 没有把无关用户改动混进本次提交范围。
 
-执行 `push`、创建 PR、`merge`、`reset`、`clean`、`rebase`、`stash` 或 `git worktree remove` 前，必须停下等待人工确认。
+执行 `push`、创建 PR、`merge`、`reset`、`clean`、`rebase`、`stash` 或人工 `git worktree remove` 前，必须停下等待人工确认。唯一例外是 repo-local `WorktreeRemove` hook 可按 `docs/git-worktree-policy.md` 清理 clean `owner=agent` ephemeral worktree，且必须使用非 force remove 并保留 branch。
 
 ## 连续执行
 

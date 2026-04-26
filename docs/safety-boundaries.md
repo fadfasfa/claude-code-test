@@ -78,7 +78,7 @@
 - `git clean`
 - `git rebase`
 - `git stash`
-- `git worktree remove`
+- manual `git worktree remove`
 
 ## Hook 边界
 
@@ -98,9 +98,11 @@ Hooks 不得：
 - 修改全局配置
 - 变成复杂 workflow engine
 
-只读 Explore / 审查 agent 不得默认创建 worktree。只有用户明确要求隔离执行，或已接受计划中明确批准 worktree，才允许触发 `WorktreeCreate`。
+只读 Explore / 审查 agent 不得默认创建 persistent/user worktree。普通 Agent / Explore / review / subagent / `isolation: "worktree"` 自动创建的 worktree 一律视为 `owner=agent` ephemeral；只有 helper `-Owner directed` 或 name 显式带 `directed-` / `user-` 才是 persistent/user worktree。
 
 如果 worktree hook 失败，不得绕过 hook 手动创建 worktree；只能降级为主线程只读搜索，或报告需要修复 hook 的 blocker。
+
+`WorktreeRemove` hook 只允许基于 repo 外 registry 清理 clean `owner=agent` ephemeral worktree；必须使用非 force `git worktree remove <path>`，不得删除 branch。dirty、`owner=user` 或 `protected=true` 时只报告或跳过。
 
 `stop-guard-lite` 在用户明确批准写 Stop hook 前，仍只是模块卡候选。
 

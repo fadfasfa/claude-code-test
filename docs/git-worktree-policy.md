@@ -6,6 +6,7 @@
 
 - `directed`：用户明确要求创建隔离工作树；branch `wt-directed-<purpose>`；path `C:\Users\apple\_worktrees\claudecode\directed\<purpose>`。
 - `auto`：agent 临时隔离工作树；branch `wt-auto-cc-<yyyymmdd-hhmm>-<purpose>-<id>`；path `C:\Users\apple\_worktrees\claudecode\auto\<branch>`。
+- repo 外 registry：`C:\Users\apple\_worktrees\claudecode\.registry\<session_id>-<name>.json`，记录 `owner`、`protected`、`session_id`、`agent_id`、`agent_type`、`name`、`purpose`、`path`、`branch`、`created_at`、`cleanup_policy`。
 - `legacy`：`worktree-agent-*`、nested `.claude/worktrees/**`、random adjective names、bare `agent-*`；不允许新增。
 - 已存在的 locked legacy worktree 是历史残留；本仓不会自动清理，清理必须另起人工确认任务。
 - `keep`：`worktree-run-scraping-refactor-phase1`；不自动清理。
@@ -14,14 +15,21 @@
 
 - 保护本地当前进度，避免被动切分支。
 - 避免 agent 直接污染当前工作区。
-- 为较大任务提供隔离执行区。
-- 任务完成、审查、合并、本地同步后，才进入人工确认的无用树清理。
+- 为较大任务或 agent isolation 提供短命隔离执行区。
+- 普通 Agent / Explore / review / subagent / `isolation: "worktree"` 自动创建的 worktree 一律视为 `owner=agent` ephemeral。
+- 只有 helper `-Owner directed` 或 WorktreeCreate name 显式带 `directed-` / `user-` 的 worktree 才视为 `owner=user` persistent；不得仅凭自然语言推断为 persistent。
 
 ## Hook 边界
 
-- 自动 hook 只保留 `WorktreeCreate` 命名校验和 `PreToolUse` 裸 `git worktree` / 危险 shell 命令拦截。
-- `WorktreeRemove`、`SessionEnd` 不自动清理 worktree。
-- 删除 / 清理 worktree 不属于默认自动机制；必须人工确认或作为专门 final cleanup step 手动处理。
+- active worktree contract 以 `.claude/hooks/worktree-governor-create.ps1`、`.claude/hooks/worktree-governor-remove.ps1` 和 repo 外 registry 为准。
+- `WorktreeCreate` 负责 owner 判定、受管 branch/path 生成、repo 外 registry marker 写入。
+- `WorktreeRemove` 只允许对 registry 中 `owner=agent`、`protected=false`、位于 auto root 且 clean 的 worktree 执行非 force `git worktree remove <path>`。
+- `WorktreeRemove` 不删除 branch；branch 清理必须另起显式手动命令。
+- dirty ephemeral worktree 不得强删，只报告 blocker。
+- `owner=user` 或 `protected=true` 的 persistent worktree 必须跳过自动清理。
+- `WorktreeRemove` 不是阻断型安全边界；安全边界依赖 marker、受控路径、非 force remove，以及 `PreToolUse` 对 raw `git worktree remove --force` 的拦截。
+- `SessionEnd` 不清理 worktree。
+- `scripts/git/ccw-*` 当前是 legacy/manual tooling，不进入自动 hook contract；后续如需使用，另起任务统一到同一 root/branch/marker 口径。
 
 ## 手动工具
 

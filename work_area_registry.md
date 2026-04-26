@@ -21,8 +21,8 @@ Default rules:
 5. Repository-root writes are allowed only for governance/control-plane files such as this registry, root entrypoints, or repo tooling docs.
 6. A Git worktree is an execution surface with its own branch/merge path; it is not an active work area unless this registry says so.
 7. A Claude Code transient worktree under `.claude/worktrees/**` is runtime/execution state; do not promote it to source of truth.
-8. Directed worktrees use `wt-directed-<purpose>` at `C:\Users\apple\_worktrees\claudecode\directed\<purpose>` and are never auto-cleaned.
-9. CC/subagent/fork auto worktrees use `wt-auto-cc-<yyyymmdd-hhmm>-<purpose>-<id>` at `C:\Users\apple\_worktrees\claudecode\auto\<branch>`; cleanup happens only after task completion, review, merge, local sync, and explicit approval or a dedicated final cleanup step.
+8. Directed/user worktrees use `wt-directed-<purpose>` at `C:\Users\apple\_worktrees\claudecode\directed\<purpose>` with repo-external registry markers `owner=user` / `protected=true`; they are persistent and never auto-cleaned.
+9. Agent-created worktrees use `wt-auto-cc-<yyyymmdd-hhmm>-<purpose>-<id>` at `C:\Users\apple\_worktrees\claudecode\auto\<branch>` with repo-external registry markers `owner=agent`; `WorktreeRemove` may remove only clean owner=agent worktrees with non-force `git worktree remove <path>` and must retain branches.
 10. Do not create nested linked worktrees, `worktree-agent-*`, random adjective names, or bare `agent-*`; `worktree-run-scraping-refactor-phase1` is grandfathered keep.
 
 ## Registered Work Areas

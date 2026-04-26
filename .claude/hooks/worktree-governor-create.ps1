@@ -9,10 +9,19 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = "C:\Users\apple\claudecode"
-$LegacyRoot = "C:\Users\apple\claudecode\.claude\worktrees"
 $ManagedRoot = "C:\Users\apple\_worktrees\claudecode"
+if ($env:WORKTREE_GOVERNOR_TEST_MODE -eq "1") {
+  if (-not [string]::IsNullOrWhiteSpace($env:WORKTREE_GOVERNOR_REPO_ROOT)) {
+    $RepoRoot = $env:WORKTREE_GOVERNOR_REPO_ROOT
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:WORKTREE_GOVERNOR_MANAGED_ROOT)) {
+    $ManagedRoot = $env:WORKTREE_GOVERNOR_MANAGED_ROOT
+  }
+}
+$LegacyRoot = Join-Path $RepoRoot ".claude\worktrees"
 $DirectedRoot = Join-Path $ManagedRoot "directed"
 $AutoRoot = Join-Path $ManagedRoot "auto"
+$RegistryRoot = Join-Path $ManagedRoot ".registry"
 
 function Write-Err([string]$Message) {
   [Console]::Error.WriteLine($Message)
@@ -68,6 +77,25 @@ function Get-ShortSessionId([string]$SessionId) {
   return $sid
 }
 
+function Get-Slug([string]$Text, [string]$Fallback) {
+  $slug = ($Text.ToLowerInvariant() -replace '[^a-z0-9]+', '-')
+  $slug = ($slug -replace '-{2,}', '-').Trim('-')
+  if ([string]::IsNullOrWhiteSpace($slug)) { $slug = $Fallback }
+  if ($slug.Length -gt 80) { $slug = $slug.Substring(0, 80).Trim('-') }
+  if ($slug -notmatch '^[a-z0-9][a-z0-9-]{2,80}$') {
+    Fail "worktree-governor: invalid worktree purpose after slug normalization: $Text"
+  }
+  return $slug
+}
+
+function Get-RegistryToken([string]$Text, [string]$Fallback) {
+  $token = ($Text.ToLowerInvariant() -replace '[^a-z0-9._-]+', '-')
+  $token = ($token -replace '-{2,}', '-').Trim('-')
+  if ([string]::IsNullOrWhiteSpace($token)) { return $Fallback }
+  if ($token.Length -gt 96) { return $token.Substring(0, 96).Trim('-') }
+  return $token
+}
+
 $stdin = [Console]::In.ReadToEnd()
 $event = $null
 if (-not [string]::IsNullOrWhiteSpace($stdin)) {
@@ -82,6 +110,8 @@ if (-not [string]::IsNullOrWhiteSpace($stdin)) {
 $name = [string](Get-JsonField $event @("name", "worktree_name"))
 $cwd = [string](Get-JsonField $event @("cwd", "current_working_directory"))
 $sessionId = [string](Get-JsonField $event @("session_id", "sessionId"))
+$agentId = [string](Get-JsonField $event @("agent_id", "agentId"))
+$agentType = [string](Get-JsonField $event @("agent_type", "agentType"))
 if ([string]::IsNullOrWhiteSpace($name) -and $event -and ($event.PSObject.Properties.Name -contains "tool_input")) {
   $name = [string](Get-JsonField $event.tool_input @("name", "worktree_name"))
 }
@@ -91,6 +121,12 @@ if ([string]::IsNullOrWhiteSpace($cwd) -and $event -and ($event.PSObject.Propert
 if ([string]::IsNullOrWhiteSpace($sessionId) -and $event -and ($event.PSObject.Properties.Name -contains "tool_input")) {
   $sessionId = [string](Get-JsonField $event.tool_input @("session_id", "sessionId"))
 }
+if ([string]::IsNullOrWhiteSpace($agentId) -and $event -and ($event.PSObject.Properties.Name -contains "tool_input")) {
+  $agentId = [string](Get-JsonField $event.tool_input @("agent_id", "agentId"))
+}
+if ([string]::IsNullOrWhiteSpace($agentType) -and $event -and ($event.PSObject.Properties.Name -contains "tool_input")) {
+  $agentType = [string](Get-JsonField $event.tool_input @("agent_type", "agentType"))
+}
 if ([string]::IsNullOrWhiteSpace($cwd)) {
   $cwd = (Get-Location).Path
 }
@@ -99,20 +135,32 @@ if (Test-UnderPath $cwd $LegacyRoot -or Test-UnderPath $cwd $ManagedRoot) {
   Fail "worktree-governor: nested worktree creation is forbidden from cwd=$cwd"
 }
 
-if ($name -notmatch '^directed-[a-z0-9][a-z0-9-]{2,80}$' -and
-    $name -notmatch '^(auto|cc-auto)-[a-z0-9][a-z0-9-]{2,80}$') {
-  Fail "worktree-governor: invalid worktree name. directed: use directed-<purpose>; auto: use auto-<purpose> or cc-auto-<purpose>"
+if ([string]::IsNullOrWhiteSpace($name)) {
+  Fail "worktree-governor: WorktreeCreate payload is missing name"
 }
 
+$owner = "agent"
+$protected = $false
 $branch = $null
 $path = $null
-if ($name -match '^directed-(?<purpose>[a-z0-9][a-z0-9-]{2,80})$') {
+if ($name -match '^(directed|user)-(?<purpose>[a-z0-9][a-z0-9-]{2,80})$') {
+  $owner = "user"
+  $protected = $true
   $purpose = $matches.purpose
   $branch = "wt-directed-$purpose"
   $path = Join-Path $DirectedRoot $purpose
 }
 elseif ($name -match '^(auto|cc-auto)-(?<purpose>[a-z0-9][a-z0-9-]{2,80})$') {
+  $owner = "agent"
   $purpose = $matches.purpose
+  $shortSession = Get-ShortSessionId $sessionId
+  $stamp = Get-Date -Format "yyyyMMdd-HHmm"
+  $branch = "wt-auto-cc-$stamp-$purpose-$shortSession"
+  $path = Join-Path $AutoRoot $branch
+}
+else {
+  $owner = "agent"
+  $purpose = Get-Slug $name "worktree"
   $shortSession = Get-ShortSessionId $sessionId
   $stamp = Get-Date -Format "yyyyMMdd-HHmm"
   $branch = "wt-auto-cc-$stamp-$purpose-$shortSession"
@@ -120,10 +168,39 @@ elseif ($name -match '^(auto|cc-auto)-(?<purpose>[a-z0-9][a-z0-9-]{2,80})$') {
 }
 
 $path = Normalize-PathText $path
+$safeSession = Get-RegistryToken $sessionId "nosession"
+$safeName = Get-RegistryToken $name "noname"
+$registryPath = Join-Path $RegistryRoot "$safeSession-$safeName.json"
+$marker = [pscustomobject]@{
+  owner = $owner
+  protected = $protected
+  session_id = $sessionId
+  agent_id = $agentId
+  agent_type = $agentType
+  name = $name
+  purpose = $purpose
+  path = $path
+  branch = $branch
+  created_at = (Get-Date).ToUniversalTime().ToString("o")
+  cleanup_policy = if ($owner -eq "agent") { "remove_worktree_clean_only_keep_branch_report_dirty" } else { "persistent_skip_cleanup" }
+}
 
 if ($env:WORKTREE_GOVERNOR_DRY_RUN -eq "1") {
-  [Console]::Out.WriteLine($path)
+  if ($env:WORKTREE_GOVERNOR_DRY_RUN_JSON -eq "1") {
+    $marker | ConvertTo-Json -Depth 5
+  }
+  else {
+    [Console]::Out.WriteLine($path)
+  }
   exit 0
+}
+
+if (-not (Test-Path -LiteralPath $RegistryRoot)) {
+  New-Item -ItemType Directory -Path $RegistryRoot | Out-Null
+}
+
+if (Test-Path -LiteralPath $registryPath) {
+  Fail "worktree-governor: registry marker already exists: $registryPath"
 }
 
 git -C $RepoRoot show-ref --verify --quiet "refs/heads/$branch"
@@ -144,8 +221,15 @@ if (-not (Test-Path -LiteralPath $parent)) {
   New-Item -ItemType Directory -Path $parent | Out-Null
 }
 
-$gitOutput = git -C $RepoRoot worktree add -b $branch $path HEAD 2>&1
-$gitExit = $LASTEXITCODE
+$oldErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+  $gitOutput = git -C $RepoRoot worktree add -b $branch $path HEAD 2>&1
+  $gitExit = $LASTEXITCODE
+}
+finally {
+  $ErrorActionPreference = $oldErrorActionPreference
+}
 foreach ($line in $gitOutput) {
   if (-not [string]::IsNullOrWhiteSpace([string]$line)) { Write-Err ([string]$line) }
 }
@@ -153,4 +237,5 @@ if ($gitExit -ne 0) {
   Fail "worktree-governor: git worktree add failed for branch=$branch path=$path" 1
 }
 
+$marker | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $registryPath -Encoding UTF8
 [Console]::Out.WriteLine($path)

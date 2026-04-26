@@ -94,7 +94,7 @@ Subagents 是可选项，只在工作能被清晰界定时有用。
 
 小型 docs/rules 编辑、本地 bug 修复或只读盘点不需要 worktree。
 
-不带 `-DryRun` 创建 worktree 前，必须有明确用户指令。删除 worktree 永远需要人工确认。
+不带 `-DryRun` 创建 persistent/user worktree 前，必须有明确用户指令。普通 Agent / Explore / review / subagent / `isolation: "worktree"` 自动创建的 worktree 一律按 `owner=agent` ephemeral contract 处理；clean ephemeral 可由 `WorktreeRemove` hook 非 force 清理并保留 branch，dirty 或 protected worktree 只能报告 blocker。
 
 如果 worktree hook 失败，只能降级为主线程只读搜索或报告 blocker；不得绕过 hook 手动创建 worktree。
 
