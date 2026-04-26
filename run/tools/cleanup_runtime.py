@@ -12,26 +12,45 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_DIR = BASE_DIR / "config"
+DATA_DIR = BASE_DIR / "data"
+RUNTIME_DIR = DATA_DIR / "runtime"
+RAW_DIR = DATA_DIR / "raw"
+PROCESSED_DIR = DATA_DIR / "processed"
+AUDIT_DIR = DATA_DIR / "audit"
 BUILD_DIR = BASE_DIR / "build"
 DIST_DIR = BASE_DIR / "dist"
 
-VOLATILE_CONFIG_FILES = (
-    "Champion_Hextech_Cache.json",
-    "Champion_List_Cache.json",
-    "Champion_Synergy.json",
-    "scraper_status.json",
-    "startup_status.json",
-    "web_server_port.txt",
-    "hextech_system.log",
-    "hextech_runtime_summary.log",
-    "hextech_error.log",
-    "web_server_test.err.log",
-    "web_server_test.log",
+VOLATILE_OUTPUT_FILES = (
+    RUNTIME_DIR / "Champion_Hextech_Cache.json",
+    RUNTIME_DIR / "Champion_List_Cache.json",
+    RUNTIME_DIR / "Champion_Synergy.json",
+    RUNTIME_DIR / "scraper_status.json",
+    RUNTIME_DIR / "startup_status.json",
+    RUNTIME_DIR / "web_server_port.txt",
+    RUNTIME_DIR / "browser_profile",
+    RUNTIME_DIR / "hextech_system.log",
+    RUNTIME_DIR / "hextech_runtime_summary.log",
+    RUNTIME_DIR / "hextech_error.log",
+    RUNTIME_DIR / "web_server_test.err.log",
+    RUNTIME_DIR / "web_server_test.log",
+    PROCESSED_DIR / "Champion_Hextech_Cache.json",
+    PROCESSED_DIR / "Champion_List_Cache.json",
+    RAW_DIR / "synergy" / "Champion_Synergy.json",
+    CONFIG_DIR / "scraper_status.json",
+    CONFIG_DIR / "startup_status.json",
+    CONFIG_DIR / "web_server_port.txt",
+    CONFIG_DIR / "hextech_system.log",
+    CONFIG_DIR / "hextech_runtime_summary.log",
+    CONFIG_DIR / "hextech_error.log",
+    CONFIG_DIR / "web_server_test.err.log",
+    CONFIG_DIR / "web_server_test.log",
 )
 
-VOLATILE_CONFIG_GLOBS = (
-    "Hextech_Data_*.csv",
-    "*.log",
+VOLATILE_OUTPUT_GLOBS = (
+    RUNTIME_DIR / "Hextech_Data_*.csv",
+    RUNTIME_DIR / "*.log",
+    AUDIT_DIR / "*.log",
+    CONFIG_DIR / "*.log",
 )
 
 
@@ -53,25 +72,26 @@ def cleanup_python_caches() -> tuple[int, int]:
     return removed_dirs, removed_files
 
 
+def _remove_target(target: Path) -> bool:
+    if not target.exists():
+        return False
+    if target.is_dir():
+        shutil.rmtree(target, ignore_errors=True)
+    else:
+        target.unlink()
+    return True
+
+
 def cleanup_runtime_outputs() -> list[Path]:
     removed: list[Path] = []
 
-    for name in VOLATILE_CONFIG_FILES:
-        target = CONFIG_DIR / name
-        if target.exists():
-            if target.is_dir():
-                shutil.rmtree(target, ignore_errors=True)
-            else:
-                target.unlink()
+    for target in VOLATILE_OUTPUT_FILES:
+        if _remove_target(target):
             removed.append(target)
 
-    for pattern in VOLATILE_CONFIG_GLOBS:
-        for target in CONFIG_DIR.glob(pattern):
-            if target.exists():
-                if target.is_dir():
-                    shutil.rmtree(target, ignore_errors=True)
-                else:
-                    target.unlink()
+    for pattern in VOLATILE_OUTPUT_GLOBS:
+        for target in pattern.parent.glob(pattern.name):
+            if _remove_target(target):
                 removed.append(target)
 
     return removed

@@ -19,7 +19,12 @@ from pydantic import BaseModel
 
 from processing.alias_search import load_manual_alias_index
 from processing.orchestrator import rebuild_api_cache_if_needed
-from processing.runtime_store import load_precomputed_hextech_for_hero
+from processing.precomputed_cache import (
+    load_precomputed_champion_list,
+    load_precomputed_hextech_for_hero,
+    load_precomputed_hextech_for_hero_id,
+    load_processed_synergy_for_champion,
+)
 from processing.view_adapter import process_champions_data, process_hextechs_data
 from scraping.augment_catalog import load_augment_icon_manifest
 from scraping.version_sync import CONFIG_DIR
@@ -165,6 +170,11 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/champions")
     async def api_champions():
+        precomputed_items = load_precomputed_champion_list()
+        if precomputed_items:
+            web_runtime.request_background_refresh(force=False)
+            return JSONResponse(content=precomputed_items)
+
         df = web_runtime.get_df()
         if not df.empty:
             return JSONResponse(content=process_champions_data(df))
@@ -199,9 +209,16 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/api/champion/{name}/hextechs")
     async def api_champion_hextechs(name: str):
         canonical_name = web_runtime.resolve_canonical_hero_name(name)
+        champion_id = web_runtime.resolve_champion_id(name)
         preloaded_payload = web_runtime.get_preloaded_hextech_payload(canonical_name)
         if isinstance(preloaded_payload, dict) and preloaded_payload.get("comprehensive"):
             return JSONResponse(content=preloaded_payload)
+
+        if champion_id:
+            precomputed_payload = load_precomputed_hextech_for_hero_id(champion_id)
+            if isinstance(precomputed_payload, dict) and precomputed_payload.get("comprehensive"):
+                web_runtime.request_background_refresh(force=False)
+                return JSONResponse(content=precomputed_payload)
 
         precomputed_payload = load_precomputed_hextech_for_hero(canonical_name)
         if isinstance(precomputed_payload, dict) and precomputed_payload.get("comprehensive"):
@@ -239,13 +256,16 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/api/synergies/{champ_id}")
     async def api_synergies(champ_id: str):
         try:
+            resolved_champ_id = web_runtime.resolve_champion_id(champ_id)
+            processed_payload = load_processed_synergy_for_champion(resolved_champ_id or champ_id)
+            if processed_payload.get("synergies"):
+                return JSONResponse(content=processed_payload)
+
             data = web_runtime.get_synergy_data()
             if not data:
                 return JSONResponse(content={"synergies": []})
 
-            resolved_champ_id = web_runtime.resolve_champion_id(champ_id)
             canonical_name = web_runtime.resolve_canonical_hero_name(champ_id).lower()
-
             synergy_data = data.get(resolved_champ_id or champ_id, {})
             if not synergy_data:
                 for key, value in data.items():

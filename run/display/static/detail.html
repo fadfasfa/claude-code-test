@@ -304,9 +304,11 @@
                 <div class="flex items-center space-x-3 mb-1">
                     <h1 id="heroName" class="text-3xl font-black text-white">加载中...</h1>
                 </div>
-                <div class="flex space-x-6 text-sm mt-2">
-                    <p><span class="text-gray-400">贝叶斯胜率:</span> <span id="heroWR"
+                <div class="flex space-x-6 text-sm mt-2 flex-wrap">
+                    <p><span class="text-gray-400">真实胜率:</span> <span id="heroWR"
                             class="text-green-400 font-bold text-lg">-</span></p>
+                    <p><span class="text-gray-400">贝叶斯参考:</span> <span id="heroBayesWR"
+                            class="text-blue-300 font-bold text-lg">-</span></p>
                     <p><span class="text-gray-400">全服出场率:</span> <span id="heroPR"
                             class="text-white font-bold text-lg">-</span></p>
                 </div>
@@ -399,8 +401,6 @@
         const hero = urlParams.get('hero');
         const enName = urlParams.get('en');
         const heroId = urlParams.get('id');
-        const heroWR = urlParams.get('wr');
-        const heroPR = urlParams.get('pr');
         const isAuto = urlParams.get('auto');
 
         window.enName = enName;
@@ -408,8 +408,6 @@
         window.heroName = hero;
 
         if (hero) document.getElementById('heroName').textContent = hero;
-        if (heroWR) document.getElementById('heroWR').textContent = heroWR;
-        if (heroPR) document.getElementById('heroPR').textContent = heroPR;
 
         if (heroId) {
             document.getElementById('heroAvatar').src = `./assets/${heroId}.png`;
@@ -426,6 +424,35 @@
 
         if (isAuto === '1') {
             document.getElementById('mainHeader').classList.add('anim-auto-lock');
+        }
+
+        async function loadHeroStats() {
+            if (!hero && !heroId) {
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/api/champions`, { cache: 'no-store' });
+                if (!response.ok) {
+                    throw new Error(`status ${response.status}`);
+                }
+                const champions = await response.json();
+                const heroData = champions.find((item) => {
+                    const itemHeroId = String(item['英雄 ID'] || '').trim();
+                    const itemHeroName = String(item['英雄名称'] || '').trim();
+                    if (heroId && itemHeroId === String(heroId).trim()) {
+                        return true;
+                    }
+                    return hero && itemHeroName === String(hero).trim();
+                });
+                if (!heroData) {
+                    return;
+                }
+                document.getElementById('heroWR').textContent = formatPercent(heroData['英雄胜率'] || 0);
+                document.getElementById('heroBayesWR').textContent = formatPercent(heroData['贝叶斯胜率'] || 0);
+                document.getElementById('heroPR').textContent = formatPercent(heroData['英雄出场率'] || 0);
+            } catch (error) {
+                console.warn('[Detail] 加载英雄头部统计失败:', error);
+            }
         }
 
         function setDisplayMode(mode) {
@@ -869,6 +896,7 @@
                     const msg = JSON.parse(e.data);
                     if (msg.type === 'data_updated') {
                         console.log('收到 CSV 数据更新通知，自动热重载...');
+                        loadHeroStats();
                         loadHextechs();
                     } else if (msg.type === 'local_player_locked') {
                         const enName = msg.en_name ? `&en=${encodeURIComponent(msg.en_name)}` : '';
@@ -884,6 +912,7 @@
         window.onload = () => {
             trapWheelOnScrollContainer(document.getElementById('compList'));
             trapWheelOnScrollContainer(document.getElementById('synergyArticleScroll'));
+            loadHeroStats();
             loadHextechs();
             connectWS();
         };

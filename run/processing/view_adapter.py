@@ -140,7 +140,7 @@ def process_champions_data(
             logging.warning(f"缺少必要列，当前列：{data.columns.tolist()}")
             return []
 
-        min_pick_rate = 0.005
+        min_pick_rate = 0.001
         avg_winrate = data['英雄胜率'].mean()
 
         data['贝叶斯胜率'] = (

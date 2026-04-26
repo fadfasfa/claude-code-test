@@ -43,13 +43,19 @@ def check_root_entrypoints() -> None:
 
 
 def check_manual_alias_index() -> None:
-    alias_file = RUN_DIR / "config" / "Champion_Alias_Index.json"
+    alias_file = RUN_DIR / "data" / "indexes" / "Champion_Alias_Index.json"
+    lookup_file = RUN_DIR / "data" / "indexes" / "champion.alias-to-id.v1.json"
+
     payload = json.loads(alias_file.read_text(encoding="utf-8"))
     assert isinstance(payload, list)
-    assert payload, "Champion_Alias_Index.json 应至少包含一条手工索引"
+    assert payload, "Champion_Alias_Index.json 应至少包含 canonical self-index"
     first = payload[0]
     assert isinstance(first, dict)
-    assert "heroName" in first
+    assert all(key in first for key in ("heroName", "title", "enName", "heroId", "aliases"))
+
+    lookup_payload = json.loads(lookup_file.read_text(encoding="utf-8"))
+    assert isinstance(lookup_payload, dict)
+    assert lookup_payload, "champion.alias-to-id.v1.json 应至少包含 self-index"
     assert load_manual_alias_index()
 
 
@@ -80,11 +86,25 @@ def check_logging_contract() -> None:
 
 def check_packaging_config() -> None:
     build_script = (RUN_DIR / "tools" / "build_bundle.py").read_text(encoding="utf-8")
-    spec_text = (RUN_DIR / "Hextech伴生终端.spec").read_text(encoding="utf-8")
+    manifest_script = (RUN_DIR / "tools" / "bundle_manifest.py").read_text(encoding="utf-8")
+    detail_dir = RUN_DIR / "data" / "processed" / "champions"
 
     assert "--hidden-import\", \"filelock\"" in build_script
-    assert "filelock" in spec_text
-    assert "display" in (RUN_DIR / "tools" / "bundle_manifest.py").read_text(encoding="utf-8")
+    assert "data/static" in build_script
+    assert "data/indexes" in build_script
+    assert "data/processed" in build_script
+    assert "display" in manifest_script
+    assert "data_static_files" in manifest_script
+    assert "data_index_files" in manifest_script
+    assert "data_processed_files" in manifest_script
+    assert "data_processed_detail_files" in manifest_script
+    assert detail_dir.exists()
+    assert any(path.suffix == ".json" for path in detail_dir.iterdir())
+    assert "champions/{heroId}.json" not in build_script
+    assert "data/processed" in build_script
+    assert "iter_stable_processed_detail_files" in manifest_script
+    assert "data_processed_detail_files" in manifest_script
+    assert "synergy" in (RUN_DIR / "processing" / "processed_writer.py").read_text(encoding="utf-8")
 
 
 def check_no_legacy_imports() -> None:

@@ -1029,10 +1029,11 @@
         function createChampionCard(champion, index) {
             const heroId = champion['英雄 ID'] || '';
             const enName = champion['英文名'] || CHAMPION_PINYIN[champion['英雄名称']] || '';
-            const wr = formatPercent(champion['贝叶斯胜率']);
+            const wr = formatPercent(champion['英雄胜率']);
+            const bayesWr = formatPercent(champion['贝叶斯胜率']);
             const heroName = String(champion['英雄名称'] || '');
 
-            const detailUrl = `detail.html?hero=${encodeURIComponent(heroName)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(formatPercent(champion['英雄出场率']))}&id=${encodeURIComponent(heroId)}&en=${encodeURIComponent(enName)}`;
+            const detailUrl = `detail.html?hero=${encodeURIComponent(heroName)}&wr=${encodeURIComponent(wr)}&bayesWr=${encodeURIComponent(bayesWr)}&pr=${encodeURIComponent(formatPercent(champion['英雄出场率']))}&id=${encodeURIComponent(heroId)}&en=${encodeURIComponent(enName)}`;
 
             const isHighlighted = activeChampionIds.has(String(heroId)) ? 'champ-highlight' : '';
 
@@ -1057,7 +1058,7 @@
                     href="${safeDetailUrl}"
                     class="champ-avatar relative w-16 h-16 sm:w-18 sm:h-18 rounded-lg overflow-hidden border-2 cursor-pointer block flex-shrink-0 ${isHighlighted}"
                     style="animation-delay: ${index * 30}ms"
-                    title="${safeHeroName} (${safeWr})"
+                    title="${safeHeroName} (真实胜率 ${safeWr} / 贝叶斯 ${escapeHtml(bayesWr)})"
                 >
                     <img
                         src="${safeAvatarUrl}"
@@ -1115,13 +1116,14 @@
                         const detailFirst = message.detail_first ? '&detailFirst=1' : '';
                         const heroData = allChampions.find(c => c['英雄名称'] === heroName);
                         if (heroData) {
-                            const wr = formatPercent(heroData['贝叶斯胜率']);
+                            const wr = formatPercent(heroData['英雄胜率']);
+                            const bayesWr = formatPercent(heroData['贝叶斯胜率']);
                             const pr = formatPercent(heroData['英雄出场率']);
                             const enName = heroData['英文名'] || CHAMPION_PINYIN[heroName] || '';
                             const heroId = heroData['英雄 ID'] || '';
 
                             console.log('[WS] 本地玩家锁定:', heroName, '-> 直接跳转详情页');
-                            window.location.href = `detail.html?hero=${encodeURIComponent(heroName)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(pr)}&id=${encodeURIComponent(heroId)}&en=${encodeURIComponent(enName)}&auto=1${detailFirst}`;
+                            window.location.href = `detail.html?hero=${encodeURIComponent(heroName)}&wr=${encodeURIComponent(wr)}&bayesWr=${encodeURIComponent(bayesWr)}&pr=${encodeURIComponent(pr)}&id=${encodeURIComponent(heroId)}&en=${encodeURIComponent(enName)}&auto=1${detailFirst}`;
                         } else if (heroName) {
                             window.location.href = `detail.html?hero=${encodeURIComponent(heroName)}&id=${encodeURIComponent(championId)}&auto=1${detailFirst}`;
                         }

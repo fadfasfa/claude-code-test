@@ -12,7 +12,7 @@ import pandas as pd
 from processing.alias_search import load_champion_alias_map, resolve_champion_name
 from processing.alias_utils import normalize_alias_token, unique_alias_tokens
 from processing.runtime_store import get_latest_csv, normalize_runtime_df
-from scraping.version_sync import CONFIG_DIR, CORE_DATA_FILE
+from scraping.version_sync import CONFIG_DIR, CORE_DATA_FILE, DATA_INDEXES_DIR
 
 if os.name == 'nt': os.system('')  # 启用 Windows 终端颜色输出。
 RESET = "\033[0m"
@@ -351,7 +351,7 @@ def load_hero_aliases():
     global _alias_cache
     if _alias_cache is not None:
         return _alias_cache
-    alias_path = os.path.join(CONFIG_DIR, "Champion_Alias_Index.json")
+    alias_path = os.path.join(DATA_INDEXES_DIR, "Champion_Alias_Index.json")
     alias_map = {}
     try:
         with open(alias_path, "r", encoding="utf-8") as f:
