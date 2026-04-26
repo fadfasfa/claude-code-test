@@ -18,6 +18,8 @@
 
 用于定期盘点 `.tmp` 临时目录，并从 `.learnings/ERRORS.md` 提炼候选经验。该命令默认只读，不删除、不写入、不提交。详见 `docs/maintenance.md`。
 
+稳定 learning 需要审查是否晋升到 docs、skills 或入口规则时，使用 `/promote-learning`；默认只输出 patch plan。
+
 ## 运行模型
 
 - 小任务和明确 bug 修复走轻量 patch-and-verify 流程。

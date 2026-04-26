@@ -11,6 +11,9 @@
 /maintenance
 /maintenance tmp
 /maintenance learning
+/promote-learning
+/promote-learning plan <learning-id> <docs|skills|entry>
+/promote-learning apply <learning-id> <docs|skills|entry>
 ```
 
 Slash commands 更适合经常重复的一段提示或固定流程入口；skills 更适合复杂能力、脚本和多文件知识组织。这个定期维护入口属于固定触发流程，所以使用 `/maintenance`，不新增 hook，也不强塞 skill。
@@ -111,3 +114,36 @@ Slash commands 更适合经常重复的一段提示或固定流程入口；skill
 `LEARNINGS` 写入需要人工确认。
 
 docs、skills、hooks、tools 的规则升级必须另开任务，不在 `/maintenance` 中自动执行。
+
+## 5. LEARNINGS 晋升审查
+
+`/promote-learning` 用于审查 `.learnings/LEARNINGS.md` 中已经多次复用、稳定的经验，判断是否应晋升到 `docs/**`、`.claude/skills/**` 或入口规则。
+
+默认模式只输出候选和 patch plan：
+
+```text
+/promote-learning
+/promote-learning plan <learning-id> <docs|skills|entry>
+```
+
+真正修改规则层必须由用户明确确认：
+
+```text
+/promote-learning apply <learning-id> <docs|skills|entry>
+```
+
+`/promote-learning` 不处理 `ERRORS.md` 到 `LEARNINGS.md` 的初次精炼；该步骤仍由 `/maintenance` 负责。
+
+晋升边界：
+
+- `LEARNINGS → docs`：适合已经多次复用、能形成稳定判断规则、适用于多个任务的经验。
+- `docs → skills`：适合已经形成可重复操作流程、需要步骤或检查项配合的经验。
+- `docs / skills → entry`：只适合高频、安全边界、路径边界、提交边界或语言可读性纪律。
+
+禁止：
+
+- 不自动晋升
+- 不把单次错误或具体业务细节提升为规则
+- 不自动修改 docs / skills / hooks / tools / entry files
+- 不写入 global 或 kb
+- 不提交
