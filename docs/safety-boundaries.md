@@ -106,6 +106,8 @@ Hooks 不得：
 
 `WorktreeRemove` hook 只允许基于 repo 外 registry 清理 clean `owner=agent` ephemeral worktree；必须使用非 force `git worktree remove <path>`，不得删除 branch。dirty、`owner=user` 或 `protected=true` 时只报告或跳过。
 
+agent branch sweep 不接入 hook，不改变 worktree cleanup 基线；只能基于 repo 外 registry 和 `git worktree list --porcelain` 判定。显式 `-Apply` 也只允许 `git branch -d`，不得使用 `git branch -D`，不得删除有 upstream、origin 同名远端、仍被 checkout、缺少 registry marker、`owner=user` 或 `protected=true` 的分支。
+
 `stop-guard-lite` 在用户明确批准写 Stop hook 前，仍只是模块卡候选。
 
 ## 前端边界

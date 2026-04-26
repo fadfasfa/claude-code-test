@@ -60,6 +60,7 @@
 - 普通 Agent / Explore / review / subagent / `isolation: "worktree"` 自动创建的 worktree 一律视为 `owner=agent` ephemeral，并写入 `C:\Users\apple\_worktrees\claudecode\.registry\*.json`。
 - `WorktreeRemove` 只允许对 clean `owner=agent`、`protected=false`、位于 auto root 的 worktree 执行非 force `git worktree remove <path>`；dirty 时只报告 blocker；branch 不自动删除。
 - `owner=user` 或 `protected=true` 的 persistent worktree 永远跳过自动清理。
+- agent branch sweep helper：`.claude/tools/worktree-governor/sweep_agent_branches.ps1`。它是手动工具，不接 hook；只基于 repo 外 registry 和 `git worktree list --porcelain` 处理 `owner=agent` / `protected=false` / `wt-auto-*` branches，默认 dry-run，显式 `-Apply` 也只能使用 `git branch -d`。
 - 旧 nested `.claude/worktrees/**` 不是当前工作流来源，也不得作为新工作的模板。
 - `scripts/git/ccw-*` 当前是 legacy/manual tooling，不进入自动 hook contract。
 

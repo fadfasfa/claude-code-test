@@ -31,11 +31,32 @@
 - `SessionEnd` 不清理 worktree。
 - `scripts/git/ccw-*` 当前是 legacy/manual tooling，不进入自动 hook contract；后续如需使用，另起任务统一到同一 root/branch/marker 口径。
 
+## Branch 清理
+
+- agent branch sweep 是独立手动工具：`.claude/tools/worktree-governor/sweep_agent_branches.ps1`。
+- 它不接入 `WorktreeRemove` hook，不改变 worktree cleanup 基线。
+- 只处理 repo 外 registry 中 `owner=agent`、`protected=false`、branch 匹配 `wt-auto-*` 的记录。
+- `owner=user`、directed、`protected=true`、仍被任何 git worktree checkout、有 upstream config、或存在 `origin/<branch>` 的分支一律跳过。
+- 没有 registry marker 的 `wt-auto-*` branch 只能在 dry-run 结果中列出，不会被处理。
+- 当 `git rev-list --count main..<branch>` 为 `0` 时，显式 `-Apply` 模式才允许执行 `git branch -d <branch>`。
+- 当独有提交数大于 `0` 时，不删除，标记 `needs-review`，并输出 `git log --oneline main..<branch>`。
+- 禁止 `git branch -D`；branch 强删不属于本工具能力。
+- archive 模式本轮只支持 `-ArchivePlan` dry-run，展示 archive tag、bundle、patch 的计划路径；不会创建 tag、bundle 或 patch。真正 archive/delete 必须另起显式任务并先 verify。
+
+## VS / Codex 隔离
+
+- VS 只打开主 worktree：`C:\Users\apple\claudecode`。
+- Agent auto worktree 只放 `C:\Users\apple\_worktrees\claudecode\auto\**`。
+- 不把 auto root 加入 VS workspace。
+- 分支清理只根据 repo 外 registry 和 `git worktree list --porcelain` 判定，不根据 VS workspace 状态推断。
+
 ## 手动工具
 
 ```powershell
 .\.claude\tools\worktree-governor\new_worktree.ps1 -Owner directed -Purpose scraping-refactor-phase1 -DryRun
 .\.claude\tools\worktree-governor\new_worktree.ps1 -Owner auto -Purpose review-diff -DryRun
+.\.claude\tools\worktree-governor\sweep_agent_branches.ps1 -Json
 ```
 
 不使用 `-DryRun` 创建 worktree 前，必须有明确人工指令。
+不使用 `-Apply` 时，branch sweep 只报告决策，不删除 branch。

@@ -186,6 +186,24 @@
 - 为什么不能用现有模块解决：在需要稳定命令前，ad hoc CLI 已足够。
 - 状态：写入任何 config 或 script 前必须另给 future card。
 
+### agent-branch-sweep
+
+- 名称：`agent-branch-sweep`
+- 类型：repo-local manual PowerShell tool。
+- 解决什么问题：在 ephemeral worktree 已移除后，安全处理 registry 证明的 agent 临时分支。
+- 不解决什么问题：worktree cleanup、branch 强删、user/direct/protected branch 清理、remote branch 清理、自动 hook cleanup。
+- 触发条件：用户明确要求检查或清理 agent `wt-auto-*` branches。
+- 会读哪些路径：`C:\Users\apple\_worktrees\claudecode\.registry\*.json`、`git worktree list --porcelain`、local/remote git refs。
+- 会写哪些路径：默认不写；显式 `-Apply` 只可能通过 `git branch -d <branch>` 删除符合 contract 的本地 branch。`-ArchivePlan` 只输出计划，不写 tag/bundle/patch。
+- 是否安装依赖：否。
+- 是否运行浏览器：否。
+- 是否影响 git/worktree/global/kb：只影响本仓 local git branches；不影响 worktree/global/kb，不接入 hooks。
+- 如何禁用：不运行该脚本。
+- 如何删除：删除 `.claude/tools/worktree-governor/sweep_agent_branches.ps1` 并移除相关文档。
+- 最小验证命令：`powershell.exe` / `pwsh` parse；在临时 repo 验证 zero-ahead delete、unique-ahead needs-review、checked-out/user/protected/remote branch skip。
+- 为什么不能用现有模块解决：`WorktreeRemove` 必须保留 branch；`ccw-*` 是 legacy/manual，且没有 registry-first branch safety contract。
+- 状态：已接受为 repo-local manual tool；不接 hook。
+
 ### claudecode-ecc-retired
 
 - 名称：`claudecode-ecc-retired`
