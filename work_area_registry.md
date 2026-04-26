@@ -12,6 +12,19 @@ Default rules:
 - Adding a new work area does not automatically justify a work-area-specific `CLAUDE.md`.
 - These rules define default rule sources and write boundaries; they do not block normal read access to current-task files inside the current work area.
 
+## Work Area Selection Protocol
+
+1. Declare `target_work_area` before implementation; choose from the registered active rows below.
+2. Declare `allowed_write_scope`; by default it is exactly the selected work area's `default_write_scope`.
+3. Use `readonly_reference_scope` for cross-work-area context; whole-repo read is allowed unless the task narrows it.
+4. If the target is unclear, stay read-only, inspect candidates, and report the likely work areas before writing.
+5. Repository-root writes are allowed only for governance/control-plane files such as this registry, root entrypoints, or repo tooling docs.
+6. A Git worktree is an execution surface with its own branch/merge path; it is not an active work area unless this registry says so.
+7. A Claude Code transient worktree under `.claude/worktrees/**` is runtime/execution state; do not promote it to source of truth.
+8. Directed worktrees use `wt-directed-<purpose>` at `C:\Users\apple\_worktrees\claudecode\directed\<purpose>` and are never auto-cleaned.
+9. CC/subagent/fork auto worktrees use `wt-auto-cc-<yyyymmdd-hhmm>-<purpose>-<id>` at `C:\Users\apple\_worktrees\claudecode\auto\<branch>`; cleanup happens only after task completion, review, merge, local sync, and explicit approval or a dedicated final cleanup step.
+10. Do not create nested linked worktrees, `worktree-agent-*`, random adjective names, or bare `agent-*`; `worktree-run-scraping-refactor-phase1` is grandfathered keep.
+
 ## Registered Work Areas
 
 | work_area | purpose | default_write_scope | read_scope | status | notes |
@@ -27,8 +40,7 @@ Default rules:
 
 - Pick the target work area before writing files.
 - When the target is unclear, stay read-only and list candidate work areas first.
-- For Codex, start from the work area directory or use `codex --cd <work_area_path>`.
-- For Codex, default to no `--add-dir`; only expand write scope when the user explicitly requires it.
+- For Codex / CX App, default to workflow, rule, structure, review, and convergence tasks; do not silently take over active CC implementation.
 - For Claude Code, start from the work area directory for implementation tasks.
 - When starting from the repository root, limit activity to read-only exploration or repository governance.
 - Do not create scraping directories, output directories, MCP directories, or business files at the repository root without explicit repository-governance intent.
