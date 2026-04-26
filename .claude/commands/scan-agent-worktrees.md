@@ -4,7 +4,7 @@ description: Read-only scan of claudecode agent worktrees and wt-auto branches.
 
 # /scan-agent-worktrees
 
-显式长别名和文档入口。语义与 `/work` 完全一致：默认只读扫描 agent worktree / `wt-auto-*` branch 状态。
+唯一只读扫描入口。默认只读扫描 agent worktree / `wt-auto-*` branch 状态。
 
 调用：
 

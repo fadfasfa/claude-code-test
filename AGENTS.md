@@ -19,6 +19,22 @@
 
 本仓也不修改全局 Claude Code、Codex、Superpowers、ECC、CLI、VS 插件、Codex App、Codex Proxy、全局 hooks 或全局 skills；除非用户另起一个全局层任务。
 
+## Codex 本仓补充
+
+Codex 不继承 Claude Code 的全局 `CLAUDE.md`；在本仓执行时先遵守 Codex 自己的 `AGENTS.md` 链，再遵守本仓规则。
+
+- 默认使用简体中文输出任务总结、风险说明、验证结果和变更说明。
+- 重要规则、工作流、工具或代码文件应有中文功能简介或模块说明；新增或大改的 Python / PowerShell / JavaScript / HTML 代码，只在必要位置补中文注释、docstring 或 JSDoc。
+- 中文注释解释“为什么”和边界条件，不重复代码表面行为；技术标识符、API 名称、库名、协议字段、命令名保持英文原文。
+- 优先写简单、直接、可局部理解的代码；可读性优先于技巧性，避免 clever code。
+- 小步修改，一个 patch 只解决一个清晰问题；不做顺手重构，不扩大任务范围。
+- 优先显式数据流，减少隐藏状态和隐式副作用；保持函数短小、命名清楚、边界明确。
+- 失败要尽早暴露，错误信息要可诊断；避免过早抽象，稳定模式重复出现后再抽象。
+- 对危险操作、路径操作、删除操作、Git 操作必须先做只读检查；如果工具链异常，不要绕过安全边界继续大改，先报告 blocker 或做最小诊断。
+- Codex 默认不修改 `run/**`，除非用户本轮明确要求业务改动。
+- Codex 不默认清理 branch / worktree，不默认运行 destructive 命令，不默认创建长期 worktree。
+- Codex 总结必须列出：修改文件、是否触碰 `run/**`、是否执行删除/清理、是否提交、验证结果。
+
 ## 任务路由
 
 详细路由规则见 `docs/task-routing.md`。

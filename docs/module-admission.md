@@ -81,19 +81,19 @@
 ### scan-agent-worktrees
 
 - 名称：`scan-agent-worktrees`
-- 类型：repo-local read-only PowerShell tool and slash commands。
-- 解决什么问题：为日常短入口 `/work` 和显式长别名 `/scan-agent-worktrees` 提供语义一致的只读 agent worktree / `wt-auto-*` branch 状态报告。
+- 类型：repo-local read-only PowerShell tool and slash command。
+- 解决什么问题：为唯一只读扫描入口 `/scan-agent-worktrees` 提供 agent worktree / `wt-auto-*` branch 状态报告。
 - 不解决什么问题：不清理 worktree、不删除 branch、不删除文件、不替代用户确认。
-- 触发条件：用户运行 `/scan-agent-worktrees` 或 `/work`，或明确要求只读扫描 agent worktree / `wt-auto-*` branch。
+- 触发条件：用户运行 `/scan-agent-worktrees`，或明确要求只读扫描 agent worktree / `wt-auto-*` branch。
 - 会读哪些路径：`git worktree list --porcelain`、`git branch --list "wt-auto-*"`、`C:\Users\apple\_worktrees\claudecode\.registry\*.json`，以及 `sweep_agent_branches.ps1` dry-run JSON 输出。
 - 会写哪些路径：无。
 - 是否安装依赖：否。
 - 是否运行浏览器：否。
-- 是否影响 git/worktree/global/kb：不影响；只读查询 git/worktree/registry 状态，不执行 cleanup。
-- 如何禁用：不运行 slash command；或删除 `.claude/commands/scan-agent-worktrees.md` 和 `.claude/commands/work.md`。
+- 是否影响 git/worktree/global/kb：不影响；只读查询 git/worktree/registry 状态，不删除 branch，不删除 worktree，不运行 `sweep -Apply`。
+- 如何禁用：不运行 slash command；或删除 `.claude/commands/scan-agent-worktrees.md`。
 - 如何删除：删除命令文件和 `.claude/tools/worktree-governor/scan_agent_worktrees.ps1`。
 - 最小验证命令：parse 脚本；运行扫描前后比较 `git worktree list --porcelain` 与 `git branch --list "wt-auto-*"` 数量不变。
-- 为什么不能用现有模块解决：`sweep_agent_branches.ps1` 是 branch sweep dry-run/apply 工具；VS slash command 需要一个只读扫描入口和 `/work` 别名。
+- 为什么不能用现有模块解决：`sweep_agent_branches.ps1` 是 branch sweep dry-run/apply 工具；VS slash command 需要一个只读扫描入口，清理必须用户另行显式确认。
 - 状态：已接受 repo-local read-only command/tool。
 
 ### resume-active-task

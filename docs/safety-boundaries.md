@@ -108,6 +108,8 @@ Hooks 不得：
 
 agent branch sweep 不接入 hook，不改变 worktree cleanup 基线；只能基于 repo 外 registry 和 `git worktree list --porcelain` 判定。显式 `-Apply` 也只允许 `git branch -d`，不得使用 `git branch -D`，不得删除有 upstream、origin 同名远端、仍被 checkout、缺少 registry marker、`owner=user` 或 `protected=true` 的分支。
 
+`/scan-agent-worktrees` 是唯一只读扫描入口；它只扫描 agent worktree / `wt-auto-*` branch，不删除 branch，不删除 worktree，不运行 `sweep -Apply`。清理必须用户另行显式确认。
+
 `stop-guard-lite` 在用户明确批准写 Stop hook 前，仍只是模块卡候选。
 
 ## 前端边界

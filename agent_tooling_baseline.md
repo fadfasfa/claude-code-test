@@ -64,7 +64,7 @@
 - `WorktreeRemove` 只允许对 clean `owner=agent`、`protected=false`、位于 auto root 的 worktree 执行非 force `git worktree remove <path>`；dirty 时只报告 blocker；branch 不自动删除。
 - `owner=user` 或 `protected=true` 的 persistent worktree 永远跳过自动清理。
 - agent branch sweep helper：`.claude/tools/worktree-governor/sweep_agent_branches.ps1`。它是手动工具，不接 hook；只基于 repo 外 registry 和 `git worktree list --porcelain` 处理 `owner=agent` / `protected=false` / `wt-auto-*` branches，默认 dry-run，显式 `-Apply` 也只能使用 `git branch -d`。
-- Slash commands：`/work` 是日常短入口，`/scan-agent-worktrees` 是显式长别名和文档入口；二者语义完全一致，当前都只运行只读扫描，不清理 worktree 或 branch。
+- Slash command：`/scan-agent-worktrees` 是唯一只读扫描入口；它只扫描 agent worktree / `wt-auto-*` branch，不删除 branch，不删除 worktree，不运行 `sweep -Apply`，不执行 `git branch -d` / `git branch -D` 或 `git worktree remove`。清理必须用户另行显式确认。
 - 旧 nested `.claude/worktrees/**` 不是当前工作流来源，也不得作为新工作的模板。
 - `scripts/git/ccw-*` 当前是 legacy/manual tooling，不进入自动 hook contract。
 

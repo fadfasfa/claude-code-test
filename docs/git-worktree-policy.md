@@ -52,6 +52,8 @@
 
 ## 手动工具
 
+`/scan-agent-worktrees` 是唯一只读扫描入口；它只扫描 agent worktree / `wt-auto-*` branch，不删除 branch，不删除 worktree，不运行 `sweep -Apply`。清理必须用户另行显式确认。
+
 ```powershell
 .\.claude\tools\worktree-governor\new_worktree.ps1 -Owner directed -Purpose scraping-refactor-phase1 -DryRun
 .\.claude\tools\worktree-governor\new_worktree.ps1 -Owner auto -Purpose review-diff -DryRun
