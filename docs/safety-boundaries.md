@@ -51,9 +51,31 @@
 
 读取 Markdown / text / code 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。
 
-避免一次性读取超大范围。优先使用目录枚举、`rg`、`Select-String`、`Get-Content -TotalCount` 或小范围分段读取来确认候选位置和少量上下文。
+避免一次性读取超大范围。优先使用内置 `Grep` / `Glob` 确认候选位置和少量上下文。
 
-若 Read 失败且原因是空 `pages`、`pages` 参数不适用于 Markdown/text/code、行号范围、空参数或工具参数失败，失败一次后禁止用相同参数重试。Markdown/text/code 的主线程只读 fallback 是 `Get-Content -LiteralPath <path> -Encoding UTF8 -Raw`；该 fallback 只能读取文件，不得写文件。
+### Text/code Read failure fallback
+
+For text/code files:
+
+- If native `Read` fails due to `pages` / unsupported parameter / malformed input, do not retry the same `Read` call.
+- Do not claim `pages` was removed while issuing the same malformed `Read` again.
+- Use built-in `Grep` / `Glob` for read-only discovery.
+- If full context is still required, report blocker instead of inventing a script workaround.
+
+### Edit safety after Read failure
+
+如果 `Edit` / `Write` 因未成功专用 `Read` 登记而失败：
+
+- Do not use PowerShell `Set-Content`.
+- Do not use `[System.IO.File]::WriteAllText`.
+- Do not use ad-hoc replacement scripts.
+- Stop and report blocker.
+- Continue only after explicit user authorization for a scripted patch.
+
+### Retry budget
+
+- One native `Read` failure per file is enough.
+- After that, switch to built-in `Grep` / `Glob` or stop.
 
 对大型工作区先搜索关键词和目录结构，不全量读文件。已知 `target_work_area` 时，先检索 `work_area_registry.md` 中该工作区条目，再列工作区一级目录；不要把 `Glob <work_area>/**/*` 作为第一步。只有明确需要更多候选文件时，才扩大 Glob 或跨子区搜索。
 
@@ -64,7 +86,7 @@
 - Windows native Python / PowerShell 不应直接使用 `/c/Users/...` Bash 风格路径。
 - 进入 native Python、PowerShell 或文件工具参数时，使用 `C:/Users/...` 或 Windows 可解析路径。
 - 中文、替换字符、大段 Markdown 输出在 Windows 控制台可能触发编码问题。
-- 优先用 Read、Grep、`rg`、`Select-String` 分段读取；必须用 Python 输出时显式控制 UTF-8 或限制输出范围。
+- 优先用 Read、内置 `Grep` / `Glob` 分段定位；必须用 Python 输出时显式控制 UTF-8 或限制输出范围。
 - 不用 Python 暴力打印大型中文文件。
 
 ## Git 确认边界

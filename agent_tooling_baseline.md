@@ -17,8 +17,8 @@
   - `WorktreeRemove`：只清理 clean `owner=agent` ephemeral worktree，保留 branch
   - `PreToolUse`：裸 shell/worktree 危险命令拦截
   - `PostToolUseFailure`：self-improvement raw error 捕获
-- Disabled / experimental hook：`.claude/hooks/block-read-pages-for-text.ps1` 曾尝试用 `updatedInput` 移除 Markdown/text/code `Read` 的 unsupported `pages` 字段；真实 Claude Code 会话未稳定 honor 该路径，因此不在 settings 注册。
-- Read 工具链保守流程：业务修改前先用只读 `Grep` / `Glob` / PowerShell `Get-Content` 查看，确认范围后再由用户明确允许脚本化补丁；不要因专用 `Read` 失败退到 PowerShell 直接改业务文件。
+- Disabled / experimental hook：`.claude/hooks/block-read-pages-for-text.ps1` 只保留为禁用状态说明，不在 settings 注册，也不再通过 `updatedInput` 修正 `Read` 的 `pages` 参数。
+- Read 工具链保守流程：业务修改前先用内置 `Grep` / `Glob` 做只读定位。文本/code 文件的原生 `Read` 因 `pages`、unsupported parameter 或 malformed input 失败一次后，不重试同类 `Read`，不走脚本 fallback；如果仍需要全文上下文，必须报告 blocker。不要因专用 `Read` / `Edit` 失败退到 PowerShell 直接改业务文件。
 - Hooks 必须保持为安全机制或轻量提醒机制。它们不能变成调度器、自动继续引擎或业务文件写入器。
 - 仓库 env 使用 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` 和 `CLAUDE_CODE_FORK_SUBAGENT=0` 禁用后台 / fork worktree 派生。
 - 只读 Explore / review subagent 不是 worktree 触发条件；只有明确隔离执行或已接受计划批准 worktree 时，才允许进入 `WorktreeCreate`。

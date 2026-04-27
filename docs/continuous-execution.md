@@ -70,23 +70,31 @@
 - 如果必须运行可能失败的命令，先说明 `PostToolUseFailure` hook 可能把失败记录写入 `.learnings/ERRORS.md`，并获得用户确认。
 - 这只补充执行边界说明，不改变现有 hook 逻辑。
 
-## Markdown / Text 读取 fallback
+## Text/code Read failure fallback
 
 读取 Markdown / text / code 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。避免一次性读取超大范围。
 
-若 Read 失败且原因是空 `pages`、`pages` 参数不适用于 Markdown/text/code、行号范围、空参数或工具参数失败，失败一次后禁止用相同参数重试。
+For text/code files:
 
-Markdown/text/code 只读 fallback 固定为主线程只读命令：
+- If native `Read` fails due to `pages` / unsupported parameter / malformed input, do not retry the same `Read` call.
+- Do not claim `pages` was removed while issuing the same malformed `Read` again.
+- Use built-in `Grep` / `Glob` for read-only discovery.
+- If full context is still required, report blocker instead of inventing a script workaround.
 
-```powershell
-Get-Content -LiteralPath <path> -Encoding UTF8 -Raw
-```
+## Edit safety after Read failure
 
-该 fallback 只能读取文件，不得写文件；不得顺手改用 `Set-Content`、`Add-Content` 或 `Out-File` 作为计划文件写入 fallback。
+如果 `Edit` / `Write` 因未成功专用 `Read` 登记而失败：
 
-读取失败不等于任务 blocker。先降级到 scoped read：目录枚举、关键词搜索、`Get-Content -TotalCount`、小范围行读取或目标工作区条目检索。
+- Do not use PowerShell `Set-Content`.
+- Do not use `[System.IO.File]::WriteAllText`.
+- Do not use ad-hoc replacement scripts.
+- Stop and report blocker.
+- Continue only after explicit user authorization for a scripted patch.
 
-连续两次同类读取失败后，停止扩大读取范围，不要改用更大的全量 Glob 或全文件 Read。输出读取策略问题、已尝试的安全读取方式和下一步建议；只有目标文件仍无法定位且任务无法继续时，才报告 blocker。
+## Retry budget
+
+- One native `Read` failure per file is enough.
+- After that, switch to built-in `Grep` / `Glob` or stop.
 
 ## Blocker 报告
 
