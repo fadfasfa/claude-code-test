@@ -99,38 +99,20 @@
 ### scan-agent-worktrees
 
 - 名称：`scan-agent-worktrees`
-- 类型：repo-local read-only PowerShell tool and slash command。
-- 解决什么问题：为唯一只读扫描入口 `/scan-agent-worktrees` 提供 agent worktree / `wt-auto-*` branch 状态报告。
-- 不解决什么问题：不清理 worktree、不删除 branch、不删除文件、不替代用户确认。
-- 触发条件：用户运行 `/scan-agent-worktrees`，或明确要求只读扫描 agent worktree / `wt-auto-*` branch。
-- 会读哪些路径：`git worktree list --porcelain`、`git branch --list "wt-auto-*"`、`C:\Users\apple\_worktrees\claudecode\.registry\*.json`，以及 `sweep_agent_branches.ps1` dry-run JSON 输出。
-- 会写哪些路径：无。
+- 类型：repo-local PowerShell tool and explicit destructive slash command。
+- 解决什么问题：为唯一 agent worktree / branch 清理入口 `/scan-agent-worktrees` 提供扫描、clean agent auto worktree 删除、zero-ahead `wt-auto-*` agent branch 删除。
+- 不解决什么问题：不删除 dirty worktree、不删除 user/protected worktree 或 branch、不清理 legacy 或非 auto root worktree、不删除有 unique commits / checked-out / upstream / origin 同名远端的 branch、不放开裸 git 命令。
+- 触发条件：用户运行 `/scan-agent-worktrees`；该调用即视为授权执行受控清理。
+- 会读哪些路径：`git worktree list --porcelain`、`git branch --list "wt-auto-*"`、`git status --porcelain`、git branch upstream/origin refs、`C:\Users\apple\_worktrees\claudecode\.registry\*.json`。
+- 会写哪些路径：只通过 `git -C C:\Users\apple\claudecode worktree remove -- <path>` 移除符合 contract 的 linked worktree checkout；只通过 `git -C C:\Users\apple\claudecode branch -d <branch>` 删除符合 contract 的 local branch；不写 repo 文件。
 - 是否安装依赖：否。
 - 是否运行浏览器：否。
-- 是否影响 git/worktree/global/kb：不影响；只读查询 git/worktree/registry 状态，不删除 branch，不删除 worktree，不运行 `sweep -Apply`。
+- 是否影响 git/worktree/global/kb：只影响本仓符合条件的 local linked worktree 和 local branch；不影响 global/kb；`.claude/settings.local.json` 仅作为 ignored 本地权限配置。
 - 如何禁用：不运行 slash command；或删除 `.claude/commands/scan-agent-worktrees.md`。
 - 如何删除：删除命令文件和 `.claude/tools/worktree-governor/scan_agent_worktrees.ps1`。
-- 最小验证命令：parse 脚本；运行扫描前后比较 `git worktree list --porcelain` 与 `git branch --list "wt-auto-*"` 数量不变。
-- 为什么不能用现有模块解决：`sweep_agent_branches.ps1` 是 branch sweep dry-run/apply 工具；VS slash command 需要一个只读扫描入口，清理必须用户另行显式确认。
-- 状态：已接受 repo-local read-only command/tool。
-
-### cleanup-agent-worktrees
-
-- 名称：`cleanup-agent-worktrees`
-- 类型：repo-local PowerShell tool and explicit destructive slash command。
-- 解决什么问题：在用户显式运行 `/cleanup-agent-worktrees` 后，清理 registry 证明的 clean agent auto worktree，并避免逐个 worktree 权限确认。
-- 不解决什么问题：不删除 branch、不处理 dirty worktree、不处理 user/protected worktree、不清理 legacy 或非 auto root worktree、不放开裸 `git worktree remove`。
-- 触发条件：用户运行 `/cleanup-agent-worktrees`，或明确要求执行该受控 cleanup wrapper。
-- 会读哪些路径：`git worktree list --porcelain`、`git branch --list "wt-auto-*"`、`git status --porcelain`、`C:\Users\apple\_worktrees\claudecode\.registry\*.json`。
-- 会写哪些路径：只通过 `git -C C:\Users\apple\claudecode worktree remove -- <path>` 移除符合 contract 的 linked worktree checkout；不写 repo 文件，不删除 branch。
-- 是否安装依赖：否。
-- 是否运行浏览器：否。
-- 是否影响 git/worktree/global/kb：只影响本仓符合条件的 local linked worktree；不影响 global/kb；`.claude/settings.local.json` 仅作为 ignored 本地权限配置。
-- 如何禁用：不运行 slash command；或从 `.claude/settings.local.json` 移除 cleanup wrapper allow。
-- 如何删除：删除 `.claude/commands/cleanup-agent-worktrees.md`、`.claude/tools/worktree-governor/cleanup_agent_worktrees.ps1`，并移除相关文档记录。
-- 最小验证命令：PowerShell / pwsh parse；无候选时 exit 0；临时 repo fixture 验证 clean agent auto worktree 会移除，dirty/user/protected/非 auto root 会 skipped，branch 保留。
-- 为什么不能用现有模块解决：`/scan-agent-worktrees` 必须保持只读；`sweep_agent_branches.ps1` 只处理 branch；裸 git 命令缺少 marker、auto root、clean status 和 owner/protected 护栏。
-- 状态：已接受 repo-local explicit cleanup command/tool。
+- 最小验证命令：PowerShell / pwsh parse；真实运行 `/scan-agent-worktrees`；临时 repo fixture 验证 clean agent auto worktree 会移除，zero-ahead agent branch 会删除，dirty/user/protected/非 auto root/unique commits/pushed-upstream 会 skipped。
+- 为什么不能用现有模块解决：只读扫描和独立 cleanup 会造成授权拆分及权限弹窗；裸 git 命令缺少 marker、auto root、clean status、zero-ahead、upstream/origin 和 owner/protected 护栏。
+- 状态：已接受 repo-local explicit cleanup command/tool；`/cleanup-agent-worktrees` 已退役，不作为常规入口。
 
 ### ship-task-pr
 
@@ -147,7 +129,7 @@
 - 如何禁用：删除 `.claude/commands/ship-task-pr.md`，并从 `.claude/settings.local.json` 移除对应 wrapper allow。
 - 如何删除：删除 `.claude/tools/pr/ship_task_pr.ps1`、`.claude/commands/ship-task-pr.md` 和相关文档记录；保留历史 commit/PR 由 GitHub/Git 管理，不由工具清理。
 - 最小验证命令：PowerShell / pwsh parse；`-DryRun`；slug 生成；危险 branch 拒绝；无 staged diff 停止；blocked paths 不会被 stage；`git diff --check`；`git diff --cached --check`。
-- 为什么不能用现有模块解决：`/scan-agent-worktrees` 是只读扫描入口，不能承载 push/PR；裸 git 命令缺少本仓提交范围、blocked path 和远端写入护栏。
+- 为什么不能用现有模块解决：`/scan-agent-worktrees` 只承载 agent worktree / branch 受控清理，不能承载 push/PR；裸 git 命令缺少本仓提交范围、blocked path 和远端写入护栏。
 - 状态：已接受 repo-local explicit remote-write command/tool。
 
 ### local-methodology-entrypoints
