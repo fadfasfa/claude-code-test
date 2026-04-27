@@ -74,6 +74,8 @@
 
 读取 Markdown / text / code 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。避免一次性读取超大范围。
 
+本仓只读探索默认使用 `.claude/agents/repo-explorer.md`。不要用 built-in `Explore` 承担需要中文 Todo、text/code Read fallback 或路径纪律的任务。
+
 For text/code files:
 
 - If native `Read` fails due to `pages` / unsupported parameter / malformed input, do not retry the same `Read` call.

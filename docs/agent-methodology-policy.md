@@ -13,6 +13,7 @@
 
 ## 受控入口
 
+- `repo-explorer`：本仓只读探索 agent，替代 built-in `Explore`，要求中文 Todo、text/code Read fallback 和路径纪律。
 - `/brainstorm-task`：需求澄清、方案比较、风险列举；默认不写文件、不创建分支、不启动 worktree。
 - `/tdd-task`：仅用于明确开发或修 bug；先定位现有测试体系，按最小 red-green-refactor 执行。
 - `/review-pr-local`：本地只读 PR 审查入口，审查当前分支相对 base 的本地 git diff，替代云端 Codex PR Review。
@@ -24,3 +25,4 @@
 - 不放开裸 `git push*`。
 - 不运行 `gh pr review --submit` 或 `gh pr merge`。
 - 不让本地 PR Review agent 修改代码、提交、push 或向 GitHub 发布评论。
+- 不使用 built-in `Explore` 承担需要中文 Todo、text/code Read fallback 或路径纪律的只读探索任务。

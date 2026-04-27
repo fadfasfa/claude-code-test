@@ -15,6 +15,8 @@
 
 入口文件不是每次都要全量读取。普通任务优先读取中文头部简介、目录、目标工作区相关段落和相关小节；已知 `target_work_area` 时，只搜索该工作区相关段落。不要默认 `Read` `AGENTS.md`、`PROJECT.md` 或 `work_area_registry.md` 的 1-2000 行，也不要把完整入口链全文件读取当作启动固定动作。文本/code 文件的 `Read` 因空 `pages`、PDF pages 参数混用、unsupported parameter 或 malformed input 失败一次后，不得用相同参数或同类错误重试；不得声称已移除 `pages` 却再次发出同类错误 `Read`。同一文件最多允许 1 次原生 `Read` 失败，随后只能改用内置 `Grep` / `Glob` 做只读定位；如果仍需要全文上下文，停止并报告 blocker，不发明脚本 fallback。
 
+只读探索默认使用 `.claude/agents/repo-explorer.md`。不要用 built-in `Explore` 承担需要中文 Todo、text/code Read fallback 或路径纪律的任务；本仓 repo-local hook 会阻断 `Agent(Explore)` 并要求改用 `repo-explorer`。
+
 `.claude/` 存放 repo-local settings、skills、hooks 和 tools。它不能替代根目录入口文件。
 
 ## 默认流程

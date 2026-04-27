@@ -24,6 +24,24 @@
 
 ## 当前模块卡
 
+### repo-explorer-agent-guard
+
+- 名称：`repo-explorer-agent-guard`
+- 类型：repo-local read-only agent and PreToolUse Agent hook。
+- 解决什么问题：替代 built-in `Explore`，强制本仓只读探索使用中文 Todo、text/code Read fallback 和路径纪律；默认不暴露 Read，以避开 text/code `Read` 被自动附加 `pages` 的工具链问题。
+- 不解决什么问题：不修复 Read 工具本身，不启用 Read normalizer，不迁移业务文件，不清理 worktree/branch。
+- 触发条件：用户或 agent 需要本仓只读探索；或 Claude Code 发起 `Agent(Explore)`。
+- 会读哪些路径：`Agent` hook 只读取 hook stdin payload；`repo-explorer` 按任务只读仓内代码、文档和配置。
+- 会写哪些路径：hook 不写文件；`repo-explorer` 不写文件。
+- 是否安装依赖：否。
+- 是否运行浏览器：否。
+- 是否影响 git/worktree/global/kb：不影响 global/kb；不清理 branch/worktree；只阻断 built-in `Explore` 调用。
+- 如何禁用：从 `.claude/settings.json` 移除 `block-builtin-explore.ps1` 的 `PreToolUse` `Agent` hook entry。
+- 如何删除：删除 `.claude/agents/repo-explorer.md`、`.claude/hooks/block-builtin-explore.ps1`，并移除相关文档记录。
+- 最小验证命令：`claude agents list`；PowerShell / pwsh parse hook；模拟 `Agent=Explore` 被阻断；模拟 `Agent=repo-explorer` 不阻断。
+- 为什么不能用现有模块解决：built-in `Explore` 未稳定遵守中文 Todo 与 text/code Read fallback；已禁用的 Read hook 不应重新作为 normalizer。
+- 状态：已接受 repo-local read-only exploration guard。
+
 ### continuous-execution-ledger
 
 - 名称：`continuous-execution-ledger`

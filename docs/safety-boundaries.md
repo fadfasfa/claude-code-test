@@ -53,6 +53,8 @@
 
 避免一次性读取超大范围。优先使用内置 `Grep` / `Glob` 确认候选位置和少量上下文。
 
+只读探索默认使用 `.claude/agents/repo-explorer.md`。不要用 built-in `Explore` 承担需要中文 Todo、text/code Read fallback 或路径纪律的任务；`Agent(Explore)` 会被 repo-local PreToolUse hook 阻断。
+
 ### Text/code Read failure fallback
 
 For text/code files:
@@ -85,6 +87,7 @@ For text/code files:
 
 - Windows native Python / PowerShell 不应直接使用 `/c/Users/...` Bash 风格路径。
 - 进入 native Python、PowerShell 或文件工具参数时，使用 `C:/Users/...` 或 Windows 可解析路径。
+- Read / Grep / Glob 优先使用相对路径或 Windows 路径；Bash 中优先使用相对路径，不混用 `/mnt/c` 与 `/c/Users`。
 - 中文、替换字符、大段 Markdown 输出在 Windows 控制台可能触发编码问题。
 - 优先用 Read、内置 `Grep` / `Glob` 分段定位；必须用 Python 输出时显式控制 UTF-8 或限制输出范围。
 - 不用 Python 暴力打印大型中文文件。
