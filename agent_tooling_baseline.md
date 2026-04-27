@@ -16,7 +16,7 @@
   - `WorktreeCreate`：worktree owner 判定、命名护栏和 repo 外 registry marker 写入
   - `WorktreeRemove`：只清理 clean `owner=agent` ephemeral worktree，保留 branch
   - `PreToolUse`：裸 shell/worktree 危险命令拦截；阻断 built-in `Explore`，要求改用 `repo-explorer`
-  - `PostToolUseFailure`：self-improvement raw error 捕获
+- Optional debug hook：`.claude/hooks/self-improvement-error-log.sh` 可用于临时捕获 Bash 失败到 ignored raw cache；默认不在 `.claude/settings.json` 注册，避免只读任务产生额外写入噪音。
 - Disabled / experimental hook：`.claude/hooks/block-read-pages-for-text.ps1` 只保留为禁用状态说明，不在 settings 注册，也不再通过 `updatedInput` 修正 `Read` 的 `pages` 参数。
 - Native Read ban for text/code files：本仓主线程和 subagent 不对 `.md`、`.txt`、`.json`、`.py`、`.ps1`、`.html`、`.css`、`.js`、`.ts`、`.tsx`、`.jsx`、`.yaml`、`.yml`、`.toml`、`.csv` 使用原生 `Read`。业务修改前先用内置 `Grep` / `Glob` / `Bash` 做只读定位；需要源码或文档汇总时使用 `.claude/agents/repo-explorer.md`。
 - 如果已经发生一次 `Read` `pages` / unsupported parameter / malformed input 失败，不重试同文件原生 `Read`，也不得声称“这次不传 pages”后再次发起同类 `Read`；`full_synergy_scraper.py` 这类源码文件不能“重试读取”。如果仍需要全文上下文，必须报告 blocker。不要因原生 `Read` / `Edit` 失败退到 PowerShell 直接改业务文件；只有用户明确回复“授权 scripted patch plan 修改 <file>”后，才允许脚本化补丁。

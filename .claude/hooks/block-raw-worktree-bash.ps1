@@ -1,7 +1,8 @@
 <#
 Repo-local PreToolUse safety hook.
 Purpose: block dangerous shell/git/worktree commands.
-Guards: recursive delete, git clean/reset, global config writes, and unmanaged worktree operations.
+Guards: raw push/branch/worktree mutations, destructive deletes, git clean/reset,
+global config writes, and unmanaged downloads/process control.
 Non-goals: no task dispatch, no auto-continue, no business-file edits, no replacement for human confirmation.
 #>
 
@@ -209,6 +210,38 @@ function Test-SegmentMatch([string]$Segment, [string]$Pattern) {
   return $Segment -match ($prefix + $Pattern)
 }
 
+# Normalize path text only for wrapper matching; this does not touch the filesystem.
+function Normalize-CommandPathText([string]$Text) {
+  if ([string]::IsNullOrWhiteSpace($Text)) { return "" }
+  $normalized = ($Text -replace '/', '\')
+  return ($normalized -replace '\\+', '\').ToLowerInvariant()
+}
+
+# Allow only the repo-local wrapper invocations that carry their own safety checks.
+function Test-AllowedWrapperSegment([string]$Segment) {
+  $normalized = Normalize-CommandPathText $Segment
+  if ($normalized -notmatch '^\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*)=(?:"[^"]*"|''[^'']*''|[^\s;|&]+)\s+)*(?:powershell(?:\.exe)?|pwsh(?:\.exe)?)\b') {
+    return $false
+  }
+  if ($normalized -notmatch '\s-file\s+') {
+    return $false
+  }
+
+  $allowedWrappers = @(
+    '\.claude\tools\worktree-governor\scan_agent_worktrees.ps1',
+    '\.claude\tools\worktree-governor\scan_and_cleanup_agent_worktrees.ps1',
+    '\.claude\tools\pr\ship_task_pr.ps1',
+    '\.claude\tools\pr\review_local_pr.ps1'
+  )
+
+  foreach ($wrapper in $allowedWrappers) {
+    if ($normalized.Contains($wrapper)) {
+      return $true
+    }
+  }
+  return $false
+}
+
 $stdin = [Console]::In.ReadToEnd()
 if ([string]::IsNullOrWhiteSpace($stdin)) { exit 0 }
 
@@ -228,28 +261,28 @@ if ([string]::IsNullOrWhiteSpace($command)) { exit 0 }
 
 $segments = Get-CommandSegments $command
 foreach ($segment in $segments) {
-  if (Test-SegmentMatch $segment '(?i:(?:Remove-Item|rm|del|rmdir)\b.*\s(?:-Recurse|-r|-rf)\b)') { Block "recursive deletion is forbidden by default." }
+  if (Test-AllowedWrapperSegment $segment) { continue }
+
+  if (Test-SegmentMatch $segment '(?i:Remove-Item(?:\s|$))') { Block "Remove-Item is forbidden outside approved wrappers." }
+  if (Test-SegmentMatch $segment '(?i:(?:rm|del|rmdir)\b.*\s(?:-Recurse|-r|-rf)\b)') { Block "recursive deletion is forbidden by default." }
   if (Test-SegmentMatch $segment '(?i:git\s+clean(?:\s|$))') { Block "git clean is forbidden by default." }
   if (Test-SegmentMatch $segment '(?i:git\s+reset\s+--hard(?:\s|$))') { Block "git reset --hard is forbidden by default." }
-  if (Test-SegmentMatch $segment '(?i:git\s+branch\s+-D(?:\s|$))') { Block "forced branch deletion is forbidden." }
+  if (Test-SegmentMatch $segment '(?i:git\s+branch\s+-(?:d|D)(?:\s|$))') { Block "raw branch deletion is forbidden; use approved cleanup tooling." }
+  if (Test-SegmentMatch $segment '(?i:git\s+push(?:\s|$))') { Block "raw git push is forbidden; use /ship-task-pr." }
   if (Test-SegmentMatch $segment '(?i:(?:Invoke-WebRequest|iwr|irm|curl|wget)\b)') { Block "network download commands require explicit approval." }
   if (Test-SegmentMatch $segment '(?i:(?:Stop-Process|taskkill)\b)') { Block "process control requires explicit approval." }
   if (Test-SegmentMatch $segment '(?i:Set-ExecutionPolicy\b)') { Block "execution policy changes are forbidden by default." }
   if (Test-SegmentMatch $segment '(?i:npm\s+install\s+-g(?:\s|$))') { Block "global npm install is forbidden by default." }
   if (Test-SegmentMatch $segment '(?i:winget\s+install(?:\s|$))') { Block "winget install is forbidden by default." }
 
-  $writesGlobalConfig = (Test-SegmentMatch $segment '(?i:(?:Set-Content|Add-Content|Out-File|New-Item|Remove-Item)\b)') -and ($segment -match '(?i)(?:C:\\Users\\apple\\\.(?:claude|codex)\b|/c/Users/apple/\.(?:claude|codex)\b|/mnt/c/Users/apple/\.(?:claude|codex)\b)')
+  $writesGlobalConfig = (Test-SegmentMatch $segment '(?i:(?:Set-Content|Add-Content|Out-File|New-Item|Remove-Item)\b)') -and ($segment -match '(?i)(?:C:\\Users\\apple\\\.(?:claude|codex)\b|C:/Users/apple/\.(?:claude|codex)\b|/c/Users/apple/\.(?:claude|codex)\b|/mnt/c/Users/apple/\.(?:claude|codex)\b)')
   if ($writesGlobalConfig) {
     Block "writes to global .claude or .codex are outside this repository."
   }
 
   if (Test-SegmentMatch $segment '(?i:git\s+worktree\s+add(?:\s|$))') { Block "git worktree add is governed." }
   if (Test-SegmentMatch $segment '(?i:git\s+worktree\s+move(?:\s|$))') { Block "git worktree move is not allowed for agents." }
-  if (Test-SegmentMatch $segment '(?i:git\s+worktree\s+remove\b.*\s(?:--force|-f)\b)') { Block "forced worktree removal is forbidden." }
-  $removesDirectedWorktree = (Test-SegmentMatch $segment '(?i:git\s+worktree\s+remove(?:\s|$))') -and ($segment -match '(?i)(?:\bwt-directed-|_worktrees[\\/]+claudecode[\\/]+directed[\\/])')
-  if ($removesDirectedWorktree) {
-    Block "wt-directed-* worktrees are directed and require explicit cleanup instruction."
-  }
+  if (Test-SegmentMatch $segment '(?i:git\s+worktree\s+remove(?:\s|$))') { Block "raw worktree removal is forbidden; use approved cleanup tooling." }
 }
 
 exit 0
