@@ -24,6 +24,7 @@
 - active worktree contract 以 `.claude/hooks/worktree-governor-create.ps1`、`.claude/hooks/worktree-governor-remove.ps1` 和 repo 外 registry 为准。
 - `WorktreeCreate` 负责 owner 判定、受管 branch/path 生成、repo 外 registry marker 写入。
 - `WorktreeRemove` 只允许对 registry 中 `owner=agent`、`protected=false`、位于 auto root 且 clean 的 worktree 执行非 force `git worktree remove <path>`。
+- `/cleanup-agent-worktrees` 是人工显式清理入口；用户调用该命令即表示授权清理符合上述条件的 clean agent worktree，但只能通过受控脚本执行。
 - `WorktreeRemove` 不删除 branch；branch 清理必须另起显式手动命令。
 - dirty ephemeral worktree 不得强删，只报告 blocker。
 - `owner=user` 或 `protected=true` 的 persistent worktree 必须跳过自动清理。
@@ -52,11 +53,14 @@
 
 ## 手动工具
 
-`/scan-agent-worktrees` 是唯一只读扫描入口；它只扫描 agent worktree / `wt-auto-*` branch，不删除 branch，不删除 worktree，不运行 `sweep -Apply`。清理必须用户另行显式确认。
+`/scan-agent-worktrees` 是只读扫描入口；它只扫描 agent worktree / `wt-auto-*` branch，不删除 branch，不删除 worktree，不运行 `sweep -Apply`。
+
+`/cleanup-agent-worktrees` 是显式 destructive 清理入口；用户调用它即视为授权清理 clean agent worktree。它先输出候选摘要，只处理 registry `owner=agent`、`protected=false`、path 位于 `C:\Users\apple\_worktrees\claudecode\auto\`、branch 匹配 `wt-auto-*` 且 `git status --porcelain` 为空的 worktree；dirty、user/protected、非 auto root、无 marker 或 marker 不匹配都只报告 skipped。它不删除 branch；branch 仍由 `.claude/tools/worktree-governor/sweep_agent_branches.ps1` 单独处理。裸 `git worktree remove` 不作为默认清理路径。
 
 ```powershell
 .\.claude\tools\worktree-governor\new_worktree.ps1 -Owner directed -Purpose scraping-refactor-phase1 -DryRun
 .\.claude\tools\worktree-governor\new_worktree.ps1 -Owner auto -Purpose review-diff -DryRun
+.\.claude\tools\worktree-governor\cleanup_agent_worktrees.ps1
 .\.claude\tools\worktree-governor\sweep_agent_branches.ps1 -Json
 ```
 

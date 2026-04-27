@@ -71,12 +71,14 @@
 - 详细策略：`docs/git-worktree-policy.md`
 - worktree helper：`.claude/tools/worktree-governor/new_worktree.ps1`
 - read-only scanner：`.claude/tools/worktree-governor/scan_agent_worktrees.ps1`
+- authorized cleanup wrapper：`.claude/tools/worktree-governor/cleanup_agent_worktrees.ps1`
 - 用户显式长期 worktree 只认 helper `-Owner directed`，或 WorktreeCreate name 显式带 `directed-` / `user-`。
 - 普通 Agent / Explore / review / subagent / `isolation: "worktree"` 自动创建的 worktree 一律视为 `owner=agent` ephemeral，并写入 `C:\Users\apple\_worktrees\claudecode\.registry\*.json`。
 - `WorktreeRemove` 只允许对 clean `owner=agent`、`protected=false`、位于 auto root 的 worktree 执行非 force `git worktree remove <path>`；dirty 时只报告 blocker；branch 不自动删除。
 - `owner=user` 或 `protected=true` 的 persistent worktree 永远跳过自动清理。
 - agent branch sweep helper：`.claude/tools/worktree-governor/sweep_agent_branches.ps1`。它是手动工具，不接 hook；只基于 repo 外 registry 和 `git worktree list --porcelain` 处理 `owner=agent` / `protected=false` / `wt-auto-*` branches，默认 dry-run，显式 `-Apply` 也只能使用 `git branch -d`。
-- Slash command：`/scan-agent-worktrees` 是唯一只读扫描入口；它只扫描 agent worktree / `wt-auto-*` branch，不删除 branch，不删除 worktree，不运行 `sweep -Apply`，不执行 `git branch -d` / `git branch -D` 或 `git worktree remove`。清理必须用户另行显式确认。
+- Slash command：`/scan-agent-worktrees` 是只读扫描入口；它只扫描 agent worktree / `wt-auto-*` branch，不删除 branch，不删除 worktree，不运行 `sweep -Apply`，不执行 `git branch -d` / `git branch -D` 或 `git worktree remove`。
+- Slash command：`/cleanup-agent-worktrees` 是显式 destructive 清理入口；用户调用它即视为授权通过受控 wrapper 清理 clean agent worktree。它只处理 registry `owner=agent`、`protected=false`、auto root、`wt-auto-*` branch 且 clean 的 worktree；dirty、user/protected、非 auto root、无 marker 或 marker 不匹配只报告 skipped。它不删除 branch；branch 仍由 sweep 工具单独处理。裸 `git worktree remove` 不作为默认路径。
 - 旧 nested `.claude/worktrees/**` 不是当前工作流来源，也不得作为新工作的模板。
 - `scripts/git/ccw-*` 当前是 legacy/manual tooling，不进入自动 hook contract。
 
@@ -84,7 +86,7 @@
 
 - Slash command：`/ship-task-pr` 是显式远端写入入口，用于把当前任务改动整理成语义化分支、commit、`git push -u origin <branch>` 和 GitHub PR。
 - Wrapper：`.claude/tools/pr/ship_task_pr.ps1`。用户调用 `/ship-task-pr` 本身视为本次 push / PR 的明确授权，但只授权该受控 wrapper。
-- `/scan-agent-worktrees` 仍然只读；不得复用它承载 push、PR、删除或清理语义。
+- `/scan-agent-worktrees` 仍然只读；不得复用它承载 push、PR、删除或清理语义。worktree 清理只走 `/cleanup-agent-worktrees` 的受控 wrapper。
 - 裸 `git push` 仍不默认放开；本地权限只允许精确 wrapper 命令，不允许 `PowerShell(*)`、`powershell.exe *`、`pwsh *`、`git *` 或 `git push*`。
 - wrapper 禁止 force push、push `main` / `master`、删除 branch/worktree、`git reset --hard`、`git clean`，并拒绝提交 `.claude/settings.local.json`、`.tmp/**`、日志文件、`node_modules/**` 和 `.venv/**`。
 - PR body 生成到 ignored `.tmp/pr/<branch>/body.md`，不纳入提交。
