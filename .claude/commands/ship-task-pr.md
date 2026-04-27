@@ -31,5 +31,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".claude\tools\pr\ship_t
 - 不允许删除 branch 或 worktree。
 - 不允许 `git reset --hard` 或 `git clean`。
 - 不允许把 `.claude/settings.local.json`、`.tmp/**`、日志文件、`node_modules/**` 或 `.venv/**` 纳入提交。
+- 检查 diff、PR body 或上下文时，不调用原生 `Read` 读取 text/code 文件；使用 Git diff、Grep / Glob / Bash。
 - 裸 `git push` 仍不默认放开。
 - 不自动打开浏览器。

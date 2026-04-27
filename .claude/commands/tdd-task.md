@@ -11,6 +11,7 @@ argument-hint: "<development or bug-fix task>"
 
 - 先定位现有测试体系和最近有效验证命令。
 - 没有测试体系时，不强行大建测试框架；只提出最小测试方案。
+- 定位源码、文档或测试入口时，不调用原生 `Read` 读取 text/code 文件；使用 `repo-explorer`、`Grep` / `Glob` / `Bash`。
 - 遵守 red-green-refactor：先写或确认失败用例，再做最小实现，再只做必要整理。
 - 不顺手重构，不扩大任务范围。
 - 修改后运行最小必要验证，并报告实际结果。

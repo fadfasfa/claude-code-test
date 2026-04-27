@@ -70,33 +70,34 @@
 - 如果必须运行可能失败的命令，先说明 `PostToolUseFailure` hook 可能把失败记录写入 `.learnings/ERRORS.md`，并获得用户确认。
 - 这只补充执行边界说明，不改变现有 hook 逻辑。
 
-## Text/code Read failure fallback
+## Native Read ban for text/code files
 
-读取 Markdown / text / code 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。避免一次性读取超大范围。
+当前本仓已知 Claude Code 原生 `Read` 对 text/code 文件可能自动携带 `pages` 参数并失败。因此连续执行时也必须遵守：
 
-本仓只读探索默认使用 `.claude/agents/repo-explorer.md`。不要用 built-in `Explore` 承担需要中文 Todo、text/code Read fallback 或路径纪律的任务。
+- 不要在主线程或 subagent 中对 `.md`、`.txt`、`.json`、`.py`、`.ps1`、`.html`、`.css`、`.js`、`.ts`、`.tsx`、`.jsx`、`.yaml`、`.yml`、`.toml`、`.csv` 文件使用原生 `Read`。
+- 源码和文档探索优先使用 `.claude/agents/repo-explorer.md`，或直接用 `Grep` / `Glob` / `Bash` 获取少量片段。
+- `repo-explorer` 只能使用 `Grep` / `Glob` / `Bash`。
+- 如果主线程或 subagent 已经发生一次 `Read` `pages` / unsupported parameter / malformed input 失败，不得重试同文件 `Read`。
+- 不得声称“这次不传 pages”后再次发起同类 `Read`。
+- 需要上下文时，用 `Grep` / `Glob` / `Bash` 获取片段或让 `repo-explorer` 汇总。
+- 如果仍需要完整上下文，停止并报告 blocker；不得发明脚本读取或写入绕过。
+- `full_synergy_scraper.py` 这类源码文件不能“重试读取”；首次遇到 `Read` 参数失败后，同文件原生 `Read` 路径立即关闭。
 
-For text/code files:
+## Edit safety after missing Read registration
 
-- If native `Read` fails due to `pages` / unsupported parameter / malformed input, do not retry the same `Read` call.
-- Do not claim `pages` was removed while issuing the same malformed `Read` again.
-- Use built-in `Grep` / `Glob` for read-only discovery.
-- If full context is still required, report blocker instead of inventing a script workaround.
-
-## Edit safety after Read failure
-
-如果 `Edit` / `Write` 因未成功专用 `Read` 登记而失败：
+如果 `Edit` / `Write` 因没有成功原生 `Read` 登记而失败：
 
 - Do not use PowerShell `Set-Content`.
 - Do not use `[System.IO.File]::WriteAllText`.
 - Do not use ad-hoc replacement scripts.
 - Stop and report blocker.
-- Continue only after explicit user authorization for a scripted patch.
+- Continue only after the user explicitly replies: `授权 scripted patch plan 修改 <file>`.
 
 ## Retry budget
 
-- One native `Read` failure per file is enough.
-- After that, switch to built-in `Grep` / `Glob` or stop.
+- Native `Read` budget for text/code files is zero in the main thread and subagents.
+- If a `Read` `pages` / unsupported parameter / malformed input failure has already happened, do not retry native `Read` for the same file.
+- Use built-in `Grep` / `Glob` / `Bash` or stop with a blocker.
 
 ## Blocker 报告
 

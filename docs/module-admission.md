@@ -28,7 +28,7 @@
 
 - 名称：`repo-explorer-agent-guard`
 - 类型：repo-local read-only agent and PreToolUse Agent hook。
-- 解决什么问题：替代 built-in `Explore`，强制本仓只读探索使用中文 Todo、text/code Read fallback 和路径纪律；默认不暴露 Read，以避开 text/code `Read` 被自动附加 `pages` 的工具链问题。
+- 解决什么问题：替代 built-in `Explore`，强制本仓只读探索使用中文 Todo、原生 `Read` 禁令和路径纪律；不暴露 Read，以避开 text/code `Read` 被自动附加 `pages` 的工具链问题。
 - 不解决什么问题：不修复 Read 工具本身，不启用 Read normalizer，不迁移业务文件，不清理 worktree/branch。
 - 触发条件：用户或 agent 需要本仓只读探索；或 Claude Code 发起 `Agent(Explore)`。
 - 会读哪些路径：`Agent` hook 只读取 hook stdin payload；`repo-explorer` 按任务只读仓内代码、文档和配置。
@@ -39,7 +39,7 @@
 - 如何禁用：从 `.claude/settings.json` 移除 `block-builtin-explore.ps1` 的 `PreToolUse` `Agent` hook entry。
 - 如何删除：删除 `.claude/agents/repo-explorer.md`、`.claude/hooks/block-builtin-explore.ps1`，并移除相关文档记录。
 - 最小验证命令：`claude agents list`；PowerShell / pwsh parse hook；模拟 `Agent=Explore` 被阻断；模拟 `Agent=repo-explorer` 不阻断。
-- 为什么不能用现有模块解决：built-in `Explore` 未稳定遵守中文 Todo 与 text/code Read fallback；已禁用的 Read hook 不应重新作为 normalizer。
+- 为什么不能用现有模块解决：built-in `Explore` 未稳定遵守中文 Todo 与 text/code 原生 `Read` 禁令；已禁用的 Read hook 不应重新作为 normalizer。
 - 状态：已接受 repo-local read-only exploration guard。
 
 ### continuous-execution-ledger
@@ -94,7 +94,7 @@
 - 如何删除：删除 `.claude/hooks/block-read-pages-for-text.ps1` 并移除 settings entry。
 - 最小验证命令：用 JSON payload 模拟 `Read` Markdown with empty `pages`，确认 exit 0 且 stdout JSON 含不带 `pages` 的 `updatedInput`；模拟普通 Markdown Read 和 PDF pages Read，确认 exit 0 且不修改。
 - 为什么不能用现有模块解决：文档规则依赖模型自律，blocking hook 会导致 Read 失败并放大 fallback 写入风险。
-- 状态：disabled / experimental；真实 Claude Code 会话仍出现 `pages: ""` invalid parameter，且 hook debug log 未记录触发，说明当前 CC/VS 面板 Read 参数问题不能靠 blocking/normalizing hook 稳定修复。业务修改前必须改用更保守流程：先只读 `Grep` / `Glob` / PowerShell `Get-Content` 查看，再由用户确认是否允许脚本化补丁。
+- 状态：disabled / experimental；真实 Claude Code 会话仍出现 `pages: ""` invalid parameter，且 hook debug log 未记录触发，说明当前 CC/VS 面板 Read 参数问题不能靠 blocking/normalizing hook 稳定修复。本仓主线程和 subagent 对 text/code 文件禁用原生 `Read`；业务修改前必须先用 `repo-explorer`、`Grep` / `Glob` / `Bash` 查看片段。如果 `Edit` / `Write` 因没有成功原生 `Read` 登记而不可用，只能报告 blocker；只有用户明确回复“授权 scripted patch plan 修改 <file>”后，才允许脚本化补丁。
 
 ### scan-agent-worktrees
 

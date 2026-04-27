@@ -14,6 +14,7 @@ argument-hint: "<task or question>"
 - 不启动 worktree。
 - 不提交、不 push、不创建 PR。
 - 不把 brainstorm 当作验收计划或实现授权。
+- 如需源码或文档上下文，不调用原生 `Read` 读取 text/code 文件；使用 `repo-explorer`、`Grep` / `Glob` / `Bash`。
 - 最多提出 1 个必须用户确认的问题；非关键歧义直接说明假设后继续。
 
 输出建议：

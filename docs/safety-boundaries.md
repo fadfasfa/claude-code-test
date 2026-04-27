@@ -49,35 +49,38 @@
 
 ## 读取边界
 
-读取 Markdown / text / code 文件时，不传 PDF `pages` 参数，不传空 `pages` 参数，也不混用 PDF 专用参数。
+避免一次性读取超大范围。优先使用内置 `Grep` / `Glob` / `Bash` 确认候选位置和少量上下文。
 
-避免一次性读取超大范围。优先使用内置 `Grep` / `Glob` 确认候选位置和少量上下文。
+只读探索默认使用 `.claude/agents/repo-explorer.md`。不要用 built-in `Explore` 承担需要中文 Todo、原生 `Read` 禁令或路径纪律的任务；`Agent(Explore)` 会被 repo-local PreToolUse hook 阻断。
 
-只读探索默认使用 `.claude/agents/repo-explorer.md`。不要用 built-in `Explore` 承担需要中文 Todo、text/code Read fallback 或路径纪律的任务；`Agent(Explore)` 会被 repo-local PreToolUse hook 阻断。
+### Native Read ban for text/code files
 
-### Text/code Read failure fallback
+当前本仓已知 Claude Code 原生 `Read` 对 text/code 文件可能自动携带 `pages` 参数并失败。因此：
 
-For text/code files:
+- 不要在主线程或 subagent 中对 `.md`、`.txt`、`.json`、`.py`、`.ps1`、`.html`、`.css`、`.js`、`.ts`、`.tsx`、`.jsx`、`.yaml`、`.yml`、`.toml`、`.csv` 文件使用原生 `Read`。
+- 源码和文档探索优先使用 `.claude/agents/repo-explorer.md`，或直接用 `Grep` / `Glob` / `Bash` 获取少量片段。
+- `repo-explorer` 只能使用 `Grep` / `Glob` / `Bash`。
+- 如果主线程或 subagent 已经发生一次 `Read` `pages` / unsupported parameter / malformed input 失败，不得重试同文件 `Read`。
+- 不得声称“这次不传 pages”后再次发起同类 `Read`。
+- 需要上下文时，用 `Grep` / `Glob` / `Bash` 获取片段或让 `repo-explorer` 汇总。
+- 如果仍需要完整上下文，停止并报告 blocker；不得发明脚本读取或写入绕过。
+- `full_synergy_scraper.py` 这类源码文件不能“重试读取”；首次遇到 `Read` 参数失败后，同文件原生 `Read` 路径立即关闭。
 
-- If native `Read` fails due to `pages` / unsupported parameter / malformed input, do not retry the same `Read` call.
-- Do not claim `pages` was removed while issuing the same malformed `Read` again.
-- Use built-in `Grep` / `Glob` for read-only discovery.
-- If full context is still required, report blocker instead of inventing a script workaround.
+### Edit safety after missing Read registration
 
-### Edit safety after Read failure
-
-如果 `Edit` / `Write` 因未成功专用 `Read` 登记而失败：
+如果 `Edit` / `Write` 因没有成功原生 `Read` 登记而失败：
 
 - Do not use PowerShell `Set-Content`.
 - Do not use `[System.IO.File]::WriteAllText`.
 - Do not use ad-hoc replacement scripts.
 - Stop and report blocker.
-- Continue only after explicit user authorization for a scripted patch.
+- Continue only after the user explicitly replies: `授权 scripted patch plan 修改 <file>`.
 
 ### Retry budget
 
-- One native `Read` failure per file is enough.
-- After that, switch to built-in `Grep` / `Glob` or stop.
+- Native `Read` budget for text/code files is zero in the main thread and subagents.
+- If a `Read` `pages` / unsupported parameter / malformed input failure has already happened, do not retry native `Read` for the same file.
+- Use built-in `Grep` / `Glob` / `Bash` or stop with a blocker.
 
 对大型工作区先搜索关键词和目录结构，不全量读文件。已知 `target_work_area` 时，先检索 `work_area_registry.md` 中该工作区条目，再列工作区一级目录；不要把 `Glob <work_area>/**/*` 作为第一步。只有明确需要更多候选文件时，才扩大 Glob 或跨子区搜索。
 
@@ -87,9 +90,9 @@ For text/code files:
 
 - Windows native Python / PowerShell 不应直接使用 `/c/Users/...` Bash 风格路径。
 - 进入 native Python、PowerShell 或文件工具参数时，使用 `C:/Users/...` 或 Windows 可解析路径。
-- Read / Grep / Glob 优先使用相对路径或 Windows 路径；Bash 中优先使用相对路径，不混用 `/mnt/c` 与 `/c/Users`。
+- Grep / Glob 优先使用相对路径或 Windows 路径；Bash 中优先使用相对路径，不混用 `/mnt/c` 与 `/c/Users`。
 - 中文、替换字符、大段 Markdown 输出在 Windows 控制台可能触发编码问题。
-- 优先用 Read、内置 `Grep` / `Glob` 分段定位；必须用 Python 输出时显式控制 UTF-8 或限制输出范围。
+- 优先用内置 `Grep` / `Glob` / `Bash` 分段定位 text/code 文件；必须用 Python 输出时显式控制 UTF-8 或限制输出范围。
 - 不用 Python 暴力打印大型中文文件。
 
 ## Git 确认边界

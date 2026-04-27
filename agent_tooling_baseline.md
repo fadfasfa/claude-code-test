@@ -18,8 +18,9 @@
   - `PreToolUse`：裸 shell/worktree 危险命令拦截；阻断 built-in `Explore`，要求改用 `repo-explorer`
   - `PostToolUseFailure`：self-improvement raw error 捕获
 - Disabled / experimental hook：`.claude/hooks/block-read-pages-for-text.ps1` 只保留为禁用状态说明，不在 settings 注册，也不再通过 `updatedInput` 修正 `Read` 的 `pages` 参数。
-- Read 工具链保守流程：业务修改前先用内置 `Grep` / `Glob` 做只读定位。文本/code 文件的原生 `Read` 因 `pages`、unsupported parameter 或 malformed input 失败一次后，不重试同类 `Read`，不走脚本 fallback；如果仍需要全文上下文，必须报告 blocker。不要因专用 `Read` / `Edit` 失败退到 PowerShell 直接改业务文件。
-- 只读探索默认使用 `.claude/agents/repo-explorer.md`；不要用 built-in `Explore` 承担需要中文 Todo、text/code Read fallback 或路径纪律的任务。`repo-explorer` 默认不暴露 Read，优先用 Grep / Glob / Bash 避开 text/code `Read` 被自动附加 `pages` 的工具链问题。
+- Native Read ban for text/code files：本仓主线程和 subagent 不对 `.md`、`.txt`、`.json`、`.py`、`.ps1`、`.html`、`.css`、`.js`、`.ts`、`.tsx`、`.jsx`、`.yaml`、`.yml`、`.toml`、`.csv` 使用原生 `Read`。业务修改前先用内置 `Grep` / `Glob` / `Bash` 做只读定位；需要源码或文档汇总时使用 `.claude/agents/repo-explorer.md`。
+- 如果已经发生一次 `Read` `pages` / unsupported parameter / malformed input 失败，不重试同文件原生 `Read`，也不得声称“这次不传 pages”后再次发起同类 `Read`；`full_synergy_scraper.py` 这类源码文件不能“重试读取”。如果仍需要全文上下文，必须报告 blocker。不要因原生 `Read` / `Edit` 失败退到 PowerShell 直接改业务文件；只有用户明确回复“授权 scripted patch plan 修改 <file>”后，才允许脚本化补丁。
+- 只读探索默认使用 `.claude/agents/repo-explorer.md`；不要用 built-in `Explore` 承担需要中文 Todo、原生 `Read` 禁令或路径纪律的任务。`repo-explorer` 不暴露 Read，只用 Grep / Glob / Bash 避开 text/code `Read` 被自动附加 `pages` 的工具链问题。
 - Hooks 必须保持为安全机制或轻量提醒机制。它们不能变成调度器、自动继续引擎或业务文件写入器。
 - 仓库 env 使用 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` 和 `CLAUDE_CODE_FORK_SUBAGENT=0` 禁用后台 / fork worktree 派生。
 - 只读 Explore / review subagent 不是 worktree 触发条件；只有明确隔离执行或已接受计划批准 worktree 时，才允许进入 `WorktreeCreate`。
