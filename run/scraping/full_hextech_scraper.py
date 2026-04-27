@@ -17,10 +17,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from processing.runtime_store import (
     CSV_ENCODING,
     build_daily_csv_path,
-    get_runtime_data_dir,
+    get_runtime_hextech_data_dir,
 )
 from scraping.version_sync import (
-    CONFIG_DIR,
     HEXTECH_AUGMENT_METADATA_URLS,
     HEXTECH_CHAMPION_STATS_URLS,
     build_hextech_detail_urls,
@@ -168,7 +167,7 @@ def update_status_file():
 
 def cleanup_old_csvs():
     # 清理过期数据和残留临时文件。
-    csv_dir = get_runtime_data_dir()
+    csv_dir = get_runtime_hextech_data_dir()
     files = glob.glob(str(csv_dir / "Hextech_Data_*.csv"))
     tmp_files = glob.glob(str(csv_dir / ".Hextech_Data_*.csv.tmp"))
     now = datetime.now()

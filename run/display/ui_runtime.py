@@ -32,7 +32,7 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from typing import TYPE_CHECKING
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import psutil
 import requests
@@ -62,16 +62,31 @@ def _load_server_port() -> int:
 SERVER_PORT = _load_server_port()
 
 
+def _parse_local_port(raw_port) -> int | None:
+    try:
+        port = int(str(raw_port or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return port if 1 <= port <= 65535 else None
+
+
+def _is_safe_local_http_base(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except Exception:
+        return False
+    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"} and _parse_local_port(parsed.port) is not None
+
+
 def resolve_web_base(web_port_file: str, timeout: float = 5.0) -> str:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             with open(web_port_file, "r", encoding="utf-8") as f:
-                raw = f.read().strip()
-            port = int(raw)
-            if 1 <= port <= 65535:
+                port = _parse_local_port(f.read())
+            if port is not None:
                 return f"http://127.0.0.1:{port}"
-        except (OSError, ValueError):
+        except OSError:
             pass
         time.sleep(0.1)
     return f"http://127.0.0.1:{SERVER_PORT}"
@@ -97,16 +112,23 @@ def scan_lcu_process() -> tuple:
 def poll_lcu_live_ids(ui: "HextechUI"):
     if not ui._lcu_port or not ui._lcu_token:
         port, token = scan_lcu_process()
-        if not port or not token:
+        parsed_port = _parse_local_port(port)
+        if parsed_port is None or not token:
             ui._lcu_port = None
             ui._lcu_token = None
             return None
-        ui._lcu_port = port
+        ui._lcu_port = parsed_port
         ui._lcu_token = token
+
+    current_port = _parse_local_port(ui._lcu_port)
+    if current_port is None:
+        ui._lcu_port = None
+        ui._lcu_token = None
+        return None
 
     auth = base64.b64encode(f"riot:{ui._lcu_token}".encode()).decode()
     headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
-    url = f"https://127.0.0.1:{ui._lcu_port}/lol-champ-select/v1/session"
+    url = f"https://127.0.0.1:{current_port}/lol-champ-select/v1/session"
 
     try:
         res = ui.session.get(url, headers=headers, verify=False, timeout=2.5)
@@ -289,11 +311,14 @@ def _post_redirect(ui: "HextechUI", web_base: str, champ_id, hero_name, en_name:
 
 
 def _open_detail_fallback(web_base: str, champ_id, hero_name: str, en_name: str) -> None:
+    if not _is_safe_local_http_base(web_base):
+        logger.warning("已拒绝打开非本机详情页地址：%s", web_base)
+        return
     url = (
         f"{web_base}/detail.html"
-        f"?hero={quote(hero_name)}"
-        f"&id={champ_id}"
-        f"&en={quote(en_name)}"
+        f"?hero={quote(str(hero_name or ''))}"
+        f"&id={quote(str(champ_id or ''))}"
+        f"&en={quote(str(en_name or ''))}"
         f"&auto=1"
         f"&detailFirst=1"
     )
@@ -465,101 +490,6 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
 
     threading.Thread(target=redirect_task, daemon=True).start()
 
-
-def _queue_ui_preload(ui: "HextechUI", hero_names: list[str]) -> None:
-    normalized_names = []
-    for hero_name in hero_names:
-        normalized = str(hero_name or "").strip()
-        if normalized and normalized not in normalized_names:
-            normalized_names.append(normalized)
-    if not normalized_names:
-        return
-
-    with ui._hero_preload_lock:
-        for hero_name in normalized_names:
-            ui._hero_preload_pending.add(hero_name)
-            ui._hero_preload_ready.setdefault(hero_name, False)
-
-    def _worker() -> None:
-        web_base = resolve_web_base(ui.web_port_file, timeout=1.0)
-        for hero_name in normalized_names:
-            try:
-                requests.post(
-                    f"{web_base}/api/champion/{quote(hero_name)}/preload",
-                    headers={"Origin": web_base, "X-Hextech-Token": ui.session.cookies.get("hextech_local_token", "")},
-                    timeout=1.0,
-                )
-            except Exception:
-                logger.debug("候选英雄预热请求失败：hero=%s", hero_name, exc_info=True)
-            _refresh_preload_ready(ui, hero_name)
-
-    _preload_status_executor.submit(_worker)
-
-
-def _wait_for_required_preload(ui: "HextechUI", hero_name: str) -> bool:
-    normalized_hero = str(hero_name or "").strip()
-    if not normalized_hero:
-        return False
-    deadline = time.time() + ui._hero_click_gate_timeout
-    while time.time() < deadline and not ui.stop_event.is_set():
-        if _refresh_preload_ready(ui, normalized_hero):
-            return True
-        time.sleep(ui._hero_click_gate_poll_interval)
-    return _refresh_preload_ready(ui, normalized_hero)
-
-
-def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
-    try:
-        set_last_hero(hero_name)
-    except Exception:
-        logger.debug("记录最近一次英雄选择失败。", exc_info=True)
-
-    def terminal_task():
-        try:
-            sys.stdout.write("\r" + " " * 80 + "\r")
-            sys.stdout.flush()
-            with ui._df_lock:
-                df_snapshot = ui.df
-            display_hero_hextech(df_snapshot, hero_name, is_from_ui=True)
-        except Exception as exc:
-            print(f"\n输出错误: {exc}")
-
-    threading.Thread(target=terminal_task, daemon=True).start()
-
-    def redirect_task():
-        normalized_hero = str(hero_name or "").strip()
-        en_name = ui.core_data.get(str(champ_id), {}).get("en_name", "")
-        _set_click_status(ui, f"正在准备 {normalized_hero}...", "#f9e2af")
-        if not _wait_for_required_preload(ui, normalized_hero):
-            logger.debug("英雄必要预热未在门限内完成，按兜底路径继续：hero=%s", normalized_hero)
-        for _ in range(3):
-            web_base = resolve_web_base(ui.web_port_file, timeout=1.0)
-            try:
-                resp = requests.post(
-                    f"{web_base}/api/redirect",
-                    json={"hero_id": str(champ_id), "hero_name": hero_name},
-                    headers={"Origin": web_base, "X-Hextech-Token": ui.session.cookies.get("hextech_local_token", "")},
-                    timeout=1.5,
-                )
-                if resp.status_code == 200:
-                    _set_click_status(ui, f"已跳转 {normalized_hero}", "#a6e3a1")
-                    return
-            except Exception:
-                logger.debug("请求 /api/redirect 失败，准备重试。", exc_info=True)
-            time.sleep(0.4)
-        logger.debug("请求 /api/redirect 多次失败，回退到本地浏览器打开。")
-        url = (
-            f"{web_base}/detail.html"
-            f"?hero={quote(hero_name)}"
-            f"&id={champ_id}"
-            f"&en={quote(en_name)}"
-            f"&auto=1"
-            f"&detailFirst=1"
-        )
-        _set_click_status(ui, f"本地回退打开 {normalized_hero}", "#f9e2af")
-        webbrowser.open(url)
-
-    threading.Thread(target=redirect_task, daemon=True).start()
 
 
 def lcu_polling_loop(ui: "HextechUI") -> None:

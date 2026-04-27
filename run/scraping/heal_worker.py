@@ -16,9 +16,8 @@ from filelock import FileLock, Timeout
 
 from processing.runtime_store import (
     build_runtime_lock_path,
-    build_runtime_persisted_path,
+    build_synergy_data_path,
     get_latest_csv,
-    resolve_runtime_data_file,
 )
 import scraping.version_sync as version_sync
 from scraping.augment_catalog import (
@@ -32,7 +31,6 @@ from scraping.full_hextech_scraper import main_scraper
 from scraping.full_synergy_scraper import main as run_synergy_scraper
 from scraping.version_sync import (
     ASSET_DIR,
-    CONFIG_DIR,
     AUGMENT_ICON_FILE,
     AUGMENT_MANIFEST_FILE,
     AUGMENT_MAP_FILE,
@@ -94,10 +92,7 @@ def detect_missing_artifacts() -> dict:
     latest_csv = get_latest_csv()
     return {
         "hextech_rankings": not _latest_csv_ready(),
-        "synergy_data": resolve_runtime_data_file(
-            build_runtime_persisted_path("Champion_Synergy.json"),
-            "Champion_Synergy.json",
-        ) is None,
+        "synergy_data": not os.path.exists(build_synergy_data_path()),
         "augment_catalog": not _core_data_ready() or not _augment_manifest_ready(),
         "champion_core": not os.path.exists(CORE_DATA_FILE),
         "images": not _image_assets_ready(),
@@ -115,10 +110,7 @@ def _heal_hero_rankings(stop_event=None) -> bool:
 def _heal_synergy_data() -> bool:
     if not run_synergy_scraper():
         return False
-    return resolve_runtime_data_file(
-        build_runtime_persisted_path("Champion_Synergy.json"),
-        "Champion_Synergy.json",
-    ) is not None
+    return os.path.exists(build_synergy_data_path())
 
 
 def _heal_augment_catalog(force: bool = False, stop_event=None) -> bool:

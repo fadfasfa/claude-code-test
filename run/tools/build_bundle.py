@@ -125,7 +125,7 @@ def prepare_runtime_bundle() -> Path:
     print_step("准备稳定基础资源")
     bundle_root = prepare_bundle_runtime(BASE_DIR, BUILD_DIR)
     print_check("静态页面已加入打包白名单")
-    print_check("稳定 config 已加入打包白名单")
+    print_check("稳定 data 资源已加入打包白名单")
     print_check("稳定 assets 已加入打包白名单")
     print_warn("高频战报 CSV、预计算缓存、协同数据和运行日志不会打包")
     return bundle_root
@@ -144,7 +144,7 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
         "--icon", "NONE",
         "--version-file", str(version_file),
         "--add-data", f"{bundle_root / 'static'};static",
-        "--add-data", f"{bundle_root / 'config'};config",
+        "--add-data", f"{bundle_root / 'data'};data",
         "--add-data", f"{bundle_root / 'assets'};assets",
         "--add-data", f"{bundle_root / 'bundle_manifest.json'};.",
         "--hidden-import", "pandas",

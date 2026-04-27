@@ -89,15 +89,20 @@ def get_base_dir():
 
 RESOURCE_DIR = get_resource_dir()
 BASE_DIR = get_base_dir()
-CONFIG_DIR = os.path.join(BASE_DIR, "config")
+DATA_DIR = os.path.join(BASE_DIR, "data")
+STATIC_DATA_DIR = os.path.join(DATA_DIR, "static")
+INDEX_DATA_DIR = os.path.join(DATA_DIR, "indexes")
+RAW_DATA_DIR = os.path.join(DATA_DIR, "raw")
+RUNTIME_DATA_DIR = os.path.join(DATA_DIR, "runtime")
 ASSET_DIR = os.path.join(BASE_DIR, "assets")
 SUMMARY_LOG_FILE = get_runtime_summary_log_file()
 ERROR_LOG_FILE = get_error_log_file()
-VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
-CORE_DATA_FILE = os.path.join(CONFIG_DIR, "Champion_Core_Data.json")
-AUGMENT_MAP_FILE = os.path.join(CONFIG_DIR, "Augment_Full_Map.json")
-AUGMENT_ICON_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Map.json")
-AUGMENT_MANIFEST_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Manifest.json")
+VERSION_FILE = os.path.join(STATIC_DATA_DIR, "hero_version.txt")
+CORE_DATA_FILE = os.path.join(STATIC_DATA_DIR, "Champion_Core_Data.json")
+AUGMENT_MAP_FILE = os.path.join(STATIC_DATA_DIR, "Augment_Full_Map.json")
+AUGMENT_ICON_FILE = os.path.join(STATIC_DATA_DIR, "Augment_Icon_Map.json")
+AUGMENT_MANIFEST_FILE = os.path.join(STATIC_DATA_DIR, "Augment_Icon_Manifest.json")
+CHAMPION_ALIAS_INDEX_FILE = os.path.join(INDEX_DATA_DIR, "Champion_Alias_Index.json")
 HEXTECH_PRIMARY_BASE_URL = "https://aramgg.com"
 HEXTECH_FALLBACK_BASE_URL = "https://hextech.dtodo.cn"
 HEXTECH_AUGMENT_METADATA_URLS = (
@@ -121,7 +126,10 @@ def build_hextech_detail_urls(champ_id: str) -> tuple[str, str]:
         build_hextech_detail_url(champ_id, HEXTECH_FALLBACK_BASE_URL),
     )
 
-os.makedirs(CONFIG_DIR, exist_ok=True)
+os.makedirs(STATIC_DATA_DIR, exist_ok=True)
+os.makedirs(INDEX_DATA_DIR, exist_ok=True)
+os.makedirs(RAW_DATA_DIR, exist_ok=True)
+os.makedirs(RUNTIME_DATA_DIR, exist_ok=True)
 os.makedirs(ASSET_DIR, exist_ok=True)
 def _load_existing_champion_aliases() -> dict:
     if not os.path.exists(CORE_DATA_FILE):
@@ -161,7 +169,8 @@ def _load_existing_champion_aliases() -> dict:
 if getattr(sys, 'frozen', False):
     seed_bundled_resources(
         bundle_root=RESOURCE_DIR,
-        runtime_config_dir=CONFIG_DIR,
+        runtime_static_dir=STATIC_DATA_DIR,
+        runtime_index_dir=INDEX_DATA_DIR,
         runtime_asset_dir=ASSET_DIR,
     )
 

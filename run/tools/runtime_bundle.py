@@ -7,7 +7,7 @@ from __future__ import annotations
 
 核心输入：
 - bundle manifest
-- bundle 内 `config/` 与 `assets/`
+- bundle 内 `data/static`、`data/indexes` 与 `assets/`
 
 核心输出：
 - 运行目录中的稳定配置和图片资源
@@ -29,17 +29,18 @@ from tools.bundle_manifest import BUNDLE_MANIFEST_NAME
 def _load_bundle_manifest(bundle_root: Path) -> dict:
     manifest_path = bundle_root / BUNDLE_MANIFEST_NAME
     if not manifest_path.exists():
-        return {"config_files": [], "asset_files": []}
+        return {"static_files": [], "index_files": [], "asset_files": []}
     try:
         return json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return {"config_files": [], "asset_files": []}
+        return {"static_files": [], "index_files": [], "asset_files": []}
 
 
 def seed_bundled_resources(
     *,
     bundle_root: str | Path,
-    runtime_config_dir: str | Path,
+    runtime_static_dir: str | Path,
+    runtime_index_dir: str | Path,
     runtime_asset_dir: str | Path,
 ) -> None:
     """按 manifest 把 bundle 稳定资源播种到运行目录，仅补缺失文件。"""
@@ -48,17 +49,29 @@ def seed_bundled_resources(
         return
 
     manifest = _load_bundle_manifest(bundle_base)
-    config_dir = Path(runtime_config_dir)
+    static_dir = Path(runtime_static_dir)
+    index_dir = Path(runtime_index_dir)
     asset_dir = Path(runtime_asset_dir)
-    bundled_config_dir = bundle_base / "config"
+    bundled_static_dir = bundle_base / "data" / "static"
+    bundled_index_dir = bundle_base / "data" / "indexes"
     bundled_asset_dir = bundle_base / "assets"
 
-    config_dir.mkdir(parents=True, exist_ok=True)
+    static_dir.mkdir(parents=True, exist_ok=True)
+    index_dir.mkdir(parents=True, exist_ok=True)
     asset_dir.mkdir(parents=True, exist_ok=True)
 
-    for filename in manifest.get("config_files", []):
-        source = bundled_config_dir / filename
-        target = config_dir / filename
+    static_files = list(manifest.get("static_files", []))
+    index_files = list(manifest.get("index_files", []))
+
+    for filename in static_files:
+        source = bundled_static_dir / filename
+        target = static_dir / filename
+        if source.exists() and not target.exists():
+            shutil.copy2(source, target)
+
+    for filename in index_files:
+        source = bundled_index_dir / filename
+        target = index_dir / filename
         if source.exists() and not target.exists():
             shutil.copy2(source, target)
 

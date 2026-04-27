@@ -30,7 +30,7 @@ from typing import Callable, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from scraping.version_sync import BASE_DIR, CONFIG_DIR, RESOURCE_DIR
+from scraping.version_sync import BASE_DIR, RESOURCE_DIR, STATIC_DATA_DIR
 
 CSV_ENCODING = "utf-8-sig"
 CSV_FILENAME_PATTERN = "Hextech_Data_*.csv"
@@ -50,9 +50,9 @@ CSV_REQUIRED_COLUMNS = (
 
 
 def runtime_priority_paths(relative_name: str) -> list[str]:
-    """返回稳定配置优先路径列表，先查本地配置目录，再查 bundle 内置资源。"""
-    runtime_path = Path(CONFIG_DIR) / relative_name
-    bundled_path = Path(RESOURCE_DIR) / "config" / relative_name
+    """返回稳定数据优先路径列表，先查本地 data/static，再查 bundle 内置资源。"""
+    runtime_path = Path(STATIC_DATA_DIR) / relative_name
+    bundled_path = Path(RESOURCE_DIR) / "data" / "static" / relative_name
     candidates = [str(runtime_path)]
     bundled = str(bundled_path)
     if bundled not in candidates:
@@ -125,13 +125,12 @@ def build_runtime_persisted_path(filename: str) -> str:
 
 
 def runtime_data_fallback_paths(runtime_path: str, legacy_relative_name: str) -> list[str]:
-    """返回 data/runtime 优先、旧 config 兼容的读取路径列表。"""
-    candidates = [runtime_path, str(_join_under_dir(Path(CONFIG_DIR), legacy_relative_name))]
-    return list(dict.fromkeys(candidates))
+    """返回运行态可变数据读取路径列表，不再兼容旧 config。"""
+    return [runtime_path]
 
 
 def resolve_runtime_data_file(runtime_path: str, legacy_relative_name: str) -> Optional[str]:
-    """解析运行态可变数据文件，优先 data/runtime，兼容旧 config。"""
+    """解析运行态可变数据文件，只读取 data/runtime 主链路。"""
     for candidate in runtime_data_fallback_paths(runtime_path, legacy_relative_name):
         if os.path.exists(candidate):
             return candidate
@@ -147,18 +146,33 @@ def resolve_runtime_file(relative_name: str) -> Optional[str]:
 
 
 def get_runtime_data_dir() -> Path:
-    """返回高频运行数据目录，避免战报 CSV 继续混入稳定配置目录。"""
+    """返回高频运行数据根目录。"""
     return Path(BASE_DIR) / "data" / "raw"
+
+
+def get_runtime_hextech_data_dir() -> Path:
+    """返回战报 CSV 原始数据目录。"""
+    return get_runtime_data_dir() / "hextech"
+
+
+def get_runtime_synergy_data_dir() -> Path:
+    """返回协同原始数据目录。"""
+    return get_runtime_data_dir() / "synergy"
+
+
+def build_synergy_data_path() -> str:
+    """返回协同数据主源文件路径。"""
+    return str(get_runtime_synergy_data_dir() / "Champion_Synergy.json")
 
 
 def build_daily_csv_path(date_str: str) -> str:
     """按统一命名规则生成每日战报 CSV 路径。"""
-    return str(get_runtime_data_dir() / f"Hextech_Data_{date_str}.csv")
+    return str(get_runtime_hextech_data_dir() / f"Hextech_Data_{date_str}.csv")
 
 
 def iter_runtime_csv_files() -> list[str]:
     """列出运行原始数据目录中的战报 CSV 文件。"""
-    return glob.glob(str(get_runtime_data_dir() / CSV_FILENAME_PATTERN))
+    return glob.glob(str(get_runtime_hextech_data_dir() / CSV_FILENAME_PATTERN))
 
 
 def get_latest_csv() -> Optional[str]:
@@ -306,10 +320,13 @@ __all__ = [
     "build_runtime_persisted_path",
     "build_runtime_profile_path",
     "build_runtime_state_path",
+    "build_synergy_data_path",
     "detect_hero_id_column",
     "get_latest_csv",
     "get_runtime_cache_dir",
     "get_runtime_data_dir",
+    "get_runtime_hextech_data_dir",
+    "get_runtime_synergy_data_dir",
     "get_runtime_lock_dir",
     "get_runtime_persisted_dir",
     "get_runtime_profile_dir",

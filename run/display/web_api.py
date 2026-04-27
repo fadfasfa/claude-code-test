@@ -22,7 +22,7 @@ from processing.orchestrator import rebuild_api_cache_if_needed
 from processing.runtime_store import load_precomputed_hextech_for_hero
 from processing.view_adapter import process_champions_data, process_hextechs_data
 from scraping.augment_catalog import load_augment_icon_manifest
-from scraping.version_sync import CONFIG_DIR
+from scraping.version_sync import STATIC_DATA_DIR
 from . import web_runtime
 
 _api_cache_rebuild_lock = threading.Lock()
@@ -124,7 +124,7 @@ def register_routes(app: FastAPI) -> None:
             catalog_entry = None
             try:
                 file_stem = unquote(filename[:-4])
-                catalog_entry = web_runtime.find_augment_catalog_entry(file_stem, CONFIG_DIR)
+                catalog_entry = web_runtime.find_augment_catalog_entry(file_stem, STATIC_DATA_DIR)
                 if catalog_entry:
                     augment_name = str(catalog_entry.get("name", "")).strip() or file_stem
                     mapped_filename = str(catalog_entry.get("filename", "")).strip()
@@ -216,6 +216,36 @@ def register_routes(app: FastAPI) -> None:
                 return JSONResponse(content=process_hextechs_data(live_df, canonical_name))
         return JSONResponse(content=process_hextechs_data(df, canonical_name))
 
+    @app.post("/api/champion/{name}/preload")
+    async def api_preload_champion(name: str, request: Request):
+        origin = request.headers.get("origin")
+        if not web_runtime.is_allowed_local_origin(origin):
+            web_runtime.logger.warning("已拒绝非本机来源的 preload 请求：origin=%s", origin)
+            return JSONResponse(content={"error": "forbidden_origin"}, status_code=status.HTTP_403_FORBIDDEN)
+        request_token = _extract_request_token(request)
+        if request_token != web_runtime.get_request_auth_token():
+            web_runtime.logger.warning("已拒绝缺少有效 token 的 preload 请求")
+            return JSONResponse(content={"error": "forbidden_token"}, status_code=status.HTTP_403_FORBIDDEN)
+
+        canonical_name = web_runtime.resolve_canonical_hero_name(unquote(name))
+        queued = web_runtime.request_preload_hextech_payload(canonical_name)
+        preload_status = web_runtime.get_preload_hextech_status(canonical_name)
+        return JSONResponse(content={"queued": queued, **preload_status})
+
+    @app.get("/api/champion/{name}/preload_status")
+    async def api_preload_status(name: str, request: Request):
+        origin = request.headers.get("origin")
+        if not web_runtime.is_allowed_local_origin(origin):
+            web_runtime.logger.warning("已拒绝非本机来源的 preload_status 请求：origin=%s", origin)
+            return JSONResponse(content={"error": "forbidden_origin"}, status_code=status.HTTP_403_FORBIDDEN)
+        request_token = _extract_request_token(request)
+        if request_token != web_runtime.get_request_auth_token():
+            web_runtime.logger.warning("已拒绝缺少有效 token 的 preload_status 请求")
+            return JSONResponse(content={"error": "forbidden_token"}, status_code=status.HTTP_403_FORBIDDEN)
+
+        canonical_name = web_runtime.resolve_canonical_hero_name(unquote(name))
+        return JSONResponse(content=web_runtime.get_preload_hextech_status(canonical_name))
+
     @app.get("/api/augment_icon_map")
     async def api_augment_icon_map():
         try:
@@ -283,7 +313,10 @@ def register_routes(app: FastAPI) -> None:
             hero_name = req.hero_name
 
         canonical_name = web_runtime.resolve_canonical_hero_name(hero_name or req.hero_name)
-        web_runtime.request_preload_hextech_payload(canonical_name)
+        try:
+            web_runtime.request_preload_hextech_payload(canonical_name)
+        except Exception:
+            web_runtime.logger.warning("英雄详情预加载请求失败：hero=%s", canonical_name, exc_info=True)
 
         if len(web_runtime.manager.active) == 0:
             url = web_runtime.build_detail_url(req.hero_id, hero_name or req.hero_name, en_name)

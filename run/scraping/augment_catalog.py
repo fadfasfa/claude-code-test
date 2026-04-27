@@ -15,8 +15,10 @@ from typing import Dict, Iterable, Optional
 from scraping.full_hextech_scraper import _clean_augment_text, _extract_augment_meta
 from scraping.version_sync import (
     ASSET_DIR,
-    CONFIG_DIR,
+    AUGMENT_MANIFEST_FILE,
     HEXTECH_AUGMENT_METADATA_URLS,
+    RUNTIME_DATA_DIR,
+    STATIC_DATA_DIR,
     get_advanced_session,
 )
 from scraping.icon_resolver import (
@@ -30,9 +32,9 @@ from scraping.icon_resolver import (
 
 logger = logging.getLogger(__name__)
 
-AUGMENT_ICON_SOURCE_FILE = os.path.join(CONFIG_DIR, "augment_icon_source.txt")
-AUGMENT_ICON_AUDIT_FILE = os.path.join(CONFIG_DIR, "augment_icon_audit.jsonl")
-AUGMENT_ICON_MANIFEST_FILE = os.path.join(CONFIG_DIR, "Augment_Icon_Manifest.json")
+AUGMENT_ICON_SOURCE_FILE = os.path.join(RUNTIME_DATA_DIR, "state", "augment_icon_source.txt")
+AUGMENT_ICON_AUDIT_FILE = os.path.join(RUNTIME_DATA_DIR, "logs", "augment_icon_audit.jsonl")
+AUGMENT_ICON_MANIFEST_FILE = AUGMENT_MANIFEST_FILE
 AUGMENT_ICON_SOURCE_ID = "apexlol"
 AUGMENT_METADATA_URLS = HEXTECH_AUGMENT_METADATA_URLS
 MANIFEST_SCHEMA_VERSION = 2
@@ -57,7 +59,7 @@ def _now_iso() -> str:
 
 
 def _append_augment_icon_audit(record: dict) -> None:
-    os.makedirs(CONFIG_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(AUGMENT_ICON_AUDIT_FILE), exist_ok=True)
     payload = dict(record)
     payload.setdefault("ts", _now_iso())
     line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -74,6 +76,7 @@ def read_augment_icon_source_marker() -> str:
 
 
 def write_augment_icon_source_marker(source_id: str) -> None:
+    os.makedirs(os.path.dirname(AUGMENT_ICON_SOURCE_FILE), exist_ok=True)
     tmp_path = AUGMENT_ICON_SOURCE_FILE + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         f.write(source_id)
@@ -293,18 +296,11 @@ def _read_manifest_file(manifest_path: str, config_dir: str) -> list[dict]:
 
 
 def _write_augment_icon_manifest(manifest: list[dict]) -> None:
-    os.makedirs(CONFIG_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(AUGMENT_ICON_MANIFEST_FILE), exist_ok=True)
     tmp_path = AUGMENT_ICON_MANIFEST_FILE + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
     os.replace(tmp_path, AUGMENT_ICON_MANIFEST_FILE)
-    for legacy_name in ("Augment_Icon_Map.json", "Augment_Full_Map.json"):
-        legacy_path = os.path.join(CONFIG_DIR, legacy_name)
-        try:
-            if os.path.exists(legacy_path):
-                os.remove(legacy_path)
-        except OSError:
-            logger.debug("删除旧版海克斯映射失败：%s", legacy_path, exc_info=True)
     global _AUGMENT_ICON_MANIFEST_CACHE, _AUGMENT_LOOKUP_CACHE
     now = os.path.getmtime(AUGMENT_ICON_MANIFEST_FILE)
     _AUGMENT_ICON_MANIFEST_CACHE = (AUGMENT_ICON_MANIFEST_FILE, now, manifest)
@@ -344,8 +340,8 @@ def _manifest_is_stale(manifest_path: str) -> bool:
         return True
 
     source_paths = [
-        os.path.join(CONFIG_DIR, "Augment_Icon_Map.json"),
-        os.path.join(CONFIG_DIR, "Augment_Full_Map.json"),
+        os.path.join(STATIC_DATA_DIR, "Augment_Icon_Map.json"),
+        os.path.join(STATIC_DATA_DIR, "Augment_Full_Map.json"),
     ]
     for source_path in source_paths:
         try:
@@ -354,7 +350,7 @@ def _manifest_is_stale(manifest_path: str) -> bool:
         except OSError:
             continue
 
-    manifest = _read_manifest_file(manifest_path, CONFIG_DIR)
+    manifest = _read_manifest_file(manifest_path, STATIC_DATA_DIR)
     return _manifest_needs_rebuild(manifest)
 
 
@@ -362,7 +358,7 @@ def build_augment_icon_manifest(
     config_dir: Optional[str] = None,
     force_refresh: bool = False,
 ) -> list[dict]:
-    config_dir = config_dir or CONFIG_DIR
+    config_dir = config_dir or STATIC_DATA_DIR
     icon_map = load_augment_icon_map(config_dir, force_refresh=force_refresh)
     full_map = _load_full_map(config_dir)
     existing_manifest = _read_manifest_file(os.path.join(config_dir, "Augment_Icon_Manifest.json"), config_dir)
@@ -430,7 +426,7 @@ def load_augment_icon_manifest(
     config_dir: Optional[str] = None,
     force_refresh: bool = False,
 ) -> list[dict]:
-    config_dir = config_dir or CONFIG_DIR
+    config_dir = config_dir or STATIC_DATA_DIR
     manifest_path = os.path.join(config_dir, "Augment_Icon_Manifest.json")
 
     global _AUGMENT_ICON_MANIFEST_CACHE
@@ -455,7 +451,7 @@ def build_augment_catalog_lookup(
     config_dir: Optional[str] = None,
     force_refresh: bool = False,
 ) -> dict:
-    config_dir = config_dir or CONFIG_DIR
+    config_dir = config_dir or STATIC_DATA_DIR
     manifest_path = os.path.join(config_dir, "Augment_Icon_Manifest.json")
     manifest = load_augment_icon_manifest(config_dir=config_dir, force_refresh=force_refresh)
     try:
@@ -549,7 +545,7 @@ def audit_and_repair_augment_icons(
     asset_dir: Optional[str] = None,
 ) -> dict:
     start_time = time.time()
-    config_dir = config_dir or CONFIG_DIR
+    config_dir = config_dir or STATIC_DATA_DIR
     asset_dir = asset_dir or ASSET_DIR
     manifest = []
     repaired_items = []
@@ -644,7 +640,7 @@ def run_augment_icon_prefetch(
     asset_dir: Optional[str] = None,
     max_workers: int = 8,
 ) -> dict:
-    config_dir = config_dir or CONFIG_DIR
+    config_dir = config_dir or STATIC_DATA_DIR
     asset_dir = asset_dir or ASSET_DIR
     start_time = time.time()
     manifest = load_augment_icon_manifest(config_dir=config_dir, force_refresh=force_refresh)
