@@ -16,12 +16,14 @@ run/build/
 run/dist/
 
 # Hextech runtime state
-run/data/**
-run/config/backend_refresh.lock
-run/config/augment_icon_audit.jsonl
-run/config/hextech_system.log
-run/config/scraper_status.json
-run/config/web_server_port.txt
+run/data/runtime/**
+run/data/processed/**
+run/data/raw/**
+!run/data/raw/
+!run/data/raw/hextech/
+!run/data/raw/hextech/Hextech_Data_*.csv
+!run/data/raw/synergy/
+!run/data/raw/synergy/Champion_Synergy.json
 
 # sm2-randomizer rebuildable artifacts
 sm2-randomizer/**/__pycache__/
