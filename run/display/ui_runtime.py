@@ -32,7 +32,7 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from typing import TYPE_CHECKING
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import psutil
 import requests
@@ -62,16 +62,31 @@ def _load_server_port() -> int:
 SERVER_PORT = _load_server_port()
 
 
+def _parse_local_port(raw_port) -> int | None:
+    try:
+        port = int(str(raw_port or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return port if 1 <= port <= 65535 else None
+
+
+def _is_safe_local_http_base(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except Exception:
+        return False
+    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"} and _parse_local_port(parsed.port) is not None
+
+
 def resolve_web_base(web_port_file: str, timeout: float = 5.0) -> str:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             with open(web_port_file, "r", encoding="utf-8") as f:
-                raw = f.read().strip()
-            port = int(raw)
-            if 1 <= port <= 65535:
+                port = _parse_local_port(f.read())
+            if port is not None:
                 return f"http://127.0.0.1:{port}"
-        except (OSError, ValueError):
+        except OSError:
             pass
         time.sleep(0.1)
     return f"http://127.0.0.1:{SERVER_PORT}"
@@ -97,16 +112,23 @@ def scan_lcu_process() -> tuple:
 def poll_lcu_live_ids(ui: "HextechUI"):
     if not ui._lcu_port or not ui._lcu_token:
         port, token = scan_lcu_process()
-        if not port or not token:
+        parsed_port = _parse_local_port(port)
+        if parsed_port is None or not token:
             ui._lcu_port = None
             ui._lcu_token = None
             return None
-        ui._lcu_port = port
+        ui._lcu_port = parsed_port
         ui._lcu_token = token
+
+    current_port = _parse_local_port(ui._lcu_port)
+    if current_port is None:
+        ui._lcu_port = None
+        ui._lcu_token = None
+        return None
 
     auth = base64.b64encode(f"riot:{ui._lcu_token}".encode()).decode()
     headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
-    url = f"https://127.0.0.1:{ui._lcu_port}/lol-champ-select/v1/session"
+    url = f"https://127.0.0.1:{current_port}/lol-champ-select/v1/session"
 
     try:
         res = ui.session.get(url, headers=headers, verify=False, timeout=2.5)
@@ -289,11 +311,14 @@ def _post_redirect(ui: "HextechUI", web_base: str, champ_id, hero_name, en_name:
 
 
 def _open_detail_fallback(web_base: str, champ_id, hero_name: str, en_name: str) -> None:
+    if not _is_safe_local_http_base(web_base):
+        logger.warning("已拒绝打开非本机详情页地址：%s", web_base)
+        return
     url = (
         f"{web_base}/detail.html"
-        f"?hero={quote(hero_name)}"
-        f"&id={champ_id}"
-        f"&en={quote(en_name)}"
+        f"?hero={quote(str(hero_name or ''))}"
+        f"&id={quote(str(champ_id or ''))}"
+        f"&en={quote(str(en_name or ''))}"
         f"&auto=1"
         f"&detailFirst=1"
     )
