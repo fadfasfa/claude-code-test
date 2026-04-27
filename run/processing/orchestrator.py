@@ -23,10 +23,9 @@ import os
 import time
 
 from processing.runtime_store import (
-    build_runtime_persisted_path,
     build_runtime_state_path,
+    build_synergy_data_path,
     get_latest_csv,
-    resolve_runtime_data_file,
 )
 from scraping.full_hextech_scraper import main_scraper
 from scraping.full_synergy_scraper import main as run_apex_spider
@@ -45,14 +44,12 @@ from scraping.version_sync import (
     AUGMENT_ICON_FILE,
     AUGMENT_MANIFEST_FILE,
     AUGMENT_MAP_FILE,
-    CONFIG_DIR,
     CORE_DATA_FILE,
     sync_hero_data,
 )
 
 
-SYNERGY_FILE = build_runtime_persisted_path("Champion_Synergy.json")
-LEGACY_SYNERGY_FILE = os.path.join(CONFIG_DIR, "Champion_Synergy.json")
+SYNERGY_FILE = build_synergy_data_path()
 
 
 def is_first_run(force: bool = False) -> bool:
@@ -64,18 +61,17 @@ def is_first_run(force: bool = False) -> bool:
     )
     core_files_ready = all(
         os.path.exists(path)
-        for path in (CORE_DATA_FILE, resolve_runtime_data_file(SYNERGY_FILE, "Champion_Synergy.json") or SYNERGY_FILE)
+        for path in (CORE_DATA_FILE, SYNERGY_FILE)
     )
     latest_csv = get_latest_csv()
     return not core_files_ready or not augment_data_ready or not latest_csv or not os.path.exists(latest_csv)
 
 
 def should_refresh_synergy(force: bool, stale_after_seconds: int) -> bool:
-    resolved_synergy_file = resolve_runtime_data_file(SYNERGY_FILE, "Champion_Synergy.json")
-    if force or not resolved_synergy_file:
+    if force or not os.path.exists(SYNERGY_FILE):
         return True
     try:
-        return (os.path.getmtime(resolved_synergy_file) + stale_after_seconds) < time.time()
+        return (os.path.getmtime(SYNERGY_FILE) + stale_after_seconds) < time.time()
     except OSError:
         return True
 
@@ -90,7 +86,7 @@ def run_hextech_refresh(stop_event=None) -> bool:
 
 def run_synergy_refresh() -> bool:
     run_apex_spider()
-    return resolve_runtime_data_file(SYNERGY_FILE, "Champion_Synergy.json") is not None
+    return os.path.exists(SYNERGY_FILE)
 
 
 def run_augment_refresh(force_refresh: bool, stop_event=None) -> dict:

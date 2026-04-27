@@ -7,10 +7,7 @@ import os
 from typing import Dict, List, Optional
 
 from processing.alias_utils import dedupe_alias_texts, normalize_alias_token
-from scraping.version_sync import CONFIG_DIR
-
-
-CHAMPION_ALIAS_INDEX_FILE = os.path.join(CONFIG_DIR, "Champion_Alias_Index.json")
+from scraping.version_sync import CHAMPION_ALIAS_INDEX_FILE
 
 _ALIAS_INDEX_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
 

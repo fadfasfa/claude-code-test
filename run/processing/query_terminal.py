@@ -11,8 +11,8 @@ import unicodedata
 import pandas as pd
 from processing.alias_search import load_champion_alias_map, resolve_champion_name
 from processing.alias_utils import normalize_alias_token, unique_alias_tokens
-from processing.runtime_store import get_latest_csv, normalize_runtime_df
-from scraping.version_sync import CONFIG_DIR, CORE_DATA_FILE
+from processing.runtime_store import get_latest_csv, load_runtime_csv, normalize_runtime_df
+from scraping.version_sync import CHAMPION_ALIAS_INDEX_FILE, CORE_DATA_FILE
 
 if os.name == 'nt': os.system('')  # 启用 Windows 终端颜色输出。
 RESET = "\033[0m"
@@ -47,7 +47,7 @@ def _normalize_query_df(shared_df=None):
         latest_csv = get_latest_csv()
         if not latest_csv:
             return pd.DataFrame(), None
-        df = normalize_runtime_df(pd.read_csv(latest_csv))
+        df = load_runtime_csv(latest_csv)
         source = latest_csv
     elif isinstance(shared_df, pd.DataFrame):
         df = normalize_runtime_df(shared_df.copy())
@@ -351,7 +351,7 @@ def load_hero_aliases():
     global _alias_cache
     if _alias_cache is not None:
         return _alias_cache
-    alias_path = os.path.join(CONFIG_DIR, "Champion_Alias_Index.json")
+    alias_path = CHAMPION_ALIAS_INDEX_FILE
     alias_map = {}
     try:
         with open(alias_path, "r", encoding="utf-8") as f:

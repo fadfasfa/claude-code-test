@@ -11,7 +11,8 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_DIR = BASE_DIR / "config"
+STATIC_DATA_DIR = BASE_DIR / "data" / "static"
+INDEX_DATA_DIR = BASE_DIR / "data" / "indexes"
 RUNTIME_RAW_DATA_DIR = BASE_DIR / "data" / "raw"
 RUNTIME_DIR = BASE_DIR / "data" / "runtime"
 BUILD_DIR = BASE_DIR / "build"
@@ -47,7 +48,6 @@ VOLATILE_RUNTIME_FILES = (
     RUNTIME_DIR / "cache" / "Champion_Hextech_Cache.json",
     RUNTIME_DIR / "cache" / "Champion_Hextech_Cache",
     RUNTIME_DIR / "locks" / "heal_worker.lock",
-    RUNTIME_DIR / "persisted" / "Champion_Synergy.json",
     RUNTIME_DIR / "profile" / "browser_profile",
 )
 
@@ -74,7 +74,7 @@ def cleanup_runtime_outputs() -> list[Path]:
     removed: list[Path] = []
 
     for name in VOLATILE_CONFIG_FILES:
-        target = CONFIG_DIR / name
+        target = RUNTIME_DIR / name
         if target.exists():
             if target.is_dir():
                 shutil.rmtree(target, ignore_errors=True)
@@ -83,7 +83,7 @@ def cleanup_runtime_outputs() -> list[Path]:
             removed.append(target)
 
     for pattern in VOLATILE_CONFIG_GLOBS:
-        for target in CONFIG_DIR.glob(pattern):
+        for target in RUNTIME_RAW_DATA_DIR.rglob(pattern):
             if target.exists():
                 if target.is_dir():
                     shutil.rmtree(target, ignore_errors=True)

@@ -43,7 +43,7 @@ def check_root_entrypoints() -> None:
 
 
 def check_manual_alias_index() -> None:
-    alias_file = RUN_DIR / "config" / "Champion_Alias_Index.json"
+    alias_file = RUN_DIR / "data" / "indexes" / "Champion_Alias_Index.json"
     payload = json.loads(alias_file.read_text(encoding="utf-8"))
     assert isinstance(payload, list)
     assert payload, "Champion_Alias_Index.json 应至少包含一条手工索引"

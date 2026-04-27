@@ -24,7 +24,6 @@ from processing.runtime_store import (
     resolve_runtime_data_file,
 )
 from processing.view_adapter import process_champions_data, process_hextechs_data
-from scraping.version_sync import CONFIG_DIR
 
 logger = logging.getLogger(__name__)
 CHAMPION_LIST_CACHE_FILE = build_runtime_cache_path("Champion_List_Cache.json")

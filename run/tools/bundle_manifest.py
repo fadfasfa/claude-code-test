@@ -7,7 +7,7 @@ from __future__ import annotations
 - 生成构建期与运行期共用的 bundle manifest
 
 核心输入：
-- `config/`
+- `data/static/` 与 `data/indexes/`
 - `assets/`
 - `display/static/`
 
@@ -25,16 +25,22 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
 
-STABLE_CONFIG_FILES = (
+STABLE_STATIC_FILES = (
     "Champion_Core_Data.json",
-    "Champion_Alias_Index.json",
     "Augment_Icon_Manifest.json",
     "Augment_Apexlol_Map.json",
+    "Augment_Full_Map.json",
+    "Augment_Icon_Map.json",
     "hero_version.txt",
+)
+
+STABLE_INDEX_FILES = (
+    "Champion_Alias_Index.json",
 )
 ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 BUNDLE_MANIFEST_NAME = "bundle_manifest.json"
@@ -50,23 +56,23 @@ def iter_stable_asset_files(asset_dir: Path) -> Iterable[Path]:
 
 
 def build_bundle_manifest(base_dir: Path) -> dict:
-    """基于当前目录结构生成稳定资源白名单 manifest。"""
-    config_dir = base_dir / "config"
+    static_dir = base_dir / "data" / "static"
+    index_dir = base_dir / "data" / "indexes"
     asset_dir = base_dir / "assets"
-    static_dir = base_dir / "display" / "static"
 
-    config_files = [
-        name for name in STABLE_CONFIG_FILES if (config_dir / name).exists()
+    static_files = [
+        name for name in STABLE_STATIC_FILES if (static_dir / name).exists()
     ]
-    asset_files = [
-        path.relative_to(asset_dir).as_posix()
-        for path in iter_stable_asset_files(asset_dir)
+    index_files = [
+        name for name in STABLE_INDEX_FILES if (index_dir / name).exists()
     ]
+    asset_files = [str(path.relative_to(asset_dir)) for path in iter_stable_asset_files(asset_dir)]
 
     return {
-        "config_files": config_files,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "static_files": static_files,
+        "index_files": index_files,
         "asset_files": asset_files,
-        "static_dirs": ["static"] if static_dir.exists() else [],
     }
 
 
@@ -76,19 +82,23 @@ def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
     if bundle_root.exists():
         shutil.rmtree(bundle_root)
 
-    config_dir = base_dir / "config"
+    data_static_dir = base_dir / "data" / "static"
+    data_index_dir = base_dir / "data" / "indexes"
     asset_dir = base_dir / "assets"
     static_dir = base_dir / "display" / "static"
 
     manifest = build_bundle_manifest(base_dir)
-    (bundle_root / "config").mkdir(parents=True, exist_ok=True)
+    (bundle_root / "data" / "static").mkdir(parents=True, exist_ok=True)
+    (bundle_root / "data" / "indexes").mkdir(parents=True, exist_ok=True)
     (bundle_root / "assets").mkdir(parents=True, exist_ok=True)
 
     if static_dir.exists():
         shutil.copytree(static_dir, bundle_root / "static")
 
-    for filename in manifest["config_files"]:
-        shutil.copy2(config_dir / filename, bundle_root / "config" / filename)
+    for filename in manifest["static_files"]:
+        shutil.copy2(data_static_dir / filename, bundle_root / "data" / "static" / filename)
+    for filename in manifest["index_files"]:
+        shutil.copy2(data_index_dir / filename, bundle_root / "data" / "indexes" / filename)
 
     for relative_name in manifest["asset_files"]:
         source = asset_dir / Path(relative_name)

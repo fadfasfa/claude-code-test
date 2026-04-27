@@ -53,11 +53,10 @@ from urllib3.util.retry import Retry
 from processing.view_adapter import process_hextechs_data
 from processing.runtime_store import (
     CachedDataFrameLoader,
-    build_runtime_persisted_path,
     build_runtime_profile_path,
     build_runtime_state_path,
+    build_synergy_data_path,
     get_latest_csv,
-    resolve_runtime_data_file,
 )
 from scraping.augment_catalog import find_augment_catalog_entry
 from scraping.full_hextech_scraper import _clean_augment_text, extract_champion_stats, fetch_with_retry
@@ -68,8 +67,9 @@ from scraping.icon_resolver import (
 )
 from scraping.version_sync import (
     BASE_DIR,
-    CONFIG_DIR,
     RESOURCE_DIR,
+    STATIC_DATA_DIR,
+    VERSION_FILE,
     HEXTECH_AUGMENT_METADATA_URLS,
     HEXTECH_CHAMPION_STATS_URLS,
     build_hextech_detail_urls,
@@ -95,7 +95,6 @@ def _load_server_port() -> int:
 
 SERVER_PORT = _load_server_port()
 WEB_PORT_FILE = build_runtime_state_path("web_server_port.txt")
-VERSION_FILE = os.path.join(CONFIG_DIR, "hero_version.txt")
 BROWSER_PROFILE_DIR = build_runtime_profile_path("browser_profile")
 AUTO_JUMP_ENABLED = True
 HTTP_SESSION_COOKIE = "hextech_local_token"
@@ -247,7 +246,7 @@ def resolve_remote_augment_icon_url(catalog_entry: Optional[dict], fallback_name
     else:
         augment_name = fallback_name
 
-    remote_url = resolve_apexlol_hextech_icon_url(augment_name, config_dir=CONFIG_DIR)
+    remote_url = resolve_apexlol_hextech_icon_url(augment_name, config_dir=STATIC_DATA_DIR)
     if remote_url and not remote_url.startswith("/assets/") and is_safe_redirect_url(remote_url):
         return remote_url
     return ""
@@ -597,6 +596,38 @@ def get_preloaded_hextech_payload(hero_name: str) -> Optional[dict]:
         return payload if isinstance(payload, dict) else None
 
 
+def get_preload_hextech_status(hero_name: str) -> dict:
+    canonical_name = resolve_canonical_hero_name(hero_name)
+    if not canonical_name:
+        return {"ready": False, "pending": False}
+
+    current_signature = _get_runtime_df_signature()
+    with _preloaded_hextech_lock:
+        global _preloaded_hextech_signature
+        if _preloaded_hextech_signature != current_signature:
+            _preloaded_hextech_payloads.clear()
+            _preloaded_hextech_pending.clear()
+            _preloaded_hextech_signature = current_signature
+            return {"ready": False, "pending": False}
+
+        payload = _preloaded_hextech_payloads.get(canonical_name)
+        return {
+            "ready": isinstance(payload, dict) and bool(payload.get("comprehensive")),
+            "pending": canonical_name in _preloaded_hextech_pending,
+        }
+
+
+def request_preload_hextech_payload(hero_name: str) -> bool:
+    canonical_name = resolve_canonical_hero_name(hero_name)
+    if not canonical_name:
+        return False
+
+    status = get_preload_hextech_status(canonical_name)
+    if status["ready"] or status["pending"]:
+        return True
+    return queue_preload_hextech_payloads([canonical_name])
+
+
 def queue_preload_hextech_payloads(hero_names: List[str]) -> bool:
     canonical_names = []
     for raw_name in hero_names:
@@ -840,11 +871,8 @@ def get_live_hextech_snapshot_df(hero_name: str, force_refresh: bool = False) ->
 
 
 def get_synergy_data() -> dict:
-    json_path = resolve_runtime_data_file(
-        build_runtime_persisted_path("Champion_Synergy.json"),
-        "Champion_Synergy.json",
-    )
-    if not json_path:
+    json_path = build_synergy_data_path()
+    if not os.path.exists(json_path):
         return _synergy_cache.data
 
     try:

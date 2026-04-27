@@ -516,7 +516,6 @@
 
         async function loadAliasRecordsFromStaticFiles() {
             const aliasIndex = await loadJsonFromCandidates([
-                '../config/Champion_Alias_Index.json',
                 '/static/Champion_Alias_Index.json',
                 './Champion_Alias_Index.json'
             ]);
@@ -526,7 +525,6 @@
             }
 
             const coreData = await loadJsonFromCandidates([
-                '../config/Champion_Core_Data.json',
                 '/static/Champion_Core_Data.json',
                 './Champion_Core_Data.json'
             ]);

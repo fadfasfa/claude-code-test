@@ -62,16 +62,16 @@ def get_unified_log_file() -> str:
 
 def get_runtime_summary_log_file() -> str:
     base_dir = Path(__file__).resolve().parent.parent
-    config_dir = base_dir / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return str(config_dir / "hextech_runtime_summary.log")
+    log_dir = base_dir / "data" / "runtime" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return str(log_dir / "hextech_runtime_summary.log")
 
 
 def get_error_log_file() -> str:
     base_dir = Path(__file__).resolve().parent.parent
-    config_dir = base_dir / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return str(config_dir / "hextech_error.log")
+    log_dir = base_dir / "data" / "runtime" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return str(log_dir / "hextech_error.log")
 
 
 def ensure_utf8_stdio() -> None:

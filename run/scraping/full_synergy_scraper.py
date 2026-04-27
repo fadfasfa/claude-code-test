@@ -13,7 +13,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
 
-from processing.runtime_store import build_runtime_persisted_path
+from processing.runtime_store import build_synergy_data_path
+from scraping.version_sync import STATIC_DATA_DIR
 from typing import Optional
 from urllib.parse import urljoin, urlparse, urlunparse
 from tools.log_utils import install_summary_logging, log_task_summary
@@ -32,14 +33,11 @@ def _bootstrap_runtime_base_dir() -> str:
 
 
 BASE_DIR = _bootstrap_runtime_base_dir()
-CONFIG_DIR = os.path.join(BASE_DIR, "config")
-CONFIG_PATH = Path(CONFIG_DIR)
-ALLOWED_CONFIG_FILES = {
+STATIC_DATA_PATH = Path(STATIC_DATA_DIR)
+ALLOWED_STATIC_DATA_FILES = {
     "Champion_Core_Data.json",
-    "hero_aliases.json",
-    "Champion_Synergy.json",
 }
-MAX_CONFIG_FILE_SIZE = 10 * 1024 * 1024
+MAX_STATIC_DATA_FILE_SIZE = 10 * 1024 * 1024
 MAX_FETCH_RETRIES = 3
 REQUEST_TIMEOUT_SECONDS = 10
 RETRY_BACKOFF_FACTOR = 0.5
@@ -96,24 +94,24 @@ def _sanitize_url_for_log(url: str) -> str:
     )
 
 
-def _resolve_config_path(filename: str) -> Path:
+def _resolve_static_data_path(filename: str) -> Path:
     # 将配置文件限制在固定白名单内，避免路径穿越。
-    if filename not in ALLOWED_CONFIG_FILES:
+    if file_name != filename or filename not in ALLOWED_STATIC_DATA_FILES:
         raise ValueError(f"不允许访问的配置文件：{filename}")
 
-    resolved = (CONFIG_PATH / filename).resolve()
-    if CONFIG_PATH.resolve() not in resolved.parents:
+    resolved = (STATIC_DATA_PATH / filename).resolve()
+    if STATIC_DATA_PATH.resolve() not in resolved.parents:
         raise ValueError(f"配置文件路径越界：{filename}")
     return resolved
 
 
 def _load_json_file(filename: str, expected_kind: str) -> dict:
     # 读取受限配置文件并做基本结构校验。
-    file_path = _resolve_config_path(filename)
+    file_path = _resolve_static_data_path(filename)
     if not file_path.exists():
         raise FileNotFoundError(f"配置文件不存在：{filename}")
 
-    if file_path.stat().st_size > MAX_CONFIG_FILE_SIZE:
+    if file_path.stat().st_size > MAX_STATIC_DATA_FILE_SIZE:
         raise ValueError(f"配置文件过大：{filename}")
 
     with file_path.open("r", encoding="utf-8") as f:
@@ -563,7 +561,7 @@ def main():
             executor.shutdown(wait=False, cancel_futures=True)
 
         # 持久化到数据文件
-        output_path = build_runtime_persisted_path("Champion_Synergy.json")
+        output_path = Path(build_synergy_data_path())
         lock_path = output_path.with_suffix(output_path.suffix + ".lock")
         with _output_file_lock(lock_path):
             _atomic_write_json(output_path, final_data)
