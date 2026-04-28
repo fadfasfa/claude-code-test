@@ -24,9 +24,10 @@ disable-model-invocation: true
 
 - `/promote-learning`：审查所有 LEARNINGS，输出晋升候选。
 - `/promote-learning plan <learning-id> <docs|skills|entry>`：为指定 learning 输出精确 patch plan。
-- `/promote-learning apply <learning-id> <docs|skills|entry>`：只有当用户明确输入 apply，且当前任务授权允许写入时，才允许执行最小修改。
+- `/promote-learning apply <learning-id> <docs|skills|entry>`：单条 apply 入口；当用户明确输入 apply，且当前任务授权允许写入时，执行最小修改。
+- `/promote-learning apply selected queue`：batch apply 入口；当用户已经明确选择一个或多个晋升项，并给出执行意图时，按已选 promotion queue 批量执行最小修改；不要求每条 learning 再单独输入 apply 命令。
 
-如果参数不清楚，停止并要求用户指定 learning-id 和目标层级。
+如果参数不清楚，且当前对话里没有明确的 selected promotion queue，停止并要求用户指定 learning-id 和目标层级。
 
 ## 读取范围
 
@@ -34,7 +35,7 @@ disable-model-invocation: true
 
 - `.learnings/LEARNINGS.md`
 
-`plan` 模式只读取目标层级相关文件的小范围内容：
+`plan` / `apply` 模式只读取目标层级相关文件的小范围内容：
 
 - `docs`：只有目标层级是 `docs` 时，才读取相关目标 `docs/*.md` 的候选位置和少量上下文。
 - `skills`：只有目标层级是 `skills` 时，才读取相关目标 `.claude/skills/**/SKILL.md` 的候选位置和少量上下文。
@@ -67,6 +68,7 @@ disable-model-invocation: true
 - 不把单次错误晋升为规则
 - 不把具体业务细节晋升为通用规则
 - 不修改 hooks / tools，除非用户明确指定
+- 不在没有 selected promotion queue 和明确执行意图时自动晋升
 - 不删除 ERRORS
 - 不 git clean
 - 不 git reset
@@ -135,6 +137,7 @@ disable-model-invocation: true
 
 - LEARNINGS 总数：
 - 可晋升候选：
+- selected promotion queue 候选：
 - 不建议晋升：
 - 重复或已被覆盖：
 - 需要用户确认的问题：
@@ -170,12 +173,18 @@ disable-model-invocation: true
 
 ## Apply 边界
 
-`apply` 只在用户本轮明确要求 `/promote-learning apply <learning-id> <docs|skills|entry>` 时允许执行。
+`apply` 允许在以下两种授权下执行：
+
+1. 用户本轮明确要求 `/promote-learning apply <learning-id> <docs|skills|entry>`。
+2. 用户已经明确选择一个或多个晋升项形成 selected promotion queue，并给出明确执行意图，例如“执行”“应用”“按我要求处理”“确认处理这些”“执行上述队列”“应用这些晋升”“apply selected”“apply queue”。
+
+selected promotion queue 必须能从当前对话或刚输出的审查结果中确定 learning-id、目标层级和排除项；用户标记“暂缓”“不处理”“只生成 plan”的 learning 不得进入本批次。用户明确说“只生成 plan / 不修改文件”时，绝对不得 apply。
 
 执行时仍必须保持最小修改：
 
-- `docs`：只更新相关 `docs/*.md`。
-- `skills`：只更新用户确认的 `.claude/skills/**/SKILL.md`。
-- `entry`：只更新用户确认的 `AGENTS.md`、`CLAUDE.md` 或 `PROJECT.md`。
+- `docs`：低风险 docs 晋升可在 selected queue 授权下自动应用最小 patch，只更新相关 `docs/*.md`。
+- `skills`：只更新 selected queue 中用户确认的 `.claude/skills/**/SKILL.md`；涉及风险时先说明风险和目标文件，但不要机械要求逐条 learning 单独 apply。
+- `entry`：可在同一批次中更新 selected queue 指定的 `AGENTS.md`、`CLAUDE.md` 或 `PROJECT.md`，但必须保持最小补丁，不新增大段规则。
+- `hooks` / `settings` / `git` / 删除文件 / 跨仓或 global / `kb` 写入：不得静默执行；必须单独说明风险、目标和所需授权。即使需要额外授权，也不要退回到逐条 learning apply 命令。
 
-不得顺手迁移其他 learning，不得清空 `ERRORS.md`，不得提交。
+不得顺手迁移未选择的 learning，不得清空 `ERRORS.md`，不得提交。

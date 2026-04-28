@@ -14,9 +14,10 @@
 /promote-learning
 /promote-learning plan <learning-id> <docs|skills|entry>
 /promote-learning apply <learning-id> <docs|skills|entry>
+/promote-learning apply selected queue
 ```
 
-本仓只保留两个维护入口：`/maintenance` 负责只读盘点和 `ERRORS → LEARNINGS` 候选生成，`/promote-learning` 负责稳定 learning 的第二阶段晋升审查。它们不是 SessionStart 注入，也不会自动删除、写入或提交。
+本仓只保留两个维护入口：`/maintenance` 负责只读盘点和 `ERRORS → LEARNINGS` 候选生成，`/promote-learning` 负责稳定 learning 的第二阶段晋升审查。它们不是 SessionStart 注入，未获明确授权时不会自动删除、写入或提交。
 
 ## 入口读取边界
 
@@ -138,11 +139,14 @@ docs、skills、hooks、tools 的规则升级必须另开任务，不在 `/maint
 /promote-learning plan <learning-id> <docs|skills|entry>
 ```
 
-真正修改规则层必须由用户明确确认：
+真正修改规则层必须由用户明确确认。确认可以是单条 apply 命令，也可以是在已有明确晋升队列上下文中的批量执行意图：
 
 ```text
 /promote-learning apply <learning-id> <docs|skills|entry>
+/promote-learning apply selected queue
 ```
+
+selected promotion queue 由用户明确选择的一个或多个 learning 组成；用户说“执行”“应用”“按我要求处理”“确认处理这些”“执行上述队列”“应用这些晋升”“apply selected”“apply queue”时，可以一次性批量应用队列中的最小 patch，不需要逐条 learning 再输入 apply 命令。用户未明确选择队列时仍只输出候选；用户明确说“只生成 plan / 不修改文件”时绝对不得修改。
 
 `/promote-learning` 不处理 `ERRORS.md` 到 `LEARNINGS.md` 的初次精炼；该步骤仍由 `/maintenance` 负责。
 
@@ -154,8 +158,9 @@ docs、skills、hooks、tools 的规则升级必须另开任务，不在 `/maint
 
 禁止：
 
-- 不自动晋升
+- 没有 selected promotion queue 和明确执行意图时不自动晋升
 - 不把单次错误或具体业务细节提升为规则
-- 不自动修改 docs / skills / hooks / tools / entry files
+- 不自动修改未选择的 docs / skills / hooks / tools / entry files
+- 涉及 hooks / settings / git / 删除文件 / 跨仓修改时不得静默执行，必须说明风险和目标授权
 - 不写入 global 或 kb
 - 不提交
