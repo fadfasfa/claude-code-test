@@ -15,17 +15,20 @@
 
 入口文件不是每次都要全量读取。普通任务优先读取中文头部简介、目录、目标工作区相关段落和相关小节；已知 `target_work_area` 时，只搜索该工作区相关段落。不要默认读取 `AGENTS.md`、`PROJECT.md` 或 `work_area_registry.md` 的 1-2000 行，也不要把入口链全文件读取当作启动固定动作。
 
-### Native Read ban for text/code files
+### Native Read limits for text/code files
 
-当前本仓已知 Claude Code 原生 `Read` 对 text/code 文件可能自动携带 `pages` 参数并失败。因此：
+当前本仓已知 Claude Code 在 Codex Proxy / GPT 模型路径下，原生 `Read` 对 text/code/Markdown 文件可能自动携带 `pages: ""` 或错误 `pages` 参数并失败。因此默认不把原生 `Read` 当作 Markdown/text/code 探索入口，只保留明确的 Edit 前置登记例外：
 
-- 不要在主线程或 subagent 中对 `.md`、`.txt`、`.json`、`.py`、`.ps1`、`.html`、`.css`、`.js`、`.ts`、`.tsx`、`.jsx`、`.yaml`、`.yml`、`.toml`、`.csv` 文件使用原生 `Read`。
+- Markdown/text/code 文件默认不要用原生 `Read` 做大范围阅读，不得传 `pages` 参数；优先用 `rg`、`Get-Content`、Python UTF-8 line-number preview、`Grep` / `Glob` / scoped `Bash` 等窄范围读取。
+- 当下一步需要使用 `Edit` 修改某个 `.md`、`.txt`、`.json`、`.py`、`.ps1`、`.html`、`.css`、`.js`、`.ts`、`.tsx`、`.jsx`、`.yaml`、`.yml`、`.toml`、`.csv` 目标文件时，允许对该目标文件执行一次原生 `Read` 作为 `Edit` 前置登记；许可只针对即将被 `Edit` 的目标文件，不得借此读取整批 Markdown/text 文件或扩大探索范围。
+- 不得给 Markdown/text/code 文件的原生 `Read` 传 PDF `pages` 参数；PDF 才允许页范围语义，Markdown/text/code 只允许路径与行范围/片段读取。
+- 如果主线程或 subagent 已经发生一次 `Read` `pages` / `schema` / unsupported parameter / malformed input / `Invalid pages parameter` 失败，不得重试同文件同类 `Read`，不得声称“这次不传 pages”后再次发起同类 `Read`；上面的 Edit 前置登记例外不适用于该失败场景。
 - 源码和文档探索优先使用 `.claude/agents/repo-explorer.md`，或直接用 `Grep` / `Glob` / `Bash` 获取少量片段。
 - `repo-explorer` 只能使用 `Grep` / `Glob` / `Bash`。
-- 如果主线程或 subagent 已经发生一次 `Read` `pages` / unsupported parameter / malformed input 失败，不得重试同文件 `Read`，不得声称“这次不传 pages”后再次发起同类 `Read`。
-- 需要上下文时，用 `Grep` / `Glob` / `Bash` 获取片段或让 `repo-explorer` 汇总；如果仍需要完整上下文，停止并报告 blocker。
-- 如果 `Edit` / `Write` 因没有成功原生 `Read` 登记而不可用，停止并报告 blocker；不得临时用 PowerShell `Set-Content`、`[System.IO.File]::WriteAllText` 或 ad-hoc replacement scripts 绕过。
-- 只有用户明确回复“授权 scripted patch plan 修改 <file>”后，才允许用脚本化补丁修改该文件。
+- 需要上下文时，用 `Grep` / `Glob` / `Bash` 获取片段或让 `repo-explorer` 汇总；非 Edit 前置登记场景如果仍需要完整上下文，停止并报告 blocker。
+- 在 Windows / Claude Bash 中摘要 `.learnings`、日志或源码片段时，显式使用 UTF-8/`errors="replace"` 或 ASCII-safe 字段，并限制输出范围；不要原样倾倒乱码、替换字符或长 payload。
+- 如果 `Edit` / `Write` 因没有成功原生 `Read` 登记而不可用，先按上方目标文件登记例外对即将 `Edit` 的目标文件执行一次原生 `Read`；若已出现 `pages` / `schema` / malformed / `Invalid pages parameter` 失败，则不得再用该例外，改用 scoped shell/Python 只读确认后报告 blocker 或等待授权。不得临时用 PowerShell `Set-Content`、`[System.IO.File]::WriteAllText` 或 ad-hoc replacement scripts 绕过。
+- 只有用户明确回复“授权 scripted patch plan 修改 <file>”后，才允许用脚本化补丁修改该文件；执行前必须只读确认目标字符串或块唯一匹配，输出匹配数量，匹配不是 1 就停止，不扩大替换范围或猜测邻近片段。
 - `full_synergy_scraper.py` 这类源码文件不能“重试读取”；首次遇到 `Read` 参数失败后，同文件原生 `Read` 路径立即关闭。
 
 只读探索默认使用 `.claude/agents/repo-explorer.md`。本仓不使用 built-in `Explore` 承担需要中文 Todo、原生 `Read` 禁令或路径纪律的只读探索任务；对应 `Agent(Explore)` 会被 repo-local PreToolUse hook 拦截。
@@ -46,7 +49,7 @@ Codex 不继承 Claude Code 的全局 `CLAUDE.md`；在本仓执行时先遵守 
 - 优先显式数据流，减少隐藏状态和隐式副作用；保持函数短小、命名清楚、边界明确。
 - 失败要尽早暴露，错误信息要可诊断；避免过早抽象，稳定模式重复出现后再抽象。
 - 对危险操作、路径操作、删除操作、Git 操作必须先做只读检查；如果工具链异常，不要绕过安全边界继续大改，先报告 blocker 或做最小诊断。
-- 如果 `Edit` / `Write` 因没有成功原生 `Read` 登记而失败，必须停止并报告 blocker；不得退到 PowerShell `Set-Content`、`[System.IO.File]::WriteAllText` 或 ad-hoc replacement scripts 修改业务文件。只有用户明确回复“授权 scripted patch plan 修改 <file>”后，才能继续。
+- 如果 `Edit` / `Write` 因没有成功原生 `Read` 登记而失败，先按 Native Read limits 中的目标文件登记例外补一次目标文件原生 `Read`；若已出现 `pages` / `schema` / malformed / `Invalid pages parameter` 失败，不得再补同类 `Read`。如果 `Edit` 仍失败，必须停止并报告具体失败原因。不得退到 PowerShell `Set-Content`、`[System.IO.File]::WriteAllText` 或 ad-hoc replacement scripts 修改业务文件。只有用户明确回复“授权 scripted patch plan 修改 <file>”后，才能继续。
 - Codex 默认不修改 `run/**`，除非用户本轮明确要求业务改动。
 - Codex 不默认清理 branch / worktree，不默认运行 destructive 命令，不默认创建长期 worktree。
 - Codex 总结必须列出：修改文件、是否触碰 `run/**`、是否执行删除/清理、是否提交、验证结果。

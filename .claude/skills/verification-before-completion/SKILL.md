@@ -24,8 +24,8 @@ description: Require concrete verification evidence before claiming a task is co
 
 ## 读取失败 fallback
 
-- 如果 Read tool 连续两次读取同一文件失败，停止重复同样的 Read 调用。
-- 改用只读路线，例如 PowerShell `Get-Content`、Python read-only script、`git show` / `git diff` 或更小范围读取。
+- 对 Markdown/text/code 文件，如果原生 `Read` 因 `pages` / `schema` / malformed / `Invalid pages parameter` 失败，一次即停止同类 `Read`；不得把 PDF `pages` 读取策略套用到这些文件。
+- 改用只读路线，例如 scoped shell、PowerShell `Get-Content`、Python read-only script、`git show` / `git diff` 或更小范围读取。
 - 如果 fallback 仍失败，报告 blocker，不猜测文件内容。
 
 ## 规则
