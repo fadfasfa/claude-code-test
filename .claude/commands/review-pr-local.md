@@ -5,7 +5,7 @@ argument-hint: "[--base main|origin/main]"
 
 # /review-pr-local
 
-本命令调用 `local-pr-reviewer` agent，执行本地只读 PR 审查，替代云端 Codex PR Review。
+本命令由 main conversation 直接执行本地只读 PR 审查，替代云端 Codex PR Review。
 
 调用：
 
@@ -35,7 +35,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".claude\tools\pr\review
 边界：
 
 - 只读扫描当前分支 diff。
-- 不调用原生 `Read` 读取 text/code 文件；需要源码或文档上下文时使用 `local-pr-reviewer` 的 Git diff、Grep / Glob / Bash。
+- 不调用原生 `Read` 读取 text/code 文件；需要源码或文档上下文时使用 Git diff、Grep / Glob / Bash。
 - 报告输出到对话；如用户明确需要，可写到 ignored `.tmp/pr-review/<branch>.md`。
 - 不运行 `gh pr review --submit`。
 - 不运行 `gh pr merge`。

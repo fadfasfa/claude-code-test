@@ -157,6 +157,9 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
         "--hidden-import", "fastapi",
         "--hidden-import", "uvicorn",
         "--hidden-import", "filelock",
+        "--hidden-import", "bs4",
+        "--collect-submodules", "fastapi",
+        "--collect-submodules", "starlette",
         "--collect-submodules", "uvicorn",
         "hextech_ui.py",
     ]
@@ -233,9 +236,13 @@ def create_portable_zip(final_dir: Path) -> Path:
 def finalize_output(exe_dir: Path) -> tuple[Path, Path]:
     """整理最终输出目录，补便携入口，并生成 zip 便携包。"""
     print_step("最终优化")
-    final_dir = DIST_DIR / f"Hextech_伴生系统_{datetime.now().strftime('%Y%m%d')}"
+    build_time = datetime.now()
+    final_dir = DIST_DIR / f"Hextech_伴生系统_{build_time.strftime('%Y%m%d')}"
     if final_dir.exists():
-        shutil.rmtree(final_dir)
+        try:
+            shutil.rmtree(final_dir)
+        except PermissionError:
+            final_dir = DIST_DIR / f"Hextech_伴生系统_{build_time.strftime('%Y%m%d_%H%M%S')}"
     shutil.move(str(exe_dir), str(final_dir))
     legacy_duplicate_dir = BUILD_DIR / "Hextech伴生终端"
     if legacy_duplicate_dir.exists():

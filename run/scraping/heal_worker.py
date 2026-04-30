@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from filelock import FileLock, Timeout
 
 from processing.runtime_store import (
     build_runtime_lock_path,
+    build_runtime_state_path,
     build_synergy_data_path,
     get_latest_csv,
 )
@@ -43,6 +45,7 @@ from scraping.version_sync import (
 
 logger = logging.getLogger(__name__)
 LOCK_FILE = Path(build_runtime_lock_path("heal_worker.lock"))
+HIGH_FREQUENCY_STALE_SECONDS = 4 * 60 * 60
 
 
 @dataclass
@@ -62,6 +65,44 @@ class HealReport:
 def _latest_csv_ready() -> bool:
     latest_csv = get_latest_csv()
     return bool(latest_csv and os.path.exists(latest_csv))
+
+
+def _file_is_fresh(path: str, stale_after_seconds: int = HIGH_FREQUENCY_STALE_SECONDS) -> bool:
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        return (os.path.getmtime(path) + stale_after_seconds) >= time.time()
+    except OSError:
+        return False
+
+
+def _latest_csv_fresh() -> bool:
+    latest_csv = get_latest_csv()
+    return _file_is_fresh(latest_csv or "")
+
+
+def _synergy_data_fresh() -> bool:
+    return _file_is_fresh(build_synergy_data_path())
+
+
+def _write_startup_status(**updates) -> None:
+    status_file = build_runtime_state_path("startup_status.json")
+    payload = {
+        "hero_ready": os.path.exists(CORE_DATA_FILE),
+        "hextech_ready": _latest_csv_ready(),
+        "synergy_ready": os.path.exists(build_synergy_data_path()),
+        "augment_icons_prefetched": is_augment_icon_prefetch_ready(),
+        "in_progress_tasks": [],
+        "last_error": "",
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    payload.update(updates)
+    status_dir = os.path.dirname(status_file)
+    os.makedirs(status_dir, exist_ok=True)
+    tmp_path = os.path.join(status_dir, f".{os.path.basename(status_file)}.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, status_file)
 
 
 def _core_data_ready() -> bool:
@@ -91,8 +132,8 @@ def _image_assets_ready() -> bool:
 def detect_missing_artifacts() -> dict:
     latest_csv = get_latest_csv()
     return {
-        "hextech_rankings": not _latest_csv_ready(),
-        "synergy_data": not os.path.exists(build_synergy_data_path()),
+        "hextech_rankings": not _latest_csv_fresh(),
+        "synergy_data": not _synergy_data_fresh(),
         "augment_catalog": not _core_data_ready() or not _augment_manifest_ready(),
         "champion_core": not os.path.exists(CORE_DATA_FILE),
         "images": not _image_assets_ready(),
@@ -142,20 +183,28 @@ def _heal_images() -> bool:
 def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alias_index: bool = False) -> dict:
     del include_alias_index
     report = HealReport()
+    _write_startup_status(in_progress_tasks=["detect_missing_artifacts"])
     try:
         with FileLock(str(LOCK_FILE), timeout=1):
             missing = detect_missing_artifacts()
-            core_assets_missing = not _core_data_ready()
+            requested = []
+            if force or missing.get("hextech_rankings"):
+                requested.append("hextech_rankings")
+            if force or missing.get("synergy_data"):
+                requested.append("synergy_data")
+            _write_startup_status(in_progress_tasks=requested, last_error="")
 
-            if force or missing.get("champion_core") or core_assets_missing:
+            if force or missing.get("champion_core"):
                 report.requested.append("champion_core")
                 if _heal_champion_core():
                     report.repaired.append("champion_core")
                 else:
                     report.failed.append("champion_core")
+                    _write_startup_status(in_progress_tasks=requested, last_error="champion_core refresh failed")
 
             if force or missing.get("hextech_rankings"):
                 report.requested.append("hextech_rankings")
+                _write_startup_status(in_progress_tasks=["hextech_rankings", *[t for t in requested if t != "hextech_rankings"]])
                 if _heal_hero_rankings(stop_event=stop_event):
                     report.repaired.append("hextech_rankings")
                 else:
@@ -163,33 +212,39 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
 
             if force or missing.get("synergy_data"):
                 report.requested.append("synergy_data")
+                _write_startup_status(in_progress_tasks=["synergy_data"])
                 if _heal_synergy_data():
                     report.repaired.append("synergy_data")
                 else:
                     report.failed.append("synergy_data")
 
-            # `augment_catalog` can be missing because source maps are gone, even if an
-            # older manifest still looks complete. Use the initial snapshot so a prior
-            # champion-core repair does not hide the need to rebuild the manifest.
-            if force or missing.get("augment_catalog"):
-                report.requested.append("augment_catalog")
-                if _heal_augment_catalog(force=force, stop_event=stop_event):
-                    report.repaired.append("augment_catalog")
-                else:
-                    report.failed.append("augment_catalog")
+            if force:
+                if missing.get("augment_catalog"):
+                    report.requested.append("augment_catalog")
+                    if _heal_augment_catalog(force=force, stop_event=stop_event):
+                        report.repaired.append("augment_catalog")
+                    else:
+                        report.failed.append("augment_catalog")
 
-            if force or missing.get("images"):
-                report.requested.append("images")
-                if _heal_images():
-                    report.repaired.append("images")
-                else:
-                    report.failed.append("images")
+                if missing.get("images"):
+                    report.requested.append("images")
+                    if _heal_images():
+                        report.repaired.append("images")
+                    else:
+                        report.failed.append("images")
     except Timeout:
         payload = report.as_dict()
+        _write_startup_status(in_progress_tasks=[], last_error="another repair is already running")
         logger.info("heal_worker skipped: another repair is already running: %s", json.dumps(payload, ensure_ascii=False))
         return payload
 
     payload = report.as_dict()
+    _write_startup_status(
+        in_progress_tasks=[],
+        last_error=", ".join(report.failed),
+        hextech_ready=_latest_csv_ready(),
+        synergy_ready=os.path.exists(build_synergy_data_path()),
+    )
     message = "heal_worker completed: %s"
     if report.failed:
         logger.error(message, json.dumps(payload, ensure_ascii=False))

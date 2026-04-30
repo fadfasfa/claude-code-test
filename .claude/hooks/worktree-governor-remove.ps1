@@ -1,8 +1,8 @@
-<#
-Repo-local WorktreeRemove hook.
-Purpose: clean only agent-owned ephemeral worktrees recorded in the repo-external registry.
-Guards: marker ownership, managed auto path, clean git status, and non-force git worktree remove only.
-Non-goals: no branch deletion, no forced cleanup, no user/persistent worktree cleanup.
+﻿<#
+中文简介：只清理 registry 记录中归属 agent 的临时 worktree。
+何时读取：当 Claude Code 通过 WorktreeRemove hook 尝试移除隔离 worktree 时读取。
+约束内容：必须校验 marker 归属、受管 auto 路径、干净 git 状态，并且只使用非强制 git worktree remove。
+不负责：不删除分支、不强制清理，也不清理用户或持久 worktree。
 #>
 
 Set-StrictMode -Version Latest
@@ -21,15 +21,18 @@ if ($env:WORKTREE_GOVERNOR_TEST_MODE -eq "1") {
 $AutoRoot = Join-Path $ManagedRoot "auto"
 $RegistryRoot = Join-Path $ManagedRoot ".registry"
 
+# 向 stderr 输出治理决策或失败原因。
 function Write-Err([string]$Message) {
   [Console]::Error.WriteLine($Message)
 }
 
+# 统一失败出口：记录原因并返回指定退出码。
 function Fail([string]$Message, [int]$Code = 1) {
   Write-Err $Message
   exit $Code
 }
 
+# 将 WSL 风格路径转换为 Windows 路径文本。
 function Convert-PathText([string]$PathText) {
   if ([string]::IsNullOrWhiteSpace($PathText)) { return "" }
   if ($PathText -match '^/mnt/([a-zA-Z])/(.*)$') {
@@ -38,12 +41,14 @@ function Convert-PathText([string]$PathText) {
   return $PathText
 }
 
+# 解析为绝对路径并去除尾部分隔符，用于稳定比较。
 function Normalize-PathText([string]$PathText) {
   $converted = Convert-PathText $PathText
   if ([string]::IsNullOrWhiteSpace($converted)) { return "" }
   return ([System.IO.Path]::GetFullPath($converted)).TrimEnd('\', '/')
 }
 
+# 仅用路径文本判断 Child 是否位于 Parent 下。
 function Test-UnderPath([string]$Child, [string]$Parent) {
   $c = Normalize-PathText $Child
   $p = Normalize-PathText $Parent
@@ -52,6 +57,7 @@ function Test-UnderPath([string]$Child, [string]$Parent) {
     $c.StartsWith($p + "\", [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+# 从不同事件 payload 形态中提取字段。
 function Get-JsonField($Object, [string[]]$Names) {
   if (-not $Object) { return $null }
   foreach ($name in $Names) {
@@ -62,6 +68,7 @@ function Get-JsonField($Object, [string[]]$Names) {
   return $null
 }
 
+# 根据 worktree 路径查找对应 marker 记录。
 function Get-MarkerForPath([string]$WorktreePath) {
   if (-not (Test-Path -LiteralPath $RegistryRoot)) { return $null }
   $target = Normalize-PathText $WorktreePath
@@ -84,6 +91,7 @@ function Get-MarkerForPath([string]$WorktreePath) {
   return $null
 }
 
+# 将清理决策写回 marker，保留后续审计线索。
 function Save-Marker($MarkerRecord, [string]$Status, [string]$Reason) {
   if (-not $MarkerRecord) { return }
   $data = $MarkerRecord.Data

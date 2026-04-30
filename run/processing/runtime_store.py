@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import glob
 import os
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,8 +61,22 @@ def runtime_priority_paths(relative_name: str) -> list[str]:
     return candidates
 
 
+def _get_packaged_runtime_base_dir() -> Path:
+    """返回打包场景下用户可写的运行态根目录。"""
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return Path(local_app_data) / "HextechNexus"
+    app_data = os.getenv("APPDATA", "").strip()
+    if app_data:
+        return Path(app_data) / "HextechNexus"
+    return Path.home() / ".hextech_nexus"
+
+
+
 def get_runtime_root_dir() -> Path:
     """返回运行态可变数据根目录。"""
+    if getattr(sys, "frozen", False):
+        return _get_packaged_runtime_base_dir() / "data" / "runtime"
     return Path(BASE_DIR) / "data" / "runtime"
 
 

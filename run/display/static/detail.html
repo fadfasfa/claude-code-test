@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -369,8 +369,8 @@
     </main>
 
     <script>
-        const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000' : window.location.origin;
-        const WS_URL = window.location.protocol === 'file:' ? 'ws://localhost:8000' : 'ws://' + (window.location.host || 'localhost:8000');
+        const API_BASE = window.location.origin;
+        const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
         let ddVersion = '14.3.1';
         window.ddVersion = ddVersion;
         fetch('https://ddragon.leagueoflegends.com/api/versions.json')
@@ -412,7 +412,7 @@
         if (heroPR) document.getElementById('heroPR').textContent = heroPR;
 
         if (heroId) {
-            document.getElementById('heroAvatar').src = `./assets/${heroId}.png`;
+            document.getElementById('heroAvatar').src = `/assets/${heroId}.png`;
         } else if (enName) {
             document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/${ddVersion}/img/champion/${enName}.png`;
         } else {
@@ -849,6 +849,12 @@
 
                 document.getElementById('loadingSpinner').classList.add('hidden');
                 renderCurrentView();
+                if (hextechData.loading && activeArray.length === 0) {
+                    document.getElementById('noDataTip').classList.remove('hidden');
+                    document.querySelector('#noDataTip .text-xl').textContent = '数据准备中';
+                    document.querySelector('#noDataTip .text-sm').textContent = '详情页已打开，海克斯数据会在后台补齐后可用';
+                    return;
+                }
                 loadSynergies();
             } catch (err) {
                 console.error(err);

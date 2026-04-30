@@ -1,4 +1,4 @@
-"""Web 服务路由层。
+﻿"""Web 服务路由层。
 
 这个模块只负责定义页面路由、API 路由和 WebSocket 入口。
 所有与端口、LCU、缓存、资源定位、浏览器托管相关的细节都委托给 `web_runtime`，
@@ -175,8 +175,11 @@ def register_routes(app: FastAPI) -> None:
         if not snapshot_df.empty:
             return JSONResponse(content=process_champions_data(snapshot_df))
 
-        df = await web_runtime.get_df_with_refresh()
-        return JSONResponse(content=process_champions_data(df))
+        stable_df = await asyncio.to_thread(web_runtime.get_stable_champion_catalog_df)
+        if not stable_df.empty:
+            return JSONResponse(content=process_champions_data(stable_df, use_runtime_cache=False, log_columns=False))
+
+        return JSONResponse(content=[])
 
     @app.get("/api/startup_status")
     async def api_startup_status():
@@ -208,13 +211,17 @@ def register_routes(app: FastAPI) -> None:
             web_runtime.request_background_refresh(force=False)
             return JSONResponse(content=precomputed_payload)
         _request_precomputed_hextech_rebuild()
+        web_runtime.request_background_refresh(force=False)
 
-        df = await web_runtime.get_df_with_refresh()
-        if df.empty:
-            live_df = await asyncio.to_thread(web_runtime.get_live_hextech_snapshot_df, canonical_name)
-            if not live_df.empty:
-                return JSONResponse(content=process_hextechs_data(live_df, canonical_name))
-        return JSONResponse(content=process_hextechs_data(df, canonical_name))
+        live_df = await asyncio.to_thread(web_runtime.get_live_hextech_snapshot_df, canonical_name)
+        if not live_df.empty:
+            return JSONResponse(content=process_hextechs_data(live_df, canonical_name))
+
+        payload = process_hextechs_data(web_runtime.get_df(), canonical_name)
+        payload["loading"] = True
+        payload["ready"] = False
+        payload["startup_status"] = web_runtime.get_startup_status()
+        return JSONResponse(content=payload)
 
     @app.post("/api/champion/{name}/preload")
     async def api_preload_champion(name: str, request: Request):
@@ -318,8 +325,10 @@ def register_routes(app: FastAPI) -> None:
         except Exception:
             web_runtime.logger.warning("英雄详情预加载请求失败：hero=%s", canonical_name, exc_info=True)
 
+        standardized_hero_name = hero_name or req.hero_name
+
         if len(web_runtime.manager.active) == 0:
-            url = web_runtime.build_detail_url(req.hero_id, hero_name or req.hero_name, en_name)
+            url = web_runtime.build_detail_url(req.hero_id, standardized_hero_name, en_name)
             if web_runtime.open_managed_browser(url, replace_existing=True):
                 return JSONResponse(content={"status": "opened_browser", "detail_first": True})
             return JSONResponse(content={"status": "浏览器打开失败"}, status_code=500)
@@ -328,7 +337,7 @@ def register_routes(app: FastAPI) -> None:
             {
                 "type": "local_player_locked",
                 "champion_id": req.hero_id,
-                "hero_name": req.hero_name,
+                "hero_name": standardized_hero_name,
                 "en_name": en_name,
                 "detail_first": True,
             }

@@ -13,11 +13,13 @@ import logging
 import threading
 import random
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from processing.runtime_store import (
     CSV_ENCODING,
     build_daily_csv_path,
+    build_runtime_state_path,
     get_runtime_hextech_data_dir,
+    resolve_runtime_data_file,
 )
 from scraping.version_sync import (
     HEXTECH_AUGMENT_METADATA_URLS,
@@ -123,7 +125,7 @@ def _extract_spell_values(raw_item: dict) -> dict:
     return values
 
 
-def fetch_with_retry(session, url, max_retries=3, timeout=10):
+def fetch_with_retry(session, url, max_retries=1, timeout=6):
     # 指数退避重试。
     for attempt in range(max_retries):
         try:
@@ -343,25 +345,31 @@ def main_scraper(stop_event=None):
 
         return c_name, champ_rows
 
-    logging.info("海克斯抓取执行中：heroes=%s workers=%s", len(stats_list), 16)
+    thread_pool_timeout_seconds = 30
+    logging.info("Hextech scrape running: heroes=%s workers=%s timeout=%s", len(stats_list), 16, thread_pool_timeout_seconds)
     with ThreadPoolExecutor(max_workers=16) as executor:
         futures = [executor.submit(fetch_champ, c) for c in stats_list]
-        for f in as_completed(futures):
-            if stop_event and stop_event.is_set():
-                logging.info("收到用户强制退出信号，正在销毁爬虫线程池...")
-                for fut in futures:
-                    fut.cancel()
-                executor.shutdown(wait=False)
-                return False
+        try:
+            for f in as_completed(futures, timeout=thread_pool_timeout_seconds):
+                if stop_event and stop_event.is_set():
+                    logging.info("Stop signal received; cancelling Hextech scrape workers...")
+                    for fut in futures:
+                        fut.cancel()
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    return False
 
-            try:
-                _, rows = f.result()
-                with lock:
-                    if rows:
-                        all_rows.extend(rows)
-            except Exception as e:
-                logging.error(f"线程结果收集失败：{e}")
-
+                try:
+                    _, rows = f.result()
+                    with lock:
+                        if rows:
+                            all_rows.extend(rows)
+                except Exception as e:
+                    logging.error(f"Worker result collection failed: {e}")
+        except TimeoutError:
+            logging.error("Hextech scrape timed out; cancelling unfinished workers")
+            for fut in futures:
+                fut.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
     if all_rows:
         df = pd.DataFrame(all_rows)
         df['胜率差'] = df['海克斯胜率'] - df['英雄胜率']

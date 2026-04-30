@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -318,8 +318,10 @@
     <div id="searchOverlay" class="hidden"></div>
 
     <script>
-        const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000' : window.location.origin;
-        const WS_URL = window.location.protocol === 'file:' ? 'ws://localhost:8000' : 'ws://' + (window.location.host || 'localhost:8000');
+        const API_BASE = window.location.origin;
+        const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+        const PRELOAD_HOVER_DELAY_MS = 500;
+        const PRELOAD_HEADERS = { 'x-hextech-token': 'bootstrapping' };
 
         let ddVersion = '14.3.1';
         let currentSearchQuery = '';
@@ -428,7 +430,12 @@
             if (!container) return;
 
             if (champions.length === 0) {
-                container.innerHTML = '';
+                container.innerHTML = `
+                    <div class="text-center py-20 text-slate-300">
+                        <div class="font-bold text-xl">数据准备中</div>
+                        <div class="text-sm mt-2 text-slate-400">后台正在加载英雄数据，稍后刷新即可显示完整列表</div>
+                    </div>
+                `;
                 hideSearchAssistPanel();
                 return;
             }
@@ -467,6 +474,7 @@
                     </div>
                 `;
             });
+            bindChampionPreloads();
         }
 
         function escapeHtml(value) {
@@ -516,6 +524,9 @@
 
         async function loadAliasRecordsFromStaticFiles() {
             const aliasIndex = await loadJsonFromCandidates([
+                `${API_BASE}/api/champion_aliases`,
+                '/data/indexes/Champion_Alias_Index.json',
+                '/data/static/Champion_Alias_Index.json',
                 '/static/Champion_Alias_Index.json',
                 './Champion_Alias_Index.json'
             ]);
@@ -525,6 +536,7 @@
             }
 
             const coreData = await loadJsonFromCandidates([
+                '/data/static/Champion_Core_Data.json',
                 '/static/Champion_Core_Data.json',
                 './Champion_Core_Data.json'
             ]);
@@ -1036,7 +1048,7 @@
 
             let avatarUrl;
             if (heroId) {
-                avatarUrl = `./assets/${heroId}.png`;
+                avatarUrl = `/assets/${heroId}.png`;
             } else if (enName) {
                 avatarUrl = `https://ddragon.leagueoflegends.com/cdn/${ddVersion}/img/champion/${enName}.png`;
             } else {
@@ -1056,6 +1068,9 @@
                     class="champ-avatar relative w-16 h-16 sm:w-18 sm:h-18 rounded-lg overflow-hidden border-2 cursor-pointer block flex-shrink-0 ${isHighlighted}"
                     style="animation-delay: ${index * 30}ms"
                     title="${safeHeroName} (${safeWr})"
+                    data-hero-name="${safeHeroNameAttr}"
+                    data-hero-id="${escapeHtml(String(heroId || ''))}"
+                    data-en-name="${escapeHtml(String(enName || ''))}"
                 >
                     <img
                         src="${safeAvatarUrl}"
@@ -1081,6 +1096,53 @@
                 if (score >= tier.minScore) return tier;
             }
             return TIERS[TIERS.length - 1];
+        }
+
+        function getPreloadHeaders() {
+            return PRELOAD_HEADERS;
+        }
+
+        function scheduleChampionPreload(anchor) {
+            if (!anchor || anchor.dataset.preloadState === 'done') return;
+
+            const heroName = (anchor.dataset.heroName || '').trim();
+            if (!heroName) return;
+
+            if (anchor.dataset.preloadTimer) {
+                window.clearTimeout(Number(anchor.dataset.preloadTimer));
+            }
+
+            const timer = window.setTimeout(async () => {
+                anchor.dataset.preloadState = 'done';
+                delete anchor.dataset.preloadTimer;
+                try {
+                    await fetch(`${API_BASE}/api/champion/${encodeURIComponent(heroName)}/preload`, {
+                        method: 'POST',
+                        headers: getPreloadHeaders(),
+                    });
+                } catch (_) {
+                }
+            }, PRELOAD_HOVER_DELAY_MS);
+
+            anchor.dataset.preloadTimer = String(timer);
+
+            const cancel = () => {
+                if (!anchor.dataset.preloadTimer) return;
+                window.clearTimeout(Number(anchor.dataset.preloadTimer));
+                delete anchor.dataset.preloadTimer;
+            };
+
+            anchor.addEventListener('mouseleave', cancel, { once: true });
+            anchor.addEventListener('blur', cancel, { once: true });
+        }
+
+        function bindChampionPreloads() {
+            document.querySelectorAll('.champ-avatar[data-hero-name]').forEach(anchor => {
+                if (anchor.dataset.preloadBound === 'true') return;
+                anchor.dataset.preloadBound = 'true';
+                anchor.addEventListener('mouseenter', () => scheduleChampionPreload(anchor), { passive: true });
+                anchor.addEventListener('focus', () => scheduleChampionPreload(anchor), { passive: true });
+            });
         }
 
         function connectWS() {

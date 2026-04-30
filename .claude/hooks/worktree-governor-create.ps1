@@ -1,8 +1,8 @@
-<#
-Repo-local WorktreeCreate hook.
-Purpose: constrain Claude Code worktree requests to managed paths and names.
-Guards: prevent nested worktrees, enforce directed/auto names, and place new worktrees under managed roots.
-Non-goals: no worktree deletion, no legacy cleanup, no replacement for human confirmation.
+﻿<#
+中文简介：约束 Claude Code WorktreeCreate 请求，只允许受管路径和受控名称。
+何时读取：当 Claude Code 通过 WorktreeCreate hook 创建隔离 worktree 时读取。
+约束内容：防止嵌套 worktree，强制 directed/auto 命名，并把新 worktree 放到受管根目录。
+不负责：不删除 worktree、不清理旧目录，也不替代人工确认。
 #>
 
 Set-StrictMode -Version Latest
@@ -27,13 +27,13 @@ function Write-Err([string]$Message) {
   [Console]::Error.WriteLine($Message)
 }
 
-# Unified failure exit: report the reason and stop this hook; do not auto-fix.
+# 统一失败出口：报告原因并停止 hook；不自动修复。
 function Fail([string]$Message, [int]$Code = 2) {
   Write-Err $Message
   exit $Code
 }
 
-# Convert WSL-style paths to Windows path text.
+# 将 WSL 风格路径转换为 Windows 路径文本。
 function Convert-PathText([string]$PathText) {
   if ([string]::IsNullOrWhiteSpace($PathText)) { return "" }
   if ($PathText -match '^/mnt/([a-zA-Z])/(.*)$') {
@@ -42,14 +42,14 @@ function Convert-PathText([string]$PathText) {
   return $PathText
 }
 
-# Resolve to an absolute path and trim trailing separators for boundary checks.
+# 解析为绝对路径并去除尾部分隔符，用于边界检查。
 function Normalize-PathText([string]$PathText) {
   $converted = Convert-PathText $PathText
   if ([string]::IsNullOrWhiteSpace($converted)) { return "" }
   return ([System.IO.Path]::GetFullPath($converted)).TrimEnd('\', '/')
 }
 
-# Return whether Child is under Parent using path text only; do not read business files.
+# 仅用路径文本判断 Child 是否位于 Parent 下；不读取业务文件。
 function Test-UnderPath([string]$Child, [string]$Parent) {
   $c = Normalize-PathText $Child
   $p = Normalize-PathText $Parent
@@ -58,7 +58,7 @@ function Test-UnderPath([string]$Child, [string]$Parent) {
     $c.StartsWith($p + "\", [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-# Extract a field from different event payload shapes.
+# 从不同事件 payload 形态中提取字段。
 function Get-JsonField($Object, [string[]]$Names) {
   if (-not $Object) { return $null }
   foreach ($name in $Names) {
@@ -69,7 +69,7 @@ function Get-JsonField($Object, [string[]]$Names) {
   return $null
 }
 
-# Compress session id to a safe short token for auto worktree branch names.
+# 将 session id 压缩为安全短 token，用于自动 worktree 分支名。
 function Get-ShortSessionId([string]$SessionId) {
   $sid = ($SessionId.ToLowerInvariant() -replace '[^a-z0-9]', '')
   if ([string]::IsNullOrWhiteSpace($sid)) { return "nosession" }
@@ -77,6 +77,7 @@ function Get-ShortSessionId([string]$SessionId) {
   return $sid
 }
 
+# 生成适合路径和分支名使用的短 slug。
 function Get-Slug([string]$Text, [string]$Fallback) {
   $slug = ($Text.ToLowerInvariant() -replace '[^a-z0-9]+', '-')
   $slug = ($slug -replace '-{2,}', '-').Trim('-')
@@ -88,6 +89,7 @@ function Get-Slug([string]$Text, [string]$Fallback) {
   return $slug
 }
 
+# 生成 registry 文件名 token，避免任意字符进入路径。
 function Get-RegistryToken([string]$Text, [string]$Fallback) {
   $token = ($Text.ToLowerInvariant() -replace '[^a-z0-9._-]+', '-')
   $token = ($token -replace '-{2,}', '-').Trim('-')

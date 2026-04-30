@@ -226,3 +226,44 @@ Windows 控制台输出中文、替换字符或大段文本时要显式控制编
 - Pattern-Key: tooling.windows-console-utf8-bounded-output
 
 ---
+
+## [LRN-20260428-001] workflow_boundary
+
+### Summary
+
+脚本化 patch 前先只读确认目标字符串唯一存在；不要假设旧片段仍匹配当前源码。
+
+### Details
+
+在本仓 Native Read 禁令或 Edit/Write 不可用时，如果需要脚本化 patch，先用 Grep 或只读脚本确认目标块存在且唯一。备份、匹配验证、替换应分步执行；目标块不匹配时停止，不要扩大替换范围或继续猜测。
+
+### Suggested Action
+
+执行脚本化 patch 前输出目标匹配数量和关键上下文；只有匹配唯一且用户授权范围明确时才修改文件。
+
+### Metadata
+
+- source: ERR-20260427-194840, ERR-20260427-222317, ERR-20260427-223346, ERR-20260427-223657
+- type: workflow_boundary
+- scope: repo-local
+
+## [LRN-20260428-002] best_practice
+
+### Summary
+
+Windows shell 中做只读日志或 learning 摘要时，避免原样打印含乱码或大段 payload。
+
+### Details
+
+维护、日志和 learning 摘要命令应优先输出标题、首行错误、dedupe、timestamp 等 UTF-8/ASCII-safe 字段。遇到乱码、替换字符或长异常 payload 时，使用 `PYTHONIOENCODING=utf-8`、`errors='replace'` 或 ASCII-safe 摘要，避免只读维护命令本身因编码失败。
+
+### Suggested Action
+
+对 `.learnings`、日志和源码片段做摘要时，限制输出范围并显式处理编码；需要完整原文时再单独确认输出介质是否支持 UTF-8。
+
+### Metadata
+
+- source: ERR-20260427-214912 and 2026-04-28 maintenance retry
+- type: best_practice
+- scope: repo-local
+

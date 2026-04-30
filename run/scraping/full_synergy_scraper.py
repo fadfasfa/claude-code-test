@@ -38,12 +38,12 @@ ALLOWED_STATIC_DATA_FILES = {
     "Champion_Core_Data.json",
 }
 MAX_STATIC_DATA_FILE_SIZE = 10 * 1024 * 1024
-MAX_FETCH_RETRIES = 3
-REQUEST_TIMEOUT_SECONDS = 10
+MAX_FETCH_RETRIES = 1
+REQUEST_TIMEOUT_SECONDS = 6
 RETRY_BACKOFF_FACTOR = 0.5
 THREAD_POOL_WORKERS = 8
-THREAD_POOL_TIMEOUT_SECONDS = 300
-OUTPUT_LOCK_TIMEOUT_SECONDS = 30
+THREAD_POOL_TIMEOUT_SECONDS = 28
+OUTPUT_LOCK_TIMEOUT_SECONDS = 5
 OUTPUT_LOCK_POLL_INTERVAL_SECONDS = 0.2
 
 # 日志配置。
@@ -96,7 +96,8 @@ def _sanitize_url_for_log(url: str) -> str:
 
 def _resolve_static_data_path(filename: str) -> Path:
     # 将配置文件限制在固定白名单内，避免路径穿越。
-    if file_name != filename or filename not in ALLOWED_STATIC_DATA_FILES:
+    base_name = os.path.basename(filename)
+    if base_name != filename or filename not in ALLOWED_STATIC_DATA_FILES:
         raise ValueError(f"不允许访问的配置文件：{filename}")
 
     resolved = (STATIC_DATA_PATH / filename).resolve()

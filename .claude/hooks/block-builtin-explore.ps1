@@ -1,18 +1,19 @@
-<#
-Repo-local PreToolUse Agent hook.
-Purpose: block Claude Code built-in Explore in this repository.
-Guards: require repo-explorer for read-only exploration that needs Chinese Todo
-and text/code Read fallback discipline.
-Non-goals: no task dispatch, no prompt rewriting, no file edits.
+﻿<#
+中文简介：阻止在本仓使用内置 Explore agent。
+何时读取：当 Claude Code 调用 Agent 工具前置钩子需要判断是否允许 Explore 时读取。
+约束内容：本仓只允许使用 repo-explorer 做只读探索，避免绕过文本/代码读取纪律。
+不负责：不修复 agent 调用，也不替代 repo-explorer 的实际检索逻辑。
 #>
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# 向 stderr 输出阻断原因，供 Claude Code hook 机制展示给调用方。
 function Write-Err([string]$Message) {
   [Console]::Error.WriteLine($Message)
 }
 
+# 兼容不同 hook payload 形态，从顶层或输入对象中取字段。
 function Get-JsonField($Object, [string[]]$Names) {
   if (-not $Object) { return $null }
   foreach ($name in $Names) {
@@ -21,11 +22,13 @@ function Get-JsonField($Object, [string[]]$Names) {
   return $null
 }
 
+# 统一提取 agent 名称，支持字符串或带 name 字段的对象。
 function Normalize-Name([object]$Value) {
   if ($null -eq $Value) { return "" }
   return ([string]$Value).Trim()
 }
 
+# 判断当前事件是否是 Agent 工具调用。
 function Is-AgentToolCall($Event) {
   $toolName = Normalize-Name (Get-JsonField $Event @("tool_name", "toolName", "name", "tool", "tool_use_name"))
   if ([string]::IsNullOrWhiteSpace($toolName)) {
@@ -34,6 +37,7 @@ function Is-AgentToolCall($Event) {
   return $toolName -ieq "Agent"
 }
 
+# 从多种 Agent 调用参数位置提取 subagent 名称。
 function Get-AgentName($Event) {
   $toolInput = Get-JsonField $Event @("tool_input", "toolInput", "input")
   $candidates = @(

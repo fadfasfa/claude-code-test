@@ -131,6 +131,16 @@ os.makedirs(INDEX_DATA_DIR, exist_ok=True)
 os.makedirs(RAW_DATA_DIR, exist_ok=True)
 os.makedirs(RUNTIME_DATA_DIR, exist_ok=True)
 os.makedirs(ASSET_DIR, exist_ok=True)
+for runtime_dir in (
+    os.path.join(RAW_DATA_DIR, "hextech"),
+    os.path.join(RAW_DATA_DIR, "synergy"),
+    os.path.join(RUNTIME_DATA_DIR, "state"),
+    os.path.join(RUNTIME_DATA_DIR, "cache"),
+    os.path.join(RUNTIME_DATA_DIR, "locks"),
+    os.path.join(RUNTIME_DATA_DIR, "profile"),
+    os.path.join(RUNTIME_DATA_DIR, "persisted"),
+):
+    os.makedirs(runtime_dir, exist_ok=True)
 def _load_existing_champion_aliases() -> dict:
     if not os.path.exists(CORE_DATA_FILE):
         return {}

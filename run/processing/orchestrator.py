@@ -50,21 +50,29 @@ from scraping.version_sync import (
 
 
 SYNERGY_FILE = build_synergy_data_path()
+HIGH_FREQUENCY_STALE_SECONDS = 4 * 60 * 60
+
+
+def _file_is_fresh(path: str, stale_after_seconds: int = HIGH_FREQUENCY_STALE_SECONDS) -> bool:
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        return (os.path.getmtime(path) + stale_after_seconds) >= time.time()
+    except OSError:
+        return False
+
+
+def should_refresh_hextech(force: bool, stale_after_seconds: int = HIGH_FREQUENCY_STALE_SECONDS) -> bool:
+    if force:
+        return True
+    latest_csv = get_latest_csv()
+    return not _file_is_fresh(latest_csv or "", stale_after_seconds)
 
 
 def is_first_run(force: bool = False) -> bool:
     if force:
         return True
-    augment_data_ready = (
-        os.path.exists(AUGMENT_MANIFEST_FILE)
-        or (os.path.exists(AUGMENT_MAP_FILE) and os.path.exists(AUGMENT_ICON_FILE))
-    )
-    core_files_ready = all(
-        os.path.exists(path)
-        for path in (CORE_DATA_FILE, SYNERGY_FILE)
-    )
-    latest_csv = get_latest_csv()
-    return not core_files_ready or not augment_data_ready or not latest_csv or not os.path.exists(latest_csv)
+    return not os.path.exists(CORE_DATA_FILE) or should_refresh_hextech(False) or should_refresh_synergy(False, HIGH_FREQUENCY_STALE_SECONDS)
 
 
 def should_refresh_synergy(force: bool, stale_after_seconds: int) -> bool:
@@ -145,5 +153,6 @@ __all__ = [
     "run_hero_sync",
     "run_hextech_refresh",
     "run_synergy_refresh",
+    "should_refresh_hextech",
     "should_refresh_synergy",
 ]

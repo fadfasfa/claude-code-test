@@ -450,8 +450,16 @@ def _queue_ui_preload(ui: "HextechUI", hero_names: list[str]) -> None:
     _submit_preload(ui, normalized_names)
 
 
-def _wait_for_required_preload(ui: "HextechUI", hero_name: str) -> bool:
-    return _wait_for_redirect_ready(ui, hero_name)
+def _refresh_clicked_hero_preload(ui: "HextechUI", hero_name: str) -> None:
+    _refresh_preload_ready(ui, hero_name)
+
+
+def _queue_clicked_hero_preload(ui: "HextechUI", hero_name: str) -> None:
+    normalized_hero = _normalize_hero_name(hero_name)
+    if not normalized_hero:
+        return
+    _queue_ui_preload(ui, [normalized_hero])
+    _preload_status_executor.submit(lambda: _refresh_clicked_hero_preload(ui, normalized_hero))
 
 
 def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
@@ -475,12 +483,11 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
     def redirect_task():
         normalized_hero = _normalize_hero_name(hero_name)
         en_name = ui.core_data.get(str(champ_id), {}).get("en_name", "")
-        _set_click_status(ui, f"正在准备 {normalized_hero}...", "#f9e2af")
-        if not _wait_for_required_preload(ui, normalized_hero):
-            logger.debug("英雄必要预热未在门限内完成，按兜底路径继续：hero=%s", normalized_hero)
+        _set_click_status(ui, f"正在跳转 {normalized_hero}...", "#f9e2af")
+        _queue_clicked_hero_preload(ui, normalized_hero)
         for _ in range(3):
             if _handle_redirect_attempt(ui, champ_id, hero_name, en_name):
-                _set_click_status(ui, f"已跳转 {normalized_hero}", "#a6e3a1")
+                _set_click_status(ui, f"已跳转 {normalized_hero}，详情数据加载中", "#a6e3a1")
                 return
             time.sleep(0.4)
         logger.debug("请求 /api/redirect 多次失败，回退到本地浏览器打开。")

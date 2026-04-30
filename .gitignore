@@ -41,4 +41,7 @@ coverage/
 !.learnings/LEARNINGS.md
 .tmp/
 .tmp/active-task/**
+/task_plan.md
+/findings.md
+/progress.md
 tmp/

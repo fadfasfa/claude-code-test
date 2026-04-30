@@ -1,4 +1,4 @@
-"""Web 服务运行时支撑层。
+﻿"""Web 服务运行时支撑层。
 
 文件职责：
 - 承载 Web 服务的长生命周期状态和请求热路径辅助逻辑
@@ -53,6 +53,7 @@ from urllib3.util.retry import Retry
 from processing.view_adapter import process_hextechs_data
 from processing.runtime_store import (
     CachedDataFrameLoader,
+    build_runtime_persisted_path,
     build_runtime_profile_path,
     build_runtime_state_path,
     build_synergy_data_path,
@@ -159,7 +160,7 @@ def get_assets_dir() -> str:
         # 冻结包里 `_MEIPASS/assets` 只是只读的捆绑副本；
         # 运行时补齐和缓存头像必须落到 exe 同级目录，保证 Web 端和桌面端看到同一份资源。
         if getattr(sys, "frozen", False):
-            _assets_dir = os.path.join(BASE_DIR, "assets")
+            _assets_dir = build_runtime_persisted_path("assets")
         else:
             _assets_dir = _get_resource_path("assets")
         os.makedirs(_assets_dir, exist_ok=True)
@@ -702,6 +703,29 @@ class JSONFileCache:
 _synergy_cache = JSONFileCache()
 _champion_snapshot_cache = JSONFileCache()
 _live_hextech_cache = JSONFileCache()
+
+
+def get_stable_champion_catalog_df() -> pd.DataFrame:
+    """读取 bundle 内稳定英雄目录，作为首页冷启动兜底数据源。"""
+    core_data = load_champion_core_data()
+    rows = []
+    for champ_id, item in core_data.items():
+        if not isinstance(item, dict):
+            continue
+        hero_name = str(item.get("name", "")).strip()
+        if not hero_name:
+            continue
+        rows.append(
+            {
+                "英雄名称": hero_name,
+                "英雄胜率": 0.0,
+                "英雄出场率": 0.0,
+                "英雄ID": str(champ_id).strip(),
+            }
+        )
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
 
 
 def get_live_champion_snapshot_df(force_refresh: bool = False) -> pd.DataFrame:

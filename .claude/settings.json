@@ -1,6 +1,5 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "plansDirectory": ".tmp/claude-plans",
   "env": {
     "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
     "CLAUDE_CODE_FORK_SUBAGENT": "0"
@@ -71,5 +70,17 @@
         ]
       }
     ]
+  },
+  "extraKnownMarketplaces": {
+    "planning-with-files": {
+      "source": {
+        "source": "github",
+        "repo": "OthmanAdi/planning-with-files"
+      }
+    }
+  },
+  "plansDirectory": ".tmp/claude-plans",
+  "enabledPlugins": {
+    "planning-with-files@planning-with-files": true
   }
 }

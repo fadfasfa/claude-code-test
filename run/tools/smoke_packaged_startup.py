@@ -1,0 +1,245 @@
+"""打包产物空仓首启烟测。
+
+这个文件用于验证 PyInstaller 便携包在非仓库空目录首次启动时，是否能在限定时间内创建运行态目录、启动本地 Web 服务并返回可操作页面。
+它只负责本地验收，不负责构建产物、不负责真实人工点击悬浮窗、不修改业务数据。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+REQUIRED_DIRS = (
+    "data/raw/hextech",
+    "data/raw/synergy",
+    "data/runtime/state",
+    "data/runtime/cache",
+    "data/runtime/locks",
+    "data/runtime/profile",
+    "data/runtime/persisted",
+    "data/runtime/logs",
+)
+
+REQUIRED_FILES = (
+    "data/runtime/state/web_server_port.txt",
+    "data/runtime/state/startup_status.json",
+)
+
+
+class SmokeFailure(RuntimeError):
+    pass
+
+
+def _latest_package(dist_dir: Path) -> Path:
+    packages = [p for p in dist_dir.iterdir() if p.is_dir() and p.name.startswith("Hextech_")]
+    if not packages:
+        raise SmokeFailure(f"未找到打包目录：{dist_dir}")
+    return max(packages, key=lambda p: p.stat().st_mtime)
+
+
+def _copy_clean_package(source: Path, smoke_root: Path) -> Path:
+    if smoke_root.exists():
+        shutil.rmtree(smoke_root)
+    smoke_root.mkdir(parents=True, exist_ok=True)
+    target = smoke_root / source.name
+    shutil.copytree(source, target)
+    for rel in ("data/raw", "data/runtime"):
+        runtime_path = target / rel
+        if runtime_path.exists():
+            shutil.rmtree(runtime_path)
+    return target
+
+
+def _find_exe(package_dir: Path) -> Path:
+    exes = list(package_dir.glob("*.exe"))
+    if not exes:
+        raise SmokeFailure(f"打包目录内未找到 exe：{package_dir}")
+    return exes[0]
+
+
+def _read_port(package_dir: Path) -> str | None:
+    port_file = package_dir / "data/runtime/state/web_server_port.txt"
+    if not port_file.exists():
+        return None
+    port = port_file.read_text(encoding="utf-8", errors="replace").strip()
+    return port or None
+
+
+def _fetch(url: str, timeout: float = 8.0) -> tuple[int, bytes]:
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        return response.status, response.read()
+
+
+def _required_paths_ready(package_dir: Path, started_at_wall: float) -> dict[str, bool]:
+    checks: dict[str, bool] = {}
+    for rel in REQUIRED_DIRS:
+        checks[rel] = (package_dir / rel).is_dir()
+    for rel in REQUIRED_FILES:
+        path = package_dir / rel
+        checks[rel] = path.is_file() and path.stat().st_mtime >= started_at_wall
+    checks["_internal/data/runtime absent"] = not (package_dir / "_internal/data/runtime").exists()
+    return checks
+
+
+def _read_json(body: bytes) -> object:
+    return json.loads(body.decode("utf-8", errors="replace"))
+
+
+def _truthy_status(payload: dict[str, object], *keys: str) -> bool:
+    return any(bool(payload.get(key)) for key in keys)
+
+
+def _business_ready(startup_status: object, champions: object, detail_payload: object) -> dict[str, bool]:
+    startup = startup_status if isinstance(startup_status, dict) else {}
+    champion_list = champions if isinstance(champions, list) else []
+    detail = detail_payload if isinstance(detail_payload, dict) else {}
+    return {
+        "startup_hero_ready": _truthy_status(startup, "hero_ready", "champion_ready", "champions_ready"),
+        "startup_hextech_ready": _truthy_status(startup, "hextech_ready", "hextechs_ready"),
+        "startup_synergy_ready": _truthy_status(startup, "synergy_ready", "synergies_ready"),
+        "champions_non_empty": len(champion_list) > 0,
+        "detail_business_payload": bool(detail.get("comprehensive")) or bool(detail.get("ready")),
+    }
+
+
+def _web_ready(port: str) -> dict[str, object]:
+    base = f"http://127.0.0.1:{port}"
+    result: dict[str, object] = {}
+
+    root_code, root_body = _fetch(base + "/")
+    result["root"] = {"code": root_code, "bytes": len(root_body)}
+
+    startup_code, startup_body = _fetch(base + "/api/startup_status")
+    startup_status = _read_json(startup_body)
+    result["startup_status"] = {"code": startup_code, "bytes": len(startup_body), "json": startup_status}
+
+    champions_code, champions_body = _fetch(base + "/api/champions")
+    champions = _read_json(champions_body)
+    result["champions"] = {"code": champions_code, "bytes": len(champions_body), "count": len(champions) if isinstance(champions, list) else 0}
+
+    detail_code, detail_body = _fetch(base + "/detail.html?champion=1")
+    result["detail"] = {"code": detail_code, "bytes": len(detail_body)}
+
+    representative_name = ""
+    if isinstance(champions, list) and champions:
+        first_champion = champions[0]
+        if isinstance(first_champion, dict):
+            representative_name = str(first_champion.get("英雄名称") or first_champion.get("hero_name") or "")
+    detail_payload: object = {}
+    if representative_name:
+        api_detail_code, api_detail_body = _fetch(base + f"/api/champion/{urllib.parse.quote(representative_name)}/hextechs")
+        detail_payload = _read_json(api_detail_body)
+        result["representative_detail"] = {"code": api_detail_code, "bytes": len(api_detail_body), "hero": representative_name}
+    else:
+        result["representative_detail"] = {"code": 0, "bytes": 0, "hero": ""}
+
+    synergy_code, synergy_body = _fetch(base + "/api/synergies/1")
+    result["synergy_fallback"] = {"code": synergy_code, "bytes": len(synergy_body)}
+
+    business_checks = _business_ready(startup_status, champions, detail_payload)
+    result["business_ready"] = business_checks
+    if not all(business_checks.values()):
+        missing = [name for name, ok in business_checks.items() if not ok]
+        raise SmokeFailure("业务数据未就绪：" + ", ".join(missing))
+    return result
+
+
+def _terminate_process_tree(proc: subprocess.Popen[bytes]) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    else:
+        proc.send_signal(signal.SIGTERM)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
+    exe = _find_exe(package_dir)
+    stdout_path = package_dir / "smoke_startup_stdout.log"
+    started_at = time.monotonic()
+    started_at_wall = time.time()
+    with stdout_path.open("wb") as stdout:
+        proc = subprocess.Popen(
+            [str(exe.resolve())],
+            cwd=str(package_dir.resolve()),
+            stdout=stdout,
+            stderr=subprocess.STDOUT,
+        )
+    try:
+        last_error = ""
+        checks: dict[str, bool] = {}
+        web: dict[str, object] = {}
+        while time.monotonic() - started_at < timeout_seconds:
+            checks = _required_paths_ready(package_dir, started_at_wall)
+            port = _read_port(package_dir)
+            if port and all(checks.values()):
+                try:
+                    web = _web_ready(port)
+                    elapsed = time.monotonic() - started_at
+                    return {
+                        "ok": True,
+                        "elapsed_seconds": round(elapsed, 2),
+                        "package_dir": str(package_dir),
+                        "port": port,
+                        "paths": checks,
+                        "web": web,
+                    }
+                except (urllib.error.URLError, TimeoutError, OSError, SmokeFailure, json.JSONDecodeError) as exc:
+                    last_error = repr(exc)
+            if proc.poll() is not None:
+                last_error = f"进程提前退出：returncode={proc.returncode}"
+                break
+            time.sleep(1)
+        return {
+            "ok": False,
+            "elapsed_seconds": round(time.monotonic() - started_at, 2),
+            "package_dir": str(package_dir),
+            "paths": checks,
+            "web": web,
+            "last_error": last_error,
+            "stdout_tail": stdout_path.read_text(encoding="utf-8", errors="replace")[-2000:] if stdout_path.exists() else "",
+        }
+    finally:
+        _terminate_process_tree(proc)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="验证打包产物空仓首启是否在限定时间内可用。")
+    parser.add_argument("--package-dir", type=Path, help="已打包便携目录；默认使用 run/dist 下最新 Hextech_* 目录。")
+    parser.add_argument("--dist-dir", type=Path, default=Path(__file__).resolve().parents[1] / "dist")
+    parser.add_argument("--smoke-root", type=Path, default=Path(__file__).resolve().parents[1] / ".tmp_package_smoke")
+    parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--keep", action="store_true", help="保留复制出的烟测目录，便于排查。")
+    args = parser.parse_args()
+
+    source = args.package_dir or _latest_package(args.dist_dir)
+    target = _copy_clean_package(source.resolve(), args.smoke_root.resolve())
+    result = run_smoke(target, args.timeout)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if result["ok"] and not args.keep:
+        shutil.rmtree(target.parent, ignore_errors=True)
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

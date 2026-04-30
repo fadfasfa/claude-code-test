@@ -75,6 +75,7 @@
 - Do not use ad-hoc replacement scripts.
 - Stop and report blocker.
 - Continue only after the user explicitly replies: `授权 scripted patch plan 修改 <file>`.
+- Before any scripted patch, confirm the exact target string or block matches once, print the match count, and stop if the count is not `1`; do not broaden the replacement or guess a nearby block.
 
 ### Retry budget
 
@@ -93,6 +94,7 @@
 - Grep / Glob 优先使用相对路径或 Windows 路径；Bash 中优先使用相对路径，不混用 `/mnt/c` 与 `/c/Users`。
 - 中文、替换字符、大段 Markdown 输出在 Windows 控制台可能触发编码问题。
 - 优先用内置 `Grep` / `Glob` / `Bash` 分段定位 text/code 文件；必须用 Python 输出时显式控制 UTF-8 或限制输出范围。
+- 摘要 `.learnings`、日志或源码片段时优先输出标题、首行错误、dedupe、timestamp 等有限字段；遇到乱码、替换字符或长 payload 时使用 `errors="replace"` 或 ASCII-safe 摘要，不原样倾倒全文。
 - 不用 Python 暴力打印大型中文文件。
 
 ## Git 确认边界

@@ -60,18 +60,22 @@ def get_unified_log_file() -> str:
     return get_runtime_summary_log_file()
 
 
-def get_runtime_summary_log_file() -> str:
-    base_dir = Path(__file__).resolve().parent.parent
+def _runtime_log_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        base_dir = Path(sys.executable).resolve().parent
+    else:
+        base_dir = Path(__file__).resolve().parent.parent
     log_dir = base_dir / "data" / "runtime" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    return str(log_dir / "hextech_runtime_summary.log")
+    return log_dir
+
+
+def get_runtime_summary_log_file() -> str:
+    return str(_runtime_log_dir() / "hextech_runtime_summary.log")
 
 
 def get_error_log_file() -> str:
-    base_dir = Path(__file__).resolve().parent.parent
-    log_dir = base_dir / "data" / "runtime" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    return str(log_dir / "hextech_error.log")
+    return str(_runtime_log_dir() / "hextech_error.log")
 
 
 def ensure_utf8_stdio() -> None:

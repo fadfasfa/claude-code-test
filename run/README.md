@@ -1,125 +1,122 @@
-﻿# Hextech 伴生系统运行指南
+# Hextech 伴生系统运行指南
 
-主项目文档位于当前目录的 `PROJECT.md`。
+主项目文档位于当前目录的 [PROJECT.md](PROJECT.md)。本文只回答“这个工作区现在是什么、怎么启动、怎么打包、怎么验收”。
 
-## 项目概述
+## 当前定位
 
-`run/` 是 Hextech 伴生系统的实际运行目录，负责：
+`run/` 是 Hextech 伴生系统的实际运行工作区，包含桌面悬浮窗、本地 Web/API、数据处理、远端抓取、自愈修复和 PyInstaller 便携包构建。
 
-- 同步英雄核心数据、海克斯数据、协同数据和图标目录
-- 提供桌面伴生窗口
-- 提供本地 Web 页面与 API
-- 产出带稳定资源白名单的打包结果
+当前项目目标：让打包后的便携目录在非仓库、空运行态目录中首次启动后 60 秒内可用；高频抓取数据不随包分发，由首次启动和 4 小时新鲜度策略触发后台刷新。
 
-当前结构以真实代码为准，核心分为四层：
+## 一眼看懂
 
-- `display/`：展示与启动层
-- `processing/`：本地数据处理与视图适配层
-- `scraping/`：远端抓取、自愈和稳定资源同步层
-- `tools/`：打包、清理、日志与开发自检工具层
-- `data/`：本地运行生成 / 下载缓存与运行输出，不作为当前仓库追踪源数据；`data/raw/` 存放 `Hextech_Data_*.csv` 等高频原始战报，`data/runtime/` 存放状态、API 缓存、锁、浏览器 profile 和生成型协同数据。稳定源数据应保留在明确的 `config/`、`assets/` 或静态资源入口。
+| 维度 | 当前状态 |
+| :--- | :--- |
+| 主入口 | `python hextech_ui.py` 启动桌面伴生；`python web_server.py` 只启动 Web 服务 |
+| 打包入口 | `python build.py`，不要另建平行打包流程 |
+| 发布形态 | PyInstaller `--onedir` 未签名便携包 + `_portable.zip` |
+| 启动硬门槛 | 打包产物空仓首启 60 秒内返回可用 Web/UI 热路径 |
+| 高频数据策略 | `data/raw/` 和 `data/runtime/` 不进包；首次空仓必刷，之后超过 4 小时再刷 |
+| 稳定资源策略 | 只把版本级稳定资源放进包，例如核心英雄数据、别名索引、稳定图标/manifest |
+| 最近验收 | `python tools/smoke_packaged_startup.py --timeout 60`，严格空仓实测约 3.83 秒可用 |
 
-## 快速开始
-
-### 安装依赖
+## 快速命令
 
 ```powershell
+# 安装依赖
 pip install -r requirements.txt
-```
 
-### 启动方式
-
-```powershell
 # 桌面伴生模式
 python hextech_ui.py
 
 # 仅启动 Web 服务
 python web_server.py
-```
 
-### 打包
-
-```powershell
+# 打包便携产物
 python build.py
+
+# 打包后空仓首启验收
+python tools/smoke_packaged_startup.py --timeout 60
 ```
 
-## 打包说明
-
-- 默认产物为 `PyInstaller --onedir`
-- 默认发布形态为“未签名便携包”，适合熟人或测试用户分发
-- 打包白名单会内置：
-  - `display/static/`
-  - 稳定 `config/` 资源
-  - 稳定 `assets/` 图片资源
-- 默认内置的稳定配置包括：
-  - `Champion_Core_Data.json`
-  - `Champion_Alias_Index.json`
-  - `Augment_Icon_Manifest.json`
-  - 兼容图标映射文件
-- 以下运行态文件不会打包：
-  - `Hextech_Data_*.csv`
-  - `Champion_Hextech_Cache.json`
-  - `Champion_List_Cache.json`
-  - `Champion_Synergy.json`
-  - `startup_status.json`
-  - `web_server_port.txt`
-  - 运行日志
-- 稳定配置读取顺序为：本地 `config/` 覆盖资源 -> 包内稳定资源；高频 CSV 只从运行原始数据目录 `data/raw/` 读取，状态、缓存、锁、profile 和生成型协同数据写入 `data/runtime/`，旧 `config/` 同名文件仅作为历史兼容读取或清理对象。
-- `dist/` 下会同时生成：
-  - 目录版 `Hextech_伴生系统_YYYYMMDD/`
-  - 便携压缩包 `Hextech_伴生系统_YYYYMMDD_portable.zip`
-- 便携目录根级会自动补齐：
-  - `Hextech伴生终端.exe`
-  - `启动 Hextech.bat`
-  - `README_首次使用.txt`
-
-### 便携分发说明
-
-- 发给熟人时，优先发送 `_portable.zip`
-- 对方只需要：
-  - 解压整个压缩包
-  - 双击 `启动 Hextech.bat`
-- 当前版本未做 Windows 代码签名，因此部分系统仍可能触发 Smart App Control / SmartScreen 拦截
-- 这个限制不能仅靠仓库内代码彻底消除；当前方案只负责把资源、入口和首次使用说明整理成便携包
-
-## 目录结构
+## 目录职责
 
 ```text
 run/
-├── build.py                       # 打包入口薄壳
-├── hextech_ui.py                  # 桌面入口薄壳
-├── web_server.py                  # Web 入口薄壳
-├── display/                       # 展示与启动层
-│   ├── hextech_ui.py              # 桌面 UI 主类与界面结构
-│   ├── ui_runtime.py              # 桌面后台协同、线程、窗口同步、头像加载
-│   ├── web_server.py              # Web 启动壳
-│   ├── web_api.py                 # FastAPI 路由与接口编排
-│   ├── web_runtime.py             # Web 运行时状态、LCU、缓存、浏览器与生命周期
-│   └── static/                    # Web 静态页面与样式
-├── processing/                    # 本地数据处理层
-│   ├── runtime_store.py           # 运行时文件定位、CSV 缓存与 DataFrame 归一
-│   ├── view_adapter.py            # 首页榜单与海克斯详情数据适配
-│   ├── precomputed_cache.py       # 预计算 API 缓存
-│   ├── query_terminal.py          # 终端查询输出
-│   ├── alias_search.py            # 首页别名索引读取
-│   ├── alias_utils.py             # 别名归一与去重
-│   └── orchestrator.py            # 后台刷新与自愈统一编排入口
-├── scraping/                      # 远端抓取与稳定资源同步层
-│   ├── version_sync.py            # 稳定资源同步与运行环境引导
-│   ├── full_hextech_scraper.py    # 海克斯数据抓取
-│   ├── full_synergy_scraper.py    # 协同数据抓取
-│   ├── augment_catalog.py         # 海克斯统一目录与预缓存
-│   ├── icon_resolver.py           # 海克斯图标查找、缓存与远端回退
-│   ├── heal_worker.py             # 缺失产物自愈修复
-│   └── augment_common.py          # 海克斯目录公共辅助
-└── tools/                         # 工具层
-    ├── build_bundle.py            # 打包主流程
-    ├── bundle_manifest.py         # 稳定资源白名单生成
-    ├── runtime_bundle.py          # 打包后稳定资源播种
-    ├── cleanup_runtime.py         # 构建与运行残留清理
-    ├── log_utils.py               # 统一日志与 UTF-8 输出工具
-    └── dev_checks.py              # 本地开发自检
+├── build.py                    # 打包入口薄壳，委托 tools/build_bundle.py
+├── hextech_ui.py               # 桌面入口薄壳，委托 display/hextech_ui.py
+├── web_server.py               # Web 入口薄壳，委托 display/web_server.py
+├── display/                    # 展示、桌面窗口、本地 Web/API、浏览器协同
+├── processing/                 # 运行态路径、CSV/DataFrame、视图适配、后台编排
+├── scraping/                   # 远端抓取、稳定资源同步、缺失产物自愈
+├── tools/                      # 打包、清理、日志、自检、烟测工具
+├── data/static/                # 版本级稳定数据文件
+├── data/indexes/               # 版本级稳定索引文件
+├── assets/                     # 稳定图片/图标资源入口
+└── data/                       # 本地运行生成数据；不作为分发源数据
 ```
+
+更细的文件职责、数据流和维护边界见 [PROJECT.md](PROJECT.md)。
+
+## 运行态数据边界
+
+### 可以随包分发
+
+- `display/static/` 前端静态页面
+- `data/static/` 中的版本级稳定数据文件
+- `data/indexes/` 中的版本级稳定索引文件
+- `assets/` 中的稳定图片/图标资源
+- `Champion_Core_Data.json`
+- `Champion_Alias_Index.json`
+- `Augment_Icon_Manifest.json`
+- 兼容图标映射文件
+
+### 不应随包分发
+
+- `data/raw/hextech/Hextech_Data_*.csv`
+- `data/raw/synergy/Champion_Synergy.json`
+- `data/runtime/state/*.json`
+- `data/runtime/state/web_server_port.txt`
+- `data/runtime/cache/`
+- `data/runtime/locks/`
+- `data/runtime/profile/`
+- `data/runtime/logs/`
+- 任何启动后生成、抓取、缓存、锁、日志或计算产物
+
+### 首启会自动创建
+
+- `data/raw/hextech/`
+- `data/raw/synergy/`
+- `data/runtime/state/`
+- `data/runtime/cache/`
+- `data/runtime/locks/`
+- `data/runtime/profile/`
+- `data/runtime/persisted/`
+- `data/runtime/logs/`
+
+## 打包与验收
+
+`python build.py` 会生成：
+
+- `dist/Hextech_伴生系统_YYYYMMDD/`
+- `dist/Hextech_伴生系统_YYYYMMDD_portable.zip`
+- 便携目录内的 `Hextech伴生终端.exe`
+- 便携目录内的 `启动 Hextech.bat`
+- 便携目录内的 `README_首次使用.txt`
+
+发布前建议固定执行：
+
+```powershell
+python tools/smoke_packaged_startup.py --timeout 60
+```
+
+这个烟测会复制最新打包目录，删除复制品中的 `data/raw` 和 `data/runtime`，再启动 exe 检查：
+
+- 运行态目录是否重新创建
+- `web_server_port.txt` 是否新写入
+- `startup_status.json` 是否新写入
+- `_internal/data/runtime` 是否不存在
+- `/`、`/api/startup_status`、`/api/champions`、`/detail.html?champion=1`、`/api/synergies/1` 是否可访问
 
 ## 常用接口
 
@@ -132,45 +129,12 @@ run/
 - `POST /api/redirect`：浏览器跳转控制
 - `GET /ws`：实时事件推送
 
-## 维护说明
+## 维护入口
 
-### 注释规范
-
-- `run/` 下所有 Python 文件统一使用模块头注释说明职责、输入、输出、依赖和维护提醒
-- 关键函数使用短 docstring 精准描述边界，不用冗长注释复述代码
-- 重点覆盖 Web 启动、生命周期钩子、LCU 轮询、CSV/快照读取、UI 后台线程、资源缓存回退和打包主流程
-
-### Web / UI 分层
-
-- `display/web_server.py` 只负责起服，不承载业务路由
-- `display/web_api.py` 只负责路由和接口编排
-- `display/web_runtime.py` 负责 Web 运行时状态和热路径辅助
-- `display/hextech_ui.py` 保留桌面 UI 主类和控件结构
-- `display/ui_runtime.py` 承载桌面后台协同逻辑
-
-### 工具文件说明
-
-- `tools/build_bundle.py`
-  负责打包主流程、版本文件生成、白名单构建和产物目录整理
-- `tools/bundle_manifest.py`
-  负责枚举稳定 `config/`、`assets/`、`display/static/` 并生成 manifest
-- `tools/runtime_bundle.py`
-  负责打包产物首次运行时把稳定资源播种到运行目录
-- `tools/cleanup_runtime.py`
-  负责清理构建产物、运行态缓存、端口文件、日志和 Python 缓存
-- `tools/log_utils.py`
-  负责统一日志过滤、source 标识和 UTF-8 终端输出
-- `tools/dev_checks.py`
-  负责本地结构校验、日志契约校验和打包配置自检，不属于正式测试框架
-
-Repository-level Claude Code learning-loop tooling lives under `.claude/tools/learning-loop/`.
-
-### 运行约束
-
-- `Champion_Alias_Index.json` 是首页搜索专用静态索引，只读使用，不在运行时写回
-- `Augment_Icon_Manifest.json` 是海克斯统一目录主链路
-- 新增 Web 路由优先落在 `display/web_api.py`
-- 新增 Web 生命周期、端口、浏览器、LCU、缓存逻辑优先落在 `display/web_runtime.py`
-- 新增桌面后台线程、轮询、跳转或资源加载逻辑优先落在 `display/ui_runtime.py`
-- 新增纯数据变换逻辑优先落在 `processing/`
-- 新增远端同步、自愈和资源修复逻辑优先落在 `scraping/`
+- Web 路由优先改 `display/web_api.py`
+- Web 生命周期、端口、浏览器、LCU、缓存逻辑优先改 `display/web_runtime.py`
+- 桌面后台线程、轮询、跳转、资源加载逻辑优先改 `display/ui_runtime.py`
+- 桌面控件结构优先改 `display/hextech_ui.py`
+- 纯数据转换、DataFrame 清洗、视图适配优先改 `processing/`
+- 远端抓取、稳定资源同步、自愈修复优先改 `scraping/`
+- 打包链路变更时同步检查 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py` 和本文档
