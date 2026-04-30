@@ -1,4 +1,3 @@
-<!-- claudecode-repo-local -->
 ---
 name: resume-active-task
 description: Resume an interrupted claudecode task from the ignored active-task ledger and current git state.

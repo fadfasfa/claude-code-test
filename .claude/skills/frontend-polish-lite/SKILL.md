@@ -1,4 +1,3 @@
-<!-- claudecode-repo-local -->
 ---
 name: frontend-polish-lite
 description: Lightweight claudecode-only frontend UI polish and validation for visual, responsive, interaction, and accessibility smoke checks.

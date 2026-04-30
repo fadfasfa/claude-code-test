@@ -40,11 +40,14 @@ Default rules:
 
 - Pick the target work area before writing files.
 - When the target is unclear, stay read-only and list candidate work areas first.
-- For Codex / CX App, default to workflow, rule, structure, review, and convergence tasks; do not silently take over active CC implementation.
-- For Claude Code, start from the work area directory for implementation tasks.
+- For Claude Code, treat it as the daily primary development endpoint for this repository and start from the selected work area directory for implementation tasks.
+- For Codex / CX App, default to global or cross-repository capability work, refactor assistance, personal-assistant tasks, and cloud PR review; it is not a mandatory local task dispatcher for this repository.
+- Web AI is reference-only for requirements, knowledge gathering, and second opinions.
+- Antigravity is manual-only for Claude Opus 4.6 independent review or Gemini hard frontend delivery; do not enable an Antigravity gate.
 - When starting from the repository root, limit activity to read-only exploration or repository governance.
 - Do not create scraping directories, output directories, MCP directories, or business files at the repository root without explicit repository-governance intent.
 - For repository-governance tasks, do not treat Desktop / OneDrive support-layer documents as default reference sources unless the user explicitly asks for audit, comparison, or migration work.
+- `.ai_workflow`, lowercase `agents.md`, `finish-task`, `event_log`, and `active_tasks_index` are not active work-area mechanisms.
 
 ## New Work Area Registration Template
 

@@ -1,4 +1,3 @@
-<!-- locally-authored-minimal -->
 ---
 name: verification-before-completion
 description: Require concrete verification evidence before claiming a task is complete.

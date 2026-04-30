@@ -1,4 +1,3 @@
-<!-- locally-authored-minimal -->
 ---
 name: requesting-code-review
 description: Prepare concise review-ready context focused on changed behavior, risks, and verification evidence.

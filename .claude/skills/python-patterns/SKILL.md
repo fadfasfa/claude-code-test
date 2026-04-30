@@ -1,4 +1,3 @@
-<!-- adopted-into-repo-baseline -->
 ---
 name: python-patterns
 description: Project-level Python guidance focused on readability, small interfaces, and safe incremental edits.

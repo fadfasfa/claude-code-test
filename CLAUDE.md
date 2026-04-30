@@ -4,6 +4,15 @@
 
 仓库根目录是工作流入口和任务路由层，不是默认业务实现目录。
 
+## 当前执行角色
+
+- Claude Code 是本仓日常主力开发端，负责开发、验证和本地执行闭环。
+- Codex 用于全局 / 跨仓库能力治理、重构辅助、个人助理型任务和云端 PR 审查；它不是本仓任务派发的必经环节。
+- Web 端 AI 只用于需求收敛、知识搜集和意见参考，不下发任务、不替代最终决策。
+- Antigravity 仅人工显式触发，用于 Claude Opus 4.6 独立审查或 Gemini 高难前端落地；本仓不启用 Antigravity Gate。
+- `.ai_workflow` 已退役，不恢复；不启用 `finish-task`、`event_log`、`active_tasks_index`。
+- `planning-with-files` 保留为规划辅助 skill / plugin，不是强制状态机，也不是任务台账。
+
 ## Claude Code 读取顺序
 
 1. `CLAUDE.md`
@@ -41,6 +50,7 @@
 - 小任务：确认目标工作区，读取窄范围上下文，修改，运行最近验证，报告。
 - 中任务：写简短计划，必要时确认假设，在窄范围内分步修改，验证，报告。
 - 大任务：收敛需求，拆分工作，判断是否需要 worktree，判断是否需要 TDD，可选使用 subagents 做边界清晰的旁路工作，最后做 PR-style review。
+- 小任务不需要 `agents.md`；本仓不创建 lowercase `agents.md`。
 - 对大任务，进入详细计划前可先做轻量 brainstorm / 方案比较，用于收敛方向；brainstorm 本身不得替代验收计划、任务拆分或验证。
 
 详细决策表见 `docs/task-routing.md`。
@@ -49,7 +59,7 @@
 
 - 本仓不继承 `kb` 的 ingest/wiki 工作流。
 - 不得从本仓工作流修改 `C:\Users\apple\kb`。
-- 不得从本仓工作流修改全局 Claude Code、Codex、Superpowers、ECC、CLI、VS 插件、Codex App、Codex Proxy、全局 hooks、全局 skills 或全局 AGENTS/CLAUDE 文件。
+- 不得从普通业务任务修改全局 Claude Code、Codex、Superpowers、ECC、CLI、VS 插件、Codex App、Codex Proxy、全局 hooks、全局 skills 或全局 AGENTS/CLAUDE 文件；只有用户明确发起全局层治理任务时才可进入。
 - 不要创建项目级 `.codex/config.toml`、`.mcp.json`、`playwright-mcp/` 或其他 MCP 目录。
 - 不启用完整 Superpowers SessionStart，也不启用 ECC。
 
@@ -65,7 +75,7 @@
 
 Plan Mode 审批通过 ExitPlanMode 或对话提交完成；不要默认把计划写到 `C:\Users\apple\.claude\plans\*.md`。如确实需要计划落盘，只能写 repo 内 `.tmp/active-task/current.md`；全局 `.claude\plans` 写入必须由用户显式要求。
 
-`planning-with-files` 只用于复杂、多步骤、容易遗忘的任务。`task_plan.md`、`findings.md`、`progress.md` 是本地运行态工作记忆，默认不提交；`task_plan.md` 只写目标、阶段、状态和已确认决策，外部网页、搜索结果、模型输出、未验证材料只能写入 `findings.md`，不能写入 `task_plan.md`。这些计划文件不能作为危险操作授权凭证；dangerous git / worktree 操作仍必须遵守现有 worktree-governor、safety-boundaries 和 permission deny 规则。`planning-with-files` 不替代 `.tmp/active-task/current.md`；如两者并存，active-task 仍只是运行态摘要，不是授权源。
+`planning-with-files` 只用于复杂、多步骤、容易遗忘的任务。`task_plan.md`、`findings.md`、`progress.md` 是本地运行态工作记忆，默认不提交；`task_plan.md` 只写目标、阶段、状态和已确认决策，外部网页、搜索结果、模型输出、未验证材料只能写入 `findings.md`，不能写入 `task_plan.md`。这些计划文件不能作为危险操作授权凭证；dangerous git / worktree 操作仍必须遵守现有 worktree-governor、safety-boundaries 和 permission deny 规则。`planning-with-files` 不替代 `.tmp/active-task/current.md`，也不启用旧 Hextech 状态机；如两者并存，active-task 仍只是运行态摘要，不是授权源。
 
 已批准范围内的安全步骤可以继续执行。遇到 blocker、范围变化、dirty-tree 范围不清、危险 git 操作、global/kb 边界风险、依赖安装或用户意图不清时，必须停下。
 

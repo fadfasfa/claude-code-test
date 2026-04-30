@@ -1,4 +1,3 @@
-<!-- claudecode-repo-local -->
 ---
 name: review-diff
 description: Review a claudecode diff for behavior risk, boundary violations, verification gaps, and commit readiness.

@@ -2,6 +2,16 @@
 
 `claudecode` 是一个多功能开发仓库。它包含多个相互独立的业务工作区，也包含本仓 repo-local 的 Claude Code 工作流规则。仓库根目录是治理与任务路由控制面，不是默认业务实现目录。
 
+## 当前执行角色
+
+- Claude Code 是本仓日常主力开发端，负责从工作区上下文进入、实施业务改动、运行本地验证并汇报结果。
+- Codex 主要承担全局 / 跨仓库能力治理、重构辅助、个人助理型任务和云端 PR 审查；在本仓内不作为必须经过的任务派发端。
+- Web 端 AI 只用于需求收敛、知识搜集和意见参考；它不下发任务，不替代本仓最终决策。
+- Antigravity 只由人工显式触发，用于 Claude Opus 4.6 独立审查或 Gemini 高难前端落地；本仓不启用 Antigravity Gate。
+- `.ai_workflow`、`finish-task`、`event_log`、`active_tasks_index` 属于已退役机制，不恢复、不引用、不作为执行状态机。
+- `planning-with-files` 保留为 Claude Code 规划辅助 skill / plugin，不是强制任务台账，也不是危险操作授权源。
+- 全局 `C:\Users\apple\.agents\skills` 已冻结，不作为正式 skill 来源；正式 Claude Code skill 来源是全局 `.claude\skills` 与本仓 `.claude\skills`。
+
 ## 规则读取链
 
 通用 agent 或 Codex 风格会话在改代码或改工作流文件前，先读这些 repo-local 文件。Claude Code 会话从 `CLAUDE.md` 进入，再跟随本文件；两者属于同一条规则链，只是入口不同。
@@ -61,6 +71,7 @@ Codex 不继承 Claude Code 的全局 `CLAUDE.md`；在本仓执行时先遵守 
 - 小任务和明确 bug 修复走轻量路径：确认目标工作区，读取窄范围文件，修改，运行最近的有效验证，报告结果。
 - 中任务走简短计划和明确验证。TDD、worktree、subagent、PR review 都是可选项，只有风险足够时才启用。
 - 大任务才默认进入需求收敛、任务拆分、worktree 隔离、TDD、subagent 并行和 PR-style review。
+- 小任务不需要 `agents.md`，本仓也不创建 lowercase `agents.md`；现行入口是 `AGENTS.md` / `CLAUDE.md`。
 - 对大任务，进入详细计划前可先做轻量 brainstorm / 方案比较，用于收敛方向；brainstorm 本身不得替代验收计划、任务拆分或验证。
 - 不要把重流程套到琐碎编辑、纯文档清理、明显错字或单文件低风险修复上。
 
@@ -92,6 +103,7 @@ Codex 不继承 Claude Code 的全局 `CLAUDE.md`；在本仓执行时先遵守 
 - 当前 repo 任务不得把 `C:\Users\apple\.claude\plans\*.md` 当作必须写入的运行态计划文件；计划审批通过 ExitPlanMode 或对话完成。
 - 如确实需要计划落盘，只能写 repo 内 `.tmp/active-task/current.md`；写全局 `.claude\plans` 必须由用户显式提出。
 - ledger 只是运行态记录。它不是规则文件，不是 learning，也不能授权危险操作。
+- 不创建 `.claude/tasks/current.md` 或其他轻量任务便签。
 - Stop hook 只能在 ledger 显示已接受计划未完成时做轻量提醒。
 - StopFailure 只能记录失败上下文。
 - hooks 不得自动派发任务、自动继续执行或修改业务文件。

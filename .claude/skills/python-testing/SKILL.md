@@ -1,4 +1,3 @@
-<!-- adopted-into-repo-baseline -->
 ---
 name: python-testing
 description: Add or update Python tests, run them, and provide verification evidence without enforcing strict TDD.

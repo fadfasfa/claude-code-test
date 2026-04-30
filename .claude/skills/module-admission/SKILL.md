@@ -1,4 +1,3 @@
-<!-- claudecode-repo-local -->
 ---
 name: module-admission
 description: Produce a required module admission card before adding claudecode workflow modules, hooks, tools, scripts, Playwright config, or new skills.

@@ -14,6 +14,8 @@
 
 根目录文件只用于仓库治理和工作流重构。业务实现应落在选定工作区内。
 
+当前工作流目标：Claude Code 是本仓日常主力开发端；Codex 用于全局 / 跨仓库能力、重构辅助、个人助理型任务和云端 PR 审查；Web 端 AI 只提供需求、知识和意见参考；Antigravity 只由人工显式触发做独立审查或高难前端落地。
+
 ## 工作区
 
 | 路径 | 职责 |
@@ -47,7 +49,9 @@
 
 ## 非目标
 
-- 不用本仓重构全局 Claude Code / Codex 配置。
+- 普通业务任务不用本仓重构全局 Claude Code / Codex 配置；只有用户明确发起全局层治理任务时才进入。
 - 不用本仓重构 `kb`。
 - 不把 coding-only 工作流推广到 `kb`。
 - 不让 Superpowers、Playwright、TDD、worktree、PR 或 subagent 流程成为所有任务的强制默认项；ECC 已剔除，不作为默认能力或候选模块恢复。
+- 不恢复 `.ai_workflow`、`finish-task`、`event_log`、`active_tasks_index` 或旧 Hextech 状态机。
+- 不创建 lowercase `agents.md`，不创建 `.claude/tasks/current.md` 或其他轻量任务便签。

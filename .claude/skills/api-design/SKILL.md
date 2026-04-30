@@ -1,4 +1,3 @@
-<!-- adopted-into-repo-baseline -->
 ---
 name: api-design
 description: Lightweight API design guardrails for consistent naming, error handling, and compatibility.
