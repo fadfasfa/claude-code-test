@@ -600,8 +600,14 @@ def window_sync_loop(ui: "HextechUI") -> None:
     def _has_recent_client_context(now_ts: float) -> bool:
         return (now_ts - last_client_interaction_at) < hide_grace_seconds
 
-    def _target_overlay_position(client_rect: tuple[int, int, int, int]) -> tuple[int, int]:
-        return (int(client_rect[2]), int(client_rect[1]))
+    def _target_overlay_position(hwnd_client: int, client_rect: tuple[int, int, int, int]) -> tuple[int, int]:
+        try:
+            client_area = win32gui.GetClientRect(hwnd_client)
+            target_x, target_y = win32gui.ClientToScreen(hwnd_client, (client_area[2], 0))
+            return (int(target_x), int(target_y))
+        except Exception:
+            logger.debug("计算客户端内容区右侧坐标失败，回退到窗口外框。", exc_info=True)
+            return (int(client_rect[2]), int(client_rect[1]))
 
     def _client_rect_jump_detected(current_rect: tuple[int, int, int, int], previous_rect: tuple[int, int, int, int] | None) -> bool:
         if not previous_rect:
@@ -639,12 +645,12 @@ def window_sync_loop(ui: "HextechUI") -> None:
             ui._resume_auto_follow()
             _update_overlay_position(target_pos)
 
-    def _sync_overlay_follow(client_rect: tuple[int, int, int, int], should_show_overlay: bool) -> None:
+    def _sync_overlay_follow(hwnd_client: int, client_rect: tuple[int, int, int, int], should_show_overlay: bool) -> None:
         if not should_show_overlay:
             ui._last_client_rect = client_rect
             return
         rect_changed = client_rect != ui._last_client_rect
-        target_pos = _target_overlay_position(client_rect)
+        target_pos = _target_overlay_position(hwnd_client, client_rect)
         if rect_changed:
             _resume_follow_if_ready(client_rect, target_pos)
         ui._last_client_rect = client_rect
@@ -687,7 +693,7 @@ def window_sync_loop(ui: "HextechUI") -> None:
                 ui._resume_auto_follow()
             return
         client_rect = win32gui.GetWindowRect(hwnd_client)
-        _sync_overlay_follow(client_rect, should_show_overlay)
+        _sync_overlay_follow(hwnd_client, client_rect, should_show_overlay)
 
     def _client_active(is_client_fg: bool) -> bool:
         return is_client_fg

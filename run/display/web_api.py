@@ -1,4 +1,4 @@
-﻿"""Web 服务路由层。
+"""Web 服务路由层。
 
 这个模块只负责定义页面路由、API 路由和 WebSocket 入口。
 所有与端口、LCU、缓存、资源定位、浏览器托管相关的细节都委托给 `web_runtime`，
@@ -167,17 +167,23 @@ def register_routes(app: FastAPI) -> None:
     async def api_champions():
         df = web_runtime.get_df()
         if not df.empty:
-            return JSONResponse(content=process_champions_data(df))
+            champions = process_champions_data(df)
+            if champions:
+                return JSONResponse(content=champions)
 
         web_runtime.request_background_refresh(force=False)
 
         snapshot_df = await asyncio.to_thread(web_runtime.get_live_champion_snapshot_df)
         if not snapshot_df.empty:
-            return JSONResponse(content=process_champions_data(snapshot_df))
+            champions = process_champions_data(snapshot_df)
+            if champions:
+                return JSONResponse(content=champions)
 
         stable_df = await asyncio.to_thread(web_runtime.get_stable_champion_catalog_df)
         if not stable_df.empty:
-            return JSONResponse(content=process_champions_data(stable_df, use_runtime_cache=False, log_columns=False))
+            champions = process_champions_data(stable_df, use_runtime_cache=False, log_columns=False)
+            if champions:
+                return JSONResponse(content=champions)
 
         return JSONResponse(content=[])
 

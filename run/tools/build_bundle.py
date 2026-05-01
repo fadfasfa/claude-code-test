@@ -126,8 +126,9 @@ def prepare_runtime_bundle() -> Path:
     bundle_root = prepare_bundle_runtime(BASE_DIR, BUILD_DIR)
     print_check("静态页面已加入打包白名单")
     print_check("稳定 data 资源已加入打包白名单")
+    print_check("Hextech 战报快照清单已加入打包白名单")
     print_check("稳定 assets 已加入打包白名单")
-    print_warn("高频战报 CSV、预计算缓存、协同数据和运行日志不会打包")
+    print_warn("仅打包 Hextech_Data_*.csv 快照；临时 CSV、预计算缓存、协同数据和运行日志不会打包")
     return bundle_root
 
 

@@ -3,11 +3,12 @@ from __future__ import annotations
 """打包白名单清单生成器。
 
 文件职责：
-- 枚举稳定配置、静态页面和图片资源
+- 枚举稳定配置、静态页面、图片资源和 Hextech 快照
 - 生成构建期与运行期共用的 bundle manifest
 
 核心输入：
 - `data/static/` 与 `data/indexes/`
+- `data/raw/hextech/Hextech_Data_*.csv`
 - `assets/`
 - `display/static/`
 
@@ -20,7 +21,8 @@ from __future__ import annotations
 - `json`
 
 维护提醒：
-- 这里只白名单稳定资源，不应把高频运行态文件误打进包里
+- 这里只白名单稳定资源和可冷启动的 Hextech 快照，不打包其他高频运行数据
+- 运行时状态、锁、日志、临时 CSV 与 synergy 结果仍不得误打进包里
 """
 
 import json
@@ -43,7 +45,14 @@ STABLE_INDEX_FILES = (
     "Champion_Alias_Index.json",
 )
 ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+HEXTECH_SNAPSHOT_DIR = Path("data") / "raw" / "hextech"
+HEXTECH_SNAPSHOT_PATTERN = "Hextech_Data_*.csv"
+SYNERGY_DATA_FILE = Path("data") / "raw" / "synergy" / "Champion_Synergy.json"
 BUNDLE_MANIFEST_NAME = "bundle_manifest.json"
+
+
+def _relative_to_base(path: Path, base_dir: Path) -> str:
+    return path.relative_to(base_dir).as_posix()
 
 
 def iter_stable_asset_files(asset_dir: Path) -> Iterable[Path]:
@@ -53,6 +62,13 @@ def iter_stable_asset_files(asset_dir: Path) -> Iterable[Path]:
         path for path in asset_dir.rglob("*")
         if path.is_file() and path.suffix.lower() in ASSET_SUFFIXES
     )
+
+
+def iter_hextech_snapshot_files(base_dir: Path) -> Iterable[Path]:
+    snapshot_dir = base_dir / HEXTECH_SNAPSHOT_DIR
+    if not snapshot_dir.exists():
+        return []
+    return sorted(path for path in snapshot_dir.glob(HEXTECH_SNAPSHOT_PATTERN) if path.is_file())
 
 
 def build_bundle_manifest(base_dir: Path) -> dict:
@@ -67,12 +83,19 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         name for name in STABLE_INDEX_FILES if (index_dir / name).exists()
     ]
     asset_files = [str(path.relative_to(asset_dir)) for path in iter_stable_asset_files(asset_dir)]
+    hextech_snapshot_files = [
+        _relative_to_base(path, base_dir)
+        for path in iter_hextech_snapshot_files(base_dir)
+    ]
+    synergy_data_file = _relative_to_base(base_dir / SYNERGY_DATA_FILE, base_dir) if (base_dir / SYNERGY_DATA_FILE).exists() else ""
 
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "static_files": static_files,
         "index_files": index_files,
         "asset_files": asset_files,
+        "hextech_snapshot_files": hextech_snapshot_files,
+        "synergy_data_file": synergy_data_file,
     }
 
 
@@ -90,6 +113,8 @@ def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
     manifest = build_bundle_manifest(base_dir)
     (bundle_root / "data" / "static").mkdir(parents=True, exist_ok=True)
     (bundle_root / "data" / "indexes").mkdir(parents=True, exist_ok=True)
+    (bundle_root / HEXTECH_SNAPSHOT_DIR).mkdir(parents=True, exist_ok=True)
+    (bundle_root / SYNERGY_DATA_FILE.parent).mkdir(parents=True, exist_ok=True)
     (bundle_root / "assets").mkdir(parents=True, exist_ok=True)
 
     if static_dir.exists():
@@ -99,6 +124,19 @@ def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
         shutil.copy2(data_static_dir / filename, bundle_root / "data" / "static" / filename)
     for filename in manifest["index_files"]:
         shutil.copy2(data_index_dir / filename, bundle_root / "data" / "indexes" / filename)
+
+    for relative_name in manifest["hextech_snapshot_files"]:
+        source = base_dir / Path(relative_name)
+        target = bundle_root / Path(relative_name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+    synergy_relative_name = manifest.get("synergy_data_file", "")
+    if synergy_relative_name:
+        source = base_dir / Path(synergy_relative_name)
+        target = bundle_root / Path(synergy_relative_name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
 
     for relative_name in manifest["asset_files"]:
         source = asset_dir / Path(relative_name)

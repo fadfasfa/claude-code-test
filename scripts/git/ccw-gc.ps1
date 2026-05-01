@@ -1,3 +1,11 @@
+<#
+中文简介：
+- 这个文件是什么：清点并清理满足条件的 Git worktree 与关联分支。
+- 什么时候读：需要做 worktree 垃圾回收，或先 dry-run 查看可清理项时。
+- 约束什么：只处理 sibling root 下、干净且已合并到 base 的附属 worktree。
+- 不负责什么：不强制清理 dirty 工作树，不跳过合并检查，也不删除主工作树。
+#>
+
 param(
   [string]$Base,
 
@@ -9,6 +17,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# 解析当前 Git 仓库根目录，失败时立即终止。
 function Resolve-RepoRoot {
   $root = git rev-parse --show-toplevel 2>$null
   if (-not $root) {
@@ -17,12 +26,14 @@ function Resolve-RepoRoot {
   return (Resolve-Path $root).Path
 }
 
+# 推导默认 sibling root，限定清理范围。
 function Get-SiblingRoot {
   param([string]$RepoRoot)
   $repoInfo = Get-Item $RepoRoot
   return Join-Path $repoInfo.DirectoryName ("$($repoInfo.Name).worktrees")
 }
 
+# 在未显式传入 -Base 时，按 origin/HEAD、当前分支、当前提交依次推断 base。
 function Get-DefaultBase {
   param([string]$RepoRoot)
   $remoteHead = git -C $RepoRoot symbolic-ref refs/remotes/origin/HEAD 2>$null
@@ -40,6 +51,7 @@ function Get-DefaultBase {
   throw "无法解析默认 base 分支，请通过 -Base 指定。"
 }
 
+# 解析 porcelain 输出，提取候选 worktree 元数据。
 function Parse-WorktreeList {
   param([string]$RepoRoot)
   $raw = git -C $RepoRoot worktree list --porcelain
@@ -64,6 +76,7 @@ function Parse-WorktreeList {
   return $result
 }
 
+# 确认工作树无未提交修改，避免误删在途工作。
 function Test-Clean {
   param([string]$Path)
   $status = git -C $Path status --porcelain 2>$null
@@ -71,12 +84,14 @@ function Test-Clean {
   return ($items.Count -eq 0)
 }
 
+# 检查分支是否已被 base 包含，作为可清理前提。
 function Get-MergeState {
   param([string]$RepoRoot,[string]$Branch,[string]$Base)
   git -C $RepoRoot merge-base --is-ancestor $Branch $Base | Out-Null
   return ($LASTEXITCODE -eq 0)
 }
 
+# 主流程：筛选候选项，默认 dry-run，只有 -Apply 时才真正删除。
 try {
   $repoRoot = Resolve-RepoRoot
   $defaultRoot = Get-SiblingRoot -RepoRoot $repoRoot

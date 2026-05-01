@@ -40,6 +40,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from typing import Optional
 
+from processing import runtime_store
 from processing.alias_utils import dedupe_alias_texts
 from scraping.icon_resolver import normalize_augment_name
 from tools.log_utils import (
@@ -79,6 +80,16 @@ def get_resource_dir():
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
         return sys._MEIPASS
     return _get_script_dir()
+
+
+def _get_packaged_hextech_snapshot_dir() -> str:
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        base_dir = os.path.join(local_app_data, "HextechNexus")
+    else:
+        app_data = os.getenv("APPDATA", "").strip()
+        base_dir = os.path.join(app_data, "HextechNexus") if app_data else os.path.join(os.path.expanduser("~"), ".hextech_nexus")
+    return os.path.join(base_dir, "data", "runtime", "raw", "hextech")
 
 
 RUNTIME_BASE_DIR = bootstrap_runtime_environment()
@@ -182,6 +193,8 @@ if getattr(sys, 'frozen', False):
         runtime_static_dir=STATIC_DATA_DIR,
         runtime_index_dir=INDEX_DATA_DIR,
         runtime_asset_dir=ASSET_DIR,
+        runtime_hextech_dir=_get_packaged_hextech_snapshot_dir(),
+        runtime_synergy_dir=runtime_store.get_runtime_synergy_data_dir(),
     )
 
 # 日志输出做滚动保留。

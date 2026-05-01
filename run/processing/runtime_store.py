@@ -162,6 +162,8 @@ def resolve_runtime_file(relative_name: str) -> Optional[str]:
 
 def get_runtime_data_dir() -> Path:
     """返回高频运行数据根目录。"""
+    if getattr(sys, "frozen", False):
+        return get_runtime_root_dir() / "raw"
     return Path(BASE_DIR) / "data" / "raw"
 
 

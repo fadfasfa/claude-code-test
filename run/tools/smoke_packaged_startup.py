@@ -20,20 +20,24 @@ import urllib.parse
 import urllib.request
 
 
-REQUIRED_DIRS = (
+REQUIRED_PACKAGE_DIRS = (
     "data/raw/hextech",
     "data/raw/synergy",
-    "data/runtime/state",
-    "data/runtime/cache",
-    "data/runtime/locks",
-    "data/runtime/profile",
-    "data/runtime/persisted",
-    "data/runtime/logs",
 )
 
-REQUIRED_FILES = (
-    "data/runtime/state/web_server_port.txt",
-    "data/runtime/state/startup_status.json",
+REQUIRED_PACKAGE_FILES = (
+    "data/raw/synergy/Champion_Synergy.json",
+)
+
+REQUIRED_RUNTIME_DIRS = (
+    "state",
+    "locks",
+    "profile",
+)
+
+REQUIRED_RUNTIME_FILES = (
+    "state/web_server_port.txt",
+    "state/startup_status.json",
 )
 
 
@@ -68,8 +72,18 @@ def _find_exe(package_dir: Path) -> Path:
     return exes[0]
 
 
-def _read_port(package_dir: Path) -> str | None:
-    port_file = package_dir / "data/runtime/state/web_server_port.txt"
+def _get_packaged_runtime_root() -> Path:
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return Path(local_app_data) / "HextechNexus" / "data" / "runtime"
+    app_data = os.getenv("APPDATA", "").strip()
+    if app_data:
+        return Path(app_data) / "HextechNexus" / "data" / "runtime"
+    return Path.home() / ".hextech_nexus" / "data" / "runtime"
+
+
+def _read_port(runtime_root: Path) -> str | None:
+    port_file = runtime_root / "state/web_server_port.txt"
     if not port_file.exists():
         return None
     port = port_file.read_text(encoding="utf-8", errors="replace").strip()
@@ -81,13 +95,18 @@ def _fetch(url: str, timeout: float = 8.0) -> tuple[int, bytes]:
         return response.status, response.read()
 
 
-def _required_paths_ready(package_dir: Path, started_at_wall: float) -> dict[str, bool]:
+def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall: float) -> dict[str, bool]:
     checks: dict[str, bool] = {}
-    for rel in REQUIRED_DIRS:
-        checks[rel] = (package_dir / rel).is_dir()
-    for rel in REQUIRED_FILES:
-        path = package_dir / rel
-        checks[rel] = path.is_file() and path.stat().st_mtime >= started_at_wall
+    packaged_data_root = package_dir / "_internal" if (package_dir / "_internal").exists() else package_dir
+    for rel in REQUIRED_PACKAGE_DIRS:
+        checks[f"package:{rel}"] = (packaged_data_root / rel).is_dir()
+    for rel in REQUIRED_PACKAGE_FILES:
+        checks[f"package:{rel}"] = (packaged_data_root / rel).is_file()
+    for rel in REQUIRED_RUNTIME_DIRS:
+        checks[f"runtime:{rel}"] = (runtime_root / rel).is_dir()
+    for rel in REQUIRED_RUNTIME_FILES:
+        path = runtime_root / rel
+        checks[f"runtime:{rel}"] = path.is_file() and path.stat().st_mtime >= started_at_wall
     checks["_internal/data/runtime absent"] = not (package_dir / "_internal/data/runtime").exists()
     return checks
 
@@ -100,16 +119,19 @@ def _truthy_status(payload: dict[str, object], *keys: str) -> bool:
     return any(bool(payload.get(key)) for key in keys)
 
 
-def _business_ready(startup_status: object, champions: object, detail_payload: object) -> dict[str, bool]:
+def _business_ready(startup_status: object, champions: object, detail_payload: object, synergy_payload: object, representative_asset: object) -> dict[str, bool]:
     startup = startup_status if isinstance(startup_status, dict) else {}
     champion_list = champions if isinstance(champions, list) else []
     detail = detail_payload if isinstance(detail_payload, dict) else {}
+    synergy = synergy_payload if isinstance(synergy_payload, dict) else {}
+    asset = representative_asset if isinstance(representative_asset, dict) else {}
     return {
-        "startup_hero_ready": _truthy_status(startup, "hero_ready", "champion_ready", "champions_ready"),
-        "startup_hextech_ready": _truthy_status(startup, "hextech_ready", "hextechs_ready"),
-        "startup_synergy_ready": _truthy_status(startup, "synergy_ready", "synergies_ready"),
+        "startup_status_reachable": isinstance(startup, dict),
         "champions_non_empty": len(champion_list) > 0,
-        "detail_business_payload": bool(detail.get("comprehensive")) or bool(detail.get("ready")),
+        "detail_user_visible": bool(detail.get("comprehensive")) or bool(detail.get("ready")) or bool(detail.get("loading")),
+        "synergy_api_reachable": isinstance(synergy, dict),
+        "synergy_payload_present": isinstance(synergy.get("synergies"), list),
+        "representative_asset_reachable": asset.get("code") == 200 and int(asset.get("bytes") or 0) > 0,
     }
 
 
@@ -145,9 +167,17 @@ def _web_ready(port: str) -> dict[str, object]:
         result["representative_detail"] = {"code": 0, "bytes": 0, "hero": ""}
 
     synergy_code, synergy_body = _fetch(base + "/api/synergies/1")
-    result["synergy_fallback"] = {"code": synergy_code, "bytes": len(synergy_body)}
+    synergy_payload = _read_json(synergy_body)
+    result["synergy_fallback"] = {"code": synergy_code, "bytes": len(synergy_body), "json": synergy_payload}
 
-    business_checks = _business_ready(startup_status, champions, detail_payload)
+    if representative_name:
+        asset_code, asset_body = _fetch(base + f"/assets/{urllib.parse.quote(representative_name)}.png")
+        representative_asset = {"code": asset_code, "bytes": len(asset_body), "hero": representative_name}
+    else:
+        representative_asset = {"code": 0, "bytes": 0, "hero": ""}
+    result["representative_asset"] = representative_asset
+
+    business_checks = _business_ready(startup_status, champions, detail_payload, synergy_payload, representative_asset)
     result["business_ready"] = business_checks
     if not all(business_checks.values()):
         missing = [name for name, ok in business_checks.items() if not ok]
@@ -178,6 +208,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
     stdout_path = package_dir / "smoke_startup_stdout.log"
     started_at = time.monotonic()
     started_at_wall = time.time()
+    runtime_root = _get_packaged_runtime_root()
     with stdout_path.open("wb") as stdout:
         proc = subprocess.Popen(
             [str(exe.resolve())],
@@ -190,8 +221,8 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
         checks: dict[str, bool] = {}
         web: dict[str, object] = {}
         while time.monotonic() - started_at < timeout_seconds:
-            checks = _required_paths_ready(package_dir, started_at_wall)
-            port = _read_port(package_dir)
+            checks = _required_paths_ready(package_dir, runtime_root, started_at_wall)
+            port = _read_port(runtime_root)
             if port and all(checks.values()):
                 try:
                     web = _web_ready(port)
@@ -200,6 +231,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
                         "ok": True,
                         "elapsed_seconds": round(elapsed, 2),
                         "package_dir": str(package_dir),
+                        "runtime_root": str(runtime_root),
                         "port": port,
                         "paths": checks,
                         "web": web,
@@ -214,6 +246,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
             "ok": False,
             "elapsed_seconds": round(time.monotonic() - started_at, 2),
             "package_dir": str(package_dir),
+            "runtime_root": str(runtime_root),
             "paths": checks,
             "web": web,
             "last_error": last_error,

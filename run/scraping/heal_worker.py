@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 import json
+
+from tools.atomic_io import atomic_write_json
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -97,12 +100,7 @@ def _write_startup_status(**updates) -> None:
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     payload.update(updates)
-    status_dir = os.path.dirname(status_file)
-    os.makedirs(status_dir, exist_ok=True)
-    tmp_path = os.path.join(status_dir, f".{os.path.basename(status_file)}.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, status_file)
+    atomic_write_json(status_file, payload, ensure_ascii=False, indent=2)
 
 
 def _core_data_ready() -> bool:
@@ -202,21 +200,33 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
                     report.failed.append("champion_core")
                     _write_startup_status(in_progress_tasks=requested, last_error="champion_core refresh failed")
 
+            high_frequency_tasks = []
             if force or missing.get("hextech_rankings"):
-                report.requested.append("hextech_rankings")
-                _write_startup_status(in_progress_tasks=["hextech_rankings", *[t for t in requested if t != "hextech_rankings"]])
-                if _heal_hero_rankings(stop_event=stop_event):
-                    report.repaired.append("hextech_rankings")
-                else:
-                    report.failed.append("hextech_rankings")
-
+                high_frequency_tasks.append(("hextech_rankings", lambda: _heal_hero_rankings(stop_event=stop_event)))
             if force or missing.get("synergy_data"):
-                report.requested.append("synergy_data")
-                _write_startup_status(in_progress_tasks=["synergy_data"])
-                if _heal_synergy_data():
-                    report.repaired.append("synergy_data")
-                else:
-                    report.failed.append("synergy_data")
+                high_frequency_tasks.append(("synergy_data", _heal_synergy_data))
+
+            if high_frequency_tasks:
+                for task_name, _ in high_frequency_tasks:
+                    report.requested.append(task_name)
+                _write_startup_status(in_progress_tasks=[task_name for task_name, _ in high_frequency_tasks])
+
+                with ThreadPoolExecutor(max_workers=len(high_frequency_tasks)) as executor:
+                    future_to_task = {
+                        executor.submit(task_func): task_name
+                        for task_name, task_func in high_frequency_tasks
+                    }
+                    for future in as_completed(future_to_task):
+                        task_name = future_to_task[future]
+                        try:
+                            success = bool(future.result())
+                        except Exception:
+                            logger.exception("高频自愈任务执行失败：%s", task_name)
+                            success = False
+                        if success:
+                            report.repaired.append(task_name)
+                        else:
+                            report.failed.append(task_name)
 
             if force:
                 if missing.get("augment_catalog"):

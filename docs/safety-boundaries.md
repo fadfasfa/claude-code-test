@@ -70,18 +70,17 @@
 
 如果 `Edit` / `Write` 因没有成功原生 `Read` 登记而失败：
 
-- Do not use PowerShell `Set-Content`.
-- Do not use `[System.IO.File]::WriteAllText`.
-- Do not use ad-hoc replacement scripts.
-- Stop and report blocker.
-- Continue only after the user explicitly replies: `授权 scripted patch plan 修改 <file>`.
+- 未授权业务闭环时，不使用 PowerShell `Set-Content`、`[System.IO.File]::WriteAllText` 或 ad-hoc replacement scripts 修改业务文件；停止并报告 blocker，等待逐文件授权。
+- 已授权业务闭环时，scoped scripted patch fallback 不视为额外权限升级；可在同一闭环内修改直接依赖 helper 文件，但每个新增目标文件都必须说明原因。
 - Before any scripted patch, confirm the exact target string or block matches once, print the match count, and stop if the count is not `1`; do not broaden the replacement or guess a nearby block.
+- 不得借 fallback 修改 hooks、settings、permissions、skills、`.git`、`.claude.json`、全局配置、`.ai_workflow` 或 lowercase `agents.md`。
+- 若新增目标文件超过 3 个、跨到新模块、删除文件、改变业务目标或涉及破坏性数据操作，必须先停下确认。
 
 ### Retry budget
 
 - Native `Read` budget for text/code files is zero in the main thread and subagents.
 - If a `Read` `pages` / unsupported parameter / malformed input failure has already happened, do not retry native `Read` for the same file.
-- Use built-in `Grep` / `Glob` / `Bash` or stop with a blocker.
+- Use built-in `Grep` / `Glob` / `Bash` or scoped PowerShell/Python read-only fallback inside the already authorized business loop.
 
 对大型工作区先搜索关键词和目录结构，不全量读文件。已知 `target_work_area` 时，先检索 `work_area_registry.md` 中该工作区条目，再列工作区一级目录；不要把 `Glob <work_area>/**/*` 作为第一步。只有明确需要更多候选文件时，才扩大 Glob 或跨子区搜索。
 

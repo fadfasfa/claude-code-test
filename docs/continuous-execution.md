@@ -51,7 +51,7 @@
 
 出现以下情况时，必须停下等待用户确认：
 
-- 范围变化。
+- 范围变化；但同一业务闭环内的直接依赖 helper 文件不算业务目标扩大，前提是每个新增目标文件都说明原因，并满足 scripted patch 唯一匹配约束。
 - 目标工作区不清楚。
 - dirty tree 在同一文件里混有无关用户改动。
 - 需要安装、卸载或升级依赖。
@@ -59,6 +59,7 @@
 - 需要新增 Playwright config/script/hook/tool，但还没有模块准入卡。
 - git 操作是 `push`、PR、`merge`、`reset`、`clean`、`rebase`、`stash` 或 `worktree remove`。
 - `git add` / `git commit` 缺少计划授权、清晰 diff 范围或已确认 message。
+- 新增目标文件超过 3 个、跨到新模块、删除文件、改变业务目标或涉及破坏性数据操作。
 
 ## 严格只读验收模式
 
@@ -87,17 +88,17 @@
 
 如果 `Edit` / `Write` 因没有成功原生 `Read` 登记而失败：
 
-- Do not use PowerShell `Set-Content`.
-- Do not use `[System.IO.File]::WriteAllText`.
-- Do not use ad-hoc replacement scripts.
-- Stop and report blocker.
-- Continue only after the user explicitly replies: `授权 scripted patch plan 修改 <file>`.
+- 未授权业务闭环时，不使用 PowerShell `Set-Content`、`[System.IO.File]::WriteAllText` 或 ad-hoc replacement scripts 修改业务文件；停止并报告 blocker，等待逐文件授权。
+- 已授权业务闭环时，scoped scripted patch fallback 不视为额外权限升级；可在同一闭环内修改直接依赖 helper 文件，但每个新增目标文件都必须说明原因。
+- Before any scripted patch, confirm the exact target string or block matches once, print the match count, and stop if the count is not `1`.
+- 不得借 fallback 修改 hooks、settings、permissions、skills、`.git`、`.claude.json`、全局配置、`.ai_workflow` 或 lowercase `agents.md`。
+- 若新增目标文件超过 3 个、跨到新模块、删除文件、改变业务目标或涉及破坏性数据操作，必须先停下确认。
 
 ## Retry budget
 
 - Native `Read` budget for text/code files is zero in the main thread and subagents.
 - If a `Read` `pages` / unsupported parameter / malformed input failure has already happened, do not retry native `Read` for the same file.
-- Use built-in `Grep` / `Glob` / `Bash` or stop with a blocker.
+- Use built-in `Grep` / `Glob` / `Bash` or scoped PowerShell/Python read-only fallback inside the already authorized business loop.
 
 ## Blocker 报告
 

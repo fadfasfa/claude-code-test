@@ -1,3 +1,11 @@
+<#
+中文简介：
+- 这个文件是什么：创建 Claude Code 约定命名的 Git worktree 与配套分支。
+- 什么时候读：需要为新任务快速拉起独立 worktree 会话时。
+- 约束什么：统一命名、默认 sibling root、分支占用检查与 base 解析。
+- 不负责什么：不提交代码、不推送远端、不启动 Claude 会话。
+#>
+
 param(
   [Parameter(Mandatory = $true)]
   [string]$Type,
@@ -13,6 +21,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# 解析当前 Git 仓库根目录，失败时立即终止。
 function Resolve-RepoRoot {
   $root = git rev-parse --show-toplevel 2>$null
   if (-not $root) {
@@ -21,6 +30,7 @@ function Resolve-RepoRoot {
   return (Resolve-Path $root).Path
 }
 
+# 将任务主题规范化为可用于路径和分支名的 slug。
 function Get-Slug {
   param([string]$InputText)
   $s = ($InputText.ToLower() -replace '[^a-z0-9]+', '-')
@@ -32,6 +42,7 @@ function Get-Slug {
   return $s
 }
 
+# 在未显式传入 -Base 时，按 origin/HEAD、当前分支、当前提交依次推断 base。
 function Get-DefaultBase {
   param([string]$RepoRoot)
   $remoteHead = git -C $RepoRoot symbolic-ref refs/remotes/origin/HEAD 2>$null
@@ -52,6 +63,7 @@ function Get-DefaultBase {
   throw "无法解析默认 base 分支，请通过 -Base 指定。"
 }
 
+# 解析 porcelain 输出，收集现有 worktree 占用信息。
 function Get-Worktrees {
   param([string]$RepoRoot)
   $raw = git -C $RepoRoot worktree list --porcelain
@@ -81,6 +93,7 @@ function Test-PathExists {
   return Test-Path $Path
 }
 
+# 检查目标分支是否已被其他 worktree 占用。
 function Test-BranchOccupied {
   param(
     [array]$Worktrees,
@@ -94,6 +107,7 @@ function Test-BranchOccupied {
   return $null
 }
 
+# 主流程：解析参数、创建 sibling root、拉起 worktree，并输出下一步命令。
 try {
   $repoRoot = Resolve-RepoRoot
   $repoInfo = Get-Item $repoRoot

@@ -148,6 +148,9 @@ def check_execution_permission():
         "scraper_status.json",
     )
     now = time.time()
+    current_csv = build_daily_csv_path(datetime.now().strftime('%Y-%m-%d'))
+    if not os.path.exists(current_csv):
+        return True, "今日战报 CSV 缺失，启动抓取..."
     if not status_file or not os.path.exists(status_file):
         return True, "首次运行，启动抓取..."
     try:
