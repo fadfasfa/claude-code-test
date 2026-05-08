@@ -1,56 +1,45 @@
-# Work Area Registry
+# 工作区注册表
 
-This file registers the repository's work areas and the default write boundary for each one.
+本文件记录仓库工作区和默认写入边界。
 
-Default rules:
+Codex 是当前唯一主流程。Claude Code 只保留空白占位。
 
-- Default read scope: the entire repository.
-- Default write scope: the current target work area's directory tree only.
-- The repository root is not a default business write area.
-- New work areas must be registered here before implementation starts.
-- Adding a new work area does not automatically justify a project-level `.codex/config.toml`.
-- Adding a new work area does not automatically justify a work-area-specific `CLAUDE.md`.
-- These rules define default rule sources and write boundaries; they do not block normal read access to current-task files inside the current work area.
+## 默认规则
 
-## Work Area Selection Protocol
+- 默认可读范围：整个仓库，排除敏感文件。
+- 默认可写范围：选定目标工作区的目录树。
+- 仓库根目录不是默认业务写入区。
+- 新工作区必须先在这里登记，再开始实现。
+- 新增工作区本身不构成新增项目级 `.codex/config.toml`、MCP 配置或工具设置的理由。
+- 仓库根目录只允许治理 / 控制面文件写入，例如本注册表、入口文件和工具文档。
 
-1. Declare `target_work_area` before implementation; choose from the registered active rows below.
-2. Declare `allowed_write_scope`; by default it is exactly the selected work area's `default_write_scope`.
-3. Use `readonly_reference_scope` for cross-work-area context; whole-repo read is allowed unless the task narrows it.
-4. If the target is unclear, stay read-only, inspect candidates, and report the likely work areas before writing.
-5. Repository-root writes are allowed only for governance/control-plane files such as this registry, root entrypoints, or repo tooling docs.
-6. A Git worktree is an execution surface with its own branch/merge path; it is not an active work area unless this registry says so.
-7. A Claude Code transient worktree under `.claude/worktrees/**` is runtime/execution state; do not promote it to source of truth.
-8. Directed/user worktrees use `wt-directed-<purpose>` at `C:\Users\apple\_worktrees\claudecode\directed\<purpose>` with repo-external registry markers `owner=user` / `protected=true`; they are persistent and never auto-cleaned.
-9. Agent-created worktrees use `wt-auto-cc-<yyyymmdd-hhmm>-<purpose>-<id>` at `C:\Users\apple\_worktrees\claudecode\auto\<branch>` with repo-external registry markers `owner=agent`; `WorktreeRemove` may remove only clean owner=agent worktrees with non-force `git worktree remove <path>` and must retain branches.
-10. Do not create nested linked worktrees, `worktree-agent-*`, random adjective names, or bare `agent-*`; `worktree-run-scraping-refactor-phase1` is grandfathered keep.
+## 工作区选择
 
-## Registered Work Areas
+1. 实现前声明 `target_work_area`。
+2. 声明 `allowed_write_scope`；默认等于目标工作区的 `default_write_scope`。
+3. 全仓读取只用于上下文，不读取敏感文件。
+4. 目标不清时保持只读，列出候选工作区。
+5. Git worktree 是执行面，不自动成为活动工作区。
 
-| work_area | purpose | default_write_scope | read_scope | status | notes |
+## 已登记工作区
+
+| work_area | 用途 | default_write_scope | read_scope | status | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `run/` | Hextech primary runtime, processing, scraping, display, and packaged assets | `run/**` | whole repo | active | Treat as the baseline work area for current Hextech tasks |
-| `heybox/` | Heybox scraping scripts and related local docs/data | `heybox/**` | whole repo | active | Small standalone scraper work area |
-| `qm-run-demo/` | Demo/runtime variant with its own nested `run/`, docs, and repo metadata | `qm-run-demo/**` | whole repo | active | Keep writes inside the top-level demo tree |
-| `QuantProject/` | Quant strategy, data sync, reports, and position history | `QuantProject/**` | whole repo | active | Independent data/model work area |
-| `sm2-randomizer/` | Space Marine 2 randomizer app, pipeline, docs, and debug assets | `sm2-randomizer/**` | whole repo | active | Keep generated outputs inside this tree |
-| `subtitle_extractor/` | Subtitle extraction scripts, requirements, and local project docs | `subtitle_extractor/**` | whole repo | active | Standalone media-processing work area |
+| `run/` | Hextech 主运行时、处理、抓取、展示和打包资产 | `run/**` | whole repo | active | 当前 Hextech 任务的基线工作区 |
+| `heybox/` | Heybox 抓取脚本和相关本地文档 / 数据 | `heybox/**` | whole repo | active | 小型独立抓取工作区 |
+| `qm-run-demo/` | 带自身 `run/`、文档和元数据的 demo / runtime 变体 | `qm-run-demo/**` | whole repo | active | 写入限制在顶层 demo 树内 |
+| `QuantProject/` | 量化策略、数据同步、报告和持仓历史 | `QuantProject/**` | whole repo | active | 独立数据 / 模型工作区 |
+| `sm2-randomizer/` | Space Marine 2 随机器应用、管线、文档和 debug 资产 | `sm2-randomizer/**` | whole repo | active | 生成产物留在该树内 |
+| `subtitle_extractor/` | 字幕提取脚本、依赖和本地项目文档 | `subtitle_extractor/**` | whole repo | active | 独立媒体处理工作区 |
 
-## Operating Notes
+## 操作说明
 
-- Pick the target work area before writing files.
-- When the target is unclear, stay read-only and list candidate work areas first.
-- For Claude Code, treat it as the daily primary development endpoint for this repository and start from the selected work area directory for implementation tasks.
-- For Codex / CX App, default to global or cross-repository capability work, refactor assistance, personal-assistant tasks, and cloud PR review; it is not a mandatory local task dispatcher for this repository.
-- Web AI is reference-only for requirements, knowledge gathering, and second opinions.
-- Antigravity is manual-only for Claude Opus 4.6 independent review or Gemini hard frontend delivery; do not enable an Antigravity gate.
-- When starting from the repository root, limit activity to read-only exploration or repository governance.
-- Do not create scraping directories, output directories, MCP directories, or business files at the repository root without explicit repository-governance intent.
-- For repository-governance tasks, do not treat Desktop / OneDrive support-layer documents as default reference sources unless the user explicitly asks for audit, comparison, or migration work.
-- `.ai_workflow`, lowercase `agents.md`, `finish-task`, `event_log`, and `active_tasks_index` are not active work-area mechanisms.
+- 从仓库根目录开始时，默认只做只读探索或仓库治理。
+- 不要在仓库根目录创建抓取目录、输出目录、MCP 目录或业务文件，除非任务明确是仓库治理。
+- Desktop / OneDrive 支撑文档不是默认参考，除非用户要求工具审计、对比或工作流同步。
 
-## New Work Area Registration Template
+## 新工作区登记模板
 
-| work_area | purpose | default_write_scope | read_scope | status | notes |
+| work_area | 用途 | default_write_scope | read_scope | status | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `<path>/` | `<what this work area is for>` | `<path>/**` | `whole repo` | `candidate/active` | `<constraints, dependencies, or handoff notes>` |
+| `<path>/` | `<用途>` | `<path>/**` | `whole repo` | `candidate/active` | `<约束、依赖或交接说明>` |

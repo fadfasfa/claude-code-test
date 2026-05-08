@@ -3,12 +3,13 @@ from __future__ import annotations
 """打包白名单清单生成器。
 
 文件职责：
-- 枚举稳定配置、静态页面、图片资源和 Hextech 快照
+- 枚举稳定配置、静态页面、图片资源和首启可用快照
 - 生成构建期与运行期共用的 bundle manifest
 
 核心输入：
 - `data/static/` 与 `data/indexes/`
 - `data/raw/hextech/Hextech_Data_*.csv`
+- `data/raw/synergy/Champion_Synergy.json`
 - `assets/`
 - `display/static/`
 
@@ -21,8 +22,8 @@ from __future__ import annotations
 - `json`
 
 维护提醒：
-- 这里只白名单稳定资源和可冷启动的 Hextech 快照，不打包其他高频运行数据
-- 运行时状态、锁、日志、临时 CSV 与 synergy 结果仍不得误打进包里
+- 这里只白名单稳定资源与首启冷启动所需快照，不打包运行态缓存/锁/日志
+- 若 manifest 字段有改动，必须同步检查 `tools.runtime_bundle` 与烟测脚本
 """
 
 import json
@@ -88,7 +89,6 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         for path in iter_hextech_snapshot_files(base_dir)
     ]
     synergy_data_file = _relative_to_base(base_dir / SYNERGY_DATA_FILE, base_dir) if (base_dir / SYNERGY_DATA_FILE).exists() else ""
-
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "static_files": static_files,
@@ -131,7 +131,7 @@ def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
 
-    synergy_relative_name = manifest.get("synergy_data_file", "")
+    synergy_relative_name = str(manifest.get("synergy_data_file", "")).strip()
     if synergy_relative_name:
         source = base_dir / Path(synergy_relative_name)
         target = bundle_root / Path(synergy_relative_name)

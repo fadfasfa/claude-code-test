@@ -5,45 +5,396 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hextech 极地枢纽 - 英雄海克斯矩阵</title>
+    <link rel="stylesheet" href="./css/hextech-theme.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        :root {
+            --hx-font-family: "Microsoft YaHei UI", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            --hx-bg: #0d1117;
+            --hx-bg-radial: radial-gradient(circle at 50% 0%, rgba(88, 166, 255, 0.08), transparent 54%);
+            --hx-surface: rgba(18, 24, 32, 0.84);
+            --hx-border-base: rgba(139, 148, 158, 0.18);
+            --hx-border-strong: rgba(139, 148, 158, 0.3);
+            --hx-border-hover: rgba(88, 166, 255, 0.38);
+            --hx-shadow-panel: 0 18px 40px rgba(0, 0, 0, 0.32);
+            --hx-shadow-card: 0 12px 28px rgba(0, 0, 0, 0.28);
+            --hx-text: #c9d1d9;
+            --hx-text-strong: #f0f6fc;
+            --hx-text-muted: #8b949e;
+            --hx-accent-soft: rgba(88, 166, 255, 0.16);
+            --hx-scroll-thumb: rgba(110, 118, 129, 0.45);
+            --hx-scroll-thumb-hover: rgba(139, 148, 158, 0.7);
+            --hx-scroll-track: rgba(0, 0, 0, 0.2);
+            --hx-tier-prismatic: #22d3ee;
+            --hx-tier-prismatic-secondary: #64748b;
+            --hx-tier-prismatic-glow: rgba(34, 211, 238, 0.18);
+            --hx-tier-gold: #d4a72c;
+            --hx-tier-gold-glow: rgba(212, 167, 44, 0.22);
+            --hx-tier-silver: #94a3b8;
+            --hx-tier-silver-glow: rgba(148, 163, 184, 0.16);
+            --hx-art-gold: #c8aa6e;
+            --hx-art-bronze: #785a28;
+            --hx-art-ink: rgba(5, 10, 16, 0.82);
+            --hx-art-line: rgba(200, 170, 110, 0.34);
+        }
+
+        html {
+            background: #0d1117;
+        }
+
         body {
-            background-color: #11111b;
-            background-image: radial-gradient(circle at 50% 10%, rgba(137, 180, 250, 0.08), transparent 60%);
-            color: #cdd6f4;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0d1117;
+            background-image:
+                linear-gradient(135deg, rgba(200, 170, 110, 0.055) 0 1px, transparent 1px 74px),
+                radial-gradient(circle at 50% 8%, rgba(47, 128, 165, 0.14), transparent 52%),
+                linear-gradient(180deg, rgba(5, 10, 16, 0.3), rgba(5, 10, 16, 0.88)),
+                var(--hx-bg-radial, radial-gradient(circle at 50% 0%, rgba(88, 166, 255, 0.08), transparent 54%));
+            color: var(--hx-text, #c9d1d9);
+            font-family: var(--hx-font-family, "Microsoft YaHei UI", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif);
+        }
+
+        .detail-page-shell {
+            padding: clamp(0.75rem, 1.5vw, 1.75rem);
+        }
+
+        .detail-frame {
+            width: min(100%, 96rem);
+            margin-inline: auto;
+        }
+
+        @media (min-width: 1800px) {
+            .detail-frame {
+                width: min(100%, 108rem);
+            }
         }
 
         .glass-panel {
-            background: rgba(30, 30, 46, 0.7);
+            background:
+                linear-gradient(120deg, rgba(200, 170, 110, 0.045), transparent 34%),
+                var(--hx-surface, rgba(18, 24, 32, 0.84));
+            border: 1px solid rgba(200, 170, 110, 0.16);
             backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: var(--hx-shadow-panel, 0 18px 40px rgba(0, 0, 0, 0.32));
+        }
+
+        .hx-tab-idle {
+            color: var(--hx-text-muted, #8b949e);
+            background: transparent;
+            border: 1px solid transparent;
+            transition: all 0.18s ease;
+        }
+
+        .hx-tab-idle:hover {
+            color: var(--hx-text-strong, #f0f6fc);
+            background: rgba(40, 33, 22, 0.92);
+            border-color: rgba(200, 170, 110, 0.24);
+        }
+
+        .hx-tab-active {
+            color: #f8f1df;
+            font-weight: 700;
+            background:
+                linear-gradient(135deg, rgba(200, 170, 110, 0.28), rgba(120, 90, 40, 0.18)),
+                linear-gradient(180deg, #182431, #0d141d);
+            border: 1px solid rgba(200, 170, 110, 0.42);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+            transition: all 0.18s ease;
+        }
+
+        .hx-surface-card {
+            background:
+                linear-gradient(120deg, rgba(200, 170, 110, 0.08), transparent 24%),
+                linear-gradient(180deg, rgba(11, 18, 25, 0.99), rgba(5, 10, 16, 0.99));
+            border: 1px solid rgba(200, 170, 110, 0.18);
+            box-shadow: var(--hx-shadow-card, 0 12px 28px rgba(0, 0, 0, 0.28));
+        }
+
+        .hx-surface-card:hover {
+            border-color: var(--hx-border-hover, rgba(88, 166, 255, 0.38));
+        }
+
+        .hx-hero-avatar {
+            border: 1px solid var(--hx-border-base, rgba(139, 148, 158, 0.18));
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+            transition: all 0.2s ease;
+        }
+
+        .hx-hero-avatar:hover {
+            border-color: rgba(240, 246, 252, 0.45);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.34);
         }
 
         .tier-prismatic {
-            background: linear-gradient(180deg, #fef3c7 0%, #f59e0b 36%, #fb7185 72%, #22d3ee 100%);
+            background: linear-gradient(180deg, #d9f6ff 0%, #5fbfd4 46%, #8f6b2d 100%);
             box-shadow:
                 0 0 0 1px rgba(255, 255, 255, 0.08),
-                0 0 12px rgba(251, 191, 36, 0.38),
-                0 0 16px rgba(34, 211, 238, 0.16);
+                0 0 12px rgba(95, 191, 212, 0.28),
+                0 0 16px rgba(200, 170, 110, 0.14);
         }
 
         .tier-gold {
-            background: linear-gradient(to bottom, #f8d66d, #c9830f);
-            box-shadow: 0 0 8px rgba(202, 138, 4, 0.34);
+            background: linear-gradient(to bottom, #e3c16f, #8f6b2d);
+            box-shadow: 0 0 8px rgba(200, 170, 110, 0.24);
         }
 
         .tier-silver {
-            background: linear-gradient(to bottom, #d8e1ef, #64748b);
-            box-shadow: 0 0 8px rgba(148, 163, 184, 0.18);
+            background: linear-gradient(to bottom, #d7e2ee, #596a7d);
+            box-shadow: 0 0 8px rgba(143, 155, 170, 0.18);
         }
 
         .list-row {
             transition: all 0.2s;
         }
 
+        .detail-page-shell::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                linear-gradient(180deg, rgba(13, 17, 23, 0.14) 0%, rgba(13, 17, 23, 0.48) 100%),
+                radial-gradient(circle at top right, rgba(88, 166, 255, 0.06), transparent 30%);
+        }
+
+        .detail-topbar {
+            padding: 0.35rem 0;
+        }
+
+        .detail-back-link {
+            color: var(--hx-text-muted);
+            transition: color 0.18s ease;
+        }
+
+        .detail-back-link:hover {
+            color: var(--hx-text-strong);
+        }
+
+        .detail-header-panel {
+            background:
+                linear-gradient(110deg, rgba(200, 170, 110, 0.12), transparent 28%),
+                linear-gradient(180deg, rgba(18, 24, 32, 0.94), rgba(15, 20, 28, 0.9)),
+                var(--hx-surface);
+            gap: clamp(1rem, 2vw, 1.5rem);
+            padding: clamp(1rem, 2vw, 1.5rem);
+            border-color: rgba(200, 170, 110, 0.24);
+        }
+
+        .detail-header-panel::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: 1px;
+            pointer-events: none;
+            background: linear-gradient(90deg, transparent, rgba(200, 170, 110, 0.5), transparent);
+        }
+
+        #headerBg {
+            clip-path: polygon(14% 0, 100% 0, 100% 100%, 0 100%);
+            filter: saturate(0.88) contrast(1.05);
+            mix-blend-mode: screen;
+        }
+
+        .detail-title {
+            font-size: clamp(1.55rem, 2.1vw, 2.15rem);
+            line-height: 1.15;
+        }
+
+        .detail-stat-row {
+            gap: clamp(0.85rem, 1.8vw, 1.5rem);
+        }
+
+        .detail-control-panel {
+            padding: clamp(0.9rem, 1.6vw, 1.5rem);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .detail-control-panel::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 auto 0;
+            height: 46px;
+            pointer-events: none;
+            background:
+                linear-gradient(120deg, transparent 0 36%, rgba(200, 170, 110, 0.18) 36% 37%, transparent 37%),
+                linear-gradient(90deg, rgba(200, 170, 110, 0.12), transparent 64%);
+        }
+
+        .detail-control-bar {
+            gap: clamp(0.45rem, 0.8vw, 0.75rem);
+        }
+
+        .detail-mode-group,
+        .detail-tier-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        #dataContainer {
+            gap: clamp(0.75rem, 1.4vw, 1.25rem);
+            align-items: flex-start;
+        }
+
+        .detail-left-pane {
+            flex: 0 0 clamp(22rem, 39vw, 40rem);
+            min-width: 0;
+        }
+
+        .detail-right-pane {
+            flex: 1 1 0;
+            min-width: min(100%, 28rem);
+        }
+
+        #compList,
+        #synergyArticleScroll {
+            max-height: clamp(28rem, 68vh, 48rem);
+        }
+
+        .hextech-list-card {
+            gap: clamp(0.45rem, 0.7vw, 0.75rem);
+        }
+
+        .hextech-article-inner {
+            display: flex;
+            gap: clamp(0.75rem, 1.1vw, 1rem);
+            min-height: clamp(6.5rem, 9vw, 8rem);
+            padding: clamp(0.9rem, 1.3vw, 1.25rem);
+        }
+
+        .hextech-article-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.75rem;
+            width: 100%;
+        }
+
+        .hextech-article-title-block {
+            min-width: 0;
+        }
+
+        .hextech-article-meta {
+            flex-shrink: 0;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            max-width: 42%;
+        }
+
+        .hextech-article-content {
+            overflow-wrap: anywhere;
+        }
+
+        @media (max-width: 1100px) {
+            #dataContainer {
+                flex-direction: column;
+            }
+
+            .detail-left-pane,
+            .detail-right-pane {
+                flex: 1 1 auto;
+                width: 100%;
+                min-width: 0;
+            }
+
+            #compList,
+            #synergyArticleScroll {
+                max-height: none;
+                overflow-y: visible !important;
+                padding-right: 0 !important;
+            }
+        }
+
+        @media (max-width: 720px) {
+            .detail-page-shell {
+                padding: 0.65rem;
+            }
+
+            .detail-topbar {
+                align-items: flex-start;
+                gap: 0.75rem;
+            }
+
+            .detail-header-panel {
+                align-items: flex-start;
+                margin-bottom: 0.75rem;
+            }
+
+            #headerBg {
+                width: 100% !important;
+                opacity: 0.12;
+            }
+
+            #heroAvatar {
+                width: 4rem;
+                height: 4rem;
+            }
+
+            .detail-stat-row {
+                flex-wrap: wrap;
+                gap: 0.5rem 0.9rem;
+            }
+
+            .detail-control-bar {
+                align-items: flex-start;
+            }
+
+            .detail-mode-group,
+            .detail-tier-group {
+                width: 100%;
+            }
+
+            .mode-btn,
+            .tab-btn {
+                flex: 1 1 auto;
+                min-width: max-content;
+                text-align: center;
+            }
+
+            .hextech-article-inner {
+                flex-direction: column;
+            }
+
+            .hextech-article-head {
+                flex-direction: column;
+            }
+
+            .hextech-article-meta {
+                max-width: 100%;
+                justify-content: flex-start;
+            }
+        }
+
         .hextech-card {
+            position: relative;
+            isolation: isolate;
             /* 保持正常布局，避免滚动时触发浏览器的内容可见性回补。 */
+        }
+
+        .hextech-card::before {
+            content: "";
+            position: absolute;
+            inset: 1px;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                linear-gradient(125deg, transparent 0 78%, rgba(200, 170, 110, 0.22) 78% 80%, transparent 80%),
+                linear-gradient(90deg, rgba(200, 170, 110, 0.08), transparent 24%);
+        }
+
+        .hextech-card::after {
+            content: "";
+            position: absolute;
+            left: 18px;
+            right: 18px;
+            top: 0;
+            height: 1px;
+            pointer-events: none;
+            background: linear-gradient(90deg, transparent, rgba(200, 170, 110, 0.46), transparent);
         }
 
         .augment-icon-shell {
@@ -53,8 +404,10 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(180deg, rgba(6, 9, 14, 0.99) 0%, rgba(3, 5, 9, 0.99) 100%);
-            border: 1px solid rgba(255, 255, 255, 0.04);
+            background:
+                linear-gradient(135deg, rgba(200, 170, 110, 0.08), transparent 45%),
+                linear-gradient(180deg, rgba(6, 9, 14, 0.99) 0%, rgba(3, 5, 9, 0.99) 100%);
+            border: 1px solid rgba(200, 170, 110, 0.18);
             --augment-accent: 43, 213, 194;
             isolation: isolate;
             box-shadow:
@@ -121,7 +474,7 @@
         .tier-shell-prismatic {
             --augment-accent: 34, 211, 238;
             --augment-accent-2: 168, 85, 247;
-            border-color: rgba(34, 211, 238, 0.82) !important;
+            border-color: var(--hx-tier-prismatic) !important;
             background:
                 radial-gradient(circle at 26% 20%, rgba(255, 255, 255, 0.14) 0%, transparent 20%),
                 radial-gradient(circle at 72% 22%, rgba(34, 211, 238, 0.16) 0%, transparent 26%),
@@ -129,7 +482,7 @@
                 linear-gradient(160deg, rgba(14, 18, 26, 0.996) 0%, rgba(7, 10, 16, 0.998) 48%, rgba(11, 16, 24, 0.994) 100%) !important;
             box-shadow:
                 0 0 0 1px rgba(255, 255, 255, 0.04),
-                0 0 12px rgba(34, 211, 238, 0.30),
+                0 0 12px var(--hx-tier-prismatic-glow),
                 0 0 18px rgba(168, 85, 247, 0.12),
                 0 12px 24px rgba(0, 0, 0, 0.55),
                 inset 0 1px 0 rgba(255, 255, 255, 0.08),
@@ -145,8 +498,8 @@
 
         .tier-shell-gold {
             --augment-accent: 244, 191, 36;
-            border-color: #f4bf24 !important;
-            box-shadow: 0 0 12px rgba(244, 191, 36, 0.42), 0 10px 22px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05) !important;
+            border-color: var(--hx-tier-gold) !important;
+            box-shadow: 0 0 12px var(--hx-tier-gold-glow), 0 10px 22px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05) !important;
         }
         .tier-shell-gold::before {
             background: radial-gradient(circle at 0% 0%, rgba(244, 191, 36, 0.36) 0%, transparent 60%), linear-gradient(135deg, rgba(244, 191, 36, 0.15) 0%, transparent 50%) !important;
@@ -154,8 +507,8 @@
 
         .tier-shell-silver {
             --augment-accent: 148, 163, 184;
-            border-color: #94a3b8 !important;
-            box-shadow: 0 0 8px rgba(148, 163, 184, 0.28), 0 10px 22px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05) !important;
+            border-color: var(--hx-tier-silver) !important;
+            box-shadow: 0 0 8px var(--hx-tier-silver-glow), 0 10px 22px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05) !important;
         }
         .tier-shell-silver::before {
             background: radial-gradient(circle at 0% 0%, rgba(148, 163, 184, 0.26) 0%, transparent 60%), linear-gradient(135deg, rgba(148, 163, 184, 0.1) 0%, transparent 50%) !important;
@@ -165,8 +518,8 @@
 
 
         .list-row:hover {
-            background-color: rgba(255, 255, 255, 0.05);
-            transform: translateX(4px);
+            background-color: rgba(200, 170, 110, 0.08);
+            transform: translateX(2px);
             border-radius: 0.5rem;
         }
 
@@ -176,23 +529,23 @@
         }
 
         .scroll-container::-webkit-scrollbar-track {
-            background: rgba(0, 0, 0, 0.2);
+            background: var(--hx-scroll-track);
             border-radius: 4px;
         }
 
         .scroll-container::-webkit-scrollbar-thumb {
-            background: rgba(137, 180, 250, 0.3);
+            background: var(--hx-scroll-thumb);
             border-radius: 4px;
             transition: background 0.2s;
         }
 
         .scroll-container::-webkit-scrollbar-thumb:hover {
-            background: rgba(137, 180, 250, 0.5);
+            background: var(--hx-scroll-thumb-hover);
         }
 
         .scroll-container {
             scrollbar-width: thin;
-            scrollbar-color: rgba(137, 180, 250, 0.3) rgba(0, 0, 0, 0.2);
+            scrollbar-color: var(--hx-scroll-thumb) var(--hx-scroll-track);
             overscroll-behavior: contain;
             overflow-anchor: none;
             touch-action: pan-y;
@@ -257,15 +610,15 @@
             z-index: 99999;
             opacity: 0;
             transition: opacity 0.15s ease-in-out;
-            background: rgba(15, 15, 20, 0.85);
+            background: rgba(15, 15, 20, 0.88);
             backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid var(--hx-border-strong);
             border-radius: 8px;
             padding: 12px;
             width: max-content;
             max-width: 320px;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
-            color: #cdd6f4;
+            color: var(--hx-text);
             font-size: 13px;
             line-height: normal;
         }
@@ -275,16 +628,16 @@
             padding-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
         .hextech-tooltip-title { font-weight: 700; font-size: 15px; }
-        .hextech-tooltip-tier-Prismatic { color: #22d3ee; }
-        .hextech-tooltip-tier-Gold { color: #f4bf24; }
-        .hextech-tooltip-tier-Silver { color: #94a3b8; }
+        .hextech-tooltip-tier-Prismatic { color: var(--hx-tier-prismatic); }
+        .hextech-tooltip-tier-Gold { color: var(--hx-tier-gold); }
+        .hextech-tooltip-tier-Silver { color: var(--hx-tier-silver); }
     </style>
 </head>
 
-<body class="min-h-screen p-6">
+<body class="detail-page-shell min-h-screen">
 
-    <nav class="max-w-6xl mx-auto mb-6 flex justify-between items-center">
-        <a href="index.html" class="text-gray-400 hover:text-white flex items-center space-x-2 transition-colors">
+    <nav class="detail-topbar detail-frame mb-6 flex justify-between items-center">
+        <a href="index.html" class="detail-back-link flex items-center space-x-2">
             <span class="text-xl">返回</span> <span>返回大盘风云榜</span>
         </a>
         <div id="wsStatus" class="flex items-center space-x-2 text-xs">
@@ -293,18 +646,18 @@
         </div>
     </nav>
 
-    <main class="max-w-6xl mx-auto">
-        <header class="glass-panel rounded-2xl p-6 mb-8 flex items-center space-x-6 relative overflow-hidden"
+    <main class="detail-frame">
+        <header class="detail-header-panel glass-panel rounded-2xl p-6 mb-8 flex items-center space-x-6 relative overflow-hidden"
             id="mainHeader">
             <div id="headerBg" class="absolute right-0 top-0 bottom-0 w-1/2 opacity-20 bg-cover bg-left"></div>
             <img id="heroAvatar" src=""
-                class="w-20 h-20 rounded-xl border-2 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.3)] relative z-10 bg-gray-900 object-cover">
+                class="w-20 h-20 rounded-xl hx-hero-avatar relative z-10 bg-gray-900 object-cover">
 
             <div class="relative z-10">
                 <div class="flex items-center space-x-3 mb-1">
-                    <h1 id="heroName" class="text-3xl font-black text-white">加载中...</h1>
+                    <h1 id="heroName" class="detail-title font-black text-white">加载中...</h1>
                 </div>
-                <div class="flex space-x-6 text-sm mt-2">
+                <div class="detail-stat-row flex text-sm mt-2">
                     <p><span class="text-gray-400">真实胜率:</span> <span id="heroWR"
                             class="text-green-400 font-bold text-lg">-</span></p>
                     <p><span class="text-gray-400">全服出场率:</span> <span id="heroPR"
@@ -313,26 +666,26 @@
             </div>
         </header>
 
-        <section class="glass-panel rounded-2xl p-6 min-h-[400px]">
-            <div class="flex flex-wrap gap-2 items-center mb-4 pb-4 border-b border-gray-800">
-                <div class="flex gap-2">
+        <section class="detail-control-panel glass-panel rounded-2xl min-h-[400px]">
+            <div class="detail-control-bar flex flex-wrap items-center mb-4 pb-4 border-b border-gray-800">
+                <div class="detail-mode-group">
                     <button id="btn-comprehensive" onclick="setDisplayMode('comprehensive')"
-                        class="mode-btn px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">综合推荐
+                        class="mode-btn hx-tab-active px-4 py-2 rounded-lg text-sm">综合推荐
                         综合推荐</button>
                     <button id="btn-winrate" onclick="setDisplayMode('winrate_only')"
-                        class="mode-btn px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium text-sm transition-colors">纯胜率
+                        class="mode-btn hx-tab-idle px-4 py-2 rounded-lg font-medium text-sm">纯胜率
                         纯胜率</button>
                 </div>
                 <div class="flex-1"></div>
-                <div class="flex gap-2">
+                <div class="detail-tier-group">
                     <button id="tab-all" onclick="switchView('all')"
-                        class="tab-btn px-5 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors">全部海克斯</button>
+                        class="tab-btn hx-tab-active px-5 py-2 rounded-lg">全部海克斯</button>
                     <button id="tab-Prismatic" onclick="switchView('Prismatic')"
-                        class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">棱彩</button>
+                        class="tab-btn hx-tab-idle px-5 py-2 rounded-lg font-medium">棱彩</button>
                     <button id="tab-Gold" onclick="switchView('Gold')"
-                        class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">黄金</button>
+                        class="tab-btn hx-tab-idle px-5 py-2 rounded-lg font-medium">黄金</button>
                     <button id="tab-Silver" onclick="switchView('Silver')"
-                        class="tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors">白银</button>
+                        class="tab-btn hx-tab-idle px-5 py-2 rounded-lg font-medium">白银</button>
                 </div>
             </div>
 
@@ -348,15 +701,15 @@
                 <div class="text-gray-600 text-sm mt-2">该阶级可能样本过少或被系统过滤</div>
             </div>
 
-            <div id="dataContainer" class="flex gap-4 hidden">
-                <div class="w-[45%] flex-shrink-0">
+            <div id="dataContainer" class="flex hidden">
+                <div class="detail-left-pane">
                     <div id="compList" class="flex flex-col gap-4 scroll-container"
-                        style="max-height: 650px; overflow-y: auto; padding-right: 8px; overscroll-behavior: contain; overflow-anchor: none;"></div>
+                        style="overflow-y: auto; padding-right: 8px; overscroll-behavior: contain; overflow-anchor: none;"></div>
                 </div>
 
-                <div class="w-[55%]">
+                <div class="detail-right-pane">
                     <div id="synergyArticleScroll"
-                        class="flex flex-col gap-4 max-h-[650px] overflow-y-auto scroll-container"
+                        class="flex flex-col gap-4 overflow-y-auto scroll-container"
                         style="padding-right: 8px; overscroll-behavior: contain; overflow-anchor: none;">
                         <div class="glass-panel rounded-xl p-4">
                             <div class="text-sm text-gray-400 text-center">选择左侧海克斯查看联动文章</div>
@@ -431,11 +784,11 @@
         function setDisplayMode(mode) {
             currentMode = mode;
             document.querySelectorAll('.mode-btn').forEach(btn => {
-                btn.className = 'mode-btn px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium text-sm transition-colors';
+                btn.className = 'mode-btn hx-tab-idle px-4 py-2 rounded-lg font-medium text-sm';
             });
             const activeBtn = mode === 'comprehensive' ? document.getElementById('btn-comprehensive') : document.getElementById('btn-winrate');
             if (activeBtn) {
-                activeBtn.className = 'mode-btn px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors';
+                activeBtn.className = 'mode-btn hx-tab-active px-4 py-2 rounded-lg text-sm';
             }
             renderCurrentView();
         }
@@ -443,19 +796,27 @@
         function switchView(view) {
             currentView = view;
             document.querySelectorAll('.tab-btn').forEach(btn => {
-                btn.className = 'tab-btn px-5 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-[#313244] font-medium transition-colors';
+                btn.className = 'tab-btn hx-tab-idle px-5 py-2 rounded-lg font-medium';
             });
             const activeBtn = document.getElementById(`tab-${view}`);
             if (activeBtn) {
-                activeBtn.className = 'tab-btn px-5 py-2 rounded-lg bg-blue-600 text-white font-bold shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-colors';
+                activeBtn.className = 'tab-btn hx-tab-active px-5 py-2 rounded-lg';
             }
             renderCurrentView();
         }
 
+        function normalizeTierName(tier) {
+            const text = String(tier || '').trim();
+            if (text.includes('棱彩') || text.includes('彩色') || text === 'Prismatic') return 'Prismatic';
+            if (text.includes('黄金') || text.includes('金') || text === 'Gold') return 'Gold';
+            return 'Silver';
+        }
+
         function getTierBarClass(tier) {
-            if (tier.includes('棱彩') || tier.includes('彩色') || tier === 'Prismatic') return 'tier-prismatic';
-            if (tier.includes('金') || tier === 'Gold') return 'tier-gold';
-            return 'tier-silver';
+            const normalized = normalizeTierName(tier);
+            if (normalized === 'Prismatic') return 'hx-tier-prismatic-bar';
+            if (normalized === 'Gold') return 'hx-tier-gold-bar';
+            return 'hx-tier-silver-bar';
         }
 
         function toLocalAugmentIconUrl(iconUrl, hextechName) {
@@ -467,10 +828,33 @@
         }
 
         function getAugmentTierClass(tier) {
-            const t = tier || '';
-            if (t.includes('棱彩') || t.includes('彩色') || t === 'Prismatic') return 'tier-shell-prismatic';
-            if (t.includes('黄金') || t.includes('金') || t === 'Gold') return 'tier-shell-gold';
+            const normalized = normalizeTierName(tier);
+            if (normalized === 'Prismatic') return 'tier-shell-prismatic';
+            if (normalized === 'Gold') return 'tier-shell-gold';
             return 'tier-shell-silver';
+        }
+
+        function splitAugmentCandidates(nameText) {
+            return String(nameText || '')
+                .split(/[，,、\/\|+]/)
+                .map(part => part.trim())
+                .filter(Boolean);
+        }
+
+        function findBaseHexByName(nameText) {
+            const baseArray = hextechData ? (hextechData.comprehensive || []) : [];
+            const exact = baseArray.find(h => h.海克斯名称 === nameText);
+            if (exact) {
+                return exact;
+            }
+            const candidates = splitAugmentCandidates(nameText);
+            for (const candidate of candidates) {
+                const matched = baseArray.find(h => h.海克斯名称 === candidate);
+                if (matched) {
+                    return matched;
+                }
+            }
+            return null;
         }
 
         function renderAugmentIcon(iconUrl, hextechName, tier, variant = 'list') {
@@ -530,7 +914,7 @@
             const bindData = encodeURIComponent(JSON.stringify(hexInfo));
 
                 return `
-            <div class="list-row flex items-center p-2 rounded border border-gray-700 bg-[#1e1e2e] hover:bg-[#252535] transition-colors gap-2" data-hex-info="${bindData}">
+            <div class="hextech-list-card list-row flex items-center p-2 rounded border border-[rgba(139,148,158,0.18)] bg-[rgba(19,26,34,0.92)] transition-colors" data-hex-info="${bindData}">
                 <div class="w-6 text-center text-xs font-bold text-gray-500">${index + 1}</div>
 
                 <div class="flex items-center gap-2 flex-shrink-0">
@@ -670,7 +1054,7 @@
                     else if (gradeVal.includes('C')) gradeScore = 2;
                     else if (gradeVal.includes('D')) gradeScore = 1;
 
-                    const baseHex = hextechData ? (hextechData.comprehensive || []).find(h => h.海克斯名称 === nameInfo) : null;
+                    const baseHex = findBaseHexByName(nameInfo);
                     const fallbackScore = baseHex ? (baseHex.综合得分 || baseHex.海克斯胜率 || 0) : 0;
 
                     return {
@@ -721,9 +1105,10 @@
                     badgeText = 'text-[#ffffff]';
                 }
 
-                const iconUrl = (item.baseHex && item.baseHex.icon)
-                    ? toLocalAugmentIconUrl(item.baseHex.icon, item.name)
-                    : `/assets/${encodeURIComponent(item.name)}.png`;
+                const leadAugmentName = item.baseHex ? item.baseHex.海克斯名称 : (splitAugmentCandidates(item.name)[0] || item.name);
+                const iconUrl = item.baseHex
+                    ? toLocalAugmentIconUrl(item.baseHex.icon, item.baseHex.海克斯名称)
+                    : toLocalAugmentIconUrl('', leadAugmentName);
                 const safeName = escapeHtml(item.name);
                 const safeTier = escapeHtml(item.tier);
                 const safeGrade = escapeHtml(item.grade);
@@ -748,17 +1133,17 @@
                 const bindData = encodeURIComponent(JSON.stringify(hexInfo));
 
                 return `
-<div class="hextech-card p-[1px] bg-[#151d2a] mb-4" style="clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));">
-    <div class="bg-[#060b10] p-5 flex gap-4" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px)); min-height: 110px;">
+<div class="hextech-card p-[1px] hx-surface-card mb-4" style="clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));">
+    <div class="hextech-article-inner bg-[#060b10]" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px));">
         
         <div class="cursor-pointer" data-hex-info="${bindData}">
             ${renderAugmentIcon(iconUrl, item.name, item.tier, 'detail')}
         </div>
 
         <div class="flex flex-col flex-grow">
-            <div class="flex items-start justify-between w-full">
+            <div class="hextech-article-head">
                 
-                <div class="flex flex-col">
+                <div class="hextech-article-title-block flex flex-col">
                     <div class="flex items-center gap-2.5 flex-wrap">
                         <span class="text-white text-[16px] font-bold tracking-wide leading-none">${safeName}</span>
                         <div class="${badgeBg} px-1.5 h-[20px] rounded flex items-center shadow-sm">
@@ -772,7 +1157,7 @@
                     </div>
                 </div>
 
-                <div class="flex items-center gap-3 mt-[-2px]">
+                <div class="hextech-article-meta flex items-center gap-3 mt-[-2px]">
                     <div class="flex items-center bg-[#1e2333] border border-[#2a3040] rounded-full overflow-hidden h-[24px]">
                         <div class="flex items-center gap-1.5 px-3 h-full border-r border-[#2a3040]">
                             <svg class="w-3.5 h-3.5 text-[#507c59] fill-current" viewBox="0 0 16 16"><path d="M3 1.5A.5.5 0 0 1 3.5 1h9a.5.5 0 0 1 .4.82l-2 2.68 2 2.68a.5.5 0 0 1-.4.82h-9v6.5a.5.5 0 0 1-1 0v-13z"/></svg>
@@ -788,7 +1173,7 @@
 
             </div>
 
-            <div class="text-[#b3b9c6] text-[14px] leading-relaxed mt-3 w-content">
+            <div class="hextech-article-content text-[#b3b9c6] text-[14px] leading-relaxed mt-3">
                 ${escapeHtml(item.content)}
             </div>
 
@@ -936,11 +1321,11 @@
                         const info = JSON.parse(decodeURIComponent(dataStr));
                         ttTitle.textContent = info.name || '';
                         ttTitle.className = 'hextech-tooltip-title';
-                        const tier = info.tier || '';
+                        const tier = normalizeTierName(info.tier || '');
 
-                        if (tier.includes('棱彩') || tier === 'Prismatic' || tier.includes('彩色')) {
+                        if (tier === 'Prismatic') {
                             ttTitle.classList.add('hextech-tooltip-tier-Prismatic');
-                        } else if (tier.includes('金') || tier === 'Gold' || tier.includes('黄金')) {
+                        } else if (tier === 'Gold') {
                             ttTitle.classList.add('hextech-tooltip-tier-Gold');
                         } else {
                             ttTitle.classList.add('hextech-tooltip-tier-Silver');

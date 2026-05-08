@@ -7,13 +7,15 @@ import random
 import sys
 import time
 import tempfile
+import re
+import ast
 import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
 
-from processing.runtime_store import build_synergy_data_path
+from processing.runtime_store import build_synergy_data_path, get_latest_csv
 from scraping.version_sync import STATIC_DATA_DIR
 from typing import Optional
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -45,6 +47,21 @@ THREAD_POOL_WORKERS = 8
 THREAD_POOL_TIMEOUT_SECONDS = 28
 OUTPUT_LOCK_TIMEOUT_SECONDS = 5
 OUTPUT_LOCK_POLL_INTERVAL_SECONDS = 0.2
+BUNDLE_INTERACTION_SECTION_MARKER = "fx={manual:gx},"
+BUNDLE_INTERACTION_OBJECT_MARKER = "],Tk={"
+BUNDLE_COMMUNITY_OBJECT_MARKER = "],RA={"
+BUNDLE_APP_JS_PATTERN = re.compile(r'/assets/app\.[^"\']+\.js')
+SYNERGY_TAG_LABELS = {
+    "Synergy": "强力联动",
+    "Trap": "陷阱",
+    "Fun": "娱乐",
+    "Bug": "缺陷",
+}
+TIER_LABELS = {
+    "Prismatic": "棱彩",
+    "Gold": "黄金",
+    "Silver": "白银",
+}
 
 # 日志配置。
 install_summary_logging(
@@ -235,6 +252,15 @@ class ApexSpider:
         parsed = urlparse(candidate)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
 
+    def _discover_bundle_app_js_path(self) -> str:
+        homepage_html = self.fetch_page(self.base_url)
+        if homepage_html is None:
+            raise ValueError("首页加载失败，无法发现 bundle")
+        match = BUNDLE_APP_JS_PATTERN.search(homepage_html)
+        if not match:
+            raise ValueError("首页未发现 app bundle 路径")
+        return match.group(0)
+
     def fetch_page(self, url: str) -> Optional[str]:
         # 获取页面内容，失败返回 None。
         retryable_status_codes = {429, 500, 502, 503, 504}
@@ -357,49 +383,330 @@ class ApexSpider:
 
         return result
 
-    def extract_hextech_synergies(self, detail_url: str) -> list:
-        # 提取英雄详情页中的海克斯协同方案。
-        result = []
+    def build_augment_name_map_from_latest_csv(self) -> dict:
+        # 从最新 runtime CSV 构建 hextechId 到中文海克斯名的映射。
+        latest_csv = get_latest_csv()
+        if not latest_csv or not os.path.exists(latest_csv):
+            logger.warning("最新 runtime CSV 不存在，无法构建海克斯名称映射")
+            return {}
 
         try:
-            html = self.fetch_page(detail_url)
-            if html is None:
-                logger.error(f"详情页加载失败：{self._sanitize_log_url(detail_url)}")
-                return result
-
-            soup = BeautifulSoup(html, 'html.parser')
-
-            cards = soup.select('.interaction-card')
-
-            for card in cards:
-                try:
-                    has_synergy_tag = False
-
-                    tag_elements = card.select('span.tag-badge')
-                    for tag_elem in tag_elements:
-                        classes = tag_elem.get('class', [])
-                        # 检查是否有协同方案相关的类名
-                        if 'tag-synergy' in classes or 'tag-trap' in classes or 'tag-fun' in classes:
-                            has_synergy_tag = True
-                            break
-
-                    if has_synergy_tag:
-                        # 使用文本提取函数，并以“ | ”分隔多行
-                        text = card.get_text(separator=' | ', strip=True)
-                        if text:
-                            result.append(text)
-                except Exception as e:
-                    logger.warning(f"单个卡片提取失败：{_safe_exception_label(e)}")
-                    continue
-
-            return result
-
+            import pandas as pd
         except Exception as e:
-            logger.error(
-                f"提取异常 - URL: {self._sanitize_log_url(detail_url)}, "
-                f"错误：{_safe_exception_label(e)}"
-            )
-            return result
+            logger.warning(f"pandas 不可用，跳过海克斯名称映射：{_safe_exception_label(e)}")
+            return {}
+
+        try:
+            df = pd.read_csv(latest_csv, usecols=["英雄 ID", "海克斯名称"])
+        except Exception as e:
+            logger.warning(f"读取最新 CSV 关键列失败：{_safe_exception_label(e)}")
+            return {}
+
+        name_map = {}
+        for _, row in df.iterrows():
+            raw_id = row.get("英雄 ID")
+            raw_name = row.get("海克斯名称")
+            if raw_name is None:
+                continue
+            name = str(raw_name).strip()
+            if not name:
+                continue
+            hextech_id = str(raw_id).strip()
+            if hextech_id and hextech_id.lower() != "nan":
+                name_map.setdefault(hextech_id, name)
+        return name_map
+
+    def _extract_js_object_literal(self, text: str, start_index: int) -> tuple[str, int]:
+        if start_index < 0 or start_index >= len(text) or text[start_index] != "{":
+            raise ValueError("对象字面量起始位置无效")
+        depth = 0
+        quote = None
+        escaped = False
+        i = start_index
+        while i < len(text):
+            char = text[i]
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+            else:
+                if char in ('"', "'", '`'):
+                    quote = char
+                elif char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return text[start_index:i + 1], i + 1
+            i += 1
+        raise ValueError("对象字面量未闭合")
+
+    def _extract_js_array_literal(self, text: str, start_index: int) -> tuple[str, int]:
+        if start_index < 0 or start_index >= len(text) or text[start_index] != "[":
+            raise ValueError("数组字面量起始位置无效")
+        depth = 0
+        quote = None
+        escaped = False
+        i = start_index
+        while i < len(text):
+            char = text[i]
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+            else:
+                if char in ('"', "'", '`'):
+                    quote = char
+                elif char == "[":
+                    depth += 1
+                elif char == "]":
+                    depth -= 1
+                    if depth == 0:
+                        return text[start_index:i + 1], i + 1
+            i += 1
+        raise ValueError("数组字面量未闭合")
+
+    def _extract_named_array_assignments(self, text: str, start_index: int, stop_index: int) -> dict:
+        assignments = {}
+        pattern = re.compile(r'([A-Za-z_$][A-Za-z0-9_$]*)=\[')
+        cursor = start_index
+        while cursor < stop_index:
+            match = pattern.search(text, cursor, stop_index)
+            if not match:
+                break
+            array_start = match.end() - 1
+            literal, cursor = self._extract_js_array_literal(text, array_start)
+            assignments[match.group(1)] = literal
+            if cursor < stop_index and text[cursor:cursor + 1] == ',':
+                cursor += 1
+        return assignments
+
+    def _parse_js_identifier_map(self, literal: str) -> dict:
+        body = literal.strip()
+        if not body.startswith('{') or not body.endswith('}'):
+            raise ValueError("英雄映射对象格式无效")
+        body = body[1:-1]
+        mapping = {}
+        pair_pattern = re.compile(r'''(?:"([^"]+)"|'([^']+)'|([A-Za-z_$][A-Za-z0-9_$]*))\s*:\s*([A-Za-z_$][A-Za-z0-9_$]*)''')
+        for match in pair_pattern.finditer(body):
+            key = match.group(1) or match.group(2) or match.group(3)
+            value = match.group(4)
+            if key:
+                mapping[key] = value
+        if not mapping:
+            raise ValueError("英雄映射对象解析为空")
+        return mapping
+
+    def _convert_js_literal_to_python(self, literal: str) -> str:
+        result = []
+        i = 0
+        length = len(literal)
+        simple_escapes = {
+            "n": "\\n",
+            "r": "\\r",
+            "t": "\\t",
+            "b": "\\b",
+            "f": "\\f",
+            "\\": "\\",
+            '"': '"',
+            "'": "'",
+            "`": "`",
+            "/": "/",
+        }
+
+        while i < length:
+            char = literal[i]
+            if char in ('"', "'", '`'):
+                quote = char
+                i += 1
+                chunks = []
+                while i < length:
+                    current = literal[i]
+                    if current == "\\":
+                        i += 1
+                        if i >= length:
+                            chunks.append("\\")
+                            break
+                        escaped = literal[i]
+                        if escaped == "u" and i + 4 < length:
+                            hex_part = literal[i + 1:i + 5]
+                            if all(c in "0123456789abcdefABCDEF" for c in hex_part):
+                                chunks.append(chr(int(hex_part, 16)))
+                                i += 5
+                                continue
+                        chunks.append(simple_escapes.get(escaped, escaped))
+                        i += 1
+                        continue
+                    if current == quote:
+                        i += 1
+                        break
+                    chunks.append(current)
+                    i += 1
+                result.append(json.dumps("".join(chunks), ensure_ascii=False))
+                continue
+
+            if char == "!" and i + 1 < length and literal[i + 1] in "01":
+                result.append("True" if literal[i + 1] == "0" else "False")
+                i += 2
+                continue
+
+            if char.isalpha() or char in "_$":
+                j = i + 1
+                while j < length and (literal[j].isalnum() or literal[j] in "_$"):
+                    j += 1
+                token = literal[i:j]
+                k = j
+                while k < length and literal[k].isspace():
+                    k += 1
+                if k < length and literal[k] == ":":
+                    result.append(json.dumps(token, ensure_ascii=False))
+                    result.append(literal[j:k + 1])
+                    i = k + 1
+                    continue
+                if token == "null":
+                    result.append("None")
+                elif token == "true":
+                    result.append("True")
+                elif token == "false":
+                    result.append("False")
+                elif token == "undefined":
+                    result.append("None")
+                else:
+                    result.append(token)
+                i = j
+                continue
+
+            result.append(char)
+            i += 1
+
+        return "".join(result)
+
+    def _parse_js_array_literal(self, literal: str) -> list:
+        python_literal = self._convert_js_literal_to_python(literal)
+        return ast.literal_eval(python_literal)
+
+    def _extract_interaction_payload(self, bundle_text: str) -> dict:
+        section_index = bundle_text.find(BUNDLE_INTERACTION_SECTION_MARKER)
+        if section_index == -1:
+            raise ValueError("未找到联动数据起始标记")
+        section_index += len(BUNDLE_INTERACTION_SECTION_MARKER)
+
+        manual_index = bundle_text.find("Tk={", section_index)
+        community_index = bundle_text.find("RA={", section_index)
+        if manual_index == -1 or community_index == -1:
+            raise ValueError("未找到英雄映射对象")
+
+        manual_literal, manual_object_end = self._extract_js_object_literal(bundle_text, manual_index + len("Tk="))
+        community_literal, _ = self._extract_js_object_literal(bundle_text, community_index + len("RA="))
+
+        short_key_arrays = {}
+        short_key_arrays.update(self._extract_named_array_assignments(bundle_text, section_index, manual_index))
+        short_key_arrays.update(self._extract_named_array_assignments(bundle_text, manual_object_end, bundle_text.rfind("],RA={", manual_object_end, community_index) + 1 if bundle_text.rfind("],RA={", manual_object_end, community_index) != -1 else community_index))
+        if not short_key_arrays:
+            raise ValueError("未找到联动数组定义")
+
+        manual_map = self._parse_js_identifier_map(manual_literal)
+        community_map = self._parse_js_identifier_map(community_literal)
+        return {
+            "arrays": short_key_arrays,
+            "manual_map": manual_map,
+            "community_map": community_map,
+        }
+
+    def _resolve_augment_name(selfself, item: dict, augment_name_map: dict) -> Optional[str]:
+        hextech_id = item.get("hextechId")
+        if hextech_id is not None:
+            key = str(hextech_id).strip()
+            if key:
+                resolved = augment_name_map.get(key)
+                if resolved:
+                    return resolved
+        hextech_ids = item.get("hextechIds") or []
+        if isinstance(hextech_ids, str):
+            hextech_ids = [hextech_ids]
+        names = []
+        for raw_id in hextech_ids:
+            key = str(raw_id).strip()
+            if not key:
+                continue
+            resolved = augment_name_map.get(key)
+            if resolved:
+                names.append(resolved)
+        if names:
+            return ", ".join(dict.fromkeys(names))
+        return None
+
+    def _stringify_synergy_entry(self, item: dict, augment_name_map: dict) -> Optional[str]:
+        if not isinstance(item, dict):
+            return None
+        tags = item.get("tags") or []
+        if isinstance(tags, str):
+            tags = [tags]
+        if not tags:
+            return None
+        tag_label = next((SYNERGY_TAG_LABELS.get(tag) for tag in tags if tag in SYNERGY_TAG_LABELS), None)
+        if not tag_label:
+            tag_label = "强力联动"
+        augment_name = self._resolve_augment_name(item, augment_name_map)
+        if not augment_name:
+            return None
+        rating = str(item.get("rating") or "").strip() or "未知"
+        author = str(item.get("author") or item.get("contributor") or "ApexLoL").strip() or "ApexLoL"
+        note = item.get("note") or {}
+        content = str(note.get("zh") or "").replace("\r", " ").replace("\n", " ").strip()
+        if not content:
+            return None
+        originality = "原创" if bool(item.get("isOriginal")) else "非原创"
+        return " | ".join([
+            augment_name,
+            "黄金",
+            f"评分 {rating}",
+            tag_label,
+            rating,
+            author,
+            originality,
+            content,
+        ])
+
+    def extract_hextech_synergies(self) -> dict:
+        bundle_url = urljoin(f"{self.base_url}/", self._discover_bundle_app_js_path())
+        bundle_text = self.fetch_page(bundle_url)
+        if bundle_text is None:
+            raise ValueError("联动 bundle 拉取失败")
+        payload = self._extract_interaction_payload(bundle_text)
+        augment_name_map = self.build_augment_name_map_from_latest_csv()
+        arrays = payload["arrays"]
+        result = {}
+        for mapping_name in ("manual_map", "community_map"):
+            champion_map = payload.get(mapping_name) or {}
+            for champion_slug, short_key in champion_map.items():
+                array_literal = arrays.get(str(short_key))
+                if not array_literal:
+                    continue
+                try:
+                    items = self._parse_js_array_literal(array_literal)
+                except Exception as e:
+                    logger.warning(
+                        "解析英雄联动数组失败：champion=%s key=%s error=%s",
+                        champion_slug,
+                        short_key,
+                        _safe_exception_label(e),
+                    )
+                    continue
+                for item in items:
+                    synergy_text = self._stringify_synergy_entry(item, augment_name_map)
+                    if not synergy_text:
+                        continue
+                    result.setdefault(champion_slug, []).append(synergy_text)
+        if not result:
+            raise ValueError("联动 bundle 解析结果为空")
+        return result
 
 
 def main():
@@ -478,90 +785,64 @@ def main():
                 if normalized:
                     search_index[normalized] = champ_id
 
-    # 全量遍历英雄列表并提取海克斯协同方案，使用线程池并发执行
-    # 初始化最终数据字典
     final_data = {}
-
-    # 获取英雄列表（全量，移除之前的[:3]限制）
     champions = champion_result.get("champions", [])
     if champions:
-        # 构建任务字典：地址对应英雄信息
         task_map = {}
         skipped_names = []
 
         for champ in champions:
             champ_name = champ["name"]
-            champ_url = champ["url"]
-
-            # 对网页提取的英雄名做同样清洗，再去搜索索引中查找编号
+            champion_slug = champ.get("url", "").rstrip("/").split("/")[-1]
             normalized_champ_name = normalize_name(champ_name)
             champ_id = search_index.get(normalized_champ_name)
-
+            if not champ_id and champion_slug:
+                champ_id = search_index.get(normalize_name(champion_slug))
             if not champ_id:
                 skipped_names.append(champ_name)
                 continue
-
-            # 从核心信息字典中取出完整信息并组装任务
             core_info = core_info_dict[champ_id]
-            task_map[champ_url] = {
+            task_map[champion_slug] = {
                 "name": core_info["name"],
                 "id": champ_id,
                 "title": core_info["title"],
                 "en_name": core_info["en_name"],
-                "aliases": core_info["aliases"]
+                "aliases": core_info["aliases"],
             }
 
-        # 调试信息
         if skipped_names:
             logger.warning("协同抓取存在未匹配英雄：count=%s", len(skipped_names))
 
-        # 使用线程池进行并发抓取（将工作线程数从 16 调整为 8）
-        executor = ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS)
         try:
-            # 提交所有任务
-            future_to_url = {
-                executor.submit(spider.extract_hextech_synergies, url): url
-                for url in task_map.keys()
+            synergy_map = spider.extract_hextech_synergies()
+        except Exception as e:
+            log_task_summary(
+                logger,
+                task="ApexLoL 协同抓取",
+                started_at=started_at,
+                success=False,
+                detail=f"stage=synergy_bundle error={_safe_exception_label(e)}",
+            )
+            return
+
+        missing_synergy = []
+        for champion_slug, champ_info in task_map.items():
+            synergies = synergy_map.get(champion_slug, [])
+            if not synergies:
+                missing_synergy.append(champ_info["name"])
+            champ_id = champ_info["id"]
+            final_data[champ_id] = {
+                "id": champ_id,
+                "name": champ_info["name"],
+                "title": champ_info["title"],
+                "en_name": champ_info["en_name"],
+                "aliases": champ_info["aliases"],
+                "synergies": synergies,
             }
 
-            # 收集完成的任务结果
-            try:
-                for future in as_completed(future_to_url, timeout=THREAD_POOL_TIMEOUT_SECONDS):
-                    champ_url = future_to_url[future]
-                    try:
-                        synergies = future.result()
-                        champ_info = task_map[champ_url]
-                        champ_id = champ_info["id"]
-                        champ_name = champ_info["name"]
+        if missing_synergy:
+            logger.warning("部分英雄暂无联动：count=%s", len(missing_synergy))
 
-                        # 合并数据结构
-                        final_data[champ_id] = {
-                            "id": champ_id,
-                            "name": champ_name,
-                            "title": champ_info["title"],
-                            "en_name": champ_info["en_name"],
-                            "aliases": champ_info["aliases"],
-                            "synergies": synergies
-                        }
-
-                    except Exception as e:
-                        logger.error(
-                            f"并发任务异常 - URL: {_sanitize_url_for_log(champ_url)}, "
-                            f"错误：{_safe_exception_label(e)}"
-                        )
-                        continue
-            except TimeoutError:
-                logger.error("并发抓取超时：已取消未完成任务")
-                for future in future_to_url:
-                    future.cancel()
-            except Exception as e:
-                logger.error(f"并发抓取异常：{_safe_exception_label(e)}")
-                for future in future_to_url:
-                    future.cancel()
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
-
-        # 持久化到数据文件
         output_path = Path(build_synergy_data_path())
         lock_path = output_path.with_suffix(output_path.suffix + ".lock")
         with _output_file_lock(lock_path):
@@ -571,7 +852,7 @@ def main():
             task="ApexLoL 协同抓取",
             started_at=started_at,
             success=True,
-            detail=f"heroes={len(final_data)} output={output_path.name}",
+            detail=f"heroes={len(final_data)} mapped={len(synergy_map)} output={output_path.name}",
         )
     else:
         log_task_summary(

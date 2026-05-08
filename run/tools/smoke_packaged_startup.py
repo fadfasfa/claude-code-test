@@ -154,10 +154,12 @@ def _web_ready(port: str) -> dict[str, object]:
     result["detail"] = {"code": detail_code, "bytes": len(detail_body)}
 
     representative_name = ""
+    representative_id = ""
     if isinstance(champions, list) and champions:
         first_champion = champions[0]
         if isinstance(first_champion, dict):
             representative_name = str(first_champion.get("英雄名称") or first_champion.get("hero_name") or "")
+            representative_id = str(first_champion.get("英雄ID") or first_champion.get("hero_id") or "")
     detail_payload: object = {}
     if representative_name:
         api_detail_code, api_detail_body = _fetch(base + f"/api/champion/{urllib.parse.quote(representative_name)}/hextechs")
@@ -166,15 +168,19 @@ def _web_ready(port: str) -> dict[str, object]:
     else:
         result["representative_detail"] = {"code": 0, "bytes": 0, "hero": ""}
 
-    synergy_code, synergy_body = _fetch(base + "/api/synergies/1")
-    synergy_payload = _read_json(synergy_body)
-    result["synergy_fallback"] = {"code": synergy_code, "bytes": len(synergy_body), "json": synergy_payload}
-
-    if representative_name:
-        asset_code, asset_body = _fetch(base + f"/assets/{urllib.parse.quote(representative_name)}.png")
-        representative_asset = {"code": asset_code, "bytes": len(asset_body), "hero": representative_name}
+    if representative_id:
+        synergy_code, synergy_body = _fetch(base + f"/api/synergies/{urllib.parse.quote(representative_id)}")
+        synergy_payload = _read_json(synergy_body)
+        result["synergy_fallback"] = {"code": synergy_code, "bytes": len(synergy_body), "hero_id": representative_id, "json": synergy_payload}
     else:
-        representative_asset = {"code": 0, "bytes": 0, "hero": ""}
+        synergy_payload = {}
+        result["synergy_fallback"] = {"code": 0, "bytes": 0, "hero_id": "", "json": synergy_payload}
+
+    if representative_id:
+        asset_code, asset_body = _fetch(base + f"/assets/{urllib.parse.quote(representative_id)}.png")
+        representative_asset = {"code": asset_code, "bytes": len(asset_body), "hero_id": representative_id}
+    else:
+        representative_asset = {"code": 0, "bytes": 0, "hero_id": ""}
     result["representative_asset"] = representative_asset
 
     business_checks = _business_ready(startup_status, champions, detail_payload, synergy_payload, representative_asset)

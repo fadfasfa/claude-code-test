@@ -6,49 +6,153 @@
     <title>Hextech 极地枢纽 - 全英雄 T 度风云榜</title>
     <link rel="preconnect" href="https://ddragon.leagueoflegends.com">
     <link rel="preconnect" href="https://raw.communitydragon.org">
+    <link rel="stylesheet" href="./css/hextech-theme.css">
     <link rel="preload" href="https://cdn.tailwindcss.com" as="script">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        :root {
+            --hx-font-family: "Microsoft YaHei UI", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            --hx-bg: #0d1117;
+            --hx-bg-radial: radial-gradient(circle at 50% 0%, rgba(88, 166, 255, 0.08), transparent 54%);
+            --hx-surface: rgba(18, 24, 32, 0.84);
+            --hx-border-base: rgba(139, 148, 158, 0.18);
+            --hx-border-hover: rgba(88, 166, 255, 0.38);
+            --hx-shadow-card: 0 12px 28px rgba(0, 0, 0, 0.28);
+            --hx-text: #c9d1d9;
+            --hx-text-strong: #f0f6fc;
+            --hx-text-muted: #8b949e;
+            --hx-accent: #58a6ff;
+            --hx-accent-soft: rgba(88, 166, 255, 0.16);
+            --hx-tier-gold: #d4a72c;
+            --hx-art-gold: #c8aa6e;
+            --hx-art-bronze: #785a28;
+            --hx-art-ink: rgba(5, 10, 16, 0.82);
+            --hx-art-line: rgba(200, 170, 110, 0.34);
+        }
+
+        html {
+            background: #0d1117;
+        }
+
         body {
-            background-color: #11111b;
-            background-image: radial-gradient(circle at 50% 0%, rgba(137, 180, 250, 0.1), transparent 50%);
-            color: #cdd6f4;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        .glass-panel {
-            background: rgba(30, 30, 46, 0.7);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            background-color: #0d1117;
+            background-image:
+                linear-gradient(135deg, rgba(200, 170, 110, 0.055) 0 1px, transparent 1px 74px),
+                radial-gradient(circle at 50% 0%, rgba(47, 128, 165, 0.16), transparent 48%),
+                linear-gradient(180deg, rgba(5, 10, 16, 0.3), rgba(5, 10, 16, 0.88)),
+                var(--hx-bg-radial, radial-gradient(circle at 50% 0%, rgba(88, 166, 255, 0.08), transparent 54%));
+            color: var(--hx-text, #c9d1d9);
+            font-family: var(--hx-font-family, "Microsoft YaHei UI", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif);
         }
 
-        .tier-op { background: linear-gradient(135deg, #ff4e50, #f9d423); color: #111; text-shadow: 0 1px 2px rgba(255,255,255,0.5); }
-        .tier-s { background: linear-gradient(135deg, #c026d3, #db2777); color: white; }
-        .tier-a { background: linear-gradient(135deg, #2563eb, #06b6d4); color: white; }
-        .tier-npc { background: linear-gradient(135deg, #4b5563, #374151); color: #9ca3af; }
-        .tier-trash { background: linear-gradient(135deg, #7f1d1d, #450a0a); color: #f87171; border-right: 1px solid #7f1d1d; }
-
-        .champ-avatar {
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        .champ-avatar:hover {
-            transform: translateY(-4px) scale(1.05);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-            border-color: #fff;
-            z-index: 10;
+        .hx-index-body {
+            padding: clamp(0.75rem, 1.6vw, 1.75rem);
+            padding-bottom: clamp(3rem, 6vw, 6rem);
         }
 
-        .champ-highlight {
-            box-shadow: 0 0 15px 2px rgba(234, 179, 8, 0.6) !important;
-            border-color: #facc15 !important;
-            transform: translateY(-2px) scale(1.05);
-            z-index: 20;
+        .hx-index-frame {
+            width: min(100%, 92rem);
+            margin-inline: auto;
         }
 
-        .scroll-container::-webkit-scrollbar { width: 8px; height: 8px; }
-        .scroll-container::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.2); border-radius: 4px; }
-        .scroll-container::-webkit-scrollbar-thumb { background: rgba(137, 180, 250, 0.3); border-radius: 4px; }
-        .scroll-container::-webkit-scrollbar-thumb:hover { background: rgba(137, 180, 250, 0.5); }
+        @media (min-width: 1800px) {
+            .hx-index-frame {
+                width: min(100%, 104rem);
+            }
+        }
+
+        .hx-tier-group-shell {
+            position: relative;
+            isolation: isolate;
+            background:
+                linear-gradient(90deg, rgba(200, 170, 110, 0.06), transparent 18%, transparent 82%, rgba(88, 166, 255, 0.055)),
+                linear-gradient(180deg, rgba(19, 26, 34, 0.98), rgba(7, 13, 20, 0.98));
+            border: 1px solid rgba(200, 170, 110, 0.16);
+            box-shadow: var(--hx-shadow-card, 0 12px 28px rgba(0, 0, 0, 0.28));
+        }
+
+        .hx-tier-group-shell::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 0 auto;
+            width: 22%;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                linear-gradient(120deg, transparent 0 38%, rgba(200, 170, 110, 0.12) 38% 40%, transparent 40%),
+                linear-gradient(90deg, transparent, rgba(200, 170, 110, 0.07));
+            opacity: 0.9;
+        }
+
+        .hx-tier-group-shell::after {
+            content: "";
+            position: absolute;
+            left: clamp(4.75rem, 6.4vw, 7rem);
+            right: 0;
+            top: 0;
+            height: 1px;
+            pointer-events: none;
+            background: linear-gradient(90deg, var(--hx-art-line), transparent 70%);
+        }
+
+        .hx-hero-avatar {
+            width: clamp(3.5rem, 4vw, 4.5rem);
+            height: clamp(3.5rem, 4vw, 4.5rem);
+            border: 1px solid rgba(200, 170, 110, 0.16);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+            transition: all 0.2s ease;
+        }
+
+        .hx-hero-avatar:hover {
+            border-color: var(--hx-art-gold);
+            box-shadow: 0 12px 26px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(200, 170, 110, 0.42);
+        }
+
+        .hx-hero-avatar-highlight {
+            border-color: var(--hx-art-gold) !important;
+            box-shadow: 0 0 0 1px rgba(200, 170, 110, 0.72), 0 0 20px rgba(200, 170, 110, 0.26) !important;
+        }
+
+        .hx-tier-op {
+            background: linear-gradient(135deg, #e3c16f, #8f6b2d);
+            color: #0b1118;
+        }
+
+        .hx-tier-s {
+            background: linear-gradient(135deg, #1d5f78, #2f9bb5);
+            color: #f4fbff;
+        }
+
+        .hx-tier-a {
+            background: linear-gradient(135deg, #276355, #50a675);
+            color: #f4fff9;
+        }
+
+        .hx-tier-npc {
+            background: linear-gradient(135deg, #263445, #151e29);
+            color: #bac7d4;
+        }
+
+        .hx-tier-trash {
+            background: linear-gradient(135deg, #682020, #250d0d);
+            color: #f0a6a6;
+            border-right: 1px solid rgba(200, 170, 110, 0.2);
+        }
+
+        .hx-tier-row {
+            display: flex;
+        }
+
+        .hx-tier-label {
+            width: clamp(4.75rem, 6.4vw, 7rem);
+            min-height: clamp(4.75rem, 7vw, 6.5rem);
+            clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+        }
+
+        .hx-tier-champions {
+            padding: clamp(0.65rem, 1vw, 1rem);
+            gap: clamp(0.5rem, 0.8vw, 0.9rem);
+        }
 
         .spinner {
             border: 4px solid rgba(59, 130, 246, 0.3);
@@ -62,8 +166,108 @@
 
         .search-input:focus {
             outline: none;
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+            border-color: var(--hx-accent);
+            box-shadow: 0 0 0 3px var(--hx-accent-soft);
+        }
+
+        .hx-page-shell {
+            position: relative;
+        }
+
+        .hx-page-shell::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                linear-gradient(180deg, rgba(13, 17, 23, 0.15) 0%, rgba(13, 17, 23, 0.62) 100%),
+                radial-gradient(circle at top, rgba(88, 166, 255, 0.08), transparent 34%);
+        }
+
+        .hero-dashboard-header {
+            position: relative;
+            padding: clamp(1rem, 2vw, 2rem) clamp(0.75rem, 2vw, 1.5rem) clamp(0.75rem, 1.4vw, 1rem);
+        }
+
+        .hero-dashboard-header::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: 1.5rem;
+            border: 1px solid rgba(200, 170, 110, 0.12);
+            background:
+                linear-gradient(120deg, transparent 0 46%, rgba(200, 170, 110, 0.08) 46% 47%, transparent 47%),
+                linear-gradient(180deg, rgba(18, 24, 32, 0.72), rgba(18, 24, 32, 0));
+            pointer-events: none;
+        }
+
+        .hero-dashboard-header::after {
+            content: "";
+            position: absolute;
+            left: 12%;
+            right: 12%;
+            bottom: 0;
+            height: 1px;
+            pointer-events: none;
+            background: linear-gradient(90deg, transparent, rgba(200, 170, 110, 0.42), transparent);
+        }
+
+        .search-input {
+            background:
+                linear-gradient(90deg, rgba(200, 170, 110, 0.055), transparent 24%),
+                rgba(9, 15, 23, 0.94);
+            border: 1px solid rgba(200, 170, 110, 0.24);
+            color: var(--hx-text-strong);
+            box-shadow: 0 14px 28px rgba(0, 0, 0, 0.24);
+        }
+
+        #searchInput {
+            min-height: clamp(3rem, 4vw, 3.75rem);
+            font-size: clamp(0.95rem, 1.15vw, 1.1rem);
+        }
+
+        #tierContainer {
+            display: flex;
+            flex-direction: column;
+            gap: clamp(0.6rem, 0.9vw, 1rem);
+        }
+
+        @media (max-width: 720px) {
+            .hx-index-body {
+                padding: 0.65rem;
+                padding-bottom: 3rem;
+            }
+
+            .hero-dashboard-header {
+                margin-top: 0;
+                gap: 0.85rem;
+            }
+
+            .hero-dashboard-header .text-2xl {
+                font-size: 1.25rem;
+                letter-spacing: 0.16em;
+            }
+
+            .hx-tier-row {
+                flex-direction: column;
+            }
+
+            .hx-tier-label {
+                width: 100%;
+                min-height: 2.75rem;
+                flex-direction: row;
+                gap: 0.45rem;
+            }
+
+            .hx-tier-champions {
+                justify-content: center;
+            }
+
+            .hx-hero-avatar {
+                width: 3.3rem;
+                height: 3.3rem;
+            }
         }
 
         .search-empty-state {
@@ -286,21 +490,21 @@
         }
     </style>
 </head>
-<body class="min-h-screen p-6 pb-20">
+<body class="hx-page-shell hx-index-body min-h-screen">
 
-    <header class="max-w-5xl mx-auto mb-8 flex flex-col items-center justify-center space-y-6 mt-4">
+    <header class="hero-dashboard-header hx-index-frame mb-8 flex flex-col items-center justify-center space-y-6 mt-4">
         <div class="flex items-center space-x-3">
-            <div class="w-3 h-3 rounded-full bg-green-400 shadow-[0_0_10px_#4ade80] animate-pulse"></div>
-            <span class="font-black text-2xl tracking-widest text-white">HEXTECH <span class="text-blue-500">NEXUS</span></span>
+            <div class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
+            <span class="font-black text-2xl tracking-[0.28em] text-white">HEXTECH <span class="text-sky-400">NEXUS</span></span>
         </div>
 
         <div class="relative w-full max-w-2xl group">
-            <div class="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
+            <div class="absolute -inset-[1px] rounded-full border border-white/5 opacity-80 pointer-events-none"></div>
             <input type="text" id="searchInput" placeholder="搜英雄看海克斯... (支持拼音如：ys / 外号如：快乐风男)"
-                   class="search-input relative w-full bg-[#181825] border-2 border-gray-700 text-lg rounded-full py-4 px-6 text-white placeholder-gray-500 transition-all shadow-xl">
-            <span class="absolute right-6 top-4 text-2xl opacity-70">搜索</span>
+                   class="search-input relative w-full text-lg rounded-full py-4 px-6 pr-20 text-white placeholder-gray-500 transition-all">
+            <span class="absolute right-6 top-4 text-sm tracking-[0.2em] text-slate-400 uppercase">搜索</span>
         </div>
-        <p class="text-xs text-gray-500 font-mono tracking-widest">实时数据已应用「微量贝叶斯平滑+Z-Score」提纯</p>
+        <p class="text-xs text-slate-500 tracking-[0.24em] uppercase">实时数据已应用「微量贝叶斯平滑 + Z-Score」提纯</p>
 
         <div id="wsStatus" class="flex items-center space-x-2 text-xs">
             <span class="w-2 h-2 bg-gray-500 rounded-full"></span>
@@ -308,7 +512,7 @@
         </div>
     </header>
 
-    <main class="max-w-5xl mx-auto space-y-3" id="tierContainer">
+    <main class="hx-index-frame" id="tierContainer">
         <div class="flex flex-col items-center justify-center py-20">
             <div class="spinner mb-4"></div>
             <div class="text-gray-400 font-bold tracking-widest">加载英雄数据中...</div>
@@ -343,11 +547,11 @@
         let ws = null;
 
         const TIERS = [
-            { id: 't0', name: '夯', enName: 'God Tier', cssClass: 'tier-op', minScore: 1.5 },
-            { id: 't1', name: '顶级', enName: 'Top', cssClass: 'tier-s', minScore: 0.8 },
-            { id: 't2', name: '人上人', enName: 'Elite', cssClass: 'tier-a', minScore: 0.3 },
-            { id: 't3', name: 'npc', enName: 'Average', cssClass: 'tier-npc', minScore: -0.3 },
-            { id: 't4', name: '拉', enName: 'Trash', cssClass: 'tier-trash', minScore: -Infinity }
+            { id: 't0', name: '夯', enName: 'God Tier', cssClass: 'hx-tier-op', minScore: 1.5 },
+            { id: 't1', name: '顶级', enName: 'Top', cssClass: 'hx-tier-s', minScore: 0.8 },
+            { id: 't2', name: '人上人', enName: 'Elite', cssClass: 'hx-tier-a', minScore: 0.3 },
+            { id: 't3', name: 'npc', enName: 'Average', cssClass: 'hx-tier-npc', minScore: -0.3 },
+            { id: 't4', name: '拉', enName: 'Trash', cssClass: 'hx-tier-trash', minScore: -Infinity }
         ];
 
         const CHAMPION_PINYIN = {
@@ -463,12 +667,12 @@
                 const champHTML = champs.map((c, i) => createChampionCard(c, i)).join('');
 
                 container.innerHTML += `
-                    <div class="flex bg-[#181825] rounded-xl border border-gray-800 shadow-lg overflow-hidden ${opacityClass} ${grayscaleClass}">
-                        <div class="w-24 shrink-0 ${tier.cssClass} flex flex-col items-center justify-center font-bold text-xl shadow-[2px_0_10px_rgba(0,0,0,0.3)] z-10">
+                    <div class="hx-tier-row hx-tier-group-shell rounded-2xl overflow-hidden ${opacityClass} ${grayscaleClass}">
+                        <div class="hx-tier-label shrink-0 ${tier.cssClass} flex flex-col items-center justify-center font-bold text-xl shadow-[2px_0_10px_rgba(0,0,0,0.3)] z-10">
                             <span>${tier.name}</span>
                             <span class="text-[9px] opacity-80 mt-1 uppercase tracking-wider">${tier.enName}</span>
                         </div>
-                        <div class="flex-1 p-3 flex flex-wrap gap-3">
+                        <div class="hx-tier-champions flex-1 flex flex-wrap">
                             ${champHTML}
                         </div>
                     </div>
@@ -1044,7 +1248,7 @@
 
             const detailUrl = `detail.html?hero=${encodeURIComponent(heroName)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(formatPercent(champion['英雄出场率']))}&id=${encodeURIComponent(heroId)}&en=${encodeURIComponent(enName)}`;
 
-            const isHighlighted = activeChampionIds.has(String(heroId)) ? 'champ-highlight' : '';
+            const isHighlighted = activeChampionIds.has(String(heroId)) ? 'hx-hero-avatar-highlight' : '';
 
             let avatarUrl;
             if (heroId) {
@@ -1065,7 +1269,7 @@
             return `
                 <a
                     href="${safeDetailUrl}"
-                    class="champ-avatar relative w-16 h-16 sm:w-18 sm:h-18 rounded-lg overflow-hidden border-2 cursor-pointer block flex-shrink-0 ${isHighlighted}"
+                    class="hx-hero-avatar relative rounded-lg overflow-hidden cursor-pointer block flex-shrink-0 ${isHighlighted}"
                     style="animation-delay: ${index * 30}ms"
                     title="${safeHeroName} (${safeWr})"
                     data-hero-name="${safeHeroNameAttr}"
@@ -1137,7 +1341,7 @@
         }
 
         function bindChampionPreloads() {
-            document.querySelectorAll('.champ-avatar[data-hero-name]').forEach(anchor => {
+            document.querySelectorAll('.hx-hero-avatar[data-hero-name]').forEach(anchor => {
                 if (anchor.dataset.preloadBound === 'true') return;
                 anchor.dataset.preloadBound = 'true';
                 anchor.addEventListener('mouseenter', () => scheduleChampionPreload(anchor), { passive: true });

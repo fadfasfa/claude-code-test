@@ -34,6 +34,11 @@ def main() -> int:
     files = manifest["hextech_snapshot_files"]
     print("hextech_snapshot_files_count", len(files))
     print("hextech_snapshot_files_sample", files[:5])
+    has_synergy_key = "synergy_data_file" in manifest
+    print("has_synergy_data_file", has_synergy_key)
+    if not has_synergy_key:
+        return 1
+    print("synergy_data_file", manifest["synergy_data_file"])
     return 0
 
 

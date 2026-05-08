@@ -147,9 +147,20 @@ def _heal_hero_rankings(stop_event=None) -> bool:
 
 
 def _heal_synergy_data() -> bool:
-    if not run_synergy_scraper():
+    result = run_synergy_scraper()
+    if not result:
         return False
-    return os.path.exists(build_synergy_data_path())
+    if not os.path.exists(build_synergy_data_path()):
+        return False
+    try:
+        with open(build_synergy_data_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        logger.exception("读取协同数据结果失败")
+        return False
+    if not isinstance(data, dict) or not data:
+        return False
+    return any(bool((item or {}).get("synergies")) for item in data.values() if isinstance(item, dict))
 
 
 def _heal_augment_catalog(force: bool = False, stop_event=None) -> bool:

@@ -40,7 +40,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from typing import Optional
 
-from processing import runtime_store
 from processing.alias_utils import dedupe_alias_texts
 from scraping.icon_resolver import normalize_augment_name
 from tools.log_utils import (
@@ -194,7 +193,7 @@ if getattr(sys, 'frozen', False):
         runtime_index_dir=INDEX_DATA_DIR,
         runtime_asset_dir=ASSET_DIR,
         runtime_hextech_dir=_get_packaged_hextech_snapshot_dir(),
-        runtime_synergy_dir=runtime_store.get_runtime_synergy_data_dir(),
+        runtime_synergy_dir=os.path.join(os.path.dirname(_get_packaged_hextech_snapshot_dir()), "synergy"),
     )
 
 # 日志输出做滚动保留。

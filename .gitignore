@@ -1,6 +1,9 @@
 .gitnexus
+.archive/
+.claude/*
+!.claude/README.md
 
-# Claude agent temporary worktrees
+# Blank placeholder only; do not track local behavior surface
 .claude/worktrees/
 .claude/settings.local.json
 .claude/hooks/.debug/

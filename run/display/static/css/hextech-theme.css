@@ -1,0 +1,205 @@
+:root {
+    --hx-font-family: "Microsoft YaHei UI", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    --hx-bg: #0d1117;
+    --hx-bg-radial: radial-gradient(circle at 50% 0%, rgba(88, 166, 255, 0.08), transparent 54%);
+    --hx-surface: rgba(18, 24, 32, 0.84);
+    --hx-surface-strong: rgba(15, 20, 28, 0.96);
+    --hx-surface-soft: rgba(10, 16, 24, 0.9);
+    --hx-card: #131a22;
+    --hx-card-strong: #0b1118;
+    --hx-border-base: rgba(139, 148, 158, 0.18);
+    --hx-border-strong: rgba(139, 148, 158, 0.3);
+    --hx-border-hover: rgba(88, 166, 255, 0.38);
+    --hx-shadow-panel: 0 18px 40px rgba(0, 0, 0, 0.32);
+    --hx-shadow-card: 0 12px 28px rgba(0, 0, 0, 0.28);
+    --hx-text: #c9d1d9;
+    --hx-text-strong: #f0f6fc;
+    --hx-text-muted: #8b949e;
+    --hx-text-soft: #7d8590;
+    --hx-accent: #58a6ff;
+    --hx-accent-soft: rgba(88, 166, 255, 0.16);
+    --hx-scroll-thumb: rgba(110, 118, 129, 0.45);
+    --hx-scroll-thumb-hover: rgba(139, 148, 158, 0.7);
+    --hx-scroll-track: rgba(0, 0, 0, 0.2);
+    --hx-tier-prismatic: #22d3ee;
+    --hx-tier-prismatic-secondary: #64748b;
+    --hx-tier-prismatic-glow: rgba(34, 211, 238, 0.18);
+    --hx-tier-gold: #d4a72c;
+    --hx-tier-gold-glow: rgba(212, 167, 44, 0.22);
+    --hx-tier-silver: #94a3b8;
+    --hx-tier-silver-glow: rgba(148, 163, 184, 0.16);
+    --hx-art-gold: #c8aa6e;
+    --hx-art-bronze: #785a28;
+    --hx-art-ink: rgba(5, 10, 16, 0.82);
+    --hx-art-line: rgba(200, 170, 110, 0.34);
+}
+
+html,
+body {
+    background-color: var(--hx-bg);
+    color: var(--hx-text);
+    font-family: var(--hx-font-family);
+}
+
+body {
+    background-image:
+        linear-gradient(135deg, rgba(200, 170, 110, 0.055) 0 1px, transparent 1px 74px),
+        radial-gradient(circle at 50% 8%, rgba(47, 128, 165, 0.14), transparent 52%),
+        linear-gradient(180deg, rgba(5, 10, 16, 0.3), rgba(5, 10, 16, 0.88)),
+        var(--hx-bg-radial);
+}
+
+.glass-panel {
+    background:
+        linear-gradient(120deg, rgba(200, 170, 110, 0.045), transparent 34%),
+        var(--hx-surface);
+    border: 1px solid rgba(200, 170, 110, 0.16);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: var(--hx-shadow-panel);
+}
+
+.scroll-container::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.scroll-container::-webkit-scrollbar-track {
+    background: var(--hx-scroll-track);
+    border-radius: 4px;
+}
+
+.scroll-container::-webkit-scrollbar-thumb {
+    background: var(--hx-scroll-thumb);
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.scroll-container::-webkit-scrollbar-thumb:hover {
+    background: var(--hx-scroll-thumb-hover);
+}
+
+.scroll-container {
+    scrollbar-width: thin;
+    scrollbar-color: var(--hx-scroll-thumb) var(--hx-scroll-track);
+}
+
+.hx-tab-idle {
+    color: var(--hx-text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    transition: all 0.18s ease;
+}
+
+.hx-tab-idle:hover {
+    color: var(--hx-text-strong);
+    background: rgba(40, 33, 22, 0.92);
+    border-color: rgba(200, 170, 110, 0.24);
+}
+
+.hx-tab-active {
+    color: #f8f1df;
+    font-weight: 700;
+    background:
+        linear-gradient(135deg, rgba(200, 170, 110, 0.28), rgba(120, 90, 40, 0.18)),
+        linear-gradient(180deg, #182431, #0d141d);
+    border: 1px solid rgba(200, 170, 110, 0.42);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    transition: all 0.18s ease;
+}
+
+.hx-surface-card {
+    background:
+        linear-gradient(120deg, rgba(200, 170, 110, 0.08), transparent 24%),
+        linear-gradient(180deg, rgba(11, 18, 25, 0.99), rgba(5, 10, 16, 0.99));
+    border: 1px solid rgba(200, 170, 110, 0.18);
+    box-shadow: var(--hx-shadow-card);
+}
+
+.hx-surface-card:hover {
+    border-color: var(--hx-border-hover);
+}
+
+.hx-tier-group-shell {
+    background:
+        linear-gradient(90deg, rgba(200, 170, 110, 0.06), transparent 18%, transparent 82%, rgba(88, 166, 255, 0.055)),
+        linear-gradient(180deg, rgba(19, 26, 34, 0.98), rgba(7, 13, 20, 0.98));
+    border: 1px solid rgba(200, 170, 110, 0.16);
+    box-shadow: var(--hx-shadow-card);
+}
+
+.hx-hero-avatar {
+    border: 1px solid rgba(200, 170, 110, 0.16);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+    transition: all 0.2s ease;
+}
+
+.hx-hero-avatar:hover {
+    border-color: var(--hx-art-gold);
+    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(200, 170, 110, 0.42);
+}
+
+.hx-hero-avatar-highlight {
+    border-color: var(--hx-art-gold) !important;
+    box-shadow: 0 0 0 1px rgba(200, 170, 110, 0.72), 0 0 20px rgba(200, 170, 110, 0.26) !important;
+}
+
+.hx-tier-op {
+    background: linear-gradient(135deg, #e3c16f, #8f6b2d);
+    color: #0b1118;
+}
+
+.hx-tier-s {
+    background: linear-gradient(135deg, #1d5f78, #2f9bb5);
+    color: #f4fbff;
+}
+
+.hx-tier-a {
+    background: linear-gradient(135deg, #276355, #50a675);
+    color: #f4fff9;
+}
+
+.hx-tier-npc {
+    background: linear-gradient(135deg, #263445, #151e29);
+    color: #bac7d4;
+}
+
+.hx-tier-trash {
+    background: linear-gradient(135deg, #682020, #250d0d);
+    color: #f0a6a6;
+    border-right: 1px solid rgba(200, 170, 110, 0.2);
+}
+
+.hx-tier-prismatic-bar {
+    background: linear-gradient(180deg, #67e8f9 0%, var(--hx-tier-prismatic) 55%, var(--hx-tier-prismatic-secondary) 100%);
+    box-shadow: 0 0 12px var(--hx-tier-prismatic-glow);
+}
+
+.hx-tier-gold-bar {
+    background: linear-gradient(180deg, #f1d58a 0%, var(--hx-tier-gold) 100%);
+    box-shadow: 0 0 8px var(--hx-tier-gold-glow);
+}
+
+.hx-tier-silver-bar {
+    background: linear-gradient(180deg, #d8e1ef 0%, var(--hx-tier-silver) 100%);
+    box-shadow: 0 0 8px var(--hx-tier-silver-glow);
+}
+
+.hx-tier-prismatic-text {
+    color: var(--hx-tier-prismatic);
+}
+
+.hx-tier-gold-text {
+    color: var(--hx-tier-gold);
+}
+
+.hx-tier-silver-text {
+    color: var(--hx-tier-silver);
+}
+
+.hx-tooltip {
+    background: rgba(15, 15, 20, 0.88);
+    border: 1px solid var(--hx-border-strong);
+    color: var(--hx-text);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+}
