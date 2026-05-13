@@ -1,5 +1,9 @@
 .gitnexus
 .archive/
+
+# Local private investment research workspace; never publish to the public remote.
+/QuantProject/
+
 .claude/*
 !.claude/README.md
 

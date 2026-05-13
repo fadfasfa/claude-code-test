@@ -17,6 +17,7 @@ from pathlib import Path
 
 from processing.runtime_store import build_synergy_data_path, get_latest_csv
 from scraping.version_sync import STATIC_DATA_DIR
+from scraping.icon_resolver import normalize_augment_name
 from typing import Optional
 from urllib.parse import urljoin, urlparse, urlunparse
 from tools.log_utils import install_summary_logging, log_task_summary
@@ -384,7 +385,45 @@ class ApexSpider:
         return result
 
     def build_augment_name_map_from_latest_csv(self) -> dict:
-        # 从最新 runtime CSV 构建 hextechId 到中文海克斯名的映射。
+        # 从本地稳定资源构建 hextechId/slug 到中文海克斯名的映射。
+        # ApexLoL 停机时也必须依赖已落盘 map，不在这里触发网络重抓。
+        name_map = {}
+
+        def add_mapping(raw_key, raw_name):
+            key = str(raw_key or "").strip()
+            name = str(raw_name or "").strip()
+            if not key or not name:
+                return
+            name_map.setdefault(key, name)
+            name_map.setdefault(normalize_augment_name(key), name)
+
+        for filename in ("Augment_Apexlol_Map.json", "Augment_Icon_Manifest.json"):
+            path = STATIC_DATA_PATH / filename
+            if not path.exists():
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if filename == "Augment_Apexlol_Map.json" and isinstance(payload, dict):
+                for raw_name, raw_slug in payload.items():
+                    name = str(raw_name or "").strip()
+                    slug = str(raw_slug or "").strip()
+                    add_mapping(slug, name)
+                    add_mapping(name, name)
+            elif filename == "Augment_Icon_Manifest.json" and isinstance(payload, list):
+                for item in payload:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("name") or "").strip()
+                    filename_stem = Path(str(item.get("filename") or "")).stem
+                    add_mapping(name, name)
+                    add_mapping(filename_stem, name)
+
+        if name_map:
+            return name_map
+
+        # 最后再从最新 runtime CSV 退化成 name->name 映射，避免把英雄 ID 误当海克斯 ID。
         latest_csv = get_latest_csv()
         if not latest_csv or not os.path.exists(latest_csv):
             logger.warning("最新 runtime CSV 不存在，无法构建海克斯名称映射")
@@ -397,23 +436,19 @@ class ApexSpider:
             return {}
 
         try:
-            df = pd.read_csv(latest_csv, usecols=["英雄 ID", "海克斯名称"])
+            df = pd.read_csv(latest_csv, usecols=["海克斯名称"])
         except Exception as e:
             logger.warning(f"读取最新 CSV 关键列失败：{_safe_exception_label(e)}")
             return {}
 
-        name_map = {}
         for _, row in df.iterrows():
-            raw_id = row.get("英雄 ID")
             raw_name = row.get("海克斯名称")
             if raw_name is None:
                 continue
             name = str(raw_name).strip()
             if not name:
                 continue
-            hextech_id = str(raw_id).strip()
-            if hextech_id and hextech_id.lower() != "nan":
-                name_map.setdefault(hextech_id, name)
+            add_mapping(name, name)
         return name_map
 
     def _extract_js_object_literal(self, text: str, start_index: int) -> tuple[str, int]:
@@ -619,7 +654,7 @@ class ApexSpider:
             "community_map": community_map,
         }
 
-    def _resolve_augment_name(selfself, item: dict, augment_name_map: dict) -> Optional[str]:
+    def _resolve_augment_name(self, item: dict, augment_name_map: dict) -> Optional[str]:
         hextech_id = item.get("hextechId")
         if hextech_id is not None:
             key = str(hextech_id).strip()
@@ -668,8 +703,9 @@ class ApexSpider:
             "黄金",
             f"评分 {rating}",
             tag_label,
-            rating,
-            author,
+            "0",
+            "0",
+            f"作者：{author}",
             originality,
             content,
         ])

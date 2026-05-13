@@ -1015,32 +1015,45 @@
                     const tierName = parts[1];
                     const gradeStr = parts[2];
                     const tagGroup = parts[3];
-                    const upvotesStr = parts.length > 4 && parts[4].includes('|') === false ? parts[4] : '0 | 0';
-                    const upvoteMatches = upvotesStr.match(/(\d+)\s*\|\s*(\d+)/) || ['0', '0', '0'];
-                    const upvotes = parseInt(upvoteMatches[1] || '0');
-                    const downvotes = parseInt(upvoteMatches[2] || '0');
+                    let upvotes = 0;
+                    let downvotes = 0;
+                    let contentStartIndex = 5;
+                    if (parts.length > 5 && /^\d+$/.test(parts[4]) && /^\d+$/.test(parts[5])) {
+                        upvotes = parseInt(parts[4] || '0');
+                        downvotes = parseInt(parts[5] || '0');
+                        contentStartIndex = 6;
+                    } else {
+                        const upvoteMatches = String(parts[4] || '').match(/(\d+)\s*\|\s*(\d+)/);
+                        if (upvoteMatches) {
+                            upvotes = parseInt(upvoteMatches[1] || '0');
+                            downvotes = parseInt(upvoteMatches[2] || '0');
+                        }
+                    }
 
                     let author = "佚名";
                     let content = "";
                     let isOriginal = false;
 
-                    if (parts.length > 5) {
-                        const nextPart = parts[5];
-                        let contentStartIndex = 5;
+                    if (parts.length > contentStartIndex) {
+                        const nextPart = parts[contentStartIndex];
                         if (nextPart.startsWith('作者：') || nextPart.startsWith('作者:')) {
                             author = nextPart.substring(3).trim();
-                            contentStartIndex = 6;
-                            if (parts.length > 6 && parts[6] === '原创') {
-                                isOriginal = true;
-                                contentStartIndex = 7;
+                            contentStartIndex += 1;
+                            if (parts.length > contentStartIndex && (parts[contentStartIndex] === '原创' || parts[contentStartIndex] === '非原创')) {
+                                isOriginal = parts[contentStartIndex] === '原创';
+                                contentStartIndex += 1;
                             }
                         } else if (nextPart === '原创') {
                             isOriginal = true;
-                            contentStartIndex = 6;
-                            if (parts.length > 6 && (parts[6].startsWith('作者：') || parts[6].startsWith('作者:'))) {
-                                author = parts[6].substring(3).trim();
-                                contentStartIndex = 7;
+                            contentStartIndex += 1;
+                            if (parts.length > contentStartIndex && (parts[contentStartIndex].startsWith('作者：') || parts[contentStartIndex].startsWith('作者:'))) {
+                                author = parts[contentStartIndex].substring(3).trim();
+                                contentStartIndex += 1;
                             }
+                        } else if (parts.length > contentStartIndex + 1 && (parts[contentStartIndex + 1] === '原创' || parts[contentStartIndex + 1] === '非原创')) {
+                            author = nextPart || author;
+                            isOriginal = parts[contentStartIndex + 1] === '原创';
+                            contentStartIndex += 2;
                         }
                         content = parts.slice(contentStartIndex).join(' | ');
                     }

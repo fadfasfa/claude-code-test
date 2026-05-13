@@ -29,6 +29,46 @@ _api_cache_rebuild_lock = threading.Lock()
 _api_cache_rebuild_inflight = False
 
 
+def _normalize_synergy_entry(raw_entry: str) -> str:
+    """把历史联动字符串归一成前端稳定解析格式。"""
+    parts = [part.strip() for part in str(raw_entry or "").split("|")]
+    if len(parts) < 8:
+        return str(raw_entry or "")
+
+    name, tier, grade, tag = parts[:4]
+    fifth = parts[4]
+    sixth = parts[5] if len(parts) > 5 else ""
+    seventh = parts[6] if len(parts) > 6 else ""
+
+    # 新格式已经是：name | tier | grade | tag | up | down | 作者：x | 原创 | content
+    if len(parts) >= 9 and sixth.isdigit() and (seventh.startswith("作者：") or seventh.startswith("作者:")):
+        return " | ".join(parts)
+
+    # 旧格式是：name | tier | grade | tag | rating | author | 原创/非原创 | content
+    if seventh in {"原创", "非原创"} and not (sixth.startswith("作者：") or sixth.startswith("作者:")):
+        author = sixth or "ApexLoL"
+        content = " | ".join(parts[7:]).strip()
+        return " | ".join([
+            name,
+            tier,
+            grade,
+            tag,
+            "0",
+            "0",
+            f"作者：{author}",
+            seventh,
+            content,
+        ])
+
+    return " | ".join(parts)
+
+
+def _normalize_synergy_entries(raw_entries) -> list[str]:
+    if not isinstance(raw_entries, list):
+        return []
+    return [_normalize_synergy_entry(entry) for entry in raw_entries if str(entry or "").strip()]
+
+
 class RedirectRequest(BaseModel):
     """前端点击英雄后发送的跳转请求体。"""
 
@@ -300,7 +340,7 @@ def register_routes(app: FastAPI) -> None:
                         synergy_data = value
                         break
 
-            synergies = synergy_data.get("synergies", []) if synergy_data else []
+            synergies = _normalize_synergy_entries(synergy_data.get("synergies", [])) if synergy_data else []
             return JSONResponse(content={"synergies": synergies})
         except Exception as exc:
             web_runtime.logger.warning("协同数据查询失败：%s", exc)

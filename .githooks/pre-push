@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+
+protected_path='QuantProject/'
+zero='0000000000000000000000000000000000000000'
+
+while read local_ref local_sha remote_ref remote_sha
+do
+  if [ "$local_sha" = "$zero" ]; then
+    continue
+  fi
+
+  if [ "$remote_sha" = "$zero" ]; then
+    range="$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+
+  if git diff-tree --no-commit-id --name-status -r "$range" -- |
+    awk -v protected="$protected_path" '
+      $1 != "D" {
+        for (i = 2; i <= NF; i++) {
+          if (index($i, protected) == 1) {
+            found = 1
+          }
+        }
+      }
+      END { exit found ? 0 : 1 }
+    '
+  then
+    echo "Blocked: non-delete changes under $protected_path would be pushed."
+    echo "QuantProject is a local-private workspace; only deletion cleanup commits may touch it."
+    exit 1
+  fi
+done
+
+exit 0

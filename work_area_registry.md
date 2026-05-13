@@ -28,7 +28,7 @@ Codex 是当前唯一主流程。Claude Code 只保留白板和必要接口。
 | `run/` | 业务项目 / 数据区域 | Hextech 主运行时、处理、抓取、展示和打包资产 | `run/**` | whole repo | active | 原始数据、不可重建资产和当前脏树默认受保护 |
 | `heybox/` | 业务项目 / 爬虫工具 | Heybox 抓取脚本和相关本地文档 / 数据 | `heybox/**` | whole repo | active | 小型独立抓取工作区 |
 | `qm-run-demo/` | 实验区 / demo | 带自身 `run/`、文档和元数据的 demo / runtime 变体 | `qm-run-demo/**` | whole repo | active | 写入限制在顶层 demo 树内 |
-| `QuantProject/` | 业务项目 / 数据区域 | 量化策略、数据同步、报告和持仓历史 | `QuantProject/**` | whole repo | active | 独立数据 / 模型工作区，业务规则不写入根规则 |
+| `QuantProject/` | 本地私有工作区 / 数据区域 | 私人量化策略、研究参考、数据同步、报告和持仓历史 | `QuantProject/**` | whole repo | local-private | 不发布到 public remote；默认不被其他任务读取或修改；只允许本地版本管理 |
 | `sm2-randomizer/` | 业务项目 | Space Marine 2 随机器应用、管线、文档和 debug 资产 | `sm2-randomizer/**` | whole repo | active | 生成产物留在该树内 |
 | `subtitle_extractor/` | 工具区 | 字幕提取脚本、依赖和本地项目文档 | `subtitle_extractor/**` | whole repo | active | 独立媒体处理工作区 |
 | `docs/` | 治理区 | 仓库工作流、安全、路由和验证规则 | `docs/**` | whole repo | active | 不写子项目业务细节 |

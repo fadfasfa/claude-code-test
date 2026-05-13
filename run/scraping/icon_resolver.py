@@ -355,6 +355,33 @@ def _normalize_apexlol_hextech_slug(value: str) -> str:
     return value.lstrip("/").split("?")[0].split("#")[0]
 
 
+def _repair_mojibake_text(value: str) -> str:
+    """尽量还原把 UTF-8 误当 latin1 写入后的中文 key。"""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        repaired = text.encode("latin1").decode("utf-8").strip()
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+    return repaired or text
+
+
+def _expand_apexlol_hextech_map(raw_map: dict) -> dict:
+    """补齐中文 key 与 normalized key，兼容历史乱码 map。"""
+    expanded: Dict[str, str] = {}
+    for raw_key, raw_value in raw_map.items():
+        slug = _normalize_apexlol_hextech_slug(raw_value)
+        if not slug:
+            continue
+        key = str(raw_key or "").strip()
+        repaired_key = _repair_mojibake_text(key)
+        for candidate in (key, repaired_key, normalize_augment_name(key), normalize_augment_name(repaired_key)):
+            if candidate:
+                expanded.setdefault(candidate, slug)
+    return expanded
+
+
 def load_apexlol_hextech_map(config_dir: Optional[str] = None, force_refresh: bool = False) -> dict:
     """加载或抓取 apexlol 海克斯 slug 映射，供远端图标兜底使用。"""
     global _APEXLOL_MAP_CACHE
@@ -380,6 +407,7 @@ def load_apexlol_hextech_map(config_dir: Optional[str] = None, force_refresh: bo
             with open(map_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict) and data:
+                data = _expand_apexlol_hextech_map(data)
                 with _APEXLOL_MAP_LOCK:
                     _APEXLOL_MAP_CACHE = (map_path, current_mtime, data)
                 return data
@@ -408,6 +436,7 @@ def load_apexlol_hextech_map(config_dir: Optional[str] = None, force_refresh: bo
             continue
         name_to_slug.setdefault(title, slug)
         name_to_slug.setdefault(normalize_augment_name(title), slug)
+    name_to_slug = _expand_apexlol_hextech_map(name_to_slug)
 
     if name_to_slug:
         try:
