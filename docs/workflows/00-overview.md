@@ -17,6 +17,12 @@
 5. 运行 `scripts/workflow/verify.ps1` 或说明无法验证的原因。
 6. 使用 `scripts/workflow/local-review.ps1` 做本地审查摘要。
 7. 发布类动作必须由用户明确授权。
+## 认证与额度分离
+
+- Codex App 使用 ChatGPT 账号登录，负责插件管理、Codex App UI、cloud/thread/desktop 类能力。API key / `codex-proxy` 登录下如果插件或 cloud 能力不可用，不再尝试强行绕过。
+- VS Code Codex 插件和 Codex CLI 作为本地执行主力，固定通过全局 `codex-proxy` provider 使用 `CODEX_PROXY_API_KEY`。它们不跟随 Codex App 当前 ChatGPT 登录账号切换。
+- `cockpit-tools` 只允许切换 Codex App / ChatGPT 登录态，不修改 VS Code Codex 插件配置、不修改全局 `codex-proxy` provider、不修改 `CODEX_PROXY_API_KEY`、不触碰 VS 插件认证状态。
+- 日常代码额度通过 `codex-proxy` 账号池消耗；Codex App 的 ChatGPT 账号额度只用于插件、云端、桌面和 App 专属能力。
 
 ## 停止条件
 
