@@ -1,8 +1,8 @@
 # claudecode 项目地图
 
-`claudecode` 是多工作区本地开发仓库。仓库根目录是治理和路由层，不是默认业务实现区。
+`claudecode` 是个人总编程仓、多子项目母仓和 Codex 编程主执行仓。仓库根目录承载规则、路由、工作流文档和工具脚本，不承载默认业务实现。
 
-Codex 是当前唯一主流程。Claude Code 只保留空白占位。
+Codex 是当前唯一主流程。Claude Code 只保留白板和必要接口。
 
 ## 根目录职责
 
@@ -13,23 +13,27 @@ Codex 是当前唯一主流程。Claude Code 只保留空白占位。
 - `work_area_registry.md`：工作区注册表和写入边界。
 - `agent_tooling_baseline.md`：当前工具基线。
 - `docs/`：当前工作流、安全、验证和准入文档。
+- `docs/workflows/`：个人总编程仓工作流骨架。
+- `scripts/git/`：Git / worktree 辅助脚本。
+- `scripts/workflow/`：本仓工作流入口脚本。
 - `.agents/skills/`：仓库级 Codex skill 白名单。
 
 ## 工作区
 
-| 路径 | 用途 |
-| :--- | :--- |
-| `run/` | Hextech 运行时、抓取、处理、展示和工具 |
-| `sm2-randomizer/` | Space Marine 2 随机器应用和数据管线 |
-| `QuantProject/` | 量化策略和数据工作区 |
-| `heybox/` | 本地抓取脚本 |
-| `qm-run-demo/` | demo / runtime 变体工作区 |
-| `subtitle_extractor/` | 字幕提取工作区 |
-| `.learnings/` | 仓库内备注和已忽略原始错误输入 |
-| `.tmp/` | 已忽略运行时临时空间 |
-| `docs/` | 仓库工作流、安全、路由和验证规则 |
+| 路径 | 定位 | 说明 |
+| :--- | :--- | :--- |
+| `run/` | 业务项目 / 数据区域 | Hextech 运行时、抓取、处理、展示和工具；原始数据默认受保护 |
+| `sm2-randomizer/` | 业务项目 | Space Marine 2 随机器应用和数据管线 |
+| `QuantProject/` | 业务项目 / 数据区域 | 量化策略和数据工作区；业务规则不写入仓库根规则 |
+| `heybox/` | 业务项目 / 爬虫工具 | 本地抓取脚本 |
+| `qm-run-demo/` | 实验区 / demo | demo / runtime 变体工作区 |
+| `subtitle_extractor/` | 工具区 | 字幕提取工作区 |
+| `.learnings/` | 备注区 | 仓库内备注和已忽略原始错误输入 |
+| `.tmp/` | 临时区 | 已忽略运行时临时空间 |
+| `docs/` | 治理区 | 仓库工作流、安全、路由和验证规则 |
+| `scripts/` | 工具区 | 仓库级辅助脚本 |
 
-业务写入前必须先从 `work_area_registry.md` 选择目标工作区。
+业务写入前必须先从 `work_area_registry.md` 选择目标工作区。QuantProject 等子项目保留自己的业务规则，根目录只写跨项目流程和边界。
 
 ## 当前文档
 
@@ -41,10 +45,12 @@ Codex 是当前唯一主流程。Claude Code 只保留空白占位。
 | `docs/continuous-execution.md` | 已接受任务的继续执行和阻断规则 |
 | `docs/frontend-validation.md` | 前端验证规则 |
 | `docs/playwright-policy.md` | Playwright 使用边界 |
+| `docs/workflows/00-overview.md` | Full Workflow Bootstrap 总览 |
 
 ## 非目标
 
 - 不用普通仓库任务修改全局工具配置。
 - 不把本仓工作流推入 KB 仓库。
-- 不恢复 command、hook、memory、learning、PR shipping、task resume 或 worktree 高权限能力。
+- 不把子项目业务规则写入仓库根规则。
+- 不恢复 command、hook、memory、learning、自动 PR shipping、task resume 或高权限 worktree 能力。
 - 不在仓库根目录创建小写 `agents.md` 或临时任务笔记。

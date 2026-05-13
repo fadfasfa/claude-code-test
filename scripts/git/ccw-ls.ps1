@@ -25,8 +25,11 @@ function Resolve-RepoRoot {
 # 推导默认 sibling root，用于标记 worktree 是否位于约定目录下。
 function Get-SiblingRoot {
   param([string]$RepoRoot)
-  $repoInfo = Get-Item $RepoRoot
-  return Join-Path $repoInfo.DirectoryName ("$($repoInfo.Name).worktrees")
+  $repoInfo = Get-Item -LiteralPath $RepoRoot
+  if (-not $repoInfo.Parent) {
+    throw "无法解析 repo root 的父目录：$RepoRoot"
+  }
+  return Join-Path $repoInfo.Parent.FullName ("$($repoInfo.Name).worktrees")
 }
 
 # 解析 porcelain 输出，提取 worktree 路径、分支和 detached 状态。

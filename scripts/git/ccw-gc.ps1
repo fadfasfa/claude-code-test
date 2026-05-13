@@ -29,8 +29,11 @@ function Resolve-RepoRoot {
 # 推导默认 sibling root，限定清理范围。
 function Get-SiblingRoot {
   param([string]$RepoRoot)
-  $repoInfo = Get-Item $RepoRoot
-  return Join-Path $repoInfo.DirectoryName ("$($repoInfo.Name).worktrees")
+  $repoInfo = Get-Item -LiteralPath $RepoRoot
+  if (-not $repoInfo.Parent) {
+    throw "无法解析 repo root 的父目录：$RepoRoot"
+  }
+  return Join-Path $repoInfo.Parent.FullName ("$($repoInfo.Name).worktrees")
 }
 
 # 在未显式传入 -Base 时，按 origin/HEAD、当前分支、当前提交依次推断 base。

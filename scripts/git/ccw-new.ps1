@@ -110,10 +110,11 @@ function Test-BranchOccupied {
 # 主流程：解析参数、创建 sibling root、拉起 worktree，并输出下一步命令。
 try {
   $repoRoot = Resolve-RepoRoot
-  $repoInfo = Get-Item $repoRoot
+  $repoInfo = Get-Item -LiteralPath $repoRoot
   if (-not $repoInfo) { throw "无法读取 repo root 信息。" }
+  if (-not $repoInfo.Parent) { throw "无法解析 repo root 的父目录：$repoRoot" }
 
-  $repoParent = $repoInfo.DirectoryName
+  $repoParent = $repoInfo.Parent.FullName
   $repoName = $repoInfo.Name
   $defaultRoot = Join-Path $repoParent ("$repoName.worktrees")
 
