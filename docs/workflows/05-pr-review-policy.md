@@ -9,8 +9,10 @@
 ## 发布边界
 
 - `finalize-pr.ps1` 默认 dry-run。
-- git add、commit、push、PR create 都需要明确授权。
-- push 和 PR 必须二次确认。
+- review branch、commit、push、PR create 都需要明确且独立的授权。
+- push 和 PR 必须二次确认；merge 不进入默认自动路径。
+- `manual-required` 且没有 `manual_accepted` 时，不得 commit。
+- `automated` 只允许进入 finalize dry-run / review branch / commit 授权阶段，不自动放行 push / PR / merge。
 
 ## Review 内容
 
@@ -18,3 +20,4 @@
 - 是否触碰受保护路径。
 - 是否有验证证据。
 - 是否有未说明的风险。
+- changed files 是否都在 `target_paths` / `allowed_paths` 内。

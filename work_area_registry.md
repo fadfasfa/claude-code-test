@@ -32,7 +32,7 @@ Codex 是当前唯一主流程。Claude Code 只保留白板和必要接口。
 | `sm2-randomizer/` | 业务项目 | Space Marine 2 随机器应用、管线、文档和 debug 资产 | `sm2-randomizer/**` | whole repo | active | 生成产物留在该树内 |
 | `subtitle_extractor/` | 工具区 | 字幕提取脚本、依赖和本地项目文档 | `subtitle_extractor/**` | whole repo | active | 独立媒体处理工作区 |
 | `docs/` | 治理区 | 仓库工作流、安全、路由和验证规则 | `docs/**` | whole repo | active | 不写子项目业务细节 |
-| `scripts/` | 工具区 | 仓库级 Git 和 workflow 辅助脚本 | `scripts/**` | whole repo | active | 脚本必须默认可 dry-run 或只读验证 |
+| `scripts/` | 工具区 | 仓库级 Git 和 workflow 辅助脚本 | `scripts/**` | whole repo | active | `scripts/workflow/*.ps1` 是默认入口；`scripts/git/ccw-*.ps1` 仅 legacy compatibility；脚本必须默认可 dry-run 或只读验证 |
 | `.agents/skills/` | 治理区 | 仓库级 Codex skill 白名单和桥接 skill | `.agents/skills/**` | whole repo | active | 不存放业务实现 |
 
 ## 操作说明

@@ -9,7 +9,7 @@
 - `repo-local-pr-review`：本地 diff / PR 前审查，不调用云端 PR。
 - `repo-maintenance`：仓库维护、清理候选和保护资产检查。
 - `karpathy-project-bridge`：桥接全局 `karpathy-guidelines`。
-- `superpowers-project-bridge`：极小边界版 Superpowers 桥接。
+- `superpowers-project-bridge`：仓库级方法论 Router 桥接，仅路由 brainstorming、worktree、planning、TDD、debugging、execution、code review 方法。
 - `frontend-design-project-bridge`：桥接全局 `frontend-design`。
 
 ## 边界
@@ -17,4 +17,4 @@
 - 不保留 memory / learning promotion。
 - 不恢复 command、hook、自动 PR shipping、task resume 或高权限 worktree skill。
 - 新增 skill 必须先得到用户明确要求，并走 `repo-module-admission`。
-- 任何 skill 都不得覆盖 `AGENTS.md`、`work_area_registry.md`、Git 边界、安全边界或验证要求。
+- 任何 skill 都不得覆盖 `AGENTS.md`、`work_area_registry.md`、Git 边界、安全边界、发布权限、验收规则或 workflow scripts。

@@ -23,3 +23,5 @@ pwsh -NoProfile -File scripts/workflow/verify.ps1
 - 列出实际结果。
 - 列出未验证点。
 - 列出是否触碰 `run/**`、是否删除/清理、是否提交或推送。
+- 写入 `TASK_HANDOFF.md` 和 `.task-worktree.json` 的 verify/test 结果。
+- acceptance gate 不能绕过失败或缺失的验证；测试缺失、测试失败或覆盖不足至少降级，必要时 `manual-required`。
