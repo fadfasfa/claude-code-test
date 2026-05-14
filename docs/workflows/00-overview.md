@@ -12,11 +12,12 @@
 
 1. 读 `AGENTS.md`、`PROJECT.md`、`work_area_registry.md`。
 2. 选择明确 `target_work_area`。
-3. 使用单一 active worktree。
+3. 使用 `scripts/workflow/worktree-start.ps1` 创建单一 detached active worktree。
 4. 小步修改，避免顺手重构。
 5. 运行 `scripts/workflow/verify.ps1` 或说明无法验证的原因。
-6. 使用 `scripts/workflow/local-review.ps1` 做本地审查摘要。
-7. 发布类动作必须由用户明确授权。
+6. 使用 `scripts/workflow/local-review.ps1` 做本地审查摘要并写入 acceptance gate。
+7. 需要时通过 `TASK_HANDOFF.md` 快速人工验收；`automated` 不强制打开 VS Code。
+8. 发布类动作必须由用户明确授权。
 ## 认证与额度分离
 
 - Codex App 使用 ChatGPT 账号登录，负责插件管理、Codex App UI、cloud/thread/desktop 类能力。API key / `codex-proxy` 登录下如果插件或 cloud 能力不可用，不再尝试强行绕过。
@@ -31,3 +32,10 @@
 - 备份失败。
 - 验证命令无法运行且没有明确原因。
 - 将要触碰未授权业务工作区或当前脏树。
+- 任务目标路径与主仓 dirty 文件重叠，且用户未显式选择处理方式。
+
+## Canonical Entrypoints
+
+- `scripts/workflow/*.ps1` 是当前 canonical workflow。
+- `scripts/git/ccw-*.ps1` 是 legacy compatibility，只保留兼容，不作为默认入口。
+- 后续是否包装、弃用或迁移 legacy scripts，需要单独任务决定。

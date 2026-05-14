@@ -1,6 +1,6 @@
 ---
 name: superpowers-project-bridge
-description: 极小边界版 Superpowers 桥接；仅作为能力索引，不覆盖本仓 AGENTS、Git、安全或验证边界。
+description: 仓库级 Superpowers 方法论桥接；只路由方法触发条件，不覆盖本仓 AGENTS、Git、安全、发布或验收边界。
 ---
 
 # superpowers-project-bridge
@@ -8,12 +8,13 @@ description: 极小边界版 Superpowers 桥接；仅作为能力索引，不覆
 ## trigger
 
 - 用户明确提到 Superpowers。
-- 需要确认可用能力边界，但不需要新增仓库 workflow。
+- 任务需要 brainstorming、using-git-worktrees、writing-plans、TDD、debugging、executing-plans 或 requesting-code-review 的方法提示。
 
 ## scope
 
-- 将 Superpowers 视为能力索引。
+- 将 Superpowers 视为方法论 Router。
 - 仍以 `AGENTS.md`、`work_area_registry.md` 和 `docs/workflows/` 为本仓规则来源。
+- 具体触发条件以 `AGENTS.md` 的 Methodology Router 为准。
 
 ## forbidden actions
 
