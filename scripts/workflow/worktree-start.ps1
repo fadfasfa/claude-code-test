@@ -89,7 +89,7 @@ function New-DetachedWorktreeWithFallback {
     }
     try {
       New-Item -ItemType Directory -Path $attempt.Root -Force | Out-Null
-      git -C $RepoRoot worktree add --detach $attempt.Path $BaseRef
+      $null = git -C $RepoRoot worktree add --detach $attempt.Path $BaseRef 2>&1
       if ($LASTEXITCODE -eq 0) { return $attempt.Path }
       $failures += "$($attempt.Label): git worktree add --detach exited $LASTEXITCODE"
     } catch {
@@ -224,6 +224,12 @@ $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $creat
 - verify_test_results: 待 verify 更新。
 - local_review_results: 待 local-review 更新。
 - optional_vs_code_review: ``code $createdPath``
+
+## CC / CX Protocol Files
+
+- codex_prompt: ``$createdPath\CODEX_PROMPT.md``
+- codex_result: ``$createdPath\CODEX_RESULT.md``
+- claude_review: ``$createdPath\CLAUDE_REVIEW.md``
 
 ## Dirty Overlap
 
