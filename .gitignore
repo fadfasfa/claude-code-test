@@ -52,3 +52,6 @@ coverage/
 /findings.md
 /progress.md
 tmp/
+
+# generated per-worktree, not committed to main
+TASK_HANDOFF.md

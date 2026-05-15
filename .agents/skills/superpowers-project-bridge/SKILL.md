@@ -15,6 +15,12 @@ description: 仓库级 Superpowers 方法论桥接；只路由方法触发条件
 - 将 Superpowers 视为方法论 Router。
 - 仍以 `AGENTS.md`、`work_area_registry.md` 和 `docs/workflows/` 为本仓规则来源。
 - 具体触发条件以 `AGENTS.md` 的 Methodology Router 为准。
+- `using-git-worktrees` 的策略：
+  默认在主仓工作。开 worktree 是显性动作，仅在以下两种触发下进行：
+  1. 用户消息中包含明示词："开树"、"在工作树里做"、"detached worktree"、"使用 worktree" 之一；
+  2. 上游 plan 文件（`IMPLEMENTATION_PLAN.md` / `TASK_BRIEF.md` / `CODEX_PROMPT.md`）明确标注 "requires_worktree: true" 或等价中文 "需要 worktree"。
+- 不构成开树触发：任务涉及多个文件、任务跨多个阶段、任务被 `writing-plans` / `executing-plans` 路由命中、任务被判定为 non-trivial / 高风险路径。
+- `scripts/workflow/worktree-start.ps1` 仍可被显性调用；其行为不变。
 
 ## forbidden actions
 

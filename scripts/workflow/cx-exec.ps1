@@ -1,150 +1,198 @@
 <#
-.SYNOPSIS
-    Invoke Codex to execute a task with isolated CODEX_HOME
-.DESCRIPTION
-    Wrapper to call codex CLI via codex-proxy, with fallback handling
-.PARAMETER TaskDescription
-    Task to execute
-.PARAMETER CodexHome
-    Isolated CODEX_HOME directory (default: .codex-exec-{caller})
-.PARAMETER DryRun
-    Show what would happen without executing
-.PARAMETER Verbose
-    Verbose output
+中文简介：
+- 这个文件是什么：Claude Code 调用 Codex 执行器的唯一入口。
+- 什么时候读：CC 需要把明确任务交给 CX 在当前 task worktree 内执行时。
+- 约束什么：使用 CC 独立 CODEX_HOME；不读 VS 插件目录；不做 stage、commit、push 或 PR。
 #>
 
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$TaskDescription,
-    [string]$CodexHome,
-    [switch]$DryRun
+  [string]$CodexHome = "C:\Users\apple\.codex-exec-cc",
+  [string]$PromptFile = "CODEX_PROMPT.md",
+  [string]$ResultFile = "CODEX_RESULT.md",
+  [switch]$Help
 )
 
 Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
 
-# Diagnostics
-function Test-CodexSetup {
-    Write-Host "=== Codex Setup Diagnostics ===" -ForegroundColor Cyan
+$script:CcCodexConfig = @'
+model = "gpt-5.5"
+model_provider = "codex-proxy"
 
-    # 1. Check codex executable
-    $codexCmd = Get-Command codex -ErrorAction SilentlyContinue
-    if ($codexCmd) {
-        Write-Host "✓ codex command: $($codexCmd.Source)" -ForegroundColor Green
-    } else {
-        Write-Host "✗ codex command NOT FOUND" -ForegroundColor Red
-        return $false
-    }
+[model_providers.codex-proxy]
+name = "Codex Proxy"
+base_url = "http://127.0.0.1:8080/v1"
+env_key = "CODEX_PROXY_API_KEY"
+wire_api = "responses"
+'@
 
-    # 2. Check codex-proxy health
-    try {
-        $health = Invoke-RestMethod -Uri "http://127.0.0.1:8080/health" -Method Get -ErrorAction Stop
-        Write-Host "✓ codex-proxy health: $($health.status) (auth: $($health.authenticated))" -ForegroundColor Green
-    } catch {
-        Write-Host "✗ codex-proxy /health failed: $_" -ForegroundColor Red
-        return $false
-    }
-
-    # 3. Check API key
-    if ($env:CODEX_PROXY_API_KEY) {
-        Write-Host "✓ CODEX_PROXY_API_KEY: set" -ForegroundColor Green
-    } else {
-        Write-Host "⚠ CODEX_PROXY_API_KEY: not set (will use default)" -ForegroundColor Yellow
-    }
-
-    # 4. Check proxy URL
-    $proxyUrl = $env:CODEX_PROXY_URL
-    if (-not $proxyUrl) {
-        $proxyUrl = "http://127.0.0.1:8080"
-    }
-    Write-Host "✓ codex-proxy URL: $proxyUrl" -ForegroundColor Green
-
-    return $true
+function Show-Help {
+  Write-Output "Usage: pwsh -NoProfile -File scripts/workflow/cx-exec.ps1 [-CodexHome <path>] [-PromptFile CODEX_PROMPT.md] [-ResultFile CODEX_RESULT.md]"
 }
 
-# Setup CODEX_HOME
-if (-not $CodexHome) {
-    $caller = $env:USERNAME
-    $CodexHome = ".codex-exec-$caller"
+function Get-CxExecRepoRoot {
+  $root = git rev-parse --show-toplevel 2>$null
+  if (-not $root) { throw "cx-exec.ps1 必须在 Git worktree 内运行。" }
+  return (Resolve-Path -LiteralPath $root).Path
 }
 
-Write-Host "Task: $TaskDescription" -ForegroundColor Cyan
-Write-Host "CODEX_HOME: $CodexHome" -ForegroundColor Cyan
-
-# Always run diagnostics
-$setupOk = Test-CodexSetup
-if (-not $setupOk) {
-    Write-Host "Setup diagnostics FAILED" -ForegroundColor Red
-    if ($DryRun) {
-        Write-Host "[DRY-RUN] Would exit with error" -ForegroundColor Yellow
-        exit 1
+function Get-CxExecMetadataFiles {
+  $roots = @("C:\Users\apple\worktrees", "C:\Users\apple\_worktrees")
+  foreach ($root in $roots) {
+    if (-not (Test-Path -LiteralPath $root)) { continue }
+    Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object {
+      $meta = Join-Path $_.FullName ".task-worktree.json"
+      if (Test-Path -LiteralPath $meta) { Get-Item -LiteralPath $meta }
     }
+  }
 }
 
-# Create isolated environment
-if (-not (Test-Path $CodexHome)) {
-    Write-Host "Creating CODEX_HOME: $CodexHome" -ForegroundColor Gray
-    if (-not $DryRun) {
-        New-Item -ItemType Directory -Path $CodexHome -Force | Out-Null
-    } else {
-        Write-Host "[DRY-RUN] Would create directory: $CodexHome" -ForegroundColor Yellow
-    }
+function Assert-CxExecActiveWorktree {
+  param([string]$RepoRoot)
+
+  $resolvedRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+  $isTaskWorktree = $resolvedRoot.StartsWith("C:\Users\apple\worktrees", [System.StringComparison]::OrdinalIgnoreCase) -or
+    $resolvedRoot.StartsWith("C:\Users\apple\_worktrees", [System.StringComparison]::OrdinalIgnoreCase)
+  if (-not $isTaskWorktree) {
+    throw "cx-exec.ps1 只能在 C:\Users\apple\worktrees 或 C:\Users\apple\_worktrees 下的 task worktree 内运行。"
+  }
+
+  $metadataFiles = @(Get-CxExecMetadataFiles)
+  if ($metadataFiles.Count -ne 1) {
+    throw "cx-exec.ps1 需要且只允许一个 active task worktree；当前发现 $($metadataFiles.Count) 个 metadata 文件。"
+  }
+
+  $metadata = Get-Content -LiteralPath $metadataFiles[0].FullName -Raw | ConvertFrom-Json
+  if (-not ($metadata.PSObject.Properties.Name -contains "worktree_path")) {
+    throw ".task-worktree.json 缺少 worktree_path，无法确认 active worktree。"
+  }
+  $metadataPath = (Resolve-Path -LiteralPath ([string]$metadata.worktree_path)).Path
+  if ($metadataPath -ine $resolvedRoot) {
+    throw "当前 cwd 不是登记的 active worktree：$metadataPath"
+  }
 }
 
-$env:CODEX_HOME = $CodexHome
+function Ensure-CcCodexConfig {
+  param([string]$CodexHome)
 
-# Invoke Codex (or fallback for testing)
-if ($DryRun) {
-    Write-Host "[DRY-RUN] Would invoke: codex exec --home '$CodexHome' --task '$TaskDescription'" -ForegroundColor Yellow
-    Write-Host "[DRY-RUN] Would generate: CODEX_RESULT.md" -ForegroundColor Yellow
-    exit 0
+  if (-not (Test-Path -LiteralPath $CodexHome)) {
+    New-Item -ItemType Directory -Path $CodexHome -Force | Out-Null
+  }
+  $configPath = Join-Path $CodexHome "config.toml"
+  if (-not (Test-Path -LiteralPath $configPath)) {
+    $script:CcCodexConfig | Set-Content -LiteralPath $configPath -Encoding UTF8
+  }
+  return $configPath
 }
 
-Write-Host "Invoking Codex..." -ForegroundColor Cyan
+function Assert-CodexProxyApiKey {
+  if ([string]::IsNullOrWhiteSpace($env:CODEX_PROXY_API_KEY)) {
+    throw "CODEX_PROXY_API_KEY is missing. Set CODEX_PROXY_API_KEY in the current process before running scripts/workflow/cx-exec.ps1."
+  }
+}
 
-# Try real codex invocation
-# CODEX_HOME is already set in environment; just pass task as prompt
-try {
-    Write-Host "Invoking: codex exec '$TaskDescription'" -ForegroundColor Gray
-    $result = & codex exec "$TaskDescription" 2>&1
-    Write-Host "✓ Codex execution completed" -ForegroundColor Green
+function Invoke-CodexExec {
+  param(
+    [string]$RepoRoot,
+    [string]$CodexHome,
+    [string]$PromptText
+  )
 
-    # Generate result file
-    $resultContent = @"
-# Codex Execution Result
+  $codex = Get-Command codex.exe -ErrorAction Stop | Select-Object -First 1
+  $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+  $startInfo.FileName = $codex.Source
+  [void]$startInfo.ArgumentList.Add("exec")
+  [void]$startInfo.ArgumentList.Add("-C")
+  [void]$startInfo.ArgumentList.Add($RepoRoot)
+  [void]$startInfo.ArgumentList.Add("--sandbox")
+  [void]$startInfo.ArgumentList.Add("workspace-write")
+  [void]$startInfo.ArgumentList.Add("-")
+  $startInfo.RedirectStandardInput = $true
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.RedirectStandardError = $true
+  $startInfo.UseShellExecute = $false
+  $startInfo.Environment["CODEX_HOME"] = $CodexHome
 
-**Task:** $TaskDescription
-**Status:** SUCCESS
-**Timestamp:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-**CODEX_HOME:** $CodexHome
+  $process = [System.Diagnostics.Process]::new()
+  $process.StartInfo = $startInfo
+  [void]$process.Start()
+  $process.StandardInput.Write($PromptText)
+  $process.StandardInput.Close()
+  $stdout = $process.StandardOutput.ReadToEnd()
+  $stderr = $process.StandardError.ReadToEnd()
+  $process.WaitForExit()
 
-## Output
-$result
+  return [pscustomobject]@{
+    ExitCode = $process.ExitCode
+    Stdout = $stdout
+    Stderr = $stderr
+  }
+}
 
-## Summary
-Codex task executed successfully with isolated CODEX_HOME.
-"@
+function Write-CodexResult {
+  param(
+    [string]$Path,
+    [string]$RepoRoot,
+    [string]$PromptPath,
+    [string]$CodexHome,
+    $Result
+  )
 
-    Set-Content -Path "CODEX_RESULT.md" -Value $resultContent -Encoding UTF8
-    Write-Host "✓ Generated CODEX_RESULT.md" -ForegroundColor Green
+  @"
+# CODEX_RESULT
 
-} catch {
-    Write-Host "✗ Codex execution failed: $_" -ForegroundColor Red
+- repo_root: ``$RepoRoot``
+- prompt_file: ``$PromptPath``
+- codex_home: ``$CodexHome``
+- command: ``codex exec -C "$RepoRoot" --sandbox workspace-write -``
+- exit_code: $($Result.ExitCode)
 
-    # Fallback: generate error result
-    $resultContent = @"
-# Codex Execution Result
+## STDOUT
 
-**Task:** $TaskDescription
-**Status:** FAILED
-**Timestamp:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-**CODEX_HOME:** $CodexHome
-**Error:** $_
+````text
+$($Result.Stdout)
+````
 
-## Summary
-Codex invocation failed. See error above.
-"@
+## STDERR
 
-    Set-Content -Path "CODEX_RESULT.md" -Value $resultContent -Encoding UTF8
-    Write-Host "✓ Generated CODEX_RESULT.md (error state)" -ForegroundColor Yellow
-    exit 1
+````text
+$($Result.Stderr)
+````
+"@ | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
+function Invoke-CxExec {
+  param(
+    [string]$CodexHome,
+    [string]$PromptFile,
+    [string]$ResultFile
+  )
+
+  $repoRoot = Get-CxExecRepoRoot
+  Assert-CxExecActiveWorktree -RepoRoot $repoRoot
+
+  $promptPath = if ([System.IO.Path]::IsPathRooted($PromptFile)) { $PromptFile } else { Join-Path $repoRoot $PromptFile }
+  $resultPath = if ([System.IO.Path]::IsPathRooted($ResultFile)) { $ResultFile } else { Join-Path $repoRoot $ResultFile }
+  if (-not (Test-Path -LiteralPath $promptPath)) {
+    throw "缺少 CODEX_PROMPT.md：$promptPath"
+  }
+
+  Assert-CodexProxyApiKey
+  [void](Ensure-CcCodexConfig -CodexHome $CodexHome)
+
+  $promptText = Get-Content -LiteralPath $promptPath -Raw
+  $result = Invoke-CodexExec -RepoRoot $repoRoot -CodexHome $CodexHome -PromptText $promptText
+  Write-CodexResult -Path $resultPath -RepoRoot $repoRoot -PromptPath $promptPath -CodexHome $CodexHome -Result $result
+  if ($result.ExitCode -ne 0) {
+    throw "codex exec failed with exit code $($result.ExitCode). See CODEX_RESULT.md for stdout/stderr."
+  }
+}
+
+if ($Help) {
+  Show-Help
+  exit 0
+}
+
+if ($MyInvocation.InvocationName -ne ".") {
+  Invoke-CxExec -CodexHome $CodexHome -PromptFile $PromptFile -ResultFile $ResultFile
 }
