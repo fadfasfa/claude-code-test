@@ -40,54 +40,24 @@
   "manual_accepted": true,
   "review_branch": "codex/task/governance-acceptance",
   "approved_changed_files": [
-    ".agents/skills/README.md",
-    ".agents/skills/superpowers-project-bridge/SKILL.md",
-    "AGENTS.md",
-    "docs/workflows/00-overview.md",
-    "docs/workflows/01-worktree-policy.md",
-    "docs/workflows/02-git-policy.md",
-    "docs/workflows/04-verification-policy.md",
-    "docs/workflows/05-pr-review-policy.md",
-    "docs/workflows/07-protected-assets.md",
-    "scripts/workflow/cleanup-worktree.ps1",
-    "scripts/workflow/finalize-pr.ps1",
-    "scripts/workflow/local-review.ps1",
-    "scripts/workflow/verify.ps1",
-    "scripts/workflow/worktree-start.ps1",
-    "scripts/workflow/worktree-status.ps1",
-    "work_area_registry.md",
     ".task-worktree.json",
-    "TASK_HANDOFF.md",
-    "scripts/git/README.md",
-    "scripts/workflow/task-metadata.ps1"
+    "CLAUDE_REVIEW.md",
+    "CODEX_RESULT.md",
+    "docs/workflows/99-pipeline-smoke-test.md"
   ],
   "verify_status": "passed",
   "local_review_status": "completed",
   "created_at": "2026-05-14T08:33:12Z",
-  "updated_at": "2026-05-14T09:11:28.4794605Z",
+  "updated_at": "2026-05-15T11:55:24.3769546Z",
   "verify_results": [
     "PASS git diff --check"
   ],
   "local_review_reason": "触碰规则、workflow、保护资产、配置或高风险路径。",
-  "unexpected_changed_files": [],
+  "unexpected_changed_files": [
+    "CLAUDE_REVIEW.md",
+    "CODEX_RESULT.md"
+  ],
   "high_risk_findings": [
-    ".agents/skills/README.md",
-    ".agents/skills/superpowers-project-bridge/SKILL.md",
-    "AGENTS.md",
-    "docs/workflows/00-overview.md",
-    "docs/workflows/01-worktree-policy.md",
-    "docs/workflows/02-git-policy.md",
-    "docs/workflows/04-verification-policy.md",
-    "docs/workflows/05-pr-review-policy.md",
-    "docs/workflows/07-protected-assets.md",
-    "scripts/workflow/cleanup-worktree.ps1",
-    "scripts/workflow/finalize-pr.ps1",
-    "scripts/workflow/local-review.ps1",
-    "scripts/workflow/verify.ps1",
-    "scripts/workflow/worktree-start.ps1",
-    "scripts/workflow/worktree-status.ps1",
-    "work_area_registry.md",
-    "scripts/git/README.md",
-    "scripts/workflow/task-metadata.ps1"
+    "docs/workflows/99-pipeline-smoke-test.md"
   ]
 }
