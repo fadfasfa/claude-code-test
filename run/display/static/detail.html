@@ -736,6 +736,8 @@
         let currentMode = 'comprehensive';
         let activeArray = null;
         let synergyData = null;
+        let augmentIconMap = {};
+        let augmentCatalogMap = {};
         let ws = null;
 
         const tabId = Math.random().toString(36).substring(2, 9);
@@ -812,6 +814,13 @@
             return 'Silver';
         }
 
+        function normalizeAugmentKey(value) {
+            return String(value || '')
+                .toLowerCase()
+                .replace(/[\s·_\-()/【】\[\]（）:：'"]/g, '')
+                .trim();
+        }
+
         function getTierBarClass(tier) {
             const normalized = normalizeTierName(tier);
             if (normalized === 'Prismatic') return 'hx-tier-prismatic-bar';
@@ -843,18 +852,98 @@
 
         function findBaseHexByName(nameText) {
             const baseArray = hextechData ? (hextechData.comprehensive || []) : [];
-            const exact = baseArray.find(h => h.海克斯名称 === nameText);
-            if (exact) {
-                return exact;
-            }
             const candidates = splitAugmentCandidates(nameText);
+            const exactNames = [String(nameText || '').trim(), ...candidates].filter(Boolean);
+
+            for (const exactName of exactNames) {
+                const exact = baseArray.find(h => h.海克斯名称 === exactName);
+                if (exact) {
+                    return exact;
+                }
+            }
+
+            const baseByKey = new Map();
+            baseArray.forEach((hex) => {
+                const key = normalizeAugmentKey(hex.海克斯名称);
+                if (key && !baseByKey.has(key)) {
+                    baseByKey.set(key, hex);
+                }
+            });
             for (const candidate of candidates) {
-                const matched = baseArray.find(h => h.海克斯名称 === candidate);
+                const matched = baseByKey.get(normalizeAugmentKey(candidate));
                 if (matched) {
                     return matched;
                 }
             }
             return null;
+        }
+
+        function findAugmentIconFromMap(nameText) {
+            const candidates = splitAugmentCandidates(nameText);
+            const entries = Object.entries(augmentIconMap || {});
+            const byKey = new Map(entries.map(([name, url]) => [normalizeAugmentKey(name), { name, url }]));
+            for (const candidate of candidates) {
+                const hit = byKey.get(normalizeAugmentKey(candidate));
+                if (hit) {
+                    return hit;
+                }
+            }
+            return null;
+        }
+
+        function findAugmentCatalogEntry(nameText) {
+            const candidates = splitAugmentCandidates(nameText);
+            for (const candidate of candidates) {
+                const hit = augmentCatalogMap[normalizeAugmentKey(candidate)];
+                if (hit) {
+                    return hit;
+                }
+            }
+            return null;
+        }
+
+        function resolveArticleAugment(item) {
+            const baseHex = findBaseHexByName(item.name);
+            if (baseHex) {
+                return {
+                    name: baseHex.海克斯名称,
+                    icon: toLocalAugmentIconUrl(baseHex.icon, baseHex.海克斯名称),
+                    tier: baseHex.海克斯阶级,
+                    desc: purifyHextechTooltip(baseHex.tooltip_plain),
+                    score: baseHex.综合得分 || baseHex.海克斯胜率 || 0
+                };
+            }
+
+            const catalogEntry = findAugmentCatalogEntry(item.name);
+            if (catalogEntry) {
+                return {
+                    name: catalogEntry.name,
+                    icon: catalogEntry.icon || toLocalAugmentIconUrl('', catalogEntry.name),
+                    tier: catalogEntry.tier || item.tier,
+                    desc: purifyHextechTooltip(catalogEntry.tooltip_plain || catalogEntry.description || ''),
+                    score: 0
+                };
+            }
+
+            const mapped = findAugmentIconFromMap(item.name);
+            if (mapped) {
+                return {
+                    name: mapped.name,
+                    icon: mapped.url,
+                    tier: item.tier,
+                    desc: '无详细描述',
+                    score: 0
+                };
+            }
+
+            const fallbackName = splitAugmentCandidates(item.name)[0] || item.name;
+            return {
+                name: fallbackName,
+                icon: toLocalAugmentIconUrl('', fallbackName),
+                tier: item.tier,
+                desc: '无详细描述',
+                score: 0
+            };
         }
 
         function renderAugmentIcon(iconUrl, hextechName, tier, variant = 'list') {
@@ -978,19 +1067,16 @@
                 return;
             }
 
-            const tierKeywords = {
-                'all': null,
-                'Prismatic': ['棱彩'],
-                'Gold': ['黄金', '金色'],
-                'Silver': ['白银', '银色']
-            };
-
-            const keywords = tierKeywords[tier];
             let filtered = synergyData;
 
-            if (keywords) {
+            if (tier !== 'all') {
                 filtered = synergyData.filter(item => {
-                    return keywords.some(kw => item.includes(kw));
+                    const parts = String(item || '').split('|').map(s => s.trim());
+                    if (parts.length < 2) {
+                        return false;
+                    }
+                    const resolvedAugment = resolveArticleAugment({ name: parts[0], tier: parts[1] });
+                    return normalizeTierName(resolvedAugment.tier || parts[1]) === tier;
                 });
             }
 
@@ -1067,8 +1153,8 @@
                     else if (gradeVal.includes('C')) gradeScore = 2;
                     else if (gradeVal.includes('D')) gradeScore = 1;
 
-                    const baseHex = findBaseHexByName(nameInfo);
-                    const fallbackScore = baseHex ? (baseHex.综合得分 || baseHex.海克斯胜率 || 0) : 0;
+                    const resolvedAugment = resolveArticleAugment({ name: nameInfo, tier: tierName });
+                    const fallbackScore = resolvedAugment.score || 0;
 
                     return {
                         original: str,
@@ -1083,10 +1169,10 @@
                         isOriginal: isOriginal,
                         content: content,
                         fallbackScore: fallbackScore,
-                        baseHex: baseHex
+                        resolvedAugment: resolvedAugment
                     };
                 }
-                return { original: str, name: "未知联动", gradeScore: -1, fallbackScore: 0, content: str, baseHex: null };
+                return { original: str, name: "未知联动", gradeScore: -1, fallbackScore: 0, content: str, resolvedAugment: null };
             });
 
             parsedArticles.sort((a, b) => {
@@ -1118,12 +1204,10 @@
                     badgeText = 'text-[#ffffff]';
                 }
 
-                const leadAugmentName = item.baseHex ? item.baseHex.海克斯名称 : (splitAugmentCandidates(item.name)[0] || item.name);
-                const iconUrl = item.baseHex
-                    ? toLocalAugmentIconUrl(item.baseHex.icon, item.baseHex.海克斯名称)
-                    : toLocalAugmentIconUrl('', leadAugmentName);
+                const resolvedAugment = item.resolvedAugment || resolveArticleAugment(item);
+                const iconUrl = resolvedAugment.icon;
                 const safeName = escapeHtml(item.name);
-                const safeTier = escapeHtml(item.tier);
+                const safeTier = escapeHtml(resolvedAugment.tier || item.tier);
                 const safeGrade = escapeHtml(item.grade);
                 const safeAuthor = escapeHtml(item.author);
 
@@ -1134,14 +1218,10 @@
                     return 'border border-gray-500/40 text-gray-400 bg-gray-500/10';
                 };
 
-                const hexInfo = item.baseHex ? {
-                    name: item.baseHex.海克斯名称,
-                    tier: item.baseHex.海克斯阶级,
-                    desc: purifyHextechTooltip(item.baseHex.tooltip_plain)
-                } : {
-                    name: item.name,
-                    tier: item.tier,
-                    desc: '无详细描述'
+                const hexInfo = {
+                    name: resolvedAugment.name || item.name,
+                    tier: resolvedAugment.tier || item.tier,
+                    desc: resolvedAugment.desc || '无详细描述'
                 };
                 const bindData = encodeURIComponent(JSON.stringify(hexInfo));
 
@@ -1150,7 +1230,7 @@
     <div class="hextech-article-inner bg-[#060b10]" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px));">
         
         <div class="cursor-pointer" data-hex-info="${bindData}">
-            ${renderAugmentIcon(iconUrl, item.name, item.tier, 'detail')}
+            ${renderAugmentIcon(iconUrl, resolvedAugment.name || item.name, resolvedAugment.tier || item.tier, 'detail')}
         </div>
 
         <div class="flex flex-col flex-grow">
@@ -1235,6 +1315,45 @@
             }
         }
 
+        async function loadAugmentIconMap() {
+            try {
+                const [iconResponse, manifestResponse] = await Promise.all([
+                    fetch(`${API_BASE}/api/augment_icon_map`).catch(() => null),
+                    fetch('/data/static/Augment_Icon_Manifest.json', { cache: 'no-store' }).catch(() => null)
+                ]);
+
+                if (iconResponse && iconResponse.ok) {
+                    const payload = await iconResponse.json();
+                    augmentIconMap = payload && typeof payload === 'object' ? payload : {};
+                }
+
+                if (manifestResponse && manifestResponse.ok) {
+                    const manifest = await manifestResponse.json();
+                    if (Array.isArray(manifest)) {
+                        const catalog = {};
+                        manifest.forEach((item) => {
+                            if (!item || !item.name) return;
+                            const icon = item.filename
+                                ? `/assets/${encodeURIComponent(item.filename)}`
+                                : (item.icon_url || augmentIconMap[item.name] || '');
+                            const entry = {
+                                name: item.name,
+                                icon,
+                                tier: item.tier || '',
+                                tooltip_plain: item.tooltip_plain || '',
+                                description: item.description || ''
+                            };
+                            catalog[normalizeAugmentKey(item.name)] = entry;
+                        });
+                        augmentCatalogMap = catalog;
+                    }
+                }
+            } catch (_) {
+                augmentIconMap = {};
+                augmentCatalogMap = {};
+            }
+        }
+
         async function loadHextechs() {
             if (!hero) {
                 document.getElementById('loadingSpinner').innerHTML = '<div class="text-red-400">错误：未获取到英雄名称</div>';
@@ -1244,6 +1363,7 @@
                 const hextechRes = await fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/hextechs`);
                 hextechData = await hextechRes.json();
                 activeArray = hextechData.comprehensive || [];
+                await loadAugmentIconMap();
 
                 document.getElementById('loadingSpinner').classList.add('hidden');
                 renderCurrentView();

@@ -361,6 +361,22 @@ def _build_catalog_icon_url(entry: Optional[Dict[str, Any]], hextech_name: str) 
     return build_local_augment_icon_url(hextech_name)
 
 
+def normalize_augment_tier(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "Silver"
+    if text in {"Prismatic", "Gold", "Silver"}:
+        return text
+    if "棱彩" in text or "彩色" in text or text.lower() == "prismatic":
+        return "Prismatic"
+    if "黄金" in text or "金色" in text or text.lower() == "gold":
+        return "Gold"
+    if "白银" in text or "银色" in text or text.lower() == "silver":
+        return "Silver"
+    logging.debug("未知海克斯阶级，按白银处理：%s", text)
+    return "Silver"
+
+
 def process_hextechs_data(
     df: pd.DataFrame,
     name: str,
@@ -464,13 +480,13 @@ def process_hextechs_data(
             catalog_entry = effective_catalog_lookup.get(augment_name) or effective_catalog_lookup.get(normalize_augment_name(augment_name))
             tooltip_raw = ""
             tooltip_plain = ""
-            tier_name = str(row.get('海克斯阶级', '棱彩'))
+            tier_name = normalize_augment_tier(row.get('海克斯阶级', 'Silver'))
             icon_url = build_local_augment_icon_url(augment_name)
 
             if catalog_entry:
                 tooltip_raw = str(catalog_entry.get("tooltip") or catalog_entry.get("description") or "").strip()
                 tooltip_plain = str(catalog_entry.get("tooltip_plain") or "").strip()
-                tier_name = str(catalog_entry.get("tier") or tier_name).strip() or tier_name
+                tier_name = normalize_augment_tier(catalog_entry.get("tier") or tier_name)
                 icon_url = _build_catalog_icon_url(catalog_entry, augment_name)
 
             if not tooltip_raw:
@@ -517,14 +533,9 @@ def process_hextechs_data(
         # ========== 分阶级数组 ==========
         def build_tier_array(tier_name, limit=None):
             # 为指定阶级生成数组
-            tier_variants = {
-                'Prismatic': ['棱彩', '彩色'],
-                'Gold': ['金色', '黄金'],
-                'Silver': ['银色', '白银']
-            }
-
-            variants = tier_variants.get(tier_name, [])
-            tier_data = hero_data[hero_data['海克斯阶级'].isin(variants)].copy()
+            tier_data = hero_data[
+                hero_data['海克斯阶级'].map(normalize_augment_tier) == tier_name
+            ].copy()
 
             # 按综合得分排序并截取
             tier_data_by_score = tier_data.sort_values(by='综合得分', ascending=False)
