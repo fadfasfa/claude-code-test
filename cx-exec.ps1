@@ -1,57 +1,41 @@
 #!/usr/bin/env pwsh
 <#
-.SYNOPSIS
-    MVP pipeline: invoke Codex to execute a task with isolated CODEX_HOME
-.DESCRIPTION
-    Simulates Codex (CX) executing a task, generating CODEX_RESULT.md
+中文简介：
+- 这个文件是什么：Claude Code 调用 Codex 的根目录兼容入口。
+- 什么时候读：CC 从仓库根目录发起 cx 任务时。
+- 约束什么：只转发到 scripts/workflow/cx-exec.ps1；不在根目录写运行产物。
+- 参数：TaskId 可选，TaskDescription 必填，Profile 选择执行配置，DryRun 只验证路径转发。
+- 失败行为：找不到真实 executor 时立即抛错；不回退到其他 Codex 入口。
 #>
 
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$TaskDescription,
-    [string]$CodexHome = ".codex-exec-cc"
+  [string]$TaskId,
+  [Parameter(Mandatory = $true)]
+  [string]$TaskDescription,
+  [ValidateSet("design", "implement", "review", "lint", "full-access")]
+  [string]$Profile = "implement",
+  [switch]$DryRun
 )
 
-# Setup isolated CODEX_HOME
-$env:CODEX_HOME = $CodexHome
-if (-not (Test-Path $CodexHome)) {
-    New-Item -ItemType Directory -Path $CodexHome -Force | Out-Null
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$executor = Join-Path $PSScriptRoot "scripts\workflow\cx-exec.ps1"
+if (-not (Test-Path -LiteralPath $executor)) {
+  throw "Missing workflow executor: $executor"
 }
 
-Write-Host "🔷 Codex execution starting with CODEX_HOME=$CodexHome"
-Write-Host "Task: $TaskDescription"
-
-# Simulate Codex task: create docs/workflows/99-pipeline-smoke-test.md
-$targetFile = "docs/workflows/99-pipeline-smoke-test.md"
-$targetDir = Split-Path $targetFile
-if (-not (Test-Path $targetDir)) {
-    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+$forward = @{
+  TaskDescription = $TaskDescription
+  Profile = $Profile
 }
 
-$content = @"
-# Pipeline smoke test
-2026-05-15
-"@
+if (-not [string]::IsNullOrWhiteSpace($TaskId)) {
+  $forward.TaskId = $TaskId
+}
 
-Set-Content -Path $targetFile -Value $content -Encoding UTF8
-Write-Host "✓ Created $targetFile"
+if ($DryRun) {
+  $forward.DryRun = $true
+}
 
-# Generate CODEX_RESULT.md
-$resultContent = @"
-# Codex Execution Result
-
-**Task:** $TaskDescription
-**Status:** SUCCESS
-**Timestamp:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-
-## Changes
-- Created: docs/workflows/99-pipeline-smoke-test.md
-
-## Summary
-Pipeline smoke test file created successfully with current date.
-"@
-
-Set-Content -Path "CODEX_RESULT.md" -Value $resultContent -Encoding UTF8
-Write-Host "✓ Generated CODEX_RESULT.md"
-
-Write-Host "🔷 Codex execution completed"
+& $executor @forward

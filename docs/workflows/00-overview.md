@@ -10,9 +10,9 @@
 
 ## 默认流程
 
-1. 读 `AGENTS.md`、`PROJECT.md`、`work_area_registry.md`。
+1. 读 `AGENTS.md`、`PROJECT.md`、`docs/workflows/work_area_registry.md`。
 2. 选择明确 `target_work_area`。
-3. 使用 `scripts/workflow/worktree-start.ps1` 创建单一 detached active worktree。
+3. 默认不自动创建 worktree；只有用户显性触发或 plan 明确 `requires_worktree: true` 时，才使用 `scripts/workflow/worktree-start.ps1` 创建单一 detached active worktree。
 4. 小步修改，避免顺手重构。
 5. 运行 `scripts/workflow/verify.ps1` 或说明无法验证的原因。
 6. 使用 `scripts/workflow/local-review.ps1` 做本地审查摘要并写入 acceptance gate。
@@ -39,3 +39,4 @@
 - `scripts/workflow/*.ps1` 是当前 canonical workflow。
 - `scripts/git/ccw-*.ps1` 是 legacy compatibility，只保留兼容，不作为默认入口。
 - 后续是否包装、弃用或迁移 legacy scripts，需要单独任务决定。
+

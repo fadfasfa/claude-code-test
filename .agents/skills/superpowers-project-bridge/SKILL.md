@@ -13,7 +13,7 @@ description: 仓库级 Superpowers 方法论桥接；只路由方法触发条件
 ## scope
 
 - 将 Superpowers 视为方法论 Router。
-- 仍以 `AGENTS.md`、`work_area_registry.md` 和 `docs/workflows/` 为本仓规则来源。
+- 仍以 `AGENTS.md`、`docs/workflows/work_area_registry.md` 和 `docs/workflows/` 为本仓规则来源。
 - 具体触发条件以 `AGENTS.md` 的 Methodology Router 为准。
 - `using-git-worktrees` 的策略：
   默认在主仓工作。开 worktree 是显性动作，仅在以下两种触发下进行：
@@ -33,3 +33,4 @@ description: 仓库级 Superpowers 方法论桥接；只路由方法触发条件
 
 - 若使用 Superpowers 辅助任务，仍需执行本仓验证。
 - 收尾说明使用了哪些本仓脚本或验证证据。
+

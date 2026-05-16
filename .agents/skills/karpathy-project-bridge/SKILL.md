@@ -19,7 +19,7 @@ description: 用于本仓所有非琐碎代码任务；桥接全局 karpathy-gui
 
 ## forbidden actions
 
-- 不覆盖 `AGENTS.md`、`work_area_registry.md` 或用户本轮限制。
+- 不覆盖 `AGENTS.md`、`docs/workflows/work_area_registry.md` 或用户本轮限制。
 - 不绕过验证。
 - 不把未验证的实现宣称完成。
 - 不触碰未授权业务工作区、凭据或受保护资产。
@@ -29,3 +29,4 @@ description: 用于本仓所有非琐碎代码任务；桥接全局 karpathy-gui
 - 修改后运行 `scripts/workflow/verify.ps1` 或更具体的子项目验证。
 - 无法验证时说明具体 blocker。
 - 收尾必须报告验证命令和结果。
+

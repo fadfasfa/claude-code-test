@@ -16,8 +16,9 @@
 
 ## Review 内容
 
-- 修改范围是否符合 `work_area_registry.md`。
+- 修改范围是否符合 `docs/workflows/work_area_registry.md`。
 - 是否触碰受保护路径。
 - 是否有验证证据。
 - 是否有未说明的风险。
 - changed files 是否都在 `target_paths` / `allowed_paths` 内。
+

@@ -44,14 +44,24 @@ sm2-randomizer/pipeline/out/source/reports/screen.png
 secrets/
 *.log
 coverage/
-.learnings/*
-!.learnings/LEARNINGS.md
+# Legacy root runtime dirs; current runtime root is .state/workflow/.
+/.workflow/
+/.codex-exec-apple/
+/.learnings/
 .tmp/
 .tmp/active-task/**
 /task_plan.md
 /findings.md
 /progress.md
 tmp/
+
+# Workflow runtime state; reports remain trackable under .state/workflow/reports/.
+.state/workflow/tasks/
+.state/workflow/current/
+.state/workflow/state/
+.state/workflow/archive/
+.state/workflow/logs/
+docs/archive/learnings-retired/ERRORS.md
 
 # generated per-worktree, not committed to main
 TASK_HANDOFF.md

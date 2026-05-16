@@ -10,10 +10,12 @@
 
 ## CX 调用边界
 
-- 调用 CX 必须通过 `scripts/workflow/cx-exec.ps1`。
-- `cx-exec.ps1` 通过 CC 自己的独立 `CODEX_HOME` 接入 codex proxy；不复用 VS Codex 插件的 `.codex-exec`，也不读取或修改 VS 插件、Codex App 的 auth / session / config 文件。
+- 调用 CX 必须通过根目录 `cx-exec.ps1`，由它转发到 `scripts/workflow/cx-exec.ps1`。
+- `scripts/workflow/cx-exec.ps1` 使用 `C:\Users\apple\.codex-exec` 和 `C:\Users\apple\codex-maintenance\codex-exec-wrapper.exe`；不读取或修改 VS 插件、Codex App 的 auth / session / config 文件。
+- CX 结构化结果固定写入 `.state/workflow/tasks/<task_id>/`；长期验收报告进入 `docs/archive/reports/` 或 `.state/workflow/reports/`。
 - CC 决定让 CX 进入 worktree 时，必须在 plan 文件中显式写明 `requires_worktree: true` 并等用户 ack；不得在未声明的情况下让 `cx-exec.ps1` 在新 worktree 中执行。
 
 ## Karpathy Guardrail
 
 Karpathy guardrail 对所有非琐碎代码任务强制生效，不可关闭。
+
