@@ -50,6 +50,7 @@ Codex 是当前唯一主流程。Claude Code 只保留白板和必要接口。
 | `docs/reference/policies/frontend-validation.md` | 前端验证规则 |
 | `docs/reference/policies/playwright-policy.md` | Playwright 使用边界 |
 | `docs/workflows/00-overview.md` | Full Workflow Bootstrap 总览 |
+| `docs/workflows/codex-execution-boundary.md` | Codex 执行面、proxy 口径和 CC/CX 调用边界 |
 | `docs/workflows/cc-cx-collaboration.md` | Claude Code 与 Codex 协作链路 |
 | `docs/workflows/repository-layout.md` | 根目录治理和目录职责说明 |
 

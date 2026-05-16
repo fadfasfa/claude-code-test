@@ -7,6 +7,7 @@
 | 路径 | 用途 | 默认是否读取 |
 | :--- | :--- | :--- |
 | `docs/workflows/` | 当前 workflow 规则、注册表、工具基线和 CC/CX 协作边界 | 是，按任务读取相关文件 |
+| `docs/workflows/codex-execution-boundary.md` | Codex 执行面、proxy 口径和 CC/CX 调用边界 | Codex / CC-CX 相关任务读取 |
 | `docs/workflows/worktree-policy.md` | 唯一 worktree 策略 | worktree 相关任务读取 |
 | `docs/workflows/work_area_registry.md` | 工作区和写入边界事实源 | 写入任务读取 |
 | `docs/workflows/agent-skill-inventory.md` | 仓库级 Codex skill inventory | skill / agent 治理任务读取 |
