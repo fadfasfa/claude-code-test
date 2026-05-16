@@ -2,7 +2,7 @@
 中文简介：
 - 这个文件是什么：CC -> Codex 的真实执行器，供根目录 cx-exec.ps1 转发调用。
 - 什么时候读：Claude Code 需要让 Codex 在本仓读代码、写代码或跑命令时。
-- 约束什么：固定使用用户级 .codex-exec 与 C# wrapper；运行结果只写入 .state/workflow/tasks/<task_id>/，长期报告不写入 run/。
+- 约束什么：固定使用用户级 .codex-exec 与 C# wrapper；运行结果只写入 .state/workflow/tasks/<task_id>/，不生成计划或 Markdown 报告。
 - 输入输出：读取当前 Git 状态和任务参数；写 result.json、codex.log、codex.err.log 到 task 目录。
 - 依赖路径：C:\Users\apple\.codex-exec、C:\Users\apple\codex-maintenance\codex-exec-wrapper.exe 和本仓 .state/workflow/。
 - 修改行为：DryRun 只写结构化 dry-run 结果；非 DryRun 才做 proxy / wrapper preflight 并调用 Codex。
@@ -228,9 +228,6 @@ $stdoutPath = Join-Path $taskRoot "codex.log"
 $stderrPath = Join-Path $taskRoot "codex.err.log"
 
 New-Item -ItemType Directory -Path $taskRoot -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $workflowRoot "current") -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $workflowRoot "state") -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $workflowRoot "archive") -Force | Out-Null
 
 $preGitStatus = Get-GitStatusText
 $commands = @(

@@ -15,3 +15,7 @@
 | `tests/cx-exec.Tests.ps1` | CC -> CX 入口静态测试 | 只读 |
 
 当前运行态根是 `.state/workflow/`；不要让 workflow 脚本重新创建 `run/workflow/`、`.workflow/` 或 `.codex-exec-apple/`。
+
+`cx-exec.ps1` 写入的 `.state/workflow/tasks/<task_id>/` 是机器运行态，只保存 `result.json`、`codex.log`、`codex.err.log`。这些目录默认 ignored，可在验收后清理，不应手工提交 task runtime。
+
+普通 Codex 修改任务不应额外生成 `docs/plans/*.md`、Markdown report、临时 probe 或 archive 证据文件；任务结束摘要默认输出到对话。

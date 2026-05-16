@@ -2,18 +2,18 @@
 
 ## 设计原则
 
-根目录只保留入口、配置、一级功能区和独立仓库目录。运行态结果、任务日志和一次性验证痕迹集中放入 `.state/workflow/`，避免根目录和 `run/` 被任务过程产物淹没。
+根目录只保留入口、配置、一级功能区和独立仓库目录。普通 Codex 修改只产出目标 diff 和对话摘要；运行态结果、任务日志和一次性验证痕迹集中放入 `.state/workflow/`，避免根目录和 `run/` 被任务过程产物淹没。
 
 ## 为什么运行态集中在 `.state/workflow/`
 
-`run/` 是业务运行区和数据区，不承载仓库级 workflow 规则、长期报告或 agent 规则。CC -> CX 调用产生的 `result.json`、stdout/stderr 日志、状态和归档都属于本地运行态，应放在默认 git ignored 的 `.state/workflow/`。
+`run/` 是业务运行区和数据区，不承载仓库级 workflow 规则、长期报告或 agent 规则。`docs/` 不接收运行态；`docs/plans/` 和 `docs/archive/reports/` 不是普通任务默认输出位置。CC -> CX 调用产生的 `result.json`、stdout/stderr 日志和滚动状态都属于本地运行态，应放在默认 git ignored 的 `.state/workflow/`。
 
 `.state/workflow/` 的职责：
 
 - `.state/workflow/tasks/`：每次 CC -> CX 调用的结构化结果和日志，默认 ignored。
-- `.state/workflow/reports/`：当前审查报告和修复报告，可作为本地证据保留。
+- `.state/workflow/reports/`：仅用于审查、验收、事故复盘或 commit 前人工复核，不是普通任务默认输出位置。
 - `.state/workflow/archive/`：旧运行态和过期任务状态，默认 ignored。
-- `.state/workflow/current/`：当前流程可选状态，默认 ignored。
+- `.state/workflow/current/`：当前流程滚动状态，默认 ignored；可覆盖，不应每轮新建不同名字的 summary/report 文件。
 - `.state/workflow/state/`：脚本状态文件，默认 ignored。
 - `.state/workflow/logs/`：运行日志，默认 ignored。
 
@@ -57,7 +57,7 @@ CC 调用根目录入口：
 - `docs/archive/learnings-retired/`：退休的原始错误输入。
 - `docs/workflows/`：工作流规则、注册表、工具基线和协作说明。
 - `run/`：业务运行区，不承载仓库级 workflow 运行态。
-- `.state/workflow/`：CC -> CX 任务、报告、归档和状态。
+- `.state/workflow/`：CC -> CX 滚动状态和机器运行态，不是长期文档区。
 - `scripts/`：仓库级脚本。
 - `scripts/workflow/`：workflow 脚本和脚本测试。
 - `heybox/`、`qm-run-demo/`、`QuantProject/`、`sm2-randomizer/`、`subtitle_extractor/`：独立仓库目录，不做目录治理迁移。

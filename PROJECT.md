@@ -4,6 +4,8 @@
 
 Codex 是当前唯一主流程。Claude Code 只保留白板和必要接口。
 
+默认不落盘计划/报告；普通 Codex 修改只产出目标 diff 和对话摘要。CC-CX 状态只写入 `.state/workflow/current/` 与 `.state/workflow/tasks/`。
+
 ## 根目录职责
 
 - `AGENTS.md`：当前 Codex 规则和边界。
@@ -13,7 +15,7 @@ Codex 是当前唯一主流程。Claude Code 只保留白板和必要接口。
 - `docs/workflows/work_area_registry.md`：工作区注册表和写入边界。
 - `docs/workflows/agent_tooling_baseline.md`：当前工具基线。
 - `docs/`：短索引、当前工作流、reference 和 archive。
-- `.state/workflow/`：CC 调用 Codex 时的任务结果、状态、报告和归档目录；根目录和 `run/` 不再作为临时产物区。
+- `.state/workflow/`：CC 调用 Codex 时的滚动状态和机器运行态；根目录和 `run/` 不再作为临时产物区。
 - `docs/workflows/`：个人总编程仓工作流骨架。
 - `scripts/git/`：Git / worktree 辅助脚本。
 - `scripts/workflow/`：本仓工作流入口脚本。
@@ -30,7 +32,7 @@ Codex 是当前唯一主流程。Claude Code 只保留白板和必要接口。
 | `heybox/` | 业务项目 / 爬虫工具 | 本地抓取脚本 |
 | `qm-run-demo/` | 实验区 / demo | demo / runtime 变体工作区 |
 | `subtitle_extractor/` | 工具区 | 字幕提取工作区 |
-| `.state/workflow/` | 运行态 | CC -> CX 任务结果、状态、日志和本轮 reports |
+| `.state/workflow/` | 运行态 | CC -> CX 滚动状态、任务结果和日志；普通 Codex 修改不写这里 |
 | `docs/reference/learnings/` | 备注区 | 仓库内 learning 摘要；不再放根目录 `.learnings/` |
 | `docs/archive/learnings-retired/` | 历史归档 | 退休的原始错误输入，默认不注入上下文 |
 | `docs/` | 治理区 | 短索引、工作流、安全、路由、验证规则和历史归档 |

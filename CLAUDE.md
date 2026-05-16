@@ -12,7 +12,8 @@
 
 - 调用 CX 必须通过根目录 `cx-exec.ps1`，由它转发到 `scripts/workflow/cx-exec.ps1`。
 - `scripts/workflow/cx-exec.ps1` 使用 `C:\Users\apple\.codex-exec` 和 `C:\Users\apple\codex-maintenance\codex-exec-wrapper.exe`；不读取或修改 VS 插件、Codex App 的 auth / session / config 文件。
-- CX 结构化结果固定写入 `.state/workflow/tasks/<task_id>/`；长期验收报告进入 `docs/archive/reports/` 或 `.state/workflow/reports/`。
+- CX 结构化结果固定写入 `.state/workflow/tasks/<task_id>/`；普通修改不要求 CX 额外创建计划或 Markdown 报告。
+- CC should not ask CX to create new plan/report files unless the task is high-risk, cross-session, under review/acceptance, or explicitly requested.
 - CC 决定让 CX 进入 worktree 时，必须在 plan 文件中显式写明 `requires_worktree: true` 并等用户 ack；不得在未声明的情况下让 `cx-exec.ps1` 在新 worktree 中执行。
 
 ## Karpathy Guardrail

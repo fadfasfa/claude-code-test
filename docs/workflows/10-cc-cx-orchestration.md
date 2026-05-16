@@ -28,9 +28,18 @@
 
 `cx-exec.ps1` 会把 stdout / stderr 分别写入 `.state/workflow/tasks/<task_id>/codex.log` 和 `.state/workflow/tasks/<task_id>/codex.err.log`，便于保留原始错误。
 
+## Artifact Contract
+
+- 普通 Codex 修改任务默认不生成 `docs/plans/*.md`、Markdown report、临时 probe 或 archive 证据文件；任务结束摘要默认留在对话里。
+- `.state/workflow/current/` 是滚动状态区，只允许覆盖 `task.json`、`summary.md`、`review.md`、`handoff.md`，默认不提交。
+- `.state/workflow/tasks/<task_id>/` 是机器运行态，只保存 `result.json`、`codex.log`、`codex.err.log`，默认 ignored，验收后可以清理。
+- `.state/workflow/reports/` 只用于审查、验收、事故复盘或 commit 前人工复核；不得作为普通修改任务的默认输出。
+- `docs/archive/reports/` 和 `docs/plans/` 只在用户确认需要长期留档时使用。
+- probe 文件不得留在 `docs/workflows/` active 层；如需存证，只写入审查摘要，不保留 probe 本体。
+
 ## CC Review
 
-CC 审查不再要求根目录 `CLAUDE_REVIEW.md`。建议在 CC 自己的输出、`.state/workflow/reports/` 或 `docs/archive/reports/` 中记录：
+CC 审查不再要求根目录 `CLAUDE_REVIEW.md`。审查、验收、事故复盘或 commit 前人工复核可以在 CC 自己的输出或 `.state/workflow/reports/` 中记录；只有用户确认需要长期留档时，才晋升到 `docs/archive/reports/`：
 
 - 审查结论：`PASS` / `BLOCK` / `COMMENT`
 - 关键发现
