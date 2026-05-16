@@ -1,0 +1,38 @@
+# Antigravity-specific guard for this monorepo.
+# Keep workflow docs and source files visible; exclude noisy runtime, cache,
+# local-private, generated, and sensitive surfaces from agent access.
+
+.git/**
+.archive/**
+
+run/data/runtime/**
+run/data/processed/**
+run/build/**
+run/dist/**
+
+.state/workflow/tasks/**
+.state/workflow/current/**
+.state/workflow/state/**
+.state/workflow/archive/**
+.state/workflow/logs/**
+
+QuantProject/**
+
+sm2-randomizer/**/__pycache__/**
+sm2-randomizer/pipeline/sources/wiki/node_modules/**
+qm-run-demo/**/__pycache__/**
+qm-run-demo/**/node_modules/**
+
+__pycache__/**
+.pytest_cache/**
+*.pyc
+*.pyo
+
+.tmp/**
+tmp/**
+coverage/**
+*.log
+
+secrets/**
+.env
+.env.*
