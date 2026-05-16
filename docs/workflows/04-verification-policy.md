@@ -1,13 +1,13 @@
 # Verification Policy
 
-## 默认要求
+## Default
 
 - 修改代码必须运行最小有效验证。
-- 修改工作流脚本必须做 PowerShell 语法检查。
-- 修改文档至少检查路径、diff 和禁止路径是否被触碰。
+- 修改 workflow 脚本必须做 PowerShell parse check。
+- 修改文档至少检查 diff、路径引用和禁止路径是否被触碰。
 - 无法验证时必须说明具体原因，不得宣称通过。
 
-## 入口
+## Entrypoint
 
 优先使用：
 
@@ -17,11 +17,8 @@ pwsh -NoProfile -File scripts/workflow/verify.ps1
 
 无法自动识别时，脚本应输出原因和建议命令。
 
-## 完成前
+## Completion Evidence
 
-- 列出验证命令。
-- 列出实际结果。
-- 列出未验证点。
-- 列出是否触碰 `run/**`、是否删除/清理、是否提交或推送。
-- 写入 `TASK_HANDOFF.md` 和 `.task-worktree.json` 的 verify/test 结果。
-- acceptance gate 不能绕过失败或缺失的验证；测试缺失、测试失败或覆盖不足至少降级，必要时 `manual-required`。
+收尾说明验证命令、实际结果、未验证点、是否触碰 `run/**`、是否删除/清理、是否 commit/push。
+
+`TASK_HANDOFF.md` 和 `.task-worktree.json` 只属于显式 worktree / finalize / local-review 流程；普通 Codex 修改任务不生成或更新这些文件。

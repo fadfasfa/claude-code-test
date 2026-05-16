@@ -1,24 +1,28 @@
 # Git Policy
 
-## 默认只读
+## Default
 
 - 默认允许 `git status`、`git diff`、`git log` 等只读命令。
-- 不默认执行 `git add`、`commit`、`push`、`clean`、`reset`、`rebase`、`stash`。
-
-## 授权要求
-
-- commit 需要用户明确授权。
-- push、PR、merge 需要用户明确授权，并在执行前二次确认。
+- 不默认执行 `git add`、`commit`、`push`、`clean`、`reset`、`rebase`、`stash`、`switch`、`branch` 或 worktree 写入。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动。
-- `-CreateReviewBranch`、`-AllowCommit`、`-AllowPush`、`-AllowPR` 是独立授权，任何一级都不隐含下一级。
-- review branch 使用 `codex/<area>/<task-slug>`；分支已存在时默认停止，不使用 `git switch -C` 或 `git branch -f` 覆盖。
-- `-AllowCommit` 只能 stage `TASK_HANDOFF.md` / `.task-worktree.json` 记录的 approved changed files，禁止 `git add .`。
-- 存在未登记 modified / untracked files 时，停止并重新 local-review。
 
-## 发布前检查
+## Explicit Authorization
 
-- 工作区选择明确。
-- diff 只包含授权范围。
-- 验证结果可复述。
-- 未验证点和残余风险已写明。
-- acceptance gate 已写入 `.task-worktree.json`。
+只有用户当前轮明确要求对应动作，才执行 Git 写入，包括 stage、commit、push、branch、checkout、switch、merge、rebase、reset、clean、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作。
+
+授权一级不隐含下一级：commit 不隐含 push，push 不隐含 PR 或 merge。
+
+## Before Git Writes
+
+执行前必须确认：
+
+- 当前分支和 `git status --short`。
+- staged 清单只包含本轮授权范围。
+- 禁止路径、受保护资产和无关业务脏改没有进入 staged。
+- 验证命令和结果可复述；无法验证时说明原因。
+
+选择性暂存优先使用明确路径，避免 `git add .`。创建分支默认用 `codex/` 前缀，不强制覆盖既有分支。
+
+## Publish Boundary
+
+push、PR、merge、amend、tag 和 release 类动作只在用户明确授权下执行。merge 不进入默认自动路径。

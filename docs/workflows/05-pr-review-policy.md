@@ -1,24 +1,20 @@
 # PR Review Policy
 
-## 本地优先
+## Local First
 
 - 默认先做本地 review，不调用云端 PR。
 - 使用 `scripts/workflow/local-review.ps1` 输出 diff 摘要、风险和建议验证。
-- 只有用户明确要求时才进入远端 PR 流程。
+- 只有用户明确要求时才进入远端 PR、GitHub Actions 或云端评论流程。
 
-## 发布边界
+## Publishing Boundary
 
-- `finalize-pr.ps1` 默认 dry-run。
-- review branch、commit、push、PR create 都需要明确且独立的授权。
-- push 和 PR 必须二次确认；merge 不进入默认自动路径。
-- `manual-required` 且没有 `manual_accepted` 时，不得 commit。
-- `automated` 只允许进入 finalize dry-run / review branch / commit 授权阶段，不自动放行 push / PR / merge。
+- `scripts/workflow/finalize-pr.ps1` 是发布前辅助脚本，默认 dry-run。
+- review branch、commit、push 和 PR create 都需要明确且独立的用户授权。
+- merge、amend、tag 或 release 不进入默认自动路径。
 
-## Review 内容
+## Review Checks
 
 - 修改范围是否符合 `docs/workflows/work_area_registry.md`。
 - 是否触碰受保护路径。
-- 是否有验证证据。
-- 是否有未说明的风险。
-- changed files 是否都在 `target_paths` / `allowed_paths` 内。
-
+- 是否有验证证据和未说明风险。
+- staged 清单是否只包含本轮授权范围。

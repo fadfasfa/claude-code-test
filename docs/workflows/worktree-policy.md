@@ -1,33 +1,37 @@
 # Worktree Policy
 
-## 默认
+本文件只描述当前 worktree 规则。普通 Codex 任务默认在当前工作树小步执行，不自动创建分支或 worktree。
 
-- 默认使用单一 active worktree。
-- 不并发开启多个任务分支。
-- 不自动创建长期 worktree。
-- `main` 只作为基准，不作为默认任务执行面。
-- 写入任务默认不自动创建 worktree；只有用户显性触发或上游 plan 明确 `requires_worktree: true` 时，才创建 detached active worktree。
+## Trigger
 
-## 创建前检查
+只有以下情况才进入 worktree 流程：
 
-- 检查主仓 `git status --short`。
-- 检查 `git worktree list --porcelain`、`C:\Users\apple\worktrees`、`C:\Users\apple\_worktrees` 和 `.task-worktree.json`。
-- 目标任务必须有明确 `target_work_area`。
-- 若已有 dirty active worktree，停止，不创建第二个。
-- 若任务目标路径与主仓 dirty 文件重叠，停止并让用户选择：先处理主仓脏改、授权复制指定脏改，或显式 `-AllowDirtyOverlapFromHead` 从 HEAD 继续。
-- 创建必须使用 `git worktree add --detach`，不得依赖不传 `-b` 的默认行为。
-- 创建优先落在 `C:\Users\apple\worktrees`；若创建失败，再尝试 `C:\Users\apple\_worktrees`。
-- 两个 worktree 根都失败时必须停止并报告原因，不得回到主仓编码。
+- 用户明确要求开 worktree。
+- 上游任务文件明确标注 `requires_worktree: true` 或等价中文。
+- 用户显式调用 `scripts/workflow/worktree-start.ps1`。
 
-## Task Metadata
+多文件、多阶段、高风险或 non-trivial 本身不构成开树触发。
 
-- 创建 worktree 时必须生成 `TASK_HANDOFF.md` 和 `.task-worktree.json`。
-- `.task-worktree.json` 必须包含固定 schema：`schema_version`、`repo_name`、`main_repo_path`、`worktree_path`、`task_slug`、`target_paths`、`base_ref`、`base_commit`、`mode`、`main_dirty_snapshot`、`acceptance_gate`、`manual_required`、`manual_accepted`、`review_branch`、`created_at`、`updated_at`。
-- 缺字段时 status、review、finalize、cleanup 入口必须失败。
+## Create
 
-## 清理规则
+创建前必须只读检查：
 
-- 只清理已完成、干净、可确认不再需要的 worktree。
-- 不删除未提交改动。
-- 不删除主工作树。
-- 清理失败立即停止。
+- `git status --short`
+- `git worktree list --porcelain`
+- `C:\Users\apple\worktrees`
+- `C:\Users\apple\_worktrees`
+- 目标任务的 `target_work_area`
+
+创建入口是 `scripts/workflow/worktree-start.ps1`。默认 dry-run；只有显式 `-Apply` 才创建 detached worktree，并写入 `TASK_HANDOFF.md` 与 `.task-worktree.json`。
+
+若存在 dirty active worktree、目标路径与主仓脏改重叠，或两个受管 worktree 根都创建失败，立即停止并报告原因，不回到主仓绕行编码。
+
+## Metadata
+
+`TASK_HANDOFF.md` 和 `.task-worktree.json` 只属于显式 worktree 流程。普通 Codex 修改任务不生成、不更新这些文件。
+
+需要读取或校验 metadata 时使用 `scripts/workflow/task-metadata.ps1` 和 `scripts/workflow/worktree-status.ps1`。
+
+## Cleanup
+
+清理只通过 `scripts/workflow/cleanup-worktree.ps1`，默认 dry-run。真实清理前必须确认目标是受管 worktree、工作树干净且不再需要；不得删除主工作树或未提交改动。清理失败立即停止。

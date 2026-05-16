@@ -1,42 +1,28 @@
-# Full Workflow Bootstrap v1
+# Workflow Overview
 
-本目录记录 `claudecode` 作为个人总编程仓的可执行工作流骨架。
-
-## 目标
-
-- 让任务从入口、工作区选择、验证、审查到发布准备都有固定路径。
-- 保护业务数据、密钥和不可重建资产。
-- 保持根目录为治理层，不承载子项目业务规则。
+`docs/workflows/` 只保存当前有效、短、可执行的仓库工作流规则。历史报告、长解释和一次性探针不放在 active 层。
 
 ## 默认流程
 
-1. 读 `AGENTS.md`、`PROJECT.md`、`docs/workflows/work_area_registry.md`。
-2. 选择明确 `target_work_area`。
-3. 默认不自动创建 worktree；只有用户显性触发或 plan 明确 `requires_worktree: true` 时，才使用 `scripts/workflow/worktree-start.ps1` 创建单一 detached active worktree。
+1. 先读 `AGENTS.md`、`PROJECT.md`、`docs/index.md`。
+2. 写入前从 `docs/workflows/work_area_registry.md` 选择目标工作区。
+3. 默认在主仓执行；worktree 只有用户显性触发或上游任务明确 `requires_worktree: true` 时才创建。
 4. 小步修改，避免顺手重构。
-5. 运行 `scripts/workflow/verify.ps1` 或说明无法验证的原因。
-6. 使用 `scripts/workflow/local-review.ps1` 做本地审查摘要并写入 acceptance gate。
-7. 需要时通过 `TASK_HANDOFF.md` 快速人工验收；`automated` 不强制打开 VS Code。
-8. 发布类动作必须由用户明确授权。
-## 认证与额度分离
+5. 运行最小有效验证；无法验证时说明具体原因。
+6. commit / push / PR / merge 只在用户明确授权下执行。
 
-- Codex App 使用 ChatGPT 账号登录，负责插件管理、Codex App UI、cloud/thread/desktop 类能力。API key / `codex-proxy` 登录下如果插件或 cloud 能力不可用，不再尝试强行绕过。
-- VS Code Codex 插件和 Codex CLI 作为本地执行主力，固定通过全局 `codex-proxy` provider 使用 `CODEX_PROXY_API_KEY`。它们不跟随 Codex App 当前 ChatGPT 登录账号切换。
-- `cockpit-tools` 只允许切换 Codex App / ChatGPT 登录态，不修改 VS Code Codex 插件配置、不修改全局 `codex-proxy` provider、不修改 `CODEX_PROXY_API_KEY`、不触碰 VS 插件认证状态。
-- 日常代码额度通过 `codex-proxy` 账号池消耗；Codex App 的 ChatGPT 账号额度只用于插件、云端、桌面和 App 专属能力。
+## Canonical Rules
 
-## 停止条件
+- 执行边界：`docs/workflows/codex-execution-boundary.md`
+- CC/CX 契约：`docs/workflows/10-cc-cx-orchestration.md`
+- 目录职责：`docs/workflows/repository-layout.md`
+- 工作区边界：`docs/workflows/work_area_registry.md`
+- worktree 策略：`docs/workflows/worktree-policy.md`
+- skill inventory：`docs/workflows/agent-skill-inventory.md`
 
-- 目标路径不清。
-- 涉及凭据、token、cookie、proxy secret 或私有配置。
-- 备份失败。
-- 验证命令无法运行且没有明确原因。
-- 将要触碰未授权业务工作区或当前脏树。
-- 任务目标路径与主仓 dirty 文件重叠，且用户未显式选择处理方式。
+## Artifact Boundary
 
-## Canonical Entrypoints
-
-- `scripts/workflow/*.ps1` 是当前 canonical workflow。
-- `scripts/git/ccw-*.ps1` 是 legacy compatibility，只保留兼容，不作为默认入口。
-- 后续是否包装、弃用或迁移 legacy scripts，需要单独任务决定。
-
+- 普通 Codex 修改任务只产出目标 diff 和对话摘要。
+- `cx-exec.ps1` 的机器结果固定写入 `.state/workflow/tasks/<task_id>/`。
+- `docs/plans/`、Markdown report、probe 文件和 archive 证据文件不是普通任务默认产物。
+- 历史资料只放 `docs/reference/` 或 `docs/archive/`，默认不读。

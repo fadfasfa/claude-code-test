@@ -9,7 +9,7 @@
 - `repo-local-pr-review`：本地 diff / PR 前审查，不调用云端 PR。
 - `repo-maintenance`：仓库维护、清理候选和保护资产检查。
 - `karpathy-project-bridge`：桥接全局 `karpathy-guidelines`。
-- `superpowers-project-bridge`：仓库级方法论 Router 桥接，仅路由 brainstorming、worktree、planning、TDD、debugging、execution、code review 方法。
+- `superpowers-project-bridge`：仓库级方法论 Router 桥接，只路由方法提示；worktree 规则以 workflow 文档为准。
 - `frontend-design-project-bridge`：桥接全局 `frontend-design`。
 
 详细 inventory 见 `docs/workflows/agent-skill-inventory.md`。没有列入本 README 的 skill 不视为默认启用。

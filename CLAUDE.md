@@ -1,22 +1,20 @@
-# Claude Code 项目入口
+# Claude Code Entry
 
-本文件是 `claudecode` 仓库的 Claude Code 项目级入口。仓库规则仍以 `AGENTS.md` 为准。
+本文件是 `claudecode` 仓库的 Claude Code 项目级入口。Codex 规则以 `AGENTS.md` 为准。
 
-## CC 角色
+## Role
 
-- planner：默认先做只读理解、目标收敛和执行计划，不直接写业务代码。
-- supervisor：需要调用 CX 时，负责准备明确的目标、非目标、影响文件和验证方式。
-- reviewer：审查 CX 产物时优先看行为回归、风险、缺失验证和边界偏离。
+- CC：planning、supervision、review。
+- CX：通过 `cx-exec.ps1` 执行读写和验证。
+- CC 不直接扩展本仓 Codex skill、hook、memory 或 workflow 能力。
 
-## CX 调用边界
+## CX Boundary
 
-- 调用 CX 必须通过根目录 `cx-exec.ps1`，由它转发到 `scripts/workflow/cx-exec.ps1`。
-- `scripts/workflow/cx-exec.ps1` 使用 `C:\Users\apple\.codex-exec` 和 `C:\Users\apple\codex-maintenance\codex-exec-wrapper.exe`；不读取或修改 VS 插件、Codex App 的 auth / session / config 文件。
-- CX 结构化结果固定写入 `.state/workflow/tasks/<task_id>/`；普通修改不要求 CX 额外创建计划或 Markdown 报告。
-- CC should not ask CX to create new plan/report files unless the task is high-risk, cross-session, under review/acceptance, or explicitly requested.
-- CC 决定让 CX 进入 worktree 时，必须在 plan 文件中显式写明 `requires_worktree: true` 并等用户 ack；不得在未声明的情况下让 `cx-exec.ps1` 在新 worktree 中执行。
+- 调用入口：根目录 `cx-exec.ps1`。
+- executor：`scripts/workflow/cx-exec.ps1`。
+- `CODEX_HOME`：`C:\Users\apple\.codex-exec`。
+- 结构化结果：`.state/workflow/tasks/<task_id>/`。
+- 普通 CX 修改不要求生成计划、Markdown report、probe 或 archive 证据文件。
 
-## Karpathy Guardrail
-
-Karpathy guardrail 对所有非琐碎代码任务强制生效，不可关闭。
+CC 如需让 CX 使用 worktree，必须在上游任务中显式写明 `requires_worktree: true` 并等用户确认。
 
