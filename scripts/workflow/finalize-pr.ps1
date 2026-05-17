@@ -41,24 +41,40 @@ function Test-BranchExists {
 if ($Help) { Show-Help; exit 0 }
 
 $repoRoot = Resolve-WorkflowRepoRoot
-$metadata = Read-TaskMetadata -RepoRoot $repoRoot -Require
+$metadata = Read-TaskMetadata -RepoRoot $repoRoot -Require:(Test-IsTaskWorktreePath -Path $repoRoot)
 $changed = @(Get-WorkflowChangedFiles -RepoRoot $repoRoot)
-$approved = @($metadata.approved_changed_files | ForEach-Object { ([string]$_ -replace '\\', '/') })
+$hasMetadata = $null -ne $metadata
+$approved = if ($hasMetadata) {
+  @($metadata.approved_changed_files | ForEach-Object { ([string]$_ -replace '\\', '/') })
+} else {
+  @()
+}
 $changedPaths = @($changed | ForEach-Object { $_.Path })
 $unregistered = @($changedPaths | Where-Object { $approved -notcontains $_ })
-$reviewBranch = if ($metadata.review_branch) { [string]$metadata.review_branch } else { "codex/$Area/$($metadata.task_slug)" }
+$reviewBranch = if ($hasMetadata -and $metadata.review_branch) {
+  [string]$metadata.review_branch
+} elseif ($hasMetadata) {
+  "codex/$Area/$($metadata.task_slug)"
+} else {
+  "(metadata-required)"
+}
 
 Write-Output "repo_root: $repoRoot"
-Write-Output "acceptance_gate: $($metadata.acceptance_gate)"
-Write-Output "manual_required: $($metadata.manual_required)"
-Write-Output "manual_accepted: $($metadata.manual_accepted)"
+Write-Output "metadata_present: $hasMetadata"
+Write-Output "acceptance_gate: $(if ($hasMetadata) { $metadata.acceptance_gate } else { '(none)' })"
+Write-Output "manual_required: $(if ($hasMetadata) { $metadata.manual_required } else { '(none)' })"
+Write-Output "manual_accepted: $(if ($hasMetadata) { $metadata.manual_accepted } else { '(none)' })"
 Write-Output "review_branch: $reviewBranch"
 Write-Output "changed_files:"
 if ($changed.Count -gt 0) { $changed | ForEach-Object { Write-Output "  $($_.Raw)" } } else { Write-Output "  clean" }
 Write-Output "unregistered_files:"
 if ($unregistered.Count -gt 0) { $unregistered | ForEach-Object { Write-Output "  $_" } } else { Write-Output "  none" }
 
-if ($metadata.acceptance_gate -eq "manual-required" -and -not [bool]$metadata.manual_accepted -and ($AllowCommit -or $CreateReviewBranch)) {
+if ((-not $hasMetadata) -and ($CreateReviewBranch -or $AllowCommit -or $AllowPush -or $AllowPR)) {
+  throw "当前 repo root 没有 .task-worktree.json；主仓只支持 dry-run，发布动作必须在 task worktree 或带 metadata 的 repo 中执行。"
+}
+
+if ($hasMetadata -and $metadata.acceptance_gate -eq "manual-required" -and -not [bool]$metadata.manual_accepted -and ($AllowCommit -or $CreateReviewBranch)) {
   throw "acceptance_gate=manual-required 且 manual_accepted=false，禁止进入 review branch / commit。"
 }
 

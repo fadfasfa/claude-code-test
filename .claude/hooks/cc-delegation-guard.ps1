@@ -7,6 +7,12 @@ Allowed tools exit silently. Blocked tools return permissionDecision=deny.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Decode hook stdin as UTF-8 so Claude Code tool inputs containing CJK
+# (or any non-ASCII characters) are parsed correctly. Without this,
+# Windows PowerShell 5.1 on a CJK system code page mis-decodes UTF-8 hook
+# input, ConvertFrom-Json fails, and every Edit/Write/Bash call is denied.
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+
 function Get-RepoRoot {
   if (-not [string]::IsNullOrWhiteSpace($env:CLAUDE_PROJECT_DIR)) {
     return ([System.IO.Path]::GetFullPath($env:CLAUDE_PROJECT_DIR))
@@ -312,9 +318,17 @@ function Get-ToolInput {
 }
 
 $pipelineInput = @($input)
-$rawInput = [Console]::In.ReadToEnd()
+# Explicitly decode stdin as UTF-8 instead of the OS default code page,
+# otherwise Claude Code tool inputs carrying CJK characters get mis-decoded
+# (GBK on a Chinese Windows host) and ConvertFrom-Json fails downstream.
+$stdinStream = [Console]::OpenStandardInput()
+$stdinReader = [System.IO.StreamReader]::new($stdinStream, [System.Text.UTF8Encoding]::new($false))
+$rawInput = $stdinReader.ReadToEnd()
 if ([string]::IsNullOrWhiteSpace($rawInput) -and $pipelineInput.Count -gt 0) {
   $rawInput = ($pipelineInput -join [Environment]::NewLine)
+}
+if ($rawInput.Length -gt 0 -and $rawInput[0] -eq [char]0xFEFF) {
+  $rawInput = $rawInput.Substring(1)
 }
 if ([string]::IsNullOrWhiteSpace($rawInput)) {
   exit 0

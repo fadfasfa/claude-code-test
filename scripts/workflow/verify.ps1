@@ -24,6 +24,42 @@ function Test-CommandExists {
   return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Invoke-VerificationCommand {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Command,
+    [Parameter(Mandatory = $true)]
+    [string]$WorkingDirectory
+  )
+
+  $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($Command))
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = "pwsh"
+  $psi.Arguments = "-NoProfile -EncodedCommand $encodedCommand"
+  $psi.WorkingDirectory = $WorkingDirectory
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.UseShellExecute = $false
+
+  $process = [System.Diagnostics.Process]::Start($psi)
+  $stdout = $process.StandardOutput.ReadToEnd()
+  $stderr = $process.StandardError.ReadToEnd()
+  $process.WaitForExit()
+
+  foreach ($stream in @($stdout, $stderr)) {
+    if ([string]::IsNullOrWhiteSpace($stream)) {
+      continue
+    }
+    foreach ($line in ($stream -split "`r?`n")) {
+      if (-not [string]::IsNullOrWhiteSpace($line)) {
+        Write-Output $line
+      }
+    }
+  }
+
+  return $process.ExitCode
+}
+
 if ($Help) { Show-Help; exit 0 }
 
 $repoRoot = Resolve-WorkflowRepoRoot
@@ -57,8 +93,8 @@ $results = @()
 try {
   foreach ($cmd in $commands) {
     Write-Output "running: $cmd"
-    pwsh -NoProfile -Command $cmd
-    if ($LASTEXITCODE -ne 0) { throw "验证失败：$cmd" }
+    $exitCode = Invoke-VerificationCommand -Command $cmd -WorkingDirectory $repoRoot
+    if ($exitCode -ne 0) { throw "验证失败：$cmd (exit $exitCode)" }
     $results += "PASS $cmd"
   }
   if ($metadata) {

@@ -7,6 +7,7 @@
 - Codex-led standalone mode：用户直接调用 Codex 时，Codex 按 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和用户任务独立执行普通代码任务完整流程。
 - CC-led supervised mode：CC 负责 planning / supervision / review；涉及实现性修改时通过 `cx-exec.ps1` 委派 CX 执行。
 - Codex App、VS Code Codex、Codex CLI、wrapper 和 CC 调用器是不同 surface，不混写为同一入口。
+- 重执行、长线程和大 diff 默认留在 VS Code Codex / Codex CLI；不要把这类执行历史重新带回 Codex App 热路径。
 - `cx-exec.ps1` 是 CC 委派 Codex 的标准入口，不是 Codex 唯一入口。
 
 ## Current CX Contract
