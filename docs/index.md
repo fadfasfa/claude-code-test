@@ -6,18 +6,18 @@
 
 | 路径 | 用途 |
 | :--- | :--- |
-| `docs/workflows/00-overview.md` | workflow 短总览 |
+| `docs/workflows/00-overview.md` | workflow 总览 |
 | `docs/workflows/work_area_registry.md` | 工作区和写入边界 |
 | `docs/workflows/codex-execution-boundary.md` | Codex 执行边界 |
 | `docs/workflows/10-cc-cx-orchestration.md` | CC/CX 契约 |
 | `docs/workflows/worktree-policy.md` | worktree 策略 |
-| `docs/workflows/agent-skill-inventory.md` | 仓库级 Codex skill inventory |
+| `docs/workflows/agent-skill-inventory.md` | skill inventory |
 
 ## On Demand
 
-- `docs/reference/`：长文政策、learning 摘要和可选参考，任务点名时读取具体文件。
-- `docs/archive/`：历史报告、旧方案和退休日志，默认不作为当前规则来源。
+- `docs/reference/`：按需读取的参考资料。
+- `docs/archive/`：历史报告和退役资料，默认不作为当前规则来源。
 
 ## Output Boundary
 
-普通 Codex 修改任务不生成 `docs/plans/*.md`、Markdown report、probe 或 archive 证据文件。
+普通任务不默认生成 `docs/plans/*.md`、Markdown report、probe 或 archive 证据文件。

@@ -8,14 +8,14 @@ description: 仓库级 Superpowers 方法论桥接；只路由方法触发条件
 ## trigger
 
 - 用户明确提到 Superpowers。
-- 任务需要 brainstorming、using-git-worktrees、writing-plans、TDD、debugging、executing-plans 或 requesting-code-review 的方法提示。
+- 任务需要 brainstorming、using-git-worktrees、TDD、debugging、requesting-code-review 或其他方法提示。
 
 ## scope
 
 - 将 Superpowers 视为方法论 Router。
 - 仍以 `AGENTS.md`、`docs/workflows/work_area_registry.md` 和 `docs/workflows/` 为本仓规则来源。
 - `using-git-worktrees` 只提供方法提示；实际触发、检查和脚本入口以 `docs/workflows/worktree-policy.md` 为准。
-- 多文件、多阶段、`writing-plans` / `executing-plans` 或 non-trivial 判定本身不触发开树。
+- 多文件、多阶段、non-trivial 判定或方法提示本身都不触发开树，也不要求落盘计划。
 
 ## forbidden actions
 

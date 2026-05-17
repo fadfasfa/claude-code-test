@@ -2,19 +2,19 @@
 
 本目录是 `claudecode` 仓库级 Codex skill 白名单入口。
 
-当前仓库级 Codex skill：
+当前保留的仓库级 skill：
 
-- `repo-module-admission`：新增模块、skill、hook、tool 或工作区前的准入判断。
-- `repo-verification-before-completion`：任务完成前验证证据。
-- `repo-local-pr-review`：本地 diff / PR 前审查，不调用云端 PR。
-- `repo-maintenance`：仓库维护、清理候选和保护资产检查。
-- `karpathy-project-bridge`：桥接全局 `karpathy-guidelines`。
-- `superpowers-project-bridge`：仓库级方法论 Router 桥接，只路由方法提示；worktree 规则以 workflow 文档为准。
-- `frontend-design-project-bridge`：桥接全局 `frontend-design`。
+- `karpathy-project-bridge`
+- `frontend-design-project-bridge`
+- `repo-verification-before-completion`
+- `repo-maintenance`
+- `repo-local-pr-review`
+- `repo-module-admission`
+- `superpowers-project-bridge`
 
-详细 inventory 见 `docs/workflows/agent-skill-inventory.md`。没有列入本 README 的 skill 不视为默认启用。
+详细触发场景见 `docs/workflows/agent-skill-inventory.md`。没有列入本 README 的 skill 不视为默认启用。
 
-## 边界
+## Boundary
 
 - 不保留 memory / learning promotion。
 - 不恢复 command、hook、自动 PR shipping、task resume 或高权限 worktree skill。

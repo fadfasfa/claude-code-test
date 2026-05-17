@@ -4,8 +4,8 @@
 
 | 路径 | 状态 | 用途 |
 | :--- | :--- | :--- |
-| `scripts/workflow/` | current | verify、local review、worktree、CC -> CX executor |
+| `scripts/workflow/` | current | 当前 workflow 脚本和测试 |
 | `scripts/git/` | legacy/manual | 旧 Git / worktree 辅助脚本，只能显式手动调用 |
-| `scripts/archive/` | archive | 未来放退役或一次性脚本；当前可不存在 |
+| `scripts/archive/` | archive | 退役或一次性脚本；可不存在 |
 
-修改脚本时必须说明用途、输入输出、关键路径、写入行为和失败行为。不要在脚本中读取凭据文件或默认执行发布动作。
+修改脚本时必须说明用途、输入输出、写入行为和失败行为。不要在脚本中读取凭据文件或默认执行发布动作。

@@ -1,6 +1,6 @@
 # Claude Code Entry
 
-本文件是 `claudecode` 仓库的 Claude Code 项目级入口。Codex 规则以 `AGENTS.md` 为准。
+本文件是 `claudecode` 仓库的 Claude Code 入口。Codex 规则以 `AGENTS.md` 为准。
 
 ## Role
 
@@ -10,13 +10,11 @@
 
 ## CX Boundary
 
-- 默认使用简体中文输出目标确认、执行计划、阶段更新、工具调用前后说明、错误解释、总结、风险、验证结果和变更说明。
-- 路径、命令、配置键、API 名称、模型名、Git 分支、日志原文和无法可靠翻译的报错可保留英文；保留英文时先用中文解释其含义。
-- 不使用英文流程模板句，例如 "Goal acknowledged"、"Let me..."、"Now I will..."；需要说明动作时使用自然的中文短句。
+- 默认使用简体中文。
 - 调用入口：根目录 `cx-exec.ps1`。
 - executor：`scripts/workflow/cx-exec.ps1`。
 - `CODEX_HOME`：`C:\Users\apple\.codex-exec`。
 - 结构化结果：`.state/workflow/tasks/<task_id>/`。
-- 普通 CX 修改不要求生成计划、Markdown report、probe 或 archive 证据文件。
+- 普通任务不生成计划、Markdown report、probe 或 archive 证据文件。
 
-CC 如需让 CX 使用 worktree，必须在上游任务中显式写明 `requires_worktree: true` 并等用户确认。
+CC 如需让 CX 使用 worktree，必须在上游任务中显式写明 `requires_worktree: true` 并等待用户确认。

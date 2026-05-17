@@ -1,28 +1,26 @@
 # Workflow Overview
 
-`docs/workflows/` 只保存当前有效、短、可执行的仓库工作流规则。历史报告、长解释和一次性探针不放在 active 层。
+`docs/workflows/` 只保留当前有效、短、可执行的仓库规则。历史报告、长解释、probe 和一次性验收不放在 active 层。
 
-## 默认流程
+## Default Flow
 
 1. 先读 `AGENTS.md`、`PROJECT.md`、`docs/index.md`。
 2. 写入前从 `docs/workflows/work_area_registry.md` 选择目标工作区。
-3. 默认在主仓执行；worktree 只有用户显性触发或上游任务明确 `requires_worktree: true` 时才创建。
-4. 小步修改，避免顺手重构。
-5. 运行最小有效验证；无法验证时说明具体原因。
-6. commit / push / PR / merge 只在用户明确授权下执行。
+3. 默认在主仓小步执行；只有用户明确要求或上游任务标注 `requires_worktree: true` 时才进入 worktree 流程。
+4. 修改后运行最小有效验证；无法验证时说明原因。
+5. Git 写入和发布动作只在用户明确授权下执行。
 
-## Canonical Rules
+## Canonical Docs
 
-- 执行边界：`docs/workflows/codex-execution-boundary.md`
-- CC/CX 契约：`docs/workflows/10-cc-cx-orchestration.md`
-- 目录职责：`docs/workflows/repository-layout.md`
-- 工作区边界：`docs/workflows/work_area_registry.md`
-- worktree 策略：`docs/workflows/worktree-policy.md`
-- skill inventory：`docs/workflows/agent-skill-inventory.md`
+- `codex-execution-boundary.md`
+- `10-cc-cx-orchestration.md`
+- `repository-layout.md`
+- `work_area_registry.md`
+- `worktree-policy.md`
+- `agent-skill-inventory.md`
 
 ## Artifact Boundary
 
-- 普通 Codex 修改任务只产出目标 diff 和对话摘要。
-- `cx-exec.ps1` 的机器结果固定写入 `.state/workflow/tasks/<task_id>/`。
-- `docs/plans/`、Markdown report、probe 文件和 archive 证据文件不是普通任务默认产物。
-- 历史资料只放 `docs/reference/` 或 `docs/archive/`，默认不读。
+- 普通任务只产出目标 diff 和对话摘要。
+- 结构化机器结果固定写入 `.state/workflow/tasks/<task_id>/`。
+- 不默认生成 `docs/plans/*.md`、Markdown report、probe 或 archive 证据文件。
