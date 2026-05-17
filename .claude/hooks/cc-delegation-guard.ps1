@@ -195,6 +195,9 @@ function Test-CxExecDelegationCommand {
   if ($normalized -match "(?i)^\s*(pwsh|powershell(?:\.exe)?)\b.*\s-File\s+[`"']?$cxExecPath[`"']?(\s|$)") {
     return $true
   }
+  if ($normalized -match "(?i)^\s*(pwsh|powershell(?:\.exe)?)\b.*\s-Command\s+[`"']?\s*&?\s*$cxExecPath(\s|$)") {
+    return $true
+  }
   return $false
 }
 
@@ -205,7 +208,7 @@ function Test-ModifyingBashCommand {
     '(?i)(^|[;&|]\s*)(Set-Content|Add-Content|Out-File|New-Item|Copy-Item|Move-Item|Remove-Item|Rename-Item|Set-Item|cp|mv|rm|del|ni)(\s|$)',
     '(?<![<])>>?(?![>&])',
     '(?i)python(?:\.exe)?\s+-c\s+.*open\s*\([^)]*,\s*["''][^"'']*[wa]',
-    '(?i)node(?:\.exe)?\s+-e\s+.*fs\.(writeFileSync|appendFileSync)\s*\(',
+    '(?i)node(?:\.exe)?\s+-e\s+.*(?:\bfs|require\s*\(\s*["''](?:node:)?fs["'']\s*\))\s*\.\s*(writeFileSync|appendFileSync)\s*\(',
     '(?i)\[IO\.File\]::(WriteAllText|AppendAllText)\s*\(',
     '(?i)(^|[;&|]\s*)git\s+(checkout|restore|rm|mv)(\s|$)'
   )
@@ -233,6 +236,21 @@ function New-DenyPayload {
   } | ConvertTo-Json -Compress
 }
 
+function New-AllowPayload {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Reason
+  )
+
+  [ordered]@{
+    hookSpecificOutput = [ordered]@{
+      hookEventName = "PreToolUse"
+      permissionDecision = "allow"
+      permissionDecisionReason = $Reason
+    }
+  } | ConvertTo-Json -Compress
+}
+
 function Get-JsonProperty {
   param(
     [Parameter(Mandatory = $true)]
@@ -246,6 +264,22 @@ function Get-JsonProperty {
     return $null
   }
   return $property.Value
+}
+
+function Test-DirectModificationAuthorized {
+  param([Parameter(Mandatory = $true)][object]$Payload)
+
+  $permissionMode = [string](Get-JsonProperty -Object $Payload -Name "permission_mode")
+  if ($permissionMode -eq "bypassPermissions") {
+    return $true
+  }
+
+  $envValue = [string]$env:CC_CX_ALLOW_DIRECT_MODIFICATION
+  if ($envValue -match '^(?i:1|true|yes|allow)$') {
+    return $true
+  }
+
+  return $false
 }
 
 function Get-ToolName {
@@ -297,7 +331,9 @@ $repoRoot = Get-RepoRoot
 $protectedPaths = Get-ProtectedPaths -RepoRoot $repoRoot
 $toolName = Get-ToolName -Payload $payload
 $toolInput = Get-ToolInput -Payload $payload
+$directModificationAuthorized = Test-DirectModificationAuthorized -Payload $payload
 $denyReason = 'CC-led supervised mode blocks direct Claude Code changes to protected paths. Use .\cx-exec.ps1 to delegate to Codex, or ask the user to explicitly authorize: allow CC direct modification.'
+$allowReason = 'Delegation Guard allowed direct Claude Code modification because explicit CC direct-modification authorization is active.'
 
 if ($toolName -in @("Edit", "Write", "MultiEdit")) {
   $filePath = [string](Get-JsonProperty -Object $toolInput -Name "file_path")
@@ -305,6 +341,10 @@ if ($toolName -in @("Edit", "Write", "MultiEdit")) {
     $filePath = [string](Get-JsonProperty -Object $toolInput -Name "path")
   }
   if ((-not [string]::IsNullOrWhiteSpace($filePath)) -and (Test-ProtectedFilePath -Path $filePath -ProtectedPaths $protectedPaths -RepoRoot $repoRoot)) {
+    if ($directModificationAuthorized) {
+      New-AllowPayload -Reason $allowReason
+      exit 0
+    }
     New-DenyPayload -Reason $denyReason
   }
   exit 0
@@ -316,6 +356,10 @@ if ($toolName -eq "Bash") {
     $command = [string](Get-JsonProperty -Object $toolInput -Name "cmd")
   }
   if (Test-GlobalBlockedBashCommand -Command $command) {
+    if ($directModificationAuthorized) {
+      New-AllowPayload -Reason $allowReason
+      exit 0
+    }
     New-DenyPayload -Reason $denyReason
     exit 0
   }
@@ -323,6 +367,10 @@ if ($toolName -eq "Bash") {
     exit 0
   }
   if ((Test-ModifyingBashCommand -Command $command) -and (Test-CommandMentionsProtectedPath -Command $command -ProtectedPaths $protectedPaths -RepoRoot $repoRoot)) {
+    if ($directModificationAuthorized) {
+      New-AllowPayload -Reason $allowReason
+      exit 0
+    }
     New-DenyPayload -Reason $denyReason
   }
   exit 0

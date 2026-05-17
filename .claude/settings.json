@@ -1,4 +1,34 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read",
+      "Edit(/**)",
+      "Write(/**)",
+      "MultiEdit(/**)"
+    ],
+    "ask": [
+      "Bash"
+    ],
+    "deny": [
+      "Read(//**/.env)",
+      "Read(//**/.env.*)",
+      "Read(//**/auth.json)",
+      "Read(//**/local.yaml)",
+      "Read(//**/proxies.json)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": false,
+    "autoAllowBashIfSandboxed": true,
+    "filesystem": {
+      "allowWrite": [
+        "."
+      ]
+    }
+  },
   "hooks": {
     "PreToolUse": [
       {
