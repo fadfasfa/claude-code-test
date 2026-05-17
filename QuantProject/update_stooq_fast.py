@@ -62,8 +62,11 @@ def is_data_up_to_date(file_path, latest_date=None):
 
 def _download_from_yfinance(yf_code, kwargs):
     # yfinance 当前版本在多线程并发调用时存在不稳定行为，这里串行化下载阶段。
+    # 下载后短暂等待，避免多资产连续请求触发 Yahoo Finance 速率限制。
     with YFINANCE_DOWNLOAD_LOCK:
-        return yf.download(yf_code, **kwargs)
+        result = yf.download(yf_code, **kwargs)
+        time.sleep(0.8)
+        return result
 
 
 def fetch_yfinance_data(yf_code, asset_name, start_date=None, allow_full_history_fallback=True):

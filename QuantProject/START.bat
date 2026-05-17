@@ -37,10 +37,10 @@ echo [1/2] 正在检查本地行情并按需同步增量数据...
 echo ==================================================
 python update_stooq_fast.py
 if !errorlevel! neq 0 (
-    color 0C
-    echo [-] 数据同步失败，请检查网络或数据源状态。
-    pause
-    exit /b !errorlevel!
+    color 0E
+    echo [!] 警告：部分资产数据同步失败（可能是网络或数据源临时问题）。
+    echo [!] 将使用本地现有数据继续运行决策引擎，行情数据可能略有滞后。
+    color 0A
 )
 
 :: 4. 运行决策引擎
