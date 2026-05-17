@@ -6,6 +6,9 @@
 
 .claude/*
 !.claude/README.md
+!.claude/settings.json
+!.claude/hooks/
+!.claude/hooks/**
 
 # Blank placeholder only; do not track local behavior surface
 .claude/worktrees/

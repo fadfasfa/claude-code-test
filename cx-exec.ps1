@@ -14,6 +14,8 @@ param(
   [string]$TaskDescription,
   [ValidateSet("design", "implement", "review", "lint", "full-access")]
   [string]$Profile = "implement",
+  [ValidateSet("auto", "read-only", "workspace-write", "danger-full-access")]
+  [string]$Sandbox = "auto",
   [switch]$DryRun
 )
 
@@ -28,6 +30,7 @@ if (-not (Test-Path -LiteralPath $executor)) {
 $forward = @{
   TaskDescription = $TaskDescription
   Profile = $Profile
+  Sandbox = $Sandbox
 }
 
 if (-not [string]::IsNullOrWhiteSpace($TaskId)) {

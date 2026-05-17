@@ -15,6 +15,8 @@ param(
   [string]$TaskDescription,
   [ValidateSet("design", "implement", "review", "lint", "full-access")]
   [string]$Profile = "implement",
+  [ValidateSet("auto", "read-only", "workspace-write", "danger-full-access")]
+  [string]$Sandbox = "auto",
   [switch]$DryRun
 )
 
@@ -114,16 +116,49 @@ function Get-TailText {
 function Classify-CxError {
   param([string]$Text)
 
+  if ($Text -match '(?i)proxy unreachable|config missing|wrapper missing|CODEX_PROXY_API_KEY missing|connection refused|health|CreateProcessAsUserW failed|windows sandbox: runner error') {
+    return @{ type = "env"; retry = $false }
+  }
   if ($Text -match '(?i)401|403|Unauthorized|Missing bearer') {
     return @{ type = "auth"; retry = $false }
-  }
-  if ($Text -match '(?i)proxy unreachable|config missing|wrapper missing|CODEX_PROXY_API_KEY missing|connection refused|health') {
-    return @{ type = "env"; retry = $false }
   }
   if (-not [string]::IsNullOrWhiteSpace($Text)) {
     return @{ type = "code"; retry = $true }
   }
   return @{ type = "unknown"; retry = $false }
+}
+
+function Test-CxSandboxExecutionFailure {
+  param([string]$Text)
+
+  if ([string]::IsNullOrWhiteSpace($Text)) {
+    return $false
+  }
+  if ($Text -match '(?im)^\d{4}-\d{2}-\d{2}T.*\bERROR\b.*(CreateProcessAsUserW failed|windows sandbox: runner error)') {
+    return $true
+  }
+  if ($Text -match '(?im)^execution error: .*windows sandbox: runner error') {
+    return $true
+  }
+  return $false
+}
+
+function Resolve-CxSandbox {
+  param(
+    [string]$Profile,
+    [string]$Sandbox
+  )
+
+  if ($Sandbox -ne "auto") {
+    return $Sandbox
+  }
+  if ($Profile -in @("design", "review")) {
+    return "read-only"
+  }
+  if ($Profile -eq "full-access") {
+    return "danger-full-access"
+  }
+  return "workspace-write"
 }
 
 function Test-CxPreflight {
@@ -221,6 +256,7 @@ function New-CxResultPayload {
 
 $repoRoot = Get-CxRepoRoot
 $resolvedTaskId = ConvertTo-SafeTaskId -Value $TaskId
+$resolvedSandbox = Resolve-CxSandbox -Profile $Profile -Sandbox $Sandbox
 $workflowRoot = Join-Path $repoRoot ".state\workflow"
 $taskRoot = Join-Path (Join-Path $workflowRoot "tasks") $resolvedTaskId
 $resultPath = Join-Path $taskRoot "result.json"
@@ -235,7 +271,7 @@ $commands = @(
 )
 
 if ($DryRun) {
-  $dryText = "DryRun only. Codex preflight and invocation were skipped. task_id=$resolvedTaskId; profile=$Profile; CODEX_HOME=$script:CodexHome."
+  $dryText = "DryRun only. Codex preflight and invocation were skipped. task_id=$resolvedTaskId; profile=$Profile; sandbox=$resolvedSandbox; CODEX_HOME=$script:CodexHome."
   $dryText | Set-Content -LiteralPath $stdoutPath -Encoding UTF8
   "" | Set-Content -LiteralPath $stderrPath -Encoding UTF8
   $postGitStatus = Get-GitStatusText
@@ -247,7 +283,7 @@ if ($DryRun) {
 
 $commands = $commands + @(
   "Invoke-RestMethod $script:ProxyHealthUrl",
-  "$script:WrapperExe exec --profile $Profile -C $repoRoot --sandbox workspace-write <task>"
+  "$script:WrapperExe exec --profile $Profile -C $repoRoot --sandbox $resolvedSandbox <task>"
 )
 $preflight = Test-CxPreflight
 
@@ -272,7 +308,7 @@ $startInfo.FileName = $script:WrapperExe
 [void]$startInfo.ArgumentList.Add("-C")
 [void]$startInfo.ArgumentList.Add($repoRoot)
 [void]$startInfo.ArgumentList.Add("--sandbox")
-[void]$startInfo.ArgumentList.Add("workspace-write")
+[void]$startInfo.ArgumentList.Add($resolvedSandbox)
 [void]$startInfo.ArgumentList.Add($TaskDescription)
 $startInfo.RedirectStandardOutput = $true
 $startInfo.RedirectStandardError = $true
@@ -312,6 +348,14 @@ if (-not $completed) {
 }
 
 if ($process.ExitCode -eq 0) {
+  $combinedSuccess = (($stderr, $stdout) -join "`n")
+  if (Test-CxSandboxExecutionFailure -Text $combinedSuccess) {
+    $classification = Classify-CxError -Text $combinedSuccess
+    $payload = New-CxResultPayload -TaskId $resolvedTaskId -Status "failed" -Summary "Codex returned success, but its tool execution failed inside the Windows sandbox." -PreGitStatus $preGitStatus -PostGitStatus $postStatus -CommandsRun $commands -ExitCode 1 -DurationSec ([math]::Round($stopwatch.Elapsed.TotalSeconds, 3)) -ErrorObject ([ordered]@{ type = $classification.type; message = "Codex shell execution failed inside the Windows sandbox."; stderr_tail = (Get-TailText -Text $combinedSuccess) }) -RetryAdvised $classification.retry -NextSuggestion "Fix the Windows Codex sandbox, or rerun with -Sandbox danger-full-access only when the user explicitly authorizes an unsandboxed CX task."
+    Write-CxResultJson -Path $resultPath -Payload $payload
+    Write-Output "result: $resultPath"
+    exit 1
+  }
   $payload = New-CxResultPayload -TaskId $resolvedTaskId -Status "success" -Summary "Codex completed successfully." -PreGitStatus $preGitStatus -PostGitStatus $postStatus -CommandsRun $commands -ExitCode $process.ExitCode -DurationSec ([math]::Round($stopwatch.Elapsed.TotalSeconds, 3)) -ErrorObject $null -RetryAdvised $false -NextSuggestion "CC should inspect result.json and codex.log, then decide acceptance or follow-up."
   Write-CxResultJson -Path $resultPath -Payload $payload
   Write-Output "result: $resultPath"

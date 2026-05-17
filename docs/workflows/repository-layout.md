@@ -11,7 +11,7 @@
 | `docs/reference/` | 按需读取的参考资料 |
 | `docs/archive/` | 历史报告和退役资料，默认不读 |
 | `.agents/skills/` | 仓库级 Codex skill 白名单 |
-| `.claude/` | Claude Code 占位和边界说明 |
+| `.claude/` | Claude Code 边界说明和 repo-local Delegation Guard |
 | `.codex/` | 项目级 Codex 配置占位，不放运行态 |
 | `.state/workflow/` | CC -> CX 运行态，默认不提交 |
 | `scripts/workflow/` | 当前 workflow 脚本 |
@@ -23,6 +23,10 @@
 ## Runtime State
 
 CC -> CX 机器结果固定写入 `.state/workflow/tasks/<task_id>/`。`.state/workflow/reports/` 只用于审查、验收、事故复盘或 commit 前人工复核。
+
+## Claude Guard
+
+`.claude/settings.json` 注册 Claude Code `PreToolUse` guard，`.claude/hooks/**` 存放 guard 脚本。guard 生效后，业务工作区、workflow 控制面、仓库入口文件、`.claude/settings.json`、`.claude/hooks/**` 和 `.agents/skills/**` 默认需要通过 CC -> CX 委派修改，除非用户显性授权 CC 直接修改。
 
 ## Retired Paths
 

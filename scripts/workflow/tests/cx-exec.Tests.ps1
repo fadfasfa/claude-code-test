@@ -28,6 +28,7 @@ Describe "CC -> CX workflow entrypoints" {
     $text | Should Not Match 'Join-Path \$repoRoot "run\\workflow"'
     $text | Should Match 'codex-exec-wrapper\.exe'
     $text | Should Match 'C:\\Users\\apple\\.codex-exec'
+    $text | Should Match 'Resolve-CxSandbox'
     $text | Should Not Match 'Join-Path \$repoRoot "\.workflow"'
   }
 }
