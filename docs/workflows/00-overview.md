@@ -22,5 +22,6 @@
 ## Artifact Boundary
 
 - 普通任务只产出目标 diff 和对话摘要。
-- 结构化机器结果固定写入 `.state/workflow/tasks/<task_id>/`。
+- `.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；新 CC-CX 主路不再依赖 `.state/workflow/tasks/result.json`。
+- CC 计划、协作、交接和审查草稿可写入 `.state/cc-work/**`；普通任务不强制生成这些文件。
 - 不默认生成 `docs/plans/*.md`、Markdown report、probe 或 archive 证据文件。

@@ -3,12 +3,12 @@
 ## Local First
 
 - 默认先做本地 review，不调用云端 PR。
-- 使用 `scripts/workflow/local-review.ps1` 输出 diff 摘要、风险和建议验证。
+- 旧 `scripts/workflow/local-review.ps1` 已随旧 workflow 主流程移除；本地 review 以 `git diff`、定向验证结果和人工风险清单为准。
 - 只有用户明确要求时才进入远端 PR、GitHub Actions 或云端评论流程。
 
 ## Publishing Boundary
 
-- `scripts/workflow/finalize-pr.ps1` 是发布前辅助脚本，默认 dry-run。
+- 不存在默认发布脚本入口；发布前辅助动作必须由用户明确授权并给出具体命令或流程。
 - review branch、commit、push 和 PR create 都需要明确且独立的用户授权。
 - merge、amend、tag 或 release 不进入默认自动路径。
 

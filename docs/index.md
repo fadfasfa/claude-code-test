@@ -21,3 +21,4 @@
 ## Output Boundary
 
 普通任务不默认生成 `docs/plans/*.md`、Markdown report、probe 或 archive 证据文件。
+旧 `.state/workflow/**` 只作为 `cx-exec` 工作流遗留运行态；新 CC-CX 主路不依赖 `.state/workflow/tasks/result.json`。

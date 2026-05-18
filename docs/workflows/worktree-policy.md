@@ -8,7 +8,7 @@
 
 - 用户明确要求开 worktree。
 - 上游任务明确标注 `requires_worktree: true`。
-- 用户显式调用 `scripts/workflow/worktree-start.ps1`。
+- 用户在后续任务中显式提供新的 worktree 创建入口和授权。
 
 多文件、多阶段、高风险或 non-trivial 本身都不构成开树触发。
 
@@ -22,7 +22,7 @@
 - `C:\Users\apple\_worktrees`
 - 目标任务的 `target_work_area`
 
-创建入口是 `scripts/workflow/worktree-start.ps1`。默认 dry-run；只有 `-Apply` 才创建 detached worktree，并写入 `TASK_HANDOFF.md` 与 `.task-worktree.json`。
+旧 `scripts/workflow/worktree-start.ps1` 已随旧 workflow 主流程移除。未建立新入口前，不自动创建 detached worktree，也不默认写入 `TASK_HANDOFF.md` 与 `.task-worktree.json`。
 
 若存在 dirty active worktree、目标路径与主仓脏改重叠，或两个受管根都创建失败，立即停止。
 
@@ -30,5 +30,5 @@
 
 - `TASK_HANDOFF.md` 和 `.task-worktree.json` 只属于显式 worktree 流程。
 - 普通任务不生成、不更新这些文件。
-- 读取 metadata 使用 `task-metadata.ps1` / `worktree-status.ps1`。
-- 清理只通过 `cleanup-worktree.ps1`，默认 dry-run；真实清理前必须确认目标受管且工作树干净。
+- 旧 metadata / cleanup 脚本已随旧 workflow 主流程移除；普通任务不读取或更新 worktree metadata。
+- 真实清理前必须确认目标受管且工作树干净，并获得用户显性授权。

@@ -11,10 +11,11 @@
 | `docs/reference/` | 按需读取的参考资料 |
 | `docs/archive/` | 历史报告和退役资料，默认不读 |
 | `.agents/skills/` | 仓库级 Codex skill 白名单 |
-| `.claude/` | Claude Code 边界说明和 repo-local Delegation Guard |
+| `.claude/` | Claude Code 边界说明和 repo-local 高风险 Bash guard |
 | `.codex/` | 项目级 Codex 配置占位，不放运行态 |
-| `.state/workflow/` | CC -> CX 运行态，默认不提交 |
-| `scripts/workflow/` | 当前 workflow 脚本 |
+| `.state/workflow/` | 旧 `cx-exec` 工作流遗留运行态，默认不提交 |
+| `.state/cc-work/` | CC 计划、协作、交接、审查草稿区 |
+| `scripts/` | 仓库级辅助脚本；旧 `scripts/workflow/` 已移除 |
 | `scripts/git/` | legacy/manual Git 辅助脚本 |
 | `run/` | Hextech 业务运行区 |
 
@@ -22,11 +23,11 @@
 
 ## Runtime State
 
-CC -> CX 机器结果固定写入 `.state/workflow/tasks/<task_id>/`。`.state/workflow/reports/` 只用于审查、验收、事故复盘或 commit 前人工复核。
+`.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；新 CC-CX 主路不再依赖 `.state/workflow/tasks/result.json`。`.state/cc-work/**` 用于 CC 计划、协作草稿、交接稿和审查草稿，不是正式文档区，普通任务不强制生成文件。
 
 ## Claude Guard
 
-`.claude/settings.json` 注册 Claude Code `PreToolUse` guard，`.claude/hooks/**` 存放 guard 脚本。guard 生效后，业务工作区、workflow 控制面、仓库入口文件、`.claude/settings.json`、`.claude/hooks/**` 和 `.agents/skills/**` 默认需要通过 CC -> CX 委派修改，除非用户显性授权 CC 直接修改。
+`.claude/settings.json` 注册 Claude Code `PreToolUse` guard，`.claude/hooks/**` 存放 guard 脚本。当前 guard 只负责高风险 Bash 的显式确认，例如删除文件、强制清理、回退工作树、重写 Git 历史、提交和推送；普通 `Edit` / `Write` / `MultiEdit` 与普通仓库内 Bash 不再由 repo-local hook 一刀切阻断。本仓外写入或非沙箱执行继续依赖 Claude Code 自身权限确认与 sandbox 边界。
 
 ## Retired Paths
 
@@ -36,4 +37,6 @@ CC -> CX 机器结果固定写入 `.state/workflow/tasks/<task_id>/`。`.state/w
 - `.codex-exec-apple/`
 - `.learnings/`
 - `run/workflow/`
+- 根 `cx-exec.ps1`
+- `scripts/workflow/`
 - 根目录 `CODEX_RESULT.md`、`CLAUDE_REVIEW.md`、`TASK_HANDOFF.md`、`.task-worktree.json`

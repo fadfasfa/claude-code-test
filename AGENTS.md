@@ -7,6 +7,9 @@
 - 默认使用简体中文输出总结、风险、验证结果和变更说明。
 - 仓库根目录是治理、路由和工具骨架，不是默认业务写入面。
 - 业务修改必须先落到明确子项目或已登记工作区；写入范围以 `docs/workflows/work_area_registry.md` 为准。
+- Codex 被用户直接调用时保留 standalone 执行能力；Claude Code 入口下，CC 负责监督、审计和验收，CX / Codex 负责复杂探查、实现和验证。
+- 旧 `cx-exec` 主流程已移除；CC 调用 CX 的默认主路是已启用的 OpenAI 官方 Codex plugin。
+- plugin 启用不等于 review gate 启用；review gate 默认禁用，除非用户显性要求，否则不得启用。
 - Windows 默认使用 PowerShell。
 - 默认在当前工作树小步执行；不自动创建 worktree、分支、计划文件、Markdown report、probe 或 archive 证据文件。
 - 修改后运行最小有效验证；无法验证时说明具体原因。

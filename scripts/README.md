@@ -1,10 +1,9 @@
 # scripts
 
-本目录放仓库级辅助脚本。默认入口是 `scripts/workflow/`；`scripts/git/` 是 legacy/manual 层，不自动触发。
+本目录放仓库级辅助脚本。旧 `scripts/workflow/` 主流程已移除；`scripts/git/` 是 legacy/manual 层，不自动触发。
 
 | 路径 | 状态 | 用途 |
 | :--- | :--- | :--- |
-| `scripts/workflow/` | current | 当前 workflow 脚本和测试 |
 | `scripts/git/` | legacy/manual | 旧 Git / worktree 辅助脚本，只能显式手动调用 |
 | `scripts/archive/` | archive | 退役或一次性脚本；可不存在 |
 

@@ -30,9 +30,10 @@ Codex 是当前唯一主流程。Claude Code 只保留入口和边界说明。
 | `qm-run-demo/` | demo / runtime 变体 |
 | `subtitle_extractor/` | 字幕提取工具 |
 | `docs/` / `scripts/` / `.agents/skills/` | 仓库治理区 |
-| `.state/workflow/` | CC -> CX 本地运行态，默认不提交 |
+| `.state/workflow/` | 旧 `cx-exec` 工作流遗留运行态，默认不提交 |
+| `.state/cc-work/` | CC 计划、协作、交接、审查草稿区 |
 
-业务写入前必须先选定 `target_work_area`。普通任务只产出目标 diff 和对话摘要。
+业务写入前必须先选定 `target_work_area`。普通任务只产出目标 diff 和对话摘要。CC 需要调用 CX 时，后续主路是 OpenAI 官方 Codex plugin；Codex 被用户直接调用时仍保留 standalone 执行能力。
 
 ## Non Goals
 

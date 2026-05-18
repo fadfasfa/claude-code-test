@@ -3,7 +3,8 @@
 本目录只服务 Claude Code，不作为当前规则真相源。仓库规则以根目录 `AGENTS.md`、`CLAUDE.md` 和 `docs/index.md` 指向的短索引为准。
 
 - `skills/`：Claude Code 专用的最小辅助 skill。
-- `settings.json`：本仓 Claude Code `PreToolUse` Delegation Guard 注册点。
-- `hooks/`：本仓 Claude Code guard 脚本；guard 生效后属于受保护控制面。
+- `settings.json`：本仓 Claude Code 权限与高风险 Bash 提示规则注册点。
+- `hooks/`：本仓 Claude Code Guard v2 脚本；优先解析结构化 hook JSON，解析失败时按原始 payload 最小分类，避免误拦 Codex plugin 主路，同时继续拦截受保护路径写入。
 - `worktrees/`：本地占位目录；不自动创建或主控 Git worktree。
+- CC 计划、协作、交接和审查草稿写入 `.state/cc-work/**`，普通任务不强制生成这些文件。
 - 不在这里保存 Codex 配置、CC -> CX 运行态、长期报告或仓库级 workflow 规则。

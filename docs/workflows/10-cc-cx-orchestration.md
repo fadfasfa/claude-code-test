@@ -4,22 +4,18 @@
 
 ## Roles
 
-- CC：planning、supervision、review。
-- CX：读写仓库、运行命令、返回结构化结果。
-- 用户直接给 Codex 下任务时，不需要经过 `cx-exec.ps1`。
-- `cx-exec.ps1` 是 CC-led supervised mode 的委派入口，不是 Codex-led standalone mode 的必经入口。
+- CC / Claude Code：大脑、监工、审计、验收；负责理解目标、收敛计划、监督过程、审查 diff 和验收结果。
+- CX / Codex：手、眼、实现者、大范围探查者、验证者；负责复杂探查、实现、运行验证和第二意见。
+- 用户直接给 Codex 下任务时，Codex 保留 standalone 能力，可按 `AGENTS.md`、`docs/index.md` 和用户任务独立完成普通代码任务。
+- Claude Code 入口下，CC 需要调用 CX 时，后续主路是 OpenAI 官方 Codex plugin。
 
 ## Current Contract
 
-- 根入口：`.\cx-exec.ps1`
-- executor：`scripts/workflow/cx-exec.ps1`
-- wrapper：`C:\Users\apple\codex-maintenance\codex-exec-wrapper.exe`
-- `CODEX_HOME`：`C:\Users\apple\.codex-exec`
-- result root：`.state/workflow/tasks/<task_id>/`
-
-`cx-exec.ps1` 支持 `-TaskId`、`-TaskDescription`、`-Profile`、`-Sandbox` 和 `-DryRun`。`-DryRun` 只写结构化结果，不调用真实 Codex。`-Sandbox auto` 默认按 profile 选择：`design` / `review` 使用 `read-only`，`implement` / `lint` 使用 `workspace-write`，`full-access` 使用 `danger-full-access`。
-
-如果 Windows Codex sandbox 在当前环境报 `CreateProcessAsUserW failed: 5`，只有用户显性授权非沙箱 CX 任务时，才允许传 `-Sandbox danger-full-access`。这是 CC -> CX 委派的授权，不等于允许 CC 直接修改受保护文件。
+- `.claude/settings.json` 已启用 OpenAI 官方 Codex plugin，作为 CC 调用 CX 的默认主路。
+- plugin 启用不等于 review gate 启用；review gate 默认禁用，除非用户显性要求，否则不得启用。
+- 不再维护 `cx-exec` 作为 fallback 或 legacy 主路。
+- 旧 `scripts/workflow/` 执行器和根 `cx-exec.ps1` 已移除。
+- `.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；新 CC-CX 主路不再依赖 `.state/workflow/tasks/result.json`、`codex.log` 或 `codex.err.log` 作为默认验收接口。
 
 ## Permission Baseline
 
@@ -34,29 +30,36 @@
 
 ## Result Contract
 
-每个任务目录只保留机器运行态：
-
-- `result.json`
-- `codex.log`
-- `codex.err.log`
-
-`result.json` 至少包含完成项、未完成项、修改文件、验证结果和下一步建议。
+新主路不再使用旧 `cx-exec` 的固定 `result.json` 契约。CC 验收以实际 diff、命令输出、测试结果和 Codex plugin 返回内容为准；`.state/workflow/tasks/**` 仅保留为旧运行态遗留。
 
 ## Artifact Boundary
 
 - 普通任务不生成 `docs/plans/*.md`、Markdown report、probe 或 archive 证据文件。
-- `.state/workflow/current/` 是滚动状态区，默认不提交。
-- `.state/workflow/reports/` 只用于审查、验收、事故复盘或 commit 前人工复核。
+- `.state/cc-work/**` 可用于 CC 计划、协作草稿、交接稿和审查草稿；不是正式文档区。
+- `.state/workflow/current/`、`.state/workflow/reports/`、`.state/workflow/logs/` 和 `.state/workflow/tasks/` 都是旧流程遗留，不是 active workflow 默认目录。
 
 ## Delegation Guard
 
-Claude Code 通过 `.claude/settings.json` 注册 `PreToolUse` Delegation Guard。Guard 长期保护业务工作区、workflow 控制面、仓库入口文件、`.claude/settings.json`、`.claude/hooks/**` 和 `.agents/skills/**`。Guard 生效后，CC 默认不得直接修改这些路径；如需实现性修改，应通过 `.\cx-exec.ps1` 委派 CX。
+Claude Code 通过 `.claude/settings.json` 注册 `PreToolUse` Delegation Guard。Guard 长期保护业务工作区和控制面。Guard 生效后，CC 默认不得直接修改这些路径；实现、修复、批量修改、复杂探查和运行验证默认应交给 CX / Codex plugin。
 
-Guard 允许 CC 执行 `.\cx-exec.ps1`、`pwsh -File .\cx-exec.ps1` 或 `pwsh -Command "& .\cx-exec.ps1 ..."` 作为委派入口；这是 supervised mode 的正常通道。直接编辑、覆盖、删除或移动 `cx-exec.ps1` 仍会被阻止。
+默认 block：
 
-用户显性授权“允许 CC 直接修改”时，还必须有一个机器可判定信号，guard 才会放行 CC 对受保护路径的直接修改：
+- `Edit` / `Write` / `MultiEdit` 命中受保护业务区。
+- `Edit` / `Write` / `MultiEdit` 命中控制面。
+- `Bash` 修改受保护业务区。
+- `Bash` 修改控制面。
 
-- Claude Code hook 输入为 `permission_mode=bypassPermissions`。
-- 启动 Claude Code 的进程环境设置了 `CC_CX_ALLOW_DIRECT_MODIFICATION=1`。
+默认 allow：
 
-没有上述信号时，guard 仍返回 deny，并提示改用 `.\cx-exec.ps1` 委派 CX。
+- `Read` / `Glob` / `Grep` / `LS`。
+- `git status` / `git diff` / `git log`。
+- 只读 Bash 命令和测试命令。
+- `.state/cc-work/**` 下的计划、协作、交接和审查草稿写入。
+
+用户显性要求“允许 CC 直接修改”“允许 Claude 直接修改”“这次 CC 直接写”“显性授权 CC 写入”时，文档上允许 CC 直写。guard 不解析用户原文；显性授权场景需要通过当前 Claude Code 权限确认或人工允许完成。
+
+阻断提示固定使用中文，核心语义是：Claude Code 是监工和审计者，不是默认实现者；非显性授权下，不允许 CC 直接修改受保护业务区或控制面文件；请将实现、复杂探查或验证委派给 CX / Codex plugin；计划和协作草稿请写入 `.state/cc-work/**`。
+
+## Skills
+
+已安装 skills 是独立能力资产。本次 CC-CX 工作流清理不移动、删除或重写 `.agents/skills/**` 或 `.claude/skills/**`；工作流清理不等于清理 skills。

@@ -47,7 +47,7 @@ sm2-randomizer/pipeline/out/source/reports/screen.png
 secrets/
 *.log
 coverage/
-# Legacy root runtime dirs; current runtime root is .state/workflow/.
+# Legacy root runtime dirs; do not recreate as active workflow roots.
 /.workflow/
 /.codex-exec-apple/
 /.learnings/
@@ -58,12 +58,15 @@ coverage/
 /progress.md
 tmp/
 
-# Workflow runtime state; reports remain trackable under .state/workflow/reports/.
+# Legacy workflow runtime state; new CC drafts live under .state/cc-work/.
 .state/workflow/tasks/
 .state/workflow/current/
 .state/workflow/state/
 .state/workflow/archive/
 .state/workflow/logs/
+.state/cc-work/**
+!.state/cc-work/
+!.state/cc-work/README.md
 docs/archive/learnings-retired/ERRORS.md
 
 # generated per-worktree, not committed to main

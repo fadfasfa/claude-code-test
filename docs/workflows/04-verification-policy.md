@@ -9,13 +9,7 @@
 
 ## Entrypoint
 
-优先使用：
-
-```powershell
-pwsh -NoProfile -File scripts/workflow/verify.ps1
-```
-
-无法自动识别时，脚本应输出原因和建议命令。
+旧 `scripts/workflow/verify.ps1` 已随旧 workflow 主流程移除。验证改为按本轮修改范围选择最小有效命令，例如 PowerShell parse check、JSON parse、定向单元测试、目标子项目测试、`rg` 引用检查和 `git diff --check`。
 
 ## Completion Evidence
 
