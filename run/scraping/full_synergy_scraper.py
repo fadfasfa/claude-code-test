@@ -147,7 +147,7 @@ class SynergyEntry:
         return " | ".join(
             [
                 augment_text,
-                self.tier or "黄金",
+                self.tier or "未知",
                 f"评分 {self.rating or '未知'}",
                 self.tag or "强力联动",
                 str(max(0, int(self.upvotes or 0))),
@@ -193,7 +193,7 @@ def _clean_text(value: Any) -> str:
 def normalize_tier(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
-        return "黄金"
+        return ""
     if text in TIER_LABELS:
         return TIER_LABELS[text]
     lowered = text.lower()
@@ -874,8 +874,6 @@ class SynergyExtractor:
             champion = self.champion_lookup.get(normalized) or self.champion_lookup.get(slug)
             if champion:
                 return champion.slug or normalize_slug(champion.en_name or champion.name)
-            if slug:
-                return slug
         return ""
 
     def _resolve_content(self, item: dict) -> str:
