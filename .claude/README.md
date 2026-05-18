@@ -22,4 +22,5 @@
 - `.claude/settings.json` 与 `.claude/hooks/cc-delegation-guard.ps1` 属于 Guard 治理面。业务任务不得修改；如需修改，必须单列为独立治理任务并由 Codex 执行。
 - Guard smoke test 运行方法：
   - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\guard\smoke-cc-delegation-guard.ps1`
+- OpenAI Codex plugin runtime cache patch 的检测、复现、恢复和端到端 smoke 见 `docs/workflows/codex-runtime-patch.md`；不要把 `.claude/plugins/cache/**` 当作 repo 持久修复。
 - 不在这里保存 Codex 配置、CC -> CX 运行态、长期报告或仓库级 workflow 规则。

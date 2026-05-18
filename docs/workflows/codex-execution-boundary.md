@@ -9,6 +9,7 @@
 - Codex App、VS Code Codex、Codex CLI、wrapper 和 CC 调用器是不同 surface，不混写为同一入口。
 - 重执行、长线程和大 diff 默认留在 VS Code Codex / Codex CLI；不要把这类执行历史重新带回 Codex App 热路径。
 - CC 需要调用 CX 时，默认主路是已启用的 OpenAI 官方 Codex plugin。
+- plugin runtime cache 是本机状态；Codex Researcher data-plane patch 的检测、复现和恢复见 `codex-runtime-patch.md`。
 
 ## Current CX Contract
 
@@ -53,5 +54,6 @@ Guard 还要求 `.claude/settings.json` 与 `.claude/hooks/cc-delegation-guard.p
 ## Related
 
 - `10-cc-cx-orchestration.md`
+- `codex-runtime-patch.md`
 - `repository-layout.md`
 - `worktree-policy.md`

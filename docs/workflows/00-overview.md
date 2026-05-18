@@ -14,6 +14,7 @@
 ## Canonical Docs
 
 - `codex-execution-boundary.md`
+- `codex-runtime-patch.md`
 - `10-cc-cx-orchestration.md`
 - `cc-cx-delegation.md`
 - `repository-layout.md`
