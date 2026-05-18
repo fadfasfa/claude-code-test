@@ -12,9 +12,14 @@ $ErrorActionPreference = "Stop"
 [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
+$script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$script:GuardDebugLogPath = Join-Path $script:RepoRoot '.state\cc-work\guard-payload-debug.jsonl'
+
 $script:InspectionBashRules = @(
   '(?i)^\s*git\s+(status|diff|log)\b',
-  '(?i)^\s*(Get-Content|gc|type|cat)\b',
+  '(?i)^\s*git\s+ls-files\b',
+  '(?i)^\s*(Get-Content|gc|type|cat|Select-String|sls)\b',
+  '(?i)^\s*cmd(?:\.exe)?\s+/c\s+type\b',
   '(?i)^\s*(rg|grep|findstr)\b',
   '(?i)^\s*(Get-ChildItem|gci|ls|dir)\b'
 )
@@ -26,6 +31,8 @@ $script:ValidationBashRules = @(
 $script:WriteSignalRules = @(
   '(?i)\b(Set-Content|Add-Content|Out-File|New-Item|Remove-Item|Move-Item|Copy-Item)\b',
   '(?i)\b(rm|rmdir|rd|del|erase|mv|move|cp|copy|touch|mkdir|tee)\b',
+  '(?i)(^|[;&|]\s*)git\s+(rm|reset|clean)\b',
+  '(?i)(^|[;&|]\s*)git\s+checkout\s+--(\s|$)',
   '(?i)\bsed\s+-i\b',
   '(?i)\b(printf|fs\.writefilesync|writefilesync|open\s*\([^)]*,\s*["'']w["''])\b',
   '(?i)(^|[^>])>>?([^>]|$)'
@@ -47,6 +54,10 @@ $script:HighRiskBashRules = @(
   [pscustomobject]@{
     Pattern = '(?i)(^|[;&|]\s*)git\s+checkout\s+--(\s|$)'
     Reason = '该命令会丢弃指定路径的改动，执行前必须明确确认。'
+  },
+  [pscustomobject]@{
+    Pattern = '(?i)(^|[;&|]\s*)git\s+rm(\s|$)'
+    Reason = '该命令会从 Git 索引或工作区移除文件，执行前必须明确确认。'
   },
   [pscustomobject]@{
     Pattern = '(?i)(^|[;&|]\s*)git\s+rebase(\s|$)'
@@ -126,6 +137,28 @@ function Get-JsonProperty {
   return $property.Value
 }
 
+function Get-JsonPropertySafe {
+  param(
+    [AllowNull()][object]$Object,
+    [Parameter(Mandatory = $true)][string]$Name
+  )
+
+  if ($null -eq $Object) {
+    return $null
+  }
+
+  return Get-JsonProperty -Object $Object -Name $Name
+}
+
+function Get-ProcessDelegationContext {
+  [pscustomobject]@{
+    Source = [string]$env:CODEX_DELEGATION_SOURCE
+    Role = [string]$env:CODEX_DELEGATION_ROLE
+    Phase = [string]$env:CODEX_DELEGATION_PHASE
+    JobId = [string]$env:CODEX_DELEGATION_JOB_ID
+  }
+}
+
 function Get-ToolName {
   param([Parameter(Mandatory = $true)][object]$Payload)
 
@@ -165,10 +198,26 @@ function Normalize-GuardText {
     return ''
   }
 
-  $normalized = $Text.Replace('\', '/').ToLowerInvariant()
+  $normalized = $Text.Replace("`r`n", "`n").Replace("`r", "`n")
+  $normalized = $normalized.Replace('\', '/').ToLowerInvariant()
   $normalized = $normalized -replace 'c:/users/apple/claudecode/', ''
   $normalized = $normalized -replace '^\./', ''
   return $normalized
+}
+
+function Get-GuardTextSegments {
+  param([AllowNull()][AllowEmptyString()][string]$Text)
+
+  $normalized = Normalize-GuardText -Text $Text
+  if ([string]::IsNullOrWhiteSpace($normalized)) {
+    return @()
+  }
+
+  return @(
+    $normalized.Split("`n", [System.StringSplitOptions]::RemoveEmptyEntries) |
+      ForEach-Object { $_.Trim() } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  )
 }
 
 function Test-AnyPattern {
@@ -189,15 +238,25 @@ function Test-AnyPattern {
 function Test-CcWorkPathText {
   param([AllowNull()][AllowEmptyString()][string]$Text)
 
-  $normalized = Normalize-GuardText -Text $Text
-  return $normalized -match '(^|[^a-z0-9_.-])\.state/cc-work(/|[^a-z0-9_.-]|$)'
+  foreach ($segment in Get-GuardTextSegments -Text $Text) {
+    if ($segment -match '(^|[^a-z0-9_.-])\.state/cc-work(/|[^a-z0-9_.-]|$)') {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function Test-ClaudePlanPathText {
   param([AllowNull()][AllowEmptyString()][string]$Text)
 
-  $normalized = Normalize-GuardText -Text $Text
-  return $normalized -match '(^|[^a-z0-9_.-])\.claude/plans(/|[^a-z0-9_.-]|$)'
+  foreach ($segment in Get-GuardTextSegments -Text $Text) {
+    if ($segment -match '(^|[^a-z0-9_.-])\.claude/plans(/|[^a-z0-9_.-]|$)') {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function Test-ClaudeDraftPathText {
@@ -209,14 +268,18 @@ function Test-ClaudeDraftPathText {
 function Test-GuardGovernancePathText {
   param([AllowNull()][AllowEmptyString()][string]$Text)
 
-  $normalized = Normalize-GuardText -Text $Text
-  return $normalized -match '(^|[^a-z0-9_.-])\.claude/(hooks/cc-delegation-guard\.ps1|settings\.json)([^a-z0-9_.-]|$)'
+  foreach ($segment in Get-GuardTextSegments -Text $Text) {
+    if ($segment -match '(^|[^a-z0-9_.-])\.claude/(hooks/cc-delegation-guard\.ps1|settings\.json)([^a-z0-9_.-]|$)') {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function Test-ProtectedPathText {
   param([AllowNull()][AllowEmptyString()][string]$Text)
 
-  $normalized = Normalize-GuardText -Text $Text
   $protectedPatterns = @(
     '(^|[^a-z0-9_.-])quantproject(/|$)',
     '(^|[^a-z0-9_.-])heybox(/|$)',
@@ -233,7 +296,13 @@ function Test-ProtectedPathText {
     '(^|[^a-z0-9_.-])\.agents/skills(/|$)'
   )
 
-  return Test-AnyPattern -Text $normalized -Patterns $protectedPatterns
+  foreach ($segment in Get-GuardTextSegments -Text $Text) {
+    if (Test-AnyPattern -Text $segment -Patterns $protectedPatterns) {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function Get-ProtectedReadReason {
@@ -278,6 +347,182 @@ function Test-GitInspectionCommand {
   return [string]$Command -match '(?i)^\s*git\s+(status|diff|log)\b'
 }
 
+function Get-GuardContextValue {
+  param(
+    [Parameter(Mandatory = $true)][object[]]$Objects,
+    [Parameter(Mandatory = $true)][string[]]$Names
+  )
+
+  foreach ($object in $Objects) {
+    if ($null -eq $object) {
+      continue
+    }
+
+    foreach ($name in $Names) {
+      $value = Get-JsonPropertySafe -Object $object -Name $name
+      if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
+        return [string]$value
+      }
+    }
+  }
+
+  return ''
+}
+
+function Get-CodexDelegationContext {
+  param(
+    [Parameter(Mandatory = $true)][object]$Payload,
+    [Parameter(Mandatory = $true)][object]$ToolInput
+  )
+
+  $metadata = Get-JsonPropertySafe -Object $Payload -Name 'metadata'
+  $context = Get-JsonPropertySafe -Object $Payload -Name 'context'
+  $payloadEnv = Get-JsonPropertySafe -Object $Payload -Name 'env'
+  $toolEnv = Get-JsonPropertySafe -Object $ToolInput -Name 'env'
+  $processEnv = [pscustomobject]@{
+    CODEX_DELEGATION_SOURCE = [string]$env:CODEX_DELEGATION_SOURCE
+    CODEX_DELEGATION_ROLE = [string]$env:CODEX_DELEGATION_ROLE
+    CODEX_DELEGATION_PHASE = [string]$env:CODEX_DELEGATION_PHASE
+    CODEX_DELEGATION_JOB_ID = [string]$env:CODEX_DELEGATION_JOB_ID
+  }
+
+  $objects = New-Object System.Collections.Generic.List[object]
+  foreach ($candidate in @(
+    (Get-JsonPropertySafe -Object $Payload -Name 'codex_delegation'),
+    (Get-JsonPropertySafe -Object $metadata -Name 'codex_delegation'),
+    (Get-JsonPropertySafe -Object $context -Name 'codex_delegation'),
+    (Get-JsonPropertySafe -Object $ToolInput -Name 'codex_delegation'),
+    $Payload,
+    $metadata,
+    $context,
+    $ToolInput,
+    $payloadEnv,
+    $toolEnv,
+    $processEnv
+  )) {
+    if ($null -ne $candidate) {
+      [void]$objects.Add($candidate)
+    }
+  }
+
+  $objectArray = @($objects.ToArray())
+
+  [pscustomobject]@{
+    Source = (Get-GuardContextValue -Objects $objectArray -Names @('source', 'codex_source', 'CODEX_DELEGATION_SOURCE'))
+    Role = (Get-GuardContextValue -Objects $objectArray -Names @('role', 'codex_role', 'CODEX_DELEGATION_ROLE'))
+    Phase = (Get-GuardContextValue -Objects $objectArray -Names @('phase', 'codex_phase', 'CODEX_DELEGATION_PHASE'))
+    JobId = (Get-GuardContextValue -Objects $objectArray -Names @('job_id', 'jobId', 'codex_job_id', 'CODEX_DELEGATION_JOB_ID'))
+  }
+}
+
+function Test-CodexResearcherContext {
+  param(
+    [Parameter(Mandatory = $true)][object]$Payload,
+    [Parameter(Mandatory = $true)][object]$ToolInput
+  )
+
+  $context = Get-CodexDelegationContext -Payload $Payload -ToolInput $ToolInput
+  $source = Normalize-GuardText -Text ([string]$context.Source)
+  $role = Normalize-GuardText -Text ([string]$context.Role)
+  $phase = Normalize-GuardText -Text ([string]$context.Phase)
+
+  if ($source -notin @('codex-thread', 'openai-codex-thread')) {
+    return $false
+  }
+
+  $hasRole = -not [string]::IsNullOrWhiteSpace($role)
+  $hasPhase = -not [string]::IsNullOrWhiteSpace($phase)
+
+  if ($hasRole -and $role -ne 'researcher') {
+    return $false
+  }
+
+  if ($hasPhase -and $phase -ne 'explore') {
+    return $false
+  }
+
+  return ($hasRole -or $hasPhase)
+}
+
+function Should-WriteGuardDebugLog {
+  param(
+    [AllowEmptyString()][string]$ToolName,
+    [AllowEmptyString()][string]$TargetText,
+    [AllowEmptyString()][string]$Command,
+    [AllowEmptyString()][string]$Raw
+  )
+
+  $tool = [string]$ToolName
+  if ($tool -in @('Read', 'Glob', 'Grep', 'LS', 'Edit', 'Write', 'MultiEdit')) {
+    return Test-ProtectedPathText -Text $TargetText
+  }
+
+  if ($tool -eq 'Bash') {
+    if (Test-ProtectedPathText -Text $Command) {
+      return $true
+    }
+    if ([string]$Command -match '(?i)^\s*git\s+ls-files\s+run/data\b') {
+      return $true
+    }
+  }
+
+  return ([string]$Raw -match '(?i)codex_delegation|run[/\\]|git\s+ls-files\s+run/data')
+}
+
+function Write-GuardDebugLog {
+  param(
+    [AllowEmptyString()][string]$ToolName,
+    [AllowEmptyString()][string]$TargetText,
+    [AllowEmptyString()][string]$Command,
+    [AllowEmptyString()][string]$Raw,
+    [AllowNull()][object]$Payload = $null,
+    [AllowNull()][object]$ToolInput = $null
+  )
+
+  if (-not (Should-WriteGuardDebugLog -ToolName $ToolName -TargetText $TargetText -Command $Command -Raw $Raw)) {
+    return
+  }
+
+  $delegationContext = if ($null -ne $Payload -and $null -ne $ToolInput) {
+    Get-CodexDelegationContext -Payload $Payload -ToolInput $ToolInput
+  } else {
+    [pscustomobject]@{
+      Source = ''
+      Role = ''
+      Phase = ''
+      JobId = ''
+    }
+  }
+
+  $entry = [ordered]@{
+    timestamp = (Get-Date).ToString('o')
+    tool_name = [string]$ToolName
+    target_text = [string]$TargetText
+    command = [string]$Command
+    raw_payload_snippet = if ([string]::IsNullOrWhiteSpace($Raw)) { '' } else { $Raw.Substring(0, [Math]::Min($Raw.Length, 4000)) }
+    observed_context = [ordered]@{
+      payload_source = [string]$delegationContext.Source
+      payload_role = [string]$delegationContext.Role
+      payload_phase = [string]$delegationContext.Phase
+      payload_job_id = [string]$delegationContext.JobId
+    }
+    process_env = [ordered]@{
+      CODEX_DELEGATION_SOURCE = [string]$env:CODEX_DELEGATION_SOURCE
+      CODEX_DELEGATION_ROLE = [string]$env:CODEX_DELEGATION_ROLE
+      CODEX_DELEGATION_PHASE = [string]$env:CODEX_DELEGATION_PHASE
+      CODEX_DELEGATION_JOB_ID = [string]$env:CODEX_DELEGATION_JOB_ID
+    }
+    top_level_keys = if ($null -ne $Payload) { @($Payload.PSObject.Properties.Name) } else { @() }
+    tool_input_keys = if ($null -ne $ToolInput) { @($ToolInput.PSObject.Properties.Name) } else { @() }
+  }
+
+  $directory = Split-Path -Parent $script:GuardDebugLogPath
+  if (-not [string]::IsNullOrWhiteSpace($directory)) {
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+  }
+  Add-Content -LiteralPath $script:GuardDebugLogPath -Value ($entry | ConvertTo-Json -Compress -Depth 8) -Encoding UTF8
+}
+
 function Get-HighRiskBashReason {
   param([Parameter(Mandatory = $true)][string]$Command)
 
@@ -295,7 +540,7 @@ function Get-ToolTargetText {
 
   $values = New-Object System.Collections.Generic.List[string]
 
-  foreach ($name in @('file_path', 'path', 'notebook_path', 'cwd', 'root', 'glob', 'directory')) {
+  foreach ($name in @('file_path', 'path', 'notebook_path', 'cwd', 'root', 'glob', 'pattern', 'directory')) {
     $value = Get-JsonProperty -Object $ToolInput -Name $name
     if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
       $values.Add([string]$value)
@@ -322,7 +567,7 @@ function Split-CommandTokens {
 
   $tokens = New-Object System.Collections.Generic.List[string]
   if ([string]::IsNullOrWhiteSpace($Command)) {
-    return $tokens
+    return @()
   }
 
   $builder = New-Object System.Text.StringBuilder
@@ -355,7 +600,7 @@ function Split-CommandTokens {
     $tokens.Add($builder.ToString())
   }
 
-  return $tokens
+  return @($tokens.ToArray())
 }
 
 function Test-HasUnquotedShellControl {
@@ -385,6 +630,70 @@ function Test-HasUnquotedShellControl {
   }
 
   return $false
+}
+
+function Get-TokenRange {
+  param(
+    [Parameter(Mandatory = $true)][object[]]$Tokens,
+    [Parameter(Mandatory = $true)][int]$Start
+  )
+
+  if ($Tokens.Count -le $Start) {
+    return @()
+  }
+
+  return @($Tokens[$Start..($Tokens.Count - 1)])
+}
+
+function Get-EffectiveReadCommandTokens {
+  param([AllowNull()][string]$Command)
+
+  $tokens = @(Split-CommandTokens -Command $Command)
+  if ($tokens.Count -ge 3) {
+    $first = Normalize-GuardText -Text ([string]$tokens[0])
+    $second = Normalize-GuardText -Text ([string]$tokens[1])
+    $third = Normalize-GuardText -Text ([string]$tokens[2])
+
+    if ($first -match '(^|/)cmd(?:\.exe)?$' -and $second -eq '/c' -and $third -match '(^|/)type(?:\.exe)?$') {
+      return Get-TokenRange -Tokens $tokens -Start 2
+    }
+  }
+
+  return $tokens
+}
+
+function Test-ReadOnlyBashAllowlist {
+  param([AllowNull()][string]$Command)
+
+  if ([string]::IsNullOrWhiteSpace($Command)) {
+    return $false
+  }
+
+  if (Test-HasUnquotedShellControl -Command $Command) {
+    return $false
+  }
+
+  if (Test-BashWriteSignal -Command $Command) {
+    return $false
+  }
+
+  $tokens = @(Get-EffectiveReadCommandTokens -Command $Command)
+  if ($tokens.Count -eq 0) {
+    return $false
+  }
+
+  $verb = Normalize-GuardText -Text ([string]$tokens[0])
+
+  if ($verb -match '(^|/)git(?:\.exe)?$') {
+    if ($tokens.Count -lt 2) {
+      return $false
+    }
+
+    $subcommand = Normalize-GuardText -Text ([string]$tokens[1])
+    return $subcommand -in @('status', 'diff', 'log', 'ls-files')
+  }
+
+  return $verb -match '(^|/)(get-content|gc|type|cat|select-string|sls|rg|grep|findstr|get-childitem|gci|ls|dir)(?:\.exe)?$'
 }
 
 function Test-CodexControlPlaneCommand {
@@ -424,39 +733,91 @@ function Test-CodexControlPlaneCommand {
 function Get-BashReadTargetText {
   param([AllowNull()][string]$Command)
 
-  $tokens = Split-CommandTokens -Command $Command
+  $tokens = @(Get-EffectiveReadCommandTokens -Command $Command)
   if ($tokens.Count -eq 0) {
     return ''
   }
 
-  $verb = Normalize-GuardText -Text $tokens[0]
+  $verb = Normalize-GuardText -Text ([string]$tokens[0])
   $values = New-Object System.Collections.Generic.List[string]
 
   if ($verb -match '(^|/)(git)(?:\.exe)?$') {
-    return ''
-  }
+    if ($tokens.Count -lt 2) {
+      return ''
+    }
 
-  if ($verb -match '(^|/)(get-content|gc|type|cat|get-childitem|gci|ls|dir)(?:\.exe)?$') {
-    foreach ($token in $tokens[1..($tokens.Count - 1)]) {
-      if ([string]::IsNullOrWhiteSpace($token) -or $token.StartsWith('-')) {
+    $subcommand = Normalize-GuardText -Text ([string]$tokens[1])
+    if ($subcommand -notin @('status', 'diff', 'log', 'ls-files')) {
+      return ''
+    }
+
+    foreach ($token in (Get-TokenRange -Tokens $tokens -Start 2)) {
+      $tokenText = [string]$token
+      if ([string]::IsNullOrWhiteSpace($tokenText) -or $tokenText -eq '--' -or $tokenText.StartsWith('-')) {
         continue
       }
-      $values.Add($token)
+      $values.Add($tokenText)
     }
     return ($values | Select-Object -Unique) -join "`n"
   }
 
-  if ($verb -match '(^|/)(rg|grep|findstr)(?:\.exe)?$') {
+  if ($verb -match '(^|/)(get-content|gc|type|cat|get-childitem|gci|ls|dir)(?:\.exe)?$') {
+    foreach ($token in (Get-TokenRange -Tokens $tokens -Start 1)) {
+      $tokenText = [string]$token
+      if ([string]::IsNullOrWhiteSpace($tokenText) -or $tokenText.StartsWith('-')) {
+        continue
+      }
+      $values.Add($tokenText)
+    }
+    return ($values | Select-Object -Unique) -join "`n"
+  }
+
+  if ($verb -match '(^|/)(select-string|sls)(?:\.exe)?$') {
+    $expectPath = $false
     $nonOptionIndex = 0
-    foreach ($token in $tokens[1..($tokens.Count - 1)]) {
-      if ([string]::IsNullOrWhiteSpace($token) -or $token.StartsWith('-')) {
+    foreach ($token in (Get-TokenRange -Tokens $tokens -Start 1)) {
+      $tokenText = [string]$token
+      $normalized = Normalize-GuardText -Text $tokenText
+      if ([string]::IsNullOrWhiteSpace($tokenText)) {
+        continue
+      }
+      if ($expectPath) {
+        $values.Add($tokenText)
+        $expectPath = $false
+        continue
+      }
+      if ($normalized -in @('-path', '-literalpath')) {
+        $expectPath = $true
+        continue
+      }
+      if ($normalized -match '^-path[:=](.+)$' -or $normalized -match '^-literalpath[:=](.+)$') {
+        $values.Add($Matches[1])
+        continue
+      }
+      if ($tokenText.StartsWith('-')) {
         continue
       }
       $nonOptionIndex += 1
       if ($nonOptionIndex -eq 1) {
         continue
       }
-      $values.Add($token)
+      $values.Add($tokenText)
+    }
+    return ($values | Select-Object -Unique) -join "`n"
+  }
+
+  if ($verb -match '(^|/)(rg|grep|findstr)(?:\.exe)?$') {
+    $nonOptionIndex = 0
+    foreach ($token in (Get-TokenRange -Tokens $tokens -Start 1)) {
+      $tokenText = [string]$token
+      if ([string]::IsNullOrWhiteSpace($tokenText) -or $tokenText.StartsWith('-') -or ($verb -match '(^|/)findstr(?:\.exe)?$' -and $tokenText.StartsWith('/'))) {
+        continue
+      }
+      $nonOptionIndex += 1
+      if ($nonOptionIndex -eq 1) {
+        continue
+      }
+      $values.Add($tokenText)
     }
     return ($values | Select-Object -Unique) -join "`n"
   }
@@ -509,7 +870,11 @@ function Invoke-WritePolicy {
 }
 
 function Invoke-BashPolicy {
-  param([AllowNull()][string]$Command)
+  param(
+    [AllowNull()][string]$Command,
+    [Parameter(Mandatory = $true)][object]$Payload,
+    [Parameter(Mandatory = $true)][object]$ToolInput
+  )
 
   if ([string]::IsNullOrWhiteSpace($Command)) {
     exit 0
@@ -517,6 +882,21 @@ function Invoke-BashPolicy {
 
   if (Test-CodexControlPlaneCommand -Command $Command) {
     exit 0
+  }
+
+  $isCodexResearcher = Test-CodexResearcherContext -Payload $Payload -ToolInput $ToolInput
+  if ($isCodexResearcher) {
+    if (Test-ReadOnlyBashAllowlist -Command $Command) {
+      $targetText = Get-BashReadTargetText -Command $Command
+      if (Test-ProtectedPathText -Text $targetText) {
+        exit 0
+      }
+    }
+
+    if ((Test-ProtectedPathText -Text $Command) -and (Test-BashWriteSignal -Command $Command)) {
+      New-DenyPayload -Reason (Get-ProtectedWriteReason -Text $Command)
+      exit 0
+    }
   }
 
   if (Test-GitInspectionCommand -Command $Command) {
@@ -586,7 +966,7 @@ function Get-FallbackToolKind {
     return 'Bash'
   }
 
-  if ($Raw -match '(?i)"(?:file_path|path|notebook_path|paths|cwd|root|glob)"\s*:') {
+  if ($Raw -match '(?i)"(?:file_path|path|notebook_path|paths|cwd|root|glob|pattern)"\s*:') {
     return 'Write'
   }
 
@@ -602,6 +982,7 @@ function Invoke-FallbackPolicy {
   }
 
   $kind = Get-FallbackToolKind -Raw $Raw
+  Write-GuardDebugLog -ToolName $kind -TargetText $Raw -Command $Raw -Raw $Raw
 
   if ($kind -eq 'Read') {
     if (Test-ClaudeDraftPathText -Text $Raw) {
@@ -694,13 +1075,11 @@ try {
 
 $toolName = Get-ToolName -Payload $payload
 $toolInput = Get-ToolInput -Payload $payload
+$targetText = ''
+$command = ''
 
-if ($toolName -in @('Read', 'Glob', 'Grep', 'LS')) {
-  Invoke-ReadPolicy -TargetText (Get-ToolTargetText -ToolInput $toolInput)
-}
-
-if ($toolName -in @('Edit', 'Write', 'MultiEdit')) {
-  Invoke-WritePolicy -TargetText (Get-ToolTargetText -ToolInput $toolInput) -UnknownReason 'Guard 无法安全判断写入目标。'
+if ($toolName -in @('Read', 'Glob', 'Grep', 'LS', 'Edit', 'Write', 'MultiEdit')) {
+  $targetText = Get-ToolTargetText -ToolInput $toolInput
 }
 
 if ($toolName -eq 'Bash') {
@@ -708,8 +1087,21 @@ if ($toolName -eq 'Bash') {
   if ([string]::IsNullOrWhiteSpace($command)) {
     $command = [string](Get-JsonProperty -Object $toolInput -Name 'cmd')
   }
+  $targetText = Get-BashReadTargetText -Command $command
+}
 
-  Invoke-BashPolicy -Command $command
+Write-GuardDebugLog -ToolName $toolName -TargetText $targetText -Command $command -Raw $rawInput -Payload $payload -ToolInput $toolInput
+
+if ($toolName -in @('Read', 'Glob', 'Grep', 'LS')) {
+  Invoke-ReadPolicy -TargetText $targetText
+}
+
+if ($toolName -in @('Edit', 'Write', 'MultiEdit')) {
+  Invoke-WritePolicy -TargetText $targetText -UnknownReason 'Guard 无法安全判断写入目标。'
+}
+
+if ($toolName -eq 'Bash') {
+  Invoke-BashPolicy -Command $command -Payload $payload -ToolInput $toolInput
 }
 
 exit 0

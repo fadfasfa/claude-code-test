@@ -4,6 +4,29 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $guardPath = Join-Path $repoRoot '.claude\hooks\cc-delegation-guard.ps1'
 
+# 模拟 companion 应注入的 Codex data-plane metadata；缺少该字段时必须继续按 CC 直接调用处理。
+$codexResearcherDelegation = @{ source = 'codex-thread'; role = 'researcher'; phase = 'explore' }
+
+function New-BashPayload {
+  param(
+    [Parameter(Mandatory = $true)][string]$Command,
+    [AllowNull()][hashtable]$Delegation = $null
+  )
+
+  $payload = @{
+    tool_name = 'Bash'
+    tool_input = @{
+      command = $Command
+    }
+  }
+
+  if ($null -ne $Delegation) {
+    $payload.codex_delegation = $Delegation
+  }
+
+  return $payload
+}
+
 $cases = @(
   [pscustomobject]@{ Name = 'deny_edit_run'; Expected = 'deny'; Payload = @{ tool_name = 'Edit'; tool_input = @{ file_path = 'run/foo.py' } } },
   [pscustomobject]@{ Name = 'deny_write_run'; Expected = 'deny'; Payload = @{ tool_name = 'Write'; tool_input = @{ file_path = 'run/foo.py' } } },
@@ -12,8 +35,19 @@ $cases = @(
   [pscustomobject]@{ Name = 'deny_bash_python_write_run'; Expected = 'deny'; Payload = @{ tool_name = 'Bash'; tool_input = @{ command = 'python -c "open(''run/foo.py'',''w'').write(''x'')"' } } },
   [pscustomobject]@{ Name = 'deny_guard_edit'; Expected = 'deny'; Payload = @{ tool_name = 'Edit'; tool_input = @{ file_path = '.claude/hooks/cc-delegation-guard.ps1' } } },
   [pscustomobject]@{ Name = 'deny_read_run'; Expected = 'deny'; Payload = @{ tool_name = 'Read'; tool_input = @{ file_path = 'run/foo.py' } } },
+  [pscustomobject]@{ Name = 'deny_glob_run_raw'; Expected = 'deny'; Payload = @{ tool_name = 'Glob'; tool_input = @{ pattern = 'run/data/raw/**'; path = '.' } } },
+  [pscustomobject]@{ Name = 'deny_glob_run_any'; Expected = 'deny'; Payload = @{ tool_name = 'Glob'; tool_input = @{ pattern = 'run/**'; path = '.' } } },
   [pscustomobject]@{ Name = 'deny_grep_run'; Expected = 'deny'; Payload = @{ tool_name = 'Grep'; tool_input = @{ path = 'run'; pattern = 'foo' } } },
   [pscustomobject]@{ Name = 'deny_ls_run'; Expected = 'deny'; Payload = @{ tool_name = 'LS'; tool_input = @{ path = 'run' } } },
+  [pscustomobject]@{ Name = 'allow_codex_researcher_cmd_type_run'; Expected = 'allow'; Payload = (New-BashPayload -Command 'cmd /c type run/scraping/full_synergy_scraper.py' -Delegation $codexResearcherDelegation) },
+  [pscustomobject]@{ Name = 'allow_codex_researcher_findstr_run_detail'; Expected = 'allow'; Payload = (New-BashPayload -Command 'findstr /n ".*" run/display/static/detail.html' -Delegation $codexResearcherDelegation) },
+  [pscustomobject]@{ Name = 'allow_codex_researcher_rg_run_scraping'; Expected = 'allow'; Payload = (New-BashPayload -Command 'rg -n "augment" run/scraping' -Delegation $codexResearcherDelegation) },
+  [pscustomobject]@{ Name = 'allow_codex_researcher_git_ls_files_run_data'; Expected = 'allow'; Payload = (New-BashPayload -Command 'git ls-files run/data' -Delegation $codexResearcherDelegation) },
+  [pscustomobject]@{ Name = 'deny_cc_direct_cmd_type_run'; Expected = 'deny'; Payload = (New-BashPayload -Command 'cmd /c type run/scraping/full_synergy_scraper.py') },
+  [pscustomobject]@{ Name = 'deny_cc_direct_findstr_run_detail'; Expected = 'deny'; Payload = (New-BashPayload -Command 'findstr /n ".*" run/display/static/detail.html') },
+  [pscustomobject]@{ Name = 'deny_codex_researcher_redirect_run'; Expected = 'deny'; Payload = (New-BashPayload -Command 'echo x > run/foo.txt' -Delegation $codexResearcherDelegation) },
+  [pscustomobject]@{ Name = 'deny_codex_researcher_node_write_run'; Expected = 'deny'; Payload = (New-BashPayload -Command "node -e `"require('fs').writeFileSync('run/foo.txt','x')`"" -Delegation $codexResearcherDelegation) },
+  [pscustomobject]@{ Name = 'deny_codex_researcher_git_rm_cached_run_data'; Expected = 'deny'; Payload = (New-BashPayload -Command 'git rm --cached run/data/raw/file.csv' -Delegation $codexResearcherDelegation) },
   [pscustomobject]@{ Name = 'allow_companion_task_prompt_text'; Expected = 'allow'; Payload = @{ tool_name = 'Bash'; tool_input = @{ command = 'node C:/tools/codex-companion.mjs task "prompt contains run/ and > and <task> and --write"' } } },
   [pscustomobject]@{ Name = 'allow_companion_status'; Expected = 'allow'; Payload = @{ tool_name = 'Bash'; tool_input = @{ command = 'node C:/tools/codex-companion.mjs status' } } },
   [pscustomobject]@{ Name = 'allow_companion_cancel'; Expected = 'allow'; Payload = @{ tool_name = 'Bash'; tool_input = @{ command = 'node C:/tools/codex-companion.mjs cancel job-123' } } },

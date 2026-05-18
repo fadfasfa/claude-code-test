@@ -7,7 +7,7 @@
 - CC / Claude Code：需求澄清、任务派发、计划审批、结果审查。
 - Codex Researcher：只读探查 protected path，整理证据、定位文件、梳理调用链。
 - Codex Planner：把探查结果收敛为可审批计划，明确范围、风险、验证入口和停止条件。
-- Codex Executor：在 plan approved 后修改文件、生成 diff、执行最小验证。
+- Codex Executor：在 plan approved 后修改文件、生成 diff、执行最小验证；若连续 3 次 shell failure，必须停止并报告已完成/未完成步骤，不得继续猜测或换壳重试。
 - Codex Reviewer：复核 changed files、diff summary、validation result，并对失败或回滚状态给出结论。
 
 ## Current Contract

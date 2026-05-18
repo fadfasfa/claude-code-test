@@ -4,7 +4,7 @@
 
 - `skills/`：Claude Code 专用的最小辅助 skill。
 - `settings.json`：本仓 Claude Code `PreToolUse` Guard 注册点。Guard v3 默认启用严格 CC/CX 分工。
-- `hooks/cc-delegation-guard.ps1`：仓库级委派 Guard。职责是拒绝 CC 直接探查或修改 protected path，并显式放行 Codex control-plane。
+- `hooks/cc-delegation-guard.ps1`：仓库级委派 Guard。职责是拒绝 CC 直接探查或修改 protected path，显式放行 Codex control-plane，并在明确 Codex Researcher data-plane metadata 时放行 protected path 只读探查。
 - `worktrees/`：本地占位目录；不自动创建或主控 Git worktree。
 - CC 计划、协作、交接和审查草稿写入 `.state/cc-work/**`。
 - Claude Code 原生运行时若需要写入本地计划文件，允许直接使用 `.claude/plans/**`；该目录是本机草稿面，默认不提交。
@@ -17,6 +17,8 @@
   - `codex resume ...`
   - `codex status`
   - `codex review`
+- Codex data-plane 不是 control-plane 的隐式延伸；读取 protected path 必须由 companion 向 hook payload 注入 `codex_delegation.source=codex-thread`，并标明 `role=researcher` 或 `phase=explore`。
+- Codex Researcher data-plane 只允许 `Get-Content` / `type` / `cmd /c type` / `findstr` / `Select-String` / `rg` / `grep` / `Get-ChildItem` / `dir` / `ls` / `git status` / `git diff` / `git log` / `git ls-files` 这类只读命令；重定向、写文件、删除/移动/复制和高危 Git 写操作仍必须拒绝。
 - `.claude/settings.json` 与 `.claude/hooks/cc-delegation-guard.ps1` 属于 Guard 治理面。业务任务不得修改；如需修改，必须单列为独立治理任务并由 Codex 执行。
 - Guard smoke test 运行方法：
   - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\guard\smoke-cc-delegation-guard.ps1`

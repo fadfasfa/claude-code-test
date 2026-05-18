@@ -73,8 +73,12 @@
 - 不允许凭猜测 patch。
 - `old_string` 不匹配时必须停止并报告，不得反复猜测。
 - 连续 3 次 shell failure 必须停止。
+- 连续 3 次 shell failure 后不得继续猜测，不得换壳重试，不得仅通过改写 shell 包装继续硬闯。
 - 超过 5 分钟无有效进展必须停止。
 - 失败后必须明确说明：
+  - 已完成步骤
+  - 未完成步骤
+  - 最后失败点
   - 是否有文件被修改
   - 如有，是否已回滚
   - 若未回滚，建议的回滚动作是什么
@@ -116,6 +120,66 @@ Guard 显式允许以下 control-plane 命令，不会因为 prompt 文本中包
 - `codex review`
 
 allowlist 只放行这些明确命令，不等于“任何包含 codex 字符串的 Bash 都放行”。
+
+## Codex Data-Plane Readonly Allowlist
+
+Codex control-plane 放行只表示 CC 可以启动、查询或中断 Codex 任务；它不自动放行 Codex 线程内部的 Bash。Guard 只在 hook payload 明确标识 Codex Researcher data-plane 时，才允许 protected path 的只读探查。
+
+companion 必须向 hook payload 注入以下 metadata：
+
+```json
+{
+  "codex_delegation": {
+    "source": "codex-thread",
+    "role": "researcher",
+    "phase": "explore"
+  }
+}
+```
+
+如果 companion 只能注入环境变量，也必须把等价字段暴露进 hook payload 的 `env` 对象，而不是写成全局 CC 环境变量：
+
+- `CODEX_DELEGATION_SOURCE=codex-thread`
+- `CODEX_DELEGATION_ROLE=researcher`
+- `CODEX_DELEGATION_PHASE=explore`
+
+Guard 的 data-plane allow 条件必须同时满足：
+
+- 来源明确为 Codex 线程：`source=codex-thread` 或 `source=openai-codex-thread`。
+- `role=researcher` 或 `phase=explore`，且已出现字段不得与 researcher/explore 冲突。
+- Bash 命令命中只读 allowlist。
+- Bash 命令不包含写信号或高危 Git 写操作。
+
+只读 allowlist 当前覆盖：
+
+- `Get-Content` / `gc` / `type` / `cat`
+- `cmd /c type`
+- `findstr`
+- `Select-String` / `sls`
+- `rg`
+- `grep`
+- `Get-ChildItem` / `gci`
+- `dir`
+- `ls`
+- `git status`
+- `git diff`
+- `git log`
+- `git ls-files`
+
+以下信号即使来自 Codex Researcher 也必须拒绝：
+
+- `>` / `>>`
+- `Out-File` / `Set-Content` / `Add-Content` / `tee`
+- `rm` / `del` / `Remove-Item`
+- `mv` / `move` / `cp` / `copy`
+- `node fs.writeFileSync`
+- `python open(..., 'w')`
+- `git rm`
+- `git checkout --`
+- `git reset`
+- `git clean`
+
+缺少上述 metadata 时，Codex data-plane Bash 会继续按 CC 直接调用处理；这会阻止读取 `run/**` 等 protected path。
 
 ## Guard Governance Rule
 

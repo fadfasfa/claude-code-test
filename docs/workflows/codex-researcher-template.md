@@ -12,16 +12,30 @@
 允许：
 
 rg/grep/findstr
-cat/Get-Content/type
+cat/Get-Content/type/cmd /c type
+Select-String
 ls/dir/Get-ChildItem
-git status/git diff/git log
+git status/git diff/git log/git ls-files
 只读运行必要的 inspection 命令
+
+Guard metadata：
+
+Codex data-plane protected path 读取必须由 companion 注入：
+codex_delegation.source=codex-thread
+codex_delegation.role=researcher
+codex_delegation.phase=explore
+
+缺少上述 metadata 时，Guard 会按 CC 直接探查处理并拒绝读取 protected path。
 
 禁止：
 
 Edit/Write/MultiEdit/apply_patch
 shell 写文件
-rm/mv/cp/sed -i/tee/Out-File/Set-Content
+>/>>/Out-File/Set-Content/Add-Content/tee
+rm/del/Remove-Item/mv/move/cp/copy/sed -i
+node fs.writeFileSync
+python open(..., 'w')
+git rm/git checkout --/git reset/git clean
 启动长时间服务
 修改 Guard
 修改业务代码
