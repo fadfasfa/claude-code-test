@@ -11,7 +11,7 @@
 | `docs/reference/` | 按需读取的参考资料 |
 | `docs/archive/` | 历史报告和退役资料，默认不读 |
 | `.agents/skills/` | 仓库级 Codex skill 白名单 |
-| `.claude/` | Claude Code 边界说明和 repo-local 高风险 Bash guard |
+| `.claude/` | Claude Code 边界说明、repo-local guard 和本机计划草稿 |
 | `.codex/` | 项目级 Codex 配置占位，不放运行态 |
 | `.state/workflow/` | 旧 `cx-exec` 工作流遗留运行态，默认不提交 |
 | `.state/cc-work/` | CC 计划、协作、交接、审查草稿区 |
@@ -23,11 +23,11 @@
 
 ## Runtime State
 
-`.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；新 CC-CX 主路不再依赖 `.state/workflow/tasks/result.json`。`.state/cc-work/**` 用于 CC 计划、协作草稿、交接稿和审查草稿，不是正式文档区，普通任务不强制生成文件。
+`.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；新 CC-CX 主路不再依赖 `.state/workflow/tasks/result.json`。`.state/cc-work/**` 用于 CC 计划、协作草稿、交接稿和审查草稿，不是正式文档区，普通任务不强制生成文件。`.claude/plans/**` 只用于 Claude Code 原生运行时本机计划草稿；计划草稿写入不需要额外授权或特殊条件，默认不提交。
 
 ## Claude Guard
 
-`.claude/settings.json` 注册 Claude Code `PreToolUse` guard，`.claude/hooks/**` 存放 guard 脚本。当前 guard 只负责高风险 Bash 的显式确认，例如删除文件、强制清理、回退工作树、重写 Git 历史、提交和推送；普通 `Edit` / `Write` / `MultiEdit` 与普通仓库内 Bash 不再由 repo-local hook 一刀切阻断。本仓外写入或非沙箱执行继续依赖 Claude Code 自身权限确认与 sandbox 边界。
+`.claude/settings.json` 注册 Claude Code `PreToolUse` guard，`.claude/hooks/**` 存放 guard 脚本。当前 Guard v3 负责严格 CC/CX 分工：CC 直接可读可写路径仅限 `.claude/plans/**` 和 `.state/cc-work/**`；protected path 的探查、执行、修改和最小验证都必须委派给 Codex。高风险 Git / destructive Bash 仍通过 ask 决策显式确认。
 
 ## Retired Paths
 

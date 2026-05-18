@@ -4,6 +4,7 @@
 
 | 路径 | 状态 | 用途 |
 | :--- | :--- | :--- |
+| `scripts/guard/` | active | Guard smoke test 与治理辅助脚本 |
 | `scripts/git/` | legacy/manual | 旧 Git / worktree 辅助脚本，只能显式手动调用 |
 | `scripts/archive/` | archive | 退役或一次性脚本；可不存在 |
 

@@ -16,6 +16,7 @@ Codex 是当前唯一主流程。Claude Code 只保留入口和边界说明。
 | `docs/workflows/00-overview.md` | workflow 总览 |
 | `docs/workflows/codex-execution-boundary.md` | Codex 执行边界 |
 | `docs/workflows/10-cc-cx-orchestration.md` | CC/CX 契约 |
+| `docs/workflows/cc-cx-delegation.md` | CC/CX 分工、阶段和故障恢复 |
 | `docs/workflows/repository-layout.md` | 目录职责 |
 | `docs/workflows/agent-skill-inventory.md` | skill inventory |
 
@@ -34,6 +35,14 @@ Codex 是当前唯一主流程。Claude Code 只保留入口和边界说明。
 | `.state/cc-work/` | CC 计划、协作、交接、审查草稿区 |
 
 业务写入前必须先选定 `target_work_area`。普通任务只产出目标 diff 和对话摘要。CC 需要调用 CX 时，后续主路是 OpenAI 官方 Codex plugin；Codex 被用户直接调用时仍保留 standalone 执行能力。
+
+## CC / CX Boundary
+
+- CC 只负责需求澄清、任务派发、计划审批、结果审查。
+- Codex 负责仓库探查、计划证据收集、代码定位、patch 生成、apply 和最小验证。
+- CC 直接可写路径仅限 `.claude/plans/**` 和 `.state/cc-work/**`。
+- `run/`、`QuantProject/`、`heybox/`、`qm-run-demo/`、`sm2-randomizer/`、`subtitle_extractor/`、`docs/workflows/`、根入口文档以及 `.claude/` Guard 治理面都属于 protected path；默认由 Codex 负责探查和修改。
+- Guard 或 `.claude/settings.json` 的调整必须作为独立治理任务处理，不得混入业务修复。
 
 ## Non Goals
 

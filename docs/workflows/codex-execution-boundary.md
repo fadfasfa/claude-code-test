@@ -21,9 +21,9 @@
 
 ## Claude Code Permission Baseline
 
-- Claude Code 项目设置采用全局 `Read` allow，减少只读探索提示；凭据类文件仍 deny。
-- 本仓普通文件编辑通过 `acceptEdits` 和 `Edit(/**)` / `Write(/**)` / `MultiEdit(/**)` 低摩擦执行。
-- Bash 默认通过 `Bash(*)` 和 sandbox auto-allow 降低提示；普通仓库内 Bash 不再逐条确认。
+- Claude Code 项目设置仍保留全局 `Read` allow、`acceptEdits` 和 `Bash(*)` 基线，以兼容 Codex plugin 与本机草稿流。
+- 实际 CC 权限由 `.claude/settings.json` 注册的 `PreToolUse` Guard v3 收紧：CC 直接可读可写路径仅限 `.claude/plans/**` 和 `.state/cc-work/**`。
+- protected path 的探查、执行、修改和最小验证必须交给 Codex；CC 只保留 intake、plan approval、diff/review surface。
 - 本仓外写入、非沙箱以及高风险、不可逆或发布类 Bash 命令仍应提示。
 
 ## Forbidden
@@ -42,7 +42,13 @@
 
 ## Claude Bash Risk Guard
 
-`.claude/settings.json` 仍注册 Claude Code `PreToolUse` guard，但 guard 已收窄为高风险 Bash 提示层：删除文件、强制清理、回退工作树、重写 Git 历史、提交和推送等操作需要显式确认；普通 `Edit` / `Write` / `MultiEdit` 与普通仓库内 Bash 不再被 repo-local hook 一刀切拦截。本仓外写入或非沙箱执行继续依赖 Claude Code 自身权限确认与 sandbox 边界。
+`.claude/settings.json` 注册的 Claude Code `PreToolUse` Guard v3 负责三类动作：
+
+- deny：CC 对 protected path 的 `Read` / `Glob` / `Grep` / `LS` / `Edit` / `Write` / `MultiEdit` / Bash 探查或执行。
+- allow：`.claude/plans/**`、`.state/cc-work/**`，以及显式 allowlist 的 Codex control-plane 命令。
+- ask：`git reset --hard`、`git clean -fd`、`git checkout -- <path>`、`git commit`、`git push` 等高风险 Git / destructive 操作。
+
+Guard 还要求 `.claude/settings.json` 与 `.claude/hooks/cc-delegation-guard.ps1` 只能在独立治理任务中修改，不得混入业务修复。
 
 ## Related
 

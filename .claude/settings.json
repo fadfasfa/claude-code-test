@@ -20,6 +20,15 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Read|Glob|Grep|LS",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PROJECT_DIR}\\.claude\\hooks\\cc-delegation-guard.ps1\""
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
