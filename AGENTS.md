@@ -30,7 +30,6 @@
 - commit / push / PR / merge / amend 必须得到用户明确授权。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动。
 - 不读取或修改凭据、token、auth、cookie、API key、proxy secret、私有配置、`.env`、`auth.json`、`local.yaml`、`proxies.json`。
-- `run/**` 中的 raw data、原始抓取结果、不可重建资产和当前脏树默认受保护。
 - 任何备份失败都必须立即停止，不继续删除、覆盖、移动或其他破坏性动作。
 
 ## Skills

@@ -9,6 +9,9 @@
 !.claude/settings.json
 !.claude/hooks/
 !.claude/hooks/**
+!.claude/plans/
+.claude/plans/**
+!.claude/plans/README.md
 
 # Blank placeholder only; do not track local behavior surface
 .claude/worktrees/
@@ -29,11 +32,6 @@ run/dist/
 run/data/runtime/**
 run/data/processed/**
 run/data/raw/**
-!run/data/raw/
-!run/data/raw/hextech/
-!run/data/raw/hextech/Hextech_Data_*.csv
-!run/data/raw/synergy/
-!run/data/raw/synergy/Champion_Synergy.json
 
 # sm2-randomizer rebuildable artifacts
 sm2-randomizer/**/__pycache__/
