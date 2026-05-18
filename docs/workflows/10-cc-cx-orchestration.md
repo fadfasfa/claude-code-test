@@ -14,23 +14,26 @@
 
 - `.claude/settings.json` 已启用 OpenAI 官方 Codex plugin，作为 CC 调用 CX 的默认主路。
 - plugin 启用不等于 review gate 启用；review gate 默认禁用，除非用户显性要求，否则不得启用。
-- 不再维护 `cx-exec` 作为 fallback 或 legacy 主路。
+- `cx-exec.ps1` 如出现只作为 legacy/compat，不再作为 CC-CX 主流程要求。
 - `.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录，不再作为默认验收接口。
 
 ## Direct Access Rule
 
-- CC 直接可读可写路径仅限 `.claude/plans/**` 和 `.state/cc-work/**`。
-- CC 不得直接 `Read` / `Glob` / `Grep` / `LS` protected path。
+- NORMAL 状态下，CC 直接写入仅限 `.claude/plans/**` 和 `.state/cc-work/**`。
+- CC 可直接读取 `CLAUDE.md`、`AGENTS.md`、`PROJECT.md` 和 `docs/workflows/**` 以完成控制面审查。
+- NORMAL 状态下，CC 不得直接 `Read` / `Glob` / `Grep` / `LS` 业务 protected path。
 - CC 不得直接 `Edit` / `Write` / `MultiEdit` protected path。
-- CC 不得通过 Bash 直接探查、执行或修改 protected path。
+- CC 不得通过 Bash 直接探查、执行、删除、移动、写入或批量格式化 protected path。
 - CC 可直接使用 `git status` / `git diff` / `git log` 做只读审查。
 
 ## Delegation Guard
 
-Claude Code 通过 `.claude/settings.json` 注册 `PreToolUse` Delegation Guard。Guard v3 的默认决策如下：
+Claude Code 通过 `.claude/settings.json` 注册 `PreToolUse` Delegation Guard。Guard v4 的默认决策如下：
 
-- deny：CC 对 protected path 的直接探查、修改或 Bash 执行。
-- allow：`.claude/plans/**`、`.state/cc-work/**`、以及显式 allowlist 的 Codex control-plane 命令。
-- ask：高风险 Git / destructive Bash，例如 `git reset --hard`、`git clean -fd`、`git checkout -- <path>`、`git commit`、`git push`。
+- allow：`.claude/plans/**`、`.state/cc-work/**`、控制面文档只读、以及显式 allowlist 的 OpenAI Codex plugin control-plane 命令。
+- deny：NORMAL/CX_DEGRADED 下 CC 对业务 protected path 的直接探查、修改或 Bash 执行。
+- break-glass：`.state/cc-work/cc-cx-state.json` 可声明 `CC_BG_READ` 或 `CC_BG_WRITE`；read 授权本会话持续有效，write 必须每个 approved plan 单独列出 `approved_files`。
+- degraded：`CX_DEGRADED` 下不得继续启动或恢复 Codex 执行线程，只允许 status/cancel/report 类收敛动作。
+- git：未授权 `git add` / `git commit` / `git push` 直接 deny；push 不继承 commit 授权。
 
 Guard 文件和 `.claude/settings.json` 只能通过独立治理任务修改，不得混入业务代码修复。

@@ -9,6 +9,9 @@
 - 业务修改必须先落到明确子项目或已登记工作区；写入范围以 `docs/workflows/work_area_registry.md` 为准。
 - Codex 被用户直接调用时保留 standalone 执行能力；Claude Code 入口下，CC 负责监督、审计和验收，CX / Codex 负责复杂探查、实现和验证。
 - 旧 `cx-exec` 主流程已移除；CC 调用 CX 的默认主路是已启用的 OpenAI 官方 Codex plugin。
+- `cx-exec.ps1` 如在历史路径或兼容层出现，只能作为 legacy/compat，不得写成 CC-CX 主流程要求。
+- CC-CX Guard 状态源优先为 `.state/cc-work/cc-cx-state.json`：`NORMAL`、`CX_DEGRADED`、`CC_BG_READ`、`CC_BG_WRITE`。
+- `CC_BG_READ` 用户授权后本会话持续有效，只允许 CC 直接只读工具访问 protected path；`CC_BG_WRITE` 必须每个 approved plan 单独授权，并限制在 `approved_files`。
 - plugin 启用不等于 review gate 启用；review gate 默认禁用，除非用户显性要求，否则不得启用。
 - Windows 默认使用 PowerShell。
 - 默认在当前工作树小步执行；不自动创建 worktree、分支、计划文件、Markdown report、probe 或 archive 证据文件。
@@ -27,6 +30,7 @@
 ## Git And Safety
 
 - 不默认执行 `git add`、`git commit`、`git push`、`git clean`、`git reset`、`git rebase`、`git stash`。
+- `git add` 默认拒绝，除非本轮明确授权；commit 必须明确授权；push 永远必须单独授权，不能继承 commit 授权。
 - commit / push / PR / merge / amend 必须得到用户明确授权。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动。
 - 不读取或修改凭据、token、auth、cookie、API key、proxy secret、私有配置、`.env`、`auth.json`、`local.yaml`、`proxies.json`。

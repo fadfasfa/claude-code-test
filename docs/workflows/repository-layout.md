@@ -23,11 +23,11 @@
 
 ## Runtime State
 
-`.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；新 CC-CX 主路不再依赖 `.state/workflow/tasks/result.json`。`.state/cc-work/**` 用于 CC 计划、协作草稿、交接稿和审查草稿，不是正式文档区，普通任务不强制生成文件。`.claude/plans/**` 只用于 Claude Code 原生运行时本机计划草稿；计划草稿写入不需要额外授权或特殊条件，默认不提交。
+`.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；新 CC-CX 主路不再依赖 `.state/workflow/tasks/result.json`。`.state/cc-work/**` 用于 CC 计划、协作草稿、交接稿、审查草稿和 Guard 状态文件，不是正式文档区，普通任务不强制生成文件。Guard 状态文件优先路径为 `.state/cc-work/cc-cx-state.json`。`.claude/plans/**` 只用于 Claude Code 原生运行时本机计划草稿；计划草稿写入不需要额外授权或特殊条件，默认不提交。
 
 ## Claude Guard
 
-`.claude/settings.json` 注册 Claude Code `PreToolUse` guard，`.claude/hooks/**` 存放 guard 脚本。当前 Guard v3 负责严格 CC/CX 分工：CC 直接可读可写路径仅限 `.claude/plans/**` 和 `.state/cc-work/**`；protected path 的探查、执行、修改和最小验证都必须委派给 Codex。高风险 Git / destructive Bash 仍通过 ask 决策显式确认。
+`.claude/settings.json` 注册 Claude Code `PreToolUse` guard，`.claude/hooks/**` 存放 guard 脚本。当前 Guard v4 负责 CX-first、CX degraded 和 CC break-glass：NORMAL 下 protected path 的探查、执行、修改和最小验证都必须委派给 Codex；`CC_BG_READ` 放行本会话只读工具；`CC_BG_WRITE` 只放行 approved plan 的 `approved_files`。未授权 `git add`、`git commit`、`git push` 直接拒绝。
 
 ## Retired Paths
 

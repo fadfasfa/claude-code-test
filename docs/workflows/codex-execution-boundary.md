@@ -13,8 +13,8 @@
 
 ## Current CX Contract
 
-- 旧根入口 `cx-exec.ps1` 和旧 executor `scripts/workflow/` 已移除。
-- 不再维护 `cx-exec` 作为 fallback 或 legacy 主路。
+- 旧根入口 `cx-exec.ps1` 和旧 executor `scripts/workflow/` 已移除；如在历史路径、缓存或兼容层出现，只能视为 legacy/compat。
+- 不再维护 `cx-exec` 作为 CC-CX 主流程、fallback 主路或验收接口。
 - `.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；新 CC-CX 主路不再依赖 `.state/workflow/tasks/result.json`。
 - Codex standalone 能力保留；用户直接调用 Codex 时不经过 CC-CX 委派层。
 - `.claude/settings.json` 已启用 Codex plugin；plugin 启用不等于 review gate 启用。
@@ -23,8 +23,8 @@
 ## Claude Code Permission Baseline
 
 - Claude Code 项目设置仍保留全局 `Read` allow、`acceptEdits` 和 `Bash(*)` 基线，以兼容 Codex plugin 与本机草稿流。
-- 实际 CC 权限由 `.claude/settings.json` 注册的 `PreToolUse` Guard v3 收紧：CC 直接可读可写路径仅限 `.claude/plans/**` 和 `.state/cc-work/**`。
-- protected path 的探查、执行、修改和最小验证必须交给 Codex；CC 只保留 intake、plan approval、diff/review surface。
+- 实际 CC 权限由 `.claude/settings.json` 注册的 `PreToolUse` Guard v4 收紧：NORMAL 状态下 CC 直接写入仅限 `.claude/plans/**` 和 `.state/cc-work/**`，可直接读取 `CLAUDE.md`、`AGENTS.md`、`PROJECT.md` 和 `docs/workflows/**` 以完成控制面审查。
+- protected path 的探查、执行、修改和最小验证默认必须交给 Codex；CC 只保留 intake、plan approval、diff/review surface。用户授权后可通过 `CC_BG_READ` 或 `CC_BG_WRITE` break-glass。
 - 本仓外写入、非沙箱以及高风险、不可逆或发布类 Bash 命令仍应提示。
 
 ## Forbidden
@@ -43,11 +43,14 @@
 
 ## Claude Bash Risk Guard
 
-`.claude/settings.json` 注册的 Claude Code `PreToolUse` Guard v3 负责三类动作：
+`.claude/settings.json` 注册的 Claude Code `PreToolUse` Guard v4 负责以下动作：
 
-- deny：CC 对 protected path 的 `Read` / `Glob` / `Grep` / `LS` / `Edit` / `Write` / `MultiEdit` / Bash 探查或执行。
-- allow：`.claude/plans/**`、`.state/cc-work/**`，以及显式 allowlist 的 Codex control-plane 命令。
-- ask：`git reset --hard`、`git clean -fd`、`git checkout -- <path>`、`git commit`、`git push` 等高风险 Git / destructive 操作。
+- state：优先读取 `.state/cc-work/cc-cx-state.json`，支持 `NORMAL`、`CX_DEGRADED`、`CC_BG_READ`、`CC_BG_WRITE`。
+- deny：NORMAL/CX_DEGRADED 下 CC 对业务 protected path 的 `Read` / `Glob` / `Grep` / `LS` / `Edit` / `Write` / `MultiEdit` / Bash 探查或执行。
+- allow：`.claude/plans/**`、`.state/cc-work/**`、控制面文档只读，以及显式 allowlist 的 OpenAI Codex plugin control-plane 命令。
+- break-glass：`CC_BG_READ` 放行本会话直接只读工具；`CC_BG_WRITE` 只放行 approved plan 的 `approved_files`。
+- git：`git add`、`git commit`、`git push` 默认 deny；push 必须单独授权，不能继承 commit 授权。
+- prompt safety：Guard 只按 `tool_name + tool_input` 的路径字段判断；`Grep.pattern`、prompt 和 description 中出现 protected path 不触发 deny。
 
 Guard 还要求 `.claude/settings.json` 与 `.claude/hooks/cc-delegation-guard.ps1` 只能在独立治理任务中修改，不得混入业务修复。
 

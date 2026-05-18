@@ -26,4 +26,5 @@ description: Claude Code 项目级 Karpathy guardrail；用于非琐碎代码修
 
 - 不覆盖 `AGENTS.md`、`work_area_registry.md` 或 workflow scripts。
 - 不读取或修改 auth、token、cookie、API key、proxy secret。
-- 不替代 CX 执行入口；调用 CX 仍必须走 `scripts/workflow/cx-exec.ps1`。
+- 不替代 CX 执行入口；调用 CX 的默认主路是已启用的 OpenAI 官方 Codex plugin。
+- `cx-exec.ps1` 如出现只作为 legacy/compat 线索，不作为 CC-CX 主流程要求。
