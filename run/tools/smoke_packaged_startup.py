@@ -265,9 +265,9 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="验证打包产物空仓首启是否在限定时间内可用。")
     parser.add_argument("--package-dir", type=Path, help="已打包便携目录；默认使用 run/dist 下最新 Hextech_* 目录。")
-    parser.add_argument("--dist-dir", type=Path, default=Path(__file__).resolve().parents[1] / "dist")
-    parser.add_argument("--smoke-root", type=Path, default=Path(__file__).resolve().parents[1] / ".tmp_package_smoke")
-    parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--dist-dir", type=Path, default=Path(__file__).resolve().parents[1] / "dist", help="便携包搜索根目录；默认是 run/dist。")
+    parser.add_argument("--smoke-root", type=Path, default=Path(__file__).resolve().parents[1] / ".tmp_package_smoke", help="烟测复制副本根目录；默认是 run/.tmp_package_smoke。")
+    parser.add_argument("--timeout", type=int, default=60, help="启动可用性等待秒数；默认 60。")
     parser.add_argument("--keep", action="store_true", help="保留复制出的烟测目录，便于排查。")
     args = parser.parse_args()
 
