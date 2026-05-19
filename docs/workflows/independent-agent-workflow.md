@@ -7,17 +7,23 @@
 1. 先运行 `git status --short`，确认是否存在非本轮修改。
 2. 读取 `CLAUDE.md`、`PROJECT.md`、`docs/index.md` 和任务相关 workflow 文档。
 3. 从 `docs/workflows/work_area_registry.md` 选择目标工作区。
-4. 小步修改；不混入无关重构、格式化或业务目录整理。
-5. 运行最小有效验证；无法验证时说明具体原因。
-6. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
+4. 只读探查可以直接执行；凡涉及非只读探查、非平凡文件修改、workflow/config/skill/hook 修改、git 写操作、worktree 操作或破坏性命令，必须先输出计划并等待用户确认。
+5. 普通极小单文件修改若不涉及 workflow/config/skill/hook、git 写、worktree 或破坏性操作，且用户当前轮明确要求直接执行，可以跳过计划确认；仍需按授权范围小步修改并验证。
+6. 计划必须包含：`git status`、预计修改文件、修改内容、不修改范围、验证命令、Git 处理方式；确认后按计划小步执行，范围变化时重新确认。
+7. 小步修改；不混入无关重构、格式化或业务目录整理。
+8. 运行最小有效验证；无法验证时说明具体原因。
+9. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
 
 ## Codex 独立工作流
 
 1. 先运行 `git status --short`，确认是否存在非本轮修改。
 2. 读取 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和任务相关 workflow 文档。
 3. 从 `docs/workflows/work_area_registry.md` 选择目标工作区。
-4. 直接探查、实现和验证；不需要 Claude Code 计划或验收才能工作。
-5. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
+4. 只读探查可以直接执行；凡涉及非只读探查、非平凡文件修改、workflow/config/skill/hook 修改、git 写操作、worktree 操作或破坏性命令，必须先输出计划并等待用户确认。
+5. 普通极小单文件修改若不涉及 workflow/config/skill/hook、git 写、worktree 或破坏性操作，且用户当前轮明确要求直接执行，可以跳过计划确认；仍需按授权范围小步修改并验证。
+6. 计划必须包含：`git status`、预计修改文件、修改内容、不修改范围、验证命令、Git 处理方式；确认后按计划小步执行，范围变化时重新确认。
+7. 直接实现和验证；不需要 Claude Code 计划或验收才能工作。
+8. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
 
 ## Commit 授权规则
 

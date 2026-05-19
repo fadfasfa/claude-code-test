@@ -35,6 +35,8 @@
 - 对应 agent 的 managed root
 - 目标任务的 `target_work_area`
 
+创建、清理或修改 worktree 属于 worktree 写操作，必须先输出计划并等待用户确认；计划必须包含 `git status`、目标 worktree 路径、预计修改文件、修改内容、不修改范围、验证命令和 Git 处理方式。
+
 旧 `scripts/workflow/worktree-start.ps1` 已随旧 workflow 主流程移除。`scripts/git/ccw-new.ps1` 已移除，不再作为 active 创建入口。不自动创建 detached worktree，也不默认写入 `TASK_HANDOFF.md` 与 `.task-worktree.json`。
 
 ## Checkout Rules

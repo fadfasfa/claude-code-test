@@ -6,6 +6,9 @@
 
 - 默认使用简体中文输出总结、风险、验证结果和变更说明。
 - 每次任务开始先运行 `git status --short`；若已有非本轮修改，先报告并避免混入。
+- 只读探查可以直接执行；凡涉及非只读探查、非平凡文件修改、workflow/config/skill/hook 修改、git 写操作、worktree 操作或破坏性命令，必须先输出计划并等待用户确认。
+- 普通极小单文件修改若不涉及 workflow/config/skill/hook、git 写、worktree 或破坏性操作，且用户当前轮明确要求直接执行，可以跳过计划确认；仍需按授权范围小步修改并验证。
+- 计划必须包含：`git status`、预计修改文件、修改内容、不修改范围、验证命令、Git 处理方式；确认后按计划小步执行，范围变化时重新确认。
 - 仓库根目录是治理、路由和工具骨架，不是默认业务写入面。
 - 业务修改必须先落到明确子项目或已登记工作区；写入范围以 `docs/workflows/work_area_registry.md` 为准。
 - Claude Code 入口按 `CLAUDE.md`、`PROJECT.md` 和 `docs/index.md` 独立执行；Codex 入口按本文件、`PROJECT.md` 和 `docs/index.md` 独立执行。
@@ -31,6 +34,7 @@
 ## Git And Safety
 
 - 只读 Git 命令默认允许，尤其是 `git status --short`、`git diff` 和 `git log`。
+- git 写操作必须先进入计划确认，不得把只读 Git 探查扩展为 staging、commit、branch、worktree 或其他写操作。
 - 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才 commit。
 - commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
 - 禁止 `git push`，除非用户明确单独要求。

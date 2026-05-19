@@ -5,14 +5,17 @@
 ## Default Flow
 
 1. 先运行 `git status --short`，发现非本轮修改时先报告并避免混入。
-2. 入口选择：
+2. 只读探查可以直接执行；凡涉及非只读探查、非平凡文件修改、workflow/config/skill/hook 修改、git 写操作、worktree 操作或破坏性命令，必须先输出计划并等待用户确认。
+3. 普通极小单文件修改若不涉及 workflow/config/skill/hook、git 写、worktree 或破坏性操作，且用户当前轮明确要求直接执行，可以跳过计划确认；仍需按授权范围小步修改并验证。
+4. 计划必须包含：`git status`、预计修改文件、修改内容、不修改范围、验证命令、Git 处理方式；确认后按计划小步执行，范围变化时重新确认。
+5. 入口选择：
    - Claude Code 入口读 `CLAUDE.md`、`PROJECT.md`、`docs/index.md`。
    - Codex 入口读 `AGENTS.md`、`PROJECT.md`、`docs/index.md`。
-3. 写入前从 `docs/workflows/work_area_registry.md` 选择目标工作区。
-4. 默认在主仓小步执行；只有用户明确要求或上游任务标注 `requires_worktree: true` 时才进入 worktree 流程。
-5. 修改后运行最小有效验证；无法验证时说明原因。
-6. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
-7. 禁止 `git add .`；禁止默认 push；高危操作按 `07-high-risk-safety.md` 确认。
+6. 写入前从 `docs/workflows/work_area_registry.md` 选择目标工作区。
+7. 默认在主仓小步执行；只有用户明确要求或上游任务标注 `requires_worktree: true` 时才进入 worktree 流程。
+8. 修改后运行最小有效验证；无法验证时说明原因。
+9. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
+10. 禁止 `git add .`；禁止默认 push；高危操作按 `07-high-risk-safety.md` 确认。
 
 ## Canonical Docs
 
