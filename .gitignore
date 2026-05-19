@@ -7,8 +7,6 @@
 .claude/*
 !.claude/README.md
 !.claude/settings.json
-!.claude/hooks/
-!.claude/hooks/**
 !.claude/plans/
 .claude/plans/**
 !.claude/plans/README.md
@@ -16,7 +14,6 @@
 # Blank placeholder only; do not track local behavior surface
 .claude/worktrees/
 .claude/settings.local.json
-.claude/hooks/.debug/
 
 # Python caches
 __pycache__/
@@ -56,7 +53,7 @@ coverage/
 /progress.md
 tmp/
 
-# Legacy workflow runtime state; new CC drafts live under .state/cc-work/.
+# Legacy workflow runtime state; current local drafts live under .state/cc-work/.
 .state/workflow/tasks/
 .state/workflow/current/
 .state/workflow/state/

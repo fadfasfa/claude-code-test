@@ -12,14 +12,13 @@
 
 ## Defaults
 
-- Codex-led standalone mode 是当前主流程之一：用户直接调用 Codex 时，Codex 可独立完成普通代码任务。
-- CC-led supervised mode 中，Claude Code 负责目标理解、计划收敛、过程监督、diff 审查和结果验收；CX / Codex 负责复杂探查、实现、运行验证和第二意见。
-- CC 需要调用 CX 时，默认主路是已启用的 OpenAI 官方 Codex plugin；plugin 启用不等于 review gate 启用，review gate 默认禁用。
+- Claude Code 和 Codex 都可以独立完成普通仓库任务。
+- OpenAI Codex plugin 可以作为可选辅助工具；plugin 启用不等于 review gate 启用，review gate 默认禁用。
 - `cx-exec.ps1` 如出现只作为 legacy/compat 线索，不作为主流程、fallback 主路或验收接口。
 - Windows 默认 shell 是 PowerShell。
 - 普通仓库任务不修改全局 Claude Code、Codex、Superpowers、CLI、VS plugin、Codex App 或 proxy 配置。
 - 不设置项目级 `.codex/config.toml`、repo-local Codex hook 或 repo-local MCP 配置。
-- 允许唯一的 repo-local Claude Code `PreToolUse` Delegation Guard：`.claude/settings.json` + `.claude/hooks/**`，状态源优先为 `.state/cc-work/cc-cx-state.json`。
+- 不新增复杂编排器；`.claude/settings.json` 只保留 Claude Code 项目权限和 plugin 可用状态。
 - `full-access` profile 只能人工选择，不是仓库默认权限。
 
 ## Skill Boundary

@@ -23,7 +23,7 @@
 | `scripts/` | `scripts/**` | active | 仓库级辅助脚本；旧 `scripts/workflow/` 已移除，`scripts/git/` 是 legacy/manual |
 | `.agents/skills/` | `.agents/skills/**` | active | 仓库级 Codex skill 白名单 |
 | `.state/workflow/` | 不作为新任务写入面 | legacy-state | 旧 `cx-exec` 工作流遗留运行态；新主路不依赖其 `tasks/result.json` |
-| `.state/cc-work/` | `.state/cc-work/**` | local-state | CC 计划、协作、交接、审查草稿；不是正式文档区 |
+| `.state/cc-work/` | `.state/cc-work/**` | local-state | 本机 agent 计划、协作、交接、审查草稿；不是正式文档区 |
 
 ## Write Selection
 

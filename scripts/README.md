@@ -4,9 +4,7 @@
 
 | 路径 | 状态 | 用途 |
 | :--- | :--- | :--- |
-| `scripts/codex/` | active | Codex plugin runtime patch 检测、复现与恢复脚本 |
-| `scripts/guard/` | active | Guard smoke test 与治理辅助脚本 |
 | `scripts/git/` | legacy/manual | 旧 Git / worktree 辅助脚本，只能显式手动调用 |
 | `scripts/archive/` | archive | 退役或一次性脚本；可不存在 |
 
-修改脚本时必须说明用途、输入输出、写入行为和失败行为。不要在脚本中读取凭据文件或默认执行发布动作。
+不维护新的复杂编排器。新增脚本必须有明确用途、输入输出、写入行为和失败行为；不要读取凭据文件或默认执行发布动作。
