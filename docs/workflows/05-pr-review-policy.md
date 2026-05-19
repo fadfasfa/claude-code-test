@@ -9,7 +9,8 @@
 ## Publishing Boundary
 
 - 不存在默认发布脚本入口；发布前辅助动作必须由用户明确授权并给出具体命令或流程。
-- review branch、commit、push 和 PR create 都需要明确且独立的用户授权。
+- 普通本地执行的 commit 遵守 `02-git-policy.md` 与 `04-verification-policy.md` 的自动收尾规则。
+- review branch、push 和 PR create 都需要明确且独立的用户授权；review 流程不得把 push、PR create 或 merge 混同为自动 commit。
 - merge、amend、tag 或 release 不进入默认自动路径。
 
 ## Review Checks
