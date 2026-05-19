@@ -258,3 +258,19 @@ Guard 的 data-plane allow 条件必须同时满足：
   - 是否改动文件
   - 可否安全重试
   - 需要的人工决策
+
+### Failure Classification
+
+单条命令报错不立即等同 `CX_DEGRADED`。Researcher / Executor 必须先按命令类别分流：
+
+- `rejected: blocked by policy` 命中 `python -c` / `node -e` / `perl -e` /
+  内联解释器脚本：read-only sandbox + approval never 配置下的预期行为，
+  必须降级为 `Get-Content` / `Select-String` / `git grep` / `cmd /c type` /
+  `cmd /c findstr` 重试一次，不得直接上报 `CX_DEGRADED`。
+- `PropertySetterNotSupportedInConstrainedLanguageMode` 命中
+  `[Console]::OutputEncoding = ...`：Windows ConstrainedLanguageMode 的预期行为，
+  必须去掉该赋值后重试，不得直接上报 `CX_DEGRADED`。
+- 基础只读命令（`Get-Content` / `Select-String` / `git grep` / `cmd /c type` /
+  `cmd /c findstr` / `git status` / `git diff`）也被拒绝、或 `CreateProcessAsUserW
+  failed: 5`、或线程无法启动：才进入 `CX_DEGRADED` 收敛动作。
+- 同一阶段连续 3 次基础命令失败：进入 `CX_DEGRADED`，不得换壳硬闯。
