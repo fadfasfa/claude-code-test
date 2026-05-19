@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import time
+import json
 
 from processing.runtime_store import (
     build_runtime_state_path,
@@ -29,6 +30,7 @@ from processing.runtime_store import (
 )
 from scraping.full_hextech_scraper import main_scraper
 from scraping.full_synergy_scraper import main as run_apex_spider
+from scraping.full_synergy_scraper import SYNERGY_REFRESH_META_FILE, SYNERGY_REFRESH_META_VERSION
 from scraping.heal_worker import heal_missing_artifacts
 from processing.precomputed_cache import (
     has_precomputed_hextech_cache,
@@ -79,8 +81,19 @@ def should_refresh_synergy(force: bool, stale_after_seconds: int) -> bool:
     if force or not os.path.exists(SYNERGY_FILE):
         return True
     try:
-        return (os.path.getmtime(SYNERGY_FILE) + stale_after_seconds) < time.time()
-    except OSError:
+        meta_path = build_runtime_state_path(SYNERGY_REFRESH_META_FILE)
+        if not _file_is_fresh(SYNERGY_FILE, stale_after_seconds) or not _file_is_fresh(meta_path, stale_after_seconds):
+            return True
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        return not (
+            isinstance(meta, dict)
+            and meta.get("version") == SYNERGY_REFRESH_META_VERSION
+            and os.path.abspath(str(meta.get("target") or "")) == os.path.abspath(SYNERGY_FILE)
+            and float(meta.get("target_mtime") or 0.0) == os.path.getmtime(SYNERGY_FILE)
+            and int(meta.get("mapped") or 0) > 0
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return True
 
 

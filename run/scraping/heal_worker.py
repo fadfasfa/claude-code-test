@@ -34,6 +34,7 @@ from scraping.augment_catalog import (
 )
 from scraping.full_hextech_scraper import main_scraper
 from scraping.full_synergy_scraper import main as run_synergy_scraper
+from scraping.full_synergy_scraper import SYNERGY_REFRESH_META_FILE, SYNERGY_REFRESH_META_VERSION
 from scraping.version_sync import (
     ASSET_DIR,
     AUGMENT_ICON_FILE,
@@ -85,7 +86,22 @@ def _latest_csv_fresh() -> bool:
 
 
 def _synergy_data_fresh() -> bool:
-    return _file_is_fresh(build_synergy_data_path())
+    synergy_path = build_synergy_data_path()
+    meta_path = build_runtime_state_path(SYNERGY_REFRESH_META_FILE)
+    if not _file_is_fresh(synergy_path) or not _file_is_fresh(meta_path):
+        return False
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        return (
+            isinstance(meta, dict)
+            and meta.get("version") == SYNERGY_REFRESH_META_VERSION
+            and os.path.abspath(str(meta.get("target") or "")) == os.path.abspath(synergy_path)
+            and float(meta.get("target_mtime") or 0.0) == os.path.getmtime(synergy_path)
+            and int(meta.get("mapped") or 0) > 0
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
 
 
 def _write_startup_status(**updates) -> None:

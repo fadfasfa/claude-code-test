@@ -27,7 +27,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import requests
 from bs4 import BeautifulSoup
 
-from processing.runtime_store import build_synergy_data_path, get_latest_csv
+from processing.runtime_store import build_runtime_state_path, build_synergy_data_path, get_latest_csv
 from scraping.icon_resolver import normalize_augment_name
 from scraping.version_sync import STATIC_DATA_DIR
 from tools.log_utils import install_summary_logging, log_task_summary
@@ -56,11 +56,18 @@ MAX_STATIC_DATA_FILE_SIZE = 10 * 1024 * 1024
 MAX_FETCH_RETRIES = 1
 REQUEST_TIMEOUT_SECONDS = 6
 RETRY_BACKOFF_FACTOR = 0.5
+MAX_JSON_RESOURCE_SIZE = 10 * 1024 * 1024
 OUTPUT_LOCK_TIMEOUT_SECONDS = 5
 OUTPUT_LOCK_POLL_INTERVAL_SECONDS = 0.2
+SYNERGY_REFRESH_META_VERSION = 1
+SYNERGY_REFRESH_META_FILE = "synergy_refresh_meta.json"
 BUNDLE_INTERACTION_SECTION_MARKER = "fx={manual:gx},"
 BUNDLE_APP_JS_PATTERN = re.compile(r'/assets/app\.[^"\']+\.js')
 SCRIPT_SRC_PATTERN = re.compile(r'<script[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
+CHAMPION_DETAIL_HREF_PATTERN = re.compile(
+    r'href=["\'](/(?:zh|zh-Hant|en|ko)/champions/[^"\'?#.]+)["\']',
+    re.IGNORECASE,
+)
 JSON_SCRIPT_PATTERN = re.compile(
     r'<script[^>]+type=["\']application/json["\'][^>]*>(.*?)</script>',
     re.IGNORECASE | re.DOTALL,
@@ -307,6 +314,23 @@ def _atomic_write_json(output_path: Path, payload: dict) -> None:
                 pass
 
 
+def write_synergy_refresh_meta(*, target_path: Path, base_url: str, resources: int, mapped: int) -> None:
+    """记录 scraper 成功写入证据，避免旧 JSON 被单纯 mtime 误判为新数据。"""
+    meta_path = Path(build_runtime_state_path(SYNERGY_REFRESH_META_FILE))
+    _atomic_write_json(
+        meta_path,
+        {
+            "version": SYNERGY_REFRESH_META_VERSION,
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "target": str(target_path),
+            "target_mtime": target_path.stat().st_mtime if target_path.exists() else 0,
+            "base_url": base_url,
+            "resources": resources,
+            "mapped": mapped,
+        },
+    )
+
+
 def build_core_info(core_data: dict) -> dict[str, ChampionInfo]:
     result = {}
     for champ_id, champ_info in core_data.items():
@@ -352,6 +376,7 @@ class ApexSource:
         if parsed_base.scheme != "https" or not parsed_base.netloc:
             raise ValueError("APEX_BASE_URL 必须是有效的 https URL")
         self.allowed_netloc = parsed_base.netloc
+        self.allowed_json_netlocs = self._build_allowed_json_netlocs()
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": get_random_user_agent()})
         self._browser_driver = None
@@ -373,6 +398,18 @@ class ApexSource:
     def is_allowed_url(self, url: str) -> bool:
         parsed = urlparse(url)
         return parsed.scheme == "https" and parsed.netloc == self.allowed_netloc
+
+    def is_allowed_json_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        return parsed.scheme == "https" and parsed.netloc.lower() in self.allowed_json_netlocs
+
+    def _build_allowed_json_netlocs(self) -> set[str]:
+        extra_hosts = {
+            host.strip().lower()
+            for host in os.getenv("APEX_JSON_ALLOWED_HOSTS", "").split(",")
+            if host.strip()
+        }
+        return {self.allowed_netloc.lower(), *extra_hosts}
 
     def build_allowed_url(self, href: str) -> Optional[str]:
         candidate = urljoin(f"{self.base_url}/", str(href or "").strip())
@@ -418,6 +455,34 @@ class ApexSource:
             return None
         return self.fetch_browser(url)
 
+    def fetch_configured_json_resource(self) -> Optional[FetchedResource]:
+        raw_url = os.getenv("APEX_SYNERGY_JSON_URL", "").strip()
+        if not raw_url:
+            return None
+        if not self.is_allowed_json_url(raw_url):
+            logger.error("APEX_SYNERGY_JSON_URL 不在允许的 https host 内：%s", _sanitize_url_for_log(raw_url))
+            return None
+        try:
+            response = self.session.get(raw_url, timeout=REQUEST_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            if len(response.content) > MAX_JSON_RESOURCE_SIZE:
+                logger.error("APEX_SYNERGY_JSON_URL 响应过大，已拒绝：%s", _sanitize_url_for_log(raw_url))
+                return None
+            response.encoding = "utf-8"
+            payload = response.json()
+            if not isinstance(payload, (dict, list)):
+                logger.error("APEX_SYNERGY_JSON_URL 不是 JSON object/list：%s", _sanitize_url_for_log(raw_url))
+                return None
+            return FetchedResource(
+                url=raw_url,
+                text=json.dumps(payload, ensure_ascii=False),
+                source="json-url",
+                status_code=response.status_code,
+            )
+        except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("APEX_SYNERGY_JSON_URL 读取失败：url=%s error=%s", _sanitize_url_for_log(raw_url), _safe_exception_label(exc))
+            return None
+
     def fetch_browser(self, url: str) -> Optional[FetchedResource]:
         if not self.is_allowed_url(url):
             logger.warning("浏览器拒绝非白名单请求：%s", _sanitize_url_for_log(url))
@@ -425,7 +490,12 @@ class ApexSource:
         try:
             driver = self._get_browser_driver()
             driver.get(url)
-            self._wait_for_browser_ready(driver)
+            self._wait_for_browser_ready(driver, url)
+            parsed_path = urlparse(url).path.lower()
+            if parsed_path.endswith((".js", ".json", ".txt")):
+                text = driver.execute_script("return document.body ? document.body.innerText : document.documentElement.innerText") or ""
+                if text and not self._is_cloudflare_block(text):
+                    return FetchedResource(url=url, text=text, source="selenium-text", status_code=200)
             html = driver.page_source or ""
             if not html or self._is_cloudflare_block(html):
                 logger.error("浏览器未取得可解析 Apex 页面：url=%s", _sanitize_url_for_log(url))
@@ -446,6 +516,7 @@ class ApexSource:
             logger.info("使用 Apex 本地 snapshot 资源：count=%s", len(snapshot_resources))
             return snapshot_resources
 
+        json_resource = self.fetch_configured_json_resource()
         seeds = [self.base_url, f"{self.base_url}/champions", f"{self.base_url}/hextech"]
         resources: list[FetchedResource] = []
         seen_urls = set()
@@ -459,15 +530,40 @@ class ApexSource:
             resources.append(resource)
             script_urls.extend(self._extract_script_urls(resource.text))
 
-        for script_url in script_urls:
-            if script_url in seen_urls:
+        detail_urls = self._extract_champion_detail_urls(resources)
+        for detail_url in detail_urls:
+            if detail_url in seen_urls:
                 continue
-            seen_urls.add(script_url)
-            script = self.fetch(script_url, allow_browser=False)
-            if script:
-                resources.append(script)
+            seen_urls.add(detail_url)
+            resource = self.fetch(detail_url, allow_browser=True)
+            if resource:
+                resources.append(resource)
+
+        if not detail_urls or os.getenv("APEX_FETCH_JS_CHUNKS", "0").strip() == "1":
+            for script_url in script_urls:
+                if script_url in seen_urls:
+                    continue
+                seen_urls.add(script_url)
+                script = self.fetch(script_url, allow_browser=True)
+                if script:
+                    resources.append(script)
+
+        if json_resource and json_resource.url not in seen_urls:
+            resources.append(json_resource)
 
         return resources
+
+    def _extract_champion_detail_urls(self, resources: Iterable[FetchedResource]) -> list[str]:
+        max_pages = int(os.getenv("APEX_MAX_CHAMPION_DETAIL_PAGES", "0") or "0")
+        urls = []
+        for resource in resources:
+            for raw_href in CHAMPION_DETAIL_HREF_PATTERN.findall(resource.text or ""):
+                candidate = self.build_allowed_url(raw_href)
+                if candidate and candidate not in urls:
+                    urls.append(candidate)
+                    if max_pages > 0 and len(urls) >= max_pages:
+                        return urls
+        return urls
 
     def _load_snapshot_resources(self) -> list[FetchedResource]:
         raw_snapshot_dir = os.getenv("APEX_SNAPSHOT_DIR", "").strip()
@@ -614,17 +710,40 @@ class ApexSource:
             ]
         return next((path for path in candidates if path and os.path.exists(path)), "")
 
-    def _wait_for_browser_ready(self, driver) -> None:
+    def _wait_for_browser_ready(self, driver, url: str = "") -> None:
         deadline = time.monotonic() + self._browser_timeout
         while time.monotonic() < deadline:
             try:
                 state = driver.execute_script("return document.readyState")
                 if state == "complete":
-                    time.sleep(1.0)
-                    return
+                    break
             except Exception:
                 return
             time.sleep(0.25)
+
+        parsed_path = urlparse(url).path.lower()
+        if "/champions/" not in parsed_path:
+            time.sleep(1.0)
+            return
+
+        # Next.js 详情页会先进入 readyState=complete，随后才把联动列表灌入页面。
+        # 这里等到可见文本出现联动标记，或 HTML 长度稳定，避免抓到只有 shell 的页面。
+        last_length = 0
+        stable_ticks = 0
+        while time.monotonic() < deadline:
+            try:
+                body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ""
+                html = driver.page_source or ""
+            except Exception:
+                return
+            if any(marker in body_text for marker in ("评分", "作者", "强力联动", "推荐出装")):
+                return
+            html_length = len(html)
+            stable_ticks = stable_ticks + 1 if html_length == last_length and html_length > 20000 else 0
+            if stable_ticks >= 3:
+                return
+            last_length = html_length
+            time.sleep(0.5)
 
 
 class SynergyExtractor:
@@ -715,8 +834,8 @@ class SynergyExtractor:
             if not augment_names:
                 continue
 
-            rating, tag = self._parse_visible_rating_tag(line)
-            author, content = self._parse_visible_author_content(lines, index + 1)
+            rating, tag = self._parse_visible_rating_tag(line, lines[index + 1:index + 6])
+            author, content, is_original, upvotes, downvotes = self._parse_visible_author_content(lines, index + 1)
             if not content:
                 continue
             entries.append(SynergyEntry(
@@ -726,14 +845,14 @@ class SynergyExtractor:
                 rating=rating,
                 tag=tag,
                 author=author,
-                is_original="原创" in line.lower() or "original" in line.lower(),
+                is_original=is_original or "原创" in line.lower() or "original" in line.lower(),
                 content=content,
-                upvotes=0,
-                downvotes=0,
+                upvotes=upvotes,
+                downvotes=downvotes,
             ))
         return [entry for entry in entries if entry.champion_slug]
 
-    def _parse_visible_rating_tag(self, line: str) -> tuple[str, str]:
+    def _parse_visible_rating_tag(self, line: str, following_lines: Optional[list[str]] = None) -> tuple[str, str]:
         rating_match = VISIBLE_RATING_PATTERN.match(line or "")
         rating = rating_match.group(1).upper() if rating_match else "未知"
         lowered = (line or "").lower()
@@ -745,31 +864,49 @@ class SynergyExtractor:
             tag = "缺陷"
         else:
             tag = "强力联动"
+        for candidate in following_lines or []:
+            if candidate in SYNERGY_TAG_LABELS:
+                tag = normalize_tag(candidate)
+                break
+            if candidate.isdigit() or candidate == "作者" or candidate.startswith(("作者：", "作者:")):
+                break
         return rating, tag
 
-    def _parse_visible_author_content(self, lines: list[str], start_index: int) -> tuple[str, str]:
+    def _parse_visible_author_content(self, lines: list[str], start_index: int) -> tuple[str, str, bool, int, int]:
         author = "ApexLoL"
+        is_original = False
+        votes = []
         content_lines = []
         cursor = start_index
-        while cursor < len(lines) and cursor < start_index + 3:
+        while cursor < len(lines) and cursor < start_index + 12:
             candidate = lines[cursor]
+            if candidate in SYNERGY_TAG_LABELS or candidate in {"原创", "非原创"}:
+                is_original = is_original or candidate == "原创"
+                cursor += 1
+                continue
+            if candidate.isdigit():
+                votes.append(self._int_value(candidate))
+                cursor += 1
+                continue
+            if candidate == "作者":
+                next_line = lines[cursor + 1] if cursor + 1 < len(lines) else ""
+                if next_line and not self._is_visible_noise_line(next_line):
+                    author = next_line
+                    cursor += 2
+                    break
             if candidate.startswith(("作者：", "作者:")):
                 author = candidate.split(":", 1)[-1].split("：", 1)[-1].strip() or author
-                cursor += 1
-                break
-            if (
-                len(candidate) <= 40
-                and not self._looks_like_augment_name(candidate, self._resolve_known_augment_names(candidate))
-                and not VISIBLE_STOP_LINE_PATTERN.match(candidate)
-            ):
-                author = candidate
                 cursor += 1
                 break
             cursor += 1
 
         while cursor < len(lines) and len(content_lines) < 12:
             candidate = lines[cursor]
-            if VISIBLE_RATING_PATTERN.match(candidate) or VISIBLE_STOP_LINE_PATTERN.match(candidate):
+            if (
+                VISIBLE_RATING_PATTERN.match(candidate)
+                or VISIBLE_STOP_LINE_PATTERN.match(candidate)
+                or self._is_visible_noise_line(candidate)
+            ):
                 break
             if self._looks_like_augment_name(candidate, self._resolve_known_augment_names(candidate)):
                 next_line = lines[cursor + 1] if cursor + 1 < len(lines) else ""
@@ -779,7 +916,21 @@ class SynergyExtractor:
                 content_lines.append(candidate)
             cursor += 1
 
-        return author, _clean_text(" ".join(content_lines))
+        upvotes = votes[0] if votes else 0
+        downvotes = votes[1] if len(votes) > 1 else 0
+        return author, _clean_text(" ".join(content_lines)), is_original, upvotes, downvotes
+
+    @staticmethod
+    def _is_visible_noise_line(candidate: str) -> bool:
+        if not candidate:
+            return True
+        if candidate in {"+", "-", "推荐出装", "推荐召唤师技能"}:
+            return True
+        if re.match(r"^\d{4}年\d{1,2}月\d{1,2}日$", candidate):
+            return True
+        if re.match(r"^关联\s*\d+\s*个海克斯$", candidate):
+            return True
+        return False
 
     def _looks_like_augment_name(self, raw_name: str, resolved_names: list[str]) -> bool:
         text = str(raw_name or "").strip()
@@ -846,11 +997,17 @@ class SynergyExtractor:
         return SynergyEntry(
             champion_slug=champion_slug,
             augment_names=augment_names,
-            tier=normalize_tier(item.get("tier") or item.get("rarity") or item.get("rank")),
-            rating=str(item.get("rating") or item.get("grade") or item.get("score") or "").strip() or "未知",
+            tier=normalize_tier(
+                item.get("tier")
+                or item.get("rarity")
+                or item.get("rank")
+                or item.get("augmentTier")
+                or item.get("hextechTier")
+            ),
+            rating=self._resolve_rating(item),
             tag=normalize_tag(item.get("tags") or item.get("tag") or item.get("type")),
             author=str(item.get("author") or item.get("contributor") or item.get("user") or "ApexLoL").strip() or "ApexLoL",
-            is_original=bool(item.get("isOriginal") or item.get("original")),
+            is_original=self._resolve_original_flag(item),
             content=content,
             upvotes=self._int_value(item.get("upvotes") or item.get("upVotes") or item.get("likes")),
             downvotes=self._int_value(item.get("downvotes") or item.get("downVotes") or item.get("dislikes")),
@@ -864,6 +1021,11 @@ class SynergyExtractor:
             item.get("championId"),
             item.get("hero"),
             item.get("heroName"),
+            item.get("champion_id"),
+            item.get("champion_slug"),
+            item.get("champion_name"),
+            item.get("hero_id"),
+            item.get("hero_name"),
             fallback_slug,
         ]
         for raw in raw_values:
@@ -877,24 +1039,65 @@ class SynergyExtractor:
         return ""
 
     def _resolve_content(self, item: dict) -> str:
-        note = item.get("note") or item.get("content") or item.get("description") or item.get("text")
+        note = (
+            item.get("note")
+            or item.get("content")
+            or item.get("comment")
+            or item.get("body")
+            or item.get("guide")
+            or item.get("description")
+            or item.get("text")
+            or item.get("tips")
+        )
         if isinstance(note, dict):
             note = note.get("zh") or note.get("zh_CN") or note.get("cn") or note.get("en") or next(iter(note.values()), "")
         return _clean_text(note)
 
     def _resolve_augment_names(self, item: dict) -> list[str]:
         raw_values = []
-        for key in ("hextechId", "hextechIds", "augmentId", "augmentIds", "augment", "augments", "augmentName", "augmentNames", "name"):
-            value = item.get(key)
+
+        def append_raw(value: Any) -> None:
             if isinstance(value, list):
-                raw_values.extend(value)
+                for child in value:
+                    append_raw(child)
             elif value is not None:
                 raw_values.append(value)
+
+        for key in (
+            "hextechId",
+            "hextechIds",
+            "hextech",
+            "hextechs",
+            "hextechName",
+            "hextechNames",
+            "hextechSlug",
+            "hextechSlugs",
+            "augmentId",
+            "augmentIds",
+            "augment",
+            "augments",
+            "augmentName",
+            "augmentNames",
+            "augmentSlug",
+            "augmentSlugs",
+            "augment_name",
+            "augment_names",
+            "name",
+        ):
+            value = item.get(key)
+            append_raw(value)
 
         names = []
         for raw in raw_values:
             if isinstance(raw, dict):
-                raw = raw.get("name") or raw.get("displayName") or raw.get("id") or raw.get("slug")
+                raw = (
+                    raw.get("name")
+                    or raw.get("displayName")
+                    or raw.get("display_name")
+                    or raw.get("label")
+                    or raw.get("id")
+                    or raw.get("slug")
+                )
             key = str(raw or "").strip()
             if not key:
                 continue
@@ -909,6 +1112,22 @@ class SynergyExtractor:
             elif not key.isdigit() and len(key) > 1:
                 names.append(key)
         return [name for name in dict.fromkeys(names) if name]
+
+    def _resolve_rating(self, item: dict) -> str:
+        value = item.get("rating") or item.get("grade") or item.get("score") or item.get("tierScore")
+        if isinstance(value, dict):
+            value = value.get("label") or value.get("grade") or value.get("rating") or value.get("value")
+        text = str(value or "").strip()
+        return text or "未知"
+
+    @staticmethod
+    def _resolve_original_flag(item: dict) -> bool:
+        value = item.get("isOriginal")
+        if value is None:
+            value = item.get("original")
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y", "原创", "original"}
+        return bool(value)
 
     def _extract_old_bundle(self, bundle_text: str) -> list[SynergyEntry]:
         if BUNDLE_INTERACTION_SECTION_MARKER not in bundle_text:
@@ -1109,10 +1328,12 @@ class SynergyExtractor:
 
     def _slug_from_path(self, path: tuple[str, ...]) -> str:
         for part in reversed(path):
-            if not part.isdigit() and len(part) > 1:
-                slug = normalize_slug(part)
-                if slug in self.champion_lookup:
-                    return slug
+            normalized = normalize_name(part)
+            slug = normalize_slug(part)
+            if normalized in self.champion_lookup:
+                return normalized
+            if slug in self.champion_lookup:
+                return slug
         return ""
 
     @staticmethod
@@ -1283,6 +1504,12 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
             )
         else:
             SynergyWriter(core_info).write(target_path, payload)
+            write_synergy_refresh_meta(
+                target_path=target_path,
+                base_url=source.base_url,
+                resources=len(resources),
+                mapped=len(synergy_map),
+            )
             log_task_summary(
                 logger,
                 task="ApexLoL 协同抓取",
