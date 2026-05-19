@@ -12,7 +12,7 @@ description: 用于本仓维护、清理候选、受保护资产检查和工作�
 
 ## scope
 
-- 优先使用 `scripts/workflow/worktree-status.ps1` 和 dry-run 脚本。
+- 优先使用只读 Git 检查、`scripts/git/ccw-ls.ps1` 和 dry-run 脚本。
 - 检查 `docs/workflows/work_area_registry.md`、`docs/workflows/07-protected-assets.md`。
 - 维护建议必须区分事实、候选动作和需要授权动作。
 

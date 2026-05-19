@@ -1,7 +1,7 @@
 <#
 中文简介：
 - 这个文件是什么：列出当前仓库及其相关 Git worktree 的概览信息。
-- 什么时候读：需要查看 worktree、分支、dirty 状态和 sibling root 归属时。
+- 什么时候读：需要查看 worktree、分支、dirty 状态和 Claude Code managed root 归属时。
 - 约束什么：统一以 porcelain 解析 worktree，并补充主工作树/附属工作树标记。
 - 不负责什么：不创建、不删除 worktree，也不修改 Git 状态。
 #>
@@ -22,14 +22,24 @@ function Resolve-RepoRoot {
   return (Resolve-Path $root).Path
 }
 
-# 推导默认 sibling root，用于标记 worktree 是否位于约定目录下。
-function Get-SiblingRoot {
-  param([string]$RepoRoot)
-  $repoInfo = Get-Item -LiteralPath $RepoRoot
-  if (-not $repoInfo.Parent) {
-    throw "无法解析 repo root 的父目录：$RepoRoot"
+# 推导默认 Claude Code managed root，用于标记 worktree 是否位于约定目录下。
+function Get-DefaultCcRoot {
+  $profile = [Environment]::GetFolderPath("UserProfile")
+  if ([string]::IsNullOrWhiteSpace($profile)) {
+    throw "无法解析用户目录，不能推导 Claude Code worktree root。"
   }
-  return Join-Path $repoInfo.Parent.FullName ("$($repoInfo.Name).worktrees")
+  return Join-Path (Join-Path $profile "_worktrees") "cc"
+}
+
+# 用完整路径边界判断归属，避免 C:\root 与 C:\root-old 这类前缀误判。
+function Test-UnderRoot {
+  param(
+    [string]$Path,
+    [string]$Root
+  )
+  $fullPath = [IO.Path]::GetFullPath($Path).TrimEnd('\','/')
+  $fullRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\','/')
+  return $fullPath.Equals($fullRoot, [StringComparison]::OrdinalIgnoreCase) -or $fullPath.StartsWith("$fullRoot\", [StringComparison]::OrdinalIgnoreCase)
 }
 
 # 解析 porcelain 输出，提取 worktree 路径、分支和 detached 状态。
@@ -67,7 +77,7 @@ function Get-DirtyFlag {
 # 主流程：汇总 worktree 记录并按表格输出关键状态。
 try {
   $repoRoot = Resolve-RepoRoot
-  $defaultRoot = Get-SiblingRoot -RepoRoot $repoRoot
+  $defaultRoot = Get-DefaultCcRoot
   if ([string]::IsNullOrWhiteSpace($Root)) {
     $Root = $defaultRoot
   }
@@ -77,14 +87,14 @@ try {
     $isMain = ($wt.Path -ieq $repoRoot)
     $dirty = Get-DirtyFlag -Path $wt.Path
     $branchText = if ($wt.Detached) { "detached" } else { ($wt.Branch -replace '^refs/heads/','') }
-    $inSibling = $wt.Path.ToLower().StartsWith($Root.ToLower())
+    $inManagedRoot = Test-UnderRoot -Path $wt.Path -Root $Root
 
     $rows += [PSCustomObject]@{
-      Path        = $wt.Path
-      Type        = if ($isMain) { "main" } else { "linked" }
-      Branch      = if ([string]::IsNullOrWhiteSpace($branchText)) { "-" } else { $branchText }
-      Dirty       = if ($dirty) { "dirty" } else { "clean" }
-      InSibling   = if ($inSibling) { "yes" } else { "no" }
+      Path          = $wt.Path
+      Type          = if ($isMain) { "main" } else { "linked" }
+      Branch        = if ([string]::IsNullOrWhiteSpace($branchText)) { "-" } else { $branchText }
+      Dirty         = if ($dirty) { "dirty" } else { "clean" }
+      InManagedRoot = if ($inManagedRoot) { "yes" } else { "no" }
     }
   }
 
@@ -93,7 +103,7 @@ try {
     exit 0
   }
 
-  $rows | Sort-Object Type,Path | Format-Table Path,Type,Branch,Dirty,InSibling -AutoSize
+  $rows | Sort-Object Type,Path | Format-Table Path,Type,Branch,Dirty,InManagedRoot -AutoSize
 }
 catch {
   Write-Error $_

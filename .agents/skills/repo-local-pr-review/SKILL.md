@@ -13,7 +13,7 @@ description: 用于本仓提交或 PR 前的本地 diff 审查；生成风险、
 ## scope
 
 - 读取 `git status`、`git diff --stat`、`git diff --name-status`。
-- 使用 `scripts/workflow/local-review.ps1` 生成本地摘要。
+- 按 `docs/workflows/05-pr-review-policy.md` 生成本地风险摘要。
 - 检查是否触碰 `run/**`、敏感文件名或未授权工作区。
 
 ## forbidden actions

@@ -31,7 +31,8 @@
 ## Git And Safety
 
 - 只读 Git 命令默认允许，尤其是 `git status --short`、`git diff` 和 `git log`。
-- 验证通过后按本轮授权自动 commit；commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
+- 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才 commit。
+- commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
 - 禁止 `git push`，除非用户明确单独要求。
 - 禁止 `git reset --hard`、`git clean -fdx`、大范围删除、批量移动或不可逆清理，除非用户明确批准。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动。

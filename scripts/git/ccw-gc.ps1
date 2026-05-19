@@ -2,7 +2,7 @@
 中文简介：
 - 这个文件是什么：清点并清理满足条件的 Git worktree 与关联分支。
 - 什么时候读：需要做 worktree 垃圾回收，或先 dry-run 查看可清理项时。
-- 约束什么：只处理 sibling root 下、干净且已合并到 base 的附属 worktree。
+- 约束什么：只处理 Claude Code managed root 下、干净且已合并到 base 的附属 worktree。
 - 不负责什么：不强制清理 dirty 工作树，不跳过合并检查，也不删除主工作树。
 #>
 
@@ -26,14 +26,24 @@ function Resolve-RepoRoot {
   return (Resolve-Path $root).Path
 }
 
-# 推导默认 sibling root，限定清理范围。
-function Get-SiblingRoot {
-  param([string]$RepoRoot)
-  $repoInfo = Get-Item -LiteralPath $RepoRoot
-  if (-not $repoInfo.Parent) {
-    throw "无法解析 repo root 的父目录：$RepoRoot"
+# 推导默认 Claude Code managed root，限定清理范围。
+function Get-DefaultCcRoot {
+  $profile = [Environment]::GetFolderPath("UserProfile")
+  if ([string]::IsNullOrWhiteSpace($profile)) {
+    throw "无法解析用户目录，不能推导 Claude Code worktree root。"
   }
-  return Join-Path $repoInfo.Parent.FullName ("$($repoInfo.Name).worktrees")
+  return Join-Path (Join-Path $profile "_worktrees") "cc"
+}
+
+# 用完整路径边界判断归属，避免 C:\root 与 C:\root-old 这类前缀误判。
+function Test-UnderRoot {
+  param(
+    [string]$Path,
+    [string]$Root
+  )
+  $fullPath = [IO.Path]::GetFullPath($Path).TrimEnd('\','/')
+  $fullRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\','/')
+  return $fullPath.Equals($fullRoot, [StringComparison]::OrdinalIgnoreCase) -or $fullPath.StartsWith("$fullRoot\", [StringComparison]::OrdinalIgnoreCase)
 }
 
 # 在未显式传入 -Base 时，按 origin/HEAD、当前分支、当前提交依次推断 base。
@@ -97,7 +107,7 @@ function Get-MergeState {
 # 主流程：筛选候选项，默认 dry-run，只有 -Apply 时才真正删除。
 try {
   $repoRoot = Resolve-RepoRoot
-  $defaultRoot = Get-SiblingRoot -RepoRoot $repoRoot
+  $defaultRoot = Get-DefaultCcRoot
   if ([string]::IsNullOrWhiteSpace($Root)) {
     $Root = $defaultRoot
   }
@@ -107,8 +117,8 @@ try {
   $candidates = @()
   $skips = @()
   foreach ($wt in (Parse-WorktreeList -RepoRoot $repoRoot)) {
-    if (-not $wt.Path.ToLower().StartsWith($Root.ToLower())) {
-      $skips += [PSCustomObject]@{ Path = $wt.Path; Reason = "不在 sibling root 下" }
+    if (-not (Test-UnderRoot -Path $wt.Path -Root $Root)) {
+      $skips += [PSCustomObject]@{ Path = $wt.Path; Reason = "不在 Claude Code managed root 下" }
       continue
     }
     if ($wt.Path -ieq $repoRoot) {

@@ -26,7 +26,7 @@ description: 用于本仓所有非琐碎代码任务；桥接全局 karpathy-gui
 
 ## verification expectation
 
-- 修改后运行 `scripts/workflow/verify.ps1` 或更具体的子项目验证。
+- 修改后按 `docs/workflows/04-verification-policy.md` 选择最小有效验证，或运行更具体的子项目验证。
 - 无法验证时说明具体 blocker。
 - 收尾必须报告验证命令和结果。
 

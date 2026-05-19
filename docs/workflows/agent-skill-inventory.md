@@ -15,7 +15,7 @@
 ## Retired
 
 - 当前没有需要归档的仓库级 skill。
-- 若后续出现未引用、触发不明或重复 skill，归档到 `docs/archive/skills-retired/` 并在此标记 `retired`。
+- 若后续出现未引用、触发不明或重复 skill，先列出影响面并取得用户授权，再删除或退役；不默认新增历史副本。
 
 ## Boundary
 

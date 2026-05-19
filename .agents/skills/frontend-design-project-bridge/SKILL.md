@@ -25,6 +25,6 @@ description: 用于本仓前端 UI / 视觉 / 交互任务；只桥接全局 fro
 
 ## verification expectation
 
-- 修改后必须运行 `scripts/workflow/verify.ps1` 或子项目已有验证命令。
+- 修改后按 `docs/workflows/04-verification-policy.md` 选择最小有效验证，或运行子项目已有验证命令。
 - 需要浏览器验收时，使用任务级 Playwright 或现有预览方式，并报告无法运行的原因。
 - 收尾必须列出验证结果和剩余视觉风险。

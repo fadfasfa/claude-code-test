@@ -4,14 +4,14 @@
 
 - 默认允许 `git status`、`git diff`、`git log` 等只读命令。
 - 每次任务开始先运行 `git status --short`。
-- 验证通过后，按本轮授权自动 commit。
+- 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才 commit。
 - commit 前只能暂存本轮修改文件，禁止 `git add .`。
 - 不默认执行 `push`、`clean`、`reset`、`rebase`、`stash`、`switch`、`branch` 或 worktree 写入。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动。
 
 ## Explicit Authorization
 
-只有用户当前轮明确要求对应动作，才执行 push、branch、checkout、switch、merge、rebase、reset、clean、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作。
+只有用户当前轮明确要求对应动作，才执行 commit、push、branch、checkout、switch、merge、rebase、reset、clean、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作。
 
 commit 授权不隐含 push，push 不隐含 PR 或 merge。push 永远必须单独授权。
 

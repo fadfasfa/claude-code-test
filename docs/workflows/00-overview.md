@@ -11,7 +11,7 @@
 3. 写入前从 `docs/workflows/work_area_registry.md` 选择目标工作区。
 4. 默认在主仓小步执行；只有用户明确要求或上游任务标注 `requires_worktree: true` 时才进入 worktree 流程。
 5. 修改后运行最小有效验证；无法验证时说明原因。
-6. 验证通过后，按本轮授权只暂存本轮修改文件并 commit。
+6. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
 7. 禁止 `git add .`；禁止默认 push；高危操作按 `07-high-risk-safety.md` 确认。
 
 ## Canonical Docs

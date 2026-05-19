@@ -9,7 +9,7 @@
 3. 从 `docs/workflows/work_area_registry.md` 选择目标工作区。
 4. 小步修改；不混入无关重构、格式化或业务目录整理。
 5. 运行最小有效验证；无法验证时说明具体原因。
-6. 验证通过后，按本轮授权只暂存本轮修改文件并 commit。
+6. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
 
 ## Codex 独立工作流
 
@@ -17,10 +17,11 @@
 2. 读取 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和任务相关 workflow 文档。
 3. 从 `docs/workflows/work_area_registry.md` 选择目标工作区。
 4. 直接探查、实现和验证；不需要 Claude Code 计划或验收才能工作。
-5. 验证通过后，按本轮授权只暂存本轮修改文件并 commit。
+5. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
 
-## 自动 Commit 规则
+## Commit 授权规则
 
+- 默认停在已验证 diff；commit 必须有当前轮明确授权。
 - commit 前必须有验证结果或明确的无法验证说明。
 - 只允许 `git add` 本轮修改文件，禁止 `git add .`。
 - commit message 应描述本轮目标，不混入非本轮修改。
