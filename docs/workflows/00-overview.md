@@ -35,3 +35,5 @@
 - 本机计划、协作、交接和审查草稿可写入 `.state/cc-work/**`；普通任务不强制生成这些文件。
 - Claude Code 原生本机计划草稿可写入 `.claude/plans/**`，不需要额外授权或特殊条件，默认不提交。
 - 不默认生成 `docs/plans/*.md`、Markdown report、probe 或 archive 证据文件。
+
+当前基线保持轻量：非平凡修改先计划，经确认后执行，验证后报告，commit 需单独授权。
