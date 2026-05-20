@@ -25,10 +25,6 @@ REQUIRED_PACKAGE_DIRS = (
     "data/raw/synergy",
 )
 
-REQUIRED_PACKAGE_FILES = (
-    "data/raw/synergy/Champion_Synergy.json",
-)
-
 REQUIRED_RUNTIME_DIRS = (
     "state",
     "locks",
@@ -100,8 +96,17 @@ def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall
     packaged_data_root = package_dir / "_internal" if (package_dir / "_internal").exists() else package_dir
     for rel in REQUIRED_PACKAGE_DIRS:
         checks[f"package:{rel}"] = (packaged_data_root / rel).is_dir()
-    for rel in REQUIRED_PACKAGE_FILES:
-        checks[f"package:{rel}"] = (packaged_data_root / rel).is_file()
+    synergy_dir = packaged_data_root / "data" / "raw" / "synergy"
+    checks["package:data/raw/synergy/Champion_Synergy_latest.v1.json"] = (
+        synergy_dir / "Champion_Synergy_latest.v1.json"
+    ).is_file()
+    checks["package:data/raw/synergy/timestamp_snapshot"] = any(
+        path.is_file()
+        and path.name.startswith("Champion_Synergy_")
+        and path.name != "Champion_Synergy_latest.v1.json"
+        and path.name.endswith(".json")
+        for path in synergy_dir.glob("Champion_Synergy_*.json")
+    )
     for rel in REQUIRED_RUNTIME_DIRS:
         checks[f"runtime:{rel}"] = (runtime_root / rel).is_dir()
     for rel in REQUIRED_RUNTIME_FILES:

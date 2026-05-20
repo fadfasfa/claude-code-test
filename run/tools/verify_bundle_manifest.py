@@ -39,6 +39,24 @@ def main() -> int:
     if not has_synergy_key:
         return 1
     print("synergy_data_file", manifest["synergy_data_file"])
+    has_synergy_files_key = "synergy_data_files" in manifest
+    print("has_synergy_data_files", has_synergy_files_key)
+    if not has_synergy_files_key:
+        return 1
+    synergy_files = manifest["synergy_data_files"]
+    print("synergy_data_files_count", len(synergy_files))
+    print("synergy_data_files_sample", synergy_files[:5])
+    has_latest_pointer = any(Path(item).name == "Champion_Synergy_latest.v1.json" for item in synergy_files)
+    has_timestamp_snapshot = any(
+        Path(item).name.startswith("Champion_Synergy_")
+        and Path(item).name != "Champion_Synergy_latest.v1.json"
+        and Path(item).name.endswith(".json")
+        for item in synergy_files
+    )
+    print("has_synergy_latest_pointer", has_latest_pointer)
+    print("has_synergy_timestamp_snapshot", has_timestamp_snapshot)
+    if not has_latest_pointer or not has_timestamp_snapshot:
+        return 1
     return 0
 
 

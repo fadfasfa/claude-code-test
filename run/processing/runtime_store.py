@@ -22,7 +22,9 @@ from __future__ import annotations
 """
 
 import glob
+import json
 import os
+import re
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -35,6 +37,12 @@ from scraping.version_sync import BASE_DIR, RESOURCE_DIR, STATIC_DATA_DIR
 
 CSV_ENCODING = "utf-8-sig"
 CSV_FILENAME_PATTERN = "Hextech_Data_*.csv"
+SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
+SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
+SYNERGY_SNAPSHOT_PREFIX = "Champion_Synergy_"
+SYNERGY_SNAPSHOT_PATTERN = "Champion_Synergy_*.json"
+SYNERGY_POINTER_VERSION = 1
+_SYNERGY_SNAPSHOT_RE = re.compile(r"^Champion_Synergy_\d{8}_\d{6}(?:_\d{2})?\.json$")
 CSV_REQUIRED_COLUMNS = (
     "英雄ID",
     "英雄名称",
@@ -177,9 +185,93 @@ def get_runtime_synergy_data_dir() -> Path:
     return get_runtime_data_dir() / "synergy"
 
 
+def is_synergy_snapshot_filename(filename: str) -> bool:
+    """判断文件名是否是协同数据时间快照，排除 latest 指针和旧固定名。"""
+    return bool(_SYNERGY_SNAPSHOT_RE.fullmatch(str(filename or "").strip()))
+
+
+def build_synergy_legacy_data_path() -> str:
+    """返回旧版固定协同数据文件路径，仅作为只读兼容 fallback。"""
+    return str(get_runtime_synergy_data_dir() / SYNERGY_LEGACY_FILENAME)
+
+
+def build_synergy_latest_pointer_path() -> str:
+    """返回协同 latest 指针路径。"""
+    return str(get_runtime_synergy_data_dir() / SYNERGY_LATEST_POINTER_FILENAME)
+
+
+def build_synergy_snapshot_path(timestamp_label: str) -> str:
+    """按时间标签生成协同数据快照路径。"""
+    safe_label = str(timestamp_label or "").strip()
+    if not re.fullmatch(r"\d{8}_\d{6}(?:_\d{2})?", safe_label):
+        raise ValueError(f"协同快照时间标签非法：{timestamp_label}")
+    return str(get_runtime_synergy_data_dir() / f"{SYNERGY_SNAPSHOT_PREFIX}{safe_label}.json")
+
+
+def iter_synergy_snapshot_files() -> list[str]:
+    """列出所有合法协同时间快照文件。"""
+    snapshot_dir = get_runtime_synergy_data_dir()
+    files = []
+    for path in snapshot_dir.glob(SYNERGY_SNAPSHOT_PATTERN):
+        if path.is_file() and is_synergy_snapshot_filename(path.name):
+            files.append(str(path))
+    files.sort(key=lambda item: (os.path.getmtime(item), os.path.basename(item)), reverse=True)
+    return files
+
+
+def load_synergy_latest_pointer() -> dict:
+    """读取 latest 指针；指针损坏时返回空字典。"""
+    pointer_path = build_synergy_latest_pointer_path()
+    try:
+        with open(pointer_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def resolve_synergy_snapshot_from_pointer(pointer: dict | None = None) -> Optional[str]:
+    """解析 latest 指针指向的时间快照路径。"""
+    payload = pointer if isinstance(pointer, dict) else load_synergy_latest_pointer()
+    if not isinstance(payload, dict) or payload.get("version") != SYNERGY_POINTER_VERSION:
+        return None
+    filename = os.path.basename(str(payload.get("filename") or "").strip())
+    if not is_synergy_snapshot_filename(filename):
+        return None
+    candidate = (get_runtime_synergy_data_dir() / filename).resolve()
+    root = get_runtime_synergy_data_dir().resolve()
+    if candidate.parent != root or not candidate.exists():
+        return None
+    return str(candidate)
+
+
+def get_latest_synergy_snapshot_path() -> Optional[str]:
+    """返回 latest 指针指向的快照；指针不可用时扫描最新合法快照。"""
+    pointed = resolve_synergy_snapshot_from_pointer()
+    if pointed:
+        return pointed
+    snapshots = iter_synergy_snapshot_files()
+    return snapshots[0] if snapshots else None
+
+
 def build_synergy_data_path() -> str:
-    """返回协同数据主源文件路径。"""
-    return str(get_runtime_synergy_data_dir() / "Champion_Synergy.json")
+    """返回当前可读协同数据路径，latest 快照优先，旧固定名只读兜底。"""
+    snapshot = get_latest_synergy_snapshot_path()
+    if snapshot:
+        return snapshot
+    return build_synergy_legacy_data_path()
+
+
+def build_next_synergy_snapshot_path(timestamp_label: str) -> str:
+    """生成不覆盖已有文件的下一份协同快照路径。"""
+    base_path = Path(build_synergy_snapshot_path(timestamp_label))
+    if not base_path.exists():
+        return str(base_path)
+    for index in range(1, 100):
+        candidate = Path(build_synergy_snapshot_path(f"{timestamp_label}_{index:02d}"))
+        if not candidate.exists():
+            return str(candidate)
+    raise FileExistsError(f"协同快照文件名连续冲突：{base_path.name}")
 
 
 def build_daily_csv_path(date_str: str) -> str:
@@ -337,9 +429,14 @@ __all__ = [
     "build_runtime_persisted_path",
     "build_runtime_profile_path",
     "build_runtime_state_path",
+    "build_next_synergy_snapshot_path",
     "build_synergy_data_path",
+    "build_synergy_latest_pointer_path",
+    "build_synergy_legacy_data_path",
+    "build_synergy_snapshot_path",
     "detect_hero_id_column",
     "get_latest_csv",
+    "get_latest_synergy_snapshot_path",
     "get_runtime_cache_dir",
     "get_runtime_data_dir",
     "get_runtime_hextech_data_dir",
@@ -350,15 +447,24 @@ __all__ = [
     "get_runtime_root_dir",
     "get_runtime_state_dir",
     "has_precomputed_hextech_cache",
+    "is_synergy_snapshot_filename",
     "iter_runtime_csv_files",
+    "iter_synergy_snapshot_files",
     "load_latest_runtime_df",
     "load_precomputed_champion_list",
     "load_precomputed_hextech_for_hero",
+    "load_synergy_latest_pointer",
     "load_runtime_csv",
     "normalize_runtime_df",
     "resolve_runtime_data_file",
     "resolve_runtime_file",
+    "resolve_synergy_snapshot_from_pointer",
     "runtime_data_fallback_paths",
     "runtime_priority_paths",
+    "SYNERGY_LATEST_POINTER_FILENAME",
+    "SYNERGY_LEGACY_FILENAME",
+    "SYNERGY_POINTER_VERSION",
+    "SYNERGY_SNAPSHOT_PATTERN",
+    "SYNERGY_SNAPSHOT_PREFIX",
     "validate_runtime_csv_schema",
 ]

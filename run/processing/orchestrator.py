@@ -26,11 +26,14 @@ import json
 from processing.runtime_store import (
     build_runtime_state_path,
     build_synergy_data_path,
+    build_synergy_latest_pointer_path,
+    get_latest_synergy_snapshot_path,
     get_latest_csv,
+    load_synergy_latest_pointer,
 )
 from scraping.full_hextech_scraper import main_scraper
 from scraping.full_synergy_scraper import main as run_apex_spider
-from scraping.full_synergy_scraper import SYNERGY_REFRESH_META_FILE, SYNERGY_REFRESH_META_VERSION
+from scraping.full_synergy_scraper import SYNERGY_REFRESH_META_VERSION
 from scraping.heal_worker import heal_missing_artifacts
 from processing.precomputed_cache import (
     has_precomputed_hextech_cache,
@@ -78,20 +81,22 @@ def is_first_run(force: bool = False) -> bool:
 
 
 def should_refresh_synergy(force: bool, stale_after_seconds: int) -> bool:
-    if force or not os.path.exists(SYNERGY_FILE):
+    if force:
+        return True
+    synergy_file = get_latest_synergy_snapshot_path()
+    if not synergy_file or not os.path.exists(synergy_file):
         return True
     try:
-        meta_path = build_runtime_state_path(SYNERGY_REFRESH_META_FILE)
-        if not _file_is_fresh(SYNERGY_FILE, stale_after_seconds) or not _file_is_fresh(meta_path, stale_after_seconds):
+        pointer_path = build_synergy_latest_pointer_path()
+        if not _file_is_fresh(synergy_file, stale_after_seconds) or not _file_is_fresh(pointer_path, stale_after_seconds):
             return True
-        with open(meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
+        meta = load_synergy_latest_pointer()
         return not (
             isinstance(meta, dict)
             and meta.get("version") == SYNERGY_REFRESH_META_VERSION
-            and os.path.abspath(str(meta.get("target") or "")) == os.path.abspath(SYNERGY_FILE)
-            and float(meta.get("target_mtime") or 0.0) == os.path.getmtime(SYNERGY_FILE)
+            and os.path.basename(str(synergy_file)) == str(meta.get("filename") or "")
             and int(meta.get("mapped") or 0) > 0
+            and int(meta.get("non_empty_heroes") or 0) > 0
         )
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return True
@@ -106,8 +111,9 @@ def run_hextech_refresh(stop_event=None) -> bool:
 
 
 def run_synergy_refresh() -> bool:
-    run_apex_spider()
-    return os.path.exists(SYNERGY_FILE)
+    result = run_apex_spider()
+    latest_path = get_latest_synergy_snapshot_path()
+    return bool(result and result.get("published") and latest_path and os.path.exists(latest_path))
 
 
 def run_augment_refresh(force_refresh: bool, stop_event=None) -> dict:

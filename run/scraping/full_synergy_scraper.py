@@ -3,7 +3,7 @@
 抓取端分三层：
 - ``ApexSource`` 负责同源页面和资源获取，普通 requests 失败后可切到 Selenium。
 - ``SynergyExtractor`` 负责从页面 hydration 数据、bundle 或旧 marker 中提取联动对象。
-- ``SynergyWriter`` 负责把结构化对象写回现有 ``Champion_Synergy.json`` 兼容格式。
+- ``SynergyWriter`` 负责把结构化对象写成时间快照，并用 latest 指针发布。
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from html import unescape
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -27,7 +28,14 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import requests
 from bs4 import BeautifulSoup
 
-from processing.runtime_store import build_runtime_state_path, build_synergy_data_path, get_latest_csv
+from processing.runtime_store import (
+    SYNERGY_LATEST_POINTER_FILENAME,
+    SYNERGY_POINTER_VERSION,
+    build_next_synergy_snapshot_path,
+    build_synergy_data_path,
+    build_synergy_latest_pointer_path,
+    get_latest_csv,
+)
 from scraping.icon_resolver import normalize_augment_name
 from scraping.version_sync import STATIC_DATA_DIR
 from tools.log_utils import install_summary_logging, log_task_summary
@@ -59,8 +67,10 @@ RETRY_BACKOFF_FACTOR = 0.5
 MAX_JSON_RESOURCE_SIZE = 10 * 1024 * 1024
 OUTPUT_LOCK_TIMEOUT_SECONDS = 5
 OUTPUT_LOCK_POLL_INTERVAL_SECONDS = 0.2
-SYNERGY_REFRESH_META_VERSION = 1
-SYNERGY_REFRESH_META_FILE = "synergy_refresh_meta.json"
+SYNERGY_REFRESH_META_VERSION = SYNERGY_POINTER_VERSION
+SYNERGY_REFRESH_META_FILE = SYNERGY_LATEST_POINTER_FILENAME
+MIN_FIRST_SYNERGY_NON_EMPTY_HEROES = 20
+SYNERGY_PUBLISH_MIN_RATIO = 0.8
 BUNDLE_INTERACTION_SECTION_MARKER = "fx={manual:gx},"
 BUNDLE_APP_JS_PATTERN = re.compile(r'/assets/app\.[^"\']+\.js')
 SCRIPT_SRC_PATTERN = re.compile(r'<script[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
@@ -314,19 +324,86 @@ def _atomic_write_json(output_path: Path, payload: dict) -> None:
                 pass
 
 
-def write_synergy_refresh_meta(*, target_path: Path, base_url: str, resources: int, mapped: int) -> None:
-    """记录 scraper 成功写入证据，避免旧 JSON 被单纯 mtime 误判为新数据。"""
-    meta_path = Path(build_runtime_state_path(SYNERGY_REFRESH_META_FILE))
+def summarize_synergy_payload(payload: dict) -> dict[str, int]:
+    """统计协同 payload 的有效规模，用于发布熔断和 latest 指针。"""
+    heroes = len(payload) if isinstance(payload, dict) else 0
+    non_empty_heroes = 0
+    synergy_entries = 0
+    if not isinstance(payload, dict):
+        return {"heroes": 0, "non_empty_heroes": 0, "synergy_entries": 0}
+
+    for item in payload.values():
+        if not isinstance(item, dict):
+            continue
+        items = item.get("synergy_items")
+        if isinstance(items, list) and items:
+            count = len(items)
+        else:
+            synergies = item.get("synergies")
+            count = len(synergies) if isinstance(synergies, list) else 0
+        if count > 0:
+            non_empty_heroes += 1
+            synergy_entries += count
+    return {
+        "heroes": heroes,
+        "non_empty_heroes": non_empty_heroes,
+        "synergy_entries": synergy_entries,
+    }
+
+
+def _load_existing_synergy_stats() -> dict[str, int]:
+    current_path = Path(build_synergy_data_path())
+    if not current_path.exists():
+        return {"heroes": 0, "non_empty_heroes": 0, "synergy_entries": 0}
+    try:
+        with current_path.open("r", encoding="utf-8") as f:
+            return summarize_synergy_payload(json.load(f))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {"heroes": 0, "non_empty_heroes": 0, "synergy_entries": 0}
+
+
+def _validate_publish_size(new_stats: dict[str, int], old_stats: dict[str, int]) -> None:
+    """拒绝把明显不完整的新结果发布为 latest。"""
+    new_count = int(new_stats.get("non_empty_heroes") or 0)
+    old_count = int(old_stats.get("non_empty_heroes") or 0)
+    if old_count > 0:
+        minimum = max(1, int(old_count * SYNERGY_PUBLISH_MIN_RATIO))
+        if new_count < minimum:
+            raise ValueError(f"协同数据熔断：非空英雄 {new_count} < 旧快照 {old_count} 的 {SYNERGY_PUBLISH_MIN_RATIO:.0%}")
+        return
+    if new_count < MIN_FIRST_SYNERGY_NON_EMPTY_HEROES:
+        raise ValueError(f"协同数据熔断：首次快照非空英雄 {new_count} < {MIN_FIRST_SYNERGY_NON_EMPTY_HEROES}")
+
+
+def _new_synergy_snapshot_path() -> Path:
+    timestamp_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Path(build_next_synergy_snapshot_path(timestamp_label))
+
+
+def write_synergy_refresh_meta(
+    *,
+    target_path: Path,
+    base_url: str,
+    resources: int,
+    mapped: int,
+    stats: Optional[dict[str, int]] = None,
+) -> None:
+    """写入 latest 指针，固定文件名不再作为刷新成功依据。"""
+    meta_path = Path(build_synergy_latest_pointer_path())
+    stat_payload = stats or {}
     _atomic_write_json(
         meta_path,
         {
             "version": SYNERGY_REFRESH_META_VERSION,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "target": str(target_path),
-            "target_mtime": target_path.stat().st_mtime if target_path.exists() else 0,
+            "filename": target_path.name,
             "base_url": base_url,
+            "source": "apex",
             "resources": resources,
             "mapped": mapped,
+            "heroes": int(stat_payload.get("heroes") or 0),
+            "non_empty_heroes": int(stat_payload.get("non_empty_heroes") or 0),
+            "synergy_entries": int(stat_payload.get("synergy_entries") or 0),
         },
     )
 
@@ -1493,31 +1570,59 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
         )
         synergy_map = extractor.extract(resources)
         payload = SynergyWriter(core_info).build_payload(synergy_map)
-        target_path = Path(output_path or build_synergy_data_path())
+        stats = summarize_synergy_payload(payload)
+        old_stats = _load_existing_synergy_stats()
+        publishable = True
+        try:
+            _validate_publish_size(stats, old_stats)
+        except ValueError as exc:
+            publishable = False
+            logger.error("%s", exc)
+            if not dry_run:
+                raise
+        target_path = Path(output_path) if output_path else _new_synergy_snapshot_path()
         if dry_run:
             log_task_summary(
                 logger,
                 task="ApexLoL 协同抓取",
                 started_at=started_at,
-                success=True,
-                detail=f"dry_run=1 heroes={len(payload)} mapped={len(synergy_map)} resources={len(resources)}",
+                success=publishable,
+                detail=(
+                    f"dry_run=1 heroes={len(payload)} mapped={len(synergy_map)} "
+                    f"resources={len(resources)} non_empty={stats['non_empty_heroes']} "
+                    f"items={stats['synergy_entries']} publishable={int(publishable)}"
+                ),
             )
         else:
             SynergyWriter(core_info).write(target_path, payload)
-            write_synergy_refresh_meta(
-                target_path=target_path,
-                base_url=source.base_url,
-                resources=len(resources),
-                mapped=len(synergy_map),
-            )
+            if output_path is None:
+                write_synergy_refresh_meta(
+                    target_path=target_path,
+                    base_url=source.base_url,
+                    resources=len(resources),
+                    mapped=len(synergy_map),
+                    stats=stats,
+                )
             log_task_summary(
                 logger,
                 task="ApexLoL 协同抓取",
                 started_at=started_at,
                 success=True,
-                detail=f"heroes={len(payload)} mapped={len(synergy_map)} output={target_path.name}",
+                detail=(
+                    f"heroes={len(payload)} mapped={len(synergy_map)} "
+                    f"non_empty={stats['non_empty_heroes']} items={stats['synergy_entries']} "
+                    f"output={target_path.name}"
+                ),
             )
-        return {"resources": len(resources), "synergy_data": payload, "dry_run": dry_run}
+        return {
+            "resources": len(resources),
+            "synergy_data": payload,
+            "dry_run": dry_run,
+            "published": bool(not dry_run and publishable and output_path is None),
+            "publishable": publishable,
+            "output_path": str(target_path),
+            "stats": stats,
+        }
     except Exception as exc:
         log_task_summary(
             logger,
@@ -1526,7 +1631,7 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
             success=False,
             detail=f"stage=synergy_extract error={_safe_exception_label(exc)}",
         )
-        logger.warning("ApexLoL 协同抓取失败，旧 Champion_Synergy.json 保持不变：%s", exc)
+        logger.warning("ApexLoL 协同抓取失败，旧 latest 协同快照保持不变：%s", exc)
         return None
     finally:
         source.close()

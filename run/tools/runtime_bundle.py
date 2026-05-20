@@ -7,7 +7,7 @@ from __future__ import annotations
 
 核心输入：
 - bundle manifest
-- bundle 内 `data/static`、`data/indexes`、`data/raw/hextech` 与 `assets/`
+- bundle 内 `data/static`、`data/indexes`、`data/raw/hextech`、`data/raw/synergy` 与 `assets/`
 
 核心输出：
 - 运行目录中的稳定配置和图片资源
@@ -29,12 +29,22 @@ from tools.bundle_manifest import BUNDLE_MANIFEST_NAME
 
 HEXTECH_SNAPSHOT_PREFIX = PurePosixPath("data/raw/hextech")
 HEXTECH_SNAPSHOT_PATTERN_PREFIX = "Hextech_Data_"
-SYNERGY_DATA_PATH = PurePosixPath("data/raw/synergy/Champion_Synergy.json")
+SYNERGY_DATA_PREFIX = PurePosixPath("data/raw/synergy")
+SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
+SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
+SYNERGY_SNAPSHOT_PATTERN_PREFIX = "Champion_Synergy_"
 logger = logging.getLogger(__name__)
 
 
 def _empty_manifest() -> dict:
-    return {"static_files": [], "index_files": [], "asset_files": [], "hextech_snapshot_files": [], "synergy_data_file": ""}
+    return {
+        "static_files": [],
+        "index_files": [],
+        "asset_files": [],
+        "hextech_snapshot_files": [],
+        "synergy_data_files": [],
+        "synergy_data_file": "",
+    }
 
 
 def _load_bundle_manifest(bundle_root: Path) -> dict:
@@ -80,10 +90,30 @@ def _synergy_data_path(relative_name: object) -> PurePosixPath | None:
     relative_path = _normalize_manifest_path(relative_name)
     if relative_path is None:
         return None
-    if relative_path == SYNERGY_DATA_PATH:
-        return relative_path
-    if len(relative_path.parts) == 1 and relative_path.name == SYNERGY_DATA_PATH.name:
-        return SYNERGY_DATA_PATH
+
+    if relative_path.parent == SYNERGY_DATA_PREFIX:
+        synergy_path = relative_path
+    elif len(relative_path.parts) == 1:
+        # 兼容旧 manifest 若只记录文件名，运行时仍按标准目录播种。
+        synergy_path = SYNERGY_DATA_PREFIX / relative_path.name
+    else:
+        return None
+
+    name = synergy_path.name
+    if name == SYNERGY_LATEST_POINTER_FILENAME or name == SYNERGY_LEGACY_FILENAME:
+        return synergy_path
+    if name.startswith(SYNERGY_SNAPSHOT_PATTERN_PREFIX) and name.endswith(".json"):
+        timestamp = name.removeprefix(SYNERGY_SNAPSHOT_PATTERN_PREFIX).removesuffix(".json")
+        parts = timestamp.split("_")
+        if (
+            len(parts) in {2, 3}
+            and len(parts[0]) == 8
+            and len(parts[1]) == 6
+            and parts[0].isdigit()
+            and parts[1].isdigit()
+            and (len(parts) == 2 or (len(parts[2]) == 2 and parts[2].isdigit()))
+        ):
+            return synergy_path
     return None
 
 
@@ -161,8 +191,14 @@ def seed_bundled_resources(
             _copy_if_missing_or_older(source, target)
 
     if synergy_dir is not None:
-        synergy_path = _synergy_data_path(manifest.get("synergy_data_file", ""))
-        if synergy_path is not None:
+        synergy_files = list(manifest.get("synergy_data_files") or [])
+        legacy_single = str(manifest.get("synergy_data_file", "")).strip()
+        if legacy_single and legacy_single not in synergy_files:
+            synergy_files.append(legacy_single)
+        for filename in synergy_files:
+            synergy_path = _synergy_data_path(filename)
+            if synergy_path is None:
+                continue
             source = bundle_base / Path(*synergy_path.parts)
             target = synergy_dir / synergy_path.name
             _copy_if_missing_or_older(source, target)
