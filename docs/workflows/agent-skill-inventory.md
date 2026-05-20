@@ -11,6 +11,7 @@
 | `repo-local-pr-review` | keep | commit / PR 前本地审查 |
 | `repo-module-admission` | keep | 新增 workflow module、skill、hook、tool 或工作区前 |
 | `superpowers-project-bridge` | keep | 明确提到 Superpowers 或需要方法提示 |
+| `crawl4ai-web-scraping` | keep | Crawl4AI、通用网页抓取、Markdown/JSON 清洗或现有爬虫替换评估 |
 
 ## Retired
 
