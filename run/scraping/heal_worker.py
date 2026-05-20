@@ -14,6 +14,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -23,9 +24,11 @@ from processing.runtime_store import (
     build_runtime_state_path,
     build_synergy_data_path,
     build_synergy_latest_pointer_path,
+    build_synergy_refresh_status_path,
     get_latest_csv,
     get_latest_synergy_snapshot_path,
     load_synergy_latest_pointer,
+    load_synergy_refresh_status,
 )
 import scraping.version_sync as version_sync
 from scraping.augment_catalog import (
@@ -53,6 +56,8 @@ from scraping.version_sync import (
 logger = logging.getLogger(__name__)
 LOCK_FILE = Path(build_runtime_lock_path("heal_worker.lock"))
 HIGH_FREQUENCY_STALE_SECONDS = 4 * 60 * 60
+SYNERGY_STALE_SECONDS = 7 * 24 * 60 * 60
+SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
 
 
 @dataclass
@@ -88,20 +93,55 @@ def _latest_csv_fresh() -> bool:
     return _file_is_fresh(latest_csv or "")
 
 
+def _parse_timestamp(value: object) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _synergy_refresh_blocked() -> bool:
+    status = load_synergy_refresh_status()
+    blocked_until = _parse_timestamp(status.get("blocked_until"))
+    return status.get("last_result") == "blocked" and blocked_until > time.time()
+
+
+def _write_synergy_refresh_status(result: str, reason: str = "") -> None:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "last_attempt_at": now.isoformat(timespec="seconds"),
+        "last_result": result,
+        "reason": reason,
+    }
+    if result == "blocked":
+        blocked_until = datetime.fromtimestamp(time.time() + SYNERGY_BLOCKED_COOLDOWN_SECONDS, tz=timezone.utc)
+        payload["blocked_until"] = blocked_until.isoformat(timespec="seconds")
+    atomic_write_json(build_synergy_refresh_status_path(), payload, ensure_ascii=False, indent=2)
+
+
 def _synergy_data_fresh() -> bool:
     synergy_path = get_latest_synergy_snapshot_path()
     pointer_path = build_synergy_latest_pointer_path()
-    if not synergy_path or not _file_is_fresh(synergy_path) or not _file_is_fresh(pointer_path):
+    if not synergy_path or not os.path.exists(synergy_path) or not os.path.exists(pointer_path):
         return False
     try:
         meta = load_synergy_latest_pointer()
-        return (
+        healthy = (
             isinstance(meta, dict)
             and meta.get("version") == SYNERGY_REFRESH_META_VERSION
             and os.path.basename(str(synergy_path)) == str(meta.get("filename") or "")
             and int(meta.get("mapped") or 0) > 0
             and int(meta.get("non_empty_heroes") or 0) > 0
+            and int(meta.get("synergy_entries") or 0) > 0
         )
+        if not healthy:
+            return False
+        if _synergy_refresh_blocked():
+            return True
+        return _file_is_fresh(synergy_path, SYNERGY_STALE_SECONDS) and _file_is_fresh(pointer_path, SYNERGY_STALE_SECONDS)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return False
 
@@ -166,6 +206,9 @@ def _heal_hero_rankings(stop_event=None) -> bool:
 
 def _heal_synergy_data() -> bool:
     result = run_synergy_scraper()
+    if result and result.get("blocked"):
+        _write_synergy_refresh_status("blocked", str(result.get("error") or "blocked"))
+        return False
     if not result or not result.get("published"):
         return False
     latest_path = get_latest_synergy_snapshot_path()
@@ -179,7 +222,10 @@ def _heal_synergy_data() -> bool:
         return False
     if not isinstance(data, dict) or not data:
         return False
-    return any(bool((item or {}).get("synergies")) for item in data.values() if isinstance(item, dict))
+    success = any(bool((item or {}).get("synergies")) for item in data.values() if isinstance(item, dict))
+    if success:
+        _write_synergy_refresh_status("success")
+    return success
 
 
 def _heal_augment_catalog(force: bool = False, stop_event=None) -> bool:
@@ -220,6 +266,10 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
                 requested.append("hextech_rankings")
             if force or missing.get("synergy_data"):
                 requested.append("synergy_data")
+            if force or missing.get("augment_catalog"):
+                requested.append("augment_catalog")
+            if force or missing.get("images"):
+                requested.append("images")
             _write_startup_status(in_progress_tasks=requested, last_error="")
 
             if force or missing.get("champion_core"):
@@ -258,20 +308,19 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
                         else:
                             report.failed.append(task_name)
 
-            if force:
-                if missing.get("augment_catalog"):
-                    report.requested.append("augment_catalog")
-                    if _heal_augment_catalog(force=force, stop_event=stop_event):
-                        report.repaired.append("augment_catalog")
-                    else:
-                        report.failed.append("augment_catalog")
+            if force or missing.get("augment_catalog"):
+                report.requested.append("augment_catalog")
+                if _heal_augment_catalog(force=force, stop_event=stop_event):
+                    report.repaired.append("augment_catalog")
+                else:
+                    report.failed.append("augment_catalog")
 
-                if missing.get("images"):
-                    report.requested.append("images")
-                    if _heal_images():
-                        report.repaired.append("images")
-                    else:
-                        report.failed.append("images")
+            if force or missing.get("images"):
+                report.requested.append("images")
+                if _heal_images():
+                    report.repaired.append("images")
+                else:
+                    report.failed.append("images")
     except Timeout:
         payload = report.as_dict()
         _write_startup_status(in_progress_tasks=[], last_error="another repair is already running")

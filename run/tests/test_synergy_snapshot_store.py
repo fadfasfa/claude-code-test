@@ -1,3 +1,10 @@
+"""协同数据快照定位与发布熔断测试。
+
+这些测试保护 `Champion_Synergy_latest.v1.json` 指针、时间快照扫描、
+旧固定文件只读兜底，以及过小抓取结果不能发布为 latest 的边界。
+它不访问真实网络，只用临时目录模拟运行态协同数据目录。
+"""
+
 import json
 import os
 import tempfile
@@ -11,6 +18,7 @@ from scraping.full_synergy_scraper import _validate_publish_size
 
 class SynergySnapshotStoreTests(unittest.TestCase):
     def _write_json(self, path: Path, payload: dict, mtime: int = 1000) -> Path:
+        """写入带固定 mtime 的 JSON，便于验证快照排序规则。"""
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         os.utime(path, (mtime, mtime))
         return path

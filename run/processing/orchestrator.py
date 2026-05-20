@@ -22,15 +22,19 @@ from __future__ import annotations
 import os
 import time
 import json
+from datetime import datetime, timezone
 
 from processing.runtime_store import (
     build_runtime_state_path,
     build_synergy_data_path,
     build_synergy_latest_pointer_path,
+    build_synergy_refresh_status_path,
     get_latest_synergy_snapshot_path,
     get_latest_csv,
     load_synergy_latest_pointer,
+    load_synergy_refresh_status,
 )
+from tools.atomic_io import atomic_write_json
 from scraping.full_hextech_scraper import main_scraper
 from scraping.full_synergy_scraper import main as run_apex_spider
 from scraping.full_synergy_scraper import SYNERGY_REFRESH_META_VERSION
@@ -56,6 +60,8 @@ from scraping.version_sync import (
 
 SYNERGY_FILE = build_synergy_data_path()
 HIGH_FREQUENCY_STALE_SECONDS = 4 * 60 * 60
+SYNERGY_STALE_SECONDS = 7 * 24 * 60 * 60
+SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
 
 
 def _file_is_fresh(path: str, stale_after_seconds: int = HIGH_FREQUENCY_STALE_SECONDS) -> bool:
@@ -77,10 +83,39 @@ def should_refresh_hextech(force: bool, stale_after_seconds: int = HIGH_FREQUENC
 def is_first_run(force: bool = False) -> bool:
     if force:
         return True
-    return not os.path.exists(CORE_DATA_FILE) or should_refresh_hextech(False) or should_refresh_synergy(False, HIGH_FREQUENCY_STALE_SECONDS)
+    return not os.path.exists(CORE_DATA_FILE) or should_refresh_hextech(False) or should_refresh_synergy(False)
 
 
-def should_refresh_synergy(force: bool, stale_after_seconds: int) -> bool:
+def _parse_timestamp(value: object) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _synergy_refresh_blocked() -> bool:
+    status = load_synergy_refresh_status()
+    blocked_until = _parse_timestamp(status.get("blocked_until"))
+    return status.get("last_result") == "blocked" and blocked_until > time.time()
+
+
+def _write_synergy_refresh_status(result: str, reason: str = "") -> None:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "last_attempt_at": now.isoformat(timespec="seconds"),
+        "last_result": result,
+        "reason": reason,
+    }
+    if result == "blocked":
+        blocked_until = datetime.fromtimestamp(time.time() + SYNERGY_BLOCKED_COOLDOWN_SECONDS, tz=timezone.utc)
+        payload["blocked_until"] = blocked_until.isoformat(timespec="seconds")
+    atomic_write_json(build_synergy_refresh_status_path(), payload, ensure_ascii=False, indent=2)
+
+
+def should_refresh_synergy(force: bool, stale_after_seconds: int = SYNERGY_STALE_SECONDS) -> bool:
     if force:
         return True
     synergy_file = get_latest_synergy_snapshot_path()
@@ -88,16 +123,20 @@ def should_refresh_synergy(force: bool, stale_after_seconds: int) -> bool:
         return True
     try:
         pointer_path = build_synergy_latest_pointer_path()
-        if not _file_is_fresh(synergy_file, stale_after_seconds) or not _file_is_fresh(pointer_path, stale_after_seconds):
-            return True
         meta = load_synergy_latest_pointer()
-        return not (
+        healthy = (
             isinstance(meta, dict)
             and meta.get("version") == SYNERGY_REFRESH_META_VERSION
             and os.path.basename(str(synergy_file)) == str(meta.get("filename") or "")
             and int(meta.get("mapped") or 0) > 0
             and int(meta.get("non_empty_heroes") or 0) > 0
+            and int(meta.get("synergy_entries") or 0) > 0
         )
+        if not healthy:
+            return True
+        if _synergy_refresh_blocked():
+            return False
+        return not (_file_is_fresh(synergy_file, stale_after_seconds) and _file_is_fresh(pointer_path, stale_after_seconds))
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return True
 
@@ -113,7 +152,13 @@ def run_hextech_refresh(stop_event=None) -> bool:
 def run_synergy_refresh() -> bool:
     result = run_apex_spider()
     latest_path = get_latest_synergy_snapshot_path()
-    return bool(result and result.get("published") and latest_path and os.path.exists(latest_path))
+    if result and result.get("blocked"):
+        _write_synergy_refresh_status("blocked", str(result.get("error") or "blocked"))
+        return False
+    if result and result.get("published") and latest_path and os.path.exists(latest_path):
+        _write_synergy_refresh_status("success")
+        return True
+    return False
 
 
 def run_augment_refresh(force_refresh: bool, stop_event=None) -> dict:
@@ -160,6 +205,8 @@ def get_startup_status_file() -> str:
 
 __all__ = [
     "SYNERGY_FILE",
+    "SYNERGY_BLOCKED_COOLDOWN_SECONDS",
+    "SYNERGY_STALE_SECONDS",
     "current_api_cache_ready",
     "get_startup_status_file",
     "heal_runtime_artifacts",

@@ -457,6 +457,7 @@ class ApexSource:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": get_random_user_agent()})
         self._browser_driver = None
+        self.blocked = False
         self._browser_timeout = int(os.getenv("APEX_BROWSER_TIMEOUT_SECONDS", "18") or "18")
         self._profile_root = os.path.join(SELENIUM_PROFILE_DIR, f"session-{os.getpid()}-{int(time.time())}")
         os.makedirs(SELENIUM_CACHE_DIR, exist_ok=True)
@@ -509,6 +510,7 @@ class ApexSource:
                 if response.status_code == 200 and not self._is_cloudflare_block(response.text):
                     return FetchedResource(url=url, text=response.text, source="requests", status_code=200)
                 if response.status_code == 403 or self._is_cloudflare_block(response.text):
+                    self.blocked = True
                     logger.warning("Apex 普通请求被拒绝：url=%s status=%s", _sanitize_url_for_log(url), response.status_code)
                     return None
                 if response.status_code in retryable_status_codes and attempt < MAX_FETCH_RETRIES:
@@ -557,6 +559,9 @@ class ApexSource:
                 status_code=response.status_code,
             )
         except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+            response = getattr(exc, "response", None)
+            if getattr(response, "status_code", None) in {401, 403, 429}:
+                self.blocked = True
             logger.warning("APEX_SYNERGY_JSON_URL 读取失败：url=%s error=%s", _sanitize_url_for_log(raw_url), _safe_exception_label(exc))
             return None
 
@@ -575,6 +580,7 @@ class ApexSource:
                     return FetchedResource(url=url, text=text, source="selenium-text", status_code=200)
             html = driver.page_source or ""
             if not html or self._is_cloudflare_block(html):
+                self.blocked = True
                 logger.error("浏览器未取得可解析 Apex 页面：url=%s", _sanitize_url_for_log(url))
                 return None
             return FetchedResource(url=url, text=html, source="selenium", status_code=200)
@@ -1632,7 +1638,12 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
             detail=f"stage=synergy_extract error={_safe_exception_label(exc)}",
         )
         logger.warning("ApexLoL 协同抓取失败，旧 latest 协同快照保持不变：%s", exc)
-        return None
+        return {
+            "dry_run": dry_run,
+            "published": False,
+            "blocked": bool(getattr(source, "blocked", False)),
+            "error": str(exc),
+        }
     finally:
         source.close()
 

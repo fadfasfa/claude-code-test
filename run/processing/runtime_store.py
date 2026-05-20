@@ -42,6 +42,7 @@ SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
 SYNERGY_SNAPSHOT_PREFIX = "Champion_Synergy_"
 SYNERGY_SNAPSHOT_PATTERN = "Champion_Synergy_*.json"
 SYNERGY_POINTER_VERSION = 1
+SYNERGY_REFRESH_STATUS_FILENAME = "synergy_refresh_status.json"
 _SYNERGY_SNAPSHOT_RE = re.compile(r"^Champion_Synergy_\d{8}_\d{6}(?:_\d{2})?\.json$")
 CSV_REQUIRED_COLUMNS = (
     "英雄ID",
@@ -200,6 +201,11 @@ def build_synergy_latest_pointer_path() -> str:
     return str(get_runtime_synergy_data_dir() / SYNERGY_LATEST_POINTER_FILENAME)
 
 
+def build_synergy_refresh_status_path() -> str:
+    """返回协同刷新状态路径，用于记录 Apex blocked cooldown。"""
+    return build_runtime_state_path(SYNERGY_REFRESH_STATUS_FILENAME)
+
+
 def build_synergy_snapshot_path(timestamp_label: str) -> str:
     """按时间标签生成协同数据快照路径。"""
     safe_label = str(timestamp_label or "").strip()
@@ -224,6 +230,17 @@ def load_synergy_latest_pointer() -> dict:
     pointer_path = build_synergy_latest_pointer_path()
     try:
         with open(pointer_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def load_synergy_refresh_status() -> dict:
+    """读取协同刷新状态；缺失或损坏时返回空字典。"""
+    status_path = build_synergy_refresh_status_path()
+    try:
+        with open(status_path, "r", encoding="utf-8") as f:
             payload = json.load(f)
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return {}
@@ -433,6 +450,7 @@ __all__ = [
     "build_synergy_data_path",
     "build_synergy_latest_pointer_path",
     "build_synergy_legacy_data_path",
+    "build_synergy_refresh_status_path",
     "build_synergy_snapshot_path",
     "detect_hero_id_column",
     "get_latest_csv",
@@ -454,6 +472,7 @@ __all__ = [
     "load_precomputed_champion_list",
     "load_precomputed_hextech_for_hero",
     "load_synergy_latest_pointer",
+    "load_synergy_refresh_status",
     "load_runtime_csv",
     "normalize_runtime_df",
     "resolve_runtime_data_file",
@@ -464,6 +483,7 @@ __all__ = [
     "SYNERGY_LATEST_POINTER_FILENAME",
     "SYNERGY_LEGACY_FILENAME",
     "SYNERGY_POINTER_VERSION",
+    "SYNERGY_REFRESH_STATUS_FILENAME",
     "SYNERGY_SNAPSHOT_PATTERN",
     "SYNERGY_SNAPSHOT_PREFIX",
     "validate_runtime_csv_schema",
