@@ -145,29 +145,32 @@ body {
 }
 
 .hx-tier-op {
-    background: linear-gradient(135deg, #e3c16f, #8f6b2d);
+    background: linear-gradient(135deg, #f3d17c, #b5893d);
     color: #0b1118;
+    text-shadow: 0 1px 1px rgba(255, 255, 255, 0.2);
 }
 
 .hx-tier-s {
-    background: linear-gradient(135deg, #1d5f78, #2f9bb5);
+    background: linear-gradient(135deg, #00d2ff, #0066ff);
     color: #f4fbff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 .hx-tier-a {
-    background: linear-gradient(135deg, #276355, #50a675);
+    background: linear-gradient(135deg, #10b981, #047857);
     color: #f4fff9;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .hx-tier-npc {
-    background: linear-gradient(135deg, #263445, #151e29);
-    color: #bac7d4;
+    background: linear-gradient(135deg, #334155, #1e293b);
+    color: #cbd5e1;
 }
 
 .hx-tier-trash {
-    background: linear-gradient(135deg, #682020, #250d0d);
-    color: #f0a6a6;
-    border-right: 1px solid rgba(200, 170, 110, 0.2);
+    background: linear-gradient(135deg, #5c2c2c, #1f0c0c);
+    color: #fca5a5;
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .hx-tier-prismatic-bar {
@@ -202,4 +205,171 @@ body {
     border: 1px solid var(--hx-border-strong);
     color: var(--hx-text);
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+}
+
+/* ==========================================================================
+   海克斯视觉重塑专区：流光动效、高级卡片、水晶加载器与 Tab 优雅休眠
+   ========================================================================== */
+
+/* 1. T0 级 premium 英雄卡片流光扫光特效 */
+@keyframes hxShimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+.hx-card-premium {
+    position: relative;
+    border-color: rgba(243, 209, 124, 0.34) !important;
+    background-size: 200% 100%;
+    animation: hxShimmer 4s infinite linear;
+}
+
+.hx-card-premium::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(243, 209, 124, 0.28), rgba(181, 137, 61, 0.12), rgba(243, 209, 124, 0.28));
+    z-index: -1;
+    opacity: 0.65;
+    transition: opacity 0.3s ease;
+}
+
+.hx-card-premium:hover::before {
+    opacity: 1;
+    box-shadow: 0 0 16px rgba(243, 209, 124, 0.34);
+}
+
+/* 2. 海克斯水晶共鸣加载器（Hextech Resonance Loader） */
+.hextech-loader-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.hextech-crystal-loader {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.crystal-core {
+    width: 14px;
+    height: 14px;
+    background: var(--hx-tier-prismatic, #22d3ee);
+    transform: rotate(45deg);
+    box-shadow: 0 0 18px var(--hx-tier-prismatic, #22d3ee);
+    animation: crystalPulse 1.6s infinite ease-in-out;
+}
+
+.orbit-ring {
+    position: absolute;
+    border: 2px solid transparent;
+    border-radius: 50%;
+}
+
+.orbit-1 {
+    width: 44px;
+    height: 44px;
+    border-top-color: rgba(34, 211, 238, 0.45);
+    border-bottom-color: rgba(34, 211, 238, 0.45);
+    animation: spin 2s infinite linear;
+}
+
+.orbit-2 {
+    width: 60px;
+    height: 60px;
+    border-left-color: rgba(212, 167, 44, 0.34);
+    border-right-color: rgba(212, 167, 44, 0.34);
+    animation: spin 3s infinite reverse linear;
+}
+
+@keyframes crystalPulse {
+    0%, 100% { transform: rotate(45deg) scale(0.85); opacity: 0.5; }
+    50% { transform: rotate(45deg) scale(1.2); opacity: 1; }
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* 3. 多 Tab 冲突优雅休眠层样式 */
+.dormancy-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: rgba(8, 10, 15, 0.94);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    animation: dormancyFadeIn 0.3s ease-out;
+}
+
+.dormancy-card {
+    width: min(480px, 100%);
+    border-radius: 1.5rem;
+    padding: 2.5rem 2rem;
+    background: linear-gradient(180deg, rgba(20, 26, 35, 0.98) 0%, rgba(10, 14, 20, 0.99) 100%);
+    border: 1px solid rgba(200, 170, 110, 0.22);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    text-align: center;
+}
+
+.dormancy-crystal-wrap {
+    margin: 0 auto 1.5rem;
+    width: 72px;
+    height: 72px;
+    background: radial-gradient(circle, rgba(200, 170, 110, 0.16) 0%, transparent 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.dormancy-crystal {
+    width: 20px;
+    height: 20px;
+    background: #cbd5e1;
+    transform: rotate(45deg);
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.2);
+    animation: dormancyFloat 3s infinite ease-in-out;
+}
+
+.dormancy-btn {
+    margin-top: 1.75rem;
+    width: 100%;
+    padding: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: #f8f1df;
+    border-radius: 0.75rem;
+    background: linear-gradient(135deg, rgba(200, 170, 110, 0.3), rgba(120, 90, 40, 0.15));
+    border: 1px solid rgba(200, 170, 110, 0.45);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.dormancy-btn:hover {
+    background: linear-gradient(135deg, rgba(200, 170, 110, 0.45), rgba(120, 90, 40, 0.25));
+    border-color: rgba(200, 170, 110, 0.7);
+    box-shadow: 0 0 12px rgba(200, 170, 110, 0.2);
+    transform: translateY(-1px);
+}
+
+@keyframes dormancyFloat {
+    0%, 100% { transform: rotate(45deg) translateY(0); }
+    50% { transform: rotate(45deg) translateY(-8px); }
+}
+
+@keyframes dormancyFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }

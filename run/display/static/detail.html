@@ -715,11 +715,15 @@
                 </div>
             </div>
 
-            <div id="loadingSpinner" class="text-center py-20">
-                <div
-                    class="inline-block w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin">
+            <div id="loadingSpinner" class="flex flex-col items-center justify-center py-20">
+                <div class="hextech-loader-container mb-6">
+                    <div class="hextech-crystal-loader">
+                        <div class="crystal-core"></div>
+                        <div class="orbit-ring orbit-1"></div>
+                        <div class="orbit-ring orbit-2"></div>
+                    </div>
                 </div>
-                <div class="text-gray-400 mt-4 font-bold tracking-widest">加载海克斯数据中...</div>
+                <div class="text-sky-300 font-bold tracking-[0.24em] uppercase text-sm animate-pulse">加载海克斯数据中...</div>
             </div>
 
             <div id="noDataTip" class="hidden text-center py-20">
@@ -766,15 +770,59 @@
         let augmentCatalogMap = {};
         let ws = null;
 
-        const tabId = Math.random().toString(36).substring(2, 9);
+        let tabId = Math.random().toString(36).substring(2, 9);
         const bc = new BroadcastChannel('hextech_nexus_channel');
+
+        function dormancyDormant() {
+            if (document.getElementById('dormancyOverlay')) return;
+
+            const overlay = document.createElement('div');
+            overlay.id = 'dormancyOverlay';
+            overlay.className = 'dormancy-overlay';
+            overlay.innerHTML = `
+                <div class="dormancy-card">
+                    <div class="dormancy-crystal-wrap">
+                        <div class="dormancy-crystal"></div>
+                    </div>
+                    <h2 class="text-xl font-bold text-white tracking-widest mb-2">海克斯核心已转移</h2>
+                    <p class="text-xs text-gray-400 leading-relaxed mb-6">
+                        已在其他悬浮窗/标签页中激活了新的枢纽，当前窗口已自动进入魔法休眠状态，以降低系统资源开销。
+                    </p>
+                    <button type="button" id="btnReactivate" class="dormancy-btn">重新激活此窗口</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            if (window.wsInstance) {
+                window.wsInstance.onclose = null;
+                window.wsInstance.close();
+            }
+        }
+
+        function reactivateTab() {
+            const overlay = document.getElementById('dormancyOverlay');
+            if (overlay) {
+                overlay.remove();
+            }
+            tabId = Math.random().toString(36).substring(2, 9);
+            bc.postMessage({ type: 'new_tab_opened', id: tabId });
+
+            connectWS();
+            loadHextechs();
+        }
+
         bc.onmessage = (e) => {
             if (e.data.type === 'new_tab_opened' && e.data.id !== tabId) {
-                document.body.innerHTML = '<div class="flex items-center justify-center h-screen text-gray-500 text-xl font-bold">已唤醒 已在新的悬浮窗中唤醒，本窗口已自动休眠。</div>';
-                if (window.wsInstance) window.wsInstance.close();
+                dormancyDormant();
             }
         };
         bc.postMessage({ type: 'new_tab_opened', id: tabId });
+
+        document.addEventListener('click', (event) => {
+            if (event.target && event.target.id === 'btnReactivate') {
+                reactivateTab();
+            }
+        });
 
         const urlParams = new URLSearchParams(window.location.search);
         const hero = urlParams.get('hero');

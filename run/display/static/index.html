@@ -515,8 +515,14 @@
 
     <main class="hx-index-frame" id="tierContainer">
         <div class="flex flex-col items-center justify-center py-20">
-            <div class="spinner mb-4"></div>
-            <div class="text-gray-400 font-bold tracking-widest">加载英雄数据中...</div>
+            <div class="hextech-loader-container mb-6">
+                <div class="hextech-crystal-loader">
+                    <div class="crystal-core"></div>
+                    <div class="orbit-ring orbit-1"></div>
+                    <div class="orbit-ring orbit-2"></div>
+                </div>
+            </div>
+            <div class="text-sky-300 font-bold tracking-[0.24em] uppercase text-sm animate-pulse">加载英雄数据中...</div>
         </div>
     </main>
 
@@ -961,6 +967,22 @@
             return ranked.slice(0, limit);
         }
 
+        function highlightMatchText(text, query) {
+            if (!query) return escapeHtml(text);
+            const normalizedText = String(text || '');
+            const normalizedQuery = normalizeSearchText(query);
+            if (!normalizedQuery) return escapeHtml(normalizedText);
+
+            const idx = normalizedText.toLowerCase().indexOf(normalizedQuery);
+            if (idx !== -1) {
+                const prefix = normalizedText.substring(0, idx);
+                const match = normalizedText.substring(idx, idx + normalizedQuery.length);
+                const suffix = normalizedText.substring(idx + normalizedQuery.length);
+                return `${escapeHtml(prefix)}<span class="text-amber-400 font-extrabold">${escapeHtml(match)}</span>${escapeHtml(suffix)}`;
+            }
+            return escapeHtml(normalizedText);
+        }
+
         function renderSearchAssistPanel(query) {
             if (!searchAssistPanel) return;
 
@@ -1008,8 +1030,8 @@
                             data-search-apply="${escapeHtml(item.query)}"
                             title="${escapeHtml(item.meta)}">
                             <div class="search-assist-item-main">
-                                <div class="search-assist-item-title">${escapeHtml(item.label)}</div>
-                                <div class="search-assist-item-meta">${escapeHtml(item.meta)}</div>
+                                <div class="search-assist-item-title">${highlightMatchText(item.label, query)}</div>
+                                <div class="search-assist-item-meta">${highlightMatchText(item.meta, query)}</div>
                             </div>
                             <span class="search-assist-tag">${escapeHtml(item.kind)}</span>
                         </button>
