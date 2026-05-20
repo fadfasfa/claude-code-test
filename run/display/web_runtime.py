@@ -918,7 +918,7 @@ def get_synergy_data() -> dict:
             _synergy_cache.path = json_path
             _synergy_cache.mtime = current_mtime
             _synergy_cache.data = data
-            logger.info("Champion_Synergy.json 缓存已刷新")
+            logger.info("协同数据缓存已刷新：%s", os.path.basename(json_path))
         except Exception as exc:
             logger.error("协同数据文件加载失败：%s", exc)
             return _synergy_cache.data
@@ -1200,18 +1200,38 @@ async def lcu_polling_loop() -> None:
 
 
 async def csv_watcher_loop() -> None:
-    """监视最新战报 CSV 的修改时间，并在文件切换后广播数据刷新事件。"""
-    prev_mtime = 0.0
+    """监视高频 CSV 与联动 JSON，并在文件切换后广播数据刷新事件。"""
+    prev_csv_signature: Tuple[str, float] = ("", 0.0)
+    prev_synergy_signature: Tuple[str, float] = ("", 0.0)
     while True:
         try:
             get_df()
-            current_mtime = _csv_loader.cached_mtime
-            if current_mtime > prev_mtime and prev_mtime != 0.0:
-                logger.info("CSV 已更新：%s", os.path.basename(_csv_loader.cached_path))
+            current_csv_signature = (_csv_loader.cached_path, _csv_loader.cached_mtime)
+            synergy_path = build_synergy_data_path()
+            current_synergy_mtime = os.path.getmtime(synergy_path) if os.path.exists(synergy_path) else 0.0
+            current_synergy_signature = (synergy_path if current_synergy_mtime > 0 else "", current_synergy_mtime)
+            csv_changed = (
+                current_csv_signature[1] > 0
+                and prev_csv_signature[1] > 0
+                and current_csv_signature != prev_csv_signature
+            )
+            synergy_changed = (
+                current_synergy_mtime > 0
+                and prev_synergy_signature[1] > 0
+                and current_synergy_signature != prev_synergy_signature
+            )
+            if csv_changed or synergy_changed:
+                clear_preloaded_hextech_payloads()
+                logger.info(
+                    "运行数据已更新：csv=%s synergy=%s",
+                    os.path.basename(_csv_loader.cached_path or ""),
+                    os.path.basename(synergy_path),
+                )
                 await manager.broadcast({"type": "data_updated"})
-            prev_mtime = current_mtime
+            prev_csv_signature = current_csv_signature
+            prev_synergy_signature = current_synergy_signature
         except (OSError, IOError) as exc:
-            logger.warning("CSV 监视器错误：%s", exc)
+            logger.warning("运行数据监视器错误：%s", exc)
         await asyncio.sleep(3)
 
 

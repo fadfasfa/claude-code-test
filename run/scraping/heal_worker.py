@@ -22,7 +22,10 @@ from processing.runtime_store import (
     build_runtime_lock_path,
     build_runtime_state_path,
     build_synergy_data_path,
+    build_synergy_latest_pointer_path,
     get_latest_csv,
+    get_latest_synergy_snapshot_path,
+    load_synergy_latest_pointer,
 )
 import scraping.version_sync as version_sync
 from scraping.augment_catalog import (
@@ -34,6 +37,7 @@ from scraping.augment_catalog import (
 )
 from scraping.full_hextech_scraper import main_scraper
 from scraping.full_synergy_scraper import main as run_synergy_scraper
+from scraping.full_synergy_scraper import SYNERGY_REFRESH_META_VERSION
 from scraping.version_sync import (
     ASSET_DIR,
     AUGMENT_ICON_FILE,
@@ -85,7 +89,21 @@ def _latest_csv_fresh() -> bool:
 
 
 def _synergy_data_fresh() -> bool:
-    return _file_is_fresh(build_synergy_data_path())
+    synergy_path = get_latest_synergy_snapshot_path()
+    pointer_path = build_synergy_latest_pointer_path()
+    if not synergy_path or not _file_is_fresh(synergy_path) or not _file_is_fresh(pointer_path):
+        return False
+    try:
+        meta = load_synergy_latest_pointer()
+        return (
+            isinstance(meta, dict)
+            and meta.get("version") == SYNERGY_REFRESH_META_VERSION
+            and os.path.basename(str(synergy_path)) == str(meta.get("filename") or "")
+            and int(meta.get("mapped") or 0) > 0
+            and int(meta.get("non_empty_heroes") or 0) > 0
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
 
 
 def _write_startup_status(**updates) -> None:
@@ -148,12 +166,13 @@ def _heal_hero_rankings(stop_event=None) -> bool:
 
 def _heal_synergy_data() -> bool:
     result = run_synergy_scraper()
-    if not result:
+    if not result or not result.get("published"):
         return False
-    if not os.path.exists(build_synergy_data_path()):
+    latest_path = get_latest_synergy_snapshot_path()
+    if not latest_path or not os.path.exists(latest_path):
         return False
     try:
-        with open(build_synergy_data_path(), "r", encoding="utf-8") as f:
+        with open(latest_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception:
         logger.exception("读取协同数据结果失败")

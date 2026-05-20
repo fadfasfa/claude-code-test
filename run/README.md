@@ -74,7 +74,8 @@ run/
 ### 不应随包分发
 
 - `data/raw/hextech/Hextech_Data_*.csv`
-- `data/raw/synergy/Champion_Synergy.json`
+- 启动后新生成的 `data/raw/synergy/Champion_Synergy_*.json`
+- 启动后新生成的 `data/raw/synergy/Champion_Synergy_latest.v1.json`
 - `data/runtime/state/*.json`
 - `data/runtime/state/web_server_port.txt`
 - `data/runtime/cache/`
@@ -82,6 +83,10 @@ run/
 - `data/runtime/profile/`
 - `data/runtime/logs/`
 - 任何启动后生成、抓取、缓存、锁、日志或计算产物
+
+打包只允许带一组首启冷启动种子：`Champion_Synergy_YYYYMMDD_HHMMSS.json`
+与 `Champion_Synergy_latest.v1.json`。旧固定名 `Champion_Synergy.json` 仅作读取兜底，
+不再作为刷新成功或最新数据判断依据。
 
 ### 首启会自动创建
 

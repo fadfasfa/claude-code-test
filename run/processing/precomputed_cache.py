@@ -69,10 +69,45 @@ def _read_wrapped_json(path: str, default: Any) -> Any:
         return default
 
 
+def _read_cache_payload(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else {}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _latest_csv_signature() -> dict:
+    latest_csv = get_latest_csv()
+    if not latest_csv or not os.path.exists(latest_csv):
+        return {"source": "", "source_mtime": 0.0}
+    return {
+        "source": os.path.basename(latest_csv),
+        "source_mtime": _safe_mtime(latest_csv),
+    }
+
+
+def _cache_matches_latest_csv(cache_file: str) -> bool:
+    payload = _read_cache_payload(cache_file)
+    meta = payload.get("meta") if isinstance(payload, dict) else {}
+    if not isinstance(meta, dict):
+        return False
+    latest = _latest_csv_signature()
+    return (
+        bool(latest["source"])
+        and meta.get("source") == latest["source"]
+        and float(meta.get("source_mtime") or 0.0) == float(latest["source_mtime"] or 0.0)
+    )
+
+
 def load_precomputed_champion_list() -> List[dict]:
     with _cache_lock:
         cache_file = _resolve_cache_file(CHAMPION_LIST_CACHE_FILE, "Champion_List_Cache.json")
         mtime = _safe_mtime(cache_file)
+        if mtime and not _cache_matches_latest_csv(cache_file):
+            _champion_cache_state.update({"path": cache_file, "mtime": 0.0, "data": []})
+            return []
         if (
             mtime
             and _champion_cache_state["path"] == cache_file
@@ -90,7 +125,8 @@ def load_precomputed_champion_list() -> List[dict]:
 
 
 def has_precomputed_hextech_cache() -> bool:
-    return bool(_safe_mtime(_resolve_cache_file(HEXTECH_DETAIL_CACHE_FILE, "Champion_Hextech_Cache.json")))
+    cache_file = _resolve_cache_file(HEXTECH_DETAIL_CACHE_FILE, "Champion_Hextech_Cache.json")
+    return bool(_safe_mtime(cache_file) and _cache_matches_latest_csv(cache_file))
 
 
 def load_precomputed_hextech_for_hero(hero_name: str) -> Optional[dict]:
@@ -101,6 +137,9 @@ def load_precomputed_hextech_for_hero(hero_name: str) -> Optional[dict]:
     with _cache_lock:
         cache_file = _resolve_cache_file(HEXTECH_DETAIL_CACHE_FILE, "Champion_Hextech_Cache.json")
         mtime = _safe_mtime(cache_file)
+        if mtime and not _cache_matches_latest_csv(cache_file):
+            _hextech_cache_state.update({"path": cache_file, "mtime": 0.0, "data": {}})
+            return None
         if (
             mtime
             and _hextech_cache_state["path"] == cache_file
@@ -121,16 +160,32 @@ def load_precomputed_hextech_for_hero(hero_name: str) -> Optional[dict]:
 
 
 def write_precomputed_champion_list(champions: List[dict], source_tag: str) -> None:
+    signature = _latest_csv_signature()
     _atomic_write_json(
         CHAMPION_LIST_CACHE_FILE,
-        {"meta": {"generated_at": _now_iso(), "source": source_tag}, "data": champions},
+        {
+            "meta": {
+                "generated_at": _now_iso(),
+                "source": signature["source"] or source_tag,
+                "source_mtime": signature["source_mtime"],
+            },
+            "data": champions,
+        },
     )
 
 
 def write_precomputed_hextech_map(hextech_by_hero: Dict[str, dict], source_tag: str) -> None:
+    signature = _latest_csv_signature()
     _atomic_write_json(
         HEXTECH_DETAIL_CACHE_FILE,
-        {"meta": {"generated_at": _now_iso(), "source": source_tag}, "data": hextech_by_hero},
+        {
+            "meta": {
+                "generated_at": _now_iso(),
+                "source": signature["source"] or source_tag,
+                "source_mtime": signature["source_mtime"],
+            },
+            "data": hextech_by_hero,
+        },
     )
     if os.path.isdir(HEXTECH_DETAIL_CACHE_DIR):
         shutil.rmtree(HEXTECH_DETAIL_CACHE_DIR, ignore_errors=True)

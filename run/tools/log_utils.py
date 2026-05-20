@@ -26,7 +26,7 @@ NOISY_MESSAGE_PATTERNS = (
     "缺失资源列表",
     "共缺失 ",
     "已检测到 LCU 连接，端口=",
-    "Champion_Synergy.json 缓存已刷新",
+    "协同数据缓存已刷新",
     "CSV 已更新：",
 )
 

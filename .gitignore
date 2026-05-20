@@ -32,6 +32,11 @@ run/dist/
 run/data/runtime/**
 run/data/processed/**
 run/data/raw/**
+!run/data/raw/
+!run/data/raw/synergy/
+!run/data/raw/synergy/Champion_Synergy_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9].json
+!run/data/raw/synergy/Champion_Synergy_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9].json
+!run/data/raw/synergy/Champion_Synergy_latest.v1.json
 
 # sm2-randomizer rebuildable artifacts
 sm2-randomizer/**/__pycache__/
