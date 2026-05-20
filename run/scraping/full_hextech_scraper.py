@@ -125,6 +125,148 @@ def _extract_spell_values(raw_item: dict) -> dict:
     return values
 
 
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _source_tier_value(value) -> int:
+    text = str(value or "").strip().upper().removeprefix("T")
+    try:
+        return int(text)
+    except ValueError:
+        return 99
+
+
+def _source_tier_label(value) -> str:
+    tier = _source_tier_value(value)
+    return f"T{tier}" if tier != 99 else str(value or "").strip()
+
+
+def _metadata_tier_from_rarity(value) -> str:
+    rarity_to_tier = {
+        0: "白银",
+        1: "黄金",
+        2: "棱彩",
+        3: "棱彩",
+        "0": "白银",
+        "1": "黄金",
+        "2": "棱彩",
+        "3": "棱彩",
+        "silver": "白银",
+        "gold": "黄金",
+        "prismatic": "棱彩",
+        "白银": "白银",
+        "黄金": "黄金",
+        "棱彩": "棱彩",
+    }
+    return rarity_to_tier.get(value, rarity_to_tier.get(str(value or "").strip().lower(), ""))
+
+
+def _decode_next_flight_payloads(html: str) -> list[str]:
+    # Next/React Flight 会把长文本切成多段 push 字符串；这里仅做字符串反转义，不解释页面其它文本。
+    payloads = []
+    pattern = re.compile(
+        r"<script>self\.__next_f\.push\(\[1,\"(.*?)\"\]\)</script>",
+        re.DOTALL,
+    )
+    for match in pattern.finditer(html or ""):
+        raw_payload = match.group(1)
+        try:
+            payloads.append(json.loads(f'"{raw_payload}"'))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            logging.debug("React Flight payload 反转义失败：%s", exc)
+    return payloads
+
+
+def _extract_champion_augments_ref_id(payloads: list[str], champ_id: str) -> str:
+    escaped_id = re.escape(str(champ_id))
+    ref_pattern = re.compile(
+        rf'"championAugmentsStats"\s*:\s*\{{\s*"{escaped_id}"\s*:\s*\[\s*\[\s*"{escaped_id}"\s*,\s*"\$([0-9A-Za-z]+)"',
+        re.DOTALL,
+    )
+    for payload in payloads:
+        match = ref_pattern.search(payload)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _extract_flight_text_blocks(payloads: list[str]) -> dict[str, str]:
+    # Flight 文本块形如 `29:T9159,`，下一段 push 字符串才是这个 ID 对应的正文。
+    blocks = {}
+    pending_ref = ""
+    ref_pattern = re.compile(r"(?:^|\n)([0-9A-Za-z]+):T[0-9A-Fa-f]+,\s*$")
+    for payload in payloads:
+        if pending_ref and payload.lstrip().startswith("{"):
+            blocks[pending_ref] = payload.strip()
+            pending_ref = ""
+
+        match = ref_pattern.search(payload)
+        if match:
+            pending_ref = match.group(1)
+    return blocks
+
+
+def _parse_augments_payload(payload: str) -> dict:
+    text = str(payload or "").strip()
+    if not text:
+        return {}
+
+    start = text.find('{"augments"')
+    if start > 0:
+        text = text[start:]
+
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+
+    augments = parsed.get("augments") if isinstance(parsed, dict) else None
+    if not isinstance(augments, dict):
+        return {}
+    return augments
+
+
+def _extract_react_flight_augments(html: str, champ_id: str) -> dict:
+    payloads = _decode_next_flight_payloads(html)
+    if not payloads:
+        return {}
+
+    ref_id = _extract_champion_augments_ref_id(payloads, champ_id)
+    if ref_id:
+        augments = _parse_augments_payload(_extract_flight_text_blocks(payloads).get(ref_id, ""))
+        if augments:
+            return augments
+
+    # 兼容极简测试快照或站点 Flight 形态变化：仍只读取 React Flight 内唯一的 augments JSON 块。
+    candidates = [_parse_augments_payload(payload) for payload in payloads if '{"augments"' in payload]
+    candidates = [item for item in candidates if item]
+    if len(candidates) == 1:
+        logging.warning("[%s] 未找到 championAugmentsStats 文本块，使用唯一 React Flight augments 块兜底。", champ_id)
+        return candidates[0]
+    return {}
+
+
+def _sort_source_augments(augments: dict) -> list[tuple[str, dict]]:
+    def sort_key(entry):
+        aug_id, raw_stats = entry
+        stats = raw_stats if isinstance(raw_stats, dict) else {}
+        return (
+            _source_tier_value(stats.get("tier")),
+            -_to_float(stats.get("win_rate", stats.get("winRate"))),
+            -_to_float(stats.get("pick_rate", stats.get("pickRate"))),
+            str(aug_id),
+        )
+
+    return sorted(augments.items(), key=sort_key)
+
+
 def fetch_with_retry(session, url, max_retries=1, timeout=6):
     # 指数退避重试。
     for attempt in range(max_retries):
@@ -200,55 +342,50 @@ def extract_champion_stats(
     champ_id: str,
     champ_name: str,
     champ_data: dict,
+    aug_tier_map: dict | None = None,
 ) -> list:
-    # 扫描页面并用内存字典完成匹配。
+    # 只解析当前英雄组件引用的 React Flight augments 数据块，避免整页统计串源。
     rows = []
+    source_augments = _extract_react_flight_augments(html, champ_id)
+    if not source_augments:
+        logging.warning("[%s] 未解析到当前英雄 React Flight augments 数据块", champ_name)
+        return rows
 
-    cleaned_html = html.replace('\\"', '"').replace('\\\\', '\\')
+    for source_rank, (raw_id, raw_stats) in enumerate(_sort_source_augments(source_augments), start=1):
+        mid = str(raw_id)
+        stats = raw_stats if isinstance(raw_stats, dict) else {}
+        try:
+            win = _to_float(stats.get("win_rate", stats.get("winRate")))
+            pick = _to_float(stats.get("pick_rate", stats.get("pickRate")))
 
-    universal_pattern = re.compile(
-        r'"(\d{4})"\s*:\s*\{[^{}]*?"(?:winRate|win_rate)"\s*:\s*"?([\d.]+)"?[^{}]*?"(?:pickRate|pick_rate)"\s*:\s*"?([\d.]+)"?',
-        re.DOTALL
-    )
+            if pick > 1.0:
+                pick = pick / 100.0
+                logging.debug(f"[量纲转换] 海克斯 ID={mid}，出场率从百分数转换为小数：{pick*100:.1f}% -> {pick:.4f}")
+            pick = min(1.0, max(0.0, pick))
 
-    for match in universal_pattern.finditer(cleaned_html):
-        mid = match.group(1)
-        if mid in aug_id_map:
-            try:
-                win = float(match.group(2))
-                pick = float(match.group(3))
-
-                if pick > 1.0:
-                    pick = pick / 100.0
-                    logging.debug(f"[量纲转换] 海克斯 ID={mid}，出场率从百分数转换为小数：{pick*100:.1f}% -> {pick:.4f}")
-
-                pick = min(1.0, pick)
-
-                if win > 0 and pick >= FRESHNESS_THRESHOLD:
-                    web_name = aug_id_map.get(mid, "")
-                    local_tier = truth_dict.get(web_name)
-                    if web_name and local_tier:
-                        rows.append({
-                            "英雄 ID": champ_id,
-                            "英雄名称": champ_name,
-                            "英雄评级": champ_data.get('tier', 'T3'),
-                            "英雄胜率": float(champ_data.get('winRate', 0)),
-                            "英雄出场率": float(champ_data.get('pickRate', 0)),
-                            "海克斯阶级": local_tier,
-                            "海克斯名称": web_name,
-                            "海克斯胜率": win,
-                            "海克斯出场率": pick
-                        })
-            except (ValueError, IndexError, AttributeError) as e:
-                chunk_start = max(0, cleaned_html.find(mid) - 50)
-                chunk_end = min(len(cleaned_html), cleaned_html.find(mid) + len(mid) + 150)
-                chunk_snapshot = cleaned_html[chunk_start:chunk_end].replace('\n', '\\n')[:200]
-                logging.warning(
-                    f"[{champ_name}] 海克斯 ID={mid} 解析失败：{e} | "
-                    f"上下文快照：{chunk_snapshot} | "
-                    f"堆栈：{traceback.format_exc().strip()}"
-                )
-                continue
+            web_name = aug_id_map.get(mid, "")
+            local_tier = truth_dict.get(web_name) or (aug_tier_map or {}).get(mid) or "未知"
+            if web_name and win > 0:
+                rows.append({
+                    "英雄 ID": champ_id,
+                    "英雄名称": champ_name,
+                    "英雄评级": champ_data.get('tier', 'T3'),
+                    "英雄胜率": float(champ_data.get('winRate', 0)),
+                    "英雄出场率": float(champ_data.get('pickRate', 0)),
+                    "海克斯ID": mid,
+                    "源站排名": source_rank,
+                    "源站层级": _source_tier_label(stats.get("tier")),
+                    "海克斯阶级": local_tier,
+                    "海克斯名称": web_name,
+                    "海克斯胜率": win,
+                    "海克斯出场率": pick
+                })
+        except (ValueError, IndexError, AttributeError) as e:
+            logging.warning(
+                f"[{champ_name}] 海克斯 ID={mid} 解析失败：{e} | "
+                f"源站字段：{stats} | 堆栈：{traceback.format_exc().strip()}"
+            )
+            continue
 
     return rows
 
@@ -289,10 +426,13 @@ def main_scraper(stop_event=None):
         aug_data = aug_response.json()
 
         aug_id_map = {}
+        aug_tier_map = {}
         for raw_key, raw_item in aug_data.items():
             item = raw_item if isinstance(raw_item, dict) else {}
             aug_id = str(raw_key)
-            aug_id_map[aug_id] = _clean_augment_text(item.get('displayName'))
+            display_name = _clean_augment_text(item.get('displayName'))
+            aug_id_map[aug_id] = display_name
+            aug_tier_map[aug_id] = truth_dict.get(display_name) or _metadata_tier_from_rarity(item.get("rarity"))
 
         stats_response = None
         for url in HEXTECH_CHAMPION_STATS_URLS:
@@ -339,7 +479,8 @@ def main_scraper(stop_event=None):
                         truth_dict,
                         c_id,
                         c_name,
-                        champ
+                        champ,
+                        aug_tier_map
                     )
                 except ValueError as e:
                     logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
@@ -391,11 +532,18 @@ def main_scraper(stop_event=None):
         sign_mask = df['胜率差'].apply(lambda x: 1 if x >= 0 else -1)
         df['综合得分'] = z_wr * 0.85 + z_pr * 0.15 * sign_mask
 
-        df.sort_values(
-            by=['英雄名称', '海克斯阶级', '综合得分'],
-            ascending=[True, True, False],
-            inplace=True
-        )
+        if '源站排名' in df.columns:
+            df.sort_values(
+                by=['英雄名称', '源站排名'],
+                ascending=[True, True],
+                inplace=True
+            )
+        else:
+            df.sort_values(
+                by=['英雄名称', '海克斯阶级', '综合得分'],
+                ascending=[True, True, False],
+                inplace=True
+            )
 
         # 数据量过低时直接拒绝覆盖结果
         if len(df) < 300:

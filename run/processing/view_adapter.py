@@ -377,6 +377,27 @@ def normalize_augment_tier(value: Any) -> str:
     return "Silver"
 
 
+def _has_usable_source_rank(df: pd.DataFrame) -> bool:
+    if "源站排名" not in df.columns:
+        return False
+    ranks = pd.to_numeric(df["源站排名"], errors="coerce")
+    return bool(ranks.notna().any())
+
+
+def _sort_by_source_rank_or_score(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    sortable = df.copy()
+    if _has_usable_source_rank(sortable):
+        sortable["_源站排名_sort"] = pd.to_numeric(sortable["源站排名"], errors="coerce").fillna(999999)
+        sortable["_海克斯胜率_sort"] = pd.to_numeric(sortable["海克斯胜率"], errors="coerce").fillna(0.0)
+        return sortable.sort_values(
+            by=["_源站排名_sort", "_海克斯胜率_sort", "海克斯名称"],
+            ascending=[True, False, True],
+        ).drop(columns=["_源站排名_sort", "_海克斯胜率_sort"])
+    return sortable.sort_values(by='综合得分', ascending=False)
+
+
 def process_hextechs_data(
     df: pd.DataFrame,
     name: str,
@@ -508,18 +529,27 @@ def process_hextechs_data(
                 'tooltip': tooltip_raw.strip(),
                 'tooltip_plain': tooltip_plain
             }
+            if '海克斯ID' in row.index and pd.notna(row.get('海克斯ID')):
+                card['海克斯ID'] = str(row.get('海克斯ID')).strip()
+            if '源站排名' in row.index and pd.notna(row.get('源站排名')):
+                try:
+                    card['源站排名'] = int(float(row.get('源站排名')))
+                except (TypeError, ValueError):
+                    card['源站排名'] = str(row.get('源站排名')).strip()
+            if '源站层级' in row.index and pd.notna(row.get('源站层级')):
+                card['源站层级'] = str(row.get('源站层级')).strip()
             if include_score:
                 card['综合得分'] = float(row['综合得分']) if pd.notna(row['综合得分']) else 0.0
             return card
 
-        # ========== 前十总榜：不计阶级，按综合得分取前 10 ==========
-        top_10_data = hero_data.sort_values(by='综合得分', ascending=False).head(10)
+        # ========== 前十总榜：优先沿用源站排名，旧 CSV 才回退综合得分 ==========
+        top_10_data = _sort_by_source_rank_or_score(hero_data).head(10)
         top_10_overall = []
         for _, row in top_10_data.iterrows():
             top_10_overall.append(build_hextech_card(row, include_score=True))
 
-        # ========== 综合榜单（向后兼容） ==========
-        comp_data = hero_data.sort_values(by='综合得分', ascending=False)
+        # ========== 综合榜单：优先沿用源站排名，旧 CSV 才回退综合得分 ==========
+        comp_data = _sort_by_source_rank_or_score(hero_data)
         comprehensive_list = []
         for _, row in comp_data.iterrows():
             comprehensive_list.append(build_hextech_card(row, include_score=True))
@@ -537,8 +567,8 @@ def process_hextechs_data(
                 hero_data['海克斯阶级'].map(normalize_augment_tier) == tier_name
             ].copy()
 
-            # 按综合得分排序并截取
-            tier_data_by_score = tier_data.sort_values(by='综合得分', ascending=False)
+            # 分阶级榜同样优先沿用源站排名，避免本地综合分改变源站顺序。
+            tier_data_by_score = _sort_by_source_rank_or_score(tier_data)
             if limit is not None:
                 tier_data_by_score = tier_data_by_score.head(limit)
             result = []
