@@ -31,6 +31,18 @@
 - Ultraplan 预留说明：`docs/workflows/ultraplan-adoption-note.md`
 - skill inventory：`docs/workflows/agent-skill-inventory.md`
 
+## Code Documentation
+
+- 新增或修改的代码注释一律使用简体中文；标识符、API 名、命令、错误原文保留英文。
+- 修改一个文件时，对路过的英文行内/块注释做顺手翻译；不主动扫全仓回填，不为翻译额外起 PR。
+- agent 新建源代码或文档文件时，文件首部必须带中文头部说明：
+  - Python/JS/TS：3 行以内 module docstring 或顶部块注释，说明该文件的职责、调用方、关键依赖。
+  - Markdown：首行中文 `#` 标题 + 1 行中文简介。
+  - PowerShell/Bash：脚本首行 shebang 或 `#Requires` 之后，紧跟 1–3 行中文注释。
+- 实质修改老文件（非纯重命名、非纯格式化）且其缺少中文头部时，按上一条格式补一段；仅做最小补全，不顺手重写已有英文头部。
+- 头部说明描述"做什么"和"谁会调它"，不写任务编号、PR 号或本轮改动说明。
+- 不替换或翻译现有的中文头部；不为图标、二进制、生成产物、第三方 vendored 代码增加头部。
+
 ## Git And Safety
 
 - 只读 Git 命令默认允许，尤其是 `git status --short`、`git diff` 和 `git log`。
