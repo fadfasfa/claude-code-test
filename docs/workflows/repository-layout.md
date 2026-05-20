@@ -13,7 +13,7 @@
 | `.agents/skills/` | 仓库级 Codex skill 白名单 |
 | `.claude/` | Claude Code 本机设置、入口说明和本机计划草稿 |
 | `.codex/` | 项目级 Codex 配置占位，不放运行态 |
-| `.state/workflow/` | 旧 `cx-exec` 工作流遗留运行态，默认不提交 |
+| `.state/workflow/` | 旧 CC-CX 工作流遗留运行态，默认不提交 |
 | `.state/cc-work/` | 本机 agent 计划、协作、交接、审查草稿区 |
 | `scripts/` | 仓库级辅助脚本；旧 `scripts/workflow/` 已移除 |
 | `scripts/git/` | legacy/manual Git 辅助脚本 |
@@ -23,7 +23,7 @@
 
 ## Runtime State
 
-`.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；当前工作流不依赖 `.state/workflow/tasks/result.json`。`.state/cc-work/**` 用于本机计划、协作草稿、交接稿和审查草稿，不是正式文档区，普通任务不强制生成文件。`.claude/plans/**` 只用于 Claude Code 原生运行时本机计划草稿；计划草稿写入不需要额外授权或特殊条件，默认不提交。
+`.state/workflow/**` 是旧 CC-CX 工作流遗留运行态目录；当前工作流不依赖旧任务结果文件。`.state/cc-work/**` 用于本机计划、协作草稿、交接稿和审查草稿，不是正式文档区，普通任务不强制生成文件。`.claude/plans/**` 只用于 Claude Code 原生运行时本机计划草稿；计划草稿写入不需要额外授权或特殊条件，默认不提交。
 
 ## Claude Code Local Settings
 
@@ -37,7 +37,7 @@
 - `.codex-exec-apple/`
 - `.learnings/`
 - `run/workflow/`
-- 根 `cx-exec.ps1`
+- 旧根 CC-CX 执行脚本
 - `scripts/workflow/`
 - `.claude/hooks/cc-delegation-guard.ps1`
 - `scripts/guard/smoke-cc-delegation-guard.ps1`

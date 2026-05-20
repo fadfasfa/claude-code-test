@@ -12,7 +12,7 @@
 - 仓库根目录是治理、路由和工具骨架，不是默认业务写入面。
 - 业务修改必须先落到明确子项目或已登记工作区；写入范围以 `docs/workflows/work_area_registry.md` 为准。
 - Claude Code 入口按 `CLAUDE.md`、`PROJECT.md` 和 `docs/index.md` 独立执行；Codex 入口按本文件、`PROJECT.md` 和 `docs/index.md` 独立执行。
-- 不强制 CC 计划、CX 执行、CC 验收；也不强制 OpenAI Codex plugin 作为主调度路径。
+- 不强制 CC 计划、CX 执行、CC 验收；Claude Code 中即使 OpenAI Codex plugin 可用，也只有用户当前轮显性点名或给出命令时才可调用。
 - 旧 CC-CX 强编排和受保护路径编排已退役，不作为日常工作流规则。
 - Windows 默认使用 PowerShell。
 - 默认在当前工作树小步执行；不自动创建 worktree、分支、计划文件、Markdown report、probe 或 archive 证据文件。

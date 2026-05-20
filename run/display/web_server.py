@@ -22,6 +22,7 @@ from .web_runtime import (
     maybe_open_browser,
     set_active_web_port,
     write_active_web_port,
+    write_request_auth_token,
 )
 
 app = FastAPI(lifespan=lifespan)
@@ -40,6 +41,7 @@ def run_web_server() -> None:
 
     set_active_web_port(actual_port)
     write_active_web_port(actual_port)
+    write_request_auth_token()
     maybe_open_browser(actual_port)
     uvicorn.run(
         app,

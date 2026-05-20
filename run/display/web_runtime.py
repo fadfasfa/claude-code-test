@@ -37,6 +37,7 @@ import threading
 import time
 import tempfile
 import webbrowser
+import warnings
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
@@ -47,23 +48,29 @@ from secrets import token_urlsafe
 import pandas as pd
 import psutil
 import requests
+import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from processing.view_adapter import process_hextechs_data
 from processing.runtime_store import (
     CachedDataFrameLoader,
+    ensure_private_runtime_dir,
+    ensure_runtime_profile_dir,
     build_runtime_persisted_path,
     build_runtime_profile_path,
     build_runtime_state_path,
     build_synergy_data_path,
     get_latest_csv,
+    write_private_runtime_state_file,
 )
 from scraping.augment_catalog import find_augment_catalog_entry
 from scraping.full_hextech_scraper import _clean_augment_text, extract_champion_stats, fetch_with_retry
 from scraping.icon_resolver import (
     ensure_augment_icon_cached,
     find_existing_augment_asset_filename,
+    is_safe_augment_icon_filename,
+    is_safe_remote_icon_url,
     resolve_apexlol_hextech_icon_url,
 )
 from scraping.version_sync import (
@@ -123,15 +130,18 @@ _preloaded_hextech_executor = ThreadPoolExecutor(max_workers=2, thread_name_pref
 _request_auth_token = token_urlsafe(24)
 
 _SAFE_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
-_SAFE_ASSET_RE = re.compile(r"^[A-Za-z0-9._-]+\.png$")
 _SAFE_HERO_ID_RE = re.compile(r"^\d{1,6}$")
-_SAFE_NAME_RE = re.compile(r"^[\w\u4e00-\u9fff .'\-]{1,64}$")
-_ALLOWED_REDIRECT_HOSTS = {"apexlol.info", "www.apexlol.info", "ddragon.leagueoflegends.com", "raw.communitydragon.org", "cdn.communitydragon.org"}
+_SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9\u4e00-\u9fff .'\-]{1,64}$")
 _lcu_warning_logged = False
 
 
 def get_request_auth_token() -> str:
     return _request_auth_token
+
+
+def write_request_auth_token() -> None:
+    """把本轮 Web token 写入私有 state 文件，供桌面 UI 读取 header。"""
+    write_private_runtime_state_file("auth_token.txt", _request_auth_token)
 
 
 def _get_resource_path(relative_path: str) -> str:
@@ -169,11 +179,7 @@ def get_assets_dir() -> str:
 
 def is_safe_png_asset_name(filename: str) -> bool:
     """校验海克斯图标文件名只包含安全字符，并固定为 png。"""
-    raw_value = str(filename or "").strip()
-    normalized = os.path.basename(raw_value)
-    if not raw_value or normalized != raw_value:
-        return False
-    return bool(_SAFE_ASSET_RE.fullmatch(normalized))
+    return is_safe_augment_icon_filename(filename)
 
 
 def is_allowed_local_origin(origin: str | None) -> bool:
@@ -201,15 +207,7 @@ def set_active_web_port(port: int) -> None:
 
 
 def write_active_web_port(port: int) -> None:
-    os.makedirs(os.path.dirname(WEB_PORT_FILE), exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(prefix="web-port-", suffix=".tmp", dir=os.path.dirname(WEB_PORT_FILE))
-    try:
-        os.chmod(tmp_path, 0o600)
-    except OSError:
-        pass
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(str(port))
-    os.replace(tmp_path, WEB_PORT_FILE)
+    write_private_runtime_state_file("web_server_port.txt", str(port))
 
 
 def safe_join_under_dir(base_dir: str, filename: str) -> Optional[str]:
@@ -224,14 +222,7 @@ def safe_join_under_dir(base_dir: str, filename: str) -> Optional[str]:
 
 
 def is_safe_redirect_url(url: str) -> bool:
-    try:
-        parsed = urlparse(str(url or "").strip())
-    except Exception:
-        return False
-    if parsed.scheme not in {"https"}:
-        return False
-    host = str(parsed.hostname or "").strip().lower()
-    return host in _ALLOWED_REDIRECT_HOSTS
+    return is_safe_remote_icon_url(url)
 
 
 def resolve_remote_augment_icon_url(catalog_entry: Optional[dict], fallback_name: str) -> str:
@@ -415,7 +406,8 @@ def is_safe_internal_url(url: str) -> bool:
 def open_managed_browser(url: str, replace_existing: bool = False) -> bool:
     global _managed_browser_process
 
-    os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+    ensure_runtime_profile_dir()
+    ensure_private_runtime_dir(BROWSER_PROFILE_DIR)
     if not is_safe_internal_url(url):
         logger.warning("已拒绝启动非本地浏览器地址：%s", url)
         return False
@@ -1062,6 +1054,17 @@ def _log_lcu_tls_warning_once() -> None:
     _lcu_warning_logged = True
 
 
+def _safe_exception_label(exc: Exception) -> str:
+    return exc.__class__.__name__
+
+
+def _get_lcu_session(url: str, headers: dict) -> requests.Response:
+    """LCU 只监听本机自签名 HTTPS，这里局部关闭校验并局部抑制 warning。"""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
+        return _lcu_session.get(url, headers=headers, verify=False, timeout=3)
+
+
 async def lcu_polling_loop() -> None:
     """持续轮询 LCU 选人会话，并把英雄可用集与锁定事件广播给前端。"""
     while True:
@@ -1090,7 +1093,7 @@ async def lcu_polling_loop() -> None:
             url = f"https://127.0.0.1:{current_port}/lol-champ-select/v1/session"
 
             _log_lcu_tls_warning_once()
-            res = await asyncio.to_thread(_lcu_session.get, url, headers=headers, verify=False, timeout=3)
+            res = await asyncio.to_thread(_get_lcu_session, url, headers)
 
             if res.status_code == 200:
                 data = res.json()
@@ -1187,14 +1190,20 @@ async def lcu_polling_loop() -> None:
                 clear_preloaded_hextech_payloads()
                 with _lcu_state_lock:
                     _lcu_state.port = None
-        except requests.exceptions.ConnectionError as exc:
-            logger.warning("LCU 连接错误：%s", exc)
+        except requests.exceptions.RequestException as exc:
+            logger.warning(
+                "LCU 请求异常，已重置连接状态：error_type=%s endpoint=127.0.0.1",
+                _safe_exception_label(exc),
+            )
             clear_preloaded_hextech_payloads()
             with _lcu_state_lock:
                 _lcu_state.port = None
                 _lcu_state.token = None
         except Exception as exc:
-            logger.warning("LCU 轮询失败：%s", exc)
+            logger.warning(
+                "LCU 轮询异常：error_type=%s context=local_polling_loop",
+                _safe_exception_label(exc),
+            )
 
         await asyncio.sleep(1.5)
 

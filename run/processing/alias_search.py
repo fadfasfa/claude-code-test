@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+import threading
 from typing import Dict, List, Optional
 
 from processing.alias_utils import dedupe_alias_texts, normalize_alias_token
+from processing.runtime_store import build_runtime_persisted_path, ensure_private_runtime_dir
 from scraping.version_sync import CHAMPION_ALIAS_INDEX_FILE
 
 _ALIAS_INDEX_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
+RUNTIME_ALIAS_FILE = build_runtime_persisted_path("aliases.json")
+_RUNTIME_ALIAS_LOCK = threading.Lock()
 
 
 def _normalize_record(record: dict) -> dict:
@@ -30,32 +35,142 @@ def _normalize_record(record: dict) -> dict:
     }
 
 
+def _load_json_file(path: str):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def _load_stable_alias_index() -> tuple[float, list[dict]]:
+    if not os.path.exists(CHAMPION_ALIAS_INDEX_FILE):
+        return 0.0, []
+    current_mtime = os.path.getmtime(CHAMPION_ALIAS_INDEX_FILE)
+    payload = _load_json_file(CHAMPION_ALIAS_INDEX_FILE)
+    if not isinstance(payload, list):
+        payload = []
+    return current_mtime, [_normalize_record(item) for item in payload if isinstance(item, dict)]
+
+
+def _coerce_runtime_alias_payload(payload) -> list[dict]:
+    if isinstance(payload, dict):
+        raw_records = payload.get("aliases", [])
+    elif isinstance(payload, list):
+        raw_records = payload
+    else:
+        raw_records = []
+    if not isinstance(raw_records, list):
+        return []
+    return [_normalize_record(item) for item in raw_records if isinstance(item, dict)]
+
+
+def _load_runtime_alias_index() -> tuple[float, list[dict]]:
+    if not os.path.exists(RUNTIME_ALIAS_FILE):
+        return 0.0, []
+    current_mtime = os.path.getmtime(RUNTIME_ALIAS_FILE)
+    return current_mtime, _coerce_runtime_alias_payload(_load_json_file(RUNTIME_ALIAS_FILE))
+
+
+def _merge_alias_records(stable_records: list[dict], runtime_records: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    for record in [*stable_records, *runtime_records]:
+        hero_name = str(record.get("heroName", "")).strip()
+        if not hero_name:
+            continue
+        if hero_name not in merged:
+            merged[hero_name] = dict(record)
+            order.append(hero_name)
+            continue
+        current = merged[hero_name]
+        current["title"] = current.get("title") or record.get("title", "")
+        current["enName"] = current.get("enName") or record.get("enName", "")
+        current["heroId"] = current.get("heroId") or record.get("heroId", "")
+        current["aliases"] = dedupe_alias_texts(
+            current.get("aliases", []),
+            record.get("aliases", []),
+            excluded_tokens=[
+                current.get("heroName", ""),
+                current.get("title", ""),
+                current.get("enName", ""),
+                current.get("heroId", ""),
+            ],
+        )
+    return [merged[name] for name in order]
+
+
 def load_champion_alias_index(force_refresh: bool = False) -> list[dict]:
-    """读取首页搜索专用的英雄别名索引，文件缺失时返回空列表。"""
+    """读取首页搜索专用别名索引，并合并运行态新增别名。"""
     global _ALIAS_INDEX_CACHE
 
-    if not os.path.exists(CHAMPION_ALIAS_INDEX_FILE):
-        return []
-
     try:
-        current_mtime = os.path.getmtime(CHAMPION_ALIAS_INDEX_FILE)
+        stable_mtime, stable_records = _load_stable_alias_index()
+        runtime_mtime, runtime_records = _load_runtime_alias_index()
+        cache_key = f"{CHAMPION_ALIAS_INDEX_FILE}|{RUNTIME_ALIAS_FILE}"
+        cache_mtime = max(stable_mtime, runtime_mtime)
         if (
             not force_refresh
-            and _ALIAS_INDEX_CACHE[0] == CHAMPION_ALIAS_INDEX_FILE
-            and _ALIAS_INDEX_CACHE[1] == current_mtime
+            and _ALIAS_INDEX_CACHE[0] == cache_key
+            and _ALIAS_INDEX_CACHE[1] == cache_mtime
             and _ALIAS_INDEX_CACHE[2]
         ):
             return _ALIAS_INDEX_CACHE[2]
 
-        with open(CHAMPION_ALIAS_INDEX_FILE, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if not isinstance(payload, list):
-            payload = []
-        records = [_normalize_record(item) for item in payload if isinstance(item, dict)]
-        _ALIAS_INDEX_CACHE = (CHAMPION_ALIAS_INDEX_FILE, current_mtime, records)
+        records = _merge_alias_records(stable_records, runtime_records)
+        _ALIAS_INDEX_CACHE = (cache_key, cache_mtime, records)
         return records
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return []
+
+
+def add_runtime_champion_alias(record: dict, alias: str) -> bool:
+    """把用户新增别名写入运行态持久化文件，不污染稳定 bundle 数据。"""
+    global _ALIAS_INDEX_CACHE
+    normalized_record = _normalize_record(record)
+    hero_name = str(normalized_record.get("heroName", "")).strip()
+    alias_text = str(alias or "").strip()
+    if not hero_name or not alias_text:
+        return False
+
+    with _RUNTIME_ALIAS_LOCK:
+        _, runtime_records = _load_runtime_alias_index()
+        by_name = {str(item.get("heroName", "")).strip(): dict(item) for item in runtime_records if str(item.get("heroName", "")).strip()}
+        current = by_name.get(hero_name, normalized_record)
+        current["heroName"] = hero_name
+        current["title"] = current.get("title") or normalized_record.get("title", "")
+        current["enName"] = current.get("enName") or normalized_record.get("enName", "")
+        current["heroId"] = current.get("heroId") or normalized_record.get("heroId", "")
+        current["aliases"] = dedupe_alias_texts(
+            current.get("aliases", []),
+            [alias_text],
+            excluded_tokens=[hero_name, current.get("title", ""), current.get("enName", ""), current.get("heroId", "")],
+        )
+        by_name[hero_name] = current
+        payload = {
+            "schema_version": 1,
+            "aliases": sorted(by_name.values(), key=lambda item: str(item.get("heroName", ""))),
+        }
+
+        target_dir = ensure_private_runtime_dir(os.path.dirname(RUNTIME_ALIAS_FILE))
+        fd, tmp_path = tempfile.mkstemp(prefix="aliases-", suffix=".tmp", dir=str(target_dir))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, RUNTIME_ALIAS_FILE)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
+        _ALIAS_INDEX_CACHE = ("", 0.0, [])
+        return True
 
 
 def load_manual_alias_index(force_refresh: bool = False) -> list[dict]:

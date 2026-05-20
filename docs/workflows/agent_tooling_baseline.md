@@ -13,8 +13,9 @@
 ## Defaults
 
 - Claude Code 和 Codex 都可以独立完成普通仓库任务。
-- OpenAI Codex plugin 可以作为可选辅助工具；plugin 启用不等于 review gate 启用，review gate 默认禁用。
-- `cx-exec.ps1` 如出现只作为 legacy/compat 线索，不作为主流程、fallback 主路或验收接口。
+- OpenAI Codex plugin 可以保留启用状态；Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
+- plugin 启用不等于 review gate 启用，review gate 默认禁用。
+- 旧 CC-CX 执行脚本如出现只作为 legacy/compat 线索，不作为主流程、fallback 主路或验收接口。
 - Windows 默认 shell 是 PowerShell。
 - 普通仓库任务不修改全局 Claude Code、Codex、Superpowers、CLI、VS plugin、Codex App 或 proxy 配置。
 - 不设置项目级 `.codex/config.toml`、repo-local Codex hook 或 repo-local MCP 配置。

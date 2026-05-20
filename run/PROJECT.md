@@ -24,7 +24,7 @@
 | 展示与运行 | `display/` | 桌面窗口、本地 Web/API、浏览器/LCU 协同、前端静态资源 | 不做远端抓取实现 |
 | 数据处理 | `processing/` | 运行态路径、CSV/DataFrame、视图适配、缓存重建、刷新编排 | 不直接承载 UI 控件 |
 | 抓取与自愈 | `scraping/` | 海克斯/协同抓取、稳定资源同步、缺失产物修复 | 不阻塞首屏可用 |
-| 工具链 | `tools/` | 打包、白名单、运行态播种、清理、日志、自检、烟测 | 不替代主业务入口 |
+| 工具链 | `tools/` | 打包、白名单、运行态播种、清理、日志、自检、手动验收、烟测 | 不替代主业务入口 |
 | 运行态数据 | `data/` | 本机生成的抓取结果、缓存、锁、日志、profile | 不作为发布源数据 |
 
 ---
@@ -61,7 +61,7 @@
 | `tools/runtime_bundle.py` | runtime tool | 打包后稳定资源播种 |
 | `tools/cleanup_runtime.py` | cleanup tool | 构建和运行态残留清理 |
 | `tools/log_utils.py` | support tool | 日志过滤、source 标识、UTF-8 输出和冻结态日志目录 |
-| `tools/dev_checks.py` | dev tool | 本地结构与构建契约自检 |
+| `tools/dev_checks.py` | dev tool | 统一离线自检、bundle manifest 明细校验、Web/UI 手动验收辅助入口 |
 | `tools/smoke_packaged_startup.py` | acceptance tool | 打包产物空仓首启 60 秒验收 |
 
 ---
@@ -170,6 +170,22 @@ python build.py
 <!-- PROJECT:SECTION:ACCEPTANCE -->
 ## 七、验收标准
 
+### 7.0 开发阶段统一自检
+
+```powershell
+python tools/dev_checks.py
+```
+
+该入口覆盖结构收口、别名索引、日志契约、bundle manifest、协同数据
+freshness、快照定位、发布熔断和结构化协同 payload 回归检查。`run/tests/`
+不再作为独立临时测试目录保留。
+
+需要查看打包资源白名单明细时使用：
+
+```powershell
+python tools/dev_checks.py --bundle-manifest
+```
+
 ### 7.1 发布前最小验收
 
 ```powershell
@@ -196,6 +212,13 @@ python tools/smoke_packaged_startup.py --timeout 60
 - 从悬浮窗点击是否能直达英雄界面。
 - 空数据刷新中状态是否符合用户预期。
 
+Web/UI 详情页右侧联动对齐 ApexLoL 源页的检查保留为手动验收辅助，
+因为它依赖浏览器、本地 Web 服务和外网：
+
+```powershell
+python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
+```
+
 ---
 
 <!-- PROJECT:SECTION:RISKS -->
@@ -220,7 +243,7 @@ python tools/smoke_packaged_startup.py --timeout 60
 - `display/hextech_ui.py` 只保留 UI 结构、状态和交互入口，不继续堆积后台流程。
 - 纯数据转换、DataFrame 清洗、终端展示适配优先落在 `processing/`。
 - 远端抓取、图标目录维护、稳定资源同步和自愈逻辑优先落在 `scraping/`。
-- 变更打包链路时，必须同步检查 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`README.md` 和本文件。
+- 变更打包链路或验证入口时，必须同步检查 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`tools/dev_checks.py`、`README.md` 和本文件。
 - 变更目录结构、数据边界或首启验收标准时，必须同步更新 [README.md](README.md) 和本文件。
 
 ---
@@ -230,6 +253,7 @@ python tools/smoke_packaged_startup.py --timeout 60
 
 | 日期 | task_id | 最终改动 | 有效范围 | 遗留债务 |
 | :--- | :--- | :--- | :--- | :--- |
+| 2026-05-20 | run-tools-verification-consolidation | 清理旧备份残留，收口临时测试和零散验收入口到 `tools/dev_checks.py` | `tools/`, `README.md`, `PROJECT.md` | Web/UI 联动验收仍需本地服务、浏览器和外网 |
 | 2026-04-28 | run-docs-clarify-project-state | 重构 `run/` 文档为现状面板 + 维护文档，补齐打包、空仓首启、数据边界和验收标准 | `README.md`、`PROJECT.md` | UI 悬浮窗点击路径仍需人工或 GUI 自动化验收 |
 | 2026-04-12 | cx-task-run-project-doc-refresh-20260412 | 按新模板收口 `run/` 项目文档，补齐文件职责、数据流、风险与变更记录 | `PROJECT.md` | TD-001, TD-002, ARCH-001 |
 | 2026-04-11 | cx-run-web-ui-performance-refactor | Web / UI 结构收口、注释统一、文档同步 | `display/*`, `tools/dev_checks.py`, `README.md`, `PROJECT.md` | TD-001, TD-002, ARCH-001 |

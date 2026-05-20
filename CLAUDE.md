@@ -30,7 +30,7 @@
 
 - Claude Code 不需要调用 Codex 才能读取、修改或验证仓库文件。
 - Codex 不需要通过 Claude Code 才能执行任务。
-- OpenAI Codex plugin 可以作为可选辅助或第二意见来源，但不是主流程要求。
+- 即使 OpenAI Codex plugin 可用，Claude Code 也不得在无用户当前轮显性命令时调用、委派、审查或触发 Codex / CX。
 - 不再强制 Claude Code 计划、Codex 执行、Claude Code 验收的固定分工。
 
 ## Safety
