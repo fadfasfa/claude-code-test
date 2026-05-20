@@ -1,6 +1,6 @@
 ---
 name: karpathy-guardrail
-description: Claude Code 项目级 Karpathy guardrail；用于非琐碎代码修改、架构计划、debugging 计划和审查 Codex 生成改动。
+description: Claude Code 项目级 Karpathy guardrail；用于非琐碎代码修改、架构计划和 debugging 计划。
 ---
 
 # karpathy-guardrail
@@ -10,7 +10,6 @@ description: Claude Code 项目级 Karpathy guardrail；用于非琐碎代码修
 - non-trivial code change
 - architecture plan
 - debugging plan
-- review of Codex-generated changes
 
 ## checklist
 
@@ -27,5 +26,5 @@ description: Claude Code 项目级 Karpathy guardrail；用于非琐碎代码修
 - 不覆盖 `AGENTS.md`、`work_area_registry.md` 或 workflow scripts。
 - 不读取或修改 auth、token、cookie、API key、proxy secret。
 - 不要求 Claude Code 依赖 Codex，也不要求 Codex 依赖 Claude Code。
-- OpenAI Codex plugin 可作为可选辅助工具，不作为固定主流程。
-- `cx-exec.ps1` 如出现只作为 legacy/compat 线索，不作为主流程要求。
+- 没有用户当前轮显性点名或命令时，不调用、委派、审查或触发 OpenAI Codex plugin / Codex / CX。
+- 旧 CC-CX 执行脚本如出现只作为 legacy/compat 线索，不作为主流程要求。

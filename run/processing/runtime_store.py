@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import glob
 import json
+import logging
 import os
 import re
 import sys
 import threading
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple
@@ -57,6 +59,9 @@ CSV_REQUIRED_COLUMNS = (
     "胜率差",
     "综合得分",
 )
+
+logger = logging.getLogger(__name__)
+_PRIVATE_PERMISSION_WARNING_PATHS: set[str] = set()
 
 
 def runtime_priority_paths(relative_name: str) -> list[str]:
@@ -121,6 +126,100 @@ def _join_under_dir(base_dir: Path, relative_name: str) -> Path:
     if candidate != root and root not in candidate.parents:
         raise ValueError(f"运行态路径越界：{relative_name}")
     return candidate
+
+
+def _warn_private_permission_failure(path: Path, exc: Exception) -> None:
+    key = str(path)
+    if key in _PRIVATE_PERMISSION_WARNING_PATHS:
+        return
+    _PRIVATE_PERMISSION_WARNING_PATHS.add(key)
+    logger.warning(
+        "运行态私有权限收敛失败，沿用系统默认权限：path=%s error_type=%s",
+        path,
+        exc.__class__.__name__,
+    )
+
+
+def _restrict_windows_current_user(path: Path) -> None:
+    """用 pywin32 尽量把运行态文件/目录收敛到当前用户可访问。"""
+    import ntsecuritycon
+    import win32api
+    import win32security
+
+    user_sid, _, _ = win32security.LookupAccountName(None, win32api.GetUserName())
+    dacl = win32security.ACL()
+    inherit_flags = win32security.OBJECT_INHERIT_ACE | win32security.CONTAINER_INHERIT_ACE
+    dacl.AddAccessAllowedAceEx(
+        win32security.ACL_REVISION,
+        inherit_flags,
+        ntsecuritycon.FILE_ALL_ACCESS,
+        user_sid,
+    )
+    security_descriptor = win32security.SECURITY_DESCRIPTOR()
+    security_descriptor.SetSecurityDescriptorDacl(1, dacl, 0)
+    win32security.SetFileSecurity(
+        str(path),
+        win32security.DACL_SECURITY_INFORMATION,
+        security_descriptor,
+    )
+
+
+def _tighten_private_runtime_path(path: Path, *, is_dir: bool) -> None:
+    """best-effort 收敛运行态敏感路径权限；失败不阻塞主流程。"""
+    try:
+        if os.name == "nt":
+            _restrict_windows_current_user(path)
+            return
+        os.chmod(path, 0o700 if is_dir else 0o600)
+    except Exception as exc:
+        _warn_private_permission_failure(path, exc)
+
+
+def ensure_private_runtime_dir(directory: str | Path) -> Path:
+    """创建并尽量收敛运行态私有目录权限。"""
+    path = Path(directory)
+    path.mkdir(parents=True, exist_ok=True)
+    _tighten_private_runtime_path(path, is_dir=True)
+    return path
+
+
+def ensure_runtime_state_dir() -> Path:
+    """创建运行态 state 目录，并按私有目录处理权限。"""
+    return ensure_private_runtime_dir(get_runtime_state_dir())
+
+
+def ensure_runtime_profile_dir() -> Path:
+    """创建运行态浏览器 profile 根目录，并按私有目录处理权限。"""
+    return ensure_private_runtime_dir(get_runtime_profile_dir())
+
+
+def write_private_runtime_state_file(filename: str, content: str) -> str:
+    """原子写入私有 state 文件，避免 token/端口文件落在宽权限目录中。"""
+    target_path = Path(build_runtime_state_path(filename))
+    ensure_private_runtime_dir(target_path.parent)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f"{target_path.stem}-",
+        suffix=".tmp",
+        dir=str(target_path.parent),
+    )
+    try:
+        _tighten_private_runtime_path(Path(tmp_path), is_dir=False)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(str(content))
+        os.replace(tmp_path, target_path)
+        _tighten_private_runtime_path(target_path, is_dir=False)
+        return str(target_path)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def build_runtime_state_path(filename: str) -> str:
@@ -453,6 +552,9 @@ __all__ = [
     "build_synergy_refresh_status_path",
     "build_synergy_snapshot_path",
     "detect_hero_id_column",
+    "ensure_private_runtime_dir",
+    "ensure_runtime_profile_dir",
+    "ensure_runtime_state_dir",
     "get_latest_csv",
     "get_latest_synergy_snapshot_path",
     "get_runtime_cache_dir",
@@ -487,4 +589,5 @@ __all__ = [
     "SYNERGY_SNAPSHOT_PATTERN",
     "SYNERGY_SNAPSHOT_PREFIX",
     "validate_runtime_csv_schema",
+    "write_private_runtime_state_file",
 ]

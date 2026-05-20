@@ -33,7 +33,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
 from typing import Dict, Iterable, Optional, Tuple
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlparse
 
 import requests
 
@@ -47,6 +47,14 @@ _ICON_FAILURE_CACHE: Dict[str, float] = {}
 _ICON_FAILURE_CACHE_LOCK = threading.Lock()
 _FAILURE_TTL_SECONDS = 180
 _ICON_WRITE_LOCK = threading.Lock()
+_SAFE_ICON_FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.png$")
+_ALLOWED_REMOTE_ICON_HOSTS = {
+    "raw.communitydragon.org",
+    "cdn.communitydragon.org",
+    "ddragon.leagueoflegends.com",
+    "apexlol.info",
+}
+MAX_APEXLOL_HEXTECH_MAP_BYTES = 5 * 1024 * 1024
 
 
 def _default_runtime_dir() -> str:
@@ -72,10 +80,61 @@ def normalize_augment_filename(value: str) -> str:
     return os.path.basename(str(value).strip()).lower()
 
 
+def is_safe_augment_icon_filename(filename: str) -> bool:
+    """只允许本地海克斯图标使用简单 png 文件名。"""
+    raw_value = str(filename or "").strip()
+    normalized = os.path.basename(raw_value)
+    return bool(raw_value and normalized == raw_value and _SAFE_ICON_FILENAME_RE.fullmatch(normalized))
+
+
+def normalize_safe_augment_icon_filename(value: str) -> str:
+    filename = normalize_augment_filename(value)
+    return filename if is_safe_augment_icon_filename(filename) else ""
+
+
+def is_safe_local_asset_url(url: str) -> bool:
+    """校验 manifest 中的本地图标 URL，拒绝目录穿越和非 png。"""
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except Exception:
+        return False
+    if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+        return False
+    if not parsed.path.startswith("/assets/"):
+        return False
+    filename = unquote(parsed.path.removeprefix("/assets/"))
+    return is_safe_augment_icon_filename(filename)
+
+
+def is_safe_remote_icon_url(url: str) -> bool:
+    """校验可用于图标兜底或 redirect 的远端 URL 白名单。"""
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except Exception:
+        return False
+    if parsed.scheme != "https":
+        return False
+    host = str(parsed.hostname or "").strip().lower()
+    return host in _ALLOWED_REMOTE_ICON_HOSTS
+
+
+def sanitize_augment_icon_url(url: str) -> str:
+    """把 manifest/远端 metadata 中的图标 URL 收口到安全白名单。"""
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    if is_safe_local_asset_url(value):
+        filename = unquote(urlparse(value).path.removeprefix("/assets/"))
+        return f"/assets/{filename}"
+    if is_safe_remote_icon_url(value):
+        return value
+    return ""
+
+
 def find_existing_augment_asset_filename(asset_dir: Optional[str], candidate_filename: str) -> Optional[str]:
     """在本地资源目录中查找最匹配的海克斯图标文件名。"""
     asset_dir = _resolve_assets_dir(asset_dir)
-    candidate = normalize_augment_filename(candidate_filename)
+    candidate = normalize_safe_augment_icon_filename(candidate_filename)
     if not candidate:
         return None
 
@@ -157,7 +216,7 @@ def _load_augment_icon_map_from_manifest(manifest_path: str) -> dict:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name", "")).strip()
-        filename = normalize_augment_filename(item.get("filename", ""))
+        filename = normalize_safe_augment_icon_filename(item.get("filename", ""))
         if name and filename:
             data[name] = filename
     return data
@@ -170,13 +229,13 @@ def find_augment_icon_filename(icon_map: dict, lookup_name: str, asset_dir: Opti
     direct = icon_map.get(lookup_name)
     if direct:
         local_filename = find_existing_augment_asset_filename(asset_dir, direct)
-        return local_filename or normalize_augment_filename(direct)
+        return local_filename or normalize_safe_augment_icon_filename(direct)
 
     normalized_lookup = normalize_augment_name(lookup_name)
     for key, value in icon_map.items():
         if normalize_augment_name(key) == normalized_lookup:
             local_filename = find_existing_augment_asset_filename(asset_dir, value)
-            return local_filename or normalize_augment_filename(value)
+            return local_filename or normalize_safe_augment_icon_filename(value)
     return None
 
 
@@ -200,19 +259,30 @@ def build_local_augment_icon_url(hextech_name: str, config_dir: Optional[str] = 
                 os.path.join(config_dir, "..", "assets"),
                 str(mapped_value).split("/")[-1].strip(),
             )
-            asset_name = resolved_name or str(mapped_value).split("/")[-1].strip()
+            asset_name = resolved_name or normalize_safe_augment_icon_filename(str(mapped_value).split("/")[-1].strip())
         else:
             apexlol_url = resolve_apexlol_hextech_icon_url(request_name, config_dir=config_dir)
             if apexlol_url:
                 return apexlol_url
 
-    if not asset_name.lower().endswith(".png"):
-        asset_name = f"{asset_name}.png"
+    if asset_name == request_name:
+        apexlol_url = resolve_apexlol_hextech_icon_url(request_name, config_dir=config_dir)
+        if apexlol_url:
+            return apexlol_url
+
+    raw_asset_name = str(asset_name or "").strip()
+    if raw_asset_name and not os.path.splitext(raw_asset_name)[1]:
+        raw_asset_name = f"{raw_asset_name}.png"
+    asset_name = normalize_safe_augment_icon_filename(raw_asset_name)
+    if not asset_name:
+        return ""
     return f"/assets/{quote(asset_name, safe='')}"
 
 
 def _iter_augment_icon_urls(icon_filename: str):
-    filename = normalize_augment_filename(icon_filename)
+    filename = normalize_safe_augment_icon_filename(icon_filename)
+    if not filename:
+        return
     templates = [
         "https://raw.communitydragon.org/latest/game/assets/ux/augments/{filename}",
         "https://raw.communitydragon.org/pbe/game/assets/ux/cherry/augments/icons/{filename}",
@@ -259,7 +329,7 @@ def _mark_augment_icon_failure(icon_filename: str) -> None:
 def ensure_augment_icon_cached(icon_filename: str, asset_dir: Optional[str] = None, force_refresh: bool = False) -> Optional[str]:
     """确保指定海克斯图标已缓存在本地资源目录，必要时执行远端下载。"""
     asset_dir = _resolve_assets_dir(asset_dir)
-    normalized_filename = normalize_augment_filename(icon_filename)
+    normalized_filename = normalize_safe_augment_icon_filename(icon_filename)
     if not normalized_filename:
         return None
 
@@ -313,7 +383,7 @@ def batch_prefetch_augment_icons(
     unique_filenames = []
     seen = set()
     for raw_name in icon_filenames:
-        normalized = normalize_augment_filename(raw_name)
+        normalized = normalize_safe_augment_icon_filename(raw_name)
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
@@ -414,16 +484,37 @@ def load_apexlol_hextech_map(config_dir: Optional[str] = None, force_refresh: bo
         except Exception:
             pass
 
+    response = None
     try:
         response = requests.get(
             "https://apexlol.info/zh/hextech/",
             timeout=20,
             headers={"User-Agent": "Mozilla/5.0"},
+            stream=True,
         )
         response.raise_for_status()
-        html = response.text
+        content_length = int(response.headers.get("Content-Length") or 0)
+        if content_length > MAX_APEXLOL_HEXTECH_MAP_BYTES:
+            return _APEXLOL_MAP_CACHE[2]
+        chunks = []
+        total_bytes = 0
+        for chunk in response.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            total_bytes += len(chunk)
+            if total_bytes > MAX_APEXLOL_HEXTECH_MAP_BYTES:
+                response.close()
+                return _APEXLOL_MAP_CACHE[2]
+            chunks.append(chunk)
+        html = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
     except Exception:
         return _APEXLOL_MAP_CACHE[2]
+    finally:
+        try:
+            if response is not None:
+                response.close()
+        except Exception:
+            pass
 
     name_to_slug: Dict[str, str] = {}
     for match in re.finditer(r'href="/zh/hextech/([^"]+)"[^>]*>(.*?)</a>', html, re.S | re.I):
@@ -461,5 +552,6 @@ def resolve_apexlol_hextech_icon_url(hextech_name: str, config_dir: Optional[str
     for candidate in candidates:
         slug = slug_map.get(candidate)
         if slug:
-            return f"https://apexlol.info/images/hextech/{slug}.webp"
+            remote_url = f"https://apexlol.info/images/hextech/{slug}.webp"
+            return remote_url if is_safe_remote_icon_url(remote_url) else ""
     return ""

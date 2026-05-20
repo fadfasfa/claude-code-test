@@ -12,7 +12,6 @@ import ast
 import json
 import logging
 import os
-import random
 import re
 import sys
 import tempfile
@@ -34,6 +33,8 @@ from processing.runtime_store import (
     build_next_synergy_snapshot_path,
     build_synergy_data_path,
     build_synergy_latest_pointer_path,
+    ensure_private_runtime_dir,
+    ensure_runtime_profile_dir,
     get_latest_csv,
 )
 from scraping.icon_resolver import normalize_augment_name
@@ -58,6 +59,7 @@ BASE_DIR = _bootstrap_runtime_base_dir()
 SELENIUM_CACHE_DIR = os.path.join(BASE_DIR, "data", "runtime", "cache", "selenium")
 SELENIUM_PROFILE_DIR = os.path.join(BASE_DIR, "data", "runtime", "profile", "apex_selenium")
 DEFAULT_APEX_SNAPSHOT_DIR = os.path.join(BASE_DIR, "data", "runtime", "cache", "apex_snapshot")
+DEFAULT_APEX_MANUAL_SNAPSHOT_DIR = os.path.join(DEFAULT_APEX_SNAPSHOT_DIR, "manual")
 STATIC_DATA_PATH = Path(STATIC_DATA_DIR)
 ALLOWED_STATIC_DATA_FILES = {"Champion_Core_Data.json"}
 MAX_STATIC_DATA_FILE_SIZE = 10 * 1024 * 1024
@@ -116,15 +118,7 @@ TIER_LABELS = {
 
 install_summary_logging(level=logging.INFO, fmt="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36",
-]
+DEFAULT_REQUEST_USER_AGENT = "HextechApexSnapshot/1.0 (manual offline sync)"
 
 
 @dataclass
@@ -176,8 +170,12 @@ class SynergyEntry:
         )
 
 
-def get_random_user_agent() -> str:
-    return random.choice(USER_AGENTS)
+def get_request_user_agent() -> str:
+    return os.getenv("APEX_USER_AGENT", DEFAULT_REQUEST_USER_AGENT).strip() or DEFAULT_REQUEST_USER_AGENT
+
+
+def env_flag(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def normalize_name(name_str: str) -> str:
@@ -455,14 +453,11 @@ class ApexSource:
         self.allowed_netloc = parsed_base.netloc
         self.allowed_json_netlocs = self._build_allowed_json_netlocs()
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": get_random_user_agent()})
+        self.session.headers.update({"User-Agent": get_request_user_agent()})
         self._browser_driver = None
         self.blocked = False
         self._browser_timeout = int(os.getenv("APEX_BROWSER_TIMEOUT_SECONDS", "18") or "18")
         self._profile_root = os.path.join(SELENIUM_PROFILE_DIR, f"session-{os.getpid()}-{int(time.time())}")
-        os.makedirs(SELENIUM_CACHE_DIR, exist_ok=True)
-        os.makedirs(self._profile_root, exist_ok=True)
-        os.environ.setdefault("SE_CACHE_PATH", SELENIUM_CACHE_DIR)
         logger.info("ApexSource 初始化完成：base=%s", _sanitize_url_for_log(self.base_url))
 
     def close(self) -> None:
@@ -526,13 +521,15 @@ class ApexSource:
                 return None
         return None
 
-    def fetch(self, url: str, *, allow_browser: bool = True) -> Optional[FetchedResource]:
+    def fetch(self, url: str, *, allow_browser: bool = False) -> Optional[FetchedResource]:
         resource = self.fetch_requests(url)
         if resource is not None:
             return resource
-        if not allow_browser:
-            return None
-        return self.fetch_browser(url)
+        if allow_browser and env_flag("APEX_ALLOW_BROWSER"):
+            return self.fetch_browser(url)
+        if allow_browser:
+            logger.info("跳过 Apex 浏览器 fallback：APEX_ALLOW_BROWSER 未启用")
+        return None
 
     def fetch_configured_json_resource(self) -> Optional[FetchedResource]:
         raw_url = os.getenv("APEX_SYNERGY_JSON_URL", "").strip()
@@ -599,6 +596,11 @@ class ApexSource:
             logger.info("使用 Apex 本地 snapshot 资源：count=%s", len(snapshot_resources))
             return snapshot_resources
 
+        if not env_flag("APEX_ALLOW_ONLINE_FETCH"):
+            logger.error("未找到 Apex snapshot，且 APEX_ALLOW_ONLINE_FETCH 未启用；保留旧协同快照")
+            return []
+
+        allow_browser = env_flag("APEX_ALLOW_BROWSER")
         json_resource = self.fetch_configured_json_resource()
         seeds = [self.base_url, f"{self.base_url}/champions", f"{self.base_url}/hextech"]
         resources: list[FetchedResource] = []
@@ -606,7 +608,7 @@ class ApexSource:
         script_urls = []
 
         for url in seeds:
-            resource = self.fetch(url, allow_browser=True)
+            resource = self.fetch(url, allow_browser=allow_browser)
             if not resource or resource.url in seen_urls:
                 continue
             seen_urls.add(resource.url)
@@ -618,7 +620,7 @@ class ApexSource:
             if detail_url in seen_urls:
                 continue
             seen_urls.add(detail_url)
-            resource = self.fetch(detail_url, allow_browser=True)
+            resource = self.fetch(detail_url, allow_browser=allow_browser)
             if resource:
                 resources.append(resource)
 
@@ -627,7 +629,7 @@ class ApexSource:
                 if script_url in seen_urls:
                     continue
                 seen_urls.add(script_url)
-                script = self.fetch(script_url, allow_browser=True)
+                script = self.fetch(script_url, allow_browser=allow_browser)
                 if script:
                     resources.append(script)
 
@@ -650,10 +652,12 @@ class ApexSource:
 
     def _load_snapshot_resources(self) -> list[FetchedResource]:
         raw_snapshot_dir = os.getenv("APEX_SNAPSHOT_DIR", "").strip()
-        if not raw_snapshot_dir:
-            return []
+        snapshot_dir = (
+            Path(raw_snapshot_dir).expanduser().resolve()
+            if raw_snapshot_dir
+            else Path(DEFAULT_APEX_MANUAL_SNAPSHOT_DIR).resolve()
+        )
 
-        snapshot_dir = Path(raw_snapshot_dir).expanduser().resolve()
         allowed_root = Path(DEFAULT_APEX_SNAPSHOT_DIR).resolve()
         try:
             snapshot_dir.relative_to(allowed_root)
@@ -661,7 +665,7 @@ class ApexSource:
             logger.error("APEX_SNAPSHOT_DIR 必须位于 %s 下：%s", allowed_root, snapshot_dir)
             return []
         if not snapshot_dir.exists() or not snapshot_dir.is_dir():
-            logger.error("APEX_SNAPSHOT_DIR 不存在或不是目录：%s", snapshot_dir)
+            logger.warning("Apex snapshot 目录不存在或不是目录：%s", snapshot_dir)
             return []
 
         resources: list[FetchedResource] = []
@@ -710,6 +714,10 @@ class ApexSource:
         browser = os.getenv("APEX_BROWSER", "auto").strip().lower() or "auto"
         headless = os.getenv("APEX_HEADLESS", "1").strip() != "0"
         errors = []
+        os.makedirs(SELENIUM_CACHE_DIR, exist_ok=True)
+        ensure_runtime_profile_dir()
+        ensure_private_runtime_dir(self._profile_root)
+        os.environ.setdefault("SE_CACHE_PATH", SELENIUM_CACHE_DIR)
 
         if browser in {"auto", "edge"}:
             try:
@@ -726,7 +734,6 @@ class ApexSource:
                 options.add_argument("--disable-extensions")
                 options.add_argument("--disable-crash-reporter")
                 options.add_argument("--disable-crashpad")
-                options.add_argument("--no-sandbox")
                 options.add_argument("--disable-dev-shm-usage")
                 options.add_argument("--remote-debugging-port=0")
                 options.add_argument("--window-size=1365,900")
@@ -756,7 +763,6 @@ class ApexSource:
                 options.add_argument("--disable-extensions")
                 options.add_argument("--disable-crash-reporter")
                 options.add_argument("--disable-crashpad")
-                options.add_argument("--no-sandbox")
                 options.add_argument("--disable-dev-shm-usage")
                 options.add_argument("--remote-debugging-port=0")
                 options.add_argument("--window-size=1365,900")
