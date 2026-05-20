@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -34,10 +35,13 @@ if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 
 import processing.orchestrator as orchestrator
+import processing.alias_search as alias_search
 import processing.precomputed_cache as precomputed_cache
 import processing.runtime_store as runtime_store
 import scraping.full_synergy_scraper as synergy_scraper
 import scraping.heal_worker as heal_worker
+import scraping.icon_resolver as icon_resolver
+import display.web_runtime as web_runtime
 from display.web_api import _normalize_synergy_items, _synergy_item_to_compat_string
 from processing.alias_search import load_manual_alias_index
 from processing.view_adapter import process_hextechs_data
@@ -88,6 +92,109 @@ def check_manual_alias_index() -> None:
     assert isinstance(first, dict)
     assert "heroName" in first
     assert load_manual_alias_index()
+
+
+def check_manifest_icon_url_safety() -> None:
+    assert icon_resolver.sanitize_augment_icon_url("/assets/safe-name_01.png") == "/assets/safe-name_01.png"
+    assert icon_resolver.sanitize_augment_icon_url("https://raw.communitydragon.org/latest/game/assets/x.webp")
+    assert icon_resolver.sanitize_augment_icon_url("https://cdn.communitydragon.org/latest/game/assets/x.webp")
+    assert icon_resolver.sanitize_augment_icon_url("https://ddragon.leagueoflegends.com/cdn/1/img/champion/Aatrox.png")
+    assert icon_resolver.sanitize_augment_icon_url("https://apexlol.info/images/hextech/example.webp")
+    assert not icon_resolver.sanitize_augment_icon_url("http://raw.communitydragon.org/latest/game/assets/x.png")
+    assert not icon_resolver.sanitize_augment_icon_url("https://evil.com/assets/x.png")
+    assert not icon_resolver.sanitize_augment_icon_url("/assets/not-png.webp")
+    assert not icon_resolver.sanitize_augment_icon_url("/assets/../secret.png")
+
+
+def check_safe_detail_name_regex() -> None:
+    safe_names = ["德玛西亚之力", "Kai'Sa", "Lee Sin", "Dr. Mundo", "K-Sante"]
+    unsafe_names = ["Kai_Sa", "<script>alert(1)</script>", "bad/name", "bad&name"]
+    for value in safe_names:
+        assert web_runtime._SAFE_NAME_RE.fullmatch(value), value
+    for value in unsafe_names:
+        assert not web_runtime._SAFE_NAME_RE.fullmatch(value), value
+
+
+def check_apexlol_hextech_map_size_limit() -> None:
+    class OversizeResponse:
+        headers = {"Content-Length": str(icon_resolver.MAX_APEXLOL_HEXTECH_MAP_BYTES + 1)}
+        encoding = "utf-8"
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, chunk_size: int = 65536):
+            yield b""
+
+        def close(self) -> None:
+            return None
+
+    original_cache = icon_resolver._APEXLOL_MAP_CACHE
+    try:
+        with TemporaryDirectory() as tmp_dir:
+            cached = {"cached": "slug"}
+            icon_resolver._APEXLOL_MAP_CACHE = ("cached-path", 1.0, cached)
+            with patch("scraping.icon_resolver.requests.get", return_value=OversizeResponse()):
+                result = icon_resolver.load_apexlol_hextech_map(config_dir=tmp_dir, force_refresh=True)
+            assert result == cached
+            assert not (Path(tmp_dir) / "Augment_Apexlol_Map.json").exists()
+    finally:
+        icon_resolver._APEXLOL_MAP_CACHE = original_cache
+
+
+def check_runtime_alias_persistence() -> None:
+    original_runtime_alias_file = alias_search.RUNTIME_ALIAS_FILE
+    original_alias_index_file = alias_search.CHAMPION_ALIAS_INDEX_FILE
+    original_cache = alias_search._ALIAS_INDEX_CACHE
+    try:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            stable_alias_file = tmp_path / "Champion_Alias_Index.json"
+            stable_alias_payload = [
+                {
+                    "heroName": "德玛西亚之力",
+                    "title": "盖伦",
+                    "enName": "Garen",
+                    "heroId": "86",
+                    "aliases": ["盖伦"],
+                }
+            ]
+            stable_alias_file.write_text(json.dumps(stable_alias_payload, ensure_ascii=False), encoding="utf-8")
+            core_file = tmp_path / "Champion_Core_Data.json"
+            core_payload = {"86": {"name": "德玛西亚之力", "title": "盖伦", "en_name": "Garen", "aliases": ["盖伦"]}}
+            core_file.write_text(json.dumps(core_payload, ensure_ascii=False), encoding="utf-8")
+            stable_before = stable_alias_file.read_text(encoding="utf-8")
+            core_before = core_file.read_text(encoding="utf-8")
+
+            alias_search.CHAMPION_ALIAS_INDEX_FILE = str(stable_alias_file)
+            alias_search.RUNTIME_ALIAS_FILE = str(tmp_path / "runtime" / "aliases.json")
+            alias_search._ALIAS_INDEX_CACHE = ("", 0.0, [])
+            added = alias_search.add_runtime_champion_alias(stable_alias_payload[0], "大宝剑")
+            merged = alias_search.load_champion_alias_map(force_refresh=True)
+
+            assert added
+            assert "大宝剑" in merged["德玛西亚之力"]
+            assert Path(alias_search.RUNTIME_ALIAS_FILE).exists()
+            assert stable_alias_file.read_text(encoding="utf-8") == stable_before
+            assert core_file.read_text(encoding="utf-8") == core_before
+    finally:
+        alias_search.RUNTIME_ALIAS_FILE = original_runtime_alias_file
+        alias_search.CHAMPION_ALIAS_INDEX_FILE = original_alias_index_file
+        alias_search._ALIAS_INDEX_CACHE = original_cache
+
+
+def check_detail_hero_param_uses_text_content() -> None:
+    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
+    assert "const urlParams = new URLSearchParams(window.location.search);" in detail_text
+    assert "const hero = urlParams.get('hero');" in detail_text
+    assert "document.getElementById('heroName').textContent = hero" in detail_text
+    forbidden_patterns = [
+        r"heroName['\"]\)\.innerHTML\s*=\s*hero",
+        r"innerHTML\s*=\s*`[^`]*\$\{hero\}",
+        r"innerHTML\s*=\s*hero\b",
+    ]
+    for pattern in forbidden_patterns:
+        assert not re.search(pattern, detail_text), pattern
 
 
 def check_heal_worker_contract() -> None:
@@ -1005,6 +1112,11 @@ def run_manual_web_synergy(args) -> dict:
 def run_default_checks() -> None:
     check_root_entrypoints()
     check_manual_alias_index()
+    check_manifest_icon_url_safety()
+    check_safe_detail_name_regex()
+    check_apexlol_hextech_map_size_limit()
+    check_runtime_alias_persistence()
+    check_detail_hero_param_uses_text_content()
     check_heal_worker_contract()
     check_logging_contract()
     check_packaging_config()

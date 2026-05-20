@@ -31,7 +31,7 @@
 ## Artifact Boundary
 
 - 普通任务只产出目标 diff 和对话摘要。
-- `.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；当前工作流不依赖 `.state/workflow/tasks/result.json`。
+- `.state/workflow/**` 是旧 CC-CX 工作流遗留运行态目录；当前工作流不依赖旧任务结果文件。
 - 本机计划、协作、交接和审查草稿可写入 `.state/cc-work/**`；普通任务不强制生成这些文件。
 - Claude Code 原生本机计划草稿可写入 `.claude/plans/**`，不需要额外授权或特殊条件，默认不提交。
 - 不默认生成 `docs/plans/*.md`、Markdown report、probe 或 archive 证据文件。

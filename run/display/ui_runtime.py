@@ -24,11 +24,13 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
 import webbrowser
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from typing import TYPE_CHECKING
@@ -36,6 +38,7 @@ from urllib.parse import quote, urlparse
 
 import psutil
 import requests
+import urllib3
 import win32gui
 from PIL import Image, ImageTk
 
@@ -60,6 +63,7 @@ def _load_server_port() -> int:
 
 
 SERVER_PORT = _load_server_port()
+_AUTH_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,256}$")
 
 
 def _parse_local_port(raw_port) -> int | None:
@@ -90,6 +94,34 @@ def resolve_web_base(web_port_file: str, timeout: float = 5.0) -> str:
             pass
         time.sleep(0.1)
     return f"http://127.0.0.1:{SERVER_PORT}"
+
+
+def _resolve_auth_token_file(web_port_file: str) -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(web_port_file)), "auth_token.txt")
+
+
+def _read_web_auth_token_once(web_port_file: str) -> str:
+    try:
+        with open(_resolve_auth_token_file(web_port_file), "r", encoding="utf-8") as f:
+            token = f.read().strip()
+    except OSError:
+        return ""
+    return token if _AUTH_TOKEN_RE.fullmatch(token) else ""
+
+
+def resolve_web_auth_token(web_port_file: str, timeout: float = 5.0) -> str:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        token = _read_web_auth_token_once(web_port_file)
+        if token:
+            return token
+        time.sleep(0.1)
+    return _read_web_auth_token_once(web_port_file)
+
+
+def _web_auth_headers(ui: "HextechUI", web_base: str, timeout: float = 0.5) -> dict[str, str]:
+    token = resolve_web_auth_token(ui.web_port_file, timeout=timeout)
+    return {"Origin": web_base, "X-Hextech-Token": token}
 
 
 def scan_lcu_process() -> tuple:
@@ -131,7 +163,9 @@ def poll_lcu_live_ids(ui: "HextechUI"):
     url = f"https://127.0.0.1:{current_port}/lol-champ-select/v1/session"
 
     try:
-        res = ui.session.get(url, headers=headers, verify=False, timeout=2.5)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
+            res = ui.session.get(url, headers=headers, verify=False, timeout=2.5)
     except requests.exceptions.RequestException:
         ui._lcu_port = None
         ui._lcu_token = None
@@ -184,6 +218,7 @@ def start_web_server_process(web_port_file: str):
         env=child_env,
     )
     resolve_web_base(web_port_file, timeout=5.0)
+    resolve_web_auth_token(web_port_file, timeout=5.0)
     return web_process
 
 
@@ -233,11 +268,10 @@ def _refresh_preload_ready(ui: "HextechUI", hero_name: str) -> bool:
     if not normalized_hero:
         return False
     web_base = resolve_web_base(ui.web_port_file, timeout=1.0)
-    request_token = ui.session.cookies.get("hextech_local_token", "")
     try:
         response = requests.get(
             f"{web_base}/api/champion/{quote(normalized_hero)}/preload_status",
-            headers={"Origin": web_base, "X-Hextech-Token": request_token},
+            headers=_web_auth_headers(ui, web_base, timeout=0.2),
             timeout=1.0,
         )
         if response.status_code != 200:
@@ -297,11 +331,10 @@ def _sync_preload_state_for_candidates(ui: "HextechUI", hero_names: list[str]) -
 
 
 def _post_redirect(ui: "HextechUI", web_base: str, champ_id, hero_name, en_name: str) -> bool:
-    request_token = ui.session.cookies.get("hextech_local_token", "")
     response = requests.post(
         f"{web_base}/api/redirect",
         json={"hero_id": str(champ_id), "hero_name": hero_name},
-        headers={"Origin": web_base, "X-Hextech-Token": request_token},
+        headers=_web_auth_headers(ui, web_base, timeout=0.2),
         timeout=1.5,
     )
     if response.status_code != 200:
@@ -421,12 +454,11 @@ def _mark_preload_pending(ui: "HextechUI", hero_names: list[str]) -> None:
 
 def _queue_preload_worker(ui: "HextechUI", hero_names: list[str]) -> None:
     web_base = _resolve_redirect_base(ui)
-    request_token = ui.session.cookies.get("hextech_local_token", "")
     for hero_name in hero_names:
         try:
             requests.post(
                 f"{web_base}/api/champion/{quote(hero_name)}/preload",
-                headers={"Origin": web_base, "X-Hextech-Token": request_token},
+                headers=_web_auth_headers(ui, web_base, timeout=0.2),
                 timeout=1.0,
             )
         except Exception:

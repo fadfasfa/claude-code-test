@@ -8,6 +8,7 @@ import logging
 import operator
 import os
 import re
+import threading
 import time
 from html import unescape
 from typing import Dict, Iterable, Optional
@@ -27,7 +28,9 @@ from scraping.icon_resolver import (
     find_existing_augment_asset_filename,
     load_augment_icon_map,
     normalize_augment_name,
+    normalize_safe_augment_icon_filename,
     resolve_apexlol_hextech_icon_url,
+    sanitize_augment_icon_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +45,7 @@ _MIN_VALID_MANIFEST_ENTRIES = 50
 _MAX_EMPTY_TEXT_RATIO = 0.35
 _AUGMENT_ICON_MANIFEST_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
 _AUGMENT_LOOKUP_CACHE: tuple[str, float, dict] = ("", 0.0, {})
+_AUGMENT_ICON_AUDIT_LOCK = threading.Lock()
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 _PLACEHOLDER_PATTERN = re.compile(r"@([^@]+)@")
 _SAFE_OPS = {
@@ -63,8 +67,9 @@ def _append_augment_icon_audit(record: dict) -> None:
     payload = dict(record)
     payload.setdefault("ts", _now_iso())
     line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    with open(AUGMENT_ICON_AUDIT_FILE, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+    with _AUGMENT_ICON_AUDIT_LOCK:
+        with open(AUGMENT_ICON_AUDIT_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
 
 def read_augment_icon_source_marker() -> str:
@@ -208,22 +213,24 @@ def _fetch_remote_augment_metadata() -> dict:
             continue
         meta = _extract_augment_meta(item)
         spell_values = meta.get("spell_values", {})
-        filename = os.path.basename(
-            str(
-                item.get("iconSmall")
-                or item.get("filename")
-                or item.get("icon")
-                or item.get("iconLarge")
-                or ""
-            ).strip()
-        ).lower()
+        filename = normalize_safe_augment_icon_filename(
+            os.path.basename(
+                str(
+                    item.get("iconSmall")
+                    or item.get("filename")
+                    or item.get("icon")
+                    or item.get("iconLarge")
+                    or ""
+                ).strip()
+            ).lower()
+        )
         normalized = {
             "description": _clean_augment_text(meta.get("description")),
             "tooltip": _clean_augment_text(meta.get("tooltip")),
             "spell_values": spell_values if isinstance(spell_values, dict) else {},
             "tier": rarity_to_tier.get(item.get("rarity", -1), ""),
             "filename": filename,
-            "icon_url": f"/assets/{filename}" if filename else "",
+            "icon_url": sanitize_augment_icon_url(f"/assets/{filename}") if filename else "",
         }
         normalized["tooltip_plain"] = _render_tooltip_plain(
             normalized["tooltip"] or normalized["description"],
@@ -236,13 +243,13 @@ def _fetch_remote_augment_metadata() -> dict:
 
 def _normalize_manifest_entry(item: dict, config_dir: str) -> dict:
     name = _clean_augment_text(item.get("name"))
-    filename = os.path.basename(str(item.get("filename", "")).strip()).lower()
-    local_path = item.get("local_path") or (os.path.join(ASSET_DIR, filename) if filename else "")
-    icon_url = _clean_augment_text(item.get("icon_url"))
+    filename = normalize_safe_augment_icon_filename(os.path.basename(str(item.get("filename", "")).strip()).lower())
+    local_path = os.path.join(ASSET_DIR, filename) if filename else ""
+    icon_url = sanitize_augment_icon_url(_clean_augment_text(item.get("icon_url")))
     if not icon_url and filename:
-        icon_url = f"/assets/{filename}"
+        icon_url = sanitize_augment_icon_url(f"/assets/{filename}")
     if not icon_url and name:
-        icon_url = resolve_apexlol_hextech_icon_url(name, config_dir=config_dir)
+        icon_url = sanitize_augment_icon_url(resolve_apexlol_hextech_icon_url(name, config_dir=config_dir))
 
     raw_values = item.get("spell_values", {})
     if not isinstance(raw_values, dict):
@@ -392,15 +399,15 @@ def build_augment_icon_manifest(
         existing = filtered_existing_by_name.get(name, {})
         remote_meta = remote_metadata.get(name) or remote_metadata.get(normalize_augment_name(name)) or {}
         raw_filename = filtered_icon_map.get(name) or existing.get("filename", "") or remote_meta.get("filename", "")
-        filename = os.path.basename(str(raw_filename).strip()).lower()
+        filename = normalize_safe_augment_icon_filename(os.path.basename(str(raw_filename).strip()).lower())
         tier = _clean_augment_text(filtered_full_map.get(name) or existing.get("tier") or remote_meta.get("tier"))
-        icon_url = _clean_augment_text(
+        icon_url = sanitize_augment_icon_url(_clean_augment_text(
             existing.get("icon_url")
             or remote_meta.get("icon_url")
             or (f"/assets/{filename}" if filename else "")
-        )
+        ))
         if not icon_url and name:
-            icon_url = resolve_apexlol_hextech_icon_url(name, config_dir=config_dir)
+            icon_url = sanitize_augment_icon_url(resolve_apexlol_hextech_icon_url(name, config_dir=config_dir))
 
         entry = {
             "schema_version": MANIFEST_SCHEMA_VERSION,

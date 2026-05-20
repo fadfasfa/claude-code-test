@@ -8,7 +8,6 @@ from datetime import datetime
 import os
 import glob
 import re
-import urllib3
 import logging
 import threading
 import random
@@ -32,7 +31,6 @@ from scraping.version_sync import (
 from tools.atomic_io import atomic_write_csv
 from tools.log_utils import log_task_summary
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 FRESHNESS_THRESHOLD = 0.0005
 
 # 请求标识池。

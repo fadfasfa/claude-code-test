@@ -360,11 +360,11 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/startup_status")
     async def api_startup_status():
-        return _attach_local_auth_cookie(JSONResponse(content=web_runtime.get_startup_status()))
+        return JSONResponse(content=web_runtime.get_startup_status())
 
     @app.get("/api/live_state")
     async def api_live_state():
-        return _attach_local_auth_cookie(JSONResponse(content=web_runtime.get_live_state_payload()))
+        return JSONResponse(content=web_runtime.get_live_state_payload())
 
     @app.get("/api/champion_aliases")
     async def api_champion_aliases():
@@ -441,9 +441,9 @@ def register_routes(app: FastAPI) -> None:
                 remote_icon_url = str(item.get("icon_url", "")).strip()
                 if not name:
                     continue
-                if filename:
+                if filename and web_runtime.is_safe_png_asset_name(filename):
                     data[name] = f"/assets/{quote(filename, safe='')}"
-                elif remote_icon_url:
+                elif remote_icon_url and web_runtime.is_safe_redirect_url(remote_icon_url):
                     data[name] = remote_icon_url
             return JSONResponse(content=data)
         except Exception as exc:

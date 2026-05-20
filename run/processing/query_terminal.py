@@ -6,13 +6,16 @@
 import os
 import json
 import sys
-import tempfile
 import unicodedata
 import pandas as pd
-from processing.alias_search import load_champion_alias_map, resolve_champion_name
+from processing.alias_search import (
+    add_runtime_champion_alias,
+    load_champion_alias_index,
+    load_champion_alias_map,
+    resolve_champion_name,
+)
 from processing.alias_utils import normalize_alias_token, unique_alias_tokens
 from processing.runtime_store import get_latest_csv, load_runtime_csv, normalize_runtime_df
-from scraping.version_sync import CHAMPION_ALIAS_INDEX_FILE, CORE_DATA_FILE
 
 if os.name == 'nt': os.system('')  # 启用 Windows 终端颜色输出。
 RESET = "\033[0m"
@@ -154,18 +157,17 @@ def add_new_alias(new_alias, official_names):
             return None
 
         target_entry = dict(core_data.get(target_key, {}))
-        aliases = target_entry.get("aliases", [])
-        if not isinstance(aliases, list):
-            aliases = []
-        if new_alias not in aliases:
-            aliases.append(new_alias)
-        target_entry["aliases"] = aliases
-        core_data[target_key] = target_entry
-
-        fd, tmp_path = tempfile.mkstemp(prefix="core-alias-", suffix=".tmp", dir=os.path.dirname(CORE_DATA_FILE))
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(core_data, f, ensure_ascii=False, indent=4)
-        os.replace(tmp_path, CORE_DATA_FILE)
+        if not add_runtime_champion_alias(
+            {
+                "heroName": target_entry.get("name", target_hero),
+                "title": target_entry.get("title", ""),
+                "enName": target_entry.get("en_name", ""),
+                "heroId": target_key,
+                "aliases": target_entry.get("aliases", []),
+            },
+            new_alias,
+        ):
+            return None
 
         CORE_DATA = None
         CHAMP_NAME_MAP = {}
@@ -351,22 +353,16 @@ def load_hero_aliases():
     global _alias_cache
     if _alias_cache is not None:
         return _alias_cache
-    alias_path = CHAMPION_ALIAS_INDEX_FILE
     alias_map = {}
     try:
-        with open(alias_path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, list):
-            for entry in payload:
-                if not isinstance(entry, dict):
-                    continue
-                hero_name = str(entry.get("heroName", "")).strip()
-                if not hero_name:
-                    continue
-                alias_map[hero_name] = unique_alias_tokens(
-                    [hero_name, entry.get("title", ""), entry.get("enName", "")],
-                    entry.get("aliases", []) if isinstance(entry.get("aliases", []), list) else [],
-                )
+        for entry in load_champion_alias_index():
+            hero_name = str(entry.get("heroName", "")).strip()
+            if not hero_name:
+                continue
+            alias_map[hero_name] = unique_alias_tokens(
+                [hero_name, entry.get("title", ""), entry.get("enName", "")],
+                entry.get("aliases", []) if isinstance(entry.get("aliases", []), list) else [],
+            )
     except Exception:
         alias_map = {}
     _alias_cache = alias_map

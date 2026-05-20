@@ -32,10 +32,10 @@ Claude Code 与 Codex 均可独立工作；仓库不再维护固定的 CC-CX 强
 | `qm-run-demo/` | demo / runtime 变体 |
 | `subtitle_extractor/` | 字幕提取工具 |
 | `docs/` / `scripts/` / `.agents/skills/` | 仓库治理区 |
-| `.state/workflow/` | 旧 `cx-exec` 工作流遗留运行态，默认不提交 |
+| `.state/workflow/` | 旧 CC-CX 工作流遗留运行态，默认不提交 |
 | `.state/cc-work/` | 本机 agent 草稿区，默认不提交 |
 
-业务写入前必须先选定 `target_work_area`。普通任务只产出目标 diff 和对话摘要。OpenAI Codex plugin 可以作为可选辅助工具，但不得写成 Claude Code 或 Codex 的强制主流程。`cx-exec.ps1` 只允许作为 legacy/compat 线索，不作为主流程要求。
+业务写入前必须先选定 `target_work_area`。普通任务只产出目标 diff 和对话摘要。Claude Code 中即使 OpenAI Codex plugin 可用，也不得在无用户当前轮显性命令时调用、委派、审查或触发 Codex / CX。旧 CC-CX 执行脚本只允许作为 legacy/compat 线索，不作为主流程要求。
 
 ## Agent Workflow
 

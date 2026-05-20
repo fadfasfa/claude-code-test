@@ -33,6 +33,8 @@ from processing.runtime_store import (
     build_next_synergy_snapshot_path,
     build_synergy_data_path,
     build_synergy_latest_pointer_path,
+    ensure_private_runtime_dir,
+    ensure_runtime_profile_dir,
     get_latest_csv,
 )
 from scraping.icon_resolver import normalize_augment_name
@@ -713,7 +715,8 @@ class ApexSource:
         headless = os.getenv("APEX_HEADLESS", "1").strip() != "0"
         errors = []
         os.makedirs(SELENIUM_CACHE_DIR, exist_ok=True)
-        os.makedirs(self._profile_root, exist_ok=True)
+        ensure_runtime_profile_dir()
+        ensure_private_runtime_dir(self._profile_root)
         os.environ.setdefault("SE_CACHE_PATH", SELENIUM_CACHE_DIR)
 
         if browser in {"auto", "edge"}:
@@ -731,7 +734,6 @@ class ApexSource:
                 options.add_argument("--disable-extensions")
                 options.add_argument("--disable-crash-reporter")
                 options.add_argument("--disable-crashpad")
-                options.add_argument("--no-sandbox")
                 options.add_argument("--disable-dev-shm-usage")
                 options.add_argument("--remote-debugging-port=0")
                 options.add_argument("--window-size=1365,900")
@@ -761,7 +763,6 @@ class ApexSource:
                 options.add_argument("--disable-extensions")
                 options.add_argument("--disable-crash-reporter")
                 options.add_argument("--disable-crashpad")
-                options.add_argument("--no-sandbox")
                 options.add_argument("--disable-dev-shm-usage")
                 options.add_argument("--remote-debugging-port=0")
                 options.add_argument("--window-size=1365,900")

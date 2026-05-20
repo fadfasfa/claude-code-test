@@ -7,15 +7,15 @@
 - Codex standalone mode：用户直接调用 Codex 时，Codex 按 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和用户任务独立执行普通代码任务完整流程。
 - Codex App、VS Code Codex、Codex CLI、wrapper 和 CC 调用器是不同 surface，不混写为同一入口。
 - 重执行、长线程和大 diff 默认留在 VS Code Codex / Codex CLI；不要把这类执行历史重新带回 Codex App 热路径。
-- OpenAI Codex plugin 可以作为可选辅助工具；不得写成 Claude Code 或 Codex 的强制主流程。
+- OpenAI Codex plugin 可以保留启用状态；Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
 
 ## Current Contract
 
-- 旧根入口 `cx-exec.ps1` 和旧 executor `scripts/workflow/` 已移除；如在历史路径、缓存或兼容层出现，只能视为 legacy/compat。
-- 不再维护 `cx-exec` 作为主流程、fallback 主路或验收接口。
-- `.state/workflow/**` 是旧 `cx-exec` 工作流遗留运行态目录；当前工作流不依赖 `.state/workflow/tasks/result.json`。
+- 旧 CC-CX 根入口和旧 workflow executor 已移除；如在历史路径、缓存或兼容层出现，只能视为 legacy/compat。
+- 不再维护旧 CC-CX 执行脚本作为主流程、fallback 主路或验收接口。
+- `.state/workflow/**` 是旧 CC-CX 工作流遗留运行态目录；当前工作流不依赖旧任务结果文件。
 - Codex standalone 能力保留；用户直接调用 Codex 时不经过 Claude Code 委派层。
-- `.claude/settings.json` 可保留 Codex plugin 启用状态；plugin 启用不等于 review gate 启用。
+- `.claude/settings.json` 可保留 Codex plugin 启用状态；启用状态不构成 Claude Code 调用 Codex 的默认偏好或隐含授权。
 - Codex plugin review gate 默认禁用；除非用户显性要求，不得启用 review gate。
 
 ## Codex Task Rules
@@ -38,7 +38,8 @@
 - 不恢复 repo-local `.codex/config.toml`。
 - 不读取或修改 `auth.json`、token、cookie、API key、`local.yaml`、`proxies.json` 或 proxy secret。
 - 不把 `full-access` profile 写成仓库默认。
-- 不把 Codex standalone mode 改写成必须经过 Claude Code、Codex plugin 或旧 `cx-exec`。
+- 不把 Codex standalone mode 改写成必须经过 Claude Code、Codex plugin 或旧 CC-CX 执行脚本。
+- 不让 Claude Code 在无用户当前轮显性命令时调用、委派、审查或触发 Codex / CX。
 - 不启用 Codex plugin review gate，除非用户显性要求。
 - 不在没有用户显性授权非沙箱 Codex 时使用 `-Sandbox danger-full-access`。
 - 不把非沙箱 Codex 授权混同为 Claude Code 修改授权。
