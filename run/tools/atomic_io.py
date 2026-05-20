@@ -1,3 +1,9 @@
+"""原子写入工具。
+
+提供文本、JSON、CSV 的原子落盘函数，先写临时文件再 `os.replace`，
+供 `processing/` 与 `scraping/` 写运行态产物时避免半写状态。
+"""
+
 import json
 import os
 import tempfile

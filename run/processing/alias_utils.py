@@ -1,4 +1,7 @@
-"""Shared helpers for alias normalization and deduplication."""
+"""英雄别名归一与去重的共享辅助。
+
+供 `processing.alias_search` 和首页搜索路径调用，保证同义别名收敛到同一 token。
+"""
 
 from __future__ import annotations
 
