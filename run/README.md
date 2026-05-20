@@ -32,11 +32,20 @@ python hextech_ui.py
 # 仅启动 Web 服务
 python web_server.py
 
+# 默认离线自检
+python tools/dev_checks.py
+
 # 打包便携产物
 python build.py
 
+# 打包资源白名单明细校验
+python tools/dev_checks.py --bundle-manifest
+
 # 打包后空仓首启验收
 python tools/smoke_packaged_startup.py --timeout 60
+
+# Web/UI 详情页联动手动验收辅助，需先启动本地 Web 服务
+python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 ```
 
 ## 目录职责
@@ -49,7 +58,7 @@ run/
 ├── display/                    # 展示、桌面窗口、本地 Web/API、浏览器协同
 ├── processing/                 # 运行态路径、CSV/DataFrame、视图适配、后台编排
 ├── scraping/                   # 远端抓取、稳定资源同步、缺失产物自愈
-├── tools/                      # 打包、清理、日志、自检、烟测工具
+├── tools/                      # 打包、清理、日志、自检、手动验收和烟测工具
 ├── data/static/                # 版本级稳定数据文件
 ├── data/indexes/               # 版本级稳定索引文件
 ├── assets/                     # 稳定图片/图标资源入口
@@ -101,6 +110,22 @@ run/
 
 ## 打包与验收
 
+开发阶段默认先运行统一离线自检：
+
+```powershell
+python tools/dev_checks.py
+```
+
+该入口包含结构收口、别名索引、日志契约、bundle manifest、协同数据
+freshness、快照定位、发布熔断和结构化协同 payload 回归检查。`run/tests/`
+不再作为独立临时测试目录保留。
+
+如需查看打包资源白名单明细：
+
+```powershell
+python tools/dev_checks.py --bundle-manifest
+```
+
 `python build.py` 会生成：
 
 - `dist/Hextech_伴生系统_YYYYMMDD/`
@@ -123,6 +148,13 @@ python tools/smoke_packaged_startup.py --timeout 60
 - `_internal/data/runtime` 是否不存在
 - `/`、`/api/startup_status`、`/api/champions`、`/detail.html?champion=1`、`/api/synergies/1` 是否可访问
 
+Web/UI 详情页右侧联动对齐 ApexLoL 源页的检查保留为手动验收辅助，
+因为它依赖浏览器、本地 Web 服务和外网：
+
+```powershell
+python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
+```
+
 ## 常用接口
 
 - `GET /api/champions`：英雄列表
@@ -142,4 +174,4 @@ python tools/smoke_packaged_startup.py --timeout 60
 - 桌面控件结构优先改 `display/hextech_ui.py`
 - 纯数据转换、DataFrame 清洗、视图适配优先改 `processing/`
 - 远端抓取、稳定资源同步、自愈修复优先改 `scraping/`
-- 打包链路变更时同步检查 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py` 和本文档
+- 打包链路变更时同步检查 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`tools/dev_checks.py` 和本文档
