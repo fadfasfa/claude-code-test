@@ -129,7 +129,7 @@ def prepare_runtime_bundle() -> Path:
     print_check("Hextech 战报快照清单已加入打包白名单")
     print_check("协同数据快照已加入打包白名单")
     print_check("稳定 assets 已加入打包白名单")
-    print_warn("仅打包 Hextech_Data_*.csv 与 Champion_Synergy.json 首启快照；临时 CSV、预计算缓存和运行日志不会打包")
+    print_warn("仅打包 Hextech_Data_*.csv、协同时间快照与 latest 指针；临时 CSV、预计算缓存和运行日志不会打包")
     return bundle_root
 
 

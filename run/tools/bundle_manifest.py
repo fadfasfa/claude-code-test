@@ -9,7 +9,8 @@ from __future__ import annotations
 核心输入：
 - `data/static/` 与 `data/indexes/`
 - `data/raw/hextech/Hextech_Data_*.csv`
-- `data/raw/synergy/Champion_Synergy.json`
+- `data/raw/synergy/Champion_Synergy_YYYYMMDD_HHMMSS.json`
+- `data/raw/synergy/Champion_Synergy_latest.v1.json`
 - `assets/`
 - `display/static/`
 
@@ -48,7 +49,10 @@ STABLE_INDEX_FILES = (
 ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 HEXTECH_SNAPSHOT_DIR = Path("data") / "raw" / "hextech"
 HEXTECH_SNAPSHOT_PATTERN = "Hextech_Data_*.csv"
-SYNERGY_DATA_FILE = Path("data") / "raw" / "synergy" / "Champion_Synergy.json"
+SYNERGY_DATA_DIR = Path("data") / "raw" / "synergy"
+SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
+SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
+SYNERGY_SNAPSHOT_PATTERN = "Champion_Synergy_*.json"
 BUNDLE_MANIFEST_NAME = "bundle_manifest.json"
 
 
@@ -72,6 +76,39 @@ def iter_hextech_snapshot_files(base_dir: Path) -> Iterable[Path]:
     return sorted(path for path in snapshot_dir.glob(HEXTECH_SNAPSHOT_PATTERN) if path.is_file())
 
 
+def _is_synergy_snapshot_file(path: Path) -> bool:
+    name = path.name
+    stem = name.removeprefix("Champion_Synergy_").removesuffix(".json")
+    parts = stem.split("_")
+    return (
+        len(parts) in {2, 3}
+        and len(parts[0]) == 8
+        and len(parts[1]) == 6
+        and parts[0].isdigit()
+        and parts[1].isdigit()
+        and (len(parts) == 2 or (len(parts[2]) == 2 and parts[2].isdigit()))
+    )
+
+
+def iter_synergy_data_files(base_dir: Path) -> Iterable[Path]:
+    """列出可打包的协同时间快照和 latest 指针，旧固定名仅作兼容兜底。"""
+    synergy_dir = base_dir / SYNERGY_DATA_DIR
+    if not synergy_dir.exists():
+        return []
+
+    files = [
+        path for path in synergy_dir.glob(SYNERGY_SNAPSHOT_PATTERN)
+        if path.is_file() and _is_synergy_snapshot_file(path)
+    ]
+    pointer = synergy_dir / SYNERGY_LATEST_POINTER_FILENAME
+    if pointer.exists():
+        files.append(pointer)
+    legacy = synergy_dir / SYNERGY_LEGACY_FILENAME
+    if legacy.exists():
+        files.append(legacy)
+    return sorted(files)
+
+
 def build_bundle_manifest(base_dir: Path) -> dict:
     static_dir = base_dir / "data" / "static"
     index_dir = base_dir / "data" / "indexes"
@@ -88,13 +125,21 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         _relative_to_base(path, base_dir)
         for path in iter_hextech_snapshot_files(base_dir)
     ]
-    synergy_data_file = _relative_to_base(base_dir / SYNERGY_DATA_FILE, base_dir) if (base_dir / SYNERGY_DATA_FILE).exists() else ""
+    synergy_data_files = [
+        _relative_to_base(path, base_dir)
+        for path in iter_synergy_data_files(base_dir)
+    ]
+    synergy_data_file = next(
+        (name for name in synergy_data_files if Path(name).name.startswith("Champion_Synergy_") and Path(name).name != SYNERGY_LATEST_POINTER_FILENAME),
+        "",
+    )
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "static_files": static_files,
         "index_files": index_files,
         "asset_files": asset_files,
         "hextech_snapshot_files": hextech_snapshot_files,
+        "synergy_data_files": synergy_data_files,
         "synergy_data_file": synergy_data_file,
     }
 
@@ -114,7 +159,7 @@ def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
     (bundle_root / "data" / "static").mkdir(parents=True, exist_ok=True)
     (bundle_root / "data" / "indexes").mkdir(parents=True, exist_ok=True)
     (bundle_root / HEXTECH_SNAPSHOT_DIR).mkdir(parents=True, exist_ok=True)
-    (bundle_root / SYNERGY_DATA_FILE.parent).mkdir(parents=True, exist_ok=True)
+    (bundle_root / SYNERGY_DATA_DIR).mkdir(parents=True, exist_ok=True)
     (bundle_root / "assets").mkdir(parents=True, exist_ok=True)
 
     if static_dir.exists():
@@ -131,8 +176,11 @@ def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
 
-    synergy_relative_name = str(manifest.get("synergy_data_file", "")).strip()
-    if synergy_relative_name:
+    synergy_relative_names = list(manifest.get("synergy_data_files") or [])
+    legacy_single = str(manifest.get("synergy_data_file", "")).strip()
+    if legacy_single and legacy_single not in synergy_relative_names:
+        synergy_relative_names.append(legacy_single)
+    for synergy_relative_name in synergy_relative_names:
         source = base_dir / Path(synergy_relative_name)
         target = bundle_root / Path(synergy_relative_name)
         target.parent.mkdir(parents=True, exist_ok=True)

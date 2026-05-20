@@ -87,7 +87,8 @@
 这些内容属于运行态，不能作为打包源数据：
 
 - `data/raw/hextech/Hextech_Data_*.csv`
-- `data/raw/synergy/Champion_Synergy.json`
+- 启动后新生成的 `data/raw/synergy/Champion_Synergy_*.json`
+- 启动后新生成的 `data/raw/synergy/Champion_Synergy_latest.v1.json`
 - `data/runtime/state/*.json`
 - `data/runtime/state/web_server_port.txt`
 - `data/runtime/cache/`
@@ -96,6 +97,9 @@
 - `data/runtime/persisted/`
 - `data/runtime/logs/`
 - 任何启动后生成、抓取、缓存、锁、日志或计算产物
+
+协同数据的包内种子使用时间快照加 latest 指针：`Champion_Synergy_YYYYMMDD_HHMMSS.json`
+和 `Champion_Synergy_latest.v1.json`。旧固定名 `Champion_Synergy.json` 只保留只读迁移兜底。
 
 ### 4.3 首启运行态骨架
 

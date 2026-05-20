@@ -976,8 +976,19 @@
             return null;
         }
 
+        function getArticleNameText(item) {
+            if (item && Array.isArray(item.augmentNames) && item.augmentNames.length > 0) {
+                return item.augmentNames.join(', ');
+            }
+            if (item && Array.isArray(item.augment_names) && item.augment_names.length > 0) {
+                return item.augment_names.join(', ');
+            }
+            return item ? (item.name || '') : '';
+        }
+
         function resolveArticleAugment(item) {
-            const baseHex = findBaseHexByName(item.name);
+            const nameText = getArticleNameText(item);
+            const baseHex = findBaseHexByName(nameText);
             if (baseHex) {
                 return {
                     name: baseHex.海克斯名称,
@@ -988,7 +999,7 @@
                 };
             }
 
-            const catalogEntry = findAugmentCatalogEntry(item.name);
+            const catalogEntry = findAugmentCatalogEntry(nameText);
             if (catalogEntry) {
                 return {
                     name: catalogEntry.name,
@@ -999,7 +1010,7 @@
                 };
             }
 
-            const mapped = findAugmentIconFromMap(item.name);
+            const mapped = findAugmentIconFromMap(nameText);
             if (mapped) {
                 return {
                     name: mapped.name,
@@ -1010,7 +1021,7 @@
                 };
             }
 
-            const fallbackName = splitAugmentCandidates(item.name)[0] || item.name;
+            const fallbackName = splitAugmentCandidates(nameText)[0] || nameText;
             return {
                 name: fallbackName,
                 icon: toLocalAugmentIconUrl('', fallbackName),
@@ -1134,34 +1145,134 @@
             }
         }
 
+        function normalizeGradeValue(grade) {
+            return String(grade || '未知').replace(/^评分\s*/i, '').trim().toUpperCase() || '未知';
+        }
+
+        function getGradeScore(grade) {
+            const gradeVal = normalizeGradeValue(grade);
+            if (gradeVal.includes('SS')) return 6;
+            if (gradeVal.includes('S')) return 5;
+            if (gradeVal.includes('A')) return 4;
+            if (gradeVal.includes('B')) return 3;
+            if (gradeVal.includes('C')) return 2;
+            if (gradeVal.includes('D')) return 1;
+            return 0;
+        }
+
+        function parseLegacySynergyString(raw) {
+            const str = String(raw || '');
+            const parts = str.split('|').map(s => s.trim());
+            if (parts.length < 4) {
+                return { original: str, name: '未知联动', tier: '', grade: '未知', tags: [], content: str };
+            }
+
+            const nameInfo = parts[0];
+            const tierName = parts[1];
+            const gradeStr = parts[2];
+            const tagGroup = parts[3];
+            let upvotes = 0;
+            let downvotes = 0;
+            let contentStartIndex = 5;
+            if (parts.length > 5 && /^\d+$/.test(parts[4]) && /^\d+$/.test(parts[5])) {
+                upvotes = parseInt(parts[4] || '0');
+                downvotes = parseInt(parts[5] || '0');
+                contentStartIndex = 6;
+            }
+
+            let author = '佚名';
+            let content = '';
+            let isOriginal = false;
+
+            if (parts.length > contentStartIndex) {
+                const nextPart = parts[contentStartIndex];
+                if (nextPart.startsWith('作者：') || nextPart.startsWith('作者:')) {
+                    author = nextPart.substring(3).trim();
+                    contentStartIndex += 1;
+                    if (parts.length > contentStartIndex && (parts[contentStartIndex] === '原创' || parts[contentStartIndex] === '非原创')) {
+                        isOriginal = parts[contentStartIndex] === '原创';
+                        contentStartIndex += 1;
+                    }
+                } else if (nextPart === '原创') {
+                    isOriginal = true;
+                    contentStartIndex += 1;
+                    if (parts.length > contentStartIndex && (parts[contentStartIndex].startsWith('作者：') || parts[contentStartIndex].startsWith('作者:'))) {
+                        author = parts[contentStartIndex].substring(3).trim();
+                        contentStartIndex += 1;
+                    }
+                } else if (parts.length > contentStartIndex + 1 && (parts[contentStartIndex + 1] === '原创' || parts[contentStartIndex + 1] === '非原创')) {
+                    author = nextPart || author;
+                    isOriginal = parts[contentStartIndex + 1] === '原创';
+                    contentStartIndex += 2;
+                }
+                content = parts.slice(contentStartIndex).join(' | ');
+            }
+
+            return {
+                original: str,
+                name: nameInfo,
+                augmentNames: splitAugmentCandidates(nameInfo),
+                tier: tierName,
+                grade: normalizeGradeValue(gradeStr),
+                tags: tagGroup.split(/\s+/).filter(t => t),
+                upvotes: upvotes,
+                downvotes: downvotes,
+                author: author,
+                isOriginal: isOriginal,
+                content: content
+            };
+        }
+
+        function normalizeSynergyArticle(raw) {
+            if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+                const augmentNames = Array.isArray(raw.augment_names)
+                    ? raw.augment_names
+                    : (Array.isArray(raw.augmentNames) ? raw.augmentNames : splitAugmentCandidates(raw.name));
+                const nameInfo = String(raw.name || augmentNames.join(', ') || '未知联动');
+                return {
+                    original: raw,
+                    name: nameInfo,
+                    augmentNames: augmentNames.filter(Boolean),
+                    tier: String(raw.tier || ''),
+                    grade: normalizeGradeValue(raw.rating || raw.grade),
+                    tags: String(raw.tag || (Array.isArray(raw.tags) ? raw.tags.join(' ') : '') || '强力联动').split(/\s+/).filter(t => t),
+                    upvotes: Number(raw.upvotes || 0),
+                    downvotes: Number(raw.downvotes || 0),
+                    author: String(raw.author || '佚名'),
+                    isOriginal: Boolean(raw.is_original || raw.isOriginal),
+                    content: String(raw.content || '')
+                };
+            }
+            return parseLegacySynergyString(raw);
+        }
+
+        function isKnownSynergyTier(rawTier) {
+            const text = String(rawTier || '').trim();
+            return Boolean(text && (
+                text.includes('棱彩') || text.includes('彩色') || text === 'Prismatic' ||
+                text.includes('黄金') || text.includes('金') || text === 'Gold' ||
+                text.includes('白银') || text.includes('银') || text === 'Silver'
+            ));
+        }
+
+        function articleMatchesTier(item, tier) {
+            if (tier === 'all') return true;
+            if (isKnownSynergyTier(item.tier)) {
+                return normalizeTierName(item.tier) === tier;
+            }
+            const resolvedAugment = resolveArticleAugment(item);
+            return resolvedAugment.tier && normalizeTierName(resolvedAugment.tier) === tier;
+        }
+
         function updateFilteredSynergies(tier) {
             const container = document.getElementById('synergyArticleScroll');
-            if (!synergyData || synergyData.length === 0) {
+            const normalized = (synergyData || []).map(normalizeSynergyArticle).filter(item => item.content);
+            if (normalized.length === 0) {
                 container.innerHTML = '<div class="glass-panel rounded-xl p-4"><div class="text-sm text-gray-400 text-center">暂无联动文章</div></div>';
                 return;
             }
 
-            let filtered = synergyData;
-
-            if (tier !== 'all') {
-                filtered = synergyData.filter(item => {
-                    const parts = String(item || '').split('|').map(s => s.trim());
-                    if (parts.length < 2) {
-                        return false;
-                    }
-                    const rawTier = parts[1] && String(parts[1]).trim();
-                    const tierKnown = rawTier && (
-                        rawTier.includes('棱彩') || rawTier.includes('彩色') || rawTier === 'Prismatic' ||
-                        rawTier.includes('黄金') || rawTier.includes('金') || rawTier === 'Gold' ||
-                        rawTier.includes('白银') || rawTier.includes('银') || rawTier === 'Silver'
-                    );
-                    if (tierKnown) {
-                        return normalizeTierName(rawTier) === tier;
-                    }
-                    const resolvedAugment = resolveArticleAugment({ name: parts[0], tier: parts[1] });
-                    return resolvedAugment.tier && normalizeTierName(resolvedAugment.tier) === tier;
-                });
-            }
+            const filtered = normalized.filter(item => articleMatchesTier(item, tier));
 
             if (filtered.length === 0) {
                 container.innerHTML = '<div class="glass-panel rounded-xl p-4"><div class="text-sm text-gray-400 text-center">该阶级无联动文章</div></div>';
@@ -1177,92 +1288,15 @@
                 return;
             }
 
-            const parsedArticles = articles.map(str => {
-                const parts = str.split('|').map(s => s.trim());
-                if (parts.length >= 4) {
-                    const nameInfo = parts[0];
-                    const tierName = parts[1];
-                    const gradeStr = parts[2];
-                    const tagGroup = parts[3];
-                    let upvotes = 0;
-                    let downvotes = 0;
-                    let contentStartIndex = 5;
-                    if (parts.length > 5 && /^\d+$/.test(parts[4]) && /^\d+$/.test(parts[5])) {
-                        upvotes = parseInt(parts[4] || '0');
-                        downvotes = parseInt(parts[5] || '0');
-                        contentStartIndex = 6;
-                    } else {
-                        const upvoteMatches = String(parts[4] || '').match(/(\d+)\s*\|\s*(\d+)/);
-                        if (upvoteMatches) {
-                            upvotes = parseInt(upvoteMatches[1] || '0');
-                            downvotes = parseInt(upvoteMatches[2] || '0');
-                        }
-                    }
-
-                    let author = "佚名";
-                    let content = "";
-                    let isOriginal = false;
-
-                    if (parts.length > contentStartIndex) {
-                        const nextPart = parts[contentStartIndex];
-                        if (nextPart.startsWith('作者：') || nextPart.startsWith('作者:')) {
-                            author = nextPart.substring(3).trim();
-                            contentStartIndex += 1;
-                            if (parts.length > contentStartIndex && (parts[contentStartIndex] === '原创' || parts[contentStartIndex] === '非原创')) {
-                                isOriginal = parts[contentStartIndex] === '原创';
-                                contentStartIndex += 1;
-                            }
-                        } else if (nextPart === '原创') {
-                            isOriginal = true;
-                            contentStartIndex += 1;
-                            if (parts.length > contentStartIndex && (parts[contentStartIndex].startsWith('作者：') || parts[contentStartIndex].startsWith('作者:'))) {
-                                author = parts[contentStartIndex].substring(3).trim();
-                                contentStartIndex += 1;
-                            }
-                        } else if (parts.length > contentStartIndex + 1 && (parts[contentStartIndex + 1] === '原创' || parts[contentStartIndex + 1] === '非原创')) {
-                            author = nextPart || author;
-                            isOriginal = parts[contentStartIndex + 1] === '原创';
-                            contentStartIndex += 2;
-                        }
-                        content = parts.slice(contentStartIndex).join(' | ');
-                    }
-
-                    const gradeVal = gradeStr.toUpperCase();
-                    let gradeScore = 0;
-                    if (gradeVal.includes('SS')) gradeScore = 6;
-                    else if (gradeVal.includes('S')) gradeScore = 5;
-                    else if (gradeVal.includes('A')) gradeScore = 4;
-                    else if (gradeVal.includes('B')) gradeScore = 3;
-                    else if (gradeVal.includes('C')) gradeScore = 2;
-                    else if (gradeVal.includes('D')) gradeScore = 1;
-
-                    const resolvedAugment = resolveArticleAugment({ name: nameInfo, tier: tierName });
-                    const fallbackScore = resolvedAugment.score || 0;
-
-                    return {
-                        original: str,
-                        name: nameInfo,
-                        tier: tierName,
-                        grade: gradeVal,
-                        gradeScore: gradeScore,
-                        tags: tagGroup.split(/\s+/).filter(t => t),
-                        upvotes: upvotes,
-                        downvotes: downvotes,
-                        author: author,
-                        isOriginal: isOriginal,
-                        content: content,
-                        fallbackScore: fallbackScore,
-                        resolvedAugment: resolvedAugment
-                    };
-                }
-                return { original: str, name: "未知联动", gradeScore: -1, fallbackScore: 0, content: str, resolvedAugment: null };
-            });
-
-            parsedArticles.sort((a, b) => {
-                if (b.gradeScore !== a.gradeScore) {
-                    return b.gradeScore - a.gradeScore;
-                }
-                return b.fallbackScore - a.fallbackScore;
+            const parsedArticles = articles.map(item => {
+                const resolvedAugment = resolveArticleAugment(item);
+                const gradeScore = getGradeScore(item.grade);
+                return {
+                    ...item,
+                    gradeScore: gradeScore,
+                    fallbackScore: resolvedAugment.score || 0,
+                    resolvedAugment: resolvedAugment
+                };
             });
 
             const html = parsedArticles.map(item => {
@@ -1290,7 +1324,8 @@
                 const resolvedAugment = item.resolvedAugment || resolveArticleAugment(item);
                 const iconUrl = resolvedAugment.icon;
                 const safeName = escapeHtml(item.name);
-                const safeTier = escapeHtml(resolvedAugment.tier || item.tier);
+                const displayTier = item.tier || resolvedAugment.tier;
+                const safeTier = escapeHtml(displayTier);
                 const safeGrade = escapeHtml(item.grade);
                 const safeAuthor = escapeHtml(item.author);
 
@@ -1313,7 +1348,7 @@
     <div class="hextech-article-inner bg-[#060b10]" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px));">
         
         <div class="cursor-pointer" data-hex-info="${bindData}">
-            ${renderAugmentIcon(iconUrl, resolvedAugment.name || item.name, resolvedAugment.tier || item.tier, 'detail')}
+            ${renderAugmentIcon(iconUrl, resolvedAugment.name || item.name, displayTier, 'detail')}
         </div>
 
         <div class="flex flex-col flex-grow">
@@ -1389,7 +1424,9 @@
             try {
                 const synergyRes = await fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId || hero)}`);
                 const synergyResult = await synergyRes.json();
-                synergyData = synergyResult.synergies || [];
+                synergyData = Array.isArray(synergyResult.synergy_items) && synergyResult.synergy_items.length > 0
+                    ? synergyResult.synergy_items
+                    : (synergyResult.synergies || []);
                 updateFilteredSynergies(currentView);
             } catch (err) {
                 console.error(err);

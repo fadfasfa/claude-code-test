@@ -69,6 +69,137 @@ def _normalize_synergy_entries(raw_entries) -> list[str]:
     return [_normalize_synergy_entry(entry) for entry in raw_entries if str(entry or "").strip()]
 
 
+def _split_augment_names(raw_name: str) -> list[str]:
+    names = [part.strip() for part in re.split(r"[，,、/+]", str(raw_name or "")) if part.strip()]
+    if names:
+        return list(dict.fromkeys(names))
+    text = str(raw_name or "").strip()
+    return [text] if text else []
+
+
+def _int_field(value) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _strip_rating_prefix(value: str) -> str:
+    text = str(value or "").strip()
+    return re.sub(r"^评分\s*", "", text, flags=re.IGNORECASE).strip() or text
+
+
+def _bool_field(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "原创", "original"}
+    return bool(value)
+
+
+def _normalize_synergy_item(raw_item) -> dict | None:
+    """把新旧联动协议都收口成前端稳定消费的结构化对象。"""
+    if isinstance(raw_item, str):
+        return _normalize_synergy_item_from_string(raw_item)
+    if not isinstance(raw_item, dict):
+        return None
+
+    raw_names = raw_item.get("augment_names") or raw_item.get("augmentNames") or raw_item.get("augments") or raw_item.get("name")
+    if isinstance(raw_names, list):
+        augment_names = []
+        for value in raw_names:
+            if isinstance(value, dict):
+                value = value.get("name") or value.get("displayName") or value.get("id") or value.get("slug")
+            augment_names.extend(_split_augment_names(str(value or "")))
+        augment_names = list(dict.fromkeys(augment_names))
+    else:
+        augment_names = _split_augment_names(str(raw_names or ""))
+    if not augment_names:
+        return None
+
+    tags = raw_item.get("tags") or raw_item.get("tag") or "强力联动"
+    if isinstance(tags, list):
+        tag = " ".join(str(item).strip() for item in tags if str(item).strip()) or "强力联动"
+    else:
+        tag = str(tags or "强力联动").strip() or "强力联动"
+
+    return {
+        "augment_names": augment_names,
+        "name": ", ".join(augment_names),
+        "tier": str(raw_item.get("tier") or raw_item.get("rarity") or raw_item.get("rank") or "未知").strip() or "未知",
+        "rating": _strip_rating_prefix(str(raw_item.get("rating") or raw_item.get("grade") or raw_item.get("score") or "未知")),
+        "tag": tag,
+        "author": str(raw_item.get("author") or raw_item.get("contributor") or raw_item.get("user") or "ApexLoL").strip() or "ApexLoL",
+        "is_original": _bool_field(raw_item.get("is_original") if "is_original" in raw_item else raw_item.get("isOriginal") or raw_item.get("original")),
+        "content": str(raw_item.get("content") or raw_item.get("note") or raw_item.get("text") or raw_item.get("description") or "").strip(),
+        "upvotes": _int_field(raw_item.get("upvotes") or raw_item.get("upVotes") or raw_item.get("likes")),
+        "downvotes": _int_field(raw_item.get("downvotes") or raw_item.get("downVotes") or raw_item.get("dislikes")),
+    }
+
+
+def _normalize_synergy_item_from_string(raw_entry: str) -> dict | None:
+    normalized = _normalize_synergy_entry(raw_entry)
+    parts = [part.strip() for part in normalized.split("|")]
+    if len(parts) < 4:
+        return None
+
+    name, tier, grade, tag = parts[:4]
+    upvotes = _int_field(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
+    downvotes = _int_field(parts[5]) if len(parts) > 5 and parts[5].isdigit() else 0
+    author = "ApexLoL"
+    is_original = False
+    content_start = 6 if len(parts) > 5 and parts[4].isdigit() and parts[5].isdigit() else 4
+
+    if len(parts) > content_start:
+        maybe_author = parts[content_start]
+        if maybe_author.startswith(("作者：", "作者:")):
+            author = maybe_author.split("：", 1)[-1].split(":", 1)[-1].strip() or author
+            content_start += 1
+    if len(parts) > content_start and parts[content_start] in {"原创", "非原创"}:
+        is_original = parts[content_start] == "原创"
+        content_start += 1
+
+    return {
+        "augment_names": _split_augment_names(name),
+        "name": name,
+        "tier": tier or "未知",
+        "rating": _strip_rating_prefix(grade),
+        "tag": tag or "强力联动",
+        "author": author,
+        "is_original": is_original,
+        "content": " | ".join(parts[content_start:]).strip(),
+        "upvotes": upvotes,
+        "downvotes": downvotes,
+    }
+
+
+def _normalize_synergy_items(raw_items, raw_entries=None) -> list[dict]:
+    source_items = raw_items if isinstance(raw_items, list) else []
+    if not source_items and isinstance(raw_entries, list):
+        source_items = raw_entries
+    result = []
+    for item in source_items:
+        normalized = _normalize_synergy_item(item)
+        if normalized and normalized.get("content"):
+            result.append(normalized)
+    return result
+
+
+def _synergy_item_to_compat_string(item: dict) -> str:
+    rating = str(item.get("rating") or "未知").strip()
+    if rating and not rating.startswith("评分"):
+        rating = f"评分 {rating}"
+    return " | ".join([
+        str(item.get("name") or ", ".join(item.get("augment_names") or []) or "未知联动"),
+        str(item.get("tier") or "未知"),
+        rating or "评分 未知",
+        str(item.get("tag") or "强力联动"),
+        str(_int_field(item.get("upvotes"))),
+        str(_int_field(item.get("downvotes"))),
+        f"作者：{item.get('author') or 'ApexLoL'}",
+        "原创" if item.get("is_original") else "非原创",
+        str(item.get("content") or ""),
+    ])
+
+
 class RedirectRequest(BaseModel):
     """前端点击英雄后发送的跳转请求体。"""
 
@@ -324,7 +455,7 @@ def register_routes(app: FastAPI) -> None:
         try:
             data = web_runtime.get_synergy_data()
             if not data:
-                return JSONResponse(content={"synergies": []})
+                return JSONResponse(content={"synergies": [], "synergy_items": []})
 
             resolved_champ_id = web_runtime.resolve_champion_id(champ_id)
             canonical_name = web_runtime.resolve_canonical_hero_name(champ_id).lower()
@@ -340,11 +471,18 @@ def register_routes(app: FastAPI) -> None:
                         synergy_data = value
                         break
 
-            synergies = _normalize_synergy_entries(synergy_data.get("synergies", [])) if synergy_data else []
-            return JSONResponse(content={"synergies": synergies})
+            raw_synergies = synergy_data.get("synergies", []) if synergy_data else []
+            synergy_items = _normalize_synergy_items(
+                synergy_data.get("synergy_items", []) if synergy_data else [],
+                raw_synergies,
+            )
+            synergies = _normalize_synergy_entries(raw_synergies)
+            if not synergies and synergy_items:
+                synergies = [_synergy_item_to_compat_string(item) for item in synergy_items]
+            return JSONResponse(content={"synergies": synergies, "synergy_items": synergy_items})
         except Exception as exc:
             web_runtime.logger.warning("协同数据查询失败：%s", exc)
-            return JSONResponse(content={"synergies": []})
+            return JSONResponse(content={"synergies": [], "synergy_items": []})
 
     @app.post("/api/redirect")
     async def api_redirect(req: RedirectRequest, request: Request):
