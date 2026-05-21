@@ -373,3 +373,68 @@ body {
     from { opacity: 0; }
     to { opacity: 1; }
 }
+
+/* 各梯队卡片悬停时的呼吸式环境光晕：仅在 hover 触发，避免与 T0 流光争夺视线 */
+.hx-tier-s,
+.hx-tier-a,
+.hx-tier-npc,
+.hx-tier-trash {
+    transition: box-shadow 360ms ease;
+}
+.hx-tier-s:hover { box-shadow: 0 6px 22px -8px rgba(47, 155, 181, 0.55); }
+.hx-tier-a:hover { box-shadow: 0 6px 22px -8px rgba(80, 166, 117, 0.45); }
+.hx-tier-npc:hover { box-shadow: 0 6px 22px -8px rgba(150, 160, 180, 0.30); }
+.hx-tier-trash:hover { box-shadow: 0 6px 22px -8px rgba(140, 60, 60, 0.35); }
+
+/* 科幻雷达网格背景：作为 body 伪元素层，与现有对角线 + 径向渐变叠加 */
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+        linear-gradient(rgba(200, 170, 110, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(200, 170, 110, 0.04) 1px, transparent 1px);
+    background-size: 60px 60px;
+}
+
+/* 数据更新气泡：1.5 秒渐入渐出，右上角悬浮，不干扰主内容流 */
+.hx-update-toast {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 9999;
+    padding: 10px 18px;
+    border-radius: 999px;
+    background: rgba(15, 30, 48, 0.92);
+    border: 1px solid rgba(88, 166, 255, 0.45);
+    color: #cfe7ff;
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity 240ms ease, transform 240ms ease;
+}
+.hx-update-toast.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* 搜索框快捷键徽章：仿照 GitHub/Linear 的 kbd 风格 */
+.hx-search-hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(139, 148, 158, 0.4);
+    background: rgba(15, 20, 28, 0.7);
+    color: #c9d1d9;
+    font-family: var(--hx-font-family);
+    font-size: 12px;
+    line-height: 1;
+}
