@@ -501,8 +501,9 @@
         <div class="relative w-full max-w-2xl group">
             <div class="absolute -inset-[1px] rounded-full border border-white/5 opacity-80 pointer-events-none"></div>
             <input type="text" id="searchInput" placeholder="搜英雄看海克斯... (支持拼音如：ys / 外号如：快乐风男)"
-                   class="search-input relative w-full text-lg rounded-full py-4 px-6 pr-20 text-white placeholder-gray-500 transition-all">
-            <span class="absolute right-6 top-4 text-sm tracking-[0.2em] text-slate-400 uppercase">搜索</span>
+                   class="search-input relative w-full text-lg rounded-full py-4 px-6 pr-32 text-white placeholder-gray-500 transition-all">
+            <span class="absolute right-20 top-4 text-sm tracking-[0.2em] text-slate-400 uppercase">搜索</span>
+            <kbd class="hx-search-hint absolute right-6 top-4" title="按 / 或 Ctrl+K 聚焦搜索">/</kbd>
             <div id="searchAssistPanel" class="search-assist-panel hidden"></div>
         </div>
         <p class="text-xs text-slate-500 tracking-[0.24em] uppercase">实时数据已应用「微量贝叶斯平滑 + Z-Score」提纯</p>
@@ -1454,9 +1455,27 @@
             };
         }
 
+        // 判断当前焦点是否在可编辑元素中，避免在 input/textarea 里按 "/" 误触发跳转
+        function _isEditableTarget(target) {
+            if (!target) return false;
+            const tag = (target.tagName || '').toLowerCase();
+            return tag === 'input' || tag === 'textarea' || target.isContentEditable;
+        }
+
         function setupSearch() {
             const input = document.getElementById('searchInput');
             if (!input) return;
+
+            // 全局快捷键：按 "/" 或 Ctrl+K 自动聚焦搜索框
+            document.addEventListener('keydown', (e) => {
+                const isSlash = e.key === '/' && !_isEditableTarget(e.target);
+                const isCtrlK = (e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K');
+                if (isSlash || isCtrlK) {
+                    e.preventDefault();
+                    input.focus();
+                    input.select();
+                }
+            });
 
             input.addEventListener('compositionstart', () => {
                 input.dataset.composing = '1';
