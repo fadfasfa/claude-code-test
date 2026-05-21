@@ -39,6 +39,45 @@ except ImportError:
     sys.exit(1)
 
 
+def _lerp_hex_color(color_a: str, color_b: str, t: float) -> str:
+    """两端十六进制颜色在 RGB 空间按比例 t 插值，返回 #rrggbb 形式。"""
+    t = max(0.0, min(1.0, t))
+    ar, ag, ab = int(color_a[1:3], 16), int(color_a[3:5], 16), int(color_a[5:7], 16)
+    br, bg, bb = int(color_b[1:3], 16), int(color_b[3:5], 16), int(color_b[5:7], 16)
+    rr = int(ar + (br - ar) * t)
+    rg = int(ag + (bg - ag) * t)
+    rb = int(ab + (bb - ab) * t)
+    return f"#{rr:02x}{rg:02x}{rb:02x}"
+
+
+def _render_winrate_bar(canvas: "tk.Canvas", width: int, ratio: float) -> None:
+    """绘制胜率条：填充区域使用暗红→中性灰青→青绿三段渐变，并在 50% 处标记温饱基准线。"""
+    canvas.delete("all")
+    if width <= 0:
+        return
+    fill_px = max(0, int(ratio * width))
+    # 三段色板：暗红 → 中性灰青（50% 锚点）→ 青绿
+    color_low = "#5b3037"
+    color_mid = "#5c6d75"
+    color_high = "#3aa17e"
+    segments = 24
+    for i in range(segments):
+        x0 = int(fill_px * i / segments)
+        x1 = int(fill_px * (i + 1) / segments)
+        if x1 <= x0:
+            continue
+        # 段中心点对应的归一化位置（0~1 映射回 0.40~0.60 真实胜率空间）
+        center_ratio = (i + 0.5) / segments * ratio if ratio > 0 else 0
+        if center_ratio < 0.5:
+            seg_color = _lerp_hex_color(color_low, color_mid, center_ratio / 0.5)
+        else:
+            seg_color = _lerp_hex_color(color_mid, color_high, (center_ratio - 0.5) / 0.5)
+        canvas.create_rectangle(x0, 0, x1, 4, fill=seg_color, outline="")
+    # 50% 温饱基准线（胜率 0.50 对应归一化 ratio=0.5）
+    baseline_x = int(width * 0.5)
+    canvas.create_line(baseline_x, 0, baseline_x, 4, fill="#6c7086", dash=(2, 2))
+
+
 class HextechUI:
     """桌面伴生主界面，负责持有 UI 状态并协调后台运行时任务。"""
 
@@ -73,6 +112,10 @@ class HextechUI:
         self._manual_move_timestamp = 0.0
         self._last_client_rect = None
         self._last_overlay_target_pos = None
+        # 折叠态标记：True 时悬浮窗收成 80 px 极窄列表，让出主屏视线
+        self._collapsed = False
+        # 首次显示是否已完成吸附定位，用于解决"必须先移动客户端窗口才会跟随"的体感问题
+        self._overlay_position_initialized = False
         self._hero_preload_ready = {}
         self._hero_preload_pending = set()
         self._hero_preload_lock = threading.Lock()
@@ -131,6 +174,8 @@ class HextechUI:
         self.title_bar.pack(side=tk.LEFT, padx=(10, 0))
         self.title_bar.bind("<ButtonPress-1>", self.start_move)
         self.title_bar.bind("<B1-Motion>", self.do_move)
+        # 双击标题栏在 320 px / 80 px 之间切换，便于单屏游戏窗口模式让出主屏视线
+        self.title_bar.bind("<Double-Button-1>", self._toggle_collapse)
 
         self.canvas = tk.Canvas(self.root, bg="#1e1e2e", highlightthickness=0)
         self.list_frame = tk.Frame(self.canvas, bg="#1e1e2e")
@@ -269,6 +314,24 @@ class HextechUI:
             img_label.pack(side=tk.LEFT, padx=(0, 10))
             threading.Thread(target=lambda i=item["id"], l=img_label: self._load_and_set_img(i, l), daemon=True).start()
 
+            # 折叠态只渲染头像 + T 级标签，省掉胜率/出场率/胜率条
+            if self._collapsed:
+                tk.Label(
+                    card,
+                    text=item["tier"],
+                    font=("Microsoft YaHei", 9, "bold"),
+                    fg="#cdd6f4",
+                    bg="#313244",
+                ).pack(side=tk.LEFT)
+
+                def bind_collapsed_click(widget, cid, name):
+                    widget.bind("<Button-1>", lambda e, c=cid, n=name: self.on_hero_click(c, n))
+                    for child in widget.winfo_children():
+                        bind_collapsed_click(child, cid, name)
+
+                bind_collapsed_click(card, item["id"], item["name"])
+                continue
+
             info = tk.Frame(card, bg="#313244")
             info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -292,15 +355,12 @@ class HextechUI:
 
             bar_canvas = tk.Canvas(info, height=4, bg="#1e1e2e", highlightthickness=0)
             bar_canvas.pack(fill=tk.X, pady=(4, 0))
-            bar_color = "#a6e3a1" if item["win"] >= 0.51 else ("#f9e2af" if item["win"] >= 0.48 else "#f38ba8")
             ratio = max(0, min(1, (item["win"] - 0.40) / 0.20))
 
+            # 渐变填充 + 50% 温饱基准线，替代纯红黄绿三色阈值
             bar_canvas.bind(
                 "<Configure>",
-                lambda e, c=bar_canvas, r=ratio, col=bar_color: (
-                    c.delete("all"),
-                    c.create_rectangle(0, 0, int(r * e.width), 4, fill=col, outline=""),
-                ),
+                lambda e, c=bar_canvas, r=ratio: _render_winrate_bar(c, e.width, r),
             )
 
             def bind_click(widget, cid, name):
@@ -317,6 +377,8 @@ class HextechUI:
         self.x, self.y = event.x, event.y
         self._auto_follow_enabled = False
         self._manual_move_timestamp = time.time()
+        # 在状态栏给出明确的"已挂起自动对齐"提示，避免玩家误以为跟随失灵
+        self._set_status("[手动] 自动对齐已挂起 8s", "#f9e2af")
 
     def do_move(self, event):
         next_x = self.root.winfo_x() + (event.x - self.x)
@@ -338,9 +400,28 @@ class HextechUI:
             logger.debug("更新悬浮窗位置失败。", exc_info=True)
 
     def _resume_auto_follow(self) -> None:
+        was_manual = not self._auto_follow_enabled
         self._auto_follow_enabled = True
         self._manual_move_timestamp = 0.0
         self._last_client_rect = None
+        # 恢复自动跟随后把状态栏回写成"实时数据"基线文案，避免一直停留在挂起提示
+        if was_manual:
+            self._run_on_ui_thread(lambda: self._set_status("实时数据已挂载", "#a6e3a1"))
+
+    def _toggle_collapse(self, _event=None) -> None:
+        """切换悬浮窗折叠态：展开 320 px / 折叠 80 px。"""
+        self._collapsed = not self._collapsed
+        if self._collapsed:
+            self.root.geometry("80x600")
+            # 折叠态隐藏底部状态栏，保留头像列表本体
+            if hasattr(self, "status_label") and self.status_label.winfo_exists():
+                self.status_label.pack_forget()
+        else:
+            self.root.geometry("320x600")
+            if hasattr(self, "status_label") and self.status_label.winfo_exists():
+                self.status_label.pack(side=tk.BOTTOM, pady=5)
+        # 折叠态切换后立即按当前英雄列表重新渲染，让卡片走极窄分支
+        self.update_ui(list(self.current_hero_ids))
 
     def _manual_follow_cooldown_elapsed(self, cooldown_seconds: float) -> bool:
         if self._manual_move_timestamp <= 0:
