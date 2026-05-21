@@ -824,6 +824,8 @@
 
         let tabId = Math.random().toString(36).substring(2, 9);
         const bc = new BroadcastChannel('hextech_nexus_channel');
+        // 白名单集合：在该集合中的 tabId 不会触发对方休眠，用于"双开此视口"工作流
+        const dormancyAllowList = new Set();
 
         function dormancyDormant() {
             if (document.getElementById('dormancyOverlay')) return;
@@ -840,7 +842,10 @@
                     <p class="text-xs text-gray-400 leading-relaxed mb-6">
                         已在其他悬浮窗/标签页中激活了新的枢纽，当前窗口已自动进入魔法休眠状态，以降低系统资源开销。
                     </p>
-                    <button type="button" id="btnReactivate" class="dormancy-btn">重新激活此窗口</button>
+                    <div class="dormancy-btn-row">
+                        <button type="button" id="btnReactivate" class="dormancy-btn">重新激活此窗口</button>
+                        <button type="button" id="btnAllowDuo" class="dormancy-btn dormancy-btn-secondary">双开此视口</button>
+                    </div>
                 </div>
             `;
             document.body.appendChild(overlay);
@@ -863,9 +868,25 @@
             loadHextechs();
         }
 
+        // 双开模式：把本标签加入白名单广播给其他标签，对方收到后不再对本 tabId 触发休眠
+        function allowDuoTab() {
+            const overlay = document.getElementById('dormancyOverlay');
+            if (overlay) {
+                overlay.remove();
+            }
+            dormancyAllowList.add(tabId);
+            bc.postMessage({ type: 'allow_duo', id: tabId });
+            connectWS();
+            loadHextechs();
+        }
+
         bc.onmessage = (e) => {
             if (e.data.type === 'new_tab_opened' && e.data.id !== tabId) {
+                // 对方在白名单内则不强制本标签休眠
+                if (dormancyAllowList.has(e.data.id)) return;
                 dormancyDormant();
+            } else if (e.data.type === 'allow_duo' && e.data.id !== tabId) {
+                dormancyAllowList.add(e.data.id);
             }
         };
         bc.postMessage({ type: 'new_tab_opened', id: tabId });
@@ -873,6 +894,8 @@
         document.addEventListener('click', (event) => {
             if (event.target && event.target.id === 'btnReactivate') {
                 reactivateTab();
+            } else if (event.target && event.target.id === 'btnAllowDuo') {
+                allowDuoTab();
             }
         });
 

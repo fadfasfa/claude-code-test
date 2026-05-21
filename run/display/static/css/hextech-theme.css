@@ -364,6 +364,77 @@ body {
     transform: translateY(-1px);
 }
 
+/* 休眠卡片内的双按钮布局：主按钮"重新激活" + 次按钮"双开此视口" */
+.dormancy-btn-row {
+    display: flex;
+    gap: 0.6rem;
+    width: 100%;
+    margin-top: 1.75rem;
+}
+.dormancy-btn-row .dormancy-btn {
+    margin-top: 0;
+    flex: 1;
+}
+
+/* 次级按钮：低饱和、暗色调，避免抢夺主按钮视线焦点 */
+.dormancy-btn-secondary {
+    background: linear-gradient(135deg, rgba(88, 166, 255, 0.16), rgba(34, 211, 238, 0.08));
+    border: 1px solid rgba(88, 166, 255, 0.32);
+    color: #cfe7ff;
+}
+.dormancy-btn-secondary:hover {
+    background: linear-gradient(135deg, rgba(88, 166, 255, 0.28), rgba(34, 211, 238, 0.14));
+    border-color: rgba(88, 166, 255, 0.52);
+    box-shadow: 0 0 12px rgba(88, 166, 255, 0.22);
+}
+
+/* 首启引导气泡：右下角更显眼的提示，带图标与关闭按钮 */
+.hx-onboarding-toast {
+    position: fixed;
+    right: 28px;
+    bottom: 28px;
+    z-index: 9999;
+    max-width: 320px;
+    padding: 16px 18px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, rgba(15, 30, 48, 0.95), rgba(8, 18, 32, 0.95));
+    border: 1px solid rgba(88, 166, 255, 0.45);
+    color: #e6f1ff;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 320ms ease, transform 320ms ease;
+}
+.hx-onboarding-toast.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+.hx-onboarding-toast .title {
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    font-size: 13px;
+    color: #aad6ff;
+    margin-bottom: 6px;
+}
+.hx-onboarding-toast .body {
+    font-size: 12px;
+    line-height: 1.6;
+    color: #c9d1d9;
+}
+.hx-onboarding-toast .close {
+    position: absolute;
+    top: 6px;
+    right: 10px;
+    background: transparent;
+    border: 0;
+    color: #8b949e;
+    font-size: 14px;
+    cursor: pointer;
+}
+.hx-onboarding-toast .close:hover {
+    color: #f0f6fc;
+}
+
 @keyframes dormancyFloat {
     0%, 100% { transform: rotate(45deg) translateY(0); }
     50% { transform: rotate(45deg) translateY(-8px); }
