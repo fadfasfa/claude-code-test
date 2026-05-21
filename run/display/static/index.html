@@ -1389,12 +1389,40 @@
             });
         }
 
+        // 首启引导气泡：用 localStorage 判定首次，仅在 WS 第一次连通时弹出，5s 自动消失
+        function showOnboardingToastOnce() {
+            try {
+                if (localStorage.getItem('hextech_onboarded') === '1') return;
+            } catch (_e) {
+                // 隐私模式下 localStorage 不可用，干脆跳过引导，避免重复打扰
+                return;
+            }
+            const toast = document.createElement('div');
+            toast.className = 'hx-onboarding-toast';
+            toast.innerHTML = `
+                <button type="button" class="close" aria-label="关闭">✕</button>
+                <div class="title">海克斯核心共鸣成功</div>
+                <div class="body">已自动锁定本地备战席。可按 <kbd class="hx-search-hint">/</kbd> 或 <kbd class="hx-search-hint">Ctrl+K</kbd> 唤起搜索框。</div>
+            `;
+            document.body.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add('is-visible'));
+            const dismiss = () => {
+                toast.classList.remove('is-visible');
+                setTimeout(() => toast.remove(), 320);
+                try { localStorage.setItem('hextech_onboarded', '1'); } catch (_e) {}
+            };
+            toast.querySelector('.close').addEventListener('click', dismiss);
+            setTimeout(dismiss, 5000);
+        }
+
         function connectWS() {
             ws = new WebSocket(WS_URL + '/ws');
             const status = document.getElementById('wsStatus');
 
             ws.onopen = () => {
                 status.innerHTML = '<span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span><span class="text-green-400">已连接</span>';
+                // 首次握手成功展示一次新手引导气泡，之后不再打扰
+                showOnboardingToastOnce();
             };
 
             ws.onclose = () => {
