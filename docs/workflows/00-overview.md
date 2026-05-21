@@ -5,8 +5,8 @@
 ## Default Flow
 
 1. 先运行 `git status --short`，发现非本轮修改时先报告并避免混入。
-2. 只读探查可以直接执行；凡涉及非只读探查、非平凡文件修改、workflow/config/skill/hook 修改、git 写操作、worktree 操作或破坏性命令，必须先输出计划并等待用户确认。
-3. 普通极小单文件修改若不涉及 workflow/config/skill/hook、git 写、worktree 或破坏性操作，且用户当前轮明确要求直接执行，可以跳过计划确认；仍需按授权范围小步修改并验证。
+2. 只读探查可以直接执行；用户当前轮明确要求实现、修复、调整或修改时，普通仓库文件编辑可以直接执行，仍需按授权范围小步修改并验证。
+3. 涉及 workflow/config/skill/hook 修改、git 写操作、worktree 操作、删除/移动/覆盖等破坏性命令、越界路径、敏感文件、依赖或环境变更、外部账户或真实网络副作用时，必须先输出计划并等待用户确认。
 4. 计划必须包含：`git status`、预计修改文件、修改内容、不修改范围、验证命令、Git 处理方式；确认后按计划小步执行，范围变化时重新确认。
 5. 入口选择：
    - Claude Code 入口读 `CLAUDE.md`、`PROJECT.md`、`docs/index.md`。
@@ -36,4 +36,4 @@
 - Claude Code 原生本机计划草稿可写入 `.claude/plans/**`，不需要额外授权或特殊条件，默认不提交。
 - 不默认生成 `docs/plans/*.md`、Markdown report、probe 或 archive 证据文件。
 
-当前基线保持轻量：非平凡修改先计划，经确认后执行，验证后报告，commit 需单独授权。
+当前基线保持轻量：普通仓库编辑按当前轮任务直接执行，高风险类别先计划，经确认后执行，验证后报告，commit 需单独授权。
