@@ -68,6 +68,7 @@ def _resolve_config_dir(config_dir: Optional[str]) -> str:
     # load_apexlol_hextech_map 每次都走 apexlol.info 远端拉取，单个海克斯卡片就要几秒
     # 到几十秒；指向真实存放本地映射的 data/static 目录，可让所有 caller 命中本地缓存。
     try:
+        # version_sync 会反向导入 normalize_augment_name，保持函数内导入以避免模块初始化循环。
         from scraping.version_sync import STATIC_DATA_DIR
         return STATIC_DATA_DIR
     except ImportError:

@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from processing.alias_search import load_manual_alias_index
 from processing.orchestrator import rebuild_api_cache_if_needed
-from processing.runtime_store import load_precomputed_hextech_for_hero, normalize_runtime_df
+from processing.runtime_store import load_precomputed_hextech_for_hero
 from processing.view_adapter import process_champions_data, process_hextechs_data
 from scraping.augment_catalog import load_augment_icon_manifest
 from scraping.version_sync import STATIC_DATA_DIR
@@ -202,6 +202,7 @@ def _synergy_item_to_compat_string(item: dict) -> str:
 
 
 _SHORT_ALIAS_TERMS = {"q", "w", "e", "r", "ad", "ap", "aa"}
+_PARTIAL_SYNERGY_OVERLAP_MIN_SHARED = 2
 
 
 def _normalize_match_text(value) -> str:
@@ -241,19 +242,51 @@ def _synergy_items_signature(items: list[dict]) -> str:
     return json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def _duplicate_synergy_ids(data: dict, target_signature: str) -> list[str]:
-    if not target_signature:
-        return []
+def _synergy_item_overlap_key(item: dict) -> str:
+    names = sorted(
+        _normalize_match_text(name)
+        for name in (item.get("augment_names") or [])
+        if _normalize_match_text(name)
+    )
+    return json.dumps(
+        {
+            "names": names,
+            "rating": _normalize_match_text(item.get("rating") or ""),
+            "tag": _normalize_match_text(item.get("tag") or ""),
+            "content": _normalize_match_text(item.get("content") or ""),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
-    duplicate_ids: list[str] = []
+
+def _synergy_item_overlap_keys(items: list[dict]) -> set[str]:
+    return {_synergy_item_overlap_key(item) for item in items if isinstance(item, dict) and item.get("content")}
+
+
+def _synergy_overlap_matches(data: dict, target_items: list[dict]) -> dict[str, str]:
+    """查找整组重复或局部重叠的协同条目，作为 API 侧污染兜底。"""
+    target_signature = _synergy_items_signature(target_items)
+    if not target_signature:
+        return {}
+
+    target_keys = _synergy_item_overlap_keys(target_items)
+    matches: dict[str, str] = {}
     for key, value in data.items():
         if not isinstance(value, dict):
             continue
         raw_synergies = value.get("synergies", [])
         items = _normalize_synergy_items(value.get("synergy_items", []), raw_synergies)
         if _synergy_items_signature(items) == target_signature:
-            duplicate_ids.append(str(key))
-    return duplicate_ids if len(duplicate_ids) > 1 else []
+            matches[str(key)] = "exact"
+            continue
+
+        item_keys = _synergy_item_overlap_keys(items)
+        shared_count = len(target_keys & item_keys)
+        if shared_count >= _PARTIAL_SYNERGY_OVERLAP_MIN_SHARED:
+            matches[str(key)] = "overlap"
+    return matches if len(matches) > 1 else {}
 
 
 def _find_term_hits(text: str, terms: list[str]) -> list[str]:
@@ -266,9 +299,9 @@ def _find_term_hits(text: str, terms: list[str]) -> list[str]:
     return hits
 
 
-def _synergy_quarantine_reason(champ_id: str, synergy_items: list[dict], duplicate_ids: list[str]) -> dict:
-    """重复整组联动时，用英雄名词命中判断是否应隐藏污染数据。"""
-    peers = [item for item in duplicate_ids if item != str(champ_id)]
+def _synergy_quarantine_reason(champ_id: str, synergy_items: list[dict], overlap_matches: dict[str, str]) -> dict:
+    """用重复/重叠条目与英雄名词命中判断是否应隐藏污染数据。"""
+    peers = [item for item in overlap_matches if item != str(champ_id)]
     if not peers:
         return {}
 
@@ -281,9 +314,19 @@ def _synergy_quarantine_reason(champ_id: str, synergy_items: list[dict], duplica
             foreign_hits.append({"id": other_id, "terms": hits[:5]})
 
     if foreign_hits and not own_hits:
-        return {"reason": "foreign_champion_terms", "duplicate_with": peers, "foreign_hits": foreign_hits}
-    if not own_hits:
-        return {"reason": "ambiguous_duplicate_synergy_items", "duplicate_with": peers, "foreign_hits": foreign_hits}
+        return {
+            "reason": "foreign_champion_terms",
+            "duplicate_with": peers,
+            "match_types": {peer: overlap_matches.get(peer) for peer in peers},
+            "foreign_hits": foreign_hits,
+        }
+    if any(overlap_matches.get(peer) == "exact" for peer in peers) and not own_hits:
+        return {
+            "reason": "ambiguous_duplicate_synergy_items",
+            "duplicate_with": peers,
+            "match_types": {peer: overlap_matches.get(peer) for peer in peers},
+            "foreign_hits": foreign_hits,
+        }
     return {}
 
 
@@ -313,9 +356,9 @@ def _build_synergy_api_payload(data: dict, champ_id: str) -> dict:
         synergy_data.get("synergy_items", []) if synergy_data else [],
         raw_synergies,
     )
-    duplicate_ids = _duplicate_synergy_ids(data, _synergy_items_signature(synergy_items))
-    if duplicate_ids:
-        quarantine = _synergy_quarantine_reason(str(lookup_id), synergy_items, duplicate_ids)
+    overlap_matches = _synergy_overlap_matches(data, synergy_items)
+    if overlap_matches:
+        quarantine = _synergy_quarantine_reason(str(lookup_id), synergy_items, overlap_matches)
         if quarantine:
             return {
                 "synergies": [],
@@ -521,33 +564,14 @@ def register_routes(app: FastAPI) -> None:
         _request_precomputed_hextech_rebuild()
         web_runtime.request_background_refresh(force=False)
 
-        def _ensure_schema(df_raw):
-            """归一列名并补齐 process_hextechs_data schema 校验所需的衍生列。
-
-            live snapshot 列名带空格 (如 "英雄 ID")，且某些 CSV 版本可能缺少 "胜率差" 或 "综合得分" 衍生列，
-            导致 validate_runtime_csv_schema 抛错并把整个查询打回 _empty_hextech_result。
-            这里统一在路由层补齐，避免数据源差异传到下游。
-            """
-            if df_raw is None or df_raw.empty:
-                return df_raw
-            df_norm = normalize_runtime_df(df_raw)
-            if "胜率差" not in df_norm.columns and {"海克斯胜率", "英雄胜率"}.issubset(df_norm.columns):
-                df_norm = df_norm.copy()
-                df_norm["胜率差"] = df_norm["海克斯胜率"] - df_norm["英雄胜率"]
-            if "综合得分" not in df_norm.columns:
-                df_norm = df_norm.copy()
-                df_norm["综合得分"] = 0.0
-            return df_norm
-
         live_df = await asyncio.to_thread(web_runtime.get_live_hextech_snapshot_df, canonical_name)
         if not live_df.empty:
-            adapted = _ensure_schema(live_df)
             # process_hextechs_data 内部会触发 build_augment_catalog_lookup（cold-start 走网络拉取 manifest），
             # 必须放到线程池里执行，否则会阻塞 uvicorn 单线程 event loop，使其他请求堆积 CLOSE_WAIT
-            content = await asyncio.to_thread(process_hextechs_data, adapted, canonical_name)
+            content = await asyncio.to_thread(process_hextechs_data, live_df, canonical_name)
             return JSONResponse(content=content)
 
-        fallback_df = _ensure_schema(web_runtime.get_df())
+        fallback_df = web_runtime.get_df()
         payload = await asyncio.to_thread(process_hextechs_data, fallback_df, canonical_name)
         payload["loading"] = True
         payload["ready"] = False

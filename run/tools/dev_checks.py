@@ -204,9 +204,21 @@ def check_detail_question_mark_augment_guard() -> None:
     assert "if (isQuestionMarkAugmentName(original))" in detail_text
     assert '<span class="${badgeText} opacity-70' not in detail_text
     assert "dataset.synergyLoaded" in detail_text
+    assert re.fullmatch(r"[?？]{3,}", "？？？")
+    assert not re.fullmatch(r"[?？]{3,}", "？？？ 提升攻速 25%")
 
     icon_map = json.loads((RUN_DIR / "data" / "indexes" / "augment.name-to-icon.v1.json").read_text(encoding="utf-8"))
     assert icon_map.get("？？？") == "/assets/missingping_small.png"
+
+
+def check_static_css_single_mount_contract() -> None:
+    index_text = (RUN_DIR / "display" / "static" / "index.html").read_text(encoding="utf-8")
+    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
+    web_server_text = (RUN_DIR / "display" / "web_server.py").read_text(encoding="utf-8")
+
+    assert 'href="/static/css/hextech-theme.css"' in index_text
+    assert 'href="/static/css/hextech-theme.css"' in detail_text
+    assert 'app.mount("/css"' not in web_server_text
 
 
 def check_heal_worker_contract() -> None:
@@ -388,6 +400,9 @@ def check_precomputed_cache_freshness() -> None:
             assert precomputed_cache._cache_matches_latest_csv(str(cache_file))
             assert precomputed_cache._cache_matches_latest_csv(str(cache_file))
             assert read_count["value"] == 1
+            os.utime(cache_file, (4000, 4000))
+            assert precomputed_cache._cache_matches_latest_csv(str(cache_file))
+            assert read_count["value"] == 2
 
 
 def check_apex_source_snapshot_policy() -> None:
@@ -568,6 +583,16 @@ def check_hextech_source_parser() -> None:
     assert result["comprehensive"][0]["海克斯名称"] == "源站第一"
     assert result["top_10_overall"][0]["源站排名"] == 1
     assert result["winrate_only"][0]["海克斯名称"] == "高胜率后排"
+
+    missing_derived_df = df.drop(columns=["胜率差", "综合得分"]).rename(columns={"英雄ID": "英雄 ID"})
+    missing_result = process_hextechs_data(
+        missing_derived_df,
+        "堕落天使",
+        catalog_lookup={},
+        use_runtime_cache=False,
+    )
+    assert missing_result["comprehensive"]
+    assert missing_result["comprehensive"][0]["海克斯名称"] == "源站第一"
 
 
 def _write_json(path: Path, payload: dict, mtime: int = 1000) -> Path:
@@ -917,6 +942,43 @@ def check_synergy_api_quarantines_duplicate_pollution() -> None:
     assert viktor_payload["status"] == "quarantined"
     assert viktor_payload["synergy_items"] == []
     assert viktor_payload["reason"] == "foreign_champion_terms"
+    assert viktor_payload["match_types"] == {"254": "exact"}
+
+    partial_viktor_items = [
+        *polluted_items,
+        {
+            "augment_names": ["珠光护手"],
+            "tier": "黄金",
+            "rating": "S",
+            "tag": "强力联动",
+            "author": "ApexLoL",
+            "is_original": True,
+            "content": "蔚的爆发玩法",
+            "upvotes": 0,
+            "downvotes": 0,
+        },
+        {
+            "augment_names": ["机械飞升"],
+            "tier": "黄金",
+            "rating": "A",
+            "tag": "强力联动",
+            "author": "ApexLoL",
+            "is_original": True,
+            "content": "普通法师联动",
+            "upvotes": 0,
+            "downvotes": 0,
+        },
+    ]
+    partial_data = {
+        "254": {"synergy_items": partial_viktor_items[:2]},
+        "112": {"synergy_items": partial_viktor_items},
+    }
+    with patch.object(web_runtime, "ensure_champion_cache", return_value=core):
+        partial_payload = _build_synergy_api_payload(partial_data, "112")
+
+    assert partial_payload["status"] == "quarantined"
+    assert partial_payload["reason"] == "foreign_champion_terms"
+    assert partial_payload["match_types"] == {"254": "overlap"}
 
 
 def check_synergy_playwright_calibrator_contract() -> None:
@@ -1289,6 +1351,7 @@ def run_default_checks() -> None:
     check_synergy_snapshot_store()
     check_synergy_structured_payloads()
     check_detail_question_mark_augment_guard()
+    check_static_css_single_mount_contract()
     check_synergy_alias_collision_guard()
     check_synergy_api_quarantines_duplicate_pollution()
     check_synergy_playwright_calibrator_contract()

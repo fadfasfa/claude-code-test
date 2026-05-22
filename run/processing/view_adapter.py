@@ -56,6 +56,17 @@ def _validate_runtime_schema(df: pd.DataFrame, source: str) -> bool:
         return False
 
 
+def _normalize_view_df(df: pd.DataFrame) -> pd.DataFrame:
+    """复用运行数据标准化入口，保证所有视图调用方都获得同一份列修复。"""
+    try:
+        from processing.runtime_store import normalize_runtime_df
+
+        return normalize_runtime_df(df)
+    except Exception as exc:
+        logging.warning("运行数据标准化失败：%s", exc)
+        return df
+
+
 def _get_champion_maps():
     # 构建英雄名称到 ID/英文名的映射。
     global _champion_core_cache
@@ -142,6 +153,7 @@ def process_champions_data(
     # 计算全英雄榜单，按贝叶斯平滑和标准分综合排序。
     if df.empty:
         return []
+    df = _normalize_view_df(df)
     if not _validate_runtime_schema(df, "process_champions_data"):
         return []
 
@@ -408,6 +420,8 @@ def process_hextechs_data(
 ) -> Dict[str, List[Dict[str, Any]]]:
     # 计算单英雄海克斯结果，返回总榜、综合榜、纯胜率榜和分阶级榜单
     # 计算时会引入置信度衰减，避免低样本数据干扰排序
+    if not df.empty:
+        df = _normalize_view_df(df)
     if log_columns:
         logging.info("处理海克斯数据列：%s", df.columns.tolist())
 

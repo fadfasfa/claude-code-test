@@ -127,6 +127,9 @@ class HextechUI:
         self._last_live_state_source = ""
         self._last_redirect_success_base = ""
         self._last_redirect_success_at = 0.0
+        self._ui_render_in_progress = False
+        self._pending_ui_refresh = None
+        self._collapse_render_after_id = None
 
         self.web_process = None
         self._start_web_server()
@@ -269,106 +272,118 @@ class HextechUI:
         ui_runtime.load_and_set_img(self, champ_id, label)
 
     def update_ui(self, hero_ids):
-        for widget in self.list_frame.winfo_children():
-            widget.destroy()
-
-        with self._df_lock:
-            is_empty = self.df.empty
-
-        if not hero_ids or is_empty:
-            tk.Label(
-                self.list_frame,
-                text="当前没有可用英雄，或数据仍在同步中...",
-                fg="#f9e2af",
-                bg="#1e1e2e",
-                font=("Microsoft YaHei", 10),
-            ).pack(pady=20)
+        if self._ui_render_in_progress:
+            self._pending_ui_refresh = list(hero_ids)
             return
 
-        self.status_label.config(text="实时数据已挂载", fg="#a6e3a1")
-        display_list = []
+        self._ui_render_in_progress = True
+        try:
+            for widget in self.list_frame.winfo_children():
+                widget.destroy()
 
-        with self._df_lock:
-            current_df = self.df
+            with self._df_lock:
+                is_empty = self.df.empty
 
-        id_col = detect_hero_id_column(current_df)
-        for hid in hero_ids:
-            if id_col:
-                h_data = current_df[current_df[id_col] == hid]
-                if not h_data.empty:
-                    row = h_data.iloc[0]
-                    id_val = row.get(id_col, row.get("英雄 ID", row.get("ID", hid)))
-                    name = row.get("英雄名称", row.get("英雄名", "未知"))
-                    win = float(row.get("英雄胜率", row.get("胜率", 0.5)))
-                    pick = float(row.get("英雄出场率", row.get("出场率", 0.1)))
-                    tier = row.get("英雄评级", row.get("评级", "T?"))
-                    display_list.append({"id": id_val, "name": name, "win": win, "pick": pick, "tier": tier})
-
-        display_list = sorted(display_list, key=lambda item: item["win"], reverse=True)
-
-        for item in display_list:
-            card = tk.Frame(self.list_frame, bg="#313244", pady=5, padx=5, cursor="hand2")
-            card.pack(fill=tk.X, pady=4, padx=(0, 10))
-
-            img_label = tk.Label(card, bg="#313244")
-            img_label.pack(side=tk.LEFT, padx=(0, 10))
-            threading.Thread(target=lambda i=item["id"], l=img_label: self._load_and_set_img(i, l), daemon=True).start()
-
-            # 折叠态只渲染头像 + T 级标签，省掉胜率/出场率/胜率条
-            if self._collapsed:
+            if not hero_ids or is_empty:
                 tk.Label(
-                    card,
-                    text=item["tier"],
-                    font=("Microsoft YaHei", 9, "bold"),
+                    self.list_frame,
+                    text="当前没有可用英雄，或数据仍在同步中...",
+                    fg="#f9e2af",
+                    bg="#1e1e2e",
+                    font=("Microsoft YaHei", 10),
+                ).pack(pady=20)
+                return
+
+            self.status_label.config(text="实时数据已挂载", fg="#a6e3a1")
+            display_list = []
+
+            with self._df_lock:
+                current_df = self.df
+
+            id_col = detect_hero_id_column(current_df)
+            for hid in hero_ids:
+                if id_col:
+                    h_data = current_df[current_df[id_col] == hid]
+                    if not h_data.empty:
+                        row = h_data.iloc[0]
+                        id_val = row.get(id_col, row.get("英雄 ID", row.get("ID", hid)))
+                        name = row.get("英雄名称", row.get("英雄名", "未知"))
+                        win = float(row.get("英雄胜率", row.get("胜率", 0.5)))
+                        pick = float(row.get("英雄出场率", row.get("出场率", 0.1)))
+                        tier = row.get("英雄评级", row.get("评级", "T?"))
+                        display_list.append({"id": id_val, "name": name, "win": win, "pick": pick, "tier": tier})
+
+            display_list = sorted(display_list, key=lambda item: item["win"], reverse=True)
+
+            for item in display_list:
+                card = tk.Frame(self.list_frame, bg="#313244", pady=5, padx=5, cursor="hand2")
+                card.pack(fill=tk.X, pady=4, padx=(0, 10))
+
+                img_label = tk.Label(card, bg="#313244")
+                img_label.pack(side=tk.LEFT, padx=(0, 10))
+                threading.Thread(target=lambda i=item["id"], l=img_label: self._load_and_set_img(i, l), daemon=True).start()
+
+                # 折叠态只渲染头像 + T 级标签，省掉胜率/出场率/胜率条
+                if self._collapsed:
+                    tk.Label(
+                        card,
+                        text=item["tier"],
+                        font=("Microsoft YaHei", 9, "bold"),
+                        fg="#cdd6f4",
+                        bg="#313244",
+                    ).pack(side=tk.LEFT)
+
+                    def bind_collapsed_click(widget, cid, name):
+                        widget.bind("<Button-1>", lambda e, c=cid, n=name: self.on_hero_click(c, n))
+                        for child in widget.winfo_children():
+                            bind_collapsed_click(child, cid, name)
+
+                    bind_collapsed_click(card, item["id"], item["name"])
+                    continue
+
+                info = tk.Frame(card, bg="#313244")
+                info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+                title = self.core_data.get(str(item["id"]), {}).get("title", "")
+                full_name = f"{item['name']} {title}".strip() if title else item["name"]
+
+                tk.Label(
+                    info,
+                    text=f"[{item['tier']}] {full_name}",
+                    font=("Microsoft YaHei", 10, "bold"),
                     fg="#cdd6f4",
                     bg="#313244",
-                ).pack(side=tk.LEFT)
+                ).pack(anchor="w")
+                tk.Label(
+                    info,
+                    text=f"胜率: {item['win']:.1%} | 出场: {item['pick']:.1%}",
+                    font=("Microsoft YaHei", 9),
+                    fg="#a6adc8",
+                    bg="#313244",
+                ).pack(anchor="w", pady=(3, 0))
 
-                def bind_collapsed_click(widget, cid, name):
+                bar_canvas = tk.Canvas(info, height=4, bg="#1e1e2e", highlightthickness=0)
+                bar_canvas.pack(fill=tk.X, pady=(4, 0))
+                ratio = max(0, min(1, (item["win"] - 0.40) / 0.20))
+
+                # 渐变填充 + 50% 温饱基准线，替代纯红黄绿三色阈值
+                bar_canvas.bind(
+                    "<Configure>",
+                    lambda e, c=bar_canvas, r=ratio: _render_winrate_bar(c, e.width, r),
+                )
+
+                def bind_click(widget, cid, name):
                     widget.bind("<Button-1>", lambda e, c=cid, n=name: self.on_hero_click(c, n))
                     for child in widget.winfo_children():
-                        bind_collapsed_click(child, cid, name)
+                        bind_click(child, cid, name)
 
-                bind_collapsed_click(card, item["id"], item["name"])
-                continue
-
-            info = tk.Frame(card, bg="#313244")
-            info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-            title = self.core_data.get(str(item["id"]), {}).get("title", "")
-            full_name = f"{item['name']} {title}".strip() if title else item["name"]
-
-            tk.Label(
-                info,
-                text=f"[{item['tier']}] {full_name}",
-                font=("Microsoft YaHei", 10, "bold"),
-                fg="#cdd6f4",
-                bg="#313244",
-            ).pack(anchor="w")
-            tk.Label(
-                info,
-                text=f"胜率: {item['win']:.1%} | 出场: {item['pick']:.1%}",
-                font=("Microsoft YaHei", 9),
-                fg="#a6adc8",
-                bg="#313244",
-            ).pack(anchor="w", pady=(3, 0))
-
-            bar_canvas = tk.Canvas(info, height=4, bg="#1e1e2e", highlightthickness=0)
-            bar_canvas.pack(fill=tk.X, pady=(4, 0))
-            ratio = max(0, min(1, (item["win"] - 0.40) / 0.20))
-
-            # 渐变填充 + 50% 温饱基准线，替代纯红黄绿三色阈值
-            bar_canvas.bind(
-                "<Configure>",
-                lambda e, c=bar_canvas, r=ratio: _render_winrate_bar(c, e.width, r),
-            )
-
-            def bind_click(widget, cid, name):
-                widget.bind("<Button-1>", lambda e, c=cid, n=name: self.on_hero_click(c, n))
-                for child in widget.winfo_children():
-                    bind_click(child, cid, name)
-
-            bind_click(card, item["id"], item["name"])
+                bind_click(card, item["id"], item["name"])
+        finally:
+            self._ui_render_in_progress = False
+            if self._pending_ui_refresh is not None:
+                pending = self._pending_ui_refresh
+                self._pending_ui_refresh = None
+                self.root.after_idle(lambda ids=pending: self.update_ui(ids))
 
     def window_sync_loop(self):
         ui_runtime.window_sync_loop(self)
@@ -420,7 +435,19 @@ class HextechUI:
             self.root.geometry("320x600")
             if hasattr(self, "status_label") and self.status_label.winfo_exists():
                 self.status_label.pack(side=tk.BOTTOM, pady=5)
-        # 折叠态切换后立即按当前英雄列表重新渲染，让卡片走极窄分支
+        self._schedule_current_hero_refresh()
+
+    def _schedule_current_hero_refresh(self) -> None:
+        """合并快速折叠/展开触发的重复渲染，降低头像异步加载竞态。"""
+        if self._collapse_render_after_id is not None:
+            try:
+                self.root.after_cancel(self._collapse_render_after_id)
+            except tk.TclError:
+                logger.debug("取消折叠态重渲染失败。", exc_info=True)
+        self._collapse_render_after_id = self.root.after(60, self._refresh_current_hero_ids)
+
+    def _refresh_current_hero_ids(self) -> None:
+        self._collapse_render_after_id = None
         self.update_ui(list(self.current_hero_ids))
 
     def _manual_follow_cooldown_elapsed(self, cooldown_seconds: float) -> bool:

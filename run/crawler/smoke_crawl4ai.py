@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import sys
 
 # Windows 控制台默认 gbk，crawl4ai 输出含 unicode 字符会崩，提前切到 UTF-8
@@ -50,7 +51,8 @@ async def smoke_fetch() -> None:
         sys.exit(1)
 
     if not result.markdown or "Example Domain" not in result.markdown:
-        print(f"[FAIL] 返回内容不符合预期，markdown 前 200 字：\n{str(result.markdown)[:200]}")
+        sample = json.dumps(str(result.markdown)[:200], ensure_ascii=False)
+        print(f"[FAIL] 返回内容不符合预期，markdown 前 200 字：{sample}")
         sys.exit(1)
 
     print(f"[OK] 抓取成功，markdown 长度={len(result.markdown)}，status={result.status_code}")
