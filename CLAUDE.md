@@ -36,8 +36,8 @@
 ## Safety
 
 - 不读取或修改 `.env`、`auth.json`、`local.yaml`、`proxies.json`、token、cookie、API key 或 proxy secret。
-- 禁止 `git push`，除非用户明确单独要求。
-- 禁止 `git reset --hard`、`git clean -fdx`、大范围删除和不可逆清理，除非用户明确批准。
+- `git push`、PR、merge、tag、release 等发布或合并动作未获用户明确授权时禁止主动执行；用户明确要求后由 agent 自行执行并验证结果，不得要求用户手动输入命令。
+- discard / 清理类操作（`git reset --hard`、`git clean -fdx`、`git restore`、覆盖式 checkout、大范围删除和不可逆清理）未获用户明确批准时禁止主动执行；批准后由 agent 按确认范围执行，不得要求用户手动输入命令。
 - 删除、覆盖、移动前先确认目标路径；需要备份时先确认备份成功。
 
 ## Retired Workflow Note

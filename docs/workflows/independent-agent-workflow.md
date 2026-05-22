@@ -31,11 +31,12 @@
 - commit 前必须有验证结果或明确的无法验证说明。
 - 只允许 `git add` 本轮修改文件，禁止 `git add .`。
 - commit message 应描述本轮目标，不混入非本轮修改。
-- `git push` 永远需要用户单独明确要求。
+- `git push` 永远需要用户单独明确要求；明确要求后由 agent 自行执行并验证远端状态，不要求用户手动输入命令。
 
 ## 高危操作确认
 
-- `git reset --hard`、`git clean -fdx`、大范围删除、批量移动、不可逆清理必须先得到用户明确批准。
+- push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 按确认范围完整执行并验证结果，不得要求用户手动输入命令。
+- `git reset --hard`、`git clean -fdx`、`git restore`、覆盖式 checkout、大范围删除、批量移动、不可逆清理必须先得到用户明确批准。
 - 删除、覆盖、移动前确认目标路径；需要备份时先确认备份成功。
 - 不读取或修改凭据、token、cookie、API key、proxy secret 或私有配置。
 - `run/**`、`QuantProject/**` 的业务逻辑只在明确任务范围内修改。

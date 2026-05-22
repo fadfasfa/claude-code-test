@@ -7,14 +7,14 @@
 - git 写操作必须先输出计划并等待用户确认；计划必须包含当前 `git status`、预计修改文件、修改内容、不修改范围、验证命令和 Git 处理方式。
 - 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才 commit。
 - commit 前只能暂存本轮修改文件，禁止 `git add .`。
-- 不默认执行 `push`、`clean`、`reset`、`rebase`、`stash`、`switch`、`branch` 或 worktree 写入。
+- 未获用户明确授权时，不主动执行 `push`、PR、merge、discard、`clean`、`reset`、`rebase`、`stash`、`switch`、`branch` 或 worktree 写入。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动。
 
 ## Explicit Authorization
 
-只有用户当前轮明确要求对应动作，才执行 commit、push、branch、checkout、switch、merge、rebase、reset、clean、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作。
+只有用户当前轮明确要求对应动作，才执行 commit、push、branch、checkout、switch、merge、rebase、reset、clean、restore、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作。
 
-commit 授权不隐含 push，push 不隐含 PR 或 merge。push 永远必须单独授权。
+commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不隐含其他清理动作。用户明确授权 push、PR、merge 或 discard 后，agent 必须按确认范围自行完整执行并验证结果，不得退回为“请你在本机终端执行命令”。
 
 ## Before Git Writes
 
@@ -30,4 +30,4 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge。push 永远必须单
 
 ## Publish Boundary
 
-push、PR、merge、amend、tag 和 release 类动作只在用户明确授权下执行。merge 不进入默认自动路径。
+push、PR、merge、amend、tag、release 和 discard 类动作只在用户明确授权下执行。授权后由 agent 完整执行、验证远端或本地状态，并在收尾报告结果；merge 不进入默认主动路径。

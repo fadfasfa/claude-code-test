@@ -15,7 +15,7 @@
 7. 默认在主仓小步执行；只有用户明确要求或上游任务标注 `requires_worktree: true` 时才进入 worktree 流程。
 8. 修改后运行最小有效验证；无法验证时说明原因。
 9. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
-10. 禁止 `git add .`；禁止默认 push；高危操作按 `07-high-risk-safety.md` 确认。
+10. 禁止 `git add .`；push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 自行完成并验证结果，不要求用户手动输入命令。高危操作按 `07-high-risk-safety.md` 确认。
 
 ## Canonical Docs
 

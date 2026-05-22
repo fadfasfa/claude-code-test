@@ -24,7 +24,7 @@
 - Claude Code 入口直接按 `CLAUDE.md`、`PROJECT.md`、`docs/index.md` 和任务上下文执行。
 - Codex 入口直接按 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和任务上下文执行。
 - 每次任务先 `git status --short`；修改后运行最小有效验证。
-- 验证通过后，按本轮授权只暂存本轮修改文件并提交；禁止 `git add .`，禁止默认 `git push`。
+- 验证通过后，按本轮授权只暂存本轮修改文件并提交；禁止 `git add .`。push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 自行完成并验证结果，不要求用户手动输入命令。
 - OpenAI Codex plugin 可以保留启用状态，但 Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
 - 旧 CC-CX 执行脚本和强编排已移除，`.state/workflow/**` 只作为旧运行态遗留，不再作为新主路验收接口。
 - `docs/reference/` 和 `docs/archive/` 默认不整体读取。
