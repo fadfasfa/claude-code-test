@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import os
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +29,9 @@ from .web_runtime import (
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=get_static_dir()), name="static")
+# 修复根目录下 /css/* 资源 404：HTML 通过 "./css/hextech-theme.css" 引用样式，
+# 根路由没有挂载 /css 时浏览器会收到 404，详情页样式会全部失效
+app.mount("/css", StaticFiles(directory=os.path.join(get_static_dir(), "css")), name="static-css")
 app.mount("/data/static", StaticFiles(directory=STATIC_DATA_DIR), name="stable-data")
 app.mount("/data/indexes", StaticFiles(directory=INDEX_DATA_DIR), name="stable-indexes")
 register_routes(app)

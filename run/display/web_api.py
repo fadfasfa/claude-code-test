@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from processing.alias_search import load_manual_alias_index
 from processing.orchestrator import rebuild_api_cache_if_needed
-from processing.runtime_store import load_precomputed_hextech_for_hero
+from processing.runtime_store import load_precomputed_hextech_for_hero, normalize_runtime_df
 from processing.view_adapter import process_champions_data, process_hextechs_data
 from scraping.augment_catalog import load_augment_icon_manifest
 from scraping.version_sync import STATIC_DATA_DIR
@@ -390,11 +390,34 @@ def register_routes(app: FastAPI) -> None:
         _request_precomputed_hextech_rebuild()
         web_runtime.request_background_refresh(force=False)
 
+        def _ensure_schema(df_raw):
+            """归一列名并补齐 process_hextechs_data schema 校验所需的衍生列。
+
+            live snapshot 列名带空格 (如 "英雄 ID")，且某些 CSV 版本可能缺少 "胜率差" 或 "综合得分" 衍生列，
+            导致 validate_runtime_csv_schema 抛错并把整个查询打回 _empty_hextech_result。
+            这里统一在路由层补齐，避免数据源差异传到下游。
+            """
+            if df_raw is None or df_raw.empty:
+                return df_raw
+            df_norm = normalize_runtime_df(df_raw)
+            if "胜率差" not in df_norm.columns and {"海克斯胜率", "英雄胜率"}.issubset(df_norm.columns):
+                df_norm = df_norm.copy()
+                df_norm["胜率差"] = df_norm["海克斯胜率"] - df_norm["英雄胜率"]
+            if "综合得分" not in df_norm.columns:
+                df_norm = df_norm.copy()
+                df_norm["综合得分"] = 0.0
+            return df_norm
+
         live_df = await asyncio.to_thread(web_runtime.get_live_hextech_snapshot_df, canonical_name)
         if not live_df.empty:
-            return JSONResponse(content=process_hextechs_data(live_df, canonical_name))
+            adapted = _ensure_schema(live_df)
+            # process_hextechs_data 内部会触发 build_augment_catalog_lookup（cold-start 走网络拉取 manifest），
+            # 必须放到线程池里执行，否则会阻塞 uvicorn 单线程 event loop，使其他请求堆积 CLOSE_WAIT
+            content = await asyncio.to_thread(process_hextechs_data, adapted, canonical_name)
+            return JSONResponse(content=content)
 
-        payload = process_hextechs_data(web_runtime.get_df(), canonical_name)
+        fallback_df = _ensure_schema(web_runtime.get_df())
+        payload = await asyncio.to_thread(process_hextechs_data, fallback_df, canonical_name)
         payload["loading"] = True
         payload["ready"] = False
         payload["startup_status"] = web_runtime.get_startup_status()

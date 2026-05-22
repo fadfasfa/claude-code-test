@@ -62,7 +62,16 @@ def _default_runtime_dir() -> str:
 
 
 def _resolve_config_dir(config_dir: Optional[str]) -> str:
-    return config_dir or os.path.join(_default_runtime_dir(), "config")
+    if config_dir:
+        return config_dir
+    # 历史默认 run/config 目录在当前数据布局下并不存在，导致 load_augment_icon_map /
+    # load_apexlol_hextech_map 每次都走 apexlol.info 远端拉取，单个海克斯卡片就要几秒
+    # 到几十秒；指向真实存放本地映射的 data/static 目录，可让所有 caller 命中本地缓存。
+    try:
+        from scraping.version_sync import STATIC_DATA_DIR
+        return STATIC_DATA_DIR
+    except ImportError:
+        return os.path.join(_default_runtime_dir(), "data", "static")
 
 
 def _resolve_assets_dir(asset_dir: Optional[str]) -> str:
