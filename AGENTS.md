@@ -13,6 +13,7 @@
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动；commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
 - 未获明确授权时，不主动 push、创建/更新 PR、merge、删除远端分支或丢弃未合并成果。
 - 用户明确要求 push、PR、merge 或清理指定 branch/worktree 时，该指令本身即授权；agent 必须自行执行必要命令并验证结果，不得退回给用户手工输入。
+- 用户明确要求新建 worktree 时，该指令本身即构成本地 task worktree 与必要任务分支的创建授权；agent 按 `docs/workflows/worktree-policy.md` 的 managed root 和命名规则直接创建并验证，不再要求业务层确认。清理、移除、覆盖、强制 checkout 仍需用户单独点名。
 - `force push`、`reset --hard`、删除/丢弃未合并成果、覆盖远端历史，必须被用户明确点名；一旦动作和目标明确，不额外增加业务层确认。
 - 不恢复 CC-CX guard、plan-gate、状态机、command、hook、memory、learning promotion、自动 PR shipping、task resume 或高权限 worktree skill。
 

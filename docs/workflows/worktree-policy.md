@@ -36,7 +36,11 @@
 - 对应 agent 的 managed root
 - 目标任务的 `target_work_area`
 
-创建、清理或修改 worktree 属于 worktree 写操作，必须有当前轮明确授权或已批准计划；授权已经明确时按范围执行并验证，不重复要求业务层确认。
+worktree 写操作按动作分授权位：
+
+- 创建：用户当前轮明确要求新建 worktree 时，该指令本身即构成本地 task worktree 与必要任务分支的创建授权；agent 按命名规则和 managed root 直接创建并验证，不重复要求业务层确认，也不退回手工命令。
+- 清理、移除、强制覆盖、修改受管 metadata：仍必须有用户当前轮单独点名的授权；未点名时不动 worktree 已落盘内容，不删除分支，不强制 checkout。
+- 任一动作目标超出 managed root、与现有 worktree 路径或分支冲突、或主仓存在与目标重叠的脏改时，停止并报告，不覆盖。
 
 旧 `scripts/workflow/worktree-start.ps1` 已随旧 workflow 主流程移除。`scripts/git/ccw-new.ps1` 已移除，不再作为 active 创建入口。不自动创建 detached worktree，也不默认写入 `TASK_HANDOFF.md` 与 `.task-worktree.json`。
 
