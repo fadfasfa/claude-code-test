@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from processing.alias_search import load_manual_alias_index
 from processing.orchestrator import rebuild_api_cache_if_needed
+from processing.precomputed_cache import is_precomputed_hextech_cache_loaded, warm_precomputed_hextech_cache
 from processing.runtime_store import load_precomputed_hextech_for_hero
 from processing.view_adapter import process_champions_data, process_hextechs_data
 from scraping.augment_catalog import load_augment_icon_manifest
@@ -28,6 +29,8 @@ from . import web_runtime
 
 _api_cache_rebuild_lock = threading.Lock()
 _api_cache_rebuild_inflight = False
+_api_cache_warm_lock = threading.Lock()
+_api_cache_warm_inflight = False
 
 
 def _normalize_synergy_entry(raw_entry: str) -> str:
@@ -381,6 +384,21 @@ class RedirectRequest(BaseModel):
     hero_name: str
 
 
+def _loading_hextech_payload() -> dict:
+    payload = {
+        "top_10_overall": [],
+        "comprehensive": [],
+        "winrate_only": [],
+        "Prismatic": [],
+        "Gold": [],
+        "Silver": [],
+        "loading": True,
+        "ready": False,
+        "startup_status": web_runtime.get_startup_status(),
+    }
+    return payload
+
+
 def _attach_local_auth_cookie(response: Response) -> Response:
     response.set_cookie(
         key=web_runtime.HTTP_SESSION_COOKIE,
@@ -427,6 +445,31 @@ def _request_precomputed_hextech_rebuild() -> bool:
         target=_worker,
         daemon=True,
         name="precomputed-hextech-cache-rebuild",
+    ).start()
+    return True
+
+
+def _request_precomputed_hextech_warm() -> bool:
+    global _api_cache_warm_inflight
+    with _api_cache_warm_lock:
+        if _api_cache_warm_inflight:
+            return False
+        _api_cache_warm_inflight = True
+
+    def _worker() -> None:
+        global _api_cache_warm_inflight
+        try:
+            warm_precomputed_hextech_cache()
+        except Exception:
+            web_runtime.logger.exception("预计算海克斯详情缓存后台暖机失败。")
+        finally:
+            with _api_cache_warm_lock:
+                _api_cache_warm_inflight = False
+
+    threading.Thread(
+        target=_worker,
+        daemon=True,
+        name="precomputed-hextech-cache-warm",
     ).start()
     return True
 
@@ -518,15 +561,15 @@ def register_routes(app: FastAPI) -> None:
 
         web_runtime.request_background_refresh(force=False)
 
-        snapshot_df = await asyncio.to_thread(web_runtime.get_live_champion_snapshot_df)
-        if not snapshot_df.empty:
-            champions = process_champions_data(snapshot_df)
-            if champions:
-                return JSONResponse(content=champions)
-
         stable_df = await asyncio.to_thread(web_runtime.get_stable_champion_catalog_df)
         if not stable_df.empty:
             champions = process_champions_data(stable_df, use_runtime_cache=False, log_columns=False)
+            if champions:
+                return JSONResponse(content=champions)
+
+        snapshot_df = await asyncio.to_thread(web_runtime.get_live_champion_snapshot_df)
+        if not snapshot_df.empty:
+            champions = process_champions_data(snapshot_df)
             if champions:
                 return JSONResponse(content=champions)
 
@@ -557,26 +600,22 @@ def register_routes(app: FastAPI) -> None:
         if isinstance(preloaded_payload, dict) and preloaded_payload.get("comprehensive"):
             return JSONResponse(content=preloaded_payload)
 
-        precomputed_payload = load_precomputed_hextech_for_hero(canonical_name)
-        if isinstance(precomputed_payload, dict) and precomputed_payload.get("comprehensive"):
-            web_runtime.request_background_refresh(force=False)
-            return JSONResponse(content=precomputed_payload)
+        if is_precomputed_hextech_cache_loaded():
+            precomputed_payload = load_precomputed_hextech_for_hero(canonical_name)
+            if isinstance(precomputed_payload, dict) and precomputed_payload.get("comprehensive"):
+                web_runtime.request_background_refresh(force=False)
+                return JSONResponse(content=precomputed_payload)
+        else:
+            _request_precomputed_hextech_warm()
+
+        preload_status = web_runtime.get_preload_hextech_status(canonical_name)
+        if preload_status.get("pending"):
+            return JSONResponse(content=_loading_hextech_payload())
+
         _request_precomputed_hextech_rebuild()
         web_runtime.request_background_refresh(force=False)
-
-        live_df = await asyncio.to_thread(web_runtime.get_live_hextech_snapshot_df, canonical_name)
-        if not live_df.empty:
-            # process_hextechs_data 内部会触发 build_augment_catalog_lookup（cold-start 走网络拉取 manifest），
-            # 必须放到线程池里执行，否则会阻塞 uvicorn 单线程 event loop，使其他请求堆积 CLOSE_WAIT
-            content = await asyncio.to_thread(process_hextechs_data, live_df, canonical_name)
-            return JSONResponse(content=content)
-
-        fallback_df = web_runtime.get_df()
-        payload = await asyncio.to_thread(process_hextechs_data, fallback_df, canonical_name)
-        payload["loading"] = True
-        payload["ready"] = False
-        payload["startup_status"] = web_runtime.get_startup_status()
-        return JSONResponse(content=payload)
+        web_runtime.request_preload_hextech_payload_async(canonical_name)
+        return JSONResponse(content=_loading_hextech_payload())
 
     @app.post("/api/champion/{name}/preload")
     async def api_preload_champion(name: str, request: Request):
@@ -590,7 +629,7 @@ def register_routes(app: FastAPI) -> None:
             return JSONResponse(content={"error": "forbidden_token"}, status_code=status.HTTP_403_FORBIDDEN)
 
         canonical_name = web_runtime.resolve_canonical_hero_name(unquote(name))
-        queued = web_runtime.request_preload_hextech_payload(canonical_name)
+        queued = web_runtime.request_preload_hextech_payload_async(canonical_name)
         preload_status = web_runtime.get_preload_hextech_status(canonical_name)
         return JSONResponse(content={"queued": queued, **preload_status})
 
@@ -658,16 +697,16 @@ def register_routes(app: FastAPI) -> None:
 
         canonical_name = web_runtime.resolve_canonical_hero_name(hero_name or req.hero_name)
         try:
-            web_runtime.request_preload_hextech_payload(canonical_name)
+            web_runtime.request_preload_hextech_payload_async(canonical_name)
         except Exception:
-            web_runtime.logger.warning("英雄详情预加载请求失败：hero=%s", canonical_name, exc_info=True)
+            web_runtime.logger.warning("英雄详情异步预加载请求失败：hero=%s", canonical_name, exc_info=True)
 
         standardized_hero_name = hero_name or req.hero_name
 
         if len(web_runtime.manager.active) == 0:
             url = web_runtime.build_detail_url(req.hero_id, standardized_hero_name, en_name)
-            if web_runtime.open_managed_browser(url, replace_existing=True):
-                return JSONResponse(content={"status": "opened_browser", "detail_first": True})
+            if web_runtime.request_open_managed_browser_async(url, replace_existing=True):
+                return JSONResponse(content={"status": "opening_browser", "detail_first": True})
             return JSONResponse(content={"status": "浏览器打开失败"}, status_code=500)
 
         await web_runtime.manager.broadcast(

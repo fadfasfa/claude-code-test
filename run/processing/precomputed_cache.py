@@ -148,6 +148,29 @@ def has_precomputed_hextech_cache() -> bool:
     return bool(_safe_mtime(cache_file) and _cache_matches_latest_csv(cache_file))
 
 
+def is_precomputed_hextech_cache_loaded() -> bool:
+    """只检查进程内详情缓存是否已暖好，不触发磁盘 JSON 读取。"""
+    return bool(_hextech_cache_state.get("data"))
+
+
+def warm_precomputed_hextech_cache() -> bool:
+    """后台暖机整份详情缓存，避免首个详情请求承担大 JSON 读取。"""
+    with _cache_lock:
+        cache_file = _resolve_cache_file(HEXTECH_DETAIL_CACHE_FILE, "Champion_Hextech_Cache.json")
+        mtime = _safe_mtime(cache_file)
+        if not mtime or not _cache_matches_latest_csv(cache_file):
+            _hextech_cache_state.update({"path": cache_file, "mtime": 0.0, "data": {}})
+            return False
+        if _hextech_cache_state["path"] == cache_file and _hextech_cache_state["mtime"] == mtime:
+            return bool(_hextech_cache_state["data"])
+        payload = _read_wrapped_json(cache_file, {})
+        if isinstance(payload, dict):
+            _hextech_cache_state.update({"path": cache_file, "mtime": mtime, "data": payload})
+            return bool(payload)
+        _hextech_cache_state.update({"path": cache_file, "mtime": 0.0, "data": {}})
+        return False
+
+
 def load_precomputed_hextech_for_hero(hero_name: str) -> Optional[dict]:
     normalized = str(hero_name or "").strip()
     if not normalized:

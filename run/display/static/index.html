@@ -7,8 +7,7 @@
     <link rel="preconnect" href="https://ddragon.leagueoflegends.com">
     <link rel="preconnect" href="https://raw.communitydragon.org">
     <link rel="stylesheet" href="/static/css/hextech-theme.css">
-    <link rel="preload" href="https://cdn.tailwindcss.com" as="script">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com" async></script>
     <style>
         :root {
             --hx-font-family: "Microsoft YaHei UI", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
@@ -599,11 +598,20 @@
             '蝎子': 'Skarner', '斯卡纳': 'Skarner',
         };
 
-        window.onload = () => {
+        let indexBootstrapped = false;
+        function bootstrapIndexPage() {
+            if (indexBootstrapped) return;
+            indexBootstrapped = true;
             loadChampions();
             connectWS();
             setupSearch();
-        };
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', bootstrapIndexPage, { once: true });
+        } else {
+            bootstrapIndexPage();
+        }
 
         async function loadChampions() {
             try {

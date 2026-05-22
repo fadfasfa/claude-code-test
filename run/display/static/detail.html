@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hextech 极地枢纽 - 英雄海克斯矩阵</title>
     <link rel="stylesheet" href="/static/css/hextech-theme.css">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com" async></script>
     <style>
         :root {
             --hx-font-family: "Microsoft YaHei UI", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
@@ -830,6 +830,9 @@
         let augmentIconMap = {};
         let augmentCatalogMap = {};
         let ws = null;
+        const DETAIL_LOADING_RETRY_MS = 350;
+        const DETAIL_LOADING_MAX_RETRIES = 12;
+        let detailLoadingRetryTimer = null;
 
         let tabId = Math.random().toString(36).substring(2, 9);
         const bc = new BroadcastChannel('hextech_nexus_channel');
@@ -1587,8 +1590,27 @@
             }
         }
 
-        async function loadHextechs() {
+        function scheduleDetailRetry(retryCount) {
+            if (detailLoadingRetryTimer || retryCount >= DETAIL_LOADING_MAX_RETRIES) {
+                return;
+            }
+            detailLoadingRetryTimer = window.setTimeout(() => {
+                detailLoadingRetryTimer = null;
+                loadHextechs(retryCount + 1);
+            }, DETAIL_LOADING_RETRY_MS);
+        }
+
+        function clearDetailRetry() {
+            if (!detailLoadingRetryTimer) {
+                return;
+            }
+            window.clearTimeout(detailLoadingRetryTimer);
+            detailLoadingRetryTimer = null;
+        }
+
+        async function loadHextechs(retryCount = 0) {
             if (!hero) {
+                clearDetailRetry();
                 document.getElementById('skeletonContainer').classList.add('hidden');
                 const spinner = document.getElementById('loadingSpinner');
                 spinner.classList.remove('hidden');
@@ -1599,7 +1621,6 @@
                 const hextechRes = await fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/hextechs`);
                 hextechData = await hextechRes.json();
                 activeArray = hextechData.comprehensive || [];
-                await loadAugmentIconMap();
                 synergyData = [];
                 synergyMeta = null;
                 synergyLoaded = false;
@@ -1607,15 +1628,23 @@
                 document.getElementById('loadingSpinner').classList.add('hidden');
                 document.getElementById('skeletonContainer').classList.add('hidden');
                 renderCurrentView();
+                loadAugmentIconMap().then(() => {
+                    if (hextechData) {
+                        renderCurrentView();
+                    }
+                }).catch(() => {});
                 if (hextechData.loading && activeArray.length === 0) {
                     document.getElementById('noDataTip').classList.remove('hidden');
                     document.querySelector('#noDataTip .text-xl').textContent = '数据准备中';
                     document.querySelector('#noDataTip .text-sm').textContent = '详情页已打开，海克斯数据会在后台补齐后可用';
+                    scheduleDetailRetry(retryCount);
                     return;
                 }
+                clearDetailRetry();
                 loadSynergies();
             } catch (err) {
                 console.error(err);
+                clearDetailRetry();
                 document.getElementById('loadingSpinner').classList.add('hidden');
                 document.getElementById('skeletonContainer').classList.add('hidden');
                 document.getElementById('noDataTip').classList.remove('hidden');
@@ -1646,12 +1675,21 @@
             };
         }
 
-        window.onload = () => {
+        let detailBootstrapped = false;
+        function bootstrapDetailPage() {
+            if (detailBootstrapped) return;
+            detailBootstrapped = true;
             trapWheelOnScrollContainer(document.getElementById('compList'));
             trapWheelOnScrollContainer(document.getElementById('synergyArticleScroll'));
             loadHextechs();
             connectWS();
-        };
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', bootstrapDetailPage, { once: true });
+        } else {
+            bootstrapDetailPage();
+        }
 
         window.addEventListener('DOMContentLoaded', () => {
             const tooltipEl = document.createElement('div');

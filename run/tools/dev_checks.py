@@ -221,6 +221,153 @@ def check_static_css_single_mount_contract() -> None:
     assert 'app.mount("/css"' not in web_server_text
 
 
+def check_web_bootstrap_avoids_load_event_gate() -> None:
+    index_text = (RUN_DIR / "display" / "static" / "index.html").read_text(encoding="utf-8")
+    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
+
+    assert "window.onload =" not in index_text
+    assert "window.onload =" not in detail_text
+    assert 'src="https://cdn.tailwindcss.com" async' in index_text
+    assert 'src="https://cdn.tailwindcss.com" async' in detail_text
+    assert "bootstrapIndexPage()" in index_text
+    assert "bootstrapDetailPage()" in detail_text
+
+
+def check_api_champions_uses_stable_catalog_before_network_snapshot() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import display.web_api as web_api
+
+    app = FastAPI()
+    web_api.register_routes(app)
+    stable_df = pd.DataFrame([{"英雄名称": "德玛西亚之力"}])
+    expected_payload = [{"英雄名称": "德玛西亚之力", "综合分数": 0.0}]
+
+    with (
+        patch.object(web_api.web_runtime, "get_df", return_value=pd.DataFrame()),
+        patch.object(web_api.web_runtime, "request_background_refresh", return_value=True),
+        patch.object(web_api.web_runtime, "get_stable_champion_catalog_df", return_value=stable_df),
+        patch.object(web_api.web_runtime, "get_live_champion_snapshot_df", side_effect=AssertionError("不应在稳定目录可用前等待远端快照")),
+        patch.object(web_api, "process_champions_data", return_value=expected_payload),
+    ):
+        response = TestClient(app).get("/api/champions")
+
+    assert response.status_code == 200
+    assert response.json() == expected_payload
+
+
+def check_redirect_api_does_not_sync_preload_before_response() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import display.web_api as web_api
+
+    class DummyManager:
+        active = [object()]
+
+        async def broadcast(self, message: dict) -> None:
+            self.message = message
+
+    app = FastAPI()
+    web_api.register_routes(app)
+    dummy_manager = DummyManager()
+
+    with (
+        patch.object(web_api.web_runtime, "get_request_auth_token", return_value="token"),
+        patch.object(web_api.web_runtime, "get_champion_info", return_value=("德玛西亚之力", "Garen")),
+        patch.object(web_api.web_runtime, "resolve_canonical_hero_name", side_effect=lambda value: str(value or "")),
+        patch.object(web_api.web_runtime, "request_preload_hextech_payload", side_effect=AssertionError("redirect 热路径不应同步预加载")),
+        patch.object(web_api.web_runtime, "manager", dummy_manager),
+    ):
+        response = TestClient(app).post(
+            "/api/redirect",
+            json={"hero_id": "86", "hero_name": "德玛西亚之力"},
+            headers={"Origin": "http://127.0.0.1:8000", "X-Hextech-Token": "token"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "broadcast_sent"
+    assert dummy_manager.message["champion_id"] == "86"
+
+
+def check_redirect_api_defers_browser_open_before_response() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import display.web_api as web_api
+
+    class DummyManager:
+        active = []
+
+    app = FastAPI()
+    web_api.register_routes(app)
+
+    with (
+        patch.object(web_api.web_runtime, "get_request_auth_token", return_value="token"),
+        patch.object(web_api.web_runtime, "get_champion_info", return_value=("德玛西亚之力", "Garen")),
+        patch.object(web_api.web_runtime, "resolve_canonical_hero_name", side_effect=lambda value: str(value or "")),
+        patch.object(web_api.web_runtime, "request_preload_hextech_payload_async", return_value=True),
+        patch.object(web_api.web_runtime, "manager", DummyManager()),
+        patch.object(web_api.web_runtime, "build_detail_url", return_value="http://127.0.0.1:8000/detail.html?hero=x&id=86&en=Garen&auto=1"),
+        patch.object(web_api.web_runtime, "request_open_managed_browser_async", return_value=True) as async_open,
+        patch.object(web_api.web_runtime, "open_managed_browser", side_effect=AssertionError("redirect 热路径不应同步打开浏览器")),
+    ):
+        response = TestClient(app).post(
+            "/api/redirect",
+            json={"hero_id": "86", "hero_name": "德玛西亚之力"},
+            headers={"Origin": "http://127.0.0.1:8000", "X-Hextech-Token": "token"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "opening_browser"
+    assert response.json()["detail_first"] is True
+    async_open.assert_called_once_with("http://127.0.0.1:8000/detail.html?hero=x&id=86&en=Garen&auto=1", replace_existing=True)
+
+
+def check_detail_api_defers_cold_local_processing() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import display.web_api as web_api
+
+    app = FastAPI()
+    web_api.register_routes(app)
+
+    with (
+        patch.object(web_api.web_runtime, "resolve_canonical_hero_name", return_value="德玛西亚之力"),
+        patch.object(web_api.web_runtime, "get_preloaded_hextech_payload", return_value=None),
+        patch.object(web_api.web_runtime, "get_preload_hextech_status", return_value={"ready": False, "pending": False}),
+        patch.object(web_api, "is_precomputed_hextech_cache_loaded", return_value=False),
+        patch.object(web_api, "load_precomputed_hextech_for_hero", side_effect=AssertionError("详情冷路径不应同步读取预计算详情缓存")),
+        patch.object(web_api, "_request_precomputed_hextech_warm", return_value=True) as warm_cache,
+        patch.object(web_api, "_request_precomputed_hextech_rebuild", return_value=True),
+        patch.object(web_api.web_runtime, "request_background_refresh", return_value=True),
+        patch.object(web_api.web_runtime, "request_preload_hextech_payload_async", return_value=True) as async_preload,
+        patch.object(web_api.web_runtime, "get_live_hextech_snapshot_df", side_effect=AssertionError("本地数据可用时不应等待远端详情快照")),
+        patch.object(web_api, "process_hextechs_data", side_effect=AssertionError("详情冷路径不应同步计算海克斯")),
+    ):
+        response = TestClient(app).get("/api/champion/%E5%BE%B7%E7%8E%9B%E8%A5%BF%E4%BA%9A%E4%B9%8B%E5%8A%9B/hextechs")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["loading"] is True
+    assert payload["ready"] is False
+    assert payload["comprehensive"] == []
+    warm_cache.assert_called_once()
+    async_preload.assert_called_once_with("德玛西亚之力")
+
+
+def check_detail_renders_before_deferred_icon_catalog() -> None:
+    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
+    load_start = detail_text.index("async function loadHextechs")
+    load_end = detail_text.index("function connectWS()", load_start)
+    load_body = detail_text[load_start:load_end]
+
+    assert "renderCurrentView();" in load_body
+    assert "loadAugmentIconMap().then" in load_body
+    assert "await loadAugmentIconMap();" not in load_body
+    assert load_body.index("renderCurrentView();") < load_body.index("loadAugmentIconMap().then")
+    assert "DETAIL_LOADING_RETRY_MS" in detail_text
+    assert "scheduleDetailRetry" in detail_text
+
+
 def check_heal_worker_contract() -> None:
     assert hasattr(heal_worker, "heal_missing_artifacts")
     assert hasattr(heal_worker, "detect_missing_artifacts")
@@ -1352,6 +1499,12 @@ def run_default_checks() -> None:
     check_synergy_structured_payloads()
     check_detail_question_mark_augment_guard()
     check_static_css_single_mount_contract()
+    check_web_bootstrap_avoids_load_event_gate()
+    check_api_champions_uses_stable_catalog_before_network_snapshot()
+    check_redirect_api_does_not_sync_preload_before_response()
+    check_redirect_api_defers_browser_open_before_response()
+    check_detail_api_defers_cold_local_processing()
+    check_detail_renders_before_deferred_icon_catalog()
     check_synergy_alias_collision_guard()
     check_synergy_api_quarantines_duplicate_pollution()
     check_synergy_playwright_calibrator_contract()

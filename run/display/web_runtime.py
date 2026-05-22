@@ -444,6 +444,26 @@ def open_managed_browser(url: str, replace_existing: bool = False) -> bool:
         return False
 
 
+def request_open_managed_browser_async(url: str, replace_existing: bool = False) -> bool:
+    """登记浏览器打开任务，避免把进程启动耗时压到 API 热路径。"""
+    if not is_safe_internal_url(url):
+        logger.warning("已拒绝异步启动非本地浏览器地址：%s", url)
+        return False
+
+    def _worker() -> None:
+        try:
+            open_managed_browser(url, replace_existing=replace_existing)
+        except Exception:
+            logger.exception("异步打开浏览器失败：%s", url)
+
+    threading.Thread(
+        target=_worker,
+        daemon=True,
+        name="managed-browser-open",
+    ).start()
+    return True
+
+
 def build_detail_url(hero_id: str, hero_name: str, en_name: str) -> str:
     normalized_id = str(hero_id or "").strip()
     normalized_name = str(hero_name or "").strip()
@@ -619,6 +639,50 @@ def request_preload_hextech_payload(hero_name: str) -> bool:
     if status["ready"] or status["pending"]:
         return True
     return queue_preload_hextech_payloads([canonical_name])
+
+
+def request_preload_hextech_payload_async(hero_name: str) -> bool:
+    """只登记预热任务，不把 CSV 读取和海克斯计算压到调用方热路径。"""
+    canonical_name = resolve_canonical_hero_name(hero_name)
+    if not canonical_name:
+        return False
+
+    status = get_preload_hextech_status(canonical_name)
+    if status["ready"] or status["pending"]:
+        return True
+
+    with _preloaded_hextech_lock:
+        payload = _preloaded_hextech_payloads.get(canonical_name)
+        if isinstance(payload, dict) and payload.get("comprehensive"):
+            return True
+        if canonical_name in _preloaded_hextech_pending:
+            return True
+        _preloaded_hextech_pending.add(canonical_name)
+
+    def _worker(target_name: str = canonical_name) -> None:
+        try:
+            df = get_df()
+            if df.empty:
+                return
+            signature = _get_runtime_df_signature()
+            payload = process_hextechs_data(df.copy(), target_name, use_runtime_cache=True, log_columns=False)
+            if not isinstance(payload, dict) or not payload.get("comprehensive"):
+                return
+            with _preloaded_hextech_lock:
+                global _preloaded_hextech_signature
+                if _preloaded_hextech_signature != signature:
+                    _preloaded_hextech_payloads.clear()
+                    _preloaded_hextech_pending.clear()
+                    _preloaded_hextech_signature = signature
+                _preloaded_hextech_payloads[target_name] = payload
+        except Exception:
+            logger.exception("异步海克斯预热失败：hero=%s", target_name)
+        finally:
+            with _preloaded_hextech_lock:
+                _preloaded_hextech_pending.discard(target_name)
+
+    _preloaded_hextech_executor.submit(_worker)
+    return True
 
 
 def queue_preload_hextech_payloads(hero_names: List[str]) -> bool:
