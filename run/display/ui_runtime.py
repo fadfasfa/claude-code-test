@@ -40,7 +40,7 @@ import psutil
 import requests
 import urllib3
 import win32gui
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 from processing.query_terminal import display_hero_hextech, main_query, set_last_hero
 from scraping.version_sync import ASSET_DIR, BASE_DIR
@@ -561,6 +561,16 @@ def lcu_polling_loop(ui: "HextechUI") -> None:
         time.sleep(1.5)
 
 
+def _apply_rounded_corner(img: "Image.Image", radius: int = 8) -> "Image.Image":
+    """为头像套一层圆角 alpha 遮罩，让头像在卡片背景上呈现柔和圆角。"""
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
+    mask = Image.new("L", img.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, img.size[0], img.size[1]), radius=radius, fill=255)
+    img.putalpha(mask)
+    return img
+
+
 def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
     """加载英雄头像，优先命中本地缓存，缺失时远端下载后回写到本地。"""
     try:
@@ -597,6 +607,8 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
             finally:
                 ui.downloading_imgs.discard(champ_id)
 
+        # 头像渲染前套圆角遮罩，削弱方框直角的生硬感
+        img = _apply_rounded_corner(img, radius=8)
         safe_img = img.copy()
 
         def _publish_loaded(image_obj=safe_img) -> None:
@@ -666,6 +678,9 @@ def window_sync_loop(ui: "HextechUI") -> None:
         nonlocal last_client_hwnd
         last_client_hwnd = None
         ui._last_client_rect = None
+        # LCU 客户端消失或切走时重置"首次吸附完成"标志，
+        # 下次再次出现时仍能立即吸附而不必等客户端窗口实际位移
+        ui._overlay_position_initialized = False
 
     def _resume_follow_if_ready(client_rect: tuple[int, int, int, int], target_pos: tuple[int, int]) -> None:
         client_jump_detected = _client_rect_jump_detected(client_rect, ui._last_client_rect)
@@ -682,9 +697,13 @@ def window_sync_loop(ui: "HextechUI") -> None:
             ui._last_client_rect = client_rect
             return
         rect_changed = client_rect != ui._last_client_rect
+        # 首次显示时即使客户端窗口没动也强制吸附一次，避免玩家"挪一下客户端才跟随"的体感
+        first_show = not ui._overlay_position_initialized
         target_pos = _target_overlay_position(hwnd_client, client_rect)
-        if rect_changed:
+        if rect_changed or first_show:
             _resume_follow_if_ready(client_rect, target_pos)
+            if ui._auto_follow_enabled:
+                ui._overlay_position_initialized = True
         ui._last_client_rect = client_rect
 
     def _set_overlay_visibility(should_show_overlay: bool, should_keep_topmost: bool, now_ts: float) -> None:

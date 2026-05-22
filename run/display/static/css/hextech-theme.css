@@ -364,6 +364,77 @@ body {
     transform: translateY(-1px);
 }
 
+/* 休眠卡片内的双按钮布局：主按钮"重新激活" + 次按钮"双开此视口" */
+.dormancy-btn-row {
+    display: flex;
+    gap: 0.6rem;
+    width: 100%;
+    margin-top: 1.75rem;
+}
+.dormancy-btn-row .dormancy-btn {
+    margin-top: 0;
+    flex: 1;
+}
+
+/* 次级按钮：低饱和、暗色调，避免抢夺主按钮视线焦点 */
+.dormancy-btn-secondary {
+    background: linear-gradient(135deg, rgba(88, 166, 255, 0.16), rgba(34, 211, 238, 0.08));
+    border: 1px solid rgba(88, 166, 255, 0.32);
+    color: #cfe7ff;
+}
+.dormancy-btn-secondary:hover {
+    background: linear-gradient(135deg, rgba(88, 166, 255, 0.28), rgba(34, 211, 238, 0.14));
+    border-color: rgba(88, 166, 255, 0.52);
+    box-shadow: 0 0 12px rgba(88, 166, 255, 0.22);
+}
+
+/* 首启引导气泡：右下角更显眼的提示，带图标与关闭按钮 */
+.hx-onboarding-toast {
+    position: fixed;
+    right: 28px;
+    bottom: 28px;
+    z-index: 9999;
+    max-width: 320px;
+    padding: 16px 18px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, rgba(15, 30, 48, 0.95), rgba(8, 18, 32, 0.95));
+    border: 1px solid rgba(88, 166, 255, 0.45);
+    color: #e6f1ff;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 320ms ease, transform 320ms ease;
+}
+.hx-onboarding-toast.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+.hx-onboarding-toast .title {
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    font-size: 13px;
+    color: #aad6ff;
+    margin-bottom: 6px;
+}
+.hx-onboarding-toast .body {
+    font-size: 12px;
+    line-height: 1.6;
+    color: #c9d1d9;
+}
+.hx-onboarding-toast .close {
+    position: absolute;
+    top: 6px;
+    right: 10px;
+    background: transparent;
+    border: 0;
+    color: #8b949e;
+    font-size: 14px;
+    cursor: pointer;
+}
+.hx-onboarding-toast .close:hover {
+    color: #f0f6fc;
+}
+
 @keyframes dormancyFloat {
     0%, 100% { transform: rotate(45deg) translateY(0); }
     50% { transform: rotate(45deg) translateY(-8px); }
@@ -372,4 +443,69 @@ body {
 @keyframes dormancyFadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
+}
+
+/* 各梯队卡片悬停时的呼吸式环境光晕：仅在 hover 触发，避免与 T0 流光争夺视线 */
+.hx-tier-s,
+.hx-tier-a,
+.hx-tier-npc,
+.hx-tier-trash {
+    transition: box-shadow 360ms ease;
+}
+.hx-tier-s:hover { box-shadow: 0 6px 22px -8px rgba(47, 155, 181, 0.55); }
+.hx-tier-a:hover { box-shadow: 0 6px 22px -8px rgba(80, 166, 117, 0.45); }
+.hx-tier-npc:hover { box-shadow: 0 6px 22px -8px rgba(150, 160, 180, 0.30); }
+.hx-tier-trash:hover { box-shadow: 0 6px 22px -8px rgba(140, 60, 60, 0.35); }
+
+/* 科幻雷达网格背景：作为 body 伪元素层，与现有对角线 + 径向渐变叠加 */
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+        linear-gradient(rgba(200, 170, 110, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(200, 170, 110, 0.04) 1px, transparent 1px);
+    background-size: 60px 60px;
+}
+
+/* 数据更新气泡：1.5 秒渐入渐出，右上角悬浮，不干扰主内容流 */
+.hx-update-toast {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 9999;
+    padding: 10px 18px;
+    border-radius: 999px;
+    background: rgba(15, 30, 48, 0.92);
+    border: 1px solid rgba(88, 166, 255, 0.45);
+    color: #cfe7ff;
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity 240ms ease, transform 240ms ease;
+}
+.hx-update-toast.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* 搜索框快捷键徽章：仿照 GitHub/Linear 的 kbd 风格 */
+.hx-search-hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(139, 148, 158, 0.4);
+    background: rgba(15, 20, 28, 0.7);
+    color: #c9d1d9;
+    font-family: var(--hx-font-family);
+    font-size: 12px;
+    line-height: 1;
 }
