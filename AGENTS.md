@@ -49,8 +49,8 @@
 - git 写操作必须先进入计划确认，不得把只读 Git 探查扩展为 staging、commit、branch、worktree 或其他写操作。
 - 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才 commit。
 - commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
-- 禁止 `git push`，除非用户明确单独要求。
-- 禁止 `git reset --hard`、`git clean -fdx`、大范围删除、批量移动或不可逆清理，除非用户明确批准。
+- `git push`、PR、merge、tag、release 等发布或合并动作未获用户明确授权时禁止主动执行；用户明确要求后由 agent 自行执行并验证结果，不得要求用户手动输入命令。
+- discard / 清理类操作（`git reset --hard`、`git clean -fdx`、`git restore`、覆盖式 checkout、大范围删除、批量移动或不可逆清理）未获用户明确批准时禁止主动执行；批准后由 agent 按确认范围执行，不得要求用户手动输入命令。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动。
 - 不读取或修改凭据、token、auth、cookie、API key、proxy secret、私有配置、`.env`、`auth.json`、`local.yaml`、`proxies.json`。
 - 任何备份失败都必须立即停止，不继续删除、覆盖、移动或其他破坏性动作。

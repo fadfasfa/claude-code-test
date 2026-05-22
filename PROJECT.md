@@ -45,7 +45,7 @@ Claude Code 与 Codex 均可独立工作；仓库不再维护固定的 CC-CX 强
 - 涉及 workflow/config/skill/hook 修改、git 写操作、worktree 操作、删除/移动/覆盖等破坏性命令、越界路径、敏感文件、依赖或环境变更、外部账户或真实网络副作用时，必须先输出计划并等待用户确认。
 - 计划必须包含：`git status`、预计修改文件、修改内容、不修改范围、验证命令、Git 处理方式；确认后按计划小步执行，范围变化时重新确认。
 - 两个入口都必须避免混入非本轮脏树，修改后运行最小有效验证。
-- 验证通过后，按本轮授权只暂存本轮修改文件并 commit；禁止 `git add .` 和默认 push。
+- 验证通过后，按本轮授权只暂存本轮修改文件并 commit；禁止 `git add .`。push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 自行完成并验证结果，不要求用户手动输入命令。
 - 后续若接入 Ultraplan，只作为复杂任务计划入口；小任务仍由 Claude Code 或 Codex 独立完成。
 
 ## Non Goals

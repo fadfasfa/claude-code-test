@@ -27,7 +27,7 @@
 - 先选择明确工作区，避免把仓库根当作默认业务写入面。
 - 修改后运行最小有效验证；无法验证时说明原因。
 - 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
-- 禁止 `git add .` 和默认 push。
+- 禁止 `git add .`。push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 自行完成并验证结果，不要求用户手动输入命令。
 - 本仓外写入、非沙箱以及高风险、不可逆或发布类 Bash 命令仍应提示。
 
 ## Forbidden
@@ -38,6 +38,7 @@
 - 不恢复 repo-local `.codex/config.toml`。
 - 不读取或修改 `auth.json`、token、cookie、API key、`local.yaml`、`proxies.json` 或 proxy secret。
 - 不把 `full-access` profile 写成仓库默认。
+- 不用 repo-local `.codex/config.toml` 覆盖 `C:\Users\apple\.codex-exec\config.toml` 的默认 sandbox 或 provider。
 - 不把 Codex standalone mode 改写成必须经过 Claude Code、Codex plugin 或旧 CC-CX 执行脚本。
 - 不让 Claude Code 在无用户当前轮显性命令时调用、委派、审查或触发 Codex / CX。
 - 不启用 Codex plugin review gate，除非用户显性要求。

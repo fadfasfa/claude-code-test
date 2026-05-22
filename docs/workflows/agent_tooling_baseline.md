@@ -21,6 +21,7 @@
 - 不设置项目级 `.codex/config.toml`、repo-local Codex hook 或 repo-local MCP 配置。
 - 不新增复杂编排器；`.claude/settings.json` 只保留 Claude Code 项目权限和 plugin 可用状态。
 - `full-access` profile 只能人工选择，不是仓库默认权限。
+- 不设置 repo-local `.codex/config.toml` 覆盖 `C:\Users\apple\.codex-exec\config.toml`；默认执行链路保持 `workspace-write`，不启用全局 `danger-full-access`。
 
 ## Skill Boundary
 
