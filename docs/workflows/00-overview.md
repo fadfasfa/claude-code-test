@@ -5,22 +5,21 @@
 ## Default Flow
 
 1. 先运行 `git status --short`，发现非本轮修改时先报告并避免混入。
-2. 只读探查可以直接执行；用户当前轮明确要求实现、修复、调整或修改时，普通仓库文件编辑可以直接执行，仍需按授权范围小步修改并验证。
-3. 涉及 workflow/config/skill/hook 修改、git 写操作、worktree 操作、删除/移动/覆盖等破坏性命令、越界路径、敏感文件、依赖或环境变更、外部账户或真实网络副作用时，必须先输出计划并等待用户确认。
-4. 计划必须包含：`git status`、预计修改文件、修改内容、不修改范围、验证命令、Git 处理方式；确认后按计划小步执行，范围变化时重新确认。
-5. 入口选择：
+2. 入口选择：
    - Claude Code 入口读 `CLAUDE.md`、`PROJECT.md`、`docs/index.md`。
    - Codex 入口读 `AGENTS.md`、`PROJECT.md`、`docs/index.md`。
-6. 写入前从 `docs/workflows/work_area_registry.md` 选择目标工作区。
-7. 默认在主仓小步执行；只有用户明确要求或上游任务标注 `requires_worktree: true` 时才进入 worktree 流程。
-8. 修改后运行最小有效验证；无法验证时说明原因。
-9. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
-10. 禁止 `git add .`；push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 自行完成并验证结果，不要求用户手动输入命令。高危操作按 `07-high-risk-safety.md` 确认。
+3. 写入前从 `docs/workflows/work_area_registry.md` 选择目标工作区。
+4. `S/M/L` 风险路由、官方 Superpowers 方法论、worktree、计划、验证、review 和收尾流程以 `.agents/skills/superpowers-project-bridge/SKILL.md` 为准。
+5. 当前轮已经明确授权或计划已批准的动作，agent 按授权范围执行并验证，不重复要求业务层确认。
+6. 修改后运行最小有效验证；无法验证时说明原因。
+7. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
+8. 禁止 `git add .`；push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 自行完成并验证结果，不要求用户手动输入命令。高危操作按 `07-high-risk-safety.md` 和 bridge 执行。
 
 ## Canonical Docs
 
 - `independent-agent-workflow.md`
 - `codex-execution-boundary.md`
+- `.agents/skills/superpowers-project-bridge/SKILL.md`
 - `07-high-risk-safety.md`
 - `repository-layout.md`
 - `work_area_registry.md`
@@ -36,4 +35,4 @@
 - Claude Code 原生本机计划草稿可写入 `.claude/plans/**`，不需要额外授权或特殊条件，默认不提交。
 - 不默认生成 `docs/plans/*.md`、Markdown report、probe 或 archive 证据文件。
 
-当前基线保持轻量：普通仓库编辑按当前轮任务直接执行，高风险类别先计划，经确认后执行，验证后报告，commit 需单独授权。
+当前基线保持轻量：普通仓库编辑按当前轮任务直接执行；`M/L` 或高风险类别按 bridge 执行；commit、push、PR、merge 和 discard 只在当前轮明确授权范围内执行。

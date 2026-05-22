@@ -10,7 +10,7 @@
 | `repo-maintenance` | keep | 仓库维护、清理候选、保护资产检查 |
 | `repo-local-pr-review` | keep | commit / PR 前本地审查 |
 | `repo-module-admission` | keep | 新增 workflow module、skill、hook、tool 或工作区前 |
-| `superpowers-project-bridge` | keep | 明确提到 Superpowers 或需要方法提示 |
+| `superpowers-project-bridge` | keep | `S/M/L` 路由、官方 Superpowers 方法论、worktree、验证和 Git 授权流程 |
 | `crawl4ai-web-scraping` | keep | Crawl4AI、通用网页抓取、Markdown/JSON 清洗或现有爬虫替换评估 |
 
 ## Retired
@@ -23,3 +23,4 @@
 - 不保留 memory / learning promotion skill。
 - 不恢复 command、hook、自动 PR shipping、task resume 或高权限 worktree skill。
 - `.claude/skills/` 不属于 Codex skill 白名单。
+- 官方 Superpowers skills 不在本仓 fork；本仓只通过 `superpowers-project-bridge` 接入方法论，并在执行面验证可发现性。

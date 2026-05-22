@@ -16,12 +16,10 @@ description: 用于本仓维护、清理候选、受保护资产检查和工作�
 - 检查 `docs/workflows/work_area_registry.md`、`docs/workflows/07-protected-assets.md`。
 - 维护建议必须区分事实、候选动作和需要授权动作。
 
-## forbidden actions
+## action boundary
 
-- 不删除未提交改动。
-- 不清理 `run/**` 当前脏树。
-- 不改 ACL。
-- 不执行 git clean、reset、stash、rebase。
+- 默认不删除未提交改动，不清理 `run/**` 当前脏树，不改 ACL，不执行 git clean、reset、stash、rebase。
+- 用户明确授权指定 clean、reset、discard、stash、rebase 或 worktree cleanup 时，先做只读目标核对，再按 `AGENTS.md` 与 `superpowers-project-bridge` 的授权范围执行并验证。
 - 不触碰凭据、token、cookie、auth、proxy secret。
 
 ## verification expectation
