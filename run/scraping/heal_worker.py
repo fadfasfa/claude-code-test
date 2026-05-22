@@ -60,6 +60,10 @@ SYNERGY_STALE_SECONDS = 7 * 24 * 60 * 60
 SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
 
 
+def _auto_synergy_refresh_enabled() -> bool:
+    return os.getenv("HEXTECH_AUTO_SYNERGY_REFRESH", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass
 class HealReport:
     requested: list[str] = field(default_factory=list)
@@ -187,9 +191,10 @@ def _image_assets_ready() -> bool:
 
 def detect_missing_artifacts() -> dict:
     latest_csv = get_latest_csv()
+    synergy_missing = not _synergy_data_fresh() if _auto_synergy_refresh_enabled() else False
     return {
         "hextech_rankings": not _latest_csv_fresh(),
-        "synergy_data": not _synergy_data_fresh(),
+        "synergy_data": synergy_missing,
         "augment_catalog": not _core_data_ready() or not _augment_manifest_ready(),
         "champion_core": not os.path.exists(CORE_DATA_FILE),
         "images": not _image_assets_ready(),
@@ -205,6 +210,9 @@ def _heal_hero_rankings(stop_event=None) -> bool:
 
 
 def _heal_synergy_data() -> bool:
+    if not _auto_synergy_refresh_enabled():
+        _write_synergy_refresh_status("paused", "HEXTECH_AUTO_SYNERGY_REFRESH is not enabled")
+        return False
     result = run_synergy_scraper()
     if result and result.get("blocked"):
         _write_synergy_refresh_status("blocked", str(result.get("error") or "blocked"))
@@ -264,7 +272,7 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
             requested = []
             if force or missing.get("hextech_rankings"):
                 requested.append("hextech_rankings")
-            if force or missing.get("synergy_data"):
+            if (force or missing.get("synergy_data")) and _auto_synergy_refresh_enabled():
                 requested.append("synergy_data")
             if force or missing.get("augment_catalog"):
                 requested.append("augment_catalog")
@@ -283,7 +291,7 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
             high_frequency_tasks = []
             if force or missing.get("hextech_rankings"):
                 high_frequency_tasks.append(("hextech_rankings", lambda: _heal_hero_rankings(stop_event=stop_event)))
-            if force or missing.get("synergy_data"):
+            if (force or missing.get("synergy_data")) and _auto_synergy_refresh_enabled():
                 high_frequency_tasks.append(("synergy_data", _heal_synergy_data))
 
             if high_frequency_tasks:

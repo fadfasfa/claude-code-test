@@ -462,6 +462,12 @@ def normalize_runtime_df(df: pd.DataFrame) -> pd.DataFrame:
             .str.strip()
             .str.replace(".0", "", regex=False)
         )
+    if "胜率差" not in normalized.columns and {"海克斯胜率", "英雄胜率"}.issubset(normalized.columns):
+        hex_winrate = pd.to_numeric(normalized["海克斯胜率"], errors="coerce")
+        hero_winrate = pd.to_numeric(normalized["英雄胜率"], errors="coerce")
+        normalized["胜率差"] = (hex_winrate - hero_winrate).fillna(0.0)
+    if "综合得分" not in normalized.columns:
+        normalized["综合得分"] = 0.0
     return normalized
 
 

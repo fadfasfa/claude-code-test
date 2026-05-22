@@ -64,6 +64,10 @@ SYNERGY_STALE_SECONDS = 7 * 24 * 60 * 60
 SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
 
 
+def auto_synergy_refresh_enabled() -> bool:
+    return os.getenv("HEXTECH_AUTO_SYNERGY_REFRESH", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _file_is_fresh(path: str, stale_after_seconds: int = HIGH_FREQUENCY_STALE_SECONDS) -> bool:
     if not path or not os.path.exists(path):
         return False
@@ -116,6 +120,8 @@ def _write_synergy_refresh_status(result: str, reason: str = "") -> None:
 
 
 def should_refresh_synergy(force: bool, stale_after_seconds: int = SYNERGY_STALE_SECONDS) -> bool:
+    if not auto_synergy_refresh_enabled():
+        return False
     if force:
         return True
     synergy_file = get_latest_synergy_snapshot_path()
@@ -150,6 +156,9 @@ def run_hextech_refresh(stop_event=None) -> bool:
 
 
 def run_synergy_refresh() -> bool:
+    if not auto_synergy_refresh_enabled():
+        _write_synergy_refresh_status("paused", "HEXTECH_AUTO_SYNERGY_REFRESH is not enabled")
+        return False
     result = run_apex_spider()
     latest_path = get_latest_synergy_snapshot_path()
     if result and result.get("blocked"):
@@ -207,6 +216,7 @@ __all__ = [
     "SYNERGY_FILE",
     "SYNERGY_BLOCKED_COOLDOWN_SECONDS",
     "SYNERGY_STALE_SECONDS",
+    "auto_synergy_refresh_enabled",
     "current_api_cache_ready",
     "get_startup_status_file",
     "heal_runtime_artifacts",

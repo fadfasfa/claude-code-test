@@ -33,6 +33,7 @@ HEXTECH_DETAIL_CACHE_DIR = build_runtime_cache_path("Champion_Hextech_Cache")
 _cache_lock = threading.Lock()
 _champion_cache_state: Dict[str, Any] = {"path": "", "mtime": 0.0, "data": []}
 _hextech_cache_state: Dict[str, Any] = {"path": "", "mtime": 0.0, "data": {}}
+_cache_match_state: Dict[str, Dict[str, Any]] = {}
 
 
 def _now_iso() -> str:
@@ -89,16 +90,34 @@ def _latest_csv_signature() -> dict:
 
 
 def _cache_matches_latest_csv(cache_file: str) -> bool:
+    cache_mtime = _safe_mtime(cache_file)
+    latest = _latest_csv_signature()
+    if not cache_mtime or not latest["source"]:
+        return False
+
+    cached = _cache_match_state.get(cache_file)
+    if (
+        cached
+        and cached.get("cache_mtime") == cache_mtime
+        and cached.get("source") == latest["source"]
+        and float(cached.get("source_mtime") or 0.0) == float(latest["source_mtime"] or 0.0)
+    ):
+        return bool(cached.get("matches"))
+
     payload = _read_cache_payload(cache_file)
     meta = payload.get("meta") if isinstance(payload, dict) else {}
-    if not isinstance(meta, dict):
-        return False
-    latest = _latest_csv_signature()
-    return (
-        bool(latest["source"])
+    matches = (
+        isinstance(meta, dict)
         and meta.get("source") == latest["source"]
         and float(meta.get("source_mtime") or 0.0) == float(latest["source_mtime"] or 0.0)
     )
+    _cache_match_state[cache_file] = {
+        "cache_mtime": cache_mtime,
+        "source": latest["source"],
+        "source_mtime": latest["source_mtime"],
+        "matches": matches,
+    }
+    return bool(matches)
 
 
 def load_precomputed_champion_list() -> List[dict]:

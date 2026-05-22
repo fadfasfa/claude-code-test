@@ -38,3 +38,15 @@ description: 用于本仓通用网页抓取、Crawl4AI 接入、LLM-ready Markdo
 - 动态网页：优先确认现有 Playwright 或浏览器依赖是否已经存在；不要为了试验扩大项目依赖面。
 - 替换评估：先对比现有输出契约、失败诊断、日志、缓存和验证命令，再决定是否值得替换。
 - Firecrawl 或其他托管抓取服务不属于本 skill 初版范围；如需双工具适配，先走 `repo-module-admission`。
+
+## 已落地工具层
+
+Crawl4AI 工具层已在 `run/crawler/` 落地，与 `run/scraping/` 现有爬虫完全平行，互不依赖：
+
+- 依赖安装文件：`run/crawler/requirements-crawl4ai.txt`（crawl4ai + playwright）
+- 用户需手动执行一次安装：`pip install -r run/crawler/requirements-crawl4ai.txt` 和 `python -m playwright install chromium`
+- CC/CX 调用方式：`from crawler.crawl4ai_client import fetch_page`（在 `run/` 目录下执行）
+- 验证：`cd run && python -m crawler.smoke_crawl4ai`
+- **Python 版本注意**：本机有 3.11 和 3.13 两套，crawl4ai 安装在 3.13；`python` 命令默认指向 3.11，调用时需显式使用 `C:/Users/apple/AppData/Local/Programs/Python/Python313/python.exe -X utf8`，或将 PATH 中的 3.13 提前。
+
+"不默认安装依赖"规则仍然有效：CC/CX 执行任务时不自动 `pip install`，安装动作由用户主动触发。

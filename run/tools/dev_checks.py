@@ -42,7 +42,7 @@ import scraping.full_synergy_scraper as synergy_scraper
 import scraping.heal_worker as heal_worker
 import scraping.icon_resolver as icon_resolver
 import display.web_runtime as web_runtime
-from display.web_api import _normalize_synergy_items, _synergy_item_to_compat_string
+from display.web_api import _build_synergy_api_payload, _normalize_synergy_items, _synergy_item_to_compat_string
 from processing.alias_search import load_manual_alias_index
 from processing.view_adapter import process_hextechs_data
 from scraping.full_hextech_scraper import extract_champion_stats
@@ -197,6 +197,30 @@ def check_detail_hero_param_uses_text_content() -> None:
         assert not re.search(pattern, detail_text), pattern
 
 
+def check_detail_question_mark_augment_guard() -> None:
+    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
+    assert "function isQuestionMarkAugmentName(text)" in detail_text
+    assert "/^[?？]{3,}$/" in detail_text
+    assert "if (isQuestionMarkAugmentName(original))" in detail_text
+    assert '<span class="${badgeText} opacity-70' not in detail_text
+    assert "dataset.synergyLoaded" in detail_text
+    assert re.fullmatch(r"[?？]{3,}", "？？？")
+    assert not re.fullmatch(r"[?？]{3,}", "？？？ 提升攻速 25%")
+
+    icon_map = json.loads((RUN_DIR / "data" / "indexes" / "augment.name-to-icon.v1.json").read_text(encoding="utf-8"))
+    assert icon_map.get("？？？") == "/assets/missingping_small.png"
+
+
+def check_static_css_single_mount_contract() -> None:
+    index_text = (RUN_DIR / "display" / "static" / "index.html").read_text(encoding="utf-8")
+    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
+    web_server_text = (RUN_DIR / "display" / "web_server.py").read_text(encoding="utf-8")
+
+    assert 'href="/static/css/hextech-theme.css"' in index_text
+    assert 'href="/static/css/hextech-theme.css"' in detail_text
+    assert 'app.mount("/css"' not in web_server_text
+
+
 def check_heal_worker_contract() -> None:
     assert hasattr(heal_worker, "heal_missing_artifacts")
     assert hasattr(heal_worker, "detect_missing_artifacts")
@@ -340,6 +364,45 @@ def check_precomputed_cache_freshness() -> None:
             patch.object(precomputed_cache, "_resolve_cache_file", return_value=str(cache_file)),
         ):
             assert precomputed_cache.load_precomputed_hextech_for_hero("酒桶") is None
+
+    with TemporaryDirectory() as temp_dir:
+        latest_csv = Path(temp_dir) / "Hextech_Data_20260518.csv"
+        latest_csv.write_text("英雄名称\n酒桶\n", encoding="utf-8")
+        os.utime(latest_csv, (3000, 3000))
+
+        cache_file = Path(temp_dir) / "Champion_Hextech_Cache.json"
+        cache_file.write_text(
+            json.dumps(
+                {
+                    "meta": {
+                        "source": latest_csv.name,
+                        "source_mtime": 3000,
+                    },
+                    "data": {"酒桶": {"comprehensive": [{"海克斯名称": "可用数据"}]}},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        precomputed_cache._cache_match_state.pop(str(cache_file), None)
+        read_count = {"value": 0}
+        original_read_cache_payload = precomputed_cache._read_cache_payload
+
+        def counted_read_cache_payload(path: str) -> dict:
+            read_count["value"] += 1
+            return original_read_cache_payload(path)
+
+        with (
+            patch.object(precomputed_cache, "get_latest_csv", return_value=str(latest_csv)),
+            patch.object(precomputed_cache, "_read_cache_payload", side_effect=counted_read_cache_payload),
+        ):
+            assert precomputed_cache._cache_matches_latest_csv(str(cache_file))
+            assert precomputed_cache._cache_matches_latest_csv(str(cache_file))
+            assert read_count["value"] == 1
+            os.utime(cache_file, (4000, 4000))
+            assert precomputed_cache._cache_matches_latest_csv(str(cache_file))
+            assert read_count["value"] == 2
 
 
 def check_apex_source_snapshot_policy() -> None:
@@ -521,6 +584,16 @@ def check_hextech_source_parser() -> None:
     assert result["top_10_overall"][0]["源站排名"] == 1
     assert result["winrate_only"][0]["海克斯名称"] == "高胜率后排"
 
+    missing_derived_df = df.drop(columns=["胜率差", "综合得分"]).rename(columns={"英雄ID": "英雄 ID"})
+    missing_result = process_hextechs_data(
+        missing_derived_df,
+        "堕落天使",
+        catalog_lookup={},
+        use_runtime_cache=False,
+    )
+    assert missing_result["comprehensive"]
+    assert missing_result["comprehensive"][0]["海克斯名称"] == "源站第一"
+
 
 def _write_json(path: Path, payload: dict, mtime: int = 1000) -> Path:
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -555,7 +628,7 @@ def check_synergy_refresh_freshness() -> None:
         _snapshot(temp_dir)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2]:
+        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             assert not heal_worker._synergy_data_fresh()
             assert orchestrator.should_refresh_synergy(False)
 
@@ -563,7 +636,7 @@ def check_synergy_refresh_freshness() -> None:
         synergy_path = _snapshot(temp_dir)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2]:
+        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             write_synergy_refresh_meta(
                 target_path=synergy_path,
                 base_url="https://apexlol.info/zh",
@@ -586,7 +659,7 @@ def check_synergy_refresh_freshness() -> None:
         synergy_path = _snapshot(temp_dir, mtime=old_mtime)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2]:
+        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             write_synergy_refresh_meta(
                 target_path=synergy_path,
                 base_url="https://apexlol.info/zh",
@@ -607,7 +680,7 @@ def check_synergy_refresh_freshness() -> None:
         synergy_path = _snapshot(temp_dir, mtime=old_mtime)
 
         patches = _patch_synergy_dir(temp_dir, status=status)
-        with patches[0], patches[1], patches[2]:
+        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             write_synergy_refresh_meta(
                 target_path=synergy_path,
                 base_url="https://apexlol.info/zh",
@@ -620,6 +693,14 @@ def check_synergy_refresh_freshness() -> None:
 
             assert heal_worker._synergy_data_fresh()
             assert not orchestrator.should_refresh_synergy(False)
+
+    with TemporaryDirectory() as temp_dir:
+        _snapshot(temp_dir)
+
+        patches = _patch_synergy_dir(temp_dir)
+        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "0"}):
+            assert not orchestrator.should_refresh_synergy(True)
+            assert not heal_worker.detect_missing_artifacts()["synergy_data"]
 
 
 def check_synergy_snapshot_store() -> None:
@@ -672,6 +753,35 @@ def _core_info() -> dict[str, ChampionInfo]:
             aliases=["卡特"],
             slug=normalize_slug("Katarina"),
         )
+    }
+
+
+def _collision_core_info() -> dict[str, ChampionInfo]:
+    return {
+        "254": ChampionInfo(
+            id="254",
+            name="皮城执法官",
+            title="蔚",
+            en_name="Vi",
+            aliases=["蔚", "w"],
+            slug=normalize_slug("Vi"),
+        ),
+        "234": ChampionInfo(
+            id="234",
+            name="破败之王",
+            title="佛耶戈",
+            en_name="Viego",
+            aliases=["vi", "vie", "佛耶戈"],
+            slug=normalize_slug("Viego"),
+        ),
+        "112": ChampionInfo(
+            id="112",
+            name="奥术先驱",
+            title="维克托",
+            en_name="Viktor",
+            aliases=["vi", "vik", "维克托"],
+            slug=normalize_slug("Viktor"),
+        ),
     }
 
 
@@ -767,6 +877,119 @@ def check_synergy_structured_payloads() -> None:
 
     assert parsed["katarina"][0].rating == "D"
     assert parsed["katarina"][0].tag == "陷阱"
+
+
+def check_synergy_alias_collision_guard() -> None:
+    def entry(slug: str, content: str) -> SynergyEntry:
+        return SynergyEntry(
+            champion_slug=slug,
+            augment_names=[content],
+            tier="黄金",
+            rating="A",
+            tag="强力联动",
+            author="ApexLoL",
+            is_original=True,
+            content=content,
+            upvotes=0,
+            downvotes=0,
+        )
+
+    writer = SynergyWriter(_collision_core_info())
+    payload = writer.build_payload(
+        {
+            "vi": [entry("vi", "蔚专属联动")],
+            "viego": [entry("viego", "佛耶戈专属联动")],
+            "viktor": [entry("viktor", "维克托专属联动")],
+        }
+    )
+
+    assert payload["254"]["synergy_items"][0]["content"] == "蔚专属联动"
+    assert payload["234"]["synergy_items"][0]["content"] == "佛耶戈专属联动"
+    assert payload["112"]["synergy_items"][0]["content"] == "维克托专属联动"
+
+    payload_without_viktor = writer.build_payload({"vi": [entry("vi", "蔚专属联动")]})
+    assert payload_without_viktor["112"]["synergy_items"] == []
+
+
+def check_synergy_api_quarantines_duplicate_pollution() -> None:
+    polluted_items = [
+        {
+            "augment_names": ["蛋白粉奶昔"],
+            "tier": "棱彩",
+            "rating": "SS",
+            "tag": "娱乐",
+            "author": "ApexLoL",
+            "is_original": True,
+            "content": "蔚的护盾玩法，楚雨荨专属联动",
+            "upvotes": 0,
+            "downvotes": 0,
+        }
+    ]
+    data = {
+        "254": {"synergy_items": polluted_items},
+        "112": {"synergy_items": polluted_items},
+    }
+    core = {
+        "254": {"name": "皮城执法官", "title": "蔚", "en_name": "Vi", "aliases": ["楚雨荨"]},
+        "112": {"name": "奥术先驱", "title": "维克托", "en_name": "Viktor", "aliases": ["vi"]},
+    }
+
+    with patch.object(web_runtime, "ensure_champion_cache", return_value=core):
+        vi_payload = _build_synergy_api_payload(data, "254")
+        viktor_payload = _build_synergy_api_payload(data, "112")
+
+    assert len(vi_payload["synergy_items"]) == 1
+    assert viktor_payload["status"] == "quarantined"
+    assert viktor_payload["synergy_items"] == []
+    assert viktor_payload["reason"] == "foreign_champion_terms"
+    assert viktor_payload["match_types"] == {"254": "exact"}
+
+    partial_viktor_items = [
+        *polluted_items,
+        {
+            "augment_names": ["珠光护手"],
+            "tier": "黄金",
+            "rating": "S",
+            "tag": "强力联动",
+            "author": "ApexLoL",
+            "is_original": True,
+            "content": "蔚的爆发玩法",
+            "upvotes": 0,
+            "downvotes": 0,
+        },
+        {
+            "augment_names": ["机械飞升"],
+            "tier": "黄金",
+            "rating": "A",
+            "tag": "强力联动",
+            "author": "ApexLoL",
+            "is_original": True,
+            "content": "普通法师联动",
+            "upvotes": 0,
+            "downvotes": 0,
+        },
+    ]
+    partial_data = {
+        "254": {"synergy_items": partial_viktor_items[:2]},
+        "112": {"synergy_items": partial_viktor_items},
+    }
+    with patch.object(web_runtime, "ensure_champion_cache", return_value=core):
+        partial_payload = _build_synergy_api_payload(partial_data, "112")
+
+    assert partial_payload["status"] == "quarantined"
+    assert partial_payload["reason"] == "foreign_champion_terms"
+    assert partial_payload["match_types"] == {"254": "overlap"}
+
+
+def check_synergy_playwright_calibrator_contract() -> None:
+    tool_path = RUN_DIR / "tools" / "calibrate_synergy_playwright.py"
+    text = tool_path.read_text(encoding="utf-8")
+    assert "sync_playwright" in text
+    assert "只访问本地 Hextech Web/API" in text
+    assert "apexlol.info" not in text.lower()
+    assert "build_synergy_data_path" in text
+    assert "api_quarantined" in text
+    assert "if duplicate_with else []" in text
 
 
 def _normalize_text(value: Any) -> str:
@@ -1127,6 +1350,11 @@ def run_default_checks() -> None:
     check_synergy_refresh_freshness()
     check_synergy_snapshot_store()
     check_synergy_structured_payloads()
+    check_detail_question_mark_augment_guard()
+    check_static_css_single_mount_contract()
+    check_synergy_alias_collision_guard()
+    check_synergy_api_quarantines_duplicate_pollution()
+    check_synergy_playwright_calibrator_contract()
     check_no_legacy_imports()
 
 
