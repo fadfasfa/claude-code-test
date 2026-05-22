@@ -10,6 +10,7 @@
 | `PROJECT.md` | agent 仓库地图 |
 | `AGENTS.md` | Codex 规则和边界 |
 | `CLAUDE.md` | Claude Code 入口 |
+| `.agents/skills/superpowers-project-bridge/SKILL.md` | `S/M/L` 路由和官方 Superpowers 方法论桥接 |
 | `docs/index.md` | 文档短索引 |
 | `docs/workflows/` | 当前 workflow 规则 |
 | `scripts/` | 仓库级辅助脚本；旧 `scripts/workflow/` 已移除 |
@@ -21,8 +22,9 @@
 
 ## Workflow
 
-- Claude Code 入口直接按 `CLAUDE.md`、`PROJECT.md`、`docs/index.md` 和任务上下文执行。
-- Codex 入口直接按 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和任务上下文执行。
+- Claude Code 入口直接按 `CLAUDE.md`、`AGENTS.md` 摘要、`PROJECT.md`、`docs/index.md` 和任务上下文执行。
+- Codex 入口直接按 `AGENTS.md`、`superpowers-project-bridge`、`PROJECT.md`、`docs/index.md` 和任务上下文执行。
+- `S/M/L`、官方 Superpowers 方法论、worktree、验证和 Git 授权以 `AGENTS.md` 与 `superpowers-project-bridge` 为准。
 - 每次任务先 `git status --short`；修改后运行最小有效验证。
 - 验证通过后，按本轮授权只暂存本轮修改文件并提交；禁止 `git add .`。push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 自行完成并验证结果，不要求用户手动输入命令。
 - OpenAI Codex plugin 可以保留启用状态，但 Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。

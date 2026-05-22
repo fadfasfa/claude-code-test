@@ -1,72 +1,23 @@
-# claudecode Agent Rules
+# claudecode Agent 规则
 
-`claudecode` 是个人总编程仓、多子项目母仓和本机 agent 执行仓。Claude Code 与 Codex 均可按各自入口独立工作；任何一方都不是另一方的必经调度层。
+本文件是 Codex 在 `claudecode` 仓库内的不可违背规则摘要；完整任务路由由 `.agents/skills/superpowers-project-bridge/SKILL.md` 承载，说明性文档只引用这里，不另立冲突口径。
 
-## Default
+## 不可违背规则
 
 - 默认使用简体中文输出总结、风险、验证结果和变更说明。
-- 每次任务开始先运行 `git status --short`；若已有非本轮修改，先报告并避免混入。
-- 只读探查可以直接执行；用户当前轮明确要求实现、修复、调整或修改时，普通仓库文件编辑可以直接执行，仍需按授权范围小步修改并验证。
-- 涉及 workflow/config/skill/hook 修改、git 写操作、worktree 操作、删除/移动/覆盖等破坏性命令、越界路径、敏感文件、依赖或环境变更、外部账户或真实网络副作用时，必须先输出计划并等待用户确认。
-- 计划必须包含：`git status`、预计修改文件、修改内容、不修改范围、验证命令、Git 处理方式；确认后按计划小步执行，范围变化时重新确认。
-- 仓库根目录是治理、路由和工具骨架，不是默认业务写入面。
-- 业务修改必须先落到明确子项目或已登记工作区；写入范围以 `docs/workflows/work_area_registry.md` 为准。
-- Claude Code 入口按 `CLAUDE.md`、`PROJECT.md` 和 `docs/index.md` 独立执行；Codex 入口按本文件、`PROJECT.md` 和 `docs/index.md` 独立执行。
-- 不强制 CC 计划、CX 执行、CC 验收；Claude Code 中即使 OpenAI Codex plugin 可用，也只有用户当前轮显性点名或给出命令时才可调用。
-- 旧 CC-CX 强编排和受保护路径编排已退役，不作为日常工作流规则。
-- Windows 默认使用 PowerShell。
-- 默认在当前工作树小步执行；不自动创建 worktree、分支、计划文件、Markdown report、probe 或 archive 证据文件。
-- 修改后运行最小有效验证；无法验证时说明具体原因。
+- 开始任务先运行 `git status --short`；发现非本轮修改时先报告并避免混入。
+- 仓库根目录是治理、路由和工具骨架；业务修改必须先落到 `docs/workflows/work_area_registry.md` 登记的明确工作区。
+- `S/M/L` 风险路由以 `superpowers-project-bridge` 为准；任何行为性代码、脚本、配置、hook、proxy、权限或规则改动最低为 `M`。
+- `M/L` 任务必须触发官方 Superpowers 方法论；若官方 Superpowers skills 未实际可发现或不可触发，必须报告阻断，不伪造已使用。
+- 不读取或修改凭据、token、auth、cookie、API key、proxy secret、`.env`、`auth.json`、`local.yaml`、`proxies.json`。
+- 不覆盖、不回滚、不清理与当前任务无关的脏树改动；commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
+- 未获明确授权时，不主动 push、创建/更新 PR、merge、删除远端分支或丢弃未合并成果。
+- 用户明确要求 push、PR、merge 或清理指定 branch/worktree 时，该指令本身即授权；agent 必须自行执行必要命令并验证结果，不得退回给用户手工输入。
+- `force push`、`reset --hard`、删除/丢弃未合并成果、覆盖远端历史，必须被用户明确点名；一旦动作和目标明确，不额外增加业务层确认。
+- 不恢复 CC-CX guard、plan-gate、状态机、command、hook、memory、learning promotion、自动 PR shipping、task resume 或高权限 worktree skill。
 
-## Canonical Docs
+## 入口
 
-- 文档入口：`docs/index.md`
-- workflow 总览：`docs/workflows/00-overview.md`
-- 独立 agent 工作流：`docs/workflows/independent-agent-workflow.md`
-- Codex 执行边界：`docs/workflows/codex-execution-boundary.md`
-- 工作区边界：`docs/workflows/work_area_registry.md`
-- 高危操作边界：`docs/workflows/07-high-risk-safety.md`
-- 目录职责：`docs/workflows/repository-layout.md`
-- worktree 策略：`docs/workflows/worktree-policy.md`
-- Ultraplan 预留说明：`docs/workflows/ultraplan-adoption-note.md`
-- skill inventory：`docs/workflows/agent-skill-inventory.md`
-
-## Code Documentation
-
-- 新增或修改的代码注释一律使用简体中文；标识符、API 名、命令、错误原文保留英文。
-- 修改一个文件时，对路过的英文行内/块注释做顺手翻译；不主动扫全仓回填，不为翻译额外起 PR。
-- agent 新建源代码或文档文件时，文件首部必须带中文头部说明：
-  - Python/JS/TS：3 行以内 module docstring 或顶部块注释，说明该文件的职责、调用方、关键依赖。
-  - Markdown：首行中文 `#` 标题 + 1 行中文简介。
-  - PowerShell/Bash：脚本首行 shebang 或 `#Requires` 之后，紧跟 1–3 行中文注释。
-- 实质修改老文件（非纯重命名、非纯格式化）且其缺少中文头部时，按上一条格式补一段；仅做最小补全，不顺手重写已有英文头部。
-- 头部说明描述"做什么"和"谁会调它"，不写任务编号、PR 号或本轮改动说明。
-- 不替换或翻译现有的中文头部；不为图标、二进制、生成产物、第三方 vendored 代码增加头部。
-
-## Git And Safety
-
-- 只读 Git 命令默认允许，尤其是 `git status --short`、`git diff` 和 `git log`。
-- git 写操作必须先进入计划确认，不得把只读 Git 探查扩展为 staging、commit、branch、worktree 或其他写操作。
-- 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才 commit。
-- commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
-- `git push`、PR、merge、tag、release 等发布或合并动作未获用户明确授权时禁止主动执行；用户明确要求后由 agent 自行执行并验证结果，不得要求用户手动输入命令。
-- discard / 清理类操作（`git reset --hard`、`git clean -fdx`、`git restore`、覆盖式 checkout、大范围删除、批量移动或不可逆清理）未获用户明确批准时禁止主动执行；批准后由 agent 按确认范围执行，不得要求用户手动输入命令。
-- 不覆盖、不回滚、不清理与当前任务无关的脏树改动。
-- 不读取或修改凭据、token、auth、cookie、API key、proxy secret、私有配置、`.env`、`auth.json`、`local.yaml`、`proxies.json`。
-- 任何备份失败都必须立即停止，不继续删除、覆盖、移动或其他破坏性动作。
-
-## Skills
-
-- 非琐碎代码、脚本、配置或 workflow 实现任务必须触发 `karpathy-project-bridge`。
-- 前端 UI / 视觉 / 交互任务还必须触发 `frontend-design-project-bridge`。
-- 完成前默认使用 `repo-verification-before-completion` 口径报告证据。
-- `.agents/skills/README.md` 是仓库级 Codex skill 白名单入口。
-- 不恢复 command、hook、memory、learning promotion、自动 PR shipping、task resume 或高权限 worktree skill。
-
-## Retired Workflow Note
-
-旧 CC-CX 状态机、Guard v4、break-glass 流程、`NORMAL`、`CX_DEGRADED`、`CC_BG_READ`、`CC_BG_WRITE` 与 protected path 只作为历史术语保留，不作为当前主流程要求。
-
-## Completion Report
-
-非琐碎任务收尾说明：修改文件、是否触碰 `run/**`、是否执行删除/清理/移动、是否 staging/commit/push、diff 摘要、验证命令与结果，以及 acceptance gate。
+- Codex：先读本文件、`PROJECT.md`、`docs/index.md`，再按 `superpowers-project-bridge` 路由。
+- Claude Code：只读 `CLAUDE.md` 的入口说明；该文件不得覆盖本文件和 `superpowers-project-bridge`。
+- 完成报告必须列出：修改文件、是否触碰 `run/**` 或 `QuantProject/**`、是否执行删除/清理/移动、是否 staging/commit/push、验证命令与结果、剩余风险。

@@ -4,7 +4,7 @@
 
 - 默认允许 `git status`、`git diff`、`git log` 等只读命令。
 - 每次任务开始先运行 `git status --short`。
-- git 写操作必须先输出计划并等待用户确认；计划必须包含当前 `git status`、预计修改文件、修改内容、不修改范围、验证命令和 Git 处理方式。
+- git 写操作必须有当前轮授权或已批准计划；授权已经明确时，agent 直接执行并验证，不重复要求业务层确认。
 - 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才 commit。
 - commit 前只能暂存本轮修改文件，禁止 `git add .`。
 - 未获用户明确授权时，不主动执行 `push`、PR、merge、discard、`clean`、`reset`、`rebase`、`stash`、`switch`、`branch` 或 worktree 写入。
@@ -12,7 +12,7 @@
 
 ## Explicit Authorization
 
-只有用户当前轮明确要求对应动作，才执行 commit、push、branch、checkout、switch、merge、rebase、reset、clean、restore、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作。
+只有用户当前轮明确要求对应动作，或当前轮批准的 `superpowers-project-bridge` 计划已经包含该动作，才执行 commit、push、branch、checkout、switch、merge、rebase、reset、clean、restore、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作。
 
 commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不隐含其他清理动作。用户明确授权 push、PR、merge 或 discard 后，agent 必须按确认范围自行完整执行并验证结果，不得退回为“请你在本机终端执行命令”。
 
@@ -24,7 +24,7 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 - staged 清单只包含本轮授权范围。
 - 高危资产和无关业务脏改没有进入 staged。
 - 验证命令和结果可复述；无法验证时说明原因。
-- 本轮计划已获用户确认，且 Git 处理方式未超出确认范围。
+- Git 处理方式未超出本轮明确授权或已批准计划范围。
 
 选择性暂存优先使用明确路径，避免 `git add .`。创建分支默认用 `codex/` 前缀，不强制覆盖既有分支。
 

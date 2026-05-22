@@ -1,6 +1,6 @@
 # Worktree Policy
 
-本文件只描述当前 worktree 规则。普通任务默认在当前工作树小步执行，不自动创建分支或 worktree；worktree 是显式授权的执行面。
+本文件只描述当前 worktree 规则。普通 `S` 级任务默认在当前工作树小步执行；`M/L` 级任务的隔离 branch/worktree 要求以 `superpowers-project-bridge` 为准。
 
 ## Trigger
 
@@ -9,8 +9,9 @@
 - 用户明确要求开 worktree。
 - 上游任务明确标注 `requires_worktree: true`。
 - 用户在后续任务中显式提供新的 worktree 创建入口和授权。
+- `superpowers-project-bridge` 将任务判为 `M/L`，且当前任务已授权按该流程执行。
 
-多文件、多阶段、高风险或 non-trivial 本身都不构成开树触发。
+多文件或多阶段本身不构成开树触发；是否开树以用户授权、上游标记和 bridge 的 `M/L` 路由为准。
 
 ## Managed Roots
 
@@ -35,7 +36,7 @@
 - 对应 agent 的 managed root
 - 目标任务的 `target_work_area`
 
-创建、清理或修改 worktree 属于 worktree 写操作，必须先输出计划并等待用户确认；计划必须包含 `git status`、目标 worktree 路径、预计修改文件、修改内容、不修改范围、验证命令和 Git 处理方式。
+创建、清理或修改 worktree 属于 worktree 写操作，必须有当前轮明确授权或已批准计划；授权已经明确时按范围执行并验证，不重复要求业务层确认。
 
 旧 `scripts/workflow/worktree-start.ps1` 已随旧 workflow 主流程移除。`scripts/git/ccw-new.ps1` 已移除，不再作为 active 创建入口。不自动创建 detached worktree，也不默认写入 `TASK_HANDOFF.md` 与 `.task-worktree.json`。
 
@@ -52,4 +53,4 @@
 - `TASK_HANDOFF.md` 和 `.task-worktree.json` 只属于显式 worktree 流程。
 - 普通任务不生成、不更新这些文件。
 - 旧 metadata / cleanup 脚本已随旧 workflow 主流程移除；普通任务不读取或更新 worktree metadata。
-- 真实清理前必须确认目标受管且工作树干净，并获得用户显性授权。
+- 真实清理前必须确认目标受管且工作树干净，并获得用户显性授权；用户已明确要求清理指定 branch/worktree 时，agent 自行执行并验证。
