@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import threading
@@ -198,6 +199,136 @@ def _synergy_item_to_compat_string(item: dict) -> str:
         "原创" if item.get("is_original") else "非原创",
         str(item.get("content") or ""),
     ])
+
+
+_SHORT_ALIAS_TERMS = {"q", "w", "e", "r", "ad", "ap", "aa"}
+
+
+def _normalize_match_text(value) -> str:
+    return "".join(str(value or "").lower().split())
+
+
+def _champion_terms(champ_id: str, *, include_short_chinese: bool = False) -> list[str]:
+    cache = web_runtime.ensure_champion_cache()
+    record = cache.get(str(champ_id), {}) if isinstance(cache, dict) else {}
+    if not isinstance(record, dict):
+        return []
+
+    raw_terms = [
+        record.get("name"),
+        record.get("title"),
+        record.get("en_name"),
+        *(record.get("aliases") or []),
+    ]
+    terms: list[str] = []
+    for value in raw_terms:
+        text = str(value or "").strip()
+        normalized = _normalize_match_text(text)
+        if not normalized or normalized in _SHORT_ALIAS_TERMS:
+            continue
+        if normalized.isascii() and len(normalized) < 3:
+            continue
+        if not normalized.isascii() and len(normalized) < 2 and not include_short_chinese:
+            continue
+        if text not in terms:
+            terms.append(text)
+    return terms
+
+
+def _synergy_items_signature(items: list[dict]) -> str:
+    if not items:
+        return ""
+    return json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _duplicate_synergy_ids(data: dict, target_signature: str) -> list[str]:
+    if not target_signature:
+        return []
+
+    duplicate_ids: list[str] = []
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            continue
+        raw_synergies = value.get("synergies", [])
+        items = _normalize_synergy_items(value.get("synergy_items", []), raw_synergies)
+        if _synergy_items_signature(items) == target_signature:
+            duplicate_ids.append(str(key))
+    return duplicate_ids if len(duplicate_ids) > 1 else []
+
+
+def _find_term_hits(text: str, terms: list[str]) -> list[str]:
+    normalized_text = _normalize_match_text(text)
+    hits = []
+    for term in terms:
+        normalized_term = _normalize_match_text(term)
+        if normalized_term and normalized_term in normalized_text:
+            hits.append(term)
+    return hits
+
+
+def _synergy_quarantine_reason(champ_id: str, synergy_items: list[dict], duplicate_ids: list[str]) -> dict:
+    """重复整组联动时，用英雄名词命中判断是否应隐藏污染数据。"""
+    peers = [item for item in duplicate_ids if item != str(champ_id)]
+    if not peers:
+        return {}
+
+    content_text = " ".join(str(item.get("content") or "") for item in synergy_items if isinstance(item, dict))
+    own_hits = _find_term_hits(content_text, _champion_terms(str(champ_id), include_short_chinese=True))
+    foreign_hits = []
+    for other_id in peers:
+        hits = _find_term_hits(content_text, _champion_terms(other_id, include_short_chinese=True))
+        if hits:
+            foreign_hits.append({"id": other_id, "terms": hits[:5]})
+
+    if foreign_hits and not own_hits:
+        return {"reason": "foreign_champion_terms", "duplicate_with": peers, "foreign_hits": foreign_hits}
+    if not own_hits:
+        return {"reason": "ambiguous_duplicate_synergy_items", "duplicate_with": peers, "foreign_hits": foreign_hits}
+    return {}
+
+
+def _build_synergy_api_payload(data: dict, champ_id: str) -> dict:
+    if not data:
+        return {"synergies": [], "synergy_items": []}
+
+    resolved_champ_id = web_runtime.resolve_champion_id(champ_id)
+    canonical_name = web_runtime.resolve_canonical_hero_name(champ_id).lower()
+
+    lookup_id = resolved_champ_id or str(champ_id)
+    synergy_data = data.get(lookup_id, {})
+    if not synergy_data:
+        for key, value in data.items():
+            key_text = str(key).lower()
+            if (
+                str(champ_id).lower() == key_text
+                or str(resolved_champ_id).lower() == key_text
+                or (canonical_name and canonical_name == key_text)
+            ):
+                synergy_data = value
+                lookup_id = str(key)
+                break
+
+    raw_synergies = synergy_data.get("synergies", []) if synergy_data else []
+    synergy_items = _normalize_synergy_items(
+        synergy_data.get("synergy_items", []) if synergy_data else [],
+        raw_synergies,
+    )
+    duplicate_ids = _duplicate_synergy_ids(data, _synergy_items_signature(synergy_items))
+    if duplicate_ids:
+        quarantine = _synergy_quarantine_reason(str(lookup_id), synergy_items, duplicate_ids)
+        if quarantine:
+            return {
+                "synergies": [],
+                "synergy_items": [],
+                "status": "quarantined",
+                "message": "联动数据待校准",
+                **quarantine,
+            }
+
+    synergies = _normalize_synergy_entries(raw_synergies)
+    if not synergies and synergy_items:
+        synergies = [_synergy_item_to_compat_string(item) for item in synergy_items]
+    return {"synergies": synergies, "synergy_items": synergy_items}
 
 
 class RedirectRequest(BaseModel):
@@ -477,32 +608,7 @@ def register_routes(app: FastAPI) -> None:
     async def api_synergies(champ_id: str):
         try:
             data = web_runtime.get_synergy_data()
-            if not data:
-                return JSONResponse(content={"synergies": [], "synergy_items": []})
-
-            resolved_champ_id = web_runtime.resolve_champion_id(champ_id)
-            canonical_name = web_runtime.resolve_canonical_hero_name(champ_id).lower()
-
-            synergy_data = data.get(resolved_champ_id or champ_id, {})
-            if not synergy_data:
-                for key, value in data.items():
-                    if (
-                        str(champ_id).lower() == key.lower()
-                        or str(resolved_champ_id).lower() == key.lower()
-                        or (canonical_name and canonical_name == key.lower())
-                    ):
-                        synergy_data = value
-                        break
-
-            raw_synergies = synergy_data.get("synergies", []) if synergy_data else []
-            synergy_items = _normalize_synergy_items(
-                synergy_data.get("synergy_items", []) if synergy_data else [],
-                raw_synergies,
-            )
-            synergies = _normalize_synergy_entries(raw_synergies)
-            if not synergies and synergy_items:
-                synergies = [_synergy_item_to_compat_string(item) for item in synergy_items]
-            return JSONResponse(content={"synergies": synergies, "synergy_items": synergy_items})
+            return JSONResponse(content=_build_synergy_api_payload(data, champ_id))
         except Exception as exc:
             web_runtime.logger.warning("协同数据查询失败：%s", exc)
             return JSONResponse(content={"synergies": [], "synergy_items": []})

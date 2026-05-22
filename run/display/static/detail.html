@@ -270,19 +270,23 @@
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
-            gap: 0.75rem;
+            gap: 0.65rem;
+            flex-wrap: wrap;
             width: 100%;
         }
 
         .hextech-article-title-block {
+            flex: 1 1 16rem;
             min-width: 0;
         }
 
         .hextech-article-meta {
-            flex-shrink: 0;
+            flex: 1 1 14rem;
             flex-wrap: wrap;
             justify-content: flex-end;
-            max-width: 42%;
+            row-gap: 0.35rem;
+            max-width: 100%;
+            min-width: 0;
         }
 
         .hextech-article-content {
@@ -581,6 +585,9 @@
             gap: 8px;
             padding: 12px 8px;
         }
+        #skeletonContainer.hidden {
+            display: none;
+        }
 
 
 
@@ -818,6 +825,8 @@
         let currentMode = 'comprehensive';
         let activeArray = null;
         let synergyData = null;
+        let synergyMeta = null;
+        let synergyLoaded = false;
         let augmentIconMap = {};
         let augmentCatalogMap = {};
         let ws = null;
@@ -1127,8 +1136,17 @@
             `;
         }
 
+        function isQuestionMarkAugmentName(text) {
+            return /^[?？]{3,}$/.test(String(text || '').trim());
+        }
+
         function purifyHextechTooltip(text) {
             if (!text) return '';
+            const original = String(text).trim();
+            if (isQuestionMarkAugmentName(original)) {
+                return original;
+            }
+
             let s = String(text);
             s = s.replace(/\{\{\s*Item_Keyword_OnHit\s*\}\}/gi, '攻击特效');
             s = s.replace(/\{\{.*?\}\}/g, '');
@@ -1139,7 +1157,7 @@
             s = s.replace(/<br>\s*(已获得的额外属性|已造成的伤害|已造成的额外伤害|已提供的护盾|伤害|治疗)[：:][\s\S]*/g, '');
             s = s.replace(/\s*(已获得的额外属性|已造成的伤害|已造成的额外伤害|已提供的护盾|伤害|治疗)[：:][\s\S]*/g, '');
             
-            // 压缩和清理连续的问号及多段问号噪声
+            // 仅清理 tooltip 内未解析变量留下的 ASCII 问号，不处理真实海克斯名“？？？”。
             s = s.replace(/\?{2,}/g, '');
             s = s.replace(/(?:\s*\?\s*){2,}/g, '');
             s = s.replace(/^[?\s]+|[?\s]+$/g, '');
@@ -1353,9 +1371,14 @@
 
         function updateFilteredSynergies(tier) {
             const container = document.getElementById('synergyArticleScroll');
+            container.dataset.synergyLoaded = synergyLoaded ? '1' : '0';
+            container.dataset.synergyStatus = synergyMeta && synergyMeta.status ? synergyMeta.status : 'ok';
             const normalized = (synergyData || []).map(normalizeSynergyArticle).filter(item => item.content);
             if (normalized.length === 0) {
-                container.innerHTML = '<div class="glass-panel rounded-xl p-4"><div class="text-sm text-gray-400 text-center">暂无联动文章</div></div>';
+                const message = synergyMeta && synergyMeta.status === 'quarantined'
+                    ? (synergyMeta.message || '联动数据待校准')
+                    : '暂无联动文章';
+                container.innerHTML = `<div class="glass-panel rounded-xl p-4"><div class="text-sm text-gray-400 text-center">${escapeHtml(message)}</div></div>`;
                 return;
             }
 
@@ -1446,7 +1469,6 @@
                         <span class="text-white text-[16px] font-bold tracking-wide leading-none">${safeName}</span>
                         <div class="${badgeBg} px-1.5 h-[20px] rounded flex items-center shadow-sm">
                             <span class="${badgeText} text-[11px] font-black">${safeGrade}</span>
-                            <span class="${badgeText} opacity-70 text-[10px] font-black ml-[1px] pt-[1px]">?</span>
                         </div>
                         ${item.tags.map(tag => `<div class="${getTagStyle(tag)} px-1.5 h-[20px] rounded flex items-center text-[10px] font-bold">${escapeHtml(tag)}</div>`).join('')}
                     </div>
@@ -1455,18 +1477,18 @@
                     </div>
                 </div>
 
-                <div class="hextech-article-meta flex items-center gap-3 mt-[-2px]">
+                <div class="hextech-article-meta flex items-center gap-2 mt-0">
                     <div class="flex items-center bg-[#1e2333] border border-[#2a3040] rounded-full overflow-hidden h-[24px]">
                         <div class="flex items-center gap-1.5 px-3 h-full border-r border-[#2a3040]">
                             <svg class="w-3.5 h-3.5 text-[#507c59] fill-current" viewBox="0 0 16 16"><path d="M3 1.5A.5.5 0 0 1 3.5 1h9a.5.5 0 0 1 .4.82l-2 2.68 2 2.68a.5.5 0 0 1-.4.82h-9v6.5a.5.5 0 0 1-1 0v-13z"/></svg>
                             <span class="text-[#8c9ba5] text-[12px] font-medium pt-0.5">${item.upvotes}</span>
                         </div>
                         <div class="flex items-center gap-1.5 px-3 h-full">
-                            <svg class="w-3.5 h-3.5 text-[#c29845] fill-current" viewBox="0 0 16 16"><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.605.69-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                            <svg class="w-3.5 h-3.5 text-[#c29845] fill-current" viewBox="0 0 16 16"><path d="M8 13.25 2.75 5.5h10.5L8 13.25z"/></svg>
                             <span class="text-[#8c9ba5] text-[12px] font-medium pt-0.5">${item.downvotes}</span>
                         </div>
                     </div>
-                    ${item.author ? `<div class="text-[#8c9ba5] text-[12px] flex items-center">作者: ${safeAuthor} ${item.isOriginal ? '<span class="bg-[#ebd55b] text-black px-1 py-[1px] rounded-[3px] ml-1.5 text-[10px] font-black tracking-wide leading-none pt-[3px]">原创</span>' : ''}</div>` : ''}
+                    ${item.author ? `<div class="text-[#8c9ba5] text-[12px] flex flex-wrap items-center justify-end gap-1.5 min-w-0 text-right">作者: ${safeAuthor} ${item.isOriginal ? '<span class="bg-[#ebd55b] text-black px-1 py-[1px] rounded-[3px] text-[10px] font-black tracking-wide leading-none pt-[3px]">原创</span>' : ''}</div>` : ''}
                 </div>
 
             </div>
@@ -1511,13 +1533,17 @@
             try {
                 const synergyRes = await fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId || hero)}`);
                 const synergyResult = await synergyRes.json();
+                synergyMeta = synergyResult && typeof synergyResult === 'object' ? synergyResult : null;
                 synergyData = Array.isArray(synergyResult.synergy_items) && synergyResult.synergy_items.length > 0
                     ? synergyResult.synergy_items
                     : (synergyResult.synergies || []);
+                synergyLoaded = true;
                 updateFilteredSynergies(currentView);
             } catch (err) {
                 console.error(err);
+                synergyMeta = null;
                 synergyData = [];
+                synergyLoaded = true;
                 updateFilteredSynergies(currentView);
             }
         }
@@ -1574,6 +1600,9 @@
                 hextechData = await hextechRes.json();
                 activeArray = hextechData.comprehensive || [];
                 await loadAugmentIconMap();
+                synergyData = [];
+                synergyMeta = null;
+                synergyLoaded = false;
 
                 document.getElementById('loadingSpinner').classList.add('hidden');
                 document.getElementById('skeletonContainer').classList.add('hidden');

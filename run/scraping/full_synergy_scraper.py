@@ -1491,15 +1491,33 @@ class SynergyWriter:
         with _output_file_lock(lock_path):
             _atomic_write_json(output_path, payload)
 
+    def _lookup_synergies_by_key(self, key: str, synergy_map: dict[str, list[SynergyEntry]]) -> list[SynergyEntry]:
+        for candidate in (normalize_slug(key), normalize_name(key)):
+            if candidate and candidate in synergy_map:
+                return synergy_map[candidate]
+        return []
+
+    def _alias_belongs_to_champion(self, alias: str, champ_info: ChampionInfo) -> bool:
+        for candidate in (normalize_name(alias), normalize_slug(alias)):
+            if not candidate:
+                continue
+            matched = self.champion_lookup.get(candidate)
+            if matched is not None and matched.id != champ_info.id:
+                return False
+        return True
+
     def _find_synergies_for_champion(self, champ_info: ChampionInfo, synergy_map: dict[str, list[SynergyEntry]]) -> list[SynergyEntry]:
-        keys = [champ_info.slug, champ_info.en_name, champ_info.name, champ_info.title, champ_info.id, *champ_info.aliases]
+        primary_keys = [champ_info.id, champ_info.slug, champ_info.en_name, champ_info.name, champ_info.title]
+        for key in primary_keys:
+            synergies = self._lookup_synergies_by_key(key, synergy_map)
+            if synergies:
+                return synergies
+
+        keys = [alias for alias in champ_info.aliases if self._alias_belongs_to_champion(alias, champ_info)]
         for key in keys:
-            normalized = normalize_slug(key)
-            if normalized in synergy_map:
-                return synergy_map[normalized]
-            name_key = normalize_name(key)
-            if name_key in synergy_map:
-                return synergy_map[name_key]
+            synergies = self._lookup_synergies_by_key(key, synergy_map)
+            if synergies:
+                return synergies
         return []
 
 
