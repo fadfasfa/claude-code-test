@@ -267,5 +267,36 @@ Windows shell 中做只读日志或 learning 摘要时，避免原样打印含�
 - type: best_practice
 - scope: repo-local
 
+---
+
+## [LRN-20260526-001] superpowers_smoke
+
+**Logged**: 2026-05-26T20:00:00+08:00
+**Priority**: medium
+**Status**: pending
+**Area**: workflow
+
+### Summary
+
+退役本地 Superpowers bridge 之后，官方 Superpowers plugin 在本仓首次完成钩子 / 子智能体 / worktree / git 全链路冒烟，结论是四面均按本仓工作流文档可用，可作为后续基线。
+
+### Details
+
+- 钩子：Superpowers 5.1.0 plugin 的 `SessionStart`（startup/clear/compact）在会话开始时正常触发；仓库 `.claude/settings.json` 与 `.claude/hooks/` 都不再注册仓库级 hook，唯一活的 hook 来自官方 plugin。
+- 子智能体：在同一条消息内并行派发 Explore + Plan + general-purpose 三类 agent 全部回流，`superpowers:dispatching-parallel-agents` skill 工作正常；Explore 完成 worktree HEAD 与 LRN 末尾核对、Plan 输出结构化迷你计划、general-purpose 完成 commit 对齐校验。
+- Worktree：按 `docs/workflows/worktree-policy.md` 在 CC managed root `C:/Users/apple/_worktrees/cc` 下创建 `claudecode-cc-probe-superpowers-smoke`，分支 `cc/probe/superpowers-smoke-20260526` 由 `origin/main` 拉出；命名、目录、base 解析与 policy 一致。
+- Git：commit 仅暂存 `LEARNINGS.md` 本文件（遵循 AGENTS.md 禁用 `git add .`）；push -u、`gh pr create` 在用户授权下执行；不 merge、不 force push、不删远端分支；执行尾段按授权清理 worktree 与本地分支。
+
+### Suggested Action
+
+后续新会话默认信任官方 Superpowers plugin 的钩子与子智能体通道；如再退役/升级 plugin 或调整 worktree managed root，须再跑一次本计划范围内的全链路 smoke 并在本文件追加新 LRN 条目，避免静默漂移。
+
+### Metadata
+
+- Source: superpowers smoke 2026-05-26 by Claude Code
+- Related Files: AGENTS.md, docs/workflows/worktree-policy.md, docs/workflows/02-git-policy.md, C:/Users/apple/.claude/plans/superpowers-superpowers-git-snuggly-tulip.md
+- Tags: superpowers, plugin, hooks, subagents, worktree, git, smoke
+- Pattern-Key: workflow.superpowers-plugin-smoke
+
 
 
