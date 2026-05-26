@@ -19,7 +19,7 @@ description: 用于本仓提交或 PR 前的本地 diff 审查；生成风险、
 ## action boundary
 
 - 本地 review 模式本身只读，不调用云端 PR，不执行 git add、commit、push、merge、rebase，也不修改业务文件。
-- 若用户在同一轮明确授权 push、PR、merge 或其他交付动作，退出只读 review 模式，按 `AGENTS.md` 与 `superpowers-project-bridge` 的授权规则执行并验证，不退回手工命令。
+- 若用户在同一轮明确授权 push、PR、merge 或其他交付动作，退出只读 review 模式，按 `AGENTS.md` 的授权规则执行并验证，不退回手工命令。
 - 不读取凭据、token、cookie、auth 或 proxy secret。
 
 ## verification expectation

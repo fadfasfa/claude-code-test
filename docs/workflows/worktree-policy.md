@@ -1,6 +1,6 @@
 # Worktree Policy
 
-本文件只描述当前 worktree 规则。普通 `S` 级任务默认在当前工作树小步执行；`M/L` 级任务的隔离 branch/worktree 要求以 `superpowers-project-bridge` 为准。
+本文件只描述当前 worktree 规则。普通 `S` 级任务默认在当前工作树小步执行；`M/L` 级任务按 `AGENTS.md` 的薄边界和当前任务授权执行。
 
 ## Trigger
 
@@ -9,9 +9,9 @@
 - 用户明确要求开 worktree。
 - 上游任务明确标注 `requires_worktree: true`。
 - 用户在后续任务中显式提供新的 worktree 创建入口和授权。
-- `superpowers-project-bridge` 将任务判为 `M/L`，且当前任务已授权按该流程执行。
+- 当前任务已被判为 `M/L`，且当前轮已明确授权按该工作区策略执行。
 
-多文件或多阶段本身不构成开树触发；是否开树以用户授权、上游标记和 bridge 的 `M/L` 路由为准。
+多文件或多阶段本身不构成开树触发；是否开树以用户授权、上游标记和 `AGENTS.md` 的薄边界为准。
 
 ## Managed Roots
 

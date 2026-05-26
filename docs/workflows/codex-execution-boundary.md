@@ -7,8 +7,7 @@
 - Codex standalone mode：用户直接调用 Codex 时，Codex 按 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和用户任务独立执行普通代码任务完整流程。
 - Codex App、VS Code Codex、Codex CLI、wrapper 和 CC 调用器是不同 surface，不混写为同一入口。
 - 重执行、长线程和大 diff 默认留在 VS Code Codex / Codex CLI；不要把这类执行历史重新带回 Codex App 热路径。
-- OpenAI Codex plugin 可以保留启用状态；Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
-- Codex App 直接 `git push` 在当前底层 policy / AskForApproval Never 配置下仍被拦截，未独立验收通过；wrapper → `C:\Users\apple\.codex-exec` 的执行链路是当前已通过 push smoke 的路径。Codex App 在文档与规则中标记为"待独立验收旁路"，不得写成已替代或可替代 wrapper，直到专门验收记录新鲜通过。
+- 官方 Superpowers plugin 是唯一 Superpowers 来源；Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
 
 ## Current Contract
 
@@ -23,7 +22,7 @@
 
 - 开始任务先运行 `git status --short`。
 - 只读探查可以直接执行；用户当前轮明确要求实现、修复、调整或修改时，普通仓库文件编辑可以直接执行，仍需按授权范围小步修改并验证。
-- `S/M/L`、官方 Superpowers 方法论、worktree、计划、验证、review 和收尾流程引用 `superpowers-project-bridge`。
+- `S/M/L` 只作为治理分级，不再引用本地 bridge。
 - 当前轮已明确授权或计划已批准时，agent 按授权范围执行并验证，不重复要求业务层确认。
 - 先选择明确工作区，避免把仓库根当作默认业务写入面。
 - 修改后运行最小有效验证；无法验证时说明原因。

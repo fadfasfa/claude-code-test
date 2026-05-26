@@ -1,14 +1,14 @@
 # claudecode Agent 规则
 
-本文件是 Codex 在 `claudecode` 仓库内的不可违背规则摘要；完整任务路由由 `.agents/skills/superpowers-project-bridge/SKILL.md` 承载，说明性文档只引用这里，不另立冲突口径。
+本文件是 Codex 在 `claudecode` 仓库内的不可违背规则摘要；现行 Superpowers 只认官方已安装 plugin，仓库只保留薄的 S/M/L 治理边界，不再保留桥接执行层。
 
 ## 不可违背规则
 
 - 默认使用简体中文输出总结、风险、验证结果和变更说明。
 - 开始任务先运行 `git status --short`；发现非本轮修改时先报告并避免混入。
 - 仓库根目录是治理、路由和工具骨架；业务修改必须先落到 `docs/workflows/work_area_registry.md` 登记的明确工作区。
-- `S/M/L` 风险路由以 `superpowers-project-bridge` 为准；任何行为性代码、脚本、配置、hook、proxy、权限或规则改动最低为 `M`。
-- `M/L` 任务必须触发官方 Superpowers 方法论；若官方 Superpowers skills 未实际可发现或不可触发，必须报告阻断，不伪造已使用。
+- `S/M/L` 只用于治理分级：`S` 为纯文字或说明性变更，`M` 为局部行为变更，`L` 为 workflow、agent 规则、plugin、hook、proxy、权限链路、仓库结构、关键数据/策略或跨模块修改。
+- 官方 Superpowers plugin 是唯一 Superpowers 来源；仓库不再提供 bridge、wrapper 或本地 skill 作为第二来源。
 - 不读取或修改凭据、token、auth、cookie、API key、proxy secret、`.env`、`auth.json`、`local.yaml`、`proxies.json`。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动；commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
 - 未获明确授权时，不主动 push、创建/更新 PR、merge、删除远端分支或丢弃未合并成果。
@@ -19,6 +19,6 @@
 
 ## 入口
 
-- Codex：先读本文件、`PROJECT.md`、`docs/index.md`，再按 `superpowers-project-bridge` 路由。
-- Claude Code：只读 `CLAUDE.md` 的入口说明；该文件不得覆盖本文件和 `superpowers-project-bridge`。
+- Codex：先读本文件、`PROJECT.md`、`docs/index.md`，再按薄 S/M/L 边界执行。
+- Claude Code：只读 `CLAUDE.md` 的入口说明；该文件不得覆盖本文件和仓库规则。
 - 完成报告必须列出：修改文件、是否触碰 `run/**` 或 `QuantProject/**`、是否执行删除/清理/移动、是否 staging/commit/push、验证命令与结果、剩余风险。

@@ -18,7 +18,7 @@
 - 旧 CC-CX 执行脚本如出现只作为 legacy/compat 线索，不作为主流程、fallback 主路或验收接口。
 - Windows 默认 shell 是 PowerShell。
 - 普通仓库任务不修改全局 Claude Code、Codex、Superpowers、CLI、VS plugin、Codex App 或 proxy 配置。
-- 官方 Superpowers 作为方法论来源；本仓只维护 `superpowers-project-bridge`，不 fork 或魔改官方源码。
+- 官方 Superpowers plugin 作为方法论来源；本仓不再维护 `superpowers-project-bridge`。
 - 不设置项目级 `.codex/config.toml`、repo-local Codex hook 或 repo-local MCP 配置。
 - 不新增复杂编排器；`.claude/settings.json` 只保留 Claude Code 项目权限和 plugin 可用状态。
 - `full-access` profile 只能人工选择，不是仓库默认权限。
@@ -28,7 +28,7 @@
 
 - 仓库级 skill 只保留 inventory 中登记项。
 - 不恢复 memory、learning promotion、自动 PR shipping、高权限 worktree governance 或 task resume skill。
-- `superpowers-project-bridge` 承载 `S/M/L`、官方 Superpowers 方法论、worktree、验证和 Git 授权流程；其他文档只引用。
+- `S/M/L` 只作为治理边界；官方 plugin 与仓库规则分层，不再由本地 bridge 承载。
 
 ## Verification
 

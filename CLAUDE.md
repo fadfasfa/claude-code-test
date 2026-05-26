@@ -1,6 +1,6 @@
 # Claude Code 入口
 
-本文件只说明 Claude Code 在本仓的入口边界；不可违背规则见 `AGENTS.md`，完整 S/M/L 与 Superpowers 执行流程见 `.agents/skills/superpowers-project-bridge/SKILL.md`。
+本文件只说明 Claude Code 在本仓的入口边界；不可违背规则见 `AGENTS.md`，现行 Superpowers 只来自官方已安装 plugin，仓库不再维护桥接执行层。
 
 ## 使用方式
 
@@ -9,6 +9,7 @@
 - 先读 `PROJECT.md`、`docs/index.md` 和任务相关 workflow 文档，再选择目标工作区。
 - Claude Code 与 Codex 均可独立工作；无用户当前轮显性命令时，Claude Code 不调用、委派、审查或触发 Codex / CX。
 - Git 授权、敏感文件、worktree、发布、discard 和完成报告规则全部引用 `AGENTS.md`，不得在本文件另写不同口径。
+- `S/M/L` 仅作治理分级，不承担 bridge 执行职责。
 
 ## 退役说明
 

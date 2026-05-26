@@ -9,7 +9,7 @@ Claude Code 与 Codex 均可独立工作；仓库不再维护固定的 CC-CX 强
 | 文件 | 用途 |
 | :--- | :--- |
 | `AGENTS.md` | Codex 当前规则和边界 |
-| `.agents/skills/superpowers-project-bridge/SKILL.md` | `S/M/L` 路由、官方 Superpowers 方法论和 Git 授权流程 |
+| `docs/archive/superpowers-project-bridge.md` | 旧 bridge 的归档说明 |
 | `README.md` | 人类快速入口 |
 | `CLAUDE.md` | Claude Code 入口 |
 | `docs/index.md` | 文档短索引 |
@@ -40,9 +40,9 @@ Claude Code 与 Codex 均可独立工作；仓库不再维护固定的 CC-CX 强
 
 ## Agent Workflow
 
-- Claude Code 入口：先 `git status --short`，按 `CLAUDE.md`、`AGENTS.md` 摘要和 bridge 引用独立完成任务。
-- Codex 入口：先 `git status --short`，按 `AGENTS.md` 和 `superpowers-project-bridge` 路由独立完成任务。
-- `S/M/L`、worktree、计划、验证、review 和收尾流程以 `superpowers-project-bridge` 为准；本文件不另写不同口径。
+- Claude Code 入口：先 `git status --short`，按 `CLAUDE.md`、`AGENTS.md` 和任务上下文独立完成任务。
+- Codex 入口：先 `git status --short`，按 `AGENTS.md`、`PROJECT.md` 和 `docs/index.md` 独立完成任务。
+- `S/M/L` 只作为治理边界；本文件不再把 bridge 当作流程入口或权威流程。
 - 当前轮已经明确授权或计划已批准的动作，不再重复要求业务层确认；agent 按授权范围执行并验证。
 - 两个入口都必须避免混入非本轮脏树，修改后运行最小有效验证。
 - 验证通过后，按本轮授权只暂存本轮修改文件并 commit；禁止 `git add .`。push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 自行完成并验证结果，不要求用户手动输入命令。

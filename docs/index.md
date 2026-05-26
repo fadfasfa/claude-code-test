@@ -7,7 +7,7 @@
 | 路径 | 用途 |
 | :--- | :--- |
 | `docs/workflows/00-overview.md` | workflow 总览 |
-| `.agents/skills/superpowers-project-bridge/SKILL.md` | `S/M/L` 路由、官方 Superpowers 方法论和 Git 授权流程 |
+| `docs/archive/superpowers-project-bridge.md` | 旧 bridge 归档说明 |
 | `docs/workflows/independent-agent-workflow.md` | Claude Code / Codex 独立工作流 |
 | `docs/workflows/work_area_registry.md` | 工作区和写入边界 |
 | `docs/workflows/codex-execution-boundary.md` | Codex 执行边界 |
@@ -18,7 +18,7 @@
 
 ## On Demand
 
-- `docs/reference/policies/task-routing.md`：`S/M/L` 概念说明；不覆盖 bridge。
+- `docs/reference/policies/task-routing.md`：`S/M/L` 概念说明；只定义薄边界。
 - `docs/reference/`：按需读取的参考资料。
 - `docs/archive/`：历史报告和退役资料，默认不作为当前规则来源。
 

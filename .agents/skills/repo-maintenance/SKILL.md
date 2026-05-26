@@ -19,7 +19,7 @@ description: 用于本仓维护、清理候选、受保护资产检查和工作�
 ## action boundary
 
 - 默认不删除未提交改动，不清理 `run/**` 当前脏树，不改 ACL，不执行 git clean、reset、stash、rebase。
-- 用户明确授权指定 clean、reset、discard、stash、rebase 或 worktree cleanup 时，先做只读目标核对，再按 `AGENTS.md` 与 `superpowers-project-bridge` 的授权范围执行并验证。
+- 用户明确授权指定 clean、reset、discard、stash、rebase 或 worktree cleanup 时，先做只读目标核对，再按 `AGENTS.md` 的授权范围执行并验证。
 - 不触碰凭据、token、cookie、auth、proxy secret。
 
 ## verification expectation

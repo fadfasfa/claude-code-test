@@ -12,7 +12,7 @@
 
 ## Explicit Authorization
 
-只有用户当前轮明确要求对应动作，或当前轮批准的 `superpowers-project-bridge` 计划已经包含该动作，才执行 commit、push、branch、checkout、switch、merge、rebase、reset、clean、restore、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作。
+只有用户当前轮明确要求对应动作，或当前轮批准的任务计划已经包含该动作，才执行 commit、push、branch、checkout、switch、merge、rebase、reset、clean、restore、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作。
 
 commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不隐含其他清理动作。用户明确授权 push、PR、merge 或 discard 后，agent 必须按确认范围自行完整执行并验证结果，不得退回为“请你在本机终端执行命令”。
 

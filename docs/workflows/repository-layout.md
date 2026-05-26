@@ -10,7 +10,7 @@
 | `docs/workflows/` | 当前 workflow 规则 |
 | `docs/reference/` | 按需读取的参考资料 |
 | `docs/archive/` | 历史报告和退役资料，默认不读 |
-| `.agents/skills/` | 仓库级 Codex skill 白名单 |
+| `.agents/skills/` | 仓库级 Codex skill 白名单；不再放 bridge 执行入口 |
 | `.claude/` | Claude Code 本机设置、入口说明和本机计划草稿 |
 | `.codex/` | 项目级 Codex 配置占位，不放运行态 |
 | `.state/workflow/` | 旧 CC-CX 工作流遗留运行态，默认不提交 |

@@ -8,7 +8,7 @@
 2. 读取 `CLAUDE.md`、`PROJECT.md`、`docs/index.md` 和任务相关 workflow 文档。
 3. 从 `docs/workflows/work_area_registry.md` 选择目标工作区。
 4. 只读探查可以直接执行；用户当前轮明确要求实现、修复、调整或修改时，普通仓库文件编辑可以直接执行，仍需按授权范围小步修改并验证。
-5. `S/M/L`、worktree、计划、验证、review 和收尾流程引用 `superpowers-project-bridge`；当前轮已明确授权或计划已批准时，不重复要求业务层确认。
+5. `S/M/L`、worktree、计划、验证、review 和收尾流程只引用 `AGENTS.md` 的薄边界；当前轮已明确授权或计划已批准时，不重复要求业务层确认。
 6. 小步修改；不混入无关重构、格式化或业务目录整理。
 7. 运行最小有效验证；无法验证时说明具体原因。
 8. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
@@ -19,7 +19,7 @@
 2. 读取 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和任务相关 workflow 文档。
 3. 从 `docs/workflows/work_area_registry.md` 选择目标工作区。
 4. 只读探查可以直接执行；用户当前轮明确要求实现、修复、调整或修改时，普通仓库文件编辑可以直接执行，仍需按授权范围小步修改并验证。
-5. `S/M/L`、worktree、计划、验证、review 和收尾流程引用 `superpowers-project-bridge`；当前轮已明确授权或计划已批准时，不重复要求业务层确认。
+5. `S/M/L`、worktree、计划、验证、review 和收尾流程只引用 `AGENTS.md` 的薄边界；当前轮已明确授权或计划已批准时，不重复要求业务层确认。
 6. 直接实现和验证；不需要 Claude Code 计划或验收才能工作。
 7. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
 
