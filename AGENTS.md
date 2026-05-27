@@ -16,6 +16,7 @@
 - 用户明确要求新建 worktree 时，该指令本身即构成本地 task worktree 与必要任务分支的创建授权；agent 按 `docs/workflows/worktree-policy.md` 的 managed root 和命名规则直接创建并验证，不再要求业务层确认。清理、移除、覆盖、强制 checkout 仍需用户单独点名。
 - `force push`、`reset --hard`、删除/丢弃未合并成果、覆盖远端历史，必须被用户明确点名；一旦动作和目标明确，不额外增加业务层确认。
 - 不恢复 CC-CX guard、plan-gate、状态机、command、hook、memory、learning promotion、自动 PR shipping、task resume 或高权限 worktree skill。
+- commit message 与 PR 标题/正文使用中文 conventional 格式与中文三段式；具体 type 字典、分支中文别名行与例外见 `docs/workflows/git-language-policy.md`。
 
 ## 入口
 

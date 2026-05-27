@@ -31,3 +31,7 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 ## Publish Boundary
 
 push、PR、merge、amend、tag、release 和 discard 类动作只在用户明确授权下执行。授权后由 agent 完整执行、验证远端或本地状态，并在收尾报告结果；merge 不进入默认主动路径。
+
+## Language And Format
+
+commit message 与 PR 的中文格式、type 字典、分支中文别名行、merge/revert/第三方例外，统一遵循 `git-language-policy.md`，本文件不重复细则。本节仅声明：本仓所有由 agent 产生的 commit 与 PR 必须满足该策略；不满足时视为未完成本轮 git 写动作，须修正后再报告。
