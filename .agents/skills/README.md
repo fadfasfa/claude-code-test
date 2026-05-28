@@ -10,7 +10,7 @@
 - `repo-maintenance`
 - `repo-local-pr-review`
 - `repo-module-admission`
-- `crawl4ai-web-scraping`
+- `scrapling-web-scraping`
 
 详细触发场景见 `docs/workflows/agent-skill-inventory.md`。没有列入本 README 的 skill 不视为默认启用。
 
