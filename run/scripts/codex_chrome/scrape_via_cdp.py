@@ -24,7 +24,7 @@ TARGETS_PATH = SCRIPT_DIR / "targets_to_rescrape.json"
 DELTA_DIR = REPO_ROOT / "run" / "data" / "raw" / "synergy" / "codex_goal_delta"
 CDP_ENDPOINT = "http://127.0.0.1:9222"
 CARD_SELECTOR = ".interaction-card-shell"
-WAIT_MS = 45_000
+WAIT_MS = 20_000
 
 RATING_RE = re.compile(r"^(SSS|SS|S|A|B|C|D)\s*(?:级|Tier|评分)?", re.IGNORECASE)
 COUNT_RE = re.compile(r"(\d+)")
@@ -247,8 +247,8 @@ async def _wait_for_cards_or_challenge(page) -> tuple[bool, str]:
         )
         if any(marker.lower() in text.lower() for marker in challenge_markers):
             print(f"CLOUDFLARE_CHALLENGE {page.url}", flush=True)
-            for _ in range(3):
-                await page.wait_for_timeout(30_000)
+            for _ in range(1):
+                await page.wait_for_timeout(3_000)
                 await page.reload(wait_until="domcontentloaded", timeout=WAIT_MS)
                 try:
                     await page.wait_for_selector(CARD_SELECTOR, timeout=10_000)
@@ -267,7 +267,7 @@ async def _scrape_one(context, target: dict[str, Any]) -> tuple[bool, str]:
 
     page = await context.new_page()
     try:
-        for attempt in range(1, 4):
+        for attempt in range(1, 2):
             await page.goto(_live_url(target["source_url"]), wait_until="domcontentloaded", timeout=WAIT_MS)
             rendered, render_reason = await _wait_for_cards_or_challenge(page)
             if not rendered:
@@ -282,7 +282,7 @@ async def _scrape_one(context, target: dict[str, Any]) -> tuple[bool, str]:
                 print(f"PASS {target['id']} {target['en_name']} cards={hero['actual_card_count']}", flush=True)
                 await page.wait_for_timeout(5000)
                 return True, ""
-            if attempt < 3:
+            if attempt < 1:
                 print(f"RETRY {target['id']} {target['en_name']} attempt={attempt} reason={reason}", flush=True)
                 await page.reload(wait_until="domcontentloaded", timeout=WAIT_MS)
                 await page.wait_for_timeout(1500)
