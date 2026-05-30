@@ -26,6 +26,7 @@
 - 分支名：Codex 使用 `codex/<type>/<slug>`，Claude Code 使用 `cc/<type>/<slug>`。
 - `<type>` 使用短分类，例如 `fix`、`feature`、`docs`、`chore`、`probe`。
 - `<slug>` 只使用小写字母、数字和 `-`；不得含空格、中文、路径分隔符或 shell 特殊字符。
+- 英文分支名沿用本节规则；commit 中需附带的中文别名行格式见 `git-language-policy.md`。
 
 ## Create
 

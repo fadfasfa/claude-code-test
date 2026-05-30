@@ -10,6 +10,7 @@
 - Claude Code 与 Codex 均可独立工作；无用户当前轮显性命令时，Claude Code 不调用、委派、审查或触发 Codex / CX。
 - Git 授权、敏感文件、worktree、发布、discard 和完成报告规则全部引用 `AGENTS.md`，不得在本文件另写不同口径。
 - `S/M/L` 仅作治理分级，不承担 bridge 执行职责。
+- Git commit 与 PR 的语言与格式遵循 `docs/workflows/git-language-policy.md`，不在本文件另写口径。
 
 ## 退役说明
 

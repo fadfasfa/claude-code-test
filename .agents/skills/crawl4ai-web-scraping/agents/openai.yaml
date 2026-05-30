@@ -1,4 +1,0 @@
-interface:
-  display_name: "Crawl4AI Web Scraping"
-  short_description: "Crawl4AI 网页抓取、清洗与替换评估边界"
-  default_prompt: "Use $crawl4ai-web-scraping to plan a safe Crawl4AI webpage extraction workflow."

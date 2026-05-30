@@ -1,0 +1,618 @@
+{
+  "schema_version": "1.0",
+  "purpose": "Codex goal CDP 9222 rescrape targets for oracle failures",
+  "target_count": 76,
+  "output_dir": "run/data/raw/synergy/codex_goal_delta",
+  "output_schema": "每个 <id>_<en_name>.json 为单 hero 子树，至少包含 id/en_name/declared_count/actual_card_count/synergy_items[]；也接受 oracle result 风格 hero/cards。",
+  "strict_pass_required": "declared_count == actual_card_count == len(synergy_items)，且每张卡 author/content/votes/augment_names/tier 必填非空；votes 字段值可为 0 但不可为 null。",
+  "targets": [
+    {
+      "id": "5",
+      "en_name": "XinZhao",
+      "name": "德邦总管",
+      "title": "赵信",
+      "source_url": "https://apexlol.info/zh/champions/XinZhao",
+      "previous_failure_reason": "missing_required_fields:5[content]"
+    },
+    {
+      "id": "7",
+      "en_name": "Leblanc",
+      "name": "诡术妖姬",
+      "title": "乐芙兰",
+      "source_url": "https://apexlol.info/zh/champions/Leblanc",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Leblanc in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "8",
+      "en_name": "Vladimir",
+      "name": "猩红收割者",
+      "title": "弗拉基米尔",
+      "source_url": "https://apexlol.info/zh/champions/Vladimir",
+      "previous_failure_reason": "missing_required_fields:10[author,content];13[author,content];14[author,content]"
+    },
+    {
+      "id": "13",
+      "en_name": "Ryze",
+      "name": "符文法师",
+      "title": "瑞兹",
+      "source_url": "https://apexlol.info/zh/champions/Ryze",
+      "previous_failure_reason": "missing_required_fields:1[author,content];2[author,content];3[author,content];4[author,content];5[author,content];6[author,content];8[author,content];9[author,content]"
+    },
+    {
+      "id": "14",
+      "en_name": "Sion",
+      "name": "亡灵战神",
+      "title": "赛恩",
+      "source_url": "https://apexlol.info/zh/champions/Sion",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "21",
+      "en_name": "MissFortune",
+      "name": "赏金猎人",
+      "title": "厄运小姐",
+      "source_url": "https://apexlol.info/zh/champions/MissFortune",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "23",
+      "en_name": "Tryndamere",
+      "name": "蛮族之王",
+      "title": "泰达米尔",
+      "source_url": "https://apexlol.info/zh/champions/Tryndamere",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "26",
+      "en_name": "Zilean",
+      "name": "时光守护者",
+      "title": "基兰",
+      "source_url": "https://apexlol.info/zh/champions/Zilean",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "27",
+      "en_name": "Singed",
+      "name": "炼金术士",
+      "title": "辛吉德",
+      "source_url": "https://apexlol.info/zh/champions/Singed",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Singed in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "29",
+      "en_name": "Twitch",
+      "name": "瘟疫之源",
+      "title": "图奇",
+      "source_url": "https://apexlol.info/zh/champions/Twitch",
+      "previous_failure_reason": "missing_required_fields:12[author,content];13[author,content];14[votes]"
+    },
+    {
+      "id": "30",
+      "en_name": "Karthus",
+      "name": "死亡颂唱者",
+      "title": "卡尔萨斯",
+      "source_url": "https://apexlol.info/zh/champions/Karthus",
+      "previous_failure_reason": "missing_required_fields:18[votes];19[votes];20[votes]"
+    },
+    {
+      "id": "35",
+      "en_name": "Shaco",
+      "name": "恶魔小丑",
+      "title": "萨科",
+      "source_url": "https://apexlol.info/zh/champions/Shaco",
+      "previous_failure_reason": "missing_required_fields:25[votes]"
+    },
+    {
+      "id": "36",
+      "en_name": "DrMundo",
+      "name": "祖安狂人",
+      "title": "蒙多医生",
+      "source_url": "https://apexlol.info/zh/champions/DrMundo",
+      "previous_failure_reason": "missing_required_fields:7[author,content]"
+    },
+    {
+      "id": "38",
+      "en_name": "Kassadin",
+      "name": "虚空行者",
+      "title": "卡萨丁",
+      "source_url": "https://apexlol.info/zh/champions/Kassadin",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Kassadin in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "41",
+      "en_name": "Gangplank",
+      "name": "海洋之灾",
+      "title": "普朗克",
+      "source_url": "https://apexlol.info/zh/champions/Gangplank",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "53",
+      "en_name": "Blitzcrank",
+      "name": "蒸汽机器人",
+      "title": "布里茨",
+      "source_url": "https://apexlol.info/zh/champions/Blitzcrank",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "55",
+      "en_name": "Katarina",
+      "name": "不祥之刃",
+      "title": "卡特琳娜",
+      "source_url": "https://apexlol.info/zh/champions/Katarina",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "56",
+      "en_name": "Nocturne",
+      "name": "永恒梦魇",
+      "title": "魔腾",
+      "source_url": "https://apexlol.info/zh/champions/Nocturne",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Nocturne in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "57",
+      "en_name": "Maokai",
+      "name": "扭曲树精",
+      "title": "茂凯",
+      "source_url": "https://apexlol.info/zh/champions/Maokai",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Maokai in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "60",
+      "en_name": "Elise",
+      "name": "蜘蛛女皇",
+      "title": "伊莉丝",
+      "source_url": "https://apexlol.info/zh/champions/Elise",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "62",
+      "en_name": "MonkeyKing",
+      "name": "齐天大圣",
+      "title": "孙悟空",
+      "source_url": "https://apexlol.info/zh/champions/MonkeyKing",
+      "previous_failure_reason": "missing_required_fields:0[content]"
+    },
+    {
+      "id": "63",
+      "en_name": "Brand",
+      "name": "复仇焰魂",
+      "title": "布兰德",
+      "source_url": "https://apexlol.info/zh/champions/Brand",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "64",
+      "en_name": "LeeSin",
+      "name": "盲僧",
+      "title": "李青",
+      "source_url": "https://apexlol.info/zh/champions/LeeSin",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "67",
+      "en_name": "Vayne",
+      "name": "暗夜猎手",
+      "title": "薇恩",
+      "source_url": "https://apexlol.info/zh/champions/Vayne",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Vayne in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "72",
+      "en_name": "Skarner",
+      "name": "上古领主",
+      "title": "斯卡纳",
+      "source_url": "https://apexlol.info/zh/champions/Skarner",
+      "previous_failure_reason": "missing_required_fields:2[author,content]"
+    },
+    {
+      "id": "82",
+      "en_name": "Mordekaiser",
+      "name": "铁铠冥魂",
+      "title": "莫德凯撒",
+      "source_url": "https://apexlol.info/zh/champions/Mordekaiser",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Mordekaiser in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "83",
+      "en_name": "Yorick",
+      "name": "牧魂人",
+      "title": "约里克",
+      "source_url": "https://apexlol.info/zh/champions/Yorick",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Yorick in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "84",
+      "en_name": "Akali",
+      "name": "离群之刺",
+      "title": "阿卡丽",
+      "source_url": "https://apexlol.info/zh/champions/Akali",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "85",
+      "en_name": "Kennen",
+      "name": "狂暴之心",
+      "title": "凯南",
+      "source_url": "https://apexlol.info/zh/champions/Kennen",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "90",
+      "en_name": "Malzahar",
+      "name": "虚空先知",
+      "title": "玛尔扎哈",
+      "source_url": "https://apexlol.info/zh/champions/Malzahar",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "91",
+      "en_name": "Talon",
+      "name": "刀锋之影",
+      "title": "泰隆",
+      "source_url": "https://apexlol.info/zh/champions/Talon",
+      "previous_failure_reason": "missing_required_fields:5[author,content];6[votes]"
+    },
+    {
+      "id": "92",
+      "en_name": "Riven",
+      "name": "放逐之刃",
+      "title": "锐雯",
+      "source_url": "https://apexlol.info/zh/champions/Riven",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "96",
+      "en_name": "KogMaw",
+      "name": "深渊巨口",
+      "title": "克格莫",
+      "source_url": "https://apexlol.info/zh/champions/KogMaw",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "104",
+      "en_name": "Graves",
+      "name": "法外狂徒",
+      "title": "格雷福斯",
+      "source_url": "https://apexlol.info/zh/champions/Graves",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Graves in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "105",
+      "en_name": "Fizz",
+      "name": "潮汐海灵",
+      "title": "菲兹",
+      "source_url": "https://apexlol.info/zh/champions/Fizz",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "107",
+      "en_name": "Rengar",
+      "name": "傲之追猎者",
+      "title": "雷恩加尔",
+      "source_url": "https://apexlol.info/zh/champions/Rengar",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Rengar in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "110",
+      "en_name": "Varus",
+      "name": "惩戒之箭",
+      "title": "韦鲁斯",
+      "source_url": "https://apexlol.info/zh/champions/Varus",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "113",
+      "en_name": "Sejuani",
+      "name": "北地之怒",
+      "title": "瑟庄妮",
+      "source_url": "https://apexlol.info/zh/champions/Sejuani",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "114",
+      "en_name": "Fiora",
+      "name": "无双剑姬",
+      "title": "菲奥娜",
+      "source_url": "https://apexlol.info/zh/champions/Fiora",
+      "previous_failure_reason": "missing_required_fields:1[author,content];3[author,content]"
+    },
+    {
+      "id": "119",
+      "en_name": "Draven",
+      "name": "荣耀行刑官",
+      "title": "德莱文",
+      "source_url": "https://apexlol.info/zh/champions/Draven",
+      "previous_failure_reason": "missing_required_fields:1[author,content]"
+    },
+    {
+      "id": "122",
+      "en_name": "Darius",
+      "name": "诺克萨斯之手",
+      "title": "德莱厄斯",
+      "source_url": "https://apexlol.info/zh/champions/Darius",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "126",
+      "en_name": "Jayce",
+      "name": "未来守护者",
+      "title": "杰斯",
+      "source_url": "https://apexlol.info/zh/champions/Jayce",
+      "previous_failure_reason": "missing_required_fields:4[author,content,votes];5[author,content,votes];7[author,content,votes];8[author,content,votes]"
+    },
+    {
+      "id": "141",
+      "en_name": "Kayn",
+      "name": "影流之镰",
+      "title": "凯隐",
+      "source_url": "https://apexlol.info/zh/champions/Kayn",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Kayn in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "145",
+      "en_name": "Kaisa",
+      "name": "虚空之女",
+      "title": "卡莎",
+      "source_url": "https://apexlol.info/zh/champions/Kaisa",
+      "previous_failure_reason": "missing_required_fields:9[author,content,votes]"
+    },
+    {
+      "id": "163",
+      "en_name": "Taliyah",
+      "name": "岩雀",
+      "title": "塔莉垭",
+      "source_url": "https://apexlol.info/zh/champions/Taliyah",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Taliyah in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "164",
+      "en_name": "Camille",
+      "name": "青钢影",
+      "title": "卡蜜尔",
+      "source_url": "https://apexlol.info/zh/champions/Camille",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "200",
+      "en_name": "Belveth",
+      "name": "虚空女皇",
+      "title": "卑尔维斯",
+      "source_url": "https://apexlol.info/zh/champions/Belveth",
+      "previous_failure_reason": "missing_required_fields:2[author,content,votes]"
+    },
+    {
+      "id": "221",
+      "en_name": "Zeri",
+      "name": "祖安花火",
+      "title": "泽丽",
+      "source_url": "https://apexlol.info/zh/champions/Zeri",
+      "previous_failure_reason": "missing_required_fields:9[author,content,votes]"
+    },
+    {
+      "id": "222",
+      "en_name": "Jinx",
+      "name": "暴走萝莉",
+      "title": "金克丝",
+      "source_url": "https://apexlol.info/zh/champions/Jinx",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "223",
+      "en_name": "TahmKench",
+      "name": "河流之王",
+      "title": "塔姆",
+      "source_url": "https://apexlol.info/zh/champions/TahmKench",
+      "previous_failure_reason": "missing_required_fields:12[author,content,votes]"
+    },
+    {
+      "id": "233",
+      "en_name": "Briar",
+      "name": "狂厄蔷薇",
+      "title": "贝蕾亚",
+      "source_url": "https://apexlol.info/zh/champions/Briar",
+      "previous_failure_reason": "missing_required_fields:5[author,content,votes]"
+    },
+    {
+      "id": "234",
+      "en_name": "Viego",
+      "name": "破败之王",
+      "title": "佛耶戈",
+      "source_url": "https://apexlol.info/zh/champions/Viego",
+      "previous_failure_reason": "missing_required_fields:3[author,content,votes];11[author,content,votes]"
+    },
+    {
+      "id": "236",
+      "en_name": "Lucian",
+      "name": "圣枪游侠",
+      "title": "卢锡安",
+      "source_url": "https://apexlol.info/zh/champions/Lucian",
+      "previous_failure_reason": "missing_required_fields:2[author,content,votes];6[author,content,votes]"
+    },
+    {
+      "id": "238",
+      "en_name": "Zed",
+      "name": "影流之主",
+      "title": "劫",
+      "source_url": "https://apexlol.info/zh/champions/Zed",
+      "previous_failure_reason": "missing_required_fields:2[author,content,votes];7[author,content,votes]"
+    },
+    {
+      "id": "245",
+      "en_name": "Ekko",
+      "name": "时间刺客",
+      "title": "艾克",
+      "source_url": "https://apexlol.info/zh/champions/Ekko",
+      "previous_failure_reason": "missing_required_fields:2[author,content,votes];9[votes]"
+    },
+    {
+      "id": "246",
+      "en_name": "Qiyana",
+      "name": "元素女皇",
+      "title": "奇亚娜",
+      "source_url": "https://apexlol.info/zh/champions/Qiyana",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "350",
+      "en_name": "Yuumi",
+      "name": "魔法猫咪",
+      "title": "悠米",
+      "source_url": "https://apexlol.info/zh/champions/Yuumi",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Yuumi in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "360",
+      "en_name": "Samira",
+      "name": "沙漠玫瑰",
+      "title": "莎弥拉",
+      "source_url": "https://apexlol.info/zh/champions/Samira",
+      "previous_failure_reason": "missing_required_fields:4[author,content,votes];5[author,content,votes];16[votes]"
+    },
+    {
+      "id": "420",
+      "en_name": "Illaoi",
+      "name": "海兽祭司",
+      "title": "俄洛伊",
+      "source_url": "https://apexlol.info/zh/champions/Illaoi",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "421",
+      "en_name": "RekSai",
+      "name": "虚空遁地兽",
+      "title": "雷克塞",
+      "source_url": "https://apexlol.info/zh/champions/RekSai",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "429",
+      "en_name": "Kalista",
+      "name": "复仇之矛",
+      "title": "卡莉丝塔",
+      "source_url": "https://apexlol.info/zh/champions/Kalista",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Kalista in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "432",
+      "en_name": "Bard",
+      "name": "星界游神",
+      "title": "巴德",
+      "source_url": "https://apexlol.info/zh/champions/Bard",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "498",
+      "en_name": "Xayah",
+      "name": "逆羽",
+      "title": "霞",
+      "source_url": "https://apexlol.info/zh/champions/Xayah",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "517",
+      "en_name": "Sylas",
+      "name": "解脱者",
+      "title": "塞拉斯",
+      "source_url": "https://apexlol.info/zh/champions/Sylas",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Sylas in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "518",
+      "en_name": "Neeko",
+      "name": "万花通灵",
+      "title": "妮蔻",
+      "source_url": "https://apexlol.info/zh/champions/Neeko",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Neeko in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "711",
+      "en_name": "Vex",
+      "name": "愁云使者",
+      "title": "薇古丝",
+      "source_url": "https://apexlol.info/zh/champions/Vex",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "777",
+      "en_name": "Yone",
+      "name": "封魔剑魂",
+      "title": "永恩",
+      "source_url": "https://apexlol.info/zh/champions/Yone",
+      "previous_failure_reason": "missing_required_fields:9[votes]"
+    },
+    {
+      "id": "799",
+      "en_name": "Ambessa",
+      "name": "铁血狼母",
+      "title": "安蓓萨",
+      "source_url": "https://apexlol.info/zh/champions/Ambessa",
+      "previous_failure_reason": "missing_required_fields:9[author,content,votes];14[author,content,votes];19[author,content,votes];20[author,content,votes]"
+    },
+    {
+      "id": "804",
+      "en_name": "Yunara",
+      "name": "不破之誓",
+      "title": "芸阿娜",
+      "source_url": "https://apexlol.info/zh/champions/Yunara",
+      "previous_failure_reason": "missing_required_fields:4[augment_names,tier];11[author,content,votes]"
+    },
+    {
+      "id": "875",
+      "en_name": "Sett",
+      "name": "腕豪",
+      "title": "瑟提",
+      "source_url": "https://apexlol.info/zh/champions/Sett",
+      "previous_failure_reason": "missing_required_fields:7[author,content,votes]"
+    },
+    {
+      "id": "876",
+      "en_name": "Lillia",
+      "name": "含羞蓓蕾",
+      "title": "莉莉娅",
+      "source_url": "https://apexlol.info/zh/champions/Lillia",
+      "previous_failure_reason": "challenge_or_error_page|declared_count_missing"
+    },
+    {
+      "id": "893",
+      "en_name": "Aurora",
+      "name": "双界灵兔",
+      "title": "阿萝拉",
+      "source_url": "https://apexlol.info/zh/champions/Aurora",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Aurora in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "id": "897",
+      "en_name": "KSante",
+      "name": "纳祖芒荣耀",
+      "title": "奎桑提",
+      "source_url": "https://apexlol.info/zh/champions/KSante",
+      "previous_failure_reason": "missing_required_fields:3[author,content,votes];4[author,content,votes]"
+    },
+    {
+      "id": "901",
+      "en_name": "Smolder",
+      "name": "炽炎雏龙",
+      "title": "斯莫德",
+      "source_url": "https://apexlol.info/zh/champions/Smolder",
+      "previous_failure_reason": "missing_required_fields:14[author,content,votes]"
+    },
+    {
+      "id": "904",
+      "en_name": "Zaahen",
+      "name": "不落魔锋",
+      "title": "亚恒",
+      "source_url": "https://apexlol.info/zh/champions/Zaahen",
+      "previous_failure_reason": "missing_required_fields:13[votes]"
+    },
+    {
+      "id": "950",
+      "en_name": "Naafiri",
+      "name": "百裂冥犬",
+      "title": "纳亚菲利",
+      "source_url": "https://apexlol.info/zh/champions/Naafiri",
+      "previous_failure_reason": "navigation_or_extraction_error:Browser Use cannot open https://apexlol.info/zh/champions/Naafiri in tab 1400726955. Browser reported: net::ERR_BLOCKED_BY_CLIENT"
+    }
+  ]
+}
