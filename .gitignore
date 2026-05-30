@@ -71,3 +71,9 @@ docs/archive/learnings-retired/ERRORS.md
 
 # generated per-worktree, not committed to main
 TASK_HANDOFF.md
+
+# 本地按版本重抓生成的英雄核心数据，不入库
+run/data/static/Champion_Core_Data.json
+
+# 一次性 Chrome 扩展策略探针脚本
+.tmp_ext_policy_probe.ps1
