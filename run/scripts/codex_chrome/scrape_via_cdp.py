@@ -95,7 +95,7 @@ async def _extract_page(page, target: dict[str, Any]) -> dict[str, Any]:
         """
         ({ target, cardSelector }) => {
           const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
-          const linesOf = element => clean(element ? element.innerText || element.textContent || '' : '')
+          const linesOf = element => String(element ? element.innerText || element.textContent || '' : '')
             .split(/\\n|\\r/)
             .map(clean)
             .filter(Boolean);
