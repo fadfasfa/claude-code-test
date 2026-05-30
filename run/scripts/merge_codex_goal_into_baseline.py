@@ -172,6 +172,11 @@ def strict_payload(
 
     declared_count = candidate.get("declared_count")
     actual_card_count = candidate.get("actual_card_count")
+    # baseline 条目只有 synergy_items/synergies，没有计数字段；干净 checkout 缺少
+    # 本地 oracle/delta 时全部英雄都会走 baseline 来源，按现有条目数补齐计数
+    if source == "baseline" and declared_count is None and actual_card_count is None:
+        declared_count = len(raw_items)
+        actual_card_count = len(raw_items)
     if declared_count != actual_card_count or actual_card_count != len(raw_items):
         raise RejectedHero(
             f"{hero_id}: {source} count mismatch declared={declared_count!r} "
