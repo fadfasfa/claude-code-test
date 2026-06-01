@@ -45,10 +45,16 @@ def fetch_page(
     timeout_ms: int = 30_000,
     headless: bool = True,
     humanize: bool = False,
+    wait_until: str = "networkidle",
+    post_wait_ms: int = 0,
 ) -> CloakFetchResult:
     """用 CloakBrowser 打开页面并返回最终 HTML。"""
     if timeout_ms <= 0:
         raise ValueError("timeout_ms 必须大于 0")
+    if post_wait_ms < 0:
+        raise ValueError("post_wait_ms 不能小于 0")
+    if wait_until not in {"commit", "domcontentloaded", "load", "networkidle"}:
+        raise ValueError(f"不支持的 wait_until：{wait_until!r}")
 
     _require_cloakbrowser()
 
@@ -60,7 +66,9 @@ def fetch_page(
     try:
         browser = launch(headless=headless, humanize=humanize)
         page = browser.new_page()
-        response = page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+        response = page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+        if post_wait_ms:
+            page.wait_for_timeout(post_wait_ms)
         html = page.content()
         status_code = response.status if response is not None else None
         return CloakFetchResult(
