@@ -642,22 +642,37 @@ class ApexSource:
         cloakbrowser_wait_until: Optional[str] = None,
         cloakbrowser_post_wait_ms: Optional[int] = None,
     ) -> Optional[FetchedResource]:
-        resource = self.fetch_requests(url)
-        if resource is not None:
-            return resource
+        is_detail = "/champions/" in urlparse(url).path
+        # 1) 普通请求：拿到 origin 页直接用；但英雄详情页若是 HTTP 200 的非 origin 壳页
+        #    （Access Denied / Next 错误页 / 缺联动 hydration），不能当成功，继续走后端回退。
+        requests_resource = self.fetch_requests(url)
+        if requests_resource is not None:
+            if not is_detail or not self._origin_failure_reason(requests_resource.text):
+                return requests_resource
+
+        # 2) CloakBrowser：穿 CF 并取最终 HTML；fetch_cloakbrowser 内部已对详情页做 origin 校验，
+        #    无 error 即视为拿到可用 origin 页。
+        cloak_resource = None
         if allow_cloakbrowser or env_flag("APEX_ALLOW_CLOAKBROWSER"):
-            resource = self.fetch_cloakbrowser(
+            cloak_resource = self.fetch_cloakbrowser(
                 url,
                 wait_until=cloakbrowser_wait_until,
                 post_wait_ms=cloakbrowser_post_wait_ms,
             )
-            if resource is not None:
-                return resource
+            if cloak_resource is not None and not cloak_resource.error:
+                return cloak_resource
+
+        # 3) Selenium：CloakBrowser 不可用/超时/被拦时仍尝试旧浏览器回退。
         if allow_browser and env_flag("APEX_ALLOW_BROWSER"):
-            return self.fetch_browser(url)
-        if allow_browser:
+            selenium_resource = self.fetch_browser(url)
+            if selenium_resource is not None:
+                return selenium_resource
+        elif allow_browser:
             logger.info("跳过 Apex 浏览器 fallback：APEX_ALLOW_BROWSER 未启用")
-        return None
+
+        # 4) 没有任何后端拿到 origin：返回信息量最大的尝试结果（CloakBrowser 的 error 详情优先，
+        #    其次普通请求拿到的非 origin 200 页）供上层判定 failed；都没有则返回 None。
+        return cloak_resource or requests_resource
 
     def fetch_configured_json_resource(self) -> Optional[FetchedResource]:
         raw_url = os.getenv("APEX_SYNERGY_JSON_URL", "").strip()
@@ -2327,17 +2342,31 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
             logger.warning("本轮联动解析为空，进入 latest merge 兜底：%s", exc)
             synergy_map = {}
         payload = SynergyWriter(core_info).build_payload(synergy_map)
+        # 本轮真实抓取规模（merge 前）：用于判定是否值得发布，避免 latest merge 把失败轮次兜底成假发布。
+        fresh_stats = summarize_synergy_payload(payload)
         payload, merge_meta = merge_payload_with_latest_snapshot(payload)
         stats = summarize_synergy_payload(payload)
         old_stats = _load_existing_synergy_stats()
         publishable = True
-        try:
-            _validate_publish_size(stats, old_stats)
-        except ValueError as exc:
+        if not synergy_map or fresh_stats.get("non_empty_heroes", 0) == 0:
+            # 本轮在线整体被反爬拦截、无任何有效新增：不能靠 latest merge 兜底写出 mapped=0 的
+            # “假发布”，保持旧 latest 不动（非 dry-run 抛出后由外层 except 记录并保留旧快照）。
             publishable = False
-            logger.error("%s", exc)
+            logger.error(
+                "本轮无有效联动新增（mapped=%s non_empty=%s），保持旧 latest 不变",
+                len(synergy_map),
+                fresh_stats.get("non_empty_heroes", 0),
+            )
             if not dry_run:
-                raise
+                raise ValueError("本轮抓取无有效新增，跳过发布以保留旧 latest")
+        else:
+            try:
+                _validate_publish_size(stats, old_stats)
+            except ValueError as exc:
+                publishable = False
+                logger.error("%s", exc)
+                if not dry_run:
+                    raise
         target_path = Path(output_path) if output_path else _new_synergy_snapshot_path()
         if dry_run:
             log_task_summary(
