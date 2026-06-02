@@ -777,7 +777,8 @@ def check_synergy_refresh_freshness() -> None:
         patches = _patch_synergy_dir(temp_dir)
         with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             assert not heal_worker._synergy_data_fresh()
-            assert orchestrator.should_refresh_synergy(False)
+            assert not orchestrator.should_refresh_synergy(False)
+            assert not heal_worker.detect_missing_artifacts()["synergy_data"]
 
     with TemporaryDirectory() as temp_dir:
         synergy_path = _snapshot(temp_dir)
@@ -794,6 +795,7 @@ def check_synergy_refresh_freshness() -> None:
 
             assert heal_worker._synergy_data_fresh()
             assert not orchestrator.should_refresh_synergy(False)
+            assert not heal_worker.detect_missing_artifacts()["synergy_data"]
 
             meta_path = Path(temp_dir) / "Champion_Synergy_latest.v1.json"
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -818,7 +820,8 @@ def check_synergy_refresh_freshness() -> None:
             os.utime(Path(temp_dir) / "Champion_Synergy_latest.v1.json", (old_mtime, old_mtime))
 
             assert not heal_worker._synergy_data_fresh()
-            assert orchestrator.should_refresh_synergy(False)
+            assert not orchestrator.should_refresh_synergy(False)
+            assert not heal_worker.detect_missing_artifacts()["synergy_data"]
 
     blocked_until = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(timespec="seconds")
     status = {"last_result": "blocked", "blocked_until": blocked_until}

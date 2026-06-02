@@ -65,7 +65,9 @@ SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
 
 
 def auto_synergy_refresh_enabled() -> bool:
-    return os.getenv("HEXTECH_AUTO_SYNERGY_REFRESH", "0").strip().lower() in {"1", "true", "yes", "on"}
+    env_enabled = os.getenv("HEXTECH_AUTO_SYNERGY_REFRESH", "0").strip().lower() in {"1", "true", "yes", "on"}
+    # synergy 已停自动更新，仅支持手动触发；原因：ApexLoL IP 级反爬，全量自动抓不可靠，待新版本恢复。
+    return False and env_enabled
 
 
 def _file_is_fresh(path: str, stale_after_seconds: int = HIGH_FREQUENCY_STALE_SECONDS) -> bool:

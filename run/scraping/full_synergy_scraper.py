@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import ast
+import argparse
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ import re
 import sys
 import tempfile
 import time
+import csv
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,7 +37,9 @@ from processing.runtime_store import (
     build_synergy_latest_pointer_path,
     ensure_private_runtime_dir,
     ensure_runtime_profile_dir,
+    get_latest_synergy_snapshot_path,
     get_latest_csv,
+    load_synergy_latest_pointer,
 )
 from scraping.icon_resolver import normalize_augment_name
 from scraping.version_sync import STATIC_DATA_DIR
@@ -66,6 +70,7 @@ MAX_STATIC_DATA_FILE_SIZE = 10 * 1024 * 1024
 MAX_FETCH_RETRIES = 1
 REQUEST_TIMEOUT_SECONDS = 6
 RETRY_BACKOFF_FACTOR = 0.5
+APEX_ONLINE_FETCH_DELAY_SECONDS = 1.5
 MAX_JSON_RESOURCE_SIZE = 10 * 1024 * 1024
 OUTPUT_LOCK_TIMEOUT_SECONDS = 5
 OUTPUT_LOCK_POLL_INTERVAL_SECONDS = 0.2
@@ -74,6 +79,18 @@ SYNERGY_REFRESH_META_FILE = SYNERGY_LATEST_POINTER_FILENAME
 MIN_FIRST_SYNERGY_NON_EMPTY_HEROES = 20
 SYNERGY_PUBLISH_MIN_RATIO = 0.8
 BUNDLE_INTERACTION_SECTION_MARKER = "fx={manual:gx},"
+APEX_ORIGIN_SYNERGY_MARKERS = (
+    "强力联动",
+    "海克斯联动卡片",
+    "条联动",
+    "关联套装",
+)
+APEX_ACCESS_DENIED_MARKER = "access denied"
+APEX_NEXT_ERROR_MARKERS = (
+    "this page couldn't load",
+    "this page couldn\u2019t load",
+    "a server error occurred",
+)
 BUNDLE_APP_JS_PATTERN = re.compile(r'/assets/app\.[^"\']+\.js')
 SCRIPT_SRC_PATTERN = re.compile(r'<script[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
 CHAMPION_DETAIL_HREF_PATTERN = re.compile(
@@ -127,6 +144,8 @@ class FetchedResource:
     text: str
     source: str
     status_code: int = 200
+    cloakbrowser_version: Optional[str] = None
+    error: Optional[str] = None
 
 
 @dataclass
@@ -373,6 +392,98 @@ def _validate_publish_size(new_stats: dict[str, int], old_stats: dict[str, int])
         raise ValueError(f"协同数据熔断：首次快照非空英雄 {new_count} < {MIN_FIRST_SYNERGY_NON_EMPTY_HEROES}")
 
 
+def _hero_has_synergy_items(hero_payload: object) -> bool:
+    if not isinstance(hero_payload, dict):
+        return False
+    items = hero_payload.get("synergy_items")
+    if isinstance(items, list) and items:
+        return True
+    synergies = hero_payload.get("synergies")
+    return isinstance(synergies, list) and bool(synergies)
+
+
+def _load_latest_synergy_payload_for_merge() -> tuple[Optional[dict], dict]:
+    pointer_path = Path(build_synergy_latest_pointer_path())
+    pointer = load_synergy_latest_pointer()
+    snapshot_path = get_latest_synergy_snapshot_path()
+    meta = {
+        "pointer_path": str(pointer_path),
+        "pointer_loaded": bool(pointer),
+        "snapshot_path": str(snapshot_path or ""),
+        "fallback": False,
+        "reason": "",
+    }
+    if not snapshot_path:
+        meta["reason"] = "latest pointer and snapshot scan returned empty"
+        return None, meta
+    try:
+        with Path(snapshot_path).open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        meta["reason"] = f"old latest unreadable: {_safe_exception_label(exc)}"
+        return None, meta
+    if not isinstance(payload, dict) or not all(isinstance(value, dict) for value in payload.values()):
+        meta["reason"] = "old latest schema mismatch"
+        return None, meta
+    return payload, meta
+
+
+def merge_payload_with_latest_snapshot(payload: dict) -> tuple[dict, dict]:
+    """发布前合并旧 latest：本轮非空英雄用新数据，本轮空/缺失英雄沿用旧非空数据。"""
+    old_payload, merge_meta = _load_latest_synergy_payload_for_merge()
+    if old_payload is None:
+        merge_meta.update(
+            {
+                "merged": False,
+                "new_non_empty_heroes": summarize_synergy_payload(payload).get("non_empty_heroes", 0),
+                "old_non_empty_heroes": 0,
+                "merged_non_empty_heroes": summarize_synergy_payload(payload).get("non_empty_heroes", 0),
+                "updated_heroes": summarize_synergy_payload(payload).get("non_empty_heroes", 0),
+                "retained_old_heroes": 0,
+                "net_regression": False,
+            }
+        )
+        logger.warning("旧 latest 协同快照不可用于增量 merge，按全新 payload 发布：%s", merge_meta["reason"])
+        return payload, merge_meta
+
+    merged = dict(payload)
+    updated_heroes = 0
+    retained_old_heroes = 0
+    all_hero_ids = set(old_payload) | set(payload)
+    for hero_id in sorted(all_hero_ids):
+        new_item = payload.get(hero_id)
+        old_item = old_payload.get(hero_id)
+        if _hero_has_synergy_items(new_item):
+            updated_heroes += 1
+            continue
+        if _hero_has_synergy_items(old_item):
+            # ApexLoL 全量抓取会被 IP 级反爬打断；本轮空结果不覆盖旧 latest 的有效联动。
+            merged[hero_id] = old_item
+            retained_old_heroes += 1
+
+    old_stats = summarize_synergy_payload(old_payload)
+    new_stats = summarize_synergy_payload(payload)
+    merged_stats = summarize_synergy_payload(merged)
+    merge_meta.update(
+        {
+            "merged": True,
+            "old_non_empty_heroes": old_stats["non_empty_heroes"],
+            "new_non_empty_heroes": new_stats["non_empty_heroes"],
+            "merged_non_empty_heroes": merged_stats["non_empty_heroes"],
+            "updated_heroes": updated_heroes,
+            "retained_old_heroes": retained_old_heroes,
+            "net_regression": merged_stats["non_empty_heroes"] < old_stats["non_empty_heroes"],
+        }
+    )
+    logger.info(
+        "协同 payload 已与旧 latest 增量合并：new_non_empty=%s retained_old=%s merged_non_empty=%s",
+        merge_meta["new_non_empty_heroes"],
+        retained_old_heroes,
+        merge_meta["merged_non_empty_heroes"],
+    )
+    return merged, merge_meta
+
+
 def _new_synergy_snapshot_path() -> Path:
     timestamp_label = datetime.now().strftime("%Y%m%d_%H%M%S")
     return Path(build_next_synergy_snapshot_path(timestamp_label))
@@ -456,6 +567,7 @@ class ApexSource:
         self.session.headers.update({"User-Agent": get_request_user_agent()})
         self._browser_driver = None
         self.blocked = False
+        self.last_fetch_error = ""
         self._browser_timeout = int(os.getenv("APEX_BROWSER_TIMEOUT_SECONDS", "18") or "18")
         self._profile_root = os.path.join(SELENIUM_PROFILE_DIR, f"session-{os.getpid()}-{int(time.time())}")
         logger.info("ApexSource 初始化完成：base=%s", _sanitize_url_for_log(self.base_url))
@@ -521,15 +633,46 @@ class ApexSource:
                 return None
         return None
 
-    def fetch(self, url: str, *, allow_browser: bool = False) -> Optional[FetchedResource]:
-        resource = self.fetch_requests(url)
-        if resource is not None:
-            return resource
+    def fetch(
+        self,
+        url: str,
+        *,
+        allow_browser: bool = False,
+        allow_cloakbrowser: bool = False,
+        cloakbrowser_wait_until: Optional[str] = None,
+        cloakbrowser_post_wait_ms: Optional[int] = None,
+    ) -> Optional[FetchedResource]:
+        is_detail = "/champions/" in urlparse(url).path
+        # 1) 普通请求：拿到 origin 页直接用；但英雄详情页若是 HTTP 200 的非 origin 壳页
+        #    （Access Denied / Next 错误页 / 缺联动 hydration），不能当成功，继续走后端回退。
+        requests_resource = self.fetch_requests(url)
+        if requests_resource is not None:
+            if not is_detail or not self._origin_failure_reason(requests_resource.text):
+                return requests_resource
+
+        # 2) CloakBrowser：穿 CF 并取最终 HTML；fetch_cloakbrowser 内部已对详情页做 origin 校验，
+        #    无 error 即视为拿到可用 origin 页。
+        cloak_resource = None
+        if allow_cloakbrowser or env_flag("APEX_ALLOW_CLOAKBROWSER"):
+            cloak_resource = self.fetch_cloakbrowser(
+                url,
+                wait_until=cloakbrowser_wait_until,
+                post_wait_ms=cloakbrowser_post_wait_ms,
+            )
+            if cloak_resource is not None and not cloak_resource.error:
+                return cloak_resource
+
+        # 3) Selenium：CloakBrowser 不可用/超时/被拦时仍尝试旧浏览器回退。
         if allow_browser and env_flag("APEX_ALLOW_BROWSER"):
-            return self.fetch_browser(url)
-        if allow_browser:
+            selenium_resource = self.fetch_browser(url)
+            if selenium_resource is not None:
+                return selenium_resource
+        elif allow_browser:
             logger.info("跳过 Apex 浏览器 fallback：APEX_ALLOW_BROWSER 未启用")
-        return None
+
+        # 4) 没有任何后端拿到 origin：返回信息量最大的尝试结果（CloakBrowser 的 error 详情优先，
+        #    其次普通请求拿到的非 origin 200 页）供上层判定 failed；都没有则返回 None。
+        return cloak_resource or requests_resource
 
     def fetch_configured_json_resource(self) -> Optional[FetchedResource]:
         raw_url = os.getenv("APEX_SYNERGY_JSON_URL", "").strip()
@@ -561,6 +704,105 @@ class ApexSource:
                 self.blocked = True
             logger.warning("APEX_SYNERGY_JSON_URL 读取失败：url=%s error=%s", _sanitize_url_for_log(raw_url), _safe_exception_label(exc))
             return None
+
+    def fetch_cloakbrowser(
+        self,
+        url: str,
+        *,
+        wait_until: Optional[str] = None,
+        post_wait_ms: Optional[int] = None,
+    ) -> Optional[FetchedResource]:
+        if not self.is_allowed_url(url):
+            logger.warning("CloakBrowser 拒绝非白名单请求：%s", _sanitize_url_for_log(url))
+            return None
+        try:
+            from crawler.cloakbrowser_client import fetch_page
+        except ImportError as exc:
+            self.last_fetch_error = str(exc)
+            logger.error("CloakBrowser 后端不可用：%s", str(exc)[:240])
+            return None
+
+        timeout_ms = int(os.getenv("APEX_CLOAKBROWSER_TIMEOUT_MS", "30000") or "30000")
+        headless = os.getenv("APEX_CLOAKBROWSER_HEADLESS", "1").strip() != "0"
+        humanize = env_flag("APEX_CLOAKBROWSER_HUMANIZE")
+        wait_until = wait_until or os.getenv("APEX_CLOAKBROWSER_WAIT_UNTIL", "networkidle").strip() or "networkidle"
+        if post_wait_ms is None:
+            post_wait_ms = int(os.getenv("APEX_CLOAKBROWSER_POST_WAIT_MS", "0") or "0")
+        max_attempts = max(1, int(os.getenv("APEX_CLOAKBROWSER_ATTEMPTS", "2") or "2"))
+        result = None
+        for attempt in range(1, max_attempts + 1):
+            result = fetch_page(
+                url,
+                timeout_ms=timeout_ms,
+                headless=headless,
+                humanize=humanize,
+                wait_until=wait_until,
+                post_wait_ms=post_wait_ms,
+            )
+            if not result.error:
+                break
+            if attempt < max_attempts:
+                sleep_seconds = max(2.0, RETRY_BACKOFF_FACTOR * (2 ** attempt))
+                logger.warning(
+                    "CloakBrowser 访问失败后重试：url=%s attempt=%s/%s wait=%.1fs error=%s",
+                    _sanitize_url_for_log(url),
+                    attempt,
+                    max_attempts,
+                    sleep_seconds,
+                    result.error[:160],
+                )
+                time.sleep(sleep_seconds)
+        if result is None:
+            return None
+        html = result.html or ""
+        self.last_fetch_error = result.error or ""
+        if result.error:
+            logger.error("CloakBrowser 访问失败：url=%s error=%s", _sanitize_url_for_log(url), result.error[:240])
+            return FetchedResource(
+                url=url,
+                text=html,
+                source="cloakbrowser",
+                status_code=result.status_code or 0,
+                cloakbrowser_version=result.cloakbrowser_version,
+                error=result.error,
+            )
+        if not html or self._is_cloudflare_block(html):
+            self.blocked = True
+            logger.error("CloakBrowser 未取得可解析 Apex 页面：url=%s status=%s", _sanitize_url_for_log(url), result.status_code)
+            return FetchedResource(
+                url=url,
+                text=html,
+                source="cloakbrowser",
+                status_code=result.status_code or 0,
+                cloakbrowser_version=result.cloakbrowser_version,
+                error="cloudflare_block_or_empty_html",
+            )
+        if "/champions/" in urlparse(url).path:
+            origin_error = self._origin_failure_reason(html)
+            if origin_error:
+                if origin_error in {"cloudflare_block", "access_denied"}:
+                    self.blocked = True
+                logger.error(
+                    "CloakBrowser 终态不是 Apex 英雄联动 origin 页面：url=%s status=%s reason=%s",
+                    _sanitize_url_for_log(url),
+                    result.status_code,
+                    origin_error,
+                )
+                return FetchedResource(
+                    url=url,
+                    text=html,
+                    source="cloakbrowser",
+                    status_code=result.status_code or 0,
+                    cloakbrowser_version=result.cloakbrowser_version,
+                    error=origin_error,
+                )
+        return FetchedResource(
+            url=url,
+            text=html,
+            source="cloakbrowser",
+            status_code=result.status_code or 200,
+            cloakbrowser_version=result.cloakbrowser_version,
+        )
 
     def fetch_browser(self, url: str) -> Optional[FetchedResource]:
         if not self.is_allowed_url(url):
@@ -606,6 +848,7 @@ class ApexSource:
         resources: list[FetchedResource] = []
         seen_urls = set()
         script_urls = []
+        online_delay = float(os.getenv("APEX_ONLINE_FETCH_DELAY_SECONDS", str(APEX_ONLINE_FETCH_DELAY_SECONDS)) or "0")
 
         for url in seeds:
             resource = self.fetch(url, allow_browser=allow_browser)
@@ -614,6 +857,8 @@ class ApexSource:
             seen_urls.add(resource.url)
             resources.append(resource)
             script_urls.extend(self._extract_script_urls(resource.text))
+            if online_delay > 0:
+                time.sleep(online_delay)
 
         detail_urls = self._extract_champion_detail_urls(resources)
         for detail_url in detail_urls:
@@ -623,6 +868,8 @@ class ApexSource:
             resource = self.fetch(detail_url, allow_browser=allow_browser)
             if resource:
                 resources.append(resource)
+            if online_delay > 0:
+                time.sleep(online_delay)
 
         if not detail_urls or os.getenv("APEX_FETCH_JS_CHUNKS", "0").strip() == "1":
             for script_url in script_urls:
@@ -632,6 +879,8 @@ class ApexSource:
                 script = self.fetch(script_url, allow_browser=allow_browser)
                 if script:
                     resources.append(script)
+                if online_delay > 0:
+                    time.sleep(online_delay)
 
         if json_resource and json_resource.url not in seen_urls:
             resources.append(json_resource)
@@ -705,7 +954,30 @@ class ApexSource:
     @staticmethod
     def _is_cloudflare_block(text: str) -> bool:
         lowered = (text or "")[:8000].lower()
-        return "attention required" in lowered and "cloudflare" in lowered
+        legacy_block = "attention required" in lowered and "cloudflare" in lowered
+        strong_challenge = "challenges.cloudflare.com" in lowered or "_cf_chl_opt" in lowered
+        managed_challenge = "just a moment" in lowered or "请稍候" in lowered
+        if strong_challenge:
+            return True
+        return legacy_block or managed_challenge
+
+    @classmethod
+    def _origin_failure_reason(cls, text: str) -> str:
+        """识别 CloakBrowser 终态是否真是 ApexLoL 英雄联动 origin 页面。"""
+        html = text or ""
+        lowered = html[:200_000].lower()
+        stripped_text = re.sub(r"\s+", " ", html).strip().lower()
+        if not html:
+            return "empty_html"
+        if cls._is_cloudflare_block(html):
+            return "cloudflare_block"
+        if len(html.encode("utf-8", errors="ignore")) <= 2048 and APEX_ACCESS_DENIED_MARKER in stripped_text:
+            return "access_denied"
+        if any(marker in lowered for marker in APEX_NEXT_ERROR_MARKERS):
+            return "origin_5xx_error_page"
+        if not any(marker in html for marker in APEX_ORIGIN_SYNERGY_MARKERS):
+            return "missing_origin_synergy_hydration"
+        return ""
 
     def _get_browser_driver(self):
         if self._browser_driver is not None:
@@ -908,6 +1180,14 @@ class SynergyExtractor:
             cursor = index - 1
             while cursor >= 0 and len(augment_names) < 4:
                 current = lines[cursor]
+                if current == "关联套装":
+                    cursor -= 1
+                    continue
+                if re.match(r"^关联\s*\d+\s*个海克斯$", current):
+                    if augment_names:
+                        break
+                    cursor -= 1
+                    continue
                 normalized_tier = normalize_tier(current)
                 if normalized_tier != current or current in TIER_LABELS:
                     tier = tier or normalized_tier
@@ -916,6 +1196,10 @@ class SynergyExtractor:
                 resolved_names = self._resolve_known_augment_names(current)
                 if resolved_names and self._looks_like_augment_name(current, resolved_names):
                     augment_names = resolved_names + augment_names
+                    cursor -= 1
+                    continue
+                if self._looks_like_visible_augment_name(current):
+                    augment_names = [current] + augment_names
                     cursor -= 1
                     continue
                 break
@@ -1030,6 +1314,18 @@ class SynergyExtractor:
         if normalized in resolved_tokens:
             return True
         return normalized in self.augment_name_map or text in self.augment_name_map
+
+    def _looks_like_visible_augment_name(self, raw_name: str) -> bool:
+        text = str(raw_name or "").strip()
+        if not text or self._is_visible_noise_line(text):
+            return False
+        if text in SYNERGY_TAG_LABELS or text in TIER_LABELS or normalize_tier(text) != text:
+            return False
+        if VISIBLE_RATING_PATTERN.match(text) or text in {"作者", "原创", "非原创", "关联套装"}:
+            return False
+        if re.match(r"^关联\s*\d+\s*个海克斯$", text):
+            return False
+        return 1 < len(text) <= 40
 
     def _resolve_known_augment_names(self, raw_name: str) -> list[str]:
         key = str(raw_name or "").strip()
@@ -1576,6 +1872,445 @@ def build_augment_name_map_from_static() -> dict:
     return name_map
 
 
+def _entry_to_report_item(entry: SynergyEntry) -> dict:
+    return {
+        "champion_slug": entry.champion_slug,
+        "augment_names": entry.augment_names,
+        "tier": entry.tier,
+        "rating": entry.rating,
+        "tag": entry.tag,
+        "author": entry.author,
+        "is_original": entry.is_original,
+        "content": entry.content,
+        "upvotes": entry.upvotes,
+        "downvotes": entry.downvotes,
+    }
+
+
+def _default_single_champion_report_dir() -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Path(BASE_DIR) / "data" / "runtime" / "reports" / "synergy_vi_cloakbrowser" / timestamp
+
+
+def _default_full_validate_report_dir() -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Path(BASE_DIR) / "data" / "runtime" / "reports" / "synergy_full_validate" / timestamp
+
+
+def _write_html_report_sample(output_path: Path, html: str, limit_bytes: int = 200 * 1024) -> None:
+    encoded = (html or "").encode("utf-8")[:limit_bytes]
+    output_path.write_bytes(encoded.decode("utf-8", errors="ignore").encode("utf-8"))
+
+
+def _build_single_champion_core_info(champion_slug: str) -> dict[str, ChampionInfo]:
+    try:
+        return build_core_info(_load_json_file("Champion_Core_Data.json", "core_data"))
+    except FileNotFoundError:
+        # 单英雄 smoke 不能为了补静态资料触发稳定资源同步；缺文件时只补当前英雄的解析锚点。
+        slug = str(champion_slug or "").strip()
+        return {
+            slug: ChampionInfo(
+                id=slug,
+                name=slug,
+                title=slug,
+                en_name=slug,
+                aliases=[slug],
+                slug=normalize_slug(slug),
+            )
+        }
+
+
+def _champion_detail_url(source: ApexSource, champion: ChampionInfo) -> str:
+    slug = champion.en_name or champion.slug or champion.name or champion.id
+    detail_url = source.build_allowed_url(f"/zh/champions/{slug}")
+    if not detail_url:
+        raise ValueError(f"英雄 URL 不在 Apex 白名单内：{slug}")
+    return detail_url
+
+
+def _find_entries_for_champion(champion: ChampionInfo, synergy_map: dict[str, list[SynergyEntry]]) -> list[SynergyEntry]:
+    keys = [champion.id, champion.slug, champion.en_name, champion.name, champion.title, *champion.aliases]
+    for key in keys:
+        for candidate in (normalize_slug(key), normalize_name(key)):
+            if candidate and candidate in synergy_map:
+                return synergy_map[candidate]
+    return []
+
+
+def _source_check_record(champion: ChampionInfo, entry: SynergyEntry, html: str) -> dict:
+    content_prefix = entry.content[: min(16, len(entry.content))]
+    first_augment = entry.augment_names[0] if entry.augment_names else ""
+    return {
+        "champion_id": champion.id,
+        "champion_slug": champion.slug,
+        "champion_name": champion.name,
+        "url_slug": champion.en_name,
+        "augment": first_augment,
+        "rating": entry.rating,
+        "tag": entry.tag,
+        "author": entry.author,
+        "content_prefix": content_prefix,
+        "augment_in_html": bool(first_augment and first_augment in html),
+        "author_in_html": bool(entry.author and entry.author in html),
+        "content_prefix_in_html": bool(content_prefix and content_prefix in html),
+    }
+
+
+def _write_per_champion_csv(output_path: Path, rows: list[dict]) -> None:
+    fieldnames = [
+        "champion_id",
+        "champion_slug",
+        "champion_name",
+        "url",
+        "backend",
+        "status_code",
+        "entry_count",
+        "status",
+        "cf_blocked",
+        "error",
+    ]
+    with output_path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+
+def _extract_champion_entries(
+    extractor: SynergyExtractor,
+    champion: ChampionInfo,
+    resource: FetchedResource,
+) -> tuple[list[SynergyEntry], dict[str, list[SynergyEntry]]]:
+    synergy_map = extractor.extract([resource])
+    entries = _find_entries_for_champion(champion, synergy_map)
+    if not entries:
+        entries = [entry for values in synergy_map.values() for entry in values]
+    return entries, synergy_map
+
+
+def run_full_validation(
+    *,
+    max_champions: Optional[int] = None,
+    report_dir: Optional[str] = None,
+    delay_seconds: Optional[float] = None,
+    champion_slugs: Optional[list[str]] = None,
+) -> dict:
+    """全量 dry-run 验证 ApexLoL 详情页抓取与解析，不写正式 synergy 快照。"""
+    started_at = time.time()
+    out_dir = Path(report_dir).resolve() if report_dir else _default_full_validate_report_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stderr_path = out_dir / "stderr.log"
+    file_handler = logging.FileHandler(stderr_path, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logging.getLogger().addHandler(file_handler)
+
+    source = ApexSource()
+    per_champion: list[dict] = []
+    failures: list[dict] = []
+    source_checks: list[dict] = []
+    combined_synergy_map: dict[str, list[SynergyEntry]] = {}
+    cf_blocked_count = 0
+    try:
+        core_info = build_core_info(_load_json_file("Champion_Core_Data.json", "core_data"))
+        champions = list(core_info.values())
+        if champion_slugs:
+            wanted = {normalize_slug(slug) for slug in champion_slugs if str(slug or "").strip()}
+            champions = [
+                champion
+                for champion in champions
+                if normalize_slug(champion.en_name or champion.slug or champion.name) in wanted
+                or normalize_slug(champion.slug) in wanted
+            ]
+        if max_champions and max_champions > 0:
+            champions = champions[:max_champions]
+        extractor = SynergyExtractor(
+            champion_lookup=build_champion_lookup(core_info),
+            augment_name_map=build_augment_name_map_from_static(),
+        )
+        delay = delay_seconds
+        if delay is None:
+            delay = float(os.getenv("APEX_VALIDATE_DELAY_SECONDS", "0") or "0")
+        max_attempts = max(1, int(os.getenv("APEX_VALIDATE_FETCH_ATTEMPTS", "2") or "2"))
+        primary_wait_until = os.getenv("APEX_CLOAKBROWSER_WAIT_UNTIL", "networkidle").strip() or "networkidle"
+        primary_post_wait_ms = int(os.getenv("APEX_CLOAKBROWSER_POST_WAIT_MS", "0") or "0")
+
+        for index, champion in enumerate(champions, start=1):
+            detail_url = _champion_detail_url(source, champion)
+            resource = None
+            for attempt in range(1, max_attempts + 1):
+                resource = source.fetch(
+                    detail_url,
+                    allow_cloakbrowser=True,
+                    cloakbrowser_wait_until=primary_wait_until,
+                    cloakbrowser_post_wait_ms=primary_post_wait_ms,
+                )
+                html_for_attempt = resource.text if resource else ""
+                if resource and html_for_attempt and not resource.error and not source._origin_failure_reason(html_for_attempt):
+                    break
+                if attempt < max_attempts:
+                    logger.warning(
+                        "Apex 全量验证重试：champion=%s attempt=%s error=%s",
+                        champion.en_name or champion.slug,
+                        attempt,
+                        (resource.error if resource else source.last_fetch_error)
+                        or source._origin_failure_reason(html_for_attempt)
+                        or "empty_html",
+                    )
+                    time.sleep(max(3.0, delay * attempt))
+            html = resource.text if resource else ""
+            cf_blocked = source._is_cloudflare_block(html)
+            entry_count = 0
+            status = "failed"
+            error = (resource.error if resource else source.last_fetch_error) or ""
+            entries: list[SynergyEntry] = []
+            synergy_map: dict[str, list[SynergyEntry]] = {}
+            origin_error = source._origin_failure_reason(html)
+            if origin_error:
+                status = "failed"
+                error = error or origin_error
+                if origin_error in {"cloudflare_block", "access_denied"}:
+                    cf_blocked = True
+            elif resource and html and not cf_blocked and not error:
+                try:
+                    entries, synergy_map = _extract_champion_entries(extractor, champion, resource)
+                    entry_count = len(entries)
+                    status = "success" if entry_count else "empty"
+                    if not entries:
+                        error = "synergy_parse_empty"
+                    for key, values in synergy_map.items():
+                        combined_synergy_map.setdefault(key, []).extend(values)
+                    if entries and champion.slug != "vi" and len(source_checks) < 3:
+                        source_checks.append(_source_check_record(champion, entries[0], html))
+                except Exception as exc:
+                    status = "empty"
+                    error = str(exc)
+            elif cf_blocked:
+                error = error or "cloudflare_block"
+            elif not html:
+                error = error or "empty_html"
+
+            if status != "success" and primary_wait_until != "networkidle":
+                fallback = source.fetch_cloakbrowser(detail_url, wait_until="networkidle", post_wait_ms=0)
+                fallback_html = fallback.text if fallback else ""
+                fallback_cf_blocked = source._is_cloudflare_block(fallback_html)
+                fallback_error = (fallback.error if fallback else source.last_fetch_error) or ""
+                fallback_origin_error = source._origin_failure_reason(fallback_html)
+                if fallback and fallback_html and not fallback_cf_blocked and not fallback_error and not fallback_origin_error:
+                    try:
+                        fallback_entries, fallback_map = _extract_champion_entries(extractor, champion, fallback)
+                        if fallback_entries:
+                            resource = fallback
+                            html = fallback_html
+                            cf_blocked = False
+                            entries = fallback_entries
+                            synergy_map = fallback_map
+                            entry_count = len(entries)
+                            status = "success"
+                            error = ""
+                            origin_error = ""
+                            for key, values in synergy_map.items():
+                                combined_synergy_map.setdefault(key, []).extend(values)
+                            if entries and champion.slug != "vi" and len(source_checks) < 3:
+                                source_checks.append(_source_check_record(champion, entries[0], html))
+                    except Exception as exc:
+                        error = error or str(exc)
+            if cf_blocked:
+                cf_blocked_count += 1
+
+            row = {
+                "champion_id": champion.id,
+                "champion_slug": champion.slug,
+                "champion_name": champion.name,
+                "url": detail_url,
+                "backend": resource.source if resource else "cloakbrowser",
+                "status_code": resource.status_code if resource else None,
+                "entry_count": entry_count,
+                "status": status,
+                "cf_blocked": cf_blocked,
+                "error": error,
+                "origin_check": "ok" if not origin_error else origin_error,
+            }
+            per_champion.append(row)
+            if status != "success":
+                failures.append(row)
+            logger.info(
+                "Apex 全量验证进度：%s/%s champion=%s status=%s entries=%s cf=%s",
+                index,
+                len(champions),
+                champion.en_name or champion.slug,
+                status,
+                entry_count,
+                cf_blocked,
+            )
+            if delay > 0 and index < len(champions):
+                time.sleep(delay)
+
+        unique_synergy_map = SynergyExtractor._dedupe_entries(combined_synergy_map)
+        payload = SynergyWriter(core_info).build_payload(unique_synergy_map)
+        stats = summarize_synergy_payload(payload)
+        old_stats = _load_existing_synergy_stats()
+        publishable = True
+        publish_error = ""
+        try:
+            _validate_publish_size(stats, old_stats)
+        except ValueError as exc:
+            publishable = False
+            publish_error = str(exc)
+        failed_count = sum(1 for row in per_champion if row["status"] == "failed")
+        if failed_count:
+            publishable = False
+            failed_error = f"存在未通过 origin 校验的英雄：failed={failed_count}"
+            publish_error = f"{publish_error}；{failed_error}" if publish_error else failed_error
+        elapsed = round(time.time() - started_at, 3)
+        summary = {
+            "total_champions": len(core_info),
+            "processed": len(per_champion),
+            "non_empty": sum(1 for row in per_champion if row["status"] == "success"),
+            "empty": sum(1 for row in per_champion if row["status"] == "empty"),
+            "real_empty": sum(1 for row in per_champion if row["status"] == "empty"),
+            "failed": failed_count,
+            "failed_blocked": failed_count,
+            "synergy_entries_total": sum(int(row["entry_count"] or 0) for row in per_champion),
+            "cf_blocked_count": cf_blocked_count,
+            "elapsed": elapsed,
+            "stats": stats,
+            "publishable": publishable,
+            "publish_error": publish_error,
+            "dry_run": True,
+        }
+        _atomic_write_json(out_dir / "summary.json", summary)
+        _atomic_write_json(out_dir / "per_champion.json", {"items": per_champion})
+        _write_per_champion_csv(out_dir / "per_champion.csv", per_champion)
+        _atomic_write_json(out_dir / "failures.json", {"items": failures})
+        _atomic_write_json(out_dir / "source_checks.json", {"items": source_checks})
+        print(
+            "full_validate processed={processed} non_empty={non_empty} empty={empty} failed={failed} "
+            "synergy_entries_total={entries} cf_blocked_count={cf} publishable={publishable} out_dir={out_dir}".format(
+                processed=summary["processed"],
+                non_empty=summary["non_empty"],
+                empty=summary["empty"],
+                failed=summary["failed"],
+                entries=summary["synergy_entries_total"],
+                cf=summary["cf_blocked_count"],
+                publishable=str(summary["publishable"]).lower(),
+                out_dir=out_dir,
+            )
+        )
+        return {"out_dir": str(out_dir), **summary}
+    finally:
+        source.close()
+        logging.getLogger().removeHandler(file_handler)
+        file_handler.close()
+
+
+def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[str] = None) -> dict:
+    """只抓单个 ApexLoL 英雄详情页，并把抓取和解析证据写入 runtime reports。"""
+    started_at = time.time()
+    out_dir = Path(report_dir).resolve() if report_dir else _default_single_champion_report_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stderr_path = out_dir / "stderr.log"
+    file_handler = logging.FileHandler(stderr_path, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logging.getLogger().addHandler(file_handler)
+
+    source = ApexSource()
+    resource: Optional[FetchedResource] = None
+    result = {
+        "url": "",
+        "backend": "cloakbrowser",
+        "status_code": None,
+        "cloakbrowser_version": None,
+        "cf_blocked": True,
+        "synergy_entry_count": 0,
+        "error": "",
+    }
+    try:
+        detail_url = source.build_allowed_url(f"/zh/champions/{champion_slug}")
+        if not detail_url:
+            raise ValueError(f"英雄 URL 不在 Apex 白名单内：{champion_slug}")
+        result["url"] = detail_url
+        resource = source.fetch(detail_url, allow_cloakbrowser=True)
+        html = resource.text if resource else ""
+        cf_blocked = source._is_cloudflare_block(html)
+        result.update(
+            {
+                "backend": resource.source if resource else "cloakbrowser",
+                "status_code": resource.status_code if resource else None,
+                "cloakbrowser_version": resource.cloakbrowser_version if resource else None,
+                "cf_blocked": cf_blocked,
+                "error": (resource.error if resource else source.last_fetch_error) or "",
+            }
+        )
+        _write_html_report_sample(out_dir / "page.html.txt", html)
+
+        entries: list[SynergyEntry] = []
+        origin_error = source._origin_failure_reason(html)
+        if origin_error and not result["error"]:
+            result["error"] = origin_error
+            result["cf_blocked"] = origin_error in {"cloudflare_block", "access_denied"}
+        if resource and html and not result["cf_blocked"] and not result["error"]:
+            core_info = _build_single_champion_core_info(champion_slug)
+            extractor = SynergyExtractor(
+                champion_lookup=build_champion_lookup(core_info),
+                augment_name_map=build_augment_name_map_from_static(),
+            )
+            synergy_map = extractor.extract([resource])
+            for candidate in (normalize_slug(champion_slug), normalize_name(champion_slug)):
+                if candidate and candidate in synergy_map:
+                    entries = synergy_map[candidate]
+                    break
+            if not entries:
+                entries = [entry for values in synergy_map.values() for entry in values]
+            result["synergy_entry_count"] = len(entries)
+
+        synergy_payload = [_entry_to_report_item(entry) for entry in entries]
+        _atomic_write_json(out_dir / "synergy_vi.json", synergy_payload)
+        if result["synergy_entry_count"] == 0 and not result["error"]:
+            if result["cf_blocked"]:
+                result["error"] = "cloudflare_block"
+            elif not html:
+                result["error"] = "empty_html"
+            else:
+                result["error"] = "synergy_parse_empty"
+        _atomic_write_json(out_dir / "result.json", result)
+        print(
+            "backend={backend} cf_blocked={cf_blocked} synergy_entry_count={count} out_dir={out_dir}".format(
+                backend=result["backend"],
+                cf_blocked=str(result["cf_blocked"]).lower(),
+                count=result["synergy_entry_count"],
+                out_dir=out_dir,
+            )
+        )
+        log_task_summary(
+            logger,
+            task="ApexLoL Vi 单英雄 CloakBrowser 验证",
+            started_at=started_at,
+            success=bool(result["synergy_entry_count"]),
+            detail=f"backend={result['backend']} cf_blocked={result['cf_blocked']} items={result['synergy_entry_count']} out_dir={out_dir}",
+        )
+        return {"out_dir": str(out_dir), **result}
+    except Exception as exc:
+        result["error"] = str(exc)
+        if resource is not None:
+            result["status_code"] = resource.status_code
+            result["cloakbrowser_version"] = resource.cloakbrowser_version
+        _atomic_write_json(out_dir / "synergy_vi.json", [])
+        _atomic_write_json(out_dir / "result.json", result)
+        print(
+            "backend={backend} cf_blocked={cf_blocked} synergy_entry_count=0 out_dir={out_dir}".format(
+                backend=result["backend"],
+                cf_blocked=str(result["cf_blocked"]).lower(),
+                out_dir=out_dir,
+            )
+        )
+        logger.exception("ApexLoL Vi 单英雄 CloakBrowser 验证失败")
+        return {"out_dir": str(out_dir), **result}
+    finally:
+        source.close()
+        logging.getLogger().removeHandler(file_handler)
+        file_handler.close()
+
+
 def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
     started_at = time.time()
     dry_run = (os.getenv("APEX_DRY_RUN", "0").strip() == "1") if dry_run is None else bool(dry_run)
@@ -1598,18 +2333,40 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
             champion_lookup=build_champion_lookup(core_info),
             augment_name_map=build_augment_name_map_from_static(),
         )
-        synergy_map = extractor.extract(resources)
+        try:
+            synergy_map = extractor.extract(resources)
+        except ValueError as exc:
+            if not str(exc).startswith("联动解析结果为空"):
+                raise
+            # 在线入口被 ApexLoL 反爬整体拦截时，继续构造空 payload，让 latest merge 保住旧有效英雄。
+            logger.warning("本轮联动解析为空，进入 latest merge 兜底：%s", exc)
+            synergy_map = {}
         payload = SynergyWriter(core_info).build_payload(synergy_map)
+        # 本轮真实抓取规模（merge 前）：用于判定是否值得发布，避免 latest merge 把失败轮次兜底成假发布。
+        fresh_stats = summarize_synergy_payload(payload)
+        payload, merge_meta = merge_payload_with_latest_snapshot(payload)
         stats = summarize_synergy_payload(payload)
         old_stats = _load_existing_synergy_stats()
         publishable = True
-        try:
-            _validate_publish_size(stats, old_stats)
-        except ValueError as exc:
+        if not synergy_map or fresh_stats.get("non_empty_heroes", 0) == 0:
+            # 本轮在线整体被反爬拦截、无任何有效新增：不能靠 latest merge 兜底写出 mapped=0 的
+            # “假发布”，保持旧 latest 不动（非 dry-run 抛出后由外层 except 记录并保留旧快照）。
             publishable = False
-            logger.error("%s", exc)
+            logger.error(
+                "本轮无有效联动新增（mapped=%s non_empty=%s），保持旧 latest 不变",
+                len(synergy_map),
+                fresh_stats.get("non_empty_heroes", 0),
+            )
             if not dry_run:
-                raise
+                raise ValueError("本轮抓取无有效新增，跳过发布以保留旧 latest")
+        else:
+            try:
+                _validate_publish_size(stats, old_stats)
+            except ValueError as exc:
+                publishable = False
+                logger.error("%s", exc)
+                if not dry_run:
+                    raise
         target_path = Path(output_path) if output_path else _new_synergy_snapshot_path()
         if dry_run:
             log_task_summary(
@@ -1620,7 +2377,8 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
                 detail=(
                     f"dry_run=1 heroes={len(payload)} mapped={len(synergy_map)} "
                     f"resources={len(resources)} non_empty={stats['non_empty_heroes']} "
-                    f"items={stats['synergy_entries']} publishable={int(publishable)}"
+                    f"items={stats['synergy_entries']} publishable={int(publishable)} "
+                    f"retained_old={merge_meta.get('retained_old_heroes', 0)}"
                 ),
             )
         else:
@@ -1641,7 +2399,7 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
                 detail=(
                     f"heroes={len(payload)} mapped={len(synergy_map)} "
                     f"non_empty={stats['non_empty_heroes']} items={stats['synergy_entries']} "
-                    f"output={target_path.name}"
+                    f"retained_old={merge_meta.get('retained_old_heroes', 0)} output={target_path.name}"
                 ),
             )
         return {
@@ -1652,6 +2410,7 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
             "publishable": publishable,
             "output_path": str(target_path),
             "stats": stats,
+            "merge": merge_meta,
         }
     except Exception as exc:
         log_task_summary(
@@ -1672,5 +2431,51 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
         source.close()
 
 
+def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="ApexLoL 协同数据抓取器")
+    parser.add_argument(
+        "--single-champion",
+        metavar="SLUG",
+        help="只抓单个 ApexLoL 英雄详情页并写入 runtime reports，不发布正式 synergy 快照",
+    )
+    parser.add_argument(
+        "--report-dir",
+        help="单英雄验证产物目录；未指定时写入 data/runtime/reports/synergy_vi_cloakbrowser/<timestamp>/",
+    )
+    parser.add_argument(
+        "--validate-full",
+        action="store_true",
+        help="全量 dry-run 验证 172 英雄详情页抓取和解析，并写入 runtime reports，不发布正式快照",
+    )
+    parser.add_argument(
+        "--max-champions",
+        type=int,
+        default=0,
+        help="配合 --validate-full 使用；只验证前 N 个英雄，用于小批量 smoke",
+    )
+    parser.add_argument(
+        "--delay-seconds",
+        type=float,
+        default=None,
+        help="配合 --validate-full 使用；英雄之间等待秒数，默认读取 APEX_VALIDATE_DELAY_SECONDS 或 0",
+    )
+    parser.add_argument(
+        "--champions",
+        help="配合 --validate-full 使用；逗号分隔的英雄英文 slug 清单，用于定向复核",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
-    main()
+    args = _parse_args()
+    if args.validate_full:
+        run_full_validation(
+            max_champions=args.max_champions or None,
+            report_dir=args.report_dir,
+            delay_seconds=args.delay_seconds,
+            champion_slugs=[item.strip() for item in (args.champions or "").split(",") if item.strip()] or None,
+        )
+    elif args.single_champion:
+        run_single_champion_probe(args.single_champion, report_dir=args.report_dir)
+    else:
+        main()
