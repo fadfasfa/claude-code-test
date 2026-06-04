@@ -1,0 +1,6 @@
+{
+  "base_url": "https://jm.luudan.xyz/api/open.php",
+  "key": "YOUR_CDK",
+  "poll_interval": 5,
+  "auto_change_on_expire": true
+}

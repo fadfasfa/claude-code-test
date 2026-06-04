@@ -77,3 +77,6 @@ run/data/static/Champion_Core_Data.json
 
 # 一次性 Chrome 扩展策略探针脚本
 .tmp_ext_policy_probe.ps1
+
+# 接码监控真实配置含 CDK，不入库（模板 config.example.json 照常跟踪）
+sms-monitor/config.json
