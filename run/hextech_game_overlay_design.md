@@ -2,7 +2,7 @@
 
 本文是 `run/` 工作区内关于 Hextech 海克斯提示「Web 前端」与「游戏内显示」双开关能力的临时设计方案。
 
-它只记录目标、路线、实现边界、性能预算、验收方式和待确认问题；不代表当前代码已经实现，也不替代 `PROJECT.md` 的现状说明。后续进入实现前，应先把本文转成更细的实施计划，并重新核对 Riot、Overwolf 和 Windows 捕获能力的当前官方文档。
+它只记录目标、路线、实现边界、性能预算、验收方式和待确认问题；不代表当前代码已经实现，也不替代 `PROJECT.md` 的现状说明。后续进入实现前，应先把本文转成更细的实施计划，并重新核对 Riot、Windows 捕获能力以及 Overwolf 后续升级对照路线的当前官方文档。
 
 ## 1. 目标状态
 
@@ -11,7 +11,7 @@
 | 开关 | 目标 | 关闭时要求 |
 | :--- | :--- | :--- |
 | Web 前端 | 启动现有本地 FastAPI / Web 页面，用于浏览器详情页、英雄查询、数据调试和手动查看 | 停止 Web 进程、停止浏览器联动、释放 WebSocket 和预热任务 |
-| 游戏内显示 | 在 LoL 游戏内海克斯出现后，把提示显示在三张海克斯卡片下方，目标响应时间不高于 500ms | 停止截图捕获、识别循环、Overwolf overlay 和相关缓存占用 |
+| 游戏内显示 | 在 LoL 游戏内海克斯出现后，把提示显示在三张海克斯卡片下方，目标响应时间不高于 500ms | 停止截图捕获、识别循环、独立 overlay host 和相关缓存占用 |
 
 两个开关必须互不强依赖：
 
@@ -20,9 +20,9 @@
 - 两者同开：Web 前端提供调试和详情页能力，游戏内 overlay 使用同一份预热数据或通过本地 IPC 获取更新。
 - 两者全关：主 Tk 控制台保持轻量常驻，只显示状态和开关，不进行高频轮询、截图或浏览器协同。
 
-用户已确认的硬约束：
+当前阶段已确认的目标约束：
 
-- LoL 目标显示模式是游戏设置里的 `Full Screen`，不是仅支持 Borderless。
+- MVP 先支持 LoL `Borderless` / 无边框全屏；游戏设置里的 `Full Screen` / 独占全屏作为后续升级方案，不进入第一阶段硬目标。
 - Web 前端关闭时，游戏内 overlay 仍必须完全可用。
 - 500ms 响应目标从「海克斯卡片开始出现」开始计算，而不是从三张卡片完全静止后开始计算。
 - 最终交付形态仍要求完全独立便携包，不能把 Overwolf 作为最终必装运行时依赖。
@@ -31,23 +31,23 @@
 
 ## 2. 推荐技术路线
 
-临时路线仍建议从「Overwolf Electron overlay + 本地 Vision sidecar + 现有 run 数据能力」开始做能力验证，但最终路线必须满足「独立便携包」目标。
+临时路线调整为「独立便携 overlay host + 本地 Vision sidecar + 现有 run 数据能力」。当前 MVP 优先支持 LoL `Borderless` / 无边框全屏，以便满足独立便携包、性能可控和实现复杂度可控三个目标。
 
 选择原因：
 
-- 普通 Tk、Electron、WebView2 或 Win32 置顶窗口很难稳定覆盖 LoL 的独占全屏渲染。
-- Overwolf 官方能力面向游戏内 overlay，提供 exclusive overlay、overlay window options、输入穿透、窗口约束和游戏窗口信息等能力，更接近 ARAMBro、Porofessor、Mobalytics 这类视觉效果。
+- 无边框全屏仍由 Windows 桌面合成器管理，普通透明置顶窗口、Win32 layered window、Electron 或 WebView2 overlay 更容易稳定覆盖游戏画面。
+- 独立 overlay host 更符合最终便携包目标，不需要把 Overwolf 作为必装运行时依赖。
 - 本地 Vision sidecar 可以专门负责截图和识别热路径，避免把 500ms 响应目标压在浏览器、Python UI 或网络请求上。
 
-需要注意：Overwolf 适合验证「全屏 overlay 是否能达到目标体验」，但它本身不满足「最终完全独立便携包」约束。因此正式落地前必须增加一个可行性分叉：
+技术路线分层如下：
 
-| 路线 | 用途 | 是否满足最终独立便携包 | 风险 |
+| 路线 | 用途 | 是否满足当前 MVP | 风险 |
 | :--- | :--- | :--- | :--- |
-| Overwolf Electron overlay | 验证 Full Screen 显示效果、输入穿透和视觉形态 | 否 | 依赖 Overwolf 生态和分发规则 |
-| 独立 Win32 / DirectComposition / Windows Graphics Capture overlay | 最终便携包候选 | 待验证 | 独占全屏下可能无法稳定覆盖游戏画面 |
+| 独立 Win32 / WebView2 / Electron 透明 overlay | 当前 MVP 主线，覆盖 Borderless 游戏画面 | 是 | 独占全屏下不承诺可用 |
+| Overwolf Electron overlay | 后续对照验证 Full Screen 体验 | 否 | 依赖 Overwolf 生态和分发规则 |
 | DirectX hook / DLL 注入 | 技术上可能覆盖独占全屏 | 不采用 | 反作弊和账号风险不可接受 |
 
-阶段 0 的真实目标不是直接定死实现，而是回答这个问题：在不注入、不读内存、不依赖 Overwolf 最终运行时的前提下，是否能稳定覆盖 LoL `Full Screen`。如果答案是否定的，需要在「接受 Overwolf 依赖」「降级支持 Borderless」「放弃 Full Screen 覆盖」之间重新决策。
+阶段 0 的真实目标改为验证：在 LoL `Borderless` / 无边框全屏下，独立便携 overlay 能否稳定显示、点击穿透、跟随窗口并满足 500ms 响应预算。LoL `Full Screen` / 独占全屏仅作为后续升级研究项，不阻塞当前 MVP。
 
 参考链接：
 
@@ -71,7 +71,7 @@
 关键现状约束：
 
 - 现有 Tk UI 会在初始化时无条件启动 Web 服务；后续应改为由「Web 前端」开关驱动。
-- 现有 Tk overlay 逻辑在检测到游戏窗口时隐藏；游戏内显示不应继续复用这条路径，而应独立交给 Overwolf overlay。
+- 现有 Tk overlay 逻辑在检测到游戏窗口时隐藏；游戏内显示不应继续复用这条路径，而应独立交给新的游戏 overlay host。
 - 现有 Web 接口可以作为数据来源，但游戏内显示不能依赖 Web 必开，否则无法达成「单开游戏内显示以节省资源」目标。
 
 ## 4. 进程与模块拆分
@@ -83,7 +83,7 @@
 | Tk 控制台 | Python/Tk | 主进程常驻 | 展示两个开关、运行状态、错误摘要和手动校准入口 |
 | ServiceManager | Python 模块 | 主进程内 | 统一启动/停止 Web、Overlay、Vision sidecar，并记录状态 |
 | Web 服务 | Python 子进程 | Web 开关控制 | 继续提供现有浏览器前端、API、WebSocket 和数据调试能力 |
-| Overlay host | Overwolf Electron | 游戏内显示开关控制 | 在游戏内渲染三张海克斯卡片下方的提示标签 |
+| Overlay host | 独立 Win32 / WebView2 / Electron 透明窗口 | 游戏内显示开关控制 | 在 Borderless 游戏画面上渲染三张海克斯卡片下方的提示标签 |
 | Vision sidecar | 原生或 Python 子进程 | 游戏内显示开关控制 | 截取 ROI、识别海克斯图标、输出稳定识别结果 |
 | Hint cache | 本地轻量数据文件 | 按数据刷新生成 | 供 Web 与 Overlay 共同读取，避免 overlay 依赖 Web 服务 |
 
@@ -138,7 +138,7 @@ Tk 控制台顶部建议新增两个明确开关：
   -> 生成本地 hint cache
   -> 游戏内显示开关开启
   -> 启动 Vision sidecar
-  -> 启动 Overwolf overlay
+  -> 启动独立 overlay host
   -> sidecar 捕获海克斯卡片 ROI
   -> sidecar 识别三张海克斯图标
   -> sidecar 查询本地 hint cache
@@ -169,7 +169,7 @@ Tk 控制台顶部建议新增两个明确开关：
 | 图标识别 | 5-40ms | 预建模板索引，优先 pHash / ORB / 多尺度模板匹配 |
 | 稳定去抖 | 40-120ms | 从卡片出现早期开始判断，最多等 2-4 帧 |
 | 本地提示查询 | 1-5ms | 内存 map 或轻量 JSON，不查网络 |
-| IPC 推送 | 1-10ms | 本机 WebSocket、named pipe 或 Overwolf 通道 |
+| IPC 推送 | 1-10ms | 本机 WebSocket、named pipe 或本地进程间通道 |
 | Overlay 渲染 | 16-50ms | 文本和小图标，避免重排和复杂动画 |
 
 验收指标：
@@ -294,14 +294,15 @@ Overlay 只负责渲染，不做复杂业务判断。
 
 ### 阶段 0: 决策验证
 
-目标：确认两件事：Overwolf 能覆盖用户实际 LoL `Full Screen` 模式；独立便携包候选路线是否有机会在不注入的前提下覆盖同一模式。
+目标：确认独立便携 overlay 在用户实际 LoL `Borderless` / 无边框全屏模式下可用，并记录 `Full Screen` / 独占全屏作为后续升级项的限制。
 
 验收：
 
-- LoL `Full Screen` 模式下 overlay 可见。
+- LoL `Borderless` / 无边框全屏模式下 overlay 可见。
 - overlay 可点击穿透。
 - overlay 可由热键隐藏和显示。
-- 如果 Overwolf 可行但独立便携包路线不可行，需要把「最终独立便携包」与「Full Screen」冲突报告为 blocker。
+- overlay 能跟随游戏窗口位置和分辨率变化。
+- LoL `Full Screen` / 独占全屏不作为当前 MVP 验收项；只记录后续升级风险。
 
 ### 阶段 1: 双开关生命周期
 
@@ -345,33 +346,33 @@ Overlay 只负责渲染，不做复杂业务判断。
 
 ### 阶段 5: 性能与打包
 
-目标：明确便携包和 Overwolf 验证包的分发边界，并判断最终独立便携包目标是否可达。
+目标：明确当前 MVP 的独立便携包分发边界，并把 Full Screen / Overwolf 对照验证留作后续升级说明。
 
 验收：
 
 - 记录三种状态内存占用：全关、只开 Web、只开游戏内显示、两者同开。
 - 记录 CPU 占用和平均识别延迟。
-- 如果最终仍依赖 Overwolf，则判定不满足用户「完全独立便携包」目标。
-- 如果独立便携包只能支持 Borderless，必须明确标注不满足 `Full Screen` 目标。
+- 当前 MVP 只承诺 Borderless；打包文档必须明确 Full Screen 属于后续升级。
+- 如果后续升级最终仍依赖 Overwolf，则判定不满足用户「完全独立便携包」目标。
 
 ## 13. 风险清单
 
 | 风险 | 影响 | 缓解 |
 | :--- | :--- | :--- |
-| Overwolf 对 LoL 当前版本的 exclusive overlay 支持不稳定 | 无法满足真全屏显示 | 阶段 0 先验证，不通过则降级为 Borderless-only |
-| Riot 政策边界变化 | 内容可能需要调整 | 保持机制说明，不显示胜率和自动决策 |
+| 独立 overlay 在 Borderless 下跟随不稳定 | 无法满足当前 MVP 显示体验 | 阶段 0 先验证窗口跟随、点击穿透和多分辨率 |
+| Riot 政策边界变化 | 胜率/排名显示可能无法合规发布 | 保留用户需求，但把胜率/排名标记为 policy_blocked / requires_go_no_go |
 | 图标动画导致误识别 | 显示错误提示 | 多帧去抖、置信度阈值、低置信度显示识别中 |
 | 分辨率和 UI 缩放差异 | ROI 偏移 | 手动校准 + 常见分辨率预设 |
 | Web 与 Overlay 共享数据不清晰 | 资源重复、内存增加 | hint cache 作为共享低成本数据层 |
 | 子进程停止不干净 | 残留 CPU/内存占用 | ServiceManager 统一 stop、超时 kill、退出前状态检查 |
-| 最终独立便携包与 Full Screen overlay 冲突 | 可能无法同时满足两个硬目标 | 阶段 0 单独验证，不通过则提请重新取舍 |
+| 后续 Full Screen 升级与独立便携包冲突 | 可能无法同时满足两个目标 | 不阻塞当前 MVP，升级阶段单独验证 |
 | 胜率/排名与 Riot 政策冲突 | 可能无法合规发布或存在账号风险 | 标记为 policy_blocked，正式实现前再次 go/no-go |
 
 ## 14. 待用户确认问题
 
 这些问题会影响正式实施计划：
 
-1. 已确认：LoL 目标模式是 `Full Screen`。
+1. 已更新：当前 MVP 目标模式是 `Borderless` / 无边框全屏；`Full Screen` / 独占全屏作为后续升级方案。
 2. 已确认：最终仍要求完全独立便携包，不接受 Overwolf 作为最终必装运行时依赖。
 3. 暂不确认：游戏内显示单开时，是否允许启动一个极小本地 IPC 服务，还是必须完全无 Web/HTTP 进程。
 4. 待确认：Web 前端开关开启时，是否默认自动打开浏览器？
@@ -384,8 +385,8 @@ Overlay 只负责渲染，不做复杂业务判断。
 
 ## 15. 临时结论
 
-在「LoL Full Screen 可用」和「从卡片开始出现起 500ms 内响应」这两个硬目标下，继续强化现有 Tk overlay 不是合适路线。更可行的验证路线是把现有 Tk 窗口收敛为轻量控制台，把游戏内显示先交给 Overwolf overlay 验证视觉和全屏能力，把识别热路径交给独立 Vision sidecar，并通过本地轻量 hint cache 解耦 Web 前端和游戏内显示。
+在当前 MVP 中，目标调整为「LoL Borderless / 无边框全屏可用」和「从卡片开始出现起 500ms 内响应」。这使实现难度明显下降，也更符合最终独立便携包目标。继续强化现有 Tk overlay 仍不是最佳路线；更合适的做法是把现有 Tk 窗口收敛为轻量控制台，把游戏内显示交给独立透明 overlay host，把识别热路径交给独立 Vision sidecar，并通过本地轻量 hint cache 解耦 Web 前端和游戏内显示。
 
-但用户新增的「最终完全独立便携包」要求使 Overwolf 不能直接作为最终路线。正式实现前，第一优先级不是改业务数据，而是完成阶段 0 验证：在用户真实 LoL `Full Screen` 设置下证明 overlay 可见、可隐藏、可点击穿透，并评估独立便携包路线是否能在不注入、不读内存的前提下达成同样能力。这个验证失败时，应立即把目标冲突上报，而不是继续扩大实现。
+LoL `Full Screen` / 独占全屏不再作为当前阶段硬目标。它保留为后续升级项，届时需要单独验证独立便携包路线是否能在不注入、不读内存的前提下覆盖独占全屏；如果不能，再重新讨论是否接受 Overwolf 依赖、降级支持范围或放弃独占全屏覆盖。
 
 胜率/排名显示是另一个必须前置决策的问题。用户要求保留，但 Riot 当前公开政策不支持把 Augments / Arena Mode items win rate 作为合规 overlay 内容。后续实现计划必须把它作为 `policy_blocked` 风险项处理。
