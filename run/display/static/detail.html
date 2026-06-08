@@ -40,9 +40,11 @@
 
         html {
             background: #0d1117;
+            height: 100%;
         }
 
         body {
+            margin: 0;
             background-color: #0d1117;
             background-image:
                 linear-gradient(135deg, rgba(200, 170, 110, 0.055) 0 1px, transparent 1px 74px),
@@ -51,15 +53,36 @@
                 var(--hx-bg-radial, radial-gradient(circle at 50% 0%, rgba(88, 166, 255, 0.08), transparent 54%));
             color: var(--hx-text, #c9d1d9);
             font-family: var(--hx-font-family, "Microsoft YaHei UI", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif);
+            min-height: 100dvh;
         }
 
         .detail-page-shell {
-            padding: clamp(0.75rem, 1.5vw, 1.75rem);
+            padding: clamp(0.5rem, 1.1vw, 1rem);
+        }
+
+        body.detail-page-shell {
+            box-sizing: border-box;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .hidden {
+            display: none !important;
         }
 
         .detail-frame {
             width: min(100%, 96rem);
             margin-inline: auto;
+        }
+
+        main.detail-frame {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: clamp(0.45rem, 0.9vh, 0.75rem);
         }
 
         @media (min-width: 1800px) {
@@ -159,7 +182,12 @@
         }
 
         .detail-topbar {
-            padding: 0.35rem 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex: 0 0 auto;
+            padding: 0.1rem 0 0.3rem;
+            margin-bottom: clamp(0.35rem, 0.8vh, 0.6rem) !important;
         }
 
         .detail-back-link {
@@ -172,12 +200,19 @@
         }
 
         .detail-header-panel {
+            display: flex;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
             background:
                 linear-gradient(110deg, rgba(200, 170, 110, 0.12), transparent 28%),
                 linear-gradient(180deg, rgba(18, 24, 32, 0.94), rgba(15, 20, 28, 0.9)),
                 var(--hx-surface);
-            gap: clamp(1rem, 2vw, 1.5rem);
-            padding: clamp(1rem, 2vw, 1.5rem);
+            flex: 0 0 auto;
+            gap: clamp(0.6rem, 1.1vw, 1rem);
+            min-height: 4.5rem;
+            margin-bottom: 0 !important;
+            padding: clamp(0.55rem, 1vh, 0.85rem) clamp(0.75rem, 1.3vw, 1.1rem) !important;
             border-color: rgba(200, 170, 110, 0.24);
         }
 
@@ -193,22 +228,59 @@
         }
 
         #headerBg {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 50%;
+            opacity: 0.2;
+            background-size: cover;
+            background-position: left center;
             clip-path: polygon(14% 0, 100% 0, 100% 100%, 0 100%);
             filter: saturate(0.88) contrast(1.05);
             mix-blend-mode: screen;
         }
 
+        #heroAvatar {
+            width: 3.75rem !important;
+            height: 3.75rem !important;
+            flex: 0 0 auto;
+            position: relative;
+            z-index: 1;
+            object-fit: cover;
+            background: #111827;
+            border-radius: 0.75rem;
+        }
+
+        .detail-hero-copy {
+            min-width: 0;
+            position: relative;
+            z-index: 1;
+        }
+
         .detail-title {
-            font-size: clamp(1.55rem, 2.1vw, 2.15rem);
-            line-height: 1.15;
+            font-size: 1.55rem;
+            line-height: 1.08;
         }
 
         .detail-stat-row {
-            gap: clamp(0.85rem, 1.8vw, 1.5rem);
+            display: flex;
+            align-items: center;
+            gap: clamp(0.65rem, 1.4vw, 1.1rem);
+            margin-top: 0.25rem !important;
+        }
+
+        #heroWR,
+        #heroPR {
+            font-size: 0.98rem !important;
         }
 
         .detail-control-panel {
-            padding: clamp(0.9rem, 1.6vw, 1.5rem);
+            flex: 1 1 auto;
+            min-height: 0 !important;
+            display: flex;
+            flex-direction: column;
+            padding: clamp(0.65rem, 1.1vh, 0.9rem) clamp(0.75rem, 1.2vw, 1rem) !important;
             position: relative;
             overflow: hidden;
         }
@@ -225,7 +297,18 @@
         }
 
         .detail-control-bar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            flex: 0 0 auto;
             gap: clamp(0.45rem, 0.8vw, 0.75rem);
+            margin-bottom: 0.6rem !important;
+            padding-bottom: 0.6rem !important;
+            border-bottom: 1px solid rgba(31, 41, 55, 0.95);
+        }
+
+        .detail-control-bar > .flex-1 {
+            flex: 1 1 auto;
         }
 
         .detail-mode-group,
@@ -236,23 +319,52 @@
         }
 
         #dataContainer {
+            display: flex;
+            flex: 1 1 auto;
+            min-height: 0;
             gap: clamp(0.75rem, 1.4vw, 1.25rem);
-            align-items: flex-start;
+            align-items: stretch;
         }
 
         .detail-left-pane {
             flex: 0 0 clamp(22rem, 39vw, 40rem);
             min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
         }
 
         .detail-right-pane {
             flex: 1 1 0;
             min-width: min(100%, 28rem);
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
         }
 
         #compList,
         #synergyArticleScroll {
-            max-height: clamp(28rem, 68vh, 48rem);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            flex: 1 1 auto;
+            height: 100%;
+            min-height: 0;
+            max-height: none;
+            overflow-y: auto;
+        }
+
+        #skeletonContainer {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            padding-right: 0.5rem;
+        }
+
+        .mode-btn,
+        .tab-btn {
+            line-height: 1;
+            padding: 0.48rem 0.75rem !important;
         }
 
         .hextech-list-card {
@@ -294,6 +406,21 @@
         }
 
         @media (max-width: 1100px) {
+            body.detail-page-shell {
+                height: auto;
+                min-height: 100dvh;
+                overflow-y: auto;
+            }
+
+            main.detail-frame {
+                flex: 0 0 auto;
+                min-height: 0;
+            }
+
+            .detail-control-panel {
+                overflow: visible;
+            }
+
             #dataContainer {
                 flex-direction: column;
             }
@@ -307,6 +434,7 @@
 
             #compList,
             #synergyArticleScroll {
+                height: auto;
                 max-height: none;
                 overflow-y: visible !important;
                 padding-right: 0 !important;
@@ -325,6 +453,7 @@
 
             .detail-header-panel {
                 align-items: flex-start;
+                flex-wrap: wrap;
                 margin-bottom: 0.75rem;
             }
 
@@ -334,8 +463,12 @@
             }
 
             #heroAvatar {
-                width: 4rem;
-                height: 4rem;
+                width: 3.25rem !important;
+                height: 3.25rem !important;
+            }
+
+            .detail-title {
+                font-size: 1.35rem;
             }
 
             .detail-stat-row {
@@ -709,11 +842,11 @@
     </style>
 </head>
 
-<body class="detail-page-shell min-h-screen">
+<body class="detail-page-shell">
 
-    <nav class="detail-topbar detail-frame mb-6 flex justify-between items-center">
+    <nav class="detail-topbar detail-frame flex justify-between items-center">
         <a href="index.html" class="detail-back-link flex items-center space-x-2">
-            <span class="text-xl">返回</span> <span>返回大盘风云榜</span>
+            <span class="text-xl" aria-hidden="true">&larr;</span> <span>返回大盘风云榜</span>
         </a>
         <div id="wsStatus" class="flex items-center space-x-2 text-xs">
             <span class="w-2 h-2 bg-gray-500 rounded-full"></span>
@@ -722,34 +855,32 @@
     </nav>
 
     <main class="detail-frame">
-        <header class="detail-header-panel glass-panel rounded-2xl p-6 mb-8 flex items-center space-x-6 relative overflow-hidden"
+        <header class="detail-header-panel glass-panel rounded-2xl flex items-center relative overflow-hidden"
             id="mainHeader">
             <div id="headerBg" class="absolute right-0 top-0 bottom-0 w-1/2 opacity-20 bg-cover bg-left"></div>
             <img id="heroAvatar" src=""
-                class="w-20 h-20 rounded-xl hx-hero-avatar relative z-10 bg-gray-900 object-cover">
+                class="rounded-xl hx-hero-avatar relative z-10 bg-gray-900 object-cover">
 
-            <div class="relative z-10">
+            <div class="detail-hero-copy relative z-10">
                 <div class="flex items-center space-x-3 mb-1">
                     <h1 id="heroName" class="detail-title font-black text-white">加载中...</h1>
                 </div>
                 <div class="detail-stat-row flex text-sm mt-2">
                     <p><span class="text-gray-400">真实胜率:</span> <span id="heroWR"
-                            class="text-green-400 font-bold text-lg">-</span></p>
+                            class="text-green-400 font-bold">-</span></p>
                     <p><span class="text-gray-400">全服出场率:</span> <span id="heroPR"
-                            class="text-white font-bold text-lg">-</span></p>
+                            class="text-white font-bold">-</span></p>
                 </div>
             </div>
         </header>
 
-        <section class="detail-control-panel glass-panel rounded-2xl min-h-[400px]">
-            <div class="detail-control-bar flex flex-wrap items-center mb-4 pb-4 border-b border-gray-800">
+        <section class="detail-control-panel glass-panel rounded-2xl">
+            <div class="detail-control-bar flex flex-wrap items-center border-b border-gray-800">
                 <div class="detail-mode-group">
                     <button id="btn-comprehensive" onclick="setDisplayMode('comprehensive')"
-                        class="mode-btn hx-tab-active px-4 py-2 rounded-lg text-sm">综合推荐
-                        综合推荐</button>
+                        class="mode-btn hx-tab-active px-4 py-2 rounded-lg text-sm">综合推荐</button>
                     <button id="btn-winrate" onclick="setDisplayMode('winrate_only')"
-                        class="mode-btn hx-tab-idle px-4 py-2 rounded-lg font-medium text-sm">纯胜率
-                        纯胜率</button>
+                        class="mode-btn hx-tab-idle px-4 py-2 rounded-lg font-medium text-sm">纯胜率</button>
                 </div>
                 <div class="flex-1"></div>
                 <div class="detail-tier-group">
@@ -793,13 +924,13 @@
             <div id="dataContainer" class="flex hidden">
                 <div class="detail-left-pane">
                     <div id="compList" class="flex flex-col gap-4 scroll-container"
-                        style="overflow-y: auto; padding-right: 8px; overscroll-behavior: contain; overflow-anchor: none;"></div>
+                        style="overflow-y: auto; padding-right: 8px; overflow-anchor: none;"></div>
                 </div>
 
                 <div class="detail-right-pane">
                     <div id="synergyArticleScroll"
                         class="flex flex-col gap-4 overflow-y-auto scroll-container"
-                        style="padding-right: 8px; overscroll-behavior: contain; overflow-anchor: none;">
+                        style="padding-right: 8px; overflow-anchor: none;">
                         <div class="glass-panel rounded-xl p-4">
                             <div class="text-sm text-gray-400 text-center">选择左侧海克斯查看联动文章</div>
                         </div>
@@ -1509,29 +1640,6 @@
             container.innerHTML = html;
         }
 
-        function trapWheelOnScrollContainer(container) {
-            if (!container || container.dataset.wheelTrapBound === '1') {
-                return;
-            }
-
-            container.dataset.wheelTrapBound = '1';
-            container.addEventListener('wheel', (event) => {
-                const scrollTop = container.scrollTop;
-                const maxScrollTop = container.scrollHeight - container.clientHeight;
-                const deltaY = event.deltaY || 0;
-                const scrollingUp = deltaY < 0;
-                const scrollingDown = deltaY > 0;
-                const atTop = scrollTop <= 0;
-                const atBottom = scrollTop >= maxScrollTop - 1;
-                const canScroll = (scrollingUp && !atTop) || (scrollingDown && !atBottom);
-
-                if (!canScroll) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                }
-            }, { passive: false });
-        }
-
         async function loadSynergies() {
             try {
                 const synergyRes = await fetch(`${API_BASE}/api/synergies/${encodeURIComponent(heroId || hero)}`);
@@ -1679,8 +1787,6 @@
         function bootstrapDetailPage() {
             if (detailBootstrapped) return;
             detailBootstrapped = true;
-            trapWheelOnScrollContainer(document.getElementById('compList'));
-            trapWheelOnScrollContainer(document.getElementById('synergyArticleScroll'));
             loadHextechs();
             connectWS();
         }
