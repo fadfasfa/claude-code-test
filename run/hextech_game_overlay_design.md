@@ -22,7 +22,7 @@
 
 当前阶段已确认的目标约束：
 
-- MVP 先支持 LoL `Borderless` / 无边框全屏；游戏设置里的 `Full Screen` / 独占全屏作为后续升级方案，不进入第一阶段硬目标。
+- MVP 先支持 LoL `Borderless` / 无边框全屏（含 Win11 FSO 机会性覆盖）；真独占全屏在「不注入 + 不依赖 Overwolf」约束下无干净路径，改由检测 + 引导用户切无边框处理，不作为升级承诺。
 - Web 前端关闭时，游戏内 overlay 仍必须完全可用。
 - 500ms 响应目标从「海克斯卡片开始出现」开始计算，而不是从三张卡片完全静止后开始计算。
 - 最终交付形态仍要求完全独立便携包，不能把 Overwolf 作为最终必装运行时依赖。
@@ -33,21 +33,88 @@
 
 临时路线调整为「独立便携 overlay host + 本地 Vision sidecar + 现有 run 数据能力」。当前 MVP 优先支持 LoL `Borderless` / 无边框全屏，以便满足独立便携包、性能可控和实现复杂度可控三个目标。
 
+overlay host 收敛为单一原生 / Qt 方案（优先 PySide6 / PyQt 无边框置顶半透明窗，或原生 Win32 layered window），不把 Electron / WebView2 列为并列主线。Electron 与「完全独立便携包 + 省资源 + 快启动 + 500ms」目标冲突（运行时上百 MB、冷启动慢、常驻进程多），不进入 MVP 主线。
+
 选择原因：
 
-- 无边框全屏仍由 Windows 桌面合成器管理，普通透明置顶窗口、Win32 layered window、Electron 或 WebView2 overlay 更容易稳定覆盖游戏画面。
+- 无边框全屏仍由 Windows 桌面合成器（DWM）管理，普通透明置顶窗口 / Win32 layered window 更容易稳定覆盖游戏画面。
 - 独立 overlay host 更符合最终便携包目标，不需要把 Overwolf 作为必装运行时依赖。
 - 本地 Vision sidecar 可以专门负责截图和识别热路径，避免把 500ms 响应目标压在浏览器、Python UI 或网络请求上。
+
+### 2.1 显示模式与覆盖能力
+
+Windows 下「全屏」不是单一概念，覆盖能力按三种模式区分：
+
+| 显示模式 | 谁在合成画面 | 普通透明置顶窗能否覆盖 |
+| :--- | :--- | :--- |
+| 窗口 / 无边框全屏 Borderless | DWM 桌面合成器 | 能（当前 MVP 主线） |
+| 独占全屏 Exclusive Fullscreen | 游戏直接占用 DXGI 前缓冲，绕过 DWM | 不能 |
+| Win10/11 全屏优化 FSO / flip-model | 实际仍由 DWM 合成的「伪独占」 | 多数能，但不保证 |
+
+关键现实：Win10/11 的 Fullscreen Optimizations（全屏优化）会把很多游戏的「独占全屏」静默转成 DWM 合成的无边框全屏。LoL 在 Win11 + 较新驱动上，用户即使选 `Full Screen` 也很可能跑的是 FSO 而非真独占，此时普通置顶 overlay 仍可机会性覆盖。因此「Full Screen 选项」不等于「真独占」，不要按二元处理。
+
+### 2.2 独占全屏结论：无干净路径，改为检测 + 引导
+
+在「完全独立便携包 + 不注入 + 不读内存 + 不依赖 Overwolf」四个约束下，真正的独占全屏没有干净技术路径——这是过约束问题，四个约束至少要放弃一个：
+
+- 独占全屏时游戏独占 front buffer，外部窗口画不上去；要覆盖只能 hook 游戏 `Present` / swapchain，而 hook 必须注入。
+- LoL 使用 Vanguard 内核级反作弊，注入 / 挂钩渲染管线是其重点拦截、可导致封号的行为，不可接受。
+- Overwolf 能覆盖独占全屏，恰恰因为其挂钩被 Riot / Vanguard 白名单放行；即「独占全屏能力」近似等价于「依赖 Overwolf」，与不依赖 Overwolf 的硬约束互斥。
+
+因此独占全屏不再作为「待验证有望的升级项」，改为检测 + 引导：
+
+- 用 `SHQueryUserNotificationState()` 检测显示模式；返回 `QUNS_RUNNING_D3D_FULL_SCREEN` 即判定前台为真独占全屏（文档化、零注入、低成本）。
+- 检测到真独占 → 在 Tk 控制台提示用户切换到无边框全屏以启用游戏内显示。
+- 检测到 FSO / 无边框 → overlay 直接工作（此时连 `Full Screen` 选项都可能机会性可用）。
+
+### 2.3 Overwolf 取舍结论：不采用
+
+Overwolf 有两种形态，且「省事」与「不装本地依赖」恰好分属不同形态：
+
+| Overwolf 形态 | 用户是否需单独安装 | 本应用包体增量 | 结论 |
+| :--- | :--- | :--- | :--- |
+| Classic `.opk`（ow-native，走应用商店） | 必须先装 Overwolf 客户端（几百 MB 常驻运行时 + 后台进程 + 自动更新） | 极小（仅 HTML/JS） | 违反「不接受 Overwolf 必装运行时」硬约束，否决 |
+| ow-electron 自包含（全部进应用包） | 不需单独安装 | 约 +150–250MB（Electron/Chromium + Overwolf 原生 overlay，估算待核） | 撑大体积 + Electron 常驻 + Vanguard 不确定性，不采用 |
+
+ow-electron 的进一步问题：
+
+- 「自包含」没有脱离注入，只是把 Overwolf 的注入打进你的包；独占全屏覆盖底层仍是注入。
+- Vanguard 是否对「自分发的 standalone ow-electron 应用」放行需按官方文档核实——其白名单历史上针对 Overwolf 平台 / 经其商店签名的应用，standalone 是否同等安全直接关系封号风险。
+
+Overwolf 三项常被提及的加成，对本项目价值有限：
+
+| Overwolf 能力 | 放到本项目里的实际收益 | 是否已有 / 可免费替代 | 判断 |
+| :--- | :--- | :--- | :--- |
+| Game Events API | 可能提供比赛阶段、击杀、金币等结构化事件，但本项目真正需要的是「海克斯三选界面出现 + 是哪三张」 | 粗触发已可用 win32gui 窗口检测 + LCU + 低频心跳解决，也可从 Riot 自带 LCU / Live Client Data 本地 API 获取；三张海克斯 ID Overwolf 几乎不提供，这正是仍要截图识别的原因 | 加成低 |
+| 现成 overlay 定位 | 提供窗口跟随、点击穿透、热键、多屏、DPI 等通用窗管能力 | `display/ui_runtime.py` 已有窗口跟随与显隐基础；「三张卡片在哪」是项目特有 ROI 数学，Overwolf 不代劳 | 加成低，且大半已自建 |
+| 自动更新 | 借 Overwolf 商店 / 客户端分发更新 | 这会把项目绑回 Overwolf 生态，与「完全独立便携包」直接冲突；GitHub Releases + 轻量更新器 / 重下 zip 是更轻的成熟方案 | 负加成 |
+
+维护取舍原则：「成熟方案利于维护」的前提是它为一个你不想拥有的硬问题提供即插即用「组件」。Overwolf 是平台不是库，接入等于把整个 app 迁到其 Electron + 生命周期 + API 之上，耦合与退出成本高，且会随其版本 / 商店政策 / Vanguard 关系在你脚下变动；对单人维护项目，这比自建小而稳定的代码风险更大。
+
+本项目里 Overwolf 唯一真正不可替代的成熟能力是独占全屏 overlay。但该能力已经被「检测 + 引导切无边框」方案绕过；也就是说，Overwolf 最不可替代的部分恰好不是当前 MVP 需要拥有的能力。
+
+因此「用成熟方案」的投入应放在成熟「库」而非平台上：
+
+- 屏幕捕获：维护良好的 WGC 封装（如 `windows-capture`），不手搓 Desktop Duplication。
+- 图标识别：OpenCV 模板匹配 + `imagehash`（pHash）。
+- LCU / Live Client Data：成熟连接库（如 `lcu-driver`）处理本地 API 鉴权。
+- Overlay 框架：PySide6 / PyQt（库不是平台，可放心用）。
+- 自动更新：GitHub Releases + 轻量更新器模式。
+
+底线：不接 Overwolf。它对 Game Events、overlay 定位和自动更新三项的加成都小，唯一不可替代的独占全屏覆盖能力已被 MVP 路线绕过；作为平台，它会增加分发、合规和退出成本，让单人长期维护更难。
+
+唯一可能动摇细节判断的事实点是：Overwolf 的 LoL Game Events 是否提供 Arena 海克斯三选的 augment ID。当前按「几乎不提供」处理；即使后续核实为提供，也只是减少一次截图触发 / 识别成本，不足以支撑为一个事件吞下整个平台。
 
 技术路线分层如下：
 
 | 路线 | 用途 | 是否满足当前 MVP | 风险 |
 | :--- | :--- | :--- | :--- |
-| 独立 Win32 / WebView2 / Electron 透明 overlay | 当前 MVP 主线，覆盖 Borderless 游戏画面 | 是 | 独占全屏下不承诺可用 |
-| Overwolf Electron overlay | 后续对照验证 Full Screen 体验 | 否 | 依赖 Overwolf 生态和分发规则 |
+| 独立 原生 Win32 / PySide(Qt) 透明 overlay | 当前 MVP 主线，覆盖 Borderless / FSO 游戏画面 | 是 | 真独占全屏下不可用，改由检测 + 引导处理 |
+| Overwolf classic `.opk` | —— | 否 | 需必装 Overwolf 客户端，违反硬约束 |
+| Overwolf ow-electron 自包含 | —— | 否 | 撑大体积 + Electron 常驻 + Vanguard 不确定性 |
 | DirectX hook / DLL 注入 | 技术上可能覆盖独占全屏 | 不采用 | 反作弊和账号风险不可接受 |
 
-阶段 0 的真实目标改为验证：在 LoL `Borderless` / 无边框全屏下，独立便携 overlay 能否稳定显示、点击穿透、跟随窗口并满足 500ms 响应预算。LoL `Full Screen` / 独占全屏仅作为后续升级研究项，不阻塞当前 MVP。
+阶段 0 的真实目标改为验证：在 LoL `Borderless` / 无边框全屏下，独立便携 overlay 能否稳定显示、点击穿透、跟随窗口并满足 500ms 响应预算；并实测该机器上 LoL `Full Screen` 走的是真独占还是 FSO。LoL 真独占全屏不阻塞当前 MVP，改由显示模式检测 + 引导处理。
 
 参考链接：
 
