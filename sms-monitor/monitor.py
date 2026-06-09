@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""LuDan SMS 接码验证码实时监控脚本。
+"""多来源 SMS 接码验证码实时监控脚本。
 
-职责：读取同目录 config.json 中的 CDK，轮询 LuDan SMS 开放 API，实时展示号码与最新验证码。
+职责：读取同目录 config.json，保留 LuDan 动态号码，同时轮询固定文本链接，
+在终端中分块展示每个来源的美国号码与最新验证码。
 调用方：用户双击 run.bat 或命令行 `python monitor.py` 运行。
-关键依赖：requests（HTTP 请求）；Windows 自带 clip 命令（剪贴板）；标准库 msvcrt（热键，可选）。
+关键依赖：requests（HTTP 请求）；Windows 自带 clip 命令（手动复制）；标准库 msvcrt（热键，可选）。
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime
 
 try:
@@ -31,6 +34,78 @@ except ImportError:  # 非 Windows
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 EXAMPLE_PATH = os.path.join(BASE_DIR, "config.example.json")
+
+DATE_TIME_RE = re.compile(
+    r"\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?"
+)
+CODE_PATTERNS = [
+    re.compile(
+        r"(?:verification\s+code|security\s+code|login\s+code|code|otp)[^\d]{0,30}(\d{4,8})",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(?:验证码|校验码|动态码|登录码)[^\d]{0,30}(\d{4,8})"),
+]
+GENERIC_CODE_RE = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")
+
+
+@dataclass(frozen=True)
+class PhoneParts:
+    """美国号码展示结构，避免把国家码和 10 位号码混在同一复制区域。"""
+
+    country_code: str
+    local_number: str
+    raw_digits: str
+
+
+@dataclass(frozen=True)
+class FixedSmsParseResult:
+    """固定文本接码链接解析结果。"""
+
+    has_sms: bool
+    code: str
+    status: str
+    content: str
+
+
+def split_us_phone(phone):
+    """把美国号码拆成 `+1` 与本地 10 位号码；异常格式保留可见数字。"""
+    digits = re.sub(r"\D", "", phone or "")
+    if len(digits) == 11 and digits.startswith("1"):
+        return PhoneParts(country_code="+1", local_number=digits[1:], raw_digits=digits)
+    if len(digits) == 10:
+        return PhoneParts(country_code="+1", local_number=digits, raw_digits=digits)
+    return PhoneParts(country_code="", local_number=digits, raw_digits=digits)
+
+
+def parse_fixed_sms_response(text, allow_generic=True):
+    """解析固定接码链接的文本响应；先识别空状态，再剔除日期后提取验证码。
+
+    allow_generic=False 时跳过裸数字兜底，仅信关键字模式，避免 HTML 页面里的
+    端口号/年份等无关数字被误判成验证码。
+    """
+    raw = (text or "").strip()
+    normalized = re.sub(r"\s+", " ", raw)
+    lower = normalized.lower()
+    if not normalized:
+        return FixedSmsParseResult(False, "", "空响应", raw)
+
+    if "暂无短信" in normalized:
+        return FixedSmsParseResult(False, "", "暂无短信", raw)
+    if lower.startswith("no sms"):
+        return FixedSmsParseResult(False, "", "no sms", raw)
+
+    without_dates = DATE_TIME_RE.sub(" ", normalized)
+    for pattern in CODE_PATTERNS:
+        match = pattern.search(without_dates)
+        if match:
+            return FixedSmsParseResult(True, match.group(1), "收到验证码", raw)
+
+    if allow_generic:
+        match = GENERIC_CODE_RE.search(without_dates)
+        if match:
+            return FixedSmsParseResult(True, match.group(1), "收到验证码", raw)
+
+    return FixedSmsParseResult(False, "", "未发现验证码", raw)
 
 
 def load_config():
@@ -56,7 +131,31 @@ def load_config():
     cfg.setdefault("base_url", "https://jm.luudan.xyz/api/open.php")
     cfg.setdefault("poll_interval", 5)
     cfg.setdefault("auto_change_on_expire", True)
+    cfg["fixed_sources"] = normalize_fixed_sources(cfg.get("fixed_sources", []))
     return cfg
+
+
+def normalize_fixed_sources(raw_sources):
+    """校验固定来源配置；错误信息不打印真实 URL，避免 token 泄漏到终端。"""
+    if raw_sources is None:
+        return []
+    if not isinstance(raw_sources, list):
+        print("config.json 里的 fixed_sources 必须是数组。")
+        sys.exit(1)
+
+    sources = []
+    for index, item in enumerate(raw_sources, start=1):
+        if not isinstance(item, dict):
+            print(f"fixed_sources 第 {index} 项必须是对象。")
+            sys.exit(1)
+        label = str(item.get("label") or f"固定来源{index}").strip()
+        phone = str(item.get("phone") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if not phone or not url:
+            print(f"fixed_sources 第 {index} 项缺少 phone 或 url。")
+            sys.exit(1)
+        sources.append({"label": label, "phone": phone, "url": url})
+    return sources
 
 
 def copy_to_clipboard(text):
@@ -73,39 +172,60 @@ def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
 
 
-class SmsMonitor:
-    """封装一次监控会话的状态与 API 调用。"""
+def now_hms():
+    return datetime.now().strftime("%H:%M:%S")
 
-    def __init__(self, cfg):
+
+def snippet(text, limit=46):
+    """把短信内容压成单行预览，避免面板被长文本撑乱。"""
+    compact = re.sub(r"\s+", " ", text or "").strip()
+    return compact[:limit]
+
+
+class LuDanSource:
+    """LuDan 动态号码来源，保留原有 CDK、换号和过期处理逻辑。"""
+
+    def __init__(self, cfg, session):
+        self.label = "LuDan"
         self.base_url = cfg["base_url"]
         self.key = cfg["key"]
-        self.poll_interval = max(2, int(cfg.get("poll_interval", 5)))
         self.auto_change = bool(cfg.get("auto_change_on_expire", True))
-        self.session = requests.Session()
+        self.session = session
 
         self.phone = ""
         self.last_code = ""
-        self.history = deque(maxlen=8)  # 最近收到的验证码（带时间戳）
+        self.history = deque(maxlen=8)
         self.card_status = "-"
         self.sms_count = 0
         self.switch_count = 0
-        self.expires_in = None  # 号码剩余有效秒数（来自 API）
-        self.note = ""  # 面板底部的一行临时提示
-        self.clipboard_ok = False
+        self.expires_in = None
+        self.note = ""
 
-    # ---------- API ----------
+    @property
+    def phone_parts(self):
+        return split_us_phone(self.phone)
+
+    @property
+    def copy_number(self):
+        return self.phone_parts.local_number
+
+    def verify(self):
+        data = self.call("verify")
+        if data.get("code") != 0:
+            print(f"CDK 校验失败：{data.get('msg', '未知错误')}（code={data.get('code')}）")
+            sys.exit(1)
+
     def call(self, action):
         """调用开放 API，返回解析后的 dict；网络/限频错误内部重试。"""
         params = {"action": action, "key": self.key}
-        for attempt in range(3):
+        for _ in range(3):
             try:
                 resp = self.session.get(self.base_url, params=params, timeout=10)
                 if resp.status_code == 429:
-                    self.note = "请求过于频繁，稍等重试…"
+                    self.note = "请求过于频繁，稍等重试..."
                     time.sleep(3)
                     continue
-                data = resp.json()
-                return data
+                return resp.json()
             except requests.RequestException as e:
                 self.note = f"网络异常重试中（{e.__class__.__name__}）"
                 time.sleep(2)
@@ -113,13 +233,6 @@ class SmsMonitor:
                 self.note = "接口返回非 JSON，稍后重试"
                 time.sleep(2)
         return {"code": -1, "msg": "本地请求失败"}
-
-    # ---------- 业务动作 ----------
-    def verify(self):
-        data = self.call("verify")
-        if data.get("code") != 0:
-            print(f"CDK 校验失败：{data.get('msg', '未知错误')}（code={data.get('code')}）")
-            sys.exit(1)
 
     def refresh_number(self):
         """优先用 status 拿当前绑定号码；没有号码则 get_number 分配。"""
@@ -146,7 +259,7 @@ class SmsMonitor:
         else:
             self.note = f"换号失败：{data.get('msg', '')}"
 
-    def poll_code(self):
+    def poll(self):
         """轮询验证码；处理新验证码与号码过期。"""
         data = self.call("get_code")
         if data.get("code") != 0:
@@ -164,23 +277,23 @@ class SmsMonitor:
             content = d.get("content", "")
             if code and code != self.last_code:
                 self.last_code = code
-                ts = datetime.now().strftime("%H:%M:%S")
-                self.history.appendleft((ts, code, content))
-                self.note = "★ 收到新验证码！"
+                self.history.appendleft((now_hms(), code, content))
+                self.note = "收到新验证码"
+                return code
         elif d.get("expired"):
             if self.auto_change:
-                self.note = "号码过期，自动换号中…"
+                self.note = "号码过期，自动换号中..."
                 self.change_number()
             else:
                 self.note = "号码已过期，按 n 换号"
+        return None
 
-    # ---------- 辅助 ----------
     def _set_phone(self, phone):
+        """只更新号码，不自动写剪贴板；复制必须由数字热键触发。"""
         if phone and phone != self.phone:
             self.phone = phone
-            self.clipboard_ok = copy_to_clipboard(phone)
 
-    def _fmt_expire(self):
+    def expire_text(self):
         if self.expires_in is None:
             return "-"
         try:
@@ -191,34 +304,126 @@ class SmsMonitor:
             return "已过期"
         return f"{secs // 60:02d}:{secs % 60:02d}"
 
+    def status_text(self):
+        return (
+            f"状态:{self.card_status} | 短信:{self.sms_count} 次 | "
+            f"换号:{self.switch_count} 次 | 有效期:{self.expire_text()}"
+        )
+
+
+class FixedUrlSource:
+    """固定文本 URL 来源，用本地解析规则提取最新验证码。"""
+
+    def __init__(self, cfg, session):
+        self.label = cfg["label"]
+        self.phone = cfg["phone"]
+        self.url = cfg["url"]
+        self.session = session
+
+        self.last_code = ""
+        self.history = deque(maxlen=8)
+        self.status = "等待中"
+        self.http_status = "-"
+        self.last_checked = "-"
+        self.note = ""
+
+    @property
+    def phone_parts(self):
+        return split_us_phone(self.phone)
+
+    @property
+    def copy_number(self):
+        return self.phone_parts.local_number
+
+    def poll(self):
+        try:
+            resp = self.session.get(self.url, timeout=10)
+            self.http_status = str(resp.status_code)
+            self.last_checked = now_hms()
+            if resp.status_code == 429:
+                self.status = "请求过于频繁"
+                self.note = "稍后重试"
+                return
+            if not 200 <= resp.status_code < 300:
+                self.status = f"HTTP {resp.status_code}"
+                self.note = "查询失败"
+                return
+        except requests.RequestException as e:
+            self.last_checked = now_hms()
+            self.status = "网络异常"
+            self.note = e.__class__.__name__
+            return
+
+        # HTML/XML 页面噪声多，禁用裸数字兜底，只信关键字模式
+        content_type = resp.headers.get("Content-Type", "").lower()
+        allow_generic = "html" not in content_type and "xml" not in content_type
+        result = parse_fixed_sms_response(resp.text, allow_generic=allow_generic)
+        self.status = result.status
+        if result.has_sms and result.code != self.last_code:
+            self.last_code = result.code
+            self.history.appendleft((now_hms(), result.code, result.content))
+            self.note = "收到新验证码"
+            return result.code
+        elif not result.has_sms:
+            self.note = result.status
+        return None
+
+    def status_text(self):
+        return f"状态:{self.status} | HTTP:{self.http_status} | 更新时间:{self.last_checked}"
+
+
+class SmsMonitor:
+    """封装一次监控会话的状态、渲染与热键处理。"""
+
+    def __init__(self, cfg):
+        self.poll_interval = max(2, int(cfg.get("poll_interval", 5)))
+        self.session = requests.Session()
+        self.ludan = LuDanSource(cfg, self.session)
+        self.fixed_sources = [FixedUrlSource(item, self.session) for item in cfg["fixed_sources"]]
+        self.sources = [self.ludan, *self.fixed_sources]
+        self.note = ""
+
     def render(self):
         clear_screen()
-        line = "=" * 46
+        line = "=" * 68
         print(line)
-        print("            LuDan SMS 验证码监控")
+        print("                    SMS 验证码多来源监控")
         print(line)
         print()
-        print(f"  当前号码：  {self.phone or '(获取中)'}")
-        clip_tip = "（已自动复制到剪贴板，可直接 Ctrl+V）" if self.clipboard_ok else "（剪贴板复制失败，请手动框选上面整行）"
-        print(f"  {clip_tip}")
-        print()
-        print(f"  最新验证码：  {self.last_code or '等待中…'}")
-        print()
-        print("  最近收到：")
-        if self.history:
-            for ts, code, content in self.history:
-                snippet = (content or "").replace("\n", " ")[:40]
-                print(f"    [{ts}] {code}   {snippet}")
+        for index, source in enumerate(self.sources, start=1):
+            self.render_source(index, source)
+            print()
+        if msvcrt:
+            keys = "/".join(str(i) for i in range(1, min(len(self.sources), 9) + 1))
+            print(f"  热键：按 {keys} 复制对应 10 位号码 | n 仅 LuDan 换号 | q 退出")
         else:
-            print("    （暂无）")
-        print()
-        print(f"  状态：{self.card_status} | 短信:{self.sms_count} 次 | "
-              f"换号:{self.switch_count} 次 | 有效期:{self._fmt_expire()}")
-        print(f"  轮询中…（按 n 换号 / r 重新复制 / q 退出）" if msvcrt
-              else "  轮询中…（Ctrl+C 退出）")
+            print("  非 Windows 终端仅支持 Ctrl+C 退出；号码请手动框选复制。")
         if self.note:
             print(f"  >> {self.note}")
         print(line)
+
+    def render_source(self, index, source):
+        parts = source.phone_parts
+        local_number = parts.local_number or "(获取中)"
+        border_width = max(18, len(local_number) + 4)
+        border = "+" + "-" * border_width + "+"
+
+        print(f"  [{index}] {source.label}")
+        print(f"      国家码：{parts.country_code or '-'}")
+        print("      可复制号码：")
+        print(f"      {border}")
+        print(f"      | {local_number:^{border_width - 2}} |")
+        print(f"      {border}")
+        print(f"      最新验证码：{source.last_code or '等待中...'}")
+        print(f"      {source.status_text()}")
+        if source.note:
+            print(f"      提示：{source.note}")
+        print("      最近收到：")
+        if source.history:
+            for ts, code, content in source.history:
+                print(f"        [{ts}] {code}   {snippet(content)}")
+        else:
+            print("        （暂无）")
 
     def handle_keys(self):
         """非阻塞读取热键；返回 False 表示请求退出。"""
@@ -229,22 +434,58 @@ class SmsMonitor:
             if ch == "q":
                 return False
             if ch == "n":
-                self.note = "手动换号中…"
+                self.note = "LuDan 手动换号中..."
                 self.render()
-                self.change_number()
-            elif ch == "r":
-                self.clipboard_ok = copy_to_clipboard(self.phone)
-                self.note = "已重新复制号码" if self.clipboard_ok else "复制失败"
+                self.ludan.change_number()
+                self.render()  # 立即刷新换号结果，不等下一轮轮询
+                continue
+            if ch.isdigit() and ch != "0":
+                self.copy_source_number(int(ch))
         return True
 
+    def copy_source_number(self, index):
+        if index < 1 or index > len(self.sources):
+            self.note = f"没有第 {index} 个号码来源"
+            return
+        source = self.sources[index - 1]
+        number = source.copy_number
+        if not number:
+            self.note = f"[{index}] {source.label} 暂无可复制号码"
+            return
+        ok = copy_to_clipboard(number)
+        self.note = f"已复制 [{index}] {source.label} 的 10 位号码" if ok else "复制失败"
+
+    def auto_copy_code(self, label, code, copy_func=copy_to_clipboard):
+        """新验证码自动写入剪贴板；号码复制仍只由数字热键触发。"""
+        if not code:
+            return False
+        ok = copy_func(code)
+        self.note = f"已自动复制 [{label}] 的验证码" if ok else f"[{label}] 验证码自动复制失败"
+        return ok
+
+    def auto_copy_codes(self, pairs, copy_func=copy_to_clipboard):
+        """本轮多个来源同时出新码时，复制第一个并在 note 列全部，避免静默覆盖。"""
+        if not pairs:
+            return
+        first_label, first_code = pairs[0]
+        self.auto_copy_code(first_label, first_code, copy_func)
+        if len(pairs) > 1:
+            extra = "；".join(f"[{label}] {code}" for label, code in pairs[1:])
+            self.note += f"；另有 {extra} 同时收到，请手动取用"
+
     def run(self):
-        print("正在校验 CDK…")
-        self.verify()
-        print("正在获取号码…")
-        self.refresh_number()
+        print("正在校验 LuDan CDK...")
+        self.ludan.verify()
+        print("正在获取 LuDan 号码...")
+        self.ludan.refresh_number()
         try:
             while True:
-                self.poll_code()
+                new_codes = []
+                for source in self.sources:
+                    new_code = source.poll()
+                    if new_code:
+                        new_codes.append((source.label, new_code))
+                self.auto_copy_codes(new_codes)
                 self.render()
                 # 在 poll_interval 期间分片检查热键，保证按键响应灵敏
                 waited = 0.0

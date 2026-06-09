@@ -17,6 +17,7 @@
 | `sm2-randomizer/` | `sm2-randomizer/**` | active | Space Marine 2 随机器应用和数据管线 |
 | `QuantProject/` | `QuantProject/**` | local-private | 本地私有工作区；默认不发布到 public remote |
 | `heybox/` | `heybox/**` | active | 本地抓取脚本 |
+| `sms-monitor/` | `sms-monitor/**` | active | 本地 SMS 接码验证码监控工具 |
 | `qm-run-demo/` | `qm-run-demo/**` | active | demo / runtime 变体 |
 | `subtitle_extractor/` | `subtitle_extractor/**` | active | 字幕提取工作区 |
 | `docs/` | `docs/**` | active | 治理文档、workflow 和历史归档 |
