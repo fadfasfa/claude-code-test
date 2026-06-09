@@ -2,5 +2,17 @@
   "base_url": "https://jm.luudan.xyz/api/open.php",
   "key": "YOUR_CDK",
   "poll_interval": 5,
-  "auto_change_on_expire": true
+  "auto_change_on_expire": true,
+  "fixed_sources": [
+    {
+      "label": "YunTL",
+      "phone": "15550123456",
+      "url": "https://example.invalid/apisms/YOUR_YUNTL_LINK"
+    },
+    {
+      "label": "eSIM88",
+      "phone": "15550987654",
+      "url": "https://example.invalid/YOUR_ESIM88_LINK"
+    }
+  ]
 }
