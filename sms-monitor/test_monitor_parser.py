@@ -3,7 +3,7 @@
 """sms-monitor 解析规则测试。
 
 本文件只覆盖固定文本接码链接的本地解析逻辑，避免真实 HTTP 响应里的到期时间
-被误判成验证码。运行方式：`python sms-monitor\test_monitor_parser.py`。
+被误判成验证码。运行方式：`python sms-monitor/test_monitor_parser.py`。
 """
 
 import unittest
@@ -46,6 +46,22 @@ class FixedSmsParserTest(unittest.TestCase):
         self.assertEqual(result.country_code, "+1")
         self.assertEqual(result.local_number, "5550123456")
 
+    def test_generic_fallback_can_be_disabled(self):
+        # HTML 页面里的裸数字（如端口号）禁用兜底后不应被当成验证码
+        text = "<html><body>service on port 8080</body></html>"
+
+        self.assertTrue(parse_fixed_sms_response(text, allow_generic=True).has_sms)
+        self.assertFalse(parse_fixed_sms_response(text, allow_generic=False).has_sms)
+
+    def test_keyword_code_survives_disabled_generic(self):
+        # 即便禁用兜底，含关键字的真实验证码仍能提取
+        result = parse_fixed_sms_response(
+            "<p>your code is 246810</p>", allow_generic=False
+        )
+
+        self.assertTrue(result.has_sms)
+        self.assertEqual(result.code, "246810")
+
 
 class ClipboardBehaviorTest(unittest.TestCase):
     """验证新验证码走自动剪贴板，号码仍由热键手动复制。"""
@@ -64,6 +80,22 @@ class ClipboardBehaviorTest(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(copied, ["123456"])
         self.assertEqual(monitor.note, "已自动复制 [YunTL] 的验证码")
+
+    def test_multiple_new_codes_copy_first_and_list_rest(self):
+        copied = []
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor.note = ""
+
+        def fake_copy(text):
+            copied.append(text)
+            return True
+
+        monitor.auto_copy_codes([("LuDan", "111111"), ("YunTL", "222222")], fake_copy)
+
+        # 剪贴板只放第一个，其余在 note 里完整列出，不被静默覆盖
+        self.assertEqual(copied, ["111111"])
+        self.assertIn("已自动复制 [LuDan] 的验证码", monitor.note)
+        self.assertIn("[YunTL] 222222", monitor.note)
 
 
 if __name__ == "__main__":

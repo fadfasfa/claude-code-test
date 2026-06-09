@@ -77,8 +77,12 @@ def split_us_phone(phone):
     return PhoneParts(country_code="", local_number=digits, raw_digits=digits)
 
 
-def parse_fixed_sms_response(text):
-    """解析固定接码链接的文本响应；先识别空状态，再剔除日期后提取验证码。"""
+def parse_fixed_sms_response(text, allow_generic=True):
+    """解析固定接码链接的文本响应；先识别空状态，再剔除日期后提取验证码。
+
+    allow_generic=False 时跳过裸数字兜底，仅信关键字模式，避免 HTML 页面里的
+    端口号/年份等无关数字被误判成验证码。
+    """
     raw = (text or "").strip()
     normalized = re.sub(r"\s+", " ", raw)
     lower = normalized.lower()
@@ -96,9 +100,10 @@ def parse_fixed_sms_response(text):
         if match:
             return FixedSmsParseResult(True, match.group(1), "收到验证码", raw)
 
-    match = GENERIC_CODE_RE.search(without_dates)
-    if match:
-        return FixedSmsParseResult(True, match.group(1), "收到验证码", raw)
+    if allow_generic:
+        match = GENERIC_CODE_RE.search(without_dates)
+        if match:
+            return FixedSmsParseResult(True, match.group(1), "收到验证码", raw)
 
     return FixedSmsParseResult(False, "", "未发现验证码", raw)
 
@@ -349,7 +354,10 @@ class FixedUrlSource:
             self.note = e.__class__.__name__
             return
 
-        result = parse_fixed_sms_response(resp.text)
+        # HTML/XML 页面噪声多，禁用裸数字兜底，只信关键字模式
+        content_type = resp.headers.get("Content-Type", "").lower()
+        allow_generic = "html" not in content_type and "xml" not in content_type
+        result = parse_fixed_sms_response(resp.text, allow_generic=allow_generic)
         self.status = result.status
         if result.has_sms and result.code != self.last_code:
             self.last_code = result.code
@@ -429,6 +437,7 @@ class SmsMonitor:
                 self.note = "LuDan 手动换号中..."
                 self.render()
                 self.ludan.change_number()
+                self.render()  # 立即刷新换号结果，不等下一轮轮询
                 continue
             if ch.isdigit() and ch != "0":
                 self.copy_source_number(int(ch))
@@ -454,6 +463,16 @@ class SmsMonitor:
         self.note = f"已自动复制 [{label}] 的验证码" if ok else f"[{label}] 验证码自动复制失败"
         return ok
 
+    def auto_copy_codes(self, pairs, copy_func=copy_to_clipboard):
+        """本轮多个来源同时出新码时，复制第一个并在 note 列全部，避免静默覆盖。"""
+        if not pairs:
+            return
+        first_label, first_code = pairs[0]
+        self.auto_copy_code(first_label, first_code, copy_func)
+        if len(pairs) > 1:
+            extra = "；".join(f"[{label}] {code}" for label, code in pairs[1:])
+            self.note += f"；另有 {extra} 同时收到，请手动取用"
+
     def run(self):
         print("正在校验 LuDan CDK...")
         self.ludan.verify()
@@ -461,10 +480,12 @@ class SmsMonitor:
         self.ludan.refresh_number()
         try:
             while True:
+                new_codes = []
                 for source in self.sources:
                     new_code = source.poll()
                     if new_code:
-                        self.auto_copy_code(source.label, new_code)
+                        new_codes.append((source.label, new_code))
+                self.auto_copy_codes(new_codes)
                 self.render()
                 # 在 poll_interval 期间分片检查热键，保证按键响应灵敏
                 waited = 0.0
