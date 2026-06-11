@@ -40,7 +40,18 @@ WEAPON_NAME_MAP_EXPORT_FILE = IMPORT_DIR / "武器名称映射.json"
 WEAPON_IMAGE_INDEX_FILE = IMPORT_DIR / "武器图片清单.json"
 WEAPON_MANIFEST_FILE = PIPELINE_STORE_CATALOG_DIR / "武器图标清单.json"
 EXCEL_EXPORT_FILE = IMPORT_DIR / "Excel原始导出.json"
+STRATEGY_TERMS_FILE = IMPORT_DIR / "策略词条清单.json"
 WEAPON_ICON_ROOT = Path("weapons") / "icons"
+SHEET_EXPORT_FILES = {
+    "主页-近战武器": IMPORT_DIR / "主页-近战武器.json",
+    "天赋技能效果": IMPORT_DIR / "天赋技能效果.json",
+    "围攻与策略模式属性": IMPORT_DIR / "围攻与策略模式属性.json",
+}
+STRATEGY_GROUP_LABELS = {
+    "negative": "负面词条",
+    "positive": "正面词条",
+}
+VERSION_PATTERN = re.compile(r"当前数据为(?P<version>\d+(?:\.\d+)?)版本")
 DISPIMG_PATTERN = re.compile(r'=DISPIMG\("(?P<id>ID_[A-Z0-9]+)",\s*1\)', re.IGNORECASE)
 XML_NS = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
@@ -75,6 +86,7 @@ SHEET_KEYWORDS = {
         "地狱火手枪": "inferno-pistol",
         "高能爆燃手枪": "neo-volkite-pistol",
         "等离子手枪": "plasma-pistol",
+        "单手爆弹卡宾枪": "bolt-carbine-one-handed",
     },
 }
 WEAPON_TITLE_COLUMN_BY_SHEET = {
@@ -109,6 +121,7 @@ class WeaponBlock:
 CANONICAL_EXCEL_WEAPON_ITEMS: dict[str, dict[str, str]] = {
     "auto-bolt-rifle": {"excel_name": "自动爆弹步枪", "source_sheet": "主武器"},
     "bolt-carbine": {"excel_name": "爆弹卡宾枪", "source_sheet": "主武器"},
+    "bolt-carbine-one-handed": {"excel_name": "单手爆弹卡宾枪", "source_sheet": "副武器"},
     "marksman-bolt-carbine": {"excel_name": "神射手卡宾枪", "source_sheet": "主武器"},
     "bolt-pistol": {"excel_name": "爆弹手枪", "source_sheet": "副武器"},
     "bolt-rifle": {"excel_name": "爆弹步枪", "source_sheet": "主武器"},
@@ -141,6 +154,7 @@ CANONICAL_EXCEL_WEAPON_ITEMS: dict[str, dict[str, str]] = {
 }
 HERO_TITLE_FILL_RGB = "FF7030A0"
 EXCEL_NON_HERO_TITLE_EXCEPTIONS: set[str] = set()
+EXCLUDED_CANONICAL_WEAPON_SLUGS = {"twin-linked-melta-gun"}
 
 
 def _is_excluded_weapon_block_name(display_name: str) -> bool:
@@ -172,6 +186,145 @@ def _ensure_formula(value: Any) -> str:
 def _extract_dispimg_id(formula: str) -> str:
     match = DISPIMG_PATTERN.search(_ensure_formula(formula))
     return match.group("id") if match else ""
+
+
+def _clean_cell_value(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip().replace("=_xlfn.", "=")
+
+
+def _trim_row(values: list[str]) -> list[str]:
+    trimmed = list(values)
+    while trimmed and not str(trimmed[-1]).strip():
+        trimmed.pop()
+    return trimmed
+
+
+def _worksheet_target(worksheet: Any) -> str:
+    raw_path = str(getattr(worksheet, "path", "") or "").lstrip("/")
+    return raw_path.removeprefix("xl/") if raw_path else ""
+
+
+def export_workbook_raw() -> list[dict[str, Any]]:
+    """从标准 Excel 重建可审阅 raw JSON。
+
+    这里保留公式文本，尤其是 WPS 的 DISPIMG 公式，后续武器图标导入会从该导出中
+    对照图片 ID。导出时只裁掉每行尾部空白，避免把格式化过的 XFD 列全部写入仓库。
+    """
+
+    workbook = load_workbook(WORKBOOK_FILE, data_only=False)
+    payload: list[dict[str, Any]] = []
+    for worksheet in workbook.worksheets:
+        rows: list[list[str]] = []
+        for row in worksheet.iter_rows(max_row=worksheet.max_row, max_col=worksheet.max_column):
+            trimmed = _trim_row([_clean_cell_value(cell.value) for cell in row])
+            rows.append(trimmed)
+        while rows and not rows[-1]:
+            rows.pop()
+
+        entry = {
+            "sheet_name": worksheet.title,
+            "target": _worksheet_target(worksheet),
+            "rows": rows,
+        }
+        payload.append(entry)
+        export_path = SHEET_EXPORT_FILES.get(worksheet.title)
+        if export_path:
+            write_json(export_path, entry)
+
+    write_json(EXCEL_EXPORT_FILE, payload)
+    return payload
+
+
+def _strategy_title(value: Any) -> str:
+    title = str(value or "").split("：", 1)[0].strip()
+    return re.sub(r"^\[[^\]]+\]", "", title).strip()
+
+
+def _strategy_term_key_title(value: Any) -> str:
+    text = str(value or "").strip()
+    title = _strategy_title(text)
+    if title == "危险环境":
+        if "泰伦" in text:
+            return "危险环境（泰伦）"
+        if "混沌" in text:
+            return "危险环境（混沌）"
+    if title == "战斗精通":
+        if "近战增强" in text:
+            return "战斗精通（近战）"
+        if "远程增强" in text:
+            return "战斗精通（远程）"
+    return title
+
+
+def _extract_workbook_versions(export_payload: list[dict[str, Any]]) -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for entry in export_payload:
+        if not isinstance(entry, dict):
+            continue
+        sheet_name = str(entry.get("sheet_name", "")).strip()
+        for row in entry.get("rows", []):
+            if not isinstance(row, list):
+                continue
+            for cell in row:
+                match = VERSION_PATTERN.search(str(cell or ""))
+                if match:
+                    versions[sheet_name] = match.group("version")
+                    break
+            if sheet_name in versions:
+                break
+    return versions
+
+
+def _extract_strategy_terms(rows: list[list[str]]) -> dict[str, list[str]]:
+    groups = {key: [] for key in STRATEGY_GROUP_LABELS}
+    seen = {key: set() for key in STRATEGY_GROUP_LABELS}
+    active_group = ""
+
+    for row in rows:
+        cells = [str(cell or "").strip() for cell in row if str(cell or "").strip()]
+        if STRATEGY_GROUP_LABELS["negative"] in cells:
+            active_group = "negative"
+        if STRATEGY_GROUP_LABELS["positive"] in cells:
+            active_group = "positive"
+        if active_group not in groups:
+            continue
+        for cell in cells:
+            if cell in STRATEGY_GROUP_LABELS.values() or "：" not in cell:
+                continue
+            if cell in seen[active_group]:
+                continue
+            seen[active_group].add(cell)
+            groups[active_group].append(cell)
+    return groups
+
+
+def export_strategy_terms(export_payload: list[dict[str, Any]]) -> dict[str, Any]:
+    strategy_sheet = next(
+        (
+            entry
+            for entry in export_payload
+            if isinstance(entry, dict) and str(entry.get("sheet_name", "")).strip() == "围攻与策略模式属性"
+        ),
+        {"rows": []},
+    )
+    groups = _extract_strategy_terms(strategy_sheet.get("rows", []))
+    versions = _extract_workbook_versions(export_payload)
+    items = [*groups["negative"], *groups["positive"]]
+    payload = {
+        "source_sheet": "围攻与策略模式属性",
+        "source_version": versions.get("围攻与策略模式属性", ""),
+        "items": items,
+        "groups": groups,
+        "group_counts": {key: len(value) for key, value in groups.items()},
+        "titles": {
+            key: [_strategy_term_key_title(term) for term in value]
+            for key, value in groups.items()
+        },
+    }
+    write_json(STRATEGY_TERMS_FILE, payload)
+    return payload
 
 
 def _load_workbook_sheet_rows() -> dict[str, list[list[str]]]:
@@ -302,7 +455,7 @@ def _append_missing_manifest_items(items: list[dict[str, Any]], manifest: dict[s
         if not isinstance(entry, dict):
             continue
         slug = str(entry.get("slug", "")).strip()
-        if not slug or slug in existing_slugs:
+        if not slug or slug in existing_slugs or slug in EXCLUDED_CANONICAL_WEAPON_SLUGS:
             continue
         appended.append({
             "slug": slug,
@@ -381,6 +534,8 @@ def _materialize_items(
     base_items = list(image_map.get("items", [])) if isinstance(image_map, dict) else []
     items = _append_missing_manifest_items(base_items, manifest)
     for slug, metadata in CANONICAL_EXCEL_WEAPON_ITEMS.items():
+        if slug in EXCLUDED_CANONICAL_WEAPON_SLUGS:
+            continue
         if slug not in {str(item.get("slug", "")).strip() for item in items}:
             items.append(
                 {
@@ -394,6 +549,8 @@ def _materialize_items(
     failures: list[ImportFailure] = []
     for item in items:
         slug = str(item.get("slug", "")).strip()
+        if slug in EXCLUDED_CANONICAL_WEAPON_SLUGS:
+            continue
         canonical_metadata = CANONICAL_EXCEL_WEAPON_ITEMS.get(slug, {})
         source_sheet = str(canonical_metadata.get("source_sheet", "")).strip() or str(item.get("source_sheet", "")).strip() or _infer_sheet_for_slug(slug)
         excel_name = str(canonical_metadata.get("excel_name", "")).strip() or str(item.get("excel_name", "")).strip()
@@ -533,9 +690,25 @@ def _build_clean_excel_exports(items: list[dict[str, Any]]) -> None:
             "notes": "Excel 图像索引。英雄级/词条说明不单列为武器项，图片路径按运行期规范输出。",
         },
     )
+    write_json(
+        WEAPON_MANIFEST_FILE,
+        {
+            "weapons": [
+                {
+                    "slug": item["slug"],
+                    "image_key": f"weapon_{item['slug']}_img",
+                    "asset_path": item["asset_path"],
+                }
+                for item in normalized_items
+                if item["asset_path"]
+            ]
+        },
+    )
 
 
 def import_weapon_icons() -> dict[str, Any]:
+    export_payload = export_workbook_raw()
+    strategy_payload = export_strategy_terms(export_payload)
     image_map = read_json(WEAPON_IMAGE_MAP_FILE, {"items": []})
     manifest = read_json(WEAPON_MANIFEST_FILE, {"weapons": []})
     sheet_rows = _load_workbook_sheet_rows()
@@ -556,6 +729,8 @@ def import_weapon_icons() -> dict[str, Any]:
         "imported_slugs": imported_slugs,
         "failure_count": len(failures),
         "failures": [failure.to_dict() for failure in failures],
+        "strategy_term_count": len(strategy_payload.get("items", [])),
+        "strategy_group_counts": strategy_payload.get("group_counts", {}),
         "output_dir": (APP_ASSETS_DIR / WEAPON_ICON_ROOT).relative_to(PROJECT_ROOT).as_posix(),
     }
 

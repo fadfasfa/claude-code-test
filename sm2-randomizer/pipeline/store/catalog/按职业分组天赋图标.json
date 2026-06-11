@@ -23,10 +23,10 @@
           "col": 1,
           "row": 1,
           "grid_label": "1/1",
-          "description": "Your Primary Weapon deals 10% more Damage, but your Secondary Weapon deals 10% less Damage",
-          "description_raw": "Your Primary Weapon deals <span class=\"sm2-green\">10%</span> more Damage, but your Secondary Weapon deals <span class=\"sm2-red\">10%</span> less Damage",
+          "description": "Your Primary Weapon deals 10% more Damage, but your Secondary Weapon deals 10% less Damage Unlocks at level 2 and costs 20 Requisition Points.",
+          "description_raw": "Your Primary Weapon deals 10% more Damage, but your Secondary Weapon deals 10% less Damage\n\nUnlocks at level 2 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -41,10 +41,10 @@
           "col": 2,
           "row": 1,
           "grid_label": "2/1",
-          "description": "After a perfectly timed Parry or Dodge, you deal 10% more Melee and Gun Strike Damage, do not lose control upon taking Heavy Hits and you cannot be knocked back for 10 seconds",
-          "description_raw": "After a perfectly timed Parry or Dodge, you deal 10% more Melee and Gun Strike Damage, do not lose control upon taking Heavy Hits and you cannot be knocked back for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After a perfectly timed Parry or Dodge, you deal 10% more Melee and Gun Strike Damage, do not lose control upon taking Heavy Hits and you cannot be knocked back for 10 seconds Unlocks at level 3 and costs 20 Requisition Points.",
+          "description_raw": "After a perfectly timed Parry or Dodge, you deal 10% more Melee and Gun Strike Damage, do not lose control upon taking Heavy Hits and you cannot be knocked back for 10 seconds\n\nUnlocks at level 3 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -59,10 +59,10 @@
           "col": 3,
           "row": 1,
           "grid_label": "3/1",
-          "description": "After a Finisher, the equipped Ranged Weapon reloads automatically, and your Primary Weapon deals 20% more Damage for 10 seconds",
-          "description_raw": "After a Finisher, the equipped Ranged Weapon reloads automatically, and your Primary Weapon deals <span class=\"sm2-green\">20%</span> more Damage for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After a Finisher, the equipped Ranged Weapon reloads automatically, and your Primary Weapon deals 20% more Damage for 10 seconds Unlocks at level 4 and costs 20 Requisition Points.",
+          "description_raw": "After a Finisher, the equipped Ranged Weapon reloads automatically, and your Primary Weapon deals 20% more Damage for 10 seconds\n\nUnlocks at level 4 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -77,10 +77,10 @@
           "col": 4,
           "row": 1,
           "grid_label": "4/1",
-          "description": "Equipment Charge is restored by 1 for all Squad Members. Cooldown is 60 seconds.",
-          "description_raw": "Equipment Charge is restored by <span class=\"sm2-green\">1</span> for all Squad Members. Cooldown is <span class=\"sm2-green\">60</span> seconds.",
+          "description": "Equipment Charge is restored by 1 for all Squad Members. Cooldown is 60 seconds. Unlocks at level 5 and costs 40 Requisition Points.",
+          "description_raw": "Equipment Charge is restored by 1 for all Squad Members. Cooldown is 60 seconds.\n\nUnlocks at level 5 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -95,10 +95,10 @@
           "col": 5,
           "row": 1,
           "grid_label": "5/1",
-          "description": "Scanning an Extremis - or Terminus -level enemy restores Auspex Scan's Charge by 50%",
-          "description_raw": "Scanning an <span class=\"sm2-extremis\">Extremis</span>- or <span class=\"sm2-terminus\">Terminus</span>-level enemy restores Auspex Scan's Charge by <span class=\"sm2-green\">50%</span>",
+          "description": "Scanning an Extremis- or Terminus-level enemy restores Auspex Scan's Charge by 50% Unlocks at level 6 and costs 20 Requisition Points.",
+          "description_raw": "Scanning an Extremis- or Terminus-level enemy restores Auspex Scan's Charge by 50%\n\nUnlocks at level 6 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -113,10 +113,10 @@
           "col": 6,
           "row": 1,
           "grid_label": "6/1",
-          "description": "A perfectly timed Parry or Block gives the parried enemy a mark from Auspex Scan",
-          "description_raw": "A perfectly timed Parry or Block gives the parried enemy a mark from Auspex Scan",
+          "description": "A perfectly timed Parry or Block gives the parried enemy a mark from Auspex Scan Unlocks at level 7 and costs 20 Requisition Points.",
+          "description_raw": "A perfectly timed Parry or Block gives the parried enemy a mark from Auspex Scan\n\nUnlocks at level 7 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -131,10 +131,10 @@
           "col": 7,
           "row": 1,
           "grid_label": "7/1",
-          "description": "When Auspex Scan is in cooldown, Melee Damage increases by 25%",
-          "description_raw": "When Auspex Scan is in cooldown, Melee Damage increases by <span class=\"sm2-green\">25%</span>",
+          "description": "When Auspex Scan is in cooldown, Melee Damage increases by 25% Unlocks at level 8 and costs 20 Requisition Points.",
+          "description_raw": "When Auspex Scan is in cooldown, Melee Damage increases by 25%\n\nUnlocks at level 8 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -149,10 +149,10 @@
           "col": 8,
           "row": 1,
           "grid_label": "8/1",
-          "description": "Enemies marked by Auspex Scan cannot call for reinforcements and automatically explode upon attempting to do so",
-          "description_raw": "Enemies marked by Auspex Scan cannot call for reinforcements and automatically explode upon attempting to do so",
+          "description": "Enemies marked by Auspex Scan cannot call for reinforcements and automatically explode upon attempting to do so Unlocks at level 9 and costs 20 Requisition Points.",
+          "description_raw": "Enemies marked by Auspex Scan cannot call for reinforcements and automatically explode upon attempting to do so\n\nUnlocks at level 9 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -167,10 +167,10 @@
           "col": 1,
           "row": 2,
           "grid_label": "1/2",
-          "description": "When the Plasma Incinerator is 30% Overheated, its Damage increases by 40% and their Charged Shots use 1 less energy",
-          "description_raw": "When the Plasma Incinerator is <span class=\"sm2-green\">30%</span> Overheated, its Damage increases by <span class=\"sm2-green\">40%</span> and their Charged Shots use <span class=\"sm2-green\">1</span> less energy",
+          "description": "When the Plasma Incinerator is 30% Overheated, its Damage increases by 40% and their Charged Shots use 1 less energy Unlocks at level 10 and costs 20 Requisition Points.",
+          "description_raw": "When the Plasma Incinerator is 30% Overheated, its Damage increases by 40% and their Charged Shots use 1 less energy\n\nUnlocks at level 10 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -185,10 +185,10 @@
           "col": 2,
           "row": 2,
           "grid_label": "2/2",
-          "description": "After a Gun Strike, Ranged Damage increases by 25% for 5 seconds",
-          "description_raw": "After a Gun Strike, Ranged Damage increases by <span class=\"sm2-green\">25%</span> for <span class=\"sm2-green\">5</span> seconds",
+          "description": "After a Gun Strike, Ranged Damage increases by 25% for 5 seconds Unlocks at level 11 and costs 20 Requisition Points.",
+          "description_raw": "After a Gun Strike, Ranged Damage increases by 25% for 5 seconds\n\nUnlocks at level 11 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -203,10 +203,10 @@
           "col": 3,
           "row": 2,
           "grid_label": "3/2",
-          "description": "Weapon Spread and Recoil is reduced by 20% and Ranged Damage against Terminus -level enemies is increased by 20%",
-          "description_raw": "Weapon Spread and Recoil is reduced by <span class=\"sm2-green\">20%</span> and Ranged Damage against <span class=\"sm2-terminus\">Terminus</span>-level enemies is increased by <span class=\"sm2-green\">20%</span>",
+          "description": "Weapon Spread and Recoil is reduced by 20% and Ranged Damage against Terminus-level enemies is increased by 20% Unlocks at level 12 and costs 20 Requisition Points.",
+          "description_raw": "Weapon Spread and Recoil is reduced by 20% and Ranged Damage against Terminus-level enemies is increased by 20%\n\nUnlocks at level 12 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -221,10 +221,10 @@
           "col": 4,
           "row": 2,
           "grid_label": "4/2",
-          "description": "Ranged Damage increases by 15% for all Squad Members",
-          "description_raw": "Ranged Damage increases by <span class=\"sm2-green\">15%</span> for all Squad Members",
+          "description": "Ranged Damage increases by 15% for all Squad Members Unlocks at level 13 and costs 40 Requisition Points.",
+          "description_raw": "Ranged Damage increases by 15% for all Squad Members\n\nUnlocks at level 13 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -239,10 +239,10 @@
           "col": 5,
           "row": 2,
           "grid_label": "5/2",
-          "description": "The Mark from Auspex Scan lasts 8 seconds longer (base: 8 ), but Auspex Scan ignores Minoris -level enemies",
-          "description_raw": "The Mark from Auspex Scan lasts <span class=\"sm2-green\">8</span> seconds longer (base: <span class=\"sm2-green\">8</span>), but Auspex Scan ignores <span class=\"sm2-minoris\">Minoris</span>-level enemies",
+          "description": "The Mark from Auspex Scan lasts 8 seconds longer (base: 8), but Auspex Scan ignores Minoris-level enemies Unlocks at level 14 and costs 20 Requisition Points.",
+          "description_raw": "The Mark from Auspex Scan lasts 8 seconds longer (base: 8), but Auspex Scan ignores Minoris-level enemies\n\nUnlocks at level 14 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -257,10 +257,10 @@
           "col": 6,
           "row": 2,
           "grid_label": "6/2",
-          "description": "Scanning any 10 enemies or 3 Majoris -level or higher enemies with one Auspex Scan restores Equipment Charge by 1",
-          "description_raw": "Scanning any <span class=\"sm2-green\">10</span> enemies or <span class=\"sm2-green\">3</span> <span class=\"sm2-majoris\">Majoris</span>-level or higher enemies with one Auspex Scan restores Equipment Charge by <span class=\"sm2-green\">1</span>",
+          "description": "Scanning any 10 enemies or 3 Majoris-level or higher enemies with one Auspex Scan restores Equipment Charge by 1 Unlocks at level 15 and costs 20 Requisition Points.",
+          "description_raw": "Scanning any 10 enemies or 3 Majoris-level or higher enemies with one Auspex Scan restores Equipment Charge by 1\n\nUnlocks at level 15 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -275,10 +275,10 @@
           "col": 7,
           "row": 2,
           "grid_label": "7/2",
-          "description": "Enemies marked by Auspex Scan take an additional 75% Damage, but the mark's Duration is reduced by 4 seconds (base: 8 )",
-          "description_raw": "Enemies marked by Auspex Scan take an additional <span class=\"sm2-green\">75%</span> Damage, but the mark's Duration is reduced by <span class=\"sm2-red\">4</span> seconds (base: <span class=\"sm2-green\">8</span>)",
+          "description": "Enemies marked by Auspex Scan take an additional 75% Damage, but the mark's Duration is reduced by 4 seconds (base: 8) Unlocks at level 16 and costs 20 Requisition Points.",
+          "description_raw": "Enemies marked by Auspex Scan take an additional 75% Damage, but the mark's Duration is reduced by 4 seconds (base: 8)\n\nUnlocks at level 16 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -293,10 +293,10 @@
           "col": 8,
           "row": 2,
           "grid_label": "8/2",
-          "description": "A Melee Finisher additionally deals area-of-effect Damage that scales with difficulty in a 10 -metre radius. Cooldown is 90 seconds.",
-          "description_raw": "A Melee Finisher additionally deals area-of-effect Damage that scales with difficulty in a <span class=\"sm2-green\">10</span>-metre radius. Cooldown is <span class=\"sm2-green\">90</span> seconds.",
+          "description": "A Melee Finisher additionally deals area-of-effect Damage that scales with difficulty in a 10-metre radius. Cooldown is 90 seconds. Unlocks at level 17 and costs 20 Requisition Points.",
+          "description_raw": "A Melee Finisher additionally deals area-of-effect Damage that scales with difficulty in a 10-metre radius. Cooldown is 90 seconds.\n\nUnlocks at level 17 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -311,10 +311,10 @@
           "col": 1,
           "row": 3,
           "grid_label": "1/3",
-          "description": "Bolt Weapons penetrate 1 more enemy",
-          "description_raw": "Bolt Weapons penetrate <span class=\"sm2-green\">1</span> more enemy",
+          "description": "Bolt Weapons penetrate 1 more enemy Unlocks at level 18 and costs 20 Requisition Points.",
+          "description_raw": "Bolt Weapons penetrate 1 more enemy\n\nUnlocks at level 18 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -329,10 +329,10 @@
           "col": 2,
           "row": 3,
           "grid_label": "2/3",
-          "description": "After switching Weapons, your Secondary Weapon does 25% more Damage. The Effect lasts until reloading or switching back to your Primary Weapon.",
-          "description_raw": "After switching Weapons, your Secondary Weapon does <span class=\"sm2-green\">25%</span> more Damage. The Effect lasts until reloading or switching back to your Primary Weapon.",
+          "description": "After switching Weapons, your Secondary Weapon does 25% more Damage. The Effect lasts until reloading or switching back to your Primary Weapon. Unlocks at level 19 and costs 20 Requisition Points.",
+          "description_raw": "After switching Weapons, your Secondary Weapon does 25% more Damage. The Effect lasts until reloading or switching back to your Primary Weapon.\n\nUnlocks at level 19 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -347,10 +347,10 @@
           "col": 3,
           "row": 3,
           "grid_label": "3/3",
-          "description": "Killing a Majoris -level or higher enemy restores your Primary Weapon's Ammo by 1 magazine. For Primary Weapons that doesn't reload, 20% of maximum Ammo capacity is restored instead. Cannot exceed maximum Ammo capacity. Cooldown is 30 seconds.",
-          "description_raw": "Killing a <span class=\"sm2-majoris\">Majoris</span>-level or higher enemy restores your Primary Weapon's Ammo by <span class=\"sm2-green\">1</span> magazine. For Primary Weapons that doesn't reload, <span class=\"sm2-green\">20%</span> of maximum Ammo capacity is restored instead. Cannot exceed maximum Ammo capacity. Cooldown is <span class=\"sm2-green\">30</span> seconds.",
+          "description": "Killing a Majoris-level or higher enemy restores your Primary Weapon's Ammo by 1 magazine. For Primary Weapons that doesn't reload, 20% of maximum Ammo capacity is restored instead. Cannot exceed maximum Ammo capacity. Cooldown is 30 seconds. Unlocks at level 20 and costs 20 Requisition Points.",
+          "description_raw": "Killing a Majoris-level or higher enemy restores your Primary Weapon's Ammo by 1 magazine. For Primary Weapons that doesn't reload, 20% of maximum Ammo capacity is restored instead. Cannot exceed maximum Ammo capacity. Cooldown is 30 seconds.\n\nUnlocks at level 20 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -365,10 +365,10 @@
           "col": 4,
           "row": 3,
           "grid_label": "4/3",
-          "description": "All Squad Members restore 30% more Contested Health from Ranged Damage",
-          "description_raw": "All Squad Members restore <span class=\"sm2-green\">30%</span> more Contested Health from Ranged Damage",
+          "description": "All Squad Members restore 30% more Contested Health from Ranged Damage Unlocks at level 21 and costs 40 Requisition Points.",
+          "description_raw": "All Squad Members restore 30% more Contested Health from Ranged Damage\n\nUnlocks at level 21 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -383,10 +383,10 @@
           "col": 5,
           "row": 3,
           "grid_label": "5/3",
-          "description": "Enemies marked by Auspex Scan take 75% more Equipment Damage",
-          "description_raw": "Enemies marked by Auspex Scan take <span class=\"sm2-green\">75%</span> more Equipment Damage",
+          "description": "Enemies marked by Auspex Scan take 75% more Equipment Damage Unlocks at level 22 and costs 20 Requisition Points.",
+          "description_raw": "Enemies marked by Auspex Scan take 75% more Equipment Damage\n\nUnlocks at level 22 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -401,10 +401,10 @@
           "col": 6,
           "row": 3,
           "grid_label": "6/3",
-          "description": "Enemies marked by Auspex Scan take an additional 75% Damage, but Auspex Scan's radius is reduced by 25%",
-          "description_raw": "Enemies marked by Auspex Scan take an additional <span class=\"sm2-green\">75%</span> Damage, but Auspex Scan's radius is reduced by <span class=\"sm2-red\">25%</span>",
+          "description": "Enemies marked by Auspex Scan take an additional 75% Damage, but Auspex Scan's radius is reduced by 25% Unlocks at level 23 and costs 20 Requisition Points.",
+          "description_raw": "Enemies marked by Auspex Scan take an additional 75% Damage, but Auspex Scan's radius is reduced by 25%\n\nUnlocks at level 23 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -419,10 +419,10 @@
           "col": 7,
           "row": 3,
           "grid_label": "7/3",
-          "description": "Auspex Scan zone lasts 60% longer, and enemies marked by Auspex Scan take an additional 120% Damage, but they lose the mark when they leave the scanned area",
-          "description_raw": "Auspex Scan zone lasts <span class=\"sm2-green\">60%</span> longer, and enemies marked by Auspex Scan take an additional <span class=\"sm2-green\">120%</span> Damage, but they lose the mark when they leave the scanned area",
+          "description": "Auspex Scan zone lasts 60% longer, and enemies marked by Auspex Scan take an additional 120% Damage, but they lose the mark when they leave the scanned area Unlocks at level 24 and costs 20 Requisition Points.",
+          "description_raw": "Auspex Scan zone lasts 60% longer, and enemies marked by Auspex Scan take an additional 120% Damage, but they lose the mark when they leave the scanned area\n\nUnlocks at level 24 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         },
         {
@@ -437,10 +437,10 @@
           "col": 8,
           "row": 3,
           "grid_label": "8/3",
-          "description": "A Headshot will instantly kill a Majoris - or Extremis -level enemy marked by Auspex Scan. Cooldown is 120 seconds.",
-          "description_raw": "A Headshot will instantly kill a <span class=\"sm2-majoris\">Majoris</span>- or <span class=\"sm2-extremis\">Extremis</span>-level enemy marked by Auspex Scan. Cooldown is <span class=\"sm2-green\">120</span> seconds.",
+          "description": "A Headshot will instantly kill a Majoris- or Extremis-level enemy marked by Auspex Scan. Cooldown is 120 seconds. Unlocks at level 25 and costs 20 Requisition Points.",
+          "description_raw": "A Headshot will instantly kill a Majoris- or Extremis-level enemy marked by Auspex Scan. Cooldown is 120 seconds.\n\nUnlocks at level 25 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Tactical",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Tactical"
         }
       ]
@@ -468,10 +468,10 @@
           "col": 1,
           "row": 1,
           "grid_label": "1/1",
-          "description": "Damage from Melee Attacks executed while sprinting or dashing increases by 100% . Deals area-of-effect Damage within a 7 -metre radius. Cooldown is 5 seconds.",
-          "description_raw": "Damage from Melee Attacks executed while sprinting or dashing increases by <span class=\"sm2-green\">100%</span>. Deals area-of-effect Damage within a <span class=\"sm2-green\">7</span>-metre radius. Cooldown is <span class=\"sm2-green\">5</span> seconds.",
+          "description": "Damage from Melee Attacks executed while sprinting or dashing increases by 100%. Deals area-of-effect Damage within a 7-metre radius. Cooldown is 5 seconds. Unlocks at level 2 and costs 20 Requisition Points.",
+          "description_raw": "Damage from Melee Attacks executed while sprinting or dashing increases by 100%. Deals area-of-effect Damage within a 7-metre radius. Cooldown is 5 seconds.\n\nUnlocks at level 2 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -486,10 +486,10 @@
           "col": 2,
           "row": 1,
           "grid_label": "2/1",
-          "description": "Secondary Weapon's Damage increases by 20%",
-          "description_raw": "Secondary Weapon's Damage increases by <span class=\"sm2-green\">20%</span>",
+          "description": "Secondary Weapon's Damage increases by 20% Unlocks at level 3 and costs 20 Requisition Points.",
+          "description_raw": "Secondary Weapon's Damage increases by 20%\n\nUnlocks at level 3 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -504,10 +504,10 @@
           "col": 3,
           "row": 1,
           "grid_label": "3/1",
-          "description": "While performing Charged Attacks, you take 25% less Health Damage do not lose control upon taking Heavy Hits and you cannot be knocked back",
-          "description_raw": "While performing Charged Attacks, you take <span class=\"sm2-green\">25%</span> less Health Damage do not lose control upon taking Heavy Hits and you cannot be knocked back",
+          "description": "While performing Charged Attacks, you take 25% less Health Damage do not lose control upon taking Heavy Hits and you cannot be knocked back Unlocks at level 4 and costs 20 Requisition Points.",
+          "description_raw": "While performing Charged Attacks, you take 25% less Health Damage do not lose control upon taking Heavy Hits and you cannot be knocked back\n\nUnlocks at level 4 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -522,10 +522,10 @@
           "col": 4,
           "row": 1,
           "grid_label": "4/1",
-          "description": "All Squad Members' Abilities recharge 15% faster",
-          "description_raw": "All Squad Members' Abilities recharge <span class=\"sm2-green\">15%</span> faster",
+          "description": "All Squad Members' Abilities recharge 15% faster Unlocks at level 5 and costs 40 Requisition Points.",
+          "description_raw": "All Squad Members' Abilities recharge 15% faster\n\nUnlocks at level 5 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -540,10 +540,10 @@
           "col": 5,
           "row": 1,
           "grid_label": "5/1",
-          "description": "Ground Pound's Damage increases by 25%",
-          "description_raw": "Ground Pound's Damage increases by <span class=\"sm2-green\">25%</span>",
+          "description": "Ground Pound's Damage increases by 25% Unlocks at level 6 and costs 20 Requisition Points.",
+          "description_raw": "Ground Pound's Damage increases by 25%\n\nUnlocks at level 6 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -558,10 +558,10 @@
           "col": 6,
           "row": 1,
           "grid_label": "6/1",
-          "description": "Jump Pack Dash deals damage that scales with difficulty to enemies along its trajectory and always works as a Perfect Dodge when dodging an attack",
-          "description_raw": "Jump Pack Dash deals damage that scales with difficulty to enemies along its trajectory and always works as a Perfect Dodge when dodging an attack",
+          "description": "Jump Pack Dash deals damage that scales with difficulty to enemies along its trajectory and always works as a Perfect Dodge when dodging an attack Unlocks at level 7 and costs 20 Requisition Points.",
+          "description_raw": "Jump Pack Dash deals damage that scales with difficulty to enemies along its trajectory and always works as a Perfect Dodge when dodging an attack\n\nUnlocks at level 7 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -576,10 +576,10 @@
           "col": 7,
           "row": 1,
           "grid_label": "7/1",
-          "description": "After a Finisher, Ground Pound deals 25% more Damage for 10 seconds",
-          "description_raw": "After a Finisher, Ground Pound deals <span class=\"sm2-green\">25%</span> more Damage for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After a Finisher, Ground Pound deals 25% more Damage for 10 seconds Unlocks at level 8 and costs 20 Requisition Points.",
+          "description_raw": "After a Finisher, Ground Pound deals 25% more Damage for 10 seconds\n\nUnlocks at level 8 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -594,10 +594,10 @@
           "col": 8,
           "row": 1,
           "grid_label": "8/1",
-          "description": "Any use of Jump Pack reloads the equipped Ranged weapon and increases Ranged Damage for by 50% for 10 seconds",
-          "description_raw": "Any use of Jump Pack reloads the equipped Ranged weapon and increases Ranged Damage for by <span class=\"sm2-green\">50%</span> for <span class=\"sm2-green\">10</span> seconds",
+          "description": "Any use of Jump Pack reloads the equipped Ranged weapon and increases Ranged Damage for by 50% for 10 seconds Unlocks at level 9 and costs 20 Requisition Points.",
+          "description_raw": "Any use of Jump Pack reloads the equipped Ranged weapon and increases Ranged Damage for by 50% for 10 seconds\n\nUnlocks at level 9 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -612,10 +612,10 @@
           "col": 1,
           "row": 2,
           "grid_label": "1/2",
-          "description": "Damage of Charged Attacks increases by 25%",
-          "description_raw": "Damage of Charged Attacks increases by <span class=\"sm2-green\">25%</span>",
+          "description": "Damage of Charged Attacks increases by 25% Unlocks at level 10 and costs 20 Requisition Points.",
+          "description_raw": "Damage of Charged Attacks increases by 25%\n\nUnlocks at level 10 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -630,10 +630,10 @@
           "col": 2,
           "row": 2,
           "grid_label": "2/2",
-          "description": "Contested Health fades 50% more slowly",
-          "description_raw": "Contested Health fades <span class=\"sm2-green\">50%</span> more slowly",
+          "description": "Contested Health fades 50% more slowly Unlocks at level 11 and costs 20 Requisition Points.",
+          "description_raw": "Contested Health fades 50% more slowly\n\nUnlocks at level 11 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -648,10 +648,10 @@
           "col": 3,
           "row": 2,
           "grid_label": "3/2",
-          "description": "Melee Damage increases by 15% against Majoris - or Extremis -level enemies",
-          "description_raw": "Melee Damage increases by <span class=\"sm2-green\">15%</span> against <span class=\"sm2-majoris\">Majoris</span>- or <span class=\"sm2-extremis\">Extremis</span>-level enemies",
+          "description": "Melee Damage increases by 15% against Majoris- or Extremis-level enemies Unlocks at level 12 and costs 20 Requisition Points.",
+          "description_raw": "Melee Damage increases by 15% against Majoris- or Extremis-level enemies\n\nUnlocks at level 12 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -666,10 +666,10 @@
           "col": 4,
           "row": 2,
           "grid_label": "4/2",
-          "description": "All Squad Members deal 20% more Melee Damage against Extremis - and Terminus -level enemies",
-          "description_raw": "All Squad Members deal <span class=\"sm2-green\">20%</span> more Melee Damage against <span class=\"sm2-extremis\">Extremis</span>- and <span class=\"sm2-terminus\">Terminus</span>-level enemies",
+          "description": "All Squad Members deal 20% more Melee Damage against Extremis- and Terminus-level enemies Unlocks at level 13 and costs 40 Requisition Points.",
+          "description_raw": "All Squad Members deal 20% more Melee Damage against Extremis- and Terminus-level enemies\n\nUnlocks at level 13 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -684,10 +684,10 @@
           "col": 5,
           "row": 2,
           "grid_label": "5/2",
-          "description": "Hitting an enemy with Jump Pack's Dash attack ability restore by 1 charger. Cooldown 10 seconds.",
-          "description_raw": "Hitting an enemy with Jump Pack's Dash attack ability restore by <span class=\"sm2-green\">1</span> charger. Cooldown <span class=\"sm2-green\">10</span> seconds.",
+          "description": "Hitting an enemy with Jump Pack's Dash attack ability restore by 1 charger. Cooldown 10 seconds. Unlocks at level 14 and costs 20 Requisition Points.",
+          "description_raw": "Hitting an enemy with Jump Pack's Dash attack ability restore by 1 charger. Cooldown 10 seconds.\n\nUnlocks at level 14 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -702,10 +702,10 @@
           "col": 6,
           "row": 2,
           "grid_label": "6/2",
-          "description": "Jump Pack recharges 20% faster",
-          "description_raw": "Jump Pack recharges <span class=\"sm2-green\">20%</span> faster",
+          "description": "Jump Pack recharges 20% faster Unlocks at level 15 and costs 20 Requisition Points.",
+          "description_raw": "Jump Pack recharges 20% faster\n\nUnlocks at level 15 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -720,10 +720,10 @@
           "col": 7,
           "row": 2,
           "grid_label": "7/2",
-          "description": "A fully prepared Ground Pound deals 20% more Damage, but preparation time increases by 25%",
-          "description_raw": "A fully prepared Ground Pound deals <span class=\"sm2-green\">20%</span> more Damage, but preparation time increases by <span class=\"sm2-green\">25%</span>",
+          "description": "A fully prepared Ground Pound deals 20% more Damage, but preparation time increases by 25% Unlocks at level 16 and costs 20 Requisition Points.",
+          "description_raw": "A fully prepared Ground Pound deals 20% more Damage, but preparation time increases by 25%\n\nUnlocks at level 16 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -738,10 +738,10 @@
           "col": 8,
           "row": 2,
           "grid_label": "8/2",
-          "description": "Jump Pack Leap deals Damage to enemies near the takeoff area. Enemies within 1 -metre take Damage based on Difficulty Level. After 1 -metre the Damage starts to drop-off and does 0 Damage at 5 -metres. Can hit up to 20 enemies.",
-          "description_raw": "Jump Pack Leap deals Damage to enemies near the takeoff area. Enemies within <span class=\"sm2-green\">1</span>-metre take Damage based on Difficulty Level. After <span class=\"sm2-green\">1</span>-metre the Damage starts to drop-off and does <span class=\"sm2-red\">0</span> Damage at <span class=\"sm2-green\">5</span>-metres. Can hit up to <span class=\"sm2-green\">20</span> enemies.",
+          "description": "Jump Pack Leap deals Damage to enemies near the takeoff area. Enemies within 1-metre take Damage based on Difficulty Level. After 1-metre the Damage starts to drop-off and does 0 Damage at 5-metres. Can hit up to 20 enemies. Unlocks at level 17 and costs 20 Requisition Points.",
+          "description_raw": "Jump Pack Leap deals Damage to enemies near the takeoff area. Enemies within 1-metre take Damage based on Difficulty Level. After 1-metre the Damage starts to drop-off and does 0 Damage at 5-metres. Can hit up to 20 enemies.\n\nUnlocks at level 17 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -756,10 +756,10 @@
           "col": 1,
           "row": 3,
           "grid_label": "1/3",
-          "description": "Non-Finisher Gun Strikes also restore 1 Armour Segment",
-          "description_raw": "Non-Finisher Gun Strikes also restore <span class=\"sm2-green\">1</span> Armour Segment",
+          "description": "Non-Finisher Gun Strikes also restore 1 Armour Segment Unlocks at level 18 and costs 20 Requisition Points.",
+          "description_raw": "Non-Finisher Gun Strikes also restore 1 Armour Segment\n\nUnlocks at level 18 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -774,10 +774,10 @@
           "col": 2,
           "row": 3,
           "grid_label": "2/3",
-          "description": "Killing 7 enemies within 6 seconds restores Equipment Charge by 1 . Cooldown is 90 seconds.",
-          "description_raw": "Killing <span class=\"sm2-green\">7</span> enemies within <span class=\"sm2-green\">6</span> seconds restores Equipment Charge by <span class=\"sm2-green\">1</span>. Cooldown is <span class=\"sm2-green\">90</span> seconds.",
+          "description": "Killing 7 enemies within 6 seconds restores Equipment Charge by 1. Cooldown is 90 seconds. Unlocks at level 19 and costs 20 Requisition Points.",
+          "description_raw": "Killing 7 enemies within 6 seconds restores Equipment Charge by 1. Cooldown is 90 seconds.\n\nUnlocks at level 19 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -792,10 +792,10 @@
           "col": 3,
           "row": 3,
           "grid_label": "3/3",
-          "description": "Enemies hit by Damage from Melee Attacks executed while sprinting or dashing take 25% more Damage for 5 seconds",
-          "description_raw": "Enemies hit by Damage from Melee Attacks executed while sprinting or dashing take <span class=\"sm2-green\">25%</span> more Damage for <span class=\"sm2-green\">5</span> seconds",
+          "description": "Enemies hit by Damage from Melee Attacks executed while sprinting or dashing take 25% more Damage for 5 seconds Unlocks at level 20 and costs 20 Requisition Points.",
+          "description_raw": "Enemies hit by Damage from Melee Attacks executed while sprinting or dashing take 25% more Damage for 5 seconds\n\nUnlocks at level 20 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -810,10 +810,10 @@
           "col": 4,
           "row": 3,
           "grid_label": "4/3",
-          "description": "All Squad Members deal 30% more Gun Strike Damage",
-          "description_raw": "All Squad Members deal <span class=\"sm2-green\">30%</span> more Gun Strike Damage",
+          "description": "All Squad Members deal 30% more Gun Strike Damage Unlocks at level 21 and costs 40 Requisition Points.",
+          "description_raw": "All Squad Members deal 30% more Gun Strike Damage\n\nUnlocks at level 21 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -828,10 +828,10 @@
           "col": 5,
           "row": 3,
           "grid_label": "5/3",
-          "description": "Ground Pound deals 100% more Damage, but its radius is reduced by 50%",
-          "description_raw": "Ground Pound deals <span class=\"sm2-green\">100%</span> more Damage, but its radius is reduced by <span class=\"sm2-red\">50%</span>",
+          "description": "Ground Pound deals 100% more Damage, but its radius is reduced by 50% Unlocks at level 22 and costs 20 Requisition Points.",
+          "description_raw": "Ground Pound deals 100% more Damage, but its radius is reduced by 50%\n\nUnlocks at level 22 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -846,10 +846,10 @@
           "col": 6,
           "row": 3,
           "grid_label": "6/3",
-          "description": "A Ground Pound kill restores Jump Pack's Charge by 10%",
-          "description_raw": "A Ground Pound kill restores Jump Pack's Charge by <span class=\"sm2-green\">10%</span>",
+          "description": "A Ground Pound kill restores Jump Pack's Charge by 10% Unlocks at level 23 and costs 20 Requisition Points.",
+          "description_raw": "A Ground Pound kill restores Jump Pack's Charge by 10%\n\nUnlocks at level 23 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -864,10 +864,10 @@
           "col": 7,
           "row": 3,
           "grid_label": "7/3",
-          "description": "After a perfectly timed Dodge using a Jump Pack Dash, you deal 30% more Damage for 10 seconds",
-          "description_raw": "After a perfectly timed Dodge using a Jump Pack Dash, you deal <span class=\"sm2-green\">30%</span> more Damage for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After a perfectly timed Dodge using a Jump Pack Dash, you deal 30% more Damage for 10 seconds Unlocks at level 24 and costs 20 Requisition Points.",
+          "description_raw": "After a perfectly timed Dodge using a Jump Pack Dash, you deal 30% more Damage for 10 seconds\n\nUnlocks at level 24 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         },
         {
@@ -882,10 +882,10 @@
           "col": 8,
           "row": 3,
           "grid_label": "8/3",
-          "description": "A perfectly timed Dodge using a Jump Pack Dash restores Jump pack's Ability Charge",
-          "description_raw": "A perfectly timed Dodge using a Jump Pack Dash restores Jump pack's Ability Charge",
+          "description": "A perfectly timed Dodge using a Jump Pack Dash restores Jump pack's Ability Charge Unlocks at level 25 and costs 20 Requisition Points.",
+          "description_raw": "A perfectly timed Dodge using a Jump Pack Dash restores Jump pack's Ability Charge\n\nUnlocks at level 25 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Assault",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Assault"
         }
       ]
@@ -913,10 +913,10 @@
           "col": 1,
           "row": 1,
           "grid_label": "1/1",
-          "description": "Killing an enemy from a distance of more than 30 } metres restores Ability Charge by 5%",
-          "description_raw": "Killing an enemy from a distance of more than <span class=\"sm2-green\">30</span>} metres restores Ability Charge by <span class=\"sm2-green\">5%</span>",
+          "description": "Killing an enemy from a distance of more than 30} metres restores Ability Charge by 5% Unlocks at level 2 and costs 20 Requisition Points.",
+          "description_raw": "Killing an enemy from a distance of more than 30} metres restores Ability Charge by 5%\n\nUnlocks at level 2 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -931,10 +931,10 @@
           "col": 2,
           "row": 1,
           "grid_label": "2/1",
-          "description": "Perfect Parry and Perfect Block windows increase by 50%",
-          "description_raw": "Perfect Parry and Perfect Block windows increase by <span class=\"sm2-green\">50%</span>",
+          "description": "Perfect Parry and Perfect Block windows increase by 50% Unlocks at level 3 and costs 20 Requisition Points.",
+          "description_raw": "Perfect Parry and Perfect Block windows increase by 50%\n\nUnlocks at level 3 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -949,10 +949,10 @@
           "col": 3,
           "row": 1,
           "grid_label": "3/1",
-          "description": "When your Ranged Weapon's magazine is empty, Melee Damage increases by 25%",
-          "description_raw": "When your Ranged Weapon's magazine is empty, Melee Damage increases by <span class=\"sm2-green\">25%</span>",
+          "description": "When your Ranged Weapon's magazine is empty, Melee Damage increases by 25% Unlocks at level 4 and costs 20 Requisition Points.",
+          "description_raw": "When your Ranged Weapon's magazine is empty, Melee Damage increases by 25%\n\nUnlocks at level 4 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -967,10 +967,10 @@
           "col": 4,
           "row": 1,
           "grid_label": "4/1",
-          "description": "All Squad Members deal 15% more Melee Damage",
-          "description_raw": "All Squad Members deal <span class=\"sm2-green\">15%</span> more Melee Damage",
+          "description": "All Squad Members deal 15% more Melee Damage Unlocks at level 5 and costs 40 Requisition Points.",
+          "description_raw": "All Squad Members deal 15% more Melee Damage\n\nUnlocks at level 5 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -985,10 +985,10 @@
           "col": 5,
           "row": 1,
           "grid_label": "5/1",
-          "description": "After a Diving Kick, you take 40% less Ranged Damage for 10 seconds",
-          "description_raw": "After a Diving Kick, you take <span class=\"sm2-green\">40%</span> less Ranged Damage for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After a Diving Kick, you take 40% less Ranged Damage for 10 seconds Unlocks at level 6 and costs 20 Requisition Points.",
+          "description_raw": "After a Diving Kick, you take 40% less Ranged Damage for 10 seconds\n\nUnlocks at level 6 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1003,10 +1003,10 @@
           "col": 6,
           "row": 1,
           "grid_label": "6/1",
-          "description": "Performing a Finisher with the Grapnel Launcher deals Damage that scales with difficulty to enemies within 5 -metres.",
-          "description_raw": "Performing a Finisher with the Grapnel Launcher deals Damage that scales with difficulty to enemies within <span class=\"sm2-green\">5</span>-metres.",
+          "description": "Performing a Finisher with the Grapnel Launcher deals Damage that scales with difficulty to enemies within 5-metres. Unlocks at level 7 and costs 20 Requisition Points.",
+          "description_raw": "Performing a Finisher with the Grapnel Launcher deals Damage that scales with difficulty to enemies within 5-metres.\n\nUnlocks at level 7 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1021,10 +1021,10 @@
           "col": 7,
           "row": 1,
           "grid_label": "7/1",
-          "description": "After a perfectly timed Parry, Block or Dodge, you take 20% less Health Damage for 5 seconds",
-          "description_raw": "After a perfectly timed Parry, Block or Dodge, you take <span class=\"sm2-green\">20%</span> less Health Damage for <span class=\"sm2-green\">5</span> seconds",
+          "description": "After a perfectly timed Parry, Block or Dodge, you take 20% less Health Damage for 5 seconds Unlocks at level 8 and costs 20 Requisition Points.",
+          "description_raw": "After a perfectly timed Parry, Block or Dodge, you take 20% less Health Damage for 5 seconds\n\nUnlocks at level 8 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1039,10 +1039,10 @@
           "col": 8,
           "row": 1,
           "grid_label": "8/1",
-          "description": "Grapnel Launcher can activate a Finisher not only on Incapacitated enemies but also on those who have less than 33% (except Terminus level), and Performing a Finisher with the Grapnel Launcher fully restores its Ability Charge",
-          "description_raw": "Grapnel Launcher can activate a Finisher not only on Incapacitated enemies but also on those who have less than <span class=\"sm2-green\">33%</span> (except <span class=\"sm2-terminus\">Terminus</span> level), and Performing a Finisher with the Grapnel Launcher fully restores its Ability Charge",
+          "description": "Grapnel Launcher can activate a Finisher not only on Incapacitated enemies but also on those who have less than 33% (except Terminus level), and Performing a Finisher with the Grapnel Launcher fully restores its Ability Charge Unlocks at level 9 and costs 20 Requisition Points.",
+          "description_raw": "Grapnel Launcher can activate a Finisher not only on Incapacitated enemies but also on those who have less than 33% (except Terminus level), and Performing a Finisher with the Grapnel Launcher fully restores its Ability Charge\n\nUnlocks at level 9 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1057,10 +1057,10 @@
           "col": 1,
           "row": 2,
           "grid_label": "1/2",
-          "description": "Melee Damage increases by 10% against Majoris -level and higher enemies",
-          "description_raw": "Melee Damage increases by <span class=\"sm2-green\">10%</span> against <span class=\"sm2-majoris\">Majoris</span>-level and higher enemies",
+          "description": "Melee Damage increases by 10% against Majoris-level and higher enemies Unlocks at level 10 and costs 20 Requisition Points.",
+          "description_raw": "Melee Damage increases by 10% against Majoris-level and higher enemies\n\nUnlocks at level 10 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1075,10 +1075,10 @@
           "col": 2,
           "row": 2,
           "grid_label": "2/2",
-          "description": "You take 20% less Ranged Damage",
-          "description_raw": "You take <span class=\"sm2-green\">20%</span> less Ranged Damage",
+          "description": "You take 20% less Ranged Damage Unlocks at level 11 and costs 20 Requisition Points.",
+          "description_raw": "You take 20% less Ranged Damage\n\nUnlocks at level 11 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1093,10 +1093,10 @@
           "col": 3,
           "row": 2,
           "grid_label": "3/2",
-          "description": "Killing 7 enemies within 5 seconds restores Equipment Charge by 1 . Cooldown is 90 seconds.",
-          "description_raw": "Killing <span class=\"sm2-green\">7</span> enemies within <span class=\"sm2-green\">5</span> seconds restores Equipment Charge by <span class=\"sm2-green\">1</span>. Cooldown is <span class=\"sm2-green\">90</span> seconds.",
+          "description": "Killing 7 enemies within 5 seconds restores Equipment Charge by 1. Cooldown is 90 seconds. Unlocks at level 12 and costs 20 Requisition Points.",
+          "description_raw": "Killing 7 enemies within 5 seconds restores Equipment Charge by 1. Cooldown is 90 seconds.\n\nUnlocks at level 12 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1111,10 +1111,10 @@
           "col": 4,
           "row": 2,
           "grid_label": "4/2",
-          "description": "Melee Finishers of Extremis - or Terminus -level additionally restore Health by 30% for any Squad Member",
-          "description_raw": "Melee Finishers of <span class=\"sm2-extremis\">Extremis</span>- or <span class=\"sm2-terminus\">Terminus</span>-level additionally restore Health by <span class=\"sm2-green\">30%</span> for any Squad Member",
+          "description": "Melee Finishers of Extremis- or Terminus-level additionally restore Health by 30% for any Squad Member Unlocks at level 13 and costs 40 Requisition Points.",
+          "description_raw": "Melee Finishers of Extremis- or Terminus-level additionally restore Health by 30% for any Squad Member\n\nUnlocks at level 13 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1129,10 +1129,10 @@
           "col": 5,
           "row": 2,
           "grid_label": "5/2",
-          "description": "Diving Kick additionally deals 50% of its main Damage in a 5 -metre radius",
-          "description_raw": "Diving Kick additionally deals <span class=\"sm2-green\">50%</span> of its main Damage in a <span class=\"sm2-green\">5</span>-metre radius",
+          "description": "Diving Kick additionally deals 50% of its main Damage in a 5-metre radius Unlocks at level 14 and costs 20 Requisition Points.",
+          "description_raw": "Diving Kick additionally deals 50% of its main Damage in a 5-metre radius\n\nUnlocks at level 14 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1147,10 +1147,10 @@
           "col": 6,
           "row": 2,
           "grid_label": "6/2",
-          "description": "After a Ranged kill of a Majoris -level or higher enemy, Diving Kick's Damage increases by 130% . Cooldown is 15 seconds.",
-          "description_raw": "After a Ranged kill of a <span class=\"sm2-majoris\">Majoris</span>-level or higher enemy, Diving Kick's Damage increases by <span class=\"sm2-green\">130%</span>. Cooldown is <span class=\"sm2-green\">15</span> seconds.",
+          "description": "After a Ranged kill of a Majoris-level or higher enemy, Diving Kick's Damage increases by 130%. Cooldown is 15 seconds. Unlocks at level 15 and costs 20 Requisition Points.",
+          "description_raw": "After a Ranged kill of a Majoris-level or higher enemy, Diving Kick's Damage increases by 130%. Cooldown is 15 seconds.\n\nUnlocks at level 15 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1165,10 +1165,10 @@
           "col": 7,
           "row": 2,
           "grid_label": "7/2",
-          "description": "When Grapnel Launcher is in cooldown, Weapon Damage increases by 15%",
-          "description_raw": "When Grapnel Launcher is in cooldown, Weapon Damage increases by <span class=\"sm2-green\">15%</span>",
+          "description": "When Grapnel Launcher is in cooldown, Weapon Damage increases by 15% Unlocks at level 16 and costs 20 Requisition Points.",
+          "description_raw": "When Grapnel Launcher is in cooldown, Weapon Damage increases by 15%\n\nUnlocks at level 16 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1183,10 +1183,10 @@
           "col": 8,
           "row": 2,
           "grid_label": "8/2",
-          "description": "Take Lethal Damage restores all Armour instead of Incapacitating you. Cooldown is 120 seconds.",
-          "description_raw": "Take Lethal Damage restores all Armour instead of Incapacitating you. Cooldown is <span class=\"sm2-green\">120</span> seconds.",
+          "description": "Take Lethal Damage restores all Armour instead of Incapacitating you. Cooldown is 120 seconds. Unlocks at level 17 and costs 20 Requisition Points.",
+          "description_raw": "Take Lethal Damage restores all Armour instead of Incapacitating you. Cooldown is 120 seconds.\n\nUnlocks at level 17 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1201,10 +1201,10 @@
           "col": 1,
           "row": 3,
           "grid_label": "1/3",
-          "description": "After a perfectly timed Parry, Block or Dodge, you do not lose control upon taking Heavy Hits and you cannot be knocked back for 10 seconds",
-          "description_raw": "After a perfectly timed Parry, Block or Dodge, you do not lose control upon taking Heavy Hits and you cannot be knocked back for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After a perfectly timed Parry, Block or Dodge, you do not lose control upon taking Heavy Hits and you cannot be knocked back for 10 seconds Unlocks at level 18 and costs 20 Requisition Points.",
+          "description_raw": "After a perfectly timed Parry, Block or Dodge, you do not lose control upon taking Heavy Hits and you cannot be knocked back for 10 seconds\n\nUnlocks at level 18 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1219,10 +1219,10 @@
           "col": 2,
           "row": 3,
           "grid_label": "2/3",
-          "description": "When your Armour is fully Depleted, you take 25% less Health Damage for 10 seconds",
-          "description_raw": "When your Armour is fully Depleted, you take <span class=\"sm2-green\">25%</span> less Health Damage for <span class=\"sm2-green\">10</span> seconds",
+          "description": "When your Armour is fully Depleted, you take 25% less Health Damage for 10 seconds Unlocks at level 19 and costs 20 Requisition Points.",
+          "description_raw": "When your Armour is fully Depleted, you take 25% less Health Damage for 10 seconds\n\nUnlocks at level 19 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1237,10 +1237,10 @@
           "col": 3,
           "row": 3,
           "grid_label": "3/3",
-          "description": "When your Health is less than 50% , your Perfect Dodge window is doubled",
-          "description_raw": "When your Health is less than <span class=\"sm2-green\">50%</span>, your Perfect Dodge window is doubled",
+          "description": "When your Health is less than 50%, your Perfect Dodge window is doubled Unlocks at level 20 and costs 20 Requisition Points.",
+          "description_raw": "When your Health is less than 50%, your Perfect Dodge window is doubled\n\nUnlocks at level 20 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1255,10 +1255,10 @@
           "col": 4,
           "row": 3,
           "grid_label": "4/3",
-          "description": "All Squad Members can restore Ability Charge by 15% by performing Finishers on Majoris -level or higher enemies",
-          "description_raw": "All Squad Members can restore Ability Charge by <span class=\"sm2-green\">15%</span> by performing Finishers on <span class=\"sm2-majoris\">Majoris</span>-level or higher enemies",
+          "description": "All Squad Members can restore Ability Charge by 15% by performing Finishers on Majoris-level or higher enemies Unlocks at level 21 and costs 40 Requisition Points.",
+          "description_raw": "All Squad Members can restore Ability Charge by 15% by performing Finishers on Majoris-level or higher enemies\n\nUnlocks at level 21 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1273,10 +1273,10 @@
           "col": 5,
           "row": 3,
           "grid_label": "5/3",
-          "description": "Diving Kick deals 10% more Damage and additionally deals damage that scales with difficulty to enemies on the way to the Grapnel Launcher's target",
-          "description_raw": "Diving Kick deals 10% more Damage and additionally deals damage that scales with difficulty to enemies on the way to the Grapnel Launcher's target",
+          "description": "Diving Kick deals 10% more Damage and additionally deals damage that scales with difficulty to enemies on the way to the Grapnel Launcher's target Unlocks at level 22 and costs 20 Requisition Points.",
+          "description_raw": "Diving Kick deals 10% more Damage and additionally deals damage that scales with difficulty to enemies on the way to the Grapnel Launcher's target\n\nUnlocks at level 22 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1291,10 +1291,10 @@
           "col": 6,
           "row": 3,
           "grid_label": "6/3",
-          "description": "Enemies hit by Diving kick take 15% more Ranged Damage for 10 seconds",
-          "description_raw": "Enemies hit by Diving kick take <span class=\"sm2-green\">15%</span> more Ranged Damage for <span class=\"sm2-green\">10</span> seconds",
+          "description": "Enemies hit by Diving kick take 15% more Ranged Damage for 10 seconds Unlocks at level 23 and costs 20 Requisition Points.",
+          "description_raw": "Enemies hit by Diving kick take 15% more Ranged Damage for 10 seconds\n\nUnlocks at level 23 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1309,10 +1309,10 @@
           "col": 7,
           "row": 3,
           "grid_label": "7/3",
-          "description": "Grapnel Launcher recharges 20% faster",
-          "description_raw": "Grapnel Launcher recharges <span class=\"sm2-green\">20%</span> faster",
+          "description": "Grapnel Launcher recharges 20% faster Unlocks at level 24 and costs 20 Requisition Points.",
+          "description_raw": "Grapnel Launcher recharges 20% faster\n\nUnlocks at level 24 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         },
         {
@@ -1327,10 +1327,10 @@
           "col": 8,
           "row": 3,
           "grid_label": "8/3",
-          "description": "Melee kills of Majoris -level or higher enemies restore Health by 5%",
-          "description_raw": "Melee kills of <span class=\"sm2-majoris\">Majoris</span>-level or higher enemies restore Health by <span class=\"sm2-green\">5%</span>",
+          "description": "Melee kills of Majoris-level or higher enemies restore Health by 5% Unlocks at level 25 and costs 20 Requisition Points.",
+          "description_raw": "Melee kills of Majoris-level or higher enemies restore Health by 5%\n\nUnlocks at level 25 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Vanguard",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Vanguard"
         }
       ]
@@ -1358,10 +1358,10 @@
           "col": 1,
           "row": 1,
           "grid_label": "1/1",
-          "description": "When your Armour is fully depleted, you take 25% less Health Damage for 10 seconds",
-          "description_raw": "When your Armour is fully depleted, you take <span class=\"sm2-green\">25%</span> less Health Damage for <span class=\"sm2-green\">10</span> seconds",
+          "description": "When your Armour is fully depleted, you take 25% less Health Damage for 10 seconds Unlocks at level 2 and costs 20 Requisition Points.",
+          "description_raw": "When your Armour is fully depleted, you take 25% less Health Damage for 10 seconds\n\nUnlocks at level 2 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1376,10 +1376,10 @@
           "col": 2,
           "row": 1,
           "grid_label": "2/1",
-          "description": "When you Block a Ranged Attack, enemies within a 10 -metre radius take the Damage instead",
-          "description_raw": "When you Block a Ranged Attack, enemies within a <span class=\"sm2-green\">10</span>-metre radius take the Damage instead",
+          "description": "When you Block a Ranged Attack, enemies within a 10-metre radius take the Damage instead Unlocks at level 3 and costs 20 Requisition Points.",
+          "description_raw": "When you Block a Ranged Attack, enemies within a 10-metre radius take the Damage instead\n\nUnlocks at level 3 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1394,10 +1394,10 @@
           "col": 3,
           "row": 1,
           "grid_label": "3/1",
-          "description": "A perfectly timed Parry or Block creates a Shock area for 5 seconds. Cooldown is 30 seconds.",
-          "description_raw": "A perfectly timed Parry or Block creates a Shock area for <span class=\"sm2-green\">5</span> seconds. Cooldown is <span class=\"sm2-green\">30</span> seconds.",
+          "description": "A perfectly timed Parry or Block creates a Shock area for 5 seconds. Cooldown is 30 seconds. Unlocks at level 4 and costs 20 Requisition Points.",
+          "description_raw": "A perfectly timed Parry or Block creates a Shock area for 5 seconds. Cooldown is 30 seconds.\n\nUnlocks at level 4 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1412,10 +1412,10 @@
           "col": 4,
           "row": 1,
           "grid_label": "4/1",
-          "description": "Every 30 seconds, all Squad Members automatically restore 1 Armour Segment",
-          "description_raw": "Every <span class=\"sm2-green\">30</span> seconds, all Squad Members automatically restore <span class=\"sm2-green\">1</span> Armour Segment",
+          "description": "Every 30 seconds, all Squad Members automatically restore 1 Armour Segment Unlocks at level 5 and costs 40 Requisition Points.",
+          "description_raw": "Every 30 seconds, all Squad Members automatically restore 1 Armour Segment\n\nUnlocks at level 5 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1430,10 +1430,10 @@
           "col": 5,
           "row": 1,
           "grid_label": "5/1",
-          "description": "The banner deals Damage that scales with difficulty over time to enemies within its area of effect",
-          "description_raw": "The banner deals Damage that scales with difficulty over time to enemies within its area of effect",
+          "description": "The banner deals Damage that scales with difficulty over time to enemies within its area of effect Unlocks at level 7 and costs 20 Requisition Points.",
+          "description_raw": "The banner deals Damage that scales with difficulty over time to enemies within its area of effect\n\nUnlocks at level 7 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1448,10 +1448,10 @@
           "col": 6,
           "row": 1,
           "grid_label": "6/1",
-          "description": "Shield Bash deals 200% more Damage. Thunder Hammer Pommel Smash deals 100% more damage and deals area-of-effect Damage within a 7 meter radius. Cooldown is 5 seconds.",
-          "description_raw": "Shield Bash deals <span class=\"sm2-green\">200%</span> more Damage. Thunder Hammer Pommel Smash deals <span class=\"sm2-green\">100%</span> more damage and deals area-of-effect Damage within a <span class=\"sm2-green\">7</span> meter radius. Cooldown is <span class=\"sm2-green\">5</span> seconds.",
+          "description": "Shield Bash deals 200% more Damage. Thunder Hammer Pommel Smash deals 100% more damage and deals area-of-effect Damage within a 7 meter radius. Cooldown is 5 seconds. Unlocks at level 6 and costs 20 Requisition Points.",
+          "description_raw": "Shield Bash deals 200% more Damage. Thunder Hammer Pommel Smash deals 100% more damage and deals area-of-effect Damage within a 7 meter radius. Cooldown is 5 seconds.\n\nUnlocks at level 6 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1466,10 +1466,10 @@
           "col": 7,
           "row": 1,
           "grid_label": "7/1",
-          "description": "When the banner is activated, it revives Incapacitated Squad Members within its area of effect",
-          "description_raw": "When the banner is activated, it revives Incapacitated Squad Members within its area of effect",
+          "description": "When the banner is activated, it revives Incapacitated Squad Members within its area of effect Unlocks at level 8 and costs 20 Requisition Points.",
+          "description_raw": "When the banner is activated, it revives Incapacitated Squad Members within its area of effect\n\nUnlocks at level 8 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1484,10 +1484,10 @@
           "col": 8,
           "row": 1,
           "grid_label": "8/1",
-          "description": "When your Armour is depleted, a reserve Shock Grenade automatically detonated at your position. Cooldown is 45 seconds.",
-          "description_raw": "When your Armour is depleted, a reserve Shock Grenade automatically detonated at your position. Cooldown is <span class=\"sm2-green\">45</span> seconds.",
+          "description": "When your Armour is depleted, a reserve Shock Grenade automatically detonated at your position. Cooldown is 45 seconds. Unlocks at level 9 and costs 20 Requisition Points.",
+          "description_raw": "When your Armour is depleted, a reserve Shock Grenade automatically detonated at your position. Cooldown is 45 seconds.\n\nUnlocks at level 9 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1502,10 +1502,10 @@
           "col": 1,
           "row": 2,
           "grid_label": "1/2",
-          "description": "A perfectly timed Parry deals area-of-effect Damage that scales with difficulty within a 5 -metre radius.",
-          "description_raw": "A perfectly timed Parry deals area-of-effect Damage that scales with difficulty within a <span class=\"sm2-green\">5</span>-metre radius.",
+          "description": "A perfectly timed Parry deals area-of-effect Damage that scales with difficulty within a 5-metre radius. Unlocks at level 10 and costs 20 Requisition Points.",
+          "description_raw": "A perfectly timed Parry deals area-of-effect Damage that scales with difficulty within a 5-metre radius.\n\nUnlocks at level 10 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1520,10 +1520,10 @@
           "col": 2,
           "row": 2,
           "grid_label": "2/2",
-          "description": "Enemies in a Shock area take 25% more Damage",
-          "description_raw": "Enemies in a Shock area take <span class=\"sm2-green\">25%</span> more Damage",
+          "description": "Enemies in a Shock area take 25% more Damage Unlocks at level 11 and costs 20 Requisition Points.",
+          "description_raw": "Enemies in a Shock area take 25% more Damage\n\nUnlocks at level 11 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1538,10 +1538,10 @@
           "col": 3,
           "row": 2,
           "grid_label": "3/2",
-          "description": "When your Health is less than 50% , you take 30% less Health Damage",
-          "description_raw": "When your Health is less than <span class=\"sm2-green\">50%</span>, you take <span class=\"sm2-green\">30%</span> less Health Damage",
+          "description": "When your Health is less than 50%, you take 30% less Health Damage Unlocks at level 12 and costs 20 Requisition Points.",
+          "description_raw": "When your Health is less than 50%, you take 30% less Health Damage\n\nUnlocks at level 12 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1556,10 +1556,10 @@
           "col": 4,
           "row": 2,
           "grid_label": "4/2",
-          "description": "Contested Health fades 50% more slowly for all Squad Members",
-          "description_raw": "Contested Health fades <span class=\"sm2-green\">50%</span> more slowly for all Squad Members",
+          "description": "Contested Health fades 50% more slowly for all Squad Members Unlocks at level 13 and costs 40 Requisition Points.",
+          "description_raw": "Contested Health fades 50% more slowly for all Squad Members\n\nUnlocks at level 13 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1574,10 +1574,10 @@
           "col": 5,
           "row": 2,
           "grid_label": "5/2",
-          "description": "The banner restores Armour 300% faster, but its Duration is reduced to 10 seconds",
-          "description_raw": "The banner restores Armour <span class=\"sm2-green\">300%</span> faster, but its Duration is reduced to <span class=\"sm2-red\">10</span> seconds",
+          "description": "The banner restores Armour 300% faster, but its Duration is reduced to 10 seconds Unlocks at level 14 and costs 20 Requisition Points.",
+          "description_raw": "The banner restores Armour 300% faster, but its Duration is reduced to 10 seconds\n\nUnlocks at level 14 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1592,10 +1592,10 @@
           "col": 6,
           "row": 2,
           "grid_label": "6/2",
-          "description": "All Squad Members within the banner's area of effect take 20% less Damage, and the banner lasts 20% longer",
-          "description_raw": "All Squad Members within the banner's area of effect take <span class=\"sm2-green\">20%</span> less Damage, and the banner lasts <span class=\"sm2-green\">20%</span> longer",
+          "description": "All Squad Members within the banner's area of effect take 20% less Damage, and the banner lasts 20% longer Unlocks at level 15 and costs 20 Requisition Points.",
+          "description_raw": "All Squad Members within the banner's area of effect take 20% less Damage, and the banner lasts 20% longer\n\nUnlocks at level 15 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1610,10 +1610,10 @@
           "col": 7,
           "row": 2,
           "grid_label": "7/2",
-          "description": "After a Shield Bash or Thunder Hammer Pommel Smash, Melee Damage increases by 15% , you do not lose control upon taking Heavy Hits and you cannot be knocked back for 10 seconds",
-          "description_raw": "After a Shield Bash or Thunder Hammer Pommel Smash, Melee Damage increases by <span class=\"sm2-green\">15%</span>, you do not lose control upon taking Heavy Hits and you cannot be knocked back for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After a Shield Bash or Thunder Hammer Pommel Smash, Melee Damage increases by 15%, you do not lose control upon taking Heavy Hits and you cannot be knocked back for 10 seconds Unlocks at level 16 and costs 20 Requisition Points.",
+          "description_raw": "After a Shield Bash or Thunder Hammer Pommel Smash, Melee Damage increases by 15%, you do not lose control upon taking Heavy Hits and you cannot be knocked back for 10 seconds\n\nUnlocks at level 16 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1628,10 +1628,10 @@
           "col": 8,
           "row": 2,
           "grid_label": "8/2",
-          "description": "A perfectly timed Parry instantly Incapacitates a Majoris - or Extremis -level enemy. Cooldown is 90 seconds.",
-          "description_raw": "A perfectly timed Parry instantly Incapacitates a <span class=\"sm2-majoris\">Majoris</span>- or <span class=\"sm2-extremis\">Extremis</span>-level enemy. Cooldown is <span class=\"sm2-green\">90</span> seconds.",
+          "description": "A perfectly timed Parry instantly Incapacitates a Majoris- or Extremis-level enemy. Cooldown is 90 seconds. Unlocks at level 17 and costs 20 Requisition Points.",
+          "description_raw": "A perfectly timed Parry instantly Incapacitates a Majoris- or Extremis-level enemy. Cooldown is 90 seconds.\n\nUnlocks at level 17 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1646,10 +1646,10 @@
           "col": 1,
           "row": 3,
           "grid_label": "1/3",
-          "description": "After a Shield Bash or Thunder Hammer Pommel Smash, Melee Damage increases by 30% for 10 seconds",
-          "description_raw": "After a Shield Bash or Thunder Hammer Pommel Smash, Melee Damage increases by <span class=\"sm2-green\">30%</span> for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After a Shield Bash or Thunder Hammer Pommel Smash, Melee Damage increases by 30% for 10 seconds Unlocks at level 18 and costs 20 Requisition Points.",
+          "description_raw": "After a Shield Bash or Thunder Hammer Pommel Smash, Melee Damage increases by 30% for 10 seconds\n\nUnlocks at level 18 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1664,10 +1664,10 @@
           "col": 2,
           "row": 3,
           "grid_label": "2/3",
-          "description": "If you are surrounded by 5 or more enemies, you take 25% less Damage from Ranged Attacks",
-          "description_raw": "If you are surrounded by <span class=\"sm2-green\">5</span> or more enemies, you take <span class=\"sm2-green\">25%</span> less Damage from Ranged Attacks",
+          "description": "If you are surrounded by 5 or more enemies, you take 25% less Damage from Ranged Attacks Unlocks at level 19 and costs 20 Requisition Points.",
+          "description_raw": "If you are surrounded by 5 or more enemies, you take 25% less Damage from Ranged Attacks\n\nUnlocks at level 19 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1682,10 +1682,10 @@
           "col": 3,
           "row": 3,
           "grid_label": "3/3",
-          "description": "Non-Finisher Gun Strikes restore 1 Armour Segment",
-          "description_raw": "Non-Finisher Gun Strikes restore <span class=\"sm2-green\">1</span> Armour Segment",
+          "description": "Non-Finisher Gun Strikes restore 1 Armour Segment Unlocks at level 20 and costs 20 Requisition Points.",
+          "description_raw": "Non-Finisher Gun Strikes restore 1 Armour Segment\n\nUnlocks at level 20 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1700,10 +1700,10 @@
           "col": 4,
           "row": 3,
           "grid_label": "4/3",
-          "description": "All Squad members take 20% less Health Damage from Extremis - and Terminus -level enemies",
-          "description_raw": "All Squad members take <span class=\"sm2-green\">20%</span> less Health Damage from <span class=\"sm2-extremis\">Extremis</span>- and <span class=\"sm2-terminus\">Terminus</span>-level enemies",
+          "description": "All Squad members take 20% less Health Damage from Extremis- and Terminus-level enemies Unlocks at level 21 and costs 40 Requisition Points.",
+          "description_raw": "All Squad members take 20% less Health Damage from Extremis- and Terminus-level enemies\n\nUnlocks at level 21 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1718,10 +1718,10 @@
           "col": 5,
           "row": 3,
           "grid_label": "5/3",
-          "description": "Shield Bash knocks enemies back and makes them lose control for a longer period of time",
-          "description_raw": "Shield Bash knocks enemies back and makes them lose control for a longer period of time",
+          "description": "Shield Bash knocks enemies back and makes them lose control for a longer period of time Unlocks at level 22 and costs 20 Requisition Points.",
+          "description_raw": "Shield Bash knocks enemies back and makes them lose control for a longer period of time\n\nUnlocks at level 22 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1736,10 +1736,10 @@
           "col": 6,
           "row": 3,
           "grid_label": "6/3",
-          "description": "When the banner is activated, all Squad Members regain maximum Contested Health, but it recharges 50% slower",
-          "description_raw": "When the banner is activated, all Squad Members regain maximum Contested Health, but it recharges <span class=\"sm2-red\">50%</span> slower",
+          "description": "When the banner is activated, all Squad Members regain maximum Contested Health, but it recharges 50% slower Unlocks at level 23 and costs 20 Requisition Points.",
+          "description_raw": "When the banner is activated, all Squad Members regain maximum Contested Health, but it recharges 50% slower\n\nUnlocks at level 23 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1754,10 +1754,10 @@
           "col": 7,
           "row": 3,
           "grid_label": "7/3",
-          "description": "All Squad Members within the banner's area of effect deal 20% more Damage",
-          "description_raw": "All Squad Members within the banner's area of effect deal <span class=\"sm2-green\">20%</span> more Damage",
+          "description": "All Squad Members within the banner's area of effect deal 20% more Damage Unlocks at level 24 and costs 20 Requisition Points.",
+          "description_raw": "All Squad Members within the banner's area of effect deal 20% more Damage\n\nUnlocks at level 24 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         },
         {
@@ -1772,10 +1772,10 @@
           "col": 8,
           "row": 3,
           "grid_label": "8/3",
-          "description": "If you have Armour remaining, you do not lose control upon taking Heavy Hits and you cannot be knocked back",
-          "description_raw": "If you have Armour remaining, you do not lose control upon taking Heavy Hits and you cannot be knocked back",
+          "description": "If you have Armour remaining, you do not lose control upon taking Heavy Hits and you cannot be knocked back Unlocks at level 25 and costs 20 Requisition Points.",
+          "description_raw": "If you have Armour remaining, you do not lose control upon taking Heavy Hits and you cannot be knocked back\n\nUnlocks at level 25 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Bulwark",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Bulwark"
         }
       ]
@@ -1803,10 +1803,10 @@
           "col": 1,
           "row": 1,
           "grid_label": "1/1",
-          "description": "Shots will penetrate enemy Block Stances, dealing 50% of the usual Damage",
-          "description_raw": "Shots will penetrate enemy Block Stances, dealing <span class=\"sm2-green\">50%</span> of the usual Damage",
+          "description": "Shots will penetrate enemy Block Stances, dealing 50% of the usual Damage Unlocks at level 2 and costs 20 Requisition Points.",
+          "description_raw": "Shots will penetrate enemy Block Stances, dealing 50% of the usual Damage\n\nUnlocks at level 2 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -1821,10 +1821,10 @@
           "col": 2,
           "row": 1,
           "grid_label": "2/1",
-          "description": "The maximum amount of Ammo you can carry increases by 10%",
-          "description_raw": "The maximum amount of Ammo you can carry increases by <span class=\"sm2-green\">10%</span>",
+          "description": "The maximum amount of Ammo you can carry increases by 10% Unlocks at level 3 and costs 20 Requisition Points.",
+          "description_raw": "The maximum amount of Ammo you can carry increases by 10%\n\nUnlocks at level 3 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -1839,10 +1839,10 @@
           "col": 3,
           "row": 1,
           "grid_label": "3/1",
-          "description": "Weapon Spread and Recoil are reduced by 20% and Ranged Damage against Terminus -level enemies is increased by 15% for Bolt Sniper Rifles and Stalker Bolt Rifles",
-          "description_raw": "Weapon Spread and Recoil are reduced by <span class=\"sm2-green\">20%</span> and Ranged Damage against <span class=\"sm2-extremis\">Terminus</span>-level enemies is increased by <span class=\"sm2-green\">15%</span> for Bolt Sniper Rifles and Stalker Bolt Rifles",
+          "description": "Weapon Spread and Recoil are reduced by 20% and Ranged Damage against Terminus-level enemies is increased by 15% for Bolt Sniper Rifles and Stalker Bolt Rifles Unlocks at level 4 and costs 20 Requisition Points.",
+          "description_raw": "Weapon Spread and Recoil are reduced by 20% and Ranged Damage against Terminus-level enemies is increased by 15% for Bolt Sniper Rifles and Stalker Bolt Rifles\n\nUnlocks at level 4 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -1857,10 +1857,10 @@
           "col": 4,
           "row": 1,
           "grid_label": "4/1",
-          "description": "Headshot Damage increases by 10% for all Squad Members",
-          "description_raw": "Headshot Damage increases by <span class=\"sm2-green\">10%</span> for all Squad Members",
+          "description": "Headshot Damage increases by 10% for all Squad Members Unlocks at level 5 and costs 40 Requisition Points.",
+          "description_raw": "Headshot Damage increases by 10% for all Squad Members\n\nUnlocks at level 5 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -1875,10 +1875,10 @@
           "col": 5,
           "row": 1,
           "grid_label": "5/1",
-          "description": "Manually activating Camo Cloak removes negative Status Effects and restores all Contested Health",
-          "description_raw": "Manually activating Camo Cloak removes negative Status Effects and restores all Contested Health",
+          "description": "Manually activating Camo Cloak removes negative Status Effects and restores all Contested Health Unlocks at level 6 and costs 20 Requisition Points.",
+          "description_raw": "Manually activating Camo Cloak removes negative Status Effects and restores all Contested Health\n\nUnlocks at level 6 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -1893,10 +1893,10 @@
           "col": 6,
           "row": 1,
           "grid_label": "6/1",
-          "description": "When you are reviving a Squad Member, Camo Cloak hides you and the Squad Member for 5 seconds without spending Charge.",
-          "description_raw": "When you are reviving a Squad Member, Camo Cloak hides you and the Squad Member for <span class=\"sm2-green\">5</span> seconds without spending Charge.",
+          "description": "When you are reviving a Squad Member, Camo Cloak hides you and the Squad Member for 5 seconds without spending Charge. Unlocks at level 7 and costs 20 Requisition Points.",
+          "description_raw": "When you are reviving a Squad Member, Camo Cloak hides you and the Squad Member for 5 seconds without spending Charge.\n\nUnlocks at level 7 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -1911,10 +1911,10 @@
           "col": 7,
           "row": 1,
           "grid_label": "7/1",
-          "description": "When Camo Cloak deactivates, you take 20% less Health Damage, do not lose control upon taking Heavy Hits, and cannot be knocked back for 10 seconds",
-          "description_raw": "When Camo Cloak deactivates, you take <span class=\"sm2-green\">20%</span> less Health Damage, do not lose control upon taking Heavy Hits, and cannot be knocked back for <span class=\"sm2-green\">10</span> seconds",
+          "description": "When Camo Cloak deactivates, you take 20% less Health Damage, do not lose control upon taking Heavy Hits, and cannot be knocked back for 10 seconds Unlocks at level 8 and costs 20 Requisition Points.",
+          "description_raw": "When Camo Cloak deactivates, you take 20% less Health Damage, do not lose control upon taking Heavy Hits, and cannot be knocked back for 10 seconds\n\nUnlocks at level 8 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -1929,10 +1929,10 @@
           "col": 8,
           "row": 1,
           "grid_label": "8/1",
-          "description": "After a perfectly timed Dodge, Camo Cloak automatically activates without spending Charge for 5 seconds. Cooldown is 30 seconds.",
-          "description_raw": "After a perfectly timed Dodge, Camo Cloak automatically activates without spending Charge for <span class=\"sm2-green\">5</span> seconds. Cooldown is <span class=\"sm2-green\">30</span> seconds.",
+          "description": "After a perfectly timed Dodge, Camo Cloak automatically activates without spending Charge for 5 seconds. Cooldown is 30 seconds. Unlocks at level 9 and costs 20 Requisition Points.",
+          "description_raw": "After a perfectly timed Dodge, Camo Cloak automatically activates without spending Charge for 5 seconds. Cooldown is 30 seconds.\n\nUnlocks at level 9 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -1947,10 +1947,10 @@
           "col": 1,
           "row": 2,
           "grid_label": "1/2",
-          "description": "Melee Damage increases by 20% against Majoris -level and higher enemies",
-          "description_raw": "Melee Damage increases by <span class=\"sm2-green\">20%</span> against <span class=\"sm2-majoris\">Majoris</span>-level and higher enemies",
+          "description": "Melee Damage increases by 20% against Majoris-level and higher enemies Unlocks at level 10 and costs 20 Requisition Points.",
+          "description_raw": "Melee Damage increases by 20% against Majoris-level and higher enemies\n\nUnlocks at level 10 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -1965,10 +1965,10 @@
           "col": 2,
           "row": 2,
           "grid_label": "2/2",
-          "description": "Remaining stationary for 2 seconds increases your Ranged Weapons' Damage by 20%",
-          "description_raw": "Remaining stationary for <span class=\"sm2-green\">2</span> seconds increases your Ranged Weapons' Damage by <span class=\"sm2-green\">20%</span>",
+          "description": "Remaining stationary for 2 seconds increases your Ranged Weapons' Damage by 20% Unlocks at level 11 and costs 20 Requisition Points.",
+          "description_raw": "Remaining stationary for 2 seconds increases your Ranged Weapons' Damage by 20%\n\nUnlocks at level 11 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -1983,10 +1983,10 @@
           "col": 3,
           "row": 2,
           "grid_label": "3/2",
-          "description": "Bolt Carbines reload 20% faster, and their Weapon Spread and Recoil are reduced by 15%",
-          "description_raw": "Bolt Carbines reload <span class=\"sm2-green\">20%</span> faster, and their Weapon Spread and Recoil are reduced by <span class=\"sm2-green\">15%</span>",
+          "description": "Bolt Carbines reload 20% faster, and their Weapon Spread and Recoil are reduced by 15% Unlocks at level 12 and costs 20 Requisition Points.",
+          "description_raw": "Bolt Carbines reload 20% faster, and their Weapon Spread and Recoil are reduced by 15%\n\nUnlocks at level 12 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2001,10 +2001,10 @@
           "col": 4,
           "row": 2,
           "grid_label": "4/2",
-          "description": "Weapon Spread is reduced by 25% and Ranged Damage against Extremis - and Terminus -level enemies is increased by 15% for all Squad Members",
-          "description_raw": "Weapon Spread is reduced by <span class=\"sm2-green\">25%</span> and Ranged Damage against <span class=\"sm2-extremis\">Extremis</span>- and <span class=\"sm2-extremis\">Terminus</span>-level enemies is increased by <span class=\"sm2-green\">15%</span> for all Squad Members",
+          "description": "Weapon Spread is reduced by 25% and Ranged Damage against Extremis- and Terminus-level enemies is increased by 15% for all Squad Members Unlocks at level 13 and costs 40 Requisition Points.",
+          "description_raw": "Weapon Spread is reduced by 25% and Ranged Damage against Extremis- and Terminus-level enemies is increased by 15% for all Squad Members\n\nUnlocks at level 13 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2019,10 +2019,10 @@
           "col": 5,
           "row": 2,
           "grid_label": "5/2",
-          "description": "Camo Cloak increases movement speed by 20% , and manually activating Camo Cloak automatically reloads Ranged Weapons. This effect lasts 5 seconds after deactivation.",
-          "description_raw": "Camo Cloak increases movement speed by <span class=\"sm2-green\">20%</span>, and manually activating Camo Cloak automatically reloads Ranged Weapons. This effect lasts <span class=\"sm2-green\">5</span> seconds after deactivation.",
+          "description": "Camo Cloak increases movement speed by 20%, and manually activating Camo Cloak automatically reloads Ranged Weapons. This effect lasts 5 seconds after deactivation. Unlocks at level 14 and costs 20 Requisition Points.",
+          "description_raw": "Camo Cloak increases movement speed by 20%, and manually activating Camo Cloak automatically reloads Ranged Weapons. This effect lasts 5 seconds after deactivation.\n\nUnlocks at level 14 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2037,10 +2037,10 @@
           "col": 6,
           "row": 2,
           "grid_label": "6/2",
-          "description": "The first Ranged Attack that breaks Camo Cloak deals 75% more Damage",
-          "description_raw": "The first Ranged Attack that breaks Camo Cloak deals <span class=\"sm2-green\">75%</span> more Damage",
+          "description": "The first Ranged Attack that breaks Camo Cloak deals 75% more Damage Unlocks at level 15 and costs 20 Requisition Points.",
+          "description_raw": "The first Ranged Attack that breaks Camo Cloak deals 75% more Damage\n\nUnlocks at level 15 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2055,10 +2055,10 @@
           "col": 7,
           "row": 2,
           "grid_label": "7/2",
-          "description": "After performing an attack that breaks Camo Cloak, you remain hidden for 2 seconds",
-          "description_raw": "After performing an attack that breaks Camo Cloak, you remain hidden for <span class=\"sm2-green\">2</span> seconds",
+          "description": "After performing an attack that breaks Camo Cloak, you remain hidden for 2 seconds Unlocks at level 16 and costs 20 Requisition Points.",
+          "description_raw": "After performing an attack that breaks Camo Cloak, you remain hidden for 2 seconds\n\nUnlocks at level 16 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2073,10 +2073,10 @@
           "col": 8,
           "row": 2,
           "grid_label": "8/2",
-          "description": "When you receive Lethal Damage, Camo Cloak automatically activates without spending Charge and you become Invulnerable for 5 seconds. Cooldown is 180 seconds.",
-          "description_raw": "When you receive Lethal Damage, Camo Cloak automatically activates without spending Charge and you become Invulnerable for <span class=\"sm2-green\">5</span> seconds. Cooldown is <span class=\"sm2-green\">180</span> seconds.",
+          "description": "When you receive Lethal Damage, Camo Cloak automatically activates without spending Charge and you become Invulnerable for 5 seconds. Cooldown is 180 seconds. Unlocks at level 17 and costs 20 Requisition Points.",
+          "description_raw": "When you receive Lethal Damage, Camo Cloak automatically activates without spending Charge and you become Invulnerable for 5 seconds. Cooldown is 180 seconds.\n\nUnlocks at level 17 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2091,10 +2091,10 @@
           "col": 1,
           "row": 3,
           "grid_label": "1/3",
-          "description": "You revive Squad members 30% faster",
-          "description_raw": "You revive Squad members <span class=\"sm2-green\">30%</span> faster",
+          "description": "You revive Squad members 30% faster Unlocks at level 18 and costs 20 Requisition Points.",
+          "description_raw": "You revive Squad members 30% faster\n\nUnlocks at level 18 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2109,10 +2109,10 @@
           "col": 2,
           "row": 3,
           "grid_label": "2/3",
-          "description": "Reloading while having Low Ammo or manually activating Camo Cloak increases Melee Damage by 25% for 10 seconds",
-          "description_raw": "Reloading while having Low Ammo or manually activating Camo Cloak increases Melee Damage by <span class=\"sm2-green\">25%</span> for <span class=\"sm2-green\">10</span> seconds",
+          "description": "Reloading while having Low Ammo or manually activating Camo Cloak increases Melee Damage by 25% for 10 seconds Unlocks at level 19 and costs 20 Requisition Points.",
+          "description_raw": "Reloading while having Low Ammo or manually activating Camo Cloak increases Melee Damage by 25% for 10 seconds\n\nUnlocks at level 19 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2127,10 +2127,10 @@
           "col": 3,
           "row": 3,
           "grid_label": "3/3",
-          "description": "Killing more than 1 enemy with one shot from a Las Fusil restores its charge by 1",
-          "description_raw": "Killing more than <span class=\"sm2-green\">1</span> enemy with one shot from a Las Fusil restores its charge by <span class=\"sm2-green\">1</span>",
+          "description": "Killing more than 1 enemy with one shot from a Las Fusil restores its charge by 1 Unlocks at level 20 and costs 20 Requisition Points.",
+          "description_raw": "Killing more than 1 enemy with one shot from a Las Fusil restores its charge by 1\n\nUnlocks at level 20 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2145,10 +2145,10 @@
           "col": 4,
           "row": 3,
           "grid_label": "4/3",
-          "description": "A Headshot kill restores Ability Charge by 10% for any Squad Member",
-          "description_raw": "A Headshot kill restores Ability Charge by <span class=\"sm2-green\">10%</span> for any Squad Member",
+          "description": "A Headshot kill restores Ability Charge by 10% for any Squad Member Unlocks at level 21 and costs 40 Requisition Points.",
+          "description_raw": "A Headshot kill restores Ability Charge by 10% for any Squad Member\n\nUnlocks at level 21 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2163,10 +2163,10 @@
           "col": 5,
           "row": 3,
           "grid_label": "5/3",
-          "description": "A Headshot kill restores Camo Cloak's Charge by 5%",
-          "description_raw": "A Headshot kill restores Camo Cloak's Charge by <span class=\"sm2-green\">5%</span>",
+          "description": "A Headshot kill restores Camo Cloak's Charge by 5% Unlocks at level 22 and costs 20 Requisition Points.",
+          "description_raw": "A Headshot kill restores Camo Cloak's Charge by 5%\n\nUnlocks at level 22 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2181,10 +2181,10 @@
           "col": 6,
           "row": 3,
           "grid_label": "6/3",
-          "description": "The first Melee Attack that breaks Camo Cloak deals 150% more Damage",
-          "description_raw": "The first Melee Attack that breaks Camo Cloak deals <span class=\"sm2-green\">150%</span> more Damage",
+          "description": "The first Melee Attack that breaks Camo Cloak deals 150% more Damage Unlocks at level 23 and costs 20 Requisition Points.",
+          "description_raw": "The first Melee Attack that breaks Camo Cloak deals 150% more Damage\n\nUnlocks at level 23 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2199,10 +2199,10 @@
           "col": 7,
           "row": 3,
           "grid_label": "7/3",
-          "description": "When your Camo Cloak deactivates, it startles and slows down nearby enemies for 10 seconds. They will temporarily lose control or get knocked back. Cooldown is 15 seconds.",
-          "description_raw": "When your Camo Cloak deactivates, it startles and slows down nearby enemies for <span class=\"sm2-green\">10</span> seconds. They will temporarily lose control or get knocked back. Cooldown is <span class=\"sm2-green\">15</span> seconds.",
+          "description": "When your Camo Cloak deactivates, it startles and slows down nearby enemies for 10 seconds. They will temporarily lose control or get knocked back. Cooldown is 15 seconds. Unlocks at level 24 and costs 20 Requisition Points.",
+          "description_raw": "When your Camo Cloak deactivates, it startles and slows down nearby enemies for 10 seconds. They will temporarily lose control or get knocked back. Cooldown is 15 seconds.\n\nUnlocks at level 24 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         },
         {
@@ -2217,10 +2217,10 @@
           "col": 8,
           "row": 3,
           "grid_label": "8/3",
-          "description": "Performing 3 consecutive Headshots restores Equipment Charge by 1 . Cooldown is 30 seconds.",
-          "description_raw": "Performing <span class=\"sm2-green\">3</span> consecutive Headshots restores Equipment Charge by <span class=\"sm2-green\">1</span>. Cooldown is <span class=\"sm2-green\">30</span> seconds.",
+          "description": "Performing 3 consecutive Headshots restores Equipment Charge by 1. Cooldown is 30 seconds. Unlocks at level 25 and costs 20 Requisition Points.",
+          "description_raw": "Performing 3 consecutive Headshots restores Equipment Charge by 1. Cooldown is 30 seconds.\n\nUnlocks at level 25 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Sniper",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Sniper"
         }
       ]
@@ -2248,10 +2248,10 @@
           "col": 1,
           "row": 1,
           "grid_label": "1/1",
-          "description": "Killing 10 enemies within 5 seconds restores 1 Armour Segments. Cooldown is 15 seconds.",
-          "description_raw": "Killing <span class=\"sm2-green\">10</span> enemies within <span class=\"sm2-green\">5</span> seconds restores <span class=\"sm2-green\">1</span> Armour Segments. Cooldown is <span class=\"sm2-green\">15</span> seconds.",
+          "description": "Killing 10 enemies within 5 seconds restores 1 Armour Segments. Cooldown is 15 seconds. Unlocks at level 2 and costs 20 Requisition Points.",
+          "description_raw": "Killing 10 enemies within 5 seconds restores 1 Armour Segments. Cooldown is 15 seconds.\n\nUnlocks at level 2 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2266,10 +2266,10 @@
           "col": 2,
           "row": 1,
           "grid_label": "2/1",
-          "description": "When a Ranged Weapon is 50% Overheated or you have 50% ammo in Magazine, Ranged Damage increases by 15%",
-          "description_raw": "When a Ranged Weapon is <span class=\"sm2-green\">50%</span> Overheated or you have 50% ammo in Magazine, Ranged Damage increases by <span class=\"sm2-green\">15%</span>",
+          "description": "When a Ranged Weapon is 50% Overheated or you have 50% ammo in Magazine, Ranged Damage increases by 15% Unlocks at level 3 and costs 20 Requisition Points.",
+          "description_raw": "When a Ranged Weapon is 50% Overheated or you have 50% ammo in Magazine, Ranged Damage increases by 15%\n\nUnlocks at level 3 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2284,10 +2284,10 @@
           "col": 3,
           "row": 1,
           "grid_label": "3/1",
-          "description": "Melee Damage increases by 30%",
-          "description_raw": "Melee Damage increases by <span class=\"sm2-green\">30%</span>",
+          "description": "Melee Damage increases by 30% Unlocks at level 4 and costs 20 Requisition Points.",
+          "description_raw": "Melee Damage increases by 30%\n\nUnlocks at level 4 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2302,10 +2302,10 @@
           "col": 4,
           "row": 1,
           "grid_label": "4/1",
-          "description": "All Squad Members take 25% less Damage from Ranged Attacks",
-          "description_raw": "All Squad Members take <span class=\"sm2-green\">25%</span> less Damage from Ranged Attacks",
+          "description": "All Squad Members take 25% less Damage from Ranged Attacks Unlocks at level 5 and costs 40 Requisition Points.",
+          "description_raw": "All Squad Members take 25% less Damage from Ranged Attacks\n\nUnlocks at level 5 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2320,10 +2320,10 @@
           "col": 5,
           "row": 1,
           "grid_label": "5/1",
-          "description": "After Iron Halo deactivates, you take 20% less Health Damage for 10 seconds",
-          "description_raw": "After Iron Halo deactivates, you take <span class=\"sm2-green\">20%</span> less Health Damage for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After Iron Halo deactivates, you take 20% less Health Damage for 10 seconds Unlocks at level 6 and costs 20 Requisition Points.",
+          "description_raw": "After Iron Halo deactivates, you take 20% less Health Damage for 10 seconds\n\nUnlocks at level 6 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2338,10 +2338,10 @@
           "col": 6,
           "row": 1,
           "grid_label": "6/1",
-          "description": "Iron Halo's Durability increases by 20%",
-          "description_raw": "Iron Halo's Durability increases by <span class=\"sm2-green\">20%</span>",
+          "description": "Iron Halo's Durability increases by 20% Unlocks at level 7 and costs 20 Requisition Points.",
+          "description_raw": "Iron Halo's Durability increases by 20%\n\nUnlocks at level 7 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2356,10 +2356,10 @@
           "col": 7,
           "row": 1,
           "grid_label": "7/1",
-          "description": "Reviving a Squad Member fully restores Iron Halo's Charge and all Armour Segments",
-          "description_raw": "Reviving a Squad Member fully restores Iron Halo's Charge and all Armour Segments",
+          "description": "Reviving a Squad Member fully restores Iron Halo's Charge and all Armour Segments Unlocks at level 8 and costs 20 Requisition Points.",
+          "description_raw": "Reviving a Squad Member fully restores Iron Halo's Charge and all Armour Segments\n\nUnlocks at level 8 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2374,10 +2374,10 @@
           "col": 8,
           "row": 1,
           "grid_label": "8/1",
-          "description": "When active, Iron Halo deals Damage that scales with difficulty over time to all enemies within 5 metres",
-          "description_raw": "When active, Iron Halo deals Damage that scales with difficulty over time to all enemies within <span class=\"sm2-green\">5</span> metres",
+          "description": "When active, Iron Halo deals Damage that scales with difficulty over time to all enemies within 5 metres Unlocks at level 9 and costs 20 Requisition Points.",
+          "description_raw": "When active, Iron Halo deals Damage that scales with difficulty over time to all enemies within 5 metres\n\nUnlocks at level 9 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2392,10 +2392,10 @@
           "col": 1,
           "row": 2,
           "grid_label": "1/2",
-          "description": "Killing 5 or more enemies with one shot from a Multi-Melta restores Ammo by 1",
-          "description_raw": "Killing <span class=\"sm2-green\">5</span> or more enemies with one shot from a Multi-Melta restores Ammo by <span class=\"sm2-green\">1</span>",
+          "description": "Killing 5 or more enemies with one shot from a Multi-Melta restores Ammo by 1 Unlocks at level 10 and costs 20 Requisition Points.",
+          "description_raw": "Killing 5 or more enemies with one shot from a Multi-Melta restores Ammo by 1\n\nUnlocks at level 10 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2410,10 +2410,10 @@
           "col": 2,
           "row": 2,
           "grid_label": "2/2",
-          "description": "Health increases by 30%",
-          "description_raw": "Health increases by <span class=\"sm2-green\">30%</span>",
+          "description": "Health increases by 30% Unlocks at level 11 and costs 20 Requisition Points.",
+          "description_raw": "Health increases by 30%\n\nUnlocks at level 11 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2428,10 +2428,10 @@
           "col": 3,
           "row": 2,
           "grid_label": "3/2",
-          "description": "When Iron Halo is active, all Squad Members within 10 metres deal 10% more Ranged Damage",
-          "description_raw": "When Iron Halo is active, all Squad Members within <span class=\"sm2-green\">10</span> metres deal <span class=\"sm2-green\">10%</span> more Ranged Damage",
+          "description": "When Iron Halo is active, all Squad Members within 10 metres deal 10% more Ranged Damage Unlocks at level 12 and costs 20 Requisition Points.",
+          "description_raw": "When Iron Halo is active, all Squad Members within 10 metres deal 10% more Ranged Damage\n\nUnlocks at level 12 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2446,10 +2446,10 @@
           "col": 4,
           "row": 2,
           "grid_label": "4/2",
-          "description": "Ammo Capacity for all Squad Members' Weapons increases by 25%",
-          "description_raw": "Ammo Capacity for all Squad Members' Weapons increases by <span class=\"sm2-green\">25%</span>",
+          "description": "Ammo Capacity for all Squad Members' Weapons increases by 25% Unlocks at level 13 and costs 40 Requisition Points.",
+          "description_raw": "Ammo Capacity for all Squad Members' Weapons increases by 25%\n\nUnlocks at level 13 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2464,10 +2464,10 @@
           "col": 5,
           "row": 2,
           "grid_label": "5/2",
-          "description": "Killing 7 enemies within 5 seconds restores Equipment Charge. Cooldown is 90 seconds.",
-          "description_raw": "Killing <span class=\"sm2-green\">7</span> enemies within <span class=\"sm2-green\">5</span> seconds restores Equipment Charge. Cooldown is <span class=\"sm2-green\">90</span> seconds.",
+          "description": "Killing 7 enemies within 5 seconds restores Equipment Charge. Cooldown is 90 seconds. Unlocks at level 14 and costs 20 Requisition Points.",
+          "description_raw": "Killing 7 enemies within 5 seconds restores Equipment Charge. Cooldown is 90 seconds.\n\nUnlocks at level 14 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2482,10 +2482,10 @@
           "col": 6,
           "row": 2,
           "grid_label": "6/2",
-          "description": "Iron Halo recharges 20% faster, but its Durability is reduced by 25%",
-          "description_raw": "Iron Halo recharges <span class=\"sm2-green\">20%</span> faster, but its Durability is reduced by <span class=\"sm2-red\">25%</span>",
+          "description": "Iron Halo recharges 20% faster, but its Durability is reduced by 25% Unlocks at level 15 and costs 20 Requisition Points.",
+          "description_raw": "Iron Halo recharges 20% faster, but its Durability is reduced by 25%\n\nUnlocks at level 15 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2500,10 +2500,10 @@
           "col": 7,
           "row": 2,
           "grid_label": "7/2",
-          "description": "When Iron Halo is in cooldown, Ranged Damage increases by 15%",
-          "description_raw": "When Iron Halo is in cooldown, Ranged Damage increases by <span class=\"sm2-green\">15%</span>",
+          "description": "When Iron Halo is in cooldown, Ranged Damage increases by 15% Unlocks at level 16 and costs 20 Requisition Points.",
+          "description_raw": "When Iron Halo is in cooldown, Ranged Damage increases by 15%\n\nUnlocks at level 16 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2518,10 +2518,10 @@
           "col": 8,
           "row": 2,
           "grid_label": "8/2",
-          "description": "If both of your Squad Members are Incapacitated or grabbed, your Primary Weapon will not Overheat and you deal 15% more Damage",
-          "description_raw": "If both of your Squad Members are Incapacitated or grabbed, your Primary Weapon will not Overheat and you deal <span class=\"sm2-green\">15%</span> more Damage",
+          "description": "If both of your Squad Members are Incapacitated or grabbed, your Primary Weapon will not Overheat and you deal 15% more Damage Unlocks at level 17 and costs 20 Requisition Points.",
+          "description_raw": "If both of your Squad Members are Incapacitated or grabbed, your Primary Weapon will not Overheat and you deal 15% more Damage\n\nUnlocks at level 17 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2536,10 +2536,10 @@
           "col": 1,
           "row": 3,
           "grid_label": "1/3",
-          "description": "When your Primary Weapon is out of Ammo, killing 7 enemies within 6 seconds restores Ammo Reserve by 20% . Cooldown is 30 seconds.",
-          "description_raw": "When your Primary Weapon is out of Ammo, killing <span class=\"sm2-green\">7</span> enemies within <span class=\"sm2-green\">6</span> seconds restores Ammo Reserve by <span class=\"sm2-green\">20%</span>. Cooldown is <span class=\"sm2-green\">30</span> seconds.",
+          "description": "When your Primary Weapon is out of Ammo, killing 7 enemies within 6 seconds restores Ammo Reserve by 20%. Cooldown is 30 seconds. Unlocks at level 18 and costs 20 Requisition Points.",
+          "description_raw": "When your Primary Weapon is out of Ammo, killing 7 enemies within 6 seconds restores Ammo Reserve by 20%. Cooldown is 30 seconds.\n\nUnlocks at level 18 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2554,10 +2554,10 @@
           "col": 2,
           "row": 3,
           "grid_label": "2/3",
-          "description": "While in Heavy Stance, dealing Damage restores 15% more Contested Health, you do not lose control upon taking Heavy Hits, and you cannot be knocked back but you will not be able to move",
-          "description_raw": "While in Heavy Stance, dealing Damage restores <span class=\"sm2-green\">15%</span> more Contested Health, you do not lose control upon taking Heavy Hits, and you cannot be knocked back but you will not be able to move",
+          "description": "While in Heavy Stance, dealing Damage restores 15% more Contested Health, you do not lose control upon taking Heavy Hits, and you cannot be knocked back but you will not be able to move Unlocks at level 19 and costs 20 Requisition Points.",
+          "description_raw": "While in Heavy Stance, dealing Damage restores 15% more Contested Health, you do not lose control upon taking Heavy Hits, and you cannot be knocked back but you will not be able to move\n\nUnlocks at level 19 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2572,10 +2572,10 @@
           "col": 3,
           "row": 3,
           "grid_label": "3/3",
-          "description": "After switching Weapons, your Secondary Weapon does 20% more Damage. The Effect lasts until reloading or switching back to your Primary Weapon.",
-          "description_raw": "After switching Weapons, your Secondary Weapon does <span class=\"sm2-green\">20%</span> more Damage. The Effect lasts until reloading or switching back to your Primary Weapon.",
+          "description": "After switching Weapons, your Secondary Weapon does 20% more Damage. The Effect lasts until reloading or switching back to your Primary Weapon. Unlocks at level 20 and costs 20 Requisition Points.",
+          "description_raw": "After switching Weapons, your Secondary Weapon does 20% more Damage. The Effect lasts until reloading or switching back to your Primary Weapon.\n\nUnlocks at level 20 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2590,10 +2590,10 @@
           "col": 4,
           "row": 3,
           "grid_label": "4/3",
-          "description": "Reviving a Squad Member restores them to full Health",
-          "description_raw": "Reviving a Squad Member restores them to full Health",
+          "description": "Reviving a Squad Member restores them to full Health Unlocks at level 21 and costs 40 Requisition Points.",
+          "description_raw": "Reviving a Squad Member restores them to full Health\n\nUnlocks at level 21 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2608,10 +2608,10 @@
           "col": 5,
           "row": 3,
           "grid_label": "5/3",
-          "description": "When Iron Halo expends all its energy, 1 Armour Segment is restored for all Squad Members",
-          "description_raw": "When Iron Halo expends all its energy, <span class=\"sm2-green\">1</span> Armour Segment is restored for all Squad Members",
+          "description": "When Iron Halo expends all its energy, 1 Armour Segment is restored for all Squad Members Unlocks at level 22 and costs 20 Requisition Points.",
+          "description_raw": "When Iron Halo expends all its energy, 1 Armour Segment is restored for all Squad Members\n\nUnlocks at level 22 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2626,10 +2626,10 @@
           "col": 6,
           "row": 3,
           "grid_label": "6/3",
-          "description": "Iron Halo loses energy 20% more slowly",
-          "description_raw": "Iron Halo loses energy <span class=\"sm2-green\">20%</span> more slowly",
+          "description": "Iron Halo loses energy 20% more slowly Unlocks at level 23 and costs 20 Requisition Points.",
+          "description_raw": "Iron Halo loses energy 20% more slowly\n\nUnlocks at level 23 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2644,10 +2644,10 @@
           "col": 7,
           "row": 3,
           "grid_label": "7/3",
-          "description": "When Iron Halo expends all of its energy, enemies in a 10 -metre radius take significant Damage that scales with difficulty",
-          "description_raw": "When Iron Halo expends all of its energy, enemies in a <span class=\"sm2-green\">10</span>-metre radius take significant Damage that scales with difficulty",
+          "description": "When Iron Halo expends all of its energy, enemies in a 10-metre radius take significant Damage that scales with difficulty Unlocks at level 24 and costs 20 Requisition Points.",
+          "description_raw": "When Iron Halo expends all of its energy, enemies in a 10-metre radius take significant Damage that scales with difficulty\n\nUnlocks at level 24 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         },
         {
@@ -2662,10 +2662,10 @@
           "col": 8,
           "row": 3,
           "grid_label": "8/3",
-          "description": "When Iron Halo is active, all Squad Members within 20 metres regenerate Ability Charge 50% faster",
-          "description_raw": "When Iron Halo is active, all Squad Members within <span class=\"sm2-green\">20</span> metres regenerate Ability Charge <span class=\"sm2-green\">50%</span> faster",
+          "description": "When Iron Halo is active, all Squad Members within 20 metres regenerate Ability Charge 50% faster Unlocks at level 25 and costs 20 Requisition Points.",
+          "description_raw": "When Iron Halo is active, all Squad Members within 20 metres regenerate Ability Charge 50% faster\n\nUnlocks at level 25 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Heavy",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Heavy"
         }
       ]
@@ -2689,14 +2689,14 @@
           "talent_name_en": "Explosive Enfilade",
           "talent_name_zh": "",
           "icon_path": "talents/技术军士/c1r1_explosive-enfilade.png",
-          "icon_url": "https://static.wikia.nocookie.net/spacemarine2/images/4/4f/Perk_engineer_02.png/revision/latest?cb=20260203145959",
+          "icon_url": "https://static.wikia.nocookie.net/spacemarine2/images/4/4f/Perk_engineer_02.png/revision/latest?cb=20260521184902",
           "col": 1,
           "row": 1,
           "grid_label": "1/1",
-          "description": "After using Equipment, your Ranged Damage increases by 15% for 10 seconds",
-          "description_raw": "After using Equipment, your Ranged Damage increases by <span class=\"sm2-green\">15%</span> for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After using Equipment, your Ranged Damage increases by 15% for 10 seconds Unlocks at level 2 and costs 20 Requisition Points.",
+          "description_raw": "After using Equipment, your Ranged Damage increases by 15% for 10 seconds\n\nUnlocks at level 2 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2711,10 +2711,10 @@
           "col": 2,
           "row": 1,
           "grid_label": "2/1",
-          "description": "Damage from Charged Melee Attacks increases by 20%",
-          "description_raw": "Damage from Charged Melee Attacks increases by <span class=\"sm2-green\">20%</span>",
+          "description": "Damage from Charged Melee Attacks increases by 20% Unlocks at level 3 and costs 20 Requisition Points.",
+          "description_raw": "Damage from Charged Melee Attacks increases by 20%\n\nUnlocks at level 3 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2729,10 +2729,10 @@
           "col": 3,
           "row": 1,
           "grid_label": "3/1",
-          "description": "Damage from Equipment increases by 35%",
-          "description_raw": "Damage from Equipment increases by <span class=\"sm2-green\">35%</span>",
+          "description": "Damage from Equipment increases by 35% Unlocks at level 4 and costs 20 Requisition Points.",
+          "description_raw": "Damage from Equipment increases by 35%\n\nUnlocks at level 4 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2747,10 +2747,10 @@
           "col": 4,
           "row": 1,
           "grid_label": "4/1",
-          "description": "All Squad Members within 15 metres of an active Tarantula Sentry Gun take 25% less Damage and deal 15% more Damage",
-          "description_raw": "All Squad Members within <span class=\"sm2-green\">15</span> metres of an active Tarantula Sentry Gun take <span class=\"sm2-green\">25%</span> less Damage and deal <span class=\"sm2-green\">15%</span> more Damage",
+          "description": "All Squad Members within 15 metres of an active Tarantula Sentry Gun take 25% less Damage and deal 15% more Damage Unlocks at level 5 and costs 40 Requisition Points.",
+          "description_raw": "All Squad Members within 15 metres of an active Tarantula Sentry Gun take 25% less Damage and deal 15% more Damage\n\nUnlocks at level 5 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2765,10 +2765,10 @@
           "col": 5,
           "row": 1,
           "grid_label": "5/1",
-          "description": "Enemies hit by the Servo-Gun take 15% more Damage for 10 seconds",
-          "description_raw": "Enemies hit by the Servo-Gun take <span class=\"sm2-green\">15%</span> more Damage for <span class=\"sm2-green\">10</span> seconds",
+          "description": "Enemies hit by the Servo-Gun take 15% more Damage for 10 seconds Unlocks at level 6 and costs 20 Requisition Points.",
+          "description_raw": "Enemies hit by the Servo-Gun take 15% more Damage for 10 seconds\n\nUnlocks at level 6 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2783,10 +2783,10 @@
           "col": 6,
           "row": 1,
           "grid_label": "6/1",
-          "description": "Servo-Gun recharges 15% faster",
-          "description_raw": "Servo-Gun recharges <span class=\"sm2-green\">15%</span> faster",
+          "description": "Servo-Gun recharges 15% faster Unlocks at level 7 and costs 20 Requisition Points.",
+          "description_raw": "Servo-Gun recharges 15% faster\n\nUnlocks at level 7 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2801,10 +2801,10 @@
           "col": 7,
           "row": 1,
           "grid_label": "7/1",
-          "description": "After using the Servo-Gun, Melee Damage increases by 35% for 10 seconds",
-          "description_raw": "After using the Servo-Gun, Melee Damage increases by <span class=\"sm2-green\">35%</span> for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After using the Servo-Gun, Melee Damage increases by 35% for 10 seconds Unlocks at level 8 and costs 20 Requisition Points.",
+          "description_raw": "After using the Servo-Gun, Melee Damage increases by 35% for 10 seconds\n\nUnlocks at level 8 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2819,10 +2819,10 @@
           "col": 8,
           "row": 1,
           "grid_label": "8/1",
-          "description": "Killing or incapacitating Majoris -level or higher enemies with the Servo- Gun regenerates its Ability Charge by 100% . Cooldown is 90 seconds.",
-          "description_raw": "Killing or incapacitating <span class=\"sm2-majoris\">Majoris</span>-level or higher enemies with the Servo- Gun regenerates its Ability Charge by <span class=\"sm2-green\">100%</span>. Cooldown is <span class=\"sm2-green\">90</span> seconds.",
+          "description": "Killing or incapacitating Majoris-level or higher enemies with the Servo- Gun regenerates its Ability Charge by 100%. Cooldown is 90 seconds. Unlocks at level 9 and costs 20 Requisition Points.",
+          "description_raw": "Killing or incapacitating Majoris-level or higher enemies with the Servo- Gun regenerates its Ability Charge by 100%. Cooldown is 90 seconds.\n\nUnlocks at level 9 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2837,10 +2837,10 @@
           "col": 1,
           "row": 2,
           "grid_label": "1/2",
-          "description": "The Servo-Gun now locks on to a single target and fires powerful precision shots",
-          "description_raw": "The Servo-Gun now locks on to a single target and fires powerful precision shots",
+          "description": "The Servo-Gun now locks on to a single target and fires powerful precision shots Unlocks at level 10 and costs 20 Requisition Points.",
+          "description_raw": "The Servo-Gun now locks on to a single target and fires powerful precision shots\n\nUnlocks at level 10 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2855,10 +2855,10 @@
           "col": 2,
           "row": 2,
           "grid_label": "2/2",
-          "description": "Enemies damaged by Equipment take 25% more Damage for 10 seconds",
-          "description_raw": "Enemies damaged by Equipment take <span class=\"sm2-green\">25%</span> more Damage for <span class=\"sm2-green\">10</span> seconds",
+          "description": "Enemies damaged by Equipment take 25% more Damage for 10 seconds Unlocks at level 11 and costs 20 Requisition Points.",
+          "description_raw": "Enemies damaged by Equipment take 25% more Damage for 10 seconds\n\nUnlocks at level 11 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2873,10 +2873,10 @@
           "col": 3,
           "row": 2,
           "grid_label": "3/2",
-          "description": "After a Finisher, your Melee Weapon deals 20% more Damage for 15 seconds",
-          "description_raw": "After a Finisher, your Melee Weapon deals <span class=\"sm2-green\">20%</span> more Damage for <span class=\"sm2-green\">15</span> seconds",
+          "description": "After a Finisher, your Melee Weapon deals 20% more Damage for 15 seconds Unlocks at level 12 and costs 20 Requisition Points.",
+          "description_raw": "After a Finisher, your Melee Weapon deals 20% more Damage for 15 seconds\n\nUnlocks at level 12 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2891,10 +2891,10 @@
           "col": 4,
           "row": 2,
           "grid_label": "4/2",
-          "description": "All Squad Members fully regenerate their Armour and gain 1 additional Armour Segment when using Medicae Stimms",
-          "description_raw": "All Squad Members fully regenerate their Armour and gain <span class=\"sm2-green\">1</span> additional Armour Segment when using Medicae Stimms",
+          "description": "All Squad Members fully regenerate their Armour and gain 1 additional Armour Segment when using Medicae Stimms Unlocks at level 13 and costs 40 Requisition Points.",
+          "description_raw": "All Squad Members fully regenerate their Armour and gain 1 additional Armour Segment when using Medicae Stimms\n\nUnlocks at level 13 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2909,10 +2909,10 @@
           "col": 5,
           "row": 2,
           "grid_label": "5/2",
-          "description": "While the Servo-Gun is active, you do not lose control upon taking Heavy Hits and you cannot be knocked back",
-          "description_raw": "While the Servo-Gun is active, you do not lose control upon taking Heavy Hits and you cannot be knocked back",
+          "description": "While the Servo-Gun is active, you do not lose control upon taking Heavy Hits and you cannot be knocked back Unlocks at level 14 and costs 20 Requisition Points.",
+          "description_raw": "While the Servo-Gun is active, you do not lose control upon taking Heavy Hits and you cannot be knocked back\n\nUnlocks at level 14 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2927,10 +2927,10 @@
           "col": 6,
           "row": 2,
           "grid_label": "6/2",
-          "description": "Tarantula Sentry Gun Damage increases by 30% and Ammo increases by 50%",
-          "description_raw": "Tarantula Sentry Gun Damage increases by <span class=\"sm2-green\">30%</span> and Ammo increases by <span class=\"sm2-green\">50%</span>",
+          "description": "Tarantula Sentry Gun Damage increases by 30% and Ammo increases by 50% Unlocks at level 15 and costs 20 Requisition Points.",
+          "description_raw": "Tarantula Sentry Gun Damage increases by 30% and Ammo increases by 50%\n\nUnlocks at level 15 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2945,10 +2945,10 @@
           "col": 7,
           "row": 2,
           "grid_label": "7/2",
-          "description": "Killing enemies with the Servo-Gun restores 1 Armor Segment. Cooldown is 30 seconds.",
-          "description_raw": "Killing enemies with the Servo-Gun restores <span class=\"sm2-green\">1</span> Armor Segment. Cooldown is <span class=\"sm2-green\">30</span> seconds.",
+          "description": "Killing enemies with the Servo-Gun restores 1 Armor Segment. Cooldown is 30 seconds. Unlocks at level 16 and costs 20 Requisition Points.",
+          "description_raw": "Killing enemies with the Servo-Gun restores 1 Armor Segment. Cooldown is 30 seconds.\n\nUnlocks at level 16 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2963,10 +2963,10 @@
           "col": 8,
           "row": 2,
           "grid_label": "8/2",
-          "description": "The Servo-Gun marks a zone and automatically attacks enemies that enter it, using 50% less energy per shot",
-          "description_raw": "The Servo-Gun marks a zone and automatically attacks enemies that enter it, using <span class=\"sm2-green\">50%</span> less energy per shot",
+          "description": "The Servo-Gun marks a zone and automatically attacks enemies that enter it, using 50% less energy per shot Unlocks at level 17 and costs 20 Requisition Points.",
+          "description_raw": "The Servo-Gun marks a zone and automatically attacks enemies that enter it, using 50% less energy per shot\n\nUnlocks at level 17 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2981,10 +2981,10 @@
           "col": 1,
           "row": 3,
           "grid_label": "1/3",
-          "description": "The Servo-Gun now guards a targeted area and fires exploding Plasma projectiles at enemies that enter it",
-          "description_raw": "The Servo-Gun now guards a targeted area and fires exploding Plasma projectiles at enemies that enter it",
+          "description": "The Servo-Gun now guards a targeted area and fires exploding Plasma projectiles at enemies that enter it Unlocks at level 18 and costs 20 Requisition Points.",
+          "description_raw": "The Servo-Gun now guards a targeted area and fires exploding Plasma projectiles at enemies that enter it\n\nUnlocks at level 18 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -2999,10 +2999,10 @@
           "col": 2,
           "row": 3,
           "grid_label": "2/3",
-          "description": "After a Perfect Parry or Perfect Block, you take 15% less Damage from Ranged Attack for 10 seconds",
-          "description_raw": "After a Perfect Parry or Perfect Block, you take <span class=\"sm2-green\">15%</span> less Damage from Ranged Attack for <span class=\"sm2-green\">10</span> seconds",
+          "description": "After a Perfect Parry or Perfect Block, you take 15% less Damage from Ranged Attack for 10 seconds Unlocks at level 19 and costs 20 Requisition Points.",
+          "description_raw": "After a Perfect Parry or Perfect Block, you take 15% less Damage from Ranged Attack for 10 seconds\n\nUnlocks at level 19 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -3017,10 +3017,10 @@
           "col": 3,
           "row": 3,
           "grid_label": "3/3",
-          "description": "Ranged Damage at ranges greater than 20 metres increases by 25%",
-          "description_raw": "Ranged Damage at ranges greater than <span class=\"sm2-green\">20</span> metres increases by <span class=\"sm2-green\">25%</span>",
+          "description": "Ranged Damage at ranges greater than 20 metres increases by 25% Unlocks at level 20 and costs 20 Requisition Points.",
+          "description_raw": "Ranged Damage at ranges greater than 20 metres increases by 25%\n\nUnlocks at level 20 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -3035,10 +3035,10 @@
           "col": 4,
           "row": 3,
           "grid_label": "4/3",
-          "description": "All Squad Members gain 1 additional Equipment (except Melta Bomb)",
-          "description_raw": "All Squad Members gain <span class=\"sm2-green\">1</span> additional Equipment (except Melta Bomb)",
+          "description": "All Squad Members gain 1 additional Equipment (except Melta Bomb) Unlocks at level 21 and costs 40 Requisition Points.",
+          "description_raw": "All Squad Members gain 1 additional Equipment (except Melta Bomb)\n\nUnlocks at level 21 and costs 40 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -3053,10 +3053,10 @@
           "col": 5,
           "row": 3,
           "grid_label": "5/3",
-          "description": "Servo-Gun recharge rate increases by 15% when you are near a Tarantula Sentry Gun",
-          "description_raw": "Servo-Gun recharge rate increases by <span class=\"sm2-green\">15%</span> when you are near a Tarantula Sentry Gun",
+          "description": "Servo-Gun recharge rate increases by 15% when you are near a Tarantula Sentry Gun Unlocks at level 22 and costs 20 Requisition Points.",
+          "description_raw": "Servo-Gun recharge rate increases by 15% when you are near a Tarantula Sentry Gun\n\nUnlocks at level 22 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -3071,10 +3071,10 @@
           "col": 6,
           "row": 3,
           "grid_label": "6/3",
-          "description": "Killing an enemy with the Servo-Gun restores 1 Equipment. Cooldown is 75 seconds.",
-          "description_raw": "Killing an enemy with the Servo-Gun restores <span class=\"sm2-green\">1</span> Equipment. Cooldown is <span class=\"sm2-green\">75</span> seconds.",
+          "description": "Killing an enemy with the Servo-Gun restores 1 Equipment. Cooldown is 75 seconds. Unlocks at level 23 and costs 20 Requisition Points.",
+          "description_raw": "Killing an enemy with the Servo-Gun restores 1 Equipment. Cooldown is 75 seconds.\n\nUnlocks at level 23 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -3085,14 +3085,14 @@
           "talent_name_en": "Strategic Gun Strike",
           "talent_name_zh": "",
           "icon_path": "talents/技术军士/c7r3_strategic-gun-strike.png",
-          "icon_url": "https://static.wikia.nocookie.net/spacemarine2/images/1/1f/Perk_engineer_24.png/revision/latest?cb=20260203145959",
+          "icon_url": "https://static.wikia.nocookie.net/spacemarine2/images/1/1f/Perk_engineer_24.png/revision/latest?cb=20260521184832",
           "col": 7,
           "row": 3,
           "grid_label": "7/3",
-          "description": "Servo-Gun only targets Majoris -level or higher enemies and deals 20% more Damage when the target is more than 20 metres away",
-          "description_raw": "Servo-Gun only targets <span class=\"sm2-majoris\">Majoris</span>-level or higher enemies and deals <span class=\"sm2-green\">20%</span> more Damage when the target is more than <span class=\"sm2-green\">20</span> metres away",
+          "description": "Servo-Gun only targets Majoris-level or higher enemies and deals 20% more Damage when the target is more than 20 metres away Unlocks at level 24 and costs 20 Requisition Points.",
+          "description_raw": "Servo-Gun only targets Majoris-level or higher enemies and deals 20% more Damage when the target is more than 20 metres away\n\nUnlocks at level 24 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         },
         {
@@ -3107,10 +3107,10 @@
           "col": 8,
           "row": 3,
           "grid_label": "8/3",
-          "description": "Servo-Gun shots set enemies on fire",
-          "description_raw": "Servo-Gun shots set enemies on fire",
+          "description": "Servo-Gun shots set enemies on fire Unlocks at level 25 and costs 20 Requisition Points.",
+          "description_raw": "Servo-Gun shots set enemies on fire\n\nUnlocks at level 25 and costs 20 Requisition Points.",
           "source_page": "https://spacemarine2.fandom.com/wiki/Techmarine",
-          "source_section": "perktree-table",
+          "source_section": "api:PerkTable",
           "source_title": "Techmarine"
         }
       ]

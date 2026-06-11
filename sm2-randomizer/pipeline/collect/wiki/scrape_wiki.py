@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -22,7 +23,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from pipeline.common import PIPELINE_STORE_CATALOG_DIR, PIPELINE_STORE_RAW_EXCEL_DIR, PIPELINE_STORE_RAW_WIKI_DIR, PIPELINE_STORE_REPORTS_SOURCE_DIR, ensure_directories, read_json, write_json
 
-VERSION_ANCHOR = "Update 12.0 / Techmarine"
+VERSION_ANCHOR = "Hotfix 13.2"
+HOTFIX_13_2_URL = "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/409-hotfix-13-2-patch-notes"
+PATCH_13_0_URL = "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/395-patch-notes-13-0"
 RAW_OUTPUT_PATH = PIPELINE_STORE_RAW_WIKI_DIR / "原始抓取数据.json"
 CLASS_WEAPON_MAP_OUTPUT_PATH = PIPELINE_STORE_CATALOG_DIR / "职业武器映射.json"
 TABLE_OUTPUT_PATH = PIPELINE_STORE_REPORTS_SOURCE_DIR / "人工审阅表.md"
@@ -53,6 +56,8 @@ GAME8_HEADERS = {
     "Pragma": "no-cache",
 }
 HTTP_TIMEOUT = 30
+HTTP_RETRIES = 4
+HTTP_RETRY_DELAY_SECONDS = 2
 CONFLICT_PREFIX = "[CONFLICT]"
 
 
@@ -124,27 +129,61 @@ def derive_mode_restriction_candidates(notes: list[str]) -> list[str]:
     return uniq([note for note in notes if re.search(r"\bPvE\b|\bPvP\b", str(note), re.I)])
 
 
+def _request_get_with_retry(url: str, *, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> requests.Response:
+    last_error: Exception | None = None
+    for attempt in range(1, HTTP_RETRIES + 1):
+        try:
+            response = requests.get(url, params=params, headers=headers or GAME8_HEADERS, timeout=HTTP_TIMEOUT)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= HTTP_RETRIES:
+                break
+            # Fandom API 偶发连接超时；这里重试真实请求，不回退到旧 raw 或伪造数据。
+            time.sleep(HTTP_RETRY_DELAY_SECONDS)
+    assert last_error is not None
+    raise last_error
+
+
 def get_json(url: str, *, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> dict[str, Any]:
-    response = requests.get(url, params=params, headers=headers or GAME8_HEADERS, timeout=HTTP_TIMEOUT)
-    response.raise_for_status()
-    return response.json()
+    return _request_get_with_retry(url, params=params, headers=headers).json()
 
 
 def get_html(url: str, *, headers: dict[str, str] | None = None) -> str:
-    response = requests.get(url, headers=headers or GAME8_HEADERS, timeout=HTTP_TIMEOUT)
-    response.raise_for_status()
-    return response.text
+    return _request_get_with_retry(url, headers=headers).text
 
 
-def fetch_official_patch_anchor() -> dict[str, str]:
-    url = "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0"
-    html = get_html(url)
+def fetch_official_patch_anchor() -> dict[str, Any]:
+    hotfix_url = HOTFIX_13_2_URL
+    html = get_html(hotfix_url)
     soup = BeautifulSoup(html, "html.parser")
     title = normalize_whitespace(soup.title.get_text() if soup.title else "")
     body_text = normalize_whitespace(soup.get_text(" "))
-    if not re.search(r"Patch Notes 12\.0", title, re.I) or not re.search(r"Techmarine", body_text, re.I):
-        raise RuntimeError("Official Update 12.0 anchor did not confirm Techmarine availability.")
-    return {"url": url, "title": title}
+    if not re.search(r"Hotfix 13\.2", title, re.I) or not re.search(r"Squad Unity", body_text, re.I):
+        raise RuntimeError("Official Hotfix 13.2 anchor did not confirm the expected strategy modifier changes.")
+
+    weapon_url = PATCH_13_0_URL
+    weapon_html = get_html(weapon_url)
+    weapon_soup = BeautifulSoup(weapon_html, "html.parser")
+    weapon_title = normalize_whitespace(weapon_soup.title.get_text() if weapon_soup.title else "")
+    weapon_body = normalize_whitespace(weapon_soup.get_text(" "))
+    if not re.search(r"Patch Notes 13\.0", weapon_title, re.I) or not re.search(r"Bolt Carbine One-Handed", weapon_body, re.I):
+        raise RuntimeError("Official Patch Notes 13.0 anchor did not confirm Bolt Carbine One-Handed.")
+    if not re.search(r"\bAssault\b", weapon_body, re.I) or not re.search(r"\bBulwark\b", weapon_body, re.I):
+        raise RuntimeError("Official Patch Notes 13.0 anchor did not confirm Assault/Bulwark availability.")
+
+    return {
+        "url": hotfix_url,
+        "title": title,
+        "related_sources": [
+            {
+                "type": "new_weapon",
+                "url": weapon_url,
+                "title": weapon_title,
+            }
+        ],
+    }
 
 
 def fetch_fandom_page(title: str) -> dict[str, Any]:
@@ -852,6 +891,8 @@ def main() -> int:
         raise RuntimeError("Techmarine class missing from Fandom output.")
     if not any(entry["name"] == "Omnissiah Axe" for entry in weapons):
         raise RuntimeError("Omnissiah Axe missing from Fandom output.")
+    if not any(entry["name"] == "Bolt Carbine One-Handed" for entry in weapons):
+        raise RuntimeError("Bolt Carbine One-Handed missing from Fandom output.")
     game8_validation = collect_game8_validation()
     rebuild_class_weapons_from_weapons(classes, weapons)
     attach_validation_notes(classes, weapons, game8_validation)

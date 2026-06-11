@@ -203,6 +203,7 @@ def parse_args() -> argparse.Namespace:
     apply_parser = subparsers.add_parser("apply-candidate", help="Apply candidate runtime files into app/data and clean up.")
     apply_parser.add_argument("--candidate-dir", default=str(PIPELINE_TMP_PUBLISH_DIR))
     apply_parser.add_argument("--target-dir", default=str(APP_DATA_DIR))
+    apply_parser.add_argument("--keep-candidate", action="store_true", help="Apply runtime files but keep the candidate directory.")
 
     clean_parser = subparsers.add_parser("clean-candidate", help="Remove candidate runtime files.")
     clean_parser.add_argument("--candidate-dir", default=str(PIPELINE_TMP_PUBLISH_DIR))
@@ -226,7 +227,7 @@ if __name__ == "__main__":
     if args.command == "diff-candidate":
         write_diff_artifacts(Path(args.candidate_dir).resolve(), Path(args.current_dir).resolve())
     elif args.command == "apply-candidate":
-        apply_candidate(Path(args.candidate_dir).resolve(), Path(args.target_dir).resolve())
+        apply_candidate(Path(args.candidate_dir).resolve(), Path(args.target_dir).resolve(), cleanup=not args.keep_candidate)
     elif args.command == "clean-candidate":
         clean_candidate(Path(args.candidate_dir).resolve())
     elif args.command == "maybe-clean-candidate":

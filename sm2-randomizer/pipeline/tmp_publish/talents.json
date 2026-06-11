@@ -2,7 +2,7 @@
   "classes": [
     {
       "class_slug": "assault",
-      "class_name": "Assault",
+      "class_name": "突击兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -278,7 +278,7 @@
     },
     {
       "class_slug": "bulwark",
-      "class_name": "Bulwark",
+      "class_name": "重装兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -554,7 +554,7 @@
     },
     {
       "class_slug": "heavy",
-      "class_name": "Heavy",
+      "class_name": "特战兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -830,7 +830,7 @@
     },
     {
       "class_slug": "sniper",
-      "class_name": "Sniper",
+      "class_name": "狙击兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -1106,7 +1106,7 @@
     },
     {
       "class_slug": "tactical",
-      "class_name": "Tactical",
+      "class_name": "战术兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -1382,7 +1382,7 @@
     },
     {
       "class_slug": "techmarine",
-      "class_name": "Techmarine",
+      "class_name": "技术军士",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -1658,7 +1658,7 @@
     },
     {
       "class_slug": "vanguard",
-      "class_name": "Vanguard",
+      "class_name": "先锋兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,

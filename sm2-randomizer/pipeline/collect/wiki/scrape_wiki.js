@@ -6,7 +6,7 @@ const path = require("path");
 const axios = require("axios");
 const cheerio = require("cheerio");
 
-const VERSION_ANCHOR = "Update 12.0 / Techmarine";
+const VERSION_ANCHOR = "Hotfix 13.2";
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..", "..");
 const DATA_RAW_DIR = path.join(PROJECT_ROOT, "pipeline", "store", "raw", "wiki");
 const DATA_CATALOG_DIR = path.join(PROJECT_ROOT, "pipeline", "store", "catalog");
@@ -319,6 +319,9 @@ async function main() {
   }
   if (!weapons.some((entry) => entry.name === "Omnissiah Axe")) {
     throw new Error("Omnissiah Axe missing from Fandom output.");
+  }
+  if (!weapons.some((entry) => entry.name === "Bolt Carbine One-Handed")) {
+    throw new Error("Bolt Carbine One-Handed missing from Fandom output.");
   }
 
   const game8Validation = await collectGame8Validation();
@@ -1000,17 +1003,30 @@ function appendTalentMarkdown(markdown, talentPayload) {
 }
 
 async function fetchOfficialPatchAnchor() {
-  const url = "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0";
+  const url = "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/409-hotfix-13-2-patch-notes";
   const response = await http.get(url, { headers: GAME8_HEADERS });
   const $ = cheerio.load(response.data);
   const title = normalizeWhitespace($("title").first().text());
   const bodyText = normalizeWhitespace($("body").text());
 
-  if (!/Patch Notes 12\.0/i.test(title) || !/Techmarine/i.test(bodyText)) {
-    throw new Error("Official Update 12.0 anchor did not confirm Techmarine availability.");
+  if (!/Hotfix 13\.2/i.test(title) || !/Squad Unity/i.test(bodyText)) {
+    throw new Error("Official Hotfix 13.2 anchor did not confirm the expected strategy modifier changes.");
   }
 
-  return { url, title };
+  const weaponUrl = "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/395-patch-notes-13-0";
+  const weaponResponse = await http.get(weaponUrl, { headers: GAME8_HEADERS });
+  const weaponPage = cheerio.load(weaponResponse.data);
+  const weaponTitle = normalizeWhitespace(weaponPage("title").first().text());
+  const weaponBodyText = normalizeWhitespace(weaponPage("body").text());
+  if (!/Patch Notes 13\.0/i.test(weaponTitle) || !/Bolt Carbine One-Handed/i.test(weaponBodyText)) {
+    throw new Error("Official Patch Notes 13.0 anchor did not confirm Bolt Carbine One-Handed.");
+  }
+
+  return {
+    url,
+    title,
+    related_sources: [{ type: "new_weapon", url: weaponUrl, title: weaponTitle }]
+  };
 }
 
 async function fetchFandomPage(title) {

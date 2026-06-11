@@ -55,12 +55,6 @@
       "source_sheet": "主武器"
     },
     {
-      "slug": "twin-linked-melta-gun",
-      "excel_name": "双联热熔枪",
-      "slot_type": "primary",
-      "source_sheet": "主武器"
-    },
-    {
       "slug": "multi-melta",
       "excel_name": "多管热熔",
       "slot_type": "primary",
@@ -155,6 +149,12 @@
       "excel_name": "重型等离子焚化枪",
       "slot_type": "primary",
       "source_sheet": "主武器"
+    },
+    {
+      "slug": "bolt-carbine-one-handed",
+      "excel_name": "单手爆弹卡宾枪",
+      "slot_type": "secondary",
+      "source_sheet": "副武器"
     },
     {
       "slug": "inferno-pistol",
