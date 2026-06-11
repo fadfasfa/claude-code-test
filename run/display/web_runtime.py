@@ -395,6 +395,13 @@ def _terminate_managed_browser() -> bool:
     return True
 
 
+def terminate_managed_browser() -> bool:
+    """关闭由本进程启动的受管浏览器窗口。"""
+
+    with _managed_browser_lock:
+        return _terminate_managed_browser()
+
+
 def is_safe_internal_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
@@ -403,7 +410,7 @@ def is_safe_internal_url(url: str) -> bool:
     return parsed.scheme == "http" and str(parsed.hostname or "").strip() == "127.0.0.1"
 
 
-def open_managed_browser(url: str, replace_existing: bool = False) -> bool:
+def open_managed_browser(url: str, replace_existing: bool = False, *, allow_system_fallback: bool = True) -> bool:
     global _managed_browser_process
 
     ensure_runtime_profile_dir()
@@ -435,13 +442,15 @@ def open_managed_browser(url: str, replace_existing: bool = False) -> bool:
             except OSError as exc:
                 logger.debug("启动浏览器 %s 失败：%s", browser_path, exc)
 
-    try:
-        webbrowser.open(url)
-        logger.info("已通过系统默认浏览器打开：%s", url)
-        return True
-    except Exception as exc:
-        logger.warning("打开浏览器失败：%s", exc)
-        return False
+    if allow_system_fallback:
+        try:
+            webbrowser.open(url)
+            logger.info("已通过系统默认浏览器打开：%s", url)
+            return True
+        except Exception as exc:
+            logger.warning("打开浏览器失败：%s", exc)
+            return False
+    return False
 
 
 def request_open_managed_browser_async(url: str, replace_existing: bool = False) -> bool:

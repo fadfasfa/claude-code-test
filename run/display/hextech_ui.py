@@ -19,6 +19,11 @@ from processing.runtime_store import (
     detect_hero_id_column,
     get_latest_csv,
 )
+from processing.ui_feature_flags import load_ui_feature_flags, save_ui_feature_flags
+from processing.overlay_hint_cache import (
+    build_overlay_hint_cache_from_precomputed,
+    write_overlay_hint_cache,
+)
 from scraping.version_sync import (
     ASSET_DIR,
     get_advanced_session,
@@ -26,6 +31,7 @@ from scraping.version_sync import (
 )
 
 from . import ui_runtime
+from .service_manager import ServiceManager, start_overlay_host_process, start_vision_sidecar_process
 
 WEB_PORT_FILE = build_runtime_state_path("web_server_port.txt")
 
@@ -91,6 +97,19 @@ class HextechUI:
         self.pause_event = threading.Event()
         self.threads = []
         self.web_port_file = WEB_PORT_FILE
+        self.feature_flags = load_ui_feature_flags()
+        self.web_process = None
+        self.service_manager = ServiceManager(
+            start_web_func=self._spawn_web_process,
+            start_overlay_func=start_overlay_host_process,
+            start_vision_sidecar_func=start_vision_sidecar_process,
+            prepare_overlay_hint_cache_func=self._prepare_overlay_hint_cache,
+            listener_interval_seconds=3.0,
+        )
+        self.service_manager.set_low_frequency_listener_enabled(
+            self.feature_flags.get("low_frequency_listener_enabled", True)
+        )
+        self.service_manager.start_low_frequency_listener()
 
         self.session = get_advanced_session()
         self.core_data = load_champion_core_data()
@@ -131,9 +150,6 @@ class HextechUI:
         self._pending_ui_refresh = None
         self._collapse_render_after_id = None
 
-        self.web_process = None
-        self._start_web_server()
-
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
         self.root.geometry("320x600")
@@ -141,18 +157,34 @@ class HextechUI:
         self.root.attributes("-alpha", 0.85, "-topmost", False)
         self.root.overrideredirect(True)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.root.withdraw()
 
         self._build_ui()
+        self._apply_persisted_feature_flags()
         self._init_core_engine()
         self.check_and_sync_data()
         self.start_background_scraper()
+
+    def _spawn_web_process(self):
+        return ui_runtime.start_web_server_process(
+            self.web_port_file,
+            auto_open_browser=self.feature_flags.get("auto_open_browser", True),
+        )
+
+    def _prepare_overlay_hint_cache(self) -> None:
+        cache_payload = build_overlay_hint_cache_from_precomputed(
+            include_private_stats=self.feature_flags.get("private_policy_stats_enabled", False),
+            source_tag="desktop-game-overlay",
+        )
+        write_overlay_hint_cache(cache_payload)
 
     def _start_web_server(self):
         """后台启动网页服务，避免阻塞界面线程。"""
 
         try:
-            self.web_process = ui_runtime.start_web_server_process(self.web_port_file)
+            self.service_manager.start_web()
+            self.web_process = self.service_manager.web.process
+            if self.feature_flags.get("auto_open_browser", True):
+                ui_runtime.open_companion_browser(self.web_port_file)
         except Exception as exc:
             print(f"\n启动网页服务失败: {exc}")
 
@@ -180,6 +212,50 @@ class HextechUI:
         # 双击标题栏在 320 px / 80 px 之间切换，便于单屏游戏窗口模式让出主屏视线
         self.title_bar.bind("<Double-Button-1>", self._toggle_collapse)
 
+        self.feature_frame = tk.Frame(self.root, bg="#1e1e2e", padx=10, pady=8)
+        self.feature_frame.pack(fill=tk.X)
+        self.web_frontend_var = tk.BooleanVar(value=self.feature_flags["web_frontend_enabled"])
+        self.game_overlay_var = tk.BooleanVar(value=self.feature_flags["game_overlay_enabled"])
+        self.private_stats_var = tk.BooleanVar(value=self.feature_flags["private_policy_stats_enabled"])
+        self.low_frequency_listener_var = tk.BooleanVar(value=self.feature_flags["low_frequency_listener_enabled"])
+
+        self.web_frontend_check = self._build_feature_checkbutton(
+            "Web 前端",
+            self.web_frontend_var,
+            self._toggle_web_frontend,
+        )
+        self.web_frontend_check.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 4))
+        self.game_overlay_check = self._build_feature_checkbutton(
+            "游戏内显示",
+            self.game_overlay_var,
+            self._toggle_game_overlay,
+        )
+        self.game_overlay_check.grid(row=0, column=1, sticky="w", pady=(0, 4))
+        self.private_stats_check = self._build_feature_checkbutton(
+            "私用统计",
+            self.private_stats_var,
+            self._toggle_private_policy_stats,
+        )
+        self.private_stats_check.grid(row=1, column=0, sticky="w", padx=(0, 8))
+        self.listener_check = self._build_feature_checkbutton(
+            "低频监听",
+            self.low_frequency_listener_var,
+            self._toggle_low_frequency_listener,
+        )
+        self.listener_check.grid(row=1, column=1, sticky="w")
+
+        self.feature_status_label = tk.Label(
+            self.feature_frame,
+            text="Web: 未启动 | 游戏内: 未启动",
+            bg="#1e1e2e",
+            fg="#a6adc8",
+            font=("Microsoft YaHei", 8),
+            anchor="w",
+        )
+        self.feature_status_label.grid(row=2, column=0, columnspan=2, sticky="we", pady=(6, 0))
+        self.feature_frame.grid_columnconfigure(0, weight=1)
+        self.feature_frame.grid_columnconfigure(1, weight=1)
+
         self.canvas = tk.Canvas(self.root, bg="#1e1e2e", highlightthickness=0)
         self.list_frame = tk.Frame(self.canvas, bg="#1e1e2e")
         self.canvas.pack(fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
@@ -196,6 +272,129 @@ class HextechUI:
             font=("Microsoft YaHei", 9),
         )
         self.status_label.pack(side=tk.BOTTOM, pady=5)
+        self._schedule_feature_status_refresh()
+
+    def _build_feature_checkbutton(self, text: str, variable: "tk.BooleanVar", command) -> "tk.Checkbutton":
+        return tk.Checkbutton(
+            self.feature_frame,
+            text=text,
+            variable=variable,
+            command=command,
+            bg="#1e1e2e",
+            fg="#cdd6f4",
+            activebackground="#313244",
+            activeforeground="#f5d076",
+            selectcolor="#313244",
+            font=("Microsoft YaHei", 9),
+            anchor="w",
+        )
+
+    def _collect_feature_flags_from_controls(self) -> dict:
+        return {
+            "web_frontend_enabled": bool(self.web_frontend_var.get()),
+            "game_overlay_enabled": bool(self.game_overlay_var.get()),
+            "auto_open_browser": bool(self.feature_flags.get("auto_open_browser", True)),
+            "private_policy_stats_enabled": bool(self.private_stats_var.get()),
+            "low_frequency_listener_enabled": bool(self.low_frequency_listener_var.get()),
+        }
+
+    def _persist_feature_flags_from_controls(self) -> None:
+        self.feature_flags = save_ui_feature_flags(self._collect_feature_flags_from_controls())
+        self.service_manager.set_low_frequency_listener_enabled(self.feature_flags["low_frequency_listener_enabled"])
+
+    def _try_persist_feature_flags_from_controls(self) -> None:
+        try:
+            self._persist_feature_flags_from_controls()
+        except Exception:
+            logger.exception("持久化 UI 功能开关失败。")
+
+    def _sync_web_process_handle(self) -> None:
+        self.web_process = self.service_manager.web.process if self.service_manager.is_web_running() else None
+
+    def _raise_if_service_error(self, service_name: str) -> None:
+        service = getattr(self.service_manager, service_name)
+        if service.status == "error":
+            raise RuntimeError(service.last_error or f"{service_name} 状态异常")
+
+    def _apply_persisted_feature_flags(self) -> None:
+        if self.feature_flags.get("web_frontend_enabled"):
+            self._toggle_web_frontend()
+        if self.feature_flags.get("game_overlay_enabled"):
+            self._toggle_game_overlay()
+
+    def _toggle_web_frontend(self) -> None:
+        enabled = bool(self.web_frontend_var.get())
+        try:
+            if enabled:
+                self.service_manager.start_web()
+                self._sync_web_process_handle()
+                if self.feature_flags.get("auto_open_browser", True):
+                    if not ui_runtime.open_companion_browser(self.web_port_file):
+                        self._set_status("Web 已启动，浏览器未自动打开", "#f9e2af")
+            else:
+                ui_runtime.close_companion_browser()
+                self.service_manager.stop_web()
+                self._raise_if_service_error("web")
+                self._sync_web_process_handle()
+            self._persist_feature_flags_from_controls()
+        except Exception as exc:
+            if enabled:
+                ui_runtime.close_companion_browser()
+                self.service_manager.stop_web()
+            self._sync_web_process_handle()
+            self.web_frontend_var.set(self.service_manager.is_web_running())
+            self._try_persist_feature_flags_from_controls()
+            self._set_status(f"Web 前端切换失败: {exc}", "#f38ba8")
+        self._refresh_feature_status()
+
+    def _toggle_game_overlay(self) -> None:
+        enabled = bool(self.game_overlay_var.get())
+        try:
+            if enabled:
+                self.service_manager.start_game_overlay()
+            else:
+                self.service_manager.stop_game_overlay()
+                self._raise_if_service_error("game_overlay")
+            self._persist_feature_flags_from_controls()
+        except Exception as exc:
+            if enabled:
+                self.service_manager.stop_game_overlay()
+            self.game_overlay_var.set(self.service_manager.is_game_overlay_running())
+            self._try_persist_feature_flags_from_controls()
+            self._set_status(f"游戏内显示切换失败: {exc}", "#f38ba8")
+        self._refresh_feature_status()
+
+    def _toggle_private_policy_stats(self) -> None:
+        self._persist_feature_flags_from_controls()
+        self._prepare_overlay_hint_cache()
+        self._set_status("私用统计仅用于本机实验，存在 Riot policy 风险", "#f9e2af")
+
+    def _toggle_low_frequency_listener(self) -> None:
+        self._persist_feature_flags_from_controls()
+        self._refresh_feature_status()
+
+    def _refresh_feature_status(self) -> None:
+        if not hasattr(self, "feature_status_label") or not self.feature_status_label.winfo_exists():
+            return
+        snapshot = self.service_manager.get_status_snapshot()
+        web_status = snapshot["web"]["status"]
+        overlay_status = snapshot["game_overlay"]["status"]
+        vision_status = snapshot["vision_sidecar"]["status"]
+        listener = snapshot["low_frequency_listener"]
+        overlay_event = snapshot.get("overlay_event", {})
+        listener_text = "开" if listener.get("enabled") else "关"
+        checks = int(listener.get("checks", 0) or 0)
+        event_reason = overlay_event.get("reason") or overlay_event.get("error") or ("active" if overlay_event.get("visible") else "inactive")
+        self.feature_status_label.config(
+            text=(
+                f"Web: {web_status} | 游戏内: {overlay_status}/{vision_status}/{event_reason} | "
+                f"低频监听: {listener_text}/{listener.get('interval_seconds', 0):.0f}s/{checks}次"
+            )
+        )
+
+    def _schedule_feature_status_refresh(self) -> None:
+        self._refresh_feature_status()
+        self.root.after(1000, self._schedule_feature_status_refresh)
 
     def check_and_sync_data(self):
         threading.Thread(target=self._silent_sync, daemon=True).start()
@@ -470,11 +669,8 @@ class HextechUI:
         for thread in self.threads:
             if thread.is_alive():
                 thread.join(timeout=2)
-        if getattr(self, "web_process", None):
-            try:
-                self.web_process.terminate()
-            except Exception:
-                pass
+        ui_runtime.close_companion_browser()
+        self.service_manager.shutdown()
         self.root.destroy()
 
 

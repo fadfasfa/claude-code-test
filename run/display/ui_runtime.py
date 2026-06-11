@@ -42,6 +42,7 @@ import urllib3
 import win32gui
 from PIL import Image, ImageDraw, ImageTk
 
+from . import web_runtime
 from processing.query_terminal import display_hero_hextech, main_query, set_last_hero
 from scraping.version_sync import ASSET_DIR, BASE_DIR
 
@@ -74,6 +75,14 @@ def _parse_local_port(raw_port) -> int | None:
     return port if 1 <= port <= 65535 else None
 
 
+def _read_web_port_once(web_port_file: str) -> int | None:
+    try:
+        with open(web_port_file, "r", encoding="utf-8") as f:
+            return _parse_local_port(f.read())
+    except OSError:
+        return None
+
+
 def _is_safe_local_http_base(url: str) -> bool:
     try:
         parsed = urlparse(str(url or "").strip())
@@ -85,13 +94,9 @@ def _is_safe_local_http_base(url: str) -> bool:
 def resolve_web_base(web_port_file: str, timeout: float = 5.0) -> str:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
-            with open(web_port_file, "r", encoding="utf-8") as f:
-                port = _parse_local_port(f.read())
-            if port is not None:
-                return f"http://127.0.0.1:{port}"
-        except OSError:
-            pass
+        port = _read_web_port_once(web_port_file)
+        if port is not None:
+            return f"http://127.0.0.1:{port}"
         time.sleep(0.1)
     return f"http://127.0.0.1:{SERVER_PORT}"
 
@@ -119,9 +124,65 @@ def resolve_web_auth_token(web_port_file: str, timeout: float = 5.0) -> str:
     return _read_web_auth_token_once(web_port_file)
 
 
+def _clear_web_readiness_files(web_port_file: str) -> None:
+    """清理上一次 Web 启动留下的端口/token 文件，避免把旧状态误判为成功。"""
+
+    for path in (web_port_file, _resolve_auth_token_file(web_port_file)):
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.debug("清理 Web readiness 文件失败：%s", path, exc_info=True)
+
+
+def _wait_for_web_startup(web_process, web_port_file: str, timeout: float = 8.0) -> None:
+    """等待 Web 子进程写出端口和 token；进程早退时直接失败。"""
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        poll = getattr(web_process, "poll", None)
+        if callable(poll):
+            exit_code = poll()
+            if exit_code is not None:
+                raise RuntimeError(f"Web 服务进程提前退出，exit_code={exit_code}")
+        port = _read_web_port_once(web_port_file)
+        token = _read_web_auth_token_once(web_port_file)
+        if port is not None and token:
+            return
+        time.sleep(0.1)
+
+    raise RuntimeError("Web 服务启动超时：未写出有效端口或 token")
+
+
+def open_companion_browser(web_port_file: str) -> bool:
+    """由桌面父进程打开可回收的本地 Web 浏览器窗口。"""
+
+    web_base = resolve_web_base(web_port_file, timeout=1.0)
+    return web_runtime.open_managed_browser(
+        web_base,
+        replace_existing=True,
+        allow_system_fallback=False,
+    )
+
+
+def close_companion_browser() -> bool:
+    """关闭桌面父进程持有的受管浏览器窗口。"""
+
+    return web_runtime.terminate_managed_browser()
+
+
 def _web_auth_headers(ui: "HextechUI", web_base: str, timeout: float = 0.5) -> dict[str, str]:
     token = resolve_web_auth_token(ui.web_port_file, timeout=timeout)
     return {"Origin": web_base, "X-Hextech-Token": token}
+
+
+def _web_frontend_available(ui: "HextechUI") -> bool:
+    manager = getattr(ui, "service_manager", None)
+    if manager is not None:
+        return bool(manager.is_web_running())
+    process = getattr(ui, "web_process", None)
+    return bool(process and getattr(process, "poll", lambda: None)() is None)
 
 
 def scan_lcu_process() -> tuple:
@@ -194,13 +255,12 @@ def poll_lcu_live_ids(ui: "HextechUI"):
     return {champ_id for champ_id in available_ids if champ_id and champ_id != "0"}
 
 
-def start_web_server_process(web_port_file: str):
+def start_web_server_process(web_port_file: str, *, auto_open_browser: bool = True):
     startupinfo = None
     child_env = os.environ.copy()
     child_env["HEXTECH_BASE_DIR"] = BASE_DIR
-    # Desktop startup should open the companion web page automatically.
-    # Packaged builds rely on the child web server process to launch the page.
-    child_env.pop("HEXTECH_OPEN_BROWSER", None)
+    # 浏览器由桌面父进程打开和关闭；子进程只负责 Web 服务本体。
+    child_env["HEXTECH_OPEN_BROWSER"] = "0"
     if os.name == "nt":
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -211,14 +271,25 @@ def start_web_server_process(web_port_file: str):
         web_script = os.path.join(BASE_DIR, "web_server.py")
         command = [sys.executable, web_script]
         cwd = BASE_DIR
+    _clear_web_readiness_files(web_port_file)
     web_process = subprocess.Popen(
         command,
         startupinfo=startupinfo,
         cwd=cwd,
         env=child_env,
     )
-    resolve_web_base(web_port_file, timeout=5.0)
-    resolve_web_auth_token(web_port_file, timeout=5.0)
+    try:
+        _wait_for_web_startup(web_process, web_port_file, timeout=8.0)
+    except Exception:
+        try:
+            web_process.terminate()
+            web_process.wait(timeout=3)
+        except Exception:
+            try:
+                web_process.kill()
+            except Exception:
+                pass
+        raise
     return web_process
 
 
@@ -264,6 +335,8 @@ def _set_click_status(ui: "HextechUI", text: str, color: str) -> None:
 
 
 def _refresh_preload_ready(ui: "HextechUI", hero_name: str) -> bool:
+    if not _web_frontend_available(ui):
+        return False
     normalized_hero = str(hero_name or "").strip()
     if not normalized_hero:
         return False
@@ -385,6 +458,8 @@ def _apply_candidate_update(ui: "HextechUI", available_ids: set[str], *, source:
 
 
 def _fetch_web_live_state(ui: "HextechUI") -> tuple[set[str] | None, dict | None]:
+    if not _web_frontend_available(ui):
+        return None, None
     web_base = _resolve_redirect_base(ui)
     response = ui.session.get(f"{web_base}/api/live_state", timeout=2)
     if response.status_code != 200:
@@ -414,6 +489,8 @@ def _fallback_live_state(ui: "HextechUI") -> set[str] | None:
 
 
 def _handle_redirect_attempt(ui: "HextechUI", champ_id, hero_name: str, en_name: str) -> bool:
+    if not _web_frontend_available(ui):
+        return False
     web_base = _resolve_redirect_base(ui)
     try:
         return _post_redirect(ui, web_base, champ_id, hero_name, en_name)
@@ -423,6 +500,8 @@ def _handle_redirect_attempt(ui: "HextechUI", champ_id, hero_name: str, en_name:
 
 
 def _drain_preload_pending(ui: "HextechUI") -> None:
+    if not _web_frontend_available(ui):
+        return
     with ui._hero_preload_lock:
         pending_names = list(ui._hero_preload_pending)
     for hero_name in pending_names:
@@ -453,6 +532,8 @@ def _mark_preload_pending(ui: "HextechUI", hero_names: list[str]) -> None:
 
 
 def _queue_preload_worker(ui: "HextechUI", hero_names: list[str]) -> None:
+    if not _web_frontend_available(ui):
+        return
     web_base = _resolve_redirect_base(ui)
     for hero_name in hero_names:
         try:
@@ -471,6 +552,8 @@ def _submit_preload(ui: "HextechUI", hero_names: list[str]) -> None:
 
 
 def _queue_ui_preload(ui: "HextechUI", hero_names: list[str]) -> None:
+    if not _web_frontend_available(ui):
+        return
     normalized_names = []
     for hero_name in hero_names:
         normalized = _normalize_hero_name(hero_name)
@@ -514,6 +597,9 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
 
     def redirect_task():
         normalized_hero = _normalize_hero_name(hero_name)
+        if not _web_frontend_available(ui):
+            _set_click_status(ui, "Web 前端未启动，已跳过浏览器跳转", "#f9e2af")
+            return
         en_name = ui.core_data.get(str(champ_id), {}).get("en_name", "")
         _set_click_status(ui, f"正在跳转 {normalized_hero}...", "#f9e2af")
         _queue_clicked_hero_preload(ui, normalized_hero)
@@ -540,11 +626,12 @@ def lcu_polling_loop(ui: "HextechUI") -> None:
 
         available_ids = None
         payload = None
-        try:
-            available_ids, payload = _fetch_web_live_state(ui)
-        except Exception:
-            available_ids = None
-            payload = None
+        if _web_frontend_available(ui):
+            try:
+                available_ids, payload = _fetch_web_live_state(ui)
+            except Exception:
+                available_ids = None
+                payload = None
 
         if available_ids is None:
             available_ids = _fallback_live_state(ui)

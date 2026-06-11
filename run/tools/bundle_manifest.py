@@ -54,6 +54,15 @@ SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
 SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
 SYNERGY_SNAPSHOT_PATTERN = "Champion_Synergy_*.json"
 BUNDLE_MANIFEST_NAME = "bundle_manifest.json"
+SOURCE_FILE_ALLOWLIST = (
+    "display/game_overlay_host.py",
+    "display/service_manager.py",
+    "processing/overlay_event_channel.py",
+    "processing/overlay_hint_cache.py",
+    "processing/overlay_vision_sidecar.py",
+    "processing/ui_feature_flags.py",
+    "tools/overlay_performance_probe.py",
+)
 
 
 def _relative_to_base(path: Path, base_dir: Path) -> str:
@@ -133,6 +142,10 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         (name for name in synergy_data_files if Path(name).name.startswith("Champion_Synergy_") and Path(name).name != SYNERGY_LATEST_POINTER_FILENAME),
         "",
     )
+    source_files = [
+        relative_name for relative_name in SOURCE_FILE_ALLOWLIST
+        if (base_dir / Path(relative_name)).exists()
+    ]
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "static_files": static_files,
@@ -141,6 +154,7 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         "hextech_snapshot_files": hextech_snapshot_files,
         "synergy_data_files": synergy_data_files,
         "synergy_data_file": synergy_data_file,
+        "source_files": source_files,
     }
 
 

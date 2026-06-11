@@ -35,6 +35,13 @@ REQUIRED_RUNTIME_FILES = (
     "state/web_server_port.txt",
     "state/startup_status.json",
 )
+SMOKE_FEATURE_FLAGS = {
+    "web_frontend_enabled": True,
+    "game_overlay_enabled": False,
+    "auto_open_browser": False,
+    "private_policy_stats_enabled": False,
+    "low_frequency_listener_enabled": True,
+}
 
 
 class SmokeFailure(RuntimeError):
@@ -86,6 +93,17 @@ def _read_port(runtime_root: Path) -> str | None:
     return port or None
 
 
+def _write_smoke_feature_flags(runtime_root: Path) -> None:
+    """烟测显式打开 Web 热路径，避免被用户默认双开关关闭语义影响。"""
+
+    state_dir = runtime_root / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "ui_feature_flags.json").write_text(
+        json.dumps(SMOKE_FEATURE_FLAGS, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def _fetch(url: str, timeout: float = 8.0) -> tuple[int, bytes]:
     with urllib.request.urlopen(url, timeout=timeout) as response:
         return response.status, response.read()
@@ -124,6 +142,36 @@ def _truthy_status(payload: dict[str, object], *keys: str) -> bool:
     return any(bool(payload.get(key)) for key in keys)
 
 
+def _first_present(mapping: dict[str, object], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = mapping.get(key)
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _extract_representative_champion(champions: object) -> tuple[str, str]:
+    """从 `/api/champions` 真实 payload 中提取烟测代表英雄。"""
+
+    if not isinstance(champions, list):
+        return "", ""
+    for champion in champions:
+        if not isinstance(champion, dict):
+            continue
+        representative_name = _first_present(
+            champion,
+            ("英雄名称", "hero_name", "heroName", "name", "champion_name", "championName"),
+        )
+        representative_id = _first_present(
+            champion,
+            ("英雄 ID", "英雄ID", "hero_id", "heroId", "champion_id", "championId", "id"),
+        )
+        if representative_name or representative_id:
+            return representative_name, representative_id
+    return "", ""
+
+
 def _business_ready(startup_status: object, champions: object, detail_payload: object, synergy_payload: object, representative_asset: object) -> dict[str, bool]:
     startup = startup_status if isinstance(startup_status, dict) else {}
     champion_list = champions if isinstance(champions, list) else []
@@ -153,18 +201,21 @@ def _web_ready(port: str) -> dict[str, object]:
 
     champions_code, champions_body = _fetch(base + "/api/champions")
     champions = _read_json(champions_body)
-    result["champions"] = {"code": champions_code, "bytes": len(champions_body), "count": len(champions) if isinstance(champions, list) else 0}
+    champion_sample_keys: list[str] = []
+    if isinstance(champions, list) and champions and isinstance(champions[0], dict):
+        champion_sample_keys = list(champions[0].keys())
+    result["champions"] = {
+        "code": champions_code,
+        "bytes": len(champions_body),
+        "count": len(champions) if isinstance(champions, list) else 0,
+        "sample_keys": champion_sample_keys,
+    }
 
     detail_code, detail_body = _fetch(base + "/detail.html?champion=1")
     result["detail"] = {"code": detail_code, "bytes": len(detail_body)}
 
-    representative_name = ""
-    representative_id = ""
-    if isinstance(champions, list) and champions:
-        first_champion = champions[0]
-        if isinstance(first_champion, dict):
-            representative_name = str(first_champion.get("英雄名称") or first_champion.get("hero_name") or "")
-            representative_id = str(first_champion.get("英雄ID") or first_champion.get("hero_id") or "")
+    representative_name, representative_id = _extract_representative_champion(champions)
+    result["representative"] = {"hero": representative_name, "hero_id": representative_id}
     detail_payload: object = {}
     if representative_name:
         api_detail_code, api_detail_body = _fetch(base + f"/api/champion/{urllib.parse.quote(representative_name)}/hextechs")
@@ -220,6 +271,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
     started_at = time.monotonic()
     started_at_wall = time.time()
     runtime_root = _get_packaged_runtime_root()
+    _write_smoke_feature_flags(runtime_root)
     with stdout_path.open("wb") as stdout:
         proc = subprocess.Popen(
             [str(exe.resolve())],

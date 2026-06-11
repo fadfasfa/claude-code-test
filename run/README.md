@@ -4,15 +4,17 @@
 
 ## 当前定位
 
-`run/` 是 Hextech 伴生系统的实际运行工作区，包含桌面悬浮窗、本地 Web/API、数据处理、远端抓取、自愈修复和 PyInstaller 便携包构建。
+`run/` 是 Hextech 伴生系统的实际运行工作区，包含桌面悬浮窗、本地 Web/API、阶段 0-5 游戏内 overlay 基础窗口、Vision sidecar、数据处理、远端抓取、自愈修复和 PyInstaller 便携包构建。
 
 当前项目目标：让打包后的便携目录在非仓库、空运行态目录中首次启动后 60 秒内可用；高频抓取数据不随包分发，由首次启动和 4 小时新鲜度策略触发后台刷新。
+
+当前游戏内显示已完成阶段 0-5 的本地 MVP：overlay host 默认不显示占位框；显示条件为“开关开 + active 选择事件 + 游戏窗口在前台”；假识别和 Vision sidecar 都通过本地事件文件刷新三槽位；ServiceManager 可同时管理 overlay host 与常驻 Vision sidecar；打包边界和性能记录结构已纳入自检。真实 LoL `Borderless` / 无边框全屏下的识别置信度、`Alt+H`、窗口跟随和 P95 <= 500ms 仍需人工验收。
 
 ## 一眼看懂
 
 | 维度 | 当前状态 |
 | :--- | :--- |
-| 主入口 | `python hextech_ui.py` 启动桌面伴生；`python web_server.py` 只启动 Web 服务 |
+| 主入口 | `python hextech_ui.py` 启动桌面伴生；`python web_server.py` 只启动 Web 服务；`python hextech_ui.py --game-overlay` 只启动基础 overlay host |
 | 打包入口 | `python build.py`，不要另建平行打包流程 |
 | 发布形态 | PyInstaller `--onedir` 未签名便携包 + `_portable.zip` |
 | 启动硬门槛 | 打包产物空仓首启 60 秒内返回可用 Web/UI 热路径 |
@@ -31,6 +33,30 @@ python hextech_ui.py
 
 # 仅启动 Web 服务
 python web_server.py
+
+# overlay host 人工验收入口；无 active 选择事件或游戏不在前台时窗口保持隐藏
+python hextech_ui.py --game-overlay
+
+# 写入一条本地三槽位样例事件；仍需游戏窗口在前台才会显示
+python -c "from processing.overlay_event_channel import write_sample_overlay_event; print(write_sample_overlay_event())"
+
+# 阶段 3 假识别：写真实事件文件，验证事件通道到三槽位渲染
+python -c "from processing.overlay_event_channel import write_fake_detection_overlay_event; print(write_fake_detection_overlay_event())"
+
+# 阶段 3R Vision MVP：执行一次本地窗口识别探针并写入事件文件
+python -m processing.overlay_vision_sidecar --once --preset auto --write-event
+
+# 正式游戏内显示链路：常驻自门控识别循环
+python -m processing.overlay_vision_sidecar --loop --preset auto --write-event
+
+# 识别校准：在真实卡片界面转储单帧、ROI crop 与 top3 候选分数到目录
+python -m processing.overlay_vision_sidecar --once --debug-dump data/runtime/debug/overlay_vision
+
+# 阶段 5 性能验收摘要：手工录入延迟样本后输出 P50/P95
+python tools/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag manual-lol-borderless
+
+# 写入非选择态事件，overlay 应隐藏
+python -c "from processing.overlay_event_channel import write_inactive_overlay_event; print(write_inactive_overlay_event())"
 
 # 默认离线自检
 python tools/dev_checks.py
@@ -55,8 +81,8 @@ run/
 ├── build.py                    # 打包入口薄壳，委托 tools/build_bundle.py
 ├── hextech_ui.py               # 桌面入口薄壳，委托 display/hextech_ui.py
 ├── web_server.py               # Web 入口薄壳，委托 display/web_server.py
-├── display/                    # 展示、桌面窗口、本地 Web/API、浏览器协同
-├── processing/                 # 运行态路径、CSV/DataFrame、视图适配、后台编排
+├── display/                    # 展示、桌面窗口、本地 Web/API、服务生命周期、基础 overlay host
+├── processing/                 # 运行态路径、CSV/DataFrame、视图适配、overlay hint cache、后台编排
 ├── scraping/                   # 远端抓取、稳定资源同步、缺失产物自愈
 ├── tools/                      # 打包、清理、日志、自检、手动验收和烟测工具
 ├── data/static/                # 版本级稳定数据文件
@@ -155,6 +181,32 @@ Web/UI 详情页右侧联动对齐 ApexLoL 源页的检查保留为手动验收�
 python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 ```
 
+阶段 0-5 游戏内显示验收覆盖基础窗口、本地事件通道、Vision MVP、生命周期和性能/打包边界：
+
+- 无事件文件、inactive 事件、过期事件、客户端阶段、桌面前台和游戏切后台时，overlay 默认不显示占位框。
+- overlay 显示条件为“开关开 + active 选择事件 + 游戏窗口在前台”；`Alt+H` 只切换用户开关，不绕过事件和前台门控。
+- 在 LoL `Borderless` / 无边框全屏下确认 overlay 可见、置顶、点击穿透、`Alt+H` 显隐、选择结束自动隐藏和跟随游戏窗口。
+- ROI 预设覆盖 `1920x1080`、`2560x1440` 和重点 `2560x1600`；DPI 缩放、多显示器和分辨率切换仍需人工记录。
+- 在桌面控制台分别验证只开 Web、只开游戏内显示、两者同开、两者全关四种矩阵。
+- 只开游戏内显示时不得出现 FastAPI 端口、浏览器进程或 Web API 依赖。
+- 关闭游戏内显示后不得残留 overlay、Vision sidecar、高频捕获或识别循环；低频监听状态必须可见、可关、可计量。
+- 当前 MVP 只承诺 `Borderless` / 无边框全屏；`Full Screen` / 独占全屏不承诺独占全屏覆盖，后续只做检测与引导。
+- 真实 LoL 人工验收需记录 P95 <= 500ms 的 overlay 文案更新延迟；识别输出目标 P95 <= 300ms。
+
+下一截断的数据通道验收只覆盖本地 JSON 事件：
+
+- `data/runtime/state/game_overlay_slots.v1.json` 是 overlay host 读取的本地三槽位事件文件。
+- `python -c "from processing.overlay_event_channel import write_sample_overlay_event; print(write_sample_overlay_event())"` 可写入开发样例事件。
+- `python -c "from processing.overlay_event_channel import write_fake_detection_overlay_event; print(write_fake_detection_overlay_event())"` 可写入假识别事件，用于先验证“事件文件 -> overlay 三槽位渲染”的端到端通道。
+- `python -m processing.overlay_vision_sidecar --once --preset auto --write-event` 可执行一次本地 Vision 诊断探针；无 LoL 窗口时会写入 inactive 诊断事件。
+- `python -m processing.overlay_vision_sidecar --loop --preset auto --write-event` 是正式常驻链路；游戏窗口不存在或不在前台时低频待机，并只写一次 inactive 清理旧 active 事件；前台时按约 250ms 截图识别。
+- 识别判据为灰度归一化指纹（NCC）+ top1/top2 区分度 margin + crop 方差下限：平坦暗面板（如 ESC 菜单）会被方差门槛直接拒绝，不会误报 active；模板按图标内容去重，近孪生图标在置信度极高时豁免 margin；active 掉到 unstable 后会延迟约 3 帧再写隐藏事件，避免 overlay 闪烁。
+- ROI 直接框住三张卡片的图标区；`2560x1600` 来自真实截图标定，16:9 预设为推算值。识别不准时在真实卡片界面运行 `--once --debug-dump <目录>`，依据转储的 `report.json`（各槽 crop_std 与 top3 置信度）校准 ROI 与阈值。
+- `selection_type` 只接受 `hextech` / `body_shard`，分别对应海克斯选择和锻体碎片选择；两类内容共用通道但文案语义独立。
+- 没有海克斯选择或锻体碎片选择时，事件应为 inactive、缺失或过期；overlay host 隐藏，不显示等待占位。
+- overlay host 应在不启动 Web/FastAPI/浏览器的情况下刷新三槽位文案。
+- Vision sidecar 使用 Pillow/pywin32 本地窗口截图和固定 ROI 预设，不引入 OpenCV、WGC、远端请求、注入、读内存或自动点击。
+
 ## 常用接口
 
 - `GET /api/champions`：英雄列表
@@ -165,13 +217,23 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 - `GET /api/synergies/{champ_id}`：英雄协同数据
 - `POST /api/redirect`：浏览器跳转控制
 - `GET /ws`：实时事件推送
+- `data/runtime/cache/overlay_hint_cache.v1.json`：游戏内 overlay 本地轻量提示缓存
+- `data/runtime/state/game_overlay_slots.v1.json`：游戏内 overlay 本地三槽位事件
+- `processing/overlay_vision_sidecar.py`：游戏内 overlay 本地 Vision MVP 探针
+- `tools/overlay_performance_probe.py`：阶段 5 性能验收摘要工具
 
 ## 维护入口
 
 - Web 路由优先改 `display/web_api.py`
 - Web 生命周期、端口、浏览器、LCU、缓存逻辑优先改 `display/web_runtime.py`
+- Web 前端 / 游戏内显示进程生命周期优先改 `display/service_manager.py`
+- 游戏内基础 overlay host 优先改 `display/game_overlay_host.py`
 - 桌面后台线程、轮询、跳转、资源加载逻辑优先改 `display/ui_runtime.py`
 - 桌面控件结构优先改 `display/hextech_ui.py`
+- overlay hint cache 生成和查询优先改 `processing/overlay_hint_cache.py`
+- overlay 三槽位事件通道优先改 `processing/overlay_event_channel.py`
+- overlay Vision 探针优先改 `processing/overlay_vision_sidecar.py`
+- overlay 性能记录结构优先改 `tools/overlay_performance_probe.py`
 - 纯数据转换、DataFrame 清洗、视图适配优先改 `processing/`
 - 远端抓取、稳定资源同步、自愈修复优先改 `scraping/`
 - 打包链路变更时同步检查 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`tools/dev_checks.py` 和本文档
