@@ -1,0 +1,51 @@
+{
+  "description": "官方 patch notes 对 Fandom Wiki 过期天赋描述的覆盖。validator 使用 description_en 的效果文本替代 Wiki raw 做运行期数值校验。",
+  "items": {
+    "heavy": {
+      "coolant-reserve": {
+        "source": "Patch Notes 13.0",
+        "url": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/395-patch-notes-13-0",
+        "description_en": "If both of your Squad Members are Incapacitated or grabbed, your Primary Weapon will not Overheat and you deal 50% more Damage."
+      }
+    },
+    "tactical": {
+      "balanced-distribution": {
+        "source": "Patch Notes 12.0",
+        "url": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+        "description_en": "Your Primary Weapon deals 15% more Damage, but your Secondary Weapon deals 15% less Damage."
+      },
+      "kraken-penetrator-rounds": {
+        "source": "Patch Notes 12.0",
+        "url": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+        "description_en": "All bolter weapons deal 50% more damage with body shots."
+      }
+    },
+    "techmarine": {
+      "replenishing-salvo": {
+        "source": "Hotfix 12.1 Patch Notes",
+        "url": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/360-hotfix-12-1-patch-notes",
+        "description_en": "Killing an enemy with the Servo-Gun restores 1 Equipment. The perk will not activate its cooldown when player has max equipment. Cooldown is 75 seconds."
+      },
+      "battlefield-repairs": {
+        "source": "Hotfix 12.1 Patch Notes",
+        "url": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/360-hotfix-12-1-patch-notes",
+        "description_en": "Any Squad Member restores 1 additional Armour Segment for each Finisher of Majoris or Extremis enemy."
+      },
+      "inexorable-salvo": {
+        "source": "Hotfix 12.1 Patch Notes",
+        "url": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/360-hotfix-12-1-patch-notes",
+        "description_en": "While the Servo-Gun is active and for an additional 15 seconds after deactivation, you do not lose control upon taking Heavy Hits and you cannot be knocked back."
+      },
+      "explosives-adept": {
+        "source": "Patch Notes 13.0",
+        "url": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/395-patch-notes-13-0",
+        "description_en": "Damage from Equipment increases by 50%."
+      },
+      "reinforced-position": {
+        "source": "Patch Notes 13.0",
+        "url": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/395-patch-notes-13-0",
+        "description_en": "All Squad Members within 15 metres of an active Tarantula Sentry Gun take 30% less Damage and deal 20% more Damage."
+      }
+    }
+  }
+}

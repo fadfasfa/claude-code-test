@@ -2,7 +2,7 @@
   "classes": [
     {
       "class_slug": "assault",
-      "class_name": "Assault",
+      "class_name": "突击兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -129,7 +129,7 @@
           "talent_name_en": "Knowledge of the Enemy",
           "talent_name_zh": "知敌先机",
           "icon_path": "talents/突击兵/c3r2_knowledge-of-the-enemy.png",
-          "description": "对 Majoris 和 Extremis 级敌人的近战伤害提高15%。"
+          "description": "对 精英 和 特种 级敌人的近战伤害提高15%。"
         },
         {
           "talent_slug": "strategic-strikes",
@@ -140,7 +140,7 @@
           "talent_name_en": "Strategic Strikes",
           "talent_name_zh": "战略打击",
           "icon_path": "talents/突击兵/c4r2_strategic-strikes.png",
-          "description": "所有小队成员对 Extremis 和 Terminus 级敌人的近战伤害提高20%。"
+          "description": "所有小队成员对 特种 和 终极 级敌人的近战伤害提高20%。"
         },
         {
           "talent_slug": "strong-strikes",
@@ -278,7 +278,7 @@
     },
     {
       "class_slug": "bulwark",
-      "class_name": "Bulwark",
+      "class_name": "重装兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -460,7 +460,7 @@
           "talent_name_en": "Defensive Mastery",
           "talent_name_zh": "防御精通",
           "icon_path": "talents/重装兵/c8r2_defensive-mastery.png",
-          "description": "完美招架会立即使 Majoris 或 Extremis 级敌人失去战斗能力。冷却90秒。"
+          "description": "完美招架会立即使 精英 或 特种 级敌人失去战斗能力。冷却90秒。"
         },
         {
           "talent_slug": "forward-momentum",
@@ -504,7 +504,7 @@
           "talent_name_en": "Effective Formation",
           "talent_name_zh": "高效阵型",
           "icon_path": "talents/重装兵/c4r3_effective-formation.png",
-          "description": "所有小队成员受到来自 Extremis 和 Terminus 级敌人的生命伤害降低20%。"
+          "description": "所有小队成员受到来自 特种 和 终极 级敌人的生命伤害降低20%。"
         },
         {
           "talent_slug": "focused-strength",
@@ -554,7 +554,7 @@
     },
     {
       "class_slug": "heavy",
-      "class_name": "Heavy",
+      "class_name": "特战兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -703,7 +703,7 @@
           "talent_name_en": "Consecutive Execution",
           "talent_name_zh": "连环处决",
           "icon_path": "talents/特战兵/c5r2_consecutive-execution.png",
-          "description": "5秒内击杀7个敌人可恢复1格装备充能。冷却90秒。"
+          "description": "5秒内击杀7个敌人可恢复装备充能。冷却90秒。"
         },
         {
           "talent_slug": "field-adjustment",
@@ -736,7 +736,7 @@
           "talent_name_en": "Coolant Reserve",
           "talent_name_zh": "冷却储备",
           "icon_path": "talents/特战兵/c8r2_coolant-reserve.png",
-          "description": "当另外两名队友都倒地或被抓取时，你的主武器不会过热，且伤害提高15%。"
+          "description": "当另外两名队友都倒地或被抓取时，你的主武器不会过热，且伤害提高50%。"
         },
         {
           "talent_slug": "auxiliary-ammunition",
@@ -830,7 +830,7 @@
     },
     {
       "class_slug": "sniper",
-      "class_name": "Sniper",
+      "class_name": "狙击兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -869,7 +869,7 @@
           "talent_name_en": "Iron Grip",
           "talent_name_zh": "钢铁握持",
           "icon_path": "talents/狙击兵/c3r1_iron-grip.png",
-          "description": "使用爆矢狙击枪和潜猎者爆矢步枪时，武器扩散与后坐力降低20%，且对 Terminus 级敌人的远程伤害提高15%。"
+          "description": "使用爆矢狙击枪和潜猎者爆矢步枪时，武器扩散与后坐力降低20%，且对 终极 级敌人的远程伤害提高15%。"
         },
         {
           "talent_slug": "marksmanship",
@@ -935,7 +935,7 @@
           "talent_name_en": "Melee Mastery",
           "talent_name_zh": "近战精通",
           "icon_path": "talents/狙击兵/c1r2_melee-mastery.png",
-          "description": "对 Majoris 及以上等级敌人的近战伤害提高20%。"
+          "description": "对 精英 及以上等级敌人的近战伤害提高20%。"
         },
         {
           "talent_slug": "vantage-point",
@@ -968,7 +968,7 @@
           "talent_name_en": "Precision Targeting",
           "talent_name_zh": "精准索敌",
           "icon_path": "talents/狙击兵/c4r2_precision-targeting.png",
-          "description": "所有小队成员武器扩散降低25%，且对 Extremis 和 Terminus 级敌人的远程伤害提高15%。"
+          "description": "所有小队成员武器扩散降低25%，且对 特种 和 终极 级敌人的远程伤害提高15%。"
         },
         {
           "talent_slug": "efficient-readiness",
@@ -1045,7 +1045,7 @@
           "talent_name_en": "Lethal Efficiency",
           "talent_name_zh": "致命效率",
           "icon_path": "talents/狙击兵/c3r3_lethal-efficiency.png",
-          "description": "用激光长枪一发击杀多个敌人时，恢复1格武器充能。"
+          "description": "用激光长枪一发击杀超过1名敌人时，恢复1格武器充能。"
         },
         {
           "talent_slug": "squad-renewal",
@@ -1106,7 +1106,7 @@
     },
     {
       "class_slug": "tactical",
-      "class_name": "Tactical",
+      "class_name": "战术兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -1123,7 +1123,7 @@
           "talent_name_en": "Balanced Distribution",
           "talent_name_zh": "均衡配给",
           "icon_path": "talents/战术兵/c1r1_balanced-distribution.png",
-          "description": "主武器伤害提高10%，但副武器伤害降低10%。"
+          "description": "主武器伤害提高15%，但副武器伤害降低15%。"
         },
         {
           "talent_slug": "heightened-vigour",
@@ -1167,7 +1167,7 @@
           "talent_name_en": "Vital Data",
           "talent_name_zh": "关键数据",
           "icon_path": "talents/战术兵/c5r1_vital-data.png",
-          "description": "扫描 Extremis 或 Terminus 级敌人时，恢复50%占卜扫描充能。"
+          "description": "扫描 特种 或 终极 级敌人时，恢复50%占卜扫描充能。"
         },
         {
           "talent_slug": "battle-focus",
@@ -1233,7 +1233,7 @@
           "talent_name_en": "Steady Aim",
           "talent_name_zh": "稳定瞄准",
           "icon_path": "talents/战术兵/c3r2_steady-aim.png",
-          "description": "武器扩散与后坐力降低20%，且对 Terminus 级敌人的远程伤害提高20%。"
+          "description": "武器扩散与后坐力降低20%，且对 终极 级敌人的远程伤害提高20%。"
         },
         {
           "talent_slug": "aligned-aim",
@@ -1255,7 +1255,7 @@
           "talent_name_en": "Priority Targeting",
           "talent_name_zh": "优先锁定",
           "icon_path": "talents/战术兵/c5r2_priority-targeting.png",
-          "description": "占卜扫描标记持续时间延长8秒（基础8秒），但不会标记 Minoris 级敌人。"
+          "description": "占卜扫描标记持续时间延长8秒（基础8秒），但不会标记 小型 级敌人。"
         },
         {
           "talent_slug": "improved-efficiency",
@@ -1266,7 +1266,7 @@
           "talent_name_en": "Improved Efficiency",
           "talent_name_zh": "效率优化",
           "icon_path": "talents/战术兵/c6r2_improved-efficiency.png",
-          "description": "一次占卜扫描命中任意10个敌人，或3个 Majoris 及以上等级敌人时，恢复1格装备充能。"
+          "description": "一次占卜扫描命中任意10个敌人，或3个 精英 及以上等级敌人时，恢复1格装备充能。"
         },
         {
           "talent_slug": "expert-timing",
@@ -1299,7 +1299,7 @@
           "talent_name_en": "Kraken Penetrator Rounds",
           "talent_name_zh": "海妖穿甲弹",
           "icon_path": "talents/战术兵/c1r3_kraken-penetrator-rounds.png",
-          "description": "爆矢武器可额外穿透1个敌人。"
+          "description": "所有爆矢武器的身体命中伤害提高50%。"
         },
         {
           "talent_slug": "versatility",
@@ -1321,7 +1321,7 @@
           "talent_name_en": "Emperor's Vengeance",
           "talent_name_zh": "帝皇复仇",
           "icon_path": "talents/战术兵/c3r3_emperor-s-vengeance.png",
-          "description": "击杀 Majoris 或更高等级敌人时，主武器恢复1个弹匣的弹药。对于无需装填的主武器，则恢复20%最大弹药，且不会超过上限。冷却30秒。"
+          "description": "击杀 精英 或更高等级敌人时，主武器恢复1个弹匣的弹药。对于无需装填的主武器，则恢复20%最大弹药，且不会超过上限。冷却30秒。"
         },
         {
           "talent_slug": "transhuman-physiology",
@@ -1376,13 +1376,13 @@
           "talent_name_en": "Marked for Death",
           "talent_name_zh": "标记处决",
           "icon_path": "talents/战术兵/c8r3_marked-for-death.png",
-          "description": "对被占卜扫描标记的 Majoris 或 Extremis 级敌人打出爆头时可直接秒杀。冷却120秒。"
+          "description": "对被占卜扫描标记的 精英 或 特种 级敌人打出爆头时可直接秒杀。冷却120秒。"
         }
       ]
     },
     {
       "class_slug": "techmarine",
-      "class_name": "Techmarine",
+      "class_name": "技术军士",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -1421,7 +1421,7 @@
           "talent_name_en": "Explosives Adept",
           "talent_name_zh": "爆炸物专精",
           "icon_path": "talents/技术军士/c3r1_explosives-adept.png",
-          "description": "装备造成的伤害提高35%。"
+          "description": "装备造成的伤害提高50%。"
         },
         {
           "talent_slug": "reinforced-position",
@@ -1432,7 +1432,7 @@
           "talent_name_en": "Reinforced Position",
           "talent_name_zh": "固守阵地",
           "icon_path": "talents/技术军士/c4r1_reinforced-position.png",
-          "description": "活跃狼蛛炮台15米内的所有小队成员受到的伤害降低25%，且造成的伤害提高15%。"
+          "description": "活跃狼蛛炮台15米内的所有小队成员受到的伤害降低30%，且造成的伤害提高20%。"
         },
         {
           "talent_slug": "designated-target",
@@ -1476,7 +1476,7 @@
           "talent_name_en": "Decapitating Stratagem",
           "talent_name_zh": "斩首战术",
           "icon_path": "talents/技术军士/c8r1_decapitating-stratagem.png",
-          "description": "用肩炮击杀或使 Majoris 及更高等级敌人失去战斗能力时，肩炮技能充能恢复100%。冷却90秒。"
+          "description": "用肩炮击杀或使 精英 及更高等级敌人失去战斗能力时，肩炮技能充能恢复100%。冷却90秒。"
         },
         {
           "talent_slug": "precision-enhancement",
@@ -1520,7 +1520,7 @@
           "talent_name_en": "Battlefield Repairs",
           "talent_name_zh": "战场修复",
           "icon_path": "talents/技术军士/c4r2_battlefield-repairs.png",
-          "description": "使用医疗针时，所有小队成员会完全恢复护甲，并额外获得1格护甲。"
+          "description": "任意小队成员每次处决 精英 或 特种 级敌人时，额外恢复1格护甲。"
         },
         {
           "talent_slug": "inexorable-salvo",
@@ -1531,7 +1531,7 @@
           "talent_name_en": "Inexorable Salvo",
           "talent_name_zh": "无情齐射",
           "icon_path": "talents/技术军士/c5r2_inexorable-salvo.png",
-          "description": "肩炮激活期间，被重击命中时不会失衡，也不会被击退。"
+          "description": "肩炮激活期间以及关闭后的15秒内，被重击命中时不会失衡，也不会被击退。"
         },
         {
           "talent_slug": "augmented-tarantula",
@@ -1630,7 +1630,7 @@
           "talent_name_en": "Replenishing Salvo",
           "talent_name_zh": "补给齐射",
           "icon_path": "talents/技术军士/c6r3_replenishing-salvo.png",
-          "description": "用肩炮击杀敌人时恢复1个装备。冷却75秒。"
+          "description": "用肩炮击杀敌人时恢复1个装备；若装备已满则不会触发冷却。冷却75秒。"
         },
         {
           "talent_slug": "strategic-gun-strike",
@@ -1641,7 +1641,7 @@
           "talent_name_en": "Strategic Gun Strike",
           "talent_name_zh": "战略枪袭",
           "icon_path": "talents/技术军士/c7r3_strategic-gun-strike.png",
-          "description": "肩炮只会锁定 Majoris 及以上等级敌人，并且目标距离超过20米时伤害提高20%。"
+          "description": "肩炮只会锁定 精英 及以上等级敌人，并且目标距离超过20米时伤害提高20%。"
         },
         {
           "talent_slug": "omnissiah-s-fury",
@@ -1658,7 +1658,7 @@
     },
     {
       "class_slug": "vanguard",
-      "class_name": "Vanguard",
+      "class_name": "先锋兵",
       "grid_spec": {
         "cols": 8,
         "rows": 3,
@@ -1752,7 +1752,7 @@
           "talent_name_en": "Tactical Prowess",
           "talent_name_zh": "战术熟练",
           "icon_path": "talents/先锋兵/c8r1_tactical-prowess.png",
-          "description": "抓钩发射器不仅能对失去战斗能力的敌人发动处决，也能对生命值低于33%的敌人发动（Terminus 级除外）；使用抓钩处决会完全恢复技能充能。"
+          "description": "抓钩发射器不仅能对失去战斗能力的敌人发动处决，也能对生命值低于33%的敌人发动（终极 级除外）；使用抓钩处决会完全恢复技能充能。"
         },
         {
           "talent_slug": "melee-mastery",
@@ -1763,7 +1763,7 @@
           "talent_name_en": "Melee Mastery",
           "talent_name_zh": "近战精通",
           "icon_path": "talents/先锋兵/c1r2_melee-mastery.png",
-          "description": "对 Majoris 及以上等级敌人的近战伤害提高10%。"
+          "description": "对 精英 及以上等级敌人的近战伤害提高10%。"
         },
         {
           "talent_slug": "close-combat-focus",
@@ -1796,7 +1796,7 @@
           "talent_name_en": "Unmatched Zeal",
           "talent_name_zh": "无双狂热",
           "icon_path": "talents/先锋兵/c4r2_unmatched-zeal.png",
-          "description": "对 Extremis 或 Terminus 级敌人进行近战处决时，会为任意一名小队成员额外恢复30%生命值。"
+          "description": "对 特种 或 终极 级敌人进行近战处决时，会为任意一名小队成员额外恢复30%生命值。"
         },
         {
           "talent_slug": "shock-wave",
@@ -1818,7 +1818,7 @@
           "talent_name_en": "Tenacity",
           "talent_name_zh": "顽强斗志",
           "icon_path": "talents/先锋兵/c6r2_tenacity.png",
-          "description": "以远程方式击杀 Majoris 或更高等级敌人后，飞踢伤害提高130%。冷却15秒。"
+          "description": "以远程方式击杀 精英 或更高等级敌人后，飞踢伤害提高130%。冷却15秒。"
         },
         {
           "talent_slug": "grim-determination",
@@ -1884,7 +1884,7 @@
           "talent_name_en": "Inner Fire",
           "talent_name_zh": "内在烈焰",
           "icon_path": "talents/先锋兵/c4r3_inner-fire.png",
-          "description": "所有小队成员都可通过对 Majoris 及以上等级敌人执行处决来恢复15%技能充能。"
+          "description": "所有小队成员都可通过对 精英 及以上等级敌人执行处决来恢复15%技能充能。"
         },
         {
           "talent_slug": "collateral-damage",
@@ -1928,7 +1928,7 @@
           "talent_name_en": "Adrenaline Rush",
           "talent_name_zh": "肾上腺狂潮",
           "icon_path": "talents/先锋兵/c8r3_adrenaline-rush.png",
-          "description": "近战击杀 Majoris 及以上等级敌人时，恢复5%生命值。"
+          "description": "近战击杀 精英 及以上等级敌人时，恢复5%生命值。"
         }
       ]
     }

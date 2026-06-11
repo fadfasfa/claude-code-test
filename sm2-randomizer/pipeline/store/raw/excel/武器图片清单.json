@@ -82,15 +82,6 @@
       "asset_path": "weapons/icons/主武器/全知者爆弹卡宾枪.png"
     },
     {
-      "slug": "twin-linked-melta-gun",
-      "excel_name": "双联热熔枪",
-      "slot_type": "primary",
-      "source_sheet": "主武器",
-      "directory_label": "主武器",
-      "asset_file_name": "双联热熔枪.png",
-      "asset_path": "weapons/icons/主武器/双联热熔枪.png"
-    },
-    {
       "slug": "multi-melta",
       "excel_name": "多管热熔",
       "slot_type": "primary",
@@ -233,6 +224,15 @@
       "directory_label": "主武器",
       "asset_file_name": "重型等离子焚化枪.png",
       "asset_path": "weapons/icons/主武器/重型等离子焚化枪.png"
+    },
+    {
+      "slug": "bolt-carbine-one-handed",
+      "excel_name": "单手爆弹卡宾枪",
+      "slot_type": "secondary",
+      "source_sheet": "副武器",
+      "directory_label": "副手",
+      "asset_file_name": "单手爆弹卡宾枪.png",
+      "asset_path": "weapons/icons/副手/单手爆弹卡宾枪.png"
     },
     {
       "slug": "inferno-pistol",
