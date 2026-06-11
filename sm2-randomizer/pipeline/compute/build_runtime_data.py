@@ -25,6 +25,12 @@ RUNTIME_TALENT_GRID_SPEC = {
     "order": "column-major",
 }
 MAX_NEGATIVE_LABEL_LENGTH = 14
+ENEMY_TIER_ZH_MAP = {
+    "Minoris": "小型",
+    "Majoris": "精英",
+    "Extremis": "特种",
+    "Terminus": "终极",
+}
 
 
 def _clean_placeholder(value: Any) -> str:
@@ -45,6 +51,15 @@ def _clean_talent_name_zh(zh_name: Any, en_name: Any) -> str | None:
     if zh_text == en_text and zh_text.isascii():
         return None
     return zh_text
+
+
+def _localize_enemy_tier_terms(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = value
+    for english, chinese in ENEMY_TIER_ZH_MAP.items():
+        text = re.sub(rf"\b{english}\b", chinese, text, flags=re.IGNORECASE)
+    return text
 
 
 def _load_talent_name_zh_map() -> dict[str, str]:
@@ -287,6 +302,7 @@ def _sanitize_talent_node(
     if description and description in blocked_descriptions:
         description = None
     description = talent_description_zh_map.get((class_slug, talent_slug), description)
+    description = _localize_enemy_tier_terms(description)
     icon_path = _clean_optional_text(item.get("icon_path"))
     if icon_path:
         icon_path = icon_path.replace("\\", "/")
