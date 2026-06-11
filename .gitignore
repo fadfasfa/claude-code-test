@@ -21,6 +21,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# 通用打包产物文件夹
+dist/
+build/
+
 # Hextech local build artifacts
 run/build/
 run/dist/
