@@ -152,38 +152,9 @@ def _normalize_manual_negative_aliases(item: dict[str, Any], current_terms: set[
     return aliases
 
 
-POSITIVE_KEY_OVERRIDES = {
-    "幽灵之誓": "ghost-oath",
-}
-NEGATIVE_TERM_METADATA = {
-    "屠夫信条": {
-        "key": "butchers-creed",
-        "risk_level": "must_exclude",
-        "core_tags": [],
-    },
-    "爆矢风暴": {
-        "key": "bolter-storm",
-        "risk_level": "must_exclude",
-        "core_tags": [],
-    },
-}
-EXTRA_NEGATIVE_CONFLICTS = [
-    {
-        "keys": ["butchers-creed", "bolter-storm"],
-        "risk_level": "must_exclude",
-        "message": "屠夫信条和爆矢风暴会同时禁止近战与远程路线，不能同时抽取。",
-    },
-    {
-        "keys": ["butchers-creed", "keep-distance"],
-        "risk_level": "must_exclude",
-        "message": "屠夫信条要求近战战斗，保持距离会压制近战路线，不能同时抽取。",
-    },
-    {
-        "keys": ["bolter-storm", "close-quarters"],
-        "risk_level": "must_exclude",
-        "message": "爆矢风暴要求远程战斗，短兵相接会压制远程路线，不能同时抽取。",
-    },
-]
+POSITIVE_KEY_OVERRIDES: dict[str, str] = {}
+NEGATIVE_TERM_METADATA: dict[str, dict[str, str]] = {}
+EXTRA_NEGATIVE_CONFLICTS: list[dict[str, Any]] = []
 
 
 def _strategy_groups(excel_strategy_terms: dict[str, Any]) -> dict[str, list[str]]:
@@ -516,6 +487,22 @@ def merge_sources() -> dict[str, Any]:
     wiki_talent_by_class = _index_by(_safe_list(wiki_raw.get("talents")), "class_slug_candidate")
     runtime_class_by_slug = _index_by(_safe_list(runtime_classes_fallback.get("classes")), "slug")
     strategy_groups = _strategy_groups(excel_strategy_terms)
+
+    # 过滤 Excel 源数据中标记为未实装的词条，防止 refresh-data 重新注入
+    not_implemented_terms: set[str] = {
+        _clean_placeholder(term)
+        for term in _safe_list(excel_strategy_terms.get("not_implemented"))
+        if _clean_placeholder(term)
+    }
+    if not_implemented_terms:
+        strategy_groups["positive"] = [
+            term for term in strategy_groups["positive"]
+            if _clean_placeholder(term) not in not_implemented_terms
+        ]
+        strategy_groups["negative"] = [
+            term for term in strategy_groups["negative"]
+            if _clean_placeholder(term) not in not_implemented_terms
+        ]
 
     strategy_terms = (
         _safe_list(manual.get("strategy_terms"))
