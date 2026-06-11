@@ -130,6 +130,7 @@ class HextechUI:
         self._ui_render_in_progress = False
         self._pending_ui_refresh = None
         self._collapse_render_after_id = None
+        self._overlay_status_after_id = None
 
         self.web_process = None
         self._start_web_server()
@@ -147,6 +148,7 @@ class HextechUI:
         self._init_core_engine()
         self.check_and_sync_data()
         self.start_background_scraper()
+        self._start_overlay_status_polling()
 
     def _start_web_server(self):
         """后台启动网页服务，避免阻塞界面线程。"""
@@ -203,6 +205,31 @@ class HextechUI:
     def _set_status(self, text, color):
         if hasattr(self, "status_label") and self.status_label.winfo_exists():
             self.status_label.config(text=text, fg=color)
+
+    def _start_overlay_status_polling(self) -> None:
+        self._overlay_status_after_id = self.root.after(1000, self._refresh_overlay_status_summary)
+
+    def _refresh_overlay_status_summary(self) -> None:
+        """低频回显游戏内 overlay 状态，避免 running 但不可见时没有反馈。"""
+
+        try:
+            from display.overlay_service_manager import read_overlay_status_snapshot
+
+            snapshot = read_overlay_status_snapshot()
+            sidecar = snapshot.get("sidecar_status") if isinstance(snapshot.get("sidecar_status"), dict) else {}
+            flags = snapshot.get("flags") if isinstance(snapshot.get("flags"), dict) else {}
+            sidecar_status = str(sidecar.get("status") or "").strip()
+            should_report = bool(flags.get("game_overlay_enabled")) or sidecar_status == "running" or bool(snapshot.get("event_active"))
+            if should_report:
+                reason = str(snapshot.get("event_reason") or sidecar.get("reason") or "unknown")
+                active = bool(snapshot.get("event_active"))
+                color = "#a6e3a1" if active else "#f9e2af"
+                self._set_status(f"游戏内显示: {reason} / sidecar {sidecar_status or 'unknown'}", color)
+        except Exception:
+            logger.debug("读取游戏内 overlay 状态失败。", exc_info=True)
+        finally:
+            if not self.stop_event.is_set():
+                self._overlay_status_after_id = self.root.after(1000, self._refresh_overlay_status_summary)
 
     def _run_on_ui_thread(self, callback):
         root = getattr(self, "root", None)
@@ -475,6 +502,11 @@ class HextechUI:
                 self.web_process.terminate()
             except Exception:
                 pass
+        if self._overlay_status_after_id is not None:
+            try:
+                self.root.after_cancel(self._overlay_status_after_id)
+            except tk.TclError:
+                logger.debug("取消 overlay 状态轮询失败。", exc_info=True)
         self.root.destroy()
 
 
