@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import os
+import re
 import sys
 import threading
 import time
@@ -10,17 +11,19 @@ import webbrowser
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote_to_bytes, urlsplit
 import mimetypes
 import shutil
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DEFAULT_PORT = 0
 DEFAULT_HOST = "127.0.0.1"
+DEFAULT_BASE_PATH = "/sm2-randomizer"
 PACKAGED_SENTINELS = ("static", "data", "assets")
 LOG_FILE_NAME = "sm2-randomizer-launch.log"
 LOG_RETENTION_DAYS = 7
 LOG_RETENTION_SECONDS = LOG_RETENTION_DAYS * 24 * 60 * 60
+BAD_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _LOG_HANDLE = None
 _ORIGINAL_PRINT = print
 
@@ -112,28 +115,85 @@ def resolve_start_path(web_root: Path) -> str:
     return "/static/" if is_packaged_root(web_root) else "/app/static/"
 
 
-def rewrite_request_path(path: str, web_root: Path) -> str:
-    if path in {"", "/"}:
-        return resolve_start_path(web_root)
-    if path.startswith("/sm2-randomizer/"):
-        trimmed = path[len("/sm2-randomizer"):]
-        return trimmed if trimmed.startswith("/") else f"/{trimmed}"
-    if is_packaged_root(web_root) and path.startswith("/app/"):
+def normalize_base_path(value: str) -> str:
+    stripped = value.strip()
+    if not stripped or stripped == "/":
+        return ""
+    if not stripped.startswith("/"):
+        stripped = f"/{stripped}"
+    return "/" + stripped.strip("/")
+
+
+def resolve_base_path() -> str:
+    return normalize_base_path(os.getenv("SM2_BASE_PATH", DEFAULT_BASE_PATH))
+
+
+def strip_base_path(path: str) -> str:
+    normalized_path = path or "/"
+    base_path = resolve_base_path()
+    if not base_path:
+        return normalized_path
+    if normalized_path == base_path:
+        return "/"
+    if normalized_path.startswith(f"{base_path}/"):
+        trimmed = normalized_path[len(base_path):]
+        return trimmed or "/"
+    return normalized_path
+
+
+def strip_packaged_app_prefix(path: str, web_root: Path) -> str:
+    if not is_packaged_root(web_root):
+        return path
+    if path == "/app":
+        return "/"
+    if path.startswith("/app/"):
         trimmed = path[len("/app"):]
-        return trimmed if trimmed.startswith("/") else f"/{trimmed}"
+        return trimmed or "/"
     return path
+
+
+def rewrite_request_path(path: str, web_root: Path) -> str:
+    path_without_base = strip_base_path(path or "/")
+    path_without_app = strip_packaged_app_prefix(path_without_base, web_root)
+    if path_without_app in {"", "/"}:
+        return resolve_start_path(web_root)
+    return path_without_app
+
+
+def decode_url_path(path: str) -> str:
+    if BAD_PERCENT_ESCAPE.search(path):
+        raise ValueError(f"Request path contains invalid percent escape: {path}")
+    try:
+        decoded = unquote_to_bytes(path).decode("utf-8", "strict")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Request path is not valid UTF-8: {path}") from exc
+    if "\x00" in decoded:
+        raise ValueError(f"Request path contains NUL byte: {path}")
+    if "\\" in decoded:
+        raise ValueError(f"Request path contains backslash: {path}")
+    return decoded
+
+
+def validate_posix_segments(decoded_path: str, raw_path: str) -> str:
+    relative_path = decoded_path.lstrip("/")
+    for segment in relative_path.split("/"):
+        if segment == "..":
+            raise PermissionError(f"Request path escapes web root: {raw_path}")
+    return relative_path
 
 
 def resolve_request_target(path: str, web_root: Path) -> tuple[str, str]:
     path_only = urlsplit(path).path
     rewritten = rewrite_request_path(path_only, web_root)
-    decoded = unquote(rewritten).lstrip("/")
-    candidate = (web_root / decoded).resolve()
+    decoded = decode_url_path(rewritten)
+    relative_decoded = validate_posix_segments(decoded, path_only)
+    resolved_root = web_root.resolve()
+    candidate = (resolved_root / relative_decoded).resolve()
     try:
-        candidate.relative_to(web_root)
+        candidate.relative_to(resolved_root)
     except ValueError as exc:
         raise PermissionError(f"Request path escapes web root: {path_only}") from exc
-    normalized = "/" + candidate.relative_to(web_root).as_posix()
+    normalized = "/" + candidate.relative_to(resolved_root).as_posix()
     if candidate.is_dir() and not normalized.endswith("/"):
         normalized += "/"
     return rewritten, normalized
@@ -354,11 +414,9 @@ def main() -> None:
             raise
 
 
-atexit.register(close_launch_logging)
-initialize_launch_logging()
-
-
 if __name__ == "__main__":
+    atexit.register(close_launch_logging)
+    initialize_launch_logging()
     try:
         main()
     except Exception as exc:
