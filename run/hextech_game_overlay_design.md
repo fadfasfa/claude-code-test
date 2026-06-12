@@ -67,7 +67,7 @@ Windows 下「全屏」不是单一概念，覆盖能力按三种模式区分：
 - 检测到真独占 → 在 Tk 控制台提示用户切换到无边框全屏以启用游戏内显示。
 - 检测到 FSO / 无边框 → overlay 直接工作（此时连 `Full Screen` 选项都可能机会性可用）。
 
-### 2.3 Overwolf 取舍结论：不采用
+### 2.3 Overwolf 取舍结论：主线不采用，保留 ARAMBro/GEP 备用方案
 
 Overwolf 有两种形态，且「省事」与「不装本地依赖」恰好分属不同形态：
 
@@ -85,7 +85,7 @@ Overwolf 三项常被提及的加成，对本项目价值有限：
 
 | Overwolf 能力 | 放到本项目里的实际收益 | 是否已有 / 可免费替代 | 判断 |
 | :--- | :--- | :--- | :--- |
-| Game Events API | 可能提供比赛阶段、击杀、金币等结构化事件，但本项目真正需要的是「海克斯三选界面出现 + 是哪三张」 | 粗触发已可用 win32gui 窗口检测 + LCU + 低频心跳解决，也可从 Riot 自带 LCU / Live Client Data 本地 API 获取；三张海克斯 ID Overwolf 几乎不提供，这正是仍要截图识别的原因 | 加成低 |
+| Game Events API / GEP | ARAMBro 证据显示 GEP `augments` 可作为 Arena 海克斯三选候选来源 | LCU / Live Client Data 仍更适合 gameflow、champ-select、summoner 等控制面；三张候选若走 GEP，需要 Overwolf runtime 和事件桥接 | 可作为备用数据源，不进 MVP 主线 |
 | 现成 overlay 定位 | 提供窗口跟随、点击穿透、热键、多屏、DPI 等通用窗管能力 | `display/ui_runtime.py` 已有窗口跟随与显隐基础；「三张卡片在哪」是项目特有 ROI 数学，Overwolf 不代劳 | 加成低，且大半已自建 |
 | 自动更新 | 借 Overwolf 商店 / 客户端分发更新 | 这会把项目绑回 Overwolf 生态，与「完全独立便携包」直接冲突；GitHub Releases + 轻量更新器 / 重下 zip 是更轻的成熟方案 | 负加成 |
 
@@ -101,17 +101,24 @@ Overwolf 三项常被提及的加成，对本项目价值有限：
 - Overlay 框架：PySide6 / PyQt（库不是平台，可放心用）。
 - 自动更新：GitHub Releases + 轻量更新器模式。
 
-底线：不接 Overwolf。它对 Game Events、overlay 定位和自动更新三项的加成都小，唯一不可替代的独占全屏覆盖能力已被 MVP 路线绕过；作为平台，它会增加分发、合规和退出成本，让单人长期维护更难。
+底线：当前 MVP 主线仍不接 Overwolf。它会增加分发、合规、包体和退出成本；其独占全屏覆盖能力也已被「Borderless 主线 + 真独占检测引导」绕过。
 
-唯一可能动摇细节判断的事实点是：Overwolf 的 LoL Game Events 是否提供 Arena 海克斯三选的 augment ID。当前按「几乎不提供」处理；即使后续核实为提供，也只是减少一次截图触发 / 识别成本，不足以支撑为一个事件吞下整个平台。
+但 ARAMBro 的本机实现已经修正旧假设：它不是主要靠 OCR 或截图模板识别三张候选，而是通过 Overwolf GEP 的 `augments` feature 获取候选，再用本地 augment 统计数据评分。只读检查 `C:\Users\apple\AppData\Local\Programs\ARAMBro\resources\app.asar` 时可见这些事实：
+
+- `LOL_GEP_REQUIRED_FEATURES` 包含 `augments`，并对 LoL / PBE game id 调用 `gep.setRequiredFeatures(...)`。
+- 它监听 `new-info-update`、`new-game-event`、`game-detected` 等 GEP 事件，并每 1000ms 调用 `gep.getInfo(gameId)` 补抓快照。
+- 它从 `owGep.stateManager.getState().augments` 读取当前候选，通过 `extractGepAugmentRefs(...)` 和 `buildGameStateSnapshotFromGepAugments(...)` 归一化三张候选。
+- Dev UI 暴露 `owgep:get-state`，并能读取 `augment_1` / `augment1`、`augment_2` / `augment2`、`augment_3` / `augment3` 这类槽位字段。
+
+因此备用方案调整为：如果本地 Vision sidecar 在真实 LoL `Borderless` 下经 ROI、阈值和模板证据修正后仍不稳定，则新增一个 ARAMBro 式 GEP provider 验证分支。该 provider 只负责把 GEP `augments` 归一化为三槽候选，并写入现有本地 overlay 事件协议；overlay host 不直接依赖 GEP，Vision sidecar 保留为 fallback / 诊断路径。
 
 技术路线分层如下：
 
 | 路线 | 用途 | 是否满足当前 MVP | 风险 |
 | :--- | :--- | :--- | :--- |
 | 独立 原生 Win32 / PySide(Qt) 透明 overlay | 当前 MVP 主线，覆盖 Borderless / FSO 游戏画面 | 是 | 真独占全屏下不可用，改由检测 + 引导处理 |
-| Overwolf classic `.opk` | —— | 否 | 需必装 Overwolf 客户端，违反硬约束 |
-| Overwolf ow-electron 自包含 | —— | 否 | 撑大体积 + Electron 常驻 + Vanguard 不确定性 |
+| Overwolf classic `.opk` | ARAMBro/GEP 备用数据源验证 | 否 | 需必装 Overwolf 客户端，违反独立便携硬约束 |
+| Overwolf ow-electron 自包含 | ARAMBro/GEP 备用数据源验证 | 否 | 撑大体积 + Electron 常驻 + Vanguard / 分发放行不确定 |
 | DirectX hook / DLL 注入 | 技术上可能覆盖独占全屏 | 不采用 | 反作弊和账号风险不可接受 |
 
 阶段 0 的真实目标改为验证：在 LoL `Borderless` / 无边框全屏下，独立便携 overlay 能否稳定显示、点击穿透、跟随窗口并满足 500ms 响应预算；并实测该机器上 LoL `Full Screen` 走的是真独占还是 FSO。LoL 真独占全屏不阻塞当前 MVP，改由显示模式检测 + 引导处理。
@@ -434,6 +441,7 @@ Overlay 只负责渲染，不做复杂业务判断。
 | 子进程停止不干净 | 残留 CPU/内存占用 | ServiceManager 统一 stop、超时 kill、退出前状态检查 |
 | 后续 Full Screen 升级与独立便携包冲突 | 可能无法同时满足两个目标 | 不阻塞当前 MVP，升级阶段单独验证 |
 | 胜率/排名与 Riot 政策冲突 | 可能无法合规发布或存在账号风险 | 标记为 policy_blocked，正式实现前再次 go/no-go |
+| ARAMBro/GEP 备用方案引入 Overwolf 依赖 | 可能破坏独立便携目标，并带来包体、分发和合规风险 | 只作为 Vision 不稳定后的 go/no-go 备用路线，不进入当前 MVP 默认运行时 |
 
 ## 14. 待用户确认问题
 
