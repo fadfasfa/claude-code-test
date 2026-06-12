@@ -283,6 +283,9 @@ python -m processing.overlay_vision_sidecar --once --preset auto --write-event
 # 正式常驻链路
 python -m processing.overlay_vision_sidecar --loop --preset auto --write-event
 
+# 官方接口优先验证；默认只读，不写 overlay event
+python tools/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json
+
 # 写入 inactive，overlay 应隐藏
 python -c "from processing.overlay_event_channel import write_inactive_overlay_event; print(write_inactive_overlay_event())"
 
