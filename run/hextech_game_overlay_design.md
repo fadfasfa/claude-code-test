@@ -160,9 +160,29 @@ python -m processing.overlay_vision_sidecar --loop --preset auto --write-event
 
 真实 LoL 下 ROI、置信度阈值和多显示器/DPI 行为仍需人工验收，不在文档里盲调。
 
-### 7.1 ARAMBro / Overwolf GEP 备用方案
+### 7.1 官方接口优先验证顺序
 
-本节只登记备用路线，不改变当前 MVP 默认实现。当前主线仍是本地 Vision sidecar；只有真实 LoL `Borderless` 验收证明固定 ROI / 模板匹配在可接受调参后仍不稳定，才进入 ARAMBro 式数据源验证。
+后续真实 LoL 验收完成后，三槽候选数据源的升级顺序固定为：
+
+1. 先验证 Riot / LoL 官方本地接口是否能走通三槽候选数据。
+2. 官方接口拿不到稳定三槽候选时，再进入部分接入 Overwolf GEP 的备用路线。
+3. Vision sidecar 保留为 fallback / 诊断路径，不再作为唯一长期主数据源假设。
+
+官方接口验证范围：
+
+- LCU lockfile 连接：只用于本地 League Client API，验证 gameflow、champ-select、summoner 和可能存在的 Arena / augment 相关 endpoint。
+- Live Client Data：只访问 LoL 官方本地 live client interface，验证是否能在局内读到当前玩家状态、已选 augment、候选 augment 或足够可靠的选择态信号。
+- CommunityDragon / 本地静态数据：只作为 augment id、名称、图标、描述映射，不当作“当前三槽候选”的实时来源。
+
+判定标准：
+
+- 若官方接口能稳定给出当前三张候选 augment id / name，则新增官方接口 provider，并写入现有 `game_overlay_slots.v1.json` 事件协议。
+- 若官方接口只能给出 gameflow、已选 augment 或选择态信号，不能给出三张未选择候选，则继续保留它作为场景门控 / 诊断辅助，不替代三槽 provider。
+- 若官方接口没有可用候选数据，再进入 `7.2` 的 Overwolf GEP provider 验证。
+
+### 7.2 ARAMBro / Overwolf GEP 备用方案
+
+本节只登记第二阶段备用路线，不改变当前 MVP 默认实现。当前主线仍是本地 Vision sidecar；后续先验证 Riot / LoL 官方本地接口，只有官方接口无法提供稳定三槽候选时，才进入 ARAMBro 式 GEP 数据源验证。
 
 只读检查 `C:\Users\apple\AppData\Local\Programs\ARAMBro\resources\app.asar` 后，ARAMBro 的关键做法可归纳为：
 
@@ -185,7 +205,7 @@ Overwolf GEP augments
 
 - 不导入、复用或修改 ARAMBro 安装目录代码；只把它作为已验证实现思路参考。
 - 不让 overlay host 直接依赖 GEP、LCU 或 Web API；所有上游仍必须写入同一份本地三槽事件协议。
-- Vision sidecar 保留为 fallback / 诊断路径；GEP provider 可作为优先数据源，但必须能独立关闭。
+- Vision sidecar 保留为 fallback / 诊断路径；GEP provider 只能在官方接口 provider 走不通后作为优先数据源，并且必须能独立关闭。
 - 采用前需要单独 go/no-go：Overwolf / ow-electron 依赖、包体、Vanguard / Riot 放行、分发方式和用户是否接受非纯便携运行时，都不属于当前 MVP 已批准范围。
 
 ## 8. Overlay Host
