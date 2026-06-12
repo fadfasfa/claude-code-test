@@ -82,18 +82,26 @@ async def run_scraper():
             logger.error(f"[致命] 运行时错误：{str(e)}", exc_info=True)
         finally:
             if page:
-                await page.close()
+                try:
+                    await page.close()
+                except Exception as close_error:
+                    logger.warning(f"[警告] 关闭 page 失败：{close_error}")
             if context:
-                await context.close()
+                try:
+                    await context.close()
+                except Exception as close_error:
+                    logger.warning(f"[警告] 关闭 context 失败：{close_error}")
             if browser:
-                await browser.close()
+                try:
+                    await browser.close()
+                except Exception as close_error:
+                    logger.warning(f"[警告] 关闭 browser 失败：{close_error}")
             logger.info("[结束] 浏览器会话已关闭。")
+
+
 if __name__ == "__main__":
     logger.info("="*50)
     logger.info("小黑盒便携浏览器抓取器 V1.0")
     logger.info(f"执行根目录：{BASE_DIR}")
     logger.info("="*50)
     asyncio.run(run_scraper())
-
-
-
