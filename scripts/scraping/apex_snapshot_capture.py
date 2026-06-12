@@ -98,8 +98,13 @@ def capture_snapshots(snapshot_dir: Path, urls: tuple[str, ...] = DEFAULT_URLS) 
     current_entry = {"url": ""}
 
     with sync_playwright() as playwright:
-        # 使用非持久上下文，避免保存或复用 cookies/localStorage 等浏览器状态。
-        browser = playwright.chromium.launch(headless=False)
+        try:
+            # 使用非持久上下文，避免保存或复用 cookies/localStorage 等浏览器状态。
+            browser = playwright.chromium.launch(headless=False)
+        except PlaywrightError as e:
+            print(f"浏览器启动失败：{e}")
+            print("请先安装Playwright浏览器驱动：playwright install chromium")
+            raise
         context = browser.new_context(locale="zh-CN")
         page = context.new_page()
 
@@ -202,3 +207,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
