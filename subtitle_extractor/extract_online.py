@@ -145,7 +145,7 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
             print(f"处理成功：{url} -> {md_path}")
             return True
         else:
-            print("字幕转换为 Markdown 失败")
+            print(f"字幕转换为 Markdown 失败，原始字幕文件已保留：{result}")
             return False
     else:
         print(f"未找到官方字幕：{result}")
@@ -215,3 +215,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
