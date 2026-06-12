@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# 小黑盒wiki页面抓取工具
+# 功能：抓取指定小黑盒wiki页面的模块标题和条目信息，输出为JSON格式
+# 依赖：playwright, asyncio
+# 使用方式：直接运行 python heybox_browser.py，结果保存到 data/heybox_wiki_browser.json
+# 注意：需要先安装playwright并安装浏览器驱动：playwright install chromium
 import asyncio
 import json
 import logging
@@ -26,17 +33,20 @@ logger = logging.getLogger("HeyboxBrowser")
 async def run_scraper():
     async with async_playwright() as p:
         logger.info("[启动] 正在启动 Chromium（便携模式）...")
-        
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
-
-        target_url = "https://www.xiaoheihe.cn/wiki/203"
+        browser = None
+        context = None
+        page = None
         
         try:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
+
+            target_url = "https://www.xiaoheihe.cn/wiki/203"
+            
             logger.info(f"[导航] 正在加载 {target_url}...")
             await page.goto(target_url, wait_until="networkidle", timeout=30000)
 
@@ -69,15 +79,21 @@ async def run_scraper():
                 logger.info(f"[调试] 截图已保存到：{screenshot_path.relative_to(BASE_DIR)}")
 
         except Exception as e:
-            logger.error(f"[致命] 运行时错误：{str(e)}")
+            logger.error(f"[致命] 运行时错误：{str(e)}", exc_info=True)
         finally:
-            if "browser" in locals():
+            if page:
+                await page.close()
+            if context:
+                await context.close()
+            if browser:
                 await browser.close()
             logger.info("[结束] 浏览器会话已关闭。")
-
 if __name__ == "__main__":
     logger.info("="*50)
     logger.info("小黑盒便携浏览器抓取器 V1.0")
     logger.info(f"执行根目录：{BASE_DIR}")
     logger.info("="*50)
     asyncio.run(run_scraper())
+
+
+
