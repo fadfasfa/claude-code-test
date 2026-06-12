@@ -287,6 +287,18 @@ class DebugEntryHandler(SimpleHTTPRequestHandler):
             log_exception(f"HTTP {method} client disconnected", exc)
         except ConnectionResetError as exc:  # pragma: no cover - runtime wiring
             log_exception(f"HTTP {method} client reset", exc)
+        except ValueError as exc:  # pragma: no cover - runtime wiring
+            log_exception(f"HTTP {method} rejected invalid request path", exc)
+            try:
+                send_plain_error(self, 400, "Bad request")
+            except Exception:
+                pass
+        except PermissionError as exc:  # pragma: no cover - runtime wiring
+            log_exception(f"HTTP {method} rejected forbidden request path", exc)
+            try:
+                send_plain_error(self, 403, "Forbidden")
+            except Exception:
+                pass
         except Exception as exc:  # pragma: no cover - runtime wiring
             log_exception(f"HTTP {method} failed", exc)
             try:
