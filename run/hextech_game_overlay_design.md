@@ -2,12 +2,17 @@
 
 本文是 `run/` 工作区内 Hextech 游戏内 overlay 的当前设计口径。它记录已经收敛的 MVP 行为、模块合同、显示语义、性能预算、验收方式和剩余风险；不替代 `PROJECT.md` / `README.md`，但应与两者保持一致。
 
-当前工作面：
+当前工作面（双轨并行，本文档在所有分支保持同步）：
 
-- worktree：`C:\Users\apple\worktrees\codex\claudecode-codex-feature-hextech-game-overlay`
-- 分支：`codex/feature/hextech-game-overlay`
+| 轨道 | worktree | 分支 | 数据源 | 状态 |
+| :--- | :--- | :--- | :--- | :--- |
+| 共享基座 | 同时存在于两个 worktree | 两条分支共有 | —— | 事件通道 + overlay host 已收敛，两轨复用，边界固定 |
+| Track A 视觉识别 | `C:\Users\apple\worktrees\codex\claudecode-codex-feature-hextech-game-overlay` | `codex/feature/hextech-game-overlay` | 截图 + 按钮定位 + ROI 指纹匹配 | 冻结：anchor 中毒已修、门控生效，但图标匹配算法系统性认错（见 §7.1） |
+| Track B Overwolf GEP | `C:\Users\apple\worktrees\hextech-overlay-overwolf-gep` | `feature/hextech-overlay-overwolf-gep` | Overwolf GEP `augments` feature | 计划阶段：执行计划见 `run/hextech_overwolf_gep_plan.md`，交 Codex 实现 |
+
 - 目标工作区：`run/`
 - 设计来源：`C:\Users\apple\.claude\plans\run-flickering-flame.md`、`run/README.md`、`run/PROJECT.md`、当前代码合同
+- 同步要求：本设计文档是两轨共同的口径源，必须在 `main`、`codex/feature/hextech-game-overlay`、`feature/hextech-overlay-overwolf-gep` 三个分支上保持一致；改动任一处后同步其余分支。
 
 ## 1. 当前目标
 
@@ -25,7 +30,31 @@ Hextech 伴生系统保留两个可独立控制的运行能力：
 - 两者同开：Web 前端提供调试与详情页能力，游戏内 overlay 仍走同一份本地 cache / event contract。
 - 两者全关：主 Tk 控制台保持轻量常驻，不进行高频截图、识别或浏览器协同。
 
-当前 MVP 只承诺 LoL `Borderless` / 无边框全屏。`Full Screen` / 真独占全屏不作为当前交付能力；后续只做检测与引导，不通过注入、读内存或 Overwolf 平台绕过该限制。
+当前 MVP 只承诺 LoL `Borderless` / 无边框全屏。`Full Screen` / 真独占全屏不作为当前交付能力；后续只做检测与引导。视觉轨（Track A）不通过注入、读内存绕过该限制；Overwolf 轨（Track B）经官方 GEP 平台获取数据，不属于注入/读内存范畴。
+
+## 1.5 技术路径分轨（双轨）
+
+三槽候选数据的来源拆成两条可独立开发、独立开关的技术路径，二者共用同一套下游基座；这样视觉算法的重做与 Overwolf 接入互不阻塞。
+
+### 共享基座（两轨都不得改动其边界）
+
+- `processing/overlay_event_channel.py`：本地三槽位事件协议，唯一读写 `data/runtime/state/game_overlay_slots.v1.json`。任一数据源都必须按它的 schema（`schema_version`、`source`、`active`、`selection_type`、`slots[]`）写事件，不得自创格式。
+- `display/game_overlay_host.py`：只按 `read_overlay_event()` 渲染三槽位，不关心数据来自截图还是 GEP，不直接依赖任何上游进程。
+- `processing/overlay_hint_cache.py` 与 `data/indexes/`：augment id / 名称 / tier / 描述的本地映射，两轨共用，用于把任何来源的 augment 标识补成可显示文案。
+
+### Track A — 视觉识别（截图链路）
+
+- 工作树 / 分支：`...claudecode-codex-feature-hextech-game-overlay` / `codex/feature/hextech-game-overlay`。
+- 范围：`processing/overlay_vision_sidecar.py` 的窗口截图、蓝色按钮 anchor 定位、固定 ROI 切片、Pillow 指纹匹配。
+- 当前状态：**冻结**。anchor 缓存中毒已修、`scene_active` 门控收紧（≥1 张 ready 才显示）、`--loop` 自动转储已加；但真机实测证明 24×24 灰度 NCC 指纹对细线条图标系统性认错（正确卡不进 top3，候选置信度全挤在 ~0.70 无区分度，见 §7.1）。图标匹配算法的重做留待后续单独立项。
+- 角色：按 §7.1-3，作为 fallback / 诊断路径保留，不作为唯一长期主数据源。
+
+### Track B — Overwolf GEP（官方事件平台）
+
+- 工作树 / 分支：`...hextech-overlay-overwolf-gep` / `feature/hextech-overlay-overwolf-gep`。
+- 范围：新增 GEP bridge / provider，订阅 Overwolf GEP `augments` feature，归一化三张候选后写入共享事件通道；不把 Overwolf 逻辑塞进 `overlay_vision_sidecar.py`。
+- 当前状态：**计划阶段**。详见 `run/hextech_overwolf_gep_plan.md`（交 Codex 执行）。采用前的依赖 / 包体 / 分发 go/no-go 见 §7.2。
+- 角色：官方本地接口（Live Client Data / LCU）实测无法提供"未选三张候选"（NO-GO，见 §7.1）后，Track B 是优先候选数据源。
 
 ## 2. 当前实现路线
 
@@ -39,7 +68,7 @@ Hextech 伴生系统保留两个可独立控制的运行能力：
 - `processing/overlay_hint_cache.py` 生成 overlay 本地轻量提示缓存，避免游戏内显示依赖 Web API。
 - `tools/overlay_performance_probe.py` 记录阶段 5 人工延迟样本摘要。
 
-当前默认实现不引入 PySide/Qt、Electron、WebView2、OpenCV、imagehash、WGC 或 Overwolf。后续只有在真实 LoL 验收证明 Pillow/pywin32 + 固定 ROI 不足时，才基于采集证据评估替代捕获或识别库。
+本节描述 Track A（视觉识别）的实现路线，是历史 MVP 主线。Track A 默认实现不引入 PySide/Qt、Electron、WebView2、OpenCV、imagehash、WGC 或 Overwolf。真实 LoL 验收已证明 Pillow/pywin32 + 固定 ROI 的指纹匹配不足（见 §7.1 视觉结论），因此并行开辟 Track B（Overwolf GEP，见 §1.5 / §7.2）；Track B 的 ow-electron / Overwolf 依赖只属于 Track B 工作树，不回灌 Track A 的依赖约束。
 
 ## 3. 四问题修复口径
 
@@ -180,9 +209,22 @@ python -m processing.overlay_vision_sidecar --loop --preset auto --write-event
 - 若官方接口只能给出 gameflow、已选 augment 或选择态信号，不能给出三张未选择候选，则继续保留它作为场景门控 / 诊断辅助，不替代三槽 provider。
 - 若官方接口没有可用候选数据，再进入 `7.2` 的 Overwolf GEP provider 验证。
 
-### 7.2 ARAMBro / Overwolf GEP 备用方案
+#### 真机验证结论（2026-06-12，已实测，NO-GO）
 
-本节只登记第二阶段备用路线，不改变当前 MVP 默认实现。当前主线仍是本地 Vision sidecar；后续先验证 Riot / LoL 官方本地接口，只有官方接口无法提供稳定三槽候选时，才进入 ARAMBro 式 GEP 数据源验证。
+| 来源 | 实测结果 | 结论 |
+| :--- | :--- | :--- |
+| Live Client Data（`https://127.0.0.1:2999`） | 局内 36 份 `allgamedata` 采样，4 个 endpoint 全 200；顶层只有 `activePlayer / allPlayers / gameData / events`，递归扫描 **augment/hextech 字段命中 = 0**（`activePlayer` 仅金币/符文/技能/属性，`events` 仅 GameStart/MinionsSpawning） | 官方局内接口**不暴露**未选三张候选 |
+| LCU（LeagueClientUx 进程参数取端口/token） | 连通，仅大厅类数据（gameflow/champ-select/summoner），无候选字段 | 只能作门控/诊断 |
+
+判定：官方本地接口（Live Client Data + LCU）**无法作为三槽候选数据源**，按上面第 3 条进入 §7.2 Overwolf GEP。官方接口后续仅可作为场景门控 / 诊断辅助。
+
+#### 视觉识别真机结论（Track A，同日实测）
+
+按钮 anchor 定位与 ROI 切片在真机正确（slot crop 精准命中图标），模板库 208 条也含真实卡（如「缩小引擎」「坦克引擎」「尤里卡」均在库）。但 24×24 灰度 NCC 指纹匹配**系统性认错**：真卡「尤里卡」识别 top3 为中娅/循环往复/狂妄，三候选置信度全挤在 ~0.70（margin≈0，无区分度）。根因是"大片黑底 + 细线条小图标"降采样后细节丢失。结论：降阈值无意义，需重做匹配算法（更紧的图标裁剪 / 更高分辨率指纹 / 边缘描述子），单独立项，Track A 暂冻结。
+
+### 7.2 ARAMBro / Overwolf GEP 路线（Track B，现行优先数据源）
+
+官方本地接口 NO-GO 后，本节从"备用登记"升级为 **Track B 现行优先数据源**。具体执行步骤见 `run/hextech_overwolf_gep_plan.md`（交 Codex 执行）；采用前仍受本节末尾 go/no-go 约束。当前主线数据源策略：Track B 为目标主源，Track A 视觉作 fallback / 诊断。
 
 只读检查 `C:\Users\apple\AppData\Local\Programs\ARAMBro\resources\app.asar` 后，ARAMBro 的关键做法可归纳为：
 
