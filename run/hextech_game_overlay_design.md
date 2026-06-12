@@ -30,17 +30,19 @@ Hextech 伴生系统保留两个可独立控制的运行能力：
 - 两者同开：Web 前端提供调试与详情页能力，游戏内 overlay 仍走同一份本地 cache / event contract。
 - 两者全关：主 Tk 控制台保持轻量常驻，不进行高频截图、识别或浏览器协同。
 
-当前 MVP 只承诺 LoL `Borderless` / 无边框全屏。`Full Screen` / 真独占全屏不作为当前交付能力；后续只做检测与引导。视觉轨（Track A）不通过注入、读内存绕过该限制；Overwolf 轨（Track B）经官方 GEP 平台获取数据，不属于注入/读内存范畴。
+显示模式按轨道分级：**Track A（Tk topmost）只承诺 LoL `Borderless` / 无边框全屏**，独占全屏盖不住，不通过注入/读内存绕过。**Track B（Overwolf overlay）通过官方图形钩子注入游戏渲染管线，可在 `Full Screen` / 真独占全屏下显示**，这是选择渲染接入的核心动机——一并解决数据准确与全屏覆盖。Track B 的渲染走 Overwolf 官方授权平台，不属于自研注入/读内存范畴。
 
 ## 1.5 技术路径分轨（双轨）
 
 三槽候选数据的来源拆成两条可独立开发、独立开关的技术路径，二者共用同一套下游基座；这样视觉算法的重做与 Overwolf 接入互不阻塞。
 
-### 共享基座（两轨都不得改动其边界）
+### 共享基座
 
-- `processing/overlay_event_channel.py`：本地三槽位事件协议，唯一读写 `data/runtime/state/game_overlay_slots.v1.json`。任一数据源都必须按它的 schema（`schema_version`、`source`、`active`、`selection_type`、`slots[]`）写事件，不得自创格式。
-- `display/game_overlay_host.py`：只按 `read_overlay_event()` 渲染三槽位，不关心数据来自截图还是 GEP，不直接依赖任何上游进程。
-- `processing/overlay_hint_cache.py` 与 `data/indexes/`：augment id / 名称 / tier / 描述的本地映射，两轨共用，用于把任何来源的 augment 标识补成可显示文案。
+真正两轨共用的只有数据契约与映射，**渲染端按轨道分离**（这是渲染接入决策的直接结果）：
+
+- `processing/overlay_event_channel.py`：三槽位事件协议（`schema_version`、`source`、`active`、`selection_type`、`slots[]`），唯一读写 `data/runtime/state/game_overlay_slots.v1.json`。Track A 必走它；Track B 可选择把候选镜像写入该文件作为调试 / Borderless fallback 契约，但 Track B 的全屏显示不依赖它。
+- `data/indexes/`（及 `processing/overlay_hint_cache.py` 生成的提示缓存）：augment id → 名称 / tier / 描述的本地 JSON 映射。两轨共用同一份 JSON；Track A 用 Python 读，Track B 在 ow-electron 里直接读同一份 JSON。
+- 渲染端**不共享**：Track A = `display/game_overlay_host.py`（Tk topmost，Borderless）；Track B = ow-electron Overwolf overlay（图形钩子，支持独占全屏）。Tk host 不参与 Track B 的全屏渲染。
 
 ### Track A — 视觉识别（截图链路）
 
@@ -49,12 +51,14 @@ Hextech 伴生系统保留两个可独立控制的运行能力：
 - 当前状态：**冻结**。anchor 缓存中毒已修、`scene_active` 门控收紧（≥1 张 ready 才显示）、`--loop` 自动转储已加；但真机实测证明 24×24 灰度 NCC 指纹对细线条图标系统性认错（正确卡不进 top3，候选置信度全挤在 ~0.70 无区分度，见 §7.1）。图标匹配算法的重做留待后续单独立项。
 - 角色：按 §7.1-3，作为 fallback / 诊断路径保留，不作为唯一长期主数据源。
 
-### Track B — Overwolf GEP（官方事件平台）
+### Track B — Overwolf GEP + Overlay 渲染（官方事件平台，目标全屏）
 
 - 工作树 / 分支：`...hextech-overlay-overwolf-gep` / `feature/hextech-overlay-overwolf-gep`。
-- 范围：新增 GEP bridge / provider，订阅 Overwolf GEP `augments` feature，归一化三张候选后写入共享事件通道；不把 Overwolf 逻辑塞进 `overlay_vision_sidecar.py`。
-- 当前状态：**计划阶段**。详见 `run/hextech_overwolf_gep_plan.md`（交 Codex 执行）。采用前的依赖 / 包体 / 分发 go/no-go 见 §7.2。
-- 角色：官方本地接口（Live Client Data / LCU）实测无法提供"未选三张候选"（NO-GO，见 §7.1）后，Track B 是优先候选数据源。
+- 范围：新增一个 ow-electron 应用，**单进程同时干两件事**——订阅 Overwolf GEP `augments` feature 拿三张候选；用 Overwolf overlay 在游戏内渲染三卡。augment id → 中文名 / tier / 描述直接读 `data/indexes` 同一份 JSON。
+- 关键能力：Overwolf overlay 注入游戏渲染管线，可在 **独占全屏（Full Screen）** 显示，突破 Track A（Tk topmost）只能 Borderless 的限制。
+- 渲染归属：Track B 的三卡 UI 由 ow-electron overlay 渲染，**不走 Python Tk**。`game_overlay_host.py` 退居二线（Track A 渲染端 / Borderless fallback / 设置控制台）。事件通道可保留为调试镜像，非必需。
+- 当前状态：**计划阶段**。执行步骤见 `run/hextech_overwolf_gep_plan.md`（仅存于本分支，不同步其他分支；交 Codex 执行）。依赖 / 包体 / 分发 / 渲染端迁移 go/no-go 见 §7.2。
+- 角色：官方本地接口（Live Client Data / LCU）实测无法提供"未选三张候选"（NO-GO，见 §7.1）后，Track B 是目标主数据源 + 全屏渲染端。
 
 ## 2. 当前实现路线
 
@@ -224,7 +228,7 @@ python -m processing.overlay_vision_sidecar --loop --preset auto --write-event
 
 ### 7.2 ARAMBro / Overwolf GEP 路线（Track B，现行优先数据源）
 
-官方本地接口 NO-GO 后，本节从"备用登记"升级为 **Track B 现行优先数据源**。具体执行步骤见 `run/hextech_overwolf_gep_plan.md`（交 Codex 执行）；采用前仍受本节末尾 go/no-go 约束。当前主线数据源策略：Track B 为目标主源，Track A 视觉作 fallback / 诊断。
+官方本地接口 NO-GO 后，本节从"备用登记"升级为 **Track B 现行优先数据源**。具体执行步骤见 `run/hextech_overwolf_gep_plan.md`（**仅存于 `feature/hextech-overlay-overwolf-gep` 分支，不随本设计文档同步到 main / 视觉分支**；交 Codex 执行）；采用前仍受本节末尾 go/no-go 约束。当前主线数据源策略：Track B 为目标主源，Track A 视觉作 fallback / 诊断。
 
 只读检查 `C:\Users\apple\AppData\Local\Programs\ARAMBro\resources\app.asar` 后，ARAMBro 的关键做法可归纳为：
 
@@ -234,21 +238,24 @@ python -m processing.overlay_vision_sidecar --loop --preset auto --write-event
 - 它的 Dev UI 暴露 `owgep:get-state`，并能从 `augments.augment_1` / `augment1`、`augment_2` / `augment2`、`augment_3` / `augment3` 读取测试槽位。
 - LCU 更像是 gameflow、champ-select、summoner 等控制面来源；三张局内候选的主数据源是 GEP `augments`，评分和推荐再接本地 augment 统计数据。
 
-如果采用该备用方案，设计边界必须是新增“候选槽位 provider”，而不是把 Overwolf 逻辑塞进 `overlay_vision_sidecar.py`。推荐边界：
+采用的接入深度：**渲染接入**（用户已定）。一并解决两个问题——GEP 给准确候选，Overwolf overlay 给独占全屏覆盖；代价是渲染端从 Python Tk 迁到 ow-electron。架构边界：
 
 ```text
-Overwolf GEP augments
-  -> GEP bridge / provider 归一化三槽候选
-  -> processing/overlay_event_channel.py 写入 game_overlay_slots.v1.json
-  -> display/game_overlay_host.py 继续只按本地事件文件渲染
+ow-electron 单进程
+  ├─ 订阅 Overwolf GEP augments feature（augment_1/2/3）
+  ├─ 读 data/indexes 同一份 JSON 把 id 补成中文名/tier/描述
+  ├─ Overwolf overlay 窗口在游戏内渲染三卡（独占全屏可见）
+  └─（可选）镜像写 game_overlay_slots.v1.json，供 Tk 在 Borderless 作 fallback / 调试
 ```
+
+为什么不是"GEP 只采数据 + Python Tk 渲染"：那条（数据接入）能修数据，但 Tk topmost 盖不住独占全屏，全屏仍不可见。要全屏必须用 Overwolf overlay 的图形钩子渲染，故渲染端必须迁出 Python。
 
 约束：
 
 - 不导入、复用或修改 ARAMBro 安装目录代码；只把它作为已验证实现思路参考。
-- 不让 overlay host 直接依赖 GEP、LCU 或 Web API；所有上游仍必须写入同一份本地三槽事件协议。
-- Vision sidecar 保留为 fallback / 诊断路径；GEP provider 只能在官方接口 provider 走不通后作为优先数据源，并且必须能独立关闭。
-- 采用前需要单独 go/no-go：Overwolf / ow-electron 依赖、包体、Vanguard / Riot 放行、分发方式和用户是否接受非纯便携运行时，都不属于当前 MVP 已批准范围。
+- Track A 的 `game_overlay_host.py` 不依赖 GEP；Track B 的 ow-electron 不反向依赖 Python overlay host。两端唯一可选的耦合是事件文件镜像。
+- Vision sidecar 保留为 fallback / 诊断路径；ow-electron Track B 必须能独立开关，不破坏 Track A。
+- 渲染接入的 go/no-go（比数据接入更重，采用前需用户逐项确认）：① ow-electron + Overwolf 运行时依赖（数百 MB，产物非纯便携）；② 整套三卡 UI 用 ow-electron overlay 重画（renderer 迁移）；③ Vanguard / Riot 对第三方 GEP overlay 应用的放行；④ 分发方式与一次性 Overwolf app 注册。GEP 接口与 ow-electron 包本身免费，成本在依赖与分发，不在费用。
 
 ## 8. Overlay Host
 
