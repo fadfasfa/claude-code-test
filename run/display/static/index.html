@@ -4,8 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hextech 极地枢纽 - 全英雄 T 度风云榜</title>
-    <link rel="preconnect" href="https://ddragon.leagueoflegends.com">
-    <link rel="preconnect" href="https://raw.communitydragon.org">
+    <link rel="preconnect" href="https://ddragon.leagueoflegends.com" crossorigin>
+    <link rel="preconnect" href="https://raw.communitydragon.org" crossorigin>
+    <link rel="preload" href="/static/css/hextech-theme.css" as="style">
+    <link rel="preload" href="/static/css/tailwind-compiled.css" as="style">
     <link rel="stylesheet" href="/static/css/hextech-theme.css">
     <link rel="stylesheet" href="/static/css/tailwind-compiled.css">
 </head>
@@ -48,6 +50,6 @@
 
     <div id="searchOverlay" class="hidden"></div>
 
-    <script src="/static/js/index.js"></script>
+    <script defer src="/static/js/index.js"></script>
 </body>
 </html>
