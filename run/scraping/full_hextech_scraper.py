@@ -231,6 +231,24 @@ def _parse_augments_payload(payload: str) -> dict:
     return augments
 
 
+def _looks_like_augment_stats(augments: dict) -> bool:
+    """校验 dict 是否为 id→统计数据 结构（排除 SEO 元数据块）。
+
+    SEO 块如 {"augments":{"title":"...","description":"..."}} 的 value 是纯字符串；
+    真实 augment stats 块 value 是含 win_rate/winRate/pick_rate/pickRate/tier 的字典。
+    """
+    if not isinstance(augments, dict):
+        return False
+    for value in augments.values():
+        if isinstance(value, dict) and (
+            "win_rate" in value or "winRate" in value
+            or "pick_rate" in value or "pickRate" in value
+            or "tier" in value
+        ):
+            return True
+    return False
+
+
 def _extract_react_flight_augments(html: str, champ_id: str) -> dict:
     payloads = _decode_next_flight_payloads(html)
     if not payloads:
@@ -243,8 +261,9 @@ def _extract_react_flight_augments(html: str, champ_id: str) -> dict:
             return augments
 
     # 兼容极简测试快照或站点 Flight 形态变化：仍只读取 React Flight 内唯一的 augments JSON 块。
+    # 加 _looks_like_augment_stats 校验排除 SEO 元数据块（其 value 为纯字符串，不含统计字段）。
     candidates = [_parse_augments_payload(payload) for payload in payloads if '{"augments"' in payload]
-    candidates = [item for item in candidates if item]
+    candidates = [item for item in candidates if item and _looks_like_augment_stats(item)]
     if len(candidates) == 1:
         logging.warning("[%s] 未找到 championAugmentsStats 文本块，使用唯一 React Flight augments 块兜底。", champ_id)
         return candidates[0]
