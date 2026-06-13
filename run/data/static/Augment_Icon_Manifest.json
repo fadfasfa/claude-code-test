@@ -15,7 +15,7 @@
       "StaticRatio": 0.625
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -24,15 +24,53 @@
     "filename": "scopedweapons_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\scopedweapons_small.png",
     "icon_url": "/assets/scopedweapons_small.png",
-    "description": "获得75攻击距离，如果你是远程英雄则降低至50攻击距离。",
-    "tooltip": "获得75攻击距离，如果你是远程英雄则降低至50攻击距离。",
-    "tooltip_plain": "获得75攻击距离，如果你是远程英雄则降低至50攻击距离。",
+    "description": "获得?攻击距离。",
+    "tooltip": "获得?攻击距离。",
+    "tooltip_plain": "获得?攻击距离。",
     "spell_values": {
       "MeleeRangeIncrease": 75.0,
       "RangedRangeIncrease": 50.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "三重射击",
+    "tier": "棱彩",
+    "filename": "genericabilityaugmenticon_prismatic.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_prismatic.png",
+    "icon_url": "/assets/genericabilityaugmenticon_prismatic.png",
+    "description": "你的【<font color='#F0C200'>?</font>】技能会瞄准你前方2个额外的敌人。",
+    "tooltip": "你的【<font color='#F0C200'>?</font>】技能会瞄准你前方2个额外的敌人。<br><br>额外命中的目标数：?<br><rules>单位从同一技能中承受伤害会减少。</rules>",
+    "tooltip_plain": "你的【?】技能会瞄准你前方2个额外的敌人。额外命中的目标数：?单位从同一技能中承受伤害会减少。",
+    "spell_values": {
+      "AHMax": 50.0,
+      "AHMin": 10.0,
+      "Bolt": 2.0,
+      "BonusRadiusAroundPrimaryTarget": 0.5,
+      "FuzzyRange": 150.0,
+      "ReducedDamageIndex": 0.800000011920929
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "下雪天",
+    "tier": "白银",
+    "filename": "snowday_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\snowday_small.png",
+    "icon_url": "/assets/snowday_small.png",
+    "description": "你的【雪球】获得100技能急速。在命中一名敌人时造成额外魔法伤害。如果你没有【雪球】，则获得一个【雪球】。",
+    "tooltip": "<spellName>雪球</spellName>获得100技能急速并且造成<magicDamage>伤害</magicDamage>提升100%。",
+    "tooltip_plain": "雪球获得100技能急速并且造成伤害提升100%。",
+    "spell_values": {
+      "AH": 100.0,
+      "DamageAmp": 1.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -72,7 +110,7 @@
       "StartingBaseDamage": 25.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -92,7 +130,24 @@
       "SpellHealthCost": 0.05000000074505806
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "主玩辅助",
+    "tier": "白银",
+    "filename": "questsupportmain_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\questsupportmain_small.png",
+    "icon_url": "/assets/questsupportmain_small.png",
+    "description": "<font color='#F0C200'>任务：</font><healing>治疗</healing>友方英雄?生命值。<br><br><font color='#F0C200'>奖励：</font>你提供的任何治疗效果现在还会在初始治疗之后提供持续治疗。",
+    "tooltip": "<font color='#F0C200'>任务：</font><healing>治疗</healing>友方英雄?生命值。<br><br><font color='#F0C200'>奖励：</font>你提供的任何治疗效果现在还会在3秒里提供相当于25%初始治疗量的持续治疗效果。<br><br>已造成的治疗：? / ?\\n",
+    "tooltip_plain": "任务：治疗友方英雄?生命值。奖励：你提供的任何治疗效果现在还会在3秒里提供相当于25%初始治疗量的持续治疗效果。已造成的治疗：? / ?\\n",
+    "spell_values": {
+      "HealDuration": 3.0,
+      "HealPercent": 25.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -102,21 +157,40 @@
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\drawyoursword_small.png",
     "icon_url": "/assets/drawyoursword_small.png",
     "description": "变为近战状态，并且获得<physicalDamage>攻击力</physicalDamage>、<healing>生命值</healing>、<attackSpeed>攻击速度</attackSpeed>、<lifesteal>生命偷取</lifesteal>和<speed>移动速度</speed> (每个属性都基于舍弃的攻击距离而进一步提升)。",
-    "tooltip": "你现在是近战状态。获得<physicalDamage>30%攻击力</physicalDamage>、<healing>30%生命值</healing>、<attackSpeed>25%攻击速度</attackSpeed>、<lifesteal>20%生命偷取</lifesteal>和<speed>25%移动速度</speed> (每个属性都已基于攻击距离的损失而进一步提升)。",
-    "tooltip_plain": "你现在是近战状态。获得30%攻击力、30%生命值、25%攻击速度、20%生命偷取和25%移动速度 (每个属性都已基于攻击距离的损失而进一步提升)。",
+    "tooltip": "你现在是近战状态。获得<physicalDamage>24%攻击力</physicalDamage>、<healing>24%生命值</healing>、<attackSpeed>20%攻击速度</attackSpeed>、<lifesteal>20%生命偷取</lifesteal>和<speed>20%移动速度</speed> (每个属性都已基于攻击距离的损失而进一步提升)。",
+    "tooltip_plain": "你现在是近战状态。获得24%攻击力、24%生命值、20%攻击速度、20%生命偷取和20%移动速度 (每个属性都已基于攻击距离的损失而进一步提升)。",
     "spell_values": {
-      "BonusAD": 0.30000001192092896,
-      "BonusAS": 0.25,
-      "BonusHP": 0.30000001192092896,
+      "BonusAD": 0.23999999463558197,
+      "BonusAS": 0.20000000298023224,
+      "BonusHP": 0.23999999463558197,
       "BonusLifesteal": 0.20000000298023224,
-      "BonusMS": 0.25,
+      "BonusMS": 0.20000000298023224,
       "ExtraStackAttackRangeCeiling": 650.0,
       "ExtraStackAttackRangeFloor": 500.0,
-      "MaxStatMod": 0.30000001192092896,
+      "MaxStatMod": 1.0,
       "MeleeAttackRange": 200.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "仁慈打击",
+    "tier": "黄金",
+    "filename": "genericabilityaugmenticon_gold.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_gold.png",
+    "icon_url": "/assets/genericabilityaugmenticon_gold.png",
+    "description": "在使用【<font color='#F0C200'>?</font>】技能之后，你的下一次普攻获得<attention>攻击距离</attention>、<speed>攻击速度</speed>并造成额外<magicDamage>最大生命值魔法伤害</magicDamage>。",
+    "tooltip": "在使用【<font color='#F0C200'>?</font>】技能之后，你的下一次普攻获得<attention>300额外攻击距离</attention>、<speed>75%攻击速度</speed>并造成额外的<magicDamage>?最大生命值魔法伤害</magicDamage>。<br><br>已造成伤害的总和：?",
+    "tooltip_plain": "在使用【?】技能之后，你的下一次普攻获得300额外攻击距离、75%攻击速度并造成额外的?最大生命值魔法伤害。已造成伤害的总和：?",
+    "spell_values": {
+      "ASBonus": 0.75,
+      "AttackRangeInc": 300.0,
+      "HSPercent": 0.20000000298023224,
+      "HealthPercentBase": 0.02500000037252903
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -134,7 +208,7 @@
       "MinionSizeIncrease": 0.4000000059604645
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -148,7 +222,7 @@
     "tooltip_plain": "立刻：获得无用大棒。需求：持有灭世者的死亡之帽和中娅沙漏。奖励:获得沃格勒特的巫师帽。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -164,7 +238,7 @@
       "TakedownsNeeded": 18.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -178,7 +252,7 @@
     "tooltip_plain": "即刻：获得1个【斑比的熔渣】。任务：持有日炎圣盾和 璀璨回响。奖励：将【日炎圣盾】 和【璀璨回响】 合成为【虚空献祭】 。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -195,7 +269,7 @@
       "StackThreshold": 300.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -214,7 +288,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -233,7 +307,24 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "位面转移",
+    "tier": "棱彩",
+    "filename": "whenthedarknesscomes_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\whenthedarknesscomes_small.png",
+    "icon_url": "/assets/whenthedarknesscomes_small.png",
+    "description": "获得<spellName>当黑暗到来</spellName>召唤师技能。生成一个地带来将它其中的所有人传送到另一个位面。",
+    "tooltip": "获得召唤师技能<spellName>当黑暗到来</spellName>。<br><br><spellName>当黑暗到来</spellName>：发射一道灿烂之光到一个位置。它着陆时，区域内的所有活着的单位都将在接下来的<attention>8</attention>秒期间被送到一个不同的领域。<br><br>在你处于这个领域时，你获得：<br>%i:scaleHealth% <scaleHealth>?生命值</scaleHealth><br>%i:scaleAP% <scaleAP>?法术强度</scaleAP><br>%i:scaleAD% <scaleAD>?攻击力</scaleAD><br>%i:scaleSize% <scaleSize>?体型</scaleSize><br><br><rules>所有单位在该领域中都能自由地移动和行动，但不能以战略点(诸如防御塔或召唤水晶)为目标。<br><br><flavorText>“跟随你的光明……”——一个迷失的灵魂</flavorText></rules>",
+    "tooltip_plain": "获得召唤师技能当黑暗到来。当黑暗到来：发射一道灿烂之光到一个位置。它着陆时，区域内的所有活着的单位都将在接下来的8秒期间被送到一个不同的领域。在你处于这个领域时，你获得：%i:scaleHealth% ?生命值%i:scaleAP% ?法术强度%i:scaleAD% ?攻击力%i:scaleSize% ?体型所有单位在该领域中都能自由地移动和行动，但不能以战略点(诸如防御塔或召唤水晶)为目标。“跟随你的光明……”——一个迷失的灵魂",
+    "spell_values": {
+      "AOESize": 500.0,
+      "DimensionDuration": 8.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -247,7 +338,7 @@
     "tooltip_plain": "按下【回城】能够回到基地，购买装备并且获得强化符文。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -264,7 +355,7 @@
       "InvulnDuration": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -290,7 +381,7 @@
       "Remnant_Spawn_Cooldown": 0.75
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -308,7 +399,24 @@
       "ShredDuration": 4.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "保持坚定",
+    "tier": "白银",
+    "filename": "genericabilityaugmenticon_silver.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_silver.png",
+    "icon_url": "/assets/genericabilityaugmenticon_silver.png",
+    "description": "当【<font color='#F0C200'>?</font>】技能对敌方英雄造成伤害时，获得?<scaleArmor>护甲</scaleArmor>和<scaleMR>魔法抗性</scaleMR>。",
+    "tooltip": "用【<font color='#F0C200'>?</font>】技能对敌方英雄造成伤害会基于其%i:miniAdaptiveForce%伤害类型为你提供?<scaleArmor>护甲</scaleArmor>或<scaleMR>魔抗</scaleMR>。<br><br>额外<scaleArmor>护甲</scaleArmor>：?<br>额外<scaleMR>魔抗</scaleMR>：?<br><br><br><rules>如果这不是你的第一个强化符文，获得20<scaleArmor>护甲</scaleArmor>和<scaleMR>魔抗</scaleMR>。<br><br>对每个目标有5秒冷却时间。</rules>",
+    "tooltip_plain": "用【?】技能对敌方英雄造成伤害会基于其%i:miniAdaptiveForce%伤害类型为你提供?护甲或魔抗。额外护甲：?额外魔抗：?如果这不是你的第一个强化符文，获得20护甲和魔抗。对每个目标有5秒冷却时间。",
+    "spell_values": {
+      "AdditionalARMR": 20.0,
+      "SpellIDCD": 5.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -326,7 +434,7 @@
       "Dot_Cooldown": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -343,7 +451,7 @@
       "PercentMaxHPDamage": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -359,7 +467,7 @@
       "Haste": 175.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -375,7 +483,7 @@
       "HealShieldAmp": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -391,7 +499,7 @@
       "SoulsToAdd": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -407,7 +515,7 @@
       "CritChance": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -424,7 +532,23 @@
       "SlowDuration": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "冰雪爆裂",
+    "tier": "黄金",
+    "filename": "snowbomb_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\snowbomb_small.png",
+    "icon_url": "/assets/snowbomb_small.png",
+    "description": "再次施放<spellName>雪球</spellName>会造成提升<magicDamage>伤害</magicDamage>、<status>击飞</status>该目标、并<status>击退</status>附近的敌人们。",
+    "tooltip": "你的<spellName>雪球</spellName>获得100技能急速。这个技能的再次施放造成100%提升<magicDamage>伤害</magicDamage>、<status>击飞</status>该目标、并击退附近的敌人们。",
+    "tooltip_plain": "你的雪球获得100技能急速。这个技能的再次施放造成100%提升伤害、击飞该目标、并击退附近的敌人们。",
+    "spell_values": {
+      "AbilityHaste": 100.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -442,7 +566,7 @@
       "RootDuration": 1.25
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -460,7 +584,7 @@
       "RootDuration": 1.25
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -478,7 +602,7 @@
       "PercentPenConversion": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -494,7 +618,54 @@
       "TotalHits": 8.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "别停止引导",
+    "tier": "白银",
+    "filename": "dontchangethechannel_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\dontchangethechannel_small.png",
+    "icon_url": "/assets/dontchangethechannel_small.png",
+    "description": "你每<attention>引导</attention>一秒都会获得<shield>护盾值</shield>。",
+    "tooltip": "在<attention>引导</attention>状态下，每秒获得<shield>?护盾值</shield>。它会在你未处于<attention>引导</attention>状态时不断衰减。<br><br><rules>总护盾值：?</rules>",
+    "tooltip_plain": "在引导状态下，每秒获得?护盾值。它会在你未处于引导状态时不断衰减。总护盾值：?",
+    "spell_values": {
+      "Shield_Interval": 1.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "前进时间到",
+    "tier": "白银",
+    "filename": "genericabilityaugmenticon_silver.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_silver.png",
+    "icon_url": "/assets/genericabilityaugmenticon_silver.png",
+    "description": "激活【<font color='#F0C200'>?</font>】技能会在其持续期间为你提供<speed>移动速度</speed>。",
+    "tooltip": "激活【<font color='#F0C200'>?</font>】技能会在其持续期间为你提供<speed>?移动速度</speed>。",
+    "tooltip_plain": "激活【?】技能会在其持续期间为你提供?移动速度。",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "加固护盾",
+    "tier": "白银",
+    "filename": "genericabilityaugmenticon_silver.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_silver.png",
+    "icon_url": "/assets/genericabilityaugmenticon_silver.png",
+    "description": "来自【<font color='#F0C200'>?</font>】技能的护盾变得更强并且受益于目标的已损失生命值。",
+    "tooltip": "来自【<font color='#F0C200'>?</font>】技能的护盾变强至多60%，受益于目标的已损失生命值。<br><br>额外护盾：?<br><rules>在30%最大生命值时达到最大效能。</rules>",
+    "tooltip_plain": "来自【?】技能的护盾变强至多60%，受益于目标的已损失生命值。额外护盾：?在30%最大生命值时达到最大效能。",
+    "spell_values": {
+      "BonusRatioMax": 0.6000000238418579,
+      "MinHealthThreshold": 0.30000001192092896
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -511,7 +682,7 @@
       "UpgradeMS": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -528,7 +699,7 @@
       "UpgradeCD": 30.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -548,7 +719,7 @@
       "UpgradedGoldAmount": 50.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -566,7 +737,7 @@
       "CritChanceToDamage": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -588,7 +759,7 @@
       "MissingHealthStackAmount": 0.004999999888241291
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -604,7 +775,7 @@
       "GoldPerTick": 12.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -625,7 +796,7 @@
       "TenacityDuration": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -642,7 +813,7 @@
       "HealMaxHP": 0.03500000014901161
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -661,7 +832,7 @@
       "PercentInc": 2.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -679,7 +850,7 @@
       "UpgradedGrievousAmount": 0.800000011920929
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -703,7 +874,7 @@
       "TicksPerSecond": 4.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -726,7 +897,7 @@
       "TickRate": 0.25
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -745,7 +916,7 @@
       "SecondMissileDelay": 0.15000000596046448
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -762,7 +933,7 @@
       "MaxLevel": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -771,9 +942,9 @@
     "filename": "twinfire_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\twinfire_small.png",
     "icon_url": "/assets/twinfire_small.png",
-    "description": "造成技能伤害时，发射1+?个<keyworkMajor>爆竹</keyworkMajor>，每个造成<magicDamage>?魔法伤害</magicDamage>。<br><br>此外，获得<attention>%i:scaleCrit%15%暴击几率</attention>。",
-    "tooltip": "造成技能伤害时，发射1+?个<keyworkMajor>爆竹</keyworkMajor>，每个造成<magicDamage>?魔法伤害</magicDamage>。<br><br>此外，获得<attention>%i:scaleCrit%15%暴击几率</attention>。",
-    "tooltip_plain": "造成技能伤害时，发射1+?个爆竹，每个造成?魔法伤害。此外，获得%i:scaleCrit%15%暴击几率。",
+    "description": "造成技能伤害时，发射1+?个飞弹，每个造成<magicDamage>?魔法伤害</magicDamage>。<br><br>此外，获得<attention>%i:scaleCrit%15%暴击几率</attention>。",
+    "tooltip": "造成技能伤害时，发射1+?个飞弹，每个造成<magicDamage>?魔法伤害</magicDamage>。<br><br>此外，获得<attention>%i:scaleCrit%15%暴击几率</attention>。",
+    "tooltip_plain": "造成技能伤害时，发射1+?个飞弹，每个造成?魔法伤害。此外，获得%i:scaleCrit%15%暴击几率。",
     "spell_values": {
       "ADRatio": 0.07000000029802322,
       "APRatio": 0.07000000029802322,
@@ -783,7 +954,21 @@
       "MaxLevel": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "双重打击",
+    "tier": "白银",
+    "filename": "adamant_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\adamant_small.png",
+    "icon_url": "/assets/adamant_small.png",
+    "description": "【<font color='#F0C200'>?</font>】技能施加一次额外的%i:OnHit%<OnHit>攻击特效</OnHit>。",
+    "tooltip": "【<font color='#F0C200'>?</font>】技能施加一次额外的%i:OnHit%<OnHit>攻击特效</OnHit>。",
+    "tooltip_plain": "【?】技能施加一次额外的%i:OnHit%攻击特效。",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -792,14 +977,14 @@
     "filename": "stackosaurusrex_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\stackosaurusrex_small.png",
     "icon_url": "/assets/stackosaurusrex_small.png",
-    "description": "在你获得一个技能的永久<keywordMajor>层数</keywordMajor>时，多获得75%！",
-    "tooltip": "在你获得一个技能的永久<keywordMajor>层数</keywordMajor>时，多获得75%！",
-    "tooltip_plain": "在你获得一个技能的永久层数时，多获得75%！",
+    "description": "在你获得一个技能、强化符文或装备的永久<keywordMajor>层数</keywordMajor>时，多获得100%！",
+    "tooltip": "在你获得一个技能、强化符文或装备的永久<keywordMajor>层数</keywordMajor>时，多获得100%！",
+    "tooltip_plain": "在你获得一个技能、强化符文或装备的永久层数时，多获得100%！",
     "spell_values": {
-      "StackModifier": 0.75
+      "StackModifier": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -815,7 +1000,23 @@
       "MaxHealthPercentageHeal": 0.009999999776482582
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "可靠武器",
+    "tier": "白银",
+    "filename": "genericabilityaugmenticon_silver.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_silver.png",
+    "icon_url": "/assets/genericabilityaugmenticon_silver.png",
+    "description": "用【<font color='#F0C200'>?</font>】技能打击敌方英雄时会铸造一条<keyword>友谊</keyword>纽带。<br><br>【<font color='#F0C200'>?</font>】技能基于你的<keyword>友谊</keyword>等级获得到临时提升伤害",
+    "tooltip": "在你用【<font color='#F0C200'>?</font>】技能打击一个敌方英雄时，铸造一条<keyword>友谊</keyword>纽带来为该技能提供<attention>?</attention>提升伤害，持续6秒。这个效果可以叠加。<br><br><rules>额外伤害：?<br><font color=\"#ce69d1\">最大友谊等级：?</font></rules><br><br><flavorText>“我——我才不是喜欢你呢！”——<font color='#F0C200'>?</font></flavorText>",
+    "tooltip_plain": "在你用【?】技能打击一个敌方英雄时，铸造一条友谊纽带来为该技能提供?提升伤害，持续6秒。这个效果可以叠加。额外伤害：?最大友谊等级：?“我——我才不是喜欢你呢！”——?",
+    "spell_values": {
+      "Buff_Duration": 6.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -824,14 +1025,14 @@
     "filename": "typhoon_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\typhoon_small.png",
     "icon_url": "/assets/typhoon_small.png",
-    "description": "你的攻击会对一个额外目标发射一个<keywordMajor>爆竹</keywordMajor>，这个爆竹会造成削减过的伤害并施加%i:OnHit%<OnHit>攻击特效</OnHit>。",
-    "tooltip": "你的攻击会对一个额外目标发射一个<keywordMajor>爆竹</keywordMajor>，这个爆竹会造成30%伤害并施加%i:OnHit%<OnHit>攻击特效</OnHit>。",
-    "tooltip_plain": "你的攻击会对一个额外目标发射一个爆竹，这个爆竹会造成30%伤害并施加%i:OnHit%攻击特效。",
+    "description": "你的攻击会对一个额外目标发射一个飞弹，从而造成削减过的伤害并施加%i:OnHit%<OnHit>攻击特效</OnHit>。",
+    "tooltip": "你的攻击会对一个额外目标发射一个飞弹，从而造成30%伤害并施加%i:OnHit%<OnHit>攻击特效</OnHit>。",
+    "tooltip_plain": "你的攻击会对一个额外目标发射一个飞弹，从而造成30%伤害并施加%i:OnHit%攻击特效。",
     "spell_values": {
       "ADRatio": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -853,7 +1054,28 @@
       "bADRatio": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "吃过路兵",
+    "tier": "棱彩",
+    "filename": "dashing_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\dashing_small.png",
+    "icon_url": "/assets/dashing_small.png",
+    "description": "周期性地识别出敌方英雄身上的<keywordMajor>破绽</keywordMajor>。 用攻击或技能命中它们时，会造成<trueDamage>最大生命值真实伤害</trueDamage>、<healing>回复生命值</healing>并提供<speed>移动速度</speed>。这些效果可以叠加。",
+    "tooltip": "周期性地识别出敌方英雄身上的<keywordMajor>破绽</keywordMajor>。 用攻击或技能命中<keywordMajor>破绽</keywordMajor>时，会造成额外的<trueDamage>6% + 每层1.5%最大生命值真实伤害</trueDamage>、回复<healing>? + 5%已损失生命值</healing>，并提供在2秒里持续衰减的<speed>?+每层5%额外移动速度</speed>。<br><br>接连命中的最大破绽数：?",
+    "tooltip_plain": "周期性地识别出敌方英雄身上的破绽。 用攻击或技能命中破绽时，会造成额外的6% + 每层1.5%最大生命值真实伤害、回复? + 5%已损失生命值，并提供在2秒里持续衰减的?+每层5%额外移动速度。接连命中的最大破绽数：?",
+    "spell_values": {
+      "BaseVitalDamage": 0.05999999865889549,
+      "MS": 0.5,
+      "MSDuration": 2.0,
+      "MissingHealthHeal": 0.05000000074505806,
+      "StackDamage": 0.014999999664723873,
+      "VitalMaxHealthDamage": 0.05999999865889549
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -870,7 +1092,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -888,7 +1110,7 @@
       "MoveSpeed": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -904,7 +1126,7 @@
       "OmniVamp": 0.25
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -925,7 +1147,7 @@
       "UltimateHaste": 30.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -941,7 +1163,46 @@
       "Cooldown": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "咒语裂变",
+    "tier": "棱彩",
+    "filename": "genericabilityaugmenticon_prismatic.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_prismatic.png",
+    "icon_url": "/assets/genericabilityaugmenticon_prismatic.png",
+    "description": "在命中时、最大距离时或<recast>再次施放</recast>时，你的【<font color='#F0C200'>?</font>】技能的飞弹会分裂为两部分。",
+    "tooltip": "在命中时、最大距离时或<recast>再次施放</recast>时，你的【<font color='#F0C200'>?</font>】技能的飞弹会分裂为两部分。 <br><br>额外命中的目标：?<br><rules>敌人被同一技能命中时，承受伤害会减少。</rules>",
+    "tooltip_plain": "在命中时、最大距离时或再次施放时，你的【?】技能的飞弹会分裂为两部分。 额外命中的目标：?敌人被同一技能命中时，承受伤害会减少。",
+    "spell_values": {
+      "AHMax": 50.0,
+      "AHMin": 10.0,
+      "DamageDeductionRatio": 0.30000001192092896,
+      "DelayTime": 0.25,
+      "RecastDelay": 0.15000000596046448
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "哎哟，我的硬币！",
+    "tier": "黄金",
+    "filename": "youchmycoins_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\youchmycoins_small.png",
+    "icon_url": "/assets/youchmycoins_small.png",
+    "description": "在参与击杀敌方英雄后，该英雄会在附近掉落多枚硬币，你和友军可以收集它们。每枚硬币价值<gold>10金币</gold>。",
+    "tooltip": "在参与击杀敌方英雄后，该英雄会在附近掉落?枚硬币，你和友军可以收集它们。每枚硬币价值<gold>10金币</gold>。<br><br><rules>?位好心人们“自愿”捐出了总共?枚硬币，你的队伍已经获得了?金币，其中?金币由你自己拾取。 </rules>",
+    "tooltip_plain": "在参与击杀敌方英雄后，该英雄会在附近掉落?枚硬币，你和友军可以收集它们。每枚硬币价值10金币。?位好心人们“自愿”捐出了总共?枚硬币，你的队伍已经获得了?金币，其中?金币由你自己拾取。",
+    "spell_values": {
+      "AmountOfCoins": 1.0,
+      "CoinDuration": 10.0,
+      "CoinMovementDistance": 500.0,
+      "GoldPerCoin": 10.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -957,7 +1218,24 @@
       "BonusDamagePerMSDifference": 0.0010000000474974513
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "喂呜喂呜",
+    "tier": "黄金",
+    "filename": "weewooweewoo_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\weewooweewoo_small.png",
+    "icon_url": "/assets/weewooweewoo_small.png",
+    "description": "在朝着<scaleHealing>低生命值</scaleHealing>的友军移动时，获得<speed>移动速度</speed>。你的<healing>治疗</healing>和<shield>护盾</shield>获得提升，基于你目标的低生命值程度。",
+    "tooltip": "朝着附近友军移动时，获得至多<speed>?移动速度</speed>，基于其<scaleHealth>已损失生命值</scaleHealth>。你的<healing>治疗</healing>和<shield>护盾</shield>也会提升至多?，基于<scaleHealth>目标的已损失生命值</scaleHealth>。<br><br><rules>额外治疗：?<br>额外护盾：?</rules>",
+    "tooltip_plain": "朝着附近友军移动时，获得至多?移动速度，基于其已损失生命值。你的治疗和护盾也会提升至多?，基于目标的已损失生命值。额外治疗：?额外护盾：?",
+    "spell_values": {
+      "MS_Linger_Duration": 2.0,
+      "VFX_Health_Threshold": 0.5
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -973,7 +1251,7 @@
       "BaseCooldown": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -989,7 +1267,27 @@
       "BaseCooldown": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "回响施放",
+    "tier": "棱彩",
+    "filename": "genericabilityaugmenticon_prismatic.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_prismatic.png",
+    "icon_url": "/assets/genericabilityaugmenticon_prismatic.png",
+    "description": "施放你的【<font color='#F0C200'>?</font>】技能时会朝你的鼠标位置派出一个复制体并再次施放该技能。",
+    "tooltip": "施放你的【<font color='#F0C200'>?</font>】技能时会朝你的鼠标位置派出一个复制体并且在0.25秒之后再次施放该技能。",
+    "tooltip_plain": "施放你的【?】技能时会朝你的鼠标位置派出一个复制体并且在0.25秒之后再次施放该技能。",
+    "spell_values": {
+      "CloneDamageRatio": 1.0,
+      "CloneDuration": 7.0,
+      "CloneMissileSpeed": 1000.0,
+      "CloneMoveToDistance": 500.0,
+      "DelayTime": 0.25
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1008,7 +1306,7 @@
       "ShieldingAmp": 0.3499999940395355
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1028,7 +1326,27 @@
       "Radius": 650.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "地形专家",
+    "tier": "黄金",
+    "filename": "lightningstrikes_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\lightningstrikes_small.png",
+    "icon_url": "/assets/lightningstrikes_small.png",
+    "description": "你的【<font color='#F0C200'>?</font>】技能会在它周围的一个区域内造成伤害。",
+    "tooltip": "由你的【<font color='#F0C200'>?</font>】技能生成的地形会每秒对附近的敌人们造成<magicDamage>?魔法伤害</magicDamage>。<br><br>地形伤害：?<br><br><rules>如果是终极技能，那么此伤害提升?。</rules>",
+    "tooltip_plain": "由你的【?】技能生成的地形会每秒对附近的敌人们造成?魔法伤害。地形伤害：?如果是终极技能，那么此伤害提升?。",
+    "spell_values": {
+      "AHMax": 60.0,
+      "AHMin": 20.0,
+      "APRatio": 0.05000000074505806,
+      "MaxDamagePerTick": 70.0,
+      "MinDamagePerTick": 40.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1062,7 +1380,7 @@
       "TimeBetweenHits": 4.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1082,7 +1400,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1100,7 +1418,7 @@
       "BaseRegen": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1118,7 +1436,7 @@
       "SizeIncrement": 0.05000000074505806
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1148,7 +1466,37 @@
       "ShieldRatioAD": 0.3499999940395355
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "复位",
+    "tier": "黄金",
+    "filename": "genericabilityaugmenticon_gold.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_gold.png",
+    "icon_url": "/assets/genericabilityaugmenticon_gold.png",
+    "description": "再次施放【<font color='#F0C200'>?</font>】技能时会产生爆炸，并回到你的原本位置。",
+    "tooltip": "再次施放【<font color='#F0C200'>?</font>】技能时会产生爆炸，造成?魔法伤害，并回到你的原本位置。",
+    "tooltip_plain": "再次施放【?】技能时会产生爆炸，造成?魔法伤害，并回到你的原本位置。",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "多重射击",
+    "tier": "棱彩",
+    "filename": "genericabilityaugmenticon_prismatic.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_prismatic.png",
+    "icon_url": "/assets/genericabilityaugmenticon_prismatic.png",
+    "description": "<font color='#F0C200'>任务：</font>用【<font color='#F0C200'>?</font>】技能命中敌方英雄?次。<br><br><font color='#F0C200'>奖励：</font>发射数量基于任务等级的额外飞弹。",
+    "tooltip": "<font color='#F0C200'>任务：</font>用【<font color='#F0C200'>?</font>】技能命中敌方英雄?次。<br><br><font color='#F0C200'>奖励：</font>发射数量基于任务等级的额外飞弹。",
+    "tooltip_plain": "任务：用【?】技能命中敌方英雄?次。奖励：发射数量基于任务等级的额外飞弹。",
+    "spell_values": {
+      "DamageDeductionRatio": 0.30000001192092896
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1166,7 +1514,7 @@
       "TakedownWindow": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1182,7 +1530,7 @@
       "ADAmp": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1204,7 +1552,54 @@
       "PerwaveDamageCD": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "大师铸就",
+    "tier": "白银",
+    "filename": "forgedbythemaster_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\forgedbythemaster_small.png",
+    "icon_url": "/assets/forgedbythemaster_small.png",
+    "description": "使你的装备和强化符文伤害提升<attention>?</attention>。",
+    "tooltip": "你的<attention>装备</attention>和<attention>强化符文</attention>伤害提升<attention>?</attention>。<br><br><rules>额外伤害：?</rules>",
+    "tooltip_plain": "你的装备和强化符文伤害提升?。额外伤害：?",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "大招工具人",
+    "tier": "棱彩",
+    "filename": "skipthebasic_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\skipthebasic_small.png",
+    "icon_url": "/assets/skipthebasic_small.png",
+    "description": "你的<scaleAbilityHaste>技能急速</scaleAbilityHaste>仅作用于<keyword>终极技能</keyword>，但效果多50%。获得<scaleAbilityHaste>100技能急速</scaleAbilityHaste>。",
+    "tooltip": "你的<scaleAbilityHaste>技能急速</scaleAbilityHaste>仅作用于<keyword>终极技能</keyword>，但效果多50%。获得<scaleAbilityHaste>100技能急速</scaleAbilityHaste>。",
+    "tooltip_plain": "你的技能急速仅作用于终极技能，但效果多50%。获得100技能急速。",
+    "spell_values": {
+      "BasicHaste": 0.5,
+      "Haste": 100.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "大法师",
+    "tier": "黄金",
+    "filename": "archmage_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\archmage_small.png",
+    "icon_url": "/assets/archmage_small.png",
+    "description": "施放一个技能会返还另一个随机技能的花费，数额相当于30%原技能冷却时间。",
+    "tooltip": "施放一个技能会返还另一个随机技能的花费，数额相当于30%原技能冷却时间。",
+    "tooltip_plain": "施放一个技能会返还另一个随机技能的花费，数额相当于30%原技能冷却时间。",
+    "spell_values": {
+      "RefundPercent": 0.30000001192092896
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1222,7 +1617,7 @@
       "SlowAmount": -0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1244,7 +1639,23 @@
       "TotalLoops": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "威能之追求",
+    "tier": "黄金",
+    "filename": "marksmage_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\marksmage_small.png",
+    "icon_url": "/assets/marksmage_small.png",
+    "description": "<font color='#F0C200'>任务：</font>用【<font color='#F0C200'>?</font>】技能命中敌人?次。<br><br><font color='#F0C200'>奖励：</font>永久提升【<font color='#F0C200'>?</font>】技能伤害。",
+    "tooltip": "{{Augment_SpecializedEmpowerment_Tooltip?}}",
+    "tooltip_plain": "{{Augment_SpecializedEmpowerment_Tooltip?}}",
+    "spell_values": {
+      "DamageAmpReward": 30.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1262,7 +1673,7 @@
       "MovementSpeed": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1288,7 +1699,7 @@
       "UpgradeTotalGoldValue": 1000.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1298,8 +1709,8 @@
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\clowncollege_small.png",
     "icon_url": "/assets/clowncollege_small.png",
     "description": "获得召唤师技能<spellName>欺诈魔术</spellName>。<br>获得<spellName>背刺</spellName>被动。<br>在你阵亡时，生成一个爆炸盒子来对附近的敌人们造成大量<trueDamage>真实伤害</trueDamage>和<status>恐惧</status>。",
-    "tooltip": "<spellName>背刺</spellName>：你从背后袭击敌人时，会造成?<physicalDamage>额外伤害</physicalDamage>。<br><br><spellName>欺诈魔术</spellName>：你传送并变为<keywordStealth>隐形</keywordStealth>，持续3秒。你在<keywordStealth>隐形</keywordStealth>状态下的第一次攻击将造成额外的<physicalDamage>?物理伤害</physicalDamage>。如果从背后进行打击，那么这个攻击会暴击，造成?伤害。<br><br><spellName>幻像：阵亡</spellName>：在阵亡时，在你周围造成<magicDamage>25%最大生命值的魔法伤害</magicDamage>以及1秒恐惧。",
-    "tooltip_plain": "背刺：你从背后袭击敌人时，会造成?额外伤害。欺诈魔术：你传送并变为隐形，持续3秒。你在隐形状态下的第一次攻击将造成额外的?物理伤害。如果从背后进行打击，那么这个攻击会暴击，造成?伤害。幻像：阵亡：在阵亡时，在你周围造成25%最大生命值的魔法伤害以及1秒恐惧。",
+    "tooltip": "<spellName>背刺</spellName>：你从背后袭击敌人时，会造成?<physicalDamage>额外物理伤害</physicalDamage>。<br><br><spellName>欺诈魔术</spellName>：你传送并变为<keywordStealth>隐形</keywordStealth>，持续3秒。你在<keywordStealth>隐形</keywordStealth>状态下的第一次攻击将造成额外的<physicalDamage>?物理伤害</physicalDamage>。如果从背后进行打击，那么这个攻击会暴击，造成?伤害。<br><br><spellName>幻像：阵亡</spellName>：在阵亡时，在你周围造成<magicDamage>25%最大生命值的魔法伤害</magicDamage>以及1秒恐惧。",
+    "tooltip_plain": "背刺：你从背后袭击敌人时，会造成?额外物理伤害。欺诈魔术：你传送并变为隐形，持续3秒。你在隐形状态下的第一次攻击将造成额外的?物理伤害。如果从背后进行打击，那么这个攻击会暴击，造成?伤害。幻像：阵亡：在阵亡时，在你周围造成25%最大生命值的魔法伤害以及1秒恐惧。",
     "spell_values": {
       "BaseDamage": 100.0,
       "CastRange": 400.0,
@@ -1311,7 +1722,21 @@
       "StealthDuration": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "小小的额外帮助",
+    "tier": "黄金",
+    "filename": "genericabilityaugmenticon_gold.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_gold.png",
+    "icon_url": "/assets/genericabilityaugmenticon_gold.png",
+    "description": "在你的【<font color='#F0C200'>?</font>】技能持续期间获得?攻击距离和?<attackSpeed>攻击速度</attackSpeed>。",
+    "tooltip": "在你的【<font color='#F0C200'>?</font>】技能持续期间获得?攻击距离和?<attackSpeed>攻击速度</attackSpeed>。",
+    "tooltip_plain": "在你的【?】技能持续期间获得?攻击距离和?攻击速度。",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1331,7 +1756,7 @@
       "MamaRadius": 400.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1348,7 +1773,7 @@
       "TooltipCDR": 50.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1364,7 +1789,7 @@
       "APToHasteConversion": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1380,7 +1805,7 @@
       "AmountOfStatAnvils": 4.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1396,7 +1821,7 @@
       "AmountOfStatAnvils": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1412,7 +1837,7 @@
       "AmountOfStatAnvils": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1426,7 +1851,7 @@
     "tooltip_plain": "你获得【山脉龙魂】，在脱离战斗之后获得持续一小段时间的护盾值。已生成的护盾值总和：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1447,7 +1872,7 @@
       "XLargeBonusDamage": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1464,7 +1889,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1480,7 +1905,7 @@
       "APFlat": 70.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1499,7 +1924,7 @@
       "HatMRAdd": 8.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1520,7 +1945,7 @@
       "SizeAmp": 0.25
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1537,7 +1962,7 @@
       "ShieldDuration": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1558,7 +1983,7 @@
       "Slow_Duration": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1574,7 +1999,7 @@
       "AbilityHaste": 60.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1593,7 +2018,7 @@
       "SlowDuration": 1.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1612,7 +2037,23 @@
       "ShieldDuration": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "快步",
+    "tier": "棱彩",
+    "filename": "genericabilityaugmenticon_prismatic.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_prismatic.png",
+    "icon_url": "/assets/genericabilityaugmenticon_prismatic.png",
+    "description": "当你使用【<font color='#F0C200'>?</font>】技能时，朝你的鼠标指针进行冲刺。",
+    "tooltip": "当你使用【<font color='#F0C200'>?</font>】技能时，朝你的鼠标指针进行冲刺。",
+    "tooltip_plain": "当你使用【?】技能时，朝你的鼠标指针进行冲刺。",
+    "spell_values": {
+      "ChargeRange": 350.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1628,7 +2069,7 @@
       "AbilityHasteToMSConversion": 0.699999988079071
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1644,7 +2085,25 @@
       "HealShieldAmp": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "急速之追求",
+    "tier": "黄金",
+    "filename": "genericabilityaugmenticon_gold.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_gold.png",
+    "icon_url": "/assets/genericabilityaugmenticon_gold.png",
+    "description": "<font color='#F0C200'>任务：</font>用【<font color='#F0C200'>?</font>】技能命中敌方英雄?次<br><br><font color='#F0C200'>奖励：</font>【<font color='#F0C200'>?</font>】技能获得技能急速，基于任务等级，至多至?。",
+    "tooltip": "{{Augment_ARAM_QQQuest_Tooltip?}}",
+    "tooltip_plain": "{{Augment_ARAM_QQQuest_Tooltip?}}",
+    "spell_values": {
+      "AbilityHastePer10CD": 1.0,
+      "AbilityHasteReward": 80.0,
+      "QuestNumerator": 250.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1661,7 +2120,25 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "惊惧",
+    "tier": "黄金",
+    "filename": "desecrator_large.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\desecrator_large.png",
+    "icon_url": "/assets/desecrator_large.png",
+    "description": "每当你施放【<font color='#F0C200'>?</font>】技能时，<status>恐惧</status>你周围的敌人们.",
+    "tooltip": "每当你施放【<font color='#F0C200'>?</font>】技能时，<status>恐惧</status>你周围的敌人们1.75秒。",
+    "tooltip_plain": "每当你施放【?】技能时，恐惧你周围的敌人们1.75秒。",
+    "spell_values": {
+      "FearDurationCDDenominator": 20.0,
+      "FearRange": 450.0,
+      "MaximumFearDuration": 1.75
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1684,7 +2161,7 @@
       "SlowAmount": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1701,7 +2178,24 @@
       "Range": 500.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "我们的治疗",
+    "tier": "黄金",
+    "filename": "equillibrium_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\equillibrium_small.png",
+    "icon_url": "/assets/equillibrium_small.png",
+    "description": "每当你周围的某人进行治疗时，你获得相当于<healing>其15%治疗效果的治疗效果</healing>。从敌方治疗中获得双倍。",
+    "tooltip": "每当你周围的某人进行治疗时，你获得相当于<healing>其15%治疗效果的治疗效果</healing>。从敌方治疗中获得双倍。",
+    "tooltip_plain": "每当你周围的某人进行治疗时，你获得相当于其15%治疗效果的治疗效果。从敌方治疗中获得双倍。",
+    "spell_values": {
+      "AllyHealingRatio": 0.15000000596046448,
+      "EnemyHealingRatio": 0.30000001192092896
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1728,7 +2222,7 @@
       "TimeUntilNextStackFromSameSpell": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1746,7 +2240,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1765,7 +2259,7 @@
       "Style_Duration": 6.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1783,7 +2277,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1801,7 +2295,7 @@
       "MaxLevel": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1818,7 +2312,28 @@
       "ProcMultiplier": 1.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "掷骰狂人",
+    "tier": "棱彩",
+    "filename": "highroller_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\highroller_small.png",
+    "icon_url": "/assets/highroller_small.png",
+    "description": "附近敌人在阵亡时有几率掉落【属性锻造器】。",
+    "tooltip": "附近敌人在阵亡时有几率掉落【属性锻造器】。",
+    "tooltip_plain": "附近敌人在阵亡时有几率掉落【属性锻造器】。",
+    "spell_values": {
+      "AnvilLife": 5000.0,
+      "GoldThreshold": 80.0,
+      "SilverThreshold": 49.0,
+      "SpawnChance": 7.0,
+      "SpawnRadius_Inner": 200.0,
+      "SpawnRadius_Outer": 300.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1835,7 +2350,7 @@
       "SpinHaste": 30.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1851,7 +2366,28 @@
       "HealthRatioPer1000Units": 0.009999999776482582
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "无尽大杀四方",
+    "tier": "黄金",
+    "filename": "endlessdecimate_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\endlessdecimate_small.png",
+    "icon_url": "/assets/endlessdecimate_small.png",
+    "description": "在战斗状态下，<keywordMajor>自动施放</keywordMajor>一次环形斧头挥舞从而造成<physicalDamage>物理伤害</physicalDamage>。被斧刃命中的敌人们受到额外伤害并<healing>治疗</healing>你。",
+    "tooltip": "在战斗中每8秒<keywordMajor>自动施放</keywordMajor>一次环形斧头挥舞来造成<physicalDamage>物理伤害</physicalDamage>。对被斧刃命中的敌人们造成提升伤害(?)并<healing>治疗你15%已损失生命值</healing>。被斧刃命中的每个敌人，都会将这个技能的冷却时间缩短10%，最小值为3秒。",
+    "tooltip_plain": "在战斗中每8秒自动施放一次环形斧头挥舞来造成物理伤害。对被斧刃命中的敌人们造成提升伤害(?)并治疗你15%已损失生命值。被斧刃命中的每个敌人，都会将这个技能的冷却时间缩短10%，最小值为3秒。",
+    "spell_values": {
+      "BaseCDRPercent": 0.10000000149011612,
+      "BaseHealPercent": 0.15000000596046448,
+      "Cooldown": 8.0,
+      "InnerRadiusDamageMod": 0.5,
+      "PreWindupWarningLength": 1.5,
+      "WindupLength": 1.25
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1869,7 +2405,7 @@
       "StartingHaste": 60.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1887,7 +2423,7 @@
       "SpellIDCD": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1904,7 +2440,7 @@
       "Health": 1500.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1921,7 +2457,7 @@
       "MSAmount": 300.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1941,7 +2477,7 @@
       "MaxStack": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1950,9 +2486,9 @@
     "filename": "criticalmissile_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\criticalmissile_small.png",
     "icon_url": "/assets/criticalmissile_small.png",
-    "description": "当你<crit>暴击</crit>时，发射<keyworkMajor>爆竹</keyworkMajor>造成<magicDamage>魔法伤害</magicDamage>。<br><br>获得<crit>%i:scaleCrit% 25%暴击几率</crit>。",
-    "tooltip": "当你<crit>暴击</crit>时，发射1+?个<keyworkMajor>爆竹</keyworkMajor>，每个造成<magicDamage>?魔法伤害</magicDamage>。<br><br>获得<crit>%i:scaleCrit% 25%暴击几率</crit>。",
-    "tooltip_plain": "当你暴击时，发射1+?个爆竹，每个造成?魔法伤害。获得%i:scaleCrit% 25%暴击几率。",
+    "description": "当你<crit>暴击</crit>时，发射飞弹造成<magicDamage>魔法伤害</magicDamage>。<br><br>获得<crit>%i:scaleCrit% 25%暴击几率</crit>。",
+    "tooltip": "当你<crit>暴击</crit>时，发射1+?个飞弹，每个造成<magicDamage>?魔法伤害</magicDamage>。<br><br>获得<crit>%i:scaleCrit% 25%暴击几率</crit>。",
+    "tooltip_plain": "当你暴击时，发射1+?个飞弹，每个造成?魔法伤害。获得%i:scaleCrit% 25%暴击几率。",
     "spell_values": {
       "ADRatio": 0.07000000029802322,
       "APRatio": 0.10000000149011612,
@@ -1962,7 +2498,7 @@
       "MaxLevel": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1971,15 +2507,15 @@
     "filename": "scopierweapons_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\scopierweapons_small.png",
     "icon_url": "/assets/scopierweapons_small.png",
-    "description": "获得200攻击距离，如果你是远程英雄则降低至100攻击距离。",
-    "tooltip": "获得200攻击距离，如果你是远程英雄则降低至100攻击距离。",
-    "tooltip_plain": "获得200攻击距离，如果你是远程英雄则降低至100攻击距离。",
+    "description": "获得?攻击距离。",
+    "tooltip": "获得?攻击距离。",
+    "tooltip_plain": "获得?攻击距离。",
     "spell_values": {
-      "MeleeRangeIncrease": 200.0,
+      "MeleeRangeIncrease": 150.0,
       "RangedRangeIncrease": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -1988,15 +2524,15 @@
     "filename": "scopiestweapons_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\scopiestweapons_small.png",
     "icon_url": "/assets/scopiestweapons_small.png",
-    "description": "获得250攻击距离，如果你是远程英雄则降低至150攻击距离。",
-    "tooltip": "获得250攻击距离，如果你是远程英雄则降低至150攻击距离。",
-    "tooltip_plain": "获得250攻击距离，如果你是远程英雄则降低至150攻击距离。",
+    "description": "获得?攻击距离。",
+    "tooltip": "获得?攻击距离。",
+    "tooltip_plain": "获得?攻击距离。",
     "spell_values": {
       "MeleeRangeIncrease": 250.0,
       "RangedRangeIncrease": 150.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2017,7 +2553,7 @@
       "OmniVamp": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2031,7 +2567,7 @@
     "tooltip_plain": "在你阵亡时，朝击杀你的敌人发动一辆列车，对它命中的每个敌人造成?物理伤害。这个列车不会停下。你的火车头已对?个敌方英雄造成了总计?伤害。它“意外”击杀了?个。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2065,7 +2601,21 @@
       "StartingSoulsPerAugment": 8.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "术士果汁盒",
+    "tier": "黄金",
+    "filename": "warlockjuicebox_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\warlockjuicebox_small.png",
+    "icon_url": "/assets/warlockjuicebox_small.png",
+    "description": "获得<lifeSteal>?全能吸血</lifeSteal>。",
+    "tooltip": "获得<lifeSteal>?全能吸血</lifeSteal>。",
+    "tooltip_plain": "获得?全能吸血。",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2083,7 +2633,7 @@
       "MovementSpeed": 0.6000000238418579
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2102,7 +2652,7 @@
       "VFXHighDamageThreshold": 500.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2122,7 +2672,7 @@
       "SizeAmp": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2139,7 +2689,7 @@
       "HealToDamageConversion": 0.699999988079071
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2157,7 +2707,7 @@
       "Radius": 300.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2175,7 +2725,21 @@
       "Lethality": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "沃格勒特的巫师帽",
+    "tier": "棱彩",
+    "filename": "quest_woogletswitchcap_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\quest_woogletswitchcap_small.png",
+    "icon_url": "/assets/quest_woogletswitchcap_small.png",
+    "description": "立刻获得一个<attention>无用大棒</attention>。<br><br><font color='#F0C200'>任务：</font>持有<attention>灭世者的死亡之帽</attention>和<attention>中娅沙漏</attention>。<br><br><font color='#F0C200'>奖励：</font>获得<attention>沃格勒特的巫师帽</attention>。",
+    "tooltip": "立刻获得一个<attention>无用大棒</attention>。<br><br><font color='#F0C200'>任务：</font>持有<attention>灭世者的死亡之帽</attention>和<attention>中娅沙漏</attention>。<br><br><font color='#F0C200'>奖励：</font>获得<attention>沃格勒特的巫师帽</attention>。",
+    "tooltip_plain": "立刻获得一个无用大棒。任务：持有灭世者的死亡之帽和中娅沙漏。奖励：获得沃格勒特的巫师帽。",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2196,7 +2760,7 @@
       "PerwaveDamageCD": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2216,7 +2780,24 @@
       "MaxLevelPerTriggerDamageAmp": 0.10000000149011612
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "泰坦的坚决",
+    "tier": "棱彩",
+    "filename": "iamthejuggernaut_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\iamthejuggernaut_small.png",
+    "icon_url": "/assets/iamthejuggernaut_small.png",
+    "description": "在承受或造成伤害时获得层数。每10层，获得<scaleAF>适应之力</scaleAF>、<scaleArmor>护甲</scaleArmor>、<scaleMR>魔法抗性</scaleMR>、<attention>体型</attention>和<status>韧性</status>。",
+    "tooltip": "在造成或承受伤害时为你提供一层持续6秒的<keyword>战神附体</keyword>。每10层<keyword>战神附体</keyword>，你获得<attention>?适应之力</attention>、<scaleArmor>?护甲</scaleArmor>、<scaleMR>?魔法抗性</scaleMR>、<attention>?体型</attention>和<status>?韧性</status>。<br><br><rules>你拥有的层数越多，层数就衰减得越快。<br>最大战神附体等级：?</rules>",
+    "tooltip_plain": "在造成或承受伤害时为你提供一层持续6秒的战神附体。每10层战神附体，你获得?适应之力、?护甲、?魔法抗性、?体型和?韧性。你拥有的层数越多，层数就衰减得越快。最大战神附体等级：?",
+    "spell_values": {
+      "Stack_Duration": 6.0,
+      "Stacks_Max": 10.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2232,7 +2813,27 @@
       "TargetCurrentHealthRatio": 0.10000000149011612
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "活力焕发",
+    "tier": "黄金",
+    "filename": "rabblerousing_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\rabblerousing_small.png",
+    "icon_url": "/assets/rabblerousing_small.png",
+    "description": "使用【<font color='#F0C200'>?</font>】技能时回复<healing>生命值</healing>。",
+    "tooltip": "使用【<font color='#F0C200'>?</font>】技能时回复<healing>?生命值</healing><br><br>已获得的总治疗量：?<br><rules>治疗量等同于?，对于冷却时间较长的技能，该数值还会提升至多至50%。</rules>",
+    "tooltip_plain": "使用【?】技能时回复?生命值已获得的总治疗量：?治疗量等同于?，对于冷却时间较长的技能，该数值还会提升至多至50%。",
+    "spell_values": {
+      "AP": 0.15000000596046448,
+      "BonusHealthPercentageHeal": 0.05000000074505806,
+      "BonusPercentMax": 0.5,
+      "MaxHealthPercentageHeal": 0.014999999664723873,
+      "bAD": 0.25
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2246,7 +2847,7 @@
     "tooltip_plain": "周期性地使你的下一个伤害型技能或攻击触发一道闪电爆裂，连锁穿过敌人以造成伤害和减速。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2260,7 +2861,21 @@
     "tooltip_plain": "获得【海洋龙魂】，在对敌方英雄造成伤害后提供高额的生命和法力回复。已造成的治疗效果：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "海牛阿福的勇士",
+    "tier": "棱彩",
+    "filename": "quest_urfschampion_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\quest_urfschampion_small.png",
+    "icon_url": "/assets/quest_urfschampion_small.png",
+    "description": "<font color='#F0C200'>任务：</font>参与击杀?次。<br><br>奖励：金铲铲",
+    "tooltip": "<font color='#F0C200'>任务：</font>参与击杀?次。<br><br>奖励：金铲铲<br><br>参与击杀：?",
+    "tooltip_plain": "任务：参与击杀?次。奖励：金铲铲参与击杀：?",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2276,7 +2891,7 @@
       "Omnivamp": 0.15000000596046448
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2292,7 +2907,7 @@
       "InitialAmpPercent": 10.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2306,7 +2921,7 @@
     "tooltip_plain": "将你的所有强化符文变为随机的棱彩阶%i:Augment%强化符文。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2327,7 +2942,27 @@
       "bHealthRatio": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "濒死悟道",
+    "tier": "棱彩",
+    "filename": "hellbent_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\hellbent_small.png",
+    "icon_url": "/assets/hellbent_small.png",
+    "description": "用攻击或技能伤害敌方英雄时会提供层数。在满层时，你在阵亡时<attention>会进行强化复活</attention>。",
+    "tooltip": "用攻击或技能打击敌方英雄时会提供给你一层持续6秒的<attention>复活限度</attention>(最大层数：10)。在满层时变为<danger>濒死悟道</danger>。<br><br><danger>濒死悟道</danger>：在濒临死亡时，在4秒里<attention>复活</attention>至<scaleHealth>?最大生命值</scaleHealth>。在此之后，你获得<attention>?适应之力</attention>、<speed>朝着敌方英雄时的?移动速度</speed>、以及<lifeSteal>?全能吸血</lifeSteal>，持续15秒。<br><br>这个效果有120秒冷却时间。",
+    "tooltip_plain": "用攻击或技能打击敌方英雄时会提供给你一层持续6秒的复活限度(最大层数：10)。在满层时变为濒死悟道。濒死悟道：在濒临死亡时，在4秒里复活至?最大生命值。在此之后，你获得?适应之力、朝着敌方英雄时的?移动速度、以及?全能吸血，持续15秒。这个效果有120秒冷却时间。",
+    "spell_values": {
+      "Buff_Duration": 15.0,
+      "Cooldown": 120.0,
+      "Revive_Duration": 4.0,
+      "Stacks_Duration": 6.0,
+      "Stacks_Max": 10.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2344,7 +2979,7 @@
       "PercentMaxHPDamagePer5Seconds": 0.019999999552965164
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2373,7 +3008,7 @@
       "SecondaryDelay": 0.4000000059604645
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2389,7 +3024,7 @@
       "AttackSpeed": 0.6000000238418579
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2406,7 +3041,28 @@
       "HealPercentage": 0.11999999731779099
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "灵魄炸弹",
+    "tier": "棱彩",
+    "filename": "spiritbomb_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\spiritbomb_small.png",
+    "icon_url": "/assets/spiritbomb_small.png",
+    "description": "为友方英雄提供<healing>治疗</healing>和<shield>护盾</shield>时会为你积攒一颗【灵魄炸弹】。在满层时，投掷该炸弹至<scaleHealth>生命值最低的那个友军</scaleHealth>，从而对其和附近友军们提供<healing>治疗</healing>和<shield>护盾</shield>。",
+    "tooltip": "提供<healing>治疗</healing>和<shield>护盾</shield>时会为你积攒一颗<keywordMajor>灵魄炸弹</keywordMajor>。在满层时，投掷<keywordMajor>灵魄炸弹</keywordMajor>至你<scaleHealth>生命值最低的那个友军</scaleHealth>。在它抵达目标之后，它会<healing>治疗附近友军们各自的?已损失生命值</healing>并为他们提供持续4秒的<shield>?当前生命值的护盾值</shield>。<br><br><rules>已投掷的灵魄炸弹数量：?<br>治疗：?<br>护盾：?</rules>",
+    "tooltip_plain": "提供治疗和护盾时会为你积攒一颗灵魄炸弹。在满层时，投掷灵魄炸弹至你生命值最低的那个友军。在它抵达目标之后，它会治疗附近友军们各自的?已损失生命值并为他们提供持续4秒的?当前生命值的护盾值。已投掷的灵魄炸弹数量：?治疗：?护盾：?",
+    "spell_values": {
+      "Cast_Delay": 1.100000023841858,
+      "Radius": 475.0,
+      "Shield_Duration": 4.0,
+      "VFX_Breakpoint_1": 0.25,
+      "VFX_Breakpoint_2": 0.5,
+      "VFX_Breakpoint_3": 0.75
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2415,12 +3071,12 @@
     "filename": "lightemup_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\lightemup_small.png",
     "icon_url": "/assets/lightemup_small.png",
-    "description": "每第4次攻击发射4个<keywordMajor>爆竹</keywordMajor>以造成<magicDamage>魔法伤害</magicDamage>%i:OnHit%<OnHit>攻击特效</OnHit>。",
-    "tooltip": "每第4次攻击发射4个<keywordMajor>爆竹</keywordMajor>以造成<magicDamage>?魔法伤害</magicDamage>。<br><br>已造成的伤害：?",
-    "tooltip_plain": "每第4次攻击发射4个爆竹以造成?魔法伤害。已造成的伤害：?",
+    "description": "每第4次攻击发射4个飞弹以造成<magicDamage>魔法伤害</magicDamage>%i:OnHit%<OnHit>攻击特效</OnHit>。",
+    "tooltip": "每第4次攻击发射4个飞弹以造成<magicDamage>?魔法伤害</magicDamage>。<br><br>已造成的伤害：?",
+    "tooltip_plain": "每第4次攻击发射4个飞弹以造成?魔法伤害。已造成的伤害：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2438,7 +3094,7 @@
       "ProcCooldown": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2452,7 +3108,7 @@
     "tooltip_plain": "你获得炼狱龙魂，使用技能或攻击命中敌人时造成额外伤害。已造成的伤害：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2468,7 +3124,40 @@
       "ProcCooldown": 0.75
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "炽燃利息",
+    "tier": "黄金",
+    "filename": "bloodmoney2_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\bloodmoney2_small.png",
+    "icon_url": "/assets/bloodmoney2_small.png",
+    "description": "施加至英雄的灼烧和持续伤害会生成<gold>金币</gold>。",
+    "tooltip": "施加至英雄的灼烧和持续伤害会生成<gold>? + 1%造成伤害的金币</gold>。<br><br>已生成的金币：<b>?</b>",
+    "tooltip_plain": "施加至英雄的灼烧和持续伤害会生成? + 1%造成伤害的金币。已生成的金币：?",
+    "spell_values": {
+      "PercentGoldFromDamage": 0.009999999776482582
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "牙仙子",
+    "tier": "黄金",
+    "filename": "questburstingteeth_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\questburstingteeth_small.png",
+    "icon_url": "/assets/questburstingteeth_small.png",
+    "description": "爆裂敌人会掉落<keyword>牙齿</keyword>。拾取<keyword>牙齿</keyword>会提供给你永久的<scaleLethality>穿甲</scaleLethality>和<magicPen>法术穿透</magicPen>。",
+    "tooltip": "当你在<attention>2.5</attention>秒内对一个敌方英雄造成大于其<attention>?</attention>生命值的伤害时，其会掉落一颗<keyword>牙齿</keyword>。<br><br>你的<attention>?</attention>颗<keyword>牙齿</keyword>藏品目前给予你<scaleLethality>?穿甲</scaleLethality>和<magicPen>?法术穿透</magicPen>。<br><br><rules>对每个目标有4秒冷却时间</rules>",
+    "tooltip_plain": "当你在2.5秒内对一个敌方英雄造成大于其?生命值的伤害时，其会掉落一颗牙齿。你的?颗牙齿藏品目前给予你?穿甲和?法术穿透。对每个目标有4秒冷却时间",
+    "spell_values": {
+      "BurstDurationCheck": 2.5,
+      "PerTargetCooldown": 4.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2484,7 +3173,7 @@
       "StackDuration": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2502,7 +3191,7 @@
       "InverseRate": 0.6000000238418579
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2520,7 +3209,7 @@
       "ResistsPerStack": 12.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2540,7 +3229,28 @@
       "MaxLevel": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "狙神飞星",
+    "tier": "黄金",
+    "filename": "questbangbang_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\questbangbang_small.png",
+    "icon_url": "/assets/questbangbang_small.png",
+    "description": "<font color='#F0C200'>任务：</font>用技能<keywordMajor>狙击</keywordMajor>?个敌方英雄<br><br><font color='#F0C200'>奖励：</font>一颗流星会飞向被<keywordMajor>狙击</keywordMajor>的敌方英雄，在其周围的一个区域内造成<magicDamage>魔法伤害</magicDamage>",
+    "tooltip": "<keywordMajor>狙击</keywordMajor>敌方英雄会引发一个延迟伤害爆炸，会发生在该英雄的位置上并对区域内的敌人们造成?伤害。<br><br><keywordMajor>狙击</keywordMajor> - 从700码外对敌人造成伤害<br><br>爆炸规模已达最大值！<br><br><flavorText>砰！砰！噢，这枪打得好啊！</flavorText>",
+    "tooltip_plain": "狙击敌方英雄会引发一个延迟伤害爆炸，会发生在该英雄的位置上并对区域内的敌人们造成?伤害。狙击 - 从700码外对敌人造成伤害爆炸规模已达最大值！砰！砰！噢，这枪打得好啊！",
+    "spell_values": {
+      "AOE": 120.0,
+      "MaxAOEDistanceScaling": 2.0,
+      "MaxDamageDistanceScaling": 2.299999952316284,
+      "MaxDistanceForScaling": 3000.0,
+      "PerTargetPerCastIDCooldown": 8.0,
+      "SnipeDistance": 700.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2562,7 +3272,7 @@
       "SSSDamage": 1500.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2580,7 +3290,7 @@
       "TrueDamagePerc": 0.15000000596046448
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2590,15 +3300,15 @@
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\jeweledgauntlet_small.png",
     "icon_url": "/assets/jeweledgauntlet_small.png",
     "description": "你的技能可以造成<crit>暴击</crit>。<br><br>获得<crit>%i:scaleCrit% ?暴击几率</crit>。",
-    "tooltip": "你的技能可以造成<crit>暴击</crit>，造成145%总伤害。获得<crit>%i:scaleCrit%25%暴击几率</crit>。<br><br>获得<crit>%i:scaleCrit% ?暴击几率</crit>。<br><br>额外伤害：?",
-    "tooltip_plain": "你的技能可以造成暴击，造成145%总伤害。获得%i:scaleCrit%25%暴击几率。获得%i:scaleCrit% ?暴击几率。额外伤害：?",
+    "tooltip": "你的技能可以造成<crit>暴击</crit>，造成145%总伤害。<br><br>获得<crit>%i:scaleCrit% ?暴击几率</crit>。<br><br>额外伤害：?",
+    "tooltip_plain": "你的技能可以造成暴击，造成145%总伤害。获得%i:scaleCrit% ?暴击几率。额外伤害：?",
     "spell_values": {
       "CritChance": 0.25,
       "CritConverRatio": 0.00044999999227002263,
       "CritDamage": 1.4500000476837158
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2621,7 +3331,7 @@
       "SlowPercent": 15.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2637,7 +3347,7 @@
       "ConvertCap": 99999.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2653,7 +3363,27 @@
       "CritToHasteConversion": 0.4000000059604645
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "电涌力场",
+    "tier": "棱彩",
+    "filename": "surgefield_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\surgefield_small.png",
+    "icon_url": "/assets/surgefield_small.png",
+    "description": "在施放终极技能时，在你周围生成一个<keywordMajor>地带</keywordMajor>来提供<scaleAbilityHaste>技能急速</scaleAbilityHaste>和<speed>移动速度</speed>。在其中时，它会发射飞弹，飞弹造成相当于你造成的<magicDamage>20%伤害</magicDamage>。",
+    "tooltip": "在施放终极技能时，在你周围生成一个<keywordMajor>地带</keywordMajor>。在它其中时，获得<scaleAbilityHaste>50技能急速</scaleAbilityHaste>和<speed>40%移动速度</speed>，并发射若干飞弹来对敌人们造成<magicDamage>20%已造成伤害</magicDamage>。<br><br>这个<keywordMajor>地带</keywordMajor>会在你第一次离开它时跟随你，并且在你第二次离开它时，它会在短暂持续之后消散。<br><br>飞弹伤害：?",
+    "tooltip_plain": "在施放终极技能时，在你周围生成一个地带。在它其中时，获得50技能急速和40%移动速度，并发射若干飞弹来对敌人们造成20%已造成伤害。这个地带会在你第一次离开它时跟随你，并且在你第二次离开它时，它会在短暂持续之后消散。飞弹伤害：?",
+    "spell_values": {
+      "Buff_Duration": 6.0,
+      "MissileDamagePercent": 0.20000000298023224,
+      "Radius": 300.0,
+      "ZoneAbilityHaste": 50.0,
+      "ZoneMovementSpeed": 0.4000000059604645
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2669,7 +3399,7 @@
       "AFAmp": 0.25
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2687,7 +3417,7 @@
       "RangedOnHitARRatio": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2705,7 +3435,7 @@
       "MaxLevel": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2740,7 +3470,7 @@
       "SparkMaxAngle": 50.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2760,7 +3490,7 @@
       "WarningDelay": 2.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2777,7 +3507,7 @@
       "InvulnerabilityDuration": 1.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2793,7 +3523,7 @@
       "APRatio": 0.75
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2814,7 +3544,7 @@
       "SizeAmp": 0.4000000059604645
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2831,7 +3561,26 @@
       "MinCDR": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "空投熊",
+    "tier": "棱彩",
+    "filename": "drop_bear_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\drop_bear_small.png",
+    "icon_url": "/assets/drop_bear_small.png",
+    "description": "阵亡时，一个具有你所有强化符文的巨大提伯斯从天而降并伤害附近的敌人们。",
+    "tooltip": "阵亡时，召唤提伯斯，从而对你周围的敌人们造成<magicDamage>?魔法伤害</magicDamage>和<attention>1.5</attention>秒<status>晕眩</status>。提伯斯随后会追击你的击杀者。<br><br><font color=\"#cb42f5\">提伯斯还会拥有你的所有强化符文。</font>",
+    "tooltip_plain": "阵亡时，召唤提伯斯，从而对你周围的敌人们造成?魔法伤害和1.5秒晕眩。提伯斯随后会追击你的击杀者。提伯斯还会拥有你的所有强化符文。",
+    "spell_values": {
+      "FlatPenConversion": 2.0,
+      "MSModifier": -350.0,
+      "PercentPenConversion": 5.0,
+      "StunDuration": 1.5
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2847,7 +3596,7 @@
       "PercentPen": 0.18000000715255737
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2865,7 +3614,7 @@
       "SnipeDistance": 700.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2883,7 +3632,7 @@
       "WEnemySlow": 60.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2907,7 +3656,7 @@
       "MSBuff": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2924,7 +3673,7 @@
       "MaxLevel": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2941,7 +3690,7 @@
       "MaxLevel": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2958,7 +3707,7 @@
       "SlowResist": 0.4000000059604645
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2975,7 +3724,7 @@
       "UnstoppableDuration": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -2991,7 +3740,7 @@
       "Cooldown": 75.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3010,7 +3759,7 @@
       "Cooldown": 20.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3026,7 +3775,7 @@
       "DamageReduction": 0.15000000596046448
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3047,7 +3796,7 @@
       "SizeReductionPerStack": 0.03999999910593033
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3066,7 +3815,7 @@
       "MaxLevel": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3075,16 +3824,16 @@
     "filename": "skilledsniper_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\skilledsniper_small.png",
     "icon_url": "/assets/skilledsniper_small.png",
-    "description": "用一个非终极技能命中一个远处的敌人时，返还该技能80%冷却时间(周期性技能返还65%)。",
-    "tooltip": "用一个非终极技能命中一个700码距离外的敌人时，返还该技能80%冷却时间(周期性技能返还65%)。<br><br>",
-    "tooltip_plain": "用一个非终极技能命中一个700码距离外的敌人时，返还该技能80%冷却时间(周期性技能返还65%)。",
+    "description": "用一个非终极技能<keywordMajor>狙击</keywordMajor>一个敌人时，返还该技能80%冷却时间(周期性技能返还65%)。",
+    "tooltip": "用一个非终极技能<keywordMajor>狙击</keywordMajor>一个敌人时，返还该技能80%冷却时间(周期性技能返还65%)。<br><br><rules><keywordMajor>狙击</keywordMajor> - 从700码外对敌人造成伤害</rules><br><br>",
+    "tooltip_plain": "用一个非终极技能狙击一个敌人时，返还该技能80%冷却时间(周期性技能返还65%)。狙击 - 从700码外对敌人造成伤害",
     "spell_values": {
       "PeriodicReductionAmount": 0.6499999761581421,
       "ReducedCooldownPercent": 0.800000011920929,
       "SnipeDistance": 700.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3104,7 +3853,38 @@
       "Radius": 350.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "自然即是治愈",
+    "tier": "黄金",
+    "filename": "natureishealing_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\natureishealing_small.png",
+    "icon_url": "/assets/natureishealing_small.png",
+    "description": "站在<keyword>草丛</keyword>中时，每秒回复<healing>?最大生命值</healing>。",
+    "tooltip": "处于<keyword>草丛</keyword>中时，每秒回复<healing>?最大生命值</healing>。<br><br>治疗效果总和：?",
+    "tooltip_plain": "处于草丛中时，每秒回复?最大生命值。治疗效果总和：?",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "自适应防护",
+    "tier": "白银",
+    "filename": "genericabilityaugmenticon_silver.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_silver.png",
+    "icon_url": "/assets/genericabilityaugmenticon_silver.png",
+    "description": "用【<font color='#F0C200'>?</font>】技能打击一个敌方英雄时，为你提供持续6秒的<attention>?</attention><scaleArmor>护甲</scaleArmor>或<scaleMR>魔法抗性</scaleMR>，基于该技能的伤害类型。这个效果可以叠加。",
+    "tooltip": "<br>用【<font color='#F0C200'>?</font>】技能打击一个敌方英雄时，为你提供持续6秒的<attention>?</attention><scaleArmor>护甲</scaleArmor>或<scaleMR>魔法抗性</scaleMR>，基于该技能的伤害类型。这个效果可以叠加。<br><br>最大防护等级：?",
+    "tooltip_plain": "用【?】技能打击一个敌方英雄时，为你提供持续6秒的?护甲或魔法抗性，基于该技能的伤害类型。这个效果可以叠加。最大防护等级：?",
+    "spell_values": {
+      "Buff_Duration": 6.0,
+      "Cooldown": 4.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3125,7 +3905,7 @@
       "ShieldRatioBHealth": 0.10000000149011612
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3146,7 +3926,7 @@
       "WarningDelay": 2.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3165,7 +3945,38 @@
       "ShieldFromHealPercentage": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "艾卡西亚的陷落",
+    "tier": "棱彩",
+    "filename": "quest_voidimmolation_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\quest_voidimmolation_small.png",
+    "icon_url": "/assets/quest_voidimmolation_small.png",
+    "description": "即刻：获得1个【斑比的熔渣】。<br><br><font color='#F0C200'>任务：</font>持有<keywordMajor>日炎圣盾</keywordMajor>和<keywordMajor>璀璨回响</keywordMajor>。<br><br><font color='#F0C200'>奖励：</font>将这些装备合成为<keywordMajor>虚空献祭</keywordMajor>。",
+    "tooltip": "即刻：获得1个【斑比的熔渣】。<br><br>任务：持有<keywordMajor>日炎圣盾</keywordMajor>和 <keywordMajor>璀璨回响</keywordMajor>。<br><br>奖励：将<keywordMajor>【日炎圣盾】</keywordMajor> 和<keywordMajor>【璀璨回响】</keywordMajor> 合成为<keywordMajor>【虚空献祭】</keywordMajor> 。",
+    "tooltip_plain": "即刻：获得1个【斑比的熔渣】。任务：持有日炎圣盾和 璀璨回响。奖励：将【日炎圣盾】 和【璀璨回响】 合成为【虚空献祭】 。",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "藏身草丛",
+    "tier": "黄金",
+    "filename": "brushpower_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\brushpower_small.png",
+    "icon_url": "/assets/brushpower_small.png",
+    "description": "在进入<keyword>草丛</keyword>后，多造成<attention>20%</attention>伤害，持续<attention>2</attention>秒。留在<keyword>草丛</keyword>中会刷新这个效果。",
+    "tooltip": "进入<keyword>草丛</keyword>会提供持续2秒的<spellName>草丛能量</spellName>。在<spellName>草丛能量</spellName>处于激活状态时，你多造成20%伤害。<br><br>已造成的伤害：<attention>?</attention><br><br><rules>待在草丛中会刷新【草丛能量】。</rules>",
+    "tooltip_plain": "进入草丛会提供持续2秒的草丛能量。在草丛能量处于激活状态时，你多造成20%伤害。已造成的伤害：?待在草丛中会刷新【草丛能量】。",
+    "spell_values": {
+      "BuffDuration": 2.0,
+      "DamageAmplification": 0.20000000298023224
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3181,7 +3992,28 @@
       "Cooldown": 1.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "虚空冲刺",
+    "tier": "黄金",
+    "filename": "genericabilityaugmenticon_gold.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_gold.png",
+    "icon_url": "/assets/genericabilityaugmenticon_gold.png",
+    "description": "用【<font color='#F0C200'>?</font>】技能冲刺时会产生一片【虚空地带】来对敌方英雄们造成<status>减速</status>和魔法伤害。",
+    "tooltip": "【<font color='#F0C200'>?</font>】技能会在目标终点产生一片【虚空地带】。它会对敌方英雄们造成持续1秒的35%<status>减速</status>以及<magicDamage>?魔法伤害</magicDamage>。 <br><br>已减速的英雄数：?",
+    "tooltip_plain": "【?】技能会在目标终点产生一片【虚空地带】。它会对敌方英雄们造成持续1秒的35%减速以及?魔法伤害。 已减速的英雄数：?",
+    "spell_values": {
+      "BaseDamage": 25.0,
+      "DelayBeforeKnockUp": 0.30000001192092896,
+      "Haste": 1.0,
+      "KnockUpRadius": 250.0,
+      "SlowAmount": 0.3499999940395355,
+      "SlowDuration": 1.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3201,7 +4033,23 @@
       "Slow_Duration": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "虹吸",
+    "tier": "白银",
+    "filename": "genericabilityaugmenticon_silver.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_silver.png",
+    "icon_url": "/assets/genericabilityaugmenticon_silver.png",
+    "description": "用【<font color='#F0C200'>?</font>】技能伤害敌方英雄时会<healing>治疗</healing>你。",
+    "tooltip": "<healing>治疗</healing>相当于用【<font color='#F0C200'>?</font>】技能对敌方英雄的30%造成伤害的生命值。",
+    "tooltip_plain": "治疗相当于用【?】技能对敌方英雄的30%造成伤害的生命值。",
+    "spell_values": {
+      "Lifesteal": 0.30000001192092896
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3219,7 +4067,7 @@
       "MaxLevel": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3237,7 +4085,7 @@
       "MSDuration": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3254,7 +4102,45 @@
       "HealthThreshold": 0.30000001192092896
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "装填",
+    "tier": "黄金",
+    "filename": "lightningstrikes_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\lightningstrikes_small.png",
+    "icon_url": "/assets/lightningstrikes_small.png",
+    "description": "在【<font color='#F0C200'>?</font>】技能期间的普攻%i:OnHit%<OnHit>攻击特效</OnHit>会降低其冷却时间。",
+    "tooltip": "在【<font color='#F0C200'>?</font>】技能期间的普攻%i:OnHit%<OnHit>攻击特效</OnHit>会降低其?秒冷却时间。<br><br>已节省的秒数：?",
+    "tooltip_plain": "在【?】技能期间的普攻%i:OnHit%攻击特效会降低其?秒冷却时间。已节省的秒数：?",
+    "spell_values": {
+      "Buff_Duration": 6.0,
+      "Radius": 300.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "豪猪",
+    "tier": "黄金",
+    "filename": "pincushion_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\pincushion_small.png",
+    "icon_url": "/assets/pincushion_small.png",
+    "description": "承受来自英雄的伤害会积攒一次尖针迸发，这些尖针会从你身上飞出，对附近的敌人们造成伤害和减速。",
+    "tooltip": "承受来自英雄的伤害会积攒一次尖针爆裂。当达到临界质量时，尖针就会爆裂，对附近敌人们造成<physicalDamage>?物理伤害</physicalDamage>和持续2秒的?<status>减速</status>。<br><br><rules>爆裂次数：?<br>伤害：?</rules>",
+    "tooltip_plain": "承受来自英雄的伤害会积攒一次尖针爆裂。当达到临界质量时，尖针就会爆裂，对附近敌人们造成?物理伤害和持续2秒的?减速。爆裂次数：?伤害：?",
+    "spell_values": {
+      "Cast_Windup": 1.5,
+      "Radius": 400.0,
+      "Slow_Duration": 2.0,
+      "VFX_Breakpoint_1": 0.25,
+      "VFX_Breakpoint_2": 0.5,
+      "VFX_Breakpoint_3": 0.75
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3274,7 +4160,7 @@
       "Stacks_Max": 6.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3288,7 +4174,7 @@
     "tooltip_plain": "获得1个随机%i:Augment%棱彩阶强化符文。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3308,7 +4194,7 @@
       "AugmentsToGrantToolTipOnly": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3322,7 +4208,29 @@
     "tooltip_plain": "获得1个随机%i:Augment%黄金阶强化符文。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "贪欲束缚",
+    "tier": "黄金",
+    "filename": "upgradehubris_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\upgradehubris_small.png",
+    "icon_url": "/assets/upgradehubris_small.png",
+    "description": "用你的【<font color='#F0C200'>?</font>】技能<status>定身</status>或<status>缚地</status>敌方英雄时造成额外<magicDamage>伤害</magicDamage>并<healing>对你进行治疗</healing>。",
+    "tooltip": "用你的【<font color='#F0C200'>?</font>】技能<status>定身</status>或<status>缚地</status>敌方英雄时造成额外<magicDamage>?魔法伤害</magicDamage>并治疗你<healing>?生命值</healing>。<br><br>伤害总和：<magicDamage>?</magicDamage><br>最小治疗：<healing>?</healing><br>治疗总和：<healing>?</healing><br><br><rules>治疗效果基于技能冷却时间至多提升至50%。</rules>",
+    "tooltip_plain": "用你的【?】技能定身或缚地敌方英雄时造成额外?魔法伤害并治疗你?生命值。伤害总和：?最小治疗：?治疗总和：?治疗效果基于技能冷却时间至多提升至50%。",
+    "spell_values": {
+      "BonusHealingPercent_Max": 0.5,
+      "BonusHealingPercent_Min": 0.15000000596046448,
+      "BounceRangeCheck": 500.0,
+      "Damage_APRatio": 0.10000000149011612,
+      "Damage_HPRatio": 0.004999999888241291,
+      "Heal_APRatio": 0.05000000074505806,
+      "Heal_bHPRatio": 0.10000000149011612
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3341,7 +4249,7 @@
       "StartingAPIfSecondAugment": 40.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3359,7 +4267,21 @@
       "ShieldBase": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "超负荷",
+    "tier": "棱彩",
+    "filename": "genericabilityaugmenticon_prismatic.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_prismatic.png",
+    "icon_url": "/assets/genericabilityaugmenticon_prismatic.png",
+    "description": "使用另一个技能会重置【<font color='#F0C200'>?</font>】技能的冷却时间。",
+    "tooltip": "使用另一个技能会重置【<font color='#F0C200'>?</font>】技能的冷却时间。<br><br><rules>重置次数：?<br>有用的重置次数：?<br>重置效率：?%<br><br><flavorText>“它们来找卷轴了……按计划来……EQEQEQ……” —— 那个蓝人</flavorText></rules>",
+    "tooltip_plain": "使用另一个技能会重置【?】技能的冷却时间。重置次数：?有用的重置次数：?重置效率：?%“它们来找卷轴了……按计划来……EQEQEQ……” —— 那个蓝人",
+    "spell_values": {},
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3378,7 +4300,7 @@
       "StackDuration": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3409,7 +4331,66 @@
       "TimeToCastE2": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "软弹啪叽抓",
+    "tier": "棱彩",
+    "filename": "squishyslappygrab_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\squishyslappygrab_small.png",
+    "icon_url": "/assets/squishyslappygrab_small.png",
+    "description": "偶尔对所有附近的敌方英雄放出软弹啪叽的手，然后用灵链系住。你的下次攻击将拉拽所有被系住的敌人。",
+    "tooltip": "偶尔对所有附近的敌方英雄放出软弹啪叽的手，然后用灵链系住4秒。当你处于系住敌人的状态时，你的下一次攻击将<status>拉拽</status>其到你的位置，造成<magicDamage>?魔法伤害</magicDamage>和<status>0.25秒晕眩</status>。你每<status>拉拽</status>到一个敌人就会获得持续2.5秒的<shield>?护盾值</shield>。<br><br>这个效果有45秒冷却时间。<br><br><rules>已抓到的敌人数：?<br>已造成的伤害：?<br>已获得的护盾值：?</rules>",
+    "tooltip_plain": "偶尔对所有附近的敌方英雄放出软弹啪叽的手，然后用灵链系住4秒。当你处于系住敌人的状态时，你的下一次攻击将拉拽其到你的位置，造成?魔法伤害和0.25秒晕眩。你每拉拽到一个敌人就会获得持续2.5秒的?护盾值。这个效果有45秒冷却时间。已抓到的敌人数：?已造成的伤害：?已获得的护盾值：?",
+    "spell_values": {
+      "Buff_Duration": 4.0,
+      "Cast_Delay": 1.5,
+      "Cast_Radius": 450.0,
+      "Close_Pull_Range": 450.0,
+      "Cooldown": 45.0,
+      "Long_Pull_Distance": 350.0,
+      "Radius": 800.0,
+      "Shield_Duration": 2.5,
+      "Stun_Duration": 0.25,
+      "Tether_Range": 950.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "轻拍背部",
+    "tier": "黄金",
+    "filename": "patontheback_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\patontheback_small.png",
+    "icon_url": "/assets/patontheback_small.png",
+    "description": "友军会在你走过时鼓励你，为你提供<shield>护盾</shield>和<speed>移动速度</speed>。",
+    "tooltip": "友军会在你走过时鼓励你，为你提供持续3秒的<shield>?护盾</shield>和<speed>?移动速度</speed>。这个效果可以叠加。<br><br><rules>每个友军需要经过?秒冷却时间才能再次轻拍你的背部。<br><br>已受到的鼓励次数：?</rules>",
+    "tooltip_plain": "友军会在你走过时鼓励你，为你提供持续3秒的?护盾和?移动速度。这个效果可以叠加。每个友军需要经过?秒冷却时间才能再次轻拍你的背部。已受到的鼓励次数：?",
+    "spell_values": {
+      "Buff_Duration": 3.0,
+      "Trigger_Radius": 200.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "过量延伸者",
+    "tier": "黄金",
+    "filename": "overextender_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\overextender_small.png",
+    "icon_url": "/assets/overextender_small.png",
+    "description": "回城并进入到你的加农炮发射器。它的距离、飞行速度和伤害已经得到显著提升。",
+    "tooltip": "你的加农炮发射器的距离、飞行速度和伤害已经得到显著提升。回城并进入到你的加农炮发射器。<br><br>飞跃的距离数：?",
+    "tooltip_plain": "你的加农炮发射器的距离、飞行速度和伤害已经得到显著提升。回城并进入到你的加农炮发射器。飞跃的距离数：?",
+    "spell_values": {
+      "CannonRangeIncrease": 12000.0,
+      "DamageIncrease": 0.5
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3418,9 +4399,9 @@
     "filename": "fanthehammer_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\fanthehammer_small.png",
     "icon_url": "/assets/fanthehammer_small.png",
-    "description": "对敌方英雄的攻击会发射5个额外<keywordMajor>爆竹</keywordMajor>，造成随距离提升的额外伤害。每个方向的冷却时间独立计算。",
-    "tooltip": "在你攻击敌方英雄时，发射5个额外<keywordMajor>爆竹</keywordMajor>，每个造成<physicalDamage>?物理伤害</physicalDamage>，基于移动的距离至多提升至50%。每个方向都有单独的8秒冷却时间。<br><br>每个弩箭都能暴击并且施加20%效能的附带攻击特效。<br><br>已造成的伤害：?",
-    "tooltip_plain": "在你攻击敌方英雄时，发射5个额外爆竹，每个造成?物理伤害，基于移动的距离至多提升至50%。每个方向都有单独的8秒冷却时间。每个弩箭都能暴击并且施加20%效能的附带攻击特效。已造成的伤害：?",
+    "description": "对敌方英雄的攻击会发射5个额外飞弹，造成随距离提升的额外伤害。每个方向的冷却时间独立计算。",
+    "tooltip": "在你攻击敌方英雄时，发射5个额外飞弹，每个造成<physicalDamage>?物理伤害</physicalDamage>，基于移动的距离至多提升至50%。每个方向都有单独的8秒冷却时间。<br><br>每个弹体都能暴击并且施加20%效能的附带攻击特效。<br><br>已造成的伤害：?",
+    "tooltip_plain": "在你攻击敌方英雄时，发射5个额外飞弹，每个造成?物理伤害，基于移动的距离至多提升至50%。每个方向都有单独的8秒冷却时间。每个弹体都能暴击并且施加20%效能的附带攻击特效。已造成的伤害：?",
     "spell_values": {
       "AdditionalBolts": 5.0,
       "Cooldown": 8.0,
@@ -3429,7 +4410,34 @@
       "OnHitRatio": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "连锁反应",
+    "tier": "棱彩",
+    "filename": "genericabilityaugmenticon_prismatic.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\genericabilityaugmenticon_prismatic.png",
+    "icon_url": "/assets/genericabilityaugmenticon_prismatic.png",
+    "description": "如果一个被【<font color='#F0C200'>?</font>】技能<status>击退</status>的目标命中了另一个英雄，则二者都会被<status>击飞</status>并受到<magicDamage>伤害</magicDamage>。在与地形产生碰撞时，该<status>击飞</status>时长会延长并且他们会受到<magicDamage>额外伤害</magicDamage>。",
+    "tooltip": "如果一个你用【<font color='#F0C200'>?</font>】技能<status>击退</status>的英雄命中了另一个英雄，则二者都会被<status>击飞</status>0.5秒并受到<magicDamage>?魔法伤害</magicDamage>。如果敌方英雄们与地形产生碰撞，则会被<status>击飞</status>0.75秒并受到<magicDamage>?魔法伤害</magicDamage>。<br><br>被击飞的敌人数：?<br>墙体命中次数：?<br><br><rules>击飞时长和高度受益于你的技能的冷却时间。</rules>",
+    "tooltip_plain": "如果一个你用【?】技能击退的英雄命中了另一个英雄，则二者都会被击飞0.5秒并受到?魔法伤害。如果敌方英雄们与地形产生碰撞，则会被击飞0.75秒并受到?魔法伤害。被击飞的敌人数：?墙体命中次数：?击飞时长和高度受益于你的技能的冷却时间。",
+    "spell_values": {
+      "BuffDetectDuration": 1.0,
+      "ChampCollideKnockupDuration": 0.5,
+      "CollisionRadius": 200.0,
+      "EnemyHitDamage_Max": 400.0,
+      "EnemyHitDamage_Min": 100.0,
+      "MaxCooldown": 100.0,
+      "MaxKnockUpDuration": 1.100000023841858,
+      "MinKnockUpDuration": 0.75,
+      "MinKnockUpHeight": 1.2300000190734863,
+      "WallCollisionDamage_Max": 800.0,
+      "WallCollisionDamage_Min": 150.0,
+      "WallStunDuration": 0.5
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3450,7 +4458,7 @@
       "SlowDuration": 1.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3472,7 +4480,7 @@
       "SizeMod": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3490,7 +4498,24 @@
       "SpeedPerHit": 200.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "邦！",
+    "tier": "黄金",
+    "filename": "bonk_large.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\bonk_large.png",
+    "icon_url": "/assets/bonk_large.png",
+    "description": "被【<font color='#F0C200'>?</font>】技能强化的攻击或技能会对目标和附近的敌人们造成额外伤害。",
+    "tooltip": "被【<font color='#F0C200'>?</font>】技能强化的攻击或技能会对目标和附近的敌人们造成额外的30%伤害。<br><br>被“邦”的额外英雄数量：?",
+    "tooltip_plain": "被【?】技能强化的攻击或技能会对目标和附近的敌人们造成额外的30%伤害。被“邦”的额外英雄数量：?",
+    "spell_values": {
+      "AoERange": 300.0,
+      "DamageMultiplier": 0.30000001192092896
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3506,7 +4531,7 @@
       "HealthPercent": 0.03500000014901161
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3539,7 +4564,41 @@
       "SlowPercentage": 80.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "针插垫",
+    "tier": "棱彩",
+    "filename": "symphonyofwar_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\symphonyofwar_small.png",
+    "icon_url": "/assets/symphonyofwar_small.png",
+    "description": "在【<font color='#F0C200'>?</font>】技能期间进行攻击会施加<keywordMajor>标记</keywordMajor>，其会在该持续时长结束时爆炸，从而造成伤害并提供移动速度。",
+    "tooltip": "在【<font color='#F0C200'>?</font>】技能期间进行攻击会对敌方英雄施加<keywordMajor>标记</keywordMajor>。<br><br>标记会在【<font color='#F0C200'>?</font>】技能到期时引爆，每层造成<physicalDamage>?物理伤害</physicalDamage>并提供持续3秒的<speed>10移动速度</speed>。<br><br>最多标记引爆数：?",
+    "tooltip_plain": "在【?】技能期间进行攻击会对敌方英雄施加标记。标记会在【?】技能到期时引爆，每层造成?物理伤害并提供持续3秒的10移动速度。最多标记引爆数：?",
+    "spell_values": {
+      "ASPerStack": 0.05000000074505806,
+      "MSPerStack": 10.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "钢化你心",
+    "tier": "黄金",
+    "filename": "quest_steelyourheart_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\quest_steelyourheart_small.png",
+    "icon_url": "/assets/quest_steelyourheart_small.png",
+    "description": "<font color='#F0C200'>任务：</font>持有【心之钢】且层数在300层或以上。<br><br>奖励：将你的【心之钢】层数乘以3。",
+    "tooltip": "<font color='#F0C200'>任务：</font>持有【心之钢】且层数在300层或以上。<br><br>奖励：将你的【心之钢】层数乘以3。",
+    "tooltip_plain": "任务：持有【心之钢】且层数在300层或以上。奖励：将你的【心之钢】层数乘以3。",
+    "spell_values": {
+      "StackMultiplication": 3.0,
+      "StackThreshold": 300.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3560,7 +4619,7 @@
       "RectHalfWidth": 60.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3578,7 +4637,7 @@
       "SlowDuration": 1.25
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3596,7 +4655,7 @@
       "FlashCooldown": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3615,7 +4674,7 @@
       "TotalASValue": 0.20000000298023224
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3632,7 +4691,7 @@
       "SummonerHaste": 70.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3650,7 +4709,7 @@
       "ShieldDuration": 2500.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3666,7 +4725,7 @@
       "AbilityHaste": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3680,7 +4739,7 @@
     "tooltip_plain": "你获得余烬之冠和洞悉之冠。余烬之冠：普攻对敌方英雄造成灼烧和减速。在非战斗状态下回复你的一部分最大生命值。洞悉之冠：获得技能急速，并且每秒回复法力值和能量值。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3689,14 +4748,14 @@
     "filename": "breadandcheese_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\breadandcheese_small.png",
     "icon_url": "/assets/breadandcheese_small.png",
-    "description": "你的E获得100技能急速。",
-    "tooltip": "你的E获得100技能急速。",
-    "tooltip_plain": "你的E获得100技能急速。",
+    "description": "你的【<font color='#F0C200'>?</font>】技能获得100技能急速。",
+    "tooltip": "你的【<font color='#F0C200'>?</font>】技能获得100技能急速。",
+    "tooltip_plain": "你的【?】技能获得100技能急速。",
     "spell_values": {
       "EAbilityHaste": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3705,14 +4764,14 @@
     "filename": "breadandjam_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\breadandjam_small.png",
     "icon_url": "/assets/breadandjam_small.png",
-    "description": "你的W获得100技能急速。",
-    "tooltip": "你的W获得100技能急速。",
-    "tooltip_plain": "你的W获得100技能急速。",
+    "description": "你的【<font color='#F0C200'>?</font>】技能获得100技能急速。",
+    "tooltip": "你的【<font color='#F0C200'>?</font>】技能获得100技能急速。",
+    "tooltip_plain": "你的【?】技能获得100技能急速。",
     "spell_values": {
       "WAbilityHaste": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3721,15 +4780,15 @@
     "filename": "breadandbutter_small.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\breadandbutter_small.png",
     "icon_url": "/assets/breadandbutter_small.png",
-    "description": "你的Q获得100技能急速。",
-    "tooltip": "你的Q获得100技能急速。",
-    "tooltip_plain": "你的Q获得100技能急速。",
+    "description": "你的【<font color='#F0C200'>?</font>】技能获得100技能急速。",
+    "tooltip": "你的【<font color='#F0C200'>?</font>】技能获得100技能急速。",
+    "tooltip_plain": "你的【?】技能获得100技能急速。",
     "spell_values": {
       "QAbilityHaste": 100.0,
       "QReducedAbilityHaste": 100.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3743,7 +4802,28 @@
     "tooltip_plain": "你的治疗效果和护盾效果还会提升目标?护甲和魔法抗性，这些加成持续3秒。",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "飞升仪式",
+    "tier": "棱彩",
+    "filename": "glasscannon_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\glasscannon_small.png",
+    "icon_url": "/assets/glasscannon_small.png",
+    "description": "参与击杀敌方英雄后会留下其精华。攻击该精华会提供<speed>移动速度</speed>并重置基础技能冷却时间。",
+    "tooltip": "参与击杀你在过去3秒内造成过伤害的敌方英雄，会使其留下其<keywordMajor>精华</keywordMajor>，持续8秒。攻击一个<keywordMajor>精华</keywordMajor>会消耗它。<br><br>消耗一个<keywordMajor>精华</keywordMajor>会使你闪烁至它的位置、让你变为<attention>不可被选取</attention>和<attention>不可阻挡</attention>、提供在2秒里持续衰减的<speed>?移动速度</speed>、<healing>治疗你?到?生命值(基于已损失生命值)</healing>、并重置你的基础技能冷却时间。<br><br><rules>治疗：?<br>已返还的冷却时间：?<br><flavorText>今天，你们将一睹飞升之威能！——沙漠皇帝 阿兹尔</flavorText></rules>",
+    "tooltip_plain": "参与击杀你在过去3秒内造成过伤害的敌方英雄，会使其留下其精华，持续8秒。攻击一个精华会消耗它。消耗一个精华会使你闪烁至它的位置、让你变为不可被选取和不可阻挡、提供在2秒里持续衰减的?移动速度、治疗你?到?生命值(基于已损失生命值)、并重置你的基础技能冷却时间。治疗：?已返还的冷却时间：?今天，你们将一睹飞升之威能！——沙漠皇帝 阿兹尔",
+    "spell_values": {
+      "Kill_Track_Duration": 3.0,
+      "Move_Speed_Duration": 2.0,
+      "Radius": 375.0,
+      "Soul_Attack_Range": 400.0,
+      "Soul_Duration": 8.0,
+      "Windup_Duration": 1.25
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3757,7 +4837,27 @@
     "tooltip_plain": "你的攻击会处决低于?最大生命值的敌方英雄, 回复你?生命值并击退敌人们。在着陆，或与一个敌人或地形产生碰撞时，这个被击退的敌人将爆炸，对附近的敌人们造成?魔法伤害。这些爆炸可以连锁。被飞身踢的敌人数量：?获得治疗的总和：?已造成的伤害：?",
     "spell_values": {},
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "高压锅",
+    "tier": "黄金",
+    "filename": "questpressurecooker_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\questpressurecooker_small.png",
+    "icon_url": "/assets/questpressurecooker_small.png",
+    "description": "每一秒，对附近的敌方英雄们施加一层可叠加的<keywordMajor>灼烧</keywordMajor>，这个效果受益于你的<scaleHealth>最大生命值</scaleHealth>。<br><br><font color='#F0C200'>任务：</font>对敌方英雄造成<keywordMajor>灼烧</keywordMajor>伤害<br><br><font color='#F0C200'>奖励</font>：提升【高压锅】的规模和伤害，基于任务等级。",
+    "tooltip": "每一秒，对附近的敌方英雄们施加一层可无限叠加的<keywordMajor>灼烧</keywordMajor>，在3秒的持续时间里每秒造成<magicDamage>?魔法伤害</magicDamage>。<br><br>任务层级完成度：2/2<br>已造成灼烧伤害：?",
+    "tooltip_plain": "每一秒，对附近的敌方英雄们施加一层可无限叠加的灼烧，在3秒的持续时间里每秒造成?魔法伤害。任务层级完成度：2/2已造成灼烧伤害：?",
+    "spell_values": {
+      "BleedDuration": 3.0,
+      "BurnVamp": 0.05000000074505806,
+      "Range": 300.0,
+      "Range2": 500.0,
+      "Range3": 600.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3777,7 +4877,7 @@
       "Poro_Augment_Amp": 1.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3796,7 +4896,36 @@
       "SpawnFrequency_Seconds": 3.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "魄罗蛮冲",
+    "tier": "棱彩",
+    "filename": "questporocharge_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\questporocharge_small.png",
+    "icon_url": "/assets/questporocharge_small.png",
+    "description": "<font color='#F0C200'>任务：</font>收集【魄罗佳肴】并投喂?只魄罗<br><br><font color='#F0C200'>奖励：</font>获得【魄罗冲锋】召唤师技能，可让魄罗们对敌方队伍发动几波攻势。每任务等级都会解锁额外的波次。<br><br><flavorText>“噢吼！它们可真萌啊！”——魄罗驯养人</flavorText>",
+    "tooltip": "【魄罗佳肴】会每<attention>?</attention>秒出现在你周围。投喂<keyword>魄罗</keyword>会给你<spellName>魄罗之爱</spellName>层数。在<attention>5</attention>层时，解锁<spellName>魄罗冲锋</spellName>召唤师技能。投喂更多<keyword>魄罗</keyword>会提升你发动攻势的波次。<br><br><spellName>魄罗冲锋</spellName>：发动若干波次的<keyword>魄罗</keyword>攻势，对敌方英雄们造成<physicalDamage>?物理伤害</physicalDamage>。<br><br>你当前可发动<attention>?</attention>波<keyword>魄罗</keyword>攻势。<br><br><rules>魄罗们仅能命中单个敌人，并且仅有第一波攻势会击飞敌人们。<br><br><flavorText>“噢吼！它们可真萌啊！”——魄罗驯养人</flavorText></rules>",
+    "tooltip_plain": "【魄罗佳肴】会每?秒出现在你周围。投喂魄罗会给你魄罗之爱层数。在5层时，解锁魄罗冲锋召唤师技能。投喂更多魄罗会提升你发动攻势的波次。魄罗冲锋：发动若干波次的魄罗攻势，对敌方英雄们造成?物理伤害。你当前可发动?波魄罗攻势。魄罗们仅能命中单个敌人，并且仅有第一波攻势会击飞敌人们。“噢吼！它们可真萌啊！”——魄罗驯养人",
+    "spell_values": {
+      "DamageReductionIfAlreadyHit": 0.5,
+      "MinionDamagePercent": 0.15000000596046448,
+      "SlowDuration": 2.0,
+      "SlowStrength": 0.8500000238418579,
+      "WaveRequirement1": 5.0,
+      "WaveRequirement10": 275.0,
+      "WaveRequirement2": 12.0,
+      "WaveRequirement3": 20.0,
+      "WaveRequirement4": 30.0,
+      "WaveRequirement5": 44.0,
+      "WaveRequirement6": 63.0,
+      "WaveRequirement7": 90.0,
+      "WaveRequirement8": 129.0,
+      "WaveRequirement9": 187.0
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3814,7 +4943,7 @@
       "InverseRate": 1.666659951210022
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3823,9 +4952,9 @@
     "filename": "magicmissile_small.kiwi.png",
     "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\magicmissile_small.kiwi.png",
     "icon_url": "/assets/magicmissile_small.kiwi.png",
-    "description": "造成技能伤害会对其发射3个<keywordMajor>爆竹</keywordMajor>，每个爆竹基于飞行距离造成<trueDamage>百分比最大生命值的真实伤害</trueDamage>。",
-    "tooltip": "造成技能伤害会对命中的每个敌人发射3个<keywordMajor>爆竹</keywordMajor>，每个爆竹基于飞行距离造成<trueDamage>1%最大生命值的真实伤害</trueDamage>。<br><br>已造成的伤害：?",
-    "tooltip_plain": "造成技能伤害会对命中的每个敌人发射3个爆竹，每个爆竹基于飞行距离造成1%最大生命值的真实伤害。已造成的伤害：?",
+    "description": "造成技能伤害会对其发射3个飞弹，每个造成基于飞行距离的<trueDamage>百分比最大生命值的真实伤害</trueDamage>。",
+    "tooltip": "造成技能伤害会对命中的每个敌人发射3个飞弹，每个造成基于飞行距离的<trueDamage>1%最大生命值的真实伤害</trueDamage>。<br><br>已造成的伤害：?",
+    "tooltip_plain": "造成技能伤害会对命中的每个敌人发射3个飞弹，每个造成基于飞行距离的1%最大生命值的真实伤害。已造成的伤害：?",
     "spell_values": {
       "Cooldown": 6.0,
       "MaxHealthDamagePerMissile": 0.0033400000538676977,
@@ -3834,7 +4963,7 @@
       "NumberOfMissiles": 3.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3864,7 +4993,48 @@
       "GRWindow": 5.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "鲨鱼暴风",
+    "tier": "黄金",
+    "filename": "sharktempest_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\sharktempest_small.png",
+    "icon_url": "/assets/sharktempest_small.png",
+    "description": "鲨鱼们环绕着你的【雪球】，对附近的敌人们造成伤害和<status>减速</status>。当你的【雪球】命中一个英雄时，其会陷入一阵鲨鱼风暴之中！",
+    "tooltip": "<keyword>鲨鱼们</keyword>环绕着你的【雪球】，对它们途经的敌人们造成<status>减速</status>和<magicDamage>?魔法伤害</magicDamage>。如果你的【雪球】命中了一个英雄，鲨鱼们会吸附至其身上并生成一阵<keyword>鲨鱼暴风</keyword>，从而对所有附近的敌人们造成每秒<magicDamage>?魔法伤害</magicDamage>和<status>持续3秒的30%减速</status>。",
+    "tooltip_plain": "鲨鱼们环绕着你的【雪球】，对它们途经的敌人们造成减速和?魔法伤害。如果你的【雪球】命中了一个英雄，鲨鱼们会吸附至其身上并生成一阵鲨鱼暴风，从而对所有附近的敌人们造成每秒?魔法伤害和持续3秒的30%减速。",
+    "spell_values": {
+      "AttachDuration": 3.0,
+      "AttachedAOESize": 425.0,
+      "AttachedSlowDuration": 3.0,
+      "Range": 300.0,
+      "SlowDuration": 1.0,
+      "SlowStrength": -0.30000001192092896,
+      "SlowStrengthTT": 0.30000001192092896
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
+  },
+  {
+    "schema_version": 2,
+    "name": "鲨鱼诱饵",
+    "tier": "黄金",
+    "filename": "fishbait_small.png",
+    "local_path": "C:\\Users\\apple\\claudecode\\run\\assets\\fishbait_small.png",
+    "icon_url": "/assets/fishbait_small.png",
+    "description": "在阵亡之后的若干秒，一头鲨鱼会啃噬所有附近的敌人们。你可以在阵亡后进行移动，以给鲨鱼攻击进行定位。",
+    "tooltip": "阵亡时，变成一个<keyword>鲨鱼诱饵</keyword>。你不能采取除了移动之外的任何其它行动，会<status>对附近的敌人们造成40%减速</status>。在若干秒之后，一头<keyword>鲨鱼</keyword>会浮现，<status>击飞</status>所有附近的敌人们并啃咬他们，对范围内的所有敌人造成<magicDamage>? + ?已损失生命值的魔法伤害</magicDamage>。<br><br>鲨鱼击杀敌方英雄的次数：<attention>?</attention>",
+    "tooltip_plain": "阵亡时，变成一个鲨鱼诱饵。你不能采取除了移动之外的任何其它行动，会对附近的敌人们造成40%减速。在若干秒之后，一头鲨鱼会浮现，击飞所有附近的敌人们并啃咬他们，对范围内的所有敌人造成? + ?已损失生命值的魔法伤害。鲨鱼击杀敌方英雄的次数：?",
+    "spell_values": {
+      "AOESize": 400.0,
+      "Duration": 3.5,
+      "MoveSpeed": 400.0,
+      "Slow": 0.4000000059604645
+    },
+    "status": "ready",
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3883,7 +5053,7 @@
       "HealthThreshold": 0.5
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   },
   {
     "schema_version": 2,
@@ -3904,6 +5074,6 @@
       "MaxMult": 2.0
     },
     "status": "ready",
-    "updated_at": "2026-06-12T11:28:35+0800"
+    "updated_at": "2026-06-13T12:48:50+0800"
   }
 ]
