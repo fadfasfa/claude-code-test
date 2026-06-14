@@ -72,6 +72,7 @@ tmp/
 !.state/cc-work/
 !.state/cc-work/README.md
 docs/archive/learnings-retired/ERRORS.md
+docs/workflows/codex-egress-maintenance.md
 
 # generated per-worktree, not committed to main
 TASK_HANDOFF.md

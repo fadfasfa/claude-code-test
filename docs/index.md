@@ -11,6 +11,7 @@
 | `docs/workflows/independent-agent-workflow.md` | Claude Code / Codex 独立工作流 |
 | `docs/workflows/work_area_registry.md` | 工作区和写入边界 |
 | `docs/workflows/codex-execution-boundary.md` | Codex 执行边界 |
+| `docs/workflows/codex-egress-maintenance.md` | 本机 Codex 出口维护说明（本地忽略，不入库） |
 | `docs/workflows/07-high-risk-safety.md` | 高危操作确认规则 |
 | `docs/workflows/ultraplan-adoption-note.md` | Ultraplan 后续接入说明 |
 | `docs/workflows/worktree-policy.md` | worktree 策略 |
