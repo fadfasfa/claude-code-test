@@ -343,16 +343,16 @@
             s = s.replace(/\{\{.*?\}\}/g, '');
             s = s.replace(/<\/?lol-uikit[^>]*>/gi, '');
             s = s.replace(/%i:[a-zA-Z0-9_]+%/gi, '');
-            
+
             // 剥离动态追踪面板（包括已造成的伤害等变体）
             s = s.replace(/<br>\s*(已获得的额外属性|已造成的伤害|已造成的额外伤害|已提供的护盾|伤害|治疗)[：:][\s\S]*/g, '');
             s = s.replace(/\s*(已获得的额外属性|已造成的伤害|已造成的额外伤害|已提供的护盾|伤害|治疗)[：:][\s\S]*/g, '');
-            
+
             // 仅清理 tooltip 内未解析变量留下的 ASCII 问号，不处理真实海克斯名“？？？”。
             s = s.replace(/\?{2,}/g, '');
             s = s.replace(/(?:\s*\?\s*){2,}/g, '');
             s = s.replace(/^[?\s]+|[?\s]+$/g, '');
-            
+
             s = s.replace(/\n\s*\n/g, '\n');
             return s.trim();
         }
@@ -647,14 +647,14 @@
                 return `
 <div class="hextech-card p-[1px] hx-surface-card mb-4" style="clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));">
     <div class="hextech-article-inner bg-[#060b10]" style="clip-path: polygon(0 0, calc(100% - 13px) 0, 100% 13px, 100% 100%, 13px 100%, 0 calc(100% - 13px));">
-        
+
         <div class="cursor-pointer" data-hex-info="${bindData}">
             ${renderAugmentIcon(iconUrl, resolvedAugment.name || item.name, displayTier, 'detail')}
         </div>
 
         <div class="flex flex-col flex-grow">
             <div class="hextech-article-head">
-                
+
                 <div class="hextech-article-title-block flex flex-col">
                     <div class="flex items-center gap-2.5 flex-wrap">
                         <span class="text-white text-[16px] font-bold tracking-wide leading-none">${safeName}</span>
@@ -945,5 +945,3 @@
             };
             return String(text).replace(/[&<>"']/g, m => map[m]);
         }
-
-    
