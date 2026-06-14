@@ -7,12 +7,35 @@
 | 轨道 | worktree | 分支 | 数据源 | 状态 |
 | :--- | :--- | :--- | :--- | :--- |
 | 共享基座 | 同时存在于两个 worktree | 两条分支共有 | —— | 事件通道 + overlay host 已收敛，两轨复用，边界固定 |
-| Track A 视觉识别 | `C:\Users\apple\worktrees\codex\claudecode-codex-feature-hextech-game-overlay` | `codex/feature/hextech-game-overlay` | 截图 + 按钮定位 + ROI 指纹匹配 | 冻结：anchor 中毒已修、门控生效，但图标匹配算法系统性认错（见 §7.1） |
-| Track B Overwolf GEP | `C:\Users\apple\worktrees\hextech-overlay-overwolf-gep` | `feature/hextech-overlay-overwolf-gep` | Overwolf GEP `augments` feature | 计划阶段：执行计划见 `run/hextech_overwolf_gep_plan.md`，交 Codex 实现 |
+| Track A 视觉识别 | `C:\Users\apple\worktrees\codex\claudecode-codex-feature-hextech-game-overlay` | `codex/feature/hextech-game-overlay` | 截图 + 按钮定位 + ROI 图标轮廓 + 卡名文字双通道 | **现行主线**：识别已重做并真机验证（2026-06-13，2/3 真机槽位认对，名字正确），剩余做稳（延迟/去抖/阈值/新卡覆盖）。详见 §0 与 §7.1 |
+| Track B Overwolf GEP | `C:\Users\apple\worktrees\hextech-overlay-overwolf-gep` | `feature/hextech-overlay-overwolf-gep` | Overwolf GEP `augments` feature | **暂阻**：GEP 包对未注册 dev 应用只给空壳（v0.0.0、game-detected 0 次、RPC 全超时），需 Overwolf 开发者注册/审核才能通；代码就绪，等注册。执行计划见 `run/hextech_overwolf_gep_plan.md` |
 
 - 目标工作区：`run/`
 - 设计来源：`C:\Users\apple\.claude\plans\run-flickering-flame.md`、`run/README.md`、`run/PROJECT.md`、当前代码合同
 - 同步要求：本设计文档是两轨共同的口径源，必须在 `main`、`codex/feature/hextech-game-overlay`、`feature/hextech-overlay-overwolf-gep` 三个分支上保持一致；改动任一处后同步其余分支。
+
+## 0. 最终目标、数据架构与路线图（2026-06-13 固化，明天接续用）
+
+### 0.1 最终产品目标
+游戏内三选一界面出现时，overlay **在玩家选择之前就稳定显示**三张卡，每张卡展示：**卡名 + 品质(tier) + 中文介绍 + 胜率 + 出场率 + 英雄联动**。即从"认出名字"升级为"出装顾问"。当前只做到认名字，富内容是后续阶段。
+
+### 0.2 数据架构（来源分工，已定）
+| 内容 | 来源 | 说明 |
+| :--- | :--- | :--- |
+| 名字 + 品质 + 图标 | **官方 CommunityDragon**（`cherry-augments.json`，637 条，随补丁更新） | 同步工具 `tools/sync_cdragon_augments.py`；闭集用于视觉识别 |
+| 中文介绍/描述 | **第三方**（aramgg `aram-mayhem-augments`） | 官方 arena 端点(`cdragon/arena/zh_cn.json`)有中文 desc 但仅覆盖 ~44%(228/516)，ARAM 卡如钢化你心/缩小引擎不在内，故描述沿用第三方 |
+| 胜率 + 出场率 | **第三方**（aramgg / apexlol） | 私用开启（见 §12 更新口径） |
+| 英雄联动(synergy) | **第三方**（已有 `data/raw/synergy/Champion_Synergy_*.json`） | 英雄×海克斯评分/强力联动/说明，待接入 overlay 渲染 |
+
+dtodo 源已失效/剔除；第三方现存 aramgg、apexlol。
+
+### 0.3 路线图（阶段）
+- **阶段 1（现行，先做）— 识别做稳**：让 active 在选择期间稳定显示（延迟/去抖/门控）、slot 阈值余量重标、新卡覆盖。详细计划见 `C:\Users\apple\.claude\plans\run-overlay-giggly-iverson.md`。
+- **阶段 2 — 富内容 overlay**：联动(synergy，仓里已有数据)优先接入渲染 → 再加胜率/出场率；overlay 渲染从"名字/品质/一句话"升级为多字段卡片。
+- **阶段 3 — Track B Overwolf**：待用户完成 Overwolf 开发者注册放行后解阻，提供独占全屏渲染。
+
+### 0.4 今日真机验收结论
+新双通道识别（图标轮廓 + 卡名文字）真机三选一实测：active 触发、3 槽中 2 槽认对（最万用的瞄准镜、钢化你心，名字正确）。问题：① 显示太晚（选完才稳，需做稳延迟/去抖）；② 第 3 槽置信度贴近 0.80 门槛未 ready；③ overlay 内容仅名字、无胜率/出场率/联动（阶段 2 做）。
 
 ## 1. 当前目标
 
@@ -370,12 +393,12 @@ python tools/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag 
 - 不把 `data/runtime/**` 作为 Git 提交内容。
 - 不把 `data/runtime/state/overlay_anchor_calibration.v1.json` 打入 bundle manifest、PyInstaller `_internal`、源码数据或便携包；打包后首次启动必须重新校准。
 
-胜率/排名：
+胜率/排名（2026-06-13 用户决策更新）：
 
-- 用户需求保留：本机私用实验中仍希望保留胜率/排名能力。
-- 当前项目口径：胜率/排名显示标记为 `policy_blocked` / `requires_explicit_go_no_go`。
-- 默认可发布能力不得把 Augments / Arena Mode items win rate 写成合规 overlay 内容。
-- 私用统计开关默认关闭；启用后必须标注风险，不宣称 Riot 合规。
+- **私用场景已批准开启**：用户明确要在本机私用 overlay 中显示胜率/出场率（阶段 2 实现）。
+- 仍标注风险：**不宣称 Riot 合规**，不作为对外默认可发布能力；数据来自第三方(aramgg/apexlol)。
+- 可发布/分发版本仍受限：默认发布构建不得把 Augments / Arena win rate 写成"合规" overlay 内容；私用开关与发布构建解耦。
+- 历史口径 `policy_blocked` 仅对"对外发布"仍成立；"本机私用"已 go(此条即 §0.2 表中胜率/出场率"私用开启"的来源)。
 
 ## 13. 当前剩余风险
 
@@ -387,7 +410,7 @@ python tools/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag 
 | `Alt+H` 注册失败 | 无法热键切换 | 保留 warning 日志，需人工确认是否被系统/其他软件占用 |
 | Borderless 覆盖不稳定 | overlay 不可见或跟随错误 | 当前 MVP 只承诺 Borderless，真实表现需训练模式验收 |
 | Full Screen / 独占全屏 | 普通外部窗口无法覆盖 | 不作为当前 MVP；后续检测并引导切无边框 |
-| 胜率/排名政策冲突 | 不能作为默认可发布能力 | 保持 `policy_blocked`，私用开关默认关闭 |
+| 胜率/排名政策冲突 | 不能作为默认可发布能力 | 私用已 go（§12）；发布构建仍 `policy_blocked`，私用与发布解耦 |
 
 ## 14. 当前结论
 
