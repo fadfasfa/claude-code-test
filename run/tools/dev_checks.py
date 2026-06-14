@@ -527,7 +527,7 @@ def check_overlay_event_channel_contract() -> None:
         source_tag="dev-check",
         hint_cache=hint_cache,
     )
-    assert event["schema_version"] == 1
+    assert event["schema_version"] == overlay_event_channel.SCHEMA_VERSION
     assert event["source"]["tag"] == "dev-check"
     assert event["active"] is True
     assert event["selection_type"] == "hextech"
@@ -566,7 +566,7 @@ def check_overlay_event_channel_contract() -> None:
         overlay_event_channel.write_overlay_event(body_shard_event, body_shard_path)
         body_shard_snapshot = overlay_event_channel.read_overlay_event(body_shard_path)
         assert body_shard_snapshot["ok"] is True
-        assert body_shard_snapshot["visible"] is True
+        assert body_shard_snapshot["visible"] is False
         assert body_shard_snapshot["selection_type"] == "body_shard"
         assert body_shard_snapshot["selection_label"] == "锻体碎片选择"
 
@@ -603,6 +603,147 @@ def check_overlay_event_channel_contract() -> None:
     assert "from processing.overlay_hint_cache" not in module_text
 
 
+def check_official_overlay_provider_contract() -> None:
+    """验证官方接口 provider 只做本地接口归一化，并通过现有 overlay 事件协议输出。"""
+    import processing.official_overlay_provider as official_overlay_provider
+    import processing.overlay_event_channel as overlay_event_channel
+    import tools.probe_official_overlay_provider as probe_official_overlay_provider
+
+    direct_payload = {
+        "augments": {
+            "augment_1": {"id": "augment_a", "name": "官方海克斯 A"},
+            "augment_2": {"augmentId": "augment_b", "displayName": "官方海克斯 B"},
+            "augment_3": {"augment_id": "augment_c", "title": "官方海克斯 C"},
+        }
+    }
+    direct_snapshot = official_overlay_provider.extract_official_augment_candidates(direct_payload)
+    assert direct_snapshot["status"] == "candidates_ready"
+    assert [choice["augment_id"] for choice in direct_snapshot["choices"]] == ["augment_a", "augment_b", "augment_c"]
+    assert [choice["slot"] for choice in direct_snapshot["choices"]] == [0, 1, 2]
+
+    nested_payloads = [
+        {
+            "gameData": {
+                "augments": {
+                    "availableAugments": [
+                        {"id": "aa", "name": "可选 A"},
+                        {"id": "bb", "name": "可选 B"},
+                        {"id": "cc", "name": "可选 C"},
+                    ]
+                }
+            }
+        },
+        {
+            "selection": {
+                "choices": [
+                    {"hextechId": "choice_a", "name": "选择 A"},
+                    {"hextechId": "choice_b", "name": "选择 B"},
+                    {"hextechId": "choice_c", "name": "选择 C"},
+                ]
+            }
+        },
+        {
+            "selection": {
+                "options": [
+                    "选项 A",
+                    "选项 B",
+                    "选项 C",
+                ]
+            }
+        },
+    ]
+    for payload in nested_payloads:
+        snapshot = official_overlay_provider.extract_official_augment_candidates(payload)
+        assert snapshot["status"] == "candidates_ready"
+        assert len(snapshot["choices"]) == 3
+        assert snapshot["diagnostics"]["field_paths"]
+
+    picked_only = official_overlay_provider.extract_official_augment_candidates(
+        {"picked_augment": {"id": "already_selected", "name": "已选海克斯"}}
+    )
+    assert picked_only["status"] == "active_no_candidates"
+    assert len(picked_only["choices"]) == 3
+    assert all(choice["state"] == "empty" for choice in picked_only["choices"])
+
+    class FakeResponse:
+        def __init__(self, status_code: int, payload: dict | None = None):
+            self.status_code = status_code
+            self._payload = payload or {}
+
+        def json(self) -> dict:
+            return self._payload
+
+    def fake_unauthorized_fetch(_url: str, _headers: dict) -> FakeResponse:
+        return FakeResponse(401, {"message": "secret-token must never leak"})
+
+    lcu_unauthorized = official_overlay_provider.LcuSnapshotClient(
+        credential_provider=lambda: ("1234", "secret-token"),
+        fetch_response=fake_unauthorized_fetch,
+    ).get_snapshot()
+    serialized_lcu = json.dumps(lcu_unauthorized, ensure_ascii=False)
+    assert lcu_unauthorized["status"] == "error"
+    assert "secret-token" not in serialized_lcu
+    assert "Authorization" not in serialized_lcu
+
+    lcu_missing = official_overlay_provider.LcuSnapshotClient(
+        credential_provider=lambda: ("1234", "secret-token"),
+        fetch_response=lambda _url, _headers: FakeResponse(404, {}),
+    ).get_snapshot()
+    assert lcu_missing["status"] == "unavailable"
+
+    def fake_connection_failure(_url: str, _headers: dict) -> FakeResponse:
+        raise RuntimeError("connection failed with secret-token")
+
+    lcu_connection_failure = official_overlay_provider.LcuSnapshotClient(
+        credential_provider=lambda: ("1234", "secret-token"),
+        fetch_response=fake_connection_failure,
+    ).get_snapshot()
+    serialized_failure = json.dumps(lcu_connection_failure, ensure_ascii=False)
+    assert lcu_connection_failure["status"] == "unavailable"
+    assert "secret-token" not in serialized_failure
+
+    with TemporaryDirectory() as tmp_dir:
+        event_path = Path(tmp_dir) / "official-overlay-event.json"
+        written = probe_official_overlay_provider.write_official_overlay_event(direct_snapshot, event_path=event_path)
+        assert written == event_path
+        event_snapshot = overlay_event_channel.read_overlay_event(event_path)
+        assert event_snapshot["visible"] is True
+        assert event_snapshot["source"]["tag"] == "official-api"
+        assert [slot["augment_id"] for slot in event_snapshot["slots"]] == ["augment_a", "augment_b", "augment_c"]
+
+        class FakeProvider:
+            def __init__(self) -> None:
+                self._snapshots = [direct_snapshot, picked_only]
+
+            def get_snapshot(self) -> dict:
+                return self._snapshots.pop(0) if self._snapshots else picked_only
+
+        now = [0.0]
+
+        def fake_time() -> float:
+            return now[0]
+
+        def fake_sleep(seconds: float) -> None:
+            now[0] += seconds
+
+        summary = probe_official_overlay_provider.run_probe(
+            duration_seconds=0.05,
+            interval_ms=50,
+            dump_runtime_json=False,
+            write_event=True,
+            provider=FakeProvider(),
+            event_path=event_path,
+            time_func=fake_time,
+            sleep_func=fake_sleep,
+            emit_snapshots=False,
+        )
+        assert summary["statuses"] == ["candidates_ready", "active_no_candidates"]
+        assert len(summary["event_writes"]) == 2
+        inactive_snapshot = overlay_event_channel.read_overlay_event(event_path)
+        assert inactive_snapshot["visible"] is False
+        assert inactive_snapshot["source"]["tag"] == "official-api"
+
+
 def check_overlay_vision_sidecar_contract() -> None:
     """验证 Vision MVP 的 ROI 预设、Pillow 指纹识别和低置信度保护。"""
     from PIL import Image, ImageDraw
@@ -624,6 +765,28 @@ def check_overlay_vision_sidecar_contract() -> None:
             assert 0 <= top < bottom <= size[1]
 
     assert overlay_vision_sidecar.resolve_roi_preset(1707, 1067, preset="auto").name == "2560x1600"
+
+    def _paint_selection_button(image: Image.Image) -> tuple[int, int, int, int]:
+        draw = ImageDraw.Draw(image)
+        box = (
+            int(image.size[0] * 0.45),
+            int(image.size[1] * 0.80),
+            int(image.size[0] * 0.55),
+            int(image.size[1] * 0.84),
+        )
+        draw.rounded_rectangle(box, radius=14, fill="#168fcf", outline="#54d5ff", width=4)
+        return box
+
+    def _paint_diagonal_blue_noise(image: Image.Image) -> None:
+        draw = ImageDraw.Draw(image)
+        width, height = image.size
+        run_width = int(width * 0.07)
+        start_x = int(width * 0.38)
+        start_y = int(height * 0.76)
+        for row in range(int(height * 0.04)):
+            x = start_x + row * 8
+            y = start_y + row
+            draw.line((x, y, x + run_width, y), fill="#168fcf")
 
     # 模板必须带形状：归一化指纹只看形状，纯色模板是平坦图会被正确剔除。
     def _make_glyph_template(shape: str) -> Image.Image:
@@ -656,62 +819,203 @@ def check_overlay_vision_sidecar_contract() -> None:
         {"flat": {"name": "平坦模板", "image": Image.new("RGB", (72, 72), "#2f6fed")}}
     ) == []
 
+    text_template_index = overlay_vision_sidecar.build_template_index(
+        {
+            "eureka": {"name": "尤里卡", "tier": "Prismatic", "summary": "文字通道测试", "image": templates["augment_a"]},
+            "fey": {"name": "精怪魔法", "tier": "Gold", "summary": "文字通道测试", "image": templates["augment_b"]},
+            "noise": {"name": "重量级打击手", "tier": "Gold", "summary": "文字通道测试", "image": templates["augment_c"]},
+        }
+    )
+    decorated_name = Image.new("RGB", (295, 48), "#001010")
+    name_mask = overlay_vision_sidecar._render_name_mask("尤里卡")
+    assert name_mask is not None
+    decorated_name.paste(Image.merge("RGB", (name_mask, name_mask, name_mask)), (42, 0))
+    ImageDraw.Draw(decorated_name).rectangle((280, 0, 283, 47), fill="#d8b36f")
+    _, name_ranked = overlay_vision_sidecar._rank_name_templates(decorated_name, text_template_index)
+    assert name_ranked[0][0].name == "尤里卡"
+    assert name_ranked[0][1] >= 0.80
+
     frame = Image.new("RGB", (2560, 1600), "#070b12")
+    _paint_selection_button(frame)
     preset = overlay_vision_sidecar.resolve_roi_preset(2560, 1600, preset="auto")
     for slot_index, box in enumerate(preset.slot_boxes(frame.size)):
         left, top, right, bottom = box
         # ROI 即图标框：模板按整框贴入，与真实几何（crop ≈ 图标整图）一致。
         frame.paste(templates[f"augment_{chr(ord('a') + slot_index)}"].resize((right - left, bottom - top)), (left, top))
 
-    detection = overlay_vision_sidecar.detect_overlay_choices(
-        frame,
-        template_index,
-        preset_name="auto",
-        min_confidence=0.80,
-    )
+    with TemporaryDirectory() as tmp_dir:
+        calibration_path = Path(tmp_dir) / "overlay_anchor_calibration.v1.json"
+        detection = overlay_vision_sidecar.detect_overlay_choices(
+            frame,
+            template_index,
+            preset_name="auto",
+            min_confidence=0.80,
+            calibration_path=calibration_path,
+        )
+        assert calibration_path.is_file()
+        cached_detection = overlay_vision_sidecar.detect_overlay_choices(
+            frame,
+            template_index,
+            preset_name="auto",
+            min_confidence=0.80,
+            calibration_path=calibration_path,
+        )
+        assert cached_detection["source"]["calibration"] == "cached"
     assert detection["active"] is True
     assert detection["selection_type"] == "hextech"
     assert detection["source"]["tag"] == "vision-sidecar"
     assert detection["source"]["preset"] == "2560x1600"
     assert detection["source"]["capture_size"] == [2560, 1600]
+    assert detection["source"]["calibration"] == "calibrated"
     assert [slot["augment_id"] for slot in detection["slots"]] == ["augment_a", "augment_b", "augment_c"]
 
     blank = Image.new("RGB", (2560, 1600), "#070b12")
-    blank_detection = overlay_vision_sidecar.detect_overlay_choices(
-        blank,
-        template_index,
-        preset_name="2560x1600",
-        min_confidence=0.80,
-    )
+    _paint_selection_button(blank)
+    with TemporaryDirectory() as tmp_dir:
+        blank_detection = overlay_vision_sidecar.detect_overlay_choices(
+            blank,
+            template_index,
+            preset_name="2560x1600",
+            min_confidence=0.80,
+            calibration_path=Path(tmp_dir) / "overlay_anchor_calibration.v1.json",
+        )
     assert blank_detection["active"] is False
-    assert all(slot["state"] == "detecting" for slot in blank_detection["slots"])
+    assert all(slot["state"] != "ready" for slot in blank_detection["slots"])
+
+    no_button = Image.new("RGB", (2560, 1600), "#070b12")
+    with TemporaryDirectory() as tmp_dir:
+        calibration_path = Path(tmp_dir) / "overlay_anchor_calibration.v1.json"
+        no_button_detection = overlay_vision_sidecar.detect_overlay_choices(
+            no_button,
+            template_index,
+            preset_name="2560x1600",
+            min_confidence=0.80,
+            calibration_path=calibration_path,
+        )
+    assert no_button_detection["active"] is False
+    assert no_button_detection["source"]["reason"] == "anchor_missing"
+
+    scattered_blue = Image.new("RGB", (2560, 1600), "#070b12")
+    _paint_diagonal_blue_noise(scattered_blue)
+    assert overlay_vision_sidecar.detect_selection_button_box(scattered_blue) is None
+    with TemporaryDirectory() as tmp_dir:
+        calibration_path = Path(tmp_dir) / "overlay_anchor_calibration.v1.json"
+        scattered_detection = overlay_vision_sidecar.detect_overlay_choices(
+            scattered_blue,
+            template_index,
+            preset_name="2560x1600",
+            min_confidence=0.80,
+            calibration_path=calibration_path,
+        )
+        assert not calibration_path.exists()
+    assert scattered_detection["active"] is False
+    assert scattered_detection["source"]["reason"] == "anchor_missing"
+
+    missing_button = frame.copy()
+    button_payload = overlay_vision_sidecar.build_anchor_calibration_payload(frame, preset_name="auto")
+    assert button_payload is not None
+    with TemporaryDirectory() as tmp_dir:
+        calibration_path = Path(tmp_dir) / "overlay_anchor_calibration.v1.json"
+        overlay_vision_sidecar.write_anchor_calibration(button_payload, calibration_path)
+        calibration = overlay_vision_sidecar._coerce_anchor_calibration(button_payload, frame.size)
+        assert calibration is not None
+        button_box = calibration.button_box
+        ImageDraw.Draw(missing_button).rectangle(button_box, fill="#070b12")
+        missing_button_detection = overlay_vision_sidecar.detect_overlay_choices(
+            missing_button,
+            template_index,
+            preset_name="auto",
+            min_confidence=0.80,
+            calibration_path=calibration_path,
+        )
+    assert missing_button_detection["active"] is False
+    assert missing_button_detection["source"]["reason"] == "selection_button_missing"
+
+    poisoned_payload = dict(button_payload)
+    poisoned_payload["button_box"] = [0.585, 0.80, 0.665, 0.84]
+    with TemporaryDirectory() as tmp_dir:
+        calibration_path = Path(tmp_dir) / "overlay_anchor_calibration.v1.json"
+        overlay_vision_sidecar.write_anchor_calibration(poisoned_payload, calibration_path)
+        healed_detection = overlay_vision_sidecar.detect_overlay_choices(
+            frame,
+            template_index,
+            preset_name="auto",
+            min_confidence=0.80,
+            calibration_path=calibration_path,
+        )
+        healed_payload = overlay_vision_sidecar.load_anchor_calibration(calibration_path)
+    assert healed_detection["active"] is True
+    assert healed_detection["source"]["calibration"] == "recalibrated"
+    assert healed_payload is not None
+    healed_button_box = healed_payload["button_box"]
+    healed_center_x = (float(healed_button_box[0]) + float(healed_button_box[2])) / 2.0
+    assert 0.42 <= healed_center_x <= 0.58
+
+    # 载入画面杂乱内容也能蹭到 low_confidence；空占位框不得触发 active 显示。
+    assert (
+        overlay_vision_sidecar._scene_active_from_slots(
+            [{"state": "low_confidence", "confidence": 0.7} for _ in range(3)]
+        )
+        is False
+    )
+    assert (
+        overlay_vision_sidecar._scene_active_from_slots(
+            [{"state": "ready", "confidence": 0.9}, {"state": "low_confidence", "confidence": 0.6}, {"state": "empty"}]
+        )
+        is True
+    )
+
+    # 搜索区内但偏上的实心蓝条（卡片描述区高度）不是底部按钮，必须被垂直下带约束拒绝。
+    mid_band = Image.new("RGB", (2560, 1600), "#070b12")
+    ImageDraw.Draw(mid_band).rounded_rectangle(
+        (int(2560 * 0.45), int(1600 * 0.56), int(2560 * 0.55), int(1600 * 0.60)),
+        radius=14,
+        fill="#168fcf",
+    )
+    assert overlay_vision_sidecar.detect_selection_button_box(mid_band) is None
+
+    body_shard_frame = Image.new("RGB", (2560, 1600), "#070b12")
+    _paint_selection_button(body_shard_frame)
+    shard_icon = _make_glyph_template("bars")
+    for box in preset.slot_boxes(body_shard_frame.size):
+        left, top, right, bottom = box
+        body_shard_frame.paste(shard_icon.resize((right - left, bottom - top)), (left, top))
+    with TemporaryDirectory() as tmp_dir:
+        body_shard_detection = overlay_vision_sidecar.detect_overlay_choices(
+            body_shard_frame,
+            template_index,
+            preset_name="auto",
+            min_confidence=0.80,
+            calibration_path=Path(tmp_dir) / "overlay_anchor_calibration.v1.json",
+        )
+    assert body_shard_detection["active"] is False
+    assert body_shard_detection["selection_type"] == "body_shard"
+    assert body_shard_detection["source"]["reason"] == "body_shard_only"
 
     # ESC 暗色菜单场景：接近平坦的深色面板必须被方差门槛拒绝，不得误报 active。
     dark_panel = Image.new("RGB", (2560, 1600), "#1d2026")
-    dark_detection = overlay_vision_sidecar.detect_overlay_choices(
-        dark_panel,
-        template_index,
-        preset_name="2560x1600",
-        min_confidence=0.80,
-    )
+    _paint_selection_button(dark_panel)
+    with TemporaryDirectory() as tmp_dir:
+        dark_detection = overlay_vision_sidecar.detect_overlay_choices(
+            dark_panel,
+            template_index,
+            preset_name="2560x1600",
+            min_confidence=0.80,
+            calibration_path=Path(tmp_dir) / "overlay_anchor_calibration.v1.json",
+        )
     assert dark_detection["active"] is False
-    assert all(slot["state"] == "detecting" for slot in dark_detection["slots"])
+    assert all(slot["state"] != "ready" for slot in dark_detection["slots"])
 
-    # 孪生图标：margin 归零但置信度极高，应走豁免判 ready 而不是永远识别不出。
+    # 孪生图标：margin 归零但置信度极高，应走槽位豁免判 ready 而不是永远识别不出。
     twin_index = overlay_vision_sidecar.build_template_index(
         {
             "twin_a": {"name": "孪生 A", "image": _make_glyph_template("ellipse")},
             "twin_b": {"name": "孪生 B", "image": _make_glyph_template("ellipse")},
         }
     )
-    twin_detection = overlay_vision_sidecar.detect_overlay_choices(
-        frame,
-        twin_index,
-        preset_name="2560x1600",
-        min_confidence=0.80,
-    )
-    assert twin_detection["slots"][0]["state"] == "ready"
-    assert twin_detection["slots"][0]["name"] in {"孪生 A", "孪生 B"}
+    twin_slot = overlay_vision_sidecar._detect_slot(frame, preset.slot_boxes(frame.size)[0], 0, twin_index, min_confidence=0.80)
+    assert twin_slot["state"] == "ready"
+    assert twin_slot["name"] in {"孪生 A", "孪生 B"}
 
     # 槽位判定真值表：平坦拒绝、低置信度拒绝、margin 不足只接受极高置信度。
     assert overlay_vision_sidecar._slot_match_decision(5.0, 0.99, 0.5, min_confidence=0.80) is False
@@ -739,7 +1043,7 @@ def check_overlay_vision_sidecar_contract() -> None:
     assert unstable["active"] is False
     active_signature = overlay_vision_sidecar._loop_event_signature(stable)
     inactive_signature = overlay_vision_sidecar._loop_event_signature(unstable)
-    assert active_signature == ("active", "augment_a", "augment_b", "augment_c")
+    assert active_signature == ("active", "ready:augment_a", "ready:augment_b", "ready:augment_c")
     assert inactive_signature == ("inactive", "unstable")
     assert overlay_vision_sidecar.should_write_loop_event(
         stable,
@@ -1315,9 +1619,14 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
     assert has_timestamp_snapshot
     source_files = manifest.get("source_files", [])
     assert "processing/overlay_vision_sidecar.py" in source_files
+    assert "processing/official_overlay_provider.py" in source_files
     assert "display/game_overlay_host.py" in source_files
+    assert "tools/probe_official_overlay_provider.py" in source_files
+    serialized_manifest = json.dumps(manifest, ensure_ascii=False)
     assert not any("data/runtime" in str(item) for item in source_files)
     assert not any("data/raw" in str(item) for item in source_files)
+    assert "data/runtime" not in serialized_manifest.replace("\\", "/")
+    assert "overlay_anchor_calibration.v1.json" not in serialized_manifest
 
     if verbose:
         print("has_hextech_snapshot_files", True)
@@ -1369,18 +1678,34 @@ def check_game_overlay_documentation_contract() -> None:
 
     readme_text = (RUN_DIR / "README.md").read_text(encoding="utf-8")
     project_text = (RUN_DIR / "PROJECT.md").read_text(encoding="utf-8")
+    design_text = (RUN_DIR / "hextech_game_overlay_design.md").read_text(encoding="utf-8")
     assert "阶段 3R" in readme_text
     assert "2560x1600" in readme_text
     assert "python -m processing.overlay_vision_sidecar --once --preset auto --write-event" in readme_text
     assert "python -m processing.overlay_vision_sidecar --loop --preset auto --write-event" in readme_text
     assert "默认不显示占位框" in readme_text
-    assert "开关开 + active 选择事件 + 游戏窗口在前台" in readme_text
+    assert "开关开 + active 海克斯选择事件 + 游戏窗口在前台" in readme_text
+    assert "蓝色选择按钮" in readme_text
+    assert "overlay_anchor_calibration.v1.json" in readme_text
+    assert "body_shard_only" in readme_text
+    assert "probe_official_overlay_provider.py" in readme_text
+    assert "官方接口优先" in readme_text
     assert "P95 <= 500ms" in readme_text
     assert "不承诺独占全屏" in readme_text
     assert "阶段 0-5" in project_text
     assert "processing/overlay_vision_sidecar.py" in project_text
+    assert "processing/official_overlay_provider.py" in project_text
     assert "tools/overlay_performance_probe.py" in project_text
+    assert "tools/probe_official_overlay_provider.py" in project_text
     assert "默认不显示占位框" in project_text
+    assert "蓝色按钮场景门控" in project_text
+    assert "overlay_anchor_calibration.v1.json" in project_text
+    assert "body_shard` 只作为诊断类型不显示" in project_text
+    assert "蓝色选择按钮是游戏内显示的主场景门控" in design_text
+    assert "官方接口优先验证顺序" in design_text
+    assert "python tools/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json" in design_text
+    assert "data/runtime/state/overlay_anchor_calibration.v1.json" in design_text
+    assert "打包后首次启动必须重新校准" in design_text
     assert "不验证真实 Vision 识别" not in project_text
 
 
@@ -1392,6 +1717,9 @@ def check_packaged_smoke_uses_explicit_feature_flags() -> None:
     assert '"game_overlay_enabled": False' in smoke_text
     assert '"auto_open_browser": False' in smoke_text
     assert "_write_smoke_feature_flags(runtime_root)" in smoke_text
+    assert "OVERLAY_ANCHOR_CALIBRATION_FILENAME" in smoke_text
+    assert "package:data/runtime absent" in smoke_text
+    assert "overlay_anchor_calibration.v1.json" in smoke_text
 
 
 def check_packaged_smoke_extracts_representative_champion_id_variants() -> None:
@@ -2492,6 +2820,7 @@ def run_default_checks() -> None:
     check_ui_feature_flags_contract()
     check_overlay_hint_cache_contract()
     check_overlay_event_channel_contract()
+    check_official_overlay_provider_contract()
     check_overlay_vision_sidecar_contract()
     check_service_manager_lifecycle_contract()
     check_game_overlay_host_contract()

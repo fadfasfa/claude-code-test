@@ -124,6 +124,8 @@ def prepare_runtime_bundle() -> Path:
     """生成 bundle 运行时白名单目录，供构建命令直接打入产物。"""
     print_step("准备稳定基础资源")
     bundle_root = prepare_bundle_runtime(BASE_DIR, BUILD_DIR)
+    if (bundle_root / "data" / "runtime").exists() or any(bundle_root.rglob("overlay_anchor_calibration.v1.json")):
+        raise RuntimeError("bundle 不能包含 data/runtime 或 overlay anchor 校准缓存")
     print_check("静态页面已加入打包白名单")
     print_check("稳定 data 资源已加入打包白名单")
     print_check("Hextech 战报快照清单已加入打包白名单")
@@ -131,6 +133,19 @@ def prepare_runtime_bundle() -> Path:
     print_check("稳定 assets 已加入打包白名单")
     print_warn("仅打包 Hextech_Data_*.csv、协同时间快照与 latest 指针；临时 CSV、预计算缓存和运行日志不会打包")
     return bundle_root
+
+
+def refresh_runtime_data_before_bundle() -> None:
+    """按运行时节奏刷新数据，再把当前落盘结果打入发布包。"""
+    print_step("按正常节奏刷新运行时数据")
+    # 延迟导入避免 tools 包初始化时反向加载 processing.orchestrator 形成导入环。
+    from processing.orchestrator import refresh_backend_data
+
+    refreshed = refresh_backend_data(force=False)
+    if refreshed:
+        print_check("运行时数据已按当前刷新策略检查并更新")
+    else:
+        print_check("运行时数据仍在有效期内，无需刷新")
 
 
 def build_exe(version_file: Path, bundle_root: Path) -> Path:
@@ -270,6 +285,7 @@ def main():
     print(f"  构建时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     cleanup()
+    refresh_runtime_data_before_bundle()
     bundle_root = prepare_runtime_bundle()
     version_file = generate_version_info()
     exe_dir = build_exe(version_file, bundle_root)

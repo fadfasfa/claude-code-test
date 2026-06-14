@@ -46,7 +46,8 @@
 | `display/web_runtime.py` | web runtime | Web 生命周期、LCU、缓存、浏览器与后台刷新触发 |
 | `processing/ui_feature_flags.py` | runtime | Web 前端、游戏内显示、私用统计和低频监听偏好持久化 |
 | `processing/overlay_hint_cache.py` | cache | overlay 本地轻量提示缓存生成、写入和按 augment_id 查询 |
-| `processing/overlay_vision_sidecar.py` | vision | Pillow/pywin32 本地窗口截图、固定 ROI、模板指纹匹配和事件写入 |
+| `processing/overlay_vision_sidecar.py` | vision | Pillow/pywin32 本地窗口截图、蓝色按钮场景门控、固定 ROI、模板指纹匹配和事件写入 |
+| `processing/official_overlay_provider.py` | provider | 官方接口优先的三槽候选探测与归一化；只访问 Riot / LoL 本地接口，不直接渲染 overlay |
 | `processing/runtime_store.py` | runtime | CSV 与运行时文件定位、DataFrame 缓存与归一 |
 | `processing/view_adapter.py` | adapter | 首页榜单与海克斯详情数据适配 |
 | `processing/precomputed_cache.py` | cache | 预计算 API 缓存读写 |
@@ -68,6 +69,7 @@
 | `tools/log_utils.py` | support tool | 日志过滤、source 标识、UTF-8 输出和冻结态日志目录 |
 | `tools/dev_checks.py` | dev tool | 统一离线自检、bundle manifest 明细校验、Web/UI 手动验收辅助入口 |
 | `tools/overlay_performance_probe.py` | acceptance tool | 阶段 5 游戏内显示四状态资源与延迟样本摘要 |
+| `tools/probe_official_overlay_provider.py` | acceptance tool | 真实 LoL 中只读探测官方本地接口是否提供三槽候选；显式 `--write-event` 才写 overlay 事件 |
 | `tools/smoke_packaged_startup.py` | acceptance tool | 打包产物空仓首启 60 秒验收 |
 
 ---
@@ -96,6 +98,7 @@
 - 启动后新生成的 `data/raw/synergy/Champion_Synergy_*.json`
 - 启动后新生成的 `data/raw/synergy/Champion_Synergy_latest.v1.json`
 - `data/runtime/state/*.json`
+- `data/runtime/state/overlay_anchor_calibration.v1.json`
 - `data/runtime/state/web_server_port.txt`
 - `data/runtime/cache/`
 - `data/runtime/locks/`
@@ -231,19 +234,20 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 
 - `python tools/dev_checks.py` 必须通过，覆盖双开关配置、ServiceManager 生命周期、overlay hint cache、overlay event channel 和基础 overlay host 合同。
 - `python hextech_ui.py --game-overlay` 用于人工确认透明置顶、点击穿透、`Alt+H` 显隐、选择结束隐藏和游戏窗口跟随；无 active 选择事件或游戏不在前台时窗口保持隐藏。
-- overlay 默认不显示占位框；显示条件为“开关开 + active 选择事件 + 游戏窗口在前台”，`Alt+H` 只切换用户开关，不绕过事件和前台门控。
+- overlay 默认不显示占位框；显示条件为“开关开 + active 海克斯选择事件 + 游戏窗口在前台”，`Alt+H` 只切换用户开关，不绕过事件和前台门控。
 - `python -c "from processing.overlay_event_channel import write_sample_overlay_event; print(write_sample_overlay_event())"` 用于写入本地三槽位样例事件；仍需游戏窗口在前台才会显示。
 - `python -c "from processing.overlay_event_channel import write_fake_detection_overlay_event; print(write_fake_detection_overlay_event())"` 用于写入假识别事件，验证“事件文件 -> overlay 三槽位渲染”的端到端通道。
 - `python -m processing.overlay_vision_sidecar --once --preset auto --write-event` 用于执行一次本地 Vision 探针；无 LoL 窗口时写入 inactive 诊断事件。
 - `python -m processing.overlay_vision_sidecar --loop --preset auto --write-event` 用于正式常驻链路；游戏窗口不存在或不在前台时低频待机，并只写一次 inactive 清理旧 active 事件；前台时按约 250ms 截图识别。
-- 识别判据为灰度归一化指纹（NCC）+ top1/top2 margin + crop 方差下限，平坦暗面板不参与匹配；模板按图标内容去重，近孪生图标在置信度极高时豁免 margin；active 掉 unstable 延迟约 3 帧再写隐藏事件。ROI 框图标区，`2560x1600` 为实测标定，16:9 为推算值；`--once --debug-dump <目录>` 转储单帧、ROI crop 和 top3 候选分数供校准。
+- 识别判据为蓝色选择按钮 ROI 场景门控 + 灰度归一化指纹（NCC）+ top1/top2 margin + crop 方差下限，平坦暗面板不参与匹配；模板按图标内容去重，近孪生图标在置信度极高时豁免 margin；active 掉 unstable 延迟约 3 帧再写隐藏事件。新环境首次定位按钮并写 `data/runtime/state/overlay_anchor_calibration.v1.json`，后续每轮仍检测固定按钮 ROI；按钮不存在或锻体碎片三选一时隐藏 overlay。
+- `python tools/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json` 用于官方接口优先验证：只读探测 Live Client Data / LCU 是否提供三槽候选；只有显式 `--write-event` 且返回完整三槽时才写现有 overlay 事件协议。
 - `python tools/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag manual-lol-borderless` 用于记录阶段 5 人工延迟样本摘要。
 - `python -c "from processing.overlay_event_channel import write_inactive_overlay_event; print(write_inactive_overlay_event())"` 用于验证非选择态隐藏 overlay。
 - LoL `Borderless` / 无边框全屏下人工确认 overlay 可见；当前 MVP 不承诺独占全屏覆盖，FSO 只作为机会性覆盖记录。
 - ROI 预设覆盖 `1920x1080`、`2560x1440` 和重点 `2560x1600`；DPI 缩放、多显示器和分辨率切换只记录为人工限制项。
 - 桌面控制台必须分别验证只开 Web、只开游戏内显示、两者同开、两者全关四种矩阵。
 - 只开游戏内显示时不得依赖 FastAPI、浏览器或 Web 端口；hint cache 只读取本地预计算缓存，并区分缺失、损坏、过期错误路径。
-- 本地事件通道只读取 `data/runtime/state/game_overlay_slots.v1.json`，缺失、损坏、过期必须可诊断；只有 `hextech` 或 `body_shard` 选择态且游戏前台时会显示 active 三槽内容，其余状态隐藏 overlay；不得触发远端抓取、截图识别或自动点击。
+- 本地事件通道只读取 `data/runtime/state/game_overlay_slots.v1.json`，缺失、损坏、过期必须可诊断；只有 `hextech` active 选择态且游戏前台时会显示三槽内容，`body_shard` 只作为诊断类型不显示，其余状态隐藏 overlay；不得触发远端抓取、截图识别或自动点击。
 - Vision sidecar 不读游戏内存、不注入、不修改客户端、不自动点击；默认不引入 OpenCV、imagehash 或 WGC。
 - 真实 LoL 人工验收需记录识别输出 P95 <= 300ms、overlay 文案更新 P95 <= 500ms。
 - 私用统计开关默认关闭；启用后仅作为本机实验，存在 Riot policy 风险，不作为可发布合规能力。
@@ -272,6 +276,7 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 - 新增基础 overlay host 能力优先落在 `display/game_overlay_host.py`；真实识别链路需另起阶段。
 - 新增 overlay 本地三槽位事件协议优先落在 `processing/overlay_event_channel.py`；真实 Vision 输出只能作为该协议的上游。
 - 新增 overlay Vision 探针优先落在 `processing/overlay_vision_sidecar.py`；默认只使用 Pillow/pywin32 本地能力。
+- 新增官方接口三槽候选探针优先落在 `processing/official_overlay_provider.py` 与 `tools/probe_official_overlay_provider.py`；结果只能通过现有 overlay 事件协议输出。
 - 新增 overlay 性能验收摘要优先落在 `tools/overlay_performance_probe.py`。
 - 新增桌面线程、轮询、跳转和资源加载逻辑优先落在 `display/ui_runtime.py`。
 - `display/hextech_ui.py` 只保留 UI 结构、状态和交互入口，不继续堆积后台流程。

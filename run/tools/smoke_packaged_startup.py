@@ -35,6 +35,7 @@ REQUIRED_RUNTIME_FILES = (
     "state/web_server_port.txt",
     "state/startup_status.json",
 )
+OVERLAY_ANCHOR_CALIBRATION_FILENAME = "overlay_anchor_calibration.v1.json"
 SMOKE_FEATURE_FLAGS = {
     "web_frontend_enabled": True,
     "game_overlay_enabled": False,
@@ -131,6 +132,11 @@ def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall
         path = runtime_root / rel
         checks[f"runtime:{rel}"] = path.is_file() and path.stat().st_mtime >= started_at_wall
     checks["_internal/data/runtime absent"] = not (package_dir / "_internal/data/runtime").exists()
+    checks["package:data/runtime absent"] = not (packaged_data_root / "data" / "runtime").exists()
+    checks[f"package:{OVERLAY_ANCHOR_CALIBRATION_FILENAME} absent"] = not any(
+        path.name == OVERLAY_ANCHOR_CALIBRATION_FILENAME
+        for path in package_dir.rglob(OVERLAY_ANCHOR_CALIBRATION_FILENAME)
+    )
     return checks
 
 

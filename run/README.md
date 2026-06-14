@@ -8,7 +8,7 @@
 
 当前项目目标：让打包后的便携目录在非仓库、空运行态目录中首次启动后 60 秒内可用；高频抓取数据不随包分发，由首次启动和 4 小时新鲜度策略触发后台刷新。
 
-当前游戏内显示已完成阶段 0-5 的本地 MVP：overlay host 默认不显示占位框；显示条件为“开关开 + active 选择事件 + 游戏窗口在前台”；假识别和 Vision sidecar 都通过本地事件文件刷新三槽位；ServiceManager 可同时管理 overlay host 与常驻 Vision sidecar；打包边界和性能记录结构已纳入自检。真实 LoL `Borderless` / 无边框全屏下的识别置信度、`Alt+H`、窗口跟随和 P95 <= 500ms 仍需人工验收。
+当前游戏内显示已完成阶段 0-5 的本地 MVP：overlay host 默认不显示占位框；显示条件为“开关开 + active 海克斯选择事件 + 游戏窗口在前台”；Vision sidecar 先用蓝色选择按钮做场景门控，再通过本地事件文件刷新三槽位；ServiceManager 可同时管理 overlay host 与常驻 Vision sidecar；打包边界和性能记录结构已纳入自检。真实 LoL `Borderless` / 无边框全屏下的识别置信度、`Alt+H`、窗口跟随和 P95 <= 500ms 仍需人工验收。
 
 ## 一眼看懂
 
@@ -51,6 +51,9 @@ python -m processing.overlay_vision_sidecar --loop --preset auto --write-event
 
 # 识别校准：在真实卡片界面转储单帧、ROI crop 与 top3 候选分数到目录
 python -m processing.overlay_vision_sidecar --once --debug-dump data/runtime/debug/overlay_vision
+
+# 官方接口优先：只读探测 Riot / LoL 本地接口是否提供三槽候选
+python tools/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json
 
 # 阶段 5 性能验收摘要：手工录入延迟样本后输出 P50/P95
 python tools/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag manual-lol-borderless
@@ -184,7 +187,8 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 阶段 0-5 游戏内显示验收覆盖基础窗口、本地事件通道、Vision MVP、生命周期和性能/打包边界：
 
 - 无事件文件、inactive 事件、过期事件、客户端阶段、桌面前台和游戏切后台时，overlay 默认不显示占位框。
-- overlay 显示条件为“开关开 + active 选择事件 + 游戏窗口在前台”；`Alt+H` 只切换用户开关，不绕过事件和前台门控。
+- overlay 显示条件为“开关开 + active 海克斯选择事件 + 游戏窗口在前台”；`Alt+H` 只切换用户开关，不绕过事件和前台门控。
+- 蓝色选择按钮是 Vision sidecar 的主场景门控：新环境首次定位并写入 `data/runtime/state/overlay_anchor_calibration.v1.json`，后续每轮仍检测固定按钮 ROI；按钮不存在或锻体碎片三选一时 overlay 隐藏。
 - 在 LoL `Borderless` / 无边框全屏下确认 overlay 可见、置顶、点击穿透、`Alt+H` 显隐、选择结束自动隐藏和跟随游戏窗口。
 - ROI 预设覆盖 `1920x1080`、`2560x1440` 和重点 `2560x1600`；DPI 缩放、多显示器和分辨率切换仍需人工记录。
 - 在桌面控制台分别验证只开 Web、只开游戏内显示、两者同开、两者全关四种矩阵。
@@ -200,10 +204,10 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 - `python -c "from processing.overlay_event_channel import write_fake_detection_overlay_event; print(write_fake_detection_overlay_event())"` 可写入假识别事件，用于先验证“事件文件 -> overlay 三槽位渲染”的端到端通道。
 - `python -m processing.overlay_vision_sidecar --once --preset auto --write-event` 可执行一次本地 Vision 诊断探针；无 LoL 窗口时会写入 inactive 诊断事件。
 - `python -m processing.overlay_vision_sidecar --loop --preset auto --write-event` 是正式常驻链路；游戏窗口不存在或不在前台时低频待机，并只写一次 inactive 清理旧 active 事件；前台时按约 250ms 截图识别。
-- 识别判据为灰度归一化指纹（NCC）+ top1/top2 区分度 margin + crop 方差下限：平坦暗面板（如 ESC 菜单）会被方差门槛直接拒绝，不会误报 active；模板按图标内容去重，近孪生图标在置信度极高时豁免 margin；active 掉到 unstable 后会延迟约 3 帧再写隐藏事件，避免 overlay 闪烁。
+- 识别判据为蓝色按钮 ROI 场景门控 + 灰度归一化指纹（NCC）+ top1/top2 区分度 margin + crop 方差下限：平坦暗面板（如 ESC 菜单）会被方差门槛直接拒绝，不会误报 active；模板按图标内容去重，近孪生图标在置信度极高时豁免 margin；active 掉到 unstable 后会延迟约 3 帧再写隐藏事件，避免 overlay 闪烁。
 - ROI 直接框住三张卡片的图标区；`2560x1600` 来自真实截图标定，16:9 预设为推算值。识别不准时在真实卡片界面运行 `--once --debug-dump <目录>`，依据转储的 `report.json`（各槽 crop_std 与 top3 置信度）校准 ROI 与阈值。
-- `selection_type` 只接受 `hextech` / `body_shard`，分别对应海克斯选择和锻体碎片选择；两类内容共用通道但文案语义独立。
-- 没有海克斯选择或锻体碎片选择时，事件应为 inactive、缺失或过期；overlay host 隐藏，不显示等待占位。
+- `selection_type=hextech` 是唯一可显示选择态；`body_shard` 只保留为诊断类型，锻体碎片选择写 `body_shard_only` 并隐藏 overlay。
+- 没有海克斯选择、蓝色按钮不存在或事件 inactive/缺失/过期时，overlay host 隐藏，不显示等待占位。
 - overlay host 应在不启动 Web/FastAPI/浏览器的情况下刷新三槽位文案。
 - Vision sidecar 使用 Pillow/pywin32 本地窗口截图和固定 ROI 预设，不引入 OpenCV、WGC、远端请求、注入、读内存或自动点击。
 

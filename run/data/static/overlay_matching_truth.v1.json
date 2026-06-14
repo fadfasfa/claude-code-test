@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "description": "Track A overlay 视觉匹配真机转储小样本；frame 位于 ignored runtime debug 目录，本文件只保存人工标注真值。",
+  "samples": [
+    {
+      "id": "selection-20260612-205754",
+      "frame": "data/runtime/debug/auto_selection/selection-20260612-205754/frame.png",
+      "expected_slots": ["缩小引擎", "急速之追求", "钢化你心"],
+      "notes": "三槽均可见；右上有 NVIDIA 提示但不遮挡卡名。"
+    },
+    {
+      "id": "selection-20260612-205839",
+      "frame": "data/runtime/debug/auto_selection/selection-20260612-205839/frame.png",
+      "expected_slots": ["缩小引擎", "坦克引擎", "钢化你心"],
+      "notes": "用户当前对局三卡样本。"
+    },
+    {
+      "id": "selection-20260612-212134",
+      "frame": "data/runtime/debug/auto_selection2/selection-20260612-212134/frame.png",
+      "expected_slots": ["尤里卡", null, "精怪魔法"],
+      "notes": "中槽被掉线弹窗遮挡，只评测左右两槽。"
+    }
+  ]
+}

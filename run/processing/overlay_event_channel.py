@@ -21,6 +21,7 @@ ACCEPTED_SCHEMA_VERSIONS = {1, 2}
 SLOT_COUNT = 3
 EVENT_MAX_AGE_SECONDS = 5 * 60.0
 ALLOWED_SELECTION_TYPES = {"hextech", "body_shard"}
+VISIBLE_SELECTION_TYPES = {"hextech"}
 ALLOWED_SLOT_STATES = {"ready", "low_confidence", "detecting", "empty"}
 SELECTION_TYPE_LABELS = {
     "hextech": "海克斯选择",
@@ -256,7 +257,7 @@ def _event_visible(event_payload: Mapping[str, Any], error: str) -> bool:
     if error:
         return False
     selection_type = normalize_selection_type(event_payload.get("selection_type"))
-    return bool(event_payload.get("active")) and selection_type in ALLOWED_SELECTION_TYPES
+    return bool(event_payload.get("active")) and selection_type in VISIBLE_SELECTION_TYPES
 
 
 def read_overlay_event(path: str | Path | None = None) -> dict[str, Any]:
