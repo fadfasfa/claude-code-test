@@ -124,6 +124,8 @@ def prepare_runtime_bundle() -> Path:
     """生成 bundle 运行时白名单目录，供构建命令直接打入产物。"""
     print_step("准备稳定基础资源")
     bundle_root = prepare_bundle_runtime(BASE_DIR, BUILD_DIR)
+    if (bundle_root / "data" / "runtime").exists() or any(bundle_root.rglob("overlay_anchor_calibration.v1.json")):
+        raise RuntimeError("bundle 不能包含 data/runtime 或 overlay anchor 校准缓存")
     print_check("静态页面已加入打包白名单")
     print_check("稳定 data 资源已加入打包白名单")
     print_check("Hextech 战报快照清单已加入打包白名单")
@@ -173,6 +175,12 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
         "--hidden-import", "uvicorn",
         "--hidden-import", "filelock",
         "--hidden-import", "bs4",
+        "--hidden-import", "display.game_overlay_host",
+        "--hidden-import", "display.service_manager",
+        "--hidden-import", "processing.overlay_event_channel",
+        "--hidden-import", "processing.overlay_hint_cache",
+        "--hidden-import", "processing.overlay_vision_sidecar",
+        "--hidden-import", "processing.ui_feature_flags",
         "--collect-submodules", "fastapi",
         "--collect-submodules", "starlette",
         "--collect-submodules", "uvicorn",

@@ -54,6 +54,29 @@ SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
 SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
 SYNERGY_SNAPSHOT_PATTERN = "Champion_Synergy_*.json"
 BUNDLE_MANIFEST_NAME = "bundle_manifest.json"
+OVERLAY_ANCHOR_CALIBRATION_FILENAME = "overlay_anchor_calibration.v1.json"
+FORBIDDEN_BUNDLE_PATH_PARTS = (
+    "data/runtime",
+    OVERLAY_ANCHOR_CALIBRATION_FILENAME,
+)
+SOURCE_FILE_ALLOWLIST = (
+    "display/game_overlay_host.py",
+    "display/service_manager.py",
+    "processing/overlay_event_channel.py",
+    "processing/overlay_hint_cache.py",
+    "processing/official_overlay_provider.py",
+    "processing/overlay_vision_sidecar.py",
+    "processing/ui_feature_flags.py",
+    "tools/overlay_performance_probe.py",
+    "tools/probe_official_overlay_provider.py",
+)
+
+
+def _assert_no_runtime_cache_entries(manifest: dict) -> None:
+    serialized = json.dumps(manifest, ensure_ascii=False).replace("\\", "/")
+    for forbidden in FORBIDDEN_BUNDLE_PATH_PARTS:
+        if forbidden in serialized:
+            raise ValueError(f"bundle manifest must not include runtime cache entry: {forbidden}")
 
 
 def _relative_to_base(path: Path, base_dir: Path) -> str:
@@ -133,7 +156,11 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         (name for name in synergy_data_files if Path(name).name.startswith("Champion_Synergy_") and Path(name).name != SYNERGY_LATEST_POINTER_FILENAME),
         "",
     )
-    return {
+    source_files = [
+        relative_name for relative_name in SOURCE_FILE_ALLOWLIST
+        if (base_dir / Path(relative_name)).exists()
+    ]
+    manifest = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "static_files": static_files,
         "index_files": index_files,
@@ -141,7 +168,10 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         "hextech_snapshot_files": hextech_snapshot_files,
         "synergy_data_files": synergy_data_files,
         "synergy_data_file": synergy_data_file,
+        "source_files": source_files,
     }
+    _assert_no_runtime_cache_entries(manifest)
+    return manifest
 
 
 def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
