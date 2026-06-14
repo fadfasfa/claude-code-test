@@ -2,5 +2,51 @@
   "base_url": "https://jm.luudan.xyz/api/open.php",
   "key": "YOUR_CDK",
   "poll_interval": 5,
-  "auto_change_on_expire": true
+  "idle_poll_interval": 15,
+  "active_until_code": true,
+  "active_after_copy_seconds": 180,
+  "auto_change_on_expire": true,
+  "fixed_sources": [
+    {
+      "label": "YunTL",
+      "phone": "15550123456",
+      "url": "https://example.invalid/apisms/YOUR_YUNTL_LINK"
+    },
+    {
+      "label": "eSIM88",
+      "phone": "15550987654",
+      "url": "https://example.invalid/YOUR_ESIM88_LINK"
+    },
+    {
+      "label": "ka001",
+      "phone": "15550112233",
+      "url": "http://example.invalid/api/sms/recordText?key=YOUR_KA001_KEY"
+    }
+  ],
+  "email_sources": [
+    {
+      "label": "iCloud",
+      "provider": "icloud",
+      "base_url": "https://email.nloop.cc",
+      "email": "example@icloud.com"
+    }
+  ],
+  "accounts": [
+    {
+      "label": "ChatGPT-Gmail",
+      "login_email": "your-gmail@example.com",
+      "password": "YOUR_ACCOUNT_PASSWORD",
+      "totp_secret": "JBSWY3DPEHPK3PXP",
+      "phone": "15550123456",
+      "email": ""
+    },
+    {
+      "label": "iCloud",
+      "login_email": "example@icloud.com",
+      "password": "",
+      "totp_secret": "",
+      "phone": "15550112233",
+      "email": "example@icloud.com"
+    }
+  ]
 }

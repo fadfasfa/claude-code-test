@@ -40,6 +40,12 @@
             "name": "高能爆燃手枪",
             "slot_type": "secondary",
             "image_path": "weapons/icons/副手/高能爆燃手枪.png"
+          },
+          {
+            "slug": "bolt-carbine-one-handed",
+            "name": "单手爆弹卡宾枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/单手爆弹卡宾枪.png"
           }
         ],
         "melee": [
@@ -110,6 +116,12 @@
             "name": "高能爆燃手枪",
             "slot_type": "secondary",
             "image_path": "weapons/icons/副手/高能爆燃手枪.png"
+          },
+          {
+            "slug": "bolt-carbine-one-handed",
+            "name": "单手爆弹卡宾枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/单手爆弹卡宾枪.png"
           }
         ],
         "melee": [

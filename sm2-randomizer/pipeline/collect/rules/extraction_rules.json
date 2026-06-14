@@ -1,5 +1,5 @@
 {
-  "version_anchor": "Update 12.0 / Techmarine",
+  "version_anchor": "Hotfix 13.2",
   "slug_key": "slug",
   "layer_contract": {
     "rules": "pipeline/collect/rules/extraction_rules.json",
@@ -8,7 +8,8 @@
     "validation": "pipeline/out/source/reports/*"
   },
   "sources": {
-    "official": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/356-patch-notes-12-0",
+    "official": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/409-hotfix-13-2-patch-notes",
+    "official_new_weapon": "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/395-patch-notes-13-0",
     "fandom": "https://spacemarine2.fandom.com",
     "game8": "https://game8.co/games/Warhammer-40000-Space-Marine-2"
   },
@@ -28,7 +29,8 @@
       "techmarine"
     ],
     "required_weapons": [
-      "omnissiah-axe"
+      "omnissiah-axe",
+      "bolt-carbine-one-handed"
     ],
     "primary_must_be_empty": [
       "assault",

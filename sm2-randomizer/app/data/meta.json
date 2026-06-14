@@ -1,14 +1,14 @@
 {
   "build": {
-    "version": "Update 12.0 / Techmarine",
-    "generated_at": "2026-04-19T15:16:41.821239+00:00",
+    "version": "Hotfix 13.2",
+    "generated_at": "2026-06-11T05:13:45.442753+00:00",
     "source_mode": "hybrid_now_wiki_ready",
     "source_coverage": {
       "classes": 7,
-      "weapons": 30,
+      "weapons": 31,
       "talent_class_count": 7,
       "class_images_with_local_assets": 7,
-      "weapon_images_from_excel": 30
+      "weapon_images_from_excel": 31
     }
   },
   "positive_modifier_pool": [
@@ -21,7 +21,7 @@
     {
       "key": "point-blank-shot",
       "name": "近距射击",
-      "detail": "近距射击：远程武器伤害对10米以内的目标增加75%[乘算]",
+      "detail": "近距射击：玩家附加天赋:仅对施加者生效-为10米内的敌人施加75%远程武器易伤效果[乘算]",
       "type": "positive"
     },
     {
@@ -33,7 +33,7 @@
     {
       "key": "long-range-shot",
       "name": "远距射击",
-      "detail": "远距射击：远程武器伤害对10米以外的目标增加75%[乘算]",
+      "detail": "远距射击：玩家附加天赋:仅对施加者生效-为10米外的敌人施加75%远程武器易伤效果[乘算]",
       "type": "positive"
     },
     {
@@ -141,7 +141,7 @@
     {
       "key": "emperors-grace",
       "name": "帝皇庇佑",
-      "detail": "帝皇庇佑：每90s生成光束治疗指定玩家及周围友军75%生命值并以1点爆炸物伤害击退该15米内的敌人",
+      "detail": "帝皇庇佑：每90s生成光束治疗指定玩家及周围友军75%生命值并以1点爆炸物伤害击退15米内的敌人",
       "type": "positive"
     },
     {
@@ -153,7 +153,7 @@
     {
       "key": "slaughter-rhythm",
       "name": "屠戮节奏",
-      "detail": "屠戮节奏：玩家初始降低70%近战伤害[乘算]，但每次近战攻击增加100%近战伤害[加算]，最高叠加9层，此加成持续4秒，每次近战攻击刷新时间",
+      "detail": "屠戮节奏：玩家初始降低70%近战伤害[乘算]，但每次近战攻击增加100%近战伤害，最高叠加9层[加成总值作加算]，此加成持续4秒，每次近战攻击刷新时间",
       "type": "positive"
     },
     {
@@ -177,13 +177,13 @@
     {
       "key": "butchers-gift",
       "name": "屠夫赠礼",
-      "detail": "屠夫赠礼：处决将治疗7米半径内的友军20%最大生命值，但不治疗处决者本人；地图不再掉落激励剂，缓冲生命值无法恢复",
+      "detail": "屠夫赠礼：处决将治疗7米半径内的友军20%最大生命值，但不治疗处决者本人；地图不再掉落激励剂",
       "type": "positive"
     },
     {
       "key": "spoils-of-war",
       "name": "战利品",
-      "detail": "战利品：处决敌人会随机掉落道具，子弹盒，但地图不再产生此类物品掉落",
+      "detail": "战利品：击杀敌人会随机掉落道具，子弹盒，但地图不再产生此类物品掉落",
       "type": "positive"
     },
     {
@@ -207,40 +207,22 @@
   ],
   "negative_modifier_pool": [
     {
-      "key": "same-step",
-      "label": "同进同退",
-      "name": "同进同退",
-      "detail": "同进同退：若20米内没有队友则禁止恢复护甲与缓冲生命值",
-      "risk_level": "must_exclude",
-      "core_tags": [],
+      "key": "reduced-vitality",
+      "label": "状态欠佳",
+      "name": "状态欠佳",
+      "detail": "状态欠佳：玩家最大生命值-50%",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
       "aliases": [],
       "type": "negative"
     },
     {
-      "key": "split-up",
-      "label": "分开行动",
-      "name": "分开行动",
-      "detail": "分开行动：若20米内有队友则禁止恢复护甲与缓冲生命值",
-      "risk_level": "must_exclude",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "myopia",
-      "label": "近视",
-      "name": "近视",
-      "detail": "近视：距玩家10米外的敌人承受的远程武器伤害降低75%[乘算]",
-      "risk_level": "must_exclude",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "hyperopia",
-      "label": "远视",
-      "name": "远视",
-      "detail": "远视：距玩家10米内的敌人承受的远程武器伤害降低75%[乘算]",
+      "key": "heavy-handed",
+      "label": "猛力重武",
+      "name": "猛力重武",
+      "detail": "[乘算]猛力重武：玩家附加天赋:仅对施加者生效-手持主武器时为敌人施加50%远程武器易伤效果，手持副武器时为敌人附加75%远程武器减伤效果。",
       "risk_level": "must_exclude",
       "core_tags": [],
       "aliases": [],
@@ -248,7 +230,7 @@
     },
     {
       "key": "close-quarters",
-      "label": "短兵相接：远程路线显著受压制",
+      "label": "短兵相接",
       "name": "短兵相接",
       "detail": "[乘算]短兵相接：近战伤害增加50%，远程武器伤害降低75%",
       "risk_level": "must_exclude",
@@ -257,8 +239,18 @@
       "type": "negative"
     },
     {
+      "key": "backup-plan",
+      "label": "备用计划",
+      "name": "备用计划",
+      "detail": "[乘算]备用计划：玩家附加天赋:仅对施加者生效-手持主武器时为敌人施加75%远程武器减伤效果，手持副武器时为敌人附加50%远程武器易伤效果。",
+      "risk_level": "must_exclude",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
       "key": "keep-distance",
-      "label": "保持距离：近战路线显著受压制",
+      "label": "保持距离",
       "name": "保持距离",
       "detail": "[乘算]保持距离：近战伤害降低75%，远程武器伤害增加50%",
       "risk_level": "must_exclude",
@@ -267,286 +259,22 @@
       "type": "negative"
     },
     {
-      "key": "heavy-handed",
-      "label": "猛力重武：主武器效率显著下降",
-      "name": "猛力重武",
-      "detail": "[乘算]猛力重武：增加主武器50%伤害，减少副武器75%伤害",
+      "key": "survival-training",
+      "label": "生存训练",
+      "name": "生存训练",
+      "detail": "生存训练：禁用缓冲生命值机制，玩家倒地不再被施加重伤状态",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "hyperopia",
+      "label": "远视",
+      "name": "远视",
+      "detail": "远视：玩家附加天赋:仅对施加者生效-为10米内的敌人施加75%远程武器减伤效果[乘算]",
       "risk_level": "must_exclude",
       "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "backup-plan",
-      "label": "备用计划：副武器效率显著下降",
-      "name": "备用计划",
-      "detail": "[乘算]备用计划：增加副武器50%伤害伤害，减少主武器75%伤害",
-      "risk_level": "must_exclude",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "lethal-contamination",
-      "label": "致命污染：异常惩罚放大",
-      "name": "致命污染",
-      "detail": "致命污染：陷入中毒状态或幻觉状态的玩家将立即倒地，但这两种异常状态的施加效率降低50%",
-      "risk_level": "high_risk",
-      "core_tags": [
-        "death_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "hazardous-environment-tyranid",
-      "label": "危险环境（泰伦）",
-      "name": "危险环境（泰伦）",
-      "detail": "危险环境：泰伦敌人将获得一个围绕自身3米范围的毒液光环来为玩家施加中毒效果",
-      "risk_level": "high_risk",
-      "core_tags": [],
-      "aliases": [
-        "危险环境：泰伦"
-      ],
-      "type": "negative"
-    },
-    {
-      "key": "hazardous-environment-chaos",
-      "label": "危险环境（混沌）",
-      "name": "危险环境（混沌）",
-      "detail": "危险环境：混沌敌人将获得一个围绕自身3米范围的腐化光环来为玩家施加幻觉效果",
-      "risk_level": "high_risk",
-      "core_tags": [],
-      "aliases": [
-        "危险环境：混沌"
-      ],
-      "type": "negative"
-    },
-    {
-      "key": "shared-suffering",
-      "label": "有难同当：队友承伤发生连带",
-      "name": "有难同当",
-      "detail": "有难同当：玩家承受的伤害的同时会施加等量伤害给小队成员",
-      "risk_level": "high_risk",
-      "core_tags": [
-        "wipe_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "reactor-breach",
-      "label": "微反应器破裂：倒地/死亡时近",
-      "name": "微反应器破裂",
-      "detail": "微反应器破裂：玩家倒地或死亡时会立即产生定向伤害攻击距离6米内的其他玩家（100点近战伤害）",
-      "risk_level": "high_risk",
-      "core_tags": [
-        "wipe_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "no-downed-revive",
-      "label": "倒地不起：倒地容错极低",
-      "name": "倒地不起",
-      "detail": "倒地不起：玩家倒地立即死亡，禁用圣物",
-      "risk_level": "mid_high_risk",
-      "core_tags": [
-        "death_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "special-challenge",
-      "label": "特种挑战：特种敌显著增多",
-      "name": "特种挑战",
-      "detail": "特种挑战：特种波生成冷却时间减少33%，且数量翻倍",
-      "risk_level": "high_risk",
-      "core_tags": [
-        "spawnball_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "call-reinforcements",
-      "label": "召唤增援：敌方更容易拉增援",
-      "name": "召唤增援",
-      "detail": "召唤增援：精英敌人成功的支援召唤必定生成特种敌人",
-      "risk_level": "high_risk",
-      "core_tags": [
-        "spawnball_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "coordinated-distress",
-      "label": "协作求援：呼叫支援更难打断",
-      "name": "协作求援",
-      "detail": "协作求援：呼叫支援的行为最大人数增加2（最多三个敌人同时呼叫支援）",
-      "risk_level": "mid_high_risk",
-      "core_tags": [
-        "spawnball_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "elite-challenge",
-      "label": "精英挑战：精英敌显著增多",
-      "name": "精英挑战",
-      "detail": "精英挑战：增加50%精英生成数量，降低80%炮灰敌人生成数量，60%小型敌人生成数量",
-      "risk_level": "mid_high_risk",
-      "core_tags": [
-        "spawnball_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "cunning-enemies",
-      "label": "机智敌人：高威胁敌处理窗口更",
-      "name": "机智敌人",
-      "detail": "机智敌人：战斗中随机2个精英级敌人会获得持续10秒的脑虫护盾",
-      "risk_level": "mid_high_risk",
-      "core_tags": [
-        "spawnball_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "against-the-clock",
-      "label": "分秒必争：倒计时压力持续存在",
-      "name": "分秒必争",
-      "detail": "分秒必争：生成任务计时器，击杀敌人或到达节点会增加时间，若时间归零任务失败：初始时间：900s",
-      "risk_level": "high_risk",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "coordinated-kill",
-      "label": "协作灭敌：目标击杀条件更苛刻",
-      "name": "协作灭敌",
-      "detail": "协作灭敌：被导演所标记的精英敌人需要多名玩家同时造成伤害才能被击杀",
-      "risk_level": "high_risk",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "private-prey",
-      "label": "私有猎物：指定击杀分配受限",
-      "name": "私有猎物",
-      "detail": "私有猎物：导演会在每波敌潮中为指定玩家生成1个只有他才能够击杀的精英敌人",
-      "risk_level": "high_risk",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "pressure-attack",
-      "label": "加紧攻击：处决/枪决止损窗口",
-      "name": "加紧攻击",
-      "detail": "加紧攻击：20秒内不进行处决或枪决则开始持续受到每次0.5的点技能伤害，直至生命值低于30%，但处决或枪决敌人会恢复生命值。",
-      "risk_level": "high_risk",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "gun-strike-out",
-      "label": "枪袭出局：枪决链路容错更低",
-      "name": "枪袭出局",
-      "detail": "枪袭出局：禁用枪袭机制",
-      "risk_level": "high_risk",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "battlefield-instinct",
-      "label": "战场本能：信息提示被削弱",
-      "name": "战场本能",
-      "detail": "战场本能：关闭用户界面显示",
-      "risk_level": "high_risk",
-      "core_tags": [
-        "info_deprivation_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "warp-shadow",
-      "label": "亚空间阴影：视野与感知受压制",
-      "name": "亚空间阴影",
-      "detail": "亚空间阴影：产生一个半径30米的黑雾特效干扰玩家视线",
-      "risk_level": "high_risk",
-      "core_tags": [
-        "info_deprivation_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "minefield",
-      "label": "遍地踩雷：地面威胁频繁刷新",
-      "name": "遍地踩雷",
-      "detail": "遍地踩雷：地图会每40秒-80秒生成15-20个向玩家移动的孢子雷",
-      "risk_level": "high_risk",
-      "core_tags": [
-        "info_deprivation_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "warp-storm",
-      "label": "亚空间风暴：区域扰动持续施压",
-      "name": "亚空间风暴",
-      "detail": "亚空间风暴：地图会每30秒生成一波半径6米的灵能风暴攻击玩家，生成2秒后对玩家造成3点生命值伤害或1点护甲伤害",
-      "risk_level": "mid_high_risk",
-      "core_tags": [
-        "info_deprivation_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "fatigued",
-      "label": "人困马乏",
-      "name": "人困马乏",
-      "detail": "人困马乏：玩家每240秒增加10%承伤，可叠加10层[总值作乘算]",
-      "risk_level": "advisory",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "escalation",
-      "label": "迟则生变：拖久后敌人越来越强",
-      "name": "迟则生变",
-      "detail": "迟则生变：敌人每240秒增加10%额外生命值，可叠加10层[总值作乘算]",
-      "risk_level": "advisory",
-      "core_tags": [
-        "spawnball_chain"
-      ],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "reinforced-enemies",
-      "label": "强化敌人",
-      "name": "强化敌人",
-      "detail": "[乘算]强化敌人：敌人增加25%生命值和25%造成的伤害",
-      "risk_level": "advisory",
-      "core_tags": [
-        "spawnball_chain"
-      ],
       "aliases": [],
       "type": "negative"
     },
@@ -563,10 +291,20 @@
       "type": "negative"
     },
     {
-      "key": "corrupted-relic",
-      "label": "腐化圣物：关键目标失败成本升",
-      "name": "腐化圣物",
-      "detail": "腐化圣物：随机玩家将在开局获得一个堕落圣物,圣物掉落将使任务失败",
+      "key": "myopia",
+      "label": "近视",
+      "name": "近视",
+      "detail": "近视：玩家附加天赋:仅对施加者生效-为10米外的敌人施加75%远程武器减伤效果[乘算]",
+      "risk_level": "must_exclude",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "no-downed-revive",
+      "label": "倒地不起",
+      "name": "倒地不起",
+      "detail": "倒地不起：玩家倒地立即死亡，禁用圣物",
       "risk_level": "mid_high_risk",
       "core_tags": [
         "death_chain"
@@ -575,8 +313,88 @@
       "type": "negative"
     },
     {
+      "key": "fatigued",
+      "label": "人困马乏",
+      "name": "人困马乏",
+      "detail": "人困马乏：玩家每240秒增加10%承伤，可叠加10层[总值作乘算]",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "reinforced-enemies",
+      "label": "强化敌人",
+      "name": "强化敌人",
+      "detail": "[乘算]强化敌人：敌人增加25%生命值和25%造成的伤害",
+      "risk_level": "advisory",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "escalation",
+      "label": "迟则生变",
+      "name": "迟则生变",
+      "detail": "迟则生变：敌人每240秒增加10%额外生命值，可叠加10层[总值作乘算]",
+      "risk_level": "advisory",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "thick-skinned",
+      "label": "皮糙肉厚",
+      "name": "皮糙肉厚",
+      "detail": "皮糙肉厚：强化敌人霸体，需要进行被设定好的固定次数(3)的攻击后才允许被控制/击退",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "class-nerf",
+      "label": "削弱特定兵种",
+      "name": "削弱特定兵种",
+      "detail": "削弱特定兵种：最大生命值、远程武器、近战、道具伤害降低50%[乘算]，且移除角色招架格挡能力",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "shared-suffering",
+      "label": "有难同当",
+      "name": "有难同当",
+      "detail": "有难同当：玩家承受的伤害的同时会施加等量伤害给小队成员",
+      "risk_level": "high_risk",
+      "core_tags": [
+        "wipe_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "killer-instinct",
+      "label": "杀手本能",
+      "name": "杀手本能",
+      "detail": "杀手本能：禁止技能恢复充能，仅能通过击杀恢复：每击杀恢复2.5%技能充能",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
       "key": "high-responsibility",
-      "label": "责任重大：指定目标承压上升",
+      "label": "责任重大",
       "name": "责任重大",
       "detail": "责任重大：团队承受的伤害全额转移至特定玩家，该玩家最大生命值增加150%[加算]",
       "risk_level": "mid_high_risk",
@@ -587,12 +405,456 @@
       "type": "negative"
     },
     {
-      "key": "pincer-attack",
-      "label": "前后夹击",
-      "name": "前后夹击",
-      "detail": "前后夹击：在地图中会同时刷出两种敌人派系混战",
+      "key": "detonation-risk",
+      "label": "引爆风险",
+      "name": "引爆风险",
+      "detail": "引爆风险：地图生成三倍数量爆炸物，爆炸范围增加100%，伤害增加100%",
       "risk_level": "mid_high_risk",
+      "core_tags": [
+        "info_deprivation_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "gun-strike-out",
+      "label": "枪袭出局",
+      "name": "枪袭出局",
+      "detail": "枪袭出局：禁用枪袭机制",
+      "risk_level": "high_risk",
       "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "relentless-pursuit",
+      "label": "紧追不舍",
+      "name": "紧追不舍",
+      "detail": "紧追不舍：刷怪包中增加一只阿尔法利卡特；最低刷新冷却时间120秒",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "pressure-attack",
+      "label": "加紧攻击",
+      "name": "加紧攻击",
+      "detail": "加紧攻击：20秒内不进行处决或枪决则开始持续受到每次0.5的点技能伤害，直至生命值低于30%，但处决或枪决敌人会恢复生命值。",
+      "risk_level": "high_risk",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "same-step",
+      "label": "同进同退",
+      "name": "同进同退",
+      "detail": "同进同退：若25米内没有队友则禁止恢复护甲与缓冲生命值",
+      "risk_level": "must_exclude",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "minefield",
+      "label": "遍地踩雷",
+      "name": "遍地踩雷",
+      "detail": "遍地踩雷：地图会每40秒-80秒生成15-20个向玩家移动的孢子雷",
+      "risk_level": "high_risk",
+      "core_tags": [
+        "info_deprivation_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "split-up",
+      "label": "分开行动",
+      "name": "分开行动",
+      "detail": "分开行动：若15米内有队友则禁止恢复护甲与缓冲生命值",
+      "risk_level": "must_exclude",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "effective-taunt",
+      "label": "有效嘲讽",
+      "name": "有效嘲讽",
+      "detail": "有效嘲讽：怪潮生成时必定生成至少2个暴怒状态精英",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "special-challenge",
+      "label": "特种挑战",
+      "name": "特种挑战",
+      "detail": "特种挑战：特种波生成冷却时间减少33%，且数量翻倍",
+      "risk_level": "high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "cunning-enemies",
+      "label": "机智敌人",
+      "name": "机智敌人",
+      "detail": "机智敌人：战斗中随机2个精英级敌人会获得持续10秒的脑虫护盾",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "elite-challenge",
+      "label": "精英挑战",
+      "name": "精英挑战",
+      "detail": "精英挑战：增加50%精英生成数量，降低80%炮灰敌人生成数量，60%小型敌人生成数量",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "armor-depleted",
+      "label": "护甲耗尽",
+      "name": "护甲耗尽",
+      "detail": "护甲耗尽：玩家只能拥有1格护甲，且禁用护甲碎片掉落",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "cannon-fodder-wave",
+      "label": "砍瓜切菜",
+      "name": "砍瓜切菜",
+      "detail": "砍瓜切菜：降低60%精英生成数量，增加100%炮灰敌人生成数量，100%小型敌人生成数量",
+      "risk_level": "advisory",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "no-ammo-pickups",
+      "label": "无弹可拾",
+      "name": "无弹可拾",
+      "detail": "无弹可拾：地图不再生成弹药补充，但近战击杀会恢复弹药（2%）",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "call-reinforcements",
+      "label": "召唤增援",
+      "name": "召唤增援",
+      "detail": "召唤增援：精英敌人成功的支援召唤必定生成特种敌人",
+      "risk_level": "high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "rationed-supply",
+      "label": "定量配给",
+      "name": "定量配给",
+      "detail": "定量配给：地图不再生成弹药箱，但弹药盒生成数量翻倍",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "hazardous-environment-tyranid",
+      "label": "危险环境（泰伦）",
+      "name": "危险环境（泰伦）",
+      "detail": "危险环境：泰伦敌人将获得一个围绕自身3米范围的毒液光环来为玩家施加中毒效果",
+      "risk_level": "high_risk",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "gear-malfunction",
+      "label": "装备故障",
+      "name": "装备故障",
+      "detail": "装备故障：禁用道具",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "hazardous-environment-chaos",
+      "label": "危险环境（混沌）",
+      "name": "危险环境（混沌）",
+      "detail": "危险环境：混沌敌人将获得一个围绕自身3米范围的腐化光环来为玩家施加幻觉效果",
+      "risk_level": "high_risk",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "no-apothecary",
+      "label": "无药剂师",
+      "name": "无药剂师",
+      "detail": "无药剂师：禁用激励剂",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "friendly-fire",
+      "label": "可疑行为",
+      "name": "可疑行为",
+      "detail": "可疑行为：启用远程伤害与道具伤害的友军伤害，这些伤害会被减少40%，爆炸物伤害为45%，",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "wipe_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "against-the-clock",
+      "label": "分秒必争",
+      "name": "分秒必争",
+      "detail": "分秒必争：生成任务计时器，击杀敌人或到达节点会增加时间，若时间归零任务失败：初始时间：900s",
+      "risk_level": "high_risk",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "warp-shadow",
+      "label": "亚空间阴影",
+      "name": "亚空间阴影",
+      "detail": "亚空间阴影：产生一个半径30米的黑雾特效干扰玩家视线",
+      "risk_level": "high_risk",
+      "core_tags": [
+        "info_deprivation_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "armor-malfunction",
+      "label": "装甲故障",
+      "name": "装甲故障",
+      "detail": "装甲故障：非完美闪避的闪避动作会使玩家受到0.67点技能伤害",
+      "risk_level": "advisory",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "reactor-breach",
+      "label": "微反应器破裂",
+      "name": "微反应器破裂",
+      "detail": "微反应器破裂：玩家倒地或死亡时会立即产生定向伤害攻击距离6米内的其他玩家（100点近战伤害）",
+      "risk_level": "high_risk",
+      "core_tags": [
+        "wipe_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "explosive-trap",
+      "label": "爆炸陷阱",
+      "name": "爆炸陷阱",
+      "detail": "爆炸陷阱：精英及以上敌人死亡后产生半径为10米的扩散范围伤害来攻击玩家（5点近战伤害）",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "info_deprivation_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "warp-storm",
+      "label": "亚空间风暴",
+      "name": "亚空间风暴",
+      "detail": "亚空间风暴：地图会每30秒生成一波半径6米的灵能风暴攻击，生成2秒后对范围内所有目标造成3点生命值伤害或1点护甲伤害",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "info_deprivation_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "tidal-onslaught",
+      "label": "海啸来袭",
+      "name": "海啸来袭",
+      "detail": "海啸来袭：每次生成敌潮只生成原版设定最大规模的敌潮，但敌潮生成冷却时间增加30%",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "atrophy",
+      "label": "机能萎缩",
+      "name": "机能萎缩",
+      "detail": "机能萎缩：倒地不会让玩家死亡，但每次倒地都会使玩家减少25%最大生命值25%，最低减少至10%最大生命值",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "tyrant-aura",
+      "label": "王霸之气",
+      "name": "王霸之气",
+      "detail": "王霸之气：终极敌人增加100%生命值和33%所造成的伤害[乘算]",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "reinforced-skull",
+      "label": "强化头颅",
+      "name": "强化头颅",
+      "detail": "强化头颅：敌人免疫爆头伤害，但最大生命值减少35%[乘算]",
+      "risk_level": "advisory",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "battlefield-instinct",
+      "label": "战场本能",
+      "name": "战场本能",
+      "detail": "战场本能：关闭用户界面显示",
+      "risk_level": "high_risk",
+      "core_tags": [
+        "info_deprivation_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "lethal-contamination",
+      "label": "致命污染",
+      "name": "致命污染",
+      "detail": "致命污染：陷入中毒状态或幻觉状态的玩家将立即倒地，但这两种异常状态的施加效率降低50%",
+      "risk_level": "high_risk",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "coordinated-distress",
+      "label": "协作求援",
+      "name": "协作求援",
+      "detail": "协作求援：呼叫支援的行为最大人数增加2（最多三个敌人同时呼叫支援）",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "double-boss",
+      "label": "双倍强敌",
+      "name": "双倍强敌",
+      "detail": "双倍强敌：双倍终极敌人数量",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "coordinated-kill",
+      "label": "协作灭敌",
+      "name": "协作灭敌",
+      "detail": "协作灭敌：被导演所标记的精英敌人需要多名玩家同时造成伤害才能被击杀",
+      "risk_level": "high_risk",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "private-prey",
+      "label": "私有猎物",
+      "name": "私有猎物",
+      "detail": "私有猎物：导演会在每波敌潮中为指定玩家生成1个只有他才能够击杀的精英敌人",
+      "risk_level": "high_risk",
+      "core_tags": [],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "corrupted-relic",
+      "label": "腐化圣物",
+      "name": "腐化圣物",
+      "detail": "腐化圣物：随机玩家将在开局获得一个堕落圣物,圣物掉落将使任务失败",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "death_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "unyielding-enemies",
+      "label": "坚韧敌人",
+      "name": "坚韧敌人",
+      "detail": "坚韧敌人：移除敌人的眩晕状态机制，使其受到致命伤害立即死亡，且最大生命值减少35%[乘算]",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
+      "aliases": [],
+      "type": "negative"
+    },
+    {
+      "key": "postmortem-growth",
+      "label": "死后增生",
+      "name": "死后增生",
+      "detail": "死后增生：精英级以上混沌敌人/泰伦敌人在死后会生成混沌颅骨/孢子雷",
+      "risk_level": "mid_high_risk",
+      "core_tags": [
+        "spawnball_chain"
+      ],
       "aliases": [],
       "type": "negative"
     }
@@ -762,24 +1024,6 @@
       },
       {
         "keys": [
-          "pincer-attack",
-          "hazardous-environment-tyranid",
-          "lethal-contamination"
-        ],
-        "risk_level": "mid_high_risk",
-        "message": "前后夹击、危险环境（泰伦）、致命污染会显著放大贴身倒地风险，不能同抽。"
-      },
-      {
-        "keys": [
-          "pincer-attack",
-          "hazardous-environment-chaos",
-          "lethal-contamination"
-        ],
-        "risk_level": "mid_high_risk",
-        "message": "前后夹击、危险环境（混沌）、致命污染会显著放大贴身倒地风险，不能同抽。"
-      },
-      {
-        "keys": [
           "elite-challenge",
           "cunning-enemies",
           "coordinated-distress"
@@ -804,6 +1048,167 @@
         ],
         "risk_level": "high_risk",
         "message": "人困马乏、迟则生变、强化敌人会形成时间型凸增长压力，不能同抽。"
+      },
+      {
+        "keys": [
+          "battlefield-instinct",
+          "warp-shadow",
+          "detonation-risk"
+        ],
+        "risk_level": "high_risk",
+        "message": "战场本能、亚空间阴影、引爆风险会显著放大低可见度爆炸失误，不能同抽。"
+      },
+      {
+        "keys": [
+          "battlefield-instinct",
+          "warp-shadow",
+          "explosive-trap"
+        ],
+        "risk_level": "high_risk",
+        "message": "战场本能、亚空间阴影、爆炸陷阱会显著放大低可见度爆炸失误，不能同抽。"
+      },
+      {
+        "keys": [
+          "battlefield-instinct",
+          "warp-shadow",
+          "friendly-fire"
+        ],
+        "risk_level": "high_risk",
+        "message": "战场本能、亚空间阴影、可疑行为会显著放大误伤与判断失误，不能同抽。"
+      },
+      {
+        "keys": [
+          "shared-suffering",
+          "reactor-breach",
+          "explosive-trap"
+        ],
+        "risk_level": "high_risk",
+        "message": "有难同当、微反应器破裂、爆炸陷阱会叠加死亡连锁，不能同抽。"
+      },
+      {
+        "keys": [
+          "shared-suffering",
+          "friendly-fire",
+          "reactor-breach"
+        ],
+        "risk_level": "high_risk",
+        "message": "有难同当、可疑行为、微反应器破裂会形成高强度连锁团灭，不能同抽。"
+      },
+      {
+        "keys": [
+          "fatigued",
+          "escalation",
+          "tyrant-aura"
+        ],
+        "risk_level": "high_risk",
+        "message": "人困马乏、迟则生变、王霸之气会把时间压力推到非线性高位，不能同抽。"
+      },
+      {
+        "keys": [
+          "special-challenge",
+          "call-reinforcements",
+          "effective-taunt"
+        ],
+        "risk_level": "high_risk",
+        "message": "特种挑战、召唤增援、有效嘲讽会同时放大精英与特种压力，不能同抽。"
+      },
+      {
+        "keys": [
+          "special-challenge",
+          "call-reinforcements",
+          "relentless-pursuit"
+        ],
+        "risk_level": "high_risk",
+        "message": "特种挑战、召唤增援、紧追不舍会形成持续高压追击链，不能同抽。"
+      },
+      {
+        "keys": [
+          "special-challenge",
+          "double-boss",
+          "tyrant-aura"
+        ],
+        "risk_level": "high_risk",
+        "message": "特种挑战、双倍强敌、王霸之气会让高阶敌压力过载，不能同抽。"
+      },
+      {
+        "keys": [
+          "elite-challenge",
+          "cunning-enemies",
+          "thick-skinned"
+        ],
+        "risk_level": "high_risk",
+        "message": "精英挑战、机智敌人、皮糙肉厚会让精英处理窗口过小，不能同抽。"
+      },
+      {
+        "keys": [
+          "double-boss",
+          "tyrant-aura",
+          "unyielding-enemies"
+        ],
+        "risk_level": "high_risk",
+        "message": "双倍强敌、王霸之气、坚韧敌人会让终极敌处理成本失控，不能同抽。"
+      },
+      {
+        "keys": [
+          "postmortem-growth",
+          "elite-challenge",
+          "special-challenge"
+        ],
+        "risk_level": "high_risk",
+        "message": "死后增生、精英挑战、特种挑战会放大高阶敌死后增生链，不能同抽。"
+      },
+      {
+        "keys": [
+          "armor-depleted",
+          "no-apothecary",
+          "reduced-vitality"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "护甲耗尽、无药剂师、状态欠佳会把生存资源压到过低，不能同抽。"
+      },
+      {
+        "keys": [
+          "armor-depleted",
+          "armor-malfunction",
+          "reduced-vitality"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "护甲耗尽、装甲故障、状态欠佳会放大闪避失误的死亡成本，不能同抽。"
+      },
+      {
+        "keys": [
+          "no-apothecary",
+          "survival-training",
+          "reduced-vitality"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "无药剂师、生存训练、状态欠佳会同时压缩恢复与生命上限，不能同抽。"
+      },
+      {
+        "keys": [
+          "class-nerf",
+          "pressure-attack",
+          "gun-strike-out"
+        ],
+        "risk_level": "high_risk",
+        "message": "削弱特定兵种、加紧攻击、枪袭出局会让止损链路对特定职业近乎失效，不能同抽。"
+      },
+      {
+        "keys": [
+          "class-nerf",
+          "high-responsibility"
+        ],
+        "risk_level": "mid_high_risk",
+        "message": "削弱特定兵种和责任重大可能让指定承压玩家无解，不能同抽。"
+      },
+      {
+        "keys": [
+          "friendly-fire",
+          "minefield",
+          "warp-storm"
+        ],
+        "risk_level": "high_risk",
+        "message": "可疑行为、遍地踩雷、亚空间风暴会放大混乱场景中的误伤链，不能同抽。"
       }
     ],
     "quota_limits": {
@@ -813,121 +1218,122 @@
       "info_deprivation_chain": 1
     },
     "title_aliases": {
-      "同进同退：20 米内无法回甲/缓冲": "same-step",
-      "同进同退": "same-step",
-      "同进同退：若20米内没有队友则禁止恢复护甲与缓冲生命值": "same-step",
-      "分开行动：20 米外无法回甲/缓冲": "split-up",
-      "分开行动": "split-up",
-      "分开行动：若20米内有队友则禁止恢复护甲与缓冲生命值": "split-up",
-      "近视：10 米外远程输出受压制": "myopia",
-      "近视": "myopia",
-      "近视：距玩家10米外的敌人承受的远程武器伤害降低75%[乘算]": "myopia",
-      "远视：10 米内远程输出受压制": "hyperopia",
-      "远视": "hyperopia",
-      "远视：距玩家10米内的敌人承受的远程武器伤害降低75%[乘算]": "hyperopia",
-      "短兵相接：远程路线显著受压制": "close-quarters",
+      "状态欠佳": "reduced-vitality",
+      "状态欠佳：玩家最大生命值-50%": "reduced-vitality",
+      "猛力重武": "heavy-handed",
+      "[乘算]猛力重武：玩家附加天赋:仅对施加者生效-手持主武器时为敌人施加50%远程武器易伤效果，手持副武器时为敌人附加75%远程武器减伤效果。": "heavy-handed",
       "短兵相接": "close-quarters",
       "[乘算]短兵相接：近战伤害增加50%，远程武器伤害降低75%": "close-quarters",
-      "保持距离：近战路线显著受压制": "keep-distance",
+      "备用计划": "backup-plan",
+      "[乘算]备用计划：玩家附加天赋:仅对施加者生效-手持主武器时为敌人施加75%远程武器减伤效果，手持副武器时为敌人附加50%远程武器易伤效果。": "backup-plan",
       "保持距离": "keep-distance",
       "[乘算]保持距离：近战伤害降低75%，远程武器伤害增加50%": "keep-distance",
-      "猛力重武：主武器效率显著下降": "heavy-handed",
-      "猛力重武": "heavy-handed",
-      "[乘算]猛力重武：增加主武器50%伤害，减少副武器75%伤害": "heavy-handed",
-      "备用计划：副武器效率显著下降": "backup-plan",
-      "备用计划": "backup-plan",
-      "[乘算]备用计划：增加副武器50%伤害伤害，减少主武器75%伤害": "backup-plan",
-      "致命污染：异常状态惩罚显著放大": "lethal-contamination",
-      "致命污染": "lethal-contamination",
-      "致命污染：陷入中毒状态或幻觉状态的玩家将立即倒地，但这两种异常状态的施加效率降低50%": "lethal-contamination",
-      "危险环境（泰伦）": "hazardous-environment-tyranid",
-      "危险环境：泰伦": "hazardous-environment-tyranid",
-      "危险环境：泰伦敌人将获得一个围绕自身3米范围的毒液光环来为玩家施加中毒效果": "hazardous-environment-tyranid",
-      "危险环境（混沌）": "hazardous-environment-chaos",
-      "危险环境：混沌": "hazardous-environment-chaos",
-      "危险环境：混沌敌人将获得一个围绕自身3米范围的腐化光环来为玩家施加幻觉效果": "hazardous-environment-chaos",
-      "有难同当：队友承伤发生连带": "shared-suffering",
-      "有难同当": "shared-suffering",
-      "有难同当：玩家承受的伤害的同时会施加等量伤害给小队成员": "shared-suffering",
-      "微反应器破裂：倒地/死亡时近距离爆伤": "reactor-breach",
-      "微反应器破裂": "reactor-breach",
-      "微反应器破裂：玩家倒地或死亡时会立即产生定向伤害攻击距离6米内的其他玩家（100点近战伤害）": "reactor-breach",
-      "倒地不起：倒地容错极低": "no-downed-revive",
-      "倒地不起": "no-downed-revive",
-      "倒地不起：玩家倒地立即死亡，禁用圣物": "no-downed-revive",
-      "特种挑战：特种敌显著增多": "special-challenge",
-      "特种挑战": "special-challenge",
-      "特种挑战：特种波生成冷却时间减少33%，且数量翻倍": "special-challenge",
-      "召唤增援：敌方更容易拉增援": "call-reinforcements",
-      "召唤增援": "call-reinforcements",
-      "召唤增援：精英敌人成功的支援召唤必定生成特种敌人": "call-reinforcements",
-      "协作求援：呼叫支援更难打断": "coordinated-distress",
-      "协作求援": "coordinated-distress",
-      "协作求援：呼叫支援的行为最大人数增加2（最多三个敌人同时呼叫支援）": "coordinated-distress",
-      "精英挑战：精英敌显著增多": "elite-challenge",
-      "精英挑战": "elite-challenge",
-      "精英挑战：增加50%精英生成数量，降低80%炮灰敌人生成数量，60%小型敌人生成数量": "elite-challenge",
-      "机智敌人：高威胁敌处理窗口更少": "cunning-enemies",
-      "机智敌人": "cunning-enemies",
-      "机智敌人：战斗中随机2个精英级敌人会获得持续10秒的脑虫护盾": "cunning-enemies",
-      "分秒必争：倒计时压力持续存在": "against-the-clock",
-      "分秒必争": "against-the-clock",
-      "分秒必争：生成任务计时器，击杀敌人或到达节点会增加时间，若时间归零任务失败：初始时间：900s": "against-the-clock",
-      "协作灭敌：目标击杀条件更苛刻": "coordinated-kill",
-      "协作灭敌": "coordinated-kill",
-      "协作灭敌：被导演所标记的精英敌人需要多名玩家同时造成伤害才能被击杀": "coordinated-kill",
-      "私有猎物：指定击杀分配受限": "private-prey",
-      "私有猎物": "private-prey",
-      "私有猎物：导演会在每波敌潮中为指定玩家生成1个只有他才能够击杀的精英敌人": "private-prey",
-      "加紧攻击：处决/枪决止损窗口更急迫": "pressure-attack",
-      "加紧攻击": "pressure-attack",
-      "加紧攻击：20秒内不进行处决或枪决则开始持续受到每次0.5的点技能伤害，直至生命值低于30%，但处决或枪决敌人会恢复生命值。": "pressure-attack",
-      "枪袭出局：枪决链路容错更低": "gun-strike-out",
-      "枪袭出局": "gun-strike-out",
-      "枪袭出局：禁用枪袭机制": "gun-strike-out",
-      "战场本能：信息提示被削弱": "battlefield-instinct",
-      "战场本能": "battlefield-instinct",
-      "战场本能：关闭用户界面显示": "battlefield-instinct",
-      "亚空间阴影：视野与感知受压制": "warp-shadow",
-      "亚空间阴影": "warp-shadow",
-      "亚空间阴影：产生一个半径30米的黑雾特效干扰玩家视线": "warp-shadow",
-      "遍地踩雷：地面威胁频繁刷新": "minefield",
-      "遍地踩雷": "minefield",
-      "遍地踩雷：地图会每40秒-80秒生成15-20个向玩家移动的孢子雷": "minefield",
-      "亚空间风暴：区域扰动持续施压": "warp-storm",
-      "亚空间风暴": "warp-storm",
-      "亚空间风暴：地图会每30秒生成一波半径6米的灵能风暴攻击玩家，生成2秒后对玩家造成3点生命值伤害或1点护甲伤害": "warp-storm",
-      "人困马乏：拖久后玩家越来越脆": "fatigued",
-      "人困马乏": "fatigued",
-      "人困马乏：玩家每240秒增加10%承伤，可叠加10层[总值作乘算]": "fatigued",
-      "迟则生变：拖久后敌人越来越强": "escalation",
-      "迟则生变": "escalation",
-      "迟则生变：敌人每240秒增加10%额外生命值，可叠加10层[总值作乘算]": "escalation",
-      "强化敌人：基础敌对强度上调": "reinforced-enemies",
-      "强化敌人": "reinforced-enemies",
-      "[乘算]强化敌人：敌人增加25%生命值和25%造成的伤害": "reinforced-enemies",
-      "只此一命：复活/容错进一步收紧": "one-life-only",
+      "生存训练": "survival-training",
+      "生存训练：禁用缓冲生命值机制，玩家倒地不再被施加重伤状态": "survival-training",
+      "远视": "hyperopia",
+      "远视：玩家附加天赋:仅对施加者生效-为10米内的敌人施加75%远程武器减伤效果[乘算]": "hyperopia",
       "只此一命": "one-life-only",
       "只此一命：禁止复活机制，禁用圣物": "one-life-only",
-      "腐化圣物：关键目标失败成本升高": "corrupted-relic",
-      "腐化圣物": "corrupted-relic",
-      "腐化圣物：随机玩家将在开局获得一个堕落圣物,圣物掉落将使任务失败": "corrupted-relic",
-      "责任重大：指定目标承压上升": "high-responsibility",
+      "近视": "myopia",
+      "近视：玩家附加天赋:仅对施加者生效-为10米外的敌人施加75%远程武器减伤效果[乘算]": "myopia",
+      "倒地不起": "no-downed-revive",
+      "倒地不起：玩家倒地立即死亡，禁用圣物": "no-downed-revive",
+      "人困马乏": "fatigued",
+      "人困马乏：玩家每240秒增加10%承伤，可叠加10层[总值作乘算]": "fatigued",
+      "强化敌人": "reinforced-enemies",
+      "[乘算]强化敌人：敌人增加25%生命值和25%造成的伤害": "reinforced-enemies",
+      "迟则生变": "escalation",
+      "迟则生变：敌人每240秒增加10%额外生命值，可叠加10层[总值作乘算]": "escalation",
+      "皮糙肉厚": "thick-skinned",
+      "皮糙肉厚：强化敌人霸体，需要进行被设定好的固定次数(3)的攻击后才允许被控制/击退": "thick-skinned",
+      "削弱特定兵种": "class-nerf",
+      "削弱特定兵种：最大生命值、远程武器、近战、道具伤害降低50%[乘算]，且移除角色招架格挡能力": "class-nerf",
+      "有难同当": "shared-suffering",
+      "有难同当：玩家承受的伤害的同时会施加等量伤害给小队成员": "shared-suffering",
+      "杀手本能": "killer-instinct",
+      "杀手本能：禁止技能恢复充能，仅能通过击杀恢复：每击杀恢复2.5%技能充能": "killer-instinct",
       "责任重大": "high-responsibility",
       "责任重大：团队承受的伤害全额转移至特定玩家，该玩家最大生命值增加150%[加算]": "high-responsibility",
-      "前后夹击：近身夹击密度增加": "pincer-attack",
-      "前后夹击": "pincer-attack",
-      "前后夹击：在地图中会同时刷出两种敌人派系混战": "pincer-attack",
-      "同进同退：20 米内无法回甲": "same-step",
-      "分开行动：20 米外无法回甲": "split-up",
-      "近视：10 米外远程输出受压": "myopia",
-      "远视：10 米内远程输出受压": "hyperopia",
-      "致命污染：异常惩罚放大": "lethal-contamination",
-      "微反应器破裂：倒地/死亡时近": "reactor-breach",
-      "机智敌人：高威胁敌处理窗口更": "cunning-enemies",
-      "加紧攻击：处决/枪决止损窗口": "pressure-attack",
-      "只此一命：复活/容错收紧": "one-life-only",
-      "腐化圣物：关键目标失败成本升": "corrupted-relic"
+      "引爆风险": "detonation-risk",
+      "引爆风险：地图生成三倍数量爆炸物，爆炸范围增加100%，伤害增加100%": "detonation-risk",
+      "枪袭出局": "gun-strike-out",
+      "枪袭出局：禁用枪袭机制": "gun-strike-out",
+      "紧追不舍": "relentless-pursuit",
+      "紧追不舍：刷怪包中增加一只阿尔法利卡特；最低刷新冷却时间120秒": "relentless-pursuit",
+      "加紧攻击": "pressure-attack",
+      "加紧攻击：20秒内不进行处决或枪决则开始持续受到每次0.5的点技能伤害，直至生命值低于30%，但处决或枪决敌人会恢复生命值。": "pressure-attack",
+      "同进同退": "same-step",
+      "同进同退：若25米内没有队友则禁止恢复护甲与缓冲生命值": "same-step",
+      "遍地踩雷": "minefield",
+      "遍地踩雷：地图会每40秒-80秒生成15-20个向玩家移动的孢子雷": "minefield",
+      "分开行动": "split-up",
+      "分开行动：若15米内有队友则禁止恢复护甲与缓冲生命值": "split-up",
+      "有效嘲讽": "effective-taunt",
+      "有效嘲讽：怪潮生成时必定生成至少2个暴怒状态精英": "effective-taunt",
+      "特种挑战": "special-challenge",
+      "特种挑战：特种波生成冷却时间减少33%，且数量翻倍": "special-challenge",
+      "机智敌人": "cunning-enemies",
+      "机智敌人：战斗中随机2个精英级敌人会获得持续10秒的脑虫护盾": "cunning-enemies",
+      "精英挑战": "elite-challenge",
+      "精英挑战：增加50%精英生成数量，降低80%炮灰敌人生成数量，60%小型敌人生成数量": "elite-challenge",
+      "护甲耗尽": "armor-depleted",
+      "护甲耗尽：玩家只能拥有1格护甲，且禁用护甲碎片掉落": "armor-depleted",
+      "砍瓜切菜": "cannon-fodder-wave",
+      "砍瓜切菜：降低60%精英生成数量，增加100%炮灰敌人生成数量，100%小型敌人生成数量": "cannon-fodder-wave",
+      "无弹可拾": "no-ammo-pickups",
+      "无弹可拾：地图不再生成弹药补充，但近战击杀会恢复弹药（2%）": "no-ammo-pickups",
+      "召唤增援": "call-reinforcements",
+      "召唤增援：精英敌人成功的支援召唤必定生成特种敌人": "call-reinforcements",
+      "定量配给": "rationed-supply",
+      "定量配给：地图不再生成弹药箱，但弹药盒生成数量翻倍": "rationed-supply",
+      "危险环境（泰伦）": "hazardous-environment-tyranid",
+      "危险环境：泰伦敌人将获得一个围绕自身3米范围的毒液光环来为玩家施加中毒效果": "hazardous-environment-tyranid",
+      "装备故障": "gear-malfunction",
+      "装备故障：禁用道具": "gear-malfunction",
+      "危险环境（混沌）": "hazardous-environment-chaos",
+      "危险环境：混沌敌人将获得一个围绕自身3米范围的腐化光环来为玩家施加幻觉效果": "hazardous-environment-chaos",
+      "无药剂师": "no-apothecary",
+      "无药剂师：禁用激励剂": "no-apothecary",
+      "可疑行为": "friendly-fire",
+      "可疑行为：启用远程伤害与道具伤害的友军伤害，这些伤害会被减少40%，爆炸物伤害为45%，": "friendly-fire",
+      "分秒必争": "against-the-clock",
+      "分秒必争：生成任务计时器，击杀敌人或到达节点会增加时间，若时间归零任务失败：初始时间：900s": "against-the-clock",
+      "亚空间阴影": "warp-shadow",
+      "亚空间阴影：产生一个半径30米的黑雾特效干扰玩家视线": "warp-shadow",
+      "装甲故障": "armor-malfunction",
+      "装甲故障：非完美闪避的闪避动作会使玩家受到0.67点技能伤害": "armor-malfunction",
+      "微反应器破裂": "reactor-breach",
+      "微反应器破裂：玩家倒地或死亡时会立即产生定向伤害攻击距离6米内的其他玩家（100点近战伤害）": "reactor-breach",
+      "爆炸陷阱": "explosive-trap",
+      "爆炸陷阱：精英及以上敌人死亡后产生半径为10米的扩散范围伤害来攻击玩家（5点近战伤害）": "explosive-trap",
+      "亚空间风暴": "warp-storm",
+      "亚空间风暴：地图会每30秒生成一波半径6米的灵能风暴攻击，生成2秒后对范围内所有目标造成3点生命值伤害或1点护甲伤害": "warp-storm",
+      "海啸来袭": "tidal-onslaught",
+      "海啸来袭：每次生成敌潮只生成原版设定最大规模的敌潮，但敌潮生成冷却时间增加30%": "tidal-onslaught",
+      "机能萎缩": "atrophy",
+      "机能萎缩：倒地不会让玩家死亡，但每次倒地都会使玩家减少25%最大生命值25%，最低减少至10%最大生命值": "atrophy",
+      "王霸之气": "tyrant-aura",
+      "王霸之气：终极敌人增加100%生命值和33%所造成的伤害[乘算]": "tyrant-aura",
+      "强化头颅": "reinforced-skull",
+      "强化头颅：敌人免疫爆头伤害，但最大生命值减少35%[乘算]": "reinforced-skull",
+      "战场本能": "battlefield-instinct",
+      "战场本能：关闭用户界面显示": "battlefield-instinct",
+      "致命污染": "lethal-contamination",
+      "致命污染：陷入中毒状态或幻觉状态的玩家将立即倒地，但这两种异常状态的施加效率降低50%": "lethal-contamination",
+      "协作求援": "coordinated-distress",
+      "协作求援：呼叫支援的行为最大人数增加2（最多三个敌人同时呼叫支援）": "coordinated-distress",
+      "双倍强敌": "double-boss",
+      "双倍强敌：双倍终极敌人数量": "double-boss",
+      "协作灭敌": "coordinated-kill",
+      "协作灭敌：被导演所标记的精英敌人需要多名玩家同时造成伤害才能被击杀": "coordinated-kill",
+      "私有猎物": "private-prey",
+      "私有猎物：导演会在每波敌潮中为指定玩家生成1个只有他才能够击杀的精英敌人": "private-prey",
+      "腐化圣物": "corrupted-relic",
+      "腐化圣物：随机玩家将在开局获得一个堕落圣物,圣物掉落将使任务失败": "corrupted-relic",
+      "坚韧敌人": "unyielding-enemies",
+      "坚韧敌人：移除敌人的眩晕状态机制，使其受到致命伤害立即死亡，且最大生命值减少35%[乘算]": "unyielding-enemies",
+      "死后增生": "postmortem-growth",
+      "死后增生：精英级以上混沌敌人/泰伦敌人在死后会生成混沌颅骨/孢子雷": "postmortem-growth"
     }
   }
 }

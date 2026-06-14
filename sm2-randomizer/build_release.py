@@ -78,14 +78,36 @@ def _finalize_package_contract() -> None:
 def _run_packaged_smoke_check() -> None:
     probe_script = """
 import json
+from pathlib import Path
+from urllib.parse import quote
 import urllib.request
 
 base = 'http://127.0.0.1:53231'
+package_dir = Path(r'__PACKAGE_DIR__')
+
+def encoded_relative_path(path):
+    return '/' + '/'.join(quote(part, safe='') for part in path.parts)
+
+def find_encoded_asset_path():
+    for path in sorted((package_dir / 'assets').rglob('*')):
+        if not path.is_file():
+            continue
+        relative_path = path.relative_to(package_dir)
+        if any(ord(char) > 127 for char in relative_path.as_posix()):
+            return encoded_relative_path(relative_path)
+    raise RuntimeError('no non-ascii packaged asset found for smoke check')
+
+asset_path = find_encoded_asset_path()
 checks = {
     '/': ['<!DOCTYPE html>', '<script src="./main.js?v=3"></script>'],
+    '/sm2-randomizer': ['<!DOCTYPE html>', '<script src="./main.js?v=3"></script>'],
+    '/sm2-randomizer/static/main.js?v=3': ['DATA_BASE_PATH'],
+    '/sm2-randomizer/app/static/main.js?v=3': ['DATA_BASE_PATH'],
     '/data/classes.json': ['"classes"'],
+    '/sm2-randomizer/data/classes.json': ['"classes"'],
     '/data/talents.json': ['"classes"'],
     '/data/meta.json': ['"build"', '"positive_modifier_pool"'],
+    '/sm2-randomizer' + asset_path: [],
 }
 result = {}
 for path, markers in checks.items():
@@ -96,7 +118,7 @@ for path, markers in checks.items():
             if marker not in body:
                 raise RuntimeError(f'{path} missing expected marker: {marker}')
 print(json.dumps(result, ensure_ascii=False))
-""".strip()
+""".strip().replace("__PACKAGE_DIR__", PACKAGE_DIR.as_posix())
     exit_code = _run([sys.executable, "-c", probe_script])
     if exit_code != 0:
         raise RuntimeError("打包模式自检失败：首页或运行期 JSON 不可访问。")
@@ -310,6 +332,14 @@ try:
             time.sleep(0.2)
     else:
         raise RuntimeError('packaged-python smoke did not come up in time')
+    for path in (
+        '/sm2-randomizer',
+        '/sm2-randomizer/data/classes.json',
+        '/sm2-randomizer/app/static/main.js?v=3',
+        '/sm2-randomizer/assets/classes/%E5%85%88%E9%94%8B%E5%85%B5/cover.png',
+    ):
+        with urllib.request.urlopen('http://127.0.0.1:53233' + path, timeout=5) as response:
+            print(path, response.status)
 finally:
     process.terminate()
     try:

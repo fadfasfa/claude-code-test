@@ -149,6 +149,7 @@ class HextechUI:
         self._ui_render_in_progress = False
         self._pending_ui_refresh = None
         self._collapse_render_after_id = None
+        self._overlay_status_after_id = None
 
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
@@ -163,6 +164,7 @@ class HextechUI:
         self._init_core_engine()
         self.check_and_sync_data()
         self.start_background_scraper()
+        self._start_overlay_status_polling()
 
     def _spawn_web_process(self):
         return ui_runtime.start_web_server_process(
@@ -402,6 +404,32 @@ class HextechUI:
     def _set_status(self, text, color):
         if hasattr(self, "status_label") and self.status_label.winfo_exists():
             self.status_label.config(text=text, fg=color)
+
+    def _start_overlay_status_polling(self) -> None:
+        self._overlay_status_after_id = self.root.after(1000, self._refresh_overlay_status_summary)
+
+    def _refresh_overlay_status_summary(self) -> None:
+        """低频回显游戏内 overlay 状态，避免 running 但不可见时没有反馈。"""
+
+        try:
+            # main 原本调用 overlay_service_manager.read_overlay_status_snapshot；PR 已把状态聚合
+            # 下沉到 ServiceManager.get_status_snapshot，这里改读新 schema 的字段。
+            snapshot = self.service_manager.get_status_snapshot()
+            sidecar = snapshot.get("vision_sidecar") if isinstance(snapshot.get("vision_sidecar"), dict) else {}
+            event = snapshot.get("overlay_event") if isinstance(snapshot.get("overlay_event"), dict) else {}
+            sidecar_status = str(sidecar.get("status") or "").strip()
+            overlay_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
+            event_active = bool(event.get("active"))
+            should_report = overlay_enabled or sidecar_status == "running" or event_active
+            if should_report:
+                reason = str(event.get("reason") or sidecar.get("last_error") or "unknown")
+                color = "#a6e3a1" if event_active else "#f9e2af"
+                self._set_status(f"游戏内显示: {reason} / sidecar {sidecar_status or 'unknown'}", color)
+        except Exception:
+            logger.debug("读取游戏内 overlay 状态失败。", exc_info=True)
+        finally:
+            if not self.stop_event.is_set():
+                self._overlay_status_after_id = self.root.after(1000, self._refresh_overlay_status_summary)
 
     def _run_on_ui_thread(self, callback):
         root = getattr(self, "root", None)
@@ -669,8 +697,15 @@ class HextechUI:
         for thread in self.threads:
             if thread.is_alive():
                 thread.join(timeout=2)
+        # PR 已把 Web 子进程与 overlay 全部下沉到 ServiceManager；这里只做 ui_runtime 与 ServiceManager 收尾，
+        # 顺带保留 main 引入的 overlay 状态轮询 after_id 取消，避免 root.destroy 后回调引发 TclError。
         ui_runtime.close_companion_browser()
         self.service_manager.shutdown()
+        if self._overlay_status_after_id is not None:
+            try:
+                self.root.after_cancel(self._overlay_status_after_id)
+            except tk.TclError:
+                logger.debug("取消 overlay 状态轮询失败。", exc_info=True)
         self.root.destroy()
 
 

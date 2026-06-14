@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, UTC
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -105,10 +106,31 @@ def _resolve_negative_modifier_detail(item: dict[str, Any], strategy_terms: list
 
 
 def _negative_title_part(value: Any) -> str:
-    return _clean_placeholder(value).split("：")[0].strip()
+    return _modifier_title(value)
 
 
-def _normalize_manual_negative_aliases(item: dict[str, Any]) -> list[str]:
+def _modifier_title(value: Any) -> str:
+    title = _clean_placeholder(value).split("：", 1)[0].strip()
+    return re.sub(r"^\[[^\]]+\]", "", title).strip()
+
+
+def _modifier_key_title(value: Any) -> str:
+    text = _clean_placeholder(value)
+    title = _modifier_title(text)
+    if title == "危险环境":
+        if "泰伦" in text:
+            return "危险环境（泰伦）"
+        if "混沌" in text:
+            return "危险环境（混沌）"
+    if title == "战斗精通":
+        if "近战增强" in text:
+            return "战斗精通（近战）"
+        if "远程增强" in text:
+            return "战斗精通（远程）"
+    return title
+
+
+def _normalize_manual_negative_aliases(item: dict[str, Any], current_terms: set[str], current_titles: set[str]) -> list[str]:
     label = _clean_placeholder(item.get("label"))
     derived = {
         _clean_placeholder(item.get("name")),
@@ -122,22 +144,84 @@ def _normalize_manual_negative_aliases(item: dict[str, Any]) -> list[str]:
         value = str(raw).strip()
         if not value or value in derived or value in seen:
             continue
+        # 旧完整说明不能继续作为别名残留；完整词条必须与当前 Excel 精确一致。
+        if "：" in value and value not in current_terms:
+            continue
         seen.add(value)
         aliases.append(value)
     return aliases
 
 
-def _load_positive_modifier_pool(manual: dict[str, Any], runtime_meta_fallback: dict[str, Any]) -> list[dict[str, Any]]:
+POSITIVE_KEY_OVERRIDES: dict[str, str] = {}
+NEGATIVE_TERM_METADATA: dict[str, dict[str, str]] = {}
+EXTRA_NEGATIVE_CONFLICTS: list[dict[str, Any]] = []
+
+
+def _strategy_groups(excel_strategy_terms: dict[str, Any]) -> dict[str, list[str]]:
+    groups = excel_strategy_terms.get("groups", {}) if isinstance(excel_strategy_terms, dict) else {}
+    if isinstance(groups, dict) and (groups.get("negative") or groups.get("positive")):
+        return {
+            "negative": _safe_list(groups.get("negative")),
+            "positive": _safe_list(groups.get("positive")),
+        }
+    return {"negative": [], "positive": []}
+
+
+def _terms_by_title(terms: list[Any]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for term in terms:
+        text = _clean_placeholder(term)
+        title = _modifier_key_title(text)
+        if title and text:
+            result[title] = text
+    return result
+
+
+def _runtime_pool_lookup(runtime_pool: list[Any]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for item in runtime_pool:
+        if not isinstance(item, dict):
+            continue
+        for candidate in (item.get("name"), item.get("label"), item.get("detail")):
+            title = _modifier_key_title(candidate)
+            if title:
+                lookup[title] = item
+    return lookup
+
+
+def _load_positive_modifier_pool(
+    manual: dict[str, Any],
+    runtime_meta_fallback: dict[str, Any],
+    positive_terms: list[Any],
+) -> list[dict[str, Any]]:
     manual_pool = _safe_list(manual.get("positive_modifier_pool"))
+    runtime_pool = _safe_list(runtime_meta_fallback.get("positive_modifier_pool"))
+    if positive_terms:
+        metadata_lookup = _runtime_pool_lookup([*manual_pool, *runtime_pool])
+        pool: list[dict[str, Any]] = []
+        for index, term in enumerate(positive_terms, start=1):
+            detail = _clean_placeholder(term)
+            title = _modifier_key_title(detail)
+            metadata = metadata_lookup.get(title, {})
+            key = _first_text(metadata.get("key"), POSITIVE_KEY_OVERRIDES.get(title), f"excel-positive-{index}")
+            name = _first_text(metadata.get("name"), title)
+            pool.append(
+                {
+                    "key": key,
+                    "name": name,
+                    "detail": detail,
+                    "type": "positive",
+                }
+            )
+        return pool
+
     if manual_pool:
         source = manual_pool
+    elif runtime_pool:
+        source = runtime_pool
     else:
-        runtime_pool = _safe_list(runtime_meta_fallback.get("positive_modifier_pool"))
-        if runtime_pool:
-            source = runtime_pool
-        else:
-            strategy_pools = _safe_dict(runtime_meta_fallback.get("strategy_modifier_pools"))
-            source = _safe_list(_safe_dict(strategy_pools).get("positive"))
+        strategy_pools = _safe_dict(runtime_meta_fallback.get("strategy_modifier_pools"))
+        source = _safe_list(_safe_dict(strategy_pools).get("positive"))
 
     pool: list[dict[str, Any]] = []
     for item in source:
@@ -197,6 +281,12 @@ def _append_unique_loadout_entry(entries: list[dict[str, str]], entry: dict[str,
 
 
 CLASS_LOADOUT_OVERRIDES: dict[str, dict[str, list[str]]] = {
+    "assault": {
+        "secondary": ["bolt-carbine-one-handed"],
+    },
+    "bulwark": {
+        "secondary": ["bolt-carbine-one-handed"],
+    },
     "sniper": {
         "primary": ["marksman-bolt-carbine"],
     },
@@ -254,24 +344,66 @@ def _to_class_loadout(entries: list[dict[str, Any]], weapon_lookup: dict[str, di
     return result
 
 
-def _build_negative_modifier_rules(manual: dict[str, Any], strategy_terms: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _negative_metadata_title_candidates(item: dict[str, Any]) -> list[str]:
+    candidates = [
+        _modifier_key_title(item.get("name")),
+        _modifier_key_title(item.get("label")),
+    ]
+    candidates.extend(_modifier_key_title(alias) for alias in _safe_list(item.get("aliases")))
+    seen: set[str] = set()
+    result: list[str] = []
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        result.append(candidate)
+    return result
+
+
+def _build_negative_modifier_rules(
+    manual: dict[str, Any],
+    strategy_terms: list[str],
+    negative_terms: list[Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     pool_raw = _safe_list(manual.get("negative_modifier_pool"))
     rules_raw = _safe_dict(manual.get("negative_modifier_rules"))
-
-    pool: list[dict[str, Any]] = []
-    title_aliases: dict[str, str] = {}
+    current_negative_terms = [_clean_placeholder(term) for term in negative_terms if _clean_placeholder(term)]
+    current_term_set = set(current_negative_terms)
+    current_term_by_title = _terms_by_title(current_negative_terms)
+    current_titles = set(current_term_by_title)
+    manual_by_title: dict[str, dict[str, Any]] = {}
     for item in pool_raw:
         if not isinstance(item, dict):
             continue
+        for title in _negative_metadata_title_candidates(item):
+            manual_by_title.setdefault(title, item)
+
+    pool: list[dict[str, Any]] = []
+    title_aliases: dict[str, str] = {}
+    source_items: list[tuple[str, str, dict[str, Any]]] = []
+    if current_negative_terms:
+        for title, detail in current_term_by_title.items():
+            metadata = manual_by_title.get(title, NEGATIVE_TERM_METADATA.get(title, {}))
+            source_items.append((title, detail, metadata))
+    else:
+        for item in pool_raw:
+            if not isinstance(item, dict):
+                continue
+            title = _first_text(_modifier_key_title(item.get("name")), _modifier_key_title(item.get("label")))
+            source_items.append((title, _resolve_negative_modifier_detail(item, strategy_terms), item))
+
+    for title, detail, item in source_items:
         key = str(item.get("key", "")).strip()
-        label = str(item.get("label", "")).strip()
+        label = title
         if not key or not label:
             continue
-        name = str(item.get("name", "")).strip() or _negative_title_part(label)
-        aliases = _normalize_manual_negative_aliases(item)
+        name = title
+        aliases = _normalize_manual_negative_aliases(item, current_term_set, current_titles)
         title_aliases[label] = key
         title_aliases[_negative_title_part(label)] = key
         title_aliases[name] = key
+        if detail:
+            title_aliases[detail] = key
         for alias in aliases:
             title_aliases[alias] = key
         pool.append(
@@ -279,7 +411,7 @@ def _build_negative_modifier_rules(manual: dict[str, Any], strategy_terms: list[
                 "key": key,
                 "label": label,
                 "name": name,
-                "detail": _resolve_negative_modifier_detail(item, strategy_terms),
+                "detail": detail or _resolve_negative_modifier_detail(item, strategy_terms),
                 "risk_level": str(item.get("risk_level", "")).strip() or "advisory",
                 "core_tags": [str(tag).strip() for tag in _safe_list(item.get("core_tags")) if str(tag).strip()],
                 "aliases": aliases,
@@ -287,12 +419,16 @@ def _build_negative_modifier_rules(manual: dict[str, Any], strategy_terms: list[
             }
         )
 
+    pool_keys = {item["key"] for item in pool}
     exact_conflicts: list[dict[str, Any]] = []
-    for rule in _safe_list(rules_raw.get("exact_conflicts")):
+    for rule in [*_safe_list(rules_raw.get("exact_conflicts")), *EXTRA_NEGATIVE_CONFLICTS]:
         if not isinstance(rule, dict):
             continue
         keys = [str(key).strip() for key in _safe_list(rule.get("keys")) if str(key).strip()]
+        keys = [key for key in keys if key in pool_keys]
         if len(keys) < 2:
+            continue
+        if any(set(keys) == set(existing["keys"]) for existing in exact_conflicts):
             continue
         exact_conflicts.append(
             {
@@ -335,6 +471,7 @@ def merge_sources() -> dict[str, Any]:
     excel_weapon_image_map = _load_excel_file("武器图片映射.json", {"items": []})
     excel_strategy_terms = _load_excel_file("策略词条清单.json", {"items": []})
     runtime_meta_fallback = read_json(APP_DATA_DIR / "meta.json", {})
+    runtime_classes_fallback = read_json(APP_DATA_DIR / "classes.json", {"classes": []})
     weapon_name_overrides = load_weapon_image_name_overrides()
     field_policy = read_json(FIELD_SOURCE_POLICY_FILE, {})
     extraction_rules = read_json(EXTRACTION_RULES_FILE, {})
@@ -348,14 +485,32 @@ def merge_sources() -> dict[str, Any]:
     excel_weapon_image_by_slug = _index_by(_safe_list(excel_weapon_image_map.get("items")), "slug")
     talent_manifest_by_class = _index_by(_safe_list(talent_manifest.get("classes")), "class_slug")
     wiki_talent_by_class = _index_by(_safe_list(wiki_raw.get("talents")), "class_slug_candidate")
+    runtime_class_by_slug = _index_by(_safe_list(runtime_classes_fallback.get("classes")), "slug")
+    strategy_groups = _strategy_groups(excel_strategy_terms)
+
+    # 过滤 Excel 源数据中标记为未实装的词条，防止 refresh-data 重新注入
+    not_implemented_terms: set[str] = {
+        _clean_placeholder(term)
+        for term in _safe_list(excel_strategy_terms.get("not_implemented"))
+        if _clean_placeholder(term)
+    }
+    if not_implemented_terms:
+        strategy_groups["positive"] = [
+            term for term in strategy_groups["positive"]
+            if _clean_placeholder(term) not in not_implemented_terms
+        ]
+        strategy_groups["negative"] = [
+            term for term in strategy_groups["negative"]
+            if _clean_placeholder(term) not in not_implemented_terms
+        ]
 
     strategy_terms = (
         _safe_list(manual.get("strategy_terms"))
         or _safe_list(excel_strategy_terms.get("items"))
         or _safe_list(runtime_meta_fallback.get("strategy_terms"))
     )
-    positive_modifier_pool = _load_positive_modifier_pool(manual, runtime_meta_fallback)
-    negative_modifier_pool, negative_modifier_rules = _build_negative_modifier_rules(manual, strategy_terms)
+    positive_modifier_pool = _load_positive_modifier_pool(manual, runtime_meta_fallback, strategy_groups["positive"])
+    negative_modifier_pool, negative_modifier_rules = _build_negative_modifier_rules(manual, strategy_terms, strategy_groups["negative"])
 
     all_weapon_slugs = sorted(
         {
@@ -444,8 +599,9 @@ def merge_sources() -> dict[str, Any]:
         manifest_class = class_manifest_by_slug.get(slug, {})
         talent_class = talent_manifest_by_class.get(slug, {})
         wiki_talent_class = wiki_talent_by_class.get(slug, {})
+        runtime_class = runtime_class_by_slug.get(slug, {})
 
-        display_name = _first_text(manual_class.get("name"), wiki_class.get("name"))
+        display_name = _first_text(manual_class.get("name"), runtime_class.get("name"), wiki_class.get("name"))
         class_weapon_entry = class_weapon_map.get("class_weapon_map", {}).get(slug, {})
         wiki_loadouts = wiki_class.get("weapons") if isinstance(wiki_class.get("weapons"), dict) else {}
         loadouts = class_weapon_entry if isinstance(class_weapon_entry, dict) and class_weapon_entry else wiki_loadouts
@@ -478,10 +634,10 @@ def merge_sources() -> dict[str, Any]:
             {
                 "slug": slug,
                 "name": display_name,
-                "role": _first_text(manual_class.get("role"), wiki_class.get("class_role_text")),
-                "tagline": _first_text(manual_class.get("tagline"), wiki_class.get("class_summary_plain")),
-                "class_ability": _first_text(manual_class.get("class_ability"), wiki_class.get("class_ability")),
-                "summary": _first_text(wiki_class.get("class_summary_plain"), manual_class.get("tagline")),
+                "role": _first_text(manual_class.get("role"), runtime_class.get("role"), wiki_class.get("class_role_text")),
+                "tagline": _first_text(manual_class.get("tagline"), runtime_class.get("tagline"), wiki_class.get("class_summary_plain")),
+                "class_ability": _first_text(manual_class.get("class_ability"), runtime_class.get("class_ability"), wiki_class.get("class_ability")),
+                "summary": _first_text(runtime_class.get("summary"), wiki_class.get("class_summary_plain"), manual_class.get("tagline")),
                 "images": {
                     "asset_dir": relative_asset_path(manifest_class.get("asset_dir")),
                     "local_images": _safe_list(manifest_class.get("local_images")),

@@ -187,9 +187,12 @@ def check_runtime_alias_persistence() -> None:
 
 def check_detail_hero_param_uses_text_content() -> None:
     detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
-    assert "const urlParams = new URLSearchParams(window.location.search);" in detail_text
-    assert "const hero = urlParams.get('hero');" in detail_text
-    assert "document.getElementById('heroName').textContent = hero" in detail_text
+    detail_script = (RUN_DIR / "display" / "static" / "js" / "detail.js").read_text(encoding="utf-8")
+
+    assert '<script defer src="/static/js/detail.js"></script>' in detail_text
+    assert "const urlParams = new URLSearchParams(window.location.search);" in detail_script
+    assert "const hero = urlParams.get('hero');" in detail_script
+    assert "document.getElementById('heroName').textContent = hero" in detail_script
     forbidden_patterns = [
         r"heroName['\"]\)\.innerHTML\s*=\s*hero",
         r"innerHTML\s*=\s*`[^`]*\$\{hero\}",
@@ -197,15 +200,18 @@ def check_detail_hero_param_uses_text_content() -> None:
     ]
     for pattern in forbidden_patterns:
         assert not re.search(pattern, detail_text), pattern
+        assert not re.search(pattern, detail_script), pattern
 
 
 def check_detail_question_mark_augment_guard() -> None:
     detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
-    assert "function isQuestionMarkAugmentName(text)" in detail_text
-    assert "/^[?？]{3,}$/" in detail_text
-    assert "if (isQuestionMarkAugmentName(original))" in detail_text
+    detail_script = (RUN_DIR / "display" / "static" / "js" / "detail.js").read_text(encoding="utf-8")
+    assert "function isQuestionMarkAugmentName(text)" in detail_script
+    assert "/^[?？]{3,}$/" in detail_script
+    assert "if (isQuestionMarkAugmentName(original))" in detail_script
     assert '<span class="${badgeText} opacity-70' not in detail_text
-    assert "dataset.synergyLoaded" in detail_text
+    assert '<span class="${badgeText} opacity-70' not in detail_script
+    assert "dataset.synergyLoaded" in detail_script
     assert re.fullmatch(r"[?？]{3,}", "？？？")
     assert not re.fullmatch(r"[?？]{3,}", "？？？ 提升攻速 25%")
 
@@ -226,13 +232,23 @@ def check_static_css_single_mount_contract() -> None:
 def check_web_bootstrap_avoids_load_event_gate() -> None:
     index_text = (RUN_DIR / "display" / "static" / "index.html").read_text(encoding="utf-8")
     detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
+    index_script = (RUN_DIR / "display" / "static" / "js" / "index.js").read_text(encoding="utf-8")
+    detail_script = (RUN_DIR / "display" / "static" / "js" / "detail.js").read_text(encoding="utf-8")
 
     assert "window.onload =" not in index_text
     assert "window.onload =" not in detail_text
-    assert 'src="https://cdn.tailwindcss.com" async' in index_text
-    assert 'src="https://cdn.tailwindcss.com" async' in detail_text
-    assert "bootstrapIndexPage()" in index_text
-    assert "bootstrapDetailPage()" in detail_text
+    assert "window.onload =" not in index_script
+    assert "window.onload =" not in detail_script
+    assert "cdn.tailwindcss.com" not in index_text
+    assert "cdn.tailwindcss.com" not in detail_text
+    assert 'href="/static/css/tailwind-compiled.css"' in index_text
+    assert 'href="/static/css/tailwind-compiled.css"' in detail_text
+    assert '<script defer src="/static/js/index.js"></script>' in index_text
+    assert '<script defer src="/static/js/detail.js"></script>' in detail_text
+    assert "function bootstrapIndexPage()" in index_script
+    assert "function bootstrapDetailPage()" in detail_script
+    assert "bootstrapIndexPage();" in index_script
+    assert "bootstrapDetailPage();" in detail_script
 
 
 def check_api_champions_uses_stable_catalog_before_network_snapshot() -> None:
@@ -357,17 +373,17 @@ def check_detail_api_defers_cold_local_processing() -> None:
 
 
 def check_detail_renders_before_deferred_icon_catalog() -> None:
-    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
-    load_start = detail_text.index("async function loadHextechs")
-    load_end = detail_text.index("function connectWS()", load_start)
-    load_body = detail_text[load_start:load_end]
+    detail_script = (RUN_DIR / "display" / "static" / "js" / "detail.js").read_text(encoding="utf-8")
+    load_start = detail_script.index("async function loadHextechs")
+    load_end = detail_script.index("function connectWS()", load_start)
+    load_body = detail_script[load_start:load_end]
 
     assert "renderCurrentView();" in load_body
     assert "loadAugmentIconMap().then" in load_body
     assert "await loadAugmentIconMap();" not in load_body
     assert load_body.index("renderCurrentView();") < load_body.index("loadAugmentIconMap().then")
-    assert "DETAIL_LOADING_RETRY_MS" in detail_text
-    assert "scheduleDetailRetry" in detail_text
+    assert "DETAIL_LOADING_RETRY_MS" in detail_script
+    assert "scheduleDetailRetry" in detail_script
 
 
 def check_heal_worker_contract() -> None:

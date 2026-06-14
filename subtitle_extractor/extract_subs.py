@@ -14,7 +14,7 @@ def extract_audio_from_video(video_path, audio_path):
     # 提取视频音频。
     try:
         video = VideoFileClip(video_path)
-        video.audio.write_audiofile(audio_path, verbose=False, logger=None)
+        video.audio.write_audiofile(audio_path, logger=None)
         video.close()
         return True
     except Exception as e:

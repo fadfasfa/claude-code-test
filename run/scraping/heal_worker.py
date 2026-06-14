@@ -56,6 +56,7 @@ from scraping.version_sync import (
 logger = logging.getLogger(__name__)
 LOCK_FILE = Path(build_runtime_lock_path("heal_worker.lock"))
 HIGH_FREQUENCY_STALE_SECONDS = 4 * 60 * 60
+MANIFEST_STALE_SECONDS = 24 * 60 * 60
 SYNERGY_STALE_SECONDS = 7 * 24 * 60 * 60
 SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
 
@@ -197,7 +198,11 @@ def detect_missing_artifacts() -> dict:
     return {
         "hextech_rankings": not _latest_csv_fresh(),
         "synergy_data": synergy_missing,
-        "augment_catalog": not _core_data_ready() or not _augment_manifest_ready(),
+        "augment_catalog": (
+            not _core_data_ready()
+            or not _augment_manifest_ready()
+            or not _file_is_fresh(AUGMENT_MANIFEST_FILE, MANIFEST_STALE_SECONDS)
+        ),
         "champion_core": not os.path.exists(CORE_DATA_FILE),
         "images": not _image_assets_ready(),
         "latest_csv": latest_csv or "",

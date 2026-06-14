@@ -1,14 +1,27 @@
 #!/usr/bin/env python3
-# 在线视频字幕提取工具。
-# 优先使用官方字幕，缺失时回退到音频转写。
+# 在线视频字幕提取工具：优先下载官方字幕转 Markdown，缺失时下载音频回退 whisper 转写。
+# 调用方：命令行直接运行（python extract_online.py <url> [-o 输出目录]）。
+# 关键依赖：yt_dlp（下载字幕/音频）、extract_subs 的 transcribe_audio 与 segments_to_markdown。
 
 import os
 import sys
 import argparse
 import tempfile
 from pathlib import Path
-import yt_dlp
-from extract_subs import transcribe_audio, segments_to_markdown
+
+
+def load_yt_dlp():
+    # 运行依赖懒加载，避免 --help 被未安装下载依赖提前拦截。
+    import yt_dlp
+
+    return yt_dlp
+
+
+def load_transcription_helpers():
+    # 转写依赖较重，只在官方字幕缺失、确实需要 whisper 回退时导入。
+    from extract_subs import transcribe_audio, segments_to_markdown
+
+    return transcribe_audio, segments_to_markdown
 
 
 def download_subtitles_from_url(url, output_dir, languages=None):
@@ -27,6 +40,7 @@ def download_subtitles_from_url(url, output_dir, languages=None):
     }
 
     try:
+        yt_dlp = load_yt_dlp()
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
 
@@ -100,6 +114,7 @@ def download_audio_from_url(url, output_dir):
     }
 
     try:
+        yt_dlp = load_yt_dlp()
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
 
@@ -145,7 +160,7 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
             print(f"处理成功：{url} -> {md_path}")
             return True
         else:
-            print("字幕转换为 Markdown 失败")
+            print(f"字幕转换为 Markdown 失败，原始字幕文件已保留：{result}")
             return False
     else:
         print(f"未找到官方字幕：{result}")
@@ -161,6 +176,7 @@ def process_online_video(url, output_dir, model_size="base", device="cpu", langu
         print(f"音频已下载：{audio_path}")
 
         # 使用 faster-whisper 转录。
+        transcribe_audio, segments_to_markdown = load_transcription_helpers()
         segments = transcribe_audio(audio_path, model_size, device)
 
         if not segments:
@@ -215,3 +231,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -21,9 +21,14 @@ __pycache__/
 *.pyc
 *.pyo
 
+# 通用打包产物文件夹
+dist/
+build/
+
 # Hextech local build artifacts
 run/build/
 run/dist/
+run/display/node_modules/
 
 # Hextech runtime state
 run/data/runtime/**
@@ -68,6 +73,7 @@ tmp/
 !.state/cc-work/
 !.state/cc-work/README.md
 docs/archive/learnings-retired/ERRORS.md
+docs/workflows/codex-egress-maintenance.md
 
 # generated per-worktree, not committed to main
 TASK_HANDOFF.md
@@ -77,6 +83,9 @@ run/data/static/Champion_Core_Data.json
 
 # 一次性 Chrome 扩展策略探针脚本
 .tmp_ext_policy_probe.ps1
+
+# Codex CLI 个人配置（沙箱模式等本地偏好）
+.codex/config.toml
 
 # 接码监控真实配置含 CDK，不入库（模板 config.example.json 照常跟踪）
 sms-monitor/config.json

@@ -6,6 +6,7 @@ from __future__ import annotations
 """
 
 import argparse
+from collections import Counter
 from pathlib import Path
 import re
 import sys
@@ -15,13 +16,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pipeline.common import APP_ASSETS_DIR, APP_DATA_DIR, MANUAL_SOURCE_FILE, VALIDATION_REPORT_FILE, ensure_directories, read_json, write_json
+from pipeline.common import APP_ASSETS_DIR, APP_DATA_DIR, MANUAL_SOURCE_FILE, TALENT_DESCRIPTION_SOURCE_OVERRIDES_FILE, VALIDATION_REPORT_FILE, WIKI_RAW_FILE, ensure_directories, read_json, write_json
 
 EXPECTED_CLASS_COUNT = 7
 EXPECTED_PRIMARY_COUNT = 17
-EXPECTED_SECONDARY_COUNT = 5
+EXPECTED_SECONDARY_COUNT = 6
 EXPECTED_MELEE_COUNT = 8
-EXPECTED_WEAPON_COUNT = 30
+EXPECTED_WEAPON_COUNT = 31
 EXPECTED_TALENT_CLASS_COUNT = 7
 EXPECTED_TALENT_NODE_COUNT = 24
 EXPECTED_TALENT_GRID = {
@@ -45,6 +46,9 @@ LEGACY_RUNTIME_FILES = ("loadouts.json", "talent_details.json")
 MAX_NEGATIVE_LABEL_LENGTH = 14
 FORBIDDEN_CLASS_FIELDS = {"skills"}
 FORBIDDEN_LOADOUT_POOL_FIELDS = {"all"}
+FORBIDDEN_TALENT_TIER_TERMS = ("Minoris", "Majoris", "Extremis", "Terminus")
+TALENT_UNLOCK_META_RE = re.compile(r"\s*Unlocks at level\s+\d+\s+and costs\s+\d+\s+Requisition Points\.?\s*$", re.IGNORECASE)
+DESCRIPTION_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 
 
 def _issue(level: str, code: str, message: str) -> dict[str, str]:
@@ -117,6 +121,58 @@ def _load_manual_skill_descriptions() -> set[str]:
             if detail and detail != "/":
                 values.add(detail)
     return values
+
+
+def _talent_effect_text(value: Any) -> str:
+    """运行期不展示解锁等级/花费，数值比对只看真实效果描述。"""
+    return TALENT_UNLOCK_META_RE.sub("", str(value or "").strip()).strip()
+
+
+def _description_number_counts(value: Any) -> Counter[str]:
+    return Counter(DESCRIPTION_NUMBER_RE.findall(str(value or "")))
+
+
+def _load_source_talent_effect_numbers() -> dict[tuple[str, str], Counter[str]]:
+    raw = read_json(WIKI_RAW_FILE, {"talents": []})
+    talents = raw.get("talents", []) if isinstance(raw, dict) else []
+    result: dict[tuple[str, str], Counter[str]] = {}
+    for class_entry in talents:
+        if not isinstance(class_entry, dict):
+            continue
+        class_slug = str(class_entry.get("class_slug_candidate") or class_entry.get("class_slug") or "").strip()
+        if not class_slug:
+            continue
+        for node in class_entry.get("talents", []):
+            if not isinstance(node, dict):
+                continue
+            talent_slug = str(node.get("talent_slug", "")).strip()
+            if not talent_slug:
+                continue
+            source_description = (
+                node.get("description")
+                or node.get("description_plain")
+                or node.get("description_raw")
+                or ""
+            )
+            result[(class_slug, talent_slug)] = _description_number_counts(_talent_effect_text(source_description))
+
+    overrides = read_json(TALENT_DESCRIPTION_SOURCE_OVERRIDES_FILE, {"items": {}})
+    override_items = overrides.get("items", {}) if isinstance(overrides, dict) else {}
+    if isinstance(override_items, dict):
+        for class_slug, class_payload in override_items.items():
+            if not isinstance(class_payload, dict):
+                continue
+            clean_class_slug = str(class_slug).strip()
+            if not clean_class_slug:
+                continue
+            for talent_slug, override in class_payload.items():
+                if not isinstance(override, dict):
+                    continue
+                clean_talent_slug = str(talent_slug).strip()
+                description_en = str(override.get("description_en", "") or "").strip()
+                if clean_talent_slug and description_en:
+                    result[(clean_class_slug, clean_talent_slug)] = _description_number_counts(_talent_effect_text(description_en))
+    return result
 
 
 def validate_runtime_data(
@@ -234,6 +290,7 @@ def validate_runtime_data(
 
     talent_slugs: set[str] = set()
     skill_description_set = _load_manual_skill_descriptions()
+    source_talent_effect_numbers = _load_source_talent_effect_numbers()
     missing_description_by_class: dict[str, int] = {}
     missing_description_count = 0
     for entry in talent_classes:
@@ -300,6 +357,18 @@ def validate_runtime_data(
                 semantic_issues.append(_issue("error", "TALENT_DESCRIPTION_NOT_ZH", f"{class_slug}/{talent_slug} 的 description 仍是 ASCII-only 文本"))
             elif description in skill_description_set:
                 semantic_issues.append(_issue("error", "TALENT_DESC_POLLUTED", f"{class_slug}/{talent_slug} 使用了职业技能描述污染文本"))
+            for term in FORBIDDEN_TALENT_TIER_TERMS:
+                if re.search(rf"\b{term}\b", description, re.IGNORECASE):
+                    semantic_issues.append(_issue("error", "TALENT_TIER_TERM_NOT_ZH", f"{class_slug}/{talent_slug} 的 description 仍保留英文敌人等级：{term}"))
+            source_numbers = source_talent_effect_numbers.get((class_slug, talent_slug))
+            if source_numbers is not None:
+                runtime_numbers = _description_number_counts(description)
+                if source_numbers != runtime_numbers:
+                    semantic_issues.append(_issue(
+                        "error",
+                        "TALENT_DESCRIPTION_NUMBERS",
+                        f"{class_slug}/{talent_slug} 的 description 数值与 Wiki 效果描述不一致：source={dict(source_numbers)} runtime={dict(runtime_numbers)}",
+                    ))
 
     if len(talent_slugs) != EXPECTED_TALENT_CLASS_COUNT:
         structure_issues.append(_issue("error", "TALENT_CLASS_COUNT", f"天赋职业数量应为 {EXPECTED_TALENT_CLASS_COUNT}，当前为 {len(talent_slugs)}"))

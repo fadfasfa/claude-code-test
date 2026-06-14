@@ -30,6 +30,8 @@ ALLOWED_HOST = "apexlol.info"
 ALLOWED_CONTENT_MARKERS = ("html", "json", "javascript", "text")
 MIN_PAGE_PAUSE_SECONDS = 10
 GOTO_TIMEOUT_MS = 30_000
+DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_RETRY_DELAY_SECONDS = 2.0
 
 
 @dataclass
@@ -48,6 +50,7 @@ class PageVisitRecord:
     filename: str
     captured_at: str
     ok: bool
+    attempts: int
     error: str = ""
 
 
@@ -89,7 +92,116 @@ def save_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def capture_snapshots(snapshot_dir: Path, urls: tuple[str, ...] = DEFAULT_URLS) -> dict:
+def is_missing_browser_driver_error(exc: PlaywrightError) -> bool:
+    message = str(exc).lower()
+    return "executable doesn't exist" in message or "playwright install" in message
+
+
+def sleep_before_retry(delay_seconds: float) -> None:
+    if delay_seconds > 0:
+        time.sleep(delay_seconds)
+
+
+def launch_browser_with_retry(playwright, max_attempts: int, retry_delay_seconds: float):
+    for attempt in range(1, max_attempts + 1):
+        try:
+            # 使用非持久浏览器，不保存或复用 cookies/localStorage 等浏览器状态。
+            return playwright.chromium.launch(headless=False)
+        except PlaywrightError as exc:
+            missing_driver = is_missing_browser_driver_error(exc)
+            should_stop = attempt >= max_attempts or missing_driver
+            if should_stop:
+                print(f"浏览器启动失败：{exc}")
+                if missing_driver:
+                    print("请先安装Playwright浏览器驱动：playwright install chromium")
+                else:
+                    print(f"已达到最大浏览器启动尝试次数：{max_attempts}")
+                raise
+            print(f"浏览器启动失败，准备重试 {attempt + 1}/{max_attempts}：{exc.__class__.__name__}")
+            sleep_before_retry(retry_delay_seconds)
+    raise RuntimeError("unreachable browser launch retry state")
+
+
+def close_context_safely(context) -> None:
+    try:
+        context.close()
+    except PlaywrightError:
+        pass
+
+
+def close_browser_safely(browser) -> None:
+    try:
+        browser.close()
+    except PlaywrightError:
+        pass
+
+
+def capture_page_with_retry(
+    browser,
+    snapshot_dir: Path,
+    url: str,
+    on_response,
+    max_attempts: int,
+    retry_delay_seconds: float,
+) -> PageVisitRecord:
+    filename = f"{safe_name(url)}.html"
+    last_error = ""
+    attempts_used = 0
+
+    for attempt in range(1, max_attempts + 1):
+        attempts_used = attempt
+        context = None
+        page = None
+        try:
+            context = browser.new_context(locale="zh-CN")
+            page = context.new_page()
+            page.on("response", on_response)
+            page.goto(url, wait_until="networkidle", timeout=GOTO_TIMEOUT_MS)
+            save_text(snapshot_dir / filename, page.content())
+            return PageVisitRecord(
+                entry_url=url,
+                filename=filename,
+                captured_at=utc_now(),
+                ok=True,
+                attempts=attempts_used,
+            )
+        except PlaywrightTimeoutError as exc:
+            last_error = exc.__class__.__name__
+            if page is not None:
+                try:
+                    save_text(snapshot_dir / filename, page.content())
+                except PlaywrightError:
+                    pass
+        except PlaywrightError as exc:
+            last_error = exc.__class__.__name__
+        finally:
+            if context is not None:
+                close_context_safely(context)
+
+        if attempt < max_attempts:
+            sleep_before_retry(retry_delay_seconds)
+
+    return PageVisitRecord(
+        entry_url=url,
+        filename=filename,
+        captured_at=utc_now(),
+        ok=False,
+        attempts=attempts_used,
+        error=last_error,
+    )
+
+
+def capture_snapshots(
+    snapshot_dir: Path,
+    urls: tuple[str, ...] = DEFAULT_URLS,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    retry_delay_seconds: float = DEFAULT_RETRY_DELAY_SECONDS,
+) -> dict:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+    if retry_delay_seconds < 0:
+        raise ValueError("retry_delay_seconds must be non-negative")
+
     snapshot_dir = snapshot_dir.resolve()
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
@@ -98,11 +210,6 @@ def capture_snapshots(snapshot_dir: Path, urls: tuple[str, ...] = DEFAULT_URLS) 
     current_entry = {"url": ""}
 
     with sync_playwright() as playwright:
-        # 使用非持久上下文，避免保存或复用 cookies/localStorage 等浏览器状态。
-        browser = playwright.chromium.launch(headless=False)
-        context = browser.new_context(locale="zh-CN")
-        page = context.new_page()
-
         def on_response(response) -> None:
             response_url = response.url
             content_type = response.headers.get("content-type", "")
@@ -132,42 +239,25 @@ def capture_snapshots(snapshot_dir: Path, urls: tuple[str, ...] = DEFAULT_URLS) 
                 )
             )
 
-        page.on("response", on_response)
-
-        for index, url in enumerate(urls):
-            current_entry["url"] = url
-            filename = f"{safe_name(url)}.html"
-            ok = True
-            error = ""
-            try:
-                page.goto(url, wait_until="networkidle", timeout=GOTO_TIMEOUT_MS)
-                save_text(snapshot_dir / filename, page.content())
-            except PlaywrightTimeoutError as exc:
-                ok = False
-                error = exc.__class__.__name__
-                try:
-                    save_text(snapshot_dir / filename, page.content())
-                except PlaywrightError:
-                    pass
-            except PlaywrightError as exc:
-                ok = False
-                error = exc.__class__.__name__
-
-            page_records.append(
-                PageVisitRecord(
-                    entry_url=url,
-                    filename=filename,
-                    captured_at=utc_now(),
-                    ok=ok,
-                    error=error,
+        browser = launch_browser_with_retry(playwright, max_attempts, retry_delay_seconds)
+        try:
+            for index, url in enumerate(urls):
+                current_entry["url"] = url
+                page_records.append(
+                    capture_page_with_retry(
+                        browser=browser,
+                        snapshot_dir=snapshot_dir,
+                        url=url,
+                        on_response=on_response,
+                        max_attempts=max_attempts,
+                        retry_delay_seconds=retry_delay_seconds,
+                    )
                 )
-            )
 
-            if index < len(urls) - 1:
-                time.sleep(MIN_PAGE_PAUSE_SECONDS)
-
-        context.close()
-        browser.close()
+                if index < len(urls) - 1:
+                    time.sleep(MIN_PAGE_PAUSE_SECONDS)
+        finally:
+            close_browser_safely(browser)
 
     manifest = {
         "generated_at": utc_now(),
@@ -187,12 +277,28 @@ def parse_args() -> argparse.Namespace:
         default=str(DEFAULT_SNAPSHOT_DIR),
         help="snapshot 输出目录，默认写入 run/data/runtime/cache/apex_snapshot/manual。",
     )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=DEFAULT_MAX_ATTEMPTS,
+        help=f"浏览器启动和单页访问最大尝试次数，默认 {DEFAULT_MAX_ATTEMPTS}。",
+    )
+    parser.add_argument(
+        "--retry-delay-seconds",
+        type=float,
+        default=DEFAULT_RETRY_DELAY_SECONDS,
+        help=f"暂态失败后的重试等待秒数，默认 {DEFAULT_RETRY_DELAY_SECONDS}。",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    manifest = capture_snapshots(Path(args.snapshot_dir))
+    manifest = capture_snapshots(
+        Path(args.snapshot_dir),
+        max_attempts=args.max_attempts,
+        retry_delay_seconds=args.retry_delay_seconds,
+    )
     print(
         "Apex snapshot capture complete: "
         f"pages={len(manifest['pages'])} responses={len(manifest['responses'])} "
@@ -202,3 +308,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+

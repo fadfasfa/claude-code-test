@@ -114,15 +114,18 @@ AUGMENT_ICON_FILE = os.path.join(STATIC_DATA_DIR, "Augment_Icon_Map.json")
 AUGMENT_MANIFEST_FILE = os.path.join(STATIC_DATA_DIR, "Augment_Icon_Manifest.json")
 CHAMPION_ALIAS_INDEX_FILE = os.path.join(INDEX_DATA_DIR, "Champion_Alias_Index.json")
 HEXTECH_PRIMARY_BASE_URL = "https://aramgg.com"
+# hextech.dtodo.cn 实测对所有路径 301 永久重定向回 aramgg.com，已退化为同一源。
+# 保留常量定义为兼容（外部 import 引用），但已从 URL 元组中移除，避免假性多源。
 HEXTECH_FALLBACK_BASE_URL = "https://hextech.dtodo.cn"
+# 海克斯强化元数据：aramgg 主源 + apexlol.info 独立备份（实测可用）。
 HEXTECH_AUGMENT_METADATA_URLS = (
     f"{HEXTECH_PRIMARY_BASE_URL}/data/aram-mayhem-augments.zh_cn.json",
-    f"{HEXTECH_FALLBACK_BASE_URL}/data/aram-mayhem-augments.zh_cn.json",
     "https://apexlol.info/data/aram-mayhem-augments.zh_cn.json",
 )
+# 英雄统计当前只有 aramgg 一个真实源（dtodo 仅为重定向别名，已移除）。
+# 未来若出现独立镜像源可在此加回顺位；fetch_with_retry 自身重试仍在。
 HEXTECH_CHAMPION_STATS_URLS = (
     f"{HEXTECH_PRIMARY_BASE_URL}/data/champions-stats.json",
-    f"{HEXTECH_FALLBACK_BASE_URL}/data/champions-stats.json",
 )
 
 
@@ -130,10 +133,10 @@ def build_hextech_detail_url(champ_id: str, base_url: str = HEXTECH_PRIMARY_BASE
     return f"{str(base_url).rstrip('/')}/zh-CN/champion-stats/{champ_id}"
 
 
-def build_hextech_detail_urls(champ_id: str) -> tuple[str, str]:
+def build_hextech_detail_urls(champ_id: str) -> tuple[str, ...]:
+    # 英雄详情当前仅 aramgg 一个真实源；dtodo 已退化为 301 重定向，不再作为独立顺位。
     return (
         build_hextech_detail_url(champ_id, HEXTECH_PRIMARY_BASE_URL),
-        build_hextech_detail_url(champ_id, HEXTECH_FALLBACK_BASE_URL),
     )
 
 os.makedirs(STATIC_DATA_DIR, exist_ok=True)
