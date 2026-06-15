@@ -18,6 +18,14 @@
 - `.claude/settings.json` 可保留 Codex plugin 启用状态；启用状态不构成 Claude Code 调用 Codex 的默认偏好或隐含授权。
 - Codex plugin review gate 默认禁用；除非用户显性要求，不得启用 review gate。
 
+## Codex Egress Boundary
+
+- Codex 出口维护是独立高风险维护任务，不属于普通仓库实现任务或默认执行边界。
+- 涉及 `Codex Proxy`、`cockpit-cliproxy`、Clash、mihomo、`7898`、`7899`、Codex 出口或账号池隔离时，先读本地 `docs/workflows/codex-egress-maintenance.md`，再做探查或修改。
+- `7898` 是 Codex Proxy / `cockpit-cliproxy` 专用隔离出口，不能指回 `7899`、`手动选择`、`GLOBAL` 或主选组；如当前订阅有 AI 出口组，优先使用该组。
+- `7899` 保持日常代理用途和 `手动选择` 语义；除非用户当前轮明确点名，不为了 Codex 出口修改它。
+- 本文件不保存 live proxy 细节、节点名、订阅 URL、账号、密钥或路由真相；这些只允许写入本地忽略的维护说明，且不得包含凭据。
+
 ## Codex Task Rules
 
 - 开始任务先运行 `git status --short`。

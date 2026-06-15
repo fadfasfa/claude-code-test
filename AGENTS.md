@@ -10,6 +10,8 @@
 - `S/M/L` 只用于治理分级：`S` 为纯文字或说明性变更，`M` 为局部行为变更，`L` 为 workflow、agent 规则、plugin、hook、proxy、权限链路、仓库结构、关键数据/策略或跨模块修改。
 - 官方 Superpowers plugin 是唯一 Superpowers 来源；仓库不再提供 bridge、wrapper 或本地 skill 作为第二来源。
 - 不读取或修改凭据、token、auth、cookie、API key、proxy secret、`.env`、`auth.json`、`local.yaml`、`proxies.json`。
+- 涉及 `Codex Proxy`、`cockpit-cliproxy`、Clash、mihomo、`7898`、`7899`、Codex 出口或账号池隔离的任务，必须先读 `docs/workflows/codex-egress-maintenance.md`；`7898` 是 Codex 专用隔离出口，不得指回 `7899`、`手动选择`、`GLOBAL` 或主选组，默认优先使用当前订阅 AI 出口组。
+- `7899` 保持 Clash Verge 日常代理和 `手动选择` 语义，不作为 Codex 隔离出口；除非用户当前轮明确点名，不得为了 Codex 出口修改 `7899`。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动；commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
 - 未获明确授权时，不主动 push、创建/更新 PR、merge、删除远端分支或丢弃未合并成果。
 - 用户明确要求 push、PR、merge 或清理指定 branch/worktree 时，该指令本身即授权；agent 必须自行执行必要命令并验证结果，不得退回给用户手工输入。
