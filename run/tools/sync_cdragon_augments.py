@@ -107,6 +107,36 @@ def _manifest_entry(raw_item: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _parse_int(value: Any) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
+def _canonical_name_rank(entry: Mapping[str, Any]) -> tuple[int, int, int, str]:
+    name_id = _clean_text(entry.get("augment_name_id"))
+    filename = _clean_text(entry.get("filename"))
+    # 同中文名的 legacy 映射优先保留正式 Arena 条目；ARAM / Special / generic 是降级兜底。
+    penalty = 0
+    if name_id.upper().startswith("ARAM_"):
+        penalty += 10
+    if name_id.upper().startswith("SPECIAL_"):
+        penalty += 5
+    if filename.startswith("genericabilityaugmenticon_"):
+        penalty += 3
+    if name_id.upper().startswith("WEAPON_"):
+        penalty += 2
+    return (penalty, _parse_int(entry.get("cdragon_id")), len(name_id), name_id)
+
+
+def _manifest_sort_key(entry: Mapping[str, Any]) -> tuple[str, tuple[int, int, int, str]]:
+    # 同名条目按 canonical rank 倒序排，让旧 name-keyed 消费者覆盖时得到稳定 canonical。
+    rank = _canonical_name_rank(entry)
+    reverse_rank = tuple(-value if isinstance(value, int) else value for value in rank)
+    return (normalize_augment_name(entry["name"]), reverse_rank)
+
+
 def build_manifest(raw_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
@@ -120,7 +150,32 @@ def build_manifest(raw_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             entry["status"] = "missing_icon"
         entries.append(entry)
         seen_keys.add(stable_key)
-    return sorted(entries, key=lambda entry: (normalize_augment_name(entry["name"]), str(entry.get("augment_name_id") or entry.get("cdragon_id") or "")))
+    return sorted(entries, key=_manifest_sort_key)
+
+
+def _ambiguous_name_groups(manifest: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    for entry in manifest:
+        by_name.setdefault(_clean_text(entry.get("name")), []).append(entry)
+
+    groups: dict[str, list[dict[str, str]]] = {}
+    for name, entries in by_name.items():
+        variants = {
+            (_clean_text(entry.get("tier")), _clean_text(entry.get("filename")))
+            for entry in entries
+        }
+        if len(variants) <= 1:
+            continue
+        groups[name] = [
+            {
+                "tier": _clean_text(entry.get("tier")),
+                "filename": _clean_text(entry.get("filename")),
+                "augment_name_id": _clean_text(entry.get("augment_name_id")),
+                "cdragon_id": str(entry.get("cdragon_id") or ""),
+            }
+            for entry in sorted(entries, key=_canonical_name_rank)
+        ]
+    return dict(sorted(groups.items(), key=lambda item: normalize_augment_name(item[0])))
 
 
 def build_name_to_icon(manifest: list[dict[str, Any]], raw_items: list[dict[str, Any]]) -> dict[str, str]:
@@ -139,7 +194,7 @@ def build_name_to_icon(manifest: list[dict[str, Any]], raw_items: list[dict[str,
     return dict(sorted(mapping.items(), key=lambda item: normalize_augment_name(item[0])))
 
 
-def _download_one(session: requests.Session, entry: Mapping[str, Any], *, force: bool, timeout: float) -> dict[str, Any]:
+def _download_one(entry: Mapping[str, Any], *, force: bool, timeout: float) -> dict[str, Any]:
     filename = str(entry.get("filename") or "").strip()
     url = str(entry.get("source_icon_url") or "").strip()
     if not filename or not url:
@@ -147,7 +202,7 @@ def _download_one(session: requests.Session, entry: Mapping[str, Any], *, force:
     target = ASSET_DIR / filename
     if target.exists() and target.stat().st_size > 0 and not force:
         return {"name": entry.get("name"), "filename": filename, "status": "cached"}
-    response = session.get(url, timeout=timeout)
+    response = requests.get(url, timeout=timeout)
     response.raise_for_status()
     content = response.content
     if not content:
@@ -166,17 +221,16 @@ def download_icons(manifest: list[dict[str, Any]], *, force: bool, max_workers: 
         filename = str(entry.get("filename") or "").strip()
         if filename and filename not in unique_entries:
             unique_entries[filename] = entry
-    with requests.Session() as session:
-        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
-            futures = [
-                pool.submit(_download_one, session, entry, force=force, timeout=timeout)
-                for entry in unique_entries.values()
-            ]
-            for future in as_completed(futures):
-                try:
-                    results.append(future.result())
-                except Exception as exc:
-                    results.append({"status": "failed", "reason": str(exc)})
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+        futures = [
+            pool.submit(_download_one, entry, force=force, timeout=timeout)
+            for entry in unique_entries.values()
+        ]
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                results.append({"status": "failed", "reason": str(exc)})
     return results
 
 
@@ -185,6 +239,7 @@ def sync_cdragon_augments(*, download: bool, force_icons: bool, max_workers: int
         raw_items = fetch_cherry_augments(session, timeout=timeout)
     manifest = build_manifest(raw_items)
     name_to_icon = build_name_to_icon(manifest, raw_items)
+    ambiguous_names = _ambiguous_name_groups(manifest)
 
     icon_results = download_icons(manifest, force=force_icons, max_workers=max_workers, timeout=timeout) if download else []
     failed_icons = [item for item in icon_results if item.get("status") == "failed"]
@@ -228,6 +283,8 @@ def sync_cdragon_augments(*, download: bool, force_icons: bool, max_workers: int
         "failed_icon_sample": failed_icons[:20],
         "missing_local_icon_count": len(missing_local_icons),
         "missing_local_icon_sample": missing_local_icons[:20],
+        "ambiguous_name_count": len(ambiguous_names),
+        "ambiguous_name_sample": dict(list(ambiguous_names.items())[:20]),
         "coverage": coverage,
         "manifest_path": str(MANIFEST_PATH),
         "name_to_icon_path": str(NAME_TO_ICON_PATH),
