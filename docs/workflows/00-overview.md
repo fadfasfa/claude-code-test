@@ -15,17 +15,9 @@
 7. 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
 8. 禁止 `git add .`；push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 自行完成并验证结果，不要求用户手动输入命令。高危操作按 `07-high-risk-safety.md` 和 `AGENTS.md` 执行。
 
-## Canonical Docs
+## Discovery
 
-- `independent-agent-workflow.md`
-- `codex-execution-boundary.md`
-- `docs/archive/superpowers-project-bridge.md`
-- `07-high-risk-safety.md`
-- `repository-layout.md`
-- `work_area_registry.md`
-- `worktree-policy.md`
-- `ultraplan-adoption-note.md`
-- `agent-skill-inventory.md`
+文档发现入口统一放在 `docs/index.md`。本文件只描述默认执行流，不再维护第二套 canonical docs 清单。
 
 ## Artifact Boundary
 

@@ -1,21 +1,33 @@
 # docs Index
 
-`docs/` 的默认入口。先读本文件，再按任务读取对应短规则；不要把 `docs/reference/` 或 `docs/archive/` 整体注入上下文。
+`docs/` 的唯一发现索引。先读本文件，再按任务读取对应短规则；不要把 `docs/reference/` 或 `docs/archive/` 整体注入上下文。
 
 ## Default Reads
 
 | 路径 | 用途 |
 | :--- | :--- |
 | `docs/workflows/00-overview.md` | workflow 总览 |
-| `docs/archive/superpowers-project-bridge.md` | 旧 bridge 归档说明 |
 | `docs/workflows/independent-agent-workflow.md` | Claude Code / Codex 独立工作流 |
 | `docs/workflows/work_area_registry.md` | 工作区和写入边界 |
 | `docs/workflows/codex-execution-boundary.md` | Codex 执行边界 |
-| `docs/workflows/codex-egress-maintenance.md` | 本机 Codex 出口维护说明（本地忽略，不入库） |
 | `docs/workflows/07-high-risk-safety.md` | 高危操作确认规则 |
-| `docs/workflows/ultraplan-adoption-note.md` | Ultraplan 后续接入说明 |
-| `docs/workflows/worktree-policy.md` | worktree 策略 |
-| `docs/workflows/agent-skill-inventory.md` | skill inventory |
+
+## Task Routing
+
+| 任务类型 | 读取文档 |
+| :--- | :--- |
+| 工作区选择、写入边界、保护目录 | `docs/workflows/work_area_registry.md` |
+| Claude Code / Codex 独立执行流 | `docs/workflows/independent-agent-workflow.md` |
+| Codex surface、旧 CC-CX 退役、执行边界 | `docs/workflows/codex-execution-boundary.md` |
+| Codex 出口、代理、账号池、`7898` / `7899`、路由维护 | `docs/workflows/codex-execution-boundary.md`，必要时再读本地忽略的 `docs/workflows/codex-egress-maintenance.md` |
+| Codex 显式短调用 Claude Code CLI / GLM-5.1 worker | `docs/workflows/codex-cc-lightweight-worker.md` |
+| Git 高危操作、删除、清理、发布边界 | `docs/workflows/07-high-risk-safety.md` |
+| commit message、PR 标题和正文语言格式 | `docs/workflows/git-language-policy.md` |
+| worktree 创建、命名、清理、managed root | `docs/workflows/worktree-policy.md` |
+| skill inventory、旧 bridge/skill 退役状态 | `docs/workflows/agent-skill-inventory.md` |
+| 仓库目录职责 | `docs/workflows/repository-layout.md` |
+| Ultraplan 后续接入 | `docs/workflows/ultraplan-adoption-note.md` |
+| 旧 Superpowers project bridge 背景 | `docs/archive/superpowers-project-bridge.md` |
 
 ## On Demand
 
