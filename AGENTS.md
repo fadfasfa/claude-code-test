@@ -9,7 +9,7 @@
 - 仓库根目录是治理、路由和工具骨架；业务修改必须落到已登记的明确工作区。
 - `S/M/L` 只用于治理分级，不恢复旧 bridge 流程入口或权威流程。
 - 官方 Superpowers plugin 是唯一 Superpowers 来源；仓库不提供旧 bridge、旧 wrapper 或本地 skill 作为第二来源。
-- 不读取或修改凭据、token、auth、cookie、API key、proxy secret、`.env`、`auth.json`、`local.yaml`、`proxies.json`。
+- 不读取或修改凭据、token、auth、cookie、API key、proxy secret、`.env`、`auth.json`、`local.yaml`、`proxies.json`、`accounts.json`。
 - 不把 Codex 出口、代理、账号池或路由维护混入普通仓库实现任务；本文件不保存 live proxy 细节、端口策略或维护步骤。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动；commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
 - 未获明确授权时，不主动 push、创建/更新 PR、merge、删除远端分支、丢弃未合并成果或执行难恢复 Git 操作。
