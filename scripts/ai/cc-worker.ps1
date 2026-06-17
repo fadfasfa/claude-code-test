@@ -74,10 +74,45 @@ function ConvertTo-RepoRelativePath {
   if ($fullPath.Equals($fullRoot, [StringComparison]::OrdinalIgnoreCase)) {
     return "."
   }
-  if (-not $fullPath.StartsWith("$fullRoot\", [StringComparison]::OrdinalIgnoreCase)) {
+  $rootWithBackslash = "$fullRoot\"
+  $rootWithSlash = "$fullRoot/"
+  if (-not ($fullPath.StartsWith($rootWithBackslash, [StringComparison]::OrdinalIgnoreCase) -or $fullPath.StartsWith($rootWithSlash, [StringComparison]::OrdinalIgnoreCase))) {
     throw "路径不在仓库内：$Path"
   }
   return ($fullPath.Substring($fullRoot.Length + 1) -replace '\\', '/')
+}
+
+function Get-SensitiveFileNames {
+  return @(".env", "auth.json", "local.yaml", "proxies.json", "accounts.json")
+}
+
+function Get-SensitiveGitPathspecs {
+  $pathspecs = New-Object System.Collections.Generic.List[string]
+  foreach ($name in (Get-SensitiveFileNames)) {
+    $pathspecs.Add($name)
+    $pathspecs.Add(":(glob)**/$name")
+  }
+  $pathspecs.Add(".env.*")
+  $pathspecs.Add(":(glob)**/.env.*")
+  return @($pathspecs)
+}
+
+function Get-SensitiveToolPathPatterns {
+  $patterns = New-Object System.Collections.Generic.List[string]
+  foreach ($name in (Get-SensitiveFileNames)) {
+    $patterns.Add($name)
+    $patterns.Add("**/$name")
+  }
+  $patterns.Add(".env.*")
+  $patterns.Add("**/.env.*")
+  return @($patterns)
+}
+
+function Get-IgnoredSensitiveFilePaths {
+  param([string]$RepoRoot)
+  $arguments = @("-C", $RepoRoot, "ls-files", "--others", "--ignored", "--exclude-standard", "--") + @(Get-SensitiveGitPathspecs)
+  $paths = @(Invoke-GitLines -Arguments $arguments -AllowFailure)
+  return @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { ($_ -replace '\\', '/').Trim() } | Sort-Object -Unique)
 }
 
 function ConvertTo-NormalizedScope {
@@ -117,6 +152,9 @@ function Get-GitChangedPaths {
     }
     $paths.Add(($pathText.Trim('"') -replace '\\', '/'))
   }
+  foreach ($path in (Get-IgnoredSensitiveFilePaths -RepoRoot $RepoRoot)) {
+    $paths.Add($path)
+  }
   return @($paths | Sort-Object -Unique)
 }
 
@@ -136,23 +174,27 @@ function ConvertTo-Sha256Hex {
 function Get-UntrackedFileFingerprints {
   param([string]$RepoRoot)
   $paths = @(Invoke-GitLines -Arguments @("-C", $RepoRoot, "ls-files", "--others", "--exclude-standard"))
+  $ignoredSensitivePaths = @(Get-IgnoredSensitiveFilePaths -RepoRoot $RepoRoot)
+  $allPaths = @($paths + $ignoredSensitivePaths | Sort-Object -Unique)
   $items = New-Object System.Collections.Generic.List[string]
-  foreach ($path in ($paths | Sort-Object)) {
+  foreach ($path in $allPaths) {
     $normalized = ($path -replace '\\', '/').Trim()
     if ([string]::IsNullOrWhiteSpace($normalized)) {
       continue
     }
-    if (Test-SensitivePath -Path $normalized) {
-      $items.Add("SENSITIVE_UNTRACKED`t$normalized")
-      continue
-    }
     $fullPath = Join-Path $RepoRoot $normalized
     if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
-      $hash = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant()
-      $items.Add("UNTRACKED`t$normalized`t$hash")
+      if (Test-SensitivePath -Path $normalized) {
+        $items.Add("SENSITIVE_UNTRACKED`t$normalized`tPRESENT")
+      }
+      else {
+        $hash = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $items.Add("UNTRACKED`t$normalized`t$hash")
+      }
       continue
     }
-    $items.Add("UNTRACKED_NONFILE`t$normalized")
+    $prefix = if (Test-SensitivePath -Path $normalized) { "SENSITIVE_UNTRACKED_NONFILE" } else { "UNTRACKED_NONFILE" }
+    $items.Add("$prefix`t$normalized")
   }
   return @($items)
 }
@@ -211,7 +253,8 @@ function Get-PathFingerprintMap {
     $fullPath = Join-Path $RepoRoot $path
     if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
       if (Test-SensitivePath -Path $path) {
-        $parts.Add("FILE_HASH`tSENSITIVE")
+        # 只把敏感文件的内容哈希放进内部指纹；不把内容或哈希写入日志。
+        $parts.Add("SENSITIVE_FILE_HASH`t$((Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant())")
       }
       else {
         $parts.Add("FILE_HASH`t$((Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant())")
@@ -415,15 +458,181 @@ function Test-SensitivePath {
   param([string]$Path)
   $normalized = ($Path -replace '\\', '/').TrimStart('/')
   $fileName = [IO.Path]::GetFileName($normalized)
-  if ($fileName -eq ".env" -or $fileName.StartsWith(".env.", [StringComparison]::OrdinalIgnoreCase)) {
+  if ($fileName.Equals(".env", [StringComparison]::OrdinalIgnoreCase) -or $fileName.StartsWith(".env.", [StringComparison]::OrdinalIgnoreCase)) {
     return $true
   }
-  foreach ($name in @("auth.json", "local.yaml", "proxies.json", "accounts.json")) {
+  foreach ($name in (Get-SensitiveFileNames | Where-Object { $_ -ne ".env" })) {
     if ($fileName.Equals($name, [StringComparison]::OrdinalIgnoreCase)) {
       return $true
     }
   }
   return $false
+}
+
+function New-ClaudeToolPattern {
+  param(
+    [string]$Tool,
+    [string]$Pattern
+  )
+  return "$Tool($Pattern)"
+}
+
+function Get-DisallowedToolPatterns {
+  $patterns = New-Object System.Collections.Generic.List[string]
+  $shellTools = @("Bash", "PowerShell")
+  $gitCommands = @(
+    "git push*",
+    "*git push*",
+    "git * push*",
+    "*git * push*",
+    "git.exe push*",
+    "*git.exe push*",
+    "git.exe * push*",
+    "*git.exe * push*",
+    "git tag*",
+    "*git tag*",
+    "git.exe tag*",
+    "*git.exe tag*",
+    "git branch -D*",
+    "*git branch -D*",
+    "git.exe branch -D*",
+    "*git.exe branch -D*",
+    "git branch -d*",
+    "*git branch -d*",
+    "git.exe branch -d*",
+    "*git.exe branch -d*",
+    "git branch --delete*",
+    "*git branch --delete*",
+    "git.exe branch --delete*",
+    "*git.exe branch --delete*",
+    "git branch -f*",
+    "*git branch -f*",
+    "git.exe branch -f*",
+    "*git.exe branch -f*",
+    "git branch --force*",
+    "*git branch --force*",
+    "git.exe branch --force*",
+    "*git.exe branch --force*",
+    "git update-ref*",
+    "*git update-ref*",
+    "git.exe update-ref*",
+    "*git.exe update-ref*",
+    "git reflog delete*",
+    "*git reflog delete*",
+    "git.exe reflog delete*",
+    "*git.exe reflog delete*",
+    "git reflog expire*",
+    "*git reflog expire*",
+    "git.exe reflog expire*",
+    "*git.exe reflog expire*",
+    "git filter-branch*",
+    "*git filter-branch*",
+    "git.exe filter-branch*",
+    "*git.exe filter-branch*",
+    "git reset --hard*",
+    "*git reset --hard*",
+    "git.exe reset --hard*",
+    "*git.exe reset --hard*",
+    "git clean*",
+    "*git clean*",
+    "git.exe clean*",
+    "*git.exe clean*",
+    "git rebase*",
+    "*git rebase*",
+    "git.exe rebase*",
+    "*git.exe rebase*",
+    "git merge*",
+    "*git merge*",
+    "git.exe merge*",
+    "*git.exe merge*",
+    "git commit --amend*",
+    "*git commit --amend*",
+    "git.exe commit --amend*",
+    "*git.exe commit --amend*",
+    "git checkout -f*",
+    "*git checkout -f*",
+    "git.exe checkout -f*",
+    "*git.exe checkout -f*",
+    "git checkout --force*",
+    "*git checkout --force*",
+    "git.exe checkout --force*",
+    "*git.exe checkout --force*",
+    "git checkout -B*",
+    "*git checkout -B*",
+    "git.exe checkout -B*",
+    "*git.exe checkout -B*",
+    "git switch -f*",
+    "*git switch -f*",
+    "git.exe switch -f*",
+    "*git.exe switch -f*",
+    "git switch --force*",
+    "*git switch --force*",
+    "git.exe switch --force*",
+    "*git.exe switch --force*",
+    "git switch -C*",
+    "*git switch -C*",
+    "git.exe switch -C*",
+    "*git.exe switch -C*",
+    "git stash drop*",
+    "*git stash drop*",
+    "git.exe stash drop*",
+    "*git.exe stash drop*",
+    "git stash clear*",
+    "*git stash clear*",
+    "git.exe stash clear*",
+    "*git.exe stash clear*",
+    "git worktree remove*",
+    "*git worktree remove*",
+    "git.exe worktree remove*",
+    "*git.exe worktree remove*",
+    "git worktree prune*",
+    "*git worktree prune*",
+    "git.exe worktree prune*",
+    "*git.exe worktree prune*",
+    "gh pr*",
+    "*gh pr*",
+    "gh release*",
+    "*gh release*"
+  )
+  foreach ($tool in $shellTools) {
+    foreach ($command in $gitCommands) {
+      $patterns.Add((New-ClaudeToolPattern -Tool $tool -Pattern $command))
+    }
+  }
+
+  $readCommands = @("cat", "type", "Get-Content", "gc", "more", "less", "Select-String", "grep", "rg")
+  foreach ($pathPattern in (Get-SensitiveToolPathPatterns)) {
+    foreach ($tool in @("Read", "Edit", "Write")) {
+      $patterns.Add((New-ClaudeToolPattern -Tool $tool -Pattern $pathPattern))
+    }
+    foreach ($shellTool in $shellTools) {
+      foreach ($command in $readCommands) {
+        $patterns.Add((New-ClaudeToolPattern -Tool $shellTool -Pattern "$command *$pathPattern*"))
+        $patterns.Add((New-ClaudeToolPattern -Tool $shellTool -Pattern "*$command *$pathPattern*"))
+      }
+    }
+  }
+
+  $seenPatterns = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::Ordinal)
+  $uniquePatterns = New-Object System.Collections.Generic.List[string]
+  foreach ($pattern in $patterns) {
+    if ($seenPatterns.Add($pattern)) {
+      $uniquePatterns.Add($pattern)
+    }
+  }
+  return @($uniquePatterns)
+}
+
+function Write-WorkerStatus {
+  param(
+    [string]$Message,
+    [string]$OutputFormat
+  )
+  if ($OutputFormat -eq "json") {
+    [Console]::Error.WriteLine($Message)
+    return
+  }
+  Write-Host $Message
 }
 
 function New-WorkerPrompt {
@@ -533,24 +742,7 @@ try {
 
   $prompt = New-WorkerPrompt -RepoRoot $repoRoot -Task $Task -Mode $Mode -AllowWrite $AllowWrite -ProtectedWrite $ProtectedWrite -ValidationCommand $ValidationCommand -AllowCommit $AllowCommit.IsPresent
   $permissionMode = if ($Mode -eq "implement") { "acceptEdits" } else { "plan" }
-  $disallowedTools = @(
-    "Bash(git push*)",
-    "Bash(*git push*)",
-    "Bash(git.exe push*)",
-    "Bash(*git.exe push*)",
-    "Bash(gh pr*)",
-    "Bash(*gh pr*)",
-    "Bash(gh release*)",
-    "Bash(*gh release*)",
-    "PowerShell(git push*)",
-    "PowerShell(*git push*)",
-    "PowerShell(git.exe push*)",
-    "PowerShell(*git.exe push*)",
-    "PowerShell(gh pr*)",
-    "PowerShell(*gh pr*)",
-    "PowerShell(gh release*)",
-    "PowerShell(*gh release*)"
-  )
+  $disallowedTools = @(Get-DisallowedToolPatterns)
   if ($Mode -ne "implement") {
     $disallowedTools += @("Edit", "Write")
   }
@@ -593,11 +785,28 @@ try {
     exit 3
   }
 
-  Write-Host "cc-worker: mode=$Mode log=$logPath"
-  $output = & claude @claudeArgs 2>&1
-  $claudeExitCode = $LASTEXITCODE
-  if ($output) {
-    $output | Tee-Object -FilePath $logPath -Append
+  Write-WorkerStatus -Message "cc-worker: mode=$Mode log=$logPath" -OutputFormat $OutputFormat
+  $originalLocation = (Get-Location).ProviderPath
+  try {
+    Set-Location -LiteralPath $repoRoot
+    if ($OutputFormat -eq "json") {
+      $output = @(& claude @claudeArgs)
+      $claudeExitCode = $LASTEXITCODE
+      if ($output) {
+        Add-Content -LiteralPath $logPath -Value $output -Encoding UTF8
+        $output | ForEach-Object { $_ }
+      }
+    }
+    else {
+      $output = @(& claude @claudeArgs 2>&1)
+      $claudeExitCode = $LASTEXITCODE
+      if ($output) {
+        $output | Tee-Object -FilePath $logPath -Append
+      }
+    }
+  }
+  finally {
+    Set-Location -LiteralPath $originalLocation
   }
 
   $afterHead = ((Invoke-GitLines -Arguments @("-C", $repoRoot, "rev-parse", "HEAD")) | Select-Object -First 1).Trim()
@@ -665,7 +874,7 @@ try {
     exit 2
   }
 
-  Write-Host "cc-worker completed. log=$logPath"
+  Write-WorkerStatus -Message "cc-worker completed. log=$logPath" -OutputFormat $OutputFormat
   exit 0
 }
 catch {
