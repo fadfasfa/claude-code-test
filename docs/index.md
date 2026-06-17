@@ -20,6 +20,7 @@
 | Claude Code / Codex 独立执行流 | `docs/workflows/independent-agent-workflow.md` |
 | Codex surface、旧 CC-CX 退役、执行边界 | `docs/workflows/codex-execution-boundary.md` |
 | Codex 出口、代理、账号池、`7898` / `7899`、路由维护 | `docs/workflows/codex-execution-boundary.md`，必要时再读本地忽略的 `docs/workflows/codex-egress-maintenance.md` |
+| Codex 显式短调用 Claude Code CLI / GLM-5.1 worker | `docs/workflows/codex-cc-lightweight-worker.md` |
 | Git 高危操作、删除、清理、发布边界 | `docs/workflows/07-high-risk-safety.md` |
 | commit message、PR 标题和正文语言格式 | `docs/workflows/git-language-policy.md` |
 | worktree 创建、命名、清理、managed root | `docs/workflows/worktree-policy.md` |
