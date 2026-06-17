@@ -21,6 +21,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageGrab
 
 from processing.overlay_event_channel import OVERLAY_EVENT_FILE, build_overlay_event, write_overlay_event
 from processing.overlay_hint_cache import load_overlay_hint_cache, normalize_augment_id, query_overlay_hint
+from processing.window_titles import LOL_GAME_WINDOW_TITLE
 from tools.atomic_io import atomic_write_json
 
 try:
@@ -47,7 +48,6 @@ TWIN_CONFIDENCE_OVERRIDE = 0.92
 FLAT_CROP_STD_THRESHOLD = 12.0
 # active 掉到 unstable 后先观察几帧再写隐藏事件，避免识别抖动让 overlay 闪烁。
 DEFAULT_EXIT_UNSTABLE_FRAMES = 3
-LOL_GAME_WINDOW_TITLE = "League of Legends (TM) Client"
 DEFAULT_LOOP_FRAME_INTERVAL_MS = 250
 DEFAULT_LOOP_IDLE_INTERVAL_SECONDS = 2.0
 DEFAULT_LOOP_HEARTBEAT_SECONDS = 60.0

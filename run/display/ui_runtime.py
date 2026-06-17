@@ -44,6 +44,7 @@ from PIL import Image, ImageDraw, ImageTk
 
 from . import web_runtime
 from processing.query_terminal import display_hero_hextech, main_query, set_last_hero
+from processing.window_titles import LOL_CLIENT_WINDOW_TITLE, LOL_GAME_WINDOW_TITLE
 from scraping.version_sync import ASSET_DIR, BASE_DIR
 
 if TYPE_CHECKING:
@@ -857,8 +858,8 @@ def window_sync_loop(ui: "HextechUI") -> None:
         return _foreground_belongs_to_client(hwnd_client, foreground_hwnd)
 
     def _loop_once(now_ts: float) -> None:
-        hwnd_client = win32gui.FindWindow(None, "League of Legends")
-        hwnd_game = win32gui.FindWindow(None, "League of Legends (TM) Client")
+        hwnd_client = win32gui.FindWindow(None, LOL_CLIENT_WINDOW_TITLE)
+        hwnd_game = win32gui.FindWindow(None, LOL_GAME_WINDOW_TITLE)
         fg_window = win32gui.GetForegroundWindow()
         fg_title = _resolve_foreground_title(fg_window)
         is_client_fg = _resolve_client_fg(hwnd_client, fg_window)
