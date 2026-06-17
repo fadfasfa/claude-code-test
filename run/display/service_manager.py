@@ -195,14 +195,14 @@ class ServiceManager:
                 "overlay_event": self._overlay_event_status(),
             }
 
-    def shutdown(self, *, timeout_seconds: float = 5.0) -> None:
+    def shutdown(self, *, timeout_seconds: float = 5.0, final_timeout_seconds: float | None = 20.0) -> None:
         """关闭所有受管服务。
 
-        把 overlay/web 的停止放到后台守护线程执行，主线程只在
-        ``timeout_seconds`` 内等待；超时则直接返回，由后台线程继续
-        兜底 terminate/kill，避免关闭窗口时主线程被多个子进程的
-        ``wait(timeout=3)`` 顺序阻塞最多约 18 秒。``stop_web`` /
-        ``stop_game_overlay`` 单独调用时仍保持同步语义不变。
+        把 overlay/web 的停止放到后台线程执行，主线程先在
+        ``timeout_seconds`` 内等待；若仍未完成且 ``final_timeout_seconds``
+        不是 ``None``，退出路径会再做一次最终 join，给 terminate/kill
+        兜底足够窗口，避免 UI 销毁后后台线程被进程退出截断而留下孤儿
+        子进程。需要明确快返回的调用方可传 ``final_timeout_seconds=None``。
         """
 
         self._listener_stop.set()
@@ -218,10 +218,13 @@ class ServiceManager:
         self._shutdown_thread = threading.Thread(
             target=_stop_all,
             name="hextech-shutdown",
-            daemon=True,
+            daemon=final_timeout_seconds is None,
         )
         self._shutdown_thread.start()
-        self._shutdown_done.wait(timeout=timeout_seconds)
+        if self._shutdown_done.wait(timeout=timeout_seconds):
+            return
+        if final_timeout_seconds is not None:
+            self._shutdown_thread.join(timeout=final_timeout_seconds)
 
     @staticmethod
     def _overlay_event_status() -> dict[str, Any]:

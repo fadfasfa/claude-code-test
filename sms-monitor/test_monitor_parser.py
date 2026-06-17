@@ -10,6 +10,7 @@ import io
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import redirect_stdout
@@ -172,6 +173,73 @@ class StatefulPollable:
             self.note = "收到新验证码"
             return self.code
         return None
+
+
+class GatedStatefulPollable:
+    """用事件精确控制 poll 完成时机，避免慢源测试依赖真实 sleep。"""
+
+    def __init__(self, label, code=None, *, write_before_release=False):
+        self.label = label
+        self.code = code
+        self.write_before_release = write_before_release
+        self.last_code = ""
+        self.history = []
+        self.note = ""
+        self.status = "等待中"
+        self.calls = 0
+        self._lock = threading.Lock()
+        self._release_events = []
+        self._finished_events = []
+
+    def poll(self):
+        with self._lock:
+            self.calls += 1
+            release_event = threading.Event()
+            finished_event = threading.Event()
+            self._release_events.append(release_event)
+            self._finished_events.append(finished_event)
+        try:
+            if self.write_before_release:
+                self._write_code()
+            release_event.wait(timeout=5)
+            if self.code and not self.write_before_release:
+                self._write_code()
+                return self.code
+            return self.code if self.write_before_release else None
+        finally:
+            finished_event.set()
+
+    def _write_code(self):
+        if self.code and self.code != self.last_code:
+            self.last_code = self.code
+            self.history.insert(0, ("00:00:00", self.code, ""))
+            self.note = "收到新验证码"
+
+    def release_all(self):
+        with self._lock:
+            events = list(self._release_events)
+        for event in events:
+            event.set()
+
+    def wait_for_calls(self, expected, timeout=1.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                calls = self.calls
+            if calls >= expected:
+                return True
+            time.sleep(0.005)
+        return False
+
+    def wait_for_finished(self, expected, timeout=1.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                events = list(self._finished_events[:expected])
+            if len(events) >= expected and all(event.is_set() for event in events):
+                return True
+            time.sleep(0.005)
+        return False
 
 
 class FakeKeyboard:
@@ -489,43 +557,100 @@ class RefreshModeTest(unittest.TestCase):
 
         monitor = SmsMonitor.__new__(SmsMonitor)
         monitor._pending_polls = []
-        slow = StatefulPollable("Slow", code="555555", delay=0.2)
+        slow = GatedStatefulPollable("Slow", code="555555")
         monitor.pollables = [slow]
         monitor.max_poll_workers = 1
         monitor.poll_round_timeout = 0.05
 
-        # 第一轮：慢来源超时，未拿到码
-        self.assertEqual(monitor.poll_sources(), [])
-        self.assertIn("超时", slow.note)
+        try:
+            # 第一轮：慢来源超时，未拿到码
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertIn("超时", slow.note)
 
-        # 等迟到的 worker 真正完成（它会把 last_code 写成 555555）
-        time.sleep(0.3)
+            # 释放迟到 worker，让它真实完成并写入 last_code/history。
+            slow.release_all()
+            self.assertTrue(slow.wait_for_finished(1))
 
-        # 第二轮：结算上一轮遗留的迟到 worker，新码应被补复制
-        # 若无此机制，迟到 worker 已把 last_code 写成 555555，本轮 fresh poll
-        # 会判定为非新码返回 None，验证码将永久漏复制。
-        second_round = monitor.poll_sources()
-        self.assertEqual(second_round, [("Slow", "555555")])
-        self.assertEqual(slow.calls, 1)
-        self.assertEqual(monitor._pending_polls, [])
+            # 第二轮：结算上一轮遗留的迟到 worker，新码应被补复制。
+            # 若无此机制，迟到 worker 已把 last_code 写成 555555，本轮 fresh poll
+            # 会判定为非新码返回 None，验证码将永久漏复制。
+            second_round = monitor.poll_sources()
+            self.assertEqual(second_round, [("Slow", "555555")])
+            self.assertEqual(slow.calls, 1)
+            self.assertEqual(monitor._pending_polls, [])
+        finally:
+            slow.release_all()
 
     def test_poll_sources_keeps_still_pending_worker_for_later_reconcile(self):
         """连续多轮仍未完成的超时 worker 也必须保留到完成后再补复制。"""
 
         monitor = SmsMonitor.__new__(SmsMonitor)
         monitor._pending_polls = []
-        slow = StatefulPollable("Slow", code="666666", delay=0.35)
+        slow = GatedStatefulPollable("Slow", code="666666")
         monitor.pollables = [slow]
         monitor.max_poll_workers = 1
         monitor.poll_round_timeout = 0.05
 
-        self.assertEqual(monitor.poll_sources(), [])
-        self.assertEqual(monitor.poll_sources(), [])
-        time.sleep(0.45)
+        try:
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertEqual(slow.calls, 1)
 
-        self.assertEqual(monitor.poll_sources(), [("Slow", "666666")])
-        self.assertEqual(slow.calls, 1)
-        self.assertEqual(monitor._pending_polls, [])
+            slow.release_all()
+            self.assertTrue(slow.wait_for_finished(1))
+
+            self.assertEqual(monitor.poll_sources(), [("Slow", "666666")])
+            self.assertEqual(slow.calls, 1)
+            self.assertEqual(monitor._pending_polls, [])
+        finally:
+            slow.release_all()
+
+    def test_poll_sources_does_not_rollback_not_done_worker_state(self):
+        """仍在运行的 worker 不应被回滚，避免与 worker 并发写 history 互相踩踏。"""
+
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor._pending_polls = []
+        slow = GatedStatefulPollable("Slow", code="777777", write_before_release=True)
+        monitor.pollables = [slow]
+        monitor.max_poll_workers = 1
+        monitor.poll_round_timeout = 0.05
+
+        try:
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertTrue(slow.wait_for_calls(1))
+            self.assertEqual(slow.last_code, "777777")
+
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertEqual(slow.last_code, "777777")
+            self.assertEqual(slow.history[0][1], "777777")
+        finally:
+            slow.release_all()
+            slow.wait_for_finished(1)
+
+    def test_poll_sources_retries_after_pending_round_limit(self):
+        """永久不返回的来源达到挂起轮次上限后，应允许 fresh poll 重试。"""
+
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor._pending_polls = []
+        monitor.pending_poll_max_rounds = 1
+        slow = GatedStatefulPollable("Slow")
+        original_session = object()
+        slow.session = original_session
+        monitor.pollables = [slow]
+        monitor.max_poll_workers = 1
+        monitor.poll_round_timeout = 0.05
+
+        try:
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertTrue(slow.wait_for_calls(1))
+
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertTrue(slow.wait_for_calls(2))
+            self.assertIsNot(slow.session, original_session)
+        finally:
+            slow.release_all()
+            slow.wait_for_finished(2)
+            monitor._reconcile_pending_polls()
 
     def test_refresh_mode_defaults_and_active_window(self):
         monitor = SmsMonitor(

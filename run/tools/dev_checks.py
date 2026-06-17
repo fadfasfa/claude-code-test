@@ -21,6 +21,7 @@ import random
 import re
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1425,7 +1426,7 @@ def check_service_manager_lifecycle_contract() -> None:
     )
     shutdown_manager.start_web()
     shutdown_start = time.time()
-    shutdown_manager.shutdown(timeout_seconds=0.5)
+    shutdown_manager.shutdown(timeout_seconds=0.5, final_timeout_seconds=None)
     shutdown_elapsed = time.time() - shutdown_start
     # 单个 UnstoppableProcess 的 _stop_service 至少要等 6 秒；
     # shutdown 必须在远小于该值的总超时内返回
@@ -1437,6 +1438,46 @@ def check_service_manager_lifecycle_contract() -> None:
     web_snapshot = shutdown_manager.get_status_snapshot()["web"]
     assert web_snapshot["status"] == "error"
     assert web_snapshot["pid"] == 101
+
+    class ReleaseAfterWaitProcess(DummyProcess):
+        def __init__(self, pid: int):
+            super().__init__(pid)
+            self.wait_entered = threading.Event()
+            self.release = threading.Event()
+
+        def wait(self, timeout=None):
+            self.wait_entered.set()
+            self.release.wait(timeout=1)
+            return 0
+
+        def poll(self):
+            return 0 if self.release.is_set() else None
+
+    joined_process = ReleaseAfterWaitProcess(104)
+    joined_manager = service_manager.ServiceManager(
+        start_web_func=lambda: joined_process,
+        start_overlay_func=lambda: DummyProcess(105),
+        start_vision_sidecar_func=lambda: DummyProcess(106),
+    )
+    joined_manager.start_web()
+
+    def release_shutdown_wait() -> None:
+        assert joined_process.wait_entered.wait(timeout=1)
+        time.sleep(0.1)
+        joined_process.release.set()
+
+    release_thread = threading.Thread(target=release_shutdown_wait, daemon=True)
+    release_thread.start()
+    try:
+        joined_manager.shutdown(timeout_seconds=0.01)
+        assert joined_process.release.is_set(), "默认退出路径应等待后台收尾线程完成"
+        assert joined_manager._shutdown_thread is not None
+        assert not joined_manager._shutdown_thread.is_alive()
+        joined_snapshot = joined_manager.get_status_snapshot()["web"]
+        assert joined_snapshot["status"] == "stopped"
+    finally:
+        joined_process.release.set()
+        release_thread.join(timeout=1)
 
 
 def _top_level_import_names(path: Path) -> set[str]:

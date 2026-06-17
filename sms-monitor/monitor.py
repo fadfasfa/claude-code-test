@@ -1228,8 +1228,9 @@ class SmsMonitor:
         self.active_waiting_for_code = False
         self.active_until = 0.0
         # 上一轮超时、尚未完成的 worker：下一轮开始时结算，迟到的验证码补复制，
-        # 仍未完成的回滚关键字段，避免迟到写入污染下一轮新码判定。
+        # 仍未完成的短期保留；超过保留轮次后允许 fresh retry，避免来源永久下线。
         self._pending_polls: list = []
+        self.pending_poll_max_rounds = max(1, int(cfg.get("pending_poll_max_rounds", 3)))
         # 每个 pollable 持有独立 requests.Session，避免多 worker 并发复用同一
         # session 触发连接池/cookie/header 竞态；ready-check 的 session_factory
         # 注入链不走这里，保持不变。
@@ -1514,8 +1515,8 @@ class SmsMonitor:
                 if future not in done:
                     future.cancel()
                     self.mark_poll_timeout(source)
-                    # 结转到下一轮结算；快照用于迟到回滚
-                    self._pending_polls.append((source, future, snapshots[id(source)]))
+                    # 结转到下一轮结算；快照用于异常完成路径的回滚，轮次用于避免永久跳过。
+                    self._pending_polls.append((source, future, snapshots[id(source)], 0))
                     continue
                 new_code = future.result()
                 if new_code:
@@ -1532,9 +1533,9 @@ class SmsMonitor:
         - 已完成的 worker 若拿到了新验证码，加入 ``late_codes`` 本轮补复制
           （其 ``last_code`` 已由 worker 正确写入，无需回滚）；
         - 已完成但未返回新码却改动了 ``last_code`` 的异常路径，回滚防污染；
-        - 仍未完成的 worker，回滚 ``last_code/history`` 到快照并加入
-          ``skip_ids``，本轮不再重复轮询该来源（旧 worker 仍在跑），避免
-          同一来源被两个线程并发 poll。
+        - 仍未完成的 worker 不回滚，避免和仍在运行的线程并发改同一个
+          ``history``；短期内加入 ``skip_ids``，达到保留轮次上限后停止追踪并
+          允许本轮 fresh retry，避免单个挂死来源永久下线。
         """
 
         pending = getattr(self, "_pending_polls", None) or []
@@ -1542,15 +1543,23 @@ class SmsMonitor:
         if not pending:
             return set(), []
 
+        records = [self._unpack_pending_poll(record) for record in pending]
         late_codes = []
         skip_ids = set()
         still_pending = []
         # 限定等待上一轮迟到的 worker 完成
-        wait([future for _, future, _ in pending], timeout=self.poll_round_timeout)
-        for source, future, snap in pending:
+        wait([future for _, future, _, _ in records], timeout=self.poll_round_timeout)
+        max_rounds = max(1, int(getattr(self, "pending_poll_max_rounds", 3)))
+        for source, future, snap, pending_rounds in records:
             if not future.done():
-                self._rollback_to_snapshot(source, snap)
-                still_pending.append((source, future, snap))
+                next_rounds = pending_rounds + 1
+                if next_rounds >= max_rounds:
+                    future.cancel()
+                    self._refresh_poll_session(source)
+                    self.mark_poll_timeout(source)
+                    source.note = f"轮询长时间未返回，已重试（>{max_rounds}轮）"
+                    continue
+                still_pending.append((source, future, snap, next_rounds))
                 skip_ids.add(id(source))
                 continue
             try:
@@ -1564,6 +1573,24 @@ class SmsMonitor:
                 self._rollback_to_snapshot(source, snap)
         self._pending_polls = still_pending
         return skip_ids, late_codes
+
+    @staticmethod
+    def _unpack_pending_poll(record):
+        """兼容旧三元组 pending 记录，新记录额外保存已保留轮次。"""
+
+        if len(record) == 3:
+            source, future, snap = record
+            return source, future, snap, 0
+        source, future, snap, pending_rounds = record
+        return source, future, snap, int(pending_rounds)
+
+    @staticmethod
+    def _refresh_poll_session(source):
+        """为 fresh retry 换新 session；旧 worker 可能仍在跑，因此不主动关闭旧 session。"""
+
+        if not hasattr(source, "session"):
+            return
+        source.session = requests.Session()
 
     @staticmethod
     def _snapshot_source_state(source):
