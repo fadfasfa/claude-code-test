@@ -17,6 +17,7 @@ from ctypes import wintypes
 from typing import Any
 
 from processing.overlay_event_channel import read_overlay_event
+from processing.window_titles import LOL_GAME_WINDOW_TITLE
 
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ def build_overlay_window_config() -> dict[str, Any]:
         "click_through": True,
         "hotkey": "Alt+H",
         "alpha": 0.9,
-        "follow_window_titles": ["League of Legends (TM) Client"],
+        "follow_window_titles": [LOL_GAME_WINDOW_TITLE],
         "follow_poll_ms": 500,
         "top_offset": 132,
         "event_poll_ms": 250,

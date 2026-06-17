@@ -43,6 +43,7 @@ import processing.runtime_store as runtime_store
 import scraping.full_synergy_scraper as synergy_scraper
 import scraping.heal_worker as heal_worker
 import scraping.icon_resolver as icon_resolver
+import scraping.augment_catalog as augment_catalog
 import display.web_runtime as web_runtime
 from display.web_api import _build_synergy_api_payload, _normalize_synergy_items, _synergy_item_to_compat_string
 from processing.alias_search import load_manual_alias_index
@@ -106,6 +107,89 @@ def check_manifest_icon_url_safety() -> None:
     assert not icon_resolver.sanitize_augment_icon_url("https://evil.com/assets/x.png")
     assert not icon_resolver.sanitize_augment_icon_url("/assets/not-png.webp")
     assert not icon_resolver.sanitize_augment_icon_url("/assets/../secret.png")
+
+
+def check_cdragon_force_refresh_semantics() -> None:
+    """CDragon minimal manifest 的 force_refresh 短路语义（方案 1）。
+
+    - 反向用例：含完整字段（description/tooltip_plain 等）的 manifest 不应被判为
+      CDragon minimal，避免误短路。
+    - force_refresh=False：盘上是 CDragon minimal 时应短路返回 existing，不触发
+      icon_map / full_map / remote_metadata 重建路径。
+    - force_refresh=True：应覆盖短路，进入重建路径（load_augment_icon_map 被调用）。
+    """
+
+    def _cdragon_entry(i: int) -> dict:
+        return {
+            "schema_version": augment_catalog.MANIFEST_SCHEMA_VERSION,
+            "name": f"Augment{i}",
+            "tier": "Silver",
+            "filename": f"augment{i}.png",
+            "icon_url": f"/assets/augment{i}.png",
+            "source_icon_url": f"{augment_catalog._CDRAGON_SOURCE_PREFIX}game/assets/augment{i}.png",
+        }
+
+    minimal_manifest = [_cdragon_entry(i) for i in range(augment_catalog._MIN_VALID_MANIFEST_ENTRIES)]
+    assert augment_catalog._is_cdragon_minimal_manifest(minimal_manifest)
+
+    # 反向用例：非 CDragon source（source_icon_url 前缀不命中）不应被判为 minimal
+    non_cdragon = [{**_cdragon_entry(i), "source_icon_url": "https://apexlol.info/x.png"} for i in range(5)]
+    assert augment_catalog._is_cdragon_minimal_manifest(non_cdragon) is False
+    # 反向用例：条目数不足阈值不应被判为 minimal
+    assert augment_catalog._is_cdragon_minimal_manifest([_cdragon_entry(0)]) is False
+
+    calls: dict[str, int] = {"icon_map": 0}
+
+    def _fake_load_icon_map(config_dir=None, force_refresh=False):
+        calls["icon_map"] += 1
+        return {}
+
+    with patch.object(augment_catalog, "_read_manifest_file", return_value=minimal_manifest), \
+            patch.object(augment_catalog, "load_augment_icon_map", side_effect=_fake_load_icon_map), \
+            patch.object(augment_catalog, "_load_full_map", return_value={}), \
+            patch.object(augment_catalog, "_fetch_remote_augment_metadata", return_value={}), \
+            patch.object(augment_catalog, "_write_augment_icon_manifest"):
+        # force_refresh=False：短路生效，不应触碰 icon_map
+        result = augment_catalog.build_augment_icon_manifest(force_refresh=False)
+        assert result is minimal_manifest
+        assert calls["icon_map"] == 0
+        # force_refresh=True：覆盖短路，进入重建路径
+        augment_catalog.build_augment_icon_manifest(force_refresh=True)
+        assert calls["icon_map"] == 1
+
+
+def check_cdragon_source_schema_marker() -> None:
+    """CDragon minimal manifest 显式 source_schema 标记契约。
+
+    - sync 写入的 cdragon 条目经 normalize 后必须带 source_schema="cdragon_minimal"。
+    - _is_cdragon_source_item 优先认显式 source_schema，即使 source_icon_url 前缀不命中
+      也能识别，避免仅靠前缀隐式推断。
+    - 旧数据无 source_schema 时仍可由前缀回落识别（向后兼容）。
+    """
+
+    raw_entry = {
+        "schema_version": augment_catalog.MANIFEST_SCHEMA_VERSION,
+        "name": "缩小引擎",
+        "tier": "棱彩",
+        "filename": "shrinkengine.png",
+        "icon_url": "/assets/shrinkengine.png",
+        "source_icon_url": f"{augment_catalog._CDRAGON_SOURCE_PREFIX}game/assets/shrinkengine.png",
+        "source_schema": augment_catalog._CDRAGON_SOURCE_SCHEMA,
+    }
+    normalized = augment_catalog._normalize_cdragon_manifest_entry(raw_entry)
+    assert normalized["source_schema"] == augment_catalog._CDRAGON_SOURCE_SCHEMA
+
+    # 显式 source_schema 优先：source_icon_url 被改成非 CDragon 前缀仍应识别
+    explicit_only = {**raw_entry, "source_icon_url": "https://apexlol.info/x.png"}
+    assert augment_catalog._is_cdragon_source_item(explicit_only) is True
+
+    # 向后兼容：无 source_schema 但前缀命中仍识别
+    legacy = {k: v for k, v in raw_entry.items() if k != "source_schema"}
+    assert augment_catalog._is_cdragon_source_item(legacy) is True
+
+    # 非 CDragon 条目（既无 source_schema 也无前缀）不识别
+    foreign = {**raw_entry, "source_schema": "", "source_icon_url": "https://apexlol.info/x.png"}
+    assert augment_catalog._is_cdragon_source_item(foreign) is False
 
 
 def check_safe_detail_name_regex() -> None:
@@ -1314,6 +1398,45 @@ def check_service_manager_lifecycle_contract() -> None:
     assert "--loop" in captured["command"]
     assert "--once" not in captured["command"]
     assert "--write-event" in captured["command"]
+
+    # 冻结态分支：打包版应走主 exe 的 --overlay-sidecar 入口，不能再用 -m 模块路径
+    frozen_captured: dict[str, Any] = {}
+
+    def frozen_popen(command, cwd=None, startupinfo=None):
+        frozen_captured["command"] = command
+        frozen_captured["cwd"] = cwd
+        return DummyProcess(91)
+
+    with patch.object(service_manager.sys, "frozen", True, create=True), \
+            patch.object(service_manager.subprocess, "Popen", side_effect=frozen_popen):
+        frozen_sidecar = service_manager.start_vision_sidecar_process()
+    assert frozen_sidecar.pid == 91
+    assert "--overlay-sidecar" in frozen_captured["command"]
+    assert "-m" not in frozen_captured["command"]
+    assert "processing.overlay_vision_sidecar" not in frozen_captured["command"]
+    assert "--loop" in frozen_captured["command"]
+    assert "--write-event" in frozen_captured["command"]
+
+    # shutdown 不应被慢子进程顺序阻塞：主线程在总超时内返回，后台线程兜底收尾
+    shutdown_manager = service_manager.ServiceManager(
+        start_web_func=lambda: UnstoppableProcess(101),
+        start_overlay_func=lambda: DummyProcess(102),
+        start_vision_sidecar_func=lambda: DummyProcess(103),
+    )
+    shutdown_manager.start_web()
+    shutdown_start = time.time()
+    shutdown_manager.shutdown(timeout_seconds=0.5)
+    shutdown_elapsed = time.time() - shutdown_start
+    # 单个 UnstoppableProcess 的 _stop_service 至少要等 6 秒；
+    # shutdown 必须在远小于该值的总超时内返回
+    assert shutdown_elapsed < 3.0, f"shutdown 阻塞了 {shutdown_elapsed:.2f}s"
+    # 等后台线程收尾后，最终状态应被正确标记为 error
+    assert shutdown_manager._shutdown_thread is not None
+    shutdown_manager._shutdown_thread.join(timeout=15)
+    assert not shutdown_manager._shutdown_thread.is_alive()
+    web_snapshot = shutdown_manager.get_status_snapshot()["web"]
+    assert web_snapshot["status"] == "error"
+    assert web_snapshot["pid"] == 101
 
 
 def _top_level_import_names(path: Path) -> set[str]:
@@ -2806,6 +2929,8 @@ def run_default_checks() -> None:
     check_root_entrypoints()
     check_manual_alias_index()
     check_manifest_icon_url_safety()
+    check_cdragon_force_refresh_semantics()
+    check_cdragon_source_schema_marker()
     check_safe_detail_name_regex()
     check_apexlol_hextech_map_size_limit()
     check_runtime_alias_persistence()

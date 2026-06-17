@@ -47,6 +47,8 @@ _AUGMENT_ICON_MANIFEST_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
 _AUGMENT_LOOKUP_CACHE: tuple[str, float, dict] = ("", 0.0, {})
 _AUGMENT_ICON_AUDIT_LOCK = threading.Lock()
 _CDRAGON_SOURCE_PREFIX = "https://raw.communitydragon.org/"
+# CDragon 闭集数据层的显式来源标记；sync_cdragon_augments 写入该字段。
+_CDRAGON_SOURCE_SCHEMA = "cdragon_minimal"
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 _PLACEHOLDER_PATTERN = re.compile(r"@([^@]+)@")
 _SAFE_OPS = {
@@ -294,6 +296,9 @@ def _normalize_manifest_entry(item: dict, config_dir: str) -> dict:
 
 
 def _is_cdragon_source_item(item: dict) -> bool:
+    # 优先认显式 source_schema 标记；旧数据无该字段时回落到 source_icon_url 前缀推断。
+    if _clean_augment_text(item.get("source_schema")) == _CDRAGON_SOURCE_SCHEMA:
+        return True
     return _clean_augment_text(item.get("source_icon_url")).startswith(_CDRAGON_SOURCE_PREFIX)
 
 
@@ -313,6 +318,7 @@ def _normalize_cdragon_manifest_entry(item: dict) -> dict:
         "augment_name_id": _clean_augment_text(item.get("augment_name_id")),
         "source_icon_path": _clean_augment_text(item.get("source_icon_path")),
         "source_icon_url": _clean_augment_text(item.get("source_icon_url")),
+        "source_schema": _clean_augment_text(item.get("source_schema")) or _CDRAGON_SOURCE_SCHEMA,
     }
 
 
@@ -422,8 +428,9 @@ def build_augment_icon_manifest(
     config_dir = config_dir or STATIC_DATA_DIR
     # cdragon 数据层是闭集；盘上 manifest 已是 cdragon schema 时直接返回，
     # 不再触发 icon_map / full_map / remote_metadata 的拼接路径，避免回写成旧 minimal schema。
+    # 但 force_refresh=True 应能覆盖该短路，供 schema 升级/修复路径强制重建。
     existing_manifest = _read_manifest_file(os.path.join(config_dir, "Augment_Icon_Manifest.json"), config_dir)
-    if _is_cdragon_minimal_manifest(existing_manifest):
+    if not force_refresh and _is_cdragon_minimal_manifest(existing_manifest):
         return existing_manifest
     icon_map = load_augment_icon_map(config_dir, force_refresh=force_refresh)
     full_map = _load_full_map(config_dir)

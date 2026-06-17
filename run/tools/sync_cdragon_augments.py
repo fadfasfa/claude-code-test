@@ -104,6 +104,9 @@ def _manifest_entry(raw_item: Mapping[str, Any]) -> dict[str, Any]:
         "augment_name_id": _clean_text(raw_item.get("augmentNameId")),
         "source_icon_path": icon_path,
         "source_icon_url": build_cdragon_asset_url(icon_path),
+        # 显式标记数据层来源，供消费者区分 cdragon 闭集（无描述字段）与 apex 富化 schema，
+        # 不再仅靠 source_icon_url 前缀隐式推断。
+        "source_schema": "cdragon_minimal",
     }
 
 

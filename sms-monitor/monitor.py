@@ -1227,13 +1227,19 @@ class SmsMonitor:
         self.active_until_code = bool(cfg.get("active_until_code", True))
         self.active_waiting_for_code = False
         self.active_until = 0.0
-        self.session = requests.Session()
-        self.ludan = LuDanSource(cfg, self.session, self.request_timeout)
+        # 上一轮超时、尚未完成的 worker：下一轮开始时结算，迟到的验证码补复制，
+        # 仍未完成的回滚关键字段，避免迟到写入污染下一轮新码判定。
+        self._pending_polls: list = []
+        # 每个 pollable 持有独立 requests.Session，避免多 worker 并发复用同一
+        # session 触发连接池/cookie/header 竞态；ready-check 的 session_factory
+        # 注入链不走这里，保持不变。
+        self.ludan = LuDanSource(cfg, requests.Session(), self.request_timeout)
         self.fixed_sources = [
-            FixedUrlSource(item, self.session, self.request_timeout) for item in cfg["fixed_sources"]
+            FixedUrlSource(item, requests.Session(), self.request_timeout)
+            for item in cfg["fixed_sources"]
         ]
         self.email_sources = [
-            EmailSource(item, self.session, self.request_timeout)
+            EmailSource(item, requests.Session(), self.request_timeout)
             for item in cfg.get("email_sources", [])
         ]
         self.accounts = [AccountSource(item) for item in cfg.get("accounts", [])]
@@ -1473,23 +1479,43 @@ class SmsMonitor:
         if len(pairs) > 1:
             extra = "；".join(f"[{label}] {code}" for label, code in pairs[1:])
             self.note += f"；另有 {extra} 同时收到，请手动取用"
-        self.deactivate_high_frequency()
+        # 只有"高频等码"模式拿到码后才结束高频；定时高频模式（active_until_code=False）
+        # 拿到码不应提前清零 active_until，否则会把高频窗口错误切回低频。
+        if self.active_until_code:
+            self.deactivate_high_frequency()
 
     def poll_sources(self):
-        """并发轮询验证码来源，避免单个慢接口拖住整轮刷新。"""
+        """并发轮询验证码来源，避免单个慢接口拖住整轮刷新。
+
+        超时的 worker 不会被打断（``future.cancel`` 对已运行任务无效），
+        因此本轮先标记超时并把 worker 结转到下一轮结算：迟到的验证码在下一轮
+        开始时补复制，仍未完成的回滚关键字段，避免迟到写入让下一轮漏判新码、
+        出现"界面显示了验证码但没自动复制"。
+        """
         if not self.pollables:
             return []
 
-        worker_count = min(self.max_poll_workers, len(self.pollables))
+        new_codes = []
+        # 先结算上一轮遗留的超时 worker
+        skip_ids, late_codes = self._reconcile_pending_polls()
+        new_codes.extend(late_codes)
+
+        targets = [s for s in self.pollables if id(s) not in skip_ids]
+        if not targets:
+            return new_codes
+
+        worker_count = min(self.max_poll_workers, len(targets))
         executor = ThreadPoolExecutor(max_workers=worker_count)
-        futures = [(source, executor.submit(source.poll)) for source in self.pollables]
+        snapshots = {id(source): self._snapshot_source_state(source) for source in targets}
+        futures = [(source, executor.submit(source.poll)) for source in targets]
         try:
             done, _ = wait([future for _, future in futures], timeout=self.poll_round_timeout)
-            new_codes = []
             for source, future in futures:
                 if future not in done:
                     future.cancel()
                     self.mark_poll_timeout(source)
+                    # 结转到下一轮结算；快照用于迟到回滚
+                    self._pending_polls.append((source, future, snapshots[id(source)]))
                     continue
                 new_code = future.result()
                 if new_code:
@@ -1497,6 +1523,69 @@ class SmsMonitor:
             return new_codes
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
+
+    def _reconcile_pending_polls(self):
+        """结算上一轮超时未完成的 worker。
+
+        返回 ``(skip_ids, late_codes)``：
+
+        - 已完成的 worker 若拿到了新验证码，加入 ``late_codes`` 本轮补复制
+          （其 ``last_code`` 已由 worker 正确写入，无需回滚）；
+        - 已完成但未返回新码却改动了 ``last_code`` 的异常路径，回滚防污染；
+        - 仍未完成的 worker，回滚 ``last_code/history`` 到快照并加入
+          ``skip_ids``，本轮不再重复轮询该来源（旧 worker 仍在跑），避免
+          同一来源被两个线程并发 poll。
+        """
+
+        pending = getattr(self, "_pending_polls", None) or []
+        self._pending_polls = []
+        if not pending:
+            return set(), []
+
+        late_codes = []
+        skip_ids = set()
+        still_pending = []
+        # 限定等待上一轮迟到的 worker 完成
+        wait([future for _, future, _ in pending], timeout=self.poll_round_timeout)
+        for source, future, snap in pending:
+            if not future.done():
+                self._rollback_to_snapshot(source, snap)
+                still_pending.append((source, future, snap))
+                skip_ids.add(id(source))
+                continue
+            try:
+                code = future.result()
+            except Exception:
+                code = None
+            if code:
+                late_codes.append((source.label, code))
+                skip_ids.add(id(source))
+            elif getattr(source, "last_code", "") != snap.get("last_code"):
+                self._rollback_to_snapshot(source, snap)
+        self._pending_polls = still_pending
+        return skip_ids, late_codes
+
+    @staticmethod
+    def _snapshot_source_state(source):
+        """快照影响新码判定的关键字段，供超时迟到回滚使用。"""
+
+        history = getattr(source, "history", None)
+        return {
+            "last_code": getattr(source, "last_code", ""),
+            "history": list(history) if history is not None else None,
+        }
+
+    @staticmethod
+    def _rollback_to_snapshot(source, snap):
+        """把 last_code/history 回滚到本轮快照，避免迟到写入污染下一轮判定。"""
+
+        if hasattr(source, "last_code") and source.last_code != snap.get("last_code"):
+            source.last_code = snap.get("last_code", "")
+        history = getattr(source, "history", None)
+        old = snap.get("history")
+        if history is not None and old is not None and list(history) != old:
+            history.clear()
+            history.extend(old)
 
     def mark_poll_timeout(self, source):
         """只标记本轮轮询超时，不清空已有验证码和历史。"""

@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover - 仅用于非 Windows 诊断环境兜�
 
 from processing.ui_feature_flags import load_ui_feature_flags, save_ui_feature_flags
 from processing.overlay_event_channel import read_overlay_event, write_inactive_overlay_event
+from processing.window_titles import LOL_CLIENT_WINDOW_TITLE, LOL_GAME_WINDOW_TITLE
 from scraping.version_sync import BASE_DIR
 
 
@@ -90,6 +91,8 @@ class ServiceManager:
         self._lock = threading.RLock()
         self._listener_stop = threading.Event()
         self._listener_thread: threading.Thread | None = None
+        self._shutdown_thread: threading.Thread | None = None
+        self._shutdown_done: threading.Event | None = None
         self._listener_interval_seconds = max(2.0, min(5.0, float(listener_interval_seconds)))
         self._listener_enabled = True
         self._listener_snapshot: dict[str, Any] = {
@@ -192,10 +195,33 @@ class ServiceManager:
                 "overlay_event": self._overlay_event_status(),
             }
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, timeout_seconds: float = 5.0) -> None:
+        """关闭所有受管服务。
+
+        把 overlay/web 的停止放到后台守护线程执行，主线程只在
+        ``timeout_seconds`` 内等待；超时则直接返回，由后台线程继续
+        兜底 terminate/kill，避免关闭窗口时主线程被多个子进程的
+        ``wait(timeout=3)`` 顺序阻塞最多约 18 秒。``stop_web`` /
+        ``stop_game_overlay`` 单独调用时仍保持同步语义不变。
+        """
+
         self._listener_stop.set()
-        self.stop_game_overlay()
-        self.stop_web()
+        self._shutdown_done = threading.Event()
+
+        def _stop_all() -> None:
+            try:
+                self.stop_game_overlay()
+                self.stop_web()
+            finally:
+                self._shutdown_done.set()
+
+        self._shutdown_thread = threading.Thread(
+            target=_stop_all,
+            name="hextech-shutdown",
+            daemon=True,
+        )
+        self._shutdown_thread.start()
+        self._shutdown_done.wait(timeout=timeout_seconds)
 
     @staticmethod
     def _overlay_event_status() -> dict[str, Any]:
@@ -281,8 +307,8 @@ class ServiceManager:
     def _poll_lol_window_state() -> dict[str, bool]:
         if win32gui is None:
             return {"lol_client_visible": False, "lol_game_visible": False}
-        client = win32gui.FindWindow(None, "League of Legends")
-        game = win32gui.FindWindow(None, "League of Legends (TM) Client")
+        client = win32gui.FindWindow(None, LOL_CLIENT_WINDOW_TITLE)
+        game = win32gui.FindWindow(None, LOL_GAME_WINDOW_TITLE)
         return {
             "lol_client_visible": bool(client and win32gui.IsWindowVisible(client)),
             "lol_game_visible": bool(game and win32gui.IsWindowVisible(game)),
@@ -305,19 +331,34 @@ def start_overlay_host_process() -> subprocess.Popen:
 
 
 def start_vision_sidecar_process() -> subprocess.Popen:
-    """启动常驻 Vision sidecar；结果只通过本地事件文件回写。"""
+    """启动常驻 Vision sidecar；结果只通过本地事件文件回写。
+
+    源码态走模块入口；冻结态回到同一 exe 的 ``--overlay-sidecar`` 分支，
+    与 ``start_overlay_host_process`` 保持一致的 frozen 退出策略，避免
+    打包态下 ``-m processing.overlay_vision_sidecar`` 找不到模块路径。
+    """
 
     startupinfo = None
     if os.name == "nt":
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    command = [
-        sys.executable,
-        "-m",
-        "processing.overlay_vision_sidecar",
-        "--loop",
-        "--preset",
-        "auto",
-        "--write-event",
-    ]
+    if getattr(sys, "frozen", False):
+        command = [
+            sys.executable,
+            "--overlay-sidecar",
+            "--loop",
+            "--preset",
+            "auto",
+            "--write-event",
+        ]
+    else:
+        command = [
+            sys.executable,
+            "-m",
+            "processing.overlay_vision_sidecar",
+            "--loop",
+            "--preset",
+            "auto",
+            "--write-event",
+        ]
     return subprocess.Popen(command, cwd=BASE_DIR, startupinfo=startupinfo)

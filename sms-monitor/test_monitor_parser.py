@@ -145,6 +145,35 @@ class FakePollable:
         return self.code
 
 
+class StatefulPollable:
+    """模拟真实来源：poll() 内部写 last_code/history 并返回新码。
+
+    FakePollable 不写状态，无法复现"迟到 worker 静默改写 last_code 导致下一轮
+    漏判新码"的竞态；本类按 FixedUrlSource 的契约在 poll 内更新状态。
+    """
+
+    def __init__(self, label, code, delay=0):
+        self.label = label
+        self.code = code
+        self.delay = delay
+        self.last_code = ""
+        self.history = []
+        self.note = ""
+        self.status = "等待中"
+        self.calls = 0
+
+    def poll(self):
+        self.calls += 1
+        if self.delay:
+            time.sleep(self.delay)
+        if self.code and self.code != self.last_code:
+            self.last_code = self.code
+            self.history.insert(0, ("00:00:00", self.code, ""))
+            self.note = "收到新验证码"
+            return self.code
+        return None
+
+
 class FakeKeyboard:
     """测试热键处理用的最小 msvcrt 替身。"""
 
@@ -455,6 +484,49 @@ class RefreshModeTest(unittest.TestCase):
         self.assertIn("超时", slow.note)
         self.assertEqual(slow.status, "轮询超时")
 
+    def test_poll_sources_copies_late_code_on_next_round(self):
+        """超时 worker 迟到写入的新码必须在下一轮被补复制，不能丢失。"""
+
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor._pending_polls = []
+        slow = StatefulPollable("Slow", code="555555", delay=0.2)
+        monitor.pollables = [slow]
+        monitor.max_poll_workers = 1
+        monitor.poll_round_timeout = 0.05
+
+        # 第一轮：慢来源超时，未拿到码
+        self.assertEqual(monitor.poll_sources(), [])
+        self.assertIn("超时", slow.note)
+
+        # 等迟到的 worker 真正完成（它会把 last_code 写成 555555）
+        time.sleep(0.3)
+
+        # 第二轮：结算上一轮遗留的迟到 worker，新码应被补复制
+        # 若无此机制，迟到 worker 已把 last_code 写成 555555，本轮 fresh poll
+        # 会判定为非新码返回 None，验证码将永久漏复制。
+        second_round = monitor.poll_sources()
+        self.assertEqual(second_round, [("Slow", "555555")])
+        self.assertEqual(slow.calls, 1)
+        self.assertEqual(monitor._pending_polls, [])
+
+    def test_poll_sources_keeps_still_pending_worker_for_later_reconcile(self):
+        """连续多轮仍未完成的超时 worker 也必须保留到完成后再补复制。"""
+
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor._pending_polls = []
+        slow = StatefulPollable("Slow", code="666666", delay=0.35)
+        monitor.pollables = [slow]
+        monitor.max_poll_workers = 1
+        monitor.poll_round_timeout = 0.05
+
+        self.assertEqual(monitor.poll_sources(), [])
+        self.assertEqual(monitor.poll_sources(), [])
+        time.sleep(0.45)
+
+        self.assertEqual(monitor.poll_sources(), [("Slow", "666666")])
+        self.assertEqual(slow.calls, 1)
+        self.assertEqual(monitor._pending_polls, [])
+
     def test_refresh_mode_defaults_and_active_window(self):
         monitor = SmsMonitor(
             {
@@ -611,6 +683,7 @@ class RefreshModeTest(unittest.TestCase):
         copied = []
         monitor = SmsMonitor.__new__(SmsMonitor)
         monitor.note = ""
+        monitor.active_until_code = True
         monitor.active_waiting_for_code = True
         monitor.active_until = 999
 
@@ -623,6 +696,27 @@ class RefreshModeTest(unittest.TestCase):
         self.assertEqual(copied, ["111111"])
         self.assertFalse(monitor.active_waiting_for_code)
         self.assertEqual(monitor.active_until, 0)
+
+    def test_auto_copy_keeps_timed_high_frequency_window(self):
+        """定时高频模式（active_until_code=False）拿到码不应提前清零高频窗口。"""
+
+        copied = []
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor.note = ""
+        monitor.active_until_code = False
+        monitor.active_waiting_for_code = False
+        monitor.active_until = 999
+
+        def fake_copy(text):
+            copied.append(text)
+            return True
+
+        monitor.auto_copy_codes([("LuDan", "111111")], fake_copy)
+
+        self.assertEqual(copied, ["111111"])
+        # 定时高频窗口必须保留，不能被 deactivate_high_frequency 清零
+        self.assertEqual(monitor.active_until, 999)
+        self.assertFalse(monitor.active_waiting_for_code)
 
     def test_run_uses_poll_sources_before_auto_copy_codes(self):
         events = []
@@ -1215,6 +1309,7 @@ class ClipboardBehaviorTest(unittest.TestCase):
         copied = []
         monitor = SmsMonitor.__new__(SmsMonitor)
         monitor.note = ""
+        monitor.active_until_code = True
 
         def fake_copy(text):
             copied.append(text)
