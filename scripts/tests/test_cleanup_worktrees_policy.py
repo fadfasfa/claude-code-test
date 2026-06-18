@@ -7,6 +7,7 @@ from __future__ import annotations
 """
 
 import subprocess
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,7 +71,10 @@ def ignored_status_lines(worktree: Path) -> list[str]:
 def is_pycache_ignored_line(line: str) -> bool:
     if not line.startswith("!! "):
         return False
-    path = line[3:].strip().strip('"').replace("\\", "/").rstrip("/")
+    path = line[3:].strip().strip('"').replace("\\", "/")
+    if not path.endswith("/"):
+        return False
+    path = path.rstrip("/")
     return bool(path) and path.split("/")[-1] == "__pycache__"
 
 
@@ -78,12 +82,26 @@ def has_only_allowlisted_pycache(status_lines: list[str]) -> bool:
     return bool(status_lines) and all(is_pycache_ignored_line(line) for line in status_lines)
 
 
+def branch_ahead_count(repo: Path, base: str, branch: str) -> int:
+    counts = run_git(repo, "rev-list", "--left-right", "--count", f"{base}...{branch}").stdout.split()
+    return int(counts[1])
+
+
+def remove_worktree(repo: Path, worktree: Path) -> None:
+    if not worktree.exists():
+        return
+    run_git(repo, "worktree", "remove", "--force", str(worktree), check=False)
+    shutil.rmtree(worktree, ignore_errors=True)
+
+
 class CleanupWorktreesPolicyTextTests(unittest.TestCase):
     def test_policy_text_allows_only_pycache_ignored_status_and_uses_chinese_tables(self) -> None:
         for path in SKILL_FILES:
             text = path.read_text(encoding="utf-8")
             with self.subTest(path=path):
+                self.assertIn("## 白名单 ignored 缓存", text)
                 self.assertIn("仅有 `!!` ignored 输出且全部匹配任意层级 `__pycache__/`", text)
+                self.assertIn("目录条目", text)
                 self.assertIn("非白名单 ignored 文件或目录", text)
                 self.assertIn("**工作树**：`路径`、`分支`、`结论`、`原因`", text)
                 self.assertIn("**本地分支**：`分支`、`已合入 base`、`领先提交数`、`结论`、`原因`", text)
@@ -105,25 +123,47 @@ class CleanupWorktreesPolicyTextTests(unittest.TestCase):
 
 
 class CleanupWorktreesGitFixtureTests(unittest.TestCase):
+    def test_allowlist_requires_pycache_directory_status_entry(self) -> None:
+        self.assertTrue(has_only_allowlisted_pycache(["!! package/module/__pycache__/"]))
+        self.assertTrue(has_only_allowlisted_pycache(["!! package/module/nested/__pycache__/"]))
+        self.assertFalse(has_only_allowlisted_pycache(["!! package/module/__pycache__"]))
+        self.assertFalse(has_only_allowlisted_pycache(["!! package/module/__pycache__/cache.pyc"]))
+
     def test_merged_ahead_zero_worktree_with_only_pycache_is_allowlisted_and_removable(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
             repo, worktree = create_repo_with_feature_worktree(Path(temp))
-            write_text(worktree / "sms-monitor" / "__pycache__" / "monitor.cpython-313.pyc", "cache\n")
+            try:
+                write_text(worktree / "sms-monitor" / "__pycache__" / "monitor.cpython-313.pyc", "cache\n")
 
-            status_lines = ignored_status_lines(worktree)
-            self.assertEqual(status_lines, ["!! sms-monitor/__pycache__/"])
-            self.assertTrue(has_only_allowlisted_pycache(status_lines))
+                status_lines = ignored_status_lines(worktree)
+                self.assertEqual(status_lines, ["!! sms-monitor/__pycache__/"])
+                self.assertTrue(has_only_allowlisted_pycache(status_lines))
 
-            self.assertEqual(
-                run_git(repo, "merge-base", "--is-ancestor", "codex/fix/pycache-only", "HEAD").returncode,
-                0,
-            )
-            ahead = run_git(repo, "rev-list", "--left-right", "--count", "HEAD...codex/fix/pycache-only").stdout.strip()
-            self.assertEqual(ahead, "0\t0")
+                self.assertEqual(
+                    run_git(repo, "merge-base", "--is-ancestor", "codex/fix/pycache-only", "HEAD").returncode,
+                    0,
+                )
+                self.assertEqual(branch_ahead_count(repo, "HEAD", "codex/fix/pycache-only"), 0)
 
-            removed = run_git(repo, "worktree", "remove", str(worktree))
-            self.assertEqual(removed.returncode, 0)
-            self.assertFalse(worktree.exists())
+                removed = run_git(repo, "worktree", "remove", str(worktree))
+                self.assertEqual(removed.returncode, 0)
+                self.assertFalse(worktree.exists())
+            finally:
+                remove_worktree(repo, worktree)
+
+    def test_branch_with_ahead_commit_is_not_candidate_even_with_only_pycache(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
+            repo, worktree = create_repo_with_feature_worktree(Path(temp))
+            try:
+                write_text(worktree / "feature.txt", "ahead\n")
+                run_git(worktree, "add", "feature.txt")
+                run_git(worktree, "commit", "-q", "-m", "ahead")
+                write_text(worktree / "sms-monitor" / "__pycache__" / "monitor.pyc", "cache\n")
+
+                self.assertTrue(has_only_allowlisted_pycache(ignored_status_lines(worktree)))
+                self.assertGreater(branch_ahead_count(repo, "HEAD", "codex/fix/pycache-only"), 0)
+            finally:
+                remove_worktree(repo, worktree)
 
     def test_status_classifier_rejects_tracked_untracked_and_non_allowlisted_ignored_content(self) -> None:
         cases = {
@@ -140,8 +180,12 @@ class CleanupWorktreesGitFixtureTests(unittest.TestCase):
             with self.subTest(case=name):
                 with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
                     _, worktree = create_repo_with_feature_worktree(Path(temp))
-                    setup(worktree)
-                    self.assertFalse(has_only_allowlisted_pycache(ignored_status_lines(worktree)))
+                    repo = Path(temp) / "repo"
+                    try:
+                        setup(worktree)
+                        self.assertFalse(has_only_allowlisted_pycache(ignored_status_lines(worktree)))
+                    finally:
+                        remove_worktree(repo, worktree)
 
 
 if __name__ == "__main__":
