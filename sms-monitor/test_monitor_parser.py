@@ -16,6 +16,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
+import monitor
 from monitor import (
     AccountSource,
     LuDanSource,
@@ -405,24 +406,52 @@ class AccountSourceTest(unittest.TestCase):
 
         self.assertRegex(account.current_totp, r"^\d{6}$")
 
-    def test_copy_fields_skip_empty_and_phone_uses_local_number(self):
+    def test_copy_fields_only_exposes_login_email_and_valid_totp(self):
         account = AccountSource(
             {
                 "label": "ChatGPT",
                 "login_email": "user@example.com",
                 "password": "pw",
+                "totp_secret": "JBSWY3DPEHPK3PXP",
                 "phone": "15550123456",
             }
         )
+
+        with patch("monitor.generate_totp", return_value="123456"):
+            self.assertEqual(
+                account.copy_fields(),
+                [
+                    ("1", "登录邮箱", "user@example.com"),
+                    ("2", "2FA 动态码", "123456"),
+                ],
+            )
+
+    def test_copy_fields_include_latest_linked_verification_codes(self):
+        account = AccountSource({"label": "ChatGPT", "login_email": "user@example.com"})
+        phone_source = FakePollable("YunTL")
+        email_source = FakePollable("iCloudMail")
+        phone_source.last_code = "111111"
+        email_source.last_code = "222222"
+        account.linked_phone_source = phone_source
+        account.linked_email_source = email_source
 
         self.assertEqual(
             account.copy_fields(),
             [
                 ("1", "登录邮箱", "user@example.com"),
-                ("2", "密码", "pw"),
-                ("3", "关联电话", "5550123456"),
+                ("2", "手机验证码", "111111"),
+                ("3", "邮箱验证码", "222222"),
             ],
         )
+
+    def test_copy_fields_skip_empty_linked_verification_codes(self):
+        account = AccountSource({"label": "ChatGPT", "login_email": "user@example.com"})
+        account.linked_phone_source = FakePollable("YunTL")
+        account.linked_email_source = FakePollable("iCloudMail")
+        account.linked_phone_source.last_code = ""
+        account.linked_email_source.last_code = ""
+
+        self.assertEqual(account.copy_fields(), [("1", "登录邮箱", "user@example.com")])
 
     def test_poll_never_returns_code(self):
         account = AccountSource({"label": "iCloud", "login_email": "a@icloud.com"})
@@ -760,6 +789,39 @@ class RefreshModeTest(unittest.TestCase):
         self.assertTrue(monitor.active_waiting_for_code)
         self.assertEqual(monitor.active_until, 0)
         self.assertIn("已复制", monitor.note)
+
+    def test_account_copy_menu_copies_current_totp_by_number(self):
+        copied = []
+        monitor = SmsMonitor(
+            {
+                "base_url": "https://example.invalid",
+                "key": "dummy",
+                "fixed_sources": [],
+                "email_sources": [],
+                "accounts": [
+                    {
+                        "label": "A",
+                        "login_email": "a@example.com",
+                        "password": "pw",
+                        "totp_secret": "JBSWY3DPEHPK3PXP",
+                    }
+                ],
+            }
+        )
+
+        with (
+            patch("monitor.generate_totp", return_value="123456"),
+            patch("monitor.msvcrt", FakeKeyboard(["2"])),
+            patch("monitor.copy_to_clipboard", side_effect=lambda value: copied.append(value) or True),
+            patch("monitor.time.time", return_value=100),
+            patch.object(monitor, "render"),
+            patch.object(monitor, "render_copy_menu"),
+        ):
+            monitor.copy_source_number(2)
+
+        self.assertEqual(copied, ["123456"])
+        self.assertTrue(monitor.active_waiting_for_code)
+        self.assertIn("2FA 动态码", monitor.note)
 
     def test_account_copy_cancel_stays_idle(self):
         monitor = SmsMonitor(
@@ -1446,6 +1508,51 @@ class ClipboardBehaviorTest(unittest.TestCase):
         self.assertEqual(copied, ["111111"])
         self.assertIn("已自动复制 [LuDan] 的验证码", monitor.note)
         self.assertIn("[YunTL] 222222", monitor.note)
+
+    def test_copy_to_clipboard_retries_windows_writer_before_fallback(self):
+        attempts = []
+
+        def flaky_writer(text):
+            attempts.append(text)
+            return len(attempts) == 2
+
+        def unused_fallback(text):
+            self.fail("Windows writer succeeded after retry; fallback should not run")
+
+        self.assertTrue(
+            monitor.copy_to_clipboard(
+                "123456",
+                attempts=2,
+                retry_delay=0,
+                windows_writer=flaky_writer,
+                fallback_writer=unused_fallback,
+            )
+        )
+        self.assertEqual(attempts, ["123456", "123456"])
+
+    def test_copy_to_clipboard_uses_fallback_after_windows_writer_fails(self):
+        windows_attempts = []
+        fallback_calls = []
+
+        def failing_windows_writer(text):
+            windows_attempts.append(text)
+            return False
+
+        def fallback_writer(text):
+            fallback_calls.append(text)
+            return True
+
+        self.assertTrue(
+            monitor.copy_to_clipboard(
+                "654321",
+                attempts=2,
+                retry_delay=0,
+                windows_writer=failing_windows_writer,
+                fallback_writer=fallback_writer,
+            )
+        )
+        self.assertEqual(windows_attempts, ["654321", "654321"])
+        self.assertEqual(fallback_calls, ["654321"])
 
 
 if __name__ == "__main__":

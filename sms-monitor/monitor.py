@@ -842,12 +842,103 @@ def run_config_command(
     raise ConfigCommandError("未知 config 子命令")
 
 
-def copy_to_clipboard(text):
-    """把文本写入 Windows 系统剪贴板；失败则静默忽略，不影响主流程。"""
+def _write_windows_clipboard_text(text):
+    """用 Win32 Unicode 剪贴板 API 写入，避免 clip 子进程偶发延迟。"""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return False
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    cf_unicode_text = 13
+    gmem_moveable = 0x0002
+
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HANDLE
+    kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalFree.argtypes = [wintypes.HANDLE]
+    kernel32.GlobalFree.restype = wintypes.HANDLE
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
+
+    data = (str(text) + "\0").encode("utf-16-le")
+    handle = kernel32.GlobalAlloc(gmem_moveable, len(data))
+    if not handle:
+        return False
+    locked = kernel32.GlobalLock(handle)
+    if not locked:
+        kernel32.GlobalFree(handle)
+        return False
+    try:
+        ctypes.memmove(locked, data, len(data))
+    finally:
+        kernel32.GlobalUnlock(handle)
+
+    if not user32.OpenClipboard(None):
+        kernel32.GlobalFree(handle)
+        return False
+    try:
+        if not user32.EmptyClipboard():
+            return False
+        if not user32.SetClipboardData(cf_unicode_text, handle):
+            return False
+        handle = None
+        return True
+    finally:
+        user32.CloseClipboard()
+        if handle:
+            kernel32.GlobalFree(handle)
+
+
+def _write_clip_command_text(text):
+    """clip.exe fallback：保留旧路径，给 Win32 API 不可用时兜底。"""
     try:
         proc = subprocess.Popen("clip", stdin=subprocess.PIPE, shell=True)
-        proc.communicate(input=text.encode("utf-16-le"))
+        proc.communicate(input=str(text).encode("utf-16-le"))
         return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def copy_to_clipboard(
+    text,
+    attempts=3,
+    retry_delay=0.05,
+    windows_writer=None,
+    fallback_writer=None,
+):
+    """把文本写入剪贴板；Windows API 短暂占用时重试，再退回 clip.exe。"""
+    value = str(text)
+    total_attempts = max(1, int(attempts))
+    writer = windows_writer
+    if writer is None and os.name == "nt":
+        writer = _write_windows_clipboard_text
+    if writer is not None:
+        for attempt_index in range(total_attempts):
+            try:
+                if writer(value):
+                    return True
+            except Exception:
+                pass
+            if retry_delay and attempt_index + 1 < total_attempts:
+                time.sleep(retry_delay)
+
+    fallback = _write_clip_command_text if fallback_writer is None else fallback_writer
+    try:
+        return bool(fallback(value))
     except Exception:
         return False
 
@@ -1195,11 +1286,20 @@ class AccountSource:
 
     def copy_fields(self):
         fields = []
-        candidates = [
-            ("登录邮箱", self.login_email),
-            ("密码", self.password),
-            ("关联电话", split_us_phone(self.phone).local_number),
-        ]
+        current_totp = self.current_totp
+        candidates = [("登录邮箱", self.login_email)]
+        if current_totp and current_totp != "密钥无效":
+            candidates.append(("2FA 动态码", current_totp))
+
+        # 只把已收到的验证码放进复制菜单；空状态仍由面板负责展示。
+        phone_code = getattr(self.linked_phone_source, "last_code", "")
+        email_code = getattr(self.linked_email_source, "last_code", "")
+        candidates.extend(
+            [
+                ("手机验证码", phone_code),
+                ("邮箱验证码", email_code),
+            ]
+        )
         for label, value in candidates:
             if value:
                 fields.append((str(len(fields) + 1), label, value))
@@ -1424,8 +1524,7 @@ class SmsMonitor:
         print(f"  [{index}] {account.label} 账户复制项")
         print("=" * 68)
         for key, label, value in fields:
-            visible = value if label != "密码" else "<密码>"
-            print(f"  {key}. {label}：{visible}")
+            print(f"  {key}. {label}：{value}")
         print()
         print("  按对应数字复制；Esc 取消。")
 
