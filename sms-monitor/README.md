@@ -7,7 +7,7 @@
 1. 首次使用：复制 `config.example.json` 为 `config.json`，把 `key` 改成你的 CDK，并把 `fixed_sources` 里的 `url` 改成真实接码链接。
 2. 双击 `run.bat` 启动（或命令行 `python monitor.py`）。
 3. 面板会显示 LuDan 动态号码、未归属账户的固定号码/邮箱来源和账户档案；已被账户关联的接码来源会聚合到账户卡片内，不在顶层重复列出。美国号码会拆成国家码 `+1` 与 10 位号码，复制区域只放 10 位号码。
-4. 按来源序号手动复制对应 10 位号码/邮箱；检测到新验证码时会自动复制验证码。账户档案按序号后会进入复制子菜单，可复制登录邮箱、当前 2FA 动态码，以及已经收到的手机/邮箱验证码；无 TOTP 密钥或密钥无效时不显示动态码复制项。
+4. 按来源序号手动复制对应 10 位号码/邮箱；检测到新的手机或邮箱验证码时会自动复制验证码。账户档案按序号后会进入复制子菜单，可复制登录邮箱、当前 2FA 动态码和 10 位手机号码；无 TOTP 密钥或密钥无效时不显示动态码复制项。
 5. 启动后默认低频刷新，方便滚动查看历史；复制号码/邮箱/账户项或手动换号后，会进入高频轮询，拿到新验证码并自动复制后回到低频。多个接码来源会并发轮询，单个慢接口只显示本轮超时提示，不会拖住整轮刷新。
 
 ## 标准录入流程
@@ -20,6 +20,8 @@
 4. 录入邮箱来源：`python monitor.py config upsert-email --label iCloud --email example@icloud.com --provider icloud --base-url https://email.nloop.cc --json`
 5. 录入账户档案：`python monitor.py config upsert-account --label ChatGPT --login-email your-gmail@example.com --password-env ACCOUNT_PASSWORD --totp-secret-env ACCOUNT_TOTP --phone 15550123456 --email example@icloud.com --json`
 6. 预备接码检查：`python monitor.py config ready-check --all --json`
+
+手机号可按原始格式录入用于来源匹配，但登录输入或复制时只使用美国 10 位本地号码，不要把 `+1` 等国家码计入目标输入框。
 
 `ready-check` 的 `ready=true` 表示来源已经可等待验证码，不表示已经收到验证码。命令输出只包含来源 label、类型、状态和脱敏原因；真实 key、URL token、密码和 TOTP 密钥必须通过环境变量传入，不应出现在命令输出或对话里。
 
@@ -51,7 +53,7 @@ python monitor.py config ready-check --all --json
 
 ## 热键
 
-- 数字键复制对应来源的 10 位号码/邮箱；账户来源会先打开复制子菜单，菜单只列登录邮箱、有效 2FA 动态码和已收到的手机/邮箱验证码
+- 数字键复制对应来源的 10 位号码/邮箱；账户来源会先打开复制子菜单，菜单只列登录邮箱、有效 2FA 动态码和 10 位手机号码
 - `n` 仅 LuDan 换号
 - `q` / Ctrl+C 退出
 
