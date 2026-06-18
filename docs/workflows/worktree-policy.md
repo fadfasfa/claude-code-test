@@ -58,5 +58,5 @@ worktree 写操作按动作分授权位：
 - `TASK_HANDOFF.md` 和 `.task-worktree.json` 只属于显式 worktree 流程。
 - 普通任务不生成、不更新这些文件。
 - 旧 metadata / cleanup 脚本已随旧 workflow 主流程移除；普通任务不读取或更新 worktree metadata。
-- `cleanup-worktrees` 对话入口默认只审计 managed roots；真实清理前必须确认目标受管且工作树干净，并按 worktree、孤立本地分支、origin stale 远程缓存分别获得用户显性授权。
-- 用户已明确要求清理指定 branch/worktree 时，agent 自行执行并验证；不得升级到 force remove、`branch -D`、`git clean` 或 `reset --hard`。
+- `cleanup-worktrees` 对话入口默认清理 PR 合并后的本地残留：已合并到 base、相对 base 无领先提交、干净、无 untracked/ignored 本地文件、受管且非 protected 的 worktree / 本地分支，以及已并入 base 的 stale `origin/*` 本机缓存。`audit`、`--dry-run`、`--audit`、`只审计` 只审计。
+- 未合并、仍领先、dirty、含 ignored 本地文件、非受管、protected 或 GitHub 上真实存在的远端分支只列清单并保持不变；`git ls-remote --heads origin` 失败时跳过 stale remote ref 清理。不得删除真实远端分支，不得升级到 force remove、`branch -D`、`git clean` 或 `reset --hard`。

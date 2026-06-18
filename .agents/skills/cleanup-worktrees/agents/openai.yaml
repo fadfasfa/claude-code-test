@@ -1,4 +1,4 @@
 interface:
   display_name: "Cleanup Worktrees"
-  short_description: "Audit or clean merged managed worktrees"
-  default_prompt: "Use $cleanup-worktrees to audit managed Git worktrees in this repository."
+  short_description: "Clean PR-merged managed worktree leftovers"
+  default_prompt: "Use $cleanup-worktrees to clean PR-merged managed Git worktree and branch leftovers in this repository."

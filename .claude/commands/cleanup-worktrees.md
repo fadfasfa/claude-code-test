@@ -1,6 +1,6 @@
 ---
-description: 审计 managed Git worktree，并按对象显性授权执行清理
-argument-hint: "[--apply] [--no-prune] [--repo PATH] [--base REF]"
+description: 审计或清理 PR 合并后的 managed Git worktree / branch 残留
+argument-hint: "[audit|--dry-run] [--no-prune] [--repo PATH] [--base REF]"
 allowed-tools: [Bash]
 ---
 
@@ -8,6 +8,6 @@ allowed-tools: [Bash]
 
 原始参数：`$ARGUMENTS`
 
-默认只做审计。即使用户传入 `--apply`，也只能执行本次消息已经明确点名的对象类型：移除 managed worktree、删除已合并孤立本地分支、清理 origin stale 远程缓存。不要把一种清理授权扩展到其他审计表。
+默认执行安全清理：只处理 PR 已合并、相对 base 无领先提交、干净、无 untracked/ignored 本地文件、受管且非 protected 的本地 worktree / branch 残留；dirty、含 ignored 缓存、未合并、仍领先、非受管或 protected 的对象只列清单并保持不变。`audit` / `audit worktrees` / `--dry-run` / `--audit` / `只审计` 只输出清单，`--apply` 只是兼容别名。
 
-不得调用或恢复 `scripts/git/safe-worktree-cleanup.ps1`；不得升级到 force remove、`branch -D`、未限定 remote 的 prune、`git clean`、`reset --hard`、push、PR、merge、rebase 或 tag。
+默认可逐个删除已合并且无领先提交的 stale `origin/*` 本机缓存；只有 `git ls-remote --heads origin` 成功后才允许判定 stale，远端列表失败时跳过 remote ref 清理。不得删除 GitHub 上真实存在的远端分支。不得调用或恢复 `scripts/git/safe-worktree-cleanup.ps1`；不得升级到 force remove、`branch -D`、未限定 remote 的 prune、`git clean`、`reset --hard`、push、PR、merge、rebase 或 tag。
