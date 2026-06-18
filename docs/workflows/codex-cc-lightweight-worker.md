@@ -1,6 +1,6 @@
 # Codex CC Lightweight Worker
 
-本文件定义 Codex App 显式短调用 Claude Code CLI / GLM-5.1 的轻量工作流。它不是旧 CC-CX bridge，不创建任务队列、daemon、状态机、hook、数据库或多层调度系统。
+本文件定义 Codex App 主动评估、显式短调用 Claude Code CLI / GLM-5.1 的轻量工作流。它不是旧 CC-CX bridge，不创建任务队列、daemon、状态机、hook、数据库、命令拦截或多层调度系统。
 
 ## 角色
 
@@ -45,6 +45,38 @@
 - `-AllowCommit`：只有 Codex 任务包明确允许时，CC 才可 commit；wrapper 场景仍禁止 push。
 - `-MaxBudgetUsd`：限制单次 Claude CLI 调用预算。
 - `-OutputFormat text|json`：默认 text；json 只用于需要结构化输出的调用。
+
+开关接口只管理 worker 启用状态，不调用 Claude，不读取任务包，不修改业务文件：
+
+```powershell
+.\scripts\ai\cc-worker.ps1 -Status
+.\scripts\ai\cc-worker.ps1 -Disable -Reason "claude unavailable"
+.\scripts\ai\cc-worker.ps1 -Enable
+```
+
+- 临时覆盖：`CODEX_CC_WORKER_ENABLED=0|1`，只影响当前进程环境；`1` 可临时覆盖持久 disabled。
+- 持久状态：`.state/cc-work/cc-worker-control.json`，字段固定为 `enabled`、`reason`、`updatedAt`；该文件是本地状态，不纳入提交。
+- worker 关闭时，普通调用返回明确的 `skipped` 状态并直接退出，不调用 Claude、不创建 wrapper log、不做 baseline fingerprint，也不修改工作区。
+
+## Codex 主动评估
+
+Codex 在本仓处理非琐碎 S1/M1/M2 任务时，默认先主动评估是否调用本 wrapper。这里的“主动”只表示高权重提示词偏好：Codex 决定合适后显式执行一次短调用；不是 hook、daemon、后台轮询、任务队列或每条 shell 命令自动触发。
+
+适合主动评估并可能委派的任务：
+
+- S1：边界清楚的文档修正、局部配置整理、简单 bug fix、测试补齐。
+- M1：独立脚本、小 CLI、局部模块实现、小型重构，且允许写入范围能明确枚举。
+- M2：方案探索、竞争设计、反向 review，默认不改文件。
+
+默认跳过自动委派的任务：
+
+- L 级或仓库级核心策略、规则链、权限模型和长期 workflow 设计。
+- 敏感凭据、认证、token、cookie、API key、proxy secret、账号池、路由维护。
+- 强耦合根因排查、需要主线程完整上下文连续推理的任务。
+- Git 高危、发布、PR、merge、rebase、tag、amend、reset、clean、远端或历史操作。
+- 允许写入范围无法清楚表达、需要跨多个保护域协调，或 worker 当前被 `-Disable` / env 关闭。
+
+如果 worker 不可用、被暂停或评估后不适合，Codex 继续独立执行，并在收口时说明跳过原因。
 
 ## Codex 调用规范
 
@@ -116,6 +148,10 @@ Git 边界：
 - `AllowWrite` 会被 postflight 执行检查；除保护目录外，本次调用实际改变的路径必须落在允许写入范围内；保护目录实际改动必须落在 `ProtectedWrite` 范围内。
 - `plan` 和 `review` 模式会比较调用前后的工作树指纹；即使调用前已有 dirty 文件，也应能发现本次调用对同一路径的内容改动。
 - 如果某个路径调用前已经 dirty，本次调用又继续修改同一路径，postflight 会把它列为 dirty overlap violation；默认不自动回滚。
+- `-Status`、`-Enable`、`-Disable` 只管理 `.state/cc-work/cc-worker-control.json`，不调用 Claude。
+- `CODEX_CC_WORKER_ENABLED=0` 或持久 disabled 时，普通调用返回 `skipped`，且不触发 Claude。
+- `CODEX_CC_WORKER_ENABLED=1` 可临时覆盖持久 disabled。
+- `-OutputFormat json` 时 wrapper 自身状态输出不污染 stdout 中的 Claude payload。
 - Codex 调用后能完成 `git status --short`、`git diff --stat`、`git diff`、`git diff --check` 审查。
 
 ## 回滚

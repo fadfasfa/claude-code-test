@@ -18,6 +18,14 @@
 - 不恢复 CC-CX guard、plan-gate、状态机、command、hook、memory、learning promotion、自动 PR shipping、task resume 或高权限 worktree skill。
 - commit message 与 PR 标题/正文使用本仓约定的中文 conventional 格式；具体格式、例外和流程由 workflow 文档维护。
 
+## Codex 主动 worker 评估
+
+- Codex 处理本仓非琐碎 S1/M1/M2 任务时，默认先主动评估是否使用 `scripts/ai/cc-worker.ps1` 辅助执行、方案探索或反向 review。
+- 该评估是高权重提示词规则，不是 hook、daemon、任务队列、命令拦截或旧 CC-CX bridge；worker 仍只能由 Codex 显式短调用。
+- 适合委派时，Codex 必须按 `docs/workflows/codex-cc-lightweight-worker.md` 写清任务包、允许写入范围、保护范围、验证命令和输出要求，并在调用后审查真实 diff。
+- 以下情况默认不自动委派：L 级或仓库级核心策略、敏感凭据/认证/路由、强耦合根因排查、Git 高危/发布/PR/merge/rebase/tag/amend/reset/clean、必须整体理解的任务、以及 worker 开关关闭时。
+- worker 不可用或被暂停时，Codex 继续独立执行当前任务，并在总结里说明未使用 worker 的原因。
+
 ## 入口和收口
 
 - Codex：先读本文件、`PROJECT.md` 和 `docs/index.md`，再按任务相关文档执行。
