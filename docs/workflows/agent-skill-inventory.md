@@ -22,6 +22,6 @@
 ## Boundary
 
 - 不保留 memory / learning promotion skill。
-- 不恢复旧 command、hook、自动 PR shipping、task resume 或高权限 worktree skill；`cleanup-worktrees` 仅作为用户显性调用的 PR 合并残留清理入口，默认只清理已合并、无领先提交、干净且受管的本地对象。
+- 不恢复旧 command、hook、自动 PR shipping、task resume 或高权限 worktree skill；`cleanup-worktrees` 仅作为用户显性调用的 PR 合并残留清理入口，默认只清理已合并、无领先提交、无 untracked/ignored 本地文件且受管的本地对象；`audit` 类请求保持只读。
 - `.claude/skills/` 不属于 Codex skill 白名单。
 - 官方 Superpowers skills 不在本仓 fork；本仓只认官方已安装 plugin，不再通过本地 bridge 接入方法论。
