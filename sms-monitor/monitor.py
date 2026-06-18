@@ -1291,15 +1291,17 @@ class AccountSource:
         if current_totp and current_totp != "密钥无效":
             candidates.append(("2FA 动态码", current_totp))
 
-        # 只把已收到的验证码放进复制菜单；空状态仍由面板负责展示。
-        phone_code = getattr(self.linked_phone_source, "last_code", "")
-        email_code = getattr(self.linked_email_source, "last_code", "")
-        candidates.extend(
-            [
-                ("手机验证码", phone_code),
-                ("邮箱验证码", email_code),
-            ]
-        )
+        # 验证码由轮询链路自动复制；账户菜单只提供登录时需要手动复制的手机号。
+        phone_number = ""
+        if self.linked_phone_source is not None:
+            parts = getattr(self.linked_phone_source, "phone_parts", None)
+            phone_number = getattr(parts, "local_number", "") if parts is not None else ""
+            if not phone_number:
+                phone_number = split_us_phone(getattr(self.linked_phone_source, "phone", "")).local_number
+        if not phone_number:
+            phone_number = split_us_phone(self.phone).local_number
+        candidates.append(("手机号码", phone_number))
+
         for label, value in candidates:
             if value:
                 fields.append((str(len(fields) + 1), label, value))

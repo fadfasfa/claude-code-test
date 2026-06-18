@@ -19,6 +19,8 @@ from unittest.mock import patch
 import monitor
 from monitor import (
     AccountSource,
+    EmailSource,
+    FixedUrlSource,
     LuDanSource,
     SmsMonitor,
     generate_totp,
@@ -406,7 +408,7 @@ class AccountSourceTest(unittest.TestCase):
 
         self.assertRegex(account.current_totp, r"^\d{6}$")
 
-    def test_copy_fields_only_exposes_login_email_and_valid_totp(self):
+    def test_copy_fields_exposes_login_totp_and_config_phone_number(self):
         account = AccountSource(
             {
                 "label": "ChatGPT",
@@ -423,12 +425,22 @@ class AccountSourceTest(unittest.TestCase):
                 [
                     ("1", "登录邮箱", "user@example.com"),
                     ("2", "2FA 动态码", "123456"),
+                    ("3", "手机号码", "5550123456"),
                 ],
             )
 
-    def test_copy_fields_include_latest_linked_verification_codes(self):
-        account = AccountSource({"label": "ChatGPT", "login_email": "user@example.com"})
-        phone_source = FakePollable("YunTL")
+    def test_copy_fields_prefers_linked_source_phone_and_never_lists_codes(self):
+        account = AccountSource(
+            {
+                "label": "ChatGPT",
+                "login_email": "user@example.com",
+                "phone": "+15550123456",
+            }
+        )
+        phone_source = FixedUrlSource(
+            {"label": "YunTL", "phone": "+15550987654", "url": "https://example.invalid/sms"},
+            FixedReadySession(FakeTextResponse("暂无短信")),
+        )
         email_source = FakePollable("iCloudMail")
         phone_source.last_code = "111111"
         email_source.last_code = "222222"
@@ -439,12 +451,11 @@ class AccountSourceTest(unittest.TestCase):
             account.copy_fields(),
             [
                 ("1", "登录邮箱", "user@example.com"),
-                ("2", "手机验证码", "111111"),
-                ("3", "邮箱验证码", "222222"),
+                ("2", "手机号码", "5550987654"),
             ],
         )
 
-    def test_copy_fields_skip_empty_linked_verification_codes(self):
+    def test_copy_fields_skip_empty_linked_codes_and_missing_phone(self):
         account = AccountSource({"label": "ChatGPT", "login_email": "user@example.com"})
         account.linked_phone_source = FakePollable("YunTL")
         account.linked_email_source = FakePollable("iCloudMail")
@@ -452,6 +463,34 @@ class AccountSourceTest(unittest.TestCase):
         account.linked_email_source.last_code = ""
 
         self.assertEqual(account.copy_fields(), [("1", "登录邮箱", "user@example.com")])
+
+    def test_email_source_poll_returns_new_code_for_auto_copy_chain(self):
+        source = EmailSource(
+            {
+                "label": "iCloudMail",
+                "email": "user@icloud.com",
+                "provider": "icloud",
+                "base_url": "https://email.nloop.cc",
+            },
+            EmailReadySession(
+                FakeJsonResponse(
+                    {
+                        "ok": True,
+                        "mails": [
+                            {
+                                "id": "mail-1",
+                                "subject": "Sign in",
+                                "body": "Your verification code is 246810.",
+                            }
+                        ],
+                    }
+                )
+            ),
+            request_timeout=1,
+        )
+
+        self.assertEqual(source.poll(), "246810")
+        self.assertEqual(source.last_code, "246810")
 
     def test_poll_never_returns_code(self):
         account = AccountSource({"label": "iCloud", "login_email": "a@icloud.com"})
