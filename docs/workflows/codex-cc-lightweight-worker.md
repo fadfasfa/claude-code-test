@@ -1,13 +1,13 @@
 # Codex CC Lightweight Worker
 
-本文件定义 Codex App 主动评估、显式短调用 Claude Code CLI / GLM-5.1 的轻量工作流。它不是旧 CC-CX bridge，不创建任务队列、daemon、状态机、hook、数据库、命令拦截或多层调度系统。
+本文件定义 Codex App 主动评估、显式短调用 Claude Code CLI 的轻量工作流；具体后端模型沿用当前 Claude Code 配置。它不是旧 CC-CX bridge，不创建任务队列、daemon、状态机、hook、数据库、命令拦截或多层调度系统。
 
 ## 角色
 
 | 角色 | 职责 |
 | :--- | :--- |
 | Codex App | 主控端、架构师、任务分级者、最终 reviewer、Git 和发布边界守门人 |
-| Claude Code CLI / GLM-5.1 | 高信任受控实现代理、局部工程执行者、方案探索者、反向 reviewer |
+| Claude Code CLI 后端模型 | 高信任受控实现代理、局部工程执行者、方案探索者、反向 reviewer |
 | Claude Code VS 插件 | 独立日常助手，处理当前文件、当前报错、局部脚本和小范围测试 |
 | 用户 | 批准 push、不可逆操作、大范围重构、核心流程变更，以及敏感或保护范围的最终边界 |
 
@@ -23,7 +23,7 @@
 | M2 | Codex 调 CC | 默认不改 | 方案探索、竞争设计、反向 review | 输出判断、风险和建议；Codex 最终裁决 |
 | L | Codex 主导 | 视授权 | 仓库级规则、权限链路、workflow、核心策略 | Codex 主导，CC 只辅助调查、局部实现或 review |
 
-判断标准是爆炸半径，不是任务难度。GLM-5.1 可以处理边界明确的中等复杂任务；高爆炸半径任务仍由 Codex 主导。
+判断标准是爆炸半径，不是任务难度或固定模型名。边界明确的中等复杂任务可委派给当前 Claude Code CLI 后端；高爆炸半径任务仍由 Codex 主导。
 
 ## Wrapper
 
@@ -112,9 +112,9 @@ git diff --check
 Codex 调用的 CC wrapper：
 
 - 使用 `claude -p` 短调用。
-- `implement` 默认使用 `--permission-mode acceptEdits`，给 GLM 宽松本地执行空间。
+- `implement` 默认使用 `--permission-mode acceptEdits`，给当前 Claude Code CLI 后端宽松本地执行空间。
 - `plan` 和 `review` 默认使用 `--permission-mode plan`，原则上不改文件。
-- 默认不传 `--model`，继承当前 Claude Code provider / GLM-5.1 配置。
+- 默认不传 `--model`，继承当前 Claude Code provider / model 配置。
 - 默认 Bash / PowerShell 宽松，允许排查、测试、lint、build 和常规本地命令；wrapper 显式禁止 `git push`、`gh pr`、`gh release`、`Edit`/`Write` 等高风险或模式不匹配工具。
 - 永远禁止 push、PR 创建和发布；用户正常打开 Claude Code 并显式命令时不受本 wrapper 限制。
 - 不把 Claude Code 的 sandbox 当强制安全边界；Windows 环境可能无 sandbox，控制点是任务包、postflight 和 Codex diff 审查。

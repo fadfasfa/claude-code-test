@@ -4,7 +4,7 @@
 
 | 路径 | 状态 | 用途 |
 | :--- | :--- | :--- |
-| `scripts/ai/cc-worker.ps1` | Codex 主动评估 / manual | Codex App 对合格 S1/M1/M2 任务主动评估、仍显式短调用 Claude Code CLI / GLM-5.1 的轻量 worker wrapper |
+| `scripts/ai/cc-worker.ps1` | Codex 主动评估 / manual | Codex App 对合格 S1/M1/M2 任务主动评估、仍显式短调用 Claude Code CLI 的轻量 worker wrapper |
 | `scripts/git/` | legacy/manual | 旧 Git / worktree 查看与清理辅助脚本，只能显式手动调用 |
 | `scripts/scraping/apex_snapshot_capture.py` | manual | 低频手动打开 ApexLoL 入口页，保存同源 HTML/JSON/JS/text snapshot 供离线解析 |
 
