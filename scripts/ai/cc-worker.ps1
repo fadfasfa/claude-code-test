@@ -705,13 +705,13 @@ function ConvertFrom-WorkerEnabledEnv {
 
 function Get-EffectiveWorkerControlState {
   param([string]$RepoRoot)
-  $state = Read-WorkerControlState -RepoRoot $RepoRoot
   $envValue = [Environment]::GetEnvironmentVariable("CODEX_CC_WORKER_ENABLED", "Process")
   $envEnabled = ConvertFrom-WorkerEnabledEnv -Value $envValue
   if ($null -ne $envEnabled) {
     $reason = if ($envEnabled) { "enabled by CODEX_CC_WORKER_ENABLED=$envValue" } else { "disabled by CODEX_CC_WORKER_ENABLED=$envValue" }
-    return New-WorkerControlState -Enabled $envEnabled -Source "env" -Reason $reason -StatePath $state.statePath -UpdatedAt $state.updatedAt
+    return New-WorkerControlState -Enabled $envEnabled -Source "env" -Reason $reason -StatePath (Get-ControlFilePath -RepoRoot $RepoRoot) -UpdatedAt ""
   }
+  $state = Read-WorkerControlState -RepoRoot $RepoRoot
   return $state
 }
 
