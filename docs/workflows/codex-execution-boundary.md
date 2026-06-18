@@ -6,7 +6,7 @@
 
 - Codex standalone mode：用户直接调用 Codex 时，Codex 按 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和用户任务独立执行普通代码任务完整流程。
 - Codex App、VS Code Codex、Codex CLI、wrapper 和 CC 调用器是不同 surface，不混写为同一入口。
-- Codex App 显式短调用 Claude Code CLI / GLM-5.1 的轻量 wrapper 属于受控辅助 surface，不创建任务队列、daemon、状态机、hook 或旧 CC-CX bridge。
+- Codex App 显式短调用 Claude Code CLI 的轻量 wrapper 属于受控辅助 surface；具体后端模型沿用当前 Claude Code 配置，不创建任务队列、daemon、状态机、hook 或旧 CC-CX bridge。
 - 重执行、长线程和大 diff 默认留在 VS Code Codex / Codex CLI；不要把这类执行历史重新带回 Codex App 热路径。
 - 官方 Superpowers plugin 是唯一 Superpowers 来源；Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
 

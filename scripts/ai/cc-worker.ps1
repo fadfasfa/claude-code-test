@@ -1,6 +1,6 @@
 ﻿<#
 中文简介：
-- 这个文件是什么：Codex App 显式短调用 Claude Code CLI / GLM 的轻量 wrapper。
+- 这个文件是什么：Codex App 显式短调用 Claude Code CLI 的轻量 wrapper。
 - 什么时候读：Codex 需要把 S1/M1/M2 的局部实现、方案探索或反向 review 交给 Claude Code CLI 时；也可用来查看或切换 worker 启用状态。
 - 约束什么：Codex 调用场景下禁止 push/PR，默认不 commit，并在结束后检查敏感文件和未开放保护目录 diff。
 - 不负责什么：不创建任务队列、daemon、状态机、hook、worktree，也不替代 Codex 的最终 diff 审查。
@@ -782,7 +782,7 @@ function New-WorkerPrompt {
   }
 
   return @"
-你是 Claude Code CLI / GLM-5.1，通过 Codex App 的轻量 wrapper 被显式短调用。
+你通过 Claude Code CLI 被 Codex App 的轻量 wrapper 显式短调用，具体后端模型沿用当前 Claude Code 配置。
 
 工作目录：$RepoRoot
 模式：$Mode
