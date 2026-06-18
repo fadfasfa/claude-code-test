@@ -1,6 +1,6 @@
 ---
 name: cleanup-worktrees
-description: Use when the user asks Claude Code to audit or clean merged managed Git worktrees in this claudecode repository.
+description: Use when the user invokes /cleanup-worktrees or asks Claude Code to audit or clean merged managed Git worktrees in this claudecode repository.
 ---
 
 # cleanup-worktrees

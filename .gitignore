@@ -7,6 +7,8 @@
 .claude/*
 !.claude/README.md
 !.claude/settings.json
+!.claude/commands/
+!.claude/commands/*.md
 !.claude/plans/
 .claude/plans/**
 !.claude/plans/README.md
