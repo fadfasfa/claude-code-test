@@ -1,14 +1,13 @@
 ﻿<#
 中文简介：
 - 这个文件是什么：Codex App 显式短调用 Claude Code CLI / GLM 的轻量 wrapper。
-- 什么时候读：Codex 需要把 S1/M1/M2 的局部实现、方案探索或反向 review 交给 Claude Code CLI 时。
+- 什么时候读：Codex 需要把 S1/M1/M2 的局部实现、方案探索或反向 review 交给 Claude Code CLI 时；也可用来查看或切换 worker 启用状态。
 - 约束什么：Codex 调用场景下禁止 push/PR，默认不 commit，并在结束后检查敏感文件和未开放保护目录 diff。
 - 不负责什么：不创建任务队列、daemon、状态机、hook、worktree，也不替代 Codex 的最终 diff 审查。
 #>
 
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$Task,
+  [string]$Task = "",
 
   [ValidateSet("implement", "plan", "review")]
   [string]$Mode = "implement",
@@ -26,7 +25,15 @@ param(
   [ValidateSet("text", "json")]
   [string]$OutputFormat = "text",
 
-  [string]$LogRoot = ".state/cc-work/logs/cc-worker"
+  [string]$LogRoot = ".state/cc-work/logs/cc-worker",
+
+  [switch]$Status,
+
+  [switch]$Enable,
+
+  [switch]$Disable,
+
+  [string]$Reason = ""
 )
 
 Set-StrictMode -Version Latest
@@ -635,6 +642,124 @@ function Write-WorkerStatus {
   Write-Host $Message
 }
 
+function Get-ControlFilePath {
+  param([string]$RepoRoot)
+  return (Join-Path $RepoRoot ".state/cc-work/cc-worker-control.json")
+}
+
+function New-WorkerControlState {
+  param(
+    [bool]$Enabled,
+    [string]$Source,
+    [string]$Reason,
+    [string]$StatePath,
+    [string]$UpdatedAt
+  )
+  return [pscustomobject]@{
+    enabled   = $Enabled
+    source    = $Source
+    reason    = $Reason
+    statePath = $StatePath
+    updatedAt = $UpdatedAt
+  }
+}
+
+function Read-WorkerControlState {
+  param([string]$RepoRoot)
+  $statePath = Get-ControlFilePath -RepoRoot $RepoRoot
+  if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+    return New-WorkerControlState -Enabled $true -Source "default" -Reason "default enabled" -StatePath $statePath -UpdatedAt ""
+  }
+  $raw = Get-Content -LiteralPath $statePath -Raw
+  try {
+    $json = $raw | ConvertFrom-Json
+  }
+  catch {
+    throw "cc-worker control 状态文件不是合法 JSON：$statePath"
+  }
+  if ($null -eq $json.enabled) {
+    throw "cc-worker control 状态文件缺少 enabled 字段：$statePath"
+  }
+  if ($json.enabled -isnot [bool]) {
+    throw "cc-worker control 状态文件 enabled 字段必须是 JSON boolean：$statePath"
+  }
+  $reasonText = if ($null -ne $json.reason) { [string]$json.reason } else { "" }
+  $updatedAtText = if ($null -ne $json.updatedAt) { [string]$json.updatedAt } else { "" }
+  return New-WorkerControlState -Enabled $json.enabled -Source "state" -Reason $reasonText -StatePath $statePath -UpdatedAt $updatedAtText
+}
+
+function ConvertFrom-WorkerEnabledEnv {
+  param([string]$Value)
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return $null
+  }
+  $normalized = $Value.Trim().ToLowerInvariant()
+  if (@("1", "true", "yes", "on", "enabled").Contains($normalized)) {
+    return $true
+  }
+  if (@("0", "false", "no", "off", "disabled").Contains($normalized)) {
+    return $false
+  }
+  throw "CODEX_CC_WORKER_ENABLED 只能是 0/1/true/false/on/off/enabled/disabled，当前值：$Value"
+}
+
+function Get-EffectiveWorkerControlState {
+  param([string]$RepoRoot)
+  $state = Read-WorkerControlState -RepoRoot $RepoRoot
+  $envValue = [Environment]::GetEnvironmentVariable("CODEX_CC_WORKER_ENABLED", "Process")
+  $envEnabled = ConvertFrom-WorkerEnabledEnv -Value $envValue
+  if ($null -ne $envEnabled) {
+    $reason = if ($envEnabled) { "enabled by CODEX_CC_WORKER_ENABLED=$envValue" } else { "disabled by CODEX_CC_WORKER_ENABLED=$envValue" }
+    return New-WorkerControlState -Enabled $envEnabled -Source "env" -Reason $reason -StatePath $state.statePath -UpdatedAt $state.updatedAt
+  }
+  return $state
+}
+
+function Set-WorkerControlState {
+  param(
+    [string]$RepoRoot,
+    [bool]$Enabled,
+    [string]$Reason
+  )
+  $statePath = Get-ControlFilePath -RepoRoot $RepoRoot
+  $stateDir = Split-Path -Parent $statePath
+  New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+  $reasonText = if ([string]::IsNullOrWhiteSpace($Reason)) {
+    if ($Enabled) { "manual enable" } else { "manual disable" }
+  }
+  else {
+    $Reason.Trim()
+  }
+  $state = [ordered]@{
+    enabled   = $Enabled
+    reason    = $reasonText
+    updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+  }
+  $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
+  return Read-WorkerControlState -RepoRoot $RepoRoot
+}
+
+function Write-ControlResponse {
+  param(
+    [pscustomobject]$State,
+    [string]$OutputFormat,
+    [string]$Status = "status"
+  )
+  if ($OutputFormat -eq "json") {
+    [pscustomobject]@{
+      type      = "cc-worker"
+      status    = $Status
+      enabled   = [bool]$State.enabled
+      source    = [string]$State.source
+      reason    = [string]$State.reason
+      statePath = [string]$State.statePath
+      updatedAt = [string]$State.updatedAt
+    } | ConvertTo-Json -Compress
+    return
+  }
+  Write-Host "cc-worker ${Status}: enabled=$($State.enabled) source=$($State.source) reason=$($State.reason) state=$($State.statePath)"
+}
+
 function New-WorkerPrompt {
   param(
     [string]$RepoRoot,
@@ -699,11 +824,38 @@ Git 策略：
 }
 
 try {
-  if ([string]::IsNullOrWhiteSpace($Task)) {
-    throw "-Task 不能为空。"
+  $repoRoot = Resolve-RepoRoot
+
+  $controlActionCount = @($Status.IsPresent, $Enable.IsPresent, $Disable.IsPresent) |
+    Where-Object { $_ } |
+    Measure-Object |
+    Select-Object -ExpandProperty Count
+  if ($controlActionCount -gt 1) {
+    throw "-Status、-Enable、-Disable 只能选择一个。"
+  }
+  if ($Status.IsPresent) {
+    Write-ControlResponse -State (Get-EffectiveWorkerControlState -RepoRoot $repoRoot) -OutputFormat $OutputFormat -Status "status"
+    exit 0
+  }
+  if ($Enable.IsPresent) {
+    Write-ControlResponse -State (Set-WorkerControlState -RepoRoot $repoRoot -Enabled $true -Reason $Reason) -OutputFormat $OutputFormat -Status "enabled"
+    exit 0
+  }
+  if ($Disable.IsPresent) {
+    Write-ControlResponse -State (Set-WorkerControlState -RepoRoot $repoRoot -Enabled $false -Reason $Reason) -OutputFormat $OutputFormat -Status "disabled"
+    exit 0
   }
 
-  $repoRoot = Resolve-RepoRoot
+  $controlState = Get-EffectiveWorkerControlState -RepoRoot $repoRoot
+  if (-not $controlState.enabled) {
+    Write-ControlResponse -State $controlState -OutputFormat $OutputFormat -Status "skipped"
+    exit 0
+  }
+
+  if ([string]::IsNullOrWhiteSpace($Task)) {
+    throw "-Task 不能为空；查看或切换 worker 状态请使用 -Status、-Enable 或 -Disable。"
+  }
+
   $baselineHead = ((Invoke-GitLines -Arguments @("-C", $repoRoot, "rev-parse", "HEAD")) | Select-Object -First 1).Trim()
   $baselineStatus = @(Invoke-GitLines -Arguments @("-C", $repoRoot, "status", "--short"))
   $baselinePaths = @(Get-GitChangedPaths -RepoRoot $repoRoot)

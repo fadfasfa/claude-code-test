@@ -4,13 +4,13 @@
 
 | 路径 | 状态 | 用途 |
 | :--- | :--- | :--- |
-| `scripts/ai/cc-worker.ps1` | manual | Codex App 显式短调用 Claude Code CLI / GLM-5.1 的轻量 worker wrapper |
+| `scripts/ai/cc-worker.ps1` | Codex 主动评估 / manual | Codex App 对合格 S1/M1/M2 任务主动评估、仍显式短调用 Claude Code CLI / GLM-5.1 的轻量 worker wrapper |
 | `scripts/git/` | legacy/manual | 旧 Git / worktree 查看与清理辅助脚本，只能显式手动调用 |
 | `scripts/scraping/apex_snapshot_capture.py` | manual | 低频手动打开 ApexLoL 入口页，保存同源 HTML/JSON/JS/text snapshot 供离线解析 |
 
 不维护新的复杂编排器。新增脚本必须有明确用途、输入输出、写入行为和失败行为；不要读取凭据文件或默认执行发布动作。
 
-`scripts/ai/cc-worker.ps1` 的参数、权限、postflight 和禁止事项由 workflow 文档维护；本 README 只保留脚本清单和用途。
+`scripts/ai/cc-worker.ps1` 的主动评估边界、开关接口、参数、权限、postflight 和禁止事项由 workflow 文档维护；本 README 只保留脚本清单和用途。
 
 ## scripts/scraping/apex_snapshot_capture.py
 
