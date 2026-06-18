@@ -10,6 +10,12 @@
 !.claude/plans/
 .claude/plans/**
 !.claude/plans/README.md
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/karpathy-guardrail/
+!.claude/skills/karpathy-guardrail/SKILL.md
+!.claude/skills/cleanup-worktrees/
+!.claude/skills/cleanup-worktrees/SKILL.md
 
 # Blank placeholder only; do not track local behavior surface
 .claude/worktrees/
