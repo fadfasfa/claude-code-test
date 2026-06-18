@@ -1524,8 +1524,7 @@ class SmsMonitor:
         print(f"  [{index}] {account.label} 账户复制项")
         print("=" * 68)
         for key, label, value in fields:
-            visible = value if label != "密码" else "<密码>"
-            print(f"  {key}. {label}：{visible}")
+            print(f"  {key}. {label}：{value}")
         print()
         print("  按对应数字复制；Esc 取消。")
 

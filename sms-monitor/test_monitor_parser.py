@@ -1530,6 +1530,30 @@ class ClipboardBehaviorTest(unittest.TestCase):
         )
         self.assertEqual(attempts, ["123456", "123456"])
 
+    def test_copy_to_clipboard_uses_fallback_after_windows_writer_fails(self):
+        windows_attempts = []
+        fallback_calls = []
+
+        def failing_windows_writer(text):
+            windows_attempts.append(text)
+            return False
+
+        def fallback_writer(text):
+            fallback_calls.append(text)
+            return True
+
+        self.assertTrue(
+            monitor.copy_to_clipboard(
+                "654321",
+                attempts=2,
+                retry_delay=0,
+                windows_writer=failing_windows_writer,
+                fallback_writer=fallback_writer,
+            )
+        )
+        self.assertEqual(windows_attempts, ["654321", "654321"])
+        self.assertEqual(fallback_calls, ["654321"])
+
 
 if __name__ == "__main__":
     unittest.main()
