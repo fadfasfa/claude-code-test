@@ -20,7 +20,6 @@
 | Claude Code / Codex 独立执行流 | `docs/workflows/independent-agent-workflow.md` |
 | Codex surface、旧 CC-CX 退役、执行边界 | `docs/workflows/codex-execution-boundary.md` |
 | Codex 出口、代理、账号池、`7898` / `7899`、路由维护 | `docs/workflows/codex-execution-boundary.md`，必要时再读本地忽略的 `docs/workflows/codex-egress-maintenance.md` |
-| Codex 显式短调用 Claude Code CLI worker | `docs/workflows/codex-cc-lightweight-worker.md` |
 | Git 高危操作、删除、清理、发布边界 | `docs/workflows/07-high-risk-safety.md` |
 | commit message、PR 标题和正文语言格式 | `docs/workflows/git-language-policy.md` |
 | worktree 创建、命名、清理、managed root | `docs/workflows/worktree-policy.md` |
@@ -33,7 +32,7 @@
 
 - `docs/reference/policies/task-routing.md`：`S/M/L` 概念说明；只定义薄边界。
 - `docs/reference/`：按需读取的参考资料。
-- `docs/archive/`：历史报告和退役资料，默认不作为当前规则来源。
+- `docs/archive/`：历史报告和退役资料，包含已退役的 cc-worker 材料；默认不作为当前规则来源。
 
 ## Output Boundary
 
