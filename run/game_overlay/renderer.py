@@ -14,7 +14,7 @@ CARD_X_RANGES = ((0.195, 0.385), (0.405, 0.595), (0.620, 0.810))
 CARD_Y_RANGE = (0.17, 0.68)
 SYNERGY_X_RANGE = (0.825, 0.992)
 INNER_BAR_HEIGHT_RATIO = 0.052
-INNER_BAR_BOTTOM_MARGIN_RATIO = 0.055
+INNER_BAR_TOP_MARGIN_RATIO = 0.015
 INNER_BAR_SIDE_INSET_RATIO = 0.055
 
 OVERLAY_THEME: dict[str, str] = {
@@ -264,9 +264,9 @@ def resolve_overlay_layout(viewport_size: tuple[int, int], *, synergy_count: int
     card_y1 = int(height * CARD_Y_RANGE[1])
     card_height = card_y1 - card_y0
     stat_height = _clamp(46, height * INNER_BAR_HEIGHT_RATIO, 72)
-    stat_bottom_margin = _clamp(18, card_height * INNER_BAR_BOTTOM_MARGIN_RATIO, 34)
-    stat_y1 = card_y1 - stat_bottom_margin
-    stat_y0 = stat_y1 - stat_height
+    stat_top_margin = _clamp(8, card_height * INNER_BAR_TOP_MARGIN_RATIO, 20)
+    stat_y0 = card_y0 + stat_top_margin
+    stat_y1 = stat_y0 + stat_height
     card_boxes: list[tuple[int, int, int, int]] = []
     stat_boxes: list[tuple[int, int, int, int]] = []
     for left, right in CARD_X_RANGES:
