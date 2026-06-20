@@ -3244,10 +3244,8 @@ print(json.dumps(blocked))
 
     ready_canvas = RecordingCanvas()
     overlay_renderer._draw_stat_panel(ready_canvas, (100, 100, 340, 160), ready_model["stats"][0])
-    assert any(call.get("text") == "胜率" and call.get("anchor") == "w" for call in ready_canvas.text_calls)
-    assert any(call.get("text") == "55.0%" and call.get("anchor") == "w" for call in ready_canvas.text_calls)
-    assert any(call.get("text") == "选取" and call.get("anchor") == "e" for call in ready_canvas.text_calls)
-    assert any(call.get("text") == "3.0%" and call.get("anchor") == "e" for call in ready_canvas.text_calls)
+    assert any(call.get("text") == "胜率 55.0%" and call.get("anchor") == "e" for call in ready_canvas.text_calls)
+    assert any(call.get("text") == "选取 3.0%" and call.get("anchor") == "w" for call in ready_canvas.text_calls)
 
     for row, expected_text in (
         (partial_model["stats"][1], "识别中…"),
@@ -3343,14 +3341,14 @@ print(json.dumps(blocked))
     assert pillow_canvas.image.getpixel((20, 20))[:3] == (18, 52, 86)
 
     left_anchor_canvas = overlay_render_snapshot.PillowCanvas(200, 100)
-    left_anchor_canvas.create_text(50, 50, text="胜率", fill="#FFFFFF", anchor="w")
+    left_anchor_canvas.create_text(50, 50, text="胜率 55.0%", fill="#FFFFFF", anchor="e")
     left_bbox = left_anchor_canvas.image.getchannel("A").getbbox()
-    assert left_bbox is not None and left_bbox[0] >= 49 and left_bbox[2] > 50
+    assert left_bbox is not None and left_bbox[0] < 50 and left_bbox[2] <= 51
 
     right_anchor_canvas = overlay_render_snapshot.PillowCanvas(200, 100)
-    right_anchor_canvas.create_text(150, 50, text="选取", fill="#FFFFFF", anchor="e")
+    right_anchor_canvas.create_text(150, 50, text="选取 3.0%", fill="#FFFFFF", anchor="w")
     right_bbox = right_anchor_canvas.image.getchannel("A").getbbox()
-    assert right_bbox is not None and right_bbox[0] < 150 and right_bbox[2] <= 151
+    assert right_bbox is not None and right_bbox[0] >= 149 and right_bbox[2] > 150
 
     with TemporaryDirectory() as tmp_dir:
         png_path = overlay_render_snapshot.render_case(

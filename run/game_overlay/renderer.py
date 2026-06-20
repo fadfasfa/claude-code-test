@@ -14,7 +14,7 @@ CARD_X_RANGES = ((0.195, 0.385), (0.405, 0.595), (0.620, 0.810))
 CARD_Y_RANGE = (0.17, 0.68)
 SYNERGY_X_RANGE = (0.825, 0.992)
 INNER_BAR_HEIGHT_RATIO = 0.052
-INNER_BAR_TOP_MARGIN_RATIO = 0.55
+INNER_BAR_TOP_MARGIN_RATIO = 0.54
 INNER_BAR_SIDE_INSET_RATIO = 0.055
 
 OVERLAY_THEME: dict[str, str] = {
@@ -386,9 +386,7 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
     x0, y0, x1, y1 = box
     height = y1 - y0
     width = x1 - x0
-    pad = _clamp(10, width * 0.045, 18)
-    label_size = _clamp(8, height * 0.16, 11)
-    value_size = _clamp(11, height * 0.25, 16)
+    unified_size = _clamp(11, height * 0.22, 14)
     status_size = _clamp(10, height * 0.22, 15)
     font_family = "Segoe UI"
     if row["status_code"] != "READY":
@@ -408,43 +406,26 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
         )
         return
 
-    label_y = y0 + int(height * 0.30)
-    value_y = y0 + int(height * 0.68)
+    cx = (x0 + x1) // 2
+    cy = (y0 + y1) // 2
+    
     _draw_shadowed_text(
         canvas,
-        x0 + pad,
-        label_y,
-        text="胜率",
-        fill=OVERLAY_THEME["text_secondary"],
-        font=(font_family, label_size),
-        anchor="w",
-    )
-    _draw_shadowed_text(
-        canvas,
-        x1 - pad,
-        label_y,
-        text="选取",
-        fill=OVERLAY_THEME["text_secondary"],
-        font=(font_family, label_size),
+        cx - 8,
+        cy,
+        text=f"胜率 {row['winrate_text']}",
+        fill=OVERLAY_THEME["text_primary"],
+        font=(font_family, unified_size, "bold"),
         anchor="e",
     )
     _draw_shadowed_text(
         canvas,
-        x0 + pad,
-        value_y,
-        text=row["winrate_text"],
+        cx + 8,
+        cy,
+        text=f"选取 {row['pickrate_text']}",
         fill=OVERLAY_THEME["text_primary"],
-        font=(font_family, value_size, "bold"),
+        font=(font_family, unified_size, "bold"),
         anchor="w",
-    )
-    _draw_shadowed_text(
-        canvas,
-        x1 - pad,
-        value_y,
-        text=row["pickrate_text"],
-        fill=OVERLAY_THEME["text_primary"],
-        font=(font_family, value_size, "bold"),
-        anchor="e",
     )
 
 
