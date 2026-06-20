@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from typing import Any, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 CARD_X_RANGES = ((0.195, 0.385), (0.405, 0.595), (0.620, 0.810))
 CARD_Y_RANGE = (0.17, 0.68)
 SYNERGY_X_RANGE = (0.825, 0.992)
+INNER_BAR_HEIGHT_RATIO = 0.052
+INNER_BAR_BOTTOM_MARGIN_RATIO = 0.055
+INNER_BAR_SIDE_INSET_RATIO = 0.055
 
 OVERLAY_THEME: dict[str, str] = {
     "panel_bg": "#0A1428",
@@ -41,7 +44,12 @@ class CanvasLike(Protocol):
 
     def create_line(self, *args: Any, **kwargs: Any) -> Any: ...
 
+    def create_rectangle(self, *args: Any, **kwargs: Any) -> Any: ...
+
     def create_text(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
+StatStatusCode = Literal["READY", "DETECTING", "PRIVACY_OFF", "NO_STATS"]
 
 
 class StatPanelModel(TypedDict):
@@ -50,6 +58,10 @@ class StatPanelModel(TypedDict):
     name: str
     tier: str
     stats_text: str
+    status_code: StatStatusCode
+    winrate_text: str
+    pickrate_text: str
+    status_text: str
 
 
 class SynergyPanelModel(TypedDict):
@@ -141,19 +153,23 @@ def _current_champion_stats(hint: Mapping[str, Any], context: Mapping[str, Any] 
     return None
 
 
-def _stats_text(
+def _stats_display(
     hint: Mapping[str, Any],
     hint_cache: Mapping[str, Any] | None,
     context: Mapping[str, Any] | None,
-) -> tuple[str, bool]:
+) -> tuple[str, StatStatusCode, str, str, str]:
     source = hint_cache.get("source") if isinstance(hint_cache, Mapping) else None
     if not (isinstance(source, Mapping) and source.get("private_policy_stats_enabled") is True):
-        return "已开启隐私模式", False
+        return "已开启隐私模式", "PRIVACY_OFF", "", "", "统计关闭"
     stats = _current_champion_stats(hint, context)
     if not isinstance(stats, Mapping):
-        return "暂无该英雄统计", False
+        return "暂无该英雄统计", "NO_STATS", "", "", "暂无统计"
+    winrate = _format_percent(stats.get("winrate"))
+    pickrate = _format_percent(stats.get("pickrate"))
     text = _format_stats_entry(stats)
-    return (text or "暂无该英雄统计"), bool(text)
+    if not (winrate and pickrate):
+        return text or "暂无该英雄统计", "NO_STATS", "", "", "暂无统计"
+    return text, "READY", winrate, pickrate, ""
 
 
 def _matched_synergy(hint: Mapping[str, Any], context: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
@@ -195,7 +211,16 @@ def build_render_model(
         hint = _query_hint(slot, hint_cache) if ready else {}
         name = _clean_text(hint.get("name") or slot_name, limit=60)
         tier = _clean_text(hint.get("tier") or slot.get("tier"), limit=24)
-        stats_text, has_current_stats = _stats_text(hint, hint_cache, context) if ready else ("识别中…", False)
+        if ready:
+            stats_text, status_code, winrate_text, pickrate_text, status_text = _stats_display(
+                hint,
+                hint_cache,
+                context,
+            )
+        else:
+            stats_text, status_code = "识别中…", "DETECTING"
+            winrate_text, pickrate_text, status_text = "", "", "识别中…"
+        has_current_stats = status_code == "READY"
         stats.append(
             {
                 "slot": index,
@@ -203,6 +228,10 @@ def build_render_model(
                 "name": name,
                 "tier": tier,
                 "stats_text": stats_text,
+                "status_code": status_code,
+                "winrate_text": winrate_text,
+                "pickrate_text": pickrate_text,
+                "status_text": status_text,
             }
         )
         if not ready:
@@ -233,16 +262,18 @@ def resolve_overlay_layout(viewport_size: tuple[int, int], *, synergy_count: int
     margin = _clamp(8, width * 0.008, 20)
     card_y0 = int(height * CARD_Y_RANGE[0])
     card_y1 = int(height * CARD_Y_RANGE[1])
-    stat_height = _clamp(48, height * 0.052, 76)
-    stat_gap = _clamp(8, height * 0.008, 14)
-    stat_y1 = max(stat_height + margin, card_y0 - stat_gap)
+    card_height = card_y1 - card_y0
+    stat_height = _clamp(46, height * INNER_BAR_HEIGHT_RATIO, 72)
+    stat_bottom_margin = _clamp(18, card_height * INNER_BAR_BOTTOM_MARGIN_RATIO, 34)
+    stat_y1 = card_y1 - stat_bottom_margin
     stat_y0 = stat_y1 - stat_height
     card_boxes: list[tuple[int, int, int, int]] = []
     stat_boxes: list[tuple[int, int, int, int]] = []
     for left, right in CARD_X_RANGES:
         x0, x1 = int(width * left), int(width * right)
         card_boxes.append((x0, card_y0, x1, card_y1))
-        stat_boxes.append((x0, stat_y0, x1, stat_y1))
+        stat_side_inset = _clamp(10, (x1 - x0) * INNER_BAR_SIDE_INSET_RATIO, 20)
+        stat_boxes.append((x0 + stat_side_inset, stat_y0, x1 - stat_side_inset, stat_y1))
     rail = (int(width * SYNERGY_X_RANGE[0]), card_y0, width - margin, card_y1)
     count = max(0, min(3, int(synergy_count)))
     boxes: list[tuple[int, int, int, int]] = []
@@ -345,43 +376,75 @@ def _draw_shadowed_text(canvas: CanvasLike, x: int, y: int, **kwargs: Any) -> No
     canvas.create_text(x, y, **kwargs)
 
 
+def _draw_embedded_bar(canvas: CanvasLike, box: tuple[int, int, int, int], *, tier: str = "") -> None:
+    """完全透明的统计底条占位，不再绘制任何阻挡原生游戏背景的矩形或线条。"""
+    pass
+
+
 def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: StatPanelModel) -> None:
-    _draw_native_panel(canvas, box, tier=row["tier"])
+    _draw_embedded_bar(canvas, box, tier=row["tier"])
     x0, y0, x1, y1 = box
     height = y1 - y0
     width = x1 - x0
-    title_size = _clamp(11, height * 0.22, 18)
-    body_size = _clamp(9, height * 0.17, 14)
+    pad = _clamp(10, width * 0.045, 18)
+    label_size = _clamp(8, height * 0.16, 11)
+    value_size = _clamp(11, height * 0.25, 16)
+    status_size = _clamp(10, height * 0.22, 15)
     font_family = "Microsoft YaHei UI"
-    if row["state"] == "detecting":
+    if row["status_code"] != "READY":
+        status_colors = {
+            "DETECTING": OVERLAY_THEME["highlight_cyan"],
+            "PRIVACY_OFF": OVERLAY_THEME["text_secondary"],
+            "NO_STATS": OVERLAY_THEME["text_muted"],
+        }
         _draw_shadowed_text(
             canvas,
             (x0 + x1) // 2,
             (y0 + y1) // 2,
-            text=row["stats_text"],
-            fill=OVERLAY_THEME["text_muted"],
-            font=(font_family, title_size, "bold"),
+            text=row["status_text"],
+            fill=status_colors[row["status_code"]],
+            font=(font_family, status_size, "bold"),
             anchor="center",
         )
         return
-    title = row["name"]
+
+    label_y = y0 + int(height * 0.30)
+    value_y = y0 + int(height * 0.68)
     _draw_shadowed_text(
         canvas,
-        (x0 + x1) // 2,
-        y0 + int(height * 0.34),
-        text=_short_text(title, max(12, width // 13)),
-        fill=OVERLAY_THEME["text_primary"],
-        font=(font_family, title_size, "bold"),
-        anchor="center",
+        x0 + pad,
+        label_y,
+        text="胜率",
+        fill=OVERLAY_THEME["text_secondary"],
+        font=(font_family, label_size),
+        anchor="w",
     )
     _draw_shadowed_text(
         canvas,
-        (x0 + x1) // 2,
-        y0 + int(height * 0.69),
-        text=_short_text(row["stats_text"], max(14, width // 10)),
+        x1 - pad,
+        label_y,
+        text="选取",
         fill=OVERLAY_THEME["text_secondary"],
-        font=(font_family, body_size),
-        anchor="center",
+        font=(font_family, label_size),
+        anchor="e",
+    )
+    _draw_shadowed_text(
+        canvas,
+        x0 + pad,
+        value_y,
+        text=row["winrate_text"],
+        fill=OVERLAY_THEME["text_primary"],
+        font=(font_family, value_size, "bold"),
+        anchor="w",
+    )
+    _draw_shadowed_text(
+        canvas,
+        x1 - pad,
+        value_y,
+        text=row["pickrate_text"],
+        fill=OVERLAY_THEME["text_primary"],
+        font=(font_family, value_size, "bold"),
+        anchor="e",
     )
 
 
