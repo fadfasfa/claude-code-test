@@ -14,7 +14,7 @@ CARD_X_RANGES = ((0.195, 0.385), (0.405, 0.595), (0.620, 0.810))
 CARD_Y_RANGE = (0.17, 0.68)
 SYNERGY_X_RANGE = (0.825, 0.992)
 INNER_BAR_HEIGHT_RATIO = 0.052
-INNER_BAR_TOP_MARGIN_RATIO = 0.015
+INNER_BAR_TOP_MARGIN_RATIO = 0.55
 INNER_BAR_SIDE_INSET_RATIO = 0.055
 
 OVERLAY_THEME: dict[str, str] = {
@@ -264,7 +264,7 @@ def resolve_overlay_layout(viewport_size: tuple[int, int], *, synergy_count: int
     card_y1 = int(height * CARD_Y_RANGE[1])
     card_height = card_y1 - card_y0
     stat_height = _clamp(46, height * INNER_BAR_HEIGHT_RATIO, 72)
-    stat_top_margin = _clamp(8, card_height * INNER_BAR_TOP_MARGIN_RATIO, 20)
+    stat_top_margin = int(card_height * INNER_BAR_TOP_MARGIN_RATIO)
     stat_y0 = card_y0 + stat_top_margin
     stat_y1 = stat_y0 + stat_height
     card_boxes: list[tuple[int, int, int, int]] = []
@@ -390,7 +390,7 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
     label_size = _clamp(8, height * 0.16, 11)
     value_size = _clamp(11, height * 0.25, 16)
     status_size = _clamp(10, height * 0.22, 15)
-    font_family = "Microsoft YaHei UI"
+    font_family = "Segoe UI"
     if row["status_code"] != "READY":
         status_colors = {
             "DETECTING": OVERLAY_THEME["highlight_cyan"],
@@ -466,7 +466,7 @@ def _draw_synergy_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row:
     pad = _clamp(12, width * 0.05, 20)
     title_size = _clamp(10, height * 0.10, 15)
     body_size = _clamp(8, height * 0.08, 12)
-    font_family = "Microsoft YaHei UI"
+    font_family = "Segoe UI"
     header_parts = [row["augment_name"]]
     if row["rating"]:
         header_parts.append(row["rating"])

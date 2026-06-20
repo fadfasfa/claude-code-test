@@ -3214,7 +3214,7 @@ print(json.dumps(blocked))
                 assert 46 <= stat_box[3] - stat_box[1] <= 72
                 assert 10 <= stat_box[0] - card_box[0] <= 20
                 assert 10 <= card_box[2] - stat_box[2] <= 20
-                assert 8 <= stat_box[1] - card_box[1] <= 20
+                assert 0.50 * (card_box[3] - card_box[1]) <= stat_box[1] - card_box[1] <= 0.60 * (card_box[3] - card_box[1])
                 assert 0 <= stat_box[0] < stat_box[2] <= width
                 assert 0 <= stat_box[1] < stat_box[3] <= height
             for left, right in zip(layout["stat_boxes"], layout["stat_boxes"][1:]):
