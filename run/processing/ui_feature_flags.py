@@ -18,7 +18,7 @@ FEATURE_FLAGS_FILE = Path(build_runtime_state_path("ui_feature_flags.json"))
 
 DEFAULT_UI_FEATURE_FLAGS: dict[str, bool] = {
     "web_frontend_enabled": False,
-    "game_overlay_enabled": False,
+    "game_overlay_enabled": True,
     "auto_open_browser": True,
     "private_policy_stats_enabled": False,
     "low_frequency_listener_enabled": True,
@@ -33,7 +33,11 @@ def normalize_ui_feature_flags(raw_flags: Mapping[str, Any] | None) -> dict[str,
         return normalized
     for key in normalized:
         if key in raw_flags:
-            normalized[key] = bool(raw_flags[key])
+            value = raw_flags[key]
+            if isinstance(value, bool):
+                normalized[key] = value
+            elif isinstance(value, str) and value.strip().casefold() in {"true", "false"}:
+                normalized[key] = value.strip().casefold() == "true"
     return normalized
 
 
@@ -55,4 +59,3 @@ def save_ui_feature_flags(flags: Mapping[str, Any], path: str | Path | None = No
     normalized = normalize_ui_feature_flags(flags)
     atomic_write_json(target, normalized, ensure_ascii=False, indent=2)
     return normalized
-

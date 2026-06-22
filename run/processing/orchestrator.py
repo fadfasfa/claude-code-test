@@ -35,7 +35,7 @@ from processing.runtime_store import (
     load_synergy_refresh_status,
 )
 from tools.atomic_io import atomic_write_json
-from scraping.full_hextech_scraper import main_scraper
+from scraping.full_hextech_scraper import hextech_refresh_blocked, main_scraper
 from scraping.full_synergy_scraper import main as run_apex_spider
 from scraping.full_synergy_scraper import SYNERGY_REFRESH_META_VERSION
 from scraping.heal_worker import heal_missing_artifacts
@@ -83,6 +83,8 @@ def should_refresh_hextech(force: bool, stale_after_seconds: int = HIGH_FREQUENC
     if force:
         return True
     latest_csv = get_latest_csv()
+    if latest_csv and hextech_refresh_blocked():
+        return False
     return not _file_is_fresh(latest_csv or "", stale_after_seconds)
 
 
@@ -153,8 +155,8 @@ def run_hero_sync() -> bool:
     return bool(sync_hero_data())
 
 
-def run_hextech_refresh(stop_event=None) -> bool:
-    return bool(main_scraper(stop_event))
+def run_hextech_refresh(stop_event=None, *, force: bool = False) -> bool:
+    return bool(main_scraper(stop_event, force=force))
 
 
 def run_synergy_refresh() -> bool:

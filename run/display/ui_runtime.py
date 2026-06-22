@@ -43,6 +43,8 @@ import win32gui
 from PIL import Image, ImageDraw, ImageTk
 
 from . import web_runtime
+from processing import overlay_context
+from processing.lol_window import find_lol_game_window, is_window_renderable
 from processing.query_terminal import display_hero_hextech, main_query, set_last_hero
 from scraping.version_sync import ASSET_DIR, BASE_DIR
 
@@ -249,9 +251,18 @@ def poll_lcu_live_ids(ui: "HextechUI"):
 
     available_ids = {str(c.get("championId")) for c in payload.get("benchChampions", [])}
     local_cell_id = payload.get("localPlayerCellId")
+    local_champion_id = None
     for player in payload.get("myTeam", []):
         if player.get("cellId") == local_cell_id and player.get("championId"):
-            available_ids.add(str(player.get("championId")))
+            local_champion_id = player.get("championId")
+            available_ids.add(str(local_champion_id))
+            break
+    if local_champion_id:
+        _write_overlay_context_from_live_state(
+            ui,
+            {"local_champion_id": local_champion_id},
+            source="lcu",
+        )
     return {champ_id for champ_id in available_ids if champ_id and champ_id != "0"}
 
 
@@ -446,6 +457,7 @@ def _apply_candidate_update(ui: "HextechUI", available_ids: set[str], *, source:
         return
     if payload:
         _store_live_state_marker(ui, payload, source)
+        _write_overlay_context_from_live_state(ui, payload, source=source)
     hero_names = _resolve_candidate_hero_names(ui, available_ids)
     _sync_preload_state_for_candidates(ui, hero_names)
     if available_ids != ui.current_hero_ids:
@@ -476,6 +488,47 @@ def _fetch_web_live_state(ui: "HextechUI") -> tuple[set[str] | None, dict | None
     if web_ids or has_local_champion:
         return web_ids, payload
     return set(), payload
+
+
+def _clean_live_champion_id(value) -> str:
+    text = str(value or "").strip()
+    return text if text and text != "0" else ""
+
+
+def _resolve_live_champion_name(ui: "HextechUI", champion_id: str, payload: dict) -> str:
+    payload_name = str(payload.get("local_champion_name") or "").strip()
+    if payload_name:
+        return payload_name
+    core_entry = ui.core_data.get(str(champion_id), {}) if isinstance(ui.core_data, dict) else {}
+    return str(core_entry.get("name") or "").strip()
+
+
+def _write_overlay_context_from_live_state(
+    ui: "HextechUI",
+    payload: dict,
+    *,
+    source: str,
+    context_path: str | os.PathLike[str] | None = None,
+) -> bool:
+    """只在 live_state 明确给出本地英雄 ID 时写入 overlay 上下文。"""
+
+    if not isinstance(payload, dict):
+        return False
+    champion_id = _clean_live_champion_id(payload.get("local_champion_id"))
+    if not champion_id:
+        return False
+    champion_name = _resolve_live_champion_name(ui, champion_id, payload)
+    context_payload = overlay_context.build_overlay_context_payload(
+        champion_id=champion_id,
+        champion_name=champion_name,
+        source=source,
+    )
+    try:
+        overlay_context.write_overlay_context(context_payload, context_path)
+    except OSError:
+        logger.debug("写入 overlay 英雄上下文失败。", exc_info=True)
+        return False
+    return True
 
 
 def _sync_candidate_ids(ui: "HextechUI", available_ids: set[str] | None, *, source: str, payload: dict | None = None) -> None:
@@ -845,7 +898,7 @@ def window_sync_loop(ui: "HextechUI") -> None:
         return bool(hwnd_client and win32gui.IsWindowVisible(hwnd_client) and not win32gui.IsIconic(hwnd_client))
 
     def _resolve_game_visibility(hwnd_game: int | None) -> bool:
-        return bool(hwnd_game and win32gui.IsWindowVisible(hwnd_game))
+        return is_window_renderable(hwnd_game)
 
     def _resolve_foreground_title(foreground_hwnd: int | None) -> str:
         return win32gui.GetWindowText(foreground_hwnd) if foreground_hwnd else ""
@@ -858,7 +911,8 @@ def window_sync_loop(ui: "HextechUI") -> None:
 
     def _loop_once(now_ts: float) -> None:
         hwnd_client = win32gui.FindWindow(None, "League of Legends")
-        hwnd_game = win32gui.FindWindow(None, "League of Legends (TM) Client")
+        game_target = find_lol_game_window()
+        hwnd_game = game_target[0] if game_target is not None else None
         fg_window = win32gui.GetForegroundWindow()
         fg_title = _resolve_foreground_title(fg_window)
         is_client_fg = _resolve_client_fg(hwnd_client, fg_window)

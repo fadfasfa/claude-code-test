@@ -19,7 +19,7 @@ from tools.atomic_io import atomic_write_json
 SCHEMA_VERSION = 2
 ACCEPTED_SCHEMA_VERSIONS = {1, 2}
 SLOT_COUNT = 3
-EVENT_MAX_AGE_SECONDS = 5 * 60.0
+EVENT_MAX_AGE_SECONDS = 2.5
 ALLOWED_SELECTION_TYPES = {"hextech", "body_shard"}
 VISIBLE_SELECTION_TYPES = {"hextech"}
 ALLOWED_SLOT_STATES = {"ready", "low_confidence", "detecting", "empty"}
@@ -242,6 +242,8 @@ def _resolve_event_error(event_payload: Mapping[str, Any], *, now: float | None 
         return "schema_mismatch"
     if not isinstance(event_payload.get("slots"), list):
         return "event_missing"
+    if bool(event_payload.get("active")) and not normalize_selection_type(event_payload.get("selection_type")):
+        return "selection_type_unknown"
     try:
         generated_at = float(event_payload.get("generated_at") or 0.0)
     except (TypeError, ValueError):

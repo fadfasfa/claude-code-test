@@ -367,13 +367,13 @@
 
             // 胜率热力图分级：>53% 为热点、<47% 为冷点，居中区段保持中性
             let heatClass = '';
-            let trendArrow = '';
+            let trendArrowMarkup = '';
             if (wrValue > 0.53) {
                 heatClass = 'heat-hot';
-                trendArrow = ' <span class="text-emerald-300">▲</span>';
+                trendArrowMarkup = '<span class="hextech-card-rate-trend text-emerald-300">▲</span>';
             } else if (wrValue < 0.47) {
                 heatClass = 'heat-cold';
-                trendArrow = ' <span class="text-rose-300">▼</span>';
+                trendArrowMarkup = '<span class="hextech-card-rate-trend text-rose-300">▼</span>';
             }
 
             const hexInfo = {
@@ -384,24 +384,24 @@
             const bindData = encodeURIComponent(JSON.stringify(hexInfo));
 
                 return `
-            <div class="hextech-list-card list-row flex items-center p-2 rounded border border-[rgba(139,148,158,0.18)] bg-[rgba(19,26,34,0.92)] transition-colors ${heatClass}" data-hex-info="${bindData}">
-                <div class="w-6 text-center text-xs font-bold text-gray-500">${index + 1}</div>
+            <div class="hextech-list-card list-row cursor-pointer p-2 rounded border border-[rgba(139,148,158,0.18)] bg-[rgba(19,26,34,0.92)] transition-colors ${heatClass}" data-hex-info="${bindData}">
+                <div class="hextech-card-rank text-xs font-bold text-gray-500">${index + 1}</div>
 
-                <div class="flex items-center gap-2 flex-shrink-0">
+                <div class="hextech-card-icon-group">
                     <div class="w-1.5 h-6 rounded-full ${tierClass}"></div>
                     ${renderAugmentIcon(iconUrl, hextech.海克斯名称, hextech.海克斯阶级, 'list')}
                 </div>
 
-                <div class="flex-1 truncate ml-2">
+                <div class="hextech-card-title">
                     <div class="text-sm font-bold text-gray-200 truncate" title="${escapeHtml(hextech.海克斯名称)}">${escapeHtml(hextech.海克斯名称)}</div>
                 </div>
 
-                <div class="w-16 text-right">
-                    <div class="text-sm font-bold text-green-400">${wr}%${trendArrow}</div>
+                <div class="hextech-card-rate hextech-card-rate--win">
+                    <span class="hextech-card-rate-value">${wr}%</span>${trendArrowMarkup}
                 </div>
 
-                <div class="w-14 text-right">
-                    <div class="text-xs text-gray-400">${pr}%</div>
+                <div class="hextech-card-rate hextech-card-rate--pick">
+                    <span class="hextech-card-rate-value">${pr}%</span>
                 </div>
             </div>
             `;
@@ -604,7 +604,7 @@
                 if (item.gradeScore === -1) {
                     return `
                         <div class="glass-panel rounded-xl p-4 border border-gray-800 hover:border-blue-500/30 transition-colors">
-                            <div class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">${escapeHtml(item.content)}</div>
+                            <div class="hextech-article-content text-sm text-gray-300">${escapeHtml(item.content)}</div>
                         </div>
                     `;
                 }
@@ -652,7 +652,7 @@
             ${renderAugmentIcon(iconUrl, resolvedAugment.name || item.name, displayTier, 'detail')}
         </div>
 
-        <div class="flex flex-col flex-grow">
+        <div class="hextech-article-body flex flex-col flex-grow">
             <div class="hextech-article-head">
 
                 <div class="hextech-article-title-block flex flex-col">
@@ -684,7 +684,7 @@
 
             </div>
 
-            <div class="hextech-article-content text-[#b3b9c6] text-[14px] leading-relaxed mt-3">
+            <div class="hextech-article-content text-[#b3b9c6] text-[14px] mt-3">
                 ${escapeHtml(item.content)}
             </div>
 
