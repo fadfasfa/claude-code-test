@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - 仅用于非 Windows 诊断环境兜�
 from processing.lol_window import find_lol_game_window
 from processing.ui_feature_flags import load_ui_feature_flags, save_ui_feature_flags
 from processing.overlay_event_channel import read_overlay_event
+from processing.window_titles import LOL_CLIENT_WINDOW_TITLE
 from game_overlay.lifecycle import (
     GameOverlayController,
     start_host_process as start_overlay_host_process,
@@ -102,6 +103,8 @@ class ServiceManager:
         self._lock = threading.RLock()
         self._listener_stop = threading.Event()
         self._listener_thread: threading.Thread | None = None
+        self._shutdown_thread: threading.Thread | None = None
+        self._shutdown_done: threading.Event | None = None
         self._listener_interval_seconds = max(2.0, min(5.0, float(listener_interval_seconds)))
         self._listener_enabled = True
         self._listener_snapshot: dict[str, Any] = {
@@ -205,10 +208,34 @@ class ServiceManager:
                 "overlay_event": self._overlay_event_status(),
             }
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, timeout_seconds: float = 5.0, final_timeout_seconds: float | None = 20.0) -> None:
+        """关闭所有受管服务。
+
+        overlay/web 的停止可能等待 terminate/kill 兜底。这里先在后台线程执行，
+        主线程等待一个短窗口；默认退出路径再做最终 join，避免 UI 销毁时留下
+        孤儿进程。需要明确快返回的调用方可传 ``final_timeout_seconds=None``。
+        """
+
         self._listener_stop.set()
-        self.stop_game_overlay()
-        self.stop_web()
+        self._shutdown_done = threading.Event()
+
+        def _stop_all() -> None:
+            try:
+                self.stop_game_overlay()
+            finally:
+                self.stop_web()
+                self._shutdown_done.set()
+
+        self._shutdown_thread = threading.Thread(
+            target=_stop_all,
+            name="hextech-shutdown",
+            daemon=final_timeout_seconds is None,
+        )
+        self._shutdown_thread.start()
+        if self._shutdown_done.wait(timeout=timeout_seconds):
+            return
+        if final_timeout_seconds is not None:
+            self._shutdown_thread.join(timeout=final_timeout_seconds)
 
     @staticmethod
     def _overlay_event_status() -> dict[str, Any]:
@@ -294,7 +321,7 @@ class ServiceManager:
     def _poll_lol_window_state() -> dict[str, bool]:
         if win32gui is None:
             return {"lol_client_visible": False, "lol_game_visible": False}
-        client = win32gui.FindWindow(None, "League of Legends")
+        client = win32gui.FindWindow(None, LOL_CLIENT_WINDOW_TITLE)
         game = find_lol_game_window()
         return {
             "lol_client_visible": bool(client and win32gui.IsWindowVisible(client) and not win32gui.IsIconic(client)),

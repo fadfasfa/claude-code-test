@@ -50,6 +50,9 @@ _MAX_EMPTY_TEXT_RATIO = 0.35
 _AUGMENT_ICON_MANIFEST_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
 _AUGMENT_LOOKUP_CACHE: tuple[str, float, dict] = ("", 0.0, {})
 _AUGMENT_ICON_AUDIT_LOCK = threading.Lock()
+_CDRAGON_SOURCE_PREFIX = "https://raw.communitydragon.org/"
+# CDragon 闭集数据层的显式来源标记；sync_cdragon_augments 写入该字段。
+_CDRAGON_SOURCE_SCHEMA = "cdragon_minimal"
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 _PLACEHOLDER_PATTERN = re.compile(r"@([^@]+)@")
 _SAFE_OPS = {
@@ -248,7 +251,8 @@ def _fetch_remote_augment_metadata() -> dict:
 def _normalize_manifest_entry(item: dict, config_dir: str) -> dict:
     name = _clean_augment_text(item.get("name"))
     filename = normalize_safe_augment_icon_filename(os.path.basename(str(item.get("filename", "")).strip()).lower())
-    local_path = os.path.join(ASSET_DIR, filename) if filename else ""
+    # 与 CDragon 条目对齐写相对路径，避免把本机绝对路径钉进 manifest。
+    local_path = f"assets/{filename}" if filename else ""
     icon_url = sanitize_augment_icon_url(_clean_augment_text(item.get("icon_url")))
     if not icon_url and filename:
         icon_url = sanitize_augment_icon_url(f"/assets/{filename}")
@@ -275,7 +279,7 @@ def _normalize_manifest_entry(item: dict, config_dir: str) -> dict:
     if not status:
         status = "ready" if (tooltip or description) else "minimal"
 
-    return {
+    normalized = {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "name": name,
         "tier": _clean_augment_text(item.get("tier")),
@@ -289,6 +293,54 @@ def _normalize_manifest_entry(item: dict, config_dir: str) -> dict:
         "status": status,
         "updated_at": _clean_augment_text(item.get("updated_at")) or _now_iso(),
     }
+    for field in ("cdragon_id", "augment_name_id", "source_icon_path", "source_icon_url", "source_schema"):
+        if field in item:
+            normalized[field] = item.get(field)
+    return normalized
+
+
+def _is_cdragon_source_item(item: dict) -> bool:
+    # 优先认显式 source_schema 标记；旧数据无该字段时回落到 source_icon_url 前缀推断。
+    if _clean_augment_text(item.get("source_schema")) == _CDRAGON_SOURCE_SCHEMA:
+        return True
+    return _clean_augment_text(item.get("source_icon_url")).startswith(_CDRAGON_SOURCE_PREFIX)
+
+
+def _normalize_cdragon_manifest_entry(item: dict) -> dict:
+    filename = normalize_safe_augment_icon_filename(os.path.basename(str(item.get("filename", "")).strip()).lower())
+    icon_url = sanitize_augment_icon_url(_clean_augment_text(item.get("icon_url")))
+    if not icon_url and filename:
+        icon_url = sanitize_augment_icon_url(f"/assets/{filename}")
+    return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "name": _clean_augment_text(item.get("name")),
+        "tier": _clean_augment_text(item.get("tier")),
+        "filename": filename,
+        "local_path": f"assets/{filename}" if filename else "",
+        "icon_url": icon_url,
+        "cdragon_id": item.get("cdragon_id"),
+        "augment_name_id": _clean_augment_text(item.get("augment_name_id")),
+        "source_icon_path": _clean_augment_text(item.get("source_icon_path")),
+        "source_icon_url": _clean_augment_text(item.get("source_icon_url")),
+        "source_schema": _clean_augment_text(item.get("source_schema")) or _CDRAGON_SOURCE_SCHEMA,
+    }
+
+
+def _is_cdragon_minimal_manifest(manifest: list[dict]) -> bool:
+    """CDragon 数据层只承诺名字、品质和图标，不要求第三方描述字段。"""
+
+    if not manifest or len(manifest) < _MIN_VALID_MANIFEST_ENTRIES:
+        return False
+    for item in manifest:
+        if not _clean_augment_text(item.get("name")):
+            return False
+        if not _clean_augment_text(item.get("tier")):
+            return False
+        if not _clean_augment_text(item.get("filename")) and not _clean_augment_text(item.get("icon_url")):
+            return False
+        if not _is_cdragon_source_item(item):
+            return False
+    return True
 
 
 def _read_manifest_file(manifest_path: str, config_dir: str) -> list[dict]:
@@ -296,11 +348,14 @@ def _read_manifest_file(manifest_path: str, config_dir: str) -> list[dict]:
         with open(manifest_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
-            return [
-                _normalize_manifest_entry(item, config_dir)
+            items = [
+                item
                 for item in data
                 if isinstance(item, dict) and _clean_augment_text(item.get("name"))
             ]
+            if items and all(_is_cdragon_source_item(item) for item in items):
+                return [_normalize_cdragon_manifest_entry(item) for item in items]
+            return [_normalize_manifest_entry(item, config_dir) for item in items]
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         pass
     return []
@@ -338,6 +393,8 @@ def _manifest_needs_rebuild(manifest: list[dict]) -> bool:
         return True
     if len(manifest) < _MIN_VALID_MANIFEST_ENTRIES:
         return True
+    if _is_cdragon_minimal_manifest(manifest):
+        return False
     sample = manifest[0]
     required = {"schema_version", "icon_url", "description", "tooltip_plain", "spell_values", "status", "updated_at"}
     if any(field not in sample for field in required):
@@ -365,6 +422,10 @@ def _manifest_is_stale(manifest_path: str) -> bool:
     except OSError:
         return True
 
+    manifest = _read_manifest_file(manifest_path, STATIC_DATA_DIR)
+    if _is_cdragon_minimal_manifest(manifest):
+        return False
+
     source_paths = [
         os.path.join(STATIC_DATA_DIR, "Augment_Icon_Map.json"),
         os.path.join(STATIC_DATA_DIR, "Augment_Full_Map.json"),
@@ -376,7 +437,6 @@ def _manifest_is_stale(manifest_path: str) -> bool:
         except OSError:
             continue
 
-    manifest = _read_manifest_file(manifest_path, STATIC_DATA_DIR)
     return _manifest_needs_rebuild(manifest)
 
 
@@ -385,6 +445,12 @@ def build_augment_icon_manifest(
     force_refresh: bool = False,
 ) -> list[dict]:
     config_dir = config_dir or STATIC_DATA_DIR
+    # CDragon 数据层是闭集；稳定 manifest 已是 CDragon schema 时直接返回，
+    # 不再触发 icon_map / full_map / remote_metadata 拼接路径。但 force_refresh=True
+    # 应能覆盖该短路，供 schema 升级/修复路径强制重建。
+    stable_manifest = _read_manifest_file(os.path.join(config_dir, "Augment_Icon_Manifest.json"), config_dir)
+    if not force_refresh and _is_cdragon_minimal_manifest(stable_manifest):
+        return stable_manifest
     icon_map = load_augment_icon_map(config_dir, force_refresh=force_refresh)
     full_map = _load_full_map(config_dir)
     existing_manifest = _read_manifest_file(get_augment_manifest_runtime_path(config_dir), config_dir)
@@ -433,7 +499,7 @@ def build_augment_icon_manifest(
             "name": name,
             "tier": tier,
             "filename": filename,
-            "local_path": os.path.join(ASSET_DIR, filename) if filename else "",
+            "local_path": f"assets/{filename}" if filename else "",
             "icon_url": icon_url,
             "description": _clean_augment_text(remote_meta.get("description") or existing.get("description")),
             "tooltip": _clean_augment_text(remote_meta.get("tooltip") or existing.get("tooltip")),
@@ -576,6 +642,8 @@ def manifest_has_incomplete_entries(
         return True
     if len(manifest) < _MIN_VALID_MANIFEST_ENTRIES:
         return True
+    if _is_cdragon_minimal_manifest(manifest):
+        return False
     for item in manifest:
         if str(item.get("status", "")).strip() != "ready":
             return True

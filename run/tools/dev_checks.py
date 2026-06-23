@@ -24,6 +24,7 @@ import random
 import re
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -110,6 +111,75 @@ def check_manifest_icon_url_safety() -> None:
     assert not icon_resolver.sanitize_augment_icon_url("https://evil.com/assets/x.png")
     assert not icon_resolver.sanitize_augment_icon_url("/assets/not-png.webp")
     assert not icon_resolver.sanitize_augment_icon_url("/assets/../secret.png")
+
+
+def check_cdragon_force_refresh_semantics() -> None:
+    """CDragon minimal manifest 不应被旧完整描述字段规则强制重建。"""
+    import scraping.augment_catalog as augment_catalog
+
+    def cdragon_entry(index: int) -> dict[str, Any]:
+        return {
+            "schema_version": augment_catalog.MANIFEST_SCHEMA_VERSION,
+            "name": f"Augment{index}",
+            "tier": "Silver",
+            "filename": f"augment{index}.png",
+            "icon_url": f"/assets/augment{index}.png",
+            "source_icon_url": f"{augment_catalog._CDRAGON_SOURCE_PREFIX}game/assets/augment{index}.png",
+        }
+
+    minimal_manifest = [cdragon_entry(index) for index in range(augment_catalog._MIN_VALID_MANIFEST_ENTRIES)]
+    assert augment_catalog._is_cdragon_minimal_manifest(minimal_manifest)
+    assert augment_catalog._is_cdragon_minimal_manifest([cdragon_entry(0)]) is False
+    non_cdragon = [
+        {**cdragon_entry(index), "source_icon_url": "https://apexlol.info/x.png"}
+        for index in range(augment_catalog._MIN_VALID_MANIFEST_ENTRIES)
+    ]
+    assert augment_catalog._is_cdragon_minimal_manifest(non_cdragon) is False
+
+    calls: dict[str, int] = {"icon_map": 0}
+
+    def fake_load_icon_map(config_dir=None, force_refresh=False):
+        calls["icon_map"] += 1
+        return {}
+
+    with (
+        patch.object(augment_catalog, "_read_manifest_file", return_value=minimal_manifest),
+        patch.object(augment_catalog, "load_augment_icon_map", side_effect=fake_load_icon_map),
+        patch.object(augment_catalog, "_load_full_map", return_value={}),
+        patch.object(augment_catalog, "_fetch_remote_augment_metadata", return_value={}),
+        patch.object(augment_catalog, "_write_augment_icon_manifest"),
+    ):
+        result = augment_catalog.build_augment_icon_manifest(force_refresh=False)
+        assert result is minimal_manifest
+        assert calls["icon_map"] == 0
+        augment_catalog.build_augment_icon_manifest(force_refresh=True)
+        assert calls["icon_map"] == 1
+
+
+def check_cdragon_source_schema_marker() -> None:
+    """CDragon 条目优先使用显式 source_schema 标记，旧数据仍按前缀兼容。"""
+    import scraping.augment_catalog as augment_catalog
+
+    raw_entry = {
+        "schema_version": augment_catalog.MANIFEST_SCHEMA_VERSION,
+        "name": "缩小引擎",
+        "tier": "棱彩",
+        "filename": "shrinkengine.png",
+        "icon_url": "/assets/shrinkengine.png",
+        "source_icon_url": f"{augment_catalog._CDRAGON_SOURCE_PREFIX}game/assets/shrinkengine.png",
+        "source_schema": augment_catalog._CDRAGON_SOURCE_SCHEMA,
+    }
+    normalized = augment_catalog._normalize_cdragon_manifest_entry(raw_entry)
+    assert normalized["source_schema"] == augment_catalog._CDRAGON_SOURCE_SCHEMA
+
+    explicit_only = {**raw_entry, "source_icon_url": "https://apexlol.info/x.png"}
+    assert augment_catalog._is_cdragon_source_item(explicit_only) is True
+
+    legacy = {key: value for key, value in raw_entry.items() if key != "source_schema"}
+    assert augment_catalog._is_cdragon_source_item(legacy) is True
+
+    foreign = {**raw_entry, "source_schema": "", "source_icon_url": "https://apexlol.info/x.png"}
+    assert augment_catalog._is_cdragon_source_item(foreign) is False
 
 
 def check_safe_detail_name_regex() -> None:
@@ -4380,6 +4450,49 @@ print(json.dumps(blocked))
     manager.stop_game_overlay()
     assert not manager.is_web_running() and not manager.is_game_overlay_running()
 
+    class ReleaseAfterWaitProcess(DummyProcess):
+        def __init__(self, pid: int):
+            super().__init__(pid)
+            self.wait_entered = threading.Event()
+            self.release = threading.Event()
+
+        def terminate(self) -> None:
+            self.calls.append("stop:web")
+
+        def wait(self, timeout=None):
+            self.wait_entered.set()
+            if self.release.wait(timeout=1):
+                self.running = False
+                return 0
+            raise TimeoutError("still running")
+
+        def poll(self):
+            return None if self.running else 0
+
+    joined_process = ReleaseAfterWaitProcess(304)
+    joined_manager = ServiceManager(
+        start_web_func=lambda: joined_process,
+        overlay_controller=GameOverlayController(prepare_data_func=lambda: None, write_inactive_func=lambda: None),
+    )
+    joined_manager.start_web()
+
+    def release_shutdown_wait() -> None:
+        assert joined_process.wait_entered.wait(timeout=1)
+        joined_process.release.set()
+
+    release_thread = threading.Thread(target=release_shutdown_wait, daemon=True)
+    release_thread.start()
+    try:
+        joined_manager.shutdown(timeout_seconds=0.01)
+        assert joined_process.release.is_set(), "默认退出路径应等待后台收尾线程完成"
+        assert joined_manager._shutdown_thread is not None
+        assert not joined_manager._shutdown_thread.is_alive()
+        joined_snapshot = joined_manager.get_status_snapshot()["web"]
+        assert joined_snapshot["status"] == "stopped"
+    finally:
+        joined_process.release.set()
+        release_thread.join(timeout=1)
+
     def hint_cache(*, private: bool = True, stats: bool = True, synergy_count: int = 3) -> dict[str, Any]:
         hints: dict[str, Any] = {}
         for index in range(3):
@@ -5132,6 +5245,8 @@ def run_default_checks() -> None:
     check_root_entrypoints()
     check_manual_alias_index()
     check_manifest_icon_url_safety()
+    check_cdragon_force_refresh_semantics()
+    check_cdragon_source_schema_marker()
     check_safe_detail_name_regex()
     check_apexlol_hextech_map_size_limit()
     check_runtime_alias_persistence()

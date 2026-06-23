@@ -13,6 +13,8 @@ from collections.abc import Iterable, Sequence
 
 import psutil
 
+from processing.window_titles import LOL_GAME_WINDOW_TITLE
+
 try:
     import win32gui
     import win32process
@@ -22,7 +24,7 @@ except ImportError:  # pragma: no cover - 非 Windows 环境只运行纯函数�
 
 
 LOL_GAME_PROCESS_NAMES = frozenset({"league of legends.exe"})
-LOL_GAME_WINDOW_TITLES = ("League of Legends (TM) Client",)
+LOL_GAME_WINDOW_TITLES = (LOL_GAME_WINDOW_TITLE,)
 DWMWA_CLOAKED = 14
 GA_ROOT = 2
 VK_TAB = 0x09

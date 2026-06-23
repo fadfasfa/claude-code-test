@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from processing.lol_window import find_lol_game_window, is_scoreboard_key_down, root_window_hwnd
+from processing.window_titles import LOL_GAME_WINDOW_TITLE
 from tools.atomic_io import atomic_write_json
 
 from .data_source import OverlayDataSource, SharedOverlayDataSource
@@ -99,7 +100,7 @@ def build_overlay_window_config() -> dict[str, Any]:
         "badge_height": 72,
         "badge_width_ratio": 0.15,
         "show_missing_synergy_reason": True,
-        "follow_window_titles": ["League of Legends (TM) Client"],
+        "follow_window_titles": [LOL_GAME_WINDOW_TITLE],
         "top_offset": 132,
         "event_poll_ms": 120,
         "diagnostic_mode": False,
