@@ -463,9 +463,10 @@ def get_latest_valid_csv(min_rows: int = CSV_MIN_VALID_ROWS) -> Optional[str]:
 
 
 def get_latest_csv() -> Optional[str]:
-    """兼容旧调用方，统一委托最新有效 CSV 选择。"""
+    """返回最新运行 CSV，保留 UI/Web 可展示部分数据的兼容语义。"""
 
-    return get_latest_valid_csv()
+    files = sorted(iter_runtime_csv_files(), key=_runtime_csv_sort_key, reverse=True)
+    return files[0] if files else None
 
 
 def validate_runtime_csv_schema(

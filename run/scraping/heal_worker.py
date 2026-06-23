@@ -26,6 +26,7 @@ from processing.runtime_store import (
     build_synergy_latest_pointer_path,
     build_synergy_refresh_status_path,
     get_latest_csv,
+    get_latest_valid_csv,
     get_latest_synergy_snapshot_path,
     load_synergy_latest_pointer,
     load_synergy_refresh_status,
@@ -85,7 +86,7 @@ class HealReport:
 
 
 def _latest_csv_ready() -> bool:
-    latest_csv = get_latest_csv()
+    latest_csv = get_latest_valid_csv()
     return bool(latest_csv and os.path.exists(latest_csv))
 
 
@@ -99,7 +100,7 @@ def _file_is_fresh(path: str, stale_after_seconds: int = HIGH_FREQUENCY_STALE_SE
 
 
 def _latest_csv_fresh() -> bool:
-    latest_csv = get_latest_csv()
+    latest_csv = get_latest_valid_csv()
     return _file_is_fresh(latest_csv or "")
 
 
@@ -203,8 +204,9 @@ def _image_assets_ready() -> bool:
 
 def detect_missing_artifacts() -> dict:
     latest_csv = get_latest_csv()
+    latest_valid_csv = get_latest_valid_csv()
     synergy_missing = not _synergy_data_fresh() if _auto_synergy_refresh_enabled() else False
-    fallback_cooling_down = bool(latest_csv and hextech_refresh_blocked())
+    fallback_cooling_down = bool(latest_valid_csv and hextech_refresh_blocked())
     return {
         "hextech_rankings": not fallback_cooling_down and not _latest_csv_fresh(),
         "hextech_fallback": fallback_cooling_down,

@@ -224,9 +224,12 @@ class GameOverlayController:
         self.sidecar_process: ProcessLike | None = None
         self.status = "stopped"
         self.last_error = ""
+        self.residual_pids: dict[str, int] = {}
         self.updated_at = time.time()
 
     def _mark(self, status: str, *, error: str = "") -> None:
+        if status in {"running", "stopped"} and not error:
+            self.residual_pids = {}
         self.status = status
         self.last_error = error
         self.updated_at = time.time()
@@ -315,8 +318,17 @@ class GameOverlayController:
             sidecar_process = self.sidecar_process
             host_stopped = stop_process(host_process)
             sidecar_stopped = stop_process(sidecar_process)
-            self.host_process = None
-            self.sidecar_process = None
+            self.residual_pids = {}
+            if host_stopped:
+                self.host_process = None
+            elif host_process is not None:
+                self.host_process = host_process
+                self.residual_pids["host"] = int(getattr(host_process, "pid", 0) or 0)
+            if sidecar_stopped:
+                self.sidecar_process = None
+            elif sidecar_process is not None:
+                self.sidecar_process = sidecar_process
+                self.residual_pids["sidecar"] = int(getattr(sidecar_process, "pid", 0) or 0)
             residual = [
                 f"{name}(pid={getattr(process, 'pid', None)})"
                 for name, stopped, process in (
@@ -358,8 +370,17 @@ class GameOverlayController:
             except Exception as exc:
                 errors.append(f"最终 inactive 事件写入失败：{exc}")
         host_stopped = stop_process(host_process)
-        self.sidecar_process = None
-        self.host_process = None
+        self.residual_pids = {}
+        if sidecar_stopped:
+            self.sidecar_process = None
+        elif sidecar_process is not None:
+            self.sidecar_process = sidecar_process
+            self.residual_pids["sidecar"] = int(getattr(sidecar_process, "pid", 0) or 0)
+        if host_stopped:
+            self.host_process = None
+        elif host_process is not None:
+            self.host_process = host_process
+            self.residual_pids["host"] = int(getattr(host_process, "pid", 0) or 0)
         if not sidecar_stopped:
             message = f"sidecar 停止失败(pid={getattr(sidecar_process, 'pid', None)})"
             errors.append(message)
@@ -388,5 +409,6 @@ class GameOverlayController:
             "host_status": "running" if host_running else "stopped",
             "sidecar_status": "running" if sidecar_running else "stopped",
             "last_error": self.last_error,
+            "residual_pids": dict(self.residual_pids),
             "updated_at": self.updated_at,
         }

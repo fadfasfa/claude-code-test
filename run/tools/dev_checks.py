@@ -439,7 +439,7 @@ def _write_runtime_csv(path: Path, row_count: int = 300) -> None:
 
 
 def check_latest_valid_runtime_csv_fallback() -> None:
-    """最新快照损坏或行数不足时必须继续使用上一份有效版本。"""
+    """最新快照保留兼容读取；健康判断必须回退到上一份有效版本。"""
 
     with TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
@@ -459,7 +459,23 @@ def check_latest_valid_runtime_csv_fallback() -> None:
             return_value=[str(valid), str(too_small), str(broken)],
         ):
             assert runtime_store.get_latest_valid_csv() == str(valid)
-            assert runtime_store.get_latest_csv() == str(valid)
+            assert runtime_store.get_latest_csv() == str(broken)
+
+        with (
+            patch.object(orchestrator, "get_latest_csv", side_effect=AssertionError("refresh must use valid csv")),
+            patch.object(orchestrator, "get_latest_valid_csv", return_value=str(valid)),
+            patch.object(orchestrator, "hextech_refresh_blocked", return_value=False),
+            patch.object(orchestrator, "_file_is_fresh", return_value=True),
+        ):
+            assert orchestrator.should_refresh_hextech(False) is False
+
+        with (
+            patch.object(heal_worker, "get_latest_csv", side_effect=AssertionError("freshness must use valid csv")),
+            patch.object(heal_worker, "get_latest_valid_csv", return_value=str(valid)),
+            patch.object(heal_worker, "_file_is_fresh", return_value=True),
+        ):
+            assert heal_worker._latest_csv_ready() is True
+            assert heal_worker._latest_csv_fresh() is True
 
 
 def check_hextech_scraper_fallback_contract() -> None:
@@ -1114,7 +1130,55 @@ def check_overlay_hint_cache_contract() -> None:
                 "海克斯出场率": 0.041,
                 "胜率差": 0.08,
                 "综合得分": 2.1,
-            }
+            },
+            {
+                "英雄 ID": float("nan"),
+                "英雄名称": "缺失ID英雄",
+                "英雄评级": 1,
+                "英雄胜率": 0.49,
+                "英雄出场率": 0.01,
+                "海克斯ID": "nan-id",
+                "源站排名": 2,
+                "源站层级": "T2",
+                "海克斯阶级": "Gold",
+                "海克斯名称": "缺失ID海克斯",
+                "海克斯胜率": 0.502,
+                "海克斯出场率": 0.012,
+                "胜率差": 0.01,
+                "综合得分": 1.1,
+            },
+            {
+                "英雄 ID": "999",
+                "英雄名称": float("nan"),
+                "英雄评级": 1,
+                "英雄胜率": 0.5,
+                "英雄出场率": 0.02,
+                "海克斯ID": "nan-hero",
+                "源站排名": 3,
+                "源站层级": "T3",
+                "海克斯阶级": "Gold",
+                "海克斯名称": "污染英雄名",
+                "海克斯胜率": 0.5,
+                "海克斯出场率": 0.02,
+                "胜率差": 0.0,
+                "综合得分": 0.5,
+            },
+            {
+                "英雄 ID": "998",
+                "英雄名称": "污染海克斯名",
+                "英雄评级": 1,
+                "英雄胜率": 0.5,
+                "英雄出场率": 0.02,
+                "海克斯ID": "nan-augment",
+                "源站排名": 4,
+                "源站层级": "T3",
+                "海克斯阶级": "Gold",
+                "海克斯名称": float("nan"),
+                "海克斯胜率": 0.5,
+                "海克斯出场率": 0.02,
+                "胜率差": 0.0,
+                "综合得分": 0.5,
+            },
         ]
     )
     with (
@@ -1132,6 +1196,12 @@ def check_overlay_hint_cache_contract() -> None:
     assert latest_hint["hint"]["stats_by_champion_name"]["星界游神"]["pickrate"] == 0.041
     assert latest_cache["source"]["data_source"] == "runtime-csv"
     assert latest_cache["source"]["runtime_csv"] == "Hextech_Data_2099-01-01.csv"
+    nan_id_hint = overlay_hint_cache.query_overlay_hint(latest_cache, "缺失ID海克斯")
+    assert nan_id_hint["ok"] is True
+    assert "nan" not in nan_id_hint["hint"].get("stats_by_champion_id", {})
+    assert latest_cache["source"]["hero_count"] == 2
+    assert overlay_hint_cache.query_overlay_hint(latest_cache, "污染英雄名")["ok"] is False
+    assert overlay_hint_cache.query_overlay_hint(latest_cache, "nan-augment")["ok"] is False
 
     with TemporaryDirectory() as tmp_dir:
         champion_cache = Path(tmp_dir) / "Champion_List_Cache.json"
@@ -1157,6 +1227,36 @@ def check_overlay_hint_cache_contract() -> None:
     stale_hint = overlay_hint_cache.query_overlay_hint(stale_cache, "augment_001")
     assert stale_hint["ok"] is True
     assert stale_hint["hint"]["stats_by_champion_id"]["86"]["pickrate"] == 0.082
+
+
+def check_overlay_runtime_paths_contract() -> None:
+    """验证 overlay event/context 共享的轻量运行态路径规则。"""
+    import processing.overlay_runtime_paths as overlay_runtime_paths
+
+    with TemporaryDirectory() as tmp_dir:
+        source_base = Path(tmp_dir) / "source"
+        with (
+            patch.object(overlay_runtime_paths.sys, "frozen", False, create=True),
+            patch.dict(os.environ, {"HEXTECH_BASE_DIR": str(source_base)}),
+        ):
+            resolved = Path(overlay_runtime_paths.overlay_runtime_state_path("probe.json"))
+            assert resolved == (source_base / "data" / "runtime" / "state" / "probe.json").resolve()
+            try:
+                overlay_runtime_paths.overlay_runtime_state_path("../escaped.json")
+            except ValueError as exc:
+                assert "escaped state dir" in str(exc)
+            else:
+                raise AssertionError("overlay runtime state 路径不得逃逸 state 根目录")
+
+        local_app_data = Path(tmp_dir) / "local-app-data"
+        with (
+            patch.object(overlay_runtime_paths.sys, "frozen", True, create=True),
+            patch.dict(os.environ, {"LOCALAPPDATA": str(local_app_data), "APPDATA": ""}),
+        ):
+            resolved = Path(overlay_runtime_paths.overlay_runtime_state_path("probe.json"))
+            assert resolved == (
+                local_app_data / "HextechNexus" / "data" / "runtime" / "state" / "probe.json"
+            ).resolve()
 
 
 def check_overlay_event_channel_contract() -> None:
@@ -1223,7 +1323,12 @@ def check_overlay_event_channel_contract() -> None:
         assert zero_ready_snapshot["active"] is False
         assert zero_ready_snapshot["source"]["selection_window_active"] is True
         assert zero_ready_snapshot["source"]["ready_slots"] == 0
-        assert overlay_event_channel.EVENT_MAX_AGE_SECONDS == 2.5
+        assert overlay_event_channel.EVENT_HEARTBEAT_SECONDS == 1.0
+        assert overlay_event_channel.EVENT_STALE_HEARTBEAT_BUDGET == 2.5
+        assert overlay_event_channel.EVENT_MAX_AGE_SECONDS == (
+            overlay_event_channel.EVENT_HEARTBEAT_SECONDS
+            * overlay_event_channel.EVENT_STALE_HEARTBEAT_BUDGET
+        )
 
         fake_path = Path(tmp_dir) / "fake-detection.json"
         fake_written = overlay_event_channel.write_fake_detection_overlay_event(fake_path)
@@ -1289,6 +1394,9 @@ def check_overlay_event_channel_contract() -> None:
     assert "from processing.runtime_store" not in module_text
     assert "import processing.runtime_store" not in module_text
     assert "from processing.overlay_hint_cache" not in module_text
+    assert "from processing.overlay_runtime_paths import overlay_runtime_state_path" in module_text
+    assert "def _overlay_runtime_root_dir" not in module_text
+    assert "def _overlay_runtime_state_path" not in module_text
 
 
 def check_overlay_context_contract() -> None:
@@ -1350,6 +1458,9 @@ def check_overlay_context_contract() -> None:
     module_text = (RUN_DIR / "processing" / "overlay_context.py").read_text(encoding="utf-8").lower()
     forbidden_terms = ["requests", "fastapi", "web_api", "web_runtime", "full_hextech_scraper"]
     assert not any(term in module_text for term in forbidden_terms)
+    assert "from processing.overlay_runtime_paths import overlay_runtime_state_path" in module_text
+    assert "def _overlay_runtime_root_dir" not in module_text
+    assert "def _overlay_runtime_state_path" not in module_text
 
 
 def check_official_overlay_provider_contract() -> None:
@@ -4187,7 +4298,9 @@ print(json.dumps(blocked))
         assert "host 停止失败(pid=114)" in str(exc)
     else:
         raise AssertionError("stop_process 失败必须向调用方报错")
-    assert residual_stop.host_process is None and residual_stop.sidecar_process is None
+    assert residual_stop.host_process is not None and residual_stop.host_process.pid == 114
+    assert residual_stop.sidecar_process is None
+    assert residual_stop.snapshot()["residual_pids"] == {"host": 114}
     assert residual_stop_calls[:2] == ["inactive", "inactive"]
 
     # host 失败必须回滚已启动 sidecar；sidecar 失败不得继续启动 host。
@@ -4210,6 +4323,24 @@ print(json.dumps(blocked))
     assert rollback_event_calls == ["inactive", "inactive"]
     assert rollback.snapshot()["status"] == "error"
     assert rollback.host_process is None and rollback.sidecar_process is None
+
+    stubborn_rollback_calls: list[str] = []
+    stubborn_orphan_sidecar = StubbornProcess(204, calls=stubborn_rollback_calls, label="sidecar")
+    stubborn_rollback = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: None,
+        start_sidecar_func=lambda: stubborn_orphan_sidecar,
+        start_host_func=lambda: (_ for _ in ()).throw(RuntimeError("host failed with stubborn sidecar")),
+    )
+    try:
+        stubborn_rollback.start()
+    except RuntimeError as exc:
+        assert "回滚后仍有残留" in str(exc)
+        assert "sidecar(pid=204)" in str(exc)
+    else:
+        raise AssertionError("回滚残留必须向调用方报错")
+    assert stubborn_rollback.sidecar_process is stubborn_orphan_sidecar
+    assert stubborn_rollback.snapshot()["residual_pids"] == {"sidecar": 204}
 
     sidecar_failed_host_calls: list[str] = []
     sidecar_failure = GameOverlayController(
@@ -5036,6 +5167,7 @@ def run_default_checks() -> None:
     check_detail_renders_before_deferred_icon_catalog()
     check_ui_feature_flags_contract()
     check_overlay_hint_cache_contract()
+    check_overlay_runtime_paths_contract()
     check_overlay_event_channel_contract()
     check_overlay_context_contract()
     check_lol_window_contract()
@@ -5054,6 +5186,7 @@ def run_overlay_only_checks() -> None:
     check_game_overlay_documentation_contract()
     check_ui_feature_flags_contract()
     check_overlay_hint_cache_contract()
+    check_overlay_runtime_paths_contract()
     check_overlay_event_channel_contract()
     check_overlay_context_contract()
     check_lol_window_contract()

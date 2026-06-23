@@ -8,12 +8,11 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 import time
 from pathlib import Path
 from typing import Any, Mapping
 
+from processing.overlay_runtime_paths import overlay_runtime_state_path
 from tools.atomic_io import atomic_write_json
 
 
@@ -21,30 +20,7 @@ SCHEMA_VERSION = 1
 CONTEXT_MAX_AGE_SECONDS = 6 * 60 * 60.0
 
 
-def _overlay_runtime_root_dir() -> Path:
-    """返回 overlay 运行态目录；保持与本地事件通道相同的 frozen/源码路径规则。"""
-
-    if getattr(sys, "frozen", False):
-        local_app_data = os.getenv("LOCALAPPDATA", "").strip()
-        if local_app_data:
-            return Path(local_app_data) / "HextechNexus" / "data" / "runtime"
-        app_data = os.getenv("APPDATA", "").strip()
-        if app_data:
-            return Path(app_data) / "HextechNexus" / "data" / "runtime"
-        return Path.home() / ".hextech_nexus" / "data" / "runtime"
-    base_dir = Path(os.getenv("HEXTECH_BASE_DIR", "") or Path(__file__).resolve().parents[1])
-    return base_dir / "data" / "runtime"
-
-
-def _overlay_runtime_state_path(filename: str) -> str:
-    root = (_overlay_runtime_root_dir() / "state").resolve()
-    candidate = (root / filename).resolve()
-    if candidate != root and root not in candidate.parents:
-        raise ValueError(f"overlay context path escaped runtime state dir: {filename}")
-    return str(candidate)
-
-
-OVERLAY_CONTEXT_FILE = Path(_overlay_runtime_state_path("game_overlay_context.v1.json"))
+OVERLAY_CONTEXT_FILE = Path(overlay_runtime_state_path("game_overlay_context.v1.json"))
 
 
 def _clean_text(value: Any, *, limit: int = 80) -> str:

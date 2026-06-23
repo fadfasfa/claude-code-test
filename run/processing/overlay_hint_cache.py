@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 from pathlib import Path
@@ -31,7 +32,13 @@ _AUGMENT_ID_SAFE_RE = re.compile(r"[^\w.:-]+")
 def normalize_augment_id(value: Any, fallback_name: str = "") -> str:
     """生成 overlay 查询用稳定 ID；优先使用源数据 ID，缺失时用名称兜底。"""
 
-    raw_text = str(value or "").strip() or str(fallback_name or "").strip()
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        raw_text = ""
+    else:
+        raw_text = str(value).strip()
+        if raw_text.lower() in {"nan", "<na>", "nat"}:
+            raw_text = ""
+    raw_text = raw_text or str(fallback_name or "").strip()
     if not raw_text:
         return ""
     return _AUGMENT_ID_SAFE_RE.sub("_", raw_text).strip("_").lower()
@@ -39,9 +46,10 @@ def normalize_augment_id(value: Any, fallback_name: str = "") -> str:
 
 def _coerce_float(value: Any) -> float | None:
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    return None if math.isnan(number) else number
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -154,7 +162,13 @@ def _load_stale_precomputed_payloads() -> tuple[list[Mapping[str, Any]], dict[st
 
 
 def _clean_text(value: Any) -> str:
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    text = re.sub(r"\s+", " ", str(value)).strip()
+    if text.lower() in {"nan", "<na>", "nat"}:
+        return ""
     return text
 
 

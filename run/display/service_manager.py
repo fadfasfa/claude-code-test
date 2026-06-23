@@ -192,7 +192,6 @@ class ServiceManager:
     def get_status_snapshot(self) -> dict[str, Any]:
         with self._lock:
             overlay_snapshot = self._overlay_controller.snapshot()
-            self._sync_overlay_compat_state()
             return {
                 "web": self.web.snapshot(),
                 "game_overlay": overlay_snapshot,

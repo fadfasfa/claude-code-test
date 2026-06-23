@@ -7,19 +7,22 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from processing.overlay_runtime_paths import overlay_runtime_state_path
 from tools.atomic_io import atomic_write_json
 
 
 SCHEMA_VERSION = 2
 ACCEPTED_SCHEMA_VERSIONS = {1, 2}
 SLOT_COUNT = 3
-EVENT_MAX_AGE_SECONDS = 2.5
+# sidecar 默认每 1s 写一次 heartbeat；2.5 个 heartbeat 后才判旧事件，host 侧
+# 还会额外做短暂 stale hold，避免单次 I/O 抖动直接让 overlay 闪烁。
+EVENT_HEARTBEAT_SECONDS = 1.0
+EVENT_STALE_HEARTBEAT_BUDGET = 2.5
+EVENT_MAX_AGE_SECONDS = EVENT_HEARTBEAT_SECONDS * EVENT_STALE_HEARTBEAT_BUDGET
 ALLOWED_SELECTION_TYPES = {"hextech", "body_shard"}
 VISIBLE_SELECTION_TYPES = {"hextech"}
 ALLOWED_SLOT_STATES = {"ready", "low_confidence", "detecting", "empty"}
@@ -40,30 +43,7 @@ _SELECTION_TYPE_ALIASES = {
 }
 
 
-def _overlay_runtime_root_dir() -> Path:
-    """返回 overlay 专用运行态目录，避免导入会加载抓取依赖的通用 runtime_store。"""
-
-    if getattr(sys, "frozen", False):
-        local_app_data = os.getenv("LOCALAPPDATA", "").strip()
-        if local_app_data:
-            return Path(local_app_data) / "HextechNexus" / "data" / "runtime"
-        app_data = os.getenv("APPDATA", "").strip()
-        if app_data:
-            return Path(app_data) / "HextechNexus" / "data" / "runtime"
-        return Path.home() / ".hextech_nexus" / "data" / "runtime"
-    base_dir = Path(os.getenv("HEXTECH_BASE_DIR", "") or Path(__file__).resolve().parents[1])
-    return base_dir / "data" / "runtime"
-
-
-def _overlay_runtime_state_path(filename: str) -> str:
-    root = (_overlay_runtime_root_dir() / "state").resolve()
-    candidate = (root / filename).resolve()
-    if candidate != root and root not in candidate.parents:
-        raise ValueError(f"overlay event path escaped runtime state dir: {filename}")
-    return str(candidate)
-
-
-OVERLAY_EVENT_FILE = Path(_overlay_runtime_state_path("game_overlay_slots.v1.json"))
+OVERLAY_EVENT_FILE = Path(overlay_runtime_state_path("game_overlay_slots.v1.json"))
 
 
 def _clean_text(value: Any, *, limit: int = 160) -> str:
