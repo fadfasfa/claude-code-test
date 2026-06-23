@@ -6,17 +6,26 @@
 
 - Codex standalone mode：用户直接调用 Codex 时，Codex 按 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和用户任务独立执行普通代码任务完整流程。
 - Codex App、VS Code Codex、Codex CLI、wrapper 和 CC 调用器是不同 surface，不混写为同一入口。
+- Codex App 显式短调用 Claude Code CLI 的轻量 wrapper 属于受控辅助 surface；具体后端模型沿用当前 Claude Code 配置，不创建任务队列、daemon、状态机、hook 或旧 CC-CX bridge。
 - 重执行、长线程和大 diff 默认留在 VS Code Codex / Codex CLI；不要把这类执行历史重新带回 Codex App 热路径。
 - 官方 Superpowers plugin 是唯一 Superpowers 来源；Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
 
 ## Current Contract
 
 - 旧 CC-CX 根入口和旧 workflow executor 已移除；如在历史路径、缓存或兼容层出现，只能视为 legacy/compat。
-- 不再维护旧 CC-CX 执行脚本作为主流程、fallback 主路或验收接口。
+- 不再维护旧 CC-CX 执行脚本作为主流程、fallback 主路或验收接口；轻量 worker 只允许作为 Codex 主控下的短调用工具。
 - `.state/workflow/**` 是旧 CC-CX 工作流遗留运行态目录；当前工作流不依赖旧任务结果文件。
 - Codex standalone 能力保留；用户直接调用 Codex 时不经过 Claude Code 委派层。
 - `.claude/settings.json` 可保留 Codex plugin 启用状态；启用状态不构成 Claude Code 调用 Codex 的默认偏好或隐含授权。
 - Codex plugin review gate 默认禁用；除非用户显性要求，不得启用 review gate。
+
+## Codex Egress Boundary
+
+- Codex 出口维护是独立高风险维护任务，不属于普通仓库实现任务或默认执行边界。
+- 涉及 `Codex Proxy`、`cockpit-cliproxy`、Clash、mihomo、`7898`、`7899`、Codex 出口或账号池隔离时，先读本地 `docs/workflows/codex-egress-maintenance.md`，再做探查或修改。
+- `7898` 是 Codex Proxy / `cockpit-cliproxy` 专用隔离出口，不能指回 `7899`、`手动选择`、`GLOBAL` 或主选组；如当前订阅有 AI 出口组，优先使用该组。
+- `7899` 保持日常代理用途和 `手动选择` 语义；除非用户当前轮明确点名，不为了 Codex 出口修改它。
+- 本文件不保存 live proxy 细节、节点名、订阅 URL、账号、密钥或路由真相；这些只允许写入本地忽略的维护说明，且不得包含凭据。
 
 ## Codex Task Rules
 
@@ -29,6 +38,7 @@
 - 验证通过后报告 diff、验证结果和剩余风险；只有当前轮明确授权时才只暂存本轮修改文件并 commit。
 - 禁止 `git add .`。push、PR、merge 或 discard 未获明确授权时禁止主动执行；用户明确要求后由 agent 自行完成并验证结果，不要求用户手动输入命令。
 - 本仓外写入、非沙箱以及高风险、不可逆或发布类 Bash 命令仍应提示。
+- Codex 调用轻量 worker 后必须审查真实 Git diff，并按任务运行最小有效验证；具体命令和参数由轻量 worker 文档维护。
 
 ## Forbidden
 
@@ -44,9 +54,11 @@
 - 不启用 Codex plugin review gate，除非用户显性要求。
 - 不在没有用户显性授权非沙箱 Codex 时使用 `-Sandbox danger-full-access`。
 - 不把非沙箱 Codex 授权混同为 Claude Code 修改授权。
+- 不让 Codex 调用的轻量 worker 执行 push、PR 创建、发布或 main 直接推送；用户正常打开 Claude Code 并显性命令时按用户授权和仓库规则处理。
 
 ## Related
 
 - `independent-agent-workflow.md`
+- `codex-cc-lightweight-worker.md`
 - `repository-layout.md`
 - `worktree-policy.md`

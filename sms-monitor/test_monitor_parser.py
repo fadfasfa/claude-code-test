@@ -7,18 +7,32 @@
 """
 
 import io
+import json
+import os
+import tempfile
+import threading
+import time
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
+import monitor
 from monitor import (
     AccountSource,
+    EmailSource,
+    FixedUrlSource,
     LuDanSource,
     SmsMonitor,
     generate_totp,
     normalize_accounts,
     normalize_email_sources,
     parse_fixed_sms_response,
+    parse_freeform_account_text,
+    ready_check_email_source,
+    ready_check_fixed_source,
+    ready_check_ludan,
+    run_cli,
+    run_config_command,
     split_us_phone,
     totp_remaining,
 )
@@ -35,6 +49,15 @@ class FakeJsonResponse:
         return self.payload
 
 
+class FakeTextResponse:
+    """测试固定文本来源用的最小 HTTP 响应对象。"""
+
+    def __init__(self, text, status_code=200, content_type="text/plain"):
+        self.text = text
+        self.status_code = status_code
+        self.headers = {"Content-Type": content_type}
+
+
 class FakeSession:
     """按调用顺序返回预设 payload，并记录 action。"""
 
@@ -45,6 +68,181 @@ class FakeSession:
     def get(self, url, params, timeout):
         self.actions.append(params["action"])
         return FakeJsonResponse(self.payloads.pop(0))
+
+
+class TimeoutRecordingSession:
+    """记录请求 timeout，验证所有来源都使用配置值。"""
+
+    def __init__(self):
+        self.get_timeouts = []
+        self.post_timeouts = []
+
+    def get(self, url, params=None, timeout=None):
+        self.get_timeouts.append(timeout)
+        if params:
+            return FakeJsonResponse({"code": 0, "data": {"has_sms": False}})
+        return FakeTextResponse("Your verification code is 123456")
+
+    def post(self, url, json=None, timeout=None):
+        self.post_timeouts.append(timeout)
+        return FakeJsonResponse(
+            {"ok": True, "mails": [{"id": "m1", "subject": "Code 654321", "body": ""}]}
+        )
+
+
+class ActionSession:
+    """按 LuDan action 返回 payload，用于 ready-check 测试。"""
+
+    def __init__(self, payloads):
+        self.payloads = payloads
+        self.actions = []
+
+    def get(self, url, params=None, timeout=None):
+        action = params["action"]
+        self.actions.append(action)
+        return FakeJsonResponse(self.payloads[action].pop(0))
+
+
+class FixedReadySession:
+    """固定 URL ready-check 用的最小 session。"""
+
+    def __init__(self, response=None, exc=None):
+        self.response = response
+        self.exc = exc
+
+    def get(self, url, timeout=None):
+        if self.exc:
+            raise self.exc
+        return self.response
+
+
+class EmailReadySession:
+    """邮箱 ready-check 用的最小 session。"""
+
+    def __init__(self, response=None, exc=None):
+        self.response = response
+        self.exc = exc
+
+    def post(self, url, json=None, timeout=None):
+        if self.exc:
+            raise self.exc
+        return self.response
+
+
+class FakePollable:
+    """测试并发轮询用的最小验证码来源。"""
+
+    def __init__(self, label, code=None, delay=0):
+        self.label = label
+        self.code = code
+        self.delay = delay
+        self.note = ""
+        self.status = "等待中"
+        self.last_code = "OLD"
+        self.history = [("12:00:00", "OLD", "old message")]
+        self.calls = 0
+
+    def poll(self):
+        self.calls += 1
+        if self.delay:
+            time.sleep(self.delay)
+        return self.code
+
+
+class StatefulPollable:
+    """模拟真实来源：poll() 内部写 last_code/history 并返回新码。
+
+    FakePollable 不写状态，无法复现"迟到 worker 静默改写 last_code 导致下一轮
+    漏判新码"的竞态；本类按 FixedUrlSource 的契约在 poll 内更新状态。
+    """
+
+    def __init__(self, label, code, delay=0):
+        self.label = label
+        self.code = code
+        self.delay = delay
+        self.last_code = ""
+        self.history = []
+        self.note = ""
+        self.status = "等待中"
+        self.calls = 0
+
+    def poll(self):
+        self.calls += 1
+        if self.delay:
+            time.sleep(self.delay)
+        if self.code and self.code != self.last_code:
+            self.last_code = self.code
+            self.history.insert(0, ("00:00:00", self.code, ""))
+            self.note = "收到新验证码"
+            return self.code
+        return None
+
+
+class GatedStatefulPollable:
+    """用事件精确控制 poll 完成时机，避免慢源测试依赖真实 sleep。"""
+
+    def __init__(self, label, code=None, *, write_before_release=False):
+        self.label = label
+        self.code = code
+        self.write_before_release = write_before_release
+        self.last_code = ""
+        self.history = []
+        self.note = ""
+        self.status = "等待中"
+        self.calls = 0
+        self._lock = threading.Lock()
+        self._release_events = []
+        self._finished_events = []
+
+    def poll(self):
+        with self._lock:
+            self.calls += 1
+            release_event = threading.Event()
+            finished_event = threading.Event()
+            self._release_events.append(release_event)
+            self._finished_events.append(finished_event)
+        try:
+            if self.write_before_release:
+                self._write_code()
+            release_event.wait(timeout=5)
+            if self.code and not self.write_before_release:
+                self._write_code()
+                return self.code
+            return self.code if self.write_before_release else None
+        finally:
+            finished_event.set()
+
+    def _write_code(self):
+        if self.code and self.code != self.last_code:
+            self.last_code = self.code
+            self.history.insert(0, ("00:00:00", self.code, ""))
+            self.note = "收到新验证码"
+
+    def release_all(self):
+        with self._lock:
+            events = list(self._release_events)
+        for event in events:
+            event.set()
+
+    def wait_for_calls(self, expected, timeout=1.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                calls = self.calls
+            if calls >= expected:
+                return True
+            time.sleep(0.005)
+        return False
+
+    def wait_for_finished(self, expected, timeout=1.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                events = list(self._finished_events[:expected])
+            if len(events) >= expected and all(event.is_set() for event in events):
+                return True
+            time.sleep(0.005)
+        return False
 
 
 class FakeKeyboard:
@@ -210,24 +408,89 @@ class AccountSourceTest(unittest.TestCase):
 
         self.assertRegex(account.current_totp, r"^\d{6}$")
 
-    def test_copy_fields_skip_empty_and_phone_uses_local_number(self):
+    def test_copy_fields_exposes_login_totp_and_config_phone_number(self):
         account = AccountSource(
             {
                 "label": "ChatGPT",
                 "login_email": "user@example.com",
                 "password": "pw",
+                "totp_secret": "JBSWY3DPEHPK3PXP",
                 "phone": "15550123456",
             }
         )
+
+        with patch("monitor.generate_totp", return_value="123456"):
+            self.assertEqual(
+                account.copy_fields(),
+                [
+                    ("1", "登录邮箱", "user@example.com"),
+                    ("2", "2FA 动态码", "123456"),
+                    ("3", "手机号码", "5550123456"),
+                ],
+            )
+
+    def test_copy_fields_prefers_linked_source_phone_and_never_lists_codes(self):
+        account = AccountSource(
+            {
+                "label": "ChatGPT",
+                "login_email": "user@example.com",
+                "phone": "+15550123456",
+            }
+        )
+        phone_source = FixedUrlSource(
+            {"label": "YunTL", "phone": "+15550987654", "url": "https://example.invalid/sms"},
+            FixedReadySession(FakeTextResponse("暂无短信")),
+        )
+        email_source = FakePollable("iCloudMail")
+        phone_source.last_code = "111111"
+        email_source.last_code = "222222"
+        account.linked_phone_source = phone_source
+        account.linked_email_source = email_source
 
         self.assertEqual(
             account.copy_fields(),
             [
                 ("1", "登录邮箱", "user@example.com"),
-                ("2", "密码", "pw"),
-                ("3", "关联电话", "5550123456"),
+                ("2", "手机号码", "5550987654"),
             ],
         )
+
+    def test_copy_fields_skip_empty_linked_codes_and_missing_phone(self):
+        account = AccountSource({"label": "ChatGPT", "login_email": "user@example.com"})
+        account.linked_phone_source = FakePollable("YunTL")
+        account.linked_email_source = FakePollable("iCloudMail")
+        account.linked_phone_source.last_code = ""
+        account.linked_email_source.last_code = ""
+
+        self.assertEqual(account.copy_fields(), [("1", "登录邮箱", "user@example.com")])
+
+    def test_email_source_poll_returns_new_code_for_auto_copy_chain(self):
+        source = EmailSource(
+            {
+                "label": "iCloudMail",
+                "email": "user@icloud.com",
+                "provider": "icloud",
+                "base_url": "https://email.nloop.cc",
+            },
+            EmailReadySession(
+                FakeJsonResponse(
+                    {
+                        "ok": True,
+                        "mails": [
+                            {
+                                "id": "mail-1",
+                                "subject": "Sign in",
+                                "body": "Your verification code is 246810.",
+                            }
+                        ],
+                    }
+                )
+            ),
+            request_timeout=1,
+        )
+
+        self.assertEqual(source.poll(), "246810")
+        self.assertEqual(source.last_code, "246810")
 
     def test_poll_never_returns_code(self):
         account = AccountSource({"label": "iCloud", "login_email": "a@icloud.com"})
@@ -294,6 +557,168 @@ class AccountSourceTest(unittest.TestCase):
 
 class RefreshModeTest(unittest.TestCase):
     """验证默认低频刷新、复制后高频等码，拿到验证码即停高频。"""
+
+    def test_request_timeout_config_is_passed_to_sources(self):
+        session = TimeoutRecordingSession()
+        timeout = 1.5
+        monitor = SmsMonitor(
+            {
+                "base_url": "https://example.invalid",
+                "key": "dummy",
+                "request_timeout": timeout,
+                "fixed_sources": [
+                    {"label": "YunTL", "phone": "15550123456", "url": "https://example.invalid/y"}
+                ],
+                "email_sources": [
+                    {
+                        "label": "iCloud",
+                        "provider": "icloud",
+                        "base_url": "https://email.nloop.cc",
+                        "email": "a@icloud.com",
+                    }
+                ],
+                "accounts": [],
+            }
+        )
+        for source in monitor.pollables:
+            source.session = session
+
+        for source in monitor.pollables:
+            source.poll()
+
+        self.assertEqual(session.get_timeouts, [timeout, timeout])
+        self.assertEqual(session.post_timeouts, [timeout])
+
+    def test_poll_sources_collects_fast_result_when_one_source_is_slow(self):
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        fast = FakePollable("Fast", code="111111")
+        slow = FakePollable("Slow", code="222222", delay=0.2)
+        monitor.pollables = [fast, slow]
+        monitor.max_poll_workers = 2
+        monitor.poll_round_timeout = 0.05
+
+        self.assertTrue(hasattr(monitor, "poll_sources"), "SmsMonitor.poll_sources should exist")
+        started = time.monotonic()
+        new_codes = monitor.poll_sources()
+        elapsed = time.monotonic() - started
+
+        self.assertEqual(new_codes, [("Fast", "111111")])
+        self.assertLess(elapsed, 0.15)
+
+    def test_poll_sources_marks_timeout_without_losing_existing_state(self):
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        slow = FakePollable("Slow", code="222222", delay=0.2)
+        original_history = list(slow.history)
+        monitor.pollables = [slow]
+        monitor.max_poll_workers = 1
+        monitor.poll_round_timeout = 0.05
+
+        self.assertEqual(monitor.poll_sources(), [])
+
+        self.assertEqual(slow.last_code, "OLD")
+        self.assertEqual(slow.history, original_history)
+        self.assertIn("超时", slow.note)
+        self.assertEqual(slow.status, "轮询超时")
+
+    def test_poll_sources_copies_late_code_on_next_round(self):
+        """超时 worker 迟到写入的新码必须在下一轮被补复制，不能丢失。"""
+
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor._pending_polls = []
+        slow = GatedStatefulPollable("Slow", code="555555")
+        monitor.pollables = [slow]
+        monitor.max_poll_workers = 1
+        monitor.poll_round_timeout = 0.05
+
+        try:
+            # 第一轮：慢来源超时，未拿到码
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertIn("超时", slow.note)
+
+            # 释放迟到 worker，让它真实完成并写入 last_code/history。
+            slow.release_all()
+            self.assertTrue(slow.wait_for_finished(1))
+
+            # 第二轮：结算上一轮遗留的迟到 worker，新码应被补复制。
+            # 若无此机制，迟到 worker 已把 last_code 写成 555555，本轮 fresh poll
+            # 会判定为非新码返回 None，验证码将永久漏复制。
+            second_round = monitor.poll_sources()
+            self.assertEqual(second_round, [("Slow", "555555")])
+            self.assertEqual(slow.calls, 1)
+            self.assertEqual(monitor._pending_polls, [])
+        finally:
+            slow.release_all()
+
+    def test_poll_sources_keeps_still_pending_worker_for_later_reconcile(self):
+        """连续多轮仍未完成的超时 worker 也必须保留到完成后再补复制。"""
+
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor._pending_polls = []
+        slow = GatedStatefulPollable("Slow", code="666666")
+        monitor.pollables = [slow]
+        monitor.max_poll_workers = 1
+        monitor.poll_round_timeout = 0.05
+
+        try:
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertEqual(slow.calls, 1)
+
+            slow.release_all()
+            self.assertTrue(slow.wait_for_finished(1))
+
+            self.assertEqual(monitor.poll_sources(), [("Slow", "666666")])
+            self.assertEqual(slow.calls, 1)
+            self.assertEqual(monitor._pending_polls, [])
+        finally:
+            slow.release_all()
+
+    def test_poll_sources_does_not_rollback_not_done_worker_state(self):
+        """仍在运行的 worker 不应被回滚，避免与 worker 并发写 history 互相踩踏。"""
+
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor._pending_polls = []
+        slow = GatedStatefulPollable("Slow", code="777777", write_before_release=True)
+        monitor.pollables = [slow]
+        monitor.max_poll_workers = 1
+        monitor.poll_round_timeout = 0.05
+
+        try:
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertTrue(slow.wait_for_calls(1))
+            self.assertEqual(slow.last_code, "777777")
+
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertEqual(slow.last_code, "777777")
+            self.assertEqual(slow.history[0][1], "777777")
+        finally:
+            slow.release_all()
+            slow.wait_for_finished(1)
+
+    def test_poll_sources_retries_after_pending_round_limit(self):
+        """永久不返回的来源达到挂起轮次上限后，应允许 fresh poll 重试。"""
+
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor._pending_polls = []
+        monitor.pending_poll_max_rounds = 1
+        slow = GatedStatefulPollable("Slow")
+        original_session = object()
+        slow.session = original_session
+        monitor.pollables = [slow]
+        monitor.max_poll_workers = 1
+        monitor.poll_round_timeout = 0.05
+
+        try:
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertTrue(slow.wait_for_calls(1))
+
+            self.assertEqual(monitor.poll_sources(), [])
+            self.assertTrue(slow.wait_for_calls(2))
+            self.assertIsNot(slow.session, original_session)
+        finally:
+            slow.release_all()
+            slow.wait_for_finished(2)
+            monitor._reconcile_pending_polls()
 
     def test_refresh_mode_defaults_and_active_window(self):
         monitor = SmsMonitor(
@@ -404,6 +829,39 @@ class RefreshModeTest(unittest.TestCase):
         self.assertEqual(monitor.active_until, 0)
         self.assertIn("已复制", monitor.note)
 
+    def test_account_copy_menu_copies_current_totp_by_number(self):
+        copied = []
+        monitor = SmsMonitor(
+            {
+                "base_url": "https://example.invalid",
+                "key": "dummy",
+                "fixed_sources": [],
+                "email_sources": [],
+                "accounts": [
+                    {
+                        "label": "A",
+                        "login_email": "a@example.com",
+                        "password": "pw",
+                        "totp_secret": "JBSWY3DPEHPK3PXP",
+                    }
+                ],
+            }
+        )
+
+        with (
+            patch("monitor.generate_totp", return_value="123456"),
+            patch("monitor.msvcrt", FakeKeyboard(["2"])),
+            patch("monitor.copy_to_clipboard", side_effect=lambda value: copied.append(value) or True),
+            patch("monitor.time.time", return_value=100),
+            patch.object(monitor, "render"),
+            patch.object(monitor, "render_copy_menu"),
+        ):
+            monitor.copy_source_number(2)
+
+        self.assertEqual(copied, ["123456"])
+        self.assertTrue(monitor.active_waiting_for_code)
+        self.assertIn("2FA 动态码", monitor.note)
+
     def test_account_copy_cancel_stays_idle(self):
         monitor = SmsMonitor(
             {
@@ -451,6 +909,7 @@ class RefreshModeTest(unittest.TestCase):
         copied = []
         monitor = SmsMonitor.__new__(SmsMonitor)
         monitor.note = ""
+        monitor.active_until_code = True
         monitor.active_waiting_for_code = True
         monitor.active_until = 999
 
@@ -463,6 +922,529 @@ class RefreshModeTest(unittest.TestCase):
         self.assertEqual(copied, ["111111"])
         self.assertFalse(monitor.active_waiting_for_code)
         self.assertEqual(monitor.active_until, 0)
+
+    def test_auto_copy_keeps_timed_high_frequency_window(self):
+        """定时高频模式（active_until_code=False）拿到码不应提前清零高频窗口。"""
+
+        copied = []
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor.note = ""
+        monitor.active_until_code = False
+        monitor.active_waiting_for_code = False
+        monitor.active_until = 999
+
+        def fake_copy(text):
+            copied.append(text)
+            return True
+
+        monitor.auto_copy_codes([("LuDan", "111111")], fake_copy)
+
+        self.assertEqual(copied, ["111111"])
+        # 定时高频窗口必须保留，不能被 deactivate_high_frequency 清零
+        self.assertEqual(monitor.active_until, 999)
+        self.assertFalse(monitor.active_waiting_for_code)
+
+    def test_run_uses_poll_sources_before_auto_copy_codes(self):
+        events = []
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor.pollables = []
+        monitor.accounts = []
+
+        class FakeLuDan:
+            def verify(self):
+                events.append("verify")
+
+            def refresh_number(self):
+                events.append("refresh_number")
+
+        monitor.ludan = FakeLuDan()
+
+        def poll_sources():
+            events.append("poll_sources")
+            return [("Fast", "111111")]
+
+        def auto_copy_codes(pairs):
+            events.append(("auto_copy_codes", pairs))
+
+        def render():
+            events.append("render")
+
+        def current_poll_interval():
+            events.append("current_poll_interval")
+            return 1
+
+        def handle_keys():
+            events.append("handle_keys")
+            return False
+
+        monitor.poll_sources = poll_sources
+        monitor.auto_copy_codes = auto_copy_codes
+        monitor.render = render
+        monitor.current_poll_interval = current_poll_interval
+        monitor.handle_keys = handle_keys
+        monitor.is_active_mode = lambda: False
+
+        with redirect_stdout(io.StringIO()):
+            monitor.run()
+
+        self.assertEqual(
+            events[:5],
+            [
+                "verify",
+                "refresh_number",
+                "poll_sources",
+                ("auto_copy_codes", [("Fast", "111111")]),
+                "render",
+            ],
+        )
+
+
+class ConfigCommandTest(unittest.TestCase):
+    """验证 Codex/Claude Code 可调用的标准配置录入命令。"""
+
+    def test_init_and_set_global_write_config_without_leaking_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            env = {"SMS_MONITOR_KEY": "REAL_SECRET_KEY"}
+
+            init_result = run_config_command(["init", "--config", config_path, "--json"], env=env)
+            result = run_config_command(
+                [
+                    "set-global",
+                    "--config",
+                    config_path,
+                    "--base-url",
+                    "https://example.invalid/api",
+                    "--key-env",
+                    "SMS_MONITOR_KEY",
+                    "--poll-interval",
+                    "7",
+                    "--idle-poll-interval",
+                    "21",
+                    "--request-timeout",
+                    "2.5",
+                    "--max-poll-workers",
+                    "3",
+                    "--poll-round-timeout",
+                    "3.0",
+                    "--active-until-code",
+                    "false",
+                    "--active-after-copy-seconds",
+                    "90",
+                    "--auto-change-on-expire",
+                    "false",
+                    "--json",
+                ],
+                env=env,
+            )
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+
+            self.assertTrue(init_result["ready"])
+            self.assertTrue(result["ready"])
+            self.assertEqual(cfg["base_url"], "https://example.invalid/api")
+            self.assertEqual(cfg["key"], "REAL_SECRET_KEY")
+            self.assertEqual(cfg["poll_interval"], 7)
+            self.assertEqual(cfg["idle_poll_interval"], 21)
+            self.assertEqual(cfg["request_timeout"], 2.5)
+            self.assertEqual(cfg["max_poll_workers"], 3)
+            self.assertEqual(cfg["poll_round_timeout"], 3.0)
+            self.assertFalse(cfg["active_until_code"])
+            self.assertEqual(cfg["active_after_copy_seconds"], 90)
+            self.assertFalse(cfg["auto_change_on_expire"])
+            self.assertNotIn("REAL_SECRET_KEY", json.dumps(result, ensure_ascii=False))
+
+    def test_upsert_sources_and_account_are_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            env = {
+                "FIXED_URL": "https://example.invalid/sms?token=SECRET_TOKEN",
+                "ACCOUNT_PASSWORD": "SECRET_PASSWORD",
+                "ACCOUNT_TOTP": "JBSWY3DPEHPK3PXP",
+            }
+
+            run_config_command(["init", "--config", config_path], env=env)
+            run_config_command(
+                [
+                    "upsert-fixed",
+                    "--config",
+                    config_path,
+                    "--label",
+                    "YunTL",
+                    "--phone",
+                    "15550123456",
+                    "--url-env",
+                    "FIXED_URL",
+                ],
+                env=env,
+            )
+            run_config_command(
+                [
+                    "upsert-fixed",
+                    "--config",
+                    config_path,
+                    "--label",
+                    "YunTL",
+                    "--phone",
+                    "15550999999",
+                    "--url-env",
+                    "FIXED_URL",
+                ],
+                env=env,
+            )
+            run_config_command(
+                [
+                    "upsert-email",
+                    "--config",
+                    config_path,
+                    "--label",
+                    "iCloud",
+                    "--email",
+                    "user@icloud.com",
+                    "--provider",
+                    "icloud",
+                    "--base-url",
+                    "https://email.nloop.cc",
+                ],
+                env=env,
+            )
+            account_result = run_config_command(
+                [
+                    "upsert-account",
+                    "--config",
+                    config_path,
+                    "--label",
+                    "ChatGPT",
+                    "--login-email",
+                    "login@example.com",
+                    "--password-env",
+                    "ACCOUNT_PASSWORD",
+                    "--totp-secret-env",
+                    "ACCOUNT_TOTP",
+                    "--phone",
+                    "15550999999",
+                    "--email",
+                    "user@icloud.com",
+                    "--note",
+                    "primary",
+                    "--json",
+                ],
+                env=env,
+            )
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+
+            self.assertEqual(len(cfg["fixed_sources"]), 1)
+            self.assertEqual(cfg["fixed_sources"][0]["phone"], "15550999999")
+            self.assertEqual(len(cfg["email_sources"]), 1)
+            self.assertEqual(cfg["email_sources"][0]["email"], "user@icloud.com")
+            self.assertEqual(len(cfg["accounts"]), 1)
+            self.assertEqual(cfg["accounts"][0]["phone"], "15550999999")
+            self.assertEqual(cfg["accounts"][0]["email"], "user@icloud.com")
+            self.assertEqual(cfg["accounts"][0]["password"], "SECRET_PASSWORD")
+            self.assertEqual(cfg["accounts"][0]["totp_secret"], "JBSWY3DPEHPK3PXP")
+            sanitized = json.dumps(account_result, ensure_ascii=False)
+            self.assertNotIn("SECRET_PASSWORD", sanitized)
+            self.assertNotIn("JBSWY3DPEHPK3PXP", sanitized)
+
+    def test_cli_validate_and_ready_check_json_are_sanitized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            env = {
+                "SMS_MONITOR_KEY": "REAL_SECRET_KEY",
+                "FIXED_URL": "https://example.invalid/sms?token=SECRET_TOKEN",
+                "ACCOUNT_PASSWORD": "SECRET_PASSWORD",
+                "ACCOUNT_TOTP": "JBSWY3DPEHPK3PXP",
+            }
+            run_config_command(["init", "--config", config_path], env=env)
+            run_config_command(
+                ["set-global", "--config", config_path, "--key-env", "SMS_MONITOR_KEY"],
+                env=env,
+            )
+            run_config_command(
+                [
+                    "upsert-fixed",
+                    "--config",
+                    config_path,
+                    "--label",
+                    "YunTL",
+                    "--phone",
+                    "15550123456",
+                    "--url-env",
+                    "FIXED_URL",
+                ],
+                env=env,
+            )
+            run_config_command(
+                [
+                    "upsert-account",
+                    "--config",
+                    config_path,
+                    "--label",
+                    "ChatGPT",
+                    "--login-email",
+                    "login@example.com",
+                    "--password-env",
+                    "ACCOUNT_PASSWORD",
+                    "--totp-secret-env",
+                    "ACCOUNT_TOTP",
+                    "--phone",
+                    "15550123456",
+                ],
+                env=env,
+            )
+
+            validate_stdout = io.StringIO()
+            with redirect_stdout(validate_stdout):
+                validate_code = run_cli(["config", "validate", "--config", config_path, "--json"], env=env)
+
+            ready_stdout = io.StringIO()
+            ready_sessions = iter(
+                [
+                    ActionSession(
+                        {
+                            "verify": [
+                                {
+                                    "code": 0,
+                                    "data": {
+                                        "phone": "15550123456",
+                                        "remaining_seconds": 120,
+                                    },
+                                }
+                            ]
+                        }
+                    ),
+                    FixedReadySession(FakeTextResponse("暂无短信")),
+                ]
+            )
+            with redirect_stdout(ready_stdout):
+                ready_code = run_cli(
+                    ["config", "ready-check", "--config", config_path, "--all", "--json"],
+                    env=env,
+                    session_factory=lambda: next(ready_sessions),
+                )
+
+            self.assertEqual(validate_code, 0)
+            self.assertEqual(ready_code, 0)
+            validate_payload = json.loads(validate_stdout.getvalue())
+            ready_payload = json.loads(ready_stdout.getvalue())
+            self.assertTrue(validate_payload["ready"])
+            self.assertTrue(ready_payload["ready"])
+            output = validate_stdout.getvalue() + ready_stdout.getvalue()
+            for secret in ["REAL_SECRET_KEY", "SECRET_TOKEN", "SECRET_PASSWORD", "JBSWY3DPEHPK3PXP"]:
+                self.assertNotIn(secret, output)
+
+    def test_parse_freeform_account_text_handles_messy_dash_format(self):
+        raw = (
+            "login@example.com----SECRET_PASSWORD---JBSWY3DPEHPK3PXP"
+            "----+15550123456----https://sms.example/api/orders/abc/sms-url?token=SECRET_TOKEN"
+        )
+
+        parsed = parse_freeform_account_text(raw, label="ChatGPT")
+
+        self.assertEqual(parsed["label"], "ChatGPT")
+        self.assertEqual(parsed["login_email"], "login@example.com")
+        self.assertEqual(parsed["password"], "SECRET_PASSWORD")
+        self.assertEqual(parsed["totp_secret"], "JBSWY3DPEHPK3PXP")
+        self.assertEqual(parsed["phone"], "15550123456")
+        self.assertEqual(parsed["sms_url"], "https://sms.example/api/orders/abc/sms-url?token=SECRET_TOKEN")
+        preview = json.dumps(parsed["preview"], ensure_ascii=False)
+        self.assertNotIn("SECRET_PASSWORD", preview)
+        self.assertNotIn("JBSWY3DPEHPK3PXP", preview)
+        self.assertNotIn("SECRET_TOKEN", preview)
+
+    def test_import_freeform_from_stdin_writes_config_and_sanitizes_output(self):
+        raw = (
+            "login@example.com----SECRET_PASSWORD---JBSWY3DPEHPK3PXP"
+            "----+15550123456----https://sms.example/api/orders/abc/sms-url?token=SECRET_TOKEN"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            run_config_command(["init", "--config", config_path])
+
+            result = run_config_command(
+                [
+                    "import-freeform",
+                    "--config",
+                    config_path,
+                    "--label",
+                    "ChatGPT",
+                    "--stdin",
+                    "--yes",
+                    "--json",
+                ],
+                input_reader=lambda: raw,
+            )
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+
+            self.assertTrue(result["ready"])
+            self.assertEqual(len(cfg["fixed_sources"]), 1)
+            self.assertEqual(cfg["fixed_sources"][0]["label"], "ChatGPT-SMS")
+            self.assertEqual(cfg["fixed_sources"][0]["phone"], "15550123456")
+            self.assertEqual(cfg["fixed_sources"][0]["url"], "https://sms.example/api/orders/abc/sms-url?token=SECRET_TOKEN")
+            self.assertEqual(len(cfg["accounts"]), 1)
+            self.assertEqual(cfg["accounts"][0]["label"], "ChatGPT")
+            self.assertEqual(cfg["accounts"][0]["login_email"], "login@example.com")
+            self.assertEqual(cfg["accounts"][0]["password"], "SECRET_PASSWORD")
+            self.assertEqual(cfg["accounts"][0]["totp_secret"], "JBSWY3DPEHPK3PXP")
+            self.assertEqual(cfg["accounts"][0]["phone"], "15550123456")
+            sanitized = json.dumps(result, ensure_ascii=False)
+            self.assertNotIn("SECRET_PASSWORD", sanitized)
+            self.assertNotIn("JBSWY3DPEHPK3PXP", sanitized)
+            self.assertNotIn("SECRET_TOKEN", sanitized)
+
+    def test_import_freeform_interactive_fills_missing_fields(self):
+        raw = "login@example.com----SECRET_PASSWORD---JBSWY3DPEHPK3PXP"
+        answers = iter(
+            [
+                "15550123456",
+                "https://sms.example/api/orders/abc/sms-url?token=SECRET_TOKEN",
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            run_config_command(["init", "--config", config_path])
+
+            result = run_config_command(
+                [
+                    "import-freeform",
+                    "--config",
+                    config_path,
+                    "--label",
+                    "ChatGPT",
+                    "--stdin",
+                    "--interactive",
+                    "--yes",
+                    "--json",
+                ],
+                input_reader=lambda: raw,
+                prompt_reader=lambda prompt, secret=False: next(answers),
+            )
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+
+            self.assertTrue(result["ready"])
+            self.assertEqual(cfg["fixed_sources"][0]["phone"], "15550123456")
+            self.assertEqual(cfg["fixed_sources"][0]["url"], "https://sms.example/api/orders/abc/sms-url?token=SECRET_TOKEN")
+            sanitized = json.dumps(result, ensure_ascii=False)
+            self.assertNotIn("SECRET_TOKEN", sanitized)
+
+
+class ReadyCheckTest(unittest.TestCase):
+    """验证 ready-check 只判断预备接码状态，不要求已经收到验证码。"""
+
+    def test_ludan_ready_when_verify_already_has_usable_phone(self):
+        cfg = {"base_url": "https://example.invalid", "key": "dummy", "request_timeout": 1}
+        session = ActionSession(
+            {
+                "verify": [
+                    {
+                        "code": 0,
+                        "data": {"phone": "15550123456", "remaining_seconds": 120},
+                    }
+                ]
+            }
+        )
+
+        result = ready_check_ludan(cfg, session)
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["label"], "LuDan")
+        self.assertEqual(session.actions, ["verify"])
+
+    def test_ludan_ready_when_get_number_returns_phone_after_verify(self):
+        cfg = {"base_url": "https://example.invalid", "key": "dummy", "request_timeout": 1}
+        session = ActionSession(
+            {
+                "verify": [{"code": 0, "data": {"has_number": False}}],
+                "get_number": [{"code": 0, "data": {"phone": "15550987654", "expires_in": 300}}],
+            }
+        )
+
+        result = ready_check_ludan(cfg, session)
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(session.actions, ["verify", "get_number"])
+
+    def test_ludan_not_ready_when_cdk_fails(self):
+        cfg = {"base_url": "https://example.invalid", "key": "dummy", "request_timeout": 1}
+        session = ActionSession({"verify": [{"code": 401, "msg": "bad secret"}]})
+
+        result = ready_check_ludan(cfg, session)
+
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["status"], "auth_failed")
+        self.assertNotIn("bad secret", json.dumps(result, ensure_ascii=False))
+
+    def test_fixed_url_ready_for_reachable_waiting_or_code_states(self):
+        cfg = {"label": "YunTL", "phone": "15550123456", "url": "https://example.invalid/sms"}
+        cases = [
+            FakeTextResponse("暂无短信"),
+            FakeTextResponse("hello page without code"),
+            FakeTextResponse("Your verification code is 123456"),
+        ]
+
+        for response in cases:
+            result = ready_check_fixed_source(cfg, FixedReadySession(response), request_timeout=1)
+            self.assertTrue(result["ready"], result)
+            self.assertEqual(result["label"], "YunTL")
+            self.assertEqual(result["kind"], "fixed")
+
+    def test_fixed_url_not_ready_for_http_error(self):
+        cfg = {"label": "YunTL", "phone": "15550123456", "url": "https://example.invalid/sms"}
+        result = ready_check_fixed_source(
+            cfg,
+            FixedReadySession(FakeTextResponse("server error", status_code=500)),
+            request_timeout=1,
+        )
+
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["status"], "http_error")
+
+    def test_email_ready_when_query_api_ok_even_without_mail(self):
+        cfg = {
+            "label": "iCloud",
+            "provider": "icloud",
+            "base_url": "https://email.nloop.cc",
+            "email": "user@icloud.com",
+        }
+        result = ready_check_email_source(
+            cfg,
+            EmailReadySession(FakeJsonResponse({"ok": True, "mails": []})),
+            request_timeout=1,
+        )
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["status"], "ready")
+
+    def test_email_not_ready_for_bad_json_or_ok_false(self):
+        cfg = {
+            "label": "iCloud",
+            "provider": "icloud",
+            "base_url": "https://email.nloop.cc",
+            "email": "user@icloud.com",
+        }
+        bad_json = ready_check_email_source(
+            cfg,
+            EmailReadySession(FakeTextResponse("not json")),
+            request_timeout=1,
+        )
+        ok_false = ready_check_email_source(
+            cfg,
+            EmailReadySession(FakeJsonResponse({"ok": False, "error": "secret detail"})),
+            request_timeout=1,
+        )
+
+        self.assertFalse(bad_json["ready"])
+        self.assertEqual(bad_json["status"], "bad_response")
+        self.assertFalse(ok_false["ready"])
+        self.assertEqual(ok_false["status"], "api_not_ready")
+        self.assertNotIn("secret detail", json.dumps(ok_false, ensure_ascii=False))
 
 
 class LuDanSourceTest(unittest.TestCase):
@@ -553,6 +1535,7 @@ class ClipboardBehaviorTest(unittest.TestCase):
         copied = []
         monitor = SmsMonitor.__new__(SmsMonitor)
         monitor.note = ""
+        monitor.active_until_code = True
 
         def fake_copy(text):
             copied.append(text)
@@ -564,6 +1547,51 @@ class ClipboardBehaviorTest(unittest.TestCase):
         self.assertEqual(copied, ["111111"])
         self.assertIn("已自动复制 [LuDan] 的验证码", monitor.note)
         self.assertIn("[YunTL] 222222", monitor.note)
+
+    def test_copy_to_clipboard_retries_windows_writer_before_fallback(self):
+        attempts = []
+
+        def flaky_writer(text):
+            attempts.append(text)
+            return len(attempts) == 2
+
+        def unused_fallback(text):
+            self.fail("Windows writer succeeded after retry; fallback should not run")
+
+        self.assertTrue(
+            monitor.copy_to_clipboard(
+                "123456",
+                attempts=2,
+                retry_delay=0,
+                windows_writer=flaky_writer,
+                fallback_writer=unused_fallback,
+            )
+        )
+        self.assertEqual(attempts, ["123456", "123456"])
+
+    def test_copy_to_clipboard_uses_fallback_after_windows_writer_fails(self):
+        windows_attempts = []
+        fallback_calls = []
+
+        def failing_windows_writer(text):
+            windows_attempts.append(text)
+            return False
+
+        def fallback_writer(text):
+            fallback_calls.append(text)
+            return True
+
+        self.assertTrue(
+            monitor.copy_to_clipboard(
+                "654321",
+                attempts=2,
+                retry_delay=0,
+                windows_writer=failing_windows_writer,
+                fallback_writer=fallback_writer,
+            )
+        )
+        self.assertEqual(windows_attempts, ["654321", "654321"])
+        self.assertEqual(fallback_calls, ["654321"])
 
 
 if __name__ == "__main__":

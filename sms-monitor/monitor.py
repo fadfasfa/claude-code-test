@@ -10,6 +10,7 @@
 
 import base64
 import binascii
+import argparse
 import hashlib
 import hmac
 import json
@@ -18,10 +19,13 @@ import re
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
+from getpass import getpass
 
 try:
     import requests
@@ -51,6 +55,12 @@ CODE_PATTERNS = [
     re.compile(r"(?:验证码|校验码|动态码|登录码)[^\d]{0,30}(\d{4,8})"),
 ]
 GENERIC_CODE_RE = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")
+EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s<>\"']+")
+
+
+class ConfigCommandError(Exception):
+    """配置命令的可诊断错误；消息不得包含真实 secret。"""
 
 
 @dataclass(frozen=True)
@@ -135,6 +145,90 @@ def parse_fixed_sms_response(text, allow_generic=True):
             return FixedSmsParseResult(True, match.group(1), "收到验证码", raw)
 
     return FixedSmsParseResult(False, "", "未发现验证码", raw)
+
+
+def mask_email(value):
+    if not value or "@" not in value:
+        return ""
+    name, domain = value.split("@", 1)
+    return f"{name[:2]}***@{domain}"
+
+
+def mask_tail(value, keep=4):
+    text = str(value or "")
+    if not text:
+        return ""
+    return f"***{text[-keep:]}" if len(text) > keep else "***"
+
+
+def mask_url(value):
+    if not value:
+        return ""
+    match = re.match(r"(https?://[^/?#]+)", value)
+    host = match.group(1) if match else "url"
+    return f"{host}/...<hidden>"
+
+
+def split_freeform_chunks(text):
+    """按常见分隔符拆自由文本；只用于本地解析，不输出原文。"""
+    compact = re.sub(r"\s+", " ", text or "").strip()
+    chunks = [part.strip(" -\t\r\n") for part in re.split(r"-{3,}|[|，,；;]+", compact)]
+    return [part for part in chunks if part]
+
+
+def parse_freeform_account_text(text, label):
+    """从本地粘贴的非标准账号行中提取字段，并返回脱敏预览。"""
+    raw = text or ""
+    url_match = URL_RE.search(raw)
+    sms_url = url_match.group(0).rstrip("。).,，；;") if url_match else ""
+    without_url = raw.replace(url_match.group(0), " ") if url_match else raw
+
+    email_match = EMAIL_RE.search(without_url)
+    login_email = email_match.group(0) if email_match else ""
+    without_email = without_url.replace(login_email, " ") if login_email else without_url
+
+    phone = ""
+    for candidate in re.findall(r"\+?\d[\d\s().-]{8,}\d", without_email):
+        digits = re.sub(r"\D", "", candidate)
+        if 10 <= len(digits) <= 15:
+            phone = digits
+    without_phone = without_email
+    if phone:
+        without_phone = re.sub(r"\+?\d[\d\s().-]{8,}\d", " ", without_phone)
+
+    chunks = split_freeform_chunks(without_phone)
+    password = chunks[0] if chunks else ""
+    totp_secret = chunks[1] if len(chunks) > 1 else ""
+
+    preview = {
+        "label": label,
+        "login_email": mask_email(login_email),
+        "password": "<hidden>" if password else "",
+        "totp_secret": "<hidden>" if totp_secret else "",
+        "phone": mask_tail(phone),
+        "sms_url": mask_url(sms_url),
+    }
+    missing = [
+        name
+        for name, value in {
+            "login_email": login_email,
+            "password": password,
+            "totp_secret": totp_secret,
+            "phone": phone,
+            "sms_url": sms_url,
+        }.items()
+        if not value
+    ]
+    return {
+        "label": label,
+        "login_email": login_email,
+        "password": password,
+        "totp_secret": totp_secret,
+        "phone": phone,
+        "sms_url": sms_url,
+        "preview": preview,
+        "missing": missing,
+    }
 
 
 def load_config():
@@ -250,12 +344,601 @@ def normalize_accounts(raw_accounts):
     return accounts
 
 
-def copy_to_clipboard(text):
-    """把文本写入 Windows 系统剪贴板；失败则静默忽略，不影响主流程。"""
+def default_config():
+    """生成可被录入命令填充的空配置；不放真实凭据。"""
+    return {
+        "base_url": "https://jm.luudan.xyz/api/open.php",
+        "key": "",
+        "poll_interval": 5,
+        "idle_poll_interval": 15,
+        "request_timeout": 3,
+        "max_poll_workers": 4,
+        "poll_round_timeout": 3.5,
+        "active_until_code": True,
+        "active_after_copy_seconds": 180,
+        "auto_change_on_expire": True,
+        "fixed_sources": [],
+        "email_sources": [],
+        "accounts": [],
+    }
+
+
+def read_config_file(path, allow_missing=False):
+    """读取配置命令使用的 JSON；不做真实 key 占位检查。"""
+    if not os.path.exists(path):
+        if allow_missing:
+            return default_config()
+        raise ConfigCommandError("配置文件不存在")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        raise ConfigCommandError(f"配置文件不可读：{e.__class__.__name__}") from e
+    if not isinstance(cfg, dict):
+        raise ConfigCommandError("配置文件根节点必须是对象")
+    merged = default_config()
+    merged.update(cfg)
+    return merged
+
+
+def write_config_file_atomic(path, cfg):
+    """用同目录临时文件原子替换，避免留下长期备份副本。"""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=os.path.dirname(os.path.abspath(path)),
+            delete=False,
+        ) as f:
+            tmp_path = f.name
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+def env_value(env, name, field_label):
+    """从环境变量读取敏感值；错误信息只包含变量名，不回显值。"""
+    if not name:
+        return None
+    if name not in env or env[name] == "":
+        raise ConfigCommandError(f"{field_label} 环境变量未设置：{name}")
+    return env[name]
+
+
+def read_clipboard_text():
+    """读取本机剪贴板；内容只在内存中用于解析，不打印。"""
+    if os.name != "nt":
+        raise ConfigCommandError("当前平台暂不支持 --from-clipboard，请使用 --stdin")
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        raise ConfigCommandError(f"读取剪贴板失败：{e.__class__.__name__}") from e
+    if proc.returncode != 0:
+        raise ConfigCommandError("读取剪贴板失败")
+    return proc.stdout
+
+
+def default_prompt_reader(prompt, secret=False):
+    return getpass(prompt) if secret else input(prompt)
+
+
+def fill_freeform_missing_fields(parsed, prompt_reader):
+    """在本机终端补齐缺失字段；返回结构仍只用脱敏预览对外输出。"""
+    prompts = {
+        "login_email": ("登录邮箱：", False),
+        "password": ("密码：", True),
+        "totp_secret": ("2FA/TOTP secret：", True),
+        "phone": ("手机号：", False),
+        "sms_url": ("接码 URL：", True),
+    }
+    for field in list(parsed["missing"]):
+        prompt, secret = prompts[field]
+        value = prompt_reader(prompt, secret=secret).strip()
+        parsed[field] = value
+    parsed["phone"] = re.sub(r"\D", "", parsed.get("phone") or "")
+    parsed["preview"] = {
+        "label": parsed["label"],
+        "login_email": mask_email(parsed.get("login_email")),
+        "password": "<hidden>" if parsed.get("password") else "",
+        "totp_secret": "<hidden>" if parsed.get("totp_secret") else "",
+        "phone": mask_tail(parsed.get("phone")),
+        "sms_url": mask_url(parsed.get("sms_url")),
+    }
+    parsed["missing"] = [
+        field for field in prompts if not parsed.get(field)
+    ]
+    return parsed
+
+
+def parse_bool(value):
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError("必须是 true 或 false")
+
+
+def safe_result(label, kind, ready, status, sanitized_reason):
+    return {
+        "label": label,
+        "kind": kind,
+        "ready": bool(ready),
+        "status": status,
+        "sanitized_reason": sanitized_reason,
+    }
+
+
+def upsert_by_label(items, item):
+    """按 label 幂等更新数组项，避免 agent 重复录入时产生多条记录。"""
+    label = item["label"]
+    for index, existing in enumerate(items):
+        if str(existing.get("label") or "") == label:
+            items[index] = item
+            return "updated"
+    items.append(item)
+    return "created"
+
+
+def positive_seconds(value):
+    if value is None:
+        return True
+    try:
+        return int(value) > 0
+    except (TypeError, ValueError):
+        return True
+
+
+def has_usable_phone(data):
+    if not data or not data.get("phone"):
+        return False
+    if data.get("expired"):
+        return False
+    return positive_seconds(data.get("expires_in", data.get("remaining_seconds")))
+
+
+def ready_check_ludan(cfg, session):
+    """校验 LuDan 是否已到可等待验证码状态，不要求已有验证码。"""
+    source = LuDanSource(cfg, session, float(cfg.get("request_timeout", 3.0)))
+    data = source.call("verify")
+    if data.get("code") != 0:
+        return safe_result("LuDan", "ludan", False, "auth_failed", "LuDan 校验失败")
+    verified = data.get("data", {}) or {}
+    if has_usable_phone(verified):
+        return safe_result("LuDan", "ludan", True, "ready", "已有可用号码")
+
+    number_data = source.call("get_number")
+    if number_data.get("code") != 0:
+        return safe_result("LuDan", "ludan", False, "number_unavailable", "无法获取可用号码")
+    if has_usable_phone(number_data.get("data", {}) or {}):
+        return safe_result("LuDan", "ludan", True, "ready", "已获取可用号码")
+    return safe_result("LuDan", "ludan", False, "number_unavailable", "未返回可用号码")
+
+
+def ready_check_fixed_source(cfg, session, request_timeout=3.0):
+    """固定短信链接可达即可 ready；不要求已有验证码。"""
+    label = cfg.get("label") or "fixed"
+    try:
+        resp = session.get(cfg["url"], timeout=request_timeout)
+    except requests.RequestException as e:
+        return safe_result(label, "fixed", False, "network_error", e.__class__.__name__)
+
+    if not 200 <= resp.status_code < 300:
+        return safe_result(label, "fixed", False, "http_error", f"HTTP {resp.status_code}")
+
+    content_type = resp.headers.get("Content-Type", "").lower()
+    allow_generic = "html" not in content_type and "xml" not in content_type
+    result = parse_fixed_sms_response(resp.text, allow_generic=allow_generic)
+    return safe_result(label, "fixed", True, "ready", result.status)
+
+
+def ready_check_email_source(cfg, session, request_timeout=3.0):
+    """邮箱取件接口 ok=true 即 ready；不要求已有验证码邮件。"""
+    label = cfg.get("label") or "email"
+    url = f"{cfg['base_url'].rstrip('/')}/api/{cfg['provider']}/query"
+    try:
+        resp = session.post(url, json={"email": cfg["email"]}, timeout=request_timeout)
+    except requests.RequestException as e:
+        return safe_result(label, "email", False, "network_error", e.__class__.__name__)
+
+    if not 200 <= resp.status_code < 300:
+        return safe_result(label, "email", False, "http_error", f"HTTP {resp.status_code}")
+    try:
+        payload = resp.json()
+    except (AttributeError, ValueError):
+        return safe_result(label, "email", False, "bad_response", "接口返回非 JSON")
+    if not payload.get("ok"):
+        return safe_result(label, "email", False, "api_not_ready", "接口返回 ok=false")
+    return safe_result(label, "email", True, "ready", "取件接口可用")
+
+
+def same_phone(left, right):
+    return bool(left and right and split_us_phone(left).raw_digits == split_us_phone(right).raw_digits)
+
+
+def ready_check_account(account, fixed_sources, email_sources):
+    """账户本地字段可用且已配置的接码关联能匹配时为 ready。"""
+    label = account.get("label") or "account"
+    if account.get("totp_secret"):
+        try:
+            generate_totp(account["totp_secret"])
+        except ValueError:
+            return safe_result(label, "account", False, "bad_totp", "TOTP 密钥无效")
+
+    if account.get("phone") and not any(same_phone(account["phone"], src.get("phone")) for src in fixed_sources):
+        return safe_result(label, "account", False, "phone_unlinked", "关联电话未匹配接码来源")
+    if account.get("email"):
+        target = account["email"].strip().lower()
+        if not any((src.get("email") or "").strip().lower() == target for src in email_sources):
+            return safe_result(label, "account", False, "email_unlinked", "关联邮箱未匹配取件来源")
+    return safe_result(label, "account", True, "ready", "账户字段和关联可用")
+
+
+def validate_config_result(cfg):
+    """只验证结构和必要字段，不触发真实网络。"""
+    normalize_fixed_sources(cfg.get("fixed_sources", []))
+    normalize_email_sources(cfg.get("email_sources", []))
+    normalize_accounts(cfg.get("accounts", []))
+    if not str(cfg.get("key") or "").strip():
+        return safe_result("config", "config", False, "missing_key", "LuDan key 未配置")
+    return safe_result("config", "config", True, "valid", "配置结构可用")
+
+
+def aggregate_results(results):
+    ready = all(item["ready"] for item in results)
+    return {
+        "label": "all",
+        "kind": "summary",
+        "ready": ready,
+        "status": "ready" if ready else "not_ready",
+        "sanitized_reason": "全部来源可预备接码" if ready else "存在未就绪来源",
+        "items": results,
+    }
+
+
+def ready_check_all(cfg, session_factory):
+    """检查所有来源是否到达预备接码状态。"""
+    request_timeout = max(0.5, float(cfg.get("request_timeout", 3.0)))
+    fixed_sources = normalize_fixed_sources(cfg.get("fixed_sources", []))
+    email_sources = normalize_email_sources(cfg.get("email_sources", []))
+    accounts = normalize_accounts(cfg.get("accounts", []))
+
+    results = [ready_check_ludan(cfg, session_factory())]
+    for source in fixed_sources:
+        results.append(ready_check_fixed_source(source, session_factory(), request_timeout))
+    for source in email_sources:
+        results.append(ready_check_email_source(source, session_factory(), request_timeout))
+    for account in accounts:
+        results.append(ready_check_account(account, fixed_sources, email_sources))
+    return aggregate_results(results)
+
+
+def build_config_parser():
+    parser = argparse.ArgumentParser(prog="monitor.py config")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    def add_common(sub):
+        sub.add_argument("--config", default=CONFIG_PATH)
+        sub.add_argument("--json", action="store_true")
+
+    init_parser = subparsers.add_parser("init")
+    add_common(init_parser)
+
+    global_parser = subparsers.add_parser("set-global")
+    add_common(global_parser)
+    global_parser.add_argument("--base-url")
+    global_parser.add_argument("--key-env")
+    global_parser.add_argument("--poll-interval", type=int)
+    global_parser.add_argument("--idle-poll-interval", type=int)
+    global_parser.add_argument("--request-timeout", type=float)
+    global_parser.add_argument("--max-poll-workers", type=int)
+    global_parser.add_argument("--poll-round-timeout", type=float)
+    global_parser.add_argument("--active-until-code", type=parse_bool)
+    global_parser.add_argument("--active-after-copy-seconds", type=int)
+    global_parser.add_argument("--auto-change-on-expire", type=parse_bool)
+
+    fixed_parser = subparsers.add_parser("upsert-fixed")
+    add_common(fixed_parser)
+    fixed_parser.add_argument("--label", required=True)
+    fixed_parser.add_argument("--phone", required=True)
+    fixed_parser.add_argument("--url-env", required=True)
+
+    email_parser = subparsers.add_parser("upsert-email")
+    add_common(email_parser)
+    email_parser.add_argument("--label", required=True)
+    email_parser.add_argument("--email", required=True)
+    email_parser.add_argument("--provider", default="icloud")
+    email_parser.add_argument("--base-url", default="https://email.nloop.cc")
+
+    account_parser = subparsers.add_parser("upsert-account")
+    add_common(account_parser)
+    account_parser.add_argument("--label", required=True)
+    account_parser.add_argument("--login-email", required=True)
+    account_parser.add_argument("--password-env")
+    account_parser.add_argument("--totp-secret-env")
+    account_parser.add_argument("--phone", default="")
+    account_parser.add_argument("--email", default="")
+    account_parser.add_argument("--note", default="")
+
+    import_parser = subparsers.add_parser("import-freeform")
+    add_common(import_parser)
+    import_parser.add_argument("--label", required=True)
+    import_parser.add_argument("--source-label")
+    import_parser.add_argument("--stdin", action="store_true")
+    import_parser.add_argument("--from-clipboard", action="store_true")
+    import_parser.add_argument("--interactive", action="store_true")
+    import_parser.add_argument("--yes", action="store_true")
+
+    validate_parser = subparsers.add_parser("validate")
+    add_common(validate_parser)
+
+    ready_parser = subparsers.add_parser("ready-check")
+    add_common(ready_parser)
+    ready_parser.add_argument("--all", action="store_true")
+    return parser
+
+
+def run_config_command(
+    argv,
+    env=None,
+    session_factory=None,
+    input_reader=None,
+    clipboard_reader=None,
+    prompt_reader=None,
+):
+    """执行 config 子命令并返回脱敏结果；测试可注入 env/session。"""
+    env = os.environ if env is None else env
+    parser = build_config_parser()
+    args = parser.parse_args(argv)
+
+    if args.command == "init":
+        cfg = read_config_file(args.config, allow_missing=True)
+        write_config_file_atomic(args.config, cfg)
+        return safe_result("config", "config", True, "initialized", "配置文件已准备")
+
+    if args.command == "set-global":
+        cfg = read_config_file(args.config, allow_missing=True)
+        updates = {
+            "base_url": args.base_url,
+            "poll_interval": args.poll_interval,
+            "idle_poll_interval": args.idle_poll_interval,
+            "request_timeout": args.request_timeout,
+            "max_poll_workers": args.max_poll_workers,
+            "poll_round_timeout": args.poll_round_timeout,
+            "active_until_code": args.active_until_code,
+            "active_after_copy_seconds": args.active_after_copy_seconds,
+            "auto_change_on_expire": args.auto_change_on_expire,
+        }
+        for key, value in updates.items():
+            if value is not None:
+                cfg[key] = value
+        key_value = env_value(env, args.key_env, "LuDan key")
+        if key_value is not None:
+            cfg["key"] = key_value
+        write_config_file_atomic(args.config, cfg)
+        return safe_result("global", "config", True, "updated", "全局配置已更新")
+
+    if args.command == "upsert-fixed":
+        cfg = read_config_file(args.config, allow_missing=True)
+        cfg["fixed_sources"] = normalize_fixed_sources(cfg.get("fixed_sources", []))
+        url = env_value(env, args.url_env, "固定来源 URL")
+        status = upsert_by_label(
+            cfg["fixed_sources"],
+            {"label": args.label.strip(), "phone": args.phone.strip(), "url": url},
+        )
+        write_config_file_atomic(args.config, cfg)
+        return safe_result(args.label, "fixed", True, status, "固定短信来源已录入")
+
+    if args.command == "upsert-email":
+        cfg = read_config_file(args.config, allow_missing=True)
+        cfg["email_sources"] = normalize_email_sources(cfg.get("email_sources", []))
+        item = {
+            "label": args.label.strip(),
+            "email": args.email.strip(),
+            "provider": args.provider.strip().lower(),
+            "base_url": args.base_url.strip().rstrip("/"),
+        }
+        normalize_email_sources([item])
+        status = upsert_by_label(cfg["email_sources"], item)
+        write_config_file_atomic(args.config, cfg)
+        return safe_result(args.label, "email", True, status, "邮箱取件来源已录入")
+
+    if args.command == "upsert-account":
+        cfg = read_config_file(args.config, allow_missing=True)
+        cfg["accounts"] = normalize_accounts(cfg.get("accounts", []))
+        password = env_value(env, args.password_env, "账户密码") if args.password_env else ""
+        totp_secret = (
+            env_value(env, args.totp_secret_env, "TOTP secret") if args.totp_secret_env else ""
+        )
+        item = {
+            "label": args.label.strip(),
+            "login_email": args.login_email.strip(),
+            "password": password,
+            "totp_secret": totp_secret,
+            "phone": args.phone.strip(),
+            "email": args.email.strip(),
+            "note": args.note.strip(),
+        }
+        normalize_accounts([item])
+        status = upsert_by_label(cfg["accounts"], item)
+        write_config_file_atomic(args.config, cfg)
+        return safe_result(args.label, "account", True, status, "账户档案已录入")
+
+    if args.command == "import-freeform":
+        if args.stdin == args.from_clipboard:
+            raise ConfigCommandError("必须且只能选择 --stdin 或 --from-clipboard")
+        if args.stdin:
+            raw_text = input_reader() if input_reader else sys.stdin.read()
+        else:
+            reader = read_clipboard_text if clipboard_reader is None else clipboard_reader
+            raw_text = reader()
+        parsed = parse_freeform_account_text(raw_text, args.label.strip())
+        if parsed["missing"] and args.interactive:
+            reader = default_prompt_reader if prompt_reader is None else prompt_reader
+            parsed = fill_freeform_missing_fields(parsed, reader)
+        if parsed["missing"]:
+            return {
+                **safe_result(args.label, "import", False, "missing_fields", "自由文本缺少必要字段"),
+                "missing": parsed["missing"],
+                "preview": parsed["preview"],
+            }
+        if not args.yes:
+            return {
+                **safe_result(args.label, "import", False, "needs_confirmation", "请确认脱敏预览后重试 --yes"),
+                "preview": parsed["preview"],
+            }
+
+        cfg = read_config_file(args.config, allow_missing=True)
+        cfg["fixed_sources"] = normalize_fixed_sources(cfg.get("fixed_sources", []))
+        cfg["accounts"] = normalize_accounts(cfg.get("accounts", []))
+        source_label = args.source_label or f"{args.label.strip()}-SMS"
+        upsert_by_label(
+            cfg["fixed_sources"],
+            {"label": source_label, "phone": parsed["phone"], "url": parsed["sms_url"]},
+        )
+        upsert_by_label(
+            cfg["accounts"],
+            {
+                "label": args.label.strip(),
+                "login_email": parsed["login_email"],
+                "password": parsed["password"],
+                "totp_secret": parsed["totp_secret"],
+                "phone": parsed["phone"],
+                "email": "",
+                "note": "",
+            },
+        )
+        write_config_file_atomic(args.config, cfg)
+        return {
+            **safe_result(args.label, "import", True, "imported", "自由文本已脱敏解析并录入"),
+            "preview": parsed["preview"],
+        }
+
+    if args.command == "validate":
+        cfg = read_config_file(args.config, allow_missing=False)
+        return validate_config_result(cfg)
+
+    if args.command == "ready-check":
+        cfg = read_config_file(args.config, allow_missing=False)
+        factory = requests.Session if session_factory is None else session_factory
+        if args.all:
+            return ready_check_all(cfg, factory)
+        return aggregate_results([ready_check_ludan(cfg, factory())])
+
+    raise ConfigCommandError("未知 config 子命令")
+
+
+def _write_windows_clipboard_text(text):
+    """用 Win32 Unicode 剪贴板 API 写入，避免 clip 子进程偶发延迟。"""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return False
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    cf_unicode_text = 13
+    gmem_moveable = 0x0002
+
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HANDLE
+    kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+    kernel32.GlobalFree.argtypes = [wintypes.HANDLE]
+    kernel32.GlobalFree.restype = wintypes.HANDLE
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
+
+    data = (str(text) + "\0").encode("utf-16-le")
+    handle = kernel32.GlobalAlloc(gmem_moveable, len(data))
+    if not handle:
+        return False
+    locked = kernel32.GlobalLock(handle)
+    if not locked:
+        kernel32.GlobalFree(handle)
+        return False
+    try:
+        ctypes.memmove(locked, data, len(data))
+    finally:
+        kernel32.GlobalUnlock(handle)
+
+    if not user32.OpenClipboard(None):
+        kernel32.GlobalFree(handle)
+        return False
+    try:
+        if not user32.EmptyClipboard():
+            return False
+        if not user32.SetClipboardData(cf_unicode_text, handle):
+            return False
+        handle = None
+        return True
+    finally:
+        user32.CloseClipboard()
+        if handle:
+            kernel32.GlobalFree(handle)
+
+
+def _write_clip_command_text(text):
+    """clip.exe fallback：保留旧路径，给 Win32 API 不可用时兜底。"""
     try:
         proc = subprocess.Popen("clip", stdin=subprocess.PIPE, shell=True)
-        proc.communicate(input=text.encode("utf-16-le"))
+        proc.communicate(input=str(text).encode("utf-16-le"))
         return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def copy_to_clipboard(
+    text,
+    attempts=3,
+    retry_delay=0.05,
+    windows_writer=None,
+    fallback_writer=None,
+):
+    """把文本写入剪贴板；Windows API 短暂占用时重试，再退回 clip.exe。"""
+    value = str(text)
+    total_attempts = max(1, int(attempts))
+    writer = windows_writer
+    if writer is None and os.name == "nt":
+        writer = _write_windows_clipboard_text
+    if writer is not None:
+        for attempt_index in range(total_attempts):
+            try:
+                if writer(value):
+                    return True
+            except Exception:
+                pass
+            if retry_delay and attempt_index + 1 < total_attempts:
+                time.sleep(retry_delay)
+
+    fallback = _write_clip_command_text if fallback_writer is None else fallback_writer
+    try:
+        return bool(fallback(value))
     except Exception:
         return False
 
@@ -277,12 +960,13 @@ def snippet(text, limit=46):
 class LuDanSource:
     """LuDan 动态号码来源，保留原有 CDK、换号和过期处理逻辑。"""
 
-    def __init__(self, cfg, session):
+    def __init__(self, cfg, session, request_timeout=3.0):
         self.label = "LuDan"
         self.base_url = cfg["base_url"]
         self.key = cfg["key"]
         self.auto_change = bool(cfg.get("auto_change_on_expire", True))
         self.session = session
+        self.request_timeout = request_timeout
 
         self.phone = ""
         self.last_code = ""
@@ -316,7 +1000,7 @@ class LuDanSource:
         params = {"action": action, "key": self.key}
         for _ in range(3):
             try:
-                resp = self.session.get(self.base_url, params=params, timeout=10)
+                resp = self.session.get(self.base_url, params=params, timeout=self.request_timeout)
                 if resp.status_code == 429:
                     self.note = "请求过于频繁，稍等重试..."
                     time.sleep(3)
@@ -417,11 +1101,12 @@ class LuDanSource:
 class FixedUrlSource:
     """固定文本 URL 来源，用本地解析规则提取最新验证码。"""
 
-    def __init__(self, cfg, session):
+    def __init__(self, cfg, session, request_timeout=3.0):
         self.label = cfg["label"]
         self.phone = cfg["phone"]
         self.url = cfg["url"]
         self.session = session
+        self.request_timeout = request_timeout
 
         self.last_code = ""
         self.history = deque(maxlen=8)
@@ -440,7 +1125,7 @@ class FixedUrlSource:
 
     def poll(self):
         try:
-            resp = self.session.get(self.url, timeout=10)
+            resp = self.session.get(self.url, timeout=self.request_timeout)
             self.http_status = str(resp.status_code)
             self.last_checked = now_hms()
             if resp.status_code == 429:
@@ -481,12 +1166,13 @@ class EmailSource:
     # 渲染时据此把"可复制号码"文案切换为"邮箱地址"
     is_email = True
 
-    def __init__(self, cfg, session):
+    def __init__(self, cfg, session, request_timeout=3.0):
         self.label = cfg["label"]
         self.email = cfg["email"]
         self.provider = cfg["provider"]
         self.base_url = cfg["base_url"]
         self.session = session
+        self.request_timeout = request_timeout
 
         self.last_code = ""
         self.last_mail_id = ""
@@ -509,7 +1195,7 @@ class EmailSource:
         """取最新一封邮件并提取验证码；按邮件 id 去重，避免重复提示同一封。"""
         url = f"{self.base_url}/api/{self.provider}/query"
         try:
-            resp = self.session.post(url, json={"email": self.email}, timeout=10)
+            resp = self.session.post(url, json={"email": self.email}, timeout=self.request_timeout)
             self.http_status = str(resp.status_code)
             self.last_checked = now_hms()
             if resp.status_code == 429:
@@ -600,11 +1286,22 @@ class AccountSource:
 
     def copy_fields(self):
         fields = []
-        candidates = [
-            ("登录邮箱", self.login_email),
-            ("密码", self.password),
-            ("关联电话", split_us_phone(self.phone).local_number),
-        ]
+        current_totp = self.current_totp
+        candidates = [("登录邮箱", self.login_email)]
+        if current_totp and current_totp != "密钥无效":
+            candidates.append(("2FA 动态码", current_totp))
+
+        # 验证码由轮询链路自动复制；账户菜单只提供登录时需要手动复制的手机号。
+        phone_number = ""
+        if self.linked_phone_source is not None:
+            parts = getattr(self.linked_phone_source, "phone_parts", None)
+            phone_number = getattr(parts, "local_number", "") if parts is not None else ""
+            if not phone_number:
+                phone_number = split_us_phone(getattr(self.linked_phone_source, "phone", "")).local_number
+        if not phone_number:
+            phone_number = split_us_phone(self.phone).local_number
+        candidates.append(("手机号码", phone_number))
+
         for label, value in candidates:
             if value:
                 fields.append((str(len(fields) + 1), label, value))
@@ -624,13 +1321,30 @@ class SmsMonitor:
         self.poll_interval = max(2, int(cfg.get("poll_interval", 5)))
         self.idle_poll_interval = max(2, int(cfg.get("idle_poll_interval", 15)))
         self.active_after_copy_seconds = max(0, int(cfg.get("active_after_copy_seconds", 180)))
+        self.request_timeout = max(0.5, float(cfg.get("request_timeout", 3.0)))
+        self.max_poll_workers = max(1, int(cfg.get("max_poll_workers", 4)))
+        self.poll_round_timeout = max(
+            self.request_timeout, float(cfg.get("poll_round_timeout", self.request_timeout + 0.5))
+        )
         self.active_until_code = bool(cfg.get("active_until_code", True))
         self.active_waiting_for_code = False
         self.active_until = 0.0
-        self.session = requests.Session()
-        self.ludan = LuDanSource(cfg, self.session)
-        self.fixed_sources = [FixedUrlSource(item, self.session) for item in cfg["fixed_sources"]]
-        self.email_sources = [EmailSource(item, self.session) for item in cfg.get("email_sources", [])]
+        # 上一轮超时、尚未完成的 worker：下一轮开始时结算，迟到的验证码补复制，
+        # 仍未完成的短期保留；超过保留轮次后允许 fresh retry，避免来源永久下线。
+        self._pending_polls: list = []
+        self.pending_poll_max_rounds = max(1, int(cfg.get("pending_poll_max_rounds", 3)))
+        # 每个 pollable 持有独立 requests.Session，避免多 worker 并发复用同一
+        # session 触发连接池/cookie/header 竞态；ready-check 的 session_factory
+        # 注入链不走这里，保持不变。
+        self.ludan = LuDanSource(cfg, requests.Session(), self.request_timeout)
+        self.fixed_sources = [
+            FixedUrlSource(item, requests.Session(), self.request_timeout)
+            for item in cfg["fixed_sources"]
+        ]
+        self.email_sources = [
+            EmailSource(item, requests.Session(), self.request_timeout)
+            for item in cfg.get("email_sources", [])
+        ]
         self.accounts = [AccountSource(item) for item in cfg.get("accounts", [])]
         # 需要后台轮询的验证码来源（账户本身不轮询）
         self.pollables = [self.ludan, *self.fixed_sources, *self.email_sources]
@@ -812,8 +1526,7 @@ class SmsMonitor:
         print(f"  [{index}] {account.label} 账户复制项")
         print("=" * 68)
         for key, label, value in fields:
-            visible = value if label != "密码" else "<密码>"
-            print(f"  {key}. {label}：{visible}")
+            print(f"  {key}. {label}：{value}")
         print()
         print("  按对应数字复制；Esc 取消。")
 
@@ -868,7 +1581,145 @@ class SmsMonitor:
         if len(pairs) > 1:
             extra = "；".join(f"[{label}] {code}" for label, code in pairs[1:])
             self.note += f"；另有 {extra} 同时收到，请手动取用"
-        self.deactivate_high_frequency()
+        # 只有"高频等码"模式拿到码后才结束高频；定时高频模式（active_until_code=False）
+        # 拿到码不应提前清零 active_until，否则会把高频窗口错误切回低频。
+        if self.active_until_code:
+            self.deactivate_high_frequency()
+
+    def poll_sources(self):
+        """并发轮询验证码来源，避免单个慢接口拖住整轮刷新。
+
+        超时的 worker 不会被打断（``future.cancel`` 对已运行任务无效），
+        因此本轮先标记超时并把 worker 结转到下一轮结算：迟到的验证码在下一轮
+        开始时补复制，仍未完成的回滚关键字段，避免迟到写入让下一轮漏判新码、
+        出现"界面显示了验证码但没自动复制"。
+        """
+        if not self.pollables:
+            return []
+
+        new_codes = []
+        # 先结算上一轮遗留的超时 worker
+        skip_ids, late_codes = self._reconcile_pending_polls()
+        new_codes.extend(late_codes)
+
+        targets = [s for s in self.pollables if id(s) not in skip_ids]
+        if not targets:
+            return new_codes
+
+        worker_count = min(self.max_poll_workers, len(targets))
+        executor = ThreadPoolExecutor(max_workers=worker_count)
+        snapshots = {id(source): self._snapshot_source_state(source) for source in targets}
+        futures = [(source, executor.submit(source.poll)) for source in targets]
+        try:
+            done, _ = wait([future for _, future in futures], timeout=self.poll_round_timeout)
+            for source, future in futures:
+                if future not in done:
+                    future.cancel()
+                    self.mark_poll_timeout(source)
+                    # 结转到下一轮结算；快照用于异常完成路径的回滚，轮次用于避免永久跳过。
+                    self._pending_polls.append((source, future, snapshots[id(source)], 0))
+                    continue
+                new_code = future.result()
+                if new_code:
+                    new_codes.append((source.label, new_code))
+            return new_codes
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    def _reconcile_pending_polls(self):
+        """结算上一轮超时未完成的 worker。
+
+        返回 ``(skip_ids, late_codes)``：
+
+        - 已完成的 worker 若拿到了新验证码，加入 ``late_codes`` 本轮补复制
+          （其 ``last_code`` 已由 worker 正确写入，无需回滚）；
+        - 已完成但未返回新码却改动了 ``last_code`` 的异常路径，回滚防污染；
+        - 仍未完成的 worker 不回滚，避免和仍在运行的线程并发改同一个
+          ``history``；短期内加入 ``skip_ids``，达到保留轮次上限后停止追踪并
+          允许本轮 fresh retry，避免单个挂死来源永久下线。
+        """
+
+        pending = getattr(self, "_pending_polls", None) or []
+        self._pending_polls = []
+        if not pending:
+            return set(), []
+
+        records = [self._unpack_pending_poll(record) for record in pending]
+        late_codes = []
+        skip_ids = set()
+        still_pending = []
+        # 限定等待上一轮迟到的 worker 完成
+        wait([future for _, future, _, _ in records], timeout=self.poll_round_timeout)
+        max_rounds = max(1, int(getattr(self, "pending_poll_max_rounds", 3)))
+        for source, future, snap, pending_rounds in records:
+            if not future.done():
+                next_rounds = pending_rounds + 1
+                if next_rounds >= max_rounds:
+                    future.cancel()
+                    self._refresh_poll_session(source)
+                    self.mark_poll_timeout(source)
+                    source.note = f"轮询长时间未返回，已重试（>{max_rounds}轮）"
+                    continue
+                still_pending.append((source, future, snap, next_rounds))
+                skip_ids.add(id(source))
+                continue
+            try:
+                code = future.result()
+            except Exception:
+                code = None
+            if code:
+                late_codes.append((source.label, code))
+                skip_ids.add(id(source))
+            elif getattr(source, "last_code", "") != snap.get("last_code"):
+                self._rollback_to_snapshot(source, snap)
+        self._pending_polls = still_pending
+        return skip_ids, late_codes
+
+    @staticmethod
+    def _unpack_pending_poll(record):
+        """兼容旧三元组 pending 记录，新记录额外保存已保留轮次。"""
+
+        if len(record) == 3:
+            source, future, snap = record
+            return source, future, snap, 0
+        source, future, snap, pending_rounds = record
+        return source, future, snap, int(pending_rounds)
+
+    @staticmethod
+    def _refresh_poll_session(source):
+        """为 fresh retry 换新 session；旧 worker 可能仍在跑，因此不主动关闭旧 session。"""
+
+        if not hasattr(source, "session"):
+            return
+        source.session = requests.Session()
+
+    @staticmethod
+    def _snapshot_source_state(source):
+        """快照影响新码判定的关键字段，供超时迟到回滚使用。"""
+
+        history = getattr(source, "history", None)
+        return {
+            "last_code": getattr(source, "last_code", ""),
+            "history": list(history) if history is not None else None,
+        }
+
+    @staticmethod
+    def _rollback_to_snapshot(source, snap):
+        """把 last_code/history 回滚到本轮快照，避免迟到写入污染下一轮判定。"""
+
+        if hasattr(source, "last_code") and source.last_code != snap.get("last_code"):
+            source.last_code = snap.get("last_code", "")
+        history = getattr(source, "history", None)
+        old = snap.get("history")
+        if history is not None and old is not None and list(history) != old:
+            history.clear()
+            history.extend(old)
+
+    def mark_poll_timeout(self, source):
+        """只标记本轮轮询超时，不清空已有验证码和历史。"""
+        source.note = f"本轮轮询超时（>{self.poll_round_timeout:g}s）"
+        if hasattr(source, "status"):
+            source.status = "轮询超时"
 
     def run(self):
         print("正在校验 LuDan CDK...")
@@ -877,11 +1728,7 @@ class SmsMonitor:
         self.ludan.refresh_number()
         try:
             while True:
-                new_codes = []
-                for source in self.pollables:
-                    new_code = source.poll()
-                    if new_code:
-                        new_codes.append((source.label, new_code))
+                new_codes = self.poll_sources()
                 self.auto_copy_codes(new_codes)
                 self.render()
                 # 低频模式保留终端滚动可用；复制/换号后切高频，才每秒刷新 TOTP。
@@ -910,5 +1757,46 @@ def main():
     SmsMonitor(cfg).run()
 
 
+def print_config_result(result, as_json=False):
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False))
+        return
+    print(f"{result['kind']}:{result['label']} {result['status']} - {result['sanitized_reason']}")
+
+
+def run_cli(
+    argv=None,
+    env=None,
+    session_factory=None,
+    input_reader=None,
+    clipboard_reader=None,
+    prompt_reader=None,
+):
+    """顶层 CLI；无参数和 run 保持原监控行为，config 走标准录入流程。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv or argv[0] == "run":
+        main()
+        return 0
+    if argv[0] != "config":
+        print("未知命令；可用命令：run, config")
+        return 2
+    try:
+        result = run_config_command(
+            argv[1:],
+            env=env,
+            session_factory=session_factory,
+            input_reader=input_reader,
+            clipboard_reader=clipboard_reader,
+            prompt_reader=prompt_reader,
+        )
+    except ConfigCommandError as e:
+        result = safe_result("config", "config", False, "error", str(e))
+        json_requested = "--json" in argv
+        print_config_result(result, as_json=json_requested)
+        return 1
+    print_config_result(result, as_json="--json" in argv)
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(run_cli())

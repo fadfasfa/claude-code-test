@@ -3866,18 +3866,6 @@
   {
     "schema_version": 2,
     "name": "最终都市列车",
-    "tier": "黄金",
-    "filename": "nightstalking_small.png",
-    "local_path": "assets/nightstalking_small.png",
-    "icon_url": "/assets/nightstalking_small.png",
-    "cdragon_id": 1400,
-    "augment_name_id": "TrainOfTheDead",
-    "source_icon_path": "/lol-game-data/assets/ASSETS/UX/Kiwi/Augments/Icons/Nightstalking_small.png",
-    "source_icon_url": "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/ux/kiwi/augments/icons/nightstalking_small.png"
-  },
-  {
-    "schema_version": 2,
-    "name": "最终都市列车",
     "tier": "白银",
     "filename": "9189_train.png",
     "local_path": "assets/9189_train.png",
@@ -3886,6 +3874,18 @@
     "augment_name_id": "Weapon_Train",
     "source_icon_path": "/lol-game-data/assets/ASSETS/UX/Strawberry/UpgradeSelection/Icons/Weapon/9189_Train.png",
     "source_icon_url": "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/ux/strawberry/upgradeselection/icons/weapon/9189_train.png"
+  },
+  {
+    "schema_version": 2,
+    "name": "最终都市列车",
+    "tier": "黄金",
+    "filename": "nightstalking_small.png",
+    "local_path": "assets/nightstalking_small.png",
+    "icon_url": "/assets/nightstalking_small.png",
+    "cdragon_id": 1400,
+    "augment_name_id": "TrainOfTheDead",
+    "source_icon_path": "/lol-game-data/assets/ASSETS/UX/Kiwi/Augments/Icons/Nightstalking_small.png",
+    "source_icon_url": "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/ux/kiwi/augments/icons/nightstalking_small.png"
   },
   {
     "schema_version": 2,
@@ -4962,8 +4962,8 @@
     "filename": "adapt_small.png",
     "local_path": "assets/adapt_small.png",
     "icon_url": "/assets/adapt_small.png",
-    "cdragon_id": 205,
-    "augment_name_id": "ADAPt",
+    "cdragon_id": 1205,
+    "augment_name_id": "ARAM_ADAPt",
     "source_icon_path": "/lol-game-data/assets/ASSETS/UX/Cherry/Augments/Icons/ADAPt_small.png",
     "source_icon_url": "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/ux/cherry/augments/icons/adapt_small.png"
   },
@@ -4974,8 +4974,8 @@
     "filename": "adapt_small.png",
     "local_path": "assets/adapt_small.png",
     "icon_url": "/assets/adapt_small.png",
-    "cdragon_id": 1205,
-    "augment_name_id": "ARAM_ADAPt",
+    "cdragon_id": 205,
+    "augment_name_id": "ADAPt",
     "source_icon_path": "/lol-game-data/assets/ASSETS/UX/Cherry/Augments/Icons/ADAPt_small.png",
     "source_icon_url": "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/ux/cherry/augments/icons/adapt_small.png"
   },
@@ -5102,18 +5102,6 @@
   {
     "schema_version": 2,
     "name": "玻璃大炮",
-    "tier": "棱彩",
-    "filename": "glasscannon_small.png",
-    "local_path": "assets/glasscannon_small.png",
-    "icon_url": "/assets/glasscannon_small.png",
-    "cdragon_id": 1325,
-    "augment_name_id": "GlassCannon",
-    "source_icon_path": "/lol-game-data/assets/ASSETS/UX/Kiwi/Augments/Icons/GlassCannon_small.png",
-    "source_icon_url": "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/ux/kiwi/augments/icons/glasscannon_small.png"
-  },
-  {
-    "schema_version": 2,
-    "name": "玻璃大炮",
     "tier": "黄金",
     "filename": "glasscannon_large.png",
     "local_path": "assets/glasscannon_large.png",
@@ -5122,6 +5110,18 @@
     "augment_name_id": "Special_GlassCannon",
     "source_icon_path": "/lol-game-data/assets/ASSETS/UX/Strawberry/UpgradeSelection/Icons/Blessing_Augment/GlassCannon_Large.png",
     "source_icon_url": "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/ux/strawberry/upgradeselection/icons/blessing_augment/glasscannon_large.png"
+  },
+  {
+    "schema_version": 2,
+    "name": "玻璃大炮",
+    "tier": "棱彩",
+    "filename": "glasscannon_small.png",
+    "local_path": "assets/glasscannon_small.png",
+    "icon_url": "/assets/glasscannon_small.png",
+    "cdragon_id": 1325,
+    "augment_name_id": "GlassCannon",
+    "source_icon_path": "/lol-game-data/assets/ASSETS/UX/Kiwi/Augments/Icons/GlassCannon_small.png",
+    "source_icon_url": "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/ux/kiwi/augments/icons/glasscannon_small.png"
   },
   {
     "schema_version": 2,

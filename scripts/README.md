@@ -9,6 +9,8 @@
 
 不维护新的复杂编排器。新增脚本必须有明确用途、输入输出、写入行为和失败行为；不要读取凭据文件或默认执行发布动作。
 
+当前没有 active AI worker wrapper；退役的 cc-worker 材料保存在 `docs/archive/cc-worker/`，不作为默认脚本入口。
+
 ## scripts/scraping/apex_snapshot_capture.py
 
 - 输入：固定入口 `https://apexlol.info/zh` 与 `https://apexlol.info/zh/hextech`，可用 `--snapshot-dir` 指定输出目录，`--max-attempts` / `--retry-delay-seconds` 调整暂态失败重试。
