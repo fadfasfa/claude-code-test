@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 OVERLAY_READY_FILE_ENV = "HEXTECH_OVERLAY_READY_FILE"
 OVERLAY_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
+OVERLAY_SIDECAR_DEBUG_DUMP_ENV = "HEXTECH_OVERLAY_SIDECAR_DEBUG_DUMP"
 OVERLAY_READY_TIMEOUT_SECONDS = 5.0
 HOST_GRACEFUL_EXIT_TIMEOUT_SECONDS = 0.75
 RUN_DIR = Path(__file__).resolve().parent.parent
@@ -105,8 +106,14 @@ def start_host_process() -> subprocess.Popen:
             pass
 
 
-def start_sidecar_process() -> subprocess.Popen:
-    diagnostic_dir = get_runtime_root_dir() / "debug" / "overlay_vision"
+def _sidecar_debug_dump_enabled(value: str | None = None) -> bool:
+    """默认不落盘真机 ROI；只有显式诊断开关才写入 ignored runtime/debug。"""
+
+    raw_value = os.environ.get(OVERLAY_SIDECAR_DEBUG_DUMP_ENV) if value is None else value
+    return str(raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def start_sidecar_process(*, debug_dump: bool | None = None) -> subprocess.Popen:
     command = [sys.executable]
     if getattr(sys, "frozen", False):
         command.append("--overlay-sidecar")
@@ -117,9 +124,10 @@ def start_sidecar_process() -> subprocess.Popen:
         "--preset",
         "auto",
         "--write-event",
-        "--debug-dump",
-        str(diagnostic_dir),
     ])
+    if debug_dump is True or (debug_dump is None and _sidecar_debug_dump_enabled()):
+        diagnostic_dir = get_runtime_root_dir() / "debug" / "overlay_vision"
+        command.extend(["--debug-dump", str(diagnostic_dir)])
     return subprocess.Popen(command, cwd=RUN_DIR, startupinfo=_hidden_startupinfo())
 
 

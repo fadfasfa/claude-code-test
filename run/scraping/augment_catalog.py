@@ -451,9 +451,10 @@ def build_augment_icon_manifest(
 def load_augment_icon_manifest(
     config_dir: Optional[str] = None,
     force_refresh: bool = False,
+    manifest_path: Optional[str] = None,
 ) -> list[dict]:
     config_dir = config_dir or STATIC_DATA_DIR
-    manifest_path = os.path.join(config_dir, "Augment_Icon_Manifest.json")
+    manifest_path = os.fspath(manifest_path or get_augment_manifest_runtime_path(config_dir))
 
     global _AUGMENT_ICON_MANIFEST_CACHE
     cached_path, cached_mtime, cached_data = _AUGMENT_ICON_MANIFEST_CACHE
@@ -502,7 +503,12 @@ def build_augment_catalog_lookup(
 ) -> dict:
     config_dir = config_dir or STATIC_DATA_DIR
     manifest_path = get_augment_manifest_runtime_path(config_dir)
-    manifest = load_augment_icon_manifest(config_dir=config_dir, force_refresh=force_refresh)
+    manifest = load_augment_icon_manifest(
+        config_dir=config_dir,
+        force_refresh=force_refresh,
+        manifest_path=manifest_path,
+    )
+    manifest_path = get_augment_manifest_runtime_path(config_dir)
     try:
         mtime = os.path.getmtime(manifest_path)
     except OSError:

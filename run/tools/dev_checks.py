@@ -1040,6 +1040,41 @@ def check_overlay_hint_cache_contract() -> None:
         assert manifest_path.read_bytes() == before
         assert json.loads(debug_manifest_path.read_text(encoding="utf-8"))[0]["name"] == "调试海克斯"
 
+        def valid_manifest(prefix: str) -> list[dict[str, Any]]:
+            return [
+                {
+                    "schema_version": 2,
+                    "name": f"{prefix}海克斯{i}",
+                    "tier": "黄金",
+                    "filename": f"{prefix.lower()}_{i}.png",
+                    "local_path": f"assets/{prefix.lower()}_{i}.png",
+                    "icon_url": f"/assets/{prefix.lower()}_{i}.png",
+                    "description": "说明",
+                    "tooltip": "说明",
+                    "tooltip_plain": "说明",
+                    "spell_values": {},
+                    "status": "ready",
+                    "updated_at": "2026-01-01T00:00:00+0000",
+                }
+                for i in range(55)
+            ]
+
+        manifest_path.write_text(json.dumps(valid_manifest("Static"), ensure_ascii=False), encoding="utf-8")
+        runtime_manifest_path = Path(tmp_dir) / "Augment_Icon_Manifest.debug.json"
+        runtime_manifest_path.write_text(
+            json.dumps(valid_manifest("Runtime"), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        with (
+            patch.object(augment_catalog, "_manifest_is_stale", return_value=False),
+            patch.object(augment_catalog, "_AUGMENT_ICON_MANIFEST_CACHE", ("", 0.0, [])),
+            patch.object(augment_catalog, "_AUGMENT_LOOKUP_CACHE", ("", 0.0, {})),
+        ):
+            manifest = augment_catalog.load_augment_icon_manifest(config_dir=tmp_dir)
+            lookup = augment_catalog.build_augment_catalog_lookup(config_dir=tmp_dir)
+        assert manifest[0]["name"] == "Runtime海克斯0"
+        assert "Runtime海克斯0" in lookup and "Static海克斯0" not in lookup
+
         with patch.object(runtime_store, "get_runtime_root_dir", return_value=Path(tmp_dir) / "runtime-root"):
             resolved_debug_path = Path(
                 runtime_store.build_runtime_debug_path("augment_catalog/manifest.json")
@@ -3949,6 +3984,7 @@ print(json.dumps(blocked))
         assert "fastapi" not in text.lower() and "uvicorn" not in text.lower(), path
 
     with (
+        patch.dict(overlay_lifecycle.os.environ, {overlay_lifecycle.OVERLAY_SIDECAR_DEBUG_DUMP_ENV: ""}),
         patch.object(overlay_lifecycle.sys, "frozen", True, create=True),
         patch.object(overlay_lifecycle, "_hidden_startupinfo", return_value=None),
         patch.object(overlay_lifecycle.subprocess, "Popen", return_value=object()) as frozen_popen,
@@ -3957,14 +3993,29 @@ print(json.dumps(blocked))
     frozen_command = frozen_popen.call_args.args[0]
     assert frozen_command[:2] == [sys.executable, "--overlay-sidecar"]
     assert "processing.overlay_vision_sidecar" not in frozen_command
+    assert "--debug-dump" not in frozen_command
 
     with (
+        patch.dict(overlay_lifecycle.os.environ, {overlay_lifecycle.OVERLAY_SIDECAR_DEBUG_DUMP_ENV: ""}),
         patch.object(overlay_lifecycle.sys, "frozen", False, create=True),
         patch.object(overlay_lifecycle, "_hidden_startupinfo", return_value=None),
         patch.object(overlay_lifecycle.subprocess, "Popen", return_value=object()) as source_popen,
     ):
         overlay_lifecycle.start_sidecar_process()
-    assert source_popen.call_args.args[0][:3] == [sys.executable, "-m", "processing.overlay_vision_sidecar"]
+    source_command = source_popen.call_args.args[0]
+    assert source_command[:3] == [sys.executable, "-m", "processing.overlay_vision_sidecar"]
+    assert "--debug-dump" not in source_command
+
+    with (
+        patch.dict(overlay_lifecycle.os.environ, {overlay_lifecycle.OVERLAY_SIDECAR_DEBUG_DUMP_ENV: "1"}),
+        patch.object(overlay_lifecycle.sys, "frozen", False, create=True),
+        patch.object(overlay_lifecycle, "_hidden_startupinfo", return_value=None),
+        patch.object(overlay_lifecycle.subprocess, "Popen", return_value=object()) as debug_popen,
+    ):
+        overlay_lifecycle.start_sidecar_process()
+    debug_command = debug_popen.call_args.args[0]
+    assert "--debug-dump" in debug_command
+    assert Path(debug_command[debug_command.index("--debug-dump") + 1]).name == "overlay_vision"
 
     class DummyProcess:
         def __init__(self, pid: int, *, running: bool = True, calls: list[str] | None = None, label: str = ""):

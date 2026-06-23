@@ -408,10 +408,10 @@ def _draw_native_panel(canvas: CanvasLike, box: tuple[int, int, int, int], *, ti
         outline=theme["outer_gold"],
         width=2,
     )
-    
+
     x0, y0, x1, y1 = box
     corner = max(5, min(14, (y1 - y0) // 5))
-    
+
     # Holographic Scanlines
     for scan_y in range(y0 + corner, y1 - corner, 4):
         canvas.create_line(x0 + 4, scan_y, x1 - 4, scan_y, fill=theme["inner_bluegray"], width=1)
@@ -428,9 +428,9 @@ def _draw_native_panel(canvas: CanvasLike, box: tuple[int, int, int, int], *, ti
         outline="",
         width=0,
     )
-    
+
     highlight = theme.get("highlight_cyan", "#0AC8B9")
-    
+
     # Simulated Top Gradient / Glass Reflection
     for i in range(1, 4):
         ly = y0 + i * 2
@@ -438,7 +438,7 @@ def _draw_native_panel(canvas: CanvasLike, box: tuple[int, int, int, int], *, ti
         lx1 = x1 - corner - i * 3
         if lx1 > lx0:
             canvas.create_line(lx0, ly, lx1, ly, fill=highlight, width=1)
-            
+
     canvas.create_line(x0 + corner, y0 + 1, x1 - corner, y0 + 1, fill=highlight, width=1)
     canvas.create_line(x0 + 1, y0 + corner, x0 + 1, y1 - corner, fill=highlight, width=1)
 
