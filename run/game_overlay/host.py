@@ -49,9 +49,14 @@ WM_MOUSEACTIVATE = 0x0021
 WM_QUIT = 0x0012
 MA_NOACTIVATE = 3
 HOTKEY_FALLBACK_POLL_SECONDS = 0.05
+HOTKEY_FALLBACK_DEBOUNCE_SECONDS = 0.3
+OVERLAY_EXIT_POLL_MS = 100
+RENDER_ERROR_BACKOFF_AFTER = 3
+RENDER_ERROR_BACKOFF_MAX_MS = 30_000
 LRESULT = getattr(wintypes, "LRESULT", ctypes.c_ssize_t)
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 OVERLAY_READY_FILE_ENV = "HEXTECH_OVERLAY_READY_FILE"
+OVERLAY_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
 
 
 class MSG(ctypes.Structure):
@@ -194,12 +199,15 @@ def _poll_alt_h_hotkey(controller: HotkeyController, user32: Any) -> None:
     """全局热键被占用时，用按键边沿轮询保留关闭 overlay 的能力。"""
 
     was_pressed = False
+    last_toggle_at = 0.0
     while not controller.stop_requested.is_set():
         alt_pressed = bool(int(user32.GetAsyncKeyState(VK_MENU)) & 0x8000)
         h_pressed = bool(int(user32.GetAsyncKeyState(ord("H"))) & 0x8000)
         pressed = alt_pressed and h_pressed
-        if pressed and not was_pressed:
+        now = time.monotonic()
+        if pressed and not was_pressed and now - last_toggle_at >= HOTKEY_FALLBACK_DEBOUNCE_SECONDS:
             controller.request_queue.put("toggle")
+            last_toggle_at = now
         was_pressed = pressed
         if controller.stop_requested.wait(HOTKEY_FALLBACK_POLL_SECONDS):
             break
@@ -405,13 +413,40 @@ def _signal_overlay_ready() -> None:
     """Tk 完成 idle 初始化后写 readiness；父进程验证 PID 后才报告 running。"""
 
     ready_path = str(os.environ.get(OVERLAY_READY_FILE_ENV) or "").strip()
-    if ready_path:
+    if not ready_path:
+        return
+    try:
         atomic_write_json(
             Path(ready_path),
             {"pid": os.getpid(), "ready_at": time.time()},
             ensure_ascii=False,
             indent=2,
         )
+    except Exception:
+        logger.exception("写入 game_overlay host readiness 失败。")
+
+
+def _schedule_exit_file_watch(root: tk.Tk, exit_path: str | Path | None = None) -> None:
+    """监听 lifecycle 写入的退出信号，让 host 优先走 Tk 主循环正常收尾。"""
+
+    raw_path = str(exit_path or os.environ.get(OVERLAY_EXIT_FILE_ENV) or "").strip()
+    if not raw_path:
+        return
+    signal_path = Path(raw_path)
+
+    def poll_exit_signal() -> None:
+        try:
+            should_exit = signal_path.exists()
+        except OSError:
+            logger.debug("检查 game_overlay host 退出信号失败：%s", signal_path, exc_info=True)
+            should_exit = False
+        if should_exit:
+            logger.info("收到 game_overlay host 退出信号。")
+            root.quit()
+            return
+        root.after(OVERLAY_EXIT_POLL_MS, poll_exit_signal)
+
+    root.after(OVERLAY_EXIT_POLL_MS, poll_exit_signal)
 
 def _apply_overlay_rect(root: tk.Tk, rect: tuple[int, int, int, int]) -> None:
     """用整数虚拟屏坐标定位 client rect，兼容左侧/上方副屏。"""
@@ -640,8 +675,17 @@ def _schedule_event_render(
 
     poll_ms = max(50, int(config.get("event_poll_ms", 250) or 250))
     source = data_source or SharedOverlayDataSource()
+    failure_count = 0
+
+    def retry_delay_ms() -> int:
+        if failure_count <= RENDER_ERROR_BACKOFF_AFTER:
+            return poll_ms
+        exponent = min(8, failure_count - RENDER_ERROR_BACKOFF_AFTER)
+        return min(RENDER_ERROR_BACKOFF_MAX_MS, poll_ms * (2 ** exponent))
 
     def render_once() -> None:
+        nonlocal failure_count
+        success = False
         try:
             _drain_hotkey_requests(hotkey_queue, visibility)
             _refresh_target_window(root, config, visibility)
@@ -671,6 +715,7 @@ def _schedule_event_render(
                     snapshot,
                     resolved_should_show=False,
                 )
+                success = True
                 return
             hint_cache = source.read_hint_cache()
             context = source.read_context()
@@ -683,10 +728,19 @@ def _schedule_event_render(
                 snapshot,
                 resolved_should_show=True,
             )
+            success = True
         except Exception:
-            logger.exception("overlay 渲染轮询失败；下一 tick 将继续重试。")
+            failure_count += 1
+            if failure_count <= RENDER_ERROR_BACKOFF_AFTER:
+                logger.exception("overlay 渲染轮询失败；下一 tick 将继续重试。")
+            elif failure_count == RENDER_ERROR_BACKOFF_AFTER + 1:
+                logger.exception("overlay 渲染轮询连续失败，开始退避。")
+            else:
+                logger.warning("overlay 渲染轮询仍在失败：连续失败=%s，退避中。", failure_count)
         finally:
-            canvas.after(poll_ms, render_once)
+            if success:
+                failure_count = 0
+            canvas.after(retry_delay_ms(), render_once)
 
     render_once()
 
@@ -743,6 +797,7 @@ def run_overlay_host(*, diagnostic: bool = False) -> None:
     )
     hotkey_controller = _start_hotkey_thread(hotkey_queue)
     _schedule_event_render(root, canvas, config, visibility, hotkey_queue, data_source=data_source)
+    _schedule_exit_file_watch(root)
     root.after_idle(_signal_overlay_ready)
     logger.info("game_overlay host 已启动：event_poll_ms=%s", config["event_poll_ms"])
 

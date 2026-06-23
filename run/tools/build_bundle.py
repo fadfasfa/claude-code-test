@@ -135,6 +135,37 @@ def prepare_runtime_bundle() -> Path:
     return bundle_root
 
 
+def resolve_tcl_runtime_dirs() -> tuple[Path, Path, Path | None]:
+    """返回当前解释器的 Tcl/Tk 数据目录，供 PyInstaller runtime hook 使用。"""
+
+    candidates = [
+        Path(sys.base_prefix) / "tcl",
+        Path(sys.prefix) / "tcl",
+    ]
+    for candidate in candidates:
+        tcl_dir = candidate / "tcl8.6"
+        tk_dir = candidate / "tk8.6"
+        module_dir = candidate / "tcl8"
+        if tcl_dir.is_dir() and tk_dir.is_dir():
+            return tcl_dir, tk_dir, module_dir if module_dir.is_dir() else None
+    searched = "、".join(str(path) for path in candidates)
+    raise RuntimeError(f"当前 Python 缺少 Tcl/Tk 数据目录，无法打包 Tk UI：{searched}")
+
+
+def resolve_tkinter_package_dir() -> Path:
+    """返回 stdlib tkinter package；部分 PyInstaller 环境不会自动放入 PYZ。"""
+
+    candidates = [
+        Path(sys.base_prefix) / "Lib" / "tkinter",
+        Path(sys.prefix) / "Lib" / "tkinter",
+    ]
+    for candidate in candidates:
+        if (candidate / "__init__.py").is_file():
+            return candidate
+    searched = "、".join(str(path) for path in candidates)
+    raise RuntimeError(f"当前 Python 缺少 tkinter 标准库目录，无法打包 Tk UI：{searched}")
+
+
 def refresh_runtime_data_before_bundle() -> None:
     """按运行时节奏刷新数据，再把当前落盘结果打入发布包。"""
     print_step("按正常节奏刷新运行时数据")
@@ -151,6 +182,8 @@ def refresh_runtime_data_before_bundle() -> None:
 def build_exe(version_file: Path, bundle_root: Path) -> Path:
     """执行 PyInstaller 主构建流程，并返回原始产物目录。"""
     print_step("构建可执行文件")
+    tcl_runtime_dir, tk_runtime_dir, tcl_module_dir = resolve_tcl_runtime_dirs()
+    tkinter_package_dir = resolve_tkinter_package_dir()
     cmd = [
         "pyinstaller",
         "--clean",
@@ -164,11 +197,17 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
         "--add-data", f"{bundle_root / 'data'};data",
         "--add-data", f"{bundle_root / 'assets'};assets",
         "--add-data", f"{bundle_root / 'bundle_manifest.json'};.",
+        "--add-data", f"{tcl_runtime_dir};_tcl_data",
+        "--add-data", f"{tk_runtime_dir};_tk_data",
+        "--add-data", f"{tkinter_package_dir};tkinter",
         "--hidden-import", "pandas",
         "--hidden-import", "numpy",
         "--hidden-import", "requests",
         "--hidden-import", "PIL",
         "--hidden-import", "PIL.ImageTk",
+        "--hidden-import", "tkinter",
+        "--hidden-import", "_tkinter",
+        "--hidden-import", "tkinter.ttk",
         "--hidden-import", "win32gui",
         "--hidden-import", "psutil",
         "--hidden-import", "fastapi",
@@ -188,11 +227,14 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
         "--hidden-import", "processing.overlay_vision_sidecar",
         "--hidden-import", "processing.overlay_vision_state",
         "--hidden-import", "processing.ui_feature_flags",
+        "--collect-submodules", "tkinter",
         "--collect-submodules", "fastapi",
         "--collect-submodules", "starlette",
         "--collect-submodules", "uvicorn",
         "hextech_ui.py",
     ]
+    if tcl_module_dir is not None:
+        cmd.extend(["--add-data", f"{tcl_module_dir};tcl8"])
     for module_name in EXCLUDED_MODULES:
         cmd.extend(["--exclude-module", module_name])
 

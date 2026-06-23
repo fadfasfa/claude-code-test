@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 from processing.overlay_event_channel import write_inactive_overlay_event
 from processing.runtime_store import build_runtime_state_path, get_runtime_root_dir
+from tools.atomic_io import atomic_write_json
 
 from .data_source import prepare_shared_overlay_data
 
@@ -26,7 +27,9 @@ from .data_source import prepare_shared_overlay_data
 logger = logging.getLogger(__name__)
 
 OVERLAY_READY_FILE_ENV = "HEXTECH_OVERLAY_READY_FILE"
+OVERLAY_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
 OVERLAY_READY_TIMEOUT_SECONDS = 5.0
+HOST_GRACEFUL_EXIT_TIMEOUT_SECONDS = 0.75
 RUN_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -83,9 +86,12 @@ def start_host_process() -> subprocess.Popen:
     else:
         command = [sys.executable, str(RUN_DIR / "game_overlay_host.py")]
     ready_path = Path(build_runtime_state_path(f"game_overlay_host.{uuid.uuid4().hex}.ready.json"))
+    exit_path = Path(build_runtime_state_path(f"game_overlay_host.{uuid.uuid4().hex}.exit.json"))
     env = os.environ.copy()
     env[OVERLAY_READY_FILE_ENV] = str(ready_path)
+    env[OVERLAY_EXIT_FILE_ENV] = str(exit_path)
     process = subprocess.Popen(command, cwd=RUN_DIR, startupinfo=_hidden_startupinfo(), env=env)
+    setattr(process, "_hextech_overlay_exit_file", str(exit_path))
     try:
         _wait_for_host_ready(process, ready_path)
         return process
@@ -121,13 +127,62 @@ def process_is_running(process: ProcessLike | None) -> bool:
     return bool(process is not None and process.poll() is None)
 
 
+def _process_exit_path(process: ProcessLike | None) -> Path | None:
+    value = str(getattr(process, "_hextech_overlay_exit_file", "") or "").strip()
+    return Path(value) if value else None
+
+
+def _cleanup_process_exit_signal(process: ProcessLike | None) -> None:
+    exit_path = _process_exit_path(process)
+    if exit_path is None:
+        return
+    try:
+        exit_path.unlink(missing_ok=True)
+    except OSError:
+        logger.debug("清理 overlay host 退出信号文件失败：%s", exit_path, exc_info=True)
+
+
+def _request_process_exit(process: ProcessLike | None) -> bool:
+    """先给 host 一个自愿退出窗口；无 signal 文件的 sidecar 继续走 terminate。"""
+
+    if process is None or not process_is_running(process):
+        return False
+    exit_path = _process_exit_path(process)
+    if exit_path is None:
+        return False
+    try:
+        atomic_write_json(
+            exit_path,
+            {"pid": getattr(process, "pid", None), "requested_at": time.time()},
+            ensure_ascii=False,
+            indent=2,
+        )
+        return True
+    except Exception:
+        logger.warning("写入 overlay host 退出信号失败：%s", exit_path, exc_info=True)
+        return False
+
+
+def _wait_process_exit(process: ProcessLike, *, timeout: float) -> bool:
+    try:
+        process.wait(timeout=timeout)
+    except Exception:
+        return not process_is_running(process)
+    return not process_is_running(process)
+
+
 def stop_process(process: ProcessLike | None) -> bool:
     if process is None or not process_is_running(process):
+        _cleanup_process_exit_signal(process)
+        return True
+    if _request_process_exit(process) and _wait_process_exit(process, timeout=HOST_GRACEFUL_EXIT_TIMEOUT_SECONDS):
+        _cleanup_process_exit_signal(process)
         return True
     try:
         process.terminate()
         process.wait(timeout=1.5)
         if not process_is_running(process):
+            _cleanup_process_exit_signal(process)
             return True
     except Exception:
         pass
@@ -136,7 +191,10 @@ def stop_process(process: ProcessLike | None) -> bool:
         process.wait(timeout=1.0)
     except Exception:
         pass
-    return not process_is_running(process)
+    stopped = not process_is_running(process)
+    if stopped:
+        _cleanup_process_exit_signal(process)
+    return stopped
 
 
 class GameOverlayController:
@@ -172,7 +230,12 @@ class GameOverlayController:
         if self.is_running():
             self._mark("running")
             return
-        self.stop(write_inactive=False)
+        try:
+            self.stop(write_inactive=False)
+        except Exception as exc:
+            error = f"无法清理旧 game_overlay 实例：{exc}"
+            self._mark("error", error=error)
+            raise RuntimeError(error) from exc
         self._mark("starting")
         try:
             self._prepare_data_func()
@@ -190,22 +253,34 @@ class GameOverlayController:
                 getattr(self.sidecar_process, "pid", None),
             )
         except Exception as exc:
-            host_stopped = stop_process(self.host_process)
-            sidecar_stopped = stop_process(self.sidecar_process)
-            if host_stopped:
-                self.host_process = None
-            if sidecar_stopped:
-                self.sidecar_process = None
+            rollback_errors: list[str] = []
+            try:
+                # host 失败时 sidecar 可能刚写过 active；先补 inactive fence 再终止。
+                self._write_inactive_func()
+            except Exception as fence_exc:
+                rollback_errors.append(f"回滚 inactive 事件写入失败：{fence_exc}")
+            host_process = self.host_process
+            sidecar_process = self.sidecar_process
+            host_stopped = stop_process(host_process)
+            sidecar_stopped = stop_process(sidecar_process)
+            self.host_process = None
+            self.sidecar_process = None
             residual = [
-                name
-                for name, stopped in (("host", host_stopped), ("sidecar", sidecar_stopped))
+                f"{name}(pid={getattr(process, 'pid', None)})"
+                for name, stopped, process in (
+                    ("host", host_stopped, host_process),
+                    ("sidecar", sidecar_stopped, sidecar_process),
+                )
                 if not stopped
             ]
             error = str(exc)
+            if rollback_errors:
+                error = f"{error}；{'；'.join(rollback_errors)}"
             if residual:
                 error = f"{error}；回滚后仍有残留：{', '.join(residual)}"
+                logger.warning("game_overlay 启动回滚后仍有残留：%s", ", ".join(residual))
             self._mark("error", error=error)
-            if residual:
+            if residual or rollback_errors:
                 raise RuntimeError(error) from exc
             raise
 
@@ -221,22 +296,26 @@ class GameOverlayController:
                 self._write_inactive_func()
             except Exception as exc:
                 errors.append(f"inactive 事件写入失败：{exc}")
-        sidecar_stopped = stop_process(self.sidecar_process)
+        sidecar_process = self.sidecar_process
+        host_process = self.host_process
+        sidecar_stopped = stop_process(sidecar_process)
         # sidecar 退出前可能刚完成一次 active 原子写；退出后再写一次作为最终 fence。
         if write_inactive:
             try:
                 self._write_inactive_func()
             except Exception as exc:
                 errors.append(f"最终 inactive 事件写入失败：{exc}")
-        host_stopped = stop_process(self.host_process)
-        if sidecar_stopped:
-            self.sidecar_process = None
-        else:
-            errors.append("sidecar 停止失败")
-        if host_stopped:
-            self.host_process = None
-        else:
-            errors.append("host 停止失败")
+        host_stopped = stop_process(host_process)
+        self.sidecar_process = None
+        self.host_process = None
+        if not sidecar_stopped:
+            message = f"sidecar 停止失败(pid={getattr(sidecar_process, 'pid', None)})"
+            errors.append(message)
+            logger.warning("game_overlay %s", message)
+        if not host_stopped:
+            message = f"host 停止失败(pid={getattr(host_process, 'pid', None)})"
+            errors.append(message)
+            logger.warning("game_overlay %s", message)
         if errors:
             error = "；".join(errors)
             self._mark("error", error=error)

@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
+
 class OverlayDataSource(Protocol):
     """host 每次绘制所需的最小只读数据接口。"""
 
@@ -47,6 +48,7 @@ class SharedOverlayDataSource:
             signature = None
         if signature == self._cache_signature and isinstance(self._cache_payload, dict):
             return self._cache_payload
+        # cache 写入方统一使用 atomic_write_json；这里按 mtime/size 签名读取即可避开半写窗口。
         payload = load_overlay_hint_cache(self._cache_path)
         self._cache_signature = signature
         self._cache_payload = payload

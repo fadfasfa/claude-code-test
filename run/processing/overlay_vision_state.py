@@ -115,11 +115,16 @@ class SelectionTracker:
             return dict(track.stable_slot) if track.stable_slot is not None else unknown_slot(index)
 
         identity = candidate.identity
+        stale_hold_identity = ""
         if track.stable_slot is not None:
             stable_identity = str(track.stable_slot.get("augment_id") or track.stable_slot.get("name") or "")
-            if identity != stable_identity and candidate.required_frames <= 2:
-                # 强新候选通常表示单槽重随；旧结果立即撤下，但新结果仍需稳定确认。
-                track.stable_slot = None
+            if identity != stable_identity:
+                if candidate.required_frames <= 2:
+                    # 强新候选通常表示单槽重随；旧结果立即撤下，但新结果仍需稳定确认。
+                    track.stable_slot = None
+                else:
+                    # 弱/慢候选更替期间保留旧稳定槽位，但把 hold 原因写进诊断。
+                    stale_hold_identity = identity
         track.weak_miss_frames = 0
         if identity == track.candidate_identity:
             track.candidate_frames += 1
@@ -128,7 +133,16 @@ class SelectionTracker:
             track.candidate_frames = 1
         if track.candidate_frames >= candidate.required_frames:
             track.stable_slot = candidate.ready_slot()
-        return dict(track.stable_slot) if track.stable_slot is not None else unknown_slot(index)
+            stale_hold_identity = ""
+        if track.stable_slot is None:
+            return unknown_slot(index)
+        rendered_slot = dict(track.stable_slot)
+        if stale_hold_identity:
+            base_rule = str(rendered_slot.get("acceptance_rule") or "").strip()
+            rendered_slot["acceptance_rule"] = f"{base_rule}|stale_hold:{stale_hold_identity}" if base_rule else (
+                f"stale_hold:{stale_hold_identity}"
+            )
+        return rendered_slot
 
     def _residue_event(self, source: Mapping[str, Any], *, hover_occluded: bool) -> dict[str, Any]:
         rendered_slots = [

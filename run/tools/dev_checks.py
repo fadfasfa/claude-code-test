@@ -793,7 +793,18 @@ def check_packaging_config() -> None:
     spec_text = (RUN_DIR / "Hextech伴生终端.spec").read_text(encoding="utf-8")
 
     assert "--hidden-import\", \"filelock\"" in build_script
+    assert "--hidden-import\", \"tkinter\"" in build_script
+    assert "--hidden-import\", \"_tkinter\"" in build_script
+    assert "resolve_tcl_runtime_dirs" in build_script
+    assert "resolve_tkinter_package_dir" in build_script
+    assert ";_tcl_data" in build_script
+    assert ";_tk_data" in build_script
+    assert ";tkinter" in build_script
+    assert "--collect-submodules\", \"tkinter\"" in build_script
     assert "filelock" in spec_text
+    assert "tkinter" in spec_text and "_tkinter" in spec_text
+    assert "_tcl_data" in spec_text and "_tk_data" in spec_text and "'tkinter'" in spec_text
+    assert "collect_submodules('tkinter')" in spec_text
     assert "display" in (RUN_DIR / "tools" / "bundle_manifest.py").read_text(encoding="utf-8")
 
 
@@ -2119,6 +2130,18 @@ def check_overlay_vision_sidecar_contract() -> None:
     assert dual_candidate.rule == "icon_shortlist_dual_font"
     assert dual_candidate.required_frames == 2
 
+    stale_hold_tracker = SelectionTracker(scene_enter_frames=1)
+    stale_hold_tracker.update(detection)
+    stable_before_weak_reroll = stale_hold_tracker.update(detection)
+    assert stable_before_weak_reroll["slots"][0]["augment_id"] == "augment_a"
+    weak_reroll_event = dict(detection)
+    weak_reroll_slot = json.loads(json.dumps(shortlist_temporal_slot, ensure_ascii=False))
+    weak_reroll_slot["slot"] = 0
+    weak_reroll_event["_raw_slots"] = [weak_reroll_slot, {}, {}]
+    stale_hold_event = stale_hold_tracker.update(weak_reroll_event)
+    assert stale_hold_event["slots"][0]["augment_id"] == "augment_a"
+    assert "stale_hold:" in stale_hold_event["_acceptance_rules"][0]
+
     conflict_shortlist_slot = json.loads(json.dumps(shortlist_temporal_slot, ensure_ascii=False))
     conflict_shortlist_slot["channels"]["icon"] = {
         "margin": 0.05,
@@ -2604,6 +2627,7 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert _probe_clean_import("game_overlay_host.py") == set()
     assert _probe_module_import("game_overlay") == set()
     assert _probe_module_import("game_overlay.host") == set()
+    assert _probe_module_import("display.game_overlay_host") == set()
 
     captured: dict[str, Any] = {}
 
@@ -3966,6 +3990,14 @@ print(json.dumps(blocked))
             self.killed = True
             self.running = False
 
+    class StubbornProcess(DummyProcess):
+        def terminate(self) -> None:
+            self.calls.append(f"stop:{self.label}")
+
+        def kill(self) -> None:
+            self.calls.append(f"kill:{self.label}")
+            self.killed = True
+
     # 空 Controller 没有事件所有权；重复停止不得覆盖其它实例的 active 事件。
     empty_stop_calls: list[str] = []
     empty_controller = GameOverlayController(
@@ -4009,6 +4041,25 @@ print(json.dumps(blocked))
     assert stale_process_calls == ["inactive", "inactive"]
     assert stale_controller.sidecar_process is None
 
+    with TemporaryDirectory() as tmp_dir:
+        exit_signal = Path(tmp_dir) / "host.exit.json"
+
+        class VoluntaryHostProcess(DummyProcess):
+            def __init__(self) -> None:
+                super().__init__(301, calls=[], label="host")
+                self._hextech_overlay_exit_file = str(exit_signal)
+
+            def wait(self, timeout=None):
+                if exit_signal.exists():
+                    self.running = False
+                    return 0
+                return super().wait(timeout=timeout)
+
+        voluntary_host = VoluntaryHostProcess()
+        assert overlay_lifecycle.stop_process(voluntary_host) is True
+        assert voluntary_host.calls == []
+        assert not exit_signal.exists()
+
     # 成功启停：停止前先隐藏，sidecar 退出后再写 inactive 作为最终 fence。
     calls: list[str] = []
     host_process = DummyProcess(101, calls=calls, label="host")
@@ -4029,12 +4080,46 @@ print(json.dumps(blocked))
     assert controller.snapshot()["status"] == "stopped"
     assert controller.host_process is None and controller.sidecar_process is None
 
+    stale_cleanup_calls: list[str] = []
+    stale_cleanup = GameOverlayController(
+        prepare_data_func=lambda: stale_cleanup_calls.append("prepare"),
+        write_inactive_func=lambda: stale_cleanup_calls.append("inactive"),
+        start_sidecar_func=lambda: stale_cleanup_calls.append("start:sidecar") or DummyProcess(111),
+        start_host_func=lambda: stale_cleanup_calls.append("start:host") or DummyProcess(112),
+    )
+    stale_cleanup.host_process = StubbornProcess(113, calls=stale_cleanup_calls, label="host")
+    try:
+        stale_cleanup.start()
+    except RuntimeError as exc:
+        assert "无法清理旧 game_overlay 实例" in str(exc)
+    else:
+        raise AssertionError("旧实例清理失败必须阻止 start")
+    assert stale_cleanup.snapshot()["status"] == "error"
+    assert stale_cleanup.host_process is None and stale_cleanup.sidecar_process is None
+    assert "prepare" not in stale_cleanup_calls and "start:sidecar" not in stale_cleanup_calls
+
+    residual_stop_calls: list[str] = []
+    residual_stop = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: residual_stop_calls.append("inactive"),
+    )
+    residual_stop.host_process = StubbornProcess(114, calls=residual_stop_calls, label="host")
+    try:
+        residual_stop.stop()
+    except RuntimeError as exc:
+        assert "host 停止失败(pid=114)" in str(exc)
+    else:
+        raise AssertionError("stop_process 失败必须向调用方报错")
+    assert residual_stop.host_process is None and residual_stop.sidecar_process is None
+    assert residual_stop_calls[:2] == ["inactive", "inactive"]
+
     # host 失败必须回滚已启动 sidecar；sidecar 失败不得继续启动 host。
     rollback_calls: list[str] = []
+    rollback_event_calls: list[str] = []
     orphan_sidecar = DummyProcess(201, calls=rollback_calls, label="sidecar")
     rollback = GameOverlayController(
         prepare_data_func=lambda: None,
-        write_inactive_func=lambda: None,
+        write_inactive_func=lambda: rollback_event_calls.append("inactive"),
         start_sidecar_func=lambda: orphan_sidecar,
         start_host_func=lambda: (_ for _ in ()).throw(RuntimeError("host failed")),
     )
@@ -4045,6 +4130,7 @@ print(json.dumps(blocked))
     else:
         raise AssertionError("host 启动失败必须向调用方报错")
     assert not orphan_sidecar.running
+    assert rollback_event_calls == ["inactive", "inactive"]
     assert rollback.snapshot()["status"] == "error"
     assert rollback.host_process is None and rollback.sidecar_process is None
 
@@ -4481,6 +4567,69 @@ print(json.dumps(blocked))
     assert hidden_source.hint_reads == 0 and hidden_source.context_reads == 0
     assert hidden_canvas.delete_calls == 0 and hidden_canvas.after_calls == 1
 
+    with (
+        TemporaryDirectory() as tmp_dir,
+        patch.dict(os.environ, {overlay_host.OVERLAY_READY_FILE_ENV: str(Path(tmp_dir) / "ready.json")}),
+        patch.object(overlay_host, "atomic_write_json", side_effect=OSError("disk busy")),
+    ):
+        overlay_host._signal_overlay_ready()
+
+    class ExitWatchRoot:
+        def __init__(self) -> None:
+            self.after_callbacks: list[Any] = []
+            self.quit_calls = 0
+
+        def after(self, _delay, callback):
+            self.after_callbacks.append(callback)
+
+        def quit(self):
+            self.quit_calls += 1
+
+    with TemporaryDirectory() as tmp_dir:
+        exit_path = Path(tmp_dir) / "host.exit.json"
+        exit_root = ExitWatchRoot()
+        overlay_host._schedule_exit_file_watch(exit_root, exit_path)
+        assert len(exit_root.after_callbacks) == 1
+        exit_root.after_callbacks[-1]()
+        assert exit_root.quit_calls == 0
+        exit_path.write_text("{}", encoding="utf-8")
+        exit_root.after_callbacks[-1]()
+        assert exit_root.quit_calls == 1
+
+    class ErrorSource:
+        def read_event(self):
+            raise RuntimeError("broken event")
+
+        def read_hint_cache(self):
+            raise AssertionError("渲染失败时不应继续读取 hint cache")
+
+        def read_context(self):
+            raise AssertionError("渲染失败时不应继续读取 context")
+
+    class BackoffCanvas:
+        def __init__(self) -> None:
+            self.after_calls: list[tuple[int, Any]] = []
+
+        def after(self, delay, callback):
+            self.after_calls.append((int(delay), callback))
+
+    error_canvas = BackoffCanvas()
+    with (
+        patch.object(overlay_host, "_find_target_game_window", return_value=None),
+        patch.object(overlay_host, "is_scoreboard_key_down", return_value=False),
+    ):
+        overlay_host._schedule_event_render(
+            object(),
+            error_canvas,
+            config,
+            {"user_enabled": True, "target_hwnd": 123, "window_visible": False},
+            queue.Queue(),
+            data_source=ErrorSource(),
+        )
+        for _ in range(4):
+            error_canvas.after_calls[-1][1]()
+    assert [delay for delay, _callback in error_canvas.after_calls[:4]] == [120, 120, 120, 240]
+
     host_text = (package_dir / "host.py").read_text(encoding="utf-8")
     assert "_schedule_window_follow" not in host_text
     assert "follow_poll_ms" not in host_text
@@ -4641,6 +4790,38 @@ print(json.dumps(blocked))
     assert fallback_controller.thread is not None
     assert fallback_controller.thread.is_alive() is False
     assert fallback_user32.post_calls == 1
+
+    class DebounceStop:
+        def __init__(self) -> None:
+            self.waits = 0
+
+        def is_set(self):
+            return False
+
+        def wait(self, _timeout):
+            self.waits += 1
+            return self.waits >= 5
+
+    class DebounceUser32:
+        def __init__(self) -> None:
+            self.loop_index = 0
+            self.states = [True, False, True, False, True]
+
+        def GetAsyncKeyState(self, key):
+            pressed = self.states[min(self.loop_index, len(self.states) - 1)]
+            if key == ord("H"):
+                self.loop_index += 1
+            return 0x8000 if pressed else 0
+
+    debounce_queue: queue.Queue[str] = queue.Queue()
+    debounce_controller = overlay_host.HotkeyController(debounce_queue)
+    debounce_controller.stop_requested = DebounceStop()  # type: ignore[assignment]
+    with patch.object(overlay_host.time, "monotonic", side_effect=[1.00, 1.10, 1.20, 1.25, 1.35]):
+        overlay_host._poll_alt_h_hotkey(debounce_controller, DebounceUser32())
+    drained_toggles: list[str] = []
+    while not debounce_queue.empty():
+        drained_toggles.append(debounce_queue.get_nowait())
+    assert drained_toggles == ["toggle", "toggle"]
 
     # 正式与诊断共用同一纯 renderer；快照必须直接输出 PNG，源码不允许 PS fallback。
     renderer_text = (package_dir / "renderer.py").read_text(encoding="utf-8").lower()
