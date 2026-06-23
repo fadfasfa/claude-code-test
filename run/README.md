@@ -224,14 +224,19 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 - `data/runtime/cache/overlay_hint_cache.v1.json`：游戏内 overlay 本地轻量提示缓存
 - `data/runtime/state/game_overlay_slots.v1.json`：游戏内 overlay 本地三槽位事件
 - `processing/overlay_vision_sidecar.py`：游戏内 overlay 本地 Vision MVP 探针
+- `game_overlay/`：独立游戏内显示产品模块；不导入 `display`、FastAPI 或浏览器
+- `python -m game_overlay --self-check`：独立模块只读自检
 - `tools/overlay_performance_probe.py`：阶段 5 性能验收摘要工具
 
 ## 维护入口
 
 - Web 路由优先改 `display/web_api.py`
 - Web 生命周期、端口、浏览器、LCU、缓存逻辑优先改 `display/web_runtime.py`
-- Web 前端 / 游戏内显示进程生命周期优先改 `display/service_manager.py`
-- 游戏内基础 overlay host 优先改 `display/game_overlay_host.py`
+- Web 前端生命周期与两个产品开关的委托优先改 `display/service_manager.py`
+- 游戏内显示统一生命周期优先改 `game_overlay/lifecycle.py`
+- 窗口、显隐和热键优先改 `game_overlay/host.py`
+- 三统计窗、联动列和原生视觉 token 优先改 `game_overlay/renderer.py`
+- 共享数据读取边界优先改 `game_overlay/data_source.py`
 - 桌面后台线程、轮询、跳转、资源加载逻辑优先改 `display/ui_runtime.py`
 - 桌面控件结构优先改 `display/hextech_ui.py`
 - overlay hint cache 生成和查询优先改 `processing/overlay_hint_cache.py`

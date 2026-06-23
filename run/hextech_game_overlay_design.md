@@ -65,7 +65,7 @@ Hextech 伴生系统保留两个可独立控制的运行能力：
 
 - `processing/overlay_event_channel.py`：三槽位事件协议（`schema_version`、`source`、`active`、`selection_type`、`slots[]`），唯一读写 `data/runtime/state/game_overlay_slots.v1.json`。Track A 必走它；Track B 可选择把候选镜像写入该文件作为调试 / Borderless fallback 契约，但 Track B 的全屏显示不依赖它。
 - `data/indexes/`（及 `processing/overlay_hint_cache.py` 生成的提示缓存）：augment id → 名称 / tier / 描述的本地 JSON 映射。两轨共用同一份 JSON；Track A 用 Python 读，Track B 在 ow-electron 里直接读同一份 JSON。
-- 渲染端**不共享**：Track A = `display/game_overlay_host.py`（Tk topmost，Borderless）；Track B = ow-electron Overwolf overlay（图形钩子，支持独占全屏）。Tk host 不参与 Track B 的全屏渲染。
+- 渲染端**不共享**：Track A = `game_overlay/host.py` + `game_overlay/renderer.py`（Tk topmost，Borderless）；Track B = ow-electron Overwolf overlay（图形钩子，支持独占全屏）。Tk host 不参与 Track B 的全屏渲染。
 
 ### Track A — 视觉识别（截图链路）
 
@@ -89,7 +89,7 @@ Hextech 伴生系统保留两个可独立控制的运行能力：
 
 - Tk 控制台管理用户开关与状态。
 - `display/service_manager.py` 管理 Web 前端、overlay host、Vision sidecar 和低频监听生命周期。
-- `display/game_overlay_host.py` 启动独立 Tk overlay host，使用 Win32 topmost / click-through / noactivate 样式覆盖 Borderless 游戏画面。
+- `game_overlay/host.py` 启动独立 Tk overlay host，使用 Win32 topmost / click-through / noactivate 样式覆盖 Borderless 游戏画面。
 - `processing/overlay_event_channel.py` 作为本地三槽位事件协议，只读写 `data/runtime/state/game_overlay_slots.v1.json`。
 - `processing/overlay_vision_sidecar.py` 作为本地 Vision sidecar，使用 Pillow/pywin32 截取 LoL 游戏窗口，先用蓝色选择按钮做场景门控，再对固定三槽位 ROI 做模板指纹匹配并写入事件文件。
 - `processing/overlay_hint_cache.py` 生成 overlay 本地轻量提示缓存，避免游戏内显示依赖 Web API。
@@ -134,8 +134,11 @@ AND LoL 游戏窗口在前台
 | 模块 | 职责 | 明确不负责 |
 | :--- | :--- | :--- |
 | `display/hextech_ui.py` | 桌面控制台 UI、开关交互、状态展示 | 不堆积子进程生命周期细节 |
-| `display/service_manager.py` | 启动/停止 Web、overlay host、Vision sidecar；失败回滚；状态快照；偏好持久化 | 不截图、不识别、不渲染三槽位 |
-| `display/game_overlay_host.py` | 透明置顶窗口、点击穿透、窗口跟随、`Alt+H`、三与门显隐、本地事件渲染 | 不截图、不识别、不访问远端、不依赖 Web API |
+| `display/service_manager.py` | 管理 Web 生命周期，并把“游戏内显示”开关委托给统一 Controller | 不直接启动或分别停止 host/sidecar |
+| `game_overlay/lifecycle.py` | host + Vision sidecar 原子启停、失败回滚、统一状态快照 | 不绘制、不解释 Web 生命周期 |
+| `game_overlay/host.py` | 透明置顶窗口、点击穿透、窗口跟随、`Alt+H`、显隐门和最小事件轮询 | 不截图、不识别、不访问 Web API |
+| `game_overlay/data_source.py` | `OverlayDataSource` 协议和当前 shared processing adapter | 不向 renderer 暴露 Web 模型 |
+| `game_overlay/renderer.py` | 三个统计窗、0–3 条真实命中联动和 Canvas 绘制 | 不读文件、不启动进程、不绘制诊断状态 UI |
 | `processing/overlay_event_channel.py` | 本地 JSON 事件协议、规范化、过期/损坏/缺失诊断、样例/假识别/inactive 事件写入 | 不做截图识别、不抓远端、不自动点击 |
 | `processing/overlay_vision_sidecar.py` | `--once` 诊断探针、`--loop` 常驻识别、自门控待机、DPI awareness、事件写入 | 不读游戏内存、不注入、不修改客户端、不依赖 Web 服务 |
 | `processing/overlay_hint_cache.py` | overlay 轻量提示缓存生成与按 augment_id 查询 | 不触发远端抓取阻塞游戏内显示 |
@@ -148,8 +151,8 @@ AND LoL 游戏窗口在前台
 
 ```text
 Tk 控制台游戏内显示开关开启
-  -> ServiceManager 启动 overlay host
-  -> ServiceManager 启动 Vision sidecar --loop --preset auto --write-event
+  -> ServiceManager 调用 GameOverlayController.start()
+  -> Controller 准备 shared hint cache、写 inactive、启动 sidecar 与 host 并等待 readiness
   -> sidecar 未找到游戏窗口或游戏不在前台：低频待机，不截图
   -> sidecar 找到前台游戏窗口：无校准缓存时先全屏定位一次蓝色选择按钮
   -> sidecar 有校准缓存后：每轮只检测固定按钮 ROI
@@ -282,7 +285,7 @@ ow-electron 单进程
 
 ## 8. Overlay Host
 
-`display/game_overlay_host.py` 的当前设计边界：
+`game_overlay/host.py` 的当前设计边界：
 
 - 根入口：`python hextech_ui.py --game-overlay` 或 `python game_overlay_host.py`。
 - 启动后默认隐藏，等待三与门放行。
@@ -417,3 +420,332 @@ python tools/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag 
 游戏内 overlay 的当前 MVP 已从“未来方案”收敛到一条明确实现线：Tk overlay host 只负责窗口、热键、跟随和渲染；Vision sidecar 负责常驻自门控识别；ServiceManager 负责生命周期；本地 JSON 事件文件负责进程间契约；本地 hint cache 负责 Web 解耦。
 
 最新显示语义是默认不显示占位框，只有“用户开关开启 + active 海克斯选择事件 + LoL 游戏窗口前台”同时满足才显示。蓝色选择按钮检测分为两步：新环境首次定位按钮并写运行态校准缓存，后续每轮仍用固定按钮 ROI 确认选择场景存在。剩余工作不是重新选技术栈，而是在真实 LoL `Borderless` / 无边框全屏下完成人工验收，并根据实际截图证据修正 ROI、阈值和性能预算。
+
+## 15. 2026-06-15 晚间实测与 2026-06-16 接续方案
+
+### 15.1 晚间实测现状
+
+用户在真实游戏选择阶段已肉眼确认：悬浮窗能在游戏内出现，三张卡的识别内容与实际选择项对得上。实测捕获过的三槽示例为：
+
+| 槽位 | 卡名 | 品质 | 当前本地 hint 状态 |
+| :--- | :--- | :--- | :--- |
+| 1 | 无限循环往复 | 棱彩 | 可查到胜率与出场率 |
+| 2 | 你摸不到 | 棱彩 | 可查到胜率、出场率与 synergy |
+| 3 | 尤里卡 | 棱彩 | 可查到胜率、出场率与 synergy |
+
+晚间发现两个用户可见问题：
+
+- 悬浮窗闪烁：选择页期间 Vision sidecar 会在 `selection_scene_not_detected`、`unstable`、`selection_button_missing` 与 active 事件之间短周期切换，导致 host 按 inactive 立即隐藏再显示。
+- 胜率/出场率缺失：overlay hint cache 当时是空缓存；根因是正式预计算缓存相对最新 CSV 被判 stale，生成 overlay cache 时直接降级为 `cache_missing`。
+
+### 15.2 晚间已处置状态
+
+- 已给 host 增加短暂 active 保持：刚刚显示过 active 三槽后，遇到上述 transient inactive 原因时短暂保留上一帧，避免单帧/短帧抖动导致窗口闪烁。
+- 已让 overlay hint cache 在正式预计算缓存 stale 时优先消费本地已有详情快照，避免选择阶段同步重建 170+ 英雄详情，也避免空 cache。
+- 已重写运行态 `overlay_hint_cache.v1.json`：当前本地 cache 有 182 条 hint，私用统计开启。
+- 已重启 overlay host，使防闪烁逻辑生效；Vision sidecar 和桌面 UI 保持运行。
+- 当前本地英雄上下文已能由 LCU 写入；晚间 probe 见到的 context 示例是“不祥之刃”和“破败之王”，说明 context 链路已经活。
+
+晚间验证命令：
+
+```powershell
+python -B -m py_compile processing\overlay_hint_cache.py display\game_overlay_host.py tools\dev_checks.py
+python -B game_overlay_host.py --self-check
+python -B tools\dev_checks.py
+git diff --check
+```
+
+结果：上述验证通过；`game_overlay_host.py --self-check` 显示 hint cache 无错误、context ok。
+
+### 15.3 2026-06-16 第一优先级：真实选择页复验
+
+目标：确认晚间修复是否解决用户肉眼问题，不再先调算法。
+
+复验顺序：
+
+1. 启动桌面 UI，确认“游戏内显示”和“私用统计”开启。
+2. 进入 LoL `Borderless` / 无边框全屏，等待真实海克斯三选一。
+3. 用户肉眼确认悬浮窗是否仍闪烁。
+4. 用户肉眼确认每张卡第二行是否显示 `胜率 xx.x% · 出场 xx.x%`。
+5. 若当前英雄已锁定，确认有 synergy 命中的卡是否显示英雄联动；无命中时应显示“暂无当前英雄联动”，不应乱配英雄。
+6. 选择结束后确认 overlay 能自动隐藏，不能长时间残留上一组三卡。
+
+通过标准：
+
+- active 选择阶段悬浮窗稳定显示，不出现可感知闪烁。
+- 三张卡卡名/tier 与游戏内选择项一致。
+- 私用统计开启时显示胜率/出场率；关闭私用统计后不显示。
+- 当前英雄 context 存在时，联动文案只按当前英雄匹配。
+- 选择结束后 overlay 及时隐藏，允许短暂保持但不得残留超过约 1 秒。
+
+### 15.4 若仍闪烁：明日定位方案
+
+先判断是哪类闪烁，不直接改阈值：
+
+| 现象 | 判断 | 下一步 |
+| :--- | :--- | :--- |
+| 窗口整块消失再出现 | event/visibility 抖动 | 记录 0.5s 轮询日志，查看 active/inactive 原因；只调整 hold 秒数或 transient reason 列表 |
+| 窗口不消失但内容跳空 | slot ready 抖动 | 检查三槽 slot 状态是否在 ready/low_confidence/detecting 间切换 |
+| 只在选完后残留 | hold 过长或 inactive 边沿没写 | 缩短 hold 或保证选择结束事件覆盖上一帧 |
+| 游戏切后台仍显示 | 前台门控问题 | 复查 game foreground 判断，不扩大显示条件 |
+
+建议先用如下只读监听，不读取 token，不改运行态：
+
+```powershell
+@'
+import time
+from processing.overlay_event_channel import read_overlay_event
+for i in range(80):
+    event = read_overlay_event()
+    source = event.get("source") if isinstance(event.get("source"), dict) else {}
+    print(i, event.get("visible"), event.get("active"), source.get("reason"), [
+        (slot.get("state"), slot.get("name"), slot.get("tier")) for slot in event.get("slots", [])
+    ])
+    time.sleep(0.5)
+'@ | python -B -
+```
+
+### 15.5 若仍无胜率/出场率：明日定位方案
+
+优先从功能链路判断：
+
+1. 确认私用统计开关是否开启。
+2. 确认 `overlay_hint_cache.v1.json` 是否非空、`private_policy_stats_enabled=True`。
+3. 用卡名查询 hint，确认 `winrate/pickrate` 字段存在。
+4. 如果 cache 有字段但画面不显示，再查 host 渲染；如果 cache 无字段，则查本地详情快照和最新 CSV freshness。
+
+可用只读检查：
+
+```powershell
+@'
+from processing.overlay_hint_cache import load_overlay_hint_cache, query_overlay_hint
+cache = load_overlay_hint_cache()
+print("error=", cache.get("error"), "hints=", len(cache.get("hints") or {}), "private=", (cache.get("source") or {}).get("private_policy_stats_enabled"))
+for name in ["无限循环往复", "你摸不到", "尤里卡"]:
+    result = query_overlay_hint(cache, name)
+    hint = result.get("hint") if result.get("ok") else {}
+    print(name, result.get("ok"), hint.get("winrate"), hint.get("pickrate"), len(hint.get("synergies") or []))
+'@ | python -B -
+```
+
+### 15.6 明日不要做的事
+
+- 不在没有新证据时继续调视觉阈值。
+- 不改事件协议 schema。
+- 不把 `data/runtime/**`、`overlay_anchor_calibration.v1.json` 或运行态 cache 提交。
+- 不触碰 cdragon sync、assets、`Augment_Icon_Manifest.json`。
+- 不读取或修改 token、cookie、auth、API key、proxy 配置。
+- 不把私用胜率/出场率包装成对外发布合规能力。
+
+### 15.7 明日收口条件
+
+若真实复验通过：
+
+- 保留当前 host 防闪烁与 stale 本地详情快照降级方案。
+- 补充最终验收记录：三选一截图/肉眼结果、三槽卡名、是否显示 stats、是否显示英雄联动、选择后隐藏是否正常。
+- 运行 `python -B tools\dev_checks.py` 和 `git diff --check`。
+- 只在用户明确要求时 staging/commit/push。
+
+若真实复验仍失败：
+
+- 先保存 0.5s 事件轮询摘要和当前三张卡名。
+- 按 §15.4 或 §15.5 分类处理，不扩大到 Track B、Overwolf、cdragon 或资源同步。
+
+### 15.6 2026-06-19 前端显示修复 + UI 视觉重塑（Hextech 原生风格）
+
+后端 `1c3852b` / `26f7824` 把 `event.source.*` 与 `slot.*` schema 大改后，游戏内 Tk
+overlay（`run/display/game_overlay_host.py`）几乎没消费新字段；同时 UI 风格被反馈"不够
+高级"。本轮按计划 `~/.claude/plans/overlay-steady-pie.md` 修复，工作范围严格限定为游戏内
+overlay + dev_checks，Web 前端 `run/display/static/` 不动。
+
+**显隐决策表（plan §一）改动**：`_should_show_overlay` 不再要求 `content_ready==True`。
+`selection_window_active==True` 一律允许显示，渲染层按 `slot.state` 决定画完整卡 / 骨架卡 /
+等待卡。`event.error` 非空与 `blocking_modal=True`（sidecar 已写 `selection_window_active=False`）
+正常模式仍隐藏，仅 `config.diagnostic_mode=True` 时显示窄状态条。旧事件
+（`selection_window_active is None`）保持向后兼容回退到 `event_visible+content_ready`。
+
+**数据层（plan §三）改动**：`build_overlay_render_rows` 扩字段
+`state` / `summary` / `synergy_rows`（结构化保留 `hero_name`/`rating`/`tag`/`tier`/`content`）/
+`confidence` / `confidence_label` / `diagnostic_zh` / `top_candidates` / `tags`（**仅 hint.tags，
+不并入 `source_heroes`**）/ `condition`；旧字段 `ready` / `title` / `stats` / `synergy` /
+`synergy_state` 完全保留向后兼容。`_format_private_stats` 改三态：策略关 → "已开启隐私模式"
+muted；策略开但当前英雄缺数据 → "暂无该英雄统计" muted；有数据 → "胜率 X · 出场 Y" good。`DIAGNOSTIC_ZH`
+覆盖 `overlay_vision_sidecar.py` 当前所有 `diagnostic=` 真实码（dev_checks 通过 grep 校验
+覆盖率），未知码原样返回。新增 `_extract_event_status(snapshot)` 集中读 `event.source.*`，
+旧事件优雅 fallback。
+
+**视觉层（plan §二）改动**：在文件顶部加 `OVERLAY_THEME` token dict 集中管理颜色。
+`_draw_hextech_panel` 升级为 4 层视觉：tier 描边（Prismatic/Gold/Silver 各色）+ 暗色内描边 +
+顶部高光线 + 左侧发光柱。新增 `_draw_status_banner`（顶部 selection_label + gate_state 中文徽章 +
+状态 dot），`_draw_skeleton_panel`（partial_ready / detecting 占位卡），`_draw_card_chrome`
+（ready 卡内：tier chip + title + 置信度圆点 + stats + summary + 底部置信度进度条 + 诊断码），
+`_draw_low_confidence_candidates`（low_confidence 槽切换详情区为 top_candidates 列表）。
+`_draw_overlay_detail` 改为消费结构化 `synergy_rows`（rating/tag/hero_name/content 分行）。
+`_resolve_overlay_layout` 加 `banner` box，right 模式 `badge_y0` 让出 24px、top 模式 banner
+复用 `detail_box` 顶部，三档 viewport（1366×768 / 1920×1080 / 2560×1600）几何不重叠。
+`blocking_modal` / `event.error` 状态条用 `stipple="gray50"` 模拟半透明（Tk Canvas 不接受
+8 位 RGBA），不再尝试全屏遮罩。
+
+**banner 实时性（plan §三·3.8 / reviewer 阻断 4）**：`_resolve_stable_render_snapshot`
+仍单返回保持兼容，但渲染循环 `_schedule_event_render` 把"最新事件"额外写到
+`visibility["live_status_snapshot"]`，`_draw_overlay_snapshot` 接 `live_status_snapshot=`
+入参专门驱动 banner / 离线条 / 诊断码——避免 partial_ready / unstable 期间 banner 显示
+hold 后的旧 gate_state。
+
+**augment 图标本轮不上**：`hint.icon` 是远端 URL，本地缓存机制需新建。本轮在槽位左上角
+用 tier 色 chip 占位，给 `_draw_card_chrome` 留接口。下一轮再接图标缓存。
+
+**dev_checks 离线契约（plan §五·5.1）**：`run_overlay_only_checks` 新增 9 个独立 check：
+`check_overlay_diagnostic_translation_table` /
+`check_overlay_format_private_stats_three_states` /
+`check_overlay_extract_event_status_legacy` /
+`check_overlay_render_rows_low_confidence_and_top_candidates` /
+`check_overlay_render_rows_excludes_source_heroes_from_tags` /
+`check_overlay_visibility_decision_table` /
+`check_overlay_stable_snapshot_separates_live_status` /
+`check_overlay_layout_three_viewports` /
+`check_overlay_draw_perf_smoke`。同步更新现有 `check_game_overlay_host_contract`
+里的决策表与 row schema 断言。
+
+**离线渲染快照工具（plan §五·5.2）**：新增 `run/tools/overlay_render_snapshot.py`，
+内置 6 个 fixture（`ready_three_tiers` / `partial_ready` / `event_error` / `blocking_modal` /
+`privacy_off` / `stats_missing`），通过 `python -m tools.overlay_render_snapshot --case all`
+导出到 `run/data/runtime/debug/overlay_snapshot_<case>.{ps,png}` 供肉眼对比。无 Ghostscript 时
+回退到 `.ps`，开发可用 PS Viewer 直接打开。
+
+**性能桩（plan §五·5.4）**：`_draw_overlay_snapshot` 入口加 `time.perf_counter()`
+桩，把 ``last_draw_ms`` 写到 `perf_sink`（渲染循环里指向 `visibility`）；`check_overlay_draw_perf_smoke`
+跑 50 次合成 fixture 验证桩存在且耗时合理。下一轮在真机加严绘制 P95 阈值。
+
+**Git 边界**：本轮未 commit、未 push、未合并；改动只叠加在 `run/display/game_overlay_host.py`
++ `run/tools/dev_checks.py` + 新增 `run/tools/overlay_render_snapshot.py` + 本节文档。
+worktree 既有 13 个修改文件 + 2 个未跟踪文件保持不变。未做真机视觉验收；离线 dev_checks
+`--overlay-only` exit 0、6 张快照写出。
+
+## 16. Living Design 接续账本（overlay worktree 为主）
+
+本节是后续多轮对话的短接续入口，优先服务 `C:\Users\apple\worktrees\codex\claudecode-codex-feature-hextech-game-overlay`。主仓 `main` 只作为后续同步目标；当前实现判断、试错沉淀和人工复验均以本 worktree 为主。
+
+### 16.1 最终目标
+
+- 游戏内三选一出现时，在玩家选择前稳定显示三张卡。
+- 每张卡展示卡名、品质、中文机制说明、胜率、出场率和当前英雄联动。
+- Track A 先保证 LoL `Borderless` / 无边框全屏下可用；Track B 等 Overwolf / GEP 外部条件满足后再接独占全屏。
+- 当前阶段不追求自动选择、不读内存、不注入、不修改游戏客户端。
+
+### 16.2 当前状态
+
+- 已实现：Tk overlay host、三槽事件文件、Vision sidecar、hint cache、私用统计字段、英雄 context 渲染链路。
+- 可用但不稳定：真实选择页显示稳定性、识别稳定性、选完隐藏和富内容实际画面显示仍需复验。
+- 当前 runtime 快照（2026-06-16 fresh probe）：`game_overlay_slots.v1.json` 为 `manual-hide`、非 active；`game_overlay_host --self-check` 显示 `event_expired`、`context_expired`。
+- 当前内容缓存：`overlay_hint_cache.v1.json` 存在，182 条 hint，`private_policy_stats_enabled=True`。
+- 当前用户直接看到的状态：不在 active 选择页时 overlay 不显示完整三卡，这是预期门控结果。
+
+### 16.3 最近推进记录
+
+| 日期 | 本轮目标 | 改动或发现 | 证据 | 后续影响 |
+| :--- | :--- | :--- | :--- | :--- |
+| 2026-06-12 | 官方本地接口 go/no-go | Live Client Data / LCU 不能提供未选三张候选，只能做诊断或门控 | 局内采样无 augment/hextech 候选字段；LCU 只有大厅/控制面信息 | Track B Overwolf/GEP 成为长期主数据源候选，Track A 保留 fallback/诊断 |
+| 2026-06-12 | 修 inactive 边沿与 anchor 缓存 | 补 ready -> inactive 事件覆盖；修复 anchor calibration 中毒缓存自愈 | `tools/dev_checks.py` 覆盖 `active_no_candidates` 和 anchor cache 场景 | 避免 overlay 残留旧 active，运行态校准缓存不得提交或打包 |
+| 2026-06-13 | 真实视觉识别验证 | 新双通道识别能触发 active，真机三槽中 2 槽认对，第三槽贴近阈值 | 真机选择页观察：最万用的瞄准镜、钢化你心等名字正确 | 进入稳定性打磨，不再把“链路未通”当主要问题 |
+| 2026-06-15 | 晚间真实选择页观察 | 悬浮窗能在游戏内出现，三张卡内容曾与实际选择项对得上 | 示例：无限循环往复、你摸不到、尤里卡 | 后续重点变为闪烁、stats 显示、选择后隐藏 |
+| 2026-06-15 | 修闪烁与 stats 缺失 | host 增加短暂 active 保持；stale 预计算缓存时消费本地已有详情快照 | `overlay_hint_cache.v1.json` 变为 182 条 hint，私用统计开启 | 下一轮先真机复验，不先调算法 |
+
+### 16.4 已发现问题与处理
+
+| 问题 | 触发条件/症状 | 根因 | 已处理方式 | 仍需验证 |
+| :--- | :--- | :--- | :--- | :--- |
+| 悬浮窗闪烁 | 选择页期间窗口整块消失再出现 | `selection_scene_not_detected`、`unstable`、`selection_button_missing` 与 active 短周期切换 | host 对刚显示过的完整 active 三槽短暂保留上一帧 | 真实选择页肉眼确认是否仍闪烁 |
+| 胜率/出场率缺失 | 卡片第二行无 `胜率 / 出场` | 正式预计算缓存 stale 后 overlay cache 直接降级为 `cache_missing` | stale 时优先消费本地已有详情快照，避免选择阶段同步重建 170+ 英雄详情 | 真机确认画面是否显示 stats |
+| 官方接口 NO-GO | 期望读取未选三张候选 | Live Client Data / LCU 不暴露未选候选 | 保留官方接口为诊断/门控，不作为三槽 provider | 除非 Riot 接口变化，否则不重复排查 |
+| 视觉指纹误识别 | 细线条图标 top3 不含真卡或置信度集中在约 0.70 | 24x24 灰度 NCC 对黑底细线条区分度不足 | 不靠盲目降阈值；后续要基于真实样本重做更高分辨率或边缘/文字辅助匹配 | 需要新的样本评估后再改算法 |
+| anchor cache 中毒 | 旧校准导致 ROI 偏移或按钮检测异常 | 运行态校准缓存污染 | 加入缓存自愈和尺寸/按钮校验；明确 `overlay_anchor_calibration.v1.json` 只属 runtime state | 多分辨率/DPI 真机验收 |
+| 状态汇报视角错误 | 用户问“现状”时得到文件/函数解释 | 汇报按代码层组织，没先讲功能和运行态 | 后续状态汇报先讲用户会看到什么、缺什么、何时算完成 | 持续遵守 |
+
+### 16.5 明确不要做的方向
+
+| 不要做 | 原因 | 允许重新打开条件 |
+| :--- | :--- | :--- |
+| 没有新真机证据时继续调视觉阈值 | 现有证据表明主要问题不只是阈值 | 有真实选择页样本、事件摘要和 slot 状态序列 |
+| 修改 overlay 事件 schema | 当前问题可在现有事件协议内表达和定位 | 明确证明现有 schema 无法表达必要状态 |
+| 提交或打包 `data/runtime/**`、`overlay_anchor_calibration.v1.json`、运行态 cache | 这些是本机运行态，不是源码事实 | 默认永不提交；只可作为对话证据摘要引用 |
+| 触碰 cdragon sync、assets 或 `Augment_Icon_Manifest.json` | 当前主线是显示和识别稳定性，不是资源同步 | 用户明确切换到资源同步或新卡覆盖任务 |
+| 把私用胜率/出场率包装成对外发布合规能力 | 数据来自第三方，只允许本机私用口径 | 单独进行发布合规评估 |
+| 把 Track B Overwolf 混入当前 Track A 复验 | Track B 受外部注册/审核阻塞，且渲染栈不同 | Overwolf 开发者注册/审核条件变化，并明确切换主线 |
+| 因 main 未同步而阻断 overlay worktree 内设计推进 | 当前执行现场以 overlay worktree 为主 | 需要发布/合入时再做主仓同步 |
+
+### 16.6 当前主线
+
+- 本阶段主线：真实 LoL `Borderless` 选择页复验 Track A 显示稳定性和三槽识别稳定性。
+- 下一步小目标：确认晚间修复是否解决闪烁和 stats 缺失；记录选择结束后隐藏是否可靠。
+- 暂不推进：Track B Overwolf、事件 schema 变更、资源同步、新卡 manifest 大改。
+- 切换主线条件：Track A 真机复验通过后进入富内容显示收口；若 Track A 复验失败，先按 §15.4 / §15.5 分类定位。
+
+### 16.7 技术路线
+
+| 路线 | 目的 | 当前判断 | 下一步 | 阻塞/风险 |
+| :--- | :--- | :--- | :--- | :--- |
+| Track A Vision | Borderless 下识别并显示三卡 | 当前主线，可运行但需稳定性复验 | 真机选择页观察 + 事件轮询摘要 | ROI、抖动、误识别、DPI |
+| Track B Overwolf / GEP | 获取准确三槽候选并支持独占全屏 overlay | 长期主数据源候选，当前外部阻塞 | 等 Overwolf dev 应用注册/审核条件 | 包体、分发、Riot/Vanguard 放行 |
+| 富内容显示 | 胜率、出场率、英雄联动显示 | cache 与渲染链路已接入 | 真实画面确认第二行 stats 和 synergy | context freshness、私用/发布边界 |
+| 样本评估 | 为后续算法调整提供证据 | 工具有基础，样本仍不足 | 收集真实帧、事件序列和 slot 状态 | 不能用旧截图盲调 |
+
+### 16.8 人工检查点
+
+- [ ] active 选择阶段悬浮窗是否仍可感知闪烁。
+- [ ] 三张卡卡名和 tier 是否与游戏内选择项一致。
+- [ ] 每张卡第二行是否显示 `胜率 xx.x% · 出场 xx.x%`。
+- [ ] 当前英雄 context 存在时，synergy 是否只按当前英雄匹配；无命中时是否显示“暂无当前英雄联动”。
+- [ ] 选择结束后 overlay 是否约 1 秒内隐藏，不残留上一组三卡。
+- [ ] Alt+Tab 切出游戏后 overlay 是否隐藏。
+
+### 16.9 每轮对话接续规则
+
+每轮开始：
+
+1. 以 overlay worktree 为主：`C:\Users\apple\worktrees\codex\claudecode-codex-feature-hextech-game-overlay\run`。
+2. 读本节和 §15。
+3. fresh probe `game_overlay_slots.v1.json`、`game_overlay_context.v1.json`、`overlay_hint_cache.v1.json`。
+4. 先检查 §16.4 和 §16.5，避免重复试错。
+5. 只推进当前主线的一个小目标。
+
+每轮结束：
+
+1. 更新当前状态、最近推进记录和下一轮入口。
+2. 如果发现新坑，写入“已发现问题与处理”或“明确不要做的方向”。
+3. 报告验证命令、人工检查结果和剩余风险。
+4. 未经明确要求，不 stage、不 commit、不 push。
+
+### 16.10 决策记录
+
+| 日期 | 决策 | 原因/证据 | 是否可逆 |
+| :--- | :--- | :--- | :--- |
+| 2026-06-12 | 官方本地接口不作为三槽候选主源 | Live Client Data / LCU 未暴露未选三张候选 | 若 Riot 接口变化可重开 |
+| 2026-06-13 | 视觉链路保留为 Track A 主线/fallback，先做稳 | 真机能触发 active 且部分槽位正确，但仍有延迟和置信度问题 | 可逆，取决于 Track B 解阻 |
+| 2026-06-13 | 私用胜率/出场率允许显示 | 用户明确本机私用要显示 stats | 对外发布默认仍不可声明合规 |
+| 2026-06-15 | 先真机复验晚间修复，不先调算法 | 闪烁和 stats 缺失已有对应修复，需先验证 | 可逆，若复验失败再分类定位 |
+| 2026-06-16 | overlay worktree 是设计方案执行主现场 | 主仓 main 当前不同步且有其他待处理提交；实际 overlay 改动集中在 worktree | 后续发布/合入时同步 main |
+
+### 16.11 下一轮入口
+
+- cwd：`C:\Users\apple\worktrees\codex\claudecode-codex-feature-hextech-game-overlay\run`
+- 当前目标：真实选择页复验 Track A 显示稳定性、三槽识别和富内容显示。
+- 第一条命令或检查：
+
+```powershell
+python -m game_overlay --self-check
+python -c "from processing.overlay_hint_cache import load_overlay_hint_cache; c=load_overlay_hint_cache(); print(c.get('error'), len(c.get('hints') or {}), (c.get('source') or {}).get('private_policy_stats_enabled'))"
+```
+
+- 必读文件：`run/hextech_game_overlay_design.md` §15、§16。
+- 不能做的事：无新证据不调阈值、不改 schema、不提交 runtime cache、不切 Track B、不把私用 stats 包装成发布合规。
+- 剩余风险：当前 runtime 非 active，核心验收必须等真实海克斯选择页。
+
+### 16.12 独立 Game Overlay 模块（2026-06-20）
+
+- 游戏内显示与 Web 前端是两个独立产品模块，可分别启停；单开 overlay 不启动 Web、FastAPI、浏览器或 Web 端口。
+- `display/service_manager.py` 只保留一个逻辑 `game_overlay` 服务，并委托 `GameOverlayController.start()/stop()`。
+- `game_overlay` 只依赖共享 `processing` 数据，通过 `OverlayDataSource` 收口；不得反向导入 `display`。
+- 正式绘制唯一入口是 `renderer.draw_overlay_frame()`：三个统计窗与原生卡片等宽、位于其正上方；右侧仅显示 0–3 条当前英雄真实命中联动。
+- 不再绘制 summary、候选列表、cache miss、context pending、全局 banner 或诊断状态条；诊断变化仅写去重日志。
+- 离线视觉证据由 `python -m tools.overlay_render_snapshot --case all --background <真机截图>` 直接写 PNG，不存在 PostScript fallback。

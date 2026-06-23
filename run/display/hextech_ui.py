@@ -31,7 +31,9 @@ from scraping.version_sync import (
 )
 
 from . import ui_runtime
-from .service_manager import ServiceManager, start_overlay_host_process, start_vision_sidecar_process
+from game_overlay.lifecycle import GameOverlayController
+
+from .service_manager import ServiceManager
 
 WEB_PORT_FILE = build_runtime_state_path("web_server_port.txt")
 
@@ -101,9 +103,9 @@ class HextechUI:
         self.web_process = None
         self.service_manager = ServiceManager(
             start_web_func=self._spawn_web_process,
-            start_overlay_func=start_overlay_host_process,
-            start_vision_sidecar_func=start_vision_sidecar_process,
-            prepare_overlay_hint_cache_func=self._prepare_overlay_hint_cache,
+            overlay_controller=GameOverlayController(
+                prepare_data_func=self._prepare_overlay_hint_cache,
+            ),
             listener_interval_seconds=3.0,
         )
         self.service_manager.set_low_frequency_listener_enabled(

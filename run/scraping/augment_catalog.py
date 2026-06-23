@@ -13,6 +13,7 @@ import time
 from html import unescape
 from typing import Dict, Iterable, Optional
 
+from processing.runtime_store import build_runtime_debug_path
 from scraping.full_hextech_scraper import _clean_augment_text, _extract_augment_meta
 from scraping.version_sync import (
     ASSET_DIR,
@@ -38,6 +39,9 @@ logger = logging.getLogger(__name__)
 AUGMENT_ICON_SOURCE_FILE = os.path.join(RUNTIME_DATA_DIR, "state", "augment_icon_source.txt")
 AUGMENT_ICON_AUDIT_FILE = os.path.join(RUNTIME_DATA_DIR, "logs", "augment_icon_audit.jsonl")
 AUGMENT_ICON_MANIFEST_FILE = AUGMENT_MANIFEST_FILE
+AUGMENT_ICON_DEBUG_MANIFEST_FILE = build_runtime_debug_path(
+    "augment_catalog/Augment_Icon_Manifest.debug.json"
+)
 AUGMENT_ICON_SOURCE_ID = "apexlol"
 AUGMENT_METADATA_URLS = HEXTECH_AUGMENT_METADATA_URLS
 MANIFEST_SCHEMA_VERSION = 2
@@ -247,7 +251,7 @@ def _fetch_remote_augment_metadata() -> dict:
 def _normalize_manifest_entry(item: dict, config_dir: str) -> dict:
     name = _clean_augment_text(item.get("name"))
     filename = normalize_safe_augment_icon_filename(os.path.basename(str(item.get("filename", "")).strip()).lower())
-    # 与 cdragon 条目对齐写相对路径，避免把本机绝对路径钉进盘上 manifest。
+    # 与 CDragon 条目对齐写相对路径，避免把本机绝对路径钉进 manifest。
     local_path = f"assets/{filename}" if filename else ""
     icon_url = sanitize_augment_icon_url(_clean_augment_text(item.get("icon_url")))
     if not icon_url and filename:
@@ -289,7 +293,7 @@ def _normalize_manifest_entry(item: dict, config_dir: str) -> dict:
         "status": status,
         "updated_at": _clean_augment_text(item.get("updated_at")) or _now_iso(),
     }
-    for field in ("cdragon_id", "augment_name_id", "source_icon_path", "source_icon_url"):
+    for field in ("cdragon_id", "augment_name_id", "source_icon_path", "source_icon_url", "source_schema"):
         if field in item:
             normalized[field] = item.get(field)
     return normalized
@@ -357,15 +361,30 @@ def _read_manifest_file(manifest_path: str, config_dir: str) -> list[dict]:
     return []
 
 
-def _write_augment_icon_manifest(manifest: list[dict]) -> None:
-    os.makedirs(os.path.dirname(AUGMENT_ICON_MANIFEST_FILE), exist_ok=True)
-    tmp_path = AUGMENT_ICON_MANIFEST_FILE + ".tmp"
+def _debug_manifest_path(config_dir: str) -> str:
+    if os.path.abspath(config_dir) == os.path.abspath(STATIC_DATA_DIR):
+        return AUGMENT_ICON_DEBUG_MANIFEST_FILE
+    return os.path.join(config_dir, "Augment_Icon_Manifest.debug.json")
+
+
+def get_augment_manifest_runtime_path(config_dir: Optional[str] = None) -> str:
+    """返回当前运行态目录；debug 快照存在时优先，否则读取稳定静态清单。"""
+
+    config_dir = config_dir or STATIC_DATA_DIR
+    debug_path = _debug_manifest_path(config_dir)
+    return debug_path if os.path.exists(debug_path) else os.path.join(config_dir, "Augment_Icon_Manifest.json")
+
+
+def _write_augment_icon_manifest(manifest: list[dict], path: Optional[str] = None) -> None:
+    target_path = path or AUGMENT_ICON_DEBUG_MANIFEST_FILE
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    tmp_path = target_path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, AUGMENT_ICON_MANIFEST_FILE)
+    os.replace(tmp_path, target_path)
     global _AUGMENT_ICON_MANIFEST_CACHE, _AUGMENT_LOOKUP_CACHE
-    now = os.path.getmtime(AUGMENT_ICON_MANIFEST_FILE)
-    _AUGMENT_ICON_MANIFEST_CACHE = (AUGMENT_ICON_MANIFEST_FILE, now, manifest)
+    now = os.path.getmtime(target_path)
+    _AUGMENT_ICON_MANIFEST_CACHE = (target_path, now, manifest)
     _AUGMENT_LOOKUP_CACHE = ("", 0.0, {})
 
 
@@ -426,14 +445,15 @@ def build_augment_icon_manifest(
     force_refresh: bool = False,
 ) -> list[dict]:
     config_dir = config_dir or STATIC_DATA_DIR
-    # cdragon 数据层是闭集；盘上 manifest 已是 cdragon schema 时直接返回，
-    # 不再触发 icon_map / full_map / remote_metadata 的拼接路径，避免回写成旧 minimal schema。
-    # 但 force_refresh=True 应能覆盖该短路，供 schema 升级/修复路径强制重建。
-    existing_manifest = _read_manifest_file(os.path.join(config_dir, "Augment_Icon_Manifest.json"), config_dir)
-    if not force_refresh and _is_cdragon_minimal_manifest(existing_manifest):
-        return existing_manifest
+    # CDragon 数据层是闭集；稳定 manifest 已是 CDragon schema 时直接返回，
+    # 不再触发 icon_map / full_map / remote_metadata 拼接路径。但 force_refresh=True
+    # 应能覆盖该短路，供 schema 升级/修复路径强制重建。
+    stable_manifest = _read_manifest_file(os.path.join(config_dir, "Augment_Icon_Manifest.json"), config_dir)
+    if not force_refresh and _is_cdragon_minimal_manifest(stable_manifest):
+        return stable_manifest
     icon_map = load_augment_icon_map(config_dir, force_refresh=force_refresh)
     full_map = _load_full_map(config_dir)
+    existing_manifest = _read_manifest_file(get_augment_manifest_runtime_path(config_dir), config_dir)
     existing_by_name = {item["name"]: item for item in existing_manifest if item.get("name")}
     remote_metadata = _fetch_remote_augment_metadata()
 
@@ -479,7 +499,7 @@ def build_augment_icon_manifest(
             "name": name,
             "tier": tier,
             "filename": filename,
-            "local_path": os.path.join(ASSET_DIR, filename) if filename else "",
+            "local_path": f"assets/{filename}" if filename else "",
             "icon_url": icon_url,
             "description": _clean_augment_text(remote_meta.get("description") or existing.get("description")),
             "tooltip": _clean_augment_text(remote_meta.get("tooltip") or existing.get("tooltip")),
@@ -490,16 +510,17 @@ def build_augment_icon_manifest(
         }
         manifest.append(_normalize_manifest_entry(entry, config_dir))
 
-    _write_augment_icon_manifest(manifest)
+    _write_augment_icon_manifest(manifest, _debug_manifest_path(config_dir))
     return manifest
 
 
 def load_augment_icon_manifest(
     config_dir: Optional[str] = None,
     force_refresh: bool = False,
+    manifest_path: Optional[str] = None,
 ) -> list[dict]:
     config_dir = config_dir or STATIC_DATA_DIR
-    manifest_path = os.path.join(config_dir, "Augment_Icon_Manifest.json")
+    manifest_path = os.fspath(manifest_path or get_augment_manifest_runtime_path(config_dir))
 
     global _AUGMENT_ICON_MANIFEST_CACHE
     cached_path, cached_mtime, cached_data = _AUGMENT_ICON_MANIFEST_CACHE
@@ -519,23 +540,7 @@ def load_augment_icon_manifest(
     return build_augment_icon_manifest(config_dir=config_dir, force_refresh=should_force_refresh)
 
 
-def build_augment_catalog_lookup(
-    config_dir: Optional[str] = None,
-    force_refresh: bool = False,
-) -> dict:
-    config_dir = config_dir or STATIC_DATA_DIR
-    manifest_path = os.path.join(config_dir, "Augment_Icon_Manifest.json")
-    manifest = load_augment_icon_manifest(config_dir=config_dir, force_refresh=force_refresh)
-    try:
-        mtime = os.path.getmtime(manifest_path)
-    except OSError:
-        mtime = 0.0
-
-    global _AUGMENT_LOOKUP_CACHE
-    cached_path, cached_mtime, cached_lookup = _AUGMENT_LOOKUP_CACHE
-    if not force_refresh and cached_path == manifest_path and cached_lookup and cached_mtime == mtime:
-        return cached_lookup
-
+def _build_lookup_from_manifest(manifest: list[dict]) -> dict:
     lookup = {}
     for item in manifest:
         name = item.get("name", "")
@@ -547,6 +552,40 @@ def build_augment_catalog_lookup(
         if filename:
             lookup[filename] = item
             lookup[os.path.splitext(filename)[0]] = item
+    return lookup
+
+
+def load_augment_catalog_lookup_read_only(config_dir: Optional[str] = None) -> dict:
+    """只读稳定 Manifest，不执行 freshness 检查、远端访问或静态文件写入。"""
+
+    config_dir = config_dir or STATIC_DATA_DIR
+    manifest_path = get_augment_manifest_runtime_path(config_dir)
+    return _build_lookup_from_manifest(_read_manifest_file(manifest_path, config_dir))
+
+
+def build_augment_catalog_lookup(
+    config_dir: Optional[str] = None,
+    force_refresh: bool = False,
+) -> dict:
+    config_dir = config_dir or STATIC_DATA_DIR
+    manifest_path = get_augment_manifest_runtime_path(config_dir)
+    manifest = load_augment_icon_manifest(
+        config_dir=config_dir,
+        force_refresh=force_refresh,
+        manifest_path=manifest_path,
+    )
+    manifest_path = get_augment_manifest_runtime_path(config_dir)
+    try:
+        mtime = os.path.getmtime(manifest_path)
+    except OSError:
+        mtime = 0.0
+
+    global _AUGMENT_LOOKUP_CACHE
+    cached_path, cached_mtime, cached_lookup = _AUGMENT_LOOKUP_CACHE
+    if not force_refresh and cached_path == manifest_path and cached_lookup and cached_mtime == mtime:
+        return cached_lookup
+
+    lookup = _build_lookup_from_manifest(manifest)
     _AUGMENT_LOOKUP_CACHE = (manifest_path, mtime, lookup)
     return lookup
 

@@ -4,7 +4,7 @@ import requests
 import json
 import time
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import glob
 import re
@@ -17,6 +17,7 @@ from processing.runtime_store import (
     CSV_ENCODING,
     build_daily_csv_path,
     build_runtime_state_path,
+    get_latest_valid_csv,
     get_runtime_hextech_data_dir,
     resolve_runtime_data_file,
 )
@@ -28,10 +29,21 @@ from scraping.version_sync import (
     load_augment_map,
     load_champion_core_data,
 )
-from tools.atomic_io import atomic_write_csv
+from tools.atomic_io import atomic_write_csv, atomic_write_json
 from tools.log_utils import log_task_summary
 
 FRESHNESS_THRESHOLD = 0.0005
+SCRAPER_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
+BLOCKED_HTTP_STATUS_CODES = {403, 429}
+
+
+class RemoteFetchError(RuntimeError):
+    """远端请求不可用；由调用方统一执行本地回退，避免逐英雄刷屏。"""
+
+    def __init__(self, reason: str, *, status_code: int | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.status_code = status_code
 
 # 请求标识池。
 USER_AGENT_POOL = [
@@ -284,7 +296,15 @@ def _sort_source_augments(augments: dict) -> list[tuple[str, dict]]:
     return sorted(augments.items(), key=sort_key)
 
 
-def fetch_with_retry(session, url, max_retries=1, timeout=6):
+def fetch_with_retry(
+    session,
+    url,
+    max_retries=1,
+    timeout=6,
+    *,
+    quiet: bool = False,
+    raise_on_failure: bool = False,
+):
     # 指数退避重试。
     for attempt in range(max_retries):
         try:
@@ -293,15 +313,107 @@ def fetch_with_retry(session, url, max_retries=1, timeout=6):
             response.raise_for_status()
             return response
         except (requests.exceptions.HTTPError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            if status_code:
+                reason = f"http_{status_code}"
+            elif isinstance(e, requests.exceptions.Timeout):
+                reason = "timeout"
+            else:
+                reason = "network_error"
             if attempt < max_retries - 1:
                 wait_time = 2 ** (attempt + 1)
-                logging.warning(f"请求 {url} 失败 (尝试 {attempt + 1}/{max_retries}): {e}，{wait_time}秒后重试...")
+                if not quiet:
+                    logging.warning(f"请求 {url} 失败 (尝试 {attempt + 1}/{max_retries}): {e}，{wait_time}秒后重试...")
                 time.sleep(wait_time)
             else:
-                logging.warning(f"请求 {url} 失败，已达最大重试次数 {max_retries}: {e}")
+                if raise_on_failure:
+                    raise RemoteFetchError(reason, status_code=status_code) from e
+                if not quiet:
+                    logging.warning(f"请求 {url} 失败，已达最大重试次数 {max_retries}: {e}")
     return None
 
-def check_execution_permission():
+
+def load_scraper_status() -> dict:
+    """兼容只含 last_success_time 的旧状态文件。"""
+
+    status_file = resolve_runtime_data_file(
+        build_runtime_state_path("scraper_status.json"),
+        "scraper_status.json",
+    )
+    if not status_file or not os.path.exists(status_file):
+        return {}
+    try:
+        with open(status_file, "r", encoding="utf-8") as file:
+            payload = json.load(file)
+        return payload if isinstance(payload, dict) else {}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _timestamp_from_status(value) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def hextech_refresh_blocked(status: dict | None = None) -> bool:
+    payload = status if isinstance(status, dict) else load_scraper_status()
+    return _timestamp_from_status(payload.get("blocked_until")) > time.time()
+
+
+def _write_scraper_status(result: str, reason: str = "", *, active_csv: str = "") -> dict:
+    now = time.time()
+    previous = load_scraper_status()
+    payload = dict(previous)
+    payload.update(
+        {
+            "last_attempt_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(timespec="seconds"),
+            "last_result": result,
+            "reason": reason,
+            "blocked_until": "",
+            "active_csv": active_csv,
+            "active_csv_mtime": os.path.getmtime(active_csv) if active_csv and os.path.exists(active_csv) else 0.0,
+            "last_success_time": previous.get("last_success_time", 0),
+        }
+    )
+    if result == "success":
+        payload["last_success_time"] = now
+    elif result == "fallback" and reason in {"http_403", "http_429"}:
+        blocked_until = datetime.fromtimestamp(now + SCRAPER_BLOCKED_COOLDOWN_SECONDS, tz=timezone.utc)
+        payload["blocked_until"] = blocked_until.isoformat(timespec="seconds")
+    atomic_write_json(build_runtime_state_path("scraper_status.json"), payload, ensure_ascii=False, indent=2)
+    return payload
+
+
+def _finish_refresh_failure(reason: str, *, started_at: float) -> bool:
+    active_csv = get_latest_valid_csv() or ""
+    if active_csv:
+        _write_scraper_status("fallback", reason, active_csv=active_csv)
+        logging.warning("海克斯远端刷新失败（%s），已使用 %s", reason, os.path.basename(active_csv))
+        return True
+    _write_scraper_status("failed", reason, active_csv="")
+    log_task_summary(
+        logging.getLogger(__name__),
+        task="海克斯抓取",
+        started_at=started_at,
+        success=False,
+        detail=f"error={reason}; no_valid_local_csv",
+    )
+    return False
+
+
+def check_execution_permission(force: bool = False):
+    if force:
+        return True, "手动强制刷新，忽略冷却与新鲜度检查..."
+    status = load_scraper_status()
+    if hextech_refresh_blocked(status) and get_latest_valid_csv():
+        return False, "远端处于 6 小时冷却期，继续使用本地有效 CSV。"
     status_file = resolve_runtime_data_file(
         build_runtime_state_path("scraper_status.json"),
         "scraper_status.json",
@@ -323,11 +435,10 @@ def check_execution_permission():
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return True, "状态文件异常，强制刷新..."
 
-def update_status_file():
-    status_file = build_runtime_state_path("scraper_status.json")
-    os.makedirs(os.path.dirname(status_file), exist_ok=True)
-    with open(status_file, "w", encoding="utf-8") as f:
-        json.dump({"last_success_time": time.time()}, f)
+def update_status_file(active_csv: str = ""):
+    """保留旧函数入口，并写入扩展后的成功状态。"""
+
+    return _write_scraper_status("success", active_csv=active_csv)
 
 def cleanup_old_csvs():
     # 清理过期数据和残留临时文件。
@@ -350,6 +461,18 @@ def cleanup_old_csvs():
                 logging.info(f"已清理过期/残留文件：{os.path.basename(f)}")
         except Exception as e:
             logging.error(f"清理文件异常 {f}: {e}")
+
+
+def rebuild_runtime_caches() -> None:
+    """新 CSV 发布后同步重建 Web 与 overlay 的运行缓存。"""
+
+    from processing.precomputed_cache import rebuild_precomputed_api_cache_from_latest_csv
+    from processing.overlay_hint_cache import build_overlay_hint_cache_from_precomputed, write_overlay_hint_cache
+
+    rebuild_precomputed_api_cache_from_latest_csv()
+    write_overlay_hint_cache(
+        build_overlay_hint_cache_from_precomputed(source_tag="runtime-refresh")
+    )
 
 
 def extract_champion_stats(
@@ -406,29 +529,28 @@ def extract_champion_stats(
 
     return rows
 
-def main_scraper(stop_event=None):
+def main_scraper(stop_event=None, force: bool = False):
     started_at = time.time()
     current_date = datetime.now().strftime('%Y-%m-%d')
     output_csv = build_daily_csv_path(current_date)
 
-    can_run, msg = check_execution_permission()
+    can_run, msg = check_execution_permission(force=force)
     if not can_run:
         logging.info("海克斯抓取跳过：%s", msg)
-        return False
+        return bool(get_latest_valid_csv())
 
     logging.info("海克斯抓取开始：%s", msg)
     truth_dict = load_augment_map()
     core_data = load_champion_core_data()
     if not truth_dict or not core_data:
-        logging.error("基础数据加载失败，终止抓取。")
-        return False
+        return _finish_refresh_failure("base_data_missing", started_at=started_at)
 
     session = get_advanced_session()
 
     try:
         aug_response = None
         for url in HEXTECH_AUGMENT_METADATA_URLS:
-            candidate = fetch_with_retry(session, url)
+            candidate = fetch_with_retry(session, url, quiet=True, raise_on_failure=True)
             if candidate is None:
                 continue
             try:
@@ -438,8 +560,7 @@ def main_scraper(stop_event=None):
             except Exception:
                 continue
         if aug_response is None:
-            logging.error("获取海克斯配置数据失败")
-            return False
+            return _finish_refresh_failure("metadata_invalid", started_at=started_at)
         aug_data = aug_response.json()
 
         aug_id_map = {}
@@ -453,7 +574,7 @@ def main_scraper(stop_event=None):
 
         stats_response = None
         for url in HEXTECH_CHAMPION_STATS_URLS:
-            candidate = fetch_with_retry(session, url)
+            candidate = fetch_with_retry(session, url, quiet=True, raise_on_failure=True)
             if candidate is None:
                 continue
             try:
@@ -463,15 +584,49 @@ def main_scraper(stop_event=None):
             except Exception:
                 continue
         if stats_response is None:
-            logging.error("获取英雄统计数据失败")
-            return False
+            return _finish_refresh_failure("stats_invalid", started_at=started_at)
         stats_list = stats_response.json()
-    except (requests.RequestException, ValueError, json.JSONDecodeError) as e:
-        logging.error(f"抓取端握手异常：{e}")
-        return False
+        if not stats_list:
+            return _finish_refresh_failure("stats_empty", started_at=started_at)
+    except RemoteFetchError as e:
+        return _finish_refresh_failure(e.reason, started_at=started_at)
+    except (requests.RequestException, ValueError, json.JSONDecodeError):
+        return _finish_refresh_failure("handshake_invalid", started_at=started_at)
+
+    # 先请求一个英雄详情。源站封禁时在创建 16 worker 线程池前熔断。
+    preflight_champ = stats_list[0]
+    preflight_id = str(preflight_champ.get("championId", ""))
+    preflight_response = None
+    try:
+        for candidate_url in build_hextech_detail_urls(preflight_id):
+            candidate = fetch_with_retry(session, candidate_url, quiet=True, raise_on_failure=True)
+            if candidate.status_code == 200 and candidate.text:
+                preflight_response = candidate
+                break
+    except RemoteFetchError as e:
+        return _finish_refresh_failure(e.reason, started_at=started_at)
+    if preflight_response is None:
+        return _finish_refresh_failure("preflight_empty", started_at=started_at)
+    preflight_name = core_data.get(preflight_id, {}).get("name", preflight_id)
+    try:
+        preflight_rows = extract_champion_stats(
+            preflight_response.text,
+            aug_id_map,
+            truth_dict,
+            preflight_id,
+            preflight_name,
+            preflight_champ,
+            aug_tier_map,
+        )
+    except ValueError:
+        return _finish_refresh_failure("preflight_parse_error", started_at=started_at)
+    if not preflight_rows:
+        return _finish_refresh_failure("preflight_no_valid_rows", started_at=started_at)
 
     all_rows = []
     lock = threading.Lock()
+    remote_failure = {"reason": ""}
+    remote_failure_event = threading.Event()
 
     def fetch_champ(champ):
         c_id = str(champ.get('championId', ''))
@@ -479,14 +634,23 @@ def main_scraper(stop_event=None):
         champ_rows = []
         url = ""
         try:
-            time.sleep(random.uniform(0.5, 1.5))
-
-            res = None
-            for candidate_url in build_hextech_detail_urls(c_id):
-                url = candidate_url
-                res = fetch_with_retry(session, url)
-                if res is not None and res.status_code == 200 and res.text:
-                    break
+            if remote_failure_event.is_set():
+                return c_name, champ_rows
+            if c_id == preflight_id:
+                return c_name, list(preflight_rows)
+            else:
+                time.sleep(random.uniform(0.5, 1.5))
+                res = None
+                for candidate_url in build_hextech_detail_urls(c_id):
+                    url = candidate_url
+                    res = fetch_with_retry(
+                        session,
+                        url,
+                        quiet=True,
+                        raise_on_failure=True,
+                    )
+                    if res is not None and res.status_code == 200 and res.text:
+                        break
 
             if res is not None and res.status_code == 200 and len(res.text) > 0:
                 try:
@@ -501,8 +665,16 @@ def main_scraper(stop_event=None):
                     )
                 except ValueError as e:
                     logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
-        except requests.RequestException as e:
-            logging.error(f"[{c_name}] HTTP 获取失败：{e} | URL={url} | 堆栈={traceback.format_exc().strip()}")
+        except RemoteFetchError as e:
+            with lock:
+                if not remote_failure["reason"]:
+                    remote_failure["reason"] = e.reason
+            remote_failure_event.set()
+        except requests.RequestException:
+            with lock:
+                if not remote_failure["reason"]:
+                    remote_failure["reason"] = "network_error"
+            remote_failure_event.set()
 
         return c_name, champ_rows
 
@@ -531,6 +703,9 @@ def main_scraper(stop_event=None):
             for fut in futures:
                 fut.cancel()
             executor.shutdown(wait=False, cancel_futures=True)
+            remote_failure["reason"] = "thread_pool_timeout"
+    if remote_failure["reason"]:
+        return _finish_refresh_failure(remote_failure["reason"], started_at=started_at)
     if all_rows:
         df = pd.DataFrame(all_rows)
         df['胜率差'] = df['海克斯胜率'] - df['英雄胜率']
@@ -564,13 +739,16 @@ def main_scraper(stop_event=None):
 
         # 数据量过低时直接拒绝覆盖结果
         if len(df) < 300:
-            logging.error(f"数据熔断：有效行数 {len(df)} < 300，拒绝覆盖 CSV")
-            return False
+            return _finish_refresh_failure(f"insufficient_rows_{len(df)}", started_at=started_at)
 
         atomic_write_csv(output_csv, df, index=False, encoding=CSV_ENCODING)
 
-        update_status_file()
+        update_status_file(output_csv)
         cleanup_old_csvs()
+        try:
+            rebuild_runtime_caches()
+        except Exception:
+            logging.exception("新 CSV 已发布，但缓存重建失败")
         log_task_summary(
             logging.getLogger(__name__),
             task="海克斯抓取",
@@ -580,12 +758,5 @@ def main_scraper(stop_event=None):
         )
         return True
     else:
-        log_task_summary(
-            logging.getLogger(__name__),
-            task="海克斯抓取",
-            started_at=started_at,
-            success=False,
-            detail="error=no_valid_rows",
-        )
-        return False
+        return _finish_refresh_failure("no_valid_rows", started_at=started_at)
 

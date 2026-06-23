@@ -5,6 +5,7 @@ from __future__ import annotations
 这个模块是 `run/` 的统一验证入口：
 - 默认模式执行离线、无外网、无浏览器依赖的结构与回归自检。
 - `--bundle-manifest` 输出 bundle manifest 明细并校验关键字段。
+- `--overlay-only` 只执行游戏内 overlay 相关的离线契约自检。
 - `--manual-web-synergy` 执行 Web/UI 详情页联动人工验收辅助检查。
 
 它替代原先散落的 `run/tests/` 临时测试目录，以及独立的
@@ -13,6 +14,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+from contextlib import ExitStack
+import inspect
 import io
 import json
 import logging
@@ -41,10 +44,10 @@ import processing.orchestrator as orchestrator
 import processing.alias_search as alias_search
 import processing.precomputed_cache as precomputed_cache
 import processing.runtime_store as runtime_store
+import scraping.full_hextech_scraper as hextech_scraper
 import scraping.full_synergy_scraper as synergy_scraper
 import scraping.heal_worker as heal_worker
 import scraping.icon_resolver as icon_resolver
-import scraping.augment_catalog as augment_catalog
 import display.web_runtime as web_runtime
 from display.web_api import _build_synergy_api_payload, _normalize_synergy_items, _synergy_item_to_compat_string
 from processing.alias_search import load_manual_alias_index
@@ -67,7 +70,7 @@ from scraping.full_synergy_scraper import (
     normalize_slug,
     write_synergy_refresh_meta,
 )
-from tools.bundle_manifest import build_bundle_manifest
+from tools.bundle_manifest import build_bundle_manifest, prepare_bundle_runtime
 from tools.log_utils import install_summary_logging
 
 
@@ -111,62 +114,51 @@ def check_manifest_icon_url_safety() -> None:
 
 
 def check_cdragon_force_refresh_semantics() -> None:
-    """CDragon minimal manifest 的 force_refresh 短路语义（方案 1）。
+    """CDragon minimal manifest 不应被旧完整描述字段规则强制重建。"""
+    import scraping.augment_catalog as augment_catalog
 
-    - 反向用例：含完整字段（description/tooltip_plain 等）的 manifest 不应被判为
-      CDragon minimal，避免误短路。
-    - force_refresh=False：盘上是 CDragon minimal 时应短路返回 existing，不触发
-      icon_map / full_map / remote_metadata 重建路径。
-    - force_refresh=True：应覆盖短路，进入重建路径（load_augment_icon_map 被调用）。
-    """
-
-    def _cdragon_entry(i: int) -> dict:
+    def cdragon_entry(index: int) -> dict[str, Any]:
         return {
             "schema_version": augment_catalog.MANIFEST_SCHEMA_VERSION,
-            "name": f"Augment{i}",
+            "name": f"Augment{index}",
             "tier": "Silver",
-            "filename": f"augment{i}.png",
-            "icon_url": f"/assets/augment{i}.png",
-            "source_icon_url": f"{augment_catalog._CDRAGON_SOURCE_PREFIX}game/assets/augment{i}.png",
+            "filename": f"augment{index}.png",
+            "icon_url": f"/assets/augment{index}.png",
+            "source_icon_url": f"{augment_catalog._CDRAGON_SOURCE_PREFIX}game/assets/augment{index}.png",
         }
 
-    minimal_manifest = [_cdragon_entry(i) for i in range(augment_catalog._MIN_VALID_MANIFEST_ENTRIES)]
+    minimal_manifest = [cdragon_entry(index) for index in range(augment_catalog._MIN_VALID_MANIFEST_ENTRIES)]
     assert augment_catalog._is_cdragon_minimal_manifest(minimal_manifest)
-
-    # 反向用例：非 CDragon source（source_icon_url 前缀不命中）不应被判为 minimal
-    non_cdragon = [{**_cdragon_entry(i), "source_icon_url": "https://apexlol.info/x.png"} for i in range(5)]
+    assert augment_catalog._is_cdragon_minimal_manifest([cdragon_entry(0)]) is False
+    non_cdragon = [
+        {**cdragon_entry(index), "source_icon_url": "https://apexlol.info/x.png"}
+        for index in range(augment_catalog._MIN_VALID_MANIFEST_ENTRIES)
+    ]
     assert augment_catalog._is_cdragon_minimal_manifest(non_cdragon) is False
-    # 反向用例：条目数不足阈值不应被判为 minimal
-    assert augment_catalog._is_cdragon_minimal_manifest([_cdragon_entry(0)]) is False
 
     calls: dict[str, int] = {"icon_map": 0}
 
-    def _fake_load_icon_map(config_dir=None, force_refresh=False):
+    def fake_load_icon_map(config_dir=None, force_refresh=False):
         calls["icon_map"] += 1
         return {}
 
-    with patch.object(augment_catalog, "_read_manifest_file", return_value=minimal_manifest), \
-            patch.object(augment_catalog, "load_augment_icon_map", side_effect=_fake_load_icon_map), \
-            patch.object(augment_catalog, "_load_full_map", return_value={}), \
-            patch.object(augment_catalog, "_fetch_remote_augment_metadata", return_value={}), \
-            patch.object(augment_catalog, "_write_augment_icon_manifest"):
-        # force_refresh=False：短路生效，不应触碰 icon_map
+    with (
+        patch.object(augment_catalog, "_read_manifest_file", return_value=minimal_manifest),
+        patch.object(augment_catalog, "load_augment_icon_map", side_effect=fake_load_icon_map),
+        patch.object(augment_catalog, "_load_full_map", return_value={}),
+        patch.object(augment_catalog, "_fetch_remote_augment_metadata", return_value={}),
+        patch.object(augment_catalog, "_write_augment_icon_manifest"),
+    ):
         result = augment_catalog.build_augment_icon_manifest(force_refresh=False)
         assert result is minimal_manifest
         assert calls["icon_map"] == 0
-        # force_refresh=True：覆盖短路，进入重建路径
         augment_catalog.build_augment_icon_manifest(force_refresh=True)
         assert calls["icon_map"] == 1
 
 
 def check_cdragon_source_schema_marker() -> None:
-    """CDragon minimal manifest 显式 source_schema 标记契约。
-
-    - sync 写入的 cdragon 条目经 normalize 后必须带 source_schema="cdragon_minimal"。
-    - _is_cdragon_source_item 优先认显式 source_schema，即使 source_icon_url 前缀不命中
-      也能识别，避免仅靠前缀隐式推断。
-    - 旧数据无 source_schema 时仍可由前缀回落识别（向后兼容）。
-    """
+    """CDragon 条目优先使用显式 source_schema 标记，旧数据仍按前缀兼容。"""
+    import scraping.augment_catalog as augment_catalog
 
     raw_entry = {
         "schema_version": augment_catalog.MANIFEST_SCHEMA_VERSION,
@@ -180,15 +172,12 @@ def check_cdragon_source_schema_marker() -> None:
     normalized = augment_catalog._normalize_cdragon_manifest_entry(raw_entry)
     assert normalized["source_schema"] == augment_catalog._CDRAGON_SOURCE_SCHEMA
 
-    # 显式 source_schema 优先：source_icon_url 被改成非 CDragon 前缀仍应识别
     explicit_only = {**raw_entry, "source_icon_url": "https://apexlol.info/x.png"}
     assert augment_catalog._is_cdragon_source_item(explicit_only) is True
 
-    # 向后兼容：无 source_schema 但前缀命中仍识别
-    legacy = {k: v for k, v in raw_entry.items() if k != "source_schema"}
+    legacy = {key: value for key, value in raw_entry.items() if key != "source_schema"}
     assert augment_catalog._is_cdragon_source_item(legacy) is True
 
-    # 非 CDragon 条目（既无 source_schema 也无前缀）不识别
     foreign = {**raw_entry, "source_schema": "", "source_icon_url": "https://apexlol.info/x.png"}
     assert augment_catalog._is_cdragon_source_item(foreign) is False
 
@@ -302,6 +291,30 @@ def check_detail_question_mark_augment_guard() -> None:
 
     icon_map = json.loads((RUN_DIR / "data" / "indexes" / "augment.name-to-icon.v1.json").read_text(encoding="utf-8"))
     assert icon_map.get("？？？") == "/assets/missingping_small.png"
+
+
+def check_detail_hextech_card_layout_contract() -> None:
+    detail_script = (RUN_DIR / "display" / "static" / "js" / "detail.js").read_text(encoding="utf-8")
+    style_source = (RUN_DIR / "display" / "src" / "styles" / "input.css").read_text(encoding="utf-8")
+    compiled_style = (RUN_DIR / "display" / "static" / "css" / "tailwind-compiled.css").read_text(encoding="utf-8")
+
+    # 列表卡片的胜率数字必须独立居中；趋势箭头不能参与数字本身的中轴线计算。
+    assert "hextech-card-rate--win" in detail_script
+    assert "hextech-card-rate-value" in detail_script
+    assert "hextech-card-rate-trend" in detail_script
+    assert "w-16 text-right" not in detail_script
+    assert "w-14 text-right" not in detail_script
+
+    # 长海克斯文案（例如“高压锅”）必须由稳定行盒承载，不能依赖浏览器默认 normal 行高。
+    for css in (style_source, compiled_style):
+        assert ".hextech-list-card" in css and ("display: grid" in css or "display:grid" in css)
+        assert ".hextech-card-rate" in css and ("justify-content: center" in css or "justify-content:center" in css)
+        assert ".hextech-article-content" in css and ("line-height: 1.72" in css or "line-height:1.72" in css)
+        assert ".hextech-tooltip-body" in css and ("line-height: 1.65" in css or "line-height:1.65" in css)
+        assert "word-break: break-word" in css or "word-break:break-word" in css
+
+    icon_map = json.loads((RUN_DIR / "data" / "indexes" / "augment.name-to-icon.v1.json").read_text(encoding="utf-8"))
+    assert icon_map.get("高压锅") == "/assets/questpressurecooker_small.png"
 
 
 def check_static_css_single_mount_contract() -> None:
@@ -476,6 +489,358 @@ def check_heal_worker_contract() -> None:
     assert hasattr(heal_worker, "detect_missing_artifacts")
 
 
+def _write_runtime_csv(path: Path, row_count: int = 300) -> None:
+    """生成满足运行态 schema 的最小离线样本。"""
+
+    row = {
+        "英雄ID": "1",
+        "英雄名称": "测试英雄",
+        "英雄评级": "S",
+        "英雄胜率": 0.5,
+        "英雄出场率": 0.1,
+        "海克斯阶级": "Gold",
+        "海克斯名称": "测试海克斯",
+        "海克斯胜率": 0.51,
+        "海克斯出场率": 0.02,
+        "胜率差": 0.01,
+        "综合得分": 1.0,
+    }
+    pd.DataFrame([row] * row_count).to_csv(path, index=False, encoding=runtime_store.CSV_ENCODING)
+
+
+def check_latest_valid_runtime_csv_fallback() -> None:
+    """最新快照保留兼容读取；健康判断必须回退到上一份有效版本。"""
+
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        valid = root / "Hextech_Data_2026-06-19.csv"
+        too_small = root / "Hextech_Data_2026-06-20.csv"
+        broken = root / "Hextech_Data_2026-06-21.csv"
+        _write_runtime_csv(valid, 300)
+        _write_runtime_csv(too_small, 299)
+        broken.write_text("unexpected\nvalue\n", encoding="utf-8")
+        os.utime(valid, (1000, 1000))
+        os.utime(too_small, (2000, 2000))
+        os.utime(broken, (3000, 3000))
+
+        with patch.object(
+            runtime_store,
+            "iter_runtime_csv_files",
+            return_value=[str(valid), str(too_small), str(broken)],
+        ):
+            assert runtime_store.get_latest_valid_csv() == str(valid)
+            assert runtime_store.get_latest_csv() == str(broken)
+
+        with (
+            patch.object(orchestrator, "get_latest_csv", side_effect=AssertionError("refresh must use valid csv")),
+            patch.object(orchestrator, "get_latest_valid_csv", return_value=str(valid)),
+            patch.object(orchestrator, "hextech_refresh_blocked", return_value=False),
+            patch.object(orchestrator, "_file_is_fresh", return_value=True),
+        ):
+            assert orchestrator.should_refresh_hextech(False) is False
+
+        with (
+            patch.object(heal_worker, "get_latest_csv", side_effect=AssertionError("freshness must use valid csv")),
+            patch.object(heal_worker, "get_latest_valid_csv", return_value=str(valid)),
+            patch.object(heal_worker, "_file_is_fresh", return_value=True),
+        ):
+            assert heal_worker._latest_csv_ready() is True
+            assert heal_worker._latest_csv_fresh() is True
+
+
+def check_hextech_scraper_fallback_contract() -> None:
+    """403 必须在英雄并发前熔断；有本地数据则降级可用。"""
+
+    class FakeResponse:
+        def __init__(self, status_code: int, payload: Any, text: str = "") -> None:
+            self.status_code = status_code
+            self._payload = payload
+            self.text = text
+
+        def json(self) -> Any:
+            return self._payload
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                error = requests.exceptions.HTTPError(f"{self.status_code} response")
+                error.response = self
+                raise error
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.responses = [
+                FakeResponse(200, {"100": {"displayName": "测试海克斯"}}),
+                FakeResponse(200, [{"championId": "1"}]),
+                FakeResponse(403, {}),
+            ]
+            self.calls = 0
+
+        def get(self, *_args, **_kwargs) -> FakeResponse:
+            self.calls += 1
+            return self.responses.pop(0)
+
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        fallback_csv = root / "Hextech_Data_2026-06-19.csv"
+        status_file = root / "scraper_status.json"
+        _write_runtime_csv(fallback_csv, 300)
+        session = FakeSession()
+        started_at = time.time()
+
+        with (
+            patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
+            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
+            patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
+            patch.object(hextech_scraper, "get_advanced_session", return_value=session),
+            patch.object(hextech_scraper, "get_latest_valid_csv", return_value=str(fallback_csv)),
+            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
+            patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
+            patch.object(hextech_scraper, "ThreadPoolExecutor", side_effect=AssertionError("403 后不得创建英雄线程池")),
+            patch.object(hextech_scraper.time, "sleep"),
+        ):
+            assert hextech_scraper.main_scraper() is True
+
+        status = json.loads(status_file.read_text(encoding="utf-8"))
+        assert session.calls == 3
+        assert status["last_result"] == "fallback"
+        assert status["reason"] == "http_403"
+        assert status["active_csv"] == str(fallback_csv)
+        blocked_until = datetime.fromisoformat(status["blocked_until"])
+        assert 5.9 * 60 * 60 <= blocked_until.timestamp() - started_at <= 6.1 * 60 * 60
+
+        status_file.unlink()
+        failed_session = FakeSession()
+        with (
+            patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
+            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
+            patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
+            patch.object(hextech_scraper, "get_advanced_session", return_value=failed_session),
+            patch.object(hextech_scraper, "get_latest_valid_csv", return_value=None),
+            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
+            patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
+            patch.object(hextech_scraper, "ThreadPoolExecutor", side_effect=AssertionError("403 后不得创建英雄线程池")),
+            patch.object(hextech_scraper.time, "sleep"),
+        ):
+            assert hextech_scraper.main_scraper() is False
+
+        failed_status = json.loads(status_file.read_text(encoding="utf-8"))
+        assert failed_status["last_result"] == "failed"
+        assert failed_status["active_csv"] == ""
+
+
+def check_hextech_cooldown_and_heal_fallback() -> None:
+    fallback_status = {
+        "last_result": "fallback",
+        "reason": "http_403",
+        "blocked_until": datetime.fromtimestamp(time.time() + 3600, tz=timezone.utc).isoformat(),
+    }
+    with (
+        patch.object(hextech_scraper, "load_scraper_status", return_value=fallback_status),
+        patch.object(hextech_scraper, "get_latest_valid_csv", return_value="valid.csv"),
+        patch.object(hextech_scraper, "get_advanced_session", side_effect=AssertionError("冷却期不得发起网络请求")),
+    ):
+        assert hextech_scraper.main_scraper() is True
+        assert hextech_scraper.check_execution_permission(force=True)[0] is True
+
+    missing = {
+        "hextech_rankings": True,
+        "synergy_data": False,
+        "augment_catalog": False,
+        "champion_core": False,
+        "images": False,
+        "latest_csv": "valid.csv",
+        "augment_icons_prefetched": True,
+    }
+    with TemporaryDirectory() as temp_dir:
+        with (
+            patch.object(heal_worker, "LOCK_FILE", Path(temp_dir) / "heal.lock"),
+            patch.object(heal_worker, "detect_missing_artifacts", return_value=missing),
+            patch.object(heal_worker, "_write_startup_status"),
+            patch.object(heal_worker, "_heal_hero_rankings", return_value=True),
+            patch.object(heal_worker, "load_scraper_status", return_value=fallback_status),
+        ):
+            report = heal_worker.heal_missing_artifacts()
+        assert report["fallback"] == ["hextech_rankings"]
+        assert report["failed"] == []
+
+
+def check_hextech_failed_refresh_never_overwrites_csv() -> None:
+    """低行数与 force 超时都只能回退，不能覆盖已有快照。"""
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload: Any, text: str = "ok") -> None:
+            self._payload = payload
+            self.text = text
+
+        def json(self) -> Any:
+            return self._payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class SequenceSession:
+        def __init__(self, responses: list[Any]) -> None:
+            self.responses = list(responses)
+            self.calls = 0
+
+        def get(self, *_args, **_kwargs) -> FakeResponse:
+            self.calls += 1
+            next_value = self.responses.pop(0)
+            if isinstance(next_value, Exception):
+                raise next_value
+            return next_value
+
+    one_row = {
+        "英雄ID": "1",
+        "英雄名称": "测试英雄",
+        "英雄评级": "S",
+        "英雄胜率": 0.5,
+        "英雄出场率": 0.1,
+        "海克斯阶级": "Gold",
+        "海克斯名称": "测试海克斯",
+        "海克斯胜率": 0.51,
+        "海克斯出场率": 0.02,
+        "源站排名": 1,
+    }
+    metadata = FakeResponse({"100": {"displayName": "测试海克斯"}})
+    stats = FakeResponse([{"championId": "1"}])
+
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        fallback_csv = root / "Hextech_Data_2026-06-19.csv"
+        output_csv = root / "Hextech_Data_2026-06-21.csv"
+        status_file = root / "scraper_status.json"
+        _write_runtime_csv(fallback_csv, 300)
+        output_csv.write_text("do-not-overwrite", encoding="utf-8")
+        low_row_session = SequenceSession([metadata, stats, FakeResponse({}, text="detail")])
+
+        common_patches = (
+            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
+            patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
+            patch.object(hextech_scraper, "get_latest_valid_csv", return_value=str(fallback_csv)),
+            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
+            patch.object(hextech_scraper, "build_daily_csv_path", return_value=str(output_csv)),
+            patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
+            patch.object(hextech_scraper, "extract_champion_stats", return_value=[one_row]),
+            patch.object(hextech_scraper.time, "sleep"),
+        )
+        with ExitStack() as stack:
+            for context_manager in common_patches:
+                stack.enter_context(context_manager)
+            stack.enter_context(patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")))
+            stack.enter_context(patch.object(hextech_scraper, "get_advanced_session", return_value=low_row_session))
+            stack.enter_context(
+                patch.object(hextech_scraper, "atomic_write_csv", side_effect=AssertionError("低行数不得覆盖 CSV"))
+            )
+            assert hextech_scraper.main_scraper() is True
+        assert output_csv.read_text(encoding="utf-8") == "do-not-overwrite"
+        assert json.loads(status_file.read_text(encoding="utf-8"))["reason"] == "insufficient_rows_1"
+
+        status_file.unlink()
+        future_block = {
+            "last_result": "fallback",
+            "reason": "http_403",
+            "blocked_until": datetime.fromtimestamp(time.time() + 3600, tz=timezone.utc).isoformat(),
+        }
+        timeout_session = SequenceSession(
+            [
+                FakeResponse({"100": {"displayName": "测试海克斯"}}),
+                FakeResponse([{"championId": "1"}]),
+                requests.exceptions.Timeout("simulated timeout"),
+            ]
+        )
+        with (
+            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
+            patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
+            patch.object(hextech_scraper, "get_latest_valid_csv", return_value=str(fallback_csv)),
+            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
+            patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
+            patch.object(hextech_scraper, "load_scraper_status", return_value=future_block),
+            patch.object(hextech_scraper, "get_advanced_session", return_value=timeout_session),
+            patch.object(hextech_scraper, "ThreadPoolExecutor", side_effect=AssertionError("预检超时不得创建线程池")),
+            patch.object(hextech_scraper.time, "sleep"),
+        ):
+            assert hextech_scraper.main_scraper(force=True) is True
+        assert timeout_session.calls == 3
+        assert json.loads(status_file.read_text(encoding="utf-8"))["reason"] == "timeout"
+
+
+def check_hextech_success_clears_fallback_state() -> None:
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, payload: Any, text: str = "ok") -> None:
+            self._payload = payload
+            self.text = text
+
+        def json(self) -> Any:
+            return self._payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.responses = [
+                FakeResponse({"100": {"displayName": "测试海克斯"}}),
+                FakeResponse([{"championId": "1"}]),
+                FakeResponse({}, text="detail"),
+            ]
+
+        def get(self, *_args, **_kwargs) -> FakeResponse:
+            return self.responses.pop(0)
+
+    row = {
+        "英雄ID": "1",
+        "英雄名称": "测试英雄",
+        "英雄评级": "S",
+        "英雄胜率": 0.5,
+        "英雄出场率": 0.1,
+        "海克斯阶级": "Gold",
+        "海克斯名称": "测试海克斯",
+        "海克斯胜率": 0.51,
+        "海克斯出场率": 0.02,
+        "源站排名": 1,
+    }
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        output_csv = root / "Hextech_Data_2026-06-21.csv"
+        status_file = root / "scraper_status.json"
+        stale_status = {
+            "last_result": "fallback",
+            "reason": "http_403",
+            "blocked_until": datetime.fromtimestamp(time.time() + 3600, tz=timezone.utc).isoformat(),
+            "last_success_time": 1,
+        }
+        with (
+            patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
+            patch.object(hextech_scraper, "load_scraper_status", return_value=stale_status),
+            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
+            patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
+            patch.object(hextech_scraper, "get_advanced_session", return_value=FakeSession()),
+            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
+            patch.object(hextech_scraper, "build_daily_csv_path", return_value=str(output_csv)),
+            patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
+            patch.object(hextech_scraper, "extract_champion_stats", return_value=[row] * 300),
+            patch.object(hextech_scraper, "cleanup_old_csvs") as cleanup,
+            patch.object(hextech_scraper, "rebuild_runtime_caches") as rebuild,
+            patch.object(hextech_scraper.time, "sleep"),
+        ):
+            assert hextech_scraper.main_scraper() is True
+
+        status = json.loads(status_file.read_text(encoding="utf-8"))
+        assert status["last_result"] == "success"
+        assert status["reason"] == ""
+        assert status["blocked_until"] == ""
+        assert status["active_csv"] == str(output_csv)
+        assert status["last_success_time"] > 1
+        assert len(pd.read_csv(output_csv, encoding=runtime_store.CSV_ENCODING)) == 300
+        cleanup.assert_called_once()
+        rebuild.assert_called_once()
+
+
 def check_logging_contract() -> None:
     fd, tmp_name = mkstemp(prefix="hextech-dev-", suffix=".log")
     os.close(fd)
@@ -497,13 +862,35 @@ def check_logging_contract() -> None:
         except OSError:
             pass
 
+    requirements = (RUN_DIR / "requirements.txt").read_text(encoding="utf-8")
+    for dependency in (
+        "requests>=2.32.3,<3",
+        "urllib3>=2.2,<3",
+        "charset-normalizer>=3.3,<4",
+        "chardet>=5.2,<6",
+    ):
+        assert dependency in requirements
+    vision_text = (RUN_DIR / "processing" / "overlay_vision_sidecar.py").read_text(encoding="utf-8")
+    assert 'mode="L"' not in vision_text
+
 
 def check_packaging_config() -> None:
     build_script = (RUN_DIR / "tools" / "build_bundle.py").read_text(encoding="utf-8")
     spec_text = (RUN_DIR / "Hextech伴生终端.spec").read_text(encoding="utf-8")
 
     assert "--hidden-import\", \"filelock\"" in build_script
+    assert "--hidden-import\", \"tkinter\"" in build_script
+    assert "--hidden-import\", \"_tkinter\"" in build_script
+    assert "resolve_tcl_runtime_dirs" in build_script
+    assert "resolve_tkinter_package_dir" in build_script
+    assert ";_tcl_data" in build_script
+    assert ";_tk_data" in build_script
+    assert ";tkinter" in build_script
+    assert "--collect-submodules\", \"tkinter\"" in build_script
     assert "filelock" in spec_text
+    assert "tkinter" in spec_text and "_tkinter" in spec_text
+    assert "_tcl_data" in spec_text and "_tk_data" in spec_text and "'tkinter'" in spec_text
+    assert "collect_submodules('tkinter')" in spec_text
     assert "display" in (RUN_DIR / "tools" / "bundle_manifest.py").read_text(encoding="utf-8")
 
 
@@ -516,7 +903,7 @@ def check_ui_feature_flags_contract() -> None:
         defaults = ui_feature_flags.load_ui_feature_flags(flags_path)
 
         assert defaults["web_frontend_enabled"] is False
-        assert defaults["game_overlay_enabled"] is False
+        assert defaults["game_overlay_enabled"] is True
         assert defaults["auto_open_browser"] is True
         assert defaults["private_policy_stats_enabled"] is False
         assert defaults["low_frequency_listener_enabled"] is True
@@ -538,15 +925,26 @@ def check_ui_feature_flags_contract() -> None:
         assert loaded["private_policy_stats_enabled"] is True
         assert "unknown" not in loaded
 
+        parsed = ui_feature_flags.normalize_ui_feature_flags(
+            {"game_overlay_enabled": "false", "web_frontend_enabled": "true", "auto_open_browser": "invalid"}
+        )
+        assert parsed["game_overlay_enabled"] is False
+        assert parsed["web_frontend_enabled"] is True
+        assert parsed["auto_open_browser"] is True
+
 
 def check_overlay_hint_cache_contract() -> None:
     """验证 overlay hint cache 可直接查询，且默认不暴露私用统计字段。"""
     import processing.overlay_hint_cache as overlay_hint_cache
+    import processing.precomputed_cache as precomputed_cache
+    import scraping.augment_catalog as augment_catalog
 
     sample_payload = {
         "德玛西亚之力": {
             "comprehensive": [
                 {
+                    "英雄 ID": "86",
+                    "英雄名称": "德玛西亚之力",
                     "海克斯ID": "augment_001",
                     "海克斯名称": "珠光护手",
                     "海克斯阶级": "Gold",
@@ -554,15 +952,46 @@ def check_overlay_hint_cache_contract() -> None:
                     "源站排名": 2,
                     "综合得分": 1.25,
                     "海克斯胜率": 0.551,
+                    "海克斯出场率": 0.082,
+                }
+            ]
+        },
+        "时间刺客": {
+            "comprehensive": [
+                {
+                    "英雄 ID": "245",
+                    "英雄名称": "时间刺客",
+                    "海克斯ID": "augment_001",
+                    "海克斯名称": "珠光护手",
+                    "海克斯阶级": "Gold",
+                    "tooltip_plain": "技能可以暴击。",
+                    "源站排名": 8,
+                    "综合得分": 0.84,
+                    "海克斯胜率": 0.612,
+                    "海克斯出场率": 0.044,
                 }
             ]
         }
+    }
+    sample_synergy = {
+        "珠光护手": [
+            {
+                "hero_id": "266",
+                "hero_name": "暗裔剑魔",
+                "rating": "S",
+                "tag": "强力联动",
+                "tier": "棱彩",
+                "content": "伤害爆炸",
+                "augment_names": ["珠光护手"],
+            }
+        ]
     }
 
     public_cache = overlay_hint_cache.build_overlay_hint_cache(
         sample_payload,
         include_private_stats=False,
         source_tag="dev-check",
+        synergy_by_name=sample_synergy,
     )
     public_hint = overlay_hint_cache.query_overlay_hint(public_cache, "augment_001")
 
@@ -571,19 +1000,40 @@ def check_overlay_hint_cache_contract() -> None:
     assert public_hint["ok"] is True
     assert public_hint["hint"]["name"] == "珠光护手"
     assert public_hint["hint"]["summary"] == "技能可以暴击。"
-    assert "winrate" not in public_hint["hint"]
-    assert "rank" not in public_hint["hint"]
-    assert "score" not in public_hint["hint"]
+    # public 缓存严禁泄露私用统计字段
+    for blocked_field in ("winrate", "pickrate", "rank", "score", "stats_by_champion_id", "stats_by_champion_name"):
+        assert blocked_field not in public_hint["hint"], blocked_field
+    # synergy 与私用统计无关，公共缓存也按 augment 名命中
+    assert public_hint["hint"].get("synergies"), "公共缓存应保留按名命中的 synergy"
+    assert public_hint["hint"]["synergies"][0]["hero_name"] == "暗裔剑魔"
 
     private_cache = overlay_hint_cache.build_overlay_hint_cache(
         sample_payload,
         include_private_stats=True,
         source_tag="dev-check",
+        synergy_by_name=sample_synergy,
     )
     private_hint = overlay_hint_cache.query_overlay_hint(private_cache, "augment_001")
     assert private_hint["hint"]["winrate"] == 0.551
+    assert private_hint["hint"]["pickrate"] == 0.082
     assert private_hint["hint"]["rank"] == 2
     assert private_hint["hint"]["score"] == 1.25
+    assert private_hint["hint"]["source_heroes"] == ["德玛西亚之力", "时间刺客"]
+    assert private_hint["hint"]["stats_by_champion_id"]["86"]["winrate"] == 0.551
+    assert private_hint["hint"]["stats_by_champion_id"]["245"]["winrate"] == 0.612
+    assert private_hint["hint"]["stats_by_champion_name"]["德玛西亚之力"]["pickrate"] == 0.082
+    assert private_hint["hint"]["stats_by_champion_name"]["时间刺客"]["pickrate"] == 0.044
+    assert private_hint["hint"]["synergies"][0]["augment_names"] == ["珠光护手"]
+
+    # 没有 synergy 命中的 augment 不应出现 synergies 字段，避免 overlay 误判
+    no_synergy_cache = overlay_hint_cache.build_overlay_hint_cache(
+        sample_payload,
+        include_private_stats=False,
+        source_tag="dev-check",
+        synergy_by_name={},
+    )
+    no_synergy_hint = overlay_hint_cache.query_overlay_hint(no_synergy_cache, "augment_001")
+    assert "synergies" not in no_synergy_hint["hint"]
 
     missing = overlay_hint_cache.query_overlay_hint({}, "augment_404")
     assert missing == {"ok": False, "error": "cache_missing", "augment_id": "augment_404"}
@@ -601,9 +1051,282 @@ def check_overlay_hint_cache_contract() -> None:
         assert overlay_hint_cache.query_overlay_hint(missing_payload, "augment_404")["error"] == "cache_missing"
         assert overlay_hint_cache.query_overlay_hint(damaged_payload, "augment_404")["error"] == "cache_damaged"
 
+    # synergy 加载器也只读本地快照，缺失/损坏时静默给空 dict，不抛异常
+    with TemporaryDirectory() as tmp_dir:
+        good_path = Path(tmp_dir) / "syn.json"
+        good_path.write_text(
+            json.dumps(
+                {
+                    "266": {
+                        "name": "暗裔剑魔",
+                        "synergy_items": [
+                            {
+                                "augment_names": ["珠光护手"],
+                                "tier": "棱彩",
+                                "rating": "S",
+                                "tag": "强力联动",
+                                "content": "伤害爆炸",
+                            }
+                        ],
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        index = overlay_hint_cache._load_synergy_by_augment_name(good_path)
+        assert "珠光护手" in index and index["珠光护手"][0]["hero_name"] == "暗裔剑魔"
+
+        damaged_syn = Path(tmp_dir) / "bad.json"
+        damaged_syn.write_text("not-json", encoding="utf-8")
+        assert overlay_hint_cache._load_synergy_by_augment_name(damaged_syn) == {}
+        assert overlay_hint_cache._load_synergy_by_augment_name(Path(tmp_dir) / "missing.json") == {}
+
     module_text = (RUN_DIR / "processing" / "overlay_hint_cache.py").read_text(encoding="utf-8")
     assert "requests" not in module_text
     assert "full_hextech_scraper" not in module_text
+
+    # Overlay 启动只允许读取稳定清单；不得因 freshness 检查改写 data/static。
+    with TemporaryDirectory() as tmp_dir:
+        manifest_path = Path(tmp_dir) / "Augment_Icon_Manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "schema_version": 2,
+                        "name": "测试海克斯",
+                        "tier": "黄金",
+                        "filename": "test_small.png",
+                        "local_path": "assets/test_small.png",
+                        "icon_url": "/assets/test_small.png",
+                    }
+                ],
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        before = manifest_path.read_bytes()
+        lookup = augment_catalog.load_augment_catalog_lookup_read_only(tmp_dir)
+        assert lookup["测试海克斯"]["icon_url"] == "/assets/test_small.png"
+        assert manifest_path.read_bytes() == before
+
+        debug_manifest_path = Path(tmp_dir) / "runtime" / "debug" / "augment_catalog" / "Augment_Icon_Manifest.debug.json"
+        with (
+            patch.object(augment_catalog, "AUGMENT_ICON_MANIFEST_FILE", str(manifest_path)),
+            patch.object(
+                augment_catalog,
+                "AUGMENT_ICON_DEBUG_MANIFEST_FILE",
+                str(debug_manifest_path),
+                create=True,
+            ),
+        ):
+            augment_catalog._write_augment_icon_manifest(
+                [{"schema_version": 2, "name": "调试海克斯", "filename": "debug_small.png"}]
+            )
+        assert manifest_path.read_bytes() == before
+        assert json.loads(debug_manifest_path.read_text(encoding="utf-8"))[0]["name"] == "调试海克斯"
+
+        def valid_manifest(prefix: str) -> list[dict[str, Any]]:
+            return [
+                {
+                    "schema_version": 2,
+                    "name": f"{prefix}海克斯{i}",
+                    "tier": "黄金",
+                    "filename": f"{prefix.lower()}_{i}.png",
+                    "local_path": f"assets/{prefix.lower()}_{i}.png",
+                    "icon_url": f"/assets/{prefix.lower()}_{i}.png",
+                    "description": "说明",
+                    "tooltip": "说明",
+                    "tooltip_plain": "说明",
+                    "spell_values": {},
+                    "status": "ready",
+                    "updated_at": "2026-01-01T00:00:00+0000",
+                }
+                for i in range(55)
+            ]
+
+        manifest_path.write_text(json.dumps(valid_manifest("Static"), ensure_ascii=False), encoding="utf-8")
+        runtime_manifest_path = Path(tmp_dir) / "Augment_Icon_Manifest.debug.json"
+        runtime_manifest_path.write_text(
+            json.dumps(valid_manifest("Runtime"), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        with (
+            patch.object(augment_catalog, "_manifest_is_stale", return_value=False),
+            patch.object(augment_catalog, "_AUGMENT_ICON_MANIFEST_CACHE", ("", 0.0, [])),
+            patch.object(augment_catalog, "_AUGMENT_LOOKUP_CACHE", ("", 0.0, {})),
+        ):
+            manifest = augment_catalog.load_augment_icon_manifest(config_dir=tmp_dir)
+            lookup = augment_catalog.build_augment_catalog_lookup(config_dir=tmp_dir)
+        assert manifest[0]["name"] == "Runtime海克斯0"
+        assert "Runtime海克斯0" in lookup and "Static海克斯0" not in lookup
+
+        with patch.object(runtime_store, "get_runtime_root_dir", return_value=Path(tmp_dir) / "runtime-root"):
+            resolved_debug_path = Path(
+                runtime_store.build_runtime_debug_path("augment_catalog/manifest.json")
+            )
+            assert resolved_debug_path == Path(tmp_dir) / "runtime-root" / "debug" / "augment_catalog" / "manifest.json"
+            try:
+                runtime_store.build_runtime_debug_path("../escaped.json")
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("runtime debug 路径不得逃逸 debug 根目录")
+
+    stable_manifest = json.loads(
+        (RUN_DIR / "data" / "static" / "Augment_Icon_Manifest.json").read_text(encoding="utf-8")
+    )
+    assert stable_manifest
+    assert all(
+        not Path(str(item.get("local_path") or "")).is_absolute()
+        for item in stable_manifest
+        if isinstance(item, dict)
+    )
+
+    latest_df = pd.DataFrame(
+        [
+            {
+                "英雄 ID": "432",
+                "英雄名称": "星界游神",
+                "英雄评级": 1,
+                "英雄胜率": 0.51,
+                "英雄出场率": 0.02,
+                "海克斯ID": "1314",
+                "源站排名": 1,
+                "源站层级": "T1",
+                "海克斯阶级": "Gold",
+                "海克斯名称": "自然即是治愈",
+                "海克斯胜率": 0.613,
+                "海克斯出场率": 0.041,
+                "胜率差": 0.08,
+                "综合得分": 2.1,
+            },
+            {
+                "英雄 ID": float("nan"),
+                "英雄名称": "缺失ID英雄",
+                "英雄评级": 1,
+                "英雄胜率": 0.49,
+                "英雄出场率": 0.01,
+                "海克斯ID": "nan-id",
+                "源站排名": 2,
+                "源站层级": "T2",
+                "海克斯阶级": "Gold",
+                "海克斯名称": "缺失ID海克斯",
+                "海克斯胜率": 0.502,
+                "海克斯出场率": 0.012,
+                "胜率差": 0.01,
+                "综合得分": 1.1,
+            },
+            {
+                "英雄 ID": "999",
+                "英雄名称": float("nan"),
+                "英雄评级": 1,
+                "英雄胜率": 0.5,
+                "英雄出场率": 0.02,
+                "海克斯ID": "nan-hero",
+                "源站排名": 3,
+                "源站层级": "T3",
+                "海克斯阶级": "Gold",
+                "海克斯名称": "污染英雄名",
+                "海克斯胜率": 0.5,
+                "海克斯出场率": 0.02,
+                "胜率差": 0.0,
+                "综合得分": 0.5,
+            },
+            {
+                "英雄 ID": "998",
+                "英雄名称": "污染海克斯名",
+                "英雄评级": 1,
+                "英雄胜率": 0.5,
+                "英雄出场率": 0.02,
+                "海克斯ID": "nan-augment",
+                "源站排名": 4,
+                "源站层级": "T3",
+                "海克斯阶级": "Gold",
+                "海克斯名称": float("nan"),
+                "海克斯胜率": 0.5,
+                "海克斯出场率": 0.02,
+                "胜率差": 0.0,
+                "综合得分": 0.5,
+            },
+        ]
+    )
+    with (
+        patch.object(runtime_store, "get_latest_csv", return_value=str(RUN_DIR / "data" / "raw" / "hextech" / "Hextech_Data_2099-01-01.csv")),
+        patch.object(runtime_store, "load_runtime_csv", return_value=latest_df),
+        patch("scraping.augment_catalog.load_augment_catalog_lookup_read_only", return_value={}),
+    ):
+        latest_cache = overlay_hint_cache.build_overlay_hint_cache_from_precomputed(
+            include_private_stats=True,
+            source_tag="dev-check",
+        )
+    latest_hint = overlay_hint_cache.query_overlay_hint(latest_cache, "自然即是治愈")
+    assert latest_hint["ok"] is True
+    assert latest_hint["hint"]["winrate"] == 0.613
+    assert latest_hint["hint"]["stats_by_champion_name"]["星界游神"]["pickrate"] == 0.041
+    assert latest_cache["source"]["data_source"] == "runtime-csv"
+    assert latest_cache["source"]["runtime_csv"] == "Hextech_Data_2099-01-01.csv"
+    nan_id_hint = overlay_hint_cache.query_overlay_hint(latest_cache, "缺失ID海克斯")
+    assert nan_id_hint["ok"] is True
+    assert "nan" not in nan_id_hint["hint"].get("stats_by_champion_id", {})
+    assert latest_cache["source"]["hero_count"] == 2
+    assert overlay_hint_cache.query_overlay_hint(latest_cache, "污染英雄名")["ok"] is False
+    assert overlay_hint_cache.query_overlay_hint(latest_cache, "nan-augment")["ok"] is False
+
+    with TemporaryDirectory() as tmp_dir:
+        champion_cache = Path(tmp_dir) / "Champion_List_Cache.json"
+        hextech_cache = Path(tmp_dir) / "Champion_Hextech_Cache.json"
+        champion_cache.write_text(
+            json.dumps({"meta": {"source": "stale.csv"}, "data": [{"英雄名称": "德玛西亚之力"}]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        hextech_cache.write_text(
+            json.dumps({"meta": {"source": "stale.csv"}, "data": sample_payload}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        with (
+            patch.object(runtime_store, "get_latest_csv", return_value=None),
+            patch.object(precomputed_cache, "warm_precomputed_hextech_cache", return_value=False),
+            patch.object(precomputed_cache, "CHAMPION_LIST_CACHE_FILE", str(champion_cache)),
+            patch.object(precomputed_cache, "HEXTECH_DETAIL_CACHE_FILE", str(hextech_cache)),
+        ):
+            stale_cache = overlay_hint_cache.build_overlay_hint_cache_from_precomputed(
+                include_private_stats=True,
+                source_tag="dev-check",
+            )
+    stale_hint = overlay_hint_cache.query_overlay_hint(stale_cache, "augment_001")
+    assert stale_hint["ok"] is True
+    assert stale_hint["hint"]["stats_by_champion_id"]["86"]["pickrate"] == 0.082
+
+
+def check_overlay_runtime_paths_contract() -> None:
+    """验证 overlay event/context 共享的轻量运行态路径规则。"""
+    import processing.overlay_runtime_paths as overlay_runtime_paths
+
+    with TemporaryDirectory() as tmp_dir:
+        source_base = Path(tmp_dir) / "source"
+        with (
+            patch.object(overlay_runtime_paths.sys, "frozen", False, create=True),
+            patch.dict(os.environ, {"HEXTECH_BASE_DIR": str(source_base)}),
+        ):
+            resolved = Path(overlay_runtime_paths.overlay_runtime_state_path("probe.json"))
+            assert resolved == (source_base / "data" / "runtime" / "state" / "probe.json").resolve()
+            try:
+                overlay_runtime_paths.overlay_runtime_state_path("../escaped.json")
+            except ValueError as exc:
+                assert "escaped state dir" in str(exc)
+            else:
+                raise AssertionError("overlay runtime state 路径不得逃逸 state 根目录")
+
+        local_app_data = Path(tmp_dir) / "local-app-data"
+        with (
+            patch.object(overlay_runtime_paths.sys, "frozen", True, create=True),
+            patch.dict(os.environ, {"LOCALAPPDATA": str(local_app_data), "APPDATA": ""}),
+        ):
+            resolved = Path(overlay_runtime_paths.overlay_runtime_state_path("probe.json"))
+            assert resolved == (
+                local_app_data / "HextechNexus" / "data" / "runtime" / "state" / "probe.json"
+            ).resolve()
 
 
 def check_overlay_event_channel_contract() -> None:
@@ -646,6 +1369,36 @@ def check_overlay_event_channel_contract() -> None:
         assert snapshot["selection_type"] == "hextech"
         assert len(snapshot["slots"]) == 3
         assert snapshot["slots"][0]["name"] == "珠光护手"
+
+        zero_ready_event = overlay_event_channel.build_overlay_event(
+            [
+                {"slot": 0, "state": "detecting"},
+                {"slot": 1, "state": "detecting"},
+                {"slot": 2, "state": "detecting"},
+            ],
+            source_tag="dev-check",
+            active=False,
+        )
+        zero_ready_event["source"].update(
+            {
+                "selection_window_active": True,
+                "ready_slots": 0,
+                "content_ready": False,
+            }
+        )
+        overlay_event_channel.write_overlay_event(zero_ready_event, event_path)
+        zero_ready_snapshot = overlay_event_channel.read_overlay_event(event_path)
+        assert zero_ready_snapshot["ok"] is True
+        assert zero_ready_snapshot["visible"] is False
+        assert zero_ready_snapshot["active"] is False
+        assert zero_ready_snapshot["source"]["selection_window_active"] is True
+        assert zero_ready_snapshot["source"]["ready_slots"] == 0
+        assert overlay_event_channel.EVENT_HEARTBEAT_SECONDS == 1.0
+        assert overlay_event_channel.EVENT_STALE_HEARTBEAT_BUDGET == 2.5
+        assert overlay_event_channel.EVENT_MAX_AGE_SECONDS == (
+            overlay_event_channel.EVENT_HEARTBEAT_SECONDS
+            * overlay_event_channel.EVENT_STALE_HEARTBEAT_BUDGET
+        )
 
         fake_path = Path(tmp_dir) / "fake-detection.json"
         fake_written = overlay_event_channel.write_fake_detection_overlay_event(fake_path)
@@ -696,12 +1449,88 @@ def check_overlay_event_channel_contract() -> None:
         assert expired_snapshot["ok"] is False
         assert expired_snapshot["error"] == "event_expired"
 
+        unknown_event = dict(event)
+        unknown_event["selection_type"] = "legacy-unknown"
+        unknown_path = Path(tmp_dir) / "unknown-selection.json"
+        overlay_event_channel.write_overlay_event(unknown_event, unknown_path)
+        unknown_snapshot = overlay_event_channel.read_overlay_event(unknown_path)
+        assert unknown_snapshot["ok"] is False
+        assert unknown_snapshot["visible"] is False
+        assert unknown_snapshot["error"] == "selection_type_unknown"
+
     module_text = (RUN_DIR / "processing" / "overlay_event_channel.py").read_text(encoding="utf-8")
     assert "requests" not in module_text
     assert "cv2" not in module_text
     assert "from processing.runtime_store" not in module_text
     assert "import processing.runtime_store" not in module_text
     assert "from processing.overlay_hint_cache" not in module_text
+    assert "from processing.overlay_runtime_paths import overlay_runtime_state_path" in module_text
+    assert "def _overlay_runtime_root_dir" not in module_text
+    assert "def _overlay_runtime_state_path" not in module_text
+
+
+def check_overlay_context_contract() -> None:
+    """验证游戏内 overlay 英雄上下文只通过本地 state 文件传递。"""
+    import processing.overlay_context as overlay_context
+    import display.ui_runtime as ui_runtime
+
+    with TemporaryDirectory() as tmp_dir:
+        context_path = Path(tmp_dir) / "game_overlay_context.v1.json"
+        missing = overlay_context.read_overlay_context(context_path)
+        assert missing["ok"] is False
+        assert missing["error"] == "context_missing"
+        assert missing["champion_id"] == ""
+
+        payload = overlay_context.build_overlay_context_payload(
+            champion_id=266,
+            champion_name="暗裔剑魔",
+            source="dev-check",
+        )
+        assert payload["schema_version"] == overlay_context.SCHEMA_VERSION
+        assert payload["champion_id"] == "266"
+        overlay_context.write_overlay_context(payload, context_path)
+        loaded = overlay_context.read_overlay_context(context_path)
+        assert loaded["ok"] is True
+        assert loaded["champion_name"] == "暗裔剑魔"
+        assert loaded["source"] == "dev-check"
+
+        expired_payload = dict(payload)
+        expired_payload["generated_at"] = time.time() - overlay_context.CONTEXT_MAX_AGE_SECONDS - 1
+        context_path.write_text(json.dumps(expired_payload, ensure_ascii=False), encoding="utf-8")
+        assert overlay_context.read_overlay_context(context_path)["error"] == "context_expired"
+
+        context_path.write_text("not-json", encoding="utf-8")
+        assert overlay_context.read_overlay_context(context_path)["error"] == "context_damaged"
+
+        class DummyUI:
+            core_data = {"266": {"name": "暗裔剑魔"}}
+
+        live_state = {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"}
+        assert ui_runtime._write_overlay_context_from_live_state(
+            DummyUI(),
+            live_state,
+            source="web",
+            context_path=context_path,
+        ) is True
+        live_loaded = overlay_context.read_overlay_context(context_path)
+        assert live_loaded["ok"] is True
+        assert live_loaded["champion_id"] == "266"
+        assert live_loaded["champion_name"] == "暗裔剑魔"
+        assert live_loaded["source"] == "web"
+
+        assert ui_runtime._write_overlay_context_from_live_state(
+            DummyUI(),
+            {"local_champion_id": 0},
+            source="web",
+            context_path=context_path,
+        ) is False
+
+    module_text = (RUN_DIR / "processing" / "overlay_context.py").read_text(encoding="utf-8").lower()
+    forbidden_terms = ["requests", "fastapi", "web_api", "web_runtime", "full_hextech_scraper"]
+    assert not any(term in module_text for term in forbidden_terms)
+    assert "from processing.overlay_runtime_paths import overlay_runtime_state_path" in module_text
+    assert "def _overlay_runtime_root_dir" not in module_text
+    assert "def _overlay_runtime_state_path" not in module_text
 
 
 def check_official_overlay_provider_contract() -> None:
@@ -850,6 +1679,10 @@ def check_overlay_vision_sidecar_contract() -> None:
     from PIL import Image, ImageDraw
 
     import processing.overlay_vision_sidecar as overlay_vision_sidecar
+    from processing.lol_window import cursor_in_client_boxes
+    from processing.overlay_vision_layout import CARD_PANELS_16_10, apply_transform, detect_selection_scene, pick_card_panels
+    from processing.overlay_vision_matcher import candidate_from_slot
+    from processing.overlay_vision_state import SelectionTracker
 
     required_presets = {
         "1920x1080": (1920, 1080),
@@ -870,13 +1703,22 @@ def check_overlay_vision_sidecar_contract() -> None:
     def _paint_selection_button(image: Image.Image) -> tuple[int, int, int, int]:
         draw = ImageDraw.Draw(image)
         box = (
-            int(image.size[0] * 0.45),
-            int(image.size[1] * 0.80),
-            int(image.size[0] * 0.55),
-            int(image.size[1] * 0.84),
+            int(image.size[0] * 0.445),
+            int(image.size[1] * 0.775),
+            int(image.size[0] * 0.555),
+            int(image.size[1] * 0.813),
         )
         draw.rounded_rectangle(box, radius=14, fill="#168fcf", outline="#54d5ff", width=4)
         return box
+
+    def _paint_card_borders(image: Image.Image) -> None:
+        draw = ImageDraw.Draw(image)
+        for left, top, right, bottom in pick_card_panels(image.size):
+            draw.rectangle(
+                (int(left * image.width), int(top * image.height), int(right * image.width), int(bottom * image.height)),
+                outline="#d8b36f",
+                width=8,
+            )
 
     def _paint_diagonal_blue_noise(image: Image.Image) -> None:
         draw = ImageDraw.Draw(image)
@@ -888,6 +1730,17 @@ def check_overlay_vision_sidecar_contract() -> None:
             x = start_x + row * 8
             y = start_y + row
             draw.line((x, y, x + run_width, y), fill="#168fcf")
+
+    def _paint_slot_name(image: Image.Image, box: tuple[int, int, int, int], name: str) -> None:
+        left, top, right, bottom = box
+        draw = ImageDraw.Draw(image)
+        draw.rectangle(box, fill="#001010")
+        name_mask = overlay_vision_sidecar._render_name_mask(name)
+        assert name_mask is not None
+        text_image = Image.merge("RGB", (name_mask, name_mask, name_mask))
+        x = left + max(0, (right - left - text_image.width) // 2)
+        y = top + max(0, (bottom - top - text_image.height) // 2)
+        image.paste(text_image, (x, y))
 
     # 模板必须带形状：归一化指纹只看形状，纯色模板是平坦图会被正确剔除。
     def _make_glyph_template(shape: str) -> Image.Image:
@@ -909,9 +1762,9 @@ def check_overlay_vision_sidecar_contract() -> None:
     }
     template_index = overlay_vision_sidecar.build_template_index(
         {
-            "augment_a": {"name": "合成海克斯 A", "tier": "Gold", "summary": "合成测试 A", "image": templates["augment_a"]},
-            "augment_b": {"name": "合成海克斯 B", "tier": "Prismatic", "summary": "合成测试 B", "image": templates["augment_b"]},
-            "augment_c": {"name": "合成海克斯 C", "tier": "Silver", "summary": "合成测试 C", "image": templates["augment_c"]},
+            "augment_a": {"name": "尤里卡", "tier": "Gold", "summary": "合成测试 A", "image": templates["augment_a"]},
+            "augment_b": {"name": "精怪魔法", "tier": "Prismatic", "summary": "合成测试 B", "image": templates["augment_b"]},
+            "augment_c": {"name": "重量级打击手", "tier": "Silver", "summary": "合成测试 C", "image": templates["augment_c"]},
         }
     )
     assert len(template_index) == 3
@@ -938,11 +1791,14 @@ def check_overlay_vision_sidecar_contract() -> None:
 
     frame = Image.new("RGB", (2560, 1600), "#070b12")
     _paint_selection_button(frame)
+    _paint_card_borders(frame)
     preset = overlay_vision_sidecar.resolve_roi_preset(2560, 1600, preset="auto")
     for slot_index, box in enumerate(preset.slot_boxes(frame.size)):
         left, top, right, bottom = box
         # ROI 即图标框：模板按整框贴入，与真实几何（crop ≈ 图标整图）一致。
         frame.paste(templates[f"augment_{chr(ord('a') + slot_index)}"].resize((right - left, bottom - top)), (left, top))
+    for slot_index, name_box in enumerate(preset.name_boxes(frame.size)):
+        _paint_slot_name(frame, name_box, ["尤里卡", "精怪魔法", "重量级打击手"][slot_index])
 
     with TemporaryDirectory() as tmp_dir:
         calibration_path = Path(tmp_dir) / "overlay_anchor_calibration.v1.json"
@@ -953,7 +1809,7 @@ def check_overlay_vision_sidecar_contract() -> None:
             min_confidence=0.80,
             calibration_path=calibration_path,
         )
-        assert calibration_path.is_file()
+        assert not calibration_path.exists()
         cached_detection = overlay_vision_sidecar.detect_overlay_choices(
             frame,
             template_index,
@@ -961,14 +1817,84 @@ def check_overlay_vision_sidecar_contract() -> None:
             min_confidence=0.80,
             calibration_path=calibration_path,
         )
-        assert cached_detection["source"]["calibration"] == "cached"
+        assert cached_detection["source"]["calibration"] == "layout_v2"
     assert detection["active"] is True
     assert detection["selection_type"] == "hextech"
     assert detection["source"]["tag"] == "vision-sidecar"
     assert detection["source"]["preset"] == "2560x1600"
     assert detection["source"]["capture_size"] == [2560, 1600]
-    assert detection["source"]["calibration"] == "calibrated"
+    assert detection["source"]["calibration"] == "layout_v2"
+    assert detection["source"]["scene_present"] is True
+    assert detection["source"]["scene_state"] == "candidate"
+    assert detection["source"]["layout_id"] == "2560x1600"
+    assert detection["source"]["gate_state"] == "visible_ready"
+    assert detection["source"]["ready_slots"] == 3
+    assert detection["source"].get("selection_button_present") is True
+    assert detection["source"].get("selection_window_active") is True
+    assert float(detection["source"].get("button_blue_ratio") or 0.0) > 0.0
+    assert len(detection["source"].get("button_box") or []) == 4
     assert [slot["augment_id"] for slot in detection["slots"]] == ["augment_a", "augment_b", "augment_c"]
+    first_channels = detection["_raw_slots"][0]["channels"]
+    assert first_channels["icon_shortlist"]["top_candidates"]
+    assert first_channels["text_narrowed"]["top_candidates"]
+    assert "margin" in first_channels["text_narrowed"]
+    assert "top_candidates" in first_channels["text_alt_narrowed"]
+
+    partial_frame = frame.copy()
+    partial_draw = ImageDraw.Draw(partial_frame)
+    partial_draw.rectangle(preset.slot_boxes(partial_frame.size)[2], fill="#070b12")
+    partial_draw.rectangle(preset.name_boxes(partial_frame.size)[2], fill="#070b12")
+    with TemporaryDirectory() as tmp_dir:
+        partial_detection = overlay_vision_sidecar.detect_overlay_choices(
+            partial_frame,
+            template_index,
+            preset_name="auto",
+            min_confidence=0.80,
+            calibration_path=Path(tmp_dir) / "overlay_anchor_calibration.v1.json",
+        )
+    assert partial_detection["active"] is False
+    assert partial_detection["source"]["ready_slots"] == 2
+    assert partial_detection["source"]["content_ready"] is False
+    assert partial_detection["source"]["reason"] == "partial_ready"
+    assert partial_detection["source"].get("selection_button_present") is True
+    assert partial_detection["source"].get("selection_window_active") is True
+
+    conflict_frame = frame.copy()
+    first_slot_box = preset.slot_boxes(conflict_frame.size)[0]
+    left, top, right, bottom = first_slot_box
+    conflict_frame.paste(templates["augment_b"].resize((right - left, bottom - top)), (left, top))
+    with TemporaryDirectory() as tmp_dir:
+        conflict_detection = overlay_vision_sidecar.detect_overlay_choices(
+            conflict_frame,
+            template_index,
+            preset_name="auto",
+            min_confidence=0.80,
+            calibration_path=Path(tmp_dir) / "overlay_anchor_calibration.v1.json",
+        )
+    assert conflict_detection["active"] is True
+    assert conflict_detection["source"]["ready_slots"] == 3
+    assert conflict_detection["source"]["content_ready"] is True
+    assert conflict_detection["slots"][0]["state"] == "ready"
+    assert conflict_detection["slots"][0]["name"] == "尤里卡"
+    assert conflict_detection["slots"][0]["diagnostic"] == "text_icon_disagree"
+
+    modal_frame = frame.copy()
+    modal_draw = ImageDraw.Draw(modal_frame)
+    modal_draw.rectangle((870, 410, 1690, 780), fill="#111820", outline="#8d6b2e", width=4)
+    modal_draw.rectangle((1110, 640, 1450, 715), fill="#6b491f", outline="#d8b36f", width=5)
+    assert overlay_vision_sidecar._blocking_modal_present(modal_frame) is True
+    assert overlay_vision_sidecar._blocking_modal_present(frame) is False
+    with TemporaryDirectory() as tmp_dir:
+        modal_detection = overlay_vision_sidecar.detect_overlay_choices(
+            modal_frame,
+            template_index,
+            preset_name="auto",
+            min_confidence=0.80,
+            calibration_path=Path(tmp_dir) / "overlay_anchor_calibration.v1.json",
+        )
+    assert modal_detection["active"] is False
+    assert modal_detection["source"]["reason"] == "blocking_modal_present"
+    assert modal_detection["source"]["ready_slots"] >= 1
 
     blank = Image.new("RGB", (2560, 1600), "#070b12")
     _paint_selection_button(blank)
@@ -981,6 +1907,10 @@ def check_overlay_vision_sidecar_contract() -> None:
             calibration_path=Path(tmp_dir) / "overlay_anchor_calibration.v1.json",
         )
     assert blank_detection["active"] is False
+    assert blank_detection["source"]["reason"] == "selection_scene_not_detected"
+    assert blank_detection["source"]["calibration"] == "layout_v2"
+    assert blank_detection["source"].get("selection_window_active") is False
+    assert blank_detection["source"]["content_ready"] is False
     assert all(slot["state"] != "ready" for slot in blank_detection["slots"])
 
     no_button = Image.new("RGB", (2560, 1600), "#070b12")
@@ -994,7 +1924,9 @@ def check_overlay_vision_sidecar_contract() -> None:
             calibration_path=calibration_path,
         )
     assert no_button_detection["active"] is False
-    assert no_button_detection["source"]["reason"] == "anchor_missing"
+    assert no_button_detection["source"]["reason"] == "selection_scene_not_detected"
+    assert no_button_detection["source"].get("selection_button_present") is False
+    assert no_button_detection["source"].get("selection_window_active") is False
 
     scattered_blue = Image.new("RGB", (2560, 1600), "#070b12")
     _paint_diagonal_blue_noise(scattered_blue)
@@ -1010,47 +1942,52 @@ def check_overlay_vision_sidecar_contract() -> None:
         )
         assert not calibration_path.exists()
     assert scattered_detection["active"] is False
-    assert scattered_detection["source"]["reason"] == "anchor_missing"
+    assert scattered_detection["source"]["reason"] == "selection_scene_not_detected"
 
-    missing_button = frame.copy()
-    button_payload = overlay_vision_sidecar.build_anchor_calibration_payload(frame, preset_name="auto")
-    assert button_payload is not None
+    # V2 不再读取或改写旧 anchor；旧文件保留在磁盘也不能影响当前版式。
     with TemporaryDirectory() as tmp_dir:
-        calibration_path = Path(tmp_dir) / "overlay_anchor_calibration.v1.json"
-        overlay_vision_sidecar.write_anchor_calibration(button_payload, calibration_path)
-        calibration = overlay_vision_sidecar._coerce_anchor_calibration(button_payload, frame.size)
-        assert calibration is not None
-        button_box = calibration.button_box
-        ImageDraw.Draw(missing_button).rectangle(button_box, fill="#070b12")
-        missing_button_detection = overlay_vision_sidecar.detect_overlay_choices(
-            missing_button,
-            template_index,
-            preset_name="auto",
-            min_confidence=0.80,
-            calibration_path=calibration_path,
-        )
-    assert missing_button_detection["active"] is False
-    assert missing_button_detection["source"]["reason"] == "selection_button_missing"
-
-    poisoned_payload = dict(button_payload)
-    poisoned_payload["button_box"] = [0.585, 0.80, 0.665, 0.84]
-    with TemporaryDirectory() as tmp_dir:
-        calibration_path = Path(tmp_dir) / "overlay_anchor_calibration.v1.json"
-        overlay_vision_sidecar.write_anchor_calibration(poisoned_payload, calibration_path)
-        healed_detection = overlay_vision_sidecar.detect_overlay_choices(
+        old_anchor_path = Path(tmp_dir) / "overlay_anchor_calibration.v1.json"
+        old_anchor_text = '{"schema_version":1,"button_box":[0.44,0.89,0.56,0.92]}'
+        old_anchor_path.write_text(old_anchor_text, encoding="utf-8")
+        ignored_anchor_detection = overlay_vision_sidecar.detect_overlay_choices(
             frame,
             template_index,
             preset_name="auto",
             min_confidence=0.80,
-            calibration_path=calibration_path,
+            calibration_path=old_anchor_path,
         )
-        healed_payload = overlay_vision_sidecar.load_anchor_calibration(calibration_path)
-    assert healed_detection["active"] is True
-    assert healed_detection["source"]["calibration"] == "recalibrated"
-    assert healed_payload is not None
-    healed_button_box = healed_payload["button_box"]
-    healed_center_x = (float(healed_button_box[0]) + float(healed_button_box[2])) / 2.0
-    assert 0.42 <= healed_center_x <= 0.58
+        assert old_anchor_path.read_text(encoding="utf-8") == old_anchor_text
+    assert ignored_anchor_detection["active"] is True
+    assert ignored_anchor_detection["source"]["calibration"] == "layout_v2"
+
+    missing_button = frame.copy()
+    ImageDraw.Draw(missing_button).rectangle(
+        (int(2560 * 0.43), int(1600 * 0.77), int(2560 * 0.57), int(1600 * 0.86)),
+        fill="#070b12",
+    )
+    missing_button_detection = overlay_vision_sidecar.detect_overlay_choices(
+        missing_button,
+        template_index,
+        preset_name="auto",
+        min_confidence=0.80,
+    )
+    assert missing_button_detection["active"] is False
+    assert missing_button_detection["source"]["reason"] == "selection_scene_not_detected"
+    assert missing_button_detection["source"].get("selection_button_present") is False
+    assert missing_button_detection["source"]["card_residue"] is True
+    assert max(missing_button_detection["source"]["panel_scores"]) >= 0.35
+
+    client_rect = (100, 200, 1100, 800)
+    client_card_boxes = [(200, 100, 400, 500), (450, 100, 650, 500)]
+    assert cursor_in_client_boxes(client_rect, client_card_boxes, cursor_position=(350, 350)) is True
+    assert cursor_in_client_boxes(client_rect, client_card_boxes, cursor_position=(900, 750)) is False
+    with patch.object(overlay_vision_sidecar, "cursor_in_client_boxes", return_value=True) as cursor_gate:
+        assert overlay_vision_sidecar._cursor_over_card_panels(
+            client_rect,
+            missing_button.size,
+            missing_button_detection["source"],
+        ) is True
+    assert len(cursor_gate.call_args.args[1]) == 3
 
     # 载入画面杂乱内容也能蹭到 low_confidence；空占位框不得触发 active 显示。
     assert (
@@ -1061,7 +1998,13 @@ def check_overlay_vision_sidecar_contract() -> None:
     )
     assert (
         overlay_vision_sidecar._scene_active_from_slots(
-            [{"state": "ready", "confidence": 0.9}, {"state": "low_confidence", "confidence": 0.6}, {"state": "empty"}]
+            [{"state": "ready", "augment_id": "a"}, {"state": "low_confidence", "confidence": 0.6}, {"state": "empty"}]
+        )
+        is False
+    )
+    assert (
+        overlay_vision_sidecar._scene_active_from_slots(
+            [{"state": "ready", "augment_id": "a"}, {"state": "ready", "augment_id": "b"}, {"state": "ready", "augment_id": "c"}]
         )
         is True
     )
@@ -1074,9 +2017,40 @@ def check_overlay_vision_sidecar_contract() -> None:
         fill="#168fcf",
     )
     assert overlay_vision_sidecar.detect_selection_button_box(mid_band) is None
+    assert detect_selection_scene(mid_band, layout_id="2560x1600").present is False
+
+    # 载入进度条中心约 0.90H，颜色和宽度都像按钮，但垂直位置必须拒绝。
+    loading_bar = Image.new("RGB", (2560, 1600), "#070b12")
+    ImageDraw.Draw(loading_bar).rounded_rectangle(
+        (int(2560 * 0.44), int(1600 * 0.885), int(2560 * 0.56), int(1600 * 0.915)),
+        radius=14,
+        fill="#168fcf",
+    )
+    assert overlay_vision_sidecar.detect_selection_button_box(loading_bar) is None
+    assert detect_selection_scene(loading_bar, layout_id="2560x1600").present is False
+
+    # 真实按钮在动画/抗锯齿帧里有时只剩内层蓝色区域被 mask 命中。
+    # 这个框可以证明“按钮存在”，但不能把整套 ROI 往下拖，否则名称框会截到按钮边缘。
+    inner_button_frame = Image.new("RGB", (2560, 1600), "#070b12")
+    _paint_card_borders(inner_button_frame)
+    ImageDraw.Draw(inner_button_frame).rectangle((1146, 1248, 1418, 1304), fill="#168fcf")
+    inner_scene = detect_selection_scene(inner_button_frame, layout_id="2560x1600")
+    assert inner_scene.present is True
+    assert abs(inner_scene.transform.dy_ratio) <= (2.0 / 1600.0)
+    stable_name_box = apply_transform(preset.name_slots[0], inner_button_frame.size, inner_scene.transform)
+    assert stable_name_box[3] <= int(round(0.431 * inner_button_frame.height))
+
+    # 1920×1200 是 16:10；sidecar 和 renderer 必须使用同一个面板选择规则。
+    wide_16_10 = Image.new("RGB", (1920, 1200), "#070b12")
+    _paint_selection_button(wide_16_10)
+    _paint_card_borders(wide_16_10)
+    wide_scene = detect_selection_scene(wide_16_10, layout_id="1920x1080")
+    assert wide_scene.present is True
+    assert pick_card_panels(wide_16_10.size) == CARD_PANELS_16_10
 
     body_shard_frame = Image.new("RGB", (2560, 1600), "#070b12")
     _paint_selection_button(body_shard_frame)
+    _paint_card_borders(body_shard_frame)
     shard_icon = _make_glyph_template("bars")
     for box in preset.slot_boxes(body_shard_frame.size):
         left, top, right, bottom = box
@@ -1090,10 +2064,65 @@ def check_overlay_vision_sidecar_contract() -> None:
             calibration_path=Path(tmp_dir) / "overlay_anchor_calibration.v1.json",
         )
     assert body_shard_detection["active"] is False
-    assert body_shard_detection["selection_type"] == "body_shard"
-    assert body_shard_detection["source"]["reason"] == "body_shard_only"
+    assert body_shard_detection["source"]["ready_slots"] == 0
+    assert body_shard_detection["source"]["reason"] == "selection_scene_not_detected"
 
-    # ESC 暗色菜单场景：接近平坦的深色面板必须被方差门槛拒绝，不得误报 active。
+    shard_fixture_dir = RUN_DIR / "data" / "static" / "overlay_vision_fixtures" / "body_shard_20260621"
+    shard_name_crops = [Image.open(shard_fixture_dir / f"name_{index}.png").convert("RGB") for index in range(3)]
+    shard_scores = overlay_vision_sidecar._body_shard_name_scores(shard_name_crops)
+    assert len(shard_scores) == 3
+    assert sum(score >= 0.80 for score in shard_scores) >= 2
+    assert overlay_vision_sidecar._body_shard_scene_present(shard_scores) is True
+
+    real_index = overlay_vision_sidecar.load_default_template_index()
+    regression_fixture_dir = RUN_DIR / "data" / "static" / "overlay_vision_fixtures" / "hextech_20260622"
+    regression_names = ("更万用的瞄准镜", "闪现向前", "大法师")
+    regression_crops = [
+        Image.open(regression_fixture_dir / f"name_{index}.png").convert("RGB")
+        for index in range(3)
+    ]
+    assert overlay_vision_sidecar._body_shard_scene_present(
+        overlay_vision_sidecar._body_shard_name_scores(regression_crops)
+    ) is False
+    for crop, expected_name in zip(regression_crops, regression_names):
+        _crop_std, ranked_names = overlay_vision_sidecar._rank_name_templates(crop, real_index)
+        assert ranked_names and ranked_names[0][0].name == expected_name
+
+    normal_name_crops = [frame.crop(box) for box in preset.name_boxes(frame.size)]
+    normal_scores = overlay_vision_sidecar._body_shard_name_scores(normal_name_crops)
+    assert overlay_vision_sidecar._body_shard_scene_present(normal_scores) is False
+
+    real_shard_frame = body_shard_frame.copy()
+    for name_box, name_crop in zip(preset.name_boxes(real_shard_frame.size), shard_name_crops):
+        left, top, right, bottom = name_box
+        real_shard_frame.paste(name_crop.resize((right - left, bottom - top)), (left, top))
+    real_shard_detection = overlay_vision_sidecar.detect_overlay_choices(
+        real_shard_frame,
+        template_index,
+        preset_name="auto",
+        min_confidence=0.80,
+    )
+    assert real_shard_detection["active"] is False
+    assert real_shard_detection["selection_type"] == "body_shard"
+    assert real_shard_detection["source"]["reason"] == "body_shard_only"
+    assert real_shard_detection["source"]["scene_kind"] == "body_shard"
+    assert len(real_shard_detection["source"]["body_shard_scores"]) == 3
+
+    shared_icon_frame = frame.copy()
+    for box in preset.slot_boxes(shared_icon_frame.size):
+        left, top, right, bottom = box
+        shared_icon_frame.paste(templates["augment_a"].resize((right - left, bottom - top)), (left, top))
+    shared_icon_detection = overlay_vision_sidecar.detect_overlay_choices(
+        shared_icon_frame,
+        template_index,
+        preset_name="auto",
+        min_confidence=0.80,
+    )
+    assert shared_icon_detection["active"] is True
+    assert shared_icon_detection["source"]["ready_slots"] == 3
+    assert [slot["name"] for slot in shared_icon_detection["slots"]] == ["尤里卡", "精怪魔法", "重量级打击手"]
+
+    # 接近平坦的深色面板不得误识别卡片；按钮存在时仍只显示 detecting 骨架。
     dark_panel = Image.new("RGB", (2560, 1600), "#1d2026")
     _paint_selection_button(dark_panel)
     with TemporaryDirectory() as tmp_dir:
@@ -1105,9 +2134,11 @@ def check_overlay_vision_sidecar_contract() -> None:
             calibration_path=Path(tmp_dir) / "overlay_anchor_calibration.v1.json",
         )
     assert dark_detection["active"] is False
+    assert dark_detection["source"].get("selection_window_active") is False
+    assert dark_detection["source"].get("scene_reject_reason") == "selection_layout_missing"
     assert all(slot["state"] != "ready" for slot in dark_detection["slots"])
 
-    # 孪生图标：margin 归零但置信度极高，应走槽位豁免判 ready 而不是永远识别不出。
+    # 共用图标按规范化 mask digest 分组；icon-only 仍不得直接授权显示。
     twin_index = overlay_vision_sidecar.build_template_index(
         {
             "twin_a": {"name": "孪生 A", "image": _make_glyph_template("ellipse")},
@@ -1115,8 +2146,15 @@ def check_overlay_vision_sidecar_contract() -> None:
         }
     )
     twin_slot = overlay_vision_sidecar._detect_slot(frame, preset.slot_boxes(frame.size)[0], 0, twin_index, min_confidence=0.80)
-    assert twin_slot["state"] == "ready"
-    assert twin_slot["name"] in {"孪生 A", "孪生 B"}
+    assert twin_index[0].icon_digest == twin_index[1].icon_digest
+    assert len(twin_index[0].icon_fingerprints) >= 2
+    assert twin_slot["state"] != "ready"
+    assert twin_slot["diagnostic"] == "icon_only_low_confidence"
+    twin_shortlist = overlay_vision_sidecar._build_icon_shortlist(
+        [(twin_index[0], 0.80), (twin_index[1], 0.80)],
+        max_groups=1,
+    )
+    assert [template.name for template, _confidence in twin_shortlist] == ["孪生 A", "孪生 B"]
 
     # 槽位判定真值表：平坦拒绝、低置信度拒绝、margin 不足只接受极高置信度。
     assert overlay_vision_sidecar._slot_match_decision(5.0, 0.99, 0.5, min_confidence=0.80) is False
@@ -1127,25 +2165,273 @@ def check_overlay_vision_sidecar_contract() -> None:
 
     # 中文名必须能生成稳定 ID；ASCII-only 归一化曾把 206/208 个模板滤成空导致识别不可用。
     assert overlay_vision_sidecar.normalize_augment_id("魄罗爆破手") == "魄罗爆破手"
-    real_index = overlay_vision_sidecar.load_default_template_index()
     assert len(real_index) >= 100, f"真实模板索引过小: {len(real_index)}"
 
-    # 退出防抖：active 掉到 unstable 的前几帧延迟写事件，其余情况不延迟。
-    assert overlay_vision_sidecar.should_defer_unstable_event(("active", "a", "b", "c"), 1) is True
-    assert overlay_vision_sidecar.should_defer_unstable_event(("active", "a", "b", "c"), 2) is True
-    assert overlay_vision_sidecar.should_defer_unstable_event(("active", "a", "b", "c"), 3) is False
+    # 退出防抖：按钮消失吸收 1 帧避免闪烁；blocking/modal 仍即时隐藏。
+    assert "selection_window_active" in inspect.signature(
+        overlay_vision_sidecar.should_defer_unstable_event
+    ).parameters
+    assert (
+        overlay_vision_sidecar.should_defer_unstable_event(
+            ("active", "a", "b", "c"),
+            1,
+            selection_window_active=False,
+        )
+        is True
+    )
+    assert (
+        overlay_vision_sidecar.should_defer_unstable_event(
+            ("active", "a", "b", "c"),
+            2,
+            selection_window_active=False,
+        )
+        is False
+    )
+    assert (
+        overlay_vision_sidecar.should_defer_unstable_event(
+            ("active", "a", "b", "c"),
+            1,
+            selection_window_active=False,
+            reason="blocking_modal_present",
+        )
+        is False
+    )
+    assert (
+        overlay_vision_sidecar.should_defer_unstable_event(
+            ("active", "a", "b", "c"),
+            1,
+            selection_window_active=True,
+        )
+        is True
+    )
+    assert (
+        overlay_vision_sidecar.should_defer_unstable_event(
+            ("active", "a", "b", "c"),
+            2,
+            selection_window_active=True,
+        )
+        is False
+    )
     assert overlay_vision_sidecar.should_defer_unstable_event(("inactive", "unstable"), 1) is False
     assert overlay_vision_sidecar.should_defer_unstable_event(None, 1) is False
 
-    stable = overlay_vision_sidecar.stabilize_detections([detection, detection], required_frames=2)
+    # 高速循环的 interval 是帧起点目标周期，识别本身已超时时不得再固定追加休眠。
+    assert overlay_vision_sidecar.remaining_frame_sleep_seconds(160, elapsed_seconds=0.180) == 0.0
+    assert abs(overlay_vision_sidecar.remaining_frame_sleep_seconds(160, elapsed_seconds=0.100) - 0.060) < 1e-9
+
+    tracker = SelectionTracker()
+    first_scene_frame = tracker.update(detection)
+    stable = tracker.update(detection)
+    assert first_scene_frame["active"] is False
     assert stable["active"] is True
     assert stable["slots"][1]["augment_id"] == "augment_b"
-    unstable = overlay_vision_sidecar.stabilize_detections([detection, blank_detection], required_frames=2)
+    assert stable["source"]["ready_slots"] == 3
+    assert stable["source"]["content_ready"] is True
+
+    hover_detection = json.loads(json.dumps(missing_button_detection, ensure_ascii=False))
+    hover_detection["source"]["cursor_over_cards"] = True
+    hover_detection["source"]["card_residue"] = True
+    hover_tracker = SelectionTracker()
+    hover_tracker.update(detection)
+    hover_stable = hover_tracker.update(detection)
+    stable_signature_before_hover = [slot["augment_id"] for slot in hover_stable["slots"]]
+    for _index in range(20):
+        hover_result = hover_tracker.update(hover_detection)
+        assert hover_result["active"] is True
+        assert hover_result["source"]["hover_occluded"] is True
+        assert [slot["augment_id"] for slot in hover_result["slots"]] == stable_signature_before_hover
+
+    hover_detection["source"]["cursor_over_cards"] = False
+    residue_hold = hover_tracker.update(hover_detection)
+    assert residue_hold["active"] is True
+    assert residue_hold["source"]["reason"] == "scene_residue_hold"
+    assert residue_hold["source"]["hover_occluded"] is False
+
+    cleared_detection = json.loads(json.dumps(hover_detection, ensure_ascii=False))
+    cleared_detection["source"]["card_residue"] = False
+    cleared_detection["source"]["name_residue"] = [False, False, False]
+    first_hover_exit = hover_tracker.update(cleared_detection)
+    second_hover_exit = hover_tracker.update(cleared_detection)
+    assert first_hover_exit["active"] is True
+    assert second_hover_exit["active"] is False
+    assert second_hover_exit["source"]["scene_state"] == "absent"
+
+    # 三槽独立稳定：部分结果即可显示，未知槽保持固定占位。
+    partial_tracker = SelectionTracker()
+    partial_tracker.update(partial_detection)
+    stable_partial = partial_tracker.update(partial_detection)
+    assert stable_partial["active"] is True
+    assert stable_partial["source"]["ready_slots"] == 2
+    assert stable_partial["source"]["content_ready"] is False
+    assert stable_partial["slots"][2]["state"] == "detecting"
+
+    progressive_tracker = SelectionTracker()
+    progressive_results: list[int] = []
+    for ready_count in range(4):
+        progressive_event = dict(detection)
+        progressive_event["_raw_slots"] = [
+            dict(slot) if index < ready_count else {}
+            for index, slot in enumerate(detection["_raw_slots"])
+        ]
+        progressive_tracker.update(progressive_event)
+        progressive_result = progressive_tracker.update(progressive_event)
+        progressive_results.append(int(progressive_result["source"]["ready_slots"]))
+        assert len(progressive_result["slots"]) == 3
+    assert progressive_results == [0, 1, 2, 3]
+
+    # 弱文字候选必须跨三帧一致，不能靠单帧降阈值授权。
+    weak_event = dict(detection)
+    weak_slot = json.loads(json.dumps(detection["_raw_slots"][0], ensure_ascii=False))
+    weak_slot["channels"]["text"]["top_candidates"][0]["confidence"] = 0.69
+    weak_slot["channels"]["text"]["margin"] = 0.015
+    weak_slot["channels"]["text_alt"]["top_candidates"][0]["confidence"] = 0.50
+    weak_slot["channels"]["icon"]["top_candidates"][0]["confidence"] = 0.50
+    weak_slot["channels"]["icon_shortlist"] = {"top_candidates": []}
+    weak_slot["channels"]["text_narrowed"] = {"margin": 0.0, "top_candidates": []}
+    weak_slot["channels"]["text_alt_narrowed"] = {"margin": 0.0, "top_candidates": []}
+    weak_event["_raw_slots"] = [weak_slot, {}, {}]
+    weak_tracker = SelectionTracker(scene_enter_frames=1)
+    assert weak_tracker.update(weak_event)["source"]["ready_slots"] == 0
+    assert weak_tracker.update(weak_event)["source"]["ready_slots"] == 0
+    assert weak_tracker.update(weak_event)["source"]["ready_slots"] == 1
+
+    def _candidate(name: str, confidence: float, *, augment_id: str | None = None) -> dict[str, Any]:
+        return {
+            "augment_id": augment_id or name,
+            "name": name,
+            "tier": "Gold",
+            "summary": "shortlist test",
+            "confidence": confidence,
+            "icon_digest": f"digest-{augment_id or name}",
+        }
+
+    alt_strong_slot = {
+        "slot": 0,
+        "top_candidates": [_candidate("主字体近似项", 0.75)],
+        "channels": {
+            "text": {"margin": 0.01, "top_candidates": [_candidate("主字体近似项", 0.75)]},
+            "text_alt": {"margin": 0.05, "top_candidates": [_candidate("正确海克斯", 0.82)]},
+            "icon": {"margin": 0.01, "top_candidates": [_candidate("弱图标候选", 0.72)]},
+            "icon_shortlist": {"top_candidates": []},
+            "text_narrowed": {"margin": 0.0, "top_candidates": []},
+            "text_alt_narrowed": {"margin": 0.0, "top_candidates": []},
+        },
+    }
+    alt_strong_candidate = candidate_from_slot(alt_strong_slot)
+    assert alt_strong_candidate is not None
+    assert alt_strong_candidate.name == "正确海克斯"
+    assert alt_strong_candidate.rule == "strong_text_alt"
+    assert alt_strong_candidate.required_frames == 2
+
+    shortlist_temporal_slot = {
+        "slot": 0,
+        "top_candidates": [_candidate("正确海克斯", 0.72), _candidate("全局近似项", 0.715)],
+        "channels": {
+            "text": {"margin": 0.005, "top_candidates": [_candidate("正确海克斯", 0.72), _candidate("全局近似项", 0.715)]},
+            "text_alt": {"margin": 0.001, "top_candidates": [_candidate("其它字体候选", 0.60)]},
+            "icon": {"margin": 0.01, "top_candidates": [_candidate("正确海克斯", 0.74)]},
+            "icon_shortlist": {"top_candidates": [_candidate("正确海克斯", 0.74)]},
+            "text_narrowed": {"margin": 0.04, "top_candidates": [_candidate("正确海克斯", 0.72), _candidate("短名单次选", 0.68)]},
+            "text_alt_narrowed": {"margin": 0.01, "top_candidates": [_candidate("其它字体候选", 0.60)]},
+        },
+    }
+    temporal_candidate = candidate_from_slot(shortlist_temporal_slot)
+    assert temporal_candidate is not None
+    assert temporal_candidate.rule == "icon_shortlist_temporal"
+    assert temporal_candidate.required_frames == 3
+
+    shortlist_dual_slot = json.loads(json.dumps(shortlist_temporal_slot, ensure_ascii=False))
+    shortlist_dual_slot["channels"]["text_narrowed"] = {
+        "margin": 0.01,
+        "top_candidates": [_candidate("正确海克斯", 0.67)],
+    }
+    shortlist_dual_slot["channels"]["text_alt_narrowed"] = {
+        "margin": 0.01,
+        "top_candidates": [_candidate("正确海克斯", 0.66)],
+    }
+    dual_candidate = candidate_from_slot(shortlist_dual_slot)
+    assert dual_candidate is not None
+    assert dual_candidate.rule == "icon_shortlist_dual_font"
+    assert dual_candidate.required_frames == 2
+
+    stale_hold_tracker = SelectionTracker(scene_enter_frames=1)
+    stale_hold_tracker.update(detection)
+    stable_before_weak_reroll = stale_hold_tracker.update(detection)
+    assert stable_before_weak_reroll["slots"][0]["augment_id"] == "augment_a"
+    weak_reroll_event = dict(detection)
+    weak_reroll_slot = json.loads(json.dumps(shortlist_temporal_slot, ensure_ascii=False))
+    weak_reroll_slot["slot"] = 0
+    weak_reroll_event["_raw_slots"] = [weak_reroll_slot, {}, {}]
+    stale_hold_event = stale_hold_tracker.update(weak_reroll_event)
+    assert stale_hold_event["slots"][0]["augment_id"] == "augment_a"
+    assert "stale_hold:" in stale_hold_event["_acceptance_rules"][0]
+
+    conflict_shortlist_slot = json.loads(json.dumps(shortlist_temporal_slot, ensure_ascii=False))
+    conflict_shortlist_slot["channels"]["icon"] = {
+        "margin": 0.05,
+        "top_candidates": [_candidate("冲突海克斯", 0.95)],
+    }
+    assert candidate_from_slot(conflict_shortlist_slot) is None
+
+    icon_only_shortlist_slot = json.loads(json.dumps(shortlist_temporal_slot, ensure_ascii=False))
+    icon_only_shortlist_slot["channels"]["text"] = {"margin": 0.0, "top_candidates": []}
+    icon_only_shortlist_slot["channels"]["text_narrowed"] = {"margin": 0.0, "top_candidates": []}
+    assert candidate_from_slot(icon_only_shortlist_slot) is None
+
+    # 单槽出现一个新的强候选时只撤下该槽，不得替换成未经稳定的新结果。
+    reroll = dict(detection)
+    reroll_raw_slots = [dict(slot) for slot in detection["_raw_slots"]]
+    reroll_raw_slots[0] = dict(reroll_raw_slots[1])
+    reroll_raw_slots[0]["slot"] = 0
+    reroll["_raw_slots"] = reroll_raw_slots
+    reroll_first = tracker.update(reroll)
+    assert reroll_first["active"] is True
+    assert reroll_first["source"]["ready_slots"] == 2
+    assert reroll_first["slots"][0]["state"] == "detecting"
+    assert [slot["augment_id"] for slot in reroll_first["slots"][1:]] == ["augment_b", "augment_c"]
+    reroll_ready = tracker.update(reroll)
+    assert reroll_ready["slots"][0]["augment_id"] == "augment_b"
+
+    # 场景/按钮消失两帧后结束 epoch；Tab 与阻塞弹窗必须立即清空。
+    tracker.update(blank_detection)
+    unstable = tracker.update(blank_detection)
     assert unstable["active"] is False
+    assert unstable["source"]["scene_state"] == "absent"
+    blocked_transition = tracker.update(modal_detection)
+    assert blocked_transition["active"] is False
+    assert blocked_transition["source"].get("reason") == "blocking_modal_present"
+    tracker.update(body_shard_detection)
+    shard_transition = tracker.update(body_shard_detection)
+    assert shard_transition["active"] is False
+    assert shard_transition["source"].get("reason") == "slots_detecting"
+
+    shard_tracker = SelectionTracker(scene_enter_frames=1)
+    shard_blocked = shard_tracker.update(real_shard_detection)
+    assert shard_blocked["active"] is False
+    assert shard_blocked["source"]["reason"] == "body_shard_only"
+    assert shard_blocked["source"]["body_shard_latched"] is True
+    false_regular_frame = shard_tracker.update(detection)
+    assert false_regular_frame["active"] is False
+    assert false_regular_frame["source"]["reason"] == "body_shard_only"
+    assert false_regular_frame["source"]["body_shard_latched"] is True
+    first_absent_after_shard = shard_tracker.update(blank_detection)
+    assert first_absent_after_shard["active"] is False
+    assert first_absent_after_shard["source"]["body_shard_latched"] is True
+    second_absent_after_shard = shard_tracker.update(blank_detection)
+    assert second_absent_after_shard["active"] is False
+    assert second_absent_after_shard["source"].get("body_shard_latched") is not True
+    assert shard_tracker.update(detection)["active"] is False
+    assert shard_tracker.update(detection)["active"] is True
+
+    tab_transition = tracker.block("scoreboard_key_down", scoreboard_key_down=True)
+    assert tab_transition["active"] is False
+    assert tab_transition["source"]["scoreboard_key_down"] is True
     active_signature = overlay_vision_sidecar._loop_event_signature(stable)
-    inactive_signature = overlay_vision_sidecar._loop_event_signature(unstable)
+    unstable_signature = overlay_vision_sidecar._loop_event_signature(unstable)
     assert active_signature == ("active", "ready:augment_a", "ready:augment_b", "ready:augment_c")
-    assert inactive_signature == ("inactive", "unstable")
+    assert unstable_signature != active_signature
+    assert unstable_signature[0] == "inactive"
+    assert overlay_vision_sidecar.DEFAULT_LOOP_HEARTBEAT_SECONDS == 1.0
     assert overlay_vision_sidecar.should_write_loop_event(
         stable,
         last_signature=None,
@@ -1183,7 +2469,7 @@ def check_overlay_vision_sidecar_contract() -> None:
     ) is True
     assert overlay_vision_sidecar.should_write_loop_event(
         unstable,
-        last_signature=inactive_signature,
+        last_signature=unstable_signature,
         last_write_at=1001.0,
         now=1002.0,
         heartbeat_seconds=60.0,
@@ -1225,6 +2511,155 @@ def check_overlay_vision_sidecar_contract() -> None:
         assert background_payload["active"] is False
         assert background_payload["source"]["reason"] == "game_not_foreground"
 
+        # Tab 是硬门：按下立即 inactive，松开后必须重新积累两帧才能恢复。
+        tab_event_path = Path(tmp_dir) / "tab-gated.json"
+        tab_states = iter((True, False, False))
+        tab_sleep_calls = 0
+
+        def stop_after_tab_recovery(_seconds: float) -> None:
+            nonlocal tab_sleep_calls
+            tab_sleep_calls += 1
+            if tab_sleep_calls >= 3:
+                raise StopLoop()
+
+        with (
+            patch.object(overlay_vision_sidecar, "load_default_template_index", return_value=template_index),
+            patch.object(overlay_vision_sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 100, 100))),
+            patch.object(overlay_vision_sidecar, "_is_lol_game_foreground", return_value=True),
+            patch.object(overlay_vision_sidecar, "is_scoreboard_key_down", side_effect=lambda: next(tab_states)),
+            patch.object(overlay_vision_sidecar, "_capture_lol_game_rect", return_value=frame),
+            patch.object(overlay_vision_sidecar, "detect_overlay_choices", return_value=detection),
+            patch.object(overlay_vision_sidecar.time, "sleep", side_effect=stop_after_tab_recovery),
+        ):
+            try:
+                overlay_vision_sidecar.run_loop(
+                    write_event=True,
+                    event_path=tab_event_path,
+                    required_frames=2,
+                )
+            except StopLoop:
+                pass
+        tab_payload = json.loads(tab_event_path.read_text(encoding="utf-8"))
+        assert tab_payload["active"] is True
+        tab_history = json.loads(
+            tab_event_path.with_name(overlay_vision_sidecar.OVERLAY_VISION_TRACE_HISTORY_FILE.name).read_text(encoding="utf-8")
+        )
+        assert any(entry.get("scoreboard_key_down") is True for entry in tab_history["entries"])
+
+        # Alt+Tab 会清空复用事件；回到前台后必须重新获得两帧新检测。
+        recovered_event_path = Path(tmp_dir) / "focus-recovered.json"
+        focus_states = iter((True, False, True, True))
+        sleep_calls = 0
+
+        def stop_after_focus_recovery(_seconds: float) -> None:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls >= 4:
+                raise StopLoop()
+
+        with (
+            patch.object(overlay_vision_sidecar, "load_default_template_index", return_value=template_index),
+            patch.object(overlay_vision_sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 100, 100))),
+            patch.object(overlay_vision_sidecar, "_is_lol_game_foreground", side_effect=lambda _hwnd: next(focus_states)),
+            patch.object(overlay_vision_sidecar, "is_scoreboard_key_down", return_value=False),
+            patch.object(overlay_vision_sidecar, "_capture_lol_game_rect", return_value=frame),
+            patch.object(overlay_vision_sidecar, "detect_overlay_choices", return_value=detection),
+            patch.object(overlay_vision_sidecar.time, "sleep", side_effect=stop_after_focus_recovery),
+        ):
+            try:
+                overlay_vision_sidecar.run_loop(
+                    write_event=True,
+                    event_path=recovered_event_path,
+                    required_frames=2,
+                )
+            except StopLoop:
+                pass
+        recovered_payload = json.loads(recovered_event_path.read_text(encoding="utf-8"))
+        assert recovered_payload["active"] is True
+        trace_path = Path(tmp_dir) / overlay_vision_sidecar.OVERLAY_VISION_TRACE_FILE.name
+        history_path = Path(tmp_dir) / overlay_vision_sidecar.OVERLAY_VISION_TRACE_HISTORY_FILE.name
+        assert trace_path.is_file()
+        assert history_path.is_file()
+        trace_payload = json.loads(trace_path.read_text(encoding="utf-8"))
+        history_payload = json.loads(history_path.read_text(encoding="utf-8"))
+        assert trace_payload["active"] is True
+        assert trace_payload["schema_version"] == 2
+        assert trace_payload["source"]["scene_state"] == "active"
+        assert trace_payload["source"]["layout_id"] == "2560x1600"
+        assert set(trace_payload["source"]) >= {
+            "scene_kind",
+            "body_shard_scores",
+            "body_shard_latched",
+            "cursor_over_cards",
+            "card_residue",
+            "name_residue",
+            "hover_occluded",
+        }
+        assert len(trace_payload["slots"]) == 3
+        for traced_slot in trace_payload["slots"]:
+            assert traced_slot["acceptance_rule"] in {
+                "strong_text",
+                "strong_text_alt",
+                "dual_font",
+                "temporal_text",
+                "temporal_text_alt",
+            }
+            assert set(traced_slot["channels"]) >= {"icon", "text", "text_alt"}
+            for channel_name in ("icon", "text", "text_alt"):
+                channel = traced_slot["channels"][channel_name]
+                assert "margin" in channel
+                assert len(channel.get("top_candidates") or []) <= 3
+        assert 1 <= len(history_payload["entries"]) <= overlay_vision_sidecar.VISION_TRACE_HISTORY_LIMIT
+        assert all("slot_signature" in entry for entry in history_payload["entries"])
+        assert all("button_center_y_ratio" in entry for entry in history_payload["entries"])
+        assert all("scene_kind" in entry for entry in history_payload["entries"])
+        assert all("body_shard_scores" in entry for entry in history_payload["entries"])
+        assert all("cursor_over_cards" in entry for entry in history_payload["entries"])
+        assert all("hover_occluded" in entry for entry in history_payload["entries"])
+
+        capped_history_path = Path(tmp_dir) / "capped-history.json"
+        capped_history_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "entries": [{"generated_at": index} for index in range(256)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        overlay_vision_sidecar._append_vision_trace_history(stable, capped_history_path)
+        capped_history = json.loads(capped_history_path.read_text(encoding="utf-8"))
+        assert len(capped_history["entries"]) == overlay_vision_sidecar.VISION_TRACE_HISTORY_LIMIT
+        assert capped_history["entries"][0]["generated_at"] == 1
+
+        rate_trace_path = Path(tmp_dir) / "rate-limited-trace.json"
+        rate_history_path = Path(tmp_dir) / "rate-limited-history.json"
+        score_only_change = json.loads(json.dumps(stable, ensure_ascii=False))
+        score_only_change["_raw_slots"][0]["channels"]["text"]["top_candidates"][0]["confidence"] = 0.75123
+        with patch.object(overlay_vision_sidecar.time, "monotonic", side_effect=[100.0, 100.1, 101.2]):
+            assert overlay_vision_sidecar.write_vision_trace_if_changed(
+                stable, rate_trace_path, history_path=rate_history_path
+            ) == rate_trace_path
+            assert overlay_vision_sidecar.write_vision_trace_if_changed(
+                score_only_change, rate_trace_path, history_path=rate_history_path
+            ) is None
+            assert overlay_vision_sidecar.write_vision_trace_if_changed(
+                score_only_change, rate_trace_path, history_path=rate_history_path
+            ) == rate_trace_path
+        assert len(json.loads(rate_history_path.read_text(encoding="utf-8"))["entries"]) == 1
+
+        roi_root = Path(tmp_dir) / "roi-debug"
+        roi_dir = overlay_vision_sidecar._write_roi_diagnostic_dump(roi_root, frame, stable)
+        roi_names = {path.name for path in roi_dir.iterdir()}
+        assert "frame.png" not in roi_names
+        assert roi_names == {
+            "button.png",
+            "icon_0.png", "icon_1.png", "icon_2.png",
+            "name_0.png", "name_1.png", "name_2.png",
+            "report.json",
+        }
+        assert overlay_vision_sidecar.ROI_DIAGNOSTIC_LIMIT == 32
+
     module_text = (RUN_DIR / "processing" / "overlay_vision_sidecar.py").read_text(encoding="utf-8").lower()
     assert "requests" not in module_text
     assert "opencv" not in module_text
@@ -1232,254 +2667,91 @@ def check_overlay_vision_sidecar_contract() -> None:
     assert "pyautogui" not in module_text
 
 
+def check_lol_window_contract() -> None:
+    """验证游戏窗口按进程发现，并排除最小化或 DWM cloak 的窗口。"""
+
+    import processing.lol_window as lol_window
+    import processing.overlay_vision_sidecar as overlay_vision_sidecar
+
+    class FakeWin32Gui:
+        @staticmethod
+        def EnumWindows(callback, extra) -> None:
+            for hwnd in (101, 202):
+                callback(hwnd, extra)
+
+        @staticmethod
+        def IsWindowVisible(_hwnd: int) -> bool:
+            return True
+
+        @staticmethod
+        def IsIconic(hwnd: int) -> bool:
+            return hwnd == 202
+
+        @staticmethod
+        def GetWindowRect(hwnd: int) -> tuple[int, int, int, int]:
+            return (10, 20, 1930, 1100) if hwnd == 101 else (0, 0, 1920, 1080)
+
+        @staticmethod
+        def GetClientRect(hwnd: int) -> tuple[int, int, int, int]:
+            return (0, 0, 1920, 1080) if hwnd == 101 else (0, 0, 1920, 1080)
+
+        @staticmethod
+        def ClientToScreen(hwnd: int, _point: tuple[int, int]) -> tuple[int, int]:
+            return (10, 20) if hwnd == 101 else (0, 0)
+
+        @staticmethod
+        def GetWindowText(hwnd: int) -> str:
+            return "本地化游戏窗口" if hwnd == 101 else "League of Legends (TM) Client"
+
+    with (
+        patch.object(lol_window, "win32gui", FakeWin32Gui),
+        patch.object(lol_window, "_window_process_name", side_effect=lambda hwnd: "league of legends.exe" if hwnd == 101 else ""),
+        patch.object(lol_window, "is_window_cloaked", return_value=False),
+    ):
+        assert lol_window.find_lol_game_window() == (101, (10, 20, 1930, 1100))
+        assert lol_window.is_window_renderable(101) is True
+        assert lol_window.is_window_renderable(202) is False
+
+    with (
+        patch.object(lol_window, "win32gui", FakeWin32Gui),
+        patch.object(lol_window, "is_window_cloaked", return_value=True),
+    ):
+        assert lol_window.is_window_renderable(101) is False
+
+    class FakeRootUser32:
+        @staticmethod
+        def GetAncestor(hwnd: int, _kind: int) -> int:
+            return 101 if hwnd in {101, 303} else hwnd
+
+    class FakeForegroundWin32:
+        @staticmethod
+        def GetForegroundWindow() -> int:
+            return 303
+
+    with (
+        patch.object(lol_window.ctypes.windll, "user32", FakeRootUser32()),
+        patch.object(overlay_vision_sidecar, "win32gui", FakeForegroundWin32),
+    ):
+        assert lol_window.root_window_hwnd(303) == 101
+        assert overlay_vision_sidecar._is_lol_game_foreground(101) is True
+
+    class FakeKeyUser32:
+        def __init__(self, state: int) -> None:
+            self.state = state
+
+        def GetAsyncKeyState(self, key: int) -> int:
+            assert key == lol_window.VK_TAB
+            return self.state
+
+    with patch.object(lol_window.ctypes.windll, "user32", FakeKeyUser32(0x8000)):
+        assert lol_window.is_scoreboard_key_down() is True
+    with patch.object(lol_window.ctypes.windll, "user32", FakeKeyUser32(0)):
+        assert lol_window.is_scoreboard_key_down() is False
+
+
 def check_service_manager_lifecycle_contract() -> None:
-    """验证 Web 与游戏内 overlay 两套生命周期互不强依赖。"""
-    import display.service_manager as service_manager
-
-    class DummyProcess:
-        def __init__(self, pid: int):
-            self.pid = pid
-            self.terminated = False
-            self.killed = False
-
-        def poll(self):
-            return None if not (self.terminated or self.killed) else 0
-
-        def terminate(self) -> None:
-            self.terminated = True
-
-        def kill(self) -> None:
-            self.killed = True
-
-        def wait(self, timeout=None):
-            return 0
-
-    calls: list[str] = []
-
-    manager = service_manager.ServiceManager(
-        start_web_func=lambda: calls.append("web") or DummyProcess(11),
-        start_overlay_func=lambda: calls.append("overlay") or DummyProcess(22),
-        start_vision_sidecar_func=lambda: calls.append("vision-sidecar") or DummyProcess(23),
-        prepare_overlay_hint_cache_func=lambda: calls.append("hint-cache"),
-        write_inactive_overlay_event_func=lambda: calls.append("inactive-event"),
-        listener_interval_seconds=3.0,
-    )
-
-    assert manager.get_status_snapshot()["web"]["status"] == "stopped"
-    assert manager.get_status_snapshot()["game_overlay"]["status"] == "stopped"
-    assert manager.get_status_snapshot()["low_frequency_listener"]["interval_seconds"] == 3.0
-
-    manager.start_game_overlay()
-    assert calls == ["hint-cache", "overlay", "vision-sidecar"]
-    snapshot = manager.get_status_snapshot()
-    assert snapshot["game_overlay"]["status"] == "running"
-    assert snapshot["game_overlay"]["pid"] == 22
-    assert snapshot["vision_sidecar"]["status"] == "running"
-    assert snapshot["vision_sidecar"]["pid"] == 23
-    assert snapshot["web"]["status"] == "stopped"
-
-    manager.start_web()
-    assert calls == ["hint-cache", "overlay", "vision-sidecar", "web"]
-    snapshot = manager.get_status_snapshot()
-    assert snapshot["web"]["status"] == "running"
-    assert snapshot["web"]["pid"] == 11
-
-    manager.stop_game_overlay()
-    snapshot = manager.get_status_snapshot()
-    assert snapshot["game_overlay"]["status"] == "stopped"
-    assert snapshot["vision_sidecar"]["status"] == "stopped"
-    assert snapshot["web"]["status"] == "running"
-    assert calls[-1] == "inactive-event"
-
-    # 从未启动过 overlay 的实例关闭时不得写隐藏事件，避免覆盖其他实例的事件文件。
-    inactive_count_before = calls.count("inactive-event")
-    manager.stop_game_overlay()
-    assert calls.count("inactive-event") == inactive_count_before
-
-    manager.set_low_frequency_listener_enabled(False)
-    assert manager.get_status_snapshot()["low_frequency_listener"]["enabled"] is False
-
-    manager.stop_web()
-    assert manager.get_status_snapshot()["web"]["status"] == "stopped"
-
-    class ExitedProcess(DummyProcess):
-        def poll(self):
-            return 1
-
-    failing_manager = service_manager.ServiceManager(
-        start_web_func=lambda: ExitedProcess(33),
-        start_overlay_func=lambda: DummyProcess(44),
-        start_vision_sidecar_func=lambda: DummyProcess(45),
-    )
-    try:
-        failing_manager.start_web()
-    except RuntimeError as exc:
-        assert "进程已退出" in str(exc)
-    else:
-        raise AssertionError("已退出的 Web 子进程不应标记为 running")
-    assert failing_manager.get_status_snapshot()["web"]["status"] == "error"
-
-    orphan_probe: dict[str, Any] = {}
-
-    def start_overlay_then_sidecar_fails() -> DummyProcess:
-        process = DummyProcess(46)
-        orphan_probe["overlay"] = process
-        return process
-
-    rollback_manager = service_manager.ServiceManager(
-        start_web_func=lambda: DummyProcess(47),
-        start_overlay_func=start_overlay_then_sidecar_fails,
-        start_vision_sidecar_func=lambda: (_ for _ in ()).throw(RuntimeError("vision failed")),
-        write_inactive_overlay_event_func=lambda: calls.append("rollback-inactive-event"),
-    )
-    try:
-        rollback_manager.start_game_overlay()
-    except RuntimeError as exc:
-        assert "vision failed" in str(exc)
-    else:
-        raise AssertionError("Vision sidecar 启动失败时不应保留 running 状态")
-    assert orphan_probe["overlay"].terminated or orphan_probe["overlay"].killed
-    rollback_snapshot = rollback_manager.get_status_snapshot()
-    assert rollback_snapshot["game_overlay"]["status"] == "error"
-    assert rollback_snapshot["game_overlay"]["pid"] is None
-    assert rollback_snapshot["vision_sidecar"]["status"] == "error"
-
-    class KillRequiredProcess(DummyProcess):
-        def terminate(self) -> None:
-            self.terminated = False
-
-        def wait(self, timeout=None):
-            if not self.killed:
-                raise TimeoutError("still running")
-            return 0
-
-    kill_manager = service_manager.ServiceManager(
-        start_web_func=lambda: KillRequiredProcess(55),
-        start_overlay_func=lambda: DummyProcess(66),
-        start_vision_sidecar_func=lambda: DummyProcess(67),
-    )
-    kill_manager.start_web()
-    kill_manager.stop_web()
-    assert kill_manager.get_status_snapshot()["web"]["status"] == "stopped"
-
-    class UnstoppableProcess(DummyProcess):
-        def terminate(self) -> None:
-            self.terminated = False
-
-        def kill(self) -> None:
-            self.killed = False
-
-        def wait(self, timeout=None):
-            raise TimeoutError("still running")
-
-    stuck_manager = service_manager.ServiceManager(
-        start_web_func=lambda: UnstoppableProcess(77),
-        start_overlay_func=lambda: DummyProcess(88),
-        start_vision_sidecar_func=lambda: DummyProcess(89),
-    )
-    stuck_manager.start_web()
-    stuck_manager.stop_web()
-    stuck_snapshot = stuck_manager.get_status_snapshot()["web"]
-    assert stuck_snapshot["status"] == "error"
-    assert stuck_snapshot["pid"] == 77
-
-    captured: dict[str, Any] = {}
-
-    def fake_popen(command, cwd=None, startupinfo=None):
-        captured["command"] = command
-        captured["cwd"] = cwd
-        captured["startupinfo"] = startupinfo
-        return DummyProcess(90)
-
-    with patch.object(service_manager.subprocess, "Popen", side_effect=fake_popen):
-        sidecar_process = service_manager.start_vision_sidecar_process()
-    assert sidecar_process.pid == 90
-    assert captured["cwd"] == service_manager.BASE_DIR
-    assert "processing.overlay_vision_sidecar" in captured["command"]
-    assert "--loop" in captured["command"]
-    assert "--once" not in captured["command"]
-    assert "--write-event" in captured["command"]
-
-    # 冻结态分支：打包版应走主 exe 的 --overlay-sidecar 入口，不能再用 -m 模块路径
-    frozen_captured: dict[str, Any] = {}
-
-    def frozen_popen(command, cwd=None, startupinfo=None):
-        frozen_captured["command"] = command
-        frozen_captured["cwd"] = cwd
-        return DummyProcess(91)
-
-    with patch.object(service_manager.sys, "frozen", True, create=True), \
-            patch.object(service_manager.subprocess, "Popen", side_effect=frozen_popen):
-        frozen_sidecar = service_manager.start_vision_sidecar_process()
-    assert frozen_sidecar.pid == 91
-    assert "--overlay-sidecar" in frozen_captured["command"]
-    assert "-m" not in frozen_captured["command"]
-    assert "processing.overlay_vision_sidecar" not in frozen_captured["command"]
-    assert "--loop" in frozen_captured["command"]
-    assert "--write-event" in frozen_captured["command"]
-
-    # shutdown 不应被慢子进程顺序阻塞：主线程在总超时内返回，后台线程兜底收尾
-    shutdown_manager = service_manager.ServiceManager(
-        start_web_func=lambda: UnstoppableProcess(101),
-        start_overlay_func=lambda: DummyProcess(102),
-        start_vision_sidecar_func=lambda: DummyProcess(103),
-    )
-    shutdown_manager.start_web()
-    shutdown_start = time.time()
-    shutdown_manager.shutdown(timeout_seconds=0.5, final_timeout_seconds=None)
-    shutdown_elapsed = time.time() - shutdown_start
-    # 单个 UnstoppableProcess 的 _stop_service 至少要等 6 秒；
-    # shutdown 必须在远小于该值的总超时内返回
-    assert shutdown_elapsed < 3.0, f"shutdown 阻塞了 {shutdown_elapsed:.2f}s"
-    # 等后台线程收尾后，最终状态应被正确标记为 error
-    assert shutdown_manager._shutdown_thread is not None
-    shutdown_manager._shutdown_thread.join(timeout=15)
-    assert not shutdown_manager._shutdown_thread.is_alive()
-    web_snapshot = shutdown_manager.get_status_snapshot()["web"]
-    assert web_snapshot["status"] == "error"
-    assert web_snapshot["pid"] == 101
-
-    class ReleaseAfterWaitProcess(DummyProcess):
-        def __init__(self, pid: int):
-            super().__init__(pid)
-            self.wait_entered = threading.Event()
-            self.release = threading.Event()
-
-        def wait(self, timeout=None):
-            self.wait_entered.set()
-            self.release.wait(timeout=1)
-            return 0
-
-        def poll(self):
-            return 0 if self.release.is_set() else None
-
-    joined_process = ReleaseAfterWaitProcess(104)
-    joined_manager = service_manager.ServiceManager(
-        start_web_func=lambda: joined_process,
-        start_overlay_func=lambda: DummyProcess(105),
-        start_vision_sidecar_func=lambda: DummyProcess(106),
-    )
-    joined_manager.start_web()
-
-    def release_shutdown_wait() -> None:
-        assert joined_process.wait_entered.wait(timeout=1)
-        time.sleep(0.1)
-        joined_process.release.set()
-
-    release_thread = threading.Thread(target=release_shutdown_wait, daemon=True)
-    release_thread.start()
-    try:
-        joined_manager.shutdown(timeout_seconds=0.01)
-        assert joined_process.release.is_set(), "默认退出路径应等待后台收尾线程完成"
-        assert joined_manager._shutdown_thread is not None
-        assert not joined_manager._shutdown_thread.is_alive()
-        joined_snapshot = joined_manager.get_status_snapshot()["web"]
-        assert joined_snapshot["status"] == "stopped"
-    finally:
-        joined_process.release.set()
-        release_thread.join(timeout=1)
-
-
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
 def _top_level_import_names(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     imports: set[str] = set()
@@ -1544,162 +2816,13 @@ print(json.dumps([name for name in watched if name in sys.modules]))
 
 
 def check_desktop_ui_toggle_rollback_contract() -> None:
-    """验证开关后续步骤失败时不会留下状态关闭但进程仍运行的残留。"""
-
-    from display.hextech_ui import HextechUI
-    import display.hextech_ui as hextech_ui_module
-    import display.service_manager as service_manager
-
-    class FakeVar:
-        def __init__(self, value: bool):
-            self.value = value
-
-        def get(self) -> bool:
-            return self.value
-
-        def set(self, value: bool) -> None:
-            self.value = bool(value)
-
-    class DummyProcess:
-        pid = 101
-
-        def __init__(self):
-            self.terminated = False
-
-        def poll(self):
-            return 0 if self.terminated else None
-
-        def terminate(self) -> None:
-            self.terminated = True
-
-        def kill(self) -> None:
-            self.terminated = True
-
-        def wait(self, timeout=None):
-            return 0
-
-    def make_ui(*, web_enabled: bool = False, overlay_enabled: bool = False):
-        ui = HextechUI.__new__(HextechUI)
-        ui.web_frontend_var = FakeVar(web_enabled)
-        ui.game_overlay_var = FakeVar(overlay_enabled)
-        ui.private_stats_var = FakeVar(False)
-        ui.low_frequency_listener_var = FakeVar(True)
-        ui.feature_flags = {
-            "web_frontend_enabled": web_enabled,
-            "game_overlay_enabled": overlay_enabled,
-            "auto_open_browser": False,
-            "private_policy_stats_enabled": False,
-            "low_frequency_listener_enabled": True,
-        }
-        ui.web_port_file = "unused-port-file.txt"
-        ui.web_process = None
-        ui.service_manager = service_manager.ServiceManager(
-            start_web_func=DummyProcess,
-            start_overlay_func=DummyProcess,
-        )
-        ui._set_status = lambda _text, _color: None
-        ui._refresh_feature_status = lambda: None
-        return ui
-
-    with patch.object(hextech_ui_module, "save_ui_feature_flags", side_effect=OSError("persist failed")):
-        web_ui = make_ui(web_enabled=True)
-        HextechUI._toggle_web_frontend(web_ui)
-        assert web_ui.web_frontend_var.get() is False
-        assert web_ui.service_manager.is_web_running() is False
-        assert web_ui.web_process is None
-
-        overlay_ui = make_ui(overlay_enabled=True)
-        HextechUI._toggle_game_overlay(overlay_ui)
-        assert overlay_ui.game_overlay_var.get() is False
-        assert overlay_ui.service_manager.is_game_overlay_running() is False
-
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
 
 def check_game_overlay_host_contract() -> None:
-    """验证 overlay host 只显示 active 选择事件，且必须要求游戏窗口前台。"""
-    import display.game_overlay_host as game_overlay_host
-
-    config = game_overlay_host.build_overlay_window_config()
-    assert config["title"] == "Hextech Game Overlay"
-    assert config["topmost"] is True
-    assert config["click_through"] is True
-    assert config["hotkey"] == "Alt+H"
-    assert "League of Legends (TM) Client" in config["follow_window_titles"]
-    assert 250 <= config["follow_poll_ms"] <= 1000
-    assert 100 <= config["event_poll_ms"] <= 500
-
-    module_text = (RUN_DIR / "display" / "game_overlay_host.py").read_text(encoding="utf-8").lower()
-    forbidden_terms = ["opencv", "cv2", "screenshot", "template match", "phash", "orb"]
-    assert not any(term in module_text for term in forbidden_terms)
-    assert game_overlay_host._should_show_overlay(user_enabled=True, event_visible=True, game_foreground=True) is True
-    assert game_overlay_host._should_show_overlay(user_enabled=False, event_visible=True, game_foreground=True) is False
-    assert game_overlay_host._should_show_overlay(user_enabled=True, event_visible=False, game_foreground=True) is False
-    assert game_overlay_host._should_show_overlay(user_enabled=True, event_visible=True, game_foreground=False) is False
-
-    class DummyRoot:
-        def __init__(self) -> None:
-            self.calls: list[Any] = []
-
-        def deiconify(self) -> None:
-            self.calls.append(("deiconify",))
-
-        def withdraw(self) -> None:
-            self.calls.append(("withdraw",))
-
-        def attributes(self, *args: Any) -> None:
-            self.calls.append(("attributes", args))
-
-    active_snapshot = {
-        "ok": True,
-        "error": "",
-        "visible": True,
-        "slots": [{"name": "珠光护手"}],
-    }
-    missing_snapshot = {
-        "ok": False,
-        "error": "event_missing",
-        "visible": False,
-        "slots": [],
-    }
-
-    root = DummyRoot()
-    visibility = {"user_enabled": True, "target_hwnd": 123, "window_visible": True}
-    with (
-        patch.object(game_overlay_host, "_is_game_window_foreground", return_value=True),
-        patch.object(game_overlay_host, "_apply_overlay_window_styles", return_value=None) as apply_styles,
-    ):
-        game_overlay_host._sync_event_visibility(root, config, visibility, missing_snapshot)
-    assert ("withdraw",) in root.calls
-    assert ("deiconify",) not in root.calls
-    assert visibility["event_visible"] is False
-    assert visibility["window_visible"] is False
-    apply_styles.assert_not_called()
-
-    root = DummyRoot()
-    visibility = {"user_enabled": True, "target_hwnd": 123, "window_visible": False}
-    with (
-        patch.object(game_overlay_host, "_is_game_window_foreground", return_value=True),
-        patch.object(game_overlay_host, "_apply_overlay_window_styles", return_value=None) as apply_styles,
-    ):
-        game_overlay_host._sync_event_visibility(root, config, visibility, active_snapshot)
-    assert ("deiconify",) in root.calls
-    assert ("withdraw",) not in root.calls
-    assert visibility["event_visible"] is True
-    assert visibility["game_foreground"] is True
-    assert visibility["window_visible"] is True
-    apply_styles.assert_called_once()
-
-    root = DummyRoot()
-    visibility = {"user_enabled": True, "target_hwnd": 123, "window_visible": False}
-    with (
-        patch.object(game_overlay_host, "_is_game_window_foreground", return_value=False),
-        patch.object(game_overlay_host, "_apply_overlay_window_styles", return_value=None) as apply_styles,
-    ):
-        game_overlay_host._sync_event_visibility(root, config, visibility, active_snapshot)
-    assert root.calls == []
-    assert visibility["game_foreground"] is False
-    apply_styles.assert_not_called()
-
-
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
+    # 旧事件（selection_window_active=None）回退到 event_visible+content_ready
 def check_desktop_ui_feature_switch_contract() -> None:
     """验证桌面 UI 不再初始化时无条件启动 Web 服务。"""
     import display.ui_runtime as ui_runtime
@@ -1713,8 +2836,9 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert "ServiceManager" in ui_text
     assert "Web 前端" in ui_text
     assert "游戏内显示" in ui_text
-    assert "start_vision_sidecar_process" in ui_text
-    assert "start_vision_sidecar_func=start_vision_sidecar_process" in ui_text
+    assert "GameOverlayController" in ui_text
+    assert "overlay_controller=GameOverlayController(" in ui_text
+    assert "start_vision_sidecar_process" not in ui_text
     assert "self._start_web_server()" not in init_body
 
     root_entry_imports = _top_level_import_names(RUN_DIR / "hextech_ui.py")
@@ -1725,6 +2849,8 @@ def check_desktop_ui_feature_switch_contract() -> None:
 
     assert _probe_clean_import("hextech_ui.py") == set()
     assert _probe_clean_import("game_overlay_host.py") == set()
+    assert _probe_module_import("game_overlay") == set()
+    assert _probe_module_import("game_overlay.host") == set()
     assert _probe_module_import("display.game_overlay_host") == set()
 
     captured: dict[str, Any] = {}
@@ -1797,16 +2923,29 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
     )
     assert has_latest_pointer
     assert has_timestamp_snapshot
+    assert "augment.name-to-icon.v1.json" in manifest.get("index_files", [])
     source_files = manifest.get("source_files", [])
+    assert "processing/lol_window.py" in source_files
+    assert "processing/overlay_context.py" in source_files
     assert "processing/overlay_vision_sidecar.py" in source_files
     assert "processing/official_overlay_provider.py" in source_files
-    assert "display/game_overlay_host.py" in source_files
+    assert "game_overlay/host.py" in source_files
+    assert "game_overlay/renderer.py" in source_files
+    assert "game_overlay/lifecycle.py" in source_files
     assert "tools/probe_official_overlay_provider.py" in source_files
     serialized_manifest = json.dumps(manifest, ensure_ascii=False)
     assert not any("data/runtime" in str(item) for item in source_files)
     assert not any("data/raw" in str(item) for item in source_files)
     assert "data/runtime" not in serialized_manifest.replace("\\", "/")
     assert "overlay_anchor_calibration.v1.json" not in serialized_manifest
+
+    with TemporaryDirectory() as tmp_dir:
+        fixture_root = Path(tmp_dir) / "fixture"
+        fixture_index = fixture_root / "data" / "indexes"
+        fixture_index.mkdir(parents=True)
+        (fixture_index / "augment.name-to-icon.v1.json").write_text('{"尤里卡":"assets/1.png"}', encoding="utf-8")
+        prepared = prepare_bundle_runtime(fixture_root, Path(tmp_dir) / "build")
+        assert (prepared / "data" / "indexes" / "augment.name-to-icon.v1.json").is_file()
 
     if verbose:
         print("has_hextech_snapshot_files", True)
@@ -2966,6 +4105,1142 @@ def run_manual_web_synergy(args) -> dict:
     }
 
 
+def check_overlay_diagnostic_translation_table() -> None:
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
+
+def check_overlay_format_private_stats_three_states() -> None:
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
+
+def check_overlay_extract_event_status_legacy() -> None:
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
+
+def check_overlay_render_rows_low_confidence_and_top_candidates() -> None:
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
+
+def check_overlay_render_rows_excludes_source_heroes_from_tags() -> None:
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
+
+def check_overlay_visibility_decision_table() -> None:
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
+
+def check_overlay_stable_snapshot_separates_live_status() -> None:
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
+
+def check_overlay_layout_three_viewports() -> None:
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
+
+def check_overlay_draw_perf_smoke() -> None:
+    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    check_game_overlay_module_contract()
+
+def check_game_overlay_module_contract() -> None:
+    """验证独立模块边界、Controller 原子性、原生布局和隐藏态最小轮询。"""
+
+    import queue
+
+    import game_overlay.host as overlay_host
+    import game_overlay.lifecycle as overlay_lifecycle
+    import game_overlay.renderer as overlay_renderer
+    from display.service_manager import ServiceManager
+    from game_overlay.lifecycle import GameOverlayController
+    from processing.overlay_vision_layout import pick_card_panels
+    from tools import overlay_render_snapshot
+
+    # 导入独立包和 host 不得隐式加载 Web/display 产品模块。
+    probe = """
+import importlib, json, sys
+importlib.import_module('game_overlay')
+importlib.import_module('game_overlay.host')
+blocked = [name for name in sys.modules if name == 'display' or name.startswith('display.') or name == 'fastapi' or name.startswith('fastapi.') or name == 'uvicorn' or name.startswith('uvicorn.') or name == 'webbrowser']
+print(json.dumps(blocked))
+"""
+    output = subprocess.check_output([sys.executable, "-c", probe], cwd=str(RUN_DIR), text=True, encoding="utf-8")
+    assert json.loads(output) == []
+    package_dir = RUN_DIR / "game_overlay"
+    assert {"__init__.py", "__main__.py", "lifecycle.py", "host.py", "data_source.py", "renderer.py"} <= {
+        path.name for path in package_dir.iterdir() if path.is_file()
+    }
+    for path in package_dir.glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert "import display" not in text and "from display" not in text, path
+        assert "fastapi" not in text.lower() and "uvicorn" not in text.lower(), path
+
+    with (
+        patch.dict(overlay_lifecycle.os.environ, {overlay_lifecycle.OVERLAY_SIDECAR_DEBUG_DUMP_ENV: ""}),
+        patch.object(overlay_lifecycle.sys, "frozen", True, create=True),
+        patch.object(overlay_lifecycle, "_hidden_startupinfo", return_value=None),
+        patch.object(overlay_lifecycle.subprocess, "Popen", return_value=object()) as frozen_popen,
+    ):
+        overlay_lifecycle.start_sidecar_process()
+    frozen_command = frozen_popen.call_args.args[0]
+    assert frozen_command[:2] == [sys.executable, "--overlay-sidecar"]
+    assert "processing.overlay_vision_sidecar" not in frozen_command
+    assert "--debug-dump" not in frozen_command
+
+    with (
+        patch.dict(overlay_lifecycle.os.environ, {overlay_lifecycle.OVERLAY_SIDECAR_DEBUG_DUMP_ENV: ""}),
+        patch.object(overlay_lifecycle.sys, "frozen", False, create=True),
+        patch.object(overlay_lifecycle, "_hidden_startupinfo", return_value=None),
+        patch.object(overlay_lifecycle.subprocess, "Popen", return_value=object()) as source_popen,
+    ):
+        overlay_lifecycle.start_sidecar_process()
+    source_command = source_popen.call_args.args[0]
+    assert source_command[:3] == [sys.executable, "-m", "processing.overlay_vision_sidecar"]
+    assert "--debug-dump" not in source_command
+
+    with (
+        patch.dict(overlay_lifecycle.os.environ, {overlay_lifecycle.OVERLAY_SIDECAR_DEBUG_DUMP_ENV: "1"}),
+        patch.object(overlay_lifecycle.sys, "frozen", False, create=True),
+        patch.object(overlay_lifecycle, "_hidden_startupinfo", return_value=None),
+        patch.object(overlay_lifecycle.subprocess, "Popen", return_value=object()) as debug_popen,
+    ):
+        overlay_lifecycle.start_sidecar_process()
+    debug_command = debug_popen.call_args.args[0]
+    assert "--debug-dump" in debug_command
+    assert Path(debug_command[debug_command.index("--debug-dump") + 1]).name == "overlay_vision"
+
+    class DummyProcess:
+        def __init__(self, pid: int, *, running: bool = True, calls: list[str] | None = None, label: str = ""):
+            self.pid = pid
+            self.running = running
+            self.calls = calls if calls is not None else []
+            self.label = label
+            self.killed = False
+
+        def poll(self):
+            return None if self.running else 1
+
+        def terminate(self) -> None:
+            self.calls.append(f"stop:{self.label}")
+            self.running = False
+
+        def wait(self, timeout=None):
+            if self.running:
+                raise TimeoutError("still running")
+            return 0
+
+        def kill(self) -> None:
+            self.killed = True
+            self.running = False
+
+    class StubbornProcess(DummyProcess):
+        def terminate(self) -> None:
+            self.calls.append(f"stop:{self.label}")
+
+        def kill(self) -> None:
+            self.calls.append(f"kill:{self.label}")
+            self.killed = True
+
+    # 空 Controller 没有事件所有权；重复停止不得覆盖其它实例的 active 事件。
+    empty_stop_calls: list[str] = []
+    empty_controller = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: empty_stop_calls.append("inactive"),
+        start_sidecar_func=lambda: DummyProcess(90),
+        start_host_func=lambda: DummyProcess(91),
+    )
+    empty_controller.stop()
+    empty_controller.stop()
+    assert empty_stop_calls == []
+    assert empty_controller.snapshot()["status"] == "stopped"
+
+    shared_event_calls: list[str] = []
+    primary_controller = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: shared_event_calls.append("inactive"),
+        start_sidecar_func=lambda: DummyProcess(92),
+        start_host_func=lambda: DummyProcess(93),
+    )
+    secondary_controller = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: shared_event_calls.append("secondary-inactive"),
+        start_sidecar_func=lambda: DummyProcess(94),
+        start_host_func=lambda: DummyProcess(95),
+    )
+    primary_controller.start()
+    event_count_before_secondary_stop = len(shared_event_calls)
+    secondary_controller.stop()
+    assert len(shared_event_calls) == event_count_before_secondary_stop
+    assert primary_controller.is_running() is True
+    primary_controller.stop()
+
+    stale_process_calls: list[str] = []
+    stale_controller = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: stale_process_calls.append("inactive"),
+    )
+    stale_controller.sidecar_process = DummyProcess(96, running=False)
+    stale_controller.stop()
+    assert stale_process_calls == ["inactive", "inactive"]
+    assert stale_controller.sidecar_process is None
+
+    with TemporaryDirectory() as tmp_dir:
+        exit_signal = Path(tmp_dir) / "host.exit.json"
+
+        class VoluntaryHostProcess(DummyProcess):
+            def __init__(self) -> None:
+                super().__init__(301, calls=[], label="host")
+                self._hextech_overlay_exit_file = str(exit_signal)
+
+            def wait(self, timeout=None):
+                if exit_signal.exists():
+                    self.running = False
+                    return 0
+                return super().wait(timeout=timeout)
+
+        voluntary_host = VoluntaryHostProcess()
+        assert overlay_lifecycle.stop_process(voluntary_host) is True
+        assert voluntary_host.calls == []
+        assert not exit_signal.exists()
+
+    # 成功启停：停止前先隐藏，sidecar 退出后再写 inactive 作为最终 fence。
+    calls: list[str] = []
+    host_process = DummyProcess(101, calls=calls, label="host")
+    sidecar_process = DummyProcess(102, calls=calls, label="sidecar")
+    controller = GameOverlayController(
+        prepare_data_func=lambda: calls.append("prepare"),
+        write_inactive_func=lambda: calls.append("inactive"),
+        start_sidecar_func=lambda: calls.append("start:sidecar") or sidecar_process,
+        start_host_func=lambda: calls.append("start:host") or host_process,
+    )
+    controller.start()
+    assert calls == ["prepare", "inactive", "start:sidecar", "start:host"]
+    assert controller.snapshot()["status"] == "running"
+    assert controller.snapshot()["host_pid"] == 101
+    assert controller.snapshot()["sidecar_pid"] == 102
+    assert "pid" not in controller.snapshot()
+    controller.stop()
+    assert calls[-4:] == ["inactive", "stop:sidecar", "inactive", "stop:host"]
+    assert controller.snapshot()["status"] == "stopped"
+    assert controller.host_process is None and controller.sidecar_process is None
+
+    partial_restart_calls: list[str] = []
+    healthy_host = DummyProcess(121, calls=partial_restart_calls, label="host")
+    dead_sidecar = DummyProcess(122, running=False, calls=partial_restart_calls, label="dead-sidecar")
+    new_sidecar = DummyProcess(123, calls=partial_restart_calls, label="sidecar")
+    partial_restart = GameOverlayController(
+        prepare_data_func=lambda: partial_restart_calls.append("prepare"),
+        write_inactive_func=lambda: partial_restart_calls.append("inactive"),
+        start_sidecar_func=lambda: partial_restart_calls.append("start:sidecar") or new_sidecar,
+        start_host_func=lambda: partial_restart_calls.append("start:host") or DummyProcess(124),
+    )
+    partial_restart.host_process = healthy_host
+    partial_restart.sidecar_process = dead_sidecar
+    assert partial_restart.is_running() is False
+    partial_restart.start()
+    assert partial_restart.host_process is healthy_host
+    assert partial_restart.sidecar_process is new_sidecar
+    assert partial_restart_calls == ["prepare", "start:sidecar"]
+    assert healthy_host.running is True
+    assert partial_restart.snapshot()["status"] == "running"
+
+    stale_cleanup_calls: list[str] = []
+    stale_cleanup = GameOverlayController(
+        prepare_data_func=lambda: stale_cleanup_calls.append("prepare"),
+        write_inactive_func=lambda: stale_cleanup_calls.append("inactive"),
+        start_sidecar_func=lambda: stale_cleanup_calls.append("start:sidecar") or DummyProcess(111),
+        start_host_func=lambda: stale_cleanup_calls.append("start:host") or DummyProcess(112),
+    )
+    stale_cleanup.host_process = StubbornProcess(113, calls=stale_cleanup_calls, label="host")
+    stale_cleanup.start()
+    assert stale_cleanup.snapshot()["status"] == "running"
+    assert stale_cleanup.host_process.pid == 113
+    assert stale_cleanup.sidecar_process.pid == 111
+    assert stale_cleanup_calls == ["prepare", "start:sidecar"]
+
+    residual_stop_calls: list[str] = []
+    residual_stop = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: residual_stop_calls.append("inactive"),
+    )
+    residual_stop.host_process = StubbornProcess(114, calls=residual_stop_calls, label="host")
+    try:
+        residual_stop.stop()
+    except RuntimeError as exc:
+        assert "host 停止失败(pid=114)" in str(exc)
+    else:
+        raise AssertionError("stop_process 失败必须向调用方报错")
+    assert residual_stop.host_process is not None and residual_stop.host_process.pid == 114
+    assert residual_stop.sidecar_process is None
+    assert residual_stop.snapshot()["residual_pids"] == {"host": 114}
+    assert residual_stop_calls[:2] == ["inactive", "inactive"]
+
+    # host 失败必须回滚已启动 sidecar；sidecar 失败不得继续启动 host。
+    rollback_calls: list[str] = []
+    rollback_event_calls: list[str] = []
+    orphan_sidecar = DummyProcess(201, calls=rollback_calls, label="sidecar")
+    rollback = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: rollback_event_calls.append("inactive"),
+        start_sidecar_func=lambda: orphan_sidecar,
+        start_host_func=lambda: (_ for _ in ()).throw(RuntimeError("host failed")),
+    )
+    try:
+        rollback.start()
+    except RuntimeError as exc:
+        assert "host failed" in str(exc)
+    else:
+        raise AssertionError("host 启动失败必须向调用方报错")
+    assert not orphan_sidecar.running
+    assert rollback_event_calls == ["inactive", "inactive"]
+    assert rollback.snapshot()["status"] == "error"
+    assert rollback.host_process is None and rollback.sidecar_process is None
+
+    stubborn_rollback_calls: list[str] = []
+    stubborn_orphan_sidecar = StubbornProcess(204, calls=stubborn_rollback_calls, label="sidecar")
+    stubborn_rollback = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: None,
+        start_sidecar_func=lambda: stubborn_orphan_sidecar,
+        start_host_func=lambda: (_ for _ in ()).throw(RuntimeError("host failed with stubborn sidecar")),
+    )
+    try:
+        stubborn_rollback.start()
+    except RuntimeError as exc:
+        assert "回滚后仍有残留" in str(exc)
+        assert "sidecar(pid=204)" in str(exc)
+    else:
+        raise AssertionError("回滚残留必须向调用方报错")
+    assert stubborn_rollback.sidecar_process is stubborn_orphan_sidecar
+    assert stubborn_rollback.snapshot()["residual_pids"] == {"sidecar": 204}
+
+    sidecar_failed_host_calls: list[str] = []
+    sidecar_failure = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: None,
+        start_sidecar_func=lambda: DummyProcess(202, running=False),
+        start_host_func=lambda: sidecar_failed_host_calls.append("host") or DummyProcess(203),
+    )
+    try:
+        sidecar_failure.start()
+    except RuntimeError as exc:
+        assert "sidecar" in str(exc)
+    else:
+        raise AssertionError("已退出 sidecar 不得被标记为 running")
+    assert sidecar_failed_host_calls == []
+
+    # Web / game overlay 四状态矩阵，两个入口互不启动对方。
+    matrix_calls: list[str] = []
+    matrix_controller = GameOverlayController(
+        prepare_data_func=lambda: matrix_calls.append("prepare"),
+        write_inactive_func=lambda: matrix_calls.append("inactive"),
+        start_sidecar_func=lambda: matrix_calls.append("sidecar") or DummyProcess(302),
+        start_host_func=lambda: matrix_calls.append("host") or DummyProcess(303),
+    )
+    manager = ServiceManager(
+        start_web_func=lambda: matrix_calls.append("web") or DummyProcess(301),
+        overlay_controller=matrix_controller,
+    )
+    assert not manager.is_web_running() and not manager.is_game_overlay_running()
+    manager.start_web()
+    assert manager.is_web_running() and not manager.is_game_overlay_running()
+    assert matrix_calls == ["web"]
+    manager.start_game_overlay()
+    assert manager.is_web_running() and manager.is_game_overlay_running()
+    manager.stop_web()
+    assert not manager.is_web_running() and manager.is_game_overlay_running()
+    manager.stop_game_overlay()
+    assert not manager.is_web_running() and not manager.is_game_overlay_running()
+
+    class ReleaseAfterWaitProcess(DummyProcess):
+        def __init__(self, pid: int):
+            super().__init__(pid)
+            self.wait_entered = threading.Event()
+            self.release = threading.Event()
+
+        def terminate(self) -> None:
+            self.calls.append("stop:web")
+
+        def wait(self, timeout=None):
+            self.wait_entered.set()
+            if self.release.wait(timeout=1):
+                self.running = False
+                return 0
+            raise TimeoutError("still running")
+
+        def poll(self):
+            return None if self.running else 0
+
+    joined_process = ReleaseAfterWaitProcess(304)
+    joined_manager = ServiceManager(
+        start_web_func=lambda: joined_process,
+        overlay_controller=GameOverlayController(prepare_data_func=lambda: None, write_inactive_func=lambda: None),
+    )
+    joined_manager.start_web()
+
+    def release_shutdown_wait() -> None:
+        assert joined_process.wait_entered.wait(timeout=1)
+        joined_process.release.set()
+
+    release_thread = threading.Thread(target=release_shutdown_wait, daemon=True)
+    release_thread.start()
+    try:
+        joined_manager.shutdown(timeout_seconds=0.01)
+        assert joined_process.release.is_set(), "默认退出路径应等待后台收尾线程完成"
+        assert joined_manager._shutdown_thread is not None
+        assert not joined_manager._shutdown_thread.is_alive()
+        joined_snapshot = joined_manager.get_status_snapshot()["web"]
+        assert joined_snapshot["status"] == "stopped"
+    finally:
+        joined_process.release.set()
+        release_thread.join(timeout=1)
+
+    def hint_cache(*, private: bool = True, stats: bool = True, synergy_count: int = 3) -> dict[str, Any]:
+        hints: dict[str, Any] = {}
+        for index in range(3):
+            hint: dict[str, Any] = {
+                "augment_id": f"a{index}",
+                "name": f"强化 {index + 1}",
+                "tier": ("Prismatic", "Gold", "Silver")[index],
+                # 顶层 stats 只保留兼容；正式 overlay 必须优先读取当前英雄维度。
+                "winrate": 0.11 + index * 0.01,
+                "pickrate": 0.01 + index * 0.01,
+                "synergies": [],
+            }
+            if stats:
+                hint.update(
+                    stats_by_champion_id={
+                        "266": {"winrate": 0.55 + index * 0.01, "pickrate": 0.03 + index * 0.01},
+                        "245": {"winrate": 0.61 + index * 0.01, "pickrate": 0.04 + index * 0.01},
+                    },
+                    stats_by_champion_name={
+                        "暗裔剑魔": {"winrate": 0.55 + index * 0.01, "pickrate": 0.03 + index * 0.01},
+                        "时间刺客": {"winrate": 0.61 + index * 0.01, "pickrate": 0.04 + index * 0.01},
+                    },
+                )
+            if index < synergy_count:
+                hint["synergies"] = [{
+                    "hero_id": "266",
+                    "hero_name": "暗裔剑魔",
+                    "rating": "S",
+                    "tag": "联动",
+                    "content": f"联动 {index + 1}",
+                }]
+            hints[f"a{index}"] = hint
+        return {
+            "schema_version": 1,
+            "generated_at": time.time(),
+            "source": {"private_policy_stats_enabled": private},
+            "hints": hints,
+            "name_index": {},
+        }
+
+    slots = [
+        {"slot": index, "state": "ready", "augment_id": f"a{index}", "name": f"强化 {index + 1}", "tier": tier}
+        for index, tier in enumerate(("Prismatic", "Gold", "Silver"))
+    ]
+    snapshot = {
+        "ok": True,
+        "visible": True,
+        "source": {"selection_window_active": True},
+        "slots": slots,
+    }
+    context = {"ok": True, "champion_id": "266", "champion_name": "暗裔剑魔"}
+
+    ready_model = overlay_renderer.build_render_model(snapshot, hint_cache=hint_cache(), context=context)
+    assert len(ready_model["stats"]) == 3
+    assert ready_model["stats"][0]["stats_text"] == "胜率 55.0% · 出场 3.0%"
+    assert ready_model["stats"][0]["status_code"] == "READY"
+    assert ready_model["stats"][0]["winrate_text"] == "55.0%"
+    assert ready_model["stats"][0]["pickrate_text"] == "3.0%"
+    assert ready_model["stats"][0]["status_text"] == ""
+    ekko_model = overlay_renderer.build_render_model(
+        snapshot,
+        hint_cache=hint_cache(),
+        context={"ok": True, "champion_id": "245", "champion_name": "时间刺客"},
+    )
+    assert ekko_model["stats"][0]["stats_text"] == "胜率 61.0% · 出场 4.0%"
+    missing_champion_model = overlay_renderer.build_render_model(
+        snapshot,
+        hint_cache=hint_cache(),
+        context={"ok": True, "champion_id": "999", "champion_name": "不存在"},
+    )
+    assert {row["stats_text"] for row in missing_champion_model["stats"]} == {"暂无该英雄统计"}
+    assert {row["status_code"] for row in missing_champion_model["stats"]} == {"NO_STATS"}
+    assert {row["status_text"] for row in missing_champion_model["stats"]} == {"暂无统计"}
+    assert [row["slot"] for row in ready_model["synergies"]] == [0, 1, 2]
+    privacy_model = overlay_renderer.build_render_model(snapshot, hint_cache=hint_cache(private=False), context=context)
+    assert {row["stats_text"] for row in privacy_model["stats"]} == {"已开启隐私模式"}
+    assert {row["status_code"] for row in privacy_model["stats"]} == {"PRIVACY_OFF"}
+    assert {row["status_text"] for row in privacy_model["stats"]} == {"统计关闭"}
+    missing_model = overlay_renderer.build_render_model(snapshot, hint_cache=hint_cache(stats=False), context=context)
+    assert {row["stats_text"] for row in missing_model["stats"]} == {"暂无该英雄统计"}
+    assert {row["status_code"] for row in missing_model["stats"]} == {"NO_STATS"}
+    partial_stats_cache = hint_cache()
+    partial_stats_cache["hints"]["a0"]["stats_by_champion_id"]["266"].pop("pickrate")
+    partial_stats_model = overlay_renderer.build_render_model(
+        snapshot,
+        hint_cache=partial_stats_cache,
+        context=context,
+    )
+    assert partial_stats_model["stats"][0]["stats_text"] == "胜率 55.0%"
+    assert partial_stats_model["stats"][0]["status_code"] == "NO_STATS"
+    assert partial_stats_model["stats"][0]["status_text"] == "暂无统计"
+    partial_snapshot = dict(snapshot)
+    partial_snapshot["slots"] = [slots[0], {"slot": 1, "state": "detecting"}]
+    partial_model = overlay_renderer.build_render_model(partial_snapshot, hint_cache=hint_cache(), context=context)
+    assert [row["stats_text"] for row in partial_model["stats"]] == [
+        "胜率 55.0% · 出场 3.0%", "识别中…", "识别中…"
+    ]
+    assert [row["status_code"] for row in partial_model["stats"]] == ["READY", "DETECTING", "DETECTING"]
+    assert [row["status_text"] for row in partial_model["stats"]] == ["", "识别中…", "识别中…"]
+    for count in range(4):
+        model = overlay_renderer.build_render_model(snapshot, hint_cache=hint_cache(synergy_count=count), context=context)
+        assert len(model["synergies"]) == count
+        assert [row["slot"] for row in model["synergies"]] == list(range(count))
+
+    # 三档常见 viewport + 1920×1200：统计条完全内嵌原生卡片且互不重叠；联动组整体居中且按槽位排序。
+    for viewport in ((1366, 768), (1920, 1080), (1920, 1200), (2560, 1600)):
+        width, height = viewport
+        assert overlay_renderer._card_panel_ratios(viewport) == pick_card_panels(viewport)
+        for count in range(4):
+            layout = overlay_renderer.resolve_overlay_layout(viewport, synergy_count=count)
+            assert len(layout["stat_boxes"]) == 3
+            for stat_box, card_box in zip(layout["stat_boxes"], layout["card_boxes"]):
+                assert card_box[0] < stat_box[0] < stat_box[2] < card_box[2]
+                assert card_box[1] < stat_box[1] < stat_box[3] < card_box[3]
+                assert 46 <= stat_box[3] - stat_box[1] <= 72
+                assert 10 <= stat_box[0] - card_box[0] <= 20
+                assert 10 <= card_box[2] - stat_box[2] <= 20
+                assert 0.81 * (card_box[3] - card_box[1]) <= stat_box[1] - card_box[1] <= 0.85 * (card_box[3] - card_box[1])
+                assert 0 <= stat_box[0] < stat_box[2] <= width
+                assert 0 <= stat_box[1] < stat_box[3] <= height
+            for left, right in zip(layout["stat_boxes"], layout["stat_boxes"][1:]):
+                assert left[2] < right[0]
+            boxes = layout["synergy_boxes"]
+            assert len(boxes) == count
+            assert all(first[3] < second[1] for first, second in zip(boxes, boxes[1:]))
+            if boxes:
+                rail = layout["synergy_rail"]
+                group_center = (boxes[0][1] + boxes[-1][3]) / 2
+                rail_center = (rail[1] + rail[3]) / 2
+                assert abs(group_center - rail_center) <= 1.0
+
+    class RecordingCanvas:
+        def __init__(self) -> None:
+            self.text_calls: list[dict[str, Any]] = []
+
+        def delete(self, *_args, **_kwargs):
+            return None
+
+        def create_polygon(self, *_args, **_kwargs):
+            return None
+
+        def create_rectangle(self, *_args, **_kwargs):
+            return None
+
+        def create_line(self, *_args, **_kwargs):
+            return None
+
+        def create_text(self, *args, **kwargs):
+            self.text_calls.append({"args": args, **kwargs})
+            return None
+
+    ready_canvas = RecordingCanvas()
+    overlay_renderer._draw_stat_panel(ready_canvas, (100, 100, 340, 160), ready_model["stats"][0])
+    assert any(
+        call.get("text") == "胜率 55.0% · 出场 3.0%" and call.get("anchor") == "center"
+        for call in ready_canvas.text_calls
+    )
+
+    # 极值百分位也必须作为整体贴近统计框中轴线；固定左右列会被长短数字拖偏。
+    stat_box = (100, 100, 546, 172)
+    stat_center_x = (stat_box[0] + stat_box[2]) / 2
+    for winrate_text, pickrate_text in (
+        ("57.7%", "3.9%"),
+        ("100.0%", "0.1%"),
+        ("49.9%", "12.3%"),
+        ("9.8%", "18.8%"),
+    ):
+        row = dict(
+            ready_model["stats"][0],
+            stats_text=f"胜率 {winrate_text} · 出场 {pickrate_text}",
+            winrate_text=winrate_text,
+            pickrate_text=pickrate_text,
+        )
+        stat_canvas = overlay_render_snapshot.PillowCanvas(700, 260)
+        overlay_renderer._draw_stat_panel(stat_canvas, stat_box, row)
+        bbox = stat_canvas.image.getchannel("A").crop(stat_box).getbbox()
+        assert bbox is not None
+        text_center_x = stat_box[0] + (bbox[0] + bbox[2]) / 2
+        assert abs(text_center_x - stat_center_x) <= 1.5
+
+    for row, expected_text in (
+        (partial_model["stats"][1], "识别中…"),
+        (privacy_model["stats"][0], "统计关闭"),
+        (missing_model["stats"][0], "暂无统计"),
+    ):
+        status_canvas = RecordingCanvas()
+        overlay_renderer._draw_stat_panel(status_canvas, (100, 100, 340, 160), row)
+        assert {call.get("text") for call in status_canvas.text_calls} == {expected_text}
+        assert {call.get("anchor") for call in status_canvas.text_calls} == {"center"}
+
+    long_cache = hint_cache()
+    long_content = (
+        "技能循环更顺畅，适合持续作战；命中后继续追击并利用回复窗口拉开第二轮技能差。"
+        "提高正面承伤与回复效率，团战中优先保持阵型，再根据关键技能决定进场时机。"
+    ) * 3
+    for hint in long_cache["hints"].values():
+        hint["synergies"][0]["content"] = long_content
+    long_model = overlay_renderer.build_render_model(snapshot, hint_cache=long_cache, context=context)
+    for viewport in ((1366, 768), (1920, 1080), (2560, 1600)):
+        width, height = viewport
+        canvas = RecordingCanvas()
+        long_layout = overlay_renderer.draw_overlay_frame(canvas, long_model, viewport_size=viewport)
+        long_boxes = long_layout["synergy_boxes"]
+        assert len(long_boxes) == 3
+        assert all(first[3] < second[1] for first, second in zip(long_boxes, long_boxes[1:]))
+        assert all(0 <= box[0] < box[2] <= width and 0 <= box[1] < box[3] <= height for box in long_boxes)
+
+        rail_width = long_layout["synergy_rail"][2] - long_layout["synergy_rail"][0]
+        minimum_height = overlay_renderer._clamp(96, height * 0.11, 176)
+        for box, row in zip(long_boxes, long_model["synergies"]):
+            panel_height = box[3] - box[1]
+            text_layout = overlay_renderer._resolve_synergy_text_layout(
+                row,
+                rail_width,
+                minimum_height=minimum_height,
+                panel_height=panel_height,
+            )
+            assert text_layout["body_offset"] + len(text_layout["body_lines"]) * text_layout["line_height"] <= panel_height
+            text_width = rail_width - 2 * overlay_renderer._clamp(12, rail_width * 0.05, 20)
+            assert all(
+                overlay_renderer._visual_text_width(line, text_layout["body_size"]) <= text_width + 1
+                for line in text_layout["body_lines"]
+            )
+
+        extreme = overlay_renderer.resolve_overlay_layout(
+            viewport,
+            synergy_heights=[1000, 1000, 1000],
+        )["synergy_boxes"]
+        assert len(extreme) == 3
+        assert all(box[3] <= height for box in extreme)
+        assert all(box[3] - box[1] >= 80 for box in extreme)
+        assert all(first[3] < second[1] for first, second in zip(extreme, extreme[1:]))
+
+    real_frame = RUN_DIR / "data" / "runtime" / "debug" / "auto_selection" / "selection-20260612-205839" / "frame.png"
+    if real_frame.exists():
+        from PIL import Image
+        import numpy as np
+
+        frame = Image.open(real_frame).convert("RGB")
+        frame_viewport = frame.size
+        frame_canvas = overlay_render_snapshot.PillowCanvas(*frame_viewport)
+        frame_layout = overlay_renderer.draw_overlay_frame(frame_canvas, ready_model, viewport_size=frame_viewport)
+        alpha = frame_canvas.image.getchannel("A")
+
+        def detect_real_card_box(card_box: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+            left, top, right, bottom = card_box
+            crop = np.asarray(frame.crop((left, top, right, bottom)), dtype=np.uint8)
+            red = crop[:, :, 0]
+            green = crop[:, :, 1]
+            blue = crop[:, :, 2]
+            # 真机卡框是暖白/金色高亮；只在预期卡片框内取 bbox，避免下方重随按钮污染。
+            mask = (
+                (red > 165)
+                & (green > 140)
+                & (blue > 105)
+                & ((red.astype(np.int16) - blue.astype(np.int16)) > 12)
+            )
+            ys, xs = np.where(mask)
+            if len(xs) < 500:
+                return card_box
+            return (
+                int(xs.min() + left),
+                int(ys.min() + top),
+                int(xs.max() + left + 1),
+                int(ys.max() + top + 1),
+            )
+
+        for stat_box, card_box in zip(frame_layout["stat_boxes"], frame_layout["card_boxes"]):
+            real_card = detect_real_card_box(card_box)
+            bbox = alpha.crop(stat_box).getbbox()
+            assert bbox is not None
+            text_left = stat_box[0] + bbox[0]
+            text_top = stat_box[1] + bbox[1]
+            text_right = stat_box[0] + bbox[2]
+            text_bottom = stat_box[1] + bbox[3]
+            text_center_x = (text_left + text_right) / 2
+            real_center_x = (real_card[0] + real_card[2]) / 2
+            real_height = max(1, real_card[3] - real_card[1])
+            assert abs(text_center_x - real_center_x) <= 4.0
+            assert (text_top - real_card[1]) / real_height >= 0.86
+            assert text_bottom <= real_card[3] - max(20, int(real_height * 0.045))
+
+    def decide(**overrides):
+        args = {
+            "user_enabled": True,
+            "event_visible": True,
+            "game_foreground": True,
+            "content_ready": True,
+            "selection_window_active": True,
+            "event_error": "",
+            "blocking_modal": False,
+            "scoreboard_key_down": False,
+            "event_fresh_after_tab": True,
+        }
+        args.update(overrides)
+        return overlay_host.decide_visibility(**args)
+
+    # 显隐矩阵：V2 至少一个稳定槽即可显示，Tab 和旧事件是硬门。
+    assert decide(event_visible=False, content_ready=False) == (False, "event_inactive")
+    assert decide() == (True, "visible_ready")
+    assert decide(selection_window_active=False) == (False, "selection_window_inactive")
+    assert decide(selection_window_active=None) == (True, "visible_ready")
+    assert decide(content_ready=False, ready_slots=1) == (True, "visible_partial")
+    for overrides in (
+        {"event_error": "event_expired", "event_visible": False},
+        {"blocking_modal": True},
+        {"game_foreground": False},
+        {"user_enabled": False},
+        {"scoreboard_key_down": True},
+        {"event_fresh_after_tab": False},
+    ):
+        assert decide(**overrides)[0] is False
+    assert decide(event_error="event_expired", event_visible=False, stale_event_hold=True) == (
+        True,
+        "event_expired_hold",
+    )
+    assert decide(game_foreground=False, diagnostic_mode=True) == (True, "diagnostic:game_not_foreground")
+    assert overlay_host.build_overlay_window_config()["event_poll_ms"] == 120
+    hotkey_visibility = {"user_enabled": True}
+    hotkeys: queue.Queue[str] = queue.Queue()
+    hotkeys.put("toggle")
+    overlay_host._drain_hotkey_requests(hotkeys, hotkey_visibility)
+    assert hotkey_visibility["user_enabled"] is False
+
+    class HiddenSource:
+        def __init__(self) -> None:
+            self.event_reads = 0
+            self.hint_reads = 0
+            self.context_reads = 0
+
+        def read_event(self):
+            self.event_reads += 1
+            return {"ok": True, "visible": False, "source": {"selection_window_active": False}, "slots": []}
+
+        def read_hint_cache(self):
+            self.hint_reads += 1
+            return {}
+
+        def read_context(self):
+            self.context_reads += 1
+            return {}
+
+    class FakeRoot:
+        def withdraw(self):
+            raise AssertionError("已隐藏窗口不应重复操作")
+
+    class FakeCanvas:
+        def __init__(self) -> None:
+            self.after_calls = 0
+            self.delete_calls = 0
+
+        def after(self, _delay, _callback):
+            self.after_calls += 1
+
+        def delete(self, *_args):
+            self.delete_calls += 1
+
+    hidden_source = HiddenSource()
+    hidden_canvas = FakeCanvas()
+    config = overlay_host.build_overlay_window_config()
+    config["no_activate"] = False
+    visibility = {"user_enabled": True, "target_hwnd": 123, "window_visible": False}
+    with (
+        patch.object(overlay_host, "_find_target_game_window", return_value=None),
+        patch.object(overlay_host, "_is_game_window_foreground", return_value=True),
+    ):
+        overlay_host._schedule_event_render(
+            FakeRoot(), hidden_canvas, config, visibility, queue.Queue(), data_source=hidden_source
+        )
+    assert hidden_source.event_reads == 1
+    assert hidden_source.hint_reads == 0 and hidden_source.context_reads == 0
+    assert hidden_canvas.delete_calls == 0 and hidden_canvas.after_calls == 1
+
+    class DiagnosticSource:
+        def __init__(self) -> None:
+            self.hint_reads = 0
+            self.context_reads = 0
+
+        def read_event(self):
+            return {
+                "ok": False,
+                "visible": False,
+                "error": "event_missing",
+                "generated_at": 0.0,
+                "source": {"reason": "event_missing"},
+                "slots": [],
+            }
+
+        def read_hint_cache(self):
+            self.hint_reads += 1
+            return {}
+
+        def read_context(self):
+            self.context_reads += 1
+            return {}
+
+    class DiagnosticRoot:
+        def __init__(self) -> None:
+            self.deiconify_calls = 0
+            self.attributes_calls: list[tuple[Any, ...]] = []
+
+        def geometry(self, _value):
+            return None
+
+        def deiconify(self):
+            self.deiconify_calls += 1
+
+        def attributes(self, *args):
+            self.attributes_calls.append(args)
+
+    class DiagnosticCanvas(FakeCanvas):
+        def __init__(self) -> None:
+            super().__init__()
+            self.text_calls: list[dict[str, Any]] = []
+
+        def create_rectangle(self, *_args, **_kwargs):
+            return None
+
+        def create_text(self, *args, **kwargs):
+            self.text_calls.append({"args": args, **kwargs})
+            return None
+
+    diagnostic_source = DiagnosticSource()
+    diagnostic_canvas = DiagnosticCanvas()
+    diagnostic_config = overlay_host.build_overlay_window_config()
+    diagnostic_config["diagnostic_mode"] = True
+    diagnostic_config["no_activate"] = False
+    diagnostic_visibility = {"user_enabled": True, "target_hwnd": None, "window_visible": False}
+    with patch.object(overlay_host, "_find_target_game_window", return_value=None):
+        overlay_host._schedule_event_render(
+            DiagnosticRoot(),
+            diagnostic_canvas,
+            diagnostic_config,
+            diagnostic_visibility,
+            queue.Queue(),
+            data_source=diagnostic_source,
+    )
+    assert diagnostic_visibility["window_visible"] is True
+    assert diagnostic_visibility["visibility_reason"] == "diagnostic:game_not_foreground"
+    assert any("Hextech overlay diagnostic" in str(call.get("text")) for call in diagnostic_canvas.text_calls)
+    assert diagnostic_source.hint_reads == 0 and diagnostic_source.context_reads == 0
+
+    stale_visibility = {"user_enabled": True, "target_hwnd": 123, "window_visible": True}
+    stale_snapshot = {
+        "visible": False,
+        "active": True,
+        "error": "event_expired",
+        "generated_at": time.time() - 3.0,
+        "source": {"selection_window_active": True},
+        "slots": [{"slot": 0, "state": "ready", "augment_id": "a0"}],
+    }
+    stale_config = dict(diagnostic_config)
+    stale_config.update({"diagnostic_mode": False, "no_activate": False})
+    with patch.object(overlay_host, "_is_game_window_foreground", return_value=True):
+        assert overlay_host._sync_event_visibility(
+            DiagnosticRoot(),
+            stale_config,
+            stale_visibility,
+            stale_snapshot,
+            apply_window=False,
+        ) is True
+    assert stale_visibility["visibility_reason"] == "event_expired_hold"
+    assert stale_visibility["event_stale_hold_active"] is True
+    assert stale_visibility["render_full_overlay"] is True
+
+    with (
+        TemporaryDirectory() as tmp_dir,
+        patch.dict(os.environ, {overlay_host.OVERLAY_READY_FILE_ENV: str(Path(tmp_dir) / "ready.json")}),
+        patch.object(overlay_host, "atomic_write_json", side_effect=OSError("disk busy")),
+    ):
+        overlay_host._signal_overlay_ready()
+
+    class ExitWatchRoot:
+        def __init__(self) -> None:
+            self.after_callbacks: list[Any] = []
+            self.quit_calls = 0
+
+        def after(self, _delay, callback):
+            self.after_callbacks.append(callback)
+
+        def quit(self):
+            self.quit_calls += 1
+
+    with TemporaryDirectory() as tmp_dir:
+        exit_path = Path(tmp_dir) / "host.exit.json"
+        exit_root = ExitWatchRoot()
+        overlay_host._schedule_exit_file_watch(exit_root, exit_path)
+        assert len(exit_root.after_callbacks) == 1
+        exit_root.after_callbacks[-1]()
+        assert exit_root.quit_calls == 0
+        exit_path.write_text("{}", encoding="utf-8")
+        exit_root.after_callbacks[-1]()
+        assert exit_root.quit_calls == 1
+
+    class ErrorSource:
+        def read_event(self):
+            raise RuntimeError("broken event")
+
+        def read_hint_cache(self):
+            raise AssertionError("渲染失败时不应继续读取 hint cache")
+
+        def read_context(self):
+            raise AssertionError("渲染失败时不应继续读取 context")
+
+    class BackoffCanvas:
+        def __init__(self) -> None:
+            self.after_calls: list[tuple[int, Any]] = []
+
+        def after(self, delay, callback):
+            self.after_calls.append((int(delay), callback))
+
+    error_canvas = BackoffCanvas()
+    with (
+        patch.object(overlay_host, "_find_target_game_window", return_value=None),
+        patch.object(overlay_host, "is_scoreboard_key_down", return_value=False),
+    ):
+        overlay_host._schedule_event_render(
+            object(),
+            error_canvas,
+            config,
+            {"user_enabled": True, "target_hwnd": 123, "window_visible": False},
+            queue.Queue(),
+            data_source=ErrorSource(),
+        )
+        for _ in range(4):
+            error_canvas.after_calls[-1][1]()
+    assert [delay for delay, _callback in error_canvas.after_calls[:4]] == [120, 120, 120, 240]
+
+    host_text = (package_dir / "host.py").read_text(encoding="utf-8")
+    assert "_schedule_window_follow" not in host_text
+    assert "follow_poll_ms" not in host_text
+
+    class GeometryMustStayHidden:
+        def geometry(self, _value):
+            raise AssertionError("隐藏状态只允许记录 pending geometry")
+
+    hidden_geometry_visibility = {"window_visible": False}
+    with patch.object(
+        overlay_host,
+        "_find_target_game_window",
+        return_value=(321, (10, 20, 1930, 1100)),
+    ):
+        overlay_host._refresh_target_window(
+            GeometryMustStayHidden(),
+            config,
+            hidden_geometry_visibility,
+        )
+    assert hidden_geometry_visibility["target_hwnd"] == 321
+    assert hidden_geometry_visibility["pending_geometry"] == "1920x1080+10+20"
+    assert overlay_host._target_overlay_geometry((-1920, -100, 0, 980), config) == "1920x1080-1920-100"
+
+    class FakeUser32:
+        def __init__(self, foreground: int = 0) -> None:
+            self.foreground = foreground
+            self.set_window_pos_flags: list[int] = []
+            self.set_window_pos_calls: list[tuple[int, int, int, int, int]] = []
+
+        def SetWindowPos(self, _hwnd, _after, _x, _y, _cx, _cy, flags):
+            self.set_window_pos_flags.append(int(flags))
+            self.set_window_pos_calls.append((int(_x), int(_y), int(_cx), int(_cy), int(flags)))
+            return 1
+
+        def GetForegroundWindow(self):
+            return self.foreground
+
+        @staticmethod
+        def GetAncestor(hwnd, _kind):
+            return hwnd
+
+    position_user32 = FakeUser32()
+    with (
+        patch.object(overlay_host.ctypes.windll, "user32", position_user32),
+        patch.object(overlay_host, "_root_hwnd", return_value=99),
+    ):
+        overlay_host._apply_overlay_rect(object(), (-1920, -100, 0, 980))
+    assert position_user32.set_window_pos_calls == [(-1920, -100, 1920, 1080, overlay_host.SWP_NOACTIVATE)]
+
+    desired_style = (
+        overlay_host.WS_EX_LAYERED
+        | overlay_host.WS_EX_TOPMOST
+        | overlay_host.WS_EX_TOOLWINDOW
+        | overlay_host.WS_EX_TRANSPARENT
+    )
+    unchanged_user32 = FakeUser32()
+    with (
+        patch.object(overlay_host.ctypes.windll, "user32", unchanged_user32),
+        patch.object(overlay_host, "_root_hwnd", return_value=99),
+        patch.object(overlay_host, "_get_window_exstyle", return_value=desired_style),
+        patch.object(overlay_host, "_set_window_exstyle") as set_style,
+    ):
+        assert overlay_host._apply_overlay_window_styles(
+            object(),
+            click_through=True,
+            no_activate=False,
+        ) is False
+    set_style.assert_not_called()
+    assert unchanged_user32.set_window_pos_flags == []
+
+    changed_user32 = FakeUser32()
+    with (
+        patch.object(overlay_host.ctypes.windll, "user32", changed_user32),
+        patch.object(overlay_host, "_root_hwnd", return_value=99),
+        patch.object(overlay_host, "_get_window_exstyle", side_effect=[0, desired_style]),
+        patch.object(overlay_host, "_set_window_exstyle"),
+    ):
+        assert overlay_host._apply_overlay_window_styles(
+            object(),
+            click_through=True,
+            no_activate=False,
+        ) is True
+    assert len(changed_user32.set_window_pos_flags) == 1
+    assert changed_user32.set_window_pos_flags[0] & overlay_host.SWP_FRAMECHANGED
+
+    class FakeShowRoot:
+        def __init__(self) -> None:
+            self.geometries: list[str] = []
+            self.shown = False
+
+        def geometry(self, value):
+            self.geometries.append(value)
+
+        def deiconify(self):
+            self.shown = True
+
+        def attributes(self, *_args):
+            return None
+
+    show_root = FakeShowRoot()
+    show_user32 = FakeUser32()
+    show_visibility = {
+        "pending_geometry": "1920x1080+10+20",
+        "target_rect": (10, 20, 1930, 1100),
+    }
+    with (
+        patch.object(overlay_host.ctypes.windll, "user32", show_user32),
+        patch.object(overlay_host, "_root_hwnd", return_value=99),
+    ):
+        overlay_host._show_overlay_window(show_root, config, show_visibility)
+    assert show_root.shown is True
+    assert show_root.geometries == ["1920x1080+10+20"]
+    assert len(show_user32.set_window_pos_flags) == 1
+    assert not (show_user32.set_window_pos_flags[0] & overlay_host.SWP_FRAMECHANGED)
+    assert show_user32.set_window_pos_calls == [(10, 20, 1920, 1080, overlay_host.SWP_NOACTIVATE)]
+
+    overlay_foreground_user32 = FakeUser32(foreground=456)
+    with patch.object(overlay_host.ctypes.windll, "user32", overlay_foreground_user32):
+        assert overlay_host._is_game_window_foreground(123, overlay_hwnd=456) is False
+
+    class RootNormalizingUser32(FakeUser32):
+        @staticmethod
+        def GetAncestor(hwnd, _kind):
+            return 123 if hwnd in {123, 456} else hwnd
+
+    child_foreground_user32 = RootNormalizingUser32(foreground=456)
+    with patch.object(overlay_host.ctypes.windll, "user32", child_foreground_user32):
+        assert overlay_host._is_game_window_foreground(123) is True
+
+    class HotkeyFallbackUser32:
+        post_calls = 0
+
+        @staticmethod
+        def PeekMessageW(*_args):
+            return 1
+
+        @staticmethod
+        def RegisterHotKey(*_args):
+            return 0
+
+        @staticmethod
+        def GetAsyncKeyState(_key):
+            return 0x8000
+
+        def PostThreadMessageW(self, *_args):
+            self.post_calls += 1
+            return 1
+
+    fallback_user32 = HotkeyFallbackUser32()
+    fallback_queue: queue.Queue[str] = queue.Queue()
+    with patch.object(overlay_host.ctypes.windll, "user32", fallback_user32):
+        fallback_controller = overlay_host._start_hotkey_thread(fallback_queue)
+        try:
+            assert fallback_controller.mode == "poll"
+            assert fallback_queue.get(timeout=1.0) == "toggle"
+        finally:
+            overlay_host._stop_hotkey_thread(fallback_controller)
+    assert fallback_controller.thread is not None
+    assert fallback_controller.thread.is_alive() is False
+    assert fallback_user32.post_calls == 1
+
+    class DebounceStop:
+        def __init__(self) -> None:
+            self.waits = 0
+
+        def is_set(self):
+            return False
+
+        def wait(self, _timeout):
+            self.waits += 1
+            return self.waits >= 5
+
+    class DebounceUser32:
+        def __init__(self) -> None:
+            self.loop_index = 0
+            self.states = [True, False, True, False, True]
+
+        def GetAsyncKeyState(self, key):
+            pressed = self.states[min(self.loop_index, len(self.states) - 1)]
+            if key == ord("H"):
+                self.loop_index += 1
+            return 0x8000 if pressed else 0
+
+    debounce_queue: queue.Queue[str] = queue.Queue()
+    debounce_controller = overlay_host.HotkeyController(debounce_queue)
+    debounce_controller.stop_requested = DebounceStop()  # type: ignore[assignment]
+    with patch.object(overlay_host.time, "monotonic", side_effect=[1.00, 1.10, 1.20, 1.25, 1.35]):
+        overlay_host._poll_alt_h_hotkey(debounce_controller, DebounceUser32())
+    drained_toggles: list[str] = []
+    while not debounce_queue.empty():
+        drained_toggles.append(debounce_queue.get_nowait())
+    assert drained_toggles == ["toggle", "toggle"]
+
+    # 正式与诊断共用同一纯 renderer；快照必须直接输出 PNG，源码不允许 PS fallback。
+    renderer_text = (package_dir / "renderer.py").read_text(encoding="utf-8").lower()
+    assert not any(token in renderer_text for token in ("banner", "top_candidates", "cache miss", "context pending"))
+    snapshot_tool_text = (RUN_DIR / "tools" / "overlay_render_snapshot.py").read_text(encoding="utf-8").lower()
+    assert "postscript" not in snapshot_tool_text and "ghostscript" not in snapshot_tool_text
+    pillow_canvas = overlay_render_snapshot.PillowCanvas(200, 100)
+    pillow_canvas.create_rectangle(10, 10, 60, 40, fill="#123456", outline="")
+    assert pillow_canvas.image.getpixel((20, 20))[:3] == (18, 52, 86)
+
+    left_anchor_canvas = overlay_render_snapshot.PillowCanvas(200, 100)
+    left_anchor_canvas.create_text(50, 50, text="胜率:", fill="#FFFFFF", anchor="e")
+    left_bbox = left_anchor_canvas.image.getchannel("A").getbbox()
+    assert left_bbox is not None and left_bbox[0] < 50 and left_bbox[2] <= 51
+
+    right_anchor_canvas = overlay_render_snapshot.PillowCanvas(200, 100)
+    right_anchor_canvas.create_text(150, 50, text="3.0%", fill="#FFFFFF", anchor="w")
+    right_bbox = right_anchor_canvas.image.getchannel("A").getbbox()
+    assert right_bbox is not None and right_bbox[0] >= 149 and right_bbox[2] > 150
+
+    with TemporaryDirectory() as tmp_dir:
+        png_path = overlay_render_snapshot.render_case(
+            "ready_three_tiers", Path(tmp_dir), (1366, 768)
+        )
+        assert png_path.suffix == ".png"
+        assert png_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 def run_default_checks() -> None:
     check_root_entrypoints()
     check_manual_alias_index()
@@ -2977,6 +5252,11 @@ def run_default_checks() -> None:
     check_runtime_alias_persistence()
     check_detail_hero_param_uses_text_content()
     check_heal_worker_contract()
+    check_latest_valid_runtime_csv_fallback()
+    check_hextech_scraper_fallback_contract()
+    check_hextech_cooldown_and_heal_fallback()
+    check_hextech_failed_refresh_never_overwrites_csv()
+    check_hextech_success_clears_fallback_state()
     check_logging_contract()
     check_packaging_config()
     check_bundle_manifest()
@@ -2992,6 +5272,7 @@ def run_default_checks() -> None:
     check_synergy_snapshot_store()
     check_synergy_structured_payloads()
     check_detail_question_mark_augment_guard()
+    check_detail_hextech_card_layout_contract()
     check_static_css_single_mount_contract()
     check_web_bootstrap_avoids_load_event_gate()
     check_api_champions_uses_stable_catalog_before_network_snapshot()
@@ -3001,22 +5282,39 @@ def run_default_checks() -> None:
     check_detail_renders_before_deferred_icon_catalog()
     check_ui_feature_flags_contract()
     check_overlay_hint_cache_contract()
+    check_overlay_runtime_paths_contract()
     check_overlay_event_channel_contract()
+    check_overlay_context_contract()
+    check_lol_window_contract()
     check_official_overlay_provider_contract()
     check_overlay_vision_sidecar_contract()
-    check_service_manager_lifecycle_contract()
-    check_game_overlay_host_contract()
+    check_game_overlay_module_contract()
     check_desktop_ui_feature_switch_contract()
-    check_desktop_ui_toggle_rollback_contract()
     check_synergy_alias_collision_guard()
     check_synergy_api_quarantines_duplicate_pollution()
     check_synergy_playwright_calibrator_contract()
     check_no_legacy_imports()
 
 
+def run_overlay_only_checks() -> None:
+    check_overlay_performance_probe_contract()
+    check_game_overlay_documentation_contract()
+    check_ui_feature_flags_contract()
+    check_overlay_hint_cache_contract()
+    check_overlay_runtime_paths_contract()
+    check_overlay_event_channel_contract()
+    check_overlay_context_contract()
+    check_lol_window_contract()
+    check_official_overlay_provider_contract()
+    check_overlay_vision_sidecar_contract()
+    check_game_overlay_module_contract()
+    check_desktop_ui_feature_switch_contract()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Hextech 开发自检与手动验收入口。")
     parser.add_argument("--bundle-manifest", action="store_true", help="只输出并校验 bundle manifest 明细。")
+    parser.add_argument("--overlay-only", action="store_true", help="只执行游戏内 overlay 相关离线自检。")
     parser.add_argument("--manual-web-synergy", action="store_true", help="执行 Web/UI 详情页联动人工验收辅助检查。")
     parser.add_argument("--base-url", default="", help="本地 Web 地址，例如 http://127.0.0.1:8000")
     parser.add_argument("--port-file", default="", help="UI/Web 写出的 web_server_port.txt；未传 base-url 时使用。")
@@ -3038,6 +5336,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.bundle_manifest:
         check_bundle_manifest(verbose=True)
+        return 0
+
+    if args.overlay_only:
+        run_overlay_only_checks()
+        print("overlay 自检通过。")
         return 0
 
     run_default_checks()

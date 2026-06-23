@@ -1,6 +1,9 @@
 pandas
 numpy
-requests
+requests>=2.32.3,<3
+urllib3>=2.2,<3
+charset-normalizer>=3.3,<4
+chardet>=5.2,<6
 Pillow
 psutil
 pywin32

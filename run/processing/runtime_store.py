@@ -39,6 +39,7 @@ from scraping.version_sync import BASE_DIR, RESOURCE_DIR, STATIC_DATA_DIR
 
 CSV_ENCODING = "utf-8-sig"
 CSV_FILENAME_PATTERN = "Hextech_Data_*.csv"
+CSV_MIN_VALID_ROWS = 300
 SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
 SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
 SYNERGY_SNAPSHOT_PREFIX = "Champion_Synergy_"
@@ -62,6 +63,8 @@ CSV_REQUIRED_COLUMNS = (
 
 logger = logging.getLogger(__name__)
 _PRIVATE_PERMISSION_WARNING_PATHS: set[str] = set()
+_VALID_CSV_CACHE: dict[tuple[str, int], tuple[int, int, bool]] = {}
+_VALID_CSV_CACHE_LOCK = threading.Lock()
 
 
 def runtime_priority_paths(relative_name: str) -> list[str]:
@@ -102,6 +105,12 @@ def get_runtime_state_dir() -> Path:
 def get_runtime_cache_dir() -> Path:
     """返回运行态缓存目录。"""
     return get_runtime_root_dir() / "cache"
+
+
+def get_runtime_debug_dir() -> Path:
+    """返回不会进入 Git 或发布包的运行态诊断目录。"""
+
+    return get_runtime_root_dir() / "debug"
 
 
 def get_runtime_lock_dir() -> Path:
@@ -230,6 +239,12 @@ def build_runtime_state_path(filename: str) -> str:
 def build_runtime_cache_path(filename: str) -> str:
     """生成运行态缓存文件路径。"""
     return str(_join_under_dir(get_runtime_cache_dir(), filename))
+
+
+def build_runtime_debug_path(filename: str) -> str:
+    """生成受控调试文件路径，拒绝绝对路径和上级目录穿越。"""
+
+    return str(_join_under_dir(get_runtime_debug_dir(), filename))
 
 
 def build_runtime_lock_path(filename: str) -> str:
@@ -400,13 +415,58 @@ def iter_runtime_csv_files() -> list[str]:
     return glob.glob(str(get_runtime_hextech_data_dir() / CSV_FILENAME_PATTERN))
 
 
+def _runtime_csv_sort_key(path: str) -> tuple[str, float]:
+    """优先按文件名日期排序，同日快照再按 mtime 排序。"""
+
+    match = re.search(r"Hextech_Data_(\d{4})-?(\d{2})-?(\d{2})", os.path.basename(path))
+    date_key = "".join(match.groups()) if match else ""
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0.0
+    return date_key, mtime
+
+
+def _runtime_csv_is_valid(path: str, min_rows: int = CSV_MIN_VALID_ROWS) -> bool:
+    """校验 schema 与最小数据量，并按文件 stat 缓存结果。"""
+
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return False
+    cache_key = (stat.st_mtime_ns, stat.st_size)
+    validation_key = (path, min_rows)
+    with _VALID_CSV_CACHE_LOCK:
+        cached = _VALID_CSV_CACHE.get(validation_key)
+        if cached and cached[:2] == cache_key:
+            return cached[2]
+
+    try:
+        valid = len(load_runtime_csv(path)) >= min_rows
+    except (OSError, ValueError, TypeError, pd.errors.ParserError, UnicodeError):
+        valid = False
+
+    with _VALID_CSV_CACHE_LOCK:
+        _VALID_CSV_CACHE[validation_key] = (cache_key[0], cache_key[1], valid)
+    return valid
+
+
+def get_latest_valid_csv(min_rows: int = CSV_MIN_VALID_ROWS) -> Optional[str]:
+    """返回最新有效战报；新文件损坏时自动检查更早版本。"""
+
+    files = sorted(iter_runtime_csv_files(), key=_runtime_csv_sort_key, reverse=True)
+    for path in files:
+        if _runtime_csv_is_valid(path, min_rows=min_rows):
+            return path
+        logger.info("忽略无效运行 CSV：%s", os.path.basename(path))
+    return None
+
+
 def get_latest_csv() -> Optional[str]:
-    """返回最新战报 CSV 的路径，供 Web、UI 和预计算缓存共用。"""
-    files = iter_runtime_csv_files()
-    if not files:
-        return None
-    files.sort(key=os.path.getmtime, reverse=True)
-    return files[0]
+    """返回最新运行 CSV，保留 UI/Web 可展示部分数据的兼容语义。"""
+
+    files = sorted(iter_runtime_csv_files(), key=_runtime_csv_sort_key, reverse=True)
+    return files[0] if files else None
 
 
 def validate_runtime_csv_schema(
@@ -542,11 +602,13 @@ def has_precomputed_hextech_cache() -> bool:
 __all__ = [
     "CSV_ENCODING",
     "CSV_FILENAME_PATTERN",
+    "CSV_MIN_VALID_ROWS",
     "CSV_REQUIRED_COLUMNS",
     "CachedDataFrameLoader",
     "DataFrameCache",
     "build_daily_csv_path",
     "build_runtime_cache_path",
+    "build_runtime_debug_path",
     "build_runtime_lock_path",
     "build_runtime_persisted_path",
     "build_runtime_profile_path",
@@ -562,8 +624,10 @@ __all__ = [
     "ensure_runtime_profile_dir",
     "ensure_runtime_state_dir",
     "get_latest_csv",
+    "get_latest_valid_csv",
     "get_latest_synergy_snapshot_path",
     "get_runtime_cache_dir",
+    "get_runtime_debug_dir",
     "get_runtime_data_dir",
     "get_runtime_hextech_data_dir",
     "get_runtime_synergy_data_dir",

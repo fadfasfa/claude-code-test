@@ -1,24 +1,102 @@
 {
   "schema_version": 1,
   "description": "Track A overlay 视觉匹配真机转储小样本；frame 位于 ignored runtime debug 目录，本文件只保存人工标注真值。",
+  "name_roi_samples": [
+    {
+      "id": "roi-20260621-223039-540",
+      "name_crops": [
+        "data/static/overlay_vision_fixtures/body_shard_20260621/name_0.png",
+        "data/static/overlay_vision_fixtures/body_shard_20260621/name_1.png",
+        "data/static/overlay_vision_fixtures/body_shard_20260621/name_2.png"
+      ],
+      "expected_body_shard": true,
+      "expected_names": [null, null, null],
+      "notes": "锻体碎片实战名称 ROI；必须在普通海克斯候选授权前被硬阻断。"
+    },
+    {
+      "id": "roi-20260621-222018-984",
+      "name_crops": [
+        "data/static/overlay_vision_fixtures/hextech_20260621/name_0.png",
+        "data/static/overlay_vision_fixtures/hextech_20260621/name_1.png",
+        "data/static/overlay_vision_fixtures/hextech_20260621/name_2.png"
+      ],
+      "expected_body_shard": false,
+      "expected_names": ["豪猪", "虚幻武器", "钢化你心"],
+      "notes": "普通海克斯实战名称 ROI；不得被碎片后缀门误杀，三槽文字 top1 必须正确。"
+    },
+    {
+      "id": "roi-20260622-170120-568",
+      "name_crops": [
+        "data/static/overlay_vision_fixtures/hextech_20260622/name_0.png",
+        "data/static/overlay_vision_fixtures/hextech_20260622/name_1.png",
+        "data/static/overlay_vision_fixtures/hextech_20260622/name_2.png"
+      ],
+      "expected_body_shard": false,
+      "expected_names": ["更万用的瞄准镜", "闪现向前", "大法师"],
+      "notes": "装饰星光、近似名称和字体通道分歧的真机回归；三槽文字 top1 必须正确。"
+    }
+  ],
   "samples": [
+    {
+      "id": "selection-20260612-205644",
+      "frame": "data/runtime/debug/auto_selection/selection-20260612-205644/frame.png",
+      "expected_slots": [null, null, null],
+      "expected_active": false,
+      "expected_source_reason": "selection_scene_not_detected",
+      "expected_ready_slots": 0,
+      "notes": "载入画面底部进度条曾被误识别为蓝色选择按钮；不得进入选择生命周期。"
+    },
+    {
+      "id": "selection-20260612-205747",
+      "frame": "data/runtime/debug/auto_selection/selection-20260612-205747/frame.png",
+      "expected_slots": [null, null, null],
+      "expected_active": false,
+      "expected_source_reason": "selection_scene_not_detected",
+      "expected_ready_slots": 0,
+      "notes": "载入进度条后续帧；按钮中心约 0.90H，必须被垂直上限拒绝。"
+    },
     {
       "id": "selection-20260612-205754",
       "frame": "data/runtime/debug/auto_selection/selection-20260612-205754/frame.png",
       "expected_slots": ["缩小引擎", "急速之追求", "钢化你心"],
+      "expected_active": true,
+      "expected_ready_slots": 3,
       "notes": "三槽均可见；右上有 NVIDIA 提示但不遮挡卡名。"
     },
     {
       "id": "selection-20260612-205839",
       "frame": "data/runtime/debug/auto_selection/selection-20260612-205839/frame.png",
       "expected_slots": ["缩小引擎", "坦克引擎", "钢化你心"],
+      "expected_active": true,
+      "expected_ready_slots": 3,
       "notes": "用户当前对局三卡样本。"
     },
     {
       "id": "selection-20260612-212134",
       "frame": "data/runtime/debug/auto_selection2/selection-20260612-212134/frame.png",
       "expected_slots": ["尤里卡", null, "精怪魔法"],
-      "notes": "中槽被掉线弹窗遮挡，只评测左右两槽。"
+      "expected_active": false,
+      "expected_source_reason": "blocking_modal_present",
+      "expected_ready_slots_max": 2,
+      "notes": "中槽被掉线弹窗遮挡，只评测可见卡名；overlay 必须隐藏。"
+    },
+    {
+      "id": "selection-20260614-161523",
+      "frame": "data/runtime/debug/verify_loop/selection-20260614-161523/frame.png",
+      "expected_slots": ["杀戮时间到了", null, "鲨鱼暴风"],
+      "expected_active": false,
+      "expected_source_reason": "blocking_modal_present",
+      "expected_ready_slots_max": 2,
+      "notes": "断线弹窗遮挡中槽，仍可诊断左右卡名，但不能显示 overlay。"
+    },
+    {
+      "id": "selection-20260614-161633",
+      "frame": "data/runtime/debug/verify_loop/selection-20260614-161633/frame.png",
+      "expected_slots": [null, null, null],
+      "expected_active": false,
+      "expected_source_reason": "selection_scene_not_detected",
+      "expected_ready_slots": 0,
+      "notes": "非三选一升级/泉水画面；NVIDIA 提示和 HUD 不得触发 active。"
     }
   ]
 }

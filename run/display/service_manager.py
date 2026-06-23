@@ -6,9 +6,6 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -20,10 +17,15 @@ try:
 except ImportError:  # pragma: no cover - 仅用于非 Windows 诊断环境兜底
     win32gui = None
 
+from processing.lol_window import find_lol_game_window
 from processing.ui_feature_flags import load_ui_feature_flags, save_ui_feature_flags
-from processing.overlay_event_channel import read_overlay_event, write_inactive_overlay_event
-from processing.window_titles import LOL_CLIENT_WINDOW_TITLE, LOL_GAME_WINDOW_TITLE
-from scraping.version_sync import BASE_DIR
+from processing.overlay_event_channel import read_overlay_event
+from processing.window_titles import LOL_CLIENT_WINDOW_TITLE
+from game_overlay.lifecycle import (
+    GameOverlayController,
+    start_host_process as start_overlay_host_process,
+    start_sidecar_process as start_vision_sidecar_process,
+)
 
 
 ProcessFactory = Callable[[], Any]
@@ -74,18 +76,28 @@ class ServiceManager:
         self,
         *,
         start_web_func: ProcessFactory,
-        start_overlay_func: ProcessFactory,
+        overlay_controller: GameOverlayController | None = None,
+        start_overlay_func: ProcessFactory | None = None,
         start_vision_sidecar_func: ProcessFactory | None = None,
         prepare_overlay_hint_cache_func: Callable[[], Any] | None = None,
         write_inactive_overlay_event_func: Callable[[], Any] | None = None,
         listener_interval_seconds: float = 3.0,
     ) -> None:
         self._start_web_func = start_web_func
-        self._start_overlay_func = start_overlay_func
-        self._start_vision_sidecar_func = start_vision_sidecar_func
-        self._prepare_overlay_hint_cache_func = prepare_overlay_hint_cache_func or (lambda: None)
-        self._write_inactive_overlay_event_func = write_inactive_overlay_event_func or write_inactive_overlay_event
+        if overlay_controller is None:
+            controller_kwargs: dict[str, Any] = {}
+            if start_overlay_func is not None:
+                controller_kwargs["start_host_func"] = start_overlay_func
+            if start_vision_sidecar_func is not None:
+                controller_kwargs["start_sidecar_func"] = start_vision_sidecar_func
+            if prepare_overlay_hint_cache_func is not None:
+                controller_kwargs["prepare_data_func"] = prepare_overlay_hint_cache_func
+            if write_inactive_overlay_event_func is not None:
+                controller_kwargs["write_inactive_func"] = write_inactive_overlay_event_func
+            overlay_controller = GameOverlayController(**controller_kwargs)
+        self._overlay_controller = overlay_controller
         self.web = ManagedService("web")
+        # 兼容桌面状态栏的字段访问；实际启停与回滚全部由 Controller 负责。
         self.game_overlay = ManagedService("game_overlay")
         self.vision_sidecar = ManagedService("vision_sidecar")
         self._lock = threading.RLock()
@@ -124,44 +136,39 @@ class ServiceManager:
 
     def start_game_overlay(self) -> None:
         with self._lock:
-            if self.game_overlay.is_running():
-                self.game_overlay.mark("running")
+            if self._overlay_controller.is_running():
+                self._sync_overlay_compat_state()
                 return
             self.game_overlay.mark("starting")
             try:
-                self._prepare_overlay_hint_cache_func()
-                self.game_overlay.process = self._start_process(self.game_overlay.name, self._start_overlay_func)
-                if self._start_vision_sidecar_func is not None:
-                    self.vision_sidecar.process = self._start_process(
-                        self.vision_sidecar.name,
-                        self._start_vision_sidecar_func,
-                    )
-                    self.vision_sidecar.mark("running")
-                self.game_overlay.mark("running")
+                self._overlay_controller.start()
+                self._sync_overlay_compat_state()
             except Exception as exc:
-                self._stop_service(self.vision_sidecar)
-                self._stop_service(self.game_overlay)
+                self._sync_overlay_compat_state()
                 self.game_overlay.mark("error", error=str(exc))
                 self.vision_sidecar.mark("error", error=str(exc))
                 raise
 
     def stop_game_overlay(self) -> None:
         with self._lock:
-            # 只有本实例确实有运行中的 overlay/sidecar 才写隐藏事件，
-            # 避免从未启动过服务的实例（如第二个 UI 窗口）关闭时覆盖事件文件。
-            if self.game_overlay.is_running() or self.vision_sidecar.is_running():
-                try:
-                    self._write_inactive_overlay_event_func()
-                except Exception:
-                    pass
-            self._stop_service(self.vision_sidecar)
-            self._stop_service(self.game_overlay)
+            self._overlay_controller.stop()
+            self._sync_overlay_compat_state()
 
     def is_web_running(self) -> bool:
         return self.web.is_running()
 
     def is_game_overlay_running(self) -> bool:
-        return self.game_overlay.is_running()
+        return self._overlay_controller.is_running()
+
+    def _sync_overlay_compat_state(self) -> None:
+        snapshot = self._overlay_controller.snapshot()
+        self.game_overlay.process = self._overlay_controller.host_process
+        self.game_overlay.mark(snapshot["status"], error=str(snapshot.get("last_error") or ""))
+        self.vision_sidecar.process = self._overlay_controller.sidecar_process
+        self.vision_sidecar.mark(
+            str(snapshot.get("sidecar_status") or "stopped"),
+            error=str(snapshot.get("last_error") or "") if snapshot.get("status") == "error" else "",
+        )
 
     def set_low_frequency_listener_enabled(self, enabled: bool) -> None:
         with self._lock:
@@ -187,10 +194,16 @@ class ServiceManager:
 
     def get_status_snapshot(self) -> dict[str, Any]:
         with self._lock:
+            overlay_snapshot = self._overlay_controller.snapshot()
             return {
                 "web": self.web.snapshot(),
-                "game_overlay": self.game_overlay.snapshot(),
-                "vision_sidecar": self.vision_sidecar.snapshot(),
+                "game_overlay": overlay_snapshot,
+                "vision_sidecar": {
+                    "status": overlay_snapshot["sidecar_status"],
+                    "pid": overlay_snapshot["sidecar_pid"],
+                    "last_error": overlay_snapshot["last_error"] if overlay_snapshot["status"] == "error" else "",
+                    "updated_at": overlay_snapshot["updated_at"],
+                },
                 "low_frequency_listener": dict(self._listener_snapshot),
                 "overlay_event": self._overlay_event_status(),
             }
@@ -198,11 +211,9 @@ class ServiceManager:
     def shutdown(self, *, timeout_seconds: float = 5.0, final_timeout_seconds: float | None = 20.0) -> None:
         """关闭所有受管服务。
 
-        把 overlay/web 的停止放到后台线程执行，主线程先在
-        ``timeout_seconds`` 内等待；若仍未完成且 ``final_timeout_seconds``
-        不是 ``None``，退出路径会再做一次最终 join，给 terminate/kill
-        兜底足够窗口，避免 UI 销毁后后台线程被进程退出截断而留下孤儿
-        子进程。需要明确快返回的调用方可传 ``final_timeout_seconds=None``。
+        overlay/web 的停止可能等待 terminate/kill 兜底。这里先在后台线程执行，
+        主线程等待一个短窗口；默认退出路径再做最终 join，避免 UI 销毁时留下
+        孤儿进程。需要明确快返回的调用方可传 ``final_timeout_seconds=None``。
         """
 
         self._listener_stop.set()
@@ -211,8 +222,8 @@ class ServiceManager:
         def _stop_all() -> None:
             try:
                 self.stop_game_overlay()
-                self.stop_web()
             finally:
+                self.stop_web()
                 self._shutdown_done.set()
 
         self._shutdown_thread = threading.Thread(
@@ -311,57 +322,8 @@ class ServiceManager:
         if win32gui is None:
             return {"lol_client_visible": False, "lol_game_visible": False}
         client = win32gui.FindWindow(None, LOL_CLIENT_WINDOW_TITLE)
-        game = win32gui.FindWindow(None, LOL_GAME_WINDOW_TITLE)
+        game = find_lol_game_window()
         return {
-            "lol_client_visible": bool(client and win32gui.IsWindowVisible(client)),
-            "lol_game_visible": bool(game and win32gui.IsWindowVisible(game)),
+            "lol_client_visible": bool(client and win32gui.IsWindowVisible(client) and not win32gui.IsIconic(client)),
+            "lol_game_visible": game is not None,
         }
-
-
-def start_overlay_host_process() -> subprocess.Popen:
-    """启动独立 overlay host；源码态走模块入口，冻结态回到同一 exe 参数。"""
-
-    startupinfo = None
-    if os.name == "nt":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    if getattr(sys, "frozen", False):
-        command = [sys.executable, "--game-overlay"]
-    else:
-        overlay_script = os.path.join(BASE_DIR, "game_overlay_host.py")
-        command = [sys.executable, str(overlay_script)]
-    return subprocess.Popen(command, cwd=BASE_DIR, startupinfo=startupinfo)
-
-
-def start_vision_sidecar_process() -> subprocess.Popen:
-    """启动常驻 Vision sidecar；结果只通过本地事件文件回写。
-
-    源码态走模块入口；冻结态回到同一 exe 的 ``--overlay-sidecar`` 分支，
-    与 ``start_overlay_host_process`` 保持一致的 frozen 退出策略，避免
-    打包态下 ``-m processing.overlay_vision_sidecar`` 找不到模块路径。
-    """
-
-    startupinfo = None
-    if os.name == "nt":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    if getattr(sys, "frozen", False):
-        command = [
-            sys.executable,
-            "--overlay-sidecar",
-            "--loop",
-            "--preset",
-            "auto",
-            "--write-event",
-        ]
-    else:
-        command = [
-            sys.executable,
-            "-m",
-            "processing.overlay_vision_sidecar",
-            "--loop",
-            "--preset",
-            "auto",
-            "--write-event",
-        ]
-    return subprocess.Popen(command, cwd=BASE_DIR, startupinfo=startupinfo)

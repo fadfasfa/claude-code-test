@@ -39,8 +39,12 @@
 | `web_server.py` | thin entry | Web 启动薄壳，委托 `display.web_server` |
 | `display/hextech_ui.py` | ui | 桌面 UI 主类、控件结构与交互入口 |
 | `display/ui_runtime.py` | ui runtime | 桌面后台线程、Web 子进程、LCU 轮询、窗口同步、头像加载 |
-| `display/service_manager.py` | lifecycle | Web 前端、游戏内 overlay host、Vision sidecar 和低频监听的生命周期管理 |
-| `display/game_overlay_host.py` | overlay | 阶段 0-5 游戏内透明置顶窗口、三与门显隐和本地事件渲染；不负责真实识别链路 |
+| `display/service_manager.py` | lifecycle | Web 前端生命周期、低频监听，以及向独立 GameOverlayController 委托启停 |
+| `game_overlay/lifecycle.py` | overlay lifecycle | host + Vision sidecar 原子启停、失败回滚和统一状态快照 |
+| `game_overlay/host.py` | overlay host | 透明置顶窗口、前台门控、Alt+H、最小事件轮询；不解释 Web 状态 |
+| `game_overlay/data_source.py` | overlay adapter | 通过统一协议读取共享 event/hint/context，为后续专属数据源保留替换点 |
+| `game_overlay/renderer.py` | overlay renderer | 固定三统计窗、0–3 当前英雄联动和 LoL 原生风格 Canvas 绘制 |
+| `game_overlay_host.py` | thin entry | 兼容旧启动方式并转发到 `game_overlay.host` |
 | `display/web_server.py` | web launcher | FastAPI 应用创建与 Uvicorn 启动 |
 | `display/web_api.py` | web api | HTTP/WS 路由、请求模型与接口编排 |
 | `display/web_runtime.py` | web runtime | Web 生命周期、LCU、缓存、浏览器与后台刷新触发 |
@@ -272,8 +276,9 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 
 - 新增 Web 路由优先落在 `display/web_api.py`。
 - 新增 Web 生命周期、LCU、缓存、端口或浏览器逻辑优先落在 `display/web_runtime.py`。
-- 新增 Web 前端 / 游戏内显示进程生命周期优先落在 `display/service_manager.py`。
-- 新增基础 overlay host 能力优先落在 `display/game_overlay_host.py`；真实识别链路需另起阶段。
+- 新增 Web 前端生命周期或产品开关委托优先落在 `display/service_manager.py`。
+- 游戏内显示生命周期、窗口、数据适配和绘制分别落在 `game_overlay/lifecycle.py`、`host.py`、`data_source.py`、`renderer.py`。
+- `game_overlay` 不得导入 `display`、FastAPI、Web API 或浏览器模块；真实识别链路仍在 `processing/`。
 - 新增 overlay 本地三槽位事件协议优先落在 `processing/overlay_event_channel.py`；真实 Vision 输出只能作为该协议的上游。
 - 新增 overlay Vision 探针优先落在 `processing/overlay_vision_sidecar.py`；默认只使用 Pillow/pywin32 本地能力。
 - 新增官方接口三槽候选探针优先落在 `processing/official_overlay_provider.py` 与 `tools/probe_official_overlay_provider.py`；结果只能通过现有 overlay 事件协议输出。
@@ -293,6 +298,7 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 
 | 日期 | task_id | 最终改动 | 有效范围 | 遗留债务 |
 | :--- | :--- | :--- | :--- | :--- |
+| 2026-06-20 | independent-game-overlay-module | 将游戏内显示拆为独立 `game_overlay` 包，统一 Controller 管理 host/sidecar，shared-data adapter 隔离数据边界，按真机截图重建三统计窗与 0–3 联动列，快照改为 Pillow 直出 PNG | `game_overlay/`、`display/service_manager.py`、`display/hextech_ui.py`、`tools/`、文档 | 真实 LoL Borderless 下对齐、前后台隐藏和进程残留仍需真机验收 |
 | 2026-06-10 | hextech-game-overlay-vision-recalibration | 识别改为灰度归一化 NCC + margin/方差门槛杀暗面板假阳性；修复中文名被 ASCII 归一化滤空导致模板索引仅剩 2 个的致命假阴性；模板按内容去重 + 孪生图标高置信度豁免；ROI 重标定为图标紧贴框；active 退出防抖；新增 `--once --debug-dump` 校准转储；stop 路径仅在有运行服务时写隐藏事件 | `processing/overlay_vision_sidecar.py`、`processing/overlay_hint_cache.py`、`display/service_manager.py`、`tools/dev_checks.py`、`README.md`、`PROJECT.md` | 真实 LoL 卡片界面置信度/margin 实测、16:9 ROI 校准仍需 debug-dump 数据 |
 | 2026-06-10 | hextech-game-overlay-visibility-and-loop | 改为开关、active 事件、游戏前台三与门显隐；修复 Alt+H 全局热键；Vision sidecar 改为常驻自门控循环 | `display/`、`processing/`、`tools/dev_checks.py`、`README.md`、`PROJECT.md` | 真实 LoL Borderless 下识别置信度、ROI 对齐和 P95 延迟仍需人工验收 |
 | 2026-06-09 | hextech-game-overlay-stage-3r-5 | 新增 Pillow/pywin32 Vision MVP、ServiceManager sidecar 生命周期、打包 source manifest 审计和阶段 5 性能摘要结构 | `display/`、`processing/`、`tools/`、`README.md`、`PROJECT.md` | 真实 LoL Borderless 下 ROI 对齐、点击穿透、Alt+H、窗口跟随和 P95 延迟仍需人工验收 |

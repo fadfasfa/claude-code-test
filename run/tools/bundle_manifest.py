@@ -45,6 +45,7 @@ STABLE_STATIC_FILES = (
 
 STABLE_INDEX_FILES = (
     "Champion_Alias_Index.json",
+    "augment.name-to-icon.v1.json",
 )
 ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 HEXTECH_SNAPSHOT_DIR = Path("data") / "raw" / "hextech"
@@ -60,12 +61,23 @@ FORBIDDEN_BUNDLE_PATH_PARTS = (
     OVERLAY_ANCHOR_CALIBRATION_FILENAME,
 )
 SOURCE_FILE_ALLOWLIST = (
-    "display/game_overlay_host.py",
     "display/service_manager.py",
+    "game_overlay/__init__.py",
+    "game_overlay/__main__.py",
+    "game_overlay/data_source.py",
+    "game_overlay/host.py",
+    "game_overlay/lifecycle.py",
+    "game_overlay/renderer.py",
+    "game_overlay_host.py",
+    "processing/lol_window.py",
+    "processing/overlay_context.py",
     "processing/overlay_event_channel.py",
     "processing/overlay_hint_cache.py",
     "processing/official_overlay_provider.py",
+    "processing/overlay_vision_layout.py",
+    "processing/overlay_vision_matcher.py",
     "processing/overlay_vision_sidecar.py",
+    "processing/overlay_vision_state.py",
     "processing/ui_feature_flags.py",
     "tools/overlay_performance_probe.py",
     "tools/probe_official_overlay_provider.py",

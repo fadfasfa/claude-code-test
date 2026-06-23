@@ -26,6 +26,7 @@ from processing.runtime_store import (
     build_synergy_latest_pointer_path,
     build_synergy_refresh_status_path,
     get_latest_csv,
+    get_latest_valid_csv,
     get_latest_synergy_snapshot_path,
     load_synergy_latest_pointer,
     load_synergy_refresh_status,
@@ -36,9 +37,10 @@ from scraping.augment_catalog import (
     is_augment_icon_prefetch_ready,
     load_augment_icon_manifest,
     manifest_has_incomplete_entries,
+    get_augment_manifest_runtime_path,
     run_augment_icon_prefetch,
 )
-from scraping.full_hextech_scraper import main_scraper
+from scraping.full_hextech_scraper import hextech_refresh_blocked, load_scraper_status, main_scraper
 from scraping.full_synergy_scraper import main as run_synergy_scraper
 from scraping.full_synergy_scraper import SYNERGY_REFRESH_META_VERSION
 from scraping.version_sync import (
@@ -71,18 +73,20 @@ def _auto_synergy_refresh_enabled() -> bool:
 class HealReport:
     requested: list[str] = field(default_factory=list)
     repaired: list[str] = field(default_factory=list)
+    fallback: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
             "requested": list(self.requested),
             "repaired": list(self.repaired),
+            "fallback": list(self.fallback),
             "failed": list(self.failed),
         }
 
 
 def _latest_csv_ready() -> bool:
-    latest_csv = get_latest_csv()
+    latest_csv = get_latest_valid_csv()
     return bool(latest_csv and os.path.exists(latest_csv))
 
 
@@ -96,7 +100,7 @@ def _file_is_fresh(path: str, stale_after_seconds: int = HIGH_FREQUENCY_STALE_SE
 
 
 def _latest_csv_fresh() -> bool:
-    latest_csv = get_latest_csv()
+    latest_csv = get_latest_valid_csv()
     return _file_is_fresh(latest_csv or "")
 
 
@@ -155,9 +159,15 @@ def _synergy_data_fresh() -> bool:
 
 def _write_startup_status(**updates) -> None:
     status_file = build_runtime_state_path("startup_status.json")
+    scraper_status = load_scraper_status()
+    active_csv = get_latest_csv() or ""
+    degraded = bool(active_csv and scraper_status.get("last_result") == "fallback")
     payload = {
         "hero_ready": os.path.exists(CORE_DATA_FILE),
-        "hextech_ready": _latest_csv_ready(),
+        "hextech_ready": bool(active_csv),
+        "hextech_degraded": degraded,
+        "active_hextech_csv": active_csv,
+        "hextech_warning": str(scraper_status.get("reason") or "") if degraded else "",
         "synergy_ready": os.path.exists(build_synergy_data_path()),
         "augment_icons_prefetched": is_augment_icon_prefetch_ready(),
         "in_progress_tasks": [],
@@ -194,14 +204,17 @@ def _image_assets_ready() -> bool:
 
 def detect_missing_artifacts() -> dict:
     latest_csv = get_latest_csv()
+    latest_valid_csv = get_latest_valid_csv()
     synergy_missing = not _synergy_data_fresh() if _auto_synergy_refresh_enabled() else False
+    fallback_cooling_down = bool(latest_valid_csv and hextech_refresh_blocked())
     return {
-        "hextech_rankings": not _latest_csv_fresh(),
+        "hextech_rankings": not fallback_cooling_down and not _latest_csv_fresh(),
+        "hextech_fallback": fallback_cooling_down,
         "synergy_data": synergy_missing,
         "augment_catalog": (
             not _core_data_ready()
             or not _augment_manifest_ready()
-            or not _file_is_fresh(AUGMENT_MANIFEST_FILE, MANIFEST_STALE_SECONDS)
+            or not _file_is_fresh(get_augment_manifest_runtime_path(), MANIFEST_STALE_SECONDS)
         ),
         "champion_core": not os.path.exists(CORE_DATA_FILE),
         "images": not _image_assets_ready(),
@@ -210,10 +223,10 @@ def detect_missing_artifacts() -> dict:
     }
 
 
-def _heal_hero_rankings(stop_event=None) -> bool:
+def _heal_hero_rankings(stop_event=None, *, force: bool = False) -> bool:
     if stop_event is not None and stop_event.is_set():
         return False
-    return bool(main_scraper(stop_event))
+    return bool(main_scraper(stop_event, force=force))
 
 
 def _heal_synergy_data() -> bool:
@@ -297,7 +310,9 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
 
             high_frequency_tasks = []
             if force or missing.get("hextech_rankings"):
-                high_frequency_tasks.append(("hextech_rankings", lambda: _heal_hero_rankings(stop_event=stop_event)))
+                high_frequency_tasks.append(
+                    ("hextech_rankings", lambda: _heal_hero_rankings(stop_event=stop_event, force=force))
+                )
             if (force or missing.get("synergy_data")) and _auto_synergy_refresh_enabled():
                 high_frequency_tasks.append(("synergy_data", _heal_synergy_data))
 
@@ -319,7 +334,10 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
                             logger.exception("高频自愈任务执行失败：%s", task_name)
                             success = False
                         if success:
-                            report.repaired.append(task_name)
+                            if task_name == "hextech_rankings" and load_scraper_status().get("last_result") == "fallback":
+                                report.fallback.append(task_name)
+                            else:
+                                report.repaired.append(task_name)
                         else:
                             report.failed.append(task_name)
 
@@ -347,12 +365,16 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
         in_progress_tasks=[],
         last_error=", ".join(report.failed),
         hextech_ready=_latest_csv_ready(),
+        hextech_degraded=bool(
+            _latest_csv_ready()
+            and (report.fallback or load_scraper_status().get("last_result") == "fallback")
+        ),
         synergy_ready=os.path.exists(build_synergy_data_path()),
     )
     message = "heal_worker completed: %s"
     if report.failed:
         logger.error(message, json.dumps(payload, ensure_ascii=False))
-    elif report.repaired or report.requested:
+    elif report.repaired or report.fallback or report.requested:
         logger.warning(message, json.dumps(payload, ensure_ascii=False))
     else:
         logger.info(message, json.dumps(payload, ensure_ascii=False))
