@@ -53,6 +53,7 @@ HOTKEY_FALLBACK_DEBOUNCE_SECONDS = 0.3
 OVERLAY_EXIT_POLL_MS = 100
 RENDER_ERROR_BACKOFF_AFTER = 3
 RENDER_ERROR_BACKOFF_MAX_MS = 30_000
+STALE_EVENT_HOLD_SECONDS = 1.0
 LRESULT = getattr(wintypes, "LRESULT", ctypes.c_ssize_t)
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 OVERLAY_READY_FILE_ENV = "HEXTECH_OVERLAY_READY_FILE"
@@ -487,7 +488,7 @@ def _apply_transparent_background(root: tk.Tk, canvas: tk.Canvas, config: Mappin
         logger.debug("当前 Tk 环境不支持 transparentcolor。", exc_info=True)
 
 
-def _should_show_overlay(
+def decide_visibility(
     *,
     user_enabled: bool,
     event_visible: bool,
@@ -499,56 +500,69 @@ def _should_show_overlay(
     event_fresh_after_tab: bool = True,
     event_error: str = "",
     blocking_modal: bool = False,
-) -> bool:
-    """统一显隐门：V2 场景中至少一个稳定槽即可显示。"""
+    diagnostic_mode: bool = False,
+    stale_event_hold: bool = False,
+    source_reason: str = "",
+) -> tuple[bool, str]:
+    """统一显隐决策，避免显示结果和诊断原因分叉。"""
 
-    if not user_enabled or not game_foreground:
-        return False
-    if event_error or blocking_modal:
-        return False
-    if scoreboard_key_down or not event_fresh_after_tab:
-        return False
+    if not user_enabled:
+        return False, "user_disabled"
+    resolved_ready_slots = (3 if content_ready else 0) if ready_slots is None else int(ready_slots)
+
+    if not game_foreground:
+        should_show, reason = False, "game_not_foreground"
+    elif event_error:
+        should_show = bool(event_error == "event_expired" and stale_event_hold)
+        reason = "event_expired_hold" if should_show else event_error
+    elif blocking_modal:
+        should_show, reason = False, "blocking_modal_present"
+    elif scoreboard_key_down:
+        should_show, reason = False, "scoreboard_key_down"
+    elif not event_fresh_after_tab:
+        should_show, reason = False, "awaiting_post_tab_event"
     # sidecar 正常会保证 active 事件来自真实选择按钮；host 仍防御矛盾事件，
     # 避免旧/手写事件绕过“蓝色按钮是生命周期依据”的合同。
-    if selection_window_active is False:
-        return False
-    resolved_ready_slots = (3 if content_ready else 0) if ready_slots is None else int(ready_slots)
-    return bool(event_visible and resolved_ready_slots >= 1)
+    elif selection_window_active is False:
+        should_show, reason = False, "selection_window_inactive"
+    elif not event_visible:
+        should_show, reason = False, source_reason or "event_inactive"
+    elif resolved_ready_slots <= 0:
+        should_show, reason = False, "content_not_ready"
+    else:
+        should_show = True
+        reason = "visible_ready" if content_ready else "visible_partial"
+
+    if diagnostic_mode and not should_show:
+        return True, f"diagnostic:{reason}"
+    return should_show, reason
 
 
-def _visibility_reason(
-    *,
-    user_enabled: bool,
-    game_foreground: bool,
-    event_visible: bool,
-    content_ready: bool,
-    ready_slots: int,
-    selection_window_active: bool | None,
-    scoreboard_key_down: bool,
-    event_fresh_after_tab: bool,
-    event_error: str,
-    blocking_modal: bool,
-    source_reason: str,
-) -> str:
-    if not user_enabled:
-        return "user_disabled"
-    if not game_foreground:
-        return "game_not_foreground"
-    if event_error:
-        return event_error
-    if blocking_modal:
-        return "blocking_modal_present"
-    if scoreboard_key_down:
-        return "scoreboard_key_down"
-    if not event_fresh_after_tab:
-        return "awaiting_post_tab_event"
-    if selection_window_active is False:
-        return "selection_window_inactive"
-    if not event_visible:
-        return source_reason or "event_inactive"
-    if ready_slots <= 0:
-        return "content_not_ready"
-    return "visible_ready" if content_ready else "visible_partial"
+def _draw_diagnostic_status(canvas: tk.Canvas, reason: str, snapshot: Mapping[str, Any]) -> None:
+    """诊断模式下只画一行 heartbeat，避免非选择态看起来像进程崩溃。"""
+
+    status = _extract_event_status(snapshot)
+    parts = [
+        "Hextech overlay diagnostic",
+        f"reason={reason}",
+        f"gate={status.get('gate_state') or '-'}",
+        f"ready={status.get('ready_slots')}",
+        f"error={status.get('error') or '-'}",
+    ]
+    message = " · ".join(parts)
+    canvas.delete("all")
+    try:
+        canvas.create_rectangle(8, 8, 560, 34, fill="#010A13", outline="#785A28")
+    except AttributeError:
+        pass
+    canvas.create_text(
+        18,
+        21,
+        text=message,
+        fill="#F0E6D2",
+        anchor="w",
+        font=("Segoe UI", 11, "bold"),
+    )
 
 
 def _sync_event_visibility(
@@ -577,9 +591,20 @@ def _sync_event_visibility(
         generated_at = 0.0
     tab_released_at = float(visibility.get("tab_released_at") or 0.0)
     event_fresh_after_tab = not tab_released_at or generated_at >= tab_released_at
+    now = time.time()
+    stale_hold_active = False
+    if event_error == "event_expired" and bool(visibility.get("window_visible")):
+        hold_until = float(visibility.get("event_stale_hold_until") or 0.0)
+        if hold_until <= 0.0:
+            hold_until = now + STALE_EVENT_HOLD_SECONDS
+            visibility["event_stale_hold_until"] = hold_until
+        stale_hold_active = now <= hold_until
+    elif event_error != "event_expired":
+        visibility.pop("event_stale_hold_until", None)
     should_show = resolved_should_show
+    reason = str(visibility.get("visibility_reason") or "")
     if should_show is None:
-        should_show = _should_show_overlay(
+        should_show, reason = decide_visibility(
             user_enabled=user_enabled,
             event_visible=event_visible,
             game_foreground=game_foreground,
@@ -590,6 +615,9 @@ def _sync_event_visibility(
             event_fresh_after_tab=event_fresh_after_tab,
             event_error=event_error,
             blocking_modal=blocking_modal,
+            diagnostic_mode=bool(config.get("diagnostic_mode")),
+            stale_event_hold=stale_hold_active,
+            source_reason=_snapshot_source_reason(snapshot),
         )
     visibility["event_visible"] = event_visible
     visibility["game_foreground"] = game_foreground
@@ -598,18 +626,13 @@ def _sync_event_visibility(
     visibility["selection_window_active"] = selection_window_active
     visibility["event_error"] = event_error
     visibility["blocking_modal"] = blocking_modal
-    visibility["visibility_reason"] = _visibility_reason(
-        user_enabled=user_enabled,
-        game_foreground=game_foreground,
-        event_visible=event_visible,
-        content_ready=content_ready,
-        ready_slots=ready_slots,
-        selection_window_active=selection_window_active,
-        scoreboard_key_down=scoreboard_key_down,
-        event_fresh_after_tab=event_fresh_after_tab,
-        event_error=event_error,
-        blocking_modal=blocking_modal,
-        source_reason=_snapshot_source_reason(snapshot),
+    visibility["event_stale_hold_active"] = stale_hold_active
+    visibility["visibility_reason"] = reason
+    visibility["render_full_overlay"] = bool(
+        should_show
+        and ready_slots >= 1
+        and selection_window_active is not False
+        and (event_visible or stale_hold_active or bool(config.get("diagnostic_mode")))
     )
     if not apply_window:
         return should_show
@@ -714,6 +737,17 @@ def _schedule_event_render(
                     visibility,
                     snapshot,
                     resolved_should_show=False,
+                )
+                success = True
+                return
+            if bool(config.get("diagnostic_mode")) and not bool(visibility.get("render_full_overlay")):
+                _draw_diagnostic_status(canvas, str(visibility.get("visibility_reason") or ""), snapshot)
+                _sync_event_visibility(
+                    root,
+                    config,
+                    visibility,
+                    snapshot,
+                    resolved_should_show=True,
                 )
                 success = True
                 return

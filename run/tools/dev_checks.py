@@ -1499,7 +1499,7 @@ def check_overlay_vision_sidecar_contract() -> None:
 
     import processing.overlay_vision_sidecar as overlay_vision_sidecar
     from processing.lol_window import cursor_in_client_boxes
-    from processing.overlay_vision_layout import CARD_PANELS_16_10, apply_transform, detect_selection_scene
+    from processing.overlay_vision_layout import CARD_PANELS_16_10, apply_transform, detect_selection_scene, pick_card_panels
     from processing.overlay_vision_matcher import candidate_from_slot
     from processing.overlay_vision_state import SelectionTracker
 
@@ -1532,7 +1532,7 @@ def check_overlay_vision_sidecar_contract() -> None:
 
     def _paint_card_borders(image: Image.Image) -> None:
         draw = ImageDraw.Draw(image)
-        for left, top, right, bottom in CARD_PANELS_16_10:
+        for left, top, right, bottom in pick_card_panels(image.size):
             draw.rectangle(
                 (int(left * image.width), int(top * image.height), int(right * image.width), int(bottom * image.height)),
                 outline="#d8b36f",
@@ -1858,6 +1858,14 @@ def check_overlay_vision_sidecar_contract() -> None:
     assert abs(inner_scene.transform.dy_ratio) <= (2.0 / 1600.0)
     stable_name_box = apply_transform(preset.name_slots[0], inner_button_frame.size, inner_scene.transform)
     assert stable_name_box[3] <= int(round(0.431 * inner_button_frame.height))
+
+    # 1920×1200 是 16:10；sidecar 和 renderer 必须使用同一个面板选择规则。
+    wide_16_10 = Image.new("RGB", (1920, 1200), "#070b12")
+    _paint_selection_button(wide_16_10)
+    _paint_card_borders(wide_16_10)
+    wide_scene = detect_selection_scene(wide_16_10, layout_id="1920x1080")
+    assert wide_scene.present is True
+    assert pick_card_panels(wide_16_10.size) == CARD_PANELS_16_10
 
     body_shard_frame = Image.new("RGB", (2560, 1600), "#070b12")
     _paint_selection_button(body_shard_frame)
@@ -3962,6 +3970,7 @@ def check_game_overlay_module_contract() -> None:
     import game_overlay.renderer as overlay_renderer
     from display.service_manager import ServiceManager
     from game_overlay.lifecycle import GameOverlayController
+    from processing.overlay_vision_layout import pick_card_panels
     from tools import overlay_render_snapshot
 
     # 导入独立包和 host 不得隐式加载 Web/display 产品模块。
@@ -4126,10 +4135,31 @@ print(json.dumps(blocked))
     assert controller.snapshot()["status"] == "running"
     assert controller.snapshot()["host_pid"] == 101
     assert controller.snapshot()["sidecar_pid"] == 102
+    assert "pid" not in controller.snapshot()
     controller.stop()
     assert calls[-4:] == ["inactive", "stop:sidecar", "inactive", "stop:host"]
     assert controller.snapshot()["status"] == "stopped"
     assert controller.host_process is None and controller.sidecar_process is None
+
+    partial_restart_calls: list[str] = []
+    healthy_host = DummyProcess(121, calls=partial_restart_calls, label="host")
+    dead_sidecar = DummyProcess(122, running=False, calls=partial_restart_calls, label="dead-sidecar")
+    new_sidecar = DummyProcess(123, calls=partial_restart_calls, label="sidecar")
+    partial_restart = GameOverlayController(
+        prepare_data_func=lambda: partial_restart_calls.append("prepare"),
+        write_inactive_func=lambda: partial_restart_calls.append("inactive"),
+        start_sidecar_func=lambda: partial_restart_calls.append("start:sidecar") or new_sidecar,
+        start_host_func=lambda: partial_restart_calls.append("start:host") or DummyProcess(124),
+    )
+    partial_restart.host_process = healthy_host
+    partial_restart.sidecar_process = dead_sidecar
+    assert partial_restart.is_running() is False
+    partial_restart.start()
+    assert partial_restart.host_process is healthy_host
+    assert partial_restart.sidecar_process is new_sidecar
+    assert partial_restart_calls == ["prepare", "start:sidecar"]
+    assert healthy_host.running is True
+    assert partial_restart.snapshot()["status"] == "running"
 
     stale_cleanup_calls: list[str] = []
     stale_cleanup = GameOverlayController(
@@ -4139,15 +4169,11 @@ print(json.dumps(blocked))
         start_host_func=lambda: stale_cleanup_calls.append("start:host") or DummyProcess(112),
     )
     stale_cleanup.host_process = StubbornProcess(113, calls=stale_cleanup_calls, label="host")
-    try:
-        stale_cleanup.start()
-    except RuntimeError as exc:
-        assert "无法清理旧 game_overlay 实例" in str(exc)
-    else:
-        raise AssertionError("旧实例清理失败必须阻止 start")
-    assert stale_cleanup.snapshot()["status"] == "error"
-    assert stale_cleanup.host_process is None and stale_cleanup.sidecar_process is None
-    assert "prepare" not in stale_cleanup_calls and "start:sidecar" not in stale_cleanup_calls
+    stale_cleanup.start()
+    assert stale_cleanup.snapshot()["status"] == "running"
+    assert stale_cleanup.host_process.pid == 113
+    assert stale_cleanup.sidecar_process.pid == 111
+    assert stale_cleanup_calls == ["prepare", "start:sidecar"]
 
     residual_stop_calls: list[str] = []
     residual_stop = GameOverlayController(
@@ -4327,9 +4353,10 @@ print(json.dumps(blocked))
         assert len(model["synergies"]) == count
         assert [row["slot"] for row in model["synergies"]] == list(range(count))
 
-    # 三档 viewport：统计条完全内嵌原生卡片且互不重叠；联动组整体居中且按槽位排序。
-    for viewport in ((1366, 768), (1920, 1080), (2560, 1600)):
+    # 三档常见 viewport + 1920×1200：统计条完全内嵌原生卡片且互不重叠；联动组整体居中且按槽位排序。
+    for viewport in ((1366, 768), (1920, 1080), (1920, 1200), (2560, 1600)):
         width, height = viewport
+        assert overlay_renderer._card_panel_ratios(viewport) == pick_card_panels(viewport)
         for count in range(4):
             layout = overlay_renderer.resolve_overlay_layout(viewport, synergy_count=count)
             assert len(layout["stat_boxes"]) == 3
@@ -4504,35 +4531,7 @@ print(json.dumps(blocked))
             assert (text_top - real_card[1]) / real_height >= 0.86
             assert text_bottom <= real_card[3] - max(20, int(real_height * 0.045))
 
-    # 显隐矩阵：V2 至少一个稳定槽即可显示，Tab 和旧事件是硬门。
-    assert not overlay_host._should_show_overlay(
-        user_enabled=True, event_visible=False, game_foreground=True, content_ready=False,
-        selection_window_active=True,
-    )
-    assert overlay_host._should_show_overlay(
-        user_enabled=True, event_visible=True, game_foreground=True, content_ready=True,
-        selection_window_active=True,
-    )
-    assert not overlay_host._should_show_overlay(
-        user_enabled=True, event_visible=True, game_foreground=True, content_ready=True,
-        selection_window_active=False,
-    )
-    assert overlay_host._should_show_overlay(
-        user_enabled=True, event_visible=True, game_foreground=True, content_ready=True,
-        selection_window_active=None,
-    )
-    assert overlay_host._should_show_overlay(
-        user_enabled=True, event_visible=True, game_foreground=True, content_ready=False,
-        ready_slots=1, selection_window_active=True,
-    )
-    for overrides in (
-        {"event_error": "event_expired"},
-        {"blocking_modal": True},
-        {"game_foreground": False},
-        {"user_enabled": False},
-        {"scoreboard_key_down": True},
-        {"event_fresh_after_tab": False},
-    ):
+    def decide(**overrides):
         args = {
             "user_enabled": True,
             "event_visible": True,
@@ -4545,24 +4544,29 @@ print(json.dumps(blocked))
             "event_fresh_after_tab": True,
         }
         args.update(overrides)
-        assert not overlay_host._should_show_overlay(**args)
-    assert overlay_host.build_overlay_window_config()["event_poll_ms"] == 120
-    assert (
-        overlay_host._visibility_reason(
-            user_enabled=True,
-            game_foreground=True,
-            event_visible=True,
-            content_ready=True,
-            ready_slots=3,
-            selection_window_active=False,
-            scoreboard_key_down=False,
-            event_fresh_after_tab=True,
-            event_error="",
-            blocking_modal=False,
-            source_reason="",
-        )
-        == "selection_window_inactive"
+        return overlay_host.decide_visibility(**args)
+
+    # 显隐矩阵：V2 至少一个稳定槽即可显示，Tab 和旧事件是硬门。
+    assert decide(event_visible=False, content_ready=False) == (False, "event_inactive")
+    assert decide() == (True, "visible_ready")
+    assert decide(selection_window_active=False) == (False, "selection_window_inactive")
+    assert decide(selection_window_active=None) == (True, "visible_ready")
+    assert decide(content_ready=False, ready_slots=1) == (True, "visible_partial")
+    for overrides in (
+        {"event_error": "event_expired", "event_visible": False},
+        {"blocking_modal": True},
+        {"game_foreground": False},
+        {"user_enabled": False},
+        {"scoreboard_key_down": True},
+        {"event_fresh_after_tab": False},
+    ):
+        assert decide(**overrides)[0] is False
+    assert decide(event_error="event_expired", event_visible=False, stale_event_hold=True) == (
+        True,
+        "event_expired_hold",
     )
+    assert decide(game_foreground=False, diagnostic_mode=True) == (True, "diagnostic:game_not_foreground")
+    assert overlay_host.build_overlay_window_config()["event_poll_ms"] == 120
     hotkey_visibility = {"user_enabled": True}
     hotkeys: queue.Queue[str] = queue.Queue()
     hotkeys.put("toggle")
@@ -4617,6 +4621,98 @@ print(json.dumps(blocked))
     assert hidden_source.event_reads == 1
     assert hidden_source.hint_reads == 0 and hidden_source.context_reads == 0
     assert hidden_canvas.delete_calls == 0 and hidden_canvas.after_calls == 1
+
+    class DiagnosticSource:
+        def __init__(self) -> None:
+            self.hint_reads = 0
+            self.context_reads = 0
+
+        def read_event(self):
+            return {
+                "ok": False,
+                "visible": False,
+                "error": "event_missing",
+                "generated_at": 0.0,
+                "source": {"reason": "event_missing"},
+                "slots": [],
+            }
+
+        def read_hint_cache(self):
+            self.hint_reads += 1
+            return {}
+
+        def read_context(self):
+            self.context_reads += 1
+            return {}
+
+    class DiagnosticRoot:
+        def __init__(self) -> None:
+            self.deiconify_calls = 0
+            self.attributes_calls: list[tuple[Any, ...]] = []
+
+        def geometry(self, _value):
+            return None
+
+        def deiconify(self):
+            self.deiconify_calls += 1
+
+        def attributes(self, *args):
+            self.attributes_calls.append(args)
+
+    class DiagnosticCanvas(FakeCanvas):
+        def __init__(self) -> None:
+            super().__init__()
+            self.text_calls: list[dict[str, Any]] = []
+
+        def create_rectangle(self, *_args, **_kwargs):
+            return None
+
+        def create_text(self, *args, **kwargs):
+            self.text_calls.append({"args": args, **kwargs})
+            return None
+
+    diagnostic_source = DiagnosticSource()
+    diagnostic_canvas = DiagnosticCanvas()
+    diagnostic_config = overlay_host.build_overlay_window_config()
+    diagnostic_config["diagnostic_mode"] = True
+    diagnostic_config["no_activate"] = False
+    diagnostic_visibility = {"user_enabled": True, "target_hwnd": None, "window_visible": False}
+    with patch.object(overlay_host, "_find_target_game_window", return_value=None):
+        overlay_host._schedule_event_render(
+            DiagnosticRoot(),
+            diagnostic_canvas,
+            diagnostic_config,
+            diagnostic_visibility,
+            queue.Queue(),
+            data_source=diagnostic_source,
+    )
+    assert diagnostic_visibility["window_visible"] is True
+    assert diagnostic_visibility["visibility_reason"] == "diagnostic:game_not_foreground"
+    assert any("Hextech overlay diagnostic" in str(call.get("text")) for call in diagnostic_canvas.text_calls)
+    assert diagnostic_source.hint_reads == 0 and diagnostic_source.context_reads == 0
+
+    stale_visibility = {"user_enabled": True, "target_hwnd": 123, "window_visible": True}
+    stale_snapshot = {
+        "visible": False,
+        "active": True,
+        "error": "event_expired",
+        "generated_at": time.time() - 3.0,
+        "source": {"selection_window_active": True},
+        "slots": [{"slot": 0, "state": "ready", "augment_id": "a0"}],
+    }
+    stale_config = dict(diagnostic_config)
+    stale_config.update({"diagnostic_mode": False, "no_activate": False})
+    with patch.object(overlay_host, "_is_game_window_foreground", return_value=True):
+        assert overlay_host._sync_event_visibility(
+            DiagnosticRoot(),
+            stale_config,
+            stale_visibility,
+            stale_snapshot,
+            apply_window=False,
+        ) is True
+    assert stale_visibility["visibility_reason"] == "event_expired_hold"
+    assert stale_visibility["event_stale_hold_active"] is True
+    assert stale_visibility["render_full_overlay"] is True
 
     with (
         TemporaryDirectory() as tmp_dir,

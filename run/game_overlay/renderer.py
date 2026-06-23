@@ -11,16 +11,8 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, Protocol, TypedDict
 
-CARD_PANELS_16_10 = (
-    (0.198, 0.175, 0.384, 0.655),
-    (0.410, 0.175, 0.597, 0.655),
-    (0.623, 0.175, 0.811, 0.655),
-)
-CARD_PANELS_16_9 = (
-    (0.198, 0.155, 0.384, 0.690),
-    (0.410, 0.155, 0.597, 0.690),
-    (0.623, 0.155, 0.811, 0.690),
-)
+from processing.overlay_vision_layout import pick_card_panels
+
 SYNERGY_X_RANGE = (0.825, 0.992)
 INNER_BAR_HEIGHT_RATIO = 0.052
 INNER_BAR_TOP_MARGIN_RATIO = 0.825
@@ -318,9 +310,7 @@ def _allocate_panel_heights(desired: Sequence[int], available: int, *, minimum: 
 def _card_panel_ratios(viewport_size: tuple[int, int]) -> tuple[tuple[float, float, float, float], ...]:
     """选择与 vision 识别一致的三卡比例，避免统计层和真实卡片中轴线分离。"""
 
-    width, height = viewport_size
-    aspect = width / max(1, height)
-    return CARD_PANELS_16_9 if aspect >= 1.70 else CARD_PANELS_16_10
+    return pick_card_panels(viewport_size)
 
 
 def resolve_overlay_layout(
@@ -412,7 +402,7 @@ def _draw_native_panel(canvas: CanvasLike, box: tuple[int, int, int, int], *, ti
     x0, y0, x1, y1 = box
     corner = max(5, min(14, (y1 - y0) // 5))
 
-    # Holographic Scanlines
+    # 原生面板的细横线质感，压暗后只作为边框层次，不抢正文可读性。
     for scan_y in range(y0 + corner, y1 - corner, 4):
         canvas.create_line(x0 + 4, scan_y, x1 - 4, scan_y, fill=theme["inner_bluegray"], width=1)
 
@@ -431,7 +421,7 @@ def _draw_native_panel(canvas: CanvasLike, box: tuple[int, int, int, int], *, ti
 
     highlight = theme.get("highlight_cyan", "#0AC8B9")
 
-    # Simulated Top Gradient / Glass Reflection
+    # 顶部高光模拟玻璃反射，帮助统计条贴近 LoL 原生 HUD。
     for i in range(1, 4):
         ly = y0 + i * 2
         lx0 = x0 + corner + i * 3
@@ -442,7 +432,7 @@ def _draw_native_panel(canvas: CanvasLike, box: tuple[int, int, int, int], *, ti
     canvas.create_line(x0 + corner, y0 + 1, x1 - corner, y0 + 1, fill=highlight, width=1)
     canvas.create_line(x0 + 1, y0 + corner, x0 + 1, y1 - corner, fill=highlight, width=1)
 
-    # Floating HUD Brackets
+    # 悬浮 HUD 角标。
     canvas.create_line(x0 - 2, y0 + corner, x0 - 2, y0 - 2, x0 + corner, y0 - 2, fill=highlight, width=2)
     canvas.create_line(x1 + 2, y1 - corner, x1 + 2, y1 + 2, x1 - corner, y1 + 2, fill=highlight, width=2)
 

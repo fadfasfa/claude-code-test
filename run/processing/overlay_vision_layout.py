@@ -41,6 +41,7 @@ CARD_PANELS_16_9 = (
     (0.410, 0.155, 0.597, 0.690),
     (0.623, 0.155, 0.811, 0.690),
 )
+CARD_PANEL_16_9_MIN_ASPECT = 1.70
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,14 @@ class SceneObservation:
     transform: LayoutTransform
     card_residue: bool
     reason: str = ""
+
+
+def pick_card_panels(viewport_size: tuple[int, int]) -> tuple[tuple[float, float, float, float], ...]:
+    """按窗口宽高比选择三卡面板比例；renderer 和 sidecar 必须共用这一条规则。"""
+
+    width, height = (max(1, int(value)) for value in viewport_size)
+    aspect = width / max(1, height)
+    return CARD_PANELS_16_9 if aspect >= CARD_PANEL_16_9_MIN_ASPECT else CARD_PANELS_16_10
 
 
 def _component_boxes(mask: np.ndarray) -> list[tuple[int, int, int, int, int]]:
@@ -293,7 +302,7 @@ def detect_selection_scene(image: Image.Image, *, layout_id: str) -> SceneObserv
     """联合按钮和三卡面板判断单帧选择场景。"""
 
     button_box, blue_ratio = detect_expected_button(image)
-    panel_defs = CARD_PANELS_16_10 if layout_id == "2560x1600" else CARD_PANELS_16_9
+    panel_defs = pick_card_panels(image.size)
     if button_box is None:
         transform = LayoutTransform()
         panel_scores = tuple(_panel_score(image, apply_transform(box, image.size, transform)) for box in panel_defs)

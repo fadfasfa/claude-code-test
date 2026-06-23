@@ -27,11 +27,10 @@ from processing.overlay_event_channel import OVERLAY_EVENT_FILE, build_overlay_e
 from processing.overlay_hint_cache import load_overlay_hint_cache, normalize_augment_id, query_overlay_hint
 from processing.overlay_vision_layout import (
     BUTTON_SEARCH_REGION as V2_BUTTON_SEARCH_REGION,
-    CARD_PANELS_16_10,
-    CARD_PANELS_16_9,
     LayoutTransform,
     apply_transform,
     detect_selection_scene,
+    pick_card_panels,
 )
 from processing.overlay_vision_state import SelectionTracker
 from tools.atomic_io import atomic_write_json
@@ -1718,8 +1717,7 @@ def _cursor_over_card_panels(
         )
     except (TypeError, ValueError):
         transform = LayoutTransform()
-    layout_id = str(source.get("layout_id") or "")
-    panel_defs = CARD_PANELS_16_10 if layout_id == "2560x1600" else CARD_PANELS_16_9
+    panel_defs = pick_card_panels(frame_size)
     boxes = [apply_transform(box, frame_size, transform) for box in panel_defs]
     return cursor_in_client_boxes(client_rect, boxes)
 

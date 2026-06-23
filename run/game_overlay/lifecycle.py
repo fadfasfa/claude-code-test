@@ -231,12 +231,56 @@ class GameOverlayController:
         self.last_error = error
         self.updated_at = time.time()
 
+    def host_running(self) -> bool:
+        return process_is_running(self.host_process)
+
+    def sidecar_running(self) -> bool:
+        return process_is_running(self.sidecar_process)
+
     def is_running(self) -> bool:
-        return process_is_running(self.host_process) and process_is_running(self.sidecar_process)
+        return self.host_running() and self.sidecar_running()
+
+    def _drop_stopped_process_refs(self) -> None:
+        if self.host_process is not None and not process_is_running(self.host_process):
+            _cleanup_process_exit_signal(self.host_process)
+            self.host_process = None
+        if self.sidecar_process is not None and not process_is_running(self.sidecar_process):
+            self.sidecar_process = None
+
+    def _start_missing_processes(self, *, host_running: bool, sidecar_running: bool) -> None:
+        """只补齐已经意外退出的一侧，避免 sidecar 抖动时重启健康 host。"""
+
+        self._mark("starting")
+        try:
+            self._prepare_data_func()
+            if not sidecar_running:
+                self.sidecar_process = self._start_sidecar_func()
+                if not process_is_running(self.sidecar_process):
+                    raise RuntimeError("game_overlay sidecar 启动后立即退出")
+            if not host_running:
+                self.host_process = self._start_host_func()
+                if not process_is_running(self.host_process):
+                    raise RuntimeError("game_overlay host 启动后立即退出")
+            self._mark("running")
+            logger.info(
+                "game_overlay 已补齐进程：host_pid=%s sidecar_pid=%s",
+                getattr(self.host_process, "pid", None),
+                getattr(self.sidecar_process, "pid", None),
+            )
+        except Exception as exc:
+            self._drop_stopped_process_refs()
+            self._mark("error", error=str(exc))
+            raise
 
     def start(self) -> None:
-        if self.is_running():
+        host_running = self.host_running()
+        sidecar_running = self.sidecar_running()
+        if host_running and sidecar_running:
             self._mark("running")
+            return
+        self._drop_stopped_process_refs()
+        if host_running or sidecar_running:
+            self._start_missing_processes(host_running=host_running, sidecar_running=sidecar_running)
             return
         try:
             self.stop(write_inactive=False)
@@ -339,7 +383,6 @@ class GameOverlayController:
             self._mark("error", error=f"game_overlay {missing} 意外退出")
         return {
             "status": self.status,
-            "pid": getattr(self.host_process, "pid", None),
             "host_pid": getattr(self.host_process, "pid", None),
             "sidecar_pid": getattr(self.sidecar_process, "pid", None),
             "host_status": "running" if host_running else "stopped",
