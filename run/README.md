@@ -134,7 +134,6 @@ run/
 - `data/raw/hextech/Hextech_Data_*.csv`
 - 启动后新生成的 `data/raw/synergy/Champion_Synergy_*.json`
 - 启动后新生成的 `data/raw/synergy/Champion_Synergy_latest.v1.json`
-- `data/raw/mayhem_combos.raw.json` 只作为 Mayhem 清洗输入，不直接作为前端数据源
 - `data/runtime/state/*.json`
 - `data/runtime/state/web_server_port.txt`
 - `data/runtime/cache/`
@@ -142,6 +141,10 @@ run/
 - `data/runtime/profile/`
 - `data/runtime/logs/`
 - 任何启动后生成、抓取、缓存、锁、日志或计算产物
+
+例外：`data/raw/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
+`Champion_Synergy_Cleaned.json` 的生成；它不进入打包白名单，也不被 API 或前端直接读取。
+重抓 raw 后只有在同步更新 cleaned 数据时才一起提交。
 
 打包只允许带一组首启冷启动种子，但包内路径必须是
 `resources/snapshots/hextech/` 与 `resources/snapshots/synergy/`。启动时再由

@@ -68,7 +68,7 @@
 | `hextech/scraping/version_sync.py` | sync | 稳定资源同步、源码/冻结态运行根定位、首启目录引导 |
 | `hextech/scraping/hextech/scraper.py` | scraper | 海克斯高频数据抓取，目标总等待约 30 秒 |
 | `hextech/scraping/synergy/scraper.py` | scraper | 协同高频数据抓取，目标总等待约 28-30 秒 |
-| `hextech/scraping/synergy/mayhem_combo_scraper.py` | scraper | ARAMMayhem Combos 普通 GET 抓取；只写 Mayhem raw，不直接供前端读取 |
+| `hextech/scraping/synergy/mayhem_combo_scraper.py` | scraper | ARAMMayhem Combos 普通 GET 抓取；写入固定 Mayhem raw 清洗输入，不直接供前端读取 |
 | `hextech/scraping/transport/scrapling_client.py` | transport | Scrapling 同步抓取客户端 |
 | `hextech/scraping/transport/cloakbrowser_client.py` | transport | CloakBrowser 同步抓取客户端 |
 | `hextech/scraping/transport/smoke_scrapling.py` | smoke | Scrapling 在线冒烟脚本 |
@@ -115,7 +115,6 @@
 - `data/raw/hextech/Hextech_Data_*.csv`
 - 启动后新生成的 `data/raw/synergy/Champion_Synergy_*.json`
 - 启动后新生成的 `data/raw/synergy/Champion_Synergy_latest.v1.json`
-- `data/raw/mayhem_combos.raw.json` 只作为 Mayhem 清洗输入，不直接随包读取
 - `data/runtime/state/*.json`
 - `data/runtime/state/overlay_anchor_calibration.v1.json`
 - `data/runtime/state/web_server_port.txt`
@@ -125,6 +124,10 @@
 - `data/runtime/persisted/`
 - `data/runtime/logs/`
 - 任何启动后生成、抓取、缓存、锁、日志或计算产物
+
+例外：`data/raw/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
+`Champion_Synergy_Cleaned.json` 的生成；它不加入 `tools/package_rules.py` 打包白名单，
+也不被 Web/API 或前端直接读取。重抓后只有在准备更新 cleaned 数据时才一起提交。
 
 协同数据的包内种子使用时间快照加 latest 指针：`Champion_Synergy_YYYYMMDD_HHMMSS.json`
 和 `Champion_Synergy_latest.v1.json`，但包内路径必须是 `resources/snapshots/synergy/`。

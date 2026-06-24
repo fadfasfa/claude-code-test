@@ -22,6 +22,7 @@ DEFAULT_CHECKS = (
     "check_heal_worker_contract",
     "check_latest_valid_runtime_csv_fallback",
     "check_hextech_scraper_fallback_contract",
+    "check_hextech_detail_timeout_tail_retry",
     "check_hextech_cooldown_and_heal_fallback",
     "check_hextech_failed_refresh_never_overwrites_csv",
     "check_hextech_success_clears_fallback_state",

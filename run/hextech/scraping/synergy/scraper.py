@@ -4,6 +4,9 @@
 - ``ApexSource`` 负责同源页面和资源获取，按 snapshot、Scrapling、CloakBrowser 顺序兜底。
 - ``SynergyExtractor`` 负责从页面 hydration 数据、bundle 或旧 marker 中提取联动对象。
 - ``SynergyWriter`` 负责把结构化对象写成时间快照，并用 latest 指针发布。
+
+资源来源会记录为 ``snapshot``、``json-url``、``scrapling-get``、
+``scrapling-stealthy`` 或 ``cloakbrowser``，方便按日志 source 反查具体后端。
 """
 
 from __future__ import annotations
@@ -25,7 +28,6 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.parse import urljoin, urlparse, urlunparse
 
-import requests
 from bs4 import BeautifulSoup
 
 from hextech.catalog.runtime_store import (
@@ -563,8 +565,6 @@ class ApexSource:
             raise ValueError("APEX_BASE_URL 必须是有效的 https URL")
         self.allowed_netloc = parsed_base.netloc
         self.allowed_json_netlocs = self._build_allowed_json_netlocs()
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": get_request_user_agent()})
         self.blocked = False
         self.last_fetch_error = ""
         self._profile_root = os.path.join(APEX_SCRAPLING_PROFILE_DIR, f"session-{os.getpid()}-{int(time.time())}")
@@ -632,8 +632,8 @@ class ApexSource:
             error=error,
         )
 
-    def fetch_requests(self, url: str) -> Optional[FetchedResource]:
-        """兼容旧方法名；实际使用 Scrapling Fetcher 普通 HTTP 获取。"""
+    def fetch_plain(self, url: str) -> Optional[FetchedResource]:
+        """使用 Scrapling Fetcher 普通 HTTP 获取。"""
 
         if not self.is_allowed_url(url):
             logger.warning("拒绝非白名单请求：%s", _sanitize_url_for_log(url))
@@ -713,9 +713,9 @@ class ApexSource:
         # 1) 普通请求：拿到 origin 页直接用；但英雄详情页若是 HTTP 200 的非 origin 壳页
         #    （Access Denied / Next 错误页 / 缺联动 hydration），不能当成功，继续走后端回退。
         del allow_browser
-        requests_resource = self.fetch_requests(url)
-        if self._resource_is_origin_success(requests_resource, is_detail=is_detail):
-            return requests_resource
+        plain_resource = self.fetch_plain(url)
+        if self._resource_is_origin_success(plain_resource, is_detail=is_detail):
+            return plain_resource
 
         # 2) Scrapling Stealthy：ApexLoL 详情页可能遇到 Cloudflare / Turnstile /
         #    短期流量限制。这里使用独立运行态 profile，不读取真实浏览器会话。
@@ -738,7 +738,7 @@ class ApexSource:
                 return cloak_resource
 
         # 4) 没有任何后端拿到 origin：返回信息量最大的尝试结果供上层判定 failed。
-        return cloak_resource or stealth_resource or requests_resource
+        return cloak_resource or stealth_resource or plain_resource
 
     def fetch_configured_json_resource(self) -> Optional[FetchedResource]:
         raw_url = os.getenv("APEX_SYNERGY_JSON_URL", "").strip()
@@ -747,29 +747,33 @@ class ApexSource:
         if not self.is_allowed_json_url(raw_url):
             logger.error("APEX_SYNERGY_JSON_URL 不在允许的 https host 内：%s", _sanitize_url_for_log(raw_url))
             return None
-        try:
-            response = self.session.get(raw_url, timeout=REQUEST_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            if len(response.content) > MAX_JSON_RESOURCE_SIZE:
-                logger.error("APEX_SYNERGY_JSON_URL 响应过大，已拒绝：%s", _sanitize_url_for_log(raw_url))
-                return None
-            response.encoding = "utf-8"
-            payload = response.json()
-            if not isinstance(payload, (dict, list)):
-                logger.error("APEX_SYNERGY_JSON_URL 不是 JSON object/list：%s", _sanitize_url_for_log(raw_url))
-                return None
-            return FetchedResource(
-                url=raw_url,
-                text=json.dumps(payload, ensure_ascii=False),
-                source="json-url",
-                status_code=response.status_code,
+        result = fetch_text(
+            raw_url,
+            timeout_ms=REQUEST_TIMEOUT_SECONDS * 1000,
+            headers={"User-Agent": get_request_user_agent()},
+        )
+        resource = self._scrapling_result_to_resource(result, source="json-url")
+        if resource.error or not resource.text:
+            logger.warning(
+                "APEX_SYNERGY_JSON_URL 读取失败：url=%s status=%s error=%s",
+                _sanitize_url_for_log(raw_url),
+                resource.status_code,
+                resource.error or "empty_response",
             )
-        except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
-            response = getattr(exc, "response", None)
-            if getattr(response, "status_code", None) in {401, 403, 429}:
-                self.blocked = True
-            logger.warning("APEX_SYNERGY_JSON_URL 读取失败：url=%s error=%s", _sanitize_url_for_log(raw_url), _safe_exception_label(exc))
             return None
+        if len(resource.text.encode("utf-8")) > MAX_JSON_RESOURCE_SIZE:
+            logger.error("APEX_SYNERGY_JSON_URL 响应过大，已拒绝：%s", _sanitize_url_for_log(raw_url))
+            return None
+        try:
+            payload = json.loads(resource.text)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("APEX_SYNERGY_JSON_URL JSON 解析失败：url=%s error=%s", _sanitize_url_for_log(raw_url), _safe_exception_label(exc))
+            return None
+        if not isinstance(payload, (dict, list)):
+            logger.error("APEX_SYNERGY_JSON_URL 不是 JSON object/list：%s", _sanitize_url_for_log(raw_url))
+            return None
+        resource.text = json.dumps(payload, ensure_ascii=False)
+        return resource
 
     def fetch_cloakbrowser(
         self,
