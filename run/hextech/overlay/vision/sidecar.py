@@ -61,6 +61,8 @@ ICON_SHORTLIST_MAX_DELTA = 0.10
 ICON_SHORTLIST_MAX_GROUPS = 16
 # 指纹灰度标准差下限：低于它视为平坦区域（如 ESC 暗色菜单），直接不参与匹配。
 FLAT_CROP_STD_THRESHOLD = 12.0
+# 按钮粗定位的搜索区域（相对捕获尺寸）：限制扫描范围以加速和减少误检
+BUTTON_SEARCH_REGION = (0.20, 0.55, 0.80, 0.95)
 # 按钮检测阈值：蓝色像素数下限和占比下限
 BUTTON_MIN_BLUE_PIXELS = 80
 BUTTON_MIN_BLUE_RATIO = 0.15

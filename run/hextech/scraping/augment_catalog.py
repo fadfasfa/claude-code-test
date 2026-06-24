@@ -192,6 +192,7 @@ def _load_full_map(config_dir: str) -> dict:
 
 def _fetch_remote_augment_metadata() -> dict:
     """从远程数据源拉取增强元数据，按名称索引 rarity/tier 映射。"""
+    metadata = {}
     session = get_advanced_session()
     payload = None
     last_error = None
