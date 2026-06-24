@@ -4,7 +4,8 @@ from __future__ import annotations
 
 本模块只描述源文件如何进入包，不创建中间资源副本。打包脚本会把这些
 规则转换为 PyInstaller 的 ``--add-data`` 参数，并把所有临时文件写入系统
-临时目录。
+临时目录。`assets/` 会按目录交给 PyInstaller，但目录内必须全部是
+``ASSET_SUFFIXES`` 白名单图片，避免临时文件被静默带入发布包。
 """
 
 from dataclasses import dataclass
@@ -102,7 +103,7 @@ def validate_asset_dir_for_package(asset_dir: Path) -> None:
 
     sample = ", ".join(path.relative_to(asset_dir).as_posix() for path in unexpected[:5])
     suffix = "" if len(unexpected) <= 5 else f" 等 {len(unexpected)} 个文件"
-    raise ValueError(f"assets 目录包含非打包白名单文件：{sample}{suffix}")
+    raise ValueError(f"assets 目录包含非打包白名单文件：{sample}{suffix}；请清理或移出非图片文件后再打包。")
 
 
 def iter_hextech_snapshot_files(base_dir: Path) -> Iterable[Path]:

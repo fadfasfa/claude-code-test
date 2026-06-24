@@ -129,22 +129,24 @@ Hextech 首启种子快照同理放入 `resources/snapshots/hextech/`。旧固�
 
 ### 4.3 首启运行态骨架
 
-源码态启动时应能创建：
+源码态和冻结态启动时使用同一套运行态骨架：
 
-- `data/raw/hextech/`
-- `data/raw/synergy/`
-- `data/runtime/state/`
-- `data/runtime/cache/`
-- `data/runtime/locks/`
-- `data/runtime/profile/`
-- `data/runtime/persisted/`
-- `data/runtime/logs/`
+- `raw/hextech/`
+- `raw/synergy/`
+- `state/`
+- `cache/`
+- `locks/`
+- `profile/`
+- `persisted/`
+- `logs/`
 
-冻结态运行态统一落到 `%LOCALAPPDATA%/HextechNexus/data/runtime/`（无
+根目录按运行形态区分：源码态高频快照仍位于 `run/data/raw/`，其余运行态位于
+`run/data/runtime/`；冻结态运行态统一落到 `%LOCALAPPDATA%/HextechNexus/data/runtime/`（无
 `LOCALAPPDATA` 时回退到 `%APPDATA%/HextechNexus/data/runtime/` 或
 `~/.hextech_nexus/data/runtime/`），高频快照位于其中的 `raw/hextech/` 与
 `raw/synergy/`。冻结态不得在便携包根或 `_internal` 下创建 `data/raw`、
 `data/runtime`、`data/processed` 或运行期 cache/profile/log/logs/debug。
+冻结态不再接受 `HEXTECH_BASE_DIR` 覆盖运行态根，避免脚本把便携包根当作可写数据目录。
 
 ---
 

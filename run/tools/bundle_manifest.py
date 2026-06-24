@@ -4,7 +4,7 @@ from __future__ import annotations
 
 文件职责：
 - 枚举稳定配置、静态页面、图片资源和首启可用快照
-- 生成构建期与运行期共用的 bundle manifest，不复制资源
+- 生成运行期 seed 使用的 bundle manifest；构建期只把这份 manifest 随包写入，不复制资源
 
 核心输入：
 - `data/static/` 与 `data/indexes/`
@@ -51,6 +51,7 @@ from tools.package_rules import (
 def _assert_no_runtime_cache_entries(manifest: dict) -> None:
     serialized = json.dumps(manifest, ensure_ascii=False).replace("\\", "/")
     for forbidden in FORBIDDEN_BUNDLE_PATH_PARTS:
+        # TODO: manifest 字段扩展后改为按路径分量精确匹配，避免 source 文件名偶然含禁词时误报。
         if forbidden in serialized:
             raise ValueError(f"bundle manifest must not include runtime cache entry: {forbidden}")
 

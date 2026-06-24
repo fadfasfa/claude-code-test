@@ -137,19 +137,27 @@ run/
 
 打包只允许带一组首启冷启动种子，但包内路径必须是
 `resources/snapshots/hextech/` 与 `resources/snapshots/synergy/`。启动时再由
-`tools/runtime_bundle.py` 播种到用户运行目录的 `data/raw/*`。旧固定名
+`tools/runtime_bundle.py` 播种到用户运行目录的 `raw/*`；源码态用户运行目录对应
+`run/data/raw/`，冻结态对应 `%LOCALAPPDATA%/HextechNexus/data/runtime/raw/`。
+旧固定名
 `Champion_Synergy.json` 仅作读取兜底，不再作为刷新成功或最新数据判断依据。
 
 ### 首启会自动创建
 
-- `data/raw/hextech/`
-- `data/raw/synergy/`
-- `data/runtime/state/`
-- `data/runtime/cache/`
-- `data/runtime/locks/`
-- `data/runtime/profile/`
-- `data/runtime/persisted/`
-- `data/runtime/logs/`
+运行态骨架包含：
+
+- `raw/hextech/`
+- `raw/synergy/`
+- `state/`
+- `cache/`
+- `locks/`
+- `profile/`
+- `persisted/`
+- `logs/`
+
+源码态根目录是 `run/data/raw/` 与 `run/data/runtime/`；冻结态根目录是
+`%LOCALAPPDATA%/HextechNexus/data/runtime/`，且不接受 `HEXTECH_BASE_DIR`
+把运行态覆盖回便携包根。
 
 ## 打包与验收
 

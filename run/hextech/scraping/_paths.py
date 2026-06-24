@@ -27,6 +27,7 @@ def _get_packaged_user_base_dir() -> str:
 def bootstrap_runtime_environment() -> str:
     """规范运行时根目录，兼容终端、编辑器与打包程序入口。"""
     if getattr(sys, "frozen", False):
+        # 冻结态不接受 HEXTECH_BASE_DIR 覆盖，避免便携包根被当作可写运行态目录。
         runtime_base = _get_packaged_user_base_dir()
     else:
         runtime_base = os.getenv("HEXTECH_BASE_DIR", "").strip()
