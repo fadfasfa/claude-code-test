@@ -8,6 +8,7 @@ DEFAULT_CHECKS 保持 tools.dev_checks 旧版 run_default_checks 的真实顺序
 
 from . import bundle, overlay, runtime, scraping, structure, synergy, web
 
+# 全量自检清单：按 tools.dev_checks 旧版 run_default_checks 的真实顺序排列，覆盖所有分域
 DEFAULT_CHECKS = (
     "check_root_entrypoints",
     "check_hextech_package_contract",
@@ -64,6 +65,7 @@ DEFAULT_CHECKS = (
     "check_no_legacy_imports",
 )
 
+# 仅 Overlay 相关检查子集：用于 overlay 专项验收
 OVERLAY_ONLY_CHECKS = (
     "check_overlay_performance_probe_contract",
     "check_game_overlay_documentation_contract",
@@ -79,6 +81,7 @@ OVERLAY_ONLY_CHECKS = (
     "check_desktop_ui_feature_switch_contract",
 )
 
+# 按分域组织的检查项映射，供 dev_checks 按需加载
 DOMAIN_CHECKS = {
     "structure": structure.CHECKS,
     "web": web.CHECKS,

@@ -14,17 +14,19 @@ from hextech.overlay.events import build_overlay_event
 from hextech.overlay.vision.matcher import SlotCandidate, candidate_from_slot, unknown_slot
 
 
-SCENE_ENTER_FRAMES = 2
-SCENE_EXIT_FRAMES = 2
-SLOT_COUNT = 3
+SCENE_ENTER_FRAMES = 2  # 场景连续出现 N 帧后判定为"进入"
+SCENE_EXIT_FRAMES = 2   # 场景连续消失 N 帧后判定为"退出"
+SLOT_COUNT = 3          # 海克斯三选一槽位数
 
 
 @dataclass
 class _SlotTrack:
-    candidate_identity: str = ""
-    candidate_frames: int = 0
-    stable_slot: dict[str, Any] | None = None
-    weak_miss_frames: int = 0
+    """单槽位跟踪器：维护候选连续性和稳定输出。"""
+
+    candidate_identity: str = ""       # 当前帧候选标识（augment_id 或 name）
+    candidate_frames: int = 0          # 同一候选连续出现帧数
+    stable_slot: dict[str, Any] | None = None  # 已稳定确认的槽位输出
+    weak_miss_frames: int = 0          # 候选丢失帧数（连续丢失 ≥ 2 帧则清空稳定输出）
 
     def clear(self) -> None:
         self.candidate_identity = ""
@@ -35,16 +37,21 @@ class _SlotTrack:
 
 @dataclass
 class SelectionTracker:
-    """维护单个 sidecar 进程内的选择 epoch。"""
+    """维护单个 sidecar 进程内的选择 epoch。
 
-    scene_frames: int = 0
-    absent_frames: int = 0
-    scene_active: bool = False
-    epoch: int = 0
+    状态机分两层：
+    - 场景层：scene_active 控制 overlay 显隐，有进入/退出帧数防抖
+    - 槽位层：每个 _SlotTrack 独立累积候选帧数，互不干扰
+    """
+
+    scene_frames: int = 0              # 场景连续出现帧数
+    absent_frames: int = 0             # 场景连续消失帧数
+    scene_active: bool = False         # 场景已激活（≥ SCENE_ENTER_FRAMES）
+    epoch: int = 0                     # 选择窗口编号，每次新窗口递增
     scene_enter_frames: int = SCENE_ENTER_FRAMES
     scene_exit_frames: int = SCENE_EXIT_FRAMES
-    body_shard_latched: bool = False
-    body_shard_absent_frames: int = 0
+    body_shard_latched: bool = False   # 锻体碎片场景锁定中
+    body_shard_absent_frames: int = 0  # 锻体场景消失帧计数（退出防抖）
     slots: list[_SlotTrack] = field(default_factory=lambda: [_SlotTrack() for _ in range(SLOT_COUNT)])
 
     def reset(self) -> None:
@@ -104,6 +111,13 @@ class SelectionTracker:
         return event
 
     def _update_slot(self, index: int, raw_slot: Mapping[str, Any]) -> dict[str, Any]:
+        """逐槽处理单帧识别结果，累积候选帧数直到达到 required_frames 阈值。
+
+        候选判定三态：
+        - candidate 为 None（识别失败）→ 增加 weak_miss，连续 ≥2 帧清空稳定输出
+        - candidate 与当前稳定输出不同 → 强候选（≤2 帧）立即撤旧等新确认；弱候选保留旧值并标记 stale_hold
+        - candidate 与当前追踪一致 → 累加帧数，达到 required_frames 后锁定为稳定输出
+        """
         track = self.slots[index]
         candidate = candidate_from_slot(raw_slot)
         if candidate is None:
@@ -195,6 +209,16 @@ class SelectionTracker:
         return event
 
     def update(self, raw_event: Mapping[str, Any]) -> dict[str, Any]:
+        """处理一帧视觉事件，返回 overlay 就绪事件。
+
+        状态转换：
+        - body_shard_only → 锁定锻体模式，清空槽位，输出 body_shard 事件
+        - blocking_modal_present / scoreboard_key_down → 重置并阻塞
+        - body_shard_latched + 场景消失 → 防抖退出锻体模式
+        - hover_occluded（鼠标遮挡）或 scene_residue_hold（残留保持）→ 沿用上次槽位
+        - 场景出现 → 累积帧数，达到阈值后 scene_active=True
+        - 场景消失 → 累积 absent_frames，达到阈值后 reset
+        """
         source = raw_event.get("source") if isinstance(raw_event.get("source"), Mapping) else {}
         reason = str(source.get("reason") or "")
         if reason == "body_shard_only":

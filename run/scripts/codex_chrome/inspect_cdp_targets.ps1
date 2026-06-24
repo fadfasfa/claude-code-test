@@ -1,8 +1,8 @@
 <#
-List current Chrome CDP targets for the temporary Codex Chrome run.
+列出当前 Codex Chrome 临时运行实例的 CDP 目标列表。
 
-This is a read-only diagnostic helper. It is part of the temporary
-run/scripts/codex_chrome directory and is removed by cleanup.ps1.
+只读诊断工具，仅输出目标信息不修改任何状态。
+该脚本位于临时目录 run/scripts/codex_chrome 内，会被 cleanup.ps1 一并清理。
 #>
 
 [CmdletBinding()]
@@ -12,6 +12,7 @@ $ErrorActionPreference = "Stop"
 
 $targets = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/json" -TimeoutSec 5
 
+# 输出 CDP 目标的关键字段：类型、标题、URL、是否支持 WebSocket 调试
 foreach ($target in $targets) {
     [PSCustomObject]@{
         type = $target.type

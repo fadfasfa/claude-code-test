@@ -20,11 +20,12 @@ import urllib3
 
 
 SLOT_COUNT = 3
-STATUS_CANDIDATES_READY = "candidates_ready"
-STATUS_ACTIVE_NO_CANDIDATES = "active_no_candidates"
-STATUS_UNAVAILABLE = "unavailable"
-STATUS_ERROR = "error"
+STATUS_CANDIDATES_READY = "candidates_ready"       # 已提取完整三槽候选
+STATUS_ACTIVE_NO_CANDIDATES = "active_no_candidates"  # 接口可达但未找到候选
+STATUS_UNAVAILABLE = "unavailable"                 # 接口不可达（游戏不在选择界面）
+STATUS_ERROR = "error"                             # 接口返回错误（如认证失败）
 
+# Live Client Data API（LoL 游戏进程内置 HTTPS 接口，端口 2999）
 LIVE_CLIENT_BASE_URL = "https://127.0.0.1:2999"
 LIVE_CLIENT_ENDPOINTS = (
     "/liveclientdata/allgamedata",
@@ -32,6 +33,7 @@ LIVE_CLIENT_ENDPOINTS = (
     "/liveclientdata/eventdata",
     "/swagger/v3/openapi.json",
 )
+# LCU API（LeagueClientUx 进程，端口和 token 从命令行参数提取）
 LCU_ENDPOINTS = (
     "/lol-gameflow/v1/gameflow-phase",
     "/lol-gameflow/v1/session",
@@ -39,9 +41,11 @@ LCU_ENDPOINTS = (
     "/lol-summoner/v1/current-summoner",
 )
 
+# JSON 路径探测策略：先在顶层找直接 ID/名称键，再深入容器键递归
 _DIRECT_ID_KEYS = ("id", "augmentId", "augment_id", "hextechId", "hextech_id")
 _DIRECT_NAME_KEYS = ("name", "displayName", "display_name", "title")
 _CONTAINER_KEYS = {
+    # 可能包含候选数组的容器键名（已标准化为小写无分隔符）
     "augments",
     "availableaugments",
     "choices",
@@ -51,6 +55,7 @@ _CONTAINER_KEYS = {
     "value",
 }
 _SELECTED_ONLY_KEYS = {
+    # 仅记录已选择/已拥有的增强，不含当前可选候选，跳过以加速搜索
     "pickedaugment",
     "selectedaugment",
     "selectedhextech",
@@ -262,7 +267,10 @@ def extract_official_augment_candidates(payload: Any, *, source: str = "official
 
 
 def scan_lcu_process() -> tuple[str | None, str | None]:
-    """从 LeagueClientUx 命令行参数读取 LCU 端口和临时 token；不落盘。"""
+    """遍历进程列表，从 LeagueClientUx.exe 命令行提取 --app-port 和 --remoting-auth-token。
+
+    不读取任何凭据文件，不落盘 token，仅从进程命令行参数实时提取。
+    """
 
     for proc in psutil.process_iter(["name", "cmdline"]):
         try:
