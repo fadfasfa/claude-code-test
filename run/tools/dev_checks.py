@@ -73,7 +73,8 @@ from hextech.scraping.synergy.scraper import (
     normalize_slug,
     write_synergy_refresh_meta,
 )
-from tools.bundle_manifest import build_bundle_manifest, prepare_bundle_runtime
+from tools.bundle_manifest import build_bundle_manifest
+from tools.package_rules import iter_package_data_entries
 from hextech.support.log_utils import install_summary_logging
 
 
@@ -1147,26 +1148,35 @@ def check_logging_contract() -> None:
 
 
 def check_packaging_config() -> None:
-    build_script = (RUN_DIR / "tools" / "build_bundle.py").read_text(encoding="utf-8")
-    spec_text = (RUN_DIR / "Hextech伴生终端.spec").read_text(encoding="utf-8")
+    build_script = (RUN_DIR / "tools" / "build_package.py").read_text(encoding="utf-8")
+    rules_text = (RUN_DIR / "tools" / "package_rules.py").read_text(encoding="utf-8")
+    build_entry_text = (RUN_DIR / "build.py").read_text(encoding="utf-8")
 
     assert "PYINSTALLER_HIDDEN_IMPORTS = [" in build_script
     assert "PYINSTALLER_COLLECT_SUBMODULES = [" in build_script
     assert 'cmd.extend(["--hidden-import", module_name])' in build_script
     assert 'cmd.extend(["--collect-submodules", module_name])' in build_script
+    assert "--workpath" in build_script
+    assert "--distpath" in build_script
+    assert "--specpath" in build_script
+    assert "TemporaryDirectory" in build_script
+    assert ".artifacts" in build_script
     for dependency in ("filelock", "tkinter", "_tkinter", "win32gui", "win32con", "hextech.overlay.lifecycle"):
         assert f'"{dependency}"' in build_script
     assert "resolve_tcl_runtime_dirs" in build_script
     assert "resolve_tkinter_package_dir" in build_script
-    assert ";_tcl_data" in build_script
-    assert ";_tk_data" in build_script
-    assert ";tkinter" in build_script
-    assert "_tcl_data" in spec_text and "_tk_data" in spec_text and "'tkinter'" in spec_text
-    assert "from tools.build_bundle import PYINSTALLER_COLLECT_SUBMODULES, PYINSTALLER_HIDDEN_IMPORTS" in spec_text
-    assert "hiddenimports = list(PYINSTALLER_HIDDEN_IMPORTS)" in spec_text
-    assert "for module_name in PYINSTALLER_COLLECT_SUBMODULES" in spec_text
+    assert '"_tcl_data"' in build_script
+    assert '"_tk_data"' in build_script
+    assert '"tkinter"' in build_script
+    assert "from tools.build_package import main" in build_entry_text
+    assert not (RUN_DIR / "tools" / "build_bundle.py").exists()
+    assert not (RUN_DIR / "Hextech伴生终端.spec").exists()
     manifest_script_text = (RUN_DIR / "tools" / "bundle_manifest.py").read_text(encoding="utf-8")
     assert "hextech" in manifest_script_text
+    assert "prepare_bundle_runtime" not in manifest_script_text
+    assert "shutil.copy" not in manifest_script_text
+    assert "PackageData" in rules_text
+    assert "iter_package_data_entries" in rules_text
     assert '"display/' not in manifest_script_text
     assert '"processing/' not in manifest_script_text
     assert '"crawler/' not in manifest_script_text
@@ -1176,7 +1186,6 @@ def check_packaging_config() -> None:
         assert f'"{module_name}"' in build_script
     for legacy_module in ("display", "processing", "scraping", "crawler", "game_overlay"):
         assert f'"{legacy_module}"' not in build_script
-        assert f"'{legacy_module}'" not in spec_text
 
 
 def check_ui_feature_flags_contract() -> None:
@@ -3258,10 +3267,14 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
         fixture_static.mkdir(parents=True)
         (fixture_index / "augment.name-to-icon.v1.json").write_text('{"尤里卡":"assets/1.png"}', encoding="utf-8")
         (fixture_static / "index.html").write_text("<html></html>", encoding="utf-8")
-        prepared = prepare_bundle_runtime(fixture_root, Path(tmp_dir) / "build")
-        assert (prepared / "data" / "indexes" / "augment.name-to-icon.v1.json").is_file()
-        assert (prepared / "static" / "index.html").is_file()
-        assert not (prepared / "data" / "raw").exists()
+        manifest_path = Path(tmp_dir) / "bundle_manifest.json"
+        manifest_path.write_text("{}", encoding="utf-8")
+        entries = iter_package_data_entries(fixture_root, manifest_path)
+        entry_targets = {(entry.source.name, entry.target) for entry in entries}
+        assert ("augment.name-to-icon.v1.json", "data/indexes") in entry_targets
+        assert ("static", "static") in entry_targets
+        assert ("bundle_manifest.json", ".") in entry_targets
+        assert not (Path(tmp_dir) / "build" / "_bundle_runtime").exists()
 
     if verbose:
         print("has_hextech_snapshot_files", True)

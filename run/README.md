@@ -16,7 +16,7 @@
 | :--- | :--- |
 | 主入口 | `python hextech_ui.py` 启动桌面伴生；`python web_server.py` 只启动 Web 服务；`python hextech_ui.py --game-overlay` 只启动基础 overlay host |
 | 打包入口 | `python build.py`，不要另建平行打包流程 |
-| 发布形态 | PyInstaller `--onedir` 未签名便携包 + `_portable.zip` |
+| 发布形态 | PyInstaller `--onedir` 未签名便携包 + zip，输出到仓库根 `.artifacts/hextech/releases/` |
 | 启动硬门槛 | 打包产物空仓首启 60 秒内返回可用 Web/UI 热路径 |
 | 高频数据策略 | `data/raw/` 和 `data/runtime/` 不进包；首次空仓必刷，之后超过 4 小时再刷 |
 | 稳定资源策略 | 只把版本级稳定资源放进包；首启种子快照在包内使用 `resources/snapshots/`，不使用 `data/raw/` |
@@ -81,7 +81,7 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 
 ```text
 run/
-├── build.py                    # 打包入口薄壳，委托 tools/build_bundle.py
+├── build.py                    # 打包入口薄壳，委托 tools/build_package.py
 ├── hextech_ui.py               # 桌面入口薄壳，委托 hextech.display.desktop
 ├── web_server.py               # Web 入口薄壳，委托 hextech.display.web
 ├── hextech/                    # 主应用包；所有可 import 业务代码收口到这里
@@ -94,6 +94,8 @@ run/
 │   └── support/                # 原子写入、日志等跨域基础工具
 ├── frontend/                   # Tailwind 源码与 Node 构建配置
 ├── tools/                      # 打包、自检、手动验收和烟测工具
+│   ├── build_package.py        # 唯一打包脚本；临时构建目录写入系统 TEMP
+│   ├── package_rules.py        # 打包资源规则；只描述源路径，不复制资源
 │   ├── checks/                 # dev_checks 分域检查清单
 │   └── acceptance/             # 验收工具入口
 ├── resources/                  # 稳定只读资源边界；打包快照输出到 resources/snapshots/
@@ -169,11 +171,15 @@ python tools/dev_checks.py --bundle-manifest
 
 `python build.py` 会生成：
 
-- `dist/Hextech_伴生系统_YYYYMMDD/`
-- `dist/Hextech_伴生系统_YYYYMMDD_portable.zip`
+- `.artifacts/hextech/releases/HextechCompanion-YYYYMMDD/`
+- `.artifacts/hextech/releases/HextechCompanion-YYYYMMDD.zip`
 - 便携目录内的 `Hextech伴生终端.exe`
 - 便携目录内的 `启动 Hextech.bat`
 - 便携目录内的 `README_首次使用.txt`
+
+构建过程使用系统临时目录 `hextech-build-*`，不会在 `run/build/`、`run/dist/`
+或 `run/build/_bundle_runtime/` 保留资源副本。旧目录若存在只视为历史生成物，
+可由新打包入口在构建前清理。
 
 发布前建议固定执行：
 
@@ -266,4 +272,4 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 - Scrapling 冒烟脚本优先改 `hextech/scraping/transport/smoke_scrapling.py`
 - 海克斯/协同业务抓取优先改 `hextech/scraping/hextech/scraper.py` 和 `hextech/scraping/synergy/scraper.py`
 - 稳定资源同步、图标目录维护、自愈修复优先改 `hextech/scraping/`
-- 打包链路变更时同步检查 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`tools/dev_checks.py` 和本文档
+- 打包链路变更时同步检查 `tools/build_package.py`、`tools/package_rules.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`tools/dev_checks.py` 和本文档

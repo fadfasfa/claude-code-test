@@ -50,7 +50,10 @@ class SmokeFailure(RuntimeError):
 
 
 def _latest_package(dist_dir: Path) -> Path:
-    packages = [p for p in dist_dir.iterdir() if p.is_dir() and p.name.startswith("Hextech_")]
+    packages = [
+        p for p in dist_dir.iterdir()
+        if p.is_dir() and (p.name.startswith("HextechCompanion-") or p.name.startswith("Hextech_"))
+    ]
     if not packages:
         raise SmokeFailure(f"未找到打包目录：{dist_dir}")
     return max(packages, key=lambda p: p.stat().st_mtime)
@@ -329,8 +332,9 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="验证打包产物空仓首启是否在限定时间内可用。")
-    parser.add_argument("--package-dir", type=Path, help="已打包便携目录；默认使用 run/dist 下最新 Hextech_* 目录。")
-    parser.add_argument("--dist-dir", type=Path, default=Path(__file__).resolve().parents[2] / "dist", help="便携包搜索根目录；默认是 run/dist。")
+    default_releases = Path(__file__).resolve().parents[3] / ".artifacts" / "hextech" / "releases"
+    parser.add_argument("--package-dir", type=Path, help="已打包便携目录；默认使用 .artifacts/hextech/releases 下最新目录。")
+    parser.add_argument("--dist-dir", type=Path, default=default_releases, help="便携包搜索根目录；默认是 .artifacts/hextech/releases。")
     parser.add_argument("--smoke-root", type=Path, default=Path(__file__).resolve().parents[2] / ".tmp_package_smoke", help="烟测复制副本根目录；默认是 run/.tmp_package_smoke。")
     parser.add_argument("--timeout", type=int, default=60, help="启动可用性等待秒数；默认 60。")
     parser.add_argument("--keep", action="store_true", help="保留复制出的烟测目录，便于排查。")

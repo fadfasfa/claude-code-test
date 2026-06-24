@@ -1,5 +1,6 @@
 .gitnexus
 .archive/
+.artifacts/
 
 # Local private investment research workspace; never publish to the public remote.
 /QuantProject/

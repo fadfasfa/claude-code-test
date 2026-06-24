@@ -39,7 +39,7 @@
 
 | 文件 | 类型 | 职责 |
 | :--- | :--- | :--- |
-| `build.py` | thin entry | 打包入口薄壳，委托 `tools.build_bundle` |
+| `build.py` | thin entry | 打包入口薄壳，委托 `tools.build_package` |
 | `hextech_ui.py` | thin entry | 桌面启动薄壳，委托 `hextech.display.desktop.app` |
 | `web_server.py` | thin entry | Web 启动薄壳，委托 `hextech.display.web.app` |
 | `hextech/` | application package | 稳定 import 根；承载 desktop、Web、catalog、overlay、scraping 与 core 主实现 |
@@ -74,8 +74,9 @@
 | `hextech/scraping/augment_catalog.py` | catalog | 海克斯统一目录维护与预缓存 |
 | `hextech/scraping/icon_resolver.py` | icon | 海克斯图标查找、缓存与远端兜底 |
 | `hextech/scraping/heal_worker.py` | heal | 缺失关键产物自愈修复与启动状态写回 |
-| `tools/build_bundle.py` | build tool | 打包主流程、版本文件、PyInstaller 参数和产物整理 |
-| `tools/bundle_manifest.py` | build tool | 稳定资源白名单与 manifest 生成 |
+| `tools/build_package.py` | build tool | 打包主流程、临时目录、PyInstaller 参数和最终产物整理 |
+| `tools/package_rules.py` | build tool | 稳定资源白名单与 PyInstaller data 规则 |
+| `tools/bundle_manifest.py` | build tool | 稳定资源 manifest 生成；不复制资源 |
 | `tools/runtime_bundle.py` | runtime tool | 打包后稳定资源播种 |
 | `tools/cleanup_runtime.py` | cleanup tool | 构建和运行态残留清理 |
 | `tools/dev_checks.py` | dev tool | 统一离线自检、bundle manifest 明细校验、Web/UI 手动验收辅助入口；检查执行顺序由 `tools/checks/registry.py` 维护 |
@@ -179,16 +180,17 @@ flowchart TD
 python build.py
 ```
 
-该入口委托 `tools/build_bundle.py`，负责：
+该入口委托 `tools/build_package.py`，负责：
 
 1. 准备稳定资源白名单。
-2. 调用 PyInstaller `--onedir`。
+2. 生成临时 bundle manifest，不创建长期 `_bundle_runtime`。
 3. 补齐 PyInstaller 动态依赖和子模块收集。
-4. 整理 `dist/Hextech_伴生系统_YYYYMMDD/`。
-5. 写入 `启动 Hextech.bat` 和 `README_首次使用.txt`。
-6. 生成 `Hextech_伴生系统_YYYYMMDD_portable.zip`。
+4. 调用 PyInstaller `--onedir`，并把 work/dist/spec 都写入系统临时目录。
+5. 整理 `.artifacts/hextech/releases/HextechCompanion-YYYYMMDD/`。
+6. 写入 `启动 Hextech.bat` 和 `README_首次使用.txt`。
+7. 生成 `.artifacts/hextech/releases/HextechCompanion-YYYYMMDD.zip`。
 
-不要新增第二条平行打包流程；如果打包行为要变，优先改 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`。
+不要新增第二条平行打包流程；如果打包行为要变，优先改 `tools/build_package.py`、`tools/package_rules.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`。
 
 ---
 
@@ -219,7 +221,7 @@ python tools/acceptance/smoke_packaged_startup.py --timeout 60
 
 验收脚本必须证明：
 
-- 使用最新 `dist/Hextech_*` 目录或显式 `--package-dir`。
+- 使用最新 `.artifacts/hextech/releases/HextechCompanion-*` 目录或显式 `--package-dir`。
 - 复制到临时目录后删除 `data/raw` 和 `data/runtime`，构造严格空仓。
 - 启动 exe 后 60 秒内可获得端口文件。
 - `startup_status.json` 是本轮启动后新写入。
@@ -304,7 +306,7 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 - Scrapling 冒烟脚本优先落在 `hextech/scraping/transport/smoke_scrapling.py`。
 - 业务抓取优先落在 `hextech/scraping/hextech/scraper.py` 或 `hextech/scraping/synergy/scraper.py`。
 - 图标目录维护、稳定资源同步和自愈逻辑优先落在 `hextech/scraping/`。
-- 变更打包链路或验证入口时，必须同步检查 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`tools/dev_checks.py`、`README.md` 和本文件。
+- 变更打包链路或验证入口时，必须同步检查 `tools/build_package.py`、`tools/package_rules.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`tools/dev_checks.py`、`README.md` 和本文件。
 - 变更目录结构、数据边界或首启验收标准时，必须同步更新 [README.md](README.md) 和本文件。
 
 ---
