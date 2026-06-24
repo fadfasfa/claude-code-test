@@ -12,9 +12,10 @@ description: 用于本仓提交或 PR 前的本地 diff 审查；生成风险、
 
 ## scope
 
+- 默认使用简体中文输出问题、风险、未验证点和建议验证命令。
 - 读取 `git status`、`git diff --stat`、`git diff --name-status`。
-- 按 `docs/workflows/05-pr-review-policy.md` 生成本地风险摘要。
-- 检查是否触碰 `run/**`、敏感文件名或未授权工作区。
+- 按 `docs/当前规则/30-验证与审查.md` 生成本地风险摘要。
+- 检查是否触碰 `run/**`、`sm2-randomizer/**`、`sms-monitor/**`、`heybox/**`、`subtitle_extractor/**`、`QuantProject/**`、`qm-run-demo`、敏感文件名或未授权工作区。
 
 ## action boundary
 

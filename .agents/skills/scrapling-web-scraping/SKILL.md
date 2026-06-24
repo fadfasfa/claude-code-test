@@ -11,9 +11,11 @@ description: 用于本仓通过 Scrapling 进行网页抓取、动态网页获�
 
 `run/crawler/` 工具层的实际调用方是 Codex / OpenAI Codex plugin。Claude Code 不在本仓通过该 skill 调用抓取工具，也不负责抓取业务实现。
 
+默认使用简体中文输出计划、风险、验证和总结；URL、selector、API、路径、命令和错误原文保持原文。
+
 ## 默认流程
 
-1. 先读目标 work area 的 `PROJECT.md`、README、附近抓取代码和 `docs/workflows/work_area_registry.md`。
+1. 先读目标 work area 的 `PROJECT.md`、README、附近抓取代码和 `docs/当前规则/10-工作区登记.md`。
 2. 明确目标 URL、输出格式、写入目录、是否允许网络访问、是否允许依赖变更，以及是否只是评估替换。
 3. 默认从同步 `mode="get"` 开始；只有页面确实依赖浏览器渲染时才升级到 `mode="browser"`。
 4. `mode="stealthy"` 只在用户明确授权且目标合规时使用；不要默认启用 stealth/anti-bot 能力。
@@ -61,4 +63,5 @@ result = fetch_page("https://example.com", mode="get", css_selector="h1::text")
 - 不默认安装 `scrapling`、Playwright/Patchright 浏览器或其他依赖；依赖变更必须在计划里单独列出并得到确认。
 - 不默认绕过验证码、登录墙、robots.txt、网站 ToS 或反爬限制；遇到这些场景先报告合规和技术风险。
 - 不默认替换 `heybox/`、`sm2-randomizer/`、`run/` 现有爬虫；替换必须限定目标工作区、输出契约和回滚方式。
+- 未获当前任务授权时，不触碰 `run/**`、`sm2-randomizer/**`、`sms-monitor/**`、`heybox/**`、`subtitle_extractor/**`、`QuantProject/**` 或 `qm-run-demo`。
 - 不新增自动抓取 hook、后台任务、定时任务或发布流程。

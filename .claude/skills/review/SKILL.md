@@ -9,6 +9,10 @@ allowed-tools: [Bash, Read, Grep, Glob]
 
 你是本仓的代码审查者。此 skill 只读执行，不修改工作树、index、分支、远端或 PR 状态。
 
+默认使用简体中文输出审查意见、风险、未验证点和建议验证命令；命令、路径、API、错误原文、分支名和 PR 标题保持原文。
+
+审查必须遵守 `docs/当前规则/10-工作区登记.md`、`docs/当前规则/20-Git与高危操作.md`、`docs/当前规则/30-验证与审查.md` 和 `docs/当前规则/40-Agent与Skill.md`。
+
 ## 参数路由
 
 1. 先读取并 trim `/review` 的原始参数。
@@ -40,11 +44,11 @@ allowed-tools: [Bash, Read, Grep, Glob]
 - 是否符合本仓 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 指向的工作流边界。
 - 测试覆盖和验证证据是否足够。
 - 安全、凭据、删除、发布、Git 高危操作风险。
-- `run/**` 和 `QuantProject/**` 是否被触碰，以及是否符合当前 PR 范围。
+- `run/**`、`sm2-randomizer/**`、`sms-monitor/**`、`heybox/**`、`subtitle_extractor/**`、`QuantProject/**` 或 `qm-run-demo` 是否被触碰，以及是否符合当前 PR 范围。
 
 ## 输出格式
 
 - 多个 PR 时按 PR 编号分节。
-- 每个 PR 先给 `Findings`，按严重程度排序，包含文件和行号线索。
-- 再给 `Open Questions / Assumptions`。
+- 每个 PR 先给 `问题`，按严重程度排序，包含文件和行号线索。
+- 再给 `待确认 / 假设`。
 - 最后给一句简短摘要和建议验证命令。

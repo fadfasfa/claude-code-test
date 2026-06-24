@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CAPTURE_SCRIPT = REPO_ROOT / "scripts" / "scraping" / "apex_snapshot_capture.py"
+CAPTURE_SCRIPT = REPO_ROOT / "scripts" / "抓取快照" / "apex_snapshot_capture.py"
 
 
 def load_capture_module():

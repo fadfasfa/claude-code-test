@@ -7,6 +7,8 @@ description: Use when the user invokes /cleanup-worktrees or asks Claude Code to
 
 本 skill 是 `claudecode` 仓库的 Claude Code 对话入口。默认清理 PR 合并后的本地残留：已合并到 base、相对 base 无领先提交、无 tracked 修改、无 `??` untracked，且 ignored 输出为空或仅包含白名单 `__pycache__/` 目录条目缓存、受管且非 protected 的 worktree / 本地分支，以及已并入 base 的 stale `origin/*` 本机缓存。未合并、仍领先、dirty、存在 `??` untracked、存在非白名单 ignored 文件或目录、非受管、protected 或远端仍真实存在的对象只列清单并保持不变。
 
+清理边界必须遵守 `docs/当前规则/10-工作区登记.md`、`docs/当前规则/20-Git与高危操作.md`、`docs/当前规则/30-验证与审查.md` 和 `docs/当前规则/40-Agent与Skill.md`。
+
 ## Scope
 
 - repo：默认当前仓库；如用户提供 `--repo PATH`，先确认该路径是 Git 仓库。
@@ -54,9 +56,9 @@ protected branch 包括 `main`、`master`、`develop`、`dev`、`release/*`、`h
 - `--apply` 不扩大范围，只表示使用默认清理模式。
 - 如用户显式给出 `--no-prune`，无论其他措辞如何都跳过 stale `origin/*` 本机缓存删除。
 - 失败时不得升级到 `--force`、`branch -D`、`git clean`、`reset --hard`、强制 checkout/switch、改 remote、push、PR、merge、rebase 或 tag。
-- 不调用或恢复 `scripts/git/safe-worktree-cleanup.ps1`；该 CLI 入口已退役。
+- 不调用或恢复 `scripts/Git辅助/safe-worktree-cleanup.ps1`；该 CLI 入口已退役。
 - 不读取或修改凭据、token、cookie、API key、proxy secret、`.env`、`auth.json`、`local.yaml`、`proxies.json`、`accounts.json`。
 
 ## Output
 
-先给三张审计表。默认清理模式逐项报告执行结果；审计模式明确说明未删除。收尾必须说明：是否移除 worktree、是否删除本地分支、是否删除 stale `origin/*` 本机缓存、是否 stage/commit/push。
+默认使用简体中文输出。先给三张审计表。默认清理模式逐项报告执行结果；审计模式明确说明未删除。收尾必须说明：是否移除 worktree、是否删除本地分支、是否删除 stale `origin/*` 本机缓存、是否 stage/commit/push。
