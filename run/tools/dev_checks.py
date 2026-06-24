@@ -273,6 +273,9 @@ def check_hextech_package_contract() -> None:
     version_sync_module = importlib.import_module("hextech.scraping.version_sync")
     assert Path(version_sync_module.BASE_DIR).resolve() == RUN_DIR.resolve()
     assert Path(version_sync_module.RESOURCE_DIR).resolve() == RUN_DIR.resolve()
+    paths_text = (RUN_DIR / "hextech" / "scraping" / "_paths.py").read_text(encoding="utf-8")
+    assert 'os.path.join(RUNTIME_DATA_DIR, "raw")' in paths_text
+    assert 'getattr(sys, "frozen", False)' in paths_text
     version_sync_text = (RUN_DIR / "hextech" / "scraping" / "version_sync.py").read_text(encoding="utf-8")
     icon_resolver_text = (RUN_DIR / "hextech" / "scraping" / "icon_resolver.py").read_text(encoding="utf-8")
     augment_catalog_text = (RUN_DIR / "hextech" / "scraping" / "augment_catalog.py").read_text(encoding="utf-8")
@@ -3381,6 +3384,8 @@ def check_packaged_smoke_uses_explicit_feature_flags() -> None:
     assert "OVERLAY_ANCHOR_CALIBRATION_FILENAME" in smoke_text
     assert "package:resources/snapshots/synergy/Champion_Synergy_latest.v1.json" in smoke_text
     assert "FORBIDDEN_PACKAGE_PATHS" in smoke_text
+    assert 'child_env["LOCALAPPDATA"]' in smoke_text
+    assert "runtime_base:data/{rel} absent" in smoke_text
     for forbidden_rel in (
         "data/raw",
         "data/runtime",

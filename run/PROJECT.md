@@ -129,7 +129,7 @@ Hextech 首启种子快照同理放入 `resources/snapshots/hextech/`。旧固�
 
 ### 4.3 首启运行态骨架
 
-源码态和冻结态启动时都应能创建：
+源码态启动时应能创建：
 
 - `data/raw/hextech/`
 - `data/raw/synergy/`
@@ -140,7 +140,11 @@ Hextech 首启种子快照同理放入 `resources/snapshots/hextech/`。旧固�
 - `data/runtime/persisted/`
 - `data/runtime/logs/`
 
-冻结态运行根必须是 exe 所在便携目录；运行态不得落到 `_internal/data/runtime`。
+冻结态运行态统一落到 `%LOCALAPPDATA%/HextechNexus/data/runtime/`（无
+`LOCALAPPDATA` 时回退到 `%APPDATA%/HextechNexus/data/runtime/` 或
+`~/.hextech_nexus/data/runtime/`），高频快照位于其中的 `raw/hextech/` 与
+`raw/synergy/`。冻结态不得在便携包根或 `_internal` 下创建 `data/raw`、
+`data/runtime`、`data/processed` 或运行期 cache/profile/log/logs/debug。
 
 ---
 
@@ -151,7 +155,7 @@ Hextech 首启种子快照同理放入 `resources/snapshots/hextech/`。旧固�
 flowchart TD
     A[hextech_ui.py / web_server.py] --> B[hextech.display]
     B --> C[hextech.catalog.runtime_store]
-    C --> D[data/raw + data/runtime]
+    C --> D[源码态 data/raw + data/runtime；冻结态 LocalAppData runtime]
     B --> E[hextech.display.web.api]
     E --> F[Web 页面 / 浏览器]
     B --> G[hextech.core.refresh]
@@ -222,11 +226,11 @@ python tools/acceptance/smoke_packaged_startup.py --timeout 60
 验收脚本必须证明：
 
 - 使用最新 `.artifacts/hextech/releases/HextechCompanion-*` 目录或显式 `--package-dir`。
-- 复制到临时目录后删除 `data/raw` 和 `data/runtime`，构造严格空仓。
+- 复制到临时目录后不预删 forbidden 目录，直接检查包根与 `_internal` 不存在运行态副本。
+- 使用隔离的 `LOCALAPPDATA` 启动 exe，确认冻结态运行态位于 `HextechNexus/data/runtime`。
 - 启动 exe 后 60 秒内可获得端口文件。
 - `startup_status.json` 是本轮启动后新写入。
-- 运行态目录全部位于便携目录根下。
-- `_internal/data/runtime` 和 `_internal/data/raw` 不存在。
+- `data/raw`、`data/runtime`、`data/processed` 与 cache/profile/log/logs/debug 不会出现在包根或 `_internal`。
 - 包内首启种子位于 `_internal/resources/snapshots/` 或便携根 `resources/snapshots/`。
 - `/`、`/api/startup_status`、`/api/champions`、`/detail.html?champion=1`、`/api/synergies/1` 返回可操作响应。
 

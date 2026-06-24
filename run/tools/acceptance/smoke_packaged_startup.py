@@ -87,11 +87,12 @@ def _find_exe(package_dir: Path) -> Path:
     return exes[0]
 
 
-def _get_packaged_runtime_root() -> Path:
-    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+def _get_packaged_runtime_root(env: dict[str, str] | None = None) -> Path:
+    source_env = env or os.environ
+    local_app_data = source_env.get("LOCALAPPDATA", "").strip()
     if local_app_data:
         return Path(local_app_data) / "HextechNexus" / "data" / "runtime"
-    app_data = os.getenv("APPDATA", "").strip()
+    app_data = source_env.get("APPDATA", "").strip()
     if app_data:
         return Path(app_data) / "HextechNexus" / "data" / "runtime"
     return Path.home() / ".hextech_nexus" / "data" / "runtime"
@@ -148,6 +149,8 @@ def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall
     for label, root in package_roots:
         for rel in FORBIDDEN_PACKAGE_PATHS:
             checks[f"{label}:{rel} absent"] = not (root / Path(rel)).exists()
+    for rel in ("raw", "processed"):
+        checks[f"runtime_base:data/{rel} absent"] = not (runtime_root.parent / rel).exists()
     checks[f"package:{OVERLAY_ANCHOR_CALIBRATION_FILENAME} absent"] = not any(
         path.name == OVERLAY_ANCHOR_CALIBRATION_FILENAME
         for path in package_dir.rglob(OVERLAY_ANCHOR_CALIBRATION_FILENAME)
@@ -291,7 +294,11 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
     stdout_path = package_dir / "smoke_startup_stdout.log"
     started_at = time.monotonic()
     started_at_wall = time.time()
-    runtime_root = _get_packaged_runtime_root()
+    child_env = os.environ.copy()
+    appdata_root = package_dir.parent / "appdata"
+    child_env["LOCALAPPDATA"] = str(appdata_root / "Local")
+    child_env["APPDATA"] = str(appdata_root / "Roaming")
+    runtime_root = _get_packaged_runtime_root(child_env)
     _write_smoke_feature_flags(runtime_root)
     with stdout_path.open("wb") as stdout:
         proc = subprocess.Popen(
@@ -299,6 +306,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
             cwd=str(package_dir.resolve()),
             stdout=stdout,
             stderr=subprocess.STDOUT,
+            env=child_env,
         )
     try:
         last_error = ""

@@ -187,12 +187,13 @@ python tools/dev_checks.py --bundle-manifest
 python tools/acceptance/smoke_packaged_startup.py --timeout 60
 ```
 
-这个烟测会复制最新打包目录，删除复制品中的 `data/raw` 和 `data/runtime`，再启动 exe 检查：
+这个烟测会复制最新打包目录，使用隔离的 `LOCALAPPDATA` 启动 exe，且不预删复制品中的
+forbidden 目录。它会检查：
 
-- 运行态目录是否重新创建
+- 冻结态运行态是否创建在 `HextechNexus/data/runtime`
 - `web_server_port.txt` 是否新写入
 - `startup_status.json` 是否新写入
-- `_internal/data/runtime` 是否不存在
+- 包根与 `_internal` 下是否不存在 `data/raw`、`data/runtime`、`data/processed` 和运行期 cache/profile/log/logs/debug
 - `/`、`/api/startup_status`、`/api/champions`、`/detail.html?champion=1`、`/api/synergies/1` 是否可访问
 
 Web/UI 详情页右侧联动对齐 ApexLoL 源页的检查保留为手动验收辅助，
