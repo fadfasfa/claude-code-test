@@ -41,6 +41,7 @@ CSV_ENCODING = "utf-8-sig"
 CSV_FILENAME_PATTERN = "Hextech_Data_*.csv"
 CSV_MIN_VALID_ROWS = 300
 SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
+SYNERGY_CLEANED_FILENAME = "Champion_Synergy_Cleaned.json"
 SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
 SYNERGY_SNAPSHOT_PREFIX = "Champion_Synergy_"
 SYNERGY_SNAPSHOT_PATTERN = "Champion_Synergy_*.json"
@@ -310,6 +311,11 @@ def build_synergy_legacy_data_path() -> str:
     return str(get_runtime_synergy_data_dir() / SYNERGY_LEGACY_FILENAME)
 
 
+def build_synergy_cleaned_data_path() -> str:
+    """返回前端优先读取的清洗后协同数据路径。"""
+    return str(Path(STATIC_DATA_DIR) / SYNERGY_CLEANED_FILENAME)
+
+
 def build_synergy_latest_pointer_path() -> str:
     """返回协同 latest 指针路径。"""
     return str(get_runtime_synergy_data_dir() / SYNERGY_LATEST_POINTER_FILENAME)
@@ -385,12 +391,20 @@ def get_latest_synergy_snapshot_path() -> Optional[str]:
     return snapshots[0] if snapshots else None
 
 
-def build_synergy_data_path() -> str:
-    """返回当前可读协同数据路径，latest 快照优先，旧固定名只读兜底。"""
+def build_raw_synergy_data_path() -> str:
+    """返回 Apex/raw 协同数据路径，不包含 cleaned 前端合并文件。"""
     snapshot = get_latest_synergy_snapshot_path()
     if snapshot:
         return snapshot
     return build_synergy_legacy_data_path()
+
+
+def build_synergy_data_path() -> str:
+    """返回当前可读协同数据路径，cleaned 前端文件优先，raw latest 兜底。"""
+    cleaned = build_synergy_cleaned_data_path()
+    if os.path.exists(cleaned):
+        return cleaned
+    return build_raw_synergy_data_path()
 
 
 def build_next_synergy_snapshot_path(timestamp_label: str) -> str:
@@ -614,6 +628,8 @@ __all__ = [
     "build_runtime_profile_path",
     "build_runtime_state_path",
     "build_next_synergy_snapshot_path",
+    "build_raw_synergy_data_path",
+    "build_synergy_cleaned_data_path",
     "build_synergy_data_path",
     "build_synergy_latest_pointer_path",
     "build_synergy_legacy_data_path",

@@ -64,6 +64,12 @@ python -c "from hextech.overlay.events import write_inactive_overlay_event; prin
 # 默认离线自检
 python tools/dev_checks.py
 
+# 手动重抓 Mayhem combo raw；只使用 Scrapling 普通 GET
+python -m hextech.scraping.synergy.mayhem_combo_scraper --max-pages 1 --output data/raw/mayhem_combos.raw.json
+
+# 将 Mayhem raw 增量合并到前端优先读取的 cleaned 协同数据
+python tools/clean_mayhem_combos.py
+
 # 打包便携产物
 python build.py
 
@@ -120,6 +126,7 @@ run/
 - `Champion_Core_Data.json`
 - `Champion_Alias_Index.json`
 - `Augment_Icon_Manifest.json`
+- `Champion_Synergy_Cleaned.json`
 - 兼容图标映射文件
 
 ### 不应随包分发
@@ -134,6 +141,10 @@ run/
 - `data/runtime/profile/`
 - `data/runtime/logs/`
 - 任何启动后生成、抓取、缓存、锁、日志或计算产物
+
+例外：`data/raw/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
+`Champion_Synergy_Cleaned.json` 的生成；它不进入打包白名单，也不被 API 或前端直接读取。
+重抓 raw 后只有在同步更新 cleaned 数据时才一起提交。
 
 打包只允许带一组首启冷启动种子，但包内路径必须是
 `resources/snapshots/hextech/` 与 `resources/snapshots/synergy/`。启动时再由

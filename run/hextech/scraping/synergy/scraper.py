@@ -1,9 +1,12 @@
 """ApexLoL 海克斯联动数据抓取器。
 
 抓取端分三层：
-- ``ApexSource`` 负责同源页面和资源获取，普通 requests 失败后可切到 Selenium。
+- ``ApexSource`` 负责同源页面和资源获取，按 snapshot、Scrapling、CloakBrowser 顺序兜底。
 - ``SynergyExtractor`` 负责从页面 hydration 数据、bundle 或旧 marker 中提取联动对象。
 - ``SynergyWriter`` 负责把结构化对象写成时间快照，并用 latest 指针发布。
+
+资源来源会记录为 ``snapshot``、``json-url``、``scrapling-get``、
+``scrapling-stealthy`` 或 ``cloakbrowser``，方便按日志 source 反查具体后端。
 """
 
 from __future__ import annotations
@@ -25,14 +28,13 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.parse import urljoin, urlparse, urlunparse
 
-import requests
 from bs4 import BeautifulSoup
 
 from hextech.catalog.runtime_store import (
     SYNERGY_LATEST_POINTER_FILENAME,
     SYNERGY_POINTER_VERSION,
     build_next_synergy_snapshot_path,
-    build_synergy_data_path,
+    build_raw_synergy_data_path,
     build_synergy_latest_pointer_path,
     ensure_private_runtime_dir,
     ensure_runtime_profile_dir,
@@ -40,14 +42,14 @@ from hextech.catalog.runtime_store import (
     get_latest_csv,
     load_synergy_latest_pointer,
 )
-from hextech.support.log_utils import install_summary_logging, log_task_summary
-from hextech.scraping.icon_resolver import normalize_augment_name
 from hextech.scraping._paths import RUNTIME_DATA_DIR, STATIC_DATA_DIR
+from hextech.scraping.icon_resolver import normalize_augment_name
+from hextech.scraping.transport.scrapling_client import ScraplingFetchResult, fetch_stealthy_text, fetch_text
+from hextech.support.log_utils import install_summary_logging, log_task_summary
 
 
 BASE_DIR = str(Path(RUNTIME_DATA_DIR).parents[1])
-SELENIUM_CACHE_DIR = os.path.join(RUNTIME_DATA_DIR, "cache", "selenium")
-SELENIUM_PROFILE_DIR = os.path.join(RUNTIME_DATA_DIR, "profile", "apex_selenium")
+APEX_SCRAPLING_PROFILE_DIR = os.path.join(RUNTIME_DATA_DIR, "profile", "apex_scrapling")
 DEFAULT_APEX_SNAPSHOT_DIR = os.path.join(RUNTIME_DATA_DIR, "cache", "apex_snapshot")
 DEFAULT_APEX_MANUAL_SNAPSHOT_DIR = os.path.join(DEFAULT_APEX_SNAPSHOT_DIR, "manual")
 STATIC_DATA_PATH = Path(STATIC_DATA_DIR)
@@ -181,6 +183,20 @@ def get_request_user_agent() -> str:
 
 def env_flag(name: str, default: str = "0") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.getenv(name, str(default)) or default))
+    except (TypeError, ValueError):
+        return default
 
 
 def normalize_name(name_str: str) -> str:
@@ -355,7 +371,7 @@ def summarize_synergy_payload(payload: dict) -> dict[str, int]:
 
 
 def _load_existing_synergy_stats() -> dict[str, int]:
-    current_path = Path(build_synergy_data_path())
+    current_path = Path(build_raw_synergy_data_path())
     if not current_path.exists():
         return {"heroes": 0, "non_empty_heroes": 0, "synergy_entries": 0}
     try:
@@ -549,22 +565,13 @@ class ApexSource:
             raise ValueError("APEX_BASE_URL 必须是有效的 https URL")
         self.allowed_netloc = parsed_base.netloc
         self.allowed_json_netlocs = self._build_allowed_json_netlocs()
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": get_request_user_agent()})
-        self._browser_driver = None
         self.blocked = False
         self.last_fetch_error = ""
-        self._browser_timeout = int(os.getenv("APEX_BROWSER_TIMEOUT_SECONDS", "18") or "18")
-        self._profile_root = os.path.join(SELENIUM_PROFILE_DIR, f"session-{os.getpid()}-{int(time.time())}")
+        self._profile_root = os.path.join(APEX_SCRAPLING_PROFILE_DIR, f"session-{os.getpid()}-{int(time.time())}")
         logger.info("ApexSource 初始化完成：base=%s", _sanitize_url_for_log(self.base_url))
 
     def close(self) -> None:
-        if self._browser_driver is not None:
-            try:
-                self._browser_driver.quit()
-            except Exception:
-                pass
-            self._browser_driver = None
+        return None
 
     def is_allowed_url(self, url: str) -> bool:
         parsed = urlparse(url)
@@ -590,40 +597,114 @@ class ApexSource:
         parsed = urlparse(candidate)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
 
-    def fetch_requests(self, url: str) -> Optional[FetchedResource]:
+    def _resource_is_origin_success(self, resource: Optional[FetchedResource], *, is_detail: bool) -> bool:
+        if resource is None or resource.error or not resource.text:
+            return False
+        if resource.status_code is not None and resource.status_code >= 400:
+            return False
+        if self._is_cloudflare_block(resource.text):
+            self.blocked = True
+            return False
+        if is_detail and self._origin_failure_reason(resource.text):
+            return False
+        return True
+
+    def _scrapling_result_to_resource(
+        self,
+        result: ScraplingFetchResult,
+        *,
+        source: str,
+    ) -> FetchedResource:
+        error = result.error or None
+        if result.status_code in {401, 403, 429}:
+            self.blocked = True
+            error = error or f"http_{result.status_code}"
+        if result.text and self._is_cloudflare_block(result.text):
+            self.blocked = True
+            error = error or "cloudflare_block"
+        if error:
+            self.last_fetch_error = error
+        return FetchedResource(
+            url=result.url or self.base_url,
+            text=result.text or "",
+            source=source,
+            status_code=result.status_code or 0,
+            error=error,
+        )
+
+    def fetch_plain(self, url: str) -> Optional[FetchedResource]:
+        """使用 Scrapling Fetcher 普通 HTTP 获取。"""
+
         if not self.is_allowed_url(url):
             logger.warning("拒绝非白名单请求：%s", _sanitize_url_for_log(url))
             return None
 
         retryable_status_codes = {429, 500, 502, 503, 504}
         for attempt in range(MAX_FETCH_RETRIES + 1):
-            try:
-                response = self.session.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
-                response.encoding = "utf-8"
-                if response.status_code == 200 and not self._is_cloudflare_block(response.text):
-                    return FetchedResource(url=url, text=response.text, source="requests", status_code=200)
-                if response.status_code == 403 or self._is_cloudflare_block(response.text):
-                    self.blocked = True
-                    logger.warning("Apex 普通请求被拒绝：url=%s status=%s", _sanitize_url_for_log(url), response.status_code)
-                    return None
-                if response.status_code in retryable_status_codes and attempt < MAX_FETCH_RETRIES:
-                    time.sleep(RETRY_BACKOFF_FACTOR * (2 ** attempt))
-                    continue
-                logger.error("页面状态异常：url=%s status=%s", _sanitize_url_for_log(url), response.status_code)
-                return None
-            except requests.RequestException as exc:
-                if attempt < MAX_FETCH_RETRIES:
-                    time.sleep(RETRY_BACKOFF_FACTOR * (2 ** attempt))
-                    continue
-                logger.error("页面加载失败：url=%s error=%s", _sanitize_url_for_log(url), _safe_exception_label(exc))
-                return None
+            result = fetch_text(
+                url,
+                timeout_ms=REQUEST_TIMEOUT_SECONDS * 1000,
+                headers={"User-Agent": get_request_user_agent()},
+            )
+            resource = self._scrapling_result_to_resource(result, source="scrapling-get")
+            if resource.status_code == 200 and resource.text and not resource.error:
+                return resource
+            if resource.error in {"cloudflare_block", "http_401", "http_403", "http_429"}:
+                logger.warning(
+                    "Apex Scrapling 普通请求被拒绝：url=%s status=%s reason=%s",
+                    _sanitize_url_for_log(url),
+                    resource.status_code,
+                    resource.error,
+                )
+                return resource
+            if resource.status_code in retryable_status_codes and attempt < MAX_FETCH_RETRIES:
+                time.sleep(RETRY_BACKOFF_FACTOR * (2 ** attempt))
+                continue
+            logger.error(
+                "Apex Scrapling 普通请求失败：url=%s status=%s error=%s",
+                _sanitize_url_for_log(url),
+                resource.status_code,
+                resource.error or "unexpected_status",
+            )
+            return resource
         return None
+
+    def fetch_stealthy(self, url: str) -> Optional[FetchedResource]:
+        if not self.is_allowed_url(url):
+            logger.warning("Scrapling Stealthy 拒绝非白名单请求：%s", _sanitize_url_for_log(url))
+            return None
+
+        ensure_runtime_profile_dir()
+        ensure_private_runtime_dir(self._profile_root)
+        timeout_ms = max(1, env_int("APEX_STEALTH_TIMEOUT_SECONDS", 35)) * 1000
+        wait_ms = max(0, env_int("APEX_STEALTH_WAIT_MS", 1500))
+        result = fetch_stealthy_text(
+            url,
+            timeout_ms=timeout_ms,
+            wait_ms=wait_ms,
+            headless=env_flag("APEX_STEALTH_HEADLESS", "1"),
+            network_idle=env_flag("APEX_STEALTH_NETWORK_IDLE", "1"),
+            solve_cloudflare=env_flag("APEX_SOLVE_CLOUDFLARE", "1"),
+            user_data_dir=self._profile_root,
+            real_chrome=env_flag("APEX_STEALTH_REAL_CHROME", "0"),
+            cdp_url=os.getenv("APEX_STEALTH_CDP_URL", "").strip(),
+        )
+        resource = self._scrapling_result_to_resource(result, source="scrapling-stealthy")
+        if resource.error:
+            logger.warning(
+                "Apex Scrapling Stealthy 获取失败：url=%s status=%s error=%s",
+                _sanitize_url_for_log(url),
+                resource.status_code,
+                resource.error,
+            )
+        return resource
 
     def fetch(
         self,
         url: str,
         *,
         allow_browser: bool = False,
+        allow_stealthy: bool = True,
         allow_cloakbrowser: bool = False,
         cloakbrowser_wait_until: Optional[str] = None,
         cloakbrowser_post_wait_ms: Optional[int] = None,
@@ -631,34 +712,33 @@ class ApexSource:
         is_detail = "/champions/" in urlparse(url).path
         # 1) 普通请求：拿到 origin 页直接用；但英雄详情页若是 HTTP 200 的非 origin 壳页
         #    （Access Denied / Next 错误页 / 缺联动 hydration），不能当成功，继续走后端回退。
-        requests_resource = self.fetch_requests(url)
-        if requests_resource is not None:
-            if not is_detail or not self._origin_failure_reason(requests_resource.text):
-                return requests_resource
+        del allow_browser
+        plain_resource = self.fetch_plain(url)
+        if self._resource_is_origin_success(plain_resource, is_detail=is_detail):
+            return plain_resource
 
-        # 2) CloakBrowser：穿 CF 并取最终 HTML；fetch_cloakbrowser 内部已对详情页做 origin 校验，
-        #    无 error 即视为拿到可用 origin 页。
+        # 2) Scrapling Stealthy：ApexLoL 详情页可能遇到 Cloudflare / Turnstile /
+        #    短期流量限制。这里使用独立运行态 profile，不读取真实浏览器会话。
+        stealth_resource = None
+        if allow_stealthy and env_flag("APEX_ALLOW_STEALTHY", "1"):
+            stealth_resource = self.fetch_stealthy(url)
+            if self._resource_is_origin_success(stealth_resource, is_detail=is_detail):
+                return stealth_resource
+
+        # 3) CloakBrowser 作为最后一档 direct fallback；它不是 Scrapling 内核，
+        #    也不使用真实浏览器 profile/cookie。
         cloak_resource = None
-        if allow_cloakbrowser or env_flag("APEX_ALLOW_CLOAKBROWSER"):
+        if allow_cloakbrowser or env_flag("APEX_ALLOW_CLOAKBROWSER", "1"):
             cloak_resource = self.fetch_cloakbrowser(
                 url,
                 wait_until=cloakbrowser_wait_until,
                 post_wait_ms=cloakbrowser_post_wait_ms,
             )
-            if cloak_resource is not None and not cloak_resource.error:
+            if self._resource_is_origin_success(cloak_resource, is_detail=is_detail):
                 return cloak_resource
 
-        # 3) Selenium：CloakBrowser 不可用/超时/被拦时仍尝试旧浏览器回退。
-        if allow_browser and env_flag("APEX_ALLOW_BROWSER"):
-            selenium_resource = self.fetch_browser(url)
-            if selenium_resource is not None:
-                return selenium_resource
-        elif allow_browser:
-            logger.info("跳过 Apex 浏览器 fallback：APEX_ALLOW_BROWSER 未启用")
-
-        # 4) 没有任何后端拿到 origin：返回信息量最大的尝试结果（CloakBrowser 的 error 详情优先，
-        #    其次普通请求拿到的非 origin 200 页）供上层判定 failed；都没有则返回 None。
-        return cloak_resource or requests_resource
+        # 4) 没有任何后端拿到 origin：返回信息量最大的尝试结果供上层判定 failed。
+        return cloak_resource or stealth_resource or plain_resource
 
     def fetch_configured_json_resource(self) -> Optional[FetchedResource]:
         raw_url = os.getenv("APEX_SYNERGY_JSON_URL", "").strip()
@@ -667,29 +747,33 @@ class ApexSource:
         if not self.is_allowed_json_url(raw_url):
             logger.error("APEX_SYNERGY_JSON_URL 不在允许的 https host 内：%s", _sanitize_url_for_log(raw_url))
             return None
-        try:
-            response = self.session.get(raw_url, timeout=REQUEST_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            if len(response.content) > MAX_JSON_RESOURCE_SIZE:
-                logger.error("APEX_SYNERGY_JSON_URL 响应过大，已拒绝：%s", _sanitize_url_for_log(raw_url))
-                return None
-            response.encoding = "utf-8"
-            payload = response.json()
-            if not isinstance(payload, (dict, list)):
-                logger.error("APEX_SYNERGY_JSON_URL 不是 JSON object/list：%s", _sanitize_url_for_log(raw_url))
-                return None
-            return FetchedResource(
-                url=raw_url,
-                text=json.dumps(payload, ensure_ascii=False),
-                source="json-url",
-                status_code=response.status_code,
+        result = fetch_text(
+            raw_url,
+            timeout_ms=REQUEST_TIMEOUT_SECONDS * 1000,
+            headers={"User-Agent": get_request_user_agent()},
+        )
+        resource = self._scrapling_result_to_resource(result, source="json-url")
+        if resource.error or not resource.text:
+            logger.warning(
+                "APEX_SYNERGY_JSON_URL 读取失败：url=%s status=%s error=%s",
+                _sanitize_url_for_log(raw_url),
+                resource.status_code,
+                resource.error or "empty_response",
             )
-        except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
-            response = getattr(exc, "response", None)
-            if getattr(response, "status_code", None) in {401, 403, 429}:
-                self.blocked = True
-            logger.warning("APEX_SYNERGY_JSON_URL 读取失败：url=%s error=%s", _sanitize_url_for_log(raw_url), _safe_exception_label(exc))
             return None
+        if len(resource.text.encode("utf-8")) > MAX_JSON_RESOURCE_SIZE:
+            logger.error("APEX_SYNERGY_JSON_URL 响应过大，已拒绝：%s", _sanitize_url_for_log(raw_url))
+            return None
+        try:
+            payload = json.loads(resource.text)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("APEX_SYNERGY_JSON_URL JSON 解析失败：url=%s error=%s", _sanitize_url_for_log(raw_url), _safe_exception_label(exc))
+            return None
+        if not isinstance(payload, (dict, list)):
+            logger.error("APEX_SYNERGY_JSON_URL 不是 JSON object/list：%s", _sanitize_url_for_log(raw_url))
+            return None
+        resource.text = json.dumps(payload, ensure_ascii=False)
+        return resource
 
     def fetch_cloakbrowser(
         self,
@@ -701,122 +785,58 @@ class ApexSource:
         if not self.is_allowed_url(url):
             logger.warning("CloakBrowser 拒绝非白名单请求：%s", _sanitize_url_for_log(url))
             return None
+
+        wait_until = (wait_until or os.getenv("APEX_CLOAKBROWSER_WAIT_UNTIL", "domcontentloaded")).strip() or "domcontentloaded"
+        if wait_until not in {"commit", "domcontentloaded", "load", "networkidle"}:
+            logger.warning("CloakBrowser wait_until 不支持，回退 domcontentloaded：%s", wait_until)
+            wait_until = "domcontentloaded"
+        post_wait_ms = int(post_wait_ms if post_wait_ms is not None else env_int("APEX_CLOAKBROWSER_POST_WAIT_MS", 0))
+        post_wait_ms = max(0, post_wait_ms)
+        timeout_ms = max(1, env_int("APEX_CLOAKBROWSER_TIMEOUT_SECONDS", 35)) * 1000
+
         try:
             from hextech.scraping.transport.cloakbrowser_client import fetch_page
         except ImportError as exc:
-            self.last_fetch_error = str(exc)
-            logger.error("CloakBrowser 后端不可用：%s", str(exc)[:240])
-            return None
+            self.last_fetch_error = "cloakbrowser_not_installed"
+            logger.warning("CloakBrowser 未安装：url=%s error=%s", _sanitize_url_for_log(url), _safe_exception_label(exc))
+            return FetchedResource(
+                url=url,
+                text="",
+                source="cloakbrowser",
+                status_code=0,
+                cloakbrowser_version=None,
+                error="cloakbrowser_not_installed",
+            )
 
-        timeout_ms = int(os.getenv("APEX_CLOAKBROWSER_TIMEOUT_MS", "30000") or "30000")
-        headless = os.getenv("APEX_CLOAKBROWSER_HEADLESS", "1").strip() != "0"
-        humanize = env_flag("APEX_CLOAKBROWSER_HUMANIZE")
-        wait_until = wait_until or os.getenv("APEX_CLOAKBROWSER_WAIT_UNTIL", "networkidle").strip() or "networkidle"
-        if post_wait_ms is None:
-            post_wait_ms = int(os.getenv("APEX_CLOAKBROWSER_POST_WAIT_MS", "0") or "0")
-        max_attempts = max(1, int(os.getenv("APEX_CLOAKBROWSER_ATTEMPTS", "2") or "2"))
-        result = None
-        for attempt in range(1, max_attempts + 1):
-            result = fetch_page(
-                url,
-                timeout_ms=timeout_ms,
-                headless=headless,
-                humanize=humanize,
-                wait_until=wait_until,
-                post_wait_ms=post_wait_ms,
-            )
-            if not result.error:
-                break
-            if attempt < max_attempts:
-                sleep_seconds = max(2.0, RETRY_BACKOFF_FACTOR * (2 ** attempt))
-                logger.warning(
-                    "CloakBrowser 访问失败后重试：url=%s attempt=%s/%s wait=%.1fs error=%s",
-                    _sanitize_url_for_log(url),
-                    attempt,
-                    max_attempts,
-                    sleep_seconds,
-                    result.error[:160],
-                )
-                time.sleep(sleep_seconds)
-        if result is None:
-            return None
+        result = fetch_page(
+            url,
+            timeout_ms=timeout_ms,
+            headless=env_flag("APEX_CLOAKBROWSER_HEADLESS", "1"),
+            humanize=env_flag("APEX_CLOAKBROWSER_HUMANIZE", "0"),
+            wait_until=wait_until,
+            post_wait_ms=post_wait_ms,
+        )
         html = result.html or ""
-        self.last_fetch_error = result.error or ""
-        if result.error:
-            logger.error("CloakBrowser 访问失败：url=%s error=%s", _sanitize_url_for_log(url), result.error[:240])
-            return FetchedResource(
-                url=url,
-                text=html,
-                source="cloakbrowser",
-                status_code=result.status_code or 0,
-                cloakbrowser_version=result.cloakbrowser_version,
-                error=result.error,
-            )
-        if not html or self._is_cloudflare_block(html):
+        error = result.error or None
+        if result.status_code in {401, 403, 429}:
             self.blocked = True
-            logger.error("CloakBrowser 未取得可解析 Apex 页面：url=%s status=%s", _sanitize_url_for_log(url), result.status_code)
-            return FetchedResource(
-                url=url,
-                text=html,
-                source="cloakbrowser",
-                status_code=result.status_code or 0,
-                cloakbrowser_version=result.cloakbrowser_version,
-                error="cloudflare_block_or_empty_html",
-            )
-        if "/champions/" in urlparse(url).path:
-            origin_error = self._origin_failure_reason(html)
-            if origin_error:
-                if origin_error in {"cloudflare_block", "access_denied"}:
-                    self.blocked = True
-                logger.error(
-                    "CloakBrowser 终态不是 Apex 英雄联动 origin 页面：url=%s status=%s reason=%s",
-                    _sanitize_url_for_log(url),
-                    result.status_code,
-                    origin_error,
-                )
-                return FetchedResource(
-                    url=url,
-                    text=html,
-                    source="cloakbrowser",
-                    status_code=result.status_code or 0,
-                    cloakbrowser_version=result.cloakbrowser_version,
-                    error=origin_error,
-                )
+            error = f"http_{result.status_code}"
+        if html and self._is_cloudflare_block(html):
+            self.blocked = True
+            error = error or "cloudflare_block"
+        if not html and not error:
+            error = "empty_html"
+        if error:
+            self.last_fetch_error = error
+
         return FetchedResource(
             url=url,
             text=html,
             source="cloakbrowser",
-            status_code=result.status_code or 200,
+            status_code=result.status_code or 0,
             cloakbrowser_version=result.cloakbrowser_version,
+            error=error,
         )
-
-    def fetch_browser(self, url: str) -> Optional[FetchedResource]:
-        if not self.is_allowed_url(url):
-            logger.warning("浏览器拒绝非白名单请求：%s", _sanitize_url_for_log(url))
-            return None
-        try:
-            driver = self._get_browser_driver()
-            driver.get(url)
-            self._wait_for_browser_ready(driver, url)
-            parsed_path = urlparse(url).path.lower()
-            if parsed_path.endswith((".js", ".json", ".txt")):
-                text = driver.execute_script("return document.body ? document.body.innerText : document.documentElement.innerText") or ""
-                if text and not self._is_cloudflare_block(text):
-                    return FetchedResource(url=url, text=text, source="selenium-text", status_code=200)
-            html = driver.page_source or ""
-            if not html or self._is_cloudflare_block(html):
-                self.blocked = True
-                logger.error("浏览器未取得可解析 Apex 页面：url=%s", _sanitize_url_for_log(url))
-                return None
-            return FetchedResource(url=url, text=html, source="selenium", status_code=200)
-        except Exception as exc:
-            logger.error(
-                "浏览器访问失败：url=%s error=%s detail=%s",
-                _sanitize_url_for_log(url),
-                _safe_exception_label(exc),
-                str(exc)[:240],
-            )
-            return None
 
     def discover_resources(self) -> list[FetchedResource]:
         snapshot_resources = self._load_snapshot_resources()
@@ -824,11 +844,11 @@ class ApexSource:
             logger.info("使用 Apex 本地 snapshot 资源：count=%s", len(snapshot_resources))
             return snapshot_resources
 
-        if not env_flag("APEX_ALLOW_ONLINE_FETCH"):
+        if not env_flag("APEX_ALLOW_ONLINE_FETCH", "1"):
             logger.error("未找到 Apex snapshot，且 APEX_ALLOW_ONLINE_FETCH 未启用；保留旧协同快照")
             return []
 
-        allow_browser = env_flag("APEX_ALLOW_BROWSER")
+        allow_stealthy = env_flag("APEX_ALLOW_STEALTHY", "1")
         json_resource = self.fetch_configured_json_resource()
         seeds = [self.base_url, f"{self.base_url}/champions", f"{self.base_url}/hextech"]
         resources: list[FetchedResource] = []
@@ -837,7 +857,7 @@ class ApexSource:
         online_delay = float(os.getenv("APEX_ONLINE_FETCH_DELAY_SECONDS", str(APEX_ONLINE_FETCH_DELAY_SECONDS)) or "0")
 
         for url in seeds:
-            resource = self.fetch(url, allow_browser=allow_browser)
+            resource = self.fetch(url, allow_stealthy=allow_stealthy)
             if not resource or resource.url in seen_urls:
                 continue
             seen_urls.add(resource.url)
@@ -851,7 +871,7 @@ class ApexSource:
             if detail_url in seen_urls:
                 continue
             seen_urls.add(detail_url)
-            resource = self.fetch(detail_url, allow_browser=allow_browser)
+            resource = self.fetch(detail_url, allow_stealthy=allow_stealthy)
             if resource:
                 resources.append(resource)
             if online_delay > 0:
@@ -862,7 +882,7 @@ class ApexSource:
                 if script_url in seen_urls:
                     continue
                 seen_urls.add(script_url)
-                script = self.fetch(script_url, allow_browser=allow_browser)
+                script = self.fetch(script_url, allow_stealthy=allow_stealthy)
                 if script:
                     resources.append(script)
                 if online_delay > 0:
@@ -964,134 +984,6 @@ class ApexSource:
         if not any(marker in html for marker in APEX_ORIGIN_SYNERGY_MARKERS):
             return "missing_origin_synergy_hydration"
         return ""
-
-    def _get_browser_driver(self):
-        if self._browser_driver is not None:
-            return self._browser_driver
-
-        browser = os.getenv("APEX_BROWSER", "auto").strip().lower() or "auto"
-        headless = os.getenv("APEX_HEADLESS", "1").strip() != "0"
-        errors = []
-        os.makedirs(SELENIUM_CACHE_DIR, exist_ok=True)
-        ensure_runtime_profile_dir()
-        ensure_private_runtime_dir(self._profile_root)
-        os.environ.setdefault("SE_CACHE_PATH", SELENIUM_CACHE_DIR)
-
-        if browser in {"auto", "edge"}:
-            try:
-                from selenium import webdriver
-                from selenium.webdriver.edge.options import Options as EdgeOptions
-
-                options = EdgeOptions()
-                edge_binary = self._find_browser_binary("edge")
-                if edge_binary:
-                    options.binary_location = edge_binary
-                if headless:
-                    options.add_argument("--headless=new")
-                options.add_argument("--disable-gpu")
-                options.add_argument("--disable-extensions")
-                options.add_argument("--disable-crash-reporter")
-                options.add_argument("--disable-crashpad")
-                options.add_argument("--disable-dev-shm-usage")
-                options.add_argument("--remote-debugging-port=0")
-                options.add_argument("--window-size=1365,900")
-                options.add_argument(f"--user-data-dir={os.path.join(self._profile_root, 'edge')}")
-                options.add_argument("--no-first-run")
-                options.add_argument("--no-default-browser-check")
-                driver = webdriver.Edge(options=options)
-                driver.set_page_load_timeout(self._browser_timeout)
-                self._browser_driver = driver
-                logger.info("Apex Selenium 使用 Edge 启动")
-                return driver
-            except Exception as exc:
-                errors.append(f"edge={_safe_exception_label(exc)}:{str(exc)[:160]}")
-
-        if browser in {"auto", "chrome"}:
-            try:
-                from selenium import webdriver
-                from selenium.webdriver.chrome.options import Options as ChromeOptions
-
-                options = ChromeOptions()
-                chrome_binary = self._find_browser_binary("chrome")
-                if chrome_binary:
-                    options.binary_location = chrome_binary
-                if headless:
-                    options.add_argument("--headless=new")
-                options.add_argument("--disable-gpu")
-                options.add_argument("--disable-extensions")
-                options.add_argument("--disable-crash-reporter")
-                options.add_argument("--disable-crashpad")
-                options.add_argument("--disable-dev-shm-usage")
-                options.add_argument("--remote-debugging-port=0")
-                options.add_argument("--window-size=1365,900")
-                options.add_argument(f"--user-data-dir={os.path.join(self._profile_root, 'chrome')}")
-                options.add_argument("--no-first-run")
-                options.add_argument("--no-default-browser-check")
-                driver = webdriver.Chrome(options=options)
-                driver.set_page_load_timeout(self._browser_timeout)
-                self._browser_driver = driver
-                logger.info("Apex Selenium 使用 Chrome 启动")
-                return driver
-            except Exception as exc:
-                errors.append(f"chrome={_safe_exception_label(exc)}:{str(exc)[:160]}")
-
-        raise RuntimeError("无法启动 Selenium 浏览器：" + ", ".join(errors))
-
-    @staticmethod
-    def _find_browser_binary(kind: str) -> str:
-        if kind == "edge":
-            env_value = os.getenv("APEX_EDGE_BINARY", "").strip()
-            candidates = [
-                env_value,
-                os.path.join(os.environ.get("ProgramFiles", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
-                os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
-                os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
-            ]
-        else:
-            env_value = os.getenv("APEX_CHROME_BINARY", "").strip()
-            candidates = [
-                env_value,
-                os.path.join(os.environ.get("ProgramFiles", ""), "Google", "Chrome", "Application", "chrome.exe"),
-                os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
-                os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
-            ]
-        return next((path for path in candidates if path and os.path.exists(path)), "")
-
-    def _wait_for_browser_ready(self, driver, url: str = "") -> None:
-        deadline = time.monotonic() + self._browser_timeout
-        while time.monotonic() < deadline:
-            try:
-                state = driver.execute_script("return document.readyState")
-                if state == "complete":
-                    break
-            except Exception:
-                return
-            time.sleep(0.25)
-
-        parsed_path = urlparse(url).path.lower()
-        if "/champions/" not in parsed_path:
-            time.sleep(1.0)
-            return
-
-        # Next.js 详情页会先进入 readyState=complete，随后才把联动列表灌入页面。
-        # 这里等到可见文本出现联动标记，或 HTML 长度稳定，避免抓到只有 shell 的页面。
-        last_length = 0
-        stable_ticks = 0
-        while time.monotonic() < deadline:
-            try:
-                body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ""
-                html = driver.page_source or ""
-            except Exception:
-                return
-            if any(marker in body_text for marker in ("评分", "作者", "强力联动", "推荐出装")):
-                return
-            html_length = len(html)
-            stable_ticks = stable_ticks + 1 if html_length == last_length and html_length > 20000 else 0
-            if stable_ticks >= 3:
-                return
-            last_length = html_length
-            time.sleep(0.5)
-
 
 class SynergyExtractor:
     """从 HTML/JS/JSON 资源中提取结构化联动对象。"""
@@ -1875,7 +1767,7 @@ def _entry_to_report_item(entry: SynergyEntry) -> dict:
 
 def _default_single_champion_report_dir() -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return Path(RUNTIME_DATA_DIR) / "reports" / "synergy_vi_cloakbrowser" / timestamp
+    return Path(RUNTIME_DATA_DIR) / "reports" / "synergy_single_probe" / timestamp
 
 
 def _default_full_validate_report_dir() -> Path:
@@ -2017,7 +1909,7 @@ def run_full_validation(
         if delay is None:
             delay = float(os.getenv("APEX_VALIDATE_DELAY_SECONDS", "0") or "0")
         max_attempts = max(1, int(os.getenv("APEX_VALIDATE_FETCH_ATTEMPTS", "2") or "2"))
-        primary_wait_until = os.getenv("APEX_CLOAKBROWSER_WAIT_UNTIL", "networkidle").strip() or "networkidle"
+        primary_wait_until = os.getenv("APEX_CLOAKBROWSER_WAIT_UNTIL", "domcontentloaded").strip() or "domcontentloaded"
         primary_post_wait_ms = int(os.getenv("APEX_CLOAKBROWSER_POST_WAIT_MS", "0") or "0")
 
         for index, champion in enumerate(champions, start=1):
@@ -2203,7 +2095,7 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
     resource: Optional[FetchedResource] = None
     result = {
         "url": "",
-        "backend": "cloakbrowser",
+        "backend": "scrapling-get",
         "status_code": None,
         "cloakbrowser_version": None,
         "cf_blocked": True,
@@ -2269,7 +2161,7 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
         )
         log_task_summary(
             logger,
-            task="ApexLoL Vi 单英雄 CloakBrowser 验证",
+            task="ApexLoL Vi 单英雄 Scrapling/CloakBrowser 验证",
             started_at=started_at,
             success=bool(result["synergy_entry_count"]),
             detail=f"backend={result['backend']} cf_blocked={result['cf_blocked']} items={result['synergy_entry_count']} out_dir={out_dir}",
@@ -2289,7 +2181,7 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
                 out_dir=out_dir,
             )
         )
-        logger.exception("ApexLoL Vi 单英雄 CloakBrowser 验证失败")
+        logger.exception("ApexLoL Vi 单英雄 Scrapling/CloakBrowser 验证失败")
         return {"out_dir": str(out_dir), **result}
     finally:
         source.close()
@@ -2426,7 +2318,7 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--report-dir",
-        help="单英雄验证产物目录；未指定时写入 data/runtime/reports/synergy_vi_cloakbrowser/<timestamp>/",
+        help="单英雄验证产物目录；未指定时写入 data/runtime/reports/synergy_single_probe/<timestamp>/",
     )
     parser.add_argument(
         "--validate-full",

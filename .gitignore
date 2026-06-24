@@ -51,6 +51,8 @@ run/data/raw/**
 !run/data/raw/synergy/Champion_Synergy_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9].json
 !run/data/raw/synergy/Champion_Synergy_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9].json
 !run/data/raw/synergy/Champion_Synergy_latest.v1.json
+# Mayhem raw is a versioned cleaner input, not a runtime snapshot glob.
+!run/data/raw/mayhem_combos.raw.json
 
 # sm2-randomizer rebuildable artifacts
 sm2-randomizer/**/__pycache__/

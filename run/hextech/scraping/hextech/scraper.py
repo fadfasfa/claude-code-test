@@ -1,6 +1,5 @@
 """英雄海克斯排名抓取器。"""
 
-import requests
 import json
 import time
 import pandas as pd
@@ -9,8 +8,6 @@ import os
 import glob
 import re
 import logging
-import threading
-import random
 import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from hextech.catalog.runtime_store import (
@@ -25,16 +22,24 @@ from hextech.scraping.version_sync import (
     HEXTECH_AUGMENT_METADATA_URLS,
     HEXTECH_CHAMPION_STATS_URLS,
     build_hextech_detail_urls,
-    get_advanced_session,
     load_augment_map,
     load_champion_core_data,
 )
+from hextech.scraping.transport.scrapling_client import ScraplingFetchResult, fetch_text
 from hextech.support.atomic_io import atomic_write_csv, atomic_write_json
 from hextech.support.log_utils import log_task_summary
 
 FRESHNESS_THRESHOLD = 0.0005
 SCRAPER_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
 BLOCKED_HTTP_STATUS_CODES = {403, 429}
+HEXTECH_DETAIL_WORKERS = 16
+HEXTECH_DETAIL_RETRY_WORKERS = 4
+HEXTECH_DETAIL_TIMEOUT_SECONDS = 6
+HEXTECH_DETAIL_RETRY_TIMEOUT_SECONDS = 12
+HEXTECH_DETAIL_POOL_TIMEOUT_SECONDS = 30
+HEXTECH_DETAIL_RETRY_POOL_TIMEOUT_SECONDS = 20
+HEXTECH_HANDSHAKE_RETRIES = 2
+HEXTECH_HANDSHAKE_TIMEOUT_SECONDS = 6
 
 
 class RemoteFetchError(RuntimeError):
@@ -44,20 +49,6 @@ class RemoteFetchError(RuntimeError):
         super().__init__(reason)
         self.reason = reason
         self.status_code = status_code
-
-# 请求标识池。
-USER_AGENT_POOL = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-]
-
-def get_random_ua():
-    # 随机选择请求标识。
-    return random.choice(USER_AGENT_POOL)
-
 
 def _clean_augment_text(value) -> str:
     # 统一清洗文本字段，避免空白干扰后续拼接。
@@ -296,8 +287,27 @@ def _sort_source_augments(augments: dict) -> list[tuple[str, dict]]:
     return sorted(augments.items(), key=sort_key)
 
 
+def _scrapling_failure_reason(result: ScraplingFetchResult) -> tuple[str, int | None]:
+    if result.status_code:
+        return f"http_{result.status_code}", result.status_code
+
+    error_text = str(result.error or "").lower()
+    if "timeout" in error_text or "timed out" in error_text:
+        return "timeout", None
+    if "connection" in error_text or "network" in error_text:
+        return "network_error", None
+    if result.error:
+        return "scrapling_error", None
+    return "empty_response", None
+
+
+def _is_blocking_remote_failure(reason: str, status_code: int | None = None) -> bool:
+    if status_code in BLOCKED_HTTP_STATUS_CODES:
+        return True
+    return reason in {f"http_{code}" for code in BLOCKED_HTTP_STATUS_CODES}
+
+
 def fetch_with_retry(
-    session,
     url,
     max_retries=1,
     timeout=6,
@@ -305,31 +315,38 @@ def fetch_with_retry(
     quiet: bool = False,
     raise_on_failure: bool = False,
 ):
-    # 指数退避重试。
+    # Scrapling 接管远端 HTTP 获取；业务层仍用旧 retry/fallback 契约。
     for attempt in range(max_retries):
-        try:
-            headers = {"User-Agent": get_random_ua()}
-            response = session.get(url, headers=headers, timeout=timeout, verify=True)
-            response.raise_for_status()
-            return response
-        except (requests.exceptions.HTTPError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            status_code = getattr(getattr(e, "response", None), "status_code", None)
-            if status_code:
-                reason = f"http_{status_code}"
-            elif isinstance(e, requests.exceptions.Timeout):
-                reason = "timeout"
-            else:
-                reason = "network_error"
-            if attempt < max_retries - 1:
-                wait_time = 2 ** (attempt + 1)
-                if not quiet:
-                    logging.warning(f"请求 {url} 失败 (尝试 {attempt + 1}/{max_retries}): {e}，{wait_time}秒后重试...")
-                time.sleep(wait_time)
-            else:
-                if raise_on_failure:
-                    raise RemoteFetchError(reason, status_code=status_code) from e
-                if not quiet:
-                    logging.warning(f"请求 {url} 失败，已达最大重试次数 {max_retries}: {e}")
+        result = fetch_text(url, timeout_ms=int(timeout * 1000))
+        if not result.error and result.status_code and 200 <= result.status_code < 400:
+            return result
+
+        reason, status_code = _scrapling_failure_reason(result)
+        if attempt < max_retries - 1:
+            wait_time = 2 ** (attempt + 1)
+            if not quiet:
+                logging.warning(
+                    "请求 %s 失败 (尝试 %s/%s): reason=%s status=%s，%s秒后重试...",
+                    url,
+                    attempt + 1,
+                    max_retries,
+                    reason,
+                    status_code,
+                    wait_time,
+                )
+            time.sleep(wait_time)
+        else:
+            if raise_on_failure:
+                raise RemoteFetchError(reason, status_code=status_code)
+            if not quiet:
+                logging.warning(
+                    "请求 %s 失败，已达最大重试次数 %s: reason=%s status=%s error=%s",
+                    url,
+                    max_retries,
+                    reason,
+                    status_code,
+                    result.error,
+                )
     return None
 
 
@@ -545,12 +562,21 @@ def main_scraper(stop_event=None, force: bool = False):
     if not truth_dict or not core_data:
         return _finish_refresh_failure("base_data_missing", started_at=started_at)
 
-    session = get_advanced_session()
-
     try:
         aug_response = None
+        aug_error = ""
         for url in HEXTECH_AUGMENT_METADATA_URLS:
-            candidate = fetch_with_retry(session, url, quiet=True, raise_on_failure=True)
+            try:
+                candidate = fetch_with_retry(
+                    url,
+                    max_retries=HEXTECH_HANDSHAKE_RETRIES,
+                    timeout=HEXTECH_HANDSHAKE_TIMEOUT_SECONDS,
+                    quiet=True,
+                    raise_on_failure=True,
+                )
+            except RemoteFetchError as e:
+                aug_error = e.reason
+                continue
             if candidate is None:
                 continue
             try:
@@ -558,9 +584,10 @@ def main_scraper(stop_event=None, force: bool = False):
                     aug_response = candidate
                     break
             except Exception:
+                aug_error = "metadata_invalid"
                 continue
         if aug_response is None:
-            return _finish_refresh_failure("metadata_invalid", started_at=started_at)
+            return _finish_refresh_failure(aug_error or "metadata_invalid", started_at=started_at)
         aug_data = aug_response.json()
 
         aug_id_map = {}
@@ -573,8 +600,19 @@ def main_scraper(stop_event=None, force: bool = False):
             aug_tier_map[aug_id] = truth_dict.get(display_name) or _metadata_tier_from_rarity(item.get("rarity"))
 
         stats_response = None
+        stats_error = ""
         for url in HEXTECH_CHAMPION_STATS_URLS:
-            candidate = fetch_with_retry(session, url, quiet=True, raise_on_failure=True)
+            try:
+                candidate = fetch_with_retry(
+                    url,
+                    max_retries=HEXTECH_HANDSHAKE_RETRIES,
+                    timeout=HEXTECH_HANDSHAKE_TIMEOUT_SECONDS,
+                    quiet=True,
+                    raise_on_failure=True,
+                )
+            except RemoteFetchError as e:
+                stats_error = e.reason
+                continue
             if candidate is None:
                 continue
             try:
@@ -582,130 +620,172 @@ def main_scraper(stop_event=None, force: bool = False):
                     stats_response = candidate
                     break
             except Exception:
+                stats_error = "stats_invalid"
                 continue
         if stats_response is None:
-            return _finish_refresh_failure("stats_invalid", started_at=started_at)
+            return _finish_refresh_failure(stats_error or "stats_invalid", started_at=started_at)
         stats_list = stats_response.json()
         if not stats_list:
             return _finish_refresh_failure("stats_empty", started_at=started_at)
     except RemoteFetchError as e:
         return _finish_refresh_failure(e.reason, started_at=started_at)
-    except (requests.RequestException, ValueError, json.JSONDecodeError):
+    except (ValueError, json.JSONDecodeError):
         return _finish_refresh_failure("handshake_invalid", started_at=started_at)
 
-    # 先请求一个英雄详情。源站封禁时在创建 16 worker 线程池前熔断。
-    preflight_champ = stats_list[0]
-    preflight_id = str(preflight_champ.get("championId", ""))
-    preflight_response = None
-    try:
-        for candidate_url in build_hextech_detail_urls(preflight_id):
-            candidate = fetch_with_retry(session, candidate_url, quiet=True, raise_on_failure=True)
-            if candidate.status_code == 200 and candidate.text:
-                preflight_response = candidate
-                break
-    except RemoteFetchError as e:
-        return _finish_refresh_failure(e.reason, started_at=started_at)
-    if preflight_response is None:
-        return _finish_refresh_failure("preflight_empty", started_at=started_at)
-    preflight_name = core_data.get(preflight_id, {}).get("name", preflight_id)
-    try:
-        preflight_rows = extract_champion_stats(
-            preflight_response.text,
-            aug_id_map,
-            truth_dict,
-            preflight_id,
-            preflight_name,
-            preflight_champ,
-            aug_tier_map,
-        )
-    except ValueError:
-        return _finish_refresh_failure("preflight_parse_error", started_at=started_at)
-    if not preflight_rows:
-        return _finish_refresh_failure("preflight_no_valid_rows", started_at=started_at)
-
-    all_rows = []
-    lock = threading.Lock()
-    remote_failure = {"reason": ""}
-    remote_failure_event = threading.Event()
-
-    def fetch_champ(champ):
+    def fetch_champ_detail(champ: dict, *, timeout: int, preflight_rows: list | None = None) -> dict:
         c_id = str(champ.get('championId', ''))
         c_name = core_data.get(c_id, {}).get("name", c_id)
-        champ_rows = []
-        url = ""
-        try:
-            if remote_failure_event.is_set():
-                return c_name, champ_rows
-            if c_id == preflight_id:
-                return c_name, list(preflight_rows)
-            else:
-                time.sleep(random.uniform(0.5, 1.5))
-                res = None
-                for candidate_url in build_hextech_detail_urls(c_id):
-                    url = candidate_url
-                    res = fetch_with_retry(
-                        session,
-                        url,
-                        quiet=True,
-                        raise_on_failure=True,
-                    )
-                    if res is not None and res.status_code == 200 and res.text:
-                        break
+        if preflight_rows is not None:
+            return {"champ": champ, "name": c_name, "rows": list(preflight_rows), "reason": "", "status_code": None}
 
-            if res is not None and res.status_code == 200 and len(res.text) > 0:
-                try:
-                    champ_rows = extract_champion_stats(
-                        res.text,
-                        aug_id_map,
-                        truth_dict,
-                        c_id,
-                        c_name,
-                        champ,
-                        aug_tier_map
-                    )
-                except ValueError as e:
-                    logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
-        except RemoteFetchError as e:
-            with lock:
-                if not remote_failure["reason"]:
-                    remote_failure["reason"] = e.reason
-            remote_failure_event.set()
-        except requests.RequestException:
-            with lock:
-                if not remote_failure["reason"]:
-                    remote_failure["reason"] = "network_error"
-            remote_failure_event.set()
+        last_reason = "empty_response"
+        last_status_code = None
+        for url in build_hextech_detail_urls(c_id):
+            try:
+                res = fetch_with_retry(
+                    url,
+                    timeout=timeout,
+                    quiet=True,
+                    raise_on_failure=True,
+                )
+            except RemoteFetchError as e:
+                last_reason = e.reason
+                last_status_code = e.status_code
+                if _is_blocking_remote_failure(e.reason, e.status_code):
+                    break
+                continue
+            if res is None or res.status_code != 200 or not res.text:
+                last_reason = "empty_response"
+                last_status_code = getattr(res, "status_code", None)
+                continue
+            try:
+                rows = extract_champion_stats(
+                    res.text,
+                    aug_id_map,
+                    truth_dict,
+                    c_id,
+                    c_name,
+                    champ,
+                    aug_tier_map,
+                )
+            except ValueError as e:
+                logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
+                last_reason = "parse_error"
+                last_status_code = res.status_code
+                continue
+            if rows:
+                return {"champ": champ, "name": c_name, "rows": rows, "reason": "", "status_code": res.status_code}
+            last_reason = "no_valid_rows"
+            last_status_code = res.status_code
+        return {
+            "champ": champ,
+            "name": c_name,
+            "rows": [],
+            "reason": last_reason,
+            "status_code": last_status_code,
+        }
 
-        return c_name, champ_rows
+    def run_detail_pass(champs: list[dict], *, workers: int, timeout: int, pool_timeout: int, label: str):
+        pass_rows = []
+        failures = []
+        logging.info(
+            "Hextech detail pass: label=%s heroes=%s workers=%s request_timeout=%s pool_timeout=%s",
+            label,
+            len(champs),
+            workers,
+            timeout,
+            pool_timeout,
+        )
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = []
+            for champ in champs:
+                c_id = str(champ.get("championId", ""))
+                cached_rows = preflight_rows if c_id == preflight_id else None
+                futures.append(executor.submit(fetch_champ_detail, champ, timeout=timeout, preflight_rows=cached_rows))
+            try:
+                for future in as_completed(futures, timeout=pool_timeout):
+                    if stop_event and stop_event.is_set():
+                        logging.info("Stop signal received; cancelling Hextech scrape workers...")
+                        for fut in futures:
+                            fut.cancel()
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        return pass_rows, failures, "stopped"
 
-    thread_pool_timeout_seconds = 30
-    logging.info("Hextech scrape running: heroes=%s workers=%s timeout=%s", len(stats_list), 16, thread_pool_timeout_seconds)
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        futures = [executor.submit(fetch_champ, c) for c in stats_list]
-        try:
-            for f in as_completed(futures, timeout=thread_pool_timeout_seconds):
-                if stop_event and stop_event.is_set():
-                    logging.info("Stop signal received; cancelling Hextech scrape workers...")
-                    for fut in futures:
-                        fut.cancel()
-                    executor.shutdown(wait=False, cancel_futures=True)
-                    return False
+                    try:
+                        item = future.result()
+                    except Exception as e:
+                        logging.error("Worker result collection failed: %s", e)
+                        failures.append({"champ": {}, "name": "", "rows": [], "reason": "worker_error", "status_code": None})
+                        continue
+                    if item["rows"]:
+                        pass_rows.extend(item["rows"])
+                    else:
+                        failures.append(item)
+            except TimeoutError:
+                logging.error("Hextech detail pass timed out: label=%s", label)
+                for fut in futures:
+                    fut.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
+                return pass_rows, failures, "thread_pool_timeout"
+        return pass_rows, failures, ""
 
-                try:
-                    _, rows = f.result()
-                    with lock:
-                        if rows:
-                            all_rows.extend(rows)
-                except Exception as e:
-                    logging.error(f"Worker result collection failed: {e}")
-        except TimeoutError:
-            logging.error("Hextech scrape timed out; cancelling unfinished workers")
-            for fut in futures:
-                fut.cancel()
-            executor.shutdown(wait=False, cancel_futures=True)
-            remote_failure["reason"] = "thread_pool_timeout"
-    if remote_failure["reason"]:
-        return _finish_refresh_failure(remote_failure["reason"], started_at=started_at)
+    # 先请求一个英雄详情。源站封禁时在创建 worker 线程池前熔断；瞬时超时做一次更长预检。
+    preflight_champ = stats_list[0]
+    preflight_id = str(preflight_champ.get("championId", ""))
+    preflight_result = fetch_champ_detail(preflight_champ, timeout=HEXTECH_DETAIL_TIMEOUT_SECONDS)
+    if not preflight_result["rows"] and not _is_blocking_remote_failure(
+        preflight_result["reason"],
+        preflight_result["status_code"],
+    ):
+        preflight_result = fetch_champ_detail(preflight_champ, timeout=HEXTECH_DETAIL_RETRY_TIMEOUT_SECONDS)
+    if not preflight_result["rows"]:
+        reason = preflight_result["reason"] or "preflight_empty"
+        if reason == "parse_error":
+            reason = "preflight_parse_error"
+        elif reason == "no_valid_rows":
+            reason = "preflight_no_valid_rows"
+        return _finish_refresh_failure(reason, started_at=started_at)
+    preflight_rows = preflight_result["rows"]
+
+    all_rows, detail_failures, pass_error = run_detail_pass(
+        list(stats_list),
+        workers=HEXTECH_DETAIL_WORKERS,
+        timeout=HEXTECH_DETAIL_TIMEOUT_SECONDS,
+        pool_timeout=HEXTECH_DETAIL_POOL_TIMEOUT_SECONDS,
+        label="initial",
+    )
+    if pass_error:
+        return _finish_refresh_failure(pass_error, started_at=started_at)
+
+    blocking_failures = [
+        item for item in detail_failures if _is_blocking_remote_failure(item["reason"], item["status_code"])
+    ]
+    if blocking_failures:
+        return _finish_refresh_failure(blocking_failures[0]["reason"], started_at=started_at)
+
+    if detail_failures:
+        retry_champs = [item["champ"] for item in detail_failures if item.get("champ")]
+        logging.warning("海克斯详情首轮失败 %s 个，进入低并发尾部重试。", len(retry_champs))
+        retry_rows, retry_failures, retry_error = run_detail_pass(
+            retry_champs,
+            workers=HEXTECH_DETAIL_RETRY_WORKERS,
+            timeout=HEXTECH_DETAIL_RETRY_TIMEOUT_SECONDS,
+            pool_timeout=HEXTECH_DETAIL_RETRY_POOL_TIMEOUT_SECONDS,
+            label="tail-retry",
+        )
+        all_rows.extend(retry_rows)
+        if retry_error:
+            return _finish_refresh_failure(retry_error, started_at=started_at)
+        blocking_retry_failures = [
+            item for item in retry_failures if _is_blocking_remote_failure(item["reason"], item["status_code"])
+        ]
+        if blocking_retry_failures:
+            return _finish_refresh_failure(blocking_retry_failures[0]["reason"], started_at=started_at)
+        if retry_failures:
+            failed_names = ", ".join(str(item["name"]) for item in retry_failures[:5])
+            logging.warning("海克斯详情尾部重试后仍失败 %s 个：%s", len(retry_failures), failed_names)
+            return _finish_refresh_failure(f"detail_failed_{len(retry_failures)}", started_at=started_at)
+
     if all_rows:
         df = pd.DataFrame(all_rows)
         df['胜率差'] = df['海克斯胜率'] - df['英雄胜率']
