@@ -25,8 +25,8 @@ RUN_DIR = Path(__file__).resolve().parents[1]
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 
-from scraping.icon_resolver import normalize_augment_name, normalize_safe_augment_icon_filename, sanitize_augment_icon_url
-from tools.atomic_io import atomic_write_json
+from hextech.scraping.icon_resolver import normalize_augment_name, normalize_safe_augment_icon_filename, sanitize_augment_icon_url
+from hextech.support.atomic_io import atomic_write_json
 
 
 CHERRY_AUGMENTS_URL = (

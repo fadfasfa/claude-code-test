@@ -19,8 +19,8 @@ RUN_DIR = Path(__file__).resolve().parents[1]
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 
-from processing import overlay_vision_sidecar
-from processing.overlay_vision_state import SelectionTracker
+from hextech.overlay.vision import sidecar as overlay_vision_sidecar
+from hextech.overlay.vision.state import SelectionTracker
 
 
 DEFAULT_TRUTH_PATH = RUN_DIR / "data" / "static" / "overlay_matching_truth.v1.json"

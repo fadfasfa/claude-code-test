@@ -1,0 +1,12 @@
+{
+  "name": "hextech-frontend",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "build:css": "tailwindcss -i ./src/styles/input.css -o ../hextech/display/web/static/css/tailwind-compiled.css --minify",
+    "watch:css": "tailwindcss -i ./src/styles/input.css -o ../hextech/display/web/static/css/tailwind-compiled.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.1"
+  }
+}

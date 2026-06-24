@@ -50,6 +50,39 @@ EXCLUDED_MODULES = [
     "s3transfer",
     "jmespath",
 ]
+PYINSTALLER_HIDDEN_IMPORTS = [
+    "pandas",
+    "numpy",
+    "requests",
+    "PIL",
+    "PIL.ImageTk",
+    "tkinter",
+    "_tkinter",
+    "tkinter.ttk",
+    "win32gui",
+    "win32con",
+    "psutil",
+    "fastapi",
+    "uvicorn",
+    "filelock",
+    "bs4",
+    "hextech",
+    "hextech.display.desktop.app",
+    "hextech.display.web.app",
+    "hextech.overlay.data_source",
+    "hextech.overlay.host",
+    "hextech.overlay.lifecycle",
+    "hextech.overlay.renderer",
+    "hextech.overlay.vision.sidecar",
+    "hextech.core.settings",
+]
+PYINSTALLER_COLLECT_SUBMODULES = [
+    "tkinter",
+    "fastapi",
+    "starlette",
+    "uvicorn",
+    "hextech",
+]
 
 
 def print_step(msg: str):
@@ -169,8 +202,8 @@ def resolve_tkinter_package_dir() -> Path:
 def refresh_runtime_data_before_bundle() -> None:
     """按运行时节奏刷新数据，再把当前落盘结果打入发布包。"""
     print_step("按正常节奏刷新运行时数据")
-    # 延迟导入避免 tools 包初始化时反向加载 processing.orchestrator 形成导入环。
-    from processing.orchestrator import refresh_backend_data
+    # 延迟导入避免 tools 包初始化时反向加载刷新编排形成导入环。
+    from hextech.core.refresh import refresh_backend_data
 
     refreshed = refresh_backend_data(force=False)
     if refreshed:
@@ -200,39 +233,12 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
         "--add-data", f"{tcl_runtime_dir};_tcl_data",
         "--add-data", f"{tk_runtime_dir};_tk_data",
         "--add-data", f"{tkinter_package_dir};tkinter",
-        "--hidden-import", "pandas",
-        "--hidden-import", "numpy",
-        "--hidden-import", "requests",
-        "--hidden-import", "PIL",
-        "--hidden-import", "PIL.ImageTk",
-        "--hidden-import", "tkinter",
-        "--hidden-import", "_tkinter",
-        "--hidden-import", "tkinter.ttk",
-        "--hidden-import", "win32gui",
-        "--hidden-import", "psutil",
-        "--hidden-import", "fastapi",
-        "--hidden-import", "uvicorn",
-        "--hidden-import", "filelock",
-        "--hidden-import", "bs4",
-        "--hidden-import", "display.service_manager",
-        "--hidden-import", "game_overlay",
-        "--hidden-import", "game_overlay.data_source",
-        "--hidden-import", "game_overlay.host",
-        "--hidden-import", "game_overlay.lifecycle",
-        "--hidden-import", "game_overlay.renderer",
-        "--hidden-import", "processing.overlay_event_channel",
-        "--hidden-import", "processing.overlay_hint_cache",
-        "--hidden-import", "processing.overlay_vision_layout",
-        "--hidden-import", "processing.overlay_vision_matcher",
-        "--hidden-import", "processing.overlay_vision_sidecar",
-        "--hidden-import", "processing.overlay_vision_state",
-        "--hidden-import", "processing.ui_feature_flags",
-        "--collect-submodules", "tkinter",
-        "--collect-submodules", "fastapi",
-        "--collect-submodules", "starlette",
-        "--collect-submodules", "uvicorn",
-        "hextech_ui.py",
     ]
+    for module_name in PYINSTALLER_HIDDEN_IMPORTS:
+        cmd.extend(["--hidden-import", module_name])
+    for module_name in PYINSTALLER_COLLECT_SUBMODULES:
+        cmd.extend(["--collect-submodules", module_name])
+    cmd.append("hextech_ui.py")
     if tcl_module_dir is not None:
         cmd.extend(["--add-data", f"{tcl_module_dir};tcl8"])
     for module_name in EXCLUDED_MODULES:

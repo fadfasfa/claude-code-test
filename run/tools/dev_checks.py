@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import ast
 from contextlib import ExitStack
+import importlib
 import inspect
 import io
 import json
@@ -39,21 +40,23 @@ import pandas as pd
 RUN_DIR = Path(__file__).resolve().parents[1]
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
+WEB_STATIC_DIR = RUN_DIR / "hextech" / "display" / "web" / "static"
 
-import processing.orchestrator as orchestrator
-import processing.alias_search as alias_search
-import processing.precomputed_cache as precomputed_cache
-import processing.runtime_store as runtime_store
-import scraping.full_hextech_scraper as hextech_scraper
-import scraping.full_synergy_scraper as synergy_scraper
-import scraping.heal_worker as heal_worker
-import scraping.icon_resolver as icon_resolver
-import display.web_runtime as web_runtime
-from display.web_api import _build_synergy_api_payload, _normalize_synergy_items, _synergy_item_to_compat_string
-from processing.alias_search import load_manual_alias_index
-from processing.view_adapter import process_hextechs_data
-from scraping.full_hextech_scraper import extract_champion_stats
-from scraping.full_synergy_scraper import (
+import hextech.core.refresh as orchestrator
+import hextech.catalog.aliases as alias_search
+import hextech.catalog.precomputed_cache as precomputed_cache
+import hextech.catalog.runtime_store as runtime_store
+import hextech.scraping.hextech.scraper as hextech_scraper
+import hextech.scraping.synergy.scraper as synergy_scraper
+import hextech.scraping.heal_worker as heal_worker
+import hextech.scraping.icon_resolver as icon_resolver
+import hextech.scraping.version_sync as version_sync
+import hextech.display.web.runtime as web_runtime
+from hextech.display.web.api import _build_synergy_api_payload, _normalize_synergy_items, _synergy_item_to_compat_string
+from hextech.catalog.aliases import load_manual_alias_index
+from hextech.catalog.view_adapter import process_hextechs_data
+from hextech.scraping.hextech.scraper import extract_champion_stats
+from hextech.scraping.synergy.scraper import (
     SYNERGY_REFRESH_META_VERSION,
     ApexSource,
     ChampionInfo,
@@ -71,10 +74,39 @@ from scraping.full_synergy_scraper import (
     write_synergy_refresh_meta,
 )
 from tools.bundle_manifest import build_bundle_manifest, prepare_bundle_runtime
-from tools.log_utils import install_summary_logging
+from hextech.support.log_utils import install_summary_logging
 
 
 TIER_IDS = ("Prismatic", "Gold", "Silver")
+VERSION_SYNC_WRITE_GUARDED_CHECKS = frozenset(
+    {
+        "check_heal_worker_contract",
+        "check_hextech_scraper_fallback_contract",
+        "check_hextech_cooldown_and_heal_fallback",
+        "check_hextech_failed_refresh_never_overwrites_csv",
+        "check_hextech_success_clears_fallback_state",
+    }
+)
+
+
+def _offline_sync_hero_data() -> bool:
+    """开发自检只验证本地缓存契约，不允许触发远端同步和资源写入。"""
+
+    return Path(version_sync.CORE_DATA_FILE).exists()
+
+
+def _run_read_only_offline_checks(check_names: tuple[str, ...]) -> None:
+    """执行离线自检时隔离英雄版本同步，避免验证命令污染 data/static 或 assets。"""
+
+    if not (set(check_names) & VERSION_SYNC_WRITE_GUARDED_CHECKS):
+        _run_named_checks(check_names)
+        return
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(version_sync, "sync_hero_data", side_effect=_offline_sync_hero_data))
+        stack.enter_context(patch.object(orchestrator, "sync_hero_data", side_effect=_offline_sync_hero_data))
+        stack.enter_context(patch.object(heal_worker, "sync_hero_data", side_effect=_offline_sync_hero_data))
+        _run_named_checks(check_names)
 
 
 def check_root_entrypoints() -> None:
@@ -85,9 +117,241 @@ def check_root_entrypoints() -> None:
     }
 
     assert {"build.py", "hextech_ui.py", "web_server.py"}.issubset(root_scripts)
-    assert (RUN_DIR / "display").exists()
-    assert (RUN_DIR / "processing").exists()
+    for legacy_dir in ("crawler", "display", "game_overlay", "processing", "scraping"):
+        assert not (RUN_DIR / legacy_dir).exists(), f"legacy root package still exists: {legacy_dir}"
+    assert not (RUN_DIR / "game_overlay_host.py").exists()
     assert (RUN_DIR / "tools").exists()
+    root_gitignore = (RUN_DIR.parent / ".gitignore").read_text(encoding="utf-8")
+    assert "run/frontend/node_modules/" in root_gitignore
+    assert "run/display/node_modules/" not in root_gitignore
+
+
+def check_hextech_package_contract() -> None:
+    """最终结构必须收口到 hextech 单包，不再保留旧根级 import 包。"""
+
+    assert (RUN_DIR / "hextech").exists()
+    assert (RUN_DIR / "frontend" / "package.json").exists()
+    assert (RUN_DIR / "resources" / "README.md").exists()
+    assert (RUN_DIR / "docs" / "README.md").exists()
+    assert (RUN_DIR / "tools" / "checks" / "registry.py").exists()
+
+    required_modules = (
+        "hextech.display.web.app",
+        "hextech.display.web.api",
+        "hextech.display.web.runtime",
+        "hextech.display.desktop.app",
+        "hextech.display.desktop.runtime",
+        "hextech.display.desktop.service_manager",
+        "hextech.core.refresh",
+        "hextech.core.settings",
+        "hextech.overlay.events",
+        "hextech.overlay.hints",
+        "hextech.overlay.window",
+        "hextech.overlay.window_titles",
+        "hextech.overlay.context",
+        "hextech.overlay.runtime_paths",
+        "hextech.overlay.providers.official",
+        "hextech.overlay.vision.layout",
+        "hextech.overlay.vision.matcher",
+        "hextech.overlay.vision.state",
+        "hextech.overlay.data_source",
+        "hextech.overlay.host",
+        "hextech.overlay.lifecycle",
+        "hextech.overlay.renderer",
+        "hextech.overlay.vision.sidecar",
+        "hextech.catalog.runtime_store",
+        "hextech.catalog.precomputed_cache",
+        "hextech.catalog.view_adapter",
+        "hextech.catalog.aliases",
+        "hextech.catalog.alias_utils",
+        "hextech.catalog.query_terminal",
+        "hextech.scraping._paths",
+        "hextech.scraping.version_sync",
+        "hextech.scraping.augment_catalog",
+        "hextech.scraping.icon_resolver",
+        "hextech.scraping.heal_worker",
+        "hextech.scraping.hextech.scraper",
+        "hextech.scraping.synergy.scraper",
+        "hextech.scraping.transport.scrapling_client",
+        "hextech.scraping.transport.cloakbrowser_client",
+        "hextech.support.atomic_io",
+        "hextech.support.log_utils",
+    )
+    for module_name in required_modules:
+        importlib.import_module(module_name)
+    for removed_module_path in (
+        "hextech/core/lifecycle.py",
+        "hextech/core/events.py",
+        "hextech/core/runtime_paths.py",
+        "hextech/catalog/augments.py",
+        "hextech/catalog/champions.py",
+        "hextech/display/web/routers",
+    ):
+        assert not (RUN_DIR / removed_module_path).exists(), f"dead preallocation still exists: {removed_module_path}"
+
+    from tools.checks.registry import DEFAULT_CHECKS, DOMAIN_CHECKS, OVERLAY_ONLY_CHECKS
+
+    grouped_checks = {name for names in DOMAIN_CHECKS.values() for name in names}
+    assert set(DEFAULT_CHECKS) == grouped_checks
+    assert "check_hextech_package_contract" in DEFAULT_CHECKS
+    assert "check_overlay_vision_sidecar_contract" in OVERLAY_ONLY_CHECKS
+
+    hint_cache_text = (RUN_DIR / "hextech" / "overlay" / "hints.py").read_text(encoding="utf-8")
+    forbidden_imports = {
+        ("processing", "runtime_store"),
+        ("processing", "precomputed_cache"),
+        ("processing.runtime_store", ""),
+        ("processing.precomputed_cache", ""),
+        ("tools", "atomic_io"),
+        ("tools.atomic_io", ""),
+    }
+    for node in ast.walk(ast.parse(hint_cache_text)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert (alias.name, "") not in forbidden_imports
+        elif isinstance(node, ast.ImportFrom):
+            module_name = node.module or ""
+            for alias in node.names:
+                assert (module_name, alias.name) not in forbidden_imports
+                assert (module_name, "") not in forbidden_imports
+    assert "from hextech.catalog.runtime_store" in hint_cache_text
+    assert "from hextech.catalog.precomputed_cache" in hint_cache_text
+    assert "from hextech.support.atomic_io" in hint_cache_text
+
+    assert WEB_STATIC_DIR.exists()
+    assert (WEB_STATIC_DIR / "index.html").exists()
+    assert not (RUN_DIR / "display" / "static").exists()
+
+    web_app_text = (RUN_DIR / "hextech" / "display" / "web" / "app.py").read_text(encoding="utf-8")
+    assert "display.web_api" not in web_app_text
+    assert "display.web_runtime" not in web_app_text
+    assert "from .api import register_routes" in web_app_text
+    assert "from .runtime import" in web_app_text
+
+    web_api_text = (RUN_DIR / "hextech" / "display" / "web" / "api.py").read_text(encoding="utf-8")
+    web_runtime_text = (RUN_DIR / "hextech" / "display" / "web" / "runtime.py").read_text(encoding="utf-8")
+    forbidden_web_imports = {
+        ("processing", "alias_search"),
+        ("processing", "precomputed_cache"),
+        ("processing", "runtime_store"),
+        ("processing", "view_adapter"),
+        ("processing.alias_search", ""),
+        ("processing.precomputed_cache", ""),
+        ("processing.runtime_store", ""),
+        ("processing.view_adapter", ""),
+        ("processing.orchestrator", ""),
+        ("tools.log_utils", ""),
+    }
+    for module_text in (web_api_text, web_runtime_text):
+        for node in ast.walk(ast.parse(module_text)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert (alias.name, "") not in forbidden_web_imports
+            elif isinstance(node, ast.ImportFrom):
+                module_name = node.module or ""
+                for alias in node.names:
+                    assert (module_name, alias.name) not in forbidden_web_imports
+                    assert (module_name, "") not in forbidden_web_imports
+
+    hextech_scraper_text = (RUN_DIR / "hextech" / "scraping" / "hextech" / "scraper.py").read_text(encoding="utf-8")
+    synergy_scraper_text = (RUN_DIR / "hextech" / "scraping" / "synergy" / "scraper.py").read_text(encoding="utf-8")
+    assert "from processing.precomputed_cache" not in hextech_scraper_text
+    assert "from processing.overlay_hint_cache" not in hextech_scraper_text
+    assert "from hextech.catalog.precomputed_cache" in hextech_scraper_text
+    assert "from hextech.overlay.hints" in hextech_scraper_text
+    assert "parents[3]" in synergy_scraper_text
+    assert "crawler.cloakbrowser_client" not in synergy_scraper_text
+    assert "hextech.scraping.transport.cloakbrowser_client" in synergy_scraper_text
+    smoke_scrapling_text = (RUN_DIR / "hextech" / "scraping" / "transport" / "smoke_scrapling.py").read_text(encoding="utf-8")
+    assert "from crawler import fetch_page" not in smoke_scrapling_text
+    assert "hextech.scraping.transport.scrapling_client" in smoke_scrapling_text
+    assert "python -m hextech.scraping.transport.smoke_scrapling" in smoke_scrapling_text
+
+    version_sync_module = importlib.import_module("hextech.scraping.version_sync")
+    assert Path(version_sync_module.BASE_DIR).resolve() == RUN_DIR.resolve()
+    assert Path(version_sync_module.RESOURCE_DIR).resolve() == RUN_DIR.resolve()
+    version_sync_text = (RUN_DIR / "hextech" / "scraping" / "version_sync.py").read_text(encoding="utf-8")
+    icon_resolver_text = (RUN_DIR / "hextech" / "scraping" / "icon_resolver.py").read_text(encoding="utf-8")
+    augment_catalog_text = (RUN_DIR / "hextech" / "scraping" / "augment_catalog.py").read_text(encoding="utf-8")
+    heal_worker_text = (RUN_DIR / "hextech" / "scraping" / "heal_worker.py").read_text(encoding="utf-8")
+    assert "from processing.alias_utils" not in version_sync_text
+    assert "from scraping.icon_resolver" not in version_sync_text
+    assert "from tools.log_utils" not in version_sync_text
+    assert "from hextech.catalog.alias_utils" in version_sync_text
+    assert "from hextech.scraping.icon_resolver" in version_sync_text
+    assert "from hextech.scraping._paths" in version_sync_text
+    assert "from hextech.support.log_utils" in version_sync_text
+    assert "from scraping.version_sync" not in icon_resolver_text
+    assert "from hextech.scraping.version_sync" not in icon_resolver_text
+    assert "from hextech.scraping._paths" in icon_resolver_text
+    assert "from processing.runtime_store" not in augment_catalog_text
+    assert "from scraping." not in augment_catalog_text
+    assert "from hextech.catalog.runtime_store" in augment_catalog_text
+    assert "from hextech.scraping.version_sync" in augment_catalog_text
+    assert "import scraping.version_sync" not in heal_worker_text
+    assert "from scraping." not in heal_worker_text
+    assert "from processing.runtime_store" not in heal_worker_text
+    assert "from tools.atomic_io" not in heal_worker_text
+    assert "from hextech.catalog.runtime_store" in heal_worker_text
+    assert "from hextech.scraping.version_sync" in heal_worker_text
+    assert "from hextech.support.atomic_io" in heal_worker_text
+
+    core_refresh_text = (RUN_DIR / "hextech" / "core" / "refresh.py").read_text(encoding="utf-8")
+    core_settings_text = (RUN_DIR / "hextech" / "core" / "settings.py").read_text(encoding="utf-8")
+    assert "from processing.runtime_store" not in core_refresh_text
+    assert "from processing.precomputed_cache" not in core_refresh_text
+    assert "from scraping." not in core_refresh_text
+    assert "from tools.atomic_io" not in core_refresh_text
+    assert "from hextech.catalog.runtime_store" in core_refresh_text
+    assert "from hextech.scraping.version_sync" in core_refresh_text
+    assert "from hextech.support.atomic_io" in core_refresh_text
+    assert "from processing.runtime_store" not in core_settings_text
+    assert "from tools.atomic_io" not in core_settings_text
+    assert "from hextech.catalog.runtime_store" in core_settings_text
+    assert "from hextech.support.atomic_io" in core_settings_text
+
+    desktop_app_text = (RUN_DIR / "hextech" / "display" / "desktop" / "app.py").read_text(encoding="utf-8")
+    desktop_runtime_text = (RUN_DIR / "hextech" / "display" / "desktop" / "runtime.py").read_text(encoding="utf-8")
+    desktop_service_text = (RUN_DIR / "hextech" / "display" / "desktop" / "service_manager.py").read_text(encoding="utf-8")
+    assert "from processing." not in desktop_app_text
+    assert "from scraping." not in desktop_app_text
+    assert "from . import ui_runtime" not in desktop_app_text
+    assert "from hextech.catalog.runtime_store" in desktop_app_text
+    assert "from hextech.overlay.hints" in desktop_app_text
+    assert "from hextech.scraping.version_sync" in desktop_app_text
+    assert "from . import runtime as ui_runtime" in desktop_app_text
+    assert "from processing." not in desktop_runtime_text
+    assert "from scraping." not in desktop_runtime_text
+    assert "from . import web_runtime" not in desktop_runtime_text
+    assert "from hextech.display.web import runtime as web_runtime" in desktop_runtime_text
+    assert "from hextech.catalog.query_terminal" in desktop_runtime_text
+    assert "from hextech.overlay.window" in desktop_runtime_text
+    assert "from hextech.scraping._paths" in desktop_runtime_text
+    assert "from processing." not in desktop_service_text
+    assert "from hextech.overlay.events" in desktop_service_text
+    assert "from hextech.overlay.window" in desktop_service_text
+
+    overlay_host_text = (RUN_DIR / "hextech" / "overlay" / "host.py").read_text(encoding="utf-8")
+    overlay_lifecycle_text = (RUN_DIR / "hextech" / "overlay" / "lifecycle.py").read_text(encoding="utf-8")
+    overlay_data_source_text = (RUN_DIR / "hextech" / "overlay" / "data_source.py").read_text(encoding="utf-8")
+    overlay_renderer_text = (RUN_DIR / "hextech" / "overlay" / "renderer.py").read_text(encoding="utf-8")
+    assert "from processing." not in overlay_host_text
+    assert "from tools.atomic_io" not in overlay_host_text
+    assert "from hextech.overlay.window" in overlay_host_text
+    assert "from hextech.support.atomic_io" in overlay_host_text
+    assert "from processing." not in overlay_lifecycle_text
+    assert "from tools.atomic_io" not in overlay_lifecycle_text
+    assert "from hextech.catalog.runtime_store" in overlay_lifecycle_text
+    assert "from hextech.overlay.events" in overlay_lifecycle_text
+    assert '"hextech.overlay.vision.sidecar"' in overlay_lifecycle_text
+    assert "from processing." not in overlay_data_source_text
+    assert "from hextech.overlay.hints" in overlay_data_source_text
+    assert "from hextech.overlay.events" in overlay_data_source_text
+    assert "from hextech.overlay.context" in overlay_data_source_text
+    assert "from processing." not in overlay_renderer_text
+    assert "from hextech.overlay.vision.layout" in overlay_renderer_text
+
+    assert not (RUN_DIR / "game_overlay").exists()
 
 
 def check_manual_alias_index() -> None:
@@ -115,7 +379,7 @@ def check_manifest_icon_url_safety() -> None:
 
 def check_cdragon_force_refresh_semantics() -> None:
     """CDragon minimal manifest 不应被旧完整描述字段规则强制重建。"""
-    import scraping.augment_catalog as augment_catalog
+    import hextech.scraping.augment_catalog as augment_catalog
 
     def cdragon_entry(index: int) -> dict[str, Any]:
         return {
@@ -158,7 +422,7 @@ def check_cdragon_force_refresh_semantics() -> None:
 
 def check_cdragon_source_schema_marker() -> None:
     """CDragon 条目优先使用显式 source_schema 标记，旧数据仍按前缀兼容。"""
-    import scraping.augment_catalog as augment_catalog
+    import hextech.scraping.augment_catalog as augment_catalog
 
     raw_entry = {
         "schema_version": augment_catalog.MANIFEST_SCHEMA_VERSION,
@@ -210,7 +474,7 @@ def check_apexlol_hextech_map_size_limit() -> None:
         with TemporaryDirectory() as tmp_dir:
             cached = {"cached": "slug"}
             icon_resolver._APEXLOL_MAP_CACHE = ("cached-path", 1.0, cached)
-            with patch("scraping.icon_resolver.requests.get", return_value=OversizeResponse()):
+            with patch("hextech.scraping.icon_resolver.requests.get", return_value=OversizeResponse()):
                 result = icon_resolver.load_apexlol_hextech_map(config_dir=tmp_dir, force_refresh=True)
             assert result == cached
             assert not (Path(tmp_dir) / "Augment_Apexlol_Map.json").exists()
@@ -260,8 +524,8 @@ def check_runtime_alias_persistence() -> None:
 
 
 def check_detail_hero_param_uses_text_content() -> None:
-    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
-    detail_script = (RUN_DIR / "display" / "static" / "js" / "detail.js").read_text(encoding="utf-8")
+    detail_text = (WEB_STATIC_DIR / "detail.html").read_text(encoding="utf-8")
+    detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
 
     assert '<script defer src="/static/js/detail.js"></script>' in detail_text
     assert "const urlParams = new URLSearchParams(window.location.search);" in detail_script
@@ -278,8 +542,8 @@ def check_detail_hero_param_uses_text_content() -> None:
 
 
 def check_detail_question_mark_augment_guard() -> None:
-    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
-    detail_script = (RUN_DIR / "display" / "static" / "js" / "detail.js").read_text(encoding="utf-8")
+    detail_text = (WEB_STATIC_DIR / "detail.html").read_text(encoding="utf-8")
+    detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
     assert "function isQuestionMarkAugmentName(text)" in detail_script
     assert "/^[?？]{3,}$/" in detail_script
     assert "if (isQuestionMarkAugmentName(original))" in detail_script
@@ -294,9 +558,9 @@ def check_detail_question_mark_augment_guard() -> None:
 
 
 def check_detail_hextech_card_layout_contract() -> None:
-    detail_script = (RUN_DIR / "display" / "static" / "js" / "detail.js").read_text(encoding="utf-8")
-    style_source = (RUN_DIR / "display" / "src" / "styles" / "input.css").read_text(encoding="utf-8")
-    compiled_style = (RUN_DIR / "display" / "static" / "css" / "tailwind-compiled.css").read_text(encoding="utf-8")
+    detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
+    style_source = (RUN_DIR / "frontend" / "src" / "styles" / "input.css").read_text(encoding="utf-8")
+    compiled_style = (WEB_STATIC_DIR / "css" / "tailwind-compiled.css").read_text(encoding="utf-8")
 
     # 列表卡片的胜率数字必须独立居中；趋势箭头不能参与数字本身的中轴线计算。
     assert "hextech-card-rate--win" in detail_script
@@ -318,20 +582,27 @@ def check_detail_hextech_card_layout_contract() -> None:
 
 
 def check_static_css_single_mount_contract() -> None:
-    index_text = (RUN_DIR / "display" / "static" / "index.html").read_text(encoding="utf-8")
-    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
-    web_server_text = (RUN_DIR / "display" / "web_server.py").read_text(encoding="utf-8")
+    index_text = (WEB_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    detail_text = (WEB_STATIC_DIR / "detail.html").read_text(encoding="utf-8")
+    web_server_text = (RUN_DIR / "hextech" / "display" / "web" / "app.py").read_text(encoding="utf-8")
+    frontend_package = (RUN_DIR / "frontend" / "package.json").read_text(encoding="utf-8")
+    tailwind_config = (RUN_DIR / "frontend" / "tailwind.config.js").read_text(encoding="utf-8")
 
     assert 'href="/static/css/hextech-theme.css"' in index_text
     assert 'href="/static/css/hextech-theme.css"' in detail_text
     assert 'app.mount("/css"' not in web_server_text
+    assert "../display/static" not in frontend_package
+    assert "../display/static" not in tailwind_config
+    assert "../hextech/display/web/static/css/tailwind-compiled.css" in frontend_package
+    assert "../hextech/display/web/static/**/*.html" in tailwind_config
+    assert "../hextech/display/web/static/**/*.js" in tailwind_config
 
 
 def check_web_bootstrap_avoids_load_event_gate() -> None:
-    index_text = (RUN_DIR / "display" / "static" / "index.html").read_text(encoding="utf-8")
-    detail_text = (RUN_DIR / "display" / "static" / "detail.html").read_text(encoding="utf-8")
-    index_script = (RUN_DIR / "display" / "static" / "js" / "index.js").read_text(encoding="utf-8")
-    detail_script = (RUN_DIR / "display" / "static" / "js" / "detail.js").read_text(encoding="utf-8")
+    index_text = (WEB_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    detail_text = (WEB_STATIC_DIR / "detail.html").read_text(encoding="utf-8")
+    index_script = (WEB_STATIC_DIR / "js" / "index.js").read_text(encoding="utf-8")
+    detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
 
     assert "window.onload =" not in index_text
     assert "window.onload =" not in detail_text
@@ -352,7 +623,7 @@ def check_web_bootstrap_avoids_load_event_gate() -> None:
 def check_api_champions_uses_stable_catalog_before_network_snapshot() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import display.web_api as web_api
+    import hextech.display.web.api as web_api
 
     app = FastAPI()
     web_api.register_routes(app)
@@ -375,7 +646,7 @@ def check_api_champions_uses_stable_catalog_before_network_snapshot() -> None:
 def check_redirect_api_does_not_sync_preload_before_response() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import display.web_api as web_api
+    import hextech.display.web.api as web_api
 
     class DummyManager:
         active = [object()]
@@ -408,7 +679,7 @@ def check_redirect_api_does_not_sync_preload_before_response() -> None:
 def check_redirect_api_defers_browser_open_before_response() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import display.web_api as web_api
+    import hextech.display.web.api as web_api
 
     class DummyManager:
         active = []
@@ -441,7 +712,7 @@ def check_redirect_api_defers_browser_open_before_response() -> None:
 def check_detail_api_defers_cold_local_processing() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import display.web_api as web_api
+    import hextech.display.web.api as web_api
 
     app = FastAPI()
     web_api.register_routes(app)
@@ -471,7 +742,7 @@ def check_detail_api_defers_cold_local_processing() -> None:
 
 
 def check_detail_renders_before_deferred_icon_catalog() -> None:
-    detail_script = (RUN_DIR / "display" / "static" / "js" / "detail.js").read_text(encoding="utf-8")
+    detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
     load_start = detail_script.index("async function loadHextechs")
     load_end = detail_script.index("function connectWS()", load_start)
     load_body = detail_script[load_start:load_end]
@@ -636,6 +907,7 @@ def check_hextech_cooldown_and_heal_fallback() -> None:
     }
     with (
         patch.object(hextech_scraper, "load_scraper_status", return_value=fallback_status),
+        patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
         patch.object(hextech_scraper, "get_latest_valid_csv", return_value="valid.csv"),
         patch.object(hextech_scraper, "get_advanced_session", side_effect=AssertionError("冷却期不得发起网络请求")),
     ):
@@ -870,7 +1142,7 @@ def check_logging_contract() -> None:
         "chardet>=5.2,<6",
     ):
         assert dependency in requirements
-    vision_text = (RUN_DIR / "processing" / "overlay_vision_sidecar.py").read_text(encoding="utf-8")
+    vision_text = (RUN_DIR / "hextech" / "overlay" / "vision" / "sidecar.py").read_text(encoding="utf-8")
     assert 'mode="L"' not in vision_text
 
 
@@ -878,25 +1150,38 @@ def check_packaging_config() -> None:
     build_script = (RUN_DIR / "tools" / "build_bundle.py").read_text(encoding="utf-8")
     spec_text = (RUN_DIR / "Hextech伴生终端.spec").read_text(encoding="utf-8")
 
-    assert "--hidden-import\", \"filelock\"" in build_script
-    assert "--hidden-import\", \"tkinter\"" in build_script
-    assert "--hidden-import\", \"_tkinter\"" in build_script
+    assert "PYINSTALLER_HIDDEN_IMPORTS = [" in build_script
+    assert "PYINSTALLER_COLLECT_SUBMODULES = [" in build_script
+    assert 'cmd.extend(["--hidden-import", module_name])' in build_script
+    assert 'cmd.extend(["--collect-submodules", module_name])' in build_script
+    for dependency in ("filelock", "tkinter", "_tkinter", "win32gui", "win32con", "hextech.overlay.lifecycle"):
+        assert f'"{dependency}"' in build_script
     assert "resolve_tcl_runtime_dirs" in build_script
     assert "resolve_tkinter_package_dir" in build_script
     assert ";_tcl_data" in build_script
     assert ";_tk_data" in build_script
     assert ";tkinter" in build_script
-    assert "--collect-submodules\", \"tkinter\"" in build_script
-    assert "filelock" in spec_text
-    assert "tkinter" in spec_text and "_tkinter" in spec_text
     assert "_tcl_data" in spec_text and "_tk_data" in spec_text and "'tkinter'" in spec_text
-    assert "collect_submodules('tkinter')" in spec_text
-    assert "display" in (RUN_DIR / "tools" / "bundle_manifest.py").read_text(encoding="utf-8")
+    assert "from tools.build_bundle import PYINSTALLER_COLLECT_SUBMODULES, PYINSTALLER_HIDDEN_IMPORTS" in spec_text
+    assert "hiddenimports = list(PYINSTALLER_HIDDEN_IMPORTS)" in spec_text
+    assert "for module_name in PYINSTALLER_COLLECT_SUBMODULES" in spec_text
+    manifest_script_text = (RUN_DIR / "tools" / "bundle_manifest.py").read_text(encoding="utf-8")
+    assert "hextech" in manifest_script_text
+    assert '"display/' not in manifest_script_text
+    assert '"processing/' not in manifest_script_text
+    assert '"crawler/' not in manifest_script_text
+    assert '"scraping/' not in manifest_script_text
+    assert '"game_overlay/' not in manifest_script_text
+    for module_name in ("hextech",):
+        assert f'"{module_name}"' in build_script
+    for legacy_module in ("display", "processing", "scraping", "crawler", "game_overlay"):
+        assert f'"{legacy_module}"' not in build_script
+        assert f"'{legacy_module}'" not in spec_text
 
 
 def check_ui_feature_flags_contract() -> None:
     """验证双开关运行态配置的默认值、持久化和未知字段收口。"""
-    import processing.ui_feature_flags as ui_feature_flags
+    import hextech.core.settings as ui_feature_flags
 
     with TemporaryDirectory() as tmp_dir:
         flags_path = Path(tmp_dir) / "ui_feature_flags.json"
@@ -935,9 +1220,9 @@ def check_ui_feature_flags_contract() -> None:
 
 def check_overlay_hint_cache_contract() -> None:
     """验证 overlay hint cache 可直接查询，且默认不暴露私用统计字段。"""
-    import processing.overlay_hint_cache as overlay_hint_cache
-    import processing.precomputed_cache as precomputed_cache
-    import scraping.augment_catalog as augment_catalog
+    import hextech.overlay.hints as overlay_hint_cache
+    import hextech.catalog.precomputed_cache as precomputed_cache
+    import hextech.scraping.augment_catalog as augment_catalog
 
     sample_payload = {
         "德玛西亚之力": {
@@ -1082,7 +1367,7 @@ def check_overlay_hint_cache_contract() -> None:
         assert overlay_hint_cache._load_synergy_by_augment_name(damaged_syn) == {}
         assert overlay_hint_cache._load_synergy_by_augment_name(Path(tmp_dir) / "missing.json") == {}
 
-    module_text = (RUN_DIR / "processing" / "overlay_hint_cache.py").read_text(encoding="utf-8")
+    module_text = (RUN_DIR / "hextech" / "overlay" / "hints.py").read_text(encoding="utf-8")
     assert "requests" not in module_text
     assert "full_hextech_scraper" not in module_text
 
@@ -1254,7 +1539,7 @@ def check_overlay_hint_cache_contract() -> None:
     with (
         patch.object(runtime_store, "get_latest_csv", return_value=str(RUN_DIR / "data" / "raw" / "hextech" / "Hextech_Data_2099-01-01.csv")),
         patch.object(runtime_store, "load_runtime_csv", return_value=latest_df),
-        patch("scraping.augment_catalog.load_augment_catalog_lookup_read_only", return_value={}),
+        patch("hextech.scraping.augment_catalog.load_augment_catalog_lookup_read_only", return_value={}),
     ):
         latest_cache = overlay_hint_cache.build_overlay_hint_cache_from_precomputed(
             include_private_stats=True,
@@ -1301,7 +1586,13 @@ def check_overlay_hint_cache_contract() -> None:
 
 def check_overlay_runtime_paths_contract() -> None:
     """验证 overlay event/context 共享的轻量运行态路径规则。"""
-    import processing.overlay_runtime_paths as overlay_runtime_paths
+    import hextech.overlay.runtime_paths as overlay_runtime_paths
+
+    with (
+        patch.object(overlay_runtime_paths.sys, "frozen", False, create=True),
+        patch.dict(os.environ, {"HEXTECH_BASE_DIR": ""}),
+    ):
+        assert overlay_runtime_paths.overlay_runtime_root_dir() == RUN_DIR / "data" / "runtime"
 
     with TemporaryDirectory() as tmp_dir:
         source_base = Path(tmp_dir) / "source"
@@ -1331,7 +1622,7 @@ def check_overlay_runtime_paths_contract() -> None:
 
 def check_overlay_event_channel_contract() -> None:
     """验证 overlay 本地事件通道可写、可读、可诊断，且固定为三槽位。"""
-    import processing.overlay_event_channel as overlay_event_channel
+    import hextech.overlay.events as overlay_event_channel
 
     hint_cache = {
         "schema_version": 1,
@@ -1458,21 +1749,21 @@ def check_overlay_event_channel_contract() -> None:
         assert unknown_snapshot["visible"] is False
         assert unknown_snapshot["error"] == "selection_type_unknown"
 
-    module_text = (RUN_DIR / "processing" / "overlay_event_channel.py").read_text(encoding="utf-8")
+    module_text = (RUN_DIR / "hextech" / "overlay" / "events.py").read_text(encoding="utf-8")
     assert "requests" not in module_text
     assert "cv2" not in module_text
     assert "from processing.runtime_store" not in module_text
     assert "import processing.runtime_store" not in module_text
     assert "from processing.overlay_hint_cache" not in module_text
-    assert "from processing.overlay_runtime_paths import overlay_runtime_state_path" in module_text
+    assert "from hextech.overlay.runtime_paths import overlay_runtime_state_path" in module_text
     assert "def _overlay_runtime_root_dir" not in module_text
     assert "def _overlay_runtime_state_path" not in module_text
 
 
 def check_overlay_context_contract() -> None:
     """验证游戏内 overlay 英雄上下文只通过本地 state 文件传递。"""
-    import processing.overlay_context as overlay_context
-    import display.ui_runtime as ui_runtime
+    import hextech.overlay.context as overlay_context
+    import hextech.display.desktop.runtime as ui_runtime
 
     with TemporaryDirectory() as tmp_dir:
         context_path = Path(tmp_dir) / "game_overlay_context.v1.json"
@@ -1525,19 +1816,19 @@ def check_overlay_context_contract() -> None:
             context_path=context_path,
         ) is False
 
-    module_text = (RUN_DIR / "processing" / "overlay_context.py").read_text(encoding="utf-8").lower()
+    module_text = (RUN_DIR / "hextech" / "overlay" / "context.py").read_text(encoding="utf-8").lower()
     forbidden_terms = ["requests", "fastapi", "web_api", "web_runtime", "full_hextech_scraper"]
     assert not any(term in module_text for term in forbidden_terms)
-    assert "from processing.overlay_runtime_paths import overlay_runtime_state_path" in module_text
+    assert "from hextech.overlay.runtime_paths import overlay_runtime_state_path" in module_text
     assert "def _overlay_runtime_root_dir" not in module_text
     assert "def _overlay_runtime_state_path" not in module_text
 
 
 def check_official_overlay_provider_contract() -> None:
     """验证官方接口 provider 只做本地接口归一化，并通过现有 overlay 事件协议输出。"""
-    import processing.official_overlay_provider as official_overlay_provider
-    import processing.overlay_event_channel as overlay_event_channel
-    import tools.probe_official_overlay_provider as probe_official_overlay_provider
+    import hextech.overlay.providers.official as official_overlay_provider
+    import hextech.overlay.events as overlay_event_channel
+    import tools.acceptance.probe_official_overlay_provider as probe_official_overlay_provider
 
     direct_payload = {
         "augments": {
@@ -1678,11 +1969,11 @@ def check_overlay_vision_sidecar_contract() -> None:
     """验证 Vision MVP 的 ROI 预设、Pillow 指纹识别和低置信度保护。"""
     from PIL import Image, ImageDraw
 
-    import processing.overlay_vision_sidecar as overlay_vision_sidecar
-    from processing.lol_window import cursor_in_client_boxes
-    from processing.overlay_vision_layout import CARD_PANELS_16_10, apply_transform, detect_selection_scene, pick_card_panels
-    from processing.overlay_vision_matcher import candidate_from_slot
-    from processing.overlay_vision_state import SelectionTracker
+    import hextech.overlay.vision.sidecar as overlay_vision_sidecar
+    from hextech.overlay.vision.layout import CARD_PANELS_16_10, apply_transform, detect_selection_scene, pick_card_panels
+    from hextech.overlay.vision.matcher import candidate_from_slot
+    from hextech.overlay.vision.state import SelectionTracker
+    from hextech.overlay.window import cursor_in_client_boxes
 
     required_presets = {
         "1920x1080": (1920, 1080),
@@ -2660,18 +2951,23 @@ def check_overlay_vision_sidecar_contract() -> None:
         }
         assert overlay_vision_sidecar.ROI_DIAGNOSTIC_LIMIT == 32
 
-    module_text = (RUN_DIR / "processing" / "overlay_vision_sidecar.py").read_text(encoding="utf-8").lower()
+    module_text = (RUN_DIR / "hextech" / "overlay" / "vision" / "sidecar.py").read_text(encoding="utf-8").lower()
     assert "requests" not in module_text
     assert "opencv" not in module_text
     assert "cv2" not in module_text
     assert "pyautogui" not in module_text
+    assert "from processing." not in module_text
+    assert "from tools.atomic_io" not in module_text
+    assert "parents[3]" in module_text
+
+    assert not (RUN_DIR / "processing").exists()
 
 
 def check_lol_window_contract() -> None:
     """验证游戏窗口按进程发现，并排除最小化或 DWM cloak 的窗口。"""
 
-    import processing.lol_window as lol_window
-    import processing.overlay_vision_sidecar as overlay_vision_sidecar
+    import hextech.overlay.vision.sidecar as overlay_vision_sidecar
+    import hextech.overlay.window as lol_window
 
     class FakeWin32Gui:
         @staticmethod
@@ -2750,7 +3046,7 @@ def check_lol_window_contract() -> None:
 
 
 def check_service_manager_lifecycle_contract() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 def _top_level_import_names(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -2782,7 +3078,7 @@ watched = [
 print(json.dumps([name for name in watched if name in sys.modules]))
 """
     output = subprocess.check_output(
-        [sys.executable, "-c", code],
+        [sys.executable, "-B", "-c", code],
         cwd=str(RUN_DIR),
         text=True,
         encoding="utf-8",
@@ -2807,7 +3103,7 @@ watched = [
 print(json.dumps([name for name in watched if name in sys.modules]))
 """
     output = subprocess.check_output(
-        [sys.executable, "-c", code],
+        [sys.executable, "-B", "-c", code],
         cwd=str(RUN_DIR),
         text=True,
         encoding="utf-8",
@@ -2816,19 +3112,19 @@ print(json.dumps([name for name in watched if name in sys.modules]))
 
 
 def check_desktop_ui_toggle_rollback_contract() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 
 def check_game_overlay_host_contract() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
     # 旧事件（selection_window_active=None）回退到 event_visible+content_ready
 def check_desktop_ui_feature_switch_contract() -> None:
     """验证桌面 UI 不再初始化时无条件启动 Web 服务。"""
-    import display.ui_runtime as ui_runtime
+    import hextech.display.desktop.runtime as ui_runtime
 
-    ui_text = (RUN_DIR / "display" / "hextech_ui.py").read_text(encoding="utf-8")
-    runtime_text = (RUN_DIR / "display" / "ui_runtime.py").read_text(encoding="utf-8")
+    ui_text = (RUN_DIR / "hextech" / "display" / "desktop" / "app.py").read_text(encoding="utf-8")
+    runtime_text = (RUN_DIR / "hextech" / "display" / "desktop" / "runtime.py").read_text(encoding="utf-8")
     init_start = ui_text.index("    def __init__(self):")
     init_end = ui_text.index("    def _start_web_server", init_start)
     init_body = ui_text[init_start:init_end]
@@ -2842,16 +3138,10 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert "self._start_web_server()" not in init_body
 
     root_entry_imports = _top_level_import_names(RUN_DIR / "hextech_ui.py")
-    display_init_imports = _top_level_import_names(RUN_DIR / "display" / "__init__.py")
     assert not any(name.startswith("display") for name in root_entry_imports)
-    assert ".web_server" not in display_init_imports
-    assert ".hextech_ui" not in display_init_imports
 
     assert _probe_clean_import("hextech_ui.py") == set()
-    assert _probe_clean_import("game_overlay_host.py") == set()
-    assert _probe_module_import("game_overlay") == set()
-    assert _probe_module_import("game_overlay.host") == set()
-    assert _probe_module_import("display.game_overlay_host") == set()
+    assert _probe_module_import("hextech.overlay.host") == set()
 
     captured: dict[str, Any] = {}
 
@@ -2906,13 +3196,17 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
     assert "hextech_snapshot_files" in manifest
     hextech_files = manifest["hextech_snapshot_files"]
     assert isinstance(hextech_files, list)
+    assert hextech_files
+    assert all(str(item).replace("\\", "/").startswith("resources/snapshots/hextech/") for item in hextech_files)
 
     assert "synergy_data_file" in manifest
     assert manifest["synergy_data_file"]
+    assert str(manifest["synergy_data_file"]).replace("\\", "/").startswith("resources/snapshots/synergy/")
 
     assert "synergy_data_files" in manifest
     synergy_files = manifest["synergy_data_files"]
     assert isinstance(synergy_files, list)
+    assert all(str(item).replace("\\", "/").startswith("resources/snapshots/synergy/") for item in synergy_files)
 
     has_latest_pointer = any(Path(item).name == "Champion_Synergy_latest.v1.json" for item in synergy_files)
     has_timestamp_snapshot = any(
@@ -2925,27 +3219,49 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
     assert has_timestamp_snapshot
     assert "augment.name-to-icon.v1.json" in manifest.get("index_files", [])
     source_files = manifest.get("source_files", [])
-    assert "processing/lol_window.py" in source_files
-    assert "processing/overlay_context.py" in source_files
-    assert "processing/overlay_vision_sidecar.py" in source_files
-    assert "processing/official_overlay_provider.py" in source_files
-    assert "game_overlay/host.py" in source_files
-    assert "game_overlay/renderer.py" in source_files
-    assert "game_overlay/lifecycle.py" in source_files
-    assert "tools/probe_official_overlay_provider.py" in source_files
+    for required_source in (
+        "hextech/__init__.py",
+        "hextech/catalog/runtime_store.py",
+        "hextech/core/refresh.py",
+        "hextech/core/settings.py",
+        "hextech/display/desktop/app.py",
+        "hextech/display/web/app.py",
+        "hextech/overlay/host.py",
+        "hextech/overlay/lifecycle.py",
+        "hextech/overlay/vision/sidecar.py",
+        "hextech/scraping/hextech/scraper.py",
+        "hextech/scraping/synergy/scraper.py",
+        "hextech/scraping/transport/scrapling_client.py",
+        "hextech/support/atomic_io.py",
+        "hextech/support/log_utils.py",
+        "hextech_ui.py",
+        "web_server.py",
+        "tools/acceptance/overlay_performance_probe.py",
+        "tools/acceptance/smoke_packaged_startup.py",
+        "tools/acceptance/probe_official_overlay_provider.py",
+    ):
+        assert required_source in source_files
+    legacy_source_prefixes = ("crawler/", "display/", "game_overlay/", "processing/", "scraping/")
+    assert not any(str(item).startswith(legacy_source_prefixes) for item in source_files)
     serialized_manifest = json.dumps(manifest, ensure_ascii=False)
     assert not any("data/runtime" in str(item) for item in source_files)
     assert not any("data/raw" in str(item) for item in source_files)
+    assert "data/raw" not in serialized_manifest.replace("\\", "/")
     assert "data/runtime" not in serialized_manifest.replace("\\", "/")
     assert "overlay_anchor_calibration.v1.json" not in serialized_manifest
 
     with TemporaryDirectory() as tmp_dir:
         fixture_root = Path(tmp_dir) / "fixture"
         fixture_index = fixture_root / "data" / "indexes"
+        fixture_static = fixture_root / "hextech" / "display" / "web" / "static"
         fixture_index.mkdir(parents=True)
+        fixture_static.mkdir(parents=True)
         (fixture_index / "augment.name-to-icon.v1.json").write_text('{"尤里卡":"assets/1.png"}', encoding="utf-8")
+        (fixture_static / "index.html").write_text("<html></html>", encoding="utf-8")
         prepared = prepare_bundle_runtime(fixture_root, Path(tmp_dir) / "build")
         assert (prepared / "data" / "indexes" / "augment.name-to-icon.v1.json").is_file()
+        assert (prepared / "static" / "index.html").is_file()
+        assert not (prepared / "data" / "raw").exists()
 
     if verbose:
         print("has_hextech_snapshot_files", True)
@@ -2962,7 +3278,7 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
 
 def check_overlay_performance_probe_contract() -> None:
     """验证游戏内显示性能记录结构可用于阶段 5 手动验收。"""
-    import tools.overlay_performance_probe as overlay_performance_probe
+    import tools.acceptance.overlay_performance_probe as overlay_performance_probe
 
     sample = overlay_performance_probe.build_overlay_performance_report(
         service_samples={
@@ -2987,7 +3303,7 @@ def check_overlay_performance_probe_contract() -> None:
     assert sample["targets"]["overlay_p95_ms"] == 500.0
     assert sample["manual_acceptance_required"] is True
 
-    module_text = (RUN_DIR / "tools" / "overlay_performance_probe.py").read_text(encoding="utf-8").lower()
+    module_text = (RUN_DIR / "tools" / "acceptance" / "overlay_performance_probe.py").read_text(encoding="utf-8").lower()
     assert "requests" not in module_text
     assert "data/runtime" not in module_text
 
@@ -2997,11 +3313,11 @@ def check_game_overlay_documentation_contract() -> None:
 
     readme_text = (RUN_DIR / "README.md").read_text(encoding="utf-8")
     project_text = (RUN_DIR / "PROJECT.md").read_text(encoding="utf-8")
-    design_text = (RUN_DIR / "hextech_game_overlay_design.md").read_text(encoding="utf-8")
+    design_text = (RUN_DIR / "docs" / "hextech_game_overlay_design.md").read_text(encoding="utf-8")
     assert "阶段 3R" in readme_text
     assert "2560x1600" in readme_text
-    assert "python -m processing.overlay_vision_sidecar --once --preset auto --write-event" in readme_text
-    assert "python -m processing.overlay_vision_sidecar --loop --preset auto --write-event" in readme_text
+    assert "python -m hextech.overlay.vision.sidecar --once --preset auto --write-event" in readme_text
+    assert "python -m hextech.overlay.vision.sidecar --loop --preset auto --write-event" in readme_text
     assert "默认不显示占位框" in readme_text
     assert "开关开 + active 海克斯选择事件 + 游戏窗口在前台" in readme_text
     assert "蓝色选择按钮" in readme_text
@@ -3012,17 +3328,17 @@ def check_game_overlay_documentation_contract() -> None:
     assert "P95 <= 500ms" in readme_text
     assert "不承诺独占全屏" in readme_text
     assert "阶段 0-5" in project_text
-    assert "processing/overlay_vision_sidecar.py" in project_text
-    assert "processing/official_overlay_provider.py" in project_text
-    assert "tools/overlay_performance_probe.py" in project_text
-    assert "tools/probe_official_overlay_provider.py" in project_text
+    assert "hextech/overlay/vision/sidecar.py" in project_text
+    assert "hextech/overlay/providers/official.py" in project_text
+    assert "tools/acceptance/overlay_performance_probe.py" in project_text
+    assert "tools/acceptance/probe_official_overlay_provider.py" in project_text
     assert "默认不显示占位框" in project_text
     assert "蓝色按钮场景门控" in project_text
     assert "overlay_anchor_calibration.v1.json" in project_text
     assert "body_shard` 只作为诊断类型不显示" in project_text
     assert "蓝色选择按钮是游戏内显示的主场景门控" in design_text
     assert "官方接口优先验证顺序" in design_text
-    assert "python tools/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json" in design_text
+    assert "python tools/acceptance/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json" in design_text
     assert "data/runtime/state/overlay_anchor_calibration.v1.json" in design_text
     assert "打包后首次启动必须重新校准" in design_text
     assert "不验证真实 Vision 识别" not in project_text
@@ -3031,20 +3347,22 @@ def check_game_overlay_documentation_contract() -> None:
 def check_packaged_smoke_uses_explicit_feature_flags() -> None:
     """验证空仓烟测不依赖桌面 UI 默认开关状态。"""
 
-    smoke_text = (RUN_DIR / "tools" / "smoke_packaged_startup.py").read_text(encoding="utf-8")
+    smoke_text = (RUN_DIR / "tools" / "acceptance" / "smoke_packaged_startup.py").read_text(encoding="utf-8")
     assert '"web_frontend_enabled": True' in smoke_text
     assert '"game_overlay_enabled": False' in smoke_text
     assert '"auto_open_browser": False' in smoke_text
     assert "_write_smoke_feature_flags(runtime_root)" in smoke_text
     assert "OVERLAY_ANCHOR_CALIBRATION_FILENAME" in smoke_text
+    assert "package:resources/snapshots/synergy/Champion_Synergy_latest.v1.json" in smoke_text
     assert "package:data/runtime absent" in smoke_text
+    assert "package:data/raw absent" in smoke_text
     assert "overlay_anchor_calibration.v1.json" in smoke_text
 
 
 def check_packaged_smoke_extracts_representative_champion_id_variants() -> None:
     """验证打包烟测代表英雄提取兼容 Web API 的真实字段名。"""
 
-    import tools.smoke_packaged_startup as smoke_packaged_startup
+    import tools.acceptance.smoke_packaged_startup as smoke_packaged_startup
 
     champion_name, champion_id = smoke_packaged_startup._extract_representative_champion(
         [{"英雄名称": "德玛西亚之力", "英雄 ID": "86", "英文名": "Garen"}]
@@ -3063,7 +3381,7 @@ def check_packaged_smoke_extracts_representative_champion_id_variants() -> None:
 def check_atomic_json_write_retries_transient_replace_conflict() -> None:
     """验证 Windows 下瞬时 replace 冲突不会让 startup_status 类 JSON 写入失败。"""
 
-    import tools.atomic_io as atomic_io
+    import hextech.support.atomic_io as atomic_io
 
     with TemporaryDirectory() as tmp_dir:
         target = Path(tmp_dir) / "startup_status.json"
@@ -4106,39 +4424,39 @@ def run_manual_web_synergy(args) -> dict:
 
 
 def check_overlay_diagnostic_translation_table() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 
 def check_overlay_format_private_stats_three_states() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 
 def check_overlay_extract_event_status_legacy() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 
 def check_overlay_render_rows_low_confidence_and_top_candidates() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 
 def check_overlay_render_rows_excludes_source_heroes_from_tags() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 
 def check_overlay_visibility_decision_table() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 
 def check_overlay_stable_snapshot_separates_live_status() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 
 def check_overlay_layout_three_viewports() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 
 def check_overlay_draw_perf_smoke() -> None:
-    """兼容旧检查入口；当前验收统一由独立 game_overlay 模块契约覆盖。"""
+    """委托统一 overlay 模块契约检查。"""
     check_game_overlay_module_contract()
 
 def check_game_overlay_module_contract() -> None:
@@ -4146,29 +4464,28 @@ def check_game_overlay_module_contract() -> None:
 
     import queue
 
-    import game_overlay.host as overlay_host
-    import game_overlay.lifecycle as overlay_lifecycle
-    import game_overlay.renderer as overlay_renderer
-    from display.service_manager import ServiceManager
-    from game_overlay.lifecycle import GameOverlayController
-    from processing.overlay_vision_layout import pick_card_panels
+    import hextech.overlay.host as overlay_host
+    import hextech.overlay.lifecycle as overlay_lifecycle
+    import hextech.overlay.renderer as overlay_renderer
+    from hextech.display.desktop.service_manager import ServiceManager
+    from hextech.overlay.lifecycle import GameOverlayController
+    from hextech.overlay.vision.layout import pick_card_panels
     from tools import overlay_render_snapshot
 
-    # 导入独立包和 host 不得隐式加载 Web/display 产品模块。
+    # 导入 overlay 主实现不得隐式加载 Web 产品模块。
     probe = """
 import importlib, json, sys
-importlib.import_module('game_overlay')
-importlib.import_module('game_overlay.host')
+importlib.import_module('hextech.overlay')
+importlib.import_module('hextech.overlay.host')
 blocked = [name for name in sys.modules if name == 'display' or name.startswith('display.') or name == 'fastapi' or name.startswith('fastapi.') or name == 'uvicorn' or name.startswith('uvicorn.') or name == 'webbrowser']
 print(json.dumps(blocked))
 """
-    output = subprocess.check_output([sys.executable, "-c", probe], cwd=str(RUN_DIR), text=True, encoding="utf-8")
+    output = subprocess.check_output([sys.executable, "-B", "-c", probe], cwd=str(RUN_DIR), text=True, encoding="utf-8")
     assert json.loads(output) == []
-    package_dir = RUN_DIR / "game_overlay"
-    assert {"__init__.py", "__main__.py", "lifecycle.py", "host.py", "data_source.py", "renderer.py"} <= {
-        path.name for path in package_dir.iterdir() if path.is_file()
-    }
-    for path in package_dir.glob("*.py"):
+    implementation_dir = RUN_DIR / "hextech" / "overlay"
+    overlay_filenames = {"__init__.py", "__main__.py", "lifecycle.py", "host.py", "data_source.py", "renderer.py"}
+    assert overlay_filenames <= {path.name for path in implementation_dir.iterdir() if path.is_file()}
+    for path in implementation_dir.glob("*.py"):
         text = path.read_text(encoding="utf-8")
         assert "import display" not in text and "from display" not in text, path
         assert "fastapi" not in text.lower() and "uvicorn" not in text.lower(), path
@@ -4193,7 +4510,8 @@ print(json.dumps(blocked))
     ):
         overlay_lifecycle.start_sidecar_process()
     source_command = source_popen.call_args.args[0]
-    assert source_command[:3] == [sys.executable, "-m", "processing.overlay_vision_sidecar"]
+    assert source_command[:3] == [sys.executable, "-m", "hextech.overlay.vision.sidecar"]
+    assert "processing.overlay_vision_sidecar" not in source_command
     assert "--debug-dump" not in source_command
 
     with (
@@ -5021,7 +5339,7 @@ print(json.dumps(blocked))
             error_canvas.after_calls[-1][1]()
     assert [delay for delay, _callback in error_canvas.after_calls[:4]] == [120, 120, 120, 240]
 
-    host_text = (package_dir / "host.py").read_text(encoding="utf-8")
+    host_text = (implementation_dir / "host.py").read_text(encoding="utf-8")
     assert "_schedule_window_follow" not in host_text
     assert "follow_poll_ms" not in host_text
 
@@ -5215,7 +5533,7 @@ print(json.dumps(blocked))
     assert drained_toggles == ["toggle", "toggle"]
 
     # 正式与诊断共用同一纯 renderer；快照必须直接输出 PNG，源码不允许 PS fallback。
-    renderer_text = (package_dir / "renderer.py").read_text(encoding="utf-8").lower()
+    renderer_text = (implementation_dir / "renderer.py").read_text(encoding="utf-8").lower()
     assert not any(token in renderer_text for token in ("banner", "top_candidates", "cache miss", "context pending"))
     snapshot_tool_text = (RUN_DIR / "tools" / "overlay_render_snapshot.py").read_text(encoding="utf-8").lower()
     assert "postscript" not in snapshot_tool_text and "ghostscript" not in snapshot_tool_text
@@ -5241,74 +5559,27 @@ print(json.dumps(blocked))
         assert png_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def _run_named_checks(check_names: tuple[str, ...]) -> None:
+    """按 registry 保存的顺序执行检查函数，避免 CLI 层继续维护长清单。"""
+
+    namespace = globals()
+    for check_name in check_names:
+        check = namespace.get(check_name)
+        if not callable(check):
+            raise RuntimeError(f"自检清单引用了不存在的检查函数：{check_name}")
+        check()
+
+
 def run_default_checks() -> None:
-    check_root_entrypoints()
-    check_manual_alias_index()
-    check_manifest_icon_url_safety()
-    check_cdragon_force_refresh_semantics()
-    check_cdragon_source_schema_marker()
-    check_safe_detail_name_regex()
-    check_apexlol_hextech_map_size_limit()
-    check_runtime_alias_persistence()
-    check_detail_hero_param_uses_text_content()
-    check_heal_worker_contract()
-    check_latest_valid_runtime_csv_fallback()
-    check_hextech_scraper_fallback_contract()
-    check_hextech_cooldown_and_heal_fallback()
-    check_hextech_failed_refresh_never_overwrites_csv()
-    check_hextech_success_clears_fallback_state()
-    check_logging_contract()
-    check_packaging_config()
-    check_bundle_manifest()
-    check_overlay_performance_probe_contract()
-    check_game_overlay_documentation_contract()
-    check_packaged_smoke_uses_explicit_feature_flags()
-    check_packaged_smoke_extracts_representative_champion_id_variants()
-    check_atomic_json_write_retries_transient_replace_conflict()
-    check_precomputed_cache_freshness()
-    check_apex_source_snapshot_policy()
-    check_hextech_source_parser()
-    check_synergy_refresh_freshness()
-    check_synergy_snapshot_store()
-    check_synergy_structured_payloads()
-    check_detail_question_mark_augment_guard()
-    check_detail_hextech_card_layout_contract()
-    check_static_css_single_mount_contract()
-    check_web_bootstrap_avoids_load_event_gate()
-    check_api_champions_uses_stable_catalog_before_network_snapshot()
-    check_redirect_api_does_not_sync_preload_before_response()
-    check_redirect_api_defers_browser_open_before_response()
-    check_detail_api_defers_cold_local_processing()
-    check_detail_renders_before_deferred_icon_catalog()
-    check_ui_feature_flags_contract()
-    check_overlay_hint_cache_contract()
-    check_overlay_runtime_paths_contract()
-    check_overlay_event_channel_contract()
-    check_overlay_context_contract()
-    check_lol_window_contract()
-    check_official_overlay_provider_contract()
-    check_overlay_vision_sidecar_contract()
-    check_game_overlay_module_contract()
-    check_desktop_ui_feature_switch_contract()
-    check_synergy_alias_collision_guard()
-    check_synergy_api_quarantines_duplicate_pollution()
-    check_synergy_playwright_calibrator_contract()
-    check_no_legacy_imports()
+    from tools.checks.registry import DEFAULT_CHECKS
+
+    _run_read_only_offline_checks(DEFAULT_CHECKS)
 
 
 def run_overlay_only_checks() -> None:
-    check_overlay_performance_probe_contract()
-    check_game_overlay_documentation_contract()
-    check_ui_feature_flags_contract()
-    check_overlay_hint_cache_contract()
-    check_overlay_runtime_paths_contract()
-    check_overlay_event_channel_contract()
-    check_overlay_context_contract()
-    check_lol_window_contract()
-    check_official_overlay_provider_contract()
-    check_overlay_vision_sidecar_contract()
-    check_game_overlay_module_contract()
-    check_desktop_ui_feature_switch_contract()
+    from tools.checks.registry import OVERLAY_ONLY_CHECKS
+
+    _run_read_only_offline_checks(OVERLAY_ONLY_CHECKS)
 
 
 def build_parser() -> argparse.ArgumentParser:

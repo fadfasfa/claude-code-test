@@ -7,7 +7,7 @@ from __future__ import annotations
 
 核心输入：
 - bundle manifest
-- bundle 内 `data/static`、`data/indexes`、`data/raw/hextech`、`data/raw/synergy` 与 `assets/`
+- bundle 内 `data/static`、`data/indexes`、`resources/snapshots/*` 与 `assets/`
 
 核心输出：
 - 运行目录中的稳定配置和图片资源
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 维护提醒：
 - 稳定资源只补缺失文件；Hextech 快照只在包内文件更新时覆盖旧快照
+- 新 manifest 使用 `resources/snapshots/*`；旧 `data/raw/*` manifest 仍兼容读取
 """
 
 import json
@@ -28,8 +29,10 @@ from tools.bundle_manifest import BUNDLE_MANIFEST_NAME
 
 
 HEXTECH_SNAPSHOT_PREFIX = PurePosixPath("data/raw/hextech")
+BUNDLED_HEXTECH_SNAPSHOT_PREFIX = PurePosixPath("resources/snapshots/hextech")
 HEXTECH_SNAPSHOT_PATTERN_PREFIX = "Hextech_Data_"
 SYNERGY_DATA_PREFIX = PurePosixPath("data/raw/synergy")
+BUNDLED_SYNERGY_DATA_PREFIX = PurePosixPath("resources/snapshots/synergy")
 SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
 SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
 SYNERGY_SNAPSHOT_PATTERN_PREFIX = "Champion_Synergy_"
@@ -72,7 +75,7 @@ def _hextech_snapshot_path(relative_name: object) -> PurePosixPath | None:
     if relative_path is None:
         return None
 
-    if relative_path.parent == HEXTECH_SNAPSHOT_PREFIX:
+    if relative_path.parent in {HEXTECH_SNAPSHOT_PREFIX, BUNDLED_HEXTECH_SNAPSHOT_PREFIX}:
         snapshot_path = relative_path
     elif len(relative_path.parts) == 1:
         # 兼容旧 manifest 若只记录文件名，运行时仍按标准目录播种。
@@ -91,7 +94,7 @@ def _synergy_data_path(relative_name: object) -> PurePosixPath | None:
     if relative_path is None:
         return None
 
-    if relative_path.parent == SYNERGY_DATA_PREFIX:
+    if relative_path.parent in {SYNERGY_DATA_PREFIX, BUNDLED_SYNERGY_DATA_PREFIX}:
         synergy_path = relative_path
     elif len(relative_path.parts) == 1:
         # 兼容旧 manifest 若只记录文件名，运行时仍按标准目录播种。

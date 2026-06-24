@@ -21,7 +21,7 @@ RUN_DIR = Path(__file__).resolve().parent.parent
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 
-from game_overlay.renderer import build_render_model, draw_overlay_frame
+from hextech.overlay.renderer import build_render_model, draw_overlay_frame
 
 
 logger = logging.getLogger(__name__)

@@ -36,7 +36,7 @@ build/
 # Hextech local build artifacts
 run/build/
 run/dist/
-run/display/node_modules/
+run/frontend/node_modules/
 
 # Hextech runtime state
 run/data/runtime/**

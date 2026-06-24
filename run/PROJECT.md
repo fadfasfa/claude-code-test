@@ -21,11 +21,16 @@
 | 层级 | 目录/入口 | 职责 | 不负责 |
 | :--- | :--- | :--- | :--- |
 | 入口薄壳 | `build.py`、`hextech_ui.py`、`web_server.py` | 保持历史命令兼容，把控制权转交给真实模块 | 不堆积业务逻辑 |
-| 展示与运行 | `display/` | 桌面窗口、本地 Web/API、浏览器/LCU 协同、前端静态资源 | 不做远端抓取实现 |
-| 数据处理 | `processing/` | 运行态路径、CSV/DataFrame、视图适配、缓存重建、刷新编排 | 不直接承载 UI 控件 |
-| 抓取与自愈 | `scraping/` | 海克斯/协同抓取、稳定资源同步、缺失产物修复 | 不阻塞首屏可用 |
-| 工具链 | `tools/` | 打包、白名单、运行态播种、清理、日志、自检、手动验收、烟测 | 不替代主业务入口 |
+| 主应用包 | `hextech/` | 承载稳定 import 根；所有可 import 业务代码收口到这里 | 不复制运行态状态 |
+| 前端源码 | `frontend/` | Tailwind 源码、Node 构建配置；输出仍写入 Web 静态目录 | 不承载运行时 API 或 Python 逻辑 |
+| 展示与运行 | `hextech/display/` | 桌面窗口、本地 Web/API、浏览器/LCU 协同、前端静态资源 | 不做远端抓取实现 |
+| 数据处理 | `hextech/catalog/` | 运行态路径、CSV/DataFrame、视图适配、缓存重建、别名索引 | 不直接承载 UI 控件 |
+| 核心编排 | `hextech/core/` | 后台刷新编排、运行态偏好和轻量核心合同 | 不承载 UI 控件 |
+| 抓取与自愈 | `hextech/scraping/` | 海克斯/协同业务抓取、稳定资源同步、图标目录维护、缺失产物修复和底层 transport | 不阻塞首屏可用 |
+| 抓取 transport | `hextech/scraping/transport/` | Scrapling / CloakBrowser 底层抓取客户端 | 不承载业务解析 |
+| 工具链 | `tools/` | 打包、白名单、运行态播种、自检、手动验收、烟测 | 不替代主业务入口 |
 | 运行态数据 | `data/` | 本机生成的抓取结果、缓存、锁、日志、profile | 不作为发布源数据 |
+| 资源目标边界 | `resources/` | 稳定只读资源边界；打包快照输出到 `resources/snapshots/` | 不存放 raw/runtime/cache/log/profile |
 
 ---
 
@@ -35,46 +40,50 @@
 | 文件 | 类型 | 职责 |
 | :--- | :--- | :--- |
 | `build.py` | thin entry | 打包入口薄壳，委托 `tools.build_bundle` |
-| `hextech_ui.py` | thin entry | 桌面启动薄壳，委托 `display.hextech_ui` |
-| `web_server.py` | thin entry | Web 启动薄壳，委托 `display.web_server` |
-| `display/hextech_ui.py` | ui | 桌面 UI 主类、控件结构与交互入口 |
-| `display/ui_runtime.py` | ui runtime | 桌面后台线程、Web 子进程、LCU 轮询、窗口同步、头像加载 |
-| `display/service_manager.py` | lifecycle | Web 前端生命周期、低频监听，以及向独立 GameOverlayController 委托启停 |
-| `game_overlay/lifecycle.py` | overlay lifecycle | host + Vision sidecar 原子启停、失败回滚和统一状态快照 |
-| `game_overlay/host.py` | overlay host | 透明置顶窗口、前台门控、Alt+H、最小事件轮询；不解释 Web 状态 |
-| `game_overlay/data_source.py` | overlay adapter | 通过统一协议读取共享 event/hint/context，为后续专属数据源保留替换点 |
-| `game_overlay/renderer.py` | overlay renderer | 固定三统计窗、0–3 当前英雄联动和 LoL 原生风格 Canvas 绘制 |
-| `game_overlay_host.py` | thin entry | 兼容旧启动方式并转发到 `game_overlay.host` |
-| `display/web_server.py` | web launcher | FastAPI 应用创建与 Uvicorn 启动 |
-| `display/web_api.py` | web api | HTTP/WS 路由、请求模型与接口编排 |
-| `display/web_runtime.py` | web runtime | Web 生命周期、LCU、缓存、浏览器与后台刷新触发 |
-| `processing/ui_feature_flags.py` | runtime | Web 前端、游戏内显示、私用统计和低频监听偏好持久化 |
-| `processing/overlay_hint_cache.py` | cache | overlay 本地轻量提示缓存生成、写入和按 augment_id 查询 |
-| `processing/overlay_vision_sidecar.py` | vision | Pillow/pywin32 本地窗口截图、蓝色按钮场景门控、固定 ROI、模板指纹匹配和事件写入 |
-| `processing/official_overlay_provider.py` | provider | 官方接口优先的三槽候选探测与归一化；只访问 Riot / LoL 本地接口，不直接渲染 overlay |
-| `processing/runtime_store.py` | runtime | CSV 与运行时文件定位、DataFrame 缓存与归一 |
-| `processing/view_adapter.py` | adapter | 首页榜单与海克斯详情数据适配 |
-| `processing/precomputed_cache.py` | cache | 预计算 API 缓存读写 |
-| `processing/query_terminal.py` | terminal | 终端查询输出 |
-| `processing/alias_search.py` | alias | 首页别名索引读取 |
-| `processing/alias_utils.py` | alias | 别名归一与去重 |
-| `processing/orchestrator.py` | orchestrator | 后台刷新、自愈与缓存重建编排；包含 4 小时高频新鲜度判断 |
-| `scraping/version_sync.py` | sync | 稳定资源同步、源码/冻结态运行根定位、首启目录引导 |
-| `scraping/full_hextech_scraper.py` | scraper | 海克斯高频数据抓取，目标总等待约 30 秒 |
-| `scraping/full_synergy_scraper.py` | scraper | 协同高频数据抓取，目标总等待约 28-30 秒 |
-| `scraping/augment_catalog.py` | catalog | 海克斯统一目录维护与预缓存 |
-| `scraping/icon_resolver.py` | icon | 海克斯图标查找、缓存与远端兜底 |
-| `scraping/heal_worker.py` | heal | 缺失关键产物自愈修复与启动状态写回 |
-| `scraping/augment_common.py` | helper | 海克斯目录公共辅助 |
+| `hextech_ui.py` | thin entry | 桌面启动薄壳，委托 `hextech.display.desktop.app` |
+| `web_server.py` | thin entry | Web 启动薄壳，委托 `hextech.display.web.app` |
+| `hextech/` | application package | 稳定 import 根；承载 desktop、Web、catalog、overlay、scraping 与 core 主实现 |
+| `frontend/` | frontend source | Tailwind 源码与 Node 构建配置，编译产物写入 `hextech/display/web/static/` |
+| `hextech/display/desktop/app.py` | ui | 桌面 UI 主类、控件结构与交互入口 |
+| `hextech/display/desktop/runtime.py` | ui runtime | 桌面后台线程、Web 子进程、LCU 轮询、窗口同步、头像加载 |
+| `hextech/display/desktop/service_manager.py` | lifecycle | Web 前端生命周期、低频监听，以及向独立 GameOverlayController 委托启停 |
+| `hextech/overlay/lifecycle.py` | overlay lifecycle | host + Vision sidecar 原子启停、失败回滚和统一状态快照 |
+| `hextech/overlay/host.py` | overlay host | 透明置顶窗口、前台门控、Alt+H、最小事件轮询；不解释 Web 状态 |
+| `hextech/overlay/data_source.py` | overlay adapter | 通过统一协议读取共享 event/hint/context，为后续专属数据源保留替换点 |
+| `hextech/overlay/renderer.py` | overlay renderer | 固定三统计窗、0–3 当前英雄联动和 LoL 原生风格 Canvas 绘制 |
+| `hextech/display/web/app.py` | web launcher | FastAPI 应用创建与 Uvicorn 启动 |
+| `hextech/display/web/api.py` | web api | HTTP/WS 路由、请求模型与接口编排 |
+| `hextech/display/web/runtime.py` | web runtime | Web 生命周期、LCU、缓存、浏览器与后台刷新触发 |
+| `hextech/core/settings.py` | runtime | Web 前端、游戏内显示、私用统计和低频监听偏好持久化 |
+| `hextech/overlay/hints.py` | cache | overlay 本地轻量提示缓存生成、写入和按 augment_id 查询 |
+| `hextech/overlay/vision/sidecar.py` | vision sidecar | Pillow/pywin32 本地窗口截图、蓝色按钮场景门控、固定 ROI、模板指纹匹配和事件写入 |
+| `hextech/overlay/providers/official.py` | provider | 官方接口优先的三槽候选探测与归一化；只访问 Riot / LoL 本地接口，不直接渲染 overlay |
+| `hextech/catalog/runtime_store.py` | runtime | CSV 与运行时文件定位、DataFrame 缓存与归一 |
+| `hextech/catalog/view_adapter.py` | adapter | 首页榜单与海克斯详情数据适配 |
+| `hextech/catalog/precomputed_cache.py` | cache | 预计算 API 缓存读写 |
+| `hextech/catalog/query_terminal.py` | terminal | 终端查询输出 |
+| `hextech/catalog/aliases.py` | alias | 首页别名索引读取 |
+| `hextech/catalog/alias_utils.py` | alias | 别名归一与去重 |
+| `hextech/core/refresh.py` | orchestrator | 后台刷新、自愈与缓存重建编排；包含 4 小时高频新鲜度判断 |
+| `hextech/scraping/version_sync.py` | sync | 稳定资源同步、源码/冻结态运行根定位、首启目录引导 |
+| `hextech/scraping/hextech/scraper.py` | scraper | 海克斯高频数据抓取，目标总等待约 30 秒 |
+| `hextech/scraping/synergy/scraper.py` | scraper | 协同高频数据抓取，目标总等待约 28-30 秒 |
+| `hextech/scraping/transport/scrapling_client.py` | transport | Scrapling 同步抓取客户端 |
+| `hextech/scraping/transport/cloakbrowser_client.py` | transport | CloakBrowser 同步抓取客户端 |
+| `hextech/scraping/transport/smoke_scrapling.py` | smoke | Scrapling 在线冒烟脚本 |
+| `hextech/scraping/augment_catalog.py` | catalog | 海克斯统一目录维护与预缓存 |
+| `hextech/scraping/icon_resolver.py` | icon | 海克斯图标查找、缓存与远端兜底 |
+| `hextech/scraping/heal_worker.py` | heal | 缺失关键产物自愈修复与启动状态写回 |
 | `tools/build_bundle.py` | build tool | 打包主流程、版本文件、PyInstaller 参数和产物整理 |
 | `tools/bundle_manifest.py` | build tool | 稳定资源白名单与 manifest 生成 |
 | `tools/runtime_bundle.py` | runtime tool | 打包后稳定资源播种 |
 | `tools/cleanup_runtime.py` | cleanup tool | 构建和运行态残留清理 |
-| `tools/log_utils.py` | support tool | 日志过滤、source 标识、UTF-8 输出和冻结态日志目录 |
-| `tools/dev_checks.py` | dev tool | 统一离线自检、bundle manifest 明细校验、Web/UI 手动验收辅助入口 |
-| `tools/overlay_performance_probe.py` | acceptance tool | 阶段 5 游戏内显示四状态资源与延迟样本摘要 |
-| `tools/probe_official_overlay_provider.py` | acceptance tool | 真实 LoL 中只读探测官方本地接口是否提供三槽候选；显式 `--write-event` 才写 overlay 事件 |
-| `tools/smoke_packaged_startup.py` | acceptance tool | 打包产物空仓首启 60 秒验收 |
+| `tools/dev_checks.py` | dev tool | 统一离线自检、bundle manifest 明细校验、Web/UI 手动验收辅助入口；检查执行顺序由 `tools/checks/registry.py` 维护 |
+| `tools/checks/` | dev tool | 分域自检清单；当前阶段只拆编排清单，不搬 5000 行检查函数体 |
+| `tools/acceptance/` | acceptance tool | 验收工具入口 |
+| `tools/acceptance/overlay_performance_probe.py` | acceptance tool | 阶段 5 游戏内显示四状态资源与延迟样本摘要 |
+| `tools/acceptance/probe_official_overlay_provider.py` | acceptance tool | 真实 LoL 中只读探测官方本地接口是否提供三槽候选；显式 `--write-event` 才写 overlay 事件 |
+| `tools/acceptance/smoke_packaged_startup.py` | acceptance tool | 打包产物空仓首启 60 秒验收 |
 
 ---
 
@@ -85,10 +94,11 @@
 
 这些资源可以进入便携包，因为它们随游戏/数据版本变化，而不是随用户运行即时变化：
 
-- `display/static/`
+- `hextech/display/web/static/`
 - `data/static/` 中的版本级稳定数据文件
 - `data/indexes/` 中的版本级稳定索引文件
 - `assets/` 中的稳定图片/图标资源
+- 包内 `resources/snapshots/` 中的首启种子快照
 - `Champion_Core_Data.json`
 - `Champion_Alias_Index.json`
 - `Augment_Icon_Manifest.json`
@@ -112,7 +122,9 @@
 - 任何启动后生成、抓取、缓存、锁、日志或计算产物
 
 协同数据的包内种子使用时间快照加 latest 指针：`Champion_Synergy_YYYYMMDD_HHMMSS.json`
-和 `Champion_Synergy_latest.v1.json`。旧固定名 `Champion_Synergy.json` 只保留只读迁移兜底。
+和 `Champion_Synergy_latest.v1.json`，但包内路径必须是 `resources/snapshots/synergy/`。
+Hextech 首启种子快照同理放入 `resources/snapshots/hextech/`。旧固定名
+`Champion_Synergy.json` 只保留只读迁移兜底。
 
 ### 4.3 首启运行态骨架
 
@@ -136,14 +148,14 @@
 
 ```mermaid
 flowchart TD
-    A[hextech_ui.py / web_server.py] --> B[display 层]
-    B --> C[processing.runtime_store]
+    A[hextech_ui.py / web_server.py] --> B[hextech.display]
+    B --> C[hextech.catalog.runtime_store]
     C --> D[data/raw + data/runtime]
-    B --> E[display.web_api]
+    B --> E[hextech.display.web.api]
     E --> F[Web 页面 / 浏览器]
-    B --> G[processing.orchestrator]
-    G --> H[scraping.heal_worker]
-    H --> I[full_hextech_scraper / full_synergy_scraper]
+    B --> G[hextech.core.refresh]
+    G --> H[hextech.scraping.heal_worker]
+    H --> I[hextech.scraping.hextech/synergy scraper]
     I --> D
 ```
 
@@ -153,8 +165,8 @@ flowchart TD
 - 首次空仓启动必须尽早写出 `startup_status.json` 和 `web_server_port.txt`。
 - 高频抓取在首次空仓启动必触发；之后只在文件缺失或超过 4 小时时触发。
 - 抓取失败应体现在状态和日志里，不应让本地 Web/API 长时间不可用。
-- 纯数据转换统一下沉到 `processing/`。
-- 远端依赖、稳定资源同步和自愈统一放在 `scraping/`。
+- 纯数据转换统一下沉到 `hextech/catalog/`。
+- 业务抓取、底层 transport、稳定资源同步、图标目录维护和自愈都放在 `hextech/scraping/`。
 
 ---
 
@@ -202,7 +214,7 @@ python tools/dev_checks.py --bundle-manifest
 ### 7.1 发布前最小验收
 
 ```powershell
-python tools/smoke_packaged_startup.py --timeout 60
+python tools/acceptance/smoke_packaged_startup.py --timeout 60
 ```
 
 验收脚本必须证明：
@@ -212,7 +224,8 @@ python tools/smoke_packaged_startup.py --timeout 60
 - 启动 exe 后 60 秒内可获得端口文件。
 - `startup_status.json` 是本轮启动后新写入。
 - 运行态目录全部位于便携目录根下。
-- `_internal/data/runtime` 不存在。
+- `_internal/data/runtime` 和 `_internal/data/raw` 不存在。
+- 包内首启种子位于 `_internal/resources/snapshots/` 或便携根 `resources/snapshots/`。
 - `/`、`/api/startup_status`、`/api/champions`、`/detail.html?champion=1`、`/api/synergies/1` 返回可操作响应。
 
 最近一次严格空仓烟测结果：约 3.83 秒可用。
@@ -239,14 +252,14 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 - `python tools/dev_checks.py` 必须通过，覆盖双开关配置、ServiceManager 生命周期、overlay hint cache、overlay event channel 和基础 overlay host 合同。
 - `python hextech_ui.py --game-overlay` 用于人工确认透明置顶、点击穿透、`Alt+H` 显隐、选择结束隐藏和游戏窗口跟随；无 active 选择事件或游戏不在前台时窗口保持隐藏。
 - overlay 默认不显示占位框；显示条件为“开关开 + active 海克斯选择事件 + 游戏窗口在前台”，`Alt+H` 只切换用户开关，不绕过事件和前台门控。
-- `python -c "from processing.overlay_event_channel import write_sample_overlay_event; print(write_sample_overlay_event())"` 用于写入本地三槽位样例事件；仍需游戏窗口在前台才会显示。
-- `python -c "from processing.overlay_event_channel import write_fake_detection_overlay_event; print(write_fake_detection_overlay_event())"` 用于写入假识别事件，验证“事件文件 -> overlay 三槽位渲染”的端到端通道。
-- `python -m processing.overlay_vision_sidecar --once --preset auto --write-event` 用于执行一次本地 Vision 探针；无 LoL 窗口时写入 inactive 诊断事件。
-- `python -m processing.overlay_vision_sidecar --loop --preset auto --write-event` 用于正式常驻链路；游戏窗口不存在或不在前台时低频待机，并只写一次 inactive 清理旧 active 事件；前台时按约 250ms 截图识别。
+- `python -c "from hextech.overlay.events import write_sample_overlay_event; print(write_sample_overlay_event())"` 用于写入本地三槽位样例事件；仍需游戏窗口在前台才会显示。
+- `python -c "from hextech.overlay.events import write_fake_detection_overlay_event; print(write_fake_detection_overlay_event())"` 用于写入假识别事件，验证“事件文件 -> overlay 三槽位渲染”的端到端通道。
+- `python -m hextech.overlay.vision.sidecar --once --preset auto --write-event` 用于执行一次本地 Vision 探针；无 LoL 窗口时写入 inactive 诊断事件。
+- `python -m hextech.overlay.vision.sidecar --loop --preset auto --write-event` 用于正式常驻链路；游戏窗口不存在或不在前台时低频待机，并只写一次 inactive 清理旧 active 事件；前台时按约 250ms 截图识别。
 - 识别判据为蓝色选择按钮 ROI 场景门控 + 灰度归一化指纹（NCC）+ top1/top2 margin + crop 方差下限，平坦暗面板不参与匹配；模板按图标内容去重，近孪生图标在置信度极高时豁免 margin；active 掉 unstable 延迟约 3 帧再写隐藏事件。新环境首次定位按钮并写 `data/runtime/state/overlay_anchor_calibration.v1.json`，后续每轮仍检测固定按钮 ROI；按钮不存在或锻体碎片三选一时隐藏 overlay。
-- `python tools/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json` 用于官方接口优先验证：只读探测 Live Client Data / LCU 是否提供三槽候选；只有显式 `--write-event` 且返回完整三槽时才写现有 overlay 事件协议。
-- `python tools/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag manual-lol-borderless` 用于记录阶段 5 人工延迟样本摘要。
-- `python -c "from processing.overlay_event_channel import write_inactive_overlay_event; print(write_inactive_overlay_event())"` 用于验证非选择态隐藏 overlay。
+- `python tools/acceptance/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json` 用于官方接口优先验证：只读探测 Live Client Data / LCU 是否提供三槽候选；只有显式 `--write-event` 且返回完整三槽时才写现有 overlay 事件协议。
+- `python tools/acceptance/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag manual-lol-borderless` 用于记录阶段 5 人工延迟样本摘要。
+- `python -c "from hextech.overlay.events import write_inactive_overlay_event; print(write_inactive_overlay_event())"` 用于验证非选择态隐藏 overlay。
 - LoL `Borderless` / 无边框全屏下人工确认 overlay 可见；当前 MVP 不承诺独占全屏覆盖，FSO 只作为机会性覆盖记录。
 - ROI 预设覆盖 `1920x1080`、`2560x1440` 和重点 `2560x1600`；DPI 缩放、多显示器和分辨率切换只记录为人工限制项。
 - 桌面控制台必须分别验证只开 Web、只开游戏内显示、两者同开、两者全关四种矩阵。
@@ -274,20 +287,23 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 <!-- PROJECT:SECTION:MAINTENANCE -->
 ## 九、维护规则
 
-- 新增 Web 路由优先落在 `display/web_api.py`。
-- 新增 Web 生命周期、LCU、缓存、端口或浏览器逻辑优先落在 `display/web_runtime.py`。
-- 新增 Web 前端生命周期或产品开关委托优先落在 `display/service_manager.py`。
-- 游戏内显示生命周期、窗口、数据适配和绘制分别落在 `game_overlay/lifecycle.py`、`host.py`、`data_source.py`、`renderer.py`。
-- `game_overlay` 不得导入 `display`、FastAPI、Web API 或浏览器模块；真实识别链路仍在 `processing/`。
-- 新增 overlay 本地三槽位事件协议优先落在 `processing/overlay_event_channel.py`；真实 Vision 输出只能作为该协议的上游。
-- 新增 overlay Vision 探针优先落在 `processing/overlay_vision_sidecar.py`；默认只使用 Pillow/pywin32 本地能力。
-- 新增官方接口三槽候选探针优先落在 `processing/official_overlay_provider.py` 与 `tools/probe_official_overlay_provider.py`；结果只能通过现有 overlay 事件协议输出。
-- 新增 overlay 性能验收摘要优先落在 `tools/overlay_performance_probe.py`。
-- 新增桌面线程、轮询、跳转和资源加载逻辑优先落在 `display/ui_runtime.py`。
-- `display/hextech_ui.py` 只保留 UI 结构、状态和交互入口，不继续堆积后台流程。
-- 新增 overlay hint cache 生成、查询和 schema 优先落在 `processing/overlay_hint_cache.py`。
-- 纯数据转换、DataFrame 清洗、终端展示适配优先落在 `processing/`。
-- 远端抓取、图标目录维护、稳定资源同步和自愈逻辑优先落在 `scraping/`。
+- 新增 Web 路由优先落在 `hextech/display/web/api.py`。
+- 新增 Web 生命周期、LCU、缓存、端口或浏览器逻辑优先落在 `hextech/display/web/runtime.py`。
+- 新增 Web 前端生命周期或产品开关委托优先落在 `hextech/display/desktop/service_manager.py`。
+- 游戏内显示生命周期、窗口、数据适配和绘制分别落在 `hextech/overlay/lifecycle.py`、`host.py`、`data_source.py`、`renderer.py`。
+- `hextech.overlay` 不得导入 FastAPI、Web API 或浏览器模块。
+- 新增 overlay 本地三槽位事件协议优先落在 `hextech/overlay/events.py`。真实 Vision 输出只能作为该协议的上游。
+- 新增 overlay Vision 探针优先落在 `hextech/overlay/vision/sidecar.py`。
+- 新增官方接口三槽候选探针优先落在 `hextech/overlay/providers/official.py` 与 `tools/acceptance/probe_official_overlay_provider.py`；结果只能通过现有 overlay 事件协议输出。
+- 新增 overlay 性能验收摘要优先落在 `tools/acceptance/overlay_performance_probe.py`。
+- 新增桌面线程、轮询、跳转和资源加载逻辑优先落在 `hextech/display/desktop/runtime.py`。
+- `hextech/display/desktop/app.py` 只保留 UI 结构、状态和交互入口，不继续堆积后台流程。
+- 新增 overlay hint cache 生成、查询和 schema 优先落在 `hextech/overlay/hints.py`。
+- 纯数据转换、DataFrame 清洗、终端展示适配优先落在 `hextech/catalog/`。
+- 底层抓取 transport 优先落在 `hextech/scraping/transport/`。
+- Scrapling 冒烟脚本优先落在 `hextech/scraping/transport/smoke_scrapling.py`。
+- 业务抓取优先落在 `hextech/scraping/hextech/scraper.py` 或 `hextech/scraping/synergy/scraper.py`。
+- 图标目录维护、稳定资源同步和自愈逻辑优先落在 `hextech/scraping/`。
 - 变更打包链路或验证入口时，必须同步检查 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`tools/dev_checks.py`、`README.md` 和本文件。
 - 变更目录结构、数据边界或首启验收标准时，必须同步更新 [README.md](README.md) 和本文件。
 
@@ -302,7 +318,7 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 | 2026-06-10 | hextech-game-overlay-vision-recalibration | 识别改为灰度归一化 NCC + margin/方差门槛杀暗面板假阳性；修复中文名被 ASCII 归一化滤空导致模板索引仅剩 2 个的致命假阴性；模板按内容去重 + 孪生图标高置信度豁免；ROI 重标定为图标紧贴框；active 退出防抖；新增 `--once --debug-dump` 校准转储；stop 路径仅在有运行服务时写隐藏事件 | `processing/overlay_vision_sidecar.py`、`processing/overlay_hint_cache.py`、`display/service_manager.py`、`tools/dev_checks.py`、`README.md`、`PROJECT.md` | 真实 LoL 卡片界面置信度/margin 实测、16:9 ROI 校准仍需 debug-dump 数据 |
 | 2026-06-10 | hextech-game-overlay-visibility-and-loop | 改为开关、active 事件、游戏前台三与门显隐；修复 Alt+H 全局热键；Vision sidecar 改为常驻自门控循环 | `display/`、`processing/`、`tools/dev_checks.py`、`README.md`、`PROJECT.md` | 真实 LoL Borderless 下识别置信度、ROI 对齐和 P95 延迟仍需人工验收 |
 | 2026-06-09 | hextech-game-overlay-stage-3r-5 | 新增 Pillow/pywin32 Vision MVP、ServiceManager sidecar 生命周期、打包 source manifest 审计和阶段 5 性能摘要结构 | `display/`、`processing/`、`tools/`、`README.md`、`PROJECT.md` | 真实 LoL Borderless 下 ROI 对齐、点击穿透、Alt+H、窗口跟随和 P95 延迟仍需人工验收 |
-| 2026-06-09 | hextech-game-overlay-stage-3-channel | 解耦 overlay 窗口可见性与本地选择事件，默认显示占位框；新增假识别事件写入入口并验证本地事件文件到三槽位渲染通道 | `display/game_overlay_host.py`、`processing/overlay_event_channel.py`、`tools/dev_checks.py`、`README.md`、`PROJECT.md` | 真实 Vision 识别、ROI、模板匹配、500ms 端到端和 LoL Borderless 人工验收仍在后续阶段 |
+| 2026-06-09 | hextech-game-overlay-stage-3-channel | 解耦 overlay 窗口可见性与本地选择事件，默认显示占位框；新增假识别事件写入入口并验证本地事件文件到三槽位渲染通道 | `hextech/overlay/host.py`、`hextech/overlay/events.py`、`tools/dev_checks.py`、`README.md`、`PROJECT.md` | 真实 Vision 识别、ROI、模板匹配、500ms 端到端和 LoL Borderless 人工验收仍在后续阶段 |
 | 2026-06-09 | hextech-game-overlay-stage-0-2 | 新增 Web 前端 / 游戏内显示双开关、ServiceManager、基础 overlay host、overlay hint cache 和阶段 0-2 验收合同 | `display/`、`processing/`、`tools/dev_checks.py`、`README.md`、`PROJECT.md` | Vision 识别、三 slot 文案接入、500ms 端到端、打包验收仍在后续阶段 |
 | 2026-05-20 | run-tools-verification-consolidation | 清理旧备份残留，收口临时测试和零散验收入口到 `tools/dev_checks.py` | `tools/`, `README.md`, `PROJECT.md` | Web/UI 联动验收仍需本地服务、浏览器和外网 |
 | 2026-04-28 | run-docs-clarify-project-state | 重构 `run/` 文档为现状面板 + 维护文档，补齐打包、空仓首启、数据边界和验收标准 | `README.md`、`PROJECT.md` | UI 悬浮窗点击路径仍需人工或 GUI 自动化验收 |

@@ -1,9 +1,9 @@
 """Web 服务兼容入口。
 
-保留根目录启动方式不变，并把实际实现委托给 `display.web_server`。
+保留根目录启动方式不变，并把实际实现委托给 `hextech.display.web.app`。
 """
 
-from display.web_server import app, run_web, run_web_server
+from hextech.display.web.app import app, run_web, run_web_server
 
 
 if __name__ == "__main__":
