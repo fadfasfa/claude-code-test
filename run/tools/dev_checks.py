@@ -828,31 +828,27 @@ def check_latest_valid_runtime_csv_fallback() -> None:
 def check_hextech_scraper_fallback_contract() -> None:
     """403 必须在英雄并发前熔断；有本地数据则降级可用。"""
 
-    class FakeResponse:
-        def __init__(self, status_code: int, payload: Any, text: str = "") -> None:
-            self.status_code = status_code
-            self._payload = payload
-            self.text = text
+    def fake_result(status_code: int | None, payload: Any = None, text: str = "", error: str = ""):
+        if payload is not None:
+            text = json.dumps(payload, ensure_ascii=False)
+        return hextech_scraper.ScraplingFetchResult(
+            url="https://example.test",
+            text=text,
+            status_code=status_code,
+            fetched_at="2026-06-23T00:00:00+00:00",
+            error=error,
+        )
 
-        def json(self) -> Any:
-            return self._payload
-
-        def raise_for_status(self) -> None:
-            if self.status_code >= 400:
-                error = requests.exceptions.HTTPError(f"{self.status_code} response")
-                error.response = self
-                raise error
-
-    class FakeSession:
+    class SequenceFetcher:
         def __init__(self) -> None:
             self.responses = [
-                FakeResponse(200, {"100": {"displayName": "测试海克斯"}}),
-                FakeResponse(200, [{"championId": "1"}]),
-                FakeResponse(403, {}),
+                fake_result(200, {"100": {"displayName": "测试海克斯"}}),
+                fake_result(200, [{"championId": "1"}]),
+                fake_result(403, {}),
             ]
             self.calls = 0
 
-        def get(self, *_args, **_kwargs) -> FakeResponse:
+        def __call__(self, *_args, **_kwargs):
             self.calls += 1
             return self.responses.pop(0)
 
@@ -861,14 +857,14 @@ def check_hextech_scraper_fallback_contract() -> None:
         fallback_csv = root / "Hextech_Data_2026-06-19.csv"
         status_file = root / "scraper_status.json"
         _write_runtime_csv(fallback_csv, 300)
-        session = FakeSession()
+        fetcher = SequenceFetcher()
         started_at = time.time()
 
         with (
             patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
             patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
             patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
-            patch.object(hextech_scraper, "get_advanced_session", return_value=session),
+            patch.object(hextech_scraper, "fetch_text", side_effect=fetcher),
             patch.object(hextech_scraper, "get_latest_valid_csv", return_value=str(fallback_csv)),
             patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
             patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
@@ -878,7 +874,7 @@ def check_hextech_scraper_fallback_contract() -> None:
             assert hextech_scraper.main_scraper() is True
 
         status = json.loads(status_file.read_text(encoding="utf-8"))
-        assert session.calls == 3
+        assert fetcher.calls == 3
         assert status["last_result"] == "fallback"
         assert status["reason"] == "http_403"
         assert status["active_csv"] == str(fallback_csv)
@@ -886,12 +882,12 @@ def check_hextech_scraper_fallback_contract() -> None:
         assert 5.9 * 60 * 60 <= blocked_until.timestamp() - started_at <= 6.1 * 60 * 60
 
         status_file.unlink()
-        failed_session = FakeSession()
+        failed_fetcher = SequenceFetcher()
         with (
             patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
             patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
             patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
-            patch.object(hextech_scraper, "get_advanced_session", return_value=failed_session),
+            patch.object(hextech_scraper, "fetch_text", side_effect=failed_fetcher),
             patch.object(hextech_scraper, "get_latest_valid_csv", return_value=None),
             patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
             patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
@@ -915,7 +911,7 @@ def check_hextech_cooldown_and_heal_fallback() -> None:
         patch.object(hextech_scraper, "load_scraper_status", return_value=fallback_status),
         patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
         patch.object(hextech_scraper, "get_latest_valid_csv", return_value="valid.csv"),
-        patch.object(hextech_scraper, "get_advanced_session", side_effect=AssertionError("冷却期不得发起网络请求")),
+        patch.object(hextech_scraper, "fetch_text", side_effect=AssertionError("冷却期不得发起网络请求")),
     ):
         assert hextech_scraper.main_scraper() is True
         assert hextech_scraper.check_execution_permission(force=True)[0] is True
@@ -945,30 +941,25 @@ def check_hextech_cooldown_and_heal_fallback() -> None:
 def check_hextech_failed_refresh_never_overwrites_csv() -> None:
     """低行数与 force 超时都只能回退，不能覆盖已有快照。"""
 
-    class FakeResponse:
-        status_code = 200
+    def fake_result(status_code: int | None, payload: Any = None, text: str = "ok", error: str = ""):
+        if payload is not None:
+            text = json.dumps(payload, ensure_ascii=False)
+        return hextech_scraper.ScraplingFetchResult(
+            url="https://example.test",
+            text=text,
+            status_code=status_code,
+            fetched_at="2026-06-23T00:00:00+00:00",
+            error=error,
+        )
 
-        def __init__(self, payload: Any, text: str = "ok") -> None:
-            self._payload = payload
-            self.text = text
-
-        def json(self) -> Any:
-            return self._payload
-
-        def raise_for_status(self) -> None:
-            return None
-
-    class SequenceSession:
+    class SequenceFetcher:
         def __init__(self, responses: list[Any]) -> None:
             self.responses = list(responses)
             self.calls = 0
 
-        def get(self, *_args, **_kwargs) -> FakeResponse:
+        def __call__(self, *_args, **_kwargs):
             self.calls += 1
-            next_value = self.responses.pop(0)
-            if isinstance(next_value, Exception):
-                raise next_value
-            return next_value
+            return self.responses.pop(0)
 
     one_row = {
         "英雄ID": "1",
@@ -982,8 +973,8 @@ def check_hextech_failed_refresh_never_overwrites_csv() -> None:
         "海克斯出场率": 0.02,
         "源站排名": 1,
     }
-    metadata = FakeResponse({"100": {"displayName": "测试海克斯"}})
-    stats = FakeResponse([{"championId": "1"}])
+    metadata = fake_result(200, {"100": {"displayName": "测试海克斯"}})
+    stats = fake_result(200, [{"championId": "1"}])
 
     with TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
@@ -992,7 +983,7 @@ def check_hextech_failed_refresh_never_overwrites_csv() -> None:
         status_file = root / "scraper_status.json"
         _write_runtime_csv(fallback_csv, 300)
         output_csv.write_text("do-not-overwrite", encoding="utf-8")
-        low_row_session = SequenceSession([metadata, stats, FakeResponse({}, text="detail")])
+        low_row_fetcher = SequenceFetcher([metadata, stats, fake_result(200, {}, text="detail")])
 
         common_patches = (
             patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
@@ -1008,7 +999,7 @@ def check_hextech_failed_refresh_never_overwrites_csv() -> None:
             for context_manager in common_patches:
                 stack.enter_context(context_manager)
             stack.enter_context(patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")))
-            stack.enter_context(patch.object(hextech_scraper, "get_advanced_session", return_value=low_row_session))
+            stack.enter_context(patch.object(hextech_scraper, "fetch_text", side_effect=low_row_fetcher))
             stack.enter_context(
                 patch.object(hextech_scraper, "atomic_write_csv", side_effect=AssertionError("低行数不得覆盖 CSV"))
             )
@@ -1022,11 +1013,12 @@ def check_hextech_failed_refresh_never_overwrites_csv() -> None:
             "reason": "http_403",
             "blocked_until": datetime.fromtimestamp(time.time() + 3600, tz=timezone.utc).isoformat(),
         }
-        timeout_session = SequenceSession(
+        timeout_fetcher = SequenceFetcher(
             [
-                FakeResponse({"100": {"displayName": "测试海克斯"}}),
-                FakeResponse([{"championId": "1"}]),
-                requests.exceptions.Timeout("simulated timeout"),
+                fake_result(200, {"100": {"displayName": "测试海克斯"}}),
+                fake_result(200, [{"championId": "1"}]),
+                fake_result(None, text="", error="simulated timeout"),
+                fake_result(None, text="", error="simulated timeout"),
             ]
         )
         with (
@@ -1036,38 +1028,111 @@ def check_hextech_failed_refresh_never_overwrites_csv() -> None:
             patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
             patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
             patch.object(hextech_scraper, "load_scraper_status", return_value=future_block),
-            patch.object(hextech_scraper, "get_advanced_session", return_value=timeout_session),
+            patch.object(hextech_scraper, "fetch_text", side_effect=timeout_fetcher),
             patch.object(hextech_scraper, "ThreadPoolExecutor", side_effect=AssertionError("预检超时不得创建线程池")),
             patch.object(hextech_scraper.time, "sleep"),
         ):
             assert hextech_scraper.main_scraper(force=True) is True
-        assert timeout_session.calls == 3
+        assert timeout_fetcher.calls == 4
         assert json.loads(status_file.read_text(encoding="utf-8"))["reason"] == "timeout"
 
 
-def check_hextech_success_clears_fallback_state() -> None:
-    class FakeResponse:
-        status_code = 200
+def check_hextech_detail_timeout_tail_retry() -> None:
+    """握手瞬断和单英雄详情 timeout 都应重试，不能直接熔断整轮。"""
 
-        def __init__(self, payload: Any, text: str = "ok") -> None:
-            self._payload = payload
-            self.text = text
+    def fake_result(status_code: int | None, payload: Any = None, text: str = "ok", error: str = ""):
+        if payload is not None:
+            text = json.dumps(payload, ensure_ascii=False)
+        return hextech_scraper.ScraplingFetchResult(
+            url="https://example.test",
+            text=text,
+            status_code=status_code,
+            fetched_at="2026-06-23T00:00:00+00:00",
+            error=error,
+        )
 
-        def json(self) -> Any:
-            return self._payload
-
-        def raise_for_status(self) -> None:
-            return None
-
-    class FakeSession:
+    class SequenceFetcher:
         def __init__(self) -> None:
             self.responses = [
-                FakeResponse({"100": {"displayName": "测试海克斯"}}),
-                FakeResponse([{"championId": "1"}]),
-                FakeResponse({}, text="detail"),
+                fake_result(None, text="", error="simulated tls error"),
+                fake_result(200, {"100": {"displayName": "测试海克斯"}}),
+                fake_result(200, [{"championId": "1"}, {"championId": "2"}]),
+                fake_result(200, text="detail-1"),
+                fake_result(None, text="", error="simulated timeout"),
+                fake_result(200, text="detail-2"),
+            ]
+            self.calls = 0
+
+        def __call__(self, *_args, **_kwargs):
+            self.calls += 1
+            return self.responses.pop(0)
+
+    row = {
+        "英雄ID": "1",
+        "英雄名称": "测试英雄",
+        "英雄评级": "S",
+        "英雄胜率": 0.5,
+        "英雄出场率": 0.1,
+        "海克斯阶级": "Gold",
+        "海克斯名称": "测试海克斯",
+        "海克斯胜率": 0.51,
+        "海克斯出场率": 0.02,
+        "源站排名": 1,
+    }
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        output_csv = root / "Hextech_Data_2026-06-21.csv"
+        status_file = root / "scraper_status.json"
+        fetcher = SequenceFetcher()
+        with (
+            patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
+            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
+            patch.object(
+                hextech_scraper,
+                "load_champion_core_data",
+                return_value={"1": {"name": "测试英雄 1"}, "2": {"name": "测试英雄 2"}},
+            ),
+            patch.object(hextech_scraper, "fetch_text", side_effect=fetcher),
+            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
+            patch.object(hextech_scraper, "build_daily_csv_path", return_value=str(output_csv)),
+            patch.object(
+                hextech_scraper,
+                "build_hextech_detail_urls",
+                side_effect=lambda champ_id: [f"https://example.test/detail/{champ_id}"],
+            ),
+            patch.object(hextech_scraper, "extract_champion_stats", return_value=[row] * 150),
+            patch.object(hextech_scraper, "cleanup_old_csvs"),
+            patch.object(hextech_scraper, "rebuild_runtime_caches"),
+            patch.object(hextech_scraper.time, "sleep"),
+        ):
+            assert hextech_scraper.main_scraper() is True
+
+        assert fetcher.calls == 6
+        assert json.loads(status_file.read_text(encoding="utf-8"))["last_result"] == "success"
+        assert len(pd.read_csv(output_csv, encoding=runtime_store.CSV_ENCODING)) == 300
+
+
+def check_hextech_success_clears_fallback_state() -> None:
+    def fake_result(payload: Any = None, text: str = "ok"):
+        if payload is not None:
+            text = json.dumps(payload, ensure_ascii=False)
+        return hextech_scraper.ScraplingFetchResult(
+            url="https://example.test",
+            text=text,
+            status_code=200,
+            fetched_at="2026-06-23T00:00:00+00:00",
+            error="",
+        )
+
+    class SequenceFetcher:
+        def __init__(self) -> None:
+            self.responses = [
+                fake_result({"100": {"displayName": "测试海克斯"}}),
+                fake_result([{"championId": "1"}]),
+                fake_result({}, text="detail"),
             ]
 
-        def get(self, *_args, **_kwargs) -> FakeResponse:
+        def __call__(self, *_args, **_kwargs):
             return self.responses.pop(0)
 
     row = {
@@ -1097,7 +1162,7 @@ def check_hextech_success_clears_fallback_state() -> None:
             patch.object(hextech_scraper, "load_scraper_status", return_value=stale_status),
             patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
             patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
-            patch.object(hextech_scraper, "get_advanced_session", return_value=FakeSession()),
+            patch.object(hextech_scraper, "fetch_text", side_effect=SequenceFetcher()),
             patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
             patch.object(hextech_scraper, "build_daily_csv_path", return_value=str(output_csv)),
             patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
@@ -1143,6 +1208,8 @@ def check_logging_contract() -> None:
     requirements = (RUN_DIR / "requirements.txt").read_text(encoding="utf-8")
     for dependency in (
         "requests>=2.32.3,<3",
+        "scrapling[fetchers]>=0.4.8,<0.5",
+        "cloakbrowser>=0.3,<0.4",
         "urllib3>=2.2,<3",
         "charset-normalizer>=3.3,<4",
         "chardet>=5.2,<6",
@@ -1166,7 +1233,18 @@ def check_packaging_config() -> None:
     assert "--specpath" in build_script
     assert "TemporaryDirectory" in build_script
     assert ".artifacts" in build_script
-    for dependency in ("filelock", "tkinter", "_tkinter", "win32gui", "win32con", "hextech.overlay.lifecycle"):
+    for dependency in (
+        "filelock",
+        "tkinter",
+        "_tkinter",
+        "win32gui",
+        "win32con",
+        "scrapling.fetchers",
+        "cloakbrowser",
+        "hextech.overlay.lifecycle",
+    ):
+        assert f'"{dependency}"' in build_script
+    for dependency in ("scrapling", "cloakbrowser"):
         assert f'"{dependency}"' in build_script
     assert "resolve_tcl_runtime_dirs" in build_script
     assert "resolve_tkinter_package_dir" in build_script
@@ -2380,6 +2458,11 @@ def check_overlay_vision_sidecar_contract() -> None:
     assert overlay_vision_sidecar._body_shard_scene_present(shard_scores) is True
 
     real_index = overlay_vision_sidecar.load_default_template_index()
+    glass_cannon_template = next((entry for entry in real_index if entry.name == "玻璃大炮"), None)
+    assert glass_cannon_template is not None
+    assert glass_cannon_template.augment_id == "glasscannon"
+    assert glass_cannon_template.tier == "棱彩"
+
     regression_fixture_dir = RUN_DIR / "data" / "static" / "overlay_vision_fixtures" / "hextech_20260622"
     regression_names = ("更万用的瞄准镜", "闪现向前", "大法师")
     regression_crops = [
@@ -3210,7 +3293,6 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
     assert "hextech_snapshot_files" in manifest
     hextech_files = manifest["hextech_snapshot_files"]
     assert isinstance(hextech_files, list)
-    assert hextech_files
     assert all(str(item).replace("\\", "/").startswith("resources/snapshots/hextech/") for item in hextech_files)
 
     assert "synergy_data_file" in manifest
@@ -3562,7 +3644,6 @@ def check_apex_source_snapshot_policy() -> None:
         env = {
             "APEX_SNAPSHOT_DIR": "",
             "APEX_ALLOW_ONLINE_FETCH": "0",
-            "APEX_ALLOW_BROWSER": "0",
             "APEX_SYNERGY_JSON_URL": "",
         }
 
@@ -3580,19 +3661,76 @@ def check_apex_source_snapshot_policy() -> None:
             source.close()
 
     source = synergy_scraper.ApexSource()
-    fetched = synergy_scraper.FetchedResource(url=source.base_url, text="<html></html>", source="selenium")
-    try:
-        with patch.dict(os.environ, {"APEX_ALLOW_BROWSER": "0"}):
-            with patch.object(source, "fetch_requests", return_value=None):
-                with patch.object(source, "fetch_browser", return_value=fetched) as fetch_browser:
-                    assert source.fetch(source.base_url, allow_browser=True) is None
-                    fetch_browser.assert_not_called()
+    detail_url = source.build_allowed_url("/zh/champions/Vi")
+    origin_html = "<html><body>强力联动 作者 评分</body></html>"
+    cf_html = "<html><script src='https://challenges.cloudflare.com/turnstile/v0/api.js'></script>Just a moment</html>"
 
-        with patch.dict(os.environ, {"APEX_ALLOW_BROWSER": "1"}):
-            with patch.object(source, "fetch_requests", return_value=None):
-                with patch.object(source, "fetch_browser", return_value=fetched) as fetch_browser:
-                    assert source.fetch(source.base_url, allow_browser=True) is fetched
-                    fetch_browser.assert_called_once_with(source.base_url)
+    def scrapling_result(status_code: int | None, text: str, error: str = "") -> synergy_scraper.ScraplingFetchResult:
+        return synergy_scraper.ScraplingFetchResult(
+            url=detail_url or source.base_url,
+            text=text,
+            status_code=status_code,
+            fetched_at="2026-06-23T00:00:00+00:00",
+            error=error,
+        )
+
+    try:
+        assert detail_url
+        with (
+            patch.object(synergy_scraper, "fetch_text", return_value=scrapling_result(200, origin_html)) as fetch_get,
+            patch.object(source, "fetch_stealthy", side_effect=AssertionError("origin 页面不应启动 Stealthy")),
+            patch.object(source, "fetch_cloakbrowser", side_effect=AssertionError("origin 页面不应启动 CloakBrowser")),
+        ):
+            fetched = source.fetch(detail_url)
+            assert fetched is not None
+            assert fetched.source == "scrapling-get"
+            fetch_get.assert_called_once()
+
+        with (
+            patch.object(synergy_scraper, "fetch_text", return_value=scrapling_result(403, cf_html)),
+            patch.object(
+                source,
+                "fetch_stealthy",
+                return_value=FetchedResource(url=detail_url, text=origin_html, source="scrapling-stealthy", status_code=200),
+            ) as fetch_stealthy,
+            patch.object(source, "fetch_cloakbrowser", side_effect=AssertionError("Stealthy 成功后不应启动 CloakBrowser")),
+        ):
+            fetched = source.fetch(detail_url)
+            assert fetched is not None
+            assert fetched.source == "scrapling-stealthy"
+            fetch_stealthy.assert_called_once_with(detail_url)
+
+        blocked_stealthy = FetchedResource(
+            url=detail_url,
+            text=cf_html,
+            source="scrapling-stealthy",
+            status_code=403,
+            error="cloudflare_block",
+        )
+        with (
+            patch.object(synergy_scraper, "fetch_text", return_value=scrapling_result(403, cf_html)),
+            patch.object(source, "fetch_stealthy", return_value=blocked_stealthy),
+            patch.object(
+                source,
+                "fetch_cloakbrowser",
+                return_value=FetchedResource(url=detail_url, text=origin_html, source="cloakbrowser", status_code=200),
+            ) as fetch_cloakbrowser,
+            patch.dict(os.environ, {"APEX_ALLOW_CLOAKBROWSER": "1"}),
+        ):
+            fetched = source.fetch(detail_url)
+            assert fetched is not None
+            assert fetched.source == "cloakbrowser"
+            fetch_cloakbrowser.assert_called_once()
+
+        with (
+            patch.object(synergy_scraper, "fetch_text", return_value=scrapling_result(403, cf_html)),
+            patch.object(source, "fetch_stealthy", return_value=blocked_stealthy),
+            patch.object(source, "fetch_cloakbrowser", side_effect=AssertionError("CloakBrowser 已禁用")),
+            patch.dict(os.environ, {"APEX_ALLOW_CLOAKBROWSER": "0"}),
+        ):
+            fetched = source.fetch(detail_url)
+            assert fetched is not None
+            assert fetched.source == "scrapling-stealthy"
     finally:
         source.close()
 
@@ -3760,6 +3898,7 @@ def check_synergy_refresh_freshness() -> None:
         patches = _patch_synergy_dir(temp_dir)
         with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             assert not heal_worker._synergy_data_fresh()
+            assert not orchestrator.auto_synergy_refresh_enabled()
             assert not orchestrator.should_refresh_synergy(False)
             assert not heal_worker.detect_missing_artifacts()["synergy_data"]
 
@@ -3835,6 +3974,15 @@ def check_synergy_refresh_freshness() -> None:
             assert not orchestrator.should_refresh_synergy(True)
             assert not heal_worker.detect_missing_artifacts()["synergy_data"]
 
+    with TemporaryDirectory() as temp_dir:
+        status_path = Path(temp_dir) / "synergy_refresh_status.json"
+        started_at = time.time()
+        with patch.object(orchestrator, "build_synergy_refresh_status_path", return_value=str(status_path)):
+            orchestrator._write_synergy_refresh_status("blocked", "cloudflare_block")
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        blocked_until = datetime.fromisoformat(status["blocked_until"])
+        assert 5.9 * 60 * 60 <= blocked_until.timestamp() - started_at <= 6.1 * 60 * 60
+
 
 def check_synergy_snapshot_store() -> None:
     with TemporaryDirectory() as temp_dir:
@@ -3844,24 +3992,51 @@ def check_synergy_snapshot_store() -> None:
             {"version": 1, "filename": snapshot.name, "non_empty_heroes": 1},
             1001,
         )
+        cleaned_missing = Path(temp_dir) / "Champion_Synergy_Cleaned.json"
 
-        with patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)):
+        with (
+            patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
+            patch.object(runtime_store, "build_synergy_cleaned_data_path", return_value=str(cleaned_missing)),
+        ):
             assert runtime_store.get_latest_synergy_snapshot_path() == str(snapshot.resolve())
             assert runtime_store.build_synergy_data_path() == str(snapshot.resolve())
+
+    with TemporaryDirectory() as temp_dir:
+        snapshot = _write_json(Path(temp_dir) / "Champion_Synergy_20260519_223505.json", {"1": {}}, 1000)
+        cleaned = _write_json(Path(temp_dir) / "Champion_Synergy_Cleaned.json", {"cleaned": {}}, 1002)
+        _write_json(
+            Path(temp_dir) / "Champion_Synergy_latest.v1.json",
+            {"version": 1, "filename": snapshot.name, "non_empty_heroes": 1},
+            1001,
+        )
+
+        with (
+            patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
+            patch.object(runtime_store, "build_synergy_cleaned_data_path", return_value=str(cleaned)),
+        ):
+            assert runtime_store.build_synergy_data_path() == str(cleaned)
 
     with TemporaryDirectory() as temp_dir:
         older = _write_json(Path(temp_dir) / "Champion_Synergy_20260518_010101.json", {"1": {}}, 1000)
         newer = _write_json(Path(temp_dir) / "Champion_Synergy_20260519_223505.json", {"2": {}}, 2000)
         (Path(temp_dir) / "Champion_Synergy_latest.v1.json").write_text("{bad", encoding="utf-8")
+        cleaned_missing = Path(temp_dir) / "Champion_Synergy_Cleaned.json"
 
-        with patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)):
+        with (
+            patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
+            patch.object(runtime_store, "build_synergy_cleaned_data_path", return_value=str(cleaned_missing)),
+        ):
             assert runtime_store.get_latest_synergy_snapshot_path() == str(newer)
             assert runtime_store.get_latest_synergy_snapshot_path() != str(older)
 
     with TemporaryDirectory() as temp_dir:
         legacy = _write_json(Path(temp_dir) / "Champion_Synergy.json", {"1": {}}, 1000)
+        cleaned_missing = Path(temp_dir) / "Champion_Synergy_Cleaned.json"
 
-        with patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)):
+        with (
+            patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
+            patch.object(runtime_store, "build_synergy_cleaned_data_path", return_value=str(cleaned_missing)),
+        ):
             assert runtime_store.get_latest_synergy_snapshot_path() is None
             assert runtime_store.build_synergy_data_path() == str(legacy)
 
@@ -3874,6 +4049,191 @@ def check_synergy_snapshot_store() -> None:
         assert "协同数据熔断" in str(exc)
     else:
         raise AssertionError("过小协同快照应触发发布熔断")
+
+
+def check_mayhem_combo_pipeline_contract() -> None:
+    from hextech.scraping.synergy.mayhem_combo_scraper import parse_combo_manifest
+    from tools.clean_mayhem_combos import merge_mayhem_combos
+
+    manifest_items, manifest_rejects, manifest_meta = parse_combo_manifest(
+        {
+            "pageSize": 1,
+            "totalCombos": 2,
+            "cards": [
+                {
+                    "id": 1,
+                    "championId": "Vayne",
+                    "champName": "暗夜猎手",
+                    "augmentId": "fan_the_hammer",
+                    "augmentName": "连拨击锤",
+                    "tier": "S+",
+                    "typeBadges": [{"label": "神级"}],
+                    "comboDescription": "每一发弩箭都可以触发 W 和攻击特效。",
+                    "comboHref": "/zh-cn/combo/vayne-fan-the-hammer/",
+                },
+                {
+                    "id": 2,
+                    "championId": "Brand",
+                    "champName": "复仇焰魂",
+                    "augmentId": "infernal_conduit",
+                    "augmentName": "炼狱导管",
+                    "tier": "S",
+                    "comboDescription": "技能灼烧不断缩减冷却。",
+                    "comboHref": "/zh-cn/combo/brand-infernal-conduit/",
+                },
+            ],
+        },
+        "https://arammayhem.com/zh-cn/combo/",
+        max_pages=1,
+    )
+    assert len(manifest_items) == 1
+    assert not manifest_rejects
+    assert manifest_meta["selected"] == 1
+    assert manifest_items[0]["source_url"].endswith("/zh-cn/combo/vayne-fan-the-hammer/")
+
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        apex_path = root / "Champion_Synergy_20260519_223505.json"
+        raw_path = root / "mayhem_combos.raw.json"
+        augment_manifest_path = root / "Augment_Icon_Manifest.json"
+        core_path = root / "Champion_Core_Data.json"
+        output_path = root / "Champion_Synergy_Cleaned.json"
+
+        _write_json(
+            core_path,
+            {
+                "67": {"name": "暗夜猎手", "title": "薇恩", "en_name": "Vayne", "aliases": []},
+                "63": {"name": "复仇焰魂", "title": "布兰德", "en_name": "Brand", "aliases": []},
+            },
+        )
+        _write_json(
+            augment_manifest_path,
+            [
+                {
+                    "name": "连拨击锤",
+                    "tier": "棱彩",
+                    "filename": "fanthehammer_small.png",
+                    "augment_name_id": "FanTheHammer",
+                    "source_icon_path": "/lol-game-data/assets/ASSETS/UX/Cherry/Augments/Icons/FanTheHammer_small.png",
+                },
+                {
+                    "name": "炼狱导管",
+                    "tier": "棱彩",
+                    "filename": "infernalconduit_small.png",
+                    "augment_name_id": "InfernalConduit",
+                    "source_icon_path": "/lol-game-data/assets/ASSETS/UX/Cherry/Augments/Icons/InfernalConduit_small.png",
+                },
+            ],
+        )
+        _write_json(
+            apex_path,
+            {
+                "67": {
+                    "id": "67",
+                    "name": "暗夜猎手",
+                    "title": "薇恩",
+                    "en_name": "Vayne",
+                    "aliases": [],
+                    "synergies": [],
+                    "synergy_items": [
+                        {
+                            "augment_names": ["连拨击锤"],
+                            "tier": "棱彩",
+                            "rating": "S",
+                            "tag": "强力联动",
+                            "author": "ApexLoL",
+                            "content": "Apex 已有同组合。",
+                        }
+                    ],
+                },
+                "63": {
+                    "id": "63",
+                    "name": "复仇焰魂",
+                    "title": "布兰德",
+                    "en_name": "Brand",
+                    "aliases": [],
+                    "synergies": [],
+                    "synergy_items": [],
+                },
+            },
+        )
+        _write_json(
+            raw_path,
+            {
+                "schema_version": 1,
+                "items": [
+                    {
+                        "champion": "暗夜猎手",
+                        "champion_id": "Vayne",
+                        "augment_names": ["Fan The Hammer"],
+                        "mayhem_tier": "神级",
+                        "mayhem_rating": "S+",
+                        "body": "重复组合不应加入。",
+                        "source_url": "https://arammayhem.com/zh-cn/combo/vayne-fan-the-hammer/",
+                    },
+                    {
+                        "champion": "复仇焰魂",
+                        "champion_id": "Brand",
+                        "augment_names": ["Infernal Conduit"],
+                        "mayhem_tier": "神级",
+                        "mayhem_rating": "S+",
+                        "body": "技能灼烧不断缩减冷却。",
+                        "source_url": "https://arammayhem.com/zh-cn/combo/brand-infernal-conduit/",
+                    },
+                    {
+                        "champion": "复仇焰魂",
+                        "champion_id": "Brand",
+                        "augment_names": ["Infernal Conduit"],
+                        "mayhem_tier": "神级",
+                        "mayhem_rating": "S",
+                        "body": "Retired in live Mayhem。",
+                        "source_url": "https://arammayhem.com/zh-cn/combo/brand-retired/",
+                    },
+                    {
+                        "champion": "复仇焰魂",
+                        "champion_id": "Brand",
+                        "augment_names": ["Infernal Conduit"],
+                        "mayhem_tier": "神级",
+                        "mayhem_rating": "A",
+                        "body": "依赖旧 Trait / Augment Sets 的组合。",
+                        "source_url": "https://arammayhem.com/zh-cn/combo/brand-trait/",
+                    },
+                ],
+                "rejects": [],
+            },
+        )
+
+        summary = merge_mayhem_combos(
+            apex_path=apex_path,
+            mayhem_raw_path=raw_path,
+            augment_manifest_path=augment_manifest_path,
+            core_data_path=core_path,
+            output_path=output_path,
+        )
+
+        assert summary["mayhem_raw_items"] == 4
+        assert summary["mayhem_valid_items"] == 2
+        assert summary["added_items"] == 1
+        assert summary["skipped_duplicate_items"] == 1
+        assert summary["clean_reject_items"] == 2
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        brand_items = payload["63"]["synergy_items"]
+        assert brand_items[0]["augment_names"] == ["炼狱导管"]
+        assert brand_items[0]["source"] == "arammayhem"
+        assert brand_items[0]["source_rating"] == "S+"
+
+        sentinel = {"sentinel": True}
+        output_path.write_text(json.dumps(sentinel, ensure_ascii=False), encoding="utf-8")
+        _write_json(raw_path, {"schema_version": 1, "items": [], "rejects": [{"reason": "empty"}]})
+        empty_summary = merge_mayhem_combos(
+            apex_path=apex_path,
+            mayhem_raw_path=raw_path,
+            augment_manifest_path=augment_manifest_path,
+            core_data_path=core_path,
+            output_path=output_path,
+        )
+        assert empty_summary["written"] is False
+        assert json.loads(output_path.read_text(encoding="utf-8")) == sentinel
 
 
 def _core_info() -> dict[str, ChampionInfo]:

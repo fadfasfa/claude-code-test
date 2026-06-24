@@ -845,7 +845,7 @@ def _name_crop_has_residue(crop: Image.Image, *, name_mask: Image.Image | None =
     return 0.005 <= foreground_ratio <= 0.45
 
 
-def _load_manifest_by_name(root: Path) -> dict[str, Mapping[str, Any]]:
+def _load_manifest_entries_by_name(root: Path) -> dict[str, list[Mapping[str, Any]]]:
     manifest_path = root / "data" / "static" / "Augment_Icon_Manifest.json"
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -853,16 +853,40 @@ def _load_manifest_by_name(root: Path) -> dict[str, Mapping[str, Any]]:
         return {}
     if not isinstance(payload, list):
         return {}
-    result: dict[str, Mapping[str, Any]] = {}
+    result: dict[str, list[Mapping[str, Any]]] = {}
     for item in payload:
         if not isinstance(item, Mapping):
             continue
         name = _clean_text(item.get("name"))
         if not name:
             continue
-        result.setdefault(name, item)
-        result.setdefault(normalize_augment_id(name), item)
+        result.setdefault(name, []).append(item)
+        result.setdefault(normalize_augment_id(name), []).append(item)
     return result
+
+
+def _select_manifest_item(
+    manifest_by_name: Mapping[str, Sequence[Mapping[str, Any]]],
+    name: str,
+    relative_icon: str,
+) -> Mapping[str, Any]:
+    entries = (
+        manifest_by_name.get(name)
+        or manifest_by_name.get(normalize_augment_id(name))
+        or ()
+    )
+    if not entries:
+        return {}
+
+    # CDragon 有少数同中文名但不同玩法/图标的条目。模板图标来自 name-to-icon，
+    # 因此元数据也要优先选择同 filename 的 manifest 项，避免图标正确但 tier/id 串到同名旧项。
+    requested_filename = Path(str(relative_icon or "").replace("\\", "/")).name.lower()
+    for item in entries:
+        filename = _clean_text(item.get("filename")).lower()
+        local_path = Path(_clean_text(item.get("local_path")).replace("\\", "/")).name.lower()
+        if requested_filename and requested_filename in {filename, local_path}:
+            return item
+    return entries[0]
 
 
 def build_template_index(raw_templates: Mapping[str, Mapping[str, Any]]) -> list[TemplateEntry]:
@@ -916,7 +940,7 @@ def load_default_template_index(
     if not isinstance(name_to_icon, Mapping):
         return []
 
-    manifest_by_name = _load_manifest_by_name(root)
+    manifest_by_name = _load_manifest_entries_by_name(root)
     raw_templates: dict[str, Mapping[str, Any]] = {}
     for name, icon_path in name_to_icon.items():
         clean_name = _clean_text(name)
@@ -934,7 +958,7 @@ def load_default_template_index(
             continue
         hint_result = query_overlay_hint(hint_cache or {}, clean_name)
         hint = hint_result.get("hint") if hint_result.get("ok") and isinstance(hint_result.get("hint"), Mapping) else {}
-        manifest_item = manifest_by_name.get(clean_name) or manifest_by_name.get(normalize_augment_id(clean_name)) or {}
+        manifest_item = _select_manifest_item(manifest_by_name, clean_name, relative_icon)
         template_id = normalize_augment_id(
             hint.get("augment_id") or manifest_item.get("augment_name_id") or manifest_item.get("cdragon_id") or clean_name,
             clean_name,

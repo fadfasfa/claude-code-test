@@ -65,7 +65,7 @@ SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
 
 def _auto_synergy_refresh_enabled() -> bool:
     env_enabled = os.getenv("HEXTECH_AUTO_SYNERGY_REFRESH", "0").strip().lower() in {"1", "true", "yes", "on"}
-    # synergy 已停自动更新，仅支持手动触发；原因：ApexLoL IP 级反爬，全量自动抓不可靠，待新版本恢复。
+    # ApexLoL 自动协同刷新仍处于退役状态；Mayhem 增量通过手动清洗脚本生成 cleaned 数据。
     return False and env_enabled
 
 

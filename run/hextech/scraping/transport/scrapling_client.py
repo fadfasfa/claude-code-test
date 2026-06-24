@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 
 FetchMode = Literal["get", "browser", "stealthy"]
@@ -22,6 +23,20 @@ class FetchResult:
     status_code: int | None
     fetched_at: str
     error: str | None
+
+
+@dataclass
+class ScraplingFetchResult:
+    """业务抓取端使用的纯文本结果，避免各 scraper 直接处理 Scrapling Response。"""
+
+    url: str
+    text: str
+    status_code: int | None
+    fetched_at: str
+    error: str
+
+    def json(self) -> Any:
+        return json.loads(self.text)
 
 
 def _require_scrapling() -> None:
@@ -49,6 +64,23 @@ def _response_html(response: object) -> str | None:
     if isinstance(body, str):
         return body
     return None
+
+
+def _response_text(response: object) -> str:
+    """兼容 body/content/html/text；JSON 原文优先从 body/content 取。"""
+    for attr in ("body", "content"):
+        value = getattr(response, attr, None)
+        if isinstance(value, bytes):
+            encoding = getattr(response, "encoding", None) or "utf-8"
+            return value.decode(encoding, errors="replace")
+        if isinstance(value, str):
+            return value
+
+    for attr in ("html", "text"):
+        value = getattr(response, attr, None)
+        if isinstance(value, str):
+            return value
+    return ""
 
 
 def _response_status(response: object) -> int | None:
@@ -136,3 +168,138 @@ def fetch_page(
             fetched_at=fetched_at,
             error=str(exc),
         )
+
+
+def fetch_text(
+    url: str,
+    *,
+    timeout_ms: int = 30_000,
+    headers: dict[str, str] | None = None,
+    impersonate: str = "chrome",
+    stealthy_headers: bool = True,
+) -> ScraplingFetchResult:
+    """用 Scrapling Fetcher 普通 HTTP GET 获取原文。"""
+    if timeout_ms <= 0:
+        raise ValueError("timeout_ms 必须大于 0")
+
+    _require_scrapling()
+
+    from scrapling.fetchers import Fetcher  # type: ignore
+
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    try:
+        response = Fetcher.get(
+            url,
+            timeout=timeout_ms / 1000,
+            headers=headers,
+            impersonate=impersonate,
+            stealthy_headers=stealthy_headers,
+            retries=1,
+        )
+        return ScraplingFetchResult(
+            url=url,
+            text=_response_text(response),
+            status_code=_response_status(response),
+            fetched_at=fetched_at,
+            error="",
+        )
+    except Exception as exc:
+        return ScraplingFetchResult(
+            url=url,
+            text="",
+            status_code=None,
+            fetched_at=fetched_at,
+            error=str(exc),
+        )
+
+
+def fetch_stealthy_text(
+    url: str,
+    *,
+    timeout_ms: int = 35_000,
+    wait_ms: int = 1_500,
+    headless: bool = True,
+    network_idle: bool = True,
+    wait_selector: str | None = None,
+    solve_cloudflare: bool = True,
+    user_data_dir: str = "",
+    real_chrome: bool = False,
+    cdp_url: str = "",
+) -> ScraplingFetchResult:
+    """用独立运行态 profile 的 StealthyFetcher 获取 Apex 受保护页面。"""
+    if timeout_ms <= 0:
+        raise ValueError("timeout_ms 必须大于 0")
+    if wait_ms < 0:
+        raise ValueError("wait_ms 不能小于 0")
+
+    _require_scrapling()
+
+    from scrapling.fetchers import StealthyFetcher  # type: ignore
+
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    kwargs: dict[str, object] = {
+        "timeout": timeout_ms,
+        "wait": wait_ms,
+        "headless": headless,
+        "network_idle": network_idle,
+        "solve_cloudflare": solve_cloudflare,
+        "real_chrome": real_chrome,
+    }
+    if wait_selector:
+        kwargs["wait_selector"] = wait_selector
+    if user_data_dir:
+        kwargs["user_data_dir"] = user_data_dir
+    if cdp_url:
+        kwargs["cdp_url"] = cdp_url
+
+    try:
+        response = StealthyFetcher.fetch(url, **kwargs)
+        return ScraplingFetchResult(
+            url=url,
+            text=_response_text(response),
+            status_code=_response_status(response),
+            fetched_at=fetched_at,
+            error="",
+        )
+    except Exception as exc:
+        return ScraplingFetchResult(
+            url=url,
+            text="",
+            status_code=None,
+            fetched_at=fetched_at,
+            error=str(exc),
+        )
+
+
+def fetch_json(
+    url: str,
+    *,
+    timeout_ms: int = 30_000,
+    expected_kind: type | tuple[type, ...] | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[Any | None, ScraplingFetchResult]:
+    """获取并解析 JSON；解析失败时把原因写入 result.error。"""
+    result = fetch_text(url, timeout_ms=timeout_ms, headers=headers)
+    if result.error:
+        return None, result
+
+    try:
+        payload = result.json()
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        return None, replace(result, error=f"json_decode_error:{exc}")
+
+    if expected_kind is not None and not isinstance(payload, expected_kind):
+        return None, replace(result, error=f"json_kind_mismatch:{type(payload).__name__}")
+
+    return payload, result
+
+
+__all__ = [
+    "FetchResult",
+    "FetchMode",
+    "ScraplingFetchResult",
+    "fetch_json",
+    "fetch_page",
+    "fetch_stealthy_text",
+    "fetch_text",
+]

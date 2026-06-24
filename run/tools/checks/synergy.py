@@ -10,6 +10,7 @@ CHECKS = (
     "check_apex_source_snapshot_policy",
     "check_synergy_refresh_freshness",
     "check_synergy_snapshot_store",
+    "check_mayhem_combo_pipeline_contract",
     "check_synergy_structured_payloads",
     "check_synergy_alias_collision_guard",
     "check_synergy_playwright_calibrator_contract",
