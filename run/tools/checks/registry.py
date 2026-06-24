@@ -38,6 +38,7 @@ DEFAULT_CHECKS = (
     "check_hextech_source_parser",
     "check_synergy_refresh_freshness",
     "check_synergy_snapshot_store",
+    "check_mayhem_combo_pipeline_contract",
     "check_synergy_structured_payloads",
     "check_detail_question_mark_augment_guard",
     "check_detail_hextech_card_layout_contract",

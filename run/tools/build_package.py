@@ -57,6 +57,8 @@ PYINSTALLER_HIDDEN_IMPORTS = [
     "uvicorn",
     "filelock",
     "bs4",
+    "scrapling.fetchers",
+    "cloakbrowser",
     "hextech",
     "hextech.display.desktop.app",
     "hextech.display.web.app",
@@ -72,6 +74,8 @@ PYINSTALLER_COLLECT_SUBMODULES = [
     "fastapi",
     "starlette",
     "uvicorn",
+    "scrapling",
+    "cloakbrowser",
     "hextech",
 ]
 LEGACY_GENERATED_OUTPUTS = (

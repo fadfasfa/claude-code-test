@@ -68,6 +68,7 @@
 | `hextech/scraping/version_sync.py` | sync | 稳定资源同步、源码/冻结态运行根定位、首启目录引导 |
 | `hextech/scraping/hextech/scraper.py` | scraper | 海克斯高频数据抓取，目标总等待约 30 秒 |
 | `hextech/scraping/synergy/scraper.py` | scraper | 协同高频数据抓取，目标总等待约 28-30 秒 |
+| `hextech/scraping/synergy/mayhem_combo_scraper.py` | scraper | ARAMMayhem Combos 普通 GET 抓取；只写 Mayhem raw，不直接供前端读取 |
 | `hextech/scraping/transport/scrapling_client.py` | transport | Scrapling 同步抓取客户端 |
 | `hextech/scraping/transport/cloakbrowser_client.py` | transport | CloakBrowser 同步抓取客户端 |
 | `hextech/scraping/transport/smoke_scrapling.py` | smoke | Scrapling 在线冒烟脚本 |
@@ -79,6 +80,7 @@
 | `tools/bundle_manifest.py` | build tool | 稳定资源 manifest 生成；不复制资源 |
 | `tools/runtime_bundle.py` | runtime tool | 打包后稳定资源播种 |
 | `tools/cleanup_runtime.py` | cleanup tool | 构建和运行态残留清理 |
+| `tools/clean_mayhem_combos.py` | data tool | 把 Mayhem raw 按英雄 + augment 组合增量合并到前端 cleaned 协同数据 |
 | `tools/dev_checks.py` | dev tool | 统一离线自检、bundle manifest 明细校验、Web/UI 手动验收辅助入口；检查执行顺序由 `tools/checks/registry.py` 维护 |
 | `tools/checks/` | dev tool | 分域自检清单；当前阶段只拆编排清单，不搬 5000 行检查函数体 |
 | `tools/acceptance/` | acceptance tool | 验收工具入口 |
@@ -103,6 +105,7 @@
 - `Champion_Core_Data.json`
 - `Champion_Alias_Index.json`
 - `Augment_Icon_Manifest.json`
+- `Champion_Synergy_Cleaned.json`
 - 兼容图标映射文件
 
 ### 4.2 禁止当作发布源的数据
@@ -112,6 +115,7 @@
 - `data/raw/hextech/Hextech_Data_*.csv`
 - 启动后新生成的 `data/raw/synergy/Champion_Synergy_*.json`
 - 启动后新生成的 `data/raw/synergy/Champion_Synergy_latest.v1.json`
+- `data/raw/mayhem_combos.raw.json` 只作为 Mayhem 清洗输入，不直接随包读取
 - `data/runtime/state/*.json`
 - `data/runtime/state/overlay_anchor_calibration.v1.json`
 - `data/runtime/state/web_server_port.txt`

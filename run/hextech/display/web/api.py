@@ -125,7 +125,7 @@ def _normalize_synergy_item(raw_item) -> dict | None:
     else:
         tag = str(tags or "强力联动").strip() or "强力联动"
 
-    return {
+    normalized = {
         "augment_names": augment_names,
         "name": ", ".join(augment_names),
         "tier": str(raw_item.get("tier") or raw_item.get("rarity") or raw_item.get("rank") or "未知").strip() or "未知",
@@ -137,6 +137,11 @@ def _normalize_synergy_item(raw_item) -> dict | None:
         "upvotes": _int_field(raw_item.get("upvotes") or raw_item.get("upVotes") or raw_item.get("likes")),
         "downvotes": _int_field(raw_item.get("downvotes") or raw_item.get("downVotes") or raw_item.get("dislikes")),
     }
+    for key in ("source", "source_url", "source_rating"):
+        value = raw_item.get(key)
+        if value is not None and str(value).strip():
+            normalized[key] = str(value).strip()
+    return normalized
 
 
 def _normalize_synergy_item_from_string(raw_entry: str) -> dict | None:

@@ -19,6 +19,7 @@ STABLE_STATIC_FILES = (
     "Augment_Apexlol_Map.json",
     "Augment_Full_Map.json",
     "Augment_Icon_Map.json",
+    "Champion_Synergy_Cleaned.json",
     "hero_version.txt",
 )
 STABLE_INDEX_FILES = (
