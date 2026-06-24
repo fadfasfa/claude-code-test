@@ -6,11 +6,11 @@ from __future__ import annotations
 """
 
 CHECKS = (
-    "check_apexlol_hextech_map_size_limit",           # 验证 ApexLoL Hextech 映射大小限制
-    "check_apex_source_snapshot_policy",              # 验证 Apex 数据源快照策略一致性
-    "check_synergy_refresh_freshness",                # 验证协同数据刷新时效性
-    "check_synergy_snapshot_store",                   # 验证协同快照存储完整性
-    "check_synergy_structured_payloads",              # 验证协同结构化载荷格式
-    "check_synergy_alias_collision_guard",            # 验证协同别名碰撞防护
-    "check_synergy_playwright_calibrator_contract",   # 验证 Playwright 校准器契约
+    "check_apexlol_hextech_map_size_limit",
+    "check_apex_source_snapshot_policy",
+    "check_synergy_refresh_freshness",
+    "check_synergy_snapshot_store",
+    "check_synergy_structured_payloads",
+    "check_synergy_alias_collision_guard",
+    "check_synergy_playwright_calibrator_contract",
 )

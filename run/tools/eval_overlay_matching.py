@@ -367,6 +367,7 @@ def evaluate_truth(path: Path, *, min_confidence: float) -> dict[str, Any]:
     - 场景存在性匹配
     - 锻体碎片检测（name_roi 样本）
     """
+    samples = _load_truth(path)
     name_roi_samples = _load_name_roi_truth(path)
     template_index = overlay_vision_sidecar.load_default_template_index(RUN_DIR)
     overlay_vision_sidecar._rank_matrices(template_index)
