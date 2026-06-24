@@ -5,6 +5,7 @@
 | 名称 | 状态 | 触发场景 |
 | :--- | :--- | :--- |
 | `karpathy-project-bridge` | keep | 非琐碎代码、脚本、配置或 workflow 实现任务 |
+| `karpathy-guardrail` | keep | 非琐碎代码修改、架构/实现/debugging 计划、方案输出防范围漂移 |
 | `frontend-design-project-bridge` | keep | 前端 UI / 视觉 / 交互任务 |
 | `repo-verification-before-completion` | keep | 声明完成前 |
 | `repo-maintenance` | keep | 仓库维护、清理候选、保护资产检查 |
@@ -21,6 +22,7 @@
 
 ## Boundary
 
+- `karpathy-guardrail` 负责计划/方案纪律，`karpathy-project-bridge` 负责实现阶段桥接，两者不互相替代。
 - 不保留 memory / learning promotion skill。
 - 不恢复旧 command、hook、自动 PR shipping、task resume 或高权限 worktree skill；`cleanup-worktrees` 仅作为用户显性调用的 PR 合并残留清理入口，默认只清理已合并、无领先提交、无 tracked 修改、无 `??` untracked，且 ignored 输出为空或仅为白名单 `__pycache__/` 缓存的受管本地对象；`audit` 类请求保持只读。
 - `.claude/skills/` 不属于 Codex skill 白名单。

@@ -5,6 +5,7 @@
 当前保留的仓库级 skill：
 
 - `karpathy-project-bridge`
+- `karpathy-guardrail`
 - `frontend-design-project-bridge`
 - `repo-verification-before-completion`
 - `repo-maintenance`
