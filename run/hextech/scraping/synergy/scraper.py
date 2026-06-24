@@ -43,7 +43,7 @@ from hextech.catalog.runtime_store import (
 )
 from hextech.support.log_utils import install_summary_logging, log_task_summary
 from hextech.scraping.icon_resolver import normalize_augment_name
-from hextech.scraping.version_sync import STATIC_DATA_DIR
+from hextech.scraping._paths import STATIC_DATA_DIR
 
 
 def _get_script_dir() -> str:

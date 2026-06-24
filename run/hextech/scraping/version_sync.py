@@ -49,36 +49,23 @@ from hextech.support.log_utils import (
     get_runtime_summary_log_file,
     install_summary_logging,
 )
+from hextech.scraping._paths import (
+    ASSET_DIR,
+    BASE_DIR,
+    DATA_DIR,
+    INDEX_DATA_DIR,
+    RAW_DATA_DIR,
+    RESOURCE_DIR,
+    RUNTIME_BASE_DIR,
+    RUNTIME_DATA_DIR,
+    STATIC_DATA_DIR,
+    bootstrap_runtime_environment,
+    get_base_dir,
+    get_resource_dir,
+)
 from tools.runtime_bundle import seed_bundled_resources
 
 ensure_utf8_stdio()
-
-
-def _get_script_dir() -> str:
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-def bootstrap_runtime_environment() -> str:
-    """规范运行时根目录，兼容终端、编辑器与打包程序入口。"""
-    runtime_base = os.getenv("HEXTECH_BASE_DIR", "").strip()
-    if runtime_base:
-        runtime_base = os.path.abspath(runtime_base)
-    elif getattr(sys, 'frozen', False):
-        runtime_base = os.path.dirname(os.path.abspath(sys.executable))
-    else:
-        runtime_base = _get_script_dir()
-
-    script_dir = _get_script_dir()
-    for candidate in (runtime_base, script_dir):
-        if candidate and candidate not in sys.path:
-            sys.path.insert(0, candidate)
-
-    return runtime_base
-
-def get_resource_dir():
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        return sys._MEIPASS
-    return _get_script_dir()
 
 
 def _get_packaged_hextech_snapshot_dir() -> str:
@@ -91,20 +78,6 @@ def _get_packaged_hextech_snapshot_dir() -> str:
     return os.path.join(base_dir, "data", "runtime", "raw", "hextech")
 
 
-RUNTIME_BASE_DIR = bootstrap_runtime_environment()
-
-
-def get_base_dir():
-    return RUNTIME_BASE_DIR
-
-RESOURCE_DIR = get_resource_dir()
-BASE_DIR = get_base_dir()
-DATA_DIR = os.path.join(BASE_DIR, "data")
-STATIC_DATA_DIR = os.path.join(DATA_DIR, "static")
-INDEX_DATA_DIR = os.path.join(DATA_DIR, "indexes")
-RAW_DATA_DIR = os.path.join(DATA_DIR, "raw")
-RUNTIME_DATA_DIR = os.path.join(DATA_DIR, "runtime")
-ASSET_DIR = os.path.join(BASE_DIR, "assets")
 SUMMARY_LOG_FILE = get_runtime_summary_log_file()
 ERROR_LOG_FILE = get_error_log_file()
 VERSION_FILE = os.path.join(STATIC_DATA_DIR, "hero_version.txt")

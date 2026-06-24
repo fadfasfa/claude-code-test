@@ -37,6 +37,8 @@ from urllib.parse import quote, unquote, urlparse
 
 import requests
 
+from hextech.scraping._paths import BASE_DIR, STATIC_DATA_DIR
+
 
 _ICON_MAP_CACHE: Tuple[str, float, dict] = ("", 0.0, {})
 _APEXLOL_MAP_CACHE: Tuple[str, float, dict] = ("", 0.0, {})
@@ -58,21 +60,14 @@ MAX_APEXLOL_HEXTECH_MAP_BYTES = 5 * 1024 * 1024
 
 
 def _default_runtime_dir() -> str:
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return BASE_DIR
 
 
 def _resolve_config_dir(config_dir: Optional[str]) -> str:
     if config_dir:
         return config_dir
-    # 历史默认 run/config 目录在当前数据布局下并不存在，导致 load_augment_icon_map /
-    # load_apexlol_hextech_map 每次都走 apexlol.info 远端拉取，单个海克斯卡片就要几秒
-    # 到几十秒；指向真实存放本地映射的 data/static 目录，可让所有 caller 命中本地缓存。
-    try:
-        # version_sync 会反向导入 normalize_augment_name，保持函数内导入以避免模块初始化循环。
-        from hextech.scraping.version_sync import STATIC_DATA_DIR
-        return STATIC_DATA_DIR
-    except ImportError:
-        return os.path.join(_default_runtime_dir(), "data", "static")
+    # 历史默认 run/config 目录在当前数据布局下并不存在，直接指向真实稳定映射目录。
+    return STATIC_DATA_DIR
 
 
 def _resolve_assets_dir(asset_dir: Optional[str]) -> str:

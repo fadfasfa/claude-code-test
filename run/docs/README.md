@@ -1,4 +1,4 @@
-# Hextech Runtime Documentation
+# Hextech 运行时文档
 
 本目录集中保存 `run/` 内部业务设计和审查文档。
 

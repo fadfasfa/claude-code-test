@@ -14,7 +14,7 @@ from __future__ import annotations
 - 运行时文件路径解析结果
 
 主要依赖：
-- `hextech.scraping.version_sync`
+- `hextech.scraping._paths`
 - `hextech.catalog.precomputed_cache`
 
 维护提醒：
@@ -35,7 +35,7 @@ from typing import Callable, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from hextech.scraping.version_sync import BASE_DIR, RESOURCE_DIR, STATIC_DATA_DIR
+from hextech.scraping._paths import BASE_DIR, RESOURCE_DIR, STATIC_DATA_DIR
 
 CSV_ENCODING = "utf-8-sig"
 CSV_FILENAME_PATTERN = "Hextech_Data_*.csv"

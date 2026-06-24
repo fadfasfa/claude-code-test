@@ -50,6 +50,7 @@ import hextech.scraping.hextech.scraper as hextech_scraper
 import hextech.scraping.synergy.scraper as synergy_scraper
 import hextech.scraping.heal_worker as heal_worker
 import hextech.scraping.icon_resolver as icon_resolver
+import hextech.scraping.version_sync as version_sync
 import hextech.display.web.runtime as web_runtime
 from hextech.display.web.api import _build_synergy_api_payload, _normalize_synergy_items, _synergy_item_to_compat_string
 from hextech.catalog.aliases import load_manual_alias_index
@@ -77,21 +78,32 @@ from hextech.support.log_utils import install_summary_logging
 
 
 TIER_IDS = ("Prismatic", "Gold", "Silver")
+VERSION_SYNC_WRITE_GUARDED_CHECKS = frozenset(
+    {
+        "check_heal_worker_contract",
+        "check_hextech_scraper_fallback_contract",
+        "check_hextech_cooldown_and_heal_fallback",
+        "check_hextech_failed_refresh_never_overwrites_csv",
+        "check_hextech_success_clears_fallback_state",
+    }
+)
 
 
 def _offline_sync_hero_data() -> bool:
     """开发自检只验证本地缓存契约，不允许触发远端同步和资源写入。"""
 
-    version_sync_module = importlib.import_module("hextech.scraping.version_sync")
-    return Path(version_sync_module.CORE_DATA_FILE).exists()
+    return Path(version_sync.CORE_DATA_FILE).exists()
 
 
 def _run_read_only_offline_checks(check_names: tuple[str, ...]) -> None:
     """执行离线自检时隔离英雄版本同步，避免验证命令污染 data/static 或 assets。"""
 
-    version_sync_module = importlib.import_module("hextech.scraping.version_sync")
+    if not (set(check_names) & VERSION_SYNC_WRITE_GUARDED_CHECKS):
+        _run_named_checks(check_names)
+        return
+
     with ExitStack() as stack:
-        stack.enter_context(patch.object(version_sync_module, "sync_hero_data", side_effect=_offline_sync_hero_data))
+        stack.enter_context(patch.object(version_sync, "sync_hero_data", side_effect=_offline_sync_hero_data))
         stack.enter_context(patch.object(orchestrator, "sync_hero_data", side_effect=_offline_sync_hero_data))
         stack.enter_context(patch.object(heal_worker, "sync_hero_data", side_effect=_offline_sync_hero_data))
         _run_named_checks(check_names)
@@ -109,6 +121,9 @@ def check_root_entrypoints() -> None:
         assert not (RUN_DIR / legacy_dir).exists(), f"legacy root package still exists: {legacy_dir}"
     assert not (RUN_DIR / "game_overlay_host.py").exists()
     assert (RUN_DIR / "tools").exists()
+    root_gitignore = (RUN_DIR.parent / ".gitignore").read_text(encoding="utf-8")
+    assert "run/frontend/node_modules/" in root_gitignore
+    assert "run/display/node_modules/" not in root_gitignore
 
 
 def check_hextech_package_contract() -> None:
@@ -150,7 +165,7 @@ def check_hextech_package_contract() -> None:
         "hextech.catalog.aliases",
         "hextech.catalog.alias_utils",
         "hextech.catalog.query_terminal",
-        "hextech.catalog.augments",
+        "hextech.scraping._paths",
         "hextech.scraping.version_sync",
         "hextech.scraping.augment_catalog",
         "hextech.scraping.icon_resolver",
@@ -164,6 +179,15 @@ def check_hextech_package_contract() -> None:
     )
     for module_name in required_modules:
         importlib.import_module(module_name)
+    for removed_module_path in (
+        "hextech/core/lifecycle.py",
+        "hextech/core/events.py",
+        "hextech/core/runtime_paths.py",
+        "hextech/catalog/augments.py",
+        "hextech/catalog/champions.py",
+        "hextech/display/web/routers",
+    ):
+        assert not (RUN_DIR / removed_module_path).exists(), f"dead preallocation still exists: {removed_module_path}"
 
     from tools.checks.registry import DEFAULT_CHECKS, DOMAIN_CHECKS, OVERLAY_ONLY_CHECKS
 
@@ -255,9 +279,11 @@ def check_hextech_package_contract() -> None:
     assert "from tools.log_utils" not in version_sync_text
     assert "from hextech.catalog.alias_utils" in version_sync_text
     assert "from hextech.scraping.icon_resolver" in version_sync_text
+    assert "from hextech.scraping._paths" in version_sync_text
     assert "from hextech.support.log_utils" in version_sync_text
     assert "from scraping.version_sync" not in icon_resolver_text
-    assert "from hextech.scraping.version_sync" in icon_resolver_text
+    assert "from hextech.scraping.version_sync" not in icon_resolver_text
+    assert "from hextech.scraping._paths" in icon_resolver_text
     assert "from processing.runtime_store" not in augment_catalog_text
     assert "from scraping." not in augment_catalog_text
     assert "from hextech.catalog.runtime_store" in augment_catalog_text
@@ -300,7 +326,7 @@ def check_hextech_package_contract() -> None:
     assert "from hextech.display.web import runtime as web_runtime" in desktop_runtime_text
     assert "from hextech.catalog.query_terminal" in desktop_runtime_text
     assert "from hextech.overlay.window" in desktop_runtime_text
-    assert "from hextech.scraping.version_sync" in desktop_runtime_text
+    assert "from hextech.scraping._paths" in desktop_runtime_text
     assert "from processing." not in desktop_service_text
     assert "from hextech.overlay.events" in desktop_service_text
     assert "from hextech.overlay.window" in desktop_service_text
@@ -1124,19 +1150,21 @@ def check_packaging_config() -> None:
     build_script = (RUN_DIR / "tools" / "build_bundle.py").read_text(encoding="utf-8")
     spec_text = (RUN_DIR / "Hextech伴生终端.spec").read_text(encoding="utf-8")
 
-    assert "--hidden-import\", \"filelock\"" in build_script
-    assert "--hidden-import\", \"tkinter\"" in build_script
-    assert "--hidden-import\", \"_tkinter\"" in build_script
+    assert "PYINSTALLER_HIDDEN_IMPORTS = [" in build_script
+    assert "PYINSTALLER_COLLECT_SUBMODULES = [" in build_script
+    assert 'cmd.extend(["--hidden-import", module_name])' in build_script
+    assert 'cmd.extend(["--collect-submodules", module_name])' in build_script
+    for dependency in ("filelock", "tkinter", "_tkinter", "win32gui", "win32con", "hextech.overlay.lifecycle"):
+        assert f'"{dependency}"' in build_script
     assert "resolve_tcl_runtime_dirs" in build_script
     assert "resolve_tkinter_package_dir" in build_script
     assert ";_tcl_data" in build_script
     assert ";_tk_data" in build_script
     assert ";tkinter" in build_script
-    assert "--collect-submodules\", \"tkinter\"" in build_script
-    assert "filelock" in spec_text
-    assert "tkinter" in spec_text and "_tkinter" in spec_text
     assert "_tcl_data" in spec_text and "_tk_data" in spec_text and "'tkinter'" in spec_text
-    assert "collect_submodules('tkinter')" in spec_text
+    assert "from tools.build_bundle import PYINSTALLER_COLLECT_SUBMODULES, PYINSTALLER_HIDDEN_IMPORTS" in spec_text
+    assert "hiddenimports = list(PYINSTALLER_HIDDEN_IMPORTS)" in spec_text
+    assert "for module_name in PYINSTALLER_COLLECT_SUBMODULES" in spec_text
     manifest_script_text = (RUN_DIR / "tools" / "bundle_manifest.py").read_text(encoding="utf-8")
     assert "hextech" in manifest_script_text
     assert '"display/' not in manifest_script_text
@@ -1145,12 +1173,10 @@ def check_packaging_config() -> None:
     assert '"scraping/' not in manifest_script_text
     assert '"game_overlay/' not in manifest_script_text
     for module_name in ("hextech",):
-        expected = f'--collect-submodules", "{module_name}"'
-        assert expected in build_script
-        assert f"collect_submodules('{module_name}')" in spec_text
+        assert f'"{module_name}"' in build_script
     for legacy_module in ("display", "processing", "scraping", "crawler", "game_overlay"):
-        assert f'--collect-submodules", "{legacy_module}"' not in build_script
-        assert f"collect_submodules('{legacy_module}')" not in spec_text
+        assert f'"{legacy_module}"' not in build_script
+        assert f"'{legacy_module}'" not in spec_text
 
 
 def check_ui_feature_flags_contract() -> None:
@@ -3052,7 +3078,7 @@ watched = [
 print(json.dumps([name for name in watched if name in sys.modules]))
 """
     output = subprocess.check_output(
-        [sys.executable, "-c", code],
+        [sys.executable, "-B", "-c", code],
         cwd=str(RUN_DIR),
         text=True,
         encoding="utf-8",
@@ -3077,7 +3103,7 @@ watched = [
 print(json.dumps([name for name in watched if name in sys.modules]))
 """
     output = subprocess.check_output(
-        [sys.executable, "-c", code],
+        [sys.executable, "-B", "-c", code],
         cwd=str(RUN_DIR),
         text=True,
         encoding="utf-8",
@@ -4454,7 +4480,7 @@ importlib.import_module('hextech.overlay.host')
 blocked = [name for name in sys.modules if name == 'display' or name.startswith('display.') or name == 'fastapi' or name.startswith('fastapi.') or name == 'uvicorn' or name.startswith('uvicorn.') or name == 'webbrowser']
 print(json.dumps(blocked))
 """
-    output = subprocess.check_output([sys.executable, "-c", probe], cwd=str(RUN_DIR), text=True, encoding="utf-8")
+    output = subprocess.check_output([sys.executable, "-B", "-c", probe], cwd=str(RUN_DIR), text=True, encoding="utf-8")
     assert json.loads(output) == []
     implementation_dir = RUN_DIR / "hextech" / "overlay"
     overlay_filenames = {"__init__.py", "__main__.py", "lifecycle.py", "host.py", "data_source.py", "renderer.py"}

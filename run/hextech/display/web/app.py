@@ -11,7 +11,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from hextech.scraping.version_sync import INDEX_DATA_DIR, STATIC_DATA_DIR
+from hextech.scraping._paths import INDEX_DATA_DIR, STATIC_DATA_DIR
 from .api import register_routes
 from .runtime import (
     SERVER_PORT,

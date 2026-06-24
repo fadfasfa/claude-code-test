@@ -24,7 +24,7 @@ from hextech.catalog.runtime_store import load_precomputed_hextech_for_hero
 from hextech.catalog.view_adapter import process_champions_data, process_hextechs_data
 from hextech.core.refresh import rebuild_api_cache_if_needed
 from hextech.scraping.augment_catalog import load_augment_icon_manifest
-from hextech.scraping.version_sync import STATIC_DATA_DIR
+from hextech.scraping._paths import STATIC_DATA_DIR
 from . import runtime as web_runtime
 
 _api_cache_rebuild_lock = threading.Lock()

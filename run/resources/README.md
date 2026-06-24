@@ -1,4 +1,4 @@
-# Hextech Stable Resources
+# Hextech 稳定资源
 
 本目录是稳定只读资源边界：只放可随包分发、可由 manifest 明确枚举的资源。
 

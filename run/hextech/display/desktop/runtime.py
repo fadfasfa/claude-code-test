@@ -12,7 +12,7 @@
 
 主要依赖：
 - `hextech.catalog.query_terminal`
-- `hextech.scraping.version_sync`
+- `hextech.scraping._paths`
 
 维护提醒：
 - Tk 组件结构仍应留在 `hextech.display.desktop.app`
@@ -47,7 +47,7 @@ from hextech.overlay import context as overlay_context
 from hextech.overlay.window import find_lol_game_window, is_window_renderable
 from hextech.catalog.query_terminal import display_hero_hextech, main_query, set_last_hero
 from hextech.overlay.window_titles import LOL_CLIENT_WINDOW_TITLE
-from hextech.scraping.version_sync import ASSET_DIR, BASE_DIR
+from hextech.scraping._paths import ASSET_DIR, BASE_DIR
 
 if TYPE_CHECKING:
     from hextech.display.desktop.app import HextechUI
