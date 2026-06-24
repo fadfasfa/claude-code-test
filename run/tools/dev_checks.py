@@ -260,7 +260,9 @@ def check_hextech_package_contract() -> None:
     assert "from processing.overlay_hint_cache" not in hextech_scraper_text
     assert "from hextech.catalog.precomputed_cache" in hextech_scraper_text
     assert "from hextech.overlay.hints" in hextech_scraper_text
-    assert "parents[3]" in synergy_scraper_text
+    assert "RUNTIME_DATA_DIR" in synergy_scraper_text
+    assert 'Path(BASE_DIR) / "data" / "runtime"' not in synergy_scraper_text
+    assert 'os.path.join(BASE_DIR, "data", "runtime"' not in synergy_scraper_text
     assert "crawler.cloakbrowser_client" not in synergy_scraper_text
     assert "hextech.scraping.transport.cloakbrowser_client" in synergy_scraper_text
     smoke_scrapling_text = (RUN_DIR / "hextech" / "scraping" / "transport" / "smoke_scrapling.py").read_text(encoding="utf-8")
@@ -3263,18 +3265,29 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
         fixture_root = Path(tmp_dir) / "fixture"
         fixture_index = fixture_root / "data" / "indexes"
         fixture_static = fixture_root / "hextech" / "display" / "web" / "static"
+        fixture_assets = fixture_root / "assets"
         fixture_index.mkdir(parents=True)
         fixture_static.mkdir(parents=True)
+        fixture_assets.mkdir(parents=True)
         (fixture_index / "augment.name-to-icon.v1.json").write_text('{"尤里卡":"assets/1.png"}', encoding="utf-8")
         (fixture_static / "index.html").write_text("<html></html>", encoding="utf-8")
+        (fixture_assets / "1.png").write_bytes(b"png")
         manifest_path = Path(tmp_dir) / "bundle_manifest.json"
         manifest_path.write_text("{}", encoding="utf-8")
         entries = iter_package_data_entries(fixture_root, manifest_path)
         entry_targets = {(entry.source.name, entry.target) for entry in entries}
         assert ("augment.name-to-icon.v1.json", "data/indexes") in entry_targets
         assert ("static", "static") in entry_targets
+        assert ("assets", "assets") in entry_targets
         assert ("bundle_manifest.json", ".") in entry_targets
         assert not (Path(tmp_dir) / "build" / "_bundle_runtime").exists()
+        (fixture_assets / "debug.tmp").write_text("debug", encoding="utf-8")
+        try:
+            iter_package_data_entries(fixture_root, manifest_path)
+        except ValueError as exc:
+            assert "debug.tmp" in str(exc)
+        else:
+            raise AssertionError("assets 目录含非白名单文件时必须阻断打包规则生成")
 
     if verbose:
         print("has_hextech_snapshot_files", True)
@@ -3367,8 +3380,19 @@ def check_packaged_smoke_uses_explicit_feature_flags() -> None:
     assert "_write_smoke_feature_flags(runtime_root)" in smoke_text
     assert "OVERLAY_ANCHOR_CALIBRATION_FILENAME" in smoke_text
     assert "package:resources/snapshots/synergy/Champion_Synergy_latest.v1.json" in smoke_text
-    assert "package:data/runtime absent" in smoke_text
-    assert "package:data/raw absent" in smoke_text
+    assert "FORBIDDEN_PACKAGE_PATHS" in smoke_text
+    for forbidden_rel in (
+        "data/raw",
+        "data/runtime",
+        "data/processed",
+        "runtime/cache",
+        "runtime/profile",
+        "runtime/log",
+        "runtime/logs",
+        "runtime/debug",
+    ):
+        assert forbidden_rel in smoke_text
+    assert "_internal" in smoke_text
     assert "overlay_anchor_calibration.v1.json" in smoke_text
 
 

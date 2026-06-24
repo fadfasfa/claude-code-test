@@ -36,6 +36,16 @@ REQUIRED_RUNTIME_FILES = (
     "state/startup_status.json",
 )
 OVERLAY_ANCHOR_CALIBRATION_FILENAME = "overlay_anchor_calibration.v1.json"
+FORBIDDEN_PACKAGE_PATHS = (
+    "data/raw",
+    "data/runtime",
+    "data/processed",
+    "runtime/cache",
+    "runtime/profile",
+    "runtime/log",
+    "runtime/logs",
+    "runtime/debug",
+)
 SMOKE_FEATURE_FLAGS = {
     "web_frontend_enabled": True,
     "game_overlay_enabled": False,
@@ -50,6 +60,8 @@ class SmokeFailure(RuntimeError):
 
 
 def _latest_package(dist_dir: Path) -> Path:
+    if not dist_dir.is_dir():
+        raise SmokeFailure(f"未找到打包搜索目录：{dist_dir}")
     packages = [
         p for p in dist_dir.iterdir()
         if p.is_dir() and (p.name.startswith("HextechCompanion-") or p.name.startswith("Hextech_"))
@@ -65,10 +77,6 @@ def _copy_clean_package(source: Path, smoke_root: Path) -> Path:
     smoke_root.mkdir(parents=True, exist_ok=True)
     target = smoke_root / source.name
     shutil.copytree(source, target)
-    for rel in ("data/raw", "data/runtime"):
-        runtime_path = target / rel
-        if runtime_path.exists():
-            shutil.rmtree(runtime_path)
     return target
 
 
@@ -134,10 +142,12 @@ def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall
     for rel in REQUIRED_RUNTIME_FILES:
         path = runtime_root / rel
         checks[f"runtime:{rel}"] = path.is_file() and path.stat().st_mtime >= started_at_wall
-    checks["_internal/data/runtime absent"] = not (package_dir / "_internal/data/runtime").exists()
-    checks["_internal/data/raw absent"] = not (package_dir / "_internal/data/raw").exists()
-    checks["package:data/runtime absent"] = not (packaged_data_root / "data" / "runtime").exists()
-    checks["package:data/raw absent"] = not (packaged_data_root / "data" / "raw").exists()
+    package_roots = [("package", package_dir)]
+    if packaged_data_root != package_dir:
+        package_roots.append(("_internal", packaged_data_root))
+    for label, root in package_roots:
+        for rel in FORBIDDEN_PACKAGE_PATHS:
+            checks[f"{label}:{rel} absent"] = not (root / Path(rel)).exists()
     checks[f"package:{OVERLAY_ANCHOR_CALIBRATION_FILENAME} absent"] = not any(
         path.name == OVERLAY_ANCHOR_CALIBRATION_FILENAME
         for path in package_dir.rglob(OVERLAY_ANCHOR_CALIBRATION_FILENAME)

@@ -14,7 +14,6 @@ import json
 import logging
 import os
 import re
-import sys
 import tempfile
 import time
 import csv
@@ -43,27 +42,13 @@ from hextech.catalog.runtime_store import (
 )
 from hextech.support.log_utils import install_summary_logging, log_task_summary
 from hextech.scraping.icon_resolver import normalize_augment_name
-from hextech.scraping._paths import STATIC_DATA_DIR
+from hextech.scraping._paths import RUNTIME_DATA_DIR, STATIC_DATA_DIR
 
 
-def _get_script_dir() -> str:
-    # 源码态迁入 `hextech/scraping/synergy/` 后，运行根仍必须是 `run/`。
-    return str(Path(__file__).resolve().parents[3])
-
-
-def _bootstrap_runtime_base_dir() -> str:
-    runtime_base = os.getenv("HEXTECH_BASE_DIR", "").strip()
-    if runtime_base:
-        return os.path.abspath(runtime_base)
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return _get_script_dir()
-
-
-BASE_DIR = _bootstrap_runtime_base_dir()
-SELENIUM_CACHE_DIR = os.path.join(BASE_DIR, "data", "runtime", "cache", "selenium")
-SELENIUM_PROFILE_DIR = os.path.join(BASE_DIR, "data", "runtime", "profile", "apex_selenium")
-DEFAULT_APEX_SNAPSHOT_DIR = os.path.join(BASE_DIR, "data", "runtime", "cache", "apex_snapshot")
+BASE_DIR = str(Path(RUNTIME_DATA_DIR).parents[1])
+SELENIUM_CACHE_DIR = os.path.join(RUNTIME_DATA_DIR, "cache", "selenium")
+SELENIUM_PROFILE_DIR = os.path.join(RUNTIME_DATA_DIR, "profile", "apex_selenium")
+DEFAULT_APEX_SNAPSHOT_DIR = os.path.join(RUNTIME_DATA_DIR, "cache", "apex_snapshot")
 DEFAULT_APEX_MANUAL_SNAPSHOT_DIR = os.path.join(DEFAULT_APEX_SNAPSHOT_DIR, "manual")
 STATIC_DATA_PATH = Path(STATIC_DATA_DIR)
 ALLOWED_STATIC_DATA_FILES = {"Champion_Core_Data.json"}
@@ -1890,12 +1875,12 @@ def _entry_to_report_item(entry: SynergyEntry) -> dict:
 
 def _default_single_champion_report_dir() -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return Path(BASE_DIR) / "data" / "runtime" / "reports" / "synergy_vi_cloakbrowser" / timestamp
+    return Path(RUNTIME_DATA_DIR) / "reports" / "synergy_vi_cloakbrowser" / timestamp
 
 
 def _default_full_validate_report_dir() -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return Path(BASE_DIR) / "data" / "runtime" / "reports" / "synergy_full_validate" / timestamp
+    return Path(RUNTIME_DATA_DIR) / "reports" / "synergy_full_validate" / timestamp
 
 
 def _write_html_report_sample(output_path: Path, html: str, limit_bytes: int = 200 * 1024) -> None:

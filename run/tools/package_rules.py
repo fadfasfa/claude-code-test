@@ -42,6 +42,7 @@ FORBIDDEN_BUNDLE_PATH_PARTS = (
     "runtime/cache",
     "runtime/profile",
     "runtime/log",
+    "runtime/logs",
     "runtime/debug",
     OVERLAY_ANCHOR_CALIBRATION_FILENAME,
 )
@@ -80,6 +81,28 @@ def iter_stable_asset_files(asset_dir: Path) -> Iterable[Path]:
         for path in asset_dir.rglob("*")
         if path.is_file() and path.suffix.lower() in ASSET_SUFFIXES
     )
+
+
+def iter_unexpected_asset_files(asset_dir: Path) -> Iterable[Path]:
+    """列出不能随 `assets/` 目录整体进入包的非白名单文件。"""
+
+    if not asset_dir.exists():
+        return []
+    return sorted(
+        path
+        for path in asset_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() not in ASSET_SUFFIXES
+    )
+
+
+def validate_asset_dir_for_package(asset_dir: Path) -> None:
+    unexpected = list(iter_unexpected_asset_files(asset_dir))
+    if not unexpected:
+        return
+
+    sample = ", ".join(path.relative_to(asset_dir).as_posix() for path in unexpected[:5])
+    suffix = "" if len(unexpected) <= 5 else f" 等 {len(unexpected)} 个文件"
+    raise ValueError(f"assets 目录包含非打包白名单文件：{sample}{suffix}")
 
 
 def iter_hextech_snapshot_files(base_dir: Path) -> Iterable[Path]:
@@ -166,6 +189,7 @@ def iter_package_data_entries(base_dir: Path, manifest_path: Path) -> list[Packa
         entries.append(PackageData(source, BUNDLED_SYNERGY_DATA_DIR.as_posix()))
 
     if asset_dir.exists():
+        validate_asset_dir_for_package(asset_dir)
         entries.append(PackageData(asset_dir, "assets"))
 
     entries.append(PackageData(manifest_path, "."))

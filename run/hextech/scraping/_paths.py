@@ -14,13 +14,25 @@ def _get_script_dir() -> str:
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def _get_packaged_user_base_dir() -> str:
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return os.path.join(local_app_data, "HextechNexus")
+    app_data = os.getenv("APPDATA", "").strip()
+    if app_data:
+        return os.path.join(app_data, "HextechNexus")
+    return os.path.join(os.path.expanduser("~"), ".hextech_nexus")
+
+
 def bootstrap_runtime_environment() -> str:
     """规范运行时根目录，兼容终端、编辑器与打包程序入口。"""
-    runtime_base = os.getenv("HEXTECH_BASE_DIR", "").strip()
+    if getattr(sys, "frozen", False):
+        runtime_base = _get_packaged_user_base_dir()
+    else:
+        runtime_base = os.getenv("HEXTECH_BASE_DIR", "").strip()
+
     if runtime_base:
         runtime_base = os.path.abspath(runtime_base)
-    elif getattr(sys, "frozen", False):
-        runtime_base = os.path.dirname(os.path.abspath(sys.executable))
     else:
         runtime_base = _get_script_dir()
 
