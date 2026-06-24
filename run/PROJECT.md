@@ -39,7 +39,7 @@
 
 | 文件 | 类型 | 职责 |
 | :--- | :--- | :--- |
-| `build.py` | thin entry | 打包入口薄壳，委托 `tools.build_bundle` |
+| `build.py` | thin entry | 打包入口薄壳，委托 `tools.build_package` |
 | `hextech_ui.py` | thin entry | 桌面启动薄壳，委托 `hextech.display.desktop.app` |
 | `web_server.py` | thin entry | Web 启动薄壳，委托 `hextech.display.web.app` |
 | `hextech/` | application package | 稳定 import 根；承载 desktop、Web、catalog、overlay、scraping 与 core 主实现 |
@@ -74,8 +74,9 @@
 | `hextech/scraping/augment_catalog.py` | catalog | 海克斯统一目录维护与预缓存 |
 | `hextech/scraping/icon_resolver.py` | icon | 海克斯图标查找、缓存与远端兜底 |
 | `hextech/scraping/heal_worker.py` | heal | 缺失关键产物自愈修复与启动状态写回 |
-| `tools/build_bundle.py` | build tool | 打包主流程、版本文件、PyInstaller 参数和产物整理 |
-| `tools/bundle_manifest.py` | build tool | 稳定资源白名单与 manifest 生成 |
+| `tools/build_package.py` | build tool | 打包主流程、临时目录、PyInstaller 参数和最终产物整理 |
+| `tools/package_rules.py` | build tool | 稳定资源白名单与 PyInstaller data 规则 |
+| `tools/bundle_manifest.py` | build tool | 稳定资源 manifest 生成；不复制资源 |
 | `tools/runtime_bundle.py` | runtime tool | 打包后稳定资源播种 |
 | `tools/cleanup_runtime.py` | cleanup tool | 构建和运行态残留清理 |
 | `tools/dev_checks.py` | dev tool | 统一离线自检、bundle manifest 明细校验、Web/UI 手动验收辅助入口；检查执行顺序由 `tools/checks/registry.py` 维护 |
@@ -128,18 +129,24 @@ Hextech 首启种子快照同理放入 `resources/snapshots/hextech/`。旧固�
 
 ### 4.3 首启运行态骨架
 
-源码态和冻结态启动时都应能创建：
+源码态和冻结态启动时使用同一套运行态骨架：
 
-- `data/raw/hextech/`
-- `data/raw/synergy/`
-- `data/runtime/state/`
-- `data/runtime/cache/`
-- `data/runtime/locks/`
-- `data/runtime/profile/`
-- `data/runtime/persisted/`
-- `data/runtime/logs/`
+- `raw/hextech/`
+- `raw/synergy/`
+- `state/`
+- `cache/`
+- `locks/`
+- `profile/`
+- `persisted/`
+- `logs/`
 
-冻结态运行根必须是 exe 所在便携目录；运行态不得落到 `_internal/data/runtime`。
+根目录按运行形态区分：源码态高频快照仍位于 `run/data/raw/`，其余运行态位于
+`run/data/runtime/`；冻结态运行态统一落到 `%LOCALAPPDATA%/HextechNexus/data/runtime/`（无
+`LOCALAPPDATA` 时回退到 `%APPDATA%/HextechNexus/data/runtime/` 或
+`~/.hextech_nexus/data/runtime/`），高频快照位于其中的 `raw/hextech/` 与
+`raw/synergy/`。冻结态不得在便携包根或 `_internal` 下创建 `data/raw`、
+`data/runtime`、`data/processed` 或运行期 cache/profile/log/logs/debug。
+冻结态不再接受 `HEXTECH_BASE_DIR` 覆盖运行态根，避免脚本把便携包根当作可写数据目录。
 
 ---
 
@@ -150,7 +157,7 @@ Hextech 首启种子快照同理放入 `resources/snapshots/hextech/`。旧固�
 flowchart TD
     A[hextech_ui.py / web_server.py] --> B[hextech.display]
     B --> C[hextech.catalog.runtime_store]
-    C --> D[data/raw + data/runtime]
+    C --> D[源码态 data/raw + data/runtime；冻结态 LocalAppData runtime]
     B --> E[hextech.display.web.api]
     E --> F[Web 页面 / 浏览器]
     B --> G[hextech.core.refresh]
@@ -179,16 +186,17 @@ flowchart TD
 python build.py
 ```
 
-该入口委托 `tools/build_bundle.py`，负责：
+该入口委托 `tools/build_package.py`，负责：
 
 1. 准备稳定资源白名单。
-2. 调用 PyInstaller `--onedir`。
+2. 生成临时 bundle manifest，不创建长期 `_bundle_runtime`。
 3. 补齐 PyInstaller 动态依赖和子模块收集。
-4. 整理 `dist/Hextech_伴生系统_YYYYMMDD/`。
-5. 写入 `启动 Hextech.bat` 和 `README_首次使用.txt`。
-6. 生成 `Hextech_伴生系统_YYYYMMDD_portable.zip`。
+4. 调用 PyInstaller `--onedir`，并把 work/dist/spec 都写入系统临时目录。
+5. 整理 `.artifacts/hextech/releases/HextechCompanion-YYYYMMDD/`。
+6. 写入 `启动 Hextech.bat` 和 `README_首次使用.txt`。
+7. 生成 `.artifacts/hextech/releases/HextechCompanion-YYYYMMDD.zip`。
 
-不要新增第二条平行打包流程；如果打包行为要变，优先改 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`。
+不要新增第二条平行打包流程；如果打包行为要变，优先改 `tools/build_package.py`、`tools/package_rules.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`。
 
 ---
 
@@ -219,12 +227,12 @@ python tools/acceptance/smoke_packaged_startup.py --timeout 60
 
 验收脚本必须证明：
 
-- 使用最新 `dist/Hextech_*` 目录或显式 `--package-dir`。
-- 复制到临时目录后删除 `data/raw` 和 `data/runtime`，构造严格空仓。
+- 使用最新 `.artifacts/hextech/releases/HextechCompanion-*` 目录或显式 `--package-dir`。
+- 复制到临时目录后不预删 forbidden 目录，直接检查包根与 `_internal` 不存在运行态副本。
+- 使用隔离的 `LOCALAPPDATA` 启动 exe，确认冻结态运行态位于 `HextechNexus/data/runtime`。
 - 启动 exe 后 60 秒内可获得端口文件。
 - `startup_status.json` 是本轮启动后新写入。
-- 运行态目录全部位于便携目录根下。
-- `_internal/data/runtime` 和 `_internal/data/raw` 不存在。
+- `data/raw`、`data/runtime`、`data/processed` 与 cache/profile/log/logs/debug 不会出现在包根或 `_internal`。
 - 包内首启种子位于 `_internal/resources/snapshots/` 或便携根 `resources/snapshots/`。
 - `/`、`/api/startup_status`、`/api/champions`、`/detail.html?champion=1`、`/api/synergies/1` 返回可操作响应。
 
@@ -304,7 +312,7 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 - Scrapling 冒烟脚本优先落在 `hextech/scraping/transport/smoke_scrapling.py`。
 - 业务抓取优先落在 `hextech/scraping/hextech/scraper.py` 或 `hextech/scraping/synergy/scraper.py`。
 - 图标目录维护、稳定资源同步和自愈逻辑优先落在 `hextech/scraping/`。
-- 变更打包链路或验证入口时，必须同步检查 `tools/build_bundle.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`tools/dev_checks.py`、`README.md` 和本文件。
+- 变更打包链路或验证入口时，必须同步检查 `tools/build_package.py`、`tools/package_rules.py`、`tools/bundle_manifest.py`、`tools/runtime_bundle.py`、`tools/dev_checks.py`、`README.md` 和本文件。
 - 变更目录结构、数据边界或首启验收标准时，必须同步更新 [README.md](README.md) 和本文件。
 
 ---

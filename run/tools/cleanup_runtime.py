@@ -17,6 +17,7 @@ RUNTIME_RAW_DATA_DIR = BASE_DIR / "data" / "raw"
 RUNTIME_DIR = BASE_DIR / "data" / "runtime"
 BUILD_DIR = BASE_DIR / "build"
 DIST_DIR = BASE_DIR / "dist"
+LEGACY_SPEC_FILE = BASE_DIR / "Hextech伴生终端.spec"
 
 VOLATILE_CONFIG_FILES = (
     "Champion_Hextech_Cache.json",
@@ -113,7 +114,7 @@ def cleanup_runtime_outputs() -> list[Path]:
 
 def cleanup_build_outputs() -> list[Path]:
     removed: list[Path] = []
-    for target in (BUILD_DIR, DIST_DIR, BASE_DIR / "version_info.txt"):
+    for target in (BUILD_DIR, DIST_DIR, BASE_DIR / "version_info.txt", LEGACY_SPEC_FILE):
         if target.exists():
             if target.is_dir():
                 shutil.rmtree(target, ignore_errors=True)

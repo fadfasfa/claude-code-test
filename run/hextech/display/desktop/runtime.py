@@ -270,7 +270,8 @@ def poll_lcu_live_ids(ui: "HextechUI"):
 def start_web_server_process(web_port_file: str, *, auto_open_browser: bool = True):
     startupinfo = None
     child_env = os.environ.copy()
-    child_env["HEXTECH_BASE_DIR"] = BASE_DIR
+    if not getattr(sys, "frozen", False):
+        child_env["HEXTECH_BASE_DIR"] = BASE_DIR
     # 浏览器由桌面父进程打开和关闭；子进程只负责 Web 服务本体。
     child_env["HEXTECH_OPEN_BROWSER"] = "0"
     if os.name == "nt":

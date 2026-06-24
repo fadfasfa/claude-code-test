@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-"""打包白名单清单生成器。
+"""打包白名单 manifest 生成器。
 
 文件职责：
 - 枚举稳定配置、静态页面、图片资源和首启可用快照
-- 生成构建期与运行期共用的 bundle manifest
+- 生成运行期 seed 使用的 bundle manifest；构建期只把这份 manifest 随包写入，不复制资源
 
 核心输入：
 - `data/static/` 与 `data/indexes/`
@@ -16,75 +16,42 @@ from __future__ import annotations
 
 核心输出：
 - bundle manifest 字典
-- `_bundle_runtime/` 目录结构
 
 主要依赖：
-- `shutil`
 - `json`
+- `tools.package_rules`
 
 维护提醒：
 - 这里只白名单稳定资源与首启冷启动所需快照，不打包运行态缓存/锁/日志
-- 构建期可读取 `data/raw` 快照源，但 manifest 和 bundle 输出必须写入 `resources/snapshots`
+- 构建期可读取 `data/raw` 快照源，但 manifest 路径必须写入 `resources/snapshots`
 - 若 manifest 字段有改动，必须同步检查 `tools.runtime_bundle` 与烟测脚本
 """
 
 import json
-import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
 
-
-STABLE_STATIC_FILES = (
-    "Champion_Core_Data.json",
-    "Augment_Icon_Manifest.json",
-    "Augment_Apexlol_Map.json",
-    "Augment_Full_Map.json",
-    "Augment_Icon_Map.json",
-    "hero_version.txt",
+from tools.package_rules import (
+    BUNDLED_HEXTECH_SNAPSHOT_DIR,
+    BUNDLED_SYNERGY_DATA_DIR,
+    BUNDLE_MANIFEST_NAME,
+    FORBIDDEN_BUNDLE_PATH_PARTS,
+    HEXTECH_SNAPSHOT_DIR,
+    STABLE_INDEX_FILES,
+    STABLE_STATIC_FILES,
+    SYNERGY_DATA_DIR,
+    SYNERGY_LATEST_POINTER_FILENAME,
+    iter_hextech_snapshot_files,
+    iter_source_files,
+    iter_stable_asset_files,
+    iter_synergy_data_files,
 )
-
-STABLE_INDEX_FILES = (
-    "Champion_Alias_Index.json",
-    "augment.name-to-icon.v1.json",
-)
-ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-HEXTECH_SNAPSHOT_DIR = Path("data") / "raw" / "hextech"
-HEXTECH_SNAPSHOT_PATTERN = "Hextech_Data_*.csv"
-SYNERGY_DATA_DIR = Path("data") / "raw" / "synergy"
-BUNDLED_HEXTECH_SNAPSHOT_DIR = Path("resources") / "snapshots" / "hextech"
-BUNDLED_SYNERGY_DATA_DIR = Path("resources") / "snapshots" / "synergy"
-SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
-SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
-SYNERGY_SNAPSHOT_PATTERN = "Champion_Synergy_*.json"
-BUNDLE_MANIFEST_NAME = "bundle_manifest.json"
-OVERLAY_ANCHOR_CALIBRATION_FILENAME = "overlay_anchor_calibration.v1.json"
-FORBIDDEN_BUNDLE_PATH_PARTS = (
-    "data/raw",
-    "data/runtime",
-    OVERLAY_ANCHOR_CALIBRATION_FILENAME,
-)
-SOURCE_FILE_ALLOWLIST = (
-    "build.py",
-    "hextech_ui.py",
-    "web_server.py",
-    "tools/build_bundle.py",
-    "tools/bundle_manifest.py",
-    "tools/runtime_bundle.py",
-    "tools/dev_checks.py",
-    "tools/acceptance/overlay_performance_probe.py",
-    "tools/acceptance/probe_official_overlay_provider.py",
-    "tools/acceptance/smoke_packaged_startup.py",
-)
-
-
-def _web_static_dir(base_dir: Path) -> Path:
-    return base_dir / "hextech" / "display" / "web" / "static"
 
 
 def _assert_no_runtime_cache_entries(manifest: dict) -> None:
     serialized = json.dumps(manifest, ensure_ascii=False).replace("\\", "/")
     for forbidden in FORBIDDEN_BUNDLE_PATH_PARTS:
+        # TODO: manifest 字段扩展后改为按路径分量精确匹配，避免 source 文件名偶然含禁词时误报。
         if forbidden in serialized:
             raise ValueError(f"bundle manifest must not include runtime cache entry: {forbidden}")
 
@@ -95,70 +62,6 @@ def _relative_to_base(path: Path, base_dir: Path) -> str:
 
 def _bundled_snapshot_name(path: Path, target_dir: Path) -> str:
     return (target_dir / path.name).as_posix()
-
-
-def iter_stable_asset_files(asset_dir: Path) -> Iterable[Path]:
-    if not asset_dir.exists():
-        return []
-    return sorted(
-        path for path in asset_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in ASSET_SUFFIXES
-    )
-
-
-def iter_hextech_snapshot_files(base_dir: Path) -> Iterable[Path]:
-    snapshot_dir = base_dir / HEXTECH_SNAPSHOT_DIR
-    if not snapshot_dir.exists():
-        return []
-    return sorted(path for path in snapshot_dir.glob(HEXTECH_SNAPSHOT_PATTERN) if path.is_file())
-
-
-def _is_synergy_snapshot_file(path: Path) -> bool:
-    name = path.name
-    stem = name.removeprefix("Champion_Synergy_").removesuffix(".json")
-    parts = stem.split("_")
-    return (
-        len(parts) in {2, 3}
-        and len(parts[0]) == 8
-        and len(parts[1]) == 6
-        and parts[0].isdigit()
-        and parts[1].isdigit()
-        and (len(parts) == 2 or (len(parts[2]) == 2 and parts[2].isdigit()))
-    )
-
-
-def iter_synergy_data_files(base_dir: Path) -> Iterable[Path]:
-    """列出可打包的协同时间快照和 latest 指针，旧固定名仅作兼容兜底。"""
-    synergy_dir = base_dir / SYNERGY_DATA_DIR
-    if not synergy_dir.exists():
-        return []
-
-    files = [
-        path for path in synergy_dir.glob(SYNERGY_SNAPSHOT_PATTERN)
-        if path.is_file() and _is_synergy_snapshot_file(path)
-    ]
-    pointer = synergy_dir / SYNERGY_LATEST_POINTER_FILENAME
-    if pointer.exists():
-        files.append(pointer)
-    legacy = synergy_dir / SYNERGY_LEGACY_FILENAME
-    if legacy.exists():
-        files.append(legacy)
-    return sorted(files)
-
-
-def iter_source_files(base_dir: Path) -> list[str]:
-    """列出最终结构的源码清单；业务实现只从 `hextech/` 主应用包收口。"""
-
-    source_files = {
-        path.relative_to(base_dir).as_posix()
-        for path in (base_dir / "hextech").rglob("*.py")
-        if path.is_file() and "__pycache__" not in path.parts
-    }
-    source_files.update(
-        relative_name for relative_name in SOURCE_FILE_ALLOWLIST
-        if (base_dir / Path(relative_name)).exists()
-    )
-    return sorted(source_files)
 
 
 def build_bundle_manifest(base_dir: Path) -> dict:
@@ -198,58 +101,3 @@ def build_bundle_manifest(base_dir: Path) -> dict:
     }
     _assert_no_runtime_cache_entries(manifest)
     return manifest
-
-
-def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
-    """把 manifest 对应的稳定资源复制到临时 bundle 目录。"""
-    bundle_root = build_dir / "_bundle_runtime"
-    if bundle_root.exists():
-        shutil.rmtree(bundle_root)
-
-    data_static_dir = base_dir / "data" / "static"
-    data_index_dir = base_dir / "data" / "indexes"
-    asset_dir = base_dir / "assets"
-    static_dir = _web_static_dir(base_dir)
-
-    manifest = build_bundle_manifest(base_dir)
-    (bundle_root / "data" / "static").mkdir(parents=True, exist_ok=True)
-    (bundle_root / "data" / "indexes").mkdir(parents=True, exist_ok=True)
-    (bundle_root / BUNDLED_HEXTECH_SNAPSHOT_DIR).mkdir(parents=True, exist_ok=True)
-    (bundle_root / BUNDLED_SYNERGY_DATA_DIR).mkdir(parents=True, exist_ok=True)
-    (bundle_root / "assets").mkdir(parents=True, exist_ok=True)
-
-    if static_dir.exists():
-        shutil.copytree(static_dir, bundle_root / "static")
-
-    for filename in manifest["static_files"]:
-        shutil.copy2(data_static_dir / filename, bundle_root / "data" / "static" / filename)
-    for filename in manifest["index_files"]:
-        shutil.copy2(data_index_dir / filename, bundle_root / "data" / "indexes" / filename)
-
-    for relative_name in manifest["hextech_snapshot_files"]:
-        source = base_dir / HEXTECH_SNAPSHOT_DIR / Path(relative_name).name
-        target = bundle_root / Path(relative_name)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-
-    synergy_relative_names = list(manifest.get("synergy_data_files") or [])
-    legacy_single = str(manifest.get("synergy_data_file", "")).strip()
-    if legacy_single and legacy_single not in synergy_relative_names:
-        synergy_relative_names.append(legacy_single)
-    for synergy_relative_name in synergy_relative_names:
-        source = base_dir / SYNERGY_DATA_DIR / Path(synergy_relative_name).name
-        target = bundle_root / Path(synergy_relative_name)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-
-    for relative_name in manifest["asset_files"]:
-        source = asset_dir / Path(relative_name)
-        target = bundle_root / "assets" / Path(relative_name)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-
-    (bundle_root / BUNDLE_MANIFEST_NAME).write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    return bundle_root

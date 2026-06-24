@@ -73,7 +73,8 @@ from hextech.scraping.synergy.scraper import (
     normalize_slug,
     write_synergy_refresh_meta,
 )
-from tools.bundle_manifest import build_bundle_manifest, prepare_bundle_runtime
+from tools.bundle_manifest import build_bundle_manifest
+from tools.package_rules import iter_package_data_entries
 from hextech.support.log_utils import install_summary_logging
 
 
@@ -259,7 +260,9 @@ def check_hextech_package_contract() -> None:
     assert "from processing.overlay_hint_cache" not in hextech_scraper_text
     assert "from hextech.catalog.precomputed_cache" in hextech_scraper_text
     assert "from hextech.overlay.hints" in hextech_scraper_text
-    assert "parents[3]" in synergy_scraper_text
+    assert "RUNTIME_DATA_DIR" in synergy_scraper_text
+    assert 'Path(BASE_DIR) / "data" / "runtime"' not in synergy_scraper_text
+    assert 'os.path.join(BASE_DIR, "data", "runtime"' not in synergy_scraper_text
     assert "crawler.cloakbrowser_client" not in synergy_scraper_text
     assert "hextech.scraping.transport.cloakbrowser_client" in synergy_scraper_text
     smoke_scrapling_text = (RUN_DIR / "hextech" / "scraping" / "transport" / "smoke_scrapling.py").read_text(encoding="utf-8")
@@ -270,6 +273,9 @@ def check_hextech_package_contract() -> None:
     version_sync_module = importlib.import_module("hextech.scraping.version_sync")
     assert Path(version_sync_module.BASE_DIR).resolve() == RUN_DIR.resolve()
     assert Path(version_sync_module.RESOURCE_DIR).resolve() == RUN_DIR.resolve()
+    paths_text = (RUN_DIR / "hextech" / "scraping" / "_paths.py").read_text(encoding="utf-8")
+    assert 'os.path.join(RUNTIME_DATA_DIR, "raw")' in paths_text
+    assert 'getattr(sys, "frozen", False)' in paths_text
     version_sync_text = (RUN_DIR / "hextech" / "scraping" / "version_sync.py").read_text(encoding="utf-8")
     icon_resolver_text = (RUN_DIR / "hextech" / "scraping" / "icon_resolver.py").read_text(encoding="utf-8")
     augment_catalog_text = (RUN_DIR / "hextech" / "scraping" / "augment_catalog.py").read_text(encoding="utf-8")
@@ -1147,26 +1153,35 @@ def check_logging_contract() -> None:
 
 
 def check_packaging_config() -> None:
-    build_script = (RUN_DIR / "tools" / "build_bundle.py").read_text(encoding="utf-8")
-    spec_text = (RUN_DIR / "Hextech伴生终端.spec").read_text(encoding="utf-8")
+    build_script = (RUN_DIR / "tools" / "build_package.py").read_text(encoding="utf-8")
+    rules_text = (RUN_DIR / "tools" / "package_rules.py").read_text(encoding="utf-8")
+    build_entry_text = (RUN_DIR / "build.py").read_text(encoding="utf-8")
 
     assert "PYINSTALLER_HIDDEN_IMPORTS = [" in build_script
     assert "PYINSTALLER_COLLECT_SUBMODULES = [" in build_script
     assert 'cmd.extend(["--hidden-import", module_name])' in build_script
     assert 'cmd.extend(["--collect-submodules", module_name])' in build_script
+    assert "--workpath" in build_script
+    assert "--distpath" in build_script
+    assert "--specpath" in build_script
+    assert "TemporaryDirectory" in build_script
+    assert ".artifacts" in build_script
     for dependency in ("filelock", "tkinter", "_tkinter", "win32gui", "win32con", "hextech.overlay.lifecycle"):
         assert f'"{dependency}"' in build_script
     assert "resolve_tcl_runtime_dirs" in build_script
     assert "resolve_tkinter_package_dir" in build_script
-    assert ";_tcl_data" in build_script
-    assert ";_tk_data" in build_script
-    assert ";tkinter" in build_script
-    assert "_tcl_data" in spec_text and "_tk_data" in spec_text and "'tkinter'" in spec_text
-    assert "from tools.build_bundle import PYINSTALLER_COLLECT_SUBMODULES, PYINSTALLER_HIDDEN_IMPORTS" in spec_text
-    assert "hiddenimports = list(PYINSTALLER_HIDDEN_IMPORTS)" in spec_text
-    assert "for module_name in PYINSTALLER_COLLECT_SUBMODULES" in spec_text
+    assert '"_tcl_data"' in build_script
+    assert '"_tk_data"' in build_script
+    assert '"tkinter"' in build_script
+    assert "from tools.build_package import main" in build_entry_text
+    assert not (RUN_DIR / "tools" / "build_bundle.py").exists()
+    assert not (RUN_DIR / "Hextech伴生终端.spec").exists()
     manifest_script_text = (RUN_DIR / "tools" / "bundle_manifest.py").read_text(encoding="utf-8")
     assert "hextech" in manifest_script_text
+    assert "prepare_bundle_runtime" not in manifest_script_text
+    assert "shutil.copy" not in manifest_script_text
+    assert "PackageData" in rules_text
+    assert "iter_package_data_entries" in rules_text
     assert '"display/' not in manifest_script_text
     assert '"processing/' not in manifest_script_text
     assert '"crawler/' not in manifest_script_text
@@ -1176,7 +1191,6 @@ def check_packaging_config() -> None:
         assert f'"{module_name}"' in build_script
     for legacy_module in ("display", "processing", "scraping", "crawler", "game_overlay"):
         assert f'"{legacy_module}"' not in build_script
-        assert f"'{legacy_module}'" not in spec_text
 
 
 def check_ui_feature_flags_contract() -> None:
@@ -3254,14 +3268,29 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
         fixture_root = Path(tmp_dir) / "fixture"
         fixture_index = fixture_root / "data" / "indexes"
         fixture_static = fixture_root / "hextech" / "display" / "web" / "static"
+        fixture_assets = fixture_root / "assets"
         fixture_index.mkdir(parents=True)
         fixture_static.mkdir(parents=True)
+        fixture_assets.mkdir(parents=True)
         (fixture_index / "augment.name-to-icon.v1.json").write_text('{"尤里卡":"assets/1.png"}', encoding="utf-8")
         (fixture_static / "index.html").write_text("<html></html>", encoding="utf-8")
-        prepared = prepare_bundle_runtime(fixture_root, Path(tmp_dir) / "build")
-        assert (prepared / "data" / "indexes" / "augment.name-to-icon.v1.json").is_file()
-        assert (prepared / "static" / "index.html").is_file()
-        assert not (prepared / "data" / "raw").exists()
+        (fixture_assets / "1.png").write_bytes(b"png")
+        manifest_path = Path(tmp_dir) / "bundle_manifest.json"
+        manifest_path.write_text("{}", encoding="utf-8")
+        entries = iter_package_data_entries(fixture_root, manifest_path)
+        entry_targets = {(entry.source.name, entry.target) for entry in entries}
+        assert ("augment.name-to-icon.v1.json", "data/indexes") in entry_targets
+        assert ("static", "static") in entry_targets
+        assert ("assets", "assets") in entry_targets
+        assert ("bundle_manifest.json", ".") in entry_targets
+        assert not (Path(tmp_dir) / "build" / "_bundle_runtime").exists()
+        (fixture_assets / "debug.tmp").write_text("debug", encoding="utf-8")
+        try:
+            iter_package_data_entries(fixture_root, manifest_path)
+        except ValueError as exc:
+            assert "debug.tmp" in str(exc)
+        else:
+            raise AssertionError("assets 目录含非白名单文件时必须阻断打包规则生成")
 
     if verbose:
         print("has_hextech_snapshot_files", True)
@@ -3354,8 +3383,21 @@ def check_packaged_smoke_uses_explicit_feature_flags() -> None:
     assert "_write_smoke_feature_flags(runtime_root)" in smoke_text
     assert "OVERLAY_ANCHOR_CALIBRATION_FILENAME" in smoke_text
     assert "package:resources/snapshots/synergy/Champion_Synergy_latest.v1.json" in smoke_text
-    assert "package:data/runtime absent" in smoke_text
-    assert "package:data/raw absent" in smoke_text
+    assert "FORBIDDEN_PACKAGE_PATHS" in smoke_text
+    assert 'child_env["LOCALAPPDATA"]' in smoke_text
+    assert "runtime_base:data/{rel} absent" in smoke_text
+    for forbidden_rel in (
+        "data/raw",
+        "data/runtime",
+        "data/processed",
+        "runtime/cache",
+        "runtime/profile",
+        "runtime/log",
+        "runtime/logs",
+        "runtime/debug",
+    ):
+        assert forbidden_rel in smoke_text
+    assert "_internal" in smoke_text
     assert "overlay_anchor_calibration.v1.json" in smoke_text
 
 

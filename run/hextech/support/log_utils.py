@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -61,9 +62,19 @@ def get_unified_log_file() -> str:
     return get_runtime_summary_log_file()
 
 
+def _packaged_runtime_base_dir() -> Path:
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return Path(local_app_data) / "HextechNexus"
+    app_data = os.getenv("APPDATA", "").strip()
+    if app_data:
+        return Path(app_data) / "HextechNexus"
+    return Path.home() / ".hextech_nexus"
+
+
 def _runtime_log_dir() -> Path:
     if getattr(sys, "frozen", False):
-        base_dir = Path(sys.executable).resolve().parent
+        base_dir = _packaged_runtime_base_dir()
     else:
         base_dir = Path(__file__).resolve().parents[2]
     log_dir = base_dir / "data" / "runtime" / "logs"

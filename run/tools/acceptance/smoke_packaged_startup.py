@@ -36,6 +36,16 @@ REQUIRED_RUNTIME_FILES = (
     "state/startup_status.json",
 )
 OVERLAY_ANCHOR_CALIBRATION_FILENAME = "overlay_anchor_calibration.v1.json"
+FORBIDDEN_PACKAGE_PATHS = (
+    "data/raw",
+    "data/runtime",
+    "data/processed",
+    "runtime/cache",
+    "runtime/profile",
+    "runtime/log",
+    "runtime/logs",
+    "runtime/debug",
+)
 SMOKE_FEATURE_FLAGS = {
     "web_frontend_enabled": True,
     "game_overlay_enabled": False,
@@ -50,7 +60,12 @@ class SmokeFailure(RuntimeError):
 
 
 def _latest_package(dist_dir: Path) -> Path:
-    packages = [p for p in dist_dir.iterdir() if p.is_dir() and p.name.startswith("Hextech_")]
+    if not dist_dir.is_dir():
+        raise SmokeFailure(f"未找到打包搜索目录：{dist_dir}")
+    packages = [
+        p for p in dist_dir.iterdir()
+        if p.is_dir() and (p.name.startswith("HextechCompanion-") or p.name.startswith("Hextech_"))
+    ]
     if not packages:
         raise SmokeFailure(f"未找到打包目录：{dist_dir}")
     return max(packages, key=lambda p: p.stat().st_mtime)
@@ -62,10 +77,6 @@ def _copy_clean_package(source: Path, smoke_root: Path) -> Path:
     smoke_root.mkdir(parents=True, exist_ok=True)
     target = smoke_root / source.name
     shutil.copytree(source, target)
-    for rel in ("data/raw", "data/runtime"):
-        runtime_path = target / rel
-        if runtime_path.exists():
-            shutil.rmtree(runtime_path)
     return target
 
 
@@ -76,11 +87,12 @@ def _find_exe(package_dir: Path) -> Path:
     return exes[0]
 
 
-def _get_packaged_runtime_root() -> Path:
-    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+def _get_packaged_runtime_root(env: dict[str, str] | None = None) -> Path:
+    source_env = env or os.environ
+    local_app_data = source_env.get("LOCALAPPDATA", "").strip()
     if local_app_data:
         return Path(local_app_data) / "HextechNexus" / "data" / "runtime"
-    app_data = os.getenv("APPDATA", "").strip()
+    app_data = source_env.get("APPDATA", "").strip()
     if app_data:
         return Path(app_data) / "HextechNexus" / "data" / "runtime"
     return Path.home() / ".hextech_nexus" / "data" / "runtime"
@@ -131,10 +143,14 @@ def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall
     for rel in REQUIRED_RUNTIME_FILES:
         path = runtime_root / rel
         checks[f"runtime:{rel}"] = path.is_file() and path.stat().st_mtime >= started_at_wall
-    checks["_internal/data/runtime absent"] = not (package_dir / "_internal/data/runtime").exists()
-    checks["_internal/data/raw absent"] = not (package_dir / "_internal/data/raw").exists()
-    checks["package:data/runtime absent"] = not (packaged_data_root / "data" / "runtime").exists()
-    checks["package:data/raw absent"] = not (packaged_data_root / "data" / "raw").exists()
+    package_roots = [("package", package_dir)]
+    if packaged_data_root != package_dir:
+        package_roots.append(("_internal", packaged_data_root))
+    for label, root in package_roots:
+        for rel in FORBIDDEN_PACKAGE_PATHS:
+            checks[f"{label}:{rel} absent"] = not (root / Path(rel)).exists()
+    for rel in ("raw", "processed"):
+        checks[f"runtime_base:data/{rel} absent"] = not (runtime_root.parent / rel).exists()
     checks[f"package:{OVERLAY_ANCHOR_CALIBRATION_FILENAME} absent"] = not any(
         path.name == OVERLAY_ANCHOR_CALIBRATION_FILENAME
         for path in package_dir.rglob(OVERLAY_ANCHOR_CALIBRATION_FILENAME)
@@ -278,7 +294,11 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
     stdout_path = package_dir / "smoke_startup_stdout.log"
     started_at = time.monotonic()
     started_at_wall = time.time()
-    runtime_root = _get_packaged_runtime_root()
+    child_env = os.environ.copy()
+    appdata_root = package_dir.parent / "appdata"
+    child_env["LOCALAPPDATA"] = str(appdata_root / "Local")
+    child_env["APPDATA"] = str(appdata_root / "Roaming")
+    runtime_root = _get_packaged_runtime_root(child_env)
     _write_smoke_feature_flags(runtime_root)
     with stdout_path.open("wb") as stdout:
         proc = subprocess.Popen(
@@ -286,6 +306,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
             cwd=str(package_dir.resolve()),
             stdout=stdout,
             stderr=subprocess.STDOUT,
+            env=child_env,
         )
     try:
         last_error = ""
@@ -329,8 +350,9 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="验证打包产物空仓首启是否在限定时间内可用。")
-    parser.add_argument("--package-dir", type=Path, help="已打包便携目录；默认使用 run/dist 下最新 Hextech_* 目录。")
-    parser.add_argument("--dist-dir", type=Path, default=Path(__file__).resolve().parents[2] / "dist", help="便携包搜索根目录；默认是 run/dist。")
+    default_releases = Path(__file__).resolve().parents[3] / ".artifacts" / "hextech" / "releases"
+    parser.add_argument("--package-dir", type=Path, help="已打包便携目录；默认使用 .artifacts/hextech/releases 下最新目录。")
+    parser.add_argument("--dist-dir", type=Path, default=default_releases, help="便携包搜索根目录；默认是 .artifacts/hextech/releases。")
     parser.add_argument("--smoke-root", type=Path, default=Path(__file__).resolve().parents[2] / ".tmp_package_smoke", help="烟测复制副本根目录；默认是 run/.tmp_package_smoke。")
     parser.add_argument("--timeout", type=int, default=60, help="启动可用性等待秒数；默认 60。")
     parser.add_argument("--keep", action="store_true", help="保留复制出的烟测目录，便于排查。")
