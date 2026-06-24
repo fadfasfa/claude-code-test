@@ -27,15 +27,15 @@ RUN_DIR = Path(__file__).resolve().parents[1]
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 
-from display.web_api import _normalize_synergy_items, register_routes  # noqa: E402
-from processing.precomputed_cache import (  # noqa: E402
+from hextech.display.web.api import _normalize_synergy_items, register_routes  # noqa: E402
+from hextech.catalog.precomputed_cache import (  # noqa: E402
     load_precomputed_champion_list,
     load_precomputed_hextech_for_hero,
 )
-from processing.runtime_store import build_synergy_data_path, get_latest_csv, load_runtime_csv  # noqa: E402
-from scraping import full_hextech_scraper as hex_scraper  # noqa: E402
-from scraping import full_synergy_scraper as synergy_scraper  # noqa: E402
-from scraping.version_sync import (  # noqa: E402
+from hextech.catalog.runtime_store import build_synergy_data_path, get_latest_csv, load_runtime_csv  # noqa: E402
+from hextech.scraping.hextech import scraper as hex_scraper  # noqa: E402
+from hextech.scraping.synergy import scraper as synergy_scraper  # noqa: E402
+from hextech.scraping.version_sync import (  # noqa: E402
     HEXTECH_AUGMENT_METADATA_URLS,
     HEXTECH_CHAMPION_STATS_URLS,
     build_hextech_detail_urls,

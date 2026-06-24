@@ -8,11 +8,11 @@ from __future__ import annotations
 
 核心输入：
 - `data/static/` 与 `data/indexes/`
-- `data/raw/hextech/Hextech_Data_*.csv`
-- `data/raw/synergy/Champion_Synergy_YYYYMMDD_HHMMSS.json`
-- `data/raw/synergy/Champion_Synergy_latest.v1.json`
+- `data/raw/hextech/Hextech_Data_*.csv`（构建期源）
+- `data/raw/synergy/Champion_Synergy_YYYYMMDD_HHMMSS.json`（构建期源）
+- `data/raw/synergy/Champion_Synergy_latest.v1.json`（构建期源）
 - `assets/`
-- `display/static/`
+- `hextech/display/web/static/`
 
 核心输出：
 - bundle manifest 字典
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 维护提醒：
 - 这里只白名单稳定资源与首启冷启动所需快照，不打包运行态缓存/锁/日志
+- 构建期可读取 `data/raw` 快照源，但 manifest 和 bundle 输出必须写入 `resources/snapshots`
 - 若 manifest 字段有改动，必须同步检查 `tools.runtime_bundle` 与烟测脚本
 """
 
@@ -51,37 +52,34 @@ ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 HEXTECH_SNAPSHOT_DIR = Path("data") / "raw" / "hextech"
 HEXTECH_SNAPSHOT_PATTERN = "Hextech_Data_*.csv"
 SYNERGY_DATA_DIR = Path("data") / "raw" / "synergy"
+BUNDLED_HEXTECH_SNAPSHOT_DIR = Path("resources") / "snapshots" / "hextech"
+BUNDLED_SYNERGY_DATA_DIR = Path("resources") / "snapshots" / "synergy"
 SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
 SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
 SYNERGY_SNAPSHOT_PATTERN = "Champion_Synergy_*.json"
 BUNDLE_MANIFEST_NAME = "bundle_manifest.json"
 OVERLAY_ANCHOR_CALIBRATION_FILENAME = "overlay_anchor_calibration.v1.json"
 FORBIDDEN_BUNDLE_PATH_PARTS = (
+    "data/raw",
     "data/runtime",
     OVERLAY_ANCHOR_CALIBRATION_FILENAME,
 )
 SOURCE_FILE_ALLOWLIST = (
-    "display/service_manager.py",
-    "game_overlay/__init__.py",
-    "game_overlay/__main__.py",
-    "game_overlay/data_source.py",
-    "game_overlay/host.py",
-    "game_overlay/lifecycle.py",
-    "game_overlay/renderer.py",
-    "game_overlay_host.py",
-    "processing/lol_window.py",
-    "processing/overlay_context.py",
-    "processing/overlay_event_channel.py",
-    "processing/overlay_hint_cache.py",
-    "processing/official_overlay_provider.py",
-    "processing/overlay_vision_layout.py",
-    "processing/overlay_vision_matcher.py",
-    "processing/overlay_vision_sidecar.py",
-    "processing/overlay_vision_state.py",
-    "processing/ui_feature_flags.py",
-    "tools/overlay_performance_probe.py",
-    "tools/probe_official_overlay_provider.py",
+    "build.py",
+    "hextech_ui.py",
+    "web_server.py",
+    "tools/build_bundle.py",
+    "tools/bundle_manifest.py",
+    "tools/runtime_bundle.py",
+    "tools/dev_checks.py",
+    "tools/acceptance/overlay_performance_probe.py",
+    "tools/acceptance/probe_official_overlay_provider.py",
+    "tools/acceptance/smoke_packaged_startup.py",
 )
+
+
+def _web_static_dir(base_dir: Path) -> Path:
+    return base_dir / "hextech" / "display" / "web" / "static"
 
 
 def _assert_no_runtime_cache_entries(manifest: dict) -> None:
@@ -93,6 +91,10 @@ def _assert_no_runtime_cache_entries(manifest: dict) -> None:
 
 def _relative_to_base(path: Path, base_dir: Path) -> str:
     return path.relative_to(base_dir).as_posix()
+
+
+def _bundled_snapshot_name(path: Path, target_dir: Path) -> str:
+    return (target_dir / path.name).as_posix()
 
 
 def iter_stable_asset_files(asset_dir: Path) -> Iterable[Path]:
@@ -144,6 +146,21 @@ def iter_synergy_data_files(base_dir: Path) -> Iterable[Path]:
     return sorted(files)
 
 
+def iter_source_files(base_dir: Path) -> list[str]:
+    """列出最终结构的源码清单；业务实现只从 `hextech/` 主应用包收口。"""
+
+    source_files = {
+        path.relative_to(base_dir).as_posix()
+        for path in (base_dir / "hextech").rglob("*.py")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+    source_files.update(
+        relative_name for relative_name in SOURCE_FILE_ALLOWLIST
+        if (base_dir / Path(relative_name)).exists()
+    )
+    return sorted(source_files)
+
+
 def build_bundle_manifest(base_dir: Path) -> dict:
     static_dir = base_dir / "data" / "static"
     index_dir = base_dir / "data" / "indexes"
@@ -157,21 +174,18 @@ def build_bundle_manifest(base_dir: Path) -> dict:
     ]
     asset_files = [str(path.relative_to(asset_dir)) for path in iter_stable_asset_files(asset_dir)]
     hextech_snapshot_files = [
-        _relative_to_base(path, base_dir)
+        _bundled_snapshot_name(path, BUNDLED_HEXTECH_SNAPSHOT_DIR)
         for path in iter_hextech_snapshot_files(base_dir)
     ]
     synergy_data_files = [
-        _relative_to_base(path, base_dir)
+        _bundled_snapshot_name(path, BUNDLED_SYNERGY_DATA_DIR)
         for path in iter_synergy_data_files(base_dir)
     ]
     synergy_data_file = next(
         (name for name in synergy_data_files if Path(name).name.startswith("Champion_Synergy_") and Path(name).name != SYNERGY_LATEST_POINTER_FILENAME),
         "",
     )
-    source_files = [
-        relative_name for relative_name in SOURCE_FILE_ALLOWLIST
-        if (base_dir / Path(relative_name)).exists()
-    ]
+    source_files = iter_source_files(base_dir)
     manifest = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "static_files": static_files,
@@ -195,13 +209,13 @@ def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
     data_static_dir = base_dir / "data" / "static"
     data_index_dir = base_dir / "data" / "indexes"
     asset_dir = base_dir / "assets"
-    static_dir = base_dir / "display" / "static"
+    static_dir = _web_static_dir(base_dir)
 
     manifest = build_bundle_manifest(base_dir)
     (bundle_root / "data" / "static").mkdir(parents=True, exist_ok=True)
     (bundle_root / "data" / "indexes").mkdir(parents=True, exist_ok=True)
-    (bundle_root / HEXTECH_SNAPSHOT_DIR).mkdir(parents=True, exist_ok=True)
-    (bundle_root / SYNERGY_DATA_DIR).mkdir(parents=True, exist_ok=True)
+    (bundle_root / BUNDLED_HEXTECH_SNAPSHOT_DIR).mkdir(parents=True, exist_ok=True)
+    (bundle_root / BUNDLED_SYNERGY_DATA_DIR).mkdir(parents=True, exist_ok=True)
     (bundle_root / "assets").mkdir(parents=True, exist_ok=True)
 
     if static_dir.exists():
@@ -213,7 +227,7 @@ def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
         shutil.copy2(data_index_dir / filename, bundle_root / "data" / "indexes" / filename)
 
     for relative_name in manifest["hextech_snapshot_files"]:
-        source = base_dir / Path(relative_name)
+        source = base_dir / HEXTECH_SNAPSHOT_DIR / Path(relative_name).name
         target = bundle_root / Path(relative_name)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
@@ -223,7 +237,7 @@ def prepare_bundle_runtime(base_dir: Path, build_dir: Path) -> Path:
     if legacy_single and legacy_single not in synergy_relative_names:
         synergy_relative_names.append(legacy_single)
     for synergy_relative_name in synergy_relative_names:
-        source = base_dir / Path(synergy_relative_name)
+        source = base_dir / SYNERGY_DATA_DIR / Path(synergy_relative_name).name
         target = bundle_root / Path(synergy_relative_name)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)

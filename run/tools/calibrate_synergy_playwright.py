@@ -23,8 +23,8 @@ RUN_DIR = Path(__file__).resolve().parents[1]
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 
-from processing.runtime_store import build_runtime_state_path, build_synergy_data_path  # noqa: E402
-from scraping.version_sync import load_champion_core_data  # noqa: E402
+from hextech.catalog.runtime_store import build_runtime_state_path, build_synergy_data_path  # noqa: E402
+from hextech.scraping.version_sync import load_champion_core_data  # noqa: E402
 
 
 COMMON_SHORT_ALIASES = {"q", "w", "e", "r", "ad", "ap", "aa"}

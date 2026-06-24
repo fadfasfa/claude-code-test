@@ -169,8 +169,8 @@ def resolve_tkinter_package_dir() -> Path:
 def refresh_runtime_data_before_bundle() -> None:
     """按运行时节奏刷新数据，再把当前落盘结果打入发布包。"""
     print_step("按正常节奏刷新运行时数据")
-    # 延迟导入避免 tools 包初始化时反向加载 processing.orchestrator 形成导入环。
-    from processing.orchestrator import refresh_backend_data
+    # 延迟导入避免 tools 包初始化时反向加载刷新编排形成导入环。
+    from hextech.core.refresh import refresh_backend_data
 
     refreshed = refresh_backend_data(force=False)
     if refreshed:
@@ -214,23 +214,20 @@ def build_exe(version_file: Path, bundle_root: Path) -> Path:
         "--hidden-import", "uvicorn",
         "--hidden-import", "filelock",
         "--hidden-import", "bs4",
-        "--hidden-import", "display.service_manager",
-        "--hidden-import", "game_overlay",
-        "--hidden-import", "game_overlay.data_source",
-        "--hidden-import", "game_overlay.host",
-        "--hidden-import", "game_overlay.lifecycle",
-        "--hidden-import", "game_overlay.renderer",
-        "--hidden-import", "processing.overlay_event_channel",
-        "--hidden-import", "processing.overlay_hint_cache",
-        "--hidden-import", "processing.overlay_vision_layout",
-        "--hidden-import", "processing.overlay_vision_matcher",
-        "--hidden-import", "processing.overlay_vision_sidecar",
-        "--hidden-import", "processing.overlay_vision_state",
-        "--hidden-import", "processing.ui_feature_flags",
+        "--hidden-import", "hextech",
+        "--hidden-import", "hextech.display.desktop.app",
+        "--hidden-import", "hextech.display.web.app",
+        "--hidden-import", "hextech.overlay.data_source",
+        "--hidden-import", "hextech.overlay.host",
+        "--hidden-import", "hextech.overlay.lifecycle",
+        "--hidden-import", "hextech.overlay.renderer",
+        "--hidden-import", "hextech.overlay.vision.sidecar",
+        "--hidden-import", "hextech.core.settings",
         "--collect-submodules", "tkinter",
         "--collect-submodules", "fastapi",
         "--collect-submodules", "starlette",
         "--collect-submodules", "uvicorn",
+        "--collect-submodules", "hextech",
         "hextech_ui.py",
     ]
     if tcl_module_dir is not None:
