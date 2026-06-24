@@ -4,7 +4,8 @@ from __future__ import annotations
 
 本模块只描述源文件如何进入包，不创建中间资源副本。打包脚本会把这些
 规则转换为 PyInstaller 的 ``--add-data`` 参数，并把所有临时文件写入系统
-临时目录。`assets/` 会按目录交给 PyInstaller，但目录内必须全部是
+临时目录。`resources/图片资源/` 会按目录交给 PyInstaller 的兼容 `assets`
+目标，但目录内必须全部是
 ``ASSET_SUFFIXES`` 白名单图片，避免临时文件被静默带入发布包。
 """
 
@@ -14,22 +15,25 @@ from typing import Iterable
 
 
 STABLE_STATIC_FILES = (
-    "Champion_Core_Data.json",
-    "Augment_Icon_Manifest.json",
-    "Augment_Apexlol_Map.json",
-    "Augment_Full_Map.json",
-    "Augment_Icon_Map.json",
+    "英雄目录.v1.json",
+    "海克斯资源目录.v1.json",
     "Champion_Synergy_Cleaned.json",
     "hero_version.txt",
 )
-STABLE_INDEX_FILES = (
-    "Champion_Alias_Index.json",
-    "augment.name-to-icon.v1.json",
-)
+STABLE_INDEX_FILES = ()
 ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+ASSET_DOCUMENTATION_FILES = {"README.md"}
+RESOURCE_ROOT_DIR = Path("resources")
+RESOURCE_IMAGE_DIR = RESOURCE_ROOT_DIR / "图片资源"
+RESOURCE_VERSION_DATA_DIR = RESOURCE_ROOT_DIR / "版本数据"
+RESOURCE_STARTUP_SNAPSHOT_DIR = RESOURCE_ROOT_DIR / "首启快照"
+RESOURCE_DIAGNOSTIC_FIXTURE_DIR = RESOURCE_ROOT_DIR / "诊断样例"
+RESOURCE_SOURCE_EVIDENCE_DIR = RESOURCE_ROOT_DIR / "来源证据"
 HEXTECH_SNAPSHOT_DIR = Path("data") / "raw" / "hextech"
 HEXTECH_SNAPSHOT_PATTERN = "Hextech_Data_*.csv"
-SYNERGY_DATA_DIR = Path("data") / "raw" / "synergy"
+SYNERGY_DATA_DIR = RESOURCE_STARTUP_SNAPSHOT_DIR
+BUNDLED_VERSION_DATA_DIR = RESOURCE_VERSION_DATA_DIR
+BUNDLED_ASSET_DIR = Path("assets")
 BUNDLED_HEXTECH_SNAPSHOT_DIR = Path("resources") / "snapshots" / "hextech"
 BUNDLED_SYNERGY_DATA_DIR = Path("resources") / "snapshots" / "synergy"
 SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
@@ -86,14 +90,16 @@ def iter_stable_asset_files(asset_dir: Path) -> Iterable[Path]:
 
 
 def iter_unexpected_asset_files(asset_dir: Path) -> Iterable[Path]:
-    """列出不能随 `assets/` 目录整体进入包的非白名单文件。"""
+    """列出不能随图片资源目录整体进入包的非白名单文件。"""
 
     if not asset_dir.exists():
         return []
     return sorted(
         path
         for path in asset_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() not in ASSET_SUFFIXES
+        if path.is_file()
+        and path.suffix.lower() not in ASSET_SUFFIXES
+        and path.name not in ASSET_DOCUMENTATION_FILES
     )
 
 
@@ -104,7 +110,7 @@ def validate_asset_dir_for_package(asset_dir: Path) -> None:
 
     sample = ", ".join(path.relative_to(asset_dir).as_posix() for path in unexpected[:5])
     suffix = "" if len(unexpected) <= 5 else f" 等 {len(unexpected)} 个文件"
-    raise ValueError(f"assets 目录包含非打包白名单文件：{sample}{suffix}；请清理或移出非图片文件后再打包。")
+    raise ValueError(f"resources/图片资源 目录包含非打包白名单文件：{sample}{suffix}；请清理或移出非图片文件后再打包。")
 
 
 def iter_hextech_snapshot_files(base_dir: Path) -> Iterable[Path]:
@@ -167,9 +173,9 @@ def iter_source_files(base_dir: Path) -> list[str]:
 def iter_package_data_entries(base_dir: Path, manifest_path: Path) -> list[PackageData]:
     """返回 PyInstaller data 规则，不复制任何业务资源到仓库内中间目录。"""
 
-    data_static_dir = base_dir / "data" / "static"
-    data_index_dir = base_dir / "data" / "indexes"
-    asset_dir = base_dir / "assets"
+    data_static_dir = base_dir / RESOURCE_VERSION_DATA_DIR
+    data_index_dir = base_dir / RESOURCE_VERSION_DATA_DIR
+    asset_dir = base_dir / RESOURCE_IMAGE_DIR
     static_dir = web_static_dir(base_dir)
     entries: list[PackageData] = []
 
@@ -179,11 +185,11 @@ def iter_package_data_entries(base_dir: Path, manifest_path: Path) -> list[Packa
     for filename in STABLE_STATIC_FILES:
         source = data_static_dir / filename
         if source.exists():
-            entries.append(PackageData(source, "data/static"))
+            entries.append(PackageData(source, BUNDLED_VERSION_DATA_DIR.as_posix()))
     for filename in STABLE_INDEX_FILES:
         source = data_index_dir / filename
         if source.exists():
-            entries.append(PackageData(source, "data/indexes"))
+            entries.append(PackageData(source, BUNDLED_VERSION_DATA_DIR.as_posix()))
 
     for source in iter_hextech_snapshot_files(base_dir):
         entries.append(PackageData(source, BUNDLED_HEXTECH_SNAPSHOT_DIR.as_posix()))
@@ -192,7 +198,7 @@ def iter_package_data_entries(base_dir: Path, manifest_path: Path) -> list[Packa
 
     if asset_dir.exists():
         validate_asset_dir_for_package(asset_dir)
-        entries.append(PackageData(asset_dir, "assets"))
+        entries.append(PackageData(asset_dir, BUNDLED_ASSET_DIR.as_posix()))
 
     entries.append(PackageData(manifest_path, "."))
     return entries

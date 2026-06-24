@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-06-24",
+  "description": "Hextech 资源中文二级分类映射。当前事实源已迁入 resources/ 下的中文二级目录。",
+  "phase": "migrated-resources",
+  "rules": {
+    "primary_directories_stay_english": true,
+    "do_not_move_files_in_this_phase": false,
+    "data_runtime_must_not_be_stable_resource": true,
+    "data_raw_requires_source_or_snapshot_kind": true
+  },
+  "categories": [
+    {
+      "name": "图片资源",
+      "resource_kind": "stable-asset",
+      "description": "随包分发的图片资源，当前事实源是 resources/图片资源/。",
+      "current_paths": [
+        "resources/图片资源/"
+      ],
+      "source_globs": [
+        "resources/图片资源/*.png"
+      ],
+      "target_path_for_phase_2": "resources/图片资源/",
+      "package_role": "stable-bundle-resource",
+      "human_maintained": true,
+      "merge_candidate": false,
+      "notes": "包内和 Web URL 仍保留 assets 兼容语义；源码态事实源不再是根级 assets/。"
+    },
+    {
+      "name": "版本数据",
+      "resource_kind": "stable-data",
+      "description": "版本级稳定 JSON/TXT 数据和索引，当前事实源是 resources/版本数据/。",
+      "current_paths": [
+        "resources/版本数据/"
+      ],
+      "source_globs": [
+        "resources/版本数据/*.json",
+        "resources/版本数据/*.txt"
+      ],
+      "target_path_for_phase_2": "resources/版本数据/",
+      "package_role": "stable-bundle-data",
+      "human_maintained": true,
+      "merge_candidate": false,
+      "merge_notes": [
+        "英雄 id/name/detail/alias 索引已收口为 英雄目录.v1.json。",
+        "海克斯图标、名称、来源映射已收口为 海克斯资源目录.v1.json。"
+      ]
+    },
+    {
+      "name": "首启快照",
+      "resource_kind": "startup-snapshot",
+      "description": "构建期可读取、包内用于首次启动播种的快照。",
+      "current_paths": [
+        "resources/首启快照/"
+      ],
+      "source_globs": [
+        "resources/首启快照/Champion_Synergy_*.json"
+      ],
+      "target_path_for_phase_2": "resources/首启快照/",
+      "package_role": "bundle-startup-seed",
+      "human_maintained": false,
+      "merge_candidate": false,
+      "notes": "包内仍应使用 resources/snapshots/ 语义；不得把 data/raw/ 直接作为包内路径。"
+    },
+    {
+      "name": "诊断样例",
+      "resource_kind": "diagnostic-fixture",
+      "description": "离线视觉匹配和诊断回归样例。",
+      "current_paths": [
+        "resources/诊断样例/"
+      ],
+      "source_globs": [
+        "resources/诊断样例/overlay_vision_fixtures/**/*.png",
+        "resources/诊断样例/overlay_matching_truth.v1.json"
+      ],
+      "target_path_for_phase_2": "resources/诊断样例/",
+      "package_role": "offline-check-fixture",
+      "human_maintained": true,
+      "merge_candidate": false,
+      "notes": "真实运行诊断输出仍应写入 data/runtime/debug/**，不得入库。"
+    },
+    {
+      "name": "来源证据",
+      "resource_kind": "source-evidence",
+      "description": "用于复现清洗结果的外部来源原始输入。",
+      "current_paths": [
+        "resources/来源证据/mayhem_combos.raw.json"
+      ],
+      "source_globs": [
+        "resources/来源证据/mayhem_combos.raw.json"
+      ],
+      "target_path_for_phase_2": "resources/来源证据/",
+      "package_role": "not-directly-bundled",
+      "human_maintained": true,
+      "merge_candidate": false,
+      "notes": "来源证据不直接供 Web/API 或前端读取；更新时应同步生成后的稳定版本数据。"
+    }
+  ]
+}

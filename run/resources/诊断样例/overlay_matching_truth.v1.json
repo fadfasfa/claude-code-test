@@ -5,9 +5,9 @@
     {
       "id": "roi-20260621-223039-540",
       "name_crops": [
-        "data/static/overlay_vision_fixtures/body_shard_20260621/name_0.png",
-        "data/static/overlay_vision_fixtures/body_shard_20260621/name_1.png",
-        "data/static/overlay_vision_fixtures/body_shard_20260621/name_2.png"
+        "resources/诊断样例/overlay_vision_fixtures/body_shard_20260621/name_0.png",
+        "resources/诊断样例/overlay_vision_fixtures/body_shard_20260621/name_1.png",
+        "resources/诊断样例/overlay_vision_fixtures/body_shard_20260621/name_2.png"
       ],
       "expected_body_shard": true,
       "expected_names": [null, null, null],
@@ -16,9 +16,9 @@
     {
       "id": "roi-20260621-222018-984",
       "name_crops": [
-        "data/static/overlay_vision_fixtures/hextech_20260621/name_0.png",
-        "data/static/overlay_vision_fixtures/hextech_20260621/name_1.png",
-        "data/static/overlay_vision_fixtures/hextech_20260621/name_2.png"
+        "resources/诊断样例/overlay_vision_fixtures/hextech_20260621/name_0.png",
+        "resources/诊断样例/overlay_vision_fixtures/hextech_20260621/name_1.png",
+        "resources/诊断样例/overlay_vision_fixtures/hextech_20260621/name_2.png"
       ],
       "expected_body_shard": false,
       "expected_names": ["豪猪", "虚幻武器", "钢化你心"],
@@ -27,9 +27,9 @@
     {
       "id": "roi-20260622-170120-568",
       "name_crops": [
-        "data/static/overlay_vision_fixtures/hextech_20260622/name_0.png",
-        "data/static/overlay_vision_fixtures/hextech_20260622/name_1.png",
-        "data/static/overlay_vision_fixtures/hextech_20260622/name_2.png"
+        "resources/诊断样例/overlay_vision_fixtures/hextech_20260622/name_0.png",
+        "resources/诊断样例/overlay_vision_fixtures/hextech_20260622/name_1.png",
+        "resources/诊断样例/overlay_vision_fixtures/hextech_20260622/name_2.png"
       ],
       "expected_body_shard": false,
       "expected_names": ["更万用的瞄准镜", "闪现向前", "大法师"],

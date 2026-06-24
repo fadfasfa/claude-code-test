@@ -3,9 +3,8 @@ from __future__ import annotations
 """从 CommunityDragon 刷新 Arena/ARAM 海克斯闭集目录。
 
 本工具只负责把 `cherry-augments.json` 收口成本地稳定资源：
-- `data/static/Augment_Icon_Manifest.json`
-- `data/indexes/augment.name-to-icon.v1.json`
-- `assets/*_small.png`
+- `resources/版本数据/海克斯资源目录.v1.json`
+- `resources/图片资源/*_small.png`
 
 CommunityDragon 的 cherry 数据只含名字、稀有度和图标路径，不含完整 tooltip。
 因此本工具不抓取、不保留 description / tooltip；描述仍由第三方数据链路提供。
@@ -26,6 +25,7 @@ if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 
 from hextech.scraping.icon_resolver import normalize_augment_name, normalize_safe_augment_icon_filename, sanitize_augment_icon_url
+from hextech.catalog.version_catalog import get_augment_resource_catalog_path, load_apexlol_slug_map
 from hextech.support.atomic_io import atomic_write_json
 
 
@@ -45,11 +45,11 @@ RARITY_TO_TIER = {
     "kEventChoice": "棱彩",
 }
 
-STATIC_DIR = RUN_DIR / "data" / "static"
-INDEX_DIR = RUN_DIR / "data" / "indexes"
-ASSET_DIR = RUN_DIR / "assets"
-MANIFEST_PATH = STATIC_DIR / "Augment_Icon_Manifest.json"
-NAME_TO_ICON_PATH = INDEX_DIR / "augment.name-to-icon.v1.json"
+RESOURCE_DIR = RUN_DIR / "resources"
+STATIC_DIR = RESOURCE_DIR / "版本数据"
+INDEX_DIR = RESOURCE_DIR / "版本数据"
+ASSET_DIR = RESOURCE_DIR / "图片资源"
+CATALOG_PATH = get_augment_resource_catalog_path(STATIC_DIR)
 
 
 def _clean_text(value: Any) -> str:
@@ -257,8 +257,14 @@ def sync_cdragon_augments(*, download: bool, force_icons: bool, max_workers: int
 
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(MANIFEST_PATH, manifest, ensure_ascii=False, indent=2)
-    atomic_write_json(NAME_TO_ICON_PATH, name_to_icon, ensure_ascii=False, separators=(",", ":"))
+    catalog_payload = {
+        "schema_version": 1,
+        "description": "海克斯名称、tier、图标文件、URL 和 apexlol slug 的统一目录。",
+        "entries": manifest,
+        "name_to_icon": name_to_icon,
+        "apexlol_slug_map": load_apexlol_slug_map(STATIC_DIR),
+    }
+    atomic_write_json(CATALOG_PATH, catalog_payload, ensure_ascii=False, indent=2)
 
     coverage = {}
     by_name = {entry["name"]: entry for entry in manifest}
@@ -289,8 +295,7 @@ def sync_cdragon_augments(*, download: bool, force_icons: bool, max_workers: int
         "ambiguous_name_count": len(ambiguous_names),
         "ambiguous_name_sample": dict(list(ambiguous_names.items())[:20]),
         "coverage": coverage,
-        "manifest_path": str(MANIFEST_PATH),
-        "name_to_icon_path": str(NAME_TO_ICON_PATH),
+        "catalog_path": str(CATALOG_PATH),
     }
 
 

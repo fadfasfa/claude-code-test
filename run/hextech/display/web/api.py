@@ -21,16 +21,44 @@ from pydantic import BaseModel
 from hextech.catalog.aliases import load_manual_alias_index
 from hextech.catalog.precomputed_cache import is_precomputed_hextech_cache_loaded, warm_precomputed_hextech_cache
 from hextech.catalog.runtime_store import load_precomputed_hextech_for_hero
+from hextech.catalog.version_catalog import (
+    AUGMENT_RESOURCE_CATALOG_FILENAME,
+    HERO_CATALOG_FILENAME,
+    legacy_index_payload,
+    legacy_static_payload,
+)
 from hextech.catalog.view_adapter import process_champions_data, process_hextechs_data
 from hextech.core.refresh import rebuild_api_cache_if_needed
 from hextech.scraping.augment_catalog import load_augment_icon_manifest
-from hextech.scraping._paths import STATIC_DATA_DIR
+from hextech.scraping._paths import INDEX_DATA_DIR, STATIC_DATA_DIR
 from . import runtime as web_runtime
 
 _api_cache_rebuild_lock = threading.Lock()
 _api_cache_rebuild_inflight = False
 _api_cache_warm_lock = threading.Lock()
 _api_cache_warm_inflight = False
+_STATIC_DATA_FILE_ALLOWLIST = frozenset({
+    HERO_CATALOG_FILENAME,
+    AUGMENT_RESOURCE_CATALOG_FILENAME,
+    "Champion_Synergy_Cleaned.json",
+    "Champion_Core_Data.json",
+    "Augment_Full_Map.json",
+    "Augment_Icon_Map.json",
+    "hero_version.txt",
+})
+_STATIC_DATA_LEGACY_ALLOWLIST = frozenset({
+    "Augment_Apexlol_Map.json",
+    "Augment_Icon_Manifest.json",
+    "Champion_Alias_Index.json",
+    "Champion_Core_Data.json",
+})
+_INDEX_DATA_LEGACY_ALLOWLIST = frozenset({
+    "Champion_Alias_Index.json",
+    "augment.name-to-icon.v1.json",
+    "champion.alias-to-id.v1.json",
+    "champion.id-to-detail.v1.json",
+    "champion.id-to-name.v1.json",
+})
 
 
 def _normalize_synergy_entry(raw_entry: str) -> str:
@@ -429,6 +457,39 @@ def _safe_asset_response(assets_dir: str, filename: str):
     return FileResponse(safe_path)
 
 
+def _route_file_name(filename: str) -> str:
+    value = str(filename or "").strip()
+    if not value or "/" in value or "\\" in value:
+        return ""
+    if os.path.basename(value) != value:
+        return ""
+    return value
+
+
+def _stable_data_response(
+    base_dir: str,
+    filename: str,
+    legacy_loader,
+    *,
+    allowed_files: frozenset[str] = frozenset(),
+    legacy_files: frozenset[str] = frozenset(),
+):
+    route_name = _route_file_name(filename)
+    if not route_name:
+        return JSONResponse(content={"error": "禁止访问"}, status_code=403)
+
+    safe_path = web_runtime.safe_join_under_dir(base_dir, route_name)
+    if not safe_path:
+        return JSONResponse(content={"error": "禁止访问"}, status_code=403)
+    if route_name in allowed_files and os.path.exists(safe_path) and os.path.isfile(safe_path):
+        return FileResponse(safe_path)
+    if route_name in legacy_files:
+        payload = legacy_loader(route_name, base_dir)
+        if payload is not None:
+            return JSONResponse(content=payload)
+    return JSONResponse(content={"error": "资源未找到"}, status_code=404)
+
+
 def _request_precomputed_hextech_rebuild() -> bool:
     global _api_cache_rebuild_inflight
     with _api_cache_rebuild_lock:
@@ -503,8 +564,29 @@ def register_routes(app: FastAPI) -> None:
     async def favicon():
         return Response(status_code=204)
 
+    @app.get("/data/static/{filename:path}")
+    async def stable_static_file(filename: str):
+        return _stable_data_response(
+            STATIC_DATA_DIR,
+            filename,
+            legacy_static_payload,
+            allowed_files=_STATIC_DATA_FILE_ALLOWLIST,
+            legacy_files=_STATIC_DATA_LEGACY_ALLOWLIST,
+        )
+
+    @app.get("/data/indexes/{filename:path}")
+    async def stable_index_file(filename: str):
+        return _stable_data_response(
+            INDEX_DATA_DIR,
+            filename,
+            legacy_index_payload,
+            legacy_files=_INDEX_DATA_LEGACY_ALLOWLIST,
+        )
+
     @app.get("/assets/{filename}")
     async def get_asset(filename: str):
+        if not str(filename or "").lower().endswith(".png"):
+            return JSONResponse(content={"error": "资源未找到"}, status_code=404)
         assets_dir = web_runtime.get_assets_dir()
         safe_path = web_runtime.safe_join_under_dir(assets_dir, filename)
         if not safe_path:

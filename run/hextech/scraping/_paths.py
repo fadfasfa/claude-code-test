@@ -61,12 +61,18 @@ def get_base_dir() -> str:
 RESOURCE_DIR = get_resource_dir()
 BASE_DIR = get_base_dir()
 DATA_DIR = os.path.join(BASE_DIR, "data")
-STATIC_DATA_DIR = os.path.join(DATA_DIR, "static")
-INDEX_DATA_DIR = os.path.join(DATA_DIR, "indexes")
+RESOURCE_CONTENT_DIR = os.path.join(BASE_DIR, "resources")
+RESOURCE_IMAGE_DIR = os.path.join(RESOURCE_CONTENT_DIR, "图片资源")
+RESOURCE_VERSION_DATA_DIR = os.path.join(RESOURCE_CONTENT_DIR, "版本数据")
+RESOURCE_STARTUP_SNAPSHOT_DIR = os.path.join(RESOURCE_CONTENT_DIR, "首启快照")
+RESOURCE_DIAGNOSTIC_FIXTURE_DIR = os.path.join(RESOURCE_CONTENT_DIR, "诊断样例")
+RESOURCE_SOURCE_EVIDENCE_DIR = os.path.join(RESOURCE_CONTENT_DIR, "来源证据")
+STATIC_DATA_DIR = RESOURCE_VERSION_DATA_DIR
+INDEX_DATA_DIR = RESOURCE_VERSION_DATA_DIR
 RUNTIME_DATA_DIR = os.path.join(DATA_DIR, "runtime")
 RAW_DATA_DIR = (
     os.path.join(RUNTIME_DATA_DIR, "raw")
     if getattr(sys, "frozen", False)
     else os.path.join(DATA_DIR, "raw")
 )
-ASSET_DIR = os.path.join(BASE_DIR, "assets")
+ASSET_DIR = RESOURCE_IMAGE_DIR

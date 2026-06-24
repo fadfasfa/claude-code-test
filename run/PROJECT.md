@@ -30,7 +30,7 @@
 | 抓取 transport | `hextech/scraping/transport/` | Scrapling / CloakBrowser 底层抓取客户端 | 不承载业务解析 |
 | 工具链 | `tools/` | 打包、白名单、运行态播种、自检、手动验收、烟测 | 不替代主业务入口 |
 | 运行态数据 | `data/` | 本机生成的抓取结果、缓存、锁、日志、profile | 不作为发布源数据 |
-| 资源目标边界 | `resources/` | 稳定只读资源边界；打包快照输出到 `resources/snapshots/` | 不存放 raw/runtime/cache/log/profile |
+| 资源目标边界 | `resources/` | 中文二级稳定资源事实源；打包快照输出到 `resources/snapshots/` | 不存放 runtime/cache/log/profile |
 
 ---
 
@@ -93,18 +93,33 @@
 <!-- PROJECT:SECTION:DATA_BOUNDARY -->
 ## 四、数据边界
 
+### 4.0 中文二级资源分类
+
+`resources/` 提供中文二级维护分类，并作为源码态稳定资源事实源。分类事实源是
+`resources/资源清单.v1.json`：
+
+- `图片资源/` 承载图片和图标事实源；`/assets/...` 只是兼容 URL。
+- `版本数据/` 承载版本级稳定 JSON / TXT 数据；`/data/static/...` 与 `/data/indexes/...` 只是兼容路由。
+- `首启快照/` 承载构建期可读取的协同快照。
+- `诊断样例/` 承载 overlay 视觉离线回归样例。
+- `来源证据/` 承载 `mayhem_combos.raw.json` 等外部来源输入。
+
+后续如果继续调整路径或合并 JSON，必须同步更新加载器、打包白名单、bundle manifest、
+runtime bundle 和验收脚本。不得把 `data/runtime/**` 登记为稳定资源，也不得把
+运行期生成的 `data/raw/**` 当作普通版本数据。
+
 ### 4.1 随包稳定资源
 
 这些资源可以进入便携包，因为它们随游戏/数据版本变化，而不是随用户运行即时变化：
 
 - `hextech/display/web/static/`
-- `data/static/` 中的版本级稳定数据文件
-- `data/indexes/` 中的版本级稳定索引文件
-- `assets/` 中的稳定图片/图标资源
+- `resources/版本数据/` 中的版本级稳定数据和索引文件
+- `resources/图片资源/` 中的稳定图片/图标资源
+- `resources/首启快照/` 中的构建期首启快照输入
 - 包内 `resources/snapshots/` 中的首启种子快照
 - `Champion_Core_Data.json`
-- `Champion_Alias_Index.json`
-- `Augment_Icon_Manifest.json`
+- `英雄目录.v1.json`
+- `海克斯资源目录.v1.json`
 - `Champion_Synergy_Cleaned.json`
 - 兼容图标映射文件
 
@@ -125,7 +140,7 @@
 - `data/runtime/logs/`
 - 任何启动后生成、抓取、缓存、锁、日志或计算产物
 
-例外：`data/raw/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
+例外：`resources/来源证据/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
 `Champion_Synergy_Cleaned.json` 的生成；它不加入 `tools/package_rules.py` 打包白名单，
 也不被 Web/API 或前端直接读取。重抓后只有在准备更新 cleaned 数据时才一起提交。
 
