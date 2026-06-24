@@ -3,9 +3,9 @@
 本目录只服务 Claude Code 本机运行时。当前仓库规则以根目录 `AGENTS.md`、`PROJECT.md`、`CLAUDE.md` 和 `docs/index.md` 为入口。
 
 - `settings.json`：Claude Code 项目权限和本机 plugin 可用状态；不再注册仓库级 PreToolUse 编排 hook，也不把 Codex plugin 作为默认执行偏好。
-- `commands/`：Claude Code 项目级 slash command；`cleanup-worktrees` 转发到同名 skill，`audit` 类请求只读，默认清理 PR 合并后已确认安全的本地残留。
+- `commands/`：Claude Code 项目级 slash command；`cleanup-worktrees` / `review` 转发到同名 skill；`review` 无参数且只有一个开放 PR 时直接审查，`all` 审查全部开放 PR；`review-all` 是可见别名，等价于 `/review all`。
 - `plans/`：Claude Code 原生运行时的本机计划草稿目录；除 `README.md` 外默认不提交。
-- `skills/`：Claude Code 专用的最小辅助 skill，不属于 Codex skill 白名单；`cleanup-worktrees` 只在显性调用时清理已合并、无领先提交、无 tracked 修改、无 `??` untracked，且 ignored 输出为空或仅为白名单 `__pycache__/` 缓存的受管本地残留。
+- `skills/`：Claude Code 专用的最小辅助 skill，不属于 Codex skill 白名单；`cleanup-worktrees` 只在显性调用时清理已合并、无领先提交、无 tracked 修改、无 `??` untracked，且 ignored 输出为空或仅为白名单 `__pycache__/` 缓存的受管本地残留；`review` 只做 PR 只读审查。
 - `worktrees/`：本地占位目录；不自动创建或主控 Git worktree。
 
 Claude Code 可以独立完成探查、修改、验证和提交；没有用户当前轮显性点名或命令时，不调用、委派、审查或触发 Codex / CX。
