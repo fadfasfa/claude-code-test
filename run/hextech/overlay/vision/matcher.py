@@ -10,13 +10,18 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 
+# 文字通道阈值：SimHei 单字体 >= 0.74 且 margin 够大 → 强匹配，2 帧稳定
 STRONG_TEXT_CONFIDENCE = 0.74
 STRONG_TEXT_MARGIN = 0.025
+# 双字体（SimHei + SimSun）同结果 ≥ 0.70 → 直接确认为双字体匹配
 DUAL_FONT_CONFIDENCE = 0.70
+# 弱文字通道阈值：≥ 0.68 且无文字冲突 → 时间确认，3 帧稳定
 WEAK_TEXT_CONFIDENCE = 0.68
 WEAK_TEXT_MARGIN = 0.01
+# 图标通道高冲突阈值：图标 top1 与文字 top1 不同且图标置信度 ≥ 0.90 → 拒绝弱候选
 HIGH_CONFLICT_ICON_CONFIDENCE = 0.90
 HIGH_CONFLICT_ICON_MARGIN = 0.03
+# 图标短名单阈值：由图标通道缩窄搜索空间后的文字通道准入条件
 SHORTLIST_DUAL_FONT_CONFIDENCE = 0.66
 SHORTLIST_TEXT_CONFIDENCE = 0.68
 SHORTLIST_TEXT_MARGIN = 0.02
@@ -24,17 +29,19 @@ SHORTLIST_TEXT_MARGIN = 0.02
 
 @dataclass(frozen=True)
 class SlotCandidate:
-    slot: int
-    augment_id: str
-    name: str
-    tier: str
-    summary: str
-    confidence: float
-    rule: str
-    required_frames: int
-    diagnostic: str
-    top_candidates: tuple[dict[str, Any], ...]
-    channels: dict[str, Any]
+    """单帧槽位候选结果，不可变以安全在状态机帧间传递。"""
+
+    slot: int            # 槽位编号 0/1/2
+    augment_id: str      # 增强 ID（优先）或名称
+    name: str            # 增强中文名
+    tier: str            # 等级：白银/黄金/棱彩
+    summary: str         # 效果简述
+    confidence: float    # 匹配置信度 0-1
+    rule: str            # 判定规则标签（如 dual_font / strong_text / temporal_text）
+    required_frames: int # 该规则要求连续出现多少帧才算稳定
+    diagnostic: str      # 诊断标签（如 v2_dual_font）
+    top_candidates: tuple[dict[str, Any], ...]  # 候选 Top-N（最多 3 个）
+    channels: dict[str, Any]  # 各通道原始得分
 
     @property
     def identity(self) -> str:
@@ -112,7 +119,15 @@ def _candidate_from_top(
 
 
 def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
-    """把单帧槽位分数转换为强、双字体或弱候选。"""
+    """把单帧槽位分数转换为强、双字体或弱候选。
+
+    决策树优先级：
+    1. 双字体同结果（dual_font）→ 2 帧稳定
+    2. 单字体强匹配（strong_text）→ 2 帧稳定
+    3. 图标短名单 + 双字体（icon_shortlist_dual_font）→ 2 帧稳定
+    4. 图标短名单 + 单字体（icon_shortlist_temporal）→ 3 帧稳定
+    5. 弱文字时间确认（temporal_text）→ 3 帧稳定
+    """
 
     text = _channel(slot, "text")
     text_alt = _channel(slot, "text_alt")
@@ -167,6 +182,7 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
         for candidate in shortlist_candidates
         if isinstance(candidate, Mapping) and _identity(candidate)
     }
+    # 优先级 1：双字体（SimHei + SimSun）top1 相同 → 直接确认，2 帧稳定
     if (
         text_identity
         and text_identity == alt_identity
@@ -182,6 +198,7 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             required_frames=2,
         )
 
+    # 优先级 2：单字体强匹配（置信度 ≥ 0.74 且 margin ≥ 0.025），2 帧稳定
     strong_channels = (
         (text, text_top, text_identity, text_confidence, text_margin, "strong_text"),
         (text_alt, alt_top, alt_identity, alt_confidence, alt_margin, "strong_text_alt"),
@@ -219,6 +236,7 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
         and narrowed_margin >= SHORTLIST_TEXT_MARGIN
         and narrowed_alt_margin >= SHORTLIST_TEXT_MARGIN
     )
+    # 优先级 3：图标短名单缩小搜索空间后，双字体同结果 → 2 帧稳定
     if (
         narrowed_identity
         and narrowed_identity in shortlist_identities
@@ -236,6 +254,7 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             required_frames=2,
         )
 
+    # 优先级 4：图标短名单 + 单字体（无冲突），3 帧稳定
     narrowed_channels = (
         (text_narrowed, narrowed_top, narrowed_identity, narrowed_confidence, narrowed_margin),
         (text_alt_narrowed, narrowed_alt_top, narrowed_alt_identity, narrowed_alt_confidence, narrowed_alt_margin),
@@ -262,6 +281,7 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
                 required_frames=3,
             )
 
+    # 优先级 5：弱文字时间确认（置信度 ≥ 0.68，无冲突，无图标高冲突），3 帧稳定
     weak_channels = (
         (text, text_top, text_identity, text_confidence, text_margin, "temporal_text"),
         (text_alt, alt_top, alt_identity, alt_confidence, alt_margin, "temporal_text_alt"),

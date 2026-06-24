@@ -1,4 +1,12 @@
-# Codex Chrome Extension Goal: ApexLoL 76 Hero Strict Rescrape
+# Codex Chrome 扩展任务：ApexLoL 76 英雄严格重新抓取
+
+<!--
+  中文说明：
+  本文件是给 Codex AI 的任务指令模板，用于通过 CDP 连接到已运行的 Chrome 实例，
+  抓取 76 个英雄的协同数据。执行入口是 launch_codex_chrome.ps1，验证用
+  verify_codex_chrome.ps1，完成后用 cleanup.ps1 清理临时产物。
+  正文保留英文以确保 Codex 执行准确性。
+-->
 
 Use the fresh Chrome profile that is already running with CDP at `http://127.0.0.1:9222`.
 Do not use stale browser/search/web fallback content. Use the live rendered Chrome pages only.

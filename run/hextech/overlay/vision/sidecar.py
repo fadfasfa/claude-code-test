@@ -61,11 +61,35 @@ ICON_SHORTLIST_MAX_DELTA = 0.10
 ICON_SHORTLIST_MAX_GROUPS = 16
 # 指纹灰度标准差下限：低于它视为平坦区域（如 ESC 暗色菜单），直接不参与匹配。
 FLAT_CROP_STD_THRESHOLD = 12.0
+# 按钮粗定位的搜索区域（相对捕获尺寸）：限制扫描范围以加速和减少误检
+BUTTON_SEARCH_REGION = (0.20, 0.55, 0.80, 0.95)
+# 按钮检测阈值：蓝色像素数下限和占比下限
+BUTTON_MIN_BLUE_PIXELS = 80
+BUTTON_MIN_BLUE_RATIO = 0.15
+BUTTON_SCAN_DOWNSAMPLE = 4      # 按钮扫描下采样倍数（加速粗定位）
+BUTTON_MIN_SOLIDITY = 0.45      # 连通域最小紧实度（排除长条状误检）
+BUTTON_CENTER_MIN_RATIO = 0.42  # 连通域中心 X 范围下限（相对卡片宽度）
+BUTTON_CENTER_MAX_RATIO = 0.58  # 连通域中心 X 范围上限
+# 真按钮垂直中心实测约 0.81H；0.70 下限排除强化界面卡片描述区等中部蓝色误锁。
+BUTTON_CENTER_MIN_Y_RATIO = 0.70
+BUTTON_CENTER_MAX_Y_RATIO = 0.87
+BODY_SHARD_KEYWORDS = ("body_shard", "body-shard", "body shard", "锻体", "碎片")
+BODY_SHARD_SUFFIX = "碎片"            # 锻体卡片名称后缀标识
+BODY_SHARD_STRONG_CONFIDENCE = 0.80    # 锻体强匹配置信度阈值
+BODY_SHARD_VERY_STRONG_CONFIDENCE = 0.85  # 锻体极强匹配置信度（直接确认）
+BODY_SHARD_SUPPORT_CONFIDENCE = 0.70     # 锻体辅助证据置信度阈值
+BODY_SHARD_SUFFIX_SIZE = (100, 48)       # 锻体后缀区域裁剪尺寸
+BODY_SHARD_SUFFIX_WIDTH_PERCENTS = (24, 28, 32, 36, 40, 44, 48, 50)  # 后缀宽度候选比例列表
+BLOCKING_MODAL_PANEL_REGION = (0.34, 0.25, 0.66, 0.50)     # 阻塞弹窗面板搜索区域（相对坐标）
+BLOCKING_MODAL_BUTTON_REGION = (0.42, 0.40, 0.58, 0.50)    # 阻塞弹窗按钮搜索区域
+BLOCKING_MODAL_MIN_DARK_RATIO = 0.75                        # 面板区域最低暗像素占比
+BLOCKING_MODAL_MIN_BUTTON_GOLD_RATIO = 0.05                 # 按钮区域最低金色像素占比
+
 # active 掉到 unstable 后先观察几帧再写隐藏事件，避免识别抖动让 overlay 闪烁。
 DEFAULT_EXIT_UNSTABLE_FRAMES = 2
-DEFAULT_LOOP_FRAME_INTERVAL_MS = 160
-DEFAULT_LOOP_IDLE_INTERVAL_SECONDS = 0.25
-DEFAULT_LOOP_HEARTBEAT_SECONDS = 1.0
+DEFAULT_LOOP_FRAME_INTERVAL_MS = 160        # --loop 模式帧间隔（毫秒）
+DEFAULT_LOOP_IDLE_INTERVAL_SECONDS = 0.25   # 空闲等待间隔
+DEFAULT_LOOP_HEARTBEAT_SECONDS = 1.0        # 心跳日志间隔
 # --loop 自动转储上限：每个进程最多转储前几个选择窗口，避免长局刷盘。
 # 载入画面青色水面会误触发按钮检测吃掉名额，上限需覆盖载入误报 + 真实三选一。
 LOOP_DEBUG_DUMP_MAX_WINDOWS = 12
@@ -73,29 +97,8 @@ ROI_DIAGNOSTIC_LIMIT = 32
 VISION_TRACE_SCHEMA_VERSION = 2
 OVERLAY_VISION_TRACE_FILE = OVERLAY_EVENT_FILE.with_name("overlay_vision_trace.v1.json")
 OVERLAY_VISION_TRACE_HISTORY_FILE = OVERLAY_EVENT_FILE.with_name("overlay_vision_trace_history.v1.json")
-VISION_TRACE_HISTORY_LIMIT = 256
-VISION_TRACE_REFRESH_SECONDS = 1.0
-BUTTON_SEARCH_REGION = (0.20, 0.55, 0.80, 0.95)
-BUTTON_MIN_BLUE_PIXELS = 80
-BUTTON_MIN_BLUE_RATIO = 0.15
-BUTTON_SCAN_DOWNSAMPLE = 4
-BUTTON_MIN_SOLIDITY = 0.45
-BUTTON_CENTER_MIN_RATIO = 0.42
-BUTTON_CENTER_MAX_RATIO = 0.58
-# 真按钮垂直中心实测约 0.81H；0.70 下带约束排除强化界面卡片描述区等中部蓝色误锁。
-BUTTON_CENTER_MIN_Y_RATIO = 0.70
-BUTTON_CENTER_MAX_Y_RATIO = 0.87
-BODY_SHARD_KEYWORDS = ("body_shard", "body-shard", "body shard", "锻体", "碎片")
-BODY_SHARD_SUFFIX = "碎片"
-BODY_SHARD_STRONG_CONFIDENCE = 0.80
-BODY_SHARD_VERY_STRONG_CONFIDENCE = 0.85
-BODY_SHARD_SUPPORT_CONFIDENCE = 0.70
-BODY_SHARD_SUFFIX_SIZE = (100, 48)
-BODY_SHARD_SUFFIX_WIDTH_PERCENTS = (24, 28, 32, 36, 40, 44, 48, 50)
-BLOCKING_MODAL_PANEL_REGION = (0.34, 0.25, 0.66, 0.50)
-BLOCKING_MODAL_BUTTON_REGION = (0.42, 0.40, 0.58, 0.50)
-BLOCKING_MODAL_MIN_DARK_RATIO = 0.75
-BLOCKING_MODAL_MIN_BUTTON_GOLD_RATIO = 0.05
+VISION_TRACE_HISTORY_LIMIT = 256             # trace 历史最大保留条数
+VISION_TRACE_REFRESH_SECONDS = 1.0           # trace 刷新间隔
 
 logger = logging.getLogger(__name__)
 _LAST_VISION_TRACE_SIGNATURES: dict[str, tuple[str, ...]] = {}
@@ -315,7 +318,13 @@ def _selection_button_source_fields(
 
 
 def detect_selection_button_box(frame: Image.Image) -> tuple[int, int, int, int] | None:
-    """首次校准时在宽搜索区内定位蓝色按钮，后续只复用固定 ROI。"""
+    """首次校准时在宽搜索区内定位蓝色按钮，后续只复用固定 ROI。
+
+    级联策略：
+    1. 下采样扫描蓝色像素 → 提取水平游程
+    2. 游程按 Y 邻近度分组为连通域
+    3. 连通域按紧实度 + 中心位置校验 → 选出最佳候选按钮框
+    """
 
     image = frame.convert("RGB")
     width, height = image.size
@@ -890,7 +899,12 @@ def _select_manifest_item(
 
 
 def build_template_index(raw_templates: Mapping[str, Mapping[str, Any]]) -> list[TemplateEntry]:
-    """从内存模板构建匹配索引；测试和真实模板加载共用这条纯函数。"""
+    """从内存模板构建匹配索引。
+
+    去重策略：同一 normalize_augment_id 只保留第一个；平坦模板（无图标指纹）直接丢弃。
+    双字体指纹：SimHei（主字体）和 SimSun（备选字体）各生成一份 name_fingerprint，
+    匹配时双通道独立评分再综合判定。
+    """
 
     index: list[TemplateEntry] = []
     for augment_id, payload in raw_templates.items():
@@ -1280,6 +1294,14 @@ def _detect_slot(
     min_text_confidence: float = DEFAULT_TEXT_MIN_CONFIDENCE,
     min_text_margin: float = DEFAULT_TEXT_MIN_MARGIN,
 ) -> dict[str, Any]:
+    """单槽位双通道识别：图标指纹匹配 + SimHei/SimSun 双字体文字匹配。
+
+    流程：
+    1. 图标通道：截取卡片图标区域 → 灰度指纹 → 与模板库排名
+    2. 文字通道：截取名称区域 → SimHei(主)/SimSun(备) 分别渲染 → 与截屏文字指纹排名
+    3. 图标短名单：用图标通道 Top-N 缩窄文字候选空间
+    4. 三通道结果汇入 channels 字典，供 matcher.candidate_from_slot 做最终判定
+    """
     crop_std, ranked = _rank_templates(frame.crop(box), template_index)
     name_levels = (
         _text_mask_levels(name_mask, NAME_FINGERPRINT_SIZE)
@@ -2353,7 +2375,15 @@ def run_loop(
     heartbeat_seconds: float = DEFAULT_LOOP_HEARTBEAT_SECONDS,
     debug_dump_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
-    """常驻 V2 视觉循环；场景和槽位分别稳定，非前台时低频待机。"""
+    """常驻 V2 视觉循环；场景和槽位分别稳定，非前台时低频待机。
+
+    循环状态机：
+    1. 检测前台窗口 → 非前台进入 idle 模式（低频待机）
+    2. 检测阻塞弹窗/计分板 → 写阻塞事件，进入 blocked 模式
+    3. 截图 → 场景检测（按钮/面板）→ 槽位识别（图标+文字双通道）
+    4. SelectionTracker 累积帧数 → 稳定后写 overlay 事件
+    5. debug_dump_dir 不为空时自动转储前 LOOP_DEBUG_DUMP_MAX_WINDOWS 个选择窗口
+    """
 
     _set_dpi_awareness()
     hint_cache = load_overlay_hint_cache()

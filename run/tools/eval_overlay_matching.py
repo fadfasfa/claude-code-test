@@ -31,6 +31,20 @@ def _clean_text(value: Any) -> str:
 
 
 def _load_truth(path: Path) -> list[dict[str, Any]]:
+    """加载真值 JSON，校验格式并标准化字段。
+
+    真值结构：
+    {
+      "samples": [
+        {
+          "frame": "data/runtime/debug/xxx/frame.png",
+          "expected_slots": ["强化名称1", "强化名称2", null],
+          "expected_active": true/false,
+          ...
+        }
+      ]
+    }
+    """
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, Mapping):
         raise ValueError(f"truth payload must be an object: {path}")
@@ -344,6 +358,15 @@ def _evaluate_name_roi_sample(
 
 
 def evaluate_truth(path: Path, *, min_confidence: float) -> dict[str, Any]:
+    """加载真值 → 逐帧运行 sidecar 匹配 → 对比结果 → 生成评测报告。
+
+    评测维度：
+    - 槽位 Top1 名称匹配（slot 0/1/2 各通道 top1 是否与真值一致）
+    - active 状态与 source_reason 匹配
+    - ready_slots 数量匹配
+    - 场景存在性匹配
+    - 锻体碎片检测（name_roi 样本）
+    """
     samples = _load_truth(path)
     name_roi_samples = _load_name_roi_truth(path)
     template_index = overlay_vision_sidecar.load_default_template_index(RUN_DIR)

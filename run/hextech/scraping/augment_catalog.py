@@ -45,8 +45,8 @@ AUGMENT_ICON_DEBUG_MANIFEST_FILE = build_runtime_debug_path(
 AUGMENT_ICON_SOURCE_ID = "apexlol"
 AUGMENT_METADATA_URLS = HEXTECH_AUGMENT_METADATA_URLS
 MANIFEST_SCHEMA_VERSION = 2
-_MIN_VALID_MANIFEST_ENTRIES = 50
-_MAX_EMPTY_TEXT_RATIO = 0.35
+_MIN_VALID_MANIFEST_ENTRIES = 50  # 清单合法性的最低条目数门槛
+_MAX_EMPTY_TEXT_RATIO = 0.35      # 允许的最大空文本占比，超过视为抓取质量异常
 _AUGMENT_ICON_MANIFEST_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
 _AUGMENT_LOOKUP_CACHE: tuple[str, float, dict] = ("", 0.0, {})
 _AUGMENT_ICON_AUDIT_LOCK = threading.Lock()
@@ -191,6 +191,7 @@ def _load_full_map(config_dir: str) -> dict:
 
 
 def _fetch_remote_augment_metadata() -> dict:
+    """从远程数据源拉取增强元数据，按名称索引 rarity/tier 映射。"""
     metadata = {}
     session = get_advanced_session()
     payload = None
@@ -444,6 +445,7 @@ def build_augment_icon_manifest(
     config_dir: Optional[str] = None,
     force_refresh: bool = False,
 ) -> list[dict]:
+    """构建增强图标清单：合并 icon_map + full_map + 已有清单 + 远程元数据四源。"""
     config_dir = config_dir or STATIC_DATA_DIR
     # CDragon 数据层是闭集；稳定 manifest 已是 CDragon schema 时直接返回，
     # 不再触发 icon_map / full_map / remote_metadata 拼接路径。但 force_refresh=True
@@ -657,6 +659,7 @@ def audit_and_repair_augment_icons(
     config_dir: Optional[str] = None,
     asset_dir: Optional[str] = None,
 ) -> dict:
+    """审计清单中所有图标的本地缓存状态，缺失项尝试远程抓取修复，输出 jsonl 诊断记录。"""
     start_time = time.time()
     config_dir = config_dir or STATIC_DATA_DIR
     asset_dir = asset_dir or ASSET_DIR

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""分域自检清单。
+"""分域自检清单：抓取。
 
 这里只保存检查函数名，不导入 tools.dev_checks，避免脚本模式下重复加载模块状态。
 """

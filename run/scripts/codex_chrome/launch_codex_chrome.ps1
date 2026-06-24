@@ -1,13 +1,13 @@
 <#
-Launch a dedicated fresh Chrome profile for Codex CDP access on port 9222.
+为 Codex CDP 访问启动一个独立的 Chrome 新用户数据目录，监听 9222 端口。
 
-Usage:
+用法：
   powershell -ExecutionPolicy Bypass -File run/scripts/codex_chrome/launch_codex_chrome.ps1
 
-Notes:
-  - Does not kill existing Chrome processes.
-  - Uses run/data/runtime/profile/codex_chrome_fresh.
-  - Keeps output ASCII so Windows PowerShell 5 can parse the file reliably.
+注意事项：
+  - 不会杀掉已有的 Chrome 进程。
+  - 用户数据目录固定在 run/data/runtime/profile/codex_chrome_fresh。
+  - 启动后等待若干秒再验证端口和进程命令行，给 Chrome 留出初始化时间。
 #>
 
 [CmdletBinding()]
@@ -26,6 +26,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $scriptDir))
 $profileDir = Join-Path $repoRoot "run\data\runtime\profile\codex_chrome_fresh"
 
+# 通过 TCP 连接探测本地端口是否已监听（1 秒超时）
 function Test-LocalTcpPort {
     param([int]$Port)
     $client = [System.Net.Sockets.TcpClient]::new()
@@ -45,6 +46,7 @@ function Test-LocalTcpPort {
     }
 }
 
+# 按优先级列出 Chrome 候选路径（64 位 → 32 位 → 用户本地安装目录）
 $chromeCandidates = @(@(
     "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
     "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
@@ -52,7 +54,7 @@ $chromeCandidates = @(@(
 ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
 
 if (-not $chromeCandidates) {
-    throw "chrome.exe was not found. Install Google Chrome first."
+    throw "未找到 chrome.exe，请先安装 Google Chrome。"
 }
 
 New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
@@ -76,17 +78,18 @@ $processInfo.WorkingDirectory = $repoRoot
 $processInfo.UseShellExecute = $false
 $process = [System.Diagnostics.Process]::Start($processInfo)
 
-Write-Host "Chrome launched."
+Write-Host "Chrome 已启动。"
 if ($process) {
-    Write-Host "Initial process id: $($process.Id)"
+    Write-Host "初始进程 ID: $($process.Id)"
 }
-Write-Host "CDP: http://127.0.0.1:$Port/json/version"
-Write-Host "Profile: $profileDir"
-Write-Host "Args: $argumentText"
+Write-Host "CDP 地址: http://127.0.0.1:$Port/json/version"
+Write-Host "用户数据目录: $profileDir"
+Write-Host "启动参数: $argumentText"
 Write-Host ""
-Write-Host "Waiting $StartupWaitSeconds seconds for CDP..."
+Write-Host "等待 $StartupWaitSeconds 秒以便 CDP 就绪..."
 Start-Sleep -Seconds $StartupWaitSeconds
 
+# 验证启动结果：端口是否监听、进程命令行是否匹配
 $portOk = Test-LocalTcpPort -Port $Port
 $matchingProcesses = @(
     Get-CimInstance Win32_Process -Filter "name = 'chrome.exe'" |
@@ -98,25 +101,25 @@ $matchingProcesses = @(
 )
 
 if ($portOk) {
-    Write-Host "[pass] 127.0.0.1:$Port is listening"
+    Write-Host "[通过] 127.0.0.1:$Port 正在监听"
 }
 else {
-    Write-Host "[warn] 127.0.0.1:$Port is not listening after startup wait"
+    Write-Host "[警告] 127.0.0.1:$Port 在等待后仍未监听"
 }
 
 if ($matchingProcesses.Count -gt 0) {
-    Write-Host "[pass] Found Chrome process with fresh profile and CDP args"
+    Write-Host "[通过] 找到使用独立配置文件和 CDP 参数的 Chrome 进程"
     foreach ($item in $matchingProcesses) {
         Write-Host "  pid=$($item.ProcessId)"
     }
 }
 else {
-    Write-Host "[warn] No Chrome process has both fresh profile and CDP args"
-    Write-Host "       If an existing Chrome window opened instead, close it and run this script again."
+    Write-Host "[警告] 没有同时使用独立配置文件和 CDP 参数的 Chrome 进程"
+    Write-Host "       如果打开的是已有 Chrome 窗口，请关闭后重新运行本脚本。"
 }
 
 Write-Host ""
-Write-Host "In the new Chrome window:"
-Write-Host "1. Install and enable the Codex Chrome Extension from the opened Web Store tab."
-Write-Host "2. Log in to apexlol.info and pass Cloudflare."
-Write-Host "3. Log in to Codex inside the extension."
+Write-Host "在新 Chrome 窗口中："
+Write-Host "1. 从已打开的 Web Store 标签页安装并启用 Codex Chrome 扩展。"
+Write-Host "2. 登录 apexlol.info 并通过 Cloudflare 验证。"
+Write-Host "3. 在扩展内登录 Codex。"
