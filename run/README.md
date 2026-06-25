@@ -136,11 +136,12 @@ run/
 - `resources/图片资源/` 中的稳定图片/图标资源
 - `resources/首启快照/` 中的构建期首启快照输入
 - `resources/snapshots/` 中的打包首启种子快照
-- `Champion_Core_Data.json`
 - `英雄目录.v1.json`
 - `海克斯资源目录.v1.json`
 - `Champion_Synergy_Cleaned.json`
-- 兼容图标映射文件
+- `hero_version.txt`
+
+旧 `/data/static/...` 与 `/data/indexes/...` 文件名由 API 投影兼容，不作为包内实体事实源。
 
 ### 不应随包分发
 

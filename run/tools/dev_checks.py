@@ -408,6 +408,12 @@ def check_version_data_catalog_consolidation() -> None:
     assert isinstance(legacy_index_payload("augment.name-to-icon.v1.json", RESOURCE_VERSION_DATA_DIR), dict)
     assert isinstance(legacy_static_payload("Augment_Icon_Manifest.json", RESOURCE_VERSION_DATA_DIR), list)
 
+    id_to_name = legacy_index_payload("champion.id-to-name.v1.json", RESOURCE_VERSION_DATA_DIR)
+    id_to_detail = legacy_index_payload("champion.id-to-detail.v1.json", RESOURCE_VERSION_DATA_DIR)
+    assert isinstance(id_to_name, dict) and isinstance(id_to_name.get("266"), str)
+    assert isinstance(id_to_detail, dict) and isinstance(id_to_detail.get("266"), dict)
+    assert id_to_name["266"] == id_to_detail["266"]["heroName"]
+
 
 def check_stable_data_compat_routes_are_whitelisted() -> None:
     """验证旧数据 URL 是受控兼容入口，不暴露整个中文版本数据目录。"""
@@ -430,6 +436,10 @@ def check_stable_data_compat_routes_are_whitelisted() -> None:
 
     assert client.get("/data/indexes/Champion_Alias_Index.json").status_code == 200
     assert client.get("/data/indexes/augment.name-to-icon.v1.json").status_code == 200
+    id_to_name = client.get("/data/indexes/champion.id-to-name.v1.json").json()
+    id_to_detail = client.get("/data/indexes/champion.id-to-detail.v1.json").json()
+    assert isinstance(id_to_name.get("266"), str)
+    assert isinstance(id_to_detail.get("266"), dict)
     assert client.get("/data/indexes/英雄目录.v1.json").status_code == 404
     assert client.get("/data/indexes/Champion_Synergy_Cleaned.json").status_code == 404
     assert client.get("/data/indexes/README.md").status_code == 404
@@ -447,6 +457,8 @@ def check_champion_core_projection_replaces_legacy_file() -> None:
     synergy_core = synergy_scraper._load_json_file("Champion_Core_Data.json", "core_data")
     assert len(synergy_core) == len(projected)
     assert synergy_core["266"]["name"] == projected["266"]["name"]
+    assert synergy_core["266"]["id"] == "266"
+    assert synergy_core["266"]["hero_id"] == "266"
     assert version_sync.load_champion_core_data()["266"]["en_name"] == projected["266"]["en_name"]
 
     with TemporaryDirectory() as temp_dir:

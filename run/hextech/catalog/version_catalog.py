@@ -78,18 +78,39 @@ def load_champion_alias_to_id(config_dir: str | Path | None = None) -> dict:
 def load_champion_id_to_name(config_dir: str | Path | None = None) -> dict:
     version_dir = get_version_data_dir(config_dir)
     catalog = load_hero_catalog(version_dir)
-    payload = catalog.get("id_to_name")
+    payload = catalog.get("id_to_detail")
     if isinstance(payload, dict):
-        return dict(payload)
+        projected = {}
+        for hero_id, hero_name in payload.items():
+            normalized_id = str(hero_id).strip()
+            if not normalized_id:
+                continue
+            if isinstance(hero_name, str):
+                name = hero_name.strip()
+            elif isinstance(hero_name, dict):
+                name = str(hero_name.get("heroName") or hero_name.get("name") or "").strip()
+            else:
+                name = ""
+            if name:
+                projected[normalized_id] = name
+        if projected:
+            return projected
     return _dict_payload(_read_json(version_dir / "champion.id-to-name.v1.json"))
 
 
 def load_champion_id_to_detail(config_dir: str | Path | None = None) -> dict:
     version_dir = get_version_data_dir(config_dir)
     catalog = load_hero_catalog(version_dir)
-    payload = catalog.get("id_to_detail")
+    payload = catalog.get("id_to_name")
     if isinstance(payload, dict):
-        return dict(payload)
+        projected = {}
+        for hero_id, detail in payload.items():
+            normalized_id = str(hero_id).strip()
+            if not normalized_id or not isinstance(detail, dict):
+                continue
+            projected[normalized_id] = dict(detail)
+        if projected:
+            return projected
     return _dict_payload(_read_json(version_dir / "champion.id-to-detail.v1.json"))
 
 
@@ -97,8 +118,8 @@ def load_champion_core_data(config_dir: str | Path | None = None) -> dict:
     """从英雄目录优先投影旧 `Champion_Core_Data.json` 结构。"""
 
     version_dir = get_version_data_dir(config_dir)
-    detail_by_id = load_champion_id_to_name(version_dir)
-    name_by_id = load_champion_id_to_detail(version_dir)
+    name_by_id = load_champion_id_to_name(version_dir)
+    detail_by_id = load_champion_id_to_detail(version_dir)
     aliases_by_name = {
         str(item.get("heroName", "")).strip(): list(item.get("aliases", []))
         for item in load_champion_alias_records(version_dir)
@@ -116,6 +137,8 @@ def load_champion_core_data(config_dir: str | Path | None = None) -> dict:
         if not normalized_id or not hero_name:
             continue
         core_data[normalized_id] = {
+            "id": normalized_id,
+            "hero_id": normalized_id,
             "name": hero_name,
             "title": title,
             "en_name": en_name,
