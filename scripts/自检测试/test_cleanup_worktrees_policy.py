@@ -24,8 +24,8 @@ POLICY_FILES = SKILL_FILES + (
     REPO_ROOT / ".agents" / "skills" / "README.md",
     REPO_ROOT / ".claude" / "commands" / "cleanup-worktrees.md",
     REPO_ROOT / ".claude" / "README.md",
-    REPO_ROOT / "docs" / "workflows" / "agent-skill-inventory.md",
-    REPO_ROOT / "docs" / "workflows" / "worktree-policy.md",
+    REPO_ROOT / "docs" / "当前规则" / "40-Agent与Skill.md",
+    REPO_ROOT / "docs" / "当前规则" / "20-Git与高危操作.md",
 )
 
 

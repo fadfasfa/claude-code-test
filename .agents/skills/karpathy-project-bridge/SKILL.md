@@ -13,20 +13,21 @@ description: 用于本仓所有非琐碎代码任务；桥接全局 karpathy-gui
 ## scope
 
 - 桥接全局 `karpathy-guidelines`。
+- 默认使用简体中文输出计划、进展、风险、验证和总结；生成计划文档时正文必须为简体中文，英文计划视为不合格。
 - 要求先读现有代码和附近规则，再改文件。
 - 优先小步、直接、可局部理解的代码。
 - 避免顺手重构和过早抽象。
 
 ## forbidden actions
 
-- 不覆盖 `AGENTS.md`、`docs/workflows/work_area_registry.md` 或用户本轮限制。
+- 不覆盖 `AGENTS.md`、`docs/当前规则/10-工作区登记.md` 或用户本轮限制。
 - 不绕过验证。
 - 不把未验证的实现宣称完成。
-- 不触碰未授权业务工作区、凭据或受保护资产。
+- 不触碰未授权业务工作区、凭据或受保护资产；未获当前任务授权时，不触碰 `run/**`、`sm2-randomizer/**`、`sms-monitor/**`、`heybox/**`、`subtitle_extractor/**`、`QuantProject/**` 或 `qm-run-demo`。
 
 ## verification expectation
 
-- 修改后按 `docs/workflows/04-verification-policy.md` 选择最小有效验证，或运行更具体的子项目验证。
+- 修改后按 `docs/当前规则/30-验证与审查.md` 选择最小有效验证，或运行更具体的子项目验证。
 - 无法验证时说明具体 blocker。
 - 收尾必须报告验证命令和结果。
 

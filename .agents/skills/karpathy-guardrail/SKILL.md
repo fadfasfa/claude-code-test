@@ -14,6 +14,7 @@ description: Codex 项目级 Karpathy guardrail；用于非琐碎代码修改、
 
 ## checklist
 
+- 默认使用简体中文输出计划、进展、风险、验证和总结；生成计划文档时正文必须为简体中文，英文计划视为不合格。
 - 软边界合同：方案或实现前先列用户目标、本轮交付物、非目标和预期验证。
 - 任务理解：先复述目标、非目标、受影响文件和预期验证。
 - 假设：列出实现依赖的关键前提，能从仓库验证的先验证。
@@ -27,8 +28,8 @@ description: Codex 项目级 Karpathy guardrail；用于非琐碎代码修改、
 
 ## boundaries
 
-- 不覆盖 `AGENTS.md`、`work_area_registry.md` 或 workflow scripts。
+- 不覆盖 `AGENTS.md`、`docs/当前规则/10-工作区登记.md`、`docs/当前规则/20-Git与高危操作.md`、`docs/当前规则/30-验证与审查.md` 或用户本轮限制。
 - 不读取或修改 auth、token、cookie、API key、proxy secret。
-- 不要求 Codex 依赖 Codex，也不要求 Codex 依赖 Codex。
+- 不要求 Codex 依赖 Claude Code，也不要求 Claude Code 依赖 Codex。
 - 没有用户当前轮显性点名或命令时，不调用、委派、审查或触发 OpenAI Codex plugin / Codex / CX。
 - 旧 CC-CX 执行脚本如出现只作为 legacy/compat 线索，不作为主流程要求。

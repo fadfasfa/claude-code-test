@@ -20,6 +20,9 @@ description: 在声明任务完成前使用；必须给出实际证据、验证�
 - 汇总验证命令和结果。
 - 说明禁止路径是否被触碰。
 - 说明未验证部分和剩余风险。
+- 按 `docs/当前规则/30-验证与审查.md` 的收尾报告要求检查 `run/**`、`sm2-randomizer/**`、`sms-monitor/**`、`heybox/**`、`subtitle_extractor/**`、`QuantProject/**` 和 `qm-run-demo`。
+- 如涉及工作区、Git 高危操作或 skill 入口，必须引用 `docs/当前规则/10-工作区登记.md`、`docs/当前规则/20-Git与高危操作.md`、`docs/当前规则/30-验证与审查.md` 和 `docs/当前规则/40-Agent与Skill.md`。
+- 默认使用简体中文输出修改文件、验证结果、风险和剩余未验证点。
 
 ## forbidden actions
 

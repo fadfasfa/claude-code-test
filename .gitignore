@@ -86,8 +86,8 @@ tmp/
 .state/cc-work/**
 !.state/cc-work/
 !.state/cc-work/README.md
-docs/archive/learnings-retired/ERRORS.md
-docs/workflows/codex-egress-maintenance.md
+docs/历史归档/learnings-retired/ERRORS.md
+docs/参考资料/本地维护/codex-egress-maintenance.md
 
 # generated per-worktree, not committed to main
 TASK_HANDOFF.md

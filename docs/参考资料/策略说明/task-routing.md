@@ -16,7 +16,7 @@
 
 ## 目标工作区
 
-业务修改前，先从 `docs/workflows/work_area_registry.md` 选择 `target_work_area`。目标不清时保持只读，列出候选工作区，只有无法安全假设时才询问。
+业务修改前，先从 `docs/当前规则/10-工作区登记.md` 选择 `target_work_area`。目标不清时保持只读，列出候选工作区，只有无法安全假设时才询问。
 
 ## Subagent
 

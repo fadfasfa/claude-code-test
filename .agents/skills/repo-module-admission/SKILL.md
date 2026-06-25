@@ -21,6 +21,8 @@ description: 仅在准备新增 workflow module、skill、hook、tool、工作�
 - 判断是否真的需要新增长期能力。
 - 输出目标、非目标、影响范围、风险、最小验证和决策。
 - 优先使用 `AGENTS.md`、现有 skill、普通脚本或一次性命令。
+- 涉及工作区、Git 高危操作、验证或 skill 入口时，必须读取 `docs/当前规则/10-工作区登记.md`、`docs/当前规则/20-Git与高危操作.md`、`docs/当前规则/30-验证与审查.md` 和 `docs/当前规则/40-Agent与Skill.md`。
+- 默认使用简体中文输出目标、非目标、风险、验证和决策；生成计划文档时正文必须为简体中文，英文计划视为不合格。
 
 ## forbidden actions
 
