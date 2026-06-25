@@ -15,6 +15,8 @@ DEFAULT_CHECKS = (
     "check_resource_classification_manifest",
     "check_version_data_catalog_consolidation",
     "check_stable_data_compat_routes_are_whitelisted",
+    "check_champion_core_projection_replaces_legacy_file",
+    "check_clean_mayhem_combos_uses_core_projection",
     "check_manual_alias_index",
     "check_manifest_icon_url_safety",
     "check_icon_resolver_defaults_to_resource_image_dir",

@@ -11,6 +11,8 @@ CHECKS = (
     "check_resource_classification_manifest",  # 验证 resources 中文二级分类清单
     "check_version_data_catalog_consolidation",  # 验证版本数据中文目录合并与旧文件名投影
     "check_stable_data_compat_routes_are_whitelisted",  # 验证旧数据 URL 不泛暴露中文版本数据目录
+    "check_champion_core_projection_replaces_legacy_file",  # 验证后台旧 core 读取点改用英雄目录投影
+    "check_clean_mayhem_combos_uses_core_projection",  # 验证 Mayhem 清洗不依赖旧 core 实体文件
     "check_manual_alias_index",             # 验证手动维护的别名索引与数据一致性
     "check_manifest_icon_url_safety",       # 验证图标清单中 URL 安全性（无外部恶意链接）
     "check_icon_resolver_defaults_to_resource_image_dir",  # 验证图标默认读取中文图片资源目录

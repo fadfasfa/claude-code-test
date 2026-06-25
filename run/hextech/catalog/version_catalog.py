@@ -94,13 +94,9 @@ def load_champion_id_to_detail(config_dir: str | Path | None = None) -> dict:
 
 
 def load_champion_core_data(config_dir: str | Path | None = None) -> dict:
-    """返回旧 `Champion_Core_Data.json` 结构，供前端兼容 URL 使用。"""
+    """从英雄目录优先投影旧 `Champion_Core_Data.json` 结构。"""
 
     version_dir = get_version_data_dir(config_dir)
-    legacy = _read_json(version_dir / "Champion_Core_Data.json")
-    if isinstance(legacy, dict) and legacy:
-        return dict(legacy)
-
     detail_by_id = load_champion_id_to_name(version_dir)
     name_by_id = load_champion_id_to_detail(version_dir)
     aliases_by_name = {
@@ -125,6 +121,12 @@ def load_champion_core_data(config_dir: str | Path | None = None) -> dict:
             "en_name": en_name,
             "aliases": aliases_by_name.get(hero_name, []),
         }
+    if core_data:
+        return core_data
+
+    legacy = _read_json(version_dir / "Champion_Core_Data.json")
+    if isinstance(legacy, dict) and legacy:
+        return dict(legacy)
     return core_data
 
 

@@ -64,6 +64,7 @@ from hextech.catalog.version_catalog import (
     load_augment_manifest_entries,
     load_augment_name_to_icon_map,
     load_champion_alias_records,
+    load_champion_core_data,
 )
 from hextech.catalog.view_adapter import process_hextechs_data
 from hextech.scraping.hextech.scraper import extract_champion_stats
@@ -433,6 +434,52 @@ def check_stable_data_compat_routes_are_whitelisted() -> None:
     assert client.get("/data/indexes/Champion_Synergy_Cleaned.json").status_code == 404
     assert client.get("/data/indexes/README.md").status_code == 404
     assert client.get("/data/indexes/overlay_vision_fixtures/name_0.png").status_code == 403
+
+
+def check_champion_core_projection_replaces_legacy_file() -> None:
+    """验证后台旧 core 读取点走英雄目录投影，不依赖实体 Champion_Core_Data.json。"""
+
+    assert Path(version_sync.CORE_DATA_FILE).name == "英雄目录.v1.json"
+    projected = load_champion_core_data()
+    assert len(projected) >= 100
+    assert {"name", "title", "en_name", "aliases"}.issubset(projected["266"].keys())
+
+    synergy_core = synergy_scraper._load_json_file("Champion_Core_Data.json", "core_data")
+    assert len(synergy_core) == len(projected)
+    assert synergy_core["266"]["name"] == projected["266"]["name"]
+    assert version_sync.load_champion_core_data()["266"]["en_name"] == projected["266"]["en_name"]
+
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        _write_json(
+            root / "英雄目录.v1.json",
+            {
+                "schema_version": 1,
+                "aliases": [{"heroName": "英雄目录名", "title": "目录称号", "enName": "CatalogHero", "heroId": "1", "aliases": ["目录别名"]}],
+                "alias_to_id": {"目录别名": "1"},
+                "id_to_name": {"1": {"heroName": "英雄目录名", "enName": "CatalogHero", "title": "目录称号"}},
+                "id_to_detail": {"1": "英雄目录名"},
+            },
+        )
+        _write_json(
+            root / "Champion_Core_Data.json",
+            {"1": {"name": "旧文件名", "title": "旧称号", "en_name": "LegacyHero", "aliases": []}},
+        )
+        assert load_champion_core_data(root)["1"]["name"] == "英雄目录名"
+
+
+def check_clean_mayhem_combos_uses_core_projection() -> None:
+    """验证 Mayhem 清洗默认读取英雄目录投影，不要求旧 core 文件存在。"""
+
+    import tools.clean_mayhem_combos as clean_mayhem_combos
+
+    summary = clean_mayhem_combos.merge_mayhem_combos(
+        apex_path=RESOURCE_DIR / "首启快照" / "Champion_Synergy_latest.v1.json",
+        write_output=False,
+    )
+    assert summary["written"] is False
+    assert summary["mayhem_raw_items"] >= 100
+    assert summary["added_items"] >= 0
 
 
 def check_manual_alias_index() -> None:
