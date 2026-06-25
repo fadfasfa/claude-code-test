@@ -66,9 +66,9 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 
 ## cleanup-worktrees 边界
 
-`cleanup-worktrees` 对话入口默认只清理 PR 合并后的本地残留：已合并到 base、相对 base 无领先提交、无 tracked 修改、无 `??` untracked，且 ignored 输出为空或仅为白名单 `__pycache__/` 缓存、受管且非 protected 的 worktree / 本地分支，以及已并入 base 的 stale `origin/*` 本机缓存。
+`cleanup-worktrees` 对话入口默认只清理 PR 合并后的本地残留：已合并到 base、相对 base 无领先提交、无 tracked 修改、无 `??` untracked、受管或仓库内临时 review 根下且非 protected 的 worktree / 本地分支，以及已并入 base 的 stale `origin/*` 本机缓存。普通 ignored runtime/cache/log/data 只作为报告项，不阻断 stale worktree 整体移除；凭据类 ignored 文件仍阻断且不得读取内容。
 
-`audit`、`--dry-run`、`--audit`、`只审计` 只审计。未合并、仍领先、dirty、存在 `??` untracked、存在非白名单 ignored 文件或目录、非受管、protected 或 GitHub 上真实存在的远端分支只列清单并保持不变。`git ls-remote --heads origin` 失败时跳过 stale remote ref 清理。不得删除真实远端分支，不得升级到 force remove、`branch -D`、`git clean` 或 `reset --hard`。
+`audit`、`--dry-run`、`--audit`、`只审计` 只审计。未合并、仍领先、dirty、存在 `??` untracked、ignored 输出含凭据或登录态名称、非受管、protected 或 GitHub 上真实存在的远端分支只列清单并保持不变。`git ls-remote --heads origin` 失败时跳过 stale remote ref 清理。不得删除真实远端分支，不得升级到 `git worktree remove --force`、`branch -D`、`git clean` 或 `reset --hard`。
 
 ## Commit 和 PR 语言
 

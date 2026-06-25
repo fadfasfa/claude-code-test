@@ -2,8 +2,9 @@ from __future__ import annotations
 
 """cleanup-worktrees 规则回归测试。
 
-本文件用临时 Git fixture 验证 `__pycache__/` 是唯一默认 ignored 白名单，
-并检查 Codex / Claude 两侧 skill 文本不会退回“所有 ignored 都阻断”的旧口径。
+本文件用临时 Git fixture 验证 cleanup 以无 ignored 的 status 判断硬干净状态，
+普通 ignored 产物只报告、不阻断已合并 stale worktree 的整体移除，
+同时检查 Codex / Claude 两侧 skill 文本不会退回“所有 ignored 都阻断”的旧口径。
 """
 
 import subprocess
@@ -54,7 +55,7 @@ def create_repo_with_feature_worktree(root: Path) -> tuple[Path, Path]:
     run_git(repo, "init", "-q")
     run_git(repo, "config", "user.email", "test@example.invalid")
     run_git(repo, "config", "user.name", "Cleanup Worktrees Test")
-    write_text(repo / ".gitignore", "__pycache__/\nbuild/\ndist/\nnode_modules/\n")
+    write_text(repo / ".gitignore", "__pycache__/\nbuild/\ndist/\nnode_modules/\nrun/data/runtime/\n.env\n")
     write_text(repo / "tracked.txt", "base\n")
     run_git(repo, "add", ".")
     run_git(repo, "commit", "-q", "-m", "init")
@@ -68,18 +69,20 @@ def ignored_status_lines(worktree: Path) -> list[str]:
     return [line for line in result.stdout.splitlines() if line.strip()]
 
 
-def is_pycache_ignored_line(line: str) -> bool:
-    if not line.startswith("!! "):
-        return False
-    path = line[3:].strip().strip('"').replace("\\", "/")
-    if not path.endswith("/"):
-        return False
-    path = path.rstrip("/")
-    return bool(path) and path.split("/")[-1] == "__pycache__"
+def hard_status_lines(worktree: Path) -> list[str]:
+    result = run_git(worktree, "status", "--short", "--untracked-files=all")
+    return [line for line in result.stdout.splitlines() if line.strip()]
 
 
-def has_only_allowlisted_pycache(status_lines: list[str]) -> bool:
-    return bool(status_lines) and all(is_pycache_ignored_line(line) for line in status_lines)
+def has_sensitive_ignored_line(status_lines: list[str]) -> bool:
+    sensitive_markers = (".env", "auth.json", "local.yaml", "proxies.json", "accounts.json")
+    for line in status_lines:
+        if not line.startswith("!! "):
+            continue
+        path = line[3:].strip().strip('"').replace("\\", "/").lower()
+        if any(marker in path for marker in sensitive_markers):
+            return True
+    return False
 
 
 def branch_ahead_count(repo: Path, base: str, branch: str) -> int:
@@ -95,14 +98,16 @@ def remove_worktree(repo: Path, worktree: Path) -> None:
 
 
 class CleanupWorktreesPolicyTextTests(unittest.TestCase):
-    def test_policy_text_allows_only_pycache_ignored_status_and_uses_chinese_tables(self) -> None:
+    def test_policy_text_treats_ignored_as_report_only_and_uses_chinese_tables(self) -> None:
         for path in SKILL_FILES:
             text = path.read_text(encoding="utf-8")
             with self.subTest(path=path):
-                self.assertIn("## 白名单 ignored 缓存", text)
-                self.assertIn("仅有 `!!` ignored 输出且全部匹配任意层级 `__pycache__/`", text)
-                self.assertIn("目录条目", text)
-                self.assertIn("非白名单 ignored 文件或目录", text)
+                self.assertIn("## Ignored 内容处理", text)
+                self.assertIn("先用 `git status --short --untracked-files=all` 判断硬干净状态", text)
+                self.assertIn("`!!` ignored 输出不再单独阻断", text)
+                self.assertIn("transient review worktree root", text)
+                self.assertIn("`pr-[0-9]+`", text)
+                self.assertIn("`worktree-agent-*`", text)
                 self.assertIn("**工作树**：`路径`、`分支`、`结论`、`原因`", text)
                 self.assertIn("**本地分支**：`分支`、`已合入 base`、`领先提交数`、`结论`、`原因`", text)
                 self.assertIn("**远端跟踪缓存**：`ref`、`结论`、`原因`", text)
@@ -112,6 +117,9 @@ class CleanupWorktreesPolicyTextTests(unittest.TestCase):
             "任何输出都视为本地内容未清空",
             "无 untracked/ignored 本地文件",
             "含 ignored 缓存",
+            "白名单 ignored 缓存",
+            "仅有 `!!` ignored 输出且全部匹配任意层级 `__pycache__/`",
+            "非白名单 ignored 文件或目录",
             "orphan branches",
             "`decision`、`reason`",
         )
@@ -123,21 +131,31 @@ class CleanupWorktreesPolicyTextTests(unittest.TestCase):
 
 
 class CleanupWorktreesGitFixtureTests(unittest.TestCase):
-    def test_allowlist_requires_pycache_directory_status_entry(self) -> None:
-        self.assertTrue(has_only_allowlisted_pycache(["!! package/module/__pycache__/"]))
-        self.assertTrue(has_only_allowlisted_pycache(["!! package/module/nested/__pycache__/"]))
-        self.assertFalse(has_only_allowlisted_pycache(["!! package/module/__pycache__"]))
-        self.assertFalse(has_only_allowlisted_pycache(["!! package/module/__pycache__/cache.pyc"]))
+    def test_ignored_only_status_is_hard_clean_even_with_runtime_outputs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
+            repo, worktree = create_repo_with_feature_worktree(Path(temp))
+            try:
+                write_text(worktree / "build" / "artifact.txt", "local\n")
+                write_text(worktree / "run" / "data" / "runtime" / "cache" / "state.json", "{}\n")
 
-    def test_merged_ahead_zero_worktree_with_only_pycache_is_allowlisted_and_removable(self) -> None:
+                self.assertEqual(hard_status_lines(worktree), [])
+                ignored = ignored_status_lines(worktree)
+                self.assertTrue(any("build/" in line for line in ignored))
+                self.assertTrue(any("run/data/runtime/" in line for line in ignored))
+                self.assertFalse(has_sensitive_ignored_line(ignored))
+            finally:
+                remove_worktree(repo, worktree)
+
+    def test_merged_ahead_zero_worktree_with_ignored_outputs_is_removable(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
             repo, worktree = create_repo_with_feature_worktree(Path(temp))
             try:
                 write_text(worktree / "sms-monitor" / "__pycache__" / "monitor.cpython-313.pyc", "cache\n")
+                write_text(worktree / "build" / "artifact.txt", "local\n")
+                write_text(worktree / "run" / "data" / "runtime" / "logs" / "last.log", "log\n")
 
-                status_lines = ignored_status_lines(worktree)
-                self.assertEqual(status_lines, ["!! sms-monitor/__pycache__/"])
-                self.assertTrue(has_only_allowlisted_pycache(status_lines))
+                self.assertEqual(hard_status_lines(worktree), [])
+                self.assertFalse(has_sensitive_ignored_line(ignored_status_lines(worktree)))
 
                 self.assertEqual(
                     run_git(repo, "merge-base", "--is-ancestor", "codex/fix/pycache-only", "HEAD").returncode,
@@ -151,7 +169,7 @@ class CleanupWorktreesGitFixtureTests(unittest.TestCase):
             finally:
                 remove_worktree(repo, worktree)
 
-    def test_branch_with_ahead_commit_is_not_candidate_even_with_only_pycache(self) -> None:
+    def test_branch_with_ahead_commit_is_not_candidate_even_with_ignored_outputs(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
             repo, worktree = create_repo_with_feature_worktree(Path(temp))
             try:
@@ -160,30 +178,35 @@ class CleanupWorktreesGitFixtureTests(unittest.TestCase):
                 run_git(worktree, "commit", "-q", "-m", "ahead")
                 write_text(worktree / "sms-monitor" / "__pycache__" / "monitor.pyc", "cache\n")
 
-                self.assertTrue(has_only_allowlisted_pycache(ignored_status_lines(worktree)))
+                self.assertEqual(hard_status_lines(worktree), [])
                 self.assertGreater(branch_ahead_count(repo, "HEAD", "codex/fix/pycache-only"), 0)
             finally:
                 remove_worktree(repo, worktree)
 
-    def test_status_classifier_rejects_tracked_untracked_and_non_allowlisted_ignored_content(self) -> None:
+    def test_status_classifier_rejects_tracked_untracked_and_sensitive_ignored_content(self) -> None:
         cases = {
-            "tracked modified": lambda wt: write_text(wt / "tracked.txt", "changed\n"),
-            "untracked file": lambda wt: write_text(wt / "notes.txt", "local\n"),
-            "non-whitelist ignored": lambda wt: write_text(wt / "build" / "artifact.txt", "local\n"),
-            "mixed pycache and ignored build": lambda wt: (
-                write_text(wt / "sms-monitor" / "__pycache__" / "monitor.pyc", "cache\n"),
-                write_text(wt / "build" / "artifact.txt", "local\n"),
+            "tracked modified": (
+                lambda wt: write_text(wt / "tracked.txt", "changed\n"),
+                lambda wt: bool(hard_status_lines(wt)),
+            ),
+            "untracked file": (
+                lambda wt: write_text(wt / "notes.txt", "local\n"),
+                lambda wt: bool(hard_status_lines(wt)),
+            ),
+            "sensitive ignored": (
+                lambda wt: write_text(wt / ".env", "SECRET=redacted\n"),
+                lambda wt: has_sensitive_ignored_line(ignored_status_lines(wt)),
             ),
         }
 
-        for name, setup in cases.items():
+        for name, (setup, is_rejected) in cases.items():
             with self.subTest(case=name):
                 with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
                     _, worktree = create_repo_with_feature_worktree(Path(temp))
                     repo = Path(temp) / "repo"
                     try:
                         setup(worktree)
-                        self.assertFalse(has_only_allowlisted_pycache(ignored_status_lines(worktree)))
+                        self.assertTrue(is_rejected(worktree))
                     finally:
                         remove_worktree(repo, worktree)
 
