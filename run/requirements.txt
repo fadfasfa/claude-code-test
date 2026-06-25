@@ -12,4 +12,5 @@ pywin32
 selenium
 beautifulsoup4
 fastapi[standard]
+filelock>=3.10,<4
 pyinstaller

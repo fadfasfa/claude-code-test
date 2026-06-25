@@ -43,6 +43,7 @@ from hextech.catalog.runtime_store import (
     load_synergy_latest_pointer,
 )
 from hextech.scraping._paths import RUNTIME_DATA_DIR, STATIC_DATA_DIR
+from hextech.catalog.version_catalog import load_apexlol_slug_map, load_augment_manifest_entries, load_champion_core_data
 from hextech.scraping.icon_resolver import normalize_augment_name
 from hextech.scraping.transport.scrapling_client import ScraplingFetchResult, fetch_stealthy_text, fetch_text
 from hextech.support.log_utils import install_summary_logging, log_task_summary
@@ -269,13 +270,16 @@ def _resolve_static_data_path(filename: str) -> Path:
 
 def _load_json_file(filename: str, expected_kind: str) -> dict:
     file_path = _resolve_static_data_path(filename)
-    if not file_path.exists():
+    if filename == "Champion_Core_Data.json":
+        data = load_champion_core_data(STATIC_DATA_PATH)
+    elif not file_path.exists():
         raise FileNotFoundError(f"配置文件不存在：{filename}")
-    if file_path.stat().st_size > MAX_STATIC_DATA_FILE_SIZE:
-        raise ValueError(f"配置文件过大：{filename}")
+    else:
+        if file_path.stat().st_size > MAX_STATIC_DATA_FILE_SIZE:
+            raise ValueError(f"配置文件过大：{filename}")
 
-    with file_path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
+        with file_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
 
     if not isinstance(data, dict):
         raise ValueError(f"{expected_kind} 配置格式错误：{filename}")
@@ -1708,26 +1712,14 @@ def build_augment_name_map_from_static() -> dict:
             if candidate:
                 name_map.setdefault(candidate, name)
 
-    for filename in ("Augment_Apexlol_Map.json", "Augment_Icon_Manifest.json"):
-        path = STATIC_DATA_PATH / filename
-        if not path.exists():
-            continue
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            continue
-        if filename == "Augment_Apexlol_Map.json" and isinstance(payload, dict):
-            for raw_name, raw_slug in payload.items():
-                add_mapping(raw_slug, raw_name)
-                add_mapping(raw_name, raw_name)
-        elif filename == "Augment_Icon_Manifest.json" and isinstance(payload, list):
-            for item in payload:
-                if not isinstance(item, dict):
-                    continue
-                name = str(item.get("name") or "").strip()
-                filename_stem = Path(str(item.get("filename") or "")).stem
-                add_mapping(name, name)
-                add_mapping(filename_stem, name)
+    for raw_name, raw_slug in load_apexlol_slug_map(STATIC_DATA_PATH).items():
+        add_mapping(raw_slug, raw_name)
+        add_mapping(raw_name, raw_name)
+    for item in load_augment_manifest_entries(STATIC_DATA_PATH):
+        name = str(item.get("name") or "").strip()
+        filename_stem = Path(str(item.get("filename") or "")).stem
+        add_mapping(name, name)
+        add_mapping(filename_stem, name)
 
     if name_map:
         return name_map

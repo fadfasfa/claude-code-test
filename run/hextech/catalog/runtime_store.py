@@ -69,13 +69,16 @@ _VALID_CSV_CACHE_LOCK = threading.Lock()
 
 
 def runtime_priority_paths(relative_name: str) -> list[str]:
-    """返回稳定数据优先路径列表，先查本地 data/static，再查 bundle 内置资源。"""
+    """返回稳定数据优先路径列表，先查本地中文资源，再兼容旧 bundle 路径。"""
     runtime_path = Path(STATIC_DATA_DIR) / relative_name
-    bundled_path = Path(RESOURCE_DIR) / "data" / "static" / relative_name
     candidates = [str(runtime_path)]
-    bundled = str(bundled_path)
-    if bundled not in candidates:
-        candidates.append(bundled)
+    for bundled_path in (
+        Path(RESOURCE_DIR) / "resources" / "版本数据" / relative_name,
+        Path(RESOURCE_DIR) / "data" / "static" / relative_name,
+    ):
+        bundled = str(bundled_path)
+        if bundled not in candidates:
+            candidates.append(bundled)
     return candidates
 
 

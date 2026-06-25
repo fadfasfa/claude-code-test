@@ -41,6 +41,10 @@ RUN_DIR = Path(__file__).resolve().parents[1]
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 WEB_STATIC_DIR = RUN_DIR / "hextech" / "display" / "web" / "static"
+RESOURCE_DIR = RUN_DIR / "resources"
+RESOURCE_IMAGE_DIR = RESOURCE_DIR / "图片资源"
+RESOURCE_VERSION_DATA_DIR = RESOURCE_DIR / "版本数据"
+RESOURCE_DIAGNOSTIC_DIR = RESOURCE_DIR / "诊断样例"
 
 import hextech.core.refresh as orchestrator
 import hextech.catalog.aliases as alias_search
@@ -54,6 +58,14 @@ import hextech.scraping.version_sync as version_sync
 import hextech.display.web.runtime as web_runtime
 from hextech.display.web.api import _build_synergy_api_payload, _normalize_synergy_items, _synergy_item_to_compat_string
 from hextech.catalog.aliases import load_manual_alias_index
+from hextech.catalog.version_catalog import (
+    legacy_index_payload,
+    legacy_static_payload,
+    load_augment_manifest_entries,
+    load_augment_name_to_icon_map,
+    load_champion_alias_records,
+    load_champion_core_data,
+)
 from hextech.catalog.view_adapter import process_hextechs_data
 from hextech.scraping.hextech.scraper import extract_champion_stats
 from hextech.scraping.synergy.scraper import (
@@ -75,6 +87,7 @@ from hextech.scraping.synergy.scraper import (
 )
 from tools.bundle_manifest import build_bundle_manifest
 from tools.package_rules import iter_package_data_entries
+from tools.resource_manifest import validate_resource_manifest
 from hextech.support.log_utils import install_summary_logging
 
 
@@ -97,7 +110,7 @@ def _offline_sync_hero_data() -> bool:
 
 
 def _run_read_only_offline_checks(check_names: tuple[str, ...]) -> None:
-    """执行离线自检时隔离英雄版本同步，避免验证命令污染 data/static 或 assets。"""
+    """执行离线自检时隔离英雄版本同步，避免验证命令污染中文稳定资源目录。"""
 
     if not (set(check_names) & VERSION_SYNC_WRITE_GUARDED_CHECKS):
         _run_named_checks(check_names)
@@ -162,6 +175,7 @@ def check_hextech_package_contract() -> None:
         "hextech.overlay.vision.sidecar",
         "hextech.catalog.runtime_store",
         "hextech.catalog.precomputed_cache",
+        "hextech.catalog.version_catalog",
         "hextech.catalog.view_adapter",
         "hextech.catalog.aliases",
         "hextech.catalog.alias_utils",
@@ -360,10 +374,128 @@ def check_hextech_package_contract() -> None:
     assert not (RUN_DIR / "game_overlay").exists()
 
 
+def check_resource_classification_manifest() -> None:
+    """验证中文资源分类清单只描述现有稳定资源，不误纳入运行态。"""
+
+    expected_categories = {"图片资源", "版本数据", "首启快照", "诊断样例", "来源证据"}
+    resolved = validate_resource_manifest(RUN_DIR)
+    assert expected_categories.issubset(resolved.keys())
+    for category in expected_categories:
+        assert (RUN_DIR / "resources" / category / "README.md").exists()
+        assert resolved[category], f"资源分类没有匹配现有文件：{category}"
+
+
+def check_version_data_catalog_consolidation() -> None:
+    """验证版本数据已收口到两个中文权威目录，同时保留旧文件名投影。"""
+
+    assert (RESOURCE_VERSION_DATA_DIR / "英雄目录.v1.json").exists()
+    assert (RESOURCE_VERSION_DATA_DIR / "海克斯资源目录.v1.json").exists()
+    for legacy_name in (
+        "Champion_Alias_Index.json",
+        "champion.alias-to-id.v1.json",
+        "champion.id-to-detail.v1.json",
+        "champion.id-to-name.v1.json",
+        "Augment_Apexlol_Map.json",
+        "Augment_Icon_Manifest.json",
+        "augment.name-to-icon.v1.json",
+    ):
+        assert not (RESOURCE_VERSION_DATA_DIR / legacy_name).exists(), f"旧拆分 JSON 不应继续作为事实源：{legacy_name}"
+
+    assert len(load_champion_alias_records()) >= 100
+    assert len(load_augment_manifest_entries()) >= 600
+    assert len(load_augment_name_to_icon_map()) >= 500
+    assert isinstance(legacy_index_payload("Champion_Alias_Index.json", RESOURCE_VERSION_DATA_DIR), list)
+    assert isinstance(legacy_index_payload("augment.name-to-icon.v1.json", RESOURCE_VERSION_DATA_DIR), dict)
+    assert isinstance(legacy_static_payload("Augment_Icon_Manifest.json", RESOURCE_VERSION_DATA_DIR), list)
+
+    id_to_name = legacy_index_payload("champion.id-to-name.v1.json", RESOURCE_VERSION_DATA_DIR)
+    id_to_detail = legacy_index_payload("champion.id-to-detail.v1.json", RESOURCE_VERSION_DATA_DIR)
+    assert isinstance(id_to_name, dict) and isinstance(id_to_name.get("266"), str)
+    assert isinstance(id_to_detail, dict) and isinstance(id_to_detail.get("266"), dict)
+    assert id_to_name["266"] == id_to_detail["266"]["heroName"]
+
+
+def check_stable_data_compat_routes_are_whitelisted() -> None:
+    """验证旧数据 URL 是受控兼容入口，不暴露整个中文版本数据目录。"""
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import hextech.display.web.api as web_api
+
+    app = FastAPI()
+    web_api.register_routes(app)
+    client = TestClient(app)
+
+    assert client.get("/data/static/海克斯资源目录.v1.json").status_code == 200
+    assert client.get("/data/static/Champion_Synergy_Cleaned.json").status_code == 200
+    assert client.get("/data/static/Champion_Core_Data.json").status_code == 200
+    assert client.get("/data/static/Augment_Icon_Manifest.json").status_code == 200
+    assert client.get("/data/static/Champion_Alias_Index.json").status_code == 200
+    assert client.get("/data/static/README.md").status_code == 404
+    assert client.get("/data/static/overlay_vision_fixtures/name_0.png").status_code == 403
+
+    assert client.get("/data/indexes/Champion_Alias_Index.json").status_code == 200
+    assert client.get("/data/indexes/augment.name-to-icon.v1.json").status_code == 200
+    id_to_name = client.get("/data/indexes/champion.id-to-name.v1.json").json()
+    id_to_detail = client.get("/data/indexes/champion.id-to-detail.v1.json").json()
+    assert isinstance(id_to_name.get("266"), str)
+    assert isinstance(id_to_detail.get("266"), dict)
+    assert client.get("/data/indexes/英雄目录.v1.json").status_code == 404
+    assert client.get("/data/indexes/Champion_Synergy_Cleaned.json").status_code == 404
+    assert client.get("/data/indexes/README.md").status_code == 404
+    assert client.get("/data/indexes/overlay_vision_fixtures/name_0.png").status_code == 403
+
+
+def check_champion_core_projection_replaces_legacy_file() -> None:
+    """验证后台旧 core 读取点走英雄目录投影，不依赖实体 Champion_Core_Data.json。"""
+
+    assert Path(version_sync.CORE_DATA_FILE).name == "英雄目录.v1.json"
+    projected = load_champion_core_data()
+    assert len(projected) >= 100
+    assert {"name", "title", "en_name", "aliases"}.issubset(projected["266"].keys())
+
+    synergy_core = synergy_scraper._load_json_file("Champion_Core_Data.json", "core_data")
+    assert len(synergy_core) == len(projected)
+    assert synergy_core["266"]["name"] == projected["266"]["name"]
+    assert synergy_core["266"]["id"] == "266"
+    assert synergy_core["266"]["hero_id"] == "266"
+    assert version_sync.load_champion_core_data()["266"]["en_name"] == projected["266"]["en_name"]
+
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        _write_json(
+            root / "英雄目录.v1.json",
+            {
+                "schema_version": 1,
+                "aliases": [{"heroName": "英雄目录名", "title": "目录称号", "enName": "CatalogHero", "heroId": "1", "aliases": ["目录别名"]}],
+                "alias_to_id": {"目录别名": "1"},
+                "id_to_name": {"1": {"heroName": "英雄目录名", "enName": "CatalogHero", "title": "目录称号"}},
+                "id_to_detail": {"1": "英雄目录名"},
+            },
+        )
+        _write_json(
+            root / "Champion_Core_Data.json",
+            {"1": {"name": "旧文件名", "title": "旧称号", "en_name": "LegacyHero", "aliases": []}},
+        )
+        assert load_champion_core_data(root)["1"]["name"] == "英雄目录名"
+
+
+def check_clean_mayhem_combos_uses_core_projection() -> None:
+    """验证 Mayhem 清洗默认读取英雄目录投影，不要求旧 core 文件存在。"""
+
+    import tools.clean_mayhem_combos as clean_mayhem_combos
+
+    summary = clean_mayhem_combos.merge_mayhem_combos(
+        apex_path=RESOURCE_DIR / "首启快照" / "Champion_Synergy_latest.v1.json",
+        write_output=False,
+    )
+    assert summary["written"] is False
+    assert summary["mayhem_raw_items"] >= 100
+    assert summary["added_items"] >= 0
+
+
 def check_manual_alias_index() -> None:
-    alias_file = RUN_DIR / "data" / "indexes" / "Champion_Alias_Index.json"
-    payload = json.loads(alias_file.read_text(encoding="utf-8"))
-    assert isinstance(payload, list)
+    payload = load_champion_alias_records()
     assert payload, "Champion_Alias_Index.json 应至少包含一条手工索引"
     first = payload[0]
     assert isinstance(first, dict)
@@ -381,6 +513,28 @@ def check_manifest_icon_url_safety() -> None:
     assert not icon_resolver.sanitize_augment_icon_url("https://evil.com/assets/x.png")
     assert not icon_resolver.sanitize_augment_icon_url("/assets/not-png.webp")
     assert not icon_resolver.sanitize_augment_icon_url("/assets/../secret.png")
+
+
+def check_icon_resolver_defaults_to_resource_image_dir() -> None:
+    """验证图标解析默认从中文图片资源目录读取，不回落到旧根级 assets。"""
+
+    assert Path(icon_resolver._resolve_assets_dir(None)) == RESOURCE_IMAGE_DIR
+    assert Path(icon_resolver._resolve_assets_dir_for_config(str(RESOURCE_VERSION_DATA_DIR))) == RESOURCE_IMAGE_DIR
+    assert icon_resolver.find_existing_augment_asset_filename(None, "augment404_small.png") == "augment404_small.png"
+    with TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        parent_config = temp_root / "config"
+        parent_assets = temp_root / "assets"
+        parent_config.mkdir()
+        parent_assets.mkdir()
+        assert Path(icon_resolver._resolve_assets_dir_for_config(str(parent_config))) == parent_assets
+
+    with TemporaryDirectory() as temp_dir:
+        temp_root = Path(temp_dir)
+        child_config = temp_root / "config"
+        child_assets = child_config / "assets"
+        child_assets.mkdir(parents=True)
+        assert Path(icon_resolver._resolve_assets_dir_for_config(str(child_config))) == child_assets
 
 
 def check_cdragon_force_refresh_semantics() -> None:
@@ -559,7 +713,7 @@ def check_detail_question_mark_augment_guard() -> None:
     assert re.fullmatch(r"[?？]{3,}", "？？？")
     assert not re.fullmatch(r"[?？]{3,}", "？？？ 提升攻速 25%")
 
-    icon_map = json.loads((RUN_DIR / "data" / "indexes" / "augment.name-to-icon.v1.json").read_text(encoding="utf-8"))
+    icon_map = load_augment_name_to_icon_map()
     assert icon_map.get("？？？") == "/assets/missingping_small.png"
 
 
@@ -583,7 +737,7 @@ def check_detail_hextech_card_layout_contract() -> None:
         assert ".hextech-tooltip-body" in css and ("line-height: 1.65" in css or "line-height:1.65" in css)
         assert "word-break: break-word" in css or "word-break:break-word" in css
 
-    icon_map = json.loads((RUN_DIR / "data" / "indexes" / "augment.name-to-icon.v1.json").read_text(encoding="utf-8"))
+    icon_map = load_augment_name_to_icon_map()
     assert icon_map.get("高压锅") == "/assets/questpressurecooker_small.png"
 
 
@@ -1463,7 +1617,7 @@ def check_overlay_hint_cache_contract() -> None:
     assert "requests" not in module_text
     assert "full_hextech_scraper" not in module_text
 
-    # Overlay 启动只允许读取稳定清单；不得因 freshness 检查改写 data/static。
+    # Overlay 启动只允许读取稳定清单；不得因 freshness 检查改写稳定版本数据。
     with TemporaryDirectory() as tmp_dir:
         manifest_path = Path(tmp_dir) / "Augment_Icon_Manifest.json"
         manifest_path.write_text(
@@ -1550,9 +1704,7 @@ def check_overlay_hint_cache_contract() -> None:
             else:
                 raise AssertionError("runtime debug 路径不得逃逸 debug 根目录")
 
-    stable_manifest = json.loads(
-        (RUN_DIR / "data" / "static" / "Augment_Icon_Manifest.json").read_text(encoding="utf-8")
-    )
+    stable_manifest = load_augment_manifest_entries()
     assert stable_manifest
     assert all(
         not Path(str(item.get("local_path") or "")).is_absolute()
@@ -2450,7 +2602,7 @@ def check_overlay_vision_sidecar_contract() -> None:
     assert body_shard_detection["source"]["ready_slots"] == 0
     assert body_shard_detection["source"]["reason"] == "selection_scene_not_detected"
 
-    shard_fixture_dir = RUN_DIR / "data" / "static" / "overlay_vision_fixtures" / "body_shard_20260621"
+    shard_fixture_dir = RESOURCE_DIAGNOSTIC_DIR / "overlay_vision_fixtures" / "body_shard_20260621"
     shard_name_crops = [Image.open(shard_fixture_dir / f"name_{index}.png").convert("RGB") for index in range(3)]
     shard_scores = overlay_vision_sidecar._body_shard_name_scores(shard_name_crops)
     assert len(shard_scores) == 3
@@ -2463,7 +2615,7 @@ def check_overlay_vision_sidecar_contract() -> None:
     assert glass_cannon_template.augment_id == "glasscannon"
     assert glass_cannon_template.tier == "棱彩"
 
-    regression_fixture_dir = RUN_DIR / "data" / "static" / "overlay_vision_fixtures" / "hextech_20260622"
+    regression_fixture_dir = RESOURCE_DIAGNOSTIC_DIR / "overlay_vision_fixtures" / "hextech_20260622"
     regression_names = ("更万用的瞄准镜", "闪现向前", "大法师")
     regression_crops = [
         Image.open(regression_fixture_dir / f"name_{index}.png").convert("RGB")
@@ -3313,7 +3465,9 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
     )
     assert has_latest_pointer
     assert has_timestamp_snapshot
-    assert "augment.name-to-icon.v1.json" in manifest.get("index_files", [])
+    assert "英雄目录.v1.json" in manifest.get("static_files", [])
+    assert "海克斯资源目录.v1.json" in manifest.get("static_files", [])
+    assert "augment.name-to-icon.v1.json" not in manifest.get("index_files", [])
     source_files = manifest.get("source_files", [])
     for required_source in (
         "hextech/__init__.py",
@@ -3348,22 +3502,27 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
 
     with TemporaryDirectory() as tmp_dir:
         fixture_root = Path(tmp_dir) / "fixture"
-        fixture_index = fixture_root / "data" / "indexes"
+        fixture_index = fixture_root / "resources" / "版本数据"
         fixture_static = fixture_root / "hextech" / "display" / "web" / "static"
-        fixture_assets = fixture_root / "assets"
+        fixture_assets = fixture_root / "resources" / "图片资源"
         fixture_index.mkdir(parents=True)
         fixture_static.mkdir(parents=True)
         fixture_assets.mkdir(parents=True)
-        (fixture_index / "augment.name-to-icon.v1.json").write_text('{"尤里卡":"assets/1.png"}', encoding="utf-8")
+        (fixture_index / "海克斯资源目录.v1.json").write_text(
+            '{"schema_version":1,"entries":[],"name_to_icon":{"尤里卡":"assets/1.png"},"apexlol_slug_map":{}}',
+            encoding="utf-8",
+        )
+        (fixture_index / "英雄目录.v1.json").write_text('{"schema_version":1,"aliases":[]}', encoding="utf-8")
         (fixture_static / "index.html").write_text("<html></html>", encoding="utf-8")
         (fixture_assets / "1.png").write_bytes(b"png")
         manifest_path = Path(tmp_dir) / "bundle_manifest.json"
         manifest_path.write_text("{}", encoding="utf-8")
         entries = iter_package_data_entries(fixture_root, manifest_path)
         entry_targets = {(entry.source.name, entry.target) for entry in entries}
-        assert ("augment.name-to-icon.v1.json", "data/indexes") in entry_targets
+        assert ("海克斯资源目录.v1.json", "resources/版本数据") in entry_targets
+        assert ("英雄目录.v1.json", "resources/版本数据") in entry_targets
         assert ("static", "static") in entry_targets
-        assert ("assets", "assets") in entry_targets
+        assert ("图片资源", "assets") in entry_targets
         assert ("bundle_manifest.json", ".") in entry_targets
         assert not (Path(tmp_dir) / "build" / "_bundle_runtime").exists()
         (fixture_assets / "debug.tmp").write_text("debug", encoding="utf-8")

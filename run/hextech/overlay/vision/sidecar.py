@@ -34,6 +34,8 @@ from hextech.overlay.vision.layout import (
 )
 from hextech.overlay.vision.state import SelectionTracker
 from hextech.overlay.window import cursor_in_client_boxes, find_lol_game_window, is_scoreboard_key_down, root_window_hwnd
+from hextech.catalog.version_catalog import load_augment_manifest_entries, load_augment_name_to_icon_map
+from hextech.scraping._paths import ASSET_DIR, INDEX_DATA_DIR, STATIC_DATA_DIR
 from hextech.support.atomic_io import atomic_write_json
 
 try:
@@ -854,10 +856,17 @@ def _name_crop_has_residue(crop: Image.Image, *, name_mask: Image.Image | None =
     return 0.005 <= foreground_ratio <= 0.45
 
 
-def _load_manifest_entries_by_name(root: Path) -> dict[str, list[Mapping[str, Any]]]:
-    manifest_path = root / "data" / "static" / "Augment_Icon_Manifest.json"
+def _load_manifest_entries_by_name(root: Path, *, use_runtime_resources: bool = True) -> dict[str, list[Mapping[str, Any]]]:
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if use_runtime_resources:
+            payload = load_augment_manifest_entries()
+        else:
+            version_data_dir = root / "resources" / "版本数据"
+            if (version_data_dir / "海克斯资源目录.v1.json").exists():
+                payload = load_augment_manifest_entries(version_data_dir)
+            else:
+                manifest_path = root / "data" / "static" / "Augment_Icon_Manifest.json"
+                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     if not isinstance(payload, list):
@@ -945,25 +954,36 @@ def load_default_template_index(
 ) -> list[TemplateEntry]:
     """从随包稳定资源加载海克斯图标模板，不触发远端抓取。"""
 
+    use_runtime_resources = base_dir is None
     root = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parents[3]
-    mapping_path = root / "data" / "indexes" / "augment.name-to-icon.v1.json"
+    version_data_dir = Path(INDEX_DATA_DIR) if use_runtime_resources else root / "resources" / "版本数据"
+    legacy_mapping_path = root / "data" / "indexes" / "augment.name-to-icon.v1.json"
+    asset_dir = Path(ASSET_DIR) if use_runtime_resources else root / "resources" / "图片资源"
+    legacy_asset_dir = root / "assets"
     try:
-        name_to_icon = json.loads(mapping_path.read_text(encoding="utf-8"))
+        if use_runtime_resources or (version_data_dir / "海克斯资源目录.v1.json").exists():
+            name_to_icon = load_augment_name_to_icon_map(version_data_dir)
+        else:
+            name_to_icon = json.loads(legacy_mapping_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
     if not isinstance(name_to_icon, Mapping):
         return []
 
-    manifest_by_name = _load_manifest_entries_by_name(root)
+    manifest_by_name = _load_manifest_entries_by_name(root, use_runtime_resources=use_runtime_resources)
     raw_templates: dict[str, Mapping[str, Any]] = {}
     for name, icon_path in name_to_icon.items():
         clean_name = _clean_text(name)
         relative_icon = str(icon_path or "").lstrip("/")
         if not clean_name or not relative_icon:
             continue
-        path = (root / relative_icon).resolve()
+        if relative_icon.startswith("assets/"):
+            path = (asset_dir / relative_icon.removeprefix("assets/")).resolve()
+        else:
+            path = (root / relative_icon).resolve()
         try:
-            if root.resolve() not in path.parents:
+            allowed_roots = (root.resolve(), asset_dir.resolve(), legacy_asset_dir.resolve())
+            if not any(path == allowed_root or allowed_root in path.parents for allowed_root in allowed_roots):
                 continue
             digest = hashlib.md5(path.read_bytes()).hexdigest()
             with Image.open(path) as opened:

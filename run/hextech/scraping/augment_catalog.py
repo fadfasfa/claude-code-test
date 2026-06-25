@@ -11,9 +11,11 @@ import re
 import threading
 import time
 from html import unescape
+from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 from hextech.catalog.runtime_store import build_runtime_debug_path
+from hextech.catalog.version_catalog import get_augment_resource_catalog_path, load_augment_manifest_entries
 from hextech.scraping.hextech.scraper import _clean_augment_text, _extract_augment_meta
 from hextech.scraping.version_sync import (
     ASSET_DIR,
@@ -345,9 +347,23 @@ def _is_cdragon_minimal_manifest(manifest: list[dict]) -> bool:
 
 
 def _read_manifest_file(manifest_path: str, config_dir: str) -> list[dict]:
+    if Path(manifest_path).name in {"Augment_Icon_Manifest.json", "海克斯资源目录.v1.json"}:
+        catalog_entries = load_augment_manifest_entries(config_dir)
+        if catalog_entries:
+            return [
+                _normalize_cdragon_manifest_entry(item) if _is_cdragon_source_item(item) else _normalize_manifest_entry(item, config_dir)
+                for item in catalog_entries
+                if isinstance(item, dict) and _clean_augment_text(item.get("name"))
+            ]
     try:
         with open(manifest_path, "r", encoding="utf-8") as f:
             data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("entries"), list):
+            return [
+                _normalize_cdragon_manifest_entry(item) if _is_cdragon_source_item(item) else _normalize_manifest_entry(item, config_dir)
+                for item in data["entries"]
+                if isinstance(item, dict) and _clean_augment_text(item.get("name"))
+            ]
         if isinstance(data, list):
             items = [
                 item
@@ -373,7 +389,12 @@ def get_augment_manifest_runtime_path(config_dir: Optional[str] = None) -> str:
 
     config_dir = config_dir or STATIC_DATA_DIR
     debug_path = _debug_manifest_path(config_dir)
-    return debug_path if os.path.exists(debug_path) else os.path.join(config_dir, "Augment_Icon_Manifest.json")
+    if os.path.exists(debug_path):
+        return debug_path
+    catalog_path = get_augment_resource_catalog_path(config_dir)
+    if catalog_path.exists():
+        return os.fspath(catalog_path)
+    return os.path.join(config_dir, "Augment_Icon_Manifest.json")
 
 
 def _write_augment_icon_manifest(manifest: list[dict], path: Optional[str] = None) -> None:

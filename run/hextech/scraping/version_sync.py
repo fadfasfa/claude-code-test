@@ -2,18 +2,17 @@
 
 文件职责：
 - 初始化运行目录与 bundle 资源播种
-- 同步英雄核心资料、海克斯映射和版本号
+- 同步英雄核心资料、海克斯目录投影和版本号
 - 后台补齐英雄头像等稳定资源
 
 核心输入：
 - Data Dragon、Hextech、CommunityDragon 等远端资源
-- 本地 `config/`、`assets/` 和包内稳定资源
+- 本地中文资源目录、运行态缓存和包内稳定资源
 
 核心输出：
-- `Champion_Core_Data.json`
-- `Augment_Full_Map.json`
-- `Augment_Icon_Map.json`
-- `hero_version.txt`
+- `resources/版本数据/hero_version.txt`
+- `resources/版本数据/海克斯资源目录.v1.json`
+- 必要时临时生成旧海克斯映射文件，并在目录文件存在后清理
 
 主要依赖：
 - `hextech.catalog.alias_utils`
@@ -41,6 +40,12 @@ from urllib3.util.retry import Retry
 from typing import Optional
 
 from hextech.catalog.alias_utils import dedupe_alias_texts
+from hextech.catalog.version_catalog import (
+    get_augment_resource_catalog_path,
+    get_hero_catalog_path,
+    load_augment_tier_map,
+    load_champion_core_data as load_projected_champion_core_data,
+)
 from hextech.scraping.icon_resolver import normalize_augment_name
 from hextech.support.log_utils import (
     MaxLevelFilter,
@@ -81,11 +86,12 @@ def _get_packaged_hextech_snapshot_dir() -> str:
 SUMMARY_LOG_FILE = get_runtime_summary_log_file()
 ERROR_LOG_FILE = get_error_log_file()
 VERSION_FILE = os.path.join(STATIC_DATA_DIR, "hero_version.txt")
-CORE_DATA_FILE = os.path.join(STATIC_DATA_DIR, "Champion_Core_Data.json")
+HERO_CATALOG_FILE = os.fspath(get_hero_catalog_path(STATIC_DATA_DIR))
+# 兼容旧 import 名称；当前事实源是英雄目录，不再写回 Champion_Core_Data.json。
+CORE_DATA_FILE = HERO_CATALOG_FILE
 AUGMENT_MAP_FILE = os.path.join(STATIC_DATA_DIR, "Augment_Full_Map.json")
 AUGMENT_ICON_FILE = os.path.join(STATIC_DATA_DIR, "Augment_Icon_Map.json")
-AUGMENT_MANIFEST_FILE = os.path.join(STATIC_DATA_DIR, "Augment_Icon_Manifest.json")
-CHAMPION_ALIAS_INDEX_FILE = os.path.join(INDEX_DATA_DIR, "Champion_Alias_Index.json")
+AUGMENT_MANIFEST_FILE = os.fspath(get_augment_resource_catalog_path(STATIC_DATA_DIR))
 HEXTECH_PRIMARY_BASE_URL = "https://aramgg.com"
 # hextech.dtodo.cn 实测对所有路径 301 永久重定向回 aramgg.com，已退化为同一源。
 # 保留常量定义为兼容（外部 import 引用），但已从 URL 元组中移除，避免假性多源。
@@ -112,6 +118,56 @@ def build_hextech_detail_urls(champ_id: str) -> tuple[str, ...]:
         build_hextech_detail_url(champ_id, HEXTECH_PRIMARY_BASE_URL),
     )
 
+
+def _build_hero_catalog_payload(core_data: dict) -> dict:
+    """把远端同步得到的旧 core 结构收口为英雄目录事实源。"""
+
+    alias_records = []
+    alias_to_id = {}
+    id_to_name = {}
+    id_to_detail = {}
+    for raw_id, raw_entry in core_data.items():
+        if not isinstance(raw_entry, dict):
+            continue
+        hero_id = str(raw_id or "").strip()
+        hero_name = str(raw_entry.get("name", "")).strip()
+        title = str(raw_entry.get("title", "")).strip()
+        en_name = str(raw_entry.get("en_name", "")).strip()
+        if not hero_id or not hero_name:
+            continue
+
+        aliases = dedupe_alias_texts(
+            raw_entry.get("aliases", []),
+            excluded_tokens=[hero_name, title, en_name, hero_id],
+        )
+        alias_records.append({
+            "heroName": hero_name,
+            "title": title,
+            "enName": en_name,
+            "heroId": hero_id,
+            "aliases": aliases,
+        })
+        id_to_name[hero_id] = {
+            "heroName": hero_name,
+            "enName": en_name,
+            "title": title,
+        }
+        id_to_detail[hero_id] = hero_name
+        for token in (hero_name, title, en_name, hero_id, *aliases):
+            text = str(token or "").strip()
+            if text:
+                alias_to_id.setdefault(text, hero_id)
+
+    alias_records.sort(key=lambda item: str(item.get("heroName", "")))
+    return {
+        "schema_version": 1,
+        "description": "英雄别名、ID、名称和详情的统一目录。旧 champion.* 索引由本文件投影生成。",
+        "aliases": alias_records,
+        "alias_to_id": alias_to_id,
+        "id_to_name": id_to_name,
+        "id_to_detail": id_to_detail,
+    }
+
 os.makedirs(STATIC_DATA_DIR, exist_ok=True)
 os.makedirs(INDEX_DATA_DIR, exist_ok=True)
 os.makedirs(RAW_DATA_DIR, exist_ok=True)
@@ -128,16 +184,8 @@ for runtime_dir in (
 ):
     os.makedirs(runtime_dir, exist_ok=True)
 def _load_existing_champion_aliases() -> dict:
-    if not os.path.exists(CORE_DATA_FILE):
-        return {}
-
-    try:
-        with open(CORE_DATA_FILE, "r", encoding="utf-8") as f:
-            existing_core = json.load(f)
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return {}
-
-    if not isinstance(existing_core, dict):
+    existing_core = load_projected_champion_core_data(STATIC_DATA_DIR)
+    if not existing_core:
         return {}
 
     alias_map = {}
@@ -483,12 +531,13 @@ def sync_hero_data():
                     except (requests.RequestException, ValueError, TypeError, json.JSONDecodeError) as e:
                         logger.debug(f"CommunityDragon 数据源抓取失败：{src} - {e}")
                         continue
-            # 原子化写入
-            core_dir = os.path.dirname(CORE_DATA_FILE)
-            fd, tmp_core = tempfile.mkstemp(prefix="core-data-", suffix=".tmp", dir=core_dir)
+            # 原子化写入英雄目录事实源，不再生成旧 Champion_Core_Data.json。
+            hero_catalog = _build_hero_catalog_payload(core_data)
+            core_dir = os.path.dirname(HERO_CATALOG_FILE)
+            fd, tmp_core = tempfile.mkstemp(prefix="hero-catalog-", suffix=".tmp", dir=core_dir)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(core_data, f, ensure_ascii=False, indent=4)
-            os.replace(tmp_core, CORE_DATA_FILE)
+                json.dump(hero_catalog, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_core, HERO_CATALOG_FILE)
 
             if aug_map:
                 aug_dir = os.path.dirname(AUGMENT_MAP_FILE)
@@ -530,15 +579,18 @@ def sync_hero_data():
     return sync_succeeded
 
 def load_champion_core_data():
-    """读取英雄核心资料；文件缺失时强制触发一次稳定资源同步。"""
+    """读取英雄核心资料；当前从英雄目录事实源投影旧 core 结构。"""
     global _last_sync_time
-    if not os.path.exists(CORE_DATA_FILE):
+    projected = load_projected_champion_core_data(STATIC_DATA_DIR)
+    if projected:
+        return projected
+
+    if not os.path.exists(HERO_CATALOG_FILE):
         with _sync_lock:
             _last_sync_time = 0  # 强制重新同步
     if not sync_hero_data():
         return {}
-    with open(CORE_DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return load_projected_champion_core_data(STATIC_DATA_DIR)
 
 def load_augment_map():
     """读取海克斯等级映射；文件缺失时强制触发一次稳定资源同步。"""
@@ -555,24 +607,7 @@ def load_augment_map():
 
 
 def _load_augment_tier_map_from_manifest() -> dict:
-    try:
-        with open(AUGMENT_MANIFEST_FILE, "r", encoding="utf-8") as f:
-            manifest = json.load(f)
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return {}
-
-    if not isinstance(manifest, list):
-        return {}
-
-    tier_map = {}
-    for item in manifest:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name", "")).strip()
-        tier = str(item.get("tier", "")).strip()
-        if name and tier:
-            tier_map[name] = tier
-    return tier_map
+    return load_augment_tier_map(STATIC_DATA_DIR)
 
 
 def _cleanup_legacy_augment_maps_if_manifest_exists() -> None:

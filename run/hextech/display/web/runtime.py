@@ -5,7 +5,7 @@
 - 统一管理 LCU 轮询、CSV 监视、冷启动快照和资源缓存回退
 
 核心输入：
-- 本地 `config/` 与 `assets/` 目录
+- 本地 `resources/版本数据`、`resources/图片资源` 与运行态缓存
 - LCU 本地接口、远端快照接口和海克斯图标资源
 
 核心输出：
@@ -76,6 +76,7 @@ from hextech.scraping.icon_resolver import (
     resolve_apexlol_hextech_icon_url,
 )
 from hextech.scraping.version_sync import (
+    ASSET_DIR,
     BASE_DIR,
     RESOURCE_DIR,
     STATIC_DATA_DIR,
@@ -167,12 +168,9 @@ def get_static_dir() -> str:
 def get_assets_dir() -> str:
     global _assets_dir
     if _assets_dir is None:
-        # 冻结包里 `_MEIPASS/assets` 只是只读的捆绑副本；
-        # 运行时补齐和缓存头像必须落到 exe 同级目录，保证 Web 端和桌面端看到同一份资源。
-        if getattr(sys, "frozen", False):
-            _assets_dir = build_runtime_persisted_path("assets")
-        else:
-            _assets_dir = _get_resource_path("assets")
+        # 源码态与冻结态都使用 `_paths.ASSET_DIR` 作为可写图片事实源；
+        # 打包内的 `assets` 只作为首启播种输入，不作为运行期写入目录。
+        _assets_dir = ASSET_DIR
         os.makedirs(_assets_dir, exist_ok=True)
     return _assets_dir
 

@@ -7,11 +7,11 @@ from __future__ import annotations
 - 生成运行期 seed 使用的 bundle manifest；构建期只把这份 manifest 随包写入，不复制资源
 
 核心输入：
-- `data/static/` 与 `data/indexes/`
+- `resources/版本数据/`
 - `data/raw/hextech/Hextech_Data_*.csv`（构建期源）
-- `data/raw/synergy/Champion_Synergy_YYYYMMDD_HHMMSS.json`（构建期源）
-- `data/raw/synergy/Champion_Synergy_latest.v1.json`（构建期源）
-- `assets/`
+- `resources/首启快照/Champion_Synergy_YYYYMMDD_HHMMSS.json`（构建期源）
+- `resources/首启快照/Champion_Synergy_latest.v1.json`（构建期源）
+- `resources/图片资源/`
 - `hextech/display/web/static/`
 
 核心输出：
@@ -37,6 +37,8 @@ from tools.package_rules import (
     BUNDLE_MANIFEST_NAME,
     FORBIDDEN_BUNDLE_PATH_PARTS,
     HEXTECH_SNAPSHOT_DIR,
+    RESOURCE_IMAGE_DIR,
+    RESOURCE_VERSION_DATA_DIR,
     STABLE_INDEX_FILES,
     STABLE_STATIC_FILES,
     SYNERGY_DATA_DIR,
@@ -65,9 +67,9 @@ def _bundled_snapshot_name(path: Path, target_dir: Path) -> str:
 
 
 def build_bundle_manifest(base_dir: Path) -> dict:
-    static_dir = base_dir / "data" / "static"
-    index_dir = base_dir / "data" / "indexes"
-    asset_dir = base_dir / "assets"
+    static_dir = base_dir / RESOURCE_VERSION_DATA_DIR
+    index_dir = base_dir / RESOURCE_VERSION_DATA_DIR
+    asset_dir = base_dir / RESOURCE_IMAGE_DIR
 
     static_files = [
         name for name in STABLE_STATIC_FILES if (static_dir / name).exists()

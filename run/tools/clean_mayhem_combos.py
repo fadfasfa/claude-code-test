@@ -22,12 +22,14 @@ if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 
 from hextech.catalog.runtime_store import build_raw_synergy_data_path, build_synergy_cleaned_data_path
+from hextech.catalog.version_catalog import get_augment_resource_catalog_path, load_augment_manifest_entries, load_champion_core_data
 from hextech.scraping.icon_resolver import normalize_augment_name
 from hextech.support.atomic_io import atomic_write_json
 
-DEFAULT_MAYHEM_RAW = RUN_DIR / "data" / "raw" / "mayhem_combos.raw.json"
-DEFAULT_AUGMENT_MANIFEST = RUN_DIR / "data" / "static" / "Augment_Icon_Manifest.json"
-DEFAULT_CORE_DATA = RUN_DIR / "data" / "static" / "Champion_Core_Data.json"
+RESOURCE_DIR = RUN_DIR / "resources"
+DEFAULT_MAYHEM_RAW = RESOURCE_DIR / "来源证据" / "mayhem_combos.raw.json"
+DEFAULT_AUGMENT_MANIFEST = get_augment_resource_catalog_path(RESOURCE_DIR / "版本数据")
+DEFAULT_CORE_DATA = RESOURCE_DIR / "版本数据" / "英雄目录.v1.json"
 
 RETIRED_MARKERS = (
     "Retired in live Mayhem",
@@ -79,6 +81,23 @@ def _load_json(path: str | os.PathLike[str], expected_type: type) -> Any:
     if not isinstance(payload, expected_type):
         raise ValueError(f"JSON schema mismatch: {target} expected={expected_type.__name__}")
     return payload
+
+
+def _load_augment_manifest(path: str | os.PathLike[str]) -> list[dict[str, Any]]:
+    target = Path(path)
+    if target.name == "海克斯资源目录.v1.json":
+        return load_augment_manifest_entries(target.parent)
+    payload = _load_json(target, list)
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _load_core_data(path: str | os.PathLike[str]) -> dict[str, Any]:
+    target = Path(path)
+    if target.name == "英雄目录.v1.json":
+        return load_champion_core_data(target.parent)
+    if target.name == "Champion_Core_Data.json" and not target.exists():
+        return load_champion_core_data(target.parent)
+    return _load_json(target, dict)
 
 
 def _lookup_key(value: Any) -> str:
@@ -352,8 +371,8 @@ def merge_mayhem_combos(
     output_target = Path(output_path or build_synergy_cleaned_data_path())
     apex_payload = _load_json(apex_target, dict)
     mayhem_payload = _load_json(mayhem_raw_path, dict)
-    manifest_payload = _load_json(augment_manifest_path, list)
-    core_payload = _load_json(core_data_path, dict)
+    manifest_payload = _load_augment_manifest(augment_manifest_path)
+    core_payload = _load_core_data(core_data_path)
 
     raw_items = mayhem_payload.get("items") if isinstance(mayhem_payload.get("items"), list) else []
     raw_rejects = mayhem_payload.get("rejects") if isinstance(mayhem_payload.get("rejects"), list) else []
@@ -436,9 +455,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="清洗并合并 ARAMMayhem combo 协同数据。")
     parser.add_argument("--apex-input", default="", help="Apex 基底 JSON；默认读取 current latest pointer 指向文件。")
     parser.add_argument("--mayhem-raw", default=os.fspath(DEFAULT_MAYHEM_RAW), help="Mayhem raw JSON。")
-    parser.add_argument("--augment-manifest", default=os.fspath(DEFAULT_AUGMENT_MANIFEST), help="官方 Augment_Icon_Manifest.json。")
-    parser.add_argument("--core-data", default=os.fspath(DEFAULT_CORE_DATA), help="Champion_Core_Data.json。")
-    parser.add_argument("--output", default="", help="输出 Champion_Synergy_Cleaned.json；默认写 data/static。")
+    parser.add_argument("--augment-manifest", default=os.fspath(DEFAULT_AUGMENT_MANIFEST), help="官方海克斯资源目录或旧 Augment_Icon_Manifest.json。")
+    parser.add_argument("--core-data", default=os.fspath(DEFAULT_CORE_DATA), help="英雄目录或旧 Champion_Core_Data.json。")
+    parser.add_argument("--output", default="", help="输出 Champion_Synergy_Cleaned.json；默认写 resources/版本数据。")
     parser.add_argument("--dry-run", action="store_true", help="只输出统计，不写 cleaned 文件。")
     return parser
 

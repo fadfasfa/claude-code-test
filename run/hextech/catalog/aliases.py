@@ -10,9 +10,10 @@ from typing import Dict, List, Optional
 
 from hextech.catalog.alias_utils import dedupe_alias_texts, normalize_alias_token
 from hextech.catalog.runtime_store import build_runtime_persisted_path, ensure_private_runtime_dir
-from hextech.scraping.version_sync import CHAMPION_ALIAS_INDEX_FILE
+from hextech.catalog.version_catalog import HERO_CATALOG_FILENAME, get_hero_catalog_path, load_champion_alias_records
 
 _ALIAS_INDEX_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
+CHAMPION_ALIAS_INDEX_FILE = str(get_hero_catalog_path())
 RUNTIME_ALIAS_FILE = build_runtime_persisted_path("aliases.json")
 _RUNTIME_ALIAS_LOCK = threading.Lock()
 
@@ -44,12 +45,16 @@ def _load_json_file(path: str):
 
 
 def _load_stable_alias_index() -> tuple[float, list[dict]]:
-    if not os.path.exists(CHAMPION_ALIAS_INDEX_FILE):
+    stable_path = CHAMPION_ALIAS_INDEX_FILE
+    if not os.path.exists(stable_path):
         return 0.0, []
-    current_mtime = os.path.getmtime(CHAMPION_ALIAS_INDEX_FILE)
-    payload = _load_json_file(CHAMPION_ALIAS_INDEX_FILE)
-    if not isinstance(payload, list):
-        payload = []
+    current_mtime = os.path.getmtime(stable_path)
+    if os.path.basename(stable_path) == HERO_CATALOG_FILENAME:
+        payload = load_champion_alias_records(os.path.dirname(stable_path))
+    else:
+        payload = _load_json_file(stable_path)
+        if not isinstance(payload, list):
+            payload = []
     return current_mtime, [_normalize_record(item) for item in payload if isinstance(item, dict)]
 
 

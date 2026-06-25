@@ -235,11 +235,11 @@
                 return [];
             }
 
-            return Object.values(coreData).map((entry) => ({
+            return Object.entries(coreData).map(([heroId, entry]) => ({
                 title: entry.name || '',
                 heroName: entry.title || '',
                 enName: entry.en_name || '',
-                heroId: String(entry.id || entry.hero_id || ''),
+                heroId: String(entry.id || entry.hero_id || heroId || ''),
                 aliases: Array.isArray(entry.aliases) ? entry.aliases : []
             }));
         }

@@ -11,8 +11,8 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-STATIC_DATA_DIR = BASE_DIR / "data" / "static"
-INDEX_DATA_DIR = BASE_DIR / "data" / "indexes"
+STATIC_DATA_DIR = BASE_DIR / "resources" / "版本数据"
+INDEX_DATA_DIR = BASE_DIR / "resources" / "版本数据"
 RUNTIME_RAW_DATA_DIR = BASE_DIR / "data" / "raw"
 RUNTIME_DIR = BASE_DIR / "data" / "runtime"
 BUILD_DIR = BASE_DIR / "build"

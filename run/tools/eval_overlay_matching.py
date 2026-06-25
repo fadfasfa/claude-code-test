@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """用本机真机转储帧评测 overlay 图标/文字双通道匹配。
 
-本工具只读取 `data/runtime/debug/**/frame.png` 与静态真值 JSON，不截图、不联网、不写事件。
+本工具只读取 `data/runtime/debug/**/frame.png` 与 `resources/诊断样例` 真值 JSON，不截图、不联网、不写事件。
 runtime 样本默认不入 Git；缺样本时会报告 skipped，方便在有真机转储的机器上复跑。
 """
 
@@ -23,7 +23,7 @@ from hextech.overlay.vision import sidecar as overlay_vision_sidecar
 from hextech.overlay.vision.state import SelectionTracker
 
 
-DEFAULT_TRUTH_PATH = RUN_DIR / "data" / "static" / "overlay_matching_truth.v1.json"
+DEFAULT_TRUTH_PATH = RUN_DIR / "resources" / "诊断样例" / "overlay_matching_truth.v1.json"
 
 
 def _clean_text(value: Any) -> str:

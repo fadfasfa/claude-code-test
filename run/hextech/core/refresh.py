@@ -39,7 +39,6 @@ from hextech.support.atomic_io import atomic_write_json
 from hextech.scraping.hextech.scraper import hextech_refresh_blocked, main_scraper
 from hextech.scraping.synergy.scraper import main as run_apex_spider
 from hextech.scraping.synergy.scraper import SYNERGY_REFRESH_META_VERSION
-from hextech.scraping.heal_worker import heal_missing_artifacts
 from hextech.catalog.precomputed_cache import (
     has_precomputed_hextech_cache,
     load_precomputed_champion_list,
@@ -202,6 +201,8 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
     这个入口用于 Web 启动、自检和桌面后台线程；它本身不直接拼接多段抓取逻辑，
     而是委托 `heal_missing_artifacts` 按缺失产物清单执行最小修复。
     """
+    from hextech.scraping.heal_worker import heal_missing_artifacts
+
     report = heal_missing_artifacts(force=force, stop_event=stop_event)
     repaired = set(report.get("repaired", []))
     if force or repaired:
@@ -210,6 +211,8 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
 
 
 def heal_runtime_artifacts(force: bool = False, stop_event=None) -> dict:
+    from hextech.scraping.heal_worker import heal_missing_artifacts
+
     return heal_missing_artifacts(force=force, stop_event=stop_event)
 
 

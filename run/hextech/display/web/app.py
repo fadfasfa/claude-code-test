@@ -11,7 +11,6 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from hextech.scraping._paths import INDEX_DATA_DIR, STATIC_DATA_DIR
 from .api import register_routes
 from .runtime import (
     SERVER_PORT,
@@ -27,8 +26,6 @@ from .runtime import (
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=get_static_dir()), name="static")
-app.mount("/data/static", StaticFiles(directory=STATIC_DATA_DIR), name="stable-data")
-app.mount("/data/indexes", StaticFiles(directory=INDEX_DATA_DIR), name="stable-indexes")
 register_routes(app)
 
 

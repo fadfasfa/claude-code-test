@@ -7,7 +7,7 @@ from __future__ import annotations
 
 核心输入：
 - bundle manifest
-- bundle 内 `data/static`、`data/indexes`、`resources/snapshots/*` 与 `assets/`
+- bundle 内 `resources/版本数据`、`resources/snapshots/*` 与兼容 `assets/`
 
 核心输出：
 - 运行目录中的稳定配置和图片资源
@@ -157,8 +157,12 @@ def seed_bundled_resources(
     asset_dir = Path(runtime_asset_dir)
     hextech_dir = Path(runtime_hextech_dir) if runtime_hextech_dir is not None else None
     synergy_dir = Path(runtime_synergy_dir) if runtime_synergy_dir is not None else None
-    bundled_static_dir = bundle_base / "data" / "static"
-    bundled_index_dir = bundle_base / "data" / "indexes"
+    bundled_static_dir = bundle_base / "resources" / "版本数据"
+    bundled_index_dir = bundle_base / "resources" / "版本数据"
+    if not bundled_static_dir.exists():
+        bundled_static_dir = bundle_base / "data" / "static"
+    if not bundled_index_dir.exists():
+        bundled_index_dir = bundle_base / "data" / "indexes"
     bundled_asset_dir = bundle_base / "assets"
 
     static_dir.mkdir(parents=True, exist_ok=True)

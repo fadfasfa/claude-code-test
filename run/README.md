@@ -104,30 +104,44 @@ run/
 │   ├── package_rules.py        # 打包资源规则；只描述源路径，不复制资源
 │   ├── checks/                 # dev_checks 分域检查清单
 │   └── acceptance/             # 验收工具入口
-├── resources/                  # 稳定只读资源边界；打包快照输出到 resources/snapshots/
+├── resources/                  # 中文二级稳定资源事实源；打包快照输出到 resources/snapshots/
 ├── docs/                       # 业务设计和审查文档
-├── data/static/                # 版本级稳定数据文件
-├── data/indexes/               # 版本级稳定索引文件
-├── assets/                     # 稳定图片/图标资源入口
+├── resources/版本数据/         # 版本级稳定数据与索引文件
+├── resources/图片资源/         # 稳定图片/图标资源入口
 └── data/                       # 本地运行生成数据；不作为分发源数据
 ```
 
 更细的文件职责、数据流和维护边界见 [PROJECT.md](PROJECT.md)。
+
+## 资源中文分类
+
+`resources/` 现在是中文二级维护分类和源码态稳定资源事实源。兼容 Web 路由和包内入口仍保持：
+
+- `/assets/...`：对外图片 URL，源码态文件来自 `resources/图片资源/`。
+- `/data/static/...` 与 `/data/indexes/...`：对外稳定数据兼容路由，源码态文件来自 `resources/版本数据/`。
+- `resources/首启快照/`：构建期首启快照输入。
+- `resources/来源证据/mayhem_combos.raw.json`：来源证据，用于复现 cleaned 协同数据。
+- `data/runtime/**`：运行态输出，不作为稳定资源。
+
+分类清单见 `resources/资源清单.v1.json`，中文分类说明见 `resources/图片资源/`、
+`resources/版本数据/`、`resources/首启快照/`、`resources/诊断样例/` 与
+`resources/来源证据/`。
 
 ## 运行态数据边界
 
 ### 可以随包分发
 
 - `hextech/display/web/static/` 前端静态页面
-- `data/static/` 中的版本级稳定数据文件
-- `data/indexes/` 中的版本级稳定索引文件
-- `assets/` 中的稳定图片/图标资源
+- `resources/版本数据/` 中的版本级稳定数据和索引文件
+- `resources/图片资源/` 中的稳定图片/图标资源
+- `resources/首启快照/` 中的构建期首启快照输入
 - `resources/snapshots/` 中的打包首启种子快照
-- `Champion_Core_Data.json`
-- `Champion_Alias_Index.json`
-- `Augment_Icon_Manifest.json`
+- `英雄目录.v1.json`
+- `海克斯资源目录.v1.json`
 - `Champion_Synergy_Cleaned.json`
-- 兼容图标映射文件
+- `hero_version.txt`
+
+旧 `/data/static/...` 与 `/data/indexes/...` 文件名由 API 投影兼容，不作为包内实体事实源。
 
 ### 不应随包分发
 
@@ -142,7 +156,7 @@ run/
 - `data/runtime/logs/`
 - 任何启动后生成、抓取、缓存、锁、日志或计算产物
 
-例外：`data/raw/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
+例外：`resources/来源证据/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
 `Champion_Synergy_Cleaned.json` 的生成；它不进入打包白名单，也不被 API 或前端直接读取。
 重抓 raw 后只有在同步更新 cleaned 数据时才一起提交。
 

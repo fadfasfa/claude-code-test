@@ -5,9 +5,8 @@
 - 在本地图标缺失时执行 CommunityDragon / apexlol 远端回退
 
 核心输入：
-- `Augment_Icon_Map.json`
-- `Augment_Apexlol_Map.json`
-- 本地 `assets/` 目录
+- `resources/版本数据/海克斯资源目录.v1.json`
+- 本地 `resources/图片资源/` 目录
 
 核心输出：
 - 本地图标文件名
@@ -15,7 +14,7 @@
 - 批量预取结果
 
 主要依赖：
-- 本地 `config/` 和 `assets/`
+- 本地 `resources/版本数据` 和 `resources/图片资源`
 - CommunityDragon 与 apexlol
 
 维护提醒：
@@ -37,7 +36,8 @@ from urllib.parse import quote, unquote, urlparse
 
 import requests
 
-from hextech.scraping._paths import BASE_DIR, STATIC_DATA_DIR
+from hextech.catalog.version_catalog import load_apexlol_slug_map, load_augment_manifest_entries
+from hextech.scraping._paths import ASSET_DIR, STATIC_DATA_DIR
 
 
 _ICON_MAP_CACHE: Tuple[str, float, dict] = ("", 0.0, {})
@@ -59,10 +59,6 @@ _ALLOWED_REMOTE_ICON_HOSTS = {
 MAX_APEXLOL_HEXTECH_MAP_BYTES = 5 * 1024 * 1024
 
 
-def _default_runtime_dir() -> str:
-    return BASE_DIR
-
-
 def _resolve_config_dir(config_dir: Optional[str]) -> str:
     if config_dir:
         return config_dir
@@ -71,7 +67,23 @@ def _resolve_config_dir(config_dir: Optional[str]) -> str:
 
 
 def _resolve_assets_dir(asset_dir: Optional[str]) -> str:
-    return asset_dir or os.path.join(_default_runtime_dir(), "assets")
+    return os.path.abspath(asset_dir) if asset_dir else ASSET_DIR
+
+
+def _resolve_assets_dir_for_config(config_dir: Optional[str]) -> str:
+    config_path = os.path.abspath(_resolve_config_dir(config_dir))
+    if os.path.basename(config_path) == "版本数据":
+        return os.path.join(os.path.dirname(config_path), "图片资源")
+
+    legacy_parent_assets = os.path.abspath(os.path.join(config_path, "..", "assets"))
+    if os.path.isdir(legacy_parent_assets):
+        return legacy_parent_assets
+
+    config_assets = os.path.abspath(os.path.join(config_path, "assets"))
+    if os.path.isdir(config_assets):
+        return config_assets
+
+    return _resolve_assets_dir(None)
 
 
 def normalize_augment_name(name: str) -> str:
@@ -207,11 +219,13 @@ def load_augment_icon_map(config_dir: Optional[str] = None, force_refresh: bool 
 
 
 def _load_augment_icon_map_from_manifest(manifest_path: str) -> dict:
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            manifest = json.load(f)
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return _ICON_MAP_CACHE[2]
+    manifest = load_augment_manifest_entries(os.path.dirname(manifest_path))
+    if not manifest:
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return _ICON_MAP_CACHE[2]
 
     if not isinstance(manifest, list):
         return _ICON_MAP_CACHE[2]
@@ -249,6 +263,7 @@ def build_local_augment_icon_url(hextech_name: str, config_dir: Optional[str] = 
     config_dir = _resolve_config_dir(config_dir)
     request_name = str(hextech_name).strip()
     asset_name = request_name
+    asset_dir = _resolve_assets_dir_for_config(config_dir)
 
     icon_map = load_augment_icon_map(config_dir=config_dir)
     if icon_map:
@@ -261,7 +276,7 @@ def build_local_augment_icon_url(hextech_name: str, config_dir: Optional[str] = 
                     break
         if mapped_value:
             resolved_name = find_existing_augment_asset_filename(
-                os.path.join(config_dir, "..", "assets"),
+                asset_dir,
                 str(mapped_value).split("/")[-1].strip(),
             )
             asset_name = resolved_name or normalize_safe_augment_icon_filename(str(mapped_value).split("/")[-1].strip())
@@ -476,6 +491,12 @@ def load_apexlol_hextech_map(config_dir: Optional[str] = None, force_refresh: bo
         current_mtime = os.path.getmtime(map_path)
     except OSError:
         current_mtime = 0.0
+        catalog_data = load_apexlol_slug_map(config_dir)
+        if catalog_data:
+            data = _expand_apexlol_hextech_map(catalog_data)
+            with _APEXLOL_MAP_LOCK:
+                _APEXLOL_MAP_CACHE = (map_path, current_mtime, data)
+            return data
 
     if not force_refresh and current_mtime and os.path.exists(map_path):
         try:
