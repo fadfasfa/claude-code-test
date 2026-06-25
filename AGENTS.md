@@ -14,7 +14,9 @@
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动；commit 前只允许 `git add` 本轮修改文件，禁止 `git add .`。
 - 未获明确授权时，不主动 push、创建/更新 PR、merge、删除远端分支、丢弃未合并成果或执行难恢复 Git 操作。
 - 用户明确授权 push、PR、merge、新建 worktree 或清理指定 branch/worktree 时，agent 必须自行执行必要命令并验证结果，不退回给用户手工输入。
-- 当用户当前轮明确要求修复 PR 并包含 `push`、`推送`、`修复并推送` 或等价发布指令时，Codex 在完成修复、自检和自审后必须自动推送当前 PR 分支；该授权不包含 merge、tag、release、force push、amend、rebase 或历史重写。
+- 当用户当前轮明确要求修复已有开放 PR 的审查意见、requested changes、CI/check failure 或等价 PR 修复闭环时，任务默认包含验证、自审、必要 commit 和普通 `git push` 到当前 PR 分支；不需要额外出现 `push` / `推送` 字样。
+- 该默认授权只适用于当前分支能对应唯一 open PR 且 PR head 分支等于当前分支；泛化“修复”“完成”“整理”“验证”“本地 review”“创建 PR”不构成 push 授权，用户明确要求“只改不提交”“不推送”“只验证”“只审查”时以用户限制为准。
+- PR 修复后的推送授权不包含 PR merge、tag、release、force push、amend、rebase、历史重写、remote 变更或删除远端分支。
 - 长任务应按合适阶段拆分；每阶段完成后先自检，再使用子智能体审查，通过后进入下一阶段。
 - `force push`、`reset --hard`、删除/丢弃未合并成果、覆盖远端历史，必须被用户明确点名；一旦动作和目标明确，不额外增加业务层确认。
 - 不恢复 CC-CX guard、plan-gate、状态机、command、hook、memory、learning promotion、自动 PR shipping、task resume 或高权限 worktree skill。

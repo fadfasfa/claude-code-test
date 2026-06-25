@@ -19,9 +19,12 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 
 ## PR 修复后的推送规则
 
-- 当前轮用户明确包含 `push`、`推送`、`修复并推送` 或等价发布指令时，agent 在修复 PR 问题后必须完成自检、自审、必要 commit，并自动推送当前 PR 分支。
-- 泛化请求如“修复”“完成”“整理”“收尾”“验证”不构成 push 授权。
-- push 授权不隐含 PR merge、tag、release、force push、amend、rebase 或历史重写。
+- 当前轮用户明确要求修复已有开放 PR 的审查意见、requested changes、CI/check failure 或等价 PR 修复闭环时，任务默认包含必要 commit 和普通 `git push` 到当前 PR 分支；不需要用户另写 `push` / `推送`。
+- 触发条件必须是已有开放 PR 的修复闭环。普通“修复”“完成”“整理”“收尾”“验证”“本地 review”或“创建 PR”不构成 push 授权。
+- 用户明确要求“只改不提交”“不推送”“只验证”或“只审查”时，以用户限制为准，不执行 commit 或 push。
+- 推送前必须完成软检查：当前分支能对应唯一 open PR，且 PR head 分支等于当前分支；已运行最小有效验证和本地自审；准备推送前 staged 为空、无 tracked 未提交改动；既有 unrelated untracked 只报告，不暂存。
+- 遇到以下任一情况必须停止并报告，不推送：不在 PR 分支、找不到唯一 open PR、PR head 不匹配；当前分支 behind 或 diverged，需要 rebase、merge 或 force 才能推送；验证失败、触碰未授权保护范围，或 commit 会混入无关改动。
+- PR 修复后的推送授权只允许普通 `git push` 当前 PR 分支，不包含 PR merge、tag、release、force push、amend、rebase、历史重写、remote 变更或删除远端分支。
 
 ## 高危资产
 
