@@ -16,9 +16,8 @@
 
 ## 恢复步骤
 
-1. 将 `cc-worker.ps1` 移回 `scripts/ai/cc-worker.ps1`。
-2. 将 `codex-cc-lightweight-worker.md` 移回 `docs/workflows/codex-cc-lightweight-worker.md`。
-3. 在 `AGENTS.md` 恢复 Codex 主动评估规则。
-4. 在 `docs/index.md` 和 `scripts/README.md` 恢复 active 入口说明。
-5. 更新 support inventory，把该 worker 从 retired 改回 active。
-6. 运行 `git diff --check` 和 support health，再按需要验证 wrapper 行为。
+1. 先走 `repo-module-admission`，确认是否真的需要恢复 worker、恢复后的目标路径和最小验证。
+2. 在 `docs/当前规则/10-工作区登记.md`、`docs/当前规则/40-Agent与Skill.md`、`docs/当前规则/50-目录职责.md` 中重新登记目标目录和入口；不得直接恢复退役脚本目录或旧 workflow 文档目录。
+3. 再按已登记路径移动 `cc-worker.ps1` 和 `codex-cc-lightweight-worker.md`。
+4. 在 `AGENTS.md`、`docs/index.md`、`scripts/README.md` 和 support inventory 中同步 active 入口说明。
+5. 运行 `git diff --check`、support health 和恢复后 wrapper 的最小行为验证。

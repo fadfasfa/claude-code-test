@@ -110,7 +110,7 @@ scrapling smoke 沿用 [scrapling_client.fetch_page](../../../run/crawler/scrapl
 
 - worktree 路径：`C:\Users\apple\_worktrees\cc\claudecode-cc-probe-scrapling-apex-smoke`
 - 分支：`cc/probe/scrapling-apex-smoke`，base `main`
-- 命名遵循 [docs/workflows/worktree-policy.md](../../workflows/worktree-policy.md) 的 CC managed root 与 `cc/<type>/<slug>` 规则。
+- 命名遵循 [docs/当前规则/20-Git与高危操作.md](../../当前规则/20-Git与高危操作.md) 的 managed root 与 `cc/<type>/<slug>` 规则。
 - Python 版本：沿用主仓现有 3.11+（`run/__pycache__` 下已并存 cpython-311 与 cpython-313 产物，二者均可）。
 - Python 依赖：
   - 现有 `pip install -r run/crawler/requirements-scrapling.txt`

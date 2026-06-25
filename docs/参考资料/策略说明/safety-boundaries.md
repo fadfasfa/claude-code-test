@@ -13,11 +13,12 @@
 - `C:\Users\apple\kb\**`
 - `.codex/**`
 - `run/**`
-- `scripts/**`
 - 全局 hooks、全局 skills、全局 AGENTS / CLAUDE 文件
 - CLI、VS plugin、Codex App、Codex Proxy、Superpowers 或 ECC 安装
 
 不读取或修改凭据、auth 文件、token、cookie、API key、proxy secret 或私有配置。
+
+`scripts/**` 是当前仓库 active tooling，按 `docs/当前规则/10-工作区登记.md` 选择为目标工作区后可以维护；具体写入仍必须限定在当前任务范围内，不借脚本维护顺手修改业务区、全局配置或发布入口。
 
 ## 工作区边界
 
