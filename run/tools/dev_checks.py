@@ -30,16 +30,23 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkstemp
-from typing import Any
+from typing import Any, Mapping
 from unittest.mock import patch
 from urllib.parse import quote
-
-import requests
-import pandas as pd
 
 RUN_DIR = Path(__file__).resolve().parents[1]
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
+
+from hextech.support.python_runtime import ensure_python_311_for_source
+
+
+if __name__ == "__main__":
+    ensure_python_311_for_source()
+
+import requests
+import pandas as pd
+
 WEB_STATIC_DIR = RUN_DIR / "hextech" / "display" / "web" / "static"
 RESOURCE_DIR = RUN_DIR / "resources"
 RESOURCE_IMAGE_DIR = RESOURCE_DIR / "图片资源"
@@ -55,6 +62,7 @@ import hextech.scraping.synergy.scraper as synergy_scraper
 import hextech.scraping.heal_worker as heal_worker
 import hextech.scraping.icon_resolver as icon_resolver
 import hextech.scraping.version_sync as version_sync
+import hextech.scraping.transport.scrapling_client as scrapling_client
 import hextech.display.web.runtime as web_runtime
 from hextech.display.web.api import _build_synergy_api_payload, _normalize_synergy_items, _synergy_item_to_compat_string
 from hextech.catalog.aliases import load_manual_alias_index
@@ -92,6 +100,7 @@ from hextech.support.log_utils import install_summary_logging
 
 
 TIER_IDS = ("Prismatic", "Gold", "Silver")
+ORIGINAL_SYNC_HERO_DATA = version_sync.sync_hero_data
 VERSION_SYNC_WRITE_GUARDED_CHECKS = frozenset(
     {
         "check_heal_worker_contract",
@@ -103,7 +112,7 @@ VERSION_SYNC_WRITE_GUARDED_CHECKS = frozenset(
 )
 
 
-def _offline_sync_hero_data() -> bool:
+def _offline_sync_hero_data(*_args, **_kwargs) -> bool:
     """开发自检只验证本地缓存契约，不允许触发远端同步和资源写入。"""
 
     return Path(version_sync.CORE_DATA_FILE).exists()
@@ -138,6 +147,68 @@ def check_root_entrypoints() -> None:
     root_gitignore = (RUN_DIR.parent / ".gitignore").read_text(encoding="utf-8")
     assert "run/frontend/node_modules/" in root_gitignore
     assert "run/display/node_modules/" not in root_gitignore
+
+
+def check_python_runtime_guard_contract() -> None:
+    """源码态入口必须先落到 run/.venv，再加载业务依赖。"""
+
+    import hextech.support.python_runtime as python_runtime
+
+    assert python_runtime.REQUIRED_PYTHON == (3, 11)
+    assert python_runtime.DEFAULT_VENV_DIR == RUN_DIR / ".venv"
+    assert python_runtime.default_venv_python_path().parent.name in {"Scripts", "bin"}
+    assert "scrapling" in python_runtime.REQUIRED_RUNTIME_PACKAGES
+    assert "curl_cffi" in python_runtime.REQUIRED_RUNTIME_PACKAGES
+    assert "PyInstaller" in python_runtime.PACKAGING_RUNTIME_PACKAGES
+
+    venv_command = [str(python_runtime.default_venv_python_path())]
+    assert python_runtime.build_reexec_command(
+        venv_command,
+        module_name="hextech.overlay",
+        argv=["__main__.py", "--self-check"],
+    ) == [*venv_command, "-m", "hextech.overlay", "--self-check"]
+    assert python_runtime.build_reexec_command(
+        venv_command,
+        argv=["hextech_ui.py", "--game-overlay", "--self-check"],
+    ) == [*venv_command, "hextech_ui.py", "--game-overlay", "--self-check"]
+
+    assert python_runtime.probe_python_version([sys.executable]) == sys.version_info[:2]
+    if python_runtime.is_current_default_venv_python():
+        assert python_runtime.find_python_311_command() is not None
+
+    guarded_entries = {
+        "hextech_ui.py": "ensure_python_311_for_source()",
+        "web_server.py": "ensure_python_311_for_source()",
+        "build.py": "ensure_python_311_for_source(require_packages=PACKAGING_RUNTIME_PACKAGES)",
+        "hextech/overlay/__main__.py": 'ensure_python_311_for_source(module_name="hextech.overlay")',
+        "hextech/overlay/host.py": 'ensure_python_311_for_source(module_name="hextech.overlay.host")',
+        "hextech/overlay/vision/sidecar.py": 'ensure_python_311_for_source(module_name="hextech.overlay.vision.sidecar")',
+        "hextech/scraping/transport/smoke_scrapling.py": (
+            'ensure_python_311_for_source(module_name="hextech.scraping.transport.smoke_scrapling")'
+        ),
+        "tools/dev_checks.py": "ensure_python_311_for_source()",
+    }
+    for relative_path, expected_call in guarded_entries.items():
+        text = (RUN_DIR / relative_path).read_text(encoding="utf-8")
+        assert "hextech.support.python_runtime" in text, relative_path
+        assert expected_call in text, relative_path
+
+    setup_tool = RUN_DIR / "tools" / "setup_venv.py"
+    setup_text = setup_tool.read_text(encoding="utf-8")
+    assert "py -3.11" in setup_text
+    assert "requirements.txt" in setup_text
+    assert "scrapling_smoke" in setup_text
+    assert ".venv" in (RUN_DIR / ".gitignore").read_text(encoding="utf-8")
+
+    runtime_text = (RUN_DIR / "hextech" / "support" / "python_runtime.py").read_text(encoding="utf-8")
+    assert '["py", "-3.11"]' not in runtime_text
+    assert "DEFAULT_VENV_DIR" in runtime_text
+    assert "PACKAGING_RUNTIME_PACKAGES" in runtime_text
+
+    dev_checks_text = (RUN_DIR / "tools" / "dev_checks.py").read_text(encoding="utf-8")
+    guard_index = dev_checks_text.index("ensure_python_311_for_source()")
+    assert guard_index < dev_checks_text.index("import requests")
+    assert guard_index < dev_checks_text.index("import pandas as pd")
 
 
 def check_hextech_package_contract() -> None:
@@ -191,6 +262,7 @@ def check_hextech_package_contract() -> None:
         "hextech.scraping.transport.cloakbrowser_client",
         "hextech.support.atomic_io",
         "hextech.support.log_utils",
+        "hextech.support.python_runtime",
     )
     for module_name in required_modules:
         importlib.import_module(module_name)
@@ -282,7 +354,7 @@ def check_hextech_package_contract() -> None:
     smoke_scrapling_text = (RUN_DIR / "hextech" / "scraping" / "transport" / "smoke_scrapling.py").read_text(encoding="utf-8")
     assert "from crawler import fetch_page" not in smoke_scrapling_text
     assert "hextech.scraping.transport.scrapling_client" in smoke_scrapling_text
-    assert "python -m hextech.scraping.transport.smoke_scrapling" in smoke_scrapling_text
+    assert ".venv\\Scripts\\python.exe -m hextech.scraping.transport.smoke_scrapling" in smoke_scrapling_text
 
     version_sync_module = importlib.import_module("hextech.scraping.version_sync")
     assert Path(version_sync_module.BASE_DIR).resolve() == RUN_DIR.resolve()
@@ -1266,6 +1338,107 @@ def check_hextech_detail_timeout_tail_retry() -> None:
         assert len(pd.read_csv(output_csv, encoding=runtime_store.CSV_ENCODING)) == 300
 
 
+def check_scrapling_tls_error_contract() -> None:
+    """curl TLS 错误必须被分类为 tls_error，并带上下文向上抛出。"""
+
+    error_text = "curl: (35) TLS connect error: error:00000000:OPENSSL_internal:invalid library (0)"
+    assert scrapling_client.classify_fetch_error(error_text) == "tls_error"
+
+    class BadFetcher:
+        @staticmethod
+        def get(*_args, **_kwargs):
+            raise RuntimeError(error_text)
+
+    fetchers_module = type(sys)("scrapling.fetchers")
+    fetchers_module.Fetcher = BadFetcher
+    fetchers_module.DynamicFetcher = BadFetcher
+    fetchers_module.StealthyFetcher = BadFetcher
+    scrapling_module = type(sys)("scrapling")
+    scrapling_module.fetchers = fetchers_module
+    with (
+        patch.object(scrapling_client, "_require_scrapling"),
+        patch.dict(sys.modules, {"scrapling": scrapling_module, "scrapling.fetchers": fetchers_module}),
+    ):
+        page_result = scrapling_client.fetch_page("https://example.test")
+    assert page_result.error_kind == "tls_error"
+
+    result = hextech_scraper.ScraplingFetchResult(
+        url="https://example.test/detail/1",
+        text="",
+        status_code=None,
+        fetched_at="2026-06-25T00:00:00+00:00",
+        error=error_text,
+        error_kind="tls_error",
+        attempts=2,
+    )
+    assert hextech_scraper._scrapling_failure_reason(result) == ("tls_error", None)
+
+    with patch.object(hextech_scraper, "fetch_text", return_value=result):
+        try:
+            hextech_scraper.fetch_with_retry(
+                "https://example.test/detail/1",
+                quiet=True,
+                raise_on_failure=True,
+                caller="hextech_detail",
+                context="championId=1;champion=测试英雄",
+            )
+        except hextech_scraper.RemoteFetchError as exc:
+            assert exc.reason == "tls_error"
+            assert exc.url == "https://example.test/detail/1"
+            assert exc.context == "championId=1;champion=测试英雄"
+        else:
+            raise AssertionError("tls_error 必须向上抛出 RemoteFetchError")
+
+
+def check_version_sync_startup_resource_guard() -> None:
+    """普通启动已有稳定资源时不得无条件访问远端或写 resources。"""
+
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        core_file = root / "英雄目录.v1.json"
+        manifest_file = root / "海克斯资源目录.v1.json"
+        version_file = root / "hero_version.txt"
+        core_file.write_text("{}", encoding="utf-8")
+        manifest_file.write_text("{}", encoding="utf-8")
+        version_file.write_text("15.13.1", encoding="utf-8")
+        with (
+            patch.object(version_sync, "CORE_DATA_FILE", str(core_file)),
+            patch.object(version_sync, "AUGMENT_MAP_FILE", str(root / "missing-augment-map.json")),
+            patch.object(version_sync, "AUGMENT_ICON_FILE", str(root / "missing-augment-icon.json")),
+            patch.object(version_sync, "AUGMENT_MANIFEST_FILE", str(manifest_file)),
+            patch.object(version_sync, "VERSION_FILE", str(version_file)),
+            patch.object(version_sync, "get_advanced_session", side_effect=AssertionError("普通启动不得查远端版本")),
+        ):
+            version_sync._last_sync_time = 0
+            assert ORIGINAL_SYNC_HERO_DATA() is True
+
+    class ResetSession:
+        def get(self, *_args, **_kwargs):
+            raise requests.ConnectionError(ConnectionResetError(10054, "远程主机强迫关闭了一个现有的连接。"))
+
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        core_file = root / "英雄目录.v1.json"
+        manifest_file = root / "海克斯资源目录.v1.json"
+        version_file = root / "hero_version.txt"
+        core_file.write_text("{}", encoding="utf-8")
+        manifest_file.write_text("{}", encoding="utf-8")
+        version_file.write_text("15.13.1", encoding="utf-8")
+        with (
+            patch.object(version_sync, "CORE_DATA_FILE", str(core_file)),
+            patch.object(version_sync, "AUGMENT_MAP_FILE", str(root / "missing-augment-map.json")),
+            patch.object(version_sync, "AUGMENT_ICON_FILE", str(root / "missing-augment-icon.json")),
+            patch.object(version_sync, "AUGMENT_MANIFEST_FILE", str(manifest_file)),
+            patch.object(version_sync, "VERSION_FILE", str(version_file)),
+            patch.object(version_sync, "get_advanced_session", return_value=ResetSession()),
+            patch.object(version_sync.logger, "warning") as warning_log,
+        ):
+            version_sync._last_sync_time = 0
+            assert ORIGINAL_SYNC_HERO_DATA(allow_remote_check=True) is True
+        assert warning_log.call_args is not None
+        assert warning_log.call_args.args[1] == "connection_reset"
+
+
 def check_hextech_success_clears_fallback_state() -> None:
     def fake_result(payload: Any = None, text: str = "ok"):
         if payload is not None:
@@ -1436,7 +1609,7 @@ def check_ui_feature_flags_contract() -> None:
         assert defaults["web_frontend_enabled"] is False
         assert defaults["game_overlay_enabled"] is True
         assert defaults["auto_open_browser"] is True
-        assert defaults["private_policy_stats_enabled"] is False
+        assert defaults["private_policy_stats_enabled"] is True
         assert defaults["low_frequency_listener_enabled"] is True
 
         ui_feature_flags.save_ui_feature_flags(
@@ -1467,6 +1640,7 @@ def check_ui_feature_flags_contract() -> None:
 def check_overlay_hint_cache_contract() -> None:
     """验证 overlay hint cache 可直接查询，且默认不暴露私用统计字段。"""
     import hextech.overlay.hints as overlay_hint_cache
+    import hextech.core.settings as core_settings
     import hextech.catalog.precomputed_cache as precomputed_cache
     import hextech.scraping.augment_catalog as augment_catalog
 
@@ -1607,11 +1781,50 @@ def check_overlay_hint_cache_contract() -> None:
         )
         index = overlay_hint_cache._load_synergy_by_augment_name(good_path)
         assert "珠光护手" in index and index["珠光护手"][0]["hero_name"] == "暗裔剑魔"
+        with (
+            patch.object(overlay_hint_cache, "build_synergy_data_path", return_value=str(good_path)),
+            patch.object(
+                overlay_hint_cache,
+                "get_latest_synergy_snapshot_path",
+                side_effect=AssertionError("cleaned 默认路径可用时不应回退 raw latest"),
+            ),
+        ):
+            default_index = overlay_hint_cache._load_synergy_by_augment_name()
+        assert "珠光护手" in default_index
 
         damaged_syn = Path(tmp_dir) / "bad.json"
         damaged_syn.write_text("not-json", encoding="utf-8")
         assert overlay_hint_cache._load_synergy_by_augment_name(damaged_syn) == {}
         assert overlay_hint_cache._load_synergy_by_augment_name(Path(tmp_dir) / "missing.json") == {}
+
+    captured_refresh_kwargs: list[dict[str, Any]] = []
+    with (
+        patch.object(core_settings, "load_ui_feature_flags", return_value={"private_policy_stats_enabled": True}),
+        patch.object(precomputed_cache, "rebuild_precomputed_api_cache_from_latest_csv", return_value=None),
+        patch.object(
+            overlay_hint_cache,
+            "build_overlay_hint_cache_from_precomputed",
+            side_effect=lambda **kwargs: captured_refresh_kwargs.append(dict(kwargs)) or {"hints": {}},
+        ),
+        patch.object(overlay_hint_cache, "write_overlay_hint_cache", return_value=Path("cache.json")),
+    ):
+        hextech_scraper.rebuild_runtime_caches()
+    assert captured_refresh_kwargs[-1]["include_private_stats"] is True
+    assert captured_refresh_kwargs[-1]["source_tag"] == "runtime-refresh"
+
+    captured_refresh_kwargs.clear()
+    with (
+        patch.object(core_settings, "load_ui_feature_flags", return_value={"private_policy_stats_enabled": False}),
+        patch.object(precomputed_cache, "rebuild_precomputed_api_cache_from_latest_csv", return_value=None),
+        patch.object(
+            overlay_hint_cache,
+            "build_overlay_hint_cache_from_precomputed",
+            side_effect=lambda **kwargs: captured_refresh_kwargs.append(dict(kwargs)) or {"hints": {}},
+        ),
+        patch.object(overlay_hint_cache, "write_overlay_hint_cache", return_value=Path("cache.json")),
+    ):
+        hextech_scraper.rebuild_runtime_caches()
+    assert captured_refresh_kwargs[-1]["include_private_stats"] is False
 
     module_text = (RUN_DIR / "hextech" / "overlay" / "hints.py").read_text(encoding="utf-8")
     assert "requests" not in module_text
@@ -1827,6 +2040,45 @@ def check_overlay_hint_cache_contract() -> None:
     assert stale_hint["ok"] is True
     assert stale_hint["hint"]["stats_by_champion_id"]["86"]["pickrate"] == 0.082
 
+    synergy_index = overlay_hint_cache._load_synergy_by_augment_name()
+    assert synergy_index, "cleaned/raw 协同源不得被 overlay 读成空索引"
+    stable_augment_names = {
+        str(item.get("name") or "")
+        for item in load_augment_manifest_entries()
+        if isinstance(item, dict) and str(item.get("name") or "")
+    }
+    if stable_augment_names:
+        normalized_stable_names = {
+            overlay_hint_cache.normalize_augment_id(name): name for name in stable_augment_names
+        }
+        normalized_missed = [
+            name
+            for name in synergy_index
+            if name not in stable_augment_names
+            and overlay_hint_cache.normalize_augment_id(name) in normalized_stable_names
+        ]
+        assert not normalized_missed[:5], f"联动名未命中不应是 overlay 归一化退化：{normalized_missed[:5]}"
+
+    real_cache = overlay_hint_cache.build_overlay_hint_cache_from_precomputed(
+        include_private_stats=True,
+        source_tag="dev-check-real",
+    )
+    real_hints = real_cache.get("hints")
+    if runtime_store.get_latest_csv() or (isinstance(real_hints, Mapping) and real_hints):
+        assert isinstance(real_hints, Mapping) and real_hints, "有运行态数据时 overlay hint cache 不得为空"
+        real_stats_hint_count = sum(
+            1
+            for hint in real_hints.values()
+            if isinstance(hint, Mapping) and isinstance(hint.get("stats_by_champion_id"), Mapping)
+        )
+        real_synergy_hint_count = sum(
+            1
+            for hint in real_hints.values()
+            if isinstance(hint, Mapping) and isinstance(hint.get("synergies"), list) and hint.get("synergies")
+        )
+        assert real_stats_hint_count > 0, "启用私用统计时 overlay cache 不得退回 0 条统计 hint"
+        assert real_synergy_hint_count > 0, "overlay cache 不得退回 0 条联动 hint"
+
 
 def check_overlay_runtime_paths_contract() -> None:
     """验证 overlay event/context 共享的轻量运行态路径规则。"""
@@ -2008,6 +2260,7 @@ def check_overlay_context_contract() -> None:
     """验证游戏内 overlay 英雄上下文只通过本地 state 文件传递。"""
     import hextech.overlay.context as overlay_context
     import hextech.display.desktop.runtime as ui_runtime
+    import hextech.display.web.runtime as web_runtime
 
     with TemporaryDirectory() as tmp_dir:
         context_path = Path(tmp_dir) / "game_overlay_context.v1.json"
@@ -2059,10 +2312,205 @@ def check_overlay_context_contract() -> None:
             source="web",
             context_path=context_path,
         ) is False
+        cleared_live_loaded = overlay_context.read_overlay_context(context_path)
+        assert cleared_live_loaded["ok"] is False
+        assert cleared_live_loaded["error"] == "context_missing"
+        assert cleared_live_loaded["champion_id"] == ""
+        assert cleared_live_loaded["source"] == "web"
+        assert "266" not in context_path.read_text(encoding="utf-8")
+
+        class FakeLcuResponse:
+            status_code = 200
+
+            def json(self) -> dict[str, Any]:
+                return {
+                    "localPlayerCellId": 7,
+                    "myTeam": [
+                        {"cellId": 3, "championId": 245},
+                        {"cellId": 7, "championId": 266},
+                    ],
+                }
+
+        lcu_payload = FakeLcuResponse().json()
+        expected_groups = {
+            "selected_champion_ids": ["245", "266"],
+            "bench_champion_ids": ["86"],
+        }
+        lcu_payload["benchChampions"] = [
+            {"championId": 245},
+            {"championId": 86},
+        ]
+        assert ui_runtime.build_lcu_candidate_groups(lcu_payload) == expected_groups
+        assert web_runtime.build_lcu_candidate_groups(lcu_payload) == expected_groups
+        assert ui_runtime.normalize_candidate_groups(expected_groups) == expected_groups
+
+        with web_runtime._lcu_state_lock:
+            saved_lcu_state = {
+                "current_ids": set(web_runtime._lcu_state.current_ids),
+                "selected_ids": list(web_runtime._lcu_state.selected_ids),
+                "bench_ids": list(web_runtime._lcu_state.bench_ids),
+                "local_champ_id": web_runtime._lcu_state.local_champ_id,
+                "local_champ_name": web_runtime._lcu_state.local_champ_name,
+                "state_version": web_runtime._lcu_state.state_version,
+                "updated_at": web_runtime._lcu_state.updated_at,
+            }
+            assert web_runtime._extract_lcu_local_champion_id(
+                {"localPlayerCellId": 1, "myTeam": [{"cellId": 1, "championId": 0}]}
+            ) is None
+            assert web_runtime._extract_lcu_local_champion_id(
+                {"localPlayerCellId": 1, "myTeam": [{"cellId": 1, "championId": "266"}]}
+            ) == 266
+            web_runtime._lcu_state.current_ids = {"1", "2"}
+            web_runtime._lcu_state.selected_ids = ["1"]
+            web_runtime._lcu_state.bench_ids = ["2"]
+            web_runtime._lcu_state.local_champ_id = 266
+            web_runtime._lcu_state.local_champ_name = "暗裔剑魔"
+            web_runtime._lcu_state.state_version = 20
+            web_runtime._lcu_state.updated_at = 1.0
+            assert web_runtime._clear_lcu_local_champion_state() is True
+            assert web_runtime._lcu_state.current_ids == {"1", "2"}
+            assert web_runtime._lcu_state.selected_ids == ["1"]
+            assert web_runtime._lcu_state.bench_ids == ["2"]
+            assert web_runtime._lcu_state.local_champ_id is None
+            assert web_runtime._lcu_state.local_champ_name is None
+            assert web_runtime._lcu_state.state_version == 21
+            assert web_runtime._lcu_state.updated_at > 1.0
+            assert web_runtime._clear_lcu_local_champion_state() is False
+
+            web_runtime._lcu_state.current_ids = {"1", "2"}
+            web_runtime._lcu_state.selected_ids = ["1"]
+            web_runtime._lcu_state.bench_ids = ["2"]
+            web_runtime._lcu_state.local_champ_id = 1
+            web_runtime._lcu_state.local_champ_name = "英雄1"
+            web_runtime._lcu_state.state_version = 10
+            web_runtime._lcu_state.updated_at = 1.0
+            assert web_runtime._clear_lcu_candidate_state(clear_local=True) is True
+            assert web_runtime._lcu_state.current_ids == set()
+            assert web_runtime._lcu_state.selected_ids == []
+            assert web_runtime._lcu_state.bench_ids == []
+            assert web_runtime._lcu_state.local_champ_id is None
+            assert web_runtime._lcu_state.local_champ_name is None
+            assert web_runtime._lcu_state.state_version == 11
+            assert web_runtime._lcu_state.updated_at > 1.0
+            assert web_runtime._clear_lcu_candidate_state(clear_local=True) is False
+            web_runtime._lcu_state.current_ids = saved_lcu_state["current_ids"]
+            web_runtime._lcu_state.selected_ids = saved_lcu_state["selected_ids"]
+            web_runtime._lcu_state.bench_ids = saved_lcu_state["bench_ids"]
+            web_runtime._lcu_state.local_champ_id = saved_lcu_state["local_champ_id"]
+            web_runtime._lcu_state.local_champ_name = saved_lcu_state["local_champ_name"]
+            web_runtime._lcu_state.state_version = saved_lcu_state["state_version"]
+            web_runtime._lcu_state.updated_at = saved_lcu_state["updated_at"]
+
+        web_runtime_text = (RUN_DIR / "hextech" / "display" / "web" / "runtime.py").read_text(encoding="utf-8")
+        assert "cleared_local_champion = _clear_lcu_local_champion_state()" in web_runtime_text
+        assert "_clear_lcu_candidate_state(clear_local=True)" in web_runtime_text.rsplit("except Exception as exc:", 1)[1]
+
+        fetch_calls: list[tuple[str, dict[str, str]]] = []
+
+        def fake_fetch(url: str, headers: dict[str, str]) -> FakeLcuResponse:
+            fetch_calls.append((url, dict(headers)))
+            return FakeLcuResponse()
+
+        assert overlay_context.write_current_lcu_overlay_context_once(
+            credential_provider=lambda: ("12345", "secret-token"),
+            fetch_response=fake_fetch,
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔"}},
+            context_path=context_path,
+        ) is True
+        lcu_loaded = overlay_context.read_overlay_context(context_path)
+        assert lcu_loaded["ok"] is True
+        assert lcu_loaded["champion_id"] == "266"
+        assert lcu_loaded["champion_name"] == "暗裔剑魔"
+        assert lcu_loaded["source"] == "lcu"
+        assert fetch_calls and fetch_calls[0][0].endswith("/lol-champ-select/v1/session")
+        assert "secret-token" not in context_path.read_text(encoding="utf-8")
+
+        with (
+            patch.object(overlay_context, "write_overlay_context") as stopped_write_context,
+            patch.object(overlay_context, "write_missing_overlay_context") as stopped_write_missing,
+        ):
+            assert overlay_context.write_current_lcu_overlay_context_once(
+                credential_provider=lambda: ("12345", "secret-token"),
+                fetch_response=lambda _url, _headers: FakeLcuResponse(),
+                core_data_loader=lambda: {"266": {"name": "暗裔剑魔"}},
+                context_path=context_path,
+                should_write=lambda: False,
+            ) is False
+            stopped_write_context.assert_not_called()
+            stopped_write_missing.assert_not_called()
+
+        class ZeroChampionResponse:
+            status_code = 200
+
+            def json(self) -> dict[str, Any]:
+                return {"localPlayerCellId": 7, "myTeam": [{"cellId": 7, "championId": 0}]}
+
+        assert overlay_context.write_current_lcu_overlay_context_once(
+            credential_provider=lambda: ("12345", "secret-token"),
+            fetch_response=lambda _url, _headers: ZeroChampionResponse(),
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔"}},
+            context_path=context_path,
+        ) is False
+        zero_loaded = overlay_context.read_overlay_context(context_path)
+        assert zero_loaded["ok"] is False
+        assert zero_loaded["error"] == "context_missing"
+        assert zero_loaded["champion_id"] == ""
+        assert zero_loaded["source"] == "lcu"
+        assert "266" not in context_path.read_text(encoding="utf-8")
+        assert overlay_context.OverlayContextPoller.stop.__defaults__ == (4.0,)
+
+        context_module_text = (RUN_DIR / "hextech" / "overlay" / "context.py").read_text(encoding="utf-8")
+        assert "should_write=lambda: not stop_event.is_set()" in context_module_text
+        assert "if should_write is not None and not should_write():" in context_module_text
+        assert "@lru_cache(maxsize=256)" in context_module_text
+
+        class DummyServiceManager:
+            def __init__(self, running: bool) -> None:
+                self._running = running
+
+            def is_game_overlay_running(self) -> bool:
+                return self._running
+
+        stopped_ui = DummyUI()
+        stopped_ui.service_manager = DummyServiceManager(False)
+        running_ui = DummyUI()
+        running_ui.service_manager = DummyServiceManager(True)
+        with (
+            patch.object(overlay_context, "write_overlay_context") as mocked_write_context,
+            patch.object(overlay_context, "write_missing_overlay_context") as mocked_write_missing,
+        ):
+            assert ui_runtime._write_overlay_context_from_live_state(
+                stopped_ui,
+                {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
+                source="web",
+            ) is False
+            assert ui_runtime._write_overlay_context_from_live_state(
+                stopped_ui,
+                {"local_champion_id": 0},
+                source="web",
+            ) is False
+            mocked_write_context.assert_not_called()
+            mocked_write_missing.assert_not_called()
+
+            assert ui_runtime._write_overlay_context_from_live_state(
+                running_ui,
+                {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
+                source="web",
+            ) is False
+            mocked_write_context.assert_not_called()
+            assert ui_runtime._write_overlay_context_from_live_state(
+                running_ui,
+                {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
+                source="web",
+                context_path=context_path,
+            ) is True
+            mocked_write_context.assert_called_once()
 
     module_text = (RUN_DIR / "hextech" / "overlay" / "context.py").read_text(encoding="utf-8").lower()
-    forbidden_terms = ["requests", "fastapi", "web_api", "web_runtime", "full_hextech_scraper"]
+    forbidden_terms = ["fastapi", "web_api", "web_runtime", "full_hextech_scraper", "auth.json"]
     assert not any(term in module_text for term in forbidden_terms)
+    assert "remoting-auth-token" in module_text
+    assert "write_current_lcu_overlay_context_once" in module_text
     assert "from hextech.overlay.runtime_paths import overlay_runtime_state_path" in module_text
     assert "def _overlay_runtime_root_dir" not in module_text
     assert "def _overlay_runtime_state_path" not in module_text
@@ -3371,6 +3819,7 @@ def check_game_overlay_host_contract() -> None:
 def check_desktop_ui_feature_switch_contract() -> None:
     """验证桌面 UI 不再初始化时无条件启动 Web 服务。"""
     import hextech.display.desktop.runtime as ui_runtime
+    import hextech.display.desktop.app as desktop_app
 
     ui_text = (RUN_DIR / "hextech" / "display" / "desktop" / "app.py").read_text(encoding="utf-8")
     runtime_text = (RUN_DIR / "hextech" / "display" / "desktop" / "runtime.py").read_text(encoding="utf-8")
@@ -3381,6 +3830,14 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert "ServiceManager" in ui_text
     assert "Web 前端" in ui_text
     assert "游戏内显示" in ui_text
+    assert "低频监听" not in ui_text
+    assert "tk.Checkbutton" not in ui_text
+    assert "feature_status_label" not in ui_text
+    assert "Web:" not in ui_text
+    assert " / sidecar" not in ui_text
+    assert 'root.attributes("-alpha", 1.0' in ui_text
+    assert "_build_feature_toggle" in ui_text
+    assert "WINDOW_EXPANDED_GEOMETRY = \"320x740\"" in ui_text
     assert "GameOverlayController" in ui_text
     assert "overlay_controller=GameOverlayController(" in ui_text
     assert "start_vision_sidecar_process" not in ui_text
@@ -3417,6 +3874,32 @@ def check_desktop_ui_feature_switch_contract() -> None:
     private_toggle_body = ui_text.split("    def _toggle_private_policy_stats", 1)[1].split("    def _toggle_low_frequency_listener", 1)[0]
     assert "self._prepare_overlay_hint_cache()" in private_toggle_body
     assert "if not _web_frontend_available(ui):\n            time.sleep(3)\n            continue" not in runtime_text
+
+    candidate_groups = {
+        "selected_champion_ids": ["1", "2", "3", "4", "5"],
+        "bench_champion_ids": ["6", "7", "8", "9", "10"],
+    }
+    candidate_df = pd.DataFrame(
+        [
+            {"英雄ID": str(index), "英雄名称": f"英雄{index}", "英雄评级": f"T{index}", "英雄胜率": win, "英雄出场率": 0.01}
+            for index, win in (
+                (1, 0.41),
+                (2, 0.55),
+                (3, 0.49),
+                (4, 0.52),
+                (5, 0.47),
+                (6, 0.60),
+                (7, 0.46),
+                (8, 0.58),
+                (9, 0.50),
+                (10, 0.44),
+            )
+        ]
+    )
+    dummy_ui = type("DummyDesktopUI", (), {})()
+    dummy_ui._candidate_groups_from_input = desktop_app.HextechUI._candidate_groups_from_input.__get__(dummy_ui)
+    display_list = desktop_app.HextechUI._build_candidate_display_list(dummy_ui, candidate_groups, candidate_df)
+    assert [item["id"] for item in display_list] == ["2", "4", "3", "5", "1", "6", "8", "9", "7", "10"]
 
 
 def check_no_legacy_imports() -> None:
@@ -3586,8 +4069,8 @@ def check_game_overlay_documentation_contract() -> None:
     design_text = (RUN_DIR / "docs" / "hextech_game_overlay_design.md").read_text(encoding="utf-8")
     assert "阶段 3R" in readme_text
     assert "2560x1600" in readme_text
-    assert "python -m hextech.overlay.vision.sidecar --once --preset auto --write-event" in readme_text
-    assert "python -m hextech.overlay.vision.sidecar --loop --preset auto --write-event" in readme_text
+    assert ".venv\\Scripts\\python.exe -m hextech.overlay.vision.sidecar --once --preset auto --write-event" in readme_text
+    assert ".venv\\Scripts\\python.exe -m hextech.overlay.vision.sidecar --loop --preset auto --write-event" in readme_text
     assert "默认不显示占位框" in readme_text
     assert "开关开 + active 海克斯选择事件 + 游戏窗口在前台" in readme_text
     assert "蓝色选择按钮" in readme_text
@@ -5050,6 +5533,14 @@ print(json.dumps(blocked))
         text = path.read_text(encoding="utf-8")
         assert "import display" not in text and "from display" not in text, path
         assert "fastapi" not in text.lower() and "uvicorn" not in text.lower(), path
+    host_text = (implementation_dir / "host.py").read_text(encoding="utf-8")
+    main_text = (implementation_dir / "__main__.py").read_text(encoding="utf-8")
+    lifecycle_text = (implementation_dir / "lifecycle.py").read_text(encoding="utf-8")
+    assert "prepare_shared_overlay_data" in host_text
+    assert "_prepare_host_hint_cache()" in host_text.split("def run_overlay_host", 1)[1]
+    assert 'row["status_code"] == "READY"' in host_text
+    assert 'row["status_code"] == "READY"' in main_text
+    assert "start_overlay_context_poller" in lifecycle_text
 
     with (
         patch.dict(overlay_lifecycle.os.environ, {overlay_lifecycle.OVERLAY_SIDECAR_DEBUG_DUMP_ENV: ""}),
@@ -5200,6 +5691,46 @@ print(json.dumps(blocked))
     assert calls[-4:] == ["inactive", "stop:sidecar", "inactive", "stop:host"]
     assert controller.snapshot()["status"] == "stopped"
     assert controller.host_process is None and controller.sidecar_process is None
+
+    poller_calls: list[str] = []
+
+    class FakeContextPoller:
+        def stop(self) -> None:
+            poller_calls.append("stop:context")
+
+    polling_controller = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: None,
+        start_sidecar_func=lambda: DummyProcess(103),
+        start_host_func=lambda: DummyProcess(104),
+        start_context_poller_func=lambda: poller_calls.append("start:context") or FakeContextPoller(),
+    )
+    polling_controller.start()
+    assert polling_controller.snapshot()["context_poller_status"] == "running"
+    polling_controller.stop()
+    assert poller_calls == ["start:context", "stop:context"]
+    assert polling_controller.snapshot()["context_poller_status"] == "stopped"
+
+    unexpected_exit_calls: list[str] = []
+
+    class UnexpectedExitPoller:
+        def stop(self) -> None:
+            unexpected_exit_calls.append("stop:context")
+
+    unexpected_exit = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: None,
+        start_sidecar_func=lambda: DummyProcess(105),
+        start_host_func=lambda: DummyProcess(106),
+        start_context_poller_func=lambda: unexpected_exit_calls.append("start:context") or UnexpectedExitPoller(),
+    )
+    unexpected_exit.start()
+    assert unexpected_exit.host_process is not None
+    unexpected_exit.host_process.running = False
+    unexpected_snapshot = unexpected_exit.snapshot()
+    assert unexpected_snapshot["status"] == "error"
+    assert unexpected_snapshot["context_poller_status"] == "stopped"
+    assert unexpected_exit_calls == ["start:context", "stop:context"]
 
     partial_restart_calls: list[str] = []
     healthy_host = DummyProcess(121, calls=partial_restart_calls, label="host")
@@ -5446,10 +5977,40 @@ print(json.dumps(blocked))
     assert {row["status_code"] for row in missing_champion_model["stats"]} == {"NO_STATS"}
     assert {row["status_text"] for row in missing_champion_model["stats"]} == {"暂无统计"}
     assert [row["slot"] for row in ready_model["synergies"]] == [0, 1, 2]
+    ranked_cache = hint_cache()
+    ranked_cache["hints"]["a0"]["synergies"] = [
+        {"hero_id": "266", "hero_name": "暗裔剑魔", "rating": "B", "tag": "弱联动", "content": "低优先级"},
+        {"hero_id": "266", "hero_name": "暗裔剑魔", "rating": "S", "tag": "强联动", "content": "高优先级"},
+        {"hero_id": "245", "hero_name": "时间刺客", "rating": "SS", "tag": "其它英雄", "content": "不应命中"},
+    ]
+    ranked_model = overlay_renderer.build_render_model(snapshot, hint_cache=ranked_cache, context=context)
+    assert ranked_model["synergies"][0]["rating"] == "S"
+    assert ranked_model["synergies"][0]["content"] == "高优先级"
+    stable_cache = hint_cache()
+    stable_cache["hints"]["a0"]["synergies"] = [
+        {"hero_id": "266", "hero_name": "暗裔剑魔", "rating": "A", "tag": "先出现", "content": "第一条"},
+        {"hero_id": "266", "hero_name": "暗裔剑魔", "rating": "A", "tag": "后出现", "content": "第二条"},
+    ]
+    stable_model = overlay_renderer.build_render_model(snapshot, hint_cache=stable_cache, context=context)
+    assert stable_model["synergies"][0]["content"] == "第一条"
     privacy_model = overlay_renderer.build_render_model(snapshot, hint_cache=hint_cache(private=False), context=context)
     assert {row["stats_text"] for row in privacy_model["stats"]} == {"已开启隐私模式"}
     assert {row["status_code"] for row in privacy_model["stats"]} == {"PRIVACY_OFF"}
     assert {row["status_text"] for row in privacy_model["stats"]} == {"统计关闭"}
+    context_missing_model = overlay_renderer.build_render_model(
+        snapshot,
+        hint_cache=hint_cache(),
+        context={"ok": False, "error": "context_missing"},
+    )
+    assert {row["status_code"] for row in context_missing_model["stats"]} == {"CONTEXT_MISSING"}
+    assert {row["status_text"] for row in context_missing_model["stats"]} == {"等待英雄"}
+    context_expired_model = overlay_renderer.build_render_model(
+        snapshot,
+        hint_cache=hint_cache(),
+        context={"ok": False, "error": "context_expired"},
+    )
+    assert {row["status_code"] for row in context_expired_model["stats"]} == {"CONTEXT_EXPIRED"}
+    assert {row["status_text"] for row in context_expired_model["stats"]} == {"等待英雄"}
     missing_model = overlay_renderer.build_render_model(snapshot, hint_cache=hint_cache(stats=False), context=context)
     assert {row["stats_text"] for row in missing_model["stats"]} == {"暂无该英雄统计"}
     assert {row["status_code"] for row in missing_model["stats"]} == {"NO_STATS"}
@@ -5555,6 +6116,7 @@ print(json.dumps(blocked))
     for row, expected_text in (
         (partial_model["stats"][1], "识别中…"),
         (privacy_model["stats"][0], "统计关闭"),
+        (context_missing_model["stats"][0], "等待英雄"),
         (missing_model["stats"][0], "暂无统计"),
     ):
         status_canvas = RecordingCanvas()
@@ -5800,7 +6362,10 @@ print(json.dumps(blocked))
     diagnostic_config["diagnostic_mode"] = True
     diagnostic_config["no_activate"] = False
     diagnostic_visibility = {"user_enabled": True, "target_hwnd": None, "window_visible": False}
-    with patch.object(overlay_host, "_find_target_game_window", return_value=None):
+    with (
+        patch.object(overlay_host, "_find_target_game_window", return_value=None),
+        patch.object(overlay_host, "_ensure_overlay_window_styles", return_value=True),
+    ):
         overlay_host._schedule_event_render(
             DiagnosticRoot(),
             diagnostic_canvas,
@@ -5923,6 +6488,36 @@ print(json.dumps(blocked))
     assert hidden_geometry_visibility["pending_geometry"] == "1920x1080+10+20"
     assert overlay_host._target_overlay_geometry((-1920, -100, 0, 980), config) == "1920x1080-1920-100"
 
+    class VisibleGeometryRoot:
+        def __init__(self) -> None:
+            self.geometries: list[str] = []
+
+        def geometry(self, value):
+            self.geometries.append(value)
+
+    visible_geometry_root = VisibleGeometryRoot()
+    visible_geometry_visibility = {
+        "window_visible": True,
+        "applied_geometry": "1x1+0+0",
+    }
+    with (
+        patch.object(
+            overlay_host,
+            "_find_target_game_window",
+            return_value=(321, (10, 20, 1930, 1100)),
+        ),
+        patch.object(overlay_host, "_apply_overlay_rect") as apply_rect,
+        patch.object(overlay_host, "_ensure_overlay_window_styles", return_value=True) as ensure_styles,
+    ):
+        overlay_host._refresh_target_window(
+            visible_geometry_root,
+            config,
+            visible_geometry_visibility,
+        )
+    assert visible_geometry_root.geometries == ["1920x1080+10+20"]
+    apply_rect.assert_called_once_with(visible_geometry_root, (10, 20, 1930, 1100))
+    ensure_styles.assert_called_once_with(visible_geometry_root, config)
+
     class FakeUser32:
         def __init__(self, foreground: int = 0) -> None:
             self.foreground = foreground
@@ -6008,6 +6603,7 @@ print(json.dumps(blocked))
     with (
         patch.object(overlay_host.ctypes.windll, "user32", show_user32),
         patch.object(overlay_host, "_root_hwnd", return_value=99),
+        patch.object(overlay_host, "_ensure_overlay_window_styles", return_value=True) as ensure_styles,
     ):
         overlay_host._show_overlay_window(show_root, config, show_visibility)
     assert show_root.shown is True
@@ -6015,6 +6611,7 @@ print(json.dumps(blocked))
     assert len(show_user32.set_window_pos_flags) == 1
     assert not (show_user32.set_window_pos_flags[0] & overlay_host.SWP_FRAMECHANGED)
     assert show_user32.set_window_pos_calls == [(10, 20, 1920, 1080, overlay_host.SWP_NOACTIVATE)]
+    ensure_styles.assert_called_once_with(show_root, config)
 
     overlay_foreground_user32 = FakeUser32(foreground=456)
     with patch.object(overlay_host.ctypes.windll, "user32", overlay_foreground_user32):

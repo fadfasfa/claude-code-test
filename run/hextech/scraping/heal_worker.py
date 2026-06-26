@@ -271,7 +271,7 @@ def _heal_champion_core() -> bool:
     if not _core_data_ready():
         with version_sync._sync_lock:
             version_sync._last_sync_time = 0
-    return bool(sync_hero_data() and os.path.exists(CORE_DATA_FILE))
+    return bool(sync_hero_data(allow_remote_check=True) and os.path.exists(CORE_DATA_FILE))
 
 
 def _heal_images() -> bool:

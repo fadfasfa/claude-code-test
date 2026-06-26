@@ -53,7 +53,14 @@ class CanvasLike(Protocol):
     def create_text(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
-StatStatusCode = Literal["READY", "DETECTING", "PRIVACY_OFF", "NO_STATS"]
+StatStatusCode = Literal[
+    "READY",
+    "DETECTING",
+    "PRIVACY_OFF",
+    "NO_STATS",
+    "CONTEXT_MISSING",
+    "CONTEXT_EXPIRED",
+]
 
 
 class StatPanelModel(TypedDict):
@@ -171,6 +178,13 @@ def _current_champion_stats(hint: Mapping[str, Any], context: Mapping[str, Any] 
     return None
 
 
+def _context_status_code(context: Mapping[str, Any] | None) -> StatStatusCode | None:
+    if isinstance(context, Mapping) and context.get("ok"):
+        return None
+    error = _clean_text(context.get("error"), limit=48) if isinstance(context, Mapping) else "context_missing"
+    return "CONTEXT_EXPIRED" if error == "context_expired" else "CONTEXT_MISSING"
+
+
 def _stats_display(
     hint: Mapping[str, Any],
     hint_cache: Mapping[str, Any] | None,
@@ -179,6 +193,11 @@ def _stats_display(
     source = hint_cache.get("source") if isinstance(hint_cache, Mapping) else None
     if not (isinstance(source, Mapping) and source.get("private_policy_stats_enabled") is True):
         return "已开启隐私模式", "PRIVACY_OFF", "", "", "统计关闭"
+    context_status = _context_status_code(context)
+    if context_status == "CONTEXT_EXPIRED":
+        return "等待当前英雄", "CONTEXT_EXPIRED", "", "", "等待英雄"
+    if context_status == "CONTEXT_MISSING":
+        return "等待当前英雄", "CONTEXT_MISSING", "", "", "等待英雄"
     stats = _current_champion_stats(hint, context)
     if not isinstance(stats, Mapping):
         return "暂无该英雄统计", "NO_STATS", "", "", "暂无统计"
@@ -188,6 +207,21 @@ def _stats_display(
     if not (winrate and pickrate):
         return text or "暂无该英雄统计", "NO_STATS", "", "", "暂无统计"
     return text, "READY", winrate, pickrate, ""
+
+
+def _synergy_rating_rank(value: Any) -> int:
+    normalized = _clean_text(value, limit=12).upper().replace(" ", "")
+    priority = {
+        "SSS": 8,
+        "SS": 7,
+        "S+": 6,
+        "S": 5,
+        "A": 4,
+        "B": 3,
+        "C": 2,
+        "D": 1,
+    }
+    return priority.get(normalized, 0)
 
 
 def _matched_synergy(hint: Mapping[str, Any], context: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
@@ -200,14 +234,19 @@ def _matched_synergy(hint: Mapping[str, Any], context: Mapping[str, Any] | None)
     synergies = hint.get("synergies")
     if not isinstance(synergies, list):
         return None
+    best: Mapping[str, Any] | None = None
+    best_rank = -1
     for item in synergies:
         if not isinstance(item, Mapping):
             continue
         hero_id = _clean_text(item.get("hero_id"))
         hero_name = _clean_text(item.get("hero_name"))
         if (champion_id and hero_id == champion_id) or (champion_name and hero_name == champion_name):
-            return item
-    return None
+            rank = _synergy_rating_rank(item.get("rating"))
+            if rank > best_rank:
+                best = item
+                best_rank = rank
+    return best
 
 
 def build_render_model(
@@ -574,6 +613,8 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
             "DETECTING": OVERLAY_THEME["highlight_cyan"],
             "PRIVACY_OFF": OVERLAY_THEME["text_secondary"],
             "NO_STATS": OVERLAY_THEME["text_muted"],
+            "CONTEXT_MISSING": OVERLAY_THEME["highlight_cyan"],
+            "CONTEXT_EXPIRED": OVERLAY_THEME["highlight_cyan"],
         }
         _draw_shadowed_text(
             canvas,

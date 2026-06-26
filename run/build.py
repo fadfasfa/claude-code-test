@@ -3,6 +3,12 @@
 根目录只保留一个稳定发布入口，具体打包流程由 `tools.build_package` 承担。
 """
 
+from hextech.support.python_runtime import PACKAGING_RUNTIME_PACKAGES, ensure_python_311_for_source
+
+
+if __name__ == "__main__":
+    ensure_python_311_for_source(require_packages=PACKAGING_RUNTIME_PACKAGES)
+
 from tools.build_package import main
 
 

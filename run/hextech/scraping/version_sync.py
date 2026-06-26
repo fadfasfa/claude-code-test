@@ -366,6 +366,49 @@ def get_advanced_session():
     return session
 
 
+class RemoteJsonFetchError(RuntimeError):
+    """远端 JSON 获取失败的短诊断异常，避免启动日志输出长堆栈。"""
+
+    def __init__(self, label: str, url: str, kind: str, original: BaseException):
+        super().__init__(f"{label}:{kind}")
+        self.label = label
+        self.url = url
+        self.kind = kind
+        self.original = original
+
+
+def _remote_exception_kind(exc: BaseException) -> str:
+    text = str(exc).lower()
+    if isinstance(exc, requests.Timeout) or "timeout" in text or "timed out" in text:
+        return "timeout"
+    if isinstance(exc, requests.ConnectionError) or "connectionreseterror" in text or "10054" in text:
+        return "connection_reset"
+    if "json" in text or isinstance(exc, json.JSONDecodeError):
+        return "json_decode_error"
+    if isinstance(exc, ValueError):
+        return "invalid_payload"
+    if "ssl" in text or "tls" in text:
+        return "tls_error"
+    return "network_error"
+
+
+def _fetch_json_with_short_retry(session, url: str, *, timeout: float, label: str):
+    last_error: BaseException | None = None
+    for attempt in range(2):
+        try:
+            response = session.get(url, verify=True, timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+            last_error = exc
+            if attempt == 0:
+                time.sleep(0.35)
+                continue
+            break
+    original = last_error or RuntimeError("unknown remote json fetch failure")
+    raise RemoteJsonFetchError(label, url, _remote_exception_kind(original), original)
+
+
 def _sync_champion_assets_async(core_data: dict, version: str) -> None:
     # 头像补齐放到后台，避免首启主路径被 172 张头像下载拖慢。
     global _hero_asset_sync_thread
@@ -406,7 +449,7 @@ def _sync_champion_assets_async(core_data: dict, version: str) -> None:
     )
     _hero_asset_sync_thread.start()
 
-def sync_hero_data():
+def sync_hero_data(*, allow_remote_check: bool = False):
     """同步英雄核心资料、海克斯映射与版本文件，并在成功后异步补头像资源。"""
     global _last_sync_time
     sync_succeeded = False
@@ -417,7 +460,6 @@ def sync_hero_data():
         if now - _last_sync_time < SYNC_TTL:
             return True
 
-        session = get_advanced_session()
         files_exist = os.path.exists(CORE_DATA_FILE) and (
             (
                 os.path.exists(AUGMENT_MAP_FILE)
@@ -432,15 +474,22 @@ def sync_hero_data():
                     local_ver = f.read().strip()
             except OSError:
                 local_ver = ""
+        if files_exist and local_ver and not allow_remote_check:
+            _last_sync_time = now
+            return True
+
+        session = get_advanced_session()
         try:
             v_url = "https://ddragon.leagueoflegends.com/api/versions.json"
-            curr_ver_raw = requests.get(
+            curr_versions = _fetch_json_with_short_retry(
+                session,
                 v_url,
-                headers=session.headers,
                 timeout=5,
+                label="ddragon_versions",
             )
-            curr_ver_raw.raise_for_status()
-            curr_ver = curr_ver_raw.json()[0]
+            if not isinstance(curr_versions, list) or not curr_versions:
+                raise ValueError("ddragon_versions_empty")
+            curr_ver = curr_versions[0]
             current_version = curr_ver
             if local_ver == curr_ver and files_exist:
                 _last_sync_time = now
@@ -559,9 +608,25 @@ def sync_hero_data():
             _cleanup_legacy_augment_maps_if_manifest_exists()
             _last_sync_time = time.time()
             sync_succeeded = True
+        except RemoteJsonFetchError as e:
+            if files_exist:
+                logger.warning(
+                    "远端版本检查失败，继续使用本地缓存：kind=%s url=%s",
+                    e.kind,
+                    e.url,
+                )
+                _last_sync_time = now
+                return True
+            logger.error(
+                "稳定资源缺失且远端版本检查失败：kind=%s url=%s error=%s",
+                e.kind,
+                e.url,
+                e.original,
+            )
+            return False
         except (requests.RequestException, json.JSONDecodeError, ValueError, KeyError) as e:
             if files_exist:
-                logger.warning("远端版本检查失败，继续使用本地缓存：%s", e)
+                logger.warning("远端资源同步失败，继续使用本地缓存：kind=%s", _remote_exception_kind(e))
                 _last_sync_time = now
                 return True
             logger.error(f"🚨 同步引擎故障：{e}")
@@ -588,7 +653,7 @@ def load_champion_core_data():
     if not os.path.exists(HERO_CATALOG_FILE):
         with _sync_lock:
             _last_sync_time = 0  # 强制重新同步
-    if not sync_hero_data():
+    if not sync_hero_data(allow_remote_check=True):
         return {}
     return load_projected_champion_core_data(STATIC_DATA_DIR)
 
@@ -598,7 +663,7 @@ def load_augment_map():
     if not os.path.exists(AUGMENT_MAP_FILE) and not os.path.exists(AUGMENT_MANIFEST_FILE):
         with _sync_lock:
             _last_sync_time = 0  # 强制重新同步
-    if not sync_hero_data():
+    if not sync_hero_data(allow_remote_check=True):
         return {}
     if os.path.exists(AUGMENT_MAP_FILE):
         with open(AUGMENT_MAP_FILE, "r", encoding="utf-8") as f:

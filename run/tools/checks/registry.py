@@ -11,6 +11,7 @@ from . import bundle, overlay, runtime, scraping, structure, synergy, web
 # 全量自检清单：按 tools.dev_checks 旧版 run_default_checks 的真实顺序排列，覆盖所有分域
 DEFAULT_CHECKS = (
     "check_root_entrypoints",
+    "check_python_runtime_guard_contract",
     "check_hextech_package_contract",
     "check_resource_classification_manifest",
     "check_version_data_catalog_consolidation",
@@ -30,6 +31,8 @@ DEFAULT_CHECKS = (
     "check_latest_valid_runtime_csv_fallback",
     "check_hextech_scraper_fallback_contract",
     "check_hextech_detail_timeout_tail_retry",
+    "check_scrapling_tls_error_contract",
+    "check_version_sync_startup_resource_guard",
     "check_hextech_cooldown_and_heal_fallback",
     "check_hextech_failed_refresh_never_overwrites_csv",
     "check_hextech_success_clears_fallback_state",

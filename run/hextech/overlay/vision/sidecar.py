@@ -8,6 +8,12 @@
 
 from __future__ import annotations
 
+from hextech.support.python_runtime import ensure_python_311_for_source
+
+
+if __name__ == "__main__":
+    ensure_python_311_for_source(module_name="hextech.overlay.vision.sidecar")
+
 import argparse
 import ctypes
 import hashlib
@@ -972,6 +978,7 @@ def load_default_template_index(
 
     manifest_by_name = _load_manifest_entries_by_name(root, use_runtime_resources=use_runtime_resources)
     raw_templates: dict[str, Mapping[str, Any]] = {}
+    hinted_templates: dict[str, Mapping[str, Any]] = {}
     for name, icon_path in name_to_icon.items():
         clean_name = _clean_text(name)
         relative_icon = str(icon_path or "").lstrip("/")
@@ -1008,7 +1015,12 @@ def load_default_template_index(
             "digest": digest,
             "priority": 1 if hint_result.get("ok") else 0,
         }
-    return build_template_index(raw_templates)
+        if hint_result.get("ok"):
+            hinted_templates[template_id] = raw_templates[template_id]
+    # 正式游戏内展示只显示当前英雄统计/联动。hint cache 有有效覆盖时优先把识别模板
+    # 收敛到可展示数据的海克斯，避免大量识别到无统计条目后只能显示“暂无统计”。
+    # 如果缓存过期/损坏导致 0 命中，则回退完整模板库，保证识别链可诊断。
+    return build_template_index(hinted_templates or raw_templates)
 
 
 @dataclass(frozen=True)

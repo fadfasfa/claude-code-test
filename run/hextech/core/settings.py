@@ -20,7 +20,7 @@ DEFAULT_UI_FEATURE_FLAGS: dict[str, bool] = {
     "web_frontend_enabled": False,
     "game_overlay_enabled": True,
     "auto_open_browser": True,
-    "private_policy_stats_enabled": False,
+    "private_policy_stats_enabled": True,
     "low_frequency_listener_enabled": True,
 }
 

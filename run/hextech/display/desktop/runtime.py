@@ -205,6 +205,46 @@ def scan_lcu_process() -> tuple:
     return None, None
 
 
+def _clean_champion_id(value) -> str:
+    text = str(value or "").strip()
+    return text if text and text != "0" else ""
+
+
+def _append_unique_champion_id(target: list[str], value) -> None:
+    champion_id = _clean_champion_id(value)
+    if champion_id and champion_id not in target:
+        target.append(champion_id)
+
+
+def build_lcu_candidate_groups(payload: dict) -> dict[str, list[str]]:
+    """从 LCU champ-select payload 生成桌面悬浮窗候选分组。"""
+
+    selected_ids: list[str] = []
+    bench_ids: list[str] = []
+    if not isinstance(payload, dict):
+        return {"selected_champion_ids": selected_ids, "bench_champion_ids": bench_ids}
+    for player in payload.get("myTeam", []):
+        if isinstance(player, dict):
+            _append_unique_champion_id(selected_ids, player.get("championId"))
+    for champion in payload.get("benchChampions", []):
+        if isinstance(champion, dict):
+            _append_unique_champion_id(bench_ids, champion.get("championId"))
+    selected_set = set(selected_ids)
+    return {
+        "selected_champion_ids": selected_ids,
+        "bench_champion_ids": [champion_id for champion_id in bench_ids if champion_id not in selected_set],
+    }
+
+
+def _candidate_groups_to_id_set(candidate_groups: dict[str, list[str]]) -> set[str]:
+    return {
+        champion_id
+        for key in ("selected_champion_ids", "bench_champion_ids")
+        for champion_id in candidate_groups.get(key, [])
+        if champion_id
+    }
+
+
 def poll_lcu_live_ids(ui: "HextechUI"):
     if not ui._lcu_port or not ui._lcu_token:
         port, token = scan_lcu_process()
@@ -236,7 +276,8 @@ def poll_lcu_live_ids(ui: "HextechUI"):
         return None
 
     if res.status_code == 404:
-        return set()
+        _write_overlay_context_from_live_state(ui, {"local_champion_id": 0}, source="lcu")
+        return {"selected_champion_ids": [], "bench_champion_ids": []}
     if res.status_code in (401, 403):
         ui._lcu_port = None
         ui._lcu_token = None
@@ -250,10 +291,13 @@ def poll_lcu_live_ids(ui: "HextechUI"):
     except ValueError:
         return None
 
-    available_ids = {str(c.get("championId")) for c in payload.get("benchChampions", [])}
+    candidate_groups = build_lcu_candidate_groups(payload)
+    available_ids = _candidate_groups_to_id_set(candidate_groups)
     local_cell_id = payload.get("localPlayerCellId")
     local_champion_id = None
     for player in payload.get("myTeam", []):
+        if not isinstance(player, dict):
+            continue
         if player.get("cellId") == local_cell_id and player.get("championId"):
             local_champion_id = player.get("championId")
             available_ids.add(str(local_champion_id))
@@ -264,7 +308,9 @@ def poll_lcu_live_ids(ui: "HextechUI"):
             {"local_champion_id": local_champion_id},
             source="lcu",
         )
-    return {champ_id for champ_id in available_ids if champ_id and champ_id != "0"}
+    else:
+        _write_overlay_context_from_live_state(ui, {"local_champion_id": 0}, source="lcu")
+    return candidate_groups
 
 
 def start_web_server_process(web_port_file: str, *, auto_open_browser: bool = True):
@@ -444,34 +490,61 @@ def _open_detail_fallback(web_base: str, champ_id, hero_name: str, en_name: str)
     webbrowser.open(url)
 
 
-def _resolve_candidate_hero_names(ui: "HextechUI", available_ids: set[str]) -> list[str]:
+def normalize_candidate_groups(candidate_groups) -> dict[str, list[str]]:
+    """兼容旧 set/list 输入，并把候选分组收口到稳定 schema。"""
+
+    if isinstance(candidate_groups, dict):
+        selected = candidate_groups.get("selected_champion_ids") or candidate_groups.get("selected") or []
+        bench = candidate_groups.get("bench_champion_ids") or candidate_groups.get("bench") or []
+    else:
+        selected = []
+        bench = candidate_groups or []
+    selected_ids: list[str] = []
+    bench_ids: list[str] = []
+    for value in selected:
+        _append_unique_champion_id(selected_ids, value)
+    for value in bench:
+        _append_unique_champion_id(bench_ids, value)
+    selected_set = set(selected_ids)
+    return {
+        "selected_champion_ids": selected_ids,
+        "bench_champion_ids": [champion_id for champion_id in bench_ids if champion_id not in selected_set],
+    }
+
+
+def _resolve_candidate_hero_names(ui: "HextechUI", candidate_groups) -> list[str]:
     hero_names = []
-    for hero_id in available_ids:
-        core_entry = ui.core_data.get(str(hero_id), {}) if isinstance(ui.core_data, dict) else {}
-        hero_name = str(core_entry.get("name", "")).strip()
-        if hero_name and hero_name not in hero_names:
-            hero_names.append(hero_name)
+    normalized = normalize_candidate_groups(candidate_groups)
+    for key in ("selected_champion_ids", "bench_champion_ids"):
+        for hero_id in normalized[key]:
+            core_entry = ui.core_data.get(str(hero_id), {}) if isinstance(ui.core_data, dict) else {}
+            hero_name = str(core_entry.get("name", "")).strip()
+            if hero_name and hero_name not in hero_names:
+                hero_names.append(hero_name)
     return hero_names
 
 
-def _apply_candidate_update(ui: "HextechUI", available_ids: set[str], *, source: str, payload: dict | None = None) -> None:
+def _apply_candidate_update(ui: "HextechUI", candidate_groups, *, source: str, payload: dict | None = None) -> None:
     if payload and not _is_newer_live_state(ui, payload, source):
         return
     if payload:
         _store_live_state_marker(ui, payload, source)
         _write_overlay_context_from_live_state(ui, payload, source=source)
-    hero_names = _resolve_candidate_hero_names(ui, available_ids)
+    normalized_groups = normalize_candidate_groups(candidate_groups)
+    available_ids = _candidate_groups_to_id_set(normalized_groups)
+    hero_names = _resolve_candidate_hero_names(ui, normalized_groups)
     _sync_preload_state_for_candidates(ui, hero_names)
-    if available_ids != ui.current_hero_ids:
+    if available_ids != ui.current_hero_ids or normalized_groups != getattr(ui, "current_candidate_groups", {}):
         ui.current_hero_ids = available_ids.copy()
+        ui.current_candidate_groups = normalized_groups
         if hero_names:
             _queue_ui_preload(ui, hero_names)
-        ui.root.after(0, ui.update_ui, available_ids)
+        ui.root.after(0, ui.update_ui, normalized_groups)
     elif hero_names:
         _queue_ui_preload(ui, hero_names)
 
 
-def _fetch_web_live_state(ui: "HextechUI") -> tuple[set[str] | None, dict | None]:
+def _fetch_web_live_state(ui: "HextechUI") -> tuple[dict[str, list[str]] | None, dict | None]:
     if not _web_frontend_available(ui):
         return None, None
     web_base = _resolve_redirect_base(ui)
@@ -479,7 +552,13 @@ def _fetch_web_live_state(ui: "HextechUI") -> tuple[set[str] | None, dict | None
     if response.status_code != 200:
         return None, None
     payload = response.json()
-    web_ids = {str(champ_id) for champ_id in payload.get("champion_ids", []) if str(champ_id).strip()}
+    candidate_groups = normalize_candidate_groups(
+        {
+            "selected_champion_ids": payload.get("selected_champion_ids", []),
+            "bench_champion_ids": payload.get("bench_champion_ids", payload.get("champion_ids", [])),
+        }
+    )
+    web_ids = _candidate_groups_to_id_set(candidate_groups)
     local_champion_id = payload.get("local_champion_id")
     has_local_champion = False
     if isinstance(local_champion_id, int):
@@ -488,13 +567,19 @@ def _fetch_web_live_state(ui: "HextechUI") -> tuple[set[str] | None, dict | None
         local_text = str(local_champion_id or "").strip()
         has_local_champion = bool(local_text and local_text != "0")
     if web_ids or has_local_champion:
-        return web_ids, payload
-    return set(), payload
+        return candidate_groups, payload
+    return {"selected_champion_ids": [], "bench_champion_ids": []}, payload
 
 
 def _clean_live_champion_id(value) -> str:
     text = str(value or "").strip()
     return text if text and text != "0" else ""
+
+
+def _game_overlay_context_writable(ui: "HextechUI", *, context_path: str | os.PathLike[str] | None = None) -> bool:
+    """运行态当前英雄上下文只由 overlay poller 写；显式测试路径可直写。"""
+
+    return context_path is not None
 
 
 def _resolve_live_champion_name(ui: "HextechUI", champion_id: str, payload: dict) -> str:
@@ -512,12 +597,18 @@ def _write_overlay_context_from_live_state(
     source: str,
     context_path: str | os.PathLike[str] | None = None,
 ) -> bool:
-    """只在 live_state 明确给出本地英雄 ID 时写入 overlay 上下文。"""
+    """同步 overlay 当前英雄上下文；空英雄会写入明确缺失状态。"""
 
     if not isinstance(payload, dict):
         return False
+    if not _game_overlay_context_writable(ui, context_path=context_path):
+        return False
     champion_id = _clean_live_champion_id(payload.get("local_champion_id"))
     if not champion_id:
+        try:
+            overlay_context.write_missing_overlay_context(context_path, source=source)
+        except OSError:
+            logger.debug("写入 overlay 空英雄上下文失败。", exc_info=True)
         return False
     champion_name = _resolve_live_champion_name(ui, champion_id, payload)
     context_payload = overlay_context.build_overlay_context_payload(
@@ -533,13 +624,13 @@ def _write_overlay_context_from_live_state(
     return True
 
 
-def _sync_candidate_ids(ui: "HextechUI", available_ids: set[str] | None, *, source: str, payload: dict | None = None) -> None:
-    if available_ids is None:
+def _sync_candidate_ids(ui: "HextechUI", candidate_groups, *, source: str, payload: dict | None = None) -> None:
+    if candidate_groups is None:
         return
-    _apply_candidate_update(ui, available_ids, source=source, payload=payload)
+    _apply_candidate_update(ui, candidate_groups, source=source, payload=payload)
 
 
-def _fallback_live_state(ui: "HextechUI") -> set[str] | None:
+def _fallback_live_state(ui: "HextechUI") -> dict[str, list[str]] | None:
     return poll_lcu_live_ids(ui)
 
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from hextech.catalog.runtime_store import (
+    build_synergy_data_path,
     build_runtime_cache_path,
     get_latest_synergy_snapshot_path,
 )
@@ -94,8 +95,11 @@ def _load_synergy_by_augment_name(
 
     target = Path(snapshot_path) if snapshot_path else None
     if target is None:
-        resolved = get_latest_synergy_snapshot_path()
-        target = Path(resolved) if resolved else None
+        for resolver in (build_synergy_data_path, get_latest_synergy_snapshot_path):
+            resolved = resolver()
+            if resolved:
+                target = Path(resolved)
+                break
     if target is None:
         return {}
     try:

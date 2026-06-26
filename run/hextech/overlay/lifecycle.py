@@ -21,6 +21,7 @@ from hextech.catalog.runtime_store import build_runtime_state_path, get_runtime_
 from hextech.overlay.events import write_inactive_overlay_event
 from hextech.support.atomic_io import atomic_write_json
 
+from .context import start_overlay_context_poller, write_missing_overlay_context
 from .data_source import prepare_shared_overlay_data
 
 
@@ -47,6 +48,8 @@ class ProcessLike(Protocol):
 
 
 ProcessFactory = Callable[[], ProcessLike]
+ContextPollerFactory = Callable[[], Any]
+_DEFAULT_CONTEXT_POLLER = object()
 
 
 def _hidden_startupinfo() -> Any:
@@ -213,15 +216,26 @@ class GameOverlayController:
         *,
         start_host_func: ProcessFactory = start_host_process,
         start_sidecar_func: ProcessFactory = start_sidecar_process,
+        start_context_poller_func: ContextPollerFactory | None | object = _DEFAULT_CONTEXT_POLLER,
         prepare_data_func: Callable[[], Any] = prepare_shared_overlay_data,
         write_inactive_func: Callable[[], Any] = write_inactive_overlay_event,
     ) -> None:
         self._start_host_func = start_host_func
         self._start_sidecar_func = start_sidecar_func
+        if start_context_poller_func is _DEFAULT_CONTEXT_POLLER:
+            # 真实默认入口启用 LCU 上下文轮询；fake 进程测试不误起本机 LCU 线程。
+            self._start_context_poller_func = (
+                start_overlay_context_poller
+                if start_host_func is start_host_process and start_sidecar_func is start_sidecar_process
+                else None
+            )
+        else:
+            self._start_context_poller_func = start_context_poller_func
         self._prepare_data_func = prepare_data_func
         self._write_inactive_func = write_inactive_func
         self.host_process: ProcessLike | None = None
         self.sidecar_process: ProcessLike | None = None
+        self.context_poller: Any | None = None
         self.status = "stopped"
         self.last_error = ""
         self.residual_pids: dict[str, int] = {}
@@ -240,8 +254,28 @@ class GameOverlayController:
     def sidecar_running(self) -> bool:
         return process_is_running(self.sidecar_process)
 
+    def context_poller_running(self) -> bool:
+        return self.context_poller is not None
+
     def is_running(self) -> bool:
         return self.host_running() and self.sidecar_running()
+
+    def _start_context_poller(self) -> None:
+        if self.context_poller is not None or self._start_context_poller_func is None:
+            return
+        self.context_poller = self._start_context_poller_func()
+
+    def _stop_context_poller(self) -> None:
+        poller = self.context_poller
+        self.context_poller = None
+        if poller is None:
+            return
+        stop = getattr(poller, "stop", None)
+        if callable(stop):
+            stop()
+            return
+        if callable(poller):
+            poller()
 
     def _drop_stopped_process_refs(self) -> None:
         if self.host_process is not None and not process_is_running(self.host_process):
@@ -264,6 +298,7 @@ class GameOverlayController:
                 self.host_process = self._start_host_func()
                 if not process_is_running(self.host_process):
                     raise RuntimeError("game_overlay host 启动后立即退出")
+            self._start_context_poller()
             self._mark("running")
             logger.info(
                 "game_overlay 已补齐进程：host_pid=%s sidecar_pid=%s",
@@ -279,6 +314,7 @@ class GameOverlayController:
         host_running = self.host_running()
         sidecar_running = self.sidecar_running()
         if host_running and sidecar_running:
+            self._start_context_poller()
             self._mark("running")
             return
         self._drop_stopped_process_refs()
@@ -301,6 +337,7 @@ class GameOverlayController:
             self.host_process = self._start_host_func()
             if not process_is_running(self.host_process):
                 raise RuntimeError("game_overlay host 启动后立即退出")
+            self._start_context_poller()
             self._mark("running")
             logger.info(
                 "game_overlay 已启动：host_pid=%s sidecar_pid=%s",
@@ -316,6 +353,10 @@ class GameOverlayController:
                 rollback_errors.append(f"回滚 inactive 事件写入失败：{fence_exc}")
             host_process = self.host_process
             sidecar_process = self.sidecar_process
+            try:
+                self._stop_context_poller()
+            except Exception as poller_exc:
+                rollback_errors.append(f"上下文轮询停止失败：{poller_exc}")
             host_stopped = stop_process(host_process)
             sidecar_stopped = stop_process(sidecar_process)
             self.residual_pids = {}
@@ -351,15 +392,23 @@ class GameOverlayController:
     def stop(self, *, write_inactive: bool = True) -> None:
         # 共享事件文件没有实例 ID；只有实际持有子进程引用的 Controller 才拥有
         # 写 inactive 的权限，避免第二个桌面实例退出时覆盖正在运行的第一个实例。
-        if self.host_process is None and self.sidecar_process is None:
+        if self.host_process is None and self.sidecar_process is None and self.context_poller is None:
             self._mark("stopped")
             return
         errors: list[str] = []
+        try:
+            self._stop_context_poller()
+        except Exception as exc:
+            errors.append(f"上下文轮询停止失败：{exc}")
         if write_inactive:
             try:
                 self._write_inactive_func()
             except Exception as exc:
                 errors.append(f"inactive 事件写入失败：{exc}")
+            try:
+                write_missing_overlay_context(source="lifecycle-stop")
+            except Exception as exc:
+                errors.append(f"空上下文写入失败：{exc}")
         sidecar_process = self.sidecar_process
         host_process = self.host_process
         sidecar_stopped = stop_process(sidecar_process)
@@ -401,13 +450,19 @@ class GameOverlayController:
         sidecar_running = process_is_running(self.sidecar_process)
         if self.status == "running" and not (host_running and sidecar_running):
             missing = "host" if not host_running else "sidecar"
-            self._mark("error", error=f"game_overlay {missing} 意外退出")
+            error = f"game_overlay {missing} 意外退出"
+            try:
+                self._stop_context_poller()
+            except Exception as exc:
+                error = f"{error}；上下文轮询停止失败：{exc}"
+            self._mark("error", error=error)
         return {
             "status": self.status,
             "host_pid": getattr(self.host_process, "pid", None),
             "sidecar_pid": getattr(self.sidecar_process, "pid", None),
             "host_status": "running" if host_running else "stopped",
             "sidecar_status": "running" if sidecar_running else "stopped",
+            "context_poller_status": "running" if self.context_poller_running() else "stopped",
             "last_error": self.last_error,
             "residual_pids": dict(self.residual_pids),
             "updated_at": self.updated_at,

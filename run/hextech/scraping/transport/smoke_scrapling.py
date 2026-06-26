@@ -2,13 +2,25 @@
 
 只验证默认同步 HTTP 模式，避免把 browser/stealthy mode 的浏览器安装
 变成普通工具层验收前置。
-用法：cd run && python -m hextech.scraping.transport.smoke_scrapling
+用法：cd run && .venv\Scripts\python.exe -m hextech.scraping.transport.smoke_scrapling
 """
 
 from __future__ import annotations
 
 import importlib.util
 import sys
+from pathlib import Path
+
+
+RUN_DIR = Path(__file__).resolve().parents[3]
+if str(RUN_DIR) not in sys.path:
+    sys.path.insert(0, str(RUN_DIR))
+
+from hextech.support.python_runtime import ensure_python_311_for_source
+
+
+if __name__ == "__main__":
+    ensure_python_311_for_source(module_name="hextech.scraping.transport.smoke_scrapling")
 
 
 if sys.platform == "win32":
@@ -24,7 +36,7 @@ def check_imports() -> None:
     if importlib.util.find_spec("scrapling") is None:
         print("[FAIL] scrapling 未安装")
         print("请执行：")
-        print("  pip install -r run/hextech/scraping/transport/requirements-scrapling.txt")
+        print(r"  .\.venv\Scripts\python.exe -m pip install -r requirements.txt")
         sys.exit(1)
 
     print("[OK] scrapling 可 import")
