@@ -577,13 +577,9 @@ def _clean_live_champion_id(value) -> str:
 
 
 def _game_overlay_context_writable(ui: "HextechUI", *, context_path: str | os.PathLike[str] | None = None) -> bool:
-    """只有游戏内 overlay 运行中才让桌面后台轮询写当前英雄上下文。"""
+    """运行态当前英雄上下文只由 overlay poller 写；显式测试路径可直写。"""
 
-    if context_path is not None:
-        return True
-    service_manager = getattr(ui, "service_manager", None)
-    is_game_overlay_running = getattr(service_manager, "is_game_overlay_running", None)
-    return bool(callable(is_game_overlay_running) and is_game_overlay_running())
+    return context_path is not None
 
 
 def _resolve_live_champion_name(ui: "HextechUI", champion_id: str, payload: dict) -> str:

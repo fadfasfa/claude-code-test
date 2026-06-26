@@ -252,8 +252,6 @@ def fetch_text(
         raise ValueError("timeout_ms 必须大于 0")
     if max_attempts <= 0:
         raise ValueError("max_attempts 必须大于 0")
-    if max_attempts <= 0:
-        raise ValueError("max_attempts 必须大于 0")
 
     _require_scrapling()
 

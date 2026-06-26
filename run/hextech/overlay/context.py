@@ -15,6 +15,7 @@ import threading
 import time
 import warnings
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -172,6 +173,19 @@ def _default_fetch_response(url: str, headers: dict[str, str]) -> requests.Respo
         return requests.get(url, headers=headers, verify=False, timeout=2.5)
 
 
+@lru_cache(maxsize=256)
+def _resolve_champion_name_cached(champion_key: str) -> str:
+    try:
+        core_data = load_champion_core_data()
+    except Exception:
+        logger.debug("加载英雄核心数据失败，LCU 上下文仅写 champion_id。", exc_info=True)
+        return ""
+    detail = core_data.get(champion_key) if isinstance(core_data, Mapping) else None
+    if not isinstance(detail, Mapping):
+        return ""
+    return _clean_text(detail.get("name") or detail.get("heroName"), limit=48)
+
+
 def _resolve_champion_name(
     champion_id: Any,
     *,
@@ -180,6 +194,8 @@ def _resolve_champion_name(
     champion_key = _clean_text(champion_id, limit=32)
     if not champion_key:
         return ""
+    if core_data_loader is load_champion_core_data:
+        return _resolve_champion_name_cached(champion_key)
     try:
         core_data = core_data_loader()
     except Exception:

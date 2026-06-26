@@ -2462,6 +2462,7 @@ def check_overlay_context_contract() -> None:
         context_module_text = (RUN_DIR / "hextech" / "overlay" / "context.py").read_text(encoding="utf-8")
         assert "should_write=lambda: not stop_event.is_set()" in context_module_text
         assert "if should_write is not None and not should_write():" in context_module_text
+        assert "@lru_cache(maxsize=256)" in context_module_text
 
         class DummyServiceManager:
             def __init__(self, running: bool) -> None:
@@ -2495,6 +2496,13 @@ def check_overlay_context_contract() -> None:
                 running_ui,
                 {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
                 source="web",
+            ) is False
+            mocked_write_context.assert_not_called()
+            assert ui_runtime._write_overlay_context_from_live_state(
+                running_ui,
+                {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
+                source="web",
+                context_path=context_path,
             ) is True
             mocked_write_context.assert_called_once()
 
