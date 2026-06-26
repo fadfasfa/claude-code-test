@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -23,6 +24,8 @@ class FetchResult:
     status_code: int | None
     fetched_at: str
     error: str | None
+    error_kind: str = ""
+    attempts: int = 1
 
 
 @dataclass
@@ -34,6 +37,8 @@ class ScraplingFetchResult:
     status_code: int | None
     fetched_at: str
     error: str
+    error_kind: str = ""
+    attempts: int = 1
 
     def json(self) -> Any:
         return json.loads(self.text)
@@ -46,9 +51,29 @@ def _require_scrapling() -> None:
     except ImportError:
         raise ImportError(
             "scrapling 未安装。请执行：\n"
-            "  pip install -r run/hextech/scraping/transport/requirements-scrapling.txt\n"
+            r"  cd run" "\n"
+            r"  .\.venv\Scripts\python.exe -m pip install -r requirements.txt" "\n"
             "  scrapling install  # 仅在需要 browser/stealthy mode 时执行"
         ) from None
+
+
+def classify_fetch_error(error: object) -> str:
+    """把 Scrapling/curl 异常归类为可诊断、可聚合的业务原因。"""
+
+    text = str(error or "").lower()
+    if not text:
+        return ""
+    if "curl: (35)" in text or "openssl_internal" in text or "tls connect" in text:
+        return "tls_error"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "connection" in text or "network" in text or "reset by peer" in text or "no active session" in text:
+        return "network_error"
+    return "scrapling_error"
+
+
+def _is_retryable_fetch_error(error_kind: str) -> bool:
+    return error_kind in {"tls_error", "timeout", "network_error"}
 
 
 def _response_html(response: object) -> str | None:
@@ -114,6 +139,8 @@ def fetch_page(
     css_selector: str | None = None,
     proxy: str | None = None,
     network_idle: bool = False,
+    max_attempts: int = 2,
+    retry_backoff_seconds: float = 0.35,
 ) -> FetchResult:
     """同步抓取单个页面，返回 HTML 和可选 selector 命中结果。
 
@@ -129,27 +156,62 @@ def fetch_page(
 
     from scrapling.fetchers import DynamicFetcher, Fetcher, StealthyFetcher  # type: ignore
 
+    if mode == "get":
+        attempts = max(1, int(max_attempts))
+        last_error = ""
+        last_kind = ""
+        fetched_at = ""
+        for attempt in range(1, attempts + 1):
+            fetched_at = datetime.now(timezone.utc).isoformat()
+            try:
+                # Scrapling 0.4.9 的页面 Fetcher 在 retries=0 时可能提前释放会话。
+                # 这里保留一次内部 retry；业务高频链路使用 fetch_text 的结构化重试。
+                kwargs: dict[str, object] = {"timeout": timeout_ms, "retries": 1}
+                if proxy:
+                    kwargs["proxy"] = proxy
+                response = Fetcher.get(url, **kwargs)
+                return FetchResult(
+                    url=url,
+                    html=_response_html(response),
+                    extracted=_extract_css(response, css_selector),
+                    status_code=_response_status(response),
+                    fetched_at=fetched_at,
+                    error=None,
+                    error_kind="",
+                    attempts=attempt,
+                )
+            except Exception as exc:
+                last_error = str(exc)
+                last_kind = classify_fetch_error(exc)
+                if attempt < attempts and _is_retryable_fetch_error(last_kind):
+                    time.sleep(max(0.0, float(retry_backoff_seconds)))
+                    continue
+                break
+        return FetchResult(
+            url=url,
+            html=None,
+            extracted=None,
+            status_code=None,
+            fetched_at=fetched_at or datetime.now(timezone.utc).isoformat(),
+            error=last_error,
+            error_kind=last_kind or classify_fetch_error(last_error),
+            attempts=attempt,
+        )
+
     fetched_at = datetime.now(timezone.utc).isoformat()
     try:
-        if mode == "get":
-            # Scrapling 0.4.8 的 Fetcher/DynamicFetcher/StealthyFetcher 都按毫秒接收 timeout。
-            kwargs: dict[str, object] = {"timeout": timeout_ms}
-            if proxy:
-                kwargs["proxy"] = proxy
-            response = Fetcher.get(url, **kwargs)
-        else:
-            fetcher = DynamicFetcher if mode == "browser" else StealthyFetcher
-            # 与 get 模式保持同一单位，避免调用方在不同 mode 下看到隐式超时漂移。
-            kwargs = {
-                "timeout": timeout_ms,
-                "headless": headless,
-                "network_idle": network_idle,
-            }
-            if wait_for:
-                kwargs["wait_selector"] = wait_for
-            if proxy:
-                kwargs["proxy"] = proxy
-            response = fetcher.fetch(url, **kwargs)
+        fetcher = DynamicFetcher if mode == "browser" else StealthyFetcher
+        # 与 get 模式保持同一单位，避免调用方在不同 mode 下看到隐式超时漂移。
+        kwargs = {
+            "timeout": timeout_ms,
+            "headless": headless,
+            "network_idle": network_idle,
+        }
+        if wait_for:
+            kwargs["wait_selector"] = wait_for
+        if proxy:
+            kwargs["proxy"] = proxy
+        response = fetcher.fetch(url, **kwargs)
 
         return FetchResult(
             url=url,
@@ -158,6 +220,8 @@ def fetch_page(
             status_code=_response_status(response),
             fetched_at=fetched_at,
             error=None,
+            error_kind="",
+            attempts=1,
         )
     except Exception as exc:
         return FetchResult(
@@ -167,6 +231,8 @@ def fetch_page(
             status_code=None,
             fetched_at=fetched_at,
             error=str(exc),
+            error_kind=classify_fetch_error(exc),
+            attempts=1,
         )
 
 
@@ -177,40 +243,64 @@ def fetch_text(
     headers: dict[str, str] | None = None,
     impersonate: str = "chrome",
     stealthy_headers: bool = True,
+    caller: str = "",
+    max_attempts: int = 2,
+    retry_backoff_seconds: float = 0.35,
 ) -> ScraplingFetchResult:
     """用 Scrapling Fetcher 普通 HTTP GET 获取原文。"""
     if timeout_ms <= 0:
         raise ValueError("timeout_ms 必须大于 0")
+    if max_attempts <= 0:
+        raise ValueError("max_attempts 必须大于 0")
+    if max_attempts <= 0:
+        raise ValueError("max_attempts 必须大于 0")
 
     _require_scrapling()
 
     from scrapling.fetchers import Fetcher  # type: ignore
 
-    fetched_at = datetime.now(timezone.utc).isoformat()
-    try:
-        response = Fetcher.get(
-            url,
-            timeout=timeout_ms / 1000,
-            headers=headers,
-            impersonate=impersonate,
-            stealthy_headers=stealthy_headers,
-            retries=1,
-        )
-        return ScraplingFetchResult(
-            url=url,
-            text=_response_text(response),
-            status_code=_response_status(response),
-            fetched_at=fetched_at,
-            error="",
-        )
-    except Exception as exc:
-        return ScraplingFetchResult(
-            url=url,
-            text="",
-            status_code=None,
-            fetched_at=fetched_at,
-            error=str(exc),
-        )
+    attempts = max(1, int(max_attempts))
+    last_error = ""
+    last_kind = ""
+    fetched_at = ""
+    for attempt in range(1, attempts + 1):
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        try:
+            response = Fetcher.get(
+                url,
+                timeout=timeout_ms / 1000,
+                headers=headers,
+                impersonate=impersonate,
+                stealthy_headers=stealthy_headers,
+                retries=0,
+            )
+            return ScraplingFetchResult(
+                url=url,
+                text=_response_text(response),
+                status_code=_response_status(response),
+                fetched_at=fetched_at,
+                error="",
+                error_kind="",
+                attempts=attempt,
+            )
+        except Exception as exc:
+            last_error = str(exc)
+            last_kind = classify_fetch_error(exc)
+            if attempt < attempts and _is_retryable_fetch_error(last_kind):
+                time.sleep(max(0.0, float(retry_backoff_seconds)))
+                continue
+            break
+
+    prefix = f"{caller}: " if caller else ""
+    return ScraplingFetchResult(
+        url=url,
+        text="",
+        status_code=None,
+        fetched_at=fetched_at or datetime.now(timezone.utc).isoformat(),
+        error=f"{prefix}{last_error}",
+        error_kind=last_kind or classify_fetch_error(last_error),
+        attempts=attempt,
+    )
 
 
 def fetch_stealthy_text(
@@ -260,6 +350,8 @@ def fetch_stealthy_text(
             status_code=_response_status(response),
             fetched_at=fetched_at,
             error="",
+            error_kind="",
+            attempts=1,
         )
     except Exception as exc:
         return ScraplingFetchResult(
@@ -268,6 +360,8 @@ def fetch_stealthy_text(
             status_code=None,
             fetched_at=fetched_at,
             error=str(exc),
+            error_kind=classify_fetch_error(exc),
+            attempts=1,
         )
 
 
@@ -277,19 +371,20 @@ def fetch_json(
     timeout_ms: int = 30_000,
     expected_kind: type | tuple[type, ...] | None = None,
     headers: dict[str, str] | None = None,
+    caller: str = "",
 ) -> tuple[Any | None, ScraplingFetchResult]:
     """获取并解析 JSON；解析失败时把原因写入 result.error。"""
-    result = fetch_text(url, timeout_ms=timeout_ms, headers=headers)
+    result = fetch_text(url, timeout_ms=timeout_ms, headers=headers, caller=caller)
     if result.error:
         return None, result
 
     try:
         payload = result.json()
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        return None, replace(result, error=f"json_decode_error:{exc}")
+        return None, replace(result, error=f"json_decode_error:{exc}", error_kind="json_decode_error")
 
     if expected_kind is not None and not isinstance(payload, expected_kind):
-        return None, replace(result, error=f"json_kind_mismatch:{type(payload).__name__}")
+        return None, replace(result, error=f"json_kind_mismatch:{type(payload).__name__}", error_kind="json_kind_mismatch")
 
     return payload, result
 
@@ -298,6 +393,7 @@ __all__ = [
     "FetchResult",
     "FetchMode",
     "ScraplingFetchResult",
+    "classify_fetch_error",
     "fetch_json",
     "fetch_page",
     "fetch_stealthy_text",

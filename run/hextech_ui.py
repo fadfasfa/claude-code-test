@@ -3,6 +3,12 @@
 保留根目录启动方式不变，并按参数懒加载对应实现。
 """
 
+from hextech.support.python_runtime import ensure_python_311_for_source
+
+
+if __name__ == "__main__":
+    ensure_python_311_for_source()
+
 
 def main() -> None:
     import sys

@@ -6,6 +6,12 @@
 
 from __future__ import annotations
 
+from hextech.support.python_runtime import ensure_python_311_for_source
+
+
+if __name__ == "__main__":
+    ensure_python_311_for_source(module_name="hextech.overlay.host")
+
 import argparse
 import ctypes
 import json
@@ -23,7 +29,7 @@ from hextech.overlay.window import find_lol_game_window, is_scoreboard_key_down,
 from hextech.overlay.window_titles import LOL_GAME_WINDOW_TITLE
 from hextech.support.atomic_io import atomic_write_json
 
-from .data_source import OverlayDataSource, SharedOverlayDataSource
+from .data_source import OverlayDataSource, SharedOverlayDataSource, prepare_shared_overlay_data
 from .renderer import build_render_model, draw_overlay_frame
 
 
@@ -114,6 +120,15 @@ def _set_dpi_awareness() -> None:
         logger.debug("设置 overlay DPI 感知失败。", exc_info=True)
 
 
+def _prepare_host_hint_cache() -> str:
+    try:
+        prepare_shared_overlay_data()
+    except Exception as exc:
+        logger.warning("overlay host 启动前准备 hint cache 失败：%s", exc, exc_info=True)
+        return exc.__class__.__name__
+    return ""
+
+
 def _root_hwnd(root: tk.Tk) -> int:
     """解析 Tk 顶层窗口 HWND，避免把扩展样式写到内部子窗口。"""
 
@@ -195,6 +210,16 @@ def _apply_overlay_window_styles(root: tk.Tk, *, click_through: bool, no_activat
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         )
     return style_changed
+
+
+def _ensure_overlay_window_styles(root: tk.Tk, config: Mapping[str, Any]) -> bool:
+    """显示或重定位后再次保证透明点击穿透，防止 Tk 覆盖扩展样式。"""
+
+    return _apply_overlay_window_styles(
+        root,
+        click_through=bool(config.get("click_through", True)),
+        no_activate=bool(config.get("no_activate", True)),
+    )
 
 
 def _poll_alt_h_hotkey(controller: HotkeyController, user32: Any) -> None:
@@ -475,6 +500,7 @@ def _show_overlay_window(root: tk.Tk, config: dict[str, Any], visibility: dict[s
         _apply_overlay_rect(root, target_rect)
     root.deiconify()
     root.attributes("-topmost", True)
+    _ensure_overlay_window_styles(root, config)
 
 
 def _apply_transparent_background(root: tk.Tk, canvas: tk.Canvas, config: Mapping[str, Any]) -> None:
@@ -683,6 +709,7 @@ def _refresh_target_window(root: tk.Tk, config: Mapping[str, Any], visibility: d
     if visibility.get("window_visible") and next_geometry != visibility.get("applied_geometry"):
         root.geometry(next_geometry)
         _apply_overlay_rect(root, rect)
+        _ensure_overlay_window_styles(root, config)
         visibility["applied_geometry"] = next_geometry
 
 
@@ -783,6 +810,7 @@ def _schedule_event_render(
 def run_overlay_host(*, diagnostic: bool = False) -> None:
     """启动独立 overlay 窗口；diagnostic 只增加去重日志。"""
 
+    _prepare_host_hint_cache()
     _set_dpi_awareness()
     config = build_overlay_window_config()
     config["diagnostic_mode"] = bool(diagnostic)
@@ -825,11 +853,7 @@ def run_overlay_host(*, diagnostic: bool = False) -> None:
     data_source = SharedOverlayDataSource()
 
     root.update_idletasks()
-    _apply_overlay_window_styles(
-        root,
-        click_through=bool(config["click_through"]),
-        no_activate=bool(config.get("no_activate", True)),
-    )
+    _ensure_overlay_window_styles(root, config)
     hotkey_controller = _start_hotkey_thread(hotkey_queue)
     _schedule_event_render(root, canvas, config, visibility, hotkey_queue, data_source=data_source)
     _schedule_exit_file_watch(root)
@@ -859,6 +883,10 @@ def run_self_check() -> dict[str, Any]:
         if isinstance(hint, Mapping) and isinstance(hint.get("synergies"), list) and hint.get("synergies")
     )
     model = build_render_model(snapshot, hint_cache=hint_cache, context=context)
+    status_counts: dict[str, int] = {}
+    for row in model["stats"]:
+        status_code = str(row.get("status_code") or "")
+        status_counts[status_code] = status_counts.get(status_code, 0) + 1
     return {
         "ok": True,
         "title": config["title"],
@@ -869,6 +897,7 @@ def run_self_check() -> dict[str, Any]:
         "event_error": str(snapshot.get("error") or ""),
         "event_reason": str((snapshot.get("source") or {}).get("reason") or "") if isinstance(snapshot.get("source"), dict) else "",
         "schema_version": snapshot.get("schema_version"),
+        "cache_ok": not bool(hint_cache.get("error")) if isinstance(hint_cache, Mapping) else False,
         "hint_cache_error": str(hint_cache.get("error") or ""),
         "hint_count": hint_count,
         "private_stats_enabled": _cache_allows_private_stats(hint_cache),
@@ -876,8 +905,10 @@ def run_self_check() -> dict[str, Any]:
         "context_champion_id": str(context.get("champion_id") or ""),
         "context_champion_name": str(context.get("champion_name") or ""),
         "context_synergy_hint_count": _count_current_context_synergy_hints(hints, context),
-        "render_stats_count": sum(1 for row in model["stats"] if row["state"] == "ready"),
+        "render_stats_count": sum(1 for row in model["stats"] if row["status_code"] == "READY"),
         "render_synergy_count": len(model["synergies"]),
+        "render_status_counts": status_counts,
+        "context_status": "ok" if context.get("ok") else str(context.get("error") or "context_missing"),
         "context_ok": bool(context.get("ok")),
         "context_error": str(context.get("error") or ""),
     }

@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from hextech.support.python_runtime import ensure_python_311_for_source
+
+
+if __name__ == "__main__":
+    ensure_python_311_for_source(module_name="hextech.overlay")
+
 import argparse
 import json
 import time
@@ -17,12 +23,17 @@ def run_self_check() -> dict[str, object]:
     cache = source.read_hint_cache()
     context = source.read_context()
     model = build_render_model(event, hint_cache=cache, context=context)
+    status_counts: dict[str, int] = {}
+    for row in model["stats"]:
+        status_code = str(row.get("status_code") or "")
+        status_counts[status_code] = status_counts.get(status_code, 0) + 1
     return {
         "ok": True,
         "event_error": str(event.get("error") or ""),
         "hint_error": str(cache.get("error") or ""),
         "context_error": str(context.get("error") or ""),
-        "ready_stats": sum(1 for row in model["stats"] if row["state"] == "ready"),
+        "ready_stats": sum(1 for row in model["stats"] if row["status_code"] == "READY"),
+        "stats_status_counts": status_counts,
         "synergy_count": len(model["synergies"]),
         "viewports": {
             f"{width}x{height}": resolve_overlay_layout((width, height), synergy_count=3)

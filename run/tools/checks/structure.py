@@ -7,6 +7,7 @@ from __future__ import annotations
 
 CHECKS = (
     "check_root_entrypoints",               # 验证根目录入口点（build.py/web_server.py/hextech_ui.py）存在
+    "check_python_runtime_guard_contract",  # 验证源码态入口统一切换到 Python 3.11
     "check_hextech_package_contract",       # 验证 hextech 包结构契约（__init__.py 完整性）
     "check_resource_classification_manifest",  # 验证 resources 中文二级分类清单
     "check_version_data_catalog_consolidation",  # 验证版本数据中文目录合并与旧文件名投影

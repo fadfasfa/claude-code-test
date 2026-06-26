@@ -9,6 +9,7 @@ import glob
 import re
 import logging
 import traceback
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from hextech.catalog.runtime_store import (
     CSV_ENCODING,
@@ -45,10 +46,21 @@ HEXTECH_HANDSHAKE_TIMEOUT_SECONDS = 6
 class RemoteFetchError(RuntimeError):
     """远端请求不可用；由调用方统一执行本地回退，避免逐英雄刷屏。"""
 
-    def __init__(self, reason: str, *, status_code: int | None = None):
+    def __init__(
+        self,
+        reason: str,
+        *,
+        status_code: int | None = None,
+        url: str = "",
+        error: str = "",
+        context: str = "",
+    ):
         super().__init__(reason)
         self.reason = reason
         self.status_code = status_code
+        self.url = url
+        self.error = error
+        self.context = context
 
 def _clean_augment_text(value) -> str:
     # 统一清洗文本字段，避免空白干扰后续拼接。
@@ -291,7 +303,12 @@ def _scrapling_failure_reason(result: ScraplingFetchResult) -> tuple[str, int | 
     if result.status_code:
         return f"http_{result.status_code}", result.status_code
 
+    if getattr(result, "error_kind", ""):
+        return str(result.error_kind), None
+
     error_text = str(result.error or "").lower()
+    if "curl: (35)" in error_text or "openssl_internal" in error_text or "tls connect" in error_text:
+        return "tls_error", None
     if "timeout" in error_text or "timed out" in error_text:
         return "timeout", None
     if "connection" in error_text or "network" in error_text:
@@ -307,6 +324,25 @@ def _is_blocking_remote_failure(reason: str, status_code: int | None = None) -> 
     return reason in {f"http_{code}" for code in BLOCKED_HTTP_STATUS_CODES}
 
 
+def _summarize_detail_failures(failures: list[dict], *, label: str) -> None:
+    if not failures:
+        return
+    reasons = Counter(str(item.get("reason") or "unknown") for item in failures)
+    samples = []
+    for item in failures[:5]:
+        name = str(item.get("name") or item.get("champ", {}).get("championId") or "?")
+        reason = str(item.get("reason") or "unknown")
+        url = str(item.get("url") or "")
+        samples.append(f"{name}:{reason}:{url}")
+    logging.warning(
+        "海克斯详情失败摘要：label=%s count=%s reasons=%s samples=%s",
+        label,
+        len(failures),
+        dict(reasons),
+        "; ".join(samples),
+    )
+
+
 def fetch_with_retry(
     url,
     max_retries=1,
@@ -314,10 +350,17 @@ def fetch_with_retry(
     *,
     quiet: bool = False,
     raise_on_failure: bool = False,
+    caller: str = "hextech",
+    context: str = "",
 ):
     # Scrapling 接管远端 HTTP 获取；业务层仍用旧 retry/fallback 契约。
     for attempt in range(max_retries):
-        result = fetch_text(url, timeout_ms=int(timeout * 1000))
+        result = fetch_text(
+            url,
+            timeout_ms=int(timeout * 1000),
+            caller=caller,
+            max_attempts=2,
+        )
         if not result.error and result.status_code and 200 <= result.status_code < 400:
             return result
 
@@ -326,7 +369,9 @@ def fetch_with_retry(
             wait_time = 2 ** (attempt + 1)
             if not quiet:
                 logging.warning(
-                    "请求 %s 失败 (尝试 %s/%s): reason=%s status=%s，%s秒后重试...",
+                    "请求失败后重试：caller=%s context=%s url=%s attempt=%s/%s reason=%s status=%s wait=%ss",
+                    caller,
+                    context,
                     url,
                     attempt + 1,
                     max_retries,
@@ -337,12 +382,20 @@ def fetch_with_retry(
             time.sleep(wait_time)
         else:
             if raise_on_failure:
-                raise RemoteFetchError(reason, status_code=status_code)
+                raise RemoteFetchError(
+                    reason,
+                    status_code=status_code,
+                    url=url,
+                    error=result.error,
+                    context=context,
+                )
             if not quiet:
                 logging.warning(
-                    "请求 %s 失败，已达最大重试次数 %s: reason=%s status=%s error=%s",
+                    "请求失败：caller=%s context=%s url=%s attempts=%s reason=%s status=%s error=%s",
+                    caller,
+                    context,
                     url,
-                    max_retries,
+                    getattr(result, "attempts", 1),
                     reason,
                     status_code,
                     result.error,
@@ -484,11 +537,17 @@ def rebuild_runtime_caches() -> None:
     """新 CSV 发布后同步重建 Web 与 overlay 的运行缓存。"""
 
     from hextech.catalog.precomputed_cache import rebuild_precomputed_api_cache_from_latest_csv
+    from hextech.core.settings import load_ui_feature_flags
     from hextech.overlay.hints import build_overlay_hint_cache_from_precomputed, write_overlay_hint_cache
 
+    flags = load_ui_feature_flags()
+    include_private_stats = bool(flags.get("private_policy_stats_enabled", False))
     rebuild_precomputed_api_cache_from_latest_csv()
     write_overlay_hint_cache(
-        build_overlay_hint_cache_from_precomputed(source_tag="runtime-refresh")
+        build_overlay_hint_cache_from_precomputed(
+            include_private_stats=include_private_stats,
+            source_tag="runtime-refresh",
+        )
     )
 
 
@@ -573,6 +632,8 @@ def main_scraper(stop_event=None, force: bool = False):
                     timeout=HEXTECH_HANDSHAKE_TIMEOUT_SECONDS,
                     quiet=True,
                     raise_on_failure=True,
+                    caller="hextech_metadata",
+                    context="augment_metadata",
                 )
             except RemoteFetchError as e:
                 aug_error = e.reason
@@ -609,6 +670,8 @@ def main_scraper(stop_event=None, force: bool = False):
                     timeout=HEXTECH_HANDSHAKE_TIMEOUT_SECONDS,
                     quiet=True,
                     raise_on_failure=True,
+                    caller="hextech_champion_stats",
+                    context="champions-stats",
                 )
             except RemoteFetchError as e:
                 stats_error = e.reason
@@ -636,27 +699,43 @@ def main_scraper(stop_event=None, force: bool = False):
         c_id = str(champ.get('championId', ''))
         c_name = core_data.get(c_id, {}).get("name", c_id)
         if preflight_rows is not None:
-            return {"champ": champ, "name": c_name, "rows": list(preflight_rows), "reason": "", "status_code": None}
+            return {
+                "champ": champ,
+                "name": c_name,
+                "rows": list(preflight_rows),
+                "reason": "",
+                "status_code": None,
+                "url": "",
+                "error": "",
+            }
 
         last_reason = "empty_response"
         last_status_code = None
+        last_url = ""
+        last_error = ""
         for url in build_hextech_detail_urls(c_id):
+            last_url = url
             try:
                 res = fetch_with_retry(
                     url,
                     timeout=timeout,
                     quiet=True,
                     raise_on_failure=True,
+                    caller="hextech_detail",
+                    context=f"championId={c_id};champion={c_name}",
                 )
             except RemoteFetchError as e:
                 last_reason = e.reason
                 last_status_code = e.status_code
+                last_url = e.url or url
+                last_error = e.error
                 if _is_blocking_remote_failure(e.reason, e.status_code):
                     break
                 continue
             if res is None or res.status_code != 200 or not res.text:
                 last_reason = "empty_response"
                 last_status_code = getattr(res, "status_code", None)
+                last_error = getattr(res, "error", "")
                 continue
             try:
                 rows = extract_champion_stats(
@@ -674,7 +753,15 @@ def main_scraper(stop_event=None, force: bool = False):
                 last_status_code = res.status_code
                 continue
             if rows:
-                return {"champ": champ, "name": c_name, "rows": rows, "reason": "", "status_code": res.status_code}
+                return {
+                    "champ": champ,
+                    "name": c_name,
+                    "rows": rows,
+                    "reason": "",
+                    "status_code": res.status_code,
+                    "url": url,
+                    "error": "",
+                }
             last_reason = "no_valid_rows"
             last_status_code = res.status_code
         return {
@@ -683,6 +770,8 @@ def main_scraper(stop_event=None, force: bool = False):
             "rows": [],
             "reason": last_reason,
             "status_code": last_status_code,
+            "url": last_url,
+            "error": last_error,
         }
 
     def run_detail_pass(champs: list[dict], *, workers: int, timeout: int, pool_timeout: int, label: str):
@@ -715,7 +804,15 @@ def main_scraper(stop_event=None, force: bool = False):
                         item = future.result()
                     except Exception as e:
                         logging.error("Worker result collection failed: %s", e)
-                        failures.append({"champ": {}, "name": "", "rows": [], "reason": "worker_error", "status_code": None})
+                        failures.append({
+                            "champ": {},
+                            "name": "",
+                            "rows": [],
+                            "reason": "worker_error",
+                            "status_code": None,
+                            "url": "",
+                            "error": str(e),
+                        })
                         continue
                     if item["rows"]:
                         pass_rows.extend(item["rows"])
@@ -753,9 +850,10 @@ def main_scraper(stop_event=None, force: bool = False):
         timeout=HEXTECH_DETAIL_TIMEOUT_SECONDS,
         pool_timeout=HEXTECH_DETAIL_POOL_TIMEOUT_SECONDS,
         label="initial",
-    )
+        )
     if pass_error:
         return _finish_refresh_failure(pass_error, started_at=started_at)
+    _summarize_detail_failures(detail_failures, label="initial")
 
     blocking_failures = [
         item for item in detail_failures if _is_blocking_remote_failure(item["reason"], item["status_code"])
@@ -776,6 +874,7 @@ def main_scraper(stop_event=None, force: bool = False):
         all_rows.extend(retry_rows)
         if retry_error:
             return _finish_refresh_failure(retry_error, started_at=started_at)
+        _summarize_detail_failures(retry_failures, label="tail-retry")
         blocking_retry_failures = [
             item for item in retry_failures if _is_blocking_remote_failure(item["reason"], item["status_code"])
         ]

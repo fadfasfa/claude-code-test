@@ -1060,6 +1060,8 @@ class LCUState:
     port: Optional[str] = None
     token: Optional[str] = None
     current_ids: Set[str] = field(default_factory=set)
+    selected_ids: list[str] = field(default_factory=list)
+    bench_ids: list[str] = field(default_factory=list)
     local_champ_id: Optional[int] = None
     local_champ_name: Optional[str] = None
     consecutive_404_count: int = 0
@@ -1075,11 +1077,100 @@ def get_live_state_payload() -> dict:
     with _lcu_state_lock:
         return {
             "champion_ids": sorted(_lcu_state.current_ids),
+            "selected_champion_ids": list(_lcu_state.selected_ids),
+            "bench_champion_ids": list(_lcu_state.bench_ids),
             "local_champion_id": _lcu_state.local_champ_id,
             "local_champion_name": _lcu_state.local_champ_name,
             "state_version": _lcu_state.state_version,
             "updated_at": _lcu_state.updated_at,
         }
+
+
+def _clean_champion_id(value) -> str:
+    text = str(value or "").strip()
+    return text if text and text != "0" else ""
+
+
+def _append_unique_champion_id(target: list[str], value) -> None:
+    champion_id = _clean_champion_id(value)
+    if champion_id and champion_id not in target:
+        target.append(champion_id)
+
+
+def build_lcu_candidate_groups(payload: dict) -> dict[str, list[str]]:
+    """从 LCU champ-select payload 生成 Web/桌面共用候选分组。"""
+
+    selected_ids: list[str] = []
+    bench_ids: list[str] = []
+    if not isinstance(payload, dict):
+        return {"selected_champion_ids": selected_ids, "bench_champion_ids": bench_ids}
+    for player in payload.get("myTeam", []):
+        if isinstance(player, dict):
+            _append_unique_champion_id(selected_ids, player.get("championId"))
+    for champion in payload.get("benchChampions", []):
+        if isinstance(champion, dict):
+            _append_unique_champion_id(bench_ids, champion.get("championId"))
+    selected_set = set(selected_ids)
+    return {
+        "selected_champion_ids": selected_ids,
+        "bench_champion_ids": [champion_id for champion_id in bench_ids if champion_id not in selected_set],
+    }
+
+
+def _candidate_groups_to_id_set(candidate_groups: dict[str, list[str]]) -> set[str]:
+    return {
+        champion_id
+        for key in ("selected_champion_ids", "bench_champion_ids")
+        for champion_id in candidate_groups.get(key, [])
+        if champion_id
+    }
+
+
+def _positive_champion_int(value) -> int | None:
+    try:
+        champion_id = int(value or 0)
+    except (TypeError, ValueError):
+        return None
+    return champion_id if champion_id > 0 else None
+
+
+def _extract_lcu_local_champion_id(payload: dict) -> int | None:
+    local_cell_id = payload.get("localPlayerCellId")
+    for player in payload.get("myTeam", []):
+        if not isinstance(player, dict):
+            continue
+        if player.get("cellId") == local_cell_id:
+            return _positive_champion_int(player.get("championId"))
+    return None
+
+
+def _clear_lcu_local_champion_state() -> bool:
+    """清空本机当前英雄；调用方必须持有 _lcu_state_lock。"""
+
+    changed = _lcu_state.local_champ_id is not None or bool(_lcu_state.local_champ_name)
+    _lcu_state.local_champ_id = None
+    _lcu_state.local_champ_name = None
+    if changed:
+        _lcu_state.state_version += 1
+        _lcu_state.updated_at = time.time()
+    return changed
+
+
+def _clear_lcu_candidate_state(*, clear_local: bool = False) -> bool:
+    """清空 LCU 候选池；调用方必须持有 _lcu_state_lock。"""
+
+    changed = bool(_lcu_state.current_ids or _lcu_state.selected_ids or _lcu_state.bench_ids)
+    if clear_local:
+        changed = changed or _lcu_state.local_champ_id is not None or bool(_lcu_state.local_champ_name)
+        _lcu_state.local_champ_id = None
+        _lcu_state.local_champ_name = None
+    _lcu_state.current_ids = set()
+    _lcu_state.selected_ids = []
+    _lcu_state.bench_ids = []
+    if changed:
+        _lcu_state.state_version += 1
+        _lcu_state.updated_at = time.time()
+    return changed
 
 
 def _create_lcu_session() -> requests.Session:
@@ -1171,15 +1262,19 @@ async def lcu_polling_loop() -> None:
                 with _lcu_state_lock:
                     _lcu_state.consecutive_404_count = 0
 
-                available_ids = {str(c["championId"]) for c in data.get("benchChampions", [])}
-                for player in data.get("myTeam", []):
-                    if player.get("cellId") == data.get("localPlayerCellId") and player.get("championId") != 0:
-                        available_ids.add(str(player["championId"]))
+                candidate_groups = build_lcu_candidate_groups(data)
+                available_ids = _candidate_groups_to_id_set(candidate_groups)
 
                 with _lcu_state_lock:
-                    ids_changed = available_ids != _lcu_state.current_ids
+                    ids_changed = (
+                        available_ids != _lcu_state.current_ids
+                        or candidate_groups["selected_champion_ids"] != _lcu_state.selected_ids
+                        or candidate_groups["bench_champion_ids"] != _lcu_state.bench_ids
+                    )
                     if ids_changed:
                         _lcu_state.current_ids = available_ids.copy()
+                        _lcu_state.selected_ids = list(candidate_groups["selected_champion_ids"])
+                        _lcu_state.bench_ids = list(candidate_groups["bench_champion_ids"])
                         _lcu_state.state_version += 1
                         _lcu_state.updated_at = time.time()
                 if ids_changed:
@@ -1194,20 +1289,18 @@ async def lcu_polling_loop() -> None:
                         {
                             "type": "champion_update",
                             "champion_ids": list(available_ids),
+                            "selected_champion_ids": list(candidate_groups["selected_champion_ids"]),
+                            "bench_champion_ids": list(candidate_groups["bench_champion_ids"]),
                             "timestamp": time.time(),
                         }
                     )
 
-                local_cell_id = data.get("localPlayerCellId")
-                local_champion_id = None
-                for player in data.get("myTeam", []):
-                    if player.get("cellId") == local_cell_id:
-                        local_champion_id = player.get("championId")
-                        break
+                local_champion_id = _extract_lcu_local_champion_id(data)
 
-                if local_champion_id and local_champion_id > 0:
+                if local_champion_id is not None:
                     with _lcu_state_lock:
                         prev_champ_id = _lcu_state.local_champ_id
+                        hero_name = _lcu_state.local_champ_name or ""
                     if prev_champ_id != local_champion_id:
                         with _lcu_state_lock:
                             _lcu_state.local_champ_id = local_champion_id
@@ -1233,16 +1326,17 @@ async def lcu_polling_loop() -> None:
 
                     elif prev_champ_id == local_champion_id and AUTO_JUMP_ENABLED and hero_name:
                         await asyncio.to_thread(request_preload_hextech_payload, hero_name)
+                else:
+                    with _lcu_state_lock:
+                        cleared_local_champion = _clear_lcu_local_champion_state()
+                    if cleared_local_champion:
+                        clear_preloaded_hextech_payloads()
             elif res.status_code == 404:
                 with _lcu_state_lock:
                     _lcu_state.consecutive_404_count += 1
-                    has_local_champ = _lcu_state.local_champ_id is not None
-                    if has_local_champ:
-                        _lcu_state.local_champ_id = None
-                        _lcu_state.local_champ_name = None
-                        _lcu_state.current_ids = set()
+                    cleared_lcu_state = _clear_lcu_candidate_state(clear_local=True)
                     consecutive_404_count = _lcu_state.consecutive_404_count
-                if has_local_champ:
+                if cleared_lcu_state:
                     clear_preloaded_hextech_payloads()
                 if consecutive_404_count >= 5:
                     logger.warning("LCU 连续返回 404 五次，重置连接状态（count=%s）", consecutive_404_count)
@@ -1250,17 +1344,20 @@ async def lcu_polling_loop() -> None:
                         _lcu_state.port = None
                         _lcu_state.token = None
                         _lcu_state.consecutive_404_count = 0
+                        _clear_lcu_candidate_state(clear_local=True)
             elif res.status_code in (401, 403):
                 logger.warning("LCU token 失效或未授权（401/403），重置连接状态。")
                 clear_preloaded_hextech_payloads()
                 with _lcu_state_lock:
                     _lcu_state.port = None
                     _lcu_state.token = None
+                    _clear_lcu_candidate_state(clear_local=True)
             else:
                 logger.warning("LCU 响应异常状态码=%s，重置连接状态。", res.status_code)
                 clear_preloaded_hextech_payloads()
                 with _lcu_state_lock:
                     _lcu_state.port = None
+                    _clear_lcu_candidate_state(clear_local=True)
         except requests.exceptions.RequestException as exc:
             logger.warning(
                 "LCU 请求异常，已重置连接状态：error_type=%s endpoint=127.0.0.1",
@@ -1270,11 +1367,15 @@ async def lcu_polling_loop() -> None:
             with _lcu_state_lock:
                 _lcu_state.port = None
                 _lcu_state.token = None
+                _clear_lcu_candidate_state(clear_local=True)
         except Exception as exc:
             logger.warning(
                 "LCU 轮询异常：error_type=%s context=local_polling_loop",
                 _safe_exception_label(exc),
             )
+            clear_preloaded_hextech_payloads()
+            with _lcu_state_lock:
+                _clear_lcu_candidate_state(clear_local=True)
 
         await asyncio.sleep(1.5)
 

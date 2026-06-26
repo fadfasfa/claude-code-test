@@ -7,8 +7,8 @@
 
 当前维护目标：
 
-1. 源码态能通过 `python hextech_ui.py` 或 `python web_server.py` 启动。
-2. 打包态只使用 `python build.py` 这一条构建入口。
+1. 源码态固定使用 `run/.venv` 内 Python 3.11；首次配置通过 `py -3.11 tools/setup_venv.py` 显式创建，入口误用系统 Python 时只会切回 `.venv`，不会回退裸 `py -3.11`。
+2. 打包态只使用 `.\.venv\Scripts\python.exe build.py` 这一条构建入口，禁止裸系统 Python 打包。
 3. 打包产物在非仓库、空运行态目录中首次启动后 60 秒内可用。
 4. 高频抓取、缓存、状态、日志和计算产物不随包分发。
 5. 首次空仓启动必定触发高频抓取；后续启动按 4 小时新鲜度触发。
@@ -72,6 +72,8 @@
 | `hextech/scraping/transport/scrapling_client.py` | transport | Scrapling 同步抓取客户端 |
 | `hextech/scraping/transport/cloakbrowser_client.py` | transport | CloakBrowser 同步抓取客户端 |
 | `hextech/scraping/transport/smoke_scrapling.py` | smoke | Scrapling 在线冒烟脚本 |
+| `hextech/support/python_runtime.py` | support | 源码态 run/.venv 守卫、依赖预检和自动重启命令构造 |
+| `tools/setup_venv.py` | setup tool | 显式创建/修复 run/.venv，安装依赖并输出关键包与 Scrapling smoke 摘要 |
 | `hextech/scraping/augment_catalog.py` | catalog | 海克斯统一目录维护与预缓存 |
 | `hextech/scraping/icon_resolver.py` | icon | 海克斯图标查找、缓存与远端兜底 |
 | `hextech/scraping/heal_worker.py` | heal | 缺失关键产物自愈修复与启动状态写回 |
@@ -123,6 +125,9 @@ runtime bundle 和验收脚本。不得把 `data/runtime/**` 登记为稳定资�
 - `hero_version.txt`
 
 旧 `/data/static/...` 与 `/data/indexes/...` 文件名由 API 投影兼容，不作为包内实体事实源。
+`Champion_Synergy_Cleaned.json` 是协同展示的清洗后静态事实源；Web/API 与
+overlay hint cache 默认通过统一运行路径读取它，只有缺失时才回退启动后的 raw latest
+或旧固定名快照。
 
 ### 4.2 禁止当作发布源的数据
 
@@ -206,7 +211,7 @@ flowchart TD
 唯一推荐打包入口：
 
 ```powershell
-python build.py
+.\.venv\Scripts\python.exe build.py
 ```
 
 该入口委托 `tools/build_package.py`，负责：
@@ -229,7 +234,7 @@ python build.py
 ### 7.0 开发阶段统一自检
 
 ```powershell
-python tools/dev_checks.py
+.\.venv\Scripts\python.exe tools/dev_checks.py
 ```
 
 该入口覆盖结构收口、别名索引、日志契约、bundle manifest、协同数据
@@ -239,13 +244,13 @@ freshness、快照定位、发布熔断和结构化协同 payload 回归检查�
 需要查看打包资源白名单明细时使用：
 
 ```powershell
-python tools/dev_checks.py --bundle-manifest
+.\.venv\Scripts\python.exe tools/dev_checks.py --bundle-manifest
 ```
 
 ### 7.1 发布前最小验收
 
 ```powershell
-python tools/acceptance/smoke_packaged_startup.py --timeout 60
+.\.venv\Scripts\python.exe tools/acceptance/smoke_packaged_startup.py --timeout 60
 ```
 
 验收脚本必须证明：
@@ -273,24 +278,24 @@ Web/UI 详情页右侧联动对齐 ApexLoL 源页的检查保留为手动验收�
 因为它依赖浏览器、本地 Web 服务和外网：
 
 ```powershell
-python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
+.\.venv\Scripts\python.exe tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 ```
 
 ### 7.3 游戏内显示阶段 0-5 验收
 
 阶段 0-2 验证基础窗口能力；阶段 3 验证假识别事件通道；阶段 3R 验证 Pillow/pywin32 Vision MVP；阶段 4 验证 overlay host 与 Vision sidecar 生命周期；阶段 5 验证性能记录结构、打包边界和人工验收清单：
 
-- `python tools/dev_checks.py` 必须通过，覆盖双开关配置、ServiceManager 生命周期、overlay hint cache、overlay event channel 和基础 overlay host 合同。
-- `python hextech_ui.py --game-overlay` 用于人工确认透明置顶、点击穿透、`Alt+H` 显隐、选择结束隐藏和游戏窗口跟随；无 active 选择事件或游戏不在前台时窗口保持隐藏。
+- `.\.venv\Scripts\python.exe tools/dev_checks.py` 必须通过，覆盖双开关配置、ServiceManager 生命周期、overlay hint cache、overlay event channel 和基础 overlay host 合同。
+- `.\.venv\Scripts\python.exe hextech_ui.py --game-overlay` 用于人工确认透明置顶、点击穿透、`Alt+H` 显隐、选择结束隐藏和游戏窗口跟随；无 active 选择事件或游戏不在前台时窗口保持隐藏。
 - overlay 默认不显示占位框；显示条件为“开关开 + active 海克斯选择事件 + 游戏窗口在前台”，`Alt+H` 只切换用户开关，不绕过事件和前台门控。
-- `python -c "from hextech.overlay.events import write_sample_overlay_event; print(write_sample_overlay_event())"` 用于写入本地三槽位样例事件；仍需游戏窗口在前台才会显示。
-- `python -c "from hextech.overlay.events import write_fake_detection_overlay_event; print(write_fake_detection_overlay_event())"` 用于写入假识别事件，验证“事件文件 -> overlay 三槽位渲染”的端到端通道。
-- `python -m hextech.overlay.vision.sidecar --once --preset auto --write-event` 用于执行一次本地 Vision 探针；无 LoL 窗口时写入 inactive 诊断事件。
-- `python -m hextech.overlay.vision.sidecar --loop --preset auto --write-event` 用于正式常驻链路；游戏窗口不存在或不在前台时低频待机，并只写一次 inactive 清理旧 active 事件；前台时按约 250ms 截图识别。
+- `.\.venv\Scripts\python.exe -c "from hextech.overlay.events import write_sample_overlay_event; print(write_sample_overlay_event())"` 用于写入本地三槽位样例事件；仍需游戏窗口在前台才会显示。
+- `.\.venv\Scripts\python.exe -c "from hextech.overlay.events import write_fake_detection_overlay_event; print(write_fake_detection_overlay_event())"` 用于写入假识别事件，验证“事件文件 -> overlay 三槽位渲染”的端到端通道。
+- `.\.venv\Scripts\python.exe -m hextech.overlay.vision.sidecar --once --preset auto --write-event` 用于执行一次本地 Vision 探针；无 LoL 窗口时写入 inactive 诊断事件。
+- `.\.venv\Scripts\python.exe -m hextech.overlay.vision.sidecar --loop --preset auto --write-event` 用于正式常驻链路；游戏窗口不存在或不在前台时低频待机，并只写一次 inactive 清理旧 active 事件；前台时按约 250ms 截图识别。
 - 识别判据为蓝色选择按钮 ROI 场景门控 + 灰度归一化指纹（NCC）+ top1/top2 margin + crop 方差下限，平坦暗面板不参与匹配；模板按图标内容去重，近孪生图标在置信度极高时豁免 margin；active 掉 unstable 延迟约 3 帧再写隐藏事件。新环境首次定位按钮并写 `data/runtime/state/overlay_anchor_calibration.v1.json`，后续每轮仍检测固定按钮 ROI；按钮不存在或锻体碎片三选一时隐藏 overlay。
-- `python tools/acceptance/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json` 用于官方接口优先验证：只读探测 Live Client Data / LCU 是否提供三槽候选；只有显式 `--write-event` 且返回完整三槽时才写现有 overlay 事件协议。
-- `python tools/acceptance/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag manual-lol-borderless` 用于记录阶段 5 人工延迟样本摘要。
-- `python -c "from hextech.overlay.events import write_inactive_overlay_event; print(write_inactive_overlay_event())"` 用于验证非选择态隐藏 overlay。
+- `.\.venv\Scripts\python.exe tools/acceptance/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json` 用于官方接口优先验证：只读探测 Live Client Data / LCU 是否提供三槽候选；只有显式 `--write-event` 且返回完整三槽时才写现有 overlay 事件协议。
+- `.\.venv\Scripts\python.exe tools/acceptance/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag manual-lol-borderless` 用于记录阶段 5 人工延迟样本摘要。
+- `.\.venv\Scripts\python.exe -c "from hextech.overlay.events import write_inactive_overlay_event; print(write_inactive_overlay_event())"` 用于验证非选择态隐藏 overlay。
 - LoL `Borderless` / 无边框全屏下人工确认 overlay 可见；当前 MVP 不承诺独占全屏覆盖，FSO 只作为机会性覆盖记录。
 - ROI 预设覆盖 `1920x1080`、`2560x1440` 和重点 `2560x1600`；DPI 缩放、多显示器和分辨率切换只记录为人工限制项。
 - 桌面控制台必须分别验证只开 Web、只开游戏内显示、两者同开、两者全关四种矩阵。
@@ -298,7 +303,7 @@ python tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 - 本地事件通道只读取 `data/runtime/state/game_overlay_slots.v1.json`，缺失、损坏、过期必须可诊断；只有 `hextech` active 选择态且游戏前台时会显示三槽内容，`body_shard` 只作为诊断类型不显示，其余状态隐藏 overlay；不得触发远端抓取、截图识别或自动点击。
 - Vision sidecar 不读游戏内存、不注入、不修改客户端、不自动点击；默认不引入 OpenCV、imagehash 或 WGC。
 - 真实 LoL 人工验收需记录识别输出 P95 <= 300ms、overlay 文案更新 P95 <= 500ms。
-- 私用统计开关默认关闭；启用后仅作为本机实验，存在 Riot policy 风险，不作为可发布合规能力。
+- 私用统计在本机伴生悬浮窗默认开启；该能力仅作为本机实验，存在 Riot policy 风险，不作为可发布合规能力。
 
 ---
 

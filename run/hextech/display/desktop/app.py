@@ -11,6 +11,7 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Mapping
 
 import tkinter as tk
 from hextech.catalog.runtime_store import (
@@ -36,6 +37,24 @@ from . import runtime as ui_runtime
 from .service_manager import ServiceManager
 
 WEB_PORT_FILE = build_runtime_state_path("web_server_port.txt")
+WINDOW_EXPANDED_GEOMETRY = "320x740"
+WINDOW_COLLAPSED_GEOMETRY = "80x740"
+UI_COLORS = {
+    "base": "#010A13",
+    "header": "#050F1B",
+    "surface": "#111C2E",
+    "surface_alt": "#0B1626",
+    "border": "#2A3B55",
+    "gold": "#C89B3C",
+    "cyan": "#2DD4BF",
+    "green": "#32D784",
+    "red": "#C45D5B",
+    "text": "#F5F8FF",
+    "muted": "#9EAABC",
+    "dim": "#667188",
+    "warn": "#F5C26B",
+    "error": "#F38BA8",
+}
 
 os.makedirs(ASSET_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)
@@ -119,6 +138,7 @@ class HextechUI:
 
         self.df = self.load_data()
         self.current_hero_ids = set()
+        self.current_candidate_groups = {"selected_champion_ids": [], "bench_champion_ids": []}
         self.image_cache = {}
         self._lcu_port = None
         self._lcu_token = None
@@ -155,9 +175,9 @@ class HextechUI:
 
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
-        self.root.geometry("320x600")
-        self.root.configure(bg="#1e1e2e")
-        self.root.attributes("-alpha", 0.85, "-topmost", False)
+        self.root.geometry(WINDOW_EXPANDED_GEOMETRY)
+        self.root.configure(bg=UI_COLORS["base"])
+        self.root.attributes("-alpha", 1.0, "-topmost", False)
         self.root.overrideredirect(True)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -199,14 +219,14 @@ class HextechUI:
         ui_runtime.run_terminal_loop(self)
 
     def _build_ui(self):
-        self.title_frame = tk.Frame(self.root, bg="#11111b")
+        self.title_frame = tk.Frame(self.root, bg=UI_COLORS["header"])
         self.title_frame.pack(fill=tk.X)
 
         self.title_bar = tk.Label(
             self.title_frame,
             text="备战席",
-            bg="#11111b",
-            fg="#cdd6f4",
+            bg=UI_COLORS["header"],
+            fg=UI_COLORS["text"],
             font=("Microsoft YaHei", 12, "bold"),
             pady=8,
         )
@@ -216,53 +236,42 @@ class HextechUI:
         # 双击标题栏在 320 px / 80 px 之间切换，便于单屏游戏窗口模式让出主屏视线
         self.title_bar.bind("<Double-Button-1>", self._toggle_collapse)
 
-        self.feature_frame = tk.Frame(self.root, bg="#1e1e2e", padx=10, pady=8)
+        self.feature_frame = tk.Frame(self.root, bg=UI_COLORS["base"], padx=10, pady=8)
         self.feature_frame.pack(fill=tk.X)
+        self._feature_toggle_widgets = []
         self.web_frontend_var = tk.BooleanVar(value=self.feature_flags["web_frontend_enabled"])
         self.game_overlay_var = tk.BooleanVar(value=self.feature_flags["game_overlay_enabled"])
         self.private_stats_var = tk.BooleanVar(value=self.feature_flags["private_policy_stats_enabled"])
         self.low_frequency_listener_var = tk.BooleanVar(value=self.feature_flags["low_frequency_listener_enabled"])
 
-        self.web_frontend_check = self._build_feature_checkbutton(
+        self.web_frontend_check = self._build_feature_toggle(
             "Web 前端",
             self.web_frontend_var,
             self._toggle_web_frontend,
+            accent=UI_COLORS["cyan"],
         )
         self.web_frontend_check.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 4))
-        self.game_overlay_check = self._build_feature_checkbutton(
+        self.game_overlay_check = self._build_feature_toggle(
             "游戏内显示",
             self.game_overlay_var,
             self._toggle_game_overlay,
+            accent=UI_COLORS["cyan"],
         )
         self.game_overlay_check.grid(row=0, column=1, sticky="w", pady=(0, 4))
-        self.private_stats_check = self._build_feature_checkbutton(
+        self.private_stats_check = self._build_feature_toggle(
             "私用统计",
             self.private_stats_var,
             self._toggle_private_policy_stats,
+            accent=UI_COLORS["green"],
         )
-        self.private_stats_check.grid(row=1, column=0, sticky="w", padx=(0, 8))
-        self.listener_check = self._build_feature_checkbutton(
-            "低频监听",
-            self.low_frequency_listener_var,
-            self._toggle_low_frequency_listener,
-        )
-        self.listener_check.grid(row=1, column=1, sticky="w")
+        self.private_stats_check.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(2, 0))
 
-        self.feature_status_label = tk.Label(
-            self.feature_frame,
-            text="Web: 未启动 | 游戏内: 未启动",
-            bg="#1e1e2e",
-            fg="#a6adc8",
-            font=("Microsoft YaHei", 8),
-            anchor="w",
-        )
-        self.feature_status_label.grid(row=2, column=0, columnspan=2, sticky="we", pady=(6, 0))
         self.feature_frame.grid_columnconfigure(0, weight=1)
         self.feature_frame.grid_columnconfigure(1, weight=1)
 
-        self.canvas = tk.Canvas(self.root, bg="#1e1e2e", highlightthickness=0)
-        self.list_frame = tk.Frame(self.canvas, bg="#1e1e2e")
-        self.canvas.pack(fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
+        self.canvas = tk.Canvas(self.root, bg=UI_COLORS["base"], highlightthickness=0)
+        self.list_frame = tk.Frame(self.canvas, bg=UI_COLORS["base"])
+        self.canvas.pack(fill=tk.BOTH, expand=True, padx=(10, 0), pady=(6, 4))
         self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
 
         self.root.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
@@ -271,27 +280,64 @@ class HextechUI:
         self.status_label = tk.Label(
             self.root,
             text="系统初始化中...",
-            bg="#1e1e2e",
-            fg="#a6adc8",
-            font=("Microsoft YaHei", 9),
+            bg=UI_COLORS["base"],
+            fg=UI_COLORS["muted"],
+            font=("Microsoft YaHei", 8),
         )
         self.status_label.pack(side=tk.BOTTOM, pady=5)
-        self._schedule_feature_status_refresh()
+        self._refresh_feature_toggle_styles()
 
-    def _build_feature_checkbutton(self, text: str, variable: "tk.BooleanVar", command) -> "tk.Checkbutton":
-        return tk.Checkbutton(
-            self.feature_frame,
+    def _build_feature_toggle(
+        self,
+        text: str,
+        variable: "tk.BooleanVar",
+        command,
+        *,
+        accent: str,
+    ) -> "tk.Frame":
+        frame = tk.Frame(self.feature_frame, bg=UI_COLORS["base"], cursor="hand2")
+        dot = tk.Canvas(frame, width=15, height=15, bg=UI_COLORS["base"], highlightthickness=0, bd=0, cursor="hand2")
+        dot.pack(side=tk.LEFT, padx=(0, 5))
+        label = tk.Label(
+            frame,
             text=text,
-            variable=variable,
-            command=command,
-            bg="#1e1e2e",
-            fg="#cdd6f4",
-            activebackground="#313244",
-            activeforeground="#f5d076",
-            selectcolor="#313244",
-            font=("Microsoft YaHei", 9),
-            anchor="w",
+            bg=UI_COLORS["base"],
+            fg=UI_COLORS["muted"],
+            font=("Microsoft YaHei", 9, "bold"),
+            cursor="hand2",
         )
+        label.pack(side=tk.LEFT)
+
+        toggle = {"frame": frame, "dot": dot, "label": label, "variable": variable, "accent": accent}
+        self._feature_toggle_widgets.append(toggle)
+
+        def _on_click(_event=None) -> None:
+            variable.set(not bool(variable.get()))
+            command()
+            self._refresh_feature_toggle_styles()
+
+        for widget in (frame, dot, label):
+            widget.bind("<Button-1>", _on_click)
+        return frame
+
+    def _refresh_feature_toggle_styles(self) -> None:
+        for toggle in getattr(self, "_feature_toggle_widgets", []):
+            variable = toggle["variable"]
+            dot = toggle["dot"]
+            label = toggle["label"]
+            accent = toggle["accent"]
+            enabled = bool(variable.get())
+            try:
+                dot.delete("all")
+                if enabled:
+                    dot.create_oval(4, 4, 11, 11, fill=accent, outline=accent)
+                    dot.create_oval(2, 2, 13, 13, outline=accent)
+                    label.config(fg=UI_COLORS["text"])
+                else:
+                    dot.create_oval(4, 4, 11, 11, fill="", outline=UI_COLORS["dim"])
+                    label.config(fg=UI_COLORS["dim"])
+            except tk.TclError:
+                logger.debug("刷新功能开关样式失败。", exc_info=True)
 
     def _collect_feature_flags_from_controls(self) -> dict:
         return {
@@ -349,7 +395,7 @@ class HextechUI:
             self.web_frontend_var.set(self.service_manager.is_web_running())
             self._try_persist_feature_flags_from_controls()
             self._set_status(f"Web 前端切换失败: {exc}", "#f38ba8")
-        self._refresh_feature_status()
+        self._refresh_feature_toggle_styles()
 
     def _toggle_game_overlay(self) -> None:
         enabled = bool(self.game_overlay_var.get())
@@ -366,39 +412,16 @@ class HextechUI:
             self.game_overlay_var.set(self.service_manager.is_game_overlay_running())
             self._try_persist_feature_flags_from_controls()
             self._set_status(f"游戏内显示切换失败: {exc}", "#f38ba8")
-        self._refresh_feature_status()
+        self._refresh_feature_toggle_styles()
 
     def _toggle_private_policy_stats(self) -> None:
         self._persist_feature_flags_from_controls()
         self._prepare_overlay_hint_cache()
         self._set_status("私用统计仅用于本机实验，存在 Riot policy 风险", "#f9e2af")
+        self._refresh_feature_toggle_styles()
 
     def _toggle_low_frequency_listener(self) -> None:
         self._persist_feature_flags_from_controls()
-        self._refresh_feature_status()
-
-    def _refresh_feature_status(self) -> None:
-        if not hasattr(self, "feature_status_label") or not self.feature_status_label.winfo_exists():
-            return
-        snapshot = self.service_manager.get_status_snapshot()
-        web_status = snapshot["web"]["status"]
-        overlay_status = snapshot["game_overlay"]["status"]
-        vision_status = snapshot["vision_sidecar"]["status"]
-        listener = snapshot["low_frequency_listener"]
-        overlay_event = snapshot.get("overlay_event", {})
-        listener_text = "开" if listener.get("enabled") else "关"
-        checks = int(listener.get("checks", 0) or 0)
-        event_reason = overlay_event.get("reason") or overlay_event.get("error") or ("active" if overlay_event.get("visible") else "inactive")
-        self.feature_status_label.config(
-            text=(
-                f"Web: {web_status} | 游戏内: {overlay_status}/{vision_status}/{event_reason} | "
-                f"低频监听: {listener_text}/{listener.get('interval_seconds', 0):.0f}s/{checks}次"
-            )
-        )
-
-    def _schedule_feature_status_refresh(self) -> None:
-        self._refresh_feature_status()
-        self.root.after(1000, self._schedule_feature_status_refresh)
 
     def check_and_sync_data(self):
         threading.Thread(target=self._silent_sync, daemon=True).start()
@@ -424,9 +447,10 @@ class HextechUI:
             event_active = bool(event.get("active"))
             should_report = overlay_enabled or sidecar_status == "running" or event_active
             if should_report:
-                reason = str(event.get("reason") or sidecar.get("last_error") or "unknown")
-                color = "#a6e3a1" if event_active else "#f9e2af"
-                self._set_status(f"游戏内显示: {reason} / sidecar {sidecar_status or 'unknown'}", color)
+                reason = "选择窗口活跃" if event_active else "等待选择"
+                sidecar_text = "识别运行" if sidecar_status == "running" else "识别待机"
+                color = UI_COLORS["green"] if event_active else UI_COLORS["warn"]
+                self._set_status(f"游戏内显示: {reason} / {sidecar_text}", color)
         except Exception:
             logger.debug("读取游戏内 overlay 状态失败。", exc_info=True)
         finally:
@@ -500,9 +524,67 @@ class HextechUI:
     def _load_and_set_img(self, champ_id, label):
         ui_runtime.load_and_set_img(self, champ_id, label)
 
+    def _candidate_groups_from_input(self, hero_ids) -> dict[str, list[str]]:
+        if isinstance(hero_ids, Mapping):
+            selected = hero_ids.get("selected_champion_ids") or hero_ids.get("selected") or []
+            bench = hero_ids.get("bench_champion_ids") or hero_ids.get("bench") or []
+            return {
+                "selected_champion_ids": [str(value) for value in selected if str(value or "").strip()],
+                "bench_champion_ids": [str(value) for value in bench if str(value or "").strip()],
+            }
+        values = list(hero_ids or [])
+        return {
+            "selected_champion_ids": [],
+            "bench_champion_ids": [str(value) for value in values if str(value or "").strip()],
+        }
+
+    def _build_candidate_display_list(self, hero_ids, current_df) -> list[dict]:
+        candidate_groups = self._candidate_groups_from_input(hero_ids)
+        id_col = detect_hero_id_column(current_df)
+        if not id_col:
+            return []
+
+        rows_by_id: dict[str, dict] = {}
+        for _, row in current_df.iterrows():
+            raw_id = row.get(id_col, row.get("英雄 ID", row.get("ID", "")))
+            hero_id = str(raw_id or "").strip()
+            if not hero_id or hero_id in rows_by_id:
+                continue
+            try:
+                win = float(row.get("英雄胜率", row.get("胜率", 0.5)))
+            except (TypeError, ValueError):
+                win = 0.5
+            try:
+                pick = float(row.get("英雄出场率", row.get("出场率", 0.1)))
+            except (TypeError, ValueError):
+                pick = 0.1
+            rows_by_id[hero_id] = {
+                "id": hero_id,
+                "name": row.get("英雄名称", row.get("英雄名", "未知")),
+                "win": win,
+                "pick": pick,
+                "tier": row.get("英雄评级", row.get("评级", "T?")),
+            }
+
+        display_list: list[dict] = []
+        seen: set[str] = set()
+        for group_name, group_rank in (("selected_champion_ids", 0), ("bench_champion_ids", 1)):
+            group_items = []
+            for hero_id in candidate_groups[group_name]:
+                if hero_id in seen:
+                    continue
+                item = rows_by_id.get(hero_id)
+                if item:
+                    seen.add(hero_id)
+                    item = dict(item)
+                    item["_group_rank"] = group_rank
+                    group_items.append(item)
+            display_list.extend(sorted(group_items, key=lambda item: item["win"], reverse=True))
+        return display_list
+
     def update_ui(self, hero_ids):
         if self._ui_render_in_progress:
-            self._pending_ui_refresh = list(hero_ids)
+            self._pending_ui_refresh = hero_ids
             return
 
         self._ui_render_in_progress = True
@@ -517,39 +599,42 @@ class HextechUI:
                 tk.Label(
                     self.list_frame,
                     text="当前没有可用英雄，或数据仍在同步中...",
-                    fg="#f9e2af",
-                    bg="#1e1e2e",
-                    font=("Microsoft YaHei", 10),
+                    fg=UI_COLORS["warn"],
+                    bg=UI_COLORS["base"],
+                    font=("Microsoft YaHei", 9),
                 ).pack(pady=20)
                 return
 
-            self.status_label.config(text="实时数据已挂载", fg="#a6e3a1")
-            display_list = []
+            self.status_label.config(text="实时数据已挂载", fg=UI_COLORS["green"])
 
             with self._df_lock:
                 current_df = self.df
 
-            id_col = detect_hero_id_column(current_df)
-            for hid in hero_ids:
-                if id_col:
-                    h_data = current_df[current_df[id_col] == hid]
-                    if not h_data.empty:
-                        row = h_data.iloc[0]
-                        id_val = row.get(id_col, row.get("英雄 ID", row.get("ID", hid)))
-                        name = row.get("英雄名称", row.get("英雄名", "未知"))
-                        win = float(row.get("英雄胜率", row.get("胜率", 0.5)))
-                        pick = float(row.get("英雄出场率", row.get("出场率", 0.1)))
-                        tier = row.get("英雄评级", row.get("评级", "T?"))
-                        display_list.append({"id": id_val, "name": name, "win": win, "pick": pick, "tier": tier})
-
-            display_list = sorted(display_list, key=lambda item: item["win"], reverse=True)
+            display_list = self._build_candidate_display_list(hero_ids, current_df)
 
             for item in display_list:
-                card = tk.Frame(self.list_frame, bg="#313244", pady=5, padx=5, cursor="hand2")
-                card.pack(fill=tk.X, pady=4, padx=(0, 10))
+                card = tk.Frame(
+                    self.list_frame,
+                    bg=UI_COLORS["surface"],
+                    highlightthickness=1,
+                    highlightbackground=UI_COLORS["border"],
+                    pady=3,
+                    padx=4,
+                    cursor="hand2",
+                )
+                card.pack(fill=tk.X, pady=3, padx=(0, 10))
 
-                img_label = tk.Label(card, bg="#313244")
-                img_label.pack(side=tk.LEFT, padx=(0, 10))
+                ribbon_color = UI_COLORS["green"] if item["win"] >= 0.5 else UI_COLORS["red"]
+                ribbon = tk.Frame(card, bg=ribbon_color, width=3)
+                ribbon.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
+
+                img_label = tk.Label(
+                    card,
+                    bg=UI_COLORS["surface"],
+                    highlightthickness=1,
+                    highlightbackground=UI_COLORS["gold"],
+                )
+                img_label.pack(side=tk.LEFT, padx=(0, 8))
                 threading.Thread(target=lambda i=item["id"], l=img_label: self._load_and_set_img(i, l), daemon=True).start()
 
                 # 折叠态只渲染头像 + T 级标签，省掉胜率/出场率/胜率条
@@ -558,8 +643,8 @@ class HextechUI:
                         card,
                         text=item["tier"],
                         font=("Microsoft YaHei", 9, "bold"),
-                        fg="#cdd6f4",
-                        bg="#313244",
+                        fg=UI_COLORS["text"],
+                        bg=UI_COLORS["surface"],
                     ).pack(side=tk.LEFT)
 
                     def bind_collapsed_click(widget, cid, name):
@@ -570,7 +655,7 @@ class HextechUI:
                     bind_collapsed_click(card, item["id"], item["name"])
                     continue
 
-                info = tk.Frame(card, bg="#313244")
+                info = tk.Frame(card, bg=UI_COLORS["surface"])
                 info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
                 title = self.core_data.get(str(item["id"]), {}).get("title", "")
@@ -579,20 +664,20 @@ class HextechUI:
                 tk.Label(
                     info,
                     text=f"[{item['tier']}] {full_name}",
-                    font=("Microsoft YaHei", 10, "bold"),
-                    fg="#cdd6f4",
-                    bg="#313244",
+                    font=("Microsoft YaHei", 9, "bold"),
+                    fg=UI_COLORS["text"],
+                    bg=UI_COLORS["surface"],
                 ).pack(anchor="w")
                 tk.Label(
                     info,
                     text=f"胜率: {item['win']:.1%} | 出场: {item['pick']:.1%}",
-                    font=("Microsoft YaHei", 9),
-                    fg="#a6adc8",
-                    bg="#313244",
-                ).pack(anchor="w", pady=(3, 0))
+                    font=("Microsoft YaHei", 8),
+                    fg=UI_COLORS["muted"],
+                    bg=UI_COLORS["surface"],
+                ).pack(anchor="w", pady=(1, 0))
 
-                bar_canvas = tk.Canvas(info, height=4, bg="#1e1e2e", highlightthickness=0)
-                bar_canvas.pack(fill=tk.X, pady=(4, 0))
+                bar_canvas = tk.Canvas(info, height=3, bg=UI_COLORS["base"], highlightthickness=0)
+                bar_canvas.pack(fill=tk.X, pady=(3, 0))
                 ratio = max(0, min(1, (item["win"] - 0.40) / 0.20))
 
                 # 渐变填充 + 50% 温饱基准线，替代纯红黄绿三色阈值
@@ -650,18 +735,18 @@ class HextechUI:
         self._last_client_rect = None
         # 恢复自动跟随后把状态栏回写成"实时数据"基线文案，避免一直停留在挂起提示
         if was_manual:
-            self._run_on_ui_thread(lambda: self._set_status("实时数据已挂载", "#a6e3a1"))
+            self._run_on_ui_thread(lambda: self._set_status("实时数据已挂载", UI_COLORS["green"]))
 
     def _toggle_collapse(self, _event=None) -> None:
         """切换悬浮窗折叠态：展开 320 px / 折叠 80 px。"""
         self._collapsed = not self._collapsed
         if self._collapsed:
-            self.root.geometry("80x600")
+            self.root.geometry(WINDOW_COLLAPSED_GEOMETRY)
             # 折叠态隐藏底部状态栏，保留头像列表本体
             if hasattr(self, "status_label") and self.status_label.winfo_exists():
                 self.status_label.pack_forget()
         else:
-            self.root.geometry("320x600")
+            self.root.geometry(WINDOW_EXPANDED_GEOMETRY)
             if hasattr(self, "status_label") and self.status_label.winfo_exists():
                 self.status_label.pack(side=tk.BOTTOM, pady=5)
         self._schedule_current_hero_refresh()
@@ -677,7 +762,7 @@ class HextechUI:
 
     def _refresh_current_hero_ids(self) -> None:
         self._collapse_render_after_id = None
-        self.update_ui(list(self.current_hero_ids))
+        self.update_ui(self.current_candidate_groups)
 
     def _manual_follow_cooldown_elapsed(self, cooldown_seconds: float) -> bool:
         if self._manual_move_timestamp <= 0:

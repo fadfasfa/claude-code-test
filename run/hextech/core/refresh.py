@@ -152,7 +152,7 @@ def should_refresh_synergy(force: bool, stale_after_seconds: int = SYNERGY_STALE
 
 
 def run_hero_sync() -> bool:
-    return bool(sync_hero_data())
+    return bool(sync_hero_data(allow_remote_check=True))
 
 
 def run_hextech_refresh(stop_event=None, *, force: bool = False) -> bool:
