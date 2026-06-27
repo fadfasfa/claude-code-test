@@ -4,7 +4,7 @@
 
 # QuantProject：保留公开行情csv/源码/文档追踪，忽略金融隐私与执行数据
 QuantProject/position_history.*
-QuantProject/decision_engine.log
+QuantProject/decision_engine.log*
 QuantProject/output/
 
 .claude/*
