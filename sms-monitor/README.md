@@ -46,6 +46,86 @@ python monitor.py config import-freeform --from-clipboard --label ChatGPT-1 --in
 python monitor.py config ready-check --all --json
 ```
 
+## 用 Claude Code 导入
+
+本节是给 Claude Code（CC）用的标准导入流程。用户把账号/电话信息贴给 CC，CC 按本节格式解析并调用 `config` 子命令录入；敏感值（密码 / TOTP / 接码 URL token）一律走环境变量，不进命令行明文、不回显到对话。
+
+> 以下命令在 `sms-monitor/` 目录下运行；若从仓库根目录运行，等价写法为 `python sms-monitor/monitor.py config ... --config sms-monitor/config.json`。
+
+### 命名约定
+
+- 账户一体：账户 `label` = 邮箱本地名（@ 前部分，小写）；接码来源 `label` = `<本地名>-SMS`。两者通过**同一手机号**自动关联（`_link_accounts` 按 `split_us_phone(phone).raw_digits` 比对）。
+- 单独电话：来源 `label` 用平台名（如 `YunTL`、`eSIM88`）或用户指定；无账户档案。
+- `label` 幂等：同 `label` 重复导入为更新，不新增。
+
+### 场景 A：单独电话导入
+
+- 适用：只有 手机号 + 接码 URL，无邮箱 / 密码 / 2FA。
+- 覆盖范围：仅支持**固定 URL 直接出码**（GET 一次返回验证码）。多步换号取码（需先输入字符换号、再查码，类似 LuDan）暂不覆盖，见「注意事项」。
+- 用户贴入格式（示例，CC 可理解变体）：
+
+```
+电话：14243554247
+接码：https://app.yuntl.cc/apisms/<token>
+```
+
+  或单行：`14243554247|https://app.yuntl.cc/apisms/<token>`
+
+- CC 执行（PowerShell，token 走环境变量）：
+
+```powershell
+$env:SMS_URL='https://app.yuntl.cc/apisms/<token>'
+python monitor.py config upsert-fixed --label <平台名> --phone 14243554247 --url-env SMS_URL --json
+```
+
+### 场景 B：账号电话一体导入
+
+- 适用：邮箱 + 密码 + 2FA + 手机号 + 接码 URL。
+- 用户贴入格式（示例）：
+
+```
+邮箱：necocheadebbra@gmail.com
+密码：YK85J7nv1b%TSkWI
+2fa：WNZDDWJZUPD4T6XEODAAHE4MK46HWEQ2
+14243554247|https://app.yuntl.cc/apisms/<token>
+```
+
+- CC 执行（两条命令，同一手机号关联；密码 / TOTP / URL token 全走环境变量）：
+
+```powershell
+$env:ACC_URL='https://app.yuntl.cc/apisms/<token>'
+$env:ACC_PASSWORD='YK85J7nv1b%TSkWI'
+$env:ACC_TOTP='WNZDDWJZUPD4T6XEODAAHE4MK46HWEQ2'
+python monitor.py config upsert-fixed   --label necocheadebbra-SMS --phone 14243554247 --url-env ACC_URL --json
+python monitor.py config upsert-account --label necocheadebbra --login-email necocheadebbra@gmail.com --password-env ACC_PASSWORD --totp-secret-env ACC_TOTP --phone 14243554247 --json
+```
+
+- 说明：`label` `necocheadebbra` 取自邮箱本地名；`-SMS` 来源与账户通过同一 `--phone` 自动关联；先建来源再建账户。
+
+### 多账号
+
+- **逐个串行执行，不要并行**：多账号改同一 `config.json`，read-modify-write 非原子，并行会互相覆盖。
+- 每个账号用独立环境变量名（如 `ACC1_*` / `ACC2_*`）避免串值。
+
+### 导入后校验
+
+```powershell
+python monitor.py config validate    --json
+python monitor.py config ready-check  --all --json
+```
+
+- `validate`：本地结构校验。
+- `ready-check --all`：LuDan + 全部固定 / 邮箱来源 + 账户关联；`ready=true` 即就绪；新接码链接应返回 `ready`（如「暂无短信」= 链接可达、暂无验证码）。
+- 两者输出均脱敏，不含明文 secret。
+
+### 注意事项
+
+- 不手改 `config.json`：一律走 `config` 子命令（见上文「标准录入流程」+ `AGENTS.md` 凭据保护）。
+- 敏感值不进命令行明文、不回显：用 `--*-env` 传环境变量；命令输出只有脱敏预览。
+- 为何不用 `import-freeform` 作主路径：其文本解析器对「中文 label 多行格式」（`邮箱：/密码：/2fa:`）不可靠，密码字段会被前缀污染；结构化命令每字段显式传值，可靠。`import-freeform` 仅适合「紧凑单行 `----` 分隔格式」（见上方「自由文本导入」节）。
+- 手机号原样录入用于关联；显示 / 复制时 `split_us_phone` 只取美国 10 位本地号。
+- 取码方式覆盖范围：当前仅支持①固定 URL 直接出码（`fixed_sources`）与②LuDan 动态号（`LuDanSource`）。多步换号取码（先输入字符换号、再查码）需扩展代码，本轮不纳入；若遇到此类号码，先确认它是否另有固定取码 URL——有则按场景 A 录入，无则暂缓，等真实样本明确后再评估扩展。
+
 ## 依赖
 
 - Python 3 + `requests`（`python -m pip install requests`）。
