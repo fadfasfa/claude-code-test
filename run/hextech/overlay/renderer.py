@@ -146,7 +146,8 @@ def _query_hint(slot: Mapping[str, Any], hint_cache: Mapping[str, Any] | None) -
             indexed_id = _clean_text(name_index.get(candidate))
             if indexed_id:
                 break
-        hint = hints.get(indexed_id) or hints.get(normalize_augment_id(indexed_id)) if indexed_id else None
+        if indexed_id:
+            hint = hints.get(indexed_id) or hints.get(normalize_augment_id(indexed_id))
     if not isinstance(hint, Mapping) and slot_name:
         hint = next(
             (

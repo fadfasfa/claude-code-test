@@ -88,12 +88,6 @@ def _latest_csv_fresh() -> bool:
     return _file_is_fresh(latest_csv or "")
 
 
-def _synergy_data_fresh() -> bool:
-    # ApexLoL 自动联动自愈已经退役。该 helper 只保留给旧自检读取当前 cleaned/raw
-    # 是否存在，不再参与 detect/heal 调度或触发网络刷新。
-    return os.path.exists(build_synergy_data_path())
-
-
 def _write_startup_status(**updates) -> None:
     status_file = build_runtime_state_path("startup_status.json")
     scraper_status = load_scraper_status()

@@ -290,7 +290,10 @@ def remove_mayhem_items(cleaned: dict[str, Any]) -> int:
             hero_payload["synergies"] = [
                 value
                 for value in synergies
-                if not (isinstance(value, str) and value in removed_compat_strings)
+                if not (
+                    isinstance(value, str)
+                    and (value in removed_compat_strings or "ARAMMayhem" in value)
+                )
             ]
     return removed
 
@@ -432,7 +435,6 @@ def merge_mayhem_combos(
 
     augment_lookup = build_augment_lookup(manifest_payload)
     champion_lookup, _champions_by_id = build_champion_lookup(core_payload)
-    existing_keys = build_apex_key_set(apex_payload, augment_lookup)
     seen_mayhem_keys: set[str] = set()
     cleaned = copy.deepcopy(apex_payload)
     removed_existing_mayhem_items = remove_mayhem_items(cleaned)

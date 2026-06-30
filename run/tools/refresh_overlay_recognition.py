@@ -109,6 +109,8 @@ def validate_truth_manifest(path: Path = TRUTH_PATH, *, run_dir: Path = RUN_DIR)
     return {
         "truth_path": str(path),
         "active_sample_count": len(active_samples),
+        "full_frame_sample_count": len([item for item in samples if isinstance(item, Mapping)]),
+        "name_roi_sample_count": len([item for item in name_roi_samples if isinstance(item, Mapping)]),
         "retired_sample_count": len([item for item in retired_samples if isinstance(item, Mapping)]),
         "invalid_path_count": len(invalid_paths),
         "missing_count": len(missing_paths),
@@ -221,7 +223,7 @@ def _paint_slot_name(image: Image.Image, box: tuple[int, int, int, int], name: s
     left, top, right, bottom = box
     draw = ImageDraw.Draw(image)
     draw.rectangle(box, fill="#001010")
-    name_mask = overlay_vision_sidecar._render_name_mask(name)
+    name_mask = overlay_vision_sidecar.render_name_mask(name)
     if name_mask is None:
         return
     text_image = Image.merge("RGB", (name_mask, name_mask, name_mask))
@@ -307,7 +309,7 @@ def run_synthetic_recognition(root: Path) -> dict[str, Any]:
     """为每个规范化名称 + 图标变体生成三槽画面并走正式识别路径。"""
 
     template_index = overlay_vision_sidecar.load_default_template_index(root, hint_cache={})
-    overlay_vision_sidecar._rank_matrices(template_index)
+    overlay_vision_sidecar.rank_template_matrices(template_index)
     cases = _build_variant_cases(root)
     batches = _variant_batches(cases)
     failures: list[dict[str, Any]] = []
@@ -412,6 +414,7 @@ def validate_snapshot(root: Path) -> dict[str, Any]:
         "missing_identity_count": template_audit["missing_identity_count"],
         "missing_variant_count": template_audit["missing_variant_count"],
         "synthetic_failure_count": synthetic_summary["synthetic_failure_count"],
+        "truth_missing_count": fixture_summary["missing_count"],
         "invalid_path_count": fixture_summary["invalid_path_count"],
         "fixture_missing_count": fixture_summary["fixture_missing_count"],
         "fixture_failure_count": fixture_summary["fixture_failure_count"],
@@ -496,6 +499,9 @@ def _compact_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
         "missing_variant_count",
         "synthetic_passed_count",
         "synthetic_checked_count",
+        "full_frame_sample_count",
+        "name_roi_sample_count",
+        "retired_sample_count",
         "fixture_evaluated_count",
         "fixture_sample_count",
         "fixture_missing_count",
@@ -543,6 +549,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         publish_summary = publish_snapshot(snapshot_root)
         summary["published"] = publish_summary
+        shutil.rmtree(snapshot_root, ignore_errors=True)
+        summary["snapshot_retained"] = False
         print(json.dumps(summary if args.json else _compact_summary(summary), ensure_ascii=False, indent=2))
         return 0
     except Exception as exc:  # noqa: BLE001 - CLI 边界统一转成诊断输出

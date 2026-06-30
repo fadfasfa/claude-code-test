@@ -117,6 +117,7 @@ class HextechUI:
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
         self.threads = []
+        self._threads_lock = threading.Lock()
         self.web_port_file = WEB_PORT_FILE
         self.feature_flags = load_ui_feature_flags()
         self.web_process = None
@@ -173,8 +174,11 @@ class HextechUI:
         self._collapse_render_after_id = None
         self._overlay_status_after_id = None
         self._overlay_watchdog_lock = threading.Lock()
+        self._overlay_operation_lock = threading.Lock()
+        self._game_overlay_desired_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
         self._feature_toggle_busy: set[str] = set()
         self._feature_toggle_lock = threading.Lock()
+        self._closing = False
 
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
@@ -360,6 +364,25 @@ class HextechUI:
                 self._feature_toggle_busy.discard(name)
         self._refresh_feature_toggle_styles()
 
+    def _start_tracked_thread(self, target, *, name: str) -> threading.Thread:
+        """启动并登记后台线程，退出时可等待，避免 overlay worker 留下孤儿进程。"""
+
+        thread: threading.Thread
+
+        def tracked_target() -> None:
+            try:
+                target()
+            finally:
+                with self._threads_lock:
+                    if thread in self.threads:
+                        self.threads.remove(thread)
+
+        thread = threading.Thread(target=tracked_target, name=name, daemon=True)
+        with self._threads_lock:
+            self.threads.append(thread)
+        thread.start()
+        return thread
+
     def _collect_feature_flags_from_controls(self) -> dict:
         return {
             "web_frontend_enabled": bool(self.web_frontend_var.get()),
@@ -433,22 +456,24 @@ class HextechUI:
 
             self._run_on_ui_thread(finish)
 
-        threading.Thread(target=worker, name="hextech-toggle-web", daemon=True).start()
+        self._start_tracked_thread(worker, name="hextech-toggle-web")
 
     def _toggle_game_overlay(self) -> None:
         toggle_name = "游戏内显示"
         enabled = bool(self.game_overlay_var.get())
+        self._game_overlay_desired_enabled = enabled
         self._set_feature_toggle_busy(toggle_name, True)
         self._set_status("正在启动游戏内显示..." if enabled else "正在关闭游戏内显示...", UI_COLORS["warn"])
 
         def worker() -> None:
             error: Exception | None = None
             try:
-                if enabled:
-                    self.service_manager.start_game_overlay()
-                else:
-                    self.service_manager.stop_game_overlay()
-                    self._raise_if_service_error("game_overlay")
+                with self._overlay_operation_lock:
+                    if enabled:
+                        self.service_manager.start_game_overlay()
+                    else:
+                        self.service_manager.stop_game_overlay()
+                        self._raise_if_service_error("game_overlay")
             except Exception as exc:
                 error = exc
                 if enabled:
@@ -463,17 +488,18 @@ class HextechUI:
                     )
                 else:
                     self.game_overlay_var.set(self.service_manager.is_game_overlay_running())
+                    self._game_overlay_desired_enabled = bool(self.game_overlay_var.get())
                     self._try_persist_feature_flags_from_controls()
                     self._set_status(f"游戏内显示切换失败: {error}", UI_COLORS["error"])
                 self._set_feature_toggle_busy(toggle_name, False)
 
             self._run_on_ui_thread(finish)
 
-        threading.Thread(target=worker, name="hextech-toggle-overlay", daemon=True).start()
+        self._start_tracked_thread(worker, name="hextech-toggle-overlay")
 
     def _toggle_private_policy_stats(self) -> None:
         toggle_name = "私用统计"
-        desired_flags = self._collect_feature_flags_from_controls()
+        desired_private_stats = bool(self.private_stats_var.get())
         self._set_feature_toggle_busy(toggle_name, True)
         self._set_status("正在更新私用统计缓存...", UI_COLORS["warn"])
 
@@ -481,7 +507,7 @@ class HextechUI:
             error: Exception | None = None
             try:
                 cache_payload = build_overlay_hint_cache_from_precomputed(
-                    include_private_stats=desired_flags["private_policy_stats_enabled"],
+                    include_private_stats=desired_private_stats,
                     source_tag="desktop-game-overlay",
                 )
                 write_overlay_hint_cache(cache_payload)
@@ -490,8 +516,7 @@ class HextechUI:
 
             def finish() -> None:
                 if error is None:
-                    self.feature_flags = save_ui_feature_flags(desired_flags)
-                    self.service_manager.set_low_frequency_listener_enabled(self.feature_flags["low_frequency_listener_enabled"])
+                    self._persist_feature_flags_from_controls()
                     self._set_status("私用统计仅用于本机实验，存在 Riot policy 风险", UI_COLORS["warn"])
                 else:
                     self.private_stats_var.set(bool(self.feature_flags.get("private_policy_stats_enabled", True)))
@@ -500,13 +525,13 @@ class HextechUI:
 
             self._run_on_ui_thread(finish)
 
-        threading.Thread(target=worker, name="hextech-toggle-private-stats", daemon=True).start()
+        self._start_tracked_thread(worker, name="hextech-toggle-private-stats")
 
     def _toggle_low_frequency_listener(self) -> None:
         self._persist_feature_flags_from_controls()
 
     def check_and_sync_data(self):
-        threading.Thread(target=self._silent_sync, daemon=True).start()
+        self._start_tracked_thread(self._silent_sync, name="hextech-silent-sync")
 
     def _set_status(self, text, color):
         if hasattr(self, "status_label") and self.status_label.winfo_exists():
@@ -515,19 +540,26 @@ class HextechUI:
     def _start_overlay_status_polling(self) -> None:
         self._overlay_status_after_id = self.root.after(1000, self._refresh_overlay_status_summary)
 
-    def _kick_game_overlay_watchdog(self, *, enabled: bool) -> None:
+    def _kick_game_overlay_watchdog(self) -> None:
+        if self._closing or self._feature_toggle_is_busy("游戏内显示"):
+            return
         if not self._overlay_watchdog_lock.acquire(blocking=False):
             return
 
         def worker() -> None:
             try:
-                self.service_manager.ensure_game_overlay_healthy(enabled=enabled)
+                with self._overlay_operation_lock:
+                    if self._closing:
+                        return
+                    self.service_manager.ensure_game_overlay_healthy(
+                        enabled=self._game_overlay_desired_enabled,
+                    )
             except Exception:
                 logger.warning("游戏内 overlay watchdog 自愈失败。", exc_info=True)
             finally:
                 self._overlay_watchdog_lock.release()
 
-        threading.Thread(target=worker, name="hextech-overlay-watchdog", daemon=True).start()
+        self._start_tracked_thread(worker, name="hextech-overlay-watchdog")
 
     def _refresh_overlay_status_summary(self) -> None:
         """低频回显游戏内 overlay 状态，避免 running 但不可见时没有反馈。"""
@@ -535,8 +567,8 @@ class HextechUI:
         try:
             # main 原本调用 overlay_service_manager.read_overlay_status_snapshot；PR 已把状态聚合
             # 下沉到 ServiceManager.get_status_snapshot，这里改读新 schema 的字段。
-            overlay_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
-            self._kick_game_overlay_watchdog(enabled=overlay_enabled)
+            overlay_enabled = bool(self.game_overlay_var.get())
+            self._kick_game_overlay_watchdog()
             snapshot = self.service_manager.get_status_snapshot()
             sidecar = snapshot.get("vision_sidecar") if isinstance(snapshot.get("vision_sidecar"), dict) else {}
             event = snapshot.get("overlay_event") if isinstance(snapshot.get("overlay_event"), dict) else {}
@@ -879,19 +911,25 @@ class HextechUI:
 
     def on_close(self):
         print("\n[System] 收到退出信号，正在等待数据安全落盘...")
+        self._closing = True
         self.stop_event.set()
-        for thread in self.threads:
+        if self._overlay_status_after_id is not None:
+            try:
+                self.root.after_cancel(self._overlay_status_after_id)
+                self._overlay_status_after_id = None
+            except tk.TclError:
+                logger.debug("取消 overlay 状态轮询失败。", exc_info=True)
+        with self._threads_lock:
+            threads = list(self.threads)
+        for thread in threads:
+            if thread is threading.current_thread():
+                continue
             if thread.is_alive():
                 thread.join(timeout=2)
         # PR 已把 Web 子进程与 overlay 全部下沉到 ServiceManager；这里只做 ui_runtime 与 ServiceManager 收尾，
         # 顺带保留 main 引入的 overlay 状态轮询 after_id 取消，避免 root.destroy 后回调引发 TclError。
         ui_runtime.close_companion_browser()
         self.service_manager.shutdown()
-        if self._overlay_status_after_id is not None:
-            try:
-                self.root.after_cancel(self._overlay_status_after_id)
-            except tk.TclError:
-                logger.debug("取消 overlay 状态轮询失败。", exc_info=True)
         self.root.destroy()
 
 

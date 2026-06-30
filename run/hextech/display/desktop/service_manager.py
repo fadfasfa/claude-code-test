@@ -112,6 +112,7 @@ class ServiceManager:
         self._shutdown_done: threading.Event | None = None
         self._listener_interval_seconds = max(2.0, min(5.0, float(listener_interval_seconds)))
         self._listener_enabled = True
+        self._shutdown_requested = False
         self._listener_snapshot: dict[str, Any] = {
             "enabled": True,
             "interval_seconds": self._listener_interval_seconds,
@@ -150,6 +151,7 @@ class ServiceManager:
 
     def start_game_overlay(self) -> None:
         with self._lock:
+            self._shutdown_requested = False
             if self._overlay_controller.is_running() and self._overlay_controller.context_poller_running():
                 self._sync_overlay_compat_state()
                 return
@@ -183,11 +185,16 @@ class ServiceManager:
 
         with self._lock:
             now = time.time()
-            self._overlay_watchdog["enabled"] = bool(enabled)
+            effective_enabled = bool(enabled) and not self._shutdown_requested
+            self._overlay_watchdog["enabled"] = effective_enabled
             self._overlay_watchdog["last_checked_at"] = now
             self._overlay_watchdog["last_error"] = ""
-            if not enabled:
-                self._overlay_watchdog["last_action"] = "disabled"
+            if not effective_enabled:
+                if self._overlay_controller.is_running():
+                    self._overlay_controller.stop()
+                    self._mark_overlay_watchdog_action("stop_disabled", now)
+                else:
+                    self._overlay_watchdog["last_action"] = "disabled"
                 self._sync_overlay_compat_state()
                 return dict(self._overlay_watchdog)
 
@@ -298,6 +305,8 @@ class ServiceManager:
         """
 
         self._listener_stop.set()
+        with self._lock:
+            self._shutdown_requested = True
         self._shutdown_done = threading.Event()
 
         def _stop_all() -> None:

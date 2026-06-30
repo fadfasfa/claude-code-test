@@ -777,6 +777,12 @@ def _render_name_mask(name: str, *, family: str = "primary") -> Image.Image | No
     return canvas.point(lambda value: 255 if value >= 32 else 0).filter(ImageFilter.MaxFilter(3))
 
 
+def render_name_mask(name: str, *, family: str = "primary") -> Image.Image | None:
+    """供离线刷新/评测工具复用的名称模板渲染入口。"""
+
+    return _render_name_mask(name, family=family)
+
+
 def _name_fingerprint(name: str, *, family: str = "primary") -> tuple[float, ...] | None:
     mask = _render_name_mask(name, family=family)
     if mask is None:
@@ -1209,6 +1215,12 @@ def _rank_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
         _RANK_MATRIX_CACHE.pop(next(iter(_RANK_MATRIX_CACHE)))
     _RANK_MATRIX_CACHE[key] = entry
     return entry
+
+
+def rank_template_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
+    """供离线刷新/评测工具预热模板矩阵，避免直接依赖私有函数名。"""
+
+    return _rank_matrices(template_index)
 
 
 def _rank_with_matrix(

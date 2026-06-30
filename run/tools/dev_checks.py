@@ -1733,7 +1733,7 @@ def check_ui_feature_flags_contract() -> None:
             migrated = ui_feature_flags.load_ui_feature_flags()
             assert migrated["web_frontend_enabled"] is False
             assert migrated["game_overlay_enabled"] is True
-            assert migrated["private_policy_stats_enabled"] is True
+            assert migrated["private_policy_stats_enabled"] is False
             assert migrated["low_frequency_listener_enabled"] is True
             assert marker_path.exists()
 
@@ -4195,8 +4195,15 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert 'sticky="ew"' in ui_text
     assert "self._refresh_feature_toggle_styles()\n            command()" in ui_text
     assert "_feature_toggle_busy" in ui_text
+    assert "_closing" in ui_text
+    assert "_overlay_operation_lock" in ui_text
+    assert "_game_overlay_desired_enabled" in ui_text
+    assert "_start_tracked_thread" in ui_text
+    assert 'self._feature_toggle_is_busy("游戏内显示")' in ui_text
+    assert "enabled=self._game_overlay_desired_enabled" in ui_text
     assert "hextech-toggle-web" in ui_text
     assert "hextech-toggle-overlay" in ui_text
+    assert "hextech-overlay-watchdog" in ui_text
     assert "hextech-toggle-private-stats" in ui_text
     assert "正在切换 Web 前端" in ui_text
     assert "正在启动游戏内显示" in ui_text
@@ -4237,7 +4244,9 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert hasattr(ui_runtime, "close_companion_browser")
     private_toggle_body = ui_text.split("    def _toggle_private_policy_stats", 1)[1].split("    def _toggle_low_frequency_listener", 1)[0]
     assert "build_overlay_hint_cache_from_precomputed" in private_toggle_body
-    assert 'include_private_stats=desired_flags["private_policy_stats_enabled"]' in private_toggle_body
+    assert "desired_private_stats = bool(self.private_stats_var.get())" in private_toggle_body
+    assert "self._persist_feature_flags_from_controls()" in private_toggle_body
+    assert "save_ui_feature_flags(desired_flags)" not in private_toggle_body
     assert "if not _web_frontend_available(ui):\n            time.sleep(3)\n            continue" not in runtime_text
 
     candidate_groups = {
@@ -4894,7 +4903,6 @@ def _patch_synergy_dir(temp_dir: str, status: dict | None = None):
     payload = {} if status is None else status
     return (
         patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
-        patch.object(heal_worker, "load_synergy_refresh_status", return_value=payload, create=True),
         patch.object(orchestrator, "load_synergy_refresh_status", return_value=payload),
     )
 
@@ -4904,7 +4912,7 @@ def check_synergy_refresh_freshness() -> None:
         _snapshot(temp_dir)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
+        with patches[0], patches[1], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             assert not orchestrator.auto_synergy_refresh_enabled()
             assert not orchestrator.should_refresh_synergy(False)
             assert "synergy_data" not in heal_worker.detect_missing_artifacts()
@@ -4913,7 +4921,7 @@ def check_synergy_refresh_freshness() -> None:
         synergy_path = _snapshot(temp_dir)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
+        with patches[0], patches[1], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             write_synergy_refresh_meta(
                 target_path=synergy_path,
                 base_url="https://apexlol.info/zh",
@@ -4936,7 +4944,7 @@ def check_synergy_refresh_freshness() -> None:
         synergy_path = _snapshot(temp_dir, mtime=old_mtime)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
+        with patches[0], patches[1], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             write_synergy_refresh_meta(
                 target_path=synergy_path,
                 base_url="https://apexlol.info/zh",
@@ -4957,7 +4965,7 @@ def check_synergy_refresh_freshness() -> None:
         synergy_path = _snapshot(temp_dir, mtime=old_mtime)
 
         patches = _patch_synergy_dir(temp_dir, status=status)
-        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
+        with patches[0], patches[1], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             write_synergy_refresh_meta(
                 target_path=synergy_path,
                 base_url="https://apexlol.info/zh",
@@ -4974,7 +4982,7 @@ def check_synergy_refresh_freshness() -> None:
         _snapshot(temp_dir)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "0"}):
+        with patches[0], patches[1], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "0"}):
             assert not orchestrator.should_refresh_synergy(True)
             assert "synergy_data" not in heal_worker.detect_missing_artifacts()
 
@@ -5252,7 +5260,7 @@ def check_mayhem_combo_pipeline_contract() -> None:
                     "en_name": "Brand",
                     "aliases": [],
                     "synergies": [
-                        "炼狱导管 | 棱彩 | 评分 A | 强力联动 | 0 | 0 | 作者：ARAMMayhem | 非原创 | 旧 Mayhem 组合。",
+                        "旧格式：炼狱导管 / ARAMMayhem / A / 旧 Mayhem 组合。",
                     ],
                     "synergy_items": [
                         {
@@ -5305,6 +5313,7 @@ def check_mayhem_combo_pipeline_contract() -> None:
         refreshed_items = refreshed["63"]["synergy_items"]
         assert len(refreshed_items) == 1
         assert refreshed_items[0]["content"] == "新版 Mayhem 组合。"
+        assert len(refreshed["63"]["synergies"]) == 1
         assert all("旧 Mayhem" not in item for item in refreshed["63"]["synergies"])
 
         status_path = root / "mayhem_refresh_status.json"
@@ -6369,8 +6378,8 @@ print(json.dumps(blocked))
     watchdog_controller = GameOverlayController(
         prepare_data_func=lambda: watchdog_calls.append("prepare"),
         write_inactive_func=lambda: watchdog_calls.append("inactive"),
-        start_sidecar_func=lambda: watchdog_calls.append("sidecar") or DummyProcess(312),
-        start_host_func=lambda: watchdog_calls.append("host") or DummyProcess(313),
+        start_sidecar_func=lambda: watchdog_calls.append("sidecar") or DummyProcess(312, calls=watchdog_calls, label="sidecar"),
+        start_host_func=lambda: watchdog_calls.append("host") or DummyProcess(313, calls=watchdog_calls, label="host"),
         start_context_poller_func=lambda: watchdog_calls.append("context") or (lambda: None),
     )
     watchdog_manager = ServiceManager(start_web_func=lambda: DummyProcess(311), overlay_controller=watchdog_controller)
@@ -6380,7 +6389,14 @@ print(json.dumps(blocked))
     started_watchdog = watchdog_manager.ensure_game_overlay_healthy(enabled=True)
     assert started_watchdog["last_action"] == "start_missing_process"
     assert watchdog_calls == ["prepare", "inactive", "sidecar", "host", "context"]
-    watchdog_manager.stop_game_overlay()
+    disabled_after_start = watchdog_manager.ensure_game_overlay_healthy(enabled=False)
+    assert disabled_after_start["last_action"] == "stop_disabled"
+    assert not watchdog_manager.is_game_overlay_running()
+    assert "stop:sidecar" in watchdog_calls and "stop:host" in watchdog_calls
+    watchdog_manager._shutdown_requested = True
+    blocked_after_shutdown = watchdog_manager.ensure_game_overlay_healthy(enabled=True)
+    assert blocked_after_shutdown["last_action"] == "disabled"
+    assert not watchdog_manager.is_game_overlay_running()
 
     stale_calls: list[str] = []
     stale_controller = GameOverlayController(
@@ -7318,8 +7334,13 @@ def check_overlay_refresh_tool_contract() -> None:
         )
         truth_summary = refresh_tool.validate_truth_manifest(truth_path, run_dir=root)
         assert truth_summary["active_sample_count"] == 1
+        assert truth_summary["full_frame_sample_count"] == 0
+        assert truth_summary["name_roi_sample_count"] == 1
         assert truth_summary["retired_sample_count"] == 1
         assert truth_summary["missing_count"] == 0
+        compact_truth = refresh_tool._compact_summary(truth_summary)
+        assert compact_truth["full_frame_sample_count"] == 0
+        assert compact_truth["name_roi_sample_count"] == 1
 
         bad_truth_path = truth_path.with_name("bad.json")
         bad_truth_path.write_text(
@@ -7334,6 +7355,29 @@ def check_overlay_refresh_tool_contract() -> None:
         )
         bad_summary = refresh_tool.validate_truth_manifest(bad_truth_path, run_dir=root)
         assert bad_summary["invalid_path_count"] == 1
+
+        catalog_summary = {
+            "missing_field_count": 0,
+            "duplicate_stable_id_count": 0,
+            "missing_icon_count": 0,
+            "invalid_icon_count": 0,
+        }
+        audit_summary = {"missing_identity_count": 0, "missing_variant_count": 0}
+        fixture_summary = {
+            "missing_count": 1,
+            "invalid_path_count": 0,
+            "fixture_missing_count": 0,
+            "fixture_failure_count": 0,
+        }
+        with (
+            patch.object(refresh_tool, "validate_official_catalog", return_value=catalog_summary),
+            patch.object(refresh_tool.overlay_vision_sidecar, "audit_default_template_index", return_value=audit_summary),
+            patch.object(refresh_tool, "run_synthetic_recognition", return_value={"synthetic_failure_count": 0}),
+            patch.object(refresh_tool, "run_fixture_regression", return_value=fixture_summary),
+        ):
+            blocked = refresh_tool.validate_snapshot(root)
+        assert blocked["passed"] is False
+        assert blocked["blockers"]["truth_missing_count"] == 1
 
         snapshot = root / "snapshot"
         target = root / "target"
@@ -7352,6 +7396,22 @@ def check_overlay_refresh_tool_contract() -> None:
         assert stale_icon.read_bytes() == b"keep"
         assert (target / "resources" / "图片资源" / "new.png").read_bytes() == b"new-icon"
         assert (target / "resources" / "版本数据" / "海克斯资源目录.v1.json").exists()
+
+        cache_root = root / "data" / "runtime" / "cache"
+        with (
+            patch.object(refresh_tool, "RUN_DIR", root),
+            patch.object(refresh_tool, "build_refresh_snapshot", return_value={"built": True}),
+            patch.object(refresh_tool, "validate_snapshot", return_value={"passed": True}),
+            patch.object(refresh_tool, "publish_snapshot", return_value={"icon_count": 1}),
+        ):
+            assert refresh_tool.main(["--json"]) == 0
+        assert not list(cache_root.glob("overlay_recognition_refresh_*"))
+
+    refresh_source = Path(refresh_tool.__file__).read_text(encoding="utf-8")
+    assert "overlay_vision_sidecar._render_name_mask" not in refresh_source
+    assert "overlay_vision_sidecar._rank_matrices" not in refresh_source
+    assert callable(refresh_tool.overlay_vision_sidecar.render_name_mask)
+    assert callable(refresh_tool.overlay_vision_sidecar.rank_template_matrices)
 
 
 def _run_named_checks(check_names: tuple[str, ...]) -> None:

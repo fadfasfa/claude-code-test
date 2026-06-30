@@ -28,7 +28,6 @@ DEFAULT_UI_FEATURE_FLAGS: dict[str, bool] = {
 
 DEFAULT_ON_MIGRATION_KEYS = (
     "game_overlay_enabled",
-    "private_policy_stats_enabled",
     "low_frequency_listener_enabled",
 )
 
