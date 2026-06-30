@@ -507,6 +507,8 @@ def _compact_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
         "fixture_missing_count",
         "fixture_failure_count",
         "synthetic_failure_count",
+        "snapshot_retained",
+        "snapshot_cleanup_error",
         "passed",
     )
     return {key: summary.get(key) for key in keys if key in summary}
@@ -549,8 +551,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         publish_summary = publish_snapshot(snapshot_root)
         summary["published"] = publish_summary
-        shutil.rmtree(snapshot_root, ignore_errors=True)
-        summary["snapshot_retained"] = False
+        cleanup_error = ""
+        try:
+            shutil.rmtree(snapshot_root)
+        except OSError as exc:
+            cleanup_error = str(exc)
+        summary["snapshot_retained"] = snapshot_root.exists()
+        if summary["snapshot_retained"]:
+            summary["snapshot_cleanup_error"] = cleanup_error or "snapshot_cleanup_incomplete"
         print(json.dumps(summary if args.json else _compact_summary(summary), ensure_ascii=False, indent=2))
         return 0
     except Exception as exc:  # noqa: BLE001 - CLI 边界统一转成诊断输出

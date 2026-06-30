@@ -4249,6 +4249,60 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert "save_ui_feature_flags(desired_flags)" not in private_toggle_body
     assert "if not _web_frontend_available(ui):\n            time.sleep(3)\n            continue" not in runtime_text
 
+    class DummyBoolVar:
+        def __init__(self, value: bool):
+            self.value = value
+
+        def get(self) -> bool:
+            return self.value
+
+        def set(self, value: bool) -> None:
+            self.value = bool(value)
+
+    class OverlayStartProbe:
+        def __init__(self):
+            self.start_calls = 0
+
+        def start_game_overlay(self) -> None:
+            self.start_calls += 1
+
+        def stop_game_overlay(self) -> None:
+            return None
+
+        def is_game_overlay_running(self) -> bool:
+            return False
+
+    # 退出标记可能在 toggle 等待 operation lock 时发生；释放后不得再启动 overlay。
+    lifecycle_ui = object.__new__(desktop_app.HextechUI)
+    lifecycle_ui.game_overlay_var = DummyBoolVar(True)
+    lifecycle_ui.service_manager = OverlayStartProbe()
+    lifecycle_ui._overlay_operation_lock = threading.Lock()
+    lifecycle_ui._overlay_operation_lock.acquire()
+    lifecycle_ui._closing = False
+    lifecycle_ui._game_overlay_desired_enabled = False
+    lifecycle_ui._set_feature_toggle_busy = lambda *_args: None
+    lifecycle_ui._set_status = lambda *_args: None
+    lifecycle_ui._persist_feature_flags_from_controls = lambda: None
+    lifecycle_ui._try_persist_feature_flags_from_controls = lambda: None
+    lifecycle_ui._run_on_ui_thread = lambda command: command()
+    lifecycle_ui._raise_if_service_error = lambda _name: None
+    toggle_threads: list[threading.Thread] = []
+
+    def start_toggle_thread(target, *, name: str):
+        thread = threading.Thread(target=target, name=name, daemon=True)
+        toggle_threads.append(thread)
+        thread.start()
+        return thread
+
+    lifecycle_ui._start_tracked_thread = start_toggle_thread
+    lifecycle_ui._toggle_game_overlay()
+    assert toggle_threads and toggle_threads[0].is_alive()
+    lifecycle_ui._closing = True
+    lifecycle_ui._overlay_operation_lock.release()
+    toggle_threads[0].join(timeout=2)
+    assert not toggle_threads[0].is_alive()
+    assert lifecycle_ui.service_manager.start_calls == 0
+
     candidate_groups = {
         "selected_champion_ids": ["1", "2", "3", "4", "5"],
         "bench_champion_ids": ["6", "7", "8", "9", "10"],
@@ -5260,7 +5314,8 @@ def check_mayhem_combo_pipeline_contract() -> None:
                     "en_name": "Brand",
                     "aliases": [],
                     "synergies": [
-                        "旧格式：炼狱导管 / ARAMMayhem / A / 旧 Mayhem 组合。",
+                        "炼狱导管 | 棱彩 | 作者: ARAMMayhem | 旧 Mayhem 组合。",
+                        "普通备注：可参考 ARAMMayhem 网站的公开讨论。",
                     ],
                     "synergy_items": [
                         {
@@ -5275,6 +5330,14 @@ def check_mayhem_combo_pipeline_contract() -> None:
                             "downvotes": 0,
                             "source": "arammayhem",
                         }
+                    ],
+                },
+                "64": {
+                    "id": "64",
+                    "name": "永恒梦魇",
+                    "synergies": [
+                        "强化组合 | 金色 | 作者: ARAMMayhem | 历史兼容项。",
+                        "普通备注：可参考 ARAMMayhem 网站的公开讨论。",
                     ],
                 },
             },
@@ -5313,8 +5376,10 @@ def check_mayhem_combo_pipeline_contract() -> None:
         refreshed_items = refreshed["63"]["synergy_items"]
         assert len(refreshed_items) == 1
         assert refreshed_items[0]["content"] == "新版 Mayhem 组合。"
-        assert len(refreshed["63"]["synergies"]) == 1
+        assert len(refreshed["63"]["synergies"]) == 2
         assert all("旧 Mayhem" not in item for item in refreshed["63"]["synergies"])
+        assert "普通备注：可参考 ARAMMayhem 网站的公开讨论。" in refreshed["63"]["synergies"]
+        assert refreshed["64"]["synergies"] == ["普通备注：可参考 ARAMMayhem 网站的公开讨论。"]
 
         status_path = root / "mayhem_refresh_status.json"
         raw_cache_path = root / "runtime_cache_mayhem.raw.json"
@@ -6393,10 +6458,29 @@ print(json.dumps(blocked))
     assert disabled_after_start["last_action"] == "stop_disabled"
     assert not watchdog_manager.is_game_overlay_running()
     assert "stop:sidecar" in watchdog_calls and "stop:host" in watchdog_calls
+
+    residual_calls: list[str] = []
+    residual_controller = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: residual_calls.append("inactive"),
+    )
+    residual_controller.host_process = DummyProcess(314, running=False, calls=residual_calls, label="host")
+    residual_controller.sidecar_process = DummyProcess(315, calls=residual_calls, label="sidecar")
+    residual_manager = ServiceManager(start_web_func=lambda: DummyProcess(316), overlay_controller=residual_controller)
+    residual_disabled = residual_manager.ensure_game_overlay_healthy(enabled=False)
+    assert residual_disabled["last_action"] == "stop_disabled"
+    assert residual_controller.sidecar_process is None
+    assert "stop:sidecar" in residual_calls
     watchdog_manager._shutdown_requested = True
     blocked_after_shutdown = watchdog_manager.ensure_game_overlay_healthy(enabled=True)
     assert blocked_after_shutdown["last_action"] == "disabled"
     assert not watchdog_manager.is_game_overlay_running()
+    try:
+        watchdog_manager.start_game_overlay()
+    except RuntimeError as exc:
+        assert "关闭流程" in str(exc)
+    else:
+        raise AssertionError("ServiceManager 进入关闭流程后不得重新启动 overlay")
 
     stale_calls: list[str] = []
     stale_controller = GameOverlayController(
@@ -6469,6 +6553,12 @@ print(json.dumps(blocked))
         assert not joined_manager._shutdown_thread.is_alive()
         joined_snapshot = joined_manager.get_status_snapshot()["web"]
         assert joined_snapshot["status"] == "stopped"
+        try:
+            joined_manager.start_game_overlay()
+        except RuntimeError as exc:
+            assert "关闭流程" in str(exc)
+        else:
+            raise AssertionError("真实 shutdown 完成后不得重新启动 overlay")
     finally:
         joined_process.release.set()
         release_thread.join(timeout=1)
@@ -7406,6 +7496,23 @@ def check_overlay_refresh_tool_contract() -> None:
         ):
             assert refresh_tool.main(["--json"]) == 0
         assert not list(cache_root.glob("overlay_recognition_refresh_*"))
+
+        cleanup_output = io.StringIO()
+        with (
+            patch.object(refresh_tool, "RUN_DIR", root),
+            patch.object(refresh_tool, "build_refresh_snapshot", return_value={"built": True}),
+            patch.object(refresh_tool, "validate_snapshot", return_value={"passed": True}),
+            patch.object(refresh_tool, "publish_snapshot", return_value={"icon_count": 1}),
+            patch.object(refresh_tool.shutil, "rmtree", side_effect=PermissionError("snapshot busy")),
+            patch.object(sys, "stdout", cleanup_output),
+        ):
+            assert refresh_tool.main(["--json"]) == 0
+        cleanup_summary = json.loads(cleanup_output.getvalue())
+        assert cleanup_summary["snapshot_retained"] is True
+        assert "snapshot busy" in cleanup_summary["snapshot_cleanup_error"]
+        cleanup_compact = refresh_tool._compact_summary(cleanup_summary)
+        assert cleanup_compact["snapshot_retained"] is True
+        assert "snapshot busy" in cleanup_compact["snapshot_cleanup_error"]
 
     refresh_source = Path(refresh_tool.__file__).read_text(encoding="utf-8")
     assert "overlay_vision_sidecar._render_name_mask" not in refresh_source

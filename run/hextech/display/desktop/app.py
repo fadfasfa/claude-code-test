@@ -469,6 +469,8 @@ class HextechUI:
             error: Exception | None = None
             try:
                 with self._overlay_operation_lock:
+                    if self._closing:
+                        return
                     if enabled:
                         self.service_manager.start_game_overlay()
                     else:

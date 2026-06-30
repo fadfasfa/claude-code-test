@@ -31,6 +31,10 @@ RESOURCE_DIR = RUN_DIR / "resources"
 DEFAULT_MAYHEM_RAW = RESOURCE_DIR / "来源证据" / "mayhem_combos.raw.json"
 DEFAULT_AUGMENT_MANIFEST = get_augment_resource_catalog_path(RESOURCE_DIR / "版本数据")
 DEFAULT_CORE_DATA = RESOURCE_DIR / "版本数据" / "英雄目录.v1.json"
+MAYHEM_COMPAT_AUTHOR_RE = re.compile(
+    r"(?:^|[|｜])\s*作者\s*[:：]\s*ARAMMayhem\s*(?=[|｜]|$)",
+    re.IGNORECASE,
+)
 
 RETIRED_MARKERS = (
     "Retired in live Mayhem",
@@ -272,27 +276,25 @@ def remove_mayhem_items(cleaned: dict[str, Any]) -> int:
         if not isinstance(hero_payload, dict):
             continue
         items = hero_payload.get("synergy_items")
-        if not isinstance(items, list):
-            continue
-
         kept_items: list[Any] = []
         removed_compat_strings: set[str] = set()
-        for item in items:
-            if isinstance(item, dict) and _text(item.get("source")).lower() == "arammayhem":
-                removed += 1
-                removed_compat_strings.add(_compat_string(item))
-                continue
-            kept_items.append(item)
-        hero_payload["synergy_items"] = kept_items
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and _text(item.get("source")).lower() == "arammayhem":
+                    removed += 1
+                    removed_compat_strings.add(_compat_string(item))
+                    continue
+                kept_items.append(item)
+            hero_payload["synergy_items"] = kept_items
 
         synergies = hero_payload.get("synergies")
-        if isinstance(synergies, list) and removed_compat_strings:
+        if isinstance(synergies, list):
             hero_payload["synergies"] = [
                 value
                 for value in synergies
                 if not (
                     isinstance(value, str)
-                    and (value in removed_compat_strings or "ARAMMayhem" in value)
+                    and (value in removed_compat_strings or MAYHEM_COMPAT_AUTHOR_RE.search(value))
                 )
             ]
     return removed

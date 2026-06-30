@@ -151,7 +151,8 @@ class ServiceManager:
 
     def start_game_overlay(self) -> None:
         with self._lock:
-            self._shutdown_requested = False
+            if self._shutdown_requested:
+                raise RuntimeError("ServiceManager 已进入关闭流程，拒绝重新启动 game_overlay")
             if self._overlay_controller.is_running() and self._overlay_controller.context_poller_running():
                 self._sync_overlay_compat_state()
                 return
@@ -190,7 +191,13 @@ class ServiceManager:
             self._overlay_watchdog["last_checked_at"] = now
             self._overlay_watchdog["last_error"] = ""
             if not effective_enabled:
-                if self._overlay_controller.is_running():
+                snapshot = self._overlay_controller.snapshot()
+                had_runtime = (
+                    snapshot.get("host_pid") is not None
+                    or snapshot.get("sidecar_pid") is not None
+                    or snapshot.get("context_poller_status") == "running"
+                )
+                if had_runtime:
                     self._overlay_controller.stop()
                     self._mark_overlay_watchdog_action("stop_disabled", now)
                 else:
