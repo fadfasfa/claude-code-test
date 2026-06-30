@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -15,6 +16,7 @@ from hextech.support.atomic_io import atomic_write_json
 
 
 FEATURE_FLAGS_FILE = Path(build_runtime_state_path("ui_feature_flags.json"))
+DEFAULT_ON_MIGRATION_MARKER_FILE = Path(build_runtime_state_path("ui_feature_flags.defaults.v2.json"))
 
 DEFAULT_UI_FEATURE_FLAGS: dict[str, bool] = {
     "web_frontend_enabled": False,
@@ -23,6 +25,11 @@ DEFAULT_UI_FEATURE_FLAGS: dict[str, bool] = {
     "private_policy_stats_enabled": True,
     "low_frequency_listener_enabled": True,
 }
+
+DEFAULT_ON_MIGRATION_KEYS = (
+    "game_overlay_enabled",
+    "low_frequency_listener_enabled",
+)
 
 
 def normalize_ui_feature_flags(raw_flags: Mapping[str, Any] | None) -> dict[str, bool]:
@@ -41,6 +48,37 @@ def normalize_ui_feature_flags(raw_flags: Mapping[str, Any] | None) -> dict[str,
     return normalized
 
 
+def _migrate_source_default_on_flags(normalized: dict[str, bool]) -> dict[str, bool]:
+    """一次性迁移旧源码态运行配置，让新默认开启项不被历史 false 压住。
+
+    迁移只在源码态默认配置文件上执行；写入 marker 后，用户后续手动关闭这些开关
+    会继续保留，不会被每次启动强行改回开启。
+    """
+
+    if getattr(sys, "frozen", False) or DEFAULT_ON_MIGRATION_MARKER_FILE.exists():
+        return normalized
+
+    migrated = dict(normalized)
+    changed = False
+    for key in DEFAULT_ON_MIGRATION_KEYS:
+        if migrated.get(key) is not True:
+            migrated[key] = True
+            changed = True
+
+    try:
+        if changed:
+            atomic_write_json(FEATURE_FLAGS_FILE, migrated, ensure_ascii=False, indent=2)
+        atomic_write_json(
+            DEFAULT_ON_MIGRATION_MARKER_FILE,
+            {"version": 2, "default_on_keys": list(DEFAULT_ON_MIGRATION_KEYS)},
+            ensure_ascii=False,
+            indent=2,
+        )
+    except OSError:
+        return migrated
+    return migrated
+
+
 def load_ui_feature_flags(path: str | Path | None = None) -> dict[str, bool]:
     """读取 UI 功能开关；文件缺失或损坏时返回安全默认值。"""
 
@@ -49,7 +87,10 @@ def load_ui_feature_flags(path: str | Path | None = None) -> dict[str, bool]:
         payload = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return dict(DEFAULT_UI_FEATURE_FLAGS)
-    return normalize_ui_feature_flags(payload)
+    normalized = normalize_ui_feature_flags(payload)
+    if path is None:
+        return _migrate_source_default_on_flags(normalized)
+    return normalized
 
 
 def save_ui_feature_flags(flags: Mapping[str, Any], path: str | Path | None = None) -> dict[str, bool]:

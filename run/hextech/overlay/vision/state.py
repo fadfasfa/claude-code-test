@@ -17,6 +17,7 @@ from hextech.overlay.vision.matcher import SlotCandidate, candidate_from_slot, u
 SCENE_ENTER_FRAMES = 2  # 场景连续出现 N 帧后判定为"进入"
 SCENE_EXIT_FRAMES = 2   # 场景连续消失 N 帧后判定为"退出"
 SLOT_COUNT = 3          # 海克斯三选一槽位数
+RESIDUE_HOLD_FRAMES = 2  # 鼠标/残影遮挡只短暂沿用，避免选择结束后长时间残留
 
 
 @dataclass
@@ -52,6 +53,7 @@ class SelectionTracker:
     scene_exit_frames: int = SCENE_EXIT_FRAMES
     body_shard_latched: bool = False   # 锻体碎片场景锁定中
     body_shard_absent_frames: int = 0  # 锻体场景消失帧计数（退出防抖）
+    residue_hold_frames: int = 0       # 非真实场景下沿用上一帧的连续帧数
     slots: list[_SlotTrack] = field(default_factory=lambda: [_SlotTrack() for _ in range(SLOT_COUNT)])
 
     def reset(self) -> None:
@@ -60,6 +62,7 @@ class SelectionTracker:
         self.scene_active = False
         self.body_shard_latched = False
         self.body_shard_absent_frames = 0
+        self.residue_hold_frames = 0
         for slot in self.slots:
             slot.clear()
 
@@ -168,7 +171,7 @@ class SelectionTracker:
             rendered_slots,
             source_tag="vision-sidecar",
             selection_type="hextech",
-            active=bool(self.scene_active and ready_slots >= 1),
+            active=bool(self.scene_active and ready_slots == SLOT_COUNT),
         )
         event["source"].update(
             {
@@ -259,10 +262,14 @@ class SelectionTracker:
             and sum(bool(value) for value in name_residue[:SLOT_COUNT]) >= 2
         )
         if hover_occluded or scene_residue_hold:
-            self.absent_frames = 0
-            return self._residue_event(source, hover_occluded=hover_occluded)
+            self.residue_hold_frames += 1
+            if self.residue_hold_frames <= max(1, int(RESIDUE_HOLD_FRAMES)):
+                self.absent_frames = 0
+                return self._residue_event(source, hover_occluded=hover_occluded)
+            return self.block("hover_occluded_expired" if hover_occluded else "scene_residue_expired")
 
         if scene_present:
+            self.residue_hold_frames = 0
             self.absent_frames = 0
             if self.scene_frames == 0 and not self.scene_active:
                 self.epoch += 1
@@ -273,6 +280,7 @@ class SelectionTracker:
                 self.scene_active = True
         else:
             self.scene_frames = 0
+            self.residue_hold_frames = 0
             self.absent_frames += 1
             if self.absent_frames >= max(1, int(self.scene_exit_frames)):
                 self.reset()
@@ -317,7 +325,7 @@ class SelectionTracker:
             rendered_slots,
             source_tag="vision-sidecar",
             selection_type="hextech",
-            active=bool(self.scene_active and ready_slots >= 1),
+            active=bool(self.scene_active and ready_slots == SLOT_COUNT),
         )
         scene_state = "active" if self.scene_active else "candidate"
         event["source"].update(

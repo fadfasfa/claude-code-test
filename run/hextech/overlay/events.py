@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from hextech.overlay.hints import normalize_augment_id, normalize_augment_name
 from hextech.overlay.runtime_paths import overlay_runtime_state_path
 from hextech.support.atomic_io import atomic_write_json
 
@@ -98,13 +99,21 @@ def _lookup_hint(augment_id: str, name: str, hint_cache: Mapping[str, Any] | Non
     hints = hint_cache.get("hints") if isinstance(hint_cache, Mapping) else None
     if not isinstance(hints, Mapping):
         return {}
-    hint = hints.get(augment_id)
+    id_candidates = [augment_id, normalize_augment_id(augment_id), normalize_augment_name(augment_id)]
+    hint = next((hints.get(candidate) for candidate in id_candidates if candidate and isinstance(hints.get(candidate), Mapping)), None)
     if not isinstance(hint, Mapping) and name:
         name_index = hint_cache.get("name_index")
         if isinstance(name_index, Mapping):
-            hinted_id = name_index.get(name)
+            hinted_id = next(
+                (
+                    name_index.get(candidate)
+                    for candidate in (name, normalize_augment_id(name), normalize_augment_name(name))
+                    if candidate and name_index.get(candidate)
+                ),
+                "",
+            )
             if hinted_id:
-                hint = hints.get(str(hinted_id))
+                hint = hints.get(str(hinted_id)) or hints.get(normalize_augment_id(hinted_id))
     return hint if isinstance(hint, Mapping) else {}
 
 

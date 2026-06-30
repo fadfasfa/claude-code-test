@@ -197,12 +197,18 @@ def build_name_to_icon(manifest: list[dict[str, Any]], raw_items: list[dict[str,
     return dict(sorted(mapping.items(), key=lambda item: normalize_augment_name(item[0])))
 
 
-def _download_one(entry: Mapping[str, Any], *, force: bool, timeout: float) -> dict[str, Any]:
+def _download_one(
+    entry: Mapping[str, Any],
+    *,
+    force: bool,
+    timeout: float,
+    asset_dir: Path = ASSET_DIR,
+) -> dict[str, Any]:
     filename = str(entry.get("filename") or "").strip()
     url = str(entry.get("source_icon_url") or "").strip()
     if not filename or not url:
         return {"name": entry.get("name"), "filename": filename, "status": "skipped", "reason": "missing_url_or_filename"}
-    target = ASSET_DIR / filename
+    target = asset_dir / filename
     if target.exists() and target.stat().st_size > 0 and not force:
         return {"name": entry.get("name"), "filename": filename, "status": "cached"}
     response = requests.get(url, timeout=timeout)
@@ -210,14 +216,21 @@ def _download_one(entry: Mapping[str, Any], *, force: bool, timeout: float) -> d
     content = response.content
     if not content:
         raise ValueError("empty icon response")
-    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    asset_dir.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(f".{target.name}.tmp")
     tmp.write_bytes(content)
     tmp.replace(target)
     return {"name": entry.get("name"), "filename": filename, "status": "downloaded", "bytes": len(content)}
 
 
-def download_icons(manifest: list[dict[str, Any]], *, force: bool, max_workers: int, timeout: float) -> list[dict[str, Any]]:
+def download_icons(
+    manifest: list[dict[str, Any]],
+    *,
+    force: bool,
+    max_workers: int,
+    timeout: float,
+    asset_dir: Path = ASSET_DIR,
+) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     unique_entries: dict[str, Mapping[str, Any]] = {}
     for entry in manifest:
@@ -226,7 +239,7 @@ def download_icons(manifest: list[dict[str, Any]], *, force: bool, max_workers: 
             unique_entries[filename] = entry
     with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
         futures = [
-            pool.submit(_download_one, entry, force=force, timeout=timeout)
+            pool.submit(_download_one, entry, force=force, timeout=timeout, asset_dir=asset_dir)
             for entry in unique_entries.values()
         ]
         for future in as_completed(futures):
@@ -237,34 +250,52 @@ def download_icons(manifest: list[dict[str, Any]], *, force: bool, max_workers: 
     return results
 
 
-def sync_cdragon_augments(*, download: bool, force_icons: bool, max_workers: int, timeout: float) -> dict[str, Any]:
+def sync_cdragon_augments(
+    *,
+    download: bool,
+    force_icons: bool,
+    max_workers: int,
+    timeout: float,
+    asset_dir: Path = ASSET_DIR,
+    catalog_path: Path = CATALOG_PATH,
+    static_dir: Path = STATIC_DIR,
+) -> dict[str, Any]:
     with requests.Session() as session:
         raw_items = fetch_cherry_augments(session, timeout=timeout)
     manifest = build_manifest(raw_items)
     name_to_icon = build_name_to_icon(manifest, raw_items)
     ambiguous_names = _ambiguous_name_groups(manifest)
 
-    icon_results = download_icons(manifest, force=force_icons, max_workers=max_workers, timeout=timeout) if download else []
+    icon_results = (
+        download_icons(
+            manifest,
+            force=force_icons,
+            max_workers=max_workers,
+            timeout=timeout,
+            asset_dir=asset_dir,
+        )
+        if download
+        else []
+    )
     failed_icons = [item for item in icon_results if item.get("status") == "failed"]
     missing_local_icons = [
         entry["filename"]
         for entry in manifest
-        if entry.get("filename") and not (ASSET_DIR / str(entry["filename"])).exists()
+        if entry.get("filename") and not (asset_dir / str(entry["filename"])).exists()
     ]
     for entry in manifest:
         if entry.get("filename") in missing_local_icons:
             entry["status"] = "missing_icon"
 
-    STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    static_dir.mkdir(parents=True, exist_ok=True)
     catalog_payload = {
         "schema_version": 1,
         "description": "海克斯名称、tier、图标文件、URL 和 apexlol slug 的统一目录。",
         "entries": manifest,
         "name_to_icon": name_to_icon,
-        "apexlol_slug_map": load_apexlol_slug_map(STATIC_DIR),
+        "apexlol_slug_map": load_apexlol_slug_map(static_dir),
     }
-    atomic_write_json(CATALOG_PATH, catalog_payload, ensure_ascii=False, indent=2)
+    atomic_write_json(catalog_path, catalog_payload, ensure_ascii=False, indent=2)
 
     coverage = {}
     by_name = {entry["name"]: entry for entry in manifest}
@@ -274,7 +305,7 @@ def sync_cdragon_augments(*, download: bool, force_icons: bool, max_workers: int
             "found": bool(entry),
             "filename": str(entry.get("filename") or "") if entry else "",
             "tier": str(entry.get("tier") or "") if entry else "",
-            "local_icon": bool(entry and entry.get("filename") and (ASSET_DIR / str(entry["filename"])).exists()),
+            "local_icon": bool(entry and entry.get("filename") and (asset_dir / str(entry["filename"])).exists()),
         }
 
     status_counts: dict[str, int] = {}
@@ -295,7 +326,7 @@ def sync_cdragon_augments(*, download: bool, force_icons: bool, max_workers: int
         "ambiguous_name_count": len(ambiguous_names),
         "ambiguous_name_sample": dict(list(ambiguous_names.items())[:20]),
         "coverage": coverage,
-        "catalog_path": str(CATALOG_PATH),
+        "catalog_path": str(catalog_path),
     }
 
 

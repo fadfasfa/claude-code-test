@@ -139,8 +139,9 @@ def _evaluate_sample(
     *,
     template_index: Sequence[overlay_vision_sidecar.TemplateEntry],
     min_confidence: float,
+    run_dir: Path = RUN_DIR,
 ) -> dict[str, Any]:
-    frame_path = RUN_DIR / str(sample["frame"])
+    frame_path = run_dir / str(sample["frame"])
     if not frame_path.is_file():
         return {
             "id": sample["id"],
@@ -306,8 +307,9 @@ def _evaluate_name_roi_sample(
     sample: Mapping[str, Any],
     *,
     template_index: Sequence[overlay_vision_sidecar.TemplateEntry],
+    run_dir: Path = RUN_DIR,
 ) -> dict[str, Any]:
-    paths = [RUN_DIR / str(item) for item in sample["name_crops"]]
+    paths = [run_dir / str(item) for item in sample["name_crops"]]
     missing_paths = [str(path) for path in paths if not path.is_file()]
     if missing_paths:
         return {
@@ -357,7 +359,13 @@ def _evaluate_name_roi_sample(
     }
 
 
-def evaluate_truth(path: Path, *, min_confidence: float) -> dict[str, Any]:
+def evaluate_truth(
+    path: Path,
+    *,
+    min_confidence: float,
+    base_dir: Path = RUN_DIR,
+    run_dir: Path = RUN_DIR,
+) -> dict[str, Any]:
     """加载真值 → 逐帧运行 sidecar 匹配 → 对比结果 → 生成评测报告。
 
     评测维度：
@@ -369,14 +377,14 @@ def evaluate_truth(path: Path, *, min_confidence: float) -> dict[str, Any]:
     """
     samples = _load_truth(path)
     name_roi_samples = _load_name_roi_truth(path)
-    template_index = overlay_vision_sidecar.load_default_template_index(RUN_DIR)
+    template_index = overlay_vision_sidecar.load_default_template_index(base_dir)
     overlay_vision_sidecar._rank_matrices(template_index)
     results = [
-        _evaluate_sample(sample, template_index=template_index, min_confidence=min_confidence)
+        _evaluate_sample(sample, template_index=template_index, min_confidence=min_confidence, run_dir=run_dir)
         for sample in samples
     ]
     name_roi_results = [
-        _evaluate_name_roi_sample(sample, template_index=template_index)
+        _evaluate_name_roi_sample(sample, template_index=template_index, run_dir=run_dir)
         for sample in name_roi_samples
     ]
     evaluated = [result for result in results if result["status"] == "evaluated"]
@@ -559,12 +567,14 @@ def _print_text_summary(summary: Mapping[str, Any]) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="评测 overlay 视觉匹配在真机转储帧上的 top1 命中率。")
     parser.add_argument("--truth", type=Path, default=DEFAULT_TRUTH_PATH, help="真值 JSON 路径。")
+    parser.add_argument("--base-dir", type=Path, default=RUN_DIR, help="模板和资源根目录，默认当前 run。")
+    parser.add_argument("--run-dir", type=Path, default=RUN_DIR, help="真机样本相对路径根目录，默认当前 run。")
     parser.add_argument("--min-confidence", type=float, default=overlay_vision_sidecar.DEFAULT_MIN_CONFIDENCE)
     parser.add_argument("--require-existing", action="store_true", help="缺少 runtime frame 时返回失败。")
     parser.add_argument("--json", action="store_true", help="输出完整 JSON。")
     args = parser.parse_args(argv)
 
-    summary = evaluate_truth(args.truth, min_confidence=args.min_confidence)
+    summary = evaluate_truth(args.truth, min_confidence=args.min_confidence, base_dir=args.base_dir, run_dir=args.run_dir)
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     else:

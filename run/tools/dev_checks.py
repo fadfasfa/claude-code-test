@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory, mkstemp
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from unittest.mock import patch
 from urllib.parse import quote
 
@@ -201,9 +201,50 @@ def check_python_runtime_guard_contract() -> None:
     assert ".venv" in (RUN_DIR / ".gitignore").read_text(encoding="utf-8")
 
     runtime_text = (RUN_DIR / "hextech" / "support" / "python_runtime.py").read_text(encoding="utf-8")
-    assert '["py", "-3.11"]' not in runtime_text
+    assert 'return [["py", "-3.11"]]' in runtime_text
+    assert "bootstrap_default_venv" in runtime_text
+    assert "创建 Python 3.11 虚拟环境" in runtime_text
+    assert 'install", "-r", str(requirements)' in runtime_text
     assert "DEFAULT_VENV_DIR" in runtime_text
     assert "PACKAGING_RUNTIME_PACKAGES" in runtime_text
+
+    with TemporaryDirectory() as temp_dir:
+        fake_venv_dir = Path(temp_dir) / ".venv"
+        fake_venv_python = fake_venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        bootstrap_commands: list[list[str]] = []
+        missing_sequence = iter((["scrapling"], []))
+
+        def fake_probe(command: Sequence[str], **_: object) -> tuple[int, int] | None:
+            command_list = list(command)
+            if command_list == python_runtime._creator_candidates()[0]:
+                return python_runtime.REQUIRED_PYTHON
+            if command_list == [str(fake_venv_python)]:
+                return python_runtime.REQUIRED_PYTHON
+            return None
+
+        def fake_missing(command: Sequence[str], packages: Sequence[str]) -> list[str]:
+            assert list(command) == [str(fake_venv_python)]
+            assert tuple(packages) == ("scrapling",)
+            return next(missing_sequence)
+
+        def fake_run(command: Sequence[str], **_: object) -> subprocess.CompletedProcess[str]:
+            bootstrap_commands.append([str(part) for part in command])
+            return subprocess.CompletedProcess(list(command), 0)
+
+        with (
+            patch.object(python_runtime, "DEFAULT_VENV_DIR", fake_venv_dir),
+            patch.object(python_runtime, "default_venv_python_path", return_value=fake_venv_python),
+            patch.object(python_runtime, "probe_python_version", side_effect=fake_probe),
+            patch.object(python_runtime, "missing_required_imports", side_effect=fake_missing),
+            patch.object(python_runtime.subprocess, "run", side_effect=fake_run),
+        ):
+            assert python_runtime.bootstrap_default_venv(require_packages=("scrapling",)) == [str(fake_venv_python)]
+
+        assert bootstrap_commands == [
+            [*python_runtime._creator_candidates()[0], "-m", "venv", str(fake_venv_dir)],
+            [str(fake_venv_python), "-m", "pip", "install", "--upgrade", "pip"],
+            [str(fake_venv_python), "-m", "pip", "install", "-r", str(RUN_DIR / "requirements.txt")],
+        ]
 
     dev_checks_text = (RUN_DIR / "tools" / "dev_checks.py").read_text(encoding="utf-8")
     guard_index = dev_checks_text.index("ensure_python_311_for_source()")
@@ -990,6 +1031,38 @@ def check_detail_renders_before_deferred_icon_catalog() -> None:
 def check_heal_worker_contract() -> None:
     assert hasattr(heal_worker, "heal_missing_artifacts")
     assert hasattr(heal_worker, "detect_missing_artifacts")
+    with TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
+        with (
+            patch.object(heal_worker, "LOCK_FILE", Path(temp_dir) / "heal.lock"),
+            patch.object(heal_worker, "_write_startup_status"),
+            patch.object(heal_worker, "_latest_csv_fresh", return_value=True),
+            patch.object(heal_worker, "_core_data_ready", return_value=True),
+            patch.object(heal_worker, "_augment_manifest_ready", return_value=True),
+            patch.object(heal_worker, "_file_is_fresh", return_value=True),
+            patch.object(heal_worker, "_image_assets_ready", return_value=True),
+            patch.object(heal_worker, "is_augment_icon_prefetch_ready", return_value=True),
+            patch.object(heal_worker, "get_latest_csv", return_value="Hextech_Data_2026-06-30.csv"),
+            patch.object(heal_worker, "get_latest_valid_csv", return_value="Hextech_Data_2026-06-30.csv"),
+            patch.object(heal_worker, "hextech_refresh_blocked", return_value=False),
+            patch.object(heal_worker, "_heal_champion_core", return_value=True),
+            patch.object(heal_worker, "_heal_hero_rankings", return_value=True),
+            patch.object(heal_worker, "_heal_augment_catalog", return_value=True),
+            patch.object(heal_worker, "_heal_images", return_value=True),
+        ):
+            missing = heal_worker.detect_missing_artifacts()
+            assert "synergy_data" not in missing
+            report = heal_worker.heal_missing_artifacts(force=True)
+            for field in ("requested", "repaired", "failed"):
+                assert "synergy_data" not in report[field]
+
+        with (
+            patch.object(heal_worker, "heal_missing_artifacts", return_value={"requested": ["hextech_rankings"], "repaired": [], "failed": []}),
+            patch(
+                "hextech.scraping.synergy.mayhem_refresh.run_mayhem_refresh",
+                side_effect=RuntimeError("mayhem diagnostic failure"),
+            ),
+        ):
+            assert orchestrator.refresh_backend_data(force=False) is True
 
 
 def _write_runtime_csv(path: Path, row_count: int = 300) -> None:
@@ -1144,7 +1217,6 @@ def check_hextech_cooldown_and_heal_fallback() -> None:
 
     missing = {
         "hextech_rankings": True,
-        "synergy_data": False,
         "augment_catalog": False,
         "champion_core": False,
         "images": False,
@@ -1636,10 +1708,49 @@ def check_ui_feature_flags_contract() -> None:
         assert parsed["web_frontend_enabled"] is True
         assert parsed["auto_open_browser"] is True
 
+    with TemporaryDirectory() as tmp_dir:
+        flags_path = Path(tmp_dir) / "ui_feature_flags.json"
+        marker_path = Path(tmp_dir) / "ui_feature_flags.defaults.v2.json"
+        flags_path.write_text(
+            json.dumps(
+                {
+                    "web_frontend_enabled": False,
+                    "game_overlay_enabled": False,
+                    "auto_open_browser": True,
+                    "private_policy_stats_enabled": False,
+                    "low_frequency_listener_enabled": False,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        with (
+            patch.object(ui_feature_flags, "FEATURE_FLAGS_FILE", flags_path),
+            patch.object(ui_feature_flags, "DEFAULT_ON_MIGRATION_MARKER_FILE", marker_path),
+            patch.object(ui_feature_flags.sys, "frozen", False, create=True),
+        ):
+            migrated = ui_feature_flags.load_ui_feature_flags()
+            assert migrated["web_frontend_enabled"] is False
+            assert migrated["game_overlay_enabled"] is True
+            assert migrated["private_policy_stats_enabled"] is False
+            assert migrated["low_frequency_listener_enabled"] is True
+            assert marker_path.exists()
+
+            ui_feature_flags.save_ui_feature_flags(
+                {**migrated, "game_overlay_enabled": False, "private_policy_stats_enabled": False},
+                flags_path,
+            )
+            preserved = ui_feature_flags.load_ui_feature_flags()
+            assert preserved["game_overlay_enabled"] is False
+            assert preserved["private_policy_stats_enabled"] is False
+
 
 def check_overlay_hint_cache_contract() -> None:
     """验证 overlay hint cache 可直接查询，且默认不暴露私用统计字段。"""
     import hextech.overlay.hints as overlay_hint_cache
+    import hextech.overlay.events as overlay_event_channel
+    import hextech.overlay.renderer as overlay_renderer
     import hextech.core.settings as core_settings
     import hextech.catalog.precomputed_cache as precomputed_cache
     import hextech.scraping.augment_catalog as augment_catalog
@@ -1679,7 +1790,7 @@ def check_overlay_hint_cache_contract() -> None:
         }
     }
     sample_synergy = {
-        "珠光护手": [
+        "珠光：护手": [
             {
                 "hero_id": "266",
                 "hero_name": "暗裔剑魔",
@@ -1711,6 +1822,14 @@ def check_overlay_hint_cache_contract() -> None:
     # synergy 与私用统计无关，公共缓存也按 augment 名命中
     assert public_hint["hint"].get("synergies"), "公共缓存应保留按名命中的 synergy"
     assert public_hint["hint"]["synergies"][0]["hero_name"] == "暗裔剑魔"
+    assert overlay_hint_cache.query_overlay_hint(public_cache, "珠光：护手")["ok"] is True
+    normalized_event = overlay_event_channel.build_overlay_event(
+        [{"slot": 0, "name": "珠光：护手", "state": "ready"}],
+        hint_cache=public_cache,
+    )
+    assert normalized_event["slots"][0]["augment_id"] == "augment_001"
+    render_model = overlay_renderer.build_render_model(normalized_event, hint_cache=public_cache, context=None)
+    assert render_model["stats"][0]["name"] == "珠光护手"
 
     private_cache = overlay_hint_cache.build_overlay_hint_cache(
         sample_payload,
@@ -2285,7 +2404,10 @@ def check_overlay_context_contract() -> None:
         expired_payload = dict(payload)
         expired_payload["generated_at"] = time.time() - overlay_context.CONTEXT_MAX_AGE_SECONDS - 1
         context_path.write_text(json.dumps(expired_payload, ensure_ascii=False), encoding="utf-8")
-        assert overlay_context.read_overlay_context(context_path)["error"] == "context_expired"
+        expired_loaded = overlay_context.read_overlay_context(context_path)
+        assert expired_loaded["error"] == "context_expired"
+        assert expired_loaded["champion_id"] == ""
+        assert expired_loaded["champion_name"] == ""
 
         context_path.write_text("not-json", encoding="utf-8")
         assert overlay_context.read_overlay_context(context_path)["error"] == "context_damaged"
@@ -2425,6 +2547,143 @@ def check_overlay_context_contract() -> None:
         assert fetch_calls and fetch_calls[0][0].endswith("/lol-champ-select/v1/session")
         assert "secret-token" not in context_path.read_text(encoding="utf-8")
 
+        assert overlay_context.write_current_lcu_overlay_context_once(
+            credential_provider=lambda: (None, None),
+            fetch_response=fake_fetch,
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔"}},
+            context_path=context_path,
+        ) is False
+        preserved_unavailable = overlay_context.read_overlay_context(context_path)
+        assert preserved_unavailable["ok"] is True
+        assert preserved_unavailable["champion_id"] == "266"
+        assert preserved_unavailable["source"] == "lcu"
+
+        class NoSessionResponse:
+            status_code = 404
+
+            def json(self) -> dict[str, Any]:
+                return {}
+
+        assert overlay_context.write_current_lcu_overlay_context_once(
+            credential_provider=lambda: ("12345", "secret-token"),
+            fetch_response=lambda _url, _headers: NoSessionResponse(),
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔"}},
+            context_path=context_path,
+        ) is False
+        preserved_no_session = overlay_context.read_overlay_context(context_path)
+        assert preserved_no_session["ok"] is True
+        assert preserved_no_session["champion_id"] == "266"
+        assert preserved_no_session["source"] == "lcu"
+
+        old_valid_payload = overlay_context.build_overlay_context_payload(
+            champion_id=266,
+            champion_name="暗裔剑魔",
+            source="lcu",
+        )
+        old_valid_payload["generated_at"] = time.time() - 3600
+        overlay_context.write_overlay_context(old_valid_payload, context_path)
+        assert overlay_context.write_current_lcu_overlay_context_once(
+            credential_provider=lambda: (None, None),
+            fetch_response=fake_fetch,
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔"}},
+            context_path=context_path,
+        ) is False
+        old_unavailable_missing = overlay_context.read_overlay_context(context_path)
+        assert old_unavailable_missing["ok"] is False
+        assert old_unavailable_missing["error"] == "context_missing"
+        assert old_unavailable_missing["champion_id"] == ""
+        assert old_unavailable_missing["source"] == "lcu-unavailable"
+
+        old_valid_payload["generated_at"] = time.time() - 3600
+        overlay_context.write_overlay_context(old_valid_payload, context_path)
+        assert overlay_context.write_current_lcu_overlay_context_once(
+            credential_provider=lambda: ("12345", "secret-token"),
+            fetch_response=lambda _url, _headers: NoSessionResponse(),
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔"}},
+            context_path=context_path,
+        ) is False
+        old_no_session_missing = overlay_context.read_overlay_context(context_path)
+        assert old_no_session_missing["ok"] is False
+        assert old_no_session_missing["error"] == "context_missing"
+        assert old_no_session_missing["champion_id"] == ""
+        assert old_no_session_missing["source"] == "lcu-no-session"
+
+        class LiveActivePlayerResponse:
+            status_code = 200
+
+            def json(self) -> dict[str, Any]:
+                return {"championName": "Aatrox"}
+
+        assert overlay_context.write_current_live_client_overlay_context_once(
+            fetch_response=lambda _url, _headers: LiveActivePlayerResponse(),
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔", "title": "亚托克斯", "en_name": "Aatrox", "aliases": ["剑魔"]}},
+            context_path=context_path,
+        ) is True
+        live_loaded = overlay_context.read_overlay_context(context_path)
+        assert live_loaded["ok"] is True
+        assert live_loaded["champion_id"] == "266"
+        assert live_loaded["champion_name"] == "Aatrox"
+        assert live_loaded["source"] == "live-client-data"
+
+        class LiveApostropheChampionResponse:
+            status_code = 200
+
+            def json(self) -> dict[str, Any]:
+                return {"championName": "K'Sante"}
+
+        assert overlay_context.write_current_live_client_overlay_context_once(
+            fetch_response=lambda _url, _headers: LiveApostropheChampionResponse(),
+            core_data_loader=lambda: {"897": {"name": "纳祖芒荣耀", "title": "奎桑提", "en_name": "KSante"}},
+            context_path=context_path,
+        ) is True
+        ksante_loaded = overlay_context.read_overlay_context(context_path)
+        assert ksante_loaded["ok"] is True
+        assert ksante_loaded["champion_id"] == "897"
+        assert ksante_loaded["champion_name"] == "K'Sante"
+
+        class LiveAllGameDataResponse:
+            status_code = 200
+
+            def json(self) -> dict[str, Any]:
+                return {
+                    "activePlayer": {"summonerName": "LocalPlayer"},
+                    "allPlayers": [
+                        {"summonerName": "OtherPlayer", "championName": "Ahri"},
+                        {"summonerName": "LocalPlayer", "championName": "Aatrox"},
+                    ],
+                }
+
+        assert overlay_context.write_current_live_client_overlay_context_once(
+            fetch_response=lambda url, _headers: LiveAllGameDataResponse()
+            if url.endswith("/liveclientdata/allgamedata")
+            else NoSessionResponse(),
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔", "title": "亚托克斯", "en_name": "Aatrox", "aliases": ["剑魔"]}},
+            context_path=context_path,
+        ) is True
+        all_game_loaded = overlay_context.read_overlay_context(context_path)
+        assert all_game_loaded["ok"] is True
+        assert all_game_loaded["champion_id"] == "266"
+        assert all_game_loaded["champion_name"] == "Aatrox"
+        assert all_game_loaded["source"] == "live-client-data"
+
+        class UnknownLiveChampionResponse:
+            status_code = 200
+
+            def json(self) -> dict[str, Any]:
+                return {"activePlayer": {"championName": "Unknown Champion"}}
+
+        assert overlay_context.write_current_live_client_overlay_context_once(
+            fetch_response=lambda _url, _headers: UnknownLiveChampionResponse(),
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔", "title": "亚托克斯", "en_name": "Aatrox", "aliases": ["剑魔"]}},
+            context_path=context_path,
+        ) is False
+        unknown_live_loaded = overlay_context.read_overlay_context(context_path)
+        assert unknown_live_loaded["ok"] is False
+        assert unknown_live_loaded["error"] == "context_unmapped_champion"
+        assert unknown_live_loaded["champion_id"] == ""
+        assert unknown_live_loaded["champion_name"] == "Unknown Champion"
+        assert unknown_live_loaded["source"] == "live-client-data"
+
         with (
             patch.object(overlay_context, "write_overlay_context") as stopped_write_context,
             patch.object(overlay_context, "write_missing_overlay_context") as stopped_write_missing,
@@ -2447,21 +2706,58 @@ def check_overlay_context_contract() -> None:
 
         assert overlay_context.write_current_lcu_overlay_context_once(
             credential_provider=lambda: ("12345", "secret-token"),
+            fetch_response=lambda url, _headers: LiveActivePlayerResponse()
+            if url.endswith("/liveclientdata/activeplayer")
+            else ZeroChampionResponse(),
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔", "title": "亚托克斯", "en_name": "Aatrox", "aliases": ["剑魔"]}},
+            context_path=context_path,
+        ) is True
+        zero_fallback_loaded = overlay_context.read_overlay_context(context_path)
+        assert zero_fallback_loaded["ok"] is True
+        assert zero_fallback_loaded["champion_id"] == "266"
+        assert zero_fallback_loaded["source"] == "live-client-data"
+
+        assert overlay_context.write_current_lcu_overlay_context_once(
+            credential_provider=lambda: ("12345", "secret-token"),
             fetch_response=lambda _url, _headers: ZeroChampionResponse(),
             core_data_loader=lambda: {"266": {"name": "暗裔剑魔"}},
             context_path=context_path,
         ) is False
         zero_loaded = overlay_context.read_overlay_context(context_path)
-        assert zero_loaded["ok"] is False
-        assert zero_loaded["error"] == "context_missing"
-        assert zero_loaded["champion_id"] == ""
-        assert zero_loaded["source"] == "lcu"
+        assert zero_loaded["ok"] is True
+        assert zero_loaded["champion_id"] == "266"
+        assert zero_loaded["source"] == "live-client-data"
+
+        stale_live_payload = overlay_context.build_overlay_context_payload(
+            champion_id=266,
+            champion_name="Aatrox",
+            source="live-client-data",
+        )
+        stale_live_payload["generated_at"] = time.time() - 3600
+        overlay_context.write_overlay_context(stale_live_payload, context_path)
+        assert overlay_context.write_current_lcu_overlay_context_once(
+            credential_provider=lambda: ("12345", "secret-token"),
+            fetch_response=lambda _url, _headers: ZeroChampionResponse(),
+            core_data_loader=lambda: {"266": {"name": "暗裔剑魔"}},
+            context_path=context_path,
+        ) is False
+        stale_zero_loaded = overlay_context.read_overlay_context(context_path)
+        assert stale_zero_loaded["ok"] is False
+        assert stale_zero_loaded["error"] == "context_missing"
+        assert stale_zero_loaded["champion_id"] == ""
+        assert stale_zero_loaded["source"] == "lcu-no-champion"
         assert "266" not in context_path.read_text(encoding="utf-8")
         assert overlay_context.OverlayContextPoller.stop.__defaults__ == (4.0,)
 
         context_module_text = (RUN_DIR / "hextech" / "overlay" / "context.py").read_text(encoding="utf-8")
         assert "should_write=lambda: not stop_event.is_set()" in context_module_text
         assert "if should_write is not None and not should_write():" in context_module_text
+        assert "_PRESERVE_VALID_CONTEXT_ON_MISSING_SOURCES" in context_module_text
+        assert "PRESERVE_CONTEXT_ON_MISSING_MAX_AGE_SECONDS" in context_module_text
+        assert "write_current_live_client_overlay_context_once" in context_module_text
+        assert "allPlayers" in context_module_text
+        assert "context_unmapped_champion" in context_module_text
+        assert "lcu-no-session" in context_module_text
         assert "@lru_cache(maxsize=256)" in context_module_text
 
         class DummyServiceManager:
@@ -2496,15 +2792,15 @@ def check_overlay_context_contract() -> None:
                 running_ui,
                 {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
                 source="web",
-            ) is False
-            mocked_write_context.assert_not_called()
+            ) is True
+            assert mocked_write_context.call_count == 1
             assert ui_runtime._write_overlay_context_from_live_state(
                 running_ui,
                 {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
                 source="web",
                 context_path=context_path,
             ) is True
-            mocked_write_context.assert_called_once()
+            assert mocked_write_context.call_count == 2
 
     module_text = (RUN_DIR / "hextech" / "overlay" / "context.py").read_text(encoding="utf-8").lower()
     forbidden_terms = ["fastapi", "web_api", "web_runtime", "full_hextech_scraper", "auth.json"]
@@ -2754,7 +3050,49 @@ def check_overlay_vision_sidecar_contract() -> None:
     # 纯色模板没有形状指纹，应被剔除而不是留下假阳性源。
     assert overlay_vision_sidecar.build_template_index(
         {"flat": {"name": "平坦模板", "image": Image.new("RGB", (72, 72), "#2f6fed")}}
-    ) == []
+    )[0].name == "平坦模板"
+
+    multi_icon_index = overlay_vision_sidecar.build_template_index(
+        {
+            "same_name": {
+                "name": "同名多图",
+                "images": [
+                    _make_glyph_template("ellipse"),
+                    _make_glyph_template("triangle"),
+                ],
+            }
+        }
+    )
+    assert len(multi_icon_index) == 1
+    assert len(multi_icon_index[0].icon_fingerprints) >= 4
+
+    real_index_without_hints = overlay_vision_sidecar.load_default_template_index(RUN_DIR, hint_cache={})
+    real_index_with_partial_hints = overlay_vision_sidecar.load_default_template_index(
+        RUN_DIR,
+        hint_cache={
+            "schema_version": 1,
+            "generated_at": time.time(),
+            "hints": {
+                "only_one": {
+                    "augment_id": "only_one",
+                    "name": "尤里卡",
+                    "tier": "棱彩",
+                    "summary": "仅用于验证 hint 不缩小模板覆盖。",
+                }
+            },
+            "name_index": {"尤里卡": "only_one"},
+        },
+    )
+    assert len(real_index_with_partial_hints) == len(real_index_without_hints)
+    assert {entry.name for entry in real_index_with_partial_hints} == {
+        entry.name for entry in real_index_without_hints
+    }
+
+    template_audit = overlay_vision_sidecar.audit_default_template_index(RUN_DIR, hint_cache={})
+    assert template_audit["missing_identity_count"] == 0
+    assert template_audit["missing_variant_count"] == 0
+    assert template_audit["template_count"] >= template_audit["identity_count"]
+    assert template_audit["variant_count"] >= template_audit["identity_count"]
 
     text_template_index = overlay_vision_sidecar.build_template_index(
         {
@@ -3223,23 +3561,38 @@ def check_overlay_vision_sidecar_contract() -> None:
     hover_tracker.update(detection)
     hover_stable = hover_tracker.update(detection)
     stable_signature_before_hover = [slot["augment_id"] for slot in hover_stable["slots"]]
-    for _index in range(20):
+    for _index in range(2):
         hover_result = hover_tracker.update(hover_detection)
         assert hover_result["active"] is True
         assert hover_result["source"]["hover_occluded"] is True
         assert [slot["augment_id"] for slot in hover_result["slots"]] == stable_signature_before_hover
+    hover_exit = hover_tracker.update(hover_detection)
+    assert hover_exit["active"] is False
+    assert hover_exit["source"]["selection_window_active"] is False
+    assert hover_exit["source"]["reason"] == "hover_occluded_expired"
 
+    residue_tracker = SelectionTracker()
+    residue_tracker.update(detection)
+    residue_tracker.update(detection)
     hover_detection["source"]["cursor_over_cards"] = False
-    residue_hold = hover_tracker.update(hover_detection)
-    assert residue_hold["active"] is True
-    assert residue_hold["source"]["reason"] == "scene_residue_hold"
-    assert residue_hold["source"]["hover_occluded"] is False
+    for _index in range(2):
+        residue_hold = residue_tracker.update(hover_detection)
+        assert residue_hold["active"] is True
+        assert residue_hold["source"]["reason"] == "scene_residue_hold"
+        assert residue_hold["source"]["hover_occluded"] is False
+    residue_exit = residue_tracker.update(hover_detection)
+    assert residue_exit["active"] is False
+    assert residue_exit["source"]["selection_window_active"] is False
+    assert residue_exit["source"]["reason"] == "scene_residue_expired"
 
     cleared_detection = json.loads(json.dumps(hover_detection, ensure_ascii=False))
     cleared_detection["source"]["card_residue"] = False
     cleared_detection["source"]["name_residue"] = [False, False, False]
-    first_hover_exit = hover_tracker.update(cleared_detection)
-    second_hover_exit = hover_tracker.update(cleared_detection)
+    clean_exit_tracker = SelectionTracker()
+    clean_exit_tracker.update(detection)
+    clean_exit_tracker.update(detection)
+    first_hover_exit = clean_exit_tracker.update(cleared_detection)
+    second_hover_exit = clean_exit_tracker.update(cleared_detection)
     assert first_hover_exit["active"] is True
     assert second_hover_exit["active"] is False
     assert second_hover_exit["source"]["scene_state"] == "absent"
@@ -3248,7 +3601,7 @@ def check_overlay_vision_sidecar_contract() -> None:
     partial_tracker = SelectionTracker()
     partial_tracker.update(partial_detection)
     stable_partial = partial_tracker.update(partial_detection)
-    assert stable_partial["active"] is True
+    assert stable_partial["active"] is False
     assert stable_partial["source"]["ready_slots"] == 2
     assert stable_partial["source"]["content_ready"] is False
     assert stable_partial["slots"][2]["state"] == "detecting"
@@ -3264,6 +3617,7 @@ def check_overlay_vision_sidecar_contract() -> None:
         progressive_tracker.update(progressive_event)
         progressive_result = progressive_tracker.update(progressive_event)
         progressive_results.append(int(progressive_result["source"]["ready_slots"]))
+        assert bool(progressive_result["active"]) is (ready_count == 3)
         assert len(progressive_result["slots"]) == 3
     assert progressive_results == [0, 1, 2, 3]
 
@@ -3373,11 +3727,12 @@ def check_overlay_vision_sidecar_contract() -> None:
     reroll_raw_slots[0]["slot"] = 0
     reroll["_raw_slots"] = reroll_raw_slots
     reroll_first = tracker.update(reroll)
-    assert reroll_first["active"] is True
+    assert reroll_first["active"] is False
     assert reroll_first["source"]["ready_slots"] == 2
     assert reroll_first["slots"][0]["state"] == "detecting"
     assert [slot["augment_id"] for slot in reroll_first["slots"][1:]] == ["augment_b", "augment_c"]
     reroll_ready = tracker.update(reroll)
+    assert reroll_ready["active"] is True
     assert reroll_ready["slots"][0]["augment_id"] == "augment_b"
 
     # 场景/按钮消失两帧后结束 epoch；Tab 与阻塞弹窗必须立即清空。
@@ -3837,6 +4192,22 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert " / sidecar" not in ui_text
     assert 'root.attributes("-alpha", 1.0' in ui_text
     assert "_build_feature_toggle" in ui_text
+    assert 'sticky="ew"' in ui_text
+    assert "self._refresh_feature_toggle_styles()\n            command()" in ui_text
+    assert "_feature_toggle_busy" in ui_text
+    assert "_closing" in ui_text
+    assert "_overlay_operation_lock" in ui_text
+    assert "_game_overlay_desired_enabled" in ui_text
+    assert "_start_tracked_thread" in ui_text
+    assert 'self._feature_toggle_is_busy("游戏内显示")' in ui_text
+    assert "enabled=self._game_overlay_desired_enabled" in ui_text
+    assert "hextech-toggle-web" in ui_text
+    assert "hextech-toggle-overlay" in ui_text
+    assert "hextech-overlay-watchdog" in ui_text
+    assert "hextech-toggle-private-stats" in ui_text
+    assert "正在切换 Web 前端" in ui_text
+    assert "正在启动游戏内显示" in ui_text
+    assert "游戏内显示已启动，等待选择窗口" in ui_text
     assert "WINDOW_EXPANDED_GEOMETRY = \"320x740\"" in ui_text
     assert "GameOverlayController" in ui_text
     assert "overlay_controller=GameOverlayController(" in ui_text
@@ -3872,8 +4243,65 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert hasattr(ui_runtime, "open_companion_browser")
     assert hasattr(ui_runtime, "close_companion_browser")
     private_toggle_body = ui_text.split("    def _toggle_private_policy_stats", 1)[1].split("    def _toggle_low_frequency_listener", 1)[0]
-    assert "self._prepare_overlay_hint_cache()" in private_toggle_body
+    assert "build_overlay_hint_cache_from_precomputed" in private_toggle_body
+    assert "desired_private_stats = bool(self.private_stats_var.get())" in private_toggle_body
+    assert "self._persist_feature_flags_from_controls()" in private_toggle_body
+    assert "save_ui_feature_flags(desired_flags)" not in private_toggle_body
     assert "if not _web_frontend_available(ui):\n            time.sleep(3)\n            continue" not in runtime_text
+
+    class DummyBoolVar:
+        def __init__(self, value: bool):
+            self.value = value
+
+        def get(self) -> bool:
+            return self.value
+
+        def set(self, value: bool) -> None:
+            self.value = bool(value)
+
+    class OverlayStartProbe:
+        def __init__(self):
+            self.start_calls = 0
+
+        def start_game_overlay(self) -> None:
+            self.start_calls += 1
+
+        def stop_game_overlay(self) -> None:
+            return None
+
+        def is_game_overlay_running(self) -> bool:
+            return False
+
+    # 退出标记可能在 toggle 等待 operation lock 时发生；释放后不得再启动 overlay。
+    lifecycle_ui = object.__new__(desktop_app.HextechUI)
+    lifecycle_ui.game_overlay_var = DummyBoolVar(True)
+    lifecycle_ui.service_manager = OverlayStartProbe()
+    lifecycle_ui._overlay_operation_lock = threading.Lock()
+    lifecycle_ui._overlay_operation_lock.acquire()
+    lifecycle_ui._closing = False
+    lifecycle_ui._game_overlay_desired_enabled = False
+    lifecycle_ui._set_feature_toggle_busy = lambda *_args: None
+    lifecycle_ui._set_status = lambda *_args: None
+    lifecycle_ui._persist_feature_flags_from_controls = lambda: None
+    lifecycle_ui._try_persist_feature_flags_from_controls = lambda: None
+    lifecycle_ui._run_on_ui_thread = lambda command: command()
+    lifecycle_ui._raise_if_service_error = lambda _name: None
+    toggle_threads: list[threading.Thread] = []
+
+    def start_toggle_thread(target, *, name: str):
+        thread = threading.Thread(target=target, name=name, daemon=True)
+        toggle_threads.append(thread)
+        thread.start()
+        return thread
+
+    lifecycle_ui._start_tracked_thread = start_toggle_thread
+    lifecycle_ui._toggle_game_overlay()
+    assert toggle_threads and toggle_threads[0].is_alive()
+    lifecycle_ui._closing = True
+    lifecycle_ui._overlay_operation_lock.release()
+    toggle_threads[0].join(timeout=2)
+    assert not toggle_threads[0].is_alive()
+    assert lifecycle_ui.service_manager.start_calls == 0
 
     candidate_groups = {
         "selected_champion_ids": ["1", "2", "3", "4", "5"],
@@ -3899,7 +4327,8 @@ def check_desktop_ui_feature_switch_contract() -> None:
     dummy_ui = type("DummyDesktopUI", (), {})()
     dummy_ui._candidate_groups_from_input = desktop_app.HextechUI._candidate_groups_from_input.__get__(dummy_ui)
     display_list = desktop_app.HextechUI._build_candidate_display_list(dummy_ui, candidate_groups, candidate_df)
-    assert [item["id"] for item in display_list] == ["2", "4", "3", "5", "1", "6", "8", "9", "7", "10"]
+    assert [item["id"] for item in display_list] == ["6", "8", "2", "4", "9", "3", "5", "7", "10", "1"]
+    assert "_group_rank" not in display_list[0]
 
 
 def check_no_legacy_imports() -> None:
@@ -4528,7 +4957,6 @@ def _patch_synergy_dir(temp_dir: str, status: dict | None = None):
     payload = {} if status is None else status
     return (
         patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
-        patch.object(heal_worker, "load_synergy_refresh_status", return_value=payload),
         patch.object(orchestrator, "load_synergy_refresh_status", return_value=payload),
     )
 
@@ -4538,17 +4966,16 @@ def check_synergy_refresh_freshness() -> None:
         _snapshot(temp_dir)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
-            assert not heal_worker._synergy_data_fresh()
+        with patches[0], patches[1], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             assert not orchestrator.auto_synergy_refresh_enabled()
             assert not orchestrator.should_refresh_synergy(False)
-            assert not heal_worker.detect_missing_artifacts()["synergy_data"]
+            assert "synergy_data" not in heal_worker.detect_missing_artifacts()
 
     with TemporaryDirectory() as temp_dir:
         synergy_path = _snapshot(temp_dir)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
+        with patches[0], patches[1], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             write_synergy_refresh_meta(
                 target_path=synergy_path,
                 base_url="https://apexlol.info/zh",
@@ -4557,9 +4984,8 @@ def check_synergy_refresh_freshness() -> None:
                 stats={"heroes": 1, "non_empty_heroes": 1, "synergy_entries": 1},
             )
 
-            assert heal_worker._synergy_data_fresh()
             assert not orchestrator.should_refresh_synergy(False)
-            assert not heal_worker.detect_missing_artifacts()["synergy_data"]
+            assert "synergy_data" not in heal_worker.detect_missing_artifacts()
 
             meta_path = Path(temp_dir) / "Champion_Synergy_latest.v1.json"
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -4572,7 +4998,7 @@ def check_synergy_refresh_freshness() -> None:
         synergy_path = _snapshot(temp_dir, mtime=old_mtime)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
+        with patches[0], patches[1], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             write_synergy_refresh_meta(
                 target_path=synergy_path,
                 base_url="https://apexlol.info/zh",
@@ -4583,9 +5009,8 @@ def check_synergy_refresh_freshness() -> None:
             os.utime(synergy_path, (old_mtime, old_mtime))
             os.utime(Path(temp_dir) / "Champion_Synergy_latest.v1.json", (old_mtime, old_mtime))
 
-            assert not heal_worker._synergy_data_fresh()
             assert not orchestrator.should_refresh_synergy(False)
-            assert not heal_worker.detect_missing_artifacts()["synergy_data"]
+            assert "synergy_data" not in heal_worker.detect_missing_artifacts()
 
     blocked_until = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(timespec="seconds")
     status = {"last_result": "blocked", "blocked_until": blocked_until}
@@ -4594,7 +5019,7 @@ def check_synergy_refresh_freshness() -> None:
         synergy_path = _snapshot(temp_dir, mtime=old_mtime)
 
         patches = _patch_synergy_dir(temp_dir, status=status)
-        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
+        with patches[0], patches[1], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
             write_synergy_refresh_meta(
                 target_path=synergy_path,
                 base_url="https://apexlol.info/zh",
@@ -4605,16 +5030,15 @@ def check_synergy_refresh_freshness() -> None:
             os.utime(synergy_path, (old_mtime, old_mtime))
             os.utime(Path(temp_dir) / "Champion_Synergy_latest.v1.json", (old_mtime, old_mtime))
 
-            assert heal_worker._synergy_data_fresh()
             assert not orchestrator.should_refresh_synergy(False)
 
     with TemporaryDirectory() as temp_dir:
         _snapshot(temp_dir)
 
         patches = _patch_synergy_dir(temp_dir)
-        with patches[0], patches[1], patches[2], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "0"}):
+        with patches[0], patches[1], patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "0"}):
             assert not orchestrator.should_refresh_synergy(True)
-            assert not heal_worker.detect_missing_artifacts()["synergy_data"]
+            assert "synergy_data" not in heal_worker.detect_missing_artifacts()
 
     with TemporaryDirectory() as temp_dir:
         status_path = Path(temp_dir) / "synergy_refresh_status.json"
@@ -4695,6 +5119,8 @@ def check_synergy_snapshot_store() -> None:
 
 def check_mayhem_combo_pipeline_contract() -> None:
     from hextech.scraping.synergy.mayhem_combo_scraper import parse_combo_manifest
+    import hextech.scraping.synergy.mayhem_refresh as mayhem_refresh
+    import tools.clean_mayhem_combos as clean_mayhem_combos
     from tools.clean_mayhem_combos import merge_mayhem_combos
 
     manifest_items, manifest_rejects, manifest_meta = parse_combo_manifest(
@@ -4876,6 +5302,122 @@ def check_mayhem_combo_pipeline_contract() -> None:
         )
         assert empty_summary["written"] is False
         assert json.loads(output_path.read_text(encoding="utf-8")) == sentinel
+
+        cleaned_base = root / "Champion_Synergy_Cleaned.current.json"
+        _write_json(
+            cleaned_base,
+            {
+                "63": {
+                    "id": "63",
+                    "name": "复仇焰魂",
+                    "title": "布兰德",
+                    "en_name": "Brand",
+                    "aliases": [],
+                    "synergies": [
+                        "炼狱导管 | 棱彩 | 作者: ARAMMayhem | 旧 Mayhem 组合。",
+                        "普通备注：可参考 ARAMMayhem 网站的公开讨论。",
+                    ],
+                    "synergy_items": [
+                        {
+                            "augment_names": ["炼狱导管"],
+                            "tier": "棱彩",
+                            "rating": "A",
+                            "tag": "强力联动",
+                            "author": "ARAMMayhem",
+                            "is_original": False,
+                            "content": "旧 Mayhem 组合。",
+                            "upvotes": 0,
+                            "downvotes": 0,
+                            "source": "arammayhem",
+                        }
+                    ],
+                },
+                "64": {
+                    "id": "64",
+                    "name": "永恒梦魇",
+                    "synergies": [
+                        "强化组合 | 金色 | 作者: ARAMMayhem | 历史兼容项。",
+                        "普通备注：可参考 ARAMMayhem 网站的公开讨论。",
+                    ],
+                },
+            },
+        )
+        _write_json(
+            raw_path,
+            {
+                "schema_version": 1,
+                "items": [
+                    {
+                        "champion": "复仇焰魂",
+                        "champion_id": "Brand",
+                        "augment_names": ["Infernal Conduit"],
+                        "mayhem_tier": "神级",
+                        "mayhem_rating": "S+",
+                        "body": "新版 Mayhem 组合。",
+                        "source_url": "https://arammayhem.com/zh-cn/combo/brand-new/",
+                    },
+                ],
+                "rejects": [],
+            },
+        )
+        with (
+            patch.object(clean_mayhem_combos, "build_synergy_cleaned_data_path", return_value=str(cleaned_base)),
+            patch.object(clean_mayhem_combos, "build_raw_synergy_data_path", return_value=str(root / "missing_legacy.json")),
+        ):
+            cleaned_summary = merge_mayhem_combos(
+                mayhem_raw_path=raw_path,
+                augment_manifest_path=augment_manifest_path,
+                core_data_path=core_path,
+            )
+        assert cleaned_summary["base_mode"] == "cleaned_without_mayhem"
+        assert cleaned_summary["removed_existing_mayhem_items"] == 1
+        assert cleaned_summary["added_items"] == 1
+        refreshed = json.loads(cleaned_base.read_text(encoding="utf-8"))
+        refreshed_items = refreshed["63"]["synergy_items"]
+        assert len(refreshed_items) == 1
+        assert refreshed_items[0]["content"] == "新版 Mayhem 组合。"
+        assert len(refreshed["63"]["synergies"]) == 2
+        assert all("旧 Mayhem" not in item for item in refreshed["63"]["synergies"])
+        assert "普通备注：可参考 ARAMMayhem 网站的公开讨论。" in refreshed["63"]["synergies"]
+        assert refreshed["64"]["synergies"] == ["普通备注：可参考 ARAMMayhem 网站的公开讨论。"]
+
+        status_path = root / "mayhem_refresh_status.json"
+        raw_cache_path = root / "runtime_cache_mayhem.raw.json"
+        now = 1_800_000_000.0
+        with (
+            patch.object(mayhem_refresh, "get_mayhem_refresh_status_path", return_value=str(status_path)),
+            patch.object(mayhem_refresh, "get_mayhem_raw_cache_path", return_value=str(raw_cache_path)),
+        ):
+            mayhem_refresh.write_mayhem_refresh_status(result="success", now=now)
+            skipped = mayhem_refresh.run_mayhem_refresh(
+                now=now + 60,
+                scraper=lambda: (_ for _ in ()).throw(AssertionError("未 stale 不应抓取 Mayhem")),
+            )
+            assert skipped["last_result"] == "skipped"
+            assert skipped["reason"] == "not_stale"
+
+            mayhem_refresh.write_mayhem_refresh_status(result="success", reason="old", now=now - 4 * 24 * 60 * 60)
+            rebuilt: list[bool] = []
+            success = mayhem_refresh.run_mayhem_refresh(
+                now=now,
+                scraper=lambda: {"schema_version": 1, "items": [{"ok": True}], "rejects": []},
+                merge=lambda **_kwargs: {"written": True, "added_items": 3},
+                rebuild_hint_cache=lambda: rebuilt.append(True),
+            )
+            assert success["last_result"] == "success"
+            assert success["raw_items"] == 1
+            assert success["added_items"] == 3
+            assert rebuilt == [True]
+            assert json.loads(raw_cache_path.read_text(encoding="utf-8"))["items"]
+
+            failed = mayhem_refresh.run_mayhem_refresh(
+                force=True,
+                now=now + 1,
+                scraper=lambda: {"schema_version": 1, "items": [], "rejects": [{"reason": "empty"}]},
+                merge=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("空 raw 不应清洗发布")),
+            )
+            assert failed["last_result"] == "failed"
+            assert failed["reason"] == "raw_empty"
 
 
 def _core_info() -> dict[str, ChampionInfo]:
@@ -5511,6 +6053,7 @@ def check_game_overlay_module_contract() -> None:
     import hextech.overlay.host as overlay_host
     import hextech.overlay.lifecycle as overlay_lifecycle
     import hextech.overlay.renderer as overlay_renderer
+    import hextech.display.desktop.service_manager as desktop_service_manager
     from hextech.display.desktop.service_manager import ServiceManager
     from hextech.overlay.lifecycle import GameOverlayController
     from hextech.overlay.vision.layout import pick_card_panels
@@ -5541,6 +6084,26 @@ print(json.dumps(blocked))
     assert 'row["status_code"] == "READY"' in host_text
     assert 'row["status_code"] == "READY"' in main_text
     assert "start_overlay_context_poller" in lifecycle_text
+    assert "game_overlay waiting_context=" in host_text
+    assert '"context_source": str(context.get("source") or "")' in host_text
+    assert '"process_health": {"host": "self-check", "sidecar": "not-inspected"}' in host_text
+    assert '"state_age_ms": state_age_ms' in host_text
+    assert '"ready_slots": event_status["ready_slots"]' in host_text
+    assert '"selection_window_active": event_status["selection_window_active"]' in host_text
+    assert "_snapshot_ready_slot_count(snapshot)" in host_text
+    manual_event_status = overlay_host._extract_event_status(
+        {
+            "source": {"tag": "manual-sample"},
+            "slots": [
+                {"state": "ready", "name": "神射法师"},
+                {"state": "ready", "augment_id": "星界躯体"},
+                {"state": "detecting", "name": ""},
+            ],
+        }
+    )
+
+
+    assert manual_event_status["ready_slots"] == 2
 
     with (
         patch.dict(overlay_lifecycle.os.environ, {overlay_lifecycle.OVERLAY_SIDECAR_DEBUG_DUMP_ENV: ""}),
@@ -5608,6 +6171,22 @@ print(json.dumps(blocked))
         def kill(self) -> None:
             self.calls.append(f"kill:{self.label}")
             self.killed = True
+
+    with TemporaryDirectory() as tmp_dir:
+        ready_path = Path(tmp_dir) / "ready.json"
+        ready_path.write_text(
+            json.dumps({"pid": 42916, "token": "ready-token", "ready_at": time.time()}),
+            encoding="utf-8",
+        )
+        launcher_process = DummyProcess(3176)
+        overlay_lifecycle._wait_for_host_ready(launcher_process, ready_path, expected_token="ready-token")
+        assert getattr(launcher_process, "_hextech_overlay_runtime_pid") == 42916
+        try:
+            overlay_lifecycle._wait_for_host_ready(DummyProcess(3177), ready_path, expected_token="wrong-token")
+        except RuntimeError as exc:
+            assert "readiness token" in str(exc)
+        else:
+            raise AssertionError("ready token 不匹配时必须失败")
 
     # 空 Controller 没有事件所有权；重复停止不得覆盖其它实例的 active 事件。
     empty_stop_calls: list[str] = []
@@ -5860,6 +6439,81 @@ print(json.dumps(blocked))
     manager.stop_game_overlay()
     assert not manager.is_web_running() and not manager.is_game_overlay_running()
 
+    watchdog_calls: list[str] = []
+    watchdog_controller = GameOverlayController(
+        prepare_data_func=lambda: watchdog_calls.append("prepare"),
+        write_inactive_func=lambda: watchdog_calls.append("inactive"),
+        start_sidecar_func=lambda: watchdog_calls.append("sidecar") or DummyProcess(312, calls=watchdog_calls, label="sidecar"),
+        start_host_func=lambda: watchdog_calls.append("host") or DummyProcess(313, calls=watchdog_calls, label="host"),
+        start_context_poller_func=lambda: watchdog_calls.append("context") or (lambda: None),
+    )
+    watchdog_manager = ServiceManager(start_web_func=lambda: DummyProcess(311), overlay_controller=watchdog_controller)
+    disabled_watchdog = watchdog_manager.ensure_game_overlay_healthy(enabled=False)
+    assert disabled_watchdog["last_action"] == "disabled"
+    assert watchdog_calls == []
+    started_watchdog = watchdog_manager.ensure_game_overlay_healthy(enabled=True)
+    assert started_watchdog["last_action"] == "start_missing_process"
+    assert watchdog_calls == ["prepare", "inactive", "sidecar", "host", "context"]
+    disabled_after_start = watchdog_manager.ensure_game_overlay_healthy(enabled=False)
+    assert disabled_after_start["last_action"] == "stop_disabled"
+    assert not watchdog_manager.is_game_overlay_running()
+    assert "stop:sidecar" in watchdog_calls and "stop:host" in watchdog_calls
+
+    residual_calls: list[str] = []
+    residual_controller = GameOverlayController(
+        prepare_data_func=lambda: None,
+        write_inactive_func=lambda: residual_calls.append("inactive"),
+    )
+    residual_controller.host_process = DummyProcess(314, running=False, calls=residual_calls, label="host")
+    residual_controller.sidecar_process = DummyProcess(315, calls=residual_calls, label="sidecar")
+    residual_manager = ServiceManager(start_web_func=lambda: DummyProcess(316), overlay_controller=residual_controller)
+    residual_disabled = residual_manager.ensure_game_overlay_healthy(enabled=False)
+    assert residual_disabled["last_action"] == "stop_disabled"
+    assert residual_controller.sidecar_process is None
+    assert "stop:sidecar" in residual_calls
+    watchdog_manager._shutdown_requested = True
+    blocked_after_shutdown = watchdog_manager.ensure_game_overlay_healthy(enabled=True)
+    assert blocked_after_shutdown["last_action"] == "disabled"
+    assert not watchdog_manager.is_game_overlay_running()
+    try:
+        watchdog_manager.start_game_overlay()
+    except RuntimeError as exc:
+        assert "关闭流程" in str(exc)
+    else:
+        raise AssertionError("ServiceManager 进入关闭流程后不得重新启动 overlay")
+
+    stale_calls: list[str] = []
+    stale_controller = GameOverlayController(
+        prepare_data_func=lambda: stale_calls.append("prepare"),
+        write_inactive_func=lambda: stale_calls.append("inactive"),
+        start_sidecar_func=lambda: stale_calls.append("sidecar") or DummyProcess(322, calls=stale_calls, label="sidecar"),
+        start_host_func=lambda: stale_calls.append("host") or DummyProcess(323, calls=stale_calls, label="host"),
+        start_context_poller_func=lambda: stale_calls.append("context") or (lambda: None),
+    )
+    stale_manager = ServiceManager(start_web_func=lambda: DummyProcess(321), overlay_controller=stale_controller)
+    with TemporaryDirectory() as tmp_dir, patch.object(
+        desktop_service_manager,
+        "OVERLAY_VISION_TRACE_FILE",
+        Path(tmp_dir) / "overlay_vision_trace.v1.json",
+    ), patch.object(desktop_service_manager, "OVERLAY_STATE_STALE_SECONDS", 0.01), patch.object(
+        desktop_service_manager,
+        "OVERLAY_WATCHDOG_RESTART_COOLDOWN_SECONDS",
+        0.01,
+    ):
+        stale_manager.ensure_game_overlay_healthy(enabled=True)
+        time.sleep(0.03)
+        stale_watchdog = stale_manager.ensure_game_overlay_healthy(enabled=True)
+        assert stale_watchdog["last_action"] == "restart_stale_state"
+        assert stale_calls == [
+            "prepare", "inactive", "sidecar", "host", "context",
+            "inactive", "stop:sidecar", "inactive", "stop:host", "prepare", "inactive", "sidecar", "host", "context",
+        ]
+        trace_path = desktop_service_manager.OVERLAY_VISION_TRACE_FILE
+        trace_path.write_text("{}", encoding="utf-8")
+        healthy_watchdog = stale_manager.ensure_game_overlay_healthy(enabled=True)
+        assert healthy_watchdog["last_action"] == "healthy"
+    stale_manager.stop_game_overlay()
+
     class ReleaseAfterWaitProcess(DummyProcess):
         def __init__(self, pid: int):
             super().__init__(pid)
@@ -5899,6 +6553,12 @@ print(json.dumps(blocked))
         assert not joined_manager._shutdown_thread.is_alive()
         joined_snapshot = joined_manager.get_status_snapshot()["web"]
         assert joined_snapshot["status"] == "stopped"
+        try:
+            joined_manager.start_game_overlay()
+        except RuntimeError as exc:
+            assert "关闭流程" in str(exc)
+        else:
+            raise AssertionError("真实 shutdown 完成后不得重新启动 overlay")
     finally:
         joined_process.release.set()
         release_thread.join(timeout=1)
@@ -6231,12 +6891,13 @@ print(json.dumps(blocked))
         args.update(overrides)
         return overlay_host.decide_visibility(**args)
 
-    # 显隐矩阵：V2 至少一个稳定槽即可显示，Tab 和旧事件是硬门。
+    # 显隐矩阵：只在三槽完整稳定时显示，避免 partial 识别导致闪烁和半空内容。
     assert decide(event_visible=False, content_ready=False) == (False, "event_inactive")
     assert decide() == (True, "visible_ready")
     assert decide(selection_window_active=False) == (False, "selection_window_inactive")
     assert decide(selection_window_active=None) == (True, "visible_ready")
-    assert decide(content_ready=False, ready_slots=1) == (True, "visible_partial")
+    assert decide(content_ready=False, ready_slots=1) == (False, "content_not_ready")
+    assert decide(content_ready=False, ready_slots=2) == (False, "content_not_ready")
     for overrides in (
         {"event_error": "event_expired", "event_visible": False},
         {"blocking_modal": True},
@@ -6246,10 +6907,7 @@ print(json.dumps(blocked))
         {"event_fresh_after_tab": False},
     ):
         assert decide(**overrides)[0] is False
-    assert decide(event_error="event_expired", event_visible=False, stale_event_hold=True) == (
-        True,
-        "event_expired_hold",
-    )
+    assert decide(event_error="event_expired", event_visible=False, stale_event_hold=True) == (False, "event_expired")
     assert decide(game_foreground=False, diagnostic_mode=True) == (True, "diagnostic:game_not_foreground")
     assert overlay_host.build_overlay_window_config()["event_poll_ms"] == 120
     hotkey_visibility = {"user_enabled": True}
@@ -6397,10 +7055,10 @@ print(json.dumps(blocked))
             stale_visibility,
             stale_snapshot,
             apply_window=False,
-        ) is True
-    assert stale_visibility["visibility_reason"] == "event_expired_hold"
-    assert stale_visibility["event_stale_hold_active"] is True
-    assert stale_visibility["render_full_overlay"] is True
+        ) is False
+    assert stale_visibility["visibility_reason"] == "event_expired"
+    assert stale_visibility["event_stale_hold_active"] is False
+    assert stale_visibility["render_full_overlay"] is False
 
     with (
         TemporaryDirectory() as tmp_dir,
@@ -6408,6 +7066,21 @@ print(json.dumps(blocked))
         patch.object(overlay_host, "atomic_write_json", side_effect=OSError("disk busy")),
     ):
         overlay_host._signal_overlay_ready()
+
+    with (
+        TemporaryDirectory() as tmp_dir,
+        patch.dict(
+            os.environ,
+            {
+                overlay_host.OVERLAY_READY_FILE_ENV: str(Path(tmp_dir) / "ready.json"),
+                overlay_host.OVERLAY_READY_TOKEN_ENV: "host-ready-token",
+            },
+        ),
+    ):
+        overlay_host._signal_overlay_ready()
+        ready_payload = json.loads((Path(tmp_dir) / "ready.json").read_text(encoding="utf-8"))
+        assert ready_payload["pid"] == os.getpid()
+        assert ready_payload["token"] == "host-ready-token"
 
     class ExitWatchRoot:
         def __init__(self) -> None:
@@ -6715,6 +7388,137 @@ print(json.dumps(blocked))
         )
         assert png_path.suffix == ".png"
         assert png_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def check_overlay_refresh_tool_contract() -> None:
+    """验证海克斯视觉资源更新工具的持久样本与发布边界。"""
+
+    refresh_tool = importlib.import_module("tools.refresh_overlay_recognition")
+    parser = refresh_tool.build_parser()
+    assert parser.parse_args(["--check-only"]).check_only is True
+
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        truth_path = root / "resources" / "诊断样例" / "truth.json"
+        fixture_path = root / "resources" / "诊断样例" / "overlay_vision_fixtures" / "case" / "name_0.png"
+        fixture_path.parent.mkdir(parents=True)
+        fixture_path.write_bytes(b"fixture")
+        truth_path.parent.mkdir(parents=True, exist_ok=True)
+        truth_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "samples": [],
+                    "name_roi_samples": [
+                        {
+                            "id": "durable",
+                            "name_crops": [str(fixture_path.relative_to(root))],
+                            "expected_names": ["尤里卡"],
+                        }
+                    ],
+                    "retired_samples": [{"id": "lost", "reason": "source_frame_missing_before_gate"}],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        truth_summary = refresh_tool.validate_truth_manifest(truth_path, run_dir=root)
+        assert truth_summary["active_sample_count"] == 1
+        assert truth_summary["full_frame_sample_count"] == 0
+        assert truth_summary["name_roi_sample_count"] == 1
+        assert truth_summary["retired_sample_count"] == 1
+        assert truth_summary["missing_count"] == 0
+        compact_truth = refresh_tool._compact_summary(truth_summary)
+        assert compact_truth["full_frame_sample_count"] == 0
+        assert compact_truth["name_roi_sample_count"] == 1
+
+        bad_truth_path = truth_path.with_name("bad.json")
+        bad_truth_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "samples": [{"id": "runtime", "frame": "data/runtime/debug/frame.png", "expected_slots": []}],
+                    "name_roi_samples": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        bad_summary = refresh_tool.validate_truth_manifest(bad_truth_path, run_dir=root)
+        assert bad_summary["invalid_path_count"] == 1
+
+        catalog_summary = {
+            "missing_field_count": 0,
+            "duplicate_stable_id_count": 0,
+            "missing_icon_count": 0,
+            "invalid_icon_count": 0,
+        }
+        audit_summary = {"missing_identity_count": 0, "missing_variant_count": 0}
+        fixture_summary = {
+            "missing_count": 1,
+            "invalid_path_count": 0,
+            "fixture_missing_count": 0,
+            "fixture_failure_count": 0,
+        }
+        with (
+            patch.object(refresh_tool, "validate_official_catalog", return_value=catalog_summary),
+            patch.object(refresh_tool.overlay_vision_sidecar, "audit_default_template_index", return_value=audit_summary),
+            patch.object(refresh_tool, "run_synthetic_recognition", return_value={"synthetic_failure_count": 0}),
+            patch.object(refresh_tool, "run_fixture_regression", return_value=fixture_summary),
+        ):
+            blocked = refresh_tool.validate_snapshot(root)
+        assert blocked["passed"] is False
+        assert blocked["blockers"]["truth_missing_count"] == 1
+
+        snapshot = root / "snapshot"
+        target = root / "target"
+        snapshot_icon = snapshot / "resources" / "图片资源" / "new.png"
+        snapshot_catalog = snapshot / "resources" / "版本数据" / "海克斯资源目录.v1.json"
+        snapshot_icon.parent.mkdir(parents=True)
+        snapshot_catalog.parent.mkdir(parents=True)
+        snapshot_icon.write_bytes(b"new-icon")
+        snapshot_catalog.write_text('{"schema_version": 1}', encoding="utf-8")
+        stale_icon = target / "resources" / "图片资源" / "stale.png"
+        stale_icon.parent.mkdir(parents=True)
+        stale_icon.write_bytes(b"keep")
+
+        published = refresh_tool.publish_snapshot(snapshot, target_run_dir=target)
+        assert published["icon_count"] == 1
+        assert stale_icon.read_bytes() == b"keep"
+        assert (target / "resources" / "图片资源" / "new.png").read_bytes() == b"new-icon"
+        assert (target / "resources" / "版本数据" / "海克斯资源目录.v1.json").exists()
+
+        cache_root = root / "data" / "runtime" / "cache"
+        with (
+            patch.object(refresh_tool, "RUN_DIR", root),
+            patch.object(refresh_tool, "build_refresh_snapshot", return_value={"built": True}),
+            patch.object(refresh_tool, "validate_snapshot", return_value={"passed": True}),
+            patch.object(refresh_tool, "publish_snapshot", return_value={"icon_count": 1}),
+        ):
+            assert refresh_tool.main(["--json"]) == 0
+        assert not list(cache_root.glob("overlay_recognition_refresh_*"))
+
+        cleanup_output = io.StringIO()
+        with (
+            patch.object(refresh_tool, "RUN_DIR", root),
+            patch.object(refresh_tool, "build_refresh_snapshot", return_value={"built": True}),
+            patch.object(refresh_tool, "validate_snapshot", return_value={"passed": True}),
+            patch.object(refresh_tool, "publish_snapshot", return_value={"icon_count": 1}),
+            patch.object(refresh_tool.shutil, "rmtree", side_effect=PermissionError("snapshot busy")),
+            patch.object(sys, "stdout", cleanup_output),
+        ):
+            assert refresh_tool.main(["--json"]) == 0
+        cleanup_summary = json.loads(cleanup_output.getvalue())
+        assert cleanup_summary["snapshot_retained"] is True
+        assert "snapshot busy" in cleanup_summary["snapshot_cleanup_error"]
+        cleanup_compact = refresh_tool._compact_summary(cleanup_summary)
+        assert cleanup_compact["snapshot_retained"] is True
+        assert "snapshot busy" in cleanup_compact["snapshot_cleanup_error"]
+
+    refresh_source = Path(refresh_tool.__file__).read_text(encoding="utf-8")
+    assert "overlay_vision_sidecar._render_name_mask" not in refresh_source
+    assert "overlay_vision_sidecar._rank_matrices" not in refresh_source
+    assert callable(refresh_tool.overlay_vision_sidecar.render_name_mask)
+    assert callable(refresh_tool.overlay_vision_sidecar.rank_template_matrices)
 
 
 def _run_named_checks(check_names: tuple[str, ...]) -> None:

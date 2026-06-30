@@ -14,7 +14,6 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -23,13 +22,8 @@ from hextech.catalog.runtime_store import (
     build_runtime_lock_path,
     build_runtime_state_path,
     build_synergy_data_path,
-    build_synergy_latest_pointer_path,
-    build_synergy_refresh_status_path,
     get_latest_csv,
     get_latest_valid_csv,
-    get_latest_synergy_snapshot_path,
-    load_synergy_latest_pointer,
-    load_synergy_refresh_status,
 )
 import hextech.scraping.version_sync as version_sync
 from hextech.scraping.augment_catalog import (
@@ -41,8 +35,6 @@ from hextech.scraping.augment_catalog import (
     run_augment_icon_prefetch,
 )
 from hextech.scraping.hextech.scraper import hextech_refresh_blocked, load_scraper_status, main_scraper
-from hextech.scraping.synergy.scraper import main as run_synergy_scraper
-from hextech.scraping.synergy.scraper import SYNERGY_REFRESH_META_VERSION
 from hextech.scraping.version_sync import (
     ASSET_DIR,
     AUGMENT_ICON_FILE,
@@ -59,14 +51,6 @@ logger = logging.getLogger(__name__)
 LOCK_FILE = Path(build_runtime_lock_path("heal_worker.lock"))
 HIGH_FREQUENCY_STALE_SECONDS = 4 * 60 * 60
 MANIFEST_STALE_SECONDS = 24 * 60 * 60
-SYNERGY_STALE_SECONDS = 7 * 24 * 60 * 60
-SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
-
-
-def _auto_synergy_refresh_enabled() -> bool:
-    env_enabled = os.getenv("HEXTECH_AUTO_SYNERGY_REFRESH", "0").strip().lower() in {"1", "true", "yes", "on"}
-    # ApexLoL 自动协同刷新仍处于退役状态；Mayhem 增量通过手动清洗脚本生成 cleaned 数据。
-    return False and env_enabled
 
 
 @dataclass
@@ -102,59 +86,6 @@ def _file_is_fresh(path: str, stale_after_seconds: int = HIGH_FREQUENCY_STALE_SE
 def _latest_csv_fresh() -> bool:
     latest_csv = get_latest_valid_csv()
     return _file_is_fresh(latest_csv or "")
-
-
-def _parse_timestamp(value: object) -> float:
-    text = str(value or "").strip()
-    if not text:
-        return 0.0
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return 0.0
-
-
-def _synergy_refresh_blocked() -> bool:
-    status = load_synergy_refresh_status()
-    blocked_until = _parse_timestamp(status.get("blocked_until"))
-    return status.get("last_result") == "blocked" and blocked_until > time.time()
-
-
-def _write_synergy_refresh_status(result: str, reason: str = "") -> None:
-    now = datetime.now(timezone.utc)
-    payload = {
-        "last_attempt_at": now.isoformat(timespec="seconds"),
-        "last_result": result,
-        "reason": reason,
-    }
-    if result == "blocked":
-        blocked_until = datetime.fromtimestamp(time.time() + SYNERGY_BLOCKED_COOLDOWN_SECONDS, tz=timezone.utc)
-        payload["blocked_until"] = blocked_until.isoformat(timespec="seconds")
-    atomic_write_json(build_synergy_refresh_status_path(), payload, ensure_ascii=False, indent=2)
-
-
-def _synergy_data_fresh() -> bool:
-    synergy_path = get_latest_synergy_snapshot_path()
-    pointer_path = build_synergy_latest_pointer_path()
-    if not synergy_path or not os.path.exists(synergy_path) or not os.path.exists(pointer_path):
-        return False
-    try:
-        meta = load_synergy_latest_pointer()
-        healthy = (
-            isinstance(meta, dict)
-            and meta.get("version") == SYNERGY_REFRESH_META_VERSION
-            and os.path.basename(str(synergy_path)) == str(meta.get("filename") or "")
-            and int(meta.get("mapped") or 0) > 0
-            and int(meta.get("non_empty_heroes") or 0) > 0
-            and int(meta.get("synergy_entries") or 0) > 0
-        )
-        if not healthy:
-            return False
-        if _synergy_refresh_blocked():
-            return True
-        return _file_is_fresh(synergy_path, SYNERGY_STALE_SECONDS) and _file_is_fresh(pointer_path, SYNERGY_STALE_SECONDS)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return False
 
 
 def _write_startup_status(**updates) -> None:
@@ -205,12 +136,10 @@ def _image_assets_ready() -> bool:
 def detect_missing_artifacts() -> dict:
     latest_csv = get_latest_csv()
     latest_valid_csv = get_latest_valid_csv()
-    synergy_missing = not _synergy_data_fresh() if _auto_synergy_refresh_enabled() else False
     fallback_cooling_down = bool(latest_valid_csv and hextech_refresh_blocked())
     return {
         "hextech_rankings": not fallback_cooling_down and not _latest_csv_fresh(),
         "hextech_fallback": fallback_cooling_down,
-        "synergy_data": synergy_missing,
         "augment_catalog": (
             not _core_data_ready()
             or not _augment_manifest_ready()
@@ -227,33 +156,6 @@ def _heal_hero_rankings(stop_event=None, *, force: bool = False) -> bool:
     if stop_event is not None and stop_event.is_set():
         return False
     return bool(main_scraper(stop_event, force=force))
-
-
-def _heal_synergy_data() -> bool:
-    if not _auto_synergy_refresh_enabled():
-        _write_synergy_refresh_status("paused", "HEXTECH_AUTO_SYNERGY_REFRESH is not enabled")
-        return False
-    result = run_synergy_scraper()
-    if result and result.get("blocked"):
-        _write_synergy_refresh_status("blocked", str(result.get("error") or "blocked"))
-        return False
-    if not result or not result.get("published"):
-        return False
-    latest_path = get_latest_synergy_snapshot_path()
-    if not latest_path or not os.path.exists(latest_path):
-        return False
-    try:
-        with open(latest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        logger.exception("读取协同数据结果失败")
-        return False
-    if not isinstance(data, dict) or not data:
-        return False
-    success = any(bool((item or {}).get("synergies")) for item in data.values() if isinstance(item, dict))
-    if success:
-        _write_synergy_refresh_status("success")
-    return success
 
 
 def _heal_augment_catalog(force: bool = False, stop_event=None) -> bool:
@@ -292,8 +194,6 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
             requested = []
             if force or missing.get("hextech_rankings"):
                 requested.append("hextech_rankings")
-            if (force or missing.get("synergy_data")) and _auto_synergy_refresh_enabled():
-                requested.append("synergy_data")
             if force or missing.get("augment_catalog"):
                 requested.append("augment_catalog")
             if force or missing.get("images"):
@@ -313,8 +213,6 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
                 high_frequency_tasks.append(
                     ("hextech_rankings", lambda: _heal_hero_rankings(stop_event=stop_event, force=force))
                 )
-            if (force or missing.get("synergy_data")) and _auto_synergy_refresh_enabled():
-                high_frequency_tasks.append(("synergy_data", _heal_synergy_data))
 
             if high_frequency_tasks:
                 for task_name, _ in high_frequency_tasks:
