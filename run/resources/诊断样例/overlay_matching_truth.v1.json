@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Track A overlay 视觉匹配真机转储小样本；frame 位于 ignored runtime debug 目录，本文件只保存人工标注真值。",
+  "description": "Track A overlay 视觉匹配真机转储小样本；有效样本必须位于 resources/诊断样例/overlay_vision_fixtures/，已丢失原图的历史 runtime debug 样本只保留 retired 记录。",
   "name_roi_samples": [
     {
       "id": "roi-20260621-223039-540",
@@ -36,7 +36,8 @@
       "notes": "装饰星光、近似名称和字体通道分歧的真机回归；三槽文字 top1 必须正确。"
     }
   ],
-  "samples": [
+  "samples": [],
+  "retired_samples": [
     {
       "id": "selection-20260612-205644",
       "frame": "data/runtime/debug/auto_selection/selection-20260612-205644/frame.png",

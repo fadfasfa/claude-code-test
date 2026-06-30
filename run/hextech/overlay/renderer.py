@@ -11,6 +11,7 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, Protocol, TypedDict
 
+from hextech.overlay.hints import normalize_augment_id, normalize_augment_name
 from hextech.overlay.vision.layout import pick_card_panels
 
 SYNERGY_X_RANGE = (0.825, 0.992)
@@ -133,10 +134,19 @@ def _query_hint(slot: Mapping[str, Any], hint_cache: Mapping[str, Any] | None) -
         return {}
     augment_id = _clean_text(slot.get("augment_id"))
     slot_name = _clean_text(slot.get("name"))
-    hint = hints.get(augment_id) if augment_id else None
+    hint = None
+    for candidate in (augment_id, normalize_augment_id(augment_id), normalize_augment_name(augment_id)):
+        if candidate:
+            hint = hints.get(candidate)
+            if isinstance(hint, Mapping):
+                break
     if not isinstance(hint, Mapping) and slot_name and isinstance(name_index, Mapping):
-        indexed_id = _clean_text(name_index.get(slot_name))
-        hint = hints.get(indexed_id) if indexed_id else None
+        indexed_id = ""
+        for candidate in (slot_name, normalize_augment_id(slot_name), normalize_augment_name(slot_name)):
+            indexed_id = _clean_text(name_index.get(candidate))
+            if indexed_id:
+                break
+        hint = hints.get(indexed_id) or hints.get(normalize_augment_id(indexed_id)) if indexed_id else None
     if not isinstance(hint, Mapping) and slot_name:
         hint = next(
             (

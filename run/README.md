@@ -14,7 +14,7 @@
 
 | 维度 | 当前状态 |
 | :--- | :--- |
-| 源码态 Python | 固定使用 `run/.venv` 内 Python 3.11；入口误用系统 Python 时只会切回 `.venv`，不会回退裸 `py -3.11` |
+| 源码态 Python | 固定使用 `run/.venv` 内 Python 3.11；入口误用系统 Python 时会在 `.venv` 缺失时用 `py -3.11` 自动创建，最终只切回 `.venv` |
 | 主入口 | `.\.venv\Scripts\python.exe hextech_ui.py` 启动桌面伴生；`.\.venv\Scripts\python.exe web_server.py` 只启动 Web 服务；`.\.venv\Scripts\python.exe hextech_ui.py --game-overlay` 只启动基础 overlay host |
 | 打包入口 | `.\.venv\Scripts\python.exe build.py`，不要使用裸系统 Python 打包 |
 | 发布形态 | PyInstaller `--onedir` 未签名便携包 + zip，输出到仓库根 `.artifacts/hextech/releases/` |
@@ -26,7 +26,7 @@
 ## 快速命令
 
 ```powershell
-# 首次创建/修复稳定 venv，并安装依赖
+# 手动创建/修复稳定 venv，并安装依赖；源码入口在 .venv 缺失时会自动执行同等 bootstrap
 py -3.11 tools/setup_venv.py
 
 # 若只需补依赖，也必须装入 run/.venv

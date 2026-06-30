@@ -88,7 +88,8 @@ def _resolve_assets_dir_for_config(config_dir: Optional[str]) -> str:
 
 def normalize_augment_name(name: str) -> str:
     name = str(name).lower()
-    for token in (" ", "-", "_", "(", ")", "[", "]", "'", '"', "."):
+    # 用于名称闭集和 overlay hint 关联；这里主动抹平常见中英文标点差异。
+    for token in (" ", "\t", "\n", "-", "_", "(", ")", "[", "]", "'", '"', ".", ":", "：", "，", ",", "、", "/", "／"):
         name = name.replace(token, "")
     return name
 

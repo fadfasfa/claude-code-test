@@ -28,6 +28,7 @@ from .data_source import prepare_shared_overlay_data
 logger = logging.getLogger(__name__)
 
 OVERLAY_READY_FILE_ENV = "HEXTECH_OVERLAY_READY_FILE"
+OVERLAY_READY_TOKEN_ENV = "HEXTECH_OVERLAY_READY_TOKEN"
 OVERLAY_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
 OVERLAY_SIDECAR_DEBUG_DUMP_ENV = "HEXTECH_OVERLAY_SIDECAR_DEBUG_DUMP"
 OVERLAY_READY_TIMEOUT_SECONDS = 5.0
@@ -64,6 +65,7 @@ def _wait_for_host_ready(
     process: ProcessLike,
     ready_path: Path,
     *,
+    expected_token: str = "",
     timeout_seconds: float = OVERLAY_READY_TIMEOUT_SECONDS,
 ) -> None:
     deadline = time.monotonic() + max(0.1, float(timeout_seconds))
@@ -76,9 +78,12 @@ def _wait_for_host_ready(
         except (OSError, json.JSONDecodeError):
             time.sleep(0.05)
             continue
-        if int(payload.get("pid") or 0) == int(process.pid):
+        if expected_token and str(payload.get("token") or "") == expected_token:
+            setattr(process, "_hextech_overlay_runtime_pid", int(payload.get("pid") or 0) or None)
             return
-        raise RuntimeError("game_overlay host readiness PID 不匹配")
+        if not expected_token and int(payload.get("pid") or 0) == int(process.pid):
+            return
+        raise RuntimeError("game_overlay host readiness token 不匹配")
     raise TimeoutError(f"game_overlay host 启动超时：{float(timeout_seconds):.1f}s")
 
 
@@ -91,13 +96,15 @@ def start_host_process() -> subprocess.Popen:
         command = [sys.executable, "-m", "hextech.overlay.host"]
     ready_path = Path(build_runtime_state_path(f"game_overlay_host.{uuid.uuid4().hex}.ready.json"))
     exit_path = Path(build_runtime_state_path(f"game_overlay_host.{uuid.uuid4().hex}.exit.json"))
+    ready_token = uuid.uuid4().hex
     env = os.environ.copy()
     env[OVERLAY_READY_FILE_ENV] = str(ready_path)
+    env[OVERLAY_READY_TOKEN_ENV] = ready_token
     env[OVERLAY_EXIT_FILE_ENV] = str(exit_path)
     process = subprocess.Popen(command, cwd=RUN_DIR, startupinfo=_hidden_startupinfo(), env=env)
     setattr(process, "_hextech_overlay_exit_file", str(exit_path))
     try:
-        _wait_for_host_ready(process, ready_path)
+        _wait_for_host_ready(process, ready_path, expected_token=ready_token)
         return process
     except Exception:
         stop_process(process)
@@ -448,6 +455,7 @@ class GameOverlayController:
     def snapshot(self) -> dict[str, Any]:
         host_running = process_is_running(self.host_process)
         sidecar_running = process_is_running(self.sidecar_process)
+        host_pid = getattr(self.host_process, "_hextech_overlay_runtime_pid", None) or getattr(self.host_process, "pid", None)
         if self.status == "running" and not (host_running and sidecar_running):
             missing = "host" if not host_running else "sidecar"
             error = f"game_overlay {missing} 意外退出"
@@ -458,7 +466,7 @@ class GameOverlayController:
             self._mark("error", error=error)
         return {
             "status": self.status,
-            "host_pid": getattr(self.host_process, "pid", None),
+            "host_pid": host_pid,
             "sidecar_pid": getattr(self.sidecar_process, "pid", None),
             "host_status": "running" if host_running else "stopped",
             "sidecar_status": "running" if sidecar_running else "stopped",

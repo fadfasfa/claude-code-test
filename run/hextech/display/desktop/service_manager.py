@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 try:
@@ -24,11 +25,15 @@ from hextech.overlay.lifecycle import (
     start_host_process as start_overlay_host_process,
     start_sidecar_process as start_vision_sidecar_process,
 )
+from hextech.overlay.runtime_paths import overlay_runtime_state_path
 from hextech.overlay.window import find_lol_game_window
 from hextech.overlay.window_titles import LOL_CLIENT_WINDOW_TITLE
 
 
 ProcessFactory = Callable[[], Any]
+OVERLAY_STATE_STALE_SECONDS = 8.0
+OVERLAY_WATCHDOG_RESTART_COOLDOWN_SECONDS = 10.0
+OVERLAY_VISION_TRACE_FILE = Path(overlay_runtime_state_path("overlay_vision_trace.v1.json"))
 
 
 @dataclass
@@ -115,6 +120,15 @@ class ServiceManager:
             "lol_client_visible": False,
             "lol_game_visible": False,
         }
+        self._overlay_watchdog: dict[str, Any] = {
+            "enabled": False,
+            "last_checked_at": 0.0,
+            "last_action": "",
+            "last_action_at": 0.0,
+            "last_error": "",
+            "state_age_ms": None,
+            "state_path": str(OVERLAY_VISION_TRACE_FILE),
+        }
 
     def start_web(self) -> None:
         with self._lock:
@@ -136,7 +150,7 @@ class ServiceManager:
 
     def start_game_overlay(self) -> None:
         with self._lock:
-            if self._overlay_controller.is_running():
+            if self._overlay_controller.is_running() and self._overlay_controller.context_poller_running():
                 self._sync_overlay_compat_state()
                 return
             self.game_overlay.mark("starting")
@@ -159,6 +173,72 @@ class ServiceManager:
 
     def is_game_overlay_running(self) -> bool:
         return self._overlay_controller.is_running()
+
+    def ensure_game_overlay_healthy(self, *, enabled: bool) -> dict[str, Any]:
+        """功能开关开启时确保 overlay 三进程链路常驻。
+
+        watchdog 只负责生命周期，不做截图识别；sidecar trace 超时代表识别进程
+        虽可能仍有 PID，但已经没有持续产出运行态，需要重启整组 overlay。
+        """
+
+        with self._lock:
+            now = time.time()
+            self._overlay_watchdog["enabled"] = bool(enabled)
+            self._overlay_watchdog["last_checked_at"] = now
+            self._overlay_watchdog["last_error"] = ""
+            if not enabled:
+                self._overlay_watchdog["last_action"] = "disabled"
+                self._sync_overlay_compat_state()
+                return dict(self._overlay_watchdog)
+
+            snapshot = self._overlay_controller.snapshot()
+            process_missing = (
+                snapshot.get("status") != "running"
+                or snapshot.get("host_status") != "running"
+                or snapshot.get("sidecar_status") != "running"
+                or snapshot.get("context_poller_status") != "running"
+            )
+            state_age = self._overlay_state_age_seconds(now=now)
+            self._overlay_watchdog["state_age_ms"] = None if state_age is None else int(state_age * 1000)
+            controller_age = now - float(snapshot.get("updated_at") or now)
+            state_stale = (
+                state_age is not None and state_age > OVERLAY_STATE_STALE_SECONDS
+            ) or (
+                state_age is None and controller_age > OVERLAY_STATE_STALE_SECONDS
+            )
+            cooldown_active = (
+                now - float(self._overlay_watchdog.get("last_action_at") or 0.0)
+            ) < OVERLAY_WATCHDOG_RESTART_COOLDOWN_SECONDS
+
+            try:
+                if process_missing:
+                    self.start_game_overlay()
+                    self._mark_overlay_watchdog_action("start_missing_process", now)
+                elif state_stale and not cooldown_active:
+                    self.stop_game_overlay()
+                    self.start_game_overlay()
+                    self._mark_overlay_watchdog_action("restart_stale_state", now)
+                else:
+                    self._sync_overlay_compat_state()
+                    self._overlay_watchdog["last_action"] = "healthy" if not state_stale else "stale_cooldown"
+            except Exception as exc:
+                self._sync_overlay_compat_state()
+                self._overlay_watchdog["last_action"] = "error"
+                self._overlay_watchdog["last_error"] = str(exc)
+                raise
+            return dict(self._overlay_watchdog)
+
+    def _mark_overlay_watchdog_action(self, action: str, now: float) -> None:
+        self._overlay_watchdog["last_action"] = action
+        self._overlay_watchdog["last_action_at"] = now
+        self._overlay_watchdog["last_error"] = ""
+
+    @staticmethod
+    def _overlay_state_age_seconds(*, now: float) -> float | None:
+        try:
+            return max(0.0, now - OVERLAY_VISION_TRACE_FILE.stat().st_mtime)
+        except OSError:
+            return None
 
     def _sync_overlay_compat_state(self) -> None:
         snapshot = self._overlay_controller.snapshot()
@@ -206,6 +286,7 @@ class ServiceManager:
                 },
                 "low_frequency_listener": dict(self._listener_snapshot),
                 "overlay_event": self._overlay_event_status(),
+                "overlay_watchdog": dict(self._overlay_watchdog),
             }
 
     def shutdown(self, *, timeout_seconds: float = 5.0, final_timeout_seconds: float | None = 20.0) -> None:

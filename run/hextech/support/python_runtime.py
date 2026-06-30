@@ -241,6 +241,79 @@ def find_python_311_command(
     return None
 
 
+def _creator_candidates() -> list[list[str]]:
+    if os.name == "nt":
+        return [["py", "-3.11"]]
+    return [["python3.11"]]
+
+
+def _find_python_311_creator() -> list[str] | None:
+    for command in _creator_candidates():
+        if probe_python_version(command) == REQUIRED_PYTHON:
+            return command
+    return None
+
+
+def _run_bootstrap_command(command: Sequence[str], *, action: str) -> None:
+    print(f"run/.venv 自动配置: {action}: {_format_command(command)}", file=sys.stderr)
+    completed = subprocess.run(list(command), cwd=str(RUN_DIR), check=False)
+    if completed.returncode != 0:
+        raise SystemExit(
+            "\n".join(
+                [
+                    f"run/.venv 自动配置失败：{action}",
+                    f"失败命令：{_format_command(command)}",
+                    f"退出码：{completed.returncode}",
+                    "可手动修复：",
+                    _setup_commands_text(),
+                ]
+            )
+        )
+
+
+def bootstrap_default_venv(*, require_packages: Sequence[str] = REQUIRED_RUNTIME_PACKAGES) -> list[str] | None:
+    """首次源码态启动时创建/修复默认 run/.venv，并返回可执行 Python 命令。"""
+
+    venv_python = default_venv_python_path()
+    if not venv_python.exists():
+        creator = _find_python_311_creator()
+        if creator is None:
+            return None
+        _run_bootstrap_command(
+            [*creator, "-m", "venv", str(DEFAULT_VENV_DIR)],
+            action="创建 Python 3.11 虚拟环境",
+        )
+
+    if probe_python_version([str(venv_python)]) != REQUIRED_PYTHON:
+        return None
+
+    missing = missing_required_imports([str(venv_python)], require_packages)
+    if missing:
+        requirements = RUN_DIR / "requirements.txt"
+        if not requirements.exists():
+            raise SystemExit(f"缺少 requirements.txt：{requirements}")
+        _run_bootstrap_command(
+            [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
+            action="升级 pip",
+        )
+        _run_bootstrap_command(
+            [str(venv_python), "-m", "pip", "install", "-r", str(requirements)],
+            action="安装 requirements.txt 依赖",
+        )
+        missing = missing_required_imports([str(venv_python)], require_packages)
+        if missing:
+            raise SystemExit(
+                "\n".join(
+                    [
+                        f"run/.venv 自动配置后仍缺少依赖：{', '.join(missing)}",
+                        "可手动修复：",
+                        _setup_commands_text(),
+                    ]
+                )
+            )
+    return [str(venv_python)]
+
+
 def build_reexec_command(
     python_command: Sequence[str],
     *,
@@ -288,7 +361,7 @@ def format_missing_python_311_message(
         f"期望解释器：{venv_python}",
     ]
     if not venv_python.exists():
-        parts.append("未找到 run/.venv。请显式创建并安装依赖：")
+        parts.append("未找到 run/.venv，入口会尝试自动创建；若自动配置失败，请手动执行：")
         parts.append(_setup_commands_text())
     else:
         version = probe_python_version([str(venv_python)])
@@ -319,6 +392,8 @@ def ensure_python_311_for_source(
         return
 
     python_command = find_python_311_command(require_packages=require_packages)
+    if not python_command:
+        python_command = bootstrap_default_venv(require_packages=require_packages)
     if not python_command:
         raise SystemExit(format_missing_python_311_message(require_packages=require_packages))
 

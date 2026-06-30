@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import time
 import json
+import logging
 from datetime import datetime, timezone
 
 from hextech.catalog.runtime_store import (
@@ -59,6 +60,7 @@ from hextech.scraping.version_sync import (
 
 
 SYNERGY_FILE = build_synergy_data_path()
+logger = logging.getLogger(__name__)
 HIGH_FREQUENCY_STALE_SECONDS = 4 * 60 * 60
 SYNERGY_STALE_SECONDS = 7 * 24 * 60 * 60
 SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
@@ -202,8 +204,15 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
     而是委托 `heal_missing_artifacts` 按缺失产物清单执行最小修复。
     """
     from hextech.scraping.heal_worker import heal_missing_artifacts
+    from hextech.scraping.synergy.mayhem_refresh import run_mayhem_refresh
 
     report = heal_missing_artifacts(force=force, stop_event=stop_event)
+    if stop_event is None or not stop_event.is_set():
+        # Mayhem 是独立低频数据刷新，不属于 self-heal；失败只记录状态，不影响后台主刷新。
+        try:
+            run_mayhem_refresh(force=False)
+        except Exception:
+            logger.exception("Mayhem 低频刷新诊断写入失败")
     repaired = set(report.get("repaired", []))
     if force or repaired:
         return True

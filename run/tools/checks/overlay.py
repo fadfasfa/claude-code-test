@@ -15,5 +15,6 @@ CHECKS = (
     "check_lol_window_contract",                        # 验证 LoL 游戏窗口检测契约
     "check_official_overlay_provider_contract",         # 验证官方 Overlay 数据源契约
     "check_overlay_vision_sidecar_contract",            # 验证 Vision Sidecar 识别契约
+    "check_overlay_refresh_tool_contract",              # 验证 Overlay 视觉资源刷新工具契约
     "check_game_overlay_module_contract",               # 验证游戏覆盖层模块契约
 )

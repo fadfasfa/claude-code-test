@@ -28,6 +28,7 @@ CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 OVERLAY_HINT_CACHE_FILE = Path(build_runtime_cache_path("overlay_hint_cache.v1.json"))
 # \w 含 CJK：海克斯名是中文，ASCII-only 正则会把整个名字滤成空串，导致模板索引几乎为空。
 _AUGMENT_ID_SAFE_RE = re.compile(r"[^\w.:-]+")
+_AUGMENT_NAME_NORMALIZE_TOKENS = (" ", "\t", "\n", "-", "_", "(", ")", "[", "]", "'", '"', ".", ":", "：", "，", ",", "、", "/", "／")
 
 
 def normalize_augment_id(value: Any, fallback_name: str = "") -> str:
@@ -43,6 +44,15 @@ def normalize_augment_id(value: Any, fallback_name: str = "") -> str:
     if not raw_text:
         return ""
     return _AUGMENT_ID_SAFE_RE.sub("_", raw_text).strip("_").lower()
+
+
+def normalize_augment_name(value: Any) -> str:
+    """轻量名称规范化；避免 overlay host 顶层导入抓取侧资源解析模块。"""
+
+    text = str(value or "").lower()
+    for token in _AUGMENT_NAME_NORMALIZE_TOKENS:
+        text = text.replace(token, "")
+    return text
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -129,6 +139,9 @@ def _load_synergy_by_augment_name(
                 continue
             for augment_name in normalized["augment_names"]:
                 index.setdefault(augment_name, []).append(normalized)
+                normalized_name = normalize_augment_name(augment_name)
+                if normalized_name and normalized_name != augment_name:
+                    index.setdefault(normalized_name, []).append(normalized)
     return index
 
 
@@ -292,7 +305,7 @@ def _build_hint(
                 hint["stats_by_champion_name"] = {resolved_hero_name: dict(stats)}
 
     if synergy_by_name:
-        matched = synergy_by_name.get(name)
+        matched = synergy_by_name.get(name) or synergy_by_name.get(normalize_augment_name(name))
         if matched:
             hint["synergies"] = [dict(item) for item in matched]
     return hint
@@ -312,10 +325,15 @@ def build_overlay_hint_cache(
     if synergy_by_name is None:
         synergy_index = _load_synergy_by_augment_name(synergy_snapshot_path)
     else:
-        synergy_index = {
-            str(name): [dict(entry) for entry in items if isinstance(entry, Mapping)]
-            for name, items in synergy_by_name.items()
-        }
+        synergy_index: dict[str, list[dict[str, Any]]] = {}
+        for name, items in synergy_by_name.items():
+            normalized_items = [dict(entry) for entry in items if isinstance(entry, Mapping)]
+            raw_name = str(name)
+            if raw_name:
+                synergy_index.setdefault(raw_name, []).extend(normalized_items)
+            normalized_name = normalize_augment_name(raw_name)
+            if normalized_name and normalized_name != raw_name:
+                synergy_index.setdefault(normalized_name, []).extend(normalized_items)
 
     hints: dict[str, dict[str, Any]] = {}
     name_index: dict[str, str] = {}
@@ -335,12 +353,14 @@ def build_overlay_hint_cache(
             _merge_hint(existing, hint)
             if hint.get("name"):
                 name_index.setdefault(normalize_augment_id(hint["name"]), hint["augment_id"])
+                name_index.setdefault(normalize_augment_name(hint["name"]), hint["augment_id"])
                 name_index.setdefault(str(hint["name"]), hint["augment_id"])
             continue
         hints[hint["augment_id"]] = hint
         name_index.setdefault(hint["augment_id"], hint["augment_id"])
         if hint.get("name"):
             name_index.setdefault(normalize_augment_id(hint["name"]), hint["augment_id"])
+            name_index.setdefault(normalize_augment_name(hint["name"]), hint["augment_id"])
             name_index.setdefault(str(hint["name"]), hint["augment_id"])
 
     return {
@@ -369,7 +389,7 @@ def _build_overlay_hint_cache_from_latest_runtime_csv(
 
     from hextech.catalog import runtime_store
     from hextech.scraping.augment_catalog import load_augment_catalog_lookup_read_only
-    from hextech.scraping.icon_resolver import build_local_augment_icon_url, normalize_augment_name
+    from hextech.scraping.icon_resolver import build_local_augment_icon_url
 
     latest_csv = runtime_store.get_latest_csv()
     if not latest_csv:
@@ -544,7 +564,8 @@ def query_overlay_hint(cache_payload: Mapping[str, Any], augment_id: Any) -> dic
     if not isinstance(hint, Mapping):
         name_index = cache_payload.get("name_index")
         if isinstance(name_index, Mapping):
-            hinted_id = name_index.get(normalized_id) or name_index.get(str(augment_id or "").strip())
+            raw_key = str(augment_id or "").strip()
+            hinted_id = name_index.get(normalized_id) or name_index.get(normalize_augment_name(raw_key)) or name_index.get(raw_key)
             if hinted_id:
                 normalized_hint_id = normalize_augment_id(hinted_id)
                 hint = hints.get(normalized_hint_id)

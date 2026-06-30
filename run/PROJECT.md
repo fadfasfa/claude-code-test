@@ -7,7 +7,7 @@
 
 当前维护目标：
 
-1. 源码态固定使用 `run/.venv` 内 Python 3.11；首次配置通过 `py -3.11 tools/setup_venv.py` 显式创建，入口误用系统 Python 时只会切回 `.venv`，不会回退裸 `py -3.11`。
+1. 源码态固定使用 `run/.venv` 内 Python 3.11；首次入口误用系统 Python 且 `.venv` 缺失时，允许用 `py -3.11` 自动创建并安装依赖，最终运行只切回 `.venv`；`py -3.11 tools/setup_venv.py` 保留为显式修复工具。
 2. 打包态只使用 `.\.venv\Scripts\python.exe build.py` 这一条构建入口，禁止裸系统 Python 打包。
 3. 打包产物在非仓库、空运行态目录中首次启动后 60 秒内可用。
 4. 高频抓取、缓存、状态、日志和计算产物不随包分发。

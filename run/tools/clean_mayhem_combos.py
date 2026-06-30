@@ -1,8 +1,9 @@
 """清洗并合并 ARAMMayhem combo 到前端协同数据。
 
-本脚本保持 ApexLoL raw synergy 作为基底，只把 ARAMMayhem 中 Apex 没有的
-「英雄 + 官方中文 augment 组合」增量追加到 ``synergy_items``。Mayhem 原始
-文件为空或全部被拒绝时不会覆盖 ``Champion_Synergy_Cleaned.json``。
+默认以当前 cleaned 协同数据作为冻结基底，先移除旧 ``source="arammayhem"``
+条目，再合并本次 ARAMMayhem 数据。显式传入 ``--apex-input`` 时仍可使用
+ApexLoL raw synergy 作为基底。Mayhem 原始文件为空或全部被拒绝时不会覆盖
+``Champion_Synergy_Cleaned.json``。
 """
 
 from __future__ import annotations
@@ -241,6 +242,59 @@ def build_apex_key_set(apex_payload: dict[str, Any], augment_lookup: dict[str, A
     return keys
 
 
+def _resolve_base_payload(apex_path: str | os.PathLike[str] | None) -> tuple[dict[str, Any], Path, str]:
+    """选择合并基底；默认冻结当前 cleaned，避免后台 Mayhem 刷新隐式依赖 Apex。"""
+
+    if apex_path:
+        target = Path(apex_path)
+        return _load_json(target, dict), target, "apex_input"
+
+    cleaned_target = Path(build_synergy_cleaned_data_path())
+    if cleaned_target.exists():
+        return _load_json(cleaned_target, dict), cleaned_target, "cleaned_without_mayhem"
+    raw_target = Path(build_raw_synergy_data_path())
+    if raw_target.exists() and raw_target.name != "Champion_Synergy.json":
+        return _load_json(raw_target, dict), raw_target, "raw_latest"
+    if raw_target.exists():
+        return _load_json(raw_target, dict), raw_target, "raw_legacy"
+
+    raise FileNotFoundError(
+        "找不到 Apex raw latest 或现有 Champion_Synergy_Cleaned.json；"
+        "请传入 --apex-input，或先准备 cleaned 基底。"
+    )
+
+
+def remove_mayhem_items(cleaned: dict[str, Any]) -> int:
+    """从基底中移除旧 Mayhem 条目，防止低频刷新长期堆积过期组合。"""
+
+    removed = 0
+    for hero_payload in cleaned.values():
+        if not isinstance(hero_payload, dict):
+            continue
+        items = hero_payload.get("synergy_items")
+        if not isinstance(items, list):
+            continue
+
+        kept_items: list[Any] = []
+        removed_compat_strings: set[str] = set()
+        for item in items:
+            if isinstance(item, dict) and _text(item.get("source")).lower() == "arammayhem":
+                removed += 1
+                removed_compat_strings.add(_compat_string(item))
+                continue
+            kept_items.append(item)
+        hero_payload["synergy_items"] = kept_items
+
+        synergies = hero_payload.get("synergies")
+        if isinstance(synergies, list) and removed_compat_strings:
+            hero_payload["synergies"] = [
+                value
+                for value in synergies
+                if not (isinstance(value, str) and value in removed_compat_strings)
+            ]
+    return removed
+
+
 def _contains_retired_marker(raw_item: dict[str, Any]) -> bool:
     haystack = " ".join(
         [
@@ -367,9 +421,8 @@ def merge_mayhem_combos(
     output_path: str | os.PathLike[str] | None = None,
     write_output: bool = True,
 ) -> dict[str, Any]:
-    apex_target = Path(apex_path or build_raw_synergy_data_path())
+    apex_payload, apex_target, base_mode = _resolve_base_payload(apex_path)
     output_target = Path(output_path or build_synergy_cleaned_data_path())
-    apex_payload = _load_json(apex_target, dict)
     mayhem_payload = _load_json(mayhem_raw_path, dict)
     manifest_payload = _load_augment_manifest(augment_manifest_path)
     core_payload = _load_core_data(core_data_path)
@@ -382,6 +435,8 @@ def merge_mayhem_combos(
     existing_keys = build_apex_key_set(apex_payload, augment_lookup)
     seen_mayhem_keys: set[str] = set()
     cleaned = copy.deepcopy(apex_payload)
+    removed_existing_mayhem_items = remove_mayhem_items(cleaned)
+    existing_keys = build_apex_key_set(cleaned, augment_lookup)
 
     added = 0
     skipped_duplicates = 0
@@ -431,9 +486,11 @@ def merge_mayhem_combos(
 
     return {
         "apex_path": str(apex_target),
+        "base_mode": base_mode,
         "mayhem_raw_path": str(mayhem_raw_path),
         "output_path": str(output_target),
         "written": should_write,
+        "removed_existing_mayhem_items": removed_existing_mayhem_items,
         "apex_heroes": len(apex_payload),
         "apex_items": sum(
             len(value.get("synergy_items") or value.get("synergies") or [])

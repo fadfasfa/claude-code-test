@@ -163,6 +163,8 @@ class TemplateEntry:
     priority: int = 0
     name_fingerprint: tuple[float, ...] | None = None
     name_fingerprint_alt: tuple[float, ...] | None = None
+    source_icon_filenames: tuple[str, ...] = ()
+    text_only_icon_filenames: tuple[str, ...] = ()
 
 
 # ROI 直接框住三张卡片的图标区（非整卡）：模板与截屏 crop 几何一致才有可比性。
@@ -782,6 +784,16 @@ def _name_fingerprint(name: str, *, family: str = "primary") -> tuple[float, ...
     return _normalized_fingerprint(_text_mask_levels(mask, NAME_FINGERPRINT_SIZE))
 
 
+def _cleaned_name_fingerprint(name: str, *, family: str = "primary") -> tuple[float, ...] | None:
+    mask = _render_name_mask(name, family=family)
+    if mask is None:
+        return None
+    # 截图路径会先经过 _name_text_mask 清理装饰组件；额外保留同路径模板指纹，
+    # 让长名称、数字和标点在全量合成回归里不会被相似中文名压过。
+    cleaned = _name_text_mask(Image.merge("RGB", (mask, mask, mask)))
+    return _normalized_fingerprint(_text_mask_levels(cleaned, NAME_FINGERPRINT_SIZE))
+
+
 @lru_cache(maxsize=1)
 def _body_shard_suffix_fingerprints() -> tuple[tuple[float, ...], ...]:
     fingerprints: list[tuple[float, ...]] = []
@@ -862,7 +874,7 @@ def _name_crop_has_residue(crop: Image.Image, *, name_mask: Image.Image | None =
     return 0.005 <= foreground_ratio <= 0.45
 
 
-def _load_manifest_entries_by_name(root: Path, *, use_runtime_resources: bool = True) -> dict[str, list[Mapping[str, Any]]]:
+def _load_manifest_entries(root: Path, *, use_runtime_resources: bool = True) -> list[Mapping[str, Any]]:
     try:
         if use_runtime_resources:
             payload = load_augment_manifest_entries()
@@ -874,9 +886,14 @@ def _load_manifest_entries_by_name(root: Path, *, use_runtime_resources: bool = 
                 manifest_path = root / "data" / "static" / "Augment_Icon_Manifest.json"
                 payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {}
+        return []
     if not isinstance(payload, list):
-        return {}
+        return []
+    return [item for item in payload if isinstance(item, Mapping)]
+
+
+def _load_manifest_entries_by_name(root: Path, *, use_runtime_resources: bool = True) -> dict[str, list[Mapping[str, Any]]]:
+    payload = _load_manifest_entries(root, use_runtime_resources=use_runtime_resources)
     result: dict[str, list[Mapping[str, Any]]] = {}
     for item in payload:
         if not isinstance(item, Mapping):
@@ -916,7 +933,8 @@ def _select_manifest_item(
 def build_template_index(raw_templates: Mapping[str, Mapping[str, Any]]) -> list[TemplateEntry]:
     """从内存模板构建匹配索引。
 
-    去重策略：同一 normalize_augment_id 只保留第一个；平坦模板（无图标指纹）直接丢弃。
+    去重策略：同一 normalize_augment_id 只保留一个身份，同名图标作为指纹变体聚合。
+    无图标指纹时仍保留文字模板，避免透明或低对比度官方图标让整个海克斯消失。
     双字体指纹：SimHei（主字体）和 SimSun（备选字体）各生成一份 name_fingerprint，
     匹配时双通道独立评分再综合判定。
     """
@@ -925,29 +943,53 @@ def build_template_index(raw_templates: Mapping[str, Mapping[str, Any]]) -> list
     for augment_id, payload in raw_templates.items():
         if not isinstance(payload, Mapping):
             continue
-        image = payload.get("image")
-        if not isinstance(image, Image.Image):
-            continue
         normalized_id = normalize_augment_id(augment_id, str(payload.get("name") or ""))
         if not normalized_id:
             continue
-        icon_fingerprints = _icon_fingerprints(image, template=True)
-        if not icon_fingerprints:
-            # 平坦模板（纯色图）没有可匹配形状，留着只会制造假阳性。
-            continue
         name = _clean_text(payload.get("name"), fallback=normalized_id)
+        raw_images = payload.get("images")
+        images = [item for item in raw_images if isinstance(item, Image.Image)] if isinstance(raw_images, Sequence) else []
+        if not images and isinstance(payload.get("image"), Image.Image):
+            images = [payload["image"]]
+        filenames_value = payload.get("source_icon_filenames")
+        filenames = [
+            _clean_text(item)
+            for item in filenames_value
+            if _clean_text(item)
+        ] if isinstance(filenames_value, Sequence) and not isinstance(filenames_value, (str, bytes)) else []
+
+        icon_fingerprints_list: list[tuple[float, ...]] = []
+        text_only_filenames: list[str] = []
+        icon_digest = ""
+        for image_index, image in enumerate(images):
+            image_fingerprints = _icon_fingerprints(image, template=True)
+            if image_fingerprints:
+                for fingerprint in image_fingerprints:
+                    if fingerprint not in icon_fingerprints_list:
+                        icon_fingerprints_list.append(fingerprint)
+                if not icon_digest:
+                    icon_digest = _icon_mask_digest(image, template=True)
+            elif image_index < len(filenames):
+                text_only_filenames.append(filenames[image_index])
+        icon_fingerprints = tuple(icon_fingerprints_list)
+        name_fingerprint = _name_fingerprint(name)
+        name_fingerprint_alt = _name_fingerprint(name, family="alt")
+        if not icon_fingerprints and name_fingerprint is None and name_fingerprint_alt is None:
+            continue
         index.append(
             TemplateEntry(
                 augment_id=normalized_id,
                 name=name,
                 tier=_clean_text(payload.get("tier"), fallback="Unknown"),
                 summary=_clean_text(payload.get("summary"), fallback="本地模板识别结果"),
-                fingerprint=icon_fingerprints[0],
+                fingerprint=icon_fingerprints[0] if icon_fingerprints else (),
                 icon_fingerprints=icon_fingerprints,
-                icon_digest=_icon_mask_digest(image, template=True),
+                icon_digest=icon_digest,
                 priority=1 if bool(payload.get("priority")) else 0,
-                name_fingerprint=_name_fingerprint(name),
-                name_fingerprint_alt=_name_fingerprint(name, family="alt"),
+                name_fingerprint=name_fingerprint,
+                name_fingerprint_alt=name_fingerprint_alt,
+                source_icon_filenames=tuple(filenames),
+                text_only_icon_filenames=tuple(text_only_filenames),
             )
         )
     return index
@@ -976,51 +1018,128 @@ def load_default_template_index(
     if not isinstance(name_to_icon, Mapping):
         return []
 
+    manifest_entries = _load_manifest_entries(root, use_runtime_resources=use_runtime_resources)
     manifest_by_name = _load_manifest_entries_by_name(root, use_runtime_resources=use_runtime_resources)
     raw_templates: dict[str, Mapping[str, Any]] = {}
-    hinted_templates: dict[str, Mapping[str, Any]] = {}
-    for name, icon_path in name_to_icon.items():
+    names = {
+        _clean_text(item.get("name"))
+        for item in manifest_entries
+        if _clean_text(item.get("name"))
+    } | {_clean_text(name) for name in name_to_icon if _clean_text(name)}
+    for name in sorted(names, key=normalize_augment_id):
         clean_name = _clean_text(name)
-        relative_icon = str(icon_path or "").lstrip("/")
-        if not clean_name or not relative_icon:
+        manifest_items = manifest_by_name.get(clean_name) or manifest_by_name.get(normalize_augment_id(clean_name)) or []
+        icon_paths = [str(item.get("local_path") or item.get("filename") or "") for item in manifest_items]
+        mapped_icon = str(name_to_icon.get(clean_name) or "")
+        if mapped_icon:
+            icon_paths.append(mapped_icon)
+        icon_paths = list(dict.fromkeys(path for path in icon_paths if path))
+        if not clean_name or not icon_paths:
             continue
-        if relative_icon.startswith("assets/"):
-            path = (asset_dir / relative_icon.removeprefix("assets/")).resolve()
-        else:
-            path = (root / relative_icon).resolve()
-        try:
-            allowed_roots = (root.resolve(), asset_dir.resolve(), legacy_asset_dir.resolve())
-            if not any(path == allowed_root or allowed_root in path.parents for allowed_root in allowed_roots):
+        images: list[Image.Image] = []
+        filenames: list[str] = []
+        loaded_paths: set[Path] = set()
+        allowed_roots = (root.resolve(), asset_dir.resolve(), legacy_asset_dir.resolve())
+        for icon_path in icon_paths:
+            relative_icon = str(icon_path or "").lstrip("/")
+            if relative_icon.startswith("assets/"):
+                path = (asset_dir / relative_icon.removeprefix("assets/")).resolve()
+            else:
+                path = (root / relative_icon).resolve()
+            try:
+                if not any(path == allowed_root or allowed_root in path.parents for allowed_root in allowed_roots):
+                    continue
+                if path in loaded_paths:
+                    continue
+                with Image.open(path) as opened:
+                    images.append(opened.copy())
+                filenames.append(path.name)
+                loaded_paths.add(path)
+            except OSError:
                 continue
-            digest = hashlib.md5(path.read_bytes()).hexdigest()
-            with Image.open(path) as opened:
-                image = opened.copy()
-        except OSError:
+        if not images:
             continue
         hint_result = query_overlay_hint(hint_cache or {}, clean_name)
         hint = hint_result.get("hint") if hint_result.get("ok") and isinstance(hint_result.get("hint"), Mapping) else {}
-        manifest_item = _select_manifest_item(manifest_by_name, clean_name, relative_icon)
+        manifest_item = _select_manifest_item(manifest_by_name, clean_name, mapped_icon)
         template_id = normalize_augment_id(
-            hint.get("augment_id") or manifest_item.get("augment_name_id") or manifest_item.get("cdragon_id") or clean_name,
+            manifest_item.get("augment_name_id")
+            or manifest_item.get("cdragon_id")
+            or hint.get("augment_id")
+            or clean_name,
             clean_name,
         )
+        existing = raw_templates.get(template_id)
+        if isinstance(existing, Mapping) and _clean_text(existing.get("name")) != clean_name:
+            template_id = normalize_augment_id(clean_name)
         raw_templates[template_id] = {
-            "name": _clean_text(hint.get("name") or manifest_item.get("name"), fallback=clean_name),
+            "name": clean_name,
             "tier": _clean_text(hint.get("tier") or manifest_item.get("tier"), fallback="Unknown"),
             "summary": _clean_text(
                 hint.get("summary") or manifest_item.get("tooltip_plain") or manifest_item.get("description"),
                 fallback="本地模板识别结果",
             ),
-            "image": image,
-            "digest": digest,
+            "images": images,
+            "source_icon_filenames": filenames,
             "priority": 1 if hint_result.get("ok") else 0,
         }
-        if hint_result.get("ok"):
-            hinted_templates[template_id] = raw_templates[template_id]
-    # 正式游戏内展示只显示当前英雄统计/联动。hint cache 有有效覆盖时优先把识别模板
-    # 收敛到可展示数据的海克斯，避免大量识别到无统计条目后只能显示“暂无统计”。
-    # 如果缓存过期/损坏导致 0 命中，则回退完整模板库，保证识别链可诊断。
-    return build_template_index(hinted_templates or raw_templates)
+    return build_template_index(raw_templates)
+
+
+def audit_default_template_index(
+    base_dir: str | Path | None = None,
+    *,
+    hint_cache: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """审计稳定资源是否为每个名称和图标变体建立了可识别模板。"""
+
+    use_runtime_resources = base_dir is None
+    root = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parents[3]
+    version_data_dir = Path(INDEX_DATA_DIR) if use_runtime_resources else root / "resources" / "版本数据"
+    entries = _load_manifest_entries(root, use_runtime_resources=use_runtime_resources)
+    try:
+        name_to_icon = load_augment_name_to_icon_map(version_data_dir)
+    except (OSError, json.JSONDecodeError):
+        name_to_icon = {}
+    expected_identities = {
+        normalize_augment_id(item.get("name"))
+        for item in entries
+        if normalize_augment_id(item.get("name"))
+    } | {
+        normalize_augment_id(name)
+        for name in name_to_icon
+        if normalize_augment_id(name)
+    }
+    expected_variants = {
+        (normalize_augment_id(item.get("name")), Path(_clean_text(item.get("filename") or item.get("local_path"))).name.lower())
+        for item in entries
+        if normalize_augment_id(item.get("name")) and _clean_text(item.get("filename") or item.get("local_path"))
+    } | {
+        (normalize_augment_id(name), Path(str(icon_path).replace("\\", "/")).name.lower())
+        for name, icon_path in name_to_icon.items()
+        if normalize_augment_id(name) and _clean_text(icon_path)
+    }
+    template_index = load_default_template_index(base_dir, hint_cache=hint_cache)
+    actual_identities = {normalize_augment_id(entry.name) for entry in template_index}
+    actual_variants = {
+        (normalize_augment_id(entry.name), filename.lower())
+        for entry in template_index
+        for filename in entry.source_icon_filenames
+    }
+    missing_identities = sorted(expected_identities - actual_identities)
+    missing_variants = sorted(expected_variants - actual_variants)
+    return {
+        "manifest_count": len(entries),
+        "identity_count": len(expected_identities),
+        "variant_count": len(expected_variants),
+        "template_count": len(template_index),
+        "text_only_template_count": sum(1 for entry in template_index if not entry.icon_fingerprints),
+        "text_only_variant_count": sum(len(entry.text_only_icon_filenames) for entry in template_index),
+        "missing_identity_count": len(missing_identities),
+        "missing_variant_count": len(missing_variants),
+        "missing_identity_sample": missing_identities[:20],
+        "missing_variant_sample": [list(item) for item in missing_variants[:20]],
+    }
 
 
 @dataclass(frozen=True)
@@ -1054,14 +1173,29 @@ def _rank_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
         return cached
     icon_rows: list[tuple[TemplateEntry, tuple[float, ...]]] = []
     for template in template_index:
-        variants = template.icon_fingerprints or (template.fingerprint,)
+        variants = tuple(fingerprint for fingerprint in (template.icon_fingerprints or (template.fingerprint,)) if fingerprint)
         icon_rows.extend((template, fingerprint) for fingerprint in variants)
     icon_templates = tuple(template for template, _fingerprint_row in icon_rows)
     icon_matrix = _stack_fingerprints([fingerprint_row for _template, fingerprint_row in icon_rows])
-    name_templates = tuple(t for t in template_index if t.name_fingerprint is not None)
-    name_matrix = _stack_fingerprints([t.name_fingerprint for t in name_templates])
-    alt_name_templates = tuple(t for t in template_index if t.name_fingerprint_alt is not None)
-    alt_name_matrix = _stack_fingerprints([t.name_fingerprint_alt for t in alt_name_templates])
+    name_rows: list[tuple[TemplateEntry, tuple[float, ...]]] = []
+    alt_name_rows: list[tuple[TemplateEntry, tuple[float, ...]]] = []
+    for template in template_index:
+        primary_variants = [
+            fingerprint
+            for fingerprint in (template.name_fingerprint, _cleaned_name_fingerprint(template.name))
+            if fingerprint is not None
+        ]
+        alt_variants = [
+            fingerprint
+            for fingerprint in (template.name_fingerprint_alt, _cleaned_name_fingerprint(template.name, family="alt"))
+            if fingerprint is not None
+        ]
+        name_rows.extend((template, fingerprint) for fingerprint in dict.fromkeys(primary_variants))
+        alt_name_rows.extend((template, fingerprint) for fingerprint in dict.fromkeys(alt_variants))
+    name_templates = tuple(template for template, _fingerprint_row in name_rows)
+    name_matrix = _stack_fingerprints([fingerprint_row for _template, fingerprint_row in name_rows])
+    alt_name_templates = tuple(template for template, _fingerprint_row in alt_name_rows)
+    alt_name_matrix = _stack_fingerprints([fingerprint_row for _template, fingerprint_row in alt_name_rows])
     entry = _RankMatrices(
         template_index,
         icon_templates,
@@ -1151,12 +1285,20 @@ def _rank_name_fingerprint(
 
     matrices = _rank_matrices(template_index)
     if family == "alt":
-        return _rank_with_matrix(
+        ranked = _rank_with_matrix(
             crop_fingerprint,
             matrices.alt_name_templates,
             matrices.alt_name_matrix,
         )
-    return _rank_with_matrix(crop_fingerprint, matrices.name_templates, matrices.name_matrix)
+    else:
+        ranked = _rank_with_matrix(crop_fingerprint, matrices.name_templates, matrices.name_matrix)
+    best_by_identity: dict[str, tuple[TemplateEntry, float]] = {}
+    for template, confidence in ranked:
+        identity = template.augment_id or template.name
+        previous = best_by_identity.get(identity)
+        if previous is None or confidence > previous[1]:
+            best_by_identity[identity] = (template, confidence)
+    return sorted(best_by_identity.values(), key=lambda item: (-item[1], -item[0].priority, item[0].name))
 
 
 def _slot_match_decision(
@@ -1442,6 +1584,20 @@ def _detect_slot(
             max(name_confidence, alt_name_confidence),
             name_candidates if name_confidence >= alt_name_confidence else _top_candidates(alt_name_ranked),
         )
+    elif text_conflict:
+        dominant_texts = [
+            (template, confidence, candidate_rows)
+            for template, confidence, candidate_rows in (
+                (name_template, name_confidence, name_candidates),
+                (alt_name_template, alt_name_confidence, _top_candidates(alt_name_ranked)),
+            )
+            if template is not None and confidence >= 0.95
+        ]
+        if dominant_texts:
+            selected_template, selected_confidence, selected_candidates = max(dominant_texts, key=lambda item: item[1])
+            other_confidence = alt_name_confidence if selected_template is name_template else name_confidence
+            if selected_confidence - other_confidence >= 0.10:
+                selected_text = (selected_template, selected_confidence, selected_candidates)
     elif not text_conflict:
         ready_texts = [
             (template, confidence, candidate_rows)

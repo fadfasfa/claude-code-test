@@ -60,10 +60,10 @@ HOTKEY_FALLBACK_DEBOUNCE_SECONDS = 0.3
 OVERLAY_EXIT_POLL_MS = 100
 RENDER_ERROR_BACKOFF_AFTER = 3
 RENDER_ERROR_BACKOFF_MAX_MS = 30_000
-STALE_EVENT_HOLD_SECONDS = 1.0
 LRESULT = getattr(wintypes, "LRESULT", ctypes.c_ssize_t)
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 OVERLAY_READY_FILE_ENV = "HEXTECH_OVERLAY_READY_FILE"
+OVERLAY_READY_TOKEN_ENV = "HEXTECH_OVERLAY_READY_TOKEN"
 OVERLAY_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
 
 
@@ -371,9 +371,12 @@ def _extract_event_status(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         except (TypeError, ValueError):
             return None
 
+    ready_slots = optional_number(source.get("ready_slots"), int)
+    if ready_slots is None:
+        ready_slots = _snapshot_ready_slot_count(snapshot)
     return {
         "gate_state": str(source.get("gate_state") or "").strip(),
-        "ready_slots": optional_number(source.get("ready_slots"), int) or 0,
+        "ready_slots": max(0, min(3, int(ready_slots or 0))),
         "blocking_modal": bool(source.get("blocking_modal")),
         "latency_ms": optional_number(source.get("latency_ms"), float),
         "stable_frames": optional_number(source.get("stable_frames"), int),
@@ -384,6 +387,37 @@ def _extract_event_status(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "error": str(snapshot.get("error") or "").strip(),
     }
+
+
+def _log_waiting_context_diagnostic(
+    visibility: dict[str, Any],
+    snapshot: Mapping[str, Any],
+    context: Mapping[str, Any],
+    model: Mapping[str, Any],
+) -> None:
+    statuses = [
+        str(row.get("status_code") or "")
+        for row in (model.get("stats") if isinstance(model.get("stats"), list) else [])
+        if isinstance(row, Mapping)
+    ]
+    if not any(status in {"CONTEXT_MISSING", "CONTEXT_EXPIRED"} for status in statuses):
+        return
+    event_status = _extract_event_status(snapshot)
+    diagnostic = {
+        "context_status": "ok" if context.get("ok") else str(context.get("error") or "context_missing"),
+        "context_source": str(context.get("source") or ""),
+        "context_champion_id": str(context.get("champion_id") or ""),
+        "context_champion_name": str(context.get("champion_name") or ""),
+        "event_reason": _snapshot_source_reason(snapshot),
+        "ready_slots": event_status.get("ready_slots"),
+        "selection_window_active": event_status.get("selection_window_active"),
+        "render_statuses": statuses,
+    }
+    diagnostic_key = tuple(diagnostic.items())
+    if diagnostic_key == visibility.get("last_waiting_context_diagnostic"):
+        return
+    visibility["last_waiting_context_diagnostic"] = diagnostic_key
+    logger.info("game_overlay waiting_context=%s", diagnostic)
 
 
 def _snapshot_has_complete_ready_slots(snapshot: Mapping[str, Any]) -> bool:
@@ -443,9 +477,10 @@ def _signal_overlay_ready() -> None:
     if not ready_path:
         return
     try:
+        ready_token = str(os.environ.get(OVERLAY_READY_TOKEN_ENV) or "").strip()
         atomic_write_json(
             Path(ready_path),
-            {"pid": os.getpid(), "ready_at": time.time()},
+            {"pid": os.getpid(), "token": ready_token, "ready_at": time.time()},
             ensure_ascii=False,
             indent=2,
         )
@@ -540,8 +575,7 @@ def decide_visibility(
     if not game_foreground:
         should_show, reason = False, "game_not_foreground"
     elif event_error:
-        should_show = bool(event_error == "event_expired" and stale_event_hold)
-        reason = "event_expired_hold" if should_show else event_error
+        should_show, reason = False, event_error
     elif blocking_modal:
         should_show, reason = False, "blocking_modal_present"
     elif scoreboard_key_down:
@@ -554,11 +588,11 @@ def decide_visibility(
         should_show, reason = False, "selection_window_inactive"
     elif not event_visible:
         should_show, reason = False, source_reason or "event_inactive"
-    elif resolved_ready_slots <= 0:
+    elif not content_ready or resolved_ready_slots < 3:
         should_show, reason = False, "content_not_ready"
     else:
         should_show = True
-        reason = "visible_ready" if content_ready else "visible_partial"
+        reason = "visible_ready"
 
     if diagnostic_mode and not should_show:
         return True, f"diagnostic:{reason}"
@@ -618,16 +652,8 @@ def _sync_event_visibility(
         generated_at = 0.0
     tab_released_at = float(visibility.get("tab_released_at") or 0.0)
     event_fresh_after_tab = not tab_released_at or generated_at >= tab_released_at
-    now = time.time()
     stale_hold_active = False
-    if event_error == "event_expired" and bool(visibility.get("window_visible")):
-        hold_until = float(visibility.get("event_stale_hold_until") or 0.0)
-        if hold_until <= 0.0:
-            hold_until = now + STALE_EVENT_HOLD_SECONDS
-            visibility["event_stale_hold_until"] = hold_until
-        stale_hold_active = now <= hold_until
-    elif event_error != "event_expired":
-        visibility.pop("event_stale_hold_until", None)
+    visibility.pop("event_stale_hold_until", None)
     should_show = resolved_should_show
     reason = str(visibility.get("visibility_reason") or "")
     if should_show is None:
@@ -657,7 +683,8 @@ def _sync_event_visibility(
     visibility["visibility_reason"] = reason
     visibility["render_full_overlay"] = bool(
         should_show
-        and ready_slots >= 1
+        and content_ready
+        and ready_slots >= 3
         and selection_window_active is not False
         and (event_visible or stale_hold_active or bool(config.get("diagnostic_mode")))
     )
@@ -782,6 +809,7 @@ def _schedule_event_render(
             hint_cache = source.read_hint_cache()
             context = source.read_context()
             model = build_render_model(snapshot, hint_cache=hint_cache, context=context)
+            _log_waiting_context_diagnostic(visibility, snapshot, context, model)
             draw_overlay_frame(canvas, model, perf_sink=visibility)
             _sync_event_visibility(
                 root,
@@ -887,15 +915,24 @@ def run_self_check() -> dict[str, Any]:
     for row in model["stats"]:
         status_code = str(row.get("status_code") or "")
         status_counts[status_code] = status_counts.get(status_code, 0) + 1
+    event_status = _extract_event_status(snapshot)
+    try:
+        state_age_ms = int(max(0.0, time.time() - float(snapshot.get("generated_at") or 0.0)) * 1000)
+    except (TypeError, ValueError):
+        state_age_ms = None
     return {
         "ok": True,
         "title": config["title"],
+        "process_health": {"host": "self-check", "sidecar": "not-inspected"},
+        "state_age_ms": state_age_ms,
         "event_poll_ms": config["event_poll_ms"],
         "no_activate": bool(config.get("no_activate")),
         "event_ok": bool(snapshot.get("ok")),
         "event_visible": bool(snapshot.get("visible")),
         "event_error": str(snapshot.get("error") or ""),
         "event_reason": str((snapshot.get("source") or {}).get("reason") or "") if isinstance(snapshot.get("source"), dict) else "",
+        "ready_slots": event_status["ready_slots"],
+        "selection_window_active": event_status["selection_window_active"],
         "schema_version": snapshot.get("schema_version"),
         "cache_ok": not bool(hint_cache.get("error")) if isinstance(hint_cache, Mapping) else False,
         "hint_cache_error": str(hint_cache.get("error") or ""),
@@ -909,6 +946,7 @@ def run_self_check() -> dict[str, Any]:
         "render_synergy_count": len(model["synergies"]),
         "render_status_counts": status_counts,
         "context_status": "ok" if context.get("ok") else str(context.get("error") or "context_missing"),
+        "context_source": str(context.get("source") or ""),
         "context_ok": bool(context.get("ok")),
         "context_error": str(context.get("error") or ""),
     }

@@ -198,6 +198,26 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             required_frames=2,
         )
 
+    if text_conflict:
+        dominant_channels = (
+            (text, text_top, text_identity, text_confidence, alt_confidence, "dominant_text"),
+            (text_alt, alt_top, alt_identity, alt_confidence, text_confidence, "dominant_text_alt"),
+        )
+        for evidence, candidate, identity, confidence, other_confidence, rule in sorted(
+            dominant_channels,
+            key=lambda item: item[3],
+            reverse=True,
+        ):
+            if identity and confidence >= 0.95 and confidence - other_confidence >= 0.10:
+                return _candidate_from_top(
+                    slot,
+                    candidate,
+                    evidence=evidence,
+                    confidence=confidence,
+                    rule=rule,
+                    required_frames=2,
+                )
+
     # 优先级 2：单字体强匹配（置信度 ≥ 0.74 且 margin ≥ 0.025），2 帧稳定
     strong_channels = (
         (text, text_top, text_identity, text_confidence, text_margin, "strong_text"),

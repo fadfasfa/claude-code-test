@@ -68,6 +68,7 @@ DEFAULT_CHECKS = (
     "check_lol_window_contract",
     "check_official_overlay_provider_contract",
     "check_overlay_vision_sidecar_contract",
+    "check_overlay_refresh_tool_contract",
     "check_game_overlay_module_contract",
     "check_desktop_ui_feature_switch_contract",
     "check_synergy_alias_collision_guard",
@@ -88,6 +89,7 @@ OVERLAY_ONLY_CHECKS = (
     "check_lol_window_contract",
     "check_official_overlay_provider_contract",
     "check_overlay_vision_sidecar_contract",
+    "check_overlay_refresh_tool_contract",
     "check_game_overlay_module_contract",
     "check_desktop_ui_feature_switch_contract",
 )
