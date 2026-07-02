@@ -2,6 +2,8 @@
   "excel_version": "13.2",
   "wiki_version": "Hotfix 13.2",
   "wiki_degraded": false,
+  "hard_degraded": false,
+  "wiki_skipped": false,
   "version_alignment": {
     "aligned": true,
     "wiki_version": "13.2",
@@ -50,11 +52,41 @@
       "current": "13.2"
     },
     "wiki_degraded": false,
+    "hard_degraded": false,
     "version_alignment": {
       "aligned": true,
       "wiki_version": "13.2",
       "excel_version": "13.2",
       "reason": "aligned"
+    },
+    "modifier_changes": {
+      "positive_modifier_pool": {
+        "added_count": 0,
+        "removed_count": 1,
+        "changed_count": 0,
+        "added_keys": [],
+        "removed_keys": [
+          "excel-positive-33"
+        ],
+        "changed_keys": []
+      },
+      "negative_modifier_pool": {
+        "added_count": 0,
+        "removed_count": 0,
+        "changed_count": 0,
+        "added_keys": [],
+        "removed_keys": [],
+        "changed_keys": []
+      },
+      "negative_modifier_rules": {
+        "added_count": 0,
+        "removed_count": 0,
+        "changed_count": 0,
+        "added_paths": [],
+        "removed_paths": [],
+        "changed_paths": []
+      },
+      "has_changes": true
     },
     "excel_new_items": [],
     "excel_new_items_count": 0

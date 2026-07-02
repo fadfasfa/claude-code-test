@@ -38,8 +38,9 @@ python scripts/sm2_update_flow.py --headless
 ## 用户拍板后
 
 - 用户说"覆盖"/"打包"/"发布"/"确认更新"：
-  - 版本对齐（aligned=True）：`python build_release.py apply-candidate` → `python build_release.py package-release [--with-exe]`
-  - 版本不齐（aligned=False，用户确认要发）：`python build_release.py apply-candidate --accept-version-mismatch` → `python build_release.py package-release [--with-exe]`
+  - 版本对齐且无硬退化（aligned=True, hard_degraded=False）：`python build_release.py apply-candidate` → `python build_release.py package-release [--with-exe]`
+  - 版本不齐（aligned=False，用户确认要发）：`python build_release.py apply-candidate --accept-version-mismatch` → `python build_release.py package-release --accept-version-mismatch [--with-exe]`
+  - wiki 硬退化（hard_degraded=True，用户确认要发）：apply/package 两步都必须显式带 `--accept-hard-degradation`；若同时版本不齐，同时带 `--accept-version-mismatch`。
 - 用户说"先不改"/"算了"/"丢弃"：`python build_release.py clean-candidate`
 - 用户说"wiki 退化要修"：排查 `pipeline/store/raw/wiki/原始抓取数据.json` 的 `meta.degradation`（reasons/soft_reasons），修 `pipeline/collect/wiki/scrape_wiki.py` 对应选择器。
 

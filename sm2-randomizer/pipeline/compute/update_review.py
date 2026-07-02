@@ -42,7 +42,12 @@ def _load_wiki_degradation() -> dict[str, Any]:
     return meta.get("degradation", {}) if isinstance(meta.get("degradation"), dict) else {}
 
 
-def build_update_review(candidate_dir: Path | None = None, current_dir: Path | None = None) -> dict[str, Any]:
+def build_update_review(
+    candidate_dir: Path | None = None,
+    current_dir: Path | None = None,
+    *,
+    wiki_skipped: bool = False,
+) -> dict[str, Any]:
     """构建人审变动报告，写 update_review.md，返回终端摘要所需数据。"""
     candidate_root = candidate_dir or PIPELINE_TMP_PUBLISH_DIR
     current_root = current_dir or APP_DATA_DIR
@@ -61,6 +66,8 @@ def build_update_review(candidate_dir: Path | None = None, current_dir: Path | N
         "excel_version": build.get("excel_version"),
         "wiki_version": build.get("version"),
         "wiki_degraded": status.get("wiki_degraded", False),
+        "hard_degraded": status.get("hard_degraded", False),
+        "wiki_skipped": wiki_skipped,
         "version_alignment": alignment,
         "validation_issue_count": status.get("validation_issue_count", 0),
         "has_diff": status.get("has_diff", False),
@@ -95,7 +102,8 @@ def _render_markdown(s: dict[str, Any]) -> str:
     sem = s.get("semantic_changes", {}) or {}
     issue_count = s.get("validation_issue_count", 0)
     aligned = alignment.get("aligned")
-    can_apply = issue_count == 0 and aligned is not False
+    hard_degraded = bool(s.get("hard_degraded"))
+    can_apply = issue_count == 0 and aligned is not False and not hard_degraded
 
     lines = [
         "# sm2-randomizer 数据更新人审报告",
@@ -105,7 +113,9 @@ def _render_markdown(s: dict[str, Any]) -> str:
         f"- wiki 版本: `{s.get('wiki_version')}`",
         f"- Excel 版本: `{s.get('excel_version')}`",
         f"- 版本对齐: `{aligned}` ({alignment.get('reason')})",
+        f"- wiki 本轮跳过: `{s.get('wiki_skipped')}`",
         f"- wiki 退化: `{s.get('wiki_degraded')}`",
+        f"- wiki 硬退化: `{hard_degraded}`",
         f"- 校验问题数: `{issue_count}`",
         f"- 有变动: `{s.get('has_diff')}`",
         f"- 可安全 apply: `{can_apply}`",
@@ -134,6 +144,7 @@ def _render_markdown(s: dict[str, Any]) -> str:
         "",
         "## wiki 抓取",
         "",
+        f"- 本轮跳过 wiki: `{s.get('wiki_skipped')}`",
         f"- 增量跳过页数: `{inc.get('skipped_count')}`",
         f"- 重新抓取页数: `{inc.get('refetched_count')}`",
         f"- 强制刷新: `{inc.get('force_refresh')}`",
@@ -150,6 +161,8 @@ def _render_markdown(s: dict[str, Any]) -> str:
     if deg.get("talent_reasons"):
         lines.append("- 天赋退化原因:")
         lines.extend(f"  - `{r}`" for r in deg["talent_reasons"])
+    if s.get("wiki_skipped"):
+        lines.append("- 说明：本轮使用既有 wiki raw，以上 wiki 增量与退化信息不代表本轮重新抓取结果。")
 
     lines.extend([
         "",
@@ -162,16 +175,33 @@ def _render_markdown(s: dict[str, Any]) -> str:
         f"- 天赋描述变更: `{sem.get('changed_talent_description_count', 0)}` 条",
         f"- Excel 待审新增项: `{sem.get('excel_new_items_count', 0)}` 条",
     ])
+    modifiers = sem.get("modifier_changes", {}) if isinstance(sem.get("modifier_changes"), dict) else {}
+    if modifiers:
+        pos = modifiers.get("positive_modifier_pool", {}) or {}
+        neg = modifiers.get("negative_modifier_pool", {}) or {}
+        rules = modifiers.get("negative_modifier_rules", {}) or {}
+        lines.extend([
+            f"- 正向 modifier 变更: +`{pos.get('added_count', 0)}` -`{pos.get('removed_count', 0)}` ~`{pos.get('changed_count', 0)}`",
+            f"- 负向 modifier 变更: +`{neg.get('added_count', 0)}` -`{neg.get('removed_count', 0)}` ~`{neg.get('changed_count', 0)}`",
+            f"- 负向 modifier 规则路径变更: +`{rules.get('added_count', 0)}` -`{rules.get('removed_count', 0)}` ~`{rules.get('changed_count', 0)}`",
+        ])
 
     lines.extend(["", "## 结论与下一步", ""])
     if issue_count > 0:
         lines.append(f"- ❌ 校验有 `{issue_count}` 个问题，**不可 apply**，请先排查 runtime_validation.json。")
-    elif aligned is False:
-        lines.append(f"- ⚠️ 版本不齐 (wiki={alignment.get('wiki_version')} excel={alignment.get('excel_version')})。")
+    elif aligned is False or hard_degraded:
+        command_flags = []
+        if aligned is False:
+            command_flags.append("--accept-version-mismatch")
+            lines.append(f"- ⚠️ 版本不齐 (wiki={alignment.get('wiki_version')} excel={alignment.get('excel_version')})。")
+        if hard_degraded:
+            command_flags.append("--accept-hard-degradation")
+            lines.append("- ⚠️ wiki 硬退化存在，确认后才可显式强制 apply/package。")
         lines.append("- 确认后可强制 apply：")
         lines.append("  ```")
-        lines.append("  python build_release.py apply-candidate --accept-version-mismatch")
-        lines.append("  python build_release.py package-release [--with-exe]")
+        flags = " ".join(command_flags)
+        lines.append(f"  python build_release.py apply-candidate {flags}".rstrip())
+        lines.append(f"  python build_release.py package-release {flags} [--with-exe]".rstrip())
         lines.append("  ```")
     else:
         lines.append("- ✅ 校验通过、版本对齐，可安全 apply：")

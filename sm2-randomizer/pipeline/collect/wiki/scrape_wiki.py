@@ -31,6 +31,8 @@ RAW_OUTPUT_PATH = PIPELINE_STORE_RAW_WIKI_DIR / "原始抓取数据.json"
 # 页面 hash 缓存：跨 run 持久化 {page_title: sha1(html)}，用于增量抓取——
 # 页面内容未变则跳过解析，复用上次 raw 该页记录。--force-refresh 绕过。
 PAGE_HASHES_PATH = PIPELINE_STORE_RAW_WIKI_DIR / "page_hashes.json"
+SCRAPER_CACHE_VERSION = "2026-07-02-role-text-blockquote-v2"
+PAGE_HASHES_VERSION_KEY = "__scraper_cache_version"
 CLASS_WEAPON_MAP_OUTPUT_PATH = PIPELINE_STORE_CATALOG_DIR / "职业武器映射.json"
 TABLE_OUTPUT_PATH = PIPELINE_STORE_REPORTS_SOURCE_DIR / "人工审阅表.md"
 TALENT_IMPORT_PATH = PIPELINE_STORE_RAW_EXCEL_DIR / "天赋技能效果.json"
@@ -200,7 +202,20 @@ def load_page_hashes() -> dict[str, str]:
 
 
 def save_page_hashes(hashes: dict[str, str]) -> None:
-    write_json(PAGE_HASHES_PATH, hashes)
+    payload = dict(hashes)
+    payload[PAGE_HASHES_VERSION_KEY] = SCRAPER_CACHE_VERSION
+    write_json(PAGE_HASHES_PATH, payload)
+
+
+def _page_hash_value(hashes: dict[str, str], title: str) -> str:
+    if hashes.get(PAGE_HASHES_VERSION_KEY) != SCRAPER_CACHE_VERSION:
+        return ""
+    return str(hashes.get(title, "") or "")
+
+
+def _set_page_hash(hashes: dict[str, str], title: str, value: str) -> None:
+    hashes[PAGE_HASHES_VERSION_KEY] = SCRAPER_CACHE_VERSION
+    hashes[title] = value
 
 
 def fetch_fandom_page(title: str) -> dict[str, Any]:
@@ -970,7 +985,7 @@ def _scrape_with_increment(
     for title in titles:
         page = fetch_fandom_page(title)
         new_hash = page["html_hash"]
-        prev_hash = page_hashes.get(title)
+        prev_hash = _page_hash_value(page_hashes, title)
         previous = previous_raw.get(title)
         if not force_refresh and prev_hash == new_hash and previous is not None:
             reused = dict(previous)
@@ -986,7 +1001,7 @@ def _scrape_with_increment(
             stats["skipped"].append(title)
             continue
         results.append(scrape_fn(title, page))
-        page_hashes[title] = new_hash
+        _set_page_hash(page_hashes, title, new_hash)
         stats["refetched"].append(title)
     return results
 

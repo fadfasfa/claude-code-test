@@ -77,8 +77,7 @@ def main() -> int:
 
     # 6. 人审报告
     print("\n=== 生成人审报告 ===")
-    summary = build_update_review()
-    summary["wiki_skipped"] = args.skip_wiki
+    summary = build_update_review(wiki_skipped=args.skip_wiki)
     _print_terminal_summary(summary)
     return 0 if summary.get("validation_issue_count", 0) == 0 else 1
 
@@ -88,6 +87,7 @@ def _print_terminal_summary(s: dict) -> None:
     inc = s.get("wiki_incremental", {}) or {}
     sem = s.get("semantic_changes", {}) or {}
     alignment = s.get("version_alignment", {}) or {}
+    hard_degraded = bool(s.get("hard_degraded"))
     print("\n" + "=" * 60)
     print("[update-flow] 终端摘要")
     print("=" * 60)
@@ -100,6 +100,7 @@ def _print_terminal_summary(s: dict) -> None:
               f"wiki_degraded={s.get('wiki_degraded')}")
     print(f"[update-flow] 校验: issue_count={s.get('validation_issue_count')}")
     print(f"[update-flow] 版本对齐: aligned={alignment.get('aligned')} (wiki={alignment.get('wiki_version')} excel={alignment.get('excel_version')})")
+    print(f"[update-flow] wiki 硬退化: {hard_degraded}")
     print(f"[update-flow] 变动: +{len(sem.get('added_weapons', []))}武器 -{len(sem.get('removed_weapons', []))}武器 "
           f"+{len(sem.get('added_classes', []))}职业 -{len(sem.get('removed_classes', []))}职业 "
           f"天赋描述变更{sem.get('changed_talent_description_count', 0)}条 "
@@ -109,8 +110,18 @@ def _print_terminal_summary(s: dict) -> None:
     aligned = alignment.get("aligned")
     if s.get("validation_issue_count", 0) != 0:
         print("[update-flow] 校验有问题，请先排查 pipeline/store/reports/runtime/runtime_validation.json")
-    elif aligned is False:
-        print("[update-flow] 版本不齐，确认后: python build_release.py apply-candidate --accept-version-mismatch && python build_release.py package-release")
+    elif aligned is False or hard_degraded:
+        flags = []
+        if aligned is False:
+            flags.append("--accept-version-mismatch")
+        if hard_degraded:
+            flags.append("--accept-hard-degradation")
+        joined_flags = " ".join(flags)
+        print(
+            "[update-flow] 需人工确认，确认后: "
+            f"python build_release.py apply-candidate {joined_flags} && "
+            f"python build_release.py package-release {joined_flags} [--with-exe]"
+        )
     else:
         print("[update-flow] 确认后: python build_release.py apply-candidate && python build_release.py package-release [--with-exe]")
     print("[update-flow] 不更新则: python build_release.py clean-candidate")

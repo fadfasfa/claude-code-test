@@ -17,7 +17,7 @@ from pathlib import Path
 
 from pipeline.common import PIPELINE_TMP_PUBLISH_DIR, VALIDATION_REPORT_FILE, read_json
 from pipeline.compute.validate_runtime_data import validate_runtime_data
-from pipeline.compute.publish_candidate import _version_alignment
+from pipeline.compute.publish_candidate import _hard_degradation_reasons, _version_alignment, build_diff_summary
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DIST_DIR = PROJECT_ROOT / "dist"
@@ -196,11 +196,14 @@ def parse_args() -> argparse.Namespace:
     subparsers.add_parser("diff-candidate", help="Generate JSON and Markdown diff summaries for the current candidate.")
     apply_candidate_parser = subparsers.add_parser("apply-candidate", help="Apply reviewed candidate runtime files into app/data.")
     apply_candidate_parser.add_argument("--accept-version-mismatch", action="store_true", help="允许在 wiki 与 Excel 版本不一致时强制应用候选。")
+    apply_candidate_parser.add_argument("--accept-hard-degradation", action="store_true", help="允许在 wiki 硬退化时强制应用候选。")
     subparsers.add_parser("clean-candidate", help="Delete candidate runtime files.")
 
     package_release_parser = subparsers.add_parser("package-release", help="Build a validated final package folder and optional exe.")
     package_release_parser.add_argument("--skip-refresh", action="store_true", help="Skip data refresh before packaging.")
     package_release_parser.add_argument("--with-exe", action="store_true", help="Also build a PyInstaller exe directly into the package root.")
+    package_release_parser.add_argument("--accept-version-mismatch", action="store_true", help="允许在 wiki 与 Excel 版本不一致时强制打包。")
+    package_release_parser.add_argument("--accept-hard-degradation", action="store_true", help="允许在 wiki 硬退化时强制打包。")
 
     argv = sys.argv[1:]
     if not argv:
@@ -265,16 +268,32 @@ def _validate_package_runtime() -> dict:
     )
 
 
-def _check_package_data_health() -> tuple[bool, dict]:
-    """读取打包目录 meta.json，返回 (wiki_degraded, version_alignment)。
+def _check_package_data_health() -> tuple[bool, dict, list[str]]:
+    """读取打包目录 meta.json，返回退化、版本对齐与硬退化原因。
 
     wiki_degraded=True 仅 warning（软退化可分发）；version_alignment.aligned
-    is False 阻断打包（版本不齐的包不应分发）。apply 闸门保证只有显式确认才进
-    app/data，package 再兜底一次。
+    is False 阻断打包（除非显式确认）；硬退化同样默认阻断。apply 闸门保证只有
+    显式确认才进 app/data，package 再兜底一次。
     """
     meta = read_json(PACKAGE_DATA_DIR / "meta.json", {})
     build = meta.get("build", {}) if isinstance(meta.get("build"), dict) else {}
-    return bool(build.get("wiki_degraded")), _version_alignment(meta)
+    return bool(build.get("wiki_degraded")), _version_alignment(meta), _hard_degradation_reasons(meta)
+
+
+def _candidate_runtime_ready() -> bool:
+    return all((PIPELINE_TMP_PUBLISH_DIR / filename).exists() for filename in PACKAGE_RUNTIME_FILES)
+
+
+def _assert_no_stale_candidate_for_package() -> None:
+    """tmp_publish 有未应用差异时禁止直接打包旧 app/data。"""
+    if not _candidate_runtime_ready():
+        return
+    summary = build_diff_summary(PIPELINE_TMP_PUBLISH_DIR, APP_DATA_DIR)
+    if int(summary.get("changed_file_count", 0) or 0) > 0:
+        raise RuntimeError(
+            f"{PIPELINE_TMP_PUBLISH_DIR} 中存在尚未应用到 app/data 的候选差异；"
+            "请先人工审阅并 apply-candidate，或 clean-candidate 后再打包。"
+        )
 
 
 def _print_package_summary(validation: dict) -> None:
@@ -589,7 +608,7 @@ def diff_candidate() -> int:
     )
 
 
-def apply_candidate(accept_version_mismatch: bool = False) -> int:
+def apply_candidate(accept_version_mismatch: bool = False, accept_hard_degradation: bool = False) -> int:
     missing = [name for name in PACKAGE_RUNTIME_FILES if not (PIPELINE_TMP_PUBLISH_DIR / name).exists()]
     if missing:
         print(f"[sm2-randomizer] Missing candidate files in {PIPELINE_TMP_PUBLISH_DIR}: {', '.join(missing)}")
@@ -615,6 +634,8 @@ def apply_candidate(accept_version_mismatch: bool = False) -> int:
     apply_command = [sys.executable, "-m", "pipeline.compute.publish_candidate", "apply-candidate"]
     if accept_version_mismatch:
         apply_command.append("--accept-version-mismatch")
+    if accept_hard_degradation:
+        apply_command.append("--accept-hard-degradation")
     return _run(apply_command)
 
 
@@ -623,6 +644,11 @@ def clean_candidate() -> int:
 
 
 def package_release(args: argparse.Namespace) -> int:
+    try:
+        _assert_no_stale_candidate_for_package()
+    except RuntimeError as error:
+        print(f"[sm2-randomizer] 打包阻断：{error}")
+        return 1
     _prepare_package_directory()
     _copy_package_static()
     _copy_package_assets()
@@ -631,16 +657,22 @@ def package_release(args: argparse.Namespace) -> int:
     _print_package_summary(validation)
     if _package_issue_count(validation):
         return 1
-    wiki_degraded, version_alignment = _check_package_data_health()
-    if version_alignment.get("aligned") is False:
+    wiki_degraded, version_alignment, hard_reasons = _check_package_data_health()
+    if version_alignment.get("aligned") is False and not args.accept_version_mismatch:
         print(
             f"[sm2-randomizer] 打包阻断：运行数据版本未对齐 "
             f"wiki={version_alignment.get('wiki_version')} excel={version_alignment.get('excel_version')}；"
-            "请对齐源数据版本（wiki VERSION_ANCHOR 与 excel source_version）后重新 refresh-data 并 apply-candidate，再打包。"
+            "请对齐源数据版本后重新 refresh-data 并 apply-candidate，或显式带 --accept-version-mismatch。"
+        )
+        return 1
+    if hard_reasons and not args.accept_hard_degradation:
+        print(
+            "[sm2-randomizer] 打包阻断：wiki 硬退化仍存在 "
+            f"({', '.join(hard_reasons)})；请修复抓取后重试，或显式带 --accept-hard-degradation。"
         )
         return 1
     if wiki_degraded:
-        print("[sm2-randomizer] 警告：wiki 数据处于退化状态（软退化），已降级字段并保计数，可分发但建议排查 wiki 抓取。")
+        print("[sm2-randomizer] 警告：wiki 数据处于退化状态；强制分发前请确认退化原因已被人工接受。")
     if not args.with_exe:
         try:
             _verify_release_acceptance(with_exe=False)
@@ -685,7 +717,10 @@ def main() -> int:
     if args.command == "diff-candidate":
         return diff_candidate()
     if args.command == "apply-candidate":
-        return apply_candidate(accept_version_mismatch=args.accept_version_mismatch)
+        return apply_candidate(
+            accept_version_mismatch=args.accept_version_mismatch,
+            accept_hard_degradation=args.accept_hard_degradation,
+        )
     if args.command == "clean-candidate":
         return clean_candidate()
     return refresh_data(args)

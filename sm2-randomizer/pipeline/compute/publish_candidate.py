@@ -110,6 +110,66 @@ def _collect_talent_descriptions(talents_payload: dict[str, Any]) -> dict[tuple[
     return result
 
 
+def _modifier_identity(item: dict[str, Any]) -> str:
+    for field in ("key", "name", "title", "label"):
+        value = str(item.get(field, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _collect_modifier_items(meta_payload: dict[str, Any], field_name: str) -> dict[str, Any]:
+    items = meta_payload.get(field_name, []) if isinstance(meta_payload, dict) else []
+    result: dict[str, Any] = {}
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        key = _modifier_identity(item)
+        if key:
+            result[key] = _normalize(item)
+    return result
+
+
+def _build_modifier_changes(cand_meta: dict[str, Any], cur_meta: dict[str, Any]) -> dict[str, Any]:
+    positive = _diff_modifier_pool(cand_meta, cur_meta, "positive_modifier_pool")
+    negative = _diff_modifier_pool(cand_meta, cur_meta, "negative_modifier_pool")
+    rules = _diff_file(cand_meta.get("negative_modifier_rules", {}), cur_meta.get("negative_modifier_rules", {}))
+    return {
+        "positive_modifier_pool": positive,
+        "negative_modifier_pool": negative,
+        "negative_modifier_rules": rules,
+        "has_changes": bool(
+            positive["added_count"]
+            or positive["removed_count"]
+            or positive["changed_count"]
+            or rules["added_count"]
+            or rules["removed_count"]
+            or rules["changed_count"]
+            or negative["added_count"]
+            or negative["removed_count"]
+            or negative["changed_count"]
+        ),
+    }
+
+
+def _diff_modifier_pool(cand_meta: dict[str, Any], cur_meta: dict[str, Any], field_name: str) -> dict[str, Any]:
+    candidate = _collect_modifier_items(cand_meta, field_name)
+    current = _collect_modifier_items(cur_meta, field_name)
+    candidate_keys = set(candidate)
+    current_keys = set(current)
+    changed = sorted(key for key in candidate_keys & current_keys if candidate[key] != current[key])
+    added = sorted(candidate_keys - current_keys)
+    removed = sorted(current_keys - candidate_keys)
+    return {
+        "added_count": len(added),
+        "removed_count": len(removed),
+        "changed_count": len(changed),
+        "added_keys": added[:100],
+        "removed_keys": removed[:100],
+        "changed_keys": changed[:100],
+    }
+
+
 def _build_semantic_changes(
     candidate_payloads: dict[str, Any],
     current_payloads: dict[str, Any],
@@ -152,7 +212,9 @@ def _build_semantic_changes(
         "version": {"candidate": cand_build.get("version"), "current": cur_build.get("version")},
         "excel_version": {"candidate": cand_build.get("excel_version"), "current": cur_build.get("excel_version")},
         "wiki_degraded": bool(cand_build.get("wiki_degraded")),
+        "hard_degraded": _has_hard_degradation(cand_meta),
         "version_alignment": _version_alignment(cand_meta),
+        "modifier_changes": _build_modifier_changes(cand_meta, cur_meta),
         "excel_new_items": discovered_new_items,
         "excel_new_items_count": len(discovered_new_items),
     }
@@ -203,10 +265,23 @@ def build_diff_markdown(summary: dict[str, Any]) -> str:
                 f"- 版本: candidate=`{semantic.get('version', {}).get('candidate')}` current=`{semantic.get('version', {}).get('current')}`",
                 f"- Excel 版本: candidate=`{semantic.get('excel_version', {}).get('candidate')}` current=`{semantic.get('excel_version', {}).get('current')}`",
                 f"- wiki 退化: `{semantic.get('wiki_degraded')}`",
+                f"- 硬退化: `{semantic.get('hard_degraded')}`",
                 f"- 版本对齐: `{alignment.get('aligned')}` ({alignment.get('reason')})",
                 f"- Excel 待审新增项: `{semantic.get('excel_new_items_count', 0)}` 条",
             ]
         )
+        modifiers = semantic.get("modifier_changes", {}) if isinstance(semantic.get("modifier_changes"), dict) else {}
+        if modifiers:
+            pos = modifiers.get("positive_modifier_pool", {}) or {}
+            neg = modifiers.get("negative_modifier_pool", {}) or {}
+            rules = modifiers.get("negative_modifier_rules", {}) or {}
+            lines.extend(
+                [
+                    f"- 正向 modifier 变更: +`{pos.get('added_count', 0)}` -`{pos.get('removed_count', 0)}` ~`{pos.get('changed_count', 0)}`",
+                    f"- 负向 modifier 变更: +`{neg.get('added_count', 0)}` -`{neg.get('removed_count', 0)}` ~`{neg.get('changed_count', 0)}`",
+                    f"- 负向 modifier 规则路径变更: +`{rules.get('added_count', 0)}` -`{rules.get('removed_count', 0)}` ~`{rules.get('changed_count', 0)}`",
+                ]
+            )
         if semantic.get("excel_new_items"):
             lines.append("- 待审新增项明细:")
             for item in semantic["excel_new_items"][:20]:
@@ -271,6 +346,25 @@ def _version_alignment(candidate_meta: dict[str, Any]) -> dict[str, Any]:
     return {"aligned": True, "wiki_version": wiki_version, "excel_version": excel_version, "reason": "aligned"}
 
 
+def _hard_degradation_reasons(candidate_meta: dict[str, Any]) -> list[str]:
+    build = candidate_meta.get("build", {}) if isinstance(candidate_meta, dict) else {}
+    degradation = build.get("degradation", {}) if isinstance(build.get("degradation"), dict) else {}
+    reasons: list[str] = []
+    if degradation.get("structure_degraded"):
+        reasons.extend(str(item) for item in degradation.get("reasons", []) if str(item).strip())
+        if not reasons:
+            reasons.append("structure_degraded")
+    if degradation.get("talent_degraded"):
+        reasons.extend(str(item) for item in degradation.get("talent_reasons", []) if str(item).strip())
+        if not any(str(reason).startswith("talent_") for reason in reasons):
+            reasons.append("talent_degraded")
+    return sorted(set(reasons))
+
+
+def _has_hard_degradation(candidate_meta: dict[str, Any]) -> bool:
+    return bool(_hard_degradation_reasons(candidate_meta))
+
+
 def should_keep_candidate(candidate_dir: Path | None = None, current_dir: Path | None = None) -> dict[str, Any]:
     candidate_root = candidate_dir or PIPELINE_TMP_PUBLISH_DIR
     current_root = current_dir or APP_DATA_DIR
@@ -289,6 +383,7 @@ def should_keep_candidate(candidate_dir: Path | None = None, current_dir: Path |
         "has_diff": has_diff,
         "version_alignment": version_alignment,
         "wiki_degraded": bool(candidate_build.get("wiki_degraded")),
+        "hard_degraded": _has_hard_degradation(candidate_meta),
         "degradation": candidate_build.get("degradation", {}) if isinstance(candidate_build.get("degradation"), dict) else {},
         "excel_new_items_count": len(excel_new_items),
         "should_keep": validation_issue_count > 0 or has_diff,
@@ -301,6 +396,7 @@ def apply_candidate(
     *,
     cleanup: bool = True,
     accept_version_mismatch: bool = False,
+    accept_hard_degradation: bool = False,
 ) -> dict[str, str]:
     candidate_root = candidate_dir or PIPELINE_TMP_PUBLISH_DIR
     app_root = target_dir or APP_DATA_DIR
@@ -310,6 +406,12 @@ def apply_candidate(
         raise RuntimeError(
             f"Version mismatch: wiki={alignment['wiki_version']} excel={alignment['excel_version']}; "
             "确认源数据版本后重试，或显式带 --accept-version-mismatch 应用。"
+        )
+    hard_reasons = _hard_degradation_reasons(candidate_meta)
+    if hard_reasons and not accept_hard_degradation:
+        raise RuntimeError(
+            "Hard wiki degradation detected: "
+            f"{', '.join(hard_reasons)}；修复 wiki 抓取后重试，或显式带 --accept-hard-degradation 应用。"
         )
     app_root.mkdir(parents=True, exist_ok=True)
     for filename in RUNTIME_FILES:
@@ -347,6 +449,7 @@ def apply_or_clean_candidate(
     target_dir: Path | None = None,
     *,
     accept_version_mismatch: bool = False,
+    accept_hard_degradation: bool = False,
 ) -> dict[str, str]:
     candidate_root = candidate_dir or PIPELINE_TMP_PUBLISH_DIR
     app_root = target_dir or APP_DATA_DIR
@@ -355,7 +458,12 @@ def apply_or_clean_candidate(
         raise RuntimeError("Candidate validation failed; refusing to apply or clean.")
     if not status["has_diff"]:
         return clean_candidate(candidate_root)
-    return apply_candidate(candidate_root, app_root, accept_version_mismatch=accept_version_mismatch)
+    return apply_candidate(
+        candidate_root,
+        app_root,
+        accept_version_mismatch=accept_version_mismatch,
+        accept_hard_degradation=accept_hard_degradation,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -371,6 +479,7 @@ def parse_args() -> argparse.Namespace:
     apply_parser.add_argument("--target-dir", default=str(APP_DATA_DIR))
     apply_parser.add_argument("--keep-candidate", action="store_true", help="Apply runtime files but keep the candidate directory.")
     apply_parser.add_argument("--accept-version-mismatch", action="store_true", help="允许在 wiki 与 Excel 版本不一致时强制应用候选。")
+    apply_parser.add_argument("--accept-hard-degradation", action="store_true", help="允许在 wiki 硬退化时强制应用候选。")
 
     clean_parser = subparsers.add_parser("clean-candidate", help="Remove candidate runtime files.")
     clean_parser.add_argument("--candidate-dir", default=str(PIPELINE_TMP_PUBLISH_DIR))
@@ -387,6 +496,7 @@ def parse_args() -> argparse.Namespace:
     apply_or_clean_parser.add_argument("--candidate-dir", default=str(PIPELINE_TMP_PUBLISH_DIR))
     apply_or_clean_parser.add_argument("--target-dir", default=str(APP_DATA_DIR))
     apply_or_clean_parser.add_argument("--accept-version-mismatch", action="store_true", help="允许在 wiki 与 Excel 版本不一致时强制应用候选。")
+    apply_or_clean_parser.add_argument("--accept-hard-degradation", action="store_true", help="允许在 wiki 硬退化时强制应用候选。")
     return parser.parse_args()
 
 
@@ -400,6 +510,7 @@ if __name__ == "__main__":
             Path(args.target_dir).resolve(),
             cleanup=not args.keep_candidate,
             accept_version_mismatch=args.accept_version_mismatch,
+            accept_hard_degradation=args.accept_hard_degradation,
         )
     elif args.command == "clean-candidate":
         clean_candidate(Path(args.candidate_dir).resolve())
@@ -408,4 +519,9 @@ if __name__ == "__main__":
     elif args.command == "candidate-status":
         print(__import__("json").dumps(should_keep_candidate(Path(args.candidate_dir).resolve(), Path(args.current_dir).resolve()), ensure_ascii=False, indent=2))
     elif args.command == "apply-or-clean-candidate":
-        apply_or_clean_candidate(Path(args.candidate_dir).resolve(), Path(args.target_dir).resolve(), accept_version_mismatch=args.accept_version_mismatch)
+        apply_or_clean_candidate(
+            Path(args.candidate_dir).resolve(),
+            Path(args.target_dir).resolve(),
+            accept_version_mismatch=args.accept_version_mismatch,
+            accept_hard_degradation=args.accept_hard_degradation,
+        )

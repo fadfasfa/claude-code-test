@@ -5,7 +5,9 @@
 - wiki 版本: `Hotfix 13.2`
 - Excel 版本: `13.2`
 - 版本对齐: `True` (aligned)
+- wiki 本轮跳过: `False`
 - wiki 退化: `False`
+- wiki 硬退化: `False`
 - 校验问题数: `0`
 - 有变动: `True`
 - 可安全 apply: `True`
@@ -37,6 +39,7 @@
 
 ## wiki 抓取
 
+- 本轮跳过 wiki: `False`
 - 增量跳过页数: `37`
 - 重新抓取页数: `0`
 - 强制刷新: `False`
@@ -52,6 +55,9 @@
 - 移除职业: 无
 - 天赋描述变更: `0` 条
 - Excel 待审新增项: `0` 条
+- 正向 modifier 变更: +`0` -`1` ~`0`
+- 负向 modifier 变更: +`0` -`0` ~`0`
+- 负向 modifier 规则路径变更: +`0` -`0` ~`0`
 
 ## 结论与下一步
 

@@ -14,8 +14,12 @@
 - 版本: candidate=`Hotfix 13.2` current=`Hotfix 13.2`
 - Excel 版本: candidate=`13.2` current=`13.2`
 - wiki 退化: `False`
+- 硬退化: `False`
 - 版本对齐: `True` (aligned)
 - Excel 待审新增项: `0` 条
+- 正向 modifier 变更: +`0` -`1` ~`0`
+- 负向 modifier 变更: +`0` -`0` ~`0`
+- 负向 modifier 规则路径变更: +`0` -`0` ~`0`
 
 ## classes.json
 

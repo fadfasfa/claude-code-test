@@ -316,12 +316,30 @@ def _extract_strategy_terms(rows: list[list[str]], excluded_texts: set[str] | No
     return groups
 
 
+GREYED_STRATEGY_FONT_RGBS = {
+    "FF666666",
+    "FF767171",
+    "FF7F7F7F",
+    "FF808080",
+    "FF999999",
+    "FFA6A6A6",
+}
+
+
+def _is_greyed_strategy_font(color: Any) -> bool:
+    """仅识别维护约定中的显式 RGB 灰色，避免 theme/auto/indexed 误杀。"""
+    if color is None or getattr(color, "type", None) != "rgb":
+        return False
+    rgb = str(getattr(color, "rgb", "") or "").upper()
+    return rgb in GREYED_STRATEGY_FONT_RGBS
+
+
 def _collect_greyed_strategy_texts() -> set[str]:
     """读取策略 sheet 中灰色字体单元格的文本，作为应屏蔽词条。
 
     Excel 维护者用灰色字体标记未实装/废弃词条（如 FF767171），这些不应进入
     词条库。export_workbook_raw 只保留纯文本丢失颜色，故在此用 openpyxl 单独读。
-    黑色(FF000000)为正常词条；非黑即视为灰色屏蔽。
+    只识别显式 RGB 灰色；theme/auto/indexed 与黑色都按正常词条处理。
     """
     greyed: set[str] = set()
     workbook = load_workbook(WORKBOOK_FILE, data_only=False)
@@ -333,9 +351,8 @@ def _collect_greyed_strategy_texts() -> set[str]:
             text = str(cell.value or "").strip()
             if not text or "：" not in text:
                 continue
-            color = cell.font.color.rgb if cell.font and cell.font.color else None
-            # 仅黑色(FF000000/None)为正常；其余灰色变体一律屏蔽
-            if color and str(color).upper() not in ("FF000000", "00000000"):
+            color = cell.font.color if cell.font and cell.font.color else None
+            if _is_greyed_strategy_font(color):
                 greyed.add(text)
     return greyed
 
@@ -579,6 +596,8 @@ def _append_missing_manifest_items(items: list[dict[str, Any]], manifest: dict[s
         if not isinstance(entry, dict):
             continue
         slug = str(entry.get("slug", "")).strip()
+        if slug.startswith("excel-discovered-"):
+            continue
         if not slug or slug in existing_slugs or slug in EXCLUDED_CANONICAL_WEAPON_SLUGS:
             continue
         appended.append({
@@ -588,6 +607,11 @@ def _append_missing_manifest_items(items: list[dict[str, Any]], manifest: dict[s
             "source_sheet": "",
         })
     return appended
+
+
+def _is_stable_weapon_item(item: dict[str, Any]) -> bool:
+    slug = str(item.get("slug", "")).strip()
+    return bool(slug) and not item.get("pending_review") and not slug.startswith("excel-discovered-")
 
 
 def _build_manifest_lookup(manifest: dict[str, Any]) -> dict[str, str]:
@@ -784,7 +808,7 @@ def _build_clean_excel_exports(items: list[dict[str, Any]]) -> None:
             "asset_path": str(item.get("asset_path", "")).strip(),
         }
         for item in items
-        if str(item.get("slug", "")).strip() and str(item.get("excel_name", "")).strip()
+        if _is_stable_weapon_item(item) and str(item.get("excel_name", "")).strip()
     ]
 
     normalized_items.sort(key=lambda item: (item["slot_type"], item["excel_name"], item["slug"]))
@@ -863,10 +887,11 @@ def import_weapon_icons() -> dict[str, Any]:
     overrides = load_weapon_image_name_overrides()
 
     finalized_items, mapping_failures = _materialize_items(image_map, manifest, sheet_rows, slug_formula_lookup, overrides)
-    imported_slugs, import_failures = _import_items(finalized_items, image_lookup)
-    _cleanup_obsolete_weapon_icons(finalized_items)
-    write_json(WEAPON_IMAGE_MAP_FILE, {"items": finalized_items})
-    _build_clean_excel_exports(finalized_items)
+    stable_items = [item for item in finalized_items if _is_stable_weapon_item(item)]
+    imported_slugs, import_failures = _import_items(stable_items, image_lookup)
+    _cleanup_obsolete_weapon_icons(stable_items)
+    write_json(WEAPON_IMAGE_MAP_FILE, {"items": stable_items})
+    _build_clean_excel_exports(stable_items)
 
     failures = _dedupe_failures([*mapping_failures, *import_failures])
     discovered_new_items = [
