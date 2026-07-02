@@ -22,8 +22,11 @@
 from __future__ import annotations
 
 import base64
+import ctypes
+import json
 import logging
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -32,6 +35,7 @@ import time
 import webbrowser
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlparse
@@ -54,7 +58,49 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-_preload_status_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ui-preload-status")
+_preload_status_executor: ThreadPoolExecutor | None = None
+
+
+def _executor_shutdown(executor: ThreadPoolExecutor | None) -> bool:
+    return executor is None or bool(getattr(executor, "_shutdown", False))
+
+
+def _executor_queue_size(executor: ThreadPoolExecutor | None) -> int:
+    queue = getattr(executor, "_work_queue", None)
+    qsize = getattr(queue, "qsize", None)
+    if callable(qsize):
+        try:
+            return int(qsize())
+        except Exception:
+            return 0
+    return 0
+
+
+def _get_preload_status_executor() -> ThreadPoolExecutor:
+    global _preload_status_executor
+    if _executor_shutdown(_preload_status_executor):
+        _preload_status_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ui-preload-status")
+    return _preload_status_executor
+
+
+def ensure_desktop_executors_started() -> None:
+    _get_preload_status_executor()
+
+
+def shutdown_desktop_executors(*, wait: bool = True, cancel_futures: bool = True) -> None:
+    global _preload_status_executor
+    if _preload_status_executor is not None and not _executor_shutdown(_preload_status_executor):
+        _preload_status_executor.shutdown(wait=wait, cancel_futures=cancel_futures)
+    _preload_status_executor = None
+
+
+def get_desktop_executor_health() -> dict:
+    return {
+        "preload_status": {
+            "shutdown": _executor_shutdown(_preload_status_executor),
+            "queue_depth": _executor_queue_size(_preload_status_executor),
+        }
+    }
 
 
 def _load_server_port() -> int:
@@ -68,6 +114,243 @@ def _load_server_port() -> int:
 
 SERVER_PORT = _load_server_port()
 _AUTH_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,256}$")
+
+
+class _WindowsJobObject:
+    """Windows kill-on-close Job Object 句柄；非 Windows 不创建。"""
+
+    def __init__(self, process: subprocess.Popen) -> None:
+        self.handle = None
+        self.attached = False
+        if os.name != "nt":
+            return
+        try:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.CreateJobObjectW(None, None)
+            if not handle:
+                return
+            class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+                _fields_ = [
+                    ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                    ("PerJobUserTimeLimit", ctypes.c_longlong),
+                    ("LimitFlags", ctypes.c_uint32),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", ctypes.c_uint32),
+                    ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", ctypes.c_uint32),
+                    ("SchedulingClass", ctypes.c_uint32),
+                ]
+            class IO_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("ReadOperationCount", ctypes.c_ulonglong),
+                    ("WriteOperationCount", ctypes.c_ulonglong),
+                    ("OtherOperationCount", ctypes.c_ulonglong),
+                    ("ReadTransferCount", ctypes.c_ulonglong),
+                    ("WriteTransferCount", ctypes.c_ulonglong),
+                    ("OtherTransferCount", ctypes.c_ulonglong),
+                ]
+            class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+                _fields_ = [
+                    ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                    ("IoInfo", IO_COUNTERS),
+                    ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t),
+                ]
+
+            info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            info.BasicLimitInformation.LimitFlags = 0x00002000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not kernel32.SetInformationJobObject(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
+                kernel32.CloseHandle(handle)
+                return
+            if not kernel32.AssignProcessToJobObject(handle, int(process._handle)):
+                kernel32.CloseHandle(handle)
+                return
+            self.handle = handle
+            self._kernel32 = kernel32
+            self.attached = True
+        except Exception:
+            logger.debug("Runtime Supervisor Job Object 绑定失败。", exc_info=True)
+
+    def close(self) -> None:
+        if self.handle:
+            try:
+                self._kernel32.CloseHandle(self.handle)
+            except Exception:
+                logger.debug("Runtime Supervisor Job Object 关闭失败。", exc_info=True)
+            self.handle = None
+
+
+@dataclass
+class RuntimeSupervisorHandle:
+    """桌面侧持有的 Runtime Supervisor bootstrap 信息。"""
+
+    process: subprocess.Popen
+    supervisor_instance_id: str
+    port: int
+    session_nonce: str
+    pid: int
+    job_object: _WindowsJobObject | None = None
+
+    @property
+    def job_object_attached(self) -> bool:
+        return bool(self.job_object and self.job_object.attached)
+
+    def renew_lease(self, *, control_instance_id: str) -> dict:
+        response = requests.post(
+            f"http://127.0.0.1:{self.port}/v1/lease/renew",
+            headers={
+                "Host": "127.0.0.1",
+                "X-Hextech-Supervisor-Nonce": self.session_nonce,
+            },
+            json={"control_instance_id": control_instance_id},
+            timeout=2,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {}
+
+    def _wait_supervisor_pid_exit(self, *, timeout: float) -> None:
+        if self.pid == self.process.pid:
+            return
+        deadline = time.time() + max(0.1, float(timeout))
+        while time.time() < deadline:
+            if not psutil.pid_exists(self.pid):
+                return
+            time.sleep(0.05)
+        try:
+            process = psutil.Process(self.pid)
+            process.terminate()
+            process.wait(timeout=1.0)
+        except psutil.TimeoutExpired:
+            try:
+                process.kill()
+            except psutil.Error:
+                pass
+        except psutil.Error:
+            pass
+
+    def stop(self, *, timeout: float = 5.0) -> None:
+        shutdown_requested = False
+        try:
+            requests.post(
+                f"http://127.0.0.1:{self.port}/v1/shutdown",
+                headers={
+                    "Host": "127.0.0.1",
+                    "X-Hextech-Supervisor-Nonce": self.session_nonce,
+                },
+                timeout=1,
+            )
+            shutdown_requested = True
+        except Exception:
+            logger.debug("Runtime Supervisor shutdown API 未响应，改用进程终止。", exc_info=True)
+        if shutdown_requested and self.process.poll() is None:
+            try:
+                self.process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                pass
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=timeout)
+        self._wait_supervisor_pid_exit(timeout=timeout)
+        for stream in (self.process.stdout, self.process.stderr):
+            try:
+                if stream is not None:
+                    stream.close()
+            except OSError:
+                pass
+        if self.job_object is not None:
+            self.job_object.close()
+
+
+def _hidden_startupinfo():
+    if os.name != "nt":
+        return None
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    return startupinfo
+
+
+def start_runtime_supervisor_process(*, parent_pid: int | None = None, timeout: float = 8.0) -> RuntimeSupervisorHandle:
+    """启动独立 Runtime Supervisor，并通过 stdout 匿名管道读取 bootstrap JSON。"""
+
+    parent = int(parent_pid or os.getpid())
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, "--runtime-supervisor", "--parent-pid", str(parent)]
+    else:
+        command = [sys.executable, os.path.join(BASE_DIR, "hextech_ui.py"), "--runtime-supervisor", "--parent-pid", str(parent)]
+    process = subprocess.Popen(
+        command,
+        cwd=BASE_DIR,
+        startupinfo=_hidden_startupinfo(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+    deadline = time.time() + float(timeout)
+    line = ""
+    line_queue: queue.Queue[str] = queue.Queue(maxsize=1)
+
+    def _read_bootstrap_line() -> None:
+        if process.stdout is None:
+            return
+        try:
+            value = process.stdout.readline().strip()
+        except Exception:
+            value = ""
+        if value:
+            try:
+                line_queue.put_nowait(value)
+            except queue.Full:
+                pass
+
+    threading.Thread(target=_read_bootstrap_line, name="hextech-supervisor-bootstrap", daemon=True).start()
+    try:
+        while time.time() < deadline:
+            if process.poll() is not None:
+                stderr = process.stderr.read() if process.stderr else ""
+                raise RuntimeError(f"Runtime Supervisor 提前退出：code={process.returncode}; stderr={stderr[-500:]}")
+            try:
+                line = line_queue.get(timeout=0.05)
+                break
+            except queue.Empty:
+                pass
+            time.sleep(0.05)
+        if not line:
+            raise TimeoutError("Runtime Supervisor bootstrap 超时")
+        payload = json.loads(line)
+        handle = RuntimeSupervisorHandle(
+            process=process,
+            supervisor_instance_id=str(payload["supervisor_instance_id"]),
+            port=int(payload["port"]),
+            session_nonce=str(payload["session_nonce"]),
+            pid=int(payload["pid"]),
+        )
+        handle.job_object = _WindowsJobObject(process)
+        return handle
+    except Exception:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        raise
+
+
+def stop_runtime_supervisor_process(handle: RuntimeSupervisorHandle | None) -> None:
+    """停止 Runtime Supervisor，供桌面 UI 退出路径统一调用。"""
+
+    if handle is None:
+        return
+    handle.stop()
 
 
 def _parse_local_port(raw_port) -> int | None:
@@ -377,15 +660,11 @@ def run_terminal_loop(ui: "HextechUI") -> None:
 
 
 def run_silent_sync(ui: "HextechUI", refresh_backend_data) -> None:
-    """启动阶段执行一次静默刷新，并在完成后把结果回灌到 UI。"""
-    try:
-        refresh_backend_data(force=False, stop_event=ui.stop_event)
-        if ui.stop_event.is_set():
-            return
-        ui._reload_data_into_ui("数据同步完成", "#a6e3a1")
-    except Exception:
-        logger.exception("启动阶段后台刷新失败。")
-        ui._run_on_ui_thread(lambda: ui._set_status("数据同步失败", "#f38ba8"))
+    """兼容旧入口；refresh 由 Runtime Supervisor 唯一发起。"""
+
+    del refresh_backend_data
+    if not ui.stop_event.is_set():
+        logger.info("启动阶段静默刷新已停用：refresh 由 Runtime Supervisor action 发起。")
 
 
 def _set_click_status(ui: "HextechUI", text: str, color: str) -> None:
@@ -704,7 +983,7 @@ def _queue_preload_worker(ui: "HextechUI", hero_names: list[str]) -> None:
 
 
 def _submit_preload(ui: "HextechUI", hero_names: list[str]) -> None:
-    _preload_status_executor.submit(lambda: _queue_preload_worker(ui, hero_names))
+    _get_preload_status_executor().submit(lambda: _queue_preload_worker(ui, hero_names))
 
 
 def _queue_ui_preload(ui: "HextechUI", hero_names: list[str]) -> None:
@@ -730,7 +1009,7 @@ def _queue_clicked_hero_preload(ui: "HextechUI", hero_name: str) -> None:
     if not normalized_hero:
         return
     _queue_ui_preload(ui, [normalized_hero])
-    _preload_status_executor.submit(lambda: _refresh_clicked_hero_preload(ui, normalized_hero))
+    _get_preload_status_executor().submit(lambda: _refresh_clicked_hero_preload(ui, normalized_hero))
 
 
 def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
@@ -1041,21 +1320,8 @@ def window_sync_loop(ui: "HextechUI") -> None:
         time.sleep(0.2)
 
 def start_background_scraper(ui: "HextechUI", refresh_backend_data) -> None:
-    """启动桌面端后台刷新线程，按固定周期执行自愈和数据同步。"""
-    def scraper_loop():
-        while not ui.stop_event.is_set():
-            try:
-                refresh_backend_data(force=False, stop_event=ui.stop_event)
-                if ui.stop_event.is_set():
-                    return
-                ui._reload_data_into_ui("数据同步完成", "#a6e3a1")
-            except Exception:
-                logger.exception("定时后台刷新失败。")
-                ui._run_on_ui_thread(lambda: ui._set_status("后台刷新失败", "#f38ba8"))
+    """兼容旧入口；不再启动桌面定时刷新线程。"""
 
-            for _ in range(14400):
-                if ui.stop_event.is_set():
-                    break
-                time.sleep(1)
-
-    threading.Thread(target=scraper_loop, daemon=True).start()
+    del refresh_backend_data
+    if not ui.stop_event.is_set():
+        logger.info("桌面定时刷新线程已停用：refresh 由 Runtime Supervisor action 发起。")

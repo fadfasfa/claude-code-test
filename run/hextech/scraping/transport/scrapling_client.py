@@ -264,13 +264,15 @@ def fetch_text(
     for attempt in range(1, attempts + 1):
         fetched_at = datetime.now(timezone.utc).isoformat()
         try:
+            # Scrapling 0.4.9 在 retries=0 时可能提前释放会话；短文本链路也要
+            # 保留一次内部 retry，否则会间歇性报 No active session available。
             response = Fetcher.get(
                 url,
                 timeout=timeout_ms / 1000,
                 headers=headers,
                 impersonate=impersonate,
                 stealthy_headers=stealthy_headers,
-                retries=0,
+                retries=1,
             )
             return ScraplingFetchResult(
                 url=url,

@@ -153,7 +153,7 @@ class ServiceManager:
         with self._lock:
             if self._shutdown_requested:
                 raise RuntimeError("ServiceManager 已进入关闭流程，拒绝重新启动 game_overlay")
-            if self._overlay_controller.is_running() and self._overlay_controller.context_poller_running():
+            if self._overlay_controller.is_running():
                 self._sync_overlay_compat_state()
                 return
             self.game_overlay.mark("starting")
@@ -180,8 +180,8 @@ class ServiceManager:
     def ensure_game_overlay_healthy(self, *, enabled: bool) -> dict[str, Any]:
         """功能开关开启时确保 overlay 三进程链路常驻。
 
-        watchdog 只负责生命周期，不做截图识别；sidecar trace 超时代表识别进程
-        虽可能仍有 PID，但已经没有持续产出运行态，需要重启整组 overlay。
+        兼容 watchdog 只补齐缺失进程，不再把旧 trace mtime 或 controller_age 当作
+        健康事实源；Vision readiness/heartbeat 由 Runtime Supervisor 接管。
         """
 
         with self._lock:
@@ -210,31 +210,17 @@ class ServiceManager:
                 snapshot.get("status") != "running"
                 or snapshot.get("host_status") != "running"
                 or snapshot.get("sidecar_status") != "running"
-                or snapshot.get("context_poller_status") != "running"
             )
-            state_age = self._overlay_state_age_seconds(now=now)
-            self._overlay_watchdog["state_age_ms"] = None if state_age is None else int(state_age * 1000)
-            controller_age = now - float(snapshot.get("updated_at") or now)
-            state_stale = (
-                state_age is not None and state_age > OVERLAY_STATE_STALE_SECONDS
-            ) or (
-                state_age is None and controller_age > OVERLAY_STATE_STALE_SECONDS
-            )
-            cooldown_active = (
-                now - float(self._overlay_watchdog.get("last_action_at") or 0.0)
-            ) < OVERLAY_WATCHDOG_RESTART_COOLDOWN_SECONDS
+            context_degraded = snapshot.get("context_poller_status") == "degraded"
+            self._overlay_watchdog["state_age_ms"] = None
 
             try:
                 if process_missing:
                     self.start_game_overlay()
                     self._mark_overlay_watchdog_action("start_missing_process", now)
-                elif state_stale and not cooldown_active:
-                    self.stop_game_overlay()
-                    self.start_game_overlay()
-                    self._mark_overlay_watchdog_action("restart_stale_state", now)
                 else:
                     self._sync_overlay_compat_state()
-                    self._overlay_watchdog["last_action"] = "healthy" if not state_stale else "stale_cooldown"
+                    self._overlay_watchdog["last_action"] = "healthy_degraded" if context_degraded else "healthy"
             except Exception as exc:
                 self._sync_overlay_compat_state()
                 self._overlay_watchdog["last_action"] = "error"

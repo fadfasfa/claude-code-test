@@ -8,9 +8,12 @@ import os
 import glob
 import re
 import logging
+import shutil
 import traceback
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
+from pathlib import Path
+from bs4 import BeautifulSoup
 from hextech.catalog.runtime_store import (
     CSV_ENCODING,
     build_daily_csv_path,
@@ -26,21 +29,26 @@ from hextech.scraping.version_sync import (
     load_augment_map,
     load_champion_core_data,
 )
-from hextech.scraping.transport.scrapling_client import ScraplingFetchResult, fetch_text
+from hextech.scraping.transport.scrapling_client import ScraplingFetchResult, fetch_page, fetch_text
 from hextech.support.atomic_io import atomic_write_csv, atomic_write_json
 from hextech.support.log_utils import log_task_summary
 
 FRESHNESS_THRESHOLD = 0.0005
-SCRAPER_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
+SCRAPER_BLOCKED_COOLDOWN_SECONDS = 30 * 60
+SCRAPER_REMOTE_FAILURE_ESCALATION_THRESHOLD = 3
 BLOCKED_HTTP_STATUS_CODES = {403, 429}
-HEXTECH_DETAIL_WORKERS = 16
-HEXTECH_DETAIL_RETRY_WORKERS = 4
+DEFERRED_REMOTE_FAILURE_REASONS = {"http_403", "http_429", "timeout"}
+HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = "https://cdn.dtodo.cn/hextech/champion-details"
+HEXTECH_DETAIL_WORKERS = 4
+HEXTECH_DETAIL_RETRY_WORKERS = 2
 HEXTECH_DETAIL_TIMEOUT_SECONDS = 6
 HEXTECH_DETAIL_RETRY_TIMEOUT_SECONDS = 12
-HEXTECH_DETAIL_POOL_TIMEOUT_SECONDS = 30
-HEXTECH_DETAIL_RETRY_POOL_TIMEOUT_SECONDS = 20
+HEXTECH_DETAIL_RENDER_TIMEOUT_SECONDS = 20
+HEXTECH_DETAIL_POOL_TIMEOUT_SECONDS = 900
+HEXTECH_DETAIL_RETRY_POOL_TIMEOUT_SECONDS = 300
 HEXTECH_HANDSHAKE_RETRIES = 2
 HEXTECH_HANDSHAKE_TIMEOUT_SECONDS = 6
+HEXTECH_BROWSER_DETAIL_FALLBACK_ENABLED = os.getenv("HEXTECH_BROWSER_DETAIL_FALLBACK", "").strip() == "1"
 
 
 class RemoteFetchError(RuntimeError):
@@ -143,6 +151,13 @@ def _to_float(value, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _percent_text_to_rate(value: str) -> float:
+    text = str(value or "").strip().replace(" ", "")
+    if not text.endswith("%"):
+        return 0.0
+    return _to_float(text.removesuffix("%")) / 100.0
 
 
 def _source_tier_value(value) -> int:
@@ -289,7 +304,9 @@ def _sort_source_augments(augments: dict) -> list[tuple[str, dict]]:
     def sort_key(entry):
         aug_id, raw_stats = entry
         stats = raw_stats if isinstance(raw_stats, dict) else {}
+        rank = int(_to_float(stats.get("rank"), default=0.0))
         return (
+            rank if rank > 0 else 9999,
             _source_tier_value(stats.get("tier")),
             -_to_float(stats.get("win_rate", stats.get("winRate"))),
             -_to_float(stats.get("pick_rate", stats.get("pickRate"))),
@@ -297,6 +314,207 @@ def _sort_source_augments(augments: dict) -> list[tuple[str, dict]]:
         )
 
     return sorted(augments.items(), key=sort_key)
+
+
+def build_hextech_champion_detail_json_url(champ_id: str) -> str:
+    return f"{HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL.rstrip('/')}/{str(champ_id).strip()}.json"
+
+
+def _extract_detail_json_augments(payload: dict, champ_id: str) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    candidates = payload.get("championAugments")
+    if not isinstance(candidates, list):
+        return {}
+    expected_id = str(champ_id)
+    for item in candidates:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        item_champ_id = str(item[0])
+        if item_champ_id != expected_id:
+            continue
+        raw_stats = item[1]
+        if isinstance(raw_stats, str):
+            try:
+                parsed = json.loads(raw_stats)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        elif isinstance(raw_stats, dict):
+            parsed = raw_stats
+        else:
+            continue
+        augments = parsed.get("augments") if isinstance(parsed, dict) else None
+        if isinstance(augments, dict) and _looks_like_augment_stats(augments):
+            return augments
+    return {}
+
+
+def _source_total_from_augments(augments: dict) -> int:
+    totals = []
+    for raw_stats in augments.values():
+        stats = raw_stats if isinstance(raw_stats, dict) else {}
+        total = _to_float(stats.get("total"), default=0.0)
+        if total > 0:
+            totals.append(int(total))
+    return max(totals, default=0)
+
+
+def _rows_from_source_augments(
+    source_augments: dict,
+    *,
+    aug_id_map: dict,
+    truth_dict: dict,
+    champ_id: str,
+    champ_name: str,
+    champ_data: dict,
+    aug_tier_map: dict | None = None,
+) -> list[dict]:
+    rows = []
+    for fallback_rank, (raw_id, raw_stats) in enumerate(_sort_source_augments(source_augments), start=1):
+        mid = str(raw_id)
+        stats = raw_stats if isinstance(raw_stats, dict) else {}
+        try:
+            win = _to_float(stats.get("win_rate", stats.get("winRate")))
+            pick = _to_float(stats.get("pick_rate", stats.get("pickRate")))
+
+            if pick > 1.0:
+                pick = pick / 100.0
+                logging.debug(f"[量纲转换] 海克斯 ID={mid}，出场率从百分数转换为小数：{pick*100:.1f}% -> {pick:.4f}")
+            pick = min(1.0, max(0.0, pick))
+
+            web_name = aug_id_map.get(mid, "")
+            local_tier = truth_dict.get(web_name) or (aug_tier_map or {}).get(mid) or "未知"
+            source_rank = int(_to_float(stats.get("rank"), default=float(fallback_rank))) or fallback_rank
+            if web_name and win > 0:
+                rows.append(
+                    _build_row(
+                        champ_id=champ_id,
+                        champ_name=champ_name,
+                        champ_data=champ_data,
+                        augment_id=mid,
+                        augment_name=web_name,
+                        source_rank=source_rank,
+                        source_tier=stats.get("tier"),
+                        local_tier=local_tier,
+                        winrate=win,
+                        pickrate=pick,
+                    )
+                )
+        except (ValueError, IndexError, AttributeError) as e:
+            logging.warning(
+                f"[{champ_name}] 海克斯 ID={mid} 解析失败：{e} | "
+                f"源站字段：{stats} | 堆栈：{traceback.format_exc().strip()}"
+            )
+            continue
+    return sorted(rows, key=lambda item: item["源站排名"])
+
+
+def extract_champion_detail_json_stats(
+    payload: dict,
+    aug_id_map: dict,
+    truth_dict: dict,
+    champ_id: str,
+    champ_name: str,
+    champ_data: dict,
+    aug_tier_map: dict | None = None,
+) -> list[dict]:
+    """解析 CDN champion-details JSON；这是全量海克斯统计的快速链路。"""
+
+    source_augments = _extract_detail_json_augments(payload, champ_id)
+    if not source_augments:
+        return []
+    return _rows_from_source_augments(
+        source_augments,
+        aug_id_map=aug_id_map,
+        truth_dict=truth_dict,
+        champ_id=champ_id,
+        champ_name=champ_name,
+        champ_data=champ_data,
+        aug_tier_map=aug_tier_map,
+    )
+
+
+def _build_row(
+    *,
+    champ_id: str,
+    champ_name: str,
+    champ_data: dict,
+    augment_id: str,
+    augment_name: str,
+    source_rank: int,
+    source_tier: str,
+    local_tier: str,
+    winrate: float,
+    pickrate: float,
+) -> dict:
+    return {
+        "英雄 ID": champ_id,
+        "英雄名称": champ_name,
+        "英雄评级": champ_data.get('tier', 'T3'),
+        "英雄胜率": float(champ_data.get('winRate', 0)),
+        "英雄出场率": float(champ_data.get('pickRate', 0)),
+        "海克斯ID": str(augment_id),
+        "源站排名": int(source_rank),
+        "源站层级": _source_tier_label(source_tier),
+        "海克斯阶级": local_tier,
+        "海克斯名称": augment_name,
+        "海克斯胜率": winrate,
+        "海克斯出场率": min(1.0, max(0.0, pickrate)),
+    }
+
+
+def _extract_rendered_table_stats(
+    html: str,
+    aug_id_map: dict,
+    truth_dict: dict,
+    champ_id: str,
+    champ_name: str,
+    champ_data: dict,
+    aug_tier_map: dict | None = None,
+) -> list[dict]:
+    """解析渲染后的隐藏全量表格；静态 React Flight 只包含折叠窗口。"""
+
+    id_by_name = {str(name): str(augment_id) for augment_id, name in aug_id_map.items() if str(name or "").strip()}
+    if not id_by_name:
+        return []
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    rows = []
+    seen_ids = set()
+    for tr in soup.find_all("tr"):
+        cells = [cell.get_text(" ", strip=True) for cell in tr.find_all(["th", "td"], recursive=False)]
+        if len(cells) != 5:
+            continue
+        rank_text, augment_name, source_tier, winrate_text, pickrate_text = cells
+        if not rank_text.isdigit() or not source_tier.replace(" ", "").upper().startswith("T"):
+            continue
+        if not winrate_text.strip().endswith("%") or not pickrate_text.strip().endswith("%"):
+            continue
+        augment_name = _clean_augment_text(augment_name)
+        augment_id = id_by_name.get(augment_name, "")
+        if not augment_id or augment_id in seen_ids:
+            continue
+        winrate = _percent_text_to_rate(winrate_text)
+        pickrate = _percent_text_to_rate(pickrate_text)
+        if winrate <= 0:
+            continue
+        seen_ids.add(augment_id)
+        local_tier = truth_dict.get(augment_name) or (aug_tier_map or {}).get(augment_id) or "未知"
+        rows.append(
+            _build_row(
+                champ_id=champ_id,
+                champ_name=champ_name,
+                champ_data=champ_data,
+                augment_id=augment_id,
+                augment_name=augment_name,
+                source_rank=int(rank_text),
+                source_tier=source_tier,
+                local_tier=local_tier,
+                winrate=winrate,
+                pickrate=pickrate,
+            )
+        )
+    return sorted(rows, key=lambda item: item["源站排名"])
 
 
 def _scrapling_failure_reason(result: ScraplingFetchResult) -> tuple[str, int | None]:
@@ -321,7 +539,23 @@ def _scrapling_failure_reason(result: ScraplingFetchResult) -> tuple[str, int | 
 def _is_blocking_remote_failure(reason: str, status_code: int | None = None) -> bool:
     if status_code in BLOCKED_HTTP_STATUS_CODES:
         return True
-    return reason in {f"http_{code}" for code in BLOCKED_HTTP_STATUS_CODES}
+    return reason in DEFERRED_REMOTE_FAILURE_REASONS
+
+
+def _is_deferred_remote_failure(reason: str, status_code: int | None = None) -> bool:
+    return _is_blocking_remote_failure(reason, status_code)
+
+
+def _remote_failure_count(previous: dict, reason: str) -> int:
+    if not _is_deferred_remote_failure(reason):
+        return 0
+    # 403/429/timeout 都属于同一类远端阻断；reason 变化也应累计连续失败。
+    if not _is_deferred_remote_failure(str(previous.get("reason") or "")):
+        return 1
+    try:
+        return int(previous.get("consecutive_remote_failures") or 0) + 1
+    except (TypeError, ValueError):
+        return 1
 
 
 def _summarize_detail_failures(failures: list[dict], *, label: str) -> None:
@@ -440,13 +674,27 @@ def hextech_refresh_blocked(status: dict | None = None) -> bool:
 def _write_scraper_status(result: str, reason: str = "", *, active_csv: str = "") -> dict:
     now = time.time()
     previous = load_scraper_status()
+    remote_failure_count = _remote_failure_count(previous, reason) if result in {"fallback", "failed"} else 0
+    blocked_until = ""
+    if remote_failure_count:
+        blocked_until = datetime.fromtimestamp(now + SCRAPER_BLOCKED_COOLDOWN_SECONDS, tz=timezone.utc).isoformat(
+            timespec="seconds"
+        )
     payload = dict(previous)
     payload.update(
         {
             "last_attempt_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(timespec="seconds"),
             "last_result": result,
             "reason": reason,
-            "blocked_until": "",
+            "blocked_until": blocked_until,
+            "next_retry_at": blocked_until,
+            "consecutive_remote_failures": remote_failure_count,
+            "remote_failure_escalated": remote_failure_count >= SCRAPER_REMOTE_FAILURE_ESCALATION_THRESHOLD,
+            "bypass_evaluation_hint": (
+                "连续远端失败达到阈值；先保留证据，后续可评估低风险 header/rate limit 或授权 stealth 兜底。"
+                if remote_failure_count >= SCRAPER_REMOTE_FAILURE_ESCALATION_THRESHOLD
+                else ""
+            ),
             "active_csv": active_csv,
             "active_csv_mtime": os.path.getmtime(active_csv) if active_csv and os.path.exists(active_csv) else 0.0,
             "last_success_time": previous.get("last_success_time", 0),
@@ -454,9 +702,10 @@ def _write_scraper_status(result: str, reason: str = "", *, active_csv: str = ""
     )
     if result == "success":
         payload["last_success_time"] = now
-    elif result == "fallback" and reason in {"http_403", "http_429"}:
-        blocked_until = datetime.fromtimestamp(now + SCRAPER_BLOCKED_COOLDOWN_SECONDS, tz=timezone.utc)
-        payload["blocked_until"] = blocked_until.isoformat(timespec="seconds")
+        payload["consecutive_remote_failures"] = 0
+        payload["remote_failure_escalated"] = False
+        payload["bypass_evaluation_hint"] = ""
+        payload["next_retry_at"] = ""
     atomic_write_json(build_runtime_state_path("scraper_status.json"), payload, ensure_ascii=False, indent=2)
     return payload
 
@@ -464,10 +713,24 @@ def _write_scraper_status(result: str, reason: str = "", *, active_csv: str = ""
 def _finish_refresh_failure(reason: str, *, started_at: float) -> bool:
     active_csv = get_latest_valid_csv() or ""
     if active_csv:
-        _write_scraper_status("fallback", reason, active_csv=active_csv)
-        logging.warning("海克斯远端刷新失败（%s），已使用 %s", reason, os.path.basename(active_csv))
+        status = _write_scraper_status("fallback", reason, active_csv=active_csv)
+        logging.warning(
+            "海克斯远端刷新失败：reason=%s active_csv=%s next_retry_at=%s consecutive_remote_failures=%s escalated=%s",
+            reason,
+            os.path.basename(active_csv),
+            status.get("next_retry_at") or "",
+            status.get("consecutive_remote_failures") or 0,
+            status.get("remote_failure_escalated") or False,
+        )
         return True
-    _write_scraper_status("failed", reason, active_csv="")
+    status = _write_scraper_status("failed", reason, active_csv="")
+    logging.warning(
+        "海克斯远端刷新失败且无本地 CSV：reason=%s next_retry_at=%s consecutive_remote_failures=%s escalated=%s",
+        reason,
+        status.get("next_retry_at") or "",
+        status.get("consecutive_remote_failures") or 0,
+        status.get("remote_failure_escalated") or False,
+    )
     log_task_summary(
         logging.getLogger(__name__),
         task="海克斯抓取",
@@ -483,7 +746,7 @@ def check_execution_permission(force: bool = False):
         return True, "手动强制刷新，忽略冷却与新鲜度检查..."
     status = load_scraper_status()
     if hextech_refresh_blocked(status) and get_latest_valid_csv():
-        return False, "远端处于 6 小时冷却期，继续使用本地有效 CSV。"
+        return False, "远端处于 30 分钟冷却期，继续使用本地有效 CSV，到期后自动重抓。"
     status_file = resolve_runtime_data_file(
         build_runtime_state_path("scraper_status.json"),
         "scraper_status.json",
@@ -511,26 +774,41 @@ def update_status_file(active_csv: str = ""):
     return _write_scraper_status("success", active_csv=active_csv)
 
 def cleanup_old_csvs():
-    # 清理过期数据和残留临时文件。
+    # 本轮保留历史 CSV 作为回退材料，只清理陈旧临时文件。
     csv_dir = get_runtime_hextech_data_dir()
-    files = glob.glob(str(csv_dir / "Hextech_Data_*.csv"))
     tmp_files = glob.glob(str(csv_dir / ".Hextech_Data_*.csv.tmp"))
     now = datetime.now()
 
-    for f in files + tmp_files:
+    for f in tmp_files:
         try:
             m = re.search(r"Hextech_Data_(\d{4}-\d{2}-\d{2})", os.path.basename(f))
             if not m: continue
             file_date = datetime.strptime(m.group(1), "%Y-%m-%d")
 
-            is_stale_csv = f.endswith('.csv') and (now - file_date).days > 3
             is_stale_tmp = f.endswith('.tmp') and (now - file_date).days > 1
 
-            if is_stale_csv or is_stale_tmp:
+            if is_stale_tmp:
                 os.remove(f)
-                logging.info(f"已清理过期/残留文件：{os.path.basename(f)}")
+                logging.info(f"已清理过期临时文件：{os.path.basename(f)}")
         except Exception as e:
             logging.error(f"清理文件异常 {f}: {e}")
+
+
+def backup_active_csv_before_publish(output_csv: str) -> str:
+    """刷新前保留当前有效 CSV；备份失败必须阻止发布。"""
+
+    active_csv = get_latest_valid_csv() or ""
+    if not active_csv or not os.path.exists(active_csv):
+        return ""
+    if os.path.abspath(active_csv) == os.path.abspath(output_csv) and not os.path.exists(output_csv):
+        return ""
+    backup_dir = get_runtime_hextech_data_dir() / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = backup_dir / f"{Path(active_csv).stem}.backup-{stamp}.csv"
+    shutil.copy2(active_csv, backup_path)
+    logging.info("刷新前已备份当前 CSV：source=%s backup=%s", os.path.basename(active_csv), backup_path)
+    return str(backup_path)
 
 
 def rebuild_runtime_caches() -> None:
@@ -560,50 +838,263 @@ def extract_champion_stats(
     champ_data: dict,
     aug_tier_map: dict | None = None,
 ) -> list:
-    # 只解析当前英雄组件引用的 React Flight augments 数据块，避免整页统计串源。
+    rendered_rows = _extract_rendered_table_stats(
+        html,
+        aug_id_map,
+        truth_dict,
+        champ_id,
+        champ_name,
+        champ_data,
+        aug_tier_map,
+    )
+    if rendered_rows:
+        return rendered_rows
+
+    # 静态响应只解析当前英雄组件引用的 React Flight augments 数据块，避免整页统计串源。
     rows = []
     source_augments = _extract_react_flight_augments(html, champ_id)
     if not source_augments:
         logging.warning("[%s] 未解析到当前英雄 React Flight augments 数据块", champ_name)
         return rows
 
-    for source_rank, (raw_id, raw_stats) in enumerate(_sort_source_augments(source_augments), start=1):
-        mid = str(raw_id)
-        stats = raw_stats if isinstance(raw_stats, dict) else {}
-        try:
-            win = _to_float(stats.get("win_rate", stats.get("winRate")))
-            pick = _to_float(stats.get("pick_rate", stats.get("pickRate")))
-
-            if pick > 1.0:
-                pick = pick / 100.0
-                logging.debug(f"[量纲转换] 海克斯 ID={mid}，出场率从百分数转换为小数：{pick*100:.1f}% -> {pick:.4f}")
-            pick = min(1.0, max(0.0, pick))
-
-            web_name = aug_id_map.get(mid, "")
-            local_tier = truth_dict.get(web_name) or (aug_tier_map or {}).get(mid) or "未知"
-            if web_name and win > 0:
-                rows.append({
-                    "英雄 ID": champ_id,
-                    "英雄名称": champ_name,
-                    "英雄评级": champ_data.get('tier', 'T3'),
-                    "英雄胜率": float(champ_data.get('winRate', 0)),
-                    "英雄出场率": float(champ_data.get('pickRate', 0)),
-                    "海克斯ID": mid,
-                    "源站排名": source_rank,
-                    "源站层级": _source_tier_label(stats.get("tier")),
-                    "海克斯阶级": local_tier,
-                    "海克斯名称": web_name,
-                    "海克斯胜率": win,
-                    "海克斯出场率": pick
-                })
-        except (ValueError, IndexError, AttributeError) as e:
-            logging.warning(
-                f"[{champ_name}] 海克斯 ID={mid} 解析失败：{e} | "
-                f"源站字段：{stats} | 堆栈：{traceback.format_exc().strip()}"
-            )
-            continue
-
+    rows = _rows_from_source_augments(
+        source_augments,
+        aug_id_map=aug_id_map,
+        truth_dict=truth_dict,
+        champ_id=champ_id,
+        champ_name=champ_name,
+        champ_data=champ_data,
+        aug_tier_map=aug_tier_map,
+    )
     return rows
+
+
+def _rendered_detail_rows(
+    url: str,
+    *,
+    champ_id: str,
+    champ_name: str,
+    champ_data: dict,
+    aug_id_map: dict,
+    truth_dict: dict,
+    aug_tier_map: dict | None,
+) -> list[dict]:
+    result = fetch_page(
+        url,
+        mode="browser",
+        timeout_ms=HEXTECH_DETAIL_RENDER_TIMEOUT_SECONDS * 1000,
+        network_idle=True,
+        max_attempts=1,
+    )
+    if result.error or result.status_code != 200 or not result.html:
+        logging.warning(
+            "[%s] browser 详情页兜底失败：championId=%s url=%s status=%s reason=%s error=%s",
+            champ_name,
+            champ_id,
+            url,
+            result.status_code,
+            result.error_kind,
+            result.error,
+        )
+        return []
+    return extract_champion_stats(
+        result.html,
+        aug_id_map,
+        truth_dict,
+        champ_id,
+        champ_name,
+        champ_data,
+        aug_tier_map,
+    )
+
+
+def fetch_champion_detail_stats_fast(
+    champ: dict,
+    *,
+    core_data: dict,
+    aug_id_map: dict,
+    truth_dict: dict,
+    aug_tier_map: dict | None,
+    timeout: int,
+    allow_browser_fallback: bool = False,
+) -> dict:
+    """优先使用 CDN JSON 全量快链路；页面和 browser 只作回退。"""
+
+    c_id = str(champ.get("championId", ""))
+    c_name = core_data.get(c_id, {}).get("name", c_id)
+    last_reason = "empty_response"
+    last_status_code = None
+    last_url = ""
+    last_error = ""
+
+    detail_json_url = build_hextech_champion_detail_json_url(c_id)
+    last_url = detail_json_url
+    try:
+        res = fetch_with_retry(
+            detail_json_url,
+            timeout=timeout,
+            quiet=True,
+            raise_on_failure=True,
+            caller="hextech_detail_json",
+            context=f"championId={c_id};champion={c_name}",
+        )
+    except RemoteFetchError as e:
+        last_reason = e.reason
+        last_status_code = e.status_code
+        last_url = e.url or detail_json_url
+        last_error = e.error
+        if _is_deferred_remote_failure(e.reason, e.status_code):
+            return {
+                "champ": champ,
+                "name": c_name,
+                "rows": [],
+                "reason": last_reason,
+                "status_code": last_status_code,
+                "url": last_url,
+                "error": last_error,
+            }
+    else:
+        if res is not None and res.status_code == 200 and res.text:
+            try:
+                rows = extract_champion_detail_json_stats(
+                    res.json(),
+                    aug_id_map,
+                    truth_dict,
+                    c_id,
+                    c_name,
+                    champ,
+                    aug_tier_map,
+                )
+                if rows:
+                    logging.info("[%s] CDN JSON 快链路命中：championId=%s rows=%s", c_name, c_id, len(rows))
+                    return {
+                        "champ": champ,
+                        "name": c_name,
+                        "rows": rows,
+                        "reason": "",
+                        "status_code": res.status_code,
+                        "url": detail_json_url,
+                        "error": "",
+                    }
+                last_reason = "detail_json_no_valid_rows"
+            except (TypeError, ValueError, json.JSONDecodeError):
+                # 如果 CDN 形态变化为 HTML，仍尝试复用页面解析；不直接升级 browser。
+                rows = extract_champion_stats(
+                    res.text,
+                    aug_id_map,
+                    truth_dict,
+                    c_id,
+                    c_name,
+                    champ,
+                    aug_tier_map,
+                )
+                if rows:
+                    logging.warning("[%s] CDN JSON 非 JSON 但页面解析可用：championId=%s rows=%s", c_name, c_id, len(rows))
+                    return {
+                        "champ": champ,
+                        "name": c_name,
+                        "rows": rows,
+                        "reason": "",
+                        "status_code": res.status_code,
+                        "url": detail_json_url,
+                        "error": "",
+                    }
+                last_reason = "detail_json_invalid"
+            last_status_code = res.status_code
+            last_error = res.error
+
+    for url in build_hextech_detail_urls(c_id):
+        last_url = url
+        try:
+            res = fetch_with_retry(
+                url,
+                timeout=timeout,
+                quiet=True,
+                raise_on_failure=True,
+                caller="hextech_detail",
+                context=f"championId={c_id};champion={c_name}",
+            )
+        except RemoteFetchError as e:
+            last_reason = e.reason
+            last_status_code = e.status_code
+            last_url = e.url or url
+            last_error = e.error
+            if _is_deferred_remote_failure(e.reason, e.status_code):
+                break
+            continue
+        if res is None or res.status_code != 200 or not res.text:
+            last_reason = "empty_response"
+            last_status_code = getattr(res, "status_code", None)
+            last_error = getattr(res, "error", "")
+            continue
+        try:
+            rows = extract_champion_stats(
+                res.text,
+                aug_id_map,
+                truth_dict,
+                c_id,
+                c_name,
+                champ,
+                aug_tier_map,
+            )
+            source_total = _source_total_from_augments(_extract_react_flight_augments(res.text, c_id))
+            if rows and source_total > len(rows):
+                logging.warning(
+                    "[%s] HTML 快路径不完整：championId=%s static_rows=%s source_total=%s browser_fallback=%s",
+                    c_name,
+                    c_id,
+                    len(rows),
+                    source_total,
+                    allow_browser_fallback,
+                )
+                if allow_browser_fallback:
+                    rendered_rows = _rendered_detail_rows(
+                        url,
+                        champ_id=c_id,
+                        champ_name=c_name,
+                        champ_data=champ,
+                        aug_id_map=aug_id_map,
+                        truth_dict=truth_dict,
+                        aug_tier_map=aug_tier_map,
+                    )
+                    if len(rendered_rows) > len(rows):
+                        logging.info(
+                            "[%s] browser 小范围兜底补全：championId=%s static_rows=%s rendered_rows=%s source_total=%s",
+                            c_name,
+                            c_id,
+                            len(rows),
+                            len(rendered_rows),
+                            source_total,
+                        )
+                        rows = rendered_rows
+            if rows:
+                return {
+                    "champ": champ,
+                    "name": c_name,
+                    "rows": rows,
+                    "reason": "",
+                    "status_code": res.status_code,
+                    "url": url,
+                    "error": "",
+                }
+        except ValueError as e:
+            logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
+            last_reason = "parse_error"
+            last_status_code = res.status_code
+            continue
+        last_reason = "no_valid_rows"
+        last_status_code = res.status_code
+
+    return {
+        "champ": champ,
+        "name": c_name,
+        "rows": [],
+        "reason": last_reason,
+        "status_code": last_status_code,
+        "url": last_url,
+        "error": last_error,
+    }
+
 
 def main_scraper(stop_event=None, force: bool = False):
     started_at = time.time()
@@ -696,9 +1187,9 @@ def main_scraper(stop_event=None, force: bool = False):
         return _finish_refresh_failure("handshake_invalid", started_at=started_at)
 
     def fetch_champ_detail(champ: dict, *, timeout: int, preflight_rows: list | None = None) -> dict:
-        c_id = str(champ.get('championId', ''))
-        c_name = core_data.get(c_id, {}).get("name", c_id)
         if preflight_rows is not None:
+            c_id = str(champ.get('championId', ''))
+            c_name = core_data.get(c_id, {}).get("name", c_id)
             return {
                 "champ": champ,
                 "name": c_name,
@@ -708,71 +1199,15 @@ def main_scraper(stop_event=None, force: bool = False):
                 "url": "",
                 "error": "",
             }
-
-        last_reason = "empty_response"
-        last_status_code = None
-        last_url = ""
-        last_error = ""
-        for url in build_hextech_detail_urls(c_id):
-            last_url = url
-            try:
-                res = fetch_with_retry(
-                    url,
-                    timeout=timeout,
-                    quiet=True,
-                    raise_on_failure=True,
-                    caller="hextech_detail",
-                    context=f"championId={c_id};champion={c_name}",
-                )
-            except RemoteFetchError as e:
-                last_reason = e.reason
-                last_status_code = e.status_code
-                last_url = e.url or url
-                last_error = e.error
-                if _is_blocking_remote_failure(e.reason, e.status_code):
-                    break
-                continue
-            if res is None or res.status_code != 200 or not res.text:
-                last_reason = "empty_response"
-                last_status_code = getattr(res, "status_code", None)
-                last_error = getattr(res, "error", "")
-                continue
-            try:
-                rows = extract_champion_stats(
-                    res.text,
-                    aug_id_map,
-                    truth_dict,
-                    c_id,
-                    c_name,
-                    champ,
-                    aug_tier_map,
-                )
-            except ValueError as e:
-                logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
-                last_reason = "parse_error"
-                last_status_code = res.status_code
-                continue
-            if rows:
-                return {
-                    "champ": champ,
-                    "name": c_name,
-                    "rows": rows,
-                    "reason": "",
-                    "status_code": res.status_code,
-                    "url": url,
-                    "error": "",
-                }
-            last_reason = "no_valid_rows"
-            last_status_code = res.status_code
-        return {
-            "champ": champ,
-            "name": c_name,
-            "rows": [],
-            "reason": last_reason,
-            "status_code": last_status_code,
-            "url": last_url,
-            "error": last_error,
-        }
+        return fetch_champion_detail_stats_fast(
+            champ,
+            core_data=core_data,
+            aug_id_map=aug_id_map,
+            truth_dict=truth_dict,
+            aug_tier_map=aug_tier_map,
+            timeout=timeout,
+            allow_browser_fallback=HEXTECH_BROWSER_DETAIL_FALLBACK_ENABLED,
+        )
 
     def run_detail_pass(champs: list[dict], *, workers: int, timeout: int, pool_timeout: int, label: str):
         pass_rows = []
@@ -920,6 +1355,7 @@ def main_scraper(stop_event=None, force: bool = False):
         if len(df) < 300:
             return _finish_refresh_failure(f"insufficient_rows_{len(df)}", started_at=started_at)
 
+        backup_active_csv_before_publish(output_csv)
         atomic_write_csv(output_csv, df, index=False, encoding=CSV_ENCODING)
 
         update_status_file(output_csv)

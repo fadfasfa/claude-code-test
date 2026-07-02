@@ -1062,7 +1062,9 @@ def check_heal_worker_contract() -> None:
                 side_effect=RuntimeError("mayhem diagnostic failure"),
             ),
         ):
-            assert orchestrator.refresh_backend_data(force=False) is True
+            result = orchestrator.refresh_backend_data(force=False)
+            assert result.state in {"ready", "degraded", "failed"}
+            assert hasattr(result, "correlation_id")
 
 
 def _write_runtime_csv(path: Path, row_count: int = 300) -> None:
@@ -1178,7 +1180,7 @@ def check_hextech_scraper_fallback_contract() -> None:
         assert status["reason"] == "http_403"
         assert status["active_csv"] == str(fallback_csv)
         blocked_until = datetime.fromisoformat(status["blocked_until"])
-        assert 5.9 * 60 * 60 <= blocked_until.timestamp() - started_at <= 6.1 * 60 * 60
+        assert 29 * 60 <= blocked_until.timestamp() - started_at <= 31 * 60
 
         status_file.unlink()
         failed_fetcher = SequenceFetcher()
@@ -1198,6 +1200,160 @@ def check_hextech_scraper_fallback_contract() -> None:
         failed_status = json.loads(status_file.read_text(encoding="utf-8"))
         assert failed_status["last_result"] == "failed"
         assert failed_status["active_csv"] == ""
+
+
+def check_hextech_remote_failure_cooldown_and_escalation() -> None:
+    """403/429/timeout 暂停 30 分钟；连续 3 次后给出升级诊断而不是盲重试。"""
+
+    started_at = time.time()
+    previous = {
+        "last_result": "fallback",
+        "reason": "timeout",
+        "consecutive_remote_failures": 2,
+    }
+    with TemporaryDirectory() as temp_dir:
+        status_file = Path(temp_dir) / "scraper_status.json"
+        with (
+            patch.object(hextech_scraper, "load_scraper_status", return_value=previous),
+            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
+            patch.object(hextech_scraper, "get_latest_valid_csv", return_value="valid.csv"),
+        ):
+            payload = hextech_scraper._write_scraper_status("fallback", "timeout", active_csv="valid.csv")
+
+    blocked_until = datetime.fromisoformat(payload["blocked_until"])
+    assert 29 * 60 <= blocked_until.timestamp() - started_at <= 31 * 60
+    assert payload["next_retry_at"] == payload["blocked_until"]
+    assert payload["consecutive_remote_failures"] == 3
+    assert payload["remote_failure_escalated"] is True
+    assert "stealth" in payload["bypass_evaluation_hint"]
+
+    mixed_previous = {
+        "last_result": "fallback",
+        "reason": "http_403",
+        "consecutive_remote_failures": 2,
+    }
+    with TemporaryDirectory() as temp_dir:
+        status_file = Path(temp_dir) / "scraper_status.json"
+        with (
+            patch.object(hextech_scraper, "load_scraper_status", return_value=mixed_previous),
+            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
+            patch.object(hextech_scraper, "get_latest_valid_csv", return_value="valid.csv"),
+        ):
+            mixed_payload = hextech_scraper._write_scraper_status("fallback", "http_429", active_csv="valid.csv")
+
+    assert mixed_payload["consecutive_remote_failures"] == 3
+    assert mixed_payload["remote_failure_escalated"] is True
+
+
+def check_hextech_champion_detail_json_extracts_full_rows() -> None:
+    """CDN champion-details JSON 是 30 秒级快链路，必须优先于 browser-mode 全量刷新。"""
+
+    payload = {
+        "championId": "910",
+        "championAugments": [
+            [
+                "910",
+                json.dumps(
+                    {
+                        "augments": {
+                            "1001": {
+                                "tier": "1",
+                                "rank": "2",
+                                "win_rate": "0.61",
+                                "pick_rate": "0.02",
+                                "total": "3",
+                            },
+                            "1002": {
+                                "tier": "1",
+                                "rank": "1",
+                                "win_rate": "0.62",
+                                "pick_rate": "0.03",
+                                "total": "3",
+                            },
+                            "1003": {
+                                "tier": "3",
+                                "rank": "3",
+                                "win_rate": "0.55",
+                                "pick_rate": "0.04",
+                                "total": "3",
+                            },
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        ],
+    }
+    rows = hextech_scraper.extract_champion_detail_json_stats(
+        payload,
+        {"1001": "慢链路A", "1002": "快链路B", "1003": "快链路C"},
+        {"快链路B": "黄金"},
+        "910",
+        "异画师",
+        {"tier": "T2", "winRate": 0.5, "pickRate": 0.1},
+        {"1003": "棱彩"},
+    )
+
+    assert [row["海克斯ID"] for row in rows] == ["1002", "1001", "1003"]
+    assert rows[0]["源站排名"] == 1
+    assert rows[0]["海克斯名称"] == "快链路B"
+    assert rows[0]["海克斯胜率"] == 0.62
+    assert rows[-1]["海克斯阶级"] == "棱彩"
+
+
+def check_hextech_detail_fetch_prefers_cdn_json_without_browser() -> None:
+    """详情抓取先走 CDN JSON；成功时不得触发 browser-mode 兜底。"""
+
+    payload = {
+        "championId": "910",
+        "championAugments": [
+            [
+                "910",
+                json.dumps(
+                    {
+                        "augments": {
+                            str(1000 + rank): {
+                                "tier": "1",
+                                "rank": str(rank),
+                                "win_rate": str(0.6 - rank / 1000),
+                                "pick_rate": str(rank / 10000),
+                                "total": "65",
+                            }
+                            for rank in range(1, 66)
+                        }
+                    }
+                ),
+            ]
+        ],
+    }
+    calls = []
+
+    def fake_fetch(url: str, *_args, **_kwargs):
+        calls.append(url)
+        return hextech_scraper.ScraplingFetchResult(
+            url=url,
+            text=json.dumps(payload),
+            status_code=200,
+            fetched_at="2026-07-02T00:00:00+00:00",
+            error="",
+        )
+
+    with (
+        patch.object(hextech_scraper, "fetch_text", side_effect=fake_fetch),
+        patch.object(hextech_scraper, "fetch_page", side_effect=AssertionError("快链路成功不得使用 browser-mode")),
+    ):
+        result = hextech_scraper.fetch_champion_detail_stats_fast(
+            {"championId": "910", "tier": "T2", "winRate": 0.5, "pickRate": 0.1},
+            core_data={"910": {"name": "异画师"}},
+            aug_id_map={str(1000 + rank): f"快链路{rank}" for rank in range(1, 66)},
+            truth_dict={},
+            aug_tier_map={},
+            timeout=6,
+        )
+
+    assert len(result["rows"]) == 65
+    assert "champion-details/910.json" in calls[0]
+    assert result["reason"] == ""
 
 
 def check_hextech_cooldown_and_heal_fallback() -> None:
@@ -1281,7 +1437,7 @@ def check_hextech_failed_refresh_never_overwrites_csv() -> None:
         status_file = root / "scraper_status.json"
         _write_runtime_csv(fallback_csv, 300)
         output_csv.write_text("do-not-overwrite", encoding="utf-8")
-        low_row_fetcher = SequenceFetcher([metadata, stats, fake_result(200, {}, text="detail")])
+        low_row_fetcher = SequenceFetcher([metadata, stats, fake_result(200, text="detail")])
 
         common_patches = (
             patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
@@ -1331,12 +1487,57 @@ def check_hextech_failed_refresh_never_overwrites_csv() -> None:
             patch.object(hextech_scraper.time, "sleep"),
         ):
             assert hextech_scraper.main_scraper(force=True) is True
-        assert timeout_fetcher.calls == 4
-        assert json.loads(status_file.read_text(encoding="utf-8"))["reason"] == "timeout"
+        timeout_status = json.loads(status_file.read_text(encoding="utf-8"))
+        assert timeout_fetcher.calls == 3
+        assert timeout_status["reason"] == "timeout"
+        assert timeout_status["next_retry_at"] == timeout_status["blocked_until"]
+
+
+def check_hextech_rendered_table_extracts_hidden_full_rows() -> None:
+    """源站“显示全部”行已在渲染 DOM 中，抓取端不能只保留 React Flight 的 60 条。"""
+
+    rendered_rows = "\n".join(
+        f"""
+        <tr class="hover:bg-muted/50 {'hidden' if rank > 20 else ''}">
+          <td>{rank}</td><td>测试海克斯{rank}</td><td>T{1 if rank <= 60 else 5}</td>
+          <td>{60 - rank / 10:.2f}%</td><td>{rank / 100:.2f}%</td>
+        </tr>
+        """
+        for rank in range(1, 66)
+    )
+    html = f"""
+    <table>
+      <tr><th>排名</th><th>强化</th><th>层级</th><th>胜率</th><th>选取率</th></tr>
+      {rendered_rows}
+    </table>
+    <table>
+      <tr><th>#</th><th>组合</th><th>层级</th></tr>
+      <tr><td>1</td><td>测试海克斯1 测试海克斯2</td><td>T1</td></tr>
+    </table>
+    """
+    aug_id_map = {str(1000 + rank): f"测试海克斯{rank}" for rank in range(1, 66)}
+    rows = hextech_scraper._extract_rendered_table_stats(
+        html,
+        aug_id_map,
+        {"测试海克斯65": "棱彩"},
+        "1",
+        "测试英雄",
+        {"tier": "T3", "winRate": 0.5, "pickRate": 0.1},
+        {},
+    )
+
+    assert len(rows) == 65
+    assert rows[0]["海克斯名称"] == "测试海克斯1"
+    assert rows[60]["源站排名"] == 61
+    assert rows[-1]["源站层级"] == "T5"
+    assert rows[-1]["海克斯ID"] == "1065"
+    assert rows[-1]["海克斯胜率"] == 0.535
+    assert rows[-1]["海克斯出场率"] == 0.0065
+    assert rows[-1]["海克斯阶级"] == "棱彩"
 
 
 def check_hextech_detail_timeout_tail_retry() -> None:
-    """握手瞬断和单英雄详情 timeout 都应重试，不能直接熔断整轮。"""
+    """握手瞬断仍重试；详情 timeout 进入 30 分钟暂停并保留旧 CSV。"""
 
     def fake_result(status_code: int | None, payload: Any = None, text: str = "ok", error: str = ""):
         if payload is not None:
@@ -1379,8 +1580,10 @@ def check_hextech_detail_timeout_tail_retry() -> None:
     }
     with TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
+        fallback_csv = root / "Hextech_Data_2026-06-19.csv"
         output_csv = root / "Hextech_Data_2026-06-21.csv"
         status_file = root / "scraper_status.json"
+        _write_runtime_csv(fallback_csv, 300)
         fetcher = SequenceFetcher()
         with (
             patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
@@ -1391,6 +1594,7 @@ def check_hextech_detail_timeout_tail_retry() -> None:
                 return_value={"1": {"name": "测试英雄 1"}, "2": {"name": "测试英雄 2"}},
             ),
             patch.object(hextech_scraper, "fetch_text", side_effect=fetcher),
+            patch.object(hextech_scraper, "get_latest_valid_csv", return_value=str(fallback_csv)),
             patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
             patch.object(hextech_scraper, "build_daily_csv_path", return_value=str(output_csv)),
             patch.object(
@@ -1399,15 +1603,20 @@ def check_hextech_detail_timeout_tail_retry() -> None:
                 side_effect=lambda champ_id: [f"https://example.test/detail/{champ_id}"],
             ),
             patch.object(hextech_scraper, "extract_champion_stats", return_value=[row] * 150),
-            patch.object(hextech_scraper, "cleanup_old_csvs"),
-            patch.object(hextech_scraper, "rebuild_runtime_caches"),
+            patch.object(hextech_scraper, "atomic_write_csv", side_effect=AssertionError("timeout 暂停不得覆盖 CSV")),
+            patch.object(hextech_scraper, "cleanup_old_csvs", side_effect=AssertionError("timeout 暂停不得清理 CSV")),
+            patch.object(hextech_scraper, "rebuild_runtime_caches", side_effect=AssertionError("timeout 暂停不得重建缓存")),
             patch.object(hextech_scraper.time, "sleep"),
         ):
             assert hextech_scraper.main_scraper() is True
 
-        assert fetcher.calls == 6
-        assert json.loads(status_file.read_text(encoding="utf-8"))["last_result"] == "success"
-        assert len(pd.read_csv(output_csv, encoding=runtime_store.CSV_ENCODING)) == 300
+        status = json.loads(status_file.read_text(encoding="utf-8"))
+        assert fetcher.calls == 5
+        assert status["last_result"] == "fallback"
+        assert status["reason"] == "timeout"
+        blocked_until = datetime.fromisoformat(status["blocked_until"])
+        assert 29 * 60 <= blocked_until.timestamp() - time.time() <= 31 * 60
+        assert not output_csv.exists()
 
 
 def check_scrapling_tls_error_contract() -> None:
@@ -1460,6 +1669,36 @@ def check_scrapling_tls_error_contract() -> None:
             assert exc.context == "championId=1;champion=测试英雄"
         else:
             raise AssertionError("tls_error 必须向上抛出 RemoteFetchError")
+
+
+def check_scrapling_fetch_text_keeps_internal_retry() -> None:
+    """短文本抓取也必须保留一次 Scrapling 内部 retry，避免 session 被提前释放。"""
+
+    calls = []
+
+    class GoodResponse:
+        body = "{}"
+        status = 200
+
+    class RecordingFetcher:
+        @staticmethod
+        def get(*_args, **kwargs):
+            calls.append(kwargs)
+            return GoodResponse()
+
+    fetchers_module = type(sys)("scrapling.fetchers")
+    fetchers_module.Fetcher = RecordingFetcher
+    scrapling_module = type(sys)("scrapling")
+    scrapling_module.fetchers = fetchers_module
+    with (
+        patch.object(scrapling_client, "_require_scrapling"),
+        patch.dict(sys.modules, {"scrapling": scrapling_module, "scrapling.fetchers": fetchers_module}),
+    ):
+        result = scrapling_client.fetch_text("https://example.test/data.json", max_attempts=1)
+
+    assert result.status_code == 200
+    assert calls
+    assert calls[0]["retries"] == 1
 
 
 def check_version_sync_startup_resource_guard() -> None:
@@ -1528,7 +1767,7 @@ def check_hextech_success_clears_fallback_state() -> None:
             self.responses = [
                 fake_result({"100": {"displayName": "测试海克斯"}}),
                 fake_result([{"championId": "1"}]),
-                fake_result({}, text="detail"),
+                fake_result(text="detail"),
             ]
 
         def __call__(self, *_args, **_kwargs):
@@ -1566,6 +1805,7 @@ def check_hextech_success_clears_fallback_state() -> None:
             patch.object(hextech_scraper, "build_daily_csv_path", return_value=str(output_csv)),
             patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
             patch.object(hextech_scraper, "extract_champion_stats", return_value=[row] * 300),
+            patch.object(hextech_scraper, "backup_active_csv_before_publish"),
             patch.object(hextech_scraper, "cleanup_old_csvs") as cleanup,
             patch.object(hextech_scraper, "rebuild_runtime_caches") as rebuild,
             patch.object(hextech_scraper.time, "sleep"),
@@ -2134,6 +2374,64 @@ def check_overlay_hint_cache_contract() -> None:
     assert overlay_hint_cache.query_overlay_hint(latest_cache, "污染英雄名")["ok"] is False
     assert overlay_hint_cache.query_overlay_hint(latest_cache, "nan-augment")["ok"] is False
 
+    manifest_gap_df = pd.DataFrame(
+        [
+            {
+                "英雄 ID": "266",
+                "英雄名称": "暗裔剑魔",
+                "海克斯ID": "1322",
+                "海克斯名称": "罪恶快感",
+                "海克斯阶级": "Gold",
+                "海克斯胜率": 0.51,
+                "海克斯出场率": 0.07,
+                "源站排名": 1,
+                "综合得分": 1.0,
+            }
+        ]
+    )
+    with (
+        patch.object(runtime_store, "get_latest_csv", return_value=str(RUN_DIR / "data" / "raw" / "hextech" / "Hextech_Data_2099-01-02.csv")),
+        patch.object(runtime_store, "load_runtime_csv", return_value=manifest_gap_df),
+        patch(
+            "hextech.scraping.augment_catalog.load_augment_catalog_lookup_read_only",
+            return_value={
+                "冰雪爆裂": {
+                    "name": "冰雪爆裂",
+                    "tier": "黄金",
+                    "cdragon_id": 2080,
+                    "augment_name_id": "Snowbomb",
+                    "icon_url": "/assets/snowbomb_small.png",
+                    "tooltip_plain": "在目标位置引爆雪球。",
+                },
+                "占位强化 A": {
+                    "name": "占位强化 A",
+                    "tier": "白银",
+                    "cdragon_id": -1,
+                    "augment_name_id": "PlaceholderA",
+                    "icon_url": "/assets/placeholdera_small.png",
+                },
+                "占位强化 B": {
+                    "name": "占位强化 B",
+                    "tier": "白银",
+                    "cdragon_id": -1,
+                    "augment_name_id": "PlaceholderB",
+                    "icon_url": "/assets/placeholderb_small.png",
+                }
+            },
+        ),
+    ):
+        manifest_gap_cache = overlay_hint_cache.build_overlay_hint_cache_from_precomputed(
+            include_private_stats=True,
+            source_tag="dev-check",
+        )
+    snowbomb_hint = overlay_hint_cache.query_overlay_hint(manifest_gap_cache, "snowbomb")
+    assert snowbomb_hint["ok"] is True
+    assert snowbomb_hint["hint"]["augment_id"] == "2080"
+    assert snowbomb_hint["hint"]["name"] == "冰雪爆裂"
+    assert "stats_by_champion_id" not in snowbomb_hint["hint"]
+    assert overlay_hint_cache.query_overlay_hint(manifest_gap_cache, "placeholdera")["hint"]["name"] == "占位强化 A"
+    assert overlay_hint_cache.query_overlay_hint(manifest_gap_cache, "placeholderb")["hint"]["name"] == "占位强化 B"
+
     with TemporaryDirectory() as tmp_dir:
         champion_cache = Path(tmp_dir) / "Champion_List_Cache.json"
         hextech_cache = Path(tmp_dir) / "Champion_Hextech_Cache.json"
@@ -2439,7 +2737,9 @@ def check_overlay_context_contract() -> None:
         assert cleared_live_loaded["error"] == "context_missing"
         assert cleared_live_loaded["champion_id"] == ""
         assert cleared_live_loaded["source"] == "web"
-        assert "266" not in context_path.read_text(encoding="utf-8")
+        cleared_payload = json.loads(context_path.read_text(encoding="utf-8"))
+        assert cleared_payload.get("champion_id") == ""
+        assert cleared_payload.get("champion_name") == ""
 
         class FakeLcuResponse:
             status_code = 200
@@ -3561,15 +3861,11 @@ def check_overlay_vision_sidecar_contract() -> None:
     hover_tracker.update(detection)
     hover_stable = hover_tracker.update(detection)
     stable_signature_before_hover = [slot["augment_id"] for slot in hover_stable["slots"]]
-    for _index in range(2):
+    for _index in range(5):
         hover_result = hover_tracker.update(hover_detection)
         assert hover_result["active"] is True
         assert hover_result["source"]["hover_occluded"] is True
         assert [slot["augment_id"] for slot in hover_result["slots"]] == stable_signature_before_hover
-    hover_exit = hover_tracker.update(hover_detection)
-    assert hover_exit["active"] is False
-    assert hover_exit["source"]["selection_window_active"] is False
-    assert hover_exit["source"]["reason"] == "hover_occluded_expired"
 
     residue_tracker = SelectionTracker()
     residue_tracker.update(detection)
@@ -6503,10 +6799,9 @@ print(json.dumps(blocked))
         stale_manager.ensure_game_overlay_healthy(enabled=True)
         time.sleep(0.03)
         stale_watchdog = stale_manager.ensure_game_overlay_healthy(enabled=True)
-        assert stale_watchdog["last_action"] == "restart_stale_state"
+        assert stale_watchdog["last_action"] == "healthy"
         assert stale_calls == [
             "prepare", "inactive", "sidecar", "host", "context",
-            "inactive", "stop:sidecar", "inactive", "stop:host", "prepare", "inactive", "sidecar", "host", "context",
         ]
         trace_path = desktop_service_manager.OVERLAY_VISION_TRACE_FILE
         trace_path.write_text("{}", encoding="utf-8")
@@ -6891,13 +7186,13 @@ print(json.dumps(blocked))
         args.update(overrides)
         return overlay_host.decide_visibility(**args)
 
-    # 显隐矩阵：只在三槽完整稳定时显示，避免 partial 识别导致闪烁和半空内容。
-    assert decide(event_visible=False, content_ready=False) == (False, "event_inactive")
+    # 显隐矩阵：选择窗口已进入时先显示 detecting/partial，避免三槽稳定前完全空窗。
+    assert decide(event_visible=False, content_ready=False) == (True, "detecting")
     assert decide() == (True, "visible_ready")
     assert decide(selection_window_active=False) == (False, "selection_window_inactive")
     assert decide(selection_window_active=None) == (True, "visible_ready")
-    assert decide(content_ready=False, ready_slots=1) == (False, "content_not_ready")
-    assert decide(content_ready=False, ready_slots=2) == (False, "content_not_ready")
+    assert decide(content_ready=False, ready_slots=1) == (True, "visible_partial")
+    assert decide(content_ready=False, ready_slots=2) == (True, "visible_partial")
     for overrides in (
         {"event_error": "event_expired", "event_visible": False},
         {"blocking_modal": True},
@@ -7454,6 +7749,7 @@ def check_overlay_refresh_tool_contract() -> None:
         }
         audit_summary = {"missing_identity_count": 0, "missing_variant_count": 0}
         fixture_summary = {
+            "full_frame_sample_count": 0,
             "missing_count": 1,
             "invalid_path_count": 0,
             "fixture_missing_count": 0,
@@ -7468,6 +7764,7 @@ def check_overlay_refresh_tool_contract() -> None:
             blocked = refresh_tool.validate_snapshot(root)
         assert blocked["passed"] is False
         assert blocked["blockers"]["truth_missing_count"] == 1
+        assert blocked["blockers"]["full_frame_sample_deficit"] == refresh_tool.MIN_FULL_FRAME_SAMPLE_COUNT
 
         snapshot = root / "snapshot"
         target = root / "target"

@@ -17,7 +17,7 @@ from hextech.overlay.vision.matcher import SlotCandidate, candidate_from_slot, u
 SCENE_ENTER_FRAMES = 2  # 场景连续出现 N 帧后判定为"进入"
 SCENE_EXIT_FRAMES = 2   # 场景连续消失 N 帧后判定为"退出"
 SLOT_COUNT = 3          # 海克斯三选一槽位数
-RESIDUE_HOLD_FRAMES = 2  # 鼠标/残影遮挡只短暂沿用，避免选择结束后长时间残留
+RESIDUE_HOLD_FRAMES = 2  # 普通残影只短暂沿用，避免选择结束后长时间残留
 
 
 @dataclass
@@ -218,7 +218,8 @@ class SelectionTracker:
         - body_shard_only → 锁定锻体模式，清空槽位，输出 body_shard 事件
         - blocking_modal_present / scoreboard_key_down → 重置并阻塞
         - body_shard_latched + 场景消失 → 防抖退出锻体模式
-        - hover_occluded（鼠标遮挡）或 scene_residue_hold（残留保持）→ 沿用上次槽位
+        - hover_occluded（鼠标遮挡）→ 只要仍能确认卡片残留就沿用上次槽位
+        - scene_residue_hold（普通残留保持）→ 短暂沿用上次槽位后退出
         - 场景出现 → 累积帧数，达到阈值后 scene_active=True
         - 场景消失 → 累积 absent_frames，达到阈值后 reset
         """
@@ -263,10 +264,13 @@ class SelectionTracker:
         )
         if hover_occluded or scene_residue_hold:
             self.residue_hold_frames += 1
+            if hover_occluded:
+                self.absent_frames = 0
+                return self._residue_event(source, hover_occluded=True)
             if self.residue_hold_frames <= max(1, int(RESIDUE_HOLD_FRAMES)):
                 self.absent_frames = 0
-                return self._residue_event(source, hover_occluded=hover_occluded)
-            return self.block("hover_occluded_expired" if hover_occluded else "scene_residue_expired")
+                return self._residue_event(source, hover_occluded=False)
+            return self.block("scene_residue_expired")
 
         if scene_present:
             self.residue_hold_frames = 0

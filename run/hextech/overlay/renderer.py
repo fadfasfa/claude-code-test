@@ -140,9 +140,18 @@ def _query_hint(slot: Mapping[str, Any], hint_cache: Mapping[str, Any] | None) -
             hint = hints.get(candidate)
             if isinstance(hint, Mapping):
                 break
-    if not isinstance(hint, Mapping) and slot_name and isinstance(name_index, Mapping):
+    if not isinstance(hint, Mapping) and isinstance(name_index, Mapping):
         indexed_id = ""
-        for candidate in (slot_name, normalize_augment_id(slot_name), normalize_augment_name(slot_name)):
+        for candidate in (
+            augment_id,
+            normalize_augment_id(augment_id),
+            normalize_augment_name(augment_id),
+            slot_name,
+            normalize_augment_id(slot_name),
+            normalize_augment_name(slot_name),
+        ):
+            if not candidate:
+                continue
             indexed_id = _clean_text(name_index.get(candidate))
             if indexed_id:
                 break
@@ -194,6 +203,21 @@ def _context_status_code(context: Mapping[str, Any] | None) -> StatStatusCode | 
         return None
     error = _clean_text(context.get("error"), limit=48) if isinstance(context, Mapping) else "context_missing"
     return "CONTEXT_EXPIRED" if error == "context_expired" else "CONTEXT_MISSING"
+
+
+def _effective_context(
+    context: Mapping[str, Any] | None,
+    recent_context: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    """短暂 context 缺失时沿用调用方提供的最近有效英雄，避免渲染状态闪烁。"""
+
+    if isinstance(context, Mapping) and context.get("ok"):
+        return context
+    if isinstance(context, Mapping) and _clean_text(context.get("error"), limit=48) == "context_expired":
+        return context
+    if isinstance(recent_context, Mapping) and recent_context.get("ok"):
+        return recent_context
+    return context
 
 
 def _stats_display(
@@ -265,9 +289,11 @@ def build_render_model(
     *,
     hint_cache: Mapping[str, Any] | None,
     context: Mapping[str, Any] | None,
+    recent_context: Mapping[str, Any] | None = None,
 ) -> OverlayRenderModel:
     """把共享数据收口为稳定三统计窗和仅命中联动的展示模型。"""
 
+    context = _effective_context(context, recent_context)
     slots = snapshot.get("slots") if isinstance(snapshot.get("slots"), list) else []
     stats: list[StatPanelModel] = []
     synergies: list[SynergyPanelModel] = []

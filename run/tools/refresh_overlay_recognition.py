@@ -41,6 +41,7 @@ FIXTURE_ROOT = DIAGNOSTIC_DIR / "overlay_vision_fixtures"
 CATALOG_RELATIVE_PATH = Path("resources") / "版本数据" / "海克斯资源目录.v1.json"
 IMAGE_RELATIVE_DIR = Path("resources") / "图片资源"
 SYNTHETIC_SIZE = (2560, 1600)
+MIN_FULL_FRAME_SAMPLE_COUNT = 5
 
 
 class RefreshValidationError(RuntimeError):
@@ -414,6 +415,7 @@ def validate_snapshot(root: Path) -> dict[str, Any]:
         "missing_identity_count": template_audit["missing_identity_count"],
         "missing_variant_count": template_audit["missing_variant_count"],
         "synthetic_failure_count": synthetic_summary["synthetic_failure_count"],
+        "full_frame_sample_deficit": max(0, MIN_FULL_FRAME_SAMPLE_COUNT - int(fixture_summary["full_frame_sample_count"] or 0)),
         "truth_missing_count": fixture_summary["missing_count"],
         "invalid_path_count": fixture_summary["invalid_path_count"],
         "fixture_missing_count": fixture_summary["fixture_missing_count"],

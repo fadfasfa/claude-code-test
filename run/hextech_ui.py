@@ -17,6 +17,11 @@ def main() -> None:
         from hextech.display.web.app import run_web_server
 
         run_web_server()
+    elif "--runtime-supervisor" in sys.argv:
+        from hextech.runtime_supervisor import main as run_runtime_supervisor
+
+        args = [arg for arg in sys.argv[1:] if arg != "--runtime-supervisor"]
+        raise SystemExit(run_runtime_supervisor(args))
     elif "--game-overlay" in sys.argv:
         # PR 走根目录薄壳避免冻结态依赖源码 .py 路径；main 合入 sidecar CLI 入口同步保留。
         from hextech.overlay.host import main as run_overlay_main
