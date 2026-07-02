@@ -265,9 +265,12 @@ def _sanitize_meta(meta: dict[str, Any]) -> dict[str, Any]:
     return {
         "build": {
             "version": _clean_optional_text(meta.get("version_anchor")),
+            "excel_version": _clean_optional_text(meta.get("excel_version")),
             "generated_at": _clean_optional_text(meta.get("generated_at")),
             "source_mode": _clean_optional_text(meta.get("source_mode")) or "hybrid_now_wiki_ready",
             "source_coverage": meta.get("source_coverage", {}) if isinstance(meta.get("source_coverage"), dict) else {},
+            "wiki_degraded": bool(meta.get("wiki_degraded")),
+            "degradation": meta.get("degradation", {}) if isinstance(meta.get("degradation"), dict) else {},
         },
         "positive_modifier_pool": positive,
         "negative_modifier_pool": negative_pool,

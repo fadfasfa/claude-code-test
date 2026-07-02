@@ -1,14 +1,31 @@
 {
   "build": {
     "version": "Hotfix 13.2",
-    "generated_at": "2026-06-11T05:13:45.442753+00:00",
+    "excel_version": "13.2",
+    "generated_at": "2026-07-02T12:04:57.309342+00:00",
     "source_mode": "hybrid_now_wiki_ready",
     "source_coverage": {
       "classes": 7,
       "weapons": 31,
       "talent_class_count": 7,
       "class_images_with_local_assets": 7,
-      "weapon_images_from_excel": 31
+      "weapon_images_from_excel": 31,
+      "by_source": {
+        "wiki_class_names": 7,
+        "manual_class_names": 0,
+        "excel_weapon_images": 31,
+        "catalog_weapon_images": 0,
+        "wiki_talent_classes": 7
+      }
+    },
+    "wiki_degraded": false,
+    "degradation": {
+      "structure_degraded": false,
+      "talent_degraded": false,
+      "soft_degraded": false,
+      "reasons": [],
+      "soft_reasons": [],
+      "talent_reasons": []
     }
   },
   "positive_modifier_pool": [
@@ -202,12 +219,6 @@
       "key": "embrace-the-blast",
       "name": "享受爆炸",
       "detail": "享受爆炸：玩家不再承受爆炸物伤害，且周围每有1次任何爆炸物伤害命中任意目标(包括自身)均会为波及范围内的友军恢复1格护甲；这个词条会尝试抵消友伤词条中的爆炸物伤害，使自身投出的爆炸物不再伤害友军",
-      "type": "positive"
-    },
-    {
-      "key": "ghost-oath",
-      "name": "幽灵之誓",
-      "detail": "幽灵之誓：玩家成功执行\"下跪\"动作将会使自身进入隐身状态",
       "type": "positive"
     }
   ],
@@ -863,26 +874,6 @@
       ],
       "aliases": [],
       "type": "negative"
-    },
-    {
-      "key": "butchers-creed",
-      "label": "屠夫信条",
-      "name": "屠夫信条",
-      "detail": "屠夫信条：玩家仅能使用近战武器战斗",
-      "risk_level": "must_exclude",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
-    },
-    {
-      "key": "bolter-storm",
-      "label": "爆矢风暴",
-      "name": "爆矢风暴",
-      "detail": "爆矢风暴：玩家仅能使用远程武器战斗",
-      "risk_level": "must_exclude",
-      "core_tags": [],
-      "aliases": [],
-      "type": "negative"
     }
   ],
   "negative_modifier_rules": {
@@ -1235,30 +1226,6 @@
         ],
         "risk_level": "high_risk",
         "message": "可疑行为、遍地踩雷、亚空间风暴会放大混乱场景中的误伤链，不能同抽。"
-      },
-      {
-        "keys": [
-          "butchers-creed",
-          "bolter-storm"
-        ],
-        "risk_level": "must_exclude",
-        "message": "屠夫信条和爆矢风暴会同时禁止近战与远程路线，不能同时抽取。"
-      },
-      {
-        "keys": [
-          "butchers-creed",
-          "keep-distance"
-        ],
-        "risk_level": "must_exclude",
-        "message": "屠夫信条要求近战战斗，保持距离会压制近战路线，不能同时抽取。"
-      },
-      {
-        "keys": [
-          "bolter-storm",
-          "close-quarters"
-        ],
-        "risk_level": "must_exclude",
-        "message": "爆矢风暴要求远程战斗，短兵相接会压制远程路线，不能同时抽取。"
       }
     ],
     "quota_limits": {
@@ -1383,11 +1350,7 @@
       "坚韧敌人": "unyielding-enemies",
       "坚韧敌人：移除敌人的眩晕状态机制，使其受到致命伤害立即死亡，且最大生命值减少35%[乘算]": "unyielding-enemies",
       "死后增生": "postmortem-growth",
-      "死后增生：精英级以上混沌敌人/泰伦敌人在死后会生成混沌颅骨/孢子雷": "postmortem-growth",
-      "屠夫信条": "butchers-creed",
-      "屠夫信条：玩家仅能使用近战武器战斗": "butchers-creed",
-      "爆矢风暴": "bolter-storm",
-      "爆矢风暴：玩家仅能使用远程武器战斗": "bolter-storm"
+      "死后增生：精英级以上混沌敌人/泰伦敌人在死后会生成混沌颅骨/孢子雷": "postmortem-growth"
     }
   }
 }

@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--headless", action="store_true", help="Pass through to scrape_perks.py.")
     parser.add_argument("--dump-dom", action="store_true", help="Pass through to scrape_perks.py.")
     parser.add_argument("--force-download", action="store_true", help="Pass through to scrape_perks.py.")
+    parser.add_argument("--force-refresh", action="store_true", help="强制全量重抓 wiki 结构页，绕过页面 hash 增量。")
     parser.add_argument("--class", dest="class_titles", action="append", default=[], help="Pass through to scrape_perks.py.")
     return parser.parse_args()
 
@@ -36,7 +37,10 @@ def _run(command: list[str]) -> int:
 def main() -> int:
     args = parse_args()
     if not args.skip_structure:
-        exit_code = _run([sys.executable, str(SCRAPE_WIKI)])
+        command = [sys.executable, str(SCRAPE_WIKI)]
+        if args.force_refresh:
+            command.append("--force-refresh")
+        exit_code = _run(command)
         if exit_code != 0:
             return exit_code
 

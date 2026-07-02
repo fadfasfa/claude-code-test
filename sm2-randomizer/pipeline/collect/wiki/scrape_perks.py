@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Wiki 天赋图标与职业图抓取脚本。
+
+用 Playwright 抓取 Fandom 职业页的天赋图标与职业图，刷新 catalog manifest，并
+把天赋退化信号（manual_action）写入 raw meta。wiki/run.py 调用本脚本，退出码
+透传；manual_action 现降级为告警不阻断，信号落到 天赋手动补图清单.json 与 meta。
+"""
+
 import argparse
 import html
 import re
@@ -905,6 +912,21 @@ def main() -> int:
     raw_payload["talents"] = merge_by_key(existing_talents, talent_classes, "class_slug_candidate", ordered_slugs)
     raw_meta = dict(raw_payload.get("meta", {}))
     raw_meta["talent_manual_action_items"] = all_manual_actions
+    # 天赋退化信号：manual_action 表示有天赋图标需手动补，属软退化。与 scrape_wiki
+    # 写入的 structure_degraded 合并，供 merge_sources 降级与 candidate-status 展示。
+    existing_degradation = raw_meta.get("degradation", {}) if isinstance(raw_meta.get("degradation"), dict) else {}
+    talent_degraded = bool(all_manual_actions)
+    structure_degraded = bool(existing_degradation.get("structure_degraded"))
+    soft_degraded = bool(existing_degradation.get("soft_degraded"))
+    raw_meta["degradation"] = {
+        **existing_degradation,
+        "talent_degraded": talent_degraded,
+        "talent_reasons": [
+            f"manual_action:{item.get('class_name','')}:{item.get('talent_name_raw','')}"
+            for item in all_manual_actions
+        ],
+    }
+    raw_meta["wiki_degraded"] = structure_degraded or soft_degraded or talent_degraded
     raw_payload["meta"] = raw_meta
 
     class_manifest_payload = {
@@ -947,7 +969,9 @@ def main() -> int:
         print("[TALENT-MANUAL-ACTION] 以下图片三次尝试后仍失败，请手动复制：")
         for item in all_manual_actions:
             print(f"- {item['class_name']} | {item['talent_name_raw']} | {item['grid_label_raw']} | {item['target_asset_rel_path']}")
-        return 2
+        # 降级为告警不阻断：退化信号已写入 meta.wiki_degraded / 天赋手动补图清单.json，
+        # 由 candidate-status 展示。缺图走 baseline/fallback，不卡 refresh-data。
+        return 0
 
     return 0
 

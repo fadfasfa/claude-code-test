@@ -1,0 +1,62 @@
+{
+  "excel_version": "13.2",
+  "wiki_version": "Hotfix 13.2",
+  "wiki_degraded": false,
+  "version_alignment": {
+    "aligned": true,
+    "wiki_version": "13.2",
+    "excel_version": "13.2",
+    "reason": "aligned"
+  },
+  "validation_issue_count": 0,
+  "has_diff": true,
+  "excel": {
+    "imported_count": 31,
+    "failure_count": 0,
+    "discovered_new_items": [],
+    "greyed_excluded": [
+      "屠夫信条：玩家仅能使用近战武器战斗",
+      "幽灵之誓：玩家成功执行\"下跪\"动作将会使自身进入隐身状态",
+      "爆矢风暴：玩家仅能使用远程武器战斗",
+      "额外调整器机制\n每次触发时，敌人获得-4%承伤(伤害减免)，玩家获得+5%承伤（易伤）。\n该效果有两种触发方式：\n\n计时器机制：每个计时器结束时触发一次。\n波次额外机制：从第11波开始（即第10波结束后），每完成一波额外触发一次。\n\n最高叠加层数：\n\n敌人减伤最高叠加15层；终极敌人最高叠加20层\n玩家易伤最高叠加 100层\n\n承伤调整器结算方式：加算，可被同为加算的其它易伤影响"
+    ],
+    "header_warnings": []
+  },
+  "wiki_incremental": {
+    "skipped_count": 37,
+    "refetched_count": 0,
+    "force_refresh": false
+  },
+  "degradation": {
+    "structure_degraded": false,
+    "talent_degraded": false,
+    "soft_degraded": false,
+    "reasons": [],
+    "soft_reasons": []
+  },
+  "semantic_changes": {
+    "added_weapons": [],
+    "removed_weapons": [],
+    "added_classes": [],
+    "removed_classes": [],
+    "changed_talent_descriptions": [],
+    "changed_talent_description_count": 0,
+    "version": {
+      "candidate": "Hotfix 13.2",
+      "current": "Hotfix 13.2"
+    },
+    "excel_version": {
+      "candidate": "13.2",
+      "current": "13.2"
+    },
+    "wiki_degraded": false,
+    "version_alignment": {
+      "aligned": true,
+      "wiki_version": "13.2",
+      "excel_version": "13.2",
+      "reason": "aligned"
+    },
+    "excel_new_items": [],
+    "excel_new_items_count": 0
+  }
+}

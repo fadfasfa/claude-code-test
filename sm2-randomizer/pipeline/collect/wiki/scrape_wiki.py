@@ -5,6 +5,7 @@ from __future__ import annotations
 职责边界：仅写入 pipeline 的 source/catalog/reports 层，不直接写运行时数据目录。
 """
 
+import hashlib
 import json
 import re
 import sys
@@ -21,12 +22,15 @@ PROJECT_ROOT = CURRENT_DIR.parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pipeline.common import PIPELINE_STORE_CATALOG_DIR, PIPELINE_STORE_RAW_EXCEL_DIR, PIPELINE_STORE_RAW_WIKI_DIR, PIPELINE_STORE_REPORTS_SOURCE_DIR, ensure_directories, read_json, write_json
+from pipeline.common import PIPELINE_STORE_CATALOG_DIR, PIPELINE_STORE_RAW_EXCEL_DIR, PIPELINE_STORE_RAW_WIKI_DIR, PIPELINE_STORE_REPORTS_SOURCE_DIR, EXTRACTION_RULES_FILE, ensure_directories, read_json, write_json
 
 VERSION_ANCHOR = "Hotfix 13.2"
 HOTFIX_13_2_URL = "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/409-hotfix-13-2-patch-notes"
 PATCH_13_0_URL = "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/395-patch-notes-13-0"
 RAW_OUTPUT_PATH = PIPELINE_STORE_RAW_WIKI_DIR / "原始抓取数据.json"
+# 页面 hash 缓存：跨 run 持久化 {page_title: sha1(html)}，用于增量抓取——
+# 页面内容未变则跳过解析，复用上次 raw 该页记录。--force-refresh 绕过。
+PAGE_HASHES_PATH = PIPELINE_STORE_RAW_WIKI_DIR / "page_hashes.json"
 CLASS_WEAPON_MAP_OUTPUT_PATH = PIPELINE_STORE_CATALOG_DIR / "职业武器映射.json"
 TABLE_OUTPUT_PATH = PIPELINE_STORE_REPORTS_SOURCE_DIR / "人工审阅表.md"
 TALENT_IMPORT_PATH = PIPELINE_STORE_RAW_EXCEL_DIR / "天赋技能效果.json"
@@ -186,6 +190,19 @@ def fetch_official_patch_anchor() -> dict[str, Any]:
     }
 
 
+def _html_hash(html: str) -> str:
+    return hashlib.sha1(str(html or "").encode("utf-8")).hexdigest()
+
+
+def load_page_hashes() -> dict[str, str]:
+    data = read_json(PAGE_HASHES_PATH, {})
+    return data if isinstance(data, dict) else {}
+
+
+def save_page_hashes(hashes: dict[str, str]) -> None:
+    write_json(PAGE_HASHES_PATH, hashes)
+
+
 def fetch_fandom_page(title: str) -> dict[str, Any]:
     payload = get_json(
         "https://spacemarine2.fandom.com/api.php",
@@ -200,6 +217,7 @@ def fetch_fandom_page(title: str) -> dict[str, Any]:
         "pageId": parse.get("pageid"),
         "url": f"https://spacemarine2.fandom.com/wiki/{quote(title.replace(' ', '_'))}",
         "html": html,
+        "html_hash": _html_hash(html),
     }
 
 
@@ -253,6 +271,13 @@ def extract_role_text(soup: BeautifulSoup) -> str:
         cleaned = _clean_role_text(node.get_text(" "))
         if cleaned:
             return cleaned
+    # Fandom 职业页改版后定位描述移到正文 blockquote（如 "Master Tactician: ..."），
+    # 旧的 .mw-parser-output p 首段已退化为空行，故优先取 blockquote。
+    blockquote = soup.select_one(".mw-parser-output blockquote")
+    if blockquote:
+        cleaned = _clean_role_text(blockquote.get_text(" "))
+        if cleaned:
+            return cleaned
     paragraph = soup.select_one(".mw-parser-output p")
     return _clean_role_text(paragraph.get_text(" ") if paragraph else "")
 
@@ -296,8 +321,9 @@ def extract_restriction_notes(text: str) -> list[str]:
     return uniq(notes)
 
 
-def scrape_fandom_class(title: str) -> dict[str, Any]:
-    page = fetch_fandom_page(title)
+def scrape_fandom_class(title: str, page: dict[str, Any] | None = None) -> dict[str, Any]:
+    if page is None:
+        page = fetch_fandom_page(title)
     soup = BeautifulSoup(page["html"], "html.parser")
     body_text = extract_raw_text(soup)
     record = {
@@ -330,8 +356,9 @@ def fetch_fandom_weapon_titles() -> list[str]:
     return [entry["title"] for entry in members if entry.get("ns") == 0 and entry.get("title") != "Equipment"]
 
 
-def scrape_fandom_weapon(title: str) -> dict[str, Any]:
-    page = fetch_fandom_page(title)
+def scrape_fandom_weapon(title: str, page: dict[str, Any] | None = None) -> dict[str, Any]:
+    if page is None:
+        page = fetch_fandom_page(title)
     soup = BeautifulSoup(page["html"], "html.parser")
     slot_node = find_infobox_value(soup, "slot")
     class_node = find_infobox_value(soup, "class")
@@ -814,12 +841,52 @@ def build_review_seed(raw_classes: list[dict[str, Any]], raw_weapons: list[dict[
     return {"items": collect_parse_issues(raw_classes, raw_weapons, raw_official_assets)}
 
 
+def build_degradation_summary(raw_classes: list[dict[str, Any]], raw_weapons: list[dict[str, Any]]) -> dict[str, Any]:
+    """检测 wiki 结构退化，分硬/软两层。
+
+    硬退化（required_class_missing/required_weapon_missing）：必填职业/武器缺失，
+    下游 EXPECTED_*_COUNT 校验拦截 apply/package；merge_sources 也会置空 wiki
+    字段源回退 baseline。软退化（class_parse_degraded/weapon_parse_degraded）：
+    单条字段抓取不全，merge_sources 按 _first_text 自然 fallback，不置空整源，
+    仅告警。reasons=硬原因、soft_reasons=软原因，供 candidate-status 展示。
+    talent_degraded 由 scrape_perks 后续补写。
+    """
+    extraction_rules = read_json(EXTRACTION_RULES_FILE, {})
+    contract = extraction_rules.get("contract_rules", {}) if isinstance(extraction_rules, dict) else {}
+    required_class_slugs = {str(slug).strip() for slug in contract.get("required_classes", []) if str(slug).strip()}
+    required_weapon_slugs = {str(slug).strip() for slug in contract.get("required_weapons", []) if str(slug).strip()}
+    class_slugs = {str(entry.get("slug_candidate", "")).strip() for entry in raw_classes if isinstance(entry, dict)}
+    weapon_slugs = {str(entry.get("slug_candidate", "")).strip() for entry in raw_weapons if isinstance(entry, dict)}
+    hard_reasons: list[str] = []
+    for slug in sorted(required_class_slugs):
+        if slug not in class_slugs:
+            hard_reasons.append(f"required_class_missing:{slug}")
+    for slug in sorted(required_weapon_slugs):
+        if slug not in weapon_slugs:
+            hard_reasons.append(f"required_weapon_missing:{slug}")
+    soft_reasons: list[str] = []
+    for entry in raw_classes:
+        if isinstance(entry, dict) and entry.get("parse_degraded"):
+            soft_reasons.append(f"class_parse_degraded:{entry.get('name') or entry.get('slug_candidate')}")
+    for entry in raw_weapons:
+        if isinstance(entry, dict) and entry.get("parse_degraded"):
+            soft_reasons.append(f"weapon_parse_degraded:{entry.get('name') or entry.get('slug_candidate')}")
+    return {
+        "structure_degraded": bool(hard_reasons),
+        "talent_degraded": False,
+        "soft_degraded": bool(soft_reasons),
+        "reasons": hard_reasons,
+        "soft_reasons": soft_reasons,
+    }
+
+
 def build_raw_payload(classes: list[dict[str, Any]], weapons: list[dict[str, Any]], official_assets: list[dict[str, Any]], official_anchor: dict[str, str], game8_validation: dict[str, Any]) -> dict[str, Any]:
     raw_classes = [to_raw_class_payload(entry) for entry in classes]
     raw_weapons = [to_raw_weapon_payload(entry) for entry in weapons]
     raw_official_assets = [to_raw_official_asset_payload(entry) for entry in official_assets]
     conflict_count = sum(len([note for note in entry["notes"] if str(note).startswith(CONFLICT_PREFIX)]) for entry in raw_classes)
     conflict_count += sum(len([note for note in entry["notes"] if str(note).startswith(CONFLICT_PREFIX)]) for entry in raw_weapons)
+    degradation = build_degradation_summary(raw_classes, raw_weapons)
     return {
         "meta": {
             "version_anchor": VERSION_ANCHOR,
@@ -834,6 +901,8 @@ def build_raw_payload(classes: list[dict[str, Any]], weapons: list[dict[str, Any
             "conflict_count": conflict_count,
             "parse_report": build_parse_report(raw_classes, raw_weapons, raw_official_assets),
             "drift_report": build_drift_report(raw_classes, raw_weapons),
+            "wiki_degraded": degradation["structure_degraded"] or degradation["soft_degraded"],
+            "degradation": degradation,
         },
         "classes": raw_classes,
         "weapons": raw_weapons,
@@ -882,17 +951,68 @@ def write_outputs(raw_payload: dict[str, Any], markdown: str) -> None:
     write_json(CLASS_WEAPON_MAP_OUTPUT_PATH, weapon_map)
 
 
-def main() -> int:
+def _scrape_with_increment(
+    titles: list[str],
+    *,
+    kind: str,
+    scrape_fn: Any,
+    previous_raw: dict[str, dict[str, Any]],
+    page_hashes: dict[str, str],
+    force_refresh: bool,
+    stats: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """增量抓取：fetch HTML → 算 hash → 与上次相同且 raw 有记录则复用，否则解析。
+
+    hash 相同仍请求了网络（hash 需 HTML 才能算），省的是解析+下游处理时间。
+    raw 缺该页记录时即使 hash 命中也强制重抓（防 page_hashes 与 raw 不同步）。
+    """
+    results: list[dict[str, Any]] = []
+    for title in titles:
+        page = fetch_fandom_page(title)
+        new_hash = page["html_hash"]
+        prev_hash = page_hashes.get(title)
+        previous = previous_raw.get(title)
+        if not force_refresh and prev_hash == new_hash and previous is not None:
+            reused = dict(previous)
+            reused["reused_unchanged"] = True
+            # class 页 HTML 未变，但 weapon 页的 allowed_classes 可能已变，故重置
+            # weapons/notes/mode_restriction，让 rebuild_class_weapons_from_weapons
+            # 用最新 weapon 页数据重新填充，避免已移除武器/旧 conflict note 残留。
+            if kind == "class":
+                reused["weapons"] = {"primary": [], "secondary": [], "melee": []}
+                reused["notes"] = []
+                reused["mode_restriction_candidates"] = []
+            results.append(reused)
+            stats["skipped"].append(title)
+            continue
+        results.append(scrape_fn(title, page))
+        page_hashes[title] = new_hash
+        stats["refetched"].append(title)
+    return results
+
+
+def main(force_refresh: bool = False) -> int:
     official_anchor = fetch_official_patch_anchor()
-    classes = [scrape_fandom_class(title) for title in CLASS_TITLES]
+    previous_payload = read_json(RAW_OUTPUT_PATH, {})
+    previous_classes = {entry.get("name"): entry for entry in (previous_payload.get("classes") or []) if isinstance(entry, dict)}
+    previous_weapons = {entry.get("name"): entry for entry in (previous_payload.get("weapons") or []) if isinstance(entry, dict)}
+    page_hashes = load_page_hashes() if not force_refresh else {}
+    stats: dict[str, Any] = {"skipped": [], "refetched": []}
+
+    classes = _scrape_with_increment(
+        CLASS_TITLES, kind="class", scrape_fn=scrape_fandom_class,
+        previous_raw=previous_classes, page_hashes=page_hashes,
+        force_refresh=force_refresh, stats=stats,
+    )
     weapon_titles = fetch_fandom_weapon_titles()
-    weapons = [scrape_fandom_weapon(title) for title in weapon_titles]
-    if not any(entry["name"] == "Techmarine" for entry in classes):
-        raise RuntimeError("Techmarine class missing from Fandom output.")
-    if not any(entry["name"] == "Omnissiah Axe" for entry in weapons):
-        raise RuntimeError("Omnissiah Axe missing from Fandom output.")
-    if not any(entry["name"] == "Bolt Carbine One-Handed" for entry in weapons):
-        raise RuntimeError("Bolt Carbine One-Handed missing from Fandom output.")
+    weapons = _scrape_with_increment(
+        weapon_titles, kind="weapon", scrape_fn=scrape_fandom_weapon,
+        previous_raw=previous_weapons, page_hashes=page_hashes,
+        force_refresh=force_refresh, stats=stats,
+    )
+    # 必填项缺失不再 raise 中断 refresh-data：改为由 build_degradation_summary 记录
+    # 退化信号，下游 EXPECTED_*_COUNT 校验对硬退化兜底拦截。Fandom 抓取本身失败
+    # （fetch_fandom_page 抛错）仍会中断，由 refresh-data --skip-wiki 兜底。
     game8_validation = collect_game8_validation()
     rebuild_class_weapons_from_weapons(classes, weapons)
     attach_validation_notes(classes, weapons, game8_validation)
@@ -902,11 +1022,20 @@ def main() -> int:
     talent_payload = build_talent_payload(classes)
     raw_payload = append_talent_payload(build_raw_payload(classes, weapons, official_assets, official_anchor, game8_validation), talent_payload)
     raw_payload["meta"]["generated_at"] = __import__("datetime").datetime.now(__import__("datetime").UTC).isoformat()
+    raw_payload["meta"]["incremental"] = {
+        "force_refresh": force_refresh,
+        "skipped_count": len(stats["skipped"]),
+        "refetched_count": len(stats["refetched"]),
+        "reused_pages": stats["skipped"],
+        "refetched_pages": stats["refetched"],
+    }
     markdown = build_markdown_table(raw_payload)
     write_outputs(raw_payload, markdown)
+    save_page_hashes(page_hashes)
     print(f"[sm2-randomizer] Wrote raw wiki payload to: {RAW_OUTPUT_PATH}")
+    print(f"[sm2-randomizer] Wiki incremental: skipped={len(stats['skipped'])} refetched={len(stats['refetched'])} force_refresh={force_refresh}")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(force_refresh="--force-refresh" in sys.argv))

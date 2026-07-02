@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""sm2-randomizer 顶层发布入口。
+
+编排数据刷新（wiki/excel）、候选构建、校验、diff、apply 与最终打包分发。
+package-release 出包前自检运行数据契约、资源完整性、版本对齐与退化状态。
+"""
+
 import argparse
 import json
 import os
@@ -9,8 +15,9 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline.common import PIPELINE_TMP_PUBLISH_DIR, VALIDATION_REPORT_FILE
+from pipeline.common import PIPELINE_TMP_PUBLISH_DIR, VALIDATION_REPORT_FILE, read_json
 from pipeline.compute.validate_runtime_data import validate_runtime_data
+from pipeline.compute.publish_candidate import _version_alignment
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DIST_DIR = PROJECT_ROOT / "dist"
@@ -54,6 +61,14 @@ def _assert_package_contract() -> None:
     missing_assets = _missing_paths(tuple(PACKAGE_ASSETS_DIR / name for name in PACKAGE_ASSET_DIRS))
     if missing_assets:
         raise RuntimeError(f"assets/ 缺少关键目录: {', '.join(missing_assets)}")
+
+    # meta.json 必须含 build.version 与 build.excel_version，防透传链断裂导致
+    # 空字段被打包（版本对齐复检依赖这两个字段）。
+    package_meta = read_json(PACKAGE_DATA_DIR / "meta.json", {})
+    package_build = package_meta.get("build", {}) if isinstance(package_meta.get("build"), dict) else {}
+    missing_build_fields = [name for name in ("version", "excel_version") if not str(package_build.get(name, "")).strip()]
+    if missing_build_fields:
+        raise RuntimeError(f"meta.json.build 缺少版本字段: {', '.join(missing_build_fields)}")
 
 
 def _print_contract_summary() -> None:
@@ -146,6 +161,14 @@ def _run_packaged_asset_check() -> None:
     if missing_assets:
         sample = ", ".join(sorted(set(missing_assets))[:10])
         raise RuntimeError(f"打包资源校验失败，缺少文件示例: {sample}")
+    # 武器图标数应与 source_coverage.weapons 一致，防多图/少图（如 discovered 待审
+    # 项缺图被误打包、或清理残留）。仅 warning 不阻断，差异可能源于英雄武器排除。
+    meta_payload = json.loads((PACKAGE_DATA_DIR / "meta.json").read_text(encoding="utf-8"))
+    expected_weapons = int(meta_payload.get("build", {}).get("source_coverage", {}).get("weapons", 0) or 0)
+    weapon_icon_root = PACKAGE_ASSETS_DIR / "weapons" / "icons"
+    actual_icons = sum(1 for _ in weapon_icon_root.rglob("*.png")) if weapon_icon_root.exists() else 0
+    if expected_weapons and actual_icons and actual_icons != expected_weapons:
+        print(f"[sm2-randomizer] 警告：武器图标数 {actual_icons} 与 source_coverage.weapons {expected_weapons} 不一致（可能含英雄武器/历史残留），请人工核对。")
     print("[sm2-randomizer] Packaged asset references all resolve to local files.")
 
 
@@ -171,7 +194,8 @@ def parse_args() -> argparse.Namespace:
     build_candidate_parser.add_argument("--skip-validate", action="store_true", help="Skip runtime validation for the candidate output.")
 
     subparsers.add_parser("diff-candidate", help="Generate JSON and Markdown diff summaries for the current candidate.")
-    subparsers.add_parser("apply-candidate", help="Apply reviewed candidate runtime files into app/data.")
+    apply_candidate_parser = subparsers.add_parser("apply-candidate", help="Apply reviewed candidate runtime files into app/data.")
+    apply_candidate_parser.add_argument("--accept-version-mismatch", action="store_true", help="允许在 wiki 与 Excel 版本不一致时强制应用候选。")
     subparsers.add_parser("clean-candidate", help="Delete candidate runtime files.")
 
     package_release_parser = subparsers.add_parser("package-release", help="Build a validated final package folder and optional exe.")
@@ -239,6 +263,18 @@ def _validate_package_runtime() -> dict:
         report_path=PACKAGE_REPORT_FILE,
         assets_dir=PACKAGE_ASSETS_DIR,
     )
+
+
+def _check_package_data_health() -> tuple[bool, dict]:
+    """读取打包目录 meta.json，返回 (wiki_degraded, version_alignment)。
+
+    wiki_degraded=True 仅 warning（软退化可分发）；version_alignment.aligned
+    is False 阻断打包（版本不齐的包不应分发）。apply 闸门保证只有显式确认才进
+    app/data，package 再兜底一次。
+    """
+    meta = read_json(PACKAGE_DATA_DIR / "meta.json", {})
+    build = meta.get("build", {}) if isinstance(meta.get("build"), dict) else {}
+    return bool(build.get("wiki_degraded")), _version_alignment(meta)
 
 
 def _print_package_summary(validation: dict) -> None:
@@ -553,7 +589,7 @@ def diff_candidate() -> int:
     )
 
 
-def apply_candidate() -> int:
+def apply_candidate(accept_version_mismatch: bool = False) -> int:
     missing = [name for name in PACKAGE_RUNTIME_FILES if not (PIPELINE_TMP_PUBLISH_DIR / name).exists()]
     if missing:
         print(f"[sm2-randomizer] Missing candidate files in {PIPELINE_TMP_PUBLISH_DIR}: {', '.join(missing)}")
@@ -576,7 +612,10 @@ def apply_candidate() -> int:
     if issue_count:
         print(f"[sm2-randomizer] Candidate validation still has {issue_count} issues. Refusing to apply.")
         return 1
-    return _run([sys.executable, "-m", "pipeline.compute.publish_candidate", "apply-candidate"])
+    apply_command = [sys.executable, "-m", "pipeline.compute.publish_candidate", "apply-candidate"]
+    if accept_version_mismatch:
+        apply_command.append("--accept-version-mismatch")
+    return _run(apply_command)
 
 
 def clean_candidate() -> int:
@@ -592,6 +631,16 @@ def package_release(args: argparse.Namespace) -> int:
     _print_package_summary(validation)
     if _package_issue_count(validation):
         return 1
+    wiki_degraded, version_alignment = _check_package_data_health()
+    if version_alignment.get("aligned") is False:
+        print(
+            f"[sm2-randomizer] 打包阻断：运行数据版本未对齐 "
+            f"wiki={version_alignment.get('wiki_version')} excel={version_alignment.get('excel_version')}；"
+            "请对齐源数据版本（wiki VERSION_ANCHOR 与 excel source_version）后重新 refresh-data 并 apply-candidate，再打包。"
+        )
+        return 1
+    if wiki_degraded:
+        print("[sm2-randomizer] 警告：wiki 数据处于退化状态（软退化），已降级字段并保计数，可分发但建议排查 wiki 抓取。")
     if not args.with_exe:
         try:
             _verify_release_acceptance(with_exe=False)
@@ -636,7 +685,7 @@ def main() -> int:
     if args.command == "diff-candidate":
         return diff_candidate()
     if args.command == "apply-candidate":
-        return apply_candidate()
+        return apply_candidate(accept_version_mismatch=args.accept_version_mismatch)
     if args.command == "clean-candidate":
         return clean_candidate()
     return refresh_data(args)

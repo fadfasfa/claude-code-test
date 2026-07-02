@@ -1,23 +1,48 @@
 # Runtime Candidate Diff
 
-- Candidate Dir: `C:/Users/apple/worktrees/codex/claudecode-codex-feature-sm2-data-13-2/sm2-randomizer/pipeline/tmp_publish`
-- Current Dir: `C:/Users/apple/worktrees/codex/claudecode-codex-feature-sm2-data-13-2/sm2-randomizer/app/data`
+- Candidate Dir: `C:/Users/apple/claudecode/.claude/worktrees/sm2-publish-hardening/sm2-randomizer/pipeline/tmp_publish`
+- Current Dir: `C:/Users/apple/claudecode/.claude/worktrees/sm2-publish-hardening/sm2-randomizer/app/data`
 - Changed Files: `2`
+
+## 语义变更
+
+- 新增武器: 无
+- 移除武器: 无
+- 新增职业: 无
+- 移除职业: 无
+- 天赋描述变更: `0` 条
+- 版本: candidate=`Hotfix 13.2` current=`Hotfix 13.2`
+- Excel 版本: candidate=`13.2` current=`13.2`
+- wiki 退化: `False`
+- 版本对齐: `True` (aligned)
+- Excel 待审新增项: `0` 条
 
 ## classes.json
 
-- Added: `8`
+- Added: `0`
 - Removed: `0`
-- Changed: `0`
-- Added Paths:
+- Changed: `123`
+- Changed Paths:
+  - `classes[0].loadout_pools.melee[1].image_path`
+  - `classes[0].loadout_pools.melee[1].name`
+  - `classes[0].loadout_pools.melee[1].slug`
+  - `classes[0].loadout_pools.melee[4].image_path`
+  - `classes[0].loadout_pools.melee[4].name`
+  - `classes[0].loadout_pools.melee[4].slug`
+  - `classes[0].loadout_pools.secondary[0].image_path`
+  - `classes[0].loadout_pools.secondary[0].name`
+  - `classes[0].loadout_pools.secondary[0].slug`
+  - `classes[0].loadout_pools.secondary[1].image_path`
+  - `classes[0].loadout_pools.secondary[1].name`
+  - `classes[0].loadout_pools.secondary[1].slug`
+  - `classes[0].loadout_pools.secondary[2].image_path`
+  - `classes[0].loadout_pools.secondary[2].name`
+  - `classes[0].loadout_pools.secondary[2].slug`
   - `classes[0].loadout_pools.secondary[5].image_path`
   - `classes[0].loadout_pools.secondary[5].name`
-  - `classes[0].loadout_pools.secondary[5].slot_type`
   - `classes[0].loadout_pools.secondary[5].slug`
-  - `classes[1].loadout_pools.secondary[4].image_path`
-  - `classes[1].loadout_pools.secondary[4].name`
-  - `classes[1].loadout_pools.secondary[4].slot_type`
-  - `classes[1].loadout_pools.secondary[4].slug`
+  - `classes[1].loadout_pools.melee[0].image_path`
+  - `classes[1].loadout_pools.melee[0].name`
 
 ## talents.json
 
@@ -27,49 +52,13 @@
 
 ## meta.json
 
-- Added: `327`
-- Removed: `61`
-- Changed: `203`
+- Added: `0`
+- Removed: `4`
+- Changed: `1`
 - Changed Paths:
   - `build.generated_at`
-  - `build.source_coverage.weapon_images_from_excel`
-  - `build.source_coverage.weapons`
-  - `build.version`
-  - `negative_modifier_pool[0].detail`
-  - `negative_modifier_pool[0].key`
-  - `negative_modifier_pool[0].label`
-  - `negative_modifier_pool[0].name`
-  - `negative_modifier_pool[0].risk_level`
-  - `negative_modifier_pool[10].detail`
-  - `negative_modifier_pool[10].key`
-  - `negative_modifier_pool[10].label`
-  - `negative_modifier_pool[10].name`
-  - `negative_modifier_pool[10].risk_level`
-  - `negative_modifier_pool[11].core_tags[0]`
-  - `negative_modifier_pool[11].detail`
-  - `negative_modifier_pool[11].key`
-  - `negative_modifier_pool[11].label`
-  - `negative_modifier_pool[11].name`
-  - `negative_modifier_pool[11].risk_level`
-- Added Paths:
-  - `negative_modifier_pool[0].core_tags[0]`
-  - `negative_modifier_pool[20].core_tags[0]`
-  - `negative_modifier_pool[23].core_tags[0]`
-  - `negative_modifier_pool[28].core_tags[0]`
-  - `negative_modifier_pool[35].detail`
-  - `negative_modifier_pool[35].key`
-  - `negative_modifier_pool[35].label`
-  - `negative_modifier_pool[35].name`
-  - `negative_modifier_pool[35].risk_level`
-  - `negative_modifier_pool[35].type`
 - Removed Paths:
-  - `negative_modifier_pool[10].aliases[0]`
-  - `negative_modifier_pool[16].core_tags[0]`
-  - `negative_modifier_pool[24].core_tags[0]`
-  - `negative_modifier_pool[31].core_tags[0]`
-  - `negative_modifier_pool[33].core_tags[0]`
-  - `negative_modifier_pool[8].core_tags[0]`
-  - `negative_modifier_pool[9].aliases[0]`
-  - `negative_modifier_rules.title_aliases.[乘算]备用计划：增加副武器50%伤害伤害，减少主武器75%伤害`
-  - `negative_modifier_rules.title_aliases.[乘算]猛力重武：增加主武器50%伤害，减少副武器75%伤害`
-  - `negative_modifier_rules.title_aliases.亚空间阴影：视野与感知受压制`
+  - `positive_modifier_pool[32].detail`
+  - `positive_modifier_pool[32].key`
+  - `positive_modifier_pool[32].name`
+  - `positive_modifier_pool[32].type`

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Excel 导入脚本。
+
+从本地星际战士2数据表.xlsx 导入武器图标/中文名/策略词条，输出到 store/raw/excel
+与 store/catalog。excel/run.py 调用本脚本并捕获 stdout 落盘导入报告供审阅。
+"""
+
+import hashlib
 import json
 import re
 import sys
@@ -277,7 +284,14 @@ def _extract_workbook_versions(export_payload: list[dict[str, Any]]) -> dict[str
     return versions
 
 
-def _extract_strategy_terms(rows: list[list[str]]) -> dict[str, list[str]]:
+def _extract_strategy_terms(rows: list[list[str]], excluded_texts: set[str] | None = None) -> dict[str, list[str]]:
+    """从策略 sheet 文本行抽取正/负词条。
+
+    excluded_texts 为应屏蔽的词条文本（Excel 里灰色字体标记的未实装/废弃词条），
+    命中则跳过，不进入词条库。颜色信息在 export_workbook_raw 已丢失，故由
+    export_strategy_terms 用 openpyxl 单独读取后传入。
+    """
+    excluded = excluded_texts or set()
     groups = {key: [] for key in STRATEGY_GROUP_LABELS}
     seen = {key: set() for key in STRATEGY_GROUP_LABELS}
     active_group = ""
@@ -293,11 +307,37 @@ def _extract_strategy_terms(rows: list[list[str]]) -> dict[str, list[str]]:
         for cell in cells:
             if cell in STRATEGY_GROUP_LABELS.values() or "：" not in cell:
                 continue
+            if cell in excluded:
+                continue
             if cell in seen[active_group]:
                 continue
             seen[active_group].add(cell)
             groups[active_group].append(cell)
     return groups
+
+
+def _collect_greyed_strategy_texts() -> set[str]:
+    """读取策略 sheet 中灰色字体单元格的文本，作为应屏蔽词条。
+
+    Excel 维护者用灰色字体标记未实装/废弃词条（如 FF767171），这些不应进入
+    词条库。export_workbook_raw 只保留纯文本丢失颜色，故在此用 openpyxl 单独读。
+    黑色(FF000000)为正常词条；非黑即视为灰色屏蔽。
+    """
+    greyed: set[str] = set()
+    workbook = load_workbook(WORKBOOK_FILE, data_only=False)
+    if "围攻与策略模式属性" not in workbook.sheetnames:
+        return greyed
+    worksheet = workbook["围攻与策略模式属性"]
+    for row in worksheet.iter_rows():
+        for cell in row:
+            text = str(cell.value or "").strip()
+            if not text or "：" not in text:
+                continue
+            color = cell.font.color.rgb if cell.font and cell.font.color else None
+            # 仅黑色(FF000000/None)为正常；其余灰色变体一律屏蔽
+            if color and str(color).upper() not in ("FF000000", "00000000"):
+                greyed.add(text)
+    return greyed
 
 
 def export_strategy_terms(export_payload: list[dict[str, Any]]) -> dict[str, Any]:
@@ -309,15 +349,18 @@ def export_strategy_terms(export_payload: list[dict[str, Any]]) -> dict[str, Any
         ),
         {"rows": []},
     )
-    groups = _extract_strategy_terms(strategy_sheet.get("rows", []))
+    greyed_texts = _collect_greyed_strategy_texts()
+    groups = _extract_strategy_terms(strategy_sheet.get("rows", []), excluded_texts=greyed_texts)
     versions = _extract_workbook_versions(export_payload)
     items = [*groups["negative"], *groups["positive"]]
     payload = {
         "source_sheet": "围攻与策略模式属性",
         "source_version": versions.get("围攻与策略模式属性", ""),
+        "versions_by_sheet": versions,
         "items": items,
         "groups": groups,
         "group_counts": {key: len(value) for key, value in groups.items()},
+        "greyed_excluded": sorted(greyed_texts),
         "titles": {
             key: [_strategy_term_key_title(term) for term in value]
             for key, value in groups.items()
@@ -412,6 +455,87 @@ def _build_slug_formula_lookup() -> dict[str, dict[str, str]]:
                     }
                     break
     return lookup
+
+
+def _discover_new_weapon_blocks() -> list[dict[str, Any]]:
+    """发现 Excel 中 canonical 白名单之外的武器块，标记待审新增。
+
+    Excel 维护者新增武器行时，这些行不在 CANONICAL_EXCEL_WEAPON_ITEMS 内，过去
+    会被静默忽略。这里按 source_sheet 汇总 canonical 已知武器名，遍历全部武器
+    sheet（主/副/近战），收集白名单外的块，以稳定 slug(excel-discovered-{hash})
+    纳入候选，带 pending_review 标记，靠 diff 审阅。中文名无法 slugify，故用
+    sha1 前 8 位保证跨 run 稳定。正式纳入运行数据仍需人工补 canonical + 职业池映射。
+    """
+    known_names_by_sheet: dict[str, set[str]] = {}
+    for metadata in CANONICAL_EXCEL_WEAPON_ITEMS.values():
+        sheet = str(metadata.get("source_sheet", "")).strip()
+        name = _normalize_text(metadata.get("excel_name", ""))
+        if sheet and name:
+            known_names_by_sheet.setdefault(sheet, set()).add(name)
+    discovered: list[dict[str, Any]] = []
+    seen_slugs: set[str] = set()
+    for source_sheet in WEAPON_TITLE_COLUMN_BY_SHEET:
+        for block in _collect_weapon_blocks(source_sheet):
+            normalized_name = _normalize_text(block.display_name)
+            if not normalized_name or normalized_name in known_names_by_sheet.get(source_sheet, set()):
+                continue
+            # 过滤纯数字/纯符号噪声块（序号图片等），武器名必含中文或字母
+            if not re.search(r"[一-鿿 a-zA-Z]", block.display_name):
+                continue
+            digest = hashlib.sha1(f"{source_sheet}:{block.display_name}".encode("utf-8")).hexdigest()[:8]
+            slug = f"excel-discovered-{digest}"
+            if slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+            discovered.append(
+                {
+                    "slug": slug,
+                    "excel_name": block.display_name,
+                    "source_sheet": source_sheet,
+                    "image_formula": block.formula,
+                    "review_reason": "excel_new_row",
+                    "pending_review": True,
+                }
+            )
+    return discovered
+
+
+def _validate_workbook_structure(export_payload: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """校验工作簿表名/表头，产出 warning 列表（不阻断导入）。
+
+    检查两类可靠信号：期望的武器/数据 sheet 是否齐全；武器 sheet 是否仍能抓到
+    至少一个武器块（标题列错位或表结构变化时抓到 0 块）。反向枚举未识别 sheet
+    噪声大（WPS 工作簿天然含 WpsReserved_* 与辅助 sheet），故不采用。warning
+    只落盘 excel_import_report.json，不阻断导入。
+    """
+    warnings: list[dict[str, str]] = []
+    payload_sheets = {
+        str(entry.get("sheet_name", "")).strip()
+        for entry in export_payload
+        if isinstance(entry, dict)
+    }
+    expected_sheets = set(SHEET_EXPORT_FILES) | set(WEAPON_TITLE_COLUMN_BY_SHEET)
+    for sheet in sorted(expected_sheets):
+        if sheet not in payload_sheets:
+            warnings.append(
+                {
+                    "code": "missing_expected_sheet",
+                    "sheet": sheet,
+                    "message": f"期望的 sheet 缺失：{sheet}，Excel 表名可能被改动",
+                }
+            )
+    for source_sheet in WEAPON_TITLE_COLUMN_BY_SHEET:
+        if source_sheet not in payload_sheets:
+            continue
+        if not _collect_weapon_blocks(source_sheet):
+            warnings.append(
+                {
+                    "code": "title_column_misaligned",
+                    "sheet": source_sheet,
+                    "message": f"{source_sheet} 未能抓到任何武器块，标题列可能错位或表结构变化",
+                }
+            )
+    return warnings
 
 
 def _build_image_rel_lookup() -> dict[str, str]:
@@ -531,7 +655,18 @@ def _materialize_items(
     slug_formula_lookup: dict[str, dict[str, str]],
     overrides: dict[str, dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[ImportFailure]]:
-    base_items = list(image_map.get("items", [])) if isinstance(image_map, dict) else []
+    # 过滤掉历史落盘的待审新增项，避免它们在 WEAPON_IMAGE_MAP_FILE / manifest
+    # 中累积后被 _append_missing_manifest_items 反复加回。按 slug 前缀排除最稳妥
+    # （历史项可能丢失 pending_review 字段）；每次由 _discover_new_weapon_blocks
+    # 重新决定哪些新行进入待审。
+    raw_base_items = list(image_map.get("items", [])) if isinstance(image_map, dict) else []
+    base_items = [
+        item
+        for item in raw_base_items
+        if isinstance(item, dict)
+        and not item.get("pending_review")
+        and not str(item.get("slug", "")).startswith("excel-discovered-")
+    ]
     items = _append_missing_manifest_items(base_items, manifest)
     for slug, metadata in CANONICAL_EXCEL_WEAPON_ITEMS.items():
         if slug in EXCLUDED_CANONICAL_WEAPON_SLUGS:
@@ -545,6 +680,13 @@ def _materialize_items(
                     "source_sheet": metadata["source_sheet"],
                 }
             )
+    # 追加 Excel 白名单外的新增武器行，带 pending_review 标记，靠 diff 审阅。
+    existing_slugs = {str(item.get("slug", "")).strip() for item in items}
+    for discovered in _discover_new_weapon_blocks():
+        if discovered["slug"] in existing_slugs:
+            continue
+        existing_slugs.add(discovered["slug"])
+        items.append(discovered)
     finalized: list[dict[str, Any]] = []
     failures: list[ImportFailure] = []
     for item in items:
@@ -606,6 +748,10 @@ def _import_items(items: list[dict[str, Any]], image_lookup: dict[str, ImageBina
         formula = _ensure_formula(item.get("image_formula", ""))
         dispimg_id = _extract_dispimg_id(formula)
         if not slug:
+            continue
+        # 待审新增项不导出图标、不计入 imported_count，避免污染 31 武器基线与
+        # app/assets；其 has_image 信号由 excel_import_report 反映，靠 diff 审阅。
+        if item.get("pending_review"):
             continue
         if not dispimg_id:
             continue
@@ -723,6 +869,17 @@ def import_weapon_icons() -> dict[str, Any]:
     _build_clean_excel_exports(finalized_items)
 
     failures = _dedupe_failures([*mapping_failures, *import_failures])
+    discovered_new_items = [
+        {
+            "slug": str(item.get("slug", "")).strip(),
+            "excel_name": str(item.get("excel_name", "")).strip(),
+            "source_sheet": str(item.get("source_sheet", "")).strip(),
+            "review_reason": str(item.get("review_reason", "")).strip(),
+            "has_image": bool(_extract_dispimg_id(_ensure_formula(item.get("image_formula", "")))),
+        }
+        for item in finalized_items
+        if item.get("pending_review")
+    ]
     return {
         "workbook": WORKBOOK_FILE.relative_to(PROJECT_ROOT).as_posix(),
         "imported_count": len(imported_slugs),
@@ -731,6 +888,11 @@ def import_weapon_icons() -> dict[str, Any]:
         "failures": [failure.to_dict() for failure in failures],
         "strategy_term_count": len(strategy_payload.get("items", [])),
         "strategy_group_counts": strategy_payload.get("group_counts", {}),
+        "excel_source_version": strategy_payload.get("source_version", ""),
+        "versions_by_sheet": strategy_payload.get("versions_by_sheet", {}),
+        "greyed_excluded": strategy_payload.get("greyed_excluded", []),
+        "discovered_new_items": discovered_new_items,
+        "header_warnings": _validate_workbook_structure(export_payload),
         "output_dir": (APP_ASSETS_DIR / WEAPON_ICON_ROOT).relative_to(PROJECT_ROOT).as_posix(),
     }
 

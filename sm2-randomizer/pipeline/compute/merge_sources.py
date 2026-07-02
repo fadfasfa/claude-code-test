@@ -488,6 +488,22 @@ def merge_sources() -> dict[str, Any]:
     runtime_class_by_slug = _index_by(_safe_list(runtime_classes_fallback.get("classes")), "slug")
     strategy_groups = _strategy_groups(excel_strategy_terms)
 
+    # wiki 退化信号：structure_degraded/talent_degraded 由 scrape_wiki/scrape_perks
+    # 写入 raw meta。退化时 wiki 字段源置空，回退 manual/runtime/manifest，但 slug
+    # 并集仍含 wiki 以保计数（硬退化由 EXPECTED_*_COUNT 兜底，软退化可出包）。
+    wiki_meta = wiki_raw.get("meta", {}) if isinstance(wiki_raw.get("meta"), dict) else {}
+    wiki_degradation = wiki_meta.get("degradation", {}) if isinstance(wiki_meta.get("degradation"), dict) else {}
+    structure_degraded = bool(wiki_degradation.get("structure_degraded"))
+    talent_degraded = bool(wiki_degradation.get("talent_degraded"))
+    soft_degraded = bool(wiki_degradation.get("soft_degraded"))
+    wiki_degraded = bool(wiki_meta.get("wiki_degraded")) or structure_degraded or talent_degraded or soft_degraded
+    excel_version = _clean_placeholder(excel_strategy_terms.get("source_version"))
+    # 仅硬退化（structure_degraded）置空 wiki 职业/武器字段源；软退化（字段级
+    # parse_degraded）不置空，靠 _first_text 自然 fallback。天赋降级由 talent_degraded 触发。
+    wiki_class_fields = {} if structure_degraded else wiki_class_by_slug
+    wiki_weapon_fields = {} if structure_degraded else wiki_weapon_by_slug
+    wiki_talent_classes = {} if talent_degraded else wiki_talent_by_class
+
     # 过滤 Excel 源数据中标记为未实装的词条，防止 refresh-data 重新注入
     not_implemented_terms: set[str] = {
         _clean_placeholder(term)
@@ -526,7 +542,7 @@ def merge_sources() -> dict[str, Any]:
     weapon_lookup: dict[str, dict[str, Any]] = {}
     for slug in all_weapon_slugs:
         manual_weapon = manual_weapon_by_slug.get(slug, {})
-        wiki_weapon = wiki_weapon_by_slug.get(slug, {})
+        wiki_weapon = wiki_weapon_fields.get(slug, {})
         weapon_image = excel_weapon_image_by_slug.get(slug, {})
         manifest_weapon = weapon_manifest_by_slug.get(slug, {})
         excel_slot_type = _slot_type_from_source_sheet(str(weapon_image.get("source_sheet", "")).strip())
@@ -595,10 +611,10 @@ def merge_sources() -> dict[str, Any]:
     merged_classes: list[dict[str, Any]] = []
     for slug in all_class_slugs:
         manual_class = manual_class_by_slug.get(slug, {})
-        wiki_class = wiki_class_by_slug.get(slug, {})
+        wiki_class = wiki_class_fields.get(slug, {})
         manifest_class = class_manifest_by_slug.get(slug, {})
         talent_class = talent_manifest_by_class.get(slug, {})
-        wiki_talent_class = wiki_talent_by_class.get(slug, {})
+        wiki_talent_class = wiki_talent_classes.get(slug, {})
         runtime_class = runtime_class_by_slug.get(slug, {})
 
         display_name = _first_text(manual_class.get("name"), runtime_class.get("name"), wiki_class.get("name"))
@@ -688,6 +704,13 @@ def merge_sources() -> dict[str, Any]:
         "talent_class_count": len([item for item in merged_classes if item.get("talents")]),
         "class_images_with_local_assets": len([item for item in merged_classes if item["images"]["local_images"]]),
         "weapon_images_from_excel": len([item for item in merged_weapons if item["image"]["asset_path"]]),
+        "by_source": {
+            "wiki_class_names": len([item for item in merged_classes if item.get("source_meta", {}).get("display_name") == "wiki"]),
+            "manual_class_names": len([item for item in merged_classes if item.get("source_meta", {}).get("display_name") == "manual"]),
+            "excel_weapon_images": len([item for item in merged_weapons if item.get("image", {}).get("source") == "excel"]),
+            "catalog_weapon_images": len([item for item in merged_weapons if item.get("image", {}).get("source") == "catalog"]),
+            "wiki_talent_classes": len([item for item in merged_classes if item.get("source_meta", {}).get("talents") == "wiki_preferred"]),
+        },
     }
 
     merged = {
@@ -696,6 +719,16 @@ def merge_sources() -> dict[str, Any]:
             "generated_at": datetime.now(UTC).isoformat(),
             "source_mode": "hybrid_now_wiki_ready",
             "version_anchor": _first_text(wiki_raw.get("meta", {}).get("version_anchor"), extraction_rules.get("version_anchor")),
+            "excel_version": excel_version,
+            "wiki_degraded": wiki_degraded,
+            "degradation": {
+                "structure_degraded": structure_degraded,
+                "talent_degraded": talent_degraded,
+                "soft_degraded": soft_degraded,
+                "reasons": wiki_degradation.get("reasons", []) if isinstance(wiki_degradation.get("reasons"), list) else [],
+                "soft_reasons": wiki_degradation.get("soft_reasons", []) if isinstance(wiki_degradation.get("soft_reasons"), list) else [],
+                "talent_reasons": wiki_degradation.get("talent_reasons", []) if isinstance(wiki_degradation.get("talent_reasons"), list) else [],
+            },
             "positive_modifier_pool": positive_modifier_pool,
             "strategy_terms": strategy_terms,
             "negative_modifier_pool": negative_modifier_pool,
