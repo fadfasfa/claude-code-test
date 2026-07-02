@@ -34,9 +34,15 @@ body {
 body {
   min-height: 100vh;
   overflow-x: hidden;
-  background: radial-gradient(circle at top left, rgba(255, 184, 123, 0.08), transparent 24%),
-    radial-gradient(circle at 85% 12%, rgba(156, 202, 255, 0.08), transparent 18%),
-    linear-gradient(180deg, #161514 0%, #111111 100%);
+  background:
+    linear-gradient(180deg, rgba(7, 6, 5, 0.78) 0%, rgba(12, 9, 7, 0.68) 42%, rgba(4, 4, 4, 0.86) 100%),
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.18) 54%, rgba(0, 0, 0, 0.76) 100%),
+    url("data:image/svg+xml;base64,PHN2ZyB2ZXJzaW9uPSIxLjEiIGlkPSJzdmcyIiB4PSIwcHgiIHk9IjBweCIgdmlld0JveD0iMCAwIDc5OS40IDI5My4yIiBlbmFibGUtYmFja2dyb3VuZD0ibmV3IDAgMCA3OTkuNCAyOTMuMiIgeG1sOnNwYWNlPSJwcmVzZXJ2ZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB4bWxuczpzdmc9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiBmaWxsPSIjZmZiODdiIiBmaWxsLW9wYWNpdHk9IjAuMzAiPjxnIGlkPSJsYXllcjEiIHRyYW5zZm9ybT0idHJhbnNsYXRlKDM4Ljc1NjkzLC04NS43MzAwMjQpIj48cGF0aCBpZD0icGF0aDQyNDUtOSIgZD0iTS0zOC44LDg1LjdsMjUuMiwyOC43bDI0My45LTEwLjJjMCwwLTUuOSw2LjctOCwxMi45TDEwLDEzNy42IGwyMC40LDIxLjJsMTg4LTMxLjFjMCwwLTIuMSw1LjMtMi4xLDExbC0xNjEuMiw0MWwyMC4zLDE4LjRsMTQwLjMtNTIuNmMwLDAsMCw4LjUsMS43LDEyLjFMOTguMywyMTcuNGwxOC4zLDEzLjNMMjE5LjgsMTY2IGMwLDAsMyw3LjYsNS42LDEwLjJsLTgwLDc1LjJsMTYuMSwxMS4ybDcwLjItODAuMWMxLjEsMi41LDkuMyw3LjQsOS4zLDcuNGwtNDguNSw4MmM4LjksNiwyMC4yLDIuNSwyMC4yLDIuNWwzNS42LTgyIGM2LjksMi45LDExLjYsMi4zLDExLjYsMi4zTDIzNS4yLDI2OGMxMS42LTEuOSwxNy4yLTkuMSwxNy4yLTkuMWwxNC45LTY0LjFjNS40LDAuNiwxMC45LTAuNSwxMC45LTAuNWMtMC40LDcuOC04LjUsNTIuMy04LjUsNTIuMyBzMTguMi0yMi43LDIyLjQtMjRjMCwwLTYuNS0yMy43LTYuOS0yOS4zYzAsMCw1LjktMC40LDkuNy0zLjNjMCwwLDUuMSwxNS43LDUuMywyMC44YzUuNC00LjgsOC44LTEyLjEsOC44LTEyLjFzLTMuMy0yLjgtNS4zLTEzLjggYzAsMCwxMi4yLTQuNiwxNC4zLDAuM2MyLjEsNC44LDAuMSwyMC0xMS43LDMzYzAsMC0xMi41LDE5LjUtMjIuOCwyNS42YzUuMS0wLjQsMjMuOSw2LjcsMjcuNiwxNi4xbDI5LjgtNzQuNWwtMjEuNy0yNSBjLTM2LDIxLjktNzkuOSwxNy4yLTg1LjctMC4zYy01LjctMTcuNS0xLjItNDUuNywxNC42LTU4LjFjNS4xLTQsMTUuOS04LjUsMTYuOC0xNi41TC0zOC44LDg1LjdMLTM4LjgsODUuN3ogTTQ1Ni45LDg1LjcgYzAuOSw4LDExLjcsMTIuNCwxNi44LDE2LjVjMTUuOCwxMi40LDIwLjQsNDAuNiwxNC42LDU4LjFjLTUuNywxNy41LTQ5LjcsMjIuMy04NS43LDAuM2wtMjEuNywyNWwyOS44LDc0LjUgYzMuNy05LjQsMjIuNS0xNi41LDI3LjYtMTYuMWMtMTAuNC02LjEtMjIuOC0yNS42LTIyLjgtMjUuNmMtMTEuOC0xMy0xMy44LTI4LjItMTEuNy0zM2MyLjEtNC44LDE0LjMtMC4zLDE0LjMtMC4zIGMtMiwxMS01LjMsMTMuOC01LjMsMTMuOHMzLjQsNy4zLDguOCwxMi4xYzAuMi01LjEsNS4zLTIwLjgsNS4zLTIwLjhjMy43LDIuOSw5LjcsMy4zLDkuNywzLjNjLTAuNCw1LjUtNi45LDI5LjMtNi45LDI5LjMgYzQuMiwxLjIsMjIuNCwyNCwyMi40LDI0cy04LjEtNDQuNC04LjUtNTIuM2MwLDAsNS41LDEuMSwxMC45LDAuNWwxNC45LDY0LjFjMCwwLDUuNiw3LjEsMTcuMiw5LjFsLTI0LjYtNzMuMyBjMCwwLDQuNywwLjYsMTEuNi0yLjNsMzUuNiw4MmMwLDAsMTEuMywzLjUsMjAuMi0yLjVsLTQ4LjUtODJjMCwwLDguMi00LjgsOS4zLTcuNGw3MC4yLDgwLjFsMTYuMS0xMS4ybC04MC03NS4yIGMyLjUtMi41LDUuNi0xMC4yLDUuNi0xMC4ybDEwMy4yLDY0LjdsMTguMy0xMy4zbC0xMTkuMi01OS44YzEuNy0zLjYsMS43LTEyLjEsMS43LTEyLjFsMTQwLjMsNTIuNmwyMC4zLTE4LjRsLTE2MS4yLTQxIGMwLTUuOC0yLjEtMTEtMi4xLTExbDE4OCwzMS4xbDIwLjQtMjEuMmwtMjEyLjMtMjAuNWMtMi4xLTYuMi04LTEyLjktOC0xMi45bDI0My45LDEwLjJsMjUuMi0yOC43SDQ1Ni45TDQ1Ni45LDg1Ljd6IE00MDAuOSwxMDcuMSBsLTIuNSwzLjhsLTI1LjgsMC42bDMyLjIsMTEuMmwyLjIsMTYuN2MxNS41LTguNiw3LjktMTMuOCwyNy41LTIwLjhsMS4xLTYuN2wtMTAuMi0wLjdsLTIuMy0xLjhMNDAwLjksMTA3LjFMNDAwLjksMTA3LjF6IE0yODQuNywxMTAuM2wyLjYsOC4zYzE5LjYsNi45LDEyLDEyLjIsMjcuNSwyMC44bDIuMi0xNi43bDMyLjItMTEuMkwyODQuNywxMTAuM0wyODQuNywxMTAuM3ogTTMwNi45LDExMy4xIGMzLjMsMCw1LjksMi42LDUuOSw1LjljMCwzLjMtMi42LDUuOS01LjksNS45YzAsMCwwLDAsMCwwYy0zLjMsMC01LjktMi42LTUuOS01LjljMCwwLDAsMCwwLDBDMzAxLDExNS44LDMwMy42LDExMy4xLDMwNi45LDExMy4xeiBNMjg3LjEsMTIzLjJjLTQuOCwwLjEtMTIuMiwyLTE3LjMsMy44YzAuNiw1LjksMy45LDkuOCw1LjUsMTQuOWMwLjYsMS44LDEuMSw2LjgsMS42LDkuMWMwLjYsMi4zLDIuOCwxLjUsMi44LDEuNSBzLTAuOC02LjEsMy43LTEyLjRjMCwwLDE2LjMtMS44LDE4LjUtNS4xYy01LjUtMy41LTYuOS05LTExLjItMTEuMkMyOTAsMTIzLjMsMjg4LjcsMTIzLjEsMjg3LjEsMTIzLjJMMjg3LjEsMTIzLjJ6IE00MzQuNywxMjMuMiBjLTEuNiwwLTIuOSwwLjEtMy43LDAuNmMtNC4zLDIuMi01LjcsNy43LTExLjIsMTEuMmMyLjIsMy4zLDE4LjUsNS4xLDE4LjUsNS4xYzQuNSw2LjMsMy43LDEyLjQsMy43LDEyLjRzMi4zLDAuOCwyLjgtMS41IGMwLjYtMi4zLDEuMS03LjMsMS42LTkuMWMxLjYtNSw0LjktOC45LDUuNS0xNC45QzQ0Ni45LDEyNS4xLDQzOS41LDEyMy4zLDQzNC43LDEyMy4yTDQzNC43LDEyMy4yeiBNMzM0LjgsMTIzLjVsLTEwLjYsMi45IGwtNC42LDE4LjFsMjQuOSwyNi40bDEyLjYtMzEuNEwzMzQuOCwxMjMuNUwzMzQuOCwxMjMuNXogTTM4NywxMjMuNWwtMjIuMywxNmwxMi42LDMxLjRsMjQuOS0yNi40bC00LjYtMTguMUwzODcsMTIzLjVMMzg3LDEyMy41eiBNMzYwLjksMTQxLjFsLTQ1LjUsMTM2LjFsMjAuMiwxMy4xbC0xOS45LDM1bDguOCw4LjJsMTgtMzkuNmwzLjcsMi42TDMyOS4xLDMzOGwxMS4zLDEwbDEyLjItNDcuOGMyLjgtMS4zLDMuNiwwLDQsMS44bC05LjEsNTIuNyBsMTMuNSwxNGwxMy41LTE0bC05LjEtNTIuN2MwLjMtMS44LDEuMi0zLjEsNC0xLjhsMTIuMiw0Ny44bDExLjMtMTBsLTE3LjEtNDEuNWwzLjctMi42bDE4LDM5LjZsOC44LTguMmwtMTkuOS0zNWwyMC4yLTEzLjEgTDM2MC45LDE0MS4xTDM2MC45LDE0MS4xeiBNNDA0LDI4NC4zbC0xMi45LDcuNGwyMi4yLDI4LjljMCwwLTIuNiwzLjEtMi40LDQuOWMwLjEsMS40LDIuNSwzLjYsMi41LDMuNmwtMTEuNiwxMy40IGMwLDAtNi45LTAuMy05LjYsMS4yYzIuOSwyLDQsMS45LDUsMy43YzAuMSwzLjItMC40LDYuNi0wLjQsNi42YzMuMS0xLjEsNi4xLTIuMyw5LjQtMy4yYzUuMywxLjEsMjUsMTEuMywyNSwxMS4zIFM0MTYsMzQ0LjEsNDE1LDM0MS44YzAuNS0xLjgsNS44LTcuNyw1LjgtNy43YzEuNC0xLjcsMi41LTEuOCwzLjUsMC4yYzAsMCwyLjYsMy40LDMuOSw3LjljMC4yLDAuNy0yLjgsNS0yLjUsNS42IGMwLjksMS41LDQuOC0wLjMsNS45LDEuMWM1LjQsNi44LDguMiwxNi41LDguNCwxNy42Yy0xLjgsMy43LTksMTItOSwxMnM5LjgtMy42LDE0LjctNWMyLjItMC42LDQuMSw1LjYsNC4xLDUuNiBjMC45LTEuMiwwLjktMTYuOSwwLjgtMjAuMmMtMS4zLTIuNy01LjctOS0xMC4yLTE1LjNjLTAuOC0xLjEsMS43LTUuMSwxLTYuMWMtMS4xLTEuNS00LjIsMC4zLTUuNS0wLjdjLTMuNC0yLjQtNS4zLTYuMi01LjMtNi4yIGMtMC44LTEuOCwwLjItMi45LDEuOS0zLjJjMCwwLDUuMi0xLjEsOC42LTFjOS4xLDE0LjIsMTAuOSwyNy41LDEwLjksMjcuNXMxLjktMjMuMywwLjMtMzIuMWMwLDAsNy01LDYuNi02LjMgYy0wLjMtMS03LjMsMC4yLTcuMywwLjJsLTEuMy00LjhjLTAuNC0xLjYtMS43LTEuOC0yLjQsMC4xbC0xLjcsNS41bC0xNy40LDMuNGMtMS4xLDAuNC0wLjEtMy4xLTEuOC00LjZjLTEuMi0xLTUuNCwwLjEtNS42LTAuNSBMNDA0LDI4NC4zTDQwNCwyODQuM3ogTTMxNy40LDI4NC42bC0yMC4xLDM1Yy0wLjYsMS41LTEuOSwxLjUtMy44LDAuOWwtMjUuMS00LjlsMC45LDM2LjdjMCwwLDEuNS0xMi42LDEwLjctMjYuOGw5LjQsMS42IGMxLjcsMC4zLDIuNiwxLjQsMS45LDMuMmMwLDAtMTkuNiwyMi43LTIyLjQsMjguM2MtMC4yLDMuMywxLjIsMTEuOSwyLjEsMTMuMWMwLDAsMy42LDAsNS44LDAuNmM0LjksMS40LDE0LDUuOSwxNCw1Ljkgcy04LjgtOS4xLTEwLjctMTIuOGMwLjUtMi4xLDE2LjYtMzIuMywxNi42LTMyLjNjMS4xLTIsMy0wLjksNC40LDAuOGMwLDAsNS4xLDUuNCw1LjUsNy4zYy0xLjEsMi4zLTE2LjMsMjAuMS0xNi4zLDIwLjFsMzIuNi0xNS44IGwtMTYuMS0xOC42Yy0yLTIuMS0xLjktMi4zLTAuMy00LjlsMjMuNS0zMC4zTDMxNy40LDI4NC42eiIgLz48L2c+PC9zdmc+") center center / 80% no-repeat fixed,
+    radial-gradient(circle at top left, rgba(255, 184, 123, 0.15), transparent 40%),
+    radial-gradient(circle at 85% 12%, rgba(156, 202, 255, 0.1), transparent 30%),
+    url("../assets/backgrounds/sm2-battlefield-bg.jpg") center center / cover no-repeat fixed,
+    linear-gradient(180deg, #1a1816 0%, #0f0d0c 100%);
+  background-color: #0f0d0c;
   color: var(--text-main);
   font-family: var(--font-body);
 }
@@ -57,15 +63,14 @@ button {
   align-items: center;
   gap: 12px;
   padding: 0 24px;
-  background: rgba(19, 19, 19, 0.94);
-  backdrop-filter: blur(12px);
+  background: rgba(16,14,12,0.98);
 }
 .app-topbar {
   top: 0;
   min-height: 58px;
   grid-template-columns: minmax(240px, 1fr) auto minmax(96px, 1fr);
-  border-bottom: 2px solid rgba(255, 184, 123, 0.18);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  border-bottom: 3px solid #564334;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
 }
 .app-topbar.tabs-hidden {
   grid-template-columns: minmax(240px, 1fr) minmax(96px, auto);
@@ -74,8 +79,8 @@ button {
   bottom: 0;
   min-height: 60px;
   grid-template-columns: minmax(240px, 1fr) auto;
-  border-top: 2px solid rgba(255, 184, 123, 0.12);
-  box-shadow: 0 -12px 28px rgba(0, 0, 0, 0.18);
+  border-top: 3px solid #564334;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.6);
 }
 .brand-shell,
 .footer-copy,
@@ -158,7 +163,8 @@ button {
   background: transparent;
 }
 .squad-tab.active {
-  color: var(--amber);
+  color: #ffe6cc;
+  text-shadow: 0 0 6px rgba(255, 184, 123, 0.6);
 }
 .squad-tab.active::after {
   background: var(--amber);
@@ -197,8 +203,8 @@ button {
   align-items: stretch;
   gap: 14px;
   height: 100vh;
-  padding: 68px 20px 74px;
-  /* 58+10=68px top, 60+14=74px bottom */
+  padding: 82px 20px 74px;
+  /* 顶栏实际视觉高度高于 min-height，额外留出少量呼吸空间 */
   max-width: 1540px;
   margin: 0 auto;
   overflow: hidden;
@@ -317,7 +323,8 @@ button {
 }
 .hero-summary h2 {
   margin: 0;
-  color: var(--amber);
+  color: #ffe6cc;
+  text-shadow: 0 0 8px rgba(255, 184, 123, 0.8), 0 0 16px rgba(255, 136, 0, 0.4);
   font-family: var(--font-display);
   font-size: clamp(1.08rem, 1.65vw, 1.48rem);
   line-height: 1;
@@ -496,11 +503,13 @@ button {
   flex-direction: column;
   position: relative;
   overflow: hidden;
-  border: 2px solid rgba(86, 67, 52, 0.58);
+  border: 2px solid #3c3228;
   border-radius: var(--radius);
-  background: linear-gradient(180deg, rgba(42, 42, 42, 0.96), rgba(28, 27, 27, 0.98)),
+  background:
+    repeating-linear-gradient(180deg, rgba(0,0,0,0.15) 0px, rgba(0,0,0,0.15) 1px, transparent 1px, transparent 3px),
+    linear-gradient(180deg, rgba(20, 18, 16, 0.98), rgba(12, 11, 10, 0.98)),
     var(--surface-low);
-  box-shadow: var(--shadow-deep);
+  box-shadow: inset 0 0 30px rgba(0,0,0,0.9), inset 0 0 5px rgba(255,184,123,0.15), var(--shadow-deep);
 }
 .hero-card img,
 .hero-card__placeholder {
@@ -592,7 +601,8 @@ button {
 }
 .primary-action,
 .footer-button.primary {
-  background: linear-gradient(135deg, #ffc082, #ffb87b 55%, #ffa651);
+  background: linear-gradient(180deg, #ffc082, #d98c38);
+  border-bottom: 4px solid #8c5314;
   color: var(--amber-deep);
   font-family: var(--font-display);
   font-size: 0.96rem;
@@ -605,7 +615,8 @@ button {
 .footer-button,
 .modifier-action {
   border: 1px solid rgba(164, 140, 122, 0.34);
-  background: rgba(53, 53, 52, 0.86);
+  border-bottom: 3px solid rgba(100, 80, 70, 0.6);
+  background: rgba(40, 38, 36, 0.96);
   color: var(--text-main);
 }
 .ghost-action {
@@ -648,7 +659,19 @@ button {
 .footer-button:hover,
 .ghost-action:hover,
 .modifier-action:hover {
-  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+.primary-action:active,
+.footer-button.primary:active {
+  transform: translateY(3px);
+  border-bottom-width: 1px;
+  margin-bottom: 3px;
+}
+.ghost-action:active,
+.footer-button:not(.primary):active,
+.modifier-action:active {
+  transform: translateY(2px);
+  border-bottom-width: 1px;
 }
 .footer-button:disabled {
   cursor: not-allowed;
