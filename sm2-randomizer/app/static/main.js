@@ -756,6 +756,14 @@
 
     const heroCard = document.querySelector(".hero-card");
     heroCard?.classList.toggle("has-class", hasImage);
+    // 图片切换时触发全息扫描 reveal 动画（仅 src 变化时，避免每次重渲染都闪）
+    const prevSrc = image.dataset.lastSrc || "";
+    if (hasImage && imageSrc !== prevSrc) {
+      heroCard?.classList.remove("revealing");
+      void heroCard?.offsetWidth; // 强制重排以重启动画
+      heroCard?.classList.add("revealing");
+    }
+    image.dataset.lastSrc = imageSrc || "";
     document.getElementById("class-image-title").textContent = hasImage ? "" : "等待抽取";
 
     document.getElementById("current-member-label").textContent = player.confirmed
@@ -1008,6 +1016,18 @@
     renderModifiers();
     renderActionButtons();
     renderFooter();
+    refreshFuiMarkers();
+  }
+
+  // 装饰性 FUI 数据：每次重渲染生成随机十六进制 + 伪协议编号，营造机魂终端日志感
+  function refreshFuiMarkers() {
+    const nodes = document.querySelectorAll("[data-fui]");
+    if (!nodes.length) return;
+    const hex = () => Math.floor(Math.random() * 0xffff).toString(16).toUpperCase().padStart(4, "0");
+    const seq = () => String(Math.floor(Math.random() * 900) + 100);
+    nodes.forEach((node) => {
+      node.textContent = `0x${hex()}//SEQ-${seq()}`;
+    });
   }
 
   async function loadJson(url) {
@@ -1039,6 +1059,12 @@
       state.activeIndex = Number(button.getAttribute("data-player-index"));
       hideTalentTooltip();
       render();
+    });
+    // 全息 reveal 动画结束后清理 class，便于下次重新触发
+    document.querySelector(".hero-card")?.addEventListener("animationend", (event) => {
+      if (event.animationName === "hologram-reveal") {
+        event.currentTarget.classList.remove("revealing");
+      }
     });
     window.addEventListener("resize", () => {
       if (state.tooltipTarget) {

@@ -1,5 +1,24 @@
 :root {
   --icon-font: "Segoe UI Symbol", "Arial Unicode MS", "Noto Sans Symbols 2", sans-serif;
+  /* 等宽字体：用于小字标签 / FUI 装饰数据，营造机魂终端日志感 */
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", "Microsoft YaHei", monospace;
+}
+
+/* JetBrains Mono（OFL-1.1）本地打包，离线桌面应用不依赖 CDN */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/JetBrainsMono-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/JetBrainsMono-Bold.woff2") format("woff2");
 }
 
 .material-symbols-outlined {

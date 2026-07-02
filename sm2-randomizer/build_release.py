@@ -26,6 +26,8 @@ APP_STATIC_DIR = APP_DIR / "static"
 APP_DATA_DIR = APP_DIR / "data"
 APP_ASSETS_DIR = APP_DIR / "assets"
 PACKAGE_STATIC_FILES = ("index.html", "main.js", "styles.css", "fonts.css")
+# static/ 下需整目录拷贝的子目录（如本地打包的 webfont 文件）
+PACKAGE_STATIC_DIRS = ("fonts",)
 PACKAGE_ASSET_DIRS = ("classes", "talents", "weapons")
 PACKAGE_RUNTIME_FILES = ("classes.json", "talents.json", "meta.json")
 PACKAGED_SENTINELS = ("static", "data", "assets")
@@ -221,6 +223,11 @@ def _prepare_package_directory() -> None:
 def _copy_package_static() -> None:
     for filename in PACKAGE_STATIC_FILES:
         shutil.copy2(APP_STATIC_DIR / filename, PACKAGE_STATIC_DIR / filename)
+    # 拷贝 static/ 下的子目录（本地打包的字体等），保留目录结构
+    for directory_name in PACKAGE_STATIC_DIRS:
+        source = APP_STATIC_DIR / directory_name
+        if source.exists():
+            _copy_tree(source, PACKAGE_STATIC_DIR / directory_name)
 
 
 def _copy_package_assets() -> None:
