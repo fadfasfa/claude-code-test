@@ -70,11 +70,13 @@ class RefreshDegradationTests(unittest.TestCase):
                 mock.patch.object(refresh, "rebuild_api_cache_if_needed", lambda force=False: True),
                 mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None: None),
             ):
+                refresh._ACTIVE_DEGRADATION.clear()
                 with mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: fallback_report):
                     first = refresh.refresh_backend_data(force=False)
                     second = refresh.refresh_backend_data(force=False)
                 with mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: recovered_report):
                     recovered = refresh.refresh_backend_data(force=False)
+                refresh._ACTIVE_DEGRADATION.clear()
 
             self.assertEqual(first.state, "degraded")
             self.assertIs(first.fallback_used, True)
@@ -94,6 +96,54 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertIs(events[0]["ready_assertion_consistent"], True)
             self.assertGreaterEqual(events[2]["degraded_duration_seconds"], 0)
             self.assertIn("recovered_hash", events[2])
+
+    def test_failed_refresh_recovery_uses_refresh_recovered_event(self):
+        from hextech.core import refresh
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            events_file = tmp_path / "runtime_events.jsonl"
+            recovered_csv = tmp_path / "Hextech_Data_2026-07-03.csv"
+            recovered_csv.write_text("valid-remote\n", encoding="utf-8")
+            latest_valid = {"path": ""}
+
+            def state_path(name: str) -> str:
+                return str(events_file if name == "runtime_events.v1.jsonl" else tmp_path / name)
+
+            failed_report = {
+                "requested": ["hextech_rankings"],
+                "repaired": [],
+                "fallback": [],
+                "failed": ["hextech_rankings"],
+            }
+            recovered_report = {
+                "requested": ["hextech_rankings"],
+                "repaired": ["hextech_rankings"],
+                "fallback": [],
+                "failed": [],
+            }
+
+            with (
+                mock.patch.object(refresh, "build_runtime_state_path", state_path),
+                mock.patch.object(refresh, "get_latest_valid_csv", lambda: latest_valid["path"]),
+                mock.patch.object(refresh, "get_latest_csv", lambda: latest_valid["path"]),
+                mock.patch.object(refresh, "rebuild_api_cache_if_needed", lambda force=False: True),
+                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None: None),
+            ):
+                refresh._ACTIVE_DEGRADATION.clear()
+                with mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: failed_report):
+                    failed = refresh.refresh_backend_data(force=False)
+                latest_valid["path"] = str(recovered_csv)
+                with mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: recovered_report):
+                    recovered = refresh.refresh_backend_data(force=False)
+                refresh._ACTIVE_DEGRADATION.clear()
+
+            self.assertEqual(failed.state, "failed")
+            self.assertEqual(recovered.state, "ready")
+            events = _read_jsonl(events_file)
+            self.assertEqual([event["event"] for event in events], ["refresh.failed", "refresh.recovered"])
+            self.assertEqual(events[1]["previous_state"], "failed")
+            self.assertEqual(events[1]["new_state"], "ready")
 
     def test_sanitize_event_message_removes_sensitive_material(self):
         from hextech.core.refresh import sanitize_event_message

@@ -216,6 +216,8 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (state / "auth_token.txt").write_text("secret-token", encoding="utf-8")
+            (state / "lcu_session.json").write_text('{"session":"secret"}', encoding="utf-8")
+            (state / "riot_client_state.json").write_text('{"token":"secret"}', encoding="utf-8")
             (logs / "hextech_runtime_summary.log").write_text("ok\nERROR overlay failed\n", encoding="utf-8")
             (debug / "official-overlay.json").write_text(
                 json.dumps(
@@ -274,7 +276,11 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             self.assertTrue((output / "state_tail" / "overlay_vision_trace_history.v1.json.tail").is_file())
             self.assertTrue((output / "logs_tail" / "hextech_runtime_summary.log.tail").is_file())
             self.assertFalse((output / "state" / "auth_token.txt").exists())
+            self.assertFalse((output / "state" / "lcu_session.json").exists())
+            self.assertFalse((output / "state" / "riot_client_state.json").exists())
             self.assertTrue(any("auth_token.txt" in item for item in summary["skipped_sensitive"]))
+            self.assertTrue(any("lcu_session.json" in item for item in summary["skipped_sensitive"]))
+            self.assertTrue(any("riot_client_state.json" in item for item in summary["skipped_sensitive"]))
 
     def test_watch_writes_periodic_snapshots(self):
         from tools.collect_runtime_diagnostics import watch_runtime_diagnostics

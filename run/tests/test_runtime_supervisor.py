@@ -9,6 +9,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from unittest import mock
 
@@ -141,6 +142,21 @@ class RuntimeSupervisorTests(unittest.TestCase):
         supervisor.tick()
         self.assertTrue(supervisor.wait_for_shutdown(0))
         self.assertEqual(supervisor.snapshot()["shutdown_reason"], "lease_expired")
+
+    def test_result_payload_supports_slots_dataclasses(self):
+        from hextech.runtime_supervisor import RuntimeSupervisor
+
+        @dataclass(slots=True)
+        class SlotsResult:
+            state: str
+            published: bool
+
+        supervisor = RuntimeSupervisor(parent_pid=0, session_nonce="test-nonce")
+
+        self.assertEqual(
+            supervisor._result_payload(SlotsResult(state="ready", published=True)),
+            {"state": "ready", "published": True},
+        )
 
     def test_root_launcher_exposes_runtime_supervisor_mode(self):
         import hextech_ui

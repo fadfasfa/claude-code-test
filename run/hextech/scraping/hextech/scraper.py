@@ -38,17 +38,24 @@ SCRAPER_BLOCKED_COOLDOWN_SECONDS = 30 * 60
 SCRAPER_REMOTE_FAILURE_ESCALATION_THRESHOLD = 3
 BLOCKED_HTTP_STATUS_CODES = {403, 429}
 DEFERRED_REMOTE_FAILURE_REASONS = {"http_403", "http_429", "timeout"}
-HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = "https://cdn.dtodo.cn/hextech/champion-details"
+DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = "https://cdn.dtodo.cn/hextech/champion-details"
+HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = (
+    os.getenv("HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL", DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL).strip()
+    or DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL
+)
 HEXTECH_DETAIL_WORKERS = 4
 HEXTECH_DETAIL_RETRY_WORKERS = 2
 HEXTECH_DETAIL_TIMEOUT_SECONDS = 6
 HEXTECH_DETAIL_RETRY_TIMEOUT_SECONDS = 12
 HEXTECH_DETAIL_RENDER_TIMEOUT_SECONDS = 20
-HEXTECH_DETAIL_POOL_TIMEOUT_SECONDS = 900
-HEXTECH_DETAIL_RETRY_POOL_TIMEOUT_SECONDS = 300
+HEXTECH_DETAIL_POOL_TIMEOUT_SECONDS = 180
+HEXTECH_DETAIL_RETRY_POOL_TIMEOUT_SECONDS = 120
 HEXTECH_HANDSHAKE_RETRIES = 2
 HEXTECH_HANDSHAKE_TIMEOUT_SECONDS = 6
 HEXTECH_BROWSER_DETAIL_FALLBACK_ENABLED = os.getenv("HEXTECH_BROWSER_DETAIL_FALLBACK", "").strip() == "1"
+HEXTECH_ROOT_CSV_RETENTION_DAYS = 14
+HEXTECH_BACKUP_CSV_RETENTION_DAYS = 7
+HEXTECH_TMP_CSV_RETENTION_DAYS = 1
 
 
 class RemoteFetchError(RuntimeError):
@@ -774,24 +781,28 @@ def update_status_file(active_csv: str = ""):
     return _write_scraper_status("success", active_csv=active_csv)
 
 def cleanup_old_csvs():
-    # 本轮保留历史 CSV 作为回退材料，只清理陈旧临时文件。
+    # 根目录 CSV 是回退材料，保留较长窗口；backups/ 和 tmp 使用更短窗口。
     csv_dir = get_runtime_hextech_data_dir()
-    tmp_files = glob.glob(str(csv_dir / ".Hextech_Data_*.csv.tmp"))
+    retention_groups = [
+        (glob.glob(str(csv_dir / "Hextech_Data_*.csv")), HEXTECH_ROOT_CSV_RETENTION_DAYS, "历史 CSV"),
+        (glob.glob(str(csv_dir / "backups" / "Hextech_Data_*.csv")), HEXTECH_BACKUP_CSV_RETENTION_DAYS, "备份 CSV"),
+        (glob.glob(str(csv_dir / ".Hextech_Data_*.csv.tmp")), HEXTECH_TMP_CSV_RETENTION_DAYS, "临时文件"),
+    ]
     now = datetime.now()
 
-    for f in tmp_files:
-        try:
-            m = re.search(r"Hextech_Data_(\d{4}-\d{2}-\d{2})", os.path.basename(f))
-            if not m: continue
-            file_date = datetime.strptime(m.group(1), "%Y-%m-%d")
+    for files, retention_days, label in retention_groups:
+        for f in files:
+            try:
+                m = re.search(r"Hextech_Data_(\d{4}-\d{2}-\d{2})", os.path.basename(f))
+                if not m:
+                    continue
+                file_date = datetime.strptime(m.group(1), "%Y-%m-%d")
 
-            is_stale_tmp = f.endswith('.tmp') and (now - file_date).days > 1
-
-            if is_stale_tmp:
-                os.remove(f)
-                logging.info(f"已清理过期临时文件：{os.path.basename(f)}")
-        except Exception as e:
-            logging.error(f"清理文件异常 {f}: {e}")
+                if (now - file_date).days > retention_days:
+                    os.remove(f)
+                    logging.info("已清理过期%s：%s", label, os.path.basename(f))
+            except Exception as e:
+                logging.error(f"清理文件异常 {f}: {e}")
 
 
 def backup_active_csv_before_publish(output_csv: str) -> str:

@@ -18,6 +18,7 @@ SCENE_ENTER_FRAMES = 2  # 场景连续出现 N 帧后判定为"进入"
 SCENE_EXIT_FRAMES = 2   # 场景连续消失 N 帧后判定为"退出"
 SLOT_COUNT = 3          # 海克斯三选一槽位数
 RESIDUE_HOLD_FRAMES = 2  # 普通残影只短暂沿用，避免选择结束后长时间残留
+HOVER_OCCLUDED_MAX_HOLD_FRAMES = 30  # 鼠标悬停遮挡只容忍有限帧，避免永久卡住
 
 
 @dataclass
@@ -265,8 +266,10 @@ class SelectionTracker:
         if hover_occluded or scene_residue_hold:
             self.residue_hold_frames += 1
             if hover_occluded:
-                self.absent_frames = 0
-                return self._residue_event(source, hover_occluded=True)
+                if self.residue_hold_frames <= max(1, int(HOVER_OCCLUDED_MAX_HOLD_FRAMES)):
+                    self.absent_frames = 0
+                    return self._residue_event(source, hover_occluded=True)
+                return self.block("hover_occluded_expired")
             if self.residue_hold_frames <= max(1, int(RESIDUE_HOLD_FRAMES)):
                 self.absent_frames = 0
                 return self._residue_event(source, hover_occluded=False)

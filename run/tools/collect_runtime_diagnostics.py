@@ -31,10 +31,16 @@ DEFAULT_RECENT_MINUTES = 180
 DEFAULT_WATCH_INTERVAL_SECONDS = 60.0
 DEFAULT_WATCH_DURATION_MINUTES = 0.0
 SENSITIVE_NAME_PARTS = (
+    "api_key",
     "auth",
+    "authorization",
     "token",
     "cookie",
     "credential",
+    "lcu",
+    "nonce",
+    "riot",
+    "session",
     "secret",
     "password",
     "local.yaml",

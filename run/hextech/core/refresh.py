@@ -376,6 +376,7 @@ def _write_refresh_state_event(result: RefreshResult) -> None:
         _ACTIVE_DEGRADATION.update(
             {
                 "degradation_id": result.degradation_id,
+                "state": "degraded",
                 "first_seen": first_seen,
                 "last_seen": now,
                 "attempt_count": attempt_count,
@@ -392,11 +393,13 @@ def _write_refresh_state_event(result: RefreshResult) -> None:
 
     if result.state == "ready" and _ACTIVE_DEGRADATION.get("degradation_id"):
         first_seen = float(_ACTIVE_DEGRADATION.get("first_seen") or now)
+        previous_state = str(_ACTIVE_DEGRADATION.get("state") or "degraded")
+        recovered_event = "refresh.recovered" if previous_state == "failed" else "fallback.recovered"
         event = dict(base_event)
         event.update(
             {
-                "event": "fallback.recovered",
-                "previous_state": "degraded",
+                "event": recovered_event,
+                "previous_state": previous_state,
                 "new_state": "ready",
                 "level": "INFO",
                 "degraded_duration_seconds": int(max(0.0, now - first_seen)),
@@ -410,21 +413,24 @@ def _write_refresh_state_event(result: RefreshResult) -> None:
         return
 
     if result.state == "failed":
+        previous_state = str(_ACTIVE_DEGRADATION.get("state") or "ready")
         if not _ACTIVE_DEGRADATION.get("degradation_id"):
             _ACTIVE_DEGRADATION.update(
                 {
                     "degradation_id": result.degradation_id,
+                    "state": "failed",
                     "first_seen": now,
                     "last_seen": now,
                     "attempt_count": 1,
                 }
             )
         else:
+            _ACTIVE_DEGRADATION["state"] = "failed"
             _ACTIVE_DEGRADATION["last_seen"] = now
             _ACTIVE_DEGRADATION["attempt_count"] = int(_ACTIVE_DEGRADATION.get("attempt_count") or 0) + 1
         base_event["event"] = "refresh.failed"
         base_event["level"] = "ERROR"
-        base_event["previous_state"] = "degraded" if base_event["attempt_count"] else "ready"
+        base_event["previous_state"] = previous_state
         base_event["new_state"] = "failed"
         base_event["attempt_count"] = int(_ACTIVE_DEGRADATION.get("attempt_count") or 1)
         _append_runtime_event(base_event)

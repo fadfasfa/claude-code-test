@@ -78,6 +78,34 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertFalse(exited["active"])
         self.assertEqual(exited["source"]["scene_state"], "absent")
 
+    def test_hover_occlusion_expires_after_max_hold_frames(self):
+        from hextech.overlay.vision.state import HOVER_OCCLUDED_MAX_HOLD_FRAMES, SelectionTracker
+
+        tracker = SelectionTracker()
+        tracker.update(_selection_event())
+        tracker.update(_selection_event())
+
+        hover_event = _selection_event()
+        hover_event["source"].update(
+            {
+                "scene_present": False,
+                "selection_button_present": False,
+                "cursor_over_cards": True,
+                "card_residue": True,
+            }
+        )
+        hover_event["_raw_slots"] = []
+
+        for _ in range(HOVER_OCCLUDED_MAX_HOLD_FRAMES):
+            held = tracker.update(hover_event)
+            self.assertTrue(held["active"])
+            self.assertEqual(held["source"]["reason"], "hover_occluded")
+
+        expired = tracker.update(hover_event)
+
+        self.assertFalse(expired["active"])
+        self.assertEqual(expired["source"]["reason"], "hover_occluded_expired")
+
     def test_non_hover_residue_still_expires(self):
         from hextech.overlay.vision.state import SelectionTracker
 

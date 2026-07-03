@@ -18,7 +18,7 @@ import secrets
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -171,10 +171,12 @@ class RuntimeSupervisor:
         return self.snapshot()
 
     def _result_payload(self, result: Any) -> dict[str, Any]:
-        if hasattr(result, "__dict__"):
-            return dict(result.__dict__)
+        if is_dataclass(result):
+            return asdict(result)
         if isinstance(result, dict):
             return dict(result)
+        if hasattr(result, "__dict__"):
+            return dict(result.__dict__)
         return {"result": bool(result)}
 
     def _execute_refresh_action(self, action_id: str, *, force: bool, started_at: float) -> None:
