@@ -1,14 +1,31 @@
 {
   "build": {
     "version": "Hotfix 13.2",
-    "generated_at": "2026-06-11T05:13:45.442753+00:00",
+    "excel_version": "13.2",
+    "generated_at": "2026-07-01T13:42:30.709238+00:00",
     "source_mode": "hybrid_now_wiki_ready",
     "source_coverage": {
       "classes": 7,
       "weapons": 31,
       "talent_class_count": 7,
       "class_images_with_local_assets": 7,
-      "weapon_images_from_excel": 31
+      "weapon_images_from_excel": 31,
+      "by_source": {
+        "wiki_class_names": 7,
+        "manual_class_names": 0,
+        "excel_weapon_images": 31,
+        "catalog_weapon_images": 0,
+        "wiki_talent_classes": 7
+      }
+    },
+    "wiki_degraded": false,
+    "degradation": {
+      "structure_degraded": false,
+      "talent_degraded": false,
+      "soft_degraded": false,
+      "reasons": [],
+      "soft_reasons": [],
+      "talent_reasons": []
     }
   },
   "positive_modifier_pool": [
@@ -202,6 +219,12 @@
       "key": "embrace-the-blast",
       "name": "享受爆炸",
       "detail": "享受爆炸：玩家不再承受爆炸物伤害，且周围每有1次任何爆炸物伤害命中任意目标(包括自身)均会为波及范围内的友军恢复1格护甲；这个词条会尝试抵消友伤词条中的爆炸物伤害，使自身投出的爆炸物不再伤害友军",
+      "type": "positive"
+    },
+    {
+      "key": "excel-positive-33",
+      "name": "幽灵之誓",
+      "detail": "幽灵之誓：玩家成功执行\"下跪\"动作将会使自身进入隐身状态",
       "type": "positive"
     }
   ],

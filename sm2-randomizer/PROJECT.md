@@ -14,6 +14,7 @@
 - 刷新与校验候选数据：`python build_release.py refresh-data --headless`
 - 查看候选状态：`python -m pipeline.compute.publish_candidate candidate-status`
 - 通过后应用候选：`python build_release.py apply-candidate`
+- 版本不齐或 wiki 硬退化时，apply 与 package 都必须显式带对应确认参数：`--accept-version-mismatch` / `--accept-hard-degradation`
 
 ## 当前结构
 
@@ -173,6 +174,8 @@ python build_release.py package-release --skip-refresh
 python build_release.py package-release --skip-refresh --with-exe
 ```
 
+如果 `pipeline/tmp_publish/` 仍有未应用候选差异，`package-release` 会阻断，避免把旧 `app/data/` 打进最终包。版本不齐或 wiki 硬退化已经被人工确认时，package 阶段也要带与 apply 阶段相同的显式确认参数。
+
 结果说明：
 
 - `package-release --skip-refresh`
@@ -219,6 +222,15 @@ python -m pipeline.compute.publish_candidate candidate-status
 ```powershell
 python build_release.py apply-candidate
 ```
+
+若 `candidate-status` 或人审报告显示版本不齐，确认后执行：
+
+```powershell
+python build_release.py apply-candidate --accept-version-mismatch
+python build_release.py package-release --accept-version-mismatch [--with-exe]
+```
+
+若显示 wiki 硬退化，确认后 apply 与 package 都必须带 `--accept-hard-degradation`；若同时版本不齐，同时带 `--accept-version-mismatch`。
 
 这会把候选目录中的：
 

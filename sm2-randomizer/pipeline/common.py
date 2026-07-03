@@ -1,3 +1,9 @@
+"""管道公共路径常量与工具函数。
+
+集中定义 app 运行层与离线工坊各目录/报告路径，提供 JSON 读写、slug 生成、
+武器资源路径解析等共用工具，供 merge/build/validate/publish 步骤依赖。
+"""
+
 from __future__ import annotations
 
 import json
@@ -37,6 +43,10 @@ WIKI_RAW_FILE = PIPELINE_STORE_RAW_WIKI_DIR / "原始抓取数据.json"
 FIELD_SOURCE_POLICY_FILE = PIPELINE_COLLECT_RULES_DIR / "field_source_policy.json"
 EXTRACTION_RULES_FILE = PIPELINE_COLLECT_RULES_DIR / "extraction_rules.json"
 VALIDATION_REPORT_FILE = PIPELINE_STORE_REPORTS_RUNTIME_DIR / "runtime_validation.json"
+# Excel 导入结果落盘报告：由 excel/run.py 捕获 import_excel.py 的 stdout 写入，
+# 供 candidate-status / diff_summary 读取，暴露 imported_count/failure_count/
+# discovered_new_items/header_warnings/excel_source_version 等导入信号。
+EXCEL_IMPORT_REPORT_FILE = PIPELINE_STORE_REPORTS_SOURCE_DIR / "excel_import_report.json"
 
 
 def ensure_directories() -> None:

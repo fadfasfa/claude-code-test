@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Wiki 天赋图标与职业图抓取脚本。
+
+用 Playwright 抓取 Fandom 职业页的天赋图标与职业图，刷新 catalog manifest，并
+把天赋退化信号（manual_action）写入 raw meta。wiki/run.py 调用本脚本，退出码
+透传；manual_action 现降级为告警不阻断，信号落到 天赋手动补图清单.json 与 meta。
+"""
+
 import argparse
 import html
 import re
@@ -822,6 +829,29 @@ def selected_classes(args: argparse.Namespace) -> list[str]:
     return args.class_titles or CLASS_TITLES
 
 
+def merge_manual_action_items(
+    existing_items: list[dict[str, str]],
+    update_items: list[dict[str, str]],
+    *,
+    requested_class_titles: list[str],
+) -> list[dict[str, str]]:
+    """局部刷新时保留未请求职业的历史手动补图退化项。
+
+    `--class Tactical` 只代表战术兵这次已重新评估；其他职业如果上轮仍需
+    manual-action，不能因为本轮没有刷新就被清空。
+    """
+    if not requested_class_titles:
+        return update_items
+
+    requested_class_names = {normalize_class_name(title) for title in requested_class_titles}
+    preserved = [
+        item
+        for item in existing_items
+        if isinstance(item, dict) and str(item.get("class_name", "")).strip() not in requested_class_names
+    ]
+    return preserved + update_items
+
+
 def write_manual_action_report(items: list[dict[str, str]]) -> None:
     write_json(MANUAL_ACTION_REPORT, {"items": items})
 
@@ -904,7 +934,30 @@ def main() -> int:
         browser.close()
     raw_payload["talents"] = merge_by_key(existing_talents, talent_classes, "class_slug_candidate", ordered_slugs)
     raw_meta = dict(raw_payload.get("meta", {}))
-    raw_meta["talent_manual_action_items"] = all_manual_actions
+    existing_manual_actions = raw_meta.get("talent_manual_action_items", [])
+    if not isinstance(existing_manual_actions, list):
+        existing_manual_actions = []
+    merged_manual_actions = merge_manual_action_items(
+        existing_manual_actions,
+        all_manual_actions,
+        requested_class_titles=args.class_titles,
+    )
+    raw_meta["talent_manual_action_items"] = merged_manual_actions
+    # 天赋退化信号：manual_action 表示有天赋图标需手动补，属软退化。与 scrape_wiki
+    # 写入的 structure_degraded 合并，供 merge_sources 降级与 candidate-status 展示。
+    existing_degradation = raw_meta.get("degradation", {}) if isinstance(raw_meta.get("degradation"), dict) else {}
+    talent_degraded = bool(merged_manual_actions)
+    structure_degraded = bool(existing_degradation.get("structure_degraded"))
+    soft_degraded = bool(existing_degradation.get("soft_degraded"))
+    raw_meta["degradation"] = {
+        **existing_degradation,
+        "talent_degraded": talent_degraded,
+        "talent_reasons": [
+            f"manual_action:{item.get('class_name','')}:{item.get('talent_name_raw','')}"
+            for item in merged_manual_actions
+        ],
+    }
+    raw_meta["wiki_degraded"] = structure_degraded or soft_degraded or talent_degraded
     raw_payload["meta"] = raw_meta
 
     class_manifest_payload = {
@@ -941,13 +994,15 @@ def main() -> int:
         if str(class_entry.get("asset_dir", "")).strip() and str(image_name or "").strip()
     )
     remove_unused_svg_assets(used_asset_paths=used_asset_paths)
-    write_manual_action_report(all_manual_actions)
+    write_manual_action_report(merged_manual_actions)
 
-    if all_manual_actions:
+    if merged_manual_actions:
         print("[TALENT-MANUAL-ACTION] 以下图片三次尝试后仍失败，请手动复制：")
-        for item in all_manual_actions:
+        for item in merged_manual_actions:
             print(f"- {item['class_name']} | {item['talent_name_raw']} | {item['grid_label_raw']} | {item['target_asset_rel_path']}")
-        return 2
+        # 降级为告警不阻断：退化信号已写入 meta.wiki_degraded / 天赋手动补图清单.json，
+        # 由 candidate-status 展示。缺图走 baseline/fallback，不卡 refresh-data。
+        return 0
 
     return 0
 
