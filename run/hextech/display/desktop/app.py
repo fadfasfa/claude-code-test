@@ -121,6 +121,11 @@ class HextechUI:
         self.web_port_file = WEB_PORT_FILE
         self.feature_flags = load_ui_feature_flags()
         self.web_process = None
+        self.runtime_supervisor = None
+        self._control_instance_id = f"ui-{os.getpid()}-{int(time.time() * 1000)}"
+        self._supervisor_lease_stop = threading.Event()
+        self._supervisor_lease_thread: threading.Thread | None = None
+        self._start_runtime_supervisor()
         self.service_manager = ServiceManager(
             start_web_func=self._spawn_web_process,
             overlay_controller=GameOverlayController(
@@ -194,6 +199,39 @@ class HextechUI:
         self.check_and_sync_data()
         self.start_background_scraper()
         self._start_overlay_status_polling()
+
+    def _start_runtime_supervisor(self) -> None:
+        """启动独立执行面，并用非 UI 线程续租，避免 Tk 主循环卡顿误杀运行态。"""
+
+        try:
+            self.runtime_supervisor = ui_runtime.start_runtime_supervisor_process(parent_pid=os.getpid())
+            self._start_supervisor_lease_thread()
+        except Exception:
+            logger.exception("Runtime Supervisor 启动失败，暂保留旧 ServiceManager 兼容路径。")
+            self.runtime_supervisor = None
+
+    def _start_supervisor_lease_thread(self) -> None:
+        if self.runtime_supervisor is None:
+            return
+        if self._supervisor_lease_thread is not None and self._supervisor_lease_thread.is_alive():
+            return
+
+        def lease_loop() -> None:
+            while not self._supervisor_lease_stop.wait(2.0):
+                handle = self.runtime_supervisor
+                if handle is None:
+                    return
+                try:
+                    handle.renew_lease(control_instance_id=self._control_instance_id)
+                except Exception:
+                    logger.warning("Runtime Supervisor lease 续租失败。", exc_info=True)
+
+        self._supervisor_lease_thread = threading.Thread(
+            target=lease_loop,
+            name="hextech-supervisor-lease",
+            daemon=True,
+        )
+        self._supervisor_lease_thread.start()
 
     def _spawn_web_process(self):
         return ui_runtime.start_web_server_process(
@@ -533,7 +571,7 @@ class HextechUI:
         self._persist_feature_flags_from_controls()
 
     def check_and_sync_data(self):
-        self._start_tracked_thread(self._silent_sync, name="hextech-silent-sync")
+        logger.info("桌面启动自愈刷新已停用：refresh 由 Runtime Supervisor action 发起。")
 
     def _set_status(self, text, color):
         if hasattr(self, "status_label") and self.status_label.winfo_exists():
@@ -582,7 +620,7 @@ class HextechUI:
                 reason = "选择窗口活跃" if event_active else "等待选择"
                 sidecar_text = "识别运行" if sidecar_status == "running" else "识别待机"
                 watchdog_action = str(watchdog.get("last_action") or "").strip()
-                if watchdog_action in {"start_missing_process", "restart_stale_state"}:
+                if watchdog_action == "start_missing_process":
                     sidecar_text = "识别已自愈"
                 elif watchdog_action == "error":
                     sidecar_text = "识别异常"
@@ -645,7 +683,7 @@ class HextechUI:
                 self.df = new_df
 
     def _silent_sync(self):
-        ui_runtime.run_silent_sync(self, refresh_backend_data)
+        logger.info("兼容旧入口：桌面不再直接调用 refresh_backend_data。")
 
     def load_data(self):
         return self._data_loader.get_df().copy()
@@ -907,9 +945,9 @@ class HextechUI:
         self._show_overlay(topmost=True)
 
     def start_background_scraper(self):
-        """启动后台数据刷新循环。"""
+        """兼容旧入口；后台刷新由 Runtime Supervisor 唯一发起。"""
 
-        ui_runtime.start_background_scraper(self, refresh_backend_data)
+        logger.info("桌面后台刷新线程已停用：refresh 由 Runtime Supervisor 统一发起。")
 
     def on_close(self):
         print("\n[System] 收到退出信号，正在等待数据安全落盘...")
@@ -931,7 +969,12 @@ class HextechUI:
         # PR 已把 Web 子进程与 overlay 全部下沉到 ServiceManager；这里只做 ui_runtime 与 ServiceManager 收尾，
         # 顺带保留 main 引入的 overlay 状态轮询 after_id 取消，避免 root.destroy 后回调引发 TclError。
         ui_runtime.close_companion_browser()
+        ui_runtime.shutdown_desktop_executors(wait=False)
         self.service_manager.shutdown()
+        self._supervisor_lease_stop.set()
+        if self._supervisor_lease_thread is not None and self._supervisor_lease_thread.is_alive():
+            self._supervisor_lease_thread.join(timeout=2)
+        ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
         self.root.destroy()
 
 

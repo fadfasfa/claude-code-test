@@ -30,8 +30,11 @@ logger = logging.getLogger(__name__)
 OVERLAY_READY_FILE_ENV = "HEXTECH_OVERLAY_READY_FILE"
 OVERLAY_READY_TOKEN_ENV = "HEXTECH_OVERLAY_READY_TOKEN"
 OVERLAY_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
+OVERLAY_SIDECAR_READY_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_FILE"
+OVERLAY_SIDECAR_READY_TOKEN_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_TOKEN"
 OVERLAY_SIDECAR_DEBUG_DUMP_ENV = "HEXTECH_OVERLAY_SIDECAR_DEBUG_DUMP"
 OVERLAY_READY_TIMEOUT_SECONDS = 5.0
+OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS = 180.0 if getattr(sys, "frozen", False) else 90.0
 HOST_GRACEFUL_EXIT_TIMEOUT_SECONDS = 0.75
 RUN_DIR = Path(__file__).resolve().parents[2]
 
@@ -87,6 +90,30 @@ def _wait_for_host_ready(
     raise TimeoutError(f"game_overlay host 启动超时：{float(timeout_seconds):.1f}s")
 
 
+def _wait_for_sidecar_ready(
+    process: ProcessLike,
+    ready_path: Path,
+    *,
+    expected_token: str,
+    timeout_seconds: float = OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS,
+) -> None:
+    deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+    while time.monotonic() < deadline:
+        exit_code = process.poll()
+        if exit_code is not None:
+            raise RuntimeError(f"Vision sidecar 在 readiness 前退出，exit_code={exit_code}")
+        try:
+            payload = json.loads(ready_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            time.sleep(0.1)
+            continue
+        if str(payload.get("token") or "") != expected_token:
+            raise RuntimeError("Vision sidecar readiness token 不匹配")
+        setattr(process, "_hextech_overlay_sidecar_generation", str(payload.get("generation") or ""))
+        return
+    raise TimeoutError(f"Vision sidecar 启动超时：{float(timeout_seconds):.1f}s")
+
+
 def start_host_process() -> subprocess.Popen:
     """启动独立 Tk host，并等待 after_idle readiness。"""
 
@@ -138,7 +165,30 @@ def start_sidecar_process(*, debug_dump: bool | None = None) -> subprocess.Popen
     if debug_dump is True or (debug_dump is None and _sidecar_debug_dump_enabled()):
         diagnostic_dir = get_runtime_root_dir() / "debug" / "overlay_vision"
         command.extend(["--debug-dump", str(diagnostic_dir)])
-    return subprocess.Popen(command, cwd=RUN_DIR, startupinfo=_hidden_startupinfo())
+    ready_path = Path(build_runtime_state_path(f"overlay_sidecar.{uuid.uuid4().hex}.ready.json"))
+    exit_path = Path(build_runtime_state_path(f"overlay_sidecar.{uuid.uuid4().hex}.exit.json"))
+    ready_token = uuid.uuid4().hex
+    env = os.environ.copy()
+    env[OVERLAY_SIDECAR_READY_FILE_ENV] = str(ready_path)
+    env[OVERLAY_SIDECAR_READY_TOKEN_ENV] = ready_token
+    env[OVERLAY_EXIT_FILE_ENV] = str(exit_path)
+    process = subprocess.Popen(command, cwd=RUN_DIR, startupinfo=_hidden_startupinfo(), env=env)
+    try:
+        setattr(process, "_hextech_overlay_exit_file", str(exit_path))
+    except Exception:
+        pass
+    try:
+        if callable(getattr(process, "poll", None)):
+            _wait_for_sidecar_ready(process, ready_path, expected_token=ready_token)
+        return process
+    except Exception:
+        stop_process(process)
+        raise
+    finally:
+        try:
+            ready_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def process_is_running(process: ProcessLike | None) -> bool:
@@ -243,6 +293,7 @@ class GameOverlayController:
         self.host_process: ProcessLike | None = None
         self.sidecar_process: ProcessLike | None = None
         self.context_poller: Any | None = None
+        self.context_poller_error = ""
         self.status = "stopped"
         self.last_error = ""
         self.residual_pids: dict[str, int] = {}
@@ -270,11 +321,18 @@ class GameOverlayController:
     def _start_context_poller(self) -> None:
         if self.context_poller is not None or self._start_context_poller_func is None:
             return
-        self.context_poller = self._start_context_poller_func()
+        try:
+            self.context_poller = self._start_context_poller_func()
+            self.context_poller_error = ""
+        except Exception as exc:
+            self.context_poller = None
+            self.context_poller_error = str(exc)
+            logger.warning("overlay context poller degraded：%s", exc)
 
     def _stop_context_poller(self) -> None:
         poller = self.context_poller
         self.context_poller = None
+        self.context_poller_error = ""
         if poller is None:
             return
         stop = getattr(poller, "stop", None)
@@ -470,7 +528,8 @@ class GameOverlayController:
             "sidecar_pid": getattr(self.sidecar_process, "pid", None),
             "host_status": "running" if host_running else "stopped",
             "sidecar_status": "running" if sidecar_running else "stopped",
-            "context_poller_status": "running" if self.context_poller_running() else "stopped",
+            "context_poller_status": "running" if self.context_poller_running() else ("degraded" if self.context_poller_error else "stopped"),
+            "context_poller_error": self.context_poller_error,
             "last_error": self.last_error,
             "residual_pids": dict(self.residual_pids),
             "updated_at": self.updated_at,

@@ -60,6 +60,7 @@ HOTKEY_FALLBACK_DEBOUNCE_SECONDS = 0.3
 OVERLAY_EXIT_POLL_MS = 100
 RENDER_ERROR_BACKOFF_AFTER = 3
 RENDER_ERROR_BACKOFF_MAX_MS = 30_000
+RECENT_CONTEXT_HOLD_SECONDS = 8.0
 LRESULT = getattr(wintypes, "LRESULT", ctypes.c_ssize_t)
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 OVERLAY_READY_FILE_ENV = "HEXTECH_OVERLAY_READY_FILE"
@@ -586,10 +587,11 @@ def decide_visibility(
     # 避免旧/手写事件绕过“蓝色按钮是生命周期依据”的合同。
     elif selection_window_active is False:
         should_show, reason = False, "selection_window_inactive"
-    elif not event_visible:
+    elif not event_visible and selection_window_active is not True:
         should_show, reason = False, source_reason or "event_inactive"
     elif not content_ready or resolved_ready_slots < 3:
-        should_show, reason = False, "content_not_ready"
+        should_show = True
+        reason = "visible_partial" if resolved_ready_slots > 0 else "detecting"
     else:
         should_show = True
         reason = "visible_ready"
@@ -683,10 +685,8 @@ def _sync_event_visibility(
     visibility["visibility_reason"] = reason
     visibility["render_full_overlay"] = bool(
         should_show
-        and content_ready
-        and ready_slots >= 3
         and selection_window_active is not False
-        and (event_visible or stale_hold_active or bool(config.get("diagnostic_mode")))
+        and (event_visible or stale_hold_active or bool(config.get("diagnostic_mode")) or reason in {"detecting", "visible_partial"})
     )
     if not apply_window:
         return should_show
@@ -808,7 +808,26 @@ def _schedule_event_render(
                 return
             hint_cache = source.read_hint_cache()
             context = source.read_context()
-            model = build_render_model(snapshot, hint_cache=hint_cache, context=context)
+            now = time.time()
+            recent_context = None
+            if isinstance(context, Mapping) and context.get("ok"):
+                visibility["last_ok_context"] = dict(context)
+                visibility["last_ok_context_seen_at"] = now
+            else:
+                try:
+                    last_seen = float(visibility.get("last_ok_context_seen_at") or 0.0)
+                except (TypeError, ValueError):
+                    last_seen = 0.0
+                if now - last_seen <= RECENT_CONTEXT_HOLD_SECONDS:
+                    cached_context = visibility.get("last_ok_context")
+                    if isinstance(cached_context, Mapping) and cached_context.get("ok"):
+                        recent_context = cached_context
+            model = build_render_model(
+                snapshot,
+                hint_cache=hint_cache,
+                context=context,
+                recent_context=recent_context,
+            )
             _log_waiting_context_diagnostic(visibility, snapshot, context, model)
             draw_overlay_frame(canvas, model, perf_sink=visibility)
             _sync_event_visibility(

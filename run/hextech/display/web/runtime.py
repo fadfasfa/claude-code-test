@@ -113,7 +113,7 @@ _managed_browser_process: Optional[subprocess.Popen] = None
 _managed_browser_lock = threading.Lock()
 _augment_cache_pending: Set[str] = set()
 _augment_cache_pending_lock = threading.Lock()
-_augment_cache_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="augment-cache")
+_augment_cache_executor: ThreadPoolExecutor | None = None
 _augment_cache_max_pending = 64
 _csv_loader = CachedDataFrameLoader(get_latest_csv)
 _startup_status_file = get_startup_status_file()
@@ -127,13 +127,79 @@ _preloaded_hextech_lock = threading.Lock()
 _preloaded_hextech_payloads: dict[str, dict] = {}
 _preloaded_hextech_pending: Set[str] = set()
 _preloaded_hextech_signature: Tuple[str, float] = ("", 0.0)
-_preloaded_hextech_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="hextech-preload")
+_preloaded_hextech_executor: ThreadPoolExecutor | None = None
 _request_auth_token = token_urlsafe(24)
 
 _SAFE_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _SAFE_HERO_ID_RE = re.compile(r"^\d{1,6}$")
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9\u4e00-\u9fff .'\-]{1,64}$")
 _lcu_warning_logged = False
+
+
+def _executor_shutdown(executor: ThreadPoolExecutor | None) -> bool:
+    return executor is None or bool(getattr(executor, "_shutdown", False))
+
+
+def _executor_queue_size(executor: ThreadPoolExecutor | None) -> int:
+    queue = getattr(executor, "_work_queue", None)
+    qsize = getattr(queue, "qsize", None)
+    if callable(qsize):
+        try:
+            return int(qsize())
+        except Exception:
+            return 0
+    return 0
+
+
+def _get_augment_cache_executor() -> ThreadPoolExecutor:
+    global _augment_cache_executor
+    if _executor_shutdown(_augment_cache_executor):
+        _augment_cache_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="augment-cache")
+    return _augment_cache_executor
+
+
+def _get_preloaded_hextech_executor() -> ThreadPoolExecutor:
+    global _preloaded_hextech_executor
+    if _executor_shutdown(_preloaded_hextech_executor):
+        _preloaded_hextech_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="hextech-preload")
+    return _preloaded_hextech_executor
+
+
+def ensure_web_executors_started() -> None:
+    _get_augment_cache_executor()
+    _get_preloaded_hextech_executor()
+
+
+def shutdown_web_executors(*, wait: bool = True, cancel_futures: bool = True) -> None:
+    global _augment_cache_executor, _preloaded_hextech_executor
+    for executor in (_augment_cache_executor, _preloaded_hextech_executor):
+        if executor is not None and not _executor_shutdown(executor):
+            executor.shutdown(wait=wait, cancel_futures=cancel_futures)
+    with _augment_cache_pending_lock:
+        _augment_cache_pending.clear()
+    with _preloaded_hextech_lock:
+        _preloaded_hextech_pending.clear()
+    _augment_cache_executor = None
+    _preloaded_hextech_executor = None
+
+
+def get_web_executor_health() -> dict:
+    with _augment_cache_pending_lock:
+        augment_pending = len(_augment_cache_pending)
+    with _preloaded_hextech_lock:
+        preload_pending = len(_preloaded_hextech_pending)
+    return {
+        "augment_cache": {
+            "shutdown": _executor_shutdown(_augment_cache_executor),
+            "pending": augment_pending,
+            "queue_depth": _executor_queue_size(_augment_cache_executor),
+        },
+        "hextech_preload": {
+            "shutdown": _executor_shutdown(_preloaded_hextech_executor),
+            "pending": preload_pending,
+            "queue_depth": _executor_queue_size(_preloaded_hextech_executor),
+        },
+    }
 
 
 def get_request_auth_token() -> str:
@@ -304,15 +370,22 @@ def queue_augment_icon_cache(icon_filename: str, augment_name: str = "") -> None
             with _augment_cache_pending_lock:
                 _augment_cache_pending.discard(normalized)
 
-    _augment_cache_executor.submit(_worker)
+    _get_augment_cache_executor().submit(_worker)
 
 
-def request_background_refresh(force: bool = False) -> bool:
-    """按单飞模式触发后台刷新，避免接口并发下重复创建刷新线程。"""
+def request_background_refresh(force: bool = False, *, source: str = "api") -> dict:
+    """执行层刷新入口。
+
+    只有 Runtime Supervisor 可以发起刷新；Web 请求热路径只消费已有数据，避免多发起方
+    重新制造状态不可追溯的问题。
+    """
+    if source != "supervisor":
+        return {"accepted": False, "reason": "supervisor_required"}
+
     global _background_refresh_inflight
     with _background_refresh_lock:
         if _background_refresh_inflight:
-            return False
+            return {"accepted": False, "reason": "already_running"}
         _background_refresh_inflight = True
 
     def _worker() -> None:
@@ -330,7 +403,7 @@ def request_background_refresh(force: bool = False) -> bool:
         daemon=True,
         name="background-refresh-singleflight",
     ).start()
-    return True
+    return {"accepted": True, "reason": "started"}
 
 
 def _iter_browser_candidates() -> List[str]:
@@ -688,7 +761,7 @@ def request_preload_hextech_payload_async(hero_name: str) -> bool:
             with _preloaded_hextech_lock:
                 _preloaded_hextech_pending.discard(target_name)
 
-    _preloaded_hextech_executor.submit(_worker)
+    _get_preloaded_hextech_executor().submit(_worker)
     return True
 
 
@@ -735,24 +808,23 @@ def queue_preload_hextech_payloads(hero_names: List[str]) -> bool:
                     with _preloaded_hextech_lock:
                         _preloaded_hextech_pending.discard(target_name)
 
-            _preloaded_hextech_executor.submit(_worker)
+            _get_preloaded_hextech_executor().submit(_worker)
 
     return queued_any
 
 
 async def get_df_with_refresh(timeout: float = 25.0) -> pd.DataFrame:
-    """在 CSV 缺失时触发一次后台刷新，并在超时前轮询等待结果。"""
+    """CSV 缺失时只等待已有产物出现；数据自愈由 Runtime Supervisor 发起。"""
     df = get_df()
     if not df.empty:
         return df
 
-    await asyncio.to_thread(refresh_backend_data, False)
     deadline = time.time() + timeout
     while time.time() < deadline:
         df = get_df()
         if not df.empty:
             return df
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(min(0.5, max(0.0, deadline - time.time())))
     return df
 
 
@@ -1420,16 +1492,9 @@ async def csv_watcher_loop() -> None:
 async def lifespan(_app):
     """Web 生命周期钩子。
 
-    启动时拉起一次后台自愈/刷新，并创建 LCU 与 CSV 两条长生命周期任务；
-    退出时统一取消这些后台任务，避免悬挂协程。
+    只创建 LCU 与 CSV 两条长生命周期任务；后台刷新由 Runtime Supervisor 唯一发起，
+    避免 Web 启动、UI 定时器和 supervisor 多处同时触发。
     """
-    scraper_thread = threading.Thread(
-        target=refresh_backend_data,
-        kwargs={"force": False},
-        daemon=True,
-        name="backend-refresh-startup",
-    )
-    scraper_thread.start()
     task1 = asyncio.create_task(lcu_polling_loop())
     task2 = asyncio.create_task(csv_watcher_loop())
     yield
@@ -1443,6 +1508,7 @@ async def lifespan(_app):
         await task2
     except asyncio.CancelledError:
         pass
+    shutdown_web_executors(wait=False)
 
 
 def find_available_port(start_port: int = 8000, max_attempts: int = 50) -> int:

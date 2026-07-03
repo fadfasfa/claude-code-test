@@ -264,6 +264,109 @@ def _merge_hint(existing: dict[str, Any], incoming: Mapping[str, Any]) -> None:
                 existing_index[str(key)] = dict(value)
     if "synergies" not in existing and isinstance(incoming.get("synergies"), list):
         existing["synergies"] = [dict(item) for item in incoming["synergies"] if isinstance(item, Mapping)]
+    aliases = existing.setdefault("aliases", [])
+    if isinstance(aliases, list):
+        for alias in incoming.get("aliases", []):
+            if alias and alias not in aliases:
+                aliases.append(alias)
+
+
+def _card_aliases(card: Mapping[str, Any]) -> list[str]:
+    aliases: list[str] = []
+    for key in ("augment_name_id", "augmentNameId", "cdragon_id", "cdragonId"):
+        raw = _clean_text(card.get(key))
+        for value in (raw, normalize_augment_id(raw), normalize_augment_name(raw)):
+            if value and value not in aliases:
+                aliases.append(value)
+                if key in {"augment_name_id", "augmentNameId"} and not value.lower().startswith("aram_"):
+                    aram_value = f"aram_{value}"
+                    if aram_value not in aliases:
+                        aliases.append(aram_value)
+    return aliases
+
+
+def _index_hint_aliases(name_index: dict[str, str], hint: Mapping[str, Any]) -> None:
+    augment_id = _clean_text(hint.get("augment_id"))
+    if not augment_id:
+        return
+    name_index.setdefault(augment_id, augment_id)
+    for alias in hint.get("aliases", []):
+        raw = _clean_text(alias)
+        for key in (raw, normalize_augment_id(raw), normalize_augment_name(raw)):
+            if key:
+                name_index.setdefault(key, augment_id)
+    name = _clean_text(hint.get("name"))
+    if name:
+        name_index.setdefault(normalize_augment_id(name), augment_id)
+        name_index.setdefault(normalize_augment_name(name), augment_id)
+        name_index.setdefault(name, augment_id)
+
+
+def _catalog_display_augment_id(entry: Mapping[str, Any], name: str) -> str:
+    """正数 CDragon ID 优先；无效占位 ID 退回名称 ID，避免多个 -1 条目互相覆盖。"""
+
+    cdragon_id = _clean_text(entry.get("cdragon_id") or entry.get("cdragonId"))
+    try:
+        if cdragon_id and int(float(cdragon_id)) > 0:
+            return normalize_augment_id(cdragon_id, name)
+    except ValueError:
+        pass
+    for key in ("augment_id", "augmentId", "augment_name_id", "augmentNameId"):
+        candidate = normalize_augment_id(entry.get(key), name)
+        if candidate:
+            return candidate
+    return normalize_augment_id(name)
+
+
+def _merge_display_only_catalog_hints(
+    cache_payload: dict[str, Any],
+    catalog_lookup: Mapping[str, Any],
+) -> int:
+    """把 manifest 中有身份但 CSV 暂无统计的海克斯补进 hint cache。
+
+    这些条目只负责名称、阶级、图标和别名解析，不伪造胜率/出场率；renderer
+    仍会对当前英雄显示 NO_STATS，避免把源数据覆盖缺口误报成 alias 断链。
+    """
+
+    hints = cache_payload.get("hints")
+    name_index = cache_payload.get("name_index")
+    if not isinstance(hints, dict) or not isinstance(name_index, dict):
+        return 0
+
+    seen_ids: set[str] = set()
+    added = 0
+    for entry in catalog_lookup.values():
+        if not isinstance(entry, Mapping):
+            continue
+        name = _clean_text(entry.get("name"))
+        if not name:
+            continue
+        augment_id = _catalog_display_augment_id(entry, name)
+        if not augment_id or augment_id in seen_ids:
+            continue
+        seen_ids.add(augment_id)
+        card = {
+            "海克斯ID": augment_id,
+            "海克斯名称": name,
+            "海克斯阶级": _clean_text(entry.get("tier")),
+            "tooltip_plain": _clean_text(entry.get("tooltip_plain")),
+            "summary": _clean_text(entry.get("tooltip_plain") or entry.get("description")),
+            "icon": _clean_text(entry.get("icon_url")),
+            "augment_name_id": _clean_text(entry.get("augment_name_id")),
+            "cdragon_id": _clean_text(entry.get("cdragon_id")),
+        }
+        hint = _build_hint(card, "", include_private_stats=False)
+        if not hint:
+            continue
+        existing = hints.get(hint["augment_id"])
+        if isinstance(existing, dict):
+            _merge_hint(existing, hint)
+            _index_hint_aliases(name_index, existing)
+            continue
+        hints[hint["augment_id"]] = hint
+        _index_hint_aliases(name_index, hint)
+        added += 1
+    return added
 
 
 def _build_hint(
@@ -292,6 +395,9 @@ def _build_hint(
         "icon": _clean_text(card.get("icon")),
         "source_heroes": [resolved_hero_name] if resolved_hero_name else [],
     }
+    aliases = _card_aliases(card)
+    if aliases:
+        hint["aliases"] = aliases
 
     if include_private_stats:
         stats = _private_stats_from_card(card, hero_id=resolved_hero_id, hero_name=resolved_hero_name)
@@ -351,17 +457,10 @@ def build_overlay_hint_cache(
         existing = hints.get(hint["augment_id"])
         if existing:
             _merge_hint(existing, hint)
-            if hint.get("name"):
-                name_index.setdefault(normalize_augment_id(hint["name"]), hint["augment_id"])
-                name_index.setdefault(normalize_augment_name(hint["name"]), hint["augment_id"])
-                name_index.setdefault(str(hint["name"]), hint["augment_id"])
+            _index_hint_aliases(name_index, existing)
             continue
         hints[hint["augment_id"]] = hint
-        name_index.setdefault(hint["augment_id"], hint["augment_id"])
-        if hint.get("name"):
-            name_index.setdefault(normalize_augment_id(hint["name"]), hint["augment_id"])
-            name_index.setdefault(normalize_augment_name(hint["name"]), hint["augment_id"])
-            name_index.setdefault(str(hint["name"]), hint["augment_id"])
+        _index_hint_aliases(name_index, hint)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -417,6 +516,9 @@ def _build_overlay_hint_cache_from_latest_runtime_csv(
             card.setdefault("tooltip_plain", _clean_text(catalog_entry.get("tooltip_plain")))
             card.setdefault("海克斯描述", _clean_text(catalog_entry.get("description") or catalog_entry.get("tooltip")))
             card.setdefault("summary", _clean_text(catalog_entry.get("tooltip_plain") or catalog_entry.get("description")))
+            for alias_key in ("augment_name_id", "cdragon_id"):
+                if catalog_entry.get(alias_key):
+                    card[alias_key] = _clean_text(catalog_entry.get(alias_key))
             if catalog_entry.get("tier"):
                 card["海克斯阶级"] = _clean_text(catalog_entry.get("tier"))
             card["icon"] = _clean_text(catalog_entry.get("icon_url")) or build_local_augment_icon_url(augment_name)
@@ -442,11 +544,13 @@ def _build_overlay_hint_cache_from_latest_runtime_csv(
     )
     if not cache_payload["hints"]:
         return None
+    display_hint_count = _merge_display_only_catalog_hints(cache_payload, catalog_lookup)
     cache_payload["source"].update(
         {
             "data_source": "runtime-csv",
             "runtime_csv": Path(latest_csv).name,
             "hero_count": len(hextech_by_hero),
+            "catalog_display_hint_count": display_hint_count,
         }
     )
     return cache_payload

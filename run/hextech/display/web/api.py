@@ -646,8 +646,6 @@ def register_routes(app: FastAPI) -> None:
             if champions:
                 return JSONResponse(content=champions)
 
-        web_runtime.request_background_refresh(force=False)
-
         stable_df = await asyncio.to_thread(web_runtime.get_stable_champion_catalog_df)
         if not stable_df.empty:
             champions = process_champions_data(stable_df, use_runtime_cache=False, log_columns=False)
@@ -690,7 +688,6 @@ def register_routes(app: FastAPI) -> None:
         if is_precomputed_hextech_cache_loaded():
             precomputed_payload = load_precomputed_hextech_for_hero(canonical_name)
             if isinstance(precomputed_payload, dict) and precomputed_payload.get("comprehensive"):
-                web_runtime.request_background_refresh(force=False)
                 return JSONResponse(content=precomputed_payload)
         else:
             _request_precomputed_hextech_warm()
@@ -700,7 +697,6 @@ def register_routes(app: FastAPI) -> None:
             return JSONResponse(content=_loading_hextech_payload())
 
         _request_precomputed_hextech_rebuild()
-        web_runtime.request_background_refresh(force=False)
         web_runtime.request_preload_hextech_payload_async(canonical_name)
         return JSONResponse(content=_loading_hextech_payload())
 

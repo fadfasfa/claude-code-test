@@ -20,16 +20,21 @@ from __future__ import annotations
 """
 
 import os
+import re
 import time
 import json
 import logging
+import uuid
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from hextech.catalog.runtime_store import (
     build_runtime_state_path,
     build_synergy_data_path,
     build_synergy_latest_pointer_path,
     build_synergy_refresh_status_path,
+    ensure_private_runtime_dir,
     get_latest_synergy_snapshot_path,
     get_latest_csv,
     get_latest_valid_csv,
@@ -64,12 +69,102 @@ logger = logging.getLogger(__name__)
 HIGH_FREQUENCY_STALE_SECONDS = 4 * 60 * 60
 SYNERGY_STALE_SECONDS = 7 * 24 * 60 * 60
 SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
+RUNTIME_EVENT_SCHEMA_VERSION = 1
+RUNTIME_EVENT_LOG_FILENAME = "runtime_events.v1.jsonl"
+_PUBLISHER_INSTANCE_ID = os.getenv("HEXTECH_COMPONENT_INSTANCE_ID") or f"refresh-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+_ACTIVE_DEGRADATION: dict[str, object] = {}
+
+
+@dataclass(frozen=True)
+class RefreshResult:
+    """后台刷新结构化结果，避免把 fallback 误报为普通成功。"""
+
+    state: str
+    remote_success: bool
+    fallback_used: bool
+    fallback_valid: bool
+    published: bool
+    published_data_path: str
+    data_version: str
+    data_hash: str
+    reason_code: str
+    correlation_id: str
+    degradation_id: str
+    report: dict
+
+    def __bool__(self) -> bool:
+        """兼容旧调用方的 bool 判断；degraded 代表可服务但不是 ready。"""
+
+        return self.state in {"ready", "degraded"}
 
 
 def auto_synergy_refresh_enabled() -> bool:
     env_enabled = os.getenv("HEXTECH_AUTO_SYNERGY_REFRESH", "0").strip().lower() in {"1", "true", "yes", "on"}
     # ApexLoL 自动协同刷新仍处于退役状态；Mayhem 增量通过手动清洗脚本生成 cleaned 数据。
     return False and env_enabled
+
+
+def sanitize_event_message(value: object) -> str:
+    """写结构化事件前剥离凭据、cookie、nonce 和 URL query。"""
+
+    text = str(value or "")
+    text = re.sub(r"(https?://[^\s?]+)\?[^\s]+", r"\1?<redacted>", text, flags=re.IGNORECASE)
+    text = re.sub(r"Authorization:\s*Bearer\s+[^\s,;]+", "Authorization: <redacted>", text, flags=re.IGNORECASE)
+    text = re.sub(r"Set-Cookie:\s*[^,\n;]+(?:;[^\n,]*)?", "Set-Cookie: <redacted>", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(cookie|token|nonce|api[_-]?key|authorization)=([^,\s;]+)", r"\1=<redacted>", text, flags=re.IGNORECASE)
+    return text
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _runtime_event_log_path() -> Path:
+    return Path(build_runtime_state_path(RUNTIME_EVENT_LOG_FILENAME))
+
+
+def _safe_file_hash(path: str) -> str:
+    """返回轻量文件指纹，用于区分同版本文件被替换的情况。"""
+
+    if not path or not os.path.exists(path):
+        return ""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return ""
+    return f"size={stat.st_size};mtime_ns={stat.st_mtime_ns}"
+
+
+def _data_version_from_path(path: str) -> str:
+    basename = os.path.basename(str(path or ""))
+    match = re.search(r"Hextech_Data_(\d{4}-?\d{2}-?\d{2})", basename)
+    return match.group(1) if match else basename
+
+
+def _append_runtime_event(event: dict) -> None:
+    target = _runtime_event_log_path()
+    ensure_private_runtime_dir(target.parent)
+    payload = dict(event)
+    payload.setdefault("schema_version", RUNTIME_EVENT_SCHEMA_VERSION)
+    payload.setdefault("timestamp", _utc_now_iso())
+    payload.setdefault("level", "INFO")
+    payload.setdefault("component", "refresh")
+    payload.setdefault("supervisor_instance_id", os.getenv("HEXTECH_SUPERVISOR_INSTANCE_ID", "standalone"))
+    payload.setdefault("component_instance_id", os.getenv("HEXTECH_REFRESH_INSTANCE_ID", _PUBLISHER_INSTANCE_ID))
+    payload.setdefault("publisher_instance_id", _PUBLISHER_INSTANCE_ID)
+    payload.setdefault("generation", int(os.getenv("HEXTECH_REFRESH_GENERATION", "1") or "1"))
+    if "error_message_sanitized" in payload:
+        payload["error_message_sanitized"] = sanitize_event_message(payload.get("error_message_sanitized"))
+    with open(target, "a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def _new_correlation_id() -> str:
+    return uuid.uuid4().hex
+
+
+def _new_degradation_id() -> str:
+    return f"deg-{uuid.uuid4().hex}"
 
 
 def _file_is_fresh(path: str, stale_after_seconds: int = HIGH_FREQUENCY_STALE_SECONDS) -> bool:
@@ -189,7 +284,7 @@ def current_api_cache_ready() -> bool:
 
 
 def rebuild_api_cache_if_needed(force: bool = False) -> bool:
-    latest_csv = get_latest_csv()
+    latest_csv = get_latest_valid_csv()
     if not latest_csv or not os.path.exists(latest_csv):
         return current_api_cache_ready()
     if force or not current_api_cache_ready():
@@ -197,26 +292,174 @@ def rebuild_api_cache_if_needed(force: bool = False) -> bool:
     return True
 
 
-def refresh_backend_data(force: bool = False, stop_event=None) -> bool:
-    """执行一次运行时自愈与后台刷新。
-
-    这个入口用于 Web 启动、自检和桌面后台线程；它本身不直接拼接多段抓取逻辑，
-    而是委托 `heal_missing_artifacts` 按缺失产物清单执行最小修复。
-    """
-    from hextech.scraping.heal_worker import heal_missing_artifacts
+def _run_mayhem_refresh_safely(stop_event=None) -> None:
+    if stop_event is not None and stop_event.is_set():
+        return
     from hextech.scraping.synergy.mayhem_refresh import run_mayhem_refresh
 
-    report = heal_missing_artifacts(force=force, stop_event=stop_event)
-    if stop_event is None or not stop_event.is_set():
-        # Mayhem 是独立低频数据刷新，不属于 self-heal；失败只记录状态，不影响后台主刷新。
-        try:
-            run_mayhem_refresh(force=False)
-        except Exception:
-            logger.exception("Mayhem 低频刷新诊断写入失败")
-    repaired = set(report.get("repaired", []))
-    if force or repaired:
-        return True
-    return bool(report.get("requested"))
+    try:
+        run_mayhem_refresh(force=False)
+    except Exception:
+        logger.exception("Mayhem 低频刷新诊断写入失败")
+
+
+def _result_from_report(report: dict, *, force: bool, correlation_id: str) -> RefreshResult:
+    latest_valid_csv = get_latest_valid_csv() or ""
+    latest_candidate_csv = get_latest_csv() or ""
+    repaired = set(report.get("repaired", []) or [])
+    fallback = set(report.get("fallback", []) or [])
+    failed = set(report.get("failed", []) or [])
+    requested = set(report.get("requested", []) or [])
+    fallback_valid = bool(latest_valid_csv)
+    remote_success = bool(repaired) and not fallback and not failed
+    fallback_used = bool(fallback)
+
+    if fallback_used and fallback_valid:
+        state = "degraded"
+        reason_code = "remote_failed_local_fallback"
+        degradation_id = str(_ACTIVE_DEGRADATION.get("degradation_id") or _new_degradation_id())
+    elif remote_success or (not requested and fallback_valid):
+        state = "ready"
+        reason_code = "refresh_success" if remote_success or force else "already_current"
+        degradation_id = str(_ACTIVE_DEGRADATION.get("degradation_id") or "")
+    else:
+        state = "failed"
+        reason_code = "refresh_failed_no_valid_fallback" if not fallback_valid else "refresh_failed"
+        degradation_id = str(_ACTIVE_DEGRADATION.get("degradation_id") or _new_degradation_id())
+
+    published_path = latest_valid_csv if fallback_valid else ""
+    return RefreshResult(
+        state=state,
+        remote_success=remote_success,
+        fallback_used=fallback_used,
+        fallback_valid=fallback_valid,
+        published=bool(published_path),
+        published_data_path=published_path,
+        data_version=_data_version_from_path(published_path or latest_candidate_csv),
+        data_hash=_safe_file_hash(published_path),
+        reason_code=reason_code,
+        correlation_id=correlation_id,
+        degradation_id=degradation_id,
+        report=dict(report),
+    )
+
+
+def _ready_assertion_consistent(result: RefreshResult) -> bool:
+    return result.state != "ready" or bool(result.published_data_path and result.fallback_valid)
+
+
+def _write_refresh_state_event(result: RefreshResult) -> None:
+    now = time.time()
+    base_event = {
+        "correlation_id": result.correlation_id,
+        "degradation_id": result.degradation_id,
+        "reason_code": result.reason_code,
+        "error_type": "" if result.state == "ready" else result.reason_code,
+        "error_message_sanitized": result.reason_code,
+        "fallback_path": result.published_data_path if result.fallback_used else "",
+        "fallback_version": result.data_version if result.fallback_used else "",
+        "fallback_age_seconds": int(max(0.0, now - os.path.getmtime(result.published_data_path)))
+        if result.fallback_used and result.published_data_path and os.path.exists(result.published_data_path)
+        else 0,
+        "fallback_validation": "valid" if result.fallback_valid else "invalid",
+        "attempt_count": int(_ACTIVE_DEGRADATION.get("attempt_count") or 0),
+        "ready_assertion_consistent": _ready_assertion_consistent(result),
+        "published_data_path": result.published_data_path,
+        "data_version": result.data_version,
+        "data_hash": result.data_hash,
+    }
+
+    if result.state == "degraded":
+        first_seen = float(_ACTIVE_DEGRADATION.get("first_seen") or now)
+        is_reused = bool(_ACTIVE_DEGRADATION.get("degradation_id"))
+        attempt_count = int(_ACTIVE_DEGRADATION.get("attempt_count") or 0) + 1
+        _ACTIVE_DEGRADATION.update(
+            {
+                "degradation_id": result.degradation_id,
+                "state": "degraded",
+                "first_seen": first_seen,
+                "last_seen": now,
+                "attempt_count": attempt_count,
+            }
+        )
+        base_event["attempt_count"] = attempt_count
+        base_event["first_failed_at"] = datetime.fromtimestamp(first_seen, tz=timezone.utc).isoformat(timespec="seconds")
+        base_event["last_failed_at"] = datetime.fromtimestamp(now, tz=timezone.utc).isoformat(timespec="seconds")
+        base_event["event"] = "fallback.reused" if is_reused else "fallback.activated"
+        base_event["previous_state"] = "degraded" if is_reused else "ready"
+        base_event["new_state"] = "degraded"
+        _append_runtime_event(base_event)
+        return
+
+    if result.state == "ready" and _ACTIVE_DEGRADATION.get("degradation_id"):
+        first_seen = float(_ACTIVE_DEGRADATION.get("first_seen") or now)
+        previous_state = str(_ACTIVE_DEGRADATION.get("state") or "degraded")
+        recovered_event = "refresh.recovered" if previous_state == "failed" else "fallback.recovered"
+        event = dict(base_event)
+        event.update(
+            {
+                "event": recovered_event,
+                "previous_state": previous_state,
+                "new_state": "ready",
+                "level": "INFO",
+                "degraded_duration_seconds": int(max(0.0, now - first_seen)),
+                "recovered_data_path": result.published_data_path,
+                "recovered_version": result.data_version,
+                "recovered_hash": result.data_hash,
+            }
+        )
+        _append_runtime_event(event)
+        _ACTIVE_DEGRADATION.clear()
+        return
+
+    if result.state == "failed":
+        previous_state = str(_ACTIVE_DEGRADATION.get("state") or "ready")
+        if not _ACTIVE_DEGRADATION.get("degradation_id"):
+            _ACTIVE_DEGRADATION.update(
+                {
+                    "degradation_id": result.degradation_id,
+                    "state": "failed",
+                    "first_seen": now,
+                    "last_seen": now,
+                    "attempt_count": 1,
+                }
+            )
+        else:
+            _ACTIVE_DEGRADATION["state"] = "failed"
+            _ACTIVE_DEGRADATION["last_seen"] = now
+            _ACTIVE_DEGRADATION["attempt_count"] = int(_ACTIVE_DEGRADATION.get("attempt_count") or 0) + 1
+        base_event["event"] = "refresh.failed"
+        base_event["level"] = "ERROR"
+        base_event["previous_state"] = previous_state
+        base_event["new_state"] = "failed"
+        base_event["attempt_count"] = int(_ACTIVE_DEGRADATION.get("attempt_count") or 1)
+        _append_runtime_event(base_event)
+
+
+def refresh_backend_data(force: bool = False, stop_event=None) -> RefreshResult:
+    """执行一次运行时自愈与后台刷新。
+
+    返回结构化结果，显式区分 ready/degraded/failed，避免把 fallback 当作普通成功。
+    """
+
+    correlation_id = _new_correlation_id()
+    report = heal_runtime_artifacts(force=force, stop_event=stop_event)
+    _run_mayhem_refresh_safely(stop_event=stop_event)
+    rebuild_api_cache_if_needed(force=force)
+    result = _result_from_report(report, force=force, correlation_id=correlation_id)
+    _write_refresh_state_event(result)
+    if not _ready_assertion_consistent(result):
+        _append_runtime_event(
+            {
+                "event": "state.assertion_mismatch",
+                "level": "ERROR",
+                "correlation_id": result.correlation_id,
+                "degradation_id": result.degradation_id,
+                "reason_code": "ready_validation_mismatch",
+                "ready_assertion_consistent": False,
+            }
+        )
+    return result
 
 
 def heal_runtime_artifacts(force: bool = False, stop_event=None) -> dict:

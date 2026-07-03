@@ -19,6 +19,7 @@ import ctypes
 import hashlib
 import json
 import logging
+import os
 import shutil
 import time
 from dataclasses import dataclass
@@ -111,6 +112,9 @@ VISION_TRACE_REFRESH_SECONDS = 1.0           # trace 刷新间隔
 logger = logging.getLogger(__name__)
 _LAST_VISION_TRACE_SIGNATURES: dict[str, tuple[str, ...]] = {}
 _LAST_VISION_TRACE_WRITES: dict[str, float] = {}
+SIDECAR_READY_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_FILE"
+SIDECAR_READY_TOKEN_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_TOKEN"
+SIDECAR_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
 
 
 @dataclass(frozen=True)
@@ -149,6 +153,32 @@ class RoiPreset:
                 )
             )
         return boxes
+
+
+def _write_sidecar_ready_from_env(*, template_count: int, started_at: float) -> None:
+    """向父进程报告冷启动完成；ready 前 watchdog 不应按 trace stale 杀进程。"""
+
+    ready_path = str(os.environ.get(SIDECAR_READY_FILE_ENV) or "").strip()
+    if not ready_path:
+        return
+    payload = {
+        "pid": os.getpid(),
+        "token": str(os.environ.get(SIDECAR_READY_TOKEN_ENV) or ""),
+        "generation": str(os.environ.get("HEXTECH_OVERLAY_GENERATION") or ""),
+        "template_count": int(template_count),
+        "ready_at": time.time(),
+        "startup_seconds": round(max(0.0, time.perf_counter() - started_at), 3),
+    }
+    atomic_write_json(Path(ready_path), payload, ensure_ascii=False, indent=2)
+
+
+def _sidecar_exit_requested() -> bool:
+    """检查父进程写入的 graceful exit 文件。"""
+
+    exit_path = str(os.environ.get(SIDECAR_EXIT_FILE_ENV) or "").strip()
+    if not exit_path:
+        return False
+    return Path(exit_path).exists()
 
 
 @dataclass(frozen=True)
@@ -2585,6 +2615,7 @@ def run_loop(
     5. debug_dump_dir 不为空时自动转储前 LOOP_DEBUG_DUMP_MAX_WINDOWS 个选择窗口
     """
 
+    started_at = time.perf_counter()
     _set_dpi_awareness()
     hint_cache = load_overlay_hint_cache()
     template_index = load_default_template_index(hint_cache=hint_cache)
@@ -2671,8 +2702,12 @@ def run_loop(
         int(frame_interval_ms),
         float(heartbeat_seconds),
     )
+    _write_sidecar_ready_from_env(template_count=len(template_index), started_at=started_at)
 
     while True:
+        if _sidecar_exit_requested():
+            logger.info("Vision sidecar 收到 graceful exit 信号，准备退出。")
+            return None
         frame_started_at = time.perf_counter()
         target = _find_lol_game_window()
         if target is None:

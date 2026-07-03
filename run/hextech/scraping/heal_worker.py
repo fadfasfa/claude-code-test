@@ -91,13 +91,14 @@ def _latest_csv_fresh() -> bool:
 def _write_startup_status(**updates) -> None:
     status_file = build_runtime_state_path("startup_status.json")
     scraper_status = load_scraper_status()
-    active_csv = get_latest_csv() or ""
+    candidate_csv = get_latest_csv() or ""
+    active_csv = get_latest_valid_csv() or ""
     degraded = bool(active_csv and scraper_status.get("last_result") == "fallback")
     payload = {
         "hero_ready": os.path.exists(CORE_DATA_FILE),
         "hextech_ready": bool(active_csv),
         "hextech_degraded": degraded,
-        "active_hextech_csv": active_csv,
+        "active_hextech_csv": active_csv or candidate_csv,
         "hextech_warning": str(scraper_status.get("reason") or "") if degraded else "",
         "synergy_ready": os.path.exists(build_synergy_data_path()),
         "augment_icons_prefetched": is_augment_icon_prefetch_ready(),
