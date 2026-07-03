@@ -26,6 +26,9 @@ APP_STATIC_DIR = APP_DIR / "static"
 APP_DATA_DIR = APP_DIR / "data"
 APP_ASSETS_DIR = APP_DIR / "assets"
 PACKAGE_STATIC_FILES = ("index.html", "main.js", "styles.css", "fonts.css")
+# static/ 下需整目录拷贝的子目录（如本地打包的 webfont 文件）
+PACKAGE_STATIC_DIRS = ("fonts",)
+PACKAGE_FONT_FILES = ("JetBrainsMono-Regular.woff2", "JetBrainsMono-Bold.woff2", "LICENSE-OFL.txt")
 PACKAGE_ASSET_DIRS = ("classes", "talents", "weapons")
 PACKAGE_RUNTIME_FILES = ("classes.json", "talents.json", "meta.json")
 PACKAGED_SENTINELS = ("static", "data", "assets")
@@ -47,6 +50,14 @@ def _assert_package_contract() -> None:
     if missing_static:
         raise RuntimeError(f"static/ 缺少关键文件: {', '.join(missing_static)}")
 
+    missing_static_dirs = _missing_paths(tuple(PACKAGE_STATIC_DIR / name for name in PACKAGE_STATIC_DIRS))
+    if missing_static_dirs:
+        raise RuntimeError(f"static/ 缺少关键目录: {', '.join(missing_static_dirs)}")
+
+    missing_fonts = _missing_paths(tuple(PACKAGE_STATIC_DIR / "fonts" / name for name in PACKAGE_FONT_FILES))
+    if missing_fonts:
+        raise RuntimeError(f"static/fonts 缺少关键文件: {', '.join(missing_fonts)}")
+
     missing_runtime = _missing_paths(tuple(PACKAGE_DATA_DIR / name for name in PACKAGE_RUNTIME_FILES))
     if missing_runtime:
         raise RuntimeError(f"data/ 缺少关键文件: {', '.join(missing_runtime)}")
@@ -60,6 +71,7 @@ def _print_contract_summary() -> None:
     print(f"[sm2-randomizer] Package contract OK: {PACKAGE_DIR}")
     print(f"[sm2-randomizer] Required roots: {', '.join(PACKAGED_SENTINELS)}")
     print(f"[sm2-randomizer] Static entry: {PACKAGE_STATIC_DIR / 'index.html'}")
+    print(f"[sm2-randomizer] Font assets: {', '.join(PACKAGE_FONT_FILES)}")
     print(f"[sm2-randomizer] Runtime metadata: {PACKAGE_DATA_DIR / 'meta.json'}")
     print(f"[sm2-randomizer] Assets root: {PACKAGE_ASSETS_DIR}")
 
@@ -103,6 +115,9 @@ checks = {
     '/sm2-randomizer': ['<!DOCTYPE html>', '<script src="./main.js?v=3"></script>'],
     '/sm2-randomizer/static/main.js?v=3': ['DATA_BASE_PATH'],
     '/sm2-randomizer/app/static/main.js?v=3': ['DATA_BASE_PATH'],
+    '/sm2-randomizer/static/fonts/JetBrainsMono-Regular.woff2': [],
+    '/sm2-randomizer/static/fonts/JetBrainsMono-Bold.woff2': [],
+    '/sm2-randomizer/static/fonts/LICENSE-OFL.txt': ['SIL OPEN FONT LICENSE'],
     '/data/classes.json': ['"classes"'],
     '/sm2-randomizer/data/classes.json': ['"classes"'],
     '/data/talents.json': ['"classes"'],
@@ -221,6 +236,11 @@ def _prepare_package_directory() -> None:
 def _copy_package_static() -> None:
     for filename in PACKAGE_STATIC_FILES:
         shutil.copy2(APP_STATIC_DIR / filename, PACKAGE_STATIC_DIR / filename)
+    # 拷贝 static/ 下的子目录（本地打包的字体等），保留目录结构
+    for directory_name in PACKAGE_STATIC_DIRS:
+        source = APP_STATIC_DIR / directory_name
+        if source.exists():
+            _copy_tree(source, PACKAGE_STATIC_DIR / directory_name)
 
 
 def _copy_package_assets() -> None:
@@ -243,11 +263,13 @@ def _validate_package_runtime() -> dict:
 
 def _print_package_summary(validation: dict) -> None:
     static_files = sorted(path.name for path in PACKAGE_STATIC_DIR.glob("*") if path.is_file())
+    font_files = sorted(path.name for path in (PACKAGE_STATIC_DIR / "fonts").glob("*") if path.is_file())
     runtime_files = sorted(path.name for path in PACKAGE_DATA_DIR.glob("*.json"))
     asset_directories = sorted(path.name for path in PACKAGE_ASSETS_DIR.iterdir() if path.is_dir())
     issue_count = int(validation.get("summary", {}).get("issue_count", 0) or 0)
     print(f"[sm2-randomizer] Final package directory: {PACKAGE_DIR}")
     print(f"[sm2-randomizer] Static files: {', '.join(static_files)}")
+    print(f"[sm2-randomizer] Font files: {', '.join(font_files)}")
     print(f"[sm2-randomizer] Runtime files: {', '.join(runtime_files)}")
     print(f"[sm2-randomizer] Asset directories: {', '.join(asset_directories)}")
     print(f"[sm2-randomizer] Validation issues: {issue_count}")
