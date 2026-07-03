@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import sys
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from pipeline.collect.excel.import_excel import _is_greyed_strategy_font
+from pipeline.collect.excel.import_excel import _is_greyed_strategy_font, _is_stable_weapon_item
 from pipeline.collect.wiki.scrape_wiki import (
     PAGE_HASHES_VERSION_KEY,
     SCRAPER_CACHE_VERSION,
@@ -19,7 +20,7 @@ from pipeline.collect.wiki.scrape_wiki import (
     _set_page_hash,
 )
 from pipeline.compute.update_review import _render_markdown
-from pipeline.compute.publish_candidate import apply_candidate, build_diff_summary
+from pipeline.compute.publish_candidate import _extract_version_number, apply_candidate, build_diff_summary
 from pipeline.common import write_json
 import build_release
 
@@ -182,6 +183,50 @@ class PublishHardeningTests(unittest.TestCase):
 
         self.assertEqual(hashes[PAGE_HASHES_VERSION_KEY], SCRAPER_CACHE_VERSION)
         self.assertEqual(_page_hash_value(hashes, "Tactical"), "new-hash")
+
+    def test_version_extraction_keeps_multi_part_versions(self):
+        self.assertEqual(_extract_version_number("Hotfix 13.2.1"), "13.2.1")
+        self.assertEqual(_extract_version_number("当前数据为13.2.1版本"), "13.2.1")
+
+    def test_pending_review_weapon_items_are_not_stable(self):
+        self.assertFalse(_is_stable_weapon_item({"slug": "excel-discovered-等离子", "pending_review": True}))
+        self.assertFalse(_is_stable_weapon_item({"slug": "excel-discovered-plasma-pistol"}))
+        self.assertTrue(_is_stable_weapon_item({"slug": "plasma-pistol"}))
+
+    def test_key_pipeline_modules_have_real_module_docstrings(self):
+        module_paths = [
+            PROJECT_ROOT / "pipeline" / "common.py",
+            PROJECT_ROOT / "build_release.py",
+            PROJECT_ROOT / "pipeline" / "collect" / "excel" / "import_excel.py",
+        ]
+
+        for path in module_paths:
+            with self.subTest(path=path.name):
+                module = ast.parse(path.read_text(encoding="utf-8"))
+                self.assertIsNotNone(ast.get_docstring(module), f"{path} should expose a module docstring")
+
+    def test_partial_perk_refresh_preserves_unrequested_manual_actions(self):
+        from pipeline.collect.wiki import scrape_perks
+
+        existing_items = [
+            {"class_name": "战术兵", "talent_name_raw": "old tactical"},
+            {"class_name": "特战兵", "talent_name_raw": "old heavy"},
+        ]
+        new_items = [{"class_name": "战术兵", "talent_name_raw": "new tactical"}]
+
+        merged = scrape_perks.merge_manual_action_items(
+            existing_items,
+            new_items,
+            requested_class_titles=["Tactical"],
+        )
+
+        self.assertEqual(
+            merged,
+            [
+                {"class_name": "特战兵", "talent_name_raw": "old heavy"},
+                {"class_name": "战术兵", "talent_name_raw": "new tactical"},
+            ],
+        )
 
 
 if __name__ == "__main__":

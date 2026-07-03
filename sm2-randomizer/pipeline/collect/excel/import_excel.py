@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """Excel 导入脚本。
 
 从本地星际战士2数据表.xlsx 导入武器图标/中文名/策略词条，输出到 store/raw/excel
 与 store/catalog。excel/run.py 调用本脚本并捕获 stdout 落盘导入报告供审阅。
 """
+
+from __future__ import annotations
 
 import hashlib
 import json

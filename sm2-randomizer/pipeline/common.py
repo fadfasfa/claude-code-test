@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """管道公共路径常量与工具函数。
 
 集中定义 app 运行层与离线工坊各目录/报告路径，提供 JSON 读写、slug 生成、
 武器资源路径解析等共用工具，供 merge/build/validate/publish 步骤依赖。
 """
+
+from __future__ import annotations
 
 import json
 from pathlib import Path

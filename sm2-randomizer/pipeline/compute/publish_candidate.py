@@ -326,7 +326,7 @@ def _validation_issue_count(candidate_root: Path) -> int:
 
 def _extract_version_number(value: Any) -> str:
     """从版本字符串抽取数字段（如 'Hotfix 13.2' → '13.2'，'13.2' → '13.2'）。"""
-    match = re.search(r"\d+(?:\.\d+)?", str(value or ""))
+    match = re.search(r"\d+(?:\.\d+)*", str(value or ""))
     return match.group(0) if match else ""
 
 

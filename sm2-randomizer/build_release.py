@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """sm2-randomizer 顶层发布入口。
 
 编排数据刷新（wiki/excel）、候选构建、校验、diff、apply 与最终打包分发。
 package-release 出包前自检运行数据契约、资源完整性、版本对齐与退化状态。
 """
+
+from __future__ import annotations
 
 import argparse
 import json
