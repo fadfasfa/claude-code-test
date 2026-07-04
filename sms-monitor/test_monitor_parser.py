@@ -309,6 +309,39 @@ class FixedSmsParserTest(unittest.TestCase):
         self.assertTrue(result.has_sms)
         self.assertEqual(result.code, "246810")
 
+    def test_looks_like_html_detects_real_tags_only(self):
+        from monitor import looks_like_html
+
+        # 真实 HTML/XML 标签才算 html
+        self.assertTrue(looks_like_html("<html><body>x</body></html>"))
+        self.assertTrue(looks_like_html("<p>code</p>"))
+        self.assertTrue(looks_like_html("</root>"))
+        self.assertTrue(looks_like_html("<!-- comment -->"))
+        # yuntl 把纯文本标成 text/html，但内容无标签，不应被当 html
+        self.assertFalse(looks_like_html("暂无短信|链接到期时间2026-07-25 11:59:59"))
+        self.assertFalse(looks_like_html("G-123456 is your Google verification code."))
+
+    def test_fixed_source_extracts_google_code_mislabeled_as_html(self):
+        """yuntl 把纯文本标成 text/html，Google 数字在前的验证码仍应提取。
+
+        回归：修复前 Content-Type 含 html 即 allow_generic=False，CODE_PATTERNS
+        只匹配关键字在前，Google 的 "G-123456 is your Google verification code"
+        数字在前会被判"未发现验证码"，与"浏览器看得到码、监控收不到"现象一致。
+        """
+        source = FixedUrlSource(
+            {"label": "yuntl", "phone": "15550123456", "url": "https://example.invalid/sms"},
+            FixedReadySession(
+                FakeTextResponse(
+                    "G-123456 is your Google verification code.|链接到期时间2026-07-25 11:59:59",
+                    content_type="text/html; charset=UTF-8",
+                )
+            ),
+            request_timeout=1,
+        )
+
+        self.assertEqual(source.poll(), "123456")
+        self.assertEqual(source.last_code, "123456")
+
 
 class EmailSourceParserTest(unittest.TestCase):
     """验证邮箱正文（subject+body 合并）能提取验证码。"""

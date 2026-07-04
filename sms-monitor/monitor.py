@@ -156,6 +156,16 @@ def parse_fixed_sms_response(text, allow_generic=True):
     return FixedSmsParseResult(False, "", "未发现验证码", raw)
 
 
+def looks_like_html(text):
+    """内容是否像 HTML/XML（含标签）。
+
+    yuntl 等平台把纯文本响应错标成 text/html，仅看 Content-Type 会错误禁用
+    裸数字兜底，导致 Google 那种"数字在前、关键字在后"的验证码提取不到；
+    这里只认真实标签，纯文本即使被标成 html 也按纯文本处理。
+    """
+    return bool(re.search(r"</?[a-zA-Z!?][^>]*>", text or ""))
+
+
 def mask_email(value):
     if not value or "@" not in value:
         return ""
@@ -594,8 +604,7 @@ def ready_check_fixed_source(cfg, session, request_timeout=3.0):
     if not 200 <= resp.status_code < 300:
         return safe_result(label, "fixed", False, "http_error", f"HTTP {resp.status_code}")
 
-    content_type = resp.headers.get("Content-Type", "").lower()
-    allow_generic = "html" not in content_type and "xml" not in content_type
+    allow_generic = not looks_like_html(resp.text)
     result = parse_fixed_sms_response(resp.text, allow_generic=allow_generic)
     return safe_result(label, "fixed", True, "ready", result.status)
 
@@ -1312,9 +1321,10 @@ class FixedUrlSource:
 
         # 成功响应：重置硬失败计数
         self.consecutive_hard_failures = 0
-        # HTML/XML 页面噪声多，禁用裸数字兜底，只信关键字模式
-        content_type = resp.headers.get("Content-Type", "").lower()
-        allow_generic = "html" not in content_type and "xml" not in content_type
+        # yuntl 等平台把纯文本错标成 text/html，只看 Content-Type 会误禁用
+        # 裸数字兜底，导致 Google 那种"数字在前"的验证码提取不到；改为看响应
+        # 内容是否真有 HTML/XML 标签来决定。
+        allow_generic = not looks_like_html(resp.text)
         result = parse_fixed_sms_response(resp.text, allow_generic=allow_generic)
         self.status = result.status
         if result.has_sms and result.code != self.last_code:
