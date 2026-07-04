@@ -35,6 +35,7 @@
   };
 
   let modifierIdSeed = 0;
+  let modifierFeedLayoutFrame = 0;
 
   function emptyPlayer() {
     return {
@@ -947,7 +948,91 @@
     document.getElementById("positive-count").textContent = String(state.modifiers.positive.length);
     document.getElementById("negative-count").textContent = String(state.modifiers.negative.length);
     document.getElementById("modifier-warning").textContent = state.warning;
+    syncModifierFeedLayout();
     bindModifierTooltipTargets();
+  }
+
+  function readCssPixels(styles, propertyName, fallback) {
+    const value = parseFloat(styles.getPropertyValue(propertyName));
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  }
+
+  function syncModifierFeedLayout() {
+    const feed = document.getElementById("modifier-feed");
+    if (!feed) return;
+
+    const list = feed.querySelector(".modifier-list");
+    if (!list || !state.modifierFeed.length) {
+      feed.style.removeProperty("--modifier-feed-height");
+      return;
+    }
+
+    const shell = feed.closest(".strategy-shell");
+    const controls = shell ? shell.querySelector(".modifier-controls") : null;
+    const header = shell ? shell.querySelector(".module-header") : null;
+    const warning = document.getElementById("modifier-warning");
+    if (!shell || !controls || !header) return;
+
+    const shellStyles = window.getComputedStyle(shell);
+    const rowHeight = readCssPixels(shellStyles, "--modifier-row-height", 76);
+    const rowGap = readCssPixels(shellStyles, "--modifier-row-gap", 6);
+    const gridGap = readCssPixels(shellStyles, "row-gap", 8);
+    const paddingTop = readCssPixels(shellStyles, "padding-top", 0);
+    const paddingBottom = readCssPixels(shellStyles, "padding-bottom", 0);
+    const warningVisible = warning && window.getComputedStyle(warning).display !== "none";
+    const fixedRowsHeight =
+      header.offsetHeight +
+      controls.offsetHeight +
+      (warningVisible ? warning.offsetHeight : 0);
+    const gridRowCount = warningVisible ? 4 : 3;
+    const availableHeight =
+      shell.clientHeight -
+      paddingTop -
+      paddingBottom -
+      fixedRowsHeight -
+      gridGap * (gridRowCount - 1);
+    const availableRows = Math.floor((availableHeight + rowGap) / (rowHeight + rowGap));
+    const itemCount = state.modifierFeed.length;
+    const maximumRows = Math.min(10, itemCount);
+    let targetRows = Math.min(maximumRows, availableRows);
+
+    const applyFeedRows = (rowCount) => {
+      const nextHeight = rowCount * rowHeight + Math.max(0, rowCount - 1) * rowGap;
+      feed.style.setProperty("--modifier-feed-height", `${Math.round(nextHeight)}px`);
+    };
+
+    if (!Number.isFinite(targetRows) || targetRows <= 0) {
+      feed.style.removeProperty("--modifier-feed-height");
+      return;
+    }
+
+    applyFeedRows(targetRows);
+
+    const shellRect = shell.getBoundingClientRect();
+    const warningRect = warningVisible ? warning.getBoundingClientRect() : null;
+    const availableBottom = warningRect
+      ? warningRect.top - gridGap
+      : shellRect.bottom;
+    let feedRect = feed.getBoundingClientRect();
+    let remainingHeight = availableBottom - feedRect.bottom;
+    const extraRowHeight = rowHeight + rowGap;
+
+    while (targetRows < maximumRows && remainingHeight >= extraRowHeight - 1) {
+      targetRows += 1;
+      applyFeedRows(targetRows);
+      feedRect = feed.getBoundingClientRect();
+      remainingHeight = availableBottom - feedRect.bottom;
+    }
+  }
+
+  function scheduleModifierFeedLayout() {
+    if (modifierFeedLayoutFrame) {
+      window.cancelAnimationFrame(modifierFeedLayoutFrame);
+    }
+    modifierFeedLayoutFrame = window.requestAnimationFrame(() => {
+      modifierFeedLayoutFrame = 0;
+      syncModifierFeedLayout();
+    });
   }
 
   function renderActionButtons() {
@@ -1067,6 +1152,7 @@
       }
     });
     window.addEventListener("resize", () => {
+      scheduleModifierFeedLayout();
       if (state.tooltipTarget) {
         positionTalentTooltip(state.tooltipTarget);
       }

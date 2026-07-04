@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from pipeline.compute.publish_candidate import _hard_degradation_reasons, _versi
 PROJECT_ROOT = Path(__file__).resolve().parent
 DIST_DIR = PROJECT_ROOT / "dist"
 PACKAGE_DIR = DIST_DIR / "sm2-randomizer-win"
+PACKAGE_ARCHIVE_FILE = DIST_DIR / "sm2-randomizer-win.zip"
 PACKAGE_STATIC_DIR = PACKAGE_DIR / "static"
 PACKAGE_DATA_DIR = PACKAGE_DIR / "data"
 PACKAGE_ASSETS_DIR = PACKAGE_DIR / "assets"
@@ -41,6 +43,7 @@ PACKAGE_RUNTIME_FILES = ("classes.json", "talents.json", "meta.json")
 PACKAGED_SENTINELS = ("static", "data", "assets")
 EXE_NAME = "sm2-randomizer"
 EXE_FILE_NAME = f"{EXE_NAME}.exe"
+PACKAGED_EXE_SMOKE_PORT = "53239"
 
 
 def _missing_paths(paths: tuple[Path, ...]) -> list[str]:
@@ -102,14 +105,23 @@ def _finalize_package_contract() -> None:
     _check_launch_log_retention()
 
 
+def _packaged_main_script_url() -> str:
+    index_html = (PACKAGE_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    match = re.search(r'<script src="(\./main\.js\?v=\d+)"></script>', index_html)
+    if not match:
+        raise RuntimeError("static/index.html 缺少 main.js cache-busting script 标签。")
+    return match.group(1).removeprefix("./")
+
+
 def _run_packaged_smoke_check() -> None:
+    main_script_url = _packaged_main_script_url()
     probe_script = """
 import json
 from pathlib import Path
 from urllib.parse import quote
 import urllib.request
 
-base = 'http://127.0.0.1:53231'
+base = 'http://127.0.0.1:__PACKAGED_EXE_SMOKE_PORT__'
 package_dir = Path(r'__PACKAGE_DIR__')
 
 def encoded_relative_path(path):
@@ -126,18 +138,16 @@ def find_encoded_asset_path():
 
 asset_path = find_encoded_asset_path()
 checks = {
-    '/': ['<!DOCTYPE html>', '<script src="./main.js?v=3"></script>'],
-    '/sm2-randomizer': ['<!DOCTYPE html>', '<script src="./main.js?v=3"></script>'],
-    '/sm2-randomizer/static/main.js?v=3': ['DATA_BASE_PATH'],
-    '/sm2-randomizer/app/static/main.js?v=3': ['DATA_BASE_PATH'],
-    '/sm2-randomizer/static/fonts/JetBrainsMono-Regular.woff2': [],
-    '/sm2-randomizer/static/fonts/JetBrainsMono-Bold.woff2': [],
-    '/sm2-randomizer/static/fonts/LICENSE-OFL.txt': ['SIL OPEN FONT LICENSE'],
+    '/': ['<!DOCTYPE html>', '<script src="./__MAIN_SCRIPT_URL__"></script>'],
+    '/static/': ['<!DOCTYPE html>', '<script src="./__MAIN_SCRIPT_URL__"></script>'],
+    '/static/__MAIN_SCRIPT_URL__': ['DATA_BASE_PATH'],
+    '/static/fonts/JetBrainsMono-Regular.woff2': [],
+    '/static/fonts/JetBrainsMono-Bold.woff2': [],
+    '/static/fonts/LICENSE-OFL.txt': ['SIL OPEN FONT LICENSE'],
     '/data/classes.json': ['"classes"'],
-    '/sm2-randomizer/data/classes.json': ['"classes"'],
     '/data/talents.json': ['"classes"'],
     '/data/meta.json': ['"build"', '"positive_modifier_pool"'],
-    '/sm2-randomizer' + asset_path: [],
+    asset_path: [],
 }
 result = {}
 for path, markers in checks.items():
@@ -148,7 +158,7 @@ for path, markers in checks.items():
             if marker not in body:
                 raise RuntimeError(f'{path} missing expected marker: {marker}')
 print(json.dumps(result, ensure_ascii=False))
-""".strip().replace("__PACKAGE_DIR__", PACKAGE_DIR.as_posix())
+""".strip().replace("__PACKAGE_DIR__", PACKAGE_DIR.as_posix()).replace("__MAIN_SCRIPT_URL__", main_script_url).replace("__PACKAGED_EXE_SMOKE_PORT__", PACKAGED_EXE_SMOKE_PORT)
     exit_code = _run([sys.executable, "-c", probe_script])
     if exit_code != 0:
         raise RuntimeError("打包模式自检失败：首页或运行期 JSON 不可访问。")
@@ -371,7 +381,10 @@ def _wait_for_launch_log(timeout_seconds: float = 10.0) -> Path:
 
 def _run_packaged_exe_smoke_test() -> None:
     _cleanup_previous_launch_log()
-    process = subprocess.Popen([str(PACKAGE_DIR / EXE_FILE_NAME)], cwd=PACKAGE_DIR)
+    env = os.environ.copy()
+    env["SM2_DEBUG_NO_BROWSER"] = "1"
+    env["SM2_DEBUG_PORT"] = PACKAGED_EXE_SMOKE_PORT
+    process = subprocess.Popen([str(PACKAGE_DIR / EXE_FILE_NAME)], cwd=PACKAGE_DIR, env=env)
     try:
         launch_log = _wait_for_launch_log()
         _run_packaged_smoke_check()
@@ -386,6 +399,7 @@ def _run_packaged_exe_smoke_test() -> None:
 
 
 def _run_packaged_python_smoke_test() -> None:
+    main_script_url = _packaged_main_script_url()
     probe_script = f"""
 import os
 import sys
@@ -412,7 +426,7 @@ try:
     for path in (
         '/sm2-randomizer',
         '/sm2-randomizer/data/classes.json',
-        '/sm2-randomizer/app/static/main.js?v=3',
+        '/sm2-randomizer/app/static/{main_script_url}',
         '/sm2-randomizer/assets/classes/%E5%85%88%E9%94%8B%E5%85%B5/cover.png',
     ):
         with urllib.request.urlopen('http://127.0.0.1:53233' + path, timeout=5) as response:
@@ -433,11 +447,11 @@ finally:
 def _run_packaged_exe_endpoint_probe() -> None:
     probe_script = """
 import urllib.request
-base = 'http://127.0.0.1:53231'
+base = 'http://127.0.0.1:__PACKAGED_EXE_SMOKE_PORT__'
 path = '/data/classes.json'
 with urllib.request.urlopen(base + path, timeout=5) as response:
     print(path, response.status)
-""".strip()
+""".strip().replace("__PACKAGED_EXE_SMOKE_PORT__", PACKAGED_EXE_SMOKE_PORT)
     exit_code = _run([sys.executable, "-c", probe_script])
     if exit_code != 0:
         raise RuntimeError("exe 打包模式探测失败：/data/classes.json 仍无法返回 200。")
@@ -471,6 +485,16 @@ def _emit_acceptance_summary(with_exe: bool) -> None:
         print("[sm2-randomizer] Packaged smoke check covers homepage and JSON runtime payloads.")
         print("[sm2-randomizer] If the browser reports ERR_EMPTY_RESPONSE, inspect sm2-randomizer-launch.log for the failing request path.")
     print("[sm2-randomizer] Manual functional validation still required: 抽职业 / 抽武器 / 抽天赋 / 保存切换 / 重置 / 词条抽取。")
+
+
+def _remove_legacy_package_artifacts() -> None:
+    """成功产出新交付目录后，清掉旧压缩包，避免误分发过期版本。"""
+    if not PACKAGE_ARCHIVE_FILE.exists():
+        return
+    if PACKAGE_ARCHIVE_FILE.is_dir():
+        raise RuntimeError(f"旧压缩包路径不是文件，已跳过删除: {PACKAGE_ARCHIVE_FILE}")
+    PACKAGE_ARCHIVE_FILE.unlink()
+    print(f"[sm2-randomizer] Removed legacy package archive: {PACKAGE_ARCHIVE_FILE}")
 
 
 def _post_package_debug_probe(with_exe: bool) -> None:
@@ -699,6 +723,7 @@ def package_release(args: argparse.Namespace) -> int:
         try:
             _verify_release_acceptance(with_exe=False)
             _emit_acceptance_summary(with_exe=False)
+            _remove_legacy_package_artifacts()
         except RuntimeError as error:
             print(f"[sm2-randomizer] {error}")
             return 1
@@ -708,6 +733,7 @@ def package_release(args: argparse.Namespace) -> int:
         exe_path = _build_exe_bundle()
         _verify_release_acceptance(with_exe=True)
         _emit_acceptance_summary(with_exe=True)
+        _remove_legacy_package_artifacts()
     except RuntimeError as error:
         print(f"[sm2-randomizer] {error}")
         return 1

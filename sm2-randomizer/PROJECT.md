@@ -185,6 +185,7 @@ python build_release.py package-release --skip-refresh --with-exe
 - `package-release --skip-refresh --with-exe`
   - 在相同最终目录根层生成 `sm2-randomizer.exe`
   - 成功后会清理 `dist/pyinstaller/`，避免把中间构建目录误当成最终交付内容
+  - 重新打包成功后默认删除旧压缩包和旧中间产物，只保留新的 `dist/sm2-randomizer-win/` 作为交付目录
 
 最终用户只需要复制：
 
