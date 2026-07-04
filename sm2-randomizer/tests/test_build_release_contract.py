@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -86,6 +87,24 @@ class BuildReleaseContractTests(unittest.TestCase):
         self.assertIn("/static/fonts/JetBrainsMono-Regular.woff2", probe_script)
         self.assertIn("/static/fonts/JetBrainsMono-Bold.woff2", probe_script)
         self.assertIn("/static/fonts/LICENSE-OFL.txt", probe_script)
+
+    def test_write_package_archive_replaces_shareable_zip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            dist_dir = Path(temp) / "dist"
+            package_dir, static_dir, _ = self._write_base_package(dist_dir)
+            (static_dir / "index.html").write_text("<!DOCTYPE html>", encoding="utf-8")
+            archive_file = dist_dir / "sm2-randomizer-win.zip"
+            archive_file.write_bytes(b"old")
+
+            with (
+                patch.object(build_release, "DIST_DIR", dist_dir),
+                patch.object(build_release, "PACKAGE_DIR", package_dir),
+                patch.object(build_release, "PACKAGE_ARCHIVE_FILE", archive_file),
+            ):
+                build_release._write_package_archive()
+
+            with zipfile.ZipFile(archive_file) as archive:
+                self.assertIn("package/static/index.html", archive.namelist())
 
 
 if __name__ == "__main__":

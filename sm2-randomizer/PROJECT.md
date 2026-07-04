@@ -182,14 +182,16 @@ python build_release.py package-release --skip-refresh --with-exe
   - 组装 `dist/sm2-randomizer-win/`
   - 复制 `static/`、`data/`、`assets/`
   - 写入 `runtime_validation.json`
+  - 验收通过后生成或替换 `dist/sm2-randomizer-win.zip`
 - `package-release --skip-refresh --with-exe`
   - 在相同最终目录根层生成 `sm2-randomizer.exe`
   - 成功后会清理 `dist/pyinstaller/`，避免把中间构建目录误当成最终交付内容
-  - 重新打包成功后默认删除旧压缩包和旧中间产物，只保留新的 `dist/sm2-randomizer-win/` 作为交付目录
+  - 验收通过后生成或替换 `dist/sm2-randomizer-win.zip`，并清理旧中间产物
 
-最终用户只需要复制：
+最终用户可以直接分享压缩包，或复制交付目录：
 
 - `dist/sm2-randomizer-win/`
+- `dist/sm2-randomizer-win.zip`
 
 ### 查看差异并决定是否更新 app/data
 

@@ -487,14 +487,21 @@ def _emit_acceptance_summary(with_exe: bool) -> None:
     print("[sm2-randomizer] Manual functional validation still required: 抽职业 / 抽武器 / 抽天赋 / 保存切换 / 重置 / 词条抽取。")
 
 
-def _remove_legacy_package_artifacts() -> None:
-    """成功产出新交付目录后，清掉旧压缩包，避免误分发过期版本。"""
-    if not PACKAGE_ARCHIVE_FILE.exists():
-        return
+def _write_package_archive() -> None:
+    """成功验收交付目录后，生成新的分享 zip，并原子替换旧 zip。"""
     if PACKAGE_ARCHIVE_FILE.is_dir():
-        raise RuntimeError(f"旧压缩包路径不是文件，已跳过删除: {PACKAGE_ARCHIVE_FILE}")
-    PACKAGE_ARCHIVE_FILE.unlink()
-    print(f"[sm2-randomizer] Removed legacy package archive: {PACKAGE_ARCHIVE_FILE}")
+        raise RuntimeError(f"压缩包目标路径不是文件，已跳过替换: {PACKAGE_ARCHIVE_FILE}")
+    temp_archive_base = DIST_DIR / f".{PACKAGE_DIR.name}.tmp"
+    temp_archive = Path(
+        shutil.make_archive(
+            str(temp_archive_base),
+            "zip",
+            root_dir=DIST_DIR,
+            base_dir=PACKAGE_DIR.name,
+        )
+    )
+    os.replace(temp_archive, PACKAGE_ARCHIVE_FILE)
+    print(f"[sm2-randomizer] Package archive ready: {PACKAGE_ARCHIVE_FILE}")
 
 
 def _post_package_debug_probe(with_exe: bool) -> None:
@@ -723,7 +730,7 @@ def package_release(args: argparse.Namespace) -> int:
         try:
             _verify_release_acceptance(with_exe=False)
             _emit_acceptance_summary(with_exe=False)
-            _remove_legacy_package_artifacts()
+            _write_package_archive()
         except RuntimeError as error:
             print(f"[sm2-randomizer] {error}")
             return 1
@@ -733,7 +740,7 @@ def package_release(args: argparse.Namespace) -> int:
         exe_path = _build_exe_bundle()
         _verify_release_acceptance(with_exe=True)
         _emit_acceptance_summary(with_exe=True)
-        _remove_legacy_package_artifacts()
+        _write_package_archive()
     except RuntimeError as error:
         print(f"[sm2-randomizer] {error}")
         return 1
