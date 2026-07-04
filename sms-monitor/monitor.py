@@ -63,6 +63,15 @@ class ConfigCommandError(Exception):
     """配置命令的可诊断错误；消息不得包含真实 secret。"""
 
 
+class LuDanAuthError(Exception):
+    """LuDan CDK 校验失败；上层捕获后降级跳过 LuDan，不退出进程。"""
+
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
 @dataclass(frozen=True)
 class PhoneParts:
     """美国号码展示结构，避免把国家码和 10 位号码混在同一复制区域。"""
@@ -494,6 +503,51 @@ def upsert_by_label(items, item):
     return "created"
 
 
+# 无效来源/账户的持久化标记：顶层 disabled 字典，key 由 disabled_key 生成。
+# 用顶层字典而非来源对象内字段，避免 normalize_* 重建 dict 时把标记剥掉。
+def disabled_key(kind, label):
+    """disabled 字典统一 key；LuDan 无 label 用 'ludan'，其余 '<kind>:<label>'。"""
+    if kind == "ludan":
+        return "ludan"
+    return f"{kind}:{label}"
+
+
+def is_disabled(cfg, kind, label):
+    """某来源/账户是否已被标记无效。"""
+    return disabled_key(kind, label) in (cfg.get("disabled") or {})
+
+
+def disable_source(cfg, kind, label, reason, path=CONFIG_PATH):
+    """标记某来源/账户为无效并持久化到 config.json。"""
+    entry = cfg.setdefault("disabled", {})
+    entry[disabled_key(kind, label)] = {"reason": reason, "at": now_hms()}
+    write_config_file_atomic(path, cfg)
+
+
+def enable_source(cfg, kind, label, path=CONFIG_PATH):
+    """移除无效标记并持久化；返回是否实际移除。"""
+    entry = cfg.get("disabled") or {}
+    key = disabled_key(kind, label)
+    if key not in entry:
+        return False
+    entry.pop(key)
+    cfg["disabled"] = entry
+    write_config_file_atomic(path, cfg)
+    return True
+
+
+def list_disabled(cfg):
+    """返回 [(kind, label, reason, at)] 列表用于报告；LuDan 的 label 固定 'LuDan'。"""
+    items = []
+    for key, info in (cfg.get("disabled") or {}).items():
+        if key == "ludan":
+            items.append(("ludan", "LuDan", info.get("reason", ""), info.get("at", "")))
+        else:
+            kind, _, label = key.partition(":")
+            items.append((kind, label or "未知", info.get("reason", ""), info.get("at", "")))
+    return items
+
+
 def positive_seconds(value):
     if value is None:
         return True
@@ -689,6 +743,28 @@ def build_config_parser():
     ready_parser = subparsers.add_parser("ready-check")
     add_common(ready_parser)
     ready_parser.add_argument("--all", action="store_true")
+
+    disable_parser = subparsers.add_parser("disable")
+    add_common(disable_parser)
+    disable_parser.add_argument("--label", required=True)
+    disable_parser.add_argument(
+        "--kind", required=True, choices=["ludan", "fixed", "email", "account"]
+    )
+    disable_parser.add_argument("--reason", default="手动禁用")
+
+    enable_parser = subparsers.add_parser("enable")
+    add_common(enable_parser)
+    enable_parser.add_argument("--label", required=True)
+    enable_parser.add_argument(
+        "--kind", required=True, choices=["ludan", "fixed", "email", "account"]
+    )
+
+    list_disabled_parser = subparsers.add_parser("list-disabled")
+    add_common(list_disabled_parser)
+
+    prune_parser = subparsers.add_parser("prune")
+    add_common(prune_parser)
+    prune_parser.add_argument("--yes", action="store_true")
     return parser
 
 
@@ -839,6 +915,72 @@ def run_config_command(
             return ready_check_all(cfg, factory)
         return aggregate_results([ready_check_ludan(cfg, factory())])
 
+    if args.command == "disable":
+        cfg = read_config_file(args.config, allow_missing=False)
+        label = "" if args.kind == "ludan" else args.label.strip()
+        if is_disabled(cfg, args.kind, label):
+            return safe_result(args.label, args.kind, True, "already_disabled", "已标记为无效")
+        disable_source(cfg, args.kind, label, args.reason, args.config)
+        return safe_result(args.label, args.kind, True, "disabled", f"已标记无效：{args.reason}")
+
+    if args.command == "enable":
+        cfg = read_config_file(args.config, allow_missing=False)
+        label = "" if args.kind == "ludan" else args.label.strip()
+        removed = enable_source(cfg, args.kind, label, args.config)
+        status = "enabled" if removed else "not_disabled"
+        reason = "已恢复轮询" if removed else "该项未标记为无效"
+        return safe_result(args.label, args.kind, removed, status, reason)
+
+    if args.command == "list-disabled":
+        cfg = read_config_file(args.config, allow_missing=False)
+        items = list_disabled(cfg)
+        return {
+            "label": "all",
+            "kind": "summary",
+            "ready": len(items) == 0,
+            "status": "no_disabled" if not items else "has_disabled",
+            "sanitized_reason": f"共 {len(items)} 个无效项" if items else "无无效项",
+            "items": [{"kind": k, "label": l, "reason": r, "at": t} for k, l, r, t in items],
+        }
+
+    if args.command == "prune":
+        cfg = read_config_file(args.config, allow_missing=False)
+        items = list_disabled(cfg)
+        if not items:
+            return safe_result("all", "summary", True, "no_disabled", "无无效项可清理")
+        preview = [{"kind": k, "label": l, "reason": r, "at": t} for k, l, r, t in items]
+        if not args.yes:
+            return {
+                "label": "all",
+                "kind": "summary",
+                "ready": False,
+                "status": "needs_confirmation",
+                "sanitized_reason": f"共 {len(items)} 个无效项，加 --yes 执行清理",
+                "items": preview,
+            }
+        # 执行清理：删除 disabled 的 fixed/email/account 项；LuDan 仅移除标记
+        disabled = cfg.get("disabled") or {}
+        list_keys = {"fixed": "fixed_sources", "email": "email_sources", "account": "accounts"}
+        for key in list(disabled.keys()):
+            if key == "ludan":
+                continue
+            kind, _, label = key.partition(":")
+            list_key = list_keys.get(kind)
+            if not list_key:
+                continue
+            cfg[list_key] = [item for item in cfg.get(list_key, []) if item.get("label") != label]
+        # 清空 disabled 字典（含 LuDan 标记，LuDan 配置本身保留）
+        cfg["disabled"] = {}
+        write_config_file_atomic(args.config, cfg)
+        return {
+            "label": "all",
+            "kind": "summary",
+            "ready": True,
+            "status": "pruned",
+            "sanitized_reason": f"已清理 {len(items)} 个无效项",
+            "items": preview,
+        }
+
     raise ConfigCommandError("未知 config 子命令")
 
 
@@ -960,6 +1102,9 @@ def snippet(text, limit=46):
 class LuDanSource:
     """LuDan 动态号码来源，保留原有 CDK、换号和过期处理逻辑。"""
 
+    # 标识来源类型，供 _disable_runtime 按 disabled_key 匹配并从 pollables 移除
+    kind = "ludan"
+
     def __init__(self, cfg, session, request_timeout=3.0):
         self.label = "LuDan"
         self.base_url = cfg["base_url"]
@@ -989,8 +1134,10 @@ class LuDanSource:
     def verify(self):
         data = self.call("verify")
         if data.get("code") != 0:
-            print(f"CDK 校验失败：{data.get('msg', '未知错误')}（code={data.get('code')}）")
-            sys.exit(1)
+            msg = data.get("msg", "未知错误")
+            code = data.get("code")
+            # 不再 sys.exit；抛异常让 SmsMonitor 降级跳过 LuDan，避免拖垮整个面板
+            raise LuDanAuthError(f"CDK 校验失败：{msg}（code={code}）", code)
         self.verified_data = data.get("data", {}) or {}
         self.apply_status_data(self.verified_data)
         return data
@@ -1114,6 +1261,18 @@ class FixedUrlSource:
         self.http_status = "-"
         self.last_checked = "-"
         self.note = ""
+        # 硬失败计数：永久性 4xx(401/403/404/410) 或网络异常累计；达阈值由 poll 设置
+        # disabled_reason，SmsMonitor 据此持久化跳过。429/5xx/超时/暂无短信不计。
+        self.consecutive_hard_failures = 0
+        self.disabled_reason = ""
+        self.kind = "fixed"
+        self.disable_threshold = 5
+
+    def _record_hard_failure(self, reason):
+        """累加硬失败计数；达阈值时设置 disabled_reason 供 SmsMonitor 持久化跳过。"""
+        self.consecutive_hard_failures += 1
+        if self.consecutive_hard_failures >= self.disable_threshold:
+            self.disabled_reason = f"连续 {self.consecutive_hard_failures} 次硬失败（{reason}）"
 
     @property
     def phone_parts(self):
@@ -1131,17 +1290,28 @@ class FixedUrlSource:
             if resp.status_code == 429:
                 self.status = "请求过于频繁"
                 self.note = "稍后重试"
+                # 限频是临时状态，不计硬失败
+                self.consecutive_hard_failures = 0
                 return
             if not 200 <= resp.status_code < 300:
                 self.status = f"HTTP {resp.status_code}"
                 self.note = "查询失败"
+                if resp.status_code in (401, 403, 404, 410):
+                    # 永久性 4xx：链接失效/token 失效，累计硬失败
+                    self._record_hard_failure(f"HTTP {resp.status_code}")
+                else:
+                    # 5xx 或其他 4xx 视为临时，不累计
+                    self.consecutive_hard_failures = 0
                 return
         except requests.RequestException as e:
             self.last_checked = now_hms()
             self.status = "网络异常"
             self.note = e.__class__.__name__
+            self._record_hard_failure(e.__class__.__name__)
             return
 
+        # 成功响应：重置硬失败计数
+        self.consecutive_hard_failures = 0
         # HTML/XML 页面噪声多，禁用裸数字兜底，只信关键字模式
         content_type = resp.headers.get("Content-Type", "").lower()
         allow_generic = "html" not in content_type and "xml" not in content_type
@@ -1181,6 +1351,16 @@ class EmailSource:
         self.http_status = "-"
         self.last_checked = "-"
         self.note = ""
+        self.consecutive_hard_failures = 0
+        self.disabled_reason = ""
+        self.kind = "email"
+        self.disable_threshold = 5
+
+    def _record_hard_failure(self, reason):
+        """累加硬失败计数；达阈值时设置 disabled_reason 供 SmsMonitor 持久化跳过。"""
+        self.consecutive_hard_failures += 1
+        if self.consecutive_hard_failures >= self.disable_threshold:
+            self.disabled_reason = f"连续 {self.consecutive_hard_failures} 次硬失败（{reason}）"
 
     @property
     def phone_parts(self):
@@ -1201,28 +1381,40 @@ class EmailSource:
             if resp.status_code == 429:
                 self.status = "请求过于频繁"
                 self.note = "稍后重试"
+                self.consecutive_hard_failures = 0
                 return
             if not 200 <= resp.status_code < 300:
                 self.status = f"HTTP {resp.status_code}"
                 self.note = "取件失败"
+                if resp.status_code in (401, 403, 404, 410):
+                    self._record_hard_failure(f"HTTP {resp.status_code}")
+                else:
+                    self.consecutive_hard_failures = 0
                 return
             payload = resp.json()
         except requests.RequestException as e:
             self.last_checked = now_hms()
             self.status = "网络异常"
             self.note = e.__class__.__name__
+            self._record_hard_failure(e.__class__.__name__)
             return
         except ValueError:
             self.last_checked = now_hms()
             self.status = "返回非 JSON"
             self.note = "稍后重试"
+            # 非 JSON 视为临时，不累计硬失败
+            self.consecutive_hard_failures = 0
             return
 
         if not payload.get("ok"):
             self.status = "取件失败"
             self.note = str(payload.get("error") or payload.get("detail") or "接口返回 ok=false")
+            # ok=false 通常是临时业务态，不累计硬失败
+            self.consecutive_hard_failures = 0
             return
 
+        # 取件成功：重置硬失败计数
+        self.consecutive_hard_failures = 0
         mails = payload.get("mails") or []
         if not mails:
             self.status = "暂无邮件"
@@ -1318,6 +1510,8 @@ class SmsMonitor:
     """封装一次监控会话的状态、渲染与热键处理。"""
 
     def __init__(self, cfg):
+        self.cfg = cfg
+        self.config_path = CONFIG_PATH
         self.poll_interval = max(2, int(cfg.get("poll_interval", 5)))
         self.idle_poll_interval = max(2, int(cfg.get("idle_poll_interval", 15)))
         self.active_after_copy_seconds = max(0, int(cfg.get("active_after_copy_seconds", 180)))
@@ -1336,29 +1530,33 @@ class SmsMonitor:
         # 每个 pollable 持有独立 requests.Session，避免多 worker 并发复用同一
         # session 触发连接池/cookie/header 竞态；ready-check 的 session_factory
         # 注入链不走这里，保持不变。
-        self.ludan = LuDanSource(cfg, requests.Session(), self.request_timeout)
+        # 无效来源/账户的展示信息（已在 config.json 持久化标记为 disabled）
+        self.disabled_display = list_disabled(cfg)
+        # LuDan 已标记失效时不实例化，run() 也不再校验它
+        if is_disabled(cfg, "ludan", ""):
+            self.ludan = None
+        else:
+            self.ludan = LuDanSource(cfg, requests.Session(), self.request_timeout)
         self.fixed_sources = [
             FixedUrlSource(item, requests.Session(), self.request_timeout)
             for item in cfg["fixed_sources"]
+            if not is_disabled(cfg, "fixed", item.get("label", ""))
         ]
         self.email_sources = [
             EmailSource(item, requests.Session(), self.request_timeout)
             for item in cfg.get("email_sources", [])
+            if not is_disabled(cfg, "email", item.get("label", ""))
         ]
-        self.accounts = [AccountSource(item) for item in cfg.get("accounts", [])]
-        # 需要后台轮询的验证码来源（账户本身不轮询）
-        self.pollables = [self.ludan, *self.fixed_sources, *self.email_sources]
+        self.accounts = [
+            AccountSource(item)
+            for item in cfg.get("accounts", [])
+            if not is_disabled(cfg, "account", item.get("label", ""))
+        ]
+        # 需要后台轮询的验证码来源（账户本身不轮询）；ludan 可能 None
+        self.pollables = [s for s in [self.ludan, *self.fixed_sources, *self.email_sources] if s is not None]
         # 账户聚合：把电话/邮箱来源挂到账户卡上，避免顶层重复展示
         self._link_accounts()
-        linked_ids = set()
-        for account in self.accounts:
-            if account.linked_phone_source is not None:
-                linked_ids.add(id(account.linked_phone_source))
-            if account.linked_email_source is not None:
-                linked_ids.add(id(account.linked_email_source))
-        # 顶层显示与热键序号：未被账户引用的来源 + 账户卡片
-        unlinked = [s for s in self.pollables if id(s) not in linked_ids]
-        self.sources = [*unlinked, *self.accounts]
+        self._rebuild_sources()
         self.note = ""
 
     def is_active_mode(self, now=None):
@@ -1397,6 +1595,27 @@ class SmsMonitor:
                         account.linked_email_source = src
                         break
 
+    def _rebuild_sources(self):
+        """根据当前 pollables/accounts 重建顶层显示列表（运行时禁用来源后调用）。"""
+        linked_ids = set()
+        for account in self.accounts:
+            if account.linked_phone_source is not None:
+                linked_ids.add(id(account.linked_phone_source))
+            if account.linked_email_source is not None:
+                linked_ids.add(id(account.linked_email_source))
+        unlinked = [s for s in self.pollables if id(s) not in linked_ids]
+        self.sources = [*unlinked, *self.accounts]
+
+    def _disable_runtime(self, kind, label, reason):
+        """运行时把某来源标记无效：写盘 + 更新展示 + 从 pollables 移除。"""
+        disable_source(self.cfg, kind, label, reason, self.config_path)
+        self.disabled_display = list_disabled(self.cfg)
+        target_key = disabled_key(kind, label)
+        self.pollables = [
+            s for s in self.pollables
+            if disabled_key(getattr(s, "kind", ""), getattr(s, "label", "")) != target_key
+        ]
+
     def render(self):
         clear_screen()
         line = "=" * 68
@@ -1406,6 +1625,11 @@ class SmsMonitor:
         print()
         for index, source in enumerate(self.sources, start=1):
             self.render_source(index, source)
+            print()
+        if self.disabled_display:
+            print("  已禁用（无效来源/账户，config prune 清理 / config enable 恢复）：")
+            for kind, label, reason, at in self.disabled_display:
+                print(f"    [{kind}] {label} - {reason}（{at}）")
             print()
         if msvcrt:
             keys = "/".join(str(i) for i in range(1, min(len(self.sources), 9) + 1))
@@ -1492,6 +1716,10 @@ class SmsMonitor:
             if ch == "q":
                 return False
             if ch == "n":
+                if self.ludan is None:
+                    self.note = "LuDan 已禁用，无法换号"
+                    self.render()
+                    continue
                 self.note = "LuDan 手动换号中..."
                 self.render()
                 self.ludan.change_number()
@@ -1612,6 +1840,7 @@ class SmsMonitor:
         futures = [(source, executor.submit(source.poll)) for source in targets]
         try:
             done, _ = wait([future for _, future in futures], timeout=self.poll_round_timeout)
+            disabled_this_round = []
             for source, future in futures:
                 if future not in done:
                     future.cancel()
@@ -1622,6 +1851,15 @@ class SmsMonitor:
                 new_code = future.result()
                 if new_code:
                     new_codes.append((source.label, new_code))
+                # 来源连续硬失败达阈值：持久化标记无效并从 pollables 移除
+                if getattr(source, "disabled_reason", ""):
+                    disabled_this_round.append(
+                        (getattr(source, "kind", ""), source.label, source.disabled_reason)
+                    )
+            for kind, label, reason in disabled_this_round:
+                self._disable_runtime(kind, label, reason)
+            if disabled_this_round:
+                self._rebuild_sources()
             return new_codes
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -1722,10 +1960,22 @@ class SmsMonitor:
             source.status = "轮询超时"
 
     def run(self):
-        print("正在校验 LuDan CDK...")
-        self.ludan.verify()
-        print("正在获取 LuDan 号码...")
-        self.ludan.refresh_number()
+        # LuDan 校验失败不再杀进程；标记无效、持久化、跳过，继续运行其余来源
+        if self.ludan is not None:
+            try:
+                print("正在校验 LuDan CDK...")
+                self.ludan.verify()
+                print("正在获取 LuDan 号码...")
+                self.ludan.refresh_number()
+            except LuDanAuthError as e:
+                print(f"LuDan 已失效，跳过并继续：{e.message}")
+                self._disable_runtime("ludan", "", e.message)
+                self.ludan = None
+                self._rebuild_sources()
+        else:
+            print("LuDan 已标记禁用，跳过校验。")
+        if getattr(self, "disabled_display", None):
+            print(f"已跳过 {len(self.disabled_display)} 个无效来源/账户；config list-disabled 查看")
         try:
             while True:
                 new_codes = self.poll_sources()
