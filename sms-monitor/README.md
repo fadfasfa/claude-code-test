@@ -25,6 +25,22 @@
 
 `ready-check` 的 `ready=true` 表示来源已经可等待验证码，不表示已经收到验证码。命令输出只包含来源 label、类型、状态和脱敏原因；真实 key、URL token、密码和 TOTP 密钥必须通过环境变量传入，不应出现在命令输出或对话里。
 
+### 无效来源与账户管理
+
+LuDan 卡密失效（CDK 校验失败 403）或某固定/邮箱来源连续硬失败（HTTP 401/403/404/410 或网络异常，连续 5 次）时，监控会自动把该项标记为无效并持久化到 `config.json` 的 `disabled` 字典，跳过轮询但保留展示，不再因单个失效来源退出整个程序。429 / 5xx / 超时 / 暂无短信等临时状态不会触发禁用。面板底部会列出当前已禁用项及原因。
+
+手动管理无效项（`--kind` 取值 `ludan` / `fixed` / `email` / `account`，`ludan` 的 `--label` 可传任意占位值）：
+
+```powershell
+python monitor.py config list-disabled --json                                # 列出所有无效项
+python monitor.py config disable --label eSIM88 --kind fixed --reason "链接失效" --json
+python monitor.py config enable  --label eSIM88 --kind fixed --json          # 恢复轮询
+python monitor.py config prune  --json                                        # 预览将清理的无效项
+python monitor.py config prune  --yes --json                                  # 从 config 物理删除无效的固定/邮箱/账户项
+```
+
+`prune --yes` 会删除 `disabled` 标记的固定/邮箱/账户项并清空 `disabled` 字典；LuDan 是顶层配置无法物理删除，`prune` 后其失效标记一并清除，下次启动会重新校验。定期用 `prune --yes` 清理无效账号即可。
+
 ### 自由文本导入
 
 如果来源文本不标准，不要把原文贴进对话。先把原文复制到本机剪贴板，然后运行：
@@ -121,6 +137,7 @@ python monitor.py config ready-check  --all --json
 ### 注意事项
 
 - 不手改 `config.json`：一律走 `config` 子命令（见上文「标准录入流程」+ `AGENTS.md` 凭据保护）。
+- LuDan 卡密失效（403）不再退出整个程序：自动标记无效、跳过轮询、继续展示固定来源和账户；换 CDK 后用 `config enable --kind ludan --label LuDan` 恢复（已禁用项不会重新校验，需先 enable 才会再校验）。
 - 敏感值不进命令行明文、不回显：用 `--*-env` 传环境变量；命令输出只有脱敏预览。
 - 为何不用 `import-freeform` 作主路径：其文本解析器对「中文 label 多行格式」（`邮箱：/密码：/2fa:`）不可靠，密码字段会被前缀污染；结构化命令每字段显式传值，可靠。`import-freeform` 仅适合「紧凑单行 `----` 分隔格式」（见上方「自由文本导入」节）。
 - 手机号原样录入用于关联；显示 / 复制时 `split_us_phone` 只取美国 10 位本地号。
@@ -154,5 +171,6 @@ python monitor.py config ready-check  --all --json
 | `fixed_sources` | 固定文本接码链接数组；每项包含 `label`、`phone`、`url` |
 | `email_sources` | 邮箱取件来源数组；每项含 `label`、`email`、`provider`（目前仅 `icloud`）、`base_url`（默认 `https://email.nloop.cc`）。走 `POST {base_url}/api/{provider}/query` 拉最新邮件并自动提取验证码 |
 | `accounts` | 账户档案数组；每项含 `label`、`login_email`、`password`、`totp_secret`、`phone`、`email`。面板会用标准库实时计算 6 位 TOTP 并显示剩余秒数，`phone` / `email` 用来标注关联的接码来源 |
+| `disabled` | 无效来源/账户的持久化标记字典；key 为 `ludan` 或 `<kind>:<label>`，值含 `reason` / `at`。由监控自动写入或 `config disable` / `enable` / `prune` 管理，一般不手改 |
 
 > `config.json` 含真实 key、接码链接 token、账户密码和 2FA 密钥，已被 `.gitignore` 忽略，不会提交。账户密码和 2FA 密钥属于明文存储，仅适合本机临时使用；`config.example.json` 只能放占位值。
