@@ -104,8 +104,10 @@ class OverlayHostVisibilityTests(unittest.TestCase):
             game_foreground=True,
             content_ready=False,
             selection_window_active=True,
+            game_hwnd=100,
+            game_rect=(0, 0, 1920, 1080),
+            game_renderable=True,
             ready_slots=0,
-            source_reason="slots_detecting",
         )
 
         self.assertTrue(should_show)
@@ -120,8 +122,10 @@ class OverlayHostVisibilityTests(unittest.TestCase):
             game_foreground=True,
             content_ready=False,
             selection_window_active=True,
+            game_hwnd=100,
+            game_rect=(0, 0, 1920, 1080),
+            game_renderable=True,
             ready_slots=2,
-            source_reason="slots_detecting",
         )
 
         self.assertTrue(should_show)
@@ -137,6 +141,8 @@ class OverlayHostVisibilityTests(unittest.TestCase):
             "content_ready": True,
             "selection_window_active": True,
             "gameflow_in_progress": True,
+            "game_hwnd": 100,
+            "game_rect": (0, 0, 1920, 1080),
             "game_renderable": True,
         }
 
@@ -164,12 +170,30 @@ class OverlayHostVisibilityTests(unittest.TestCase):
             selection_window_active=False,
             ready_slots=0,
             gameflow_in_progress=True,
+            game_hwnd=100,
+            game_rect=(0, 0, 1920, 1080),
             game_renderable=True,
-            source_reason="selection_window_inactive",
         )
 
         self.assertFalse(should_show)
         self.assertEqual(reason, "selection_window_inactive")
+
+    def test_decide_visibility_defaults_to_missing_game_window_without_hwnd(self):
+        from hextech.overlay.host import decide_visibility
+
+        should_show, reason = decide_visibility(
+            user_enabled=True,
+            event_visible=False,
+            game_foreground=True,
+            content_ready=False,
+            selection_window_active=True,
+            ready_slots=0,
+            gameflow_in_progress=True,
+            game_renderable=True,
+        )
+
+        self.assertFalse(should_show)
+        self.assertEqual(reason, "game_window_missing")
 
     def test_sync_event_visibility_reads_cached_gameflow_without_querying_http(self):
         from hextech.overlay import host

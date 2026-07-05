@@ -7207,6 +7207,9 @@ print(json.dumps(blocked))
             "game_foreground": True,
             "content_ready": True,
             "selection_window_active": True,
+            "game_hwnd": 100,
+            "game_rect": (0, 0, 1920, 1080),
+            "game_renderable": True,
             "event_error": "",
             "blocking_modal": False,
             "scoreboard_key_down": False,
@@ -7222,6 +7225,7 @@ print(json.dumps(blocked))
     assert decide(selection_window_active=None) == (True, "visible_ready")
     assert decide(content_ready=False, ready_slots=1) == (True, "visible_partial")
     assert decide(content_ready=False, ready_slots=2) == (True, "visible_partial")
+    assert decide(game_hwnd=None) == (False, "game_window_missing")
     for overrides in (
         {"game_foreground": False},
         {"user_enabled": False},

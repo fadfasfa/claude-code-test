@@ -113,7 +113,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
                 release_refresh.set()
                 server.shutdown()
 
-    def test_supervisor_tick_does_not_schedule_startup_refresh_and_handles_stale_lease(self):
+    def test_supervisor_tick_delays_startup_refresh_and_handles_stale_lease(self):
         from hextech.runtime_supervisor import RuntimeSupervisor
 
         calls: list[bool] = []
@@ -134,6 +134,8 @@ class RuntimeSupervisorTests(unittest.TestCase):
         supervisor.tick()
         self.assertEqual(calls, [])
         self.assertEqual(supervisor.snapshot()["actions"], {})
+        self.assertIsNotNone(supervisor.snapshot()["next_refresh_at"])
+        self.assertGreater(supervisor.snapshot()["next_refresh_at"], time.time())
 
         supervisor.renew_lease({"control_instance_id": "ui-1"})
         with supervisor._lock:

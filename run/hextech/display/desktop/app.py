@@ -66,10 +66,14 @@ def _format_game_overlay_host_reason(reason: str) -> str:
         "game_window_not_renderable": "游戏窗口不可渲染",
         "game_not_foreground": "切回游戏后显示",
         "selection_window_inactive": "等待海克斯选择",
+        "event_stale_after_tab": "等待最新选择画面",
+        "event_expired": "选择数据已过期",
+        "blocking_modal_present": "等待弹窗关闭",
+        "scoreboard_key_down": "记分板显示中",
         "visible_detecting": "检测选择中",
         "visible_partial": "部分识别",
         "visible_ready": "已显示",
-    }.get(reason, "等待选择")
+    }.get(reason, "暂不显示")
 
 os.makedirs(ASSET_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)

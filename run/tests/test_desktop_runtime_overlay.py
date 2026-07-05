@@ -10,6 +10,15 @@ from unittest.mock import patch
 
 
 class DesktopRuntimeOverlayTests(unittest.TestCase):
+    def test_game_overlay_host_reason_labels_scene_blockers(self):
+        from hextech.display.desktop.app import _format_game_overlay_host_reason
+
+        self.assertEqual(_format_game_overlay_host_reason("event_stale_after_tab"), "等待最新选择画面")
+        self.assertEqual(_format_game_overlay_host_reason("event_expired"), "选择数据已过期")
+        self.assertEqual(_format_game_overlay_host_reason("blocking_modal_present"), "等待弹窗关闭")
+        self.assertEqual(_format_game_overlay_host_reason("scoreboard_key_down"), "记分板显示中")
+        self.assertEqual(_format_game_overlay_host_reason("unknown_reason"), "暂不显示")
+
     def test_empty_web_live_state_falls_back_to_lcu(self):
         from hextech.display.desktop import runtime
 

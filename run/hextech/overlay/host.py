@@ -827,9 +827,9 @@ def decide_visibility(
     content_ready: bool,
     selection_window_active: bool | None,
     gameflow_in_progress: bool = True,
-    game_hwnd: int | None = 1,
+    game_hwnd: int | None = None,
     game_rect: tuple[int, int, int, int] | None = None,
-    game_renderable: bool = True,
+    game_renderable: bool = False,
     ready_slots: int | None = None,
     scoreboard_key_down: bool = False,
     event_fresh_after_tab: bool = True,
@@ -837,7 +837,6 @@ def decide_visibility(
     blocking_modal: bool = False,
     diagnostic_mode: bool = False,
     stale_event_hold: bool = False,
-    source_reason: str = "",
 ) -> tuple[bool, str]:
     """统一显隐决策，避免显示结果和诊断原因分叉。"""
 
@@ -1100,7 +1099,6 @@ def _sync_event_visibility(
             blocking_modal=blocking_modal,
             diagnostic_mode=bool(config.get("diagnostic_mode")),
             stale_event_hold=stale_hold_active,
-            source_reason=_snapshot_source_reason(snapshot),
         )
     visibility["event_visible"] = event_visible
     visibility["gameflow_in_progress"] = gameflow_in_progress
@@ -1165,12 +1163,10 @@ def _refresh_target_window(root: tk.Tk, config: Mapping[str, Any], visibility: d
             visibility["target_hwnd"] = None
             visibility["target_rect"] = None
             visibility["pending_geometry"] = ""
-        visibility["target_renderable"] = False
         return
     hwnd, rect = target
     visibility["target_hwnd"] = hwnd
     visibility["target_rect"] = rect
-    visibility["target_renderable"] = True
     next_geometry = _target_overlay_geometry(rect, dict(config))
     visibility["pending_geometry"] = next_geometry
     if visibility.get("window_visible") and next_geometry != visibility.get("applied_geometry"):
