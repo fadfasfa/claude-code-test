@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 
 def _ready_slot(slot: int, augment_id: str, name: str) -> dict:
@@ -44,6 +47,73 @@ def _selection_event() -> dict:
 
 
 class OverlayVisionStateTests(unittest.TestCase):
+    def test_template_runtime_cache_hits_and_invalidates_by_signature(self):
+        from hextech.overlay.vision import sidecar
+
+        entry = sidecar.TemplateEntry(
+            augment_id="a0",
+            name="强化 1",
+            tier="Gold",
+            summary="test",
+            fingerprint=(0.0, 1.0),
+            icon_fingerprints=((0.0, 1.0),),
+            name_fingerprint=(0.0, 1.0),
+            name_fingerprint_alt=(1.0, 0.0),
+        )
+
+        def fake_rank(template_index):
+            return sidecar._RankMatrices(
+                template_index,
+                (entry,),
+                sidecar.np.asarray([[0.0, 1.0]], dtype=sidecar.np.float32),
+                (entry,),
+                sidecar.np.asarray([[0.0, 1.0]], dtype=sidecar.np.float32),
+                (entry,),
+                sidecar.np.asarray([[1.0, 0.0]], dtype=sidecar.np.float32),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_file = Path(tmp) / "overlay_vision" / "template_runtime_cache.v1.pkl"
+            signature = {"schema_version": 1, "asset_digest": "a", "version_digest": "v"}
+            updated_signature = {"schema_version": 1, "asset_digest": "b", "version_digest": "v"}
+
+            with (
+                mock.patch.object(sidecar, "load_default_template_index", return_value=[entry]) as load_index,
+                mock.patch.object(sidecar, "_rank_matrices", side_effect=fake_rank) as rank,
+            ):
+                first = sidecar.load_or_build_default_template_runtime(
+                    hint_cache={},
+                    cache_file=cache_file,
+                    resource_signature=signature,
+                )
+            self.assertFalse(first.stats["cache_hit"])
+            self.assertEqual(load_index.call_count, 1)
+            self.assertEqual(rank.call_count, 1)
+
+            with (
+                mock.patch.object(sidecar, "load_default_template_index", side_effect=AssertionError("cache hit should not rebuild")),
+                mock.patch.object(sidecar, "_rank_matrices", side_effect=AssertionError("cache hit should not rebuild matrices")),
+            ):
+                second = sidecar.load_or_build_default_template_runtime(
+                    hint_cache={},
+                    cache_file=cache_file,
+                    resource_signature=signature,
+                )
+            self.assertTrue(second.stats["cache_hit"])
+            self.assertEqual(second.template_index[0].augment_id, "a0")
+
+            with (
+                mock.patch.object(sidecar, "load_default_template_index", return_value=[entry]) as load_after_change,
+                mock.patch.object(sidecar, "_rank_matrices", side_effect=fake_rank),
+            ):
+                invalidated = sidecar.load_or_build_default_template_runtime(
+                    hint_cache={},
+                    cache_file=cache_file,
+                    resource_signature=updated_signature,
+                )
+            self.assertFalse(invalidated.stats["cache_hit"])
+            self.assertEqual(load_after_change.call_count, 1)
+
     def test_hover_occlusion_keeps_stable_slots_until_card_residue_clears(self):
         from hextech.overlay.vision.state import SelectionTracker
 

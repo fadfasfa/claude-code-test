@@ -35,6 +35,7 @@ from hextech.overlay.lifecycle import GameOverlayController
 from . import runtime as ui_runtime
 
 from .service_manager import ServiceManager
+from .single_instance import DesktopInstanceAlreadyRunning, DesktopInstanceOwner
 
 WEB_PORT_FILE = build_runtime_state_path("web_server_port.txt")
 WINDOW_EXPANDED_GEOMETRY = "320x740"
@@ -459,6 +460,11 @@ class HextechUI:
         except Exception:
             logger.exception("持久化 UI 功能开关失败。")
 
+    def _restore_feature_toggle_after_failure(self, key: str, variable) -> None:
+        """启动失败只回滚控件显示，不把失败态当成新的用户偏好落盘。"""
+
+        variable.set(bool(self.feature_flags.get(key)))
+
     def _sync_web_process_handle(self) -> None:
         self.web_process = self.service_manager.web.process if self.service_manager.is_web_running() else None
 
@@ -506,8 +512,7 @@ class HextechUI:
                     else:
                         self._set_status("Web 前端已启动" if enabled else "Web 前端已关闭", UI_COLORS["green"] if enabled else UI_COLORS["muted"])
                 else:
-                    self.web_frontend_var.set(self.service_manager.is_web_running())
-                    self._try_persist_feature_flags_from_controls()
+                    self._restore_feature_toggle_after_failure("web_frontend_enabled", self.web_frontend_var)
                     self._set_status(f"Web 前端切换失败: {error}", UI_COLORS["error"])
                 self._set_feature_toggle_busy(toggle_name, False)
 
@@ -546,9 +551,8 @@ class HextechUI:
                         UI_COLORS["green"] if enabled else UI_COLORS["muted"],
                     )
                 else:
-                    self.game_overlay_var.set(self.service_manager.is_game_overlay_running())
-                    self._game_overlay_desired_enabled = bool(self.game_overlay_var.get())
-                    self._try_persist_feature_flags_from_controls()
+                    self._restore_feature_toggle_after_failure("game_overlay_enabled", self.game_overlay_var)
+                    self._game_overlay_desired_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
                     self._set_status(f"游戏内显示切换失败: {error}", UI_COLORS["error"])
                 self._set_feature_toggle_busy(toggle_name, False)
 
@@ -1002,7 +1006,12 @@ class HextechUI:
 def run_desktop():
     """启动桌面伴生窗口。"""
 
-    HextechUI().root.mainloop()
+    try:
+        with DesktopInstanceOwner():
+            HextechUI().root.mainloop()
+    except DesktopInstanceAlreadyRunning as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
 
 
 if __name__ == "__main__":

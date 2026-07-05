@@ -20,12 +20,14 @@ import hashlib
 import json
 import logging
 import os
+import pickle
 import shutil
+import sys
 import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageGrab
@@ -41,6 +43,7 @@ from hextech.overlay.vision.layout import (
 )
 from hextech.overlay.vision.state import SelectionTracker
 from hextech.overlay.window import cursor_in_client_boxes, find_lol_game_window, is_scoreboard_key_down, root_window_hwnd
+from hextech.catalog.runtime_store import build_runtime_cache_path, build_runtime_state_path
 from hextech.catalog.version_catalog import load_augment_manifest_entries, load_augment_name_to_icon_map
 from hextech.scraping._paths import ASSET_DIR, INDEX_DATA_DIR, STATIC_DATA_DIR
 from hextech.support.atomic_io import atomic_write_json
@@ -52,6 +55,9 @@ except ImportError:  # pragma: no cover - Windows 之外只允许离线测试纯
 
 
 SLOT_COUNT = 3
+TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 1
+TEMPLATE_RUNTIME_CACHE_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v1.pkl"))
+SIDECAR_STATUS_FILE = Path(build_runtime_state_path("game_overlay_sidecar_status.json"))
 FINGERPRINT_SIZE = (48, 48)
 NAME_FINGERPRINT_SIZE = (220, 48)
 DEFAULT_MIN_CONFIDENCE = 0.80
@@ -155,9 +161,39 @@ class RoiPreset:
         return boxes
 
 
-def _write_sidecar_ready_from_env(*, template_count: int, started_at: float) -> None:
+def _write_sidecar_status(status: str, **fields: Any) -> None:
+    """写入 sidecar 分阶段状态；失败只影响诊断，不阻断识别循环。"""
+
+    payload = {
+        "schema_version": 1,
+        "status": status,
+        "pid": os.getpid(),
+        "updated_at": time.time(),
+    }
+    payload.update(fields)
+    try:
+        atomic_write_json(SIDECAR_STATUS_FILE, payload, ensure_ascii=False, indent=2)
+    except OSError:
+        logger.debug("写入 Vision sidecar 状态失败。", exc_info=True)
+
+
+def _write_sidecar_ready_from_env(
+    *,
+    template_count: int,
+    started_at: float,
+    startup_profile: Mapping[str, Any] | None = None,
+) -> None:
     """向父进程报告冷启动完成；ready 前 watchdog 不应按 trace stale 杀进程。"""
 
+    startup_seconds = round(max(0.0, time.perf_counter() - started_at), 3)
+    profile = dict(startup_profile or {})
+    _write_sidecar_status(
+        "running",
+        phase="ready",
+        template_count=int(template_count),
+        startup_seconds=startup_seconds,
+        startup_profile=profile,
+    )
     ready_path = str(os.environ.get(SIDECAR_READY_FILE_ENV) or "").strip()
     if not ready_path:
         return
@@ -167,7 +203,8 @@ def _write_sidecar_ready_from_env(*, template_count: int, started_at: float) -> 
         "generation": str(os.environ.get("HEXTECH_OVERLAY_GENERATION") or ""),
         "template_count": int(template_count),
         "ready_at": time.time(),
-        "startup_seconds": round(max(0.0, time.perf_counter() - started_at), 3),
+        "startup_seconds": startup_seconds,
+        "startup_profile": profile,
     }
     atomic_write_json(Path(ready_path), payload, ensure_ascii=False, indent=2)
 
@@ -1191,6 +1228,15 @@ class _RankMatrices:
     alt_name_matrix: np.ndarray
 
 
+@dataclass(frozen=True)
+class TemplateRuntime:
+    """sidecar 启动所需的模板索引与矩阵，允许从本机 runtime cache 直接恢复。"""
+
+    template_index: list[TemplateEntry]
+    matrices: _RankMatrices
+    stats: dict[str, Any]
+
+
 # 单进程通常只有一份长驻 template_index；缓存按 id 命中，限容防 eval/测试反复建表泄漏。
 _RANK_MATRIX_CACHE: "dict[int, _RankMatrices]" = {}
 _RANK_MATRIX_CACHE_MAX = 4
@@ -1251,6 +1297,181 @@ def rank_template_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatr
     """供离线刷新/评测工具预热模板矩阵，避免直接依赖私有函数名。"""
 
     return _rank_matrices(template_index)
+
+
+def _runtime_environment_signature() -> dict[str, Any]:
+    return {
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "numpy": str(getattr(np, "__version__", "")),
+        "pillow": str(getattr(Image, "__version__", "")),
+    }
+
+
+def _hash_runtime_resource_stats(paths: Sequence[Path]) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(paths, key=lambda item: str(item).lower()):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        digest.update(str(path).replace("\\", "/").encode("utf-8", errors="replace"))
+        digest.update(str(int(stat.st_size)).encode("ascii"))
+        digest.update(str(int(stat.st_mtime_ns)).encode("ascii"))
+    return digest.hexdigest()
+
+
+def template_runtime_resource_signature(base_dir: str | Path | None = None) -> dict[str, Any]:
+    """生成模板缓存指纹；资源或代码 schema 变化时自动失效。"""
+
+    use_runtime_resources = base_dir is None
+    root = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parents[3]
+    version_dir = Path(INDEX_DATA_DIR) if use_runtime_resources else root / "data" / "static" / "version"
+    asset_dir = Path(ASSET_DIR) if use_runtime_resources else root / "data" / "static" / "assets"
+    version_files = [path for path in version_dir.rglob("*.json") if path.is_file()] if version_dir.exists() else []
+    asset_files = [
+        path
+        for path in asset_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    ] if asset_dir.exists() else []
+    return {
+        "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+        "environment": _runtime_environment_signature(),
+        "version_digest": _hash_runtime_resource_stats(version_files),
+        "asset_digest": _hash_runtime_resource_stats(asset_files),
+        "version_file_count": len(version_files),
+        "asset_file_count": len(asset_files),
+    }
+
+
+def _hint_cache_signature(hint_cache: Mapping[str, Any] | None) -> str:
+    if not isinstance(hint_cache, Mapping):
+        return ""
+    try:
+        return hashlib.sha256(
+            json.dumps(hint_cache, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+    except TypeError:
+        return hashlib.sha256(repr(hint_cache).encode("utf-8", errors="replace")).hexdigest()
+
+
+def _read_template_runtime_cache(
+    cache_file: str | Path,
+    *,
+    resource_signature: Mapping[str, Any],
+    hint_signature: str,
+) -> TemplateRuntime | None:
+    try:
+        with Path(cache_file).open("rb") as f:
+            payload = pickle.load(f)
+    except Exception:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    if payload.get("schema_version") != TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION:
+        return None
+    if payload.get("resource_signature") != dict(resource_signature):
+        return None
+    if str(payload.get("hint_signature") or "") != hint_signature:
+        return None
+    template_index = payload.get("template_index")
+    matrices = payload.get("matrices")
+    if not isinstance(template_index, list) or not isinstance(matrices, _RankMatrices):
+        return None
+    if matrices.index_ref is not template_index:
+        return None
+    _RANK_MATRIX_CACHE[id(template_index)] = matrices
+    return TemplateRuntime(
+        template_index=template_index,
+        matrices=matrices,
+        stats={
+            "cache_hit": True,
+            "cache_file": str(cache_file),
+            "template_count": len(template_index),
+        },
+    )
+
+
+def _write_template_runtime_cache(
+    cache_file: str | Path,
+    *,
+    resource_signature: Mapping[str, Any],
+    hint_signature: str,
+    template_index: list[TemplateEntry],
+    matrices: _RankMatrices,
+) -> None:
+    target = Path(cache_file)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    payload = {
+        "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+        "resource_signature": dict(resource_signature),
+        "hint_signature": hint_signature,
+        "template_index": template_index,
+        "matrices": matrices,
+        "written_at": time.time(),
+    }
+    try:
+        with temp_path.open("wb") as f:
+            pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(temp_path, target)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def load_or_build_default_template_runtime(
+    base_dir: str | Path | None = None,
+    *,
+    hint_cache: Mapping[str, Any] | None = None,
+    cache_file: str | Path | None = None,
+    resource_signature: Mapping[str, Any] | None = None,
+    status_callback: Callable[[str, Mapping[str, Any]], None] | None = None,
+) -> TemplateRuntime:
+    """加载 sidecar 模板 runtime；cache miss 才重建模板索引和矩阵。"""
+
+    started_at = time.perf_counter()
+    target_cache = Path(cache_file) if cache_file is not None else TEMPLATE_RUNTIME_CACHE_FILE
+    signature = dict(resource_signature or template_runtime_resource_signature(base_dir))
+    hint_signature = _hint_cache_signature(hint_cache)
+    if status_callback is not None:
+        status_callback("template_runtime_cache_lookup", {"cache_file": str(target_cache)})
+    runtime = _read_template_runtime_cache(
+        target_cache,
+        resource_signature=signature,
+        hint_signature=hint_signature,
+    )
+    if runtime is not None:
+        runtime.stats.update({"build_seconds": 0.0, "load_seconds": round(time.perf_counter() - started_at, 3)})
+        return runtime
+    if status_callback is not None:
+        status_callback("template_index_build", {"cache_hit": False})
+    template_index = load_default_template_index(base_dir, hint_cache=hint_cache)
+    if status_callback is not None:
+        status_callback("rank_matrix_build", {"template_count": len(template_index)})
+    matrices = _rank_matrices(template_index)
+    try:
+        _write_template_runtime_cache(
+            target_cache,
+            resource_signature=signature,
+            hint_signature=hint_signature,
+            template_index=template_index,
+            matrices=matrices,
+        )
+        cache_error = ""
+    except Exception as exc:
+        cache_error = str(exc)
+        logger.debug("写入 Vision 模板 runtime cache 失败。", exc_info=True)
+    stats = {
+        "cache_hit": False,
+        "cache_file": str(target_cache),
+        "cache_error": cache_error,
+        "template_count": len(template_index),
+        "build_seconds": round(time.perf_counter() - started_at, 3),
+        "load_seconds": 0.0,
+    }
+    return TemplateRuntime(template_index=template_index, matrices=matrices, stats=stats)
 
 
 def _rank_with_matrix(
@@ -2566,10 +2787,20 @@ def run_once(
 ) -> dict[str, Any]:
     """执行一次短窗口识别；无 LoL 窗口时写入 inactive 诊断事件。"""
 
+    started_at = time.perf_counter()
     _set_dpi_awareness()
+    _write_sidecar_status("starting", phase="hint_cache_load")
     hint_cache = load_overlay_hint_cache()
-    template_index = load_default_template_index(hint_cache=hint_cache)
-    _rank_matrices(template_index)
+    runtime = load_or_build_default_template_runtime(
+        hint_cache=hint_cache,
+        status_callback=lambda phase, fields: _write_sidecar_status(
+            "starting",
+            phase=phase,
+            startup_seconds=round(time.perf_counter() - started_at, 3),
+            **dict(fields),
+        ),
+    )
+    template_index = runtime.template_index
     tracker = SelectionTracker(scene_enter_frames=max(1, int(required_frames)))
     if not template_index:
         event = build_overlay_event([], source_tag="vision-sidecar", selection_type="hextech", active=False)
@@ -2629,9 +2860,18 @@ def run_loop(
 
     started_at = time.perf_counter()
     _set_dpi_awareness()
+    _write_sidecar_status("starting", phase="hint_cache_load")
     hint_cache = load_overlay_hint_cache()
-    template_index = load_default_template_index(hint_cache=hint_cache)
-    _rank_matrices(template_index)
+    runtime = load_or_build_default_template_runtime(
+        hint_cache=hint_cache,
+        status_callback=lambda phase, fields: _write_sidecar_status(
+            "starting",
+            phase=phase,
+            startup_seconds=round(time.perf_counter() - started_at, 3),
+            **dict(fields),
+        ),
+    )
+    template_index = runtime.template_index
     trace_path = _vision_trace_path_for_event(event_path)
     tracker = SelectionTracker(scene_enter_frames=max(1, int(required_frames)))
 
@@ -2714,7 +2954,11 @@ def run_loop(
         int(frame_interval_ms),
         float(heartbeat_seconds),
     )
-    _write_sidecar_ready_from_env(template_count=len(template_index), started_at=started_at)
+    _write_sidecar_ready_from_env(
+        template_count=len(template_index),
+        started_at=started_at,
+        startup_profile=runtime.stats,
+    )
 
     while True:
         if _sidecar_exit_requested():

@@ -6863,7 +6863,7 @@ print(json.dumps(blocked))
     assert watchdog_calls == []
     started_watchdog = watchdog_manager.ensure_game_overlay_healthy(enabled=True)
     assert started_watchdog["last_action"] == "start_missing_process"
-    assert watchdog_calls == ["prepare", "inactive", "sidecar", "host", "context"]
+    assert watchdog_calls == ["prepare", "inactive", "context", "sidecar", "host"]
     disabled_after_start = watchdog_manager.ensure_game_overlay_healthy(enabled=False)
     assert disabled_after_start["last_action"] == "stop_disabled"
     assert not watchdog_manager.is_game_overlay_running()
@@ -6915,7 +6915,7 @@ print(json.dumps(blocked))
         stale_watchdog = stale_manager.ensure_game_overlay_healthy(enabled=True)
         assert stale_watchdog["last_action"] == "healthy"
         assert stale_calls == [
-            "prepare", "inactive", "sidecar", "host", "context",
+            "prepare", "inactive", "context", "sidecar", "host",
         ]
         trace_path = desktop_service_manager.OVERLAY_VISION_TRACE_FILE
         trace_path.write_text("{}", encoding="utf-8")
@@ -7072,14 +7072,20 @@ print(json.dumps(blocked))
         context={"ok": False, "error": "context_missing"},
     )
     assert {row["status_code"] for row in context_missing_model["stats"]} == {"CONTEXT_MISSING"}
-    assert {row["status_text"] for row in context_missing_model["stats"]} == {"等待英雄"}
+    assert {row["status_text"] for row in context_missing_model["stats"]} == {"等待当前英雄"}
+    lcu_missing_model = overlay_renderer.build_render_model(
+        snapshot,
+        hint_cache=hint_cache(),
+        context={"ok": False, "error": "context_missing", "source": "lcu-unavailable"},
+    )
+    assert {row["status_text"] for row in lcu_missing_model["stats"]} == {"等待 LCU"}
     context_expired_model = overlay_renderer.build_render_model(
         snapshot,
         hint_cache=hint_cache(),
         context={"ok": False, "error": "context_expired"},
     )
     assert {row["status_code"] for row in context_expired_model["stats"]} == {"CONTEXT_EXPIRED"}
-    assert {row["status_text"] for row in context_expired_model["stats"]} == {"等待英雄"}
+    assert {row["status_text"] for row in context_expired_model["stats"]} == {"等待当前英雄"}
     missing_model = overlay_renderer.build_render_model(snapshot, hint_cache=hint_cache(stats=False), context=context)
     assert {row["stats_text"] for row in missing_model["stats"]} == {"暂无该英雄统计"}
     assert {row["status_code"] for row in missing_model["stats"]} == {"NO_STATS"}
@@ -7185,7 +7191,7 @@ print(json.dumps(blocked))
     for row, expected_text in (
         (partial_model["stats"][1], "识别中…"),
         (privacy_model["stats"][0], "统计关闭"),
-        (context_missing_model["stats"][0], "等待英雄"),
+        (context_missing_model["stats"][0], "等待当前英雄"),
         (missing_model["stats"][0], "暂无统计"),
     ):
         status_canvas = RecordingCanvas()

@@ -355,6 +355,7 @@ class GameOverlayController:
         self._mark("starting")
         try:
             self._prepare_data_func()
+            self._start_context_poller()
             if not sidecar_running:
                 self.sidecar_process = self._start_sidecar_func()
                 if not process_is_running(self.sidecar_process):
@@ -363,7 +364,6 @@ class GameOverlayController:
                 self.host_process = self._start_host_func()
                 if not process_is_running(self.host_process):
                     raise RuntimeError("game_overlay host 启动后立即退出")
-            self._start_context_poller()
             self._mark("running")
             logger.info(
                 "game_overlay 已补齐进程：host_pid=%s sidecar_pid=%s",
@@ -371,6 +371,7 @@ class GameOverlayController:
                 getattr(self.sidecar_process, "pid", None),
             )
         except Exception as exc:
+            self._stop_context_poller()
             self._drop_stopped_process_refs()
             self._mark("error", error=str(exc))
             raise
@@ -396,13 +397,13 @@ class GameOverlayController:
         try:
             self._prepare_data_func()
             self._write_inactive_func()
+            self._start_context_poller()
             self.sidecar_process = self._start_sidecar_func()
             if not process_is_running(self.sidecar_process):
                 raise RuntimeError("game_overlay sidecar 启动后立即退出")
             self.host_process = self._start_host_func()
             if not process_is_running(self.host_process):
                 raise RuntimeError("game_overlay host 启动后立即退出")
-            self._start_context_poller()
             self._mark("running")
             logger.info(
                 "game_overlay 已启动：host_pid=%s sidecar_pid=%s",

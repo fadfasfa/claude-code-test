@@ -91,7 +91,23 @@ class OverlayContextStabilityTests(unittest.TestCase):
         )
 
         self.assertEqual(model["stats"][0]["status_code"], "CONTEXT_EXPIRED")
-        self.assertEqual(model["stats"][0]["status_text"], "等待英雄")
+        self.assertEqual(model["stats"][0]["status_text"], "等待当前英雄")
+
+    def test_missing_context_status_text_explains_lcu_unavailable(self):
+        from hextech.overlay import renderer
+
+        model = renderer.build_render_model(
+            {
+                "ok": True,
+                "visible": True,
+                "slots": [{"slot": 0, "state": "ready", "augment_id": "a0", "name": "强化 1", "tier": "Gold"}],
+            },
+            hint_cache=_hint_cache(),
+            context={"ok": False, "error": "context_missing", "source": "lcu-unavailable"},
+        )
+
+        self.assertEqual(model["stats"][0]["status_code"], "CONTEXT_MISSING")
+        self.assertEqual(model["stats"][0]["status_text"], "等待 LCU")
 
     def test_renderer_resolves_augment_name_id_alias_without_slot_name(self):
         from hextech.overlay import renderer

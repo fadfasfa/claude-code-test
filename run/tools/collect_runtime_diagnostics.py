@@ -60,6 +60,7 @@ TRACE_CURRENT_FILE = "overlay_vision_trace.v1.json"
 OVERLAY_EVENT_FILE = "game_overlay_slots.v1.json"
 SIDECAR_STATUS_FILE = "game_overlay_sidecar_status.json"
 FEATURE_FLAGS_FILE = "ui_feature_flags.json"
+WEB_PORT_FILE = "web_server_port.txt"
 FOCUS_BLOCK_REASONS = {"game_not_foreground", "game_window_missing"}
 BLOCKING_REASONS = {"blocking_modal_present", "scoreboard_key_down"}
 CONTENT_WAIT_REASONS = {
@@ -180,6 +181,16 @@ def _state_summary(state_dir: Path) -> dict[str, Any]:
     overlay_event = _read_json(state_dir / OVERLAY_EVENT_FILE)
     sidecar = _read_json(state_dir / SIDECAR_STATUS_FILE)
     feature_flags = _read_json(state_dir / FEATURE_FLAGS_FILE)
+    flags = feature_flags if isinstance(feature_flags, dict) else {}
+    port_path = state_dir / WEB_PORT_FILE
+    web_port = ""
+    try:
+        web_port = port_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        web_port = ""
+    web_status = "running" if web_port else "web_disabled_until_user_action"
+    if flags and bool(flags.get("web_frontend_enabled", False)) and not web_port:
+        web_status = "startup_requested_no_port"
     return {
         "startup_status": startup if isinstance(startup, dict) else {},
         "scraper_status": scraper if isinstance(scraper, dict) else {},
@@ -187,7 +198,13 @@ def _state_summary(state_dir: Path) -> dict[str, Any]:
         "context": context if isinstance(context, dict) else {},
         "overlay_event": overlay_event if isinstance(overlay_event, dict) else {},
         "sidecar_status": sidecar if isinstance(sidecar, dict) else {},
-        "feature_flags": feature_flags if isinstance(feature_flags, dict) else {},
+        "feature_flags": flags,
+        "web_frontend": {
+            "status": web_status,
+            "enabled_intent": bool(flags.get("web_frontend_enabled", False)),
+            "port_file_present": bool(web_port),
+            "port": web_port,
+        },
     }
 
 
@@ -763,6 +780,7 @@ def _attention_items(
 ) -> list[str]:
     items: list[str] = []
     flags = state.get("feature_flags") if isinstance(state.get("feature_flags"), Mapping) else {}
+    web_frontend = state.get("web_frontend") if isinstance(state.get("web_frontend"), Mapping) else {}
     sidecar = state.get("sidecar_status") if isinstance(state.get("sidecar_status"), Mapping) else {}
     overlay_event = state.get("overlay_event") if isinstance(state.get("overlay_event"), Mapping) else {}
 
@@ -770,6 +788,10 @@ def _attention_items(
         items.append("未发现 overlay_vision_trace_history.v1.json 记录；需要先启动游戏内显示/sidecar 再打一局。")
     if flags and not bool(flags.get("game_overlay_enabled", True)):
         items.append("ui_feature_flags 显示 game_overlay_enabled=false；本局不会产生完整游戏内识别 trace。")
+    if web_frontend.get("status") == "web_disabled_until_user_action":
+        items.append("Web 前端当前为按需启用：web_disabled_until_user_action；点击 Web/详情后才会启动服务。")
+    elif web_frontend.get("status") == "startup_requested_no_port":
+        items.append("ui_feature_flags 显示 web_frontend_enabled=true，但未发现 web_server_port.txt；检查 Web 启动错误。")
     if sidecar and sidecar.get("status") not in {"running", "ready"}:
         items.append(f"Vision sidecar 当前状态不是 running/ready：{sidecar.get('status') or 'unknown'}。")
     if trace_summary.get("game_window_missing_samples") and not trace_summary.get("active_hextech_samples"):

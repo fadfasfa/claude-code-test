@@ -10,6 +10,60 @@ from unittest.mock import patch
 
 
 class DesktopRuntimeOverlayTests(unittest.TestCase):
+    def test_web_start_failure_does_not_persist_runtime_false_as_user_intent(self):
+        from hextech.display.desktop import app
+
+        class Var:
+            def __init__(self, value):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        class FailingServiceManager:
+            web = SimpleNamespace(process=None, status="stopped", last_error="")
+
+            def start_web(self):
+                raise RuntimeError("port busy")
+
+            def stop_web(self):
+                return None
+
+            def is_web_running(self):
+                return False
+
+        ui = object.__new__(app.HextechUI)
+        ui.web_frontend_var = Var(True)
+        ui.game_overlay_var = Var(True)
+        ui.private_stats_var = Var(True)
+        ui.low_frequency_listener_var = Var(True)
+        ui.feature_flags = {
+            "web_frontend_enabled": False,
+            "game_overlay_enabled": True,
+            "auto_open_browser": True,
+            "private_policy_stats_enabled": True,
+            "low_frequency_listener_enabled": True,
+        }
+        ui.service_manager = FailingServiceManager()
+        ui.web_port_file = Path("unused")
+        ui._set_feature_toggle_busy = lambda *_args, **_kwargs: None
+        ui._set_status = lambda *_args, **_kwargs: None
+        ui._run_on_ui_thread = lambda func: func()
+        ui._start_tracked_thread = lambda func, *, name: (func(), None)[1]
+
+        with (
+            patch.object(app.ui_runtime, "open_companion_browser", return_value=False),
+            patch.object(app.ui_runtime, "close_companion_browser"),
+            patch.object(app, "save_ui_feature_flags", side_effect=AssertionError("failure must not persist flags")),
+        ):
+            ui._toggle_web_frontend()
+
+        self.assertFalse(ui.web_frontend_var.get())
+        self.assertFalse(ui.feature_flags["web_frontend_enabled"])
+
     def test_game_overlay_host_reason_labels_scene_blockers(self):
         from hextech.display.desktop.app import _format_game_overlay_host_reason
 

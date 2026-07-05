@@ -56,6 +56,38 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertEqual(snapshot["context_poller_status"], "degraded")
         self.assertIn("LCU offline", snapshot["context_poller_error"])
 
+    def test_context_poller_starts_before_sidecar_cold_start(self):
+        from hextech.overlay.lifecycle import GameOverlayController
+
+        calls: list[str] = []
+
+        class FakeProcess:
+            pid = 123
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                return None
+
+            def wait(self, timeout=None):
+                return None
+
+            def kill(self):
+                return None
+
+        controller = GameOverlayController(
+            start_host_func=lambda: (calls.append("host"), FakeProcess())[1],
+            start_sidecar_func=lambda: (calls.append("sidecar"), FakeProcess())[1],
+            start_context_poller_func=lambda: (calls.append("context"), object())[1],
+            prepare_data_func=lambda: calls.append("prepare"),
+            write_inactive_func=lambda: calls.append("inactive"),
+        )
+
+        controller.start()
+
+        self.assertEqual(calls[:4], ["prepare", "inactive", "context", "sidecar"])
+
 
 if __name__ == "__main__":
     unittest.main()

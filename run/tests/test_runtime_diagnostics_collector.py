@@ -308,6 +308,10 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             self.assertEqual(validation["hint_cache"]["zero_stats_hint_count"], 1)
             self.assertEqual(validation["render_status"]["status_counts"]["READY"], 1)
             self.assertEqual(validation["render_status"]["context"]["champion_id"], "266")
+            self.assertEqual(summary["state"]["web_frontend"]["status"], "web_disabled_until_user_action")
+            self.assertTrue(
+                any("web_disabled_until_user_action" in item for item in validation["attention_items"])
+            )
             self.assertIn("quick_customization_scope", validation)
             self.assertTrue(trace["acceptance_observations"]["saw_multiple_hextech_selections"])
             self.assertTrue(trace["acceptance_observations"]["saw_body_shard"])
