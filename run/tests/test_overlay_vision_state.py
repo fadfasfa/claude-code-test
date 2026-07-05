@@ -57,7 +57,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         hover_event["source"].update(
             {
                 "scene_present": False,
-                "selection_button_present": False,
+                "selection_button_present": True,
                 "cursor_over_cards": True,
                 "card_residue": True,
             }
@@ -89,7 +89,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         hover_event["source"].update(
             {
                 "scene_present": False,
-                "selection_button_present": False,
+                "selection_button_present": True,
                 "cursor_over_cards": True,
                 "card_residue": True,
             }
@@ -105,6 +105,31 @@ class OverlayVisionStateTests(unittest.TestCase):
 
         self.assertFalse(expired["active"])
         self.assertEqual(expired["source"]["reason"], "hover_occluded_expired")
+
+    def test_post_selection_cursor_residue_exits_without_long_hover_hold(self):
+        from hextech.overlay.vision.state import RESIDUE_HOLD_FRAMES, SelectionTracker
+
+        tracker = SelectionTracker()
+        tracker.update(_selection_event())
+        tracker.update(_selection_event())
+
+        clicked_event = _selection_event()
+        clicked_event["source"].update(
+            {
+                "scene_present": False,
+                "selection_button_present": False,
+                "cursor_over_cards": True,
+                "card_residue": True,
+                "name_residue": [True, True, False],
+            }
+        )
+        clicked_event["_raw_slots"] = []
+
+        results = [tracker.update(clicked_event) for _ in range(RESIDUE_HOLD_FRAMES + 1)]
+
+        self.assertTrue(all(result["source"]["reason"] != "hover_occluded" for result in results))
+        self.assertFalse(results[-1]["active"])
+        self.assertEqual(results[-1]["source"]["reason"], "scene_residue_expired")
 
     def test_non_hover_residue_still_expires(self):
         from hextech.overlay.vision.state import SelectionTracker
@@ -133,6 +158,51 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertTrue(second["active"])
         self.assertFalse(expired["active"])
         self.assertEqual(expired["source"]["reason"], "scene_residue_expired")
+
+    def test_selection_active_partial_progress_writes_on_slot_changes(self):
+        from hextech.overlay.vision import sidecar
+
+        first_partial = {
+            "active": False,
+            "source": {
+                "selection_window_active": True,
+                "gate_state": "visible_partial",
+                "ready_slots": 1,
+                "reason": "",
+            },
+            "slots": [
+                {"slot": 0, "state": "ready", "augment_id": "augment_a"},
+                {"slot": 1, "state": "detecting", "augment_id": ""},
+                {"slot": 2, "state": "detecting", "augment_id": ""},
+            ],
+        }
+        second_partial = {
+            "active": False,
+            "source": {
+                "selection_window_active": True,
+                "gate_state": "visible_partial",
+                "ready_slots": 2,
+                "reason": "",
+            },
+            "slots": [
+                {"slot": 0, "state": "ready", "augment_id": "augment_a"},
+                {"slot": 1, "state": "ready", "augment_id": "augment_b"},
+                {"slot": 2, "state": "detecting", "augment_id": ""},
+            ],
+        }
+
+        first_signature = sidecar._loop_event_signature(first_partial)
+
+        self.assertNotEqual(first_signature, sidecar._loop_event_signature(second_partial))
+        self.assertTrue(
+            sidecar.should_write_loop_event(
+                second_partial,
+                last_signature=first_signature,
+                last_write_at=1000.0,
+                now=1000.16,
+                heartbeat_seconds=60.0,
+            )
+        )
 
 
 if __name__ == "__main__":

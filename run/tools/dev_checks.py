@@ -3855,6 +3855,7 @@ def check_overlay_vision_sidecar_contract() -> None:
     assert stable["source"]["content_ready"] is True
 
     hover_detection = json.loads(json.dumps(missing_button_detection, ensure_ascii=False))
+    hover_detection["source"]["selection_button_present"] = True
     hover_detection["source"]["cursor_over_cards"] = True
     hover_detection["source"]["card_residue"] = True
     hover_tracker = SelectionTracker()
@@ -3866,6 +3867,17 @@ def check_overlay_vision_sidecar_contract() -> None:
         assert hover_result["active"] is True
         assert hover_result["source"]["hover_occluded"] is True
         assert [slot["augment_id"] for slot in hover_result["slots"]] == stable_signature_before_hover
+
+    clicked_residue_detection = json.loads(json.dumps(missing_button_detection, ensure_ascii=False))
+    clicked_residue_detection["source"]["cursor_over_cards"] = True
+    clicked_residue_detection["source"]["card_residue"] = True
+    clicked_residue_tracker = SelectionTracker()
+    clicked_residue_tracker.update(detection)
+    clicked_residue_tracker.update(detection)
+    clicked_residue_results = [clicked_residue_tracker.update(clicked_residue_detection) for _index in range(3)]
+    assert all(result["source"]["reason"] != "hover_occluded" for result in clicked_residue_results)
+    assert clicked_residue_results[-1]["active"] is False
+    assert clicked_residue_results[-1]["source"]["reason"] == "scene_residue_expired"
 
     residue_tracker = SelectionTracker()
     residue_tracker.update(detection)
@@ -4113,6 +4125,23 @@ def check_overlay_vision_sidecar_contract() -> None:
         now=1002.0,
         heartbeat_seconds=60.0,
     ) is False
+    progressive_one_ready = dict(stable_partial)
+    progressive_one_ready["source"] = dict(stable_partial["source"], ready_slots=1)
+    progressive_one_ready["slots"] = [
+        dict(stable_partial["slots"][0]),
+        {"slot": 1, "state": "detecting", "augment_id": "", "name": ""},
+        dict(stable_partial["slots"][2]),
+    ]
+    first_partial_signature = overlay_vision_sidecar._loop_event_signature(progressive_one_ready)
+    assert first_partial_signature[0] == "selection"
+    assert overlay_vision_sidecar._loop_event_signature(stable_partial) != first_partial_signature
+    assert overlay_vision_sidecar.should_write_loop_event(
+        stable_partial,
+        last_signature=first_partial_signature,
+        last_write_at=1001.0,
+        now=1001.16,
+        heartbeat_seconds=60.0,
+    ) is True
 
     class StopLoop(Exception):
         pass
@@ -7186,24 +7215,61 @@ print(json.dumps(blocked))
         args.update(overrides)
         return overlay_host.decide_visibility(**args)
 
-    # 显隐矩阵：选择窗口已进入时先显示 detecting/partial，避免三槽稳定前完全空窗。
-    assert decide(event_visible=False, content_ready=False) == (True, "detecting")
+    # 显隐矩阵：host 负责对局/窗口 gate，选择界面 inactive 时正常模式必须收窗。
+    assert decide(event_visible=False, content_ready=False) == (True, "visible_detecting")
     assert decide() == (True, "visible_ready")
     assert decide(selection_window_active=False) == (False, "selection_window_inactive")
     assert decide(selection_window_active=None) == (True, "visible_ready")
     assert decide(content_ready=False, ready_slots=1) == (True, "visible_partial")
     assert decide(content_ready=False, ready_slots=2) == (True, "visible_partial")
     for overrides in (
-        {"event_error": "event_expired", "event_visible": False},
-        {"blocking_modal": True},
         {"game_foreground": False},
         {"user_enabled": False},
-        {"scoreboard_key_down": True},
-        {"event_fresh_after_tab": False},
+        {"gameflow_in_progress": False},
+        {"game_renderable": False},
     ):
         assert decide(**overrides)[0] is False
     assert decide(event_error="event_expired", event_visible=False, stale_event_hold=True) == (False, "event_expired")
+    assert decide(blocking_modal=True) == (False, "blocking_modal_present")
+    assert decide(scoreboard_key_down=True) == (False, "scoreboard_key_down")
+    assert decide(event_fresh_after_tab=False) == (False, "event_stale_after_tab")
     assert decide(game_foreground=False, diagnostic_mode=True) == (True, "diagnostic:game_not_foreground")
+    from hextech.display.desktop import runtime as desktop_runtime
+
+    assert desktop_runtime.resolve_client_overlay_policy(
+        client_visible=True,
+        game_hwnd_renderable=False,
+        gameflow_in_progress=True,
+        live_client_in_progress=False,
+        client_active=True,
+        overlay_active=False,
+        recent_client_context=False,
+    ) == (False, False)
+    assert desktop_runtime.resolve_client_overlay_policy(
+        client_visible=True,
+        game_hwnd_renderable=False,
+        gameflow_in_progress=False,
+        live_client_in_progress=True,
+        client_active=True,
+        overlay_active=False,
+        recent_client_context=False,
+    ) == (False, False)
+
+    class EmptyLiveStateResponse:
+        status_code = 200
+
+        def json(self):
+            return {"selected_champion_ids": [], "bench_champion_ids": [], "local_champion_id": 0}
+
+    class EmptyLiveStateSession:
+        def get(self, *_args, **_kwargs):
+            return EmptyLiveStateResponse()
+
+    with (
+        patch.object(desktop_runtime, "_web_frontend_available", return_value=True),
+        patch.object(desktop_runtime, "_resolve_redirect_base", return_value="http://127.0.0.1:8000"),
+    ):
+        assert desktop_runtime._fetch_web_live_state(type("Ui", (), {"session": EmptyLiveStateSession()})()) == (None, None)
     assert overlay_host.build_overlay_window_config()["event_poll_ms"] == 120
     hotkey_visibility = {"user_enabled": True}
     hotkeys: queue.Queue[str] = queue.Queue()
@@ -7252,6 +7318,7 @@ print(json.dumps(blocked))
     with (
         patch.object(overlay_host, "_find_target_game_window", return_value=None),
         patch.object(overlay_host, "_is_game_window_foreground", return_value=True),
+        patch.object(overlay_host, "_refresh_gameflow_in_progress", return_value=True),
     ):
         overlay_host._schedule_event_render(
             FakeRoot(), hidden_canvas, config, visibility, queue.Queue(), data_source=hidden_source
@@ -7318,6 +7385,7 @@ print(json.dumps(blocked))
     with (
         patch.object(overlay_host, "_find_target_game_window", return_value=None),
         patch.object(overlay_host, "_ensure_overlay_window_styles", return_value=True),
+        patch.object(overlay_host, "_refresh_gameflow_in_progress", return_value=True),
     ):
         overlay_host._schedule_event_render(
             DiagnosticRoot(),
@@ -7328,7 +7396,7 @@ print(json.dumps(blocked))
             data_source=diagnostic_source,
     )
     assert diagnostic_visibility["window_visible"] is True
-    assert diagnostic_visibility["visibility_reason"] == "diagnostic:game_not_foreground"
+    assert diagnostic_visibility["visibility_reason"] == "diagnostic:game_window_missing"
     assert any("Hextech overlay diagnostic" in str(call.get("text")) for call in diagnostic_canvas.text_calls)
     assert diagnostic_source.hint_reads == 0 and diagnostic_source.context_reads == 0
 
@@ -7343,7 +7411,11 @@ print(json.dumps(blocked))
     }
     stale_config = dict(diagnostic_config)
     stale_config.update({"diagnostic_mode": False, "no_activate": False})
-    with patch.object(overlay_host, "_is_game_window_foreground", return_value=True):
+    with (
+        patch.object(overlay_host, "_is_game_window_foreground", return_value=True),
+        patch.object(overlay_host, "is_window_renderable", return_value=True),
+        patch.object(overlay_host, "_refresh_gameflow_in_progress", return_value=True),
+    ):
         assert overlay_host._sync_event_visibility(
             DiagnosticRoot(),
             stale_config,
@@ -7441,17 +7513,18 @@ print(json.dumps(blocked))
         def geometry(self, _value):
             raise AssertionError("隐藏状态只允许记录 pending geometry")
 
-    hidden_geometry_visibility = {"window_visible": False}
-    with patch.object(
-        overlay_host,
-        "_find_target_game_window",
-        return_value=(321, (10, 20, 1930, 1100)),
-    ):
-        overlay_host._refresh_target_window(
-            GeometryMustStayHidden(),
-            config,
-            hidden_geometry_visibility,
-        )
+    hidden_geometry_visibility = {
+        "window_visible": False,
+        "window_target_poller": overlay_host.WindowTargetPoller(
+            [],
+            initial_target=(321, (10, 20, 1930, 1100)),
+        ),
+    }
+    overlay_host._refresh_target_window(
+        GeometryMustStayHidden(),
+        config,
+        hidden_geometry_visibility,
+    )
     assert hidden_geometry_visibility["target_hwnd"] == 321
     assert hidden_geometry_visibility["pending_geometry"] == "1920x1080+10+20"
     assert overlay_host._target_overlay_geometry((-1920, -100, 0, 980), config) == "1920x1080-1920-100"
@@ -7467,13 +7540,12 @@ print(json.dumps(blocked))
     visible_geometry_visibility = {
         "window_visible": True,
         "applied_geometry": "1x1+0+0",
+        "window_target_poller": overlay_host.WindowTargetPoller(
+            [],
+            initial_target=(321, (10, 20, 1930, 1100)),
+        ),
     }
     with (
-        patch.object(
-            overlay_host,
-            "_find_target_game_window",
-            return_value=(321, (10, 20, 1930, 1100)),
-        ),
         patch.object(overlay_host, "_apply_overlay_rect") as apply_rect,
         patch.object(overlay_host, "_ensure_overlay_window_styles", return_value=True) as ensure_styles,
     ):

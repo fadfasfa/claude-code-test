@@ -254,6 +254,7 @@ class SelectionTracker:
         hover_occluded = bool(
             self.scene_active
             and not scene_present
+            and source.get("selection_button_present")
             and source.get("cursor_over_cards")
             and source.get("card_residue")
         )

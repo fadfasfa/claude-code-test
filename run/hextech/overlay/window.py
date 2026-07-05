@@ -126,6 +126,31 @@ def is_window_renderable(hwnd: int | None) -> bool:
         return False
 
 
+def foreground_root_hwnd() -> int:
+    """返回当前前台窗口的根 HWND；Win32 API 不可用时返回 0。"""
+
+    if not hasattr(ctypes, "windll"):
+        return 0
+    try:
+        foreground = int(ctypes.windll.user32.GetForegroundWindow())
+    except (AttributeError, OSError, TypeError, ValueError):
+        return 0
+    return root_window_hwnd(foreground)
+
+
+def is_window_foreground(hwnd: int | None, *, overlay_hwnd: int | None = None) -> bool:
+    """严格判断目标窗口是否为前台；overlay 自身前台不算游戏前台。"""
+
+    if not hwnd:
+        return False
+    foreground = foreground_root_hwnd()
+    if not foreground:
+        return False
+    if overlay_hwnd and foreground == root_window_hwnd(overlay_hwnd):
+        return False
+    return foreground == root_window_hwnd(hwnd)
+
+
 def _window_process_name(hwnd: int) -> str:
     if win32process is None:
         return ""

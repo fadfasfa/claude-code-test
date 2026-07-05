@@ -279,7 +279,7 @@ class RuntimeSupervisor:
                 self._lease["state"] = "expired"
             self.request_shutdown("lease_expired")
             return
-        if not active_refresh and (last_refresh_at <= 0.0 or (next_refresh_at > 0.0 and now >= next_refresh_at)):
+        if not active_refresh and next_refresh_at > 0.0 and now >= next_refresh_at:
             self.run_refresh_action({"force": False})
 
     def append_event(self, payload: dict[str, Any]) -> None:
