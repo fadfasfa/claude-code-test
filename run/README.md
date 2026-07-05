@@ -194,6 +194,23 @@ overlay hint cache 默认通过统一运行路径读取它，只有缺失时才�
 `%LOCALAPPDATA%/HextechNexus/data/runtime/`，且不接受 `HEXTECH_BASE_DIR`
 把运行态覆盖回便携包根。
 
+### 日志与诊断导出
+
+运行态日志采用双层体系：
+
+- 源码态默认 `HEXTECH_LOG_PROFILE=dev`，写入 `data/runtime/logs/dev/hextech_full.jsonl`、`hextech_runtime_summary.log` 和 `hextech_error.log`。full JSONL 用于开发排障，包含 `run_id`、`correlation_id`、组件、事件、线程、进程、耗时和脱敏后的异常字段，并按 10MB x 5 轮转。
+- 冻结态默认 `packaged`，不写 full debug JSONL，只保留摘要、错误日志和 `state/*.jsonl` 事件尾部，供用户轻量导出。
+- 桌面标题栏右侧的 `诊断` 按钮只导出 `data/runtime/reports/user_diagnostics/<timestamp>.zip`，内容为白名单 state、日志/事件 tail、`summary.json` 和说明文件。
+- 用户导出包不会采集 `debug/`、旧 `reports/`、`raw/`、`cache/`、`profile/`，也会跳过或脱敏 `auth/token/cookie/secret/nonce/lcu/riot` 相关文件和内容。
+
+开发侧重型采集仍使用：
+
+```powershell
+.\.venv\Scripts\python.exe tools/collect_runtime_diagnostics.py
+```
+
+该工具不进入发布包；打包态只使用 `hextech/support/user_diagnostics.py` 中的轻量导出逻辑。
+
 ## 打包与验收
 
 开发阶段默认先运行统一离线自检：

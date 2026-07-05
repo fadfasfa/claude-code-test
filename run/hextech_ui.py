@@ -15,6 +15,9 @@ if __name__ == "__main__":
 
 
 def main() -> None:
+    from hextech.support.log_utils import install_runtime_logging
+
+    install_runtime_logging()
     if "--web-server" in sys.argv:
         from hextech.display.web.app import run_web_server
 

@@ -4,10 +4,13 @@
 """
 
 from hextech.support.python_runtime import ensure_python_311_for_source
+from hextech.support.log_utils import install_runtime_logging
 
 
 if __name__ == "__main__":
     ensure_python_311_for_source()
+
+install_runtime_logging()
 
 from hextech.display.web.app import app, run_web, run_web_server
 

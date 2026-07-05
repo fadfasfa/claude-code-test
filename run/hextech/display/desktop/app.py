@@ -31,6 +31,7 @@ from hextech.scraping.version_sync import (
     load_champion_core_data,
 )
 from hextech.overlay.lifecycle import GameOverlayController
+from hextech.support.user_diagnostics import export_user_diagnostics
 
 from . import runtime as ui_runtime
 
@@ -301,6 +302,23 @@ class HextechUI:
         # 双击标题栏在 320 px / 80 px 之间切换，便于单屏游戏窗口模式让出主屏视线
         self.title_bar.bind("<Double-Button-1>", self._toggle_collapse)
 
+        self.diagnostics_button = tk.Button(
+            self.title_frame,
+            text="诊断",
+            command=self._start_user_diagnostics_export,
+            bg=UI_COLORS["surface_alt"],
+            fg=UI_COLORS["muted"],
+            activebackground=UI_COLORS["surface"],
+            activeforeground=UI_COLORS["text"],
+            relief=tk.FLAT,
+            bd=0,
+            padx=8,
+            pady=3,
+            font=("Microsoft YaHei", 8, "bold"),
+            cursor="hand2",
+        )
+        self.diagnostics_button.pack(side=tk.RIGHT, padx=(0, 8), pady=6)
+
         self.feature_frame = tk.Frame(self.root, bg=UI_COLORS["base"], padx=10, pady=8)
         self.feature_frame.pack(fill=tk.X)
         self._feature_toggle_widgets = []
@@ -440,6 +458,38 @@ class HextechUI:
             self.threads.append(thread)
         thread.start()
         return thread
+
+    def _start_user_diagnostics_export(self) -> None:
+        """后台导出用户可发送的轻量诊断包，避免 UI 线程被 zip 写入阻塞。"""
+
+        if hasattr(self, "diagnostics_button"):
+            self.diagnostics_button.config(state=tk.DISABLED)
+        self._set_status("正在导出诊断包...", UI_COLORS["warn"])
+
+        def worker() -> None:
+            try:
+                result = export_user_diagnostics()
+            except Exception as exc:
+                logger.exception("用户诊断导出失败。")
+                error_text = str(exc)
+
+                def fail() -> None:
+                    if hasattr(self, "diagnostics_button"):
+                        self.diagnostics_button.config(state=tk.NORMAL)
+                    self._set_status(f"诊断导出失败: {error_text}", UI_COLORS["error"])
+
+                self._run_on_ui_thread(fail)
+                return
+
+            def finish() -> None:
+                if hasattr(self, "diagnostics_button"):
+                    self.diagnostics_button.config(state=tk.NORMAL)
+                zip_path = result.zip_path
+                self._set_status(f"诊断已导出: {zip_path}", UI_COLORS["green"])
+
+            self._run_on_ui_thread(finish)
+
+        self._start_tracked_thread(worker, name="hextech-user-diagnostics-export")
 
     def _collect_feature_flags_from_controls(self) -> dict:
         return {
