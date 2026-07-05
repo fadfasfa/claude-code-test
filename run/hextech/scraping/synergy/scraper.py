@@ -47,7 +47,7 @@ from hextech.scraping._paths import RUNTIME_DATA_DIR, STATIC_DATA_DIR
 from hextech.catalog.version_catalog import load_apexlol_slug_map, load_augment_manifest_entries, load_champion_core_data
 from hextech.scraping.icon_resolver import normalize_augment_name
 from hextech.scraping.transport.scrapling_client import ScraplingFetchResult, fetch_stealthy_text, fetch_text
-from hextech.support.log_utils import install_summary_logging, log_task_summary
+from hextech.support.log_utils import install_runtime_logging, log_task_summary
 
 
 BASE_DIR = str(Path(RUNTIME_DATA_DIR).parents[1])
@@ -163,7 +163,7 @@ TIER_LABELS = {
     "银色": "白银",
 }
 
-install_summary_logging(level=logging.INFO, fmt="%(asctime)s - %(levelname)s - %(message)s")
+install_runtime_logging()
 logger = logging.getLogger(__name__)
 DEFAULT_REQUEST_USER_AGENT = "HextechApexSnapshot/1.0 (manual offline sync)"
 

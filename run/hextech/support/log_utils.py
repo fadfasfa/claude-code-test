@@ -149,6 +149,21 @@ class RedactingTextFormatter(logging.Formatter):
         return redact_log_value(super().format(record))
 
 
+class RuntimeRotatingFileHandler(RotatingFileHandler):
+    """Windows 上轮转文件可能被其他进程短暂占用；失败时保留本次日志写入。"""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            if self.shouldRollover(record):
+                try:
+                    self.doRollover()
+                except OSError:
+                    pass
+            logging.FileHandler.emit(self, record)
+        except Exception:
+            self.handleError(record)
+
+
 def get_unified_log_file() -> str:
     return get_runtime_summary_log_file()
 
@@ -278,6 +293,21 @@ def _remove_hextech_runtime_handlers(root: logging.Logger, paths: dict[str, Path
             handler.close()
 
 
+def _runtime_handler_names(root: logging.Logger) -> set[str]:
+    return {
+        str(getattr(handler, "_hextech_handler_name", ""))
+        for handler in root.handlers
+        if getattr(handler, "_hextech_runtime_logging", False)
+    }
+
+
+def _expected_runtime_handler_names(profile: str) -> set[str]:
+    names = {"runtime_summary", "runtime_error", "runtime_stream"}
+    if profile == "dev":
+        names.add("dev_full_jsonl")
+    return names
+
+
 def _new_rotating_handler(
     path: Path,
     *,
@@ -289,11 +319,23 @@ def _new_rotating_handler(
     profile: str,
 ) -> RotatingFileHandler:
     path.parent.mkdir(parents=True, exist_ok=True)
-    handler = RotatingFileHandler(path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
+    handler = RuntimeRotatingFileHandler(path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
     handler.setLevel(level)
     handler.setFormatter(formatter)
     handler._hextech_runtime_logging = True  # type: ignore[attr-defined]
     handler._hextech_handler_name = name  # type: ignore[attr-defined]
+    handler._hextech_preserve_level = True  # type: ignore[attr-defined]
+    _add_common_filters(handler, profile=profile)
+    return handler
+
+
+def _new_stream_handler(*, name: str, level: int, formatter: logging.Formatter, profile: str) -> logging.Handler:
+    handler = logging.StreamHandler()
+    handler.setLevel(level)
+    handler.setFormatter(formatter)
+    handler._hextech_runtime_logging = True  # type: ignore[attr-defined]
+    handler._hextech_handler_name = name  # type: ignore[attr-defined]
+    handler._hextech_preserve_level = True  # type: ignore[attr-defined]
     _add_common_filters(handler, profile=profile)
     return handler
 
@@ -301,7 +343,10 @@ def _new_rotating_handler(
 def install_runtime_logging(profile: Literal["dev", "packaged", "test"] | None = None) -> None:
     resolved_profile = _resolve_log_profile(profile)
     root = logging.getLogger()
-    if getattr(root, "_hextech_runtime_logging_profile", None) == resolved_profile:
+    if (
+        getattr(root, "_hextech_runtime_logging_profile", None) == resolved_profile
+        and _expected_runtime_handler_names(resolved_profile).issubset(_runtime_handler_names(root))
+    ):
         return
 
     paths = get_runtime_log_paths()
@@ -326,8 +371,15 @@ def install_runtime_logging(profile: Literal["dev", "packaged", "test"] | None =
         formatter=summary_formatter,
         profile=resolved_profile,
     )
+    stream_handler = _new_stream_handler(
+        name="runtime_stream",
+        level=logging.WARNING,
+        formatter=summary_formatter,
+        profile=resolved_profile,
+    )
     root.addHandler(summary_handler)
     root.addHandler(error_handler)
+    root.addHandler(stream_handler)
 
     if resolved_profile == "dev":
         full_handler = _new_rotating_handler(
@@ -364,6 +416,8 @@ def install_summary_logging(
         if not root.handlers:
             logging.basicConfig(level=logging.WARNING, format=fmt)
         for handler in root.handlers:
+            if getattr(handler, "_hextech_runtime_logging", False):
+                continue
             handler.setFormatter(RedactingTextFormatter(fmt))
             if not getattr(handler, "_hextech_preserve_level", False):
                 if isinstance(handler, logging.FileHandler):
@@ -378,11 +432,15 @@ def install_summary_logging(
 
     logging.basicConfig(level=level, handlers=handlers, force=True)
     root = logging.getLogger()
+    if hasattr(root, "_hextech_runtime_logging_profile"):
+        delattr(root, "_hextech_runtime_logging_profile")
     if not any(isinstance(existing, SummaryOnlyFilter) for existing in root.filters):
         root.addFilter(summary_filter)
     if not any(isinstance(existing, SourceNameFilter) for existing in root.filters):
         root.addFilter(source_filter)
     for handler in root.handlers:
+        if getattr(handler, "_hextech_runtime_logging", False):
+            continue
         handler.setFormatter(RedactingTextFormatter(fmt))
         if not getattr(handler, "_hextech_preserve_level", False):
             if isinstance(handler, logging.FileHandler):
@@ -395,9 +453,13 @@ def install_summary_logging(
             handler.addFilter(source_filter)
 
 
-def write_structured_event(component: str, event: str, **fields) -> None:
-    paths = get_runtime_log_paths()
-    target = paths["events"]
+def write_structured_event(component: str, event: str, *, target_path: Path | None = None, **fields) -> None:
+    """写入低频运行态结构化事件。
+
+    这里面向 lifecycle、refresh、supervisor 等低频诊断事件；overlay/vision 热路径如需接入，应先改为队列或批量写入。
+    """
+
+    target = Path(target_path) if target_path is not None else get_runtime_log_paths()["events"]
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": _RUNTIME_EVENT_SCHEMA_VERSION,

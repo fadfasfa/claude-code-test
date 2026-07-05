@@ -42,6 +42,7 @@ from hextech.catalog.runtime_store import (
     load_synergy_refresh_status,
 )
 from hextech.support.atomic_io import atomic_write_json
+from hextech.support.log_utils import write_structured_event
 from hextech.scraping.hextech.scraper import hextech_refresh_blocked, main_scraper
 from hextech.scraping.synergy.scraper import main as run_apex_spider
 from hextech.scraping.synergy.scraper import SYNERGY_REFRESH_META_VERSION
@@ -145,18 +146,18 @@ def _append_runtime_event(event: dict) -> None:
     target = _runtime_event_log_path()
     ensure_private_runtime_dir(target.parent)
     payload = dict(event)
+    component = str(payload.pop("component", "refresh") or "refresh")
+    event_name = str(payload.pop("event", "runtime.event") or "runtime.event")
     payload.setdefault("schema_version", RUNTIME_EVENT_SCHEMA_VERSION)
     payload.setdefault("timestamp", _utc_now_iso())
     payload.setdefault("level", "INFO")
-    payload.setdefault("component", "refresh")
     payload.setdefault("supervisor_instance_id", os.getenv("HEXTECH_SUPERVISOR_INSTANCE_ID", "standalone"))
     payload.setdefault("component_instance_id", os.getenv("HEXTECH_REFRESH_INSTANCE_ID", _PUBLISHER_INSTANCE_ID))
     payload.setdefault("publisher_instance_id", _PUBLISHER_INSTANCE_ID)
     payload.setdefault("generation", int(os.getenv("HEXTECH_REFRESH_GENERATION", "1") or "1"))
     if "error_message_sanitized" in payload:
         payload["error_message_sanitized"] = sanitize_event_message(payload.get("error_message_sanitized"))
-    with open(target, "a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+    write_structured_event(component, event_name, target_path=target, **payload)
 
 
 def _new_correlation_id() -> str:

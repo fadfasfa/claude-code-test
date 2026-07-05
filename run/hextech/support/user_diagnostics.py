@@ -7,6 +7,8 @@ from __future__ import annotations
 """
 
 import json
+import re
+import time
 import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -47,6 +49,9 @@ LOG_TAIL_ALLOWLIST = {
     "hextech_error.log",
 }
 SENSITIVE_REPORT_DIRS = {"state", "logs"}
+TIMESTAMP_PREFIX_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[,.]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)"
+)
 
 
 @dataclass(frozen=True)
@@ -90,18 +95,71 @@ def _read_json(path: Path) -> dict:
     return {str(key): _redact_json_value(str(key), value) for key, value in payload.items()}
 
 
-def _tail_lines(path: Path, line_count: int) -> list[str]:
+def _timestamp_to_epoch(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    if "," in normalized:
+        normalized = normalized.replace(",", ".", 1)
+    try:
+        return datetime.fromisoformat(normalized).timestamp()
+    except ValueError:
+        return None
+
+
+def _line_timestamp(line: str) -> float | None:
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        for key in ("generated_at", "updated_at", "timestamp"):
+            parsed = _timestamp_to_epoch(payload.get(key))
+            if parsed is not None:
+                return parsed
+
+    match = TIMESTAMP_PREFIX_RE.match(line.strip())
+    if not match:
+        return None
+    return _timestamp_to_epoch(match.group(1))
+
+
+def _recent_tail_lines(path: Path, *, line_count: int, since_timestamp: float | None) -> list[str]:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
-    if line_count <= 0:
+    if line_count <= 0 or not lines:
+        return []
+    if since_timestamp is None:
+        return lines[-line_count:]
+
+    parsed = [(line, _line_timestamp(line)) for line in lines]
+    if any(timestamp is not None for _, timestamp in parsed):
+        filtered: list[str] = []
+        keep_continuation = False
+        for line, timestamp in parsed:
+            if timestamp is not None:
+                keep_continuation = timestamp >= since_timestamp
+            if keep_continuation:
+                filtered.append(line)
+        return filtered[-line_count:]
+
+    try:
+        if path.stat().st_mtime < since_timestamp:
+            return []
+    except OSError:
         return []
     return lines[-line_count:]
 
 
-def _write_text_tail(source: Path, target: Path, *, tail_lines: int) -> bool:
-    lines = _tail_lines(source, tail_lines)
+def _write_text_tail(source: Path, target: Path, *, tail_lines: int, since_timestamp: float | None) -> bool:
+    lines = _recent_tail_lines(source, line_count=tail_lines, since_timestamp=since_timestamp)
     if not lines:
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -161,6 +219,7 @@ def export_user_diagnostics(
     copied_files = 0
     warnings: list[str] = []
     skipped_sensitive = _iter_skipped_sensitive(runtime_root)
+    since_timestamp = time.time() - max(1, int(recent_minutes)) * 60
 
     state_dir = runtime_root / "state"
     for filename in sorted(STATE_JSON_ALLOWLIST):
@@ -174,7 +233,12 @@ def export_user_diagnostics(
         source = state_dir / filename
         if not source.is_file() or _is_sensitive_path(source):
             continue
-        if _write_text_tail(source, bundle_dir / "state_tail" / f"{filename}.tail", tail_lines=tail_lines):
+        if _write_text_tail(
+            source,
+            bundle_dir / "state_tail" / f"{filename}.tail",
+            tail_lines=tail_lines,
+            since_timestamp=since_timestamp,
+        ):
             copied_files += 1
 
     logs_dir = runtime_root / "logs"
@@ -182,7 +246,12 @@ def export_user_diagnostics(
         source = logs_dir / filename
         if not source.is_file() or _is_sensitive_path(source):
             continue
-        if _write_text_tail(source, bundle_dir / "logs_tail" / f"{filename}.tail", tail_lines=tail_lines):
+        if _write_text_tail(
+            source,
+            bundle_dir / "logs_tail" / f"{filename}.tail",
+            tail_lines=tail_lines,
+            since_timestamp=since_timestamp,
+        ):
             copied_files += 1
 
     readme = (
