@@ -60,15 +60,16 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 - 用户明确要求新建 worktree 时，默认使用 `codex/` 分支前缀和 managed root。
 - Codex worktree root：`C:\Users\apple\worktrees\codex`。
 - Claude Code worktree root：`C:\Users\apple\_worktrees\cc`。
+- cleanup-only legacy worktree root：`C:\Users\apple\worktrees\claudecode-*`。该 root 只用于清理历史平铺 worktree，不作为新建 worktree 目标。
 - 默认创建新分支，不在主工作树执行 `checkout` / `switch`。
 - 目标路径、目标分支或目标 worktree 已存在时停止，不覆盖。
 - 清理、移除、强制覆盖或修改受管 metadata 必须有用户当前轮单独点名授权。
 
 ## cleanup-worktrees 边界
 
-`cleanup-worktrees` 对话入口默认只清理 PR 合并后的本地残留：已合并到 base、相对 base 无领先提交、无 tracked 修改、无 `??` untracked、受管或仓库内临时 review 根下且非 protected 的 worktree / 本地分支，以及已并入 base 的 stale `origin/*` 本机缓存。普通 ignored runtime/cache/log/data 只作为报告项，不阻断 stale worktree 整体移除；凭据类 ignored 文件仍阻断且不得读取内容。
+`cleanup-worktrees` 对话入口默认用快路径清理 PR 合并后的本地残留：已合并到刷新后的 base、相对 base 无领先提交、无 tracked 修改、无 `??` untracked、standard managed root、legacy cleanup-only root 或仓库内临时 review 根下且非 protected 的 worktree / 本地分支，以及已并入 base 的 stale `origin/*` 本机缓存。普通 ignored runtime/cache/log/data 只作为报告项，不阻断 stale worktree 整体移除；凭据类 ignored 文件仍阻断且不得读取内容。如用户显式给出 `--no-prune`，跳过 stale `origin/*` 本机缓存清理。默认输出短摘要：`removed worktrees`、`deleted local branches`、`deleted stale origin refs`、`skipped`。
 
-`audit`、`--dry-run`、`--audit`、`只审计` 只审计。未合并、仍领先、dirty、存在 `??` untracked、ignored 输出含凭据或登录态名称、非受管、protected 或 GitHub 上真实存在的远端分支只列清单并保持不变。`git ls-remote --heads origin` 失败时跳过 stale remote ref 清理。不得删除真实远端分支，不得升级到 `git worktree remove --force`、`branch -D`、`git clean` 或 `reset --hard`。
+`audit`、`--dry-run`、`--audit`、`只审计` 只审计且不得 `fetch`；如果远端 base 与本机 base 不同，只能标记 `base-stale-needs-fetch` / `needs-fetch-for-cleanup`，不得用 stale base 给出最终清理结论。默认清理模式可先执行一次定向 `git fetch --no-tags origin refs/heads/<base_branch>:refs/remotes/origin/<base_branch>` 刷新 base；fetch 失败时跳过所有依赖 base 的候选并标记 `fetch-failed-skip`。未合并、仍领先、dirty、存在 `??` untracked、ignored 输出含凭据或登录态名称、非受管、protected、远端列表失败或 GitHub 上真实存在的远端分支触发重审计，只列候选表和原因码并保持不变。不得删除真实远端分支，不得升级到 `git worktree remove --force`、`branch -D`、`git fetch --prune`、`git remote prune origin`、未限定 remote/ref 的 prune、`git clean` 或 `reset --hard`。
 
 ## Commit 和 PR 语言
 
