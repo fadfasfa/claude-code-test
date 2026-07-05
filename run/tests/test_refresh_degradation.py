@@ -38,6 +38,113 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertIs(payload["hextech_degraded"], False)
             self.assertEqual(payload["hextech_warning"], "")
 
+    def test_startup_status_includes_hextech_refresh_summary(self):
+        from hextech.scraping import heal_worker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status_file = tmp_path / "startup_status.json"
+            active_csv = tmp_path / "Hextech_Data_2026-07-02.csv"
+            active_csv.write_text("valid\n", encoding="utf-8")
+
+            scraper_status = {
+                "last_result": "fallback",
+                "reason": "thread_pool_timeout",
+                "last_attempt_id": "attempt-1",
+                "failure_stage": "detail_initial",
+                "cdn_hit_count": 42,
+                "slow_path_count": 9,
+                "success_rows": 1200,
+                "failure_samples": [{"champion_id": "266", "reason": "timeout"}],
+                "fallback_used": True,
+            }
+
+            with (
+                mock.patch.object(heal_worker, "build_runtime_state_path", lambda name: str(status_file)),
+                mock.patch.object(heal_worker, "load_scraper_status", lambda: scraper_status),
+                mock.patch.object(heal_worker, "get_latest_csv", lambda: str(active_csv)),
+                mock.patch.object(heal_worker, "get_latest_valid_csv", lambda: str(active_csv)),
+                mock.patch.object(heal_worker, "CORE_DATA_FILE", str(active_csv)),
+                mock.patch.object(heal_worker, "build_synergy_data_path", lambda: str(active_csv)),
+                mock.patch.object(heal_worker, "is_augment_icon_prefetch_ready", lambda: True),
+            ):
+                heal_worker._write_startup_status()
+
+            payload = json.loads(status_file.read_text(encoding="utf-8"))
+            refresh = payload["hextech_refresh"]
+            self.assertEqual(refresh["attempt_id"], "attempt-1")
+            self.assertEqual(refresh["failure_stage"], "detail_initial")
+            self.assertEqual(refresh["cdn_hit_count"], 42)
+            self.assertTrue(refresh["fallback_used"])
+
+    def test_scraper_failure_records_attempt_diagnostics(self):
+        from hextech.scraping.hextech import scraper
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status_file = tmp_path / "scraper_status.json"
+            active_csv = tmp_path / "Hextech_Data_2026-07-02.csv"
+            active_csv.write_text("valid\n", encoding="utf-8")
+            attempt = scraper._new_attempt_context()
+            attempt.update(
+                {
+                    "total_heroes": 173,
+                    "completed_heroes": 120,
+                    "cdn_hit_count": 80,
+                    "slow_path_count": 40,
+                    "success_rows": 2400,
+                    "failure_samples": [{"champion_id": "266", "reason": "thread_pool_timeout"}],
+                }
+            )
+
+            with (
+                mock.patch.object(scraper, "build_runtime_state_path", lambda name: str(status_file)),
+                mock.patch.object(scraper, "load_scraper_status", lambda: {}),
+                mock.patch.object(scraper, "get_latest_valid_csv", lambda: str(active_csv)),
+            ):
+                result = scraper._finish_refresh_failure(
+                    "thread_pool_timeout",
+                    started_at=0.0,
+                    attempt=attempt,
+                    failure_stage="detail_initial",
+                )
+
+            payload = json.loads(status_file.read_text(encoding="utf-8"))
+            self.assertTrue(result)
+            self.assertEqual(payload["last_result"], "fallback")
+            self.assertEqual(payload["failure_stage"], "detail_initial")
+            self.assertEqual(payload["last_attempt"]["result"], "fallback")
+            self.assertEqual(payload["last_attempt"]["completed_heroes"], 120)
+            self.assertTrue(payload["fallback_used"])
+
+    def test_heal_worker_exception_clears_in_progress_tasks(self):
+        from hextech.scraping import heal_worker
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status_file = tmp_path / "startup_status.json"
+            active_csv = tmp_path / "Hextech_Data_2026-07-02.csv"
+            active_csv.write_text("valid\n", encoding="utf-8")
+
+            with (
+                mock.patch.object(heal_worker, "build_runtime_state_path", lambda name: str(status_file)),
+                mock.patch.object(heal_worker, "build_runtime_lock_path", lambda name: str(tmp_path / name)),
+                mock.patch.object(heal_worker, "LOCK_FILE", tmp_path / "heal_worker.lock"),
+                mock.patch.object(heal_worker, "detect_missing_artifacts", side_effect=RuntimeError("boom")),
+                mock.patch.object(heal_worker, "load_scraper_status", lambda: {"last_result": "success"}),
+                mock.patch.object(heal_worker, "get_latest_csv", lambda: str(active_csv)),
+                mock.patch.object(heal_worker, "get_latest_valid_csv", lambda: str(active_csv)),
+                mock.patch.object(heal_worker, "CORE_DATA_FILE", str(active_csv)),
+                mock.patch.object(heal_worker, "build_synergy_data_path", lambda: str(active_csv)),
+                mock.patch.object(heal_worker, "is_augment_icon_prefetch_ready", lambda: True),
+            ):
+                report = heal_worker.heal_missing_artifacts()
+
+            payload = json.loads(status_file.read_text(encoding="utf-8"))
+            self.assertIn("heal_worker", report["failed"])
+            self.assertEqual(payload["in_progress_tasks"], [])
+            self.assertIn("heal_worker failed", payload["last_error"])
+
     def test_refresh_result_records_fallback_activation_and_recovery(self):
         from hextech.core import refresh
 

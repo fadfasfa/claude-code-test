@@ -24,7 +24,7 @@ from hextech.scraping.transport.scrapling_client import fetch_text
 from hextech.support.atomic_io import atomic_write_json
 
 DEFAULT_COMBO_URL = "https://arammayhem.com/zh-cn/combo/"
-DEFAULT_OUTPUT = Path("data") / "raw" / "mayhem_combos.raw.json"
+DEFAULT_OUTPUT = Path("data") / "evidence" / "mayhem_combos.raw.json"
 DEFAULT_TIMEOUT_MS = 30_000
 
 

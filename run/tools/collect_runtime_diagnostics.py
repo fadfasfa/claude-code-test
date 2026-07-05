@@ -700,6 +700,58 @@ def _summarize_refresh_events(event_paths: Sequence[Path], *, max_lines: int) ->
     }
 
 
+def _scraper_attempt_summary(state: Mapping[str, Any]) -> dict[str, Any]:
+    """从 startup/scraper 状态派生刷新诊断摘要，避免排查时只读原始 JSON。"""
+
+    startup = state.get("startup_status") if isinstance(state.get("startup_status"), Mapping) else {}
+    scraper = state.get("scraper_status") if isinstance(state.get("scraper_status"), Mapping) else {}
+    attempt = scraper.get("last_attempt") if isinstance(scraper.get("last_attempt"), Mapping) else {}
+    refresh_summary = startup.get("hextech_refresh") if isinstance(startup.get("hextech_refresh"), Mapping) else {}
+    in_progress = list(startup.get("in_progress_tasks") or []) if isinstance(startup.get("in_progress_tasks"), list) else []
+    updated_ts = _float_or_none(startup.get("updated_at"))
+    stale_seconds = None
+    if in_progress and updated_ts is not None:
+        stale_seconds = round(max(0.0, time.time() - updated_ts), 3)
+
+    active_csv = (
+        refresh_summary.get("active_csv")
+        or attempt.get("active_csv")
+        or scraper.get("active_csv")
+        or startup.get("active_hextech_csv")
+        or ""
+    )
+    return {
+        "attempt_id": scraper.get("last_attempt_id") or refresh_summary.get("attempt_id") or attempt.get("attempt_id", ""),
+        "result": attempt.get("result") or scraper.get("last_result", ""),
+        "reason": attempt.get("reason") or scraper.get("reason", ""),
+        "failure_stage": attempt.get("failure_stage") or scraper.get("failure_stage") or refresh_summary.get("failure_stage", ""),
+        "started_at": attempt.get("started_at") or refresh_summary.get("started_at", ""),
+        "ended_at": attempt.get("ended_at") or refresh_summary.get("ended_at", ""),
+        "duration_seconds": attempt.get("duration_seconds"),
+        "total_heroes": attempt.get("total_heroes", 0),
+        "completed_heroes": attempt.get("completed_heroes", 0),
+        "cdn_hit_count": attempt.get("cdn_hit_count", scraper.get("cdn_hit_count", 0)),
+        "slow_path_count": attempt.get("slow_path_count", scraper.get("slow_path_count", 0)),
+        "success_rows": attempt.get("success_rows", scraper.get("success_rows", 0)),
+        "failure_count": attempt.get("failure_count", 0),
+        "failure_samples": attempt.get("failure_samples") or scraper.get("failure_samples", []),
+        "active_csv": active_csv,
+        "active_csv_mtime": scraper.get("active_csv_mtime", 0.0),
+        "fallback_used": bool(
+            attempt.get("fallback_used")
+            or scraper.get("fallback_used")
+            or refresh_summary.get("fallback_used")
+            or startup.get("hextech_degraded")
+        ),
+        "blocked_until": scraper.get("blocked_until", ""),
+        "next_retry_at": scraper.get("next_retry_at", ""),
+        "remote_failure_escalated": bool(scraper.get("remote_failure_escalated", False)),
+        "startup_in_progress_tasks": in_progress,
+        "startup_in_progress_stale_seconds": stale_seconds,
+        "startup_updated_at": startup.get("updated_at", ""),
+    }
+
+
 def _attention_items(
     *,
     trace_entries: Sequence[Mapping[str, Any]],
@@ -745,6 +797,17 @@ def _attention_items(
         items.append("refresh 出现 failed/fallback；海克斯内容缺失可能来自数据刷新链路，而不是 overlay 识别。")
     if int(refresh_actions.get("running_count") or 0) > 0:
         items.append("存在未完成 refresh action；检查 supervisor_events 里的 correlation_id 是否卡住。")
+    scraper_attempt = refresh_summary.get("scraper_attempt") if isinstance(refresh_summary.get("scraper_attempt"), Mapping) else {}
+    if scraper_attempt.get("startup_in_progress_tasks"):
+        items.append(
+            "startup_status 仍有 in_progress_tasks："
+            f"{scraper_attempt.get('startup_in_progress_tasks')}；检查刷新是否卡在 {scraper_attempt.get('failure_stage') or 'unknown'}。"
+        )
+    if scraper_attempt.get("failure_stage") and scraper_attempt.get("result") in {"fallback", "failed"}:
+        items.append(
+            f"最近一次 scraper attempt 在 {scraper_attempt.get('failure_stage')} 失败，"
+            f"fallback_used={bool(scraper_attempt.get('fallback_used'))}。"
+        )
     if host_self_check and not bool(host_self_check.get("event_ok", True)):
         items.append(f"host 自检读取当前事件异常：{host_self_check.get('event_error') or host_self_check.get('error_type') or 'unknown'}。")
     if int(official_summary.get("sample_count") or 0) > 0 and int(official_summary.get("ready_sample_count") or 0) <= 0:
@@ -840,6 +903,7 @@ def _game_validation_summary(
     trace_entries = _trace_entries(state_dir, since_timestamp=trace_since_timestamp)
     trace_summary = _trace_validation_summary(state_dir, since_timestamp=trace_since_timestamp)
     refresh_summary = _summarize_refresh_events(event_paths, max_lines=max_lines)
+    refresh_summary["scraper_attempt"] = _scraper_attempt_summary(state)
     try:
         default_state_dir = (get_runtime_root_dir() / "state").resolve()
         current_state_dir = state_dir.resolve()

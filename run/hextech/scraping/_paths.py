@@ -58,21 +58,24 @@ def get_base_dir() -> str:
     return RUNTIME_BASE_DIR
 
 
-RESOURCE_DIR = get_resource_dir()
+BUNDLE_ROOT_DIR = get_resource_dir()
+# 兼容旧 import 名称；它表示源码/冻结态 bundle 根，不表示旧 run/resources 目录。
+RESOURCE_DIR = BUNDLE_ROOT_DIR
 BASE_DIR = get_base_dir()
 DATA_DIR = os.path.join(BASE_DIR, "data")
-RESOURCE_CONTENT_DIR = os.path.join(BASE_DIR, "resources")
-RESOURCE_IMAGE_DIR = os.path.join(RESOURCE_CONTENT_DIR, "图片资源")
-RESOURCE_VERSION_DATA_DIR = os.path.join(RESOURCE_CONTENT_DIR, "版本数据")
-RESOURCE_STARTUP_SNAPSHOT_DIR = os.path.join(RESOURCE_CONTENT_DIR, "首启快照")
-RESOURCE_DIAGNOSTIC_FIXTURE_DIR = os.path.join(RESOURCE_CONTENT_DIR, "诊断样例")
-RESOURCE_SOURCE_EVIDENCE_DIR = os.path.join(RESOURCE_CONTENT_DIR, "来源证据")
-STATIC_DATA_DIR = RESOURCE_VERSION_DATA_DIR
-INDEX_DATA_DIR = RESOURCE_VERSION_DATA_DIR
+STATIC_CONTENT_DIR = os.path.join(DATA_DIR, "static")
+STATIC_DATA_DIR = os.path.join(STATIC_CONTENT_DIR, "version")
+INDEX_DATA_DIR = STATIC_DATA_DIR
+ASSET_DIR = os.path.join(STATIC_CONTENT_DIR, "assets")
+STARTUP_SEED_DIR = os.path.join(DATA_DIR, "seed", "startup")
+DIAGNOSTIC_FIXTURE_DIR = os.path.join(DATA_DIR, "fixtures", "diagnostics")
+SOURCE_EVIDENCE_DIR = os.path.join(DATA_DIR, "evidence")
+# 兼容旧 import 名称；值已经迁到 data/*，不得再指向 run/resources。
+RESOURCE_CONTENT_DIR = DATA_DIR
+RESOURCE_IMAGE_DIR = ASSET_DIR
+RESOURCE_VERSION_DATA_DIR = STATIC_DATA_DIR
+RESOURCE_STARTUP_SNAPSHOT_DIR = STARTUP_SEED_DIR
+RESOURCE_DIAGNOSTIC_FIXTURE_DIR = DIAGNOSTIC_FIXTURE_DIR
+RESOURCE_SOURCE_EVIDENCE_DIR = SOURCE_EVIDENCE_DIR
 RUNTIME_DATA_DIR = os.path.join(DATA_DIR, "runtime")
-RAW_DATA_DIR = (
-    os.path.join(RUNTIME_DATA_DIR, "raw")
-    if getattr(sys, "frozen", False)
-    else os.path.join(DATA_DIR, "raw")
-)
-ASSET_DIR = RESOURCE_IMAGE_DIR
+RAW_DATA_DIR = os.path.join(RUNTIME_DATA_DIR, "raw")

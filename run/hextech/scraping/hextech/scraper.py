@@ -10,6 +10,7 @@ import re
 import logging
 import shutil
 import traceback
+import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from pathlib import Path
@@ -678,7 +679,104 @@ def hextech_refresh_blocked(status: dict | None = None) -> bool:
     return _timestamp_from_status(payload.get("blocked_until")) > time.time()
 
 
-def _write_scraper_status(result: str, reason: str = "", *, active_csv: str = "") -> dict:
+def _new_attempt_context() -> dict:
+    """记录一次刷新尝试的诊断字段；只保存统计和样本，不保存响应正文。"""
+
+    started = time.time()
+    return {
+        "attempt_id": f"hextech-{datetime.fromtimestamp(started, tz=timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}",
+        "started_at": datetime.fromtimestamp(started, tz=timezone.utc).isoformat(timespec="seconds"),
+        "ended_at": "",
+        "duration_seconds": 0.0,
+        "result": "running",
+        "failure_stage": "",
+        "reason": "",
+        "total_heroes": 0,
+        "completed_heroes": 0,
+        "cdn_hit_count": 0,
+        "slow_path_count": 0,
+        "success_rows": 0,
+        "failure_count": 0,
+        "failure_samples": [],
+        "active_csv": "",
+        "fallback_used": False,
+        "output_csv": "",
+    }
+
+
+def _finish_attempt(
+    attempt: dict | None,
+    *,
+    result: str,
+    reason: str = "",
+    failure_stage: str = "",
+    active_csv: str = "",
+    output_csv: str = "",
+    fallback_used: bool = False,
+) -> dict:
+    if not isinstance(attempt, dict):
+        attempt = _new_attempt_context()
+    ended = time.time()
+    started_at = _timestamp_from_status(attempt.get("started_at")) or ended
+    attempt.update(
+        {
+            "ended_at": datetime.fromtimestamp(ended, tz=timezone.utc).isoformat(timespec="seconds"),
+            "duration_seconds": round(max(0.0, ended - started_at), 3),
+            "result": result,
+            "reason": reason,
+            "failure_stage": failure_stage,
+            "active_csv": active_csv,
+            "fallback_used": bool(fallback_used),
+            "output_csv": output_csv,
+        }
+    )
+    return attempt
+
+
+def _detail_source_from_url(url: str) -> str:
+    text = str(url or "")
+    if text.startswith(HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL):
+        return "cdn"
+    return "slow" if text else "unknown"
+
+
+def _failure_sample(item: dict) -> dict:
+    champ = item.get("champ") if isinstance(item.get("champ"), dict) else {}
+    return {
+        "champion_id": str(champ.get("championId") or ""),
+        "name": str(item.get("name") or ""),
+        "reason": str(item.get("reason") or ""),
+        "status_code": item.get("status_code"),
+        "source": _detail_source_from_url(str(item.get("url") or "")),
+        "error": str(item.get("error") or "")[:200],
+    }
+
+
+def _record_detail_result(attempt: dict, item: dict) -> None:
+    source = _detail_source_from_url(str(item.get("url") or ""))
+    if item.get("rows"):
+        attempt["success_rows"] = int(attempt.get("success_rows") or 0) + len(item["rows"])
+        if source == "cdn":
+            attempt["cdn_hit_count"] = int(attempt.get("cdn_hit_count") or 0) + 1
+        elif source == "slow":
+            attempt["slow_path_count"] = int(attempt.get("slow_path_count") or 0) + 1
+    else:
+        attempt["failure_count"] = int(attempt.get("failure_count") or 0) + 1
+        if source == "slow":
+            attempt["slow_path_count"] = int(attempt.get("slow_path_count") or 0) + 1
+        samples = list(attempt.get("failure_samples") or [])
+        if len(samples) < 8:
+            samples.append(_failure_sample(item))
+        attempt["failure_samples"] = samples
+
+
+def _write_scraper_status(
+    result: str,
+    reason: str = "",
+    *,
+    active_csv: str = "",
+    attempt: dict | None = None,
+) -> dict:
     now = time.time()
     previous = load_scraper_status()
     remote_failure_count = _remote_failure_count(previous, reason) if result in {"fallback", "failed"} else 0
@@ -687,6 +785,7 @@ def _write_scraper_status(result: str, reason: str = "", *, active_csv: str = ""
         blocked_until = datetime.fromtimestamp(now + SCRAPER_BLOCKED_COOLDOWN_SECONDS, tz=timezone.utc).isoformat(
             timespec="seconds"
         )
+    last_attempt = dict(attempt) if isinstance(attempt, dict) else dict(previous.get("last_attempt") or {})
     payload = dict(previous)
     payload.update(
         {
@@ -705,6 +804,14 @@ def _write_scraper_status(result: str, reason: str = "", *, active_csv: str = ""
             "active_csv": active_csv,
             "active_csv_mtime": os.path.getmtime(active_csv) if active_csv and os.path.exists(active_csv) else 0.0,
             "last_success_time": previous.get("last_success_time", 0),
+            "last_attempt": last_attempt,
+            "last_attempt_id": last_attempt.get("attempt_id", ""),
+            "failure_stage": last_attempt.get("failure_stage", ""),
+            "cdn_hit_count": last_attempt.get("cdn_hit_count", 0),
+            "slow_path_count": last_attempt.get("slow_path_count", 0),
+            "success_rows": last_attempt.get("success_rows", 0),
+            "failure_samples": last_attempt.get("failure_samples", []),
+            "fallback_used": bool(active_csv and result == "fallback"),
         }
     )
     if result == "success":
@@ -717,10 +824,24 @@ def _write_scraper_status(result: str, reason: str = "", *, active_csv: str = ""
     return payload
 
 
-def _finish_refresh_failure(reason: str, *, started_at: float) -> bool:
+def _finish_refresh_failure(
+    reason: str,
+    *,
+    started_at: float,
+    attempt: dict | None = None,
+    failure_stage: str = "",
+) -> bool:
     active_csv = get_latest_valid_csv() or ""
     if active_csv:
-        status = _write_scraper_status("fallback", reason, active_csv=active_csv)
+        attempt = _finish_attempt(
+            attempt,
+            result="fallback",
+            reason=reason,
+            failure_stage=failure_stage or reason,
+            active_csv=active_csv,
+            fallback_used=True,
+        )
+        status = _write_scraper_status("fallback", reason, active_csv=active_csv, attempt=attempt)
         logging.warning(
             "海克斯远端刷新失败：reason=%s active_csv=%s next_retry_at=%s consecutive_remote_failures=%s escalated=%s",
             reason,
@@ -730,7 +851,15 @@ def _finish_refresh_failure(reason: str, *, started_at: float) -> bool:
             status.get("remote_failure_escalated") or False,
         )
         return True
-    status = _write_scraper_status("failed", reason, active_csv="")
+    attempt = _finish_attempt(
+        attempt,
+        result="failed",
+        reason=reason,
+        failure_stage=failure_stage or reason,
+        active_csv="",
+        fallback_used=False,
+    )
+    status = _write_scraper_status("failed", reason, active_csv="", attempt=attempt)
     logging.warning(
         "海克斯远端刷新失败且无本地 CSV：reason=%s next_retry_at=%s consecutive_remote_failures=%s escalated=%s",
         reason,
@@ -775,10 +904,18 @@ def check_execution_permission(force: bool = False):
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return True, "状态文件异常，强制刷新..."
 
-def update_status_file(active_csv: str = ""):
+def update_status_file(active_csv: str = "", *, attempt: dict | None = None):
     """保留旧函数入口，并写入扩展后的成功状态。"""
 
-    return _write_scraper_status("success", active_csv=active_csv)
+    attempt = _finish_attempt(
+        attempt,
+        result="success",
+        reason="",
+        active_csv=active_csv,
+        output_csv=active_csv,
+        fallback_used=False,
+    )
+    return _write_scraper_status("success", active_csv=active_csv, attempt=attempt)
 
 def cleanup_old_csvs():
     # 根目录 CSV 是回退材料，保留较长窗口；backups/ 和 tmp 使用更短窗口。
@@ -1109,8 +1246,10 @@ def fetch_champion_detail_stats_fast(
 
 def main_scraper(stop_event=None, force: bool = False):
     started_at = time.time()
+    attempt = _new_attempt_context()
     current_date = datetime.now().strftime('%Y-%m-%d')
     output_csv = build_daily_csv_path(current_date)
+    attempt["output_csv"] = output_csv
 
     can_run, msg = check_execution_permission(force=force)
     if not can_run:
@@ -1121,7 +1260,12 @@ def main_scraper(stop_event=None, force: bool = False):
     truth_dict = load_augment_map()
     core_data = load_champion_core_data()
     if not truth_dict or not core_data:
-        return _finish_refresh_failure("base_data_missing", started_at=started_at)
+        return _finish_refresh_failure(
+            "base_data_missing",
+            started_at=started_at,
+            attempt=attempt,
+            failure_stage="base_data",
+        )
 
     try:
         aug_response = None
@@ -1150,7 +1294,12 @@ def main_scraper(stop_event=None, force: bool = False):
                 aug_error = "metadata_invalid"
                 continue
         if aug_response is None:
-            return _finish_refresh_failure(aug_error or "metadata_invalid", started_at=started_at)
+            return _finish_refresh_failure(
+                aug_error or "metadata_invalid",
+                started_at=started_at,
+                attempt=attempt,
+                failure_stage="augment_metadata",
+            )
         aug_data = aug_response.json()
 
         aug_id_map = {}
@@ -1188,14 +1337,36 @@ def main_scraper(stop_event=None, force: bool = False):
                 stats_error = "stats_invalid"
                 continue
         if stats_response is None:
-            return _finish_refresh_failure(stats_error or "stats_invalid", started_at=started_at)
+            return _finish_refresh_failure(
+                stats_error or "stats_invalid",
+                started_at=started_at,
+                attempt=attempt,
+                failure_stage="champion_stats",
+            )
         stats_list = stats_response.json()
         if not stats_list:
-            return _finish_refresh_failure("stats_empty", started_at=started_at)
+            return _finish_refresh_failure(
+                "stats_empty",
+                started_at=started_at,
+                attempt=attempt,
+                failure_stage="champion_stats",
+            )
     except RemoteFetchError as e:
-        return _finish_refresh_failure(e.reason, started_at=started_at)
+        return _finish_refresh_failure(
+            e.reason,
+            started_at=started_at,
+            attempt=attempt,
+            failure_stage=e.context or "handshake",
+        )
     except (ValueError, json.JSONDecodeError):
-        return _finish_refresh_failure("handshake_invalid", started_at=started_at)
+        return _finish_refresh_failure(
+            "handshake_invalid",
+            started_at=started_at,
+            attempt=attempt,
+            failure_stage="handshake",
+        )
+
+    attempt["total_heroes"] = len(stats_list)
 
     def fetch_champ_detail(champ: dict, *, timeout: int, preflight_rows: list | None = None) -> dict:
         if preflight_rows is not None:
@@ -1206,9 +1377,9 @@ def main_scraper(stop_event=None, force: bool = False):
                 "name": c_name,
                 "rows": list(preflight_rows),
                 "reason": "",
-                "status_code": None,
-                "url": "",
-                "error": "",
+                "status_code": preflight_result.get("status_code"),
+                "url": preflight_result.get("url", ""),
+                "error": preflight_result.get("error", ""),
             }
         return fetch_champion_detail_stats_fast(
             champ,
@@ -1231,12 +1402,17 @@ def main_scraper(stop_event=None, force: bool = False):
             timeout,
             pool_timeout,
         )
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = []
+        executor = ThreadPoolExecutor(max_workers=workers)
+        shutdown_called = False
+        futures = []
+        future_to_champ: dict = {}
+        try:
             for champ in champs:
                 c_id = str(champ.get("championId", ""))
                 cached_rows = preflight_rows if c_id == preflight_id else None
-                futures.append(executor.submit(fetch_champ_detail, champ, timeout=timeout, preflight_rows=cached_rows))
+                future = executor.submit(fetch_champ_detail, champ, timeout=timeout, preflight_rows=cached_rows)
+                futures.append(future)
+                future_to_champ[future] = champ
             try:
                 for future in as_completed(futures, timeout=pool_timeout):
                     if stop_event and stop_event.is_set():
@@ -1244,13 +1420,14 @@ def main_scraper(stop_event=None, force: bool = False):
                         for fut in futures:
                             fut.cancel()
                         executor.shutdown(wait=False, cancel_futures=True)
+                        shutdown_called = True
                         return pass_rows, failures, "stopped"
 
                     try:
                         item = future.result()
                     except Exception as e:
                         logging.error("Worker result collection failed: %s", e)
-                        failures.append({
+                        failure_item = {
                             "champ": {},
                             "name": "",
                             "rows": [],
@@ -1258,18 +1435,43 @@ def main_scraper(stop_event=None, force: bool = False):
                             "status_code": None,
                             "url": "",
                             "error": str(e),
-                        })
+                        }
+                        failures.append(failure_item)
+                        attempt["completed_heroes"] = int(attempt.get("completed_heroes") or 0) + 1
+                        _record_detail_result(attempt, failure_item)
                         continue
                     if item["rows"]:
                         pass_rows.extend(item["rows"])
                     else:
                         failures.append(item)
+                    attempt["completed_heroes"] = int(attempt.get("completed_heroes") or 0) + 1
+                    _record_detail_result(attempt, item)
             except TimeoutError:
                 logging.error("Hextech detail pass timed out: label=%s", label)
                 for fut in futures:
+                    if fut.done():
+                        continue
+                    champ = future_to_champ.get(fut) or {}
+                    c_id = str(champ.get("championId", ""))
+                    failure_item = {
+                        "champ": champ,
+                        "name": core_data.get(c_id, {}).get("name", c_id),
+                        "rows": [],
+                        "reason": "thread_pool_timeout",
+                        "status_code": None,
+                        "url": "",
+                        "error": f"detail pass timed out: {label}",
+                    }
+                    failures.append(failure_item)
+                    _record_detail_result(attempt, failure_item)
+                for fut in futures:
                     fut.cancel()
                 executor.shutdown(wait=False, cancel_futures=True)
+                shutdown_called = True
                 return pass_rows, failures, "thread_pool_timeout"
+        finally:
+            if not shutdown_called:
+                executor.shutdown(wait=True, cancel_futures=False)
         return pass_rows, failures, ""
 
     # 先请求一个英雄详情。源站封禁时在创建 worker 线程池前熔断；瞬时超时做一次更长预检。
@@ -1287,7 +1489,13 @@ def main_scraper(stop_event=None, force: bool = False):
             reason = "preflight_parse_error"
         elif reason == "no_valid_rows":
             reason = "preflight_no_valid_rows"
-        return _finish_refresh_failure(reason, started_at=started_at)
+        _record_detail_result(attempt, preflight_result)
+        return _finish_refresh_failure(
+            reason,
+            started_at=started_at,
+            attempt=attempt,
+            failure_stage="detail_preflight",
+        )
     preflight_rows = preflight_result["rows"]
 
     all_rows, detail_failures, pass_error = run_detail_pass(
@@ -1298,14 +1506,24 @@ def main_scraper(stop_event=None, force: bool = False):
         label="initial",
         )
     if pass_error:
-        return _finish_refresh_failure(pass_error, started_at=started_at)
+        return _finish_refresh_failure(
+            pass_error,
+            started_at=started_at,
+            attempt=attempt,
+            failure_stage="detail_initial",
+        )
     _summarize_detail_failures(detail_failures, label="initial")
 
     blocking_failures = [
         item for item in detail_failures if _is_blocking_remote_failure(item["reason"], item["status_code"])
     ]
     if blocking_failures:
-        return _finish_refresh_failure(blocking_failures[0]["reason"], started_at=started_at)
+        return _finish_refresh_failure(
+            blocking_failures[0]["reason"],
+            started_at=started_at,
+            attempt=attempt,
+            failure_stage="detail_initial",
+        )
 
     if detail_failures:
         retry_champs = [item["champ"] for item in detail_failures if item.get("champ")]
@@ -1319,17 +1537,32 @@ def main_scraper(stop_event=None, force: bool = False):
         )
         all_rows.extend(retry_rows)
         if retry_error:
-            return _finish_refresh_failure(retry_error, started_at=started_at)
+            return _finish_refresh_failure(
+                retry_error,
+                started_at=started_at,
+                attempt=attempt,
+                failure_stage="detail_retry",
+            )
         _summarize_detail_failures(retry_failures, label="tail-retry")
         blocking_retry_failures = [
             item for item in retry_failures if _is_blocking_remote_failure(item["reason"], item["status_code"])
         ]
         if blocking_retry_failures:
-            return _finish_refresh_failure(blocking_retry_failures[0]["reason"], started_at=started_at)
+            return _finish_refresh_failure(
+                blocking_retry_failures[0]["reason"],
+                started_at=started_at,
+                attempt=attempt,
+                failure_stage="detail_retry",
+            )
         if retry_failures:
             failed_names = ", ".join(str(item["name"]) for item in retry_failures[:5])
             logging.warning("海克斯详情尾部重试后仍失败 %s 个：%s", len(retry_failures), failed_names)
-            return _finish_refresh_failure(f"detail_failed_{len(retry_failures)}", started_at=started_at)
+            return _finish_refresh_failure(
+                f"detail_failed_{len(retry_failures)}",
+                started_at=started_at,
+                attempt=attempt,
+                failure_stage="detail_retry",
+            )
 
     if all_rows:
         df = pd.DataFrame(all_rows)
@@ -1364,12 +1597,18 @@ def main_scraper(stop_event=None, force: bool = False):
 
         # 数据量过低时直接拒绝覆盖结果
         if len(df) < 300:
-            return _finish_refresh_failure(f"insufficient_rows_{len(df)}", started_at=started_at)
+            return _finish_refresh_failure(
+                f"insufficient_rows_{len(df)}",
+                started_at=started_at,
+                attempt=attempt,
+                failure_stage="publish_validation",
+            )
 
         backup_active_csv_before_publish(output_csv)
         atomic_write_csv(output_csv, df, index=False, encoding=CSV_ENCODING)
 
-        update_status_file(output_csv)
+        attempt["success_rows"] = len(df)
+        update_status_file(output_csv, attempt=attempt)
         cleanup_old_csvs()
         try:
             rebuild_runtime_caches()
@@ -1384,5 +1623,10 @@ def main_scraper(stop_event=None, force: bool = False):
         )
         return True
     else:
-        return _finish_refresh_failure("no_valid_rows", started_at=started_at)
+        return _finish_refresh_failure(
+            "no_valid_rows",
+            started_at=started_at,
+            attempt=attempt,
+            failure_stage="detail_rows",
+        )
 

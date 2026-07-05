@@ -139,7 +139,7 @@ def run_mayhem_refresh(
 
         merge_func = merge
         if merge_func is None:
-            from tools.clean_mayhem_combos import merge_mayhem_combos
+            from hextech.scraping.synergy.mayhem_merge import merge_mayhem_combos
 
             merge_func = merge_mayhem_combos
         summary = dict(merge_func(mayhem_raw_path=raw_path, write_output=True))

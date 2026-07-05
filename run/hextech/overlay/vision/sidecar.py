@@ -915,7 +915,7 @@ def _load_manifest_entries(root: Path, *, use_runtime_resources: bool = True) ->
         if use_runtime_resources:
             payload = load_augment_manifest_entries()
         else:
-            version_data_dir = root / "resources" / "版本数据"
+            version_data_dir = root / "data" / "static" / "version"
             if (version_data_dir / "海克斯资源目录.v1.json").exists():
                 payload = load_augment_manifest_entries(version_data_dir)
             else:
@@ -1040,9 +1040,9 @@ def load_default_template_index(
 
     use_runtime_resources = base_dir is None
     root = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parents[3]
-    version_data_dir = Path(INDEX_DATA_DIR) if use_runtime_resources else root / "resources" / "版本数据"
+    version_data_dir = Path(INDEX_DATA_DIR) if use_runtime_resources else root / "data" / "static" / "version"
     legacy_mapping_path = root / "data" / "indexes" / "augment.name-to-icon.v1.json"
-    asset_dir = Path(ASSET_DIR) if use_runtime_resources else root / "resources" / "图片资源"
+    asset_dir = Path(ASSET_DIR) if use_runtime_resources else root / "data" / "static" / "assets"
     legacy_asset_dir = root / "assets"
     try:
         if use_runtime_resources or (version_data_dir / "海克斯资源目录.v1.json").exists():
@@ -1131,7 +1131,7 @@ def audit_default_template_index(
 
     use_runtime_resources = base_dir is None
     root = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parents[3]
-    version_data_dir = Path(INDEX_DATA_DIR) if use_runtime_resources else root / "resources" / "版本数据"
+    version_data_dir = Path(INDEX_DATA_DIR) if use_runtime_resources else root / "data" / "static" / "version"
     entries = _load_manifest_entries(root, use_runtime_resources=use_runtime_resources)
     try:
         name_to_icon = load_augment_name_to_icon_map(version_data_dir)

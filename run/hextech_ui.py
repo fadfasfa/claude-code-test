@@ -3,6 +3,10 @@
 保留根目录启动方式不变，并按参数懒加载对应实现。
 """
 
+import sys
+
+sys.dont_write_bytecode = True
+
 from hextech.support.python_runtime import ensure_python_311_for_source
 
 
@@ -11,8 +15,6 @@ if __name__ == "__main__":
 
 
 def main() -> None:
-    import sys
-
     if "--web-server" in sys.argv:
         from hextech.display.web.app import run_web_server
 

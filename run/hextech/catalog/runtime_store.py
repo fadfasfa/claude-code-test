@@ -6,8 +6,8 @@ from __future__ import annotations
 - 统一管理运行时文件定位、CSV 读取优先级和 DataFrame 缓存
 
 核心输入：
-- 运行目录 `config/`
-- 打包内稳定资源目录 `RESOURCE_DIR`
+- 运行态 `data/runtime/**`
+- 源码态或打包内 `data/static/version`
 
 核心输出：
 - 标准化后的 DataFrame
@@ -35,7 +35,7 @@ from typing import Callable, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from hextech.scraping._paths import BASE_DIR, RESOURCE_DIR, STATIC_DATA_DIR
+from hextech.scraping._paths import BASE_DIR, BUNDLE_ROOT_DIR, STATIC_DATA_DIR
 
 CSV_ENCODING = "utf-8-sig"
 CSV_FILENAME_PATTERN = "Hextech_Data_*.csv"
@@ -69,12 +69,12 @@ _VALID_CSV_CACHE_LOCK = threading.Lock()
 
 
 def runtime_priority_paths(relative_name: str) -> list[str]:
-    """返回稳定数据优先路径列表，先查本地中文资源，再兼容旧 bundle 路径。"""
+    """返回稳定数据优先路径列表，源码态和打包态都以 data/static/version 为事实源。"""
     runtime_path = Path(STATIC_DATA_DIR) / relative_name
     candidates = [str(runtime_path)]
     for bundled_path in (
-        Path(RESOURCE_DIR) / "resources" / "版本数据" / relative_name,
-        Path(RESOURCE_DIR) / "data" / "static" / relative_name,
+        Path(BUNDLE_ROOT_DIR) / "data" / "static" / "version" / relative_name,
+        Path(BUNDLE_ROOT_DIR) / "data" / "static" / relative_name,
     ):
         bundled = str(bundled_path)
         if bundled not in candidates:
@@ -267,7 +267,8 @@ def build_runtime_persisted_path(filename: str) -> str:
 
 
 def runtime_data_fallback_paths(runtime_path: str, legacy_relative_name: str) -> list[str]:
-    """返回运行态可变数据读取路径列表，不再兼容旧 config。"""
+    """返回运行态可变数据读取路径列表，只读取 data/runtime 主链路。"""
+
     return [runtime_path]
 
 
@@ -288,10 +289,12 @@ def resolve_runtime_file(relative_name: str) -> Optional[str]:
 
 
 def get_runtime_data_dir() -> Path:
-    """返回高频运行数据根目录。"""
-    if getattr(sys, "frozen", False):
-        return get_runtime_root_dir() / "raw"
-    return Path(BASE_DIR) / "data" / "raw"
+    """返回高频原始运行数据根目录；源码态和冻结态都收口到 data/runtime/raw。"""
+    return get_runtime_root_dir() / "raw"
+
+
+def _runtime_raw_dirs(subdir: str) -> list[Path]:
+    return [get_runtime_data_dir() / subdir]
 
 
 def get_runtime_hextech_data_dir() -> Path:
@@ -310,7 +313,7 @@ def is_synergy_snapshot_filename(filename: str) -> bool:
 
 
 def build_synergy_legacy_data_path() -> str:
-    """返回旧版固定协同数据文件路径，仅作为只读兼容 fallback。"""
+    """返回运行态固定协同数据文件路径，仅作为 raw latest 兜底。"""
     return str(get_runtime_synergy_data_dir() / SYNERGY_LEGACY_FILENAME)
 
 
@@ -339,24 +342,29 @@ def build_synergy_snapshot_path(timestamp_label: str) -> str:
 
 def iter_synergy_snapshot_files() -> list[str]:
     """列出所有合法协同时间快照文件。"""
-    snapshot_dir = get_runtime_synergy_data_dir()
     files = []
-    for path in snapshot_dir.glob(SYNERGY_SNAPSHOT_PATTERN):
-        if path.is_file() and is_synergy_snapshot_filename(path.name):
-            files.append(str(path))
+    seen: set[str] = set()
+    for snapshot_dir in _runtime_raw_dirs("synergy"):
+        for path in snapshot_dir.glob(SYNERGY_SNAPSHOT_PATTERN):
+            key = str(path.resolve())
+            if key not in seen and path.is_file() and is_synergy_snapshot_filename(path.name):
+                files.append(str(path))
+                seen.add(key)
     files.sort(key=lambda item: (os.path.getmtime(item), os.path.basename(item)), reverse=True)
     return files
 
 
 def load_synergy_latest_pointer() -> dict:
     """读取 latest 指针；指针损坏时返回空字典。"""
-    pointer_path = build_synergy_latest_pointer_path()
-    try:
-        with open(pointer_path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-    except (OSError, TypeError, ValueError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    for directory in _runtime_raw_dirs("synergy"):
+        pointer_path = directory / SYNERGY_LATEST_POINTER_FILENAME
+        try:
+            with open(pointer_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        return payload if isinstance(payload, dict) else {}
+    return {}
 
 
 def load_synergy_refresh_status() -> dict:
@@ -378,11 +386,12 @@ def resolve_synergy_snapshot_from_pointer(pointer: dict | None = None) -> Option
     filename = os.path.basename(str(payload.get("filename") or "").strip())
     if not is_synergy_snapshot_filename(filename):
         return None
-    candidate = (get_runtime_synergy_data_dir() / filename).resolve()
-    root = get_runtime_synergy_data_dir().resolve()
-    if candidate.parent != root or not candidate.exists():
-        return None
-    return str(candidate)
+    for directory in _runtime_raw_dirs("synergy"):
+        candidate = (directory / filename).resolve()
+        root = directory.resolve()
+        if candidate.parent == root and candidate.exists():
+            return str(candidate)
+    return None
 
 
 def get_latest_synergy_snapshot_path() -> Optional[str]:
@@ -429,7 +438,15 @@ def build_daily_csv_path(date_str: str) -> str:
 
 def iter_runtime_csv_files() -> list[str]:
     """列出运行原始数据目录中的战报 CSV 文件。"""
-    return glob.glob(str(get_runtime_hextech_data_dir() / CSV_FILENAME_PATTERN))
+    files: list[str] = []
+    seen: set[str] = set()
+    for directory in _runtime_raw_dirs("hextech"):
+        for path in glob.glob(str(directory / CSV_FILENAME_PATTERN)):
+            key = str(Path(path).resolve())
+            if key not in seen:
+                files.append(path)
+                seen.add(key)
+    return files
 
 
 def _runtime_csv_sort_key(path: str) -> tuple[str, float]:

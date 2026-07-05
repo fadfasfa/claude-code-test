@@ -94,12 +94,29 @@ def _write_startup_status(**updates) -> None:
     candidate_csv = get_latest_csv() or ""
     active_csv = get_latest_valid_csv() or ""
     degraded = bool(active_csv and scraper_status.get("last_result") == "fallback")
+    last_attempt = scraper_status.get("last_attempt") if isinstance(scraper_status.get("last_attempt"), dict) else {}
     payload = {
         "hero_ready": os.path.exists(CORE_DATA_FILE),
         "hextech_ready": bool(active_csv),
         "hextech_degraded": degraded,
         "active_hextech_csv": active_csv or candidate_csv,
         "hextech_warning": str(scraper_status.get("reason") or "") if degraded else "",
+        "hextech_refresh": {
+            "last_result": scraper_status.get("last_result", ""),
+            "reason": scraper_status.get("reason", ""),
+            "attempt_id": scraper_status.get("last_attempt_id") or last_attempt.get("attempt_id", ""),
+            "started_at": last_attempt.get("started_at", ""),
+            "ended_at": last_attempt.get("ended_at", ""),
+            "failure_stage": scraper_status.get("failure_stage") or last_attempt.get("failure_stage", ""),
+            "cdn_hit_count": scraper_status.get("cdn_hit_count", last_attempt.get("cdn_hit_count", 0)),
+            "slow_path_count": scraper_status.get("slow_path_count", last_attempt.get("slow_path_count", 0)),
+            "success_rows": scraper_status.get("success_rows", last_attempt.get("success_rows", 0)),
+            "failure_samples": scraper_status.get("failure_samples", last_attempt.get("failure_samples", [])),
+            "active_csv": active_csv or candidate_csv,
+            "fallback_used": bool(scraper_status.get("fallback_used") or degraded),
+            "next_retry_at": scraper_status.get("next_retry_at", ""),
+            "remote_failure_escalated": bool(scraper_status.get("remote_failure_escalated", False)),
+        },
         "synergy_ready": os.path.exists(build_synergy_data_path()),
         "augment_icons_prefetched": is_augment_icon_prefetch_ready(),
         "in_progress_tasks": [],
@@ -257,6 +274,12 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
         payload = report.as_dict()
         _write_startup_status(in_progress_tasks=[], last_error="another repair is already running")
         logger.info("heal_worker skipped: another repair is already running: %s", json.dumps(payload, ensure_ascii=False))
+        return payload
+    except Exception as exc:
+        logger.exception("heal_worker unexpected failure")
+        report.failed.append("heal_worker")
+        payload = report.as_dict()
+        _write_startup_status(in_progress_tasks=[], last_error=f"heal_worker failed: {exc.__class__.__name__}")
         return payload
 
     payload = report.as_dict()

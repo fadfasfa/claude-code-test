@@ -21,7 +21,7 @@ PYTHON311_ENV = "HEXTECH_PYTHON311"
 RUN_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_VENV_DIR = RUN_DIR / ".venv"
 
-REQUIRED_RUNTIME_PACKAGES = ("scrapling", "curl_cffi", "requests", "certifi")
+REQUIRED_RUNTIME_PACKAGES = ("scrapling", "cloakbrowser", "curl_cffi", "requests", "certifi")
 PACKAGING_RUNTIME_PACKAGES = (*REQUIRED_RUNTIME_PACKAGES, "PyInstaller")
 _IMPORT_MODULE_BY_PACKAGE = {
     "PyInstaller": "PyInstaller",

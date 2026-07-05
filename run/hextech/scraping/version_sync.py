@@ -7,11 +7,11 @@
 
 核心输入：
 - Data Dragon、Hextech、CommunityDragon 等远端资源
-- 本地中文资源目录、运行态缓存和包内稳定资源
+- 本地 `data/static/**` 稳定资源、运行态缓存和包内稳定资源
 
 核心输出：
-- `resources/版本数据/hero_version.txt`
-- `resources/版本数据/海克斯资源目录.v1.json`
+- `data/static/version/hero_version.txt`
+- `data/static/version/海克斯资源目录.v1.json`
 - 必要时临时生成旧海克斯映射文件，并在目录文件存在后清理
 
 主要依赖：
@@ -57,10 +57,10 @@ from hextech.support.log_utils import (
 from hextech.scraping._paths import (
     ASSET_DIR,
     BASE_DIR,
+    BUNDLE_ROOT_DIR,
     DATA_DIR,
     INDEX_DATA_DIR,
     RAW_DATA_DIR,
-    RESOURCE_DIR,
     RUNTIME_BASE_DIR,
     RUNTIME_DATA_DIR,
     STATIC_DATA_DIR,
@@ -212,7 +212,7 @@ def _load_existing_champion_aliases() -> dict:
 
 if getattr(sys, 'frozen', False):
     seed_bundled_resources(
-        bundle_root=RESOURCE_DIR,
+        bundle_root=BUNDLE_ROOT_DIR,
         runtime_static_dir=STATIC_DATA_DIR,
         runtime_index_dir=INDEX_DATA_DIR,
         runtime_asset_dir=ASSET_DIR,

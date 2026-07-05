@@ -4,7 +4,7 @@ from __future__ import annotations
 
 本工具把 CommunityDragon 海克斯目录、图标、视觉模板覆盖审计、全量合成识别
 和长期真机 fixture 回归收口到一个入口。默认模式只在临时 snapshot 全部通过后
-才发布到稳定 `resources/`；`--check-only` 只读当前资源，不联网、不改文件。
+才发布到稳定 `data/static` 与 `data/fixtures`；`--check-only` 只读当前资源，不联网、不改文件。
 """
 
 import argparse
@@ -32,14 +32,14 @@ from tools import eval_overlay_matching
 from tools import sync_cdragon_augments
 
 
-RESOURCE_DIR = RUN_DIR / "resources"
-VERSION_DATA_DIR = RESOURCE_DIR / "版本数据"
-IMAGE_DIR = RESOURCE_DIR / "图片资源"
-DIAGNOSTIC_DIR = RESOURCE_DIR / "诊断样例"
+DATA_DIR = RUN_DIR / "data"
+VERSION_DATA_DIR = DATA_DIR / "static" / "version"
+IMAGE_DIR = DATA_DIR / "static" / "assets"
+DIAGNOSTIC_DIR = DATA_DIR / "fixtures" / "diagnostics"
 TRUTH_PATH = DIAGNOSTIC_DIR / "overlay_matching_truth.v1.json"
 FIXTURE_ROOT = DIAGNOSTIC_DIR / "overlay_vision_fixtures"
-CATALOG_RELATIVE_PATH = Path("resources") / "版本数据" / "海克斯资源目录.v1.json"
-IMAGE_RELATIVE_DIR = Path("resources") / "图片资源"
+CATALOG_RELATIVE_PATH = Path("data") / "static" / "version" / "海克斯资源目录.v1.json"
+IMAGE_RELATIVE_DIR = Path("data") / "static" / "assets"
 SYNTHETIC_SIZE = (2560, 1600)
 MIN_FULL_FRAME_SAMPLE_COUNT = 5
 
@@ -67,7 +67,7 @@ def _read_json(path: Path) -> Any:
 
 def _resource_path_allowed(path_text: str) -> bool:
     normalized = str(path_text or "").replace("\\", "/").lstrip("/")
-    return normalized.startswith("resources/诊断样例/overlay_vision_fixtures/")
+    return normalized.startswith("data/fixtures/diagnostics/overlay_vision_fixtures/")
 
 
 def _truth_sample_paths(sample: Mapping[str, Any]) -> list[str]:
@@ -130,13 +130,13 @@ def _entry_icon_filename(entry: Mapping[str, Any]) -> str:
 
 def _icon_path_for_entry(root: Path, entry: Mapping[str, Any]) -> Path:
     filename = _entry_icon_filename(entry)
-    return root / "resources" / "图片资源" / filename
+    return root / "data" / "static" / "assets" / filename
 
 
 def validate_official_catalog(root: Path) -> dict[str, Any]:
     """校验官方目录字段、稳定 ID、图标路径和可读取图标。"""
 
-    entries = load_augment_manifest_entries(root / "resources" / "版本数据")
+    entries = load_augment_manifest_entries(root / "data" / "static" / "version")
     missing_fields: list[dict[str, str]] = []
     missing_icons: list[dict[str, str]] = []
     invalid_icons: list[dict[str, str]] = []
@@ -236,7 +236,7 @@ def _paint_slot_name(image: Image.Image, box: tuple[int, int, int, int], name: s
 def _build_variant_cases(root: Path) -> list[VariantCase]:
     cases: list[VariantCase] = []
     seen: set[tuple[str, str]] = set()
-    for entry in load_augment_manifest_entries(root / "resources" / "版本数据"):
+    for entry in load_augment_manifest_entries(root / "data" / "static" / "version"):
         name = _clean_text(entry.get("name"))
         identity = normalize_augment_name(name)
         filename = _entry_icon_filename(entry)
@@ -427,9 +427,9 @@ def validate_snapshot(root: Path) -> dict[str, Any]:
 
 
 def _copy_existing_resources_to_snapshot(snapshot_root: Path) -> None:
-    version_dir = snapshot_root / "resources" / "版本数据"
-    image_dir = snapshot_root / "resources" / "图片资源"
-    diagnostic_dir = snapshot_root / "resources" / "诊断样例"
+    version_dir = snapshot_root / "data" / "static" / "version"
+    image_dir = snapshot_root / "data" / "static" / "assets"
+    diagnostic_dir = snapshot_root / "data" / "fixtures" / "diagnostics"
     version_dir.mkdir(parents=True, exist_ok=True)
     image_dir.mkdir(parents=True, exist_ok=True)
     diagnostic_dir.mkdir(parents=True, exist_ok=True)
@@ -455,9 +455,9 @@ def build_refresh_snapshot(
         force_icons=force_icons,
         max_workers=max_workers,
         timeout=timeout,
-        asset_dir=snapshot_root / "resources" / "图片资源",
+        asset_dir=snapshot_root / "data" / "static" / "assets",
         catalog_path=snapshot_root / CATALOG_RELATIVE_PATH,
-        static_dir=snapshot_root / "resources" / "版本数据",
+        static_dir=snapshot_root / "data" / "static" / "version",
     )
 
 
@@ -471,8 +471,8 @@ def _atomic_copy_file(source: Path, target: Path) -> None:
 def publish_snapshot(snapshot_root: Path, *, target_run_dir: Path = RUN_DIR) -> dict[str, Any]:
     """发布 snapshot：先逐图标原子替换，最后更新目录 JSON；不删除旧图标。"""
 
-    source_image_dir = snapshot_root / "resources" / "图片资源"
-    target_image_dir = target_run_dir / "resources" / "图片资源"
+    source_image_dir = snapshot_root / "data" / "static" / "assets"
+    target_image_dir = target_run_dir / "data" / "static" / "assets"
     icon_count = 0
     for icon_path in sorted(source_image_dir.glob("*")):
         if not icon_path.is_file():

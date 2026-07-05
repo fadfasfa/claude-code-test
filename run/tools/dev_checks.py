@@ -48,10 +48,12 @@ import requests
 import pandas as pd
 
 WEB_STATIC_DIR = RUN_DIR / "hextech" / "display" / "web" / "static"
-RESOURCE_DIR = RUN_DIR / "resources"
-RESOURCE_IMAGE_DIR = RESOURCE_DIR / "图片资源"
-RESOURCE_VERSION_DATA_DIR = RESOURCE_DIR / "版本数据"
-RESOURCE_DIAGNOSTIC_DIR = RESOURCE_DIR / "诊断样例"
+DATA_DIR = RUN_DIR / "data"
+DATA_STATIC_ASSET_DIR = DATA_DIR / "static" / "assets"
+DATA_STATIC_VERSION_DIR = DATA_DIR / "static" / "version"
+DATA_STARTUP_SEED_DIR = DATA_DIR / "seed" / "startup"
+DATA_DIAGNOSTIC_DIR = DATA_DIR / "fixtures" / "diagnostics"
+DATA_EVIDENCE_DIR = DATA_DIR / "evidence"
 
 import hextech.core.refresh as orchestrator
 import hextech.catalog.aliases as alias_search
@@ -158,6 +160,7 @@ def check_python_runtime_guard_contract() -> None:
     assert python_runtime.DEFAULT_VENV_DIR == RUN_DIR / ".venv"
     assert python_runtime.default_venv_python_path().parent.name in {"Scripts", "bin"}
     assert "scrapling" in python_runtime.REQUIRED_RUNTIME_PACKAGES
+    assert "cloakbrowser" in python_runtime.REQUIRED_RUNTIME_PACKAGES
     assert "curl_cffi" in python_runtime.REQUIRED_RUNTIME_PACKAGES
     assert "PyInstaller" in python_runtime.PACKAGING_RUNTIME_PACKAGES
 
@@ -257,7 +260,7 @@ def check_hextech_package_contract() -> None:
 
     assert (RUN_DIR / "hextech").exists()
     assert (RUN_DIR / "frontend" / "package.json").exists()
-    assert (RUN_DIR / "resources" / "README.md").exists()
+    assert (DATA_DIR / "README.md").exists()
     assert (RUN_DIR / "docs" / "README.md").exists()
     assert (RUN_DIR / "tools" / "checks" / "registry.py").exists()
 
@@ -399,9 +402,10 @@ def check_hextech_package_contract() -> None:
 
     version_sync_module = importlib.import_module("hextech.scraping.version_sync")
     assert Path(version_sync_module.BASE_DIR).resolve() == RUN_DIR.resolve()
-    assert Path(version_sync_module.RESOURCE_DIR).resolve() == RUN_DIR.resolve()
+    assert Path(version_sync_module.BUNDLE_ROOT_DIR).resolve() == RUN_DIR.resolve()
     paths_text = (RUN_DIR / "hextech" / "scraping" / "_paths.py").read_text(encoding="utf-8")
     assert 'os.path.join(RUNTIME_DATA_DIR, "raw")' in paths_text
+    assert 'else os.path.join(DATA_DIR, "raw")' not in paths_text
     assert 'getattr(sys, "frozen", False)' in paths_text
     version_sync_text = (RUN_DIR / "hextech" / "scraping" / "version_sync.py").read_text(encoding="utf-8")
     icon_resolver_text = (RUN_DIR / "hextech" / "scraping" / "icon_resolver.py").read_text(encoding="utf-8")
@@ -488,21 +492,29 @@ def check_hextech_package_contract() -> None:
 
 
 def check_resource_classification_manifest() -> None:
-    """验证中文资源分类清单只描述现有稳定资源，不误纳入运行态。"""
+    """验证单一 data 根分类清单只描述现有稳定资源，不误纳入运行态。"""
 
-    expected_categories = {"图片资源", "版本数据", "首启快照", "诊断样例", "来源证据"}
+    expected_categories = {
+        "static-version",
+        "static-assets",
+        "startup-seed",
+        "source-evidence",
+        "diagnostic-fixtures",
+        "runtime",
+    }
     resolved = validate_resource_manifest(RUN_DIR)
     assert expected_categories.issubset(resolved.keys())
     for category in expected_categories:
-        assert (RUN_DIR / "resources" / category / "README.md").exists()
+        if category == "runtime":
+            continue
         assert resolved[category], f"资源分类没有匹配现有文件：{category}"
 
 
 def check_version_data_catalog_consolidation() -> None:
-    """验证版本数据已收口到两个中文权威目录，同时保留旧文件名投影。"""
+    """验证版本数据已收口到 data/static/version，同时保留旧文件名投影。"""
 
-    assert (RESOURCE_VERSION_DATA_DIR / "英雄目录.v1.json").exists()
-    assert (RESOURCE_VERSION_DATA_DIR / "海克斯资源目录.v1.json").exists()
+    assert (DATA_STATIC_VERSION_DIR / "英雄目录.v1.json").exists()
+    assert (DATA_STATIC_VERSION_DIR / "海克斯资源目录.v1.json").exists()
     for legacy_name in (
         "Champion_Alias_Index.json",
         "champion.alias-to-id.v1.json",
@@ -512,24 +524,24 @@ def check_version_data_catalog_consolidation() -> None:
         "Augment_Icon_Manifest.json",
         "augment.name-to-icon.v1.json",
     ):
-        assert not (RESOURCE_VERSION_DATA_DIR / legacy_name).exists(), f"旧拆分 JSON 不应继续作为事实源：{legacy_name}"
+        assert not (DATA_STATIC_VERSION_DIR / legacy_name).exists(), f"旧拆分 JSON 不应继续作为事实源：{legacy_name}"
 
     assert len(load_champion_alias_records()) >= 100
     assert len(load_augment_manifest_entries()) >= 600
     assert len(load_augment_name_to_icon_map()) >= 500
-    assert isinstance(legacy_index_payload("Champion_Alias_Index.json", RESOURCE_VERSION_DATA_DIR), list)
-    assert isinstance(legacy_index_payload("augment.name-to-icon.v1.json", RESOURCE_VERSION_DATA_DIR), dict)
-    assert isinstance(legacy_static_payload("Augment_Icon_Manifest.json", RESOURCE_VERSION_DATA_DIR), list)
+    assert isinstance(legacy_index_payload("Champion_Alias_Index.json", DATA_STATIC_VERSION_DIR), list)
+    assert isinstance(legacy_index_payload("augment.name-to-icon.v1.json", DATA_STATIC_VERSION_DIR), dict)
+    assert isinstance(legacy_static_payload("Augment_Icon_Manifest.json", DATA_STATIC_VERSION_DIR), list)
 
-    id_to_name = legacy_index_payload("champion.id-to-name.v1.json", RESOURCE_VERSION_DATA_DIR)
-    id_to_detail = legacy_index_payload("champion.id-to-detail.v1.json", RESOURCE_VERSION_DATA_DIR)
+    id_to_name = legacy_index_payload("champion.id-to-name.v1.json", DATA_STATIC_VERSION_DIR)
+    id_to_detail = legacy_index_payload("champion.id-to-detail.v1.json", DATA_STATIC_VERSION_DIR)
     assert isinstance(id_to_name, dict) and isinstance(id_to_name.get("266"), str)
     assert isinstance(id_to_detail, dict) and isinstance(id_to_detail.get("266"), dict)
     assert id_to_name["266"] == id_to_detail["266"]["heroName"]
 
 
 def check_stable_data_compat_routes_are_whitelisted() -> None:
-    """验证旧数据 URL 是受控兼容入口，不暴露整个中文版本数据目录。"""
+    """验证旧数据 URL 是受控兼容入口，不暴露整个稳定版本数据目录。"""
 
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -599,7 +611,7 @@ def check_clean_mayhem_combos_uses_core_projection() -> None:
     import tools.clean_mayhem_combos as clean_mayhem_combos
 
     summary = clean_mayhem_combos.merge_mayhem_combos(
-        apex_path=RESOURCE_DIR / "首启快照" / "Champion_Synergy_latest.v1.json",
+        apex_path=DATA_STARTUP_SEED_DIR / "synergy" / "Champion_Synergy_latest.v1.json",
         write_output=False,
     )
     assert summary["written"] is False
@@ -629,10 +641,10 @@ def check_manifest_icon_url_safety() -> None:
 
 
 def check_icon_resolver_defaults_to_resource_image_dir() -> None:
-    """验证图标解析默认从中文图片资源目录读取，不回落到旧根级 assets。"""
+    """验证图标解析默认从 data/static/assets 读取，不回落到旧根级 assets。"""
 
-    assert Path(icon_resolver._resolve_assets_dir(None)) == RESOURCE_IMAGE_DIR
-    assert Path(icon_resolver._resolve_assets_dir_for_config(str(RESOURCE_VERSION_DATA_DIR))) == RESOURCE_IMAGE_DIR
+    assert Path(icon_resolver._resolve_assets_dir(None)) == DATA_STATIC_ASSET_DIR
+    assert Path(icon_resolver._resolve_assets_dir_for_config(str(DATA_STATIC_VERSION_DIR))) == DATA_STATIC_ASSET_DIR
     assert icon_resolver.find_existing_augment_asset_filename(None, "augment404_small.png") == "augment404_small.png"
     with TemporaryDirectory() as temp_dir:
         temp_root = Path(temp_dir)
@@ -3688,7 +3700,7 @@ def check_overlay_vision_sidecar_contract() -> None:
     assert body_shard_detection["source"]["ready_slots"] == 0
     assert body_shard_detection["source"]["reason"] == "selection_scene_not_detected"
 
-    shard_fixture_dir = RESOURCE_DIAGNOSTIC_DIR / "overlay_vision_fixtures" / "body_shard_20260621"
+    shard_fixture_dir = DATA_DIAGNOSTIC_DIR / "overlay_vision_fixtures" / "body_shard_20260621"
     shard_name_crops = [Image.open(shard_fixture_dir / f"name_{index}.png").convert("RGB") for index in range(3)]
     shard_scores = overlay_vision_sidecar._body_shard_name_scores(shard_name_crops)
     assert len(shard_scores) == 3
@@ -3701,7 +3713,7 @@ def check_overlay_vision_sidecar_contract() -> None:
     assert glass_cannon_template.augment_id == "glasscannon"
     assert glass_cannon_template.tier == "棱彩"
 
-    regression_fixture_dir = RESOURCE_DIAGNOSTIC_DIR / "overlay_vision_fixtures" / "hextech_20260622"
+    regression_fixture_dir = DATA_DIAGNOSTIC_DIR / "overlay_vision_fixtures" / "hextech_20260622"
     regression_names = ("更万用的瞄准镜", "闪现向前", "大法师")
     regression_crops = [
         Image.open(regression_fixture_dir / f"name_{index}.png").convert("RGB")
@@ -4682,16 +4694,16 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
     assert "hextech_snapshot_files" in manifest
     hextech_files = manifest["hextech_snapshot_files"]
     assert isinstance(hextech_files, list)
-    assert all(str(item).replace("\\", "/").startswith("resources/snapshots/hextech/") for item in hextech_files)
+    assert all(str(item).replace("\\", "/").startswith("data/seed/startup/hextech/") for item in hextech_files)
 
     assert "synergy_data_file" in manifest
     assert manifest["synergy_data_file"]
-    assert str(manifest["synergy_data_file"]).replace("\\", "/").startswith("resources/snapshots/synergy/")
+    assert str(manifest["synergy_data_file"]).replace("\\", "/").startswith("data/seed/startup/synergy/")
 
     assert "synergy_data_files" in manifest
     synergy_files = manifest["synergy_data_files"]
     assert isinstance(synergy_files, list)
-    assert all(str(item).replace("\\", "/").startswith("resources/snapshots/synergy/") for item in synergy_files)
+    assert all(str(item).replace("\\", "/").startswith("data/seed/startup/synergy/") for item in synergy_files)
 
     has_latest_pointer = any(Path(item).name == "Champion_Synergy_latest.v1.json" for item in synergy_files)
     has_timestamp_snapshot = any(
@@ -4733,15 +4745,28 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
     serialized_manifest = json.dumps(manifest, ensure_ascii=False)
     assert not any("data/runtime" in str(item) for item in source_files)
     assert not any("data/raw" in str(item) for item in source_files)
-    assert "data/raw" not in serialized_manifest.replace("\\", "/")
-    assert "data/runtime" not in serialized_manifest.replace("\\", "/")
+    normalized_manifest = serialized_manifest.replace("\\", "/")
+    assert "data/raw" not in normalized_manifest
+    assert "data/runtime" not in normalized_manifest
+    assert "data/processed" not in normalized_manifest
+    assert "runtime/reports" not in normalized_manifest
+    assert "runtime/report" not in normalized_manifest
+    assert "__pycache__" not in normalized_manifest
+    assert ".pyc" not in normalized_manifest
+    assert ".pyo" not in normalized_manifest
+    assert not any(str(item).startswith("run/tests/") or str(item).startswith("tests/") for item in source_files)
+    assert not any(str(item).startswith(("tools/diagnostics/", "tools/maintenance/")) for item in source_files)
+    assert "tools/collect_runtime_diagnostics.py" not in source_files
+    assert "tools/cleanup_runtime.py" not in source_files
+    assert "tools/dev_checks.py" not in source_files
+    assert "tools/migrate_runtime_data.py" not in source_files
     assert "overlay_anchor_calibration.v1.json" not in serialized_manifest
 
     with TemporaryDirectory() as tmp_dir:
         fixture_root = Path(tmp_dir) / "fixture"
-        fixture_index = fixture_root / "resources" / "版本数据"
+        fixture_index = fixture_root / "data" / "static" / "version"
         fixture_static = fixture_root / "hextech" / "display" / "web" / "static"
-        fixture_assets = fixture_root / "resources" / "图片资源"
+        fixture_assets = fixture_root / "data" / "static" / "assets"
         fixture_index.mkdir(parents=True)
         fixture_static.mkdir(parents=True)
         fixture_assets.mkdir(parents=True)
@@ -4756,10 +4781,10 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
         manifest_path.write_text("{}", encoding="utf-8")
         entries = iter_package_data_entries(fixture_root, manifest_path)
         entry_targets = {(entry.source.name, entry.target) for entry in entries}
-        assert ("海克斯资源目录.v1.json", "resources/版本数据") in entry_targets
-        assert ("英雄目录.v1.json", "resources/版本数据") in entry_targets
+        assert ("海克斯资源目录.v1.json", "data/static/version") in entry_targets
+        assert ("英雄目录.v1.json", "data/static/version") in entry_targets
         assert ("static", "static") in entry_targets
-        assert ("图片资源", "assets") in entry_targets
+        assert ("assets", "data/static/assets") in entry_targets
         assert ("bundle_manifest.json", ".") in entry_targets
         assert not (Path(tmp_dir) / "build" / "_bundle_runtime").exists()
         (fixture_assets / "debug.tmp").write_text("debug", encoding="utf-8")
@@ -4860,7 +4885,7 @@ def check_packaged_smoke_uses_explicit_feature_flags() -> None:
     assert '"auto_open_browser": False' in smoke_text
     assert "_write_smoke_feature_flags(runtime_root)" in smoke_text
     assert "OVERLAY_ANCHOR_CALIBRATION_FILENAME" in smoke_text
-    assert "package:resources/snapshots/synergy/Champion_Synergy_latest.v1.json" in smoke_text
+    assert "package:data/seed/startup/synergy/Champion_Synergy_latest.v1.json" in smoke_text
     assert "FORBIDDEN_PACKAGE_PATHS" in smoke_text
     assert 'child_env["LOCALAPPDATA"]' in smoke_text
     assert "runtime_base:data/{rel} absent" in smoke_text
@@ -4873,6 +4898,11 @@ def check_packaged_smoke_uses_explicit_feature_flags() -> None:
         "runtime/log",
         "runtime/logs",
         "runtime/debug",
+        "runtime/reports",
+        "runtime/report",
+        "__pycache__",
+        ".pyc",
+        ".pyo",
     ):
         assert forbidden_rel in smoke_text
     assert "_internal" in smoke_text
@@ -5386,6 +5416,7 @@ def check_synergy_snapshot_store() -> None:
         cleaned_missing = Path(temp_dir) / "Champion_Synergy_Cleaned.json"
 
         with (
+            patch.object(runtime_store, "_runtime_raw_dirs", return_value=[Path(temp_dir)]),
             patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
             patch.object(runtime_store, "build_synergy_cleaned_data_path", return_value=str(cleaned_missing)),
         ):
@@ -5402,7 +5433,7 @@ def check_synergy_snapshot_store() -> None:
         )
 
         with (
-            patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
+            patch.object(runtime_store, "_runtime_raw_dirs", return_value=[Path(temp_dir)]),
             patch.object(runtime_store, "build_synergy_cleaned_data_path", return_value=str(cleaned)),
         ):
             assert runtime_store.build_synergy_data_path() == str(cleaned)
@@ -5414,7 +5445,7 @@ def check_synergy_snapshot_store() -> None:
         cleaned_missing = Path(temp_dir) / "Champion_Synergy_Cleaned.json"
 
         with (
-            patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
+            patch.object(runtime_store, "_runtime_raw_dirs", return_value=[Path(temp_dir)]),
             patch.object(runtime_store, "build_synergy_cleaned_data_path", return_value=str(cleaned_missing)),
         ):
             assert runtime_store.get_latest_synergy_snapshot_path() == str(newer)
@@ -5425,6 +5456,7 @@ def check_synergy_snapshot_store() -> None:
         cleaned_missing = Path(temp_dir) / "Champion_Synergy_Cleaned.json"
 
         with (
+            patch.object(runtime_store, "_runtime_raw_dirs", return_value=[Path(temp_dir)]),
             patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
             patch.object(runtime_store, "build_synergy_cleaned_data_path", return_value=str(cleaned_missing)),
         ):
@@ -5444,6 +5476,7 @@ def check_synergy_snapshot_store() -> None:
 
 def check_mayhem_combo_pipeline_contract() -> None:
     from hextech.scraping.synergy.mayhem_combo_scraper import parse_combo_manifest
+    import hextech.scraping.synergy.mayhem_merge as mayhem_merge
     import hextech.scraping.synergy.mayhem_refresh as mayhem_refresh
     import tools.clean_mayhem_combos as clean_mayhem_combos
     from tools.clean_mayhem_combos import merge_mayhem_combos
@@ -5628,6 +5661,58 @@ def check_mayhem_combo_pipeline_contract() -> None:
         assert empty_summary["written"] is False
         assert json.loads(output_path.read_text(encoding="utf-8")) == sentinel
 
+        raw_latest = root / "Champion_Synergy.raw-latest.json"
+        cleaned_base = root / "Champion_Synergy_Cleaned.current.json"
+        _write_json(
+            raw_latest,
+            {
+                "63": {
+                    "id": "63",
+                    "name": "复仇焰魂",
+                    "title": "布兰德",
+                    "en_name": "Brand",
+                    "aliases": [],
+                    "synergies": [],
+                    "synergy_items": [],
+                },
+            },
+        )
+        _write_json(
+            cleaned_base,
+            {
+                "67": {
+                    "id": "67",
+                    "name": "暗夜猎手",
+                    "title": "薇恩",
+                    "en_name": "Vayne",
+                    "aliases": [],
+                    "synergies": [],
+                    "synergy_items": [
+                        {
+                            "augment_names": ["连拨击锤"],
+                            "tier": "棱彩",
+                            "rating": "S",
+                            "tag": "强力联动",
+                            "author": "ApexLoL",
+                            "content": "旧 cleaned 不应覆盖 raw latest。",
+                        }
+                    ],
+                }
+            },
+        )
+        with (
+            patch.object(mayhem_merge, "build_raw_synergy_data_path", return_value=str(raw_latest)),
+            patch.object(mayhem_merge, "build_synergy_cleaned_data_path", return_value=str(cleaned_base)),
+        ):
+            raw_first_summary = merge_mayhem_combos(
+                mayhem_raw_path=raw_path,
+                augment_manifest_path=augment_manifest_path,
+                core_data_path=core_path,
+                write_output=False,
+            )
+        assert raw_first_summary["base_mode"] == "raw_latest"
+        assert raw_first_summary["apex_path"] == str(raw_latest)
+
         cleaned_base = root / "Champion_Synergy_Cleaned.current.json"
         _write_json(
             cleaned_base,
@@ -5686,8 +5771,8 @@ def check_mayhem_combo_pipeline_contract() -> None:
             },
         )
         with (
-            patch.object(clean_mayhem_combos, "build_synergy_cleaned_data_path", return_value=str(cleaned_base)),
-            patch.object(clean_mayhem_combos, "build_raw_synergy_data_path", return_value=str(root / "missing_legacy.json")),
+            patch.object(mayhem_merge, "build_synergy_cleaned_data_path", return_value=str(cleaned_base)),
+            patch.object(mayhem_merge, "build_raw_synergy_data_path", return_value=str(root / "missing_legacy.json")),
         ):
             cleaned_summary = merge_mayhem_combos(
                 mayhem_raw_path=raw_path,
@@ -7770,8 +7855,8 @@ def check_overlay_refresh_tool_contract() -> None:
 
     with TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
-        truth_path = root / "resources" / "诊断样例" / "truth.json"
-        fixture_path = root / "resources" / "诊断样例" / "overlay_vision_fixtures" / "case" / "name_0.png"
+        truth_path = root / "data" / "fixtures" / "diagnostics" / "truth.json"
+        fixture_path = root / "data" / "fixtures" / "diagnostics" / "overlay_vision_fixtures" / "case" / "name_0.png"
         fixture_path.parent.mkdir(parents=True)
         fixture_path.write_bytes(b"fixture")
         truth_path.parent.mkdir(parents=True, exist_ok=True)
@@ -7844,21 +7929,21 @@ def check_overlay_refresh_tool_contract() -> None:
 
         snapshot = root / "snapshot"
         target = root / "target"
-        snapshot_icon = snapshot / "resources" / "图片资源" / "new.png"
-        snapshot_catalog = snapshot / "resources" / "版本数据" / "海克斯资源目录.v1.json"
+        snapshot_icon = snapshot / "data" / "static" / "assets" / "new.png"
+        snapshot_catalog = snapshot / "data" / "static" / "version" / "海克斯资源目录.v1.json"
         snapshot_icon.parent.mkdir(parents=True)
         snapshot_catalog.parent.mkdir(parents=True)
         snapshot_icon.write_bytes(b"new-icon")
         snapshot_catalog.write_text('{"schema_version": 1}', encoding="utf-8")
-        stale_icon = target / "resources" / "图片资源" / "stale.png"
+        stale_icon = target / "data" / "static" / "assets" / "stale.png"
         stale_icon.parent.mkdir(parents=True)
         stale_icon.write_bytes(b"keep")
 
         published = refresh_tool.publish_snapshot(snapshot, target_run_dir=target)
         assert published["icon_count"] == 1
         assert stale_icon.read_bytes() == b"keep"
-        assert (target / "resources" / "图片资源" / "new.png").read_bytes() == b"new-icon"
-        assert (target / "resources" / "版本数据" / "海克斯资源目录.v1.json").exists()
+        assert (target / "data" / "static" / "assets" / "new.png").read_bytes() == b"new-icon"
+        assert (target / "data" / "static" / "version" / "海克斯资源目录.v1.json").exists()
 
         cache_root = root / "data" / "runtime" / "cache"
         with (

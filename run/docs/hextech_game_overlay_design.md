@@ -64,7 +64,7 @@ Hextech 伴生系统保留两个可独立控制的运行能力：
 真正两轨共用的只有数据契约与映射，**渲染端按轨道分离**（这是渲染接入决策的直接结果）：
 
 - `hextech/overlay/events.py`：三槽位事件协议（`schema_version`、`source`、`active`、`selection_type`、`slots[]`），唯一读写 `data/runtime/state/game_overlay_slots.v1.json`。Track A 必走它；Track B 可选择把候选镜像写入该文件作为调试 / Borderless fallback 契约，但 Track B 的全屏显示不依赖它。
-- `resources/版本数据/`（及 `hextech/overlay/hints.py` 生成的提示缓存）：augment id → 名称 / tier / 描述的本地 JSON 映射。两轨共用同一份 JSON；Track A 用 Python 读，Track B 在 ow-electron 里直接读同一份 JSON。
+- `data/static/version/`（及 `hextech/overlay/hints.py` 生成的提示缓存）：augment id → 名称 / tier / 描述的本地 JSON 映射。两轨共用同一份 JSON；Track A 用 Python 读，Track B 在 ow-electron 里直接读同一份 JSON。
 - 渲染端**不共享**：Track A = `hextech/overlay/host.py` + `hextech/overlay/renderer.py`（Tk topmost，Borderless）；Track B = ow-electron Overwolf overlay（图形钩子，支持独占全屏）。Tk host 不参与 Track B 的全屏渲染。
 
 ### Track A — 视觉识别（截图链路）
@@ -77,7 +77,7 @@ Hextech 伴生系统保留两个可独立控制的运行能力：
 ### Track B — Overwolf GEP + Overlay 渲染（官方事件平台，目标全屏）
 
 - 工作树 / 分支：`...hextech-overlay-overwolf-gep` / `feature/hextech-overlay-overwolf-gep`。
-- 范围：新增一个 ow-electron 应用，**单进程同时干两件事**——订阅 Overwolf GEP `augments` feature 拿三张候选；用 Overwolf overlay 在游戏内渲染三卡。augment id → 中文名 / tier / 描述直接读 `resources/版本数据` 同一份 JSON。
+- 范围：新增一个 ow-electron 应用，**单进程同时干两件事**——订阅 Overwolf GEP `augments` feature 拿三张候选；用 Overwolf overlay 在游戏内渲染三卡。augment id → 中文名 / tier / 描述直接读 `data/static/version` 同一份 JSON。
 - 关键能力：Overwolf overlay 注入游戏渲染管线，可在 **独占全屏（Full Screen）** 显示，突破 Track A（Tk topmost）只能 Borderless 的限制。
 - 渲染归属：Track B 的三卡 UI 由 ow-electron overlay 渲染，**不走 Python Tk**。`hextech.overlay.host` 退居二线（Track A 渲染端 / Borderless fallback / 设置控制台）。事件通道可保留为调试镜像，非必需。
 - 当前状态：**计划阶段**。执行步骤见 `run/hextech_overwolf_gep_plan.md`（仅存于本分支，不同步其他分支；交 Codex 执行）。依赖 / 包体 / 分发 / 渲染端迁移 go/no-go 见 §7.2。
@@ -269,7 +269,7 @@ python -m hextech.overlay.vision.sidecar --loop --preset auto --write-event
 ```text
 ow-electron 单进程
   ├─ 订阅 Overwolf GEP augments feature（augment_1/2/3）
-  ├─ 读 resources/版本数据 同一份 JSON 把 id 补成中文名/tier/描述
+  ├─ 读 data/static/version 同一份 JSON 把 id 补成中文名/tier/描述
   ├─ Overwolf overlay 窗口在游戏内渲染三卡（独占全屏可见）
   └─（可选）镜像写 game_overlay_slots.v1.json，供 Tk 在 Borderless 作 fallback / 调试
 ```

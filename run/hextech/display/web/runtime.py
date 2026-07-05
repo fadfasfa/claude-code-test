@@ -5,7 +5,7 @@
 - 统一管理 LCU 轮询、CSV 监视、冷启动快照和资源缓存回退
 
 核心输入：
-- 本地 `resources/版本数据`、`resources/图片资源` 与运行态缓存
+- 本地 `data/static/version`、`data/static/assets` 与运行态缓存
 - LCU 本地接口、远端快照接口和海克斯图标资源
 
 核心输出：
@@ -78,7 +78,7 @@ from hextech.scraping.icon_resolver import (
 from hextech.scraping.version_sync import (
     ASSET_DIR,
     BASE_DIR,
-    RESOURCE_DIR,
+    BUNDLE_ROOT_DIR,
     STATIC_DATA_DIR,
     VERSION_FILE,
     HEXTECH_AUGMENT_METADATA_URLS,
@@ -213,7 +213,7 @@ def write_request_auth_token() -> None:
 
 def _get_resource_path(relative_path: str) -> str:
     candidates = [
-        os.path.join(RESOURCE_DIR, relative_path),
+        os.path.join(BUNDLE_ROOT_DIR, relative_path),
         os.path.join(BASE_DIR, relative_path),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path),
     ]

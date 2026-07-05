@@ -21,8 +21,8 @@ import urllib.request
 
 
 REQUIRED_PACKAGE_DIRS = (
-    "resources/snapshots/hextech",
-    "resources/snapshots/synergy",
+    "data/seed/startup/hextech",
+    "data/seed/startup/synergy",
 )
 
 REQUIRED_RUNTIME_DIRS = (
@@ -37,6 +37,7 @@ REQUIRED_RUNTIME_FILES = (
 )
 OVERLAY_ANCHOR_CALIBRATION_FILENAME = "overlay_anchor_calibration.v1.json"
 FORBIDDEN_PACKAGE_PATHS = (
+    "resources",
     "data/raw",
     "data/runtime",
     "data/processed",
@@ -45,7 +46,10 @@ FORBIDDEN_PACKAGE_PATHS = (
     "runtime/log",
     "runtime/logs",
     "runtime/debug",
+    "runtime/report",
+    "runtime/reports",
 )
+FORBIDDEN_PACKAGE_GENERATED_SUFFIXES = (".pyc", ".pyo")
 SMOKE_FEATURE_FLAGS = {
     "web_frontend_enabled": True,
     "game_overlay_enabled": False,
@@ -127,11 +131,11 @@ def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall
     packaged_data_root = package_dir / "_internal" if (package_dir / "_internal").exists() else package_dir
     for rel in REQUIRED_PACKAGE_DIRS:
         checks[f"package:{rel}"] = (packaged_data_root / rel).is_dir()
-    synergy_dir = packaged_data_root / "resources" / "snapshots" / "synergy"
-    checks["package:resources/snapshots/synergy/Champion_Synergy_latest.v1.json"] = (
+    synergy_dir = packaged_data_root / "data" / "seed" / "startup" / "synergy"
+    checks["package:data/seed/startup/synergy/Champion_Synergy_latest.v1.json"] = (
         synergy_dir / "Champion_Synergy_latest.v1.json"
     ).is_file()
-    checks["package:resources/snapshots/synergy/timestamp_snapshot"] = any(
+    checks["package:data/seed/startup/synergy/timestamp_snapshot"] = any(
         path.is_file()
         and path.name.startswith("Champion_Synergy_")
         and path.name != "Champion_Synergy_latest.v1.json"
@@ -149,6 +153,14 @@ def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall
     for label, root in package_roots:
         for rel in FORBIDDEN_PACKAGE_PATHS:
             checks[f"{label}:{rel} absent"] = not (root / Path(rel)).exists()
+        checks[f"{label}:__pycache__ absent"] = not any(
+            path.is_dir() and path.name == "__pycache__"
+            for path in root.rglob("__pycache__")
+        )
+        checks[f"{label}:pyc/pyo absent"] = not any(
+            path.is_file() and path.suffix.lower() in FORBIDDEN_PACKAGE_GENERATED_SUFFIXES
+            for path in root.rglob("*")
+        )
     for rel in ("raw", "processed"):
         checks[f"runtime_base:data/{rel} absent"] = not (runtime_root.parent / rel).exists()
     checks[f"package:{OVERLAY_ANCHOR_CALIBRATION_FILENAME} absent"] = not any(
@@ -298,6 +310,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
     appdata_root = package_dir.parent / "appdata"
     child_env["LOCALAPPDATA"] = str(appdata_root / "Local")
     child_env["APPDATA"] = str(appdata_root / "Roaming")
+    child_env["PYTHONDONTWRITEBYTECODE"] = "1"
     runtime_root = _get_packaged_runtime_root(child_env)
     _write_smoke_feature_flags(runtime_root)
     with stdout_path.open("wb") as stdout:

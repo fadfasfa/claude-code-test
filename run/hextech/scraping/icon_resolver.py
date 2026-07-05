@@ -5,8 +5,8 @@
 - 在本地图标缺失时执行 CommunityDragon / apexlol 远端回退
 
 核心输入：
-- `resources/版本数据/海克斯资源目录.v1.json`
-- 本地 `resources/图片资源/` 目录
+- `data/static/version/海克斯资源目录.v1.json`
+- 本地 `data/static/assets/` 目录
 
 核心输出：
 - 本地图标文件名
@@ -14,7 +14,7 @@
 - 批量预取结果
 
 主要依赖：
-- 本地 `resources/版本数据` 和 `resources/图片资源`
+- 本地 `data/static/version` 和 `data/static/assets`
 - CommunityDragon 与 apexlol
 
 维护提醒：
@@ -72,8 +72,8 @@ def _resolve_assets_dir(asset_dir: Optional[str]) -> str:
 
 def _resolve_assets_dir_for_config(config_dir: Optional[str]) -> str:
     config_path = os.path.abspath(_resolve_config_dir(config_dir))
-    if os.path.basename(config_path) == "版本数据":
-        return os.path.join(os.path.dirname(config_path), "图片资源")
+    if os.path.basename(config_path) == "version":
+        return os.path.join(os.path.dirname(config_path), "assets")
 
     legacy_parent_assets = os.path.abspath(os.path.join(config_path, "..", "assets"))
     if os.path.isdir(legacy_parent_assets):

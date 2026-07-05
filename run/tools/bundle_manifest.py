@@ -7,11 +7,11 @@ from __future__ import annotations
 - 生成运行期 seed 使用的 bundle manifest；构建期只把这份 manifest 随包写入，不复制资源
 
 核心输入：
-- `resources/版本数据/`
-- `data/raw/hextech/Hextech_Data_*.csv`（构建期源）
-- `resources/首启快照/Champion_Synergy_YYYYMMDD_HHMMSS.json`（构建期源）
-- `resources/首启快照/Champion_Synergy_latest.v1.json`（构建期源）
-- `resources/图片资源/`
+- `data/static/version/`
+- `data/seed/startup/hextech/Hextech_Data_*.csv`（构建期源）
+- `data/seed/startup/synergy/Champion_Synergy_YYYYMMDD_HHMMSS.json`（构建期源）
+- `data/seed/startup/synergy/Champion_Synergy_latest.v1.json`（构建期源）
+- `data/static/assets/`
 - `hextech/display/web/static/`
 
 核心输出：
@@ -23,7 +23,7 @@ from __future__ import annotations
 
 维护提醒：
 - 这里只白名单稳定资源与首启冷启动所需快照，不打包运行态缓存/锁/日志
-- 构建期可读取 `data/raw` 快照源，但 manifest 路径必须写入 `resources/snapshots`
+- 构建期只读取 `data/seed/startup` 快照源，manifest 路径必须写入 `data/seed/startup`
 - 若 manifest 字段有改动，必须同步检查 `tools.runtime_bundle` 与烟测脚本
 """
 
@@ -35,10 +35,10 @@ from tools.package_rules import (
     BUNDLED_HEXTECH_SNAPSHOT_DIR,
     BUNDLED_SYNERGY_DATA_DIR,
     BUNDLE_MANIFEST_NAME,
+    DATA_STATIC_ASSET_DIR,
+    DATA_STATIC_VERSION_DIR,
     FORBIDDEN_BUNDLE_PATH_PARTS,
     HEXTECH_SNAPSHOT_DIR,
-    RESOURCE_IMAGE_DIR,
-    RESOURCE_VERSION_DATA_DIR,
     STABLE_INDEX_FILES,
     STABLE_STATIC_FILES,
     SYNERGY_DATA_DIR,
@@ -53,7 +53,6 @@ from tools.package_rules import (
 def _assert_no_runtime_cache_entries(manifest: dict) -> None:
     serialized = json.dumps(manifest, ensure_ascii=False).replace("\\", "/")
     for forbidden in FORBIDDEN_BUNDLE_PATH_PARTS:
-        # TODO: manifest 字段扩展后改为按路径分量精确匹配，避免 source 文件名偶然含禁词时误报。
         if forbidden in serialized:
             raise ValueError(f"bundle manifest must not include runtime cache entry: {forbidden}")
 
@@ -67,9 +66,9 @@ def _bundled_snapshot_name(path: Path, target_dir: Path) -> str:
 
 
 def build_bundle_manifest(base_dir: Path) -> dict:
-    static_dir = base_dir / RESOURCE_VERSION_DATA_DIR
-    index_dir = base_dir / RESOURCE_VERSION_DATA_DIR
-    asset_dir = base_dir / RESOURCE_IMAGE_DIR
+    static_dir = base_dir / DATA_STATIC_VERSION_DIR
+    index_dir = base_dir / DATA_STATIC_VERSION_DIR
+    asset_dir = base_dir / DATA_STATIC_ASSET_DIR
 
     static_files = [
         name for name in STABLE_STATIC_FILES if (static_dir / name).exists()
