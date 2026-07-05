@@ -95,7 +95,7 @@ from hextech.scraping.synergy.scraper import (
     normalize_slug,
     write_synergy_refresh_meta,
 )
-from tools.bundle_manifest import build_bundle_manifest
+from tools.bundle_manifest import build_bundle_manifest, manifest_contains_forbidden_path
 from tools.package_rules import iter_package_data_entries
 from tools.resource_manifest import validate_resource_manifest
 from hextech.support.log_utils import install_summary_logging
@@ -4742,25 +4742,26 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
         assert required_source in source_files
     legacy_source_prefixes = ("crawler/", "display/", "game_overlay/", "processing/", "scraping/")
     assert not any(str(item).startswith(legacy_source_prefixes) for item in source_files)
-    serialized_manifest = json.dumps(manifest, ensure_ascii=False)
     assert not any("data/runtime" in str(item) for item in source_files)
     assert not any("data/raw" in str(item) for item in source_files)
-    normalized_manifest = serialized_manifest.replace("\\", "/")
-    assert "data/raw" not in normalized_manifest
-    assert "data/runtime" not in normalized_manifest
-    assert "data/processed" not in normalized_manifest
-    assert "runtime/reports" not in normalized_manifest
-    assert "runtime/report" not in normalized_manifest
-    assert "__pycache__" not in normalized_manifest
-    assert ".pyc" not in normalized_manifest
-    assert ".pyo" not in normalized_manifest
+    for forbidden_path in (
+        "data/raw",
+        "data/runtime",
+        "data/processed",
+        "runtime/reports",
+        "runtime/report",
+        "__pycache__",
+        ".pyc",
+        ".pyo",
+    ):
+        assert not manifest_contains_forbidden_path(manifest, forbidden_path)
     assert not any(str(item).startswith("run/tests/") or str(item).startswith("tests/") for item in source_files)
     assert not any(str(item).startswith(("tools/diagnostics/", "tools/maintenance/")) for item in source_files)
     assert "tools/collect_runtime_diagnostics.py" not in source_files
     assert "tools/cleanup_runtime.py" not in source_files
     assert "tools/dev_checks.py" not in source_files
     assert "tools/migrate_runtime_data.py" not in source_files
-    assert "overlay_anchor_calibration.v1.json" not in serialized_manifest
+    assert not manifest_contains_forbidden_path(manifest, "overlay_anchor_calibration.v1.json")
 
     with TemporaryDirectory() as tmp_dir:
         fixture_root = Path(tmp_dir) / "fixture"

@@ -1094,7 +1094,8 @@ class SynergyExtractor:
         if text.strip().startswith(("{", "[")):
             try:
                 entries.extend(self._extract_from_json_payload(json.loads(text), fallback_slug=""))
-                return entries
+                if entries:
+                    return entries
             except json.JSONDecodeError:
                 pass
         entries.extend(self._extract_old_bundle(text))

@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 from tools.package_rules import (
     BUNDLED_HEXTECH_SNAPSHOT_DIR,
@@ -50,10 +51,45 @@ from tools.package_rules import (
 )
 
 
+def _iter_manifest_path_strings(value: Any):
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_manifest_path_strings(item)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            yield from _iter_manifest_path_strings(item)
+        return
+    if isinstance(value, str):
+        normalized = value.replace("\\", "/").strip()
+        if normalized:
+            yield normalized
+
+
+def _path_contains_forbidden_part(path_value: str, forbidden: str) -> bool:
+    normalized = path_value.replace("\\", "/").strip("/")
+    forbidden_norm = forbidden.replace("\\", "/").strip("/")
+    if not normalized or not forbidden_norm:
+        return False
+    if forbidden_norm in {".pyc", ".pyo"}:
+        return normalized.endswith(forbidden_norm)
+    path_parts = PurePosixPath(normalized).parts
+    forbidden_parts = PurePosixPath(forbidden_norm).parts
+    if len(forbidden_parts) == 1:
+        return forbidden_parts[0] in path_parts or PurePosixPath(normalized).name == forbidden_parts[0]
+    return any(
+        tuple(path_parts[index : index + len(forbidden_parts)]) == forbidden_parts
+        for index in range(0, len(path_parts) - len(forbidden_parts) + 1)
+    )
+
+
+def manifest_contains_forbidden_path(manifest: dict, forbidden: str) -> bool:
+    return any(_path_contains_forbidden_part(path_value, forbidden) for path_value in _iter_manifest_path_strings(manifest))
+
+
 def _assert_no_runtime_cache_entries(manifest: dict) -> None:
-    serialized = json.dumps(manifest, ensure_ascii=False).replace("\\", "/")
     for forbidden in FORBIDDEN_BUNDLE_PATH_PARTS:
-        if forbidden in serialized:
+        if manifest_contains_forbidden_path(manifest, forbidden):
             raise ValueError(f"bundle manifest must not include runtime cache entry: {forbidden}")
 
 

@@ -20,7 +20,6 @@ import hashlib
 import json
 import logging
 import os
-import pickle
 import shutil
 import sys
 import time
@@ -56,7 +55,7 @@ except ImportError:  # pragma: no cover - Windows 之外只允许离线测试纯
 
 SLOT_COUNT = 3
 TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 1
-TEMPLATE_RUNTIME_CACHE_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v1.pkl"))
+TEMPLATE_RUNTIME_CACHE_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v1.npz"))
 SIDECAR_STATUS_FILE = Path(build_runtime_state_path("game_overlay_sidecar_status.json"))
 FINGERPRINT_SIZE = (48, 48)
 NAME_FINGERPRINT_SIZE = (220, 48)
@@ -1354,6 +1353,126 @@ def _hint_cache_signature(hint_cache: Mapping[str, Any] | None) -> str:
         return hashlib.sha256(repr(hint_cache).encode("utf-8", errors="replace")).hexdigest()
 
 
+def _tuple_float(value: Any) -> tuple[float, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    result: list[float] = []
+    for item in value:
+        try:
+            result.append(float(item))
+        except (TypeError, ValueError):
+            return ()
+    return tuple(result)
+
+
+def _optional_tuple_float(value: Any) -> tuple[float, ...] | None:
+    if value is None:
+        return None
+    result = _tuple_float(value)
+    return result if result else None
+
+
+def _tuple_str(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    return tuple(str(item) for item in value if str(item).strip())
+
+
+def _tuple_tuple_float(value: Any) -> tuple[tuple[float, ...], ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    rows: list[tuple[float, ...]] = []
+    for item in value:
+        row = _tuple_float(item)
+        if row:
+            rows.append(row)
+    return tuple(rows)
+
+
+def _template_entry_to_cache(entry: TemplateEntry) -> dict[str, Any]:
+    return {
+        "augment_id": entry.augment_id,
+        "name": entry.name,
+        "tier": entry.tier,
+        "summary": entry.summary,
+        "fingerprint": list(entry.fingerprint),
+        "icon_fingerprints": [list(item) for item in entry.icon_fingerprints],
+        "icon_digest": entry.icon_digest,
+        "priority": int(entry.priority),
+        "name_fingerprint": list(entry.name_fingerprint) if entry.name_fingerprint is not None else None,
+        "name_fingerprint_alt": list(entry.name_fingerprint_alt) if entry.name_fingerprint_alt is not None else None,
+        "source_icon_filenames": list(entry.source_icon_filenames),
+        "text_only_icon_filenames": list(entry.text_only_icon_filenames),
+    }
+
+
+def _template_entry_from_cache(payload: Any) -> TemplateEntry:
+    if not isinstance(payload, Mapping):
+        raise ValueError("template cache entry schema mismatch")
+    return TemplateEntry(
+        augment_id=str(payload.get("augment_id") or ""),
+        name=str(payload.get("name") or ""),
+        tier=str(payload.get("tier") or ""),
+        summary=str(payload.get("summary") or ""),
+        fingerprint=_tuple_float(payload.get("fingerprint")),
+        icon_fingerprints=_tuple_tuple_float(payload.get("icon_fingerprints")),
+        icon_digest=str(payload.get("icon_digest") or ""),
+        priority=int(payload.get("priority") or 0),
+        name_fingerprint=_optional_tuple_float(payload.get("name_fingerprint")),
+        name_fingerprint_alt=_optional_tuple_float(payload.get("name_fingerprint_alt")),
+        source_icon_filenames=_tuple_str(payload.get("source_icon_filenames")),
+        text_only_icon_filenames=_tuple_str(payload.get("text_only_icon_filenames")),
+    )
+
+
+def _template_indices(template_index: Sequence[TemplateEntry], templates: Sequence[TemplateEntry]) -> list[int]:
+    index_by_identity = {id(template): index for index, template in enumerate(template_index)}
+    return [index_by_identity[id(template)] for template in templates]
+
+
+def _templates_by_index(template_index: Sequence[TemplateEntry], indices: Any) -> tuple[TemplateEntry, ...]:
+    result: list[TemplateEntry] = []
+    for raw_index in np.asarray(indices, dtype=np.int32).tolist():
+        index = int(raw_index)
+        if index < 0 or index >= len(template_index):
+            raise ValueError("template cache matrix index out of range")
+        result.append(template_index[index])
+    return tuple(result)
+
+
+def _matrix_from_cache(arrays: Mapping[str, Any], key: str, templates: Sequence[TemplateEntry]) -> np.ndarray:
+    matrix = np.asarray(arrays[key], dtype=np.float32).copy()
+    if matrix.ndim != 2:
+        raise ValueError("template cache matrix must be two-dimensional")
+    if matrix.shape[0] != len(templates):
+        raise ValueError("template cache matrix row count mismatch")
+    if templates and matrix.shape[1] <= 0:
+        raise ValueError("template cache matrix width mismatch")
+    if not templates and matrix.shape != (0, 0):
+        raise ValueError("empty template cache matrix shape mismatch")
+    return matrix
+
+
+def _rank_matrices_from_cache(
+    template_index: list[TemplateEntry],
+    *,
+    metadata: Mapping[str, Any],
+    arrays: Mapping[str, Any],
+) -> _RankMatrices:
+    icon_templates = _templates_by_index(template_index, metadata.get("icon_template_indices") or [])
+    name_templates = _templates_by_index(template_index, metadata.get("name_template_indices") or [])
+    alt_name_templates = _templates_by_index(template_index, metadata.get("alt_name_template_indices") or [])
+    return _RankMatrices(
+        template_index,
+        icon_templates,
+        _matrix_from_cache(arrays, "icon_matrix", icon_templates),
+        name_templates,
+        _matrix_from_cache(arrays, "name_matrix", name_templates),
+        alt_name_templates,
+        _matrix_from_cache(arrays, "alt_name_matrix", alt_name_templates),
+    )
+
+
 def _read_template_runtime_cache(
     cache_file: str | Path,
     *,
@@ -1361,23 +1480,23 @@ def _read_template_runtime_cache(
     hint_signature: str,
 ) -> TemplateRuntime | None:
     try:
-        with Path(cache_file).open("rb") as f:
-            payload = pickle.load(f)
+        with np.load(Path(cache_file), allow_pickle=False) as payload:
+            raw_metadata = np.asarray(payload["metadata_json"], dtype=np.uint8).tobytes().decode("utf-8")
+            metadata = json.loads(raw_metadata)
+            if not isinstance(metadata, Mapping):
+                return None
+            if metadata.get("schema_version") != TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION:
+                return None
+            if metadata.get("resource_signature") != dict(resource_signature):
+                return None
+            if str(metadata.get("hint_signature") or "") != hint_signature:
+                return None
+            raw_templates = metadata.get("template_index")
+            if not isinstance(raw_templates, list):
+                return None
+            template_index = [_template_entry_from_cache(item) for item in raw_templates]
+            matrices = _rank_matrices_from_cache(template_index, metadata=metadata, arrays=payload)
     except Exception:
-        return None
-    if not isinstance(payload, Mapping):
-        return None
-    if payload.get("schema_version") != TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION:
-        return None
-    if payload.get("resource_signature") != dict(resource_signature):
-        return None
-    if str(payload.get("hint_signature") or "") != hint_signature:
-        return None
-    template_index = payload.get("template_index")
-    matrices = payload.get("matrices")
-    if not isinstance(template_index, list) or not isinstance(matrices, _RankMatrices):
-        return None
-    if matrices.index_ref is not template_index:
         return None
     _RANK_MATRIX_CACHE[id(template_index)] = matrices
     return TemplateRuntime(
@@ -1402,17 +1521,26 @@ def _write_template_runtime_cache(
     target = Path(cache_file)
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target.with_name(f"{target.name}.{os.getpid()}.tmp")
-    payload = {
+    metadata = {
         "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
         "resource_signature": dict(resource_signature),
         "hint_signature": hint_signature,
-        "template_index": template_index,
-        "matrices": matrices,
+        "template_index": [_template_entry_to_cache(entry) for entry in template_index],
+        "icon_template_indices": _template_indices(template_index, matrices.icon_templates),
+        "name_template_indices": _template_indices(template_index, matrices.name_templates),
+        "alt_name_template_indices": _template_indices(template_index, matrices.alt_name_templates),
         "written_at": time.time(),
     }
+    metadata_bytes = json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8")
     try:
         with temp_path.open("wb") as f:
-            pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+            np.savez(
+                f,
+                metadata_json=np.frombuffer(metadata_bytes, dtype=np.uint8),
+                icon_matrix=np.asarray(matrices.icon_matrix, dtype=np.float32),
+                name_matrix=np.asarray(matrices.name_matrix, dtype=np.float32),
+                alt_name_matrix=np.asarray(matrices.alt_name_matrix, dtype=np.float32),
+            )
         os.replace(temp_path, target)
     finally:
         try:

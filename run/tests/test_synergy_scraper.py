@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 class SynergyScraperTests(unittest.TestCase):
@@ -99,6 +100,28 @@ class SynergyScraperTests(unittest.TestCase):
         self.assertEqual(len(entries["vi"]), 1)
         self.assertEqual(entries["vi"][0].augment_names, ["闪电打击"])
         self.assertEqual(extractor.archived_filtered_count, 1)
+
+    def test_empty_json_payload_falls_back_to_old_bundle_parser(self):
+        from hextech.scraping.synergy import scraper
+
+        extractor = self._extractor()
+        fallback_entry = scraper.SynergyEntry(
+            champion_slug="vi",
+            augment_names=["闪电打击"],
+            tier="黄金",
+            rating="A",
+            tag="强力联动",
+            author="ApexLoL",
+            is_original=False,
+            content="旧 bundle 兜底。",
+        )
+        resource = scraper.FetchedResource("https://apexlol.info/zh/champions/Vi", "[]", "fixture")
+
+        with mock.patch.object(extractor, "_extract_old_bundle", return_value=[fallback_entry]) as old_bundle:
+            entries = extractor._extract_from_resource(resource)
+
+        self.assertEqual(entries, [fallback_entry])
+        old_bundle.assert_called_once()
 
     def test_archived_marker_in_card_content_is_filtered(self):
         from hextech.scraping.synergy import scraper

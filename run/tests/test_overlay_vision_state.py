@@ -73,7 +73,7 @@ class OverlayVisionStateTests(unittest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as tmp:
-            cache_file = Path(tmp) / "overlay_vision" / "template_runtime_cache.v1.pkl"
+            cache_file = Path(tmp) / "overlay_vision" / "template_runtime_cache.v1.npz"
             signature = {"schema_version": 1, "asset_digest": "a", "version_digest": "v"}
             updated_signature = {"schema_version": 1, "asset_digest": "b", "version_digest": "v"}
 
