@@ -2014,9 +2014,16 @@ def _slot_signature(event_payload: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def _loop_event_signature(event_payload: Mapping[str, Any]) -> tuple[str, ...]:
+    source = event_payload.get("source") if isinstance(event_payload.get("source"), Mapping) else {}
     if bool(event_payload.get("active")):
         return ("active", *_slot_signature(event_payload))
-    source = event_payload.get("source") if isinstance(event_payload.get("source"), Mapping) else {}
+    if source.get("selection_window_active") is True:
+        return (
+            "selection",
+            str(source.get("gate_state") or ""),
+            str(_event_ready_slots(event_payload)),
+            *_slot_signature(event_payload),
+        )
     return ("inactive", str(source.get("reason") or "inactive"))
 
 
@@ -2128,9 +2135,14 @@ def should_write_loop_event(
     """判断 loop 是否需要写事件，避免每帧刷新运行态文件。"""
 
     signature = _loop_event_signature(event_payload)
-    if bool(event_payload.get("active")):
+    source = event_payload.get("source") if isinstance(event_payload.get("source"), Mapping) else {}
+    if bool(event_payload.get("active")) or source.get("selection_window_active") is True:
         return signature != last_signature or (now - float(last_write_at or 0.0)) >= float(heartbeat_seconds)
-    return last_signature is None or signature != last_signature or (bool(last_signature) and last_signature[0] == "active")
+    return (
+        last_signature is None
+        or signature != last_signature
+        or (bool(last_signature) and last_signature[0] in {"active", "selection"})
+    )
 
 
 def should_defer_unstable_event(

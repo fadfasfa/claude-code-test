@@ -48,6 +48,7 @@ from PIL import Image, ImageDraw, ImageTk
 
 from hextech.display.web import runtime as web_runtime
 from hextech.overlay import context as overlay_context
+from hextech.overlay.gameflow import probe_lcu_gameflow_in_progress, probe_live_client_in_progress
 from hextech.overlay.window import find_lol_game_window, is_window_renderable
 from hextech.catalog.query_terminal import display_hero_hextech, main_query, set_last_hero
 from hextech.overlay.window_titles import LOL_CLIENT_WINDOW_TITLE
@@ -59,6 +60,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _preload_status_executor: ThreadPoolExecutor | None = None
+GAMEFLOW_VISIBILITY_POLL_SECONDS = 1.0
+LCU_LOCAL_REQUEST_TIMEOUT_SECONDS = 1.0
 
 
 def _executor_shutdown(executor: ThreadPoolExecutor | None) -> bool:
@@ -74,6 +77,27 @@ def _executor_queue_size(executor: ThreadPoolExecutor | None) -> int:
         except Exception:
             return 0
     return 0
+
+
+def resolve_client_overlay_policy(
+    *,
+    client_visible: bool,
+    game_hwnd_renderable: bool,
+    gameflow_in_progress: bool,
+    live_client_in_progress: bool,
+    client_active: bool,
+    overlay_active: bool,
+    recent_client_context: bool,
+) -> tuple[bool, bool]:
+    """统一桌面伴生窗显隐：实际对局中必须隐藏客户端浮窗。"""
+
+    game_visible = bool(game_hwnd_renderable or gameflow_in_progress or live_client_in_progress)
+    if game_visible:
+        return False, False
+    if not client_visible:
+        return False, False
+    should_show = bool(client_active or overlay_active or recent_client_context)
+    return should_show, bool(client_active)
 
 
 def _get_preload_status_executor() -> ThreadPoolExecutor:
@@ -528,6 +552,17 @@ def _candidate_groups_to_id_set(candidate_groups: dict[str, list[str]]) -> set[s
     }
 
 
+def _get_lcu_champ_select_session(url: str, headers: dict[str, str]) -> requests.Response:
+    """LCU 是本机短轮询接口，不能复用资源下载的重试 session。"""
+
+    return requests.get(
+        url,
+        headers=headers,
+        verify=False,
+        timeout=LCU_LOCAL_REQUEST_TIMEOUT_SECONDS,
+    )
+
+
 def poll_lcu_live_ids(ui: "HextechUI"):
     if not ui._lcu_port or not ui._lcu_token:
         port, token = scan_lcu_process()
@@ -552,7 +587,7 @@ def poll_lcu_live_ids(ui: "HextechUI"):
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
-            res = ui.session.get(url, headers=headers, verify=False, timeout=2.5)
+            res = _get_lcu_champ_select_session(url, headers)
     except requests.exceptions.RequestException:
         ui._lcu_port = None
         ui._lcu_token = None
@@ -847,7 +882,7 @@ def _fetch_web_live_state(ui: "HextechUI") -> tuple[dict[str, list[str]] | None,
         has_local_champion = bool(local_text and local_text != "0")
     if web_ids or has_local_champion:
         return candidate_groups, payload
-    return {"selected_champion_ids": [], "bench_champion_ids": []}, payload
+    return None, None
 
 
 def _clean_live_champion_id(value) -> str:
@@ -1152,6 +1187,9 @@ def window_sync_loop(ui: "HextechUI") -> None:
     last_visible_at = 0.0
     last_client_interaction_at = 0.0
     last_client_hwnd = None
+    last_gameflow_checked_at = 0.0
+    cached_gameflow_in_progress = False
+    cached_live_client_in_progress = False
 
     def _foreground_belongs_to_client(hwnd: int | None, foreground_hwnd: int | None) -> bool:
         if not hwnd or not foreground_hwnd:
@@ -1251,14 +1289,6 @@ def window_sync_loop(ui: "HextechUI") -> None:
     def _overlay_active() -> bool:
         return ui._window_visible and is_self_fg
 
-    def _resolve_overlay_policy(client_visible: bool, game_visible: bool, client_active: bool, overlay_active: bool, now_ts: float) -> tuple[bool, bool]:
-        if game_visible:
-            return False, False
-        if not client_visible:
-            return False, False
-        should_show = _should_keep_overlay_visible(client_active, overlay_active, now_ts)
-        return should_show, client_active
-
     def _sync_for_client(hwnd_client: int | None, client_visible: bool, should_show_overlay: bool) -> None:
         if not client_visible or not hwnd_client:
             _reset_client_tracking()
@@ -1282,6 +1312,29 @@ def window_sync_loop(ui: "HextechUI") -> None:
     def _resolve_game_visibility(hwnd_game: int | None) -> bool:
         return is_window_renderable(hwnd_game)
 
+    def _resolve_gameflow_visibility(now_ts: float) -> tuple[bool, bool]:
+        nonlocal last_gameflow_checked_at, cached_gameflow_in_progress, cached_live_client_in_progress
+        if now_ts - last_gameflow_checked_at < GAMEFLOW_VISIBILITY_POLL_SECONDS:
+            return cached_gameflow_in_progress, cached_live_client_in_progress
+        last_gameflow_checked_at = now_ts
+        try:
+            live_state = probe_live_client_in_progress()
+        except Exception:
+            logger.debug("检查 Live Client 对局状态失败。", exc_info=True)
+            live_state = None
+        live_in_progress = live_state is True
+        gameflow_in_progress = live_in_progress
+        if not gameflow_in_progress:
+            try:
+                gameflow_state = probe_lcu_gameflow_in_progress()
+            except Exception:
+                logger.debug("检查 LCU gameflow 状态失败。", exc_info=True)
+                gameflow_state = None
+            gameflow_in_progress = gameflow_state is True
+        cached_gameflow_in_progress = bool(gameflow_in_progress)
+        cached_live_client_in_progress = bool(live_in_progress)
+        return cached_gameflow_in_progress, cached_live_client_in_progress
+
     def _resolve_foreground_title(foreground_hwnd: int | None) -> str:
         return win32gui.GetWindowText(foreground_hwnd) if foreground_hwnd else ""
 
@@ -1299,11 +1352,20 @@ def window_sync_loop(ui: "HextechUI") -> None:
         fg_title = _resolve_foreground_title(fg_window)
         is_client_fg = _resolve_client_fg(hwnd_client, fg_window)
         is_self_fg = _resolve_self_fg(fg_title)
-        game_visible = _resolve_game_visibility(hwnd_game)
+        game_hwnd_renderable = _resolve_game_visibility(hwnd_game)
+        gameflow_in_progress, live_client_in_progress = _resolve_gameflow_visibility(now_ts)
         client_visible = _resolve_client_visibility(hwnd_client)
         client_active, overlay_active = _client_or_overlay_active(is_client_fg, is_self_fg)
         _update_client_visibility(now_ts, hwnd_client, client_visible, client_active)
-        should_show_overlay, should_keep_topmost = _resolve_overlay_policy(client_visible, game_visible, client_active, overlay_active, now_ts)
+        should_show_overlay, should_keep_topmost = resolve_client_overlay_policy(
+            client_visible=client_visible,
+            game_hwnd_renderable=game_hwnd_renderable,
+            gameflow_in_progress=gameflow_in_progress,
+            live_client_in_progress=live_client_in_progress,
+            client_active=client_active,
+            overlay_active=overlay_active,
+            recent_client_context=_has_recent_client_context(now_ts),
+        )
         _set_overlay_visibility(should_show_overlay, should_keep_topmost, now_ts)
         _sync_for_client(hwnd_client, client_visible, should_show_overlay)
 

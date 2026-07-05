@@ -113,7 +113,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
                 release_refresh.set()
                 server.shutdown()
 
-    def test_supervisor_tick_schedules_startup_refresh_and_stale_lease_shutdown(self):
+    def test_supervisor_tick_delays_startup_refresh_and_handles_stale_lease(self):
         from hextech.runtime_supervisor import RuntimeSupervisor
 
         calls: list[bool] = []
@@ -132,9 +132,10 @@ class RuntimeSupervisorTests(unittest.TestCase):
         )
 
         supervisor.tick()
-        self.assertEqual(calls, [False])
-        action = next(iter(supervisor.snapshot()["actions"].values()))
-        self.assertIn(action["status"], {"running", "completed"})
+        self.assertEqual(calls, [])
+        self.assertEqual(supervisor.snapshot()["actions"], {})
+        self.assertIsNotNone(supervisor.snapshot()["next_refresh_at"])
+        self.assertGreater(supervisor.snapshot()["next_refresh_at"], time.time())
 
         supervisor.renew_lease({"control_instance_id": "ui-1"})
         with supervisor._lock:
@@ -142,6 +143,31 @@ class RuntimeSupervisorTests(unittest.TestCase):
         supervisor.tick()
         self.assertTrue(supervisor.wait_for_shutdown(0))
         self.assertEqual(supervisor.snapshot()["shutdown_reason"], "lease_expired")
+
+    def test_supervisor_tick_schedules_refresh_when_next_refresh_is_due(self):
+        from hextech.runtime_supervisor import RuntimeSupervisor
+
+        calls: list[bool] = []
+
+        def refresh_func(force: bool = False):
+            calls.append(force)
+            return {"state": "ready"}
+
+        supervisor = RuntimeSupervisor(
+            parent_pid=os.getpid(),
+            session_nonce="test-nonce",
+            refresh_func=refresh_func,
+            refresh_interval_seconds=60.0,
+        )
+        with supervisor._lock:
+            supervisor._last_refresh_at = time.time() - 120.0
+            supervisor._next_refresh_at = time.time() - 1.0
+
+        supervisor.tick()
+
+        self.assertEqual(calls, [False])
+        action = next(iter(supervisor.snapshot()["actions"].values()))
+        self.assertIn(action["status"], {"running", "completed"})
 
     def test_result_payload_supports_slots_dataclasses(self):
         from hextech.runtime_supervisor import RuntimeSupervisor

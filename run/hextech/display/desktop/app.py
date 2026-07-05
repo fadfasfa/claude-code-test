@@ -56,6 +56,25 @@ UI_COLORS = {
     "error": "#F38BA8",
 }
 
+
+def _format_game_overlay_host_reason(reason: str) -> str:
+    reason = str(reason or "").strip()
+    return {
+        "user_disabled": "已关闭",
+        "gameflow_not_in_progress": "等待实际对局",
+        "game_window_missing": "等待游戏窗口",
+        "game_window_not_renderable": "游戏窗口不可渲染",
+        "game_not_foreground": "切回游戏后显示",
+        "selection_window_inactive": "等待海克斯选择",
+        "event_stale_after_tab": "等待最新选择画面",
+        "event_expired": "选择数据已过期",
+        "blocking_modal_present": "等待弹窗关闭",
+        "scoreboard_key_down": "记分板显示中",
+        "visible_detecting": "检测选择中",
+        "visible_partial": "部分识别",
+        "visible_ready": "已显示",
+    }.get(reason, "暂不显示")
+
 os.makedirs(ASSET_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)
 
@@ -612,19 +631,21 @@ class HextechUI:
             snapshot = self.service_manager.get_status_snapshot()
             sidecar = snapshot.get("vision_sidecar") if isinstance(snapshot.get("vision_sidecar"), dict) else {}
             event = snapshot.get("overlay_event") if isinstance(snapshot.get("overlay_event"), dict) else {}
+            host_visibility = snapshot.get("overlay_visibility") if isinstance(snapshot.get("overlay_visibility"), dict) else {}
             watchdog = snapshot.get("overlay_watchdog") if isinstance(snapshot.get("overlay_watchdog"), dict) else {}
             sidecar_status = str(sidecar.get("status") or "").strip()
             event_active = bool(event.get("active"))
             should_report = overlay_enabled or sidecar_status == "running" or event_active
             if should_report:
-                reason = "选择窗口活跃" if event_active else "等待选择"
+                host_reason = str(host_visibility.get("reason") or "").strip() if bool(host_visibility.get("ok")) else ""
+                reason = _format_game_overlay_host_reason(host_reason) if host_reason else ("选择窗口活跃" if event_active else "等待选择")
                 sidecar_text = "识别运行" if sidecar_status == "running" else "识别待机"
                 watchdog_action = str(watchdog.get("last_action") or "").strip()
                 if watchdog_action == "start_missing_process":
                     sidecar_text = "识别已自愈"
                 elif watchdog_action == "error":
                     sidecar_text = "识别异常"
-                color = UI_COLORS["green"] if event_active else UI_COLORS["warn"]
+                color = UI_COLORS["green"] if bool(host_visibility.get("visible")) or event_active else UI_COLORS["warn"]
                 self._set_status(f"游戏内显示: {reason} / {sidecar_text}", color)
         except Exception:
             logger.debug("读取游戏内 overlay 状态失败。", exc_info=True)

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections.abc import Callable
@@ -33,7 +34,9 @@ from hextech.overlay.window_titles import LOL_CLIENT_WINDOW_TITLE
 ProcessFactory = Callable[[], Any]
 OVERLAY_STATE_STALE_SECONDS = 8.0
 OVERLAY_WATCHDOG_RESTART_COOLDOWN_SECONDS = 10.0
+OVERLAY_HOST_VISIBILITY_STALE_SECONDS = 6.0
 OVERLAY_VISION_TRACE_FILE = Path(overlay_runtime_state_path("overlay_vision_trace.v1.json"))
+OVERLAY_HOST_VISIBILITY_FILE = Path(overlay_runtime_state_path("game_overlay_visibility.v1.json"))
 
 
 @dataclass
@@ -286,6 +289,7 @@ class ServiceManager:
                 },
                 "low_frequency_listener": dict(self._listener_snapshot),
                 "overlay_event": self._overlay_event_status(),
+                "overlay_visibility": self._overlay_host_visibility_status(),
                 "overlay_watchdog": dict(self._overlay_watchdog),
             }
 
@@ -335,6 +339,38 @@ class ServiceManager:
             "reason": str(source.get("reason") or ""),
             "selection_type": str(snapshot.get("selection_type") or ""),
             "updated_at": float(snapshot.get("generated_at") or 0.0),
+        }
+
+    @staticmethod
+    def _overlay_host_visibility_status() -> dict[str, Any]:
+        try:
+            snapshot = json.loads(OVERLAY_HOST_VISIBILITY_FILE.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {"ok": False, "error": "visibility_status_missing", "visible": False, "reason": ""}
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return {"ok": False, "error": exc.__class__.__name__, "visible": False, "reason": ""}
+        if not isinstance(snapshot, dict):
+            return {"ok": False, "error": "visibility_status_invalid", "visible": False, "reason": ""}
+        if int(snapshot.get("schema_version") or 0) != 1:
+            return {"ok": False, "error": "visibility_status_unknown_schema", "visible": False, "reason": ""}
+        try:
+            updated_at = float(snapshot.get("updated_at") or 0.0)
+        except (TypeError, ValueError):
+            updated_at = 0.0
+        if updated_at <= 0.0 or time.time() - updated_at > OVERLAY_HOST_VISIBILITY_STALE_SECONDS:
+            return {"ok": False, "error": "visibility_status_stale", "visible": False, "reason": ""}
+        decision = snapshot.get("decision") if isinstance(snapshot.get("decision"), dict) else {}
+        host = snapshot.get("host") if isinstance(snapshot.get("host"), dict) else {}
+        scene = snapshot.get("scene") if isinstance(snapshot.get("scene"), dict) else {}
+        context = snapshot.get("context") if isinstance(snapshot.get("context"), dict) else {}
+        return {
+            "ok": True,
+            "visible": bool(decision.get("window_visible")),
+            "reason": str(decision.get("reason") or ""),
+            "updated_at": updated_at,
+            "host": dict(host),
+            "scene": dict(scene),
+            "context": dict(context),
         }
 
     @staticmethod

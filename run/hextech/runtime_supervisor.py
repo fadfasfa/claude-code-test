@@ -35,6 +35,7 @@ SUPERVISOR_NONCE_HEADER = "X-Hextech-Supervisor-Nonce"
 SUPERVISOR_EVENT_SCHEMA_VERSION = 1
 SAFE_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 DEFAULT_REFRESH_INTERVAL_SECONDS = 4 * 60 * 60
+STARTUP_REFRESH_DELAY_SECONDS = 10.0
 
 
 def _utc_now_iso() -> str:
@@ -107,7 +108,8 @@ class RuntimeSupervisor:
         self._shutdown_reason = ""
         self._active_refresh_action_id = ""
         self._last_refresh_at = 0.0
-        self._next_refresh_at = 0.0
+        # 首刷延迟到 UI 启动后，避免恢复旧的首 tick 同步卡顿，同时保证无人手动触发时也会自动刷新。
+        self._next_refresh_at = self._started_at + STARTUP_REFRESH_DELAY_SECONDS
 
     def parent_alive(self) -> bool:
         return bool(self.parent_pid and psutil.pid_exists(self.parent_pid))
@@ -279,7 +281,7 @@ class RuntimeSupervisor:
                 self._lease["state"] = "expired"
             self.request_shutdown("lease_expired")
             return
-        if not active_refresh and (last_refresh_at <= 0.0 or (next_refresh_at > 0.0 and now >= next_refresh_at)):
+        if not active_refresh and next_refresh_at > 0.0 and now >= next_refresh_at:
             self.run_refresh_action({"force": False})
 
     def append_event(self, payload: dict[str, Any]) -> None:
