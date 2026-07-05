@@ -19,8 +19,8 @@
 | 打包入口 | `.\.venv\Scripts\python.exe build.py`，不要使用裸系统 Python 打包 |
 | 发布形态 | PyInstaller `--onedir` 未签名便携包 + zip，输出到仓库根 `.artifacts/hextech/releases/` |
 | 启动硬门槛 | 打包产物空仓首启 60 秒内返回可用 Web/UI 热路径 |
-| 高频数据策略 | `data/raw/` 和 `data/runtime/` 不进包；首次空仓必刷，之后超过 4 小时再刷 |
-| 稳定资源策略 | 只把版本级稳定资源放进包；首启种子快照在包内使用 `resources/snapshots/`，不使用 `data/raw/` |
+| 高频数据策略 | `data/runtime/raw/` 和其他 `data/runtime/` 运行态目录不进包；首次空仓必刷，之后超过 4 小时再刷 |
+| 稳定资源策略 | 源码态唯一数据根是 `data/`；只把 `data/static/**` 和 `data/seed/startup/**` 的稳定输入放进包，不使用运行态 raw |
 | 最近验收 | `.\.venv\Scripts\python.exe tools/acceptance/smoke_packaged_startup.py --timeout 60`，严格空仓实测约 3.83 秒可用 |
 
 ## 快速命令
@@ -69,7 +69,7 @@ py -3.11 tools/setup_venv.py
 .\.venv\Scripts\python.exe tools/dev_checks.py
 
 # 手动重抓 Mayhem combo raw；只使用 Scrapling 普通 GET
-.\.venv\Scripts\python.exe -m hextech.scraping.synergy.mayhem_combo_scraper --max-pages 1 --output data/raw/mayhem_combos.raw.json
+.\.venv\Scripts\python.exe -m hextech.scraping.synergy.mayhem_combo_scraper --max-pages 1 --output data/evidence/mayhem_combos.raw.json
 
 # 将 Mayhem raw 增量合并到前端优先读取的 cleaned 协同数据
 .\.venv\Scripts\python.exe tools/clean_mayhem_combos.py
@@ -108,38 +108,40 @@ run/
 │   ├── package_rules.py        # 打包资源规则；只描述源路径，不复制资源
 │   ├── checks/                 # dev_checks 分域检查清单
 │   └── acceptance/             # 验收工具入口
-├── resources/                  # 中文二级稳定资源事实源；打包快照输出到 resources/snapshots/
+├── data/                       # 源码态唯一数据根；稳定数据、首启 seed、证据、fixture 和 runtime 分区
+│   ├── static/version/         # 版本级稳定数据与索引文件
+│   ├── static/assets/          # 稳定图片/图标资源入口
+│   ├── seed/startup/           # 构建期首启种子输入
+│   ├── evidence/               # 可审计来源证据，不直接供 UI 消费
+│   ├── fixtures/diagnostics/   # 离线诊断样例和真值
+│   └── runtime/                # 本机运行态状态、缓存、日志、锁和 profile
 ├── docs/                       # 业务设计和审查文档
-├── resources/版本数据/         # 版本级稳定数据与索引文件
-├── resources/图片资源/         # 稳定图片/图标资源入口
-└── data/                       # 本地运行生成数据；不作为分发源数据
+└── tests/                      # 分域 pytest 回归
 ```
 
 更细的文件职责、数据流和维护边界见 [PROJECT.md](PROJECT.md)。
 
-## 资源中文分类
+## 数据目录分类
 
-`resources/` 现在是中文二级维护分类和源码态稳定资源事实源。兼容 Web 路由和包内入口仍保持：
+`data/` 是源码态唯一数据根，`resources/` 不再作为真实路径存在。兼容 Web URL 仍保持：
 
-- `/assets/...`：对外图片 URL，源码态文件来自 `resources/图片资源/`。
-- `/data/static/...` 与 `/data/indexes/...`：对外稳定数据兼容路由，源码态文件来自 `resources/版本数据/`。
-- `resources/首启快照/`：构建期首启快照输入。
-- `resources/来源证据/mayhem_combos.raw.json`：来源证据，用于复现 cleaned 协同数据。
+- `/assets/...`：对外图片 URL，源码态文件来自 `data/static/assets/`。
+- `/data/static/...` 与 `/data/indexes/...`：对外稳定数据兼容路由，源码态文件来自 `data/static/version/`。
+- `data/seed/startup/`：构建期首启 seed 输入。
+- `data/evidence/mayhem_combos.raw.json`：来源证据，用于复现 cleaned 协同数据。
 - `data/runtime/**`：运行态输出，不作为稳定资源。
 
-分类清单见 `resources/资源清单.v1.json`，中文分类说明见 `resources/图片资源/`、
-`resources/版本数据/`、`resources/首启快照/`、`resources/诊断样例/` 与
-`resources/来源证据/`。
+分类清单见 `data/data_manifest.v1.json`。目录索引见 `data/README.md`，具体用途、消费方、
+写入规则和打包边界见 `data/DATA_USAGE.md`。
 
 ## 运行态数据边界
 
 ### 可以随包分发
 
 - `hextech/display/web/static/` 前端静态页面
-- `resources/版本数据/` 中的版本级稳定数据和索引文件
-- `resources/图片资源/` 中的稳定图片/图标资源
-- `resources/首启快照/` 中的构建期首启快照输入
-- `resources/snapshots/` 中的打包首启种子快照
+- `data/static/version/` 中的版本级稳定数据和索引文件
+- `data/static/assets/` 中的稳定图片/图标资源
+- `data/seed/startup/` 中的构建期首启 seed 输入
 - `英雄目录.v1.json`
 - `海克斯资源目录.v1.json`
 - `Champion_Synergy_Cleaned.json`
@@ -152,9 +154,10 @@ overlay hint cache 默认通过统一运行路径读取它，只有缺失时才�
 
 ### 不应随包分发
 
-- `data/raw/hextech/Hextech_Data_*.csv`
-- 启动后新生成的 `data/raw/synergy/Champion_Synergy_*.json`
-- 启动后新生成的 `data/raw/synergy/Champion_Synergy_latest.v1.json`
+- `data/runtime/raw/hextech/Hextech_Data_*.csv`
+- 启动后新生成的 `data/runtime/raw/synergy/Champion_Synergy_*.json`
+- 启动后新生成的 `data/runtime/raw/synergy/Champion_Synergy_latest.v1.json`
+- 迁移前旧路径 `data/raw/**`
 - `data/runtime/state/*.json`
 - `data/runtime/state/web_server_port.txt`
 - `data/runtime/cache/`
@@ -163,14 +166,14 @@ overlay hint cache 默认通过统一运行路径读取它，只有缺失时才�
 - `data/runtime/logs/`
 - 任何启动后生成、抓取、缓存、锁、日志或计算产物
 
-例外：`resources/来源证据/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
+例外：`data/evidence/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
 `Champion_Synergy_Cleaned.json` 的生成；它不进入打包白名单，也不被 API 或前端直接读取。
 重抓 raw 后只有在同步更新 cleaned 数据时才一起提交。
 
 打包只允许带一组首启冷启动种子，但包内路径必须是
-`resources/snapshots/hextech/` 与 `resources/snapshots/synergy/`。启动时再由
-`tools/runtime_bundle.py` 播种到用户运行目录的 `raw/*`；源码态用户运行目录对应
-`run/data/raw/`，冻结态对应 `%LOCALAPPDATA%/HextechNexus/data/runtime/raw/`。
+`data/seed/startup/hextech/` 与 `data/seed/startup/synergy/`。启动时再由
+`tools/runtime_bundle.py` 播种到用户运行目录的 `raw/*`；源码态与冻结态都对应
+各自运行根下的 `data/runtime/raw/`。
 旧固定名
 `Champion_Synergy.json` 仅作读取兜底，不再作为刷新成功或最新数据判断依据。
 
@@ -187,7 +190,7 @@ overlay hint cache 默认通过统一运行路径读取它，只有缺失时才�
 - `persisted/`
 - `logs/`
 
-源码态根目录是 `run/data/raw/` 与 `run/data/runtime/`；冻结态根目录是
+源码态根目录是 `run/data/runtime/`；冻结态根目录是
 `%LOCALAPPDATA%/HextechNexus/data/runtime/`，且不接受 `HEXTECH_BASE_DIR`
 把运行态覆盖回便携包根。
 

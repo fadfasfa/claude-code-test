@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """版本数据统一目录。
 
-本模块把 `resources/版本数据` 下的中文权威 JSON 投影成旧读取点需要的结构。
+本模块把 `data/static/version` 下的权威 JSON 投影成旧读取点需要的结构。
 它只做只读解析和兼容投影，不触发远端刷新，也不写回资源文件。
 """
 

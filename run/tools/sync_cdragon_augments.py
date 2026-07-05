@@ -3,8 +3,8 @@ from __future__ import annotations
 """从 CommunityDragon 刷新 Arena/ARAM 海克斯闭集目录。
 
 本工具只负责把 `cherry-augments.json` 收口成本地稳定资源：
-- `resources/版本数据/海克斯资源目录.v1.json`
-- `resources/图片资源/*_small.png`
+- `data/static/version/海克斯资源目录.v1.json`
+- `data/static/assets/*_small.png`
 
 CommunityDragon 的 cherry 数据只含名字、稀有度和图标路径，不含完整 tooltip。
 因此本工具不抓取、不保留 description / tooltip；描述仍由第三方数据链路提供。
@@ -45,10 +45,10 @@ RARITY_TO_TIER = {
     "kEventChoice": "棱彩",
 }
 
-RESOURCE_DIR = RUN_DIR / "resources"
-STATIC_DIR = RESOURCE_DIR / "版本数据"
-INDEX_DIR = RESOURCE_DIR / "版本数据"
-ASSET_DIR = RESOURCE_DIR / "图片资源"
+DATA_DIR = RUN_DIR / "data"
+STATIC_DIR = DATA_DIR / "static" / "version"
+INDEX_DIR = DATA_DIR / "static" / "version"
+ASSET_DIR = DATA_DIR / "static" / "assets"
 CATALOG_PATH = get_augment_resource_catalog_path(STATIC_DIR)
 
 

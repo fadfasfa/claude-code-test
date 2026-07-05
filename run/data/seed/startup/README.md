@@ -1,9 +1,10 @@
-# 首启快照
+# seed/startup
 
-本目录是打包首启种子快照的中文事实源。
+本目录是打包首启种子快照事实源。
 
-当前构建期事实源是 `Champion_Synergy_*.json` 和 latest 指针。打包产物内的目标路径
-仍保持 `resources/snapshots/synergy/` 语义，不把源码态中文目录名暴露为运行态路径。
+当前构建期事实源是 `synergy/Champion_Synergy_*.json` 和 `synergy/Champion_Synergy_latest.v1.json`。
+打包产物内的目标路径使用 `data/seed/startup/synergy/`；Hextech CSV seed 使用
+`data/seed/startup/hextech/`。
 
 维护约束：
 

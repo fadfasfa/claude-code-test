@@ -60,6 +60,7 @@ TRACE_CURRENT_FILE = "overlay_vision_trace.v1.json"
 OVERLAY_EVENT_FILE = "game_overlay_slots.v1.json"
 SIDECAR_STATUS_FILE = "game_overlay_sidecar_status.json"
 FEATURE_FLAGS_FILE = "ui_feature_flags.json"
+WEB_PORT_FILE = "web_server_port.txt"
 FOCUS_BLOCK_REASONS = {"game_not_foreground", "game_window_missing"}
 BLOCKING_REASONS = {"blocking_modal_present", "scoreboard_key_down"}
 CONTENT_WAIT_REASONS = {
@@ -180,6 +181,16 @@ def _state_summary(state_dir: Path) -> dict[str, Any]:
     overlay_event = _read_json(state_dir / OVERLAY_EVENT_FILE)
     sidecar = _read_json(state_dir / SIDECAR_STATUS_FILE)
     feature_flags = _read_json(state_dir / FEATURE_FLAGS_FILE)
+    flags = feature_flags if isinstance(feature_flags, dict) else {}
+    port_path = state_dir / WEB_PORT_FILE
+    web_port = ""
+    try:
+        web_port = port_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        web_port = ""
+    web_status = "running" if web_port else "web_disabled_until_user_action"
+    if flags and bool(flags.get("web_frontend_enabled", False)) and not web_port:
+        web_status = "startup_requested_no_port"
     return {
         "startup_status": startup if isinstance(startup, dict) else {},
         "scraper_status": scraper if isinstance(scraper, dict) else {},
@@ -187,7 +198,13 @@ def _state_summary(state_dir: Path) -> dict[str, Any]:
         "context": context if isinstance(context, dict) else {},
         "overlay_event": overlay_event if isinstance(overlay_event, dict) else {},
         "sidecar_status": sidecar if isinstance(sidecar, dict) else {},
-        "feature_flags": feature_flags if isinstance(feature_flags, dict) else {},
+        "feature_flags": flags,
+        "web_frontend": {
+            "status": web_status,
+            "enabled_intent": bool(flags.get("web_frontend_enabled", False)),
+            "port_file_present": bool(web_port),
+            "port": web_port,
+        },
     }
 
 
@@ -700,6 +717,58 @@ def _summarize_refresh_events(event_paths: Sequence[Path], *, max_lines: int) ->
     }
 
 
+def _scraper_attempt_summary(state: Mapping[str, Any]) -> dict[str, Any]:
+    """从 startup/scraper 状态派生刷新诊断摘要，避免排查时只读原始 JSON。"""
+
+    startup = state.get("startup_status") if isinstance(state.get("startup_status"), Mapping) else {}
+    scraper = state.get("scraper_status") if isinstance(state.get("scraper_status"), Mapping) else {}
+    attempt = scraper.get("last_attempt") if isinstance(scraper.get("last_attempt"), Mapping) else {}
+    refresh_summary = startup.get("hextech_refresh") if isinstance(startup.get("hextech_refresh"), Mapping) else {}
+    in_progress = list(startup.get("in_progress_tasks") or []) if isinstance(startup.get("in_progress_tasks"), list) else []
+    updated_ts = _float_or_none(startup.get("updated_at"))
+    stale_seconds = None
+    if in_progress and updated_ts is not None:
+        stale_seconds = round(max(0.0, time.time() - updated_ts), 3)
+
+    active_csv = (
+        refresh_summary.get("active_csv")
+        or attempt.get("active_csv")
+        or scraper.get("active_csv")
+        or startup.get("active_hextech_csv")
+        or ""
+    )
+    return {
+        "attempt_id": scraper.get("last_attempt_id") or refresh_summary.get("attempt_id") or attempt.get("attempt_id", ""),
+        "result": attempt.get("result") or scraper.get("last_result", ""),
+        "reason": attempt.get("reason") or scraper.get("reason", ""),
+        "failure_stage": attempt.get("failure_stage") or scraper.get("failure_stage") or refresh_summary.get("failure_stage", ""),
+        "started_at": attempt.get("started_at") or refresh_summary.get("started_at", ""),
+        "ended_at": attempt.get("ended_at") or refresh_summary.get("ended_at", ""),
+        "duration_seconds": attempt.get("duration_seconds"),
+        "total_heroes": attempt.get("total_heroes", 0),
+        "completed_heroes": attempt.get("completed_heroes", 0),
+        "cdn_hit_count": attempt.get("cdn_hit_count", scraper.get("cdn_hit_count", 0)),
+        "slow_path_count": attempt.get("slow_path_count", scraper.get("slow_path_count", 0)),
+        "success_rows": attempt.get("success_rows", scraper.get("success_rows", 0)),
+        "failure_count": attempt.get("failure_count", 0),
+        "failure_samples": attempt.get("failure_samples") or scraper.get("failure_samples", []),
+        "active_csv": active_csv,
+        "active_csv_mtime": scraper.get("active_csv_mtime", 0.0),
+        "fallback_used": bool(
+            attempt.get("fallback_used")
+            or scraper.get("fallback_used")
+            or refresh_summary.get("fallback_used")
+            or startup.get("hextech_degraded")
+        ),
+        "blocked_until": scraper.get("blocked_until", ""),
+        "next_retry_at": scraper.get("next_retry_at", ""),
+        "remote_failure_escalated": bool(scraper.get("remote_failure_escalated", False)),
+        "startup_in_progress_tasks": in_progress,
+        "startup_in_progress_stale_seconds": stale_seconds,
+        "startup_updated_at": startup.get("updated_at", ""),
+    }
+
+
 def _attention_items(
     *,
     trace_entries: Sequence[Mapping[str, Any]],
@@ -711,6 +780,7 @@ def _attention_items(
 ) -> list[str]:
     items: list[str] = []
     flags = state.get("feature_flags") if isinstance(state.get("feature_flags"), Mapping) else {}
+    web_frontend = state.get("web_frontend") if isinstance(state.get("web_frontend"), Mapping) else {}
     sidecar = state.get("sidecar_status") if isinstance(state.get("sidecar_status"), Mapping) else {}
     overlay_event = state.get("overlay_event") if isinstance(state.get("overlay_event"), Mapping) else {}
 
@@ -718,6 +788,10 @@ def _attention_items(
         items.append("未发现 overlay_vision_trace_history.v1.json 记录；需要先启动游戏内显示/sidecar 再打一局。")
     if flags and not bool(flags.get("game_overlay_enabled", True)):
         items.append("ui_feature_flags 显示 game_overlay_enabled=false；本局不会产生完整游戏内识别 trace。")
+    if web_frontend.get("status") == "web_disabled_until_user_action":
+        items.append("Web 前端当前为按需启用：web_disabled_until_user_action；点击 Web/详情后才会启动服务。")
+    elif web_frontend.get("status") == "startup_requested_no_port":
+        items.append("ui_feature_flags 显示 web_frontend_enabled=true，但未发现 web_server_port.txt；检查 Web 启动错误。")
     if sidecar and sidecar.get("status") not in {"running", "ready"}:
         items.append(f"Vision sidecar 当前状态不是 running/ready：{sidecar.get('status') or 'unknown'}。")
     if trace_summary.get("game_window_missing_samples") and not trace_summary.get("active_hextech_samples"):
@@ -745,6 +819,17 @@ def _attention_items(
         items.append("refresh 出现 failed/fallback；海克斯内容缺失可能来自数据刷新链路，而不是 overlay 识别。")
     if int(refresh_actions.get("running_count") or 0) > 0:
         items.append("存在未完成 refresh action；检查 supervisor_events 里的 correlation_id 是否卡住。")
+    scraper_attempt = refresh_summary.get("scraper_attempt") if isinstance(refresh_summary.get("scraper_attempt"), Mapping) else {}
+    if scraper_attempt.get("startup_in_progress_tasks"):
+        items.append(
+            "startup_status 仍有 in_progress_tasks："
+            f"{scraper_attempt.get('startup_in_progress_tasks')}；检查刷新是否卡在 {scraper_attempt.get('failure_stage') or 'unknown'}。"
+        )
+    if scraper_attempt.get("failure_stage") and scraper_attempt.get("result") in {"fallback", "failed"}:
+        items.append(
+            f"最近一次 scraper attempt 在 {scraper_attempt.get('failure_stage')} 失败，"
+            f"fallback_used={bool(scraper_attempt.get('fallback_used'))}。"
+        )
     if host_self_check and not bool(host_self_check.get("event_ok", True)):
         items.append(f"host 自检读取当前事件异常：{host_self_check.get('event_error') or host_self_check.get('error_type') or 'unknown'}。")
     if int(official_summary.get("sample_count") or 0) > 0 and int(official_summary.get("ready_sample_count") or 0) <= 0:
@@ -840,6 +925,7 @@ def _game_validation_summary(
     trace_entries = _trace_entries(state_dir, since_timestamp=trace_since_timestamp)
     trace_summary = _trace_validation_summary(state_dir, since_timestamp=trace_since_timestamp)
     refresh_summary = _summarize_refresh_events(event_paths, max_lines=max_lines)
+    refresh_summary["scraper_attempt"] = _scraper_attempt_summary(state)
     try:
         default_state_dir = (get_runtime_root_dir() / "state").resolve()
         current_state_dir = state_dir.resolve()

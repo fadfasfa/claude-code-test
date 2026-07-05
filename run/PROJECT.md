@@ -29,8 +29,7 @@
 | 抓取与自愈 | `hextech/scraping/` | 海克斯/协同业务抓取、稳定资源同步、图标目录维护、缺失产物修复和底层 transport | 不阻塞首屏可用 |
 | 抓取 transport | `hextech/scraping/transport/` | Scrapling / CloakBrowser 底层抓取客户端 | 不承载业务解析 |
 | 工具链 | `tools/` | 打包、白名单、运行态播种、自检、手动验收、烟测 | 不替代主业务入口 |
-| 运行态数据 | `data/` | 本机生成的抓取结果、缓存、锁、日志、profile | 不作为发布源数据 |
-| 资源目标边界 | `resources/` | 中文二级稳定资源事实源；打包快照输出到 `resources/snapshots/` | 不存放 runtime/cache/log/profile |
+| 数据根 | `data/` | 源码态唯一数据根；承载稳定版本数据、图片资源、首启 seed、来源证据、诊断 fixture 和运行态数据 | 不保留 `resources/` 镜像；runtime/cache/log/profile 不进包 |
 
 ---
 
@@ -95,30 +94,31 @@
 <!-- PROJECT:SECTION:DATA_BOUNDARY -->
 ## 四、数据边界
 
-### 4.0 中文二级资源分类
+### 4.0 单一数据根分类
 
-`resources/` 提供中文二级维护分类，并作为源码态稳定资源事实源。分类事实源是
-`resources/资源清单.v1.json`：
+`data/` 是源码态唯一数据根，`resources/` 不再作为真实路径存在。分类事实源是
+`data/data_manifest.v1.json`，详细用途口径见 `data/DATA_USAGE.md`：
 
-- `图片资源/` 承载图片和图标事实源；`/assets/...` 只是兼容 URL。
-- `版本数据/` 承载版本级稳定 JSON / TXT 数据；`/data/static/...` 与 `/data/indexes/...` 只是兼容路由。
-- `首启快照/` 承载构建期可读取的协同快照。
-- `诊断样例/` 承载 overlay 视觉离线回归样例。
-- `来源证据/` 承载 `mayhem_combos.raw.json` 等外部来源输入。
+- `static/assets/` 承载图片和图标事实源；`/assets/...` 只是兼容 URL。
+- `static/version/` 承载版本级稳定 JSON / TXT 数据；`/data/static/...` 与 `/data/indexes/...` 只是兼容路由。
+- `seed/startup/` 承载构建期可读取的首启 seed。
+- `fixtures/diagnostics/` 承载 overlay 视觉离线回归样例。
+- `evidence/` 承载 `mayhem_combos.raw.json` 等外部来源输入。
+- `runtime/` 承载本机运行态状态、缓存、锁、日志、profile 和 debug 输出。
 
 后续如果继续调整路径或合并 JSON，必须同步更新加载器、打包白名单、bundle manifest、
 runtime bundle 和验收脚本。不得把 `data/runtime/**` 登记为稳定资源，也不得把
-运行期生成的 `data/raw/**` 当作普通版本数据。
+运行期生成的 `data/runtime/raw/**` 或迁移前旧 `data/raw/**` 当作普通版本数据。
 
 ### 4.1 随包稳定资源
 
 这些资源可以进入便携包，因为它们随游戏/数据版本变化，而不是随用户运行即时变化：
 
 - `hextech/display/web/static/`
-- `resources/版本数据/` 中的版本级稳定数据和索引文件
-- `resources/图片资源/` 中的稳定图片/图标资源
-- `resources/首启快照/` 中的构建期首启快照输入
-- 包内 `resources/snapshots/` 中的首启种子快照
+- `data/static/version/` 中的版本级稳定数据和索引文件
+- `data/static/assets/` 中的稳定图片/图标资源
+- `data/seed/startup/` 中的构建期首启 seed 输入
+- 包内 `data/seed/startup/` 中的首启种子快照
 - `英雄目录.v1.json`
 - `海克斯资源目录.v1.json`
 - `Champion_Synergy_Cleaned.json`
@@ -133,9 +133,10 @@ overlay hint cache 默认通过统一运行路径读取它，只有缺失时才�
 
 这些内容属于运行态，不能作为打包源数据：
 
-- `data/raw/hextech/Hextech_Data_*.csv`
-- 启动后新生成的 `data/raw/synergy/Champion_Synergy_*.json`
-- 启动后新生成的 `data/raw/synergy/Champion_Synergy_latest.v1.json`
+- `data/runtime/raw/hextech/Hextech_Data_*.csv`
+- 启动后新生成的 `data/runtime/raw/synergy/Champion_Synergy_*.json`
+- 启动后新生成的 `data/runtime/raw/synergy/Champion_Synergy_latest.v1.json`
+- 迁移前旧路径 `data/raw/**`
 - `data/runtime/state/*.json`
 - `data/runtime/state/overlay_anchor_calibration.v1.json`
 - `data/runtime/state/web_server_port.txt`
@@ -146,13 +147,13 @@ overlay hint cache 默认通过统一运行路径读取它，只有缺失时才�
 - `data/runtime/logs/`
 - 任何启动后生成、抓取、缓存、锁、日志或计算产物
 
-例外：`resources/来源证据/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
+例外：`data/evidence/mayhem_combos.raw.json` 是显式入库的 Mayhem 清洗输入，用于复现
 `Champion_Synergy_Cleaned.json` 的生成；它不加入 `tools/package_rules.py` 打包白名单，
 也不被 Web/API 或前端直接读取。重抓后只有在准备更新 cleaned 数据时才一起提交。
 
 协同数据的包内种子使用时间快照加 latest 指针：`Champion_Synergy_YYYYMMDD_HHMMSS.json`
-和 `Champion_Synergy_latest.v1.json`，但包内路径必须是 `resources/snapshots/synergy/`。
-Hextech 首启种子快照同理放入 `resources/snapshots/hextech/`。旧固定名
+和 `Champion_Synergy_latest.v1.json`，但包内路径必须是 `data/seed/startup/synergy/`。
+Hextech 首启种子快照同理放入 `data/seed/startup/hextech/`。旧固定名
 `Champion_Synergy.json` 只保留只读迁移兜底。
 
 ### 4.3 首启运行态骨架
@@ -168,8 +169,7 @@ Hextech 首启种子快照同理放入 `resources/snapshots/hextech/`。旧固�
 - `persisted/`
 - `logs/`
 
-根目录按运行形态区分：源码态高频快照仍位于 `run/data/raw/`，其余运行态位于
-`run/data/runtime/`；冻结态运行态统一落到 `%LOCALAPPDATA%/HextechNexus/data/runtime/`（无
+源码态运行态统一位于 `run/data/runtime/`；冻结态运行态统一落到 `%LOCALAPPDATA%/HextechNexus/data/runtime/`（无
 `LOCALAPPDATA` 时回退到 `%APPDATA%/HextechNexus/data/runtime/` 或
 `~/.hextech_nexus/data/runtime/`），高频快照位于其中的 `raw/hextech/` 与
 `raw/synergy/`。冻结态不得在便携包根或 `_internal` 下创建 `data/raw`、
@@ -185,7 +185,7 @@ Hextech 首启种子快照同理放入 `resources/snapshots/hextech/`。旧固�
 flowchart TD
     A[hextech_ui.py / web_server.py] --> B[hextech.display]
     B --> C[hextech.catalog.runtime_store]
-    C --> D[源码态 data/raw + data/runtime；冻结态 LocalAppData runtime]
+    C --> D[源码态 data/runtime；冻结态 LocalAppData runtime]
     B --> E[hextech.display.web.api]
     E --> F[Web 页面 / 浏览器]
     B --> G[hextech.core.refresh]
@@ -261,7 +261,7 @@ freshness、快照定位、发布熔断和结构化协同 payload 回归检查�
 - 启动 exe 后 60 秒内可获得端口文件。
 - `startup_status.json` 是本轮启动后新写入。
 - `data/raw`、`data/runtime`、`data/processed` 与 cache/profile/log/logs/debug 不会出现在包根或 `_internal`。
-- 包内首启种子位于 `_internal/resources/snapshots/` 或便携根 `resources/snapshots/`。
+- 包内首启种子位于 `_internal/data/seed/startup/` 或便携根 `data/seed/startup/`。
 - `/`、`/api/startup_status`、`/api/champions`、`/detail.html?champion=1`、`/api/synergies/1` 返回可操作响应。
 
 最近一次严格空仓烟测结果：约 3.83 秒可用。

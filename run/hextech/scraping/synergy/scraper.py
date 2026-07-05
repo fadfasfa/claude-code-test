@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import sys
 import tempfile
 import time
 import csv
@@ -100,6 +101,46 @@ VISIBLE_STOP_LINE_PATTERN = re.compile(
     r"评论|推荐|已弃用|编辑|删除|回复|加载更多|登录|登入)$",
     re.IGNORECASE,
 )
+ARCHIVED_SYNERGY_MARKERS = (
+    "已弃用归档",
+    "已弃用",
+    "deprecated",
+    "archived",
+    "retired",
+)
+ARCHIVED_STATUS_KEYS = {
+    "status",
+    "state",
+    "lifecycle",
+    "section",
+    "category",
+    "categories",
+    "tag",
+    "tags",
+    "type",
+    "badge",
+    "badges",
+    "label",
+    "labels",
+    "flags",
+}
+ARCHIVED_TEXT_KEYS = {
+    "body",
+    "content",
+    "description",
+    "desc",
+    "summary",
+    "text",
+    "title",
+}
+ARCHIVED_BOOL_KEYS = {
+    "deprecated",
+    "isdeprecated",
+    "archived",
+    "isarchived",
+    "retired",
+    "isretired",
+}
 SYNERGY_TAG_LABELS = {
     "Synergy": "强力联动",
     "Trap": "陷阱",
@@ -572,10 +613,33 @@ class ApexSource:
         self.blocked = False
         self.last_fetch_error = ""
         self._profile_root = os.path.join(APEX_SCRAPLING_PROFILE_DIR, f"session-{os.getpid()}-{int(time.time())}")
+        self.cloakbrowser_probe = self.probe_cloakbrowser()
         logger.info("ApexSource 初始化完成：base=%s", _sanitize_url_for_log(self.base_url))
 
     def close(self) -> None:
         return None
+
+    @staticmethod
+    def probe_cloakbrowser() -> dict[str, Any]:
+        """只验证 CloakBrowser import 与版本，不启动浏览器、不读取任何用户 profile。"""
+
+        try:
+            from hextech.scraping.transport.cloakbrowser_client import _cloakbrowser_version, _require_cloakbrowser
+
+            _require_cloakbrowser()
+            return {
+                "available": True,
+                "version": _cloakbrowser_version() or "",
+                "python": os.path.abspath(sys.executable),
+                "error": "",
+            }
+        except Exception as exc:
+            return {
+                "available": False,
+                "version": "",
+                "python": os.path.abspath(sys.executable),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
 
     def is_allowed_url(self, url: str) -> bool:
         parsed = urlparse(url)
@@ -995,6 +1059,16 @@ class SynergyExtractor:
     def __init__(self, champion_lookup: dict[str, ChampionInfo], augment_name_map: dict[str, str]):
         self.champion_lookup = champion_lookup
         self.augment_name_map = augment_name_map
+        self.archived_filtered_count = 0
+        self.archived_filter_samples: list[dict[str, str]] = []
+
+    def _record_archived_filter(self, *, reason: str, sample: str = "") -> None:
+        self.archived_filtered_count += 1
+        if len(self.archived_filter_samples) < 20:
+            self.archived_filter_samples.append({
+                "reason": reason,
+                "sample": _clean_text(sample)[:180],
+            })
 
     def extract(self, resources: Iterable[FetchedResource]) -> dict[str, list[SynergyEntry]]:
         results: dict[str, list[SynergyEntry]] = {}
@@ -1020,6 +1094,8 @@ class SynergyExtractor:
         if text.strip().startswith(("{", "[")):
             try:
                 entries.extend(self._extract_from_json_payload(json.loads(text), fallback_slug=""))
+                if entries:
+                    return entries
             except json.JSONDecodeError:
                 pass
         entries.extend(self._extract_old_bundle(text))
@@ -1055,6 +1131,12 @@ class SynergyExtractor:
         for index, line in enumerate(lines):
             rating_match = VISIBLE_RATING_PATTERN.match(line)
             if not rating_match:
+                continue
+            if self._visible_rating_belongs_to_archived_card(lines, index):
+                self._record_archived_filter(
+                    reason="visible_archived_card",
+                    sample=" | ".join(lines[max(0, index - 6): min(len(lines), index + 8)]),
+                )
                 continue
 
             augment_names = []
@@ -1093,6 +1175,12 @@ class SynergyExtractor:
             author, content, is_original, upvotes, downvotes = self._parse_visible_author_content(lines, index + 1)
             if not content:
                 continue
+            if self._contains_archived_marker(content):
+                self._record_archived_filter(
+                    reason="visible_archived_content",
+                    sample=content,
+                )
+                continue
             entries.append(SynergyEntry(
                 champion_slug=fallback_slug,
                 augment_names=list(dict.fromkeys(augment_names)),
@@ -1106,6 +1194,37 @@ class SynergyExtractor:
                 downvotes=downvotes,
             ))
         return [entry for entry in entries if entry.champion_slug]
+
+    @staticmethod
+    def _contains_archived_marker(value: Any) -> bool:
+        if isinstance(value, dict):
+            return any(SynergyExtractor._contains_archived_marker(child) for child in value.values())
+        if isinstance(value, list):
+            return any(SynergyExtractor._contains_archived_marker(child) for child in value)
+        text = _clean_text(value).lower()
+        if not text:
+            return False
+        return any(marker.lower() in text for marker in ARCHIVED_SYNERGY_MARKERS)
+
+    def _visible_rating_belongs_to_archived_card(self, lines: list[str], rating_index: int) -> bool:
+        before = lines[max(0, rating_index - 8): rating_index]
+        after = lines[rating_index + 1: min(len(lines), rating_index + 8)]
+        if any(self._contains_archived_marker(line) for line in before):
+            return True
+        if any(_clean_text(line) == "已弃用" for line in after):
+            return True
+        return False
+
+    def _dict_has_archived_marker(self, item: dict) -> bool:
+        for raw_key, value in item.items():
+            key = normalize_name(raw_key)
+            if key in ARCHIVED_BOOL_KEYS and bool(value):
+                return True
+            if key in ARCHIVED_STATUS_KEYS and self._contains_archived_marker(value):
+                return True
+            if key in ARCHIVED_TEXT_KEYS and self._contains_archived_marker(value):
+                return True
+        return False
 
     def _parse_visible_rating_tag(self, line: str, following_lines: Optional[list[str]] = None) -> tuple[str, str]:
         rating_match = VISIBLE_RATING_PATTERN.match(line or "")
@@ -1252,6 +1371,12 @@ class SynergyExtractor:
                 yield from self._walk_json(child, (*path, str(idx)))
 
     def _entry_from_dict(self, item: dict, fallback_slug: str) -> Optional[SynergyEntry]:
+        if self._dict_has_archived_marker(item):
+            self._record_archived_filter(
+                reason="json_archived_marker",
+                sample=json.dumps(item, ensure_ascii=False, sort_keys=True)[:500],
+            )
+            return None
         augment_names = self._resolve_augment_names(item)
         if not augment_names:
             return None
@@ -1665,6 +1790,7 @@ class SynergyWriter:
         return final_data
 
     def write(self, output_path: Path, payload: dict) -> None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = output_path.with_suffix(output_path.suffix + ".lock")
         with _output_file_lock(lock_path):
             _atomic_write_json(output_path, payload)
@@ -1994,6 +2120,7 @@ def run_full_validation(
                 "url": detail_url,
                 "backend": resource.source if resource else "cloakbrowser",
                 "status_code": resource.status_code if resource else None,
+                "cloakbrowser_version": resource.cloakbrowser_version if resource else None,
                 "entry_count": entry_count,
                 "status": status,
                 "cf_blocked": cf_blocked,
@@ -2047,6 +2174,9 @@ def run_full_validation(
             "publishable": publishable,
             "publish_error": publish_error,
             "dry_run": True,
+            "cloakbrowser_probe": source.cloakbrowser_probe,
+            "archived_filtered_count": extractor.archived_filtered_count,
+            "archived_filter_samples": extractor.archived_filter_samples,
         }
         _atomic_write_json(out_dir / "summary.json", summary)
         _atomic_write_json(out_dir / "per_champion.json", {"items": per_champion})
@@ -2090,8 +2220,11 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
         "backend": "scrapling-get",
         "status_code": None,
         "cloakbrowser_version": None,
+        "cloakbrowser_probe": source.cloakbrowser_probe,
         "cf_blocked": True,
         "synergy_entry_count": 0,
+        "archived_filtered_count": 0,
+        "archived_filter_samples": [],
         "error": "",
     }
     try:
@@ -2132,6 +2265,8 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
             if not entries:
                 entries = [entry for values in synergy_map.values() for entry in values]
             result["synergy_entry_count"] = len(entries)
+            result["archived_filtered_count"] = extractor.archived_filtered_count
+            result["archived_filter_samples"] = extractor.archived_filter_samples
 
         synergy_payload = [_entry_to_report_item(entry) for entry in entries]
         _atomic_write_json(out_dir / "synergy_vi.json", synergy_payload)
@@ -2281,6 +2416,9 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
             "output_path": str(target_path),
             "stats": stats,
             "merge": merge_meta,
+            "cloakbrowser_probe": source.cloakbrowser_probe,
+            "archived_filtered_count": extractor.archived_filtered_count,
+            "archived_filter_samples": extractor.archived_filter_samples,
         }
     except Exception as exc:
         log_task_summary(
@@ -2295,6 +2433,7 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
             "dry_run": dry_run,
             "published": False,
             "blocked": bool(getattr(source, "blocked", False)),
+            "cloakbrowser_probe": source.cloakbrowser_probe,
             "error": str(exc),
         }
     finally:

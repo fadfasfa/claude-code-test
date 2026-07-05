@@ -1,8 +1,8 @@
-# 版本数据
+# static/version
 
-本目录是版本级稳定 JSON / TXT 数据的中文事实源。
+本目录是版本级稳定 JSON / TXT 数据事实源。
 
-原 `data/static/` 与 `data/indexes/` 的稳定数据已合并到这里。旧 Web 路由
+旧 `data/static/` 与 `data/indexes/` 的稳定数据已合并到这里。旧 Web 路由
 `/data/static/...` 与 `/data/indexes/...` 仍作为兼容入口挂载到本目录。
 
 当前权威目录文件：
@@ -15,6 +15,6 @@
 维护约束：
 
 - 这里放可随版本变化、可随包分发的稳定数据。
-- 不把 `data/raw/**` 抓取快照当作普通版本数据。
+- 不把 `data/runtime/raw/**` 或迁移前旧 `data/raw/**` 抓取快照当作普通版本数据。
 - 不把 `data/runtime/**` 缓存、日志、锁、profile 或本机状态放入版本数据。
 - 旧拆分文件名只作为 Web/API 兼容投影，不再作为源码态事实源。

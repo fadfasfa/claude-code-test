@@ -123,6 +123,18 @@ def _load_synergy_by_augment_name(
     if not isinstance(payload, Mapping):
         return {}
 
+    canonical_names: dict[str, str] = {}
+    try:
+        from hextech.catalog.version_catalog import load_augment_manifest_entries
+
+        canonical_names = {
+            normalize_augment_name(item.get("name")): str(item.get("name") or "")
+            for item in load_augment_manifest_entries()
+            if isinstance(item, Mapping) and str(item.get("name") or "")
+        }
+    except Exception:
+        canonical_names = {}
+
     index: dict[str, list[dict[str, Any]]] = {}
     for hero_id, hero_payload in payload.items():
         if not isinstance(hero_payload, Mapping):
@@ -138,9 +150,10 @@ def _load_synergy_by_augment_name(
             if not normalized:
                 continue
             for augment_name in normalized["augment_names"]:
-                index.setdefault(augment_name, []).append(normalized)
                 normalized_name = normalize_augment_name(augment_name)
-                if normalized_name and normalized_name != augment_name:
+                canonical_name = canonical_names.get(normalized_name) or augment_name
+                index.setdefault(canonical_name, []).append(normalized)
+                if normalized_name and normalized_name != canonical_name and normalized_name not in canonical_names:
                     index.setdefault(normalized_name, []).append(normalized)
     return index
 

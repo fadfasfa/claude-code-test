@@ -7,7 +7,7 @@ from __future__ import annotations
 
 核心输入：
 - bundle manifest
-- bundle 内 `resources/版本数据`、`resources/snapshots/*` 与兼容 `assets/`
+- bundle 内 `data/static/version`、`data/seed/startup/*` 与 `data/static/assets`
 
 核心输出：
 - 运行目录中的稳定配置和图片资源
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 维护提醒：
 - 稳定资源只补缺失文件；Hextech 快照只在包内文件更新时覆盖旧快照
-- 新 manifest 使用 `resources/snapshots/*`；旧 `data/raw/*` manifest 仍兼容读取
+- 新 manifest 使用 `data/seed/startup/*`；旧 `data/raw/*` manifest 仍兼容读取
 """
 
 import json
@@ -29,10 +29,10 @@ from tools.bundle_manifest import BUNDLE_MANIFEST_NAME
 
 
 HEXTECH_SNAPSHOT_PREFIX = PurePosixPath("data/raw/hextech")
-BUNDLED_HEXTECH_SNAPSHOT_PREFIX = PurePosixPath("resources/snapshots/hextech")
+BUNDLED_HEXTECH_SNAPSHOT_PREFIX = PurePosixPath("data/seed/startup/hextech")
 HEXTECH_SNAPSHOT_PATTERN_PREFIX = "Hextech_Data_"
 SYNERGY_DATA_PREFIX = PurePosixPath("data/raw/synergy")
-BUNDLED_SYNERGY_DATA_PREFIX = PurePosixPath("resources/snapshots/synergy")
+BUNDLED_SYNERGY_DATA_PREFIX = PurePosixPath("data/seed/startup/synergy")
 SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
 SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
 SYNERGY_SNAPSHOT_PATTERN_PREFIX = "Champion_Synergy_"
@@ -157,13 +157,15 @@ def seed_bundled_resources(
     asset_dir = Path(runtime_asset_dir)
     hextech_dir = Path(runtime_hextech_dir) if runtime_hextech_dir is not None else None
     synergy_dir = Path(runtime_synergy_dir) if runtime_synergy_dir is not None else None
-    bundled_static_dir = bundle_base / "resources" / "版本数据"
-    bundled_index_dir = bundle_base / "resources" / "版本数据"
+    bundled_static_dir = bundle_base / "data" / "static" / "version"
+    bundled_index_dir = bundle_base / "data" / "static" / "version"
     if not bundled_static_dir.exists():
         bundled_static_dir = bundle_base / "data" / "static"
     if not bundled_index_dir.exists():
         bundled_index_dir = bundle_base / "data" / "indexes"
-    bundled_asset_dir = bundle_base / "assets"
+    bundled_asset_dir = bundle_base / "data" / "static" / "assets"
+    if not bundled_asset_dir.exists():
+        bundled_asset_dir = bundle_base / "assets"
 
     static_dir.mkdir(parents=True, exist_ok=True)
     index_dir.mkdir(parents=True, exist_ok=True)

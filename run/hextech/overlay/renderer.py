@@ -205,6 +205,24 @@ def _context_status_code(context: Mapping[str, Any] | None) -> StatStatusCode | 
     return "CONTEXT_EXPIRED" if error == "context_expired" else "CONTEXT_MISSING"
 
 
+def _context_missing_status_text(context: Mapping[str, Any] | None) -> str:
+    """把当前英雄缺失原因压成短文案，避免所有状态都显示成同一个“等待英雄”。"""
+
+    error = _clean_text(context.get("error"), limit=48) if isinstance(context, Mapping) else "context_missing"
+    source = _clean_text(context.get("source"), limit=48) if isinstance(context, Mapping) else ""
+    key = source if error in {"", "context_missing"} and source else error
+    return {
+        "context_expired": "等待当前英雄",
+        "context_unmapped_champion": "英雄未映射",
+        "lcu-unavailable": "等待 LCU",
+        "lcu-error": "LCU 不可用",
+        "lcu-auth": "LCU 认证失效",
+        "lcu-no-session": "等待选人",
+        "lcu-no-champion": "等待锁定英雄",
+        "live-client-data": "等待当前英雄",
+    }.get(key, "等待当前英雄")
+
+
 def _effective_context(
     context: Mapping[str, Any] | None,
     recent_context: Mapping[str, Any] | None,
@@ -230,9 +248,9 @@ def _stats_display(
         return "已开启隐私模式", "PRIVACY_OFF", "", "", "统计关闭"
     context_status = _context_status_code(context)
     if context_status == "CONTEXT_EXPIRED":
-        return "等待当前英雄", "CONTEXT_EXPIRED", "", "", "等待英雄"
+        return "等待当前英雄", "CONTEXT_EXPIRED", "", "", _context_missing_status_text(context)
     if context_status == "CONTEXT_MISSING":
-        return "等待当前英雄", "CONTEXT_MISSING", "", "", "等待英雄"
+        return "等待当前英雄", "CONTEXT_MISSING", "", "", _context_missing_status_text(context)
     stats = _current_champion_stats(hint, context)
     if not isinstance(stats, Mapping):
         return "暂无该英雄统计", "NO_STATS", "", "", "暂无统计"

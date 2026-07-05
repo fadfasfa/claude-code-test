@@ -13,6 +13,7 @@ import subprocess
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import NoReturn
 
 
 REQUIRED_PYTHON = (3, 11)
@@ -21,7 +22,7 @@ PYTHON311_ENV = "HEXTECH_PYTHON311"
 RUN_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_VENV_DIR = RUN_DIR / ".venv"
 
-REQUIRED_RUNTIME_PACKAGES = ("scrapling", "curl_cffi", "requests", "certifi")
+REQUIRED_RUNTIME_PACKAGES = ("scrapling", "cloakbrowser", "curl_cffi", "requests", "certifi")
 PACKAGING_RUNTIME_PACKAGES = (*REQUIRED_RUNTIME_PACKAGES, "PyInstaller")
 _IMPORT_MODULE_BY_PACKAGE = {
     "PyInstaller": "PyInstaller",
@@ -328,6 +329,21 @@ def build_reexec_command(
     return [*python_command, *current_argv]
 
 
+def reexec_current_process(command: Sequence[str]) -> NoReturn:
+    """用目标解释器原地替换当前进程，避免源码态启动留下多层父子 Python。"""
+
+    parts = [str(part) for part in command if str(part).strip()]
+    if not parts:
+        raise SystemExit("Python re-exec 失败：目标命令为空。")
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os.execv(parts[0], parts)
+    raise SystemExit("Python re-exec 失败：os.execv 返回了意外结果。")
+
+
 def _format_command(command: Sequence[str]) -> str:
     return " ".join(str(part) for part in command)
 
@@ -404,4 +420,4 @@ def ensure_python_311_for_source(
         f"已切换到：{_format_command(python_command)}",
         file=sys.stderr,
     )
-    raise SystemExit(subprocess.call(command))
+    reexec_current_process(command)

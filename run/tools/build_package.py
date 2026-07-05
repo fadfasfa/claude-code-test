@@ -251,6 +251,20 @@ def resolve_tkinter_package_dir(python_root: Path) -> Path:
     raise RuntimeError(f"当前 Python 缺少 tkinter 标准库目录，无法打包 Tk UI：{searched}")
 
 
+def stage_tkinter_package_dir(source: Path, build_root: Path) -> Path:
+    """复制最小 Tkinter data 包，避免 stdlib 测试和缓存文件进入发布包。"""
+
+    target = build_root / "staging" / "tkinter"
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(
+        source,
+        target,
+        ignore=shutil.ignore_patterns("__pycache__", "test", "*.pyc", "*.pyo"),
+    )
+    return target
+
+
 def refresh_runtime_data_before_package() -> None:
     """按运行时节奏刷新数据，再把当前落盘快照打入发布包。"""
 
@@ -278,6 +292,7 @@ def build_exe(version_file: Path, manifest_path: Path, build_root: Path) -> Path
     pyinstaller_cmd, pyinstaller_python_root = resolve_pyinstaller_command()
     tcl_runtime_dir, tk_runtime_dir, tcl_module_dir = resolve_tcl_runtime_dirs(pyinstaller_python_root)
     tkinter_package_dir = resolve_tkinter_package_dir(pyinstaller_python_root)
+    staged_tkinter_package_dir = stage_tkinter_package_dir(tkinter_package_dir, build_root)
     cmd = [
         *pyinstaller_cmd,
         "--clean",
@@ -302,7 +317,7 @@ def build_exe(version_file: Path, manifest_path: Path, build_root: Path) -> Path
     for source, target in (
         (tcl_runtime_dir, "_tcl_data"),
         (tk_runtime_dir, "_tk_data"),
-        (tkinter_package_dir, "tkinter"),
+        (staged_tkinter_package_dir, "tkinter"),
     ):
         cmd.extend(["--add-data", _add_data_arg(source, target)])
     if tcl_module_dir is not None:

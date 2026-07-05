@@ -21,7 +21,46 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             debug.mkdir(parents=True)
 
             (state / "startup_status.json").write_text(
-                json.dumps({"hextech_ready": True, "hextech_degraded": False}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "hextech_ready": True,
+                        "hextech_degraded": True,
+                        "in_progress_tasks": [],
+                        "hextech_refresh": {
+                            "attempt_id": "attempt-1",
+                            "failure_stage": "detail_initial",
+                            "fallback_used": True,
+                            "active_csv": "Hextech_Data_2026-07-02.csv",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (state / "scraper_status.json").write_text(
+                json.dumps(
+                    {
+                        "last_result": "fallback",
+                        "reason": "thread_pool_timeout",
+                        "last_attempt_id": "attempt-1",
+                        "active_csv": "Hextech_Data_2026-07-02.csv",
+                        "last_attempt": {
+                            "attempt_id": "attempt-1",
+                            "result": "fallback",
+                            "reason": "thread_pool_timeout",
+                            "failure_stage": "detail_initial",
+                            "total_heroes": 173,
+                            "completed_heroes": 120,
+                            "cdn_hit_count": 80,
+                            "slow_path_count": 40,
+                            "success_rows": 2400,
+                            "failure_count": 53,
+                            "failure_samples": [{"champion_id": "266", "reason": "thread_pool_timeout"}],
+                            "fallback_used": True,
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
                 encoding="utf-8",
             )
             (state / "runtime_events.v1.jsonl").write_text(
@@ -258,6 +297,10 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             self.assertGreaterEqual(len(trace["selection_epoch_timeline"]), 3)
             self.assertTrue(any(item["waiting_resolved_to_visible"] for item in trace["selection_epoch_timeline"]))
             self.assertIn("fallback.activated", validation["refresh"]["event_counts"])
+            self.assertEqual(validation["refresh"]["scraper_attempt"]["attempt_id"], "attempt-1")
+            self.assertEqual(validation["refresh"]["scraper_attempt"]["failure_stage"], "detail_initial")
+            self.assertTrue(validation["refresh"]["scraper_attempt"]["fallback_used"])
+            self.assertEqual(validation["refresh"]["scraper_attempt"]["cdn_hit_count"], 80)
             self.assertGreaterEqual(validation["refresh"]["actions"]["action_count"], 1)
             self.assertEqual(validation["official_provider"]["ready_sample_count"], 1)
             self.assertEqual(validation["host_self_check"]["skipped"], "custom_runtime_root")
@@ -265,6 +308,10 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             self.assertEqual(validation["hint_cache"]["zero_stats_hint_count"], 1)
             self.assertEqual(validation["render_status"]["status_counts"]["READY"], 1)
             self.assertEqual(validation["render_status"]["context"]["champion_id"], "266")
+            self.assertEqual(summary["state"]["web_frontend"]["status"], "web_disabled_until_user_action")
+            self.assertTrue(
+                any("web_disabled_until_user_action" in item for item in validation["attention_items"])
+            )
             self.assertIn("quick_customization_scope", validation)
             self.assertTrue(trace["acceptance_observations"]["saw_multiple_hextech_selections"])
             self.assertTrue(trace["acceptance_observations"]["saw_body_shard"])
