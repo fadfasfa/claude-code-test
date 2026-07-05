@@ -72,6 +72,8 @@
 | `hextech/scraping/transport/cloakbrowser_client.py` | transport | CloakBrowser 同步抓取客户端 |
 | `hextech/scraping/transport/smoke_scrapling.py` | smoke | Scrapling 在线冒烟脚本 |
 | `hextech/support/python_runtime.py` | support | 源码态 run/.venv 守卫、依赖预检和自动重启命令构造 |
+| `hextech/support/log_utils.py` | support | 统一安装摘要/错误日志、开发态 JSONL 诊断日志、脱敏 filter 和结构化事件写入 |
+| `hextech/support/user_diagnostics.py` | support | 打包内用户轻量诊断导出，只采集白名单 state 与日志/事件 tail |
 | `tools/setup_venv.py` | setup tool | 显式创建/修复 run/.venv，安装依赖并输出关键包与 Scrapling smoke 摘要 |
 | `hextech/scraping/augment_catalog.py` | catalog | 海克斯统一目录维护与预缓存 |
 | `hextech/scraping/icon_resolver.py` | icon | 海克斯图标查找、缓存与远端兜底 |
@@ -176,6 +178,22 @@ Hextech 首启种子快照同理放入 `data/seed/startup/hextech/`。旧固定�
 `data/runtime`、`data/processed` 或运行期 cache/profile/log/logs/debug。
 冻结态不再接受 `HEXTECH_BASE_DIR` 覆盖运行态根，避免脚本把便携包根当作可写数据目录。
 
+### 4.4 日志与诊断边界
+
+`hextech.support.log_utils` 是运行态日志统一入口。源码态默认 `dev` profile，可通过
+`HEXTECH_LOG_PROFILE=packaged|dev|test` 覆盖；冻结态默认 `packaged`。`dev` profile
+额外写 `data/runtime/logs/dev/hextech_full.jsonl`，按 10MB x 5 轮转；`packaged`
+不写 full debug JSONL，只保留摘要、错误和轻量导出所需事件尾部。
+
+用户侧诊断导出由 `hextech.support.user_diagnostics.export_user_diagnostics()` 提供，
+桌面标题栏 `诊断` 按钮异步调用。导出包只包含白名单 state JSON、`runtime_events.v1.jsonl`
+和 `supervisor_events.v1.jsonl` 尾部、摘要/错误日志尾部、`summary.json` 和说明文件。
+导出逻辑不得读取或复制 `debug/`、旧 `reports/`、`raw/`、`cache/`、`profile/`，
+不得把 `auth/token/cookie/secret/nonce/lcu/riot` 相关文件或内容写入 zip。
+
+源码侧重型开发采集工具仍是 `tools/collect_runtime_diagnostics.py`，用于 watch、全量摘要和
+debug JSON 复盘；该工具不进入 source manifest，不作为打包态能力。
+
 ---
 
 <!-- PROJECT:SECTION:DATAFLOW -->
@@ -246,6 +264,17 @@ freshness、快照定位、发布熔断和结构化协同 payload 回归检查�
 ```powershell
 .\.venv\Scripts\python.exe tools/dev_checks.py --bundle-manifest
 ```
+
+日志与诊断变更的最小自动验收：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_runtime_logging.py tests/test_user_diagnostics_export.py tests/test_desktop_diagnostics_button.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_runtime_diagnostics_collector.py tests/test_runtime_supervisor.py tests/test_bundle_manifest.py -q
+.\.venv\Scripts\python.exe tools/dev_checks.py --bundle-manifest
+```
+
+人工视觉验收必须确认标题栏右侧只有一个低干扰 `诊断` 按钮，英雄列表可见区域不减少，
+三个功能开关位置不变，底部状态栏不遮挡，游戏内 overlay 无新增控件。
 
 ### 7.1 发布前最小验收
 

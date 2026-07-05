@@ -34,7 +34,6 @@ import threading
 import logging
 import shutil
 import tempfile
-from logging.handlers import RotatingFileHandler
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from typing import Optional
@@ -48,11 +47,10 @@ from hextech.catalog.version_catalog import (
 )
 from hextech.scraping.icon_resolver import normalize_augment_name
 from hextech.support.log_utils import (
-    MaxLevelFilter,
     ensure_utf8_stdio,
     get_error_log_file,
     get_runtime_summary_log_file,
-    install_summary_logging,
+    install_runtime_logging,
 )
 from hextech.scraping._paths import (
     ASSET_DIR,
@@ -220,39 +218,7 @@ if getattr(sys, 'frozen', False):
         runtime_synergy_dir=os.path.join(os.path.dirname(_get_packaged_hextech_snapshot_dir()), "synergy"),
     )
 
-# 日志输出做滚动保留。
-summary_handler = RotatingFileHandler(
-    SUMMARY_LOG_FILE,
-    maxBytes=1024 * 1024,
-    backupCount=1,
-    encoding="utf-8",
-)
-summary_handler.setLevel(logging.INFO)
-summary_handler.addFilter(MaxLevelFilter(logging.INFO))
-summary_handler._hextech_preserve_level = True
-
-error_handler = RotatingFileHandler(
-    ERROR_LOG_FILE,
-    maxBytes=1024 * 1024,
-    backupCount=1,
-    encoding="utf-8",
-)
-error_handler.setLevel(logging.WARNING)
-error_handler._hextech_preserve_level = True
-
-stream_handler = logging.StreamHandler()
-stream_handler.setLevel(logging.WARNING)
-stream_handler._hextech_preserve_level = True
-
-install_summary_logging(
-    level=logging.INFO,
-    fmt='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        summary_handler,
-        error_handler,
-        stream_handler,
-    ],
-)
+install_runtime_logging()
 logger = logging.getLogger(__name__)
 
 

@@ -98,7 +98,7 @@ from hextech.scraping.synergy.scraper import (
 from tools.bundle_manifest import build_bundle_manifest, manifest_contains_forbidden_path
 from tools.package_rules import iter_package_data_entries
 from tools.resource_manifest import validate_resource_manifest
-from hextech.support.log_utils import install_summary_logging
+from hextech.support.log_utils import get_runtime_log_paths, install_runtime_logging, install_summary_logging
 
 
 TIER_IDS = ("Prismatic", "Gold", "Silver")
@@ -307,6 +307,7 @@ def check_hextech_package_contract() -> None:
         "hextech.support.atomic_io",
         "hextech.support.log_utils",
         "hextech.support.python_runtime",
+        "hextech.support.user_diagnostics",
     )
     for module_name in required_modules:
         importlib.import_module(module_name)
@@ -1855,6 +1856,58 @@ def check_logging_contract() -> None:
             os.remove(tmp_name)
         except OSError:
             pass
+
+    with TemporaryDirectory() as tmp_dir:
+        import hextech.support.log_utils as log_utils
+
+        runtime_root = Path(tmp_dir) / "runtime"
+        root_logger = logging.getLogger()
+        original_handlers = list(root_logger.handlers)
+        original_profile = getattr(root_logger, "_hextech_runtime_logging_profile", None)
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+        if hasattr(root_logger, "_hextech_runtime_logging_profile"):
+            delattr(root_logger, "_hextech_runtime_logging_profile")
+        try:
+            with patch.object(log_utils, "_runtime_root_dir", return_value=runtime_root):
+                install_runtime_logging(profile="dev")
+                paths = get_runtime_log_paths()
+                logging.getLogger("hextech.dev_checks").info(
+                    "logging contract token=secret",
+                    extra={"component": "dev_checks", "event": "logging.contract"},
+                )
+                for handler in root_logger.handlers:
+                    handler.flush()
+                assert paths["full"].is_file()
+                assert any(getattr(handler, "_hextech_handler_name", "") == "dev_full_jsonl" for handler in root_logger.handlers)
+
+                install_runtime_logging(profile="dev")
+                dev_full_handlers = [
+                    handler
+                    for handler in root_logger.handlers
+                    if getattr(handler, "_hextech_handler_name", "") == "dev_full_jsonl"
+                ]
+                assert len(dev_full_handlers) == 1
+
+            packaged_runtime_root = Path(tmp_dir) / "packaged-runtime"
+            with patch.object(log_utils, "_runtime_root_dir", return_value=packaged_runtime_root):
+                install_runtime_logging(profile="packaged")
+                packaged_paths = get_runtime_log_paths()
+                assert not any(
+                    getattr(handler, "_hextech_handler_name", "") == "dev_full_jsonl"
+                    for handler in root_logger.handlers
+                )
+                assert not packaged_paths["full"].exists()
+        finally:
+            for handler in list(root_logger.handlers):
+                if getattr(handler, "_hextech_runtime_logging", False):
+                    root_logger.removeHandler(handler)
+                    handler.close()
+            for handler in original_handlers:
+                if handler not in root_logger.handlers:
+                    root_logger.addHandler(handler)
+            if original_profile is not None:
+                root_logger._hextech_runtime_logging_profile = original_profile  # type: ignore[attr-defined]
 
     requirements = (RUN_DIR / "requirements.txt").read_text(encoding="utf-8")
     for dependency in (
@@ -4733,6 +4786,7 @@ def check_bundle_manifest(*, verbose: bool = False) -> None:
         "hextech/scraping/transport/scrapling_client.py",
         "hextech/support/atomic_io.py",
         "hextech/support/log_utils.py",
+        "hextech/support/user_diagnostics.py",
         "hextech_ui.py",
         "web_server.py",
         "tools/acceptance/overlay_performance_probe.py",
