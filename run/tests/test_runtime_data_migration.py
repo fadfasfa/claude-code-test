@@ -1,3 +1,7 @@
+"""测试 运行态数据迁移。
+
+调用方: pytest; 关键依赖: tools.migrate_runtime_data。
+"""
 from __future__ import annotations
 
 import shutil

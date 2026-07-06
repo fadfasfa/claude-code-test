@@ -1,3 +1,7 @@
+"""测试 refresh 触发器。
+
+调用方: pytest; 关键依赖: hextech.display.web.runtime。
+"""
 from __future__ import annotations
 
 import asyncio

@@ -1,9 +1,11 @@
-from __future__ import annotations
-
 """分域自检清单：项目结构。
 
 这里只保存检查函数名，不导入 tools.dev_checks，避免脚本模式下重复加载模块状态。
+
+调用方: 见 import 此模块的代码; 关键依赖: 见 imports。
 """
+
+from __future__ import annotations
 
 CHECKS = (
     "check_root_entrypoints",               # 验证根目录入口点（build.py/web_server.py/hextech_ui.py）存在

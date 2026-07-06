@@ -2,6 +2,8 @@
 
 负责把运行时 DataFrame 转换为前端接口和详情页需要的数据结构，
 并在这里集中处理排序、得分、tooltip 与图标投影逻辑。
+
+调用方: catalog.precomputed_cache、display.web.api、display.web.runtime; 关键依赖: pandas、numpy、scraping.augment_catalog。
 """
 
 import pandas as pd

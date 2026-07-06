@@ -1,10 +1,12 @@
-from __future__ import annotations
-
 """官方本地接口 overlay provider 手工探针。
 
 默认只读：采样 Riot / LoL 本地接口并打印状态。只有显式传入 `--write-event` 且
 provider 返回完整三槽候选时，才写入现有 overlay 事件文件。
+
+调用方: dev_checks; 关键依赖: overlay.providers.official、overlay.events。
 """
+
+from __future__ import annotations
 
 import argparse
 import json

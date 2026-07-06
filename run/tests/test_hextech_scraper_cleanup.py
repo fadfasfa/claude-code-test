@@ -1,3 +1,7 @@
+"""测试 hextech scraper 清理。
+
+调用方: pytest; 关键依赖: hextech.scraping.hextech.scraper。
+"""
 from __future__ import annotations
 
 import importlib

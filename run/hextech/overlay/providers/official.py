@@ -2,6 +2,8 @@
 
 本模块只访问 Riot / LoL 本机接口并把可能出现的三槽候选归一化为 overlay 上游快照。
 它不读取凭据文件、不保存 LCU token、不渲染 overlay，也不直接修改游戏客户端。
+
+调用方: overlay.gameflow、acceptance.probe_official_overlay_provider、dev_checks; 关键依赖: psutil、requests。
 """
 
 from __future__ import annotations

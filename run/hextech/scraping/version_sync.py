@@ -23,6 +23,8 @@
 维护提醒：
 - 这里负责稳定资源层，不负责高频战报 CSV 与协同数据抓取
 - 新增持久化文件时，要同步评估 bundle 白名单和冷启动兼容性
+
+调用方: catalog.query_terminal、catalog.view_adapter、core.refresh; 关键依赖: requests、catalog.alias_utils、catalog.version_catalog。
 """
 
 import requests

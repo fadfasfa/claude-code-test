@@ -3,6 +3,8 @@
 源码入口会在默认 ``run/.venv`` 缺失时尝试自动创建并安装依赖；本工具保留
 给人工修复、依赖重装或 smoke 检查使用。手动运行：
 ``py -3.11 tools/setup_venv.py``。
+
+调用方: 见 import 此模块的代码; 关键依赖: support.python_runtime。
 """
 
 from __future__ import annotations

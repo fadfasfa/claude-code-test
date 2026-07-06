@@ -18,6 +18,8 @@
 
 只有 172/172 全部严格通过时，非 --check 模式才会原子写回
 run/data/raw/synergy/Champion_Synergy_20260519_223505.json。
+
+调用方: 见 import 此模块的代码; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

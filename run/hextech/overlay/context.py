@@ -4,6 +4,8 @@
 本地 LCU 或游戏内 Live Client Data 已明确锁定的当前英雄传给 overlay host。
 它只允许访问本机 Riot/LoL HTTPS 接口，不读取 token 文件、不输出 token、不依赖
 本地 Web 服务，也不猜测英雄；缺失、损坏、过期或没有英雄 ID 时返回可诊断空上下文。
+
+调用方: overlay.data_source、overlay.lifecycle、dev_checks; 关键依赖: psutil、requests、catalog.version_catalog。
 """
 
 from __future__ import annotations

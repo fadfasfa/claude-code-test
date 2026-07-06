@@ -1,10 +1,12 @@
-from __future__ import annotations
-
 """本地协同详情页校准工具。
 
 该工具只访问本地 Hextech Web/API，用 Playwright 逐个打开详情页并报告右侧协同数据
 的重复、疑似错配和 DOM/API 不一致；不访问 ApexLoL，不读取 cookie 或浏览器登录态。
+
+调用方: 见 import 此模块的代码; 关键依赖: requests、catalog.runtime_store、scraping.version_sync。
 """
+
+from __future__ import annotations
 
 import argparse
 import hashlib

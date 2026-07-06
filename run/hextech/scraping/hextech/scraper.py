@@ -1,4 +1,7 @@
-"""英雄海克斯排名抓取器。"""
+"""英雄海克斯排名抓取器。
+
+调用方: core.refresh、scraping.augment_catalog、scraping.heal_worker; 关键依赖: runtime_store、BeautifulSoup、pandas。
+"""
 
 import json
 import time

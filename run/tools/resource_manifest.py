@@ -1,10 +1,12 @@
-from __future__ import annotations
-
 """数据目录分类清单校验。
 
 本模块只验证 `data/data_manifest.v1.json` 的结构和路径边界，不移动数据文件。
 它让源码态数据事实源可审计，并阻止运行态输出混入稳定数据。
+
+调用方: dev_checks; 关键依赖: 见 imports。
 """
+
+from __future__ import annotations
 
 import json
 from pathlib import Path

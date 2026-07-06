@@ -1,10 +1,12 @@
-from __future__ import annotations
-
 """统一自检执行顺序。
 
 DEFAULT_CHECKS 保持 tools.dev_checks 旧版 run_default_checks 的真实顺序；
 分域模块只负责表达职责边界，避免一次性移动大量检查函数。
+
+调用方: dev_checks; 关键依赖: 见 imports。
 """
+
+from __future__ import annotations
 
 from . import bundle, overlay, runtime, scraping, structure, synergy, web
 

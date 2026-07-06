@@ -1,11 +1,13 @@
-from __future__ import annotations
-
 """发布包构建工具。
 
 打包过程中不在 `run/` 下创建长期 `build/`、`dist/` 或 `_bundle_runtime/`
 资源副本；PyInstaller 的 work/dist/spec 全部落到系统临时目录，最终只把
 便携目录和 zip 移入仓库根 `.artifacts/hextech/releases/`。
+
+调用方: build; 关键依赖: bundle_manifest、cleanup_runtime、package_rules。
 """
+
+from __future__ import annotations
 
 import json
 import shutil

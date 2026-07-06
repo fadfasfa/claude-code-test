@@ -1,3 +1,7 @@
+"""测试 RuntimeSupervisor 编排。
+
+调用方: pytest; 关键依赖: hextech.runtime_supervisor。
+"""
 from __future__ import annotations
 
 import json

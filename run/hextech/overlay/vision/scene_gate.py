@@ -1,4 +1,7 @@
-"""overlay vision 场景门控入口。"""
+"""overlay vision 场景门控入口。
+
+调用方: 经别名转发至 overlay.vision.sidecar 的引用方; 关键依赖: hextech._compat。
+"""
 
 from __future__ import annotations
 

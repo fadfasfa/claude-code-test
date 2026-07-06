@@ -1,6 +1,8 @@
 """桌面伴生兼容入口。
 
 保留根目录启动方式不变，并按参数懒加载对应实现。
+
+调用方: 命令行入口; 关键依赖: support.python_runtime、support.log_utils、display.web.app。
 """
 
 import sys

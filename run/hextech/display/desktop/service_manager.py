@@ -2,6 +2,8 @@
 
 本模块统一管理 Web 前端进程、游戏内 overlay host 进程、Vision sidecar 进程
 和低频 LoL 状态监听。它不做图像识别，只负责生命周期边界。
+
+调用方: display.desktop.app、tests.test_overlay_watchdog_contract、dev_checks; 关键依赖: core.settings、overlay.events、overlay.lifecycle。
 """
 
 from __future__ import annotations

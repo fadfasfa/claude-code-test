@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """开发自检与手动验收入口。
 
 这个模块是 `run/` 的统一验证入口：
@@ -10,7 +8,11 @@ from __future__ import annotations
 
 它替代原先散落的 `run/tests/` 临时测试目录，以及独立的
 `accept_web_synergy.py` / `verify_bundle_manifest.py` 工具入口。
+
+调用方: 见 import 此模块的代码; 关键依赖: support.python_runtime、requests、pandas。
 """
+
+from __future__ import annotations
 
 import argparse
 import ast

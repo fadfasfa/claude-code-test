@@ -2,6 +2,8 @@
 
 Controller 把 Tk host 与 Vision sidecar 视为一个逻辑服务：启动失败原子回滚，停止时
 先写 inactive 事件，再确保两个子进程都退出。桌面 UI 只调用本模块的统一接口。
+
+调用方: display.desktop.app、display.desktop.service_manager、overlay.__main__; 关键依赖: catalog.runtime_store、overlay.events、support.atomic_io。
 """
 
 from __future__ import annotations

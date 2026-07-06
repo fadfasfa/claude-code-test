@@ -1,4 +1,7 @@
-"""``python -m hextech.overlay`` 独立逻辑服务入口。"""
+"""``python -m hextech.overlay`` 独立逻辑服务入口。
+
+调用方: python -m hextech.overlay 命令行; 关键依赖: .data_source、.lifecycle、.renderer。
+"""
 
 from __future__ import annotations
 

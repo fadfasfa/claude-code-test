@@ -2,6 +2,8 @@
 
 本模块只保存 Web 前端、游戏内显示、浏览器自动打开、私用统计显示和低频监听的
 用户偏好。配置落在 `data/runtime/state/`，属于运行态，不作为发布源数据提交。
+
+调用方: display.desktop.app、display.desktop.service_manager、overlay.data_source; 关键依赖: catalog.runtime_store、support.atomic_io。
 """
 
 from __future__ import annotations

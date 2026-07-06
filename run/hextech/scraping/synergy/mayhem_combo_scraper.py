@@ -4,6 +4,8 @@
 页面声明的 combo manifest，不启用 Stealthy、CloakBrowser、真实浏览器
 profile、cookie 或代理池。输出固定保存 ARAMMayhem 原始字段和解析 rejects，
 供后续清洗脚本合并到前端协同数据。
+
+调用方: scraping.synergy.mayhem_refresh、dev_checks; 关键依赖: scraping.transport.scrapling_client、support.atomic_io。
 """
 
 from __future__ import annotations

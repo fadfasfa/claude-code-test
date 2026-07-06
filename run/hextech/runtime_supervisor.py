@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Hextech Runtime Supervisor。
 
 文件职责：
@@ -9,7 +7,11 @@ from __future__ import annotations
 维护边界：
 - nonce 只在内存和父子匿名管道中传递，不写入日志或状态文件。
 - 控制 API 面向本机进程调用，使用 loopback 绑定、Host header 校验和 nonce header 鉴权。
+
+调用方: hextech_ui、tests.test_runtime_supervisor; 关键依赖: psutil、catalog.runtime_store、core.refresh。
 """
+
+from __future__ import annotations
 
 import argparse
 import json

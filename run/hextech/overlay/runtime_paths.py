@@ -2,6 +2,8 @@
 
 本模块只负责 overlay 本地 state/debug 这类运行态路径的轻量解析。它不导入
 `runtime_store`，避免 host/sidecar 启动早期因为抓取或 pandas 依赖拖慢路径解析。
+
+调用方: display.desktop.service_manager、overlay.context、overlay.events; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

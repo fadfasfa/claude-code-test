@@ -1,10 +1,12 @@
-from __future__ import annotations
-
 """预计算 API 缓存。
 
 负责把最新 CSV 转换成首页榜单和单英雄海克斯详情缓存，
 降低冷启动和无实时数据场景下的接口延迟。
+
+调用方: catalog.runtime_store、core.refresh、display.web.api; 关键依赖: pandas、catalog.runtime_store、catalog.view_adapter。
 """
+
+from __future__ import annotations
 
 import json
 import logging

@@ -1,4 +1,7 @@
-"""首页搜索专用的英雄别名索引读取与归一。"""
+"""首页搜索专用的英雄别名索引读取与归一。
+
+调用方: catalog.query_terminal、display.web.api、tools.dev_checks; 关键依赖: alias_utils、runtime_store、version_catalog。
+"""
 
 from __future__ import annotations
 

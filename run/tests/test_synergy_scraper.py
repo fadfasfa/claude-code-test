@@ -1,3 +1,7 @@
+"""测试 synergy 抓取器。
+
+调用方: pytest; 关键依赖: hextech.scraping.synergy.scraper。
+"""
 from __future__ import annotations
 
 import json

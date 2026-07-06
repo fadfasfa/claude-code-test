@@ -3,6 +3,8 @@
 只验证默认同步 HTTP 模式，避免把 browser/stealthy mode 的浏览器安装
 变成普通工具层验收前置。
 用法：cd run && .venv\Scripts\python.exe -m hextech.scraping.transport.smoke_scrapling
+
+调用方: 见 import 此模块的代码; 关键依赖: support.python_runtime、scraping.transport.scrapling_client。
 """
 
 from __future__ import annotations

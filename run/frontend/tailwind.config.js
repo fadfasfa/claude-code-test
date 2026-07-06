@@ -1,3 +1,5 @@
+// Tailwind 构建配置，扫描 hextech Web 静态资源的类名。
+// 调用方: tailwindcss CLI; 关键依赖: hextech/display/web 静态资源。
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [

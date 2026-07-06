@@ -1,3 +1,7 @@
+"""测试 bundle manifest 生成器。
+
+调用方: pytest; 关键依赖: tools.bundle_manifest。
+"""
 def test_manifest_forbidden_paths_are_matched_by_path_parts():
     from tools.bundle_manifest import manifest_contains_forbidden_path
 

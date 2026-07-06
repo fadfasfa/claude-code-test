@@ -4,6 +4,8 @@
 本地 JSON 结构。它只消费已经可用的本地数据（含 synergy 快照），不触发抓取、
 远端访问或 Web 服务；synergy 与私用胜率/出场率字段都按 `include_private_stats`
 标记控制是否写入。
+
+调用方: display.desktop.app、overlay.data_source、overlay.events; 关键依赖: catalog.runtime_store、support.atomic_io、catalog。
 """
 
 from __future__ import annotations

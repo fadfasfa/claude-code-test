@@ -1,6 +1,8 @@
 """协同数据定位入口。
 
 协同 snapshot 的运行态路径仍由 `runtime_store` 统一管理；本模块提供 catalog 层协同域入口。
+
+调用方: 见 import 此模块的代码; 关键依赖: catalog.runtime_store。
 """
 
 from __future__ import annotations

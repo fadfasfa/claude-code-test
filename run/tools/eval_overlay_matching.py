@@ -1,10 +1,12 @@
-from __future__ import annotations
-
 """用本机真机转储帧评测 overlay 图标/文字双通道匹配。
 
 本工具只读取 `data/runtime/debug/**/frame.png` 与 `data/fixtures/diagnostics` 真值 JSON，不截图、不联网、不写事件。
 runtime 样本默认不入 Git；缺样本时会报告 skipped，方便在有真机转储的机器上复跑。
+
+调用方: 见 import 此模块的代码; 关键依赖: overlay.vision、overlay.vision.state。
 """
+
+from __future__ import annotations
 
 import argparse
 import json

@@ -1,3 +1,7 @@
+"""测试 Python 运行态守卫。
+
+调用方: pytest; 关键依赖: hextech.support.python_runtime。
+"""
 from __future__ import annotations
 
 import unittest

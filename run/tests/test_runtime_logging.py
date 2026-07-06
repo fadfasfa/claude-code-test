@@ -1,3 +1,7 @@
+"""测试 运行态日志。
+
+调用方: pytest; 关键依赖: hextech.support.log_utils。
+"""
 from __future__ import annotations
 
 import json

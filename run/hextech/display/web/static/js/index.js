@@ -1,3 +1,5 @@
+// 海克斯首页前端逻辑。
+// 调用方: hextech/display/web 首页 HTML; 关键依赖: API_BASE、WS_URL、searchOverlay。
 
         const API_BASE = window.location.origin;
         const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;

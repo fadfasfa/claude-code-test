@@ -2,6 +2,8 @@
 
 核心合并逻辑在 ``hextech.scraping.synergy.mayhem_merge``，避免打包态后台刷新
 依赖 ``tools/**`` 维护脚本。本文件只保留命令行包装和本地开发入口。
+
+调用方: dev_checks; 关键依赖: scraping.synergy.mayhem_merge。
 """
 
 from __future__ import annotations

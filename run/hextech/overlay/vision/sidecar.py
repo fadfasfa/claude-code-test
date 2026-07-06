@@ -4,6 +4,8 @@
 候选规则、跨帧状态分别位于 ``hextech.overlay.vision.layout``、
 ``hextech.overlay.vision.matcher`` 和 ``hextech.overlay.vision.state``。
 它不读游戏内存、不注入客户端、不自动点击，也不联网。
+
+调用方: hextech_ui、dev_checks; 关键依赖: support.python_runtime、numpy、overlay.events。
 """
 
 from __future__ import annotations

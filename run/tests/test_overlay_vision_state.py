@@ -1,3 +1,7 @@
+"""测试 overlay vision 状态。
+
+调用方: pytest; 关键依赖: hextech.overlay.vision.state。
+"""
 from __future__ import annotations
 
 import tempfile

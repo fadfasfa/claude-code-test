@@ -2,6 +2,8 @@
 
 状态机只处理已经完成单帧视觉分析的字典，不访问窗口、截图或磁盘。场景和槽位
 分别稳定，避免任一槽抖动时让整个 overlay 反复显隐。
+
+调用方: overlay.vision.sidecar、tests.test_overlay_vision_state、dev_checks; 关键依赖: overlay.events、overlay.vision.matcher。
 """
 
 from __future__ import annotations

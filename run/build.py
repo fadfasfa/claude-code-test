@@ -1,6 +1,8 @@
 """打包入口薄壳。
 
 根目录只保留一个稳定发布入口，具体打包流程由 `tools.build_package` 承担。
+
+调用方: 命令行入口; 关键依赖: support.python_runtime、build_package。
 """
 
 from hextech.support.python_runtime import PACKAGING_RUNTIME_PACKAGES, ensure_python_311_for_source

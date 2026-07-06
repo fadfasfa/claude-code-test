@@ -2,6 +2,8 @@
 
 本模块只消费 sidecar 已计算的 icon/SimHei/SimSun 通道分数，把单帧结果收口成
 可供状态机累计的候选。它不截图、不加载模板，也不直接决定窗口显隐。
+
+调用方: overlay.vision.state、dev_checks; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

@@ -19,6 +19,8 @@
 
 维护提醒：
 - 资源缓存策略和失败 TTL 要与 Web / UI 热路径一起评估，避免重复下载
+
+调用方: catalog.view_adapter、display.web.runtime、overlay.hints; 关键依赖: requests、catalog.version_catalog、scraping._paths。
 """
 
 from __future__ import annotations

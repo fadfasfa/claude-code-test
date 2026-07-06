@@ -1,3 +1,7 @@
+"""测试 桌面单实例锁。
+
+调用方: pytest; 关键依赖: hextech.display.desktop.single_instance。
+"""
 from __future__ import annotations
 
 import json

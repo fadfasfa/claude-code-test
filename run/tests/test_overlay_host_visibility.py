@@ -1,3 +1,7 @@
+"""测试 overlay host 可见性。
+
+调用方: pytest; 关键依赖: hextech.overlay.host。
+"""
 from __future__ import annotations
 
 import threading

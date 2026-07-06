@@ -1,3 +1,7 @@
+"""测试 overlay 上下文稳定性。
+
+调用方: pytest; 关键依赖: hextech.overlay.renderer。
+"""
 from __future__ import annotations
 
 import unittest

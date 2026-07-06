@@ -1,3 +1,7 @@
+"""测试 web executor 生命周期。
+
+调用方: pytest; 关键依赖: hextech.display.web.runtime。
+"""
 from __future__ import annotations
 
 import unittest

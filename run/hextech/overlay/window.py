@@ -3,6 +3,8 @@
 优先按 ``League of Legends.exe`` 进程枚举顶层窗口，避免客户端语言改变窗口标题后
 host、Vision sidecar 和桌面伴生窗口得出不同结论。标题只作为进程信息不可读时的兜底。
 本模块不读取游戏内存，也不持久化 HWND；调用方每次获得的都是当前窗口快照。
+
+调用方: display.desktop.runtime、display.desktop.service_manager、overlay.host; 关键依赖: psutil、overlay.window_titles。
 """
 
 from __future__ import annotations

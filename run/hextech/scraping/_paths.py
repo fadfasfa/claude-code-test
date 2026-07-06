@@ -2,6 +2,8 @@
 
 本模块只计算源码态、冻结态和便携运行态路径，不导入抓取器或图标解析逻辑。
 `version_sync` 与 `icon_resolver` 共同依赖这里，避免两者互相导入。
+
+调用方: catalog.runtime_store、catalog.version_catalog、display.desktop.runtime; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

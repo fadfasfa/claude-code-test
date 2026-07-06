@@ -1,3 +1,5 @@
+// 海克斯详情页前端逻辑。
+// 调用方: hextech/display/web 详情页 HTML; 关键依赖: API_BASE、WS_URL、ddragon API。
 
         const API_BASE = window.location.origin;
         const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;

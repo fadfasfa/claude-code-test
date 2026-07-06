@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """运行时数据定位与 DataFrame 缓存。
 
 文件职责：
@@ -19,7 +17,11 @@ from __future__ import annotations
 
 维护提醒：
 - Web 和 UI 对 CSV 的读取都应经由这里，避免各自实现路径和缓存策略
+
+调用方: catalog.aliases、catalog.precomputed_cache、catalog.query_terminal; 关键依赖: pandas、scraping._paths、catalog.precomputed_cache。
 """
+
+from __future__ import annotations
 
 import glob
 import json

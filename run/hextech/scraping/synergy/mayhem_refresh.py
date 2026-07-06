@@ -4,6 +4,8 @@
 - 不调用 ApexLoL 抓取器，不读取浏览器、cookie 或代理配置。
 - 抓取 raw 先发布到 runtime cache，再通过 cleaned 合并脚本做 schema/闭集校验。
 - 失败只写诊断状态，保留旧 ``Champion_Synergy_Cleaned.json``。
+
+调用方: core.refresh、dev_checks; 关键依赖: catalog.runtime_store、overlay.hints、scraping.synergy.mayhem_combo_scraper。
 """
 
 from __future__ import annotations
