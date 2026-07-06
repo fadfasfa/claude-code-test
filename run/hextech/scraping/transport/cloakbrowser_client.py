@@ -2,6 +2,8 @@
 
 本模块只负责启动 CloakBrowser 并返回 HTML；它不 import Scrapling，也不承担
 ApexLoL 业务解析，便于后续独立替换任一底层抓取路径。
+
+调用方: scraping.synergy.scraper; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

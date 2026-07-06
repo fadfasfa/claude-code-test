@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """运行时编排层。
 
 文件职责：
@@ -17,7 +15,11 @@ from __future__ import annotations
 
 维护提醒：
 - 上层只应调用这里暴露的编排入口，不应在 UI 或 Web 中直接拼装多段抓取流程
+
+调用方: display.desktop.app、display.web.api、display.web.runtime; 关键依赖: catalog.runtime_store、support.atomic_io、support.log_utils。
 """
+
+from __future__ import annotations
 
 import os
 import re

@@ -1,4 +1,7 @@
-"""海克斯统一目录、图像预缓存与审计任务。"""
+"""海克斯统一目录、图像预缓存与审计任务。
+
+调用方: core.refresh、display.web、catalog.view_adapter、scraping.heal_worker; 关键依赖: runtime_store、version_catalog、scraping.hextech.scraper。
+"""
 
 from __future__ import annotations
 

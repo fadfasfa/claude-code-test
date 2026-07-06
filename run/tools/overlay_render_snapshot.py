@@ -2,6 +2,8 @@
 
 本工具不创建 Tk 窗口，也不经过中间矢量文件。可选 ``--background`` 会把透明 overlay
 合成到真机截图，供布局和视觉验收使用。
+
+调用方: 见 import 此模块的代码; 关键依赖: overlay.renderer。
 """
 
 from __future__ import annotations

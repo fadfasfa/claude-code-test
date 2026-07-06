@@ -2,6 +2,8 @@
 
 这个文件用于验证 PyInstaller 便携包在非仓库空目录首次启动时，是否能在限定时间内创建运行态目录、启动本地 Web 服务并返回可操作页面。
 它只负责本地验收，不负责构建产物、不负责真实人工点击悬浮窗、不修改业务数据。
+
+调用方: dev_checks; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

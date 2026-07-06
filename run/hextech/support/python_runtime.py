@@ -3,6 +3,8 @@
 本模块只负责源码态入口的解释器边界：项目源码与打包入口必须运行在
 ``run/.venv`` 的 Python 3.11 中。冻结态 exe 不走这里，避免影响
 PyInstaller 产物。
+
+调用方: build、overlay.__main__、overlay.host; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

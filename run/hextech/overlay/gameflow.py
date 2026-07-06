@@ -2,6 +2,8 @@
 
 本模块只访问本机 LoL/LCU 接口，不读取凭据文件。LCU token 仅从
 `LeagueClientUx.exe` 命令行实时提取，调用方不得把 token 写入日志。
+
+调用方: display.desktop.runtime、overlay.host; 关键依赖: requests、overlay.providers.official。
 """
 
 from __future__ import annotations

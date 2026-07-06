@@ -1,3 +1,7 @@
+"""测试 overlay sidecar 生命周期。
+
+调用方: pytest; 关键依赖: hextech.overlay.lifecycle。
+"""
 from __future__ import annotations
 
 import inspect

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Hextech 运行态数据迁移工具。
 
 用途：
@@ -9,7 +7,11 @@ from __future__ import annotations
 - 排除凭据/登录态文件；只记录路径和原因，不读取内容。
 
 默认 dry-run 不改文件。执行迁移必须显式传入 `--apply`。
+
+调用方: tests.test_runtime_data_migration; 关键依赖: 见 imports。
 """
+
+from __future__ import annotations
 
 import argparse
 import hashlib

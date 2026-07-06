@@ -1,6 +1,8 @@
 """终端查询交互层。
 
 负责把运行时数据组织成终端可读输出，并维护桌面端最近一次英雄选择上下文。
+
+调用方: display.desktop.runtime; 关键依赖: pandas、catalog.aliases、catalog.alias_utils。
 """
 
 import os

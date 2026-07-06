@@ -1,3 +1,7 @@
+"""测试 运行态诊断收集器。
+
+调用方: pytest; 关键依赖: tools.collect_runtime_diagnostics。
+"""
 from __future__ import annotations
 
 import json

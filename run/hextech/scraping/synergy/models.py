@@ -1,6 +1,8 @@
 """协同 models 域入口。
 
 当前模型类型与 scraper 实现同源，保留本模块作为后续拆分的稳定入口。
+
+调用方: 见 import 此模块的代码; 关键依赖: _compat。
 """
 
 from __future__ import annotations

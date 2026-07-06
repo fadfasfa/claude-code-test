@@ -1,3 +1,7 @@
+"""测试 桌面运行态 overlay。
+
+调用方: pytest; 关键依赖: hextech.display.desktop.runtime。
+"""
 from __future__ import annotations
 
 import json

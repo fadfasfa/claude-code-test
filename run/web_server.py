@@ -1,6 +1,8 @@
 """Web 服务兼容入口。
 
 保留根目录启动方式不变，并把实际实现委托给 `hextech.display.web.app`。
+
+调用方: 命令行入口; 关键依赖: support.python_runtime、support.log_utils、display.web.app。
 """
 
 from hextech.support.python_runtime import ensure_python_311_for_source

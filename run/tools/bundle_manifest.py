@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """打包白名单 manifest 生成器。
 
 文件职责：
@@ -25,7 +23,10 @@ from __future__ import annotations
 - 这里只白名单稳定资源与首启冷启动所需快照，不打包运行态缓存/锁/日志
 - 构建期只读取 `data/seed/startup` 快照源，manifest 路径必须写入 `data/seed/startup`
 - 若 manifest 字段有改动，必须同步检查 `tools.runtime_bundle` 与烟测脚本
+
+调用方: tests.test_bundle_manifest、build_package、dev_checks; 关键依赖: package_rules。
 """
+from __future__ import annotations
 
 import json
 from datetime import datetime

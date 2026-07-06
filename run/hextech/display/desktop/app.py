@@ -3,6 +3,8 @@
 这个文件保留 Tk 界面结构、主状态对象和主要交互方法。
 后台线程、Web 协同、LCU 查询和头像下载等运行时细节委托给 `hextech.display.desktop.runtime`，
 以便在保持热路径聚合的前提下，让后续需求变更有明确落点。
+
+调用方: display.desktop.runtime、hextech_ui、tests.test_desktop_diagnostics_button; 关键依赖: catalog.runtime_store、core.settings、overlay.hints。
 """
 
 import ctypes

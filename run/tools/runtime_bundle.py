@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """打包后稳定资源播种工具。
 
 文件职责：
@@ -18,7 +16,11 @@ from __future__ import annotations
 维护提醒：
 - 稳定资源只补缺失文件；Hextech 快照只在包内文件更新时覆盖旧快照
 - 新 manifest 使用 `data/seed/startup/*`；旧 `data/raw/*` manifest 仍兼容读取
+
+调用方: scraping.version_sync; 关键依赖: bundle_manifest。
 """
+
+from __future__ import annotations
 
 import json
 import logging

@@ -2,6 +2,8 @@
 
 在恢复 `run/scraping/` 包路径时提供最小自愈能力，供当前 `processing/` 与 `display/`
 层安全调用，不要求一次性回滚全部历史目录结构。
+
+调用方: core.refresh、dev_checks; 关键依赖: support.atomic_io、catalog.runtime_store、scraping.version_sync。
 """
 
 from __future__ import annotations

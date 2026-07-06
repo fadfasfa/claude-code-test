@@ -2,6 +2,8 @@
 
 同一 worktree 只能有一个 Tk 控制面写共享 runtime state。这里不负责杀旧进程；
 活 owner 存在时直接拒绝第二实例，stale owner 才允许接管。
+
+调用方: display.desktop.app、tests.test_desktop_single_instance; 关键依赖: psutil、catalog.runtime_store、support.atomic_io。
 """
 
 from __future__ import annotations

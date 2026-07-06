@@ -20,6 +20,8 @@
 维护提醒：
 - 这里不定义 FastAPI 路由，只提供路由层和启动壳依赖的运行时能力
 - 涉及轮询频率、缓存 TTL 和资源回退策略的改动都应优先回归 Web 热路径
+
+调用方: display.web.app、dev_checks; 关键依赖: pandas、psutil、requests。
 """
 
 from __future__ import annotations

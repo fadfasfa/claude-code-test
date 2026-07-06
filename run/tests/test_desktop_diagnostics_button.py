@@ -1,3 +1,7 @@
+"""测试 桌面诊断按钮。
+
+调用方: pytest; 关键依赖: hextech.display.desktop.app。
+"""
 from __future__ import annotations
 
 import inspect

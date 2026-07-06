@@ -2,6 +2,8 @@
 
 运行时代码通过本模块写文本、JSON 和 CSV：先写临时文件，再用 `os.replace`
 替换目标文件。Windows 上目标文件短暂被读取占用时会进行小范围重试，避免半写文件。
+
+调用方: core.refresh、core.settings、display.desktop.single_instance; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

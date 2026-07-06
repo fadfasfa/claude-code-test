@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """海克斯与联动数据源完整性验收门。
 
 用途：
@@ -9,7 +7,11 @@ from __future__ import annotations
 边界：
 - 不读取 cookie、storage、代理或登录态。
 - 不写业务数据，只读取源站公开页面、本地 CSV、缓存和 snapshot。
+
+调用方: 见 import 此模块的代码; 关键依赖: pandas、display.web.api、catalog.precomputed_cache。
 """
+
+from __future__ import annotations
 
 import argparse
 import json

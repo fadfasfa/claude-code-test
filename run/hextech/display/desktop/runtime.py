@@ -17,6 +17,8 @@
 维护提醒：
 - Tk 组件结构仍应留在 `hextech.display.desktop.app`
 - 新增后台线程、轮询或资源下载逻辑优先集中在本文件
+
+调用方: dev_checks; 关键依赖: psutil、requests、display.web。
 """
 
 from __future__ import annotations

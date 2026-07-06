@@ -4,6 +4,8 @@
 cleaned 协同数据。合并前会先移除旧 ``source="arammayhem"`` 条目，再用本次
 ARAMMayhem 数据只补 Apex 缺失组合。Mayhem 原始文件为空或全部被拒绝时不会覆盖
 ``Champion_Synergy_Cleaned.json``。
+
+调用方: scraping.synergy.mayhem_refresh、tests.test_synergy_scraper、clean_mayhem_combos; 关键依赖: catalog.runtime_store、catalog.version_catalog、scraping.icon_resolver。
 """
 
 from __future__ import annotations

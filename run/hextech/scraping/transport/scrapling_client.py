@@ -2,6 +2,8 @@
 
 供 Codex 调用，独立于 run/scraping/ 现有业务爬虫；输入 URL，输出 HTML
 和可选 CSS selector 命中结果。依赖安装见 requirements-scrapling.txt。
+
+调用方: scraping.hextech.scraper、scraping.synergy.mayhem_combo_scraper、scraping.synergy.scraper; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

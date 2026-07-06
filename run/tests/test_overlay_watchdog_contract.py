@@ -1,3 +1,7 @@
+"""测试 overlay watchdog 契约。
+
+调用方: pytest; 关键依赖: hextech.display.desktop.service_manager。
+"""
 from __future__ import annotations
 
 import inspect

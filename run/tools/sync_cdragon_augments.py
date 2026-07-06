@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """从 CommunityDragon 刷新 Arena/ARAM 海克斯闭集目录。
 
 本工具只负责把 `cherry-augments.json` 收口成本地稳定资源：
@@ -8,7 +6,11 @@ from __future__ import annotations
 
 CommunityDragon 的 cherry 数据只含名字、稀有度和图标路径，不含完整 tooltip。
 因此本工具不抓取、不保留 description / tooltip；描述仍由第三方数据链路提供。
+
+调用方: 见 import 此模块的代码; 关键依赖: requests、scraping.icon_resolver、catalog.version_catalog。
 """
+
+from __future__ import annotations
 
 import argparse
 import json

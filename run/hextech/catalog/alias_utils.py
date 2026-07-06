@@ -1,6 +1,8 @@
 """英雄别名归一与去重的共享辅助。
 
 供 `hextech.catalog.aliases` 和首页搜索路径调用，保证同义别名收敛到同一 token。
+
+调用方: catalog.aliases、catalog.query_terminal、scraping.version_sync; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

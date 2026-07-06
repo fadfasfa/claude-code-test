@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Hextech 打包资源规则。
 
 本模块只描述源文件如何进入包，不创建中间资源副本。打包脚本会把这些
@@ -7,7 +5,11 @@ from __future__ import annotations
 临时目录。`data/static/assets/` 会按目录交给 PyInstaller 的 `data/static/assets`
 目标，但目录内必须全部是
 ``ASSET_SUFFIXES`` 白名单图片，避免临时文件被静默带入发布包。
+
+调用方: build_package、bundle_manifest、dev_checks; 关键依赖: 见 imports。
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path

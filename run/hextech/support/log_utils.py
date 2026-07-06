@@ -2,6 +2,8 @@
 
 集中管理摘要日志、错误日志、开发态 JSONL 诊断日志和结构化事件写入。
 开发态可以写更重的本地诊断文件；冻结/打包态只保留摘要、错误和轻量导出所需事件。
+
+调用方: core.refresh、display.web.runtime、scraping.hextech.scraper; 关键依赖: catalog.runtime_store。
 """
 
 from __future__ import annotations

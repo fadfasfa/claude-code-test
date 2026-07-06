@@ -1,10 +1,12 @@
-from __future__ import annotations
-
 """用户侧轻量诊断导出。
 
 该模块允许进入打包产物，只做只读 tail、白名单 state 复制、脱敏和 zip 封装。
 开发态全量采集继续由 `tools/collect_runtime_diagnostics.py` 负责，避免把 debug/raw/cache/profile 带给用户导出面。
+
+调用方: display.desktop.app; 关键依赖: catalog.runtime_store、support.log_utils。
 """
+
+from __future__ import annotations
 
 import json
 import re

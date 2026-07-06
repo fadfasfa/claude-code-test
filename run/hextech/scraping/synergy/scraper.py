@@ -7,6 +7,8 @@
 
 资源来源会记录为 ``snapshot``、``json-url``、``scrapling-get``、
 ``scrapling-stealthy`` 或 ``cloakbrowser``，方便按日志 source 反查具体后端。
+
+调用方: core.refresh、tests.test_runtime_logging、dev_checks; 关键依赖: catalog.runtime_store、scraping._paths、catalog.version_catalog。
 """
 
 from __future__ import annotations

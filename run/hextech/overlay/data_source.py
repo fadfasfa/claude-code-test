@@ -2,6 +2,8 @@
 
 当前实现复用 ``hextech.overlay`` 的本地事件、提示缓存和英雄上下文；未来若游戏内
 显示改用独立数据，只需替换 ``OverlayDataSource``，host 与 renderer 不需要改动。
+
+调用方: overlay.__main__、overlay.host、overlay.lifecycle; 关键依赖: overlay.hints、core.settings、overlay.events。
 """
 
 from __future__ import annotations

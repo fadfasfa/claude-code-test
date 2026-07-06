@@ -1,11 +1,13 @@
-from __future__ import annotations
-
 """一键刷新并校验 overlay 视觉识别资源。
 
 本工具把 CommunityDragon 海克斯目录、图标、视觉模板覆盖审计、全量合成识别
 和长期真机 fixture 回归收口到一个入口。默认模式只在临时 snapshot 全部通过后
 才发布到稳定 `data/static` 与 `data/fixtures`；`--check-only` 只读当前资源，不联网、不改文件。
+
+调用方: 见 import 此模块的代码; 关键依赖: catalog.version_catalog、overlay.vision、overlay.vision.state。
 """
+
+from __future__ import annotations
 
 import argparse
 import json

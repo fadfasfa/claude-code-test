@@ -2,6 +2,8 @@
 
 本模块只负责透明置顶窗口、点击穿透、热键、游戏窗口跟随和本地事件渲染。
 真实识别由 Vision sidecar 写入本地事件文件，host 不截图、不识别、不访问远端。
+
+调用方: hextech_ui、tests.test_overlay_host_visibility、collect_runtime_diagnostics; 关键依赖: support.python_runtime、overlay.window、overlay.window_titles。
 """
 
 from __future__ import annotations

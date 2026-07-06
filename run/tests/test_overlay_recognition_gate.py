@@ -1,3 +1,7 @@
+"""测试 overlay 视觉识别门控。
+
+调用方: pytest; 关键依赖: tools.refresh_overlay_recognition。
+"""
 from __future__ import annotations
 
 import unittest

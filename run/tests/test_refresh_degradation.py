@@ -1,3 +1,7 @@
+"""测试 refresh 降级路径。
+
+调用方: pytest; 关键依赖: hextech.core.refresh。
+"""
 from __future__ import annotations
 
 import json

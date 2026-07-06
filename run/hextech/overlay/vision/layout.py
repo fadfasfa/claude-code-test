@@ -2,6 +2,8 @@
 
 本模块只在预期三卡区域内联合判断选择按钮与卡面结构，并返回当前帧的局部
 平移/缩放。它不识别海克斯内容、不写运行态，也不持久化窗口校准。
+
+调用方: overlay.renderer、overlay.vision.sidecar、dev_checks; 关键依赖: numpy。
 """
 
 from __future__ import annotations

@@ -1,12 +1,14 @@
-from __future__ import annotations
-
 """运行态日志采集器。
 
 用途：
 - 真实对局结束后读取已有 runtime state/log/debug 文件，生成可复盘诊断包。
 - 真实对局期间可开启轻量 watch，周期性只读 runtime 文件并写诊断快照。
 - 不截图，不联网，不读取 token/auth/cookie 等敏感文件。
+
+调用方: tests.test_runtime_diagnostics_collector; 关键依赖: catalog.runtime_store、overlay.renderer、overlay.host。
 """
+
+from __future__ import annotations
 
 import argparse
 import json

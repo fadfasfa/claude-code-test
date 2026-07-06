@@ -1,3 +1,7 @@
+"""测试 用户诊断导出。
+
+调用方: pytest; 关键依赖: hextech.support.user_diagnostics。
+"""
 from __future__ import annotations
 
 import json

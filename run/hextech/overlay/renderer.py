@@ -2,6 +2,8 @@
 
 本模块是纯展示层：不读文件、不启动进程、不依赖 ``display`` 或 Web。输入是已经
 加载到内存的 event/hint/context，输出只通过 Canvas-like 接口绘制。
+
+调用方: overlay.__main__、overlay.host、collect_runtime_diagnostics; 关键依赖: overlay.hints、overlay.vision.layout。
 """
 
 from __future__ import annotations

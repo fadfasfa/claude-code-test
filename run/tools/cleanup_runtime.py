@@ -1,10 +1,12 @@
-from __future__ import annotations
-
 """开发与构建相关的清理工具。
 
 这个模块只负责删除构建产物、运行时缓存和临时文件，不做业务数据变更。
 与打包逻辑强相关的清理动作放在这里，方便在构建前后统一调用。
+
+调用方: build_package; 关键依赖: 见 imports。
 """
+
+from __future__ import annotations
 
 import shutil
 import argparse

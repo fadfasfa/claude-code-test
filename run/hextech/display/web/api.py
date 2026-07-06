@@ -3,6 +3,8 @@
 这个模块只负责定义页面路由、API 路由和 WebSocket 入口。
 所有与端口、LCU、缓存、资源定位、浏览器托管相关的细节都委托给 `web_runtime`，
 从而让接口层保持稳定且方便后续扩展。
+
+调用方: display.web.app、dev_checks、verify_data_source_integrity; 关键依赖: catalog.aliases、catalog.precomputed_cache、catalog.runtime_store。
 """
 
 from __future__ import annotations

@@ -2,6 +2,8 @@
 
 本模块只定义本机 JSON 文件事件的读写与规范化。它不截图、不识别、不抓取远端，
 用于把后续 Vision 或手工探针产生的三槽位结果送进 overlay host。
+
+调用方: display.desktop.service_manager、overlay.data_source、overlay.lifecycle; 关键依赖: overlay.hints、overlay.runtime_paths、support.atomic_io。
 """
 
 from __future__ import annotations

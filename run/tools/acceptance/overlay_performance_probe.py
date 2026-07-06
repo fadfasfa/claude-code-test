@@ -2,6 +2,8 @@
 
 本工具只生成结构化性能报告，供阶段 5 人工记录四种服务状态和延迟样本。默认不写
 运行态文件、不启动服务、不访问网络。
+
+调用方: dev_checks; 关键依赖: 见 imports。
 """
 
 from __future__ import annotations

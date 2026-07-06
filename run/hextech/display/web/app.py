@@ -3,6 +3,8 @@
 这个文件只负责创建 FastAPI 应用、挂载静态目录并启动 Uvicorn。
 所有路由定义委托给 `hextech.display.web.api`，所有运行时状态与后台任务委托给 `hextech.display.web.runtime`，
 从而把 Web 的启动层、接口层和运行时层稳定拆开，同时控制模块数量不过度膨胀。
+
+调用方: hextech_ui、web_server; 关键依赖: uvicorn。
 """
 
 from __future__ import annotations
