@@ -183,6 +183,9 @@ class HextechUI:
         self.web_process = None
         self.runtime_supervisor = None
         self.service_manager: ServiceManager | None = None
+        self._service_manager_lock = threading.Lock()
+        self._service_manager_shutdown_in_progress: ServiceManager | None = None
+        self._service_manager_shutdown_completed: ServiceManager | None = None
         self.session = None
         self.core_data = {}
         self._data_loader = None
@@ -288,11 +291,8 @@ class HextechUI:
                 self.feature_flags.get("low_frequency_listener_enabled", True)
             )
             service_manager.start_low_frequency_listener()
-            if self._closing:
-                service_manager.shutdown()
+            if not self._publish_service_manager(service_manager):
                 return
-            self.service_manager = service_manager
-            self._runtime_services_ready = True
             self.startup_timing.mark("services_ready")
 
             self.session = get_advanced_session()
@@ -302,11 +302,7 @@ class HextechUI:
             self.startup_timing.mark("data_ready", rows=len(loaded_df))
         except Exception as exc:
             error = exc
-            if service_manager is not None and self.service_manager is not service_manager:
-                try:
-                    service_manager.shutdown()
-                except Exception:
-                    logger.debug("后台初始化失败后清理 ServiceManager 失败。", exc_info=True)
+            self._shutdown_failed_bootstrap_service_manager(service_manager)
             logger.exception("桌面后台初始化失败。")
 
         def finish() -> None:
@@ -329,6 +325,54 @@ class HextechUI:
             self._start_overlay_status_polling()
 
         self._run_on_ui_thread(finish)
+
+    def _publish_service_manager(self, service_manager: "ServiceManager") -> bool:
+        """发布后台 ServiceManager；若关闭已开始，则由 bootstrap 线程自清理。"""
+
+        with self._service_manager_lock:
+            if self._closing:
+                should_shutdown = True
+            else:
+                self.service_manager = service_manager
+                self._runtime_services_ready = True
+                self._service_manager_shutdown_completed = None
+                should_shutdown = False
+        if should_shutdown:
+            service_manager.shutdown()
+            return False
+        return True
+
+    def _take_service_manager_for_shutdown(self) -> "ServiceManager | None":
+        """关闭路径独占取走 ServiceManager，避免与 bootstrap 失败清理重复 shutdown。"""
+
+        with self._service_manager_lock:
+            service_manager = self.service_manager
+            self.service_manager = None
+            self._runtime_services_ready = False
+            self._service_manager_shutdown_in_progress = service_manager
+            return service_manager
+
+    def _shutdown_failed_bootstrap_service_manager(self, service_manager: "ServiceManager | None") -> None:
+        """bootstrap 失败时清理本轮创建的 ServiceManager，包含已发布和未发布两种状态。"""
+
+        if service_manager is None:
+            return
+        with self._service_manager_lock:
+            if self.service_manager is service_manager:
+                self.service_manager = None
+                self._runtime_services_ready = False
+                should_shutdown = True
+            elif self._service_manager_shutdown_in_progress is service_manager:
+                should_shutdown = False
+            elif self._service_manager_shutdown_completed is service_manager:
+                should_shutdown = False
+            else:
+                should_shutdown = self.service_manager is not service_manager
+        if should_shutdown:
+            try:
+                service_manager.shutdown()
+            except Exception:
+                logger.debug("后台初始化失败后清理 ServiceManager 失败。", exc_info=True)
 
     def _start_runtime_supervisor(self, *, restore_persisted_game_overlay: bool = True) -> None:
         """启动独立执行面，并用非 UI 线程续租，避免 Tk 主循环卡顿误杀运行态。"""
@@ -1204,8 +1248,15 @@ class HextechUI:
         # 顺带保留 main 引入的 overlay 状态轮询 after_id 取消，避免 root.destroy 后回调引发 TclError。
         ui_runtime.close_companion_browser()
         ui_runtime.shutdown_desktop_executors(wait=False)
-        if self.service_manager is not None:
-            self.service_manager.shutdown()
+        service_manager = self._take_service_manager_for_shutdown()
+        if service_manager is not None:
+            try:
+                service_manager.shutdown()
+            finally:
+                with self._service_manager_lock:
+                    if self._service_manager_shutdown_in_progress is service_manager:
+                        self._service_manager_shutdown_in_progress = None
+                        self._service_manager_shutdown_completed = service_manager
         self._supervisor_lease_stop.set()
         if self._supervisor_lease_thread is not None and self._supervisor_lease_thread.is_alive():
             self._supervisor_lease_thread.join(timeout=2)

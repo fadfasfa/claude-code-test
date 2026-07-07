@@ -1199,6 +1199,16 @@ def resolve_event_render_delay_ms(config: Mapping[str, Any], visibility: Mapping
     return min(base_ms, fast_ms) if time.monotonic() < fast_until else base_ms
 
 
+def resolve_event_render_retry_delay_ms(config: Mapping[str, Any], failure_count: int) -> int:
+    """渲染失败后的下一次重试间隔；失败路径不进入 fast poll。"""
+
+    base_ms = max(50, int(config.get("event_poll_ms", 250) or 250))
+    if int(failure_count or 0) <= RENDER_ERROR_BACKOFF_AFTER:
+        return base_ms
+    exponent = min(8, int(failure_count) - RENDER_ERROR_BACKOFF_AFTER)
+    return min(RENDER_ERROR_BACKOFF_MAX_MS, base_ms * (2 ** exponent))
+
+
 def _schedule_event_render(
     root: tk.Tk,
     canvas: tk.Canvas,
@@ -1210,7 +1220,6 @@ def _schedule_event_render(
 ) -> Callable[[], None]:
     """单一 tick 同步窗口、事件和显隐；隐藏时不加载 hint/context。"""
 
-    poll_ms = max(50, int(config.get("event_poll_ms", 250) or 250))
     fast_poll_ms = max(50, int(config.get("fast_event_poll_ms", 60) or 60))
     fast_hold_seconds = max(0.0, float(config.get("fast_event_hold_ms", 1200) or 1200) / 1000.0)
     source = data_source or SharedOverlayDataSource()
@@ -1218,10 +1227,9 @@ def _schedule_event_render(
     render_after_id: str | None = None
 
     def retry_delay_ms() -> int:
-        if failure_count <= RENDER_ERROR_BACKOFF_AFTER:
+        if failure_count <= 0:
             return resolve_event_render_delay_ms(config, visibility)
-        exponent = min(8, failure_count - RENDER_ERROR_BACKOFF_AFTER)
-        return min(RENDER_ERROR_BACKOFF_MAX_MS, poll_ms * (2 ** exponent))
+        return resolve_event_render_retry_delay_ms(config, failure_count)
 
     def note_fast_event(snapshot: Mapping[str, Any]) -> None:
         event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}

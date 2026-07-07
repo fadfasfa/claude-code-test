@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 MAYHEM_STALE_SECONDS = 72 * 60 * 60
 MAYHEM_FAILURE_RETRY_SECONDS = 30 * 60
+MAYHEM_FAILURE_RETRY_JITTER_SECONDS = 5 * 60
 MAYHEM_RAW_CACHE_FILENAME = "mayhem_combos.raw.json"
 MAYHEM_REFRESH_STATUS_FILENAME = "mayhem_refresh_status.json"
 
@@ -60,11 +62,26 @@ def _parse_timestamp(value: object) -> float:
         return 0.0
 
 
+def _stable_failure_retry_jitter_seconds(status: Mapping[str, Any], jitter_seconds: int) -> int:
+    """按失败状态生成稳定抖动，避免持续失败时形成精确固定请求节奏。"""
+
+    jitter = max(0, int(jitter_seconds or 0))
+    if jitter <= 0:
+        return 0
+    seed = "|".join(
+        str(status.get(key) or "")
+        for key in ("last_attempt_at", "last_result", "reason")
+    )
+    digest = hashlib.blake2b(seed.encode("utf-8", errors="replace"), digest_size=4).digest()
+    return int.from_bytes(digest, "big") % (jitter + 1)
+
+
 def mayhem_refresh_due(
     *,
     now: float | None = None,
     stale_after_seconds: int = MAYHEM_STALE_SECONDS,
     failure_retry_seconds: int = MAYHEM_FAILURE_RETRY_SECONDS,
+    failure_retry_jitter_seconds: int = MAYHEM_FAILURE_RETRY_JITTER_SECONDS,
 ) -> bool:
     status = load_mayhem_refresh_status()
     current = time.time() if now is None else now
@@ -72,7 +89,11 @@ def mayhem_refresh_due(
     if success_at <= 0:
         attempt_at = _parse_timestamp(status.get("last_attempt_at"))
         if attempt_at > 0 and str(status.get("last_result") or "") != "success":
-            return (attempt_at + max(0, int(failure_retry_seconds))) <= current
+            retry_after = max(0, int(failure_retry_seconds)) + _stable_failure_retry_jitter_seconds(
+                status,
+                failure_retry_jitter_seconds,
+            )
+            return (attempt_at + retry_after) <= current
         return True
     return (success_at + stale_after_seconds) <= current
 
@@ -205,6 +226,7 @@ def run_mayhem_refresh(
 __all__ = [
     "MAYHEM_RAW_CACHE_FILENAME",
     "MAYHEM_REFRESH_STATUS_FILENAME",
+    "MAYHEM_FAILURE_RETRY_JITTER_SECONDS",
     "MAYHEM_STALE_SECONDS",
     "get_mayhem_raw_cache_path",
     "get_mayhem_refresh_status_path",

@@ -1,4 +1,4 @@
-"""Mayhem refresh and scrape-health regression tests.
+"""Mayhem 低频刷新与抓取健康回归测试。
 
 调用方: pytest; 关键依赖: hextech.scraping.synergy.mayhem_refresh、tools.dev_checks。
 """
@@ -108,8 +108,59 @@ class MayhemRefreshHealthTests(unittest.TestCase):
             )
 
             with mock.patch.object(mayhem_refresh, "build_runtime_state_path", lambda name: str(status_file)):
-                self.assertFalse(mayhem_refresh.mayhem_refresh_due(now=now, failure_retry_seconds=300))
-                self.assertTrue(mayhem_refresh.mayhem_refresh_due(now=now + 301, failure_retry_seconds=300))
+                self.assertFalse(
+                    mayhem_refresh.mayhem_refresh_due(
+                        now=now,
+                        failure_retry_seconds=300,
+                        failure_retry_jitter_seconds=0,
+                    )
+                )
+                self.assertTrue(
+                    mayhem_refresh.mayhem_refresh_due(
+                        now=now + 301,
+                        failure_retry_seconds=300,
+                        failure_retry_jitter_seconds=0,
+                    )
+                )
+
+    def test_mayhem_due_adds_stable_failure_retry_jitter(self):
+        from hextech.scraping.synergy import mayhem_refresh
+
+        now = 1783260000.0
+        payload = {
+            "last_attempt_at": mayhem_refresh._now_iso(now),
+            "last_success_at": "",
+            "last_result": "failed",
+            "reason": "network_timeout",
+        }
+        jitter = mayhem_refresh._stable_failure_retry_jitter_seconds(payload, 300)
+        for index in range(20):
+            if jitter > 0:
+                break
+            payload["reason"] = f"network_timeout_{index}"
+            jitter = mayhem_refresh._stable_failure_retry_jitter_seconds(payload, 300)
+        self.assertGreater(jitter, 0)
+        self.assertEqual(jitter, mayhem_refresh._stable_failure_retry_jitter_seconds(payload, 300))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            status_file = Path(tmp) / "mayhem_refresh_status.json"
+            status_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+            with mock.patch.object(mayhem_refresh, "build_runtime_state_path", lambda name: str(status_file)):
+                self.assertFalse(
+                    mayhem_refresh.mayhem_refresh_due(
+                        now=now + 300 + jitter - 1,
+                        failure_retry_seconds=300,
+                        failure_retry_jitter_seconds=300,
+                    )
+                )
+                self.assertTrue(
+                    mayhem_refresh.mayhem_refresh_due(
+                        now=now + 300 + jitter,
+                        failure_retry_seconds=300,
+                        failure_retry_jitter_seconds=300,
+                    )
+                )
 
     def test_mayhem_due_uses_last_success_before_failure_retry(self):
         from hextech.scraping.synergy import mayhem_refresh
@@ -132,8 +183,22 @@ class MayhemRefreshHealthTests(unittest.TestCase):
             )
 
             with mock.patch.object(mayhem_refresh, "build_runtime_state_path", lambda name: str(status_file)):
-                self.assertFalse(mayhem_refresh.mayhem_refresh_due(now=now, stale_after_seconds=300, failure_retry_seconds=300))
-                self.assertTrue(mayhem_refresh.mayhem_refresh_due(now=now + 181, stale_after_seconds=300, failure_retry_seconds=300))
+                self.assertFalse(
+                    mayhem_refresh.mayhem_refresh_due(
+                        now=now,
+                        stale_after_seconds=300,
+                        failure_retry_seconds=300,
+                        failure_retry_jitter_seconds=0,
+                    )
+                )
+                self.assertTrue(
+                    mayhem_refresh.mayhem_refresh_due(
+                        now=now + 181,
+                        stale_after_seconds=300,
+                        failure_retry_seconds=300,
+                        failure_retry_jitter_seconds=0,
+                    )
+                )
 
     def test_mayhem_success_writes_runtime_raw_status_and_rebuilds_hints(self):
         from hextech.scraping.synergy import mayhem_refresh
