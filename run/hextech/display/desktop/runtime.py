@@ -11,7 +11,6 @@
 - 桌面端后台刷新、英雄联动、图片缓存和窗口状态同步
 
 主要依赖：
-- `hextech.catalog.query_terminal`
 - `hextech.scraping._paths`
 
 维护提醒：
@@ -48,11 +47,9 @@ import urllib3
 import win32gui
 from PIL import Image, ImageDraw, ImageTk
 
-from hextech.display.web import runtime as web_runtime
 from hextech.overlay import context as overlay_context
 from hextech.overlay.gameflow import probe_lcu_gameflow_in_progress, probe_live_client_in_progress
 from hextech.overlay.window import find_lol_game_window, is_window_renderable
-from hextech.catalog.query_terminal import display_hero_hextech, main_query, set_last_hero
 from hextech.overlay.window_titles import LOL_CLIENT_WINDOW_TITLE
 from hextech.scraping._paths import ASSET_DIR, BASE_DIR
 
@@ -64,6 +61,22 @@ logger = logging.getLogger(__name__)
 _preload_status_executor: ThreadPoolExecutor | None = None
 GAMEFLOW_VISIBILITY_POLL_SECONDS = 1.0
 LCU_LOCAL_REQUEST_TIMEOUT_SECONDS = 1.0
+
+
+def _web_runtime():
+    """延迟导入 Web runtime，避免 Web 默认关闭时拖慢桌面首屏。"""
+
+    from hextech.display.web import runtime as web_runtime
+
+    return web_runtime
+
+
+def _query_terminal():
+    """延迟导入终端查询模块；它会加载 pandas，不进入桌面冷启动路径。"""
+
+    from hextech.catalog import query_terminal
+
+    return query_terminal
 
 
 def _executor_shutdown(executor: ThreadPoolExecutor | None) -> bool:
@@ -224,14 +237,38 @@ class RuntimeSupervisorHandle:
     def job_object_attached(self) -> bool:
         return bool(self.job_object and self.job_object.attached)
 
+    def _supervisor_headers(self) -> dict[str, str]:
+        return {
+            "Host": "127.0.0.1",
+            "X-Hextech-Supervisor-Nonce": self.session_nonce,
+        }
+
     def renew_lease(self, *, control_instance_id: str) -> dict:
         response = requests.post(
             f"http://127.0.0.1:{self.port}/v1/lease/renew",
-            headers={
-                "Host": "127.0.0.1",
-                "X-Hextech-Supervisor-Nonce": self.session_nonce,
-            },
+            headers=self._supervisor_headers(),
             json={"control_instance_id": control_instance_id},
+            timeout=2,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {}
+
+    def get_status(self) -> dict:
+        response = requests.get(
+            f"http://127.0.0.1:{self.port}/v1/status",
+            headers=self._supervisor_headers(),
+            timeout=2,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {}
+
+    def set_game_overlay_enabled(self, enabled: bool) -> dict:
+        response = requests.post(
+            f"http://127.0.0.1:{self.port}/v1/actions/game-overlay",
+            headers=self._supervisor_headers(),
+            json={"enabled": bool(enabled)},
             timeout=2,
         )
         response.raise_for_status()
@@ -263,10 +300,7 @@ class RuntimeSupervisorHandle:
         try:
             requests.post(
                 f"http://127.0.0.1:{self.port}/v1/shutdown",
-                headers={
-                    "Host": "127.0.0.1",
-                    "X-Hextech-Supervisor-Nonce": self.session_nonce,
-                },
+                headers=self._supervisor_headers(),
                 timeout=1,
             )
             shutdown_requested = True
@@ -303,14 +337,21 @@ def _hidden_startupinfo():
     return startupinfo
 
 
-def start_runtime_supervisor_process(*, parent_pid: int | None = None, timeout: float = 8.0) -> RuntimeSupervisorHandle:
+def start_runtime_supervisor_process(
+    *,
+    parent_pid: int | None = None,
+    timeout: float = 8.0,
+    prewarm_templates: bool = False,
+) -> RuntimeSupervisorHandle:
     """启动独立 Runtime Supervisor，并通过 stdout 匿名管道读取 bootstrap JSON。"""
 
     parent = int(parent_pid or os.getpid())
     if getattr(sys, "frozen", False):
         command = [sys.executable, "--runtime-supervisor", "--parent-pid", str(parent)]
     else:
-        command = [sys.executable, os.path.join(BASE_DIR, "hextech_ui.py"), "--runtime-supervisor", "--parent-pid", str(parent)]
+        command = [sys.executable, "-m", "hextech.runtime_supervisor", "--parent-pid", str(parent)]
+    if prewarm_templates:
+        command.append("--prewarm-templates")
     process = subprocess.Popen(
         command,
         cwd=BASE_DIR,
@@ -471,7 +512,7 @@ def open_companion_browser(web_port_file: str) -> bool:
     """由桌面父进程打开可回收的本地 Web 浏览器窗口。"""
 
     web_base = resolve_web_base(web_port_file, timeout=1.0)
-    return web_runtime.open_managed_browser(
+    return _web_runtime().open_managed_browser(
         web_base,
         replace_existing=True,
         allow_system_fallback=False,
@@ -481,7 +522,7 @@ def open_companion_browser(web_port_file: str) -> bool:
 def close_companion_browser() -> bool:
     """关闭桌面父进程持有的受管浏览器窗口。"""
 
-    return web_runtime.terminate_managed_browser()
+    return _web_runtime().terminate_managed_browser()
 
 
 def _web_auth_headers(ui: "HextechUI", web_base: str, timeout: float = 0.5) -> dict[str, str]:
@@ -693,7 +734,7 @@ def run_terminal_loop(ui: "HextechUI") -> None:
     if not ui.stop_event.is_set():
         with ui._df_lock:
             df_snapshot = ui.df
-        main_query(shared_df=df_snapshot, ui_instance=ui)
+        _query_terminal().main_query(shared_df=df_snapshot, ui_instance=ui)
 
 
 def run_silent_sync(ui: "HextechUI", refresh_backend_data) -> None:
@@ -1051,7 +1092,7 @@ def _queue_clicked_hero_preload(ui: "HextechUI", hero_name: str) -> None:
 
 def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
     try:
-        set_last_hero(hero_name)
+        _query_terminal().set_last_hero(hero_name)
     except Exception:
         logger.debug("记录最近一次英雄选择失败。", exc_info=True)
 
@@ -1061,7 +1102,7 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
             sys.stdout.flush()
             with ui._df_lock:
                 df_snapshot = ui.df
-            display_hero_hextech(df_snapshot, hero_name, is_from_ui=True)
+            _query_terminal().display_hero_hextech(df_snapshot, hero_name, is_from_ui=True)
         except Exception as exc:
             print(f"\n输出错误: {exc}")
 

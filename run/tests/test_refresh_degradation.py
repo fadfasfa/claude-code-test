@@ -121,6 +121,95 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertEqual(payload["last_attempt"]["completed_heroes"], 120)
             self.assertTrue(payload["fallback_used"])
 
+    def test_main_scraper_timeout_records_fallback_without_blocking_shutdown(self):
+        from hextech.scraping.hextech import scraper
+
+        class Response:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        class PendingFuture:
+            cancelled = False
+
+            def done(self):
+                return False
+
+            def cancel(self):
+                self.cancelled = True
+                return True
+
+        shutdown_calls = []
+        submitted = []
+
+        class FakeExecutor:
+            def __init__(self, max_workers):
+                self.max_workers = max_workers
+
+            def submit(self, *_args, **_kwargs):
+                future = PendingFuture()
+                submitted.append(future)
+                return future
+
+            def shutdown(self, *, wait=True, cancel_futures=False):
+                shutdown_calls.append({"wait": wait, "cancel_futures": cancel_futures})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status_file = tmp_path / "scraper_status.json"
+            active_csv = tmp_path / "Hextech_Data_2026-07-05.csv"
+            active_csv.write_text("valid\n", encoding="utf-8")
+
+            def state_path(name: str) -> str:
+                return str(status_file if name == "scraper_status.json" else tmp_path / name)
+
+            with (
+                mock.patch.object(scraper, "build_runtime_state_path", state_path),
+                mock.patch.object(scraper, "build_daily_csv_path", lambda _date: str(tmp_path / "out.csv")),
+                mock.patch.object(scraper, "check_execution_permission", lambda force=False: (True, "test")),
+                mock.patch.object(scraper, "load_augment_map", lambda: {"炼狱导管": "棱彩"}),
+                mock.patch.object(scraper, "load_champion_core_data", lambda: {"63": {"name": "复仇焰魂"}}),
+                mock.patch.object(
+                    scraper,
+                    "fetch_with_retry",
+                    side_effect=[
+                        Response({"1045": {"displayName": "炼狱导管", "rarity": 3}}),
+                        Response([{"championId": 63}, {"championId": 64}]),
+                    ],
+                ),
+                mock.patch.object(
+                    scraper,
+                    "fetch_champion_detail_stats_fast",
+                    lambda *_args, **_kwargs: {
+                        "champ": {"championId": 63},
+                        "name": "复仇焰魂",
+                        "rows": [{"英雄名称": "复仇焰魂", "海克斯名称": "炼狱导管"}],
+                        "reason": "",
+                        "status_code": 200,
+                        "url": "fixture",
+                        "error": "",
+                    },
+                ),
+                mock.patch.object(scraper, "ThreadPoolExecutor", FakeExecutor),
+                mock.patch.object(scraper, "as_completed", side_effect=scraper.TimeoutError()),
+                mock.patch.object(scraper, "get_latest_valid_csv", lambda: str(active_csv)),
+                mock.patch.object(scraper, "load_scraper_status", lambda: {}),
+            ):
+                result = scraper.main_scraper(force=True)
+
+            payload = json.loads(status_file.read_text(encoding="utf-8"))
+            self.assertTrue(result)
+            self.assertEqual(payload["last_result"], "fallback")
+            self.assertEqual(payload["reason"], "thread_pool_timeout")
+            self.assertEqual(payload["failure_stage"], "detail_initial")
+            self.assertEqual(payload["active_csv"], str(active_csv))
+            self.assertEqual(payload["last_attempt"]["completed_heroes"], 2)
+            self.assertEqual(payload["last_attempt"]["failure_samples"][0]["reason"], "thread_pool_timeout")
+            self.assertEqual(shutdown_calls, [{"wait": False, "cancel_futures": True}])
+            self.assertTrue(all(future.cancelled for future in submitted))
+
     def test_heal_worker_exception_clears_in_progress_tasks(self):
         from hextech.scraping import heal_worker
 

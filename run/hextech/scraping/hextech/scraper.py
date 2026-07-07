@@ -1450,7 +1450,8 @@ def main_scraper(stop_event=None, force: bool = False):
                     attempt["completed_heroes"] = int(attempt.get("completed_heroes") or 0) + 1
                     _record_detail_result(attempt, item)
             except TimeoutError:
-                logging.error("Hextech detail pass timed out: label=%s", label)
+                pending_count = sum(1 for fut in futures if not fut.done())
+                logging.error("Hextech detail pass timed out: label=%s pending=%s", label, pending_count)
                 for fut in futures:
                     if fut.done():
                         continue
@@ -1466,6 +1467,7 @@ def main_scraper(stop_event=None, force: bool = False):
                         "error": f"detail pass timed out: {label}",
                     }
                     failures.append(failure_item)
+                    attempt["completed_heroes"] = int(attempt.get("completed_heroes") or 0) + 1
                     _record_detail_result(attempt, failure_item)
                 for fut in futures:
                     fut.cancel()

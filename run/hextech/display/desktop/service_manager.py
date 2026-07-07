@@ -92,9 +92,13 @@ class ServiceManager:
         prepare_overlay_hint_cache_func: Callable[[], Any] | None = None,
         write_inactive_overlay_event_func: Callable[[], Any] | None = None,
         listener_interval_seconds: float = 3.0,
+        manage_overlay_runtime: bool = True,
     ) -> None:
         self._start_web_func = start_web_func
-        if overlay_controller is None:
+        self._manage_overlay_runtime = bool(manage_overlay_runtime)
+        if not self._manage_overlay_runtime:
+            overlay_controller = None
+        elif overlay_controller is None:
             controller_kwargs: dict[str, Any] = {}
             if start_overlay_func is not None:
                 controller_kwargs["start_host_func"] = start_overlay_func
@@ -156,6 +160,8 @@ class ServiceManager:
 
     def start_game_overlay(self) -> None:
         with self._lock:
+            if self._overlay_controller is None:
+                raise RuntimeError("game_overlay 由 Runtime Supervisor 管理")
             if self._shutdown_requested:
                 raise RuntimeError("ServiceManager 已进入关闭流程，拒绝重新启动 game_overlay")
             if self._overlay_controller.is_running():
@@ -173,6 +179,10 @@ class ServiceManager:
 
     def stop_game_overlay(self) -> None:
         with self._lock:
+            if self._overlay_controller is None:
+                self.game_overlay.mark("stopped")
+                self.vision_sidecar.mark("stopped")
+                return
             self._overlay_controller.stop()
             self._sync_overlay_compat_state()
 
@@ -180,6 +190,8 @@ class ServiceManager:
         return self.web.is_running()
 
     def is_game_overlay_running(self) -> bool:
+        if self._overlay_controller is None:
+            return False
         return self._overlay_controller.is_running()
 
     def ensure_game_overlay_healthy(self, *, enabled: bool) -> dict[str, Any]:
@@ -195,6 +207,10 @@ class ServiceManager:
             self._overlay_watchdog["enabled"] = effective_enabled
             self._overlay_watchdog["last_checked_at"] = now
             self._overlay_watchdog["last_error"] = ""
+            if self._overlay_controller is None:
+                self._overlay_watchdog["last_action"] = "supervisor_owned" if effective_enabled else "disabled"
+                self._overlay_watchdog["state_age_ms"] = None
+                return dict(self._overlay_watchdog)
             if not effective_enabled:
                 snapshot = self._overlay_controller.snapshot()
                 had_runtime = (
@@ -246,6 +262,12 @@ class ServiceManager:
             return None
 
     def _sync_overlay_compat_state(self) -> None:
+        if self._overlay_controller is None:
+            self.game_overlay.process = None
+            self.game_overlay.mark("stopped")
+            self.vision_sidecar.process = None
+            self.vision_sidecar.mark("stopped")
+            return
         snapshot = self._overlay_controller.snapshot()
         self.game_overlay.process = self._overlay_controller.host_process
         self.game_overlay.mark(snapshot["status"], error=str(snapshot.get("last_error") or ""))
@@ -279,7 +301,18 @@ class ServiceManager:
 
     def get_status_snapshot(self) -> dict[str, Any]:
         with self._lock:
-            overlay_snapshot = self._overlay_controller.snapshot()
+            overlay_snapshot = self._overlay_controller.snapshot() if self._overlay_controller is not None else {
+                "status": "supervisor_owned",
+                "host_pid": None,
+                "sidecar_pid": None,
+                "host_status": "unknown",
+                "sidecar_status": "unknown",
+                "context_poller_status": "unknown",
+                "context_poller_error": "",
+                "last_error": "",
+                "residual_pids": {},
+                "updated_at": time.time(),
+            }
             return {
                 "web": self.web.snapshot(),
                 "game_overlay": overlay_snapshot,

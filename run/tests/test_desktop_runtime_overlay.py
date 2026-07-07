@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -14,6 +15,94 @@ from unittest.mock import patch
 
 
 class DesktopRuntimeOverlayTests(unittest.TestCase):
+    def _new_ui_for_service_manager_tests(self):
+        from hextech.display.desktop import app
+
+        ui = object.__new__(app.HextechUI)
+        ui._closing = False
+        ui.service_manager = None
+        ui._runtime_services_ready = False
+        ui._service_manager_lock = threading.Lock()
+        ui._service_manager_shutdown_in_progress = None
+        ui._service_manager_shutdown_completed = None
+        return ui
+
+    def test_service_manager_publish_rejects_when_closing(self):
+        class FakeServiceManager:
+            def __init__(self):
+                self.shutdown_count = 0
+
+            def shutdown(self):
+                self.shutdown_count += 1
+
+        ui = self._new_ui_for_service_manager_tests()
+        ui._closing = True
+        manager = FakeServiceManager()
+
+        self.assertFalse(ui._publish_service_manager(manager))
+        self.assertIsNone(ui.service_manager)
+        self.assertFalse(ui._runtime_services_ready)
+        self.assertEqual(manager.shutdown_count, 1)
+
+    def test_service_manager_failed_bootstrap_cleans_published_manager_once(self):
+        class FakeServiceManager:
+            def __init__(self):
+                self.shutdown_count = 0
+
+            def shutdown(self):
+                self.shutdown_count += 1
+
+        ui = self._new_ui_for_service_manager_tests()
+        manager = FakeServiceManager()
+
+        self.assertTrue(ui._publish_service_manager(manager))
+        ui._shutdown_failed_bootstrap_service_manager(manager)
+
+        self.assertIsNone(ui.service_manager)
+        self.assertFalse(ui._runtime_services_ready)
+        self.assertEqual(manager.shutdown_count, 1)
+
+    def test_service_manager_failed_bootstrap_does_not_double_shutdown_close_owner(self):
+        class FakeServiceManager:
+            def __init__(self):
+                self.shutdown_count = 0
+
+            def shutdown(self):
+                self.shutdown_count += 1
+
+        ui = self._new_ui_for_service_manager_tests()
+        manager = FakeServiceManager()
+
+        self.assertTrue(ui._publish_service_manager(manager))
+        taken = ui._take_service_manager_for_shutdown()
+        ui._shutdown_failed_bootstrap_service_manager(manager)
+
+        self.assertIs(taken, manager)
+        self.assertEqual(manager.shutdown_count, 0)
+
+    def test_service_manager_failed_bootstrap_does_not_double_shutdown_after_close_done(self):
+        class FakeServiceManager:
+            def __init__(self):
+                self.shutdown_count = 0
+
+            def shutdown(self):
+                self.shutdown_count += 1
+
+        ui = self._new_ui_for_service_manager_tests()
+        manager = FakeServiceManager()
+
+        self.assertTrue(ui._publish_service_manager(manager))
+        taken = ui._take_service_manager_for_shutdown()
+        self.assertIs(taken, manager)
+        taken.shutdown()
+        with ui._service_manager_lock:
+            ui._service_manager_shutdown_in_progress = None
+            ui._service_manager_shutdown_completed = manager
+
+        ui._shutdown_failed_bootstrap_service_manager(manager)
+
+        self.assertEqual(manager.shutdown_count, 1)
+
     def test_web_start_failure_does_not_persist_runtime_false_as_user_intent(self):
         from hextech.display.desktop import app
 

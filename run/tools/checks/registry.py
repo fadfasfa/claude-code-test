@@ -10,7 +10,12 @@ from __future__ import annotations
 
 from . import bundle, overlay, runtime, scraping, structure, synergy, web
 
-# 全量自检清单：按 tools.dev_checks 旧版 run_default_checks 的真实顺序排列，覆盖所有分域
+# 慢速自检清单：默认 fast gate 不跑，显式 `tools/dev_checks.py --deep` 才包含。
+DEEP_CHECKS = (
+    "check_overlay_vision_sidecar_contract",
+)
+
+# 默认 fast 自检清单：按旧版顺序排列，但剥离慢速 overlay sidecar contract。
 DEFAULT_CHECKS = (
     "check_root_entrypoints",
     "check_python_runtime_guard_contract",
@@ -72,7 +77,6 @@ DEFAULT_CHECKS = (
     "check_overlay_context_contract",
     "check_lol_window_contract",
     "check_official_overlay_provider_contract",
-    "check_overlay_vision_sidecar_contract",
     "check_overlay_refresh_tool_contract",
     "check_game_overlay_module_contract",
     "check_desktop_ui_feature_switch_contract",
@@ -93,11 +97,12 @@ OVERLAY_ONLY_CHECKS = (
     "check_overlay_context_contract",
     "check_lol_window_contract",
     "check_official_overlay_provider_contract",
-    "check_overlay_vision_sidecar_contract",
     "check_overlay_refresh_tool_contract",
     "check_game_overlay_module_contract",
     "check_desktop_ui_feature_switch_contract",
 )
+
+DEEP_OVERLAY_ONLY_CHECKS = tuple(dict.fromkeys((*OVERLAY_ONLY_CHECKS, *DEEP_CHECKS)))
 
 # 按分域组织的检查项映射，供 dev_checks 按需加载
 DOMAIN_CHECKS = {

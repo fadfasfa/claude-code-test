@@ -14,33 +14,20 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import tkinter as tk
-from hextech.catalog.runtime_store import (
-    CachedDataFrameLoader,
-    build_runtime_state_path,
-    detect_hero_id_column,
-    get_latest_csv,
-)
 from hextech.core.settings import load_ui_feature_flags, save_ui_feature_flags
-from hextech.overlay.hints import (
-    build_overlay_hint_cache_from_precomputed,
-    write_overlay_hint_cache,
-)
-from hextech.scraping.version_sync import (
-    ASSET_DIR,
-    get_advanced_session,
-    load_champion_core_data,
-)
-from hextech.overlay.lifecycle import GameOverlayController
-from hextech.support.user_diagnostics import export_user_diagnostics
 
 from . import runtime as ui_runtime
 
-from .service_manager import ServiceManager
+from .startup_timing import StartupTimingProbe, build_desktop_runtime_state_path
 from .single_instance import DesktopInstanceAlreadyRunning, DesktopInstanceOwner
 
-WEB_PORT_FILE = build_runtime_state_path("web_server_port.txt")
+if TYPE_CHECKING:
+    from .service_manager import ServiceManager
+
+WEB_PORT_FILE = str(build_desktop_runtime_state_path("web_server_port.txt"))
 WINDOW_EXPANDED_GEOMETRY = "320x740"
 WINDOW_COLLAPSED_GEOMETRY = "80x740"
 UI_COLORS = {
@@ -79,14 +66,62 @@ def _format_game_overlay_host_reason(reason: str) -> str:
         "visible_ready": "已显示",
     }.get(reason, "暂不显示")
 
-os.makedirs(ASSET_DIR, exist_ok=True)
+
+def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tuple[str, str]:
+    """把 Supervisor overlay 组件状态压成桌面状态栏短句。"""
+
+    status = str(overlay.get("status") or "").strip()
+    phase = str(overlay.get("phase") or "").strip()
+    cache_status = str(overlay.get("cache_status") or "").strip()
+    context_status = str(overlay.get("context_status") or "").strip()
+    visible_reason = str(overlay.get("visible_reason") or "").strip()
+    last_error = str(overlay.get("last_error") or "").strip()
+    if status == "error":
+        return (f"游戏内显示异常: {last_error or phase or '未知错误'}", UI_COLORS["error"])
+    if status == "stopping":
+        return ("游戏内显示: 正在关闭", UI_COLORS["warn"])
+    if status == "stopped":
+        if cache_status in {"queued", "prewarming", "lookup", "building"}:
+            return ("游戏内显示: 模板预热中", UI_COLORS["warn"])
+        if cache_status == "ready":
+            return ("游戏内显示: 识别模板已预热", UI_COLORS["muted"])
+        return ("游戏内显示: 已关闭", UI_COLORS["muted"])
+    if status == "starting":
+        if phase == "vision_prewarming":
+            return ("游戏内显示: 窗口已就绪 / 模板预热中", UI_COLORS["warn"])
+        if phase in {"prepare_data", "context_start"}:
+            return ("游戏内显示: 正在准备数据", UI_COLORS["warn"])
+        if phase == "sidecar_start":
+            return ("游戏内显示: 正在启动识别", UI_COLORS["warn"])
+        if phase == "host_start":
+            return ("游戏内显示: 正在启动窗口", UI_COLORS["warn"])
+        return ("游戏内显示: 正在启动", UI_COLORS["warn"])
+    if status == "running":
+        reason = _format_game_overlay_host_reason(visible_reason) if visible_reason else "等待选择窗口"
+        if context_status == "degraded":
+            return (f"游戏内显示: {reason} / 上下文降级", UI_COLORS["warn"])
+        if cache_status in {"queued", "prewarming", "lookup", "building"}:
+            return (f"游戏内显示: {reason} / 模板预热中", UI_COLORS["warn"])
+        return (f"游戏内显示: {reason} / 识别已就绪", UI_COLORS["green"])
+    return ("游戏内显示: 等待 Supervisor 状态", UI_COLORS["warn"])
+
 logger = logging.getLogger(__name__)
 
-try:
-    from hextech.core.refresh import refresh_backend_data
-except ImportError:
-    print("缺少核心依赖模块，请确认文件结构完整。")
-    sys.exit(1)
+
+def _empty_dataframe():
+    """延迟创建空 DataFrame，避免 desktop app import 阶段加载 pandas。"""
+
+    import pandas as pd
+
+    return pd.DataFrame()
+
+
+def export_user_diagnostics(*args, **kwargs):
+    """延迟导入诊断导出，避免首屏加载 runtime_store 数据栈。"""
+
+    from hextech.support.user_diagnostics import export_user_diagnostics as _export_user_diagnostics
+
+    return _export_user_diagnostics(*args, **kwargs)
 
 
 def _lerp_hex_color(color_a: str, color_b: str, t: float) -> str:
@@ -132,6 +167,8 @@ class HextechUI:
     """桌面伴生主界面，负责持有 UI 状态并协调后台运行时任务。"""
 
     def __init__(self):
+        self.startup_timing = StartupTimingProbe()
+        self.startup_timing.mark("init_start")
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
@@ -145,27 +182,20 @@ class HextechUI:
         self.feature_flags = load_ui_feature_flags()
         self.web_process = None
         self.runtime_supervisor = None
+        self.service_manager: ServiceManager | None = None
+        self._service_manager_lock = threading.Lock()
+        self._service_manager_shutdown_in_progress: ServiceManager | None = None
+        self._service_manager_shutdown_completed: ServiceManager | None = None
+        self.session = None
+        self.core_data = {}
+        self._data_loader = None
+        self.df = None
+        self._runtime_services_ready = False
+        self._post_visible_bootstrap_started = False
+        self._post_visible_bootstrap_done = False
         self._control_instance_id = f"ui-{os.getpid()}-{int(time.time() * 1000)}"
         self._supervisor_lease_stop = threading.Event()
         self._supervisor_lease_thread: threading.Thread | None = None
-        self._start_runtime_supervisor()
-        self.service_manager = ServiceManager(
-            start_web_func=self._spawn_web_process,
-            overlay_controller=GameOverlayController(
-                prepare_data_func=self._prepare_overlay_hint_cache,
-            ),
-            listener_interval_seconds=3.0,
-        )
-        self.service_manager.set_low_frequency_listener_enabled(
-            self.feature_flags.get("low_frequency_listener_enabled", True)
-        )
-        self.service_manager.start_low_frequency_listener()
-
-        self.session = get_advanced_session()
-        self.core_data = load_champion_core_data()
-        self._data_loader = CachedDataFrameLoader(get_latest_csv)
-
-        self.df = self.load_data()
         self.current_hero_ids = set()
         self.current_candidate_groups = {"selected_champion_ids": [], "bench_champion_ids": []}
         self.image_cache = {}
@@ -217,20 +247,146 @@ class HextechUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self._build_ui()
-        self._apply_persisted_feature_flags()
-        self._init_core_engine()
-        self.check_and_sync_data()
-        self.start_background_scraper()
-        self._start_overlay_status_polling()
+        self.startup_timing.mark("tk_shell_built")
+        self.root.after_idle(self._mark_first_idle_visible)
+        self.root.after(50, self._schedule_post_visible_bootstrap)
 
-    def _start_runtime_supervisor(self) -> None:
+    def _mark_first_idle_visible(self) -> None:
+        self.startup_timing.mark("first_idle_visible")
+        self._set_status("窗口已就绪，后台服务启动中...", UI_COLORS["warn"])
+
+    def _schedule_post_visible_bootstrap(self) -> None:
+        if self._post_visible_bootstrap_started or self._closing:
+            return
+        self._post_visible_bootstrap_started = True
+        self._set_status("后台初始化中...", UI_COLORS["warn"])
+        self._start_tracked_thread(self._post_visible_bootstrap, name="hextech-post-visible-bootstrap")
+
+    def _post_visible_bootstrap(self) -> None:
+        """首屏可见后再启动重型服务，避免 Tk shell 被后台依赖阻塞。"""
+
+        error: Exception | None = None
+        loaded_df = _empty_dataframe()
+        service_manager = None
+        try:
+            self.startup_timing.mark("background_bootstrap_start")
+            from hextech.catalog.runtime_store import CachedDataFrameLoader, get_latest_csv
+            from hextech.scraping.version_sync import ASSET_DIR, get_advanced_session, load_champion_core_data
+            from .service_manager import ServiceManager
+
+            if self._closing:
+                return
+            os.makedirs(ASSET_DIR, exist_ok=True)
+            self._start_runtime_supervisor(restore_persisted_game_overlay=False)
+            if self._closing:
+                ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
+                self.runtime_supervisor = None
+                return
+            service_manager = ServiceManager(
+                start_web_func=self._spawn_web_process,
+                manage_overlay_runtime=False,
+                listener_interval_seconds=3.0,
+            )
+            service_manager.set_low_frequency_listener_enabled(
+                self.feature_flags.get("low_frequency_listener_enabled", True)
+            )
+            service_manager.start_low_frequency_listener()
+            if not self._publish_service_manager(service_manager):
+                return
+            self.startup_timing.mark("services_ready")
+
+            self.session = get_advanced_session()
+            self.core_data = load_champion_core_data()
+            self._data_loader = CachedDataFrameLoader(get_latest_csv)
+            loaded_df = self.load_data()
+            self.startup_timing.mark("data_ready", rows=len(loaded_df))
+        except Exception as exc:
+            error = exc
+            self._shutdown_failed_bootstrap_service_manager(service_manager)
+            logger.exception("桌面后台初始化失败。")
+
+        def finish() -> None:
+            if self._closing:
+                return
+            if error is not None:
+                self.startup_timing.mark("background_bootstrap_error", error=str(error))
+                self._set_status(f"后台初始化失败: {error}", UI_COLORS["error"])
+                return
+            with self._df_lock:
+                self.df = loaded_df
+            self._post_visible_bootstrap_done = True
+            self.startup_timing.mark("background_bootstrap_done")
+            self._set_status("后台服务已就绪", UI_COLORS["green"])
+            self._apply_persisted_feature_flags()
+            self._restore_persisted_game_overlay()
+            self._init_core_engine()
+            self.check_and_sync_data()
+            self.start_background_scraper()
+            self._start_overlay_status_polling()
+
+        self._run_on_ui_thread(finish)
+
+    def _publish_service_manager(self, service_manager: "ServiceManager") -> bool:
+        """发布后台 ServiceManager；若关闭已开始，则由 bootstrap 线程自清理。"""
+
+        with self._service_manager_lock:
+            if self._closing:
+                should_shutdown = True
+            else:
+                self.service_manager = service_manager
+                self._runtime_services_ready = True
+                self._service_manager_shutdown_completed = None
+                should_shutdown = False
+        if should_shutdown:
+            service_manager.shutdown()
+            return False
+        return True
+
+    def _take_service_manager_for_shutdown(self) -> "ServiceManager | None":
+        """关闭路径独占取走 ServiceManager，避免与 bootstrap 失败清理重复 shutdown。"""
+
+        with self._service_manager_lock:
+            service_manager = self.service_manager
+            self.service_manager = None
+            self._runtime_services_ready = False
+            self._service_manager_shutdown_in_progress = service_manager
+            return service_manager
+
+    def _shutdown_failed_bootstrap_service_manager(self, service_manager: "ServiceManager | None") -> None:
+        """bootstrap 失败时清理本轮创建的 ServiceManager，包含已发布和未发布两种状态。"""
+
+        if service_manager is None:
+            return
+        with self._service_manager_lock:
+            if self.service_manager is service_manager:
+                self.service_manager = None
+                self._runtime_services_ready = False
+                should_shutdown = True
+            elif self._service_manager_shutdown_in_progress is service_manager:
+                should_shutdown = False
+            elif self._service_manager_shutdown_completed is service_manager:
+                should_shutdown = False
+            else:
+                should_shutdown = self.service_manager is not service_manager
+        if should_shutdown:
+            try:
+                service_manager.shutdown()
+            except Exception:
+                logger.debug("后台初始化失败后清理 ServiceManager 失败。", exc_info=True)
+
+    def _start_runtime_supervisor(self, *, restore_persisted_game_overlay: bool = True) -> None:
         """启动独立执行面，并用非 UI 线程续租，避免 Tk 主循环卡顿误杀运行态。"""
 
         try:
-            self.runtime_supervisor = ui_runtime.start_runtime_supervisor_process(parent_pid=os.getpid())
+            self.runtime_supervisor = ui_runtime.start_runtime_supervisor_process(
+                parent_pid=os.getpid(),
+                prewarm_templates=True,
+            )
             self._start_supervisor_lease_thread()
+            if restore_persisted_game_overlay:
+                self._restore_persisted_game_overlay()
         except Exception:
-            logger.exception("Runtime Supervisor 启动失败，暂保留旧 ServiceManager 兼容路径。")
+            logger.exception("Runtime Supervisor 启动失败，游戏内显示控制面暂不可用。")
             self.runtime_supervisor = None
 
     def _start_supervisor_lease_thread(self) -> None:
@@ -263,6 +419,8 @@ class HextechUI:
         )
 
     def _prepare_overlay_hint_cache(self) -> None:
+        from hextech.overlay.hints import build_overlay_hint_cache_from_precomputed, write_overlay_hint_cache
+
         cache_payload = build_overlay_hint_cache_from_precomputed(
             include_private_stats=self.feature_flags.get("private_policy_stats_enabled", False),
             source_tag="desktop-game-overlay",
@@ -273,6 +431,8 @@ class HextechUI:
         """后台启动网页服务，避免阻塞界面线程。"""
 
         try:
+            if self.service_manager is None:
+                raise RuntimeError("后台服务尚未就绪")
             self.service_manager.start_web()
             self.web_process = self.service_manager.web.process
             if self.feature_flags.get("auto_open_browser", True):
@@ -400,6 +560,9 @@ class HextechUI:
             if self._feature_toggle_is_busy(text):
                 self._set_status(f"{text} 正在切换中...", UI_COLORS["warn"])
                 return "break"
+            if text in {"Web 前端", "游戏内显示", "私用统计"} and not self._runtime_services_ready:
+                self._set_status("后台服务仍在启动中，请稍候...", UI_COLORS["warn"])
+                return "break"
             variable.set(not bool(variable.get()))
             self._refresh_feature_toggle_styles()
             command()
@@ -504,7 +667,8 @@ class HextechUI:
 
     def _persist_feature_flags_from_controls(self) -> None:
         self.feature_flags = save_ui_feature_flags(self._collect_feature_flags_from_controls())
-        self.service_manager.set_low_frequency_listener_enabled(self.feature_flags["low_frequency_listener_enabled"])
+        if self.service_manager is not None:
+            self.service_manager.set_low_frequency_listener_enabled(self.feature_flags["low_frequency_listener_enabled"])
 
     def _try_persist_feature_flags_from_controls(self) -> None:
         try:
@@ -518,9 +682,12 @@ class HextechUI:
         variable.set(bool(self.feature_flags.get(key)))
 
     def _sync_web_process_handle(self) -> None:
-        self.web_process = self.service_manager.web.process if self.service_manager.is_web_running() else None
+        service_manager = self.service_manager
+        self.web_process = service_manager.web.process if service_manager is not None and service_manager.is_web_running() else None
 
     def _raise_if_service_error(self, service_name: str) -> None:
+        if self.service_manager is None:
+            raise RuntimeError("后台服务尚未就绪")
         service = getattr(self.service_manager, service_name)
         if service.status == "error":
             raise RuntimeError(service.last_error or f"{service_name} 状态异常")
@@ -528,8 +695,24 @@ class HextechUI:
     def _apply_persisted_feature_flags(self) -> None:
         if self.feature_flags.get("web_frontend_enabled"):
             self._toggle_web_frontend()
-        if self.feature_flags.get("game_overlay_enabled"):
+        # 游戏内显示依赖 Runtime Supervisor；Supervisor 延后到首屏绘制后启动，
+        # 所以持久化恢复必须等控制面就绪后单独执行。
+        self._game_overlay_desired_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
+
+    def _restore_persisted_game_overlay(self) -> None:
+        if self.runtime_supervisor is None:
+            return
+        if not bool(self.feature_flags.get("game_overlay_enabled")):
+            return
+        if not bool(self.game_overlay_var.get()):
+            return
+        if self._feature_toggle_is_busy("游戏内显示"):
+            return
+        self._set_status("正在恢复游戏内显示...", UI_COLORS["warn"])
+        try:
             self._toggle_game_overlay()
+        except Exception:
+            logger.exception("恢复持久化游戏内显示失败。")
 
     def _toggle_web_frontend(self) -> None:
         toggle_name = "Web 前端"
@@ -541,6 +724,8 @@ class HextechUI:
             error: Exception | None = None
             browser_opened = True
             try:
+                if self.service_manager is None:
+                    raise RuntimeError("后台服务尚未就绪")
                 if enabled:
                     self.service_manager.start_web()
                     if self.feature_flags.get("auto_open_browser", True):
@@ -577,30 +762,29 @@ class HextechUI:
         enabled = bool(self.game_overlay_var.get())
         self._game_overlay_desired_enabled = enabled
         self._set_feature_toggle_busy(toggle_name, True)
-        self._set_status("正在启动游戏内显示..." if enabled else "正在关闭游戏内显示...", UI_COLORS["warn"])
+        self._set_status("正在提交游戏内显示启动..." if enabled else "正在提交游戏内显示关闭...", UI_COLORS["warn"])
 
         def worker() -> None:
             error: Exception | None = None
+            action: dict | None = None
             try:
                 with self._overlay_operation_lock:
                     if self._closing:
                         return
-                    if enabled:
-                        self.service_manager.start_game_overlay()
-                    else:
-                        self.service_manager.stop_game_overlay()
-                        self._raise_if_service_error("game_overlay")
+                    if self.runtime_supervisor is None:
+                        raise RuntimeError("Runtime Supervisor 未启动")
+                    action = self.runtime_supervisor.set_game_overlay_enabled(enabled)
             except Exception as exc:
                 error = exc
-                if enabled:
-                    self.service_manager.stop_game_overlay()
 
             def finish() -> None:
                 if error is None:
                     self._persist_feature_flags_from_controls()
+                    action_status = str((action or {}).get("status") or "accepted")
+                    status_color = UI_COLORS["green"] if action_status == "completed" and enabled else UI_COLORS["warn"]
                     self._set_status(
-                        "游戏内显示已启动，等待选择窗口" if enabled else "游戏内显示已关闭",
-                        UI_COLORS["green"] if enabled else UI_COLORS["muted"],
+                        f"游戏内显示启动请求已提交({action_status})" if enabled else f"游戏内显示关闭请求已提交({action_status})",
+                        status_color if enabled else UI_COLORS["muted"],
                     )
                 else:
                     self._restore_feature_toggle_after_failure("game_overlay_enabled", self.game_overlay_var)
@@ -621,6 +805,8 @@ class HextechUI:
         def worker() -> None:
             error: Exception | None = None
             try:
+                from hextech.overlay.hints import build_overlay_hint_cache_from_precomputed, write_overlay_hint_cache
+
                 cache_payload = build_overlay_hint_cache_from_precomputed(
                     include_private_stats=desired_private_stats,
                     source_tag="desktop-game-overlay",
@@ -656,6 +842,8 @@ class HextechUI:
         self._overlay_status_after_id = self.root.after(1000, self._refresh_overlay_status_summary)
 
     def _kick_game_overlay_watchdog(self) -> None:
+        if self.runtime_supervisor is not None:
+            return
         if self._closing or self._feature_toggle_is_busy("游戏内显示"):
             return
         if not self._overlay_watchdog_lock.acquire(blocking=False):
@@ -665,6 +853,8 @@ class HextechUI:
             try:
                 with self._overlay_operation_lock:
                     if self._closing:
+                        return
+                    if self.service_manager is None:
                         return
                     self.service_manager.ensure_game_overlay_healthy(
                         enabled=self._game_overlay_desired_enabled,
@@ -680,10 +870,19 @@ class HextechUI:
         """低频回显游戏内 overlay 状态，避免 running 但不可见时没有反馈。"""
 
         try:
-            # main 原本调用 overlay_service_manager.read_overlay_status_snapshot；PR 已把状态聚合
-            # 下沉到 ServiceManager.get_status_snapshot，这里改读新 schema 的字段。
             overlay_enabled = bool(self.game_overlay_var.get())
+            if self.runtime_supervisor is not None:
+                snapshot = self.runtime_supervisor.get_status()
+                components = snapshot.get("components") if isinstance(snapshot.get("components"), dict) else {}
+                overlay = components.get("game_overlay") if isinstance(components.get("game_overlay"), dict) else {}
+                should_report = overlay_enabled or str(overlay.get("status") or "") in {"starting", "running", "stopping", "error"}
+                if should_report:
+                    text, color = _format_supervisor_game_overlay_status(overlay)
+                    self._set_status(text, color)
+                return
             self._kick_game_overlay_watchdog()
+            if self.service_manager is None:
+                return
             snapshot = self.service_manager.get_status_snapshot()
             sidecar = snapshot.get("vision_sidecar") if isinstance(snapshot.get("vision_sidecar"), dict) else {}
             event = snapshot.get("overlay_event") if isinstance(snapshot.get("overlay_event"), dict) else {}
@@ -763,6 +962,8 @@ class HextechUI:
         logger.info("兼容旧入口：桌面不再直接调用 refresh_backend_data。")
 
     def load_data(self):
+        if self._data_loader is None:
+            return _empty_dataframe()
         return self._data_loader.get_df().copy()
 
     def on_hero_click(self, champ_id, hero_name):
@@ -791,6 +992,8 @@ class HextechUI:
         }
 
     def _build_candidate_display_list(self, hero_ids, current_df) -> list[dict]:
+        from hextech.catalog.runtime_store import detect_hero_id_column
+
         candidate_groups = self._candidate_groups_from_input(hero_ids)
         id_col = detect_hero_id_column(current_df)
         if not id_col:
@@ -841,7 +1044,8 @@ class HextechUI:
                 widget.destroy()
 
             with self._df_lock:
-                is_empty = self.df.empty
+                current_df = self.df
+                is_empty = current_df is None or current_df.empty
 
             if not hero_ids or is_empty:
                 tk.Label(
@@ -854,9 +1058,6 @@ class HextechUI:
                 return
 
             self.status_label.config(text="实时数据已挂载", fg=UI_COLORS["green"])
-
-            with self._df_lock:
-                current_df = self.df
 
             display_list = self._build_candidate_display_list(hero_ids, current_df)
 
@@ -1047,7 +1248,15 @@ class HextechUI:
         # 顺带保留 main 引入的 overlay 状态轮询 after_id 取消，避免 root.destroy 后回调引发 TclError。
         ui_runtime.close_companion_browser()
         ui_runtime.shutdown_desktop_executors(wait=False)
-        self.service_manager.shutdown()
+        service_manager = self._take_service_manager_for_shutdown()
+        if service_manager is not None:
+            try:
+                service_manager.shutdown()
+            finally:
+                with self._service_manager_lock:
+                    if self._service_manager_shutdown_in_progress is service_manager:
+                        self._service_manager_shutdown_in_progress = None
+                        self._service_manager_shutdown_completed = service_manager
         self._supervisor_lease_stop.set()
         if self._supervisor_lease_thread is not None and self._supervisor_lease_thread.is_alive():
             self._supervisor_lease_thread.join(timeout=2)

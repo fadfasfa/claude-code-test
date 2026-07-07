@@ -56,8 +56,10 @@ except ImportError:  # pragma: no cover - Windows 之外只允许离线测试纯
 
 
 SLOT_COUNT = 3
-TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 1
-TEMPLATE_RUNTIME_CACHE_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v1.npz"))
+TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 2
+TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE = np.float16
+TEMPLATE_RUNTIME_CACHE_V1_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v1.npz"))
+TEMPLATE_RUNTIME_CACHE_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v2.npz"))
 SIDECAR_STATUS_FILE = Path(build_runtime_state_path("game_overlay_sidecar_status.json"))
 FINGERPRINT_SIZE = (48, 48)
 NAME_FINGERPRINT_SIZE = (220, 48)
@@ -103,8 +105,10 @@ BLOCKING_MODAL_MIN_BUTTON_GOLD_RATIO = 0.05                 # 按钮区域最低
 
 # active 掉到 unstable 后先观察几帧再写隐藏事件，避免识别抖动让 overlay 闪烁。
 DEFAULT_EXIT_UNSTABLE_FRAMES = 2
-DEFAULT_LOOP_FRAME_INTERVAL_MS = 160        # --loop 模式帧间隔（毫秒）
+DEFAULT_LOOP_FRAME_INTERVAL_MS = 80         # --loop fast 模式帧间隔（毫秒）
+DEFAULT_LOOP_SCAN_FRAME_INTERVAL_MS = 160   # 前台但未进入选择态时的扫描间隔
 DEFAULT_LOOP_IDLE_INTERVAL_SECONDS = 0.25   # 空闲等待间隔
+DEFAULT_LOOP_FAST_HOLD_SECONDS = 1.2        # 最近疑似选择态后保持 fast 的窗口
 DEFAULT_LOOP_HEARTBEAT_SECONDS = 1.0        # 心跳日志间隔
 # --loop 自动转储上限：每个进程最多转储前几个选择窗口，避免长局刷盘。
 # 载入画面青色水面会误触发按钮检测吃掉名额，上限需覆盖载入误报 + 真实三选一。
@@ -233,6 +237,14 @@ class TemplateEntry:
     name_fingerprint_alt: tuple[float, ...] | None = None
     source_icon_filenames: tuple[str, ...] = ()
     text_only_icon_filenames: tuple[str, ...] = ()
+
+
+class TemplateIndex(list[TemplateEntry]):
+    """模板列表的轻量子类，用于让 v2 cache hit 强持有矩阵。"""
+
+    def __init__(self, entries: Sequence[TemplateEntry] = ()) -> None:
+        super().__init__(entries)
+        self.rank_matrices: _RankMatrices | None = None
 
 
 # ROI 直接框住三张卡片的图标区（非整卡）：模板与截屏 crop 几何一致才有可比性。
@@ -1250,6 +1262,9 @@ def _stack_fingerprints(rows: Sequence[Sequence[float]]) -> np.ndarray:
 
 
 def _rank_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
+    attached = getattr(template_index, "rank_matrices", None)
+    if isinstance(attached, _RankMatrices) and attached.index_ref is template_index:
+        return attached
     key = id(template_index)
     cached = _RANK_MATRIX_CACHE.get(key)
     if cached is not None and cached.index_ref is template_index:
@@ -1291,6 +1306,8 @@ def _rank_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
     if key not in _RANK_MATRIX_CACHE and len(_RANK_MATRIX_CACHE) >= _RANK_MATRIX_CACHE_MAX:
         _RANK_MATRIX_CACHE.pop(next(iter(_RANK_MATRIX_CACHE)))
     _RANK_MATRIX_CACHE[key] = entry
+    if isinstance(template_index, TemplateIndex):
+        template_index.rank_matrices = entry
     return entry
 
 
@@ -1344,15 +1361,61 @@ def template_runtime_resource_signature(base_dir: str | Path | None = None) -> d
     }
 
 
-def _hint_cache_signature(hint_cache: Mapping[str, Any] | None) -> str:
+def template_runtime_hint_signature(hint_cache: Mapping[str, Any] | None) -> str:
+    """生成识别模板相关的 hint cache 指纹。
+
+    Vision 模板 runtime 只依赖海克斯身份、显示名称和图标来源。运行时发布时间、
+    source tag、胜率/联动展示字段变化不应让 1GB 级模板矩阵反复失效。
+    """
+
     if not isinstance(hint_cache, Mapping):
         return ""
+    hints = hint_cache.get("hints")
+    if not isinstance(hints, Mapping):
+        hints = {}
+    stable_hints: list[dict[str, Any]] = []
+    stable_keys = (
+        "augment_id",
+        "id",
+        "name",
+        "localized_name",
+        "en_name",
+        "icon",
+        "icon_path",
+        "image",
+        "cdragon_id",
+        "augment_name_id",
+    )
+    for key, value in sorted(hints.items(), key=lambda item: str(item[0])):
+        if not isinstance(value, Mapping):
+            continue
+        stable_hints.append(
+            {
+                "key": str(key),
+                **{field: value.get(field) for field in stable_keys if value.get(field) not in (None, "")},
+            }
+        )
+    name_index = hint_cache.get("name_index")
+    stable_name_index = {
+        str(key): str(value)
+        for key, value in sorted(name_index.items(), key=lambda item: str(item[0]))
+        if str(key or "").strip() and str(value or "").strip()
+    } if isinstance(name_index, Mapping) else {}
+    payload = {
+        "schema_version": int(hint_cache.get("schema_version") or 0),
+        "hints": stable_hints,
+        "name_index": stable_name_index,
+    }
     try:
         return hashlib.sha256(
-            json.dumps(hint_cache, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
     except TypeError:
-        return hashlib.sha256(repr(hint_cache).encode("utf-8", errors="replace")).hexdigest()
+        return hashlib.sha256(repr(payload).encode("utf-8", errors="replace")).hexdigest()
+
+
+def _hint_cache_signature(hint_cache: Mapping[str, Any] | None) -> str:
+    return template_runtime_hint_signature(hint_cache)
 
 
 def _tuple_float(value: Any) -> tuple[float, ...]:
@@ -1391,6 +1454,22 @@ def _tuple_tuple_float(value: Any) -> tuple[tuple[float, ...], ...]:
     return tuple(rows)
 
 
+def _template_entry_to_manifest(entry: TemplateEntry, *, row_index: int) -> dict[str, Any]:
+    """v2 cache manifest 只保留展示和索引字段，避免重复 JSON 化高维指纹。"""
+
+    return {
+        "row_index": int(row_index),
+        "augment_id": entry.augment_id,
+        "name": entry.name,
+        "tier": entry.tier,
+        "summary": entry.summary,
+        "icon_digest": entry.icon_digest,
+        "priority": int(entry.priority),
+        "source_icon_filenames": list(entry.source_icon_filenames),
+        "text_only_icon_filenames": list(entry.text_only_icon_filenames),
+    }
+
+
 def _template_entry_to_cache(entry: TemplateEntry) -> dict[str, Any]:
     return {
         "augment_id": entry.augment_id,
@@ -1427,6 +1506,25 @@ def _template_entry_from_cache(payload: Any) -> TemplateEntry:
     )
 
 
+def _template_entry_from_manifest(payload: Any) -> TemplateEntry:
+    if not isinstance(payload, Mapping):
+        raise ValueError("template cache manifest entry schema mismatch")
+    return TemplateEntry(
+        augment_id=str(payload.get("augment_id") or ""),
+        name=str(payload.get("name") or ""),
+        tier=str(payload.get("tier") or ""),
+        summary=str(payload.get("summary") or ""),
+        fingerprint=(),
+        icon_fingerprints=(),
+        icon_digest=str(payload.get("icon_digest") or ""),
+        priority=int(payload.get("priority") or 0),
+        name_fingerprint=None,
+        name_fingerprint_alt=None,
+        source_icon_filenames=_tuple_str(payload.get("source_icon_filenames")),
+        text_only_icon_filenames=_tuple_str(payload.get("text_only_icon_filenames")),
+    )
+
+
 def _template_indices(template_index: Sequence[TemplateEntry], templates: Sequence[TemplateEntry]) -> list[int]:
     index_by_identity = {id(template): index for index, template in enumerate(template_index)}
     return [index_by_identity[id(template)] for template in templates]
@@ -1455,6 +1553,36 @@ def _matrix_from_cache(arrays: Mapping[str, Any], key: str, templates: Sequence[
     return matrix
 
 
+def _cache_manifest_bytes(payload: Mapping[str, Any]) -> bytes:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+
+
+def _read_cache_manifest(payload: Mapping[str, Any]) -> dict[str, Any]:
+    manifest_key = "manifest_json" if "manifest_json" in payload else "metadata_json"
+    raw_metadata = np.asarray(payload[manifest_key], dtype=np.uint8).tobytes().decode("utf-8")
+    manifest = json.loads(raw_metadata)
+    if not isinstance(manifest, dict):
+        raise ValueError("template cache manifest schema mismatch")
+    return manifest
+
+
+def _resource_signature_matches(
+    *,
+    cached_signature: Any,
+    resource_signature: Mapping[str, Any],
+    schema_version: int,
+) -> bool:
+    expected = dict(resource_signature)
+    if cached_signature == expected:
+        return True
+    # v1 cache 的 resource_signature 内含 schema_version=1；v2 miss 后会重建，
+    # 但显式传入 v1 cache_file 时仍允许老缓存被离线工具读取。
+    if schema_version == 1:
+        legacy_expected = {**expected, "schema_version": 1}
+        return cached_signature == legacy_expected
+    return False
+
+
 def _rank_matrices_from_cache(
     template_index: list[TemplateEntry],
     *,
@@ -1481,33 +1609,49 @@ def _read_template_runtime_cache(
     resource_signature: Mapping[str, Any],
     hint_signature: str,
 ) -> TemplateRuntime | None:
+    started_at = time.perf_counter()
+    target = Path(cache_file)
     try:
-        with np.load(Path(cache_file), allow_pickle=False) as payload:
-            raw_metadata = np.asarray(payload["metadata_json"], dtype=np.uint8).tobytes().decode("utf-8")
-            metadata = json.loads(raw_metadata)
-            if not isinstance(metadata, Mapping):
+        cache_bytes = target.stat().st_size
+    except OSError:
+        return None
+    try:
+        with np.load(target, allow_pickle=False) as payload:
+            metadata = _read_cache_manifest(payload)
+            schema_version = int(metadata.get("schema_version") or 0)
+            if schema_version not in {1, TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION}:
                 return None
-            if metadata.get("schema_version") != TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION:
-                return None
-            if metadata.get("resource_signature") != dict(resource_signature):
+            if not _resource_signature_matches(
+                cached_signature=metadata.get("resource_signature"),
+                resource_signature=resource_signature,
+                schema_version=schema_version,
+            ):
                 return None
             if str(metadata.get("hint_signature") or "") != hint_signature:
                 return None
-            raw_templates = metadata.get("template_index")
+            raw_templates = metadata.get("template_manifest") if schema_version >= 2 else metadata.get("template_index")
             if not isinstance(raw_templates, list):
                 return None
-            template_index = [_template_entry_from_cache(item) for item in raw_templates]
+            template_index = TemplateIndex([
+                _template_entry_from_manifest(item) if schema_version >= 2 else _template_entry_from_cache(item)
+                for item in raw_templates
+            ])
             matrices = _rank_matrices_from_cache(template_index, metadata=metadata, arrays=payload)
     except Exception:
         return None
+    template_index.rank_matrices = matrices
     _RANK_MATRIX_CACHE[id(template_index)] = matrices
     return TemplateRuntime(
         template_index=template_index,
         matrices=matrices,
         stats={
+            "schema_version": schema_version,
             "cache_hit": True,
-            "cache_file": str(cache_file),
+            "cache_file": str(target),
+            "cache_bytes": int(cache_bytes),
             "template_count": len(template_index),
+            "matrix_dtype": str(metadata.get("matrix_dtype") or ""),
+            "load_seconds": round(time.perf_counter() - started_at, 3),
         },
     )
 
@@ -1519,36 +1663,64 @@ def _write_template_runtime_cache(
     hint_signature: str,
     template_index: list[TemplateEntry],
     matrices: _RankMatrices,
-) -> None:
+) -> dict[str, Any]:
     target = Path(cache_file)
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target.with_name(f"{target.name}.{os.getpid()}.tmp")
-    metadata = {
+    manifest = {
         "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+        "matrix_dtype": np.dtype(TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE).name,
         "resource_signature": dict(resource_signature),
         "hint_signature": hint_signature,
-        "template_index": [_template_entry_to_cache(entry) for entry in template_index],
+        "template_manifest": [
+            _template_entry_to_manifest(entry, row_index=index)
+            for index, entry in enumerate(template_index)
+        ],
         "icon_template_indices": _template_indices(template_index, matrices.icon_templates),
         "name_template_indices": _template_indices(template_index, matrices.name_templates),
         "alt_name_template_indices": _template_indices(template_index, matrices.alt_name_templates),
         "written_at": time.time(),
     }
-    metadata_bytes = json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    manifest_bytes = _cache_manifest_bytes(manifest)
     try:
         with temp_path.open("wb") as f:
             np.savez(
                 f,
-                metadata_json=np.frombuffer(metadata_bytes, dtype=np.uint8),
-                icon_matrix=np.asarray(matrices.icon_matrix, dtype=np.float32),
-                name_matrix=np.asarray(matrices.name_matrix, dtype=np.float32),
-                alt_name_matrix=np.asarray(matrices.alt_name_matrix, dtype=np.float32),
+                manifest_json=np.frombuffer(manifest_bytes, dtype=np.uint8),
+                icon_matrix=np.asarray(matrices.icon_matrix, dtype=TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE),
+                name_matrix=np.asarray(matrices.name_matrix, dtype=TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE),
+                alt_name_matrix=np.asarray(matrices.alt_name_matrix, dtype=TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE),
             )
         os.replace(temp_path, target)
+        return {
+            "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+            "cache_file": str(target),
+            "cache_bytes": int(target.stat().st_size),
+            "matrix_dtype": np.dtype(TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE).name,
+        }
     finally:
         try:
             temp_path.unlink()
         except FileNotFoundError:
             pass
+
+
+def _cleanup_legacy_template_runtime_cache(cache_file: Path) -> bool:
+    """默认 v2 cache ready 后清理旧 v1 大文件；自定义 cache_file 不做隐式删除。"""
+
+    try:
+        if cache_file.resolve() != TEMPLATE_RUNTIME_CACHE_FILE.resolve():
+            return False
+    except OSError:
+        return False
+    try:
+        TEMPLATE_RUNTIME_CACHE_V1_FILE.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        logger.debug("清理旧 Vision 模板 runtime cache v1 失败。", exc_info=True)
+        return False
 
 
 def load_or_build_default_template_runtime(
@@ -1566,7 +1738,13 @@ def load_or_build_default_template_runtime(
     signature = dict(resource_signature or template_runtime_resource_signature(base_dir))
     hint_signature = _hint_cache_signature(hint_cache)
     if status_callback is not None:
-        status_callback("template_runtime_cache_lookup", {"cache_file": str(target_cache)})
+        status_callback(
+            "template_runtime_cache_lookup",
+            {
+                "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+                "cache_file": str(target_cache),
+            },
+        )
     runtime = _read_template_runtime_cache(
         target_cache,
         resource_signature=signature,
@@ -1574,15 +1752,24 @@ def load_or_build_default_template_runtime(
     )
     if runtime is not None:
         runtime.stats.update({"build_seconds": 0.0, "load_seconds": round(time.perf_counter() - started_at, 3)})
+        runtime.stats["legacy_v1_cache_removed"] = _cleanup_legacy_template_runtime_cache(target_cache)
+        if status_callback is not None:
+            status_callback("template_runtime_cache_ready", runtime.stats)
         return runtime
     if status_callback is not None:
-        status_callback("template_index_build", {"cache_hit": False})
+        status_callback(
+            "template_index_build",
+            {
+                "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+                "cache_hit": False,
+            },
+        )
     template_index = load_default_template_index(base_dir, hint_cache=hint_cache)
     if status_callback is not None:
         status_callback("rank_matrix_build", {"template_count": len(template_index)})
     matrices = _rank_matrices(template_index)
     try:
-        _write_template_runtime_cache(
+        cache_write_stats = _write_template_runtime_cache(
             target_cache,
             resource_signature=signature,
             hint_signature=hint_signature,
@@ -1591,16 +1778,28 @@ def load_or_build_default_template_runtime(
         )
         cache_error = ""
     except Exception as exc:
+        cache_write_stats = {
+            "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+            "cache_file": str(target_cache),
+            "cache_bytes": 0,
+            "matrix_dtype": np.dtype(TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE).name,
+        }
         cache_error = str(exc)
         logger.debug("写入 Vision 模板 runtime cache 失败。", exc_info=True)
     stats = {
+        "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
         "cache_hit": False,
         "cache_file": str(target_cache),
+        "cache_bytes": int(cache_write_stats.get("cache_bytes") or 0),
         "cache_error": cache_error,
+        "legacy_v1_cache_removed": _cleanup_legacy_template_runtime_cache(target_cache),
         "template_count": len(template_index),
+        "matrix_dtype": str(cache_write_stats.get("matrix_dtype") or np.dtype(TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE).name),
         "build_seconds": round(time.perf_counter() - started_at, 3),
         "load_seconds": 0.0,
     }
+    if status_callback is not None:
+        status_callback("template_runtime_cache_ready", stats)
     return TemplateRuntime(template_index=template_index, matrices=matrices, stats=stats)
 
 
@@ -2520,6 +2719,34 @@ def remaining_frame_sleep_seconds(frame_interval_ms: int, *, elapsed_seconds: fl
     return max(0.0, target_seconds - max(0.0, float(elapsed_seconds)))
 
 
+def loop_event_needs_fast_poll(event_payload: Mapping[str, Any]) -> bool:
+    """判断本帧是否应进入 warm-path fast poll。"""
+
+    source = event_payload.get("source") if isinstance(event_payload.get("source"), Mapping) else {}
+    if bool(event_payload.get("active")) or source.get("selection_window_active") is True:
+        return True
+    if str(source.get("scene_state") or "") in {"candidate", "active"}:
+        return True
+    try:
+        return int(source.get("ready_slots") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def resolve_loop_poll_mode(
+    event_payload: Mapping[str, Any],
+    *,
+    fast_until: float,
+    now: float | None = None,
+) -> str:
+    """把当前事件和保持窗口收口成 scan/fast 两档。"""
+
+    if loop_event_needs_fast_poll(event_payload):
+        return "fast"
+    current = time.monotonic() if now is None else float(now)
+    return "fast" if current < float(fast_until) else "scan"
+
+
 def stabilize_detections(events: Sequence[Mapping[str, Any]], *, required_frames: int = 2) -> dict[str, Any]:
     """要求连续多帧槽位 ID 一致，避免动画早期误输出。"""
 
@@ -2977,6 +3204,8 @@ def run_loop(
     idle_interval_seconds: float = DEFAULT_LOOP_IDLE_INTERVAL_SECONDS,
     heartbeat_seconds: float = DEFAULT_LOOP_HEARTBEAT_SECONDS,
     debug_dump_dir: str | Path | None = None,
+    scan_frame_interval_ms: int = DEFAULT_LOOP_SCAN_FRAME_INTERVAL_MS,
+    fast_hold_seconds: float = DEFAULT_LOOP_FAST_HOLD_SECONDS,
 ) -> dict[str, Any] | None:
     """常驻 V2 视觉循环；场景和槽位分别稳定，非前台时低频待机。
 
@@ -3024,6 +3253,9 @@ def run_loop(
     last_signature: tuple[str, ...] | None = None
     last_write_at = 0.0
     idle_sleep_seconds = max(0.12, float(idle_interval_seconds))
+    scan_frame_interval_ms = max(int(frame_interval_ms), int(scan_frame_interval_ms))
+    fast_hold_seconds = max(0.0, float(fast_hold_seconds))
+    fast_poll_until = 0.0
     dump_root = Path(debug_dump_dir) if debug_dump_dir else None
     last_dump_signature: tuple[str, ...] | None = None
     tab_was_down = False
@@ -3045,6 +3277,15 @@ def run_loop(
             write_overlay_event(_public_event_payload(event_payload), event_path)
             last_signature = _loop_event_signature(event_payload)
             last_write_at = now
+
+    def foreground_sleep_seconds(event_payload: Mapping[str, Any], *, elapsed_seconds: float) -> tuple[str, float]:
+        nonlocal fast_poll_until
+        now = time.monotonic()
+        if loop_event_needs_fast_poll(event_payload):
+            fast_poll_until = max(fast_poll_until, now + fast_hold_seconds)
+        poll_mode = resolve_loop_poll_mode(event_payload, fast_until=fast_poll_until, now=now)
+        interval_ms = frame_interval_ms if poll_mode == "fast" else scan_frame_interval_ms
+        return poll_mode, remaining_frame_sleep_seconds(interval_ms, elapsed_seconds=elapsed_seconds)
 
     def maybe_dump(frame: Image.Image, event_payload: Mapping[str, Any]) -> None:
         nonlocal last_dump_signature
@@ -3080,8 +3321,9 @@ def run_loop(
             last_dump_signature = signature
 
     logger.info(
-        "Vision sidecar V2 已启动：frame_interval_ms=%s heartbeat_seconds=%.1f",
+        "Vision sidecar V2 已启动：fast_frame_interval_ms=%s scan_frame_interval_ms=%s heartbeat_seconds=%.1f",
         int(frame_interval_ms),
+        int(scan_frame_interval_ms),
         float(heartbeat_seconds),
     )
     _write_sidecar_ready_from_env(
@@ -3117,13 +3359,12 @@ def run_loop(
                 if frame is not None:
                     maybe_dump(frame, event)
             tab_was_down = True
-            commit_event(event, poll_mode="high")
-            time.sleep(
-                remaining_frame_sleep_seconds(
-                    frame_interval_ms,
-                    elapsed_seconds=time.perf_counter() - frame_started_at,
-                )
+            poll_mode, sleep_seconds = foreground_sleep_seconds(
+                event,
+                elapsed_seconds=time.perf_counter() - frame_started_at,
             )
+            commit_event(event, poll_mode=poll_mode)
+            time.sleep(sleep_seconds)
             continue
         tab_was_down = False
 
@@ -3147,13 +3388,12 @@ def run_loop(
             event = tracker.update(raw_event)
             maybe_dump(frame, event)
 
-        commit_event(event, poll_mode="high")
-        time.sleep(
-            remaining_frame_sleep_seconds(
-                frame_interval_ms,
-                elapsed_seconds=time.perf_counter() - frame_started_at,
-            )
+        poll_mode, sleep_seconds = foreground_sleep_seconds(
+            event,
+            elapsed_seconds=time.perf_counter() - frame_started_at,
         )
+        commit_event(event, poll_mode=poll_mode)
+        time.sleep(sleep_seconds)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3166,7 +3406,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-confidence", type=float, default=DEFAULT_MIN_CONFIDENCE)
     parser.add_argument("--required-frames", type=int, default=2)
     parser.add_argument("--frame-interval-ms", type=int, default=DEFAULT_LOOP_FRAME_INTERVAL_MS)
+    parser.add_argument("--scan-frame-interval-ms", type=int, default=DEFAULT_LOOP_SCAN_FRAME_INTERVAL_MS)
     parser.add_argument("--idle-interval-ms", type=int, default=int(DEFAULT_LOOP_IDLE_INTERVAL_SECONDS * 1000))
+    parser.add_argument("--fast-hold-ms", type=int, default=int(DEFAULT_LOOP_FAST_HOLD_SECONDS * 1000))
     parser.add_argument("--heartbeat-seconds", type=float, default=DEFAULT_LOOP_HEARTBEAT_SECONDS)
     parser.add_argument(
         "--debug-dump",
@@ -3201,6 +3443,8 @@ def main(argv: list[str] | None = None) -> int:
         idle_interval_seconds=max(0, int(args.idle_interval_ms)) / 1000.0,
         heartbeat_seconds=args.heartbeat_seconds,
         debug_dump_dir=args.debug_dump or None,
+        scan_frame_interval_ms=args.scan_frame_interval_ms,
+        fast_hold_seconds=max(0, int(args.fast_hold_ms)) / 1000.0,
     )
     if event is not None:
         print(json.dumps(event, ensure_ascii=False, indent=2))

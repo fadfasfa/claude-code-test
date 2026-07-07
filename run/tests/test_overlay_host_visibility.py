@@ -11,6 +11,15 @@ from unittest.mock import patch
 
 
 class OverlayHostVisibilityTests(unittest.TestCase):
+    def test_render_failure_retry_uses_base_poll_before_backoff(self):
+        from hextech.overlay.host import RENDER_ERROR_BACKOFF_AFTER, resolve_event_render_retry_delay_ms
+
+        config = {"event_poll_ms": 250, "fast_event_poll_ms": 60}
+
+        self.assertEqual(resolve_event_render_retry_delay_ms(config, 1), 250)
+        self.assertEqual(resolve_event_render_retry_delay_ms(config, RENDER_ERROR_BACKOFF_AFTER), 250)
+        self.assertEqual(resolve_event_render_retry_delay_ms(config, RENDER_ERROR_BACKOFF_AFTER + 1), 500)
+
     def test_visibility_snapshot_requires_in_progress_foreground_renderable_game(self):
         from hextech.overlay.host import resolve_overlay_visibility
 
