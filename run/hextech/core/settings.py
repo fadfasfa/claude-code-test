@@ -3,7 +3,7 @@
 本模块只保存 Web 前端、游戏内显示、浏览器自动打开、私用统计显示和低频监听的
 用户偏好。配置落在 `data/runtime/state/`，属于运行态，不作为发布源数据提交。
 
-调用方: display.desktop.app、display.desktop.service_manager、overlay.data_source; 关键依赖: catalog.runtime_store、support.atomic_io。
+调用方: display.desktop.app、display.desktop.service_manager、overlay.data_source; 关键依赖: scraping._paths、support.atomic_io。
 """
 
 from __future__ import annotations
@@ -13,12 +13,19 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
-from hextech.catalog.runtime_store import build_runtime_state_path
+from hextech.scraping._paths import RUNTIME_DATA_DIR
 from hextech.support.atomic_io import atomic_write_json
 
 
-FEATURE_FLAGS_FILE = Path(build_runtime_state_path("ui_feature_flags.json"))
-DEFAULT_ON_MIGRATION_MARKER_FILE = Path(build_runtime_state_path("ui_feature_flags.defaults.v2.json"))
+def _runtime_state_path(filename: str) -> Path:
+    name = str(filename or "").strip()
+    if not name or Path(name).is_absolute() or ".." in Path(name).parts:
+        raise ValueError(f"invalid runtime state filename: {filename!r}")
+    return Path(RUNTIME_DATA_DIR) / "state" / name
+
+
+FEATURE_FLAGS_FILE = _runtime_state_path("ui_feature_flags.json")
+DEFAULT_ON_MIGRATION_MARKER_FILE = _runtime_state_path("ui_feature_flags.defaults.v2.json")
 
 DEFAULT_UI_FEATURE_FLAGS: dict[str, bool] = {
     "web_frontend_enabled": False,

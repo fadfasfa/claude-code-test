@@ -314,13 +314,14 @@ Web/UI 详情页右侧联动对齐 ApexLoL 源页的检查保留为手动验收�
 
 阶段 0-2 验证基础窗口能力；阶段 3 验证假识别事件通道；阶段 3R 验证 Pillow/pywin32 Vision MVP；阶段 4 验证 overlay host 与 Vision sidecar 生命周期；阶段 5 验证性能记录结构、打包边界和人工验收清单：
 
-- `.\.venv\Scripts\python.exe tools/dev_checks.py` 必须通过，覆盖双开关配置、ServiceManager 生命周期、overlay hint cache、overlay event channel 和基础 overlay host 合同。
+- `.\.venv\Scripts\python.exe tools/dev_checks.py` 必须通过，作为默认 fast gate，覆盖双开关配置、ServiceManager 生命周期、overlay hint cache、overlay event channel 和基础 overlay host 合同。
+- `.\.venv\Scripts\python.exe tools/dev_checks.py --overlay-only --deep` 必须通过，覆盖慢速 Vision sidecar、template runtime cache v2/float16 和 overlay 深度合同。
 - `.\.venv\Scripts\python.exe hextech_ui.py --game-overlay` 用于人工确认透明置顶、点击穿透、`Alt+H` 显隐、选择结束隐藏和游戏窗口跟随；无 active 选择事件或游戏不在前台时窗口保持隐藏。
 - overlay 默认不显示占位框；显示条件为“开关开 + active 海克斯选择事件 + 游戏窗口在前台”，`Alt+H` 只切换用户开关，不绕过事件和前台门控。
 - `.\.venv\Scripts\python.exe -c "from hextech.overlay.events import write_sample_overlay_event; print(write_sample_overlay_event())"` 用于写入本地三槽位样例事件；仍需游戏窗口在前台才会显示。
 - `.\.venv\Scripts\python.exe -c "from hextech.overlay.events import write_fake_detection_overlay_event; print(write_fake_detection_overlay_event())"` 用于写入假识别事件，验证“事件文件 -> overlay 三槽位渲染”的端到端通道。
 - `.\.venv\Scripts\python.exe -m hextech.overlay.vision.sidecar --once --preset auto --write-event` 用于执行一次本地 Vision 探针；无 LoL 窗口时写入 inactive 诊断事件。
-- `.\.venv\Scripts\python.exe -m hextech.overlay.vision.sidecar --loop --preset auto --write-event` 用于正式常驻链路；游戏窗口不存在或不在前台时低频待机，并只写一次 inactive 清理旧 active 事件；前台时按约 250ms 截图识别。
+- `.\.venv\Scripts\python.exe -m hextech.overlay.vision.sidecar --loop --preset auto --write-event` 用于正式常驻链路；游戏窗口不存在或不在前台时低频待机，并只写一次 inactive 清理旧 active 事件；前台扫描默认约 160ms，疑似选择态/active warm path 默认约 80ms。
 - 识别判据为蓝色选择按钮 ROI 场景门控 + 灰度归一化指纹（NCC）+ top1/top2 margin + crop 方差下限，平坦暗面板不参与匹配；模板按图标内容去重，近孪生图标在置信度极高时豁免 margin；active 掉 unstable 延迟约 3 帧再写隐藏事件。新环境首次定位按钮并写 `data/runtime/state/overlay_anchor_calibration.v1.json`，后续每轮仍检测固定按钮 ROI；按钮不存在或锻体碎片三选一时隐藏 overlay。
 - `.\.venv\Scripts\python.exe tools/acceptance/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json` 用于官方接口优先验证：只读探测 Live Client Data / LCU 是否提供三槽候选；只有显式 `--write-event` 且返回完整三槽时才写现有 overlay 事件协议。
 - `.\.venv\Scripts\python.exe tools/acceptance/overlay_performance_probe.py --latency-ms 180 240 420 --source-tag manual-lol-borderless` 用于记录阶段 5 人工延迟样本摘要。

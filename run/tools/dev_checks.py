@@ -56,6 +56,15 @@ DATA_STATIC_VERSION_DIR = DATA_DIR / "static" / "version"
 DATA_STARTUP_SEED_DIR = DATA_DIR / "seed" / "startup"
 DATA_DIAGNOSTIC_DIR = DATA_DIR / "fixtures" / "diagnostics"
 DATA_EVIDENCE_DIR = DATA_DIR / "evidence"
+HEXTECH_HEALTH_REQUIRED_COLUMNS = (
+    "英雄ID",
+    "英雄名称",
+    "海克斯名称",
+    "英雄胜率",
+    "英雄出场率",
+    "海克斯胜率",
+    "海克斯出场率",
+)
 
 import hextech.core.refresh as orchestrator
 import hextech.catalog.aliases as alias_search
@@ -120,6 +129,234 @@ def _offline_sync_hero_data(*_args, **_kwargs) -> bool:
     """开发自检只验证本地缓存契约，不允许触发远端同步和资源写入。"""
 
     return Path(version_sync.CORE_DATA_FILE).exists()
+
+
+def _read_json_object(path: str | Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _csv_health_summary(path: str) -> dict[str, Any]:
+    if not path or not Path(path).exists():
+        return {"path": path, "exists": False, "valid": False}
+    try:
+        df = runtime_store.load_runtime_csv(path)
+    except Exception as exc:
+        return {"path": path, "exists": True, "valid": False, "error": f"{type(exc).__name__}: {exc}"}
+    summary: dict[str, Any] = {
+        "path": path,
+        "filename": Path(path).name,
+        "exists": True,
+        "valid": not df.empty,
+        "rows": int(len(df)),
+        "unique_heroes": int(df["英雄ID"].astype(str).nunique()) if "英雄ID" in df.columns else 0,
+        "missing_columns": [column for column in HEXTECH_HEALTH_REQUIRED_COLUMNS if column not in df.columns],
+        "blank_required_cells": {},
+    }
+    for column in HEXTECH_HEALTH_REQUIRED_COLUMNS:
+        if column in df.columns:
+            summary["blank_required_cells"][column] = int(df[column].isna().sum() + (df[column].astype(str).str.strip() == "").sum())
+    summary["meets_contract"] = (
+        summary["valid"]
+        and int(summary["rows"]) >= 300
+        and int(summary["unique_heroes"]) >= 170
+        and not summary["missing_columns"]
+        and all(count == 0 for count in summary["blank_required_cells"].values())
+    )
+    return summary
+
+
+def _raw_items_summary(path: str | Path) -> dict[str, Any]:
+    payload = _read_json_object(path)
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    return {
+        "path": str(path),
+        "exists": Path(path).exists(),
+        "items": len(items),
+    }
+
+
+def _cleaned_synergy_summary(path: str | Path) -> dict[str, Any]:
+    payload = _read_json_object(path)
+    hero_count = 0
+    item_count = 0
+    mayhem_item_count = 0
+    heroes_empty = 0
+    if isinstance(payload, dict):
+        hero_count = len(payload)
+        for hero_payload in payload.values():
+            if not isinstance(hero_payload, Mapping):
+                continue
+            items = hero_payload.get("synergy_items") if isinstance(hero_payload.get("synergy_items"), list) else []
+            if not items and isinstance(hero_payload.get("synergies"), list):
+                items = hero_payload.get("synergies")
+            if not items:
+                heroes_empty += 1
+            item_count += len(items)
+            mayhem_item_count += sum(
+                1
+                for item in items
+                if isinstance(item, Mapping) and str(item.get("source") or "").lower() == "arammayhem"
+            )
+    return {
+        "path": str(path),
+        "exists": Path(path).exists(),
+        "heroes": hero_count,
+        "heroes_empty": heroes_empty,
+        "items": item_count,
+        "mayhem_items": mayhem_item_count,
+    }
+
+
+def _overlay_hint_summary(path: str | Path) -> dict[str, Any]:
+    payload = _read_json_object(path)
+    hints = payload.get("hints") if isinstance(payload.get("hints"), dict) else {}
+    hints_with_synergies = 0
+    arammayhem_synergy_hints = 0
+    for hint in hints.values():
+        if not isinstance(hint, Mapping):
+            continue
+        synergies = hint.get("synergies") if isinstance(hint.get("synergies"), list) else []
+        if synergies:
+            hints_with_synergies += 1
+        if any(isinstance(item, Mapping) and str(item.get("source") or "").lower() == "arammayhem" for item in synergies):
+            arammayhem_synergy_hints += 1
+    source = payload.get("source") if isinstance(payload.get("source"), Mapping) else {}
+    return {
+        "path": str(path),
+        "exists": Path(path).exists(),
+        "hints": len(hints),
+        "hints_with_synergies": hints_with_synergies,
+        "arammayhem_synergy_hints": arammayhem_synergy_hints,
+        "source": dict(source),
+    }
+
+
+def _error_log_summary(path: str | Path) -> dict[str, Any]:
+    target = Path(path)
+    if not target.exists():
+        return {
+            "path": str(target),
+            "exists": False,
+            "tail_lines": 0,
+            "thread_pool_timeout_mentions": 0,
+            "scrapling_timeout_mentions": 0,
+            "mayhem_mentions": 0,
+        }
+    try:
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+    except OSError as exc:
+        return {"path": str(target), "exists": True, "error": f"{type(exc).__name__}: {exc}"}
+    joined = "\n".join(lines).lower()
+    return {
+        "path": str(target),
+        "exists": True,
+        "tail_lines": len(lines),
+        "thread_pool_timeout_mentions": joined.count("thread_pool_timeout"),
+        "scrapling_timeout_mentions": joined.count("scrapling") + joined.count("curl: (28)"),
+        "mayhem_mentions": joined.count("mayhem") + joined.count("联动"),
+    }
+
+
+def build_hextech_scrape_health_summary() -> dict[str, Any]:
+    from hextech.overlay.hints import OVERLAY_HINT_CACHE_FILE
+    from hextech.scraping.synergy.mayhem_refresh import (
+        get_mayhem_raw_cache_path,
+        get_mayhem_refresh_status_path,
+        mayhem_refresh_due,
+    )
+
+    scraper_status_path = runtime_store.build_runtime_state_path("scraper_status.json")
+    synergy_status_path = runtime_store.build_synergy_refresh_status_path()
+    mayhem_status_path = get_mayhem_refresh_status_path()
+    latest_csv = runtime_store.get_latest_valid_csv() or runtime_store.get_latest_csv() or ""
+    scraper_status = _read_json_object(scraper_status_path)
+    cleaned_path = runtime_store.build_synergy_cleaned_data_path()
+    mayhem_raw_cache = get_mayhem_raw_cache_path()
+    mayhem_evidence_raw = DATA_EVIDENCE_DIR / "mayhem_combos.raw.json"
+    error_log_path = runtime_store.get_runtime_root_dir() / "logs" / "hextech_error.log"
+
+    csv_summary = _csv_health_summary(latest_csv)
+    error_log_summary = _error_log_summary(error_log_path)
+    mayhem_status = _read_json_object(mayhem_status_path)
+    synergy_status = _read_json_object(synergy_status_path)
+    mayhem_cache_summary = _raw_items_summary(mayhem_raw_cache)
+    evidence_summary = _raw_items_summary(mayhem_evidence_raw)
+    cleaned_summary = _cleaned_synergy_summary(cleaned_path)
+    hint_summary = _overlay_hint_summary(OVERLAY_HINT_CACHE_FILE)
+
+    hextech_issue = ""
+    if csv_summary.get("meets_contract") and scraper_status.get("last_result") in {"fallback", "failed"}:
+        hextech_issue = "data_available_refresh_failed"
+    elif not csv_summary.get("meets_contract"):
+        hextech_issue = "no_valid_hextech_csv"
+    else:
+        hextech_issue = "ok"
+
+    mayhem_issue = "ok"
+    if evidence_summary["items"] > 0 and mayhem_cache_summary["items"] <= 0:
+        mayhem_issue = "raw_captured_not_published"
+    elif mayhem_status.get("last_result") != "success":
+        mayhem_issue = "no_successful_mayhem_refresh"
+
+    synergy_issue = "ok"
+    if cleaned_summary["items"] > 0 and cleaned_summary["mayhem_items"] <= 0 and hint_summary["hints_with_synergies"] > 0:
+        synergy_issue = "old_synergy_visible_without_mayhem_source"
+    elif hint_summary["hints_with_synergies"] > 0 and hint_summary["arammayhem_synergy_hints"] <= 0:
+        synergy_issue = "old_synergy_visible_new_mayhem_not_in_overlay"
+    elif hint_summary["hints_with_synergies"] <= 0:
+        synergy_issue = "no_overlay_synergy_hints"
+
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "hextech": {
+            "issue": hextech_issue,
+            "csv": csv_summary,
+            "scraper_status_path": scraper_status_path,
+            "scraper_status": {
+                key: scraper_status.get(key)
+                for key in (
+                    "last_result",
+                    "reason",
+                    "failure_stage",
+                    "active_csv",
+                    "success_rows",
+                    "fallback_used",
+                    "last_attempt_at",
+                )
+            },
+            "error_log": error_log_summary,
+        },
+        "mayhem": {
+            "issue": mayhem_issue,
+            "refresh_due": mayhem_refresh_due(),
+            "status_path": mayhem_status_path,
+            "status": mayhem_status,
+            "runtime_raw": mayhem_cache_summary,
+            "evidence_raw": evidence_summary,
+        },
+        "synergy": {
+            "issue": synergy_issue,
+            "refresh_status_path": synergy_status_path,
+            "refresh_status": synergy_status,
+            "cleaned": cleaned_summary,
+            "overlay_hint_cache": hint_summary,
+        },
+    }
+
+
+def print_hextech_scrape_health_summary(*, as_json: bool) -> None:
+    summary = build_hextech_scrape_health_summary()
+    if as_json:
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+    print(f"hextech: {summary['hextech']['issue']}")
+    print(f"mayhem: {summary['mayhem']['issue']}")
+    print(f"synergy: {summary['synergy']['issue']}")
 
 
 def _run_read_only_offline_checks(check_names: tuple[str, ...]) -> None:
@@ -323,12 +560,13 @@ def check_hextech_package_contract() -> None:
     ):
         assert not (RUN_DIR / removed_module_path).exists(), f"dead preallocation still exists: {removed_module_path}"
 
-    from tools.checks.registry import DEFAULT_CHECKS, DOMAIN_CHECKS, OVERLAY_ONLY_CHECKS
+    from tools.checks.registry import DEEP_CHECKS, DEFAULT_CHECKS, DOMAIN_CHECKS, OVERLAY_ONLY_CHECKS
 
     grouped_checks = {name for names in DOMAIN_CHECKS.values() for name in names}
-    assert set(DEFAULT_CHECKS) == grouped_checks
+    assert set((*DEFAULT_CHECKS, *DEEP_CHECKS)) == grouped_checks
     assert "check_hextech_package_contract" in DEFAULT_CHECKS
-    assert "check_overlay_vision_sidecar_contract" in OVERLAY_ONLY_CHECKS
+    assert "check_overlay_vision_sidecar_contract" in DEEP_CHECKS
+    assert "check_overlay_vision_sidecar_contract" not in OVERLAY_ONLY_CHECKS
 
     hint_cache_text = (RUN_DIR / "hextech" / "overlay" / "hints.py").read_text(encoding="utf-8")
     forbidden_imports = {
@@ -447,7 +685,8 @@ def check_hextech_package_contract() -> None:
     assert "from hextech.support.atomic_io" in core_refresh_text
     assert "from processing.runtime_store" not in core_settings_text
     assert "from tools.atomic_io" not in core_settings_text
-    assert "from hextech.catalog.runtime_store" in core_settings_text
+    assert "from hextech.catalog.runtime_store" not in core_settings_text
+    assert "from hextech.scraping._paths import RUNTIME_DATA_DIR" in core_settings_text
     assert "from hextech.support.atomic_io" in core_settings_text
 
     desktop_app_text = (RUN_DIR / "hextech" / "display" / "desktop" / "app.py").read_text(encoding="utf-8")
@@ -456,15 +695,20 @@ def check_hextech_package_contract() -> None:
     assert "from processing." not in desktop_app_text
     assert "from scraping." not in desktop_app_text
     assert "from . import ui_runtime" not in desktop_app_text
-    assert "from hextech.catalog.runtime_store" in desktop_app_text
-    assert "from hextech.overlay.hints" in desktop_app_text
-    assert "from hextech.scraping.version_sync" in desktop_app_text
+    assert "from hextech.catalog.runtime_store" not in desktop_app_text.split("class HextechUI", 1)[0]
+    assert "from hextech.overlay.hints" not in desktop_app_text.split("class HextechUI", 1)[0]
+    assert "from hextech.scraping.version_sync" not in desktop_app_text.split("class HextechUI", 1)[0]
+    assert "from hextech.catalog.runtime_store import CachedDataFrameLoader, get_latest_csv" in desktop_app_text
+    assert "from hextech.scraping.version_sync import ASSET_DIR, get_advanced_session, load_champion_core_data" in desktop_app_text
     assert "from . import runtime as ui_runtime" in desktop_app_text
     assert "from processing." not in desktop_runtime_text
     assert "from scraping." not in desktop_runtime_text
     assert "from . import web_runtime" not in desktop_runtime_text
-    assert "from hextech.display.web import runtime as web_runtime" in desktop_runtime_text
-    assert "from hextech.catalog.query_terminal" in desktop_runtime_text
+    assert "from hextech.display.web import runtime as web_runtime" not in desktop_runtime_text.split("def _web_runtime()", 1)[0]
+    assert "def _web_runtime()" in desktop_runtime_text
+    assert "def _query_terminal()" in desktop_runtime_text
+    assert "from hextech.catalog import query_terminal" in desktop_runtime_text
+    assert "from hextech.catalog.query_terminal" not in desktop_runtime_text
     assert "from hextech.overlay.window" in desktop_runtime_text
     assert "from hextech.scraping._paths" in desktop_runtime_text
     assert "from processing." not in desktop_service_text
@@ -3323,12 +3567,34 @@ def check_official_overlay_provider_contract() -> None:
 def check_overlay_vision_sidecar_contract() -> None:
     """验证 Vision MVP 的 ROI 预设、Pillow 指纹识别和低置信度保护。"""
     from PIL import Image, ImageDraw
+    import numpy as np
 
     import hextech.overlay.vision.sidecar as overlay_vision_sidecar
     from hextech.overlay.vision.layout import CARD_PANELS_16_10, apply_transform, detect_selection_scene, pick_card_panels
     from hextech.overlay.vision.matcher import candidate_from_slot
     from hextech.overlay.vision.state import SelectionTracker
     from hextech.overlay.window import cursor_in_client_boxes
+
+    assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION == 2
+    assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_FILE.name == "template_runtime_cache.v2.npz"
+    assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE == np.float16
+    assert overlay_vision_sidecar.DEFAULT_LOOP_FRAME_INTERVAL_MS == 80
+    assert overlay_vision_sidecar.DEFAULT_LOOP_SCAN_FRAME_INTERVAL_MS == 160
+    assert overlay_vision_sidecar.resolve_loop_poll_mode(
+        {"active": True, "source": {"selection_window_active": True}},
+        fast_until=0.0,
+        now=10.0,
+    ) == "fast"
+    assert overlay_vision_sidecar.resolve_loop_poll_mode(
+        {"active": False, "source": {"scene_state": "blocked", "ready_slots": 0}},
+        fast_until=9.0,
+        now=10.0,
+    ) == "scan"
+    assert overlay_vision_sidecar.resolve_loop_poll_mode(
+        {"active": False, "source": {"scene_state": "absent"}},
+        fast_until=11.0,
+        now=10.0,
+    ) == "fast"
 
     required_presets = {
         "1920x1080": (1920, 1080),
@@ -4571,7 +4837,7 @@ def check_desktop_ui_feature_switch_contract() -> None:
     ui_text = (RUN_DIR / "hextech" / "display" / "desktop" / "app.py").read_text(encoding="utf-8")
     runtime_text = (RUN_DIR / "hextech" / "display" / "desktop" / "runtime.py").read_text(encoding="utf-8")
     init_start = ui_text.index("    def __init__(self):")
-    init_end = ui_text.index("    def _start_web_server", init_start)
+    init_end = ui_text.index("    def _mark_first_idle_visible", init_start)
     init_body = ui_text[init_start:init_end]
 
     assert "ServiceManager" in ui_text
@@ -4590,19 +4856,27 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert "_closing" in ui_text
     assert "_overlay_operation_lock" in ui_text
     assert "_game_overlay_desired_enabled" in ui_text
+    assert "StartupTimingProbe" in ui_text
+    assert "_schedule_post_visible_bootstrap" in ui_text
+    assert "hextech-post-visible-bootstrap" in ui_text
+    assert "self.root.after(50, self._schedule_post_visible_bootstrap)" in ui_text
+    assert "self._start_runtime_supervisor()" not in init_body
+    assert "ServiceManager(" not in init_body
+    assert "start_low_frequency_listener()" not in init_body
     assert "_start_tracked_thread" in ui_text
     assert 'self._feature_toggle_is_busy("游戏内显示")' in ui_text
-    assert "enabled=self._game_overlay_desired_enabled" in ui_text
+    assert "set_game_overlay_enabled" in ui_text
+    assert "components.get(\"game_overlay\")" in ui_text
     assert "hextech-toggle-web" in ui_text
     assert "hextech-toggle-overlay" in ui_text
     assert "hextech-overlay-watchdog" in ui_text
     assert "hextech-toggle-private-stats" in ui_text
     assert "正在切换 Web 前端" in ui_text
-    assert "正在启动游戏内显示" in ui_text
-    assert "游戏内显示已启动，等待选择窗口" in ui_text
+    assert "正在提交游戏内显示启动" in ui_text
+    assert "游戏内显示启动请求已提交" in ui_text
     assert "WINDOW_EXPANDED_GEOMETRY = \"320x740\"" in ui_text
-    assert "GameOverlayController" in ui_text
-    assert "overlay_controller=GameOverlayController(" in ui_text
+    assert "manage_overlay_runtime=False" in ui_text
+    assert "overlay_controller=GameOverlayController(" not in ui_text
     assert "start_vision_sidecar_process" not in ui_text
     assert "self._start_web_server()" not in init_body
 
@@ -8053,22 +8327,38 @@ def _run_named_checks(check_names: tuple[str, ...]) -> None:
         check()
 
 
-def run_default_checks() -> None:
-    from tools.checks.registry import DEFAULT_CHECKS
+def run_default_checks(*, deep: bool = False) -> None:
+    from tools.checks.registry import DEEP_CHECKS, DEFAULT_CHECKS
 
-    _run_read_only_offline_checks(DEFAULT_CHECKS)
+    check_names = tuple(dict.fromkeys((*DEFAULT_CHECKS, *DEEP_CHECKS))) if deep else DEFAULT_CHECKS
+    _run_read_only_offline_checks(check_names)
 
 
-def run_overlay_only_checks() -> None:
-    from tools.checks.registry import OVERLAY_ONLY_CHECKS
+def run_overlay_only_checks(*, deep: bool = False) -> None:
+    from tools.checks.registry import DEEP_OVERLAY_ONLY_CHECKS, OVERLAY_ONLY_CHECKS
 
-    _run_read_only_offline_checks(OVERLAY_ONLY_CHECKS)
+    _run_read_only_offline_checks(DEEP_OVERLAY_ONLY_CHECKS if deep else OVERLAY_ONLY_CHECKS)
+
+
+def run_with_isolated_test_logs(callback) -> None:
+    """把 dev_checks 运行期日志写入临时 runtime，避免污染真实客户端日志。"""
+
+    from hextech.support import log_utils
+
+    with TemporaryDirectory(prefix="hextech-dev-checks-") as temp_dir:
+        isolated_root = Path(temp_dir) / "data" / "runtime"
+        isolated_root.mkdir(parents=True, exist_ok=True)
+        with patch.object(log_utils, "_runtime_root_dir", return_value=isolated_root):
+            callback()
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Hextech 开发自检与手动验收入口。")
     parser.add_argument("--bundle-manifest", action="store_true", help="只输出并校验 bundle manifest 明细。")
     parser.add_argument("--overlay-only", action="store_true", help="只执行游戏内 overlay 相关离线自检。")
+    parser.add_argument("--deep", action="store_true", help="包含慢速 overlay sidecar/cache 等深度自检。")
+    parser.add_argument("--hextech-health", action="store_true", help="只读输出海克斯胜率/联动抓取健康摘要。")
+    parser.add_argument("--json", action="store_true", help="与 --hextech-health 一起使用时输出 JSON。")
     parser.add_argument("--manual-web-synergy", action="store_true", help="执行 Web/UI 详情页联动人工验收辅助检查。")
     parser.add_argument("--base-url", default="", help="本地 Web 地址，例如 http://127.0.0.1:8000")
     parser.add_argument("--port-file", default="", help="UI/Web 写出的 web_server_port.txt；未传 base-url 时使用。")
@@ -8093,12 +8383,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.overlay_only:
-        run_overlay_only_checks()
-        print("overlay 自检通过。")
+        run_with_isolated_test_logs(lambda: run_overlay_only_checks(deep=bool(args.deep)))
+        print("overlay 深度自检通过。" if args.deep else "overlay fast 自检通过。")
         return 0
 
-    run_default_checks()
-    print("所有开发自检通过。")
+    if args.hextech_health:
+        print_hextech_scrape_health_summary(as_json=bool(args.json))
+        return 0
+
+    run_with_isolated_test_logs(lambda: run_default_checks(deep=bool(args.deep)))
+    print("所有开发深度自检通过。" if args.deep else "所有开发 fast 自检通过。")
     return 0
 
 

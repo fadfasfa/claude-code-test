@@ -89,7 +89,7 @@ def _normalize_synergy_item(
         names = []
     if not names:
         return None
-    return {
+    normalized = {
         "hero_id": str(hero_id or "").strip(),
         "hero_name": _clean_text(hero_name),
         "rating": _clean_text(item.get("rating")),
@@ -98,6 +98,11 @@ def _normalize_synergy_item(
         "content": _clean_text(item.get("content")),
         "augment_names": names,
     }
+    for key in ("source", "source_url", "source_rating", "source_tier"):
+        value = _clean_text(item.get(key))
+        if value:
+            normalized[key] = value
+    return normalized
 
 
 def _load_synergy_by_augment_name(

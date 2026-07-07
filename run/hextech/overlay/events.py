@@ -209,9 +209,11 @@ def build_overlay_event(
     while len(normalized_slots) < SLOT_COUNT:
         normalized_slots.append(_empty_slot(len(normalized_slots)))
 
+    generated_at = time.time()
     return {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": time.time(),
+        "generated_at": generated_at,
+        "timing": {"event_built_at": generated_at},
         "source": {"tag": _clean_text(source_tag, limit=48) or "local", "kind": "overlay_event"},
         "active": bool(active),
         "selection_type": normalize_selection_type(selection_type),
@@ -285,7 +287,10 @@ def write_overlay_event(event_payload: Mapping[str, Any], path: str | Path | Non
     """原子写入 overlay 事件到运行态 state 目录。"""
 
     target = Path(path) if path is not None else OVERLAY_EVENT_FILE
-    atomic_write_json(target, event_payload, ensure_ascii=False, indent=2)
+    payload = dict(event_payload)
+    timing = payload.get("timing") if isinstance(payload.get("timing"), Mapping) else {}
+    payload["timing"] = {**dict(timing), "event_written_at": time.time()}
+    atomic_write_json(target, payload, ensure_ascii=False, indent=2)
     return target
 
 

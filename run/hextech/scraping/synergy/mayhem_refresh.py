@@ -61,11 +61,11 @@ def _parse_timestamp(value: object) -> float:
 
 def mayhem_refresh_due(*, now: float | None = None, stale_after_seconds: int = MAYHEM_STALE_SECONDS) -> bool:
     status = load_mayhem_refresh_status()
-    reference = _parse_timestamp(status.get("last_success_at") or status.get("last_attempt_at"))
-    if reference <= 0:
+    success_at = _parse_timestamp(status.get("last_success_at"))
+    if success_at <= 0:
         return True
     current = time.time() if now is None else now
-    return (reference + stale_after_seconds) <= current
+    return (success_at + stale_after_seconds) <= current
 
 
 def write_mayhem_refresh_status(
@@ -100,6 +100,24 @@ def _raw_item_count(payload: Mapping[str, Any]) -> int:
     return len(items) if isinstance(items, list) else 0
 
 
+def _failure_status(
+    *,
+    reason: str,
+    raw_items: int = 0,
+    added_items: int = 0,
+    now: float | None = None,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    return write_mayhem_refresh_status(
+        result="failed",
+        reason=reason,
+        raw_items=raw_items,
+        added_items=added_items,
+        now=now,
+        extra=extra,
+    )
+
+
 def _rebuild_overlay_hint_cache() -> None:
     cache_payload = build_overlay_hint_cache_from_precomputed(source_tag="mayhem-refresh")
     write_overlay_hint_cache(cache_payload)
@@ -124,13 +142,14 @@ def run_mayhem_refresh(
             extra={"stale_after_seconds": MAYHEM_STALE_SECONDS},
         )
 
+    raw_items = 0
+    added_items = 0
     try:
         fetch = scraper or (lambda: scrape_mayhem_combos(max_pages=0))
         raw_payload = dict(fetch())
         raw_items = _raw_item_count(raw_payload)
         if raw_items <= 0:
-            return write_mayhem_refresh_status(
-                result="failed",
+            return _failure_status(
                 reason="raw_empty",
                 raw_items=raw_items,
                 now=current,
@@ -147,8 +166,7 @@ def run_mayhem_refresh(
         summary = dict(merge_func(mayhem_raw_path=raw_path, write_output=True))
         added_items = int(summary.get("added_items") or 0)
         if not summary.get("written"):
-            return write_mayhem_refresh_status(
-                result="failed",
+            return _failure_status(
                 reason="cleaned_not_written",
                 raw_items=raw_items,
                 added_items=added_items,
@@ -167,9 +185,10 @@ def run_mayhem_refresh(
         )
     except Exception as exc:
         logger.exception("Mayhem 低频刷新失败")
-        return write_mayhem_refresh_status(
-            result="failed",
+        return _failure_status(
             reason=f"{type(exc).__name__}: {exc}",
+            raw_items=raw_items,
+            added_items=added_items,
             now=current,
         )
 

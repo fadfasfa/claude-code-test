@@ -254,6 +254,8 @@ def build_overlay_window_config() -> dict[str, Any]:
         "follow_window_titles": [LOL_GAME_WINDOW_TITLE],
         "top_offset": 132,
         "event_poll_ms": 120,
+        "fast_event_poll_ms": 60,
+        "fast_event_hold_ms": 1200,
         "diagnostic_mode": False,
     }
 
@@ -1178,6 +1180,25 @@ def _refresh_target_window(root: tk.Tk, config: Mapping[str, Any], visibility: d
         visibility["applied_geometry"] = next_geometry
 
 
+def resolve_event_render_delay_ms(config: Mapping[str, Any], visibility: Mapping[str, Any]) -> int:
+    """根据最近选择态事件选择 overlay host 下一帧轮询间隔。"""
+
+    base_ms = max(50, int(config.get("event_poll_ms", 250) or 250))
+    fast_ms = max(50, int(visibility.get("fast_event_poll_ms") or config.get("fast_event_poll_ms", 60) or 60))
+    if bool(visibility.get("render_full_overlay")) or bool(visibility.get("selection_window_active")):
+        return min(base_ms, fast_ms)
+    try:
+        if int(visibility.get("ready_slots") or 0) > 0:
+            return min(base_ms, fast_ms)
+    except (TypeError, ValueError):
+        pass
+    try:
+        fast_until = float(visibility.get("fast_event_until") or 0.0)
+    except (TypeError, ValueError):
+        fast_until = 0.0
+    return min(base_ms, fast_ms) if time.monotonic() < fast_until else base_ms
+
+
 def _schedule_event_render(
     root: tk.Tk,
     canvas: tk.Canvas,
@@ -1190,15 +1211,38 @@ def _schedule_event_render(
     """单一 tick 同步窗口、事件和显隐；隐藏时不加载 hint/context。"""
 
     poll_ms = max(50, int(config.get("event_poll_ms", 250) or 250))
+    fast_poll_ms = max(50, int(config.get("fast_event_poll_ms", 60) or 60))
+    fast_hold_seconds = max(0.0, float(config.get("fast_event_hold_ms", 1200) or 1200) / 1000.0)
     source = data_source or SharedOverlayDataSource()
     failure_count = 0
     render_after_id: str | None = None
 
     def retry_delay_ms() -> int:
         if failure_count <= RENDER_ERROR_BACKOFF_AFTER:
-            return poll_ms
+            return resolve_event_render_delay_ms(config, visibility)
         exponent = min(8, failure_count - RENDER_ERROR_BACKOFF_AFTER)
         return min(RENDER_ERROR_BACKOFF_MAX_MS, poll_ms * (2 ** exponent))
+
+    def note_fast_event(snapshot: Mapping[str, Any]) -> None:
+        event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+        slots = snapshot.get("slots") if isinstance(snapshot.get("slots"), list) else []
+        ready_slots = sum(
+            1
+            for slot in slots
+            if isinstance(slot, Mapping)
+            and (str(slot.get("state") or "") == "ready" or bool(str(slot.get("augment_id") or "").strip()))
+        )
+        if (
+            bool(snapshot.get("active"))
+            or bool(snapshot.get("visible"))
+            or event_source.get("selection_window_active") is True
+            or ready_slots > 0
+        ):
+            visibility["fast_event_until"] = max(
+                float(visibility.get("fast_event_until") or 0.0),
+                time.monotonic() + fast_hold_seconds,
+            )
+        visibility["fast_event_poll_ms"] = fast_poll_ms
 
     def schedule_render(delay_ms: int, *, replace: bool = False) -> None:
         nonlocal render_after_id
@@ -1231,6 +1275,7 @@ def _schedule_event_render(
                 if previous_tab_down:
                     visibility["tab_released_at"] = time.time()
             snapshot = source.read_event()
+            note_fast_event(snapshot)
             if bool(config.get("diagnostic_mode")):
                 status = _extract_event_status(snapshot)
                 diagnostic_key = tuple(status.get(key) for key in (
