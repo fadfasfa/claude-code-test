@@ -87,6 +87,8 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
             return ("游戏内显示: 识别模板已预热", UI_COLORS["muted"])
         return ("游戏内显示: 已关闭", UI_COLORS["muted"])
     if status == "starting":
+        if phase == "vision_prewarming":
+            return ("游戏内显示: 窗口已就绪 / 模板预热中", UI_COLORS["warn"])
         if phase in {"prepare_data", "context_start"}:
             return ("游戏内显示: 正在准备数据", UI_COLORS["warn"])
         if phase == "sidecar_start":

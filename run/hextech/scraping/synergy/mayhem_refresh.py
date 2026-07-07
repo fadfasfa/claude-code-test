@@ -25,6 +25,7 @@ from hextech.support.atomic_io import atomic_write_json
 logger = logging.getLogger(__name__)
 
 MAYHEM_STALE_SECONDS = 72 * 60 * 60
+MAYHEM_FAILURE_RETRY_SECONDS = 30 * 60
 MAYHEM_RAW_CACHE_FILENAME = "mayhem_combos.raw.json"
 MAYHEM_REFRESH_STATUS_FILENAME = "mayhem_refresh_status.json"
 
@@ -59,12 +60,20 @@ def _parse_timestamp(value: object) -> float:
         return 0.0
 
 
-def mayhem_refresh_due(*, now: float | None = None, stale_after_seconds: int = MAYHEM_STALE_SECONDS) -> bool:
+def mayhem_refresh_due(
+    *,
+    now: float | None = None,
+    stale_after_seconds: int = MAYHEM_STALE_SECONDS,
+    failure_retry_seconds: int = MAYHEM_FAILURE_RETRY_SECONDS,
+) -> bool:
     status = load_mayhem_refresh_status()
+    current = time.time() if now is None else now
     success_at = _parse_timestamp(status.get("last_success_at"))
     if success_at <= 0:
+        attempt_at = _parse_timestamp(status.get("last_attempt_at"))
+        if attempt_at > 0 and str(status.get("last_result") or "") != "success":
+            return (attempt_at + max(0, int(failure_retry_seconds))) <= current
         return True
-    current = time.time() if now is None else now
     return (success_at + stale_after_seconds) <= current
 
 

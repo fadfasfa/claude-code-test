@@ -57,7 +57,7 @@ class StartupTimingProbe:
         }
         try:
             atomic_write_json(self.output_path, data, ensure_ascii=False, indent=2)
-        except OSError:
+        except Exception:
             # timing 诊断不能影响桌面启动。
             return
 

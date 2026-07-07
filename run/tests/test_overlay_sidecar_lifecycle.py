@@ -214,6 +214,32 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertIs(restored_matrices, runtime.matrices)
         np.testing.assert_allclose(restored_matrices.name_matrix, matrices.name_matrix, atol=1e-3)
 
+    def test_template_runtime_cache_v2_ready_cleans_default_v1_cache(self):
+        from hextech.overlay.vision import sidecar
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            v1_cache = root / "template_runtime_cache.v1.npz"
+            v2_cache = root / "template_runtime_cache.v2.npz"
+            v1_cache.write_bytes(b"legacy-cache")
+            v2_cache.write_bytes(b"v2-cache")
+            with (
+                patch.object(sidecar, "TEMPLATE_RUNTIME_CACHE_FILE", v2_cache),
+                patch.object(sidecar, "TEMPLATE_RUNTIME_CACHE_V1_FILE", v1_cache),
+            ):
+                self.assertTrue(sidecar._cleanup_legacy_template_runtime_cache(v2_cache))
+                self.assertFalse(v1_cache.exists())
+
+            custom_cache = root / "custom.v2.npz"
+            v1_cache.write_bytes(b"legacy-cache")
+            custom_cache.write_bytes(b"custom-cache")
+            with (
+                patch.object(sidecar, "TEMPLATE_RUNTIME_CACHE_FILE", v2_cache),
+                patch.object(sidecar, "TEMPLATE_RUNTIME_CACHE_V1_FILE", v1_cache),
+            ):
+                self.assertFalse(sidecar._cleanup_legacy_template_runtime_cache(custom_cache))
+                self.assertTrue(v1_cache.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -457,7 +457,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertLess(time.perf_counter() - started_at, 1.0)
         self.assertTrue(host_started.is_set())
         self.assertFalse(sidecar_started.is_set())
-        self.assertEqual(snapshot["status"], "running")
+        self.assertEqual(snapshot["status"], "starting")
         self.assertEqual(snapshot["phase"], "vision_prewarming")
         self.assertEqual(snapshot["last_start_failure_kind"], "template_prewarm_timeout")
 

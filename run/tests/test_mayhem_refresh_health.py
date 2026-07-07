@@ -87,19 +87,20 @@ class MayhemRefreshHealthTests(unittest.TestCase):
         ):
             return dev_checks.build_hextech_scrape_health_summary()
 
-    def test_mayhem_due_ignores_last_attempt_without_success(self):
+    def test_mayhem_due_respects_failure_retry_interval(self):
         from hextech.scraping.synergy import mayhem_refresh
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             status_file = tmp_path / "mayhem_refresh_status.json"
+            now = 1783260000.0
             status_file.write_text(
                 json.dumps(
                     {
-                        "last_attempt_at": "2026-07-05T13:50:43+00:00",
+                        "last_attempt_at": mayhem_refresh._now_iso(now - 60),
                         "last_success_at": "",
-                        "last_result": "skipped",
-                        "reason": "not_stale",
+                        "last_result": "failed",
+                        "reason": "network_timeout",
                     },
                     ensure_ascii=False,
                 ),
@@ -107,7 +108,32 @@ class MayhemRefreshHealthTests(unittest.TestCase):
             )
 
             with mock.patch.object(mayhem_refresh, "build_runtime_state_path", lambda name: str(status_file)):
-                self.assertTrue(mayhem_refresh.mayhem_refresh_due(now=1783260000.0))
+                self.assertFalse(mayhem_refresh.mayhem_refresh_due(now=now, failure_retry_seconds=300))
+                self.assertTrue(mayhem_refresh.mayhem_refresh_due(now=now + 301, failure_retry_seconds=300))
+
+    def test_mayhem_due_uses_last_success_before_failure_retry(self):
+        from hextech.scraping.synergy import mayhem_refresh
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            status_file = tmp_path / "mayhem_refresh_status.json"
+            now = 1783260000.0
+            status_file.write_text(
+                json.dumps(
+                    {
+                        "last_attempt_at": mayhem_refresh._now_iso(now - 60),
+                        "last_success_at": mayhem_refresh._now_iso(now - 120),
+                        "last_result": "failed",
+                        "reason": "network_timeout",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(mayhem_refresh, "build_runtime_state_path", lambda name: str(status_file)):
+                self.assertFalse(mayhem_refresh.mayhem_refresh_due(now=now, stale_after_seconds=300, failure_retry_seconds=300))
+                self.assertTrue(mayhem_refresh.mayhem_refresh_due(now=now + 181, stale_after_seconds=300, failure_retry_seconds=300))
 
     def test_mayhem_success_writes_runtime_raw_status_and_rebuilds_hints(self):
         from hextech.scraping.synergy import mayhem_refresh

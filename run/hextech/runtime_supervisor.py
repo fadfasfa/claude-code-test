@@ -285,7 +285,7 @@ class OverlayRuntimeManager:
             except TimeoutError:
                 with self._lock:
                     self.startup_seconds = round(time.perf_counter() - started_at, 3)
-                    self._mark(status="running", phase="vision_prewarming")
+                    self._mark(status="starting", phase="vision_prewarming")
                 return self.snapshot()
             with self._lock:
                 self.phase = "sidecar_start"
@@ -342,6 +342,8 @@ class OverlayRuntimeManager:
         except Exception as exc:
             errors.append(f"空上下文写入失败：{exc}")
         sidecar_stopped = stop_process(self.sidecar_process)
+        # sidecar graceful exit 期间可能最后写出一帧 active 事件；停止后再写一次
+        # inactive，确保 host/renderer 最终看到隐藏态。
         try:
             self._write_inactive_func()
         except Exception as exc:

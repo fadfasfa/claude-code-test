@@ -1705,6 +1705,24 @@ def _write_template_runtime_cache(
             pass
 
 
+def _cleanup_legacy_template_runtime_cache(cache_file: Path) -> bool:
+    """默认 v2 cache ready 后清理旧 v1 大文件；自定义 cache_file 不做隐式删除。"""
+
+    try:
+        if cache_file.resolve() != TEMPLATE_RUNTIME_CACHE_FILE.resolve():
+            return False
+    except OSError:
+        return False
+    try:
+        TEMPLATE_RUNTIME_CACHE_V1_FILE.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        logger.debug("清理旧 Vision 模板 runtime cache v1 失败。", exc_info=True)
+        return False
+
+
 def load_or_build_default_template_runtime(
     base_dir: str | Path | None = None,
     *,
@@ -1734,6 +1752,7 @@ def load_or_build_default_template_runtime(
     )
     if runtime is not None:
         runtime.stats.update({"build_seconds": 0.0, "load_seconds": round(time.perf_counter() - started_at, 3)})
+        runtime.stats["legacy_v1_cache_removed"] = _cleanup_legacy_template_runtime_cache(target_cache)
         if status_callback is not None:
             status_callback("template_runtime_cache_ready", runtime.stats)
         return runtime
@@ -1773,6 +1792,7 @@ def load_or_build_default_template_runtime(
         "cache_file": str(target_cache),
         "cache_bytes": int(cache_write_stats.get("cache_bytes") or 0),
         "cache_error": cache_error,
+        "legacy_v1_cache_removed": _cleanup_legacy_template_runtime_cache(target_cache),
         "template_count": len(template_index),
         "matrix_dtype": str(cache_write_stats.get("matrix_dtype") or np.dtype(TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE).name),
         "build_seconds": round(time.perf_counter() - started_at, 3),
