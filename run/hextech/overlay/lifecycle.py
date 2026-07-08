@@ -73,6 +73,12 @@ def _wait_for_host_ready(
     expected_token: str = "",
     timeout_seconds: float = OVERLAY_READY_TIMEOUT_SECONDS,
 ) -> None:
+    def _ready_pid(payload: dict) -> int:
+        try:
+            return int(payload.get("pid") or 0)
+        except (TypeError, ValueError):
+            return 0
+
     deadline = time.monotonic() + max(0.1, float(timeout_seconds))
     ready_state = "missing"
     while time.monotonic() < deadline:
@@ -94,10 +100,11 @@ def _wait_for_host_ready(
             ready_state = "unreadable"
             time.sleep(0.05)
             continue
+        pid = _ready_pid(payload)
         if expected_token and str(payload.get("token") or "") == expected_token:
-            setattr(process, "_hextech_overlay_runtime_pid", int(payload.get("pid") or 0) or None)
+            setattr(process, "_hextech_overlay_runtime_pid", pid or None)
             return
-        if not expected_token and int(payload.get("pid") or 0) == int(process.pid):
+        if not expected_token and pid == int(process.pid):
             return
         raise RuntimeError(
             "game_overlay host readiness token 不匹配"

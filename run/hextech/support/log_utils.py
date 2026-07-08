@@ -265,6 +265,12 @@ def redact_log_value(value: object) -> str:
         text,
         flags=re.IGNORECASE,
     )
+    text = re.sub(
+        r'("?(?:auth|authorization|cookie|(?:access|refresh|session)[_-]?token|session[_-]?id|token|nonce|secret|password|credential|api[_-]?key|jwt|bearer|lcu|riot)"?\s*:\s*)(?:-?\d+(?:\.\d+)?|true|false|null)',
+        r'\1"<redacted>"',
+        text,
+        flags=re.IGNORECASE,
+    )
     return text
 
 

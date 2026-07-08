@@ -15,6 +15,22 @@ from PIL import Image
 
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+MAX_PNG_RESPONSE_BYTES = 2 * 1024 * 1024
+
+
+def read_limited_response_bytes(response, *, max_bytes: int = MAX_PNG_RESPONSE_BYTES, chunk_size: int = 8192) -> bytes | None:
+    """读取流式响应并限制总字节数；超过上限返回 None。"""
+
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=chunk_size):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > max_bytes:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def is_valid_png_bytes(data: bytes) -> bool:

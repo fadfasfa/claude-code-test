@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import inspect
 import os
 import tempfile
 import threading
@@ -300,13 +299,90 @@ class DesktopRuntimeOverlayTests(unittest.TestCase):
         self.assertIn("游戏内显示启动请求已提交(running)", ui.overlay_status_label.text)
 
     def test_game_overlay_busy_toggle_uses_secondary_status_path(self):
-        from hextech.display.desktop.app import HextechUI
+        from hextech.display.desktop import app
 
-        source = inspect.getsource(HextechUI._build_feature_toggle)
+        class FakeWidget:
+            def __init__(self, *args, **kwargs):
+                self.bindings = {}
+                self.text = kwargs.get("text", "")
 
-        self.assertIn('if text == "游戏内显示":', source)
-        self.assertIn('_set_overlay_status_summary("游戏内显示: 正在切换中"', source)
-        self.assertNotIn("游戏内显示 正在切换中", source)
+            def pack(self, **_kwargs):
+                return None
+
+            def bind(self, event, callback):
+                self.bindings[event] = callback
+
+            def cget(self, key):
+                return self.text if key == "text" else ""
+
+        class FakeVar:
+            def get(self):
+                return False
+
+            def set(self, _value):
+                raise AssertionError("busy toggle must not mutate variable")
+
+        calls: list[tuple[str, str]] = []
+        ui = object.__new__(app.HextechUI)
+        ui.feature_frame = None
+        ui._feature_toggle_widgets = []
+        ui._runtime_services_ready = True
+        ui._feature_toggle_is_busy = lambda _text: True
+        ui._set_overlay_status_summary = lambda text, color: calls.append((text, color))
+        ui._set_status = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must use overlay status"))
+        ui._refresh_feature_toggle_styles = lambda: None
+
+        with patch.object(app.tk, "Frame", FakeWidget), patch.object(app.tk, "Canvas", FakeWidget), patch.object(app.tk, "Label", FakeWidget):
+            frame = app.HextechUI._build_feature_toggle(
+                ui,
+                "游戏内显示",
+                FakeVar(),
+                lambda: None,
+                accent=app.UI_COLORS["cyan"],
+            )
+
+        self.assertEqual(frame.bindings["<Button-1>"](), "break")
+        self.assertEqual(calls, [("游戏内显示: 正在切换中", app.UI_COLORS["warn"])])
+
+    def test_expand_restores_status_labels_in_initial_pack_order(self):
+        from hextech.display.desktop import app
+
+        pack_calls: list[str] = []
+
+        class FakeRoot:
+            def geometry(self, _value):
+                return None
+
+            def after(self, _delay, _func):
+                return "after-id"
+
+            def after_cancel(self, _after_id):
+                return None
+
+        class FakeLabel:
+            def __init__(self, name: str):
+                self.name = name
+
+            def winfo_exists(self):
+                return True
+
+            def pack_forget(self):
+                return None
+
+            def pack(self, **_kwargs):
+                pack_calls.append(self.name)
+
+        ui = object.__new__(app.HextechUI)
+        ui.root = FakeRoot()
+        ui._collapsed = True
+        ui._collapse_render_after_id = None
+        ui.status_label = FakeLabel("status")
+        ui.overlay_status_label = FakeLabel("overlay")
+        ui._refresh_current_hero_ids = lambda: None
+
+        ui._toggle_collapse()
+
+        self.assertEqual(pack_calls, ["status", "overlay"])
 
     def test_empty_web_live_state_falls_back_to_lcu(self):
         from hextech.display.desktop import runtime

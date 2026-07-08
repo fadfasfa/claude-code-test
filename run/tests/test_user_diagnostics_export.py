@@ -194,6 +194,11 @@ def test_export_user_diagnostics_redacts_local_absolute_paths(tmp_path, monkeypa
                 "status": "ready",
                 "active_hextech_csv": str(local_csv),
                 "repo_data_path": str(repo_path),
+                "hextech_warning": "check auth_token.txt local.yaml proxies.json accounts.json auth.json .env",
+                "nested": {
+                    "auth.json": "present",
+                    "message": "uses .env",
+                },
             },
             ensure_ascii=False,
         ),
@@ -230,4 +235,11 @@ def test_export_user_diagnostics_redacts_local_absolute_paths(tmp_path, monkeypa
     assert "C:\\Users\\apple" not in exported_blob
     assert "C:/Users/apple" not in exported_blob
     assert "Hextech_Data_2026-07-05.csv" not in exported_blob
+    assert "auth_token.txt" not in exported_blob
+    assert "local.yaml" not in exported_blob
+    assert "proxies.json" not in exported_blob
+    assert "accounts.json" not in exported_blob
+    assert "auth.json" not in exported_blob
+    assert ".env" not in exported_blob
     assert "<local-path>" in exported_blob
+    assert "<sensitive-file>" in exported_blob

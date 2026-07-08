@@ -36,6 +36,8 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
                             "fallback_used": True,
                             "active_csv": "Hextech_Data_2026-07-02.csv",
                         },
+                        "hextech_warning": "check auth_token.txt local.yaml proxies.json accounts.json auth.json .env",
+                        "nested": {"auth.json": "present", "message": "uses .env"},
                     },
                     ensure_ascii=False,
                 ),
@@ -358,9 +360,12 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             self.assertFalse((output / "state" / "auth_token.txt").exists())
             self.assertFalse((output / "state" / "lcu_session.json").exists())
             self.assertFalse((output / "state" / "riot_client_state.json").exists())
-            self.assertTrue(any("auth_token.txt" in item for item in summary["skipped_sensitive"]))
-            self.assertTrue(any("lcu_session.json" in item for item in summary["skipped_sensitive"]))
-            self.assertTrue(any("riot_client_state.json" in item for item in summary["skipped_sensitive"]))
+            self.assertGreaterEqual(len(summary["skipped_sensitive"]), 3)
+            skipped_sensitive_blob = json.dumps(summary["skipped_sensitive"], ensure_ascii=False)
+            self.assertIn("<sensitive-file>", skipped_sensitive_blob)
+            self.assertNotIn("auth_token.txt", skipped_sensitive_blob)
+            self.assertNotIn("lcu_session.json", skipped_sensitive_blob)
+            self.assertNotIn("riot_client_state.json", skipped_sensitive_blob)
             exported_blob = (
                 (output / "summary.json").read_text(encoding="utf-8")
                 + (output / "state_tail" / "runtime_events.v1.jsonl.tail").read_text(encoding="utf-8")
@@ -378,6 +383,9 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             self.assertNotIn("local.yaml", exported_blob)
             self.assertNotIn("proxies.json", exported_blob)
             self.assertNotIn("accounts.json", exported_blob)
+            self.assertNotIn("auth.json", exported_blob)
+            self.assertNotIn(".env", exported_blob)
+            self.assertIn("<sensitive-file>", exported_blob)
             self.assertIn("<local-path>", exported_blob)
             self.assertIn("https://example.test/path?<redacted>", exported_blob)
 

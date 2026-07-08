@@ -58,11 +58,11 @@ LOCAL_ABSOLUTE_PATH_RE = re.compile(
     r"(?i)(?<![A-Z0-9])(?:[A-Z]:[\\/][^\s\"'<>|{}]+|\\\\[^\\/\s\"'<>|{}]+\\[^\s\"'<>|{}]+)"
 )
 SENSITIVE_FILENAME_RE = re.compile(
-    r"(?i)\b(?:"
+    r"(?i)(?<![A-Za-z0-9_.-])(?:"
     r"[A-Za-z0-9_.-]*(?:auth|authorization|token|cookie|secret|password|credential|nonce|lcu|riot|session|overlay_anchor_calibration)[A-Za-z0-9_.-]*"
     r"\.(?:txt|json|yaml|yml|env|ini|cfg|conf|log)"
-    r"|local\.yaml|proxies\.json|accounts\.json"
-    r")\b"
+    r"|local\.yaml|proxies\.json|accounts\.json|auth\.json|\.env"
+    r")(?![A-Za-z0-9_.-])"
 )
 
 
@@ -89,11 +89,11 @@ def _redact_json_value(key: str, value):
     if any(keyword in key_lower for keyword in SENSITIVE_PATH_KEYWORDS):
         return "<redacted>"
     if isinstance(value, dict):
-        return {str(child_key): _redact_json_value(str(child_key), child_value) for child_key, child_value in value.items()}
+        return {_redact_json_key(child_key): _redact_json_value(str(child_key), child_value) for child_key, child_value in value.items()}
     if isinstance(value, list):
         return [_redact_json_value(key, item) for item in value]
     if isinstance(value, str):
-        return _redact_export_text(value)
+        return _redact_sensitive_filename_text(value)
     return value
 
 
@@ -106,13 +106,17 @@ def _redact_sensitive_filename_text(value: object) -> str:
     return SENSITIVE_FILENAME_RE.sub("<sensitive-file>", _redact_export_text(value))
 
 
+def _redact_json_key(key: object) -> str:
+    return SENSITIVE_FILENAME_RE.sub("<sensitive-file>", str(key or ""))
+
+
 def _redact_tail_line(line: str) -> str:
     try:
         payload = json.loads(line)
     except json.JSONDecodeError:
         return _redact_export_text(line)
     if isinstance(payload, dict):
-        payload = {str(key): _redact_json_value(str(key), value) for key, value in payload.items()}
+        payload = {_redact_json_key(key): _redact_json_value(str(key), value) for key, value in payload.items()}
         return json.dumps(payload, ensure_ascii=False, sort_keys=True)
     return _redact_export_text(line)
 
@@ -120,7 +124,7 @@ def _redact_tail_line(line: str) -> str:
 def redact_diagnostic_text(value: object) -> str:
     """脱敏可分享诊断文本；保留事件语义，移除 token 和本机绝对路径。"""
 
-    return _redact_export_text(value)
+    return _redact_sensitive_filename_text(value)
 
 
 def redact_diagnostic_value(key: str, value):
@@ -142,7 +146,7 @@ def _read_json(path: Path) -> dict:
         return {}
     if not isinstance(payload, dict):
         return {}
-    return {str(key): _redact_json_value(str(key), value) for key, value in payload.items()}
+    return {_redact_json_key(key): _redact_json_value(str(key), value) for key, value in payload.items()}
 
 
 def _timestamp_to_epoch(value: object) -> float | None:

@@ -1222,10 +1222,10 @@ class HextechUI:
                 self.overlay_status_label.pack_forget()
         else:
             self.root.geometry(WINDOW_EXPANDED_GEOMETRY)
-            if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
-                self.overlay_status_label.pack(side=tk.BOTTOM, pady=(0, 2))
             if hasattr(self, "status_label") and self.status_label.winfo_exists():
                 self.status_label.pack(side=tk.BOTTOM, pady=5)
+            if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
+                self.overlay_status_label.pack(side=tk.BOTTOM, pady=(0, 2))
         self._schedule_current_hero_refresh()
 
     def _schedule_current_hero_refresh(self) -> None:

@@ -509,6 +509,10 @@ class RuntimeSupervisorTests(unittest.TestCase):
             OverlayRuntimeManager._classify_start_failure_kind("game_overlay host readiness token 不匹配"),
             "host_readiness_token_mismatch",
         )
+        self.assertEqual(
+            OverlayRuntimeManager._classify_start_failure_kind("game_overlay host 启动失败：sidecar cache still warming"),
+            "start_failed",
+        )
 
     def test_overlay_runtime_status_reads_host_visible_reason(self):
         from hextech.runtime_supervisor import OverlayRuntimeManager

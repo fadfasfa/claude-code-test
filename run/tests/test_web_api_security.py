@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -98,6 +100,7 @@ def test_public_hextech_loading_payload_redacts_startup_status_paths(monkeypatch
             "hero_ready": True,
             "hextech_ready": False,
             "last_error": "failed at C:/Users/apple/claudecode/run/data/runtime/raw/hextech/Hextech_Data.csv",
+            "hextech_warning": "check auth_token.txt local.yaml proxies.json accounts.json",
             "active_hextech_csv": "C:/Users/apple/claudecode/run/data/runtime/raw/hextech/Hextech_Data.csv",
             "hextech_refresh": {
                 "reason": "fallback",
@@ -121,12 +124,17 @@ def test_public_hextech_loading_payload_redacts_startup_status_paths(monkeypatch
     assert startup["hero_ready"] is True
     assert startup["hextech_ready"] is False
     assert startup["last_error"] == "failed at <local-path>"
+    assert startup["hextech_warning"] == "check <sensitive-file> <sensitive-file> <sensitive-file> <sensitive-file>"
     assert startup["bundle_manifest"] == {"warning": "manifest at <local-path>"}
     assert "active_hextech_csv" not in startup
     assert "hextech_refresh" not in startup
     assert "manifest_path" not in startup["bundle_manifest"]
     assert "C:/Users/apple" not in serialized
     assert "Hextech_Data.csv" not in serialized
+    assert "auth_token.txt" not in serialized
+    assert "local.yaml" not in serialized
+    assert "proxies.json" not in serialized
+    assert "accounts.json" not in serialized
 
 
 def test_detail_loading_branch_requests_authenticated_preload_from_page():
@@ -137,6 +145,75 @@ def test_detail_loading_branch_requests_authenticated_preload_from_page():
     assert "method: 'POST'" in detail_js
     assert "credentials: 'same-origin'" in detail_js
     assert "requestDetailPreload();" in detail_js
+
+
+def test_detail_loading_retry_stops_after_max_attempts(tmp_path):
+    node = shutil.which("node")
+    if not node:
+        raise AssertionError("node is required for detail.js retry behavior test")
+
+    detail_path = (Path.cwd() / "hextech/display/web/static/js/detail.js").as_posix()
+    script = tmp_path / "detail_retry_test.cjs"
+    script.write_text(
+        f"""
+const fs = require('fs');
+const vm = require('vm');
+const source = fs.readFileSync({json.dumps(detail_path)}, 'utf8');
+const tip = {{ textContent: '' }};
+let scheduled = 0;
+const fakeElement = () => ({{
+  textContent: '',
+  innerHTML: '',
+  className: '',
+  style: {{}},
+  dataset: {{}},
+  classList: {{ add: () => {{}}, remove: () => {{}}, contains: () => false }},
+  removeAttribute: () => {{}},
+  appendChild: () => {{}},
+  remove: () => {{}},
+  addEventListener: () => {{}},
+  querySelector: () => fakeElement(),
+}});
+const context = {{
+  console,
+  window: {{
+    location: {{ origin: 'http://127.0.0.1:8211', protocol: 'http:', host: '127.0.0.1:8211', search: '?hero=Garen' }},
+    setTimeout: (_fn, _delay) => {{ scheduled += 1; return scheduled; }},
+    clearTimeout: () => {{}},
+    addEventListener: () => {{}},
+  }},
+  document: {{
+    readyState: 'loading',
+    body: {{ appendChild: () => {{}} }},
+    createElement: () => fakeElement(),
+    getElementById: () => fakeElement(),
+    querySelector: (selector) => {{
+      if (selector === '#noDataTip .text-sm') return tip;
+      return fakeElement();
+    }},
+    querySelectorAll: () => [],
+    addEventListener: () => {{}},
+  }},
+  fetch: () => Promise.resolve({{ json: () => Promise.resolve([]) }}),
+  BroadcastChannel: class {{ constructor() {{}} postMessage() {{}} addEventListener() {{}} }},
+  WebSocket: class {{}},
+  URLSearchParams,
+  setTimeout: (_fn, _delay) => {{ scheduled += 1; return scheduled; }},
+  clearTimeout: () => {{}},
+}};
+context.window.window = context.window;
+vm.createContext(context);
+vm.runInContext(source, context);
+context.scheduleDetailRetry(12);
+if (scheduled !== 0) throw new Error(`scheduled after max retry: ${{scheduled}}`);
+if (tip.textContent !== '数据准备时间较长，请稍后刷新页面') throw new Error(`unexpected tip: ${{tip.textContent}}`);
+context.scheduleDetailRetry(11);
+if (scheduled !== 1) throw new Error(`expected one scheduled retry, got ${{scheduled}}`);
+""",
+        encoding="utf-8",
+    )
+
+    subprocess.run([node, str(script)], check=True, cwd=Path.cwd())
 
 
 def test_synergy_api_distinguishes_empty_error_and_quarantined(monkeypatch):

@@ -74,7 +74,7 @@ def _write_bundle_manifest_startup_warning(status: str, warning: str, manifest_p
         "path": manifest_path.name,
         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
-    if warning:
+    if warning and not str(payload.get("last_error") or "").strip():
         payload["last_error"] = warning
     atomic_write_json(status_path, payload)
 

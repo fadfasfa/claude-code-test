@@ -330,7 +330,7 @@ class OverlayRuntimeManager:
         text = str(reason or "")
         if "game_overlay host 启动超时" in text:
             return "host_readiness_timeout"
-        if "sidecar" in text:
+        if "Vision sidecar" in text or "game_overlay sidecar" in text:
             return "sidecar_failed"
         if "readiness token 不匹配" in text:
             return "host_readiness_token_mismatch"

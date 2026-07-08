@@ -22,6 +22,7 @@
         let ws = null;
         const DETAIL_LOADING_RETRY_BASE_MS = 500;
         const DETAIL_LOADING_RETRY_MAX_MS = 5000;
+        const DETAIL_LOADING_MAX_RETRIES = 12;
         let detailLoadingRetryTimer = null;
         let detailPreloadRequested = false;
 
@@ -787,6 +788,10 @@
 
         function scheduleDetailRetry(retryCount) {
             if (detailLoadingRetryTimer) {
+                return;
+            }
+            if (retryCount >= DETAIL_LOADING_MAX_RETRIES) {
+                document.querySelector('#noDataTip .text-sm').textContent = '数据准备时间较长，请稍后刷新页面';
                 return;
             }
             detailLoadingRetryTimer = window.setTimeout(() => {

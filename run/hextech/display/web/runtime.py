@@ -78,7 +78,7 @@ from hextech.scraping.icon_resolver import (
     is_safe_remote_icon_url,
     resolve_apexlol_hextech_icon_url,
 )
-from hextech.support.image_validation import is_valid_png_bytes
+from hextech.support.image_validation import is_valid_png_bytes, read_limited_response_bytes
 from hextech.scraping.version_sync import (
     ASSET_DIR,
     BASE_DIR,
@@ -342,8 +342,9 @@ def download_augment_icon_from_remote(augment_name: str, icon_filename: str) -> 
         response = requests.get(remote_url, stream=True, timeout=15)
         if response.status_code != 200:
             return None
-        chunks = [chunk for chunk in response.iter_content(chunk_size=8192) if chunk]
-        content = b"".join(chunks)
+        content = read_limited_response_bytes(response)
+        if content is None:
+            return None
         if not is_valid_png_bytes(content):
             return None
         with open(tmp_path, "wb") as f:

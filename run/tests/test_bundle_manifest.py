@@ -91,6 +91,12 @@ def test_runtime_bundle_reports_missing_or_corrupt_manifest(tmp_path, monkeypatc
         lambda filename: str(state_dir / filename),
     )
 
+    state_dir.mkdir(parents=True)
+    (state_dir / "startup_status.json").write_text(
+        json.dumps({"last_error": "remote_failed_local_fallback"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
     missing_root = tmp_path / "missing_bundle"
     missing_root.mkdir()
     manifest = runtime_bundle._load_bundle_manifest(missing_root)
@@ -99,6 +105,7 @@ def test_runtime_bundle_reports_missing_or_corrupt_manifest(tmp_path, monkeypatc
     assert manifest["hextech_snapshot_files"] == []
     assert status["bundle_manifest"]["status"] == "missing"
     assert status["bundle_manifest"]["warning"] == "bundle_manifest_missing"
+    assert status["last_error"] == "remote_failed_local_fallback"
     assert warnings
 
     corrupt_root = tmp_path / "corrupt_bundle"
@@ -109,6 +116,7 @@ def test_runtime_bundle_reports_missing_or_corrupt_manifest(tmp_path, monkeypatc
     status = json.loads((state_dir / "startup_status.json").read_text(encoding="utf-8"))
     assert status["bundle_manifest"]["status"] == "error"
     assert status["bundle_manifest"]["warning"] == "bundle_manifest_invalid"
+    assert status["last_error"] == "remote_failed_local_fallback"
 
 
 def test_finalize_output_runs_smoke_before_replacing_existing_release(tmp_path, monkeypatch):

@@ -73,6 +73,13 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                     timeout_seconds=0.1,
                 )
 
+            ready_path.write_text(
+                json.dumps({"pid": "abc", "updated_at": time.time()}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, r"token 不匹配.*pid=abc"):
+                lifecycle._wait_for_host_ready(RunningProcess(), ready_path, timeout_seconds=0.1)
+
     def test_lifecycle_waits_for_sidecar_ready_and_sets_exit_signal(self):
         from hextech.overlay import lifecycle
 

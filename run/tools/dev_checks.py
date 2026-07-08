@@ -109,6 +109,7 @@ from hextech.scraping.synergy.scraper import (
 from tools.bundle_manifest import build_bundle_manifest, manifest_contains_forbidden_path
 from tools.package_rules import iter_package_data_entries
 from tools.resource_manifest import validate_resource_manifest
+from hextech.support import image_validation
 from hextech.support.log_utils import get_runtime_log_paths, install_runtime_logging, install_summary_logging
 
 
@@ -1026,6 +1027,13 @@ def check_icon_downloads_reject_non_png_bytes() -> None:
             del chunk_size
             yield b"<html><body>not an image</body></html>"
 
+    class OversizeStreamResponse:
+        status_code = 200
+
+        def iter_content(self, chunk_size=8192):
+            del chunk_size
+            yield b"x" * (image_validation.MAX_PNG_RESPONSE_BYTES + 1)
+
     class FakeSession:
         def get(self, *_args, **_kwargs):
             return HtmlStreamResponse()
@@ -1047,6 +1055,16 @@ def check_icon_downloads_reject_non_png_bytes() -> None:
         assert not target.exists()
 
     with TemporaryDirectory() as tmp_dir:
+        target = Path(tmp_dir) / "too_large.png"
+        fake_session = type("OversizeSession", (), {"get": lambda self, *_args, **_kwargs: OversizeStreamResponse()})()
+        with (
+            patch.object(icon_resolver, "_get_download_session", return_value=fake_session),
+            patch.object(icon_resolver, "_iter_augment_icon_urls", return_value=iter(("https://example.test/too_large.png",))),
+        ):
+            assert icon_resolver.ensure_augment_icon_cached("too_large.png", asset_dir=tmp_dir, force_refresh=True) is None
+        assert not target.exists()
+
+    with TemporaryDirectory() as tmp_dir:
         asset_dir = Path(tmp_dir)
         target = asset_dir / "bad_champion.png"
         fake_session = type("FakeChampionSession", (), {"get": lambda self, *_args, **_kwargs: HtmlBytesResponse()})()
@@ -1062,6 +1080,17 @@ def check_icon_downloads_reject_non_png_bytes() -> None:
             patch("hextech.display.web.runtime.requests.get", return_value=HtmlStreamResponse()),
         ):
             assert web_runtime.download_augment_icon_from_remote("测试海克斯", "bad_web.png") is None
+        assert not target.exists()
+
+    with TemporaryDirectory() as tmp_dir:
+        asset_dir = Path(tmp_dir)
+        target = asset_dir / "too_large_web.png"
+        with (
+            patch.object(web_runtime, "get_assets_dir", return_value=str(asset_dir)),
+            patch.object(web_runtime, "resolve_remote_augment_icon_url", return_value="https://example.test/too_large_web.png"),
+            patch("hextech.display.web.runtime.requests.get", return_value=OversizeStreamResponse()),
+        ):
+            assert web_runtime.download_augment_icon_from_remote("测试海克斯", "too_large_web.png") is None
         assert not target.exists()
 
     with TemporaryDirectory() as tmp_dir:
@@ -1451,7 +1480,6 @@ def check_detail_renders_before_deferred_icon_catalog() -> None:
     assert load_body.index("renderCurrentView();") < load_body.index("loadAugmentIconMap().then")
     assert "DETAIL_LOADING_RETRY_BASE_MS" in detail_script
     assert "DETAIL_LOADING_RETRY_MAX_MS" in detail_script
-    assert "DETAIL_LOADING_MAX_RETRIES" not in detail_script
     assert "scheduleDetailRetry" in detail_script
     assert "describeLoadingStatus" in detail_script
     assert "startup_status" in detail_script

@@ -61,6 +61,17 @@ def test_dev_profile_installs_full_summary_error_logs(tmp_path, monkeypatch):
     _reset_hextech_logging()
 
 
+def test_redact_log_value_redacts_json_numeric_sensitive_values():
+    from hextech.support.log_utils import redact_log_value
+
+    redacted = redact_log_value('"token": 12345, "session_id": true, "status": "ok"')
+
+    assert '"token": "<redacted>"' in redacted
+    assert '"session_id": "<redacted>"' in redacted
+    assert '"status": "ok"' in redacted
+    assert "12345" not in redacted
+
+
 def test_packaged_profile_skips_full_debug_jsonl(tmp_path, monkeypatch):
     from hextech.support import log_utils
 
