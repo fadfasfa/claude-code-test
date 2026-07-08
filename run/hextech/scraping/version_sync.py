@@ -48,6 +48,7 @@ from hextech.catalog.version_catalog import (
     load_champion_core_data as load_projected_champion_core_data,
 )
 from hextech.scraping.icon_resolver import normalize_augment_name
+from hextech.support.image_validation import is_valid_png_bytes
 from hextech.support.log_utils import (
     ensure_utf8_stdio,
     get_error_log_file,
@@ -299,8 +300,20 @@ def _download_champion_image(session, version: str, en_name: str, asset_path: st
         try:
             img_resp = session.get(img_url, verify=True, timeout=15)
             if img_resp is not None and img_resp.status_code == 200:
-                with open(asset_path, "wb") as img_f:
-                    img_f.write(img_resp.content)
+                if not is_valid_png_bytes(img_resp.content):
+                    continue
+                os.makedirs(os.path.dirname(asset_path), exist_ok=True)
+                fd, tmp_path = tempfile.mkstemp(prefix="champion-image-", suffix=".tmp", dir=os.path.dirname(asset_path))
+                try:
+                    with os.fdopen(fd, "wb") as img_f:
+                        img_f.write(img_resp.content)
+                    os.replace(tmp_path, asset_path)
+                finally:
+                    try:
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                    except OSError:
+                        pass
                 return True
         except Exception:
             continue

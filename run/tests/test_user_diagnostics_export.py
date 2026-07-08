@@ -46,7 +46,7 @@ def test_export_user_diagnostics_creates_limited_redacted_zip(tmp_path, monkeypa
     (state_dir / "overlay_anchor_calibration.v1.json").write_text('{"nonce":"secret"}', encoding="utf-8")
 
     (logs_dir / "hextech_runtime_summary.log").write_text(
-        "\n".join(f"summary {index} token=secret" for index in range(6)) + "\n",
+        "\n".join(f"summary {index} token=secret local.yaml proxies.json accounts.json" for index in range(6)) + "\n",
         encoding="utf-8",
     )
     (logs_dir / "hextech_error.log").write_text("cookie=secret\n", encoding="utf-8")
@@ -82,6 +82,12 @@ def test_export_user_diagnostics_creates_limited_redacted_zip(tmp_path, monkeypa
     summary = json.loads((result.bundle_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary["copied_files"] == result.copied_files
     assert summary["skipped_sensitive"]
+    summary_blob = json.dumps(summary, ensure_ascii=False)
+    assert str(runtime_root) not in summary_blob
+    assert str(result.bundle_dir) not in summary_blob
+    assert str(result.zip_path) not in summary_blob
+    assert summary["bundle_dir"] == result.bundle_dir.name
+    assert summary["zip_path"] == result.zip_path.name
     skipped_blob = json.dumps(summary["skipped_sensitive"], ensure_ascii=False)
     assert "debug/" not in skipped_blob
     assert "profile/" not in skipped_blob
@@ -102,6 +108,8 @@ def test_export_user_diagnostics_creates_limited_redacted_zip(tmp_path, monkeypa
 
     with zipfile.ZipFile(result.zip_path) as archive:
         names = set(archive.namelist())
+        archived_summary = archive.read("summary.json").decode("utf-8")
+        archived_log_tail = archive.read("logs_tail/hextech_runtime_summary.log.tail").decode("utf-8")
 
     assert "summary.json" in names
     assert "README.txt" in names
@@ -112,6 +120,13 @@ def test_export_user_diagnostics_creates_limited_redacted_zip(tmp_path, monkeypa
     assert not any(name.startswith(("debug/", "cache/", "profile/", "raw/", "reports/")) for name in names)
     assert not any("hextech_full.jsonl" in name for name in names)
     assert not any("auth" in name.lower() or "token" in name.lower() for name in names)
+    assert "auth_token.txt" not in archived_summary
+    assert "lcu_session.json" not in archived_summary
+    assert "riot_client_state.json" not in archived_summary
+    assert "overlay_anchor_calibration.v1.json" not in archived_summary
+    assert "local.yaml" not in archived_log_tail
+    assert "proxies.json" not in archived_log_tail
+    assert "accounts.json" not in archived_log_tail
 
 
 def test_export_user_diagnostics_filters_tail_by_recent_minutes(tmp_path, monkeypatch):
@@ -162,3 +177,57 @@ def test_export_user_diagnostics_filters_tail_by_recent_minutes(tmp_path, monkey
     assert "continuation line" in log_tail
     assert "old log" not in log_tail
     assert summary["recent_minutes"] == 60
+
+
+def test_export_user_diagnostics_redacts_local_absolute_paths(tmp_path, monkeypatch):
+    from hextech.support import user_diagnostics
+
+    runtime_root = tmp_path / "runtime"
+    state_dir = runtime_root / "state"
+    state_dir.mkdir(parents=True)
+    local_csv = runtime_root / "raw" / "hextech" / "Hextech_Data_2026-07-05.csv"
+    repo_path = Path("C:/Users/apple/claudecode/run/data/runtime/raw/hextech/Hextech_Data_2026-07-05.csv")
+
+    (state_dir / "startup_status.json").write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "active_hextech_csv": str(local_csv),
+                "repo_data_path": str(repo_path),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "runtime_events.v1.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "event": "hextech.refresh.published",
+                "published_data_path": str(local_csv),
+                "fallback_path": str(repo_path),
+                "message": f"published to {local_csv}",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(user_diagnostics, "get_runtime_root_dir", lambda: runtime_root)
+
+    result = user_diagnostics.export_user_diagnostics(
+        output_dir=tmp_path / "exports",
+        recent_minutes=180,
+        tail_lines=10,
+    )
+
+    startup_text = (result.bundle_dir / "state" / "startup_status.json").read_text(encoding="utf-8")
+    event_tail = (result.bundle_dir / "state_tail" / "runtime_events.v1.jsonl.tail").read_text(encoding="utf-8")
+    exported_blob = startup_text + event_tail
+
+    assert str(runtime_root) not in exported_blob
+    assert "C:\\Users\\apple" not in exported_blob
+    assert "C:/Users/apple" not in exported_blob
+    assert "Hextech_Data_2026-07-05.csv" not in exported_blob
+    assert "<local-path>" in exported_blob

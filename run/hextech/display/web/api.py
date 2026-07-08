@@ -33,6 +33,7 @@ from hextech.catalog.view_adapter import process_champions_data, process_hextech
 from hextech.core.refresh import rebuild_api_cache_if_needed
 from hextech.scraping.augment_catalog import load_augment_icon_manifest
 from hextech.scraping._paths import INDEX_DATA_DIR, STATIC_DATA_DIR
+from hextech.support.user_diagnostics import redact_diagnostic_text
 from . import runtime as web_runtime
 
 _api_cache_rebuild_lock = threading.Lock()
@@ -60,6 +61,22 @@ _INDEX_DATA_LEGACY_ALLOWLIST = frozenset({
     "champion.alias-to-id.v1.json",
     "champion.id-to-detail.v1.json",
     "champion.id-to-name.v1.json",
+})
+_PUBLIC_STARTUP_STATUS_BOOL_KEYS = frozenset({
+    "first_run",
+    "hero_ready",
+    "hextech_ready",
+    "hextech_degraded",
+    "synergy_ready",
+    "augment_icons_prefetched",
+})
+_PUBLIC_STARTUP_STATUS_TEXT_KEYS = frozenset({
+    "last_error",
+    "hextech_warning",
+    "updated_at",
+})
+_PUBLIC_STARTUP_STATUS_LIST_KEYS = frozenset({
+    "in_progress_tasks",
 })
 
 
@@ -368,9 +385,18 @@ def _synergy_quarantine_reason(champ_id: str, synergy_items: list[dict], overlap
     return {}
 
 
+def _empty_synergy_payload(*, status_text: str = "empty", message: str = "暂无联动数据") -> dict:
+    return {
+        "synergies": [],
+        "synergy_items": [],
+        "status": status_text,
+        "message": message,
+    }
+
+
 def _build_synergy_api_payload(data: dict, champ_id: str) -> dict:
     if not data:
-        return {"synergies": [], "synergy_items": []}
+        return _empty_synergy_payload()
 
     resolved_champ_id = web_runtime.resolve_champion_id(champ_id)
     canonical_name = web_runtime.resolve_canonical_hero_name(champ_id).lower()
@@ -388,6 +414,9 @@ def _build_synergy_api_payload(data: dict, champ_id: str) -> dict:
                 synergy_data = value
                 lookup_id = str(key)
                 break
+
+    if not synergy_data:
+        return _empty_synergy_payload()
 
     raw_synergies = synergy_data.get("synergies", []) if synergy_data else []
     synergy_items = _normalize_synergy_items(
@@ -409,7 +438,9 @@ def _build_synergy_api_payload(data: dict, champ_id: str) -> dict:
     synergies = _normalize_synergy_entries(raw_synergies)
     if not synergies and synergy_items:
         synergies = [_synergy_item_to_compat_string(item) for item in synergy_items]
-    return {"synergies": synergies, "synergy_items": synergy_items}
+    if not synergies and not synergy_items:
+        return _empty_synergy_payload()
+    return {"synergies": synergies, "synergy_items": synergy_items, "status": "ok"}
 
 
 class RedirectRequest(BaseModel):
@@ -419,7 +450,35 @@ class RedirectRequest(BaseModel):
     hero_name: str
 
 
-def _loading_hextech_payload() -> dict:
+def _public_startup_status() -> dict:
+    raw_status = web_runtime.get_startup_status()
+    if not isinstance(raw_status, dict):
+        return {}
+
+    public: dict = {}
+    for key in _PUBLIC_STARTUP_STATUS_BOOL_KEYS:
+        if key in raw_status:
+            public[key] = bool(raw_status.get(key))
+    for key in _PUBLIC_STARTUP_STATUS_TEXT_KEYS:
+        if key in raw_status:
+            public[key] = redact_diagnostic_text(raw_status.get(key))
+    for key in _PUBLIC_STARTUP_STATUS_LIST_KEYS:
+        if key not in raw_status:
+            continue
+        value = raw_status.get(key)
+        if isinstance(value, (list, tuple)):
+            public[key] = [redact_diagnostic_text(item) for item in value]
+        elif value:
+            public[key] = [redact_diagnostic_text(value)]
+
+    manifest = raw_status.get("bundle_manifest")
+    if isinstance(manifest, dict) and manifest.get("warning"):
+        public["bundle_manifest"] = {"warning": redact_diagnostic_text(manifest.get("warning"))}
+
+    return public
+
+
+def _loading_hextech_payload(preload_status: dict | None = None) -> dict:
     payload = {
         "top_10_overall": [],
         "comprehensive": [],
@@ -429,7 +488,8 @@ def _loading_hextech_payload() -> dict:
         "Silver": [],
         "loading": True,
         "ready": False,
-        "startup_status": web_runtime.get_startup_status(),
+        "startup_status": _public_startup_status(),
+        "preload_status": preload_status or {},
     }
     return payload
 
@@ -450,6 +510,20 @@ def _extract_request_token(request: Request) -> str:
     if header_token:
         return header_token
     return str(request.cookies.get(web_runtime.HTTP_SESSION_COOKIE, "")).strip()
+
+
+def _require_local_api_access(request: Request, route_label: str) -> JSONResponse | None:
+    """保护本机状态 API：同时要求本机 Origin 和当前 Web token。"""
+
+    origin = request.headers.get("origin")
+    if not web_runtime.is_allowed_local_origin(origin):
+        web_runtime.logger.warning("已拒绝非本机来源的 %s 请求：origin=%s", route_label, origin)
+        return JSONResponse(content={"error": "forbidden_origin"}, status_code=status.HTTP_403_FORBIDDEN)
+    request_token = _extract_request_token(request)
+    if request_token != web_runtime.get_request_auth_token():
+        web_runtime.logger.warning("已拒绝缺少有效 token 的 %s 请求", route_label)
+        return JSONResponse(content={"error": "forbidden_token"}, status_code=status.HTTP_403_FORBIDDEN)
+    return None
 
 
 def _safe_asset_response(assets_dir: str, filename: str):
@@ -663,11 +737,17 @@ def register_routes(app: FastAPI) -> None:
         return JSONResponse(content=[])
 
     @app.get("/api/startup_status")
-    async def api_startup_status():
+    async def api_startup_status(request: Request):
+        denied = _require_local_api_access(request, "startup_status")
+        if denied is not None:
+            return denied
         return JSONResponse(content=web_runtime.get_startup_status())
 
     @app.get("/api/live_state")
-    async def api_live_state():
+    async def api_live_state(request: Request):
+        denied = _require_local_api_access(request, "live_state")
+        if denied is not None:
+            return denied
         return JSONResponse(content=web_runtime.get_live_state_payload())
 
     @app.get("/api/champion_aliases")
@@ -691,27 +771,18 @@ def register_routes(app: FastAPI) -> None:
             precomputed_payload = load_precomputed_hextech_for_hero(canonical_name)
             if isinstance(precomputed_payload, dict) and precomputed_payload.get("comprehensive"):
                 return JSONResponse(content=precomputed_payload)
-        else:
-            _request_precomputed_hextech_warm()
 
         preload_status = web_runtime.get_preload_hextech_status(canonical_name)
         if preload_status.get("pending"):
-            return JSONResponse(content=_loading_hextech_payload())
+            return JSONResponse(content=_loading_hextech_payload(preload_status))
 
-        _request_precomputed_hextech_rebuild()
-        web_runtime.request_preload_hextech_payload_async(canonical_name)
-        return JSONResponse(content=_loading_hextech_payload())
+        return JSONResponse(content=_loading_hextech_payload(preload_status))
 
     @app.post("/api/champion/{name}/preload")
     async def api_preload_champion(name: str, request: Request):
-        origin = request.headers.get("origin")
-        if not web_runtime.is_allowed_local_origin(origin):
-            web_runtime.logger.warning("已拒绝非本机来源的 preload 请求：origin=%s", origin)
-            return JSONResponse(content={"error": "forbidden_origin"}, status_code=status.HTTP_403_FORBIDDEN)
-        request_token = _extract_request_token(request)
-        if request_token != web_runtime.get_request_auth_token():
-            web_runtime.logger.warning("已拒绝缺少有效 token 的 preload 请求")
-            return JSONResponse(content={"error": "forbidden_token"}, status_code=status.HTTP_403_FORBIDDEN)
+        denied = _require_local_api_access(request, "preload")
+        if denied is not None:
+            return denied
 
         canonical_name = web_runtime.resolve_canonical_hero_name(unquote(name))
         queued = web_runtime.request_preload_hextech_payload_async(canonical_name)
@@ -720,14 +791,9 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/champion/{name}/preload_status")
     async def api_preload_status(name: str, request: Request):
-        origin = request.headers.get("origin")
-        if not web_runtime.is_allowed_local_origin(origin):
-            web_runtime.logger.warning("已拒绝非本机来源的 preload_status 请求：origin=%s", origin)
-            return JSONResponse(content={"error": "forbidden_origin"}, status_code=status.HTTP_403_FORBIDDEN)
-        request_token = _extract_request_token(request)
-        if request_token != web_runtime.get_request_auth_token():
-            web_runtime.logger.warning("已拒绝缺少有效 token 的 preload_status 请求")
-            return JSONResponse(content={"error": "forbidden_token"}, status_code=status.HTTP_403_FORBIDDEN)
+        denied = _require_local_api_access(request, "preload_status")
+        if denied is not None:
+            return denied
 
         canonical_name = web_runtime.resolve_canonical_hero_name(unquote(name))
         return JSONResponse(content=web_runtime.get_preload_hextech_status(canonical_name))
@@ -759,18 +825,13 @@ def register_routes(app: FastAPI) -> None:
             return JSONResponse(content=_build_synergy_api_payload(data, champ_id))
         except Exception as exc:
             web_runtime.logger.warning("协同数据查询失败：%s", exc)
-            return JSONResponse(content={"synergies": [], "synergy_items": []})
+            return JSONResponse(content=_empty_synergy_payload(status_text="error", message="协同数据读取失败"))
 
     @app.post("/api/redirect")
     async def api_redirect(req: RedirectRequest, request: Request):
-        origin = request.headers.get("origin")
-        if not web_runtime.is_allowed_local_origin(origin):
-            web_runtime.logger.warning("已拒绝非本地来源的 redirect 请求：origin=%s", origin)
-            return JSONResponse(content={"error": "forbidden_origin"}, status_code=status.HTTP_403_FORBIDDEN)
-        request_token = _extract_request_token(request)
-        if request_token != web_runtime.get_request_auth_token():
-            web_runtime.logger.warning("已拒绝缺少有效 token 的 redirect 请求。")
-            return JSONResponse(content={"error": "forbidden_token"}, status_code=status.HTTP_403_FORBIDDEN)
+        denied = _require_local_api_access(request, "redirect")
+        if denied is not None:
+            return denied
 
         try:
             hero_name, en_name = web_runtime.get_champion_info(req.hero_id)
@@ -780,16 +841,23 @@ def register_routes(app: FastAPI) -> None:
         if not hero_name:
             hero_name = req.hero_name
 
-        canonical_name = web_runtime.resolve_canonical_hero_name(hero_name or req.hero_name)
+        try:
+            canonical_name = web_runtime.resolve_canonical_hero_name(hero_name or req.hero_name)
+        except (ValueError, TypeError):
+            return JSONResponse(content={"error": "invalid_champion"}, status_code=400)
+
+        standardized_hero_name = hero_name or req.hero_name
+        try:
+            url = web_runtime.build_detail_url(req.hero_id, standardized_hero_name, en_name)
+        except (ValueError, TypeError):
+            return JSONResponse(content={"error": "invalid_champion"}, status_code=400)
+
         try:
             web_runtime.request_preload_hextech_payload_async(canonical_name)
         except Exception:
             web_runtime.logger.warning("英雄详情异步预加载请求失败：hero=%s", canonical_name, exc_info=True)
 
-        standardized_hero_name = hero_name or req.hero_name
-
         if len(web_runtime.manager.active) == 0:
-            url = web_runtime.build_detail_url(req.hero_id, standardized_hero_name, en_name)
             if web_runtime.request_open_managed_browser_async(url, replace_existing=True):
                 return JSONResponse(content={"status": "opening_browser", "detail_first": True})
             return JSONResponse(content={"status": "浏览器打开失败"}, status_code=500)

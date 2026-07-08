@@ -244,6 +244,7 @@ class RefreshDegradationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             events_file = tmp_path / "runtime_events.jsonl"
+            degradation_file = tmp_path / "refresh_degradation.v1.json"
             fallback_csv = tmp_path / "Hextech_Data_2026-06-30.csv"
             fallback_csv.write_text("valid-local\n", encoding="utf-8")
 
@@ -274,6 +275,8 @@ class RefreshDegradationTests(unittest.TestCase):
                 with mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: fallback_report):
                     first = refresh.refresh_backend_data(force=False)
                     second = refresh.refresh_backend_data(force=False)
+                self.assertTrue(degradation_file.exists())
+                refresh._ACTIVE_DEGRADATION.clear()
                 with mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: recovered_report):
                     recovered = refresh.refresh_backend_data(force=False)
                 refresh._ACTIVE_DEGRADATION.clear()
@@ -285,6 +288,7 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertEqual(second.degradation_id, first.degradation_id)
             self.assertEqual(recovered.state, "ready")
             self.assertEqual(recovered.degradation_id, first.degradation_id)
+            self.assertFalse(degradation_file.exists())
 
             events = _read_jsonl(events_file)
             self.assertEqual(
@@ -344,6 +348,65 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertEqual([event["event"] for event in events], ["refresh.failed", "refresh.recovered"])
             self.assertEqual(events[1]["previous_state"], "failed")
             self.assertEqual(events[1]["new_state"], "ready")
+
+    def test_heal_worker_busy_report_is_explicit(self):
+        from filelock import Timeout
+        from hextech.scraping import heal_worker
+
+        class BusyLock:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def __enter__(self):
+                raise Timeout("busy")
+
+            def __exit__(self, *_args):
+                return False
+
+        with mock.patch.object(heal_worker, "FileLock", BusyLock), mock.patch.object(heal_worker, "_write_startup_status"):
+            report = heal_worker.heal_missing_artifacts()
+
+        self.assertIs(report["busy"], True)
+        self.assertEqual(report["reason"], "another_repair_running")
+        self.assertIn("heal_worker", report["skipped"])
+
+    def test_refresh_busy_report_does_not_become_ready(self):
+        from hextech.core import refresh
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            events_file = tmp_path / "runtime_events.jsonl"
+            fallback_csv = tmp_path / "Hextech_Data_2026-07-03.csv"
+            fallback_csv.write_text("valid-fallback\n", encoding="utf-8")
+
+            def state_path(name: str) -> str:
+                return str(events_file if name == "runtime_events.v1.jsonl" else tmp_path / name)
+
+            busy_report = {
+                "requested": [],
+                "repaired": [],
+                "fallback": [],
+                "failed": [],
+                "skipped": ["heal_worker"],
+                "busy": True,
+                "reason": "another_repair_running",
+            }
+
+            with (
+                mock.patch.object(refresh, "build_runtime_state_path", state_path),
+                mock.patch.object(refresh, "get_latest_valid_csv", lambda: str(fallback_csv)),
+                mock.patch.object(refresh, "get_latest_csv", lambda: str(fallback_csv)),
+                mock.patch.object(refresh, "rebuild_api_cache_if_needed", lambda force=False: True),
+                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None: None),
+                mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: busy_report),
+            ):
+                refresh._ACTIVE_DEGRADATION.clear()
+                result = refresh.refresh_backend_data(force=False)
+                refresh._ACTIVE_DEGRADATION.clear()
+
+            self.assertEqual(result.state, "degraded")
+            self.assertEqual(result.reason_code, "heal_busy_local_fallback")
+            self.assertIs(result.fallback_used, True)
 
     def test_sanitize_event_message_removes_sensitive_material(self):
         from hextech.core.refresh import sanitize_event_message

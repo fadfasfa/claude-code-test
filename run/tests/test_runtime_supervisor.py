@@ -469,6 +469,47 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertFalse(stop_thread.is_alive())
         self.assertEqual(runtime.snapshot()["status"], "stopped")
 
+    def test_overlay_runtime_host_readiness_timeout_sets_failure_kind_without_sidecar_retry(self):
+        from hextech.runtime_supervisor import OverlayRuntimeManager
+
+        sidecar_started = threading.Event()
+        inactive_events: list[str] = []
+
+        def start_host():
+            raise TimeoutError("game_overlay host 启动超时：5.0s (ready_file=missing, pid=4321)")
+
+        runtime = OverlayRuntimeManager(
+            start_host_func=start_host,
+            start_sidecar_func=lambda: (sidecar_started.set(), object())[1],
+            start_context_poller_func=lambda: object(),
+            prepare_data_func=lambda: {},
+            write_inactive_func=lambda: inactive_events.append("inactive"),
+            prewarm_wait_timeout_seconds=0.2,
+        )
+
+        with self.assertRaisesRegex(TimeoutError, "host 启动超时"):
+            runtime.set_enabled(True)
+
+        snapshot = runtime.snapshot()
+        self.assertEqual(snapshot["status"], "error")
+        self.assertEqual(snapshot["phase"], "failed")
+        self.assertEqual(snapshot["last_start_failure_kind"], "host_readiness_timeout")
+        self.assertIn("ready_file=missing", snapshot["last_error"])
+        self.assertFalse(sidecar_started.is_set())
+        self.assertGreaterEqual(len(inactive_events), 2)
+
+    def test_overlay_runtime_classifies_sidecar_token_mismatch_as_sidecar_failure(self):
+        from hextech.runtime_supervisor import OverlayRuntimeManager
+
+        self.assertEqual(
+            OverlayRuntimeManager._classify_start_failure_kind("Vision sidecar readiness token 不匹配"),
+            "sidecar_failed",
+        )
+        self.assertEqual(
+            OverlayRuntimeManager._classify_start_failure_kind("game_overlay host readiness token 不匹配"),
+            "host_readiness_token_mismatch",
+        )
+
     def test_overlay_runtime_status_reads_host_visible_reason(self):
         from hextech.runtime_supervisor import OverlayRuntimeManager
 

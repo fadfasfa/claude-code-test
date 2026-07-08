@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -26,6 +27,7 @@ from hextech.catalog.runtime_store import (
     resolve_runtime_data_file,
 )
 from hextech.catalog.view_adapter import process_champions_data, process_hextechs_data
+from hextech.support.atomic_io import atomic_write_json
 
 logger = logging.getLogger(__name__)
 CHAMPION_LIST_CACHE_FILE = build_runtime_cache_path("Champion_List_Cache.json")
@@ -50,11 +52,7 @@ def _safe_mtime(path: str) -> float:
 
 
 def _atomic_write_json(path: str, payload: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp_path = path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-    os.replace(tmp_path, path)
+    atomic_write_json(path, payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def _resolve_cache_file(path: str, legacy_relative_name: str) -> str:
@@ -134,14 +132,14 @@ def load_precomputed_champion_list() -> List[dict]:
             and _champion_cache_state["path"] == cache_file
             and _champion_cache_state["mtime"] == mtime
         ):
-            return list(_champion_cache_state["data"])
+            return copy.deepcopy(_champion_cache_state["data"])
 
         data = _read_wrapped_json(cache_file, [])
         if isinstance(data, list):
             _champion_cache_state.update(
                 {"path": cache_file, "mtime": mtime, "data": data}
             )
-            return list(data)
+            return copy.deepcopy(data)
         return []
 
 
@@ -200,7 +198,7 @@ def load_precomputed_hextech_for_hero(hero_name: str) -> Optional[dict]:
                 payload = {}
 
     result = payload.get(normalized) if isinstance(payload, dict) else None
-    return result if isinstance(result, dict) else None
+    return copy.deepcopy(result) if isinstance(result, dict) else None
 
 
 def write_precomputed_champion_list(champions: List[dict], source_tag: str) -> None:

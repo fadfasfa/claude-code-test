@@ -68,7 +68,7 @@ def _format_game_overlay_host_reason(reason: str) -> str:
 
 
 def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tuple[str, str]:
-    """把 Supervisor overlay 组件状态压成桌面状态栏短句。"""
+    """把 Supervisor overlay 组件状态压成游戏内显示的二级状态短句。"""
 
     status = str(overlay.get("status") or "").strip()
     phase = str(overlay.get("phase") or "").strip()
@@ -82,13 +82,13 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
         return ("游戏内显示: 正在关闭", UI_COLORS["warn"])
     if status == "stopped":
         if cache_status in {"queued", "prewarming", "lookup", "building"}:
-            return ("游戏内显示: 模板预热中", UI_COLORS["warn"])
+            return ("游戏内显示: 海克斯卡识别模板预热中", UI_COLORS["warn"])
         if cache_status == "ready":
             return ("游戏内显示: 识别模板已预热", UI_COLORS["muted"])
         return ("游戏内显示: 已关闭", UI_COLORS["muted"])
     if status == "starting":
         if phase == "vision_prewarming":
-            return ("游戏内显示: 窗口已就绪 / 模板预热中", UI_COLORS["warn"])
+            return ("游戏内显示: 窗口已就绪 / 海克斯卡识别模板预热中", UI_COLORS["warn"])
         if phase in {"prepare_data", "context_start"}:
             return ("游戏内显示: 正在准备数据", UI_COLORS["warn"])
         if phase == "sidecar_start":
@@ -101,7 +101,7 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
         if context_status == "degraded":
             return (f"游戏内显示: {reason} / 上下文降级", UI_COLORS["warn"])
         if cache_status in {"queued", "prewarming", "lookup", "building"}:
-            return (f"游戏内显示: {reason} / 模板预热中", UI_COLORS["warn"])
+            return (f"游戏内显示: {reason} / 海克斯卡识别模板预热中", UI_COLORS["warn"])
         return (f"游戏内显示: {reason} / 识别已就绪", UI_COLORS["green"])
     return ("游戏内显示: 等待 Supervisor 状态", UI_COLORS["warn"])
 
@@ -231,6 +231,8 @@ class HextechUI:
         self._pending_ui_refresh = None
         self._collapse_render_after_id = None
         self._overlay_status_after_id = None
+        self._overlay_status_text = ""
+        self._overlay_status_color = UI_COLORS["muted"]
         self._overlay_watchdog_lock = threading.Lock()
         self._overlay_operation_lock = threading.Lock()
         self._game_overlay_desired_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
@@ -530,6 +532,14 @@ class HextechUI:
             font=("Microsoft YaHei", 8),
         )
         self.status_label.pack(side=tk.BOTTOM, pady=5)
+        self.overlay_status_label = tk.Label(
+            self.root,
+            text="",
+            bg=UI_COLORS["base"],
+            fg=UI_COLORS["muted"],
+            font=("Microsoft YaHei", 8),
+        )
+        self.overlay_status_label.pack(side=tk.BOTTOM, pady=(0, 2))
         self._refresh_feature_toggle_styles()
 
     def _build_feature_toggle(
@@ -558,7 +568,10 @@ class HextechUI:
 
         def _on_click(_event=None) -> None:
             if self._feature_toggle_is_busy(text):
-                self._set_status(f"{text} 正在切换中...", UI_COLORS["warn"])
+                if text == "游戏内显示":
+                    self._set_overlay_status_summary("游戏内显示: 正在切换中", UI_COLORS["warn"])
+                else:
+                    self._set_status(f"{text} 正在切换中...", UI_COLORS["warn"])
                 return "break"
             if text in {"Web 前端", "游戏内显示", "私用统计"} and not self._runtime_services_ready:
                 self._set_status("后台服务仍在启动中，请稍候...", UI_COLORS["warn"])
@@ -708,7 +721,7 @@ class HextechUI:
             return
         if self._feature_toggle_is_busy("游戏内显示"):
             return
-        self._set_status("正在恢复游戏内显示...", UI_COLORS["warn"])
+        self._set_overlay_status_summary("游戏内显示: 正在恢复", UI_COLORS["warn"])
         try:
             self._toggle_game_overlay()
         except Exception:
@@ -762,7 +775,10 @@ class HextechUI:
         enabled = bool(self.game_overlay_var.get())
         self._game_overlay_desired_enabled = enabled
         self._set_feature_toggle_busy(toggle_name, True)
-        self._set_status("正在提交游戏内显示启动..." if enabled else "正在提交游戏内显示关闭...", UI_COLORS["warn"])
+        self._set_overlay_status_summary(
+            "游戏内显示: 正在提交启动请求" if enabled else "游戏内显示: 正在提交关闭请求",
+            UI_COLORS["warn"],
+        )
 
         def worker() -> None:
             error: Exception | None = None
@@ -782,14 +798,14 @@ class HextechUI:
                     self._persist_feature_flags_from_controls()
                     action_status = str((action or {}).get("status") or "accepted")
                     status_color = UI_COLORS["green"] if action_status == "completed" and enabled else UI_COLORS["warn"]
-                    self._set_status(
+                    self._set_overlay_status_summary(
                         f"游戏内显示启动请求已提交({action_status})" if enabled else f"游戏内显示关闭请求已提交({action_status})",
                         status_color if enabled else UI_COLORS["muted"],
                     )
                 else:
                     self._restore_feature_toggle_after_failure("game_overlay_enabled", self.game_overlay_var)
                     self._game_overlay_desired_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
-                    self._set_status(f"游戏内显示切换失败: {error}", UI_COLORS["error"])
+                    self._set_overlay_status_summary(f"游戏内显示切换失败: {error}", UI_COLORS["error"])
                 self._set_feature_toggle_busy(toggle_name, False)
 
             self._run_on_ui_thread(finish)
@@ -838,6 +854,14 @@ class HextechUI:
         if hasattr(self, "status_label") and self.status_label.winfo_exists():
             self.status_label.config(text=text, fg=color)
 
+    def _set_overlay_status_summary(self, text: str, color: str) -> None:
+        """只更新游戏内显示的二级状态，不覆盖主服务/英雄状态栏。"""
+
+        self._overlay_status_text = str(text or "")
+        self._overlay_status_color = color
+        if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
+            self.overlay_status_label.config(text=self._overlay_status_text, fg=color)
+
     def _start_overlay_status_polling(self) -> None:
         self._overlay_status_after_id = self.root.after(1000, self._refresh_overlay_status_summary)
 
@@ -878,7 +902,7 @@ class HextechUI:
                 should_report = overlay_enabled or str(overlay.get("status") or "") in {"starting", "running", "stopping", "error"}
                 if should_report:
                     text, color = _format_supervisor_game_overlay_status(overlay)
-                    self._set_status(text, color)
+                    self._set_overlay_status_summary(text, color)
                 return
             self._kick_game_overlay_watchdog()
             if self.service_manager is None:
@@ -901,7 +925,7 @@ class HextechUI:
                 elif watchdog_action == "error":
                     sidecar_text = "识别异常"
                 color = UI_COLORS["green"] if bool(host_visibility.get("visible")) or event_active else UI_COLORS["warn"]
-                self._set_status(f"游戏内显示: {reason} / {sidecar_text}", color)
+                self._set_overlay_status_summary(f"游戏内显示: {reason} / {sidecar_text}", color)
         except Exception:
             logger.debug("读取游戏内 overlay 状态失败。", exc_info=True)
         finally:
@@ -1194,8 +1218,12 @@ class HextechUI:
             # 折叠态隐藏底部状态栏，保留头像列表本体
             if hasattr(self, "status_label") and self.status_label.winfo_exists():
                 self.status_label.pack_forget()
+            if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
+                self.overlay_status_label.pack_forget()
         else:
             self.root.geometry(WINDOW_EXPANDED_GEOMETRY)
+            if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
+                self.overlay_status_label.pack(side=tk.BOTTOM, pady=(0, 2))
             if hasattr(self, "status_label") and self.status_label.winfo_exists():
                 self.status_label.pack(side=tk.BOTTOM, pady=5)
         self._schedule_current_hero_refresh()

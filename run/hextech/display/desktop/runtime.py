@@ -31,6 +31,7 @@ import queue
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -38,6 +39,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlparse
 
@@ -52,6 +54,7 @@ from hextech.overlay.gameflow import probe_lcu_gameflow_in_progress, probe_live_
 from hextech.overlay.window import find_lol_game_window, is_window_renderable
 from hextech.overlay.window_titles import LOL_CLIENT_WINDOW_TITLE
 from hextech.scraping._paths import ASSET_DIR, BASE_DIR
+from hextech.support.image_validation import is_valid_png_bytes
 
 if TYPE_CHECKING:
     from hextech.display.desktop.app import HextechUI
@@ -340,7 +343,7 @@ def _hidden_startupinfo():
 def start_runtime_supervisor_process(
     *,
     parent_pid: int | None = None,
-    timeout: float = 8.0,
+    timeout: float = 15.0,
     prewarm_templates: bool = False,
 ) -> RuntimeSupervisorHandle:
     """启动独立 Runtime Supervisor，并通过 stdout 匿名管道读取 bootstrap JSON。"""
@@ -526,7 +529,8 @@ def close_companion_browser() -> bool:
 
 
 def _web_auth_headers(ui: "HextechUI", web_base: str, timeout: float = 0.5) -> dict[str, str]:
-    token = resolve_web_auth_token(ui.web_port_file, timeout=timeout)
+    web_port_file = str(getattr(ui, "web_port_file", "") or "")
+    token = resolve_web_auth_token(web_port_file, timeout=timeout) if web_port_file else ""
     return {"Origin": web_base, "X-Hextech-Token": token}
 
 
@@ -905,7 +909,7 @@ def _fetch_web_live_state(ui: "HextechUI") -> tuple[dict[str, list[str]] | None,
     if not _web_frontend_available(ui):
         return None, None
     web_base = _resolve_redirect_base(ui)
-    response = ui.session.get(f"{web_base}/api/live_state", timeout=2)
+    response = ui.session.get(f"{web_base}/api/live_state", headers=_web_auth_headers(ui, web_base), timeout=2)
     if response.status_code != 200:
         return None, None
     payload = response.json()
@@ -1171,6 +1175,24 @@ def _apply_rounded_corner(img: "Image.Image", radius: int = 8) -> "Image.Image":
     return img
 
 
+def _write_champion_icon_cache(path: str, data: bytes) -> None:
+    if not is_valid_png_bytes(data):
+        raise ValueError("champion icon response is not a valid PNG")
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(tmp_name, target)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
     """加载英雄头像，优先命中本地缓存，缺失时远端下载后回写到本地。"""
     try:
@@ -1200,8 +1222,7 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
                 if res.status_code != 200:
                     return
                 with ui.img_write_lock:
-                    with open(img_path, "wb") as f:
-                        f.write(res.content)
+                    _write_champion_icon_cache(img_path, res.content)
                 with Image.open(BytesIO(res.content)) as raw_img:
                     img = raw_img.resize((48, 48), Image.Resampling.LANCZOS)
             finally:
@@ -1233,6 +1254,11 @@ def window_sync_loop(ui: "HextechUI") -> None:
     last_gameflow_checked_at = 0.0
     cached_gameflow_in_progress = False
     cached_live_client_in_progress = False
+
+    def _is_stale_window_handle_error(exc: BaseException) -> bool:
+        if getattr(exc, "winerror", None) == 1400:
+            return True
+        return bool(getattr(exc, "args", ()) and exc.args[0] == 1400)
 
     def _foreground_belongs_to_client(hwnd: int | None, foreground_hwnd: int | None) -> bool:
         if not hwnd or not foreground_hwnd:
@@ -1338,7 +1364,15 @@ def window_sync_loop(ui: "HextechUI") -> None:
             if ui._manual_follow_cooldown_elapsed(manual_follow_cooldown):
                 ui._resume_auto_follow()
             return
-        client_rect = win32gui.GetWindowRect(hwnd_client)
+        try:
+            client_rect = win32gui.GetWindowRect(hwnd_client)
+        except Exception as exc:
+            if not _is_stale_window_handle_error(exc):
+                raise
+            logger.debug("客户端窗口句柄已失效，暂停伴生窗跟随并等待下一轮重扫。")
+            _reset_client_tracking()
+            ui._hide_overlay()
+            return
         _sync_overlay_follow(hwnd_client, client_rect, should_show_overlay)
 
     def _client_active(is_client_fg: bool) -> bool:
@@ -1350,7 +1384,16 @@ def window_sync_loop(ui: "HextechUI") -> None:
         return client_active, overlay_active
 
     def _resolve_client_visibility(hwnd_client: int | None) -> bool:
-        return bool(hwnd_client and win32gui.IsWindowVisible(hwnd_client) and not win32gui.IsIconic(hwnd_client))
+        if not hwnd_client:
+            return False
+        try:
+            return bool(win32gui.IsWindowVisible(hwnd_client) and not win32gui.IsIconic(hwnd_client))
+        except Exception as exc:
+            if not _is_stale_window_handle_error(exc):
+                raise
+            logger.debug("客户端窗口句柄已失效，按不可见处理并等待下一轮重扫。")
+            _reset_client_tracking()
+            return False
 
     def _resolve_game_visibility(hwnd_game: int | None) -> bool:
         return is_window_renderable(hwnd_game)

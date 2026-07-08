@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
+import re
 import time
 from collections import Counter
 from datetime import datetime, timezone
@@ -26,6 +26,11 @@ if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 
 from hextech.catalog.runtime_store import get_runtime_root_dir  # noqa: E402
+from hextech.support.user_diagnostics import (  # noqa: E402
+    redact_diagnostic_tail_line,
+    redact_diagnostic_text,
+    redact_diagnostic_value,
+)
 
 
 DEFAULT_TAIL_LINES = 500
@@ -52,6 +57,13 @@ SENSITIVE_NAME_PARTS = (
 SAFE_STATE_EXTENSIONS = {".json"}
 TAIL_EXTENSIONS = {".log", ".jsonl", ".txt"}
 SAFE_DEBUG_EXTENSIONS = {".json", ".jsonl", ".log", ".txt"}
+SENSITIVE_FILENAME_RE = re.compile(
+    r"(?i)\b(?:"
+    r"[A-Za-z0-9_.-]*(?:auth|authorization|token|cookie|secret|password|credential|nonce|lcu|riot|session)[A-Za-z0-9_.-]*"
+    r"\.(?:txt|json|yaml|yml|env|ini|cfg|conf|log)"
+    r"|local\.yaml|proxies\.json|accounts\.json"
+    r")\b"
+)
 STATE_TAIL_FILES = {
     "supervisor_events.v1.jsonl",
     "runtime_events.v1.jsonl",
@@ -145,15 +157,59 @@ def _tail_jsonl_events(path: Path, *, max_lines: int) -> list[dict[str, Any]]:
     return events
 
 
-def _copy_file(source: Path, target: Path, *, copied: list[dict[str, Any]]) -> None:
+def _copy_json_file_redacted(source: Path, target: Path, *, copied: list[dict[str, Any]]) -> None:
+    payload = _read_json(source)
+    if payload is None:
+        return
+    redacted = redact_diagnostic_value(source.name, payload)
+    text = json.dumps(redacted, ensure_ascii=False, indent=2) + "\n"
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
-    copied.append({"source": str(source), "target": str(target), "bytes": source.stat().st_size})
+    target.write_text(text, encoding="utf-8")
+    copied.append({"source": str(source), "target": str(target), "bytes": len(text.encode("utf-8"))})
+
+
+def _redact_bundle_text(value: object) -> str:
+    return SENSITIVE_FILENAME_RE.sub("<sensitive-file>", redact_diagnostic_text(value))
+
+
+def _redact_bundle_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {_redact_bundle_text(key): _redact_bundle_value(child_value) for key, child_value in value.items()}
+    if isinstance(value, list):
+        return [_redact_bundle_value(item) for item in value]
+    if isinstance(value, str):
+        return _redact_bundle_text(value)
+    return value
+
+
+def _copy_debug_file_redacted(source: Path, target: Path, *, copied: list[dict[str, Any]]) -> None:
+    """复制可分享 debug 文本；debug_recent 不允许原样带出本机路径或 token。"""
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if source.suffix.lower() == ".json":
+        payload = _read_json(source)
+        if payload is not None:
+            redacted = _redact_bundle_value(redact_diagnostic_value(source.name, payload))
+            text = json.dumps(redacted, ensure_ascii=False, indent=2) + "\n"
+            target.write_text(text, encoding="utf-8")
+            copied.append({"source": str(source), "target": str(target), "bytes": len(text.encode("utf-8"))})
+            return
+
+    try:
+        lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
+    text = "\n".join(_redact_bundle_text(redact_diagnostic_tail_line(line)) for line in lines) + ("\n" if lines else "")
+    target.write_text(text, encoding="utf-8")
+    copied.append({"source": str(source), "target": str(target), "bytes": len(text.encode("utf-8"))})
 
 
 def _write_tail(source: Path, target: Path, *, max_lines: int, copied: list[dict[str, Any]]) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    text = _tail_text(source, max_lines=max_lines)
+    lines = _tail_text(source, max_lines=max_lines).splitlines()
+    text = "\n".join(_redact_bundle_text(redact_diagnostic_tail_line(line)) for line in lines) + (
+        "\n" if lines else ""
+    )
     target.write_text(text, encoding="utf-8")
     copied.append({"source": str(source), "target": str(target), "bytes": len(text.encode("utf-8")), "tail_lines": max_lines})
 
@@ -328,7 +384,7 @@ def _log_summary(log_paths: Sequence[Path], *, max_lines: int) -> dict[str, Any]
         for line in _tail_text(path, max_lines=max_lines).splitlines():
             upper = line.upper()
             if "ERROR" in upper or "WARNING" in upper or "失败" in line or "异常" in line:
-                problem_lines.append({"file": str(path), "line": line[:1000]})
+                problem_lines.append({"file": str(path), "line": redact_diagnostic_text(line[:1000])})
     return {"recent_problem_lines": problem_lines[-80:]}
 
 
@@ -1076,7 +1132,11 @@ def watch_runtime_diagnostics(
         "events_file": str(events_path),
         "latest_summary_file": str(session_root / LATEST_SUMMARY_FILE),
     }
-    (session_root / "watch_summary.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest = redact_diagnostic_value("watch_summary", manifest)
+    (session_root / "watch_summary.json").write_text(
+        json.dumps(_redact_bundle_value(manifest), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     return manifest
 
 
@@ -1103,12 +1163,12 @@ def collect_runtime_diagnostics(
             if not path.is_file():
                 continue
             if _is_sensitive_path(path):
-                skipped_sensitive.append(str(path))
+                skipped_sensitive.append(_safe_relative(path, runtime_root))
                 continue
             if path.name in STATE_TAIL_FILES or path.suffix.lower() in {".jsonl"}:
                 _write_tail(path, reports_root / "state_tail" / f"{path.name}.tail", max_lines=tail_lines, copied=copied)
             elif path.suffix.lower() in SAFE_STATE_EXTENSIONS:
-                _copy_file(path, reports_root / "state" / path.name, copied=copied)
+                _copy_json_file_redacted(path, reports_root / "state" / path.name, copied=copied)
 
     log_paths: list[Path] = []
     for path in _iter_recent_files(logs_dir, since_timestamp=since_timestamp, extensions=TAIL_EXTENSIONS):
@@ -1119,7 +1179,7 @@ def collect_runtime_diagnostics(
     for path in _iter_recent_files(debug_dir, since_timestamp=since_timestamp, extensions=SAFE_DEBUG_EXTENSIONS):
         debug_paths.append(path)
         relative = _safe_relative(path, debug_dir)
-        _copy_file(path, reports_root / "debug_recent" / relative, copied=copied)
+        _copy_debug_file_redacted(path, reports_root / "debug_recent" / relative, copied=copied)
 
     event_paths = [
         path
@@ -1150,7 +1210,11 @@ def collect_runtime_diagnostics(
         "debug_recent_file_count": len(debug_paths),
         "skipped_sensitive": skipped_sensitive,
     }
-    (reports_root / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary = redact_diagnostic_value("summary", summary)
+    (reports_root / "summary.json").write_text(
+        json.dumps(_redact_bundle_value(summary), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     (reports_root / "README.txt").write_text(
         "\n".join(
             [

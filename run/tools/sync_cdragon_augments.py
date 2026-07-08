@@ -29,6 +29,7 @@ if str(RUN_DIR) not in sys.path:
 from hextech.scraping.icon_resolver import normalize_augment_name, normalize_safe_augment_icon_filename, sanitize_augment_icon_url
 from hextech.catalog.version_catalog import get_augment_resource_catalog_path, load_apexlol_slug_map
 from hextech.support.atomic_io import atomic_write_json
+from hextech.support.image_validation import is_valid_png_bytes
 
 
 CHERRY_AUGMENTS_URL = (
@@ -216,8 +217,8 @@ def _download_one(
     response = requests.get(url, timeout=timeout)
     response.raise_for_status()
     content = response.content
-    if not content:
-        raise ValueError("empty icon response")
+    if not is_valid_png_bytes(content):
+        raise ValueError("invalid png icon response")
     asset_dir.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(f".{target.name}.tmp")
     tmp.write_bytes(content)

@@ -25,9 +25,12 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from tools.bundle_manifest import BUNDLE_MANIFEST_NAME
+from hextech.catalog.runtime_store import build_runtime_state_path, ensure_private_runtime_dir
+from hextech.support.atomic_io import atomic_write_json
 
 
 HEXTECH_SNAPSHOT_PREFIX = PurePosixPath("data/raw/hextech")
@@ -52,13 +55,44 @@ def _empty_manifest() -> dict:
     }
 
 
+def _write_bundle_manifest_startup_warning(status: str, warning: str, manifest_path: Path) -> None:
+    """把 bundle manifest 异常写入 startup_status，便于打包首启诊断。"""
+
+    status_path = Path(build_runtime_state_path("startup_status.json"))
+    ensure_private_runtime_dir(status_path.parent)
+    payload: dict = {}
+    if status_path.exists():
+        try:
+            loaded = json.loads(status_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            payload = {}
+    payload["bundle_manifest"] = {
+        "status": status,
+        "warning": warning,
+        "path": manifest_path.name,
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    if warning:
+        payload["last_error"] = warning
+    atomic_write_json(status_path, payload)
+
+
 def _load_bundle_manifest(bundle_root: Path) -> dict:
     manifest_path = bundle_root / BUNDLE_MANIFEST_NAME
     if not manifest_path.exists():
+        logger.warning("bundle manifest 缺失：%s", manifest_path)
+        _write_bundle_manifest_startup_warning("missing", "bundle_manifest_missing", manifest_path)
         return _empty_manifest()
     try:
-        return json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            return payload
+        raise ValueError("bundle manifest must be a JSON object")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        logger.warning("bundle manifest 无法读取：path=%s error=%s", manifest_path, type(exc).__name__)
+        _write_bundle_manifest_startup_warning("error", "bundle_manifest_invalid", manifest_path)
         return _empty_manifest()
 
 

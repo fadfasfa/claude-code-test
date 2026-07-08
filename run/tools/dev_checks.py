@@ -1014,6 +1014,134 @@ def check_apexlol_hextech_map_size_limit() -> None:
         icon_resolver._APEXLOL_MAP_CACHE = original_cache
 
 
+def check_icon_downloads_reject_non_png_bytes() -> None:
+    """远端图标下载必须验证 PNG 内容，不能把 200 HTML 写成本地 png。"""
+
+    import tools.sync_cdragon_augments as sync_cdragon_augments
+
+    class HtmlStreamResponse:
+        status_code = 200
+
+        def iter_content(self, chunk_size=8192):
+            del chunk_size
+            yield b"<html><body>not an image</body></html>"
+
+    class FakeSession:
+        def get(self, *_args, **_kwargs):
+            return HtmlStreamResponse()
+
+    class HtmlBytesResponse:
+        status_code = 200
+        content = b"<html><body>not an image</body></html>"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    with TemporaryDirectory() as tmp_dir:
+        target = Path(tmp_dir) / "bad_icon.png"
+        with (
+            patch.object(icon_resolver, "_get_download_session", return_value=FakeSession()),
+            patch.object(icon_resolver, "_iter_augment_icon_urls", return_value=iter(("https://example.test/bad_icon.png",))),
+        ):
+            assert icon_resolver.ensure_augment_icon_cached("bad_icon.png", asset_dir=tmp_dir, force_refresh=True) is None
+        assert not target.exists()
+
+    with TemporaryDirectory() as tmp_dir:
+        asset_dir = Path(tmp_dir)
+        target = asset_dir / "bad_champion.png"
+        fake_session = type("FakeChampionSession", (), {"get": lambda self, *_args, **_kwargs: HtmlBytesResponse()})()
+        assert version_sync._download_champion_image(fake_session, "15.13.1", "Aatrox", str(target)) is False
+        assert not target.exists()
+
+    with TemporaryDirectory() as tmp_dir:
+        asset_dir = Path(tmp_dir)
+        target = asset_dir / "bad_web.png"
+        with (
+            patch.object(web_runtime, "get_assets_dir", return_value=str(asset_dir)),
+            patch.object(web_runtime, "resolve_remote_augment_icon_url", return_value="https://example.test/bad_web.png"),
+            patch("hextech.display.web.runtime.requests.get", return_value=HtmlStreamResponse()),
+        ):
+            assert web_runtime.download_augment_icon_from_remote("测试海克斯", "bad_web.png") is None
+        assert not target.exists()
+
+    with TemporaryDirectory() as tmp_dir:
+        asset_dir = Path(tmp_dir)
+        target = asset_dir / "bad_sync.png"
+        with patch("tools.sync_cdragon_augments.requests.get", return_value=HtmlBytesResponse()):
+            try:
+                sync_cdragon_augments._download_one(
+                    {"name": "测试海克斯", "filename": "bad_sync.png", "source_icon_url": "https://example.test/bad_sync.png"},
+                    force=True,
+                    timeout=1,
+                    asset_dir=asset_dir,
+                )
+            except ValueError as exc:
+                assert "invalid png" in str(exc)
+            else:
+                raise AssertionError("CDragon 同步不得接受非 PNG 字节")
+        assert not target.exists()
+
+
+def check_verify_data_source_integrity_offline_fixture_mode() -> None:
+    """离线 fixture 模式必须跳过所有远端请求，保留本地数据一致性检查。"""
+
+    import tools.verify_data_source_integrity as verifier
+
+    row = {
+        "英雄ID": "1",
+        "英雄名称": "测试英雄",
+        "海克斯ID": "101",
+        "海克斯名称": "测试海克斯",
+        "海克斯阶级": "Gold",
+        "源站层级": "Gold",
+        "源站排名": 1,
+        "海克斯胜率": 0.5,
+        "海克斯出场率": 0.2,
+        "英雄胜率": 0.51,
+        "英雄出场率": 0.12,
+    }
+    core_data = {
+        "1": {
+            "name": "测试英雄",
+            "title": "测试标题",
+            "en_name": "TestHero",
+            "aliases": [],
+        }
+    }
+    fixture_payload = {
+        "core_data": core_data,
+        "augment_metadata": {},
+        "champion_stats": [],
+        "source_rows_by_champ_id": {"1": [row]},
+    }
+    cache_payload = {"comprehensive": [dict(row)]}
+    df = pd.DataFrame([row])
+
+    with TemporaryDirectory() as tmp_dir:
+        fixture_path = Path(tmp_dir) / "source_fixture.json"
+        fixture_path.write_text(json.dumps(fixture_payload, ensure_ascii=False), encoding="utf-8")
+        csv_path = Path(tmp_dir) / "Hextech_Data_2026-07-07.csv"
+        df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+        with (
+            patch.object(verifier, "get_advanced_session", side_effect=AssertionError("offline fixture 不得创建远端 session")),
+            patch.object(verifier.hex_scraper, "fetch_with_retry", side_effect=AssertionError("offline fixture 不得请求远端")),
+            patch.object(verifier, "load_champion_core_data", return_value=core_data),
+            patch.object(verifier, "get_latest_csv", return_value=str(csv_path)),
+            patch.object(verifier, "load_runtime_csv", return_value=df),
+            patch.object(verifier, "load_precomputed_champion_list", return_value=[{"英雄ID": "1", "英雄胜率": 0.51, "英雄出场率": 0.12}]),
+            patch.object(verifier, "load_precomputed_hextech_for_hero", return_value=cache_payload),
+            patch.object(verifier, "_build_api_client", return_value=object()),
+            patch.object(verifier, "_load_api_payload", return_value=cache_payload),
+        ):
+            code, report = verifier.run(verifier.parse_args(["--offline-fixture", str(fixture_path), "--heroes", "1"]))
+
+    assert code == 0
+    assert report["passed"] is True
+    assert report["source_mode"] == "offline-fixture"
+    assert report["heroes"][0]["checks"]["csv"]["source_count"] == 1
+
+
 def check_runtime_alias_persistence() -> None:
     original_runtime_alias_file = alias_search.RUNTIME_ALIAS_FILE
     original_alias_index_file = alias_search.CHAMPION_ALIAS_INDEX_FILE
@@ -1241,6 +1369,46 @@ def check_redirect_api_defers_browser_open_before_response() -> None:
     async_open.assert_called_once_with("http://127.0.0.1:8000/detail.html?hero=x&id=86&en=Garen&auto=1", replace_existing=True)
 
 
+def check_redirect_api_handles_invalid_champion_input() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import hextech.display.web.api as web_api
+
+    app = FastAPI()
+    web_api.register_routes(app)
+
+    with (
+        patch.object(web_api.web_runtime, "get_request_auth_token", return_value="token"),
+        patch.object(web_api.web_runtime, "get_champion_info", return_value=("", "")),
+        patch.object(web_api.web_runtime, "resolve_canonical_hero_name", side_effect=ValueError("bad champion")),
+    ):
+        response = TestClient(app).post(
+            "/api/redirect",
+            json={"hero_id": "%", "hero_name": "%"},
+            headers={"Origin": "http://127.0.0.1:8000", "X-Hextech-Token": "token"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_champion"
+
+    with (
+        patch.object(web_api.web_runtime, "get_request_auth_token", return_value="token"),
+        patch.object(web_api.web_runtime, "get_champion_info", return_value=("德玛西亚之力", "Garen")),
+        patch.object(web_api.web_runtime, "resolve_canonical_hero_name", return_value="德玛西亚之力"),
+        patch.object(web_api.web_runtime, "request_preload_hextech_payload_async", return_value=True),
+        patch.object(web_api.web_runtime, "manager", type("DummyManager", (), {"active": []})()),
+        patch.object(web_api.web_runtime, "build_detail_url", side_effect=ValueError("invalid_hero_id")),
+    ):
+        response = TestClient(app).post(
+            "/api/redirect",
+            json={"hero_id": "%", "hero_name": "德玛西亚之力"},
+            headers={"Origin": "http://127.0.0.1:8000", "X-Hextech-Token": "token"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_champion"
+
+
 def check_detail_api_defers_cold_local_processing() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -1255,10 +1423,10 @@ def check_detail_api_defers_cold_local_processing() -> None:
         patch.object(web_api.web_runtime, "get_preload_hextech_status", return_value={"ready": False, "pending": False}),
         patch.object(web_api, "is_precomputed_hextech_cache_loaded", return_value=False),
         patch.object(web_api, "load_precomputed_hextech_for_hero", side_effect=AssertionError("详情冷路径不应同步读取预计算详情缓存")),
-        patch.object(web_api, "_request_precomputed_hextech_warm", return_value=True) as warm_cache,
-        patch.object(web_api, "_request_precomputed_hextech_rebuild", return_value=True),
+        patch.object(web_api, "_request_precomputed_hextech_warm", side_effect=AssertionError("公开详情 GET 不应启动缓存暖机")),
+        patch.object(web_api, "_request_precomputed_hextech_rebuild", side_effect=AssertionError("公开详情 GET 不应启动重建")),
         patch.object(web_api.web_runtime, "request_background_refresh", return_value=True),
-        patch.object(web_api.web_runtime, "request_preload_hextech_payload_async", return_value=True) as async_preload,
+        patch.object(web_api.web_runtime, "request_preload_hextech_payload_async", side_effect=AssertionError("公开详情 GET 不应启动预加载")),
         patch.object(web_api.web_runtime, "get_live_hextech_snapshot_df", side_effect=AssertionError("本地数据可用时不应等待远端详情快照")),
         patch.object(web_api, "process_hextechs_data", side_effect=AssertionError("详情冷路径不应同步计算海克斯")),
     ):
@@ -1269,8 +1437,6 @@ def check_detail_api_defers_cold_local_processing() -> None:
     assert payload["loading"] is True
     assert payload["ready"] is False
     assert payload["comprehensive"] == []
-    warm_cache.assert_called_once()
-    async_preload.assert_called_once_with("德玛西亚之力")
 
 
 def check_detail_renders_before_deferred_icon_catalog() -> None:
@@ -1283,8 +1449,16 @@ def check_detail_renders_before_deferred_icon_catalog() -> None:
     assert "loadAugmentIconMap().then" in load_body
     assert "await loadAugmentIconMap();" not in load_body
     assert load_body.index("renderCurrentView();") < load_body.index("loadAugmentIconMap().then")
-    assert "DETAIL_LOADING_RETRY_MS" in detail_script
+    assert "DETAIL_LOADING_RETRY_BASE_MS" in detail_script
+    assert "DETAIL_LOADING_RETRY_MAX_MS" in detail_script
+    assert "DETAIL_LOADING_MAX_RETRIES" not in detail_script
     assert "scheduleDetailRetry" in detail_script
+    assert "describeLoadingStatus" in detail_script
+    assert "startup_status" in detail_script
+    assert "preload_status" in detail_script
+    dormant_start = detail_script.index("function dormancyDormant()")
+    dormant_end = detail_script.index("function reactivateTab()", dormant_start)
+    assert "clearDetailRetry();" in detail_script[dormant_start:dormant_end]
 
 
 def check_heal_worker_contract() -> None:
@@ -1957,6 +2131,42 @@ def check_scrapling_fetch_text_keeps_internal_retry() -> None:
 
     assert result.status_code == 200
     assert calls
+    assert calls[0]["retries"] == 1
+
+
+def check_scrapling_fetch_page_get_timeout_uses_seconds() -> None:
+    """Scrapling Fetcher.get 的 timeout 必须使用秒，避免 30_000 被解释成 8 小时。"""
+
+    calls = []
+
+    class GoodResponse:
+        html = "<html></html>"
+        status = 200
+
+        def css(self, _selector):
+            raise AssertionError("未传 selector 时不应读取 css")
+
+    class RecordingFetcher:
+        @staticmethod
+        def get(*_args, **kwargs):
+            calls.append(kwargs)
+            return GoodResponse()
+
+    fetchers_module = type(sys)("scrapling.fetchers")
+    fetchers_module.Fetcher = RecordingFetcher
+    fetchers_module.DynamicFetcher = RecordingFetcher
+    fetchers_module.StealthyFetcher = RecordingFetcher
+    scrapling_module = type(sys)("scrapling")
+    scrapling_module.fetchers = fetchers_module
+    with (
+        patch.object(scrapling_client, "_require_scrapling"),
+        patch.dict(sys.modules, {"scrapling": scrapling_module, "scrapling.fetchers": fetchers_module}),
+    ):
+        result = scrapling_client.fetch_page("https://example.test", timeout_ms=30_000, max_attempts=1)
+
+    assert result.status_code == 200
+    assert calls
+    assert calls[0]["timeout"] == 30.0
     assert calls[0]["retries"] == 1
 
 
@@ -4872,7 +5082,8 @@ def check_desktop_ui_feature_switch_contract() -> None:
     assert "hextech-overlay-watchdog" in ui_text
     assert "hextech-toggle-private-stats" in ui_text
     assert "正在切换 Web 前端" in ui_text
-    assert "正在提交游戏内显示启动" in ui_text
+    assert "_set_overlay_status_summary" in ui_text
+    assert "游戏内显示: 正在提交启动请求" in ui_text
     assert "游戏内显示启动请求已提交" in ui_text
     assert "WINDOW_EXPANDED_GEOMETRY = \"320x740\"" in ui_text
     assert "manage_overlay_runtime=False" in ui_text
@@ -5374,6 +5585,167 @@ def check_precomputed_cache_freshness() -> None:
             assert read_count["value"] == 2
 
 
+def check_precomputed_cache_returns_unpollutable_copies() -> None:
+    with TemporaryDirectory() as temp_dir:
+        latest_csv = Path(temp_dir) / "Hextech_Data_20260518.csv"
+        latest_csv.write_text("英雄名称\n酒桶\n", encoding="utf-8")
+        os.utime(latest_csv, (5000, 5000))
+
+        champion_cache = Path(temp_dir) / "Champion_List_Cache.json"
+        champion_cache.write_text(
+            json.dumps(
+                {
+                    "meta": {"source": latest_csv.name, "source_mtime": 5000},
+                    "data": [{"name": "酒桶", "stats": {"wins": 1}}],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        hextech_cache = Path(temp_dir) / "Champion_Hextech_Cache.json"
+        hextech_cache.write_text(
+            json.dumps(
+                {
+                    "meta": {"source": latest_csv.name, "source_mtime": 5000},
+                    "data": {"酒桶": {"comprehensive": [{"海克斯名称": "A", "score": {"value": 1}}]}},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        precomputed_cache._champion_cache_state.update({"path": "", "mtime": 0.0, "data": []})
+        precomputed_cache._hextech_cache_state.update({"path": "", "mtime": 0.0, "data": {}})
+        precomputed_cache._cache_match_state.clear()
+
+        def resolve_cache_file(path: str, _legacy_name: str) -> str:
+            if path == precomputed_cache.CHAMPION_LIST_CACHE_FILE:
+                return str(champion_cache)
+            return str(hextech_cache)
+
+        with (
+            patch.object(precomputed_cache, "get_latest_csv", return_value=str(latest_csv)),
+            patch.object(precomputed_cache, "_resolve_cache_file", side_effect=resolve_cache_file),
+        ):
+            champions = precomputed_cache.load_precomputed_champion_list()
+            champions[0]["stats"]["wins"] = 999
+            assert precomputed_cache.load_precomputed_champion_list()[0]["stats"]["wins"] == 1
+
+            hero_payload = precomputed_cache.load_precomputed_hextech_for_hero("酒桶")
+            hero_payload["comprehensive"][0]["score"]["value"] = 999
+            fresh_payload = precomputed_cache.load_precomputed_hextech_for_hero("酒桶")
+            assert fresh_payload["comprehensive"][0]["score"]["value"] == 1
+
+
+def check_cached_dataframe_loader_returns_copy_and_hash_samples_middle() -> None:
+    import pandas as pd
+    from hextech.catalog.runtime_store import CachedDataFrameLoader
+    from hextech.catalog import view_adapter
+
+    with TemporaryDirectory() as temp_dir:
+        csv_path = Path(temp_dir) / "Hextech_Data_20260518.csv"
+        csv_path.write_text(
+            "\n".join(
+                [
+                    "英雄ID,英雄名称,英雄评级,英雄胜率,英雄出场率,海克斯名称,海克斯阶级,海克斯胜率,海克斯出场率",
+                    "1,酒桶,A,50.0,10.0,A,Gold,55.0,2.0",
+                    "2,盖伦,B,49.0,8.0,B,Silver,51.0,1.5",
+                    "3,拉克丝,S,52.0,12.0,C,Prismatic,57.0,1.0",
+                    "",
+                ]
+            ),
+            encoding="utf-8-sig",
+        )
+        os.utime(csv_path, (6000, 6000))
+
+        loader = CachedDataFrameLoader(lambda: str(csv_path))
+        first = loader.get_df()
+        first.loc[0, "英雄名称"] = "污染"
+        second = loader.get_df()
+        assert second.loc[0, "英雄名称"] == "酒桶"
+
+    left = pd.DataFrame({"英雄名称": ["A", "B", "C", "D", "E"], "score": [1, 2, 3, 4, 5]})
+    right = pd.DataFrame({"英雄名称": ["A", "B", "C", "D", "E"], "score": [1, 99, 3, 4, 5]})
+    assert view_adapter._compute_df_hash(left) != view_adapter._compute_df_hash(right)
+
+    cache_df = pd.DataFrame(
+        {
+            "英雄ID": [1, 2],
+            "英雄名称": ["酒桶", "盖伦"],
+            "英雄评级": ["A", "B"],
+            "英雄胜率": [50.0, 49.0],
+            "英雄出场率": [10.0, 8.0],
+            "海克斯名称": ["A", "B"],
+            "海克斯阶级": ["Gold", "Silver"],
+            "海克斯胜率": [55.0, 51.0],
+            "海克斯出场率": [2.0, 1.5],
+            "胜率差": [5.0, 2.0],
+            "综合得分": [1.0, 0.5],
+        }
+    )
+    view_adapter._champion_cache_pool.clear()
+    view_adapter._hextech_cache_pool.clear()
+    view_adapter._cache_metadata.clear()
+
+    champions = view_adapter.process_champions_data(cache_df, use_runtime_cache=True, log_columns=False)
+    champions[0]["英雄名称"] = "污染"
+    fresh_champions = view_adapter.process_champions_data(cache_df, use_runtime_cache=True, log_columns=False)
+    assert fresh_champions[0]["英雄名称"] != "污染"
+
+    hextechs = view_adapter.process_hextechs_data(
+        cache_df,
+        "酒桶",
+        catalog_lookup={},
+        use_runtime_cache=True,
+        log_columns=False,
+    )
+    hextechs["comprehensive"][0]["海克斯名称"] = "污染"
+    fresh_hextechs = view_adapter.process_hextechs_data(
+        cache_df,
+        "酒桶",
+        catalog_lookup={},
+        use_runtime_cache=True,
+        log_columns=False,
+    )
+    assert fresh_hextechs["comprehensive"][0]["海克斯名称"] != "污染"
+
+
+def check_precomputed_atomic_write_uses_unique_temp_files() -> None:
+    with TemporaryDirectory() as temp_dir:
+        target = Path(temp_dir) / "cache.json"
+        replace_sources: list[str] = []
+        original_replace = precomputed_cache.atomic_write_json.__globals__["os"].replace
+        replace_lock = threading.Lock()
+
+        def tracking_replace(src, dst):
+            with replace_lock:
+                replace_sources.append(str(src))
+            original_replace(src, dst)
+
+        errors: list[BaseException] = []
+
+        def write_payload(index: int) -> None:
+            try:
+                precomputed_cache._atomic_write_json(str(target), {"value": index})
+            except BaseException as exc:
+                errors.append(exc)
+
+        with patch.object(precomputed_cache.atomic_write_json.__globals__["os"], "replace", side_effect=tracking_replace):
+            threads = [
+                threading.Thread(target=write_payload, args=(index,))
+                for index in range(2)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        assert not errors
+        assert json.loads(target.read_text(encoding="utf-8"))["value"] in {0, 1}
+        assert len(replace_sources) == 2
+        assert len(set(replace_sources)) == 2
+        assert not target.with_suffix(target.suffix + ".tmp").exists()
+
+
 def check_apex_source_snapshot_policy() -> None:
     with TemporaryDirectory() as temp_dir:
         root = Path(temp_dir) / "apex_snapshot"
@@ -5393,6 +5765,28 @@ def check_apex_source_snapshot_policy() -> None:
         assert len(resources) == 1
         assert resources[0].source == "snapshot"
         assert "sample.json" in resources[0].url
+
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir) / "apex_snapshot"
+        manual = root / "manual"
+        root.mkdir(parents=True)
+        env = {
+            "APEX_SNAPSHOT_DIR": "",
+            "APEX_SYNERGY_JSON_URL": "",
+        }
+
+        with (
+            patch.object(synergy_scraper, "DEFAULT_APEX_SNAPSHOT_DIR", str(root)),
+            patch.object(synergy_scraper, "DEFAULT_APEX_MANUAL_SNAPSHOT_DIR", str(manual)),
+            patch.dict(os.environ, env, clear=True),
+        ):
+            source = synergy_scraper.ApexSource()
+            with (
+                patch.object(source, "fetch_configured_json_resource", side_effect=AssertionError("默认不得读取在线 JSON")),
+                patch.object(source, "fetch", side_effect=AssertionError("默认不得联网抓取 Apex 页面")),
+            ):
+                assert source.discover_resources() == []
+            source.close()
 
     with TemporaryDirectory() as temp_dir:
         root = Path(temp_dir) / "apex_snapshot"
@@ -5451,11 +5845,22 @@ def check_apex_source_snapshot_policy() -> None:
                 return_value=FetchedResource(url=detail_url, text=origin_html, source="scrapling-stealthy", status_code=200),
             ) as fetch_stealthy,
             patch.object(source, "fetch_cloakbrowser", side_effect=AssertionError("Stealthy 成功后不应启动 CloakBrowser")),
+            patch.dict(os.environ, {"APEX_ALLOW_STEALTHY": "1"}),
         ):
-            fetched = source.fetch(detail_url)
+            fetched = source.fetch(detail_url, allow_stealthy=True)
             assert fetched is not None
             assert fetched.source == "scrapling-stealthy"
             fetch_stealthy.assert_called_once_with(detail_url)
+
+        with (
+            patch.object(synergy_scraper, "fetch_text", return_value=scrapling_result(403, cf_html)),
+            patch.object(source, "fetch_stealthy", side_effect=AssertionError("默认不得启动 Stealthy")),
+            patch.object(source, "fetch_cloakbrowser", side_effect=AssertionError("默认不得启动 CloakBrowser")),
+            patch.dict(os.environ, {"APEX_ALLOW_STEALTHY": ""}, clear=False),
+        ):
+            fetched = source.fetch(detail_url)
+            assert fetched is not None
+            assert fetched.source == "scrapling-get"
 
         blocked_stealthy = FetchedResource(
             url=detail_url,
@@ -5483,9 +5888,9 @@ def check_apex_source_snapshot_policy() -> None:
             patch.object(synergy_scraper, "fetch_text", return_value=scrapling_result(403, cf_html)),
             patch.object(source, "fetch_stealthy", return_value=blocked_stealthy),
             patch.object(source, "fetch_cloakbrowser", side_effect=AssertionError("CloakBrowser 已禁用")),
-            patch.dict(os.environ, {"APEX_ALLOW_CLOAKBROWSER": "0"}),
+            patch.dict(os.environ, {"APEX_ALLOW_STEALTHY": "1", "APEX_ALLOW_CLOAKBROWSER": "0"}),
         ):
-            fetched = source.fetch(detail_url)
+            fetched = source.fetch(detail_url, allow_stealthy=True)
             assert fetched is not None
             assert fetched.source == "scrapling-stealthy"
     finally:

@@ -71,7 +71,16 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
                 "\n".join(
                     [
                         json.dumps({"event": "refresh.started", "level": "INFO"}),
-                        json.dumps({"event": "fallback.activated", "level": "WARNING", "reason_code": "remote_http_error"}),
+                        json.dumps(
+                            {
+                                "event": "fallback.activated",
+                                "level": "WARNING",
+                                "reason_code": "remote_http_error",
+                                "published_data_path": str(root / "raw" / "hextech" / "Hextech_Data_2026-07-05.csv"),
+                                "fallback_path": "C:/Users/apple/claudecode/run/data/runtime/raw/hextech/Hextech_Data_2026-07-05.csv",
+                                "url": "https://example.test/path?access_token=secret-token",
+                            }
+                        ),
                     ]
                 )
                 + "\n",
@@ -261,7 +270,10 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             (state / "auth_token.txt").write_text("secret-token", encoding="utf-8")
             (state / "lcu_session.json").write_text('{"session":"secret"}', encoding="utf-8")
             (state / "riot_client_state.json").write_text('{"token":"secret"}', encoding="utf-8")
-            (logs / "hextech_runtime_summary.log").write_text("ok\nERROR overlay failed\n", encoding="utf-8")
+            (logs / "hextech_runtime_summary.log").write_text(
+                "ok\nERROR overlay failed local.yaml proxies.json accounts.json\n",
+                encoding="utf-8",
+            )
             (debug / "official-overlay.json").write_text(
                 json.dumps(
                     {
@@ -276,6 +288,23 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
                     },
                     ensure_ascii=False,
                 ),
+                encoding="utf-8",
+            )
+            (debug / "sensitive-debug.json").write_text(
+                json.dumps(
+                    {
+                        "auth_token.txt": "file-name-key",
+                        "local.yaml": "config-name-key",
+                        "path": str(root / "raw" / "hextech" / "Hextech_Data_2026-07-05.csv"),
+                        "url": "https://example.test/debug?access_token=secret-token",
+                        "note": "auth_token.txt local.yaml proxies.json accounts.json should not leak",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (debug / "sensitive-debug.log").write_text(
+                f"debug path={root}\\raw\\hextech\\Hextech_Data_2026-07-05.csv token=secret-token local.yaml proxies.json accounts.json\n",
                 encoding="utf-8",
             )
 
@@ -332,6 +361,25 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             self.assertTrue(any("auth_token.txt" in item for item in summary["skipped_sensitive"]))
             self.assertTrue(any("lcu_session.json" in item for item in summary["skipped_sensitive"]))
             self.assertTrue(any("riot_client_state.json" in item for item in summary["skipped_sensitive"]))
+            exported_blob = (
+                (output / "summary.json").read_text(encoding="utf-8")
+                + (output / "state_tail" / "runtime_events.v1.jsonl.tail").read_text(encoding="utf-8")
+                + (output / "state" / "startup_status.json").read_text(encoding="utf-8")
+                + (output / "logs_tail" / "hextech_runtime_summary.log.tail").read_text(encoding="utf-8")
+                + (output / "debug_recent" / "official_overlay_provider" / "sensitive-debug.json").read_text(encoding="utf-8")
+                + (output / "debug_recent" / "official_overlay_provider" / "sensitive-debug.log").read_text(encoding="utf-8")
+            )
+            self.assertNotIn(str(root), exported_blob)
+            self.assertNotIn("C:/Users/apple", exported_blob)
+            self.assertNotIn("C:\\Users\\apple", exported_blob)
+            self.assertNotIn("Hextech_Data_2026-07-05.csv", exported_blob)
+            self.assertNotIn("secret-token", exported_blob)
+            self.assertNotIn("auth_token.txt", exported_blob)
+            self.assertNotIn("local.yaml", exported_blob)
+            self.assertNotIn("proxies.json", exported_blob)
+            self.assertNotIn("accounts.json", exported_blob)
+            self.assertIn("<local-path>", exported_blob)
+            self.assertIn("https://example.test/path?<redacted>", exported_blob)
 
     def test_watch_writes_periodic_snapshots(self):
         from tools.collect_runtime_diagnostics import watch_runtime_diagnostics
@@ -359,6 +407,12 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             self.assertEqual(manifest["snapshot_count"], 2)
             self.assertTrue((output / "watch_summary.json").is_file())
             self.assertTrue((output / "latest_summary.json").is_file())
+            watch_summary_text = (output / "watch_summary.json").read_text(encoding="utf-8")
+            manifest_blob = json.dumps(manifest, ensure_ascii=False) + watch_summary_text
+            self.assertNotIn(str(root), manifest_blob)
+            self.assertNotIn(str(output), manifest_blob)
+            self.assertNotIn("C:\\Users\\apple", manifest_blob)
+            self.assertIn("<local-path>", manifest_blob)
             event_lines = (output / "watch_events.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(event_lines), 2)
             first_event = json.loads(event_lines[0])

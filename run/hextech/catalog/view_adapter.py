@@ -15,6 +15,7 @@ import re
 import ast
 import operator
 import json
+import copy
 from html import unescape
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -91,16 +92,17 @@ def _get_champion_maps():
 
 
 def _compute_df_hash(df: pd.DataFrame) -> str:
-    # 基于行数、列名和边界数据计算轻量哈希。
+    # 基于行数、列名和全量行内容摘要计算哈希，避免只改中间行时误命中缓存。
     try:
         row_count = len(df)
         col_hash = hashlib.sha256(str(tuple(df.columns)).encode()).hexdigest()[:8]
 
-        sample_data = ""
+        content_hash = ""
         if row_count > 0:
-            sample_data = str(df.iloc[0].tolist()) + str(df.iloc[-1].tolist())
+            row_hashes = pd.util.hash_pandas_object(df, index=True).values
+            content_hash = hashlib.sha256(row_hashes.tobytes()).hexdigest()[:16]
 
-        hash_input = f"{row_count}|{col_hash}|{sample_data}"
+        hash_input = f"{row_count}|{col_hash}|{content_hash}"
         return hashlib.sha256(hash_input.encode()).hexdigest()[:16]
     except Exception as e:
         logging.warning(f"计算 DataFrame 哈希失败：{e}")
@@ -111,7 +113,7 @@ def _get_from_cache(cache_pool: dict, key) -> Optional[Any]:
     if key in cache_pool:
         meta = _cache_metadata.get(key, {})
         if CACHE_TTL <= 0 or (time.time() - meta.get('timestamp', 0)) < CACHE_TTL:
-            return cache_pool[key]
+            return copy.deepcopy(cache_pool[key])
         cache_pool.pop(key, None)
         _cache_metadata.pop(key, None)
     return None
@@ -124,7 +126,7 @@ def _set_to_cache(cache_pool: dict, key, value: Any, df: pd.DataFrame) -> None:
         cache_pool.pop(oldest_key, None)
         _cache_metadata.pop(oldest_key, None)
 
-    cache_pool[key] = value
+    cache_pool[key] = copy.deepcopy(value)
     _cache_metadata[key] = {
         'row_count': len(df),
         'timestamp': time.time()

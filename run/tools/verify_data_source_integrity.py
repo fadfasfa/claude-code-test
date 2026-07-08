@@ -58,6 +58,13 @@ def _read_json(path: str | Path) -> Any:
         return json.load(f)
 
 
+def _load_offline_fixture(path: str | Path) -> dict:
+    payload = _read_json(path)
+    if not isinstance(payload, dict):
+        raise ValueError("offline fixture 必须是 JSON object")
+    return payload
+
+
 def _fetch_json_from_candidates(session, urls: tuple[str, ...] | list[str], expected_type: type) -> Any:
     for url in urls:
         response = hex_scraper.fetch_with_retry(session, url, max_retries=1, timeout=10)
@@ -127,7 +134,15 @@ def _source_rows_for_hero(
     aug_id_map: dict[str, str],
     truth_dict: dict[str, str],
     aug_tier_map: dict[str, str],
+    fixture_source_rows: dict[str, list[dict]] | None = None,
+    fixture_detail_pages: dict[str, str] | None = None,
 ) -> list[dict]:
+    if fixture_source_rows is not None:
+        rows = fixture_source_rows.get(str(champ_id))
+        if isinstance(rows, list):
+            return [dict(row) for row in rows if isinstance(row, dict)]
+        raise RuntimeError(f"offline fixture 缺失 source_rows_by_champ_id：{champ_id}")
+
     hero_info = core_data[champ_id]
     champ_data = stats_by_id.get(champ_id) or {
         "championId": champ_id,
@@ -135,6 +150,23 @@ def _source_rows_for_hero(
         "winRate": 0,
         "pickRate": 0,
     }
+
+    if fixture_detail_pages is not None:
+        html = str(fixture_detail_pages.get(str(champ_id)) or "")
+        if not html:
+            raise RuntimeError(f"offline fixture 缺失 detail_pages_by_champ_id：{champ_id}")
+        rows = hex_scraper.extract_champion_stats(
+            html,
+            aug_id_map,
+            truth_dict,
+            champ_id,
+            hero_info.get("name", champ_id),
+            champ_data,
+            aug_tier_map,
+        )
+        if rows:
+            return rows
+        raise RuntimeError(f"offline fixture 详情页无可解析 augments：{champ_id}")
 
     last_error = ""
     for url in build_hextech_detail_urls(champ_id):
@@ -326,14 +358,35 @@ def _champion_list_entry_map() -> dict[str, dict]:
 
 
 def run(args) -> tuple[int, dict]:
-    core_data = load_champion_core_data()
+    offline_fixture = _load_offline_fixture(args.offline_fixture) if args.offline_fixture else None
+    fixture_core_data = offline_fixture.get("core_data") if offline_fixture else None
+    core_data = fixture_core_data if isinstance(fixture_core_data, dict) and fixture_core_data else load_champion_core_data()
     if not core_data:
         raise RuntimeError("Champion_Core_Data.json 读取失败")
 
     seed, hero_ids = _select_heroes(args, core_data)
-    session = get_advanced_session()
-    aug_data = _fetch_json_from_candidates(session, list(HEXTECH_AUGMENT_METADATA_URLS), dict)
-    stats_list = _fetch_json_from_candidates(session, list(HEXTECH_CHAMPION_STATS_URLS), list)
+    fixture_source_rows = None
+    fixture_detail_pages = None
+    if offline_fixture is not None:
+        session = None
+        aug_data = offline_fixture.get("augment_metadata") or {}
+        stats_list = offline_fixture.get("champion_stats") or []
+        raw_rows = offline_fixture.get("source_rows_by_champ_id")
+        if raw_rows is not None:
+            if not isinstance(raw_rows, dict):
+                raise ValueError("offline fixture 字段 source_rows_by_champ_id 必须是 object")
+            fixture_source_rows = raw_rows
+        raw_pages = offline_fixture.get("detail_pages_by_champ_id")
+        if raw_pages is not None:
+            if not isinstance(raw_pages, dict):
+                raise ValueError("offline fixture 字段 detail_pages_by_champ_id 必须是 object")
+            fixture_detail_pages = raw_pages
+        if fixture_source_rows is None and fixture_detail_pages is None:
+            raise ValueError("offline fixture 必须提供 source_rows_by_champ_id 或 detail_pages_by_champ_id")
+    else:
+        session = get_advanced_session()
+        aug_data = _fetch_json_from_candidates(session, list(HEXTECH_AUGMENT_METADATA_URLS), dict)
+        stats_list = _fetch_json_from_candidates(session, list(HEXTECH_CHAMPION_STATS_URLS), list)
     stats_by_id = {str(item.get("championId")): item for item in stats_list if isinstance(item, dict)}
     truth_dict = hex_scraper.load_augment_map()
     aug_id_map, aug_tier_map = _build_augment_maps(aug_data)
@@ -356,6 +409,7 @@ def run(args) -> tuple[int, dict]:
         "sample_size": len(hero_ids),
         "heroes": [],
         "latest_csv": latest_csv,
+        "source_mode": "offline-fixture" if offline_fixture is not None else "online",
         "csv_hero_count": int(df["英雄名称"].nunique()) if "英雄名称" in df.columns else 0,
         "expected_hero_count": len(core_data),
         "synergy_source": synergy_source_status,
@@ -381,7 +435,17 @@ def run(args) -> tuple[int, dict]:
             "issues": [],
         }
 
-        source_rows = _source_rows_for_hero(session, champ_id, core_data, stats_by_id, aug_id_map, truth_dict, aug_tier_map)
+        source_rows = _source_rows_for_hero(
+            session,
+            champ_id,
+            core_data,
+            stats_by_id,
+            aug_id_map,
+            truth_dict,
+            aug_tier_map,
+            fixture_source_rows=fixture_source_rows,
+            fixture_detail_pages=fixture_detail_pages,
+        )
         csv_rows = df[df["英雄ID"].astype(str) == champ_id].copy() if "英雄ID" in df.columns else pd.DataFrame()
         csv_ok, csv_issues = _compare_csv_rows(source_rows, csv_rows)
         hero_report["checks"]["csv"] = {
@@ -449,6 +513,11 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument("--seed", type=int, default=None, help="随机 seed；缺省时使用当前时间戳并打印。")
     parser.add_argument("--include-synergy", action="store_true", help="同时校验 ApexLoL snapshot 联动数据。")
     parser.add_argument("--heroes", default="", help="指定英雄 ID/名称/别名，逗号或空格分隔；例如 25 或 莫甘娜。")
+    parser.add_argument(
+        "--offline-fixture",
+        default="",
+        help="使用本地 JSON fixture 作为源站输入，跳过所有在线请求；在线端到端仍保留为手动验收。",
+    )
     return parser.parse_args(argv)
 
 

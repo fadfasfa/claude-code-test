@@ -19,5 +19,6 @@ CHECKS = (
     "check_manual_alias_index",             # 验证手动维护的别名索引与数据一致性
     "check_manifest_icon_url_safety",       # 验证图标清单中 URL 安全性（无外部恶意链接）
     "check_icon_resolver_defaults_to_resource_image_dir",  # 验证图标默认读取 data/static/assets
+    "check_icon_downloads_reject_non_png_bytes",  # 验证远端图标不会把 HTML 错误页写成本地 PNG
     "check_no_legacy_imports",              # 验证无残留的旧模块导入
 )

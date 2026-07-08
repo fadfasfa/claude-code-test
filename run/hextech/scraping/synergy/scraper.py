@@ -49,7 +49,7 @@ from hextech.scraping._paths import RUNTIME_DATA_DIR, STATIC_DATA_DIR
 from hextech.catalog.version_catalog import load_apexlol_slug_map, load_augment_manifest_entries, load_champion_core_data
 from hextech.scraping.icon_resolver import normalize_augment_name
 from hextech.scraping.transport.scrapling_client import ScraplingFetchResult, fetch_stealthy_text, fetch_text
-from hextech.support.log_utils import install_runtime_logging, log_task_summary
+from hextech.support.log_utils import RedactingTextFormatter, install_runtime_logging, log_task_summary
 
 
 BASE_DIR = str(Path(RUNTIME_DATA_DIR).parents[1])
@@ -774,7 +774,7 @@ class ApexSource:
         url: str,
         *,
         allow_browser: bool = False,
-        allow_stealthy: bool = True,
+        allow_stealthy: bool = False,
         allow_cloakbrowser: bool = False,
         cloakbrowser_wait_until: Optional[str] = None,
         cloakbrowser_post_wait_ms: Optional[int] = None,
@@ -790,7 +790,7 @@ class ApexSource:
         # 2) Scrapling Stealthy：ApexLoL 详情页可能遇到 Cloudflare / Turnstile /
         #    短期流量限制。这里使用独立运行态 profile，不读取真实浏览器会话。
         stealth_resource = None
-        if allow_stealthy and env_flag("APEX_ALLOW_STEALTHY", "1"):
+        if allow_stealthy and env_flag("APEX_ALLOW_STEALTHY", "0"):
             stealth_resource = self.fetch_stealthy(url)
             if self._resource_is_origin_success(stealth_resource, is_detail=is_detail):
                 return stealth_resource
@@ -798,7 +798,7 @@ class ApexSource:
         # 3) CloakBrowser 作为最后一档 direct fallback；它不是 Scrapling 内核，
         #    也不使用真实浏览器 profile/cookie。
         cloak_resource = None
-        if allow_cloakbrowser or env_flag("APEX_ALLOW_CLOAKBROWSER", "1"):
+        if allow_cloakbrowser or env_flag("APEX_ALLOW_CLOAKBROWSER", "0"):
             cloak_resource = self.fetch_cloakbrowser(
                 url,
                 wait_until=cloakbrowser_wait_until,
@@ -914,11 +914,11 @@ class ApexSource:
             logger.info("使用 Apex 本地 snapshot 资源：count=%s", len(snapshot_resources))
             return snapshot_resources
 
-        if not env_flag("APEX_ALLOW_ONLINE_FETCH", "1"):
+        if not env_flag("APEX_ALLOW_ONLINE_FETCH", "0"):
             logger.error("未找到 Apex snapshot，且 APEX_ALLOW_ONLINE_FETCH 未启用；保留旧协同快照")
             return []
 
-        allow_stealthy = env_flag("APEX_ALLOW_STEALTHY", "1")
+        allow_stealthy = env_flag("APEX_ALLOW_STEALTHY", "0")
         json_resource = self.fetch_configured_json_resource()
         seeds = [self.base_url, f"{self.base_url}/champions", f"{self.base_url}/hextech"]
         resources: list[FetchedResource] = []
@@ -1900,6 +1900,14 @@ def _write_html_report_sample(output_path: Path, html: str, limit_bytes: int = 2
     output_path.write_bytes(encoded.decode("utf-8", errors="ignore").encode("utf-8"))
 
 
+def _new_redacting_report_file_handler(path: Path) -> logging.FileHandler:
+    """为临时 Apex 报表日志创建统一脱敏 handler，避免绕过运行态日志边界。"""
+
+    file_handler = logging.FileHandler(path, encoding="utf-8")
+    file_handler.setFormatter(RedactingTextFormatter("%(asctime)s - %(levelname)s - %(message)s"))
+    return file_handler
+
+
 def _build_single_champion_core_info(champion_slug: str) -> dict[str, ChampionInfo]:
     try:
         return build_core_info(_load_json_file("Champion_Core_Data.json", "core_data"))
@@ -1998,17 +2006,17 @@ def run_full_validation(
     out_dir = Path(report_dir).resolve() if report_dir else _default_full_validate_report_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     stderr_path = out_dir / "stderr.log"
-    file_handler = logging.FileHandler(stderr_path, encoding="utf-8")
-    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    file_handler = _new_redacting_report_file_handler(stderr_path)
     logging.getLogger().addHandler(file_handler)
 
-    source = ApexSource()
+    source: Optional[ApexSource] = None
     per_champion: list[dict] = []
     failures: list[dict] = []
     source_checks: list[dict] = []
     combined_synergy_map: dict[str, list[SynergyEntry]] = {}
     cf_blocked_count = 0
     try:
+        source = ApexSource()
         core_info = build_core_info(_load_json_file("Champion_Core_Data.json", "core_data"))
         champions = list(core_info.values())
         if champion_slugs:
@@ -2200,7 +2208,8 @@ def run_full_validation(
         )
         return {"out_dir": str(out_dir), **summary}
     finally:
-        source.close()
+        if source is not None:
+            source.close()
         logging.getLogger().removeHandler(file_handler)
         file_handler.close()
 
@@ -2211,18 +2220,17 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
     out_dir = Path(report_dir).resolve() if report_dir else _default_single_champion_report_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     stderr_path = out_dir / "stderr.log"
-    file_handler = logging.FileHandler(stderr_path, encoding="utf-8")
-    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    file_handler = _new_redacting_report_file_handler(stderr_path)
     logging.getLogger().addHandler(file_handler)
 
-    source = ApexSource()
+    source: Optional[ApexSource] = None
     resource: Optional[FetchedResource] = None
     result = {
         "url": "",
         "backend": "scrapling-get",
         "status_code": None,
         "cloakbrowser_version": None,
-        "cloakbrowser_probe": source.cloakbrowser_probe,
+        "cloakbrowser_probe": {},
         "cf_blocked": True,
         "synergy_entry_count": 0,
         "archived_filtered_count": 0,
@@ -2230,6 +2238,8 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
         "error": "",
     }
     try:
+        source = ApexSource()
+        result["cloakbrowser_probe"] = source.cloakbrowser_probe
         detail_url = source.build_allowed_url(f"/zh/champions/{champion_slug}")
         if not detail_url:
             raise ValueError(f"英雄 URL 不在 Apex 白名单内：{champion_slug}")
@@ -2297,6 +2307,8 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
         )
         return {"out_dir": str(out_dir), **result}
     except Exception as exc:
+        if source is None:
+            raise
         result["error"] = str(exc)
         if resource is not None:
             result["status_code"] = resource.status_code
@@ -2313,7 +2325,8 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
         logger.exception("ApexLoL Vi 单英雄 Scrapling/CloakBrowser 验证失败")
         return {"out_dir": str(out_dir), **result}
     finally:
-        source.close()
+        if source is not None:
+            source.close()
         logging.getLogger().removeHandler(file_handler)
         file_handler.close()
 
@@ -2474,11 +2487,25 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--champions",
         help="配合 --validate-full 使用；逗号分隔的英雄英文 slug 清单，用于定向复核",
     )
+    parser.add_argument(
+        "--allow-online-fetch",
+        action="store_true",
+        help="显式允许没有本地 snapshot 时访问 ApexLoL 在线页面；也可用 APEX_ALLOW_ONLINE_FETCH=1。",
+    )
+    parser.add_argument(
+        "--allow-stealthy",
+        action="store_true",
+        help="显式允许 Scrapling Stealthy fallback；也可用 APEX_ALLOW_STEALTHY=1。",
+    )
     return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
     args = _parse_args()
+    if args.allow_online_fetch:
+        os.environ["APEX_ALLOW_ONLINE_FETCH"] = "1"
+    if args.allow_stealthy:
+        os.environ["APEX_ALLOW_STEALTHY"] = "1"
     if args.validate_full:
         run_full_validation(
             max_champions=args.max_champions or None,

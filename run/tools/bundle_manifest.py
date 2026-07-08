@@ -32,6 +32,7 @@ import json
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
+import csv
 
 from tools.package_rules import (
     BUNDLED_HEXTECH_SNAPSHOT_DIR,
@@ -94,6 +95,92 @@ def _assert_no_runtime_cache_entries(manifest: dict) -> None:
             raise ValueError(f"bundle manifest must not include runtime cache entry: {forbidden}")
 
 
+REQUIRED_HEXTECH_SEED_COLUMNS = (
+    "英雄名称",
+    "海克斯名称",
+    "英雄胜率",
+    "英雄出场率",
+    "海克斯胜率",
+    "海克斯出场率",
+)
+DEFAULT_MIN_HEXTECH_SEED_ROWS = 1000
+DEFAULT_MIN_HEXTECH_SEED_HEROES = 20
+
+
+def _count_csv_rows_and_heroes(path: Path) -> tuple[int, int, list[str]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        columns = list(reader.fieldnames or [])
+        hero_column = "英雄 ID" if "英雄 ID" in columns else "英雄ID" if "英雄ID" in columns else "英雄名称"
+        hero_values: set[str] = set()
+        rows = 0
+        for row in reader:
+            rows += 1
+            hero_value = str(row.get(hero_column, "") or "").strip()
+            if hero_value:
+                hero_values.add(hero_value)
+    return rows, len(hero_values), columns
+
+
+def validate_hextech_seed_health(
+    base_dir: Path,
+    *,
+    min_rows: int = DEFAULT_MIN_HEXTECH_SEED_ROWS,
+    min_heroes: int = DEFAULT_MIN_HEXTECH_SEED_HEROES,
+) -> dict[str, Any]:
+    """校验首启 Hextech seed 至少有一个可用快照，防止空包发布。"""
+
+    candidates = list(iter_hextech_snapshot_files(base_dir))
+    if not candidates:
+        raise ValueError("missing Hextech_Data_YYYY-MM-DD.csv seed snapshot")
+
+    failures: list[str] = []
+    for path in sorted(candidates, key=lambda item: item.name, reverse=True):
+        try:
+            rows, unique_heroes, columns = _count_csv_rows_and_heroes(path)
+        except OSError as exc:
+            failures.append(f"{path.name}: read_failed={type(exc).__name__}")
+            continue
+        missing_columns = [column for column in REQUIRED_HEXTECH_SEED_COLUMNS if column not in columns]
+        if missing_columns:
+            failures.append(f"{path.name}: missing_columns={','.join(missing_columns)}")
+            continue
+        if rows < min_rows:
+            failures.append(f"{path.name}: rows={rows} < {min_rows}")
+            continue
+        if unique_heroes < min_heroes:
+            failures.append(f"{path.name}: unique_heroes={unique_heroes} < {min_heroes}")
+            continue
+        return {
+            "valid": True,
+            "path": path.relative_to(base_dir).as_posix(),
+            "filename": path.name,
+            "mtime": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
+            "rows": rows,
+            "unique_heroes": unique_heroes,
+            "required_columns": list(REQUIRED_HEXTECH_SEED_COLUMNS),
+        }
+
+    raise ValueError("no healthy Hextech seed snapshot: " + "; ".join(failures[:3]))
+
+
+def validate_bundle_manifest(manifest: dict) -> None:
+    """校验 manifest 关键字段非空，并保持路径边界。"""
+
+    missing: list[str] = []
+    for field in ("static_files", "hextech_snapshot_files", "synergy_data_files", "source_files"):
+        value = manifest.get(field)
+        if not isinstance(value, list) or not value:
+            missing.append(field)
+    if not str(manifest.get("synergy_data_file", "") or "").strip():
+        missing.append("synergy_data_file")
+
+    if missing:
+        raise ValueError("bundle manifest missing critical fields: " + ", ".join(missing))
+
+    _assert_no_runtime_cache_entries(manifest)
+
+
 def _relative_to_base(path: Path, base_dir: Path) -> str:
     return path.relative_to(base_dir).as_posix()
 
@@ -133,9 +220,10 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         "index_files": index_files,
         "asset_files": asset_files,
         "hextech_snapshot_files": hextech_snapshot_files,
+        "hextech_seed_health": validate_hextech_seed_health(base_dir),
         "synergy_data_files": synergy_data_files,
         "synergy_data_file": synergy_data_file,
         "source_files": source_files,
     }
-    _assert_no_runtime_cache_entries(manifest)
+    validate_bundle_manifest(manifest)
     return manifest

@@ -7,6 +7,7 @@ from __future__ import annotations
 import inspect
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +16,63 @@ import numpy as np
 
 
 class OverlaySidecarLifecycleTests(unittest.TestCase):
+    def test_host_ready_timeout_reports_missing_ready_file_without_token(self):
+        from hextech.overlay import lifecycle
+
+        class FakeProcess:
+            pid = 9876
+
+            def poll(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ready_path = Path(temp_dir) / "missing.ready.json"
+            with self.assertRaisesRegex(
+                TimeoutError,
+                r"ready_file=missing.*pid=9876",
+            ) as raised:
+                lifecycle._wait_for_host_ready(
+                    FakeProcess(),
+                    ready_path,
+                    expected_token="secret-token",
+                    timeout_seconds=0.01,
+                )
+
+        self.assertNotIn("secret-token", str(raised.exception))
+
+    def test_host_ready_timeout_reports_process_exit_and_token_mismatch(self):
+        from hextech.overlay import lifecycle
+
+        class ExitedProcess:
+            pid = 1201
+
+            def poll(self):
+                return 9
+
+        class RunningProcess:
+            pid = 1202
+
+            def poll(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ready_path = Path(temp_dir) / "host.ready.json"
+
+            with self.assertRaisesRegex(RuntimeError, r"readiness 前退出.*exit_code=9"):
+                lifecycle._wait_for_host_ready(ExitedProcess(), ready_path, timeout_seconds=0.01)
+
+            ready_path.write_text(
+                json.dumps({"token": "actual-token", "pid": 1202, "updated_at": time.time()}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, r"token 不匹配.*pid=1202"):
+                lifecycle._wait_for_host_ready(
+                    RunningProcess(),
+                    ready_path,
+                    expected_token="expected-token",
+                    timeout_seconds=0.1,
+                )
+
     def test_lifecycle_waits_for_sidecar_ready_and_sets_exit_signal(self):
         from hextech.overlay import lifecycle
 
