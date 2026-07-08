@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import json
 import logging
 import os
@@ -77,6 +78,7 @@ from hextech.scraping.icon_resolver import (
     is_safe_remote_icon_url,
     resolve_apexlol_hextech_icon_url,
 )
+from hextech.support.image_validation import is_valid_png_bytes, read_limited_response_bytes
 from hextech.scraping.version_sync import (
     ASSET_DIR,
     BASE_DIR,
@@ -128,6 +130,7 @@ _background_refresh_inflight = False
 _preloaded_hextech_lock = threading.Lock()
 _preloaded_hextech_payloads: dict[str, dict] = {}
 _preloaded_hextech_pending: Set[str] = set()
+_preloaded_hextech_errors: dict[str, dict] = {}
 _preloaded_hextech_signature: Tuple[str, float] = ("", 0.0)
 _preloaded_hextech_executor: ThreadPoolExecutor | None = None
 _request_auth_token = token_urlsafe(24)
@@ -251,7 +254,7 @@ def is_safe_png_asset_name(filename: str) -> bool:
 def is_allowed_local_origin(origin: str | None) -> bool:
     """校验浏览器来源是否来自本机页面。
 
-    只接受来自本机页面的浏览器请求；缺失 `Origin` 的请求一律拒绝。
+    只接受当前 Web 端口上的本机页面；缺失 `Origin` 的请求一律拒绝。
     """
     if not origin:
         return False
@@ -260,7 +263,15 @@ def is_allowed_local_origin(origin: str | None) -> bool:
     except Exception:
         return False
     host = str(parsed.hostname or "").strip().lower()
-    return host in _SAFE_LOCAL_HOSTS
+    if host not in _SAFE_LOCAL_HOSTS:
+        return False
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    return int(port) == int(get_active_web_port())
 
 
 def get_active_web_port() -> int:
@@ -331,10 +342,13 @@ def download_augment_icon_from_remote(augment_name: str, icon_filename: str) -> 
         response = requests.get(remote_url, stream=True, timeout=15)
         if response.status_code != 200:
             return None
+        content = read_limited_response_bytes(response)
+        if content is None:
+            return None
+        if not is_valid_png_bytes(content):
+            return None
         with open(tmp_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+            f.write(content)
         os.replace(tmp_path, target_path)
         return target_path
     except Exception:
@@ -669,8 +683,23 @@ def clear_preloaded_hextech_payloads() -> None:
     with _preloaded_hextech_lock:
         _preloaded_hextech_payloads.clear()
         _preloaded_hextech_pending.clear()
+        _preloaded_hextech_errors.clear()
         global _preloaded_hextech_signature
         _preloaded_hextech_signature = ("", 0.0)
+
+
+def _record_preload_hextech_error(hero_name: str, reason: str) -> None:
+    with _preloaded_hextech_lock:
+        _preloaded_hextech_errors[hero_name] = {
+            "error": "preload_failed",
+            "reason": reason,
+            "last_error": "海克斯预加载失败",
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }
+
+
+def _clear_preload_hextech_error(hero_name: str) -> None:
+    _preloaded_hextech_errors.pop(hero_name, None)
 
 
 def get_preloaded_hextech_payload(hero_name: str) -> Optional[dict]:
@@ -684,11 +713,12 @@ def get_preloaded_hextech_payload(hero_name: str) -> Optional[dict]:
         if _preloaded_hextech_signature != current_signature:
             _preloaded_hextech_payloads.clear()
             _preloaded_hextech_pending.clear()
+            _preloaded_hextech_errors.clear()
             _preloaded_hextech_signature = current_signature
             return None
 
         payload = _preloaded_hextech_payloads.get(canonical_name)
-        return payload if isinstance(payload, dict) else None
+        return copy.deepcopy(payload) if isinstance(payload, dict) else None
 
 
 def get_preload_hextech_status(hero_name: str) -> dict:
@@ -702,14 +732,19 @@ def get_preload_hextech_status(hero_name: str) -> dict:
         if _preloaded_hextech_signature != current_signature:
             _preloaded_hextech_payloads.clear()
             _preloaded_hextech_pending.clear()
+            _preloaded_hextech_errors.clear()
             _preloaded_hextech_signature = current_signature
             return {"ready": False, "pending": False}
 
         payload = _preloaded_hextech_payloads.get(canonical_name)
-        return {
+        status = {
             "ready": isinstance(payload, dict) and bool(payload.get("comprehensive")),
             "pending": canonical_name in _preloaded_hextech_pending,
         }
+        error = _preloaded_hextech_errors.get(canonical_name)
+        if isinstance(error, dict) and not status["ready"]:
+            status.update(error)
+        return status
 
 
 def request_preload_hextech_payload(hero_name: str) -> bool:
@@ -755,9 +790,12 @@ def request_preload_hextech_payload_async(hero_name: str) -> bool:
                 if _preloaded_hextech_signature != signature:
                     _preloaded_hextech_payloads.clear()
                     _preloaded_hextech_pending.clear()
+                    _preloaded_hextech_errors.clear()
                     _preloaded_hextech_signature = signature
+                _clear_preload_hextech_error(target_name)
                 _preloaded_hextech_payloads[target_name] = payload
         except Exception:
+            _record_preload_hextech_error(target_name, "worker_exception")
             logger.exception("异步海克斯预热失败：hero=%s", target_name)
         finally:
             with _preloaded_hextech_lock:
@@ -786,6 +824,7 @@ def queue_preload_hextech_payloads(hero_names: List[str]) -> bool:
         if _preloaded_hextech_signature != current_signature:
             _preloaded_hextech_payloads.clear()
             _preloaded_hextech_pending.clear()
+            _preloaded_hextech_errors.clear()
             _preloaded_hextech_signature = current_signature
 
         queued_any = False
@@ -803,8 +842,10 @@ def queue_preload_hextech_payloads(hero_names: List[str]) -> bool:
                     with _preloaded_hextech_lock:
                         if _preloaded_hextech_signature != signature:
                             return
+                        _clear_preload_hextech_error(target_name)
                         _preloaded_hextech_payloads[target_name] = payload
                 except Exception:
+                    _record_preload_hextech_error(target_name, "worker_exception")
                     logger.exception("海克斯预热失败：hero=%s", target_name)
                 finally:
                     with _preloaded_hextech_lock:

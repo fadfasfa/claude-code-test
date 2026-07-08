@@ -61,6 +61,9 @@ class HealReport:
     repaired: list[str] = field(default_factory=list)
     fallback: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    busy: bool = False
+    reason: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -68,6 +71,9 @@ class HealReport:
             "repaired": list(self.repaired),
             "fallback": list(self.fallback),
             "failed": list(self.failed),
+            "skipped": list(self.skipped),
+            "busy": bool(self.busy),
+            "reason": self.reason,
         }
 
 
@@ -273,6 +279,9 @@ def heal_missing_artifacts(*, force: bool = False, stop_event=None, include_alia
                 else:
                     report.failed.append("images")
     except Timeout:
+        report.skipped.append("heal_worker")
+        report.busy = True
+        report.reason = "another_repair_running"
         payload = report.as_dict()
         _write_startup_status(in_progress_tasks=[], last_error="another repair is already running")
         logger.info("heal_worker skipped: another repair is already running: %s", json.dumps(payload, ensure_ascii=False))

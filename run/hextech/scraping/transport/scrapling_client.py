@@ -168,7 +168,7 @@ def fetch_page(
             try:
                 # Scrapling 0.4.9 的页面 Fetcher 在 retries=0 时可能提前释放会话。
                 # 这里保留一次内部 retry；业务高频链路使用 fetch_text 的结构化重试。
-                kwargs: dict[str, object] = {"timeout": timeout_ms, "retries": 1}
+                kwargs: dict[str, object] = {"timeout": timeout_ms / 1000, "retries": 1}
                 if proxy:
                     kwargs["proxy"] = proxy
                 response = Fetcher.get(url, **kwargs)

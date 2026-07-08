@@ -40,6 +40,7 @@ import requests
 
 from hextech.catalog.version_catalog import load_apexlol_slug_map, load_augment_manifest_entries
 from hextech.scraping._paths import ASSET_DIR, STATIC_DATA_DIR
+from hextech.support.image_validation import is_valid_png_bytes, read_limited_response_bytes
 
 
 _ICON_MAP_CACHE: Tuple[str, float, dict] = ("", 0.0, {})
@@ -369,13 +370,16 @@ def ensure_augment_icon_cached(icon_filename: str, asset_dir: Optional[str] = No
             response = _get_download_session().get(url, stream=True, timeout=15)
             if response.status_code != 200:
                 continue
+            content = read_limited_response_bytes(response)
+            if content is None:
+                continue
+            if not is_valid_png_bytes(content):
+                continue
             with _ICON_WRITE_LOCK:
                 fd, tmp_path = tempfile.mkstemp(prefix="augment-cache-", suffix=".tmp", dir=asset_dir)
                 try:
                     with os.fdopen(fd, "wb") as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
+                        f.write(content)
                     os.replace(tmp_path, target_path)
                 finally:
                     try:

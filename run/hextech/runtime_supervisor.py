@@ -323,6 +323,20 @@ class OverlayRuntimeManager:
         error = "；".join([reason, *errors]) if errors else reason
         with self._lock:
             self._mark(status="error", phase="failed", error=error)
+            self.last_start_failure_kind = self._classify_start_failure_kind(reason)
+
+    @staticmethod
+    def _classify_start_failure_kind(reason: str) -> str:
+        text = str(reason or "")
+        if "game_overlay host 启动超时" in text:
+            return "host_readiness_timeout"
+        if "Vision sidecar" in text or "game_overlay sidecar" in text:
+            return "sidecar_failed"
+        if "readiness token 不匹配" in text:
+            return "host_readiness_token_mismatch"
+        if "game_overlay host 在 readiness 前退出" in text or "host 启动后立即退出" in text:
+            return "host_exited"
+        return "start_failed"
 
     def _stop(self, reason: str) -> dict[str, Any]:
         with self._lock:

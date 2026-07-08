@@ -191,6 +191,16 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertFalse(should_show)
         self.assertEqual(reason, "selection_window_inactive")
 
+    def test_inactive_overlay_event_carries_scene_inactive_source(self):
+        from hextech.overlay.events import build_inactive_overlay_event
+
+        event = build_inactive_overlay_event(source_tag="manual-hide")
+
+        self.assertFalse(event["active"])
+        self.assertEqual(event["source"]["selection_window_active"], False)
+        self.assertEqual(event["source"]["ready_slots"], 0)
+        self.assertEqual(event["source"]["content_ready"], False)
+
     def test_decide_visibility_defaults_to_missing_game_window_without_hwnd(self):
         from hextech.overlay.host import decide_visibility
 

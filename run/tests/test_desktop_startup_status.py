@@ -22,7 +22,7 @@ class DesktopStartupStatusTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(text, "游戏内显示: 窗口已就绪 / 模板预热中")
+        self.assertEqual(text, "游戏内显示: 窗口已就绪 / 海克斯卡识别模板预热中")
         self.assertEqual(color, UI_COLORS["warn"])
 
     def test_startup_timing_flush_never_breaks_startup_on_unexpected_error(self):

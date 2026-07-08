@@ -42,6 +42,10 @@ NOISY_MESSAGE_PATTERNS = (
 SENSITIVE_KEYWORDS = (
     "auth",
     "authorization",
+    "access_token",
+    "refresh_token",
+    "session_token",
+    "session_id",
     "token",
     "cookie",
     "secret",
@@ -50,6 +54,9 @@ SENSITIVE_KEYWORDS = (
     "nonce",
     "api_key",
     "apikey",
+    "jwt",
+    "bearer",
+    "x-hextech-token",
     "lcu",
     "riot",
 )
@@ -224,16 +231,42 @@ def get_error_log_file() -> str:
 def redact_log_value(value: object) -> str:
     text = str(value or "")
     text = re.sub(r"(https?://[^\s?]+)\?[^\s]+", r"\1?<redacted>", text, flags=re.IGNORECASE)
-    text = re.sub(r"Authorization:\s*Bearer\s+[^\s,;]+", "Authorization: <redacted>", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"(/(?:auth|token|session|jwt|bearer)/)[^/?#\s,;]+",
+        r"\1<redacted>",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\b(Proxy-Authorization|Authorization)\s*:\s*[^,\n;{}]+",
+        r"\1: <redacted>",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\bBearer\s+[^\s,;]+", "Bearer <redacted>", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bX-Hextech-Token\s*:\s*[^,\s;]+", "X-Hextech-Token: <redacted>", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bCookie\s*:\s*[^,\n]+", "Cookie: <redacted>", text, flags=re.IGNORECASE)
     text = re.sub(r"Set-Cookie:\s*[^,\n;]+(?:;[^\n,]*)?", "Set-Cookie: <redacted>", text, flags=re.IGNORECASE)
     text = re.sub(
-        r"\b(auth|authorization|cookie|token|nonce|secret|password|credential|api[_-]?key|lcu|riot)=([^,\s;]+)",
+        r"\b(auth|authorization|cookie|(?:access|refresh|session)[_-]?token|session[_-]?id|token|nonce|secret|password|credential|api[_-]?key|jwt|bearer|lcu|riot)=([^,\s;]+)",
         r"\1=<redacted>",
         text,
         flags=re.IGNORECASE,
     )
     text = re.sub(
-        r'("?(?:auth|authorization|cookie|token|nonce|secret|password|credential|api[_-]?key|lcu|riot)"?\s*:\s*)"[^"]*"',
+        r"\b(auth|authorization|cookie|(?:access|refresh|session)[_-]?token|session[_-]?id|token|nonce|secret|password|credential|api[_-]?key|jwt|bearer|x[-_]?hextech[-_]?token|lcu|riot)\s*:\s*([^,\s;{}]+)",
+        r"\1: <redacted>",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r'("?(?:auth|authorization|cookie|(?:access|refresh|session)[_-]?token|session[_-]?id|token|nonce|secret|password|credential|api[_-]?key|jwt|bearer|lcu|riot)"?\s*:\s*)"[^"]*"',
+        r'\1"<redacted>"',
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r'("?(?:auth|authorization|cookie|(?:access|refresh|session)[_-]?token|session[_-]?id|token|nonce|secret|password|credential|api[_-]?key|jwt|bearer|lcu|riot)"?\s*:\s*)(?:-?\d+(?:\.\d+)?|true|false|null)',
         r'\1"<redacted>"',
         text,
         flags=re.IGNORECASE,

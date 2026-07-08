@@ -61,6 +61,17 @@ def test_dev_profile_installs_full_summary_error_logs(tmp_path, monkeypatch):
     _reset_hextech_logging()
 
 
+def test_redact_log_value_redacts_json_numeric_sensitive_values():
+    from hextech.support.log_utils import redact_log_value
+
+    redacted = redact_log_value('"token": 12345, "session_id": true, "status": "ok"')
+
+    assert '"token": "<redacted>"' in redacted
+    assert '"session_id": "<redacted>"' in redacted
+    assert '"status": "ok"' in redacted
+    assert "12345" not in redacted
+
+
 def test_packaged_profile_skips_full_debug_jsonl(tmp_path, monkeypatch):
     from hextech.support import log_utils
 
@@ -267,6 +278,104 @@ def test_runtime_logging_redacts_exception_traceback(tmp_path, monkeypatch):
     assert "cookie=<redacted>" in error_text
 
     _reset_hextech_logging()
+
+
+def test_redact_log_value_covers_composite_tokens_bearer_and_path_tokens():
+    from hextech.support import log_utils
+
+    raw = (
+        "access_token=access-secret refresh_token=refresh-secret session_token=session-secret "
+        "session_id=session-secret-id jwt=jwt-secret Authorization: Bearer header-secret\n"
+        "Bearer inline-secret https://127.0.0.1:2999/api/token/path-secret/live?refresh_token=query-secret "
+        "X-Hextech-Token: header-token access_token: colon-access Cookie: session=colon-cookie\n"
+        "Authorization: Basic basic-secret\n"
+        "Proxy-Authorization: Basic proxy-secret\n"
+        "Authorization: Token token-secret\n"
+        '{"access_token":"json-secret","session_id":"json-session"}'
+    )
+
+    redacted = log_utils.redact_log_value(raw)
+
+    for secret in (
+        "access-secret",
+        "refresh-secret",
+        "session-secret",
+        "session-secret-id",
+        "jwt-secret",
+        "header-secret",
+        "inline-secret",
+        "path-secret",
+        "query-secret",
+        "header-token",
+        "colon-access",
+        "colon-cookie",
+        "basic-secret",
+        "proxy-secret",
+        "token-secret",
+        "json-secret",
+        "json-session",
+    ):
+        assert secret not in redacted
+    assert "access_token=<redacted>" in redacted
+    assert "refresh_token=<redacted>" in redacted
+    assert "session_token=<redacted>" in redacted
+    assert "session_id=<redacted>" in redacted
+    assert "jwt=<redacted>" in redacted
+    assert "Bearer <redacted>" in redacted
+    assert "X-Hextech-Token: <redacted>" in redacted
+    assert "access_token: <redacted>" in redacted
+    assert "Cookie: <redacted>" in redacted
+    assert "Authorization: <redacted>" in redacted
+    assert "Proxy-Authorization: <redacted>" in redacted
+    assert "/api/token/<redacted>/live?<redacted>" in redacted
+
+
+def test_synergy_report_file_handler_redacts_sensitive_values(tmp_path):
+    import hextech.scraping.synergy.scraper as scraper
+
+    report_path = tmp_path / "stderr.log"
+    handler = scraper._new_redacting_report_file_handler(report_path)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        root.warning("Apex probe failed access_token=report-secret Bearer bearer-secret")
+        handler.flush()
+    finally:
+        root.removeHandler(handler)
+        handler.close()
+
+    text = report_path.read_text(encoding="utf-8")
+    assert "report-secret" not in text
+    assert "bearer-secret" not in text
+    assert "access_token=<redacted>" in text
+    assert "Bearer <redacted>" in text
+
+
+def test_synergy_report_handler_removed_when_source_init_fails(tmp_path, monkeypatch):
+    import hextech.scraping.synergy.scraper as scraper
+
+    class BrokenApexSource:
+        def __init__(self):
+            raise RuntimeError("access_token=init-secret")
+
+    monkeypatch.setattr(scraper, "ApexSource", BrokenApexSource)
+    root = logging.getLogger()
+    before = list(root.handlers)
+
+    try:
+        try:
+            scraper.run_single_champion_probe("Vi", report_dir=str(tmp_path))
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("ApexSource 初始化失败应透出异常")
+
+        assert root.handlers == before
+    finally:
+        for handler in list(root.handlers):
+            if handler not in before:
+                root.removeHandler(handler)
+                handler.close()
 
 
 def test_write_structured_event_redacts_and_is_parseable(tmp_path, monkeypatch):

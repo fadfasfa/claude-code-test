@@ -18,7 +18,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from tools.bundle_manifest import build_bundle_manifest
+from tools.bundle_manifest import build_bundle_manifest, validate_hextech_seed_health
 from tools.cleanup_runtime import cleanup_python_caches
 from tools.package_rules import iter_package_data_entries
 
@@ -27,6 +27,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 REPO_DIR = BASE_DIR.parent
 ARTIFACTS_DIR = REPO_DIR / ".artifacts" / "hextech"
 RELEASES_DIR = ARTIFACTS_DIR / "releases"
+STAGING_RELEASES_DIR = ARTIFACTS_DIR / "staging"
 APP_EXE_NAME = "Hextech伴生终端.exe"
 APP_BUILD_NAME = "Hextech伴生终端"
 RELEASE_PREFIX = "HextechCompanion"
@@ -268,16 +269,22 @@ def stage_tkinter_package_dir(source: Path, build_root: Path) -> Path:
 
 
 def refresh_runtime_data_before_package() -> None:
-    """按运行时节奏刷新数据，再把当前落盘快照打入发布包。"""
+    """按运行时节奏刷新数据，并打印实际进入发布包的 seed 健康信息。"""
 
     print_step("按正常节奏刷新运行时数据")
     from hextech.core.refresh import refresh_backend_data
 
     refreshed = refresh_backend_data(force=False)
     if refreshed:
-        print_check("运行时数据已按当前刷新策略检查并更新")
+        print_check("运行时数据已按当前刷新策略检查")
     else:
         print_check("运行时数据仍在有效期内，无需刷新")
+    seed_health = validate_hextech_seed_health(BASE_DIR)
+    print_check(
+        "Hextech seed：file={filename} mtime={mtime} rows={rows} heroes={unique_heroes} source=data/seed/startup/hextech".format(
+            **seed_health
+        )
+    )
 
 
 def _add_data_arg(source: Path, target: str) -> str:
@@ -400,22 +407,93 @@ def _release_dir_name(build_time: datetime) -> str:
     return f"{RELEASE_PREFIX}-{build_time.strftime('%Y%m%d')}"
 
 
+def run_packaged_smoke(package_dir: Path, timeout: int = 60) -> None:
+    """运行便携包首启 smoke；失败时调用方不得替换正式 release。"""
+
+    smoke_script = BASE_DIR / "tools" / "acceptance" / "smoke_packaged_startup.py"
+    subprocess.run(
+        [
+            sys.executable,
+            str(smoke_script),
+            "--package-dir",
+            str(package_dir),
+            "--timeout",
+            str(timeout),
+        ],
+        cwd=BASE_DIR,
+        text=True,
+        check=True,
+    )
+
+
+def _move_existing_release_as_backup(final_dir: Path, zip_path: Path, build_time: datetime) -> tuple[Path | None, Path | None]:
+    backup_suffix = build_time.strftime("%H%M%S")
+    backup_dir = None
+    backup_zip = None
+    if final_dir.exists():
+        backup_dir = final_dir.with_name(f"{final_dir.name}.previous-{backup_suffix}")
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+        shutil.move(str(final_dir), str(backup_dir))
+    if zip_path.exists():
+        backup_zip = zip_path.with_name(f"{zip_path.stem}.previous-{backup_suffix}{zip_path.suffix}")
+        if backup_zip.exists():
+            backup_zip.unlink()
+        shutil.move(str(zip_path), str(backup_zip))
+    return backup_dir, backup_zip
+
+
+def _restore_release_backup(final_dir: Path, zip_path: Path, backup_dir: Path | None, backup_zip: Path | None) -> None:
+    if backup_dir is not None and backup_dir.exists():
+        if final_dir.exists():
+            failed_dir = final_dir.with_name(f"{final_dir.name}.failed")
+            if failed_dir.exists():
+                shutil.rmtree(failed_dir)
+            shutil.move(str(final_dir), str(failed_dir))
+        shutil.move(str(backup_dir), str(final_dir))
+    if backup_zip is not None and backup_zip.exists():
+        if zip_path.exists():
+            failed_zip = zip_path.with_name(f"{zip_path.stem}.failed{zip_path.suffix}")
+            if failed_zip.exists():
+                failed_zip.unlink()
+            shutil.move(str(zip_path), str(failed_zip))
+        shutil.move(str(backup_zip), str(zip_path))
+
+
+def _discard_release_backup(backup_dir: Path | None, backup_zip: Path | None) -> None:
+    if backup_dir is not None and backup_dir.exists():
+        shutil.rmtree(backup_dir)
+    if backup_zip is not None and backup_zip.exists():
+        backup_zip.unlink()
+
+
 def finalize_output(exe_dir: Path) -> tuple[Path, Path]:
-    """整理最终输出目录，补便携入口，并生成 zip 便携包。"""
+    """整理最终输出目录；先 smoke staging，通过后才替换正式 release。"""
 
     print_step("最终优化")
     RELEASES_DIR.mkdir(parents=True, exist_ok=True)
+    STAGING_RELEASES_DIR.mkdir(parents=True, exist_ok=True)
     build_time = datetime.now()
     final_dir = RELEASES_DIR / _release_dir_name(build_time)
-    if final_dir.exists():
-        try:
-            shutil.rmtree(final_dir)
-        except PermissionError:
-            final_dir = RELEASES_DIR / f"{_release_dir_name(build_time)}-{build_time.strftime('%H%M%S')}"
-    shutil.move(str(exe_dir), str(final_dir))
-    write_portable_launcher(final_dir)
-    write_first_run_guide(final_dir)
-    zip_path = create_portable_zip(final_dir)
+    zip_path = RELEASES_DIR / f"{final_dir.name}.zip"
+    staging_dir = STAGING_RELEASES_DIR / f"{final_dir.name}-{build_time.strftime('%H%M%S')}"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    shutil.move(str(exe_dir), str(staging_dir))
+    write_portable_launcher(staging_dir)
+    write_first_run_guide(staging_dir)
+    print_check(f"staging 输出目录：{staging_dir}")
+    run_packaged_smoke(staging_dir, timeout=60)
+
+    backup_dir, backup_zip = _move_existing_release_as_backup(final_dir, zip_path, build_time)
+    try:
+        shutil.move(str(staging_dir), str(final_dir))
+        zip_path = create_portable_zip(final_dir)
+    except Exception:
+        _restore_release_backup(final_dir, zip_path, backup_dir, backup_zip)
+        raise
+    else:
+        _discard_release_backup(backup_dir, backup_zip)
     print_check(f"输出目录：{final_dir}")
     print_check(f"便携压缩包：{zip_path}")
     return final_dir, zip_path

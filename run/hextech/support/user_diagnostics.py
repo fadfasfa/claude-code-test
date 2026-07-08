@@ -54,6 +54,16 @@ SENSITIVE_REPORT_DIRS = {"state", "logs"}
 TIMESTAMP_PREFIX_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[,.]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
+LOCAL_ABSOLUTE_PATH_RE = re.compile(
+    r"(?i)(?<![A-Z0-9])(?:[A-Z]:[\\/][^\s\"'<>|{}]+|\\\\[^\\/\s\"'<>|{}]+\\[^\s\"'<>|{}]+)"
+)
+SENSITIVE_FILENAME_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_.-])(?:"
+    r"[A-Za-z0-9_.-]*(?:auth|authorization|token|cookie|secret|password|credential|nonce|lcu|riot|session|overlay_anchor_calibration)[A-Za-z0-9_.-]*"
+    r"\.(?:txt|json|yaml|yml|env|ini|cfg|conf|log)"
+    r"|local\.yaml|proxies\.json|accounts\.json|auth\.json|\.env"
+    r")(?![A-Za-z0-9_.-])"
+)
 
 
 @dataclass(frozen=True)
@@ -79,12 +89,54 @@ def _redact_json_value(key: str, value):
     if any(keyword in key_lower for keyword in SENSITIVE_PATH_KEYWORDS):
         return "<redacted>"
     if isinstance(value, dict):
-        return {str(child_key): _redact_json_value(str(child_key), child_value) for child_key, child_value in value.items()}
+        return {_redact_json_key(child_key): _redact_json_value(str(child_key), child_value) for child_key, child_value in value.items()}
     if isinstance(value, list):
         return [_redact_json_value(key, item) for item in value]
     if isinstance(value, str):
-        return redact_log_value(value)
+        return _redact_sensitive_filename_text(value)
     return value
+
+
+def _redact_export_text(value: object) -> str:
+    redacted = redact_log_value(value)
+    return LOCAL_ABSOLUTE_PATH_RE.sub("<local-path>", redacted)
+
+
+def _redact_sensitive_filename_text(value: object) -> str:
+    return SENSITIVE_FILENAME_RE.sub("<sensitive-file>", _redact_export_text(value))
+
+
+def _redact_json_key(key: object) -> str:
+    return SENSITIVE_FILENAME_RE.sub("<sensitive-file>", str(key or ""))
+
+
+def _redact_tail_line(line: str) -> str:
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return _redact_export_text(line)
+    if isinstance(payload, dict):
+        payload = {_redact_json_key(key): _redact_json_value(str(key), value) for key, value in payload.items()}
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return _redact_export_text(line)
+
+
+def redact_diagnostic_text(value: object) -> str:
+    """脱敏可分享诊断文本；保留事件语义，移除 token 和本机绝对路径。"""
+
+    return _redact_sensitive_filename_text(value)
+
+
+def redact_diagnostic_value(key: str, value):
+    """递归脱敏可分享诊断 JSON 值。"""
+
+    return _redact_json_value(key, value)
+
+
+def redact_diagnostic_tail_line(line: str) -> str:
+    """脱敏可分享 tail 行；JSONL 会按字段递归处理。"""
+
+    return _redact_tail_line(line)
 
 
 def _read_json(path: Path) -> dict:
@@ -94,7 +146,7 @@ def _read_json(path: Path) -> dict:
         return {}
     if not isinstance(payload, dict):
         return {}
-    return {str(key): _redact_json_value(str(key), value) for key, value in payload.items()}
+    return {_redact_json_key(key): _redact_json_value(str(key), value) for key, value in payload.items()}
 
 
 def _timestamp_to_epoch(value: object) -> float | None:
@@ -165,7 +217,7 @@ def _write_text_tail(source: Path, target: Path, *, tail_lines: int, since_times
     if not lines:
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
-    redacted = [redact_log_value(line) for line in lines]
+    redacted = [_redact_sensitive_filename_text(_redact_tail_line(line)) for line in lines]
     target.write_text("\n".join(redacted) + "\n", encoding="utf-8")
     return True
 
@@ -273,13 +325,16 @@ def export_user_diagnostics(
     )
     summary = {
         **asdict(result_without_summary),
-        "bundle_dir": str(result_without_summary.bundle_dir),
-        "zip_path": str(result_without_summary.zip_path),
-        "runtime_root": str(runtime_root),
+        "bundle_dir": result_without_summary.bundle_dir.name,
+        "zip_path": result_without_summary.zip_path.name,
+        "runtime_root": "<local-runtime-root>",
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "recent_minutes": int(recent_minutes),
         "tail_lines": int(tail_lines),
     }
+    summary["skipped_sensitive"] = [
+        _redact_sensitive_filename_text(item) for item in result_without_summary.skipped_sensitive
+    ]
     (bundle_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     _zip_directory(bundle_dir, result_without_summary.zip_path)

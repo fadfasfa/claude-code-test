@@ -74,6 +74,7 @@ SYNERGY_STALE_SECONDS = 7 * 24 * 60 * 60
 SYNERGY_BLOCKED_COOLDOWN_SECONDS = 6 * 60 * 60
 RUNTIME_EVENT_SCHEMA_VERSION = 1
 RUNTIME_EVENT_LOG_FILENAME = "runtime_events.v1.jsonl"
+REFRESH_DEGRADATION_STATE_FILENAME = "refresh_degradation.v1.json"
 _PUBLISHER_INSTANCE_ID = os.getenv("HEXTECH_COMPONENT_INSTANCE_ID") or f"refresh-{os.getpid()}-{uuid.uuid4().hex[:8]}"
 _ACTIVE_DEGRADATION: dict[str, object] = {}
 
@@ -124,6 +125,47 @@ def _utc_now_iso() -> str:
 
 def _runtime_event_log_path() -> Path:
     return Path(build_runtime_state_path(RUNTIME_EVENT_LOG_FILENAME))
+
+
+def _refresh_degradation_state_path() -> Path:
+    return Path(build_runtime_state_path(REFRESH_DEGRADATION_STATE_FILENAME))
+
+
+def _load_active_degradation() -> None:
+    if _ACTIVE_DEGRADATION.get("degradation_id"):
+        return
+    path = _refresh_degradation_state_path()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(payload, dict) or not payload.get("degradation_id"):
+        return
+    for key in ("degradation_id", "state", "first_seen", "last_seen", "attempt_count"):
+        if key in payload:
+            _ACTIVE_DEGRADATION[key] = payload[key]
+
+
+def _persist_active_degradation() -> None:
+    if not _ACTIVE_DEGRADATION.get("degradation_id"):
+        return
+    payload = {
+        "schema_version": 1,
+        "degradation_id": str(_ACTIVE_DEGRADATION.get("degradation_id") or ""),
+        "state": str(_ACTIVE_DEGRADATION.get("state") or ""),
+        "first_seen": float(_ACTIVE_DEGRADATION.get("first_seen") or 0.0),
+        "last_seen": float(_ACTIVE_DEGRADATION.get("last_seen") or 0.0),
+        "attempt_count": int(_ACTIVE_DEGRADATION.get("attempt_count") or 0),
+        "updated_at": _utc_now_iso(),
+    }
+    atomic_write_json(_refresh_degradation_state_path(), payload, ensure_ascii=False, indent=2)
+
+
+def _clear_persisted_degradation() -> None:
+    try:
+        _refresh_degradation_state_path().unlink(missing_ok=True)
+    except OSError:
+        logger.warning("刷新降级状态清理失败", exc_info=True)
 
 
 def _safe_file_hash(path: str) -> str:
@@ -307,17 +349,28 @@ def _run_mayhem_refresh_safely(stop_event=None) -> None:
 
 
 def _result_from_report(report: dict, *, force: bool, correlation_id: str) -> RefreshResult:
+    _load_active_degradation()
     latest_valid_csv = get_latest_valid_csv() or ""
     latest_candidate_csv = get_latest_csv() or ""
     repaired = set(report.get("repaired", []) or [])
     fallback = set(report.get("fallback", []) or [])
     failed = set(report.get("failed", []) or [])
     requested = set(report.get("requested", []) or [])
+    skipped = set(report.get("skipped", []) or [])
+    heal_busy = bool(report.get("busy") or report.get("reason") == "another_repair_running")
     fallback_valid = bool(latest_valid_csv)
     remote_success = bool(repaired) and not fallback and not failed
-    fallback_used = bool(fallback)
+    fallback_used = bool(fallback or (heal_busy and fallback_valid))
 
-    if fallback_used and fallback_valid:
+    if heal_busy and fallback_valid:
+        state = "degraded"
+        reason_code = "heal_busy_local_fallback"
+        degradation_id = str(_ACTIVE_DEGRADATION.get("degradation_id") or _new_degradation_id())
+    elif heal_busy or skipped:
+        state = "failed"
+        reason_code = "heal_busy_no_valid_fallback"
+        degradation_id = str(_ACTIVE_DEGRADATION.get("degradation_id") or _new_degradation_id())
+    elif fallback_used and fallback_valid:
         state = "degraded"
         reason_code = "remote_failed_local_fallback"
         degradation_id = str(_ACTIVE_DEGRADATION.get("degradation_id") or _new_degradation_id())
@@ -352,6 +405,7 @@ def _ready_assertion_consistent(result: RefreshResult) -> bool:
 
 
 def _write_refresh_state_event(result: RefreshResult) -> None:
+    _load_active_degradation()
     now = time.time()
     base_event = {
         "correlation_id": result.correlation_id,
@@ -392,6 +446,7 @@ def _write_refresh_state_event(result: RefreshResult) -> None:
         base_event["previous_state"] = "degraded" if is_reused else "ready"
         base_event["new_state"] = "degraded"
         _append_runtime_event(base_event)
+        _persist_active_degradation()
         return
 
     if result.state == "ready" and _ACTIVE_DEGRADATION.get("degradation_id"):
@@ -413,6 +468,7 @@ def _write_refresh_state_event(result: RefreshResult) -> None:
         )
         _append_runtime_event(event)
         _ACTIVE_DEGRADATION.clear()
+        _clear_persisted_degradation()
         return
 
     if result.state == "failed":
@@ -437,6 +493,7 @@ def _write_refresh_state_event(result: RefreshResult) -> None:
         base_event["new_state"] = "failed"
         base_event["attempt_count"] = int(_ACTIVE_DEGRADATION.get("attempt_count") or 1)
         _append_runtime_event(base_event)
+        _persist_active_degradation()
 
 
 def refresh_backend_data(force: bool = False, stop_event=None) -> RefreshResult:

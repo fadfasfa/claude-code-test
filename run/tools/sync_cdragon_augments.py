@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Mapping
@@ -29,6 +31,7 @@ if str(RUN_DIR) not in sys.path:
 from hextech.scraping.icon_resolver import normalize_augment_name, normalize_safe_augment_icon_filename, sanitize_augment_icon_url
 from hextech.catalog.version_catalog import get_augment_resource_catalog_path, load_apexlol_slug_map
 from hextech.support.atomic_io import atomic_write_json
+from hextech.support.image_validation import is_valid_png_bytes
 
 
 CHERRY_AUGMENTS_URL = (
@@ -216,12 +219,22 @@ def _download_one(
     response = requests.get(url, timeout=timeout)
     response.raise_for_status()
     content = response.content
-    if not content:
-        raise ValueError("empty icon response")
+    if not is_valid_png_bytes(content):
+        raise ValueError("invalid png icon response")
     asset_dir.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.tmp")
-    tmp.write_bytes(content)
-    tmp.replace(target)
+    tmp_path: Path | None = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}-", suffix=".tmp", dir=asset_dir)
+        tmp_path = Path(tmp_name)
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, target)
+        tmp_path = None
+    finally:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
     return {"name": entry.get("name"), "filename": filename, "status": "downloaded", "bytes": len(content)}
 
 

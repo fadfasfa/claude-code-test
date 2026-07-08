@@ -20,9 +20,11 @@
         let augmentIconMap = {};
         let augmentCatalogMap = {};
         let ws = null;
-        const DETAIL_LOADING_RETRY_MS = 350;
+        const DETAIL_LOADING_RETRY_BASE_MS = 500;
+        const DETAIL_LOADING_RETRY_MAX_MS = 5000;
         const DETAIL_LOADING_MAX_RETRIES = 12;
         let detailLoadingRetryTimer = null;
+        let detailPreloadRequested = false;
 
         let tabId = Math.random().toString(36).substring(2, 9);
         const bc = new BroadcastChannel('hextech_nexus_channel');
@@ -56,6 +58,7 @@
                 window.wsInstance.onclose = null;
                 window.wsInstance.close();
             }
+            clearDetailRetry();
         }
 
         function reactivateTab() {
@@ -568,9 +571,14 @@
             container.dataset.synergyStatus = synergyMeta && synergyMeta.status ? synergyMeta.status : 'ok';
             const normalized = (synergyData || []).map(normalizeSynergyArticle).filter(item => item.content);
             if (normalized.length === 0) {
-                const message = synergyMeta && synergyMeta.status === 'quarantined'
-                    ? (synergyMeta.message || '联动数据待校准')
-                    : '暂无联动文章';
+                let message = '暂无联动文章';
+                if (synergyMeta && synergyMeta.status === 'quarantined') {
+                    message = synergyMeta.message || '联动数据待校准';
+                } else if (synergyMeta && synergyMeta.status === 'error') {
+                    message = synergyMeta.message || '联动数据读取失败';
+                } else if (synergyMeta && synergyMeta.status === 'empty') {
+                    message = synergyMeta.message || '暂无联动数据';
+                }
                 container.innerHTML = `<div class="glass-panel rounded-xl p-4"><div class="text-sm text-gray-400 text-center">${escapeHtml(message)}</div></div>`;
                 return;
             }
@@ -711,7 +719,7 @@
                 updateFilteredSynergies(currentView);
             } catch (err) {
                 console.error(err);
-                synergyMeta = null;
+                synergyMeta = { status: 'error', message: '联动数据读取失败' };
                 synergyData = [];
                 synergyLoaded = true;
                 updateFilteredSynergies(currentView);
@@ -757,14 +765,39 @@
             }
         }
 
+        function detailRetryDelayMs(retryCount) {
+            return Math.min(
+                DETAIL_LOADING_RETRY_MAX_MS,
+                DETAIL_LOADING_RETRY_BASE_MS * Math.pow(2, Math.min(retryCount, 4))
+            );
+        }
+
+        function describeLoadingStatus(payload) {
+            const startup = payload && payload.startup_status ? payload.startup_status : {};
+            const preload = payload && payload.preload_status ? payload.preload_status : {};
+            const messages = [
+                preload.last_error,
+                preload.error,
+                preload.reason,
+                startup.last_error,
+                startup.hextech_warning,
+                startup.bundle_manifest && startup.bundle_manifest.warning,
+            ].filter(Boolean);
+            return messages.length > 0 ? String(messages[0]) : '详情页已打开，海克斯数据会在后台补齐后可用';
+        }
+
         function scheduleDetailRetry(retryCount) {
-            if (detailLoadingRetryTimer || retryCount >= DETAIL_LOADING_MAX_RETRIES) {
+            if (detailLoadingRetryTimer) {
+                return;
+            }
+            if (retryCount >= DETAIL_LOADING_MAX_RETRIES) {
+                document.querySelector('#noDataTip .text-sm').textContent = '数据准备时间较长，请稍后刷新页面';
                 return;
             }
             detailLoadingRetryTimer = window.setTimeout(() => {
                 detailLoadingRetryTimer = null;
                 loadHextechs(retryCount + 1);
-            }, DETAIL_LOADING_RETRY_MS);
+            }, detailRetryDelayMs(retryCount));
         }
 
         function clearDetailRetry() {
@@ -773,6 +806,17 @@
             }
             window.clearTimeout(detailLoadingRetryTimer);
             detailLoadingRetryTimer = null;
+        }
+
+        function requestDetailPreload() {
+            if (detailPreloadRequested || !hero) {
+                return;
+            }
+            detailPreloadRequested = true;
+            fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/preload`, {
+                method: 'POST',
+                credentials: 'same-origin',
+            }).catch(() => {});
         }
 
         async function loadHextechs(retryCount = 0) {
@@ -803,7 +847,8 @@
                 if (hextechData.loading && activeArray.length === 0) {
                     document.getElementById('noDataTip').classList.remove('hidden');
                     document.querySelector('#noDataTip .text-xl').textContent = '数据准备中';
-                    document.querySelector('#noDataTip .text-sm').textContent = '详情页已打开，海克斯数据会在后台补齐后可用';
+                    document.querySelector('#noDataTip .text-sm').textContent = describeLoadingStatus(hextechData);
+                    requestDetailPreload();
                     scheduleDetailRetry(retryCount);
                     return;
                 }

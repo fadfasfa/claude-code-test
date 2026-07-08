@@ -601,7 +601,7 @@ class CachedDataFrameLoader:
         try:
             current_mtime = os.path.getmtime(latest)
         except OSError:
-            return self._cache.df
+            return self._cache.df.copy()
 
         with self._lock:
             if (
@@ -614,7 +614,7 @@ class CachedDataFrameLoader:
                     mtime=current_mtime,
                     df=load_runtime_csv(latest),
                 )
-            return self._cache.df
+            return self._cache.df.copy()
 
 
 def load_precomputed_champion_list():

@@ -73,23 +73,47 @@ def _wait_for_host_ready(
     expected_token: str = "",
     timeout_seconds: float = OVERLAY_READY_TIMEOUT_SECONDS,
 ) -> None:
+    def _ready_pid(payload: dict) -> int:
+        try:
+            return int(payload.get("pid") or 0)
+        except (TypeError, ValueError):
+            return 0
+
     deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+    ready_state = "missing"
     while time.monotonic() < deadline:
         exit_code = process.poll()
         if exit_code is not None:
-            raise RuntimeError(f"game_overlay host 在 readiness 前退出，exit_code={exit_code}")
+            raise RuntimeError(f"game_overlay host 在 readiness 前退出，exit_code={exit_code}, pid={getattr(process, 'pid', None)}")
         try:
             payload = json.loads(ready_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            ready_state = "present"
+        except FileNotFoundError:
+            ready_state = "missing"
             time.sleep(0.05)
             continue
+        except json.JSONDecodeError:
+            ready_state = "invalid_json"
+            time.sleep(0.05)
+            continue
+        except OSError:
+            ready_state = "unreadable"
+            time.sleep(0.05)
+            continue
+        pid = _ready_pid(payload)
         if expected_token and str(payload.get("token") or "") == expected_token:
-            setattr(process, "_hextech_overlay_runtime_pid", int(payload.get("pid") or 0) or None)
+            setattr(process, "_hextech_overlay_runtime_pid", pid or None)
             return
-        if not expected_token and int(payload.get("pid") or 0) == int(process.pid):
+        if not expected_token and pid == int(process.pid):
             return
-        raise RuntimeError("game_overlay host readiness token 不匹配")
-    raise TimeoutError(f"game_overlay host 启动超时：{float(timeout_seconds):.1f}s")
+        raise RuntimeError(
+            "game_overlay host readiness token 不匹配"
+            f" (pid={payload.get('pid') or getattr(process, 'pid', None)}, ready_file=present, ready_name={ready_path.name})"
+        )
+    raise TimeoutError(
+        "game_overlay host 启动超时："
+        f"{float(timeout_seconds):.1f}s (ready_file={ready_state}, pid={getattr(process, 'pid', None)}, ready_name={ready_path.name})"
+    )
 
 
 def _wait_for_sidecar_ready(

@@ -224,7 +224,15 @@ def build_overlay_event(
 def build_inactive_overlay_event(*, source_tag: str = "local") -> dict[str, Any]:
     """构造明确隐藏 overlay 的本地事件。"""
 
-    return build_overlay_event([], source_tag=source_tag, selection_type="", active=False)
+    event = build_overlay_event([], source_tag=source_tag, selection_type="", active=False)
+    event["source"].update(
+        {
+            "selection_window_active": False,
+            "ready_slots": 0,
+            "content_ready": False,
+        }
+    )
+    return event
 
 
 def _resolve_event_error(event_payload: Mapping[str, Any], *, now: float | None = None) -> str:

@@ -16,6 +16,7 @@ CHECKS = (
     "check_api_champions_uses_stable_catalog_before_network_snapshot",       # 验证 API 先查稳定目录再发网络请求
     "check_redirect_api_does_not_sync_preload_before_response",              # 验证重定向 API 不在响应前同步预加载
     "check_redirect_api_defers_browser_open_before_response",                # 验证重定向 API 不在响应前打开浏览器
+    "check_redirect_api_handles_invalid_champion_input",                     # 验证重定向 API 非法输入不冒泡 500
     "check_detail_api_defers_cold_local_processing",                         # 验证详情 API 延迟冷本地处理
     "check_detail_renders_before_deferred_icon_catalog",                     # 验证详情渲染在延迟图标目录之前完成
     "check_synergy_api_quarantines_duplicate_pollution",                     # 验证协同 API 隔离重复污染

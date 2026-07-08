@@ -123,8 +123,9 @@ def _write_smoke_feature_flags(runtime_root: Path) -> None:
     )
 
 
-def _fetch(url: str, timeout: float = 8.0) -> tuple[int, bytes]:
-    with urllib.request.urlopen(url, timeout=timeout) as response:
+def _fetch(url: str, timeout: float = 8.0, headers: dict[str, str] | None = None) -> tuple[int, bytes]:
+    request = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.status, response.read()
 
 
@@ -226,14 +227,26 @@ def _business_ready(startup_status: object, champions: object, detail_payload: o
     }
 
 
-def _web_ready(port: str) -> dict[str, object]:
+def _read_runtime_auth_token(runtime_root: Path) -> str:
+    try:
+        return (runtime_root / "state" / "auth_token.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _local_auth_headers(base: str, runtime_root: Path) -> dict[str, str]:
+    token = _read_runtime_auth_token(runtime_root)
+    return {"Origin": base, "X-Hextech-Token": token}
+
+
+def _web_ready(port: str, runtime_root: Path) -> dict[str, object]:
     base = f"http://127.0.0.1:{port}"
     result: dict[str, object] = {}
 
     root_code, root_body = _fetch(base + "/")
     result["root"] = {"code": root_code, "bytes": len(root_body)}
 
-    startup_code, startup_body = _fetch(base + "/api/startup_status")
+    startup_code, startup_body = _fetch(base + "/api/startup_status", headers=_local_auth_headers(base, runtime_root))
     startup_status = _read_json(startup_body)
     result["startup_status"] = {"code": startup_code, "bytes": len(startup_body), "json": startup_status}
 
@@ -332,7 +345,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
             port = _read_port(runtime_root)
             if port and all(checks.values()):
                 try:
-                    web = _web_ready(port)
+                    web = _web_ready(port, runtime_root)
                     elapsed = time.monotonic() - started_at
                     return {
                         "ok": True,
