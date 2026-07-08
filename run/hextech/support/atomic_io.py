@@ -13,13 +13,14 @@ import os
 import tempfile
 import threading
 import time
+import weakref
 from typing import Any
 
 
 _REPLACE_RETRY_DELAYS_SECONDS = (0.02, 0.05, 0.10, 0.20, 0.40)
 _TRANSIENT_REPLACE_WINERRORS = {5, 32, 33, 80, 183}
 _WRITE_LOCKS_GUARD = threading.Lock()
-_WRITE_LOCKS: dict[str, threading.Lock] = {}
+_WRITE_LOCKS: weakref.WeakValueDictionary[str, threading.Lock] = weakref.WeakValueDictionary()
 
 
 def _coerce_path(path: str | os.PathLike[str]) -> str:
@@ -58,6 +59,11 @@ def _replace_with_retry(tmp_path: str | os.PathLike[str], target: str | os.PathL
                 raise
 
 
+def _flush_and_fsync(file_obj) -> None:
+    file_obj.flush()
+    os.fsync(file_obj.fileno())
+
+
 def atomic_write_text(path: str | os.PathLike[str], content: str, *, encoding: str = "utf-8") -> None:
     target = _coerce_path(path)
     directory = os.path.dirname(target) or "."
@@ -67,6 +73,7 @@ def atomic_write_text(path: str | os.PathLike[str], content: str, *, encoding: s
         fd, tmp_path = tempfile.mkstemp(prefix=f".{os.path.basename(target)}-", suffix=".tmp", dir=directory)
         with os.fdopen(fd, "w", encoding=encoding) as f:
             f.write(content)
+            _flush_and_fsync(f)
         with _target_lock(target):
             _replace_with_retry(tmp_path, target)
         tmp_path = None
@@ -91,6 +98,7 @@ def atomic_write_json(
         fd, tmp_path = tempfile.mkstemp(prefix=f".{os.path.basename(target)}-", suffix=".tmp", dir=directory)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=ensure_ascii, indent=indent, separators=separators)
+            _flush_and_fsync(f)
         with _target_lock(target):
             _replace_with_retry(tmp_path, target)
         tmp_path = None
@@ -106,8 +114,9 @@ def atomic_write_csv(path: str | os.PathLike[str], dataframe, *, index: bool = F
     tmp_path = None
     try:
         fd, tmp_path = tempfile.mkstemp(prefix=f".{os.path.basename(target)}-", suffix=".tmp", dir=directory)
-        os.close(fd)
-        dataframe.to_csv(tmp_path, index=index, encoding=encoding)
+        with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
+            dataframe.to_csv(f, index=index)
+            _flush_and_fsync(f)
         with _target_lock(target):
             _replace_with_retry(tmp_path, target)
         tmp_path = None

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Mapping
@@ -220,9 +222,19 @@ def _download_one(
     if not is_valid_png_bytes(content):
         raise ValueError("invalid png icon response")
     asset_dir.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(f".{target.name}.tmp")
-    tmp.write_bytes(content)
-    tmp.replace(target)
+    tmp_path: Path | None = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}-", suffix=".tmp", dir=asset_dir)
+        tmp_path = Path(tmp_name)
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, target)
+        tmp_path = None
+    finally:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
     return {"name": entry.get("name"), "filename": filename, "status": "downloaded", "bytes": len(content)}
 
 
