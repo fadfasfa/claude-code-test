@@ -21,20 +21,25 @@ from monitor import (
     AccountSource,
     EmailSource,
     FixedUrlSource,
+    KkdosSource,
     LuDanSource,
     SmsMonitor,
     generate_totp,
     normalize_accounts,
     normalize_email_sources,
+    normalize_kkdos_sources,
     parse_fixed_sms_response,
     parse_freeform_account_text,
+    ready_check_all,
     ready_check_email_source,
     ready_check_fixed_source,
+    ready_check_kkdos_source,
     ready_check_ludan,
     run_cli,
     run_config_command,
     split_us_phone,
     totp_remaining,
+    validate_config_result,
 )
 
 
@@ -127,6 +132,49 @@ class EmailReadySession:
         if self.exc:
             raise self.exc
         return self.response
+
+
+class FakeSseResponse:
+    """kkdos SSE 测试响应；只实现 KkdosSource 需要的 iter_lines。"""
+
+    def __init__(self, events, status_code=200):
+        self.events = list(events)
+        self.status_code = status_code
+        self.text = ""
+
+    def iter_lines(self, decode_unicode=False):
+        for event in self.events:
+            raw = f"data: {json.dumps(event, ensure_ascii=False)}"
+            yield raw if decode_unicode else raw.encode("utf-8")
+
+    def close(self):
+        pass
+
+
+class KkdosFakeSession:
+    """记录 kkdos HTTP 调用，并按路径返回预设 payload/SSE。"""
+
+    def __init__(self, verify=None, start=None, switch=None, sse=None):
+        self.verify = verify or {}
+        self.start = start or {}
+        self.switch = switch or {}
+        self.sse = sse or []
+        self.posts = []
+        self.gets = []
+
+    def post(self, url, json=None, timeout=None):
+        self.posts.append((url, json, timeout))
+        if url.endswith("/api/cdk/verify"):
+            return FakeJsonResponse(self.verify)
+        if url.endswith("/start"):
+            return FakeJsonResponse(self.start)
+        if url.endswith("/switch-phone"):
+            return FakeJsonResponse(self.switch)
+        return FakeJsonResponse({"success": False, "error": "unexpected post"})
+
+    def get(self, url, stream=False, timeout=None):
+        self.gets.append((url, stream, timeout))
+        return FakeSseResponse(self.sse)
 
 
 class FakePollable:
@@ -586,6 +634,29 @@ class AccountSourceTest(unittest.TestCase):
         self.assertEqual(monitor.accounts[0].linked_phone_source.label, "YunTL")
         self.assertEqual(monitor.accounts[1].linked_phone_source.label, "ka001")
         self.assertEqual(monitor.accounts[1].linked_email_source.label, "iCloudMail")
+
+    def test_account_can_link_dynamic_phone_source_by_label(self):
+        monitor = SmsMonitor(
+            {
+                "base_url": "https://example.invalid",
+                "key": "",
+                "fixed_sources": [],
+                "email_sources": [],
+                "kkdos_sources": [{"label": "kkdos", "cdk": "SECRET_CDK"}],
+                "accounts": [
+                    {
+                        "label": "sk7398965",
+                        "login_email": "sk7398965@example.com",
+                        "phone": "2087605936",
+                        "phone_source_label": "kkdos",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual([source.label for source in monitor.sources], ["sk7398965"])
+        self.assertEqual([source.label for source in monitor.pollables], ["kkdos"])
+        self.assertEqual(monitor.accounts[0].linked_phone_source.label, "kkdos")
 
 
 class RefreshModeTest(unittest.TestCase):
@@ -1093,6 +1164,7 @@ class ConfigCommandTest(unittest.TestCase):
             config_path = os.path.join(tmp, "config.json")
             env = {
                 "FIXED_URL": "https://example.invalid/sms?token=SECRET_TOKEN",
+                "KKDOS_CDK": "SECRET_KKDOS_CDK",
                 "ACCOUNT_PASSWORD": "SECRET_PASSWORD",
                 "ACCOUNT_TOTP": "JBSWY3DPEHPK3PXP",
             }
@@ -1123,6 +1195,18 @@ class ConfigCommandTest(unittest.TestCase):
                     "15550999999",
                     "--url-env",
                     "FIXED_URL",
+                ],
+                env=env,
+            )
+            run_config_command(
+                [
+                    "upsert-kkdos",
+                    "--config",
+                    config_path,
+                    "--label",
+                    "kkdos",
+                    "--cdk-env",
+                    "KKDOS_CDK",
                 ],
                 env=env,
             )
@@ -1159,6 +1243,8 @@ class ConfigCommandTest(unittest.TestCase):
                     "15550999999",
                     "--email",
                     "user@icloud.com",
+                    "--phone-source-label",
+                    "kkdos",
                     "--note",
                     "primary",
                     "--json",
@@ -1171,16 +1257,34 @@ class ConfigCommandTest(unittest.TestCase):
 
             self.assertEqual(len(cfg["fixed_sources"]), 1)
             self.assertEqual(cfg["fixed_sources"][0]["phone"], "15550999999")
+            self.assertEqual(len(cfg["kkdos_sources"]), 1)
+            self.assertEqual(cfg["kkdos_sources"][0]["label"], "kkdos")
+            self.assertEqual(cfg["kkdos_sources"][0]["cdk"], "SECRET_KKDOS_CDK")
             self.assertEqual(len(cfg["email_sources"]), 1)
             self.assertEqual(cfg["email_sources"][0]["email"], "user@icloud.com")
             self.assertEqual(len(cfg["accounts"]), 1)
             self.assertEqual(cfg["accounts"][0]["phone"], "15550999999")
+            self.assertEqual(cfg["accounts"][0]["phone_source_label"], "kkdos")
             self.assertEqual(cfg["accounts"][0]["email"], "user@icloud.com")
             self.assertEqual(cfg["accounts"][0]["password"], "SECRET_PASSWORD")
             self.assertEqual(cfg["accounts"][0]["totp_secret"], "JBSWY3DPEHPK3PXP")
             sanitized = json.dumps(account_result, ensure_ascii=False)
             self.assertNotIn("SECRET_PASSWORD", sanitized)
             self.assertNotIn("JBSWY3DPEHPK3PXP", sanitized)
+            self.assertNotIn("SECRET_KKDOS_CDK", sanitized)
+
+    def test_normalize_kkdos_sources_requires_cdk_without_leaking_value(self):
+        stdout = io.StringIO()
+        with redirect_stdout(stdout), self.assertRaises(SystemExit):
+            normalize_kkdos_sources([{"label": "kkdos", "cdk": ""}])
+        self.assertNotIn("SECRET_CDK", stdout.getvalue())
+
+        source = normalize_kkdos_sources(
+            [{"label": "kkdos", "cdk": "SECRET_CDK", "base_url": "https://sms.kkdos.store/"}]
+        )[0]
+        self.assertEqual(source["label"], "kkdos")
+        self.assertEqual(source["cdk"], "SECRET_CDK")
+        self.assertEqual(source["base_url"], "https://sms.kkdos.store")
 
     def test_cli_validate_and_ready_check_json_are_sanitized(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1188,6 +1292,7 @@ class ConfigCommandTest(unittest.TestCase):
             env = {
                 "SMS_MONITOR_KEY": "REAL_SECRET_KEY",
                 "FIXED_URL": "https://example.invalid/sms?token=SECRET_TOKEN",
+                "KKDOS_CDK": "SECRET_KKDOS_CDK",
                 "ACCOUNT_PASSWORD": "SECRET_PASSWORD",
                 "ACCOUNT_TOTP": "JBSWY3DPEHPK3PXP",
             }
@@ -1207,6 +1312,18 @@ class ConfigCommandTest(unittest.TestCase):
                     "15550123456",
                     "--url-env",
                     "FIXED_URL",
+                ],
+                env=env,
+            )
+            run_config_command(
+                [
+                    "upsert-kkdos",
+                    "--config",
+                    config_path,
+                    "--label",
+                    "kkdos",
+                    "--cdk-env",
+                    "KKDOS_CDK",
                 ],
                 env=env,
             )
@@ -1250,6 +1367,12 @@ class ConfigCommandTest(unittest.TestCase):
                         }
                     ),
                     FixedReadySession(FakeTextResponse("暂无短信")),
+                    KkdosFakeSession(
+                        verify={
+                            "success": True,
+                            "data": {"sessionId": "sess-123", "phone": "+15550123456"},
+                        }
+                    ),
                 ]
             )
             with redirect_stdout(ready_stdout):
@@ -1265,8 +1388,15 @@ class ConfigCommandTest(unittest.TestCase):
             ready_payload = json.loads(ready_stdout.getvalue())
             self.assertTrue(validate_payload["ready"])
             self.assertTrue(ready_payload["ready"])
+            self.assertIn("kkdos", [item["label"] for item in ready_payload["items"]])
             output = validate_stdout.getvalue() + ready_stdout.getvalue()
-            for secret in ["REAL_SECRET_KEY", "SECRET_TOKEN", "SECRET_PASSWORD", "JBSWY3DPEHPK3PXP"]:
+            for secret in [
+                "REAL_SECRET_KEY",
+                "SECRET_TOKEN",
+                "SECRET_KKDOS_CDK",
+                "SECRET_PASSWORD",
+                "JBSWY3DPEHPK3PXP",
+            ]:
                 self.assertNotIn(secret, output)
 
     def test_parse_freeform_account_text_handles_messy_dash_format(self):
@@ -1480,6 +1610,119 @@ class ReadyCheckTest(unittest.TestCase):
         self.assertNotIn("secret detail", json.dumps(ok_false, ensure_ascii=False))
 
 
+class KkdosSourceTest(unittest.TestCase):
+    """验证 kkdos 私有 HTTP/SSE 流程可用，且不依赖浏览器或视觉识别。"""
+
+    def _verify_payload(self, **extra):
+        data = {
+            "sessionId": "sess-123",
+            "phone": "+15550123456",
+            "state": "assigned",
+            "type": "bindable",
+            "locked": False,
+            "attempt": 1,
+            "maxAttempts": 3,
+            "trialSwitchCount": 0,
+            "maxTrialSwitches": 3,
+            "history": [{"content": "OpenAI verification code 246810"}],
+            "expiresAt": "2026-07-30T10:59:09.000Z",
+            "effectiveExpiresAt": "2026-07-30T10:59:09.000Z",
+        }
+        data.update(extra)
+        return {"success": True, "data": data}
+
+    def test_verify_sets_session_phone_and_history_code(self):
+        session = KkdosFakeSession(verify=self._verify_payload())
+        source = KkdosSource({"label": "kkdos", "cdk": "SECRET_CDK"}, session, request_timeout=1)
+
+        source.verify()
+
+        self.assertEqual(source.session_id, "sess-123")
+        self.assertEqual(source.phone, "+15550123456")
+        self.assertEqual(source.state, "assigned")
+        self.assertEqual(source.last_code, "246810")
+        self.assertEqual(source.history[0][1], "246810")
+        self.assertEqual(session.posts[0][0], "https://sms.kkdos.store/api/cdk/verify")
+
+    def test_poll_starts_session_and_reads_sse_code(self):
+        session = KkdosFakeSession(
+            verify=self._verify_payload(),
+            start={"success": True, "data": {"attempt": 1, "maxAttempts": 3}},
+            sse=[{"type": "connected"}, {"type": "code", "data": "Your OpenAI code is 654321"}],
+        )
+        source = KkdosSource({"label": "kkdos", "cdk": "SECRET_CDK"}, session, request_timeout=1)
+        source.verify()
+        source.start_waiting_for_code()
+
+        self.assertEqual(source.poll(), "654321")
+
+        self.assertTrue(session.posts[1][0].endswith("/api/session/sess-123/start"))
+        self.assertTrue(session.gets[0][0].endswith("/api/sse/sess-123"))
+        self.assertEqual(source.last_code, "654321")
+        self.assertEqual(source.status, "收到新验证码")
+
+    def test_poll_idle_does_not_return_code(self):
+        session = KkdosFakeSession(
+            verify=self._verify_payload(),
+            start={"success": True, "data": {"attempt": 1, "maxAttempts": 3}},
+            sse=[{"type": "idle", "remainingSeconds": 0}],
+        )
+        source = KkdosSource({"label": "kkdos", "cdk": "SECRET_CDK"}, session, request_timeout=1)
+        source.verify()
+        source.start_waiting_for_code()
+
+        self.assertIsNone(source.poll())
+        self.assertEqual(source.status, "等待触发")
+        self.assertIn("未收到验证码", source.note)
+
+    def test_change_number_handles_success_cooldown_and_locked(self):
+        success_session = KkdosFakeSession(
+            verify=self._verify_payload(),
+            switch={
+                "success": True,
+                "data": {
+                    "phone": "+15550999999",
+                    "attempt": 2,
+                    "maxAttempts": 3,
+                    "trialSwitchCount": 1,
+                    "maxTrialSwitches": 3,
+                },
+            },
+        )
+        source = KkdosSource({"label": "kkdos", "cdk": "SECRET_CDK"}, success_session, request_timeout=1)
+        source.verify()
+        source.change_number()
+        self.assertEqual(source.phone, "+15550999999")
+        self.assertEqual(source.last_code, "")
+        self.assertEqual(source.trial_switch_count, 1)
+
+        cooldown_session = KkdosFakeSession(
+            verify=self._verify_payload(),
+            switch={"success": False, "error": "too soon", "data": {"remainingSeconds": 17}},
+        )
+        cooldown = KkdosSource({"label": "kkdos", "cdk": "SECRET_CDK"}, cooldown_session, request_timeout=1)
+        cooldown.verify()
+        cooldown.change_number()
+        self.assertIn("17", cooldown.note)
+
+        locked = KkdosSource(
+            {"label": "kkdos", "cdk": "SECRET_CDK"},
+            KkdosFakeSession(verify=self._verify_payload(locked=True)),
+            request_timeout=1,
+        )
+        locked.verify()
+        locked.change_number()
+        self.assertIn("锁定", locked.note)
+
+    def test_ready_check_kkdos_ready_when_verify_returns_phone(self):
+        session = KkdosFakeSession(verify=self._verify_payload())
+        result = ready_check_kkdos_source({"label": "kkdos", "cdk": "SECRET_CDK"}, session, 1)
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["kind"], "kkdos")
+        self.assertNotIn("SECRET_CDK", json.dumps(result, ensure_ascii=False))
+
+
 class LuDanSourceTest(unittest.TestCase):
     """验证 LuDan 动态号使用官网同款 action 流程。"""
 
@@ -1625,6 +1868,60 @@ class ClipboardBehaviorTest(unittest.TestCase):
         )
         self.assertEqual(windows_attempts, ["654321", "654321"])
         self.assertEqual(fallback_calls, ["654321"])
+
+
+class LuDanOptionalTest(unittest.TestCase):
+    """LuDan 可选化：key 未配置或占位时跳过 LuDan，不阻塞其余来源。"""
+
+    def _cfg(self, **extra):
+        cfg = {
+            "base_url": "https://example.invalid",
+            "request_timeout": 1,
+            "fixed_sources": [],
+            "email_sources": [],
+            "accounts": [],
+        }
+        cfg.update(extra)
+        return cfg
+
+    def test_validate_passes_when_key_empty(self):
+        result = validate_config_result(self._cfg())
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["status"], "valid")
+
+    def test_validate_passes_when_key_is_placeholder(self):
+        result = validate_config_result(self._cfg(key="YOUR_CDK"))
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["status"], "valid")
+
+    def test_ready_check_all_skips_ludan_when_key_empty(self):
+        # key 为空时不应调用 LuDan；factory 若被调用即说明未跳过
+        def factory():
+            raise AssertionError("LuDan 不应在 key 为空时被检查")
+
+        result = ready_check_all(self._cfg(), factory)
+        self.assertTrue(result["ready"])
+        self.assertEqual([i["label"] for i in result["items"]], [])
+
+    def test_ready_check_single_reports_not_configured_when_key_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(self._cfg(), f)
+            result = run_config_command(["ready-check", "--config", config_path, "--json"])
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["items"][0]["status"], "not_configured")
+
+    def test_sms_monitor_ludan_none_when_key_empty(self):
+        cfg = monitor.default_config()
+        m = SmsMonitor(cfg)
+        self.assertIsNone(m.ludan)
+
+    def test_sms_monitor_ludan_none_when_key_placeholder(self):
+        cfg = monitor.default_config()
+        cfg["key"] = "YOUR_CDK"
+        m = SmsMonitor(cfg)
+        self.assertIsNone(m.ludan)
 
 
 if __name__ == "__main__":

@@ -72,6 +72,14 @@ class LuDanAuthError(Exception):
         self.code = code
 
 
+class KkdosApiError(Exception):
+    """kkdos 私有接口错误；对外只暴露脱敏诊断。"""
+
+    def __init__(self, safe_message):
+        super().__init__(safe_message)
+        self.safe_message = safe_message
+
+
 @dataclass(frozen=True)
 class PhoneParts:
     """美国号码展示结构，避免把国家码和 10 位号码混在同一复制区域。"""
@@ -265,15 +273,17 @@ def load_config():
         sys.exit(1)
 
     key = (cfg.get("key") or "").strip()
-    if not key or key == "YOUR_CDK":
-        print("config.json 里的 key 还是占位符，请填入你的真实 CDK。")
-        sys.exit(1)
-
+    if key == "YOUR_CDK":
+        key = ""
     cfg["key"] = key
+    if not key:
+        # LuDan 已改为可选来源：key 未配置时跳过 LuDan，仅使用固定/邮箱/账户来源
+        print("提示：LuDan key 未配置，将跳过 LuDan 来源。")
     cfg.setdefault("base_url", "https://jm.luudan.xyz/api/open.php")
     cfg.setdefault("poll_interval", 5)
     cfg.setdefault("auto_change_on_expire", True)
     cfg["fixed_sources"] = normalize_fixed_sources(cfg.get("fixed_sources", []))
+    cfg["kkdos_sources"] = normalize_kkdos_sources(cfg.get("kkdos_sources", []))
     cfg["email_sources"] = normalize_email_sources(cfg.get("email_sources", []))
     cfg["accounts"] = normalize_accounts(cfg.get("accounts", []))
     return cfg
@@ -299,6 +309,29 @@ def normalize_fixed_sources(raw_sources):
             print(f"fixed_sources 第 {index} 项缺少 phone 或 url。")
             sys.exit(1)
         sources.append({"label": label, "phone": phone, "url": url})
+    return sources
+
+
+def normalize_kkdos_sources(raw_sources):
+    """校验 kkdos 动态来源；错误信息不回显 CDK。"""
+    if raw_sources is None:
+        return []
+    if not isinstance(raw_sources, list):
+        print("config.json 里的 kkdos_sources 必须是数组。")
+        sys.exit(1)
+
+    sources = []
+    for index, item in enumerate(raw_sources, start=1):
+        if not isinstance(item, dict):
+            print(f"kkdos_sources 第 {index} 项必须是对象。")
+            sys.exit(1)
+        label = str(item.get("label") or f"kkdos{index}").strip()
+        cdk = str(item.get("cdk") or "").strip()
+        base_url = str(item.get("base_url") or "https://sms.kkdos.store").strip().rstrip("/")
+        if not cdk:
+            print(f"kkdos_sources 第 {index} 项缺少 cdk。")
+            sys.exit(1)
+        sources.append({"label": label, "cdk": cdk, "base_url": base_url})
     return sources
 
 
@@ -356,6 +389,7 @@ def normalize_accounts(raw_accounts):
                 "password": str(item.get("password") or ""),
                 "totp_secret": str(item.get("totp_secret") or ""),
                 "phone": str(item.get("phone") or "").strip(),
+                "phone_source_label": str(item.get("phone_source_label") or "").strip(),
                 "email": str(item.get("email") or "").strip(),
                 "note": str(item.get("note") or "").strip(),
             }
@@ -377,6 +411,7 @@ def default_config():
         "active_after_copy_seconds": 180,
         "auto_change_on_expire": True,
         "fixed_sources": [],
+        "kkdos_sources": [],
         "email_sources": [],
         "accounts": [],
     }
@@ -527,6 +562,12 @@ def is_disabled(cfg, kind, label):
     return disabled_key(kind, label) in (cfg.get("disabled") or {})
 
 
+def ludan_configured(cfg):
+    """LuDan 是否已配置：key 非空且非占位符 YOUR_CDK。"""
+    key = (cfg.get("key") or "").strip()
+    return bool(key) and key != "YOUR_CDK"
+
+
 def disable_source(cfg, kind, label, reason, path=CONFIG_PATH):
     """标记某来源/账户为无效并持久化到 config.json。"""
     entry = cfg.setdefault("disabled", {})
@@ -609,6 +650,19 @@ def ready_check_fixed_source(cfg, session, request_timeout=3.0):
     return safe_result(label, "fixed", True, "ready", result.status)
 
 
+def ready_check_kkdos_source(cfg, session, request_timeout=3.0):
+    """kkdos verify 能拿到手机号即 ready；不启动等码窗口。"""
+    label = cfg.get("label") or "kkdos"
+    source = KkdosSource(cfg, session, request_timeout)
+    try:
+        source.verify()
+    except KkdosApiError as e:
+        return safe_result(label, "kkdos", False, "api_not_ready", e.safe_message)
+    if source.phone:
+        return safe_result(label, "kkdos", True, "ready", "已分配可用号码")
+    return safe_result(label, "kkdos", False, "number_unavailable", "未返回可用号码")
+
+
 def ready_check_email_source(cfg, session, request_timeout=3.0):
     """邮箱取件接口 ok=true 即 ready；不要求已有验证码邮件。"""
     label = cfg.get("label") or "email"
@@ -633,7 +687,7 @@ def same_phone(left, right):
     return bool(left and right and split_us_phone(left).raw_digits == split_us_phone(right).raw_digits)
 
 
-def ready_check_account(account, fixed_sources, email_sources):
+def ready_check_account(account, phone_sources, email_sources):
     """账户本地字段可用且已配置的接码关联能匹配时为 ready。"""
     label = account.get("label") or "account"
     if account.get("totp_secret"):
@@ -642,7 +696,11 @@ def ready_check_account(account, fixed_sources, email_sources):
         except ValueError:
             return safe_result(label, "account", False, "bad_totp", "TOTP 密钥无效")
 
-    if account.get("phone") and not any(same_phone(account["phone"], src.get("phone")) for src in fixed_sources):
+    phone_source_label = (account.get("phone_source_label") or "").strip()
+    if phone_source_label:
+        if not any((src.get("label") or "").strip() == phone_source_label for src in phone_sources):
+            return safe_result(label, "account", False, "phone_unlinked", "关联电话来源 label 未匹配")
+    elif account.get("phone") and not any(same_phone(account["phone"], src.get("phone")) for src in phone_sources):
         return safe_result(label, "account", False, "phone_unlinked", "关联电话未匹配接码来源")
     if account.get("email"):
         target = account["email"].strip().lower()
@@ -654,10 +712,10 @@ def ready_check_account(account, fixed_sources, email_sources):
 def validate_config_result(cfg):
     """只验证结构和必要字段，不触发真实网络。"""
     normalize_fixed_sources(cfg.get("fixed_sources", []))
+    normalize_kkdos_sources(cfg.get("kkdos_sources", []))
     normalize_email_sources(cfg.get("email_sources", []))
     normalize_accounts(cfg.get("accounts", []))
-    if not str(cfg.get("key") or "").strip():
-        return safe_result("config", "config", False, "missing_key", "LuDan key 未配置")
+    # LuDan 已改为可选来源：key 未配置不再视为配置无效
     return safe_result("config", "config", True, "valid", "配置结构可用")
 
 
@@ -677,16 +735,22 @@ def ready_check_all(cfg, session_factory):
     """检查所有来源是否到达预备接码状态。"""
     request_timeout = max(0.5, float(cfg.get("request_timeout", 3.0)))
     fixed_sources = normalize_fixed_sources(cfg.get("fixed_sources", []))
+    kkdos_sources = normalize_kkdos_sources(cfg.get("kkdos_sources", []))
     email_sources = normalize_email_sources(cfg.get("email_sources", []))
     accounts = normalize_accounts(cfg.get("accounts", []))
 
-    results = [ready_check_ludan(cfg, session_factory())]
+    results = []
+    # LuDan 可选：key 未配置时跳过其就绪检查，不计入整体 ready 判定
+    if ludan_configured(cfg):
+        results.append(ready_check_ludan(cfg, session_factory()))
     for source in fixed_sources:
         results.append(ready_check_fixed_source(source, session_factory(), request_timeout))
+    for source in kkdos_sources:
+        results.append(ready_check_kkdos_source(source, session_factory(), request_timeout))
     for source in email_sources:
         results.append(ready_check_email_source(source, session_factory(), request_timeout))
     for account in accounts:
-        results.append(ready_check_account(account, fixed_sources, email_sources))
+        results.append(ready_check_account(account, [*fixed_sources, *kkdos_sources], email_sources))
     return aggregate_results(results)
 
 
@@ -727,6 +791,12 @@ def build_config_parser():
     email_parser.add_argument("--provider", default="icloud")
     email_parser.add_argument("--base-url", default="https://email.nloop.cc")
 
+    kkdos_parser = subparsers.add_parser("upsert-kkdos")
+    add_common(kkdos_parser)
+    kkdos_parser.add_argument("--label", required=True)
+    kkdos_parser.add_argument("--cdk-env", required=True)
+    kkdos_parser.add_argument("--base-url", default="https://sms.kkdos.store")
+
     account_parser = subparsers.add_parser("upsert-account")
     add_common(account_parser)
     account_parser.add_argument("--label", required=True)
@@ -734,6 +804,7 @@ def build_config_parser():
     account_parser.add_argument("--password-env")
     account_parser.add_argument("--totp-secret-env")
     account_parser.add_argument("--phone", default="")
+    account_parser.add_argument("--phone-source-label", default="")
     account_parser.add_argument("--email", default="")
     account_parser.add_argument("--note", default="")
 
@@ -757,7 +828,7 @@ def build_config_parser():
     add_common(disable_parser)
     disable_parser.add_argument("--label", required=True)
     disable_parser.add_argument(
-        "--kind", required=True, choices=["ludan", "fixed", "email", "account"]
+        "--kind", required=True, choices=["ludan", "fixed", "kkdos", "email", "account"]
     )
     disable_parser.add_argument("--reason", default="手动禁用")
 
@@ -765,7 +836,7 @@ def build_config_parser():
     add_common(enable_parser)
     enable_parser.add_argument("--label", required=True)
     enable_parser.add_argument(
-        "--kind", required=True, choices=["ludan", "fixed", "email", "account"]
+        "--kind", required=True, choices=["ludan", "fixed", "kkdos", "email", "account"]
     )
 
     list_disabled_parser = subparsers.add_parser("list-disabled")
@@ -842,6 +913,20 @@ def run_config_command(
         write_config_file_atomic(args.config, cfg)
         return safe_result(args.label, "email", True, status, "邮箱取件来源已录入")
 
+    if args.command == "upsert-kkdos":
+        cfg = read_config_file(args.config, allow_missing=True)
+        cfg["kkdos_sources"] = normalize_kkdos_sources(cfg.get("kkdos_sources", []))
+        cdk = env_value(env, args.cdk_env, "kkdos CDK")
+        item = {
+            "label": args.label.strip(),
+            "cdk": cdk,
+            "base_url": args.base_url.strip().rstrip("/"),
+        }
+        normalize_kkdos_sources([item])
+        status = upsert_by_label(cfg["kkdos_sources"], item)
+        write_config_file_atomic(args.config, cfg)
+        return safe_result(args.label, "kkdos", True, status, "kkdos 动态来源已录入")
+
     if args.command == "upsert-account":
         cfg = read_config_file(args.config, allow_missing=True)
         cfg["accounts"] = normalize_accounts(cfg.get("accounts", []))
@@ -855,6 +940,7 @@ def run_config_command(
             "password": password,
             "totp_secret": totp_secret,
             "phone": args.phone.strip(),
+            "phone_source_label": args.phone_source_label.strip(),
             "email": args.email.strip(),
             "note": args.note.strip(),
         }
@@ -922,6 +1008,9 @@ def run_config_command(
         factory = requests.Session if session_factory is None else session_factory
         if args.all:
             return ready_check_all(cfg, factory)
+        # LuDan 可选：key 未配置时跳过就绪检查，不发无效请求
+        if not ludan_configured(cfg):
+            return aggregate_results([safe_result("LuDan", "ludan", True, "not_configured", "LuDan key 未配置，已跳过")])
         return aggregate_results([ready_check_ludan(cfg, factory())])
 
     if args.command == "disable":
@@ -969,7 +1058,12 @@ def run_config_command(
             }
         # 执行清理：删除 disabled 的 fixed/email/account 项；LuDan 仅移除标记
         disabled = cfg.get("disabled") or {}
-        list_keys = {"fixed": "fixed_sources", "email": "email_sources", "account": "accounts"}
+        list_keys = {
+            "fixed": "fixed_sources",
+            "kkdos": "kkdos_sources",
+            "email": "email_sources",
+            "account": "accounts",
+        }
         for key in list(disabled.keys()):
             if key == "ludan":
                 continue
@@ -1113,6 +1207,7 @@ class LuDanSource:
 
     # 标识来源类型，供 _disable_runtime 按 disabled_key 匹配并从 pollables 移除
     kind = "ludan"
+    supports_change_number = True
 
     def __init__(self, cfg, session, request_timeout=3.0):
         self.label = "LuDan"
@@ -1252,6 +1347,228 @@ class LuDanSource:
             f"状态:{self.card_status} | 短信:{self.sms_count} 次 | "
             f"换号:{self.switch_count} 次 | 有效期:{self.expire_text()}"
         )
+
+
+class KkdosSource:
+    """kkdos 动态号码来源：verify 取号，复制后 start，并通过 SSE 等验证码。"""
+
+    kind = "kkdos"
+    supports_change_number = True
+    poll_only_when_active = True
+
+    def __init__(self, cfg, session, request_timeout=3.0):
+        self.label = cfg["label"]
+        self.cdk = cfg["cdk"]
+        self.base_url = cfg.get("base_url", "https://sms.kkdos.store").rstrip("/")
+        self.session = session
+        self.request_timeout = request_timeout
+
+        self.session_id = ""
+        self.phone = ""
+        self.state = "未校验"
+        self.card_type = "-"
+        self.locked = False
+        self.attempt = None
+        self.max_attempts = None
+        self.trial_switch_count = 0
+        self.max_trial_switches = None
+        self.expires_at = ""
+        self.effective_expires_at = ""
+        self.waiting_for_code = False
+        self.last_code = ""
+        self.history = deque(maxlen=8)
+        self.status = "等待校验"
+        self.last_checked = "-"
+        self.note = ""
+        self.disabled_reason = ""
+
+    @property
+    def phone_parts(self):
+        return split_us_phone(self.phone)
+
+    @property
+    def copy_number(self):
+        return self.phone_parts.local_number
+
+    def _post_json(self, path, body=None):
+        url = f"{self.base_url}{path}"
+        try:
+            resp = self.session.post(url, json=body or {}, timeout=self.request_timeout)
+        except requests.RequestException as e:
+            raise KkdosApiError(f"网络异常：{e.__class__.__name__}") from e
+        self.last_checked = now_hms()
+        status_code = getattr(resp, "status_code", 0)
+        if not 200 <= status_code < 300:
+            raise KkdosApiError(f"HTTP {status_code}")
+        try:
+            payload = resp.json()
+        except (AttributeError, ValueError) as e:
+            raise KkdosApiError("接口返回非 JSON") from e
+        if not payload.get("success"):
+            error = str(payload.get("error") or "接口返回 success=false")
+            data = payload.get("data") or {}
+            if isinstance(data, dict) and "remainingSeconds" in data:
+                error = f"请再等待 {data.get('remainingSeconds')} 秒"
+            raise KkdosApiError(error)
+        return payload.get("data") or {}
+
+    def verify(self):
+        data = self._post_json("/api/cdk/verify", {"cdk": self.cdk.strip().upper()})
+        self.apply_status_data(data)
+        self.status = "已分配号码" if self.phone else "未返回号码"
+        return data
+
+    def apply_status_data(self, data):
+        if not isinstance(data, dict):
+            return
+        self.session_id = str(data.get("sessionId") or self.session_id)
+        self.phone = str(data.get("phone") or data.get("phoneNumber") or self.phone)
+        self.state = str(data.get("state") or self.state)
+        self.card_type = str(data.get("type") or self.card_type)
+        self.locked = bool(data.get("locked", self.locked))
+        self.attempt = data.get("attempt", self.attempt)
+        self.max_attempts = data.get("maxAttempts", self.max_attempts)
+        self.trial_switch_count = data.get("trialSwitchCount", self.trial_switch_count)
+        self.max_trial_switches = data.get("maxTrialSwitches", self.max_trial_switches)
+        self.expires_at = str(data.get("expiresAt") or self.expires_at)
+        self.effective_expires_at = str(data.get("effectiveExpiresAt") or self.effective_expires_at)
+        for item in data.get("history") or []:
+            self._record_history_item(item)
+
+    def _record_history_item(self, item):
+        text = ""
+        if isinstance(item, dict):
+            text = str(item.get("content") or item.get("data") or item.get("message") or "")
+        else:
+            text = str(item or "")
+        result = parse_fixed_sms_response(text, allow_generic=True)
+        if not result.has_sms or not result.code:
+            return
+        if any(code == result.code for _, code, _ in self.history):
+            return
+        self.last_code = result.code
+        self.history.appendleft((now_hms(), result.code, result.content or text))
+
+    def start_waiting_for_code(self):
+        self.waiting_for_code = True
+        self.note = "等待验证码查询"
+
+    def poll(self):
+        if not self.session_id:
+            self.verify()
+        if not self.waiting_for_code:
+            self.status = "等待触发"
+            return None
+        try:
+            data = self._post_json(f"/api/session/{self.session_id}/start")
+        except KkdosApiError as e:
+            self.status = "启动失败"
+            self.note = e.safe_message
+            return None
+        self.apply_status_data(data)
+        return self._read_sse_code()
+
+    def _read_sse_code(self):
+        url = f"{self.base_url}/api/sse/{self.session_id}"
+        try:
+            resp = self.session.get(url, stream=True, timeout=self.request_timeout)
+        except requests.RequestException as e:
+            self.status = "SSE 网络异常"
+            self.note = e.__class__.__name__
+            return None
+        self.last_checked = now_hms()
+        if not 200 <= getattr(resp, "status_code", 0) < 300:
+            self.status = f"SSE HTTP {getattr(resp, 'status_code', '-')}"
+            self.note = "查询失败"
+            return None
+        try:
+            try:
+                for line in resp.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    text = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else str(line)
+                    if not text.startswith("data:"):
+                        continue
+                    try:
+                        event = json.loads(text.partition(":")[2].strip())
+                    except ValueError:
+                        continue
+                    code = self._handle_sse_event(event)
+                    if code:
+                        return code
+                    if event.get("type") in {"idle", "failed", "timeout", "error"}:
+                        return None
+            except requests.RequestException as e:
+                self.status = "SSE 网络异常"
+                self.note = e.__class__.__name__
+                return None
+        finally:
+            close = getattr(resp, "close", None)
+            if close:
+                close()
+        return None
+
+    def _handle_sse_event(self, event):
+        if not isinstance(event, dict):
+            return None
+        if "remainingSeconds" in event:
+            self.note = f"剩余等待 {event.get('remainingSeconds')} 秒"
+        self.apply_status_data(event)
+        event_type = event.get("type")
+        if event_type in {"connected", "retry"}:
+            self.status = "正在等待验证码"
+            return None
+        if event_type == "code":
+            content = str(event.get("data") or event.get("content") or "")
+            result = parse_fixed_sms_response(content, allow_generic=True)
+            if result.has_sms and result.code and result.code != self.last_code:
+                self.last_code = result.code
+                self.history.appendleft((now_hms(), result.code, result.content or content))
+                self.status = "收到新验证码"
+                self.note = "收到新验证码"
+                self.waiting_for_code = False
+                return result.code
+            self.status = "收到短信"
+            self.note = "未提取到新验证码"
+            return None
+        if event_type == "idle":
+            self.status = "等待触发"
+            self.note = "本次未收到验证码，可重新查询或换号"
+            self.waiting_for_code = False
+            return None
+        if event_type in {"failed", "timeout", "error"}:
+            self.status = "查询失败"
+            self.note = str(event.get("error") or event_type)
+            self.waiting_for_code = False
+        return None
+
+    def change_number(self):
+        if self.locked:
+            self.note = "号码已锁定，不能换号"
+            return
+        if not self.session_id:
+            try:
+                self.verify()
+            except KkdosApiError as e:
+                self.note = e.safe_message
+                return
+        try:
+            data = self._post_json(f"/api/session/{self.session_id}/switch-phone")
+        except KkdosApiError as e:
+            self.note = f"换号失败：{e.safe_message}"
+            return
+        self.apply_status_data(data)
+        self.last_code = ""
+        self.waiting_for_code = False
+        self.status = "已换号"
+        self.note = "已换号"
+
+    def status_text(self):
+        attempt = "-"
+        if self.attempt is not None or self.max_attempts is not None:
+            attempt = f"{self.attempt or '-'} / {self.max_attempts or '-'}"
+        locked = "是" if self.locked else "否"
+        return f"状态:{self.status} | 尝试:{attempt} | 锁定:{locked} | 更新时间:{self.last_checked}"
 
 
 class FixedUrlSource:
@@ -1462,6 +1779,7 @@ class AccountSource:
         self.password = cfg.get("password", "")
         self.totp_secret = cfg.get("totp_secret", "")
         self.phone = cfg.get("phone", "")
+        self.phone_source_label = cfg.get("phone_source_label", "")
         self.email = cfg.get("email", "")
         self.note = cfg.get("note", "")
         # 聚合卡片用：由 SmsMonitor._link_accounts 挂上对应的轮询来源
@@ -1542,8 +1860,8 @@ class SmsMonitor:
         # 注入链不走这里，保持不变。
         # 无效来源/账户的展示信息（已在 config.json 持久化标记为 disabled）
         self.disabled_display = list_disabled(cfg)
-        # LuDan 已标记失效时不实例化，run() 也不再校验它
-        if is_disabled(cfg, "ludan", ""):
+        # LuDan 可选：key 未配置或已标记失效时不实例化，run() 也不再校验它
+        if not ludan_configured(cfg) or is_disabled(cfg, "ludan", ""):
             self.ludan = None
         else:
             self.ludan = LuDanSource(cfg, requests.Session(), self.request_timeout)
@@ -1551,6 +1869,11 @@ class SmsMonitor:
             FixedUrlSource(item, requests.Session(), self.request_timeout)
             for item in cfg["fixed_sources"]
             if not is_disabled(cfg, "fixed", item.get("label", ""))
+        ]
+        self.kkdos_sources = [
+            KkdosSource(item, requests.Session(), self.request_timeout)
+            for item in cfg.get("kkdos_sources", [])
+            if not is_disabled(cfg, "kkdos", item.get("label", ""))
         ]
         self.email_sources = [
             EmailSource(item, requests.Session(), self.request_timeout)
@@ -1563,7 +1886,10 @@ class SmsMonitor:
             if not is_disabled(cfg, "account", item.get("label", ""))
         ]
         # 需要后台轮询的验证码来源（账户本身不轮询）；ludan 可能 None
-        self.pollables = [s for s in [self.ludan, *self.fixed_sources, *self.email_sources] if s is not None]
+        self.pollables = [
+            s for s in [self.ludan, *self.fixed_sources, *self.kkdos_sources, *self.email_sources]
+            if s is not None
+        ]
         # 账户聚合：把电话/邮箱来源挂到账户卡上，避免顶层重复展示
         self._link_accounts()
         self._rebuild_sources()
@@ -1592,7 +1918,12 @@ class SmsMonitor:
         for account in self.accounts:
             account.linked_phone_source = None
             account.linked_email_source = None
-            if account.phone:
+            if account.phone_source_label:
+                for src in [*self.fixed_sources, *self.kkdos_sources]:
+                    if src.label == account.phone_source_label:
+                        account.linked_phone_source = src
+                        break
+            elif account.phone:
                 target = split_us_phone(account.phone).raw_digits
                 for src in self.fixed_sources:
                     if target and split_us_phone(src.phone).raw_digits == target:
@@ -1643,7 +1974,8 @@ class SmsMonitor:
             print()
         if msvcrt:
             keys = "/".join(str(i) for i in range(1, min(len(self.sources), 9) + 1))
-            print(f"  热键：按 {keys} 复制对应号码/邮箱 | n 仅 LuDan 换号 | q 退出")
+            change_hint = " | n 换号" if self.changeable_sources() else ""
+            print(f"  热键：按 {keys} 复制对应号码/邮箱{change_hint} | q 退出")
         else:
             print("  非 Windows 终端仅支持 Ctrl+C 退出；号码请手动框选复制。")
         if self.note:
@@ -1726,13 +2058,14 @@ class SmsMonitor:
             if ch == "q":
                 return False
             if ch == "n":
-                if self.ludan is None:
-                    self.note = "LuDan 已禁用，无法换号"
+                source = self.default_changeable_source()
+                if source is None:
+                    self.note = "当前没有可换号来源"
                     self.render()
                     continue
-                self.note = "LuDan 手动换号中..."
+                self.note = f"{source.label} 手动换号中..."
                 self.render()
-                self.ludan.change_number()
+                source.change_number()
                 self.activate_high_frequency()
                 self.render()  # 立即刷新换号结果，不等下一轮轮询
                 continue
@@ -1755,6 +2088,7 @@ class SmsMonitor:
         ok = copy_to_clipboard(number)
         target = "邮箱地址" if getattr(source, "is_email", False) else "10 位号码"
         if ok:
+            self.mark_waiting_for_code(source)
             self.activate_high_frequency()
         self.note = f"已复制 [{index}] {source.label} 的{target}" if ok else "复制失败"
 
@@ -1777,6 +2111,8 @@ class SmsMonitor:
             _, label, value = fields[0]
             ok = copy_to_clipboard(value)
             if ok:
+                if label == "手机号码":
+                    self.mark_waiting_for_code(account.linked_phone_source)
                 self.activate_high_frequency()
             self.note = (
                 f"非 Windows 终端已复制 [{index}] {account.label} 的{label}"
@@ -1797,10 +2133,32 @@ class SmsMonitor:
                 label, value = choices[ch]
                 ok = copy_to_clipboard(value)
                 if ok:
+                    if label == "手机号码":
+                        self.mark_waiting_for_code(account.linked_phone_source)
                     self.activate_high_frequency()
                 self.note = f"已复制 [{index}] {account.label} 的{label}" if ok else "复制失败"
                 self.render()
                 return
+
+    @staticmethod
+    def mark_waiting_for_code(source):
+        if source is None:
+            return
+        starter = getattr(source, "start_waiting_for_code", None)
+        if starter:
+            starter()
+
+    def changeable_sources(self):
+        return [
+            source for source in self.pollables
+            if getattr(source, "supports_change_number", False)
+        ]
+
+    def default_changeable_source(self):
+        sources = self.changeable_sources()
+        if not sources:
+            return None
+        return sources[0]
 
     def auto_copy_code(self, label, code, copy_func=copy_to_clipboard):
         """新验证码自动写入剪贴板；号码复制仍只由数字热键触发。"""
@@ -1840,7 +2198,14 @@ class SmsMonitor:
         skip_ids, late_codes = self._reconcile_pending_polls()
         new_codes.extend(late_codes)
 
-        targets = [s for s in self.pollables if id(s) not in skip_ids]
+        targets = [
+            s for s in self.pollables
+            if id(s) not in skip_ids
+            and (
+                not getattr(s, "poll_only_when_active", False)
+                or getattr(s, "waiting_for_code", False)
+            )
+        ]
         if not targets:
             return new_codes
 
@@ -1983,7 +2348,15 @@ class SmsMonitor:
                 self.ludan = None
                 self._rebuild_sources()
         else:
-            print("LuDan 已标记禁用，跳过校验。")
+            print("LuDan 未启用（未配置 key 或已禁用），跳过校验。")
+        for source in list(getattr(self, "kkdos_sources", [])):
+            try:
+                print(f"正在校验 {source.label} kkdos CDK...")
+                source.verify()
+            except KkdosApiError as e:
+                print(f"{source.label} kkdos 暂不可用，跳过并继续：{e.safe_message}")
+                self._disable_runtime("kkdos", source.label, e.safe_message)
+        self._rebuild_sources()
         if getattr(self, "disabled_display", None):
             print(f"已跳过 {len(self.disabled_display)} 个无效来源/账户；config list-disabled 查看")
         try:
