@@ -709,6 +709,27 @@ class RefreshModeTest(unittest.TestCase):
         self.assertEqual(new_codes, [("Fast", "111111")])
         self.assertLess(elapsed, 0.15)
 
+    def test_poll_sources_skips_source_whose_poll_raises(self):
+        # 某 source.poll() 漏网抛异常时，poll_sources 不应崩溃，异常来源跳过本轮，
+        # 其他来源的新码照常收集。
+        monitor = SmsMonitor.__new__(SmsMonitor)
+        monitor._pending_polls = []
+
+        class RaisingPollable(FakePollable):
+            def poll(self):
+                raise RuntimeError("boom")
+
+        bad = RaisingPollable("Bad", code="999999")
+        good = FakePollable("Good", code="111111")
+        monitor.pollables = [bad, good]
+        monitor.max_poll_workers = 2
+        monitor.poll_round_timeout = 1.0
+
+        new_codes = monitor.poll_sources()
+
+        self.assertEqual(new_codes, [("Good", "111111")])
+        self.assertIn("轮询异常", bad.note)
+
     def test_poll_sources_marks_timeout_without_losing_existing_state(self):
         monitor = SmsMonitor.__new__(SmsMonitor)
         slow = FakePollable("Slow", code="222222", delay=0.2)
@@ -1674,6 +1695,21 @@ class KkdosSourceTest(unittest.TestCase):
         self.assertIsNone(source.poll())
         self.assertEqual(source.status, "等待触发")
         self.assertIn("未收到验证码", source.note)
+
+    def test_poll_swallows_verify_error_without_raising(self):
+        # session_id 为空时 poll() 会调 verify()；verify 失败（success=false）
+        # 抛 KkdosApiError，必须被 poll 内部捕获，不能冒泡拖垮监控主循环。
+        session = KkdosFakeSession(verify={"success": False, "error": "CDK 已失效"})
+        source = KkdosSource({"label": "kkdos", "cdk": "SECRET_CDK"}, session, request_timeout=1)
+        source.start_waiting_for_code()
+
+        result = source.poll()
+
+        self.assertIsNone(result)
+        self.assertEqual(source.status, "校验失败")
+        self.assertIn("CDK 已失效", source.note)
+        # 脱敏：CDK 明文不得出现在状态信息里
+        self.assertNotIn("SECRET_CDK", source.note)
 
     def test_change_number_handles_success_cooldown_and_locked(self):
         success_session = KkdosFakeSession(

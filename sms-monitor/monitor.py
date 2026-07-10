@@ -1455,7 +1455,14 @@ class KkdosSource:
 
     def poll(self):
         if not self.session_id:
-            self.verify()
+            try:
+                self.verify()
+            except KkdosApiError as e:
+                # verify 失败（网络异常/HTTP错误/CDK失效）不应拖垮整个监控，
+                # 与下方 start 调用一致：设状态后跳过本轮，等下次重试。
+                self.status = "校验失败"
+                self.note = e.safe_message
+                return None
         if not self.waiting_for_code:
             self.status = "等待触发"
             return None
@@ -2223,7 +2230,12 @@ class SmsMonitor:
                     # 结转到下一轮结算；快照用于异常完成路径的回滚，轮次用于避免永久跳过。
                     self._pending_polls.append((source, future, snapshots[id(source)], 0))
                     continue
-                new_code = future.result()
+                try:
+                    new_code = future.result()
+                except Exception as e:
+                    # 来源 poll() 漏网异常不应拖垮整轮；按无新码处理，等下次重试。
+                    new_code = None
+                    source.note = f"轮询异常：{e.__class__.__name__}"
                 if new_code:
                     new_codes.append((source.label, new_code))
                 # 来源连续硬失败达阈值：持久化标记无效并从 pollables 移除
