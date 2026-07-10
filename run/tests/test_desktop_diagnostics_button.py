@@ -4,37 +4,90 @@
 """
 from __future__ import annotations
 
-import inspect
-from pathlib import Path
+import threading
+from types import SimpleNamespace
 
 
-def test_diagnostics_button_is_in_title_frame_not_feature_or_list():
+def test_diagnostics_button_is_created_in_title_frame(monkeypatch):
     import hextech.display.desktop.app as desktop_app
 
-    source = inspect.getsource(desktop_app.HextechUI._build_ui)
-    assert 'text="诊断"' in source
-    assert "self.diagnostics_button" in source
-    assert "self.title_frame" in source
-    assert "self.diagnostics_button.pack(side=tk.RIGHT" in source
-    assert "self.diagnostics_button.grid" not in source
+    class Variable:
+        def __init__(self, value=False):
+            self.value = value
 
-    title_index = source.index("self.diagnostics_button")
-    feature_index = source.index("self.feature_frame")
-    canvas_index = source.index("self.canvas")
-    assert title_index < feature_index < canvas_index
+        def get(self):
+            return self.value
 
+        def set(self, value):
+            self.value = value
 
-def test_diagnostics_button_uses_async_export_and_status_label():
-    import hextech.display.desktop.app as desktop_app
+    class Widget:
+        def __init__(self, parent=None, **kwargs):
+            self.parent = parent
+            self.kwargs = dict(kwargs)
+            self.pack_options = None
+            self.grid_options = None
 
-    source = inspect.getsource(desktop_app.HextechUI._start_user_diagnostics_export)
-    assert "export_user_diagnostics" in source
-    assert '_start_tracked_thread(worker, name="hextech-user-diagnostics-export")' in source
-    assert "self.diagnostics_button.config(state=tk.DISABLED)" in source
-    assert "self.diagnostics_button.config(state=tk.NORMAL)" in source
-    assert "zip_path" in source
-    assert "_set_status" in source
-    assert "logger.exception" in source
+        def pack(self, **kwargs):
+            self.pack_options = dict(kwargs)
+
+        def grid(self, **kwargs):
+            self.grid_options = dict(kwargs)
+
+        def bind(self, *_args, **_kwargs):
+            return None
+
+        def bind_all(self, *_args, **_kwargs):
+            return None
+
+        def grid_columnconfigure(self, *_args, **_kwargs):
+            return None
+
+        def create_window(self, *_args, **_kwargs):
+            return None
+
+        def configure(self, **kwargs):
+            self.kwargs.update(kwargs)
+
+        config = configure
+
+        def bbox(self, *_args):
+            return (0, 0, 0, 0)
+
+        def cget(self, key):
+            return self.kwargs.get(key)
+
+        def delete(self, *_args):
+            return None
+
+        def create_oval(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(desktop_app.tk, "Frame", Widget)
+    monkeypatch.setattr(desktop_app.tk, "Label", Widget)
+    monkeypatch.setattr(desktop_app.tk, "Button", Widget)
+    monkeypatch.setattr(desktop_app.tk, "Canvas", Widget)
+    monkeypatch.setattr(desktop_app.tk, "BooleanVar", Variable)
+
+    dummy = object.__new__(desktop_app.HextechUI)
+    dummy.root = Widget()
+    dummy.feature_flags = {
+        "web_frontend_enabled": True,
+        "game_overlay_enabled": True,
+        "private_policy_stats_enabled": False,
+        "low_frequency_listener_enabled": True,
+    }
+    dummy._feature_toggle_lock = threading.Lock()
+    dummy._feature_toggle_busy = set()
+    dummy._runtime_services_ready = True
+
+    desktop_app.HextechUI._build_ui(dummy)
+
+    assert dummy.diagnostics_button.parent is dummy.title_frame
+    assert dummy.diagnostics_button.kwargs["text"] == "诊断"
+    assert dummy.diagnostics_button.kwargs["command"] == dummy._start_user_diagnostics_export
+    assert dummy.diagnostics_button.pack_options["side"] == desktop_app.tk.RIGHT
+    assert dummy.diagnostics_button.grid_options is None
 
 
 def test_diagnostics_export_callback_restores_button_on_error(monkeypatch, tmp_path):
@@ -74,3 +127,41 @@ def test_diagnostics_export_callback_restores_button_on_error(monkeypatch, tmp_p
     assert states[-1] == desktop_app.tk.NORMAL
     assert statuses
     assert "诊断导出失败" in statuses[-1][0]
+
+
+def test_diagnostics_export_runs_async_callback_and_reports_zip(monkeypatch, tmp_path):
+    import hextech.display.desktop.app as desktop_app
+
+    states: list[str] = []
+    statuses: list[tuple[str, str]] = []
+
+    class Button:
+        def config(self, **kwargs):
+            if "state" in kwargs:
+                states.append(kwargs["state"])
+
+    class Root:
+        def after(self, _delay, callback):
+            callback()
+
+    dummy = object.__new__(desktop_app.HextechUI)
+    dummy.root = Root()
+    dummy.diagnostics_button = Button()
+    dummy._set_status = lambda text, color: statuses.append((text, color))
+
+    def run_now(target, *, name: str):
+        assert name == "hextech-user-diagnostics-export"
+        target()
+
+    dummy._start_tracked_thread = run_now
+    zip_path = tmp_path / "diagnostics.zip"
+    monkeypatch.setattr(
+        desktop_app,
+        "export_user_diagnostics",
+        lambda: SimpleNamespace(zip_path=zip_path),
+    )
+
+    desktop_app.HextechUI._start_user_diagnostics_export(dummy)
+
+    assert states == [desktop_app.tk.DISABLED, desktop_app.tk.NORMAL]
+    assert statuses[-1][0] == f"诊断已导出: {zip_path}"

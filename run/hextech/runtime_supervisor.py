@@ -51,6 +51,11 @@ DEFAULT_REFRESH_INTERVAL_SECONDS = 4 * 60 * 60
 STARTUP_REFRESH_DELAY_SECONDS = 10.0
 OVERLAY_HOST_VISIBILITY_STALE_SECONDS = 6.0
 TEMPLATE_PREWARM_WAIT_TIMEOUT_SECONDS = 8.0
+SIDECAR_RETRY_DELAYS_SECONDS = (1.0, 3.0)
+
+
+class _OverlayStartCancelled(RuntimeError):
+    """内部控制流：当前启动 generation 已被新的 desired state 取代。"""
 
 
 class OverlayRuntimeManager:
@@ -72,6 +77,7 @@ class OverlayRuntimeManager:
         load_template_runtime_func: Callable[..., Any] | None = None,
         visibility_status_file: str | Path | None = None,
         prewarm_wait_timeout_seconds: float = TEMPLATE_PREWARM_WAIT_TIMEOUT_SECONDS,
+        retry_sleep_func: Callable[[float], Any] | None = None,
     ) -> None:
         self._start_host_func = start_host_func
         self._start_sidecar_func = start_sidecar_func
@@ -81,9 +87,12 @@ class OverlayRuntimeManager:
         self._load_template_runtime_func = load_template_runtime_func
         self._visibility_status_file = Path(visibility_status_file) if visibility_status_file is not None else Path(overlay_runtime_state_path("game_overlay_visibility.v1.json"))
         self._prewarm_wait_timeout_seconds = max(0.1, float(prewarm_wait_timeout_seconds))
+        self._retry_sleep_func = retry_sleep_func
         self._lock = threading.RLock()
         self._operation_lock = threading.Lock()
         self._prewarm_thread: threading.Thread | None = None
+        self._generation = 0
+        self._start_cancel = threading.Event()
         self.host_process: ProcessLike | None = None
         self.sidecar_process: ProcessLike | None = None
         self.context_poller: Any | None = None
@@ -225,7 +234,19 @@ class OverlayRuntimeManager:
         if self.cache_status == "error":
             raise RuntimeError(f"template runtime cache 预热失败：{self.last_error or 'unknown'}")
 
-    def _wait_for_template_prewarm(self, *, started_at: float) -> None:
+    def _ensure_start_current(self, generation: int, cancel_event: threading.Event) -> None:
+        with self._lock:
+            current = self.desired_enabled and generation == self._generation and not cancel_event.is_set()
+        if not current:
+            raise _OverlayStartCancelled("overlay 启动已取消")
+
+    def _wait_for_template_prewarm(
+        self,
+        *,
+        started_at: float,
+        generation: int,
+        cancel_event: threading.Event,
+    ) -> None:
         deadline = time.perf_counter() + self._prewarm_wait_timeout_seconds
         with self._lock:
             self._raise_template_prewarm_error_if_any()
@@ -236,6 +257,7 @@ class OverlayRuntimeManager:
         if thread is None:
             return
         while thread.is_alive():
+            self._ensure_start_current(generation, cancel_event)
             if time.perf_counter() >= deadline:
                 with self._lock:
                     self.phase = "cache_wait_timeout"
@@ -251,13 +273,31 @@ class OverlayRuntimeManager:
             self._raise_template_prewarm_error_if_any()
 
     def set_enabled(self, enabled: bool) -> dict[str, Any]:
+        if not bool(enabled):
+            self.cancel_start("disabled")
+            return self._stop("disabled")
         with self._operation_lock:
-            return self._start() if bool(enabled) else self._stop("disabled")
+            with self._lock:
+                self._generation += 1
+                generation = self._generation
+                self._start_cancel.set()
+                self._start_cancel = threading.Event()
+                cancel_event = self._start_cancel
+                self.desired_enabled = True
+            return self._start(generation, cancel_event)
 
-    def _start(self) -> dict[str, Any]:
+    def cancel_start(self, reason: str = "cancelled") -> dict[str, Any]:
+        with self._lock:
+            self._generation += 1
+            self.desired_enabled = False
+            self._start_cancel.set()
+            if self.status == "starting":
+                self._mark(status="stopping", phase=str(reason or "cancelled"))
+            return self.snapshot()
+
+    def _start(self, generation: int, cancel_event: threading.Event) -> dict[str, Any]:
         started_at = time.perf_counter()
         with self._lock:
-            self.desired_enabled = True
             if self._process_running(self.host_process) and self._process_running(self.sidecar_process):
                 self._start_context_poller()
                 self._mark(status="running", phase="running", error="")
@@ -270,18 +310,25 @@ class OverlayRuntimeManager:
             )
         try:
             self._prepare_data_func()
+            self._ensure_start_current(generation, cancel_event)
             self._write_inactive_func()
             with self._lock:
                 self.phase = "context_start"
             self._start_context_poller()
+            self._ensure_start_current(generation, cancel_event)
             with self._lock:
                 self.phase = "host_start"
             if not self._process_running(self.host_process):
                 self.host_process = self._start_host_func()
             if not self._process_running(self.host_process):
                 raise RuntimeError("game_overlay host 启动后立即退出")
+            self._ensure_start_current(generation, cancel_event)
             try:
-                self._wait_for_template_prewarm(started_at=started_at)
+                self._wait_for_template_prewarm(
+                    started_at=started_at,
+                    generation=generation,
+                    cancel_event=cancel_event,
+                )
             except TimeoutError:
                 with self._lock:
                     self.startup_seconds = round(time.perf_counter() - started_at, 3)
@@ -290,17 +337,68 @@ class OverlayRuntimeManager:
             with self._lock:
                 self.phase = "sidecar_start"
             if not self._process_running(self.sidecar_process):
-                self.sidecar_process = self._start_sidecar_func()
+                self.sidecar_process = self._start_sidecar_with_retry(generation, cancel_event)
             if not self._process_running(self.sidecar_process):
                 raise RuntimeError("game_overlay sidecar 启动后立即退出")
+            self._ensure_start_current(generation, cancel_event)
             with self._lock:
                 self.startup_seconds = round(time.perf_counter() - started_at, 3)
                 self._mark(status="running", phase="running", error="")
                 self.last_start_failure_kind = ""
             return self.snapshot()
+        except _OverlayStartCancelled:
+            return self.snapshot()
         except Exception as exc:
             self._rollback_failed_start(str(exc))
             raise
+
+    @staticmethod
+    def _sidecar_failure_is_retryable(exc: Exception) -> bool:
+        retryable = getattr(exc, "retryable", None)
+        if retryable is not None:
+            return bool(retryable)
+        if isinstance(exc, (FileNotFoundError, ValueError)):
+            return False
+        text = str(exc or "").casefold()
+        deterministic_markers = (
+            "template_missing",
+            "模板缺失",
+            "schema",
+            "配置",
+            "readiness token 不匹配",
+        )
+        return not any(marker.casefold() in text for marker in deterministic_markers)
+
+    def _wait_before_sidecar_retry(
+        self,
+        delay_seconds: float,
+        generation: int,
+        cancel_event: threading.Event,
+    ) -> None:
+        if self._retry_sleep_func is None:
+            cancel_event.wait(timeout=delay_seconds)
+        else:
+            self._retry_sleep_func(delay_seconds)
+        self._ensure_start_current(generation, cancel_event)
+
+    def _start_sidecar_with_retry(
+        self,
+        generation: int,
+        cancel_event: threading.Event,
+    ) -> ProcessLike:
+        for attempt in range(len(SIDECAR_RETRY_DELAYS_SECONDS) + 1):
+            self._ensure_start_current(generation, cancel_event)
+            try:
+                return self._start_sidecar_func()
+            except Exception as exc:
+                if attempt >= len(SIDECAR_RETRY_DELAYS_SECONDS) or not self._sidecar_failure_is_retryable(exc):
+                    raise
+                self._wait_before_sidecar_retry(
+                    SIDECAR_RETRY_DELAYS_SECONDS[attempt],
+                    generation,
+                    cancel_event,
+                )
+        raise RuntimeError("Vision sidecar 启动重试状态异常")
 
     def _rollback_failed_start(self, reason: str) -> None:
         errors: list[str] = []
@@ -382,8 +480,9 @@ class OverlayRuntimeManager:
         return self.snapshot()
 
     def shutdown(self, reason: str = "shutdown") -> None:
-        with self._operation_lock:
-            self._stop(str(reason or "shutdown"))
+        shutdown_reason = str(reason or "shutdown")
+        self.cancel_start(shutdown_reason)
+        self._stop(shutdown_reason)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -407,6 +506,7 @@ class OverlayRuntimeManager:
                 "visible_reason": self.visible_reason,
                 "last_error": self.last_error,
                 "last_start_failure_kind": self.last_start_failure_kind,
+                "generation": self._generation,
                 "updated_at": self.updated_at,
             }
 
@@ -482,6 +582,7 @@ class RuntimeSupervisor:
         self._shutdown_requested = threading.Event()
         self._shutdown_reason = ""
         self._overlay_shutdown_called = False
+        self._overlay_shutdown_thread: threading.Thread | None = None
         self._active_refresh_action_id = ""
         self._active_overlay_action_id = ""
         self._overlay_retry_after_prewarm_used = False
@@ -803,23 +904,42 @@ class RuntimeSupervisor:
             if not self._overlay_shutdown_called:
                 self._overlay_shutdown_called = True
                 should_stop_overlay = True
-        if should_stop_overlay:
-            try:
-                self._overlay_runtime.shutdown(shutdown_reason)
-            except Exception as exc:
-                self.append_event(
-                    {
-                        "event": "game_overlay.shutdown_failed",
-                        "level": "ERROR",
-                        "component": "game_overlay",
-                        "error_type": exc.__class__.__name__,
-                        "error_message_sanitized": str(exc),
-                    }
-                )
         self._shutdown_requested.set()
+        if should_stop_overlay:
+            thread = threading.Thread(
+                target=self._shutdown_overlay_runtime,
+                args=(shutdown_reason,),
+                name="hextech-supervisor-overlay-shutdown",
+                daemon=True,
+            )
+            with self._lock:
+                self._overlay_shutdown_thread = thread
+            thread.start()
+
+    def _shutdown_overlay_runtime(self, shutdown_reason: str) -> None:
+        try:
+            self._overlay_runtime.shutdown(shutdown_reason)
+        except Exception as exc:
+            self.append_event(
+                {
+                    "event": "game_overlay.shutdown_failed",
+                    "level": "ERROR",
+                    "component": "game_overlay",
+                    "error_type": exc.__class__.__name__,
+                    "error_message_sanitized": str(exc),
+                }
+            )
 
     def wait_for_shutdown(self, timeout: float) -> bool:
         return self._shutdown_requested.wait(timeout)
+
+    def wait_for_overlay_shutdown(self, timeout: float) -> bool:
+        with self._lock:
+            thread = self._overlay_shutdown_thread
+        if thread is None:
+            return True
+        thread.join(timeout=max(0.0, float(timeout)))
+        return not thread.is_alive()
 
     def tick(self) -> None:
         now = time.time()
@@ -831,7 +951,6 @@ class RuntimeSupervisor:
             last_lease = float(self._lease.get("last_renewed_at") or 0.0)
             active_refresh = bool(self._active_refresh_action_id)
             next_refresh_at = float(self._next_refresh_at or 0.0)
-            last_refresh_at = float(self._last_refresh_at or 0.0)
         if last_lease and now - last_lease > self._lease_timeout_seconds + self._orphan_grace_seconds:
             self.append_event({"event": "lease.expired", "component": "supervisor", "level": "WARNING"})
             with self._lock:
@@ -978,6 +1097,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
+        supervisor.wait_for_overlay_shutdown(2.0)
         server.shutdown()
     return 0
 

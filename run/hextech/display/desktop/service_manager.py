@@ -23,19 +23,13 @@ except ImportError:  # pragma: no cover - 仅用于非 Windows 诊断环境兜�
 
 from hextech.core.settings import load_ui_feature_flags, save_ui_feature_flags
 from hextech.overlay.events import read_overlay_event
-from hextech.overlay.lifecycle import (
-    GameOverlayController,
-    start_host_process as start_overlay_host_process,
-    start_sidecar_process as start_vision_sidecar_process,
-)
+from hextech.overlay.lifecycle import GameOverlayController
 from hextech.overlay.runtime_paths import overlay_runtime_state_path
 from hextech.overlay.window import find_lol_game_window
 from hextech.overlay.window_titles import LOL_CLIENT_WINDOW_TITLE
 
 
 ProcessFactory = Callable[[], Any]
-OVERLAY_STATE_STALE_SECONDS = 8.0
-OVERLAY_WATCHDOG_RESTART_COOLDOWN_SECONDS = 10.0
 OVERLAY_HOST_VISIBILITY_STALE_SECONDS = 6.0
 OVERLAY_VISION_TRACE_FILE = Path(overlay_runtime_state_path("overlay_vision_trace.v1.json"))
 OVERLAY_HOST_VISIBILITY_FILE = Path(overlay_runtime_state_path("game_overlay_visibility.v1.json"))
@@ -92,7 +86,7 @@ class ServiceManager:
         prepare_overlay_hint_cache_func: Callable[[], Any] | None = None,
         write_inactive_overlay_event_func: Callable[[], Any] | None = None,
         listener_interval_seconds: float = 3.0,
-        manage_overlay_runtime: bool = True,
+        manage_overlay_runtime: bool = False,
     ) -> None:
         self._start_web_func = start_web_func
         self._manage_overlay_runtime = bool(manage_overlay_runtime)
@@ -195,11 +189,7 @@ class ServiceManager:
         return self._overlay_controller.is_running()
 
     def ensure_game_overlay_healthy(self, *, enabled: bool) -> dict[str, Any]:
-        """功能开关开启时确保 overlay 三进程链路常驻。
-
-        兼容 watchdog 只补齐缺失进程，不再把旧 trace mtime 或 controller_age 当作
-        健康事实源；Vision readiness/heartbeat 由 Runtime Supervisor 接管。
-        """
+        """保留旧 snapshot 字段；overlay 健康与重启只由 Runtime Supervisor 决定。"""
 
         with self._lock:
             now = time.time()
@@ -207,59 +197,9 @@ class ServiceManager:
             self._overlay_watchdog["enabled"] = effective_enabled
             self._overlay_watchdog["last_checked_at"] = now
             self._overlay_watchdog["last_error"] = ""
-            if self._overlay_controller is None:
-                self._overlay_watchdog["last_action"] = "supervisor_owned" if effective_enabled else "disabled"
-                self._overlay_watchdog["state_age_ms"] = None
-                return dict(self._overlay_watchdog)
-            if not effective_enabled:
-                snapshot = self._overlay_controller.snapshot()
-                had_runtime = (
-                    snapshot.get("host_pid") is not None
-                    or snapshot.get("sidecar_pid") is not None
-                    or snapshot.get("context_poller_status") == "running"
-                )
-                if had_runtime:
-                    self._overlay_controller.stop()
-                    self._mark_overlay_watchdog_action("stop_disabled", now)
-                else:
-                    self._overlay_watchdog["last_action"] = "disabled"
-                self._sync_overlay_compat_state()
-                return dict(self._overlay_watchdog)
-
-            snapshot = self._overlay_controller.snapshot()
-            process_missing = (
-                snapshot.get("status") != "running"
-                or snapshot.get("host_status") != "running"
-                or snapshot.get("sidecar_status") != "running"
-            )
-            context_degraded = snapshot.get("context_poller_status") == "degraded"
             self._overlay_watchdog["state_age_ms"] = None
-
-            try:
-                if process_missing:
-                    self.start_game_overlay()
-                    self._mark_overlay_watchdog_action("start_missing_process", now)
-                else:
-                    self._sync_overlay_compat_state()
-                    self._overlay_watchdog["last_action"] = "healthy_degraded" if context_degraded else "healthy"
-            except Exception as exc:
-                self._sync_overlay_compat_state()
-                self._overlay_watchdog["last_action"] = "error"
-                self._overlay_watchdog["last_error"] = str(exc)
-                raise
+            self._overlay_watchdog["last_action"] = "supervisor_owned" if effective_enabled else "disabled"
             return dict(self._overlay_watchdog)
-
-    def _mark_overlay_watchdog_action(self, action: str, now: float) -> None:
-        self._overlay_watchdog["last_action"] = action
-        self._overlay_watchdog["last_action_at"] = now
-        self._overlay_watchdog["last_error"] = ""
-
-    @staticmethod
-    def _overlay_state_age_seconds(*, now: float) -> float | None:
-        try:
-            return max(0.0, now - OVERLAY_VISION_TRACE_FILE.stat().st_mtime)
-        except OSError:
-            return None
 
     def _sync_overlay_compat_state(self) -> None:
         if self._overlay_controller is None:

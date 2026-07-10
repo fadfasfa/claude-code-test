@@ -35,7 +35,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import tempfile
@@ -45,7 +44,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Set, Tuple
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from secrets import token_urlsafe
 
 import pandas as pd
@@ -60,7 +59,6 @@ from hextech.catalog.runtime_store import (
     CachedDataFrameLoader,
     ensure_private_runtime_dir,
     ensure_runtime_profile_dir,
-    build_runtime_persisted_path,
     build_runtime_profile_path,
     build_runtime_state_path,
     build_synergy_data_path,
@@ -69,11 +67,11 @@ from hextech.catalog.runtime_store import (
 )
 from hextech.core.refresh import get_startup_status_file, refresh_backend_data
 from hextech.support.log_utils import ensure_utf8_stdio
-from hextech.scraping.augment_catalog import find_augment_catalog_entry
+from hextech.scraping.augment_catalog import find_augment_catalog_entry as find_augment_catalog_entry
 from hextech.scraping.hextech.scraper import _clean_augment_text, extract_champion_stats, fetch_with_retry
 from hextech.scraping.icon_resolver import (
     ensure_augment_icon_cached,
-    find_existing_augment_asset_filename,
+    find_existing_augment_asset_filename as find_existing_augment_asset_filename,
     is_safe_augment_icon_filename,
     is_safe_remote_icon_url,
     resolve_apexlol_hextech_icon_url,
@@ -785,6 +783,7 @@ def request_preload_hextech_payload_async(hero_name: str) -> bool:
             payload = process_hextechs_data(df.copy(), target_name, use_runtime_cache=True, log_columns=False)
             if not isinstance(payload, dict) or not payload.get("comprehensive"):
                 return
+            _queue_payload_augment_icons(payload)
             with _preloaded_hextech_lock:
                 global _preloaded_hextech_signature
                 if _preloaded_hextech_signature != signature:
@@ -839,6 +838,7 @@ def queue_preload_hextech_payloads(hero_names: List[str]) -> bool:
                     payload = process_hextechs_data(df_snapshot, target_name, use_runtime_cache=True, log_columns=False)
                     if not isinstance(payload, dict) or not payload.get("comprehensive"):
                         return
+                    _queue_payload_augment_icons(payload)
                     with _preloaded_hextech_lock:
                         if _preloaded_hextech_signature != signature:
                             return
@@ -854,6 +854,30 @@ def queue_preload_hextech_payloads(hero_names: List[str]) -> bool:
             _get_preloaded_hextech_executor().submit(_worker)
 
     return queued_any
+
+
+def _queue_payload_augment_icons(payload: dict) -> None:
+    """把认证 preload 已解析出的本地图标引用交给既有缓存队列。"""
+    queued_filenames: set[str] = set()
+    for value in payload.values():
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            icon_url = str(item.get("icon", "")).strip()
+            if not icon_url.startswith("/assets/"):
+                continue
+            filename = unquote(icon_url.removeprefix("/assets/"))
+            if (
+                not filename
+                or os.path.basename(filename) != filename
+                or not is_safe_png_asset_name(filename)
+                or filename in queued_filenames
+            ):
+                continue
+            queued_filenames.add(filename)
+            queue_augment_icon_cache(filename, str(item.get("海克斯名称", "")).strip())
 
 
 async def get_df_with_refresh(timeout: float = 25.0) -> pd.DataFrame:
@@ -1135,16 +1159,32 @@ class ConnectionManager:
     def __init__(self):
         self.active: List = []
         self._lock = asyncio.Lock()
+        self._pending_connections = 0
         self.max_connections = 50
 
     async def connect(self, ws) -> None:
         async with self._lock:
-            if len(self.active) >= self.max_connections:
-                await ws.close(code=1013, reason="too_many_connections")
-                return
-        await ws.accept()
-        async with self._lock:
-            self.active.append(ws)
+            if len(self.active) + self._pending_connections >= self.max_connections:
+                reject = True
+            else:
+                reject = False
+                self._pending_connections += 1
+        if reject:
+            await ws.close(code=1013, reason="too_many_connections")
+            return
+
+        reserved = True
+        try:
+            await ws.accept()
+            async with self._lock:
+                self._pending_connections -= 1
+                reserved = False
+                self.active.append(ws)
+        except BaseException:
+            if reserved:
+                async with self._lock:
+                    self._pending_connections -= 1
+            raise
 
     async def disconnect(self, ws) -> None:
         async with self._lock:
@@ -1154,12 +1194,15 @@ class ConnectionManager:
     async def broadcast(self, message: dict) -> None:
         async with self._lock:
             snapshot = list(self.active)
-        dead = []
-        for ws in snapshot:
+
+        async def _send(ws):
             try:
-                await ws.send_json(message)
+                await asyncio.wait_for(ws.send_json(message), timeout=1.0)
+                return None
             except Exception:
-                dead.append(ws)
+                return ws
+
+        dead = [ws for ws in await asyncio.gather(*(_send(ws) for ws in snapshot)) if ws is not None]
         if dead:
             async with self._lock:
                 for ws in dead:

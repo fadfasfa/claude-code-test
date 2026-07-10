@@ -28,23 +28,22 @@
 """
 from __future__ import annotations
 
+import csv
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
-import csv
 
 from tools.package_rules import (
     BUNDLED_HEXTECH_SNAPSHOT_DIR,
     BUNDLED_SYNERGY_DATA_DIR,
-    BUNDLE_MANIFEST_NAME,
+    BUNDLE_MANIFEST_NAME as BUNDLE_MANIFEST_NAME,
     DATA_STATIC_ASSET_DIR,
     DATA_STATIC_VERSION_DIR,
     FORBIDDEN_BUNDLE_PATH_PARTS,
-    HEXTECH_SNAPSHOT_DIR,
     STABLE_INDEX_FILES,
     STABLE_STATIC_FILES,
-    SYNERGY_DATA_DIR,
     SYNERGY_LATEST_POINTER_FILENAME,
     iter_hextech_snapshot_files,
     iter_source_files,
@@ -189,6 +188,41 @@ def _bundled_snapshot_name(path: Path, target_dir: Path) -> str:
     return (target_dir / path.name).as_posix()
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _dataset_version(path: Path) -> str:
+    name = path.name
+    if name.startswith("Hextech_Data_") and name.endswith(".csv"):
+        return name.removeprefix("Hextech_Data_").removesuffix(".csv")
+    if name.startswith("Champion_Synergy_") and name.endswith(".json") and name != SYNERGY_LATEST_POINTER_FILENAME:
+        return name.removeprefix("Champion_Synergy_").removesuffix(".json")
+    if name == SYNERGY_LATEST_POINTER_FILENAME:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return ""
+        referenced_name = Path(str(payload.get("filename") or "")).name if isinstance(payload, dict) else ""
+        if referenced_name.startswith("Champion_Synergy_") and referenced_name.endswith(".json"):
+            return referenced_name.removeprefix("Champion_Synergy_").removesuffix(".json")
+    return "legacy"
+
+
+def _build_seed_metadata(paths: list[tuple[Path, str]]) -> dict[str, dict[str, str]]:
+    metadata: dict[str, dict[str, str]] = {}
+    for source, bundled_name in paths:
+        metadata[bundled_name] = {
+            "dataset_version": _dataset_version(source),
+            "sha256": _sha256(source),
+        }
+    return metadata
+
+
 def build_bundle_manifest(base_dir: Path) -> dict:
     static_dir = base_dir / DATA_STATIC_VERSION_DIR
     index_dir = base_dir / DATA_STATIC_VERSION_DIR
@@ -201,13 +235,15 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         name for name in STABLE_INDEX_FILES if (index_dir / name).exists()
     ]
     asset_files = [str(path.relative_to(asset_dir)) for path in iter_stable_asset_files(asset_dir)]
+    hextech_sources = list(iter_hextech_snapshot_files(base_dir))
+    synergy_sources = list(iter_synergy_data_files(base_dir))
     hextech_snapshot_files = [
         _bundled_snapshot_name(path, BUNDLED_HEXTECH_SNAPSHOT_DIR)
-        for path in iter_hextech_snapshot_files(base_dir)
+        for path in hextech_sources
     ]
     synergy_data_files = [
         _bundled_snapshot_name(path, BUNDLED_SYNERGY_DATA_DIR)
-        for path in iter_synergy_data_files(base_dir)
+        for path in synergy_sources
     ]
     synergy_data_file = next(
         (name for name in synergy_data_files if Path(name).name.startswith("Champion_Synergy_") and Path(name).name != SYNERGY_LATEST_POINTER_FILENAME),
@@ -223,6 +259,12 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         "hextech_seed_health": validate_hextech_seed_health(base_dir),
         "synergy_data_files": synergy_data_files,
         "synergy_data_file": synergy_data_file,
+        "seed_metadata": _build_seed_metadata(
+            [
+                *((path, bundled_name) for path, bundled_name in zip(hextech_sources, hextech_snapshot_files)),
+                *((path, bundled_name) for path, bundled_name in zip(synergy_sources, synergy_data_files)),
+            ]
+        ),
         "source_files": source_files,
     }
     validate_bundle_manifest(manifest)

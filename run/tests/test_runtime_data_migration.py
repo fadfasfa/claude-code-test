@@ -7,6 +7,8 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
+import json
+import os
 from pathlib import Path
 
 
@@ -97,6 +99,186 @@ class RuntimeDataMigrationTests(unittest.TestCase):
             shutil.move(str(target), str(source))
             self.assertTrue(source.exists())
             self.assertFalse(target.exists())
+
+
+class RuntimeBundleSeedTests(unittest.TestCase):
+    def _seed(
+        self,
+        root: Path,
+        *,
+        manifest: dict,
+        bundled_files: dict[str, str],
+        runtime_files: dict[str, str],
+    ) -> tuple[Path, Path]:
+        from tools.runtime_bundle import seed_bundled_resources
+
+        bundle_root = root / "bundle"
+        runtime_root = root / "runtime"
+        bundle_root.mkdir()
+        (bundle_root / "bundle_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        for relative_name, content in bundled_files.items():
+            path = bundle_root / relative_name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        for relative_name, content in runtime_files.items():
+            path = runtime_root / relative_name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+        seed_bundled_resources(
+            bundle_root=bundle_root,
+            runtime_static_dir=runtime_root / "static",
+            runtime_index_dir=runtime_root / "indexes",
+            runtime_asset_dir=runtime_root / "assets",
+            runtime_hextech_dir=runtime_root / "hextech",
+            runtime_synergy_dir=runtime_root / "synergy",
+        )
+        return bundle_root, runtime_root
+
+    def test_timestamp_snapshot_is_only_copied_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relative_name = "data/seed/startup/hextech/Hextech_Data_2026-07-05.csv"
+            bundle_root = root / "bundle"
+            runtime_target = root / "runtime" / "hextech" / "Hextech_Data_2026-07-05.csv"
+            bundle_source = bundle_root / relative_name
+            bundle_source.parent.mkdir(parents=True)
+            bundle_source.write_text("bundled-old", encoding="utf-8")
+            runtime_target.parent.mkdir(parents=True)
+            runtime_target.write_text("runtime-new", encoding="utf-8")
+            os.utime(bundle_source, (5000, 5000))
+            os.utime(runtime_target, (1000, 1000))
+            manifest = {
+                "static_files": [],
+                "index_files": [],
+                "asset_files": [],
+                "hextech_snapshot_files": [relative_name],
+                "synergy_data_files": [],
+                "synergy_data_file": "",
+                "seed_metadata": {
+                    relative_name: {"dataset_version": "2026-07-05", "sha256": "unused"}
+                },
+            }
+            (bundle_root / "bundle_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+            from tools.runtime_bundle import seed_bundled_resources
+
+            seed_bundled_resources(
+                bundle_root=bundle_root,
+                runtime_static_dir=root / "runtime" / "static",
+                runtime_index_dir=root / "runtime" / "indexes",
+                runtime_asset_dir=root / "runtime" / "assets",
+                runtime_hextech_dir=runtime_target.parent,
+            )
+
+            self.assertEqual(runtime_target.read_text(encoding="utf-8"), "runtime-new")
+
+    def test_stable_latest_promotes_newer_dataset_version_ignoring_mtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relative_name = "data/seed/startup/synergy/Champion_Synergy_latest.v1.json"
+            bundled = json.dumps(
+                {"version": 1, "filename": "Champion_Synergy_20260710_010101.json"}
+            )
+            runtime = json.dumps(
+                {"version": 1, "filename": "Champion_Synergy_20260709_230000.json"}
+            )
+            import hashlib
+
+            manifest = {
+                "static_files": [],
+                "index_files": [],
+                "asset_files": [],
+                "hextech_snapshot_files": [],
+                "synergy_data_files": [relative_name],
+                "synergy_data_file": relative_name,
+                "seed_metadata": {
+                    relative_name: {
+                        "dataset_version": "20260710_010101",
+                        "sha256": hashlib.sha256(bundled.encode()).hexdigest(),
+                    }
+                },
+            }
+            _, runtime_root = self._seed(
+                root,
+                manifest=manifest,
+                bundled_files={relative_name: bundled},
+                runtime_files={"synergy/Champion_Synergy_latest.v1.json": runtime},
+            )
+
+            self.assertEqual(
+                json.loads(
+                    (runtime_root / "synergy" / "Champion_Synergy_latest.v1.json").read_text(encoding="utf-8")
+                )["filename"],
+                "Champion_Synergy_20260710_010101.json",
+            )
+
+    def test_stable_latest_never_replaces_newer_runtime_dataset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relative_name = "data/seed/startup/synergy/Champion_Synergy_latest.v1.json"
+            bundled = json.dumps(
+                {"version": 1, "filename": "Champion_Synergy_20260709_230000.json"}
+            )
+            runtime = json.dumps(
+                {"version": 1, "filename": "Champion_Synergy_20260710_010101.json"}
+            )
+            import hashlib
+
+            manifest = {
+                "static_files": [],
+                "index_files": [],
+                "asset_files": [],
+                "hextech_snapshot_files": [],
+                "synergy_data_files": [relative_name],
+                "synergy_data_file": relative_name,
+                "seed_metadata": {
+                    relative_name: {
+                        "dataset_version": "20260709_230000",
+                        "sha256": hashlib.sha256(bundled.encode()).hexdigest(),
+                    }
+                },
+            }
+            _, runtime_root = self._seed(
+                root,
+                manifest=manifest,
+                bundled_files={relative_name: bundled},
+                runtime_files={"synergy/Champion_Synergy_latest.v1.json": runtime},
+            )
+
+            self.assertEqual(
+                json.loads(
+                    (runtime_root / "synergy" / "Champion_Synergy_latest.v1.json").read_text(encoding="utf-8")
+                )["filename"],
+                "Champion_Synergy_20260710_010101.json",
+            )
+
+    def test_legacy_manifest_only_fills_missing_latest_pointer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relative_name = "data/seed/startup/synergy/Champion_Synergy_latest.v1.json"
+            _, runtime_root = self._seed(
+                root,
+                manifest={
+                    "static_files": [],
+                    "index_files": [],
+                    "asset_files": [],
+                    "hextech_snapshot_files": [],
+                    "synergy_data_files": [relative_name],
+                    "synergy_data_file": relative_name,
+                },
+                bundled_files={relative_name: '{"filename":"bundled.json"}'},
+                runtime_files={
+                    "synergy/Champion_Synergy_latest.v1.json": '{"filename":"runtime.json"}'
+                },
+            )
+
+            self.assertEqual(
+                json.loads(
+                    (runtime_root / "synergy" / "Champion_Synergy_latest.v1.json").read_text(encoding="utf-8")
+                )["filename"],
+                "runtime.json",
+            )
 
 
 if __name__ == "__main__":

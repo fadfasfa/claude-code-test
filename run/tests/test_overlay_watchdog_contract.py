@@ -4,21 +4,25 @@
 """
 from __future__ import annotations
 
-import inspect
 import unittest
 
 
 class OverlayWatchdogContractTests(unittest.TestCase):
-    def test_service_manager_watchdog_no_longer_restarts_from_trace_stale(self):
+    def test_service_manager_defaults_to_supervisor_owned_overlay(self):
         from hextech.display.desktop.service_manager import ServiceManager
 
-        source = inspect.getsource(ServiceManager.ensure_game_overlay_healthy)
+        manager = ServiceManager(start_web_func=lambda: object())
 
-        self.assertNotIn("restart_stale_state", source)
-        self.assertNotIn("_overlay_state_age_seconds", source)
-        self.assertIn("start_missing_process", source)
+        watchdog = manager.ensure_game_overlay_healthy(enabled=True)
+        snapshot = manager.get_status_snapshot()
 
-    def test_context_degraded_does_not_trigger_overlay_restart(self):
+        self.assertIsNone(manager._overlay_controller)
+        self.assertEqual(watchdog["last_action"], "supervisor_owned")
+        self.assertEqual(snapshot["game_overlay"]["status"], "supervisor_owned")
+        self.assertEqual(snapshot["game_overlay"]["host_status"], "unknown")
+        self.assertEqual(snapshot["game_overlay"]["sidecar_status"], "unknown")
+
+    def test_compat_controller_snapshot_does_not_restore_watchdog_restarts(self):
         from hextech.display.desktop.service_manager import ServiceManager
 
         class DegradedOverlayController:
@@ -55,7 +59,7 @@ class OverlayWatchdogContractTests(unittest.TestCase):
         watchdog = manager.ensure_game_overlay_healthy(enabled=True)
 
         self.assertFalse(controller.start_called)
-        self.assertEqual(watchdog["last_action"], "healthy_degraded")
+        self.assertEqual(watchdog["last_action"], "supervisor_owned")
 
 
 if __name__ == "__main__":
