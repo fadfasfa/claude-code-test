@@ -10,6 +10,8 @@ QuantProject/output/
 .claude/*
 !.claude/README.md
 !.claude/settings.json
+!.claude/settings.plan.json
+!.claude/settings.implement.json
 !.claude/commands/
 !.claude/commands/*.md
 !.claude/plans/

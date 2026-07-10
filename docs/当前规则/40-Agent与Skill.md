@@ -15,6 +15,8 @@
 - Claude Code 和 Codex 都可以独立完成普通仓库任务。
 - Codex standalone mode：用户直接调用 Codex 时，Codex 按 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和用户任务独立执行。
 - Claude Code 入口读取 `CLAUDE.md`、`PROJECT.md`、`docs/index.md`。
+- Claude Code Plan 阶段默认严格只读。项目默认 `.claude/settings.json` 保守为 `plan` + `Read`；严格 Plan 使用 `.claude/settings.plan.json`，显式实现使用 `.claude/settings.implement.json`。
+- Plan 阶段不得把 `Bash` / `PowerShell` 当只读工具；Windows sandbox 不可用时 shell 可以通过重定向、复制、解释器或脚本真实写盘。使用 GLM 或非 Anthropic first-party host 时必须走严格 Plan 入口。
 - OpenAI Codex plugin 可以保留启用状态；Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
 - plugin 启用不等于 review gate 启用，review gate 默认禁用。
 - 普通仓库任务不修改全局 Claude Code、Codex、Superpowers、CLI、VS plugin、Codex App 或 proxy 配置。
@@ -39,7 +41,8 @@
 - `.claude/commands/review.md`：转发到 review skill。
 - `.claude/commands/review-all.md`：`/review all` 可见别名。
 - `.claude/skills/` 只保留 Claude Code 专用最小 skill，不作为 Codex 白名单。
-- `.claude/settings.json` 只保留 Claude Code 项目权限、敏感文件 deny 和本机 plugin 可用状态；不注册仓库级编排 hook。
+- `.claude/settings.json` 只保留 Claude Code 项目默认保守权限、敏感文件 deny 和本机 plugin 可用状态；不注册仓库级编排 hook。
+- `.claude/settings.plan.json` 是严格 Plan 专用设置；`.claude/settings.implement.json` 是显式执行设置。不要在同一会话内把 Plan 草稿确认误当执行授权。
 
 ## 重复 Skill 维护合同
 

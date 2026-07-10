@@ -5,6 +5,12 @@
       "Read"
     ],
     "deny": [
+      "Bash",
+      "Bash(*)",
+      "PowerShell",
+      "PowerShell(*)",
+      "Edit(/**)",
+      "Write(/**)",
       "Read(**/.env)",
       "Read(**/.env.*)",
       "Read(**/auth.json)",
@@ -13,14 +19,6 @@
     ],
     "defaultMode": "plan"
   },
-  "extraKnownMarketplaces": {
-    "openai-codex": {
-      "source": {
-        "source": "github",
-        "repo": "openai/codex-plugin-cc"
-      }
-    }
-  },
   "sandbox": {
     "enabled": true,
     "failIfUnavailable": false,
@@ -28,8 +26,5 @@
     "filesystem": {
       "allowWrite": []
     }
-  },
-  "enabledPlugins": {
-    "codex@openai-codex": true
   }
 }
