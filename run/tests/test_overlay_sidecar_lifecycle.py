@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-import inspect
 import json
 import tempfile
 import time
@@ -16,6 +15,16 @@ import numpy as np
 
 
 class OverlaySidecarLifecycleTests(unittest.TestCase):
+    def test_sidecar_run_loop_delegates_to_runner_module(self):
+        from hextech.overlay.vision import runner, sidecar
+
+        expected = {"active": False, "source": {"reason": "test"}}
+        with patch.object(runner, "run_loop", return_value=expected) as delegated:
+            result = sidecar.run_loop(write_event=True, event_path="test-event.json")
+
+        self.assertEqual(result, expected)
+        delegated.assert_called_once_with(write_event=True, event_path="test-event.json")
+
     def test_host_ready_timeout_reports_missing_ready_file_without_token(self):
         from hextech.overlay import lifecycle
 
@@ -83,20 +92,99 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
     def test_lifecycle_waits_for_sidecar_ready_and_sets_exit_signal(self):
         from hextech.overlay import lifecycle
 
-        source = inspect.getsource(lifecycle.start_sidecar_process)
+        captured_env: dict[str, str] = {}
 
-        self.assertEqual(lifecycle.OVERLAY_SIDECAR_READY_FILE_ENV, "HEXTECH_OVERLAY_SIDECAR_READY_FILE")
-        self.assertIn("OVERLAY_SIDECAR_READY_FILE_ENV", source)
-        self.assertIn("_wait_for_sidecar_ready", source)
-        self.assertIn("_hextech_overlay_exit_file", source)
+        class FakeProcess:
+            pid = 1001
+
+            def poll(self):
+                return None
+
+        def fake_popen(_command, **kwargs):
+            captured_env.update(kwargs["env"])
+            return FakeProcess()
+
+        with (
+            patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
+            patch.object(lifecycle, "_wait_for_sidecar_ready", return_value=None),
+        ):
+            process = lifecycle.start_sidecar_process()
+
+        self.assertEqual(process.pid, 1001)
+        self.assertEqual(lifecycle.OVERLAY_SIDECAR_BOOTSTRAP_FILE_ENV, "HEXTECH_OVERLAY_SIDECAR_BOOTSTRAP_FILE")
+        self.assertTrue(captured_env[lifecycle.OVERLAY_SIDECAR_BOOTSTRAP_FILE_ENV].endswith(".bootstrap.json"))
+        self.assertTrue(captured_env["HEXTECH_OVERLAY_GENERATION"])
+        self.assertTrue(getattr(process, "_hextech_overlay_exit_file", ""))
 
     def test_sidecar_writes_ready_and_checks_exit_signal(self):
-        from hextech.overlay.vision import sidecar
+        from hextech.overlay.vision import runner, sidecar
 
-        run_loop_source = inspect.getsource(sidecar.run_loop)
+        statuses: list[tuple[str, dict]] = []
+        bootstrap_states: list[tuple[str, dict]] = []
+        with (
+            patch.object(runner, "_write_sidecar_status", side_effect=lambda status, **fields: statuses.append((status, fields))),
+            patch.object(runner, "_write_sidecar_bootstrap_from_env", side_effect=lambda state, **fields: bootstrap_states.append((state, fields))),
+        ):
+            sidecar._write_sidecar_ready_from_env(template_count=3, started_at=time.perf_counter())
 
-        self.assertIn("_write_sidecar_ready_from_env", run_loop_source)
-        self.assertIn("_sidecar_exit_requested", run_loop_source)
+        self.assertEqual(statuses[-1][0], "running")
+        self.assertEqual(bootstrap_states[-1][0], "ready")
+        self.assertEqual(bootstrap_states[-1][1]["phase"], "ready")
+
+    def test_wait_for_sidecar_ready_surfaces_failed_bootstrap_without_timeout(self):
+        from hextech.overlay import lifecycle
+
+        class FakeProcess:
+            pid = 1002
+
+            def poll(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            ready_path = root / "sidecar.ready.json"
+            bootstrap_path = root / "sidecar.bootstrap.json"
+            bootstrap_path.write_text(
+                json.dumps(
+                    {
+                        "state": "failed",
+                        "token": "expected-token",
+                        "error_type": "FileNotFoundError",
+                        "error_message_sanitized": "模板缺失",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(lifecycle.SidecarBootstrapError, "模板缺失") as raised:
+                lifecycle._wait_for_sidecar_ready(
+                    FakeProcess(),
+                    ready_path,
+                    bootstrap_path=bootstrap_path,
+                    expected_token="expected-token",
+                    timeout_seconds=0.1,
+                )
+
+        self.assertFalse(raised.exception.retryable)
+
+    def test_sidecar_main_records_starting_and_failed_bootstrap_state(self):
+        from hextech.overlay.vision import runner, sidecar
+
+        bootstrap_states: list[tuple[str, dict]] = []
+        with (
+            patch.object(runner, "_write_sidecar_bootstrap_from_env", side_effect=lambda state, **fields: bootstrap_states.append((state, fields))),
+            patch.object(runner, "run_loop", side_effect=RuntimeError(r"C:\Users\alice\private\boom")),
+        ):
+            try:
+                result = sidecar.main([])
+            except RuntimeError:
+                result = 1
+
+        self.assertEqual(result, 1)
+        self.assertEqual([state for state, _fields in bootstrap_states], ["starting", "failed"])
+        self.assertEqual(bootstrap_states[-1][1]["error_type"], "RuntimeError")
+        self.assertNotIn(r"C:\Users\alice", bootstrap_states[-1][1]["error_message_sanitized"])
 
     def test_context_poller_failure_degrades_without_blocking_overlay(self):
         from hextech.overlay.lifecycle import GameOverlayController
@@ -124,12 +212,28 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
             write_inactive_func=lambda: None,
         )
 
+        self.assertIn("_runtime", controller.__dict__)
         controller.start()
         snapshot = controller.snapshot()
 
         self.assertEqual(snapshot["status"], "running")
         self.assertEqual(snapshot["context_poller_status"], "degraded")
         self.assertIn("LCU offline", snapshot["context_poller_error"])
+
+    def test_compat_controller_stop_without_owned_runtime_does_not_write_inactive(self):
+        from hextech.overlay.lifecycle import GameOverlayController
+
+        inactive_calls: list[str] = []
+        controller = GameOverlayController(
+            start_context_poller_func=None,
+            prepare_data_func=lambda: None,
+            write_inactive_func=lambda: inactive_calls.append("inactive"),
+        )
+
+        controller.stop()
+
+        self.assertEqual(inactive_calls, [])
+        self.assertEqual(controller.snapshot()["status"], "stopped")
 
     def test_context_poller_starts_before_sidecar_cold_start(self):
         from hextech.overlay.lifecycle import GameOverlayController
@@ -161,10 +265,11 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
 
         controller.start()
 
-        self.assertEqual(calls[:4], ["prepare", "inactive", "context", "sidecar"])
+        self.assertEqual(calls[:3], ["prepare", "inactive", "context"])
+        self.assertLess(calls.index("context"), calls.index("sidecar"))
 
     def test_template_runtime_signature_ignores_hint_cache_runtime_metadata(self):
-        from hextech.overlay.vision import sidecar
+        from hextech.overlay.vision import template_runtime
 
         base_cache = {
             "schema_version": 1,
@@ -201,11 +306,12 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
             "name_index": {"测试海克斯": "augment-b"},
         }
 
-        self.assertEqual(sidecar.template_runtime_hint_signature(base_cache), sidecar.template_runtime_hint_signature(changed_metadata))
-        self.assertNotEqual(sidecar.template_runtime_hint_signature(base_cache), sidecar.template_runtime_hint_signature(changed_identity))
-        self.assertNotEqual(sidecar.template_runtime_hint_signature(base_cache), sidecar.template_runtime_hint_signature(changed_name_index))
+        self.assertEqual(template_runtime.template_runtime_hint_signature(base_cache), template_runtime.template_runtime_hint_signature(changed_metadata))
+        self.assertNotEqual(template_runtime.template_runtime_hint_signature(base_cache), template_runtime.template_runtime_hint_signature(changed_identity))
+        self.assertNotEqual(template_runtime.template_runtime_hint_signature(base_cache), template_runtime.template_runtime_hint_signature(changed_name_index))
 
     def test_template_runtime_cache_v2_manifest_and_float16_roundtrip(self):
+        from hextech.overlay.vision import template_runtime
         from hextech.overlay.vision import sidecar
 
         template_index = [
@@ -238,11 +344,11 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         ]
         with patch.object(sidecar, "_cleaned_name_fingerprint", return_value=None):
             matrices = sidecar.rank_template_matrices(template_index)
-        signature = {"schema_version": sidecar.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION, "resource": "fixture"}
+        signature = {"schema_version": template_runtime.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION, "resource": "fixture"}
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             cache_file = Path(tmp_dir) / "template_runtime_cache.v2.npz"
-            write_stats = sidecar._write_template_runtime_cache(
+            write_stats = template_runtime._write_template_runtime_cache(
                 cache_file,
                 resource_signature=signature,
                 hint_signature="hint-fixture",
@@ -260,7 +366,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                 self.assertNotIn("fingerprint", manifest_text)
                 self.assertNotIn("name_fingerprint", manifest_text)
 
-            runtime = sidecar._read_template_runtime_cache(
+            runtime = template_runtime._read_template_runtime_cache(
                 cache_file,
                 resource_signature=signature,
                 hint_signature="hint-fixture",
@@ -280,7 +386,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         np.testing.assert_allclose(restored_matrices.name_matrix, matrices.name_matrix, atol=1e-3)
 
     def test_template_runtime_cache_v2_ready_cleans_default_v1_cache(self):
-        from hextech.overlay.vision import sidecar
+        from hextech.overlay.vision import template_runtime
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -289,20 +395,20 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
             v1_cache.write_bytes(b"legacy-cache")
             v2_cache.write_bytes(b"v2-cache")
             with (
-                patch.object(sidecar, "TEMPLATE_RUNTIME_CACHE_FILE", v2_cache),
-                patch.object(sidecar, "TEMPLATE_RUNTIME_CACHE_V1_FILE", v1_cache),
+                patch.object(template_runtime, "TEMPLATE_RUNTIME_CACHE_FILE", v2_cache),
+                patch.object(template_runtime, "TEMPLATE_RUNTIME_CACHE_V1_FILE", v1_cache),
             ):
-                self.assertTrue(sidecar._cleanup_legacy_template_runtime_cache(v2_cache))
+                self.assertTrue(template_runtime._cleanup_legacy_template_runtime_cache(v2_cache))
                 self.assertFalse(v1_cache.exists())
 
             custom_cache = root / "custom.v2.npz"
             v1_cache.write_bytes(b"legacy-cache")
             custom_cache.write_bytes(b"custom-cache")
             with (
-                patch.object(sidecar, "TEMPLATE_RUNTIME_CACHE_FILE", v2_cache),
-                patch.object(sidecar, "TEMPLATE_RUNTIME_CACHE_V1_FILE", v1_cache),
+                patch.object(template_runtime, "TEMPLATE_RUNTIME_CACHE_FILE", v2_cache),
+                patch.object(template_runtime, "TEMPLATE_RUNTIME_CACHE_V1_FILE", v1_cache),
             ):
-                self.assertFalse(sidecar._cleanup_legacy_template_runtime_cache(custom_cache))
+                self.assertFalse(template_runtime._cleanup_legacy_template_runtime_cache(custom_cache))
                 self.assertTrue(v1_cache.exists())
 
 

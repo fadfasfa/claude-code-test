@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
@@ -18,12 +19,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from zipfile import ZIP_DEFLATED, ZipFile
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
 from tools.bundle_manifest import build_bundle_manifest, validate_hextech_seed_health
 from tools.cleanup_runtime import cleanup_python_caches
 from tools.package_rules import iter_package_data_entries
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
 REPO_DIR = BASE_DIR.parent
 ARTIFACTS_DIR = REPO_DIR / ".artifacts" / "hextech"
 RELEASES_DIR = ARTIFACTS_DIR / "releases"
@@ -268,23 +272,47 @@ def stage_tkinter_package_dir(source: Path, build_root: Path) -> Path:
     return target
 
 
-def refresh_runtime_data_before_package() -> None:
-    """按运行时节奏刷新数据，并打印实际进入发布包的 seed 健康信息。"""
+def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """解析构建参数；无参数时保持原有打包入口，但默认不访问网络。"""
 
-    print_step("按正常节奏刷新运行时数据")
-    from hextech.core.refresh import refresh_backend_data
+    parser = argparse.ArgumentParser(description="构建 Hextech 伴生系统便携包")
+    parser.add_argument(
+        "--refresh-data",
+        action="store_true",
+        help="构建前显式刷新远端数据；degraded/failed 会终止构建",
+    )
+    return parser.parse_args(argv)
 
-    refreshed = refresh_backend_data(force=False)
-    if refreshed:
-        print_check("运行时数据已按当前刷新策略检查")
+
+def prepare_runtime_data_for_package(*, refresh_data: bool) -> None:
+    """可选刷新数据，并校验实际进入发布包的 seed 健康信息。"""
+
+    if refresh_data:
+        print_step("显式刷新运行时数据")
+        from hextech.core.refresh import refresh_backend_data
+
+        result = refresh_backend_data(force=True)
+        state = str(getattr(result, "state", "") or "")
+        if state != "ready":
+            reason_code = str(getattr(result, "reason_code", "") or "unknown")
+            raise RuntimeError(f"构建前数据刷新未达到 ready：state={state or 'unknown'} reason={reason_code}")
+        print_check("运行时数据刷新完成：state=ready")
     else:
-        print_check("运行时数据仍在有效期内，无需刷新")
+        print_step("离线校验打包 seed")
+        print_check("未指定 --refresh-data，跳过远端刷新")
+
     seed_health = validate_hextech_seed_health(BASE_DIR)
     print_check(
         "Hextech seed：file={filename} mtime={mtime} rows={rows} heroes={unique_heroes} source=data/seed/startup/hextech".format(
             **seed_health
         )
     )
+
+
+def refresh_runtime_data_before_package() -> None:
+    """兼容旧调用方：显式执行构建前刷新。"""
+
+    prepare_runtime_data_for_package(refresh_data=True)
 
 
 def _add_data_arg(source: Path, target: str) -> str:
@@ -499,15 +527,16 @@ def finalize_output(exe_dir: Path) -> tuple[Path, Path]:
     return final_dir, zip_path
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """打包工具主流程入口。"""
 
+    args = parse_build_args(argv)
     print("\n" + "=" * 60)
     print("  Hextech 伴生系统打包程序")
     print(f"  构建时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     cleanup()
-    refresh_runtime_data_before_package()
+    prepare_runtime_data_for_package(refresh_data=args.refresh_data)
     with TemporaryDirectory(prefix="hextech-build-") as tmp_dir:
         build_root = Path(tmp_dir)
         manifest_path = write_generated_manifest(build_root)

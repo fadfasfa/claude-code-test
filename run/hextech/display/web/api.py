@@ -29,7 +29,7 @@ from hextech.catalog.version_catalog import (
     legacy_index_payload,
     legacy_static_payload,
 )
-from hextech.catalog.view_adapter import process_champions_data, process_hextechs_data
+from hextech.catalog.view_adapter import process_champions_data
 from hextech.core.refresh import rebuild_api_cache_if_needed
 from hextech.scraping.augment_catalog import load_augment_icon_manifest
 from hextech.scraping._paths import INDEX_DATA_DIR, STATIC_DATA_DIR
@@ -87,7 +87,6 @@ def _normalize_synergy_entry(raw_entry: str) -> str:
         return str(raw_entry or "")
 
     name, tier, grade, tag = parts[:4]
-    fifth = parts[4]
     sixth = parts[5] if len(parts) > 5 else ""
     seventh = parts[6] if len(parts) > 6 else ""
 
@@ -683,7 +682,6 @@ def register_routes(app: FastAPI) -> None:
                         local_mapped = web_runtime.find_existing_augment_asset_filename(assets_dir, mapped_filename)
                         if local_mapped:
                             return _safe_asset_response(assets_dir, local_mapped)
-                        web_runtime.queue_augment_icon_cache(mapped_filename, augment_name)
 
                     remote_icon_url = web_runtime.resolve_remote_augment_icon_url(catalog_entry, augment_name)
                     if remote_icon_url:
@@ -692,13 +690,11 @@ def register_routes(app: FastAPI) -> None:
                 local_fallback = web_runtime.find_existing_augment_asset_filename(assets_dir, filename)
                 if local_fallback:
                     return _safe_asset_response(assets_dir, local_fallback)
-                if re.fullmatch(r"[A-Za-z0-9._-]+", file_stem):
-                    web_runtime.queue_augment_icon_cache(filename, file_stem)
                 remote_icon_url = web_runtime.resolve_remote_augment_icon_url(catalog_entry, file_stem)
                 if remote_icon_url:
                     return RedirectResponse(url=remote_icon_url, status_code=307)
             except Exception as exc:
-                web_runtime.logger.warning("远程资源缓存失败：%s", exc)
+                web_runtime.logger.warning("远程资源解析失败：%s", exc)
 
         if filename.endswith(".png"):
             file_stem = filename[:-4]

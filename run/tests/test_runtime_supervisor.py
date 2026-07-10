@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import inspect
 import os
 import tempfile
 import threading
@@ -245,7 +244,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             overlay.release_start.set()
             server.shutdown()
 
-    def test_overlay_runtime_shutdown_serializes_with_start(self):
+    def test_overlay_runtime_disable_cancels_inflight_generation_without_waiting_for_start_lock(self):
         from hextech.runtime_supervisor import OverlayRuntimeManager
 
         class FakeProcess:
@@ -268,6 +267,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         prepare_entered = threading.Event()
         release_prepare = threading.Event()
         inactive_events: list[str] = []
+        start_calls: list[str] = []
         host = FakeProcess(301)
         sidecar = FakeProcess(302)
 
@@ -277,8 +277,8 @@ class RuntimeSupervisorTests(unittest.TestCase):
             return {}
 
         runtime = OverlayRuntimeManager(
-            start_host_func=lambda: host,
-            start_sidecar_func=lambda: sidecar,
+            start_host_func=lambda: (start_calls.append("host"), host)[1],
+            start_sidecar_func=lambda: (start_calls.append("sidecar"), sidecar)[1],
             start_context_poller_func=lambda: object(),
             prepare_data_func=prepare_data,
             write_inactive_func=lambda: inactive_events.append("inactive"),
@@ -287,22 +287,104 @@ class RuntimeSupervisorTests(unittest.TestCase):
         start_thread = threading.Thread(target=lambda: runtime.set_enabled(True))
         start_thread.start()
         self.assertTrue(prepare_entered.wait(timeout=1))
+        starting_generation = runtime.snapshot()["generation"]
 
-        shutdown_done = threading.Event()
-        shutdown_thread = threading.Thread(target=lambda: (runtime.shutdown("requested"), shutdown_done.set()))
-        shutdown_thread.start()
-        time.sleep(0.1)
-        self.assertFalse(shutdown_done.is_set())
+        started_at = time.perf_counter()
+        stopped = runtime.set_enabled(False)
+        elapsed = time.perf_counter() - started_at
 
         release_prepare.set()
         start_thread.join(timeout=3)
-        shutdown_thread.join(timeout=3)
 
-        self.assertTrue(shutdown_done.is_set())
+        self.assertLess(elapsed, 0.5)
+        self.assertFalse(start_thread.is_alive())
+        self.assertGreater(stopped["generation"], starting_generation)
+        self.assertFalse(stopped["desired_enabled"])
         self.assertEqual(runtime.snapshot()["status"], "stopped")
-        self.assertTrue(host.stopped)
-        self.assertTrue(sidecar.stopped)
-        self.assertGreaterEqual(len(inactive_events), 2)
+        self.assertEqual(start_calls, [])
+        self.assertGreaterEqual(len(inactive_events), 1)
+
+    def test_overlay_runtime_retries_transient_sidecar_start_twice_with_fixed_backoff(self):
+        from hextech.runtime_supervisor import OverlayRuntimeManager
+
+        class FakeProcess:
+            pid = 302
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                return None
+
+            def wait(self, timeout=None):
+                return None
+
+            def kill(self):
+                return None
+
+        attempts: list[int] = []
+        delays: list[float] = []
+
+        def start_sidecar():
+            attempts.append(len(attempts) + 1)
+            if len(attempts) < 3:
+                raise RuntimeError("Vision sidecar 在 readiness 前退出，exit_code=1")
+            return FakeProcess()
+
+        runtime = OverlayRuntimeManager(
+            start_host_func=FakeProcess,
+            start_sidecar_func=start_sidecar,
+            start_context_poller_func=None,
+            prepare_data_func=lambda: {},
+            write_inactive_func=lambda: None,
+            retry_sleep_func=delays.append,
+        )
+
+        snapshot = runtime.set_enabled(True)
+
+        self.assertEqual(snapshot["status"], "running")
+        self.assertEqual(attempts, [1, 2, 3])
+        self.assertEqual(delays, [1.0, 3.0])
+
+    def test_overlay_runtime_does_not_retry_deterministic_sidecar_failure(self):
+        from hextech.runtime_supervisor import OverlayRuntimeManager
+
+        class FakeProcess:
+            pid = 401
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                return None
+
+            def wait(self, timeout=None):
+                return None
+
+            def kill(self):
+                return None
+
+        attempts: list[int] = []
+        delays: list[float] = []
+
+        def start_sidecar():
+            attempts.append(1)
+            raise RuntimeError("Vision sidecar 模板缺失：template_missing")
+
+        runtime = OverlayRuntimeManager(
+            start_host_func=FakeProcess,
+            start_sidecar_func=start_sidecar,
+            start_context_poller_func=None,
+            prepare_data_func=lambda: {},
+            write_inactive_func=lambda: None,
+            retry_sleep_func=delays.append,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "模板缺失"):
+            runtime.set_enabled(True)
+
+        self.assertEqual(attempts, [1])
+        self.assertEqual(delays, [])
 
     def test_overlay_runtime_waits_for_template_prewarm_before_sidecar_start(self):
         from hextech.runtime_supervisor import OverlayRuntimeManager
@@ -326,7 +408,6 @@ class RuntimeSupervisorTests(unittest.TestCase):
 
         loader_entered = threading.Event()
         release_loader = threading.Event()
-        host_started = threading.Event()
         sidecar_started = threading.Event()
 
         def load_template_runtime(**kwargs):
@@ -544,6 +625,8 @@ class RuntimeSupervisorTests(unittest.TestCase):
         class FakeOverlayRuntime:
             def __init__(self):
                 self.shutdown_reasons: list[str] = []
+                self.shutdown_entered = threading.Event()
+                self.release_shutdown = threading.Event()
 
             def snapshot(self) -> dict:
                 return {"status": "running", "phase": "running"}
@@ -553,13 +636,22 @@ class RuntimeSupervisorTests(unittest.TestCase):
 
             def shutdown(self, reason: str = "shutdown") -> None:
                 self.shutdown_reasons.append(reason)
+                self.shutdown_entered.set()
+                self.release_shutdown.wait(timeout=5)
 
         overlay = FakeOverlayRuntime()
         supervisor = RuntimeSupervisor(parent_pid=0, session_nonce="test-nonce", overlay_runtime=overlay)
 
-        supervisor.request_shutdown("requested")
+        request_thread = threading.Thread(target=lambda: supervisor.request_shutdown("requested"))
+        request_thread.start()
+        self.assertTrue(overlay.shutdown_entered.wait(timeout=1))
 
+        self.assertTrue(supervisor.wait_for_shutdown(0.1))
         self.assertEqual(overlay.shutdown_reasons, ["requested"])
+        request_thread.join(timeout=0.2)
+        self.assertFalse(request_thread.is_alive())
+        overlay.release_shutdown.set()
+        self.assertTrue(supervisor.wait_for_overlay_shutdown(1.0))
 
     def test_supervisor_retries_game_overlay_after_template_prewarm_ready(self):
         from hextech.runtime_supervisor import RuntimeSupervisor
@@ -806,10 +898,15 @@ class RuntimeSupervisorTests(unittest.TestCase):
     def test_root_launcher_exposes_runtime_supervisor_mode(self):
         import hextech_ui
 
-        source = inspect.getsource(hextech_ui.main)
+        with (
+            mock.patch.object(os.sys, "argv", ["hextech_ui.py", "--runtime-supervisor", "--parent-pid", "123"]),
+            mock.patch("hextech.runtime_supervisor.main", return_value=17) as run_supervisor,
+            self.assertRaises(SystemExit) as raised,
+        ):
+            hextech_ui.main()
 
-        self.assertIn("--runtime-supervisor", source)
-        self.assertIn("hextech.runtime_supervisor", source)
+        self.assertEqual(raised.exception.code, 17)
+        run_supervisor.assert_called_once_with(["--parent-pid", "123"])
 
     def test_desktop_runtime_bootstraps_supervisor_process(self):
         from hextech.display.desktop import runtime as desktop_runtime
@@ -868,31 +965,75 @@ class RuntimeSupervisorTests(unittest.TestCase):
 
     def test_desktop_ui_starts_supervisor_and_lease_thread(self):
         from hextech.display.desktop.app import HextechUI
+        from hextech.display.desktop import app as desktop_app
 
-        source = inspect.getsource(HextechUI)
+        ui = HextechUI.__new__(HextechUI)
+        ui.runtime_supervisor = None
+        ui._start_supervisor_lease_thread = mock.Mock()
+        ui._restore_persisted_game_overlay = mock.Mock()
+        handle = object()
 
-        self.assertIn("start_runtime_supervisor_process", source)
-        self.assertIn("_start_supervisor_lease_thread", source)
-        self.assertIn("stop_runtime_supervisor_process", source)
-        self.assertIn("_restore_persisted_game_overlay", inspect.getsource(HextechUI._start_runtime_supervisor))
+        with mock.patch.object(desktop_app.ui_runtime, "start_runtime_supervisor_process", return_value=handle) as start:
+            ui._start_runtime_supervisor()
+
+        start.assert_called_once_with(parent_pid=os.getpid(), prewarm_templates=True)
+        self.assertIs(ui.runtime_supervisor, handle)
+        ui._start_supervisor_lease_thread.assert_called_once_with()
+        ui._restore_persisted_game_overlay.assert_called_once_with()
 
     def test_desktop_ui_defers_persisted_game_overlay_until_supervisor_ready(self):
         from hextech.display.desktop.app import HextechUI
 
-        apply_source = inspect.getsource(HextechUI._apply_persisted_feature_flags)
-        restore_source = inspect.getsource(HextechUI._restore_persisted_game_overlay)
+        ui = HextechUI.__new__(HextechUI)
+        ui.feature_flags = {"web_frontend_enabled": True, "game_overlay_enabled": True}
+        ui._game_overlay_desired_enabled = False
+        ui._toggle_web_frontend = mock.Mock()
+        ui._toggle_game_overlay = mock.Mock()
+        ui.runtime_supervisor = None
 
-        self.assertNotIn("_toggle_game_overlay", apply_source)
-        self.assertIn("_toggle_game_overlay", restore_source)
+        ui._apply_persisted_feature_flags()
+
+        ui._toggle_web_frontend.assert_called_once_with()
+        ui._toggle_game_overlay.assert_not_called()
+        self.assertTrue(ui._game_overlay_desired_enabled)
+
+        ui.runtime_supervisor = object()
+        ui.game_overlay_var = mock.Mock()
+        ui.game_overlay_var.get.return_value = True
+        ui._feature_toggle_is_busy = mock.Mock(return_value=False)
+        ui._set_overlay_status_summary = mock.Mock()
+
+        ui._restore_persisted_game_overlay()
+
+        ui._toggle_game_overlay.assert_called_once_with()
 
     def test_desktop_ui_game_overlay_toggle_uses_supervisor_action(self):
         from hextech.display.desktop.app import HextechUI
 
-        source = inspect.getsource(HextechUI._toggle_game_overlay)
+        ui = HextechUI.__new__(HextechUI)
+        ui.game_overlay_var = mock.Mock()
+        ui.game_overlay_var.get.return_value = True
+        ui._game_overlay_desired_enabled = False
+        ui._overlay_operation_lock = threading.Lock()
+        ui._closing = False
+        ui.runtime_supervisor = mock.Mock()
+        ui.runtime_supervisor.set_game_overlay_enabled.return_value = {"status": "completed"}
+        ui.service_manager = mock.Mock()
+        ui.service_manager.start_game_overlay.side_effect = AssertionError("legacy controller must not start")
+        ui.service_manager.stop_game_overlay.side_effect = AssertionError("legacy controller must not stop")
+        ui._set_feature_toggle_busy = mock.Mock()
+        ui._set_overlay_status_summary = mock.Mock()
+        ui._persist_feature_flags_from_controls = mock.Mock()
+        ui._restore_feature_toggle_after_failure = mock.Mock()
+        ui._start_tracked_thread = lambda target, **_kwargs: target()
+        ui._run_on_ui_thread = lambda callback: callback()
 
-        self.assertIn("set_game_overlay_enabled", source)
-        self.assertNotIn("start_game_overlay()", source)
-        self.assertNotIn("stop_game_overlay()", source)
+        ui._toggle_game_overlay()
+
+        ui.runtime_supervisor.set_game_overlay_enabled.assert_called_once_with(True)
+        ui.service_manager.start_game_overlay.assert_not_called()
+        ui.service_manager.stop_game_overlay.assert_not_called()
+        ui._persist_feature_flags_from_controls.assert_called_once_with()
 
 
 if __name__ == "__main__":

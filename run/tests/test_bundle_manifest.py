@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 
@@ -76,6 +77,65 @@ def test_hextech_seed_health_requires_valid_snapshot_rows_and_heroes(tmp_path):
     assert summary["filename"] == "Hextech_Data_2026-07-06.csv"
     assert summary["rows"] == 2
     assert summary["unique_heroes"] == 2
+
+
+def test_bundle_manifest_records_dataset_version_and_sha256_for_mutable_seeds(tmp_path, monkeypatch):
+    from tools import bundle_manifest
+
+    hextech = tmp_path / "data" / "seed" / "startup" / "hextech" / "Hextech_Data_2026-07-05.csv"
+    synergy_dir = tmp_path / "data" / "seed" / "startup" / "synergy"
+    synergy = synergy_dir / "Champion_Synergy_20260519_223505.json"
+    latest = synergy_dir / "Champion_Synergy_latest.v1.json"
+    hextech.parent.mkdir(parents=True)
+    synergy_dir.mkdir(parents=True)
+    hextech.write_bytes(b"hextech-seed")
+    synergy.write_bytes(b'{"heroes":172}')
+    latest.write_text(
+        json.dumps({"version": 1, "filename": synergy.name}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(bundle_manifest, "iter_hextech_snapshot_files", lambda _base: [hextech])
+    monkeypatch.setattr(bundle_manifest, "iter_synergy_data_files", lambda _base: [synergy, latest])
+    monkeypatch.setattr(bundle_manifest, "iter_source_files", lambda _base: ["hextech_ui.py"])
+    monkeypatch.setattr(bundle_manifest, "STABLE_STATIC_FILES", ("英雄目录.v1.json",))
+    monkeypatch.setattr(
+        bundle_manifest,
+        "validate_hextech_seed_health",
+        lambda _base: {"valid": True},
+    )
+    static_dir = tmp_path / "data" / "static" / "version"
+    static_dir.mkdir(parents=True)
+    (static_dir / "英雄目录.v1.json").write_text("{}", encoding="utf-8")
+
+    manifest = bundle_manifest.build_bundle_manifest(tmp_path)
+
+    hextech_name = "data/seed/startup/hextech/Hextech_Data_2026-07-05.csv"
+    latest_name = "data/seed/startup/synergy/Champion_Synergy_latest.v1.json"
+    assert manifest["seed_metadata"][hextech_name] == {
+        "dataset_version": "2026-07-05",
+        "sha256": hashlib.sha256(b"hextech-seed").hexdigest(),
+    }
+    assert manifest["seed_metadata"][latest_name] == {
+        "dataset_version": "20260519_223505",
+        "sha256": hashlib.sha256(latest.read_bytes()).hexdigest(),
+    }
+
+
+def test_validate_bundle_manifest_accepts_manifest_without_seed_metadata():
+    from tools.bundle_manifest import validate_bundle_manifest
+
+    validate_bundle_manifest(
+        {
+            "static_files": ["英雄目录.v1.json"],
+            "index_files": ["index.json"],
+            "asset_files": [],
+            "hextech_snapshot_files": ["data/seed/startup/hextech/Hextech_Data_2026-07-05.csv"],
+            "synergy_data_files": ["data/seed/startup/synergy/Champion_Synergy_20260519_223505.json"],
+            "synergy_data_file": "data/seed/startup/synergy/Champion_Synergy_20260519_223505.json",
+            "source_files": ["hextech_ui.py"],
+        }
+    )
 
 
 def test_runtime_bundle_reports_missing_or_corrupt_manifest(tmp_path, monkeypatch):

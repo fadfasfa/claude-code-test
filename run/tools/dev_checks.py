@@ -3595,7 +3595,6 @@ def check_overlay_context_contract() -> None:
         assert stale_zero_loaded["error"] == "context_missing"
         assert stale_zero_loaded["champion_id"] == ""
         assert stale_zero_loaded["source"] == "lcu-no-champion"
-        assert "266" not in context_path.read_text(encoding="utf-8")
         assert overlay_context.OverlayContextPoller.stop.__defaults__ == (4.0,)
 
         context_module_text = (RUN_DIR / "hextech" / "overlay" / "context.py").read_text(encoding="utf-8")
@@ -6242,7 +6241,6 @@ def check_mayhem_combo_pipeline_contract() -> None:
     from hextech.scraping.synergy.mayhem_combo_scraper import parse_combo_manifest
     import hextech.scraping.synergy.mayhem_merge as mayhem_merge
     import hextech.scraping.synergy.mayhem_refresh as mayhem_refresh
-    import tools.clean_mayhem_combos as clean_mayhem_combos
     from tools.clean_mayhem_combos import merge_mayhem_combos
 
     manifest_items, manifest_rejects, manifest_meta = parse_combo_manifest(
@@ -7227,7 +7225,6 @@ def check_game_overlay_module_contract() -> None:
     import hextech.overlay.host as overlay_host
     import hextech.overlay.lifecycle as overlay_lifecycle
     import hextech.overlay.renderer as overlay_renderer
-    import hextech.display.desktop.service_manager as desktop_service_manager
     from hextech.display.desktop.service_manager import ServiceManager
     from hextech.overlay.lifecycle import GameOverlayController
     from hextech.overlay.vision.layout import pick_card_panels
@@ -7338,14 +7335,6 @@ print(json.dumps(blocked))
             self.killed = True
             self.running = False
 
-    class StubbornProcess(DummyProcess):
-        def terminate(self) -> None:
-            self.calls.append(f"stop:{self.label}")
-
-        def kill(self) -> None:
-            self.calls.append(f"kill:{self.label}")
-            self.killed = True
-
     with TemporaryDirectory() as tmp_dir:
         ready_path = Path(tmp_dir) / "ready.json"
         ready_path.write_text(
@@ -7395,16 +7384,6 @@ print(json.dumps(blocked))
     assert primary_controller.is_running() is True
     primary_controller.stop()
 
-    stale_process_calls: list[str] = []
-    stale_controller = GameOverlayController(
-        prepare_data_func=lambda: None,
-        write_inactive_func=lambda: stale_process_calls.append("inactive"),
-    )
-    stale_controller.sidecar_process = DummyProcess(96, running=False)
-    stale_controller.stop()
-    assert stale_process_calls == ["inactive", "inactive"]
-    assert stale_controller.sidecar_process is None
-
     with TemporaryDirectory() as tmp_dir:
         exit_signal = Path(tmp_dir) / "host.exit.json"
 
@@ -7424,7 +7403,7 @@ print(json.dumps(blocked))
         assert voluntary_host.calls == []
         assert not exit_signal.exists()
 
-    # 成功启停：停止前先隐藏，sidecar 退出后再写 inactive 作为最终 fence。
+    # 兼容 Controller 只委托统一 runtime；不恢复可直接变更的进程所有权。
     calls: list[str] = []
     host_process = DummyProcess(101, calls=calls, label="host")
     sidecar_process = DummyProcess(102, calls=calls, label="sidecar")
@@ -7435,7 +7414,7 @@ print(json.dumps(blocked))
         start_host_func=lambda: calls.append("start:host") or host_process,
     )
     controller.start()
-    assert calls == ["prepare", "inactive", "start:sidecar", "start:host"]
+    assert calls == ["prepare", "inactive", "start:host", "start:sidecar"]
     assert controller.snapshot()["status"] == "running"
     assert controller.snapshot()["host_pid"] == 101
     assert controller.snapshot()["sidecar_pid"] == 102
@@ -7465,85 +7444,31 @@ print(json.dumps(blocked))
     assert polling_controller.snapshot()["context_poller_status"] == "stopped"
 
     unexpected_exit_calls: list[str] = []
-
-    class UnexpectedExitPoller:
-        def stop(self) -> None:
-            unexpected_exit_calls.append("stop:context")
-
     unexpected_exit = GameOverlayController(
         prepare_data_func=lambda: None,
         write_inactive_func=lambda: None,
         start_sidecar_func=lambda: DummyProcess(105),
         start_host_func=lambda: DummyProcess(106),
-        start_context_poller_func=lambda: unexpected_exit_calls.append("start:context") or UnexpectedExitPoller(),
+        start_context_poller_func=lambda: unexpected_exit_calls.append("start:context") or (
+            lambda: unexpected_exit_calls.append("stop:context")
+        ),
     )
     unexpected_exit.start()
     assert unexpected_exit.host_process is not None
     unexpected_exit.host_process.running = False
     unexpected_snapshot = unexpected_exit.snapshot()
     assert unexpected_snapshot["status"] == "error"
-    assert unexpected_snapshot["context_poller_status"] == "stopped"
+    assert unexpected_snapshot["last_error"] == "game_overlay host 意外退出"
+    unexpected_exit.stop()
     assert unexpected_exit_calls == ["start:context", "stop:context"]
 
-    partial_restart_calls: list[str] = []
-    healthy_host = DummyProcess(121, calls=partial_restart_calls, label="host")
-    dead_sidecar = DummyProcess(122, running=False, calls=partial_restart_calls, label="dead-sidecar")
-    new_sidecar = DummyProcess(123, calls=partial_restart_calls, label="sidecar")
-    partial_restart = GameOverlayController(
-        prepare_data_func=lambda: partial_restart_calls.append("prepare"),
-        write_inactive_func=lambda: partial_restart_calls.append("inactive"),
-        start_sidecar_func=lambda: partial_restart_calls.append("start:sidecar") or new_sidecar,
-        start_host_func=lambda: partial_restart_calls.append("start:host") or DummyProcess(124),
-    )
-    partial_restart.host_process = healthy_host
-    partial_restart.sidecar_process = dead_sidecar
-    assert partial_restart.is_running() is False
-    partial_restart.start()
-    assert partial_restart.host_process is healthy_host
-    assert partial_restart.sidecar_process is new_sidecar
-    assert partial_restart_calls == ["prepare", "start:sidecar"]
-    assert healthy_host.running is True
-    assert partial_restart.snapshot()["status"] == "running"
-
-    stale_cleanup_calls: list[str] = []
-    stale_cleanup = GameOverlayController(
-        prepare_data_func=lambda: stale_cleanup_calls.append("prepare"),
-        write_inactive_func=lambda: stale_cleanup_calls.append("inactive"),
-        start_sidecar_func=lambda: stale_cleanup_calls.append("start:sidecar") or DummyProcess(111),
-        start_host_func=lambda: stale_cleanup_calls.append("start:host") or DummyProcess(112),
-    )
-    stale_cleanup.host_process = StubbornProcess(113, calls=stale_cleanup_calls, label="host")
-    stale_cleanup.start()
-    assert stale_cleanup.snapshot()["status"] == "running"
-    assert stale_cleanup.host_process.pid == 113
-    assert stale_cleanup.sidecar_process.pid == 111
-    assert stale_cleanup_calls == ["prepare", "start:sidecar"]
-
-    residual_stop_calls: list[str] = []
-    residual_stop = GameOverlayController(
-        prepare_data_func=lambda: None,
-        write_inactive_func=lambda: residual_stop_calls.append("inactive"),
-    )
-    residual_stop.host_process = StubbornProcess(114, calls=residual_stop_calls, label="host")
-    try:
-        residual_stop.stop()
-    except RuntimeError as exc:
-        assert "host 停止失败(pid=114)" in str(exc)
-    else:
-        raise AssertionError("stop_process 失败必须向调用方报错")
-    assert residual_stop.host_process is not None and residual_stop.host_process.pid == 114
-    assert residual_stop.sidecar_process is None
-    assert residual_stop.snapshot()["residual_pids"] == {"host": 114}
-    assert residual_stop_calls[:2] == ["inactive", "inactive"]
-
-    # host 失败必须回滚已启动 sidecar；sidecar 失败不得继续启动 host。
+    # host 失败不得继续启动 sidecar；确定性 sidecar 失败不得循环重试。
     rollback_calls: list[str] = []
     rollback_event_calls: list[str] = []
-    orphan_sidecar = DummyProcess(201, calls=rollback_calls, label="sidecar")
     rollback = GameOverlayController(
         prepare_data_func=lambda: None,
         write_inactive_func=lambda: rollback_event_calls.append("inactive"),
-        start_sidecar_func=lambda: orphan_sidecar,
+        start_sidecar_func=lambda: rollback_calls.append("sidecar") or DummyProcess(201),
         start_host_func=lambda: (_ for _ in ()).throw(RuntimeError("host failed")),
     )
     try:
@@ -7552,34 +7477,19 @@ print(json.dumps(blocked))
         assert "host failed" in str(exc)
     else:
         raise AssertionError("host 启动失败必须向调用方报错")
-    assert not orphan_sidecar.running
+    assert rollback_calls == []
     assert rollback_event_calls == ["inactive", "inactive"]
     assert rollback.snapshot()["status"] == "error"
     assert rollback.host_process is None and rollback.sidecar_process is None
 
-    stubborn_rollback_calls: list[str] = []
-    stubborn_orphan_sidecar = StubbornProcess(204, calls=stubborn_rollback_calls, label="sidecar")
-    stubborn_rollback = GameOverlayController(
-        prepare_data_func=lambda: None,
-        write_inactive_func=lambda: None,
-        start_sidecar_func=lambda: stubborn_orphan_sidecar,
-        start_host_func=lambda: (_ for _ in ()).throw(RuntimeError("host failed with stubborn sidecar")),
-    )
-    try:
-        stubborn_rollback.start()
-    except RuntimeError as exc:
-        assert "回滚后仍有残留" in str(exc)
-        assert "sidecar(pid=204)" in str(exc)
-    else:
-        raise AssertionError("回滚残留必须向调用方报错")
-    assert stubborn_rollback.sidecar_process is stubborn_orphan_sidecar
-    assert stubborn_rollback.snapshot()["residual_pids"] == {"sidecar": 204}
-
     sidecar_failed_host_calls: list[str] = []
+    sidecar_attempts: list[str] = []
     sidecar_failure = GameOverlayController(
         prepare_data_func=lambda: None,
         write_inactive_func=lambda: None,
-        start_sidecar_func=lambda: DummyProcess(202, running=False),
+        start_sidecar_func=lambda: sidecar_attempts.append("sidecar") or (
+            (_ for _ in ()).throw(RuntimeError("Vision sidecar 模板缺失：template_missing"))
+        ),
         start_host_func=lambda: sidecar_failed_host_calls.append("host") or DummyProcess(203),
     )
     try:
@@ -7588,9 +7498,10 @@ print(json.dumps(blocked))
         assert "sidecar" in str(exc)
     else:
         raise AssertionError("已退出 sidecar 不得被标记为 running")
-    assert sidecar_failed_host_calls == []
+    assert sidecar_failed_host_calls == ["host"]
+    assert sidecar_attempts == ["sidecar"]
 
-    # Web / game overlay 四状态矩阵，两个入口互不启动对方。
+    # ServiceManager 默认不拥有 overlay；只有显式兼容模式才允许旧入口委托。
     matrix_calls: list[str] = []
     matrix_controller = GameOverlayController(
         prepare_data_func=lambda: matrix_calls.append("prepare"),
@@ -7606,86 +7517,49 @@ print(json.dumps(blocked))
     manager.start_web()
     assert manager.is_web_running() and not manager.is_game_overlay_running()
     assert matrix_calls == ["web"]
-    manager.start_game_overlay()
-    assert manager.is_web_running() and manager.is_game_overlay_running()
+    watchdog = manager.ensure_game_overlay_healthy(enabled=True)
+    assert watchdog["last_action"] == "supervisor_owned"
+    assert manager.get_status_snapshot()["game_overlay"]["status"] == "supervisor_owned"
+    try:
+        manager.start_game_overlay()
+    except RuntimeError as exc:
+        assert "Runtime Supervisor" in str(exc)
+    else:
+        raise AssertionError("默认 ServiceManager 不得拥有 overlay 子进程")
     manager.stop_web()
-    assert not manager.is_web_running() and manager.is_game_overlay_running()
-    manager.stop_game_overlay()
     assert not manager.is_web_running() and not manager.is_game_overlay_running()
 
-    watchdog_calls: list[str] = []
-    watchdog_controller = GameOverlayController(
-        prepare_data_func=lambda: watchdog_calls.append("prepare"),
-        write_inactive_func=lambda: watchdog_calls.append("inactive"),
-        start_sidecar_func=lambda: watchdog_calls.append("sidecar") or DummyProcess(312, calls=watchdog_calls, label="sidecar"),
-        start_host_func=lambda: watchdog_calls.append("host") or DummyProcess(313, calls=watchdog_calls, label="host"),
-        start_context_poller_func=lambda: watchdog_calls.append("context") or (lambda: None),
+    compat_calls: list[str] = []
+    compat_controller = GameOverlayController(
+        prepare_data_func=lambda: compat_calls.append("prepare"),
+        write_inactive_func=lambda: compat_calls.append("inactive"),
+        start_sidecar_func=lambda: compat_calls.append("sidecar") or DummyProcess(312, calls=compat_calls, label="sidecar"),
+        start_host_func=lambda: compat_calls.append("host") or DummyProcess(313, calls=compat_calls, label="host"),
+        start_context_poller_func=None,
     )
-    watchdog_manager = ServiceManager(start_web_func=lambda: DummyProcess(311), overlay_controller=watchdog_controller)
-    disabled_watchdog = watchdog_manager.ensure_game_overlay_healthy(enabled=False)
-    assert disabled_watchdog["last_action"] == "disabled"
-    assert watchdog_calls == []
-    started_watchdog = watchdog_manager.ensure_game_overlay_healthy(enabled=True)
-    assert started_watchdog["last_action"] == "start_missing_process"
-    assert watchdog_calls == ["prepare", "inactive", "context", "sidecar", "host"]
-    disabled_after_start = watchdog_manager.ensure_game_overlay_healthy(enabled=False)
-    assert disabled_after_start["last_action"] == "stop_disabled"
-    assert not watchdog_manager.is_game_overlay_running()
-    assert "stop:sidecar" in watchdog_calls and "stop:host" in watchdog_calls
+    compat_manager = ServiceManager(
+        start_web_func=lambda: DummyProcess(311),
+        overlay_controller=compat_controller,
+        manage_overlay_runtime=True,
+    )
+    compat_manager.start_game_overlay()
+    assert compat_manager.is_game_overlay_running()
+    assert compat_calls == ["prepare", "inactive", "host", "sidecar"]
+    compat_watchdog = compat_manager.ensure_game_overlay_healthy(enabled=True)
+    assert compat_watchdog["last_action"] == "supervisor_owned"
+    compat_manager.stop_game_overlay()
+    assert not compat_manager.is_game_overlay_running()
 
-    residual_calls: list[str] = []
-    residual_controller = GameOverlayController(
-        prepare_data_func=lambda: None,
-        write_inactive_func=lambda: residual_calls.append("inactive"),
-    )
-    residual_controller.host_process = DummyProcess(314, running=False, calls=residual_calls, label="host")
-    residual_controller.sidecar_process = DummyProcess(315, calls=residual_calls, label="sidecar")
-    residual_manager = ServiceManager(start_web_func=lambda: DummyProcess(316), overlay_controller=residual_controller)
-    residual_disabled = residual_manager.ensure_game_overlay_healthy(enabled=False)
-    assert residual_disabled["last_action"] == "stop_disabled"
-    assert residual_controller.sidecar_process is None
-    assert "stop:sidecar" in residual_calls
-    watchdog_manager._shutdown_requested = True
-    blocked_after_shutdown = watchdog_manager.ensure_game_overlay_healthy(enabled=True)
+    manager._shutdown_requested = True
+    blocked_after_shutdown = manager.ensure_game_overlay_healthy(enabled=True)
     assert blocked_after_shutdown["last_action"] == "disabled"
-    assert not watchdog_manager.is_game_overlay_running()
+    assert not manager.is_game_overlay_running()
     try:
-        watchdog_manager.start_game_overlay()
+        manager.start_game_overlay()
     except RuntimeError as exc:
-        assert "关闭流程" in str(exc)
+        assert "Runtime Supervisor" in str(exc)
     else:
         raise AssertionError("ServiceManager 进入关闭流程后不得重新启动 overlay")
-
-    stale_calls: list[str] = []
-    stale_controller = GameOverlayController(
-        prepare_data_func=lambda: stale_calls.append("prepare"),
-        write_inactive_func=lambda: stale_calls.append("inactive"),
-        start_sidecar_func=lambda: stale_calls.append("sidecar") or DummyProcess(322, calls=stale_calls, label="sidecar"),
-        start_host_func=lambda: stale_calls.append("host") or DummyProcess(323, calls=stale_calls, label="host"),
-        start_context_poller_func=lambda: stale_calls.append("context") or (lambda: None),
-    )
-    stale_manager = ServiceManager(start_web_func=lambda: DummyProcess(321), overlay_controller=stale_controller)
-    with TemporaryDirectory() as tmp_dir, patch.object(
-        desktop_service_manager,
-        "OVERLAY_VISION_TRACE_FILE",
-        Path(tmp_dir) / "overlay_vision_trace.v1.json",
-    ), patch.object(desktop_service_manager, "OVERLAY_STATE_STALE_SECONDS", 0.01), patch.object(
-        desktop_service_manager,
-        "OVERLAY_WATCHDOG_RESTART_COOLDOWN_SECONDS",
-        0.01,
-    ):
-        stale_manager.ensure_game_overlay_healthy(enabled=True)
-        time.sleep(0.03)
-        stale_watchdog = stale_manager.ensure_game_overlay_healthy(enabled=True)
-        assert stale_watchdog["last_action"] == "healthy"
-        assert stale_calls == [
-            "prepare", "inactive", "context", "sidecar", "host",
-        ]
-        trace_path = desktop_service_manager.OVERLAY_VISION_TRACE_FILE
-        trace_path.write_text("{}", encoding="utf-8")
-        healthy_watchdog = stale_manager.ensure_game_overlay_healthy(enabled=True)
-        assert healthy_watchdog["last_action"] == "healthy"
-    stale_manager.stop_game_overlay()
 
     class ReleaseAfterWaitProcess(DummyProcess):
         def __init__(self, pid: int):
@@ -7729,7 +7603,7 @@ print(json.dumps(blocked))
         try:
             joined_manager.start_game_overlay()
         except RuntimeError as exc:
-            assert "关闭流程" in str(exc)
+            assert "Runtime Supervisor" in str(exc)
         else:
             raise AssertionError("真实 shutdown 完成后不得重新启动 overlay")
     finally:

@@ -7,6 +7,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -51,8 +52,48 @@ def _selection_event() -> dict:
 
 
 class OverlayVisionStateTests(unittest.TestCase):
+    def test_sidecar_template_runtime_entrypoint_delegates_to_cache_module(self):
+        from hextech.overlay.vision import sidecar, template_runtime
+
+        expected = object()
+        with mock.patch.object(template_runtime, "load_or_build_default_template_runtime", return_value=expected) as delegated:
+            result = sidecar.load_or_build_default_template_runtime(
+                hint_cache={"schema_version": 1},
+                cache_file="cache.npz",
+                resource_signature={"schema_version": 2},
+            )
+
+        self.assertIs(result, expected)
+        delegated.assert_called_once_with(
+            base_dir=None,
+            hint_cache={"schema_version": 1},
+            cache_file="cache.npz",
+            resource_signature={"schema_version": 2},
+            status_callback=None,
+        )
+
+    def test_template_resource_digest_normalizes_windows_path_case_and_separators(self):
+        from hextech.overlay.vision import template_runtime
+
+        stat = SimpleNamespace(st_size=42, st_mtime_ns=123456)
+
+        class FakePath:
+            def __init__(self, value: str):
+                self.value = value
+
+            def __str__(self):
+                return self.value
+
+            def stat(self):
+                return stat
+
+        lower_slash = template_runtime._hash_runtime_resource_stats([FakePath(r"c:\hextech\data\icon.png")])
+        upper_forward = template_runtime._hash_runtime_resource_stats([FakePath("C:/HEXTECH/DATA/ICON.PNG")])
+
+        self.assertEqual(lower_slash, upper_forward)
+
     def test_template_runtime_cache_hits_and_invalidates_by_signature(self):
-        from hextech.overlay.vision import sidecar
+        from hextech.overlay.vision import sidecar, template_runtime
 
         entry = sidecar.TemplateEntry(
             augment_id="a0",
@@ -66,14 +107,14 @@ class OverlayVisionStateTests(unittest.TestCase):
         )
 
         def fake_rank(template_index):
-            return sidecar._RankMatrices(
+            return template_runtime._RankMatrices(
                 template_index,
                 (entry,),
-                sidecar.np.asarray([[0.0, 1.0]], dtype=sidecar.np.float32),
+                template_runtime.np.asarray([[0.0, 1.0]], dtype=template_runtime.np.float32),
                 (entry,),
-                sidecar.np.asarray([[0.0, 1.0]], dtype=sidecar.np.float32),
+                template_runtime.np.asarray([[0.0, 1.0]], dtype=template_runtime.np.float32),
                 (entry,),
-                sidecar.np.asarray([[1.0, 0.0]], dtype=sidecar.np.float32),
+                template_runtime.np.asarray([[1.0, 0.0]], dtype=template_runtime.np.float32),
             )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -82,10 +123,10 @@ class OverlayVisionStateTests(unittest.TestCase):
             updated_signature = {"schema_version": 1, "asset_digest": "b", "version_digest": "v"}
 
             with (
-                mock.patch.object(sidecar, "load_default_template_index", return_value=[entry]) as load_index,
-                mock.patch.object(sidecar, "_rank_matrices", side_effect=fake_rank) as rank,
+                mock.patch.object(template_runtime, "load_default_template_index", return_value=[entry]) as load_index,
+                mock.patch.object(template_runtime, "_rank_matrices", side_effect=fake_rank) as rank,
             ):
-                first = sidecar.load_or_build_default_template_runtime(
+                first = template_runtime.load_or_build_default_template_runtime(
                     hint_cache={},
                     cache_file=cache_file,
                     resource_signature=signature,
@@ -95,10 +136,10 @@ class OverlayVisionStateTests(unittest.TestCase):
             self.assertEqual(rank.call_count, 1)
 
             with (
-                mock.patch.object(sidecar, "load_default_template_index", side_effect=AssertionError("cache hit should not rebuild")),
-                mock.patch.object(sidecar, "_rank_matrices", side_effect=AssertionError("cache hit should not rebuild matrices")),
+                mock.patch.object(template_runtime, "load_default_template_index", side_effect=AssertionError("cache hit should not rebuild")),
+                mock.patch.object(template_runtime, "_rank_matrices", side_effect=AssertionError("cache hit should not rebuild matrices")),
             ):
-                second = sidecar.load_or_build_default_template_runtime(
+                second = template_runtime.load_or_build_default_template_runtime(
                     hint_cache={},
                     cache_file=cache_file,
                     resource_signature=signature,
@@ -107,10 +148,10 @@ class OverlayVisionStateTests(unittest.TestCase):
             self.assertEqual(second.template_index[0].augment_id, "a0")
 
             with (
-                mock.patch.object(sidecar, "load_default_template_index", return_value=[entry]) as load_after_change,
-                mock.patch.object(sidecar, "_rank_matrices", side_effect=fake_rank),
+                mock.patch.object(template_runtime, "load_default_template_index", return_value=[entry]) as load_after_change,
+                mock.patch.object(template_runtime, "_rank_matrices", side_effect=fake_rank),
             ):
-                invalidated = sidecar.load_or_build_default_template_runtime(
+                invalidated = template_runtime.load_or_build_default_template_runtime(
                     hint_cache={},
                     cache_file=cache_file,
                     resource_signature=updated_signature,

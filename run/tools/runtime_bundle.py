@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import shutil
 from datetime import datetime, timezone
@@ -156,21 +157,69 @@ def _synergy_data_path(relative_name: object) -> PurePosixPath | None:
     return None
 
 
-def _copy_if_missing_or_older(source: Path, target: Path) -> None:
-    if not source.exists():
-        return
-    should_copy = not target.exists()
-    if not should_copy:
-        try:
-            should_copy = source.stat().st_mtime > target.stat().st_mtime
-        except OSError:
-            should_copy = True
-    if not should_copy:
+def _copy_if_missing(source: Path, target: Path) -> None:
+    if not source.exists() or target.exists():
         return
 
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     logger.info("已播种 bundle 快照：%s -> %s", source, target)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _synergy_pointer_version(path: Path) -> str:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    filename = Path(str(payload.get("filename") or "")).name
+    if not (filename.startswith(SYNERGY_SNAPSHOT_PATTERN_PREFIX) and filename.endswith(".json")):
+        return ""
+    return filename.removeprefix(SYNERGY_SNAPSHOT_PATTERN_PREFIX).removesuffix(".json")
+
+
+def _promote_latest_pointer(source: Path, target: Path, metadata: object) -> None:
+    if not source.exists():
+        return
+    if not target.exists():
+        _copy_if_missing(source, target)
+        return
+    if not isinstance(metadata, dict):
+        return
+
+    source_version = str(metadata.get("dataset_version") or "")
+    expected_sha256 = str(metadata.get("sha256") or "").lower()
+    if not source_version or len(expected_sha256) != 64:
+        return
+    try:
+        source_sha256 = _sha256(source)
+    except OSError:
+        return
+    if source_sha256 != expected_sha256:
+        logger.warning("bundle seed 摘要不匹配，跳过晋升：%s", source)
+        return
+
+    target_version = _synergy_pointer_version(target)
+    if target_version and target_version > source_version:
+        return
+    try:
+        if target_version == source_version and _sha256(target) == source_sha256:
+            return
+    except OSError:
+        pass
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    logger.info("已按 dataset_version 晋升 bundle latest：%s -> %s", source, target)
 
 
 def seed_bundled_resources(
@@ -213,6 +262,9 @@ def seed_bundled_resources(
 
     static_files = list(manifest.get("static_files", []))
     index_files = list(manifest.get("index_files", []))
+    seed_metadata = manifest.get("seed_metadata")
+    if not isinstance(seed_metadata, dict):
+        seed_metadata = {}
 
     for filename in static_files:
         source = bundled_static_dir / filename
@@ -233,7 +285,7 @@ def seed_bundled_resources(
                 continue
             source = bundle_base / Path(*snapshot_path.parts)
             target = hextech_dir / snapshot_path.name
-            _copy_if_missing_or_older(source, target)
+            _copy_if_missing(source, target)
 
     if synergy_dir is not None:
         synergy_files = list(manifest.get("synergy_data_files") or [])
@@ -246,7 +298,10 @@ def seed_bundled_resources(
                 continue
             source = bundle_base / Path(*synergy_path.parts)
             target = synergy_dir / synergy_path.name
-            _copy_if_missing_or_older(source, target)
+            if synergy_path.name == SYNERGY_LATEST_POINTER_FILENAME:
+                _promote_latest_pointer(source, target, seed_metadata.get(synergy_path.as_posix()))
+            else:
+                _copy_if_missing(source, target)
 
     for relative_name in manifest.get("asset_files", []):
         source = bundled_asset_dir / Path(relative_name)

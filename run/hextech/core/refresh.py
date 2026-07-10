@@ -27,7 +27,7 @@ import time
 import json
 import logging
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -59,9 +59,6 @@ from hextech.scraping.augment_catalog import (
     run_augment_icon_prefetch,
 )
 from hextech.scraping.version_sync import (
-    AUGMENT_ICON_FILE,
-    AUGMENT_MANIFEST_FILE,
-    AUGMENT_MAP_FILE,
     CORE_DATA_FILE,
     sync_hero_data,
 )
@@ -370,6 +367,10 @@ def _result_from_report(report: dict, *, force: bool, correlation_id: str) -> Re
         state = "failed"
         reason_code = "heal_busy_no_valid_fallback"
         degradation_id = str(_ACTIVE_DEGRADATION.get("degradation_id") or _new_degradation_id())
+    elif failed == {"api_cache"}:
+        state = "failed"
+        reason_code = "api_cache_rebuild_failed"
+        degradation_id = str(_ACTIVE_DEGRADATION.get("degradation_id") or _new_degradation_id())
     elif fallback_used and fallback_valid:
         state = "degraded"
         reason_code = "remote_failed_local_fallback"
@@ -503,9 +504,23 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> RefreshResult:
     """
 
     correlation_id = _new_correlation_id()
-    report = heal_runtime_artifacts(force=force, stop_event=stop_event)
+    report = dict(heal_runtime_artifacts(force=force, stop_event=stop_event) or {})
+    report.setdefault("failed", [])
+    report.setdefault("stage_errors", [])
     _run_mayhem_refresh_safely(stop_event=stop_event)
-    rebuild_api_cache_if_needed(force=force)
+    try:
+        rebuild_api_cache_if_needed(force=force)
+    except Exception as exc:
+        logger.exception("API cache rebuild failed")
+        if "api_cache" not in report["failed"]:
+            report["failed"].append("api_cache")
+        report["stage_errors"].append(
+            {
+                "stage": "api_cache",
+                "error_type": exc.__class__.__name__,
+                "error_message": sanitize_event_message(str(exc)),
+            }
+        )
     result = _result_from_report(report, force=force, correlation_id=correlation_id)
     _write_refresh_state_event(result)
     if not _ready_assertion_consistent(result):

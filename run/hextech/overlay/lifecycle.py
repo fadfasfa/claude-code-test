@@ -23,7 +23,7 @@ from hextech.catalog.runtime_store import build_runtime_state_path, get_runtime_
 from hextech.overlay.events import write_inactive_overlay_event
 from hextech.support.atomic_io import atomic_write_json
 
-from .context import start_overlay_context_poller, write_missing_overlay_context
+from .context import start_overlay_context_poller
 from .data_source import prepare_shared_overlay_data
 
 
@@ -34,6 +34,8 @@ OVERLAY_READY_TOKEN_ENV = "HEXTECH_OVERLAY_READY_TOKEN"
 OVERLAY_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
 OVERLAY_SIDECAR_READY_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_FILE"
 OVERLAY_SIDECAR_READY_TOKEN_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_TOKEN"
+OVERLAY_SIDECAR_BOOTSTRAP_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_BOOTSTRAP_FILE"
+OVERLAY_GENERATION_ENV = "HEXTECH_OVERLAY_GENERATION"
 OVERLAY_SIDECAR_DEBUG_DUMP_ENV = "HEXTECH_OVERLAY_SIDECAR_DEBUG_DUMP"
 OVERLAY_READY_TIMEOUT_SECONDS = 5.0
 OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS = 180.0 if getattr(sys, "frozen", False) else 90.0
@@ -56,6 +58,15 @@ class ProcessLike(Protocol):
 ProcessFactory = Callable[[], ProcessLike]
 ContextPollerFactory = Callable[[], Any]
 _DEFAULT_CONTEXT_POLLER = object()
+
+
+class SidecarBootstrapError(RuntimeError):
+    """sidecar 在 readiness 前报告的结构化启动失败。"""
+
+    def __init__(self, message: str, *, error_type: str, retryable: bool) -> None:
+        super().__init__(message)
+        self.error_type = str(error_type or "RuntimeError")
+        self.retryable = bool(retryable)
 
 
 def _hidden_startupinfo() -> Any:
@@ -120,11 +131,40 @@ def _wait_for_sidecar_ready(
     process: ProcessLike,
     ready_path: Path,
     *,
+    bootstrap_path: Path | None = None,
     expected_token: str,
     timeout_seconds: float = OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS,
 ) -> None:
+    def _read_json(path: Path | None) -> dict[str, Any] | None:
+        if path is None:
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _bootstrap_retryable(payload: dict[str, Any]) -> bool:
+        error_type = str(payload.get("error_type") or "")
+        if error_type in {"FileNotFoundError", "ValueError", "JSONDecodeError"}:
+            return False
+        message = str(payload.get("error_message_sanitized") or "").casefold()
+        deterministic_markers = ("template_missing", "模板缺失", "schema", "配置", "token 不匹配")
+        return not any(marker.casefold() in message for marker in deterministic_markers)
+
     deadline = time.monotonic() + max(1.0, float(timeout_seconds))
     while time.monotonic() < deadline:
+        bootstrap = _read_json(bootstrap_path)
+        if bootstrap is not None and str(bootstrap.get("token") or "") == expected_token:
+            state = str(bootstrap.get("state") or "")
+            if state == "failed":
+                error_type = str(bootstrap.get("error_type") or "RuntimeError")
+                message = str(bootstrap.get("error_message_sanitized") or "Vision sidecar 启动失败")
+                raise SidecarBootstrapError(
+                    f"Vision sidecar 启动失败：{message}",
+                    error_type=error_type,
+                    retryable=_bootstrap_retryable(bootstrap),
+                )
         exit_code = process.poll()
         if exit_code is not None:
             raise RuntimeError(f"Vision sidecar 在 readiness 前退出，exit_code={exit_code}")
@@ -192,20 +232,30 @@ def start_sidecar_process(*, debug_dump: bool | None = None) -> subprocess.Popen
         diagnostic_dir = get_runtime_root_dir() / "debug" / "overlay_vision"
         command.extend(["--debug-dump", str(diagnostic_dir)])
     ready_path = Path(build_runtime_state_path(f"overlay_sidecar.{uuid.uuid4().hex}.ready.json"))
+    bootstrap_path = Path(build_runtime_state_path(f"overlay_sidecar.{uuid.uuid4().hex}.bootstrap.json"))
     exit_path = Path(build_runtime_state_path(f"overlay_sidecar.{uuid.uuid4().hex}.exit.json"))
     ready_token = uuid.uuid4().hex
+    generation = uuid.uuid4().hex
     env = os.environ.copy()
     env[OVERLAY_SIDECAR_READY_FILE_ENV] = str(ready_path)
     env[OVERLAY_SIDECAR_READY_TOKEN_ENV] = ready_token
+    env[OVERLAY_SIDECAR_BOOTSTRAP_FILE_ENV] = str(bootstrap_path)
+    env[OVERLAY_GENERATION_ENV] = generation
     env[OVERLAY_EXIT_FILE_ENV] = str(exit_path)
     process = subprocess.Popen(command, cwd=RUN_DIR, startupinfo=_hidden_startupinfo(), env=env)
     try:
         setattr(process, "_hextech_overlay_exit_file", str(exit_path))
+        setattr(process, "_hextech_overlay_sidecar_generation", generation)
     except Exception:
         pass
     try:
         if callable(getattr(process, "poll", None)):
-            _wait_for_sidecar_ready(process, ready_path, expected_token=ready_token)
+            _wait_for_sidecar_ready(
+                process,
+                ready_path,
+                bootstrap_path=bootstrap_path,
+                expected_token=ready_token,
+            )
         return process
     except Exception:
         stop_process(process)
@@ -213,6 +263,10 @@ def start_sidecar_process(*, debug_dump: bool | None = None) -> subprocess.Popen
     finally:
         try:
             ready_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            bootstrap_path.unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -292,7 +346,7 @@ def stop_process(process: ProcessLike | None) -> bool:
 
 
 class GameOverlayController:
-    """host + sidecar 的单一启停与状态边界。"""
+    """旧入口兼容门面；实际生命周期统一委托 Runtime Supervisor 的 manager。"""
 
     def __init__(
         self,
@@ -303,34 +357,35 @@ class GameOverlayController:
         prepare_data_func: Callable[[], Any] = prepare_shared_overlay_data,
         write_inactive_func: Callable[[], Any] = write_inactive_overlay_event,
     ) -> None:
-        self._start_host_func = start_host_func
-        self._start_sidecar_func = start_sidecar_func
+        from hextech.runtime_supervisor import OverlayRuntimeManager
+
         if start_context_poller_func is _DEFAULT_CONTEXT_POLLER:
-            # 真实默认入口启用 LCU 上下文轮询；fake 进程测试不误起本机 LCU 线程。
-            self._start_context_poller_func = (
+            context_factory = (
                 start_overlay_context_poller
                 if start_host_func is start_host_process and start_sidecar_func is start_sidecar_process
                 else None
             )
         else:
-            self._start_context_poller_func = start_context_poller_func
-        self._prepare_data_func = prepare_data_func
-        self._write_inactive_func = write_inactive_func
-        self.host_process: ProcessLike | None = None
-        self.sidecar_process: ProcessLike | None = None
-        self.context_poller: Any | None = None
-        self.context_poller_error = ""
-        self.status = "stopped"
-        self.last_error = ""
-        self.residual_pids: dict[str, int] = {}
-        self.updated_at = time.time()
+            context_factory = start_context_poller_func
+        self._runtime = OverlayRuntimeManager(
+            start_host_func=start_host_func,
+            start_sidecar_func=start_sidecar_func,
+            start_context_poller_func=context_factory,
+            prepare_data_func=prepare_data_func,
+            write_inactive_func=write_inactive_func,
+        )
 
-    def _mark(self, status: str, *, error: str = "") -> None:
-        if status in {"running", "stopped"} and not error:
-            self.residual_pids = {}
-        self.status = status
-        self.last_error = error
-        self.updated_at = time.time()
+    @property
+    def host_process(self) -> ProcessLike | None:
+        return self._runtime.host_process
+
+    @property
+    def sidecar_process(self) -> ProcessLike | None:
+        return self._runtime.sidecar_process
+
+    @property
+    def context_poller(self) -> Any | None:
+        return self._runtime.context_poller
 
     def host_running(self) -> bool:
         return process_is_running(self.host_process)
@@ -344,220 +399,34 @@ class GameOverlayController:
     def is_running(self) -> bool:
         return self.host_running() and self.sidecar_running()
 
-    def _start_context_poller(self) -> None:
-        if self.context_poller is not None or self._start_context_poller_func is None:
-            return
-        try:
-            self.context_poller = self._start_context_poller_func()
-            self.context_poller_error = ""
-        except Exception as exc:
-            self.context_poller = None
-            self.context_poller_error = str(exc)
-            logger.warning("overlay context poller degraded：%s", exc)
-
-    def _stop_context_poller(self) -> None:
-        poller = self.context_poller
-        self.context_poller = None
-        self.context_poller_error = ""
-        if poller is None:
-            return
-        stop = getattr(poller, "stop", None)
-        if callable(stop):
-            stop()
-            return
-        if callable(poller):
-            poller()
-
-    def _drop_stopped_process_refs(self) -> None:
-        if self.host_process is not None and not process_is_running(self.host_process):
-            _cleanup_process_exit_signal(self.host_process)
-            self.host_process = None
-        if self.sidecar_process is not None and not process_is_running(self.sidecar_process):
-            self.sidecar_process = None
-
-    def _start_missing_processes(self, *, host_running: bool, sidecar_running: bool) -> None:
-        """只补齐已经意外退出的一侧，避免 sidecar 抖动时重启健康 host。"""
-
-        self._mark("starting")
-        try:
-            self._prepare_data_func()
-            self._start_context_poller()
-            if not sidecar_running:
-                self.sidecar_process = self._start_sidecar_func()
-                if not process_is_running(self.sidecar_process):
-                    raise RuntimeError("game_overlay sidecar 启动后立即退出")
-            if not host_running:
-                self.host_process = self._start_host_func()
-                if not process_is_running(self.host_process):
-                    raise RuntimeError("game_overlay host 启动后立即退出")
-            self._mark("running")
-            logger.info(
-                "game_overlay 已补齐进程：host_pid=%s sidecar_pid=%s",
-                getattr(self.host_process, "pid", None),
-                getattr(self.sidecar_process, "pid", None),
-            )
-        except Exception as exc:
-            self._stop_context_poller()
-            self._drop_stopped_process_refs()
-            self._mark("error", error=str(exc))
-            raise
-
     def start(self) -> None:
-        host_running = self.host_running()
-        sidecar_running = self.sidecar_running()
-        if host_running and sidecar_running:
-            self._start_context_poller()
-            self._mark("running")
-            return
-        self._drop_stopped_process_refs()
-        if host_running or sidecar_running:
-            self._start_missing_processes(host_running=host_running, sidecar_running=sidecar_running)
-            return
-        try:
-            self.stop(write_inactive=False)
-        except Exception as exc:
-            error = f"无法清理残留 overlay 实例：{exc}"
-            self._mark("error", error=error)
-            raise RuntimeError(error) from exc
-        self._mark("starting")
-        try:
-            self._prepare_data_func()
-            self._write_inactive_func()
-            self._start_context_poller()
-            self.sidecar_process = self._start_sidecar_func()
-            if not process_is_running(self.sidecar_process):
-                raise RuntimeError("game_overlay sidecar 启动后立即退出")
-            self.host_process = self._start_host_func()
-            if not process_is_running(self.host_process):
-                raise RuntimeError("game_overlay host 启动后立即退出")
-            self._mark("running")
-            logger.info(
-                "game_overlay 已启动：host_pid=%s sidecar_pid=%s",
-                getattr(self.host_process, "pid", None),
-                getattr(self.sidecar_process, "pid", None),
-            )
-        except Exception as exc:
-            rollback_errors: list[str] = []
-            try:
-                # host 失败时 sidecar 可能刚写过 active；先补 inactive fence 再终止。
-                self._write_inactive_func()
-            except Exception as fence_exc:
-                rollback_errors.append(f"回滚 inactive 事件写入失败：{fence_exc}")
-            host_process = self.host_process
-            sidecar_process = self.sidecar_process
-            try:
-                self._stop_context_poller()
-            except Exception as poller_exc:
-                rollback_errors.append(f"上下文轮询停止失败：{poller_exc}")
-            host_stopped = stop_process(host_process)
-            sidecar_stopped = stop_process(sidecar_process)
-            self.residual_pids = {}
-            if host_stopped:
-                self.host_process = None
-            elif host_process is not None:
-                self.host_process = host_process
-                self.residual_pids["host"] = int(getattr(host_process, "pid", 0) or 0)
-            if sidecar_stopped:
-                self.sidecar_process = None
-            elif sidecar_process is not None:
-                self.sidecar_process = sidecar_process
-                self.residual_pids["sidecar"] = int(getattr(sidecar_process, "pid", 0) or 0)
-            residual = [
-                f"{name}(pid={getattr(process, 'pid', None)})"
-                for name, stopped, process in (
-                    ("host", host_stopped, host_process),
-                    ("sidecar", sidecar_stopped, sidecar_process),
-                )
-                if not stopped
-            ]
-            error = str(exc)
-            if rollback_errors:
-                error = f"{error}；{'；'.join(rollback_errors)}"
-            if residual:
-                error = f"{error}；回滚后仍有残留：{', '.join(residual)}"
-                logger.warning("game_overlay 启动回滚后仍有残留：%s", ", ".join(residual))
-            self._mark("error", error=error)
-            if residual or rollback_errors:
-                raise RuntimeError(error) from exc
-            raise
+        self._runtime.set_enabled(True)
 
     def stop(self, *, write_inactive: bool = True) -> None:
-        # 共享事件文件没有实例 ID；只有实际持有子进程引用的 Controller 才拥有
-        # 写 inactive 的权限，避免第二个桌面实例退出时覆盖正在运行的第一个实例。
+        del write_inactive
         if self.host_process is None and self.sidecar_process is None and self.context_poller is None:
-            self._mark("stopped")
             return
-        errors: list[str] = []
-        try:
-            self._stop_context_poller()
-        except Exception as exc:
-            errors.append(f"上下文轮询停止失败：{exc}")
-        if write_inactive:
-            try:
-                self._write_inactive_func()
-            except Exception as exc:
-                errors.append(f"inactive 事件写入失败：{exc}")
-            try:
-                write_missing_overlay_context(source="lifecycle-stop")
-            except Exception as exc:
-                errors.append(f"空上下文写入失败：{exc}")
-        sidecar_process = self.sidecar_process
-        host_process = self.host_process
-        sidecar_stopped = stop_process(sidecar_process)
-        # sidecar 退出前可能刚完成一次 active 原子写；退出后再写一次作为最终 fence。
-        if write_inactive:
-            try:
-                self._write_inactive_func()
-            except Exception as exc:
-                errors.append(f"最终 inactive 事件写入失败：{exc}")
-        host_stopped = stop_process(host_process)
-        self.residual_pids = {}
-        if sidecar_stopped:
-            self.sidecar_process = None
-        elif sidecar_process is not None:
-            self.sidecar_process = sidecar_process
-            self.residual_pids["sidecar"] = int(getattr(sidecar_process, "pid", 0) or 0)
-        if host_stopped:
-            self.host_process = None
-        elif host_process is not None:
-            self.host_process = host_process
-            self.residual_pids["host"] = int(getattr(host_process, "pid", 0) or 0)
-        if not sidecar_stopped:
-            message = f"sidecar 停止失败(pid={getattr(sidecar_process, 'pid', None)})"
-            errors.append(message)
-            logger.warning("game_overlay %s", message)
-        if not host_stopped:
-            message = f"host 停止失败(pid={getattr(host_process, 'pid', None)})"
-            errors.append(message)
-            logger.warning("game_overlay %s", message)
-        if errors:
-            error = "；".join(errors)
-            self._mark("error", error=error)
-            raise RuntimeError(error)
-        self._mark("stopped")
-        logger.info("game_overlay 已停止")
+        self._runtime.set_enabled(False)
 
     def snapshot(self) -> dict[str, Any]:
-        host_running = process_is_running(self.host_process)
-        sidecar_running = process_is_running(self.sidecar_process)
-        host_pid = getattr(self.host_process, "_hextech_overlay_runtime_pid", None) or getattr(self.host_process, "pid", None)
-        if self.status == "running" and not (host_running and sidecar_running):
-            missing = "host" if not host_running else "sidecar"
-            error = f"game_overlay {missing} 意外退出"
-            try:
-                self._stop_context_poller()
-            except Exception as exc:
-                error = f"{error}；上下文轮询停止失败：{exc}"
-            self._mark("error", error=error)
+        snapshot = self._runtime.snapshot()
+        host_running = self.host_running()
+        sidecar_running = self.sidecar_running()
+        residual_pids: dict[str, int] = {}
+        if snapshot.get("status") == "error":
+            if host_running and snapshot.get("host_pid") is not None:
+                residual_pids["host"] = int(snapshot["host_pid"])
+            if sidecar_running and snapshot.get("sidecar_pid") is not None:
+                residual_pids["sidecar"] = int(snapshot["sidecar_pid"])
         return {
-            "status": self.status,
-            "host_pid": host_pid,
-            "sidecar_pid": getattr(self.sidecar_process, "pid", None),
+            "status": snapshot.get("status", "stopped"),
+            "host_pid": snapshot.get("host_pid"),
+            "sidecar_pid": snapshot.get("sidecar_pid"),
             "host_status": "running" if host_running else "stopped",
             "sidecar_status": "running" if sidecar_running else "stopped",
-            "context_poller_status": "running" if self.context_poller_running() else ("degraded" if self.context_poller_error else "stopped"),
-            "context_poller_error": self.context_poller_error,
-            "last_error": self.last_error,
-            "residual_pids": dict(self.residual_pids),
-            "updated_at": self.updated_at,
+            "context_poller_status": snapshot.get("context_status", "stopped"),
+            "context_poller_error": self._runtime.context_error,
+            "last_error": snapshot.get("last_error", ""),
+            "residual_pids": residual_pids,
+            "updated_at": snapshot.get("updated_at", time.time()),
         }

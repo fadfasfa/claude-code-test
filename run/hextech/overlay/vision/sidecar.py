@@ -22,6 +22,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import time
@@ -46,7 +47,7 @@ from hextech.overlay.vision.state import SelectionTracker
 from hextech.overlay.window import cursor_in_client_boxes, find_lol_game_window, is_scoreboard_key_down, root_window_hwnd
 from hextech.catalog.runtime_store import build_runtime_cache_path, build_runtime_state_path
 from hextech.catalog.version_catalog import load_augment_manifest_entries, load_augment_name_to_icon_map
-from hextech.scraping._paths import ASSET_DIR, INDEX_DATA_DIR, STATIC_DATA_DIR
+from hextech.scraping._paths import ASSET_DIR, INDEX_DATA_DIR
 from hextech.support.atomic_io import atomic_write_json
 
 try:
@@ -125,6 +126,8 @@ _LAST_VISION_TRACE_SIGNATURES: dict[str, tuple[str, ...]] = {}
 _LAST_VISION_TRACE_WRITES: dict[str, float] = {}
 SIDECAR_READY_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_FILE"
 SIDECAR_READY_TOKEN_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_TOKEN"
+SIDECAR_BOOTSTRAP_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_BOOTSTRAP_FILE"
+SIDECAR_GENERATION_ENV = "HEXTECH_OVERLAY_GENERATION"
 SIDECAR_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
 
 
@@ -182,6 +185,37 @@ def _write_sidecar_status(status: str, **fields: Any) -> None:
         logger.debug("写入 Vision sidecar 状态失败。", exc_info=True)
 
 
+def _sanitize_bootstrap_error_message(value: object) -> str:
+    """bootstrap 仅保留可诊断错误，不暴露本机用户目录。"""
+
+    text = str(value or "").strip()
+    home = str(Path.home())
+    if home:
+        text = text.replace(home, "<home>")
+        text = text.replace(home.replace("\\", "/"), "<home>")
+    return re.sub(r"(?i)\b[a-z]:[\\/][^\s；;,]+", "<path>", text)
+
+
+def _write_sidecar_bootstrap_from_env(state: str, **fields: Any) -> None:
+    target_value = str(os.environ.get(SIDECAR_BOOTSTRAP_FILE_ENV) or "").strip()
+    if not target_value:
+        return
+    payload = {
+        "schema_version": 1,
+        "state": str(state),
+        "phase": str(fields.pop("phase", state) or state),
+        "pid": os.getpid(),
+        "token": str(os.environ.get(SIDECAR_READY_TOKEN_ENV) or ""),
+        "generation": str(os.environ.get(SIDECAR_GENERATION_ENV) or ""),
+        "updated_at": time.time(),
+    }
+    payload.update(fields)
+    try:
+        atomic_write_json(Path(target_value), payload, ensure_ascii=False, indent=2)
+    except OSError:
+        logger.debug("写入 Vision sidecar bootstrap 状态失败。", exc_info=True)
+
+
 def _write_sidecar_ready_from_env(
     *,
     template_count: int,
@@ -194,6 +228,13 @@ def _write_sidecar_ready_from_env(
     profile = dict(startup_profile or {})
     _write_sidecar_status(
         "running",
+        phase="ready",
+        template_count=int(template_count),
+        startup_seconds=startup_seconds,
+        startup_profile=profile,
+    )
+    _write_sidecar_bootstrap_from_env(
+        "ready",
         phase="ready",
         template_count=int(template_count),
         startup_seconds=startup_seconds,
@@ -1327,12 +1368,16 @@ def _runtime_environment_signature() -> dict[str, Any]:
 
 def _hash_runtime_resource_stats(paths: Sequence[Path]) -> str:
     digest = hashlib.sha256()
-    for path in sorted(paths, key=lambda item: str(item).lower()):
+    normalized_paths = sorted(
+        ((str(path).replace("\\", "/").casefold(), path) for path in paths),
+        key=lambda item: item[0],
+    )
+    for normalized_path, path in normalized_paths:
         try:
             stat = path.stat()
         except OSError:
             continue
-        digest.update(str(path).replace("\\", "/").encode("utf-8", errors="replace"))
+        digest.update(normalized_path.encode("utf-8", errors="replace"))
         digest.update(str(int(stat.st_size)).encode("ascii"))
         digest.update(str(int(stat.st_mtime_ns)).encode("ascii"))
     return digest.hexdigest()
@@ -3420,36 +3465,170 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    _write_sidecar_bootstrap_from_env("starting", phase="argument_parsed")
     if args.once:
-        event = run_once(
+        try:
+            event = run_once(
+                preset=args.preset,
+                write_event=args.write_event,
+                event_path=args.event_path or None,
+                min_confidence=args.min_confidence,
+                required_frames=args.required_frames,
+                frame_interval_ms=args.frame_interval_ms,
+                debug_dump_dir=args.debug_dump or None,
+            )
+            print(json.dumps(event, ensure_ascii=False, indent=2))
+            return 0
+        except Exception as exc:
+            _write_sidecar_bootstrap_from_env(
+                "failed",
+                phase="run_once",
+                error_type=exc.__class__.__name__,
+                error_message_sanitized=_sanitize_bootstrap_error_message(exc),
+            )
+            return 1
+
+    try:
+        event = run_loop(
             preset=args.preset,
             write_event=args.write_event,
             event_path=args.event_path or None,
             min_confidence=args.min_confidence,
             required_frames=args.required_frames,
             frame_interval_ms=args.frame_interval_ms,
+            idle_interval_seconds=max(0, int(args.idle_interval_ms)) / 1000.0,
+            heartbeat_seconds=args.heartbeat_seconds,
             debug_dump_dir=args.debug_dump or None,
+            scan_frame_interval_ms=args.scan_frame_interval_ms,
+            fast_hold_seconds=max(0, int(args.fast_hold_ms)) / 1000.0,
         )
-        print(json.dumps(event, ensure_ascii=False, indent=2))
+    except Exception as exc:
+        _write_sidecar_bootstrap_from_env(
+            "failed",
+            phase="run_loop",
+            error_type=exc.__class__.__name__,
+            error_message_sanitized=_sanitize_bootstrap_error_message(exc),
+        )
+        return 1
+    if event is None:
         return 0
-
-    event = run_loop(
-        preset=args.preset,
-        write_event=args.write_event,
-        event_path=args.event_path or None,
-        min_confidence=args.min_confidence,
-        required_frames=args.required_frames,
-        frame_interval_ms=args.frame_interval_ms,
-        idle_interval_seconds=max(0, int(args.idle_interval_ms)) / 1000.0,
-        heartbeat_seconds=args.heartbeat_seconds,
-        debug_dump_dir=args.debug_dump or None,
-        scan_frame_interval_ms=args.scan_frame_interval_ms,
-        fast_hold_seconds=max(0, int(args.fast_hold_ms)) / 1000.0,
-    )
-    if event is not None:
-        print(json.dumps(event, ensure_ascii=False, indent=2))
-        return 1 if event.get("source", {}).get("reason") == "template_missing" else 0
+    print(json.dumps(event, ensure_ascii=False, indent=2))
+    if event.get("source", {}).get("reason") == "template_missing":
+        _write_sidecar_bootstrap_from_env(
+            "failed",
+            phase="template_load",
+            error_type="FileNotFoundError",
+            error_message_sanitized="Vision sidecar 模板缺失：template_missing",
+        )
+        return 1
     return 0
+
+
+_TemplateRuntimeImpl = TemplateRuntime
+_RankMatricesImpl = _RankMatrices
+_hash_runtime_resource_stats_impl = _hash_runtime_resource_stats
+_runtime_environment_signature_impl = _runtime_environment_signature
+template_runtime_resource_signature_impl = template_runtime_resource_signature
+template_runtime_hint_signature_impl = template_runtime_hint_signature
+_hint_cache_signature_impl = _hint_cache_signature
+_template_entry_to_manifest_impl = _template_entry_to_manifest
+_template_entry_to_cache_impl = _template_entry_to_cache
+_template_entry_from_cache_impl = _template_entry_from_cache
+_template_entry_from_manifest_impl = _template_entry_from_manifest
+_template_indices_impl = _template_indices
+_templates_by_index_impl = _templates_by_index
+_matrix_from_cache_impl = _matrix_from_cache
+_cache_manifest_bytes_impl = _cache_manifest_bytes
+_read_cache_manifest_impl = _read_cache_manifest
+_resource_signature_matches_impl = _resource_signature_matches
+_rank_matrices_from_cache_impl = _rank_matrices_from_cache
+_read_template_runtime_cache_impl = _read_template_runtime_cache
+_write_template_runtime_cache_impl = _write_template_runtime_cache
+_cleanup_legacy_template_runtime_cache_impl = _cleanup_legacy_template_runtime_cache
+load_default_template_index_impl = load_default_template_index
+rank_template_matrices_impl = rank_template_matrices
+load_or_build_default_template_runtime_impl = load_or_build_default_template_runtime
+run_once_impl = run_once
+run_loop_impl = run_loop
+build_parser_impl = build_parser
+main_impl = main
+
+from . import template_runtime as _template_runtime_module  # noqa: E402
+
+TemplateRuntime = _template_runtime_module.TemplateRuntime
+_RankMatrices = _template_runtime_module._RankMatrices
+_hash_runtime_resource_stats = _template_runtime_module._hash_runtime_resource_stats
+_runtime_environment_signature = _template_runtime_module._runtime_environment_signature
+_hint_cache_signature = _template_runtime_module._hint_cache_signature
+_template_entry_to_manifest = _template_runtime_module._template_entry_to_manifest
+_template_entry_to_cache = _template_runtime_module._template_entry_to_cache
+_template_entry_from_cache = _template_runtime_module._template_entry_from_cache
+_template_entry_from_manifest = _template_runtime_module._template_entry_from_manifest
+_template_indices = _template_runtime_module._template_indices
+_templates_by_index = _template_runtime_module._templates_by_index
+_matrix_from_cache = _template_runtime_module._matrix_from_cache
+_cache_manifest_bytes = _template_runtime_module._cache_manifest_bytes
+_read_cache_manifest = _template_runtime_module._read_cache_manifest
+_resource_signature_matches = _template_runtime_module._resource_signature_matches
+_rank_matrices_from_cache = _template_runtime_module._rank_matrices_from_cache
+_read_template_runtime_cache = _template_runtime_module._read_template_runtime_cache
+_write_template_runtime_cache = _template_runtime_module._write_template_runtime_cache
+_cleanup_legacy_template_runtime_cache = _template_runtime_module._cleanup_legacy_template_runtime_cache
+
+
+def _forward_template_runtime(name: str):
+    def _call(*args, **kwargs):
+        from hextech.overlay.vision import template_runtime as _template_runtime
+
+        return getattr(_template_runtime, name)(*args, **kwargs)
+
+    return _call
+
+
+def _forward_runner(name: str):
+    def _call(*args, **kwargs):
+        from hextech.overlay.vision import runner as _runner
+
+        return getattr(_runner, name)(*args, **kwargs)
+
+    return _call
+
+
+load_default_template_index = _forward_template_runtime("load_default_template_index")
+rank_template_matrices = _forward_template_runtime("rank_template_matrices")
+
+
+def load_or_build_default_template_runtime(
+    base_dir: str | Path | None = None,
+    *,
+    hint_cache: Mapping[str, Any] | None = None,
+    cache_file: str | Path | None = None,
+    resource_signature: Mapping[str, Any] | None = None,
+    status_callback: Callable[[str, Mapping[str, Any]], None] | None = None,
+) -> TemplateRuntime:
+    from hextech.overlay.vision import template_runtime as _template_runtime
+
+    return _template_runtime.load_or_build_default_template_runtime(
+        base_dir=base_dir,
+        hint_cache=hint_cache,
+        cache_file=cache_file,
+        resource_signature=resource_signature,
+        status_callback=status_callback,
+    )
+
+
+template_runtime_resource_signature = _forward_template_runtime("template_runtime_resource_signature")
+template_runtime_hint_signature = _forward_template_runtime("template_runtime_hint_signature")
+_hash_runtime_resource_stats = _forward_template_runtime("_hash_runtime_resource_stats")
+_write_sidecar_status = _forward_runner("_write_sidecar_status")
+_sanitize_bootstrap_error_message = _forward_runner("_sanitize_bootstrap_error_message")
+_write_sidecar_bootstrap_from_env = _forward_runner("_write_sidecar_bootstrap_from_env")
+_write_sidecar_ready_from_env = _forward_runner("_write_sidecar_ready_from_env")
+_sidecar_exit_requested = _forward_runner("_sidecar_exit_requested")
+run_once = _forward_runner("run_once")
+run_loop = _forward_runner("run_loop")
+build_parser = _forward_runner("build_parser")
+main = _forward_runner("main")
 
 
 if __name__ == "__main__":

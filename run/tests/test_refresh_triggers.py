@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import unittest
 from unittest import mock
 
@@ -47,19 +46,19 @@ class RefreshTriggerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.empty)
 
-    def test_web_runtime_has_no_direct_refresh_helper_call(self):
-        from hextech.display.web import runtime
-
-        source = inspect.getsource(runtime.get_df_with_refresh)
-
-        self.assertNotIn("refresh_backend_data", source)
-
     def test_desktop_background_scraper_no_longer_starts_ui_loop(self):
-        from hextech.display.desktop.app import HextechUI
+        from hextech.display.desktop import app
 
-        source = inspect.getsource(HextechUI.start_background_scraper)
+        dummy = object.__new__(app.HextechUI)
+        with mock.patch.object(
+            app.ui_runtime,
+            "start_background_scraper",
+            create=True,
+        ) as old_start:
+            result = app.HextechUI.start_background_scraper(dummy)
 
-        self.assertNotIn("ui_runtime.start_background_scraper", source)
+        self.assertIsNone(result)
+        old_start.assert_not_called()
 
 
 if __name__ == "__main__":

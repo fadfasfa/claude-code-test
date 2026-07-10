@@ -15,7 +15,6 @@ import shutil
 import traceback
 import uuid
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from pathlib import Path
 from bs4 import BeautifulSoup
 from hextech.catalog.runtime_store import (
@@ -34,6 +33,7 @@ from hextech.scraping.version_sync import (
     load_champion_core_data,
 )
 from hextech.scraping.transport.scrapling_client import ScraplingFetchResult, fetch_page, fetch_text
+from hextech.scraping.hextech.detail_runner import DETAIL_PASS_RUNNER
 from hextech.support.atomic_io import atomic_write_csv, atomic_write_json
 from hextech.support.log_utils import log_task_summary
 
@@ -1405,78 +1405,68 @@ def main_scraper(stop_event=None, force: bool = False):
             timeout,
             pool_timeout,
         )
-        executor = ThreadPoolExecutor(max_workers=workers)
-        shutdown_called = False
-        futures = []
-        future_to_champ: dict = {}
-        try:
-            for champ in champs:
-                c_id = str(champ.get("championId", ""))
-                cached_rows = preflight_rows if c_id == preflight_id else None
-                future = executor.submit(fetch_champ_detail, champ, timeout=timeout, preflight_rows=cached_rows)
-                futures.append(future)
-                future_to_champ[future] = champ
-            try:
-                for future in as_completed(futures, timeout=pool_timeout):
-                    if stop_event and stop_event.is_set():
-                        logging.info("Stop signal received; cancelling Hextech scrape workers...")
-                        for fut in futures:
-                            fut.cancel()
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        shutdown_called = True
-                        return pass_rows, failures, "stopped"
+        def worker(champ: dict) -> dict:
+            c_id = str(champ.get("championId", ""))
+            cached_rows = preflight_rows if c_id == preflight_id else None
+            return fetch_champ_detail(champ, timeout=timeout, preflight_rows=cached_rows)
 
-                    try:
-                        item = future.result()
-                    except Exception as e:
-                        logging.error("Worker result collection failed: %s", e)
-                        failure_item = {
-                            "champ": {},
-                            "name": "",
-                            "rows": [],
-                            "reason": "worker_error",
-                            "status_code": None,
-                            "url": "",
-                            "error": str(e),
-                        }
-                        failures.append(failure_item)
-                        attempt["completed_heroes"] = int(attempt.get("completed_heroes") or 0) + 1
-                        _record_detail_result(attempt, failure_item)
-                        continue
-                    if item["rows"]:
-                        pass_rows.extend(item["rows"])
-                    else:
-                        failures.append(item)
-                    attempt["completed_heroes"] = int(attempt.get("completed_heroes") or 0) + 1
-                    _record_detail_result(attempt, item)
-            except TimeoutError:
-                pending_count = sum(1 for fut in futures if not fut.done())
-                logging.error("Hextech detail pass timed out: label=%s pending=%s", label, pending_count)
-                for fut in futures:
-                    if fut.done():
-                        continue
-                    champ = future_to_champ.get(fut) or {}
-                    c_id = str(champ.get("championId", ""))
-                    failure_item = {
-                        "champ": champ,
-                        "name": core_data.get(c_id, {}).get("name", c_id),
-                        "rows": [],
-                        "reason": "thread_pool_timeout",
-                        "status_code": None,
-                        "url": "",
-                        "error": f"detail pass timed out: {label}",
-                    }
-                    failures.append(failure_item)
-                    attempt["completed_heroes"] = int(attempt.get("completed_heroes") or 0) + 1
-                    _record_detail_result(attempt, failure_item)
-                for fut in futures:
-                    fut.cancel()
-                executor.shutdown(wait=False, cancel_futures=True)
-                shutdown_called = True
-                return pass_rows, failures, "thread_pool_timeout"
-        finally:
-            if not shutdown_called:
-                executor.shutdown(wait=True, cancel_futures=False)
+        outcome = DETAIL_PASS_RUNNER.run(
+            champs,
+            worker=worker,
+            max_workers=workers,
+            timeout_seconds=pool_timeout,
+            stop_event=stop_event,
+        )
+        if outcome.status == "draining":
+            logging.warning("Hextech detail pass skipped while previous workers drain: label=%s", label)
+            return pass_rows, failures, "detail_pass_draining"
+
+        for champ, item in outcome.results:
+            if item["rows"]:
+                pass_rows.extend(item["rows"])
+            else:
+                failures.append(item)
+            attempt["completed_heroes"] = int(attempt.get("completed_heroes") or 0) + 1
+            _record_detail_result(attempt, item)
+
+        for champ, error in outcome.errors:
+            logging.error("Worker result collection failed: %s", error)
+            failure_item = {
+                "champ": champ,
+                "name": "",
+                "rows": [],
+                "reason": "worker_error",
+                "status_code": None,
+                "url": "",
+                "error": str(error),
+            }
+            failures.append(failure_item)
+            attempt["completed_heroes"] = int(attempt.get("completed_heroes") or 0) + 1
+            _record_detail_result(attempt, failure_item)
+
+        if outcome.status in {"timed_out", "stopped"}:
+            reason = "thread_pool_timeout" if outcome.status == "timed_out" else "stopped"
+            logging.error(
+                "Hextech detail pass ended early: label=%s reason=%s pending=%s",
+                label,
+                reason,
+                len(outcome.pending_items),
+            )
+            for champ in outcome.pending_items:
+                c_id = str(champ.get("championId", ""))
+                failure_item = {
+                    "champ": champ,
+                    "name": core_data.get(c_id, {}).get("name", c_id),
+                    "rows": [],
+                    "reason": reason,
+                    "status_code": None,
+                    "url": "",
+                    "error": f"detail pass ended early: {label}",
+                }
+                failures.append(failure_item)
+                attempt["completed_heroes"] = int(attempt.get("completed_heroes") or 0) + 1
+                _record_detail_result(attempt, failure_item)
+            return pass_rows, failures, reason
         return pass_rows, failures, ""
 
     # 先请求一个英雄详情。源站封禁时在创建 worker 线程池前熔断；瞬时超时做一次更长预检。

@@ -131,30 +131,11 @@ class RefreshDegradationTests(unittest.TestCase):
             def json(self):
                 return self._payload
 
-        class PendingFuture:
-            cancelled = False
-
-            def done(self):
-                return False
-
-            def cancel(self):
-                self.cancelled = True
-                return True
-
-        shutdown_calls = []
-        submitted = []
-
-        class FakeExecutor:
-            def __init__(self, max_workers):
-                self.max_workers = max_workers
-
-            def submit(self, *_args, **_kwargs):
-                future = PendingFuture()
-                submitted.append(future)
-                return future
-
-            def shutdown(self, *, wait=True, cancel_futures=False):
-                shutdown_calls.append({"wait": wait, "cancel_futures": cancel_futures})
+        class TimeoutOutcome:
+            status = "timed_out"
+            results = []
+            errors = []
+            pending_items = [{"championId": 63}, {"championId": 64}]
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -192,8 +173,7 @@ class RefreshDegradationTests(unittest.TestCase):
                         "error": "",
                     },
                 ),
-                mock.patch.object(scraper, "ThreadPoolExecutor", FakeExecutor),
-                mock.patch.object(scraper, "as_completed", side_effect=scraper.TimeoutError()),
+                mock.patch.object(scraper.DETAIL_PASS_RUNNER, "run", return_value=TimeoutOutcome()),
                 mock.patch.object(scraper, "get_latest_valid_csv", lambda: str(active_csv)),
                 mock.patch.object(scraper, "load_scraper_status", lambda: {}),
             ):
@@ -207,8 +187,6 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertEqual(payload["active_csv"], str(active_csv))
             self.assertEqual(payload["last_attempt"]["completed_heroes"], 2)
             self.assertEqual(payload["last_attempt"]["failure_samples"][0]["reason"], "thread_pool_timeout")
-            self.assertEqual(shutdown_calls, [{"wait": False, "cancel_futures": True}])
-            self.assertTrue(all(future.cancelled for future in submitted))
 
     def test_heal_worker_exception_clears_in_progress_tasks(self):
         from hextech.scraping import heal_worker
@@ -407,6 +385,46 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertEqual(result.state, "degraded")
             self.assertEqual(result.reason_code, "heal_busy_local_fallback")
             self.assertIs(result.fallback_used, True)
+
+    def test_refresh_cache_rebuild_failure_returns_structured_failed_result(self):
+        from hextech.core import refresh
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            events_file = tmp_path / "runtime_events.jsonl"
+
+            def state_path(name: str) -> str:
+                return str(events_file if name == "runtime_events.v1.jsonl" else tmp_path / name)
+
+            report = {
+                "requested": ["hextech_rankings"],
+                "repaired": ["hextech_rankings"],
+                "fallback": [],
+                "failed": [],
+            }
+            with (
+                mock.patch.object(refresh, "build_runtime_state_path", state_path),
+                mock.patch.object(refresh, "get_latest_valid_csv", lambda: ""),
+                mock.patch.object(refresh, "get_latest_csv", lambda: ""),
+                mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: dict(report)),
+                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None: None),
+                mock.patch.object(
+                    refresh,
+                    "rebuild_api_cache_if_needed",
+                    side_effect=RuntimeError("cache token=secret"),
+                ),
+            ):
+                refresh._ACTIVE_DEGRADATION.clear()
+                result = refresh.refresh_backend_data(force=True)
+                refresh._ACTIVE_DEGRADATION.clear()
+
+            self.assertEqual(result.state, "failed")
+            self.assertEqual(result.reason_code, "api_cache_rebuild_failed")
+            self.assertIn("api_cache", result.report["failed"])
+            self.assertEqual(result.report["stage_errors"][0]["stage"], "api_cache")
+            self.assertNotIn("secret", result.report["stage_errors"][0]["error_message"])
+            events = _read_jsonl(events_file)
+            self.assertEqual(events[-1]["event"], "refresh.failed")
 
     def test_sanitize_event_message_removes_sensitive_material(self):
         from hextech.core.refresh import sanitize_event_message

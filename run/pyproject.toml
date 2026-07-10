@@ -1,0 +1,33 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = ["data", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+include = [
+  "hextech/runtime_supervisor.py",
+  "hextech/overlay/lifecycle.py",
+  "hextech/overlay/vision/sidecar.py",
+  "hextech/overlay/vision/template_runtime.py",
+  "hextech/overlay/vision/runner.py",
+  "tools/build_package.py",
+  "tools/bundle_manifest.py",
+  "tools/runtime_bundle.py",
+]
+exclude = ["data", "build", "dist"]
+
+[tool.coverage.run]
+branch = true
+source = ["hextech", "tools"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

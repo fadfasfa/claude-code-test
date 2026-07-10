@@ -15,6 +15,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
+RUN_ROOT = Path(__file__).resolve().parents[1]
+
+
 def _client():
     from hextech.display.web import api as web_api
 
@@ -139,7 +142,7 @@ def test_public_hextech_loading_payload_redacts_startup_status_paths(monkeypatch
 
 
 def test_detail_loading_branch_requests_authenticated_preload_from_page():
-    detail_js = Path("hextech/display/web/static/js/detail.js").read_text(encoding="utf-8")
+    detail_js = (RUN_ROOT / "hextech/display/web/static/js/detail.js").read_text(encoding="utf-8")
 
     assert "function requestDetailPreload" in detail_js
     assert "fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/preload`" in detail_js
@@ -153,7 +156,7 @@ def test_detail_loading_retry_stops_after_max_attempts(tmp_path):
     if not node:
         pytest.skip("node required for detail.js retry behavior test")
 
-    detail_path = (Path.cwd() / "hextech/display/web/static/js/detail.js").as_posix()
+    detail_path = (RUN_ROOT / "hextech/display/web/static/js/detail.js").as_posix()
     script = tmp_path / "detail_retry_test.cjs"
     script.write_text(
         f"""
@@ -214,7 +217,106 @@ if (scheduled !== 1) throw new Error(`expected one scheduled retry, got ${{sched
         encoding="utf-8",
     )
 
-    subprocess.run([node, str(script)], check=True, cwd=Path.cwd())
+    subprocess.run([node, str(script)], check=True, cwd=RUN_ROOT)
+
+
+def test_missing_asset_get_redirects_without_queueing_cache_write(monkeypatch, tmp_path):
+    client, web_api = _client()
+    queued: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(web_api.web_runtime, "get_assets_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        web_api.web_runtime,
+        "find_augment_catalog_entry",
+        lambda _name, _base_dir: {
+            "name": "测试海克斯",
+            "filename": "mapped.png",
+            "icon_url": "https://raw.communitydragon.org/latest/game/mapped.png",
+        },
+    )
+    monkeypatch.setattr(web_api.web_runtime, "find_existing_augment_asset_filename", lambda *_args: "")
+    monkeypatch.setattr(
+        web_api.web_runtime,
+        "queue_augment_icon_cache",
+        lambda filename, name="": queued.append((filename, name)),
+    )
+    monkeypatch.setattr(
+        web_api.web_runtime,
+        "resolve_remote_augment_icon_url",
+        lambda _entry, _name: "https://raw.communitydragon.org/latest/game/mapped.png",
+    )
+
+    response = client.get("/assets/requested.png", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://raw.communitydragon.org/latest/game/mapped.png"
+    assert queued == []
+
+
+def test_uncatalogued_asset_get_redirects_without_queueing_cache_write(monkeypatch, tmp_path):
+    client, web_api = _client()
+    queued: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(web_api.web_runtime, "get_assets_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(web_api.web_runtime, "find_augment_catalog_entry", lambda *_args: None)
+    monkeypatch.setattr(web_api.web_runtime, "find_existing_augment_asset_filename", lambda *_args: "")
+    monkeypatch.setattr(
+        web_api.web_runtime,
+        "queue_augment_icon_cache",
+        lambda filename, name="": queued.append((filename, name)),
+    )
+    monkeypatch.setattr(
+        web_api.web_runtime,
+        "resolve_remote_augment_icon_url",
+        lambda _entry, _name: "https://raw.communitydragon.org/latest/game/fallback.png",
+    )
+
+    response = client.get("/assets/fallback.png", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://raw.communitydragon.org/latest/game/fallback.png"
+    assert queued == []
+
+
+def test_authenticated_preload_queues_missing_payload_assets(monkeypatch):
+    from hextech.display.web import runtime
+
+    class InlineExecutor:
+        def submit(self, func, *args, **kwargs):
+            func(*args, **kwargs)
+            return None
+
+    queued: list[tuple[str, str]] = []
+    runtime.clear_preloaded_hextech_payloads()
+    monkeypatch.setattr(runtime, "resolve_canonical_hero_name", lambda _name: "Garen")
+    monkeypatch.setattr(runtime, "_get_runtime_df_signature", lambda: ("csv", 1.0))
+    monkeypatch.setattr(runtime, "get_df", lambda: pd.DataFrame([{"hero": "Garen"}]))
+    monkeypatch.setattr(runtime, "_get_preloaded_hextech_executor", lambda: InlineExecutor())
+    monkeypatch.setattr(
+        runtime,
+        "process_hextechs_data",
+        lambda *_args, **_kwargs: {
+            "comprehensive": [
+                {"海克斯名称": "测试海克斯", "icon": "/assets/mapped.png"},
+                {"海克斯名称": "远端图标", "icon": "https://example.test/remote.png"},
+            ],
+            "top_10_overall": [
+                {"海克斯名称": "测试海克斯", "icon": "/assets/mapped.png"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        runtime,
+        "queue_augment_icon_cache",
+        lambda filename, name="": queued.append((filename, name)),
+    )
+
+    try:
+        assert runtime.request_preload_hextech_payload_async("Garen") is True
+    finally:
+        runtime.clear_preloaded_hextech_payloads()
+
+    assert queued == [("mapped.png", "测试海克斯")]
 
 
 def test_synergy_api_distinguishes_empty_error_and_quarantined(monkeypatch):
