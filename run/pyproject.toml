@@ -18,6 +18,7 @@ include = [
   "hextech/overlay/vision/sidecar.py",
   "hextech/overlay/vision/template_runtime.py",
   "hextech/overlay/vision/runner.py",
+  "hextech/scraping/hextech/detail_runner.py",
   "tools/build_package.py",
   "tools/bundle_manifest.py",
   "tools/runtime_bundle.py",

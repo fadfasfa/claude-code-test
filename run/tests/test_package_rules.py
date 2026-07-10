@@ -1,6 +1,8 @@
 """测试构建入口和依赖分层规则。"""
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +17,27 @@ def test_build_defaults_to_offline_and_refresh_flag_is_opt_in():
 
     assert parse_build_args([]).refresh_data is False
     assert parse_build_args(["--refresh-data"]).refresh_data is True
+
+
+@pytest.mark.parametrize(
+    ("cwd", "script"),
+    [
+        (RUN_DIR, Path("tools/build_package.py")),
+        (RUN_DIR.parent, Path("run/tools/build_package.py")),
+    ],
+)
+def test_build_package_direct_help_is_cwd_independent(cwd: Path, script: Path):
+    completed = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "--refresh-data" in completed.stdout
 
 
 def test_offline_build_validation_does_not_call_remote_refresh(monkeypatch):

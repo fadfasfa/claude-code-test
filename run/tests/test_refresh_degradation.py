@@ -442,6 +442,25 @@ class RefreshDegradationTests(unittest.TestCase):
         self.assertNotIn("nonce=xyz", sanitized)
         self.assertIn("http://127.0.0.1:1234/path", sanitized)
 
+    def test_api_cache_failure_remains_primary_when_other_stages_also_fail(self):
+        from hextech.core import refresh
+
+        report = {
+            "requested": ["api_cache", "champion_core"],
+            "repaired": [],
+            "fallback": [],
+            "failed": ["api_cache", "champion_core"],
+        }
+        with (
+            mock.patch.object(refresh, "get_latest_valid_csv", lambda: ""),
+            mock.patch.object(refresh, "get_latest_csv", lambda: ""),
+        ):
+            result = refresh._result_from_report(report, force=True, correlation_id="combined-failure")
+
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.reason_code, "api_cache_rebuild_failed")
+        self.assertEqual(set(result.report["failed"]), {"api_cache", "champion_core"})
+
 
 if __name__ == "__main__":
     unittest.main()

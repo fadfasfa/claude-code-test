@@ -186,6 +186,36 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertEqual(bootstrap_states[-1][1]["error_type"], "RuntimeError")
         self.assertNotIn(r"C:\Users\alice", bootstrap_states[-1][1]["error_message_sanitized"])
 
+    def test_sidecar_once_template_missing_records_failed_bootstrap_state(self):
+        from hextech.overlay.vision import runner, sidecar
+
+        bootstrap_states: list[tuple[str, dict]] = []
+        event = {"source": {"reason": "template_missing"}}
+        with (
+            patch.object(runner, "_write_sidecar_bootstrap_from_env", side_effect=lambda state, **fields: bootstrap_states.append((state, fields))),
+            patch.object(runner, "run_once", return_value=event),
+            patch("builtins.print"),
+        ):
+            result = sidecar.main(["--once"])
+
+        self.assertEqual(result, 1)
+        self.assertEqual([state for state, _fields in bootstrap_states], ["starting", "failed"])
+        self.assertEqual(bootstrap_states[-1][1]["phase"], "template_load")
+        self.assertEqual(bootstrap_states[-1][1]["error_type"], "FileNotFoundError")
+
+    def test_sidecar_template_runtime_constants_are_reexports(self):
+        from hextech.overlay.vision import sidecar, template_runtime
+
+        self.assertIs(
+            sidecar.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+            template_runtime.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+        )
+        self.assertIs(sidecar.TEMPLATE_RUNTIME_CACHE_FILE, template_runtime.TEMPLATE_RUNTIME_CACHE_FILE)
+        self.assertIs(
+            sidecar.TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE,
+            template_runtime.TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE,
+        )
+
     def test_context_poller_failure_degrades_without_blocking_overlay(self):
         from hextech.overlay.lifecycle import GameOverlayController
 

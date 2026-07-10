@@ -30,8 +30,6 @@ from hextech.overlay.window_titles import LOL_CLIENT_WINDOW_TITLE
 
 
 ProcessFactory = Callable[[], Any]
-OVERLAY_STATE_STALE_SECONDS = 8.0
-OVERLAY_WATCHDOG_RESTART_COOLDOWN_SECONDS = 10.0
 OVERLAY_HOST_VISIBILITY_STALE_SECONDS = 6.0
 OVERLAY_VISION_TRACE_FILE = Path(overlay_runtime_state_path("overlay_vision_trace.v1.json"))
 OVERLAY_HOST_VISIBILITY_FILE = Path(overlay_runtime_state_path("game_overlay_visibility.v1.json"))

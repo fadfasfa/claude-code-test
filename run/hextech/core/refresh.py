@@ -367,7 +367,7 @@ def _result_from_report(report: dict, *, force: bool, correlation_id: str) -> Re
         state = "failed"
         reason_code = "heal_busy_no_valid_fallback"
         degradation_id = str(_ACTIVE_DEGRADATION.get("degradation_id") or _new_degradation_id())
-    elif failed == {"api_cache"}:
+    elif "api_cache" in failed:
         state = "failed"
         reason_code = "api_cache_rebuild_failed"
         degradation_id = str(_ACTIVE_DEGRADATION.get("degradation_id") or _new_degradation_id())

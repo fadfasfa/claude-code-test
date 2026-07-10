@@ -419,6 +419,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _record_template_missing_failure(event: Mapping[str, Any] | None) -> bool:
+    if not isinstance(event, Mapping):
+        return False
+    source = event.get("source")
+    if not isinstance(source, Mapping) or source.get("reason") != "template_missing":
+        return False
+    _write_sidecar_bootstrap_from_env(
+        "failed",
+        phase="template_load",
+        error_type="FileNotFoundError",
+        error_message_sanitized="Vision sidecar 模板缺失：template_missing",
+    )
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     _write_sidecar_bootstrap_from_env("starting", phase="argument_parsed")
@@ -434,6 +449,8 @@ def main(argv: list[str] | None = None) -> int:
                 debug_dump_dir=args.debug_dump or None,
             )
             print(json.dumps(event, ensure_ascii=False, indent=2))
+            if _record_template_missing_failure(event):
+                return 1
             return 0
         except Exception as exc:
             _write_sidecar_bootstrap_from_env(
@@ -469,12 +486,6 @@ def main(argv: list[str] | None = None) -> int:
     if event is None:
         return 0
     print(json.dumps(event, ensure_ascii=False, indent=2))
-    if event.get("source", {}).get("reason") == "template_missing":
-        _write_sidecar_bootstrap_from_env(
-            "failed",
-            phase="template_load",
-            error_type="FileNotFoundError",
-            error_message_sanitized="Vision sidecar 模板缺失：template_missing",
-        )
+    if _record_template_missing_failure(event):
         return 1
     return 0

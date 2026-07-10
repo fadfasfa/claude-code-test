@@ -58,34 +58,38 @@ class DetailPassRunner:
         future_to_item: dict[Future[ResultT], ItemT] = {executor.submit(worker, item): item for item in materialized}
         results: list[tuple[ItemT, ResultT]] = []
         errors: list[tuple[ItemT, Exception]] = []
+        drain_started = False
+
+        def start_drain(status: str) -> DetailPassOutcome[ItemT, ResultT]:
+            nonlocal drain_started
+            outcome = self._start_drain(
+                executor,
+                future_to_item,
+                generation=generation,
+                status=status,
+                results=results,
+                errors=errors,
+            )
+            drain_started = True
+            return outcome
+
         try:
             try:
                 for future in as_completed(future_to_item, timeout=max(0.001, float(timeout_seconds))):
                     item = future_to_item[future]
                     if stop_event is not None and stop_event.is_set():
-                        return self._start_drain(
-                            executor,
-                            future_to_item,
-                            generation=generation,
-                            status="stopped",
-                            results=results,
-                            errors=errors,
-                        )
+                        return start_drain("stopped")
                     try:
                         results.append((item, future.result()))
                     except Exception as exc:
                         errors.append((item, exc))
             except TimeoutError:
-                return self._start_drain(
-                    executor,
-                    future_to_item,
-                    generation=generation,
-                    status="timed_out",
-                    results=results,
-                    errors=errors,
-                )
+                return start_drain("timed_out")
+        except BaseException:
+            start_drain("failed")
+            raise
         finally:
-            if all(future.done() for future in future_to_item):
+            if not drain_started:
                 executor.shutdown(wait=True, cancel_futures=False)
                 self._finish_generation(generation)
 
