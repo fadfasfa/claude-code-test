@@ -1,12 +1,12 @@
 # SMS 验证码多来源监控
 
-实时轮询 LuDan SMS 接码平台、固定文本接码链接和邮箱取件接口，终端按来源显示号码/邮箱与最新验证码，并可在同一面板展示本机账户档案。
+实时轮询 LuDan SMS 接码平台、kkdos 动态号、固定文本接码链接和邮箱取件接口，终端按来源显示号码/邮箱与最新验证码，并可在同一面板展示本机账户档案。
 
 ## 使用
 
-1. 首次使用：复制 `config.example.json` 为 `config.json`，把 `key` 改成你的 CDK，并把 `fixed_sources` 里的 `url` 改成真实接码链接。
+1. 首次使用：复制 `config.example.json` 为 `config.json`，按需配置 LuDan `key`、`kkdos_sources` 的 CDK，或把 `fixed_sources` 里的 `url` 改成真实接码链接。
 2. 双击 `run.bat` 启动（或命令行 `python monitor.py`）。
-3. 面板会显示 LuDan 动态号码、未归属账户的固定号码/邮箱来源和账户档案；已被账户关联的接码来源会聚合到账户卡片内，不在顶层重复列出。美国号码会拆成国家码 `+1` 与 10 位号码，复制区域只放 10 位号码。
+3. 面板会显示 LuDan / kkdos 动态号码、未归属账户的固定号码/邮箱来源和账户档案；已被账户关联的接码来源会聚合到账户卡片内，不在顶层重复列出。美国号码会拆成国家码 `+1` 与 10 位号码，复制区域只放 10 位号码。
 4. 按来源序号手动复制对应 10 位号码/邮箱；检测到新的手机或邮箱验证码时会自动复制验证码。账户档案按序号后会进入复制子菜单，可复制登录邮箱、当前 2FA 动态码和 10 位手机号码；无 TOTP 密钥或密钥无效时不显示动态码复制项。
 5. 启动后默认低频刷新，方便滚动查看历史；复制号码/邮箱/账户项或手动换号后，会进入高频轮询，拿到新验证码并自动复制后回到低频。多个接码来源会并发轮询，单个慢接口只显示本轮超时提示，不会拖住整轮刷新。
 
@@ -17,9 +17,10 @@
 1. 结构检查：`python monitor.py config validate --json`
 2. 初始化或更新全局配置：`python monitor.py config init --json`，再用 `python monitor.py config set-global --key-env SMS_MONITOR_KEY --json`
 3. 录入固定短信来源：`python monitor.py config upsert-fixed --label YunTL --phone 15550123456 --url-env FIXED_URL --json`
-4. 录入邮箱来源：`python monitor.py config upsert-email --label iCloud --email example@icloud.com --provider icloud --base-url https://email.nloop.cc --json`
-5. 录入账户档案：`python monitor.py config upsert-account --label ChatGPT --login-email your-gmail@example.com --password-env ACCOUNT_PASSWORD --totp-secret-env ACCOUNT_TOTP --phone 15550123456 --email example@icloud.com --json`
-6. 预备接码检查：`python monitor.py config ready-check --all --json`
+4. 录入 kkdos 动态来源：`python monitor.py config upsert-kkdos --label kkdos --cdk-env KKDOS_CDK --json`
+5. 录入邮箱来源：`python monitor.py config upsert-email --label iCloud --email example@icloud.com --provider icloud --base-url https://email.nloop.cc --json`
+6. 录入账户档案：`python monitor.py config upsert-account --label ChatGPT --login-email your-gmail@example.com --password-env ACCOUNT_PASSWORD --totp-secret-env ACCOUNT_TOTP --phone 15550123456 --phone-source-label kkdos --email example@icloud.com --json`
+7. 预备接码检查：`python monitor.py config ready-check --all --json`
 
 手机号可按原始格式录入用于来源匹配，但登录输入或复制时只使用美国 10 位本地号码，不要把 `+1` 等国家码计入目标输入框。
 
@@ -29,7 +30,7 @@
 
 LuDan 卡密失效（CDK 校验失败 403）或某固定/邮箱来源连续硬失败（HTTP 401/403/404/410 或网络异常，连续 5 次）时，监控会自动把该项标记为无效并持久化到 `config.json` 的 `disabled` 字典，跳过轮询但保留展示，不再因单个失效来源退出整个程序。429 / 5xx / 超时 / 暂无短信等临时状态不会触发禁用。面板底部会列出当前已禁用项及原因。
 
-手动管理无效项（`--kind` 取值 `ludan` / `fixed` / `email` / `account`，`ludan` 的 `--label` 可传任意占位值）：
+手动管理无效项（`--kind` 取值 `ludan` / `fixed` / `kkdos` / `email` / `account`，`ludan` 的 `--label` 可传任意占位值）：
 
 ```powershell
 python monitor.py config list-disabled --json                                # 列出所有无效项
@@ -39,7 +40,7 @@ python monitor.py config prune  --json                                        # 
 python monitor.py config prune  --yes --json                                  # 从 config 物理删除无效的固定/邮箱/账户项
 ```
 
-`prune --yes` 会删除 `disabled` 标记的固定/邮箱/账户项并清空 `disabled` 字典；LuDan 是顶层配置无法物理删除，`prune` 后其失效标记一并清除，下次启动会重新校验。定期用 `prune --yes` 清理无效账号即可。
+`prune --yes` 会删除 `disabled` 标记的固定/kkdos/邮箱/账户项并清空 `disabled` 字典；LuDan 是顶层配置无法物理删除，`prune` 后其失效标记一并清除，下次启动会重新校验。定期用 `prune --yes` 清理无效账号即可。
 
 ### 自由文本导入
 
@@ -118,6 +119,20 @@ python monitor.py config upsert-account --label necocheadebbra --login-email nec
 
 - 说明：`label` `necocheadebbra` 取自邮箱本地名；`-SMS` 来源与账户通过同一 `--phone` 自动关联；先建来源再建账户。
 
+### 场景 C：kkdos 动态号导入
+
+- 适用：kkdos 卡密/CDK 动态分配手机号，复制号码到 OpenAI 后再点击查询等待验证码。
+- 行为：启动时只 `verify` 取号；复制 kkdos 号码后才调用查询接口并通过 SSE 等码，空闲刷新不会自动触发查询。`bindable` 且已锁定的卡密不会自动换号。
+- CC 执行（CDK 走环境变量）：
+
+```powershell
+$env:KKDOS_CDK='YOUR_KKDOS_CDK'
+python monitor.py config upsert-kkdos --label kkdos --cdk-env KKDOS_CDK --json
+python monitor.py config upsert-account --label sk7398965 --login-email sk7398965@example.com --phone-source-label kkdos --json
+```
+
+- 说明：`phone_source_label` 优先于静态手机号匹配，适合 kkdos 这种动态号码；旧固定来源账户仍可继续只用 `--phone` 自动关联。
+
 ### 多账号
 
 - **逐个串行执行，不要并行**：多账号改同一 `config.json`，read-modify-write 非原子，并行会互相覆盖。
@@ -131,7 +146,7 @@ python monitor.py config ready-check  --all --json
 ```
 
 - `validate`：本地结构校验。
-- `ready-check --all`：LuDan + 全部固定 / 邮箱来源 + 账户关联；`ready=true` 即就绪；新接码链接应返回 `ready`（如「暂无短信」= 链接可达、暂无验证码）。
+- `ready-check --all`：LuDan + 全部固定 / kkdos / 邮箱来源 + 账户关联；`ready=true` 即就绪；新接码链接应返回 `ready`（如「暂无短信」= 链接可达、暂无验证码）。
 - 两者输出均脱敏，不含明文 secret。
 
 ### 注意事项
@@ -141,7 +156,7 @@ python monitor.py config ready-check  --all --json
 - 敏感值不进命令行明文、不回显：用 `--*-env` 传环境变量；命令输出只有脱敏预览。
 - 为何不用 `import-freeform` 作主路径：其文本解析器对「中文 label 多行格式」（`邮箱：/密码：/2fa:`）不可靠，密码字段会被前缀污染；结构化命令每字段显式传值，可靠。`import-freeform` 仅适合「紧凑单行 `----` 分隔格式」（见上方「自由文本导入」节）。
 - 手机号原样录入用于关联；显示 / 复制时 `split_us_phone` 只取美国 10 位本地号。
-- 取码方式覆盖范围：当前仅支持①固定 URL 直接出码（`fixed_sources`）与②LuDan 动态号（`LuDanSource`）。多步换号取码（先输入字符换号、再查码）需扩展代码，本轮不纳入；若遇到此类号码，先确认它是否另有固定取码 URL——有则按场景 A 录入，无则暂缓，等真实样本明确后再评估扩展。
+- 取码方式覆盖范围：当前支持①固定 URL 直接出码（`fixed_sources`）、②LuDan 动态号（`LuDanSource`）、③kkdos 动态号（`kkdos_sources`，verify 取号、复制后 start/SSE 等码、允许时手动换号）。其他多步取码平台需先确认真实 API 后再扩展。
 
 ## 依赖
 
@@ -151,7 +166,7 @@ python monitor.py config ready-check  --all --json
 ## 热键
 
 - 数字键复制对应来源的 10 位号码/邮箱；账户来源会先打开复制子菜单，菜单只列登录邮箱、有效 2FA 动态码和 10 位手机号码
-- `n` 仅 LuDan 换号
+- `n` 对当前启用的可换号动态来源执行换号；kkdos 锁号或冷却时会显示服务端限制
 - `q` / Ctrl+C 退出
 
 ## 配置项
@@ -169,8 +184,9 @@ python monitor.py config ready-check  --all --json
 | `active_after_copy_seconds` | `active_until_code=false` 时的高频轮询秒数（默认 180） |
 | `auto_change_on_expire` | 号码过期时是否自动换号 |
 | `fixed_sources` | 固定文本接码链接数组；每项包含 `label`、`phone`、`url` |
+| `kkdos_sources` | kkdos 动态号来源数组；每项含 `label`、`cdk`、`base_url`（默认 `https://sms.kkdos.store`）。启动时 verify 取号，复制号码后 start/SSE 等码 |
 | `email_sources` | 邮箱取件来源数组；每项含 `label`、`email`、`provider`（目前仅 `icloud`）、`base_url`（默认 `https://email.nloop.cc`）。走 `POST {base_url}/api/{provider}/query` 拉最新邮件并自动提取验证码 |
-| `accounts` | 账户档案数组；每项含 `label`、`login_email`、`password`、`totp_secret`、`phone`、`email`。面板会用标准库实时计算 6 位 TOTP 并显示剩余秒数，`phone` / `email` 用来标注关联的接码来源 |
+| `accounts` | 账户档案数组；每项含 `label`、`login_email`、`password`、`totp_secret`、`phone`、`phone_source_label`、`email`。面板会用标准库实时计算 6 位 TOTP 并显示剩余秒数，`phone_source_label` 优先显式关联动态/固定短信来源，未配置时继续用 `phone` 匹配固定来源 |
 | `disabled` | 无效来源/账户的持久化标记字典；key 为 `ludan` 或 `<kind>:<label>`，值含 `reason` / `at`。由监控自动写入或 `config disable` / `enable` / `prune` 管理，一般不手改 |
 
 > `config.json` 含真实 key、接码链接 token、账户密码和 2FA 密钥，已被 `.gitignore` 忽略，不会提交。账户密码和 2FA 密钥属于明文存储，仅适合本机临时使用；`config.example.json` 只能放占位值。

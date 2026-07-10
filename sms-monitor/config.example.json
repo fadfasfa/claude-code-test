@@ -26,6 +26,13 @@
       "url": "http://example.invalid/api/sms/recordText?key=YOUR_KA001_KEY"
     }
   ],
+  "kkdos_sources": [
+    {
+      "label": "kkdos",
+      "cdk": "YOUR_KKDOS_CDK",
+      "base_url": "https://sms.kkdos.store"
+    }
+  ],
   "email_sources": [
     {
       "label": "iCloud",
@@ -41,6 +48,7 @@
       "password": "YOUR_ACCOUNT_PASSWORD",
       "totp_secret": "JBSWY3DPEHPK3PXP",
       "phone": "15550123456",
+      "phone_source_label": "",
       "email": ""
     },
     {
@@ -49,6 +57,7 @@
       "password": "",
       "totp_secret": "",
       "phone": "15550112233",
+      "phone_source_label": "",
       "email": "example@icloud.com"
     }
   ]
