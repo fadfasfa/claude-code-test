@@ -90,6 +90,17 @@ def test_bundle_manifest_mode_does_not_invoke_pytest(monkeypatch) -> None:
     assert called == [True]
 
 
+def test_bundle_manifest_mode_returns_failure_when_validation_fails(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        dev_checks,
+        "check_bundle_manifest",
+        lambda *, verbose: (_ for _ in ()).throw(AssertionError("manifest contract failed")),
+    )
+
+    assert dev_checks.main(["--bundle-manifest"]) == 1
+    assert "manifest contract failed" in capsys.readouterr().err
+
+
 def test_manual_web_synergy_mode_does_not_invoke_pytest(monkeypatch) -> None:
     monkeypatch.setattr(dev_checks, "run_manual_web_synergy", lambda _args: {"passed": True})
     monkeypatch.setattr(

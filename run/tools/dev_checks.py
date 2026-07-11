@@ -101,15 +101,19 @@ def main(argv: list[str] | None = None) -> int:
         result = run_manual_web_synergy(args)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["passed"] else 1
-    if args.bundle_manifest:
-        check_bundle_manifest(verbose=True)
+    elif args.bundle_manifest:
+        try:
+            check_bundle_manifest(verbose=True)
+        except Exception as exc:
+            print(f"bundle manifest 校验失败：{exc}", file=sys.stderr)
+            return 1
         return 0
-    if args.overlay_only:
+    elif args.overlay_only:
         exit_code = run_pytest_gate(overlay_only=True, deep=bool(args.deep))
         if exit_code == 0:
             print("overlay 深度自检通过。" if args.deep else "overlay fast 自检通过。")
         return exit_code
-    if args.hextech_health:
+    elif args.hextech_health:
         print_hextech_scrape_health_summary(as_json=bool(args.json))
         return 0
     exit_code = run_pytest_gate(deep=bool(args.deep))

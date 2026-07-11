@@ -5,10 +5,13 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 
 RUN_DIR = Path(__file__).resolve().parents[1]
 TESTS_DIR = RUN_DIR / "tests"
 DOMAINS = ("structure", "web", "overlay", "bundle", "scraping", "synergy", "runtime")
+pytestmark = pytest.mark.dev_gate
 
 
 def _top_level_tests(path: Path) -> set[str]:
