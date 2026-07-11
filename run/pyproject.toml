@@ -1,5 +1,10 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "dev_gate: 默认开发门禁覆盖的自动化测试",
+  "overlay: 游戏内 overlay 相关自动化测试",
+  "deep: 耗时较长、仅在深度门禁中执行的自动化测试",
+]
 
 [tool.ruff]
 target-version = "py311"
