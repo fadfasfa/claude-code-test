@@ -142,7 +142,8 @@ AND LoL 游戏窗口在前台
 | `hextech/overlay/events.py` | 本地 JSON 事件协议、规范化、过期/损坏/缺失诊断、样例/假识别/inactive 事件写入 | 不做截图识别、不抓远端、不自动点击 |
 | `hextech/overlay/vision/sidecar.py` | `--once` 诊断探针、`--loop` 常驻识别、自门控待机、DPI awareness、事件写入 | 不读游戏内存、不注入、不修改客户端、不依赖 Web 服务 |
 | `hextech/overlay/hints.py` | overlay 轻量提示缓存生成与按 augment_id 查询 | 不触发远端抓取阻塞游戏内显示 |
-| `tools/dev_checks.py` | 离线自检、overlay 合同回归、bundle manifest 检查 | 不替代真实 LoL 人工验收 |
+| `tests/` | 唯一自动化测试事实源；承载 overlay 合同回归及 marker 门禁 | 不替代真实 LoL 人工验收 |
+| `tools/dev_checks.py` | 兼容 CLI；按 marker 委托 pytest，并保留 bundle manifest、健康摘要和 Web 联动人工辅助模式 | 不保存自动化断言，不替代真实 LoL 人工验收 |
 | `tools/acceptance/overlay_performance_probe.py` | 手工延迟样本 P50/P95 摘要 | 不自动测游戏画面端到端延迟 |
 
 ## 6. 数据流
@@ -333,11 +334,18 @@ Web 前端仍可作为调试和详情页入口，但不是 overlay 热路径。o
 
 ## 11. 验收方式
 
-离线自检：
+自动化测试以 pytest 为唯一事实源；旧命令作为兼容入口委托
+`pytest -m "dev_gate and not deep"`：
 
 ```powershell
 cd C:\Users\apple\worktrees\codex\claudecode-codex-feature-hextech-game-overlay\run
 python tools/dev_checks.py
+
+# overlay fast：pytest -m "dev_gate and overlay and not deep"
+python tools/dev_checks.py --overlay-only
+
+# overlay 深度门禁：pytest -m "dev_gate and overlay"
+python tools/dev_checks.py --overlay-only --deep
 ```
 
 人工辅助命令：

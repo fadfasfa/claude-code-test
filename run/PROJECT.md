@@ -84,8 +84,8 @@
 | `tools/runtime_bundle.py` | runtime tool | 打包后稳定资源播种 |
 | `tools/cleanup_runtime.py` | cleanup tool | 构建和运行态残留清理 |
 | `tools/clean_mayhem_combos.py` | data tool | 把 Mayhem raw 按英雄 + augment 组合增量合并到前端 cleaned 协同数据 |
-| `tools/dev_checks.py` | dev tool | 统一离线自检、bundle manifest 明细校验、Web/UI 手动验收辅助入口；检查执行顺序由 `tools/checks/registry.py` 维护 |
-| `tools/checks/` | dev tool | 分域自检清单；当前阶段只拆编排清单，不搬 5000 行检查函数体 |
+| `tools/dev_checks.py` | dev tool | 自动化门禁兼容 CLI；按 marker 委托 pytest，并保留 bundle manifest、健康摘要和 Web/UI 手动验收等非 pytest 模式 |
+| `tests/` | test | 唯一自动化测试事实源；承载分域 pytest 回归及 `dev_gate`、`overlay`、`deep` marker 门禁 |
 | `tools/acceptance/` | acceptance tool | 验收工具入口 |
 | `tools/acceptance/overlay_performance_probe.py` | acceptance tool | 阶段 5 游戏内显示四状态资源与延迟样本摘要 |
 | `tools/acceptance/probe_official_overlay_provider.py` | acceptance tool | 真实 LoL 中只读探测官方本地接口是否提供三槽候选；显式 `--write-event` 才写 overlay 事件 |
@@ -249,20 +249,44 @@ flowchart TD
 <!-- PROJECT:SECTION:ACCEPTANCE -->
 ## 七、验收标准
 
-### 7.0 开发阶段统一自检
+### 7.0 开发阶段自动化测试与兼容入口
+
+pytest 是唯一自动化测试事实源。完整测试直接运行：
 
 ```powershell
-.\.venv\Scripts\python.exe tools/dev_checks.py
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
-该入口覆盖结构收口、别名索引、日志契约、bundle manifest、协同数据
-freshness、快照定位、发布熔断和结构化协同 payload 回归检查。`run/tests/`
-不再作为独立临时测试目录保留。
+`tools/dev_checks.py` 仅保留既有 CLI 用法，并按 marker 委托 pytest：
+
+```powershell
+# pytest -m "dev_gate and not deep"
+.\.venv\Scripts\python.exe tools/dev_checks.py
+
+# pytest -m "dev_gate and overlay and not deep"
+.\.venv\Scripts\python.exe tools/dev_checks.py --overlay-only
+
+# pytest -m "dev_gate"
+.\.venv\Scripts\python.exe tools/dev_checks.py --deep
+
+# pytest -m "dev_gate and overlay"
+.\.venv\Scripts\python.exe tools/dev_checks.py --overlay-only --deep
+```
+
+该兼容入口不保存自动化断言或字符串检查注册表；pytest 的退出码原样返回。
+`--bundle-manifest`、`--hextech-health` 和 `--manual-web-synergy` 是独立的
+非 pytest 模式。
 
 需要查看打包资源白名单明细时使用：
 
 ```powershell
 .\.venv\Scripts\python.exe tools/dev_checks.py --bundle-manifest
+```
+
+只读查看海克斯胜率/联动抓取健康摘要时使用：
+
+```powershell
+.\.venv\Scripts\python.exe tools/dev_checks.py --hextech-health
 ```
 
 日志与诊断变更的最小自动验收：
@@ -314,8 +338,8 @@ Web/UI 详情页右侧联动对齐 ApexLoL 源页的检查保留为手动验收�
 
 阶段 0-2 验证基础窗口能力；阶段 3 验证假识别事件通道；阶段 3R 验证 Pillow/pywin32 Vision MVP；阶段 4 验证 overlay host 与 Vision sidecar 生命周期；阶段 5 验证性能记录结构、打包边界和人工验收清单：
 
-- `.\.venv\Scripts\python.exe tools/dev_checks.py` 必须通过，作为默认 fast gate，覆盖双开关配置、ServiceManager 生命周期、overlay hint cache、overlay event channel 和基础 overlay host 合同。
-- `.\.venv\Scripts\python.exe tools/dev_checks.py --overlay-only --deep` 必须通过，覆盖慢速 Vision sidecar、template runtime cache v2/float16 和 overlay 深度合同。
+- `.\.venv\Scripts\python.exe tools/dev_checks.py` 必须通过；它委托 `pytest -m "dev_gate and not deep"` 执行默认 fast gate。
+- `.\.venv\Scripts\python.exe tools/dev_checks.py --overlay-only --deep` 必须通过；它委托 `pytest -m "dev_gate and overlay"` 覆盖慢速 Vision sidecar、template runtime cache v2/float16 和 overlay 深度合同。
 - `.\.venv\Scripts\python.exe hextech_ui.py --game-overlay` 用于人工确认透明置顶、点击穿透、`Alt+H` 显隐、选择结束隐藏和游戏窗口跟随；无 active 选择事件或游戏不在前台时窗口保持隐藏。
 - overlay 默认不显示占位框；显示条件为“开关开 + active 海克斯选择事件 + 游戏窗口在前台”，`Alt+H` 只切换用户开关，不绕过事件和前台门控。
 - `.\.venv\Scripts\python.exe -c "from hextech.overlay.events import write_sample_overlay_event; print(write_sample_overlay_event())"` 用于写入本地三槽位样例事件；仍需游戏窗口在前台才会显示。

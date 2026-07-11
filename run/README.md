@@ -103,10 +103,10 @@ run/
 │   ├── scraping/               # 业务抓取、稳定资源同步、自愈与底层 transport
 │   └── support/                # run/.venv 守卫、原子写入、日志等跨域基础工具
 ├── frontend/                   # Tailwind 源码与 Node 构建配置
-├── tools/                      # 打包、自检、手动验收和烟测工具
+├── tools/                      # 打包、兼容自检入口、手动验收和烟测工具
 │   ├── build_package.py        # 唯一打包脚本；临时构建目录写入系统 TEMP
 │   ├── package_rules.py        # 打包资源规则；只描述源路径，不复制资源
-│   ├── checks/                 # dev_checks 分域检查清单
+│   ├── dev_checks.py           # pytest 门禁兼容 CLI 与非 pytest 辅助模式
 │   └── acceptance/             # 验收工具入口
 ├── data/                       # 源码态唯一数据根；稳定数据、首启 seed、证据、fixture 和 runtime 分区
 │   ├── static/version/         # 版本级稳定数据与索引文件
@@ -116,7 +116,7 @@ run/
 │   ├── fixtures/diagnostics/   # 离线诊断样例和真值
 │   └── runtime/                # 本机运行态状态、缓存、日志、锁和 profile
 ├── docs/                       # 业务设计和审查文档
-└── tests/                      # 分域 pytest 回归
+└── tests/                      # 唯一自动化测试事实源；含分域 pytest 回归与开发门禁
 ```
 
 更细的文件职责、数据流和维护边界见 [PROJECT.md](PROJECT.md)。
@@ -213,20 +213,40 @@ overlay hint cache 默认通过统一运行路径读取它，只有缺失时才�
 
 ## 打包与验收
 
-开发阶段默认先运行统一离线自检：
+pytest 是自动化测试的唯一事实源。开发阶段可直接运行 pytest；原有命令继续作为
+兼容 CLI，根据 marker 委托给 pytest：
 
 ```powershell
+# 完整自动化测试
+.\.venv\Scripts\python.exe -m pytest -q
+
+# 默认开发门禁：pytest -m "dev_gate and not deep"
 .\.venv\Scripts\python.exe tools/dev_checks.py
+
+# 仅 overlay fast 门禁：pytest -m "dev_gate and overlay and not deep"
+.\.venv\Scripts\python.exe tools/dev_checks.py --overlay-only
+
+# 全部分域深度门禁：pytest -m "dev_gate"
+.\.venv\Scripts\python.exe tools/dev_checks.py --deep
+
+# 仅 overlay 深度门禁：pytest -m "dev_gate and overlay"
+.\.venv\Scripts\python.exe tools/dev_checks.py --overlay-only --deep
 ```
 
-该入口包含结构收口、别名索引、日志契约、bundle manifest、协同数据
-freshness、快照定位、发布熔断和结构化协同 payload 回归检查。`run/tests/`
-不再作为独立临时测试目录保留。
+`tools/dev_checks.py` 不保存自动化断言或检查函数注册表，只保留旧命令的参数兼容、
+pytest 退出码透传，以及 bundle manifest、海克斯健康摘要和 Web 联动人工验收等
+非 pytest 模式。
 
 如需查看打包资源白名单明细：
 
 ```powershell
 .\.venv\Scripts\python.exe tools/dev_checks.py --bundle-manifest
+```
+
+只读查看海克斯胜率/联动抓取健康摘要：
+
+```powershell
+.\.venv\Scripts\python.exe tools/dev_checks.py --hextech-health
 ```
 
 `.\.venv\Scripts\python.exe build.py` 会生成：
