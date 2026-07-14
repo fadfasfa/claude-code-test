@@ -24,6 +24,7 @@
 | Git 高危操作、删除、清理、worktree、commit、push、PR | `docs/当前规则/20-Git与高危操作.md` |
 | 验证、审查、收尾报告 | `docs/当前规则/30-验证与审查.md` |
 | skill inventory、agent surface、重复 skill 维护 | `docs/当前规则/40-Agent与Skill.md` |
+| 新增或扩展长期 workflow module、skill、hook、tool、验证脚本或自动化 | `docs/参考资料/策略说明/module-admission.md` |
 | 仓库目录职责、路径生命周期 | `docs/当前规则/50-目录职责.md` |
 | Codex surface、旧 CC-CX 退役、出口维护、Ultraplan | `docs/当前规则/90-退役边界.md` |
 

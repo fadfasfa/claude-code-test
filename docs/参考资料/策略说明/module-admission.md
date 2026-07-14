@@ -32,7 +32,7 @@
 
 `repo-module-admission` 与 `repo-verification-before-completion` 已移除，不再作为独立 Skill 或强制流程入口。模块准入原则由仓库 `AGENTS.md` 与本文共同承担；完成前验证按任务风险、用户要求和更近层规则执行。
 
-### Playwright 任务级验证
+## Playwright 任务级验证
 
 - 类型：可选任务级前端验证。
 - 用途：前端任务需要浏览器或截图检查时使用。
