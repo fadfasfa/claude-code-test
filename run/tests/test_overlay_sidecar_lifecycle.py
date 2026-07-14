@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 from unittest.mock import patch
 
 import numpy as np
@@ -116,6 +118,46 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertTrue(captured_env["HEXTECH_OVERLAY_GENERATION"])
         self.assertTrue(getattr(process, "_hextech_overlay_exit_file", ""))
 
+    def test_sidecar_readiness_wait_responds_to_cancel_signal(self):
+        from hextech.overlay import lifecycle
+
+        class FakeProcess:
+            pid = 1002
+
+            def poll(self):
+                return None
+
+        cancel_event = threading.Event()
+        cancel_event.set()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(lifecycle.SidecarStartCancelled):
+                lifecycle._wait_for_sidecar_ready(
+                    FakeProcess(),
+                    Path(temp_dir) / "missing.ready.json",
+                    expected_token="expected-token",
+                    timeout_seconds=5.0,
+                    cancel_event=cancel_event,
+                )
+
+    def test_sidecar_start_surfaces_cleanup_failure_as_non_retryable(self):
+        from hextech.overlay import lifecycle
+
+        class FakeProcess:
+            pid = 1003
+
+            def poll(self):
+                return None
+
+        with (
+            patch.object(lifecycle.subprocess, "Popen", return_value=FakeProcess()),
+            patch.object(lifecycle, "_wait_for_sidecar_ready", side_effect=TimeoutError("slow bootstrap")),
+            patch.object(lifecycle, "stop_process", return_value=False),
+        ):
+            with self.assertRaises(lifecycle.SidecarCleanupError) as raised:
+                lifecycle.start_sidecar_process(readiness_timeout_seconds=1.0)
+
+        self.assertFalse(raised.exception.retryable)
+
     def test_sidecar_writes_ready_and_checks_exit_signal(self):
         from hextech.overlay.vision import runner, sidecar
 
@@ -163,6 +205,38 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                     ready_path,
                     bootstrap_path=bootstrap_path,
                     expected_token="expected-token",
+                    timeout_seconds=0.1,
+                )
+
+        self.assertFalse(raised.exception.retryable)
+
+    def test_wait_for_sidecar_ready_marks_permission_error_non_retryable(self):
+        from hextech.overlay import lifecycle
+
+        process = mock.Mock()
+        process.poll.return_value = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            ready_path = root / "sidecar.ready.json"
+            bootstrap_path = root / "sidecar.bootstrap.json"
+            bootstrap_path.write_text(
+                json.dumps(
+                    {
+                        "token": "expected",
+                        "state": "failed",
+                        "error_type": "PermissionError",
+                        "error_message_sanitized": "cache access denied",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(lifecycle.SidecarBootstrapError) as raised:
+                lifecycle._wait_for_sidecar_ready(
+                    process,
+                    ready_path,
+                    bootstrap_path=bootstrap_path,
+                    expected_token="expected",
                     timeout_seconds=0.1,
                 )
 

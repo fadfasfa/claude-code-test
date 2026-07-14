@@ -13,6 +13,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -67,6 +68,16 @@ class SidecarBootstrapError(RuntimeError):
         super().__init__(message)
         self.error_type = str(error_type or "RuntimeError")
         self.retryable = bool(retryable)
+
+
+class SidecarStartCancelled(RuntimeError):
+    """sidecar readiness 等待被上层启动会话取消。"""
+
+
+class SidecarCleanupError(RuntimeError):
+    """sidecar 启动失败后无法确认进程已清理；禁止继续重试。"""
+
+    retryable = False
 
 
 def _hidden_startupinfo() -> Any:
@@ -134,6 +145,7 @@ def _wait_for_sidecar_ready(
     bootstrap_path: Path | None = None,
     expected_token: str,
     timeout_seconds: float = OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     def _read_json(path: Path | None) -> dict[str, Any] | None:
         if path is None:
@@ -146,14 +158,23 @@ def _wait_for_sidecar_ready(
 
     def _bootstrap_retryable(payload: dict[str, Any]) -> bool:
         error_type = str(payload.get("error_type") or "")
-        if error_type in {"FileNotFoundError", "ValueError", "JSONDecodeError"}:
+        if error_type in {
+            "FileNotFoundError",
+            "PermissionError",
+            "OSError",
+            "ValueError",
+            "JSONDecodeError",
+            "UnicodeDecodeError",
+        }:
             return False
         message = str(payload.get("error_message_sanitized") or "").casefold()
         deterministic_markers = ("template_missing", "模板缺失", "schema", "配置", "token 不匹配")
         return not any(marker.casefold() in message for marker in deterministic_markers)
 
-    deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+    deadline = time.monotonic() + max(0.05, float(timeout_seconds))
     while time.monotonic() < deadline:
+        if cancel_event is not None and cancel_event.is_set():
+            raise SidecarStartCancelled("Vision sidecar 启动已取消")
         bootstrap = _read_json(bootstrap_path)
         if bootstrap is not None and str(bootstrap.get("token") or "") == expected_token:
             state = str(bootstrap.get("state") or "")
@@ -177,6 +198,8 @@ def _wait_for_sidecar_ready(
             raise RuntimeError("Vision sidecar readiness token 不匹配")
         setattr(process, "_hextech_overlay_sidecar_generation", str(payload.get("generation") or ""))
         return
+    if cancel_event is not None and cancel_event.is_set():
+        raise SidecarStartCancelled("Vision sidecar 启动已取消")
     raise TimeoutError(f"Vision sidecar 启动超时：{float(timeout_seconds):.1f}s")
 
 
@@ -216,7 +239,12 @@ def _sidecar_debug_dump_enabled(value: str | None = None) -> bool:
     return str(raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def start_sidecar_process(*, debug_dump: bool | None = None) -> subprocess.Popen:
+def start_sidecar_process(
+    *,
+    debug_dump: bool | None = None,
+    readiness_timeout_seconds: float | None = None,
+    cancel_event: threading.Event | None = None,
+) -> subprocess.Popen:
     command = [sys.executable]
     if getattr(sys, "frozen", False):
         command.append("--overlay-sidecar")
@@ -255,10 +283,17 @@ def start_sidecar_process(*, debug_dump: bool | None = None) -> subprocess.Popen
                 ready_path,
                 bootstrap_path=bootstrap_path,
                 expected_token=ready_token,
+                timeout_seconds=(
+                    OVERLAY_SIDECAR_READY_TIMEOUT_SECONDS
+                    if readiness_timeout_seconds is None
+                    else max(0.05, float(readiness_timeout_seconds))
+                ),
+                cancel_event=cancel_event,
             )
         return process
-    except Exception:
-        stop_process(process)
+    except Exception as exc:
+        if not stop_process(process):
+            raise SidecarCleanupError(f"Vision sidecar 启动失败且进程清理失败(pid={process.pid})") from exc
         raise
     finally:
         try:

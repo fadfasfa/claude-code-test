@@ -59,39 +59,25 @@ def test_overlay_performance_probe_contract() -> None:
     assert "data/runtime" not in module_text
 
 def test_game_overlay_documentation_contract() -> None:
-    """验证阶段 3R-5 文档口径与当前实现一致。"""
+    """验证当前系统设计入口、正式路线和启动降级口径。"""
 
     readme_text = (RUN_DIR / "README.md").read_text(encoding="utf-8")
     project_text = (RUN_DIR / "PROJECT.md").read_text(encoding="utf-8")
-    design_text = (RUN_DIR / "docs" / "hextech_game_overlay_design.md").read_text(encoding="utf-8")
-    assert "阶段 3R" in readme_text
-    assert "2560x1600" in readme_text
+    docs_index_text = (RUN_DIR / "docs" / "README.md").read_text(encoding="utf-8")
+    design_text = (RUN_DIR / "docs" / "system-design.md").read_text(encoding="utf-8")
     assert ".venv\\Scripts\\python.exe -m hextech.overlay.vision.sidecar --once --preset auto --write-event" in readme_text
     assert ".venv\\Scripts\\python.exe -m hextech.overlay.vision.sidecar --loop --preset auto --write-event" in readme_text
-    assert "默认不显示占位框" in readme_text
-    assert "开关开 + active 海克斯选择事件 + 游戏窗口在前台" in readme_text
-    assert "蓝色选择按钮" in readme_text
-    assert "overlay_anchor_calibration.v1.json" in readme_text
-    assert "body_shard_only" in readme_text
-    assert "probe_official_overlay_provider.py" in readme_text
-    assert "官方接口优先" in readme_text
-    assert "P95 <= 500ms" in readme_text
-    assert "不承诺独占全屏" in readme_text
-    assert "阶段 0-5" in project_text
-    assert "hextech/overlay/vision/sidecar.py" in project_text
-    assert "hextech/overlay/providers/official.py" in project_text
-    assert "tools/acceptance/overlay_performance_probe.py" in project_text
-    assert "tools/acceptance/probe_official_overlay_provider.py" in project_text
-    assert "默认不显示占位框" in project_text
-    assert "蓝色按钮场景门控" in project_text
-    assert "overlay_anchor_calibration.v1.json" in project_text
-    assert "body_shard` 只作为诊断类型不显示" in project_text
-    assert "蓝色选择按钮是游戏内显示的主场景门控" in design_text
-    assert "官方接口优先验证顺序" in design_text
-    assert "python tools/acceptance/probe_official_overlay_provider.py --duration-seconds 120 --interval-ms 500 --dump-runtime-json" in design_text
-    assert "data/runtime/state/overlay_anchor_calibration.v1.json" in design_text
-    assert "打包后首次启动必须重新校准" in design_text
-    assert "不验证真实 Vision 识别" not in project_text
+    assert "docs/system-design.md" in project_text
+    assert "docs/overwolf-route.md" in project_text
+    assert "当前正式 Overlay 是 Python/Tk/Vision" in project_text
+    assert "hextech/overlay/vision/" in project_text
+    assert "system-design.md" in docs_index_text
+    assert "overwolf-route.md" in docs_index_text
+    assert "Python 3.11 + Tk host + Vision sidecar" in design_text
+    assert "cache 命中时力求 30 秒内 ready" in design_text
+    assert "cache miss、cache 未知或空运行态时力求 60 秒内 ready" in design_text
+    assert "最多继续 120 秒" in design_text
+    assert "fallback_web_owned" in design_text
 
 def test_overlay_hint_cache_contract() -> None:
     """验证 overlay hint cache 可直接查询，且默认不暴露私用统计字段。"""

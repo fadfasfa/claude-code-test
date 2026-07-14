@@ -235,6 +235,16 @@ class HextechUI:
         self._overlay_status_color = UI_COLORS["muted"]
         self._overlay_watchdog_lock = threading.Lock()
         self._overlay_operation_lock = threading.Lock()
+        self._web_operation_lock = threading.Lock()
+        self._fallback_web_lock = threading.Lock()
+        self._fallback_web_owned = False
+        self._fallback_web_starting = False
+        self._fallback_web_stopping = False
+        self._fallback_web_cleanup_requested = False
+        self._fallback_web_user_adopted = False
+        self._fallback_web_error = ""
+        self._fallback_web_generation = 0
+        self._fallback_web_failed_key = ""
         self._game_overlay_desired_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
         self._feature_toggle_busy: set[str] = set()
         self._feature_toggle_lock = threading.Lock()
@@ -280,6 +290,7 @@ class HextechUI:
                 return
             os.makedirs(ASSET_DIR, exist_ok=True)
             self._start_runtime_supervisor(restore_persisted_game_overlay=False)
+            self._run_on_ui_thread(self._activate_overlay_control_plane)
             if self._closing:
                 ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
                 self.runtime_supervisor = None
@@ -296,6 +307,7 @@ class HextechUI:
             if not self._publish_service_manager(service_manager):
                 return
             self.startup_timing.mark("services_ready")
+            self._run_on_ui_thread(self._apply_persisted_feature_flags)
 
             self.session = get_advanced_session()
             self.core_data = load_champion_core_data()
@@ -304,7 +316,8 @@ class HextechUI:
             self.startup_timing.mark("data_ready", rows=len(loaded_df))
         except Exception as exc:
             error = exc
-            self._shutdown_failed_bootstrap_service_manager(service_manager)
+            if self.service_manager is None:
+                self._shutdown_failed_bootstrap_service_manager(service_manager)
             logger.exception("桌面后台初始化失败。")
 
         def finish() -> None:
@@ -312,19 +325,17 @@ class HextechUI:
                 return
             if error is not None:
                 self.startup_timing.mark("background_bootstrap_error", error=str(error))
-                self._set_status(f"后台初始化失败: {error}", UI_COLORS["error"])
+                self._post_visible_bootstrap_done = True
+                self._set_status(f"本地数据初始化失败，展示面继续运行: {error}", UI_COLORS["warn"])
                 return
             with self._df_lock:
                 self.df = loaded_df
             self._post_visible_bootstrap_done = True
             self.startup_timing.mark("background_bootstrap_done")
             self._set_status("后台服务已就绪", UI_COLORS["green"])
-            self._apply_persisted_feature_flags()
-            self._restore_persisted_game_overlay()
             self._init_core_engine()
             self.check_and_sync_data()
             self.start_background_scraper()
-            self._start_overlay_status_polling()
 
         self._run_on_ui_thread(finish)
 
@@ -698,6 +709,237 @@ class HextechUI:
         service_manager = self.service_manager
         self.web_process = service_manager.web.process if service_manager is not None and service_manager.is_web_running() else None
 
+    def _ensure_overlay_fallback_state(self) -> None:
+        """兼容轻量测试对象和旧反序列化实例，惰性补齐 fallback 运行态。"""
+
+        if not hasattr(self, "_web_operation_lock"):
+            self._web_operation_lock = threading.Lock()
+        if not hasattr(self, "_fallback_web_lock"):
+            self._fallback_web_lock = threading.Lock()
+        if not hasattr(self, "_fallback_web_owned"):
+            self._fallback_web_owned = False
+        if not hasattr(self, "_fallback_web_starting"):
+            self._fallback_web_starting = False
+        if not hasattr(self, "_fallback_web_stopping"):
+            self._fallback_web_stopping = False
+        if not hasattr(self, "_fallback_web_cleanup_requested"):
+            self._fallback_web_cleanup_requested = False
+        if not hasattr(self, "_fallback_web_user_adopted"):
+            self._fallback_web_user_adopted = False
+        if not hasattr(self, "_fallback_web_error"):
+            self._fallback_web_error = ""
+        if not hasattr(self, "_fallback_web_generation"):
+            self._fallback_web_generation = 0
+        if not hasattr(self, "_fallback_web_failed_key"):
+            self._fallback_web_failed_key = ""
+
+    def _user_web_enabled(self) -> bool:
+        variable = getattr(self, "web_frontend_var", None)
+        if variable is not None:
+            return bool(variable.get())
+        return bool(getattr(self, "feature_flags", {}).get("web_frontend_enabled", False))
+
+    def _adopt_fallback_web_for_user(self) -> None:
+        """用户主动开启 Web 后转移所有权，后续 Overlay 恢复不得自动关闭。"""
+
+        self._ensure_overlay_fallback_state()
+        with self._fallback_web_lock:
+            self._fallback_web_generation += 1
+            self._fallback_web_owned = False
+            self._fallback_web_cleanup_requested = False
+            self._fallback_web_user_adopted = True
+
+    def _start_overlay_web_fallback(self, fallback_key: str) -> None:
+        self._ensure_overlay_fallback_state()
+        with self._fallback_web_lock:
+            if self._fallback_web_owned or self._fallback_web_starting or self._fallback_web_stopping:
+                return
+            if self._fallback_web_failed_key == fallback_key:
+                return
+            self._fallback_web_generation += 1
+            generation = self._fallback_web_generation
+            self._fallback_web_starting = True
+            self._fallback_web_cleanup_requested = False
+            self._fallback_web_user_adopted = False
+            self._fallback_web_error = ""
+
+        def worker() -> None:
+            error: Exception | None = None
+            browser_opened = True
+            manager = None
+            should_cleanup = False
+            with self._web_operation_lock:
+                with self._fallback_web_lock:
+                    cancelled = bool(
+                        generation != self._fallback_web_generation
+                        or self._fallback_web_user_adopted
+                        or self._closing
+                    )
+                    if cancelled:
+                        self._fallback_web_starting = False
+                if cancelled:
+                    return
+                try:
+                    manager = self.service_manager
+                    if manager is None:
+                        raise RuntimeError("后台服务尚未就绪")
+                    manager.start_web()
+                except Exception as exc:
+                    error = exc
+                if error is None and not self._closing:
+                    try:
+                        browser_opened = ui_runtime.open_companion_browser(self.web_port_file)
+                    except Exception:
+                        browser_opened = False
+                        logger.warning("Overlay Web 备份已启动，但受管浏览器打开失败。", exc_info=True)
+
+                with self._fallback_web_lock:
+                    self._fallback_web_starting = False
+                    user_owned = self._fallback_web_user_adopted or generation != self._fallback_web_generation
+                    should_cleanup = bool(
+                        error is None
+                        and not user_owned
+                        and (self._fallback_web_cleanup_requested or self._closing)
+                    )
+                    self._fallback_web_owned = bool(error is None and not user_owned and not should_cleanup)
+                    self._fallback_web_error = str(error or "")
+                    self._fallback_web_failed_key = fallback_key if error is not None else ""
+                    self._fallback_web_cleanup_requested = False
+
+                if should_cleanup:
+                    ui_runtime.close_companion_browser()
+                    try:
+                        if manager is not None:
+                            manager.stop_web()
+                    except Exception as exc:
+                        error = exc
+                        with self._fallback_web_lock:
+                            self._fallback_web_owned = True
+                            self._fallback_web_error = str(exc)
+
+            self._sync_web_process_handle()
+
+            def finish() -> None:
+                if error is not None:
+                    self._set_overlay_status_summary(
+                        f"游戏内显示: Web 备份启动失败 ({error})",
+                        UI_COLORS["error"],
+                    )
+                elif should_cleanup:
+                    self._set_overlay_status_summary("游戏内显示: Overlay 已恢复", UI_COLORS["green"])
+                elif not browser_opened:
+                    self._set_overlay_status_summary("游戏内显示: Web 备份已接管，浏览器打开失败", UI_COLORS["warn"])
+                else:
+                    self._set_overlay_status_summary("游戏内显示: Web 备份已接管", UI_COLORS["warn"])
+
+            self._run_on_ui_thread(finish)
+
+        self._start_tracked_thread(worker, name="hextech-overlay-web-fallback-start")
+
+    def _request_overlay_web_fallback_cleanup(self) -> None:
+        self._ensure_overlay_fallback_state()
+        with self._fallback_web_lock:
+            if self._fallback_web_starting:
+                self._fallback_web_cleanup_requested = True
+                return
+            if not self._fallback_web_owned or self._fallback_web_stopping:
+                return
+            generation = self._fallback_web_generation
+            self._fallback_web_stopping = True
+
+        def worker() -> None:
+            error: Exception | None = None
+            with self._web_operation_lock:
+                with self._fallback_web_lock:
+                    cancelled = bool(
+                        generation != self._fallback_web_generation
+                        or self._fallback_web_user_adopted
+                    )
+                    if cancelled:
+                        self._fallback_web_stopping = False
+                if cancelled:
+                    return
+                manager = self.service_manager
+                ui_runtime.close_companion_browser()
+                try:
+                    if manager is not None:
+                        manager.stop_web()
+                except Exception as exc:
+                    error = exc
+            with self._fallback_web_lock:
+                self._fallback_web_stopping = False
+                self._fallback_web_owned = error is not None
+                self._fallback_web_error = str(error or "")
+            self._sync_web_process_handle()
+
+            def finish() -> None:
+                if error is None:
+                    self._set_overlay_status_summary("游戏内显示: Overlay 已恢复", UI_COLORS["green"])
+                else:
+                    self._set_overlay_status_summary(
+                        f"游戏内显示: Overlay 已恢复，Web 备份关闭失败 ({error})",
+                        UI_COLORS["warn"],
+                    )
+
+            self._run_on_ui_thread(finish)
+
+        self._start_tracked_thread(worker, name="hextech-overlay-web-fallback-stop")
+
+    def _coordinate_overlay_web_fallback(self, overlay: Mapping[str, object]) -> bool:
+        """根据 Supervisor 状态编排临时 Web；返回是否已输出 fallback 专用状态。"""
+
+        self._ensure_overlay_fallback_state()
+        overlay_enabled = bool(self.game_overlay_var.get())
+        status = str(overlay.get("status") or "")
+        fallback_key = str(overlay.get("generation") or "default")
+        fallback_recommended = bool(overlay.get("fallback_recommended")) or (
+            overlay_enabled and status == "error"
+        )
+        if self._user_web_enabled():
+            self._adopt_fallback_web_for_user()
+        if not overlay_enabled:
+            self._request_overlay_web_fallback_cleanup()
+            return False
+        if status == "running":
+            with self._fallback_web_lock:
+                self._fallback_web_failed_key = ""
+            if not self._user_web_enabled():
+                self._request_overlay_web_fallback_cleanup()
+                with self._fallback_web_lock:
+                    cleanup_active = self._fallback_web_stopping or self._fallback_web_cleanup_requested
+                if cleanup_active:
+                    self._set_overlay_status_summary("游戏内显示: Overlay 已恢复，正在关闭 Web 备份", UI_COLORS["green"])
+                    return True
+            return False
+        if fallback_recommended:
+            if not self._user_web_enabled():
+                self._start_overlay_web_fallback(fallback_key)
+            with self._fallback_web_lock:
+                owned = self._fallback_web_owned
+                starting = self._fallback_web_starting
+                fallback_error = self._fallback_web_error
+            if status == "error":
+                if owned or self._user_web_enabled():
+                    self._set_overlay_status_summary("游戏内显示: Overlay 最终失败 / Web 备份保留", UI_COLORS["error"])
+                elif starting:
+                    self._set_overlay_status_summary("游戏内显示: Overlay 最终失败 / Web 备份启动中", UI_COLORS["error"])
+                else:
+                    self._set_overlay_status_summary(
+                        f"游戏内显示: Overlay 与 Web 备份均启动失败 ({fallback_error or 'unknown'})",
+                        UI_COLORS["error"],
+                    )
+            elif starting:
+                self._set_overlay_status_summary("游戏内显示: Web 备份启动中 / Overlay 继续启动", UI_COLORS["warn"])
+            elif fallback_error:
+                self._set_overlay_status_summary(
+                    f"游戏内显示: Web 备份启动失败，Overlay 继续启动 ({fallback_error})",
+                    UI_COLORS["error"],
+                )
+            else:
+                self._set_overlay_status_summary("游戏内显示: Web 备份已接管 / Overlay 继续启动", UI_COLORS["warn"])
+            return True
+        return False
+
     def _raise_if_service_error(self, service_name: str) -> None:
         if self.service_manager is None:
             raise RuntimeError("后台服务尚未就绪")
@@ -727,31 +969,44 @@ class HextechUI:
         except Exception:
             logger.exception("恢复持久化游戏内显示失败。")
 
+    def _activate_overlay_control_plane(self) -> None:
+        """本地数据可降级，但 Overlay 恢复和预算轮询不能被它阻塞。"""
+
+        if self._closing:
+            return
+        self._restore_persisted_game_overlay()
+        if self._overlay_status_after_id is None:
+            self._start_overlay_status_polling()
+
     def _toggle_web_frontend(self) -> None:
         toggle_name = "Web 前端"
         enabled = bool(self.web_frontend_var.get())
+        if enabled:
+            self._adopt_fallback_web_for_user()
         self._set_feature_toggle_busy(toggle_name, True)
         self._set_status("正在切换 Web 前端...", UI_COLORS["warn"])
 
         def worker() -> None:
             error: Exception | None = None
             browser_opened = True
-            try:
-                if self.service_manager is None:
-                    raise RuntimeError("后台服务尚未就绪")
-                if enabled:
-                    self.service_manager.start_web()
-                    if self.feature_flags.get("auto_open_browser", True):
-                        browser_opened = ui_runtime.open_companion_browser(self.web_port_file)
-                else:
-                    ui_runtime.close_companion_browser()
-                    self.service_manager.stop_web()
-                    self._raise_if_service_error("web")
-            except Exception as exc:
-                error = exc
-                if enabled:
-                    ui_runtime.close_companion_browser()
-                    self.service_manager.stop_web()
+            self._ensure_overlay_fallback_state()
+            with self._web_operation_lock:
+                try:
+                    if self.service_manager is None:
+                        raise RuntimeError("后台服务尚未就绪")
+                    if enabled:
+                        self.service_manager.start_web()
+                        if self.feature_flags.get("auto_open_browser", True):
+                            browser_opened = ui_runtime.open_companion_browser(self.web_port_file)
+                    else:
+                        ui_runtime.close_companion_browser()
+                        self.service_manager.stop_web()
+                        self._raise_if_service_error("web")
+                except Exception as exc:
+                    error = exc
+                    if enabled and self.service_manager is not None:
+                        ui_runtime.close_companion_browser()
+                        self.service_manager.stop_web()
 
             def finish() -> None:
                 self._sync_web_process_handle()
@@ -773,6 +1028,8 @@ class HextechUI:
     def _toggle_game_overlay(self) -> None:
         toggle_name = "游戏内显示"
         enabled = bool(self.game_overlay_var.get())
+        if not enabled:
+            self._request_overlay_web_fallback_cleanup()
         self._game_overlay_desired_enabled = enabled
         self._set_feature_toggle_busy(toggle_name, True)
         self._set_overlay_status_summary(
@@ -901,6 +1158,8 @@ class HextechUI:
                 overlay = components.get("game_overlay") if isinstance(components.get("game_overlay"), dict) else {}
                 should_report = overlay_enabled or str(overlay.get("status") or "") in {"starting", "running", "stopping", "error"}
                 if should_report:
+                    if self._coordinate_overlay_web_fallback(overlay):
+                        return
                     text, color = _format_supervisor_game_overlay_status(overlay)
                     self._set_overlay_status_summary(text, color)
                 return
