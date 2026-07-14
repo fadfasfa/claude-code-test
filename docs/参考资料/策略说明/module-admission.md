@@ -8,6 +8,8 @@
 
 不新增 memory、learning promotion、长期上下文晋升、PR shipping、task resume 或 worktree governance skill。
 
+新增或扩展长期 hook、tool、workflow module、验证脚本或自动化时，仍须填写下方准入卡，并说明为什么现有规则、Skill 或一次性命令不足。该要求由本文与 `AGENTS.md` 承担，不恢复独立准入 Skill，也不阻断普通一次性实现。
+
 ## 准入卡
 
 - 名称：
@@ -26,21 +28,9 @@
 - 为什么现有规则或 Codex 能力不够：
 - 状态：
 
-## 当前已准入能力
+## 已退役流程 Skill
 
-### repo-module-admission
-
-- 类型：仓库级 Codex skill。
-- 用途：新增长期仓库级能力前要求显式准入判断。
-- 入口：`.agents/skills/repo-module-admission/SKILL.md`。
-- 状态：active。
-
-### repo-verification-before-completion
-
-- 类型：仓库级 Codex skill。
-- 用途：报告完成前要求给出窄范围验证证据。
-- 入口：`.agents/skills/repo-verification-before-completion/SKILL.md`。
-- 状态：active。
+`repo-module-admission` 与 `repo-verification-before-completion` 已移除，不再作为独立 Skill 或强制流程入口。模块准入原则由仓库 `AGENTS.md` 与本文共同承担；完成前验证按任务风险、用户要求和更近层规则执行。
 
 ### Playwright 任务级验证
 

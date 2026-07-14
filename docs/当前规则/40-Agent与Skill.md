@@ -25,14 +25,10 @@
 
 | 名称 | 状态 | 触发场景 |
 | :--- | :--- | :--- |
-| `karpathy-guardrail` | keep | 架构/实现/debugging/数据管线方案防范围漂移；不承担编码实现纪律 |
-| `frontend-design-project-bridge` | keep | 前端 UI / 视觉 / 交互任务 |
-| `repo-verification-before-completion` | keep | 声明完成前 |
-| `repo-maintenance` | keep | 仓库维护、清理候选、保护资产检查 |
-| `repo-local-pr-review` | keep | commit / PR 前本地审查 |
-| `repo-module-admission` | keep | 新增 workflow module、skill、hook、tool 或工作区前 |
 | `cleanup-worktrees` | keep | 显性调用 cleanup-worktrees 或审计/清理 managed worktree |
-| `scrapling-web-scraping` | keep | Scrapling、网页抓取、动态网页、结构化抽取或爬虫替换评估 |
+| `repo-local-pr-review` | keep | 用户显式要求本地 review，或任务规则明确要求独立自审 |
+| `repo-maintenance` | keep | 健康检查、维护候选、保护资产和脚本状态核对 |
+| `scrapling-web-scraping` | keep | Scrapling 接入、现有实现维护与爬虫替换评估；现行 runtime 位于 `run/hextech/scraping/transport` |
 
 ## Claude Code 项目入口
 
@@ -46,8 +42,8 @@
 ## 重复 Skill 维护合同
 
 - `cleanup-worktrees` 的安全规则以 `docs/当前规则/20-Git与高危操作.md` 和两侧 skill 中的最小执行步骤共同约束。
-- `karpathy-guardrail` 只约束方案范围；编码实现纪律由两端原生 `karpathy-guidelines` 提供。
-- 不维护大段复制的双份说明；两侧 skill 必须短、明确、指向当前事实源。
+- 通用方法类只使用两端各自原生的 `brainstorming` 与 `karpathy-guidelines`，仓库不建立 bridge、guardrail 或 completion gate。
+- 不维护大段复制的双份说明；专项 skill 必须短、明确、只保存本仓特有事实。
 - 修改任一侧重复 skill 时，必须检查另一侧是否需要同步。
 
 ## 禁止恢复
@@ -55,4 +51,5 @@
 - 不恢复 memory、learning promotion、自动 PR shipping、高权限 worktree governance 或 task resume skill。
 - 不恢复旧 command、hook、自动 PR shipping、task resume 或高权限 worktree skill。
 - `brainstorming` 与 `karpathy-guidelines` 由 Codex、Claude Code 各自的原生目录维护；本仓不 fork、复制或桥接这两个基线 Skill。
+- 不恢复 Superpowers 元路由、强制 TDD/worktree/review/verification 串联或其替代 skill。
 - `S/M/L` 只作为治理边界，不承载 Skill 加载或执行职责。
