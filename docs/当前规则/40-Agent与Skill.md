@@ -25,7 +25,7 @@
 
 | 名称 | 状态 | 触发场景 |
 | :--- | :--- | :--- |
-| `karpathy-guardrail` | keep | 非琐碎代码修改、架构/实现/debugging 计划、方案输出防漂移 |
+| `karpathy-guardrail` | keep | 架构/实现/debugging/数据管线方案防范围漂移；不承担编码实现纪律 |
 | `frontend-design-project-bridge` | keep | 前端 UI / 视觉 / 交互任务 |
 | `repo-verification-before-completion` | keep | 声明完成前 |
 | `repo-maintenance` | keep | 仓库维护、清理候选、保护资产检查 |
@@ -46,7 +46,7 @@
 ## 重复 Skill 维护合同
 
 - `cleanup-worktrees` 的安全规则以 `docs/当前规则/20-Git与高危操作.md` 和两侧 skill 中的最小执行步骤共同约束。
-- `karpathy-guardrail` 的工程纪律以 `AGENTS.md`、`CLAUDE.md`、本文件和两侧 skill 的最小触发说明共同约束。
+- `karpathy-guardrail` 只约束方案范围；编码实现纪律由两端原生 `karpathy-guidelines` 提供。
 - 不维护大段复制的双份说明；两侧 skill 必须短、明确、指向当前事实源。
 - 修改任一侧重复 skill 时，必须检查另一侧是否需要同步。
 
