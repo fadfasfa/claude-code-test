@@ -1,6 +1,6 @@
 ---
 name: repo-local-pr-review
-description: 用于本仓提交或 PR 前的本地 diff 审查；生成风险、未验证点和建议验证命令；本地 review 本身不发布。
+description: 仅在用户明确要求本地 review、PR 前检查，或当前任务明确要求独立自审时使用；生成风险、未验证点和建议验证命令，本地 review 本身不发布。
 ---
 
 # repo-local-pr-review
@@ -8,7 +8,7 @@ description: 用于本仓提交或 PR 前的本地 diff 审查；生成风险、
 ## trigger
 
 - 用户要求 review、local review、PR 前检查或提交前自审。
-- 准备发布前需要确认 diff 范围和风险。
+- 当前任务规则明确要求一次独立本地自审。
 
 ## scope
 

@@ -16,7 +16,7 @@
 
 ## 恢复步骤
 
-1. 先走 `repo-module-admission`，确认是否真的需要恢复 worker、恢复后的目标路径和最小验证。
+1. 先按当前 `AGENTS.md` 与 `docs/参考资料/策略说明/module-admission.md` 评估是否真的需要恢复 worker，并明确目标路径和最小验证；不要恢复已删除的 `repo-module-admission` Skill。
 2. 在 `docs/当前规则/10-工作区登记.md`、`docs/当前规则/40-Agent与Skill.md`、`docs/当前规则/50-目录职责.md` 中重新登记目标目录和入口；不得直接恢复退役脚本目录或旧 workflow 文档目录。
 3. 再按已登记路径移动 `cc-worker.ps1` 和 `codex-cc-lightweight-worker.md`。
 4. 在 `AGENTS.md`、`docs/index.md`、`scripts/README.md` 和 support inventory 中同步 active 入口说明。
