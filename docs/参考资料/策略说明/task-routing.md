@@ -1,6 +1,6 @@
 # 任务路由参考
 
-本文件只解释路由概念；权威边界见 `AGENTS.md`，官方 Superpowers plugin 为唯一 Superpowers 来源。
+本文件只解释路由概念；权威边界见 `AGENTS.md`。
 
 ## S/M/L
 

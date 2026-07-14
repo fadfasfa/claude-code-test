@@ -26,7 +26,6 @@
 | skill inventory、agent surface、重复 skill 维护 | `docs/当前规则/40-Agent与Skill.md` |
 | 仓库目录职责、路径生命周期 | `docs/当前规则/50-目录职责.md` |
 | Codex surface、旧 CC-CX 退役、出口维护、Ultraplan | `docs/当前规则/90-退役边界.md` |
-| 旧 Superpowers project bridge 背景 | `docs/历史归档/superpowers-project-bridge.md` |
 
 ## On Demand
 

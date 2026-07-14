@@ -15,7 +15,7 @@ description: 用于本仓前端 UI / 视觉 / 交互任务；只桥接全局 fro
 - 默认使用简体中文输出计划、进展、风险、验证和总结；路径、命令、API 和错误原文保持原文。
 - 不重复全局设计规则。
 - 不覆盖 `AGENTS.md`、子项目规则或用户本轮限制。
-- 前端代码任务仍必须触发 `karpathy-project-bridge`。
+- 前端代码任务仍必须同时使用原生 `karpathy-guidelines`。
 
 ## forbidden actions
 

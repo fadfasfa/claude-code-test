@@ -19,13 +19,12 @@
 - Plan 阶段不得把 `Bash` / `PowerShell` 当只读工具；Windows sandbox 不可用时 shell 可以通过重定向、复制、解释器或脚本真实写盘。使用 GLM 或非 Anthropic first-party host 时必须走严格 Plan 入口。
 - OpenAI Codex plugin 可以保留启用状态；Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
 - plugin 启用不等于 review gate 启用，review gate 默认禁用。
-- 普通仓库任务不修改全局 Claude Code、Codex、Superpowers、CLI、VS plugin、Codex App 或 proxy 配置。
+- 普通仓库任务不修改全局 Claude Code、Codex、CLI、VS plugin、Codex App 或 proxy 配置。
 
 ## Codex Skill 白名单
 
 | 名称 | 状态 | 触发场景 |
 | :--- | :--- | :--- |
-| `karpathy-project-bridge` | keep | 非琐碎代码、脚本、配置或 workflow 实现任务 |
 | `karpathy-guardrail` | keep | 非琐碎代码修改、架构/实现/debugging 计划、方案输出防漂移 |
 | `frontend-design-project-bridge` | keep | 前端 UI / 视觉 / 交互任务 |
 | `repo-verification-before-completion` | keep | 声明完成前 |
@@ -55,5 +54,5 @@
 
 - 不恢复 memory、learning promotion、自动 PR shipping、高权限 worktree governance 或 task resume skill。
 - 不恢复旧 command、hook、自动 PR shipping、task resume 或高权限 worktree skill。
-- 官方 Superpowers plugin 是唯一 Superpowers 来源；本仓不 fork 或复制官方 Superpowers skill。
-- `S/M/L` 只作为治理边界；官方 plugin 与仓库规则分层，不再由本地 bridge 承载。
+- `brainstorming` 与 `karpathy-guidelines` 由 Codex、Claude Code 各自的原生目录维护；本仓不 fork、复制或桥接这两个基线 Skill。
+- `S/M/L` 只作为治理边界，不承载 Skill 加载或执行职责。

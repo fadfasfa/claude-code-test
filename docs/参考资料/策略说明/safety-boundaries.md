@@ -14,7 +14,7 @@
 - `.codex/**`
 - `run/**`
 - 全局 hooks、全局 skills、全局 AGENTS / CLAUDE 文件
-- CLI、VS plugin、Codex App、Codex Proxy、Superpowers 或 ECC 安装
+- CLI、VS plugin、Codex App、Codex Proxy 或 ECC 安装
 
 不读取或修改凭据、auth 文件、token、cookie、API key、proxy secret 或私有配置。
 
