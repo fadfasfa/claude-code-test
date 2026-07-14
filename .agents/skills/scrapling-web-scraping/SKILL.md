@@ -50,7 +50,7 @@ result = fetch_page("https://example.com", mode="get", css_selector="h1::text")
 
 ## 冲突边界
 
-- 非琐碎代码、脚本、配置或 workflow 实现仍必须同时使用 `karpathy-project-bridge`。
+- 非琐碎代码、脚本、配置或 workflow 实现仍必须同时使用原生 `karpathy-guidelines`。
 - 前端 UI、视觉或交互任务仍归 `frontend-design-project-bridge`。
 - 仓库维护、清理候选、保护资产检查和健康检查仍归 `repo-maintenance`。
 - 新增或扩展长期工具、hook、workflow module、工作区或额外 skill 前仍归 `repo-module-admission`。

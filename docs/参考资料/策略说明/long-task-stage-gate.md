@@ -107,7 +107,7 @@ Owned files / modules：
 
 请检查：
 1. 是否引入重复事实源、路径漂移、过度抽象或隐式状态。
-2. 是否恢复旧 CC-CX、cc-worker、hook、wrapper、daemon、队列、状态机或 Superpowers bridge。
+2. 是否恢复旧 CC-CX、cc-worker、hook、wrapper、daemon、队列、状态机或其他退役 bridge。
 3. 是否遗漏中文维护说明、边界说明或必要的最小验证。
 4. 后续阶段是否会因为当前改动变得更难验收。
 

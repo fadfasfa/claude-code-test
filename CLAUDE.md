@@ -1,6 +1,6 @@
 # Claude Code 入口
 
-本文件只说明 Claude Code 在本仓的入口边界；不可违背规则见 `AGENTS.md`，现行 Superpowers 只来自官方已安装 plugin，仓库不再维护桥接执行层。
+本文件只说明 Claude Code 在本仓的入口边界；不可违背规则见 `AGENTS.md`，`brainstorming` 与 `karpathy-guidelines` 直接使用 Claude Code 原生 Skill。
 
 ## 使用方式
 
