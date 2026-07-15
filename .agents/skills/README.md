@@ -5,8 +5,6 @@
 当前保留的仓库级 skill：
 
 - `cleanup-worktrees`
-- `repo-local-pr-review`
-- `repo-maintenance`
 - `scrapling-web-scraping`
 
 详细触发场景见 `docs/当前规则/40-Agent与Skill.md`。没有列入本 README 的 skill 不视为默认启用。

@@ -17,6 +17,7 @@
 - Claude Code 入口读取 `CLAUDE.md`、`PROJECT.md`、`docs/index.md`。
 - Claude Code Plan 阶段默认严格只读。项目默认 `.claude/settings.json` 保守为 `plan` + `Read`；严格 Plan 使用 `.claude/settings.plan.json`，显式实现使用 `.claude/settings.implement.json`。
 - Plan 阶段不得把 `Bash` / `PowerShell` 当只读工具；Windows sandbox 不可用时 shell 可以通过重定向、复制、解释器或脚本真实写盘。使用 GLM 或非 Anthropic first-party host 时必须走严格 Plan 入口。
+- 严格 Plan 禁止 `Agent(general-purpose)`；只读 `Explore` / `Plan` agent 可按需使用，且不得把代理消息视为用户实施批准。
 - OpenAI Codex plugin 可以保留启用状态；Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
 - plugin 启用不等于 review gate 启用，review gate 默认禁用。
 - 普通仓库任务不修改全局 Claude Code、Codex、CLI、VS plugin、Codex App 或 proxy 配置。
@@ -26,15 +27,11 @@
 | 名称 | 状态 | 触发场景 |
 | :--- | :--- | :--- |
 | `cleanup-worktrees` | keep | 显性调用 cleanup-worktrees 或审计/清理 managed worktree |
-| `repo-local-pr-review` | keep | 用户显式要求本地 review，或任务规则明确要求独立自审 |
-| `repo-maintenance` | keep | 健康检查、维护候选、保护资产和脚本状态核对 |
 | `scrapling-web-scraping` | keep | Scrapling 接入、现有实现维护与爬虫替换评估；现行 runtime 位于 `run/hextech/scraping/transport` |
 
 ## Claude Code 项目入口
 
 - `.claude/commands/cleanup-worktrees.md`：转发到 cleanup skill。
-- `.claude/commands/review.md`：转发到 review skill。
-- `.claude/commands/review-all.md`：`/review all` 可见别名。
 - `.claude/skills/` 只保留 Claude Code 专用最小 skill，不作为 Codex 白名单。
 - `.claude/settings.json` 只保留 Claude Code 项目默认保守权限、敏感文件 deny 和本机 plugin 可用状态；不注册仓库级编排 hook。
 - `.claude/settings.plan.json` 是严格 Plan 专用设置；`.claude/settings.implement.json` 是显式执行设置。不要在同一会话内把 Plan 草稿确认误当执行授权。
@@ -42,7 +39,7 @@
 ## 重复 Skill 维护合同
 
 - `cleanup-worktrees` 的安全规则以 `docs/当前规则/20-Git与高危操作.md` 和两侧 skill 中的最小执行步骤共同约束。
-- 通用方法类只使用两端各自原生的 `brainstorming` 与 `karpathy-guidelines`，仓库不建立 bridge、guardrail 或 completion gate。
+- 通用需求澄清、编码纪律和自检由模型与当前规则直接完成；仓库不建立通用流程 skill、bridge、guardrail 或 completion gate。
 - 不维护大段复制的双份说明；专项 skill 必须短、明确、只保存本仓特有事实。
 - 修改任一侧重复 skill 时，必须检查另一侧是否需要同步。
 
@@ -50,6 +47,5 @@
 
 - 不恢复 memory、learning promotion、自动 PR shipping、高权限 worktree governance 或 task resume skill。
 - 不恢复旧 command、hook、自动 PR shipping、task resume 或高权限 worktree skill。
-- `brainstorming` 与 `karpathy-guidelines` 由 Codex、Claude Code 各自的原生目录维护；本仓不 fork、复制或桥接这两个基线 Skill。
-- 不恢复 Superpowers 元路由、强制 TDD/worktree/review/verification 串联或其替代 skill。
+- 不恢复 Superpowers、通用 brainstorming、TDD、worktree、review、verification、planning 元流程 Skill 或其替代串联。
 - `S/M/L` 只作为治理边界，不承载 Skill 加载或执行职责。

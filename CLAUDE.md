@@ -1,6 +1,6 @@
 # Claude Code 入口
 
-本文件只说明 Claude Code 在本仓的入口边界；不可违背规则见 `AGENTS.md`，`brainstorming` 与 `karpathy-guidelines` 直接使用 Claude Code 原生 Skill。
+本文件只说明 Claude Code 在本仓的入口边界；不可违背规则见 `AGENTS.md`，通用需求澄清、编码纪律和自检由模型与当前规则直接完成。
 
 ## 使用方式
 
@@ -15,7 +15,7 @@
 - Git 授权、敏感文件、worktree、发布、discard 和完成报告规则全部引用 `AGENTS.md`，不得在本文件另写不同口径。
 - `S/M/L` 仅作治理分级，不承担 bridge 执行职责。
 - Git commit 与 PR 的语言与格式遵循 `docs/当前规则/20-Git与高危操作.md`，不在本文件另写口径。
-- 长任务按阶段拆分；每阶段完成后先自检，再使用子智能体审查，通过后进入下一阶段。
+- 长任务按需要拆分阶段并逐段自检；不因任务规模自动派子智能体或设置 reviewer 门禁。
 
 ## 退役说明
 

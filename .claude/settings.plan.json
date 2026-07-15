@@ -9,6 +9,7 @@
       "Bash(*)",
       "PowerShell",
       "PowerShell(*)",
+      "Agent(general-purpose)",
       "Edit(/**)",
       "Write(/**)",
       "Read(**/.env)",
