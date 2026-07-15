@@ -40,7 +40,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlparse
 
 import psutil
@@ -49,6 +49,7 @@ import urllib3
 import win32gui
 from PIL import Image, ImageDraw, ImageTk
 
+from hextech.client_context import ClientContextProvider, parse_client_context
 from hextech.overlay import context as overlay_context
 from hextech.overlay.gameflow import probe_lcu_gameflow_in_progress, probe_live_client_in_progress
 from hextech.overlay.window import find_lol_game_window, is_window_renderable
@@ -332,12 +333,142 @@ class RuntimeSupervisorHandle:
             self.job_object.close()
 
 
+@dataclass
+class DataServiceHandle:
+    """桌面持有的独立 DataService 进程与本机控制面。"""
+
+    process: subprocess.Popen
+    port: int
+    session_nonce: str
+    pid: int
+    job_object: _WindowsJobObject | None = None
+
+    def poll(self) -> int | None:
+        """把受管子进程状态暴露给 ServiceManager。"""
+
+        return self.process.poll()
+
+    def close_exited_resources(self) -> bool:
+        """仅在子进程已经退出后关闭管道和 Windows Job Object。"""
+
+        if self.process.poll() is None:
+            return False
+        for stream in (self.process.stdout, self.process.stderr):
+            try:
+                if stream is not None:
+                    stream.close()
+            except OSError:
+                pass
+        if self.job_object is not None:
+            self.job_object.close()
+            self.job_object = None
+        return True
+
+    def _headers(self) -> dict[str, str]:
+        return {"Host": "127.0.0.1", "X-Hextech-Data-Service-Nonce": self.session_nonce}
+
+    def get_status(self) -> dict:
+        response = requests.get(f"http://127.0.0.1:{self.port}/v1/status", headers=self._headers(), timeout=2)
+        response.raise_for_status()
+        return response.json()
+
+    def refresh(self) -> dict:
+        response = requests.post(
+            f"http://127.0.0.1:{self.port}/v1/actions/refresh", headers=self._headers(), timeout=2
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _wait_for_action(self, action_id: str, *, timeout: float | None) -> dict:
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        while deadline is None or time.monotonic() < deadline:
+            status = self.get_status()
+            actions = status.get("actions")
+            action = actions.get(action_id) if isinstance(actions, dict) else None
+            if not isinstance(action, dict):
+                last_action = status.get("last_action")
+                action = last_action if isinstance(last_action, dict) and last_action.get("action_id") == action_id else None
+            if isinstance(action, dict):
+                result = action.get("result")
+                return dict(result) if isinstance(result, dict) else {"state": "failed", "reason_code": "missing_result"}
+            if self.process.poll() is not None:
+                raise RuntimeError(f"DataService action 执行期间退出：code={self.process.returncode}")
+            time.sleep(0.2)
+        raise TimeoutError(f"DataService action 超时：action_id={action_id}")
+
+    def set_private_stats(self, enabled: bool, *, timeout: float | None = None) -> dict:
+        """等待同一策略 action 到终态，避免超时回滚后 action 又反向发布。"""
+
+        response = requests.post(
+            f"http://127.0.0.1:{self.port}/v1/actions/set-private-stats",
+            headers=self._headers(),
+            json={"enabled": bool(enabled)},
+            timeout=2,
+        )
+        response.raise_for_status()
+        accepted = response.json()
+        action_id = str(accepted.get("action_id") or "")
+        if not action_id:
+            raise RuntimeError(str(accepted.get("reason_code") or "DataService action 未受理"))
+        return self._wait_for_action(action_id, timeout=timeout)
+
+    def stop(self, timeout: float = 5.0) -> None:
+        try:
+            requests.post(f"http://127.0.0.1:{self.port}/v1/shutdown", headers=self._headers(), timeout=1)
+        except Exception:
+            logger.debug("DataService shutdown API 未响应，改用进程终止。", exc_info=True)
+        if self.process.poll() is None:
+            try:
+                self.process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=timeout)
+        self.close_exited_resources()
+
+
 def _hidden_startupinfo():
     if os.name != "nt":
         return None
     startupinfo = subprocess.STARTUPINFO()
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     return startupinfo
+
+
+def _drain_process_stream(
+    stream,
+    *,
+    bootstrap_queue: queue.Queue[str] | None = None,
+    tail: list[str] | None = None,
+) -> None:
+    """持续消费子进程文本管道，避免刷新日志填满 Windows pipe。"""
+
+    bootstrap_pending = bootstrap_queue is not None
+    try:
+        while True:
+            raw_line = stream.readline()
+            if not raw_line:
+                return
+            line = raw_line.rstrip("\r\n")
+            if bootstrap_pending and line:
+                bootstrap_pending = False
+                try:
+                    bootstrap_queue.put_nowait(line)
+                except queue.Full:
+                    pass
+                continue
+            if tail is not None and line:
+                tail.append(line)
+                del tail[:-20]
+    except (OSError, ValueError):
+        return
+
+
+def _pipe_tail_text(lines: list[str]) -> str:
+    return "\n".join(lines)[-500:]
 
 
 def start_runtime_supervisor_process(
@@ -367,26 +498,28 @@ def start_runtime_supervisor_process(
     deadline = time.time() + float(timeout)
     line = ""
     line_queue: queue.Queue[str] = queue.Queue(maxsize=1)
-
-    def _read_bootstrap_line() -> None:
-        if process.stdout is None:
-            return
-        try:
-            value = process.stdout.readline().strip()
-        except Exception:
-            value = ""
-        if value:
-            try:
-                line_queue.put_nowait(value)
-            except queue.Full:
-                pass
-
-    threading.Thread(target=_read_bootstrap_line, name="hextech-supervisor-bootstrap", daemon=True).start()
+    stdout_tail: list[str] = []
+    stderr_tail: list[str] = []
+    if process.stdout is not None:
+        threading.Thread(
+            target=_drain_process_stream,
+            kwargs={"stream": process.stdout, "bootstrap_queue": line_queue, "tail": stdout_tail},
+            name="hextech-supervisor-stdout",
+            daemon=True,
+        ).start()
+    if process.stderr is not None:
+        threading.Thread(
+            target=_drain_process_stream,
+            kwargs={"stream": process.stderr, "tail": stderr_tail},
+            name="hextech-supervisor-stderr",
+            daemon=True,
+        ).start()
     try:
         while time.time() < deadline:
             if process.poll() is not None:
-                stderr = process.stderr.read() if process.stderr else ""
-                raise RuntimeError(f"Runtime Supervisor 提前退出：code={process.returncode}; stderr={stderr[-500:]}")
+                raise RuntimeError(
+                    f"Runtime Supervisor 提前退出：code={process.returncode}; stderr={_pipe_tail_text(stderr_tail)}"
+                )
             try:
                 line = line_queue.get(timeout=0.05)
                 break
@@ -413,6 +546,86 @@ def start_runtime_supervisor_process(
             except subprocess.TimeoutExpired:
                 process.kill()
         raise
+
+
+def start_data_service_process(
+    *,
+    parent_pid: int | None = None,
+    timeout: float = 15.0,
+    force_initial_refresh: bool = False,
+) -> DataServiceHandle:
+    """启动独立 DataService；bootstrap 后真实刷新在其后台线程继续。"""
+
+    parent = int(parent_pid or os.getpid())
+    command = (
+        [sys.executable, "--data-service", "--parent-pid", str(parent)]
+        if getattr(sys, "frozen", False)
+        else [sys.executable, "-m", "hextech.data_service", "--parent-pid", str(parent)]
+    )
+    if force_initial_refresh:
+        command.append("--force-initial-refresh")
+    process = subprocess.Popen(
+        command,
+        cwd=BASE_DIR,
+        startupinfo=_hidden_startupinfo(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+    )
+    deadline = time.time() + timeout
+    line = ""
+    line_queue: queue.Queue[str] = queue.Queue(maxsize=1)
+    stdout_tail: list[str] = []
+    stderr_tail: list[str] = []
+    if process.stdout is not None:
+        threading.Thread(
+            target=_drain_process_stream,
+            kwargs={"stream": process.stdout, "bootstrap_queue": line_queue, "tail": stdout_tail},
+            name="hextech-data-stdout",
+            daemon=True,
+        ).start()
+    if process.stderr is not None:
+        threading.Thread(
+            target=_drain_process_stream,
+            kwargs={"stream": process.stderr, "tail": stderr_tail},
+            name="hextech-data-stderr",
+            daemon=True,
+        ).start()
+    try:
+        while time.time() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError(f"DataService 提前退出：code={process.returncode}; stderr={_pipe_tail_text(stderr_tail)}")
+            try:
+                line = line_queue.get(timeout=0.05)
+                break
+            except queue.Empty:
+                pass
+            time.sleep(0.05)
+        if not line:
+            raise TimeoutError("DataService bootstrap 超时")
+        payload = json.loads(line)
+        handle = DataServiceHandle(
+            process=process,
+            port=int(payload["port"]),
+            session_nonce=str(payload["session_nonce"]),
+            pid=int(payload["pid"]),
+        )
+        handle.job_object = _WindowsJobObject(process)
+        return handle
+    except Exception:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        raise
+
+
+def stop_data_service_process(handle: DataServiceHandle | None) -> None:
+    if handle is not None:
+        handle.stop()
 
 
 def stop_runtime_supervisor_process(handle: RuntimeSupervisorHandle | None) -> None:
@@ -572,22 +785,9 @@ def _append_unique_champion_id(target: list[str], value) -> None:
 
 def build_lcu_candidate_groups(payload: dict) -> dict[str, list[str]]:
     """从 LCU champ-select payload 生成桌面悬浮窗候选分组。"""
-
-    selected_ids: list[str] = []
-    bench_ids: list[str] = []
     if not isinstance(payload, dict):
-        return {"selected_champion_ids": selected_ids, "bench_champion_ids": bench_ids}
-    for player in payload.get("myTeam", []):
-        if isinstance(player, dict):
-            _append_unique_champion_id(selected_ids, player.get("championId"))
-    for champion in payload.get("benchChampions", []):
-        if isinstance(champion, dict):
-            _append_unique_champion_id(bench_ids, champion.get("championId"))
-    selected_set = set(selected_ids)
-    return {
-        "selected_champion_ids": selected_ids,
-        "bench_champion_ids": [champion_id for champion_id in bench_ids if champion_id not in selected_set],
-    }
+        return {"selected_champion_ids": [], "bench_champion_ids": []}
+    return parse_client_context(payload).candidate_groups()
 
 
 def _candidate_groups_to_id_set(candidate_groups: dict[str, list[str]]) -> set[str]:
@@ -610,6 +810,18 @@ def _get_lcu_champ_select_session(url: str, headers: dict[str, str]) -> requests
     )
 
 
+def _get_client_context_provider(ui: "HextechUI") -> ClientContextProvider:
+    provider = getattr(ui, "_client_context_provider", None)
+    if not isinstance(provider, ClientContextProvider):
+        provider = ClientContextProvider()
+        ui._client_context_provider = provider
+    return provider
+
+
+def _degraded_candidate_groups(ui: "HextechUI", error_code: str) -> dict[str, Any]:
+    return _get_client_context_provider(ui).unavailable(error_code).candidate_groups(include_roles=True)
+
+
 def poll_lcu_live_ids(ui: "HextechUI"):
     if not ui._lcu_port or not ui._lcu_token:
         port, token = scan_lcu_process()
@@ -617,7 +829,7 @@ def poll_lcu_live_ids(ui: "HextechUI"):
         if parsed_port is None or not token:
             ui._lcu_port = None
             ui._lcu_token = None
-            return None
+            return _degraded_candidate_groups(ui, "client_not_found")
         ui._lcu_port = parsed_port
         ui._lcu_token = token
 
@@ -625,7 +837,7 @@ def poll_lcu_live_ids(ui: "HextechUI"):
     if current_port is None:
         ui._lcu_port = None
         ui._lcu_token = None
-        return None
+        return _degraded_candidate_groups(ui, "invalid_client_port")
 
     auth = base64.b64encode(f"riot:{ui._lcu_token}".encode()).decode()
     headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
@@ -638,39 +850,31 @@ def poll_lcu_live_ids(ui: "HextechUI"):
     except requests.exceptions.RequestException:
         ui._lcu_port = None
         ui._lcu_token = None
-        return None
+        return _degraded_candidate_groups(ui, "request_failed")
 
     if res.status_code == 404:
         _write_overlay_context_from_live_state(ui, {"local_champion_id": 0}, source="lcu")
-        return {"selected_champion_ids": [], "bench_champion_ids": []}
+        return _get_client_context_provider(ui).not_in_champ_select().candidate_groups(include_roles=True)
     if res.status_code in (401, 403):
         ui._lcu_port = None
         ui._lcu_token = None
-        return None
+        return _degraded_candidate_groups(ui, "authorization_failed")
     if res.status_code != 200:
         ui._lcu_port = None
-        return None
+        return _degraded_candidate_groups(ui, f"http_{res.status_code}")
 
     try:
         payload = res.json()
     except ValueError:
-        return None
+        return _degraded_candidate_groups(ui, "invalid_json")
 
-    candidate_groups = build_lcu_candidate_groups(payload)
-    available_ids = _candidate_groups_to_id_set(candidate_groups)
-    local_cell_id = payload.get("localPlayerCellId")
-    local_champion_id = None
-    for player in payload.get("myTeam", []):
-        if not isinstance(player, dict):
-            continue
-        if player.get("cellId") == local_cell_id and player.get("championId"):
-            local_champion_id = player.get("championId")
-            available_ids.add(str(local_champion_id))
-            break
+    client_context = _get_client_context_provider(ui).update(payload)
+    candidate_groups = client_context.candidate_groups(include_roles=True)
+    local_champion_id = candidate_groups.get("local_champion_id")
     if local_champion_id:
         _write_overlay_context_from_live_state(
             ui,
-            {"local_champion_id": local_champion_id},
+            {**candidate_groups, "local_champion_id": local_champion_id},
             source="lcu",
         )
     else:
@@ -854,6 +1058,13 @@ def _open_detail_fallback(web_base: str, champ_id, hero_name: str, en_name: str)
 def normalize_candidate_groups(candidate_groups) -> dict[str, list[str]]:
     """兼容旧 set/list 输入，并把候选分组收口到稳定 schema。"""
 
+    role_keys = {
+        "local_champion_id",
+        "teammate_champion_ids",
+        "context_phase",
+        "context_connection_state",
+        "context_error_code",
+    }
     if isinstance(candidate_groups, dict):
         selected = candidate_groups.get("selected_champion_ids") or candidate_groups.get("selected") or []
         bench = candidate_groups.get("bench_champion_ids") or candidate_groups.get("bench") or []
@@ -867,10 +1078,25 @@ def normalize_candidate_groups(candidate_groups) -> dict[str, list[str]]:
     for value in bench:
         _append_unique_champion_id(bench_ids, value)
     selected_set = set(selected_ids)
-    return {
+    normalized = {
         "selected_champion_ids": selected_ids,
         "bench_champion_ids": [champion_id for champion_id in bench_ids if champion_id not in selected_set],
     }
+    if isinstance(candidate_groups, dict) and role_keys.intersection(candidate_groups):
+        local_id = _clean_champion_id(candidate_groups.get("local_champion_id"))
+        teammate_ids: list[str] = []
+        for value in candidate_groups.get("teammate_champion_ids", []):
+            _append_unique_champion_id(teammate_ids, value)
+        normalized.update(
+            {
+                "local_champion_id": local_id,
+                "teammate_champion_ids": [value for value in teammate_ids if value != local_id],
+                "context_phase": str(candidate_groups.get("context_phase") or ""),
+                "context_connection_state": str(candidate_groups.get("context_connection_state") or ""),
+                "context_error_code": str(candidate_groups.get("context_error_code") or ""),
+            }
+        )
+    return normalized
 
 
 def _resolve_candidate_hero_names(ui: "HextechUI", candidate_groups) -> list[str]:
@@ -917,6 +1143,10 @@ def _fetch_web_live_state(ui: "HextechUI") -> tuple[dict[str, list[str]] | None,
         {
             "selected_champion_ids": payload.get("selected_champion_ids", []),
             "bench_champion_ids": payload.get("bench_champion_ids", payload.get("champion_ids", [])),
+            "local_champion_id": payload.get("local_champion_id", ""),
+            "teammate_champion_ids": payload.get("teammate_champion_ids", []),
+            "context_phase": payload.get("context_phase", ""),
+            "context_connection_state": payload.get("context_connection_state", ""),
         }
     )
     web_ids = _candidate_groups_to_id_set(candidate_groups)
@@ -986,6 +1216,10 @@ def _write_overlay_context_from_live_state(
         champion_id=champion_id,
         champion_name=champion_name,
         source=source,
+        teammate_champion_ids=payload.get("teammate_champion_ids", []),
+        bench_champion_ids=payload.get("bench_champion_ids", []),
+        phase=str(payload.get("context_phase") or ""),
+        connection_state=str(payload.get("context_connection_state") or ""),
     )
     try:
         overlay_context.write_overlay_context(context_payload, context_path)
@@ -1354,9 +1588,6 @@ def window_sync_loop(ui: "HextechUI") -> None:
 
     def _is_same_client_window(hwnd: int | None) -> bool:
         return bool(hwnd and last_client_hwnd and hwnd == last_client_hwnd)
-
-    def _overlay_active() -> bool:
-        return ui._window_visible and is_self_fg
 
     def _sync_for_client(hwnd_client: int | None, client_visible: bool, should_show_overlay: bool) -> None:
         if not client_visible or not hwnd_client:

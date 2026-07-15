@@ -963,21 +963,10 @@ def backup_active_csv_before_publish(output_csv: str) -> str:
 
 
 def rebuild_runtime_caches() -> None:
-    """新 CSV 发布后同步重建 Web 与 overlay 的运行缓存。"""
+    """新 CSV 发布后重建 DataService 内部兼容 Web cache；generation 由 DataService 发布。"""
 
     from hextech.catalog.precomputed_cache import rebuild_precomputed_api_cache_from_latest_csv
-    from hextech.core.settings import load_ui_feature_flags
-    from hextech.overlay.hints import build_overlay_hint_cache_from_precomputed, write_overlay_hint_cache
-
-    flags = load_ui_feature_flags()
-    include_private_stats = bool(flags.get("private_policy_stats_enabled", False))
     rebuild_precomputed_api_cache_from_latest_csv()
-    write_overlay_hint_cache(
-        build_overlay_hint_cache_from_precomputed(
-            include_private_stats=include_private_stats,
-            source_tag="runtime-refresh",
-        )
-    )
 
 
 def extract_champion_stats(

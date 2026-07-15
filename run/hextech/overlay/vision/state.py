@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from hextech.overlay.events import build_overlay_event
-from hextech.overlay.vision.matcher import SlotCandidate, candidate_from_slot, unknown_slot
+from hextech.overlay.vision.matcher import candidate_from_slot, unknown_slot
 
 
 SCENE_ENTER_FRAMES = 2  # 场景连续出现 N 帧后判定为"进入"
@@ -21,6 +21,7 @@ SCENE_EXIT_FRAMES = 2   # 场景连续消失 N 帧后判定为"退出"
 SLOT_COUNT = 3          # 海克斯三选一槽位数
 RESIDUE_HOLD_FRAMES = 2  # 普通残影只短暂沿用，避免选择结束后长时间残留
 HOVER_OCCLUDED_MAX_HOLD_FRAMES = 30  # 鼠标悬停遮挡只容忍有限帧，避免永久卡住
+SLOT_DETECTION_TIMEOUT_SECONDS = 3.0
 
 
 @dataclass
@@ -31,12 +32,14 @@ class _SlotTrack:
     candidate_frames: int = 0          # 同一候选连续出现帧数
     stable_slot: dict[str, Any] | None = None  # 已稳定确认的槽位输出
     weak_miss_frames: int = 0          # 候选丢失帧数（连续丢失 ≥ 2 帧则清空稳定输出）
+    detecting_since: float = 0.0       # 当前选择 epoch 内首次无稳定候选的时间
 
     def clear(self) -> None:
         self.candidate_identity = ""
         self.candidate_frames = 0
         self.stable_slot = None
         self.weak_miss_frames = 0
+        self.detecting_since = 0.0
 
 
 @dataclass
@@ -121,30 +124,60 @@ class SelectionTracker:
 
         候选判定三态：
         - candidate 为 None（识别失败）→ 增加 weak_miss，连续 ≥2 帧清空稳定输出
-        - candidate 与当前稳定输出不同 → 强候选（≤2 帧）立即撤旧等新确认；弱候选保留旧值并标记 stale_hold
+        - candidate 与当前稳定输出不同 → 立即撤旧并进入同一轮有界识别等待
         - candidate 与当前追踪一致 → 累加帧数，达到 required_frames 后锁定为稳定输出
         """
         track = self.slots[index]
+        now = time.monotonic()
         candidate = candidate_from_slot(raw_slot)
+
+        def failed_slot() -> dict[str, Any]:
+            raw_candidates = raw_slot.get("top_candidates") if isinstance(raw_slot.get("top_candidates"), list) else []
+            top_candidates = (
+                [dict(item) for item in candidate.top_candidates]
+                if candidate is not None
+                else [dict(item) for item in raw_candidates[:3] if isinstance(item, Mapping)]
+            )
+            confidence = candidate.confidence if candidate is not None else (
+                top_candidates[0].get("confidence") if top_candidates else None
+            )
+            return {
+                **unknown_slot(index, diagnostic="detection_timeout"),
+                "state": "failed",
+                "summary": "识别失败/重试",
+                "confidence": confidence,
+                "top_candidates": top_candidates,
+                "candidate_identity": candidate.identity if candidate is not None else "",
+                "rejection_reason": str(
+                    raw_slot.get("diagnostic")
+                    or raw_slot.get("reason")
+                    or (candidate.diagnostic if candidate is not None else "no_stable_candidate")
+                ),
+                "elapsed_seconds": round(now - track.detecting_since, 3),
+            }
+
         if candidate is None:
+            if track.detecting_since <= 0.0:
+                track.detecting_since = now
             track.candidate_identity = ""
             track.candidate_frames = 0
             track.weak_miss_frames += 1
             if track.weak_miss_frames >= 2:
                 track.stable_slot = None
-            return dict(track.stable_slot) if track.stable_slot is not None else unknown_slot(index)
+            if track.stable_slot is not None:
+                return dict(track.stable_slot)
+            if now - track.detecting_since >= SLOT_DETECTION_TIMEOUT_SECONDS:
+                return failed_slot()
+            return unknown_slot(index)
 
         identity = candidate.identity
-        stale_hold_identity = ""
         if track.stable_slot is not None:
             stable_identity = str(track.stable_slot.get("augment_id") or track.stable_slot.get("name") or "")
             if identity != stable_identity:
-                if candidate.required_frames <= 2:
-                    # 强新候选通常表示单槽重随；旧结果立即撤下，但新结果仍需稳定确认。
-                    track.stable_slot = None
-                else:
-                    # 弱/慢候选更替期间保留旧稳定槽位，但把 hold 原因写进诊断。
-                    stale_hold_identity = identity
+                # 单槽重随开始后旧结果已失效；候选身份抖动也不能重置三秒门槛。
+                track.stable_slot = None
+                if track.detecting_since <= 0.0:
+                    track.detecting_since = now
         track.weak_miss_frames = 0
         if identity == track.candidate_identity:
             track.candidate_frames += 1
@@ -153,16 +186,14 @@ class SelectionTracker:
             track.candidate_frames = 1
         if track.candidate_frames >= candidate.required_frames:
             track.stable_slot = candidate.ready_slot()
-            stale_hold_identity = ""
+            track.detecting_since = 0.0
         if track.stable_slot is None:
+            if track.detecting_since <= 0.0:
+                track.detecting_since = now
+            if now - track.detecting_since >= SLOT_DETECTION_TIMEOUT_SECONDS:
+                return failed_slot()
             return unknown_slot(index)
-        rendered_slot = dict(track.stable_slot)
-        if stale_hold_identity:
-            base_rule = str(rendered_slot.get("acceptance_rule") or "").strip()
-            rendered_slot["acceptance_rule"] = f"{base_rule}|stale_hold:{stale_hold_identity}" if base_rule else (
-                f"stale_hold:{stale_hold_identity}"
-            )
-        return rendered_slot
+        return dict(track.stable_slot)
 
     def _residue_event(self, source: Mapping[str, Any], *, hover_occluded: bool) -> dict[str, Any]:
         rendered_slots = [

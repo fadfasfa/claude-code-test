@@ -16,18 +16,22 @@
 | 桌面启动 | `hextech_ui.py` -> `hextech/display/desktop/app.py` |
 | Web 启动 | `web_server.py` -> `hextech/display/web/app.py` |
 | Runtime Supervisor | `hextech/runtime_supervisor.py` |
+| DataService / generation | `hextech/data_service.py`、`hextech/data_snapshot.py` |
+| 客户端上下文 | `hextech/client_context.py` |
 | Overlay 生命周期 | `hextech/overlay/lifecycle.py` |
 | Vision | `hextech/overlay/vision/` |
 | 后台刷新 | `hextech/core/refresh.py` |
 | 打包 | `.\.venv\Scripts\python.exe build.py` |
 | 自动化 | `.\.venv\Scripts\python.exe -m pytest -q` |
 | Overlay gate | `.\.venv\Scripts\python.exe tools/dev_checks.py --overlay-only --deep` |
+| 真实总验收 | `.\.venv\Scripts\python.exe tools/acceptance/verify_data_pipeline.py` |
 
 ## 稳定边界
 
 - 源码态只使用 `run/.venv` 的 Python 3.11；打包也从该环境运行。
 - 运行态统一写 `data/runtime/`；冻结态写 `%LOCALAPPDATA%/HextechNexus/data/runtime/`，不写便携包目录。
-- 网络抓取不阻塞桌面首屏、Web 本地可用或 Overlay fallback。
+- 网络抓取不阻塞桌面首屏或 Overlay；已有 generation 始终可读，缺失时明确显示数据准备状态。
 - `data/runtime/**`、日志、cache、profile、lock、debug 和抓取 raw 不进入发布资源。
+- 最终包只携带通过 manifest 校验的完整 generation seed，不携带抓取 raw 或普通运行态缓存。
 - 当前正式 Overlay 是 Python/Tk/Vision；Overwolf 不在生产链路。
 - 改路径、启动预算或进程所有权时，必须同步代码、测试和 `docs/system-design.md`。

@@ -9,7 +9,7 @@ import sys
 
 sys.dont_write_bytecode = True
 
-from hextech.support.python_runtime import ensure_python_311_for_source
+from hextech.support.python_runtime import ensure_python_311_for_source  # noqa: E402
 
 
 if __name__ == "__main__":
@@ -29,6 +29,11 @@ def main() -> None:
 
         args = [arg for arg in sys.argv[1:] if arg != "--runtime-supervisor"]
         raise SystemExit(run_runtime_supervisor(args))
+    elif "--data-service" in sys.argv:
+        from hextech.data_service import main as run_data_service
+
+        args = [arg for arg in sys.argv[1:] if arg != "--data-service"]
+        raise SystemExit(run_data_service(args))
     elif "--game-overlay" in sys.argv:
         # PR 走根目录薄壳避免冻结态依赖源码 .py 路径；main 合入 sidecar CLI 入口同步保留。
         from hextech.overlay.host import main as run_overlay_main

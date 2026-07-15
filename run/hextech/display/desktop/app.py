@@ -4,7 +4,7 @@
 后台线程、Web 协同、LCU 查询和头像下载等运行时细节委托给 `hextech.display.desktop.runtime`，
 以便在保持热路径聚合的前提下，让后续需求变更有明确落点。
 
-调用方: display.desktop.runtime、hextech_ui、tests.test_desktop_diagnostics_button; 关键依赖: catalog.runtime_store、core.settings、overlay.hints。
+调用方: display.desktop.runtime、hextech_ui、tests.test_desktop_diagnostics_button; 关键依赖: data_snapshot、core.settings、overlay.events。
 """
 
 import ctypes
@@ -182,13 +182,16 @@ class HextechUI:
         self.feature_flags = load_ui_feature_flags()
         self.web_process = None
         self.runtime_supervisor = None
+        self.data_service = None
         self.service_manager: ServiceManager | None = None
         self._service_manager_lock = threading.Lock()
         self._service_manager_shutdown_in_progress: ServiceManager | None = None
         self._service_manager_shutdown_completed: ServiceManager | None = None
         self.session = None
         self.core_data = {}
-        self._data_loader = None
+        self._snapshot_client = None
+        self._snapshot_generation_id = ""
+        self._snapshot_watch_started = False
         self.df = None
         self._runtime_services_ready = False
         self._post_visible_bootstrap_started = False
@@ -201,6 +204,7 @@ class HextechUI:
         self.image_cache = {}
         self._lcu_port = None
         self._lcu_token = None
+        self._client_context_provider = None
 
         self.last_click_time = 0
         self.img_write_lock = threading.Lock()
@@ -282,24 +286,33 @@ class HextechUI:
         service_manager = None
         try:
             self.startup_timing.mark("background_bootstrap_start")
-            from hextech.catalog.runtime_store import CachedDataFrameLoader, get_latest_csv
+            from hextech.data_snapshot import DataSnapshotClient
             from hextech.scraping.version_sync import ASSET_DIR, get_advanced_session, load_champion_core_data
             from .service_manager import ServiceManager
 
             if self._closing:
                 return
             os.makedirs(ASSET_DIR, exist_ok=True)
+            service_manager = ServiceManager(
+                start_web_func=self._spawn_web_process,
+                start_data_service_func=lambda: ui_runtime.start_data_service_process(parent_pid=os.getpid()),
+                stop_data_service_func=ui_runtime.stop_data_service_process,
+                manage_overlay_runtime=False,
+                listener_interval_seconds=3.0,
+            )
+            try:
+                self.data_service = service_manager.start_data_service()
+            except Exception:
+                self.data_service = None
+                logger.exception("DataService 启动失败，继续探测上一代本地快照。")
             self._start_runtime_supervisor(restore_persisted_game_overlay=False)
             self._run_on_ui_thread(self._activate_overlay_control_plane)
             if self._closing:
                 ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
                 self.runtime_supervisor = None
+                service_manager.shutdown()
+                self.data_service = None
                 return
-            service_manager = ServiceManager(
-                start_web_func=self._spawn_web_process,
-                manage_overlay_runtime=False,
-                listener_interval_seconds=3.0,
-            )
             service_manager.set_low_frequency_listener_enabled(
                 self.feature_flags.get("low_frequency_listener_enabled", True)
             )
@@ -311,7 +324,7 @@ class HextechUI:
 
             self.session = get_advanced_session()
             self.core_data = load_champion_core_data()
-            self._data_loader = CachedDataFrameLoader(get_latest_csv)
+            self._snapshot_client = DataSnapshotClient()
             loaded_df = self.load_data()
             self.startup_timing.mark("data_ready", rows=len(loaded_df))
         except Exception as exc:
@@ -432,13 +445,10 @@ class HextechUI:
         )
 
     def _prepare_overlay_hint_cache(self) -> None:
-        from hextech.overlay.hints import build_overlay_hint_cache_from_precomputed, write_overlay_hint_cache
+        """兼容旧调用点；共享数据只能由 DataService 发布。"""
 
-        cache_payload = build_overlay_hint_cache_from_precomputed(
-            include_private_stats=self.feature_flags.get("private_policy_stats_enabled", False),
-            source_tag="desktop-game-overlay",
-        )
-        write_overlay_hint_cache(cache_payload)
+        if self.data_service is not None:
+            self.data_service.refresh()
 
     def _start_web_server(self):
         """后台启动网页服务，避免阻塞界面线程。"""
@@ -1078,13 +1088,11 @@ class HextechUI:
         def worker() -> None:
             error: Exception | None = None
             try:
-                from hextech.overlay.hints import build_overlay_hint_cache_from_precomputed, write_overlay_hint_cache
-
-                cache_payload = build_overlay_hint_cache_from_precomputed(
-                    include_private_stats=desired_private_stats,
-                    source_tag="desktop-game-overlay",
-                )
-                write_overlay_hint_cache(cache_payload)
+                if self.data_service is None:
+                    raise RuntimeError("DataService 尚未就绪")
+                result = self.data_service.set_private_stats(desired_private_stats, timeout=None)
+                if result.get("state") not in {"ready", "degraded"}:
+                    raise RuntimeError(str(result.get("reason_code") or "DataService 更新失败"))
             except Exception as exc:
                 error = exc
 
@@ -1105,7 +1113,7 @@ class HextechUI:
         self._persist_feature_flags_from_controls()
 
     def check_and_sync_data(self):
-        logger.info("桌面启动自愈刷新已停用：refresh 由 Runtime Supervisor action 发起。")
+        logger.info("桌面不直接刷新数据：refresh 与 generation 发布由 DataService 负责。")
 
     def _set_status(self, text, color):
         if hasattr(self, "status_label") and self.status_label.winfo_exists():
@@ -1245,9 +1253,41 @@ class HextechUI:
         logger.info("兼容旧入口：桌面不再直接调用 refresh_backend_data。")
 
     def load_data(self):
-        if self._data_loader is None:
+        if self._snapshot_client is None:
             return _empty_dataframe()
-        return self._data_loader.get_df().copy()
+        try:
+            snapshot_view = self._snapshot_client.open_view()
+        except Exception:
+            return _empty_dataframe()
+        self._snapshot_generation_id = str(snapshot_view.status().get("generation_id") or "")
+        champions = snapshot_view.get_champions()
+        if not champions:
+            return _empty_dataframe()
+        import pandas as pd
+
+        return pd.DataFrame(champions)
+
+    def _snapshot_watch_loop(self) -> None:
+        """监视 DataService 原子指针，首代或新代发布后刷新桌面列表。"""
+
+        while not self.stop_event.wait(1.0):
+            if self._snapshot_client is None:
+                continue
+            status = self._snapshot_client.status()
+            generation_id = str(status.get("generation_id") or "")
+            if not generation_id or generation_id == self._snapshot_generation_id:
+                continue
+            new_df = self.load_data()
+            if new_df.empty:
+                continue
+            with self._df_lock:
+                self.df = new_df
+
+            def refresh_ui() -> None:
+                self._set_status("统计快照已更新", UI_COLORS["green"])
+                self.update_ui(self.current_candidate_groups)
+
+            self._run_on_ui_thread(refresh_ui)
 
     def on_hero_click(self, champ_id, hero_name):
         """处理英雄卡片点击，并触发终端输出与页面跳转。"""
@@ -1267,6 +1307,13 @@ class HextechUI:
             return {
                 "selected_champion_ids": [str(value) for value in selected if str(value or "").strip()],
                 "bench_champion_ids": [str(value) for value in bench if str(value or "").strip()],
+                "local_champion_id": str(hero_ids.get("local_champion_id") or "").strip(),
+                "teammate_champion_ids": [
+                    str(value) for value in hero_ids.get("teammate_champion_ids", []) if str(value or "").strip()
+                ],
+                "context_phase": str(hero_ids.get("context_phase") or ""),
+                "context_connection_state": str(hero_ids.get("context_connection_state") or ""),
+                "context_error_code": str(hero_ids.get("context_error_code") or ""),
             }
         values = list(hero_ids or [])
         return {
@@ -1306,6 +1353,8 @@ class HextechUI:
 
         display_list: list[dict] = []
         seen: set[str] = set()
+        local_id = candidate_groups.get("local_champion_id", "")
+        teammate_ids = set(candidate_groups.get("teammate_champion_ids", []))
         for group_name in ("selected_champion_ids", "bench_champion_ids"):
             for hero_id in candidate_groups[group_name]:
                 if hero_id in seen:
@@ -1313,7 +1362,11 @@ class HextechUI:
                 item = rows_by_id.get(hero_id)
                 if item:
                     seen.add(hero_id)
-                    display_list.append(dict(item))
+                    display_item = dict(item)
+                    display_item["selection_role"] = (
+                        "self" if hero_id == local_id else "teammate" if hero_id in teammate_ids else "bench"
+                    )
+                    display_list.append(display_item)
         return sorted(display_list, key=lambda item: item["win"], reverse=True)
 
     def update_ui(self, hero_ids):
@@ -1330,26 +1383,55 @@ class HextechUI:
                 current_df = self.df
                 is_empty = current_df is None or current_df.empty
 
-            if not hero_ids or is_empty:
+            candidate_groups = self._candidate_groups_from_input(hero_ids)
+            has_candidates = any(candidate_groups.get(key) for key in ("selected_champion_ids", "bench_champion_ids"))
+            connection = str(candidate_groups.get("context_connection_state") or "")
+            phase = str(candidate_groups.get("context_phase") or "")
+            if not hero_ids or not has_candidates:
+                if connection == "disconnected":
+                    empty_message = "未连接客户端"
+                elif phase == "champ_select":
+                    empty_message = "当前没有备战席英雄"
+                else:
+                    empty_message = "尚未进入选人"
+            elif is_empty:
+                empty_message = "已取得英雄，统计快照加载中"
+            else:
+                empty_message = ""
+            if empty_message:
                 tk.Label(
                     self.list_frame,
-                    text="当前没有可用英雄，或数据仍在同步中...",
+                    text=empty_message,
                     fg=UI_COLORS["warn"],
                     bg=UI_COLORS["base"],
                     font=("Microsoft YaHei", 9),
                 ).pack(pady=20)
                 return
 
-            self.status_label.config(text="实时数据已挂载", fg=UI_COLORS["green"])
+            if connection == "degraded":
+                self.status_label.config(text="客户端连接暂时中断，保留最近选择", fg=UI_COLORS["warn"])
+            else:
+                self.status_label.config(text="实时数据已挂载", fg=UI_COLORS["green"])
 
             display_list = self._build_candidate_display_list(hero_ids, current_df)
+            if not display_list:
+                tk.Label(
+                    self.list_frame,
+                    text="当前数据集中缺少对应英雄",
+                    fg=UI_COLORS["warn"],
+                    bg=UI_COLORS["base"],
+                    font=("Microsoft YaHei", 9),
+                ).pack(pady=20)
+                return
 
             for item in display_list:
+                role = item.get("selection_role", "bench")
+                role_color = "#22D3EE" if role == "self" else "#F59E0B" if role == "teammate" else UI_COLORS["border"]
                 card = tk.Frame(
                     self.list_frame,
                     bg=UI_COLORS["surface"],
                     highlightthickness=1,
-                    highlightbackground=UI_COLORS["border"],
+                    highlightbackground=role_color,
                     pady=3,
                     padx=4,
                     cursor="hand2",
@@ -1367,7 +1449,10 @@ class HextechUI:
                     highlightbackground=UI_COLORS["gold"],
                 )
                 img_label.pack(side=tk.LEFT, padx=(0, 8))
-                threading.Thread(target=lambda i=item["id"], l=img_label: self._load_and_set_img(i, l), daemon=True).start()
+                threading.Thread(
+                    target=lambda champion_id=item["id"], label=img_label: self._load_and_set_img(champion_id, label),
+                    daemon=True,
+                ).start()
 
                 # 折叠态只渲染头像 + T 级标签，省掉胜率/出场率/胜率条
                 if self._collapsed:
@@ -1378,6 +1463,15 @@ class HextechUI:
                         fg=UI_COLORS["text"],
                         bg=UI_COLORS["surface"],
                     ).pack(side=tk.LEFT)
+                    if role in {"self", "teammate"}:
+                        tk.Label(
+                            card,
+                            text="我" if role == "self" else "队友",
+                            font=("Microsoft YaHei", 7, "bold"),
+                            fg="#062A30" if role == "self" else "#2D1B00",
+                            bg=role_color,
+                            padx=3,
+                        ).pack(side=tk.RIGHT)
 
                     def bind_collapsed_click(widget, cid, name):
                         widget.bind("<Button-1>", lambda e, c=cid, n=name: self.on_hero_click(c, n))
@@ -1393,13 +1487,25 @@ class HextechUI:
                 title = self.core_data.get(str(item["id"]), {}).get("title", "")
                 full_name = f"{item['name']} {title}".strip() if title else item["name"]
 
+                title_row = tk.Frame(info, bg=UI_COLORS["surface"])
+                title_row.pack(fill=tk.X)
                 tk.Label(
-                    info,
+                    title_row,
                     text=f"[{item['tier']}] {full_name}",
                     font=("Microsoft YaHei", 9, "bold"),
                     fg=UI_COLORS["text"],
                     bg=UI_COLORS["surface"],
-                ).pack(anchor="w")
+                ).pack(side=tk.LEFT, anchor="w")
+                if role in {"self", "teammate"}:
+                    tk.Label(
+                        title_row,
+                        text="我的英雄" if role == "self" else "队友已选",
+                        font=("Microsoft YaHei", 8, "bold"),
+                        fg="#062A30" if role == "self" else "#2D1B00",
+                        bg=role_color,
+                        padx=5,
+                        pady=0,
+                    ).pack(side=tk.RIGHT)
                 tk.Label(
                     info,
                     text=f"胜率: {item['win']:.1%} | 出场: {item['pick']:.1%}",
@@ -1510,9 +1616,12 @@ class HextechUI:
         self._show_overlay(topmost=True)
 
     def start_background_scraper(self):
-        """兼容旧入口；后台刷新由 Runtime Supervisor 唯一发起。"""
+        """启动 generation 只读 watcher；抓取和发布仍只由 DataService 执行。"""
 
-        logger.info("桌面后台刷新线程已停用：refresh 由 Runtime Supervisor 统一发起。")
+        if self._snapshot_watch_started:
+            return
+        self._snapshot_watch_started = True
+        self._start_tracked_thread(self._snapshot_watch_loop, name="hextech-desktop-snapshot-watch")
 
     def on_close(self):
         print("\n[System] 收到退出信号，正在等待数据安全落盘...")
@@ -1548,6 +1657,7 @@ class HextechUI:
         if self._supervisor_lease_thread is not None and self._supervisor_lease_thread.is_alive():
             self._supervisor_lease_thread.join(timeout=2)
         ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
+        self.data_service = None
         self.root.destroy()
 
 

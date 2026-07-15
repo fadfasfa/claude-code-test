@@ -60,9 +60,9 @@ def _find_python_311_creator() -> list[str]:
 
 
 def _install_dependencies(venv_python: Path) -> None:
-    requirements = RUN_DIR / "requirements.txt"
+    requirements = RUN_DIR / "tools" / "requirements" / "compat.txt"
     if not requirements.exists():
-        raise SystemExit(f"缺少 requirements.txt：{requirements}")
+        raise SystemExit(f"缺少 tools/requirements/compat.txt：{requirements}")
     _run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip"])
     _run([str(venv_python), "-m", "pip", "install", "-r", str(requirements)])
 

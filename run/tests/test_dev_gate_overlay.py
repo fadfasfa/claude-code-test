@@ -84,9 +84,12 @@ def test_overlay_hint_cache_contract() -> None:
     import hextech.overlay.hints as overlay_hint_cache
     import hextech.overlay.events as overlay_event_channel
     import hextech.overlay.renderer as overlay_renderer
-    import hextech.core.settings as core_settings
     import hextech.catalog.precomputed_cache as precomputed_cache
     import hextech.scraping.augment_catalog as augment_catalog
+
+    host_parser = __import__("hextech.overlay.host", fromlist=["build_parser"]).build_parser()
+    acceptance_args = host_parser.parse_args(["--acceptance-screenshot", "overlay.png"])
+    assert acceptance_args.acceptance_screenshot == Path("overlay.png")
 
     sample_payload = {
         "德玛西亚之力": {
@@ -249,34 +252,21 @@ def test_overlay_hint_cache_contract() -> None:
         assert overlay_hint_cache._load_synergy_by_augment_name(damaged_syn) == {}
         assert overlay_hint_cache._load_synergy_by_augment_name(Path(tmp_dir) / "missing.json") == {}
 
-    captured_refresh_kwargs: list[dict[str, Any]] = []
     with (
-        patch.object(core_settings, "load_ui_feature_flags", return_value={"private_policy_stats_enabled": True}),
-        patch.object(precomputed_cache, "rebuild_precomputed_api_cache_from_latest_csv", return_value=None),
+        patch.object(precomputed_cache, "rebuild_precomputed_api_cache_from_latest_csv", return_value=None) as rebuild_web,
         patch.object(
             overlay_hint_cache,
             "build_overlay_hint_cache_from_precomputed",
-            side_effect=lambda **kwargs: captured_refresh_kwargs.append(dict(kwargs)) or {"hints": {}},
+            side_effect=AssertionError("scraper 不得直接构建 overlay hint cache"),
         ),
-        patch.object(overlay_hint_cache, "write_overlay_hint_cache", return_value=Path("cache.json")),
-    ):
-        hextech_scraper.rebuild_runtime_caches()
-    assert captured_refresh_kwargs[-1]["include_private_stats"] is True
-    assert captured_refresh_kwargs[-1]["source_tag"] == "runtime-refresh"
-
-    captured_refresh_kwargs.clear()
-    with (
-        patch.object(core_settings, "load_ui_feature_flags", return_value={"private_policy_stats_enabled": False}),
-        patch.object(precomputed_cache, "rebuild_precomputed_api_cache_from_latest_csv", return_value=None),
         patch.object(
             overlay_hint_cache,
-            "build_overlay_hint_cache_from_precomputed",
-            side_effect=lambda **kwargs: captured_refresh_kwargs.append(dict(kwargs)) or {"hints": {}},
+            "write_overlay_hint_cache",
+            side_effect=AssertionError("scraper 不得直接发布 overlay hint cache"),
         ),
-        patch.object(overlay_hint_cache, "write_overlay_hint_cache", return_value=Path("cache.json")),
     ):
         hextech_scraper.rebuild_runtime_caches()
-    assert captured_refresh_kwargs[-1]["include_private_stats"] is False
+    rebuild_web.assert_called_once_with()
 
     module_text = (RUN_DIR / "hextech" / "overlay" / "hints.py").read_text(encoding="utf-8")
     assert "requests" not in module_text
@@ -861,6 +851,7 @@ def test_overlay_context_contract() -> None:
                 "current_ids": set(web_runtime._lcu_state.current_ids),
                 "selected_ids": list(web_runtime._lcu_state.selected_ids),
                 "bench_ids": list(web_runtime._lcu_state.bench_ids),
+                "teammate_ids": list(web_runtime._lcu_state.teammate_ids),
                 "local_champ_id": web_runtime._lcu_state.local_champ_id,
                 "local_champ_name": web_runtime._lcu_state.local_champ_name,
                 "state_version": web_runtime._lcu_state.state_version,
@@ -875,6 +866,7 @@ def test_overlay_context_contract() -> None:
             web_runtime._lcu_state.current_ids = {"1", "2"}
             web_runtime._lcu_state.selected_ids = ["1"]
             web_runtime._lcu_state.bench_ids = ["2"]
+            web_runtime._lcu_state.teammate_ids = ["1"]
             web_runtime._lcu_state.local_champ_id = 266
             web_runtime._lcu_state.local_champ_name = "暗裔剑魔"
             web_runtime._lcu_state.state_version = 20
@@ -900,6 +892,7 @@ def test_overlay_context_contract() -> None:
             assert web_runtime._lcu_state.current_ids == set()
             assert web_runtime._lcu_state.selected_ids == []
             assert web_runtime._lcu_state.bench_ids == []
+            assert web_runtime._lcu_state.teammate_ids == []
             assert web_runtime._lcu_state.local_champ_id is None
             assert web_runtime._lcu_state.local_champ_name is None
             assert web_runtime._lcu_state.state_version == 11
@@ -908,14 +901,16 @@ def test_overlay_context_contract() -> None:
             web_runtime._lcu_state.current_ids = saved_lcu_state["current_ids"]
             web_runtime._lcu_state.selected_ids = saved_lcu_state["selected_ids"]
             web_runtime._lcu_state.bench_ids = saved_lcu_state["bench_ids"]
+            web_runtime._lcu_state.teammate_ids = saved_lcu_state["teammate_ids"]
             web_runtime._lcu_state.local_champ_id = saved_lcu_state["local_champ_id"]
             web_runtime._lcu_state.local_champ_name = saved_lcu_state["local_champ_name"]
             web_runtime._lcu_state.state_version = saved_lcu_state["state_version"]
             web_runtime._lcu_state.updated_at = saved_lcu_state["updated_at"]
 
         web_runtime_text = (RUN_DIR / "hextech" / "display" / "web" / "runtime.py").read_text(encoding="utf-8")
-        assert "cleared_local_champion = _clear_lcu_local_champion_state()" in web_runtime_text
-        assert "_clear_lcu_candidate_state(clear_local=True)" in web_runtime_text.rsplit("except Exception as exc:", 1)[1]
+        assert "_clear_lcu_local_champion_state()" in web_runtime_text
+        lcu_loop_text = web_runtime_text.split("async def lcu_polling_loop", 1)[1].split("async def csv_watcher_loop", 1)[0]
+        assert "_clear_lcu_candidate_state(clear_local=True)" in lcu_loop_text
 
         fetch_calls: list[tuple[str, dict[str, str]]] = []
 
@@ -2195,17 +2190,18 @@ def test_overlay_vision_sidecar_contract() -> None:
     assert dual_candidate.rule == "icon_shortlist_dual_font"
     assert dual_candidate.required_frames == 2
 
-    stale_hold_tracker = SelectionTracker(scene_enter_frames=1)
-    stale_hold_tracker.update(detection)
-    stable_before_weak_reroll = stale_hold_tracker.update(detection)
+    weak_reroll_tracker = SelectionTracker(scene_enter_frames=1)
+    weak_reroll_tracker.update(detection)
+    stable_before_weak_reroll = weak_reroll_tracker.update(detection)
     assert stable_before_weak_reroll["slots"][0]["augment_id"] == "augment_a"
     weak_reroll_event = dict(detection)
     weak_reroll_slot = json.loads(json.dumps(shortlist_temporal_slot, ensure_ascii=False))
     weak_reroll_slot["slot"] = 0
     weak_reroll_event["_raw_slots"] = [weak_reroll_slot, {}, {}]
-    stale_hold_event = stale_hold_tracker.update(weak_reroll_event)
-    assert stale_hold_event["slots"][0]["augment_id"] == "augment_a"
-    assert "stale_hold:" in stale_hold_event["_acceptance_rules"][0]
+    weak_reroll_pending = weak_reroll_tracker.update(weak_reroll_event)
+    assert weak_reroll_pending["slots"][0]["state"] == "detecting"
+    assert weak_reroll_pending["slots"][0]["augment_id"] == ""
+    assert "stale_hold:" not in weak_reroll_pending["_acceptance_rules"][0]
 
     conflict_shortlist_slot = json.loads(json.dumps(shortlist_temporal_slot, ensure_ascii=False))
     conflict_shortlist_slot["channels"]["icon"] = {
@@ -3149,6 +3145,16 @@ print(json.dumps(blocked))
     assert {row["stats_text"] for row in privacy_model["stats"]} == {"已开启隐私模式"}
     assert {row["status_code"] for row in privacy_model["stats"]} == {"PRIVACY_OFF"}
     assert {row["status_text"] for row in privacy_model["stats"]} == {"统计关闭"}
+    unavailable_cache = hint_cache()
+    unavailable_cache["snapshot"] = {"state": "unavailable", "generation_id": ""}
+    unavailable_model = overlay_renderer.build_render_model(snapshot, hint_cache=unavailable_cache, context=context)
+    assert {row["status_code"] for row in unavailable_model["stats"]} == {"DATA_NOT_READY"}
+    assert {row["status_text"] for row in unavailable_model["stats"]} == {"数据准备中"}
+    degraded_cache = hint_cache()
+    degraded_cache["snapshot"] = {"state": "degraded", "generation_id": "g0"}
+    degraded_model = overlay_renderer.build_render_model(snapshot, hint_cache=degraded_cache, context=context)
+    assert {row["status_code"] for row in degraded_model["stats"]} == {"GENERATION_DEGRADED"}
+    assert degraded_model["stats"][0]["stats_text"].startswith("上一代 · 胜率")
     context_missing_model = overlay_renderer.build_render_model(
         snapshot,
         hint_cache=hint_cache(),

@@ -9,13 +9,37 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pandas as pd
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
 RUN_ROOT = Path(__file__).resolve().parents[1]
+
+
+class _SnapshotView:
+    def __init__(self, status: dict, *, detail: dict | None = None, synergy: dict | None = None) -> None:
+        self._status = dict(status)
+        self._detail = detail
+        self._synergy = synergy or {}
+
+    def status(self) -> dict:
+        return dict(self._status)
+
+    def get_champion_detail(self, _name: str) -> dict | None:
+        return self._detail
+
+    def get_champion_augments(self, _name: str) -> list[dict]:
+        return list((self._detail or {}).get("augments", []))
+
+    def get_synergy_data(self) -> dict:
+        return dict(self._synergy)
+
+
+def _raise_snapshot_unavailable():
+    from hextech.data_snapshot import SnapshotValidationError
+
+    raise SnapshotValidationError("unavailable")
 
 
 def _client():
@@ -72,13 +96,10 @@ def test_public_hextech_get_does_not_trigger_rebuild_or_preload(monkeypatch):
         raise AssertionError("public GET must not start rebuild, warmup, or preload side effects")
 
     monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda name: "Garen")
-    monkeypatch.setattr(web_api.web_runtime, "get_preloaded_hextech_payload", lambda name: None)
-    monkeypatch.setattr(web_api.web_runtime, "get_preload_hextech_status", lambda name: {"pending": False})
     monkeypatch.setattr(web_api.web_runtime, "get_startup_status", lambda: {"hextech_ready": False})
-    monkeypatch.setattr(web_api, "is_precomputed_hextech_cache_loaded", lambda: False)
-    monkeypatch.setattr(web_api, "_request_precomputed_hextech_warm", fail_side_effect)
-    monkeypatch.setattr(web_api, "_request_precomputed_hextech_rebuild", fail_side_effect)
     monkeypatch.setattr(web_api.web_runtime, "request_preload_hextech_payload_async", fail_side_effect)
+    monkeypatch.setattr(web_api._snapshot_client, "status", lambda: {"state": "unavailable"})
+    monkeypatch.setattr(web_api._snapshot_client, "open_view", _raise_snapshot_unavailable)
 
     response = client.get("/api/champion/Garen/hextechs")
 
@@ -86,17 +107,17 @@ def test_public_hextech_get_does_not_trigger_rebuild_or_preload(monkeypatch):
     payload = response.json()
     assert payload["loading"] is True
     assert payload["ready"] is False
+    assert payload["status"] == "DATA_NOT_READY"
     assert payload["startup_status"] == {"hextech_ready": False}
-    assert payload["preload_status"] == {"pending": False}
+    assert payload["preload_status"] == {}
 
 
 def test_public_hextech_loading_payload_redacts_startup_status_paths(monkeypatch):
     client, web_api = _client()
 
     monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda name: "Garen")
-    monkeypatch.setattr(web_api.web_runtime, "get_preloaded_hextech_payload", lambda name: None)
-    monkeypatch.setattr(web_api.web_runtime, "get_preload_hextech_status", lambda name: {"pending": False})
-    monkeypatch.setattr(web_api, "is_precomputed_hextech_cache_loaded", lambda: False)
+    monkeypatch.setattr(web_api._snapshot_client, "status", lambda: {"state": "unavailable"})
+    monkeypatch.setattr(web_api._snapshot_client, "open_view", _raise_snapshot_unavailable)
     monkeypatch.setattr(
         web_api.web_runtime,
         "get_startup_status",
@@ -139,6 +160,44 @@ def test_public_hextech_loading_payload_redacts_startup_status_paths(monkeypatch
     assert "local.yaml" not in serialized
     assert "proxies.json" not in serialized
     assert "accounts.json" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("snapshot_status", "expected_status"),
+    [
+        ({"state": "ready", "generation_id": "g1", "private_stats_enabled": True}, "NO_STATS"),
+        ({"state": "ready", "generation_id": "g1", "private_stats_enabled": False}, "PRIVATE_STATS_DISABLED"),
+        ({"state": "degraded", "generation_id": "g0", "private_stats_enabled": True}, "GENERATION_DEGRADED"),
+    ],
+)
+def test_public_hextech_empty_states_are_not_conflated(monkeypatch, snapshot_status, expected_status):
+    client, web_api = _client()
+    monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda name: "Garen")
+    monkeypatch.setattr(web_api._snapshot_client, "status", lambda: snapshot_status)
+    monkeypatch.setattr(
+        web_api._snapshot_client,
+        "open_view",
+        lambda: _SnapshotView(snapshot_status),
+    )
+
+    payload = client.get("/api/champion/Garen/hextechs").json()
+
+    assert payload["status"] == expected_status
+    assert payload["generation_id"] == ("g1" if snapshot_status["state"] == "ready" else "g0")
+
+
+def test_private_stats_disabled_does_not_expose_published_detail(monkeypatch):
+    client, web_api = _client()
+    status = {"state": "ready", "generation_id": "g1", "private_stats_enabled": False}
+    view = _SnapshotView(status, detail={"augments": [{"id": "a1", "win_rate": 0.9}]})
+    monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda name: "Garen")
+    monkeypatch.setattr(web_api._snapshot_client, "open_view", lambda: view)
+
+    payload = client.get("/api/champion/Garen/hextechs").json()
+
+    assert payload["status"] == "PRIVATE_STATS_DISABLED"
+    assert payload["comprehensive"] == []
+    assert payload["generation_state"] == "ready"
 
 
 def test_detail_loading_branch_requests_authenticated_preload_from_page():
@@ -278,32 +337,19 @@ def test_uncatalogued_asset_get_redirects_without_queueing_cache_write(monkeypat
     assert queued == []
 
 
-def test_authenticated_preload_queues_missing_payload_assets(monkeypatch):
+def test_authenticated_preload_only_reads_snapshot_and_does_not_queue_assets(monkeypatch):
     from hextech.display.web import runtime
 
-    class InlineExecutor:
-        def submit(self, func, *args, **kwargs):
-            func(*args, **kwargs)
-            return None
-
     queued: list[tuple[str, str]] = []
-    runtime.clear_preloaded_hextech_payloads()
     monkeypatch.setattr(runtime, "resolve_canonical_hero_name", lambda _name: "Garen")
-    monkeypatch.setattr(runtime, "_get_runtime_df_signature", lambda: ("csv", 1.0))
-    monkeypatch.setattr(runtime, "get_df", lambda: pd.DataFrame([{"hero": "Garen"}]))
-    monkeypatch.setattr(runtime, "_get_preloaded_hextech_executor", lambda: InlineExecutor())
+    monkeypatch.setattr(runtime._snapshot_client, "status", lambda: {"state": "ready", "generation_id": "g1"})
     monkeypatch.setattr(
-        runtime,
-        "process_hextechs_data",
-        lambda *_args, **_kwargs: {
-            "comprehensive": [
-                {"海克斯名称": "测试海克斯", "icon": "/assets/mapped.png"},
-                {"海克斯名称": "远端图标", "icon": "https://example.test/remote.png"},
-            ],
-            "top_10_overall": [
-                {"海克斯名称": "测试海克斯", "icon": "/assets/mapped.png"},
-            ],
-        },
+        runtime._snapshot_client,
+        "open_view",
+        lambda: _SnapshotView(
+            {"state": "ready", "generation_id": "g1"},
+            detail={"augments": [{"id": "a1", "icon": "/assets/mapped.png"}]},
+        ),
     )
     monkeypatch.setattr(
         runtime,
@@ -311,12 +357,9 @@ def test_authenticated_preload_queues_missing_payload_assets(monkeypatch):
         lambda filename, name="": queued.append((filename, name)),
     )
 
-    try:
-        assert runtime.request_preload_hextech_payload_async("Garen") is True
-    finally:
-        runtime.clear_preloaded_hextech_payloads()
+    assert runtime.request_preload_hextech_payload_async("Garen") is True
 
-    assert queued == [("mapped.png", "测试海克斯")]
+    assert queued == []
 
 
 def test_synergy_api_distinguishes_empty_error_and_quarantined(monkeypatch):
@@ -325,7 +368,11 @@ def test_synergy_api_distinguishes_empty_error_and_quarantined(monkeypatch):
     monkeypatch.setattr(web_api.web_runtime, "resolve_champion_id", lambda champ_id: str(champ_id))
     monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda champ_id: str(champ_id))
 
-    monkeypatch.setattr(web_api.web_runtime, "get_synergy_data", lambda: {})
+    monkeypatch.setattr(
+        web_api._snapshot_client,
+        "open_view",
+        lambda: _SnapshotView({"state": "ready", "generation_id": "g1"}),
+    )
     empty = client.get("/api/synergies/86").json()
     assert empty["status"] == "empty"
     assert empty["synergy_items"] == []
@@ -333,7 +380,9 @@ def test_synergy_api_distinguishes_empty_error_and_quarantined(monkeypatch):
     def boom():
         raise RuntimeError("broken")
 
-    monkeypatch.setattr(web_api.web_runtime, "get_synergy_data", boom)
+    broken_view = _SnapshotView({"state": "ready", "generation_id": "g1"})
+    broken_view.get_synergy_data = boom
+    monkeypatch.setattr(web_api._snapshot_client, "open_view", lambda: broken_view)
     error = client.get("/api/synergies/86").json()
     assert error["status"] == "error"
     assert error["message"] == "协同数据读取失败"
@@ -352,72 +401,61 @@ def test_synergy_api_distinguishes_empty_error_and_quarantined(monkeypatch):
             ]
         },
     }
-    monkeypatch.setattr(web_api.web_runtime, "get_synergy_data", lambda: duplicated)
+    monkeypatch.setattr(
+        web_api._snapshot_client,
+        "open_view",
+        lambda: _SnapshotView({"state": "ready", "generation_id": "g1"}, synergy=duplicated),
+    )
     quarantined = client.get("/api/synergies/86").json()
     assert quarantined["status"] == "quarantined"
     assert quarantined["synergy_items"] == []
 
 
-def test_preload_worker_failure_is_visible_in_detail_loading_payload(monkeypatch):
+def test_web_runtime_has_no_detail_builder_or_preload_executor(monkeypatch):
     client, web_api = _client()
     runtime = web_api.web_runtime
-
-    class InlineExecutor:
-        def submit(self, func, *args, **kwargs):
-            func(*args, **kwargs)
-            return None
-
-    runtime.clear_preloaded_hextech_payloads()
     monkeypatch.setattr(runtime, "resolve_canonical_hero_name", lambda name: "Garen")
-    monkeypatch.setattr(runtime, "_get_runtime_df_signature", lambda: ("csv", 1.0))
-    monkeypatch.setattr(runtime, "get_df", lambda: pd.DataFrame([{"hero": "Garen"}]))
-    monkeypatch.setattr(runtime, "_get_preloaded_hextech_executor", lambda: InlineExecutor())
-
-    def fail_process(*_args, **_kwargs):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(runtime, "process_hextechs_data", fail_process)
     monkeypatch.setattr(runtime, "get_startup_status", lambda: {"hextech_ready": False})
-    monkeypatch.setattr(web_api, "is_precomputed_hextech_cache_loaded", lambda: False)
+    monkeypatch.setattr(web_api._snapshot_client, "status", lambda: {"state": "unavailable"})
+    monkeypatch.setattr(web_api._snapshot_client, "open_view", _raise_snapshot_unavailable)
+    monkeypatch.setattr(runtime._snapshot_client, "status", lambda: {"state": "unavailable"})
+    monkeypatch.setattr(runtime._snapshot_client, "open_view", _raise_snapshot_unavailable)
+    monkeypatch.setattr(runtime._snapshot_client, "get_champion_detail", lambda name: None)
 
-    try:
-        assert runtime.request_preload_hextech_payload_async("Garen") is True
-        response = client.get("/api/champion/Garen/hextechs")
-        payload = response.json()
-    finally:
-        runtime.clear_preloaded_hextech_payloads()
+    assert not hasattr(runtime, "process_hextechs_data")
+    assert not hasattr(runtime, "_get_preloaded_hextech_executor")
+    assert runtime.request_preload_hextech_payload_async("Garen") is False
+    response = client.get("/api/champion/Garen/hextechs")
+    payload = response.json()
 
     assert response.status_code == 200
     assert payload["loading"] is True
-    assert payload["preload_status"]["error"] == "preload_failed"
-    assert payload["preload_status"]["reason"] == "worker_exception"
-    assert payload["preload_status"]["last_error"] == "海克斯预加载失败"
+    assert payload["status"] == "DATA_NOT_READY"
+    assert payload["preload_status"] == {}
 
 
-def test_preloaded_hextech_payload_returns_unpolluted_copy(monkeypatch):
+def test_preloaded_compat_reader_returns_snapshot_copy(monkeypatch, tmp_path):
     from hextech.display.web import runtime
+    from hextech.data_snapshot import DataSnapshotClient, DataSnapshotPublisher
 
-    runtime.clear_preloaded_hextech_payloads()
+    DataSnapshotPublisher(tmp_path).publish(
+        {
+            "champions": [{"id": "86", "name": "Garen"}],
+            "champion_hextech": {"Garen": {"hero_id": "86", "augments": [{"id": "a1", "name": "original"}]}},
+            "overlay_hints": {"hints": {}, "augments": {}},
+            "identities": {"champions": {"86": "Garen"}, "augments": {}},
+        },
+        private_stats_enabled=True,
+    )
     monkeypatch.setattr(runtime, "resolve_canonical_hero_name", lambda name: "Garen")
-    monkeypatch.setattr(runtime, "_get_runtime_df_signature", lambda: ("csv", 1.0))
-    try:
-        with runtime._preloaded_hextech_lock:
-            runtime._preloaded_hextech_signature = ("csv", 1.0)
-            runtime._preloaded_hextech_payloads["Garen"] = {
-                "comprehensive": True,
-                "items": [{"name": "original"}],
-            }
-
-        first = runtime.get_preloaded_hextech_payload("Garen")
-        assert first is not None
-        first["items"][0]["name"] = "polluted"
-
-        second = runtime.get_preloaded_hextech_payload("Garen")
-    finally:
-        runtime.clear_preloaded_hextech_payloads()
+    monkeypatch.setattr(runtime, "_snapshot_client", DataSnapshotClient(tmp_path))
+    first = runtime.get_preloaded_hextech_payload("Garen")
+    assert first is not None
+    first["augments"][0]["name"] = "polluted"
+    second = runtime.get_preloaded_hextech_payload("Garen")
 
     assert second is not None
-    assert second["items"][0]["name"] == "original"
+    assert second["augments"][0]["name"] == "original"
 
 
 def test_redirect_invalid_champion_input_returns_400(monkeypatch):

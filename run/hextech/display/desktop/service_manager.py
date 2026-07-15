@@ -1,7 +1,7 @@
 """桌面端服务生命周期管理。
 
-本模块统一管理 Web 前端进程、游戏内 overlay host 进程、Vision sidecar 进程
-和低频 LoL 状态监听。它不做图像识别，只负责生命周期边界。
+本模块统一管理 DataService、Web 前端进程、游戏内 overlay host 进程、Vision
+sidecar 进程和低频 LoL 状态监听。它不做抓取或图像识别，只负责生命周期边界。
 
 调用方: display.desktop.app、tests.test_overlay_watchdog_contract、dev_checks; 关键依赖: core.settings、overlay.events、overlay.lifecycle。
 """
@@ -63,6 +63,9 @@ class ManagedService:
 
     def snapshot(self) -> dict[str, Any]:
         if self.status == "running" and not self.is_running():
+            close_exited_resources = getattr(self.process, "close_exited_resources", None)
+            if callable(close_exited_resources):
+                close_exited_resources()
             self.process = None
             self.mark("stopped")
         return {
@@ -80,6 +83,8 @@ class ServiceManager:
         self,
         *,
         start_web_func: ProcessFactory,
+        start_data_service_func: ProcessFactory | None = None,
+        stop_data_service_func: Callable[[Any], Any] | None = None,
         overlay_controller: GameOverlayController | None = None,
         start_overlay_func: ProcessFactory | None = None,
         start_vision_sidecar_func: ProcessFactory | None = None,
@@ -89,6 +94,8 @@ class ServiceManager:
         manage_overlay_runtime: bool = False,
     ) -> None:
         self._start_web_func = start_web_func
+        self._start_data_service_func = start_data_service_func
+        self._stop_data_service_func = stop_data_service_func
         self._manage_overlay_runtime = bool(manage_overlay_runtime)
         if not self._manage_overlay_runtime:
             overlay_controller = None
@@ -105,6 +112,7 @@ class ServiceManager:
             overlay_controller = GameOverlayController(**controller_kwargs)
         self._overlay_controller = overlay_controller
         self.web = ManagedService("web")
+        self.data_service = ManagedService("data_service")
         # 兼容桌面状态栏的字段访问；实际启停与回滚全部由 Controller 负责。
         self.game_overlay = ManagedService("game_overlay")
         self.vision_sidecar = ManagedService("vision_sidecar")
@@ -147,6 +155,58 @@ class ServiceManager:
                 self.web.process = None
                 self.web.mark("error", error=str(exc))
                 raise
+
+    def start_data_service(self) -> Any:
+        """启动唯一 DataService，并返回其本机控制面 handle。"""
+
+        with self._lock:
+            if self.data_service.is_running():
+                self.data_service.mark("running")
+                return self.data_service.process
+            stale_handle = self.data_service.process
+            if stale_handle is not None:
+                close_exited_resources = getattr(stale_handle, "close_exited_resources", None)
+                if callable(close_exited_resources):
+                    close_exited_resources()
+                self.data_service.process = None
+            if self._start_data_service_func is None:
+                raise RuntimeError("DataService 启动工厂未配置")
+            if self._shutdown_requested:
+                raise RuntimeError("ServiceManager 已进入关闭流程，拒绝启动 DataService")
+            self.data_service.mark("starting")
+            try:
+                self.data_service.process = self._start_process(
+                    self.data_service.name,
+                    self._start_data_service_func,
+                )
+                self.data_service.mark("running")
+                return self.data_service.process
+            except Exception as exc:
+                self.data_service.process = None
+                self.data_service.mark("error", error=str(exc))
+                raise
+
+    def stop_data_service(self) -> None:
+        with self._lock:
+            handle = self.data_service.process
+            if handle is None:
+                self.data_service.mark("stopped")
+                return
+            self.data_service.mark("stopping")
+            try:
+                if self._stop_data_service_func is not None:
+                    self._stop_data_service_func(handle)
+                else:
+                    stop = getattr(handle, "stop", None)
+                    if callable(stop):
+                        stop()
+                    else:
+                        self._stop_service(self.data_service)
+                        return
+                self.data_service.process = None
+                self.data_service.mark("stopped")
+            except Exception as exc:
+                self.data_service.mark("error", error=str(exc))
 
     def stop_web(self) -> None:
         with self._lock:
@@ -254,6 +314,7 @@ class ServiceManager:
                 "updated_at": time.time(),
             }
             return {
+                "data_service": self.data_service.snapshot(),
                 "web": self.web.snapshot(),
                 "game_overlay": overlay_snapshot,
                 "vision_sidecar": {
@@ -285,8 +346,11 @@ class ServiceManager:
             try:
                 self.stop_game_overlay()
             finally:
-                self.stop_web()
-                self._shutdown_done.set()
+                try:
+                    self.stop_web()
+                finally:
+                    self.stop_data_service()
+                    self._shutdown_done.set()
 
         self._shutdown_thread = threading.Thread(
             target=_stop_all,

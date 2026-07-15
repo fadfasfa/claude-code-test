@@ -92,7 +92,7 @@ def test_logging_contract() -> None:
             if original_profile is not None:
                 root_logger._hextech_runtime_logging_profile = original_profile  # type: ignore[attr-defined]
 
-    requirements = (RUN_DIR / "requirements.txt").read_text(encoding="utf-8")
+    requirements = (RUN_DIR / "tools" / "requirements" / "runtime.txt").read_text(encoding="utf-8")
     for dependency in (
         "requests>=2.32.3,<3",
         "scrapling[fetchers]>=0.4.8,<0.5",

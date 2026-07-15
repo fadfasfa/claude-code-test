@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from hextech.catalog.runtime_store import build_runtime_cache_path, build_runtime_state_path
-from hextech.overlay.hints import build_overlay_hint_cache_from_precomputed, write_overlay_hint_cache
 from hextech.scraping.synergy.mayhem_combo_scraper import scrape_mayhem_combos
 from hextech.support.atomic_io import atomic_write_json
 
@@ -149,8 +148,7 @@ def _failure_status(
 
 
 def _rebuild_overlay_hint_cache() -> None:
-    cache_payload = build_overlay_hint_cache_from_precomputed(source_tag="mayhem-refresh")
-    write_overlay_hint_cache(cache_payload)
+    """兼容旧注入点；generation 只由 DataService 在完整构建后发布。"""
 
 
 def run_mayhem_refresh(

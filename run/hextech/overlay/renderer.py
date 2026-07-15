@@ -59,6 +59,9 @@ class CanvasLike(Protocol):
 StatStatusCode = Literal[
     "READY",
     "DETECTING",
+    "DETECTION_FAILED",
+    "DATA_NOT_READY",
+    "GENERATION_DEGRADED",
     "PRIVACY_OFF",
     "NO_STATS",
     "CONTEXT_MISSING",
@@ -245,6 +248,10 @@ def _stats_display(
     hint_cache: Mapping[str, Any] | None,
     context: Mapping[str, Any] | None,
 ) -> tuple[str, StatStatusCode, str, str, str]:
+    snapshot_status = hint_cache.get("snapshot") if isinstance(hint_cache, Mapping) else None
+    snapshot_state = str(snapshot_status.get("state") or "") if isinstance(snapshot_status, Mapping) else ""
+    if snapshot_state == "unavailable":
+        return "统计数据准备中", "DATA_NOT_READY", "", "", "数据准备中"
     source = hint_cache.get("source") if isinstance(hint_cache, Mapping) else None
     if not (isinstance(source, Mapping) and source.get("private_policy_stats_enabled") is True):
         return "已开启隐私模式", "PRIVACY_OFF", "", "", "统计关闭"
@@ -261,6 +268,8 @@ def _stats_display(
     text = _format_stats_entry(stats)
     if not (winrate and pickrate):
         return text or "暂无该英雄统计", "NO_STATS", "", "", "暂无统计"
+    if snapshot_state == "degraded":
+        return f"上一代 · {text}", "GENERATION_DEGRADED", winrate, pickrate, "上一代数据"
     return text, "READY", winrate, pickrate, ""
 
 
@@ -331,14 +340,19 @@ def build_render_model(
                 hint_cache,
                 context,
             )
+        elif state == "failed":
+            stats_text, status_code = "识别失败/重试", "DETECTION_FAILED"
+            winrate_text, pickrate_text, status_text = "", "", "识别失败/重试"
         else:
             stats_text, status_code = "识别中…", "DETECTING"
             winrate_text, pickrate_text, status_text = "", "", "识别中…"
-        has_current_stats = status_code == "READY"
+        has_current_stats = status_code in {"READY", "GENERATION_DEGRADED"}
         stats.append(
             {
                 "slot": index,
-                "state": ("matched" if has_current_stats else "missing_stats") if ready else "detecting",
+                "state": ("matched" if has_current_stats else "missing_stats") if ready else (
+                    "failed" if state == "failed" else "detecting"
+                ),
                 "name": name,
                 "tier": tier,
                 "stats_text": stats_text,
@@ -665,11 +679,14 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
     value_size = _clamp(13, height * 0.29, 18)
     status_size = _clamp(10, height * 0.22, 15)
     font_family = "Microsoft YaHei UI"
-    if row["status_code"] != "READY":
+    if row["status_code"] not in {"READY", "GENERATION_DEGRADED"}:
         status_colors = {
             "DETECTING": OVERLAY_THEME["highlight_cyan"],
+            "DETECTION_FAILED": OVERLAY_THEME["stat_value"],
             "PRIVACY_OFF": OVERLAY_THEME["text_secondary"],
             "NO_STATS": OVERLAY_THEME["text_muted"],
+            "DATA_NOT_READY": OVERLAY_THEME["text_secondary"],
+            "GENERATION_DEGRADED": OVERLAY_THEME["stat_value"],
             "CONTEXT_MISSING": OVERLAY_THEME["highlight_cyan"],
             "CONTEXT_EXPIRED": OVERLAY_THEME["highlight_cyan"],
         }

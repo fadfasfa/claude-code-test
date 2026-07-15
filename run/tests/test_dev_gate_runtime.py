@@ -422,6 +422,10 @@ def test_precomputed_cache_returns_unpollutable_copies() -> None:
             champions[0]["stats"]["wins"] = 999
             assert precomputed_cache.load_precomputed_champion_list()[0]["stats"]["wins"] == 1
 
+            hextech_map = precomputed_cache.load_precomputed_hextech_map()
+            hextech_map["酒桶"]["comprehensive"][0]["score"]["value"] = 999
+            assert precomputed_cache.load_precomputed_hextech_map()["酒桶"]["comprehensive"][0]["score"]["value"] == 1
+
             hero_payload = precomputed_cache.load_precomputed_hextech_for_hero("酒桶")
             hero_payload["comprehensive"][0]["score"]["value"] = 999
             fresh_payload = precomputed_cache.load_precomputed_hextech_for_hero("酒桶")
@@ -706,7 +710,8 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert hasattr(ui_runtime, "open_companion_browser")
     assert hasattr(ui_runtime, "close_companion_browser")
     private_toggle_body = ui_text.split("    def _toggle_private_policy_stats", 1)[1].split("    def _toggle_low_frequency_listener", 1)[0]
-    assert "build_overlay_hint_cache_from_precomputed" in private_toggle_body
+    assert "self.data_service.set_private_stats" in private_toggle_body
+    assert "build_overlay_hint_cache_from_precomputed" not in private_toggle_body
     assert "desired_private_stats = bool(self.private_stats_var.get())" in private_toggle_body
     assert "self._persist_feature_flags_from_controls()" in private_toggle_body
     assert "save_ui_feature_flags(desired_flags)" not in private_toggle_body
@@ -769,6 +774,8 @@ def test_desktop_ui_feature_switch_contract() -> None:
     candidate_groups = {
         "selected_champion_ids": ["1", "2", "3", "4", "5"],
         "bench_champion_ids": ["6", "7", "8", "9", "10"],
+        "local_champion_id": "2",
+        "teammate_champion_ids": ["1", "3", "4", "5"],
     }
     candidate_df = pd.DataFrame(
         [
@@ -791,4 +798,21 @@ def test_desktop_ui_feature_switch_contract() -> None:
     dummy_ui._candidate_groups_from_input = desktop_app.HextechUI._candidate_groups_from_input.__get__(dummy_ui)
     display_list = desktop_app.HextechUI._build_candidate_display_list(dummy_ui, candidate_groups, candidate_df)
     assert [item["id"] for item in display_list] == ["6", "8", "2", "4", "9", "3", "5", "7", "10", "1"]
+    assert next(item for item in display_list if item["id"] == "2")["selection_role"] == "self"
+    assert next(item for item in display_list if item["id"] == "4")["selection_role"] == "teammate"
+    assert next(item for item in display_list if item["id"] == "6")["selection_role"] == "bench"
     assert "_group_rank" not in display_list[0]
+    equal_win_df = pd.DataFrame(
+        [
+            {"英雄ID": "2", "英雄名称": "英雄2", "英雄评级": "T1", "英雄胜率": 0.5, "英雄出场率": 0.01},
+            {"英雄ID": "1", "英雄名称": "英雄1", "英雄评级": "T1", "英雄胜率": 0.5, "英雄出场率": 0.01},
+        ]
+    )
+    equal_win_groups = {
+        "selected_champion_ids": ["2", "1"],
+        "bench_champion_ids": [],
+        "local_champion_id": "1",
+        "teammate_champion_ids": ["2"],
+    }
+    equal_win_list = desktop_app.HextechUI._build_candidate_display_list(dummy_ui, equal_win_groups, equal_win_df)
+    assert [item["id"] for item in equal_win_list] == ["2", "1"]

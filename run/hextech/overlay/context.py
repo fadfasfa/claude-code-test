@@ -26,6 +26,7 @@ import psutil
 import requests
 import urllib3
 
+from hextech.client_context import ClientContextProvider, parse_client_context
 from hextech.catalog.version_catalog import load_champion_core_data
 from hextech.overlay.runtime_paths import overlay_runtime_state_path
 from hextech.support.atomic_io import atomic_write_json
@@ -68,7 +69,16 @@ def _empty_context(error: str) -> dict[str, Any]:
     }
 
 
-def build_overlay_context_payload(*, champion_id: Any, champion_name: Any, source: str) -> dict[str, Any]:
+def build_overlay_context_payload(
+    *,
+    champion_id: Any,
+    champion_name: Any,
+    source: str,
+    teammate_champion_ids: Any = (),
+    bench_champion_ids: Any = (),
+    phase: str = "",
+    connection_state: str = "",
+) -> dict[str, Any]:
     """构造当前英雄上下文 payload；调用方负责只在明确锁定英雄时传入 ID。"""
 
     return {
@@ -77,6 +87,14 @@ def build_overlay_context_payload(*, champion_id: Any, champion_name: Any, sourc
         "champion_id": _clean_text(champion_id, limit=32),
         "champion_name": _clean_text(champion_name, limit=48),
         "source": _clean_text(source, limit=48) or "local",
+        "teammate_champion_ids": [
+            _clean_text(value, limit=32) for value in teammate_champion_ids if _clean_text(value, limit=32)
+        ],
+        "bench_champion_ids": [
+            _clean_text(value, limit=32) for value in bench_champion_ids if _clean_text(value, limit=32)
+        ],
+        "phase": _clean_text(phase, limit=48),
+        "connection_state": _clean_text(connection_state, limit=48),
     }
 
 
@@ -131,6 +149,10 @@ def read_overlay_context(path: str | Path | None = None) -> dict[str, Any]:
         "champion_id": _clean_text(payload.get("champion_id"), limit=32),
         "champion_name": _clean_text(payload.get("champion_name"), limit=48),
         "source": _clean_text(payload.get("source"), limit=48),
+        "teammate_champion_ids": list(payload.get("teammate_champion_ids") or []),
+        "bench_champion_ids": list(payload.get("bench_champion_ids") or []),
+        "phase": _clean_text(payload.get("phase"), limit=48),
+        "connection_state": _clean_text(payload.get("connection_state"), limit=48),
     }
 
 
@@ -380,21 +402,12 @@ def write_current_live_client_overlay_context_once(
 
 
 def _extract_local_champion_id(session_payload: Mapping[str, Any]) -> int | None:
-    local_cell_id = session_payload.get("localPlayerCellId")
-    team = session_payload.get("myTeam")
-    if not isinstance(team, list):
+    champion_id = parse_client_context(session_payload).local_champion_id
+    try:
+        value = int(champion_id or 0)
+    except (TypeError, ValueError):
         return None
-    for player in team:
-        if not isinstance(player, Mapping):
-            continue
-        if player.get("cellId") != local_cell_id:
-            continue
-        try:
-            champion_id = int(player.get("championId") or 0)
-        except (TypeError, ValueError):
-            return None
-        return champion_id if champion_id > 0 else None
-    return None
+    return value if value > 0 else None
 
 
 def write_current_lcu_overlay_context_once(
@@ -405,12 +418,36 @@ def write_current_lcu_overlay_context_once(
     context_path: str | Path | None = None,
     base_url_template: str = "https://127.0.0.1:{port}",
     should_write: ShouldWriteContext | None = None,
+    context_provider: ClientContextProvider | None = None,
 ) -> bool:
     """轮询一次本机 LCU 当前英雄；只有明确 championId 时才刷新上下文。"""
 
     def write_missing_if_allowed(source: str) -> bool:
         if should_write is not None and not should_write():
             return False
+        if context_provider is not None:
+            if source == "lcu-no-session":
+                degraded = context_provider.not_in_champ_select(source="overlay-lcu")
+            else:
+                degraded = context_provider.unavailable(source, source="overlay-lcu")
+            if degraded.local_champion_id:
+                champion_name = _resolve_champion_name(
+                    int(degraded.local_champion_id),
+                    core_data_loader=core_data_loader,
+                )
+                write_overlay_context(
+                    build_overlay_context_payload(
+                        champion_id=degraded.local_champion_id,
+                        champion_name=champion_name,
+                        source="lcu",
+                        teammate_champion_ids=degraded.teammate_champion_ids,
+                        bench_champion_ids=degraded.bench_champion_ids,
+                        phase=degraded.phase,
+                        connection_state=degraded.connection_state,
+                    ),
+                    context_path,
+                )
+                return True
         if source in _PRESERVE_VALID_CONTEXT_ON_MISSING_SOURCES:
             if write_current_live_client_overlay_context_once(
                 fetch_response=fetch_response,
@@ -420,7 +457,8 @@ def write_current_lcu_overlay_context_once(
                 should_write=should_write,
             ):
                 return True
-            if _has_recent_valid_overlay_context(context_path):
+            # 生产 poller 由 Provider 统一决定旧上下文 TTL；文件窗口只兼容无 Provider 的一次性调用。
+            if context_provider is None and _has_recent_valid_overlay_context(context_path):
                 return False
             current = read_overlay_context(context_path)
             if current.get("source") == "live-client-data" and current.get("error") == "context_unmapped_champion":
@@ -452,10 +490,15 @@ def write_current_lcu_overlay_context_once(
         return write_missing_if_allowed("lcu-error")
     if not isinstance(payload, Mapping):
         return write_missing_if_allowed("lcu-error")
-    champion_id = _extract_local_champion_id(payload)
-    if champion_id is None:
-        return write_missing_if_allowed("lcu-no-champion")
-    champion_name = _resolve_champion_name(champion_id, core_data_loader=core_data_loader)
+    client_context = (
+        context_provider.update(payload, source="overlay-lcu")
+        if context_provider is not None
+        else parse_client_context(payload, source="overlay-lcu")
+    )
+    champion_id = client_context.local_champion_id
+    if not champion_id:
+        return write_missing_if_allowed(client_context.error_code or "lcu-no-champion")
+    champion_name = _resolve_champion_name(int(champion_id), core_data_loader=core_data_loader)
     if should_write is not None and not should_write():
         return False
     write_overlay_context(
@@ -463,6 +506,10 @@ def write_current_lcu_overlay_context_once(
             champion_id=champion_id,
             champion_name=champion_name,
             source="lcu",
+            teammate_champion_ids=client_context.teammate_champion_ids,
+            bench_champion_ids=client_context.bench_champion_ids,
+            phase=client_context.phase,
+            connection_state=client_context.connection_state,
         ),
         context_path,
     )
@@ -505,7 +552,15 @@ def start_overlay_context_poller(
 ) -> OverlayContextPoller:
     stop_event = threading.Event()
     if write_once_func is write_current_lcu_overlay_context_once:
-        write_once_func = lambda: write_current_lcu_overlay_context_once(should_write=lambda: not stop_event.is_set())
+        context_provider = ClientContextProvider()
+
+        def write_current_context() -> bool:
+            return write_current_lcu_overlay_context_once(
+                should_write=lambda: not stop_event.is_set(),
+                context_provider=context_provider,
+            )
+
+        write_once_func = write_current_context
     thread = threading.Thread(
         target=run_overlay_context_poll_loop,
         kwargs={

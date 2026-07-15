@@ -39,6 +39,7 @@ BUNDLED_HEXTECH_SNAPSHOT_PREFIX = PurePosixPath("data/seed/startup/hextech")
 HEXTECH_SNAPSHOT_PATTERN_PREFIX = "Hextech_Data_"
 SYNERGY_DATA_PREFIX = PurePosixPath("data/raw/synergy")
 BUNDLED_SYNERGY_DATA_PREFIX = PurePosixPath("data/seed/startup/synergy")
+BUNDLED_SNAPSHOT_SEED_PREFIX = PurePosixPath("data/seed/startup/snapshots")
 SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
 SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
 SYNERGY_SNAPSHOT_PATTERN_PREFIX = "Champion_Synergy_"
@@ -53,6 +54,7 @@ def _empty_manifest() -> dict:
         "hextech_snapshot_files": [],
         "synergy_data_files": [],
         "synergy_data_file": "",
+        "snapshot_seed_files": [],
     }
 
 
@@ -78,6 +80,53 @@ def _write_bundle_manifest_startup_warning(status: str, warning: str, manifest_p
     if warning and not str(payload.get("last_error") or "").strip():
         payload["last_error"] = warning
     atomic_write_json(status_path, payload)
+
+
+def _write_verified_snapshot_startup_status(snapshot_dir: Path) -> None:
+    """发布已完整播种的 generation 状态，供桌面、Web 与诊断统一读取。"""
+
+    from hextech.data_snapshot import DataSnapshotClient
+
+    client = DataSnapshotClient(snapshot_dir)
+    snapshot_status = client.status()
+    if snapshot_status.get("state") not in {"ready", "degraded"}:
+        logger.warning("bundle generation seed 无法作为启动快照使用：%s", snapshot_status.get("reason", "unknown"))
+        return
+    manifest = client.load_manifest()
+    status_path = Path(build_runtime_state_path("startup_status.json"))
+    ensure_private_runtime_dir(status_path.parent)
+    payload: dict = {}
+    if status_path.exists():
+        try:
+            loaded = json.loads(status_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            payload = {}
+    synergy_ready = any(
+        str(item.get("name") or "") == "Champion_Synergy_Cleaned.json"
+        for item in manifest.source_files
+        if isinstance(item, dict)
+    )
+    payload.update(
+        {
+            "first_run": False,
+            "hero_ready": manifest.champion_count > 0,
+            "hextech_ready": manifest.stat_record_count > 0,
+            "synergy_ready": synergy_ready,
+            "in_progress_tasks": [],
+            "last_error": "",
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "data_snapshot": {
+                **snapshot_status,
+                "source": "verified_bundle_seed",
+                "champion_count": manifest.champion_count,
+                "augment_count": manifest.augment_count,
+                "stat_record_count": manifest.stat_record_count,
+            },
+        }
+    )
+    atomic_write_json(status_path, payload, ensure_ascii=False, indent=2)
 
 
 def _load_bundle_manifest(bundle_root: Path) -> dict:
@@ -157,6 +206,15 @@ def _synergy_data_path(relative_name: object) -> PurePosixPath | None:
     return None
 
 
+def _snapshot_seed_path(relative_name: object) -> PurePosixPath | None:
+    relative_path = _normalize_manifest_path(relative_name)
+    if relative_path is None or BUNDLED_SNAPSHOT_SEED_PREFIX not in relative_path.parents:
+        return None
+    if relative_path.suffix != ".json":
+        return None
+    return relative_path
+
+
 def _copy_if_missing(source: Path, target: Path) -> None:
     if not source.exists() or target.exists():
         return
@@ -230,6 +288,7 @@ def seed_bundled_resources(
     runtime_asset_dir: str | Path,
     runtime_hextech_dir: str | Path | None = None,
     runtime_synergy_dir: str | Path | None = None,
+    runtime_snapshot_dir: str | Path | None = None,
 ) -> None:
     """按 manifest 把 bundle 资源播种到运行目录，仅补缺失文件。"""
     bundle_base = Path(bundle_root)
@@ -242,6 +301,7 @@ def seed_bundled_resources(
     asset_dir = Path(runtime_asset_dir)
     hextech_dir = Path(runtime_hextech_dir) if runtime_hextech_dir is not None else None
     synergy_dir = Path(runtime_synergy_dir) if runtime_synergy_dir is not None else None
+    snapshot_dir = Path(runtime_snapshot_dir) if runtime_snapshot_dir is not None else None
     bundled_static_dir = bundle_base / "data" / "static" / "version"
     bundled_index_dir = bundle_base / "data" / "static" / "version"
     if not bundled_static_dir.exists():
@@ -259,6 +319,8 @@ def seed_bundled_resources(
         hextech_dir.mkdir(parents=True, exist_ok=True)
     if synergy_dir is not None:
         synergy_dir.mkdir(parents=True, exist_ok=True)
+    if snapshot_dir is not None:
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     static_files = list(manifest.get("static_files", []))
     index_files = list(manifest.get("index_files", []))
@@ -303,9 +365,39 @@ def seed_bundled_resources(
             else:
                 _copy_if_missing(source, target)
 
+    snapshot_seeded = False
+    if snapshot_dir is not None and not (snapshot_dir / "current.v1.json").exists():
+        snapshot_files: list[tuple[PurePosixPath, Path, Path]] = []
+        for filename in manifest.get("snapshot_seed_files", []):
+            snapshot_path = _snapshot_seed_path(filename)
+            if snapshot_path is None:
+                continue
+            source = bundle_base / Path(*snapshot_path.parts)
+            relative = snapshot_path.relative_to(BUNDLED_SNAPSHOT_SEED_PREFIX)
+            target = snapshot_dir / Path(*relative.parts)
+            metadata = seed_metadata.get(snapshot_path.as_posix())
+            expected_sha256 = str(metadata.get("sha256") or "").lower() if isinstance(metadata, dict) else ""
+            if len(expected_sha256) != 64 or not source.is_file() or _sha256(source) != expected_sha256:
+                logger.warning("bundle generation seed 摘要不匹配，跳过播种：%s", source)
+                snapshot_files = []
+                break
+            snapshot_files.append((snapshot_path, source, target))
+        for snapshot_path, source, target in sorted(
+            snapshot_files,
+            key=lambda item: item[0].name == "current.v1.json",
+        ):
+            _copy_if_missing(source, target)
+        snapshot_seeded = bool(snapshot_files) and any(
+            snapshot_path.name == "current.v1.json" and target.is_file()
+            for snapshot_path, _source, target in snapshot_files
+        )
+
     for relative_name in manifest.get("asset_files", []):
         source = bundled_asset_dir / Path(relative_name)
         target = asset_dir / Path(relative_name)
         if source.exists() and not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+
+    if snapshot_seeded and snapshot_dir is not None:
+        _write_verified_snapshot_startup_status(snapshot_dir)

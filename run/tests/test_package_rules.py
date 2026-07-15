@@ -19,6 +19,18 @@ def test_build_defaults_to_offline_and_refresh_flag_is_opt_in():
     assert parse_build_args(["--refresh-data"]).refresh_data is True
 
 
+def test_build_accepts_existing_verified_snapshot_root(tmp_path):
+    from tools.build_package import parse_build_args
+
+    snapshot_root = tmp_path / "snapshots"
+    snapshot_root.mkdir()
+
+    args = parse_build_args(["--verified-snapshot-root", str(snapshot_root)])
+
+    assert args.refresh_data is False
+    assert args.verified_snapshot_root == snapshot_root.resolve()
+
+
 @pytest.mark.parametrize(
     ("cwd", "script"),
     [
@@ -81,20 +93,81 @@ def test_explicit_refresh_rejects_non_ready_result(monkeypatch, state):
 
 
 def test_dependency_files_split_runtime_build_and_dev_tools():
-    compatibility = (RUN_DIR / "requirements.txt").read_text(encoding="utf-8")
-    runtime = (RUN_DIR / "requirements-runtime.txt").read_text(encoding="utf-8")
-    build = (RUN_DIR / "requirements-build.txt").read_text(encoding="utf-8")
-    dev = (RUN_DIR / "requirements-dev.txt").read_text(encoding="utf-8")
+    requirements_dir = RUN_DIR / "tools" / "requirements"
+    compatibility = (requirements_dir / "compat.txt").read_text(encoding="utf-8")
+    runtime = (requirements_dir / "runtime.txt").read_text(encoding="utf-8")
+    build = (requirements_dir / "build.txt").read_text(encoding="utf-8")
+    dev = (requirements_dir / "dev.txt").read_text(encoding="utf-8")
 
-    assert "-r requirements-build.txt" in compatibility
+    assert "-r build.txt" in compatibility
     assert "pyinstaller" not in runtime.lower()
-    assert "-r requirements-runtime.txt" in build
+    assert "-r runtime.txt" in build
     assert "pyinstaller" in build.lower()
-    assert "-r requirements-build.txt" in dev
+    assert "-r build.txt" in dev
     for package in ("ruff", "pyright", "coverage", "pytest-cov"):
         assert package not in runtime.lower()
         assert package not in build.lower()
         assert f"{package}==" in dev.lower()
+
+
+def test_portable_launcher_is_ascii_crlf_and_discovers_single_root_exe(tmp_path):
+    from tools.build_package import write_portable_launcher
+
+    launcher = write_portable_launcher(tmp_path)
+    content = launcher.read_bytes()
+    assert b"\r\r\n" not in content
+    assert content.splitlines()[0] == b"@echo off"
+    assert b"for %%F in (*.exe)" in content
+    assert b"Hextech" not in content
+    content.decode("ascii")
+
+
+def test_packaged_smoke_requires_unique_root_exe_and_bat(tmp_path):
+    from tools.acceptance.smoke_packaged_startup import SmokeFailure, _find_exe, _find_launcher
+
+    (tmp_path / "Hextech.exe").write_bytes(b"exe")
+    (tmp_path / "start.bat").write_bytes(b"@echo off\r\n")
+    assert _find_exe(tmp_path).name == "Hextech.exe"
+    assert _find_launcher(tmp_path).name == "start.bat"
+
+    (tmp_path / "extra.exe").write_bytes(b"exe")
+    with pytest.raises(SmokeFailure, match="一个根 exe"):
+        _find_exe(tmp_path)
+    (tmp_path / "start.bat").unlink()
+    with pytest.raises(SmokeFailure, match="一个根 BAT"):
+        _find_launcher(tmp_path)
+
+
+def test_pyinstaller_collects_scraping_package_data():
+    from tools.build_package import PYINSTALLER_COLLECT_DATA, REQUIRED_PACKAGED_SCRAPING_DATA
+
+    assert {"scrapling", "browserforge", "apify_fingerprint_datapoints"} <= set(PYINSTALLER_COLLECT_DATA)
+    assert "input-network-definition.zip" in REQUIRED_PACKAGED_SCRAPING_DATA
+
+
+def test_package_entries_include_verified_snapshot_files(tmp_path):
+    from tools.package_rules import iter_package_data_entries
+
+    snapshot_root = tmp_path / "verified"
+    generation_dir = snapshot_root / "generations" / "g1"
+    generation_dir.mkdir(parents=True)
+    (snapshot_root / "current.v1.json").write_text("{}", encoding="utf-8")
+    (generation_dir / "manifest.json").write_text("{}", encoding="utf-8")
+    manifest_path = tmp_path / "bundle_manifest.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+
+    entries = iter_package_data_entries(
+        tmp_path,
+        manifest_path,
+        verified_snapshot_root=snapshot_root,
+    )
+    snapshot_entries = [entry for entry in entries if snapshot_root in entry.source.parents]
+
+    assert {entry.source.name for entry in snapshot_entries} == {"current.v1.json", "manifest.json"}
+    assert {entry.target for entry in snapshot_entries} == {
+        "data/seed/startup/snapshots",
+        "data/seed/startup/snapshots/generations/g1",
+    }
 
 
 def test_pyproject_defines_python_quality_tool_boundaries():

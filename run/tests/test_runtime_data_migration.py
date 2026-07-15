@@ -7,6 +7,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 import json
 import os
 from pathlib import Path
@@ -172,6 +173,76 @@ class RuntimeBundleSeedTests(unittest.TestCase):
             )
 
             self.assertEqual(runtime_target.read_text(encoding="utf-8"), "runtime-new")
+
+    def test_verified_generation_is_seeded_before_current_pointer(self):
+        import hashlib
+        from hextech.data_snapshot import DataSnapshotClient, DataSnapshotPublisher
+        from tools import runtime_bundle
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_root = root / "source-snapshots"
+            published = DataSnapshotPublisher(source_root).publish(
+                {
+                    "champions": [{"id": "1", "name": "英雄一"}],
+                    "champion_hextech": {"英雄一": {"hero_id": "1", "augments": [{"id": "a1"}]}},
+                    "overlay_hints": {"augments": {"a1": {"name": "强化一"}}},
+                    "identities": {"champions": {"1": "英雄一"}, "augments": {"a1": "强化一"}},
+                },
+                private_stats_enabled=True,
+                source_files=(
+                    {
+                        "name": "Champion_Synergy_Cleaned.json",
+                        "size": 2,
+                        "sha256": "a" * 64,
+                        "record_count": 1,
+                    },
+                ),
+            )
+            bundle_root = root / "bundle"
+            snapshot_files: list[str] = []
+            metadata: dict[str, dict[str, str]] = {}
+            for source in source_root.rglob("*"):
+                if not source.is_file():
+                    continue
+                relative = source.relative_to(source_root)
+                bundled_name = (Path("data/seed/startup/snapshots") / relative).as_posix()
+                target = bundle_root / bundled_name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                snapshot_files.append(bundled_name)
+                metadata[bundled_name] = {"dataset_version": "legacy", "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+            bundle_root.mkdir(exist_ok=True)
+            (bundle_root / "bundle_manifest.json").write_text(
+                json.dumps({"snapshot_seed_files": snapshot_files, "seed_metadata": metadata}),
+                encoding="utf-8",
+            )
+            runtime_snapshot_root = root / "runtime" / "snapshots"
+
+            runtime_state = root / "runtime" / "state"
+            with mock.patch.object(
+                runtime_bundle,
+                "build_runtime_state_path",
+                side_effect=lambda filename: str(runtime_state / filename),
+            ):
+                runtime_bundle.seed_bundled_resources(
+                    bundle_root=bundle_root,
+                    runtime_static_dir=root / "runtime" / "static",
+                    runtime_index_dir=root / "runtime" / "indexes",
+                    runtime_asset_dir=root / "runtime" / "assets",
+                    runtime_snapshot_dir=runtime_snapshot_root,
+                )
+
+            status = DataSnapshotClient(runtime_snapshot_root).status()
+            self.assertEqual(status["state"], "ready")
+            self.assertEqual(status["generation_id"], published.generation_id)
+            startup = json.loads((runtime_state / "startup_status.json").read_text(encoding="utf-8"))
+            self.assertTrue(startup["hero_ready"])
+            self.assertTrue(startup["hextech_ready"])
+            self.assertTrue(startup["synergy_ready"])
+            self.assertEqual(startup["data_snapshot"]["state"], "ready")
+            self.assertEqual(startup["data_snapshot"]["generation_id"], published.generation_id)
+            self.assertEqual(startup["data_snapshot"]["source"], "verified_bundle_seed")
 
     def test_stable_latest_promotes_newer_dataset_version_ignoring_mtime(self):
         with tempfile.TemporaryDirectory() as tmp:

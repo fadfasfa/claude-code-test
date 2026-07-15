@@ -32,7 +32,7 @@ from urllib.parse import urlparse
 import psutil
 
 from hextech.catalog.runtime_store import build_runtime_state_path, ensure_private_runtime_dir
-from hextech.core.refresh import refresh_backend_data, sanitize_event_message
+from hextech.core.refresh import sanitize_event_message
 from hextech.overlay.events import write_inactive_overlay_event
 from hextech.overlay.runtime_paths import overlay_runtime_state_path
 from hextech.overlay.lifecycle import (
@@ -707,7 +707,7 @@ class RuntimeSupervisor:
         self.supervisor_instance_id = f"sup-{uuid.uuid4().hex}"
         self.parent_pid = int(parent_pid or 0)
         self.session_nonce = session_nonce or secrets.token_urlsafe(24)
-        self._refresh_func = refresh_func or refresh_backend_data
+        self._refresh_func = refresh_func or self._snapshot_refresh_status
         self._overlay_runtime = overlay_runtime or OverlayRuntimeManager()
         self._event_log_path = Path(event_log_path) if event_log_path is not None else Path(build_runtime_state_path("supervisor_events.v1.jsonl"))
         self._lock = threading.RLock()
@@ -732,6 +732,15 @@ class RuntimeSupervisor:
         self._last_refresh_at = 0.0
         # 首刷延迟到 UI 启动后，避免恢复旧的首 tick 同步卡顿，同时保证无人手动触发时也会自动刷新。
         self._next_refresh_at = self._started_at + STARTUP_REFRESH_DELAY_SECONDS
+
+    @staticmethod
+    def _snapshot_refresh_status(*, force: bool = False) -> dict[str, Any]:
+        """刷新所有权已迁入 DataService；Supervisor 仅报告当前 generation。"""
+
+        del force
+        from hextech.data_snapshot import DataSnapshotClient
+
+        return DataSnapshotClient().status()
 
     def parent_alive(self) -> bool:
         return bool(self.parent_pid and psutil.pid_exists(self.parent_pid))

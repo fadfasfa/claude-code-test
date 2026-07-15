@@ -6,9 +6,9 @@
 
 `run/` 是 Hextech 伴生系统的实际运行工作区，包含桌面悬浮窗、本地 Web/API、阶段 0-5 游戏内 overlay 基础窗口、Vision sidecar、数据处理、远端抓取、自愈修复和 PyInstaller 便携包构建。
 
-当前项目目标：让打包后的便携目录在非仓库、空运行态目录中首次启动后 60 秒内可用；高频抓取数据不随包分发，由首次启动和 4 小时新鲜度策略触发后台刷新。
+当前项目目标：让打包后的便携目录在 cache 命中时力求 30 秒、空运行态时力求 60 秒内完成桌面与 Overlay ready；最终包携带一代已通过真实验收的完整统计 seed，远端抓取在 DataService 后台执行且不阻塞 Overlay。
 
-当前游戏内显示已完成阶段 0-5 的本地 MVP：overlay host 默认不显示占位框；显示条件为“开关开 + active 海克斯选择事件 + 游戏窗口在前台”；Vision sidecar 先用蓝色选择按钮做场景门控，再通过本地事件文件刷新三槽位；ServiceManager 可同时管理 overlay host 与常驻 Vision sidecar；打包边界和性能记录结构已纳入自检。真实 LoL `Borderless` / 无边框全屏下的识别置信度、`Alt+H`、窗口跟随和 P95 <= 500ms 仍需人工验收。
+当前游戏内显示正式路线是 Python/Tk/Vision：Runtime Supervisor 管理 overlay host 与常驻 Vision sidecar，ServiceManager 管理独立 DataService 和按需 Web；显示条件为“开关开 + active 海克斯选择事件 + 游戏窗口在前台”。Web、桌面悬浮窗和 Overlay 通过固定 `DataSnapshotView` 读取同一 generation；真实 LoL `Borderless` / 无边框全屏下的识别置信度、`Alt+H`、窗口跟随和 P95 <= 500ms 仍需人工验收。
 
 ## 一眼看懂
 
@@ -18,10 +18,10 @@
 | 主入口 | `.\.venv\Scripts\python.exe hextech_ui.py` 启动桌面伴生；`.\.venv\Scripts\python.exe web_server.py` 只启动 Web 服务；`.\.venv\Scripts\python.exe hextech_ui.py --game-overlay` 只启动基础 overlay host |
 | 打包入口 | `.\.venv\Scripts\python.exe build.py`，不要使用裸系统 Python 打包 |
 | 发布形态 | PyInstaller `--onedir` 未签名便携包 + zip，输出到仓库根 `.artifacts/hextech/releases/` |
-| 启动硬门槛 | 打包产物空仓首启 60 秒内返回可用 Web/UI 热路径 |
-| 高频数据策略 | `data/runtime/raw/` 和其他 `data/runtime/` 运行态目录不进包；首次空仓必刷，之后超过 4 小时再刷 |
-| 稳定资源策略 | 源码态唯一数据根是 `data/`；只把 `data/static/**` 和 `data/seed/startup/**` 的稳定输入放进包，不使用运行态 raw |
-| 最近验收 | `.\.venv\Scripts\python.exe tools/acceptance/smoke_packaged_startup.py --timeout 60`，严格空仓实测约 3.83 秒可用 |
+| 启动目标 | cache 命中 30 秒、空运行态 60 秒内 Overlay ready 或明确进入 Web fallback；硬截止额外 120 秒 |
+| 高频数据策略 | DataService 独占抓取、清洗、Mayhem 合并和 generation 发布；失败保留上一代，超过 4 小时再后台刷新 |
+| 稳定资源策略 | 源码态唯一数据根是 `data/`；包内包含 `data/static/**` 和已验证的 `data/seed/startup/snapshots/**`，不包含抓取 raw |
+| 最近验收 | 真实总验收 generation `20260715T132919-958e2dd635`：BAT 空运行态 13.03 秒进入同代 Web 可用态，报告 `ok=true` |
 
 ## 快速命令
 
@@ -30,7 +30,7 @@
 py -3.11 tools/setup_venv.py
 
 # 若只需补依赖，也必须装入 run/.venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r tools\requirements\compat.txt
 
 # 桌面伴生模式
 .\.venv\Scripts\python.exe hextech_ui.py
@@ -83,6 +83,9 @@ py -3.11 tools/setup_venv.py
 # 打包后空仓首启验收
 .\.venv\Scripts\python.exe tools/acceptance/smoke_packaged_startup.py --timeout 60
 
+# 交付前真实总验收：远端、generation、Web、Tk、打包和 BAT/EXE
+.\.venv\Scripts\python.exe tools/acceptance/verify_data_pipeline.py --remote-timeout 900 --build-timeout 1800 --package-timeout 70
+
 # Web/UI 详情页联动手动验收辅助，需先启动本地 Web 服务
 .\.venv\Scripts\python.exe tools/dev_checks.py --manual-web-synergy --base-url http://127.0.0.1:8000
 ```
@@ -107,11 +110,12 @@ run/
 │   ├── build_package.py        # 唯一打包脚本；临时构建目录写入系统 TEMP
 │   ├── package_rules.py        # 打包资源规则；只描述源路径，不复制资源
 │   ├── dev_checks.py           # pytest 门禁兼容 CLI 与非 pytest 辅助模式
-│   └── acceptance/             # 验收工具入口
+│   ├── requirements/           # runtime/build/dev/compat 四类依赖事实源
+│   └── acceptance/             # 打包烟测、Overlay 探针与真实总验收
 ├── data/                       # 源码态唯一数据根；稳定数据、首启 seed、证据、fixture 和 runtime 分区
 │   ├── static/version/         # 版本级稳定数据与索引文件
 │   ├── static/assets/          # 稳定图片/图标资源入口
-│   ├── seed/startup/           # 构建期首启种子输入
+│   ├── seed/startup/           # 构建期首启输入；最终包含已验证 snapshot generation
 │   ├── evidence/               # 可审计来源证据，不直接供 UI 消费
 │   ├── fixtures/diagnostics/   # 离线诊断样例和真值
 │   └── runtime/                # 本机运行态状态、缓存、日志、锁和 profile
@@ -142,15 +146,15 @@ run/
 - `data/static/version/` 中的版本级稳定数据和索引文件
 - `data/static/assets/` 中的稳定图片/图标资源
 - `data/seed/startup/` 中的构建期首启 seed 输入
+- 由 `--verified-snapshot-root` 校验并生成的 `data/seed/startup/snapshots/` 完整 generation
 - `英雄目录.v1.json`
 - `海克斯资源目录.v1.json`
 - `Champion_Synergy_Cleaned.json`
 - `hero_version.txt`
 
 旧 `/data/static/...` 与 `/data/indexes/...` 文件名由 API 投影兼容，不作为包内实体事实源。
-`Champion_Synergy_Cleaned.json` 是协同展示的清洗后静态事实源；Web/API 与
-overlay hint cache 默认通过统一运行路径读取它，只有缺失时才回退启动后的 raw latest
-或旧固定名快照。
+`Champion_Synergy_Cleaned.json` 是协同展示的清洗后静态事实源；DataService 将它与
+英雄统计一起发布到完整 generation，Web、桌面和 Overlay 不再读取独立 hint cache。
 
 ### 不应随包分发
 
@@ -170,10 +174,10 @@ overlay hint cache 默认通过统一运行路径读取它，只有缺失时才�
 `Champion_Synergy_Cleaned.json` 的生成；它不进入打包白名单，也不被 API 或前端直接读取。
 重抓 raw 后只有在同步更新 cleaned 数据时才一起提交。
 
-打包只允许带一组首启冷启动种子，但包内路径必须是
-`data/seed/startup/hextech/` 与 `data/seed/startup/synergy/`。启动时再由
-`tools/runtime_bundle.py` 播种到用户运行目录的 `raw/*`；源码态与冻结态都对应
-各自运行根下的 `data/runtime/raw/`。
+普通打包只允许稳定首启输入；最终交付通过 `--verified-snapshot-root` 额外投影一代
+完整 generation 到 `data/seed/startup/snapshots/`。启动时由 `tools/runtime_bundle.py`
+先校验并复制 generation 文件、最后原子发布 `current.v1.json`，再写入带 generation id 与计数的
+`startup_status.json`；包内不携带或播种远端抓取 raw。
 旧固定名
 `Champion_Synergy.json` 仅作读取兜底，不再作为刷新成功或最新数据判断依据。
 
@@ -189,6 +193,7 @@ overlay hint cache 默认通过统一运行路径读取它，只有缺失时才�
 - `profile/`
 - `persisted/`
 - `logs/`
+- `snapshots/`
 
 源码态根目录是 `run/data/runtime/`；冻结态根目录是
 `%LOCALAPPDATA%/HextechNexus/data/runtime/`，且不接受 `HEXTECH_BASE_DIR`
@@ -267,12 +272,13 @@ pytest 退出码透传，以及 bundle manifest、海克斯健康摘要和 Web �
 .\.venv\Scripts\python.exe tools/acceptance/smoke_packaged_startup.py --timeout 60
 ```
 
-这个烟测会复制最新打包目录，使用隔离的 `LOCALAPPDATA` 启动 exe，且不预删复制品中的
+这个烟测会复制最新打包目录，使用隔离的 `LOCALAPPDATA` 通过 BAT 启动唯一根 EXE，且不预删复制品中的
 forbidden 目录。它会检查：
 
 - 冻结态运行态是否创建在 `HextechNexus/data/runtime`
 - `web_server_port.txt` 是否新写入
 - `startup_status.json` 是否新写入
+- verified seed 的运行态 pointer、startup status 和 Web 详情是否为同一 generation，且 packaged DataService 不自动联网刷新
 - 包根与 `_internal` 下是否不存在 `data/raw`、`data/runtime`、`data/processed` 和运行期 cache/profile/log/logs/debug
 - `/`、`/api/startup_status`、`/api/champions`、`/detail.html?champion=1`、`/api/synergies/1` 是否可访问
 
@@ -321,13 +327,13 @@ Web/UI 详情页右侧联动对齐 ApexLoL 源页的检查保留为手动验收�
 - `POST /api/redirect`：浏览器跳转控制
 - `GET /ws`：实时事件推送
 - `hextech/`：主应用 import 根，承载 desktop/web/catalog/overlay/scraping/core 主实现
-- `data/runtime/cache/overlay_hint_cache.v1.json`：游戏内 overlay 本地轻量提示缓存
+- `data/runtime/snapshots/current.v1.json`：DataService 当前/上一 generation 原子指针
 - `hextech/catalog/runtime_store.py`：CSV 与运行时文件定位、DataFrame 缓存与归一
 - `hextech/catalog/view_adapter.py`：首页榜单与海克斯详情数据适配
 - `hextech/catalog/precomputed_cache.py`：预计算 API 缓存读写
 - `data/runtime/state/game_overlay_slots.v1.json`：游戏内 overlay 本地三槽位事件
 - `hextech/overlay/events.py`：游戏内 overlay 本地三槽位事件协议
-- `hextech/overlay/hints.py`：游戏内 overlay 本地轻量提示缓存生成与查询
+- `hextech/data_snapshot.py`：Web、桌面和 Overlay 的固定 generation 只读查询
 - `hextech/overlay/vision/sidecar.py`：游戏内 overlay 本地 Vision MVP 探针入口
 - `hextech/overlay/`：独立游戏内显示产品模块
 - `.\.venv\Scripts\python.exe -m hextech.overlay --self-check`：独立模块只读自检
@@ -344,7 +350,7 @@ Web/UI 详情页右侧联动对齐 ApexLoL 源页的检查保留为手动验收�
 - 共享数据读取边界优先改 `hextech/overlay/data_source.py`
 - 桌面后台线程、轮询、跳转、资源加载逻辑优先改 `hextech/display/desktop/runtime.py`
 - 桌面控件结构优先改 `hextech/display/desktop/app.py`
-- overlay hint cache 生成和查询优先改 `hextech/overlay/hints.py`
+- generation 生成与查询优先改 `hextech/data_service.py` 和 `hextech/data_snapshot.py`
 - overlay 三槽位事件通道优先改 `hextech/overlay/events.py`
 - overlay Vision 探针优先改 `hextech/overlay/vision/sidecar.py`
 - overlay 性能记录结构优先改 `tools/acceptance/overlay_performance_probe.py`

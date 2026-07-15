@@ -33,7 +33,6 @@ from hextech.overlay.window import (
     is_scoreboard_key_down,
     is_window_foreground,
     is_window_renderable,
-    root_window_hwnd,
 )
 from hextech.overlay.window_titles import LOL_GAME_WINDOW_TITLE
 from hextech.support.atomic_io import atomic_write_json
@@ -1497,11 +1496,73 @@ def run_self_check() -> dict[str, Any]:
     }
 
 
+def render_acceptance_screenshot(
+    output_path: str | Path,
+    *,
+    width: int = 1280,
+    height: int = 720,
+) -> dict[str, Any]:
+    """用真实 Tk Canvas 和当前 generation/event/context 生成验收截图。"""
+
+    from PIL import ImageGrab
+
+    target = Path(output_path).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source = SharedOverlayDataSource()
+    snapshot = source.read_event()
+    hint_cache = source.read_hint_cache()
+    context = source.read_context()
+    model = build_render_model(snapshot, hint_cache=hint_cache, context=context)
+
+    _set_dpi_awareness()
+    root = tk.Tk()
+    root.title("Hextech Overlay Acceptance")
+    root.geometry(f"{max(640, int(width))}x{max(360, int(height))}+0+0")
+    root.attributes("-topmost", True)
+    canvas = tk.Canvas(root, bg="#10131A", highlightthickness=0, bd=0)
+    canvas.pack(fill=tk.BOTH, expand=True)
+    try:
+        root.update_idletasks()
+        root.deiconify()
+        root.lift()
+        root.update()
+        draw_overlay_frame(canvas, model)
+        root.update_idletasks()
+        root.update()
+        time.sleep(0.2)
+        left = root.winfo_rootx()
+        top = root.winfo_rooty()
+        right = left + root.winfo_width()
+        bottom = top + root.winfo_height()
+        image = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True).convert("RGB")
+        image.save(target)
+    finally:
+        root.destroy()
+
+    status_counts: dict[str, int] = {}
+    for row in model.get("stats", []):
+        code = str(row.get("status_code") or "")
+        status_counts[code] = status_counts.get(code, 0) + 1
+    snapshot_status = hint_cache.get("snapshot") if isinstance(hint_cache.get("snapshot"), Mapping) else {}
+    return {
+        "ok": target.is_file() and target.stat().st_size > 0,
+        "path": str(target),
+        "width": image.width,
+        "height": image.height,
+        "generation_id": str(snapshot_status.get("generation_id") or ""),
+        "status_counts": status_counts,
+        "context_champion_id": str(context.get("champion_id") or ""),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Hextech game overlay host。")
     parser.add_argument("--game-overlay", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--diagnostic", action="store_true", help="记录去重诊断日志，不绘制状态 UI。")
     parser.add_argument("--self-check", action="store_true", help="执行无 GUI overlay 入口自检后退出。")
+    parser.add_argument("--acceptance-screenshot", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-width", type=int, default=1280, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-height", type=int, default=720, help=argparse.SUPPRESS)
     return parser
 
 
@@ -1510,6 +1571,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_check:
         print(json.dumps(run_self_check(), ensure_ascii=False, indent=2))
         return 0
+    if args.acceptance_screenshot is not None:
+        result = render_acceptance_screenshot(
+            args.acceptance_screenshot,
+            width=args.acceptance_width,
+            height=args.acceptance_height,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ok"] else 1
     run_overlay_host(diagnostic=args.diagnostic)
     return 0
 

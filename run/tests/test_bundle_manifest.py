@@ -138,6 +138,46 @@ def test_validate_bundle_manifest_accepts_manifest_without_seed_metadata():
     )
 
 
+def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch):
+    from hextech.data_snapshot import DataSnapshotPublisher
+    from tools import bundle_manifest
+
+    snapshot_root = tmp_path / "verified-snapshots"
+    published = DataSnapshotPublisher(snapshot_root).publish(
+        {
+            "champions": [{"id": "1", "name": "英雄一"}],
+            "champion_hextech": {"英雄一": {"hero_id": "1", "augments": [{"id": "a1"}]}},
+            "overlay_hints": {"augments": {"a1": {"name": "强化一"}}},
+            "identities": {"champions": {"1": "英雄一"}, "augments": {"a1": "强化一"}},
+        },
+        private_stats_enabled=True,
+    )
+    seed_csv = tmp_path / "data" / "seed" / "startup" / "hextech" / "Hextech_Data_2026-07-15.csv"
+    synergy = tmp_path / "data" / "seed" / "startup" / "synergy" / "Champion_Synergy_20260715_010101.json"
+    seed_csv.parent.mkdir(parents=True)
+    synergy.parent.mkdir(parents=True)
+    seed_csv.write_text("seed", encoding="utf-8")
+    synergy.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(bundle_manifest, "iter_hextech_snapshot_files", lambda _base: [seed_csv])
+    monkeypatch.setattr(bundle_manifest, "iter_synergy_data_files", lambda _base: [synergy])
+    monkeypatch.setattr(bundle_manifest, "iter_source_files", lambda _base: ["hextech_ui.py"])
+    monkeypatch.setattr(bundle_manifest, "STABLE_STATIC_FILES", ("英雄目录.v1.json",))
+    monkeypatch.setattr(bundle_manifest, "validate_hextech_seed_health", lambda _base: {"valid": True})
+    static_dir = tmp_path / "data" / "static" / "version"
+    static_dir.mkdir(parents=True)
+    (static_dir / "英雄目录.v1.json").write_text("{}", encoding="utf-8")
+
+    manifest = bundle_manifest.build_bundle_manifest(
+        tmp_path,
+        verified_snapshot_root=snapshot_root,
+    )
+
+    assert manifest["snapshot_seed_health"]["generation_id"] == published.generation_id
+    assert "data/seed/startup/snapshots/current.v1.json" in manifest["snapshot_seed_files"]
+    for relative_name in manifest["snapshot_seed_files"]:
+        assert len(manifest["seed_metadata"][relative_name]["sha256"]) == 64
+
+
 def test_runtime_bundle_reports_missing_or_corrupt_manifest(tmp_path, monkeypatch):
     from tools import runtime_bundle
 
@@ -194,6 +234,7 @@ def test_finalize_output_runs_smoke_before_replacing_existing_release(tmp_path, 
     monkeypatch.setattr(build_package, "RELEASES_DIR", releases)
     monkeypatch.setattr(build_package, "STAGING_RELEASES_DIR", staging)
     monkeypatch.setattr(build_package, "_release_dir_name", lambda _build_time: "HextechCompanion-20260707")
+    monkeypatch.setattr(build_package, "validate_packaged_scraping_data", lambda _package_dir: None)
 
     def fail_smoke(_package_dir: Path, timeout: int = 60) -> None:
         assert timeout == 60
@@ -230,6 +271,7 @@ def test_finalize_output_restores_old_release_when_zip_creation_fails_after_smok
     monkeypatch.setattr(build_package, "RELEASES_DIR", releases)
     monkeypatch.setattr(build_package, "STAGING_RELEASES_DIR", staging)
     monkeypatch.setattr(build_package, "_release_dir_name", lambda _build_time: "HextechCompanion-20260707")
+    monkeypatch.setattr(build_package, "validate_packaged_scraping_data", lambda _package_dir: None)
     monkeypatch.setattr(build_package, "run_packaged_smoke", lambda _package_dir, timeout=60: None)
     monkeypatch.setattr(build_package, "create_portable_zip", lambda _final_dir: (_ for _ in ()).throw(RuntimeError("zip failed")))
 
@@ -258,6 +300,7 @@ def test_finalize_output_promotes_staging_after_smoke_success(tmp_path, monkeypa
     monkeypatch.setattr(build_package, "RELEASES_DIR", releases)
     monkeypatch.setattr(build_package, "STAGING_RELEASES_DIR", staging)
     monkeypatch.setattr(build_package, "_release_dir_name", lambda _build_time: "HextechCompanion-20260707")
+    monkeypatch.setattr(build_package, "validate_packaged_scraping_data", lambda _package_dir: None)
     monkeypatch.setattr(build_package, "run_packaged_smoke", lambda package_dir, timeout=60: smoke_calls.append((package_dir, timeout)))
 
     final_dir, zip_path = build_package.finalize_output(exe_dir)
@@ -283,11 +326,11 @@ def test_packaged_smoke_startup_status_uses_runtime_auth_token(tmp_path, monkeyp
     def fake_fetch(url: str, timeout: float = 8.0, headers: dict[str, str] | None = None):
         calls.append((url, headers))
         if url.endswith("/api/startup_status"):
-            return 200, b'{"hextech_ready":true}'
+            return 200, b'{"hextech_ready":true,"data_snapshot":{"state":"ready","generation_id":"g1"}}'
         if url.endswith("/api/champions"):
             return 200, b'[{"heroName":"Garen","heroId":"86"}]'
         if "/api/champion/" in url:
-            return 200, b'{"loading":true}'
+            return 200, b'{"loading":true,"generation_id":"g1"}'
         if "/api/synergies/" in url:
             return 200, b'{"synergies":[]}'
         if url.endswith(".png"):
@@ -303,3 +346,34 @@ def test_packaged_smoke_startup_status_uses_runtime_auth_token(tmp_path, monkeyp
         "Origin": "http://127.0.0.1:8211",
         "X-Hextech-Token": "local-secret",
     }
+
+
+def test_packaged_smoke_rejects_web_generation_mismatch():
+    from tools.acceptance.smoke_packaged_startup import _business_ready
+
+    checks = _business_ready(
+        {"data_snapshot": {"state": "ready", "generation_id": "g1"}},
+        [{"heroId": "1"}],
+        {"ready": True, "generation_id": "g2"},
+        {"synergies": []},
+        {"code": 200, "bytes": 10},
+        require_snapshot_status=True,
+    )
+
+    assert checks["snapshot_generation_ready"] is True
+    assert checks["web_generation_matches_snapshot"] is False
+
+
+def test_packaged_smoke_allows_runtime_generation_without_verified_seed_status():
+    from tools.acceptance.smoke_packaged_startup import _business_ready
+
+    checks = _business_ready(
+        {"hextech_ready": True},
+        [{"heroId": "1"}],
+        {"ready": True, "generation_id": "runtime-g1"},
+        {"synergies": []},
+        {"code": 200, "bytes": 10},
+    )
+
+    assert checks["snapshot_generation_ready"] is True
+    assert checks["web_generation_matches_snapshot"] is True

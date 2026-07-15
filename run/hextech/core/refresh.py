@@ -334,13 +334,13 @@ def rebuild_api_cache_if_needed(force: bool = False) -> bool:
     return True
 
 
-def _run_mayhem_refresh_safely(stop_event=None) -> None:
+def _run_mayhem_refresh_safely(stop_event=None, *, force: bool = False) -> None:
     if stop_event is not None and stop_event.is_set():
         return
     from hextech.scraping.synergy.mayhem_refresh import run_mayhem_refresh
 
     try:
-        run_mayhem_refresh(force=False)
+        run_mayhem_refresh(force=force)
     except Exception:
         logger.exception("Mayhem 低频刷新诊断写入失败")
 
@@ -507,9 +507,11 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> RefreshResult:
     report = dict(heal_runtime_artifacts(force=force, stop_event=stop_event) or {})
     report.setdefault("failed", [])
     report.setdefault("stage_errors", [])
-    _run_mayhem_refresh_safely(stop_event=stop_event)
+    _run_mayhem_refresh_safely(stop_event=stop_event, force=force)
     try:
-        rebuild_api_cache_if_needed(force=force)
+        # 远端 force 刷新已在 scraper 成功发布后重建一次派生缓存；这里只校验
+        # 新 CSV 的签名并补建缺失缓存，避免同一 action 再做一次数分钟的全量计算。
+        rebuild_api_cache_if_needed(force=False)
     except Exception as exc:
         logger.exception("API cache rebuild failed")
         if "api_cache" not in report["failed"]:
