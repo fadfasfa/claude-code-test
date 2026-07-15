@@ -107,3 +107,7 @@ run/data/static/Champion_Core_Data.json
 sms-monitor/config.json
 # 配置改动时的本地备份同样含凭据，不入库
 sms-monitor/config.json*.bak*
+sms-monitor/config.json.*
+# 重要账户导入暂存区及原子替换残留含明文凭据，不入库
+sms-monitor/private-import.txt
+sms-monitor/private-import.txt.*

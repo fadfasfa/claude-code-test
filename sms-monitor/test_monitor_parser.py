@@ -19,6 +19,7 @@ from unittest.mock import patch
 import monitor
 from monitor import (
     AccountSource,
+    ConfigCommandError,
     EmailSource,
     FixedUrlSource,
     KkdosSource,
@@ -30,6 +31,8 @@ from monitor import (
     normalize_kkdos_sources,
     parse_fixed_sms_response,
     parse_freeform_account_text,
+    parse_freeform_accounts,
+    private_template_text,
     ready_check_all,
     ready_check_email_source,
     ready_check_fixed_source,
@@ -336,7 +339,7 @@ class FixedSmsParserTest(unittest.TestCase):
         self.assertEqual(result.code, "654321")
 
     def test_us_country_code_is_split_from_local_number(self):
-        result = split_us_phone("15550123456")
+        result = split_us_phone("+15550123456")
 
         self.assertEqual(result.country_code, "+1")
         self.assertEqual(result.local_number, "5550123456")
@@ -409,14 +412,48 @@ class EmailSourceParserTest(unittest.TestCase):
         self.assertTrue(result.has_sms)
         self.assertEqual(result.code, "123456")
 
+    def test_mail_id_change_does_not_repeat_same_code(self):
+        class Session:
+            def __init__(self):
+                self.mail_id = "mail-1"
+
+            def post(self, *args, **kwargs):
+                return FakeJsonResponse(
+                    {
+                        "ok": True,
+                        "mails": [
+                            {
+                                "id": self.mail_id,
+                                "subject": "Verification code 123456",
+                                "body": "code 123456",
+                            }
+                        ],
+                    }
+                )
+
+        session = Session()
+        source = EmailSource(
+            {
+                "label": "mail",
+                "email": "a@example.com",
+                "provider": "icloud",
+                "base_url": "https://example.invalid",
+            },
+            session,
+        )
+
+        self.assertEqual(source.poll(), "123456")
+        session.mail_id = "mail-2"
+        self.assertIsNone(source.poll())
+        self.assertEqual(len(source.history), 1)
+
 
 class NormalizeEmailSourcesTest(unittest.TestCase):
     """验证 email_sources 配置校验：缺 email 退出、provider 缺省与限制。"""
 
     def test_missing_email_exits(self):
-        with redirect_stdout(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                normalize_email_sources([{"label": "iCloud"}])
+        with self.assertRaises(ConfigCommandError):
+            normalize_email_sources([{"label": "iCloud"}])
 
     def test_provider_defaults_to_icloud_and_base_url_normalized(self):
         sources = normalize_email_sources(
@@ -430,9 +467,8 @@ class NormalizeEmailSourcesTest(unittest.TestCase):
         self.assertEqual(sources[0]["base_url"], "https://email.nloop.cc")
 
     def test_non_icloud_provider_exits(self):
-        with redirect_stdout(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                normalize_email_sources([{"email": "a@outlook.com", "provider": "outlook"}])
+        with self.assertRaises(ConfigCommandError):
+            normalize_email_sources([{"email": "a@outlook.com", "provider": "outlook"}])
 
 
 class TotpTest(unittest.TestCase):
@@ -458,9 +494,8 @@ class NormalizeAccountsTest(unittest.TestCase):
     """验证账户档案配置校验不依赖真实密码或真实 2FA 密钥。"""
 
     def test_missing_login_email_exits(self):
-        with redirect_stdout(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                normalize_accounts([{"label": "ChatGPT"}])
+        with self.assertRaises(ConfigCommandError):
+            normalize_accounts([{"label": "ChatGPT"}])
 
     def test_defaults_and_secret_are_preserved(self):
         accounts = normalize_accounts(
@@ -496,7 +531,7 @@ class AccountSourceTest(unittest.TestCase):
                 "login_email": "user@example.com",
                 "password": "pw",
                 "totp_secret": "JBSWY3DPEHPK3PXP",
-                "phone": "15550123456",
+                "phone": "+15550123456",
             }
         )
 
@@ -579,7 +614,7 @@ class AccountSourceTest(unittest.TestCase):
         self.assertIsNone(account.poll())
         self.assertEqual(account.copy_number, "a@icloud.com")
 
-    def test_monitor_appends_accounts_after_code_sources(self):
+    def test_monitor_places_accounts_before_unlinked_sources(self):
         monitor = SmsMonitor(
             {
                 "base_url": "https://example.invalid",
@@ -590,8 +625,8 @@ class AccountSourceTest(unittest.TestCase):
             }
         )
 
-        self.assertEqual([source.label for source in monitor.sources], ["LuDan", "A"])
-        self.assertTrue(getattr(monitor.sources[-1], "is_account"))
+        self.assertEqual([source.label for source in monitor.sources], ["A", "LuDan"])
+        self.assertTrue(getattr(monitor.sources[0], "is_account"))
 
     def test_monitor_hides_sources_linked_to_accounts_but_keeps_polling(self):
         monitor = SmsMonitor(
@@ -625,7 +660,7 @@ class AccountSourceTest(unittest.TestCase):
 
         self.assertEqual(
             [source.label for source in monitor.sources],
-            ["LuDan", "eSIM88", "ChatGPT", "iCloudAccount"],
+            ["ChatGPT", "iCloudAccount", "LuDan", "eSIM88"],
         )
         self.assertEqual(
             [source.label for source in monitor.pollables],
@@ -634,6 +669,52 @@ class AccountSourceTest(unittest.TestCase):
         self.assertEqual(monitor.accounts[0].linked_phone_source.label, "YunTL")
         self.assertEqual(monitor.accounts[1].linked_phone_source.label, "ka001")
         self.assertEqual(monitor.accounts[1].linked_email_source.label, "iCloudMail")
+
+    def test_render_account_never_prints_password(self):
+        monitor = SmsMonitor(
+            {
+                "base_url": "https://example.invalid",
+                "key": "",
+                "fixed_sources": [],
+                "email_sources": [],
+                "accounts": [
+                    {"label": "A", "login_email": "a@example.com", "password": "SECRET_PASSWORD"}
+                ],
+            }
+        )
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            monitor.render_account_source(1, monitor.accounts[0])
+
+        self.assertIn("密码：已配置", output.getvalue())
+        self.assertNotIn("SECRET_PASSWORD", output.getvalue())
+
+    def test_disable_runtime_unlinks_account_immediately(self):
+        monitor = SmsMonitor(
+            {
+                "base_url": "https://example.invalid",
+                "key": "",
+                "fixed_sources": [
+                    {"label": "SMS", "phone": "+15550123456", "url": "https://example.invalid/sms"}
+                ],
+                "email_sources": [],
+                "accounts": [
+                    {
+                        "label": "A",
+                        "login_email": "a@example.com",
+                        "phone": "+15550123456",
+                        "phone_source_label": "SMS",
+                    }
+                ],
+            }
+        )
+
+        with patch("monitor.disable_source"):
+            monitor._disable_runtime("fixed", "SMS", "认证失败")
+
+        self.assertIsNone(monitor.accounts[0].linked_phone_source)
+        self.assertNotIn("SMS", [source.label for source in monitor.pollables])
 
     def test_account_can_link_dynamic_phone_source_by_label(self):
         monitor = SmsMonitor(
@@ -948,7 +1029,7 @@ class RefreshModeTest(unittest.TestCase):
             patch("monitor.copy_to_clipboard", return_value=True),
             patch("monitor.time.time", return_value=100),
         ):
-            monitor.copy_source_number(2)
+            monitor.copy_source_number(1)
 
         self.assertTrue(monitor.active_waiting_for_code)
         self.assertEqual(monitor.active_until, 0)
@@ -981,7 +1062,7 @@ class RefreshModeTest(unittest.TestCase):
             patch.object(monitor, "render"),
             patch.object(monitor, "render_copy_menu"),
         ):
-            monitor.copy_source_number(2)
+            monitor.copy_source_number(1)
 
         self.assertEqual(copied, ["123456"])
         self.assertTrue(monitor.active_waiting_for_code)
@@ -1003,7 +1084,7 @@ class RefreshModeTest(unittest.TestCase):
             patch.object(monitor, "render"),
             patch.object(monitor, "render_copy_menu"),
         ):
-            monitor.copy_source_number(2)
+            monitor.copy_source_number(1)
 
         self.assertEqual(monitor.active_until, 0)
         self.assertIn("已取消", monitor.note)
@@ -1296,7 +1377,7 @@ class ConfigCommandTest(unittest.TestCase):
 
     def test_normalize_kkdos_sources_requires_cdk_without_leaking_value(self):
         stdout = io.StringIO()
-        with redirect_stdout(stdout), self.assertRaises(SystemExit):
+        with redirect_stdout(stdout), self.assertRaises(ConfigCommandError):
             normalize_kkdos_sources([{"label": "kkdos", "cdk": ""}])
         self.assertNotIn("SECRET_CDK", stdout.getvalue())
 
@@ -1420,6 +1501,23 @@ class ConfigCommandTest(unittest.TestCase):
             ]:
                 self.assertNotIn(secret, output)
 
+    def test_cli_validate_invalid_config_still_returns_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump({"fixed_sources": "not-an-array"}, f)
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                exit_code = run_cli(
+                    ["config", "validate", "--config", config_path, "--json"]
+                )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertFalse(payload["ready"])
+        self.assertEqual(payload["status"], "error")
+
     def test_parse_freeform_account_text_handles_messy_dash_format(self):
         raw = (
             "login@example.com----SECRET_PASSWORD---JBSWY3DPEHPK3PXP"
@@ -1438,6 +1536,303 @@ class ConfigCommandTest(unittest.TestCase):
         self.assertNotIn("SECRET_PASSWORD", preview)
         self.assertNotIn("JBSWY3DPEHPK3PXP", preview)
         self.assertNotIn("SECRET_TOKEN", preview)
+
+    def test_parse_freeform_accounts_handles_chinese_multiline_batch(self):
+        raw = """名称：账户A
+邮箱：a@example.com
+密码：SECRET_A
+2FA：JBSWY3DPEHPK3PXP
+手机号：+15550123456
+接码链接：https://sms.example/a?token=TOKEN_A
+
+label: Account-B
+email: b@example.com
+password: SECRET_B
+totp: JBSWY3DPEHPK3PXP
+phone: +15550987654
+url: https://sms.example/b?token=TOKEN_B"""
+
+        items = parse_freeform_accounts(raw)
+
+        self.assertEqual([item["label"] for item in items], ["账户A", "Account-B"])
+        self.assertTrue(all(not item["missing"] for item in items))
+        preview = json.dumps([item["preview"] for item in items], ensure_ascii=False)
+        for secret in ("SECRET_A", "SECRET_B", "TOKEN_A", "TOKEN_B"):
+            self.assertNotIn(secret, preview)
+
+    def test_parse_freeform_accounts_handles_inline_natural_language(self):
+        raw = (
+            "ChatGPT谷歌邮箱：discarded@example.com ChatGPT密码：SECRET_PASSWORD "
+            "一次性安全码密钥：JBSWY3DPEHPK3PXP 一次性安全码获取地址：2fa.example "
+            "二验手机号：+15550123456 "
+            "二验手机号验证码获取链接：https://sms.example/query?token=SECRET_TOKEN"
+        )
+
+        items = parse_freeform_accounts(raw)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["label"], "discarded")
+        self.assertEqual(items[0]["login_email"], "discarded@example.com")
+        self.assertEqual(items[0]["password"], "SECRET_PASSWORD")
+        self.assertEqual(items[0]["totp_secret"], "JBSWY3DPEHPK3PXP")
+        self.assertEqual(items[0]["phone"], "15550123456")
+        self.assertEqual(items[0]["sms_url"], "https://sms.example/query?token=SECRET_TOKEN")
+        self.assertNotIn("2fa.example", json.dumps(items[0]["preview"], ensure_ascii=False))
+
+    def test_private_template_has_requested_blank_slots(self):
+        text = private_template_text(2)
+
+        self.assertEqual(text.count("名称："), 2)
+        self.assertEqual(text.count("接码链接："), 2)
+        self.assertNotIn("example.com", text)
+        self.assertNotIn("YOUR_", text)
+
+    def test_private_template_command_creates_only_blank_slots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            private_path = os.path.join(tmp, "private-import.txt")
+
+            result = run_config_command(
+                ["private-template", "--count", "3", "--file", private_path, "--json"]
+            )
+            with open(private_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["count"], 3)
+        self.assertEqual(content, private_template_text(3))
+
+    def test_private_template_refuses_to_overwrite_filled_content(self):
+        raw = "名称：Important\n邮箱：important@example.com\n密码：SECRET_PASSWORD\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            private_path = os.path.join(tmp, "private-import.txt")
+            with open(private_path, "w", encoding="utf-8") as f:
+                f.write(raw)
+
+            with self.assertRaises(ConfigCommandError):
+                run_config_command(
+                    ["private-template", "--count", "2", "--file", private_path, "--json"]
+                )
+            with open(private_path, "r", encoding="utf-8") as f:
+                preserved = f.read()
+
+        self.assertEqual(preserved, raw)
+
+    def test_private_preview_does_not_write_config_and_success_clears_template(self):
+        raw = """名称：Important-A
+邮箱：important@example.com
+密码：SECRET_PASSWORD
+2FA：JBSWY3DPEHPK3PXP
+手机号：+15550123456
+接码链接：https://sms.example/query?token=SECRET_TOKEN
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            private_path = os.path.join(tmp, "private-import.txt")
+            with open(private_path, "w", encoding="utf-8") as f:
+                f.write(raw)
+
+            preview = run_config_command(
+                [
+                    "import-private",
+                    "--config",
+                    config_path,
+                    "--file",
+                    private_path,
+                    "--json",
+                ]
+            )
+            self.assertFalse(os.path.exists(config_path))
+            with open(private_path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), raw)
+
+            result = run_config_command(
+                [
+                    "import-private",
+                    "--config",
+                    config_path,
+                    "--file",
+                    private_path,
+                    "--yes",
+                    "--json",
+                ]
+            )
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            with open(private_path, "r", encoding="utf-8") as f:
+                cleared = f.read()
+
+        self.assertEqual(preview["status"], "needs_confirmation")
+        self.assertTrue(result["ready"])
+        self.assertEqual(cfg["accounts"][0]["phone_source_label"], "Important-A-SMS")
+        self.assertEqual(cleared, private_template_text(1))
+        sanitized = json.dumps(preview, ensure_ascii=False) + json.dumps(result, ensure_ascii=False)
+        for secret in ("SECRET_PASSWORD", "JBSWY3DPEHPK3PXP", "SECRET_TOKEN"):
+            self.assertNotIn(secret, sanitized)
+
+    def test_private_invalid_batch_preserves_template(self):
+        raw = "名称：Incomplete\n邮箱：incomplete@example.com\n密码：SECRET_PASSWORD\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            private_path = os.path.join(tmp, "private-import.txt")
+            with open(private_path, "w", encoding="utf-8") as f:
+                f.write(raw)
+
+            result = run_config_command(
+                [
+                    "import-private",
+                    "--config",
+                    config_path,
+                    "--file",
+                    private_path,
+                    "--yes",
+                    "--json",
+                ]
+            )
+            with open(private_path, "r", encoding="utf-8") as f:
+                preserved = f.read()
+
+        self.assertEqual(result["status"], "invalid_batch")
+        self.assertFalse(os.path.exists(config_path))
+        self.assertEqual(preserved, raw)
+
+    def test_private_cleanup_failure_reports_partial_success(self):
+        raw = """名称：Important-A
+邮箱：important@example.com
+密码：SECRET_PASSWORD
+2FA：JBSWY3DPEHPK3PXP
+手机号：+15550123456
+接码链接：https://sms.example/query?token=SECRET_TOKEN
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            private_path = os.path.join(tmp, "private-import.txt")
+            with open(private_path, "w", encoding="utf-8") as f:
+                f.write(raw)
+
+            with patch("monitor.write_text_atomic", side_effect=ConfigCommandError("清空失败")):
+                result = run_config_command(
+                    [
+                        "import-private",
+                        "--config",
+                        config_path,
+                        "--file",
+                        private_path,
+                        "--yes",
+                        "--json",
+                    ]
+                )
+            config_written = os.path.exists(config_path)
+
+        self.assertEqual(result["status"], "imported_cleanup_failed")
+        self.assertTrue(config_written)
+        self.assertFalse(result["ready"])
+
+    def test_private_cleanup_failure_returns_nonzero_cli_status(self):
+        raw = """名称：Important-A
+邮箱：important@example.com
+密码：SECRET_PASSWORD
+2FA：JBSWY3DPEHPK3PXP
+手机号：+15550123456
+接码链接：https://sms.example/query?token=SECRET_TOKEN
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            private_path = os.path.join(tmp, "private-import.txt")
+            with open(private_path, "w", encoding="utf-8") as f:
+                f.write(raw)
+            stdout = io.StringIO()
+
+            with (
+                patch("monitor.write_text_atomic", side_effect=ConfigCommandError("清空失败")),
+                redirect_stdout(stdout),
+            ):
+                exit_code = run_cli(
+                    [
+                        "config",
+                        "import-private",
+                        "--config",
+                        config_path,
+                        "--file",
+                        private_path,
+                        "--yes",
+                        "--json",
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "imported_cleanup_failed")
+        self.assertNotIn("SECRET_PASSWORD", stdout.getvalue())
+
+    def test_batch_import_is_atomic_and_reports_email_conflict(self):
+        initial = """名称：Existing
+邮箱：same@example.com
+密码：SECRET_A
+2FA：JBSWY3DPEHPK3PXP
+手机号：+15550123456
+接码链接：https://sms.example/a?token=TOKEN_A"""
+        conflict = """名称：Different
+邮箱：same@example.com
+密码：SECRET_B
+2FA：JBSWY3DPEHPK3PXP
+手机号：+15550987654
+接码链接：https://sms.example/b?token=TOKEN_B"""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            run_config_command(["init", "--config", config_path])
+            run_config_command(
+                ["import-freeform", "--config", config_path, "--stdin", "--yes"],
+                input_reader=lambda: initial,
+            )
+            with open(config_path, "r", encoding="utf-8") as f:
+                before = f.read()
+
+            result = run_config_command(
+                ["import-freeform", "--config", config_path, "--stdin", "--yes", "--json"],
+                input_reader=lambda: conflict,
+            )
+            with open(config_path, "r", encoding="utf-8") as f:
+                after = f.read()
+
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["status"], "invalid_batch")
+        self.assertTrue(result["conflicts"])
+        self.assertEqual(before, after)
+
+    def test_batch_preview_and_write_include_explicit_source_links(self):
+        raw = """名称：A
+邮箱：a@example.com
+密码：SECRET_A
+2FA：JBSWY3DPEHPK3PXP
+手机号：+15550123456
+接码链接：https://sms.example/a?token=TOKEN_A
+
+名称：B
+邮箱：b@example.com
+密码：SECRET_B
+2FA：JBSWY3DPEHPK3PXP
+手机号：+15550987654
+接码链接：https://sms.example/b?token=TOKEN_B"""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            preview = run_config_command(
+                ["import-freeform", "--config", config_path, "--stdin", "--json"],
+                input_reader=lambda: raw,
+            )
+            self.assertFalse(os.path.exists(config_path))
+            result = run_config_command(
+                ["import-freeform", "--config", config_path, "--stdin", "--yes", "--json"],
+                input_reader=lambda: raw,
+            )
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+
+        self.assertEqual(preview["summary"], {"total": 2, "created": 2, "updated": 0})
+        self.assertTrue(result["ready"])
+        self.assertEqual([item["phone_source_label"] for item in cfg["accounts"]], ["A-SMS", "B-SMS"])
+        sanitized = json.dumps(result, ensure_ascii=False)
+        for secret in ("SECRET_A", "SECRET_B", "TOKEN_A", "TOKEN_B"):
+            self.assertNotIn(secret, sanitized)
 
     def test_import_freeform_from_stdin_writes_config_and_sanitizes_output(self):
         raw = (
@@ -1707,7 +2102,7 @@ class KkdosSourceTest(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertEqual(source.status, "校验失败")
-        self.assertIn("CDK 已失效", source.note)
+        self.assertEqual(source.note, "kkdos 请求被拒绝")
         # 脱敏：CDK 明文不得出现在状态信息里
         self.assertNotIn("SECRET_CDK", source.note)
 

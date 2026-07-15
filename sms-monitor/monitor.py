@@ -43,6 +43,7 @@ except ImportError:  # 非 Windows
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 EXAMPLE_PATH = os.path.join(BASE_DIR, "config.example.json")
+PRIVATE_IMPORT_PATH = os.path.join(BASE_DIR, "private-import.txt")
 
 DATE_TIME_RE = re.compile(
     r"\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?"
@@ -64,20 +65,22 @@ class ConfigCommandError(Exception):
 
 
 class LuDanAuthError(Exception):
-    """LuDan CDK 校验失败；上层捕获后降级跳过 LuDan，不退出进程。"""
+    """LuDan 请求失败；只向上层暴露脱敏诊断和是否属于硬失败。"""
 
-    def __init__(self, message, code=None):
-        super().__init__(message)
-        self.message = message
+    def __init__(self, safe_message, code=None, retryable=False):
+        super().__init__(safe_message)
+        self.safe_message = safe_message
         self.code = code
+        self.retryable = retryable
 
 
 class KkdosApiError(Exception):
     """kkdos 私有接口错误；对外只暴露脱敏诊断。"""
 
-    def __init__(self, safe_message):
+    def __init__(self, safe_message, retryable=False):
         super().__init__(safe_message)
         self.safe_message = safe_message
+        self.retryable = retryable
 
 
 @dataclass(frozen=True)
@@ -101,8 +104,9 @@ class FixedSmsParseResult:
 
 def split_us_phone(phone):
     """把美国号码拆成 `+1` 与本地 10 位号码；异常格式保留可见数字。"""
-    digits = re.sub(r"\D", "", phone or "")
-    if len(digits) == 11 and digits.startswith("1"):
+    raw = str(phone or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if raw.startswith("+1") and len(digits) == 11:
         return PhoneParts(country_code="+1", local_number=digits[1:], raw_digits=digits)
     if len(digits) == 10:
         return PhoneParts(country_code="+1", local_number=digits, raw_digits=digits)
@@ -178,7 +182,8 @@ def mask_email(value):
     if not value or "@" not in value:
         return ""
     name, domain = value.split("@", 1)
-    return f"{name[:2]}***@{domain}"
+    visible = name[:2] if len(name) > 2 else name[:1]
+    return f"{visible}***@{domain}"
 
 
 def mask_tail(value, keep=4):
@@ -258,6 +263,116 @@ def parse_freeform_account_text(text, label):
     }
 
 
+FREEFORM_FIELD_ALIASES = {
+    "label": {"label", "名称", "标签", "账户", "账号名称"},
+    "login_email": {"email", "邮箱", "登录邮箱", "账号", "account", "chatgpt谷歌邮箱", "账号邮箱"},
+    "password": {"password", "密码", "pass", "pwd", "chatgpt密码", "账号密码"},
+    "totp_secret": {"2fa", "totp", "totp_secret", "2fa密钥", "密钥", "一次性安全码密钥"},
+    "phone": {"phone", "手机号", "手机", "电话", "号码", "二验手机号", "接码手机号"},
+    "sms_url": {"sms_url", "url", "接码url", "接码链接", "短信链接", "二验手机号验证码获取链接", "验证码获取链接"},
+}
+
+IGNORED_FREEFORM_ALIASES = {"一次性安全码获取地址", "2fa获取地址"}
+
+
+def _canonical_freeform_field(name):
+    normalized = re.sub(r"[\s_-]+", "", str(name or "").strip().lower())
+    for field, aliases in FREEFORM_FIELD_ALIASES.items():
+        if normalized in {re.sub(r"[\s_-]+", "", alias.lower()) for alias in aliases}:
+            return field
+    return ""
+
+
+def parse_inline_labeled_fields(text):
+    """提取同一行连续出现的自然语言字段，不把说明性 2FA 地址当作密钥。"""
+    aliases = []
+    for field, names in FREEFORM_FIELD_ALIASES.items():
+        aliases.extend((name, field) for name in names)
+    aliases.extend((name, "") for name in IGNORED_FREEFORM_ALIASES)
+    aliases.sort(key=lambda item: len(item[0]), reverse=True)
+    marker_re = re.compile(
+        r"(?i)(?<![\w])(" + "|".join(re.escape(name) for name, _ in aliases) + r")\s*[:：]"
+    )
+    alias_map = {re.sub(r"[\s_-]+", "", name.lower()): field for name, field in aliases}
+    matches = list(marker_re.finditer(str(text or "")))
+    if not matches:
+        return {}
+    values = {}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        normalized = re.sub(r"[\s_-]+", "", match.group(1).lower())
+        field = alias_map.get(normalized, "")
+        value = text[match.end() : end].strip(" \t\r\n,，;；")
+        if field and value:
+            values[field] = value
+    return values
+
+
+def _parsed_account(values, fallback_label=""):
+    login_email = str(values.get("login_email") or "").strip()
+    derived_label = login_email.partition("@")[0] if "@" in login_email else ""
+    label = str(values.get("label") or fallback_label or derived_label).strip()
+    phone = re.sub(r"\D", "", str(values.get("phone") or ""))
+    parsed = {
+        "label": label,
+        "login_email": login_email,
+        "password": str(values.get("password") or ""),
+        "totp_secret": str(values.get("totp_secret") or "").strip(),
+        "phone": phone,
+        "sms_url": str(values.get("sms_url") or "").strip(),
+    }
+    parsed["preview"] = {
+        "label": label,
+        "login_email": mask_email(parsed["login_email"]),
+        "password": "<hidden>" if parsed["password"] else "",
+        "totp_secret": "<hidden>" if parsed["totp_secret"] else "",
+        "phone": mask_tail(phone),
+        "sms_url": mask_url(parsed["sms_url"]),
+    }
+    parsed["missing"] = [
+        field
+        for field in ("label", "login_email", "password", "totp_secret", "phone", "sms_url")
+        if not parsed[field]
+    ]
+    return parsed
+
+
+def parse_freeform_accounts(text, fallback_label=""):
+    """解析一组或多组账户文本；敏感原文只存在于返回的内存结构中。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    blocks = [
+        block.strip()
+        for block in re.split(r"(?:\r?\n\s*){2,}|^\s*(?:={3,}|-{6,})\s*$", raw, flags=re.MULTILINE)
+        if block.strip()
+    ]
+    parsed_items = []
+    for block in blocks:
+        values = parse_inline_labeled_fields(block)
+        unkeyed = []
+        for line in block.splitlines():
+            match = re.match(r"^\s*([^:：]{1,24})\s*[:：]\s*(.*?)\s*$", line)
+            field = _canonical_freeform_field(match.group(1)) if match else ""
+            if field and not values.get(field):
+                values[field] = match.group(2)
+            elif line.strip():
+                unkeyed.append(line.strip())
+        if values:
+            residue = "\n".join(unkeyed)
+            if residue:
+                url_match = URL_RE.search(residue)
+                if url_match and not values.get("sms_url"):
+                    values["sms_url"] = url_match.group(0).rstrip("。).,，；;")
+                phone_matches = re.findall(r"\+?\d[\d\s().-]{8,}\d", residue)
+                if phone_matches and not values.get("phone"):
+                    values["phone"] = phone_matches[-1]
+            parsed_items.append(_parsed_account(values, fallback_label if len(blocks) == 1 else ""))
+            continue
+        parsed_items.append(parse_freeform_account_text(block, fallback_label if len(blocks) == 1 else ""))
+    return parsed_items
+
+
 def load_config():
     """读取 config.json；缺失或仍为占位符时给中文提示并退出。"""
     if not os.path.exists(CONFIG_PATH):
@@ -282,10 +397,14 @@ def load_config():
     cfg.setdefault("base_url", "https://jm.luudan.xyz/api/open.php")
     cfg.setdefault("poll_interval", 5)
     cfg.setdefault("auto_change_on_expire", True)
-    cfg["fixed_sources"] = normalize_fixed_sources(cfg.get("fixed_sources", []))
-    cfg["kkdos_sources"] = normalize_kkdos_sources(cfg.get("kkdos_sources", []))
-    cfg["email_sources"] = normalize_email_sources(cfg.get("email_sources", []))
-    cfg["accounts"] = normalize_accounts(cfg.get("accounts", []))
+    try:
+        cfg["fixed_sources"] = normalize_fixed_sources(cfg.get("fixed_sources", []))
+        cfg["kkdos_sources"] = normalize_kkdos_sources(cfg.get("kkdos_sources", []))
+        cfg["email_sources"] = normalize_email_sources(cfg.get("email_sources", []))
+        cfg["accounts"] = normalize_accounts(cfg.get("accounts", []))
+    except ConfigCommandError as e:
+        print(f"配置无效：{e}")
+        sys.exit(1)
     return cfg
 
 
@@ -294,20 +413,17 @@ def normalize_fixed_sources(raw_sources):
     if raw_sources is None:
         return []
     if not isinstance(raw_sources, list):
-        print("config.json 里的 fixed_sources 必须是数组。")
-        sys.exit(1)
+        raise ConfigCommandError("config.json 里的 fixed_sources 必须是数组。")
 
     sources = []
     for index, item in enumerate(raw_sources, start=1):
         if not isinstance(item, dict):
-            print(f"fixed_sources 第 {index} 项必须是对象。")
-            sys.exit(1)
+            raise ConfigCommandError(f"fixed_sources 第 {index} 项必须是对象。")
         label = str(item.get("label") or f"固定来源{index}").strip()
         phone = str(item.get("phone") or "").strip()
         url = str(item.get("url") or "").strip()
         if not phone or not url:
-            print(f"fixed_sources 第 {index} 项缺少 phone 或 url。")
-            sys.exit(1)
+            raise ConfigCommandError(f"fixed_sources 第 {index} 项缺少 phone 或 url。")
         sources.append({"label": label, "phone": phone, "url": url})
     return sources
 
@@ -317,20 +433,17 @@ def normalize_kkdos_sources(raw_sources):
     if raw_sources is None:
         return []
     if not isinstance(raw_sources, list):
-        print("config.json 里的 kkdos_sources 必须是数组。")
-        sys.exit(1)
+        raise ConfigCommandError("config.json 里的 kkdos_sources 必须是数组。")
 
     sources = []
     for index, item in enumerate(raw_sources, start=1):
         if not isinstance(item, dict):
-            print(f"kkdos_sources 第 {index} 项必须是对象。")
-            sys.exit(1)
+            raise ConfigCommandError(f"kkdos_sources 第 {index} 项必须是对象。")
         label = str(item.get("label") or f"kkdos{index}").strip()
         cdk = str(item.get("cdk") or "").strip()
         base_url = str(item.get("base_url") or "https://sms.kkdos.store").strip().rstrip("/")
         if not cdk:
-            print(f"kkdos_sources 第 {index} 项缺少 cdk。")
-            sys.exit(1)
+            raise ConfigCommandError(f"kkdos_sources 第 {index} 项缺少 cdk。")
         sources.append({"label": label, "cdk": cdk, "base_url": base_url})
     return sources
 
@@ -340,24 +453,22 @@ def normalize_email_sources(raw_sources):
     if raw_sources is None:
         return []
     if not isinstance(raw_sources, list):
-        print("config.json 里的 email_sources 必须是数组。")
-        sys.exit(1)
+        raise ConfigCommandError("config.json 里的 email_sources 必须是数组。")
 
     sources = []
     for index, item in enumerate(raw_sources, start=1):
         if not isinstance(item, dict):
-            print(f"email_sources 第 {index} 项必须是对象。")
-            sys.exit(1)
+            raise ConfigCommandError(f"email_sources 第 {index} 项必须是对象。")
         provider = str(item.get("provider") or "icloud").strip().lower()
         if provider != "icloud":
-            print(f"email_sources 第 {index} 项的 provider={provider} 暂不支持，目前只支持 icloud。")
-            sys.exit(1)
+            raise ConfigCommandError(
+                f"email_sources 第 {index} 项的 provider={provider} 暂不支持，目前只支持 icloud。"
+            )
         label = str(item.get("label") or f"邮箱来源{index}").strip()
         email = str(item.get("email") or "").strip()
         base_url = str(item.get("base_url") or "https://email.nloop.cc").strip().rstrip("/")
         if not email:
-            print(f"email_sources 第 {index} 项缺少 email。")
-            sys.exit(1)
+            raise ConfigCommandError(f"email_sources 第 {index} 项缺少 email。")
         sources.append(
             {"label": label, "email": email, "provider": provider, "base_url": base_url}
         )
@@ -369,18 +480,15 @@ def normalize_accounts(raw_accounts):
     if raw_accounts is None:
         return []
     if not isinstance(raw_accounts, list):
-        print("config.json 里的 accounts 必须是数组。")
-        sys.exit(1)
+        raise ConfigCommandError("config.json 里的 accounts 必须是数组。")
 
     accounts = []
     for index, item in enumerate(raw_accounts, start=1):
         if not isinstance(item, dict):
-            print(f"accounts 第 {index} 项必须是对象。")
-            sys.exit(1)
+            raise ConfigCommandError(f"accounts 第 {index} 项必须是对象。")
         login_email = str(item.get("login_email") or "").strip()
         if not login_email:
-            print(f"accounts 第 {index} 项缺少 login_email。")
-            sys.exit(1)
+            raise ConfigCommandError(f"accounts 第 {index} 项缺少 login_email。")
         label = str(item.get("label") or f"账户{index}").strip()
         accounts.append(
             {
@@ -444,6 +552,8 @@ def write_config_file_atomic(path, cfg):
             "w",
             encoding="utf-8",
             dir=os.path.dirname(os.path.abspath(path)),
+            prefix=os.path.basename(path) + ".",
+            suffix=".tmp",
             delete=False,
         ) as f:
             tmp_path = f.name
@@ -493,6 +603,7 @@ def default_prompt_reader(prompt, secret=False):
 def fill_freeform_missing_fields(parsed, prompt_reader):
     """在本机终端补齐缺失字段；返回结构仍只用脱敏预览对外输出。"""
     prompts = {
+        "label": ("账户标签：", False),
         "login_email": ("登录邮箱：", False),
         "password": ("密码：", True),
         "totp_secret": ("2FA/TOTP secret：", True),
@@ -546,6 +657,139 @@ def upsert_by_label(items, item):
             return "updated"
     items.append(item)
     return "created"
+
+
+def private_template_text(count=1):
+    """生成不含示例秘密的私密导入空白槽位。"""
+    count = max(1, int(count))
+    block = "名称：\n邮箱：\n密码：\n2FA：\n手机号：\n接码链接："
+    return ("\n\n".join(block for _ in range(count)) + "\n")
+
+
+def write_text_atomic(path, text):
+    """原子写入本地文本；错误消息不包含文件内容。"""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=os.path.dirname(os.path.abspath(path)),
+            prefix=os.path.basename(path) + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_path = f.name
+            f.write(text)
+        os.replace(tmp_path, path)
+    except OSError as e:
+        raise ConfigCommandError(f"私密模板写入失败：{e.__class__.__name__}") from e
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+def private_template_has_values(path):
+    """判断私密模板是否已填写；调用方不得输出读取到的原文。"""
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            parsed_items = parse_freeform_accounts(f.read())
+    except OSError as e:
+        raise ConfigCommandError(f"私密模板不可读：{e.__class__.__name__}") from e
+    return any(
+        any(item.get(field) for field in ("login_email", "password", "totp_secret", "phone", "sms_url"))
+        for item in parsed_items
+    )
+
+
+def analyze_import_batch(parsed_items, cfg, source_label="", result_label="batch"):
+    """构建脱敏预览和待写入副本；不修改传入配置。"""
+    fixed_sources = normalize_fixed_sources(cfg.get("fixed_sources", []))
+    accounts = normalize_accounts(cfg.get("accounts", []))
+    existing_by_label = {item["label"]: item for item in accounts}
+    existing_email_labels = {
+        item["login_email"].strip().lower(): item["label"] for item in accounts
+    }
+    batch_labels = set()
+    batch_emails = {}
+    conflicts = []
+    if source_label and len(parsed_items) > 1:
+        conflicts.append({"label": source_label, "reason": "批量导入不能共用同一个 --source-label"})
+    for item in parsed_items:
+        label = item["label"]
+        email = item["login_email"].strip().lower()
+        if label and label in batch_labels:
+            conflicts.append({"label": label, "reason": "批次内 label 重复"})
+        if email and email in batch_emails and batch_emails[email] != label:
+            conflicts.append({"label": label, "reason": "批次内登录邮箱重复"})
+        current_label = existing_email_labels.get(email)
+        if current_label and current_label != label:
+            conflicts.append({"label": label, "reason": "登录邮箱已属于其他 label"})
+        batch_labels.add(label)
+        if email:
+            batch_emails[email] = label
+
+    missing_items = [
+        {"label": item["label"] or f"第 {index} 组", "missing": item["missing"]}
+        for index, item in enumerate(parsed_items, start=1)
+        if item["missing"]
+    ]
+    changes = [
+        {
+            "label": item["label"],
+            "action": "updated" if item["label"] in existing_by_label else "created",
+            "source_label": source_label or f"{item['label']}-SMS",
+        }
+        for item in parsed_items
+        if item["label"]
+    ]
+    response = {
+        "items": [item["preview"] for item in parsed_items],
+        "summary": {
+            "total": len(parsed_items),
+            "created": sum(change["action"] == "created" for change in changes),
+            "updated": sum(change["action"] == "updated" for change in changes),
+        },
+        "conflicts": conflicts,
+        "changes": changes,
+    }
+    if len(parsed_items) == 1:
+        response["preview"] = parsed_items[0]["preview"]
+    if missing_items or conflicts:
+        return {
+            **safe_result(result_label, "import", False, "invalid_batch", "批量导入需要补齐或解决冲突"),
+            **response,
+            "missing": missing_items,
+        }, None
+
+    for item in parsed_items:
+        item_source_label = source_label or f"{item['label']}-SMS"
+        upsert_by_label(
+            fixed_sources,
+            {"label": item_source_label, "phone": item["phone"], "url": item["sms_url"]},
+        )
+        upsert_by_label(
+            accounts,
+            {
+                "label": item["label"],
+                "login_email": item["login_email"],
+                "password": item["password"],
+                "totp_secret": item["totp_secret"],
+                "phone": item["phone"],
+                "phone_source_label": item_source_label,
+                "email": "",
+                "note": "",
+            },
+        )
+    updated_cfg = dict(cfg)
+    updated_cfg["fixed_sources"] = normalize_fixed_sources(fixed_sources)
+    updated_cfg["accounts"] = normalize_accounts(accounts)
+    return response, updated_cfg
 
 
 # 无效来源/账户的持久化标记：顶层 disabled 字典，key 由 disabled_key 生成。
@@ -810,12 +1054,24 @@ def build_config_parser():
 
     import_parser = subparsers.add_parser("import-freeform")
     add_common(import_parser)
-    import_parser.add_argument("--label", required=True)
+    import_parser.add_argument("--label", default="")
     import_parser.add_argument("--source-label")
     import_parser.add_argument("--stdin", action="store_true")
     import_parser.add_argument("--from-clipboard", action="store_true")
     import_parser.add_argument("--interactive", action="store_true")
     import_parser.add_argument("--yes", action="store_true")
+
+    private_template_parser = subparsers.add_parser("private-template")
+    add_common(private_template_parser)
+    private_template_parser.add_argument("--count", type=int, default=1)
+    private_template_parser.add_argument("--open", action="store_true")
+    private_template_parser.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
+    private_template_parser.add_argument("--file", default=PRIVATE_IMPORT_PATH, help=argparse.SUPPRESS)
+
+    private_import_parser = subparsers.add_parser("import-private")
+    add_common(private_import_parser)
+    private_import_parser.add_argument("--yes", action="store_true")
+    private_import_parser.add_argument("--file", default=PRIVATE_IMPORT_PATH, help=argparse.SUPPRESS)
 
     validate_parser = subparsers.add_parser("validate")
     add_common(validate_parser)
@@ -949,6 +1205,25 @@ def run_config_command(
         write_config_file_atomic(args.config, cfg)
         return safe_result(args.label, "account", True, status, "账户档案已录入")
 
+    if args.command == "private-template":
+        if args.count < 1:
+            raise ConfigCommandError("私密模板账户数量必须大于 0")
+        if not args.force and private_template_has_values(args.file):
+            raise ConfigCommandError("私密模板已有填写内容，拒绝覆盖；请先导入或显式使用 --force")
+        write_text_atomic(args.file, private_template_text(args.count))
+        if args.open:
+            if os.name != "nt" or not hasattr(os, "startfile"):
+                raise ConfigCommandError("当前平台不支持自动打开模板")
+            try:
+                os.startfile(args.file)
+            except OSError as e:
+                raise ConfigCommandError(f"私密模板已创建，但打开失败：{e.__class__.__name__}") from e
+        return {
+            **safe_result("private-template", "config", True, "initialized", "私密空白模板已准备"),
+            "count": args.count,
+            "opened": bool(args.open),
+        }
+
     if args.command == "import-freeform":
         if args.stdin == args.from_clipboard:
             raise ConfigCommandError("必须且只能选择 --stdin 或 --from-clipboard")
@@ -957,46 +1232,64 @@ def run_config_command(
         else:
             reader = read_clipboard_text if clipboard_reader is None else clipboard_reader
             raw_text = reader()
-        parsed = parse_freeform_account_text(raw_text, args.label.strip())
-        if parsed["missing"] and args.interactive:
+        parsed_items = parse_freeform_accounts(raw_text, args.label.strip())
+        if not parsed_items:
+            raise ConfigCommandError("未识别到可导入的账户资料")
+        if args.interactive:
             reader = default_prompt_reader if prompt_reader is None else prompt_reader
-            parsed = fill_freeform_missing_fields(parsed, reader)
-        if parsed["missing"]:
-            return {
-                **safe_result(args.label, "import", False, "missing_fields", "自由文本缺少必要字段"),
-                "missing": parsed["missing"],
-                "preview": parsed["preview"],
-            }
-        if not args.yes:
-            return {
-                **safe_result(args.label, "import", False, "needs_confirmation", "请确认脱敏预览后重试 --yes"),
-                "preview": parsed["preview"],
-            }
+            parsed_items = [
+                fill_freeform_missing_fields(item, reader) if item["missing"] else item
+                for item in parsed_items
+            ]
 
         cfg = read_config_file(args.config, allow_missing=True)
-        cfg["fixed_sources"] = normalize_fixed_sources(cfg.get("fixed_sources", []))
-        cfg["accounts"] = normalize_accounts(cfg.get("accounts", []))
-        source_label = args.source_label or f"{args.label.strip()}-SMS"
-        upsert_by_label(
-            cfg["fixed_sources"],
-            {"label": source_label, "phone": parsed["phone"], "url": parsed["sms_url"]},
+        response, updated_cfg = analyze_import_batch(
+            parsed_items, cfg, source_label=args.source_label or "", result_label=args.label or "batch"
         )
-        upsert_by_label(
-            cfg["accounts"],
-            {
-                "label": args.label.strip(),
-                "login_email": parsed["login_email"],
-                "password": parsed["password"],
-                "totp_secret": parsed["totp_secret"],
-                "phone": parsed["phone"],
-                "email": "",
-                "note": "",
-            },
-        )
-        write_config_file_atomic(args.config, cfg)
+        if updated_cfg is None:
+            return response
+        if not args.yes:
+            return {
+                **safe_result(args.label or "batch", "import", False, "needs_confirmation", "请确认脱敏预览后重试 --yes"),
+                **response,
+            }
+        write_config_file_atomic(args.config, updated_cfg)
         return {
-            **safe_result(args.label, "import", True, "imported", "自由文本已脱敏解析并录入"),
-            "preview": parsed["preview"],
+            **safe_result(args.label or "batch", "import", True, "imported", "批量资料已脱敏解析并原子录入"),
+            **response,
+        }
+
+    if args.command == "import-private":
+        try:
+            with open(args.file, "r", encoding="utf-8") as f:
+                raw_text = f.read()
+        except OSError as e:
+            raise ConfigCommandError(f"私密模板不可读：{e.__class__.__name__}") from e
+        parsed_items = parse_freeform_accounts(raw_text)
+        if not parsed_items:
+            raise ConfigCommandError("私密模板为空或未识别到账户槽位")
+        cfg = read_config_file(args.config, allow_missing=True)
+        response, updated_cfg = analyze_import_batch(
+            parsed_items, cfg, result_label="private"
+        )
+        if updated_cfg is None:
+            return response
+        if not args.yes:
+            return {
+                **safe_result("private", "import", False, "needs_confirmation", "请确认脱敏预览后重试 --yes"),
+                **response,
+            }
+        write_config_file_atomic(args.config, updated_cfg)
+        try:
+            write_text_atomic(args.file, private_template_text(len(parsed_items)))
+        except ConfigCommandError:
+            return {
+                **safe_result("private", "import", False, "imported_cleanup_failed", "配置已导入，但私密模板清空失败"),
+                **response,
+            }
+        return {
+            **safe_result("private", "import", True, "imported", "私密资料已导入，模板已恢复为空白槽位"),
+            **response,
         }
 
     if args.command == "validate":
@@ -1238,10 +1531,10 @@ class LuDanSource:
     def verify(self):
         data = self.call("verify")
         if data.get("code") != 0:
-            msg = data.get("msg", "未知错误")
             code = data.get("code")
-            # 不再 sys.exit；抛异常让 SmsMonitor 降级跳过 LuDan，避免拖垮整个面板
-            raise LuDanAuthError(f"CDK 校验失败：{msg}（code={code}）", code)
+            retryable = bool(data.get("_local_failure"))
+            reason = "LuDan 暂时无法连接" if retryable else f"LuDan 认证失败（code={code}）"
+            raise LuDanAuthError(reason, code, retryable=retryable)
         self.verified_data = data.get("data", {}) or {}
         self.apply_status_data(self.verified_data)
         return data
@@ -1256,6 +1549,8 @@ class LuDanSource:
                     self.note = "请求过于频繁，稍等重试..."
                     time.sleep(3)
                     continue
+                if resp.status_code in (401, 403):
+                    return {"code": resp.status_code, "msg": "认证失败"}
                 return resp.json()
             except requests.RequestException as e:
                 self.note = f"网络异常重试中（{e.__class__.__name__}）"
@@ -1263,7 +1558,7 @@ class LuDanSource:
             except ValueError:
                 self.note = "接口返回非 JSON，稍后重试"
                 time.sleep(2)
-        return {"code": -1, "msg": "本地请求失败"}
+        return {"code": -1, "msg": "本地请求失败", "_local_failure": True}
 
     def refresh_number(self):
         """优先复用 verify 返回的已分配号码；没有号码才申请新号。"""
@@ -1299,13 +1594,13 @@ class LuDanSource:
             self.last_code = ""
             self.note = "已换号"
         else:
-            self.note = f"换号失败：{data.get('msg', '')}"
+            self.note = "换号失败：服务端拒绝请求"
 
     def poll(self):
         """轮询验证码；处理新验证码与号码过期。"""
         data = self.call("get_code")
         if data.get("code") != 0:
-            self.note = data.get("msg", "查询失败")
+            self.note = "查询失败"
             return
         d = data.get("data", {})
         self.apply_status_data(d)
@@ -1313,6 +1608,9 @@ class LuDanSource:
         if d.get("has_sms"):
             code = d.get("sms_code") or d.get("code", "")
             content = d.get("content", "")
+            if not code and content:
+                parsed = parse_fixed_sms_response(str(content), allow_generic=True)
+                code = parsed.code if parsed.has_sms else ""
             if code and code != self.last_code:
                 self.last_code = code
                 self.history.appendleft((now_hms(), code, content))
@@ -1381,6 +1679,8 @@ class KkdosSource:
         self.last_checked = "-"
         self.note = ""
         self.disabled_reason = ""
+        self.verify_hard_failures = 0
+        self.verify_failure_threshold = 3
 
     @property
     def phone_parts(self):
@@ -1395,21 +1695,22 @@ class KkdosSource:
         try:
             resp = self.session.post(url, json=body or {}, timeout=self.request_timeout)
         except requests.RequestException as e:
-            raise KkdosApiError(f"网络异常：{e.__class__.__name__}") from e
+            raise KkdosApiError(f"临时网络错误（{e.__class__.__name__}）", retryable=True) from e
         self.last_checked = now_hms()
         status_code = getattr(resp, "status_code", 0)
         if not 200 <= status_code < 300:
-            raise KkdosApiError(f"HTTP {status_code}")
+            retryable = status_code not in (401, 403)
+            message = f"临时 HTTP 错误（{status_code}）" if retryable else "kkdos 认证失败"
+            raise KkdosApiError(message, retryable=retryable)
         try:
             payload = resp.json()
         except (AttributeError, ValueError) as e:
-            raise KkdosApiError("接口返回非 JSON") from e
+            raise KkdosApiError("接口返回非 JSON", retryable=True) from e
         if not payload.get("success"):
-            error = str(payload.get("error") or "接口返回 success=false")
             data = payload.get("data") or {}
             if isinstance(data, dict) and "remainingSeconds" in data:
-                error = f"请再等待 {data.get('remainingSeconds')} 秒"
-            raise KkdosApiError(error)
+                raise KkdosApiError(f"请再等待 {data.get('remainingSeconds')} 秒", retryable=True)
+            raise KkdosApiError("kkdos 请求被拒绝")
         return payload.get("data") or {}
 
     def verify(self):
@@ -1453,6 +1754,16 @@ class KkdosSource:
         self.waiting_for_code = True
         self.note = "等待验证码查询"
 
+    def _record_verify_error(self, error):
+        self.waiting_for_code = False
+        self.note = error.safe_message
+        if error.retryable:
+            self.verify_hard_failures = 0
+            return
+        self.verify_hard_failures += 1
+        if self.verify_hard_failures >= self.verify_failure_threshold:
+            self.disabled_reason = "kkdos 连续认证失败"
+
     def poll(self):
         if not self.session_id:
             try:
@@ -1461,8 +1772,9 @@ class KkdosSource:
                 # verify 失败（网络异常/HTTP错误/CDK失效）不应拖垮整个监控，
                 # 与下方 start 调用一致：设状态后跳过本轮，等下次重试。
                 self.status = "校验失败"
-                self.note = e.safe_message
+                self._record_verify_error(e)
                 return None
+            self.verify_hard_failures = 0
         if not self.waiting_for_code:
             self.status = "等待触发"
             return None
@@ -1470,7 +1782,7 @@ class KkdosSource:
             data = self._post_json(f"/api/session/{self.session_id}/start")
         except KkdosApiError as e:
             self.status = "启动失败"
-            self.note = e.safe_message
+            self._record_verify_error(e)
             return None
         self.apply_status_data(data)
         return self._read_sse_code()
@@ -1545,7 +1857,7 @@ class KkdosSource:
             return None
         if event_type in {"failed", "timeout", "error"}:
             self.status = "查询失败"
-            self.note = str(event.get("error") or event_type)
+            self.note = "验证码查询失败"
             self.waiting_for_code = False
         return None
 
@@ -1742,7 +2054,7 @@ class EmailSource:
 
         if not payload.get("ok"):
             self.status = "取件失败"
-            self.note = str(payload.get("error") or payload.get("detail") or "接口返回 ok=false")
+            self.note = "接口返回 ok=false"
             # ok=false 通常是临时业务态，不累计硬失败
             self.consecutive_hard_failures = 0
             return
@@ -1760,7 +2072,7 @@ class EmailSource:
         subject = mail.get("subject") or ""
         body = mail.get("body") or mail.get("preview") or ""
         result = parse_fixed_sms_response(f"{subject} {body}", allow_generic=True)
-        if result.has_sms and (result.code != self.last_code or mail_id != self.last_mail_id):
+        if result.has_sms and result.code != self.last_code:
             self.last_code = result.code
             self.last_mail_id = mail_id
             self.history.appendleft((now_hms(), result.code, subject or result.content))
@@ -1858,6 +2170,8 @@ class SmsMonitor:
         self.active_until_code = bool(cfg.get("active_until_code", True))
         self.active_waiting_for_code = False
         self.active_until = 0.0
+        self._digit_buffer = ""
+        self._digit_deadline = 0.0
         # 上一轮超时、尚未完成的 worker：下一轮开始时结算，迟到的验证码补复制，
         # 仍未完成的短期保留；超过保留轮次后允许 fresh retry，避免来源永久下线。
         self._pending_polls: list = []
@@ -1897,6 +2211,8 @@ class SmsMonitor:
             s for s in [self.ludan, *self.fixed_sources, *self.kkdos_sources, *self.email_sources]
             if s is not None
         ]
+        self._link_accounts()
+        self._rebuild_sources()
         # 账户聚合：把电话/邮箱来源挂到账户卡上，避免顶层重复展示
         self._link_accounts()
         self._rebuild_sources()
@@ -1922,23 +2238,32 @@ class SmsMonitor:
 
     def _link_accounts(self):
         """按电话(去格式比对)与取件邮箱，把轮询来源挂到账户上供聚合卡片展示。"""
+        enabled_phone_sources = [
+            source for source in self.pollables if getattr(source, "kind", "") in {"fixed", "kkdos"}
+        ]
+        enabled_fixed_sources = [
+            source for source in enabled_phone_sources if getattr(source, "kind", "") == "fixed"
+        ]
+        enabled_email_sources = [
+            source for source in self.pollables if getattr(source, "kind", "") == "email"
+        ]
         for account in self.accounts:
             account.linked_phone_source = None
             account.linked_email_source = None
             if account.phone_source_label:
-                for src in [*self.fixed_sources, *self.kkdos_sources]:
+                for src in enabled_phone_sources:
                     if src.label == account.phone_source_label:
                         account.linked_phone_source = src
                         break
             elif account.phone:
                 target = split_us_phone(account.phone).raw_digits
-                for src in self.fixed_sources:
+                for src in enabled_fixed_sources:
                     if target and split_us_phone(src.phone).raw_digits == target:
                         account.linked_phone_source = src
                         break
             if account.email:
                 target = account.email.strip().lower()
-                for src in self.email_sources:
+                for src in enabled_email_sources:
                     if src.email.strip().lower() == target:
                         account.linked_email_source = src
                         break
@@ -1952,7 +2277,8 @@ class SmsMonitor:
             if account.linked_email_source is not None:
                 linked_ids.add(id(account.linked_email_source))
         unlinked = [s for s in self.pollables if id(s) not in linked_ids]
-        self.sources = [*unlinked, *self.accounts]
+        self.unlinked_sources = unlinked
+        self.sources = [*self.accounts, *unlinked]
 
     def _disable_runtime(self, kind, label, reason):
         """运行时把某来源标记无效：写盘 + 更新展示 + 从 pollables 移除。"""
@@ -1963,6 +2289,8 @@ class SmsMonitor:
             s for s in self.pollables
             if disabled_key(getattr(s, "kind", ""), getattr(s, "label", "")) != target_key
         ]
+        self._link_accounts()
+        self._rebuild_sources()
 
     def render(self):
         clear_screen()
@@ -1971,7 +2299,12 @@ class SmsMonitor:
         print("                    SMS 验证码多来源监控")
         print(line)
         print()
+        account_count = len(self.accounts)
+        if account_count:
+            print("  账户摘要")
         for index, source in enumerate(self.sources, start=1):
+            if index == account_count + 1 and self.unlinked_sources:
+                print("  其他来源")
             self.render_source(index, source)
             print()
         if self.disabled_display:
@@ -1980,7 +2313,7 @@ class SmsMonitor:
                 print(f"    [{kind}] {label} - {reason}（{at}）")
             print()
         if msvcrt:
-            keys = "/".join(str(i) for i in range(1, min(len(self.sources), 9) + 1))
+            keys = f"1-{len(self.sources)}" if self.sources else "无"
             change_hint = " | n 换号" if self.changeable_sources() else ""
             print(f"  热键：按 {keys} 复制对应号码/邮箱{change_hint} | q 退出")
         else:
@@ -2014,8 +2347,9 @@ class SmsMonitor:
         if source.note:
             print(f"      提示：{source.note}")
         print("      最近收到：")
-        if source.history:
-            for ts, code, content in source.history:
+        history = list(source.history)
+        if history:
+            for ts, code, content in history:
                 print(f"        [{ts}] {code}   {snippet(content)}")
         else:
             print("        （暂无）")
@@ -2023,7 +2357,7 @@ class SmsMonitor:
     def render_account_source(self, index, source):
         print(f"  [{index}] {source.label}（账户）")
         print(f"      登录邮箱：{source.login_email}")
-        print(f"      密码：{source.password or '未配置'}")
+        print(f"      密码：{'已配置' if source.password else '未配置'}")
         if source.totp_secret:
             current = source.current_totp
             if current == "密钥无效":
@@ -2041,7 +2375,9 @@ class SmsMonitor:
             print(f"        最新验证码：{phone_src.last_code or '等待中...'} | {phone_src.status_text()}")
         elif source.phone:
             parts = split_us_phone(source.phone)
-            print(f"      短信号码：{parts.country_code or '-'} {parts.local_number}（无轮询来源）")
+            disabled_reason = self._disabled_reason("fixed", source.phone_source_label)
+            state = f"来源已禁用：{disabled_reason}" if disabled_reason else "未关联"
+            print(f"      短信号码：{parts.country_code or '-'} {parts.local_number}（{state}）")
 
         # 取件邮箱渠道：聚合显示关联邮箱来源的最新验证码
         email_src = source.linked_email_source
@@ -2056,6 +2392,12 @@ class SmsMonitor:
         if source.note:
             print(f"      提示：{source.note}")
 
+    def _disabled_reason(self, kind, label):
+        for disabled_kind, disabled_label, reason, _ in self.disabled_display:
+            if disabled_kind == kind and disabled_label == label:
+                return reason or "已禁用"
+        return ""
+
     def handle_keys(self):
         """非阻塞读取热键；返回 False 表示请求退出。"""
         if not msvcrt:
@@ -2063,6 +2405,7 @@ class SmsMonitor:
         while msvcrt.kbhit():
             ch = msvcrt.getwch().lower()
             if ch == "q":
+                self._digit_buffer = ""
                 return False
             if ch == "n":
                 source = self.default_changeable_source()
@@ -2076,8 +2419,14 @@ class SmsMonitor:
                 self.activate_high_frequency()
                 self.render()  # 立即刷新换号结果，不等下一轮轮询
                 continue
-            if ch.isdigit() and ch != "0":
-                self.copy_source_number(int(ch))
+            if ch.isdigit():
+                self._digit_buffer += ch
+                self._digit_deadline = time.time() + 0.35
+        if self._digit_buffer and time.time() >= self._digit_deadline:
+            index_text = self._digit_buffer
+            self._digit_buffer = ""
+            if not index_text.startswith("0"):
+                self.copy_source_number(int(index_text))
         return True
 
     def copy_source_number(self, index):
@@ -2107,7 +2456,7 @@ class SmsMonitor:
         for key, label, value in fields:
             print(f"  {key}. {label}：{value}")
         print()
-        print("  按对应数字复制；Esc 取消。")
+        print("  按对应数字复制；q 或 Esc 取消。")
 
     def copy_account_field(self, index, account):
         fields = account.copy_fields()
@@ -2132,7 +2481,7 @@ class SmsMonitor:
         choices = {key: (label, value) for key, label, value in fields}
         while True:
             ch = msvcrt.getwch().lower()
-            if ch == "\x1b":
+            if ch in {"q", "\x1b"}:
                 self.note = f"已取消 [{index}] {account.label} 复制"
                 self.render()
                 return
@@ -2273,8 +2622,6 @@ class SmsMonitor:
         late_codes = []
         skip_ids = set()
         still_pending = []
-        # 限定等待上一轮迟到的 worker 完成
-        wait([future for _, future, _, _ in records], timeout=self.poll_round_timeout)
         max_rounds = max(1, int(getattr(self, "pending_poll_max_rounds", 3)))
         for source, future, snap, pending_rounds in records:
             if not future.done():
@@ -2355,10 +2702,11 @@ class SmsMonitor:
                 print("正在获取 LuDan 号码...")
                 self.ludan.refresh_number()
             except LuDanAuthError as e:
-                print(f"LuDan 已失效，跳过并继续：{e.message}")
-                self._disable_runtime("ludan", "", e.message)
-                self.ludan = None
-                self._rebuild_sources()
+                print(f"LuDan 校验未通过：{e.safe_message}")
+                if not e.retryable:
+                    self._disable_runtime("ludan", "", e.safe_message)
+                    self.ludan = None
+                    self._rebuild_sources()
         else:
             print("LuDan 未启用（未配置 key 或已禁用），跳过校验。")
         for source in list(getattr(self, "kkdos_sources", [])):
@@ -2367,7 +2715,8 @@ class SmsMonitor:
                 source.verify()
             except KkdosApiError as e:
                 print(f"{source.label} kkdos 暂不可用，跳过并继续：{e.safe_message}")
-                self._disable_runtime("kkdos", source.label, e.safe_message)
+                if not e.retryable:
+                    self._disable_runtime("kkdos", source.label, e.safe_message)
         self._rebuild_sources()
         if getattr(self, "disabled_display", None):
             print(f"已跳过 {len(self.disabled_display)} 个无效来源/账户；config list-disabled 查看")
@@ -2407,6 +2756,23 @@ def print_config_result(result, as_json=False):
         print(json.dumps(result, ensure_ascii=False))
         return
     print(f"{result['kind']}:{result['label']} {result['status']} - {result['sanitized_reason']}")
+    summary = result.get("summary") or {}
+    if summary:
+        print(
+            f"账户总数：{summary.get('total', 0)} | 新增：{summary.get('created', 0)} | "
+            f"更新：{summary.get('updated', 0)}"
+        )
+    for index, item in enumerate(result.get("items") or [], start=1):
+        print(
+            f"  [{index}] {item.get('label') or '未命名'} | {item.get('login_email') or '邮箱缺失'} | "
+            f"密码:{'已配置' if item.get('password') else '缺失'} | "
+            f"2FA:{'已配置' if item.get('totp_secret') else '缺失'} | "
+            f"手机:{item.get('phone') or '缺失'} | URL:{item.get('sms_url') or '缺失'}"
+        )
+    for conflict in result.get("conflicts") or []:
+        print(f"  冲突：{conflict.get('label') or '未命名'} - {conflict.get('reason')}")
+    for missing in result.get("missing") or []:
+        print(f"  缺失：{missing.get('label')} - {', '.join(missing.get('missing') or [])}")
 
 
 def run_cli(
@@ -2440,6 +2806,8 @@ def run_cli(
         print_config_result(result, as_json=json_requested)
         return 1
     print_config_result(result, as_json="--json" in argv)
+    if result.get("status") == "imported_cleanup_failed":
+        return 1
     return 0
 
 
