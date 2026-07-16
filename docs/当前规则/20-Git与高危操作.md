@@ -20,6 +20,8 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 ## PR 修复后的推送规则
 
 - 当前轮用户明确要求修复已有开放 PR 的审查意见、requested changes、CI/check failure 或等价 PR 修复闭环时，任务默认包含必要 commit 和普通 `git push` 到当前 PR 分支；不需要用户另写 `push` / `推送`。
+- 修复前必须确认当前分支对应唯一 open PR，且当前分支等于该 PR 的真实 `headRefName`。不匹配时停止，不得新建替代修复分支；允许把已存在的真实 PR head 分支绑定到新的 linked worktree。
+- PR 只读审查使用 GitHub API、`FETCH_HEAD` 或不落持久分支的临时 ref；禁止用 `git fetch origin pull/<编号>/head:pr-<编号>` 或等价命令留下 `pr-<编号>` 本地分支。
 - 触发条件必须是已有开放 PR 的修复闭环。普通“修复”“完成”“整理”“收尾”“验证”“本地 review”或“创建 PR”不构成 push 授权。
 - 用户明确要求“只改不提交”“不推送”“只验证”或“只审查”时，以用户限制为准，不执行 commit 或 push。
 - 推送前必须完成软检查：当前分支能对应唯一 open PR，且 PR head 分支等于当前分支；已运行最小有效验证和本地自审；准备推送前 staged 为空、无 tracked 未提交改动；既有 unrelated untracked 只报告，不暂存。
@@ -67,9 +69,11 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 
 ## cleanup-worktrees 边界
 
-`cleanup-worktrees` 对话入口默认用快路径清理 PR 合并后的本地残留：已合并到刷新后的 base、相对 base 无领先提交、无 tracked 修改、无 `??` untracked、standard managed root、legacy cleanup-only root 或仓库内临时 review 根下且非 protected 的 worktree / 本地分支，以及已并入 base 的 stale `origin/*` 本机缓存。普通 ignored runtime/cache/log/data 只作为报告项，不阻断 stale worktree 整体移除；凭据类 ignored 文件仍阻断且不得读取内容。如用户显式给出 `--no-prune`，跳过 stale `origin/*` 本机缓存清理。默认输出短摘要：`removed worktrees`、`deleted local branches`、`deleted stale origin refs`、`skipped`。
+`cleanup-worktrees` 对话入口默认用快路径清理 PR 合并后的本地残留。普通 merge 仍要求候选是刷新后 base 的祖先且 ahead=0。非祖先候选只有在 GitHub 返回唯一 merged PR，且 `baseRefName`、`headRefName`、`headRefOid`、本地候选 OID 和 `mergeCommit.oid` 全部交叉验证通过、merge commit 已进入 base 时，才按 `squash-merged-pr` 处理。GitHub 元数据不可用、结果不唯一、OID 不一致或 merge commit 未进入 base 时保持不变。
 
-`audit`、`--dry-run`、`--audit`、`只审计` 只审计且不得 `fetch`；如果远端 base 与本机 base 不同，只能标记 `base-stale-needs-fetch` / `needs-fetch-for-cleanup`，不得用 stale base 给出最终清理结论。默认清理模式可先执行一次定向 `git fetch --no-tags origin refs/heads/<base_branch>:refs/remotes/origin/<base_branch>` 刷新 base；fetch 失败时跳过所有依赖 base 的候选并标记 `fetch-failed-skip`。未合并、仍领先、dirty、存在 `??` untracked、ignored 输出含凭据或登录态名称、非受管、protected、远端列表失败或 GitHub 上真实存在的远端分支触发重审计，只列候选表和原因码并保持不变。不得删除真实远端分支，不得升级到 `git worktree remove --force`、`branch -D`、`git fetch --prune`、`git remote prune origin`、未限定 remote/ref 的 prune、`git clean` 或 `reset --hard`。
+候选还必须无 tracked/staged 修改、无 `??` untracked，位于 standard managed root、legacy cleanup-only root 或仓库内临时 review 根且非 protected。普通 ignored runtime/cache/log/data 只作为报告项；凭据类 ignored 文件仍阻断且不得读取内容。Skill 不自动丢弃 dirty 内容；只有用户当前轮精确授权具体路径后，才可先丢弃并重新完整审计。硬干净 worktree 只用普通 `git worktree remove`。已验证的 squash 本地分支在 worktree 成功移除后，使用 `git update-ref -d refs/heads/<branch> <expected-old-oid>` 原子删除；OID 已变化时以 `ref-changed-before-delete` 保留。stale `origin/*` 还必须确认 GitHub 上真实远端分支不存在，才可逐项删除。如用户显式给出 `--no-prune`，跳过 stale `origin/*` 本机缓存清理。
+
+`audit`、`--dry-run`、`--audit`、`只审计` 只审计且不得 `fetch` 或删除；如果远端 base 与本机 base 不同，只能标记 `base-stale-needs-fetch` / `needs-fetch-for-cleanup`。默认清理模式可定向刷新 base；fetch 失败时标记 `fetch-failed-skip`。squash 证据失败分别使用 `pr-metadata-unavailable`、`pr-head-oid-mismatch`、`merge-commit-not-in-base`、`ambiguous-merged-pr`；删除前 ref 改变使用 `ref-changed-before-delete`。审计输出区分祖先合并与 GitHub 已验证 squash 合并，并报告对应 PR 编号。不得删除真实远端分支，不得升级到 `git worktree remove --force`、`branch -D`、`git fetch --prune`、`git remote prune origin`、未限定 remote/ref 的 prune、`git clean` 或 `reset --hard`。
 
 ## Commit 和 PR 语言
 

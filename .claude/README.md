@@ -8,7 +8,7 @@
 - 输出语言：默认使用简体中文输出计划、进展、风险、验证、审查和总结；生成计划文档、治理文档或任务总结时正文必须为简体中文，英文计划视为不合格；命令、路径、API、错误原文和分支名保持原文。
 - `commands/`：Claude Code 项目级 slash command；`cleanup-worktrees` / `review` 转发到同名 skill；`review` 无参数且只有一个开放 PR 时直接审查，`all` 审查全部开放 PR；`review-all` 是可见别名，等价于 `/review all`。
 - `plans/`：Claude Code 原生运行时的本机计划草稿目录；严格 Plan 会话不得写入计划文件，只有切到执行入口或用户显式授权本地草稿写入时才可写；除 `README.md` 外默认不提交。
-- `skills/`：Claude Code 专用的最小辅助 skill，不属于 Codex skill 白名单；`cleanup-worktrees` 只在显性调用时清理已合并、无领先提交、无 tracked 修改、无 `??` untracked 的受管或仓库内临时 review 残留；普通 ignored runtime/cache/log/data 只报告、不阻断 stale worktree 整体移除，凭据类 ignored 文件仍阻断；`review` 只做 PR 只读审查。
+- `skills/`：Claude Code 专用的最小辅助 skill，不属于 Codex skill 白名单；`cleanup-worktrees` 只在显性调用时清理经祖先关系或 GitHub squash OID 证据链确认的硬干净残留；普通 ignored 内容只报告，凭据类内容仍阻断。
 - `worktrees/`：本地临时 review worktree 占位目录；不作为长期主控 Git worktree，`cleanup-worktrees` 仅清理已合并且硬干净的 `agent-*` 残留。
 
 Claude Code 可以独立完成探查、修改、验证和提交；没有用户当前轮显性点名或命令时，不调用、委派、审查或触发 Codex / CX。

@@ -15,6 +15,8 @@
 - 未获明确授权时，不主动 push、创建/更新 PR、merge、删除远端分支、丢弃未合并成果或执行难恢复 Git 操作。
 - 用户明确授权 push、PR、merge、新建 worktree 或清理指定 branch/worktree 时，agent 必须自行执行必要命令并验证结果，不退回给用户手工输入。
 - 当用户当前轮明确要求修复已有开放 PR 的审查意见、requested changes、CI/check failure 或等价 PR 修复闭环时，任务默认包含验证、自审、必要 commit 和普通 `git push` 到当前 PR 分支；不需要额外出现 `push` / `推送` 字样。
+- 修复已有开放 PR 前，必须确认当前分支对应唯一 open PR，且当前分支就是该 PR 的真实 `headRefName`；不匹配时停止，不得新建替代修复分支。允许把已存在的真实 PR head 分支绑定到新的 linked worktree。
+- PR 只读审查不得通过 `git fetch origin pull/<编号>/head:pr-<编号>` 或等价命令创建持久化 `pr-<编号>` 本地分支；使用 GitHub API、`FETCH_HEAD` 或不落持久分支的临时 ref。
 - 该默认授权只适用于当前分支能对应唯一 open PR 且 PR head 分支等于当前分支；泛化“修复”“完成”“整理”“验证”“本地 review”“创建 PR”不构成 push 授权，用户明确要求“只改不提交”“不推送”“只验证”“只审查”时以用户限制为准。
 - PR 修复后的推送授权不包含 PR merge、tag、release、force push、amend、rebase、历史重写、remote 变更或删除远端分支。
 - 长任务按需要拆分阶段并逐段自检；不因任务规模自动派子智能体或设置 reviewer 门禁。

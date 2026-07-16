@@ -38,7 +38,7 @@
 
 ## 重复 Skill 维护合同
 
-- `cleanup-worktrees` 的安全规则以 `docs/当前规则/20-Git与高危操作.md` 和两侧 skill 中的最小执行步骤共同约束。
+- `cleanup-worktrees` 的安全规则以 `docs/当前规则/20-Git与高危操作.md` 和两侧 skill 中的最小执行步骤共同约束；两侧必须同步祖先合并、GitHub squash OID 证据链和 expected-old-OID 删除边界。
 - 通用需求澄清、编码纪律和自检由模型与当前规则直接完成；仓库不建立通用流程 skill、bridge、guardrail 或 completion gate。
 - 不维护大段复制的双份说明；专项 skill 必须短、明确、只保存本仓特有事实。
 - 修改任一侧重复 skill 时，必须检查另一侧是否需要同步。

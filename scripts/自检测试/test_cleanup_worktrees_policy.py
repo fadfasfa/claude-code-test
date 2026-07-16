@@ -2,9 +2,8 @@ from __future__ import annotations
 
 """cleanup-worktrees 规则回归测试。
 
-本文件用临时 Git fixture 验证 cleanup 以无 ignored 的 status 判断硬干净状态，
-普通 ignored 产物只报告、不阻断已合并 stale worktree 的整体移除，
-同时检查 Codex / Claude 两侧 skill 文本不会退回“所有 ignored 都阻断”的旧口径。
+临时 Git fixture 覆盖普通合并、squash merge、硬干净状态和 expected-old-OID
+删除语义；文本测试只锁定两侧 Skill 必须共同保留的安全不变量。
 """
 
 import subprocess
@@ -26,6 +25,11 @@ POLICY_FILES = SKILL_FILES + (
     REPO_ROOT / ".claude" / "commands" / "cleanup-worktrees.md",
     REPO_ROOT / ".claude" / "README.md",
     REPO_ROOT / "docs" / "当前规则" / "40-Agent与Skill.md",
+    REPO_ROOT / "docs" / "当前规则" / "20-Git与高危操作.md",
+)
+
+PR_POLICY_FILES = (
+    REPO_ROOT / "AGENTS.md",
     REPO_ROOT / "docs" / "当前规则" / "20-Git与高危操作.md",
 )
 
@@ -64,6 +68,21 @@ def create_repo_with_feature_worktree(root: Path) -> tuple[Path, Path]:
     return repo, worktree
 
 
+def create_squash_merged_worktree(root: Path) -> tuple[Path, Path, str, str]:
+    repo, worktree = create_repo_with_feature_worktree(root)
+    write_text(worktree / "feature.txt", "first\n")
+    run_git(worktree, "add", "feature.txt")
+    run_git(worktree, "commit", "-q", "-m", "feature one")
+    write_text(worktree / "feature.txt", "first\nsecond\n")
+    run_git(worktree, "commit", "-q", "-am", "feature two")
+    candidate_oid = run_git(worktree, "rev-parse", "HEAD").stdout.strip()
+
+    run_git(repo, "merge", "--squash", "codex/fix/pycache-only")
+    run_git(repo, "commit", "-q", "-m", "squash feature")
+    merge_oid = run_git(repo, "rev-parse", "HEAD").stdout.strip()
+    return repo, worktree, candidate_oid, merge_oid
+
+
 def ignored_status_lines(worktree: Path) -> list[str]:
     result = run_git(worktree, "status", "--short", "--untracked-files=all", "--ignored=matching")
     return [line for line in result.stdout.splitlines() if line.strip()]
@@ -98,19 +117,35 @@ def remove_worktree(repo: Path, worktree: Path) -> None:
 
 
 class CleanupWorktreesPolicyTextTests(unittest.TestCase):
-    def test_policy_text_treats_ignored_as_report_only_and_uses_chinese_tables(self) -> None:
+    def test_skill_text_keeps_squash_and_cleanup_safety_invariants(self) -> None:
         for path in SKILL_FILES:
             text = path.read_text(encoding="utf-8")
             with self.subTest(path=path):
-                self.assertIn("## Ignored 内容处理", text)
                 self.assertIn("先用 `git status --short --untracked-files=all` 判断硬干净状态", text)
-                self.assertIn("`!!` ignored 输出不再单独阻断", text)
-                self.assertIn("transient review worktree root", text)
-                self.assertIn("`pr-[0-9]+`", text)
-                self.assertIn("`worktree-agent-*`", text)
-                self.assertIn("**工作树**：`路径`、`分支`、`结论`、`原因`", text)
-                self.assertIn("**本地分支**：`分支`、`已合入 base`、`领先提交数`、`结论`、`原因`", text)
-                self.assertIn("**远端跟踪缓存**：`ref`、`结论`、`原因`", text)
+                self.assertIn("普通 runtime/cache/log/data 的 `!!` 输出只报告", text)
+                self.assertIn("gh pr list --state merged --head <branch>", text)
+                self.assertIn("`headRefOid` 等于固定的 `candidate_oid`", text)
+                self.assertIn("`squash-merged-pr`", text)
+                self.assertIn("git update-ref -d refs/heads/<branch> <candidate_oid>", text)
+                self.assertIn("expected-old-OID 不匹配", text)
+                self.assertIn("Skill 不自动丢弃 dirty 内容", text)
+                for reason in (
+                    "pr-metadata-unavailable",
+                    "pr-head-oid-mismatch",
+                    "merge-commit-not-in-base",
+                    "ambiguous-merged-pr",
+                    "ref-changed-before-delete",
+                ):
+                    self.assertIn(reason, text)
+
+    def test_pr_fix_and_review_must_not_create_replacement_branch(self) -> None:
+        for path in PR_POLICY_FILES:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path):
+                self.assertIn("真实 `headRefName`", text)
+                self.assertIn("不得新建替代修复分支", text)
+                self.assertIn("FETCH_HEAD", text)
+                self.assertIn("pull/<编号>/head:pr-<编号>", text)
 
     def test_policy_text_drops_old_over_strict_or_english_output_wording(self) -> None:
         forbidden_phrases = (
@@ -180,6 +215,77 @@ class CleanupWorktreesGitFixtureTests(unittest.TestCase):
 
                 self.assertEqual(hard_status_lines(worktree), [])
                 self.assertGreater(branch_ahead_count(repo, "HEAD", "codex/fix/pycache-only"), 0)
+            finally:
+                remove_worktree(repo, worktree)
+
+    def test_squash_merge_is_non_ancestor_but_merge_commit_is_in_base(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
+            repo, worktree, candidate_oid, merge_oid = create_squash_merged_worktree(Path(temp))
+            try:
+                self.assertNotEqual(
+                    run_git(repo, "merge-base", "--is-ancestor", candidate_oid, "HEAD", check=False).returncode,
+                    0,
+                )
+                self.assertGreater(branch_ahead_count(repo, "HEAD", candidate_oid), 0)
+                self.assertEqual(
+                    run_git(repo, "merge-base", "--is-ancestor", merge_oid, "HEAD").returncode,
+                    0,
+                )
+            finally:
+                remove_worktree(repo, worktree)
+
+    def test_verified_squash_branch_can_be_deleted_with_expected_old_oid(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
+            repo, worktree, candidate_oid, _ = create_squash_merged_worktree(Path(temp))
+            try:
+                self.assertEqual(hard_status_lines(worktree), [])
+                run_git(repo, "worktree", "remove", str(worktree))
+                run_git(
+                    repo,
+                    "update-ref",
+                    "-d",
+                    "refs/heads/codex/fix/pycache-only",
+                    candidate_oid,
+                )
+                self.assertNotEqual(
+                    run_git(repo, "show-ref", "--verify", "refs/heads/codex/fix/pycache-only", check=False).returncode,
+                    0,
+                )
+            finally:
+                remove_worktree(repo, worktree)
+
+    def test_expected_old_oid_mismatch_preserves_changed_branch(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
+            repo, worktree, candidate_oid, merge_oid = create_squash_merged_worktree(Path(temp))
+            try:
+                run_git(repo, "worktree", "remove", str(worktree))
+                run_git(repo, "update-ref", "refs/heads/codex/fix/pycache-only", merge_oid, candidate_oid)
+                deleted = run_git(
+                    repo,
+                    "update-ref",
+                    "-d",
+                    "refs/heads/codex/fix/pycache-only",
+                    candidate_oid,
+                    check=False,
+                )
+                self.assertNotEqual(deleted.returncode, 0)
+                self.assertEqual(
+                    run_git(repo, "rev-parse", "refs/heads/codex/fix/pycache-only").stdout.strip(),
+                    merge_oid,
+                )
+            finally:
+                remove_worktree(repo, worktree)
+
+    def test_commit_after_squash_merge_no_longer_matches_pr_head_oid(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cleanup-worktrees-policy-") as temp:
+            repo, worktree, pr_head_oid, _ = create_squash_merged_worktree(Path(temp))
+            try:
+                write_text(worktree / "after-merge.txt", "new work\n")
+                run_git(worktree, "add", "after-merge.txt")
+                run_git(worktree, "commit", "-q", "-m", "post merge work")
+                local_oid = run_git(worktree, "rev-parse", "HEAD").stdout.strip()
+                self.assertNotEqual(local_oid, pr_head_oid)
+                self.assertGreater(branch_ahead_count(repo, "HEAD", local_oid), 0)
             finally:
                 remove_worktree(repo, worktree)
 
