@@ -6,7 +6,14 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from hextech.contracts import GameContext, GenerationId, HealthState, RecommendationModel, VisionSelection
+from hextech.contracts import (
+    GameContext,
+    GenerationId,
+    HealthState,
+    RecommendationModel,
+    VisionSelection,
+    VisionSlotState,
+)
 from hextech.data_core.ports import SnapshotViewPort
 
 
@@ -42,7 +49,7 @@ class RecommendationService:
         for champion_id, role, stable_index in roles:
             if champion_id in seen:
                 continue
-            champion = snapshot.get_champion(champion_id)  # type: ignore[arg-type]
+            champion = snapshot.get_champion(champion_id)
             if champion is None:
                 continue
             seen.add(champion_id)
@@ -67,25 +74,35 @@ class RecommendationService:
                     "augment_id": str(slot.augment_id or ""),
                     "name": slot.name,
                     "confidence": slot.confidence,
-                    "status_code": "DETECTION_FAILED" if slot.state.value == "failed" else "",
+                    "status_code": "DETECTION_FAILED" if slot.state is VisionSlotState.FAILED else "",
                 }
                 if not status.get("private_stats_enabled") and slot.state.value == "ready":
                     row["status_code"] = "PRIVACY_OFF"
+                private_stats_enabled = status.get("private_stats_enabled") is True
                 if slot.augment_id and context.local_champion_id:
                     identity = snapshot.resolve_augment(slot.augment_id)
                     if identity:
                         row["name"] = str(identity.get("name") or row["name"])
                         row["tier"] = str(identity.get("tier") or "")
                         row["canonical_augment_id"] = str(identity.get("canonical_id") or "")
-                    stats = snapshot.get_combo_stats(context.local_champion_id, slot.augment_id) if identity else None
+                    stats = (
+                        snapshot.get_combo_stats(context.local_champion_id, slot.augment_id)
+                        if identity and private_stats_enabled
+                        else None
+                    )
                     row["stats"] = stats or {}
-                    if stats is None and not row["status_code"]:
+                    if not private_stats_enabled:
+                        row["status_code"] = "PRIVACY_OFF"
+                    elif stats is None and not row["status_code"]:
                         row["status_code"] = "SOURCE_STATS_MISSING" if identity else "IDENTITY_UNRESOLVED"
                     elif stats is not None and not row["status_code"]:
                         row["status_code"] = "GENERATION_DEGRADED" if status.get("state") == "degraded" else "READY"
                 slots.append(row)
 
-        health = HealthState.DEGRADED if status.get("state") == "degraded" else context.health
+        health = _max_health(
+            context.health,
+            HealthState.DEGRADED if status.get("state") == "degraded" else HealthState.READY,
+        )
         return RecommendationModel(
             generation_id=generation_id,
             session_id=context.session_id,
@@ -93,7 +110,11 @@ class RecommendationService:
             champion_candidates=tuple(candidates),
             augment_slots=tuple(slots),
             health=health,
-            error_code=str(status.get("reason") or context.error_code),
+            error_code=str(
+                context.error_code
+                if context.health is HealthState.UNAVAILABLE and context.error_code
+                else status.get("reason") or context.error_code
+            ),
         )
 
 
@@ -114,3 +135,8 @@ def _stable_index(item: dict[str, object]) -> int:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return 0
+
+
+def _max_health(*states: HealthState) -> HealthState:
+    severity = {HealthState.READY: 0, HealthState.DEGRADED: 1, HealthState.UNAVAILABLE: 2}
+    return max(states, key=severity.__getitem__)

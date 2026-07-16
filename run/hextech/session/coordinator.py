@@ -6,6 +6,7 @@ import time
 
 from hextech.contracts import (
     GameContext,
+    GameSessionId,
     GameSessionState,
     GenerationId,
     HealthState,
@@ -15,6 +16,7 @@ from hextech.contracts import (
     SessionPhase,
     VisionSceneState,
     VisionSelection,
+    VisionSlotState,
 )
 
 
@@ -29,16 +31,41 @@ class SessionCoordinator:
         vision: VisionSelection | None,
         recommendation: RecommendationModel | None,
     ) -> GameSessionState:
-        session_id = context.session_id if context is not None else vision.session_id if vision is not None else ""
+        session_id = (
+            context.session_id
+            if context is not None
+            else vision.session_id
+            if vision is not None
+            else GameSessionId("unbound")
+        )
         phase, mode, reason = self._resolve_phase(game_present, context, vision, recommendation)
         should_show = bool(user_enabled and game_present)
         if not user_enabled:
             mode, reason = PresentationMode.HIDDEN, "user_disabled"
         elif not game_present:
             mode, reason = PresentationMode.HIDDEN, "waiting_game"
-        health = HealthState.DEGRADED if phase in {SessionPhase.DEGRADED, SessionPhase.FAILED} else HealthState.READY
+        health_inputs = [
+            HealthState.UNAVAILABLE
+            if phase is SessionPhase.FAILED
+            else HealthState.DEGRADED
+            if phase is SessionPhase.DEGRADED
+            else HealthState.READY,
+            *(item.health for item in (context, vision, recommendation) if item is not None),
+        ]
+        severity = {HealthState.READY: 0, HealthState.DEGRADED: 1, HealthState.UNAVAILABLE: 2}
+        health = max(health_inputs, key=severity.__getitem__)
+        error_code = ""
+        if health is not HealthState.READY:
+            error_code = next(
+                (
+                    item.error_code
+                    for item in (recommendation, context, vision)
+                    if item is not None and item.error_code
+                ),
+                reason,
+            )
         return GameSessionState(
-            session_id=session_id,  # type: ignore[arg-type]
+            session_id=session_id,
             generation_id=generation_id,
             observed_at=time.time(),
             phase=phase,
@@ -47,7 +74,7 @@ class SessionCoordinator:
             vision=vision,
             recommendation=recommendation,
             health=health,
-            error_code=reason if health is HealthState.DEGRADED else "",
+            error_code=error_code,
         )
 
     @staticmethod
@@ -65,7 +92,7 @@ class SessionCoordinator:
             return SessionPhase.WAITING_SELECTION, PresentationMode.WAITING, "waiting_selection"
         if vision.scene_state is VisionSceneState.BLOCKED:
             return SessionPhase.DEGRADED, PresentationMode.DEGRADED, vision.error_code or "vision_blocked"
-        if any(slot.state.value == "failed" for slot in vision.slots):
+        if any(slot.state is VisionSlotState.FAILED for slot in vision.slots):
             return SessionPhase.FAILED, PresentationMode.FAILED, "detection_failed"
         if vision.scene_state is VisionSceneState.CANDIDATE or not recommendation:
             return SessionPhase.DETECTING, PresentationMode.WAITING, "detecting"

@@ -15,10 +15,13 @@ from hextech.support.atomic_io import atomic_write_json
 
 
 def _evidence_int(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return 0
     try:
-        return int(str(value))
+        numeric = float(value)
     except (TypeError, ValueError):
         return 0
+    return int(numeric) if numeric.is_integer() else 0
 
 
 def _evidence_float(value: object) -> float:

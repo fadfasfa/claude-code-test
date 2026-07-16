@@ -98,7 +98,7 @@ size、DPI scale 和 layout transform 视为原子 observation。客户区与捕
 | `hextech/contracts/` | 已收敛 | 强类型 ID、枚举、冻结 DTO、schema version | 已校验标量 / `GameContext`、`VisionSelection`、`RecommendationModel`、`GameSessionState` | 标准库 / Pandas、Tk、FastAPI、requests、OpenCV、runtime | 全进程；`test_modular_architecture.py` | `ItemId`、新 DTO 字段 |
 | `hextech/data_core/` | 端口已收敛，pipeline 迁移中 | 固定 generation 查询 port 和读写分离边界 | contracts ID / `SnapshotViewPort` | contracts / UI、LCU、Vision、进程管理 | DataService 与消费者；`test_data_snapshot.py` | items 与新统计域 |
 | `hextech/data_service.py`、`data_snapshot.py` | 已收敛 | 唯一写入、bootstrap、原子发布、last-good、固定代查询、海克斯身份解析 | 清洗数据、资源目录、action / manifest、generation、view | data_core、catalog、core、support / Tk、FastAPI、Vision 决策 | DataService 独立进程与只读消费者；`test_data_service.py`、`test_data_snapshot.py` | 新 snapshot role |
-| `hextech/game_context/` | 核心已收敛 | LCU 角色、session、8 秒 TTL、跨局清空 | 脱敏 payload / `GameContext` | contracts / 胜率、Vision、UI、窗口显隐 | context poller；`test_client_context.py` | 新阶段与角色 |
+| `hextech/game_context/` | 核心已收敛 | `TypedGameContextProvider` 统一 LCU 角色、session、8 秒 TTL、跨局清空 | 脱敏 payload / `GameContext` | contracts / 胜率、Vision、UI、窗口显隐 | Overlay context poller 的生产 provider；`test_client_context.py` | 新阶段与角色 |
 | `hextech/client_context.py` | 迁移兼容 | 旧调用者到 `game_context` 的桥接和文件投影 | LCU payload / 兼容 JSON + DTO | game_context、adapters/lcu / 新业务规则 | Supervisor；`test_overlay_context_stability.py` | 调用者迁完后缩减 |
 | `hextech/adapters/lcu/` | 技术适配 | LCU 字段脱敏、类型边界、错误码 | LCU HTTP JSON / provider 安全结构 | contracts / 排序、统计、UI | Desktop/Supervisor；`test_client_context.py` | 新 endpoint |
 | `hextech/adapters/runtime_session.py` | 生产接线适配 | 将 context/event JSON 一次转换为 DTO，并调用 Recommendation/Session | 兼容 JSON、固定 view / `GameSessionState` | contracts、recommendation、session / Tk 绘制、抓取、重复状态判断 | Overlay host；`test_modular_architecture.py`、host tests | 删除旧字典入口后进一步缩减 |
@@ -108,7 +108,7 @@ size、DPI scale 和 layout transform 视为原子 observation。客户区与捕
 | `hextech/session/` | 核心已收敛 | 组合 context/window/Vision/generation，生产状态、可见性和证据 | 类型化 DTO / `GameSessionState`、evidence | contracts、recommendation / UI、抓取、进程启停 | Desktop/Overlay；`test_real_session_acceptance.py` | 新 phase、脱敏回放 |
 | `hextech/display/desktop/` | Presentation adapter，迁移中 | Tk、开关、英雄列表、Web fallback 所有权 | DTO/ViewModel、命令 / UI、受管 action | session、snapshot、runtime facade / CSV/DataFrame、原始 LCU、Vision trace 解释 | Desktop 主进程；desktop tests | 选人推荐面板 |
 | `hextech/display/web/` | Presentation adapter，迁移中 | FastAPI、静态前端、WS，只展示同一代模型 | 固定代查询、请求 / API、HTML、WS | data_core、recommendation / 抓取、发布、重复规则 | Web 子进程；web tests | 装备页、新 API |
-| `hextech/overlay/host.py`、`renderer.py`、`data_source.py`、`lifecycle.py` | Presentation/runtime adapter，迁移中 | 透明窗、等待/内容渲染、统一读取、readiness | session 投影、event、hints / Canvas、visibility | session、contracts、snapshot / CSV、抓取、身份猜测 | host 与 Supervisor；overlay lifecycle tests | 新 renderer |
+| `hextech/overlay/host.py`、`renderer.py`、`data_source.py`、`lifecycle.py` | Presentation/runtime adapter，迁移中 | 透明窗、等待/内容渲染、单 tick `open_view()` 固定代读取、readiness | session 投影、event、hints / Canvas、visibility | session、contracts、snapshot / CSV、抓取、身份猜测 | host 与 Supervisor；overlay lifecycle tests | 新 renderer |
 | `hextech/runtime_supervisor.py` | 运行边界已收敛 | 启停、30/60 预算、120 秒继续、取消、重试、诊断 | action、lease / runtime snapshot、受管进程 | lifecycle、support / ChampionId、推荐、Vision 语义、Web 所有权 | Supervisor；runtime tests | 新受管进程 |
 | `hextech/catalog/`、`core/`、`scraping/` | Data Core pipeline，迁移中 | 抓取、解析、清洗、Mayhem、资源目录、runtime store | 远端 HTML/JSON、静态资源 / 完整 CSV/JSON 候选代 | transport、support / UI、Overlay 生命周期、直接发布 | DataService worker；scraping/refresh tests | 装备数据源 |
 | `hextech/support/` | 已收敛 | 原子 I/O、日志、Python runtime、诊断、图像校验 | 基础设施原语 / 小型工具 | 标准库和明确第三方库 / 业务规则 | 各进程；support tests | 通用基础设施 |
@@ -189,6 +189,8 @@ sequenceDiagram
 ```
 
 正式数据链路为：DataService bootstrap -> 远端抓取 -> runtime raw/cleaned/Mayhem merge -> 最新 CSV 的结构化查询 DTO -> DataService staging generation -> schema/计数/大小/SHA-256 校验 -> 原子切换 `current.v1.json`。bootstrap 先读取健康 current；没有 current 时，冻结态使用 verified generation seed，源码态由只读 startup CSV/联动 seed 构建完整 generation。随后远端 refresh 才在后台更新下一代。两种入口只允许可写 runtime 根不同，不能再拥有不同的快照状态语义。DataService 可以复用已与最新 CSV 签名匹配的兼容查询缓存；缓存缺失或过期时直接从 CSV 构建 DTO，不等待数分钟的兼容缓存重建。桌面、Web 和 Overlay 都通过 `DataSnapshotClient` 整代读取同一 generation；当前代任一文件损坏时整体回退 previous，禁止按文件混代。Overlay 每轮绘制重新打开当前 view，首代发布后应从“数据准备中”原位更新，不要求重启。
+
+保存的隐私策略与 current generation 不一致时，bootstrap 必须在对外 ready 前发布匹配策略的新代：关闭统计时从固定代生成去除私用 hint 字段的投影，开启统计时由 Data Core 重建。`RecommendationService` 在策略关闭时不得调用组合统计查询，输出 `PRIVACY_OFF` 且 `stats={}`。装备推荐和选人阶段推荐当前只保留稳定字段，并以 `NOT_IMPLEMENTED` 明确区分“尚未实现”与“已实现但没有结果”。
 
 generation 固定包含 `champions.json`、`champion_hextech.json`、`overlay_hints.json`、`identities.json` 与 `manifest.json`。manifest 记录 `schema_version`、`generation_id`、`created_at`、`private_stats_enabled`、来源摘要、三类记录计数以及每个文件的相对路径、大小和 SHA-256。只有 DataService 可以实例化发布器；Web、桌面、host、scraper 和 Mayhem 不得直接发布 generation 或 hint cache。
 

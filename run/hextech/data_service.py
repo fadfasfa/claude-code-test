@@ -103,6 +103,7 @@ def _query_payloads_from_dataframe(dataframe) -> tuple[list[dict[str, Any]], dic
     """从已清洗 CSV 直接构造查询 DTO，避免冷启动重建大型兼容缓存。"""
 
     import pandas as pd
+    from hextech.catalog.view_adapter import process_champions_data
 
     id_column = "英雄ID" if "英雄ID" in dataframe.columns else "英雄 ID"
     required = {id_column, "英雄名称", "海克斯ID", "海克斯名称"}
@@ -116,7 +117,17 @@ def _query_payloads_from_dataframe(dataframe) -> tuple[list[dict[str, Any]], dic
             return value.item()
         return value
 
-    champions: list[dict[str, Any]] = []
+    id_by_name: dict[str, str] = {}
+    for hero_name, group in dataframe.groupby("英雄名称", sort=False):
+        name = str(hero_name or "").strip()
+        if name:
+            id_by_name[name] = str(int(float(group.iloc[0][id_column])))
+    champions = process_champions_data(dataframe, use_runtime_cache=False, log_columns=False)
+    for champion in champions:
+        name = str(champion.get("英雄名称") or "").strip()
+        champion_id = str(champion.get("英雄 ID") or id_by_name.get(name, "")).strip()
+        champion.update({"英雄 ID": champion_id, "id": champion_id, "name": name})
+
     details: dict[str, dict[str, Any]] = {}
     for hero_name, group in dataframe.groupby("英雄名称", sort=False):
         name = str(hero_name or "").strip()
@@ -124,8 +135,6 @@ def _query_payloads_from_dataframe(dataframe) -> tuple[list[dict[str, Any]], dic
             continue
         first = group.iloc[0]
         champion_id = str(int(float(first[id_column])))
-        champion = {key: clean_value(first[key]) for key in (id_column, "英雄名称", "英雄评级", "英雄胜率", "英雄出场率") if key in group.columns}
-        champion.update({"id": champion_id, "name": name})
         cards: list[dict[str, Any]] = []
         for raw in group.to_dict(orient="records"):
             card = {str(key): clean_value(value) for key, value in raw.items()}
@@ -133,8 +142,9 @@ def _query_payloads_from_dataframe(dataframe) -> tuple[list[dict[str, Any]], dic
             card.update({"id": augment_id, "hero_id": champion_id, "hero_name": name})
             cards.append(card)
         if cards:
-            champions.append(champion)
             details[name] = {"hero_id": champion_id, "comprehensive": cards}
+    if not champions or any(not item.get("英雄 ID") for item in champions):
+        raise ValueError("DataService 冷启动英雄 DTO 构建不完整")
     return champions, details
 
 
@@ -367,14 +377,40 @@ def bootstrap_snapshot(
 
     from hextech.data_snapshot import DataSnapshotClient
 
-    current = DataSnapshotClient(publisher.root).status()
+    client = DataSnapshotClient(publisher.root)
+    current = client.status()
     if current.get("state") in {"ready", "degraded"}:
         try:
-            identity_indexes = DataSnapshotClient(publisher.root).get_identity_indexes()
+            identity_indexes = client.get_identity_indexes()
             identity_contract_ready = int(identity_indexes.get("schema_version") or 0) >= 2
         except (TypeError, ValueError):
             identity_contract_ready = False
-        if not identity_contract_ready:
+        policy_matches = current.get("private_stats_enabled") is bool(private_stats_enabled)
+        if not policy_matches and not private_stats_enabled and identity_contract_ready:
+            try:
+                current_view = client.open_view()
+                payloads = current_view.payloads_for_policy_transition(private_stats_enabled=False)
+                manifest = publisher.publish(
+                    payloads,
+                    private_stats_enabled=False,
+                    source_files=current_view.manifest.source_files,
+                )
+                return {
+                    "state": "ready",
+                    "generation_id": manifest.generation_id,
+                    "private_stats_enabled": False,
+                    "source": "startup_data_built",
+                    "reason_code": "privacy_policy_masked",
+                }
+            except Exception as exc:
+                return {
+                    "state": "failed",
+                    "generation_id": str(current.get("generation_id") or ""),
+                    "source": "last_good_fallback",
+                    "reason_code": "privacy_policy_mask_failed",
+                    "error_type": exc.__class__.__name__,
+                }
+        if not identity_contract_ready or not policy_matches:
             try:
                 seed_preparer()
                 build = builder(bool(private_stats_enabled))
@@ -388,7 +424,9 @@ def bootstrap_snapshot(
                     "generation_id": manifest.generation_id,
                     "private_stats_enabled": manifest.private_stats_enabled,
                     "source": "startup_data_built",
-                    "reason_code": "identity_schema_upgraded",
+                    "reason_code": (
+                        "identity_schema_upgraded" if not identity_contract_ready else "privacy_policy_rebuilt"
+                    ),
                 }
             except Exception as exc:
                 # 旧代仍可作为 last-good，但必须暴露身份契约尚未升级，不能静默冒充 ready。
@@ -396,7 +434,9 @@ def bootstrap_snapshot(
                     "state": "degraded",
                     "generation_id": str(current.get("generation_id") or ""),
                     "source": "last_good_fallback",
-                    "reason_code": "identity_schema_upgrade_failed",
+                    "reason_code": (
+                        "identity_schema_upgrade_failed" if not identity_contract_ready else "privacy_policy_rebuild_failed"
+                    ),
                     "error_type": exc.__class__.__name__,
                 }
         source = "last_good_fallback" if current.get("state") == "degraded" else "runtime_current"

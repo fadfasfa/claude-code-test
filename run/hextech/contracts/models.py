@@ -94,6 +94,8 @@ class RecommendationModel:
     augment_slots: tuple[dict[str, object], ...] = ()
     item_recommendations: tuple[dict[str, object], ...] = ()
     champion_select_augments: tuple[dict[str, object], ...] = ()
+    item_recommendations_status: str = "NOT_IMPLEMENTED"
+    champion_select_augments_status: str = "NOT_IMPLEMENTED"
     health: HealthState = HealthState.READY
     error_code: str = ""
     schema_version: int = CONTRACT_SCHEMA_VERSION

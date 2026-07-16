@@ -27,6 +27,7 @@ import requests
 import urllib3
 
 from hextech.client_context import ClientContextProvider, parse_client_context
+from hextech.game_context import TypedGameContextProvider
 from hextech.catalog.version_catalog import load_champion_core_data
 from hextech.overlay.runtime_paths import overlay_runtime_state_path
 from hextech.support.atomic_io import atomic_write_json
@@ -428,7 +429,7 @@ def write_current_lcu_overlay_context_once(
     context_path: str | Path | None = None,
     base_url_template: str = "https://127.0.0.1:{port}",
     should_write: ShouldWriteContext | None = None,
-    context_provider: ClientContextProvider | None = None,
+    context_provider: ClientContextProvider | TypedGameContextProvider | None = None,
 ) -> bool:
     """轮询一次本机 LCU 当前英雄；只有明确 championId 时才刷新上下文。"""
 
@@ -453,7 +454,10 @@ def write_current_lcu_overlay_context_once(
                         teammate_champion_ids=degraded.teammate_champion_ids,
                         bench_champion_ids=degraded.bench_champion_ids,
                         phase=degraded.phase,
-                        connection_state=degraded.connection_state,
+                        connection_state=(
+                            getattr(degraded, "connection_state", "")
+                            or getattr(getattr(degraded, "health", None), "value", "degraded")
+                        ),
                         session_id=degraded.session_id,
                     ),
                     context_path,
@@ -521,7 +525,10 @@ def write_current_lcu_overlay_context_once(
             teammate_champion_ids=client_context.teammate_champion_ids,
             bench_champion_ids=client_context.bench_champion_ids,
             phase=client_context.phase,
-            connection_state=client_context.connection_state,
+            connection_state=(
+                getattr(client_context, "connection_state", "")
+                or getattr(getattr(client_context, "health", None), "value", "degraded")
+            ),
             session_id=client_context.session_id,
         ),
         context_path,
@@ -565,7 +572,7 @@ def start_overlay_context_poller(
 ) -> OverlayContextPoller:
     stop_event = threading.Event()
     if write_once_func is write_current_lcu_overlay_context_once:
-        context_provider = ClientContextProvider()
+        context_provider = TypedGameContextProvider()
 
         def write_current_context() -> bool:
             return write_current_lcu_overlay_context_once(

@@ -20,7 +20,7 @@ SCENE_ENTER_FRAMES = 2  # 场景连续出现 N 帧后判定为"进入"
 SCENE_EXIT_FRAMES = 2   # 场景连续消失 N 帧后判定为"退出"
 SLOT_COUNT = 3          # 海克斯三选一槽位数
 RESIDUE_HOLD_FRAMES = 2  # 普通残影只短暂沿用，避免选择结束后长时间残留
-HOVER_HOLD_FRAMES = 6  # 鼠标遮挡只能短暂锁存；选择后光标停留不能让场景永久存活
+HOVER_HOLD_FRAMES = 30  # 未点击 hover 需给玩家足够阅读时间；真实点击仍立即完成
 SLOT_DETECTION_TIMEOUT_SECONDS = 3.0
 
 

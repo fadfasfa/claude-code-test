@@ -376,6 +376,7 @@ def run_loop(
         frame_started_at = time.perf_counter()
         target = vision_sidecar._find_lol_game_window()
         if target is None:
+            left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
             event = tracker.block("game_window_missing")
             commit_event(event, poll_mode="idle")
             time.sleep(idle_sleep_seconds)
@@ -386,12 +387,14 @@ def run_loop(
         context_session_id = str(context_payload.get("session_id") or "").strip()
         if int(hwnd) != active_hwnd:
             tracker.reset()
+            left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
             active_hwnd = int(hwnd)
             game_session_id = context_session_id or uuid.uuid4().hex
         elif context_session_id and context_session_id != game_session_id:
             tracker.reset()
             game_session_id = context_session_id
         if not vision_sidecar._is_lol_game_foreground(hwnd):
+            left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
             event = attach_window_observation(tracker.block("game_not_foreground"), hwnd=hwnd, rect=rect)
             commit_event(event, poll_mode="idle")
             time.sleep(idle_sleep_seconds)

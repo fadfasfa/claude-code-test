@@ -7,7 +7,8 @@
 from __future__ import annotations
 
 import math
-from typing import NewType, TypeVar
+import re
+from typing import NewType
 
 
 ChampionId = NewType("ChampionId", str)
@@ -17,7 +18,7 @@ GenerationId = NewType("GenerationId", str)
 GameSessionId = NewType("GameSessionId", str)
 VisionEpoch = NewType("VisionEpoch", int)
 
-IdentifierT = TypeVar("IdentifierT", ChampionId, AugmentId, ItemId)
+_VISION_AUGMENT_ID_RE = re.compile(r"^[A-Za-z0-9_:-]{1,128}$")
 
 
 class InvalidIdentifierError(ValueError):
@@ -64,3 +65,17 @@ def optional_champion_id(value: object) -> ChampionId | None:
         return champion_id(value)
     except InvalidIdentifierError:
         return None
+
+
+def optional_augment_id(value: object) -> AugmentId | None:
+    """规范化数字统计 ID，并允许 Vision 输出的受限稳定标识。"""
+
+    try:
+        return augment_id(value)
+    except InvalidIdentifierError:
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if not text or not _VISION_AUGMENT_ID_RE.fullmatch(text):
+            return None
+        return AugmentId(text)

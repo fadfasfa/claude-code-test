@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from hextech.data_core import SnapshotViewPort
+
 
 class OverlayDataSource(Protocol):
     """host 每次绘制所需的最小只读数据接口。"""
@@ -21,14 +23,13 @@ class OverlayDataSource(Protocol):
 
     def read_context(self) -> dict[str, Any]: ...
 
-    def open_snapshot_view(self) -> Any | None: ...
+    def open_view(self) -> SnapshotViewPort | None: ...
 
 
 class SharedOverlayDataSource:
     """只读取 DataService 当前完整 generation，不混入旧共享 cache。"""
 
-    def __init__(self, *, snapshot_client=None, cache_path=None) -> None:
-        del cache_path
+    def __init__(self, *, snapshot_client=None) -> None:
         from hextech.data_snapshot import DataSnapshotClient
 
         self._snapshot_client = snapshot_client or DataSnapshotClient()
@@ -62,7 +63,7 @@ class SharedOverlayDataSource:
 
         return read_overlay_context()
 
-    def open_snapshot_view(self):
+    def open_view(self) -> SnapshotViewPort | None:
         """固定打开当前 generation；一次 render tick 内不得切换数据代。"""
 
         try:
@@ -71,10 +72,9 @@ class SharedOverlayDataSource:
             return None
 
 
-def prepare_shared_overlay_data(*, include_private_stats: bool | None = None) -> dict[str, Any]:
+def prepare_shared_overlay_data() -> dict[str, Any]:
     """只读探测当前快照，不在 Overlay 启动路径构建或写入共享数据。"""
 
-    del include_private_stats
     return SharedOverlayDataSource().read_hint_cache()
 
 

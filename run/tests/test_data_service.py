@@ -20,6 +20,7 @@ from hextech.data_service import (
     bootstrap_snapshot,
     build_snapshot_from_runtime,
     _build_augment_identity_payload,
+    _query_payloads_from_dataframe,
 )
 from hextech.data_snapshot import DataSnapshotClient, DataSnapshotPublisher
 
@@ -150,6 +151,69 @@ def test_bootstrap_reuses_healthy_runtime_generation(tmp_path: Path) -> None:
         "generation_id": current.generation_id,
         "source": "runtime_current",
     }
+
+
+def test_bootstrap_masks_ready_generation_when_saved_privacy_is_disabled(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    payload = _build_payload(True)
+    payload["overlay_hints"] = {
+        "source": {"private_policy_stats_enabled": True},
+        "hints": {"augment-1": {"name": "augment", "winrate": 0.51, "stats_by_champion_id": {"1": {}}}},
+    }
+    current = publisher.publish(payload, private_stats_enabled=True)
+
+    result = bootstrap_snapshot(
+        publisher,
+        False,
+        builder=lambda _private: pytest.fail("关闭隐私统计只需重发固定代"),
+        seed_preparer=lambda: pytest.fail("健康 current 不应重新播种"),
+    )
+
+    view = DataSnapshotClient(tmp_path).open_view()
+    assert result["reason_code"] == "privacy_policy_masked"
+    assert result["generation_id"] != current.generation_id
+    assert view.status()["private_stats_enabled"] is False
+    hint = view.get_overlay_hints()["hints"]["augment-1"]
+    assert "winrate" not in hint and "stats_by_champion_id" not in hint
+
+
+def test_bootstrap_rebuilds_ready_generation_when_saved_privacy_is_enabled(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    current = publisher.publish(_build_payload(False), private_stats_enabled=False)
+
+    result = bootstrap_snapshot(
+        publisher,
+        True,
+        builder=lambda private: DataBuildResult(_build_payload(private)),
+        seed_preparer=lambda: True,
+    )
+
+    assert result["reason_code"] == "privacy_policy_rebuilt"
+    assert result["generation_id"] != current.generation_id
+    assert DataSnapshotClient(tmp_path).status()["private_stats_enabled"] is True
+
+
+def test_dataframe_fallback_preserves_web_champion_dto_shape() -> None:
+    dataframe = pd.DataFrame(
+        [
+            {
+                "英雄ID": 24, "英雄名称": "武器大师", "英雄评级": "A", "英雄胜率": 0.52,
+                "英雄出场率": 0.01, "海克斯ID": 100, "海克斯名称": "强化 A", "海克斯阶级": "金",
+                "海克斯胜率": 0.53, "海克斯出场率": 0.1, "胜率差": 0.01,
+            },
+            {
+                "英雄ID": 245, "英雄名称": "时间刺客", "英雄评级": "A", "英雄胜率": 0.51,
+                "英雄出场率": 0.02, "海克斯ID": 101, "海克斯名称": "强化 B", "海克斯阶级": "金",
+                "海克斯胜率": 0.52, "海克斯出场率": 0.1, "胜率差": 0.01,
+            },
+        ]
+    )
+
+    champions, details = _query_payloads_from_dataframe(dataframe)
+
+    assert {"英雄 ID", "英雄名称", "英文名", "综合分数", "id", "name"}.issubset(champions[0])
+    assert {item["英雄 ID"] for item in champions} == {"24", "245"}
+    assert set(details) == {"武器大师", "时间刺客"}
 
 
 def test_bootstrap_upgrades_legacy_identity_generation_without_remote_refresh(tmp_path: Path) -> None:

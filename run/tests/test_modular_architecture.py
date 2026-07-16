@@ -19,7 +19,7 @@ from hextech.contracts import (
     VisionSlot,
     VisionSlotState,
 )
-from hextech.contracts.identifiers import InvalidIdentifierError, champion_id
+from hextech.contracts.identifiers import InvalidIdentifierError, champion_id, optional_augment_id
 from hextech.data_snapshot import DataSnapshotManifest, DataSnapshotView
 from hextech.recommendation import RecommendationService
 from hextech.session import SessionCoordinator
@@ -39,12 +39,12 @@ def test_champion_id_rejects_ambiguous_values(value: object) -> None:
         champion_id(value)
 
 
-def _snapshot_view() -> DataSnapshotView:
+def _snapshot_view(*, private_stats_enabled: bool = True, degraded: bool = False) -> DataSnapshotView:
     manifest = DataSnapshotManifest(
         schema_version=1,
         generation_id="g1",
         created_at="now",
-        private_stats_enabled=True,
+        private_stats_enabled=private_stats_enabled,
         source_files=(),
         champion_count=2,
         augment_count=1,
@@ -84,6 +84,7 @@ def _snapshot_view() -> DataSnapshotView:
                 },
             },
         },
+        degraded=degraded,
     )
 
 
@@ -176,7 +177,139 @@ def test_session_rejects_failed_slot_as_explicit_failed_state() -> None:
 
     assert state.phase is SessionPhase.FAILED
     assert state.visibility.presentation_mode is PresentationMode.FAILED
-    assert state.health is HealthState.DEGRADED
+    assert state.health is HealthState.UNAVAILABLE
+    assert state.error_code == "detection_failed"
+
+
+def test_privacy_off_never_carries_combo_stats(monkeypatch: pytest.MonkeyPatch) -> None:
+    context = GameContext(session_id="s1", observed_at=1, local_champion_id=ChampionId("24"))  # type: ignore[arg-type]
+    vision = VisionSelection(
+        session_id="s1",  # type: ignore[arg-type]
+        epoch=VisionEpoch(1),
+        observed_at=2,
+        scene_state=VisionSceneState.ACTIVE,
+        slots=(VisionSlot(0, VisionSlotState.READY, AugmentId("stable_ready")),),
+    )
+
+    view = _snapshot_view(private_stats_enabled=False)
+    monkeypatch.setattr(
+        view.__class__,
+        "get_combo_stats",
+        lambda *_args, **_kwargs: pytest.fail("隐私关闭时不得查询组合统计"),
+    )
+
+    model = RecommendationService().build(context, view, vision=vision)
+
+    assert model.augment_slots[0]["status_code"] == "PRIVACY_OFF"
+    assert model.augment_slots[0]["stats"] == {}
+
+
+def test_degraded_snapshot_does_not_lower_unavailable_context_health() -> None:
+    context = GameContext(
+        session_id="s1",  # type: ignore[arg-type]
+        observed_at=1,
+        local_champion_id=ChampionId("24"),
+        health=HealthState.UNAVAILABLE,
+        error_code="lcu_disconnected",
+    )
+
+    model = RecommendationService().build(context, _snapshot_view(degraded=True))
+
+    assert model.health is HealthState.UNAVAILABLE
+    state = SessionCoordinator().reduce(
+        user_enabled=True,
+        game_present=True,
+        generation_id=model.generation_id,
+        context=context,
+        vision=None,
+        recommendation=model,
+    )
+    assert state.health is HealthState.UNAVAILABLE
+    assert state.error_code == "lcu_disconnected"
+
+
+def test_future_recommendation_fields_report_not_implemented() -> None:
+    context = GameContext(session_id="s1", observed_at=1, local_champion_id=ChampionId("24"))  # type: ignore[arg-type]
+
+    model = RecommendationService().build(context, _snapshot_view())
+
+    assert model.item_recommendations == ()
+    assert model.item_recommendations_status == "NOT_IMPLEMENTED"
+    assert model.champion_select_augments_status == "NOT_IMPLEMENTED"
+
+
+def test_runtime_adapter_rejects_malformed_numbers_without_losing_frame() -> None:
+    state = build_runtime_session(
+        event={
+            "generated_at": "bad-time",
+            "source": {"session_id": "s1", "selection_epoch": "bad-epoch", "scene_state": "active"},
+            "slots": [{"state": "ready", "augment_id": "24.0", "confidence": "bad"}],
+        },
+        context_payload={"ok": True, "session_id": "s1", "champion_id": 24, "generated_at": "bad-time"},
+        snapshot_view=_snapshot_view(),
+        user_enabled=True,
+        game_present=True,
+    )
+
+    assert state.session_id == "s1"
+    assert state.vision is None
+    assert optional_augment_id("24.0") is None
+
+
+def test_typed_renderer_preserves_context_expired_status() -> None:
+    from hextech.overlay.renderer import build_render_model_from_session
+
+    state = build_runtime_session(
+        event={},
+        context_payload={
+            "ok": False,
+            "session_id": "s1",
+            "error": "context_expired",
+            "generated_at": "bad-time",
+        },
+        snapshot_view=_snapshot_view(),
+        user_enabled=True,
+        game_present=True,
+    )
+
+    rendered = build_render_model_from_session(state)
+    assert {row["status_code"] for row in rendered["stats"]} == {"CONTEXT_EXPIRED"}
+
+
+def test_session_without_context_or_vision_uses_nonempty_unbound_id() -> None:
+    state = SessionCoordinator().reduce(
+        user_enabled=True,
+        game_present=True,
+        generation_id=GenerationId("g1"),
+        context=None,
+        vision=None,
+        recommendation=None,
+    )
+
+    assert state.session_id == "unbound"
+
+
+def test_typed_game_context_provider_is_the_lcu_runtime_boundary() -> None:
+    from hextech.game_context import TypedGameContextProvider
+
+    provider = TypedGameContextProvider(ttl_seconds=8)
+    context = provider.update(
+        {
+            "localPlayerCellId": 1,
+            "myTeam": [
+                {"cellId": 1, "championId": 24},
+                {"cellId": 2, "championId": 245},
+            ],
+            "benchChampions": [{"championId": 86}],
+        },
+        now=10,
+        source="overlay-lcu",
+    )
+
+    assert context.local_champion_id == ChampionId("24")
+    assert context.teammate_champion_ids == (ChampionId("245"),)
+    assert context.bench_champion_ids == (ChampionId("86"),)
+    assert context.source == "overlay-lcu"
 
 
 def test_game_window_observation_prevents_mixed_capture_geometry() -> None:

@@ -7,10 +7,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from hextech.contracts import (
-    AugmentId,
     ChampionId,
     GameContext,
     GameSessionId,
+    GameSessionState,
     GenerationId,
     HealthState,
     VisionEpoch,
@@ -19,9 +19,33 @@ from hextech.contracts import (
     VisionSlot,
     VisionSlotState,
 )
-from hextech.contracts.identifiers import optional_champion_id
+from hextech.contracts.identifiers import optional_augment_id, optional_champion_id
+from hextech.data_core.ports import SnapshotViewPort
 from hextech.recommendation import RecommendationService
 from hextech.session import SessionCoordinator
+
+
+def _coerce_float(value: object, default: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed == parsed and parsed not in {float("inf"), float("-inf")} else default
+
+
+def _coerce_positive_int(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return 0
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if not numeric.is_integer():
+        return 0
+    parsed = int(numeric)
+    return parsed if parsed > 0 else 0
 
 
 def game_context_from_runtime(payload: Mapping[str, Any], *, fallback_session_id: str = "") -> GameContext | None:
@@ -42,10 +66,17 @@ def game_context_from_runtime(payload: Mapping[str, Any], *, fallback_session_id
     teammates = normalized_ids(payload.get("teammate_champion_ids", ()))
     bench = normalized_ids(payload.get("bench_champion_ids", ()))
     error = str(payload.get("error") or "")
-    health = HealthState.READY if payload.get("ok") and champion_id else HealthState.DEGRADED
+    connection_state = str(payload.get("connection_state") or "")
+    health = (
+        HealthState.UNAVAILABLE
+        if connection_state == "disconnected"
+        else HealthState.READY
+        if payload.get("ok") and champion_id
+        else HealthState.DEGRADED
+    )
     return GameContext(
         session_id=GameSessionId(session_id),
-        observed_at=float(payload.get("generated_at") or time.time()),
+        observed_at=_coerce_float(payload.get("generated_at"), time.time()),
         local_champion_id=champion_id,
         teammate_champion_ids=teammates,
         bench_champion_ids=bench,
@@ -60,7 +91,7 @@ def vision_selection_from_runtime(payload: Mapping[str, Any], *, fallback_sessio
     source_value = payload.get("source")
     source: Mapping[str, Any] = source_value if isinstance(source_value, Mapping) else {}
     session_id = str(source.get("session_id") or fallback_session_id).strip()
-    epoch = int(source.get("selection_epoch") or 0)
+    epoch = _coerce_positive_int(source.get("selection_epoch"))
     if not session_id or epoch <= 0:
         return None
     try:
@@ -77,21 +108,25 @@ def vision_selection_from_runtime(payload: Mapping[str, Any], *, fallback_sessio
             state = VisionSlotState(str(raw.get("state") or "detecting"))
         except ValueError:
             state = VisionSlotState.DETECTING
-        raw_id = str(raw.get("augment_id") or "").strip()
+        normalized_augment_id = optional_augment_id(raw.get("augment_id"))
         slots.append(
             VisionSlot(
                 index=index,
                 state=state,
-                augment_id=AugmentId(raw_id) if raw_id else None,
+                augment_id=normalized_augment_id,
                 name=str(raw.get("name") or ""),
-                confidence=float(raw["confidence"]) if isinstance(raw.get("confidence"), (int, float)) else None,
+                confidence=(
+                    _coerce_float(raw.get("confidence"), 0.0)
+                    if isinstance(raw.get("confidence"), (int, float, str)) and not isinstance(raw.get("confidence"), bool)
+                    else None
+                ),
                 error_code=str(raw.get("diagnostic") or raw.get("error_code") or ""),
             )
         )
     return VisionSelection(
         session_id=GameSessionId(session_id),
         epoch=VisionEpoch(epoch),
-        observed_at=float(payload.get("generated_at") or time.time()),
+        observed_at=_coerce_float(payload.get("generated_at"), time.time()),
         scene_state=scene_state,
         slots=tuple(slots),
         health=HealthState.DEGRADED if any(slot.state is VisionSlotState.FAILED for slot in slots) else HealthState.READY,
@@ -103,10 +138,10 @@ def build_runtime_session(
     *,
     event: Mapping[str, Any],
     context_payload: Mapping[str, Any],
-    snapshot_view: Any | None,
+    snapshot_view: SnapshotViewPort | None,
     user_enabled: bool,
     game_present: bool,
-):
+) -> GameSessionState:
     source_value = event.get("source")
     source: Mapping[str, Any] = source_value if isinstance(source_value, Mapping) else {}
     event_session_id = str(source.get("session_id") or "")
@@ -119,7 +154,7 @@ def build_runtime_session(
     recommendation = None
     if snapshot_view is not None:
         generation_id = GenerationId(str(snapshot_view.status().get("generation_id") or ""))
-        if context is not None:
+        if context is not None and context.local_champion_id is not None:
             recommendation = RecommendationService().build(context, snapshot_view, vision=vision)
     return SessionCoordinator().reduce(
         user_enabled=user_enabled,

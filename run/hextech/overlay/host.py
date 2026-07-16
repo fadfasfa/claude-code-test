@@ -1407,7 +1407,6 @@ def _schedule_event_render(
                 )
                 success = True
                 return
-            hint_cache = source.read_hint_cache()
             context = source.read_context()
             now = time.time()
             recent_context = None
@@ -1428,8 +1427,12 @@ def _schedule_event_render(
                     if isinstance(cached_context, Mapping) and cached_context.get("ok"):
                         recent_context = cached_context
             effective_context = recent_context if not context.get("ok") and recent_context is not None else context
-            open_snapshot_view = getattr(source, "open_snapshot_view", None)
-            snapshot_view = open_snapshot_view() if callable(open_snapshot_view) else None
+            snapshot_view = source.open_view()
+            if snapshot_view is not None:
+                hint_cache = snapshot_view.get_overlay_hints()
+                hint_cache.setdefault("snapshot", {}).update(snapshot_view.status())
+            else:
+                hint_cache = source.read_hint_cache()
             session_state = build_runtime_session(
                 event=snapshot,
                 context_payload=effective_context,

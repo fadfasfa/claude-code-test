@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import shutil
 import uuid
 from copy import deepcopy
@@ -23,6 +24,7 @@ from hextech.support.atomic_io import atomic_write_json
 
 SNAPSHOT_SCHEMA_VERSION = 1
 SNAPSHOT_ROLES = ("champions", "champion_hextech", "overlay_hints", "identities")
+_GENERATION_ID_RE = re.compile(r"^\d{8}T\d{6}-[0-9a-f]{10}$")
 logger = logging.getLogger(__name__)
 
 
@@ -441,6 +443,34 @@ class DataSnapshotView:
     def get_identity_indexes(self) -> dict[str, Any]:
         return deepcopy(dict(self._payloads["identities"]))
 
+    def payloads_for_policy_transition(self, *, private_stats_enabled: bool) -> dict[str, Any]:
+        """供 DataService 切换隐私策略时重发固定代；消费者不得修改原视图。"""
+
+        payloads = deepcopy(dict(self._payloads))
+        if private_stats_enabled:
+            return payloads
+        hints = payloads.get("overlay_hints")
+        if not isinstance(hints, dict):
+            return payloads
+        source = hints.get("source")
+        if isinstance(source, dict):
+            source["private_policy_stats_enabled"] = False
+        private_fields = {
+            "rank",
+            "score",
+            "winrate",
+            "pickrate",
+            "stats_by_champion_id",
+            "stats_by_champion_name",
+        }
+        hint_map = hints.get("hints")
+        if isinstance(hint_map, dict):
+            for hint in hint_map.values():
+                if isinstance(hint, dict):
+                    for field in private_fields:
+                        hint.pop(field, None)
+        return payloads
+
 
 class DataSnapshotClient:
     """桌面、Web 与 Overlay 共用的只读 generation 客户端。"""
@@ -456,6 +486,8 @@ class DataSnapshotClient:
         return payload
 
     def _load_generation(self, generation_id: str) -> tuple[DataSnapshotManifest, dict[str, Any]]:
+        if not _GENERATION_ID_RE.fullmatch(generation_id):
+            raise SnapshotValidationError("generation_id 格式无效")
         directory = self.root / "generations" / generation_id
         manifest = DataSnapshotManifest.from_mapping(_read_json(directory / "manifest.json"))
         _validate_manifest(directory, manifest)

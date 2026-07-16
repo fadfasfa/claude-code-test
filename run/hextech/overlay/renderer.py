@@ -423,7 +423,8 @@ def build_render_model_from_session(
         status_code = _clean_text(row.get("status_code"), limit=48)
         if not recommendation:
             if state.context is None or state.context.local_champion_id is None:
-                status_code = "CONTEXT_EXPIRED" if state.error_code == "context_expired" else "CONTEXT_MISSING"
+                context_error = state.context.error_code if state.context is not None else state.error_code
+                status_code = "CONTEXT_EXPIRED" if context_error == "context_expired" else "CONTEXT_MISSING"
             else:
                 status_code = "DATA_NOT_READY"
         elif slot_state == "failed":

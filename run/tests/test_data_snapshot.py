@@ -359,10 +359,7 @@ def test_overlay_unavailable_state_does_not_fall_back_to_legacy_cache(tmp_path: 
 
     legacy_cache = tmp_path / "overlay_hint_cache.v1.json"
     legacy_cache.write_text('{"hints":{"legacy":{}}}', encoding="utf-8")
-    payload = SharedOverlayDataSource(
-        snapshot_client=UnavailableClient(),
-        cache_path=legacy_cache,
-    ).read_hint_cache()
+    payload = SharedOverlayDataSource(snapshot_client=UnavailableClient()).read_hint_cache()
 
     assert payload["hints"] == {}
     assert payload["snapshot"]["state"] == "unavailable"
