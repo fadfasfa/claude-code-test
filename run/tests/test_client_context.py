@@ -283,6 +283,92 @@ def test_overlay_provider_ttl_is_not_extended_by_recent_context_file(tmp_path: P
     assert expired["source"] == "lcu-unavailable"
 
 
+def test_typed_overlay_disconnect_remains_unavailable_through_runtime_adapter(tmp_path: Path) -> None:
+    from hextech.adapters.runtime_session import game_context_from_runtime
+    from hextech.contracts import HealthState
+    from hextech.game_context import TypedGameContextProvider
+    from hextech.overlay import context as overlay_context
+
+    class UnavailableResponse:
+        status_code = 503
+
+        @staticmethod
+        def json() -> dict:
+            return {}
+
+    path = tmp_path / "context.json"
+    provider = TypedGameContextProvider(ttl_seconds=3)
+
+    assert not overlay_context.write_current_lcu_overlay_context_once(
+        credential_provider=lambda: (None, None),
+        fetch_response=lambda _url, _headers: UnavailableResponse(),
+        context_path=path,
+        context_provider=provider,
+    )
+
+    payload = overlay_context.read_overlay_context(path)
+    context = game_context_from_runtime(payload)
+
+    assert payload["connection_state"] == "disconnected"
+    assert payload["health"] == "unavailable"
+    assert context is not None
+    assert context.session_id == provider.session_id
+    assert context.health is HealthState.UNAVAILABLE
+    assert context.error_code == "lcu-unavailable"
+
+
+def test_typed_overlay_short_disconnect_remains_degraded_through_runtime_adapter(tmp_path: Path, monkeypatch) -> None:
+    from hextech.adapters.runtime_session import game_context_from_runtime
+    from hextech.contracts import HealthState
+    from hextech.game_context import TypedGameContextProvider
+    from hextech.overlay import context as overlay_context
+
+    now = {"value": 100.0}
+    monkeypatch.setattr(overlay_context.time, "time", lambda: now["value"])
+    path = tmp_path / "context.json"
+    provider = TypedGameContextProvider(ttl_seconds=3)
+
+    class SelectedResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict:
+            return {"localPlayerCellId": 1, "myTeam": [{"cellId": 1, "championId": 266}]}
+
+    class UnavailableResponse:
+        status_code = 503
+
+        @staticmethod
+        def json() -> dict:
+            return {}
+
+    assert overlay_context.write_current_lcu_overlay_context_once(
+        credential_provider=lambda: ("123", "token"),
+        fetch_response=lambda _url, _headers: SelectedResponse(),
+        core_data_loader=lambda: {"266": {"name": "Aatrox"}},
+        context_path=path,
+        context_provider=provider,
+    )
+
+    now["value"] = 102.0
+    assert overlay_context.write_current_lcu_overlay_context_once(
+        credential_provider=lambda: (None, None),
+        fetch_response=lambda _url, _headers: UnavailableResponse(),
+        core_data_loader=lambda: {"266": {"name": "Aatrox"}},
+        context_path=path,
+        context_provider=provider,
+    )
+
+    payload = overlay_context.read_overlay_context(path)
+    context = game_context_from_runtime(payload)
+
+    assert payload["connection_state"] == "degraded"
+    assert payload["health"] == "degraded"
+    assert context is not None
+    assert context.health is HealthState.DEGRADED
+    assert context.local_champion_id == "266"
+
+
 def test_overlay_malformed_team_is_bounded_by_provider_ttl(tmp_path: Path, monkeypatch) -> None:
     from hextech.overlay import context as overlay_context
 

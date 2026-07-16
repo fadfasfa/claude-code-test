@@ -58,6 +58,30 @@ def _clean_text(value: Any, *, limit: int = 80) -> str:
     return text[:limit]
 
 
+def _context_health_value(context: Any) -> str:
+    """读取新旧上下文的健康状态，不把 health 枚举值混入连接状态字段。"""
+
+    explicit_health = _clean_text(getattr(getattr(context, "health", None), "value", ""), limit=48)
+    if explicit_health:
+        return explicit_health
+    return {
+        "connected": "ready",
+        "degraded": "degraded",
+        "disconnected": "unavailable",
+    }.get(_clean_text(getattr(context, "connection_state", ""), limit=48), "")
+
+
+def _context_connection_state(context: Any) -> str:
+    legacy_state = _clean_text(getattr(context, "connection_state", ""), limit=48)
+    if legacy_state:
+        return legacy_state
+    return {
+        "ready": "connected",
+        "degraded": "degraded",
+        "unavailable": "disconnected",
+    }.get(_context_health_value(context), "")
+
+
 def _empty_context(error: str) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -68,6 +92,8 @@ def _empty_context(error: str) -> dict[str, Any]:
         "champion_name": "",
         "source": "",
         "session_id": "",
+        "connection_state": "",
+        "health": "degraded",
     }
 
 
@@ -80,10 +106,19 @@ def build_overlay_context_payload(
     bench_champion_ids: Any = (),
     phase: str = "",
     connection_state: str = "",
+    health: str = "",
     session_id: str = "",
 ) -> dict[str, Any]:
     """构造当前英雄上下文 payload；调用方负责只在明确锁定英雄时传入 ID。"""
 
+    normalized_connection = _clean_text(connection_state, limit=48)
+    normalized_health = _clean_text(health, limit=48)
+    if not normalized_health:
+        normalized_health = {
+            "connected": "ready",
+            "degraded": "degraded",
+            "disconnected": "unavailable",
+        }.get(normalized_connection, "")
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": time.time(),
@@ -97,7 +132,8 @@ def build_overlay_context_payload(
             _clean_text(value, limit=32) for value in bench_champion_ids if _clean_text(value, limit=32)
         ],
         "phase": _clean_text(phase, limit=48),
-        "connection_state": _clean_text(connection_state, limit=48),
+        "connection_state": normalized_connection,
+        "health": normalized_health,
         "session_id": _clean_text(session_id, limit=64),
     }
 
@@ -143,6 +179,8 @@ def read_overlay_context(path: str | Path | None = None) -> dict[str, Any]:
         empty["generated_at"] = payload.get("generated_at", 0.0)
         empty["source"] = _clean_text(payload.get("source"), limit=48)
         empty["session_id"] = _clean_text(payload.get("session_id"), limit=64)
+        empty["connection_state"] = _clean_text(payload.get("connection_state"), limit=48)
+        empty["health"] = _clean_text(payload.get("health"), limit=48) or "degraded"
         if error == "context_unmapped_champion":
             empty["champion_name"] = _clean_text(payload.get("champion_name"), limit=48)
         return empty
@@ -158,6 +196,7 @@ def read_overlay_context(path: str | Path | None = None) -> dict[str, Any]:
         "bench_champion_ids": list(payload.get("bench_champion_ids") or []),
         "phase": _clean_text(payload.get("phase"), limit=48),
         "connection_state": _clean_text(payload.get("connection_state"), limit=48),
+        "health": _clean_text(payload.get("health"), limit=48),
         "session_id": _clean_text(payload.get("session_id"), limit=64),
     }
 
@@ -175,12 +214,18 @@ def write_missing_overlay_context(
     *,
     source: str = "lcu",
     error: str = "context_missing",
+    connection_state: str = "",
+    health: str = "degraded",
+    session_id: str = "",
 ) -> Path:
     """写入明确的空上下文，避免 overlay 沿用上一位英雄。"""
 
     payload = _empty_context(error)
     payload["generated_at"] = time.time()
     payload["source"] = _clean_text(source, limit=48) or "local"
+    payload["connection_state"] = _clean_text(connection_state, limit=48)
+    payload["health"] = _clean_text(health, limit=48) or "degraded"
+    payload["session_id"] = _clean_text(session_id, limit=64)
     return write_overlay_context(payload, path)
 
 
@@ -454,10 +499,8 @@ def write_current_lcu_overlay_context_once(
                         teammate_champion_ids=degraded.teammate_champion_ids,
                         bench_champion_ids=degraded.bench_champion_ids,
                         phase=degraded.phase,
-                        connection_state=(
-                            getattr(degraded, "connection_state", "")
-                            or getattr(getattr(degraded, "health", None), "value", "degraded")
-                        ),
+                        connection_state=_context_connection_state(degraded),
+                        health=_context_health_value(degraded),
                         session_id=degraded.session_id,
                     ),
                     context_path,
@@ -479,7 +522,23 @@ def write_current_lcu_overlay_context_once(
             current = read_overlay_context(context_path)
             if current.get("source") == "live-client-data" and current.get("error") == "context_unmapped_champion":
                 return False
-        write_missing_overlay_context(context_path, source=source)
+        if context_provider is not None:
+            write_missing_overlay_context(
+                context_path,
+                source=source,
+                error=degraded.error_code or source,
+                connection_state=_context_connection_state(degraded),
+                health=_context_health_value(degraded),
+                session_id=degraded.session_id,
+            )
+        else:
+            connection_state = "disconnected" if source in {"lcu-unavailable", "lcu-error", "lcu-auth"} else ""
+            write_missing_overlay_context(
+                context_path,
+                source=source,
+                connection_state=connection_state,
+                health="unavailable" if connection_state else "degraded",
+            )
         return False
 
     port, token = credential_provider()
@@ -525,10 +584,8 @@ def write_current_lcu_overlay_context_once(
             teammate_champion_ids=client_context.teammate_champion_ids,
             bench_champion_ids=client_context.bench_champion_ids,
             phase=client_context.phase,
-            connection_state=(
-                getattr(client_context, "connection_state", "")
-                or getattr(getattr(client_context, "health", None), "value", "degraded")
-            ),
+            connection_state=_context_connection_state(client_context),
+            health=_context_health_value(client_context),
             session_id=client_context.session_id,
         ),
         context_path,

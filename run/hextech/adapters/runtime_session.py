@@ -67,13 +67,16 @@ def game_context_from_runtime(payload: Mapping[str, Any], *, fallback_session_id
     bench = normalized_ids(payload.get("bench_champion_ids", ()))
     error = str(payload.get("error") or "")
     connection_state = str(payload.get("connection_state") or "")
-    health = (
-        HealthState.UNAVAILABLE
-        if connection_state == "disconnected"
-        else HealthState.READY
-        if payload.get("ok") and champion_id
-        else HealthState.DEGRADED
-    )
+    try:
+        health = HealthState(str(payload.get("health") or ""))
+    except ValueError:
+        health = (
+            HealthState.UNAVAILABLE
+            if connection_state in {"disconnected", "unavailable"}
+            else HealthState.READY
+            if payload.get("ok") and champion_id
+            else HealthState.DEGRADED
+        )
     return GameContext(
         session_id=GameSessionId(session_id),
         observed_at=_coerce_float(payload.get("generated_at"), time.time()),
