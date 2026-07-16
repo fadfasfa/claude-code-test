@@ -1,5 +1,7 @@
 """web 域 pytest 开发门禁。"""
 
+from types import SimpleNamespace
+
 import pytest
 
 from tests._dev_gate_support import (
@@ -8,7 +10,6 @@ from tests._dev_gate_support import (
     _build_synergy_api_payload,
     load_augment_name_to_icon_map,
     patch,
-    pd,
     re,
     web_runtime,
 )
@@ -99,22 +100,24 @@ def test_web_bootstrap_avoids_load_event_gate() -> None:
     assert "bootstrapIndexPage();" in index_script
     assert "bootstrapDetailPage();" in detail_script
 
-def test_api_champions_uses_stable_catalog_before_network_snapshot() -> None:
+def test_api_champions_reads_published_snapshot_without_web_rebuild() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     import hextech.display.web.api as web_api
 
     app = FastAPI()
     web_api.register_routes(app)
-    stable_df = pd.DataFrame([{"英雄名称": "德玛西亚之力"}])
     expected_payload = [{"英雄名称": "德玛西亚之力", "综合分数": 0.0}]
 
+    class SnapshotClient:
+        @staticmethod
+        def open_view():
+            return SimpleNamespace(get_champions=lambda: expected_payload)
+
     with (
-        patch.object(web_api.web_runtime, "get_df", return_value=pd.DataFrame()),
-        patch.object(web_api.web_runtime, "request_background_refresh", return_value=True),
-        patch.object(web_api.web_runtime, "get_stable_champion_catalog_df", return_value=stable_df),
-        patch.object(web_api.web_runtime, "get_live_champion_snapshot_df", side_effect=AssertionError("不应在稳定目录可用前等待远端快照")),
-        patch.object(web_api, "process_champions_data", return_value=expected_payload),
+        patch.object(web_api, "_snapshot_client", SnapshotClient()),
+        patch.object(web_api.web_runtime, "get_df", side_effect=AssertionError("Web 不得读取运行时 CSV")),
+        patch.object(web_api.web_runtime, "request_background_refresh", side_effect=AssertionError("Web 不得发起刷新")),
     ):
         response = TestClient(app).get("/api/champions")
 

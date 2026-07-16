@@ -54,7 +54,7 @@ def _require_scrapling() -> None:
         raise ImportError(
             "scrapling 未安装。请执行：\n"
             r"  cd run" "\n"
-            r"  .\.venv\Scripts\python.exe -m pip install -r requirements.txt" "\n"
+            r"  .\.venv\Scripts\python.exe -m pip install -r tools\requirements\compat.txt" "\n"
             "  scrapling install  # 仅在需要 browser/stealthy mode 时执行"
         ) from None
 

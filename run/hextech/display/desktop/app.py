@@ -4,7 +4,7 @@
 后台线程、Web 协同、LCU 查询和头像下载等运行时细节委托给 `hextech.display.desktop.runtime`，
 以便在保持热路径聚合的前提下，让后续需求变更有明确落点。
 
-调用方: display.desktop.runtime、hextech_ui、tests.test_desktop_diagnostics_button; 关键依赖: catalog.runtime_store、core.settings、overlay.hints。
+调用方: display.desktop.runtime、hextech_ui、tests.test_desktop_diagnostics_button; 关键依赖: data_snapshot、core.settings、overlay.events。
 """
 
 import ctypes
@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 import tkinter as tk
 from hextech.core.settings import load_ui_feature_flags, save_ui_feature_flags
@@ -48,6 +48,24 @@ UI_COLORS = {
 }
 
 
+class _SelectionRoleStyle(TypedDict):
+    accent: str
+    surface: str
+    text: str
+    border_width: int
+    marker_width: int
+
+
+def _selection_role_style(role: str) -> _SelectionRoleStyle:
+    """返回英雄角色的稳定视觉语义；样式不参与排序或卡片布局。"""
+
+    if role == "self":
+        return {"accent": "#22D3EE", "surface": "#0B2A30", "text": "#062A30", "border_width": 3, "marker_width": 5}
+    if role == "teammate":
+        return {"accent": "#F59E0B", "surface": "#2A2110", "text": "#2D1B00", "border_width": 2, "marker_width": 3}
+    return {"accent": UI_COLORS["border"], "surface": UI_COLORS["surface"], "text": UI_COLORS["text"], "border_width": 1, "marker_width": 0}
+
+
 def _format_game_overlay_host_reason(reason: str) -> str:
     reason = str(reason or "").strip()
     return {
@@ -57,6 +75,7 @@ def _format_game_overlay_host_reason(reason: str) -> str:
         "game_window_not_renderable": "游戏窗口不可渲染",
         "game_not_foreground": "切回游戏后显示",
         "selection_window_inactive": "等待海克斯选择",
+        "waiting_selection": "等待海克斯选择",
         "event_stale_after_tab": "等待最新选择画面",
         "event_expired": "选择数据已过期",
         "blocking_modal_present": "等待弹窗关闭",
@@ -108,12 +127,10 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
 logger = logging.getLogger(__name__)
 
 
-def _empty_dataframe():
-    """延迟创建空 DataFrame，避免 desktop app import 阶段加载 pandas。"""
+def _empty_champions() -> list[dict]:
+    """桌面只消费快照 DTO，不再把只读 generation 转回 DataFrame。"""
 
-    import pandas as pd
-
-    return pd.DataFrame()
+    return []
 
 
 def export_user_diagnostics(*args, **kwargs):
@@ -182,14 +199,17 @@ class HextechUI:
         self.feature_flags = load_ui_feature_flags()
         self.web_process = None
         self.runtime_supervisor = None
+        self.data_service = None
         self.service_manager: ServiceManager | None = None
         self._service_manager_lock = threading.Lock()
         self._service_manager_shutdown_in_progress: ServiceManager | None = None
         self._service_manager_shutdown_completed: ServiceManager | None = None
         self.session = None
         self.core_data = {}
-        self._data_loader = None
-        self.df = None
+        self._snapshot_client = None
+        self._snapshot_generation_id = ""
+        self._snapshot_watch_started = False
+        self.champions: list[dict] = []
         self._runtime_services_ready = False
         self._post_visible_bootstrap_started = False
         self._post_visible_bootstrap_done = False
@@ -201,11 +221,12 @@ class HextechUI:
         self.image_cache = {}
         self._lcu_port = None
         self._lcu_token = None
+        self._client_context_provider = None
 
         self.last_click_time = 0
         self.img_write_lock = threading.Lock()
         self.downloading_imgs = set()
-        self._df_lock = threading.Lock()
+        self._champions_lock = threading.Lock()
         self._window_topmost = False
         self._window_visible = False
         self._auto_follow_enabled = True
@@ -235,6 +256,16 @@ class HextechUI:
         self._overlay_status_color = UI_COLORS["muted"]
         self._overlay_watchdog_lock = threading.Lock()
         self._overlay_operation_lock = threading.Lock()
+        self._web_operation_lock = threading.Lock()
+        self._fallback_web_lock = threading.Lock()
+        self._fallback_web_owned = False
+        self._fallback_web_starting = False
+        self._fallback_web_stopping = False
+        self._fallback_web_cleanup_requested = False
+        self._fallback_web_user_adopted = False
+        self._fallback_web_error = ""
+        self._fallback_web_generation = 0
+        self._fallback_web_failed_key = ""
         self._game_overlay_desired_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
         self._feature_toggle_busy: set[str] = set()
         self._feature_toggle_lock = threading.Lock()
@@ -268,27 +299,37 @@ class HextechUI:
         """首屏可见后再启动重型服务，避免 Tk shell 被后台依赖阻塞。"""
 
         error: Exception | None = None
-        loaded_df = _empty_dataframe()
+        loaded_champions = _empty_champions()
         service_manager = None
         try:
             self.startup_timing.mark("background_bootstrap_start")
-            from hextech.catalog.runtime_store import CachedDataFrameLoader, get_latest_csv
+            from hextech.data_snapshot import DataSnapshotClient
             from hextech.scraping.version_sync import ASSET_DIR, get_advanced_session, load_champion_core_data
             from .service_manager import ServiceManager
 
             if self._closing:
                 return
             os.makedirs(ASSET_DIR, exist_ok=True)
-            self._start_runtime_supervisor(restore_persisted_game_overlay=False)
-            if self._closing:
-                ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
-                self.runtime_supervisor = None
-                return
             service_manager = ServiceManager(
                 start_web_func=self._spawn_web_process,
+                start_data_service_func=lambda: ui_runtime.start_data_service_process(parent_pid=os.getpid()),
+                stop_data_service_func=ui_runtime.stop_data_service_process,
                 manage_overlay_runtime=False,
                 listener_interval_seconds=3.0,
             )
+            try:
+                self.data_service = service_manager.start_data_service()
+            except Exception:
+                self.data_service = None
+                logger.exception("DataService 启动失败，继续探测上一代本地快照。")
+            self._start_runtime_supervisor(restore_persisted_game_overlay=False)
+            self._run_on_ui_thread(self._activate_overlay_control_plane)
+            if self._closing:
+                ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
+                self.runtime_supervisor = None
+                service_manager.shutdown()
+                self.data_service = None
+                return
             service_manager.set_low_frequency_listener_enabled(
                 self.feature_flags.get("low_frequency_listener_enabled", True)
             )
@@ -296,15 +337,17 @@ class HextechUI:
             if not self._publish_service_manager(service_manager):
                 return
             self.startup_timing.mark("services_ready")
+            self._run_on_ui_thread(self._apply_persisted_feature_flags)
 
             self.session = get_advanced_session()
             self.core_data = load_champion_core_data()
-            self._data_loader = CachedDataFrameLoader(get_latest_csv)
-            loaded_df = self.load_data()
-            self.startup_timing.mark("data_ready", rows=len(loaded_df))
+            self._snapshot_client = DataSnapshotClient()
+            loaded_champions = self.load_data()
+            self.startup_timing.mark("data_ready", rows=len(loaded_champions))
         except Exception as exc:
             error = exc
-            self._shutdown_failed_bootstrap_service_manager(service_manager)
+            if self.service_manager is None:
+                self._shutdown_failed_bootstrap_service_manager(service_manager)
             logger.exception("桌面后台初始化失败。")
 
         def finish() -> None:
@@ -312,19 +355,17 @@ class HextechUI:
                 return
             if error is not None:
                 self.startup_timing.mark("background_bootstrap_error", error=str(error))
-                self._set_status(f"后台初始化失败: {error}", UI_COLORS["error"])
+                self._post_visible_bootstrap_done = True
+                self._set_status(f"本地数据初始化失败，展示面继续运行: {error}", UI_COLORS["warn"])
                 return
-            with self._df_lock:
-                self.df = loaded_df
+            with self._champions_lock:
+                self.champions = loaded_champions
             self._post_visible_bootstrap_done = True
             self.startup_timing.mark("background_bootstrap_done")
             self._set_status("后台服务已就绪", UI_COLORS["green"])
-            self._apply_persisted_feature_flags()
-            self._restore_persisted_game_overlay()
             self._init_core_engine()
             self.check_and_sync_data()
             self.start_background_scraper()
-            self._start_overlay_status_polling()
 
         self._run_on_ui_thread(finish)
 
@@ -421,13 +462,10 @@ class HextechUI:
         )
 
     def _prepare_overlay_hint_cache(self) -> None:
-        from hextech.overlay.hints import build_overlay_hint_cache_from_precomputed, write_overlay_hint_cache
+        """兼容旧调用点；共享数据只能由 DataService 发布。"""
 
-        cache_payload = build_overlay_hint_cache_from_precomputed(
-            include_private_stats=self.feature_flags.get("private_policy_stats_enabled", False),
-            source_tag="desktop-game-overlay",
-        )
-        write_overlay_hint_cache(cache_payload)
+        if self.data_service is not None:
+            self.data_service.refresh()
 
     def _start_web_server(self):
         """后台启动网页服务，避免阻塞界面线程。"""
@@ -698,6 +736,237 @@ class HextechUI:
         service_manager = self.service_manager
         self.web_process = service_manager.web.process if service_manager is not None and service_manager.is_web_running() else None
 
+    def _ensure_overlay_fallback_state(self) -> None:
+        """兼容轻量测试对象和旧反序列化实例，惰性补齐 fallback 运行态。"""
+
+        if not hasattr(self, "_web_operation_lock"):
+            self._web_operation_lock = threading.Lock()
+        if not hasattr(self, "_fallback_web_lock"):
+            self._fallback_web_lock = threading.Lock()
+        if not hasattr(self, "_fallback_web_owned"):
+            self._fallback_web_owned = False
+        if not hasattr(self, "_fallback_web_starting"):
+            self._fallback_web_starting = False
+        if not hasattr(self, "_fallback_web_stopping"):
+            self._fallback_web_stopping = False
+        if not hasattr(self, "_fallback_web_cleanup_requested"):
+            self._fallback_web_cleanup_requested = False
+        if not hasattr(self, "_fallback_web_user_adopted"):
+            self._fallback_web_user_adopted = False
+        if not hasattr(self, "_fallback_web_error"):
+            self._fallback_web_error = ""
+        if not hasattr(self, "_fallback_web_generation"):
+            self._fallback_web_generation = 0
+        if not hasattr(self, "_fallback_web_failed_key"):
+            self._fallback_web_failed_key = ""
+
+    def _user_web_enabled(self) -> bool:
+        variable = getattr(self, "web_frontend_var", None)
+        if variable is not None:
+            return bool(variable.get())
+        return bool(getattr(self, "feature_flags", {}).get("web_frontend_enabled", False))
+
+    def _adopt_fallback_web_for_user(self) -> None:
+        """用户主动开启 Web 后转移所有权，后续 Overlay 恢复不得自动关闭。"""
+
+        self._ensure_overlay_fallback_state()
+        with self._fallback_web_lock:
+            self._fallback_web_generation += 1
+            self._fallback_web_owned = False
+            self._fallback_web_cleanup_requested = False
+            self._fallback_web_user_adopted = True
+
+    def _start_overlay_web_fallback(self, fallback_key: str) -> None:
+        self._ensure_overlay_fallback_state()
+        with self._fallback_web_lock:
+            if self._fallback_web_owned or self._fallback_web_starting or self._fallback_web_stopping:
+                return
+            if self._fallback_web_failed_key == fallback_key:
+                return
+            self._fallback_web_generation += 1
+            generation = self._fallback_web_generation
+            self._fallback_web_starting = True
+            self._fallback_web_cleanup_requested = False
+            self._fallback_web_user_adopted = False
+            self._fallback_web_error = ""
+
+        def worker() -> None:
+            error: Exception | None = None
+            browser_opened = True
+            manager = None
+            should_cleanup = False
+            with self._web_operation_lock:
+                with self._fallback_web_lock:
+                    cancelled = bool(
+                        generation != self._fallback_web_generation
+                        or self._fallback_web_user_adopted
+                        or self._closing
+                    )
+                    if cancelled:
+                        self._fallback_web_starting = False
+                if cancelled:
+                    return
+                try:
+                    manager = self.service_manager
+                    if manager is None:
+                        raise RuntimeError("后台服务尚未就绪")
+                    manager.start_web()
+                except Exception as exc:
+                    error = exc
+                if error is None and not self._closing:
+                    try:
+                        browser_opened = ui_runtime.open_companion_browser(self.web_port_file)
+                    except Exception:
+                        browser_opened = False
+                        logger.warning("Overlay Web 备份已启动，但受管浏览器打开失败。", exc_info=True)
+
+                with self._fallback_web_lock:
+                    self._fallback_web_starting = False
+                    user_owned = self._fallback_web_user_adopted or generation != self._fallback_web_generation
+                    should_cleanup = bool(
+                        error is None
+                        and not user_owned
+                        and (self._fallback_web_cleanup_requested or self._closing)
+                    )
+                    self._fallback_web_owned = bool(error is None and not user_owned and not should_cleanup)
+                    self._fallback_web_error = str(error or "")
+                    self._fallback_web_failed_key = fallback_key if error is not None else ""
+                    self._fallback_web_cleanup_requested = False
+
+                if should_cleanup:
+                    ui_runtime.close_companion_browser()
+                    try:
+                        if manager is not None:
+                            manager.stop_web()
+                    except Exception as exc:
+                        error = exc
+                        with self._fallback_web_lock:
+                            self._fallback_web_owned = True
+                            self._fallback_web_error = str(exc)
+
+            self._sync_web_process_handle()
+
+            def finish() -> None:
+                if error is not None:
+                    self._set_overlay_status_summary(
+                        f"游戏内显示: Web 备份启动失败 ({error})",
+                        UI_COLORS["error"],
+                    )
+                elif should_cleanup:
+                    self._set_overlay_status_summary("游戏内显示: Overlay 已恢复", UI_COLORS["green"])
+                elif not browser_opened:
+                    self._set_overlay_status_summary("游戏内显示: Web 备份已接管，浏览器打开失败", UI_COLORS["warn"])
+                else:
+                    self._set_overlay_status_summary("游戏内显示: Web 备份已接管", UI_COLORS["warn"])
+
+            self._run_on_ui_thread(finish)
+
+        self._start_tracked_thread(worker, name="hextech-overlay-web-fallback-start")
+
+    def _request_overlay_web_fallback_cleanup(self) -> None:
+        self._ensure_overlay_fallback_state()
+        with self._fallback_web_lock:
+            if self._fallback_web_starting:
+                self._fallback_web_cleanup_requested = True
+                return
+            if not self._fallback_web_owned or self._fallback_web_stopping:
+                return
+            generation = self._fallback_web_generation
+            self._fallback_web_stopping = True
+
+        def worker() -> None:
+            error: Exception | None = None
+            with self._web_operation_lock:
+                with self._fallback_web_lock:
+                    cancelled = bool(
+                        generation != self._fallback_web_generation
+                        or self._fallback_web_user_adopted
+                    )
+                    if cancelled:
+                        self._fallback_web_stopping = False
+                if cancelled:
+                    return
+                manager = self.service_manager
+                ui_runtime.close_companion_browser()
+                try:
+                    if manager is not None:
+                        manager.stop_web()
+                except Exception as exc:
+                    error = exc
+            with self._fallback_web_lock:
+                self._fallback_web_stopping = False
+                self._fallback_web_owned = error is not None
+                self._fallback_web_error = str(error or "")
+            self._sync_web_process_handle()
+
+            def finish() -> None:
+                if error is None:
+                    self._set_overlay_status_summary("游戏内显示: Overlay 已恢复", UI_COLORS["green"])
+                else:
+                    self._set_overlay_status_summary(
+                        f"游戏内显示: Overlay 已恢复，Web 备份关闭失败 ({error})",
+                        UI_COLORS["warn"],
+                    )
+
+            self._run_on_ui_thread(finish)
+
+        self._start_tracked_thread(worker, name="hextech-overlay-web-fallback-stop")
+
+    def _coordinate_overlay_web_fallback(self, overlay: Mapping[str, object]) -> bool:
+        """根据 Supervisor 状态编排临时 Web；返回是否已输出 fallback 专用状态。"""
+
+        self._ensure_overlay_fallback_state()
+        overlay_enabled = bool(self.game_overlay_var.get())
+        status = str(overlay.get("status") or "")
+        fallback_key = str(overlay.get("generation") or "default")
+        fallback_recommended = bool(overlay.get("fallback_recommended")) or (
+            overlay_enabled and status == "error"
+        )
+        if self._user_web_enabled():
+            self._adopt_fallback_web_for_user()
+        if not overlay_enabled:
+            self._request_overlay_web_fallback_cleanup()
+            return False
+        if status == "running":
+            with self._fallback_web_lock:
+                self._fallback_web_failed_key = ""
+            if not self._user_web_enabled():
+                self._request_overlay_web_fallback_cleanup()
+                with self._fallback_web_lock:
+                    cleanup_active = self._fallback_web_stopping or self._fallback_web_cleanup_requested
+                if cleanup_active:
+                    self._set_overlay_status_summary("游戏内显示: Overlay 已恢复，正在关闭 Web 备份", UI_COLORS["green"])
+                    return True
+            return False
+        if fallback_recommended:
+            if not self._user_web_enabled():
+                self._start_overlay_web_fallback(fallback_key)
+            with self._fallback_web_lock:
+                owned = self._fallback_web_owned
+                starting = self._fallback_web_starting
+                fallback_error = self._fallback_web_error
+            if status == "error":
+                if owned or self._user_web_enabled():
+                    self._set_overlay_status_summary("游戏内显示: Overlay 最终失败 / Web 备份保留", UI_COLORS["error"])
+                elif starting:
+                    self._set_overlay_status_summary("游戏内显示: Overlay 最终失败 / Web 备份启动中", UI_COLORS["error"])
+                else:
+                    self._set_overlay_status_summary(
+                        f"游戏内显示: Overlay 与 Web 备份均启动失败 ({fallback_error or 'unknown'})",
+                        UI_COLORS["error"],
+                    )
+            elif starting:
+                self._set_overlay_status_summary("游戏内显示: Web 备份启动中 / Overlay 继续启动", UI_COLORS["warn"])
+            elif fallback_error:
+                self._set_overlay_status_summary(
+                    f"游戏内显示: Web 备份启动失败，Overlay 继续启动 ({fallback_error})",
+                    UI_COLORS["error"],
+                )
+            else:
+                self._set_overlay_status_summary("游戏内显示: Web 备份已接管 / Overlay 继续启动", UI_COLORS["warn"])
+            return True
+        return False
+
     def _raise_if_service_error(self, service_name: str) -> None:
         if self.service_manager is None:
             raise RuntimeError("后台服务尚未就绪")
@@ -727,31 +996,44 @@ class HextechUI:
         except Exception:
             logger.exception("恢复持久化游戏内显示失败。")
 
+    def _activate_overlay_control_plane(self) -> None:
+        """本地数据可降级，但 Overlay 恢复和预算轮询不能被它阻塞。"""
+
+        if self._closing:
+            return
+        self._restore_persisted_game_overlay()
+        if self._overlay_status_after_id is None:
+            self._start_overlay_status_polling()
+
     def _toggle_web_frontend(self) -> None:
         toggle_name = "Web 前端"
         enabled = bool(self.web_frontend_var.get())
+        if enabled:
+            self._adopt_fallback_web_for_user()
         self._set_feature_toggle_busy(toggle_name, True)
         self._set_status("正在切换 Web 前端...", UI_COLORS["warn"])
 
         def worker() -> None:
             error: Exception | None = None
             browser_opened = True
-            try:
-                if self.service_manager is None:
-                    raise RuntimeError("后台服务尚未就绪")
-                if enabled:
-                    self.service_manager.start_web()
-                    if self.feature_flags.get("auto_open_browser", True):
-                        browser_opened = ui_runtime.open_companion_browser(self.web_port_file)
-                else:
-                    ui_runtime.close_companion_browser()
-                    self.service_manager.stop_web()
-                    self._raise_if_service_error("web")
-            except Exception as exc:
-                error = exc
-                if enabled:
-                    ui_runtime.close_companion_browser()
-                    self.service_manager.stop_web()
+            self._ensure_overlay_fallback_state()
+            with self._web_operation_lock:
+                try:
+                    if self.service_manager is None:
+                        raise RuntimeError("后台服务尚未就绪")
+                    if enabled:
+                        self.service_manager.start_web()
+                        if self.feature_flags.get("auto_open_browser", True):
+                            browser_opened = ui_runtime.open_companion_browser(self.web_port_file)
+                    else:
+                        ui_runtime.close_companion_browser()
+                        self.service_manager.stop_web()
+                        self._raise_if_service_error("web")
+                except Exception as exc:
+                    error = exc
+                    if enabled and self.service_manager is not None:
+                        ui_runtime.close_companion_browser()
+                        self.service_manager.stop_web()
 
             def finish() -> None:
                 self._sync_web_process_handle()
@@ -773,6 +1055,8 @@ class HextechUI:
     def _toggle_game_overlay(self) -> None:
         toggle_name = "游戏内显示"
         enabled = bool(self.game_overlay_var.get())
+        if not enabled:
+            self._request_overlay_web_fallback_cleanup()
         self._game_overlay_desired_enabled = enabled
         self._set_feature_toggle_busy(toggle_name, True)
         self._set_overlay_status_summary(
@@ -821,13 +1105,11 @@ class HextechUI:
         def worker() -> None:
             error: Exception | None = None
             try:
-                from hextech.overlay.hints import build_overlay_hint_cache_from_precomputed, write_overlay_hint_cache
-
-                cache_payload = build_overlay_hint_cache_from_precomputed(
-                    include_private_stats=desired_private_stats,
-                    source_tag="desktop-game-overlay",
-                )
-                write_overlay_hint_cache(cache_payload)
+                if self.data_service is None:
+                    raise RuntimeError("DataService 尚未就绪")
+                result = self.data_service.set_private_stats(desired_private_stats, timeout=None)
+                if result.get("state") not in {"ready", "degraded"}:
+                    raise RuntimeError(str(result.get("reason_code") or "DataService 更新失败"))
             except Exception as exc:
                 error = exc
 
@@ -848,7 +1130,7 @@ class HextechUI:
         self._persist_feature_flags_from_controls()
 
     def check_and_sync_data(self):
-        logger.info("桌面启动自愈刷新已停用：refresh 由 Runtime Supervisor action 发起。")
+        logger.info("桌面不直接刷新数据：refresh 与 generation 发布由 DataService 负责。")
 
     def _set_status(self, text, color):
         if hasattr(self, "status_label") and self.status_label.winfo_exists():
@@ -901,6 +1183,8 @@ class HextechUI:
                 overlay = components.get("game_overlay") if isinstance(components.get("game_overlay"), dict) else {}
                 should_report = overlay_enabled or str(overlay.get("status") or "") in {"starting", "running", "stopping", "error"}
                 if should_report:
+                    if self._coordinate_overlay_web_fallback(overlay):
+                        return
                     text, color = _format_supervisor_game_overlay_status(overlay)
                     self._set_overlay_status_summary(text, color)
                 return
@@ -971,24 +1255,54 @@ class HextechUI:
             logger.debug("隐藏悬浮窗失败。", exc_info=True)
 
     def _reload_data_into_ui(self, status_text, status_color):
-        new_df = self.load_data()
+        new_champions = self.load_data()
 
         def _update_on_main():
-            with self._df_lock:
-                self.df = new_df
+            with self._champions_lock:
+                self.champions = new_champions
             self._set_status(status_text, status_color)
 
         if not self._run_on_ui_thread(_update_on_main):
-            with self._df_lock:
-                self.df = new_df
+            with self._champions_lock:
+                self.champions = new_champions
 
     def _silent_sync(self):
         logger.info("兼容旧入口：桌面不再直接调用 refresh_backend_data。")
 
     def load_data(self):
-        if self._data_loader is None:
-            return _empty_dataframe()
-        return self._data_loader.get_df().copy()
+        if self._snapshot_client is None:
+            return _empty_champions()
+        try:
+            snapshot_view = self._snapshot_client.open_view()
+        except Exception:
+            return _empty_champions()
+        self._snapshot_generation_id = str(snapshot_view.status().get("generation_id") or "")
+        champions = snapshot_view.get_champions()
+        if not champions:
+            return _empty_champions()
+        return champions
+
+    def _snapshot_watch_loop(self) -> None:
+        """监视 DataService 原子指针，首代或新代发布后刷新桌面列表。"""
+
+        while not self.stop_event.wait(1.0):
+            if self._snapshot_client is None:
+                continue
+            status = self._snapshot_client.status()
+            generation_id = str(status.get("generation_id") or "")
+            if not generation_id or generation_id == self._snapshot_generation_id:
+                continue
+            new_champions = self.load_data()
+            if not new_champions:
+                continue
+            with self._champions_lock:
+                self.champions = new_champions
+
+            def refresh_ui() -> None:
+                self._set_status("统计快照已更新", UI_COLORS["green"])
+                self.update_ui(self.current_candidate_groups)
+
+            self._run_on_ui_thread(refresh_ui)
 
     def on_hero_click(self, champ_id, hero_name):
         """处理英雄卡片点击，并触发终端输出与页面跳转。"""
@@ -1002,60 +1316,103 @@ class HextechUI:
         ui_runtime.load_and_set_img(self, champ_id, label)
 
     def _candidate_groups_from_input(self, hero_ids) -> dict[str, list[str]]:
+        from hextech.contracts.identifiers import optional_champion_id
+
+        def normalized(values) -> list[str]:
+            return [str(result) for value in (values or []) if (result := optional_champion_id(value)) is not None]
+
         if isinstance(hero_ids, Mapping):
             selected = hero_ids.get("selected_champion_ids") or hero_ids.get("selected") or []
             bench = hero_ids.get("bench_champion_ids") or hero_ids.get("bench") or []
             return {
-                "selected_champion_ids": [str(value) for value in selected if str(value or "").strip()],
-                "bench_champion_ids": [str(value) for value in bench if str(value or "").strip()],
+                "selected_champion_ids": normalized(selected),
+                "bench_champion_ids": normalized(bench),
+                "local_champion_id": str(optional_champion_id(hero_ids.get("local_champion_id")) or ""),
+                "teammate_champion_ids": normalized(hero_ids.get("teammate_champion_ids", [])),
+                "context_phase": str(hero_ids.get("context_phase") or ""),
+                "context_connection_state": str(hero_ids.get("context_connection_state") or ""),
+                "context_error_code": str(hero_ids.get("context_error_code") or ""),
             }
         values = list(hero_ids or [])
         return {
             "selected_champion_ids": [],
-            "bench_champion_ids": [str(value) for value in values if str(value or "").strip()],
+            "bench_champion_ids": normalized(values),
         }
 
-    def _build_candidate_display_list(self, hero_ids, current_df) -> list[dict]:
-        from hextech.catalog.runtime_store import detect_hero_id_column
+    def _build_candidate_display_list(self, hero_ids, champions: list[dict]) -> list[dict]:
+        import time
+
+        from hextech.contracts import GameContext, GameSessionId
+        from hextech.contracts.identifiers import optional_champion_id
+        from hextech.recommendation import RecommendationService
 
         candidate_groups = self._candidate_groups_from_input(hero_ids)
-        id_col = detect_hero_id_column(current_df)
-        if not id_col:
-            return []
+        local_id = candidate_groups.get("local_champion_id", "")
+        teammate_ids = list(dict.fromkeys([
+            *candidate_groups.get("teammate_champion_ids", []),
+            *(value for value in candidate_groups.get("selected_champion_ids", []) if value != local_id),
+        ]))
+        context = GameContext(
+            session_id=GameSessionId(str(getattr(self, "_client_session_id", "") or "desktop-session")),
+            observed_at=time.time(),
+            local_champion_id=optional_champion_id(local_id),
+            teammate_champion_ids=tuple(
+                value for item in teammate_ids if (value := optional_champion_id(item)) is not None
+            ),
+            bench_champion_ids=tuple(
+                value
+                for item in candidate_groups.get("bench_champion_ids", [])
+                if (value := optional_champion_id(item)) is not None
+            ),
+            phase=str(candidate_groups.get("context_phase") or "champ_select"),
+        )
+        snapshot_client = getattr(self, "_snapshot_client", None)
+        if snapshot_client is not None:
+            snapshot_view = snapshot_client.open_view()
+        else:
+            # 只用于旧调用者和组件测试；生产 UI 始终从 DataSnapshotClient 打开固定代。
+            class _RowsView:
+                def status(self):
+                    return {"state": "ready", "generation_id": "compat", "private_stats_enabled": True}
 
-        rows_by_id: dict[str, dict] = {}
-        for _, row in current_df.iterrows():
-            raw_id = row.get(id_col, row.get("英雄 ID", row.get("ID", "")))
-            hero_id = str(raw_id or "").strip()
-            if not hero_id or hero_id in rows_by_id:
-                continue
+                def get_champion(self, champion_id):
+                    needle = str(champion_id)
+                    return next(
+                        (
+                            dict(row)
+                            for row in champions
+                            if str(optional_champion_id(row.get("id", row.get("英雄 ID", row.get("ID", "")))) or "")
+                            == needle
+                        ),
+                        None,
+                    )
+
+                def get_champions(self):
+                    return [dict(row) for row in champions]
+
+            snapshot_view = _RowsView()
+        recommendation = RecommendationService().build(context, snapshot_view)
+        display_list: list[dict] = []
+        for row in recommendation.champion_candidates:
             try:
-                win = float(row.get("英雄胜率", row.get("胜率", 0.5)))
+                win = float(row.get("英雄胜率", row.get("胜率", row.get("win_rate", 0.5))))
             except (TypeError, ValueError):
                 win = 0.5
             try:
-                pick = float(row.get("英雄出场率", row.get("出场率", 0.1)))
+                pick = float(row.get("英雄出场率", row.get("出场率", row.get("pick_rate", 0.1))))
             except (TypeError, ValueError):
                 pick = 0.1
-            rows_by_id[hero_id] = {
-                "id": hero_id,
-                "name": row.get("英雄名称", row.get("英雄名", "未知")),
-                "win": win,
-                "pick": pick,
-                "tier": row.get("英雄评级", row.get("评级", "T?")),
-            }
-
-        display_list: list[dict] = []
-        seen: set[str] = set()
-        for group_name in ("selected_champion_ids", "bench_champion_ids"):
-            for hero_id in candidate_groups[group_name]:
-                if hero_id in seen:
-                    continue
-                item = rows_by_id.get(hero_id)
-                if item:
-                    seen.add(hero_id)
-                    display_list.append(dict(item))
-        return sorted(display_list, key=lambda item: item["win"], reverse=True)
+            display_list.append(
+                {
+                    "id": str(row.get("id") or ""),
+                    "name": row.get("name", row.get("英雄名称", row.get("英雄名", "未知"))),
+                    "win": win,
+                    "pick": pick,
+                    "tier": row.get("英雄评级", row.get("评级", "T?")),
+                    "selection_role": row.get("selection_role", "bench"),
+                }
+            )
+        return display_list
 
     def update_ui(self, hero_ids):
         if self._ui_render_in_progress:
@@ -1067,35 +1424,69 @@ class HextechUI:
             for widget in self.list_frame.winfo_children():
                 widget.destroy()
 
-            with self._df_lock:
-                current_df = self.df
-                is_empty = current_df is None or current_df.empty
+            with self._champions_lock:
+                current_champions = list(self.champions)
+                is_empty = not current_champions
 
-            if not hero_ids or is_empty:
+            candidate_groups = self._candidate_groups_from_input(hero_ids)
+            has_candidates = any(candidate_groups.get(key) for key in ("selected_champion_ids", "bench_champion_ids"))
+            connection = str(candidate_groups.get("context_connection_state") or "")
+            phase = str(candidate_groups.get("context_phase") or "")
+            if not hero_ids or not has_candidates:
+                if connection == "disconnected":
+                    empty_message = "未连接客户端"
+                elif phase == "champ_select":
+                    empty_message = "当前没有备战席英雄"
+                else:
+                    empty_message = "尚未进入选人"
+            elif is_empty:
+                empty_message = "已取得英雄，统计快照加载中"
+            else:
+                empty_message = ""
+            if empty_message:
                 tk.Label(
                     self.list_frame,
-                    text="当前没有可用英雄，或数据仍在同步中...",
+                    text=empty_message,
                     fg=UI_COLORS["warn"],
                     bg=UI_COLORS["base"],
                     font=("Microsoft YaHei", 9),
                 ).pack(pady=20)
                 return
 
-            self.status_label.config(text="实时数据已挂载", fg=UI_COLORS["green"])
+            if connection == "degraded":
+                self.status_label.config(text="客户端连接暂时中断，保留最近选择", fg=UI_COLORS["warn"])
+            else:
+                self.status_label.config(text="实时数据已挂载", fg=UI_COLORS["green"])
 
-            display_list = self._build_candidate_display_list(hero_ids, current_df)
+            display_list = self._build_candidate_display_list(hero_ids, current_champions)
+            if not display_list:
+                tk.Label(
+                    self.list_frame,
+                    text="当前数据集中缺少对应英雄",
+                    fg=UI_COLORS["warn"],
+                    bg=UI_COLORS["base"],
+                    font=("Microsoft YaHei", 9),
+                ).pack(pady=20)
+                return
 
             for item in display_list:
+                role = item.get("selection_role", "bench")
+                role_style = _selection_role_style(str(role))
+                role_color = str(role_style["accent"])
+                card_surface = str(role_style["surface"])
                 card = tk.Frame(
                     self.list_frame,
-                    bg=UI_COLORS["surface"],
-                    highlightthickness=1,
-                    highlightbackground=UI_COLORS["border"],
+                    bg=card_surface,
+                    highlightthickness=int(role_style["border_width"]),
+                    highlightbackground=role_color,
                     pady=3,
                     padx=4,
                     cursor="hand2",
                 )
                 card.pack(fill=tk.X, pady=3, padx=(0, 10))
+
+                if int(role_style["marker_width"]) > 0:
+                    tk.Frame(card, bg=role_color, width=int(role_style["marker_width"])).pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4))
 
                 ribbon_color = UI_COLORS["green"] if item["win"] >= 0.5 else UI_COLORS["red"]
                 ribbon = tk.Frame(card, bg=ribbon_color, width=3)
@@ -1103,12 +1494,15 @@ class HextechUI:
 
                 img_label = tk.Label(
                     card,
-                    bg=UI_COLORS["surface"],
-                    highlightthickness=1,
-                    highlightbackground=UI_COLORS["gold"],
+                    bg=card_surface,
+                    highlightthickness=2 if role in {"self", "teammate"} else 1,
+                    highlightbackground=role_color if role in {"self", "teammate"} else UI_COLORS["gold"],
                 )
                 img_label.pack(side=tk.LEFT, padx=(0, 8))
-                threading.Thread(target=lambda i=item["id"], l=img_label: self._load_and_set_img(i, l), daemon=True).start()
+                threading.Thread(
+                    target=lambda champion_id=item["id"], label=img_label: self._load_and_set_img(champion_id, label),
+                    daemon=True,
+                ).start()
 
                 # 折叠态只渲染头像 + T 级标签，省掉胜率/出场率/胜率条
                 if self._collapsed:
@@ -1117,8 +1511,18 @@ class HextechUI:
                         text=item["tier"],
                         font=("Microsoft YaHei", 9, "bold"),
                         fg=UI_COLORS["text"],
-                        bg=UI_COLORS["surface"],
+                        bg=card_surface,
                     ).pack(side=tk.LEFT)
+                    if role in {"self", "teammate"}:
+                        tk.Label(
+                            card,
+                            text="我" if role == "self" else "队友",
+                            font=("Microsoft YaHei", 7, "bold"),
+                            fg=str(role_style["text"]),
+                            bg=role_color,
+                            padx=5 if role == "self" else 3,
+                            pady=1,
+                        ).pack(side=tk.RIGHT)
 
                     def bind_collapsed_click(widget, cid, name):
                         widget.bind("<Button-1>", lambda e, c=cid, n=name: self.on_hero_click(c, n))
@@ -1128,25 +1532,37 @@ class HextechUI:
                     bind_collapsed_click(card, item["id"], item["name"])
                     continue
 
-                info = tk.Frame(card, bg=UI_COLORS["surface"])
+                info = tk.Frame(card, bg=card_surface)
                 info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
                 title = self.core_data.get(str(item["id"]), {}).get("title", "")
                 full_name = f"{item['name']} {title}".strip() if title else item["name"]
 
+                title_row = tk.Frame(info, bg=card_surface)
+                title_row.pack(fill=tk.X)
                 tk.Label(
-                    info,
+                    title_row,
                     text=f"[{item['tier']}] {full_name}",
                     font=("Microsoft YaHei", 9, "bold"),
                     fg=UI_COLORS["text"],
-                    bg=UI_COLORS["surface"],
-                ).pack(anchor="w")
+                    bg=card_surface,
+                ).pack(side=tk.LEFT, anchor="w")
+                if role in {"self", "teammate"}:
+                    tk.Label(
+                        title_row,
+                        text="我的英雄" if role == "self" else "队友已选",
+                        font=("Microsoft YaHei", 8, "bold"),
+                        fg=str(role_style["text"]),
+                        bg=role_color,
+                        padx=7 if role == "self" else 5,
+                        pady=1,
+                    ).pack(side=tk.RIGHT)
                 tk.Label(
                     info,
                     text=f"胜率: {item['win']:.1%} | 出场: {item['pick']:.1%}",
                     font=("Microsoft YaHei", 8),
                     fg=UI_COLORS["muted"],
-                    bg=UI_COLORS["surface"],
+                    bg=card_surface,
                 ).pack(anchor="w", pady=(1, 0))
 
                 bar_canvas = tk.Canvas(info, height=3, bg=UI_COLORS["base"], highlightthickness=0)
@@ -1251,9 +1667,12 @@ class HextechUI:
         self._show_overlay(topmost=True)
 
     def start_background_scraper(self):
-        """兼容旧入口；后台刷新由 Runtime Supervisor 唯一发起。"""
+        """启动 generation 只读 watcher；抓取和发布仍只由 DataService 执行。"""
 
-        logger.info("桌面后台刷新线程已停用：refresh 由 Runtime Supervisor 统一发起。")
+        if self._snapshot_watch_started:
+            return
+        self._snapshot_watch_started = True
+        self._start_tracked_thread(self._snapshot_watch_loop, name="hextech-desktop-snapshot-watch")
 
     def on_close(self):
         print("\n[System] 收到退出信号，正在等待数据安全落盘...")
@@ -1289,6 +1708,7 @@ class HextechUI:
         if self._supervisor_lease_thread is not None and self._supervisor_lease_thread.is_alive():
             self._supervisor_lease_thread.join(timeout=2)
         ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
+        self.data_service = None
         self.root.destroy()
 
 

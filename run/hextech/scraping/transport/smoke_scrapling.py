@@ -18,7 +18,7 @@ RUN_DIR = Path(__file__).resolve().parents[3]
 if str(RUN_DIR) not in sys.path:
     sys.path.insert(0, str(RUN_DIR))
 
-from hextech.support.python_runtime import ensure_python_311_for_source
+from hextech.support.python_runtime import ensure_python_311_for_source  # noqa: E402
 
 
 if __name__ == "__main__":
@@ -38,7 +38,7 @@ def check_imports() -> None:
     if importlib.util.find_spec("scrapling") is None:
         print("[FAIL] scrapling 未安装")
         print("请执行：")
-        print(r"  .\.venv\Scripts\python.exe -m pip install -r requirements.txt")
+        print(r"  .\.venv\Scripts\python.exe -m pip install -r tools\requirements\compat.txt")
         sys.exit(1)
 
     print("[OK] scrapling 可 import")

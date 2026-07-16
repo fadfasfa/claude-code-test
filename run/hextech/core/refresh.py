@@ -334,13 +334,13 @@ def rebuild_api_cache_if_needed(force: bool = False) -> bool:
     return True
 
 
-def _run_mayhem_refresh_safely(stop_event=None) -> None:
+def _run_mayhem_refresh_safely(stop_event=None, *, force: bool = False) -> None:
     if stop_event is not None and stop_event.is_set():
         return
     from hextech.scraping.synergy.mayhem_refresh import run_mayhem_refresh
 
     try:
-        run_mayhem_refresh(force=False)
+        run_mayhem_refresh(force=force)
     except Exception:
         logger.exception("Mayhem 低频刷新诊断写入失败")
 
@@ -497,7 +497,12 @@ def _write_refresh_state_event(result: RefreshResult) -> None:
         _persist_active_degradation()
 
 
-def refresh_backend_data(force: bool = False, stop_event=None) -> RefreshResult:
+def refresh_backend_data(
+    force: bool = False,
+    stop_event=None,
+    *,
+    rebuild_compat_cache: bool = True,
+) -> RefreshResult:
     """执行一次运行时自愈与后台刷新。
 
     返回结构化结果，显式区分 ready/degraded/failed，避免把 fallback 当作普通成功。
@@ -507,20 +512,23 @@ def refresh_backend_data(force: bool = False, stop_event=None) -> RefreshResult:
     report = dict(heal_runtime_artifacts(force=force, stop_event=stop_event) or {})
     report.setdefault("failed", [])
     report.setdefault("stage_errors", [])
-    _run_mayhem_refresh_safely(stop_event=stop_event)
-    try:
-        rebuild_api_cache_if_needed(force=force)
-    except Exception as exc:
-        logger.exception("API cache rebuild failed")
-        if "api_cache" not in report["failed"]:
-            report["failed"].append("api_cache")
-        report["stage_errors"].append(
-            {
-                "stage": "api_cache",
-                "error_type": exc.__class__.__name__,
-                "error_message": sanitize_event_message(str(exc)),
-            }
-        )
+    _run_mayhem_refresh_safely(stop_event=stop_event, force=force)
+    if rebuild_compat_cache:
+        try:
+            # 仅为尚未迁移到 DataSnapshotView 的兼容消费者补建旧缓存。
+            # DataService 会关闭此阶段并直接从同代 CSV 构建 generation。
+            rebuild_api_cache_if_needed(force=False)
+        except Exception as exc:
+            logger.exception("API cache rebuild failed")
+            if "api_cache" not in report["failed"]:
+                report["failed"].append("api_cache")
+            report["stage_errors"].append(
+                {
+                    "stage": "api_cache",
+                    "error_type": exc.__class__.__name__,
+                    "error_message": sanitize_event_message(str(exc)),
+                }
+            )
     result = _result_from_report(report, force=force, correlation_id=correlation_id)
     _write_refresh_state_event(result)
     if not _ready_assertion_consistent(result):

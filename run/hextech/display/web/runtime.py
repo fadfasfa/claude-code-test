@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import copy
 import json
 import logging
 import os
@@ -43,8 +42,8 @@ import warnings
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional, Set, Tuple
-from urllib.parse import quote, unquote, urlparse
+from typing import Any, List, Optional, Set, Tuple
+from urllib.parse import quote, urlparse
 from secrets import token_urlsafe
 
 import pandas as pd
@@ -54,21 +53,18 @@ import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from hextech.catalog.view_adapter import process_hextechs_data
+from hextech.client_context import ClientContextProvider
+from hextech.data_snapshot import DataSnapshotClient
 from hextech.catalog.runtime_store import (
-    CachedDataFrameLoader,
     ensure_private_runtime_dir,
     ensure_runtime_profile_dir,
     build_runtime_profile_path,
     build_runtime_state_path,
-    build_synergy_data_path,
-    get_latest_csv,
     write_private_runtime_state_file,
 )
-from hextech.core.refresh import get_startup_status_file, refresh_backend_data
+from hextech.core.refresh import get_startup_status_file
 from hextech.support.log_utils import ensure_utf8_stdio
 from hextech.scraping.augment_catalog import find_augment_catalog_entry as find_augment_catalog_entry
-from hextech.scraping.hextech.scraper import _clean_augment_text, extract_champion_stats, fetch_with_retry
 from hextech.scraping.icon_resolver import (
     ensure_augment_icon_cached,
     find_existing_augment_asset_filename as find_existing_augment_asset_filename,
@@ -83,11 +79,6 @@ from hextech.scraping.version_sync import (
     BUNDLE_ROOT_DIR,
     STATIC_DATA_DIR,
     VERSION_FILE,
-    HEXTECH_AUGMENT_METADATA_URLS,
-    HEXTECH_CHAMPION_STATS_URLS,
-    build_hextech_detail_urls,
-    get_advanced_session,
-    load_augment_map,
     load_champion_core_data,
 )
 
@@ -117,20 +108,12 @@ _augment_cache_pending: Set[str] = set()
 _augment_cache_pending_lock = threading.Lock()
 _augment_cache_executor: ThreadPoolExecutor | None = None
 _augment_cache_max_pending = 64
-_csv_loader = CachedDataFrameLoader(get_latest_csv)
+_snapshot_client = DataSnapshotClient()
 _startup_status_file = get_startup_status_file()
 _active_web_port = SERVER_PORT
 _static_dir: Optional[str] = None
 _assets_dir: Optional[str] = None
 _champion_core_cache: Optional[dict] = None
-_background_refresh_lock = threading.Lock()
-_background_refresh_inflight = False
-_preloaded_hextech_lock = threading.Lock()
-_preloaded_hextech_payloads: dict[str, dict] = {}
-_preloaded_hextech_pending: Set[str] = set()
-_preloaded_hextech_errors: dict[str, dict] = {}
-_preloaded_hextech_signature: Tuple[str, float] = ("", 0.0)
-_preloaded_hextech_executor: ThreadPoolExecutor | None = None
 _request_auth_token = token_urlsafe(24)
 
 _SAFE_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -161,36 +144,23 @@ def _get_augment_cache_executor() -> ThreadPoolExecutor:
     return _augment_cache_executor
 
 
-def _get_preloaded_hextech_executor() -> ThreadPoolExecutor:
-    global _preloaded_hextech_executor
-    if _executor_shutdown(_preloaded_hextech_executor):
-        _preloaded_hextech_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="hextech-preload")
-    return _preloaded_hextech_executor
-
-
 def ensure_web_executors_started() -> None:
     _get_augment_cache_executor()
-    _get_preloaded_hextech_executor()
 
 
 def shutdown_web_executors(*, wait: bool = True, cancel_futures: bool = True) -> None:
-    global _augment_cache_executor, _preloaded_hextech_executor
-    for executor in (_augment_cache_executor, _preloaded_hextech_executor):
+    global _augment_cache_executor
+    for executor in (_augment_cache_executor,):
         if executor is not None and not _executor_shutdown(executor):
             executor.shutdown(wait=wait, cancel_futures=cancel_futures)
     with _augment_cache_pending_lock:
         _augment_cache_pending.clear()
-    with _preloaded_hextech_lock:
-        _preloaded_hextech_pending.clear()
     _augment_cache_executor = None
-    _preloaded_hextech_executor = None
 
 
 def get_web_executor_health() -> dict:
     with _augment_cache_pending_lock:
         augment_pending = len(_augment_cache_pending)
-    with _preloaded_hextech_lock:
-        preload_pending = len(_preloaded_hextech_pending)
     return {
         "augment_cache": {
             "shutdown": _executor_shutdown(_augment_cache_executor),
@@ -198,9 +168,10 @@ def get_web_executor_health() -> dict:
             "queue_depth": _executor_queue_size(_augment_cache_executor),
         },
         "hextech_preload": {
-            "shutdown": _executor_shutdown(_preloaded_hextech_executor),
-            "pending": preload_pending,
-            "queue_depth": _executor_queue_size(_preloaded_hextech_executor),
+            "shutdown": True,
+            "pending": 0,
+            "queue_depth": 0,
+            "owner": "data_service",
         },
     }
 
@@ -388,36 +359,10 @@ def queue_augment_icon_cache(icon_filename: str, augment_name: str = "") -> None
 
 
 def request_background_refresh(force: bool = False, *, source: str = "api") -> dict:
-    """执行层刷新入口。
+    """兼容旧调用点；Web 无权发起刷新，调用方必须提交给 DataService。"""
 
-    只有 Runtime Supervisor 可以发起刷新；Web 请求热路径只消费已有数据，避免多发起方
-    重新制造状态不可追溯的问题。
-    """
-    if source != "supervisor":
-        return {"accepted": False, "reason": "supervisor_required"}
-
-    global _background_refresh_inflight
-    with _background_refresh_lock:
-        if _background_refresh_inflight:
-            return {"accepted": False, "reason": "already_running"}
-        _background_refresh_inflight = True
-
-    def _worker() -> None:
-        global _background_refresh_inflight
-        try:
-            refresh_backend_data(force=force)
-        except Exception:
-            logger.exception("后台刷新线程执行失败。")
-        finally:
-            with _background_refresh_lock:
-                _background_refresh_inflight = False
-
-    threading.Thread(
-        target=_worker,
-        daemon=True,
-        name="background-refresh-singleflight",
-    ).start()
-    return {"accepted": True, "reason": "started"}
+    del force, source
+    return {"accepted": False, "reason": "data_service_required"}
 
 
 def _iter_browser_candidates() -> List[str]:
@@ -665,219 +610,63 @@ def get_ddragon_version() -> str:
 
 
 def get_df() -> pd.DataFrame:
-    """读取最新战报 CSV，并复用内存缓存避免重复解析。"""
+    """兼容旧查询入口；只把当前 generation 英雄榜投影为 DataFrame。"""
+
     try:
-        return _csv_loader.get_df()
+        return pd.DataFrame(_snapshot_client.get_champions())
     except Exception as exc:
-        logger.error("CSV 刷新失败：%s", exc)
+        logger.debug("DataSnapshot 英雄榜尚不可用：%s", exc)
         return pd.DataFrame()
 
 
 def _get_runtime_df_signature() -> Tuple[str, float]:
-    return (_csv_loader.cached_path, _csv_loader.cached_mtime)
+    status = _snapshot_client.status()
+    return (str(status.get("generation_id") or ""), 0.0)
 
 
 def clear_preloaded_hextech_payloads() -> None:
-    with _preloaded_hextech_lock:
-        _preloaded_hextech_payloads.clear()
-        _preloaded_hextech_pending.clear()
-        _preloaded_hextech_errors.clear()
-        global _preloaded_hextech_signature
-        _preloaded_hextech_signature = ("", 0.0)
-
-
-def _record_preload_hextech_error(hero_name: str, reason: str) -> None:
-    with _preloaded_hextech_lock:
-        _preloaded_hextech_errors[hero_name] = {
-            "error": "preload_failed",
-            "reason": reason,
-            "last_error": "海克斯预加载失败",
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        }
-
-
-def _clear_preload_hextech_error(hero_name: str) -> None:
-    _preloaded_hextech_errors.pop(hero_name, None)
+    """兼容旧生命周期调用；generation 客户端无需由 Web 清缓存。"""
 
 
 def get_preloaded_hextech_payload(hero_name: str) -> Optional[dict]:
+    """兼容旧名称；直接返回当前 generation 的不可变详情副本。"""
+
     canonical_name = resolve_canonical_hero_name(hero_name)
     if not canonical_name:
         return None
-
-    current_signature = _get_runtime_df_signature()
-    with _preloaded_hextech_lock:
-        global _preloaded_hextech_signature
-        if _preloaded_hextech_signature != current_signature:
-            _preloaded_hextech_payloads.clear()
-            _preloaded_hextech_pending.clear()
-            _preloaded_hextech_errors.clear()
-            _preloaded_hextech_signature = current_signature
-            return None
-
-        payload = _preloaded_hextech_payloads.get(canonical_name)
-        return copy.deepcopy(payload) if isinstance(payload, dict) else None
+    return _snapshot_client.get_champion_detail(canonical_name)
 
 
 def get_preload_hextech_status(hero_name: str) -> dict:
     canonical_name = resolve_canonical_hero_name(hero_name)
     if not canonical_name:
         return {"ready": False, "pending": False}
-
-    current_signature = _get_runtime_df_signature()
-    with _preloaded_hextech_lock:
-        global _preloaded_hextech_signature
-        if _preloaded_hextech_signature != current_signature:
-            _preloaded_hextech_payloads.clear()
-            _preloaded_hextech_pending.clear()
-            _preloaded_hextech_errors.clear()
-            _preloaded_hextech_signature = current_signature
-            return {"ready": False, "pending": False}
-
-        payload = _preloaded_hextech_payloads.get(canonical_name)
-        status = {
-            "ready": isinstance(payload, dict) and bool(payload.get("comprehensive")),
-            "pending": canonical_name in _preloaded_hextech_pending,
-        }
-        error = _preloaded_hextech_errors.get(canonical_name)
-        if isinstance(error, dict) and not status["ready"]:
-            status.update(error)
-        return status
+    try:
+        snapshot_view = _snapshot_client.open_view()
+        snapshot_status = snapshot_view.status()
+        detail = snapshot_view.get_champion_detail(canonical_name)
+    except Exception:
+        snapshot_status = _snapshot_client.status()
+        detail = None
+    return {
+        "ready": isinstance(detail, dict) and bool(detail.get("augments") or detail.get("comprehensive")),
+        "pending": snapshot_status.get("state") == "unavailable",
+        "generation_id": str(snapshot_status.get("generation_id") or ""),
+    }
 
 
 def request_preload_hextech_payload(hero_name: str) -> bool:
-    canonical_name = resolve_canonical_hero_name(hero_name)
-    if not canonical_name:
-        return False
-
-    status = get_preload_hextech_status(canonical_name)
-    if status["ready"] or status["pending"]:
-        return True
-    return queue_preload_hextech_payloads([canonical_name])
+    return bool(get_preload_hextech_status(hero_name).get("ready"))
 
 
 def request_preload_hextech_payload_async(hero_name: str) -> bool:
-    """只登记预热任务，不把 CSV 读取和海克斯计算压到调用方热路径。"""
-    canonical_name = resolve_canonical_hero_name(hero_name)
-    if not canonical_name:
-        return False
+    """兼容旧名称；Web 不再创建数据任务，只探测已发布 generation。"""
 
-    status = get_preload_hextech_status(canonical_name)
-    if status["ready"] or status["pending"]:
-        return True
-
-    with _preloaded_hextech_lock:
-        payload = _preloaded_hextech_payloads.get(canonical_name)
-        if isinstance(payload, dict) and payload.get("comprehensive"):
-            return True
-        if canonical_name in _preloaded_hextech_pending:
-            return True
-        _preloaded_hextech_pending.add(canonical_name)
-
-    def _worker(target_name: str = canonical_name) -> None:
-        try:
-            df = get_df()
-            if df.empty:
-                return
-            signature = _get_runtime_df_signature()
-            payload = process_hextechs_data(df.copy(), target_name, use_runtime_cache=True, log_columns=False)
-            if not isinstance(payload, dict) or not payload.get("comprehensive"):
-                return
-            _queue_payload_augment_icons(payload)
-            with _preloaded_hextech_lock:
-                global _preloaded_hextech_signature
-                if _preloaded_hextech_signature != signature:
-                    _preloaded_hextech_payloads.clear()
-                    _preloaded_hextech_pending.clear()
-                    _preloaded_hextech_errors.clear()
-                    _preloaded_hextech_signature = signature
-                _clear_preload_hextech_error(target_name)
-                _preloaded_hextech_payloads[target_name] = payload
-        except Exception:
-            _record_preload_hextech_error(target_name, "worker_exception")
-            logger.exception("异步海克斯预热失败：hero=%s", target_name)
-        finally:
-            with _preloaded_hextech_lock:
-                _preloaded_hextech_pending.discard(target_name)
-
-    _get_preloaded_hextech_executor().submit(_worker)
-    return True
+    return request_preload_hextech_payload(hero_name)
 
 
 def queue_preload_hextech_payloads(hero_names: List[str]) -> bool:
-    canonical_names = []
-    for raw_name in hero_names:
-        canonical_name = resolve_canonical_hero_name(raw_name)
-        if canonical_name and canonical_name not in canonical_names:
-            canonical_names.append(canonical_name)
-    if not canonical_names:
-        return False
-
-    df = get_df()
-    if df.empty:
-        return False
-
-    current_signature = _get_runtime_df_signature()
-    with _preloaded_hextech_lock:
-        global _preloaded_hextech_signature
-        if _preloaded_hextech_signature != current_signature:
-            _preloaded_hextech_payloads.clear()
-            _preloaded_hextech_pending.clear()
-            _preloaded_hextech_errors.clear()
-            _preloaded_hextech_signature = current_signature
-
-        queued_any = False
-        for canonical_name in canonical_names:
-            if canonical_name in _preloaded_hextech_payloads or canonical_name in _preloaded_hextech_pending:
-                continue
-            _preloaded_hextech_pending.add(canonical_name)
-            queued_any = True
-
-            def _worker(target_name: str = canonical_name, df_snapshot: pd.DataFrame = df.copy(), signature: Tuple[str, float] = current_signature) -> None:
-                try:
-                    payload = process_hextechs_data(df_snapshot, target_name, use_runtime_cache=True, log_columns=False)
-                    if not isinstance(payload, dict) or not payload.get("comprehensive"):
-                        return
-                    _queue_payload_augment_icons(payload)
-                    with _preloaded_hextech_lock:
-                        if _preloaded_hextech_signature != signature:
-                            return
-                        _clear_preload_hextech_error(target_name)
-                        _preloaded_hextech_payloads[target_name] = payload
-                except Exception:
-                    _record_preload_hextech_error(target_name, "worker_exception")
-                    logger.exception("海克斯预热失败：hero=%s", target_name)
-                finally:
-                    with _preloaded_hextech_lock:
-                        _preloaded_hextech_pending.discard(target_name)
-
-            _get_preloaded_hextech_executor().submit(_worker)
-
-    return queued_any
-
-
-def _queue_payload_augment_icons(payload: dict) -> None:
-    """把认证 preload 已解析出的本地图标引用交给既有缓存队列。"""
-    queued_filenames: set[str] = set()
-    for value in payload.values():
-        if not isinstance(value, list):
-            continue
-        for item in value:
-            if not isinstance(item, dict):
-                continue
-            icon_url = str(item.get("icon", "")).strip()
-            if not icon_url.startswith("/assets/"):
-                continue
-            filename = unquote(icon_url.removeprefix("/assets/"))
-            if (
-                not filename
-                or os.path.basename(filename) != filename
-                or not is_safe_png_asset_name(filename)
-                or filename in queued_filenames
-            ):
-                continue
-            queued_filenames.add(filename)
-            queue_augment_icon_cache(filename, str(item.get("海克斯名称", "")).strip())
+    return any(request_preload_hextech_payload(name) for name in hero_names)
 
 
 async def get_df_with_refresh(timeout: float = 25.0) -> pd.DataFrame:
@@ -893,18 +682,6 @@ async def get_df_with_refresh(timeout: float = 25.0) -> pd.DataFrame:
             return df
         await asyncio.sleep(min(0.5, max(0.0, deadline - time.time())))
     return df
-
-
-@dataclass
-class JSONFileCache:
-    path: str = ""
-    mtime: float = 0.0
-    data: dict = field(default_factory=dict)
-
-
-_synergy_cache = JSONFileCache()
-_champion_snapshot_cache = JSONFileCache()
-_live_hextech_cache = JSONFileCache()
 
 
 def get_stable_champion_catalog_df() -> pd.DataFrame:
@@ -938,193 +715,32 @@ def get_stable_champion_catalog_df() -> pd.DataFrame:
 
 
 def get_live_champion_snapshot_df(force_refresh: bool = False) -> pd.DataFrame:
-    """读取远端轻量英雄快照，作为冷启动或本地 CSV 缺失时的回退数据源。"""
-    cache_path = "live_champion_snapshot"
-    now = time.time()
-    if (
-        not force_refresh
-        and _champion_snapshot_cache.path == cache_path
-        and _champion_snapshot_cache.data
-        and (now - _champion_snapshot_cache.mtime) < 180
-    ):
-        payload = _champion_snapshot_cache.data
-    else:
-        try:
-            session = get_advanced_session()
-            response = None
-            payload = None
-            for url in HEXTECH_CHAMPION_STATS_URLS:
-                try:
-                    response = session.get(url, timeout=12, verify=True)
-                    response.raise_for_status()
-                    payload = response.json()
-                    if isinstance(payload, list):
-                        break
-                    payload = None
-                except Exception:
-                    payload = None
-            if not isinstance(payload, list):
-                return pd.DataFrame()
-            _champion_snapshot_cache.path = cache_path
-            _champion_snapshot_cache.mtime = now
-            _champion_snapshot_cache.data = payload
-        except Exception as exc:
-            logger.warning("轻量英雄快照拉取失败：%s", exc)
-            return pd.DataFrame()
+    """兼容旧名称；返回当前 generation 英雄榜，不执行远端请求。"""
 
-    core_data = load_champion_core_data()
-    rows = []
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        champ_id = str(item.get("championId", "")).strip()
-        hero_info = core_data.get(champ_id, {})
-        hero_name = hero_info.get("name", "")
-        if not hero_name:
-            continue
-        try:
-            rows.append(
-                {
-                    "英雄名称": hero_name,
-                    "英雄胜率": float(item.get("winRate", 0) or 0),
-                    "英雄出场率": float(item.get("pickRate", 0) or 0),
-                }
-            )
-        except (TypeError, ValueError):
-            continue
-    if not rows:
-        return pd.DataFrame()
-    return pd.DataFrame(rows)
+    del force_refresh
+    return get_df()
 
 
 def get_live_hextech_snapshot_df(hero_name: str, force_refresh: bool = False) -> pd.DataFrame:
-    """按单英雄拉取海克斯快照，并缓存短周期结果用于详情页回退。"""
+    """兼容旧名称；返回当前 generation 单英雄详情，不执行远端请求。"""
+
+    del force_refresh
     hero_name = resolve_canonical_hero_name(hero_name)
     if not hero_name:
         return pd.DataFrame()
-
-    cache_path = f"live_hextech_snapshot::{hero_name}"
-    now = time.time()
-    if (
-        not force_refresh
-        and _live_hextech_cache.path == cache_path
-        and _live_hextech_cache.data
-        and (now - _live_hextech_cache.mtime) < 180
-    ):
-        rows = _live_hextech_cache.data.get("rows", [])
-        return pd.DataFrame(rows) if rows else pd.DataFrame()
-
-    core_data = load_champion_core_data()
-    champ_id = None
-    for key, value in core_data.items():
-        if str(value.get("name", "")).strip() == hero_name:
-            champ_id = str(key)
-            break
-    if not champ_id:
-        return pd.DataFrame()
-
-    truth_dict = load_augment_map()
-    if not truth_dict:
-        return pd.DataFrame()
-
-    session = get_advanced_session()
     try:
-        aug_response = None
-        for url in HEXTECH_AUGMENT_METADATA_URLS:
-            candidate = fetch_with_retry(session, url, timeout=6)
-            if candidate is None:
-                continue
-            try:
-                if isinstance(candidate.json(), dict):
-                    aug_response = candidate
-                    break
-            except Exception:
-                continue
-        stats_response = None
-        for url in HEXTECH_CHAMPION_STATS_URLS:
-            candidate = fetch_with_retry(session, url, timeout=6)
-            if candidate is None:
-                continue
-            try:
-                if isinstance(candidate.json(), list):
-                    stats_response = candidate
-                    break
-            except Exception:
-                continue
-        if aug_response is None or stats_response is None:
-            return pd.DataFrame()
-
-        aug_data = aug_response.json()
-        stats_list = stats_response.json()
-        if not isinstance(aug_data, dict) or not isinstance(stats_list, list):
-            return pd.DataFrame()
-
-        aug_id_map = {}
-        for raw_key, raw_item in aug_data.items():
-            item = raw_item if isinstance(raw_item, dict) else {}
-            aug_id = str(raw_key)
-            aug_id_map[aug_id] = _clean_augment_text(item.get("displayName"))
-
-        champ_stats = next(
-            (item for item in stats_list if str(item.get("championId", "")).strip() == champ_id),
-            None,
-        )
-        if not champ_stats:
-            return pd.DataFrame()
-
-        detail_response = None
-        for url in build_hextech_detail_urls(champ_id):
-            detail_response = fetch_with_retry(session, url, timeout=6)
-            if detail_response is not None and detail_response.status_code == 200 and detail_response.text:
-                break
-        if detail_response is None or detail_response.status_code != 200 or not detail_response.text:
-            return pd.DataFrame()
-
-        rows = extract_champion_stats(
-            detail_response.text,
-            aug_id_map,
-            truth_dict,
-            champ_id,
-            hero_name,
-            champ_stats,
-        )
-        if not rows:
-            return pd.DataFrame()
-
-        df = pd.DataFrame(rows)
-        df["胜率差"] = df["海克斯胜率"] - df["英雄胜率"]
-        _live_hextech_cache.path = cache_path
-        _live_hextech_cache.mtime = now
-        _live_hextech_cache.data = {"rows": rows}
-        logger.info("单英雄海克斯快照已就绪：hero=%s rows=%s", hero_name, len(rows))
-        return df
+        return pd.DataFrame(_snapshot_client.get_champion_augments(hero_name))
     except Exception as exc:
-        logger.warning("单英雄海克斯快照拉取失败：hero=%s error=%s", hero_name, exc)
+        logger.debug("DataSnapshot 单英雄详情尚不可用：hero=%s error=%s", hero_name, exc)
         return pd.DataFrame()
 
 
 def get_synergy_data() -> dict:
-    json_path = build_synergy_data_path()
-    if not os.path.exists(json_path):
-        return _synergy_cache.data
-
+    """兼容旧名称；联动数据与英雄统计来自同一 generation。"""
     try:
-        current_mtime = os.path.getmtime(json_path)
-    except OSError:
-        return _synergy_cache.data
-
-    if json_path != _synergy_cache.path or current_mtime != _synergy_cache.mtime:
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            _synergy_cache.path = json_path
-            _synergy_cache.mtime = current_mtime
-            _synergy_cache.data = data
-            logger.info("协同数据缓存已刷新：%s", os.path.basename(json_path))
-        except Exception as exc:
-            logger.error("协同数据文件加载失败：%s", exc)
-            return _synergy_cache.data
-    return _synergy_cache.data
+        return _snapshot_client.get_synergy_data()
+    except Exception:
+        return {}
 
 
 def default_startup_status() -> dict:
@@ -1220,6 +836,9 @@ class LCUState:
     current_ids: Set[str] = field(default_factory=set)
     selected_ids: list[str] = field(default_factory=list)
     bench_ids: list[str] = field(default_factory=list)
+    teammate_ids: list[str] = field(default_factory=list)
+    context_phase: str = "not_in_champ_select"
+    connection_state: str = "disconnected"
     local_champ_id: Optional[int] = None
     local_champ_name: Optional[str] = None
     consecutive_404_count: int = 0
@@ -1229,6 +848,7 @@ class LCUState:
 
 _lcu_state = LCUState()
 _lcu_state_lock = threading.RLock()
+_client_context_provider = ClientContextProvider()
 
 
 def get_live_state_payload() -> dict:
@@ -1237,6 +857,9 @@ def get_live_state_payload() -> dict:
             "champion_ids": sorted(_lcu_state.current_ids),
             "selected_champion_ids": list(_lcu_state.selected_ids),
             "bench_champion_ids": list(_lcu_state.bench_ids),
+            "teammate_champion_ids": list(_lcu_state.teammate_ids),
+            "context_phase": _lcu_state.context_phase,
+            "context_connection_state": _lcu_state.connection_state,
             "local_champion_id": _lcu_state.local_champ_id,
             "local_champion_name": _lcu_state.local_champ_name,
             "state_version": _lcu_state.state_version,
@@ -1258,21 +881,11 @@ def _append_unique_champion_id(target: list[str], value) -> None:
 def build_lcu_candidate_groups(payload: dict) -> dict[str, list[str]]:
     """从 LCU champ-select payload 生成 Web/桌面共用候选分组。"""
 
-    selected_ids: list[str] = []
-    bench_ids: list[str] = []
+    from hextech.client_context import parse_client_context
+
     if not isinstance(payload, dict):
-        return {"selected_champion_ids": selected_ids, "bench_champion_ids": bench_ids}
-    for player in payload.get("myTeam", []):
-        if isinstance(player, dict):
-            _append_unique_champion_id(selected_ids, player.get("championId"))
-    for champion in payload.get("benchChampions", []):
-        if isinstance(champion, dict):
-            _append_unique_champion_id(bench_ids, champion.get("championId"))
-    selected_set = set(selected_ids)
-    return {
-        "selected_champion_ids": selected_ids,
-        "bench_champion_ids": [champion_id for champion_id in bench_ids if champion_id not in selected_set],
-    }
+        return {"selected_champion_ids": [], "bench_champion_ids": []}
+    return parse_client_context(payload).candidate_groups()
 
 
 def _candidate_groups_to_id_set(candidate_groups: dict[str, list[str]]) -> set[str]:
@@ -1293,13 +906,9 @@ def _positive_champion_int(value) -> int | None:
 
 
 def _extract_lcu_local_champion_id(payload: dict) -> int | None:
-    local_cell_id = payload.get("localPlayerCellId")
-    for player in payload.get("myTeam", []):
-        if not isinstance(player, dict):
-            continue
-        if player.get("cellId") == local_cell_id:
-            return _positive_champion_int(player.get("championId"))
-    return None
+    from hextech.client_context import parse_client_context
+
+    return _positive_champion_int(parse_client_context(payload).local_champion_id)
 
 
 def _clear_lcu_local_champion_state() -> bool:
@@ -1317,7 +926,12 @@ def _clear_lcu_local_champion_state() -> bool:
 def _clear_lcu_candidate_state(*, clear_local: bool = False) -> bool:
     """清空 LCU 候选池；调用方必须持有 _lcu_state_lock。"""
 
-    changed = bool(_lcu_state.current_ids or _lcu_state.selected_ids or _lcu_state.bench_ids)
+    changed = bool(
+        _lcu_state.current_ids
+        or _lcu_state.selected_ids
+        or _lcu_state.bench_ids
+        or _lcu_state.teammate_ids
+    )
     if clear_local:
         changed = changed or _lcu_state.local_champ_id is not None or bool(_lcu_state.local_champ_name)
         _lcu_state.local_champ_id = None
@@ -1325,10 +939,44 @@ def _clear_lcu_candidate_state(*, clear_local: bool = False) -> bool:
     _lcu_state.current_ids = set()
     _lcu_state.selected_ids = []
     _lcu_state.bench_ids = []
+    _lcu_state.teammate_ids = []
     if changed:
         _lcu_state.state_version += 1
         _lcu_state.updated_at = time.time()
     return changed
+
+
+def _apply_client_context(context) -> tuple[dict[str, Any], bool]:
+    """把 Provider 结果完整投影到 Web 状态，连接恢复也会推进版本。"""
+
+    candidate_groups = context.candidate_groups(include_roles=True)
+    available_ids = _candidate_groups_to_id_set(candidate_groups)
+    with _lcu_state_lock:
+        clear_local = context.connection_state == "disconnected" or (
+            context.connection_state == "connected" and not candidate_groups.get("local_champion_id")
+        )
+        changed = (
+            available_ids != _lcu_state.current_ids
+            or candidate_groups["selected_champion_ids"] != _lcu_state.selected_ids
+            or candidate_groups["bench_champion_ids"] != _lcu_state.bench_ids
+            or candidate_groups["teammate_champion_ids"] != _lcu_state.teammate_ids
+            or context.phase != _lcu_state.context_phase
+            or context.connection_state != _lcu_state.connection_state
+            or (clear_local and (_lcu_state.local_champ_id is not None or bool(_lcu_state.local_champ_name)))
+        )
+        _lcu_state.current_ids = available_ids.copy()
+        _lcu_state.selected_ids = list(candidate_groups["selected_champion_ids"])
+        _lcu_state.bench_ids = list(candidate_groups["bench_champion_ids"])
+        _lcu_state.teammate_ids = list(candidate_groups["teammate_champion_ids"])
+        _lcu_state.context_phase = context.phase
+        _lcu_state.connection_state = context.connection_state
+        if clear_local:
+            _lcu_state.local_champ_id = None
+            _lcu_state.local_champ_name = None
+        if changed:
+            _lcu_state.state_version += 1
+            _lcu_state.updated_at = time.time()
+    return candidate_groups, changed
 
 
 def _create_lcu_session() -> requests.Session:
@@ -1402,10 +1050,17 @@ async def lcu_polling_loop() -> None:
                     current_port = port
                     current_token = token
                 else:
+                    degraded_context = _client_context_provider.unavailable("client_not_found", source="web-lcu")
+                    _apply_client_context(degraded_context)
+                    if degraded_context.connection_state == "disconnected":
+                        with _lcu_state_lock:
+                            _clear_lcu_candidate_state(clear_local=True)
                     await asyncio.sleep(2)
                     continue
 
             if not current_token or not current_port:
+                degraded_context = _client_context_provider.unavailable("credentials_missing", source="web-lcu")
+                _apply_client_context(degraded_context)
                 await asyncio.sleep(2)
                 continue
             auth = base64.b64encode(f"riot:{current_token}".encode()).decode()
@@ -1420,40 +1075,23 @@ async def lcu_polling_loop() -> None:
                 with _lcu_state_lock:
                     _lcu_state.consecutive_404_count = 0
 
-                candidate_groups = build_lcu_candidate_groups(data)
+                client_context = _client_context_provider.update(data, source="web-lcu")
+                candidate_groups, state_changed = _apply_client_context(client_context)
                 available_ids = _candidate_groups_to_id_set(candidate_groups)
-
-                with _lcu_state_lock:
-                    ids_changed = (
-                        available_ids != _lcu_state.current_ids
-                        or candidate_groups["selected_champion_ids"] != _lcu_state.selected_ids
-                        or candidate_groups["bench_champion_ids"] != _lcu_state.bench_ids
-                    )
-                    if ids_changed:
-                        _lcu_state.current_ids = available_ids.copy()
-                        _lcu_state.selected_ids = list(candidate_groups["selected_champion_ids"])
-                        _lcu_state.bench_ids = list(candidate_groups["bench_champion_ids"])
-                        _lcu_state.state_version += 1
-                        _lcu_state.updated_at = time.time()
-                if ids_changed:
-                    preload_names = []
-                    for champion_id in available_ids:
-                        hero_name, _ = get_champion_info(str(champion_id))
-                        if hero_name:
-                            preload_names.append(hero_name)
-                    if preload_names:
-                        await asyncio.to_thread(queue_preload_hextech_payloads, preload_names)
+                if state_changed:
                     await manager.broadcast(
                         {
                             "type": "champion_update",
                             "champion_ids": list(available_ids),
                             "selected_champion_ids": list(candidate_groups["selected_champion_ids"]),
                             "bench_champion_ids": list(candidate_groups["bench_champion_ids"]),
+                            "local_champion_id": candidate_groups["local_champion_id"],
+                            "teammate_champion_ids": list(candidate_groups["teammate_champion_ids"]),
                             "timestamp": time.time(),
                         }
                     )
 
-                local_champion_id = _extract_lcu_local_champion_id(data)
+                local_champion_id = _positive_champion_int(candidate_groups.get("local_champion_id"))
 
                 if local_champion_id is not None:
                     with _lcu_state_lock:
@@ -1469,8 +1107,6 @@ async def lcu_polling_loop() -> None:
                             _lcu_state.local_champ_name = hero_name
                             _lcu_state.updated_at = time.time()
                         logger.info("LCU 已锁定英雄：%s (ID=%s)", hero_name, local_champion_id)
-                        if hero_name:
-                            await asyncio.to_thread(request_preload_hextech_payload, hero_name)
                         if AUTO_JUMP_ENABLED:
                             await manager.broadcast(
                                 {
@@ -1482,20 +1118,18 @@ async def lcu_polling_loop() -> None:
                                 }
                             )
 
-                    elif prev_champ_id == local_champion_id and AUTO_JUMP_ENABLED and hero_name:
-                        await asyncio.to_thread(request_preload_hextech_payload, hero_name)
                 else:
                     with _lcu_state_lock:
-                        cleared_local_champion = _clear_lcu_local_champion_state()
-                    if cleared_local_champion:
-                        clear_preloaded_hextech_payloads()
+                        _clear_lcu_local_champion_state()
             elif res.status_code == 404:
+                context = _client_context_provider.not_in_champ_select(source="web-lcu")
+                _apply_client_context(context)
                 with _lcu_state_lock:
                     _lcu_state.consecutive_404_count += 1
-                    cleared_lcu_state = _clear_lcu_candidate_state(clear_local=True)
+                    _clear_lcu_candidate_state(clear_local=True)
                     consecutive_404_count = _lcu_state.consecutive_404_count
-                if cleared_lcu_state:
-                    clear_preloaded_hextech_payloads()
+                    _lcu_state.context_phase = "not_in_champ_select"
+                    _lcu_state.connection_state = "connected"
                 if consecutive_404_count >= 5:
                     logger.warning("LCU 连续返回 404 五次，重置连接状态（count=%s）", consecutive_404_count)
                     with _lcu_state_lock:
@@ -1505,72 +1139,63 @@ async def lcu_polling_loop() -> None:
                         _clear_lcu_candidate_state(clear_local=True)
             elif res.status_code in (401, 403):
                 logger.warning("LCU token 失效或未授权（401/403），重置连接状态。")
-                clear_preloaded_hextech_payloads()
+                context = _client_context_provider.unavailable("authorization_failed", source="web-lcu")
+                _apply_client_context(context)
                 with _lcu_state_lock:
                     _lcu_state.port = None
                     _lcu_state.token = None
-                    _clear_lcu_candidate_state(clear_local=True)
+                    if context.connection_state == "disconnected":
+                        _clear_lcu_candidate_state(clear_local=True)
             else:
                 logger.warning("LCU 响应异常状态码=%s，重置连接状态。", res.status_code)
-                clear_preloaded_hextech_payloads()
+                context = _client_context_provider.unavailable(f"http_{res.status_code}", source="web-lcu")
+                _apply_client_context(context)
                 with _lcu_state_lock:
                     _lcu_state.port = None
-                    _clear_lcu_candidate_state(clear_local=True)
+                    if context.connection_state == "disconnected":
+                        _clear_lcu_candidate_state(clear_local=True)
         except requests.exceptions.RequestException as exc:
             logger.warning(
                 "LCU 请求异常，已重置连接状态：error_type=%s endpoint=127.0.0.1",
                 _safe_exception_label(exc),
             )
-            clear_preloaded_hextech_payloads()
+            degraded_context = _client_context_provider.unavailable("request_failed", source="web-lcu")
+            _apply_client_context(degraded_context)
             with _lcu_state_lock:
                 _lcu_state.port = None
                 _lcu_state.token = None
-                _clear_lcu_candidate_state(clear_local=True)
+                _lcu_state.connection_state = degraded_context.connection_state
+                _lcu_state.context_phase = degraded_context.phase
+                if degraded_context.connection_state == "disconnected":
+                    _clear_lcu_candidate_state(clear_local=True)
         except Exception as exc:
             logger.warning(
                 "LCU 轮询异常：error_type=%s context=local_polling_loop",
                 _safe_exception_label(exc),
             )
-            clear_preloaded_hextech_payloads()
+            degraded_context = _client_context_provider.unavailable("unexpected_error", source="web-lcu")
+            _apply_client_context(degraded_context)
             with _lcu_state_lock:
-                _clear_lcu_candidate_state(clear_local=True)
+                if degraded_context.connection_state == "disconnected":
+                    _clear_lcu_candidate_state(clear_local=True)
 
         await asyncio.sleep(1.5)
 
 
 async def csv_watcher_loop() -> None:
-    """监视高频 CSV 与联动 JSON，并在文件切换后广播数据刷新事件。"""
-    prev_csv_signature: Tuple[str, float] = ("", 0.0)
-    prev_synergy_signature: Tuple[str, float] = ("", 0.0)
+    """监视 DataService generation，并在整代切换后广播数据刷新事件。"""
+
+    previous_generation_id = ""
     while True:
         try:
-            get_df()
-            current_csv_signature = (_csv_loader.cached_path, _csv_loader.cached_mtime)
-            synergy_path = build_synergy_data_path()
-            current_synergy_mtime = os.path.getmtime(synergy_path) if os.path.exists(synergy_path) else 0.0
-            current_synergy_signature = (synergy_path if current_synergy_mtime > 0 else "", current_synergy_mtime)
-            csv_changed = (
-                current_csv_signature[1] > 0
-                and prev_csv_signature[1] > 0
-                and current_csv_signature != prev_csv_signature
-            )
-            synergy_changed = (
-                current_synergy_mtime > 0
-                and prev_synergy_signature[1] > 0
-                and current_synergy_signature != prev_synergy_signature
-            )
-            if csv_changed or synergy_changed:
-                clear_preloaded_hextech_payloads()
-                logger.info(
-                    "运行数据已更新：csv=%s synergy=%s",
-                    os.path.basename(_csv_loader.cached_path or ""),
-                    os.path.basename(synergy_path),
-                )
-                await manager.broadcast({"type": "data_updated"})
-            prev_csv_signature = current_csv_signature
-            prev_synergy_signature = current_synergy_signature
-        except (OSError, IOError) as exc:
-            logger.warning("运行数据监视器错误：%s", exc)
+            status = _snapshot_client.status()
+            generation_id = str(status.get("generation_id") or "")
+            if generation_id and previous_generation_id and generation_id != previous_generation_id:
+                logger.info("DataService generation 已切换：generation_id=%s", generation_id)
+                await manager.broadcast({"type": "data_updated", "generation_id": generation_id})
+            previous_generation_id = generation_id or previous_generation_id
+        except Exception as exc:
+            logger.warning("DataService generation 监视器错误：%s", exc)
         await asyncio.sleep(3)
 
 
@@ -1578,8 +1203,7 @@ async def csv_watcher_loop() -> None:
 async def lifespan(_app):
     """Web 生命周期钩子。
 
-    只创建 LCU 与 CSV 两条长生命周期任务；后台刷新由 Runtime Supervisor 唯一发起，
-    避免 Web 启动、UI 定时器和 supervisor 多处同时触发。
+    只创建 LCU 与 generation 监视两条长生命周期任务；刷新由 DataService 唯一发起。
     """
     task1 = asyncio.create_task(lcu_polling_loop())
     task2 = asyncio.create_task(csv_watcher_loop())

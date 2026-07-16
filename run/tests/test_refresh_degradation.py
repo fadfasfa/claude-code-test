@@ -247,7 +247,7 @@ class RefreshDegradationTests(unittest.TestCase):
                 mock.patch.object(refresh, "get_latest_valid_csv", lambda: str(fallback_csv)),
                 mock.patch.object(refresh, "get_latest_csv", lambda: str(fallback_csv)),
                 mock.patch.object(refresh, "rebuild_api_cache_if_needed", lambda force=False: True),
-                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None: None),
+                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None, force=False: None),
             ):
                 refresh._ACTIVE_DEGRADATION.clear()
                 with mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: fallback_report):
@@ -310,7 +310,7 @@ class RefreshDegradationTests(unittest.TestCase):
                 mock.patch.object(refresh, "get_latest_valid_csv", lambda: latest_valid["path"]),
                 mock.patch.object(refresh, "get_latest_csv", lambda: latest_valid["path"]),
                 mock.patch.object(refresh, "rebuild_api_cache_if_needed", lambda force=False: True),
-                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None: None),
+                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None, force=False: None),
             ):
                 refresh._ACTIVE_DEGRADATION.clear()
                 with mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: failed_report):
@@ -375,7 +375,7 @@ class RefreshDegradationTests(unittest.TestCase):
                 mock.patch.object(refresh, "get_latest_valid_csv", lambda: str(fallback_csv)),
                 mock.patch.object(refresh, "get_latest_csv", lambda: str(fallback_csv)),
                 mock.patch.object(refresh, "rebuild_api_cache_if_needed", lambda force=False: True),
-                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None: None),
+                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None, force=False: None),
                 mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: busy_report),
             ):
                 refresh._ACTIVE_DEGRADATION.clear()
@@ -407,7 +407,7 @@ class RefreshDegradationTests(unittest.TestCase):
                 mock.patch.object(refresh, "get_latest_valid_csv", lambda: ""),
                 mock.patch.object(refresh, "get_latest_csv", lambda: ""),
                 mock.patch.object(refresh, "heal_runtime_artifacts", lambda force=False, stop_event=None: dict(report)),
-                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None: None),
+                mock.patch.object(refresh, "_run_mayhem_refresh_safely", lambda stop_event=None, force=False: None),
                 mock.patch.object(
                     refresh,
                     "rebuild_api_cache_if_needed",
@@ -425,6 +425,33 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertNotIn("secret", result.report["stage_errors"][0]["error_message"])
             events = _read_jsonl(events_file)
             self.assertEqual(events[-1]["event"], "refresh.failed")
+
+    def test_force_refresh_does_not_rebuild_matching_api_cache_twice(self):
+        from hextech.core import refresh
+
+        report = {
+            "requested": ["hextech_rankings"],
+            "repaired": ["hextech_rankings"],
+            "fallback": [],
+            "failed": [],
+        }
+        cache_checks: list[bool] = []
+        with (
+            mock.patch.object(refresh, "heal_runtime_artifacts", return_value=report),
+            mock.patch.object(refresh, "_run_mayhem_refresh_safely"),
+            mock.patch.object(refresh, "get_latest_valid_csv", return_value=__file__),
+            mock.patch.object(refresh, "get_latest_csv", return_value=__file__),
+            mock.patch.object(
+                refresh,
+                "rebuild_api_cache_if_needed",
+                side_effect=lambda force=False: cache_checks.append(force) or True,
+            ),
+            mock.patch.object(refresh, "_write_refresh_state_event"),
+        ):
+            result = refresh.refresh_backend_data(force=True)
+
+        self.assertEqual(result.state, "ready")
+        self.assertEqual(cache_checks, [False])
 
     def test_sanitize_event_message_removes_sensitive_material(self):
         from hextech.core.refresh import sanitize_event_message

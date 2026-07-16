@@ -19,7 +19,8 @@ class ExecutorLifecycleTests(unittest.TestCase):
         runtime.ensure_web_executors_started()
         started = runtime.get_web_executor_health()
         self.assertFalse(started["augment_cache"]["shutdown"])
-        self.assertFalse(started["hextech_preload"]["shutdown"])
+        self.assertTrue(started["hextech_preload"]["shutdown"])
+        self.assertEqual(started["hextech_preload"]["owner"], "data_service")
 
         runtime.shutdown_web_executors(wait=False)
         stopped = runtime.get_web_executor_health()

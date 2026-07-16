@@ -28,7 +28,7 @@ EVENT_STALE_HEARTBEAT_BUDGET = 2.5
 EVENT_MAX_AGE_SECONDS = EVENT_HEARTBEAT_SECONDS * EVENT_STALE_HEARTBEAT_BUDGET
 ALLOWED_SELECTION_TYPES = {"hextech", "body_shard"}
 VISIBLE_SELECTION_TYPES = {"hextech"}
-ALLOWED_SLOT_STATES = {"ready", "low_confidence", "detecting", "empty"}
+ALLOWED_SLOT_STATES = {"ready", "low_confidence", "detecting", "failed", "empty"}
 SELECTION_TYPE_LABELS = {
     "hextech": "海克斯选择",
     "body_shard": "锻体碎片选择",
@@ -78,6 +78,9 @@ def _empty_slot(index: int, *, state: str = "empty") -> dict[str, Any]:
         "confidence": None,
         "diagnostic": "",
         "top_candidates": [],
+        "candidate_identity": "",
+        "rejection_reason": "",
+        "elapsed_seconds": 0.0,
     }
 
 
@@ -178,6 +181,10 @@ def normalize_overlay_slot(
         confidence_value = None if confidence is None else max(0.0, min(1.0, float(confidence)))
     except (TypeError, ValueError):
         confidence_value = None
+    try:
+        elapsed_seconds = max(0.0, float(raw_slot.get("elapsed_seconds") or 0.0))
+    except (TypeError, ValueError):
+        elapsed_seconds = 0.0
 
     return {
         "slot": slot_index,
@@ -189,6 +196,9 @@ def normalize_overlay_slot(
         "confidence": confidence_value,
         "diagnostic": diagnostic,
         "top_candidates": _normalize_top_candidates(raw_slot.get("top_candidates")),
+        "candidate_identity": _clean_text(raw_slot.get("candidate_identity"), limit=80),
+        "rejection_reason": _clean_text(raw_slot.get("rejection_reason"), limit=80),
+        "elapsed_seconds": elapsed_seconds,
     }
 
 

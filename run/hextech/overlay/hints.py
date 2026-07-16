@@ -345,7 +345,7 @@ def _merge_display_only_catalog_hints(
     """把 manifest 中有身份但 CSV 暂无统计的海克斯补进 hint cache。
 
     这些条目只负责名称、阶级、图标和别名解析，不伪造胜率/出场率；renderer
-    仍会对当前英雄显示 NO_STATS，避免把源数据覆盖缺口误报成 alias 断链。
+    仍会对当前英雄显示 SOURCE_STATS_MISSING，避免把源数据覆盖缺口误报成 alias 断链。
     """
 
     hints = cache_payload.get("hints")
@@ -387,6 +387,24 @@ def _merge_display_only_catalog_hints(
         _index_hint_aliases(name_index, hint)
         added += 1
     return added
+
+
+def enrich_overlay_hint_cache_with_catalog(
+    cache_payload: dict[str, Any],
+    catalog_entries: Iterable[Mapping[str, Any]],
+) -> int:
+    """补全资源目录中仅用于展示和身份解析的海克斯。
+
+    DataService 在发布 generation 前调用本函数。它只补名称、阶级、图标和别名，
+    不生成任何胜率字段，因此源站缺少的组合仍会被明确报告为无统计。
+    """
+
+    catalog_lookup = {
+        f"{index}:{_clean_text(entry.get('augment_name_id') or entry.get('name'))}": entry
+        for index, entry in enumerate(catalog_entries)
+        if isinstance(entry, Mapping)
+    }
+    return _merge_display_only_catalog_hints(cache_payload, catalog_lookup)
 
 
 def _build_hint(

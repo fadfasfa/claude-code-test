@@ -12,12 +12,13 @@ import logging
 import os
 import re
 import time
+import uuid
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from hextech.catalog.runtime_store import build_runtime_state_path
 from hextech.overlay.events import build_overlay_event, write_overlay_event
-from hextech.overlay.hints import load_overlay_hint_cache
+from hextech.overlay.data_source import SharedOverlayDataSource
 from hextech.overlay.vision.state import SelectionTracker
 from hextech.support.atomic_io import atomic_write_json
 
@@ -38,6 +39,15 @@ SIDECAR_READY_TOKEN_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_TOKEN"
 SIDECAR_BOOTSTRAP_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_BOOTSTRAP_FILE"
 SIDECAR_GENERATION_ENV = "HEXTECH_OVERLAY_GENERATION"
 SIDECAR_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
+
+
+def _mutable_string_key_mapping(value: object) -> dict[str, Any]:
+    """把外部事件字典收窄为可写 source，避免跨模块 Mapping 类型泄漏。"""
+
+    if not isinstance(value, Mapping):
+        return {}
+    source = cast(Mapping[object, Any], value)
+    return {str(key): item for key, item in source.items()}
 
 
 def _write_sidecar_status(status: str, **fields: Any) -> None:
@@ -152,7 +162,8 @@ def run_once(
     started_at = time.perf_counter()
     vision_sidecar._set_dpi_awareness()
     _write_sidecar_status("starting", phase="hint_cache_load")
-    hint_cache = load_overlay_hint_cache()
+    data_source = SharedOverlayDataSource()
+    hint_cache = data_source.read_hint_cache()
     runtime = load_or_build_default_template_runtime(
         hint_cache=hint_cache,
         status_callback=lambda phase, fields: _write_sidecar_status(
@@ -219,7 +230,8 @@ def run_loop(
     started_at = time.perf_counter()
     vision_sidecar._set_dpi_awareness()
     _write_sidecar_status("starting", phase="hint_cache_load")
-    hint_cache = load_overlay_hint_cache()
+    data_source = SharedOverlayDataSource()
+    hint_cache = data_source.read_hint_cache()
     runtime = load_or_build_default_template_runtime(
         hint_cache=hint_cache,
         status_callback=lambda phase, fields: _write_sidecar_status(
@@ -258,12 +270,15 @@ def run_loop(
     dump_root = Path(debug_dump_dir) if debug_dump_dir else None
     last_dump_signature: tuple[str, ...] | None = None
     tab_was_down = False
+    left_mouse_was_down = False
+    active_hwnd = 0
+    game_session_id = ""
 
     def commit_event(event_payload: dict[str, Any], *, poll_mode: str) -> None:
         nonlocal last_signature, last_write_at
-        source = event_payload.get("source") if isinstance(event_payload.get("source"), Mapping) else {}
-        event_payload["source"] = dict(source)
-        event_payload["source"]["poll_mode"] = poll_mode
+        source = _mutable_string_key_mapping(event_payload.get("source"))
+        source["poll_mode"] = poll_mode
+        event_payload["source"] = source
         write_runtime_trace(event_payload)
         now = time.time()
         if write_event and vision_sidecar.should_write_loop_event(
@@ -276,6 +291,28 @@ def run_loop(
             write_overlay_event(vision_sidecar._public_event_payload(event_payload), event_path)
             last_signature = vision_sidecar._loop_event_signature(event_payload)
             last_write_at = now
+
+    def attach_window_observation(
+        event_payload: dict[str, Any],
+        *,
+        hwnd: int,
+        rect: tuple[int, int, int, int],
+        capture_size: tuple[int, int] | None = None,
+    ) -> dict[str, Any]:
+        """状态机只决定业务状态；runner 统一补回本帧真实窗口观测。"""
+
+        source = _mutable_string_key_mapping(event_payload.get("source"))
+        source.update(
+            {
+                "session_id": game_session_id,
+                "window_hwnd": int(hwnd),
+                "client_rect": [int(value) for value in rect],
+                "capture_size": [int(value) for value in capture_size] if capture_size else [],
+                "dpi_scale": vision_sidecar._window_dpi_scale(hwnd),
+            }
+        )
+        event_payload["source"] = source
+        return event_payload
 
     def foreground_sleep_seconds(event_payload: Mapping[str, Any], *, elapsed_seconds: float) -> tuple[str, float]:
         nonlocal fast_poll_until
@@ -290,8 +327,9 @@ def run_loop(
         nonlocal last_dump_signature
         if dump_root is None:
             return
-        source = event_payload.get("source") if isinstance(event_payload.get("source"), Mapping) else {}
-        raw_slots = event_payload.get("_raw_slots") if isinstance(event_payload.get("_raw_slots"), list) else []
+        source = _mutable_string_key_mapping(event_payload.get("source"))
+        raw_slots_value = event_payload.get("_raw_slots")
+        raw_slots = raw_slots_value if isinstance(raw_slots_value, list) else []
         top_ids: list[str] = []
         for slot in raw_slots[:vision_sidecar.SLOT_COUNT]:
             candidates = slot.get("top_candidates") if isinstance(slot, Mapping) and isinstance(slot.get("top_candidates"), list) else []
@@ -338,21 +376,35 @@ def run_loop(
         frame_started_at = time.perf_counter()
         target = vision_sidecar._find_lol_game_window()
         if target is None:
+            left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
             event = tracker.block("game_window_missing")
             commit_event(event, poll_mode="idle")
             time.sleep(idle_sleep_seconds)
             continue
 
         hwnd, rect = target
+        context_payload = data_source.read_context()
+        context_session_id = str(context_payload.get("session_id") or "").strip()
+        if int(hwnd) != active_hwnd:
+            tracker.reset()
+            left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
+            active_hwnd = int(hwnd)
+            game_session_id = context_session_id or uuid.uuid4().hex
+        elif context_session_id and context_session_id != game_session_id:
+            tracker.reset()
+            game_session_id = context_session_id
         if not vision_sidecar._is_lol_game_foreground(hwnd):
-            event = tracker.block("game_not_foreground")
+            left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
+            event = attach_window_observation(tracker.block("game_not_foreground"), hwnd=hwnd, rect=rect)
             commit_event(event, poll_mode="idle")
             time.sleep(idle_sleep_seconds)
             continue
 
         tab_down = vision_sidecar.is_scoreboard_key_down()
         if tab_down:
-            event = tracker.block("scoreboard_key_down", scoreboard_key_down=True)
+            event = attach_window_observation(
+                tracker.block("scoreboard_key_down", scoreboard_key_down=True), hwnd=hwnd, rect=rect
+            )
             if dump_root is not None and not tab_was_down:
                 frame = vision_sidecar._capture_lol_game_rect(rect)
                 if frame is not None:
@@ -369,22 +421,50 @@ def run_loop(
 
         frame = vision_sidecar._capture_lol_game_rect(rect)
         if frame is None:
-            event = tracker.block("capture_unavailable")
+            event = attach_window_observation(tracker.block("capture_unavailable"), hwnd=hwnd, rect=rect)
         else:
+            expected_size = (int(rect[2] - rect[0]), int(rect[3] - rect[1]))
+            if tuple(frame.size) != expected_size:
+                event = tracker.block("capture_client_size_mismatch")
+                attach_window_observation(event, hwnd=hwnd, rect=rect, capture_size=frame.size)
+                poll_mode, sleep_seconds = foreground_sleep_seconds(
+                    event,
+                    elapsed_seconds=time.perf_counter() - frame_started_at,
+                )
+                commit_event(event, poll_mode=poll_mode)
+                time.sleep(sleep_seconds)
+                continue
             raw_event = vision_sidecar.detect_overlay_choices(
                 frame,
                 template_index,
                 preset_name=preset,
                 min_confidence=min_confidence,
             )
-            raw_source = raw_event.get("source") if isinstance(raw_event.get("source"), Mapping) else {}
-            raw_event["source"] = dict(raw_source)
-            raw_event["source"]["cursor_over_cards"] = vision_sidecar._cursor_over_card_panels(
+            raw_source = _mutable_string_key_mapping(raw_event.get("source"))
+            raw_source.update(
+                {
+                    "session_id": game_session_id,
+                    "window_hwnd": int(hwnd),
+                    "client_rect": [int(value) for value in rect],
+                    "capture_size": [int(value) for value in frame.size],
+                    "dpi_scale": vision_sidecar._window_dpi_scale(hwnd),
+                }
+            )
+            raw_source["cursor_over_cards"] = vision_sidecar._cursor_over_card_panels(
                 rect,
                 frame.size,
-                raw_event["source"],
+                raw_source,
             )
+            left_mouse_down = vision_sidecar.is_left_mouse_button_down()
+            raw_source["selection_click"] = bool(
+                left_mouse_down
+                and not left_mouse_was_down
+                and raw_source["cursor_over_cards"]
+            )
+            left_mouse_was_down = left_mouse_down
+            raw_event["source"] = raw_source
             event = tracker.update(raw_event)
+            attach_window_observation(event, hwnd=hwnd, rect=rect, capture_size=frame.size)
             maybe_dump(frame, event)
 
         poll_mode, sleep_seconds = foreground_sleep_seconds(

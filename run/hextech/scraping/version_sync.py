@@ -34,7 +34,6 @@ import sys
 import time
 import threading
 import logging
-import shutil
 import tempfile
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -57,17 +56,12 @@ from hextech.support.log_utils import (
 )
 from hextech.scraping._paths import (
     ASSET_DIR,
-    BASE_DIR,
+    BASE_DIR,  # noqa: F401 - 兼容 web.runtime 的历史导入。
     BUNDLE_ROOT_DIR,
-    DATA_DIR,
     INDEX_DATA_DIR,
     RAW_DATA_DIR,
-    RUNTIME_BASE_DIR,
     RUNTIME_DATA_DIR,
     STATIC_DATA_DIR,
-    bootstrap_runtime_environment,
-    get_base_dir,
-    get_resource_dir,
 )
 from tools.runtime_bundle import seed_bundled_resources
 
@@ -82,6 +76,10 @@ def _get_packaged_hextech_snapshot_dir() -> str:
         app_data = os.getenv("APPDATA", "").strip()
         base_dir = os.path.join(app_data, "HextechNexus") if app_data else os.path.join(os.path.expanduser("~"), ".hextech_nexus")
     return os.path.join(base_dir, "data", "runtime", "raw", "hextech")
+
+
+def _get_packaged_snapshot_dir() -> str:
+    return os.path.join(os.path.dirname(os.path.dirname(_get_packaged_hextech_snapshot_dir())), "snapshots")
 
 
 SUMMARY_LOG_FILE = get_runtime_summary_log_file()
@@ -219,6 +217,7 @@ if getattr(sys, 'frozen', False):
         runtime_asset_dir=ASSET_DIR,
         runtime_hextech_dir=_get_packaged_hextech_snapshot_dir(),
         runtime_synergy_dir=os.path.join(os.path.dirname(_get_packaged_hextech_snapshot_dir()), "synergy"),
+        runtime_snapshot_dir=_get_packaged_snapshot_dir(),
     )
 
 install_runtime_logging()
@@ -641,11 +640,12 @@ def load_champion_core_data():
 def load_augment_map():
     """读取海克斯等级映射；文件缺失时强制触发一次稳定资源同步。"""
     global _last_sync_time
-    if not os.path.exists(AUGMENT_MAP_FILE) and not os.path.exists(AUGMENT_MANIFEST_FILE):
+    resources_missing = not os.path.exists(AUGMENT_MAP_FILE) and not os.path.exists(AUGMENT_MANIFEST_FILE)
+    if resources_missing:
         with _sync_lock:
             _last_sync_time = 0  # 强制重新同步
-    if not sync_hero_data(allow_remote_check=True):
-        return {}
+        if not sync_hero_data(allow_remote_check=True):
+            return {}
     if os.path.exists(AUGMENT_MAP_FILE):
         with open(AUGMENT_MAP_FILE, "r", encoding="utf-8") as f:
             return json.load(f)

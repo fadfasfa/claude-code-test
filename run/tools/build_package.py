@@ -23,9 +23,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from tools.bundle_manifest import build_bundle_manifest, validate_hextech_seed_health
-from tools.cleanup_runtime import cleanup_python_caches
-from tools.package_rules import iter_package_data_entries
+from tools.bundle_manifest import build_bundle_manifest, validate_hextech_seed_health  # noqa: E402
+from tools.cleanup_runtime import cleanup_python_caches  # noqa: E402
+from tools.package_rules import iter_package_data_entries  # noqa: E402
 
 
 REPO_DIR = BASE_DIR.parent
@@ -75,6 +75,8 @@ PYINSTALLER_HIDDEN_IMPORTS = [
     "hextech.overlay.renderer",
     "hextech.overlay.vision.sidecar",
     "hextech.core.settings",
+    "hextech.data_service",
+    "hextech.data_snapshot",
 ]
 PYINSTALLER_COLLECT_SUBMODULES = [
     "tkinter",
@@ -85,11 +87,23 @@ PYINSTALLER_COLLECT_SUBMODULES = [
     "cloakbrowser",
     "hextech",
 ]
+PYINSTALLER_COLLECT_DATA = [
+    "scrapling",
+    "browserforge",
+    "apify_fingerprint_datapoints",
+]
 LEGACY_GENERATED_OUTPUTS = (
     BASE_DIR / "build",
     BASE_DIR / "dist",
     BASE_DIR / "version_info.txt",
     BASE_DIR / "Hextech伴生终端.spec",
+)
+REQUIRED_PACKAGED_SCRAPING_DATA = (
+    "browser-helper-file.json",
+    "fingerprint-network-definition.zip",
+    "header-network-definition.zip",
+    "headers-order.json",
+    "input-network-definition.zip",
 )
 
 
@@ -178,14 +192,14 @@ VSVersionInfo(
     return version_file
 
 
-def write_generated_manifest(build_root: Path) -> Path:
+def write_generated_manifest(build_root: Path, *, verified_snapshot_root: Path | None = None) -> Path:
     """把本次 bundle manifest 写入临时 staging 目录。"""
 
     print_step("生成资源清单")
     staging_dir = build_root / "staging"
     staging_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = staging_dir / "bundle_manifest.json"
-    manifest = build_bundle_manifest(BASE_DIR)
+    manifest = build_bundle_manifest(BASE_DIR, verified_snapshot_root=verified_snapshot_root)
 
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print_check("静态页面、稳定 data、快照和 assets 已按源路径加入打包规则")
@@ -281,7 +295,19 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="构建前显式刷新远端数据；degraded/failed 会终止构建",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--verified-snapshot-root",
+        type=Path,
+        help="注入已通过真实链路验收的 snapshots 根；仅用于离线构建同代验收包。",
+    )
+    args = parser.parse_args(argv)
+    if args.refresh_data and args.verified_snapshot_root is not None:
+        parser.error("--refresh-data 与 --verified-snapshot-root 不能同时使用")
+    if args.verified_snapshot_root is not None:
+        args.verified_snapshot_root = args.verified_snapshot_root.resolve()
+        if not args.verified_snapshot_root.is_dir():
+            parser.error("--verified-snapshot-root 必须是存在的目录")
+    return args
 
 
 def prepare_runtime_data_for_package(*, refresh_data: bool) -> None:
@@ -319,7 +345,13 @@ def _add_data_arg(source: Path, target: str) -> str:
     return f"{source};{target}"
 
 
-def build_exe(version_file: Path, manifest_path: Path, build_root: Path) -> Path:
+def build_exe(
+    version_file: Path,
+    manifest_path: Path,
+    build_root: Path,
+    *,
+    verified_snapshot_root: Path | None = None,
+) -> Path:
     """执行 PyInstaller 主构建流程，并返回临时原始产物目录。"""
 
     print_step("构建可执行文件")
@@ -349,7 +381,11 @@ def build_exe(version_file: Path, manifest_path: Path, build_root: Path) -> Path
         "--specpath",
         str(spec_path),
     ]
-    for entry in iter_package_data_entries(BASE_DIR, manifest_path):
+    for entry in iter_package_data_entries(
+        BASE_DIR,
+        manifest_path,
+        verified_snapshot_root=verified_snapshot_root,
+    ):
         cmd.extend(["--add-data", _add_data_arg(entry.source, entry.target)])
     for source, target in (
         (tcl_runtime_dir, "_tcl_data"),
@@ -363,6 +399,8 @@ def build_exe(version_file: Path, manifest_path: Path, build_root: Path) -> Path
         cmd.extend(["--hidden-import", module_name])
     for module_name in PYINSTALLER_COLLECT_SUBMODULES:
         cmd.extend(["--collect-submodules", module_name])
+    for module_name in PYINSTALLER_COLLECT_DATA:
+        cmd.extend(["--collect-data", module_name])
     for module_name in EXCLUDED_MODULES:
         cmd.extend(["--exclude-module", module_name])
     cmd.append("hextech_ui.py")
@@ -378,16 +416,27 @@ def build_exe(version_file: Path, manifest_path: Path, build_root: Path) -> Path
 
 
 def write_portable_launcher(final_dir: Path) -> Path:
-    """生成便携包启动脚本，确保从任意解压目录都能正确启动。"""
+    """生成 ASCII/CRLF 启动脚本，避免中文 EXE 名和代码页破坏命令。"""
 
     launcher_path = final_dir / LAUNCHER_NAME
     launcher_content = (
         "@echo off\r\n"
-        "setlocal\r\n"
+        "setlocal EnableExtensions EnableDelayedExpansion\r\n"
         "cd /d \"%~dp0\"\r\n"
-        f"start \"\" \"{APP_EXE_NAME}\"\r\n"
+        "set \"HEXTECH_EXE=\"\r\n"
+        "set /a HEXTECH_EXE_COUNT=0\r\n"
+        "for %%F in (*.exe) do (\r\n"
+        "  set /a HEXTECH_EXE_COUNT+=1\r\n"
+        "  set \"HEXTECH_EXE=%%~fF\"\r\n"
+        ")\r\n"
+        "if not !HEXTECH_EXE_COUNT!==1 exit /b 2\r\n"
+        "if defined HEXTECH_LAUNCHER_WAIT (\r\n"
+        "  \"!HEXTECH_EXE!\"\r\n"
+        "  exit /b !errorlevel!\r\n"
+        ")\r\n"
+        "start \"\" \"!HEXTECH_EXE!\"\r\n"
     )
-    launcher_path.write_text(launcher_content, encoding="utf-8")
+    launcher_path.write_bytes(launcher_content.encode("ascii"))
     return launcher_path
 
 
@@ -412,6 +461,15 @@ def write_first_run_guide(final_dir: Path) -> Path:
 """
     guide_path.write_text(guide_content, encoding="utf-8")
     return guide_path
+
+
+def validate_packaged_scraping_data(final_dir: Path) -> None:
+    """阻止缺少 browserforge/apify 模型数据的包进入 smoke。"""
+
+    data_dir = final_dir / "_internal" / "apify_fingerprint_datapoints" / "data"
+    missing = [name for name in REQUIRED_PACKAGED_SCRAPING_DATA if not (data_dir / name).is_file()]
+    if missing:
+        raise RuntimeError("打包缺少 Scrapling 指纹数据：" + ", ".join(missing))
 
 
 def create_portable_zip(final_dir: Path) -> Path:
@@ -510,6 +568,7 @@ def finalize_output(exe_dir: Path) -> tuple[Path, Path]:
     shutil.move(str(exe_dir), str(staging_dir))
     write_portable_launcher(staging_dir)
     write_first_run_guide(staging_dir)
+    validate_packaged_scraping_data(staging_dir)
     print_check(f"staging 输出目录：{staging_dir}")
     run_packaged_smoke(staging_dir, timeout=60)
 
@@ -539,9 +598,17 @@ def main(argv: list[str] | None = None) -> None:
     prepare_runtime_data_for_package(refresh_data=args.refresh_data)
     with TemporaryDirectory(prefix="hextech-build-") as tmp_dir:
         build_root = Path(tmp_dir)
-        manifest_path = write_generated_manifest(build_root)
+        manifest_path = write_generated_manifest(
+            build_root,
+            verified_snapshot_root=args.verified_snapshot_root,
+        )
         version_file = generate_version_info(build_root)
-        exe_dir = build_exe(version_file, manifest_path, build_root)
+        exe_dir = build_exe(
+            version_file,
+            manifest_path,
+            build_root,
+            verified_snapshot_root=args.verified_snapshot_root,
+        )
         final_dir, zip_path = finalize_output(exe_dir)
     print_step("打包完成")
     print(f"  输出目录：{final_dir}")

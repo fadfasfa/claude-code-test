@@ -11,7 +11,9 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -29,6 +31,66 @@ TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 2
 TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE = np.float16
 TEMPLATE_RUNTIME_CACHE_V1_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v1.npz"))
 TEMPLATE_RUNTIME_CACHE_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v2.npz"))
+_CACHE_BUILD_LOCK_GUARD = threading.Lock()
+_CACHE_BUILD_THREAD_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _thread_lock_for_cache(path: Path) -> threading.Lock:
+    key = str(path.resolve()).casefold()
+    with _CACHE_BUILD_LOCK_GUARD:
+        return _CACHE_BUILD_THREAD_LOCKS.setdefault(key, threading.Lock())
+
+
+@contextmanager
+def _template_cache_build_lock(cache_file: Path, *, timeout_seconds: float = 120.0):
+    """串行化同一 runtime cache 的线程和进程构建。"""
+
+    started_at = time.perf_counter()
+    thread_lock = _thread_lock_for_cache(cache_file)
+    if not thread_lock.acquire(timeout=max(0.1, timeout_seconds)):
+        raise TimeoutError("template_runtime_cache_thread_lock_timeout")
+    lock_file = cache_file.with_suffix(f"{cache_file.suffix}.lock")
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    handle = None
+    try:
+        handle = lock_file.open("a+b")
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        while True:
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.perf_counter() - started_at >= timeout_seconds:
+                    raise TimeoutError("template_runtime_cache_process_lock_timeout")
+                time.sleep(0.05)
+        yield round(time.perf_counter() - started_at, 3)
+    finally:
+        if handle is not None:
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+            handle.close()
+        thread_lock.release()
 
 
 @dataclass(frozen=True)
@@ -583,7 +645,8 @@ def load_default_template_index(
         if not images:
             continue
         hint_result = query_overlay_hint(hint_cache or {}, clean_name)
-        hint = hint_result.get("hint") if hint_result.get("ok") and isinstance(hint_result.get("hint"), Mapping) else {}
+        hint_value = hint_result.get("hint")
+        hint: Mapping[str, Any] = hint_value if hint_result.get("ok") and isinstance(hint_value, Mapping) else {}
         manifest_item = _select_manifest_item(manifest_by_name, clean_name, mapped_icon)
         template_id = normalize_augment_id(
             manifest_item.get("augment_name_id")
@@ -643,35 +706,55 @@ def load_or_build_default_template_runtime(
             status_callback("template_runtime_cache_ready", runtime.stats)
         return runtime
     if status_callback is not None:
-        status_callback(
-            "template_index_build",
-            {
-                "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
-                "cache_hit": False,
-            },
-        )
-    template_index = load_default_template_index(base_dir, hint_cache=hint_cache)
-    if status_callback is not None:
-        status_callback("rank_matrix_build", {"template_count": len(template_index)})
-    matrices = rank_template_matrices(template_index)
-    try:
-        cache_write_stats = _write_template_runtime_cache(
+        status_callback("template_runtime_cache_lock_wait", {"cache_file": str(target_cache)})
+    with _template_cache_build_lock(target_cache) as lock_wait_seconds:
+        runtime = _read_template_runtime_cache(
             target_cache,
             resource_signature=signature,
             hint_signature=hint_signature,
-            template_index=template_index,
-            matrices=matrices,
         )
-        cache_error = ""
-    except Exception as exc:
-        cache_write_stats = {
-            "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
-            "cache_file": str(target_cache),
-            "cache_bytes": 0,
-            "matrix_dtype": np.dtype(TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE).name,
-        }
-        cache_error = str(exc)
-        logger.debug("写入 Vision 模板 runtime cache 失败。", exc_info=True)
+        if runtime is not None:
+            runtime.stats.update(
+                {
+                    "build_seconds": 0.0,
+                    "load_seconds": round(time.perf_counter() - started_at, 3),
+                    "lock_wait_seconds": lock_wait_seconds,
+                }
+            )
+            if status_callback is not None:
+                status_callback("template_runtime_cache_ready", runtime.stats)
+            return runtime
+        if status_callback is not None:
+            status_callback(
+                "template_index_build",
+                {
+                    "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+                    "cache_hit": False,
+                    "lock_wait_seconds": lock_wait_seconds,
+                },
+            )
+        template_index = load_default_template_index(base_dir, hint_cache=hint_cache)
+        if status_callback is not None:
+            status_callback("rank_matrix_build", {"template_count": len(template_index)})
+        matrices = rank_template_matrices(template_index)
+        try:
+            cache_write_stats = _write_template_runtime_cache(
+                target_cache,
+                resource_signature=signature,
+                hint_signature=hint_signature,
+                template_index=template_index,
+                matrices=matrices,
+            )
+            cache_error = ""
+        except Exception as exc:
+            cache_write_stats = {
+                "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+                "cache_file": str(target_cache),
+                "cache_bytes": 0,
+                "matrix_dtype": np.dtype(TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE).name,
+            }
+            cache_error = str(exc)
+            logger.debug("写入 Vision 模板 runtime cache 失败。", exc_info=True)
     stats = {
         "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
         "cache_hit": False,
@@ -683,6 +766,7 @@ def load_or_build_default_template_runtime(
         "matrix_dtype": str(cache_write_stats.get("matrix_dtype") or np.dtype(TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE).name),
         "build_seconds": round(time.perf_counter() - started_at, 3),
         "load_seconds": 0.0,
+        "lock_wait_seconds": lock_wait_seconds,
     }
     if status_callback is not None:
         status_callback("template_runtime_cache_ready", stats)

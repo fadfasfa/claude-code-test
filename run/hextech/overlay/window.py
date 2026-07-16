@@ -10,6 +10,7 @@ host、Vision sidecar 和桌面伴生窗口得出不同结论。标题只作为�
 from __future__ import annotations
 
 import ctypes
+import os
 from ctypes import wintypes
 from collections.abc import Iterable, Sequence
 
@@ -30,6 +31,7 @@ LOL_GAME_WINDOW_TITLES = (LOL_GAME_WINDOW_TITLE,)
 DWMWA_CLOAKED = 14
 GA_ROOT = 2
 VK_TAB = 0x09
+VK_LBUTTON = 0x01
 
 
 def root_window_hwnd(hwnd: int | None) -> int:
@@ -55,6 +57,17 @@ def is_scoreboard_key_down() -> bool:
     try:
         return bool(int(ctypes.windll.user32.GetAsyncKeyState(VK_TAB)) & 0x8000)
     except (AttributeError, OSError, TypeError, ValueError):
+        return False
+
+
+def is_left_mouse_button_down() -> bool:
+    """返回鼠标左键当前物理按下状态；非 Windows 或查询失败时保守返回 False。"""
+
+    if os.name != "nt":
+        return False
+    try:
+        return bool(int(ctypes.windll.user32.GetAsyncKeyState(VK_LBUTTON)) & 0x8000)
+    except (AttributeError, OSError):
         return False
 
 

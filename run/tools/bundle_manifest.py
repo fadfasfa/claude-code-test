@@ -37,6 +37,7 @@ from typing import Any
 
 from tools.package_rules import (
     BUNDLED_HEXTECH_SNAPSHOT_DIR,
+    BUNDLED_SNAPSHOT_SEED_DIR,
     BUNDLED_SYNERGY_DATA_DIR,
     BUNDLE_MANIFEST_NAME as BUNDLE_MANIFEST_NAME,
     DATA_STATIC_ASSET_DIR,
@@ -46,6 +47,7 @@ from tools.package_rules import (
     STABLE_STATIC_FILES,
     SYNERGY_LATEST_POINTER_FILENAME,
     iter_hextech_snapshot_files,
+    iter_snapshot_seed_files,
     iter_source_files,
     iter_stable_asset_files,
     iter_synergy_data_files,
@@ -223,7 +225,37 @@ def _build_seed_metadata(paths: list[tuple[Path, str]]) -> dict[str, dict[str, s
     return metadata
 
 
-def build_bundle_manifest(base_dir: Path) -> dict:
+def validate_snapshot_seed(snapshot_root: Path) -> dict[str, Any]:
+    """校验外部 generation 是完整 current，而不是降级回退或零统计快照。"""
+
+    from hextech.data_snapshot import DataSnapshotClient
+
+    root = snapshot_root.resolve()
+    try:
+        pointer = json.loads((root / "current.v1.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError) as exc:
+        raise ValueError(f"verified snapshot current pointer invalid: {type(exc).__name__}") from exc
+    if not isinstance(pointer, dict):
+        raise ValueError("verified snapshot current pointer must be object")
+    current_id = str(pointer.get("current_generation_id") or "")
+    if not current_id:
+        raise ValueError("verified snapshot current generation missing")
+    view = DataSnapshotClient(root).open_view()
+    status = view.status()
+    if status.get("state") != "ready" or status.get("generation_id") != current_id:
+        raise ValueError("verified snapshot must load current generation without fallback")
+    manifest = view.manifest
+    return {
+        "valid": True,
+        "generation_id": manifest.generation_id,
+        "champion_count": manifest.champion_count,
+        "augment_count": manifest.augment_count,
+        "stat_record_count": manifest.stat_record_count,
+        "private_stats_enabled": manifest.private_stats_enabled,
+    }
+
+
+def build_bundle_manifest(base_dir: Path, *, verified_snapshot_root: Path | None = None) -> dict:
     static_dir = base_dir / DATA_STATIC_VERSION_DIR
     index_dir = base_dir / DATA_STATIC_VERSION_DIR
     asset_dir = base_dir / DATA_STATIC_ASSET_DIR
@@ -250,6 +282,15 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         "",
     )
     source_files = iter_source_files(base_dir)
+    snapshot_sources = (
+        iter_snapshot_seed_files(verified_snapshot_root.resolve())
+        if verified_snapshot_root is not None
+        else []
+    )
+    snapshot_seed_files = [
+        (BUNDLED_SNAPSHOT_SEED_DIR / path.relative_to(verified_snapshot_root.resolve())).as_posix()
+        for path in snapshot_sources
+    ] if verified_snapshot_root is not None else []
     manifest = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "static_files": static_files,
@@ -259,10 +300,15 @@ def build_bundle_manifest(base_dir: Path) -> dict:
         "hextech_seed_health": validate_hextech_seed_health(base_dir),
         "synergy_data_files": synergy_data_files,
         "synergy_data_file": synergy_data_file,
+        "snapshot_seed_files": snapshot_seed_files,
+        "snapshot_seed_health": validate_snapshot_seed(verified_snapshot_root)
+        if verified_snapshot_root is not None
+        else {},
         "seed_metadata": _build_seed_metadata(
             [
                 *((path, bundled_name) for path, bundled_name in zip(hextech_sources, hextech_snapshot_files)),
                 *((path, bundled_name) for path, bundled_name in zip(synergy_sources, synergy_data_files)),
+                *((path, bundled_name) for path, bundled_name in zip(snapshot_sources, snapshot_seed_files)),
             ]
         ),
         "source_files": source_files,

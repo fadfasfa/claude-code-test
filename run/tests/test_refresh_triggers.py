@@ -17,7 +17,7 @@ class RefreshTriggerTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
 
         with (
-            mock.patch.object(runtime, "refresh_backend_data", side_effect=AssertionError("lifespan must not start refresh")),
+            mock.patch.object(runtime, "request_background_refresh", side_effect=AssertionError("lifespan must not start refresh")),
             mock.patch.object(runtime, "lcu_polling_loop", _idle_loop),
             mock.patch.object(runtime, "csv_watcher_loop", _idle_loop),
         ):
@@ -30,15 +30,12 @@ class RefreshTriggerTests(unittest.IsolatedAsyncioTestCase):
         result = runtime.request_background_refresh(force=False, source="api")
 
         self.assertFalse(result["accepted"])
-        self.assertEqual(result["reason"], "supervisor_required")
+        self.assertEqual(result["reason"], "data_service_required")
 
     async def test_web_helper_does_not_directly_refresh_when_csv_missing(self):
         from hextech.display.web import runtime
 
-        with (
-            mock.patch.object(runtime, "get_df") as get_df,
-            mock.patch.object(runtime, "refresh_backend_data", side_effect=AssertionError("web helper must not refresh")),
-        ):
+        with mock.patch.object(runtime, "get_df") as get_df:
             import pandas as pd
 
             get_df.return_value = pd.DataFrame()
@@ -46,10 +43,12 @@ class RefreshTriggerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.empty)
 
-    def test_desktop_background_scraper_no_longer_starts_ui_loop(self):
+    def test_desktop_background_scraper_starts_only_snapshot_watcher(self):
         from hextech.display.desktop import app
 
         dummy = object.__new__(app.HextechUI)
+        dummy._snapshot_watch_started = False
+        dummy._start_tracked_thread = mock.Mock()
         with mock.patch.object(
             app.ui_runtime,
             "start_background_scraper",
@@ -58,6 +57,9 @@ class RefreshTriggerTests(unittest.IsolatedAsyncioTestCase):
             result = app.HextechUI.start_background_scraper(dummy)
 
         self.assertIsNone(result)
+        self.assertTrue(dummy._snapshot_watch_started)
+        dummy._start_tracked_thread.assert_called_once()
+        self.assertEqual(dummy._start_tracked_thread.call_args.kwargs["name"], "hextech-desktop-snapshot-watch")
         old_start.assert_not_called()
 
 

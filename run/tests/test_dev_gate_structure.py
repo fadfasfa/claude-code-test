@@ -196,7 +196,7 @@ def test_python_runtime_guard_contract() -> None:
     setup_tool = RUN_DIR / "tools" / "setup_venv.py"
     setup_text = setup_tool.read_text(encoding="utf-8")
     assert "py -3.11" in setup_text
-    assert "requirements.txt" in setup_text
+    assert '"tools" / "requirements" / "compat.txt"' in setup_text
     assert "scrapling_smoke" in setup_text
     assert ".venv" in (RUN_DIR / ".gitignore").read_text(encoding="utf-8")
 
@@ -243,7 +243,14 @@ def test_python_runtime_guard_contract() -> None:
         assert bootstrap_commands == [
             [*python_runtime._creator_candidates()[0], "-m", "venv", str(fake_venv_dir)],
             [str(fake_venv_python), "-m", "pip", "install", "--upgrade", "pip"],
-            [str(fake_venv_python), "-m", "pip", "install", "-r", str(RUN_DIR / "requirements.txt")],
+            [
+                str(fake_venv_python),
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                str(RUN_DIR / "tools" / "requirements" / "compat.txt"),
+            ],
         ]
 
     dev_checks_text = (RUN_DIR / "tools" / "dev_checks.py").read_text(encoding="utf-8")
@@ -269,6 +276,9 @@ def test_hextech_package_contract() -> None:
         "hextech.display.desktop.service_manager",
         "hextech.core.refresh",
         "hextech.core.settings",
+        "hextech.data_service",
+        "hextech.data_snapshot",
+        "hextech.client_context",
         "hextech.overlay.events",
         "hextech.overlay.hints",
         "hextech.overlay.window",
@@ -378,8 +388,8 @@ def test_hextech_package_contract() -> None:
     synergy_scraper_text = (RUN_DIR / "hextech" / "scraping" / "synergy" / "scraper.py").read_text(encoding="utf-8")
     assert "from processing.precomputed_cache" not in hextech_scraper_text
     assert "from processing.overlay_hint_cache" not in hextech_scraper_text
-    assert "from hextech.catalog.precomputed_cache" in hextech_scraper_text
-    assert "from hextech.overlay.hints" in hextech_scraper_text
+    assert "from hextech.catalog.precomputed_cache" not in hextech_scraper_text
+    assert "from hextech.overlay.hints" not in hextech_scraper_text
     assert "RUNTIME_DATA_DIR" in synergy_scraper_text
     assert 'Path(BASE_DIR) / "data" / "runtime"' not in synergy_scraper_text
     assert 'os.path.join(BASE_DIR, "data", "runtime"' not in synergy_scraper_text
@@ -447,7 +457,9 @@ def test_hextech_package_contract() -> None:
     assert "from hextech.catalog.runtime_store" not in desktop_app_text.split("class HextechUI", 1)[0]
     assert "from hextech.overlay.hints" not in desktop_app_text.split("class HextechUI", 1)[0]
     assert "from hextech.scraping.version_sync" not in desktop_app_text.split("class HextechUI", 1)[0]
-    assert "from hextech.catalog.runtime_store import CachedDataFrameLoader, get_latest_csv" in desktop_app_text
+    assert "from hextech.data_snapshot import DataSnapshotClient" in desktop_app_text
+    assert "CachedDataFrameLoader" not in desktop_app_text
+    assert "get_latest_csv" not in desktop_app_text
     assert "from hextech.scraping.version_sync import ASSET_DIR, get_advanced_session, load_champion_core_data" in desktop_app_text
     assert "from . import runtime as ui_runtime" in desktop_app_text
     assert "from processing." not in desktop_runtime_text
@@ -463,6 +475,7 @@ def test_hextech_package_contract() -> None:
     assert "from processing." not in desktop_service_text
     assert "from hextech.overlay.events" in desktop_service_text
     assert "from hextech.overlay.window" in desktop_service_text
+    assert "self.data_service = ManagedService" in desktop_service_text
 
     overlay_host_text = (RUN_DIR / "hextech" / "overlay" / "host.py").read_text(encoding="utf-8")
     overlay_lifecycle_text = (RUN_DIR / "hextech" / "overlay" / "lifecycle.py").read_text(encoding="utf-8")
@@ -478,7 +491,8 @@ def test_hextech_package_contract() -> None:
     assert "from hextech.overlay.events" in overlay_lifecycle_text
     assert '"hextech.overlay.vision.sidecar"' in overlay_lifecycle_text
     assert "from processing." not in overlay_data_source_text
-    assert "from hextech.overlay.hints" in overlay_data_source_text
+    assert "from hextech.data_snapshot import DataSnapshotClient" in overlay_data_source_text
+    assert "from hextech.overlay.hints" not in overlay_data_source_text
     assert "from hextech.overlay.events" in overlay_data_source_text
     assert "from hextech.overlay.context" in overlay_data_source_text
     assert "from processing." not in overlay_renderer_text

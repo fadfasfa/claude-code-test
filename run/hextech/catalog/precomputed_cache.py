@@ -171,6 +171,26 @@ def warm_precomputed_hextech_cache() -> bool:
         return False
 
 
+def load_precomputed_hextech_map() -> Dict[str, dict]:
+    """读取与最新 CSV 匹配的整份英雄详情，供 DataService 发布 generation。"""
+
+    with _cache_lock:
+        cache_file = _resolve_cache_file(HEXTECH_DETAIL_CACHE_FILE, "Champion_Hextech_Cache.json")
+        mtime = _safe_mtime(cache_file)
+        if not mtime or not _cache_matches_latest_csv(cache_file):
+            _hextech_cache_state.update({"path": cache_file, "mtime": 0.0, "data": {}})
+            return {}
+        if _hextech_cache_state["path"] == cache_file and _hextech_cache_state["mtime"] == mtime:
+            payload = _hextech_cache_state["data"]
+        else:
+            payload = _read_wrapped_json(cache_file, {})
+            if not isinstance(payload, dict):
+                _hextech_cache_state.update({"path": cache_file, "mtime": 0.0, "data": {}})
+                return {}
+            _hextech_cache_state.update({"path": cache_file, "mtime": mtime, "data": payload})
+        return copy.deepcopy(payload)
+
+
 def load_precomputed_hextech_for_hero(hero_name: str) -> Optional[dict]:
     normalized = str(hero_name or "").strip()
     if not normalized:

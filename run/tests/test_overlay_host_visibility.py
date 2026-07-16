@@ -160,7 +160,6 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         }
 
         for overrides, expected_reason in (
-            ({"event_error": "event_expired", "event_visible": False}, "event_expired"),
             ({"blocking_modal": True}, "blocking_modal_present"),
             ({"scoreboard_key_down": True}, "scoreboard_key_down"),
             ({"event_fresh_after_tab": False}, "event_stale_after_tab"),
@@ -188,8 +187,28 @@ class OverlayHostVisibilityTests(unittest.TestCase):
             game_renderable=True,
         )
 
-        self.assertFalse(should_show)
-        self.assertEqual(reason, "selection_window_inactive")
+        self.assertTrue(should_show)
+        self.assertEqual(reason, "waiting_selection")
+
+    def test_expired_event_keeps_waiting_surface_visible_during_game(self):
+        from hextech.overlay.host import decide_visibility
+
+        should_show, reason = decide_visibility(
+            user_enabled=True,
+            event_visible=False,
+            game_foreground=True,
+            content_ready=False,
+            selection_window_active=False,
+            ready_slots=0,
+            gameflow_in_progress=True,
+            game_hwnd=100,
+            game_rect=(0, 0, 1920, 1080),
+            game_renderable=True,
+            event_error="event_expired",
+        )
+
+        self.assertTrue(should_show)
+        self.assertEqual(reason, "waiting_selection")
 
     def test_inactive_overlay_event_carries_scene_inactive_source(self):
         from hextech.overlay.events import build_inactive_overlay_event

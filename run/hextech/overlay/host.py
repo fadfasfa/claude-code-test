@@ -33,14 +33,16 @@ from hextech.overlay.window import (
     is_scoreboard_key_down,
     is_window_foreground,
     is_window_renderable,
-    root_window_hwnd,
 )
 from hextech.overlay.window_titles import LOL_GAME_WINDOW_TITLE
 from hextech.support.atomic_io import atomic_write_json
+from hextech.adapters import build_runtime_session
+from hextech.contracts import GameSessionState, PresentationMode, VisionSlotState
+from hextech.session.evidence import build_evidence_bundle, write_evidence_bundle
 
 from .data_source import OverlayDataSource, SharedOverlayDataSource, prepare_shared_overlay_data
 from .gameflow import probe_gameflow_in_progress
-from .renderer import build_render_model, draw_overlay_frame
+from .renderer import build_render_model, build_render_model_from_session, draw_overlay_frame
 from .runtime_paths import overlay_runtime_state_path
 
 
@@ -855,16 +857,15 @@ def decide_visibility(
         content_ready=content_ready,
     )
     should_show, reason = host_snapshot.visible, host_snapshot.reason
-    if should_show and event_error:
-        should_show, reason = False, event_error
-    elif should_show and blocking_modal:
+    if should_show and blocking_modal:
         should_show, reason = False, "blocking_modal_present"
     elif should_show and scoreboard_key_down:
         should_show, reason = False, "scoreboard_key_down"
     elif should_show and not event_fresh_after_tab:
         should_show, reason = False, "event_stale_after_tab"
-    elif should_show and selection_window_active is False:
-        should_show, reason = False, "selection_window_inactive"
+    elif should_show and (event_error or selection_window_active is False):
+        # 游戏存在时保持轻量等待面；event/context 暂缺不再让整个 Overlay 静默消失。
+        reason = "waiting_selection"
     elif should_show and resolved_ready_slots > 0 and resolved_ready_slots < 3:
         reason = "visible_partial"
 
@@ -1122,7 +1123,7 @@ def _sync_event_visibility(
             event_visible
             or stale_hold_active
             or bool(config.get("diagnostic_mode"))
-            or reason in {"visible_detecting", "visible_partial"}
+            or reason in {"visible_detecting", "visible_partial", "waiting_selection"}
         )
     )
     now = time.time()
@@ -1140,6 +1141,85 @@ def _sync_event_visibility(
     visibility["window_visible"] = should_show
     _log_visibility_diagnostic(visibility, snapshot, now=now, should_show=should_show, reason=reason)
     return should_show
+
+
+def _draw_waiting_status(canvas: tk.Canvas, reason: str) -> None:
+    """非选择态只显示轻量提示，不能把空事件重新解释为三张检测中卡片。"""
+
+    message = {
+        "selection_completed": "海克斯选择已完成，等待下一次选择",
+        "waiting_context": "等待英雄上下文",
+    }.get(reason, "等待海克斯选择")
+    canvas.delete("all")
+    canvas.create_rectangle(8, 8, 420, 42, fill="#010A13", outline="#785A28")
+    canvas.create_text(
+        20,
+        25,
+        text=message,
+        fill="#F0E6D2",
+        anchor="w",
+        font=("Microsoft YaHei UI", 11, "bold"),
+    )
+
+
+def _write_real_session_evidence(
+    root: tk.Tk,
+    state: GameSessionState,
+    snapshot: Mapping[str, Any],
+    visibility: dict[str, Any],
+) -> None:
+    """真实三槽内容稳定后只记录一次同局五联证据。"""
+
+    vision = state.vision
+    if (
+        state.visibility.presentation_mode is not PresentationMode.CONTENT
+        or state.context is None
+        or state.context.local_champion_id is None
+        or state.recommendation is None
+        or vision is None
+        or len(vision.slots) != 3
+        or any(slot.state is not VisionSlotState.READY for slot in vision.slots)
+    ):
+        return
+    key = (str(state.session_id), str(state.generation_id), int(vision.epoch))
+    if visibility.get("last_evidence_key") == key or visibility.get("evidence_attempt_key") == key:
+        return
+    source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+    client_rect = source.get("client_rect") if isinstance(source.get("client_rect"), list) else []
+    capture_size = source.get("capture_size") if isinstance(source.get("capture_size"), list) else []
+    if len(client_rect) != 4 or len(capture_size) != 2:
+        return
+    visibility["evidence_attempt_key"] = key
+    root.update_idletasks()
+    evidence_dir = Path(overlay_runtime_state_path("session_evidence")).resolve()
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    safe_session = "".join(char for char in str(state.session_id) if char.isalnum())[:32] or "session"
+    screenshot_path = evidence_dir / f"overlay-{safe_session}-e{int(vision.epoch)}.png"
+    from PIL import ImageGrab
+
+    left, top = root.winfo_rootx(), root.winfo_rooty()
+    right, bottom = left + root.winfo_width(), top + root.winfo_height()
+    ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True).convert("RGB").save(screenshot_path)
+    client_size = [int(client_rect[2]) - int(client_rect[0]), int(client_rect[3]) - int(client_rect[1])]
+    context = state.context
+    bundle = build_evidence_bundle(
+        state,
+        lcu_summary={
+            "local_champion_id": str(context.local_champion_id),
+            "teammate_champion_ids": [str(value) for value in context.teammate_champion_ids],
+            "bench_champion_ids": [str(value) for value in context.bench_champion_ids],
+        },
+        window_summary={
+            "hwnd": int(source.get("window_hwnd") or 0),
+            "client_size": client_size,
+            "capture_size": [int(value) for value in capture_size],
+            "dpi_scale": float(source.get("dpi_scale") or 0.0),
+        },
+        screenshot=screenshot_path.name,
+    )
+    write_evidence_bundle(bundle, evidence_dir / "latest_real_session.v1.json")
+    visibility["last_evidence_key"] = key
+    logger.info("game_overlay real_session_evidence=%s", evidence_dir / "latest_real_session.v1.json")
 
 
 def _drain_hotkey_requests(request_queue: "queue.Queue[str]", visibility: dict[str, bool]) -> None:
@@ -1314,7 +1394,19 @@ def _schedule_event_render(
                 )
                 success = True
                 return
-            hint_cache = source.read_hint_cache()
+            if not bool(visibility.get("render_full_overlay")):
+                event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+                waiting_reason = str(event_source.get("reason") or visibility.get("visibility_reason") or "")
+                _draw_waiting_status(canvas, waiting_reason)
+                _sync_event_visibility(
+                    root,
+                    config,
+                    visibility,
+                    snapshot,
+                    resolved_should_show=True,
+                )
+                success = True
+                return
             context = source.read_context()
             now = time.time()
             recent_context = None
@@ -1334,12 +1426,22 @@ def _schedule_event_render(
                     cached_context = visibility.get("last_ok_context")
                     if isinstance(cached_context, Mapping) and cached_context.get("ok"):
                         recent_context = cached_context
-            model = build_render_model(
-                snapshot,
-                hint_cache=hint_cache,
-                context=context,
-                recent_context=recent_context,
+            effective_context = recent_context if not context.get("ok") and recent_context is not None else context
+            snapshot_view = source.open_view()
+            if snapshot_view is not None:
+                hint_cache = snapshot_view.get_overlay_hints()
+                hint_cache.setdefault("snapshot", {}).update(snapshot_view.status())
+            else:
+                hint_cache = source.read_hint_cache()
+            session_state = build_runtime_session(
+                event=snapshot,
+                context_payload=effective_context,
+                snapshot_view=snapshot_view,
+                user_enabled=bool(visibility.get("user_enabled")),
+                game_present=bool(visibility.get("target_hwnd")),
             )
+            model = build_render_model_from_session(session_state, hint_cache=hint_cache)
+            visibility["session_state"] = session_state
             _log_waiting_context_diagnostic(visibility, snapshot, context, model)
             draw_overlay_frame(canvas, model, perf_sink=visibility)
             _sync_event_visibility(
@@ -1349,6 +1451,11 @@ def _schedule_event_render(
                 snapshot,
                 resolved_should_show=True,
             )
+            try:
+                _write_real_session_evidence(root, session_state, snapshot, visibility)
+            except Exception:
+                visibility.pop("evidence_attempt_key", None)
+                logger.warning("写入真实会话验收证据失败。", exc_info=True)
             success = True
         except Exception:
             failure_count += 1
@@ -1497,11 +1604,73 @@ def run_self_check() -> dict[str, Any]:
     }
 
 
+def render_acceptance_screenshot(
+    output_path: str | Path,
+    *,
+    width: int = 1280,
+    height: int = 720,
+) -> dict[str, Any]:
+    """用真实 Tk Canvas 和当前 generation/event/context 生成验收截图。"""
+
+    from PIL import ImageGrab
+
+    target = Path(output_path).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source = SharedOverlayDataSource()
+    snapshot = source.read_event()
+    hint_cache = source.read_hint_cache()
+    context = source.read_context()
+    model = build_render_model(snapshot, hint_cache=hint_cache, context=context)
+
+    _set_dpi_awareness()
+    root = tk.Tk()
+    root.title("Hextech Overlay Acceptance")
+    root.geometry(f"{max(640, int(width))}x{max(360, int(height))}+0+0")
+    root.attributes("-topmost", True)
+    canvas = tk.Canvas(root, bg="#10131A", highlightthickness=0, bd=0)
+    canvas.pack(fill=tk.BOTH, expand=True)
+    try:
+        root.update_idletasks()
+        root.deiconify()
+        root.lift()
+        root.update()
+        draw_overlay_frame(canvas, model)
+        root.update_idletasks()
+        root.update()
+        time.sleep(0.2)
+        left = root.winfo_rootx()
+        top = root.winfo_rooty()
+        right = left + root.winfo_width()
+        bottom = top + root.winfo_height()
+        image = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True).convert("RGB")
+        image.save(target)
+    finally:
+        root.destroy()
+
+    status_counts: dict[str, int] = {}
+    for row in model.get("stats", []):
+        code = str(row.get("status_code") or "")
+        status_counts[code] = status_counts.get(code, 0) + 1
+    snapshot_status = hint_cache.get("snapshot") if isinstance(hint_cache.get("snapshot"), Mapping) else {}
+    return {
+        "ok": target.is_file() and target.stat().st_size > 0,
+        "path": str(target),
+        "width": image.width,
+        "height": image.height,
+        "generation_id": str(snapshot_status.get("generation_id") or ""),
+        "status_counts": status_counts,
+        "context_champion_id": str(context.get("champion_id") or ""),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Hextech game overlay host。")
     parser.add_argument("--game-overlay", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--diagnostic", action="store_true", help="记录去重诊断日志，不绘制状态 UI。")
     parser.add_argument("--self-check", action="store_true", help="执行无 GUI overlay 入口自检后退出。")
+    parser.add_argument("--acceptance-screenshot", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-width", type=int, default=1280, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-height", type=int, default=720, help=argparse.SUPPRESS)
     return parser
 
 
@@ -1510,6 +1679,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_check:
         print(json.dumps(run_self_check(), ensure_ascii=False, indent=2))
         return 0
+    if args.acceptance_screenshot is not None:
+        result = render_acceptance_screenshot(
+            args.acceptance_screenshot,
+            width=args.acceptance_width,
+            height=args.acceptance_height,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ok"] else 1
     run_overlay_host(diagnostic=args.diagnostic)
     return 0
 

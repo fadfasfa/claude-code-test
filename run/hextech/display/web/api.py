@@ -9,11 +9,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import re
-import threading
 from urllib.parse import quote, unquote
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
@@ -21,25 +19,19 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from pydantic import BaseModel
 
 from hextech.catalog.aliases import load_manual_alias_index
-from hextech.catalog.precomputed_cache import is_precomputed_hextech_cache_loaded, warm_precomputed_hextech_cache
-from hextech.catalog.runtime_store import load_precomputed_hextech_for_hero
+from hextech.data_snapshot import DataSnapshotClient, SnapshotValidationError
 from hextech.catalog.version_catalog import (
     AUGMENT_RESOURCE_CATALOG_FILENAME,
     HERO_CATALOG_FILENAME,
     legacy_index_payload,
     legacy_static_payload,
 )
-from hextech.catalog.view_adapter import process_champions_data
-from hextech.core.refresh import rebuild_api_cache_if_needed
 from hextech.scraping.augment_catalog import load_augment_icon_manifest
 from hextech.scraping._paths import INDEX_DATA_DIR, STATIC_DATA_DIR
 from hextech.support.user_diagnostics import redact_diagnostic_text
 from . import runtime as web_runtime
 
-_api_cache_rebuild_lock = threading.Lock()
-_api_cache_rebuild_inflight = False
-_api_cache_warm_lock = threading.Lock()
-_api_cache_warm_inflight = False
+_snapshot_client = DataSnapshotClient()
 _STATIC_DATA_FILE_ALLOWLIST = frozenset({
     HERO_CATALOG_FILENAME,
     AUGMENT_RESOURCE_CATALOG_FILENAME,
@@ -493,6 +485,63 @@ def _loading_hextech_payload(preload_status: dict | None = None) -> dict:
     return payload
 
 
+def _snapshot_hextech_payload(champion_name: str) -> dict:
+    """只读查询一代快照，并保持数据未就绪与真实无统计的语义分离。"""
+
+    try:
+        snapshot_view = _snapshot_client.open_view()
+    except SnapshotValidationError:
+        snapshot_view = None
+    snapshot_status = snapshot_view.status() if snapshot_view is not None else _snapshot_client.status()
+    state = str(snapshot_status.get("state") or "unavailable")
+    generation_id = str(snapshot_status.get("generation_id") or "")
+    if state == "unavailable":
+        return {
+            **_loading_hextech_payload(),
+            "status": "DATA_NOT_READY",
+            "generation_id": generation_id,
+        }
+
+    if snapshot_status.get("private_stats_enabled") is False:
+        return {
+            "comprehensive": [],
+            "ready": True,
+            "loading": False,
+            "status": "PRIVATE_STATS_DISABLED",
+            "data_status": "PRIVATE_STATS_DISABLED",
+            "generation_state": state,
+            "generation_id": generation_id,
+            "private_stats_enabled": False,
+        }
+
+    detail = snapshot_view.get_champion_detail(champion_name)
+    augments = snapshot_view.get_champion_augments(champion_name)
+    if detail is not None and augments:
+        payload = dict(detail)
+        payload.setdefault("comprehensive", augments)
+        payload["generation_id"] = generation_id
+        payload["status"] = "GENERATION_DEGRADED" if state == "degraded" else "READY"
+        payload["data_status"] = "READY"
+        payload["generation_state"] = state
+        payload["private_stats_enabled"] = bool(snapshot_status.get("private_stats_enabled"))
+        return payload
+
+    if state == "degraded":
+        status_code = "GENERATION_DEGRADED"
+    else:
+        status_code = "NO_STATS"
+    return {
+        "comprehensive": [],
+        "ready": True,
+        "loading": False,
+        "status": status_code,
+        "data_status": "NO_STATS",
+        "generation_state": state,
+        "generation_id": generation_id,
+        "private_stats_enabled": bool(snapshot_status.get("private_stats_enabled")),
+    }
+
+
 def _attach_local_auth_cookie(response: Response) -> Response:
     response.set_cookie(
         key=web_runtime.HTTP_SESSION_COOKIE,
@@ -563,56 +612,6 @@ def _stable_data_response(
         if payload is not None:
             return JSONResponse(content=payload)
     return JSONResponse(content={"error": "资源未找到"}, status_code=404)
-
-
-def _request_precomputed_hextech_rebuild() -> bool:
-    global _api_cache_rebuild_inflight
-    with _api_cache_rebuild_lock:
-        if _api_cache_rebuild_inflight:
-            return False
-        _api_cache_rebuild_inflight = True
-
-    def _worker() -> None:
-        global _api_cache_rebuild_inflight
-        try:
-            rebuild_api_cache_if_needed(force=False)
-        except Exception:
-            web_runtime.logger.exception("预计算海克斯缓存后台重建失败。")
-        finally:
-            with _api_cache_rebuild_lock:
-                _api_cache_rebuild_inflight = False
-
-    threading.Thread(
-        target=_worker,
-        daemon=True,
-        name="precomputed-hextech-cache-rebuild",
-    ).start()
-    return True
-
-
-def _request_precomputed_hextech_warm() -> bool:
-    global _api_cache_warm_inflight
-    with _api_cache_warm_lock:
-        if _api_cache_warm_inflight:
-            return False
-        _api_cache_warm_inflight = True
-
-    def _worker() -> None:
-        global _api_cache_warm_inflight
-        try:
-            warm_precomputed_hextech_cache()
-        except Exception:
-            web_runtime.logger.exception("预计算海克斯详情缓存后台暖机失败。")
-        finally:
-            with _api_cache_warm_lock:
-                _api_cache_warm_inflight = False
-
-    threading.Thread(
-        target=_worker,
-        daemon=True,
-        name="precomputed-hextech-cache-warm",
-    ).start()
-    return True
 
 
 def _html_file_response(filename: str) -> FileResponse:
@@ -712,25 +711,11 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/champions")
     async def api_champions():
-        df = web_runtime.get_df()
-        if not df.empty:
-            champions = process_champions_data(df)
-            if champions:
-                return JSONResponse(content=champions)
-
-        stable_df = await asyncio.to_thread(web_runtime.get_stable_champion_catalog_df)
-        if not stable_df.empty:
-            champions = process_champions_data(stable_df, use_runtime_cache=False, log_columns=False)
-            if champions:
-                return JSONResponse(content=champions)
-
-        snapshot_df = await asyncio.to_thread(web_runtime.get_live_champion_snapshot_df)
-        if not snapshot_df.empty:
-            champions = process_champions_data(snapshot_df)
-            if champions:
-                return JSONResponse(content=champions)
-
-        return JSONResponse(content=[])
+        try:
+            snapshot_view = _snapshot_client.open_view()
+        except SnapshotValidationError:
+            return JSONResponse(content=[])
+        return JSONResponse(content=snapshot_view.get_champions())
 
     @app.get("/api/startup_status")
     async def api_startup_status(request: Request):
@@ -759,20 +744,7 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/api/champion/{name}/hextechs")
     async def api_champion_hextechs(name: str):
         canonical_name = web_runtime.resolve_canonical_hero_name(name)
-        preloaded_payload = web_runtime.get_preloaded_hextech_payload(canonical_name)
-        if isinstance(preloaded_payload, dict) and preloaded_payload.get("comprehensive"):
-            return JSONResponse(content=preloaded_payload)
-
-        if is_precomputed_hextech_cache_loaded():
-            precomputed_payload = load_precomputed_hextech_for_hero(canonical_name)
-            if isinstance(precomputed_payload, dict) and precomputed_payload.get("comprehensive"):
-                return JSONResponse(content=precomputed_payload)
-
-        preload_status = web_runtime.get_preload_hextech_status(canonical_name)
-        if preload_status.get("pending"):
-            return JSONResponse(content=_loading_hextech_payload(preload_status))
-
-        return JSONResponse(content=_loading_hextech_payload(preload_status))
+        return JSONResponse(content=_snapshot_hextech_payload(canonical_name))
 
     @app.post("/api/champion/{name}/preload")
     async def api_preload_champion(name: str, request: Request):
@@ -817,7 +789,7 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/api/synergies/{champ_id}")
     async def api_synergies(champ_id: str):
         try:
-            data = web_runtime.get_synergy_data()
+            data = _snapshot_client.open_view().get_synergy_data()
             return JSONResponse(content=_build_synergy_api_payload(data, champ_id))
         except Exception as exc:
             web_runtime.logger.warning("协同数据查询失败：%s", exc)

@@ -31,6 +31,7 @@ STATIC_ROOT_DIR = DATA_ROOT_DIR / "static"
 DATA_STATIC_ASSET_DIR = STATIC_ROOT_DIR / "assets"
 DATA_STATIC_VERSION_DIR = STATIC_ROOT_DIR / "version"
 DATA_STARTUP_SEED_DIR = DATA_ROOT_DIR / "seed" / "startup"
+DATA_STARTUP_SNAPSHOT_DIR = DATA_STARTUP_SEED_DIR / "snapshots"
 DATA_DIAGNOSTIC_FIXTURE_DIR = DATA_ROOT_DIR / "fixtures" / "diagnostics"
 DATA_SOURCE_EVIDENCE_DIR = DATA_ROOT_DIR / "evidence"
 HEXTECH_SNAPSHOT_DIR = DATA_STARTUP_SEED_DIR / "hextech"
@@ -41,6 +42,7 @@ BUNDLED_VERSION_DATA_DIR = DATA_STATIC_VERSION_DIR
 BUNDLED_ASSET_DIR = DATA_STATIC_ASSET_DIR
 BUNDLED_HEXTECH_SNAPSHOT_DIR = DATA_STARTUP_SEED_DIR / "hextech"
 BUNDLED_SYNERGY_DATA_DIR = SYNERGY_DATA_DIR
+BUNDLED_SNAPSHOT_SEED_DIR = DATA_STARTUP_SNAPSHOT_DIR
 SYNERGY_LEGACY_FILENAME = "Champion_Synergy.json"
 SYNERGY_LATEST_POINTER_FILENAME = "Champion_Synergy_latest.v1.json"
 SYNERGY_SNAPSHOT_PATTERN = "Champion_Synergy_*.json"
@@ -189,6 +191,19 @@ def iter_synergy_data_files(base_dir: Path) -> Iterable[Path]:
     return sorted(files)
 
 
+def iter_snapshot_seed_files(snapshot_root: Path) -> list[Path]:
+    """列出外部已验证 generation 根中的普通文件，不跟随目录外路径。"""
+
+    root = snapshot_root.resolve()
+    if not (root / "current.v1.json").is_file():
+        return []
+    return sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and root in path.resolve().parents
+    )
+
+
 def iter_source_files(base_dir: Path) -> list[str]:
     """列出最终结构的源码清单；业务实现只从 `hextech/` 主应用包收口。"""
 
@@ -206,7 +221,12 @@ def iter_source_files(base_dir: Path) -> list[str]:
     return sorted(source_files)
 
 
-def iter_package_data_entries(base_dir: Path, manifest_path: Path) -> list[PackageData]:
+def iter_package_data_entries(
+    base_dir: Path,
+    manifest_path: Path,
+    *,
+    verified_snapshot_root: Path | None = None,
+) -> list[PackageData]:
     """返回 PyInstaller data 规则，不复制任何业务资源到仓库内中间目录。"""
 
     data_static_dir = base_dir / DATA_STATIC_VERSION_DIR
@@ -231,6 +251,12 @@ def iter_package_data_entries(base_dir: Path, manifest_path: Path) -> list[Packa
         entries.append(PackageData(source, BUNDLED_HEXTECH_SNAPSHOT_DIR.as_posix()))
     for source in iter_synergy_data_files(base_dir):
         entries.append(PackageData(source, BUNDLED_SYNERGY_DATA_DIR.as_posix()))
+    if verified_snapshot_root is not None:
+        snapshot_root = verified_snapshot_root.resolve()
+        for source in iter_snapshot_seed_files(snapshot_root):
+            relative_parent = source.relative_to(snapshot_root).parent
+            target = BUNDLED_SNAPSHOT_SEED_DIR / relative_parent
+            entries.append(PackageData(source, target.as_posix()))
 
     if asset_dir.exists():
         validate_asset_dir_for_package(asset_dir)

@@ -292,16 +292,16 @@ def bootstrap_default_venv(*, require_packages: Sequence[str] = REQUIRED_RUNTIME
 
     missing = missing_required_imports([str(venv_python)], require_packages)
     if missing:
-        requirements = RUN_DIR / "requirements.txt"
+        requirements = RUN_DIR / "tools" / "requirements" / "compat.txt"
         if not requirements.exists():
-            raise SystemExit(f"缺少 requirements.txt：{requirements}")
+            raise SystemExit(f"缺少 tools/requirements/compat.txt：{requirements}")
         _run_bootstrap_command(
             [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
             action="升级 pip",
         )
         _run_bootstrap_command(
             [str(venv_python), "-m", "pip", "install", "-r", str(requirements)],
-            action="安装 requirements.txt 依赖",
+            action="安装 tools/requirements/compat.txt 依赖",
         )
         missing = missing_required_imports([str(venv_python)], require_packages)
         if missing:
@@ -351,19 +351,18 @@ def _format_command(command: Sequence[str]) -> str:
 
 
 def _setup_commands_text() -> str:
-    venv_python = default_venv_python_path()
     if os.name == "nt":
         return (
             f"  cd /d {RUN_DIR}\n"
             "  py -3.11 -m venv .venv\n"
             r"  .\.venv\Scripts\python.exe -m pip install --upgrade pip" "\n"
-            r"  .\.venv\Scripts\python.exe -m pip install -r requirements.txt"
+            r"  .\.venv\Scripts\python.exe -m pip install -r tools\requirements\compat.txt"
         )
     return (
         f"  cd {RUN_DIR}\n"
         "  python3.11 -m venv .venv\n"
         "  ./.venv/bin/python -m pip install --upgrade pip\n"
-        "  ./.venv/bin/python -m pip install -r requirements.txt"
+        "  ./.venv/bin/python -m pip install -r tools/requirements/compat.txt"
     )
 
 
@@ -390,7 +389,7 @@ def format_missing_python_311_message(
         elif missing:
             parts.append(f"run/.venv 缺少依赖：{', '.join(missing)}")
             parts.append("请在 run 目录执行：")
-            parts.append(r"  .\.venv\Scripts\python.exe -m pip install -r requirements.txt" if os.name == "nt" else "  ./.venv/bin/python -m pip install -r requirements.txt")
+            parts.append(r"  .\.venv\Scripts\python.exe -m pip install -r tools\requirements\compat.txt" if os.name == "nt" else "  ./.venv/bin/python -m pip install -r tools/requirements/compat.txt")
     parts.append(f"如需临时使用非默认 venv，可显式设置 {PYTHON311_ENV}=<python3.11.exe>。")
     return "\n".join(parts)
 

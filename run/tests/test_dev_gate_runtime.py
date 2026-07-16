@@ -210,7 +210,7 @@ def test_hextech_failed_refresh_never_overwrites_csv() -> None:
         ):
             assert hextech_scraper.main_scraper(force=True) is True
         timeout_status = json.loads(status_file.read_text(encoding="utf-8"))
-        assert timeout_fetcher.calls == 3
+        assert timeout_fetcher.calls == 4
         assert timeout_status["reason"] == "timeout"
         assert timeout_status["next_retry_at"] == timeout_status["blocked_until"]
 
@@ -271,7 +271,6 @@ def test_hextech_success_clears_fallback_state() -> None:
             patch.object(hextech_scraper, "extract_champion_stats", return_value=[row] * 300),
             patch.object(hextech_scraper, "backup_active_csv_before_publish"),
             patch.object(hextech_scraper, "cleanup_old_csvs") as cleanup,
-            patch.object(hextech_scraper, "rebuild_runtime_caches") as rebuild,
             patch.object(hextech_scraper.time, "sleep"),
         ):
             assert hextech_scraper.main_scraper() is True
@@ -284,7 +283,6 @@ def test_hextech_success_clears_fallback_state() -> None:
         assert status["last_success_time"] > 1
         assert len(pd.read_csv(output_csv, encoding=runtime_store.CSV_ENCODING)) == 300
         cleanup.assert_called_once()
-        rebuild.assert_called_once()
 
 def test_precomputed_cache_freshness() -> None:
     with TemporaryDirectory() as temp_dir:
@@ -421,6 +419,10 @@ def test_precomputed_cache_returns_unpollutable_copies() -> None:
             champions = precomputed_cache.load_precomputed_champion_list()
             champions[0]["stats"]["wins"] = 999
             assert precomputed_cache.load_precomputed_champion_list()[0]["stats"]["wins"] == 1
+
+            hextech_map = precomputed_cache.load_precomputed_hextech_map()
+            hextech_map["酒桶"]["comprehensive"][0]["score"]["value"] = 999
+            assert precomputed_cache.load_precomputed_hextech_map()["酒桶"]["comprehensive"][0]["score"]["value"] == 1
 
             hero_payload = precomputed_cache.load_precomputed_hextech_for_hero("酒桶")
             hero_payload["comprehensive"][0]["score"]["value"] = 999
@@ -632,6 +634,8 @@ def test_desktop_ui_feature_switch_contract() -> None:
 
     ui_text = (RUN_DIR / "hextech" / "display" / "desktop" / "app.py").read_text(encoding="utf-8")
     runtime_text = (RUN_DIR / "hextech" / "display" / "desktop" / "runtime.py").read_text(encoding="utf-8")
+    assert "ui._df_lock" not in runtime_text
+    assert "ui.df" not in runtime_text
     init_start = ui_text.index("    def __init__(self):")
     init_end = ui_text.index("    def _mark_first_idle_visible", init_start)
     init_body = ui_text[init_start:init_end]
@@ -706,7 +710,8 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert hasattr(ui_runtime, "open_companion_browser")
     assert hasattr(ui_runtime, "close_companion_browser")
     private_toggle_body = ui_text.split("    def _toggle_private_policy_stats", 1)[1].split("    def _toggle_low_frequency_listener", 1)[0]
-    assert "build_overlay_hint_cache_from_precomputed" in private_toggle_body
+    assert "self.data_service.set_private_stats" in private_toggle_body
+    assert "build_overlay_hint_cache_from_precomputed" not in private_toggle_body
     assert "desired_private_stats = bool(self.private_stats_var.get())" in private_toggle_body
     assert "self._persist_feature_flags_from_controls()" in private_toggle_body
     assert "save_ui_feature_flags(desired_flags)" not in private_toggle_body
@@ -769,26 +774,54 @@ def test_desktop_ui_feature_switch_contract() -> None:
     candidate_groups = {
         "selected_champion_ids": ["1", "2", "3", "4", "5"],
         "bench_champion_ids": ["6", "7", "8", "9", "10"],
+        "local_champion_id": "2",
+        "teammate_champion_ids": ["1", "3", "4", "5"],
     }
-    candidate_df = pd.DataFrame(
-        [
-            {"英雄ID": str(index), "英雄名称": f"英雄{index}", "英雄评级": f"T{index}", "英雄胜率": win, "英雄出场率": 0.01}
-            for index, win in (
-                (1, 0.41),
-                (2, 0.55),
-                (3, 0.49),
-                (4, 0.52),
-                (5, 0.47),
-                (6, 0.60),
-                (7, 0.46),
-                (8, 0.58),
-                (9, 0.50),
-                (10, 0.44),
-            )
-        ]
-    )
+    candidate_champions = [
+        {"id": str(index), "name": f"英雄{index}", "英雄评级": f"T{index}", "英雄胜率": win, "英雄出场率": 0.01}
+        for index, win in (
+            (1, 0.41),
+            (2, 0.55),
+            (3, 0.49),
+            (4, 0.52),
+            (5, 0.47),
+            (6, 0.60),
+            (7, 0.46),
+            (8, 0.58),
+            (9, 0.50),
+            (10, 0.44),
+        )
+    ]
     dummy_ui = type("DummyDesktopUI", (), {})()
     dummy_ui._candidate_groups_from_input = desktop_app.HextechUI._candidate_groups_from_input.__get__(dummy_ui)
-    display_list = desktop_app.HextechUI._build_candidate_display_list(dummy_ui, candidate_groups, candidate_df)
+    display_list = desktop_app.HextechUI._build_candidate_display_list(dummy_ui, candidate_groups, candidate_champions)
     assert [item["id"] for item in display_list] == ["6", "8", "2", "4", "9", "3", "5", "7", "10", "1"]
+    assert next(item for item in display_list if item["id"] == "2")["selection_role"] == "self"
+    assert next(item for item in display_list if item["id"] == "4")["selection_role"] == "teammate"
+    assert next(item for item in display_list if item["id"] == "6")["selection_role"] == "bench"
     assert "_group_rank" not in display_list[0]
+    equal_win_champions = [
+        {"id": "2", "name": "英雄2", "英雄评级": "T1", "英雄胜率": 0.5, "英雄出场率": 0.01},
+        {"id": "1", "name": "英雄1", "英雄评级": "T1", "英雄胜率": 0.5, "英雄出场率": 0.01},
+    ]
+    equal_win_groups = {
+        "selected_champion_ids": ["2", "1"],
+        "bench_champion_ids": [],
+        "local_champion_id": "1",
+        "teammate_champion_ids": ["2"],
+    }
+    equal_win_list = desktop_app.HextechUI._build_candidate_display_list(dummy_ui, equal_win_groups, equal_win_champions)
+    assert [item["id"] for item in equal_win_list] == ["2", "1"]
+
+
+def test_desktop_self_role_has_stronger_visual_priority_than_teammate() -> None:
+    from hextech.display.desktop import app as desktop_app
+
+    self_style = desktop_app._selection_role_style("self")
+    teammate_style = desktop_app._selection_role_style("teammate")
+    bench_style = desktop_app._selection_role_style("bench")
+
+    assert self_style["border_width"] == 3
+    assert self_style["marker_width"] > teammate_style["marker_width"] > bench_style["marker_width"]
+    assert self_style["accent"] != teammate_style["accent"]
+    assert self_style["surface"] != bench_style["surface"]
