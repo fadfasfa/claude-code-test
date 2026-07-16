@@ -773,8 +773,9 @@ def scan_lcu_process() -> tuple:
 
 
 def _clean_champion_id(value) -> str:
-    text = str(value or "").strip()
-    return text if text and text != "0" else ""
+    from hextech.contracts.identifiers import optional_champion_id
+
+    return str(optional_champion_id(value) or "")
 
 
 def _append_unique_champion_id(target: list[str], value) -> None:
@@ -932,17 +933,35 @@ def initialize_core_threads(ui: "HextechUI") -> None:
         thread.start()
 
 
+def _snapshot_terminal_rows(ui: "HextechUI", *, champion_name: str = "") -> list[dict[str, Any]]:
+    """终端兼容层读取固定 generation DTO；Pandas 转换只留在 catalog 查询模块。"""
+
+    snapshot_client = getattr(ui, "_snapshot_client", None)
+    if snapshot_client is None:
+        return []
+    try:
+        view = snapshot_client.open_view()
+        if champion_name:
+            return view.get_champion_augments(champion_name)
+        rows: list[dict[str, Any]] = []
+        for champion in view.get_champions():
+            identity = champion.get("id") or champion.get("name")
+            if identity:
+                rows.extend(view.get_champion_augments(identity))
+        return rows
+    except Exception:
+        logger.debug("终端兼容查询读取 snapshot 失败。", exc_info=True)
+        return []
+
+
 def run_terminal_loop(ui: "HextechUI") -> None:
     while not ui.stop_event.is_set():
-        with ui._df_lock:
-            is_empty = ui.df.empty
-        if not is_empty:
+        rows = _snapshot_terminal_rows(ui)
+        if rows:
             break
         time.sleep(0.5)
     if not ui.stop_event.is_set():
-        with ui._df_lock:
-            df_snapshot = ui.df
-        _query_terminal().main_query(shared_df=df_snapshot, ui_instance=ui)
+        _query_terminal().main_query(shared_df=rows, ui_instance=ui)
 
 
 def run_silent_sync(ui: "HextechUI", refresh_backend_data) -> None:
@@ -1163,8 +1182,7 @@ def _fetch_web_live_state(ui: "HextechUI") -> tuple[dict[str, list[str]] | None,
 
 
 def _clean_live_champion_id(value) -> str:
-    text = str(value or "").strip()
-    return text if text and text != "0" else ""
+    return _clean_champion_id(value)
 
 
 def _game_overlay_context_writable(ui: "HextechUI", *, context_path: str | os.PathLike[str] | None = None) -> bool:
@@ -1338,9 +1356,10 @@ def handle_hero_click(ui: "HextechUI", champ_id, hero_name) -> None:
         try:
             sys.stdout.write("\r" + " " * 80 + "\r")
             sys.stdout.flush()
-            with ui._df_lock:
-                df_snapshot = ui.df
-            _query_terminal().display_hero_hextech(df_snapshot, hero_name, is_from_ui=True)
+            rows = _snapshot_terminal_rows(ui, champion_name=hero_name)
+            query = _query_terminal()
+            df_snapshot, _source = query._normalize_query_df(rows)
+            query.display_hero_hextech(df_snapshot, hero_name, is_from_ui=True)
         except Exception as exc:
             print(f"\n输出错误: {exc}")
 

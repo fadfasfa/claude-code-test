@@ -12,11 +12,14 @@ import json
 import os
 import queue
 import secrets
+import shutil
+import sys
 import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -25,6 +28,7 @@ from pathlib import Path
 import psutil
 
 from hextech.data_snapshot import DataSnapshotPublisher
+from hextech.support.atomic_io import atomic_write_json
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,55 @@ class DataBuildResult:
 
 
 SnapshotBuilder = Callable[[bool], DataBuildResult]
+SeedPreparer = Callable[[], bool]
+
+
+def _sync_startup_snapshot_status(publisher: DataSnapshotPublisher, result: Mapping[str, Any]) -> None:
+    """generation 切换后同步公共启动状态，避免 Web 与 runtime status 跨代。"""
+
+    from hextech.data_snapshot import DataSnapshotClient
+
+    if publisher.root.name != "snapshots":
+        return
+    try:
+        client = DataSnapshotClient(publisher.root)
+        snapshot_status = client.status()
+        if snapshot_status.get("state") not in {"ready", "degraded"}:
+            return
+        manifest = client.load_manifest()
+        status_path = publisher.root.parent / "state" / "startup_status.json"
+        payload: dict[str, Any] = {}
+        if status_path.is_file():
+            loaded = json.loads(status_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        synergy_ready = any(
+            str(item.get("name") or "") == "Champion_Synergy_Cleaned.json"
+            for item in manifest.source_files
+            if isinstance(item, Mapping)
+        )
+        payload.update(
+            {
+                "first_run": False,
+                "hero_ready": manifest.champion_count > 0,
+                "hextech_ready": manifest.stat_record_count > 0,
+                "synergy_ready": synergy_ready,
+                "in_progress_tasks": [],
+                "last_error": "" if result.get("state") == "ready" else str(result.get("reason_code") or ""),
+                "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "data_snapshot": {
+                    **snapshot_status,
+                    "source": str(result.get("source") or "runtime_current"),
+                    "champion_count": manifest.champion_count,
+                    "augment_count": manifest.augment_count,
+                    "stat_record_count": manifest.stat_record_count,
+                },
+            }
+        )
+        atomic_write_json(status_path, payload, ensure_ascii=False, indent=2)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        # status 是诊断投影，写入失败不能回滚已经原子发布的 generation。
+        return
 
 
 def _file_sha256(path: Path) -> str:
@@ -46,12 +99,126 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _query_payloads_from_dataframe(dataframe) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """从已清洗 CSV 直接构造查询 DTO，避免冷启动重建大型兼容缓存。"""
+
+    import pandas as pd
+
+    id_column = "英雄ID" if "英雄ID" in dataframe.columns else "英雄 ID"
+    required = {id_column, "英雄名称", "海克斯ID", "海克斯名称"}
+    if not required.issubset(set(dataframe.columns)):
+        raise ValueError("DataService generation 源 CSV schema 不完整")
+
+    def clean_value(value: Any) -> Any:
+        if pd.isna(value):
+            return None
+        if hasattr(value, "item"):
+            return value.item()
+        return value
+
+    champions: list[dict[str, Any]] = []
+    details: dict[str, dict[str, Any]] = {}
+    for hero_name, group in dataframe.groupby("英雄名称", sort=False):
+        name = str(hero_name or "").strip()
+        if not name:
+            continue
+        first = group.iloc[0]
+        champion_id = str(int(float(first[id_column])))
+        champion = {key: clean_value(first[key]) for key in (id_column, "英雄名称", "英雄评级", "英雄胜率", "英雄出场率") if key in group.columns}
+        champion.update({"id": champion_id, "name": name})
+        cards: list[dict[str, Any]] = []
+        for raw in group.to_dict(orient="records"):
+            card = {str(key): clean_value(value) for key, value in raw.items()}
+            augment_id = str(int(float(card["海克斯ID"])))
+            card.update({"id": augment_id, "hero_id": champion_id, "hero_name": name})
+            cards.append(card)
+        if cards:
+            champions.append(champion)
+            details[name] = {"hero_id": champion_id, "comprehensive": cards}
+    return champions, details
+
+
+def _build_augment_identity_payload(
+    overlay_hints: Mapping[str, Any],
+    catalog_entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """把 Vision stable ID 与源站数字统计 ID 收口到同一身份索引。"""
+
+    from hextech.overlay.hints import normalize_augment_id, normalize_augment_name
+
+    hint_map = overlay_hints.get("hints", {})
+    if not isinstance(hint_map, Mapping):
+        hint_map = {}
+
+    augments: dict[str, str] = {}
+    canonical_ids_by_name: dict[str, set[str]] = {}
+    for raw_id, raw_hint in hint_map.items():
+        if not isinstance(raw_hint, Mapping):
+            continue
+        canonical_id = str(raw_id).strip()
+        name = str(raw_hint.get("name") or "").strip()
+        if not canonical_id.isdecimal() or not name:
+            continue
+        augments[canonical_id] = name
+        canonical_ids_by_name.setdefault(normalize_augment_name(name), set()).add(canonical_id)
+
+    aliases: dict[str, str] = {}
+    for canonical_id, name in augments.items():
+        for alias in (canonical_id, name, normalize_augment_id(name), normalize_augment_name(name)):
+            if alias:
+                aliases.setdefault(alias, canonical_id)
+
+    catalog_augments: dict[str, dict[str, Any]] = {}
+    for entry in catalog_entries:
+        if not isinstance(entry, Mapping):
+            continue
+        name = str(entry.get("name") or "").strip()
+        stable_id = normalize_augment_id(entry.get("augment_name_id"), name)
+        if not name or not stable_id:
+            continue
+        candidates = canonical_ids_by_name.get(normalize_augment_name(name), set())
+        canonical_id = next(iter(candidates)) if len(candidates) == 1 else ""
+        item = {
+            "vision_id": stable_id,
+            "name": name,
+            "tier": str(entry.get("tier") or "").strip(),
+            "canonical_id": canonical_id,
+            "stats_available": bool(canonical_id),
+            "ambiguous": len(candidates) > 1,
+        }
+        existing = catalog_augments.get(stable_id)
+        if existing and existing != item:
+            existing["ambiguous"] = True
+            existing["canonical_id"] = ""
+            existing["stats_available"] = False
+            continue
+        catalog_augments[stable_id] = item
+        if canonical_id:
+            for alias in (
+                stable_id,
+                str(entry.get("augment_name_id") or "").strip(),
+                name,
+                normalize_augment_id(name),
+                normalize_augment_name(name),
+            ):
+                if alias:
+                    aliases.setdefault(alias, canonical_id)
+
+    return {
+        "schema_version": 2,
+        "augments": augments,
+        "augment_aliases": aliases,
+        "catalog_augments": catalog_augments,
+    }
+
+
 def build_snapshot_from_runtime(private_stats_enabled: bool) -> DataBuildResult:
     """从已刷新且签名匹配的运行态数据构建一代完整消费者快照。"""
 
     from hextech.catalog.runtime_store import build_synergy_data_path, get_latest_valid_csv, load_runtime_csv
     from hextech.catalog.precomputed_cache import load_precomputed_champion_list, load_precomputed_hextech_map
-    from hextech.overlay.hints import build_overlay_hint_cache
+    from hextech.catalog.version_catalog import load_augment_manifest_entries
+    from hextech.overlay.hints import build_overlay_hint_cache, enrich_overlay_hint_cache_with_catalog
 
     csv_path = Path(get_latest_valid_csv() or "")
     if not csv_path.is_file():
@@ -62,7 +229,7 @@ def build_snapshot_from_runtime(private_stats_enabled: bool) -> DataBuildResult:
     raw_champions = load_precomputed_champion_list()
     raw_details = load_precomputed_hextech_map()
     if not raw_champions or not raw_details:
-        raise ValueError("DataService 预计算缓存未就绪或与最新 CSV 不匹配")
+        raw_champions, raw_details = _query_payloads_from_dataframe(dataframe)
     champions: list[dict[str, Any]] = []
     champion_id_by_name: dict[str, str] = {}
     for item in raw_champions:
@@ -119,15 +286,12 @@ def build_snapshot_from_runtime(private_stats_enabled: bool) -> DataBuildResult:
         source_tag="data-service",
         champion_id_by_name=champion_id_by_name,
     )
-    hint_map = overlay_hints.get("hints", {}) if isinstance(overlay_hints, Mapping) else {}
+    catalog_entries = load_augment_manifest_entries()
+    augment_identities = _build_augment_identity_payload(overlay_hints, catalog_entries)
+    enrich_overlay_hint_cache_with_catalog(overlay_hints, catalog_entries)
     identities = {
         "champions": {champion["id"]: champion["name"] for champion in champions},
-        "augments": {
-            str(augment_id): str(hint.get("name") or "")
-            for augment_id, hint in hint_map.items()
-            if isinstance(hint, Mapping)
-        },
-        "augment_aliases": dict(overlay_hints.get("name_index", {})),
+        **augment_identities,
     }
     sources: list[dict[str, Any]] = [{
         "name": csv_path.name,
@@ -154,6 +318,130 @@ def build_snapshot_from_runtime(private_stats_enabled: bool) -> DataBuildResult:
     )
 
 
+def prepare_startup_data_seed() -> bool:
+    """源码态无 generation 时，把只读 startup 数据播种到可写 runtime。
+
+    打包态通常已由 bundle manifest 播种完整 generation；这里主要保证源码 UI
+    不必把首次联网刷新当作进入游戏前的硬依赖。仅补缺失文件，不覆盖运行数据。
+    """
+
+    from hextech.catalog.runtime_store import get_runtime_hextech_data_dir, get_runtime_synergy_data_dir
+    from hextech.scraping._paths import BUNDLE_ROOT_DIR
+
+    seed_root = Path(BUNDLE_ROOT_DIR) / "data" / "seed" / "startup"
+    seed_hextech = seed_root / "hextech"
+    seed_synergy = seed_root / "synergy"
+    runtime_hextech = Path(get_runtime_hextech_data_dir())
+    runtime_synergy = Path(get_runtime_synergy_data_dir())
+    csv_sources = sorted(seed_hextech.glob("Hextech_Data_*.csv"), key=lambda path: path.name, reverse=True)
+    synergy_sources = sorted(seed_synergy.glob("Champion_Synergy_*.json"), key=lambda path: path.name)
+    if not csv_sources or not synergy_sources:
+        return False
+
+    runtime_hextech.mkdir(parents=True, exist_ok=True)
+    runtime_synergy.mkdir(parents=True, exist_ok=True)
+    copied = False
+    for source, target_dir in ((csv_sources[0], runtime_hextech), *[(path, runtime_synergy) for path in synergy_sources]):
+        target = target_dir / source.name
+        if target.exists():
+            continue
+        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            shutil.copy2(source, temporary)
+            os.replace(temporary, target)
+            copied = True
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    return copied or bool((runtime_hextech / csv_sources[0].name).is_file() and any(runtime_synergy.glob("Champion_Synergy_*.json")))
+
+
+def bootstrap_snapshot(
+    publisher: DataSnapshotPublisher,
+    private_stats_enabled: bool,
+    *,
+    builder: SnapshotBuilder = build_snapshot_from_runtime,
+    seed_preparer: SeedPreparer = prepare_startup_data_seed,
+) -> dict[str, Any]:
+    """在启动远端刷新前保证存在一代完整可读快照。"""
+
+    from hextech.data_snapshot import DataSnapshotClient
+
+    current = DataSnapshotClient(publisher.root).status()
+    if current.get("state") in {"ready", "degraded"}:
+        try:
+            identity_indexes = DataSnapshotClient(publisher.root).get_identity_indexes()
+            identity_contract_ready = int(identity_indexes.get("schema_version") or 0) >= 2
+        except (TypeError, ValueError):
+            identity_contract_ready = False
+        if not identity_contract_ready:
+            try:
+                seed_preparer()
+                build = builder(bool(private_stats_enabled))
+                manifest = publisher.publish(
+                    build.payloads,
+                    private_stats_enabled=bool(private_stats_enabled),
+                    source_files=build.source_files,
+                )
+                return {
+                    "state": "ready",
+                    "generation_id": manifest.generation_id,
+                    "private_stats_enabled": manifest.private_stats_enabled,
+                    "source": "startup_data_built",
+                    "reason_code": "identity_schema_upgraded",
+                }
+            except Exception as exc:
+                # 旧代仍可作为 last-good，但必须暴露身份契约尚未升级，不能静默冒充 ready。
+                return {
+                    "state": "degraded",
+                    "generation_id": str(current.get("generation_id") or ""),
+                    "source": "last_good_fallback",
+                    "reason_code": "identity_schema_upgrade_failed",
+                    "error_type": exc.__class__.__name__,
+                }
+        source = "last_good_fallback" if current.get("state") == "degraded" else "runtime_current"
+        if source == "runtime_current":
+            try:
+                startup_status = json.loads((publisher.root.parent / "state" / "startup_status.json").read_text(encoding="utf-8"))
+                seeded = startup_status.get("data_snapshot") if isinstance(startup_status, Mapping) else None
+                if (
+                    isinstance(seeded, Mapping)
+                    and seeded.get("source") == "verified_bundle_seed"
+                    and str(seeded.get("generation_id") or "") == str(current.get("generation_id") or "")
+                ):
+                    source = "verified_seed"
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                pass
+        return {
+            "state": str(current["state"]),
+            "generation_id": str(current.get("generation_id") or ""),
+            "source": source,
+        }
+    try:
+        if not seed_preparer():
+            raise FileNotFoundError("没有可用的 startup 数据 seed")
+        build = builder(bool(private_stats_enabled))
+        manifest = publisher.publish(
+            build.payloads,
+            private_stats_enabled=bool(private_stats_enabled),
+            source_files=build.source_files,
+        )
+    except Exception as exc:
+        return {
+            "state": "failed",
+            "generation_id": "",
+            "source": "startup_data_built",
+            "reason_code": "bootstrap_failed_no_snapshot",
+            "error_type": exc.__class__.__name__,
+        }
+    return {
+        "state": "ready",
+        "generation_id": manifest.generation_id,
+        "private_stats_enabled": manifest.private_stats_enabled,
+        "source": "startup_data_built",
+    }
+
+
 class DataServiceCore:
     """DataService 唯一写入者的最小可测试核心。"""
 
@@ -163,16 +451,19 @@ class DataServiceCore:
         publisher: DataSnapshotPublisher,
         builder: SnapshotBuilder,
         private_stats_enabled: bool,
+        initial_result: Mapping[str, Any] | None = None,
     ) -> None:
         self.publisher = publisher
         self.builder = builder
         self._private_stats_enabled = bool(private_stats_enabled)
         self._action_lock = threading.Lock()
-        self._last_result: dict[str, Any] = {"state": "starting", "generation_id": ""}
+        self._last_result: dict[str, Any] = dict(initial_result or {"state": "starting", "generation_id": ""})
+        _sync_startup_snapshot_status(self.publisher, self._last_result)
 
     def refresh(self) -> dict[str, Any]:
         with self._action_lock:
             self._last_result = self._refresh_locked()
+            _sync_startup_snapshot_status(self.publisher, self._last_result)
             return dict(self._last_result)
 
     def set_private_stats(self, enabled: bool) -> dict[str, Any]:
@@ -189,6 +480,7 @@ class DataServiceCore:
                     "desired_private_stats_enabled": previous,
                 }
             self._last_result = result
+            _sync_startup_snapshot_status(self.publisher, self._last_result)
             return dict(self._last_result)
 
     def status(self) -> dict[str, Any]:
@@ -216,6 +508,7 @@ class DataServiceCore:
             return {
                 "state": "degraded" if current_id else "failed",
                 "generation_id": current_id,
+                "source": "last_good_fallback" if current_id else "remote_refresh",
                 "reason_code": "refresh_failed_last_good_preserved" if current_id else "refresh_failed_no_snapshot",
                 "error_type": exc.__class__.__name__,
             }
@@ -223,6 +516,7 @@ class DataServiceCore:
             "state": "ready",
             "generation_id": manifest.generation_id,
             "private_stats_enabled": manifest.private_stats_enabled,
+            "source": "remote_refresh",
         }
 
 
@@ -375,7 +669,10 @@ class DataServiceApplication:
 def _refresh_and_build(private_stats_enabled: bool, *, force_refresh: bool = False) -> DataBuildResult:
     from hextech.core.refresh import refresh_backend_data
 
-    result = refresh_backend_data(force=force_refresh)
+    result = refresh_backend_data(
+        force=force_refresh,
+        rebuild_compat_cache=False,
+    )
     if result.state != "ready":
         raise RuntimeError(f"远端刷新失败：{result.reason_code}")
     return build_snapshot_from_runtime(private_stats_enabled)
@@ -445,12 +742,14 @@ def main(argv: list[str] | None = None) -> int:
     publisher = DataSnapshotPublisher()
     instance_lock = DataServiceInstanceLock(publisher.root / "data-service.lock")
     if not instance_lock.acquire():
-        print("DataService 已由另一个桌面实例持有。", file=os.sys.stderr, flush=True)
+        print("DataService 已由另一个桌面实例持有。", file=sys.stderr, flush=True)
         return 3
+    bootstrap_result = bootstrap_snapshot(publisher, private_enabled)
     core = DataServiceCore(
         publisher=publisher,
         builder=lambda enabled: _refresh_and_build(enabled, force_refresh=args.force_initial_refresh),
         private_stats_enabled=private_enabled,
+        initial_result=bootstrap_result,
     )
     application = DataServiceApplication(core=core, parent_pid=args.parent_pid)
     server = ThreadingHTTPServer(("127.0.0.1", 0), application.handler())

@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass, replace
 from typing import Any, Mapping
+
+from hextech.contracts.identifiers import optional_champion_id
 
 
 CLIENT_CONTEXT_SCHEMA_VERSION = 1
@@ -16,17 +19,8 @@ DEFAULT_CONTEXT_TTL_SECONDS = 8.0
 
 
 def _champion_id(value: object) -> str:
-    if isinstance(value, bool):
-        return ""
-    if isinstance(value, int):
-        return str(value) if value > 0 else ""
-    if not isinstance(value, str):
-        return ""
-    text = value.strip()
-    if not text or any(char < "0" or char > "9" for char in text):
-        return ""
-    champion_id = int(text)
-    return str(champion_id) if champion_id > 0 else ""
+    normalized = optional_champion_id(value)
+    return str(normalized or "")
 
 
 def _cell_id(value: object) -> str:
@@ -46,6 +40,7 @@ class ClientContext:
     updated_at: float = 0.0
     source: str = "lcu"
     error_code: str = ""
+    session_id: str = ""
 
     @property
     def selected_champion_ids(self) -> tuple[str, ...]:
@@ -124,6 +119,12 @@ class ClientContextProvider:
     def __init__(self, *, ttl_seconds: float = DEFAULT_CONTEXT_TTL_SECONDS) -> None:
         self.ttl_seconds = max(0.0, float(ttl_seconds))
         self._context: ClientContext | None = None
+        self._session_id = uuid.uuid4().hex
+        self._in_champ_select = False
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
 
     def update(self, payload: Mapping[str, Any], *, now: float | None = None, source: str = "lcu") -> ClientContext:
         context = parse_client_context(payload, now=now, source=source)
@@ -133,8 +134,11 @@ class ClientContextProvider:
                 now=context.updated_at,
                 source=source,
             )
-        self._context = context
-        return context
+        if not self._in_champ_select:
+            self._session_id = uuid.uuid4().hex
+        self._in_champ_select = True
+        self._context = replace(context, session_id=self._session_id)
+        return self._context
 
     def unavailable(self, error_code: str, *, now: float | None = None, source: str = "lcu") -> ClientContext:
         timestamp = time.time() if now is None else float(now)
@@ -156,14 +160,17 @@ class ClientContextProvider:
             updated_at=timestamp,
             source=source,
             error_code=str(error_code or "lcu_unavailable"),
+            session_id=self._session_id,
         )
 
     def not_in_champ_select(self, *, now: float | None = None, source: str = "lcu") -> ClientContext:
         timestamp = time.time() if now is None else float(now)
+        self._in_champ_select = False
         self._context = ClientContext(
             phase="not_in_champ_select",
             connection_state="connected",
             updated_at=timestamp,
             source=source,
+            session_id=self._session_id,
         )
         return self._context

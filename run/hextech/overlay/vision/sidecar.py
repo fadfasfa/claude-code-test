@@ -41,7 +41,13 @@ from hextech.overlay.vision.layout import (
     pick_card_panels,
 )
 # runner/dev_checks 通过 sidecar 注入按键状态，保留该兼容 re-export。
-from hextech.overlay.window import cursor_in_client_boxes, find_lol_game_window, is_scoreboard_key_down, root_window_hwnd  # noqa: F401
+from hextech.overlay.window import (  # noqa: F401
+    cursor_in_client_boxes,
+    find_lol_game_window,
+    is_left_mouse_button_down,
+    is_scoreboard_key_down,
+    root_window_hwnd,
+)
 from hextech.catalog.version_catalog import load_augment_manifest_entries, load_augment_name_to_icon_map
 from hextech.scraping._paths import INDEX_DATA_DIR
 from hextech.support.atomic_io import atomic_write_json
@@ -2106,10 +2112,25 @@ def stabilize_detections(events: Sequence[Mapping[str, Any]], *, required_frames
 
 
 def _set_dpi_awareness() -> None:
+    # Vision 坐标必须以目标窗口客户区的物理像素为准；System DPI aware 在跨缩放显示器
+    # 时会把 GetClientRect 与 ImageGrab 置于不同坐标系。
+    try:
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except Exception:
+        logger.debug("设置 Per-Monitor V2 DPI 感知失败，回退 System DPI aware。", exc_info=True)
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         logger.debug("设置 Vision sidecar DPI 感知失败。", exc_info=True)
+
+
+def _window_dpi_scale(hwnd: int) -> float:
+    try:
+        dpi = int(ctypes.windll.user32.GetDpiForWindow(int(hwnd)))
+        return round(max(1, dpi) / 96.0, 4)
+    except Exception:
+        return 1.0
 
 
 def _find_lol_game_window() -> tuple[int, tuple[int, int, int, int]] | None:
@@ -2357,8 +2378,39 @@ def _vision_trace_history_entry(event_payload: Mapping[str, Any]) -> dict[str, A
         and not blocking_modal
         and not bool(source.get("scoreboard_key_down"))
     )
+    rendered_slots = event_payload.get("slots") if isinstance(event_payload.get("slots"), list) else []
+    raw_slots = event_payload.get("_raw_slots") if isinstance(event_payload.get("_raw_slots"), list) else []
+    slot_summaries: list[dict[str, Any]] = []
+    for index in range(SLOT_COUNT):
+        rendered = rendered_slots[index] if index < len(rendered_slots) and isinstance(rendered_slots[index], Mapping) else {}
+        raw = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
+        candidates = rendered.get("top_candidates")
+        if not isinstance(candidates, list):
+            candidates = raw.get("top_candidates") if isinstance(raw.get("top_candidates"), list) else []
+        slot_summaries.append(
+            {
+                "slot": index,
+                "state": str(rendered.get("state") or "detecting"),
+                "augment_id": str(rendered.get("augment_id") or ""),
+                "name": str(rendered.get("name") or ""),
+                "confidence": rendered.get("confidence"),
+                "rejection_reason": str(
+                    rendered.get("rejection_reason")
+                    or rendered.get("diagnostic")
+                    or raw.get("diagnostic")
+                    or raw.get("reason")
+                    or ""
+                ),
+                "top_candidates": [dict(item) for item in candidates[:3] if isinstance(item, Mapping)],
+            }
+        )
     return {
         "generated_at": time.time(),
+        "session_id": str(source.get("session_id") or ""),
+        "window_hwnd": int(source.get("window_hwnd") or 0),
+        "client_rect": list(source.get("client_rect")) if isinstance(source.get("client_rect"), list) else [],
+        "capture_size": list(capture_size) if isinstance(capture_size, list) else [],
+        "dpi_scale": float(source.get("dpi_scale") or 0.0),
         "active": bool(event_payload.get("active")),
         "visible": visible,
         "selection_type": str(event_payload.get("selection_type") or ""),
@@ -2387,6 +2439,7 @@ def _vision_trace_history_entry(event_payload: Mapping[str, Any]) -> dict[str, A
         "button_center_y_ratio": center_y_ratio,
         "button_box": button_box,
         "slot_signature": list(_slot_signature(event_payload)),
+        "slots": slot_summaries,
     }
 
 

@@ -348,6 +348,26 @@ def test_packaged_smoke_startup_status_uses_runtime_auth_token(tmp_path, monkeyp
     }
 
 
+def test_packaged_smoke_cleanup_retries_transient_windows_locks(tmp_path, monkeypatch):
+    from tools.acceptance import smoke_packaged_startup as smoke
+
+    smoke_root = tmp_path / "smoke"
+    smoke_root.mkdir()
+    attempts: list[int] = []
+
+    def delayed_remove(path: Path, *, ignore_errors: bool) -> None:
+        del ignore_errors
+        attempts.append(1)
+        if len(attempts) >= 3:
+            path.rmdir()
+
+    monkeypatch.setattr(smoke.shutil, "rmtree", delayed_remove)
+    monkeypatch.setattr(smoke.time, "sleep", lambda _seconds: None)
+
+    assert smoke._cleanup_smoke_root(smoke_root, attempts=3)
+    assert len(attempts) == 3
+
+
 def test_packaged_smoke_rejects_web_generation_mismatch():
     from tools.acceptance.smoke_packaged_startup import _business_ready
 

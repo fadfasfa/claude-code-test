@@ -700,18 +700,18 @@ def _verify_failed_generation_fallback(base_url: str, snapshot_root: Path, view:
     ui = SimpleNamespace(
         _snapshot_client=DataSnapshotClient(snapshot_root),
         _snapshot_generation_id="",
-        _df_lock=threading_module.Lock(),
-        df=None,
+        _champions_lock=threading_module.Lock(),
+        champions=[],
         current_candidate_groups={"selected_champion_ids": [sample["hero_id"]], "bench_champion_ids": []},
         _set_status=lambda *_args: None,
         update_ui=lambda groups: rendered.append(dict(groups)),
         _run_on_ui_thread=lambda callback: callback() or True,
     )
     ui.load_data = MethodType(HextechUI.load_data, ui)
-    loaded_df = ui.load_data()
-    if loaded_df.empty:
+    loaded_champions = ui.load_data()
+    if not loaded_champions:
         raise AcceptanceFailure("失败代后桌面 loader 未保留英雄数据")
-    ui.df = loaded_df
+    ui.champions = loaded_champions
     overlay_generation = SharedOverlayDataSource(
         snapshot_client=DataSnapshotClient(snapshot_root)
     ).read_hint_cache().get("snapshot", {}).get("generation_id")
@@ -721,7 +721,7 @@ def _verify_failed_generation_fallback(base_url: str, snapshot_root: Path, view:
         "generation_id": generation_id,
         "reason_code": result.get("reason_code"),
         "web_generation_id": detail.get("generation_id"),
-        "desktop_rows": int(len(ui.df.index)),
+        "desktop_rows": len(ui.champions),
         "overlay_generation_id": overlay_generation,
     }
 
@@ -861,6 +861,67 @@ def _report_path(artifact_dir: Path) -> Path:
     return artifact_dir / "report.json"
 
 
+def verify_real_session_evidence(path: Path, *, expected_generation_id: str) -> dict[str, Any]:
+    """验证真实 LCU、窗口、Vision、推荐与截图属于同一局。
+
+    合成 event/Tk 结果不能调用本函数冒充真实证据；采集器必须显式写
+    ``evidence_kind=real_game_session``。
+    """
+
+    payload = _read_json(path)
+    if payload.get("evidence_kind") != "real_game_session":
+        raise AcceptanceFailure("缺少真实游戏会话证据标记")
+    generation_id = str(payload.get("generation_id") or "")
+    session_id = str(payload.get("session_id") or "")
+    if not generation_id or generation_id != expected_generation_id:
+        raise AcceptanceFailure("真实会话 generation 与已验证快照不一致")
+    if not session_id:
+        raise AcceptanceFailure("真实会话缺少 session_id")
+    required_sections = ("lcu", "window", "vision", "recommendation", "final_state")
+    for section_name in required_sections:
+        section = payload.get(section_name)
+        if not isinstance(section, Mapping):
+            raise AcceptanceFailure(f"真实会话缺少 {section_name} 证据")
+        section_session = str(section.get("session_id") or "")
+        if section_session != session_id:
+            raise AcceptanceFailure(f"真实会话 session 不一致：{section_name}")
+    lcu = payload["lcu"]
+    window = payload["window"]
+    vision = payload["vision"]
+    recommendation = payload["recommendation"]
+    final_state = payload["final_state"]
+    if not str(lcu.get("local_champion_id") or ""):
+        raise AcceptanceFailure("真实 LCU 未取得本地英雄")
+    if (
+        int(window.get("hwnd") or 0) <= 0
+        or not window.get("client_size")
+        or not window.get("capture_size")
+        or float(window.get("dpi_scale") or 0.0) <= 0
+    ):
+        raise AcceptanceFailure("真实游戏窗口证据不完整")
+    if int(vision.get("epoch") or 0) <= 0 or len(vision.get("slots") or []) != 3:
+        raise AcceptanceFailure("真实 Vision epoch 或三槽证据不完整")
+    if str(recommendation.get("generation_id") or "") != generation_id:
+        raise AcceptanceFailure("真实推荐 generation 不一致")
+    if str(final_state.get("generation_id") or "") != generation_id:
+        raise AcceptanceFailure("真实渲染 generation 不一致")
+    if int(final_state.get("vision_epoch") or 0) != int(vision.get("epoch") or 0):
+        raise AcceptanceFailure("真实渲染 Vision epoch 不一致")
+    if not bool(final_state.get("should_show")) or str(final_state.get("presentation_mode") or "") != "content":
+        raise AcceptanceFailure("真实 Overlay 最终未进入可见内容态")
+    screenshot = Path(str(payload.get("screenshot") or ""))
+    if not screenshot.is_absolute():
+        screenshot = path.parent / screenshot
+    if not screenshot.is_file() or screenshot.stat().st_size <= 0:
+        raise AcceptanceFailure("真实 Overlay 非空截图缺失")
+    return {
+        "generation_id": generation_id,
+        "session_id": session_id,
+        "vision_epoch": int(vision["epoch"]),
+        "screenshot": str(screenshot),
+    }
+
+
 def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     artifact_dir = (args.artifact_root / timestamp).resolve()
@@ -926,7 +987,16 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
             context,
             timeout_seconds=args.package_timeout,
         )
-        report["ok"] = True
+        report["component_chain_ok"] = True
+        if args.real_session_evidence is None:
+            if not args.component_only:
+                raise AcceptanceFailure("缺少 --real-session-evidence；合成 Overlay 只能算组件测试")
+        else:
+            report["stages"]["real_session"] = verify_real_session_evidence(
+                args.real_session_evidence.resolve(),
+                expected_generation_id=str(view.status().get("generation_id") or ""),
+            )
+            report["ok"] = True
         report["completed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         _write_json(_report_path(artifact_dir), report)
         return report
@@ -958,6 +1028,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--web-timeout", type=int, default=60)
     parser.add_argument("--build-timeout", type=int, default=1800)
     parser.add_argument("--package-timeout", type=int, default=70)
+    parser.add_argument("--real-session-evidence", type=Path, default=None)
+    parser.add_argument(
+        "--component-only",
+        action="store_true",
+        help="只运行抓取、Web、合成 Tk 和打包组件链；报告 ok 仍保持 false。",
+    )
     return parser
 
 

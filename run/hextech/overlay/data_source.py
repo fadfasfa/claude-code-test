@@ -21,6 +21,8 @@ class OverlayDataSource(Protocol):
 
     def read_context(self) -> dict[str, Any]: ...
 
+    def open_snapshot_view(self) -> Any | None: ...
+
 
 class SharedOverlayDataSource:
     """只读取 DataService 当前完整 generation，不混入旧共享 cache。"""
@@ -59,6 +61,14 @@ class SharedOverlayDataSource:
         from hextech.overlay.context import read_overlay_context
 
         return read_overlay_context()
+
+    def open_snapshot_view(self):
+        """固定打开当前 generation；一次 render tick 内不得切换数据代。"""
+
+        try:
+            return self._snapshot_client.open_view()
+        except Exception:
+            return None
 
 
 def prepare_shared_overlay_data(*, include_private_stats: bool | None = None) -> dict[str, Any]:

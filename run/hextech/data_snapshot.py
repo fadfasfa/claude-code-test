@@ -369,11 +369,71 @@ class DataSnapshotView:
         return result
 
     def get_combo_stats(self, champion_id_or_name: object, augment_id: object) -> dict[str, Any] | None:
-        needle = str(augment_id)
+        identity = self.resolve_augment(augment_id)
+        needle = str(identity.get("canonical_id") or "") if identity else ""
+        if not needle:
+            return None
         return next(
             (item for item in self.get_champion_augments(champion_id_or_name) if str(item.get("id")) == needle),
             None,
         )
+
+    def resolve_augment(self, value: object) -> dict[str, Any] | None:
+        """解析数字统计 ID、中文名或 Vision stable ID。"""
+
+        from hextech.overlay.hints import normalize_augment_id, normalize_augment_name
+
+        identities = self._payloads.get("identities", {})
+        if not isinstance(identities, Mapping):
+            return None
+        raw = str(value or "").strip()
+        aliases = identities.get("augment_aliases", {})
+        canonical_id = ""
+        if isinstance(aliases, Mapping):
+            for candidate in (raw, normalize_augment_id(raw), normalize_augment_name(raw)):
+                resolved = str(aliases.get(candidate) or "").strip()
+                if resolved:
+                    canonical_id = resolved
+                    break
+        catalog = identities.get("catalog_augments", {})
+        catalog_item = None
+        if isinstance(catalog, Mapping):
+            for candidate in (raw, normalize_augment_id(raw), normalize_augment_name(raw)):
+                item = catalog.get(candidate)
+                if isinstance(item, Mapping):
+                    catalog_item = dict(item)
+                    break
+            if catalog_item is None:
+                catalog_item = next(
+                    (
+                        dict(item)
+                        for item in catalog.values()
+                        if isinstance(item, Mapping)
+                        and normalize_augment_name(item.get("name")) == normalize_augment_name(raw)
+                    ),
+                    None,
+                )
+        augments = identities.get("augments", {})
+        if not canonical_id and raw.isdecimal():
+            canonical_id = raw
+        if catalog_item is None and not canonical_id:
+            return None
+        result = catalog_item or {}
+        result["canonical_id"] = canonical_id or str(result.get("canonical_id") or "")
+        result["stats_available"] = bool(result["canonical_id"])
+        if not result.get("name") and isinstance(augments, Mapping):
+            result["name"] = str(augments.get(result["canonical_id"]) or "")
+        return deepcopy(result)
+
+    def get_item(self, item_id: object) -> dict[str, Any] | None:
+        """装备域预留查询；当前 generation 尚未发布装备角色。"""
+
+        return None
+
+    def get_item_recommendations(self, champion_id: object) -> list[dict[str, Any]]:
+        """装备推荐预留查询，未发布时返回稳定空集合。"""
+
+        return []
 
     def get_overlay_hints(self) -> dict[str, Any]:
         return deepcopy(dict(self._payloads["overlay_hints"]))
@@ -458,6 +518,9 @@ class DataSnapshotClient:
 
     def get_combo_stats(self, champion_id_or_name: object, augment_id: object) -> dict[str, Any] | None:
         return self.open_view().get_combo_stats(champion_id_or_name, augment_id)
+
+    def resolve_augment(self, value: object) -> dict[str, Any] | None:
+        return self.open_view().resolve_augment(value)
 
     def get_overlay_hints(self) -> dict[str, Any]:
         return self.open_view().get_overlay_hints()

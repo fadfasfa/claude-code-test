@@ -131,7 +131,7 @@ def test_heal_worker_contract() -> None:
                 side_effect=RuntimeError("mayhem diagnostic failure"),
             ),
         ):
-            result = orchestrator.refresh_backend_data(force=False)
+            result = orchestrator.refresh_backend_data(force=False, rebuild_compat_cache=False)
             assert result.state in {"ready", "degraded", "failed"}
             assert hasattr(result, "correlation_id")
 
@@ -370,7 +370,7 @@ def test_hextech_detail_fetch_prefers_cdn_json_without_browser() -> None:
     assert result["reason"] == ""
 
 def test_hextech_detail_timeout_tail_retry() -> None:
-    """握手瞬断仍重试；详情 timeout 进入 30 分钟暂停并保留旧 CSV。"""
+    """握手瞬断仍重试；单英雄详情 timeout 进入低并发尾部重试。"""
 
     def fake_result(status_code: int | None, payload: Any = None, text: str = "ok", error: str = ""):
         if payload is not None:
@@ -436,20 +436,16 @@ def test_hextech_detail_timeout_tail_retry() -> None:
                 side_effect=lambda champ_id: [f"https://example.test/detail/{champ_id}"],
             ),
             patch.object(hextech_scraper, "extract_champion_stats", return_value=[row] * 150),
-            patch.object(hextech_scraper, "atomic_write_csv", side_effect=AssertionError("timeout 暂停不得覆盖 CSV")),
-            patch.object(hextech_scraper, "cleanup_old_csvs", side_effect=AssertionError("timeout 暂停不得清理 CSV")),
-            patch.object(hextech_scraper, "rebuild_runtime_caches", side_effect=AssertionError("timeout 暂停不得重建缓存")),
+            patch.object(hextech_scraper, "cleanup_old_csvs"),
             patch.object(hextech_scraper.time, "sleep"),
         ):
             assert hextech_scraper.main_scraper() is True
 
         status = json.loads(status_file.read_text(encoding="utf-8"))
-        assert fetcher.calls == 5
-        assert status["last_result"] == "fallback"
-        assert status["reason"] == "timeout"
-        blocked_until = datetime.fromisoformat(status["blocked_until"])
-        assert 29 * 60 <= blocked_until.timestamp() - time.time() <= 31 * 60
-        assert not output_csv.exists()
+        assert fetcher.calls == 6
+        assert status["last_result"] == "success"
+        assert status["reason"] == ""
+        assert output_csv.exists()
 
 def test_scrapling_tls_error_contract() -> None:
     """curl TLS 错误必须被分类为 tls_error，并带上下文向上抛出。"""

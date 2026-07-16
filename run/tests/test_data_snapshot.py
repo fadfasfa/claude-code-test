@@ -51,6 +51,44 @@ def test_publish_switches_complete_generation_and_records_manifest(tmp_path: Pat
     }
 
 
+def test_view_resolves_vision_augment_id_and_preserves_catalog_only_identity(tmp_path: Path) -> None:
+    payload = _payload(marker="one")
+    payload["identities"] = {
+        "champions": {"1": "hero-one"},
+        "augments": {"9": "大地苏醒"},
+        "augment_aliases": {"aram_earthwake": "9", "大地苏醒": "9"},
+        "catalog_augments": {
+            "aram_earthwake": {
+                "vision_id": "aram_earthwake",
+                "name": "大地苏醒",
+                "tier": "棱彩",
+                "canonical_id": "9",
+                "stats_available": True,
+            },
+            "weapon_nuke": {
+                "vision_id": "weapon_nuke",
+                "name": "歼灭者",
+                "tier": "白银",
+                "canonical_id": "",
+                "stats_available": False,
+            },
+        },
+    }
+    DataSnapshotPublisher(tmp_path).publish(payload, private_stats_enabled=True)
+    view = DataSnapshotClient(tmp_path).open_view()
+
+    assert view.resolve_augment("ARAM_Earthwake")["canonical_id"] == "9"
+    assert view.get_combo_stats(1, "aram_earthwake")["win_rate"] == pytest.approx(0.51)
+    assert view.resolve_augment("weapon_nuke") == {
+        "vision_id": "weapon_nuke",
+        "name": "歼灭者",
+        "tier": "白银",
+        "canonical_id": "",
+        "stats_available": False,
+    }
+    assert view.get_combo_stats(1, "weapon_nuke") is None
+
+
 def test_failed_publish_keeps_current_generation(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
     first = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
@@ -137,8 +175,8 @@ def test_desktop_generation_watcher_loads_first_published_snapshot(tmp_path: Pat
         _snapshot_client=DataSnapshotClient(tmp_path),
         _snapshot_generation_id="",
         stop_event=StopAfterOnePass(),
-        _df_lock=threading.Lock(),
-        df=None,
+        _champions_lock=threading.Lock(),
+        champions=[],
         current_candidate_groups={"selected_champion_ids": ["1"], "bench_champion_ids": []},
         _set_status=lambda *_args: None,
         update_ui=lambda groups: rendered.append(dict(groups)),
@@ -148,7 +186,7 @@ def test_desktop_generation_watcher_loads_first_published_snapshot(tmp_path: Pat
 
     HextechUI._snapshot_watch_loop(ui)
 
-    assert list(ui.df["id"]) == [1]
+    assert [champion["id"] for champion in ui.champions] == [1]
     assert rendered == [{"selected_champion_ids": ["1"], "bench_champion_ids": []}]
 
 
@@ -328,6 +366,21 @@ def test_overlay_unavailable_state_does_not_fall_back_to_legacy_cache(tmp_path: 
 
     assert payload["hints"] == {}
     assert payload["snapshot"]["state"] == "unavailable"
+
+
+def test_overlay_data_source_observes_first_generation_without_restart(tmp_path: Path) -> None:
+    from hextech.overlay.data_source import SharedOverlayDataSource
+
+    client = DataSnapshotClient(tmp_path)
+    source = SharedOverlayDataSource(snapshot_client=client)
+    assert source.read_hint_cache()["snapshot"]["state"] == "unavailable"
+
+    manifest = DataSnapshotPublisher(tmp_path).publish(_payload(marker="hot"), private_stats_enabled=True)
+    refreshed = source.read_hint_cache()
+
+    assert refreshed["snapshot"]["state"] == "ready"
+    assert refreshed["snapshot"]["generation_id"] == manifest.generation_id
+    assert refreshed["augments"]["9"]["name"] == "augment-hot"
 
 
 def test_web_and_overlay_read_the_same_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

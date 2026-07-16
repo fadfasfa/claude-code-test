@@ -252,21 +252,7 @@ def test_overlay_hint_cache_contract() -> None:
         assert overlay_hint_cache._load_synergy_by_augment_name(damaged_syn) == {}
         assert overlay_hint_cache._load_synergy_by_augment_name(Path(tmp_dir) / "missing.json") == {}
 
-    with (
-        patch.object(precomputed_cache, "rebuild_precomputed_api_cache_from_latest_csv", return_value=None) as rebuild_web,
-        patch.object(
-            overlay_hint_cache,
-            "build_overlay_hint_cache_from_precomputed",
-            side_effect=AssertionError("scraper 不得直接构建 overlay hint cache"),
-        ),
-        patch.object(
-            overlay_hint_cache,
-            "write_overlay_hint_cache",
-            side_effect=AssertionError("scraper 不得直接发布 overlay hint cache"),
-        ),
-    ):
-        hextech_scraper.rebuild_runtime_caches()
-    rebuild_web.assert_called_once_with()
+    assert not hasattr(hextech_scraper, "rebuild_runtime_caches")
 
     module_text = (RUN_DIR / "hextech" / "overlay" / "hints.py").read_text(encoding="utf-8")
     assert "requests" not in module_text
@@ -2041,7 +2027,7 @@ def test_overlay_vision_sidecar_contract() -> None:
     assert stable["source"]["content_ready"] is True
 
     hover_detection = json.loads(json.dumps(missing_button_detection, ensure_ascii=False))
-    hover_detection["source"]["selection_button_present"] = True
+    hover_detection["source"]["selection_button_present"] = False
     hover_detection["source"]["cursor_over_cards"] = True
     hover_detection["source"]["card_residue"] = True
     hover_tracker = SelectionTracker()
@@ -2057,13 +2043,15 @@ def test_overlay_vision_sidecar_contract() -> None:
     clicked_residue_detection = json.loads(json.dumps(missing_button_detection, ensure_ascii=False))
     clicked_residue_detection["source"]["cursor_over_cards"] = True
     clicked_residue_detection["source"]["card_residue"] = True
+    clicked_residue_detection["source"]["selection_confirmed"] = True
     clicked_residue_tracker = SelectionTracker()
     clicked_residue_tracker.update(detection)
     clicked_residue_tracker.update(detection)
     clicked_residue_results = [clicked_residue_tracker.update(clicked_residue_detection) for _index in range(3)]
     assert all(result["source"]["reason"] != "hover_occluded" for result in clicked_residue_results)
-    assert clicked_residue_results[-1]["active"] is False
-    assert clicked_residue_results[-1]["source"]["reason"] == "scene_residue_expired"
+    assert clicked_residue_results[0]["active"] is False
+    assert clicked_residue_results[0]["source"]["reason"] == "selection_completed"
+    assert clicked_residue_results[0]["source"]["slot_states"] == []
 
     residue_tracker = SelectionTracker()
     residue_tracker.update(detection)
@@ -2199,8 +2187,8 @@ def test_overlay_vision_sidecar_contract() -> None:
     weak_reroll_slot["slot"] = 0
     weak_reroll_event["_raw_slots"] = [weak_reroll_slot, {}, {}]
     weak_reroll_pending = weak_reroll_tracker.update(weak_reroll_event)
-    assert weak_reroll_pending["slots"][0]["state"] == "detecting"
-    assert weak_reroll_pending["slots"][0]["augment_id"] == ""
+    assert weak_reroll_pending["slots"][0]["state"] == "ready"
+    assert weak_reroll_pending["slots"][0]["augment_id"] == "augment_a"
     assert "stale_hold:" not in weak_reroll_pending["_acceptance_rules"][0]
 
     conflict_shortlist_slot = json.loads(json.dumps(shortlist_temporal_slot, ensure_ascii=False))
@@ -2215,16 +2203,16 @@ def test_overlay_vision_sidecar_contract() -> None:
     icon_only_shortlist_slot["channels"]["text_narrowed"] = {"margin": 0.0, "top_candidates": []}
     assert candidate_from_slot(icon_only_shortlist_slot) is None
 
-    # 单槽出现一个新的强候选时只撤下该槽，不得替换成未经稳定的新结果。
+    # 单槽新候选达到稳定门槛前保留旧结果，再原子替换。
     reroll = dict(detection)
     reroll_raw_slots = [dict(slot) for slot in detection["_raw_slots"]]
     reroll_raw_slots[0] = dict(reroll_raw_slots[1])
     reroll_raw_slots[0]["slot"] = 0
     reroll["_raw_slots"] = reroll_raw_slots
     reroll_first = tracker.update(reroll)
-    assert reroll_first["active"] is False
-    assert reroll_first["source"]["ready_slots"] == 2
-    assert reroll_first["slots"][0]["state"] == "detecting"
+    assert reroll_first["active"] is True
+    assert reroll_first["source"]["ready_slots"] == 3
+    assert reroll_first["slots"][0]["augment_id"] == "augment_a"
     assert [slot["augment_id"] for slot in reroll_first["slots"][1:]] == ["augment_b", "augment_c"]
     reroll_ready = tracker.update(reroll)
     assert reroll_ready["active"] is True
@@ -2354,7 +2342,7 @@ def test_overlay_vision_sidecar_contract() -> None:
         background_event_path = Path(tmp_dir) / "background-window.json"
         with (
             patch.object(overlay_vision_sidecar, "load_default_template_index", return_value=template_index),
-            patch.object(overlay_vision_sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 100, 100))),
+            patch.object(overlay_vision_sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 2560, 1600))),
             patch.object(overlay_vision_sidecar, "_is_lol_game_foreground", return_value=False),
             patch.object(overlay_vision_sidecar.time, "sleep", side_effect=stop_after_first_idle),
         ):
@@ -2379,7 +2367,7 @@ def test_overlay_vision_sidecar_contract() -> None:
 
         with (
             patch.object(overlay_vision_sidecar, "load_default_template_index", return_value=template_index),
-            patch.object(overlay_vision_sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 100, 100))),
+            patch.object(overlay_vision_sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 2560, 1600))),
             patch.object(overlay_vision_sidecar, "_is_lol_game_foreground", return_value=True),
             patch.object(overlay_vision_sidecar, "is_scoreboard_key_down", side_effect=lambda: next(tab_states)),
             patch.object(overlay_vision_sidecar, "_capture_lol_game_rect", return_value=frame),
@@ -2414,7 +2402,7 @@ def test_overlay_vision_sidecar_contract() -> None:
 
         with (
             patch.object(overlay_vision_sidecar, "load_default_template_index", return_value=template_index),
-            patch.object(overlay_vision_sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 100, 100))),
+            patch.object(overlay_vision_sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 2560, 1600))),
             patch.object(overlay_vision_sidecar, "_is_lol_game_foreground", side_effect=lambda _hwnd: next(focus_states)),
             patch.object(overlay_vision_sidecar, "is_scoreboard_key_down", return_value=False),
             patch.object(overlay_vision_sidecar, "_capture_lol_game_rect", return_value=frame),
@@ -2471,6 +2459,23 @@ def test_overlay_vision_sidecar_contract() -> None:
         assert all("body_shard_scores" in entry for entry in history_payload["entries"])
         assert all("cursor_over_cards" in entry for entry in history_payload["entries"])
         assert all("hover_occluded" in entry for entry in history_payload["entries"])
+        assert all("session_id" in entry for entry in history_payload["entries"])
+        assert all("window_hwnd" in entry for entry in history_payload["entries"])
+        assert all("client_rect" in entry for entry in history_payload["entries"])
+        assert all("capture_size" in entry for entry in history_payload["entries"])
+        assert all("dpi_scale" in entry for entry in history_payload["entries"])
+        real_window_entries = [entry for entry in history_payload["entries"] if entry.get("window_hwnd") == 123]
+        assert real_window_entries
+        assert all(entry["session_id"] for entry in real_window_entries)
+        assert all(entry["client_rect"] == [0, 0, 2560, 1600] for entry in real_window_entries)
+        assert all(entry["capture_size"] == [2560, 1600] for entry in real_window_entries if entry["active"])
+        assert all(entry["dpi_scale"] > 0 for entry in real_window_entries)
+        assert all(len(entry["slots"]) == 3 for entry in history_payload["entries"])
+        assert all(
+            set(slot) >= {"slot", "state", "augment_id", "name", "confidence", "rejection_reason", "top_candidates"}
+            for entry in history_payload["entries"]
+            for slot in entry["slots"]
+        )
 
         capped_history_path = Path(tmp_dir) / "capped-history.json"
         capped_history_path.write_text(
@@ -3121,9 +3126,9 @@ print(json.dumps(blocked))
         hint_cache=hint_cache(),
         context={"ok": True, "champion_id": "999", "champion_name": "不存在"},
     )
-    assert {row["stats_text"] for row in missing_champion_model["stats"]} == {"暂无该英雄统计"}
-    assert {row["status_code"] for row in missing_champion_model["stats"]} == {"NO_STATS"}
-    assert {row["status_text"] for row in missing_champion_model["stats"]} == {"暂无统计"}
+    assert {row["stats_text"] for row in missing_champion_model["stats"]} == {"源站暂无该组合统计"}
+    assert {row["status_code"] for row in missing_champion_model["stats"]} == {"SOURCE_STATS_MISSING"}
+    assert {row["status_text"] for row in missing_champion_model["stats"]} == {"源站暂无统计"}
     assert [row["slot"] for row in ready_model["synergies"]] == [0, 1, 2]
     ranked_cache = hint_cache()
     ranked_cache["hints"]["a0"]["synergies"] = [
@@ -3176,8 +3181,8 @@ print(json.dumps(blocked))
     assert {row["status_code"] for row in context_expired_model["stats"]} == {"CONTEXT_EXPIRED"}
     assert {row["status_text"] for row in context_expired_model["stats"]} == {"等待当前英雄"}
     missing_model = overlay_renderer.build_render_model(snapshot, hint_cache=hint_cache(stats=False), context=context)
-    assert {row["stats_text"] for row in missing_model["stats"]} == {"暂无该英雄统计"}
-    assert {row["status_code"] for row in missing_model["stats"]} == {"NO_STATS"}
+    assert {row["stats_text"] for row in missing_model["stats"]} == {"源站暂无该组合统计"}
+    assert {row["status_code"] for row in missing_model["stats"]} == {"SOURCE_STATS_MISSING"}
     partial_stats_cache = hint_cache()
     partial_stats_cache["hints"]["a0"]["stats_by_champion_id"]["266"].pop("pickrate")
     partial_stats_model = overlay_renderer.build_render_model(
@@ -3187,7 +3192,7 @@ print(json.dumps(blocked))
     )
     assert partial_stats_model["stats"][0]["stats_text"] == "胜率 55.0%"
     assert partial_stats_model["stats"][0]["status_code"] == "NO_STATS"
-    assert partial_stats_model["stats"][0]["status_text"] == "暂无统计"
+    assert partial_stats_model["stats"][0]["status_text"] == "统计不完整"
     partial_snapshot = dict(snapshot)
     partial_snapshot["slots"] = [slots[0], {"slot": 1, "state": "detecting"}]
     partial_model = overlay_renderer.build_render_model(partial_snapshot, hint_cache=hint_cache(), context=context)
@@ -3281,7 +3286,7 @@ print(json.dumps(blocked))
         (partial_model["stats"][1], "识别中…"),
         (privacy_model["stats"][0], "统计关闭"),
         (context_missing_model["stats"][0], "等待当前英雄"),
-        (missing_model["stats"][0], "暂无统计"),
+        (missing_model["stats"][0], "源站暂无统计"),
     ):
         status_canvas = RecordingCanvas()
         overlay_renderer._draw_stat_panel(status_canvas, (100, 100, 340, 160), row)
@@ -3398,10 +3403,10 @@ print(json.dumps(blocked))
         args.update(overrides)
         return overlay_host.decide_visibility(**args)
 
-    # 显隐矩阵：host 负责对局/窗口 gate，选择界面 inactive 时正常模式必须收窗。
+    # 显隐矩阵：游戏存在时保持等待面，只有明确主机 gate 或遮挡策略才收窗。
     assert decide(event_visible=False, content_ready=False) == (True, "visible_detecting")
     assert decide() == (True, "visible_ready")
-    assert decide(selection_window_active=False) == (False, "selection_window_inactive")
+    assert decide(selection_window_active=False) == (True, "waiting_selection")
     assert decide(selection_window_active=None) == (True, "visible_ready")
     assert decide(content_ready=False, ready_slots=1) == (True, "visible_partial")
     assert decide(content_ready=False, ready_slots=2) == (True, "visible_partial")
@@ -3413,7 +3418,7 @@ print(json.dumps(blocked))
         {"game_renderable": False},
     ):
         assert decide(**overrides)[0] is False
-    assert decide(event_error="event_expired", event_visible=False, stale_event_hold=True) == (False, "event_expired")
+    assert decide(event_error="event_expired", event_visible=False, stale_event_hold=True) == (True, "waiting_selection")
     assert decide(blocking_modal=True) == (False, "blocking_modal_present")
     assert decide(scoreboard_key_down=True) == (False, "scoreboard_key_down")
     assert decide(event_fresh_after_tab=False) == (False, "event_stale_after_tab")
@@ -3606,10 +3611,10 @@ print(json.dumps(blocked))
             stale_visibility,
             stale_snapshot,
             apply_window=False,
-        ) is False
-    assert stale_visibility["visibility_reason"] == "event_expired"
+        ) is True
+    assert stale_visibility["visibility_reason"] == "waiting_selection"
     assert stale_visibility["event_stale_hold_active"] is False
-    assert stale_visibility["render_full_overlay"] is False
+    assert stale_visibility["render_full_overlay"] is True
 
     with (
         TemporaryDirectory() as tmp_dir,

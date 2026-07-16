@@ -95,6 +95,12 @@ def test_parse_accepts_only_positive_integer_champion_ids() -> None:
     assert normalized.local_champion_id == "266"
     assert normalized.teammate_champion_ids == ("245",)
 
+    integer_float = parse_client_context(
+        {"localPlayerCellId": 1, "myTeam": [{"cellId": 1, "championId": 24.0}]},
+        now=10,
+    )
+    assert integer_float.local_champion_id == "24"
+
 
 def test_invalid_payload_uses_provider_bounded_unavailable_window() -> None:
     provider = ClientContextProvider(ttl_seconds=3)
@@ -132,6 +138,22 @@ def test_not_in_champ_select_clears_roles() -> None:
     assert context.phase == "not_in_champ_select"
     assert context.connection_state == "connected"
     assert context.selected_champion_ids == ()
+
+
+def test_provider_session_is_stable_during_disconnect_and_rotates_for_next_champ_select() -> None:
+    provider = ClientContextProvider(ttl_seconds=3)
+    payload = {"localPlayerCellId": 1, "myTeam": [{"cellId": 1, "championId": 266}]}
+
+    first = provider.update(payload, now=10)
+    degraded = provider.unavailable("request_failed", now=12)
+    between_games = provider.not_in_champ_select(now=13)
+    second = provider.update(payload, now=14)
+
+    assert first.session_id
+    assert degraded.session_id == first.session_id
+    assert between_games.session_id == first.session_id
+    assert second.session_id
+    assert second.session_id != first.session_id
 
 
 def test_web_projection_clears_teammates_after_ttl_and_recovers_connection() -> None:
@@ -202,6 +224,7 @@ def test_overlay_lcu_writer_preserves_roles_with_mixed_cell_id_types(tmp_path: P
     assert context["teammate_champion_ids"] == ["245"]
     assert context["bench_champion_ids"] == ["86"]
     assert context["connection_state"] == "connected"
+    assert context["session_id"]
 
 
 def test_overlay_provider_ttl_is_not_extended_by_recent_context_file(tmp_path: Path, monkeypatch) -> None:

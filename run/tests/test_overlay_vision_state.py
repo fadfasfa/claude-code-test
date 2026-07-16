@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -112,7 +115,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(failed["slots"][2]["candidate_identity"], "augment_x")
         self.assertGreaterEqual(failed["slots"][2]["elapsed_seconds"], 3.0)
 
-    def test_weak_reroll_hides_old_slot_uses_one_timeout_and_recovers(self):
+    def test_weak_reroll_keeps_old_slot_until_replacement_is_stable(self):
         from hextech.overlay.vision import state
 
         tracker = state.SelectionTracker(scene_enter_frames=1)
@@ -142,12 +145,10 @@ class OverlayVisionStateTests(unittest.TestCase):
             recovered = tracker.update(recovered_event)
 
         self.assertEqual(stable["slots"][2]["augment_id"], "augment_c")
-        self.assertEqual(weak_started["slots"][2]["state"], "detecting")
-        self.assertEqual(weak_started["slots"][2]["augment_id"], "")
-        self.assertEqual(wobbling["slots"][2]["state"], "detecting")
-        self.assertEqual(failed["slots"][2]["state"], "failed")
-        self.assertGreaterEqual(failed["slots"][2]["elapsed_seconds"], 3.0)
-        self.assertEqual(recovering["slots"][2]["state"], "failed")
+        self.assertEqual(weak_started["slots"][2]["augment_id"], "augment_c")
+        self.assertEqual(wobbling["slots"][2]["augment_id"], "augment_c")
+        self.assertEqual(failed["slots"][2]["augment_id"], "augment_c")
+        self.assertEqual(recovering["slots"][2]["augment_id"], "augment_c")
         self.assertEqual(recovered["slots"][2]["state"], "ready")
         self.assertEqual(recovered["slots"][2]["augment_id"], "augment_z")
         self.assertEqual([slot["state"] for slot in recovered["slots"][:2]], ["ready", "ready"])
@@ -259,7 +260,120 @@ class OverlayVisionStateTests(unittest.TestCase):
             self.assertFalse(invalidated.stats["cache_hit"])
             self.assertEqual(load_after_change.call_count, 1)
 
-    def test_hover_occlusion_keeps_stable_slots_until_card_residue_clears(self):
+    def test_template_hint_signature_ignores_stats_generation_fields(self):
+        from hextech.overlay.vision import template_runtime
+
+        first = {
+            "schema_version": 1,
+            "generated_at": 1,
+            "snapshot": {"generation_id": "g1"},
+            "hints": {"1027": {"augment_id": "1027", "name": "大地苏醒", "winrate": 0.51}},
+            "name_index": {"aram_earthwake": "1027"},
+        }
+        second = {
+            "schema_version": 1,
+            "generated_at": 2,
+            "snapshot": {"generation_id": "g2"},
+            "hints": {"1027": {"augment_id": "1027", "name": "大地苏醒", "winrate": 0.62}},
+            "name_index": {"aram_earthwake": "1027"},
+        }
+
+        self.assertEqual(
+            template_runtime.template_runtime_hint_signature(first),
+            template_runtime.template_runtime_hint_signature(second),
+        )
+
+    def test_concurrent_template_runtime_miss_builds_once(self):
+        from hextech.overlay.vision import sidecar, template_runtime
+
+        entry = sidecar.TemplateEntry(
+            augment_id="a0",
+            name="强化 1",
+            tier="Gold",
+            summary="test",
+            fingerprint=(0.0, 1.0),
+            icon_fingerprints=((0.0, 1.0),),
+        )
+        build_count = 0
+        build_guard = threading.Lock()
+
+        def slow_load(*_args, **_kwargs):
+            nonlocal build_count
+            with build_guard:
+                build_count += 1
+            time.sleep(0.1)
+            return [entry]
+
+        def fake_rank(template_index):
+            empty = template_runtime.np.empty((0, 0), dtype=template_runtime.np.float32)
+            return template_runtime._RankMatrices(template_index, (), empty, (), empty, (), empty)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_file = Path(tmp) / "overlay_vision" / "template_runtime_cache.v2.npz"
+            signature = {"schema_version": 2, "asset_digest": "a", "version_digest": "v"}
+            with (
+                mock.patch.object(template_runtime, "load_default_template_index", side_effect=slow_load),
+                mock.patch.object(template_runtime, "_rank_matrices", side_effect=fake_rank),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                futures = [
+                    executor.submit(
+                        template_runtime.load_or_build_default_template_runtime,
+                        hint_cache={},
+                        cache_file=cache_file,
+                        resource_signature=signature,
+                    )
+                    for _ in range(2)
+                ]
+                runtimes = [future.result(timeout=5) for future in futures]
+
+        self.assertEqual(build_count, 1)
+        self.assertEqual(sum(not runtime.stats["cache_hit"] for runtime in runtimes), 1)
+
+    def test_runner_uses_lcu_session_id_for_vision_event(self):
+        import json
+
+        from PIL import Image
+
+        from hextech.overlay.vision import runner, sidecar
+
+        class StopLoop(RuntimeError):
+            pass
+
+        class FakeSource:
+            def read_hint_cache(self):
+                return {"schema_version": 1, "hints": {}, "name_index": {}}
+
+            def read_context(self):
+                return {"session_id": "lcu-session-1"}
+
+        runtime = SimpleNamespace(template_index=[object()], stats={"cache_hit": True})
+        frame = Image.new("RGB", (1920, 1080), "black")
+        with tempfile.TemporaryDirectory() as tmp:
+            event_path = Path(tmp) / "event.json"
+            with (
+                mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
+                mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
+                mock.patch.object(sidecar, "_set_dpi_awareness"),
+                mock.patch.object(sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 1920, 1080))),
+                mock.patch.object(sidecar, "_is_lol_game_foreground", return_value=True),
+                mock.patch.object(sidecar, "is_scoreboard_key_down", return_value=False),
+                mock.patch.object(sidecar, "_capture_lol_game_rect", return_value=frame),
+                mock.patch.object(sidecar, "detect_overlay_choices", return_value=_selection_event()),
+                mock.patch.object(sidecar, "_window_dpi_scale", return_value=1.25),
+                mock.patch.object(sidecar, "_cursor_over_card_panels", return_value=False),
+                mock.patch.object(runner.time, "sleep", side_effect=StopLoop),
+            ):
+                with self.assertRaises(StopLoop):
+                    runner.run_loop(write_event=True, event_path=event_path, required_frames=1)
+
+            payload = json.loads(event_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["source"]["session_id"], "lcu-session-1")
+            self.assertEqual(payload["source"]["window_hwnd"], 123)
+            self.assertEqual(payload["source"]["capture_size"], [1920, 1080])
+            self.assertEqual(payload["source"]["dpi_scale"], 1.25)
+
+    def test_hover_occlusion_keeps_stable_slots_until_cursor_leaves(self):
         from hextech.overlay.vision.state import SelectionTracker
 
         tracker = SelectionTracker()
@@ -272,9 +386,9 @@ class OverlayVisionStateTests(unittest.TestCase):
         hover_event["source"].update(
             {
                 "scene_present": False,
-                "selection_button_present": True,
+                "selection_button_present": False,
                 "cursor_over_cards": True,
-                "card_residue": True,
+                "card_residue": False,
             }
         )
         hover_event["_raw_slots"] = []
@@ -286,15 +400,17 @@ class OverlayVisionStateTests(unittest.TestCase):
             self.assertEqual([slot["augment_id"] for slot in result["slots"]], stable_ids)
 
         clear_event = dict(hover_event)
-        clear_event["source"] = dict(hover_event["source"], card_residue=False, name_residue=[False, False, False])
+        clear_event["source"] = dict(
+            hover_event["source"], cursor_over_cards=False, card_residue=False, name_residue=[False, False, False]
+        )
         tracker.update(clear_event)
         exited = tracker.update(clear_event)
 
         self.assertFalse(exited["active"])
         self.assertEqual(exited["source"]["scene_state"], "absent")
 
-    def test_hover_occlusion_expires_after_max_hold_frames(self):
-        from hextech.overlay.vision.state import HOVER_OCCLUDED_MAX_HOLD_FRAMES, SelectionTracker
+    def test_hover_occlusion_has_finite_hold_when_cursor_never_leaves(self):
+        from hextech.overlay.vision.state import HOVER_HOLD_FRAMES, SelectionTracker
 
         tracker = SelectionTracker()
         tracker.update(_selection_event())
@@ -311,7 +427,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         )
         hover_event["_raw_slots"] = []
 
-        for _ in range(HOVER_OCCLUDED_MAX_HOLD_FRAMES):
+        for _ in range(HOVER_HOLD_FRAMES):
             held = tracker.update(hover_event)
             self.assertTrue(held["active"])
             self.assertEqual(held["source"]["reason"], "hover_occluded")
@@ -319,7 +435,9 @@ class OverlayVisionStateTests(unittest.TestCase):
         expired = tracker.update(hover_event)
 
         self.assertFalse(expired["active"])
-        self.assertEqual(expired["source"]["reason"], "hover_occluded_expired")
+        self.assertEqual(expired["source"]["scene_state"], "absent")
+        self.assertEqual(expired["source"]["reason"], "selection_completed")
+        self.assertEqual(expired["source"]["slot_states"], [])
 
     def test_post_selection_cursor_residue_exits_without_long_hover_hold(self):
         from hextech.overlay.vision.state import RESIDUE_HOLD_FRAMES, SelectionTracker
@@ -335,6 +453,7 @@ class OverlayVisionStateTests(unittest.TestCase):
                 "selection_button_present": False,
                 "cursor_over_cards": True,
                 "card_residue": True,
+                "selection_confirmed": True,
                 "name_residue": [True, True, False],
             }
         )
@@ -343,8 +462,28 @@ class OverlayVisionStateTests(unittest.TestCase):
         results = [tracker.update(clicked_event) for _ in range(RESIDUE_HOLD_FRAMES + 1)]
 
         self.assertTrue(all(result["source"]["reason"] != "hover_occluded" for result in results))
-        self.assertFalse(results[-1]["active"])
-        self.assertEqual(results[-1]["source"]["reason"], "scene_residue_expired")
+        self.assertFalse(results[0]["active"])
+        self.assertEqual(results[0]["source"]["reason"], "selection_completed")
+
+    def test_click_arms_selection_completion_and_next_epoch_recovers(self):
+        from hextech.overlay.vision.state import SelectionTracker
+
+        tracker = SelectionTracker()
+        tracker.update(_selection_event())
+        clicked = _selection_event()
+        clicked["source"].update({"selection_click": True, "cursor_over_cards": True})
+        tracker.update(clicked)
+
+        disappeared = _selection_event()
+        disappeared["source"].update({"scene_present": False, "selection_window_active": False, "cursor_over_cards": True})
+        disappeared["_raw_slots"] = []
+        completed = tracker.update(disappeared)
+        self.assertEqual(completed["source"]["reason"], "selection_completed")
+        self.assertNotIn("detecting", completed["source"]["slot_states"])
+
+        tracker.update(_selection_event())
+        recovered = tracker.update(_selection_event())
+        self.assertEqual(recovered["source"]["ready_slots"], 3)
 
     def test_non_hover_residue_still_expires(self):
         from hextech.overlay.vision.state import SelectionTracker

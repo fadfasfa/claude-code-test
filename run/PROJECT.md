@@ -17,14 +17,20 @@
 | Web 启动 | `web_server.py` -> `hextech/display/web/app.py` |
 | Runtime Supervisor | `hextech/runtime_supervisor.py` |
 | DataService / generation | `hextech/data_service.py`、`hextech/data_snapshot.py` |
-| 客户端上下文 | `hextech/client_context.py` |
+| 稳定领域契约 | `hextech/contracts/` |
+| 数据查询端口 | `hextech/data_core/`、`hextech/data_snapshot.py` |
+| 客户端上下文 | `hextech/game_context/`、`hextech/client_context.py`（迁移兼容） |
+| 推荐与会话协调 | `hextech/recommendation/`、`hextech/session/` |
+| 外部协议适配 | `hextech/adapters/` |
+| Vision observation | `hextech/vision_engine/`、`hextech/overlay/vision/` |
 | Overlay 生命周期 | `hextech/overlay/lifecycle.py` |
 | Vision | `hextech/overlay/vision/` |
 | 后台刷新 | `hextech/core/refresh.py` |
 | 打包 | `.\.venv\Scripts\python.exe build.py` |
 | 自动化 | `.\.venv\Scripts\python.exe -m pytest -q` |
 | Overlay gate | `.\.venv\Scripts\python.exe tools/dev_checks.py --overlay-only --deep` |
-| 真实总验收 | `.\.venv\Scripts\python.exe tools/acceptance/verify_data_pipeline.py` |
+| 组件数据链 | `.\.venv\Scripts\python.exe tools/acceptance/verify_data_pipeline.py --component-only` |
+| 真实总验收 | `.\.venv\Scripts\python.exe tools/acceptance/verify_data_pipeline.py --real-session-evidence <session.json>` |
 
 ## 稳定边界
 
@@ -34,4 +40,6 @@
 - `data/runtime/**`、日志、cache、profile、lock、debug 和抓取 raw 不进入发布资源。
 - 最终包只携带通过 manifest 校验的完整 generation seed，不携带抓取 raw 或普通运行态缓存。
 - 当前正式 Overlay 是 Python/Tk/Vision；Overwolf 不在生产链路。
+- 领域 ID 只能通过 `hextech.contracts.identifiers` 规范化；UI 不得自行解释 ID。
+- 合成事件和 Tk 截图只算组件测试；缺少真实五联会话证据时 acceptance `ok` 必须为 `false`。
 - 改路径、启动预算或进程所有权时，必须同步代码、测试和 `docs/system-design.md`。

@@ -17,7 +17,9 @@ from hextech.data_service import (
     DataServiceApplication,
     DataServiceCore,
     DataServiceInstanceLock,
+    bootstrap_snapshot,
     build_snapshot_from_runtime,
+    _build_augment_identity_payload,
 )
 from hextech.data_snapshot import DataSnapshotClient, DataSnapshotPublisher
 
@@ -32,8 +34,41 @@ def _build_payload(private_stats_enabled: bool) -> dict[str, object]:
             "source": {"private_policy_stats_enabled": private_stats_enabled},
             "augments": {"augment-1": {"name": "augment"}},
         },
-        "identities": {"champions": {"1": "hero"}, "augments": {"augment-1": "augment"}},
+        "identities": {
+            "schema_version": 2,
+            "champions": {"1": "hero"},
+            "augments": {"augment-1": "augment"},
+            "augment_aliases": {},
+            "catalog_augments": {},
+        },
     }
+
+
+def test_augment_identities_map_vision_ids_without_inventing_source_stats() -> None:
+    overlay_hints = {
+        "hints": {
+            "1027": {"name": "大地苏醒"},
+            "1421": {"name": "舞会女王"},
+            "2006": {"name": "飞身踢"},
+            "1018": {"name": "巨像的勇气"},
+        }
+    }
+    catalog = [
+        {"name": "大地苏醒", "tier": "棱彩", "augment_name_id": "ARAM_Earthwake", "cdragon_id": 1027},
+        {"name": "舞会女王", "tier": "棱彩", "augment_name_id": "PromQueen", "cdragon_id": 1421},
+        {"name": "飞身踢", "tier": "棱彩", "augment_name_id": "ARAM_Dropkick", "cdragon_id": 2006},
+        {"name": "巨像的勇气", "tier": "棱彩", "augment_name_id": "ARAM_CourageoftheColossus", "cdragon_id": 1018},
+        {"name": "歼灭者", "tier": "白银", "augment_name_id": "Weapon_Nuke", "cdragon_id": 33220},
+    ]
+
+    identities = _build_augment_identity_payload(overlay_hints, catalog)
+
+    assert identities["augment_aliases"]["aram_earthwake"] == "1027"
+    assert identities["augment_aliases"]["promqueen"] == "1421"
+    assert identities["augment_aliases"]["aram_dropkick"] == "2006"
+    assert identities["augment_aliases"]["aram_courageofthecolossus"] == "1018"
+    assert identities["catalog_augments"]["weapon_nuke"]["canonical_id"] == ""
+    assert identities["catalog_augments"]["weapon_nuke"]["stats_available"] is False
 
 
 def test_refresh_and_policy_actions_are_serialized(tmp_path: Path) -> None:
@@ -65,6 +100,22 @@ def test_refresh_and_policy_actions_are_serialized(tmp_path: Path) -> None:
     assert client.get_overlay_hints()["source"]["private_policy_stats_enabled"] is True
 
 
+def test_private_policy_generation_updates_public_startup_status(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path / "runtime" / "snapshots")
+    service = DataServiceCore(
+        publisher=publisher,
+        builder=lambda private: DataBuildResult(_build_payload(private)),
+        private_stats_enabled=True,
+    )
+
+    result = service.set_private_stats(False)
+    status = json.loads((tmp_path / "runtime" / "state" / "startup_status.json").read_text(encoding="utf-8"))
+
+    assert result["state"] == "ready"
+    assert status["data_snapshot"]["generation_id"] == result["generation_id"]
+    assert status["data_snapshot"]["private_stats_enabled"] is False
+
+
 def test_failed_refresh_preserves_last_generation(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
     service = DataServiceCore(
@@ -81,6 +132,97 @@ def test_failed_refresh_preserves_last_generation(tmp_path: Path) -> None:
     assert failed["state"] == "degraded"
     assert failed["reason_code"] == "refresh_failed_last_good_preserved"
     assert DataSnapshotClient(tmp_path).status()["generation_id"] == first["generation_id"]
+
+
+def test_bootstrap_reuses_healthy_runtime_generation(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    current = publisher.publish(_build_payload(False), private_stats_enabled=False)
+
+    result = bootstrap_snapshot(
+        publisher,
+        False,
+        builder=lambda _private: pytest.fail("healthy current must not be rebuilt"),
+        seed_preparer=lambda: pytest.fail("healthy current must not be seeded"),
+    )
+
+    assert result == {
+        "state": "ready",
+        "generation_id": current.generation_id,
+        "source": "runtime_current",
+    }
+
+
+def test_bootstrap_upgrades_legacy_identity_generation_without_remote_refresh(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    legacy = _build_payload(False)
+    legacy["identities"] = {"champions": {"1": "hero"}, "augments": {"augment-1": "augment"}}
+    previous = publisher.publish(legacy, private_stats_enabled=False)
+
+    result = bootstrap_snapshot(
+        publisher,
+        False,
+        builder=lambda private: DataBuildResult(_build_payload(private)),
+        seed_preparer=lambda: True,
+    )
+
+    assert result["state"] == "ready"
+    assert result["reason_code"] == "identity_schema_upgraded"
+    assert result["generation_id"] != previous.generation_id
+    assert DataSnapshotClient(tmp_path).get_identity_indexes()["schema_version"] == 2
+
+
+def test_bootstrap_reports_degraded_when_legacy_identity_upgrade_fails(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    legacy = _build_payload(False)
+    legacy["identities"] = {"champions": {"1": "hero"}, "augments": {"augment-1": "augment"}}
+    previous = publisher.publish(legacy, private_stats_enabled=False)
+
+    result = bootstrap_snapshot(
+        publisher,
+        False,
+        builder=lambda _private: (_ for _ in ()).throw(RuntimeError("local build failed")),
+        seed_preparer=lambda: False,
+    )
+
+    assert result == {
+        "state": "degraded",
+        "generation_id": previous.generation_id,
+        "source": "last_good_fallback",
+        "reason_code": "identity_schema_upgrade_failed",
+        "error_type": "RuntimeError",
+    }
+
+
+def test_bootstrap_builds_generation_from_startup_seed(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    prepared: list[bool] = []
+
+    result = bootstrap_snapshot(
+        publisher,
+        True,
+        builder=lambda private: DataBuildResult(_build_payload(private)),
+        seed_preparer=lambda: prepared.append(True) or True,
+    )
+
+    assert prepared == [True]
+    assert result["state"] == "ready"
+    assert result["source"] == "startup_data_built"
+    assert DataSnapshotClient(tmp_path).status()["generation_id"] == result["generation_id"]
+
+
+def test_bootstrap_failure_never_publishes_partial_generation(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+
+    result = bootstrap_snapshot(
+        publisher,
+        False,
+        builder=lambda _private: (_ for _ in ()).throw(ValueError("incomplete seed")),
+        seed_preparer=lambda: True,
+    )
+
+    assert result["state"] == "failed"
+    assert result["reason_code"] == "bootstrap_failed_no_snapshot"
+    assert DataSnapshotClient(tmp_path).status()["state"] == "unavailable"
 
 
 def test_service_publishes_source_summary(tmp_path: Path) -> None:
@@ -226,6 +368,24 @@ def test_data_service_instance_lock_is_exclusive(tmp_path: Path) -> None:
         first.release()
     assert second.acquire() is True
     second.release()
+
+
+def test_data_service_refresh_skips_legacy_compat_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    import hextech.core.refresh as refresh
+    import hextech.data_service as data_service
+
+    calls: list[dict[str, object]] = []
+
+    def fake_refresh_backend_data(**kwargs):
+        calls.append(kwargs)
+        return type("RefreshResult", (), {"state": "ready", "reason_code": ""})()
+
+    expected = object()
+    monkeypatch.setattr(refresh, "refresh_backend_data", fake_refresh_backend_data)
+    monkeypatch.setattr(data_service, "build_snapshot_from_runtime", lambda _enabled: expected)
+
+    assert data_service._refresh_and_build(True, force_refresh=True) is expected
+    assert calls == [{"force": True, "rebuild_compat_cache": False}]
 
 
 def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

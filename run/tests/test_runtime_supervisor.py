@@ -1207,31 +1207,47 @@ class RuntimeSupervisorTests(unittest.TestCase):
 
         calls: list[bool] = []
 
+        class FakeOverlayRuntime:
+            shutdown_reason = ""
+
+            @staticmethod
+            def snapshot():
+                return {"status": "stopped", "cache_status": "ready"}
+
+            def shutdown(self, reason: str = "shutdown") -> None:
+                self.shutdown_reason = reason
+
         def refresh_func(force: bool = False):
             calls.append(force)
             return {"state": "ready"}
 
-        supervisor = RuntimeSupervisor(
-            parent_pid=os.getpid(),
-            session_nonce="test-nonce",
-            refresh_func=refresh_func,
-            refresh_interval_seconds=60.0,
-            lease_timeout_seconds=1.0,
-            orphan_grace_seconds=1.0,
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            overlay = FakeOverlayRuntime()
+            supervisor = RuntimeSupervisor(
+                parent_pid=os.getpid(),
+                session_nonce="test-nonce",
+                refresh_func=refresh_func,
+                overlay_runtime=overlay,
+                event_log_path=Path(tmp) / "events.jsonl",
+                refresh_interval_seconds=60.0,
+                lease_timeout_seconds=1.0,
+                orphan_grace_seconds=1.0,
+            )
 
-        supervisor.tick()
-        self.assertEqual(calls, [])
-        self.assertEqual(supervisor.snapshot()["actions"], {})
-        self.assertIsNotNone(supervisor.snapshot()["next_refresh_at"])
-        self.assertGreater(supervisor.snapshot()["next_refresh_at"], time.time())
+            supervisor.tick()
+            self.assertEqual(calls, [])
+            self.assertEqual(supervisor.snapshot()["actions"], {})
+            self.assertIsNotNone(supervisor.snapshot()["next_refresh_at"])
+            self.assertGreater(supervisor.snapshot()["next_refresh_at"], time.time())
 
-        supervisor.renew_lease({"control_instance_id": "ui-1"})
-        with supervisor._lock:
-            supervisor._lease["last_renewed_at"] = time.time() - 5
-        supervisor.tick()
-        self.assertTrue(supervisor.wait_for_shutdown(0))
-        self.assertEqual(supervisor.snapshot()["shutdown_reason"], "lease_expired")
+            supervisor.renew_lease({"control_instance_id": "ui-1"})
+            with supervisor._lock:
+                supervisor._lease["last_renewed_at"] = time.time() - 5
+            supervisor.tick()
+            self.assertTrue(supervisor.wait_for_shutdown(0))
+            self.assertTrue(supervisor.wait_for_overlay_shutdown(1.0))
+            self.assertEqual(supervisor.snapshot()["shutdown_reason"], "lease_expired")
+            self.assertEqual(overlay.shutdown_reason, "lease_expired")
 
     def test_supervisor_tick_schedules_refresh_when_next_refresh_is_due(self):
         from hextech.runtime_supervisor import RuntimeSupervisor

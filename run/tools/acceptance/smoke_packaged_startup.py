@@ -86,6 +86,18 @@ def _copy_clean_package(source: Path, smoke_root: Path) -> Path:
     return target
 
 
+def _cleanup_smoke_root(smoke_root: Path, *, attempts: int = 20, delay_seconds: float = 0.25) -> bool:
+    """等待 Windows 子进程释放 runtime 句柄后清理隔离烟测目录。"""
+
+    for attempt in range(max(1, attempts)):
+        shutil.rmtree(smoke_root, ignore_errors=True)
+        if not smoke_root.exists():
+            return True
+        if attempt + 1 < attempts:
+            time.sleep(max(0.0, delay_seconds))
+    return False
+
+
 def _find_exe(package_dir: Path) -> Path:
     exes = list(package_dir.glob("*.exe"))
     if len(exes) != 1:
@@ -252,7 +264,8 @@ def _business_ready(
     require_snapshot_status: bool = False,
 ) -> dict[str, bool]:
     startup = startup_status if isinstance(startup_status, dict) else {}
-    snapshot = startup.get("data_snapshot") if isinstance(startup.get("data_snapshot"), dict) else {}
+    snapshot_value = startup.get("data_snapshot")
+    snapshot = snapshot_value if isinstance(snapshot_value, dict) else {}
     champion_list = champions if isinstance(champions, list) else []
     detail = detail_payload if isinstance(detail_payload, dict) else {}
     synergy = synergy_payload if isinstance(synergy_payload, dict) else {}
@@ -450,8 +463,9 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    reconfigure_stdout = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure_stdout):
+        reconfigure_stdout(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="验证打包产物空仓首启是否在限定时间内可用。")
     default_releases = Path(__file__).resolve().parents[3] / ".artifacts" / "hextech" / "releases"
     parser.add_argument("--package-dir", type=Path, help="已打包便携目录；默认使用 .artifacts/hextech/releases 下最新目录。")
@@ -466,7 +480,8 @@ def main() -> int:
     result = run_smoke(target, args.timeout)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if result["ok"] and not args.keep:
-        shutil.rmtree(target.parent, ignore_errors=True)
+        if not _cleanup_smoke_root(target.parent):
+            raise SmokeFailure(f"烟测进程退出后仍无法清理隔离目录：{target.parent}")
     return 0 if result["ok"] else 1
 
 

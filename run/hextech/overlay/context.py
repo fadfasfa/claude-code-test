@@ -66,6 +66,7 @@ def _empty_context(error: str) -> dict[str, Any]:
         "champion_id": "",
         "champion_name": "",
         "source": "",
+        "session_id": "",
     }
 
 
@@ -78,6 +79,7 @@ def build_overlay_context_payload(
     bench_champion_ids: Any = (),
     phase: str = "",
     connection_state: str = "",
+    session_id: str = "",
 ) -> dict[str, Any]:
     """构造当前英雄上下文 payload；调用方负责只在明确锁定英雄时传入 ID。"""
 
@@ -95,6 +97,7 @@ def build_overlay_context_payload(
         ],
         "phase": _clean_text(phase, limit=48),
         "connection_state": _clean_text(connection_state, limit=48),
+        "session_id": _clean_text(session_id, limit=64),
     }
 
 
@@ -138,6 +141,7 @@ def read_overlay_context(path: str | Path | None = None) -> dict[str, Any]:
         empty["schema_version"] = payload.get("schema_version", SCHEMA_VERSION)
         empty["generated_at"] = payload.get("generated_at", 0.0)
         empty["source"] = _clean_text(payload.get("source"), limit=48)
+        empty["session_id"] = _clean_text(payload.get("session_id"), limit=64)
         if error == "context_unmapped_champion":
             empty["champion_name"] = _clean_text(payload.get("champion_name"), limit=48)
         return empty
@@ -153,6 +157,7 @@ def read_overlay_context(path: str | Path | None = None) -> dict[str, Any]:
         "bench_champion_ids": list(payload.get("bench_champion_ids") or []),
         "phase": _clean_text(payload.get("phase"), limit=48),
         "connection_state": _clean_text(payload.get("connection_state"), limit=48),
+        "session_id": _clean_text(payload.get("session_id"), limit=64),
     }
 
 
@@ -343,6 +348,7 @@ def _write_live_client_context(
     core_data_loader: ChampionCoreLoader,
     context_path: str | Path | None,
     should_write: ShouldWriteContext | None,
+    session_id: str = "",
 ) -> bool:
     champion_id = _resolve_champion_id_by_name(champion_name, core_data_loader=core_data_loader)
     if should_write is not None and not should_write():
@@ -352,6 +358,7 @@ def _write_live_client_context(
         payload["generated_at"] = time.time()
         payload["champion_name"] = _clean_text(champion_name, limit=48)
         payload["source"] = "live-client-data"
+        payload["session_id"] = _clean_text(session_id, limit=64)
         write_overlay_context(payload, context_path)
         return False
     write_overlay_context(
@@ -359,6 +366,7 @@ def _write_live_client_context(
             champion_id=champion_id,
             champion_name=champion_name,
             source="live-client-data",
+            session_id=session_id,
         ),
         context_path,
     )
@@ -372,6 +380,7 @@ def write_current_live_client_overlay_context_once(
     context_path: str | Path | None = None,
     base_url: str = LIVE_CLIENT_BASE_URL,
     should_write: ShouldWriteContext | None = None,
+    session_id: str = "",
 ) -> bool:
     """轮询一次 2999 Live Client Data；只在能明确映射当前英雄时写有效上下文。"""
 
@@ -397,6 +406,7 @@ def write_current_live_client_overlay_context_once(
                 core_data_loader=core_data_loader,
                 context_path=context_path,
                 should_write=should_write,
+                session_id=session_id,
             )
     return False
 
@@ -444,6 +454,7 @@ def write_current_lcu_overlay_context_once(
                         bench_champion_ids=degraded.bench_champion_ids,
                         phase=degraded.phase,
                         connection_state=degraded.connection_state,
+                        session_id=degraded.session_id,
                     ),
                     context_path,
                 )
@@ -455,6 +466,7 @@ def write_current_lcu_overlay_context_once(
                 context_path=context_path,
                 base_url=LIVE_CLIENT_BASE_URL,
                 should_write=should_write,
+                session_id=context_provider.session_id if context_provider is not None else "",
             ):
                 return True
             # 生产 poller 由 Provider 统一决定旧上下文 TTL；文件窗口只兼容无 Provider 的一次性调用。
@@ -510,6 +522,7 @@ def write_current_lcu_overlay_context_once(
             bench_champion_ids=client_context.bench_champion_ids,
             phase=client_context.phase,
             connection_state=client_context.connection_state,
+            session_id=client_context.session_id,
         ),
         context_path,
     )

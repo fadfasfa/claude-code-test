@@ -388,7 +388,7 @@ def test_hextech_package_contract() -> None:
     synergy_scraper_text = (RUN_DIR / "hextech" / "scraping" / "synergy" / "scraper.py").read_text(encoding="utf-8")
     assert "from processing.precomputed_cache" not in hextech_scraper_text
     assert "from processing.overlay_hint_cache" not in hextech_scraper_text
-    assert "from hextech.catalog.precomputed_cache" in hextech_scraper_text
+    assert "from hextech.catalog.precomputed_cache" not in hextech_scraper_text
     assert "from hextech.overlay.hints" not in hextech_scraper_text
     assert "RUNTIME_DATA_DIR" in synergy_scraper_text
     assert 'Path(BASE_DIR) / "data" / "runtime"' not in synergy_scraper_text

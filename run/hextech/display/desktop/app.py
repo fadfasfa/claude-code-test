@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 import tkinter as tk
 from hextech.core.settings import load_ui_feature_flags, save_ui_feature_flags
@@ -48,6 +48,24 @@ UI_COLORS = {
 }
 
 
+class _SelectionRoleStyle(TypedDict):
+    accent: str
+    surface: str
+    text: str
+    border_width: int
+    marker_width: int
+
+
+def _selection_role_style(role: str) -> _SelectionRoleStyle:
+    """返回英雄角色的稳定视觉语义；样式不参与排序或卡片布局。"""
+
+    if role == "self":
+        return {"accent": "#22D3EE", "surface": "#0B2A30", "text": "#062A30", "border_width": 3, "marker_width": 5}
+    if role == "teammate":
+        return {"accent": "#F59E0B", "surface": "#2A2110", "text": "#2D1B00", "border_width": 2, "marker_width": 3}
+    return {"accent": UI_COLORS["border"], "surface": UI_COLORS["surface"], "text": UI_COLORS["text"], "border_width": 1, "marker_width": 0}
+
+
 def _format_game_overlay_host_reason(reason: str) -> str:
     reason = str(reason or "").strip()
     return {
@@ -57,6 +75,7 @@ def _format_game_overlay_host_reason(reason: str) -> str:
         "game_window_not_renderable": "游戏窗口不可渲染",
         "game_not_foreground": "切回游戏后显示",
         "selection_window_inactive": "等待海克斯选择",
+        "waiting_selection": "等待海克斯选择",
         "event_stale_after_tab": "等待最新选择画面",
         "event_expired": "选择数据已过期",
         "blocking_modal_present": "等待弹窗关闭",
@@ -108,12 +127,10 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
 logger = logging.getLogger(__name__)
 
 
-def _empty_dataframe():
-    """延迟创建空 DataFrame，避免 desktop app import 阶段加载 pandas。"""
+def _empty_champions() -> list[dict]:
+    """桌面只消费快照 DTO，不再把只读 generation 转回 DataFrame。"""
 
-    import pandas as pd
-
-    return pd.DataFrame()
+    return []
 
 
 def export_user_diagnostics(*args, **kwargs):
@@ -192,7 +209,7 @@ class HextechUI:
         self._snapshot_client = None
         self._snapshot_generation_id = ""
         self._snapshot_watch_started = False
-        self.df = None
+        self.champions: list[dict] = []
         self._runtime_services_ready = False
         self._post_visible_bootstrap_started = False
         self._post_visible_bootstrap_done = False
@@ -209,7 +226,7 @@ class HextechUI:
         self.last_click_time = 0
         self.img_write_lock = threading.Lock()
         self.downloading_imgs = set()
-        self._df_lock = threading.Lock()
+        self._champions_lock = threading.Lock()
         self._window_topmost = False
         self._window_visible = False
         self._auto_follow_enabled = True
@@ -282,7 +299,7 @@ class HextechUI:
         """首屏可见后再启动重型服务，避免 Tk shell 被后台依赖阻塞。"""
 
         error: Exception | None = None
-        loaded_df = _empty_dataframe()
+        loaded_champions = _empty_champions()
         service_manager = None
         try:
             self.startup_timing.mark("background_bootstrap_start")
@@ -325,8 +342,8 @@ class HextechUI:
             self.session = get_advanced_session()
             self.core_data = load_champion_core_data()
             self._snapshot_client = DataSnapshotClient()
-            loaded_df = self.load_data()
-            self.startup_timing.mark("data_ready", rows=len(loaded_df))
+            loaded_champions = self.load_data()
+            self.startup_timing.mark("data_ready", rows=len(loaded_champions))
         except Exception as exc:
             error = exc
             if self.service_manager is None:
@@ -341,8 +358,8 @@ class HextechUI:
                 self._post_visible_bootstrap_done = True
                 self._set_status(f"本地数据初始化失败，展示面继续运行: {error}", UI_COLORS["warn"])
                 return
-            with self._df_lock:
-                self.df = loaded_df
+            with self._champions_lock:
+                self.champions = loaded_champions
             self._post_visible_bootstrap_done = True
             self.startup_timing.mark("background_bootstrap_done")
             self._set_status("后台服务已就绪", UI_COLORS["green"])
@@ -1238,34 +1255,32 @@ class HextechUI:
             logger.debug("隐藏悬浮窗失败。", exc_info=True)
 
     def _reload_data_into_ui(self, status_text, status_color):
-        new_df = self.load_data()
+        new_champions = self.load_data()
 
         def _update_on_main():
-            with self._df_lock:
-                self.df = new_df
+            with self._champions_lock:
+                self.champions = new_champions
             self._set_status(status_text, status_color)
 
         if not self._run_on_ui_thread(_update_on_main):
-            with self._df_lock:
-                self.df = new_df
+            with self._champions_lock:
+                self.champions = new_champions
 
     def _silent_sync(self):
         logger.info("兼容旧入口：桌面不再直接调用 refresh_backend_data。")
 
     def load_data(self):
         if self._snapshot_client is None:
-            return _empty_dataframe()
+            return _empty_champions()
         try:
             snapshot_view = self._snapshot_client.open_view()
         except Exception:
-            return _empty_dataframe()
+            return _empty_champions()
         self._snapshot_generation_id = str(snapshot_view.status().get("generation_id") or "")
         champions = snapshot_view.get_champions()
         if not champions:
-            return _empty_dataframe()
-        import pandas as pd
-
-        return pd.DataFrame(champions)
+            return _empty_champions()
+        return champions
 
     def _snapshot_watch_loop(self) -> None:
         """监视 DataService 原子指针，首代或新代发布后刷新桌面列表。"""
@@ -1277,11 +1292,11 @@ class HextechUI:
             generation_id = str(status.get("generation_id") or "")
             if not generation_id or generation_id == self._snapshot_generation_id:
                 continue
-            new_df = self.load_data()
-            if new_df.empty:
+            new_champions = self.load_data()
+            if not new_champions:
                 continue
-            with self._df_lock:
-                self.df = new_df
+            with self._champions_lock:
+                self.champions = new_champions
 
             def refresh_ui() -> None:
                 self._set_status("统计快照已更新", UI_COLORS["green"])
@@ -1301,16 +1316,19 @@ class HextechUI:
         ui_runtime.load_and_set_img(self, champ_id, label)
 
     def _candidate_groups_from_input(self, hero_ids) -> dict[str, list[str]]:
+        from hextech.contracts.identifiers import optional_champion_id
+
+        def normalized(values) -> list[str]:
+            return [str(result) for value in (values or []) if (result := optional_champion_id(value)) is not None]
+
         if isinstance(hero_ids, Mapping):
             selected = hero_ids.get("selected_champion_ids") or hero_ids.get("selected") or []
             bench = hero_ids.get("bench_champion_ids") or hero_ids.get("bench") or []
             return {
-                "selected_champion_ids": [str(value) for value in selected if str(value or "").strip()],
-                "bench_champion_ids": [str(value) for value in bench if str(value or "").strip()],
-                "local_champion_id": str(hero_ids.get("local_champion_id") or "").strip(),
-                "teammate_champion_ids": [
-                    str(value) for value in hero_ids.get("teammate_champion_ids", []) if str(value or "").strip()
-                ],
+                "selected_champion_ids": normalized(selected),
+                "bench_champion_ids": normalized(bench),
+                "local_champion_id": str(optional_champion_id(hero_ids.get("local_champion_id")) or ""),
+                "teammate_champion_ids": normalized(hero_ids.get("teammate_champion_ids", [])),
                 "context_phase": str(hero_ids.get("context_phase") or ""),
                 "context_connection_state": str(hero_ids.get("context_connection_state") or ""),
                 "context_error_code": str(hero_ids.get("context_error_code") or ""),
@@ -1318,56 +1336,83 @@ class HextechUI:
         values = list(hero_ids or [])
         return {
             "selected_champion_ids": [],
-            "bench_champion_ids": [str(value) for value in values if str(value or "").strip()],
+            "bench_champion_ids": normalized(values),
         }
 
-    def _build_candidate_display_list(self, hero_ids, current_df) -> list[dict]:
-        from hextech.catalog.runtime_store import detect_hero_id_column
+    def _build_candidate_display_list(self, hero_ids, champions: list[dict]) -> list[dict]:
+        import time
+
+        from hextech.contracts import GameContext, GameSessionId
+        from hextech.contracts.identifiers import optional_champion_id
+        from hextech.recommendation import RecommendationService
 
         candidate_groups = self._candidate_groups_from_input(hero_ids)
-        id_col = detect_hero_id_column(current_df)
-        if not id_col:
-            return []
+        local_id = candidate_groups.get("local_champion_id", "")
+        teammate_ids = list(dict.fromkeys([
+            *candidate_groups.get("teammate_champion_ids", []),
+            *(value for value in candidate_groups.get("selected_champion_ids", []) if value != local_id),
+        ]))
+        context = GameContext(
+            session_id=GameSessionId(str(getattr(self, "_client_session_id", "") or "desktop-session")),
+            observed_at=time.time(),
+            local_champion_id=optional_champion_id(local_id),
+            teammate_champion_ids=tuple(
+                value for item in teammate_ids if (value := optional_champion_id(item)) is not None
+            ),
+            bench_champion_ids=tuple(
+                value
+                for item in candidate_groups.get("bench_champion_ids", [])
+                if (value := optional_champion_id(item)) is not None
+            ),
+            phase=str(candidate_groups.get("context_phase") or "champ_select"),
+        )
+        snapshot_client = getattr(self, "_snapshot_client", None)
+        if snapshot_client is not None:
+            snapshot_view = snapshot_client.open_view()
+        else:
+            # 只用于旧调用者和组件测试；生产 UI 始终从 DataSnapshotClient 打开固定代。
+            class _RowsView:
+                def status(self):
+                    return {"state": "ready", "generation_id": "compat", "private_stats_enabled": True}
 
-        rows_by_id: dict[str, dict] = {}
-        for _, row in current_df.iterrows():
-            raw_id = row.get(id_col, row.get("英雄 ID", row.get("ID", "")))
-            hero_id = str(raw_id or "").strip()
-            if not hero_id or hero_id in rows_by_id:
-                continue
+                def get_champion(self, champion_id):
+                    needle = str(champion_id)
+                    return next(
+                        (
+                            dict(row)
+                            for row in champions
+                            if str(optional_champion_id(row.get("id", row.get("英雄 ID", row.get("ID", "")))) or "")
+                            == needle
+                        ),
+                        None,
+                    )
+
+                def get_champions(self):
+                    return [dict(row) for row in champions]
+
+            snapshot_view = _RowsView()
+        recommendation = RecommendationService().build(context, snapshot_view)
+        display_list: list[dict] = []
+        for row in recommendation.champion_candidates:
             try:
-                win = float(row.get("英雄胜率", row.get("胜率", 0.5)))
+                win = float(row.get("英雄胜率", row.get("胜率", row.get("win_rate", 0.5))))
             except (TypeError, ValueError):
                 win = 0.5
             try:
-                pick = float(row.get("英雄出场率", row.get("出场率", 0.1)))
+                pick = float(row.get("英雄出场率", row.get("出场率", row.get("pick_rate", 0.1))))
             except (TypeError, ValueError):
                 pick = 0.1
-            rows_by_id[hero_id] = {
-                "id": hero_id,
-                "name": row.get("英雄名称", row.get("英雄名", "未知")),
-                "win": win,
-                "pick": pick,
-                "tier": row.get("英雄评级", row.get("评级", "T?")),
-            }
-
-        display_list: list[dict] = []
-        seen: set[str] = set()
-        local_id = candidate_groups.get("local_champion_id", "")
-        teammate_ids = set(candidate_groups.get("teammate_champion_ids", []))
-        for group_name in ("selected_champion_ids", "bench_champion_ids"):
-            for hero_id in candidate_groups[group_name]:
-                if hero_id in seen:
-                    continue
-                item = rows_by_id.get(hero_id)
-                if item:
-                    seen.add(hero_id)
-                    display_item = dict(item)
-                    display_item["selection_role"] = (
-                        "self" if hero_id == local_id else "teammate" if hero_id in teammate_ids else "bench"
-                    )
-                    display_list.append(display_item)
-        return sorted(display_list, key=lambda item: item["win"], reverse=True)
+            display_list.append(
+                {
+                    "id": str(row.get("id") or ""),
+                    "name": row.get("name", row.get("英雄名称", row.get("英雄名", "未知"))),
+                    "win": win,
+                    "pick": pick,
+                    "tier": row.get("英雄评级", row.get("评级", "T?")),
+                    "selection_role": row.get("selection_role", "bench"),
+                }
+            )
+        return display_list
 
     def update_ui(self, hero_ids):
         if self._ui_render_in_progress:
@@ -1379,9 +1424,9 @@ class HextechUI:
             for widget in self.list_frame.winfo_children():
                 widget.destroy()
 
-            with self._df_lock:
-                current_df = self.df
-                is_empty = current_df is None or current_df.empty
+            with self._champions_lock:
+                current_champions = list(self.champions)
+                is_empty = not current_champions
 
             candidate_groups = self._candidate_groups_from_input(hero_ids)
             has_candidates = any(candidate_groups.get(key) for key in ("selected_champion_ids", "bench_champion_ids"))
@@ -1413,7 +1458,7 @@ class HextechUI:
             else:
                 self.status_label.config(text="实时数据已挂载", fg=UI_COLORS["green"])
 
-            display_list = self._build_candidate_display_list(hero_ids, current_df)
+            display_list = self._build_candidate_display_list(hero_ids, current_champions)
             if not display_list:
                 tk.Label(
                     self.list_frame,
@@ -1426,11 +1471,13 @@ class HextechUI:
 
             for item in display_list:
                 role = item.get("selection_role", "bench")
-                role_color = "#22D3EE" if role == "self" else "#F59E0B" if role == "teammate" else UI_COLORS["border"]
+                role_style = _selection_role_style(str(role))
+                role_color = str(role_style["accent"])
+                card_surface = str(role_style["surface"])
                 card = tk.Frame(
                     self.list_frame,
-                    bg=UI_COLORS["surface"],
-                    highlightthickness=1,
+                    bg=card_surface,
+                    highlightthickness=int(role_style["border_width"]),
                     highlightbackground=role_color,
                     pady=3,
                     padx=4,
@@ -1438,15 +1485,18 @@ class HextechUI:
                 )
                 card.pack(fill=tk.X, pady=3, padx=(0, 10))
 
+                if int(role_style["marker_width"]) > 0:
+                    tk.Frame(card, bg=role_color, width=int(role_style["marker_width"])).pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4))
+
                 ribbon_color = UI_COLORS["green"] if item["win"] >= 0.5 else UI_COLORS["red"]
                 ribbon = tk.Frame(card, bg=ribbon_color, width=3)
                 ribbon.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
 
                 img_label = tk.Label(
                     card,
-                    bg=UI_COLORS["surface"],
-                    highlightthickness=1,
-                    highlightbackground=UI_COLORS["gold"],
+                    bg=card_surface,
+                    highlightthickness=2 if role in {"self", "teammate"} else 1,
+                    highlightbackground=role_color if role in {"self", "teammate"} else UI_COLORS["gold"],
                 )
                 img_label.pack(side=tk.LEFT, padx=(0, 8))
                 threading.Thread(
@@ -1461,16 +1511,17 @@ class HextechUI:
                         text=item["tier"],
                         font=("Microsoft YaHei", 9, "bold"),
                         fg=UI_COLORS["text"],
-                        bg=UI_COLORS["surface"],
+                        bg=card_surface,
                     ).pack(side=tk.LEFT)
                     if role in {"self", "teammate"}:
                         tk.Label(
                             card,
                             text="我" if role == "self" else "队友",
                             font=("Microsoft YaHei", 7, "bold"),
-                            fg="#062A30" if role == "self" else "#2D1B00",
+                            fg=str(role_style["text"]),
                             bg=role_color,
-                            padx=3,
+                            padx=5 if role == "self" else 3,
+                            pady=1,
                         ).pack(side=tk.RIGHT)
 
                     def bind_collapsed_click(widget, cid, name):
@@ -1481,37 +1532,37 @@ class HextechUI:
                     bind_collapsed_click(card, item["id"], item["name"])
                     continue
 
-                info = tk.Frame(card, bg=UI_COLORS["surface"])
+                info = tk.Frame(card, bg=card_surface)
                 info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
                 title = self.core_data.get(str(item["id"]), {}).get("title", "")
                 full_name = f"{item['name']} {title}".strip() if title else item["name"]
 
-                title_row = tk.Frame(info, bg=UI_COLORS["surface"])
+                title_row = tk.Frame(info, bg=card_surface)
                 title_row.pack(fill=tk.X)
                 tk.Label(
                     title_row,
                     text=f"[{item['tier']}] {full_name}",
                     font=("Microsoft YaHei", 9, "bold"),
                     fg=UI_COLORS["text"],
-                    bg=UI_COLORS["surface"],
+                    bg=card_surface,
                 ).pack(side=tk.LEFT, anchor="w")
                 if role in {"self", "teammate"}:
                     tk.Label(
                         title_row,
                         text="我的英雄" if role == "self" else "队友已选",
                         font=("Microsoft YaHei", 8, "bold"),
-                        fg="#062A30" if role == "self" else "#2D1B00",
+                        fg=str(role_style["text"]),
                         bg=role_color,
-                        padx=5,
-                        pady=0,
+                        padx=7 if role == "self" else 5,
+                        pady=1,
                     ).pack(side=tk.RIGHT)
                 tk.Label(
                     info,
                     text=f"胜率: {item['win']:.1%} | 出场: {item['pick']:.1%}",
                     font=("Microsoft YaHei", 8),
                     fg=UI_COLORS["muted"],
-                    bg=UI_COLORS["surface"],
+                    bg=card_surface,
                 ).pack(anchor="w", pady=(1, 0))
 
                 bar_canvas = tk.Canvas(info, height=3, bg=UI_COLORS["base"], highlightthickness=0)

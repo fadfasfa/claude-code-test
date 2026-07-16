@@ -548,13 +548,21 @@ def _scrapling_failure_reason(result: ScraplingFetchResult) -> tuple[str, int | 
 
 
 def _is_blocking_remote_failure(reason: str, status_code: int | None = None) -> bool:
+    """只标记不应继续批量请求的明确限流/拒绝响应。
+
+    单请求 timeout 仍属于最终失败后的 cooldown 分类，但首轮详情 timeout
+    必须先进入低并发 tail retry，不能在已有重试分支前提前返回。
+    """
+
     if status_code in BLOCKED_HTTP_STATUS_CODES:
         return True
-    return reason in DEFERRED_REMOTE_FAILURE_REASONS
+    return reason in {"http_403", "http_429"}
 
 
 def _is_deferred_remote_failure(reason: str, status_code: int | None = None) -> bool:
-    return _is_blocking_remote_failure(reason, status_code)
+    if status_code in BLOCKED_HTTP_STATUS_CODES:
+        return True
+    return reason in DEFERRED_REMOTE_FAILURE_REASONS
 
 
 def _remote_failure_count(previous: dict, reason: str) -> int:
@@ -960,13 +968,6 @@ def backup_active_csv_before_publish(output_csv: str) -> str:
     shutil.copy2(active_csv, backup_path)
     logging.info("刷新前已备份当前 CSV：source=%s backup=%s", os.path.basename(active_csv), backup_path)
     return str(backup_path)
-
-
-def rebuild_runtime_caches() -> None:
-    """新 CSV 发布后重建 DataService 内部兼容 Web cache；generation 由 DataService 发布。"""
-
-    from hextech.catalog.precomputed_cache import rebuild_precomputed_api_cache_from_latest_csv
-    rebuild_precomputed_api_cache_from_latest_csv()
 
 
 def extract_champion_stats(
@@ -1594,10 +1595,6 @@ def main_scraper(stop_event=None, force: bool = False):
         attempt["success_rows"] = len(df)
         update_status_file(output_csv, attempt=attempt)
         cleanup_old_csvs()
-        try:
-            rebuild_runtime_caches()
-        except Exception:
-            logging.exception("新 CSV 已发布，但缓存重建失败")
         log_task_summary(
             logging.getLogger(__name__),
             task="海克斯抓取",

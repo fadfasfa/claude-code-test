@@ -13,6 +13,8 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, Protocol, TypedDict
 
+from hextech.contracts import GameSessionState
+
 from hextech.overlay.hints import normalize_augment_id, normalize_augment_name
 from hextech.overlay.vision.layout import pick_card_panels
 
@@ -64,6 +66,8 @@ StatStatusCode = Literal[
     "GENERATION_DEGRADED",
     "PRIVACY_OFF",
     "NO_STATS",
+    "SOURCE_STATS_MISSING",
+    "IDENTITY_UNRESOLVED",
     "CONTEXT_MISSING",
     "CONTEXT_EXPIRED",
 ]
@@ -262,12 +266,12 @@ def _stats_display(
         return "等待当前英雄", "CONTEXT_MISSING", "", "", _context_missing_status_text(context)
     stats = _current_champion_stats(hint, context)
     if not isinstance(stats, Mapping):
-        return "暂无该英雄统计", "NO_STATS", "", "", "暂无统计"
+        return "源站暂无该组合统计", "SOURCE_STATS_MISSING", "", "", "源站暂无统计"
     winrate = _format_percent(stats.get("winrate"))
     pickrate = _format_percent(stats.get("pickrate"))
     text = _format_stats_entry(stats)
     if not (winrate and pickrate):
-        return text or "暂无该英雄统计", "NO_STATS", "", "", "暂无统计"
+        return text or "统计字段不完整", "NO_STATS", "", "", "统计不完整"
     if snapshot_state == "degraded":
         return f"上一代 · {text}", "GENERATION_DEGRADED", winrate, pickrate, "上一代数据"
     return text, "READY", winrate, pickrate, ""
@@ -335,11 +339,15 @@ def build_render_model(
         name = _clean_text(hint.get("name") or slot_name, limit=60)
         tier = _clean_text(hint.get("tier") or slot.get("tier"), limit=24)
         if ready:
-            stats_text, status_code, winrate_text, pickrate_text, status_text = _stats_display(
-                hint,
-                hint_cache,
-                context,
-            )
+            if not hint:
+                stats_text, status_code = "海克斯身份未解析", "IDENTITY_UNRESOLVED"
+                winrate_text, pickrate_text, status_text = "", "", "身份未解析"
+            else:
+                stats_text, status_code, winrate_text, pickrate_text, status_text = _stats_display(
+                    hint,
+                    hint_cache,
+                    context,
+                )
         elif state == "failed":
             stats_text, status_code = "识别失败/重试", "DETECTION_FAILED"
             winrate_text, pickrate_text, status_text = "", "", "识别失败/重试"
@@ -378,6 +386,105 @@ def build_render_model(
                 "content": _clean_text(matched.get("content"), limit=180),
             }
         )
+    return {"stats": stats, "synergies": synergies}
+
+
+def build_render_model_from_session(
+    state: GameSessionState,
+    *,
+    hint_cache: Mapping[str, Any] | None = None,
+) -> OverlayRenderModel:
+    """把核心会话模型适配为 Tk 绘制模型；业务状态不得在此重新推导。"""
+
+    recommendation = state.recommendation
+    rows = list(recommendation.augment_slots) if recommendation is not None else []
+    context_mapping: dict[str, Any] = {}
+    if state.context is not None:
+        context_mapping = {
+            "ok": bool(state.context.local_champion_id),
+            "champion_id": str(state.context.local_champion_id or ""),
+            "error": state.context.error_code,
+            "source": state.context.source,
+        }
+    stats: list[StatPanelModel] = []
+    synergies: list[SynergyPanelModel] = []
+    labels: dict[str, tuple[str, str]] = {
+        "DETECTION_FAILED": ("识别失败/重试", "识别失败/重试"),
+        "DATA_NOT_READY": ("统计数据准备中", "数据准备中"),
+        "PRIVACY_OFF": ("已开启隐私模式", "统计关闭"),
+        "SOURCE_STATS_MISSING": ("源站暂无该组合统计", "源站暂无统计"),
+        "IDENTITY_UNRESOLVED": ("海克斯身份未解析", "身份未解析"),
+        "CONTEXT_MISSING": ("等待当前英雄", "等待英雄上下文"),
+        "CONTEXT_EXPIRED": ("等待当前英雄", "等待当前英雄"),
+    }
+    for index in range(3):
+        row = rows[index] if index < len(rows) and isinstance(rows[index], Mapping) else {}
+        slot_state = _clean_text(row.get("state"), limit=32) or "detecting"
+        status_code = _clean_text(row.get("status_code"), limit=48)
+        if not recommendation:
+            if state.context is None or state.context.local_champion_id is None:
+                status_code = "CONTEXT_EXPIRED" if state.error_code == "context_expired" else "CONTEXT_MISSING"
+            else:
+                status_code = "DATA_NOT_READY"
+        elif slot_state == "failed":
+            status_code = "DETECTION_FAILED"
+        elif slot_state != "ready":
+            status_code = "DETECTING"
+        elif not status_code:
+            status_code = "SOURCE_STATS_MISSING"
+        stats_payload = row.get("stats") if isinstance(row.get("stats"), Mapping) else {}
+        normalized_stats = {
+            "winrate": stats_payload.get(
+                "winrate", stats_payload.get("win_rate", stats_payload.get("海克斯胜率"))
+            ),
+            "pickrate": stats_payload.get(
+                "pickrate", stats_payload.get("pick_rate", stats_payload.get("海克斯出场率"))
+            ),
+        }
+        winrate_text = _format_percent(normalized_stats["winrate"])
+        pickrate_text = _format_percent(normalized_stats["pickrate"])
+        if status_code in {"READY", "GENERATION_DEGRADED"}:
+            raw_text = _format_stats_entry(normalized_stats)
+            stats_text = f"上一代 · {raw_text}" if status_code == "GENERATION_DEGRADED" else raw_text
+            status_text = "上一代数据" if status_code == "GENERATION_DEGRADED" else ""
+        elif status_code == "DETECTING":
+            stats_text, status_text = "识别中…", "识别中…"
+            winrate_text = pickrate_text = ""
+        else:
+            stats_text, status_text = labels.get(status_code, ("暂无统计", "暂无统计"))
+            winrate_text = pickrate_text = ""
+        name = _clean_text(row.get("name"), limit=60)
+        tier = _clean_text(row.get("tier"), limit=24)
+        ready = slot_state == "ready"
+        stats.append(
+            {
+                "slot": index,
+                "state": ("matched" if status_code in {"READY", "GENERATION_DEGRADED"} else "missing_stats")
+                if ready
+                else ("failed" if slot_state == "failed" else "detecting"),
+                "name": name,
+                "tier": tier,
+                "stats_text": stats_text,
+                "status_code": status_code,  # type: ignore[typeddict-item]
+                "winrate_text": winrate_text,
+                "pickrate_text": pickrate_text,
+                "status_text": status_text,
+            }
+        )
+        hint = _query_hint(row, hint_cache) if ready else {}
+        matched = _matched_synergy(hint, context_mapping)
+        if isinstance(matched, Mapping):
+            synergies.append(
+                {
+                    "slot": index,
+                    "augment_name": name,
+                    "tier": tier,
+                    "hero_name": _clean_text(matched.get("hero_name"), limit=40),
+                    "rating": _clean_text(matched.get("rating"), limit=12),
+                    "tag": _clean_text(matched.get("tag"), limit=24),
+                    "content": _clean_text(matched.get("content"), limit=180),
+                }
+            )
     return {"stats": stats, "synergies": synergies}
 
 
@@ -685,6 +792,8 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
             "DETECTION_FAILED": OVERLAY_THEME["stat_value"],
             "PRIVACY_OFF": OVERLAY_THEME["text_secondary"],
             "NO_STATS": OVERLAY_THEME["text_muted"],
+            "SOURCE_STATS_MISSING": OVERLAY_THEME["text_muted"],
+            "IDENTITY_UNRESOLVED": OVERLAY_THEME["text_muted"],
             "DATA_NOT_READY": OVERLAY_THEME["text_secondary"],
             "GENERATION_DEGRADED": OVERLAY_THEME["stat_value"],
             "CONTEXT_MISSING": OVERLAY_THEME["highlight_cyan"],
