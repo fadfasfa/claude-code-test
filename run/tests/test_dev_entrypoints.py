@@ -9,19 +9,21 @@ RUN_DIR = Path(__file__).resolve().parents[1]
 DEV_DIR = RUN_DIR / "tooling" / "dev"
 
 
-def test_dev_entrypoints_are_discoverable_without_restoring_root_scripts() -> None:
-    expected = {
-        "start_desktop.ps1",
-        "start_web.ps1",
+def test_frequent_entrypoints_are_exposed_at_run_root() -> None:
+    assert {path.name for path in RUN_DIR.glob("*.ps1")} == {
+        "启动Hextech.ps1",
+        "调试Web前端.ps1",
+    }
+    expected_tooling = {
         "start_overlay_probe.ps1",
         "verify_machine.ps1",
     }
-    assert expected <= {path.name for path in DEV_DIR.glob("*.ps1")}
-    assert not list(RUN_DIR.glob("*.ps1"))
+    assert expected_tooling <= {path.name for path in DEV_DIR.glob("*.ps1")}
 
 
 def test_dev_entrypoints_only_use_new_cli_and_runtime_layout() -> None:
-    combined = "\n".join(path.read_text(encoding="utf-8") for path in DEV_DIR.glob("*.ps1"))
+    scripts = [*RUN_DIR.glob("*.ps1"), *DEV_DIR.glob("*.ps1")]
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in scripts)
     for command in (
         "hextech-desktop",
         "hextech-web",

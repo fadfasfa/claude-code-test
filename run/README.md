@@ -1,6 +1,6 @@
 # Hextech 模块化单体
 
-`run/` 是 Desktop、Web、Overlay、DataService 与三个抓取来源共享的运行工作区。源码采用 `src` layout；可提交资源只在 `resources/`；所有本机可写状态只在 `var/`。不存在旧目录 fallback 或根脚本入口。
+`run/` 是 Desktop、Web、Overlay、DataService 与三个抓取来源共享的运行工作区。源码采用 `src` layout；可提交资源只在 `resources/`；所有本机可写状态只在 `var/`。不存在旧目录 fallback 或旧根入口兼容。
 
 ## 入口
 
@@ -23,12 +23,17 @@ python -m tooling.build --help
 python -m tooling.acceptance.smoke_packaged_startup --help
 ```
 
-Windows 开发入口位于 `tooling/dev/`，只封装上述正式 CLI，不恢复旧根脚本：
+Windows 下两个最高频入口直接位于 `run/` 根目录：
 
 ```powershell
-.\tooling\dev\start_desktop.ps1
-.\tooling\dev\start_web.ps1
-.\tooling\dev\start_web.ps1 -ProbeOnly
+.\启动Hextech.ps1
+.\调试Web前端.ps1
+.\调试Web前端.ps1 -ProbeOnly
+```
+
+较低频的 Overlay 和整机检查保留在 `tooling/dev/`：
+
+```powershell
 .\tooling\dev\start_overlay_probe.ps1
 .\tooling\dev\verify_machine.ps1
 .\tooling\dev\verify_machine.ps1 -RequireRunningWeb -RequireConsistentGeneration
@@ -65,6 +70,8 @@ run/
 ├── tests/
 ├── tooling/
 ├── docs/
+├── 启动Hextech.ps1
+├── 调试Web前端.ps1
 └── pyproject.toml
 ```
 

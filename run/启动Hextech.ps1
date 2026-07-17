@@ -5,7 +5,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-. (Join-Path $PSScriptRoot "_common.ps1")
+. (Join-Path $PSScriptRoot "tooling\dev\_common.ps1")
 
 $runRoot = Get-HextechRunRoot
 $command = Resolve-HextechCli -Name "hextech-desktop"
