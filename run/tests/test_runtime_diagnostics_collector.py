@@ -1,6 +1,6 @@
 """测试 运行态诊断收集器。
 
-调用方: pytest; 关键依赖: tools.collect_runtime_diagnostics。
+调用方: pytest; 关键依赖: tooling.diagnostics.runtime。
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
     def test_collects_runtime_logs_and_skips_sensitive_files(self):
-        from tools.collect_runtime_diagnostics import collect_runtime_diagnostics
+        from tooling.diagnostics.runtime import collect_runtime_diagnostics
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "runtime"
@@ -79,7 +79,7 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
                                 "level": "WARNING",
                                 "reason_code": "remote_http_error",
                                 "published_data_path": str(root / "raw" / "hextech" / "Hextech_Data_2026-07-05.csv"),
-                                "fallback_path": "C:/Users/apple/claudecode/run/data/runtime/raw/hextech/Hextech_Data_2026-07-05.csv",
+                                "fallback_path": "C:/Users/apple/claudecode/run/var/sources/hextech/runs/example/stats.csv",
                                 "url": "https://example.test/path?access_token=secret-token",
                             }
                         ),
@@ -390,7 +390,7 @@ class RuntimeDiagnosticsCollectorTests(unittest.TestCase):
             self.assertIn("https://example.test/path?<redacted>", exported_blob)
 
     def test_watch_writes_periodic_snapshots(self):
-        from tools.collect_runtime_diagnostics import watch_runtime_diagnostics
+        from tooling.diagnostics.runtime import watch_runtime_diagnostics
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "runtime"

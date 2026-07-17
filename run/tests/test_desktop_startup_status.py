@@ -1,6 +1,6 @@
 """桌面启动状态栏与 timing 诊断回归测试。
 
-调用方: pytest/unittest; 关键依赖: hextech.display.desktop.app、startup_timing。
+调用方: pytest/unittest; 关键依赖: hextech.interfaces.desktop.app、startup_timing。
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from unittest import mock
 
 class DesktopStartupStatusTests(unittest.TestCase):
     def test_overlay_starting_prewarm_status_reports_host_ready(self):
-        from hextech.display.desktop.app import UI_COLORS, _format_supervisor_game_overlay_status
+        from hextech.interfaces.desktop.app import UI_COLORS, _format_supervisor_game_overlay_status
 
         text, color = _format_supervisor_game_overlay_status(
             {
@@ -26,7 +26,7 @@ class DesktopStartupStatusTests(unittest.TestCase):
         self.assertEqual(color, UI_COLORS["warn"])
 
     def test_startup_timing_flush_never_breaks_startup_on_unexpected_error(self):
-        from hextech.display.desktop import startup_timing
+        from hextech.interfaces.desktop import startup_timing
 
         with tempfile.TemporaryDirectory() as tmp:
             probe = startup_timing.StartupTimingProbe(output_path=Path(tmp) / "startup_timing.v1.json")

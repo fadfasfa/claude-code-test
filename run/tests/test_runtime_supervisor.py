@@ -1,6 +1,6 @@
 """测试 RuntimeSupervisor 编排。
 
-调用方: pytest; 关键依赖: hextech.runtime_supervisor。
+调用方: pytest; 关键依赖: hextech.bootstrap.supervisor。
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 import psutil
+from hextech.interfaces.overlay import runtime_manager as overlay_runtime_manager
 
 
 def _request(base_url: str, method: str, path: str, *, nonce: str = "test-nonce", host: str = "127.0.0.1", body: dict | None = None):
@@ -37,7 +38,7 @@ def _request(base_url: str, method: str, path: str, *, nonce: str = "test-nonce"
 
 class RuntimeSupervisorTests(unittest.TestCase):
     def test_control_api_requires_safe_host_and_nonce(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         supervisor = RuntimeSupervisor(parent_pid=0, session_nonce="test-nonce")
         server = supervisor.serve_in_thread(port=0)
@@ -59,7 +60,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             server.shutdown()
 
     def test_refresh_action_returns_running_and_completes_async(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         calls: list[bool] = []
         release_refresh = threading.Event()
@@ -117,7 +118,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
                 server.shutdown()
 
     def test_game_overlay_action_is_async_and_updates_component_status(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         class FakeOverlayRuntime:
             def __init__(self):
@@ -194,7 +195,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
                 server.shutdown()
 
     def test_game_overlay_opposite_action_is_not_deduplicated(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         class FakeOverlayRuntime:
             def __init__(self):
@@ -245,7 +246,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             server.shutdown()
 
     def test_overlay_runtime_disable_cancels_inflight_generation_without_waiting_for_start_lock(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         class FakeProcess:
             def __init__(self, pid: int):
@@ -305,7 +306,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertGreaterEqual(len(inactive_events), 1)
 
     def test_overlay_runtime_retries_transient_sidecar_start_once_with_fixed_backoff(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         class FakeProcess:
             pid = 302
@@ -347,7 +348,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(delays, [1.0])
 
     def test_overlay_runtime_warm_budget_recommends_fallback_without_stopping_start(self):
-        from hextech import runtime_supervisor
+        from hextech.bootstrap import supervisor as runtime_supervisor
 
         class FakeProcess:
             pid = 303
@@ -376,7 +377,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             release_loader.wait(timeout=2)
             return object()
 
-        with mock.patch.object(runtime_supervisor, "OVERLAY_WARM_STARTUP_BUDGET_SECONDS", 0.05):
+        with mock.patch.object(overlay_runtime_manager, "OVERLAY_WARM_STARTUP_BUDGET_SECONDS", 0.05):
             runtime = runtime_supervisor.OverlayRuntimeManager(
                 start_host_func=FakeProcess,
                 start_sidecar_func=FakeProcess,
@@ -409,7 +410,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             runtime.set_enabled(False)
 
     def test_overlay_runtime_first_enable_keeps_elapsed_prewarm_time(self):
-        from hextech import runtime_supervisor
+        from hextech.bootstrap import supervisor as runtime_supervisor
 
         class FakeProcess:
             pid = 304
@@ -445,7 +446,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             release_sidecar.wait(timeout=2)
             return FakeProcess()
 
-        with mock.patch.object(runtime_supervisor, "OVERLAY_WARM_STARTUP_BUDGET_SECONDS", 0.05):
+        with mock.patch.object(overlay_runtime_manager, "OVERLAY_WARM_STARTUP_BUDGET_SECONDS", 0.05):
             runtime = runtime_supervisor.OverlayRuntimeManager(
                 start_host_func=FakeProcess,
                 start_sidecar_func=start_sidecar,
@@ -471,7 +472,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             runtime.set_enabled(False)
 
     def test_overlay_runtime_unknown_and_cold_modes_use_cold_fallback_budget(self):
-        from hextech import runtime_supervisor
+        from hextech.bootstrap import supervisor as runtime_supervisor
 
         class FakeProcess:
             pid = 305
@@ -491,7 +492,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             def kill(self):
                 self.stopped = True
 
-        with mock.patch.object(runtime_supervisor, "OVERLAY_COLD_STARTUP_BUDGET_SECONDS", 0.05):
+        with mock.patch.object(overlay_runtime_manager, "OVERLAY_COLD_STARTUP_BUDGET_SECONDS", 0.05):
             for cache_hit, expected_mode in ((None, "unknown"), (False, "cold")):
                 with self.subTest(mode=expected_mode):
                     sidecar_entered = threading.Event()
@@ -524,7 +525,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
                     runtime.set_enabled(False)
 
     def test_overlay_runtime_prewarm_hard_timeout_rolls_back_host_and_enters_error(self):
-        from hextech import runtime_supervisor
+        from hextech.bootstrap import supervisor as runtime_supervisor
 
         class FakeProcess:
             pid = 305
@@ -553,8 +554,8 @@ class RuntimeSupervisorTests(unittest.TestCase):
             return object()
 
         with (
-            mock.patch.object(runtime_supervisor, "OVERLAY_WARM_STARTUP_BUDGET_SECONDS", 0.05),
-            mock.patch.object(runtime_supervisor, "OVERLAY_CONTINUATION_SECONDS", 0.05),
+            mock.patch.object(overlay_runtime_manager, "OVERLAY_WARM_STARTUP_BUDGET_SECONDS", 0.05),
+            mock.patch.object(overlay_runtime_manager, "OVERLAY_CONTINUATION_SECONDS", 0.05),
         ):
             runtime = runtime_supervisor.OverlayRuntimeManager(
                 start_host_func=lambda: host,
@@ -578,7 +579,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             release_loader.set()
 
     def test_overlay_runtime_passes_deadline_and_cancel_signal_to_sidecar(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         class FakeProcess:
             pid = 304
@@ -618,7 +619,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(snapshot["startup_attempts"][0]["status"], "ready")
 
     def test_overlay_runtime_repeated_enable_keeps_completed_startup_session(self):
-        from hextech import runtime_supervisor
+        from hextech.bootstrap import supervisor as runtime_supervisor
 
         class FakeProcess:
             pid = 306
@@ -639,8 +640,8 @@ class RuntimeSupervisorTests(unittest.TestCase):
                 self.stopped = True
 
         with (
-            mock.patch.object(runtime_supervisor, "OVERLAY_COLD_STARTUP_BUDGET_SECONDS", 0.01),
-            mock.patch.object(runtime_supervisor, "OVERLAY_CONTINUATION_SECONDS", 0.01),
+            mock.patch.object(overlay_runtime_manager, "OVERLAY_COLD_STARTUP_BUDGET_SECONDS", 0.01),
+            mock.patch.object(overlay_runtime_manager, "OVERLAY_CONTINUATION_SECONDS", 0.01),
         ):
             runtime = runtime_supervisor.OverlayRuntimeManager(
                 start_host_func=FakeProcess,
@@ -660,7 +661,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             runtime.set_enabled(False)
 
     def test_overlay_runtime_rejects_sidecar_ready_after_hard_deadline(self):
-        from hextech import runtime_supervisor
+        from hextech.bootstrap import supervisor as runtime_supervisor
 
         class FakeProcess:
             pid = 307
@@ -687,8 +688,8 @@ class RuntimeSupervisorTests(unittest.TestCase):
             return sidecar
 
         with (
-            mock.patch.object(runtime_supervisor, "OVERLAY_COLD_STARTUP_BUDGET_SECONDS", 0.01),
-            mock.patch.object(runtime_supervisor, "OVERLAY_CONTINUATION_SECONDS", 0.01),
+            mock.patch.object(overlay_runtime_manager, "OVERLAY_COLD_STARTUP_BUDGET_SECONDS", 0.01),
+            mock.patch.object(overlay_runtime_manager, "OVERLAY_CONTINUATION_SECONDS", 0.01),
         ):
             runtime = runtime_supervisor.OverlayRuntimeManager(
                 start_host_func=FakeProcess,
@@ -707,7 +708,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             self.assertTrue(sidecar.stopped)
 
     def test_overlay_runtime_does_not_retry_deterministic_sidecar_failure(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         class FakeProcess:
             pid = 401
@@ -747,7 +748,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(delays, [])
 
     def test_overlay_runtime_does_not_retry_sidecar_resource_error(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         attempts: list[int] = []
 
@@ -769,7 +770,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(attempts, [1])
 
     def test_overlay_runtime_waits_for_template_prewarm_before_sidecar_start(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         class FakeProcess:
             def __init__(self, pid: int):
@@ -831,7 +832,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(runtime.snapshot()["status"], "running")
 
     def test_overlay_runtime_raises_when_finished_prewarm_failed(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         sidecar_started = threading.Event()
 
@@ -873,7 +874,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertFalse(sidecar_started.is_set())
 
     def test_overlay_runtime_prewarm_wait_uses_same_session_and_releases_stop_path(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         class FakeProcess:
             def __init__(self):
@@ -935,7 +936,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(runtime.snapshot()["status"], "stopped")
 
     def test_overlay_runtime_host_readiness_timeout_sets_failure_kind_without_sidecar_retry(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         sidecar_started = threading.Event()
         inactive_events: list[str] = []
@@ -964,7 +965,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertGreaterEqual(len(inactive_events), 2)
 
     def test_overlay_runtime_classifies_sidecar_token_mismatch_as_sidecar_failure(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         self.assertEqual(
             OverlayRuntimeManager._classify_start_failure_kind("Vision sidecar readiness token 不匹配"),
@@ -980,7 +981,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         )
 
     def test_overlay_runtime_status_reads_host_visible_reason(self):
-        from hextech.runtime_supervisor import OverlayRuntimeManager
+        from hextech.bootstrap.supervisor import OverlayRuntimeManager
 
         with tempfile.TemporaryDirectory() as tmp:
             visibility_path = Path(tmp) / "game_overlay_visibility.v1.json"
@@ -1004,7 +1005,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             self.assertEqual(runtime.snapshot()["visible_reason"], "game_not_foreground")
 
     def test_supervisor_shutdown_stops_overlay_runtime(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         class FakeOverlayRuntime:
             def __init__(self):
@@ -1038,8 +1039,8 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertTrue(supervisor.wait_for_overlay_shutdown(1.0))
 
     def test_supervisor_process_wait_covers_bounded_host_and_sidecar_cleanup(self):
-        from hextech import runtime_supervisor
-        from hextech.overlay import lifecycle
+        from hextech.bootstrap import supervisor as runtime_supervisor
+        from hextech.interfaces.overlay import lifecycle
 
         per_process_upper_bound = (
             lifecycle.HOST_GRACEFUL_EXIT_TIMEOUT_SECONDS + 1.5 + 1.0
@@ -1051,7 +1052,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         )
 
     def test_supervisor_registers_overlay_cleanup_before_publishing_shutdown(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         class FakeOverlayRuntime:
             def snapshot(self) -> dict:
@@ -1076,7 +1077,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertTrue(supervisor.wait_for_overlay_shutdown(1.0))
 
     def test_supervisor_does_not_restart_overlay_action_after_template_prewarm(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         class FakeOverlayRuntime:
             def __init__(self):
@@ -1131,7 +1132,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             self.assertFalse((Path(tmp) / "events.jsonl").exists())
 
     def test_supervisor_does_not_retry_unrelated_overlay_failure(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         class FakeOverlayRuntime:
             def __init__(self):
@@ -1163,7 +1164,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(overlay.calls, [])
 
     def test_supervisor_does_not_retry_while_overlay_action_is_running(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         class FakeOverlayRuntime:
             def __init__(self):
@@ -1203,7 +1204,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(overlay.calls, [])
 
     def test_supervisor_tick_delays_startup_refresh_and_handles_stale_lease(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         calls: list[bool] = []
 
@@ -1250,7 +1251,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
             self.assertEqual(overlay.shutdown_reason, "lease_expired")
 
     def test_supervisor_tick_schedules_refresh_when_next_refresh_is_due(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         calls: list[bool] = []
 
@@ -1275,7 +1276,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertIn(action["status"], {"running", "completed"})
 
     def test_supervisor_tick_defers_due_refresh_while_overlay_is_starting(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         calls: list[bool] = []
 
@@ -1309,7 +1310,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertGreater(supervisor.snapshot()["next_refresh_at"], time.time())
 
     def test_supervisor_tick_allows_due_refresh_after_overlay_error_even_if_cache_builds(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         calls: list[bool] = []
 
@@ -1339,7 +1340,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertEqual(calls, [False])
 
     def test_result_payload_supports_slots_dataclasses(self):
-        from hextech.runtime_supervisor import RuntimeSupervisor
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
 
         @dataclass(slots=True)
         class SlotsResult:
@@ -1354,11 +1355,11 @@ class RuntimeSupervisorTests(unittest.TestCase):
         )
 
     def test_root_launcher_exposes_runtime_supervisor_mode(self):
-        import hextech_ui
+        from hextech.bootstrap import desktop as hextech_ui
 
         with (
-            mock.patch.object(os.sys, "argv", ["hextech_ui.py", "--runtime-supervisor", "--parent-pid", "123"]),
-            mock.patch("hextech.runtime_supervisor.main", return_value=17) as run_supervisor,
+            mock.patch.object(os.sys, "argv", ["hextech-desktop", "--runtime-supervisor", "--parent-pid", "123"]),
+            mock.patch("hextech.bootstrap.supervisor.main", return_value=17) as run_supervisor,
             self.assertRaises(SystemExit) as raised,
         ):
             hextech_ui.main()
@@ -1367,7 +1368,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         run_supervisor.assert_called_once_with(["--parent-pid", "123"])
 
     def test_desktop_runtime_bootstraps_supervisor_process(self):
-        from hextech.display.desktop import runtime as desktop_runtime
+        from hextech.interfaces.desktop import runtime as desktop_runtime
 
         handle = desktop_runtime.start_runtime_supervisor_process(parent_pid=os.getpid())
         wrapper_pid = handle.process.pid
@@ -1384,7 +1385,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertFalse(psutil.pid_exists(supervisor_pid))
 
     def test_desktop_runtime_bootstrap_timeout_is_not_blocked_by_readline(self):
-        from hextech.display.desktop import runtime as desktop_runtime
+        from hextech.interfaces.desktop import runtime as desktop_runtime
 
         class SlowStdout:
             def readline(self):
@@ -1422,8 +1423,8 @@ class RuntimeSupervisorTests(unittest.TestCase):
         self.assertTrue(fake_process.terminated)
 
     def test_desktop_ui_starts_supervisor_and_lease_thread(self):
-        from hextech.display.desktop.app import HextechUI
-        from hextech.display.desktop import app as desktop_app
+        from hextech.interfaces.desktop.app import HextechUI
+        from hextech.interfaces.desktop import app as desktop_app
 
         ui = HextechUI.__new__(HextechUI)
         ui.runtime_supervisor = None
@@ -1440,7 +1441,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         ui._restore_persisted_game_overlay.assert_called_once_with()
 
     def test_desktop_ui_defers_persisted_game_overlay_until_supervisor_ready(self):
-        from hextech.display.desktop.app import HextechUI
+        from hextech.interfaces.desktop.app import HextechUI
 
         ui = HextechUI.__new__(HextechUI)
         ui.feature_flags = {"web_frontend_enabled": True, "game_overlay_enabled": True}
@@ -1466,7 +1467,7 @@ class RuntimeSupervisorTests(unittest.TestCase):
         ui._toggle_game_overlay.assert_called_once_with()
 
     def test_desktop_ui_game_overlay_toggle_uses_supervisor_action(self):
-        from hextech.display.desktop.app import HextechUI
+        from hextech.interfaces.desktop.app import HextechUI
 
         ui = HextechUI.__new__(HextechUI)
         ui.game_overlay_var = mock.Mock()

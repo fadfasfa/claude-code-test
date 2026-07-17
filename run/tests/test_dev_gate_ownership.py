@@ -46,7 +46,7 @@ def test_dev_gate_support_contains_no_tests_or_manual_web_copy() -> None:
 
 def test_bundle_gate_uses_manual_module_validation_api() -> None:
     bundle_source = (TESTS_DIR / "test_dev_gate_bundle.py").read_text(encoding="utf-8")
-    manual_source = (RUN_DIR / "tools" / "dev_check_manual.py").read_text(encoding="utf-8")
+    manual_source = (RUN_DIR / "tooling" / "checks" / "manual.py").read_text(encoding="utf-8")
     assert "validate_bundle_manifest_contract" in manual_source
     assert "dev_check_manual.validate_bundle_manifest_contract" in bundle_source
     assert "build_bundle_manifest(" not in bundle_source

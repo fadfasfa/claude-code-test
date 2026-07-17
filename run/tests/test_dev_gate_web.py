@@ -54,11 +54,13 @@ def test_detail_question_mark_augment_guard() -> None:
     assert not re.fullmatch(r"[?？]{3,}", "？？？ 提升攻速 25%")
 
     icon_map = load_augment_name_to_icon_map()
-    assert icon_map.get("？？？") == "/assets/missingping_small.png"
+    assert icon_map.get("？？？") == "/assets/augments/missingping_small.png"
 
 def test_detail_hextech_card_layout_contract() -> None:
     detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
-    style_source = (RUN_DIR / "frontend" / "src" / "styles" / "input.css").read_text(encoding="utf-8")
+    style_source = (
+        RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "frontend" / "src" / "styles" / "input.css"
+    ).read_text(encoding="utf-8")
     compiled_style = (WEB_STATIC_DIR / "css" / "tailwind-compiled.css").read_text(encoding="utf-8")
 
     # 列表卡片的胜率数字必须独立居中；趋势箭头不能参与数字本身的中轴线计算。
@@ -77,7 +79,7 @@ def test_detail_hextech_card_layout_contract() -> None:
         assert "word-break: break-word" in css or "word-break:break-word" in css
 
     icon_map = load_augment_name_to_icon_map()
-    assert icon_map.get("高压锅") == "/assets/questpressurecooker_small.png"
+    assert icon_map.get("高压锅") == "/assets/augments/questpressurecooker_small.png"
 
 def test_web_bootstrap_avoids_load_event_gate() -> None:
     index_text = (WEB_STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -103,7 +105,7 @@ def test_web_bootstrap_avoids_load_event_gate() -> None:
 def test_api_champions_reads_published_snapshot_without_web_rebuild() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import hextech.display.web.api as web_api
+    import hextech.interfaces.web.backend.api as web_api
 
     app = FastAPI()
     web_api.register_routes(app)
@@ -127,7 +129,7 @@ def test_api_champions_reads_published_snapshot_without_web_rebuild() -> None:
 def test_redirect_api_does_not_sync_preload_before_response() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import hextech.display.web.api as web_api
+    import hextech.interfaces.web.backend.api as web_api
 
     class DummyManager:
         active = [object()]
@@ -159,7 +161,7 @@ def test_redirect_api_does_not_sync_preload_before_response() -> None:
 def test_redirect_api_defers_browser_open_before_response() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import hextech.display.web.api as web_api
+    import hextech.interfaces.web.backend.api as web_api
 
     class DummyManager:
         active = []
@@ -191,7 +193,7 @@ def test_redirect_api_defers_browser_open_before_response() -> None:
 def test_redirect_api_handles_invalid_champion_input() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    import hextech.display.web.api as web_api
+    import hextech.interfaces.web.backend.api as web_api
 
     app = FastAPI()
     web_api.register_routes(app)

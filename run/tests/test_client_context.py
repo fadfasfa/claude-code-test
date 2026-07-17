@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
-from hextech.client_context import ClientContextProvider, parse_client_context
+from hextech.modules.game_context.client import ClientContextProvider, parse_client_context
 
 
 def test_parse_roles_excludes_selected_from_bench() -> None:
@@ -157,7 +157,7 @@ def test_provider_session_is_stable_during_disconnect_and_rotates_for_next_champ
 
 
 def test_web_projection_clears_teammates_after_ttl_and_recovers_connection() -> None:
-    from hextech.display.web import runtime
+    from hextech.interfaces.web.backend import runtime
 
     provider = ClientContextProvider(ttl_seconds=3)
     payload = {
@@ -194,7 +194,7 @@ def test_web_projection_clears_teammates_after_ttl_and_recovers_connection() -> 
 
 
 def test_overlay_lcu_writer_preserves_roles_with_mixed_cell_id_types(tmp_path: Path) -> None:
-    from hextech.overlay.context import read_overlay_context, write_current_lcu_overlay_context_once
+    from hextech.interfaces.overlay.context import read_overlay_context, write_current_lcu_overlay_context_once
 
     class Response:
         status_code = 200
@@ -228,7 +228,7 @@ def test_overlay_lcu_writer_preserves_roles_with_mixed_cell_id_types(tmp_path: P
 
 
 def test_overlay_provider_ttl_is_not_extended_by_recent_context_file(tmp_path: Path, monkeypatch) -> None:
-    from hextech.overlay import context as overlay_context
+    from hextech.interfaces.overlay import context as overlay_context
 
     class UnavailableResponse:
         status_code = 503
@@ -284,10 +284,10 @@ def test_overlay_provider_ttl_is_not_extended_by_recent_context_file(tmp_path: P
 
 
 def test_typed_overlay_disconnect_remains_unavailable_through_runtime_adapter(tmp_path: Path) -> None:
-    from hextech.adapters.runtime_session import game_context_from_runtime
+    from hextech.interfaces.overlay.session_adapter import game_context_from_runtime
     from hextech.contracts import HealthState
-    from hextech.game_context import TypedGameContextProvider
-    from hextech.overlay import context as overlay_context
+    from hextech.modules.game_context import TypedGameContextProvider
+    from hextech.interfaces.overlay import context as overlay_context
 
     class UnavailableResponse:
         status_code = 503
@@ -318,10 +318,10 @@ def test_typed_overlay_disconnect_remains_unavailable_through_runtime_adapter(tm
 
 
 def test_typed_overlay_short_disconnect_remains_degraded_through_runtime_adapter(tmp_path: Path, monkeypatch) -> None:
-    from hextech.adapters.runtime_session import game_context_from_runtime
+    from hextech.interfaces.overlay.session_adapter import game_context_from_runtime
     from hextech.contracts import HealthState
-    from hextech.game_context import TypedGameContextProvider
-    from hextech.overlay import context as overlay_context
+    from hextech.modules.game_context import TypedGameContextProvider
+    from hextech.interfaces.overlay import context as overlay_context
 
     now = {"value": 100.0}
     monkeypatch.setattr(overlay_context.time, "time", lambda: now["value"])
@@ -370,7 +370,7 @@ def test_typed_overlay_short_disconnect_remains_degraded_through_runtime_adapter
 
 
 def test_overlay_malformed_team_is_bounded_by_provider_ttl(tmp_path: Path, monkeypatch) -> None:
-    from hextech.overlay import context as overlay_context
+    from hextech.interfaces.overlay import context as overlay_context
 
     now = {"value": 100.0}
     monkeypatch.setattr(overlay_context.time, "time", lambda: now["value"])
@@ -426,7 +426,8 @@ def test_overlay_malformed_team_is_bounded_by_provider_ttl(tmp_path: Path, monke
 
 
 def test_desktop_lcu_consumer_uses_provider_local_role(monkeypatch) -> None:
-    from hextech.display.desktop import runtime
+    from hextech.interfaces.desktop import runtime
+    from hextech.interfaces.desktop import runtime_services
 
     class Response:
         status_code = 200
@@ -447,9 +448,9 @@ def test_desktop_lcu_consumer_uses_provider_local_role(monkeypatch) -> None:
     ui._lcu_token = "token"
     ui._client_context_provider = ClientContextProvider()
     captured: list[dict] = []
-    monkeypatch.setattr(runtime, "_get_lcu_champ_select_session", lambda _url, _headers: Response())
+    monkeypatch.setattr(runtime_services, "_get_lcu_champ_select_session", lambda _url, _headers: Response())
     monkeypatch.setattr(
-        runtime,
+        runtime_services,
         "_write_overlay_context_from_live_state",
         lambda _ui, payload, **_kwargs: captured.append(dict(payload)) or True,
     )

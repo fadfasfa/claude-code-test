@@ -7,8 +7,8 @@ from types import MethodType, SimpleNamespace
 
 import pytest
 
-import hextech.data_snapshot as snapshot_module
-from hextech.data_snapshot import DataSnapshotClient, DataSnapshotPublisher, SnapshotValidationError
+import hextech.modules.data.generation as snapshot_module
+from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher, SnapshotValidationError
 
 
 def _payload(*, marker: str, private: bool = True) -> dict[str, object]:
@@ -159,7 +159,7 @@ def test_open_view_stays_on_one_generation_after_pointer_switch(tmp_path: Path) 
 
 
 def test_desktop_generation_watcher_loads_first_published_snapshot(tmp_path: Path) -> None:
-    from hextech.display.desktop.app import HextechUI
+    from hextech.interfaces.desktop.app import HextechUI
 
     DataSnapshotPublisher(tmp_path).publish(_payload(marker="one"), private_stats_enabled=True)
 
@@ -346,7 +346,7 @@ def test_publisher_keeps_only_current_and_previous_generations(tmp_path: Path) -
 
 
 def test_overlay_unavailable_state_does_not_fall_back_to_legacy_cache(tmp_path: Path) -> None:
-    from hextech.overlay.data_source import SharedOverlayDataSource
+    from hextech.modules.data.overlay_source import SharedOverlayDataSource
 
     class UnavailableClient:
         @staticmethod
@@ -366,7 +366,7 @@ def test_overlay_unavailable_state_does_not_fall_back_to_legacy_cache(tmp_path: 
 
 
 def test_overlay_data_source_observes_first_generation_without_restart(tmp_path: Path) -> None:
-    from hextech.overlay.data_source import SharedOverlayDataSource
+    from hextech.modules.data.overlay_source import SharedOverlayDataSource
 
     client = DataSnapshotClient(tmp_path)
     source = SharedOverlayDataSource(snapshot_client=client)
@@ -384,8 +384,8 @@ def test_web_and_overlay_read_the_same_generation(tmp_path: Path, monkeypatch: p
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from hextech.display.web import api as web_api
-    from hextech.overlay.data_source import SharedOverlayDataSource
+    from hextech.interfaces.web.backend import api as web_api
+    from hextech.modules.data.overlay_source import SharedOverlayDataSource
 
     manifest = DataSnapshotPublisher(tmp_path).publish(_payload(marker="one"), private_stats_enabled=True)
     snapshot_client = DataSnapshotClient(tmp_path)
@@ -408,8 +408,8 @@ def test_web_and_overlay_response_stays_pinned_during_pointer_switch(
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from hextech.display.web import api as web_api
-    from hextech.overlay.data_source import SharedOverlayDataSource
+    from hextech.interfaces.web.backend import api as web_api
+    from hextech.modules.data.overlay_source import SharedOverlayDataSource
 
     publisher = DataSnapshotPublisher(tmp_path)
     first = publisher.publish(_payload(marker="one"), private_stats_enabled=True)

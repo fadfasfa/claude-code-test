@@ -1,6 +1,6 @@
 """测试 运行态日志。
 
-调用方: pytest; 关键依赖: hextech.support.log_utils。
+调用方: pytest; 关键依赖: hextech.infrastructure.observability.logging。
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def _reset_hextech_logging() -> None:
 
 
 def test_dev_profile_installs_full_summary_error_logs(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     _reset_hextech_logging()
     monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
@@ -62,7 +62,7 @@ def test_dev_profile_installs_full_summary_error_logs(tmp_path, monkeypatch):
 
 
 def test_redact_log_value_redacts_json_numeric_sensitive_values():
-    from hextech.support.log_utils import redact_log_value
+    from hextech.infrastructure.observability.logging import redact_log_value
 
     redacted = redact_log_value('"token": 12345, "session_id": true, "status": "ok"')
 
@@ -73,7 +73,7 @@ def test_redact_log_value_redacts_json_numeric_sensitive_values():
 
 
 def test_packaged_profile_skips_full_debug_jsonl(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     _reset_hextech_logging()
     monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
@@ -96,7 +96,7 @@ def test_packaged_profile_skips_full_debug_jsonl(tmp_path, monkeypatch):
 
 
 def test_runtime_logging_install_is_idempotent(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     _reset_hextech_logging()
     monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
@@ -115,7 +115,7 @@ def test_runtime_logging_install_is_idempotent(tmp_path, monkeypatch):
 
 
 def test_runtime_logging_replaces_legacy_summary_error_handlers(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     _reset_hextech_logging()
     monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
@@ -137,7 +137,7 @@ def test_runtime_logging_replaces_legacy_summary_error_handlers(tmp_path, monkey
 
 
 def test_runtime_logging_installs_warning_stream_handler(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     _reset_hextech_logging()
     monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
@@ -156,7 +156,7 @@ def test_runtime_logging_installs_warning_stream_handler(tmp_path, monkeypatch):
 
 
 def test_runtime_rotating_handler_keeps_logging_when_rollover_is_locked(tmp_path):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     path = tmp_path / "busy.log"
     path.write_text("existing\n", encoding="utf-8")
@@ -176,7 +176,7 @@ def test_runtime_rotating_handler_keeps_logging_when_rollover_is_locked(tmp_path
 
 
 def test_legacy_summary_logging_does_not_downgrade_runtime_handlers(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     _reset_hextech_logging()
     monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
@@ -204,7 +204,7 @@ def test_legacy_summary_logging_does_not_downgrade_runtime_handlers(tmp_path, mo
 
 
 def test_runtime_logging_recovers_after_legacy_forced_handlers(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     _reset_hextech_logging()
     monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
@@ -233,13 +233,13 @@ def test_runtime_logging_recovers_after_legacy_forced_handlers(tmp_path, monkeyp
 
 
 def test_importing_synergy_scraper_keeps_runtime_handler_levels(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     _reset_hextech_logging()
     monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
 
     log_utils.install_runtime_logging(profile="dev")
-    import hextech.scraping.synergy.scraper as scraper
+    import hextech.infrastructure.sources.apex.service as scraper
 
     importlib.reload(scraper)
 
@@ -257,7 +257,7 @@ def test_importing_synergy_scraper_keeps_runtime_handler_levels(tmp_path, monkey
 
 
 def test_runtime_logging_redacts_exception_traceback(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     _reset_hextech_logging()
     monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
@@ -281,7 +281,7 @@ def test_runtime_logging_redacts_exception_traceback(tmp_path, monkeypatch):
 
 
 def test_redact_log_value_covers_composite_tokens_bearer_and_path_tokens():
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     raw = (
         "access_token=access-secret refresh_token=refresh-secret session_token=session-secret "
@@ -331,7 +331,7 @@ def test_redact_log_value_covers_composite_tokens_bearer_and_path_tokens():
 
 
 def test_synergy_report_file_handler_redacts_sensitive_values(tmp_path):
-    import hextech.scraping.synergy.scraper as scraper
+    import hextech.infrastructure.sources.apex.service as scraper
 
     report_path = tmp_path / "stderr.log"
     handler = scraper._new_redacting_report_file_handler(report_path)
@@ -352,7 +352,7 @@ def test_synergy_report_file_handler_redacts_sensitive_values(tmp_path):
 
 
 def test_synergy_report_handler_removed_when_source_init_fails(tmp_path, monkeypatch):
-    import hextech.scraping.synergy.scraper as scraper
+    import hextech.infrastructure.sources.apex.service as scraper
 
     class BrokenApexSource:
         def __init__(self):
@@ -379,7 +379,7 @@ def test_synergy_report_handler_removed_when_source_init_fails(tmp_path, monkeyp
 
 
 def test_write_structured_event_redacts_and_is_parseable(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
 
@@ -401,7 +401,7 @@ def test_write_structured_event_redacts_and_is_parseable(tmp_path, monkeypatch):
 
 
 def test_write_structured_event_target_path_avoids_default_runtime_paths(tmp_path, monkeypatch):
-    from hextech.support import log_utils
+    from hextech.infrastructure.observability import logging as log_utils
 
     target = tmp_path / "custom" / "events.jsonl"
     monkeypatch.setattr(
@@ -419,11 +419,15 @@ def test_write_structured_event_target_path_avoids_default_runtime_paths(tmp_pat
 
 def test_entrypoints_install_runtime_logging():
     run_dir = Path(__file__).resolve().parents[1]
-    web_server_source = (run_dir / "web_server.py").read_text(encoding="utf-8")
-    assert "install_runtime_logging()" in (run_dir / "hextech_ui.py").read_text(encoding="utf-8")
-    assert "install_runtime_logging()\n    run_web_server()" in web_server_source
-    assert "\ninstall_runtime_logging()\n\nfrom hextech.display.web.app" not in web_server_source
+    web_server_source = (run_dir / "src" / "hextech" / "bootstrap" / "web.py").read_text(encoding="utf-8")
     assert "install_runtime_logging()" in (
-        run_dir / "hextech" / "scraping" / "version_sync.py"
+        run_dir / "src" / "hextech" / "bootstrap" / "desktop.py"
     ).read_text(encoding="utf-8")
-    assert "write_structured_event(" in (run_dir / "hextech" / "core" / "refresh.py").read_text(encoding="utf-8")
+    assert "install_runtime_logging()\n    run_web_server()" in web_server_source
+    assert "\ninstall_runtime_logging()\n\nfrom hextech.interfaces.web.backend.app" not in web_server_source
+    assert "install_runtime_logging()" in (
+        run_dir / "src" / "hextech" / "infrastructure" / "sources" / "version_sync.py"
+    ).read_text(encoding="utf-8")
+    assert "write_structured_event(" in (
+        run_dir / "src" / "hextech" / "bootstrap" / "data_refresh.py"
+    ).read_text(encoding="utf-8")

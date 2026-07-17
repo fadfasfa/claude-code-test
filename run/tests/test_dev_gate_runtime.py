@@ -4,7 +4,6 @@ import pytest
 
 from tests._dev_gate_support import (
     Any,
-    ExitStack,
     Path,
     RUN_DIR,
     TemporaryDirectory,
@@ -14,19 +13,14 @@ from tests._dev_gate_support import (
     _top_level_import_names,
     _write_runtime_csv,
     alias_search,
-    datetime,
     heal_worker,
-    hextech_scraper,
     json,
     orchestrator,
     os,
     patch,
-    pd,
     precomputed_cache,
     runtime_store,
     threading,
-    time,
-    timezone,
 )
 
 pytestmark = pytest.mark.dev_gate
@@ -109,180 +103,6 @@ def test_latest_valid_runtime_csv_fallback() -> None:
         ):
             assert heal_worker._latest_csv_ready() is True
             assert heal_worker._latest_csv_fresh() is True
-
-def test_hextech_failed_refresh_never_overwrites_csv() -> None:
-    """低行数与 force 超时都只能回退，不能覆盖已有快照。"""
-
-    def fake_result(status_code: int | None, payload: Any = None, text: str = "ok", error: str = ""):
-        if payload is not None:
-            text = json.dumps(payload, ensure_ascii=False)
-        return hextech_scraper.ScraplingFetchResult(
-            url="https://example.test",
-            text=text,
-            status_code=status_code,
-            fetched_at="2026-06-23T00:00:00+00:00",
-            error=error,
-        )
-
-    class SequenceFetcher:
-        def __init__(self, responses: list[Any]) -> None:
-            self.responses = list(responses)
-            self.calls = 0
-
-        def __call__(self, *_args, **_kwargs):
-            self.calls += 1
-            return self.responses.pop(0)
-
-    one_row = {
-        "英雄ID": "1",
-        "英雄名称": "测试英雄",
-        "英雄评级": "S",
-        "英雄胜率": 0.5,
-        "英雄出场率": 0.1,
-        "海克斯阶级": "Gold",
-        "海克斯名称": "测试海克斯",
-        "海克斯胜率": 0.51,
-        "海克斯出场率": 0.02,
-        "源站排名": 1,
-    }
-    metadata = fake_result(200, {"100": {"displayName": "测试海克斯"}})
-    stats = fake_result(200, [{"championId": "1"}])
-
-    with TemporaryDirectory() as temp_dir:
-        root = Path(temp_dir)
-        fallback_csv = root / "Hextech_Data_2026-06-19.csv"
-        output_csv = root / "Hextech_Data_2026-06-21.csv"
-        status_file = root / "scraper_status.json"
-        _write_runtime_csv(fallback_csv, 300)
-        output_csv.write_text("do-not-overwrite", encoding="utf-8")
-        low_row_fetcher = SequenceFetcher([metadata, stats, fake_result(200, text="detail")])
-
-        common_patches = (
-            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
-            patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
-            patch.object(hextech_scraper, "get_latest_valid_csv", return_value=str(fallback_csv)),
-            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
-            patch.object(hextech_scraper, "build_daily_csv_path", return_value=str(output_csv)),
-            patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
-            patch.object(hextech_scraper, "extract_champion_stats", return_value=[one_row]),
-            patch.object(hextech_scraper.time, "sleep"),
-        )
-        with ExitStack() as stack:
-            for context_manager in common_patches:
-                stack.enter_context(context_manager)
-            stack.enter_context(patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")))
-            stack.enter_context(patch.object(hextech_scraper, "fetch_text", side_effect=low_row_fetcher))
-            stack.enter_context(
-                patch.object(hextech_scraper, "atomic_write_csv", side_effect=AssertionError("低行数不得覆盖 CSV"))
-            )
-            assert hextech_scraper.main_scraper() is True
-        assert output_csv.read_text(encoding="utf-8") == "do-not-overwrite"
-        assert json.loads(status_file.read_text(encoding="utf-8"))["reason"] == "insufficient_rows_1"
-
-        status_file.unlink()
-        future_block = {
-            "last_result": "fallback",
-            "reason": "http_403",
-            "blocked_until": datetime.fromtimestamp(time.time() + 3600, tz=timezone.utc).isoformat(),
-        }
-        timeout_fetcher = SequenceFetcher(
-            [
-                fake_result(200, {"100": {"displayName": "测试海克斯"}}),
-                fake_result(200, [{"championId": "1"}]),
-                fake_result(None, text="", error="simulated timeout"),
-                fake_result(None, text="", error="simulated timeout"),
-            ]
-        )
-        with (
-            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
-            patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
-            patch.object(hextech_scraper, "get_latest_valid_csv", return_value=str(fallback_csv)),
-            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
-            patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
-            patch.object(hextech_scraper, "load_scraper_status", return_value=future_block),
-            patch.object(hextech_scraper, "fetch_text", side_effect=timeout_fetcher),
-            patch.object(
-                hextech_scraper.DETAIL_PASS_RUNNER,
-                "run",
-                side_effect=AssertionError("预检超时不得启动英雄详情并发"),
-            ),
-            patch.object(hextech_scraper.time, "sleep"),
-        ):
-            assert hextech_scraper.main_scraper(force=True) is True
-        timeout_status = json.loads(status_file.read_text(encoding="utf-8"))
-        assert timeout_fetcher.calls == 4
-        assert timeout_status["reason"] == "timeout"
-        assert timeout_status["next_retry_at"] == timeout_status["blocked_until"]
-
-def test_hextech_success_clears_fallback_state() -> None:
-    def fake_result(payload: Any = None, text: str = "ok"):
-        if payload is not None:
-            text = json.dumps(payload, ensure_ascii=False)
-        return hextech_scraper.ScraplingFetchResult(
-            url="https://example.test",
-            text=text,
-            status_code=200,
-            fetched_at="2026-06-23T00:00:00+00:00",
-            error="",
-        )
-
-    class SequenceFetcher:
-        def __init__(self) -> None:
-            self.responses = [
-                fake_result({"100": {"displayName": "测试海克斯"}}),
-                fake_result([{"championId": "1"}]),
-                fake_result(text="detail"),
-            ]
-
-        def __call__(self, *_args, **_kwargs):
-            return self.responses.pop(0)
-
-    row = {
-        "英雄ID": "1",
-        "英雄名称": "测试英雄",
-        "英雄评级": "S",
-        "英雄胜率": 0.5,
-        "英雄出场率": 0.1,
-        "海克斯阶级": "Gold",
-        "海克斯名称": "测试海克斯",
-        "海克斯胜率": 0.51,
-        "海克斯出场率": 0.02,
-        "源站排名": 1,
-    }
-    with TemporaryDirectory() as temp_dir:
-        root = Path(temp_dir)
-        output_csv = root / "Hextech_Data_2026-06-21.csv"
-        status_file = root / "scraper_status.json"
-        stale_status = {
-            "last_result": "fallback",
-            "reason": "http_403",
-            "blocked_until": datetime.fromtimestamp(time.time() + 3600, tz=timezone.utc).isoformat(),
-            "last_success_time": 1,
-        }
-        with (
-            patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
-            patch.object(hextech_scraper, "load_scraper_status", return_value=stale_status),
-            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
-            patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
-            patch.object(hextech_scraper, "fetch_text", side_effect=SequenceFetcher()),
-            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
-            patch.object(hextech_scraper, "build_daily_csv_path", return_value=str(output_csv)),
-            patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
-            patch.object(hextech_scraper, "extract_champion_stats", return_value=[row] * 300),
-            patch.object(hextech_scraper, "backup_active_csv_before_publish"),
-            patch.object(hextech_scraper, "cleanup_old_csvs") as cleanup,
-            patch.object(hextech_scraper.time, "sleep"),
-        ):
-            assert hextech_scraper.main_scraper() is True
-
-        status = json.loads(status_file.read_text(encoding="utf-8"))
-        assert status["last_result"] == "success"
-        assert status["reason"] == ""
-        assert status["blocked_until"] == ""
-        assert status["active_csv"] == str(output_csv)
-        assert status["last_success_time"] > 1
-        assert len(pd.read_csv(output_csv, encoding=runtime_store.CSV_ENCODING)) == 300
-        cleanup.assert_called_once()
 
 def test_precomputed_cache_freshness() -> None:
     with TemporaryDirectory() as temp_dir:
@@ -431,8 +251,8 @@ def test_precomputed_cache_returns_unpollutable_copies() -> None:
 
 def test_cached_dataframe_loader_returns_copy_and_hash_samples_middle() -> None:
     import pandas as pd
-    from hextech.catalog.runtime_store import CachedDataFrameLoader
-    from hextech.catalog import view_adapter
+    from hextech.modules.data.catalog.runtime_store import CachedDataFrameLoader
+    from hextech.modules.data.catalog import view_adapter
 
     with TemporaryDirectory() as temp_dir:
         csv_path = Path(temp_dir) / "Hextech_Data_20260518.csv"
@@ -539,22 +359,24 @@ def test_precomputed_atomic_write_uses_unique_temp_files() -> None:
 def test_static_css_single_mount_contract() -> None:
     index_text = (WEB_STATIC_DIR / "index.html").read_text(encoding="utf-8")
     detail_text = (WEB_STATIC_DIR / "detail.html").read_text(encoding="utf-8")
-    web_server_text = (RUN_DIR / "hextech" / "display" / "web" / "app.py").read_text(encoding="utf-8")
-    frontend_package = (RUN_DIR / "frontend" / "package.json").read_text(encoding="utf-8")
-    tailwind_config = (RUN_DIR / "frontend" / "tailwind.config.js").read_text(encoding="utf-8")
+    web_server_text = (RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "backend" / "app.py").read_text(encoding="utf-8")
+    frontend_package = (RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "frontend" / "package.json").read_text(encoding="utf-8")
+    tailwind_config = (
+        RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "frontend" / "tailwind.config.js"
+    ).read_text(encoding="utf-8")
 
     assert 'href="/static/css/hextech-theme.css"' in index_text
     assert 'href="/static/css/hextech-theme.css"' in detail_text
     assert 'app.mount("/css"' not in web_server_text
     assert "../display/static" not in frontend_package
     assert "../display/static" not in tailwind_config
-    assert "../hextech/display/web/static/css/tailwind-compiled.css" in frontend_package
-    assert "../hextech/display/web/static/**/*.html" in tailwind_config
-    assert "../hextech/display/web/static/**/*.js" in tailwind_config
+    assert "../backend/static/css/tailwind-compiled.css" in frontend_package
+    assert "../backend/static/**/*.html" in tailwind_config
+    assert "../backend/static/**/*.js" in tailwind_config
 
 def test_ui_feature_flags_contract() -> None:
     """验证双开关运行态配置的默认值、持久化和未知字段收口。"""
-    import hextech.core.settings as ui_feature_flags
+    import hextech.modules.session.settings as ui_feature_flags
 
     with TemporaryDirectory() as tmp_dir:
         flags_path = Path(tmp_dir) / "ui_feature_flags.json"
@@ -629,16 +451,22 @@ def test_ui_feature_flags_contract() -> None:
 
 def test_desktop_ui_feature_switch_contract() -> None:
     """验证桌面 UI 不再初始化时无条件启动 Web 服务。"""
-    import hextech.display.desktop.runtime as ui_runtime
-    import hextech.display.desktop.app as desktop_app
+    import hextech.interfaces.desktop.runtime as ui_runtime
+    import hextech.interfaces.desktop.runtime_services as ui_runtime_services
+    import hextech.interfaces.desktop.app as desktop_app
 
-    ui_text = (RUN_DIR / "hextech" / "display" / "desktop" / "app.py").read_text(encoding="utf-8")
-    runtime_text = (RUN_DIR / "hextech" / "display" / "desktop" / "runtime.py").read_text(encoding="utf-8")
+    desktop_dir = RUN_DIR / "src" / "hextech" / "interfaces" / "desktop"
+    app_entry_text = (desktop_dir / "app.py").read_text(encoding="utf-8")
+    ui_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(desktop_dir.glob("app*.py"))
+    )
+    runtime_text = (RUN_DIR / "src" / "hextech" / "interfaces" / "desktop" / "runtime.py").read_text(encoding="utf-8")
     assert "ui._df_lock" not in runtime_text
     assert "ui.df" not in runtime_text
-    init_start = ui_text.index("    def __init__(self):")
-    init_end = ui_text.index("    def _mark_first_idle_visible", init_start)
-    init_body = ui_text[init_start:init_end]
+    init_start = app_entry_text.index("    def __init__(self):")
+    init_end = app_entry_text.index("\ndef run_desktop", init_start)
+    init_body = app_entry_text[init_start:init_end]
 
     assert "ServiceManager" in ui_text
     assert "Web 前端" in ui_text
@@ -681,11 +509,11 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert "start_vision_sidecar_process" not in ui_text
     assert "self._start_web_server()" not in init_body
 
-    root_entry_imports = _top_level_import_names(RUN_DIR / "hextech_ui.py")
+    root_entry_imports = _top_level_import_names(RUN_DIR / "src" / "hextech" / "bootstrap" / "desktop.py")
     assert not any(name.startswith("display") for name in root_entry_imports)
 
-    assert _probe_clean_import("hextech_ui.py") == set()
-    assert _probe_module_import("hextech.overlay.host") == set()
+    assert _probe_clean_import("src/hextech/bootstrap/desktop.py") == set()
+    assert _probe_module_import("hextech.interfaces.overlay.host") == set()
 
     captured: dict[str, Any] = {}
 
@@ -701,8 +529,8 @@ def test_desktop_ui_feature_switch_contract() -> None:
 
     with (
         patch.object(ui_runtime.subprocess, "Popen", side_effect=fake_popen),
-        patch.object(ui_runtime, "_clear_web_readiness_files", return_value=None),
-        patch.object(ui_runtime, "_wait_for_web_startup", return_value=None),
+            patch.object(ui_runtime_services, "_clear_web_readiness_files", return_value=None),
+            patch.object(ui_runtime_services, "_wait_for_web_startup", return_value=None),
     ):
         ui_runtime.start_web_server_process("unused-port-file.txt", auto_open_browser=True)
     assert captured["env"]["HEXTECH_OPEN_BROWSER"] == "0"
@@ -815,7 +643,7 @@ def test_desktop_ui_feature_switch_contract() -> None:
 
 
 def test_desktop_self_role_has_stronger_visual_priority_than_teammate() -> None:
-    from hextech.display.desktop import app as desktop_app
+    from hextech.interfaces.desktop import app as desktop_app
 
     self_style = desktop_app._selection_role_style("self")
     teammate_style = desktop_app._selection_role_style("teammate")

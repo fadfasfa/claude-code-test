@@ -1,6 +1,6 @@
 """测试 CDragon augment 同步工具的文件写入边界。
 
-调用方: pytest; 关键依赖: tools.sync_cdragon_augments。
+调用方: pytest; 关键依赖: tooling.setup.catalog。
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ def _png_bytes() -> bytes:
 
 
 def test_download_one_uses_unique_same_directory_temp_file(tmp_path):
-    from tools import sync_cdragon_augments
-    from hextech.support.image_validation import is_valid_png_bytes
+    from tooling.setup import catalog as sync_cdragon_augments
+    from hextech.modules.vision.image_validation import is_valid_png_bytes
 
     class FakeResponse:
         content = _png_bytes()

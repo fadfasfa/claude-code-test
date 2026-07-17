@@ -11,7 +11,7 @@ import pytest
 import requests
 import pandas as pd
 
-from hextech.data_service import (
+from hextech.bootstrap.data_service_runtime import (
     DATA_SERVICE_NONCE_HEADER,
     DataBuildResult,
     DataServiceApplication,
@@ -19,10 +19,11 @@ from hextech.data_service import (
     DataServiceInstanceLock,
     bootstrap_snapshot,
     build_snapshot_from_runtime,
+    _sync_startup_snapshot_status,
     _build_augment_identity_payload,
     _query_payloads_from_dataframe,
 )
-from hextech.data_snapshot import DataSnapshotClient, DataSnapshotPublisher
+from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher
 
 
 def _build_payload(private_stats_enabled: bool) -> dict[str, object]:
@@ -274,6 +275,43 @@ def test_bootstrap_builds_generation_from_startup_seed(tmp_path: Path) -> None:
     assert DataSnapshotClient(tmp_path).status()["generation_id"] == result["generation_id"]
 
 
+def test_bootstrap_accepts_complete_seed_without_runtime_rebuild(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    seeded_generation_id = ""
+
+    def prepare_seed() -> bool:
+        nonlocal seeded_generation_id
+        manifest = publisher.publish(_build_payload(False), private_stats_enabled=False)
+        seeded_generation_id = manifest.generation_id
+        return True
+
+    result = bootstrap_snapshot(
+        publisher,
+        False,
+        builder=lambda _private: (_ for _ in ()).throw(AssertionError("完整 seed 不应从运行态重建")),
+        seed_preparer=prepare_seed,
+    )
+
+    assert result == {
+        "state": "ready",
+        "generation_id": seeded_generation_id,
+        "private_stats_enabled": False,
+        "source": "verified_seed",
+    }
+
+
+def test_startup_status_recognizes_current_synergy_artifact(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    source = {"name": "synergy.json", "size": 2, "sha256": "a" * 64, "record_count": 1}
+    publisher.publish(_build_payload(False), private_stats_enabled=False, source_files=(source,))
+
+    _sync_startup_snapshot_status(publisher, {"state": "ready", "source": "verified_seed"})
+
+    status = json.loads((tmp_path / "state" / "startup_status.json").read_text(encoding="utf-8"))
+    assert status["synergy_ready"] is True
+    assert status["last_error"] == ""
+
+
 def test_bootstrap_failure_never_publishes_partial_generation(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
 
@@ -353,7 +391,7 @@ def test_control_plane_queues_actions_and_requires_nonce(tmp_path: Path) -> None
 
 
 def test_private_stats_handle_tracks_the_same_action_until_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    from hextech.display.desktop import runtime
+    from hextech.interfaces.desktop import runtime
 
     class Process:
         returncode = None
@@ -434,9 +472,9 @@ def test_data_service_instance_lock_is_exclusive(tmp_path: Path) -> None:
     second.release()
 
 
-def test_data_service_refresh_skips_legacy_compat_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    import hextech.core.refresh as refresh
-    import hextech.data_service as data_service
+def test_data_service_refresh_skips_query_cache_rebuild(monkeypatch: pytest.MonkeyPatch) -> None:
+    import hextech.bootstrap.data_refresh as refresh
+    import hextech.bootstrap.data_service_runtime as data_service
 
     calls: list[dict[str, object]] = []
 
@@ -449,12 +487,13 @@ def test_data_service_refresh_skips_legacy_compat_cache(monkeypatch: pytest.Monk
     monkeypatch.setattr(data_service, "build_snapshot_from_runtime", lambda _enabled: expected)
 
     assert data_service._refresh_and_build(True, force_refresh=True) is expected
-    assert calls == [{"force": True, "rebuild_compat_cache": False}]
+    assert calls == [{"force": True, "rebuild_query_cache": False}]
 
 
 def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from hextech.catalog import precomputed_cache, runtime_store
-    import hextech.overlay.hints as overlay_hints
+    from hextech.modules.data.catalog import precomputed_cache, runtime_store
+    from hextech.modules.data import source_runs
+    import hextech.modules.recommendation.hints as overlay_hints
 
     csv_path = tmp_path / "Hextech_Data_2026-07-15.csv"
     dataframe = pd.DataFrame(
@@ -476,7 +515,7 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
         ]
     )
     dataframe.to_csv(csv_path, index=False, encoding="utf-8-sig")
-    synergy_path = tmp_path / "Champion_Synergy_Cleaned.json"
+    synergy_path = tmp_path / "synergy.json"
     synergy_path.write_text(
         json.dumps({"266": {"synergy_items": [{"content": "同代联动"}]}}, ensure_ascii=False),
         encoding="utf-8",
@@ -485,6 +524,7 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
     monkeypatch.setattr(runtime_store, "load_runtime_csv", lambda _path: dataframe.copy())
     monkeypatch.setattr(runtime_store, "build_synergy_data_path", lambda: str(synergy_path))
     monkeypatch.setattr(overlay_hints, "build_synergy_data_path", lambda: str(synergy_path))
+    monkeypatch.setattr(source_runs, "resolve_current_artifact", lambda _source_name: None)
     monkeypatch.setattr(
         precomputed_cache,
         "load_precomputed_champion_list",
@@ -528,7 +568,7 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
 
 
 def test_service_manager_owns_data_service_lifecycle() -> None:
-    from hextech.display.desktop.service_manager import ServiceManager
+    from hextech.interfaces.desktop.service_manager import ServiceManager
 
     class Handle:
         pid = 4321
@@ -552,8 +592,8 @@ def test_service_manager_owns_data_service_lifecycle() -> None:
 
 
 def test_service_manager_restarts_data_service_after_child_exit() -> None:
-    from hextech.display.desktop.runtime import DataServiceHandle
-    from hextech.display.desktop.service_manager import ServiceManager
+    from hextech.interfaces.desktop.runtime import DataServiceHandle
+    from hextech.interfaces.desktop.service_manager import ServiceManager
 
     class Process:
         def __init__(self, pid: int) -> None:
@@ -598,7 +638,7 @@ def test_service_manager_restarts_data_service_after_child_exit() -> None:
 
 
 def test_data_service_bootstrap_timeout_is_not_blocked_by_readline(monkeypatch: pytest.MonkeyPatch) -> None:
-    from hextech.display.desktop import runtime
+    from hextech.interfaces.desktop import runtime
 
     class BlockingStream:
         def __init__(self) -> None:
@@ -645,7 +685,7 @@ def test_data_service_bootstrap_timeout_is_not_blocked_by_readline(monkeypatch: 
 
 
 def test_data_service_bootstrap_keeps_draining_stdout_and_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
-    from hextech.display.desktop import runtime
+    from hextech.interfaces.desktop import runtime
 
     stdout_text = json.dumps({"port": 52001, "session_nonce": "nonce", "pid": 4321}) + "\nextra stdout\n"
     stderr_text = "refresh diagnostic\n" * 10000

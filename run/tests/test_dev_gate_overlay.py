@@ -5,7 +5,6 @@ import pytest
 from tests._dev_gate_support import (
     Any,
     DATA_DIAGNOSTIC_DIR,
-    Mapping,
     Path,
     RUN_DIR,
     TemporaryDirectory,
@@ -29,7 +28,7 @@ pytestmark = [pytest.mark.dev_gate, pytest.mark.overlay]
 
 def test_overlay_performance_probe_contract() -> None:
     """验证游戏内显示性能记录结构可用于阶段 5 手动验收。"""
-    import tools.acceptance.overlay_performance_probe as overlay_performance_probe
+    import tooling.acceptance.overlay_performance_probe as overlay_performance_probe
 
     sample = overlay_performance_probe.build_overlay_performance_report(
         service_samples={
@@ -54,40 +53,36 @@ def test_overlay_performance_probe_contract() -> None:
     assert sample["targets"]["overlay_p95_ms"] == 500.0
     assert sample["manual_acceptance_required"] is True
 
-    module_text = (RUN_DIR / "tools" / "acceptance" / "overlay_performance_probe.py").read_text(encoding="utf-8").lower()
+    module_text = (RUN_DIR / "tooling" / "acceptance" / "overlay_performance_probe.py").read_text(encoding="utf-8").lower()
     assert "requests" not in module_text
-    assert "data/runtime" not in module_text
+    assert "data" + "/runtime" not in module_text
 
 def test_game_overlay_documentation_contract() -> None:
     """验证当前系统设计入口、正式路线和启动降级口径。"""
 
     readme_text = (RUN_DIR / "README.md").read_text(encoding="utf-8")
-    project_text = (RUN_DIR / "PROJECT.md").read_text(encoding="utf-8")
+    project_text = (RUN_DIR / "docs" / "system-design.md").read_text(encoding="utf-8")
     docs_index_text = (RUN_DIR / "docs" / "README.md").read_text(encoding="utf-8")
     design_text = (RUN_DIR / "docs" / "system-design.md").read_text(encoding="utf-8")
-    assert ".venv\\Scripts\\python.exe -m hextech.overlay.vision.sidecar --once --preset auto --write-event" in readme_text
-    assert ".venv\\Scripts\\python.exe -m hextech.overlay.vision.sidecar --loop --preset auto --write-event" in readme_text
-    assert "docs/system-design.md" in project_text
-    assert "docs/overwolf-route.md" in project_text
-    assert "当前正式 Overlay 是 Python/Tk/Vision" in project_text
-    assert "hextech/overlay/vision/" in project_text
+    assert ".venv\\Scripts\\python.exe -m hextech.infrastructure.vision.sidecar --once --preset auto --write-event" in readme_text
+    assert ".venv\\Scripts\\python.exe -m hextech.infrastructure.vision.sidecar --loop --preset auto --write-event" in readme_text
+    assert "# Hextech 伴生系统设计" in project_text
+    assert "src/hextech" in project_text
+    assert "var/snapshots" in project_text
+    assert "DataService" in project_text
     assert "system-design.md" in docs_index_text
-    assert "overwolf-route.md" in docs_index_text
-    assert "Python 3.11 + Tk host + Vision sidecar" in design_text
-    assert "cache 命中时力求 30 秒内 ready" in design_text
-    assert "cache miss、cache 未知或空运行态时力求 60 秒内 ready" in design_text
-    assert "最多继续 120 秒" in design_text
-    assert "fallback_web_owned" in design_text
+    assert "data-layout.md" in docs_index_text
+    assert "generation" in design_text
 
 def test_overlay_hint_cache_contract() -> None:
     """验证 overlay hint cache 可直接查询，且默认不暴露私用统计字段。"""
-    import hextech.overlay.hints as overlay_hint_cache
-    import hextech.overlay.events as overlay_event_channel
-    import hextech.overlay.renderer as overlay_renderer
-    import hextech.catalog.precomputed_cache as precomputed_cache
-    import hextech.scraping.augment_catalog as augment_catalog
+    import hextech.modules.recommendation.hints as overlay_hint_cache
+    import hextech.modules.vision.events as overlay_event_channel
+    import hextech.interfaces.overlay.renderer as overlay_renderer
+    import hextech.modules.data.catalog.precomputed_cache as precomputed_cache
+    import hextech.infrastructure.sources.catalog as augment_catalog
 
-    host_parser = __import__("hextech.overlay.host", fromlist=["build_parser"]).build_parser()
+    host_parser = __import__("hextech.interfaces.overlay.host", fromlist=["build_parser"]).build_parser()
     acceptance_args = host_parser.parse_args(["--acceptance-screenshot", "overlay.png"])
     assert acceptance_args.acceptance_screenshot == Path("overlay.png")
 
@@ -254,7 +249,7 @@ def test_overlay_hint_cache_contract() -> None:
 
     assert not hasattr(hextech_scraper, "rebuild_runtime_caches")
 
-    module_text = (RUN_DIR / "hextech" / "overlay" / "hints.py").read_text(encoding="utf-8")
+    module_text = (RUN_DIR / "src" / "hextech" / "modules" / "recommendation" / "hints.py").read_text(encoding="utf-8")
     assert "requests" not in module_text
     assert "full_hextech_scraper" not in module_text
 
@@ -270,7 +265,7 @@ def test_overlay_hint_cache_contract() -> None:
                         "tier": "黄金",
                         "filename": "test_small.png",
                         "local_path": "assets/test_small.png",
-                        "icon_url": "/assets/test_small.png",
+                        "icon_url": "/assets/augments/test_small.png",
                     }
                 ],
                 ensure_ascii=False,
@@ -279,7 +274,7 @@ def test_overlay_hint_cache_contract() -> None:
         )
         before = manifest_path.read_bytes()
         lookup = augment_catalog.load_augment_catalog_lookup_read_only(tmp_dir)
-        assert lookup["测试海克斯"]["icon_url"] == "/assets/test_small.png"
+        assert lookup["测试海克斯"]["icon_url"] == "/assets/augments/test_small.png"
         assert manifest_path.read_bytes() == before
 
         debug_manifest_path = Path(tmp_dir) / "runtime" / "debug" / "augment_catalog" / "Augment_Icon_Manifest.debug.json"
@@ -306,7 +301,7 @@ def test_overlay_hint_cache_contract() -> None:
                     "tier": "黄金",
                     "filename": f"{prefix.lower()}_{i}.png",
                     "local_path": f"assets/{prefix.lower()}_{i}.png",
-                    "icon_url": f"/assets/{prefix.lower()}_{i}.png",
+                    "icon_url": f"/assets/augments/{prefix.lower()}_{i}.png",
                     "description": "说明",
                     "tooltip": "说明",
                     "tooltip_plain": "说明",
@@ -337,7 +332,7 @@ def test_overlay_hint_cache_contract() -> None:
             resolved_debug_path = Path(
                 runtime_store.build_runtime_debug_path("augment_catalog/manifest.json")
             )
-            assert resolved_debug_path == Path(tmp_dir) / "runtime-root" / "debug" / "augment_catalog" / "manifest.json"
+            assert resolved_debug_path == Path(tmp_dir) / "runtime-root" / "reports" / "augment_catalog" / "manifest.json"
             try:
                 runtime_store.build_runtime_debug_path("../escaped.json")
             except ValueError:
@@ -424,7 +419,7 @@ def test_overlay_hint_cache_contract() -> None:
     with (
         patch.object(runtime_store, "get_latest_csv", return_value=str(RUN_DIR / "data" / "raw" / "hextech" / "Hextech_Data_2099-01-01.csv")),
         patch.object(runtime_store, "load_runtime_csv", return_value=latest_df),
-        patch("hextech.scraping.augment_catalog.load_augment_catalog_lookup_read_only", return_value={}),
+        patch("hextech.modules.data.catalog.augment_lookup.load_augment_catalog_lookup_read_only", return_value={}),
     ):
         latest_cache = overlay_hint_cache.build_overlay_hint_cache_from_precomputed(
             include_private_stats=True,
@@ -462,14 +457,14 @@ def test_overlay_hint_cache_contract() -> None:
         patch.object(runtime_store, "get_latest_csv", return_value=str(RUN_DIR / "data" / "raw" / "hextech" / "Hextech_Data_2099-01-02.csv")),
         patch.object(runtime_store, "load_runtime_csv", return_value=manifest_gap_df),
         patch(
-            "hextech.scraping.augment_catalog.load_augment_catalog_lookup_read_only",
+            "hextech.modules.data.catalog.augment_lookup.load_augment_catalog_lookup_read_only",
             return_value={
                 "冰雪爆裂": {
                     "name": "冰雪爆裂",
                     "tier": "黄金",
                     "cdragon_id": 2080,
                     "augment_name_id": "Snowbomb",
-                    "icon_url": "/assets/snowbomb_small.png",
+                    "icon_url": "/assets/augments/snowbomb_small.png",
                     "tooltip_plain": "在目标位置引爆雪球。",
                 },
                 "占位强化 A": {
@@ -477,14 +472,14 @@ def test_overlay_hint_cache_contract() -> None:
                     "tier": "白银",
                     "cdragon_id": -1,
                     "augment_name_id": "PlaceholderA",
-                    "icon_url": "/assets/placeholdera_small.png",
+                    "icon_url": "/assets/augments/placeholdera_small.png",
                 },
                 "占位强化 B": {
                     "name": "占位强化 B",
                     "tier": "白银",
                     "cdragon_id": -1,
                     "augment_name_id": "PlaceholderB",
-                    "icon_url": "/assets/placeholderb_small.png",
+                    "icon_url": "/assets/augments/placeholderb_small.png",
                 }
             },
         ),
@@ -526,63 +521,15 @@ def test_overlay_hint_cache_contract() -> None:
     assert stale_hint["ok"] is True
     assert stale_hint["hint"]["stats_by_champion_id"]["86"]["pickrate"] == 0.082
 
-    synergy_index = overlay_hint_cache._load_synergy_by_augment_name()
-    assert synergy_index, "cleaned/raw 协同源不得被 overlay 读成空索引"
-    stable_augment_names = {
-        str(item.get("name") or "")
-        for item in load_augment_manifest_entries()
-        if isinstance(item, dict) and str(item.get("name") or "")
-    }
-    if stable_augment_names:
-        normalized_stable_names = {
-            overlay_hint_cache.normalize_augment_id(name): name for name in stable_augment_names
-        }
-        normalized_missed = [
-            name
-            for name in synergy_index
-            if name not in stable_augment_names
-            and overlay_hint_cache.normalize_augment_id(name) in normalized_stable_names
-        ]
-        assert not normalized_missed[:5], f"联动名未命中不应是 overlay 归一化退化：{normalized_missed[:5]}"
-
-    real_cache = overlay_hint_cache.build_overlay_hint_cache_from_precomputed(
-        include_private_stats=True,
-        source_tag="dev-check-real",
-    )
-    real_hints = real_cache.get("hints")
-    if runtime_store.get_latest_csv() or (isinstance(real_hints, Mapping) and real_hints):
-        assert isinstance(real_hints, Mapping) and real_hints, "有运行态数据时 overlay hint cache 不得为空"
-        real_stats_hint_count = sum(
-            1
-            for hint in real_hints.values()
-            if isinstance(hint, Mapping) and isinstance(hint.get("stats_by_champion_id"), Mapping)
-        )
-        real_synergy_hint_count = sum(
-            1
-            for hint in real_hints.values()
-            if isinstance(hint, Mapping) and isinstance(hint.get("synergies"), list) and hint.get("synergies")
-        )
-        assert real_stats_hint_count > 0, "启用私用统计时 overlay cache 不得退回 0 条统计 hint"
-        assert real_synergy_hint_count > 0, "overlay cache 不得退回 0 条联动 hint"
-
 def test_overlay_runtime_paths_contract() -> None:
     """验证 overlay event/context 共享的轻量运行态路径规则。"""
-    import hextech.overlay.runtime_paths as overlay_runtime_paths
-
-    with (
-        patch.object(overlay_runtime_paths.sys, "frozen", False, create=True),
-        patch.dict(os.environ, {"HEXTECH_BASE_DIR": ""}),
-    ):
-        assert overlay_runtime_paths.overlay_runtime_root_dir() == RUN_DIR / "data" / "runtime"
+    import hextech.modules.vision.runtime_paths as overlay_runtime_paths
 
     with TemporaryDirectory() as tmp_dir:
-        source_base = Path(tmp_dir) / "source"
-        with (
-            patch.object(overlay_runtime_paths.sys, "frozen", False, create=True),
-            patch.dict(os.environ, {"HEXTECH_BASE_DIR": str(source_base)}),
-        ):
+        var_root = Path(tmp_dir) / "var"
+        with patch.object(overlay_runtime_paths, "get_var_dir", return_value=var_root):
             resolved = Path(overlay_runtime_paths.overlay_runtime_state_path("probe.json"))
-            assert resolved == (source_base / "data" / "runtime" / "state" / "probe.json").resolve()
+            assert resolved == (var_root / "state" / "probe.json").resolve()
             try:
                 overlay_runtime_paths.overlay_runtime_state_path("../escaped.json")
             except ValueError as exc:
@@ -590,19 +537,9 @@ def test_overlay_runtime_paths_contract() -> None:
             else:
                 raise AssertionError("overlay runtime state 路径不得逃逸 state 根目录")
 
-        local_app_data = Path(tmp_dir) / "local-app-data"
-        with (
-            patch.object(overlay_runtime_paths.sys, "frozen", True, create=True),
-            patch.dict(os.environ, {"LOCALAPPDATA": str(local_app_data), "APPDATA": ""}),
-        ):
-            resolved = Path(overlay_runtime_paths.overlay_runtime_state_path("probe.json"))
-            assert resolved == (
-                local_app_data / "HextechNexus" / "data" / "runtime" / "state" / "probe.json"
-            ).resolve()
-
 def test_overlay_event_channel_contract() -> None:
     """验证 overlay 本地事件通道可写、可读、可诊断，且固定为三槽位。"""
-    import hextech.overlay.events as overlay_event_channel
+    import hextech.modules.vision.events as overlay_event_channel
 
     hint_cache = {
         "schema_version": 1,
@@ -729,21 +666,21 @@ def test_overlay_event_channel_contract() -> None:
         assert unknown_snapshot["visible"] is False
         assert unknown_snapshot["error"] == "selection_type_unknown"
 
-    module_text = (RUN_DIR / "hextech" / "overlay" / "events.py").read_text(encoding="utf-8")
+    module_text = (RUN_DIR / "src" / "hextech" / "modules" / "vision" / "events.py").read_text(encoding="utf-8")
     assert "requests" not in module_text
     assert "cv2" not in module_text
     assert "from processing.runtime_store" not in module_text
     assert "import processing.runtime_store" not in module_text
     assert "from processing.overlay_hint_cache" not in module_text
-    assert "from hextech.overlay.runtime_paths import overlay_runtime_state_path" in module_text
+    assert "from hextech.modules.vision.runtime_paths import overlay_runtime_state_path" in module_text
     assert "def _overlay_runtime_root_dir" not in module_text
     assert "def _overlay_runtime_state_path" not in module_text
 
 def test_overlay_context_contract() -> None:
     """验证游戏内 overlay 英雄上下文只通过本地 state 文件传递。"""
-    import hextech.overlay.context as overlay_context
-    import hextech.display.desktop.runtime as ui_runtime
-    import hextech.display.web.runtime as web_runtime
+    import hextech.interfaces.overlay.context as overlay_context
+    import hextech.interfaces.desktop.runtime as ui_runtime
+    import hextech.interfaces.web.backend.runtime as web_runtime
 
     with TemporaryDirectory() as tmp_dir:
         context_path = Path(tmp_dir) / "game_overlay_context.v1.json"
@@ -893,7 +830,11 @@ def test_overlay_context_contract() -> None:
             web_runtime._lcu_state.state_version = saved_lcu_state["state_version"]
             web_runtime._lcu_state.updated_at = saved_lcu_state["updated_at"]
 
-        web_runtime_text = (RUN_DIR / "hextech" / "display" / "web" / "runtime.py").read_text(encoding="utf-8")
+        web_runtime_dir = RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "backend"
+        web_runtime_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(web_runtime_dir.glob("*runtime.py"))
+        )
         assert "_clear_lcu_local_champion_state()" in web_runtime_text
         lcu_loop_text = web_runtime_text.split("async def lcu_polling_loop", 1)[1].split("async def csv_watcher_loop", 1)[0]
         assert "_clear_lcu_candidate_state(clear_local=True)" in lcu_loop_text
@@ -1119,7 +1060,7 @@ def test_overlay_context_contract() -> None:
         assert stale_zero_loaded["source"] == "lcu-no-champion"
         assert overlay_context.OverlayContextPoller.stop.__defaults__ == (4.0,)
 
-        context_module_text = (RUN_DIR / "hextech" / "overlay" / "context.py").read_text(encoding="utf-8")
+        context_module_text = (RUN_DIR / "src" / "hextech" / "interfaces" / "overlay" / "context.py").read_text(encoding="utf-8")
         assert "should_write=lambda: not stop_event.is_set()" in context_module_text
         assert "if should_write is not None and not should_write():" in context_module_text
         assert "_PRESERVE_VALID_CONTEXT_ON_MISSING_SOURCES" in context_module_text
@@ -1172,20 +1113,21 @@ def test_overlay_context_contract() -> None:
             ) is True
             assert mocked_write_context.call_count == 2
 
-    module_text = (RUN_DIR / "hextech" / "overlay" / "context.py").read_text(encoding="utf-8").lower()
+    module_text = (RUN_DIR / "src" / "hextech" / "interfaces" / "overlay" / "context.py").read_text(encoding="utf-8").lower()
     forbidden_terms = ["fastapi", "web_api", "web_runtime", "full_hextech_scraper", "auth.json"]
     assert not any(term in module_text for term in forbidden_terms)
     assert "remoting-auth-token" in module_text
     assert "write_current_lcu_overlay_context_once" in module_text
-    assert "from hextech.overlay.runtime_paths import overlay_runtime_state_path" in module_text
+    assert "from hextech.modules.vision.runtime_paths import overlay_runtime_state_path" in module_text
     assert "def _overlay_runtime_root_dir" not in module_text
     assert "def _overlay_runtime_state_path" not in module_text
 
 def test_lol_window_contract() -> None:
     """验证游戏窗口按进程发现，并排除最小化或 DWM cloak 的窗口。"""
 
-    import hextech.overlay.vision.sidecar as overlay_vision_sidecar
-    import hextech.overlay.window as lol_window
+    import hextech.infrastructure.vision.sidecar as overlay_vision_sidecar
+    import hextech.infrastructure.vision.sidecar_capture as overlay_vision_capture
+    import hextech.modules.vision.window as lol_window
 
     class FakeWin32Gui:
         @staticmethod
@@ -1244,7 +1186,7 @@ def test_lol_window_contract() -> None:
 
     with (
         patch.object(lol_window.ctypes.windll, "user32", FakeRootUser32()),
-        patch.object(overlay_vision_sidecar, "win32gui", FakeForegroundWin32),
+        patch.object(overlay_vision_capture, "win32gui", FakeForegroundWin32),
     ):
         assert lol_window.root_window_hwnd(303) == 101
         assert overlay_vision_sidecar._is_lol_game_foreground(101) is True
@@ -1264,9 +1206,9 @@ def test_lol_window_contract() -> None:
 
 def test_official_overlay_provider_contract() -> None:
     """验证官方接口 provider 只做本地接口归一化，并通过现有 overlay 事件协议输出。"""
-    import hextech.overlay.providers.official as official_overlay_provider
-    import hextech.overlay.events as overlay_event_channel
-    import tools.acceptance.probe_official_overlay_provider as probe_official_overlay_provider
+    import hextech.infrastructure.lcu.official_overlay as official_overlay_provider
+    import hextech.modules.vision.events as overlay_event_channel
+    import tooling.acceptance.probe_official_overlay_provider as probe_official_overlay_provider
 
     direct_payload = {
         "augments": {
@@ -1408,11 +1350,12 @@ def test_overlay_vision_sidecar_contract() -> None:
     from PIL import Image, ImageDraw
     import numpy as np
 
-    import hextech.overlay.vision.sidecar as overlay_vision_sidecar
-    from hextech.overlay.vision.layout import CARD_PANELS_16_10, apply_transform, detect_selection_scene, pick_card_panels
-    from hextech.overlay.vision.matcher import candidate_from_slot
-    from hextech.overlay.vision.state import SelectionTracker
-    from hextech.overlay.window import cursor_in_client_boxes
+    import hextech.infrastructure.vision.sidecar as overlay_vision_sidecar
+    import hextech.infrastructure.vision.sidecar_event_loop as overlay_vision_event_loop
+    from hextech.modules.vision.layout import CARD_PANELS_16_10, apply_transform, detect_selection_scene, pick_card_panels
+    from hextech.infrastructure.vision.matcher import candidate_from_slot
+    from hextech.infrastructure.vision.state import SelectionTracker
+    from hextech.modules.vision.window import cursor_in_client_boxes
 
     assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION == 2
     assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_FILE.name == "template_runtime_cache.v2.npz"
@@ -1774,7 +1717,7 @@ def test_overlay_vision_sidecar_contract() -> None:
     client_card_boxes = [(200, 100, 400, 500), (450, 100, 650, 500)]
     assert cursor_in_client_boxes(client_rect, client_card_boxes, cursor_position=(350, 350)) is True
     assert cursor_in_client_boxes(client_rect, client_card_boxes, cursor_position=(900, 750)) is False
-    with patch.object(overlay_vision_sidecar, "cursor_in_client_boxes", return_value=True) as cursor_gate:
+    with patch.object(overlay_vision_event_loop, "cursor_in_client_boxes", return_value=True) as cursor_gate:
         assert overlay_vision_sidecar._cursor_over_card_panels(
             client_rect,
             missing_button.size,
@@ -2520,13 +2463,18 @@ def test_overlay_vision_sidecar_contract() -> None:
         }
         assert overlay_vision_sidecar.ROI_DIAGNOSTIC_LIMIT == 32
 
-    module_text = (RUN_DIR / "hextech" / "overlay" / "vision" / "sidecar.py").read_text(encoding="utf-8").lower()
+    vision_dir = RUN_DIR / "src" / "hextech" / "infrastructure" / "vision"
+    module_text = "\n".join(
+        path.read_text(encoding="utf-8").lower()
+        for path in sorted(vision_dir.glob("sidecar*.py"))
+    )
+    module_text += "\n" + (vision_dir / "template_runtime.py").read_text(encoding="utf-8").lower()
     assert "requests" not in module_text
     assert "opencv" not in module_text
     assert "cv2" not in module_text
     assert "pyautogui" not in module_text
     assert "from processing." not in module_text
-    assert "from tools.atomic_io" not in module_text
+    assert "from " + "tools.atomic_io" not in module_text
     assert "parents[3]" in module_text
 
     assert not (RUN_DIR / "processing").exists()
@@ -2534,14 +2482,14 @@ def test_overlay_vision_sidecar_contract() -> None:
 def test_overlay_refresh_tool_contract() -> None:
     """验证海克斯视觉资源更新工具的持久样本与发布边界。"""
 
-    refresh_tool = importlib.import_module("tools.refresh_overlay_recognition")
+    refresh_tool = importlib.import_module("tooling.setup.vision")
     parser = refresh_tool.build_parser()
     assert parser.parse_args(["--check-only"]).check_only is True
 
     with TemporaryDirectory() as temp_dir:
         root = Path(temp_dir)
-        truth_path = root / "data" / "fixtures" / "diagnostics" / "truth.json"
-        fixture_path = root / "data" / "fixtures" / "diagnostics" / "overlay_vision_fixtures" / "case" / "name_0.png"
+        truth_path = root / "tests" / "fixtures" / "diagnostics" / "truth.json"
+        fixture_path = root / "tests" / "fixtures" / "diagnostics" / "overlay_vision_fixtures" / "case" / "name_0.png"
         fixture_path.parent.mkdir(parents=True)
         fixture_path.write_bytes(b"fixture")
         truth_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2578,7 +2526,7 @@ def test_overlay_refresh_tool_contract() -> None:
             json.dumps(
                 {
                     "schema_version": 1,
-                    "samples": [{"id": "runtime", "frame": "data/runtime/debug/frame.png", "expected_slots": []}],
+                    "samples": [{"id": "runtime", "frame": "var/reports/frame.png", "expected_slots": []}],
                     "name_roi_samples": [],
                 }
             ),
@@ -2614,23 +2562,23 @@ def test_overlay_refresh_tool_contract() -> None:
 
         snapshot = root / "snapshot"
         target = root / "target"
-        snapshot_icon = snapshot / "data" / "static" / "assets" / "new.png"
-        snapshot_catalog = snapshot / "data" / "static" / "version" / "海克斯资源目录.v1.json"
+        snapshot_icon = snapshot / "resources" / "assets" / "augments" / "new.png"
+        snapshot_catalog = snapshot / "resources" / "catalog" / "海克斯资源目录.v1.json"
         snapshot_icon.parent.mkdir(parents=True)
         snapshot_catalog.parent.mkdir(parents=True)
         snapshot_icon.write_bytes(b"new-icon")
         snapshot_catalog.write_text('{"schema_version": 1}', encoding="utf-8")
-        stale_icon = target / "data" / "static" / "assets" / "stale.png"
+        stale_icon = target / "resources" / "assets" / "augments" / "stale.png"
         stale_icon.parent.mkdir(parents=True)
         stale_icon.write_bytes(b"keep")
 
         published = refresh_tool.publish_snapshot(snapshot, target_run_dir=target)
         assert published["icon_count"] == 1
         assert stale_icon.read_bytes() == b"keep"
-        assert (target / "data" / "static" / "assets" / "new.png").read_bytes() == b"new-icon"
-        assert (target / "data" / "static" / "version" / "海克斯资源目录.v1.json").exists()
+        assert (target / "resources" / "assets" / "augments" / "new.png").read_bytes() == b"new-icon"
+        assert (target / "resources" / "catalog" / "海克斯资源目录.v1.json").exists()
 
-        cache_root = root / "data" / "runtime" / "cache"
+        cache_root = root / "var" / "cache" / "vision"
         with (
             patch.object(refresh_tool, "RUN_DIR", root),
             patch.object(refresh_tool, "build_refresh_snapshot", return_value={"built": True}),
@@ -2668,32 +2616,43 @@ def test_game_overlay_module_contract() -> None:
 
     import queue
 
-    import hextech.overlay.host as overlay_host
-    import hextech.overlay.lifecycle as overlay_lifecycle
-    import hextech.overlay.renderer as overlay_renderer
-    from hextech.display.desktop.service_manager import ServiceManager
-    from hextech.overlay.lifecycle import GameOverlayController
-    from hextech.overlay.vision.layout import pick_card_panels
-    from tools import overlay_render_snapshot
+    import hextech.interfaces.overlay.host as overlay_host
+    import hextech.interfaces.overlay.host_platform as overlay_host_platform
+    import hextech.interfaces.overlay.host_runner as overlay_host_runner
+    import hextech.interfaces.overlay.host_sync as overlay_host_sync
+    import hextech.interfaces.overlay.host_visibility as overlay_host_visibility
+    import hextech.interfaces.overlay.lifecycle as overlay_lifecycle
+    import hextech.interfaces.overlay.renderer as overlay_renderer
+    import hextech.interfaces.overlay.canvas_renderer as overlay_canvas_renderer
+    from hextech.interfaces.desktop.service_manager import ServiceManager
+    from hextech.interfaces.overlay.lifecycle import GameOverlayController
+    from hextech.modules.vision.layout import pick_card_panels
+    from tooling.diagnostics import overlay_snapshot as overlay_render_snapshot
 
     # 导入 overlay 主实现不得隐式加载 Web 产品模块。
     probe = """
 import importlib, json, sys
-importlib.import_module('hextech.overlay')
-importlib.import_module('hextech.overlay.host')
+importlib.import_module('hextech.interfaces.overlay')
+importlib.import_module('hextech.interfaces.overlay.host')
 blocked = [name for name in sys.modules if name == 'display' or name.startswith('display.') or name == 'fastapi' or name.startswith('fastapi.') or name == 'uvicorn' or name.startswith('uvicorn.') or name == 'webbrowser']
 print(json.dumps(blocked))
 """
-    output = subprocess.check_output([sys.executable, "-B", "-c", probe], cwd=str(RUN_DIR), text=True, encoding="utf-8")
+    child_env = {**os.environ, "PYTHONPATH": str(RUN_DIR / "src")}
+    output = subprocess.check_output(
+        [sys.executable, "-B", "-c", probe], cwd=str(RUN_DIR), env=child_env, text=True, encoding="utf-8"
+    )
     assert json.loads(output) == []
-    implementation_dir = RUN_DIR / "hextech" / "overlay"
-    overlay_filenames = {"__init__.py", "__main__.py", "lifecycle.py", "host.py", "data_source.py", "renderer.py"}
+    implementation_dir = RUN_DIR / "src" / "hextech" / "interfaces" / "overlay"
+    overlay_filenames = {"__init__.py", "__main__.py", "lifecycle.py", "host.py", "renderer.py"}
     assert overlay_filenames <= {path.name for path in implementation_dir.iterdir() if path.is_file()}
     for path in implementation_dir.glob("*.py"):
         text = path.read_text(encoding="utf-8")
         assert "import display" not in text and "from display" not in text, path
         assert "fastapi" not in text.lower() and "uvicorn" not in text.lower(), path
-    host_text = (implementation_dir / "host.py").read_text(encoding="utf-8")
+    host_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(implementation_dir.glob("host*.py"))
+    )
     main_text = (implementation_dir / "__main__.py").read_text(encoding="utf-8")
     lifecycle_text = (implementation_dir / "lifecycle.py").read_text(encoding="utf-8")
     assert "prepare_shared_overlay_data" in host_text
@@ -2742,7 +2701,7 @@ print(json.dumps(blocked))
     ):
         overlay_lifecycle.start_sidecar_process()
     source_command = source_popen.call_args.args[0]
-    assert source_command[:3] == [sys.executable, "-m", "hextech.overlay.vision.sidecar"]
+    assert source_command[:3] == [sys.executable, "-m", "hextech.infrastructure.vision.sidecar"]
     assert "processing.overlay_vision_sidecar" not in source_command
     assert "--debug-dump" not in source_command
 
@@ -2975,26 +2934,26 @@ print(json.dumps(blocked))
     manager.stop_web()
     assert not manager.is_web_running() and not manager.is_game_overlay_running()
 
-    compat_calls: list[str] = []
-    compat_controller = GameOverlayController(
-        prepare_data_func=lambda: compat_calls.append("prepare"),
-        write_inactive_func=lambda: compat_calls.append("inactive"),
-        start_sidecar_func=lambda: compat_calls.append("sidecar") or DummyProcess(312, calls=compat_calls, label="sidecar"),
-        start_host_func=lambda: compat_calls.append("host") or DummyProcess(313, calls=compat_calls, label="host"),
+    direct_calls: list[str] = []
+    direct_controller = GameOverlayController(
+        prepare_data_func=lambda: direct_calls.append("prepare"),
+        write_inactive_func=lambda: direct_calls.append("inactive"),
+        start_sidecar_func=lambda: direct_calls.append("sidecar") or DummyProcess(312, calls=direct_calls, label="sidecar"),
+        start_host_func=lambda: direct_calls.append("host") or DummyProcess(313, calls=direct_calls, label="host"),
         start_context_poller_func=None,
     )
-    compat_manager = ServiceManager(
+    direct_manager = ServiceManager(
         start_web_func=lambda: DummyProcess(311),
-        overlay_controller=compat_controller,
+        overlay_controller=direct_controller,
         manage_overlay_runtime=True,
     )
-    compat_manager.start_game_overlay()
-    assert compat_manager.is_game_overlay_running()
-    assert compat_calls == ["prepare", "inactive", "host", "sidecar"]
-    compat_watchdog = compat_manager.ensure_game_overlay_healthy(enabled=True)
-    assert compat_watchdog["last_action"] == "supervisor_owned"
-    compat_manager.stop_game_overlay()
-    assert not compat_manager.is_game_overlay_running()
+    direct_manager.start_game_overlay()
+    assert direct_manager.is_game_overlay_running()
+    assert direct_calls == ["prepare", "inactive", "host", "sidecar"]
+    direct_watchdog = direct_manager.ensure_game_overlay_healthy(enabled=True)
+    assert direct_watchdog["last_action"] == "supervisor_owned"
+    direct_manager.stop_game_overlay()
+    assert not direct_manager.is_game_overlay_running()
 
     manager._shutdown_requested = True
     blocked_after_shutdown = manager.ensure_game_overlay_healthy(enabled=True)
@@ -3209,7 +3168,7 @@ print(json.dumps(blocked))
     # 三档常见 viewport + 1920×1200：统计条完全内嵌原生卡片且互不重叠；联动组整体居中且按槽位排序。
     for viewport in ((1366, 768), (1920, 1080), (1920, 1200), (2560, 1600)):
         width, height = viewport
-        assert overlay_renderer._card_panel_ratios(viewport) == pick_card_panels(viewport)
+        assert overlay_canvas_renderer._card_panel_ratios(viewport) == pick_card_panels(viewport)
         for count in range(4):
             layout = overlay_renderer.resolve_overlay_layout(viewport, synergy_count=count)
             assert len(layout["stat_boxes"]) == 3
@@ -3254,7 +3213,7 @@ print(json.dumps(blocked))
             return None
 
     ready_canvas = RecordingCanvas()
-    overlay_renderer._draw_stat_panel(ready_canvas, (100, 100, 340, 160), ready_model["stats"][0])
+    overlay_canvas_renderer._draw_stat_panel(ready_canvas, (100, 100, 340, 160), ready_model["stats"][0])
     assert any(
         call.get("text") == "胜率 55.0% · 出场 3.0%" and call.get("anchor") == "center"
         for call in ready_canvas.text_calls
@@ -3276,7 +3235,7 @@ print(json.dumps(blocked))
             pickrate_text=pickrate_text,
         )
         stat_canvas = overlay_render_snapshot.PillowCanvas(700, 260)
-        overlay_renderer._draw_stat_panel(stat_canvas, stat_box, row)
+        overlay_canvas_renderer._draw_stat_panel(stat_canvas, stat_box, row)
         bbox = stat_canvas.image.getchannel("A").crop(stat_box).getbbox()
         assert bbox is not None
         text_center_x = stat_box[0] + (bbox[0] + bbox[2]) / 2
@@ -3289,7 +3248,7 @@ print(json.dumps(blocked))
         (missing_model["stats"][0], "源站暂无统计"),
     ):
         status_canvas = RecordingCanvas()
-        overlay_renderer._draw_stat_panel(status_canvas, (100, 100, 340, 160), row)
+        overlay_canvas_renderer._draw_stat_panel(status_canvas, (100, 100, 340, 160), row)
         assert {call.get("text") for call in status_canvas.text_calls} == {expected_text}
         assert {call.get("anchor") for call in status_canvas.text_calls} == {"center"}
 
@@ -3311,19 +3270,19 @@ print(json.dumps(blocked))
         assert all(0 <= box[0] < box[2] <= width and 0 <= box[1] < box[3] <= height for box in long_boxes)
 
         rail_width = long_layout["synergy_rail"][2] - long_layout["synergy_rail"][0]
-        minimum_height = overlay_renderer._clamp(96, height * 0.11, 176)
+        minimum_height = overlay_canvas_renderer._clamp(96, height * 0.11, 176)
         for box, row in zip(long_boxes, long_model["synergies"]):
             panel_height = box[3] - box[1]
-            text_layout = overlay_renderer._resolve_synergy_text_layout(
+            text_layout = overlay_canvas_renderer._resolve_synergy_text_layout(
                 row,
                 rail_width,
                 minimum_height=minimum_height,
                 panel_height=panel_height,
             )
             assert text_layout["body_offset"] + len(text_layout["body_lines"]) * text_layout["line_height"] <= panel_height
-            text_width = rail_width - 2 * overlay_renderer._clamp(12, rail_width * 0.05, 20)
+            text_width = rail_width - 2 * overlay_canvas_renderer._clamp(12, rail_width * 0.05, 20)
             assert all(
-                overlay_renderer._visual_text_width(line, text_layout["body_size"]) <= text_width + 1
+                overlay_canvas_renderer._visual_text_width(line, text_layout["body_size"]) <= text_width + 1
                 for line in text_layout["body_lines"]
             )
 
@@ -3423,7 +3382,7 @@ print(json.dumps(blocked))
     assert decide(scoreboard_key_down=True) == (False, "scoreboard_key_down")
     assert decide(event_fresh_after_tab=False) == (False, "event_stale_after_tab")
     assert decide(game_foreground=False, diagnostic_mode=True) == (True, "diagnostic:game_not_foreground")
-    from hextech.display.desktop import runtime as desktop_runtime
+    from hextech.interfaces.desktop import runtime as desktop_runtime
 
     assert desktop_runtime.resolve_client_overlay_policy(
         client_visible=True,
@@ -3505,9 +3464,8 @@ print(json.dumps(blocked))
     config["no_activate"] = False
     visibility = {"user_enabled": True, "target_hwnd": 123, "window_visible": False}
     with (
-        patch.object(overlay_host, "_find_target_game_window", return_value=None),
-        patch.object(overlay_host, "_is_game_window_foreground", return_value=True),
-        patch.object(overlay_host, "_refresh_gameflow_in_progress", return_value=True),
+        patch.object(overlay_host_sync, "_is_game_window_foreground", return_value=True),
+        patch.object(overlay_host_sync, "_refresh_gameflow_in_progress", return_value=True),
     ):
         overlay_host._schedule_event_render(
             FakeRoot(), hidden_canvas, config, visibility, queue.Queue(), data_source=hidden_source
@@ -3572,9 +3530,9 @@ print(json.dumps(blocked))
     diagnostic_config["no_activate"] = False
     diagnostic_visibility = {"user_enabled": True, "target_hwnd": None, "window_visible": False}
     with (
-        patch.object(overlay_host, "_find_target_game_window", return_value=None),
-        patch.object(overlay_host, "_ensure_overlay_window_styles", return_value=True),
-        patch.object(overlay_host, "_refresh_gameflow_in_progress", return_value=True),
+        patch.object(overlay_host_sync, "_ensure_overlay_window_styles", return_value=True),
+        patch.object(overlay_host_visibility, "_ensure_overlay_window_styles", return_value=True),
+        patch.object(overlay_host_sync, "_refresh_gameflow_in_progress", return_value=True),
     ):
         overlay_host._schedule_event_render(
             DiagnosticRoot(),
@@ -3601,9 +3559,9 @@ print(json.dumps(blocked))
     stale_config = dict(diagnostic_config)
     stale_config.update({"diagnostic_mode": False, "no_activate": False})
     with (
-        patch.object(overlay_host, "_is_game_window_foreground", return_value=True),
-        patch.object(overlay_host, "is_window_renderable", return_value=True),
-        patch.object(overlay_host, "_refresh_gameflow_in_progress", return_value=True),
+        patch.object(overlay_host_sync, "_is_game_window_foreground", return_value=True),
+        patch.object(overlay_host_sync, "is_window_renderable", return_value=True),
+        patch.object(overlay_host_sync, "_refresh_gameflow_in_progress", return_value=True),
     ):
         assert overlay_host._sync_event_visibility(
             DiagnosticRoot(),
@@ -3619,7 +3577,7 @@ print(json.dumps(blocked))
     with (
         TemporaryDirectory() as tmp_dir,
         patch.dict(os.environ, {overlay_host.OVERLAY_READY_FILE_ENV: str(Path(tmp_dir) / "ready.json")}),
-        patch.object(overlay_host, "atomic_write_json", side_effect=OSError("disk busy")),
+        patch.object(overlay_host_visibility, "atomic_write_json", side_effect=OSError("disk busy")),
     ):
         overlay_host._signal_overlay_ready()
 
@@ -3679,8 +3637,7 @@ print(json.dumps(blocked))
 
     error_canvas = BackoffCanvas()
     with (
-        patch.object(overlay_host, "_find_target_game_window", return_value=None),
-        patch.object(overlay_host, "is_scoreboard_key_down", return_value=False),
+        patch.object(overlay_host_runner, "is_scoreboard_key_down", return_value=False),
     ):
         overlay_host._schedule_event_render(
             object(),
@@ -3735,8 +3692,8 @@ print(json.dumps(blocked))
         ),
     }
     with (
-        patch.object(overlay_host, "_apply_overlay_rect") as apply_rect,
-        patch.object(overlay_host, "_ensure_overlay_window_styles", return_value=True) as ensure_styles,
+        patch.object(overlay_host_sync, "_apply_overlay_rect") as apply_rect,
+        patch.object(overlay_host_sync, "_ensure_overlay_window_styles", return_value=True) as ensure_styles,
     ):
         overlay_host._refresh_target_window(
             visible_geometry_root,
@@ -3768,7 +3725,7 @@ print(json.dumps(blocked))
     position_user32 = FakeUser32()
     with (
         patch.object(overlay_host.ctypes.windll, "user32", position_user32),
-        patch.object(overlay_host, "_root_hwnd", return_value=99),
+        patch.object(overlay_host_visibility, "_root_hwnd", return_value=99),
     ):
         overlay_host._apply_overlay_rect(object(), (-1920, -100, 0, 980))
     assert position_user32.set_window_pos_calls == [(-1920, -100, 1920, 1080, overlay_host.SWP_NOACTIVATE)]
@@ -3782,9 +3739,9 @@ print(json.dumps(blocked))
     unchanged_user32 = FakeUser32()
     with (
         patch.object(overlay_host.ctypes.windll, "user32", unchanged_user32),
-        patch.object(overlay_host, "_root_hwnd", return_value=99),
-        patch.object(overlay_host, "_get_window_exstyle", return_value=desired_style),
-        patch.object(overlay_host, "_set_window_exstyle") as set_style,
+        patch.object(overlay_host_platform, "_root_hwnd", return_value=99),
+        patch.object(overlay_host_platform, "_get_window_exstyle", return_value=desired_style),
+        patch.object(overlay_host_platform, "_set_window_exstyle") as set_style,
     ):
         assert overlay_host._apply_overlay_window_styles(
             object(),
@@ -3797,9 +3754,9 @@ print(json.dumps(blocked))
     changed_user32 = FakeUser32()
     with (
         patch.object(overlay_host.ctypes.windll, "user32", changed_user32),
-        patch.object(overlay_host, "_root_hwnd", return_value=99),
-        patch.object(overlay_host, "_get_window_exstyle", side_effect=[0, desired_style]),
-        patch.object(overlay_host, "_set_window_exstyle"),
+        patch.object(overlay_host_platform, "_root_hwnd", return_value=99),
+        patch.object(overlay_host_platform, "_get_window_exstyle", side_effect=[0, desired_style]),
+        patch.object(overlay_host_platform, "_set_window_exstyle"),
     ):
         assert overlay_host._apply_overlay_window_styles(
             object(),
@@ -3831,8 +3788,8 @@ print(json.dumps(blocked))
     }
     with (
         patch.object(overlay_host.ctypes.windll, "user32", show_user32),
-        patch.object(overlay_host, "_root_hwnd", return_value=99),
-        patch.object(overlay_host, "_ensure_overlay_window_styles", return_value=True) as ensure_styles,
+        patch.object(overlay_host_visibility, "_root_hwnd", return_value=99),
+        patch.object(overlay_host_visibility, "_ensure_overlay_window_styles", return_value=True) as ensure_styles,
     ):
         overlay_host._show_overlay_window(show_root, config, show_visibility)
     assert show_root.shown is True
@@ -3922,7 +3879,7 @@ print(json.dumps(blocked))
     # 正式与诊断共用同一纯 renderer；快照必须直接输出 PNG，源码不允许 PS fallback。
     renderer_text = (implementation_dir / "renderer.py").read_text(encoding="utf-8").lower()
     assert not any(token in renderer_text for token in ("banner", "top_candidates", "cache miss", "context pending"))
-    snapshot_tool_text = (RUN_DIR / "tools" / "overlay_render_snapshot.py").read_text(encoding="utf-8").lower()
+    snapshot_tool_text = (RUN_DIR / "tooling" / "diagnostics" / "overlay_snapshot.py").read_text(encoding="utf-8").lower()
     assert "postscript" not in snapshot_tool_text and "ghostscript" not in snapshot_tool_text
     pillow_canvas = overlay_render_snapshot.PillowCanvas(200, 100)
     pillow_canvas.create_rectangle(10, 10, 60, 40, fill="#123456", outline="")

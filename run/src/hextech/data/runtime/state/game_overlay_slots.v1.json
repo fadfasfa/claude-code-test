@@ -1,0 +1,61 @@
+{
+  "schema_version": 2,
+  "generated_at": 1784209460.9278529,
+  "timing": {
+    "event_built_at": 1784209460.9278529,
+    "event_written_at": 1784209460.9278529
+  },
+  "source": {
+    "tag": "manual-hide",
+    "kind": "overlay_event",
+    "selection_window_active": false,
+    "ready_slots": 0,
+    "content_ready": false
+  },
+  "active": false,
+  "selection_type": "",
+  "slots": [
+    {
+      "slot": 0,
+      "state": "empty",
+      "augment_id": "",
+      "name": "",
+      "tier": "",
+      "summary": "",
+      "confidence": null,
+      "diagnostic": "",
+      "top_candidates": [],
+      "candidate_identity": "",
+      "rejection_reason": "",
+      "elapsed_seconds": 0.0
+    },
+    {
+      "slot": 1,
+      "state": "empty",
+      "augment_id": "",
+      "name": "",
+      "tier": "",
+      "summary": "",
+      "confidence": null,
+      "diagnostic": "",
+      "top_candidates": [],
+      "candidate_identity": "",
+      "rejection_reason": "",
+      "elapsed_seconds": 0.0
+    },
+    {
+      "slot": 2,
+      "state": "empty",
+      "augment_id": "",
+      "name": "",
+      "tier": "",
+      "summary": "",
+      "confidence": null,
+      "diagnostic": "",
+      "top_candidates": [],
+      "candidate_identity": "",
+      "rejection_reason": "",
+      "elapsed_seconds": 0.0
+    }
+  ]
+}

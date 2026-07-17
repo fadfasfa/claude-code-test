@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 
-from hextech.display.web.runtime import ConnectionManager
+from hextech.interfaces.web.backend.runtime import ConnectionManager
 
 
 class _ImmediateWebSocket:

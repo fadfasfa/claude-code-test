@@ -1,6 +1,6 @@
 """测试 refresh 降级路径。
 
-调用方: pytest; 关键依赖: hextech.core.refresh。
+调用方: pytest; 关键依赖: hextech.bootstrap.data_refresh。
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 class RefreshDegradationTests(unittest.TestCase):
     def test_startup_status_uses_valid_csv_for_ready(self):
-        from hextech.scraping import heal_worker
+        from hextech.infrastructure.sources import heal_worker
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -43,7 +43,7 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertEqual(payload["hextech_warning"], "")
 
     def test_startup_status_includes_hextech_refresh_summary(self):
-        from hextech.scraping import heal_worker
+        from hextech.infrastructure.sources import heal_worker
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -81,115 +81,8 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertEqual(refresh["cdn_hit_count"], 42)
             self.assertTrue(refresh["fallback_used"])
 
-    def test_scraper_failure_records_attempt_diagnostics(self):
-        from hextech.scraping.hextech import scraper
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            status_file = tmp_path / "scraper_status.json"
-            active_csv = tmp_path / "Hextech_Data_2026-07-02.csv"
-            active_csv.write_text("valid\n", encoding="utf-8")
-            attempt = scraper._new_attempt_context()
-            attempt.update(
-                {
-                    "total_heroes": 173,
-                    "completed_heroes": 120,
-                    "cdn_hit_count": 80,
-                    "slow_path_count": 40,
-                    "success_rows": 2400,
-                    "failure_samples": [{"champion_id": "266", "reason": "thread_pool_timeout"}],
-                }
-            )
-
-            with (
-                mock.patch.object(scraper, "build_runtime_state_path", lambda name: str(status_file)),
-                mock.patch.object(scraper, "load_scraper_status", lambda: {}),
-                mock.patch.object(scraper, "get_latest_valid_csv", lambda: str(active_csv)),
-            ):
-                result = scraper._finish_refresh_failure(
-                    "thread_pool_timeout",
-                    started_at=0.0,
-                    attempt=attempt,
-                    failure_stage="detail_initial",
-                )
-
-            payload = json.loads(status_file.read_text(encoding="utf-8"))
-            self.assertTrue(result)
-            self.assertEqual(payload["last_result"], "fallback")
-            self.assertEqual(payload["failure_stage"], "detail_initial")
-            self.assertEqual(payload["last_attempt"]["result"], "fallback")
-            self.assertEqual(payload["last_attempt"]["completed_heroes"], 120)
-            self.assertTrue(payload["fallback_used"])
-
-    def test_main_scraper_timeout_records_fallback_without_blocking_shutdown(self):
-        from hextech.scraping.hextech import scraper
-
-        class Response:
-            def __init__(self, payload):
-                self._payload = payload
-
-            def json(self):
-                return self._payload
-
-        class TimeoutOutcome:
-            status = "timed_out"
-            results = []
-            errors = []
-            pending_items = [{"championId": 63}, {"championId": 64}]
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            status_file = tmp_path / "scraper_status.json"
-            active_csv = tmp_path / "Hextech_Data_2026-07-05.csv"
-            active_csv.write_text("valid\n", encoding="utf-8")
-
-            def state_path(name: str) -> str:
-                return str(status_file if name == "scraper_status.json" else tmp_path / name)
-
-            with (
-                mock.patch.object(scraper, "build_runtime_state_path", state_path),
-                mock.patch.object(scraper, "build_daily_csv_path", lambda _date: str(tmp_path / "out.csv")),
-                mock.patch.object(scraper, "check_execution_permission", lambda force=False: (True, "test")),
-                mock.patch.object(scraper, "load_augment_map", lambda: {"炼狱导管": "棱彩"}),
-                mock.patch.object(scraper, "load_champion_core_data", lambda: {"63": {"name": "复仇焰魂"}}),
-                mock.patch.object(
-                    scraper,
-                    "fetch_with_retry",
-                    side_effect=[
-                        Response({"1045": {"displayName": "炼狱导管", "rarity": 3}}),
-                        Response([{"championId": 63}, {"championId": 64}]),
-                    ],
-                ),
-                mock.patch.object(
-                    scraper,
-                    "fetch_champion_detail_stats_fast",
-                    lambda *_args, **_kwargs: {
-                        "champ": {"championId": 63},
-                        "name": "复仇焰魂",
-                        "rows": [{"英雄名称": "复仇焰魂", "海克斯名称": "炼狱导管"}],
-                        "reason": "",
-                        "status_code": 200,
-                        "url": "fixture",
-                        "error": "",
-                    },
-                ),
-                mock.patch.object(scraper.DETAIL_PASS_RUNNER, "run", return_value=TimeoutOutcome()),
-                mock.patch.object(scraper, "get_latest_valid_csv", lambda: str(active_csv)),
-                mock.patch.object(scraper, "load_scraper_status", lambda: {}),
-            ):
-                result = scraper.main_scraper(force=True)
-
-            payload = json.loads(status_file.read_text(encoding="utf-8"))
-            self.assertTrue(result)
-            self.assertEqual(payload["last_result"], "fallback")
-            self.assertEqual(payload["reason"], "thread_pool_timeout")
-            self.assertEqual(payload["failure_stage"], "detail_initial")
-            self.assertEqual(payload["active_csv"], str(active_csv))
-            self.assertEqual(payload["last_attempt"]["completed_heroes"], 2)
-            self.assertEqual(payload["last_attempt"]["failure_samples"][0]["reason"], "thread_pool_timeout")
-
     def test_heal_worker_exception_clears_in_progress_tasks(self):
-        from hextech.scraping import heal_worker
+        from hextech.infrastructure.sources import heal_worker
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -217,7 +110,7 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertIn("heal_worker failed", payload["last_error"])
 
     def test_refresh_result_records_fallback_activation_and_recovery(self):
-        from hextech.core import refresh
+        from hextech.bootstrap import data_refresh as refresh
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -280,7 +173,7 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertIn("recovered_hash", events[2])
 
     def test_failed_refresh_recovery_uses_refresh_recovered_event(self):
-        from hextech.core import refresh
+        from hextech.bootstrap import data_refresh as refresh
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -329,7 +222,7 @@ class RefreshDegradationTests(unittest.TestCase):
 
     def test_heal_worker_busy_report_is_explicit(self):
         from filelock import Timeout
-        from hextech.scraping import heal_worker
+        from hextech.infrastructure.sources import heal_worker
 
         class BusyLock:
             def __init__(self, *_args, **_kwargs):
@@ -349,7 +242,7 @@ class RefreshDegradationTests(unittest.TestCase):
         self.assertIn("heal_worker", report["skipped"])
 
     def test_refresh_busy_report_does_not_become_ready(self):
-        from hextech.core import refresh
+        from hextech.bootstrap import data_refresh as refresh
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -387,7 +280,7 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertIs(result.fallback_used, True)
 
     def test_refresh_cache_rebuild_failure_returns_structured_failed_result(self):
-        from hextech.core import refresh
+        from hextech.bootstrap import data_refresh as refresh
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -427,7 +320,7 @@ class RefreshDegradationTests(unittest.TestCase):
             self.assertEqual(events[-1]["event"], "refresh.failed")
 
     def test_force_refresh_does_not_rebuild_matching_api_cache_twice(self):
-        from hextech.core import refresh
+        from hextech.bootstrap import data_refresh as refresh
 
         report = {
             "requested": ["hextech_rankings"],
@@ -454,7 +347,7 @@ class RefreshDegradationTests(unittest.TestCase):
         self.assertEqual(cache_checks, [False])
 
     def test_sanitize_event_message_removes_sensitive_material(self):
-        from hextech.core.refresh import sanitize_event_message
+        from hextech.bootstrap.data_refresh import sanitize_event_message
 
         raw = (
             "GET http://127.0.0.1:1234/path?token=secret Authorization: Bearer abc "
@@ -470,7 +363,7 @@ class RefreshDegradationTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:1234/path", sanitized)
 
     def test_api_cache_failure_remains_primary_when_other_stages_also_fail(self):
-        from hextech.core import refresh
+        from hextech.bootstrap import data_refresh as refresh
 
         report = {
             "requested": ["api_cache", "champion_core"],

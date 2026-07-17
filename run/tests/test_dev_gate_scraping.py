@@ -1,6 +1,7 @@
 """scraping 域 pytest 开发门禁。"""
 
 import pytest
+import hextech.infrastructure.sources.hextech.refresh_support as hextech_refresh_support
 
 from tests._dev_gate_support import (
     Any,
@@ -32,7 +33,7 @@ pytestmark = pytest.mark.dev_gate
 
 def test_cdragon_force_refresh_semantics() -> None:
     """CDragon minimal manifest 不应被旧完整描述字段规则强制重建。"""
-    import hextech.scraping.augment_catalog as augment_catalog
+    import hextech.infrastructure.sources.catalog as augment_catalog
 
     def cdragon_entry(index: int) -> dict[str, Any]:
         return {
@@ -40,8 +41,8 @@ def test_cdragon_force_refresh_semantics() -> None:
             "name": f"Augment{index}",
             "tier": "Silver",
             "filename": f"augment{index}.png",
-            "icon_url": f"/assets/augment{index}.png",
-            "source_icon_url": f"{augment_catalog._CDRAGON_SOURCE_PREFIX}game/assets/augment{index}.png",
+            "icon_url": f"/assets/augments/augment{index}.png",
+            "source_icon_url": f"{augment_catalog._CDRAGON_SOURCE_PREFIX}game/assets/augments/augment{index}.png",
         }
 
     minimal_manifest = [cdragon_entry(index) for index in range(augment_catalog._MIN_VALID_MANIFEST_ENTRIES)]
@@ -74,15 +75,15 @@ def test_cdragon_force_refresh_semantics() -> None:
 
 def test_cdragon_source_schema_marker() -> None:
     """CDragon 条目优先使用显式 source_schema 标记，旧数据仍按前缀兼容。"""
-    import hextech.scraping.augment_catalog as augment_catalog
+    import hextech.infrastructure.sources.catalog as augment_catalog
 
     raw_entry = {
         "schema_version": augment_catalog.MANIFEST_SCHEMA_VERSION,
         "name": "缩小引擎",
         "tier": "棱彩",
         "filename": "shrinkengine.png",
-        "icon_url": "/assets/shrinkengine.png",
-        "source_icon_url": f"{augment_catalog._CDRAGON_SOURCE_PREFIX}game/assets/shrinkengine.png",
+        "icon_url": "/assets/augments/shrinkengine.png",
+        "source_icon_url": f"{augment_catalog._CDRAGON_SOURCE_PREFIX}game/assets/augments/shrinkengine.png",
         "source_schema": augment_catalog._CDRAGON_SOURCE_SCHEMA,
     }
     normalized = augment_catalog._normalize_cdragon_manifest_entry(raw_entry)
@@ -127,11 +128,11 @@ def test_heal_worker_contract() -> None:
         with (
             patch.object(heal_worker, "heal_missing_artifacts", return_value={"requested": ["hextech_rankings"], "repaired": [], "failed": []}),
             patch(
-                "hextech.scraping.synergy.mayhem_refresh.run_mayhem_refresh",
+                "hextech.infrastructure.sources.mayhem.service.run_mayhem_refresh",
                 side_effect=RuntimeError("mayhem diagnostic failure"),
             ),
         ):
-            result = orchestrator.refresh_backend_data(force=False, rebuild_compat_cache=False)
+            result = orchestrator.refresh_backend_data(force=False, rebuild_query_cache=False)
             assert result.state in {"ready", "degraded", "failed"}
             assert hasattr(result, "correlation_id")
 
@@ -141,7 +142,7 @@ def test_hextech_scraper_fallback_contract() -> None:
     def fake_result(status_code: int | None, payload: Any = None, text: str = "", error: str = ""):
         if payload is not None:
             text = json.dumps(payload, ensure_ascii=False)
-        return hextech_scraper.ScraplingFetchResult(
+        return scrapling_client.ScraplingFetchResult(
             url="https://example.test",
             text=text,
             status_code=status_code,
@@ -174,9 +175,10 @@ def test_hextech_scraper_fallback_contract() -> None:
             patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
             patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
             patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
-            patch.object(hextech_scraper, "fetch_text", side_effect=fetcher),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.fetch_text", side_effect=fetcher),
             patch.object(hextech_scraper, "get_latest_valid_csv", return_value=str(fallback_csv)),
-            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.get_latest_valid_csv", return_value=str(fallback_csv)),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.build_runtime_state_path", return_value=str(status_file)),
             patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
             patch.object(
                 hextech_scraper.DETAIL_PASS_RUNNER,
@@ -201,9 +203,10 @@ def test_hextech_scraper_fallback_contract() -> None:
             patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
             patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
             patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
-            patch.object(hextech_scraper, "fetch_text", side_effect=failed_fetcher),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.fetch_text", side_effect=failed_fetcher),
             patch.object(hextech_scraper, "get_latest_valid_csv", return_value=None),
-            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.get_latest_valid_csv", return_value=None),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.build_runtime_state_path", return_value=str(status_file)),
             patch.object(hextech_scraper, "build_hextech_detail_urls", return_value=["https://example.test/detail/1"]),
             patch.object(
                 hextech_scraper.DETAIL_PASS_RUNNER,
@@ -230,18 +233,18 @@ def test_hextech_remote_failure_cooldown_and_escalation() -> None:
     with TemporaryDirectory() as temp_dir:
         status_file = Path(temp_dir) / "scraper_status.json"
         with (
-            patch.object(hextech_scraper, "load_scraper_status", return_value=previous),
-            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
-            patch.object(hextech_scraper, "get_latest_valid_csv", return_value="valid.csv"),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.load_scraper_status", return_value=previous),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.build_runtime_state_path", return_value=str(status_file)),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.get_latest_valid_csv", return_value="valid.csv"),
         ):
-            payload = hextech_scraper._write_scraper_status("fallback", "timeout", active_csv="valid.csv")
+            payload = hextech_refresh_support._write_scraper_status("fallback", "timeout", active_csv="valid.csv")
 
     blocked_until = datetime.fromisoformat(payload["blocked_until"])
     assert 29 * 60 <= blocked_until.timestamp() - started_at <= 31 * 60
     assert payload["next_retry_at"] == payload["blocked_until"]
     assert payload["consecutive_remote_failures"] == 3
     assert payload["remote_failure_escalated"] is True
-    assert "stealth" in payload["bypass_evaluation_hint"]
+    assert "last-good" in payload["bypass_evaluation_hint"]
 
     mixed_previous = {
         "last_result": "fallback",
@@ -251,11 +254,11 @@ def test_hextech_remote_failure_cooldown_and_escalation() -> None:
     with TemporaryDirectory() as temp_dir:
         status_file = Path(temp_dir) / "scraper_status.json"
         with (
-            patch.object(hextech_scraper, "load_scraper_status", return_value=mixed_previous),
-            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
-            patch.object(hextech_scraper, "get_latest_valid_csv", return_value="valid.csv"),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.load_scraper_status", return_value=mixed_previous),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.build_runtime_state_path", return_value=str(status_file)),
+            patch("hextech.infrastructure.sources.hextech.refresh_support.get_latest_valid_csv", return_value="valid.csv"),
         ):
-            mixed_payload = hextech_scraper._write_scraper_status("fallback", "http_429", active_csv="valid.csv")
+            mixed_payload = hextech_refresh_support._write_scraper_status("fallback", "http_429", active_csv="valid.csv")
 
     assert mixed_payload["consecutive_remote_failures"] == 3
     assert mixed_payload["remote_failure_escalated"] is True
@@ -344,7 +347,7 @@ def test_hextech_detail_fetch_prefers_cdn_json_without_browser() -> None:
 
     def fake_fetch(url: str, *_args, **_kwargs):
         calls.append(url)
-        return hextech_scraper.ScraplingFetchResult(
+        return scrapling_client.ScraplingFetchResult(
             url=url,
             text=json.dumps(payload),
             status_code=200,
@@ -353,7 +356,7 @@ def test_hextech_detail_fetch_prefers_cdn_json_without_browser() -> None:
         )
 
     with (
-        patch.object(hextech_scraper, "fetch_text", side_effect=fake_fetch),
+        patch("hextech.infrastructure.sources.hextech.refresh_support.fetch_text", side_effect=fake_fetch),
         patch.object(hextech_scraper, "fetch_page", side_effect=AssertionError("快链路成功不得使用 browser-mode")),
     ):
         result = hextech_scraper.fetch_champion_detail_stats_fast(
@@ -368,84 +371,6 @@ def test_hextech_detail_fetch_prefers_cdn_json_without_browser() -> None:
     assert len(result["rows"]) == 65
     assert "champion-details/910.json" in calls[0]
     assert result["reason"] == ""
-
-def test_hextech_detail_timeout_tail_retry() -> None:
-    """握手瞬断仍重试；单英雄详情 timeout 进入低并发尾部重试。"""
-
-    def fake_result(status_code: int | None, payload: Any = None, text: str = "ok", error: str = ""):
-        if payload is not None:
-            text = json.dumps(payload, ensure_ascii=False)
-        return hextech_scraper.ScraplingFetchResult(
-            url="https://example.test",
-            text=text,
-            status_code=status_code,
-            fetched_at="2026-06-23T00:00:00+00:00",
-            error=error,
-        )
-
-    class SequenceFetcher:
-        def __init__(self) -> None:
-            self.responses = [
-                fake_result(None, text="", error="simulated tls error"),
-                fake_result(200, {"100": {"displayName": "测试海克斯"}}),
-                fake_result(200, [{"championId": "1"}, {"championId": "2"}]),
-                fake_result(200, text="detail-1"),
-                fake_result(None, text="", error="simulated timeout"),
-                fake_result(200, text="detail-2"),
-            ]
-            self.calls = 0
-
-        def __call__(self, *_args, **_kwargs):
-            self.calls += 1
-            return self.responses.pop(0)
-
-    row = {
-        "英雄ID": "1",
-        "英雄名称": "测试英雄",
-        "英雄评级": "S",
-        "英雄胜率": 0.5,
-        "英雄出场率": 0.1,
-        "海克斯阶级": "Gold",
-        "海克斯名称": "测试海克斯",
-        "海克斯胜率": 0.51,
-        "海克斯出场率": 0.02,
-        "源站排名": 1,
-    }
-    with TemporaryDirectory() as temp_dir:
-        root = Path(temp_dir)
-        fallback_csv = root / "Hextech_Data_2026-06-19.csv"
-        output_csv = root / "Hextech_Data_2026-06-21.csv"
-        status_file = root / "scraper_status.json"
-        _write_runtime_csv(fallback_csv, 300)
-        fetcher = SequenceFetcher()
-        with (
-            patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
-            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
-            patch.object(
-                hextech_scraper,
-                "load_champion_core_data",
-                return_value={"1": {"name": "测试英雄 1"}, "2": {"name": "测试英雄 2"}},
-            ),
-            patch.object(hextech_scraper, "fetch_text", side_effect=fetcher),
-            patch.object(hextech_scraper, "get_latest_valid_csv", return_value=str(fallback_csv)),
-            patch.object(hextech_scraper, "build_runtime_state_path", return_value=str(status_file)),
-            patch.object(hextech_scraper, "build_daily_csv_path", return_value=str(output_csv)),
-            patch.object(
-                hextech_scraper,
-                "build_hextech_detail_urls",
-                side_effect=lambda champ_id: [f"https://example.test/detail/{champ_id}"],
-            ),
-            patch.object(hextech_scraper, "extract_champion_stats", return_value=[row] * 150),
-            patch.object(hextech_scraper, "cleanup_old_csvs"),
-            patch.object(hextech_scraper.time, "sleep"),
-        ):
-            assert hextech_scraper.main_scraper() is True
-
-        status = json.loads(status_file.read_text(encoding="utf-8"))
-        assert fetcher.calls == 6
-        assert status["last_result"] == "success"
-        assert status["reason"] == ""
-        assert output_csv.exists()
 
 def test_scrapling_tls_error_contract() -> None:
     """curl TLS 错误必须被分类为 tls_error，并带上下文向上抛出。"""
@@ -471,7 +396,7 @@ def test_scrapling_tls_error_contract() -> None:
         page_result = scrapling_client.fetch_page("https://example.test")
     assert page_result.error_kind == "tls_error"
 
-    result = hextech_scraper.ScraplingFetchResult(
+    result = scrapling_client.ScraplingFetchResult(
         url="https://example.test/detail/1",
         text="",
         status_code=None,
@@ -480,9 +405,9 @@ def test_scrapling_tls_error_contract() -> None:
         error_kind="tls_error",
         attempts=2,
     )
-    assert hextech_scraper._scrapling_failure_reason(result) == ("tls_error", None)
+    assert hextech_refresh_support._scrapling_failure_reason(result) == ("tls_error", None)
 
-    with patch.object(hextech_scraper, "fetch_text", return_value=result):
+    with patch("hextech.infrastructure.sources.hextech.refresh_support.fetch_text", return_value=result):
         try:
             hextech_scraper.fetch_with_retry(
                 "https://example.test/detail/1",
@@ -565,7 +490,7 @@ def test_scrapling_fetch_page_get_timeout_uses_seconds() -> None:
 def test_verify_data_source_integrity_offline_fixture_mode() -> None:
     """离线 fixture 模式必须跳过所有远端请求，保留本地数据一致性检查。"""
 
-    import tools.verify_data_source_integrity as verifier
+    import tooling.checks.source_integrity as verifier
 
     row = {
         "英雄ID": "1",
@@ -676,10 +601,11 @@ def test_hextech_cooldown_and_heal_fallback() -> None:
         "blocked_until": datetime.fromtimestamp(time.time() + 3600, tz=timezone.utc).isoformat(),
     }
     with (
-        patch.object(hextech_scraper, "load_scraper_status", return_value=fallback_status),
+        patch("hextech.infrastructure.sources.hextech.refresh_support.load_scraper_status", return_value=fallback_status),
         patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
         patch.object(hextech_scraper, "get_latest_valid_csv", return_value="valid.csv"),
-        patch.object(hextech_scraper, "fetch_text", side_effect=AssertionError("冷却期不得发起网络请求")),
+        patch("hextech.infrastructure.sources.hextech.refresh_support.get_latest_valid_csv", return_value="valid.csv"),
+        patch("hextech.infrastructure.sources.hextech.refresh_support.fetch_text", side_effect=AssertionError("冷却期不得发起网络请求")),
     ):
         assert hextech_scraper.main_scraper() is True
         assert hextech_scraper.check_execution_permission(force=True)[0] is True

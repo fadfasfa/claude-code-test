@@ -1,6 +1,6 @@
 """测试 overlay watchdog 契约。
 
-调用方: pytest; 关键依赖: hextech.display.desktop.service_manager。
+调用方: pytest; 关键依赖: hextech.interfaces.desktop.service_manager。
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import unittest
 
 class OverlayWatchdogContractTests(unittest.TestCase):
     def test_service_manager_defaults_to_supervisor_owned_overlay(self):
-        from hextech.display.desktop.service_manager import ServiceManager
+        from hextech.interfaces.desktop.service_manager import ServiceManager
 
         manager = ServiceManager(start_web_func=lambda: object())
 
@@ -22,8 +22,8 @@ class OverlayWatchdogContractTests(unittest.TestCase):
         self.assertEqual(snapshot["game_overlay"]["host_status"], "unknown")
         self.assertEqual(snapshot["game_overlay"]["sidecar_status"], "unknown")
 
-    def test_compat_controller_snapshot_does_not_restore_watchdog_restarts(self):
-        from hextech.display.desktop.service_manager import ServiceManager
+    def test_controller_snapshot_does_not_restore_watchdog_restarts(self):
+        from hextech.interfaces.desktop.service_manager import ServiceManager
 
         class DegradedOverlayController:
             host_process = object()

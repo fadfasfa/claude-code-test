@@ -13,14 +13,14 @@ RUN_DIR = Path(__file__).resolve().parents[1]
 
 
 def test_build_defaults_to_offline_and_refresh_flag_is_opt_in():
-    from tools.build_package import parse_build_args
+    from tooling.build.package import parse_build_args
 
     assert parse_build_args([]).refresh_data is False
     assert parse_build_args(["--refresh-data"]).refresh_data is True
 
 
 def test_build_accepts_existing_verified_snapshot_root(tmp_path):
-    from tools.build_package import parse_build_args
+    from tooling.build.package import parse_build_args
 
     snapshot_root = tmp_path / "snapshots"
     snapshot_root.mkdir()
@@ -34,8 +34,8 @@ def test_build_accepts_existing_verified_snapshot_root(tmp_path):
 @pytest.mark.parametrize(
     ("cwd", "script"),
     [
-        (RUN_DIR, Path("tools/build_package.py")),
-        (RUN_DIR.parent, Path("run/tools/build_package.py")),
+        (RUN_DIR, Path("tooling/build/package.py")),
+        (RUN_DIR.parent, Path("run/tooling/build/package.py")),
     ],
 )
 def test_build_package_direct_help_is_cwd_independent(cwd: Path, script: Path):
@@ -53,8 +53,8 @@ def test_build_package_direct_help_is_cwd_independent(cwd: Path, script: Path):
 
 
 def test_offline_build_validation_does_not_call_remote_refresh(monkeypatch):
-    from tools import build_package
-    from hextech.core import refresh
+    from tooling.build import package as build_package
+    from hextech.bootstrap import data_refresh as refresh
 
     monkeypatch.setattr(
         refresh,
@@ -63,13 +63,13 @@ def test_offline_build_validation_does_not_call_remote_refresh(monkeypatch):
     )
     monkeypatch.setattr(
         build_package,
-        "validate_hextech_seed_health",
+        "validate_snapshot_seed",
         lambda _base: {
             "valid": True,
-            "filename": "Hextech_Data_2026-07-05.csv",
-            "mtime": "2026-07-05T00:00:00",
-            "rows": 1000,
-            "unique_heroes": 20,
+            "generation_id": "g1",
+            "champion_count": 173,
+            "augment_count": 204,
+            "stat_record_count": 24910,
         },
     )
 
@@ -78,28 +78,26 @@ def test_offline_build_validation_does_not_call_remote_refresh(monkeypatch):
 
 @pytest.mark.parametrize("state", ["degraded", "failed"])
 def test_explicit_refresh_rejects_non_ready_result(monkeypatch, state):
-    from tools import build_package
-    from hextech.core import refresh
+    from tooling.build import package as build_package
+    from hextech.bootstrap import data_refresh as refresh
 
     monkeypatch.setattr(
         refresh,
         "refresh_backend_data",
         lambda **_kwargs: SimpleNamespace(state=state, reason_code=f"{state}_reason"),
     )
-    monkeypatch.setattr(build_package, "validate_hextech_seed_health", lambda _base: {"valid": True})
+    monkeypatch.setattr(build_package, "validate_snapshot_seed", lambda _base: {"valid": True})
 
     with pytest.raises(RuntimeError, match=state):
         build_package.prepare_runtime_data_for_package(refresh_data=True)
 
 
 def test_dependency_files_split_runtime_build_and_dev_tools():
-    requirements_dir = RUN_DIR / "tools" / "requirements"
-    compatibility = (requirements_dir / "compat.txt").read_text(encoding="utf-8")
+    requirements_dir = RUN_DIR / "tooling" / "requirements"
     runtime = (requirements_dir / "runtime.txt").read_text(encoding="utf-8")
     build = (requirements_dir / "build.txt").read_text(encoding="utf-8")
     dev = (requirements_dir / "dev.txt").read_text(encoding="utf-8")
 
-    assert "-r build.txt" in compatibility
     assert "pyinstaller" not in runtime.lower()
     assert "-r runtime.txt" in build
     assert "pyinstaller" in build.lower()
@@ -111,7 +109,7 @@ def test_dependency_files_split_runtime_build_and_dev_tools():
 
 
 def test_portable_launcher_is_ascii_crlf_and_discovers_single_root_exe(tmp_path):
-    from tools.build_package import write_portable_launcher
+    from tooling.build.package import write_portable_launcher
 
     launcher = write_portable_launcher(tmp_path)
     content = launcher.read_bytes()
@@ -123,7 +121,7 @@ def test_portable_launcher_is_ascii_crlf_and_discovers_single_root_exe(tmp_path)
 
 
 def test_packaged_smoke_requires_unique_root_exe_and_bat(tmp_path):
-    from tools.acceptance.smoke_packaged_startup import SmokeFailure, _find_exe, _find_launcher
+    from tooling.acceptance.smoke_packaged_startup import SmokeFailure, _find_exe, _find_launcher
 
     (tmp_path / "Hextech.exe").write_bytes(b"exe")
     (tmp_path / "start.bat").write_bytes(b"@echo off\r\n")
@@ -139,19 +137,19 @@ def test_packaged_smoke_requires_unique_root_exe_and_bat(tmp_path):
 
 
 def test_pyinstaller_collects_scraping_package_data():
-    from tools.build_package import PYINSTALLER_COLLECT_DATA, REQUIRED_PACKAGED_SCRAPING_DATA
+    from tooling.build.package import PYINSTALLER_COLLECT_DATA, REQUIRED_PACKAGED_SCRAPING_DATA
 
     assert {"scrapling", "browserforge", "apify_fingerprint_datapoints"} <= set(PYINSTALLER_COLLECT_DATA)
     assert "input-network-definition.zip" in REQUIRED_PACKAGED_SCRAPING_DATA
 
 
 def test_package_entries_include_verified_snapshot_files(tmp_path):
-    from tools.package_rules import iter_package_data_entries
+    from tooling.build.rules import iter_package_data_entries
 
     snapshot_root = tmp_path / "verified"
     generation_dir = snapshot_root / "generations" / "g1"
     generation_dir.mkdir(parents=True)
-    (snapshot_root / "current.v1.json").write_text("{}", encoding="utf-8")
+    (snapshot_root / "current.v1.json").write_text('{"current_generation_id":"g1"}', encoding="utf-8")
     (generation_dir / "manifest.json").write_text("{}", encoding="utf-8")
     manifest_path = tmp_path / "bundle_manifest.json"
     manifest_path.write_text("{}", encoding="utf-8")
@@ -165,8 +163,8 @@ def test_package_entries_include_verified_snapshot_files(tmp_path):
 
     assert {entry.source.name for entry in snapshot_entries} == {"current.v1.json", "manifest.json"}
     assert {entry.target for entry in snapshot_entries} == {
-        "data/seed/startup/snapshots",
-        "data/seed/startup/snapshots/generations/g1",
+        "resources/seeds",
+        "resources/seeds/generations/g1",
     }
 
 
