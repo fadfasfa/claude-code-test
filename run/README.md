@@ -23,6 +23,21 @@ python -m tooling.build --help
 python -m tooling.acceptance.smoke_packaged_startup --help
 ```
 
+Windows 开发入口位于 `tooling/dev/`，只封装上述正式 CLI，不恢复旧根脚本：
+
+```powershell
+.\tooling\dev\start_desktop.ps1
+.\tooling\dev\start_web.ps1
+.\tooling\dev\start_web.ps1 -ProbeOnly
+.\tooling\dev\start_overlay_probe.ps1
+.\tooling\dev\verify_machine.ps1
+.\tooling\dev\verify_machine.ps1 -RequireRunningWeb -RequireConsistentGeneration
+```
+
+脚本优先使用 `run/.venv` 中的 editable 命令，并输出当前 generation、状态文件、Web 端口文件和日志目录。
+Web 实际端口写入 `var/state/web_server_port.txt`；`-ProbeOnly` 会等待服务就绪、验证首页 HTTP 200 后回收测试进程。
+完整系统运行时可使用两个 `Require*` 开关，把 Web 监听和 Desktop/Web/Overlay 共用 generation 提升为硬检查。
+
 Vision 人工探针：
 
 ```powershell

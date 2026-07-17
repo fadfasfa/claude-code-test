@@ -15,7 +15,6 @@ from typing import Iterable
 CATALOG_FILES = (
     "英雄目录.v1.json",
     "海克斯资源目录.v1.json",
-    "Champion_Synergy_Cleaned.json",
     "hero_version.txt",
 )
 ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}

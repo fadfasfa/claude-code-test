@@ -4,7 +4,7 @@
 所有路由定义委托给 `hextech.interfaces.web.backend.api`，所有运行时状态与后台任务委托给 `hextech.interfaces.web.backend.runtime`，
 从而把 Web 的启动层、接口层和运行时层稳定拆开，同时控制模块数量不过度膨胀。
 
-调用方: hextech_ui、web_server; 关键依赖: uvicorn。
+调用方: hextech.bootstrap.web; 关键依赖: uvicorn。
 """
 
 from __future__ import annotations
@@ -50,13 +50,5 @@ def run_web_server() -> None:
         access_log=False,
         log_level="warning",
     )
-
-
-def run_web() -> None:
-    """兼容保留的 Web 启动别名。"""
-
-    run_web_server()
-
-
 if __name__ == "__main__":
     run_web_server()
