@@ -48,6 +48,7 @@ RESOURCE_DIR = os.fspath(_bundle_root() / "resources")
 STATIC_DATA_DIR = os.path.join(RESOURCE_DIR, "catalog")
 INDEX_DATA_DIR = STATIC_DATA_DIR
 ASSET_DIR = os.path.join(RESOURCE_DIR, "assets")
+CHAMPION_ASSET_DIR = os.path.join(ASSET_DIR, "champions")
 STARTUP_SEED_DIR = os.path.join(RESOURCE_DIR, "seeds")
 SOURCE_EVIDENCE_DIR = os.path.join(RESOURCE_DIR, "evidence")
 DIAGNOSTIC_FIXTURE_DIR = os.fspath(PROJECT_ROOT / "tests" / "fixtures" / "diagnostics")
@@ -107,6 +108,7 @@ __all__ = [
     "ASSET_DIR",
     "BASE_DIR",
     "BUNDLE_ROOT_DIR",
+    "CHAMPION_ASSET_DIR",
     "DIAGNOSTIC_FIXTURE_DIR",
     "INDEX_DATA_DIR",
     "PROJECT_ROOT",

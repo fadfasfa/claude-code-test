@@ -33,6 +33,8 @@ def test_dev_entrypoints_only_use_new_cli_and_runtime_layout() -> None:
     ):
         assert command in combined
     assert "state\\web_server_port.txt" in combined
+    assert "tooling.dev.web_stack" in combined
+    assert "WithOverlay" in combined
     assert "state\\desktop" not in combined
     assert "auth_token.txt" not in combined
     for old_root in ("run\\scripts", "run\\data", "run\\hextech", "run\\frontend", "run\\tools"):
@@ -43,3 +45,9 @@ def test_build_catalog_whitelist_excludes_dynamic_synergy() -> None:
     from tooling.build.rules import CATALOG_FILES
 
     assert "Champion_Synergy_Cleaned.json" not in CATALOG_FILES
+
+
+def test_champion_asset_path_is_classified() -> None:
+    from hextech.modules.data.ports.paths import ASSET_DIR, CHAMPION_ASSET_DIR
+
+    assert Path(CHAMPION_ASSET_DIR) == Path(ASSET_DIR) / "champions"

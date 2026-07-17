@@ -55,7 +55,8 @@ from hextech.infrastructure.observability.logging import (
     install_runtime_logging,
 )
 from hextech.modules.data.ports.paths import (
-    ASSET_DIR,
+    ASSET_DIR,  # noqa: F401 - catalog 仍从本模块读取海克斯资源根目录。
+    CHAMPION_ASSET_DIR,
     BASE_DIR,  # noqa: F401 - 兼容 web.runtime 的历史导入。
     BUNDLE_ROOT_DIR,
     INDEX_DATA_DIR,
@@ -167,7 +168,7 @@ os.makedirs(STATIC_DATA_DIR, exist_ok=True)
 os.makedirs(INDEX_DATA_DIR, exist_ok=True)
 os.makedirs(RAW_DATA_DIR, exist_ok=True)
 os.makedirs(RUNTIME_DATA_DIR, exist_ok=True)
-os.makedirs(ASSET_DIR, exist_ok=True)
+os.makedirs(CHAMPION_ASSET_DIR, exist_ok=True)
 for runtime_dir in (
     os.path.join(RAW_DATA_DIR, "hextech"),
     os.path.join(RAW_DATA_DIR, "synergy"),
@@ -393,7 +394,7 @@ def _sync_champion_assets_async(core_data: dict, version: str) -> None:
             downloaded_count = 0
             failed_downloads = []
             for key, v in core_data.items():
-                asset_path = os.path.join(ASSET_DIR, f"{key}.png")
+                asset_path = os.path.join(CHAMPION_ASSET_DIR, f"{key}.png")
                 if os.path.exists(asset_path) and os.path.getsize(asset_path) > 0:
                     continue
                 success = _download_champion_image(img_session, version, v['en_name'], asset_path)
@@ -665,7 +666,7 @@ def get_system_status():
 def _collect_missing_assets(core_data: dict) -> list:
     missing_assets = []
     for key, v in core_data.items():
-        asset_path = os.path.join(ASSET_DIR, f"{key}.png")
+        asset_path = os.path.join(CHAMPION_ASSET_DIR, f"{key}.png")
         if not os.path.exists(asset_path):
             missing_assets.append((key, v['name'], v['en_name']))
     return missing_assets
@@ -702,7 +703,7 @@ def cleanup_missing_assets(max_retries: int = 3, core_data: Optional[dict] = Non
     still_missing = []
     recovered_count = 0
     for key, name, en_name in missing_assets:
-        asset_path = os.path.join(ASSET_DIR, f"{key}.png")
+        asset_path = os.path.join(CHAMPION_ASSET_DIR, f"{key}.png")
         success = False
 
         # 多次重试

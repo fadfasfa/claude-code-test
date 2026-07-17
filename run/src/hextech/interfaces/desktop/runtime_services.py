@@ -326,7 +326,12 @@ def poll_lcu_live_ids(ui: "HextechUI"):
     return candidate_groups
 
 
-def start_web_server_process(web_port_file: str, *, auto_open_browser: bool = True):
+def start_web_server_process(
+    web_port_file: str,
+    *,
+    auto_open_browser: bool = True,
+    timeout: float = 8.0,
+):
     startupinfo = None
     child_env = os.environ.copy()
     if not getattr(sys, "frozen", False):
@@ -351,7 +356,7 @@ def start_web_server_process(web_port_file: str, *, auto_open_browser: bool = Tr
         env=child_env,
     )
     try:
-        _wait_for_web_startup(web_process, web_port_file, timeout=8.0)
+        _wait_for_web_startup(web_process, web_port_file, timeout=max(1.0, float(timeout)))
     except Exception:
         try:
             web_process.terminate()

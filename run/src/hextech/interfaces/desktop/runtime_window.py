@@ -54,7 +54,7 @@ from hextech.interfaces.overlay import context as overlay_context
 from hextech.interfaces.overlay.gameflow import probe_lcu_gameflow_in_progress, probe_live_client_in_progress
 from hextech.modules.vision.window import find_lol_game_window, is_window_renderable
 from hextech.modules.vision.window_titles import LOL_CLIENT_WINDOW_TITLE
-from hextech.modules.data.ports.paths import ASSET_DIR, BASE_DIR
+from hextech.modules.data.ports.paths import BASE_DIR, CHAMPION_ASSET_DIR
 from hextech.modules.vision.image_validation import is_valid_png_bytes
 
 if TYPE_CHECKING:
@@ -147,7 +147,7 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
             ui._run_on_ui_thread(lambda p=cached_photo: _publish_cached(p))
             return
 
-        img_path = os.path.join(ASSET_DIR, f"{champ_id}.png")
+        img_path = os.path.join(CHAMPION_ASSET_DIR, f"{champ_id}.png")
         if os.path.exists(img_path):
             with Image.open(img_path) as raw_img:
                 img = raw_img.resize((48, 48), Image.Resampling.LANCZOS)

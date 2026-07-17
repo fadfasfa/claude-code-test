@@ -1,5 +1,12 @@
 ﻿Set-StrictMode -Version Latest
 
+if ($env:OS -eq "Windows_NT") {
+    & "$env:SystemRoot\System32\chcp.com" 65001 > $null
+}
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $utf8
+$global:OutputEncoding = $utf8
+
 $script:RunRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 
 function Get-HextechRunRoot {
@@ -33,7 +40,7 @@ function Resolve-HextechCli {
         return $installed.Source
     }
 
-    throw "未找到 $Name。请先在 $script:RunRoot 运行: python -m pip install -e ."
+    throw "Command not found: $Name. Run 'python -m pip install -e .' in $script:RunRoot first."
 }
 
 function Get-HextechGenerationId {
@@ -54,13 +61,13 @@ function Show-HextechDevContext {
     $varRoot = Get-HextechVarRoot
     $generationId = Get-HextechGenerationId
     if ([string]::IsNullOrWhiteSpace($generationId)) {
-        $generationId = "<尚无有效 generation>"
+        $generationId = "<unavailable>"
     }
 
-    Write-Host "Run 根目录:       $script:RunRoot"
+    Write-Host "Run root:         $script:RunRoot"
     Write-Host "Generation ID:    $generationId"
-    Write-Host "Snapshot 指针:    $(Join-Path $varRoot 'snapshots\current.v1.json')"
-    Write-Host "启动状态:         $(Join-Path $varRoot 'state\startup_status.json')"
-    Write-Host "Web 端口文件:     $(Join-Path $varRoot 'state\web_server_port.txt')"
-    Write-Host "日志目录:         $(Join-Path $varRoot 'logs')"
+    Write-Host "Snapshot pointer: $(Join-Path $varRoot 'snapshots\current.v1.json')"
+    Write-Host "Startup status:   $(Join-Path $varRoot 'state\startup_status.json')"
+    Write-Host "Web port file:    $(Join-Path $varRoot 'state\web_server_port.txt')"
+    Write-Host "Log directory:    $(Join-Path $varRoot 'logs')"
 }

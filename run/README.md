@@ -29,6 +29,7 @@ Windows 下两个最高频入口直接位于 `run/` 根目录：
 .\启动Hextech.ps1
 .\调试Web前端.ps1
 .\调试Web前端.ps1 -ProbeOnly
+.\调试Web前端.ps1 -WithOverlay
 ```
 
 较低频的 Overlay 和整机检查保留在 `tooling/dev/`：
@@ -40,7 +41,8 @@ Windows 下两个最高频入口直接位于 `run/` 根目录：
 ```
 
 脚本优先使用 `run/.venv` 中的 editable 命令，并输出当前 generation、状态文件、Web 端口文件和日志目录。
-Web 实际端口写入 `var/state/web_server_port.txt`；`-ProbeOnly` 会等待服务就绪、验证首页 HTTP 200 后回收测试进程。
+`调试Web前端.ps1` 默认只启动 DataService 与 Web，不创建 Desktop、客户端悬浮窗或 Overlay；`-WithOverlay` 才额外启动 Overlay host 与 Vision sidecar。
+Web 实际端口写入 `var/state/web_server_port.txt`；`-ProbeOnly` 会等待 DataService 和 Web 就绪、验证首页 HTTP 200 后回收全部测试进程。
 完整系统运行时可使用两个 `Require*` 开关，把 Web 监听和 Desktop/Web/Overlay 共用 generation 提升为硬检查。
 
 Vision 人工探针：

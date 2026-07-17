@@ -39,7 +39,7 @@ from hextech.infrastructure.sources.catalog_prefetch import run_augment_icon_pre
 from hextech.infrastructure.sources.hextech.refresh_support import hextech_refresh_blocked, load_scraper_status
 from hextech.infrastructure.sources.hextech.service import main_scraper
 from hextech.infrastructure.sources.version_sync import (
-    ASSET_DIR,
+    CHAMPION_ASSET_DIR,
     AUGMENT_ICON_FILE,
     AUGMENT_MANIFEST_FILE,
     AUGMENT_MAP_FILE,
@@ -154,7 +154,7 @@ def _image_assets_ready() -> bool:
     if not core_data:
         return False
     for key in core_data.keys():
-        asset_path = Path(ASSET_DIR) / f"{key}.png"
+        asset_path = Path(CHAMPION_ASSET_DIR) / f"{key}.png"
         if not asset_path.exists():
             return False
     return True
