@@ -2,7 +2,7 @@
 
 ## 模块边界
 
-源码根为 `src/hextech`。`contracts` 定义跨边界 ID、DTO 和失败分类；`modules` 持有业务用例；`interfaces` 与 `infrastructure` 实现入站和出站适配；`runtime` 管理进程；`bootstrap` 是唯一 composition root。
+源码根为 `src/hextech`。`contracts` 定义跨边界 ID、DTO 和失败分类；`modules` 持有业务用例；`interfaces` 与 `infrastructure` 实现入站和出站适配；`runtime` 是只允许依赖 `contracts/modules` 的预留纯运行时边界；`bootstrap` 是唯一 composition root，负责具体进程与实现组装。当前不为填充 `runtime` 目录制造转发实现。
 
 ```mermaid
 flowchart LR
@@ -54,7 +54,8 @@ Mayhem 优先解析 manifest JSON，HTML 仅为结构化 fallback。reject 带�
 ## 进程与消费
 
 - Desktop：Tk 控制面和用户操作入口。
-- Runtime Supervisor：管理 DataService、Web、Overlay host 与 Vision sidecar 的生命周期。
+- Runtime Supervisor：只管理 Overlay host、Vision sidecar、lease 与本机控制面，不拥有数据刷新职责。
+- Bootstrap/Desktop service manager：组装并持有 DataService、Web 与 Runtime Supervisor 的具体进程。
 - DataService：刷新来源、选择 last-good、构建并发布 generation。
 - Web/Overlay：只通过固定 snapshot view 查询，不直接读取来源 run。
 

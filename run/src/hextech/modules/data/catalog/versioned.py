@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from hextech.contracts import ArtifactDescriptor, CatalogManifestV2, SourceProvenance
+from hextech.contracts.data_pipeline import require_identifier
 from hextech.modules.data.catalog.version_catalog import (
     load_augment_manifest_entries,
     load_champion_core_data,
@@ -186,7 +187,7 @@ def load_runtime_catalog_from_pointer(pointer: Mapping[str, Any]) -> CatalogView
     try:
         if pointer.get("schema_version") != 2:
             return None
-        generation_id = str(pointer["catalog_generation_id"])
+        generation_id = require_identifier(pointer["catalog_generation_id"], field_name="catalog_generation_id")
         root = catalog_root() / "generations" / generation_id
         manifest_path = root / "manifest.json"
         if not manifest_path.is_file() or sha256_file(manifest_path) != str(pointer["manifest_sha256"]):

@@ -1,18 +1,27 @@
-"""DataService 单实例文件锁。"""
+"""跨进程独占文件锁，供单实例和 promotion 事务复用。"""
 
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
-class DataServiceInstanceLock:
-    """持有进程级文件锁，避免多个桌面实例同时发布 generation。"""
+from typing import BinaryIO
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._file = None
+
+class InterProcessFileLock:
+    """持有一个字节的 OS 文件锁；进程退出时由系统自动释放。"""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self._file: BinaryIO | None = None
+
+    @property
+    def acquired(self) -> bool:
+        return self._file is not None
 
     def acquire(self) -> bool:
+        if self._file is not None:
+            return True
         self.path.parent.mkdir(parents=True, exist_ok=True)
         file_obj = self.path.open("a+b")
         try:
@@ -56,3 +65,6 @@ class DataServiceInstanceLock:
                 fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
         finally:
             file_obj.close()
+
+
+__all__ = ["InterProcessFileLock"]

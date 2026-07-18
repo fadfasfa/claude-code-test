@@ -25,16 +25,6 @@ from hextech.infrastructure.sources.hextech.source import ChampionCatalogMismatc
 from hextech.modules.acquisition.common.contracts import ItemOutcome
 from hextech.infrastructure.observability.logging import log_task_summary
 
-FRESHNESS_THRESHOLD = 0.0005
-SCRAPER_BLOCKED_COOLDOWN_SECONDS = 30 * 60
-SCRAPER_REMOTE_FAILURE_ESCALATION_THRESHOLD = 3
-BLOCKED_HTTP_STATUS_CODES = {403, 429}
-DEFERRED_REMOTE_FAILURE_REASONS = {"http_403", "http_429", "timeout"}
-DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = "https://cdn.dtodo.cn/hextech/champion-details"
-HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = (
-    os.getenv("HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL", DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL).strip()
-    or DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL
-)
 HEXTECH_DETAIL_WORKERS = 4
 HEXTECH_DETAIL_RETRY_WORKERS = 2
 HEXTECH_DETAIL_TIMEOUT_SECONDS = 6
@@ -295,15 +285,17 @@ def fetch_champion_detail_stats_fast(
     }
 
 
-def main_scraper(
+def _main_scraper_impl(
     stop_event=None,
     force: bool = False,
     *,
     promote_current: bool = False,
     pointer_output: str | os.PathLike[str] | None = None,
+    _started_at: float | None = None,
+    _attempt: dict | None = None,
 ):
-    started_at = time.time()
-    attempt = _new_attempt_context()
+    started_at = time.time() if _started_at is None else _started_at
+    attempt = _new_attempt_context() if _attempt is None else _attempt
     output_csv = ""
     attempt["output_csv"] = output_csv
 
@@ -433,6 +425,10 @@ def main_scraper(
         )
 
     attempt["total_heroes"] = len(stats_list)
+    # 先声明预检状态，避免 worker 闭包依赖后续才创建的局部变量。
+    preflight_id = ""
+    preflight_result: dict = {}
+    preflight_rows: list = []
 
     def fetch_champ_detail(champ: dict, *, timeout: int, preflight_rows: list | None = None) -> dict:
         if preflight_rows is not None:
@@ -708,3 +704,48 @@ def main_scraper(
             attempt=attempt,
             failure_stage="detail_rows",
         )
+
+
+def main_scraper(
+    stop_event=None,
+    force: bool = False,
+    *,
+    promote_current: bool = False,
+    pointer_output: str | os.PathLike[str] | None = None,
+):
+    """执行完整 Hextech 抓取；未预期异常必须留下失败诊断后继续向上抛出。"""
+
+    started_at = time.time()
+    attempt = _new_attempt_context()
+    try:
+        return _main_scraper_impl(
+            stop_event,
+            force,
+            promote_current=promote_current,
+            pointer_output=pointer_output,
+            _started_at=started_at,
+            _attempt=attempt,
+        )
+    except Exception as exc:
+        attempt["failure_count"] = max(1, int(attempt.get("failure_count") or 0))
+        samples = list(attempt.get("failure_samples") or [])
+        samples.append(
+            {
+                "champion_id": "",
+                "stage": "unexpected_exception",
+                "error_type": exc.__class__.__name__,
+                "error": str(exc)[:1000],
+            }
+        )
+        attempt["failure_samples"] = samples[-20:]
+        try:
+            _finish_refresh_failure(
+                "unexpected_exception",
+                started_at=started_at,
+                attempt=attempt,
+                failure_stage="unexpected_exception",
+            )
+        except Exception:
+            logging.exception("Hextech 未预期异常的失败诊断写入失败")
+        logging.exception("Hextech 抓取发生未预期异常")
+        raise

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -38,17 +39,26 @@ def _generation_id(view: SnapshotViewPort | None) -> str:
 class SelectionGenerationPin:
     """持有当前选择轮的 immutable snapshot view。"""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        now: Callable[[], float] = time.monotonic,
+        latest_probe_interval_seconds: float = 1.0,
+    ) -> None:
         self._key: SelectionKey | None = None
         self._view: SnapshotViewPort | None = None
         self._generation_id = ""
         self._new_generation_id = ""
+        self._now = now
+        self._latest_probe_interval_seconds = max(0.1, float(latest_probe_interval_seconds))
+        self._last_latest_probe_at = 0.0
 
     def reset(self) -> None:
         self._key = None
         self._view = None
         self._generation_id = ""
         self._new_generation_id = ""
+        self._last_latest_probe_at = 0.0
 
     def resolve(
         self,
@@ -62,6 +72,7 @@ class SelectionGenerationPin:
         if key != self._key:
             self._key = key
             self._new_generation_id = ""
+            self._last_latest_probe_at = self._now()
             try:
                 self._view = open_latest()
             except Exception:
@@ -70,6 +81,11 @@ class SelectionGenerationPin:
             return self._view
         if self._view is None:
             return None
+
+        now = self._now()
+        if now - self._last_latest_probe_at < self._latest_probe_interval_seconds:
+            return self._view
+        self._last_latest_probe_at = now
 
         try:
             latest = open_latest()

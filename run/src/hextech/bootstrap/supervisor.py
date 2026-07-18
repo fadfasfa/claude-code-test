@@ -2,13 +2,13 @@
 
 文件职责：
 - 作为桌面 UI 之外的执行面，承载受管组件状态、lease、控制 API 与结构化事件日志。
-- 首版只实现可独立验证的控制面骨架和 refresh action；具体 Web/overlay 组件逐步接入。
+- 只管理 Overlay 生命周期和桌面控制面；数据刷新由 DataService 独占。
 
 维护边界：
 - nonce 只在内存和父子匿名管道中传递，不写入日志或状态文件。
 - 控制 API 面向本机进程调用，使用 loopback 绑定、Host header 校验和 nonce header 鉴权。
 
-调用方: hextech_ui、tests.test_runtime_supervisor; 关键依赖: psutil、catalog.runtime_store、core.refresh。
+调用方: hextech_ui、tests.test_runtime_supervisor; 关键依赖: psutil、catalog.runtime_store、overlay runtime。
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlparse
 
 import psutil
@@ -37,8 +37,6 @@ from hextech.interfaces.overlay.runtime_manager import OverlayRuntimeManager
 SUPERVISOR_NONCE_HEADER = "X-Hextech-Supervisor-Nonce"
 SUPERVISOR_EVENT_SCHEMA_VERSION = 1
 SAFE_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
-DEFAULT_REFRESH_INTERVAL_SECONDS = 4 * 60 * 60
-STARTUP_REFRESH_DELAY_SECONDS = 10.0
 OVERLAY_HOST_VISIBILITY_STALE_SECONDS = 6.0
 TEMPLATE_PREWARM_WAIT_TIMEOUT_SECONDS = 8.0
 OVERLAY_WARM_STARTUP_BUDGET_SECONDS = 30.0
@@ -91,24 +89,20 @@ class RuntimeSupervisor:
         *,
         parent_pid: int,
         session_nonce: str | None = None,
-        refresh_func: Callable[..., Any] | None = None,
         overlay_runtime: Any | None = None,
         event_log_path: str | Path | None = None,
         lease_timeout_seconds: float = 6.0,
         orphan_grace_seconds: float = 15.0,
-        refresh_interval_seconds: float = DEFAULT_REFRESH_INTERVAL_SECONDS,
     ) -> None:
         self.supervisor_instance_id = f"sup-{uuid.uuid4().hex}"
         self.parent_pid = int(parent_pid or 0)
         self.session_nonce = session_nonce or secrets.token_urlsafe(24)
-        self._refresh_func = refresh_func or self._snapshot_refresh_status
         self._overlay_runtime = overlay_runtime or OverlayRuntimeManager()
         self._event_log_path = Path(event_log_path) if event_log_path is not None else Path(build_runtime_state_path("supervisor_events.v1.jsonl"))
         self._lock = threading.RLock()
         self._started_at = time.time()
         self._lease_timeout_seconds = max(1.0, float(lease_timeout_seconds))
         self._orphan_grace_seconds = max(1.0, float(orphan_grace_seconds))
-        self._refresh_interval_seconds = max(60.0, float(refresh_interval_seconds))
         self._lease: dict[str, Any] = {
             "control_instance_id": "",
             "last_renewed_at": 0.0,
@@ -121,20 +115,7 @@ class RuntimeSupervisor:
         self._shutdown_reason = ""
         self._overlay_shutdown_called = False
         self._overlay_shutdown_thread: threading.Thread | None = None
-        self._active_refresh_action_id = ""
         self._active_overlay_action_id = ""
-        self._last_refresh_at = 0.0
-        # 首刷延迟到 UI 启动后，避免恢复旧的首 tick 同步卡顿，同时保证无人手动触发时也会自动刷新。
-        self._next_refresh_at = self._started_at + STARTUP_REFRESH_DELAY_SECONDS
-
-    @staticmethod
-    def _snapshot_refresh_status(*, force: bool = False) -> dict[str, Any]:
-        """刷新所有权已迁入 DataService；Supervisor 仅报告当前 generation。"""
-
-        del force
-        from hextech.modules.data.generation import DataSnapshotClient
-
-        return DataSnapshotClient().status()
 
     def parent_alive(self) -> bool:
         return bool(self.parent_pid and psutil.pid_exists(self.parent_pid))
@@ -169,8 +150,6 @@ class RuntimeSupervisor:
                 "lease_age_seconds": int(lease_age) if self._lease.get("last_renewed_at") else None,
                 "lease_timeout_seconds": self._lease_timeout_seconds,
                 "orphan_grace_seconds": self._orphan_grace_seconds,
-                "last_refresh_at": self._last_refresh_at or None,
-                "next_refresh_at": self._next_refresh_at or None,
                 "shutdown_reason": self._shutdown_reason,
                 "desired_state": dict(self._desired_state),
                 "components": components,
@@ -228,74 +207,6 @@ class RuntimeSupervisor:
         if hasattr(result, "__dict__"):
             return dict(result.__dict__)
         return {"result": bool(result)}
-
-    def _execute_refresh_action(self, action_id: str, *, force: bool, started_at: float) -> None:
-        try:
-            result_payload = self._result_payload(self._refresh_func(force=force))
-            status = "completed"
-            self.append_event(
-                {
-                    "event": "refresh.completed",
-                    "component": "refresh",
-                    "correlation_id": action_id,
-                    "duration_seconds": int(max(0.0, time.time() - started_at)),
-                    "result_state": result_payload.get("state", ""),
-                }
-            )
-        except Exception as exc:
-            status = "failed"
-            result_payload = {"error_type": exc.__class__.__name__, "error_message": sanitize_event_message(str(exc))}
-            self.append_event(
-                {
-                    "event": "refresh.failed",
-                    "level": "ERROR",
-                    "component": "refresh",
-                    "correlation_id": action_id,
-                    "error_type": exc.__class__.__name__,
-                    "error_message_sanitized": str(exc),
-                }
-            )
-        completed_at = time.time()
-        with self._lock:
-            self._actions[action_id] = {
-                **self._actions.get(action_id, {}),
-                "status": status,
-                "completed_at": completed_at,
-                "completed_at_iso": _utc_now_iso(),
-                "result": result_payload,
-            }
-            if self._active_refresh_action_id == action_id:
-                self._active_refresh_action_id = ""
-            self._last_refresh_at = completed_at
-            self._next_refresh_at = completed_at + self._refresh_interval_seconds
-
-    def run_refresh_action(self, payload: dict[str, Any]) -> dict[str, Any]:
-        action_id = f"act-{uuid.uuid4().hex}"
-        force = bool(payload.get("force"))
-        started_at = time.time()
-        with self._lock:
-            if self._active_refresh_action_id:
-                action = self._actions.get(self._active_refresh_action_id)
-                if action and action.get("status") == "running":
-                    return dict(action)
-            self._actions[action_id] = {
-                "action_id": action_id,
-                "type": "refresh",
-                "status": "running",
-                "force": force,
-                "started_at": started_at,
-                "started_at_iso": _utc_now_iso(),
-            }
-            self._active_refresh_action_id = action_id
-        self.append_event({"event": "refresh.started", "component": "refresh", "correlation_id": action_id})
-        thread = threading.Thread(
-            target=self._execute_refresh_action,
-            kwargs={"action_id": action_id, "force": force, "started_at": started_at},
-            name="hextech-supervisor-refresh",
-            daemon=True,
-        )
-        thread.start()
-        return self.get_action(action_id) or {"action_id": action_id, "type": "refresh", "status": "running"}
 
     def _execute_game_overlay_action(self, action_id: str, *, enabled: bool, started_at: float) -> None:
         try:
@@ -428,35 +339,19 @@ class RuntimeSupervisor:
         return not thread.is_alive()
 
     def tick(self) -> None:
-        now = time.time()
         if self.parent_pid and not self.parent_alive():
             self.append_event({"event": "shutdown.parent_gone", "component": "supervisor", "level": "WARNING"})
             self.request_shutdown("parent_gone")
             return
         with self._lock:
             last_lease = float(self._lease.get("last_renewed_at") or 0.0)
-            active_refresh = bool(self._active_refresh_action_id)
-            next_refresh_at = float(self._next_refresh_at or 0.0)
+        now = time.time()
         if last_lease and now - last_lease > self._lease_timeout_seconds + self._orphan_grace_seconds:
             self.append_event({"event": "lease.expired", "component": "supervisor", "level": "WARNING"})
             with self._lock:
                 self._lease["state"] = "expired"
             self.request_shutdown("lease_expired")
             return
-        try:
-            overlay = self._overlay_runtime.snapshot()
-        except Exception:
-            overlay = {}
-        overlay_status = str(overlay.get("status") or "")
-        overlay_starting = overlay_status == "starting"
-        cache_prewarming = str(overlay.get("cache_status") or "") in {"queued", "prewarming", "lookup", "building"}
-        overlay_terminal = overlay_status in {"running", "error", "stopped"}
-        if overlay_starting or (cache_prewarming and not overlay_terminal):
-            with self._lock:
-                self._next_refresh_at = max(self._next_refresh_at, now + 1.0)
-            return
-        if not active_refresh and next_refresh_at > 0.0 and now >= next_refresh_at:
-            self.run_refresh_action({"force": False})
 
     def append_event(self, payload: dict[str, Any]) -> None:
         target = self._event_log_path
@@ -541,8 +436,6 @@ class RuntimeSupervisor:
                 payload = self._read_json()
                 if path == "/v1/lease/renew":
                     self._send_json(HTTPStatus.OK, supervisor.renew_lease(payload))
-                elif path == "/v1/actions/refresh":
-                    self._send_json(HTTPStatus.ACCEPTED, supervisor.run_refresh_action(payload))
                 elif path == "/v1/actions/game-overlay":
                     self._send_json(HTTPStatus.ACCEPTED, supervisor.run_game_overlay_action(payload))
                 elif path == "/v1/shutdown":
@@ -597,8 +490,8 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
-        # sidecar 与 host 依次执行 graceful/terminate/kill，2 秒会让主进程在
-        # daemon 清理线程完成前退出，并把两个受管子进程遗留在系统中。
+        # 所有退出路径都先登记同一个幂等 shutdown，确保 Ctrl+C 也会回收受管进程。
+        supervisor.request_shutdown("finally")
         supervisor.wait_for_overlay_shutdown(OVERLAY_SHUTDOWN_WAIT_SECONDS)
         server.shutdown()
     return 0

@@ -120,6 +120,11 @@ class ItemOutcome:
     attempt: FetchAttempt | None = None
     details: Mapping[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if self.state not in {"success", "confirmed_empty", "failed"}:
+            raise DataContractError(f"item outcome state 无效：{self.state}")
+        _non_negative_int(self.record_count, field_name="item outcome.record_count")
+
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["failure_kind"] = self.failure_kind.value if self.failure_kind else ""
@@ -258,6 +263,8 @@ class SourceRunManifestV2:
         outcomes = payload.get("outcomes")
         metadata = payload.get("metadata")
         artifact = payload.get("artifact")
+        if not isinstance(outcomes, list) or any(not isinstance(item, Mapping) for item in outcomes):
+            raise DataContractError("source run manifest outcomes 必须是对象数组")
         try:
             return cls(
                 schema_version=payload["schema_version"],
@@ -273,13 +280,7 @@ class SourceRunManifestV2:
                 confirmed_empty_items=payload["confirmed_empty_items"],
                 failed_items=payload["failed_items"],
                 artifact=(ArtifactDescriptor.from_mapping(artifact) if isinstance(artifact, Mapping) else None),
-                outcomes=tuple(
-                    ItemOutcome.from_mapping(item)
-                    for item in outcomes
-                    if isinstance(item, Mapping)
-                )
-                if isinstance(outcomes, Sequence) and not isinstance(outcomes, (str, bytes))
-                else (),
+                outcomes=tuple(ItemOutcome.from_mapping(item) for item in outcomes),
                 metadata=dict(metadata) if isinstance(metadata, Mapping) else {},
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -384,17 +385,20 @@ class CatalogManifestV2:
             raise DataContractError(f"不支持的 catalog schema：{self.schema_version}")
         require_identifier(self.catalog_generation_id, field_name="catalog_generation_id")
         require_sha256(self.content_sha256, field_name="catalog.content_sha256")
-        if {item.role for item in self.files} != {"champions", "augments", "versions"}:
+        if len(self.files) != 3 or {item.role for item in self.files} != {"champions", "augments", "versions"}:
             raise DataContractError("Catalog 必须包含 champions、augments、versions 三个角色")
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "CatalogManifestV2":
+        files = payload.get("files")
+        if not isinstance(files, list) or any(not isinstance(item, Mapping) for item in files):
+            raise DataContractError("catalog manifest files 必须是对象数组")
         try:
             return cls(
                 schema_version=payload["schema_version"],
                 catalog_generation_id=str(payload["catalog_generation_id"]),
                 created_at=str(payload["created_at"]),
-                files=tuple(ArtifactDescriptor.from_mapping(item) for item in payload["files"]),
+                files=tuple(ArtifactDescriptor.from_mapping(item) for item in files),
                 content_sha256=str(payload["content_sha256"]),
             )
         except (KeyError, TypeError) as exc:

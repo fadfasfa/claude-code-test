@@ -7,6 +7,7 @@ artifact 才能切换 ``current.v2.json``。本模块明确拒绝 v1 pointer。
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from dataclasses import replace
 from pathlib import Path
@@ -25,6 +26,18 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 class SourceRunValidationError(ValueError):
     pass
+
+
+def _file_sha256_and_size(path: Path) -> tuple[str, int]:
+    """在同一个文件句柄上取得摘要和字节数，避免 stat/hash 间被替换。"""
+
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            size += len(block)
+            digest.update(block)
+    return digest.hexdigest(), size
 
 
 def _validate_source(source: str) -> str:
@@ -74,12 +87,15 @@ def _normalized_manifest(manifest: SourceRunManifestV2) -> SourceRunManifestV2:
             raise SourceRunValidationError("健康来源 run 缺少 artifact")
         return manifest
     artifact_path = source_run_artifact_path(manifest.source, manifest.run_id, manifest.artifact.relative_path)
-    if not artifact_path.is_file() or artifact_path.stat().st_size <= 0:
+    if not artifact_path.is_file():
+        raise SourceRunValidationError(f"来源 artifact 缺失或为空：{artifact_path}")
+    artifact_sha256, artifact_size = _file_sha256_and_size(artifact_path)
+    if artifact_size <= 0:
         raise SourceRunValidationError(f"来源 artifact 缺失或为空：{artifact_path}")
     descriptor = replace(
         manifest.artifact,
-        sha256=sha256_file(artifact_path),
-        size=artifact_path.stat().st_size,
+        sha256=artifact_sha256,
+        size=artifact_size,
     )
     return replace(manifest, artifact=descriptor)
 
@@ -147,26 +163,30 @@ def publish_source_run(
 
 def load_source_current(source: str, *, verify_hash: bool = True) -> dict[str, Any]:
     pointer_path = source_current_path(source)
+    if not pointer_path.is_file():
+        return {}
     try:
         payload = json.loads(pointer_path.read_text(encoding="utf-8"))
         if not isinstance(payload, Mapping):
-            return {}
+            raise SourceRunValidationError(f"来源 pointer 必须是对象：{pointer_path}")
         pointer = SourcePointerV2.from_mapping(payload)
-    except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        return {}
+    except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SourceRunValidationError(f"来源 pointer 无效：{pointer_path}: {exc}") from exc
     if pointer.source != _validate_source(source):
-        return {}
+        raise SourceRunValidationError(f"来源 pointer 身份错误：expected={source} actual={pointer.source}")
     run_dir = source_run_dir(pointer.source, pointer.run_id)
     manifest_path = run_dir / "manifest.json"
     artifact_path = source_run_artifact_path(pointer.source, pointer.run_id, pointer.artifact.relative_path)
     if not manifest_path.is_file() or not artifact_path.is_file():
-        return {}
-    if verify_hash and (
-        sha256_file(manifest_path) != pointer.manifest_sha256
-        or sha256_file(artifact_path) != pointer.artifact.sha256
-        or artifact_path.stat().st_size != pointer.artifact.size
-    ):
-        return {}
+        raise SourceRunValidationError(f"来源 current 引用文件缺失：{pointer.source}/{pointer.run_id}")
+    if verify_hash:
+        artifact_sha256, artifact_size = _file_sha256_and_size(artifact_path)
+        if (
+            sha256_file(manifest_path) != pointer.manifest_sha256
+            or artifact_sha256 != pointer.artifact.sha256
+            or artifact_size != pointer.artifact.size
+        ):
+            raise SourceRunValidationError(f"来源 current 哈希或大小校验失败：{pointer.source}/{pointer.run_id}")
     return pointer.to_dict()
 
 
@@ -188,13 +208,14 @@ def build_artifact_descriptor(
 ) -> ArtifactDescriptor:
     if not path.is_file():
         raise SourceRunValidationError(f"来源 artifact 不存在：{path}")
+    sha256, size = _file_sha256_and_size(path)
     return ArtifactDescriptor(
         role=role,
         relative_path=relative_path,
-        sha256=sha256_file(path),
+        sha256=sha256,
         record_count=record_count,
         content_schema_version=content_schema_version,
-        size=path.stat().st_size,
+        size=size,
     )
 
 

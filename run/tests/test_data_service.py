@@ -17,13 +17,13 @@ from hextech.bootstrap.data_service_runtime import (
     DataBuildResult,
     DataServiceApplication,
     DataServiceCore,
-    DataServiceInstanceLock,
     bootstrap_snapshot,
     build_snapshot_from_runtime,
     _sync_startup_snapshot_status,
     _build_augment_identity_payload,
     _query_payloads_from_dataframe,
 )
+from hextech.infrastructure.persistence.file_lock import InterProcessFileLock
 from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher, SnapshotValidationError
 from hextech.contracts import SourceProvenance
 
@@ -564,8 +564,8 @@ def test_shutdown_clears_pending_refresh_without_starting_followup(tmp_path: Pat
 
 
 def test_data_service_instance_lock_is_exclusive(tmp_path: Path) -> None:
-    first = DataServiceInstanceLock(tmp_path / "data-service.lock")
-    second = DataServiceInstanceLock(tmp_path / "data-service.lock")
+    first = InterProcessFileLock(tmp_path / "data-service.lock")
+    second = InterProcessFileLock(tmp_path / "data-service.lock")
     assert first.acquire() is True
     try:
         assert second.acquire() is False

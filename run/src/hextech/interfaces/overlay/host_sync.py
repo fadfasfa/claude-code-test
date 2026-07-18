@@ -1,4 +1,4 @@
-"""Overlay host host_sync 职责模块。"""
+"""Overlay host 的事件轮询、窗口目标同步与渲染调度。"""
 # ruff: noqa: F403, F405
 
 from hextech.interfaces.overlay.host_common import *

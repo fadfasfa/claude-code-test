@@ -1,5 +1,6 @@
 ﻿Set-StrictMode -Version Latest
 
+# 功能：为根目录开发入口统一解析 run、var、CLI 与诊断输出，不承载业务启动逻辑。
 if ($env:OS -eq "Windows_NT") {
     & "$env:SystemRoot\System32\chcp.com" 65001 > $null
 }

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import traceback
@@ -98,6 +99,15 @@ def _to_float(value, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_rate(value: object, *, field_name: str) -> float:
+    """同时接受小数和百分数输入，拒绝无法确定量纲的非法值。"""
+
+    rate = float(value)
+    if not math.isfinite(rate) or rate < 0 or rate > 100:
+        raise ValueError(f"{field_name} 必须是 [0, 1] 小数或 (1, 100] 百分数：{value}")
+    return rate if rate <= 1 else rate / 100.0
 
 
 def _percent_text_to_rate(value: str) -> float:
@@ -321,13 +331,8 @@ def _rows_from_source_augments(
         mid = str(raw_id)
         stats = raw_stats if isinstance(raw_stats, dict) else {}
         try:
-            win = _to_float(stats.get("win_rate", stats.get("winRate")))
-            pick = _to_float(stats.get("pick_rate", stats.get("pickRate")))
-
-            if pick > 1.0:
-                pick = pick / 100.0
-                logging.debug(f"[量纲转换] 海克斯 ID={mid}，出场率从百分数转换为小数：{pick*100:.1f}% -> {pick:.4f}")
-            pick = min(1.0, max(0.0, pick))
+            win = _normalize_rate(stats.get("win_rate", stats.get("winRate")), field_name="augment_win_rate")
+            pick = _normalize_rate(stats.get("pick_rate", stats.get("pickRate")), field_name="augment_pick_rate")
 
             web_name = aug_id_map.get(mid, "")
             local_tier = truth_dict.get(web_name) or (aug_tier_map or {}).get(mid) or "未知"
@@ -398,15 +403,15 @@ def _build_row(
         champion_id=str(champ_id),
         champion_name=str(champ_name),
         champion_tier=str(champ_data.get("tier", "T3")),
-        champion_win_rate=float(champ_data.get("winRate", 0)),
-        champion_pick_rate=float(champ_data.get("pickRate", 0)),
+        champion_win_rate=_normalize_rate(champ_data.get("winRate", 0), field_name="champion_win_rate"),
+        champion_pick_rate=_normalize_rate(champ_data.get("pickRate", 0), field_name="champion_pick_rate"),
         augment_id=str(augment_id),
         source_rank=int(source_rank),
         source_tier=_source_tier_label(source_tier),
         augment_tier=str(local_tier),
         augment_name=str(augment_name),
-        augment_win_rate=float(winrate),
-        augment_pick_rate=min(1.0, max(0.0, float(pickrate))),
+        augment_win_rate=_normalize_rate(winrate, field_name="augment_win_rate"),
+        augment_pick_rate=_normalize_rate(pickrate, field_name="augment_pick_rate"),
     )
     return record.to_csv_row()
 

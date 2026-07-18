@@ -1,4 +1,4 @@
-"""Overlay host host_platform 职责模块。"""
+"""Overlay host 的 Win32 窗口、热键与前台事件适配器。"""
 # ruff: noqa: F403, F405
 
 from hextech.interfaces.overlay.host_common import *
@@ -51,6 +51,21 @@ def _root_hwnd(root: tk.Tk) -> int:
     raw_hwnd = int(root.winfo_id())
     top_hwnd = int(user32.GetAncestor(raw_hwnd, GA_ROOT))
     return top_hwnd or raw_hwnd
+
+
+def _apply_overlay_rect(root: tk.Tk, rect: tuple[int, int, int, int]) -> None:
+    """用整数虚拟屏坐标定位 client rect，兼容左侧或上方副屏。"""
+
+    left, top, right, bottom = rect
+    ctypes.windll.user32.SetWindowPos(
+        _root_hwnd(root),
+        HWND_TOPMOST,
+        int(left),
+        int(top),
+        max(1, int(right) - int(left)),
+        max(1, int(bottom) - int(top)),
+        SWP_NOACTIVATE,
+    )
 
 
 def _get_window_exstyle(hwnd: int) -> int:

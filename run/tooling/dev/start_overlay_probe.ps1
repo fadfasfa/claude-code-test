@@ -1,6 +1,7 @@
 ﻿[CmdletBinding()]
 param()
 
+# 功能：独立启动 Overlay 自检探针，用于排查 host/sidecar，不启动完整 Desktop。
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "_common.ps1")

@@ -31,6 +31,65 @@ from tests._dev_gate_support import (
 
 pytestmark = pytest.mark.dev_gate
 
+
+def test_hextech_rate_normalization_accepts_percentages_and_rejects_invalid_values() -> None:
+    from hextech.infrastructure.sources.hextech.parsing import _build_row, _normalize_rate
+
+    row = _build_row(
+        champ_id="25",
+        champ_name="堕落天使",
+        champ_data={"tier": "1", "winRate": 53, "pickRate": 10},
+        augment_id="1373",
+        augment_name="缩小引擎",
+        source_rank=1,
+        source_tier="1",
+        local_tier="黄金",
+        winrate=53,
+        pickrate=10,
+    )
+
+    assert row["英雄胜率"] == pytest.approx(0.53)
+    assert row["英雄出场率"] == pytest.approx(0.10)
+    assert row["海克斯胜率"] == pytest.approx(0.53)
+    assert row["海克斯出场率"] == pytest.approx(0.10)
+    for invalid in (-1, float("nan"), float("inf"), 101):
+        with pytest.raises(ValueError):
+            _normalize_rate(invalid, field_name="fixture_rate")
+
+
+@pytest.mark.parametrize("failure", (OSError("disk"), KeyError("dataframe"), RuntimeError("publisher")))
+def test_hextech_unexpected_failure_writes_diagnostics_and_preserves_last_good(tmp_path: Path, failure: Exception) -> None:
+    last_good = tmp_path / "last-good.csv"
+    last_good.write_text("stable", encoding="utf-8")
+    diagnostic = tmp_path / "failed-run.json"
+
+    def write_failure(reason: str, **kwargs) -> bool:
+        diagnostic.write_text(
+            json.dumps(
+                {
+                    "reason": reason,
+                    "stage": kwargs["failure_stage"],
+                    "samples": kwargs["attempt"]["failure_samples"],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return True
+
+    with (
+        patch.object(hextech_scraper, "_main_scraper_impl", side_effect=failure),
+        patch.object(hextech_scraper, "_finish_refresh_failure", side_effect=write_failure),
+        pytest.raises(type(failure)),
+    ):
+        hextech_scraper.main_scraper(force=True)
+
+    payload = json.loads(diagnostic.read_text(encoding="utf-8"))
+    assert payload["reason"] == "unexpected_exception"
+    assert payload["stage"] == "unexpected_exception"
+    assert payload["samples"][-1]["error_type"] == type(failure).__name__
+    assert last_good.read_text(encoding="utf-8") == "stable"
+
 def test_cdragon_force_refresh_semantics() -> None:
     """CDragon minimal manifest 不应被旧完整描述字段规则强制重建。"""
     import hextech.infrastructure.sources.catalog as augment_catalog

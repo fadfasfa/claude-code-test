@@ -1,4 +1,4 @@
-"""Overlay host host_runner 职责模块。"""
+"""Overlay host 的进程入口与 Tk 主循环组装。"""
 # ruff: noqa: F403, F405
 
 from hextech.interfaces.overlay.host_common import *

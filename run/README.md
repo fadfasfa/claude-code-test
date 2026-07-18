@@ -77,6 +77,6 @@ run/
 └── pyproject.toml
 ```
 
-依赖方向固定为 `contracts <- modules <- interfaces/infrastructure <- runtime <- bootstrap`。只有 DataService 能发布 generation；抓取器只能发布各自完整 source run。
+依赖方向固定为 `contracts <- modules <- interfaces/infrastructure <- runtime <- bootstrap`。`runtime` 是只依赖 `contracts/modules` 的预留纯边界，具体实现组装只允许出现在 `bootstrap`。只有 DataService 能发布 generation；抓取器只能发布各自完整 source run。
 
 详细数据路径和 current 指针规则见 [docs/data-layout.md](docs/data-layout.md)，进程与数据链路见 [docs/system-design.md](docs/system-design.md)。

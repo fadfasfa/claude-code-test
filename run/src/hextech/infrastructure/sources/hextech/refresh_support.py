@@ -362,6 +362,7 @@ def _finish_refresh_failure(
 ) -> bool:
     active_csv = get_latest_valid_csv() or ""
     if isinstance(attempt, dict) and attempt.get("attempt_id"):
+        catalog = load_active_catalog()
         reason_kind = str(reason or "")
         try:
             failure_kind = FailureKind(reason_kind)
@@ -381,8 +382,8 @@ def _finish_refresh_failure(
         manifest = SourceRunManifest(
             source="hextech",
             run_id=str(attempt["attempt_id"]),
-            catalog_generation_id=load_active_catalog().generation_id,
-            catalog_sha256=load_active_catalog().content_sha256,
+            catalog_generation_id=catalog.generation_id,
+            catalog_sha256=catalog.content_sha256,
             health=SourceHealth.FAILED,
             started_at=str(attempt.get("started_at") or utc_now_iso()),
             completed_at=utc_now_iso(),

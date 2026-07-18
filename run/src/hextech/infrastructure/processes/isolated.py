@@ -73,7 +73,6 @@ def run_isolated_process(
 ) -> IsolatedProcessResult:
     """运行一个来源 worker；超时时先协作取消，再回收完整进程树。"""
 
-    cancel_file.unlink(missing_ok=True)
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     started = time.monotonic()
     process = subprocess.Popen(

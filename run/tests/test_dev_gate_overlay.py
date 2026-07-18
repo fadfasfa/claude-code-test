@@ -3725,7 +3725,7 @@ print(json.dumps(blocked))
     position_user32 = FakeUser32()
     with (
         patch.object(overlay_host.ctypes.windll, "user32", position_user32),
-        patch.object(overlay_host_visibility, "_root_hwnd", return_value=99),
+        patch.object(overlay_host_platform, "_root_hwnd", return_value=99),
     ):
         overlay_host._apply_overlay_rect(object(), (-1920, -100, 0, 980))
     assert position_user32.set_window_pos_calls == [(-1920, -100, 1920, 1080, overlay_host.SWP_NOACTIVATE)]
@@ -3788,7 +3788,7 @@ print(json.dumps(blocked))
     }
     with (
         patch.object(overlay_host.ctypes.windll, "user32", show_user32),
-        patch.object(overlay_host_visibility, "_root_hwnd", return_value=99),
+        patch.object(overlay_host_platform, "_root_hwnd", return_value=99),
         patch.object(overlay_host_visibility, "_ensure_overlay_window_styles", return_value=True) as ensure_styles,
     ):
         overlay_host._show_overlay_window(show_root, config, show_visibility)

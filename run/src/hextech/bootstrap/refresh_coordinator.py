@@ -79,57 +79,66 @@ class CohortRefreshCoordinator:
         self.process_runner = process_runner
         self.now = now or (lambda: datetime.now(timezone.utc))
         self._stop = threading.Event()
+        self._cancel_lock = threading.Lock()
         self._active_cancel: Path | None = None
         self.promotion.recover()
 
     def request_stop(self) -> None:
         self._stop.set()
-        if self._active_cancel is not None:
-            self._active_cancel.parent.mkdir(parents=True, exist_ok=True)
-            self._active_cancel.touch()
+        with self._cancel_lock:
+            cancel_path = self._active_cancel
+            if cancel_path is not None:
+                cancel_path.parent.mkdir(parents=True, exist_ok=True)
+                cancel_path.touch()
 
     def _current_pointer(self, source: str) -> dict[str, Any]:
         if source == "catalog":
+            pointer_path = self.root / "catalog" / "current.v2.json"
+            if not pointer_path.is_file():
+                return {}
             try:
-                payload = json.loads((self.root / "catalog" / "current.v2.json").read_text(encoding="utf-8"))
+                payload = json.loads(pointer_path.read_text(encoding="utf-8"))
                 if not isinstance(payload, dict) or payload.get("schema_version") != 2:
-                    return {}
+                    raise ValueError("Catalog pointer schema 无效")
                 generation_id = str(payload.get("catalog_generation_id") or "")
                 generation_root = self.root / "catalog" / "generations" / generation_id
                 manifest_path = generation_root / "manifest.json"
                 if not manifest_path.is_file() or sha256_file(manifest_path) != str(payload.get("manifest_sha256") or ""):
-                    return {}
+                    raise ValueError("Catalog manifest 缺失或哈希不匹配")
                 manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
                 manifest = CatalogManifestV2.from_mapping(manifest_payload)
                 if (
                     manifest.catalog_generation_id != generation_id
                     or manifest.content_sha256 != str(payload.get("content_sha256") or "")
                 ):
-                    return {}
+                    raise ValueError("Catalog pointer 身份不匹配")
                 validate_catalog_files(generation_root, manifest)
-            except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
-                return {}
+            except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise RuntimeError(f"Catalog current 无效：{exc}") from exc
             return payload
+        pointer_path = self.root / "sources" / source / "current.v2.json"
+        if not pointer_path.is_file():
+            return {}
         try:
-            payload = json.loads((self.root / "sources" / source / "current.v2.json").read_text(encoding="utf-8"))
+            payload = json.loads(pointer_path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
-                return {}
+                raise ValueError("source pointer 必须是对象")
             pointer = SourcePointerV2.from_mapping(payload)
             if pointer.source != source:
-                return {}
+                raise ValueError(f"source pointer 身份不匹配：{pointer.source}")
             run_root = (self.root / "sources" / source / "runs" / pointer.run_id).resolve()
             manifest_path = run_root / "manifest.json"
             artifact_path = (run_root / pointer.artifact.relative_path).resolve()
             if run_root not in artifact_path.parents or not manifest_path.is_file() or not artifact_path.is_file():
-                return {}
+                raise ValueError("source current 引用文件缺失或越界")
             if (
                 sha256_file(manifest_path) != pointer.manifest_sha256
                 or sha256_file(artifact_path) != pointer.artifact.sha256
                 or artifact_path.stat().st_size != pointer.artifact.size
             ):
-                return {}
-        except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
-            return {}
+                raise ValueError("source current 哈希或大小不匹配")
+        except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"{source} current 无效：{exc}") from exc
         return pointer.to_dict()
 
     def _due(self, source: str, state: RefreshSourceState, pointer: Mapping[str, Any], *, force: bool) -> bool:
@@ -178,7 +187,12 @@ class CohortRefreshCoordinator:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         command = self._worker_command(source, work, catalog_pointer, force=force)
         cancel_path = work / f"{source}.cancel"
-        self._active_cancel = cancel_path
+        cancel_path.unlink(missing_ok=True)
+        with self._cancel_lock:
+            self._active_cancel = cancel_path
+            if self._stop.is_set():
+                cancel_path.parent.mkdir(parents=True, exist_ok=True)
+                cancel_path.touch()
         try:
             worker_env = os.environ.copy()
             worker_env["HEXTECH_VAR_DIR"] = os.fspath(self.root.resolve())
@@ -190,7 +204,9 @@ class CohortRefreshCoordinator:
                 env=worker_env,
             )
         finally:
-            self._active_cancel = None
+            with self._cancel_lock:
+                if self._active_cancel == cancel_path:
+                    self._active_cancel = None
         result_path = work / f"{source}.result.json"
         try:
             result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -358,7 +374,7 @@ class CohortRefreshCoordinator:
                 source_files=build.source_files,
                 require_complete_provenance=True,
             )
-            self.promotion.record_generation_promoted()
+            self.promotion.record_generation_promoted(manifest.generation_id)
             self.promotion.commit()
             try:
                 retention = apply_retention(self.root, now=self.now())

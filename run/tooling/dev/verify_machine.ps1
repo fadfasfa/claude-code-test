@@ -4,6 +4,7 @@ param(
     [switch]$RequireConsistentGeneration
 )
 
+# 功能：只读核查本机运行态、generation 与可选 Web 一致性，不修改正式数据。
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "_common.ps1")

@@ -11,6 +11,7 @@ from hextech.modules.data.catalog.version_catalog import load_champion_core_data
 from hextech.modules.data.catalog.versioned import (
     CatalogValidationError,
     build_catalog_manifest,
+    load_runtime_catalog_from_pointer,
     validate_catalog_files,
 )
 
@@ -89,3 +90,13 @@ def test_catalog_validation_rejects_aliases_without_business_indexes(tmp_path: P
 def test_catalog_refresh_rejects_direct_current_promotion() -> None:
     with pytest.raises(CatalogRefreshError, match="cohort promotion"):
         refresh_catalog(promote_current=True, allow_remote=False)
+
+
+def test_runtime_catalog_pointer_rejects_path_traversal() -> None:
+    pointer = {
+        "schema_version": 2,
+        "catalog_generation_id": "../outside",
+        "manifest_sha256": "a" * 64,
+    }
+
+    assert load_runtime_catalog_from_pointer(pointer) is None

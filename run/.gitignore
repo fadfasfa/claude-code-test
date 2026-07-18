@@ -5,7 +5,7 @@ __pycache__/
 *.so
 .Python
 *.bak_cc
-build/
+/build/
 develop-eggs/
 dist/*.egg-info/
 *.egg-info/

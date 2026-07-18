@@ -7,6 +7,8 @@ from hextech.infrastructure.sources.apex.common import *
 from hextech.infrastructure.sources.apex.fetcher import ApexSource
 from hextech.infrastructure.sources.apex.extractor import SynergyExtractor
 from hextech.infrastructure.sources.apex.writer import SynergyWriter
+from hextech.contracts import FailureKind
+from hextech.modules.acquisition.apex.parser import ApexPageOutcome
 from hextech.modules.data.catalog.versioned import load_active_catalog
 def build_augment_name_map_from_static(catalog_root: Path | None = None) -> dict:
     name_map = {}
@@ -176,6 +178,28 @@ def _extract_champion_entries(
     return entries, synergy_map
 
 
+def _extract_and_classify_champion(
+    extractor: SynergyExtractor,
+    champion: ChampionInfo,
+    resource: FetchedResource,
+    *,
+    expected_slug: str,
+) -> tuple[list[SynergyEntry], dict[str, list[SynergyEntry]], ApexPageOutcome]:
+    """解析异常是 schema failure，绝不能被页面空态 marker 降级为确认空。"""
+
+    try:
+        entries, synergy_map = _extract_champion_entries(extractor, champion, resource)
+    except Exception:
+        return [], {}, ApexPageOutcome(ApexPageState.FAILED, FailureKind.SCHEMA_CHANGED, "parser_exception")
+    page = classify_apex_page(
+        resource.text,
+        expected_slug=expected_slug,
+        entry_count=len(entries),
+        status_code=resource.status_code,
+    )
+    return entries, synergy_map, page
+
+
 def run_full_validation(
     *,
     max_champions: Optional[int] = None,
@@ -251,19 +275,24 @@ def run_full_validation(
                 if origin_error in {"cloudflare_block", "access_denied"}:
                     cf_blocked = True
             elif resource and html and not cf_blocked and not error:
-                try:
-                    entries, synergy_map = _extract_champion_entries(extractor, champion, resource)
-                    entry_count = len(entries)
-                    status = "success" if entry_count else "empty"
-                    if not entries:
-                        error = "synergy_parse_empty"
+                entries, synergy_map, page = _extract_and_classify_champion(
+                    extractor,
+                    champion,
+                    resource,
+                    expected_slug=champion.en_name or champion.slug,
+                )
+                entry_count = len(entries)
+                if page.state is ApexPageState.HAS_SYNERGY:
+                    status = "success"
                     for key, values in synergy_map.items():
                         combined_synergy_map.setdefault(key, []).extend(values)
                     if entries and champion.slug != "vi" and len(source_checks) < 3:
                         source_checks.append(_source_check_record(champion, entries[0], html))
-                except Exception as exc:
-                    status = "empty"
-                    error = str(exc)
+                elif page.state is ApexPageState.CONFIRMED_EMPTY:
+                    status = "confirmed_empty"
+                else:
+                    status = "failed"
+                    error = page.failure_kind.value if page.failure_kind else "schema_changed"
             elif cf_blocked:
                 error = error or "cloudflare_block"
             elif not html:
@@ -412,7 +441,11 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
                 champion_lookup=build_champion_lookup(core_info),
                 augment_name_map=build_augment_name_map_from_static(),
             )
-            synergy_map = extractor.extract([resource])
+            try:
+                synergy_map = extractor.extract([resource])
+            except Exception as exc:
+                result["error"] = f"schema_changed:{_safe_exception_label(exc)}"
+                synergy_map = {}
             for candidate in (normalize_slug(champion_slug), normalize_name(champion_slug)):
                 if candidate and candidate in synergy_map:
                     entries = synergy_map[candidate]
@@ -490,7 +523,7 @@ def main(
 
     try:
         catalog = load_active_catalog()
-        core_data = _load_json_file("Champion_Core_Data.json", "core_data")
+        core_data = load_champion_core_data(catalog.root)
         core_info = build_core_info(core_data)
         slug_map = build_champion_slug_map(core_data)
         source = ApexSource()
@@ -508,17 +541,21 @@ def main(
             resource = source.fetch(url, allow_browser=True)
             entries: list[SynergyEntry] = []
             extracted: dict[str, list[SynergyEntry]] = {}
+            page: ApexPageOutcome | None = None
             if resource and resource.text and not resource.error:
-                try:
-                    entries, extracted = _extract_champion_entries(extractor, champion, resource)
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    entries, extracted = [], {}
-            page = classify_apex_page(
-                resource.text if resource else "",
-                expected_slug=slug_map[champion_id],
-                entry_count=len(entries),
-                status_code=resource.status_code if resource else None,
-            )
+                entries, extracted, page = _extract_and_classify_champion(
+                    extractor,
+                    champion,
+                    resource,
+                    expected_slug=slug_map[champion_id],
+                )
+            if page is None:
+                page = classify_apex_page(
+                    resource.text if resource else "",
+                    expected_slug=slug_map[champion_id],
+                    entry_count=len(entries),
+                    status_code=resource.status_code if resource else None,
+                )
             outcome = item_outcome(
                 champion_id,
                 page,
@@ -580,8 +617,8 @@ def main(
             manifest = SourceRunManifest(
                 source="apex",
                 run_id=run_id,
-                catalog_generation_id=load_active_catalog().generation_id,
-                catalog_sha256=load_active_catalog().content_sha256,
+                catalog_generation_id=catalog.generation_id,
+                catalog_sha256=catalog.content_sha256,
                 health=SourceHealth.FAILED,
                 started_at=started_at,
                 completed_at=utc_now_iso(),

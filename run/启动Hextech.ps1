@@ -3,6 +3,7 @@ param(
     [switch]$NoBrowser
 )
 
+# 功能：从源码环境启动完整 Hextech Desktop，并沿新 CLI 进入统一生命周期管理。
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "tooling\dev\_common.ps1")

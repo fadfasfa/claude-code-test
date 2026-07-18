@@ -83,7 +83,8 @@ def test_current_artifact_hash_is_verified(tmp_path, monkeypatch) -> None:
     assert source_runs.resolve_current_artifact("apex") == artifact
 
     artifact.write_text(json.dumps({"tampered": True}), encoding="utf-8")
-    assert source_runs.resolve_current_artifact("apex") is None
+    with pytest.raises(source_runs.SourceRunValidationError, match="哈希或大小"):
+        source_runs.resolve_current_artifact("apex")
 
 
 def test_candidate_pointer_does_not_replace_current(tmp_path, monkeypatch) -> None:
@@ -123,3 +124,13 @@ def test_source_publisher_rejects_direct_current_promotion(tmp_path, monkeypatch
         source_runs.publish_source_run(_manifest("run-direct", descriptor), promote_current=True)
 
     assert source_runs.load_source_current("apex") == {}
+
+
+def test_malformed_current_is_not_treated_as_missing(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(source_runs, "var_path", lambda *parts: tmp_path.joinpath(*parts))
+    pointer = source_runs.source_current_path("apex")
+    pointer.parent.mkdir(parents=True)
+    pointer.write_text("{broken", encoding="utf-8")
+
+    with pytest.raises(source_runs.SourceRunValidationError, match="pointer 无效"):
+        source_runs.load_source_current("apex")

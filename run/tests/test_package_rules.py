@@ -49,6 +49,20 @@ def test_build_package_direct_help_is_cwd_independent(cwd: Path, script: Path):
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_stable_build_module_help_uses_current_python_environment_module() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "tooling.build", "--help"],
+        cwd=RUN_DIR,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
     assert "--refresh-data" in completed.stdout
 
 

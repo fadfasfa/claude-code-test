@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -30,6 +31,43 @@ class PythonRuntimeGuardTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 17)
         self.assertEqual(captured["command"], ["C:/run/.venv/Scripts/python.exe", "-m", "hextech.interfaces.desktop.app", "--flag"])
         self.assertEqual(reexec.call_count, 1)
+
+    def test_build_reexec_preserves_stable_module_entry(self):
+        from hextech.modules.session import python_environment as python_runtime
+
+        command = python_runtime.build_reexec_command(
+            ["C:/run/.venv/Scripts/python.exe"],
+            module_name="tooling.build",
+            argv=["C:/repo/run/tooling/build/__main__.py", "--refresh-data"],
+        )
+
+        self.assertEqual(
+            command,
+            ["C:/run/.venv/Scripts/python.exe", "-m", "tooling.build", "--refresh-data"],
+        )
+
+    def test_windows_reexec_waits_for_child_and_propagates_exit_code(self):
+        from hextech.modules.session import python_environment as python_runtime
+
+        command = ["C:/run/.venv/Scripts/python.exe", "-m", "tooling.build"]
+        with (
+            mock.patch.object(python_runtime.sys, "platform", "win32"),
+            mock.patch.object(
+                python_runtime.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=23),
+            ) as run,
+            mock.patch.object(
+                python_runtime.os,
+                "execv",
+                side_effect=AssertionError("Windows 不应使用 execv 启动 venv launcher"),
+            ),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            python_runtime.reexec_current_process(command)
+
+        self.assertEqual(raised.exception.code, 23)
+        run.assert_called_once_with(command, check=False)
 
 
 if __name__ == "__main__":

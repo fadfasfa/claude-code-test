@@ -1,4 +1,4 @@
-"""Overlay host host_visibility 职责模块。"""
+"""Overlay host 的平台无关显隐状态、诊断与窗口展示编排。"""
 # ruff: noqa: F403, F405
 
 from hextech.interfaces.overlay.host_common import *
@@ -254,21 +254,6 @@ def _schedule_exit_file_watch(root: tk.Tk, exit_path: str | Path | None = None) 
         root.after(OVERLAY_EXIT_POLL_MS, poll_exit_signal)
 
     root.after(OVERLAY_EXIT_POLL_MS, poll_exit_signal)
-
-def _apply_overlay_rect(root: tk.Tk, rect: tuple[int, int, int, int]) -> None:
-    """用整数虚拟屏坐标定位 client rect，兼容左侧/上方副屏。"""
-
-    left, top, right, bottom = rect
-    ctypes.windll.user32.SetWindowPos(
-        _root_hwnd(root),
-        HWND_TOPMOST,
-        int(left),
-        int(top),
-        max(1, int(right) - int(left)),
-        max(1, int(bottom) - int(top)),
-        SWP_NOACTIVATE,
-    )
-
 
 def _show_overlay_window(root: tk.Tk, config: dict[str, Any], visibility: dict[str, Any]) -> None:
     pending_geometry = str(visibility.get("pending_geometry") or "")

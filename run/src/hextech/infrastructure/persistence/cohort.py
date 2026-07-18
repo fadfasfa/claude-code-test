@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from hextech.contracts import PromotionJournalPhase, PromotionJournalV1, utc_now_iso
+from hextech.infrastructure.persistence.file_lock import InterProcessFileLock
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
 
@@ -28,6 +29,20 @@ class CohortPromotionStore:
     def __init__(self, root: str | Path | None = None) -> None:
         self.root = Path(root) if root is not None else get_var_dir()
         self.journal_path = self.root / "state" / "data-service" / "promotion_journal.v1.json"
+        self._transaction_lock = InterProcessFileLock(self.root / "locks" / "cohort-promotion.lock")
+
+    def _acquire_transaction(self) -> None:
+        if not self._transaction_lock.acquire():
+            raise CohortPromotionError("另一个进程正在执行 cohort promotion")
+
+    def _require_transaction(self) -> None:
+        if not self._transaction_lock.acquired:
+            raise CohortPromotionError("当前调用方未持有 cohort promotion 锁")
+
+    def close(self) -> None:
+        """释放事务锁但保留 journal；仅用于进程退出或崩溃恢复交接。"""
+
+        self._transaction_lock.release()
 
     def pointer_path(self, role: str) -> Path:
         if role == "catalog":
@@ -83,18 +98,23 @@ class CohortPromotionStore:
         atomic_write_json(self.journal_path, journal.to_dict(), ensure_ascii=False, indent=2)
 
     def begin(self) -> PromotionJournalV1:
-        if self.journal_path.exists():
-            raise CohortPromotionError("存在未恢复的 promotion journal")
-        old = {role: self._read_role(role) for role in COHORT_ROLES}
-        journal = PromotionJournalV1(
-            transaction_id=f"promotion-{uuid.uuid4().hex}",
-            phase=PromotionJournalPhase.PREPARED,
-            created_at=utc_now_iso(),
-            old_pointers=old,
-            target_pointers={role: dict(payload) for role, payload in old.items()},
-        )
-        self._write_journal(journal)
-        return journal
+        self._acquire_transaction()
+        try:
+            if self.journal_path.exists():
+                raise CohortPromotionError("存在未恢复的 promotion journal")
+            old = {role: self._read_role(role) for role in COHORT_ROLES}
+            journal = PromotionJournalV1(
+                transaction_id=f"promotion-{uuid.uuid4().hex}",
+                phase=PromotionJournalPhase.PREPARED,
+                created_at=utc_now_iso(),
+                old_pointers=old,
+                target_pointers={role: dict(payload) for role, payload in old.items()},
+            )
+            self._write_journal(journal)
+            return journal
+        except Exception:
+            self._transaction_lock.release()
+            raise
 
     def load(self) -> PromotionJournalV1 | None:
         if not self.journal_path.is_file():
@@ -114,6 +134,7 @@ class CohortPromotionStore:
             raise CohortPromotionError(f"promotion journal 无效：{exc}") from exc
 
     def record_target(self, role: str, pointer: Mapping[str, Any]) -> PromotionJournalV1:
+        self._require_transaction()
         journal = self.load()
         if journal is None or role not in COHORT_ROLES:
             raise CohortPromotionError("没有可更新的 promotion journal")
@@ -135,6 +156,7 @@ class CohortPromotionStore:
         return self.record_target(role, self._read_role(role))
 
     def promote_dependencies(self) -> PromotionJournalV1:
+        self._require_transaction()
         journal = self.load()
         if journal is None or journal.phase is not PromotionJournalPhase.PREPARED:
             raise CohortPromotionError("promotion 未处于 prepared")
@@ -150,12 +172,20 @@ class CohortPromotionStore:
         self._write_journal(updated)
         return updated
 
-    def record_generation_promoted(self) -> PromotionJournalV1:
+    def record_generation_promoted(self, expected_generation_id: str) -> PromotionJournalV1:
+        self._require_transaction()
         journal = self.load()
         if journal is None or journal.phase is not PromotionJournalPhase.DEPENDENCIES_PROMOTED:
             raise CohortPromotionError("dependencies 尚未 promotion")
         target = {key: dict(value) for key, value in journal.target_pointers.items()}
-        target["generation"] = self._read_role("generation")
+        generation = self._read_role("generation")
+        current = generation.get("current")
+        actual_generation_id = str(current.get("current_generation_id") or "") if isinstance(current, Mapping) else ""
+        if not expected_generation_id or actual_generation_id != expected_generation_id:
+            raise CohortPromotionError(
+                f"generation current 与发布结果不一致：expected={expected_generation_id} actual={actual_generation_id}"
+            )
+        target["generation"] = generation
         updated = PromotionJournalV1(
             transaction_id=journal.transaction_id,
             phase=PromotionJournalPhase.GENERATION_PROMOTED,
@@ -167,41 +197,53 @@ class CohortPromotionStore:
         return updated
 
     def commit(self) -> None:
-        journal = self.load()
-        if journal is None or journal.phase is not PromotionJournalPhase.GENERATION_PROMOTED:
-            raise CohortPromotionError("generation 尚未 promotion")
-        committed = PromotionJournalV1(
-            transaction_id=journal.transaction_id,
-            phase=PromotionJournalPhase.COMMITTED,
-            created_at=journal.created_at,
-            old_pointers=journal.old_pointers,
-            target_pointers=journal.target_pointers,
-        )
-        self._write_journal(committed)
-        self.journal_path.unlink(missing_ok=True)
+        self._require_transaction()
+        try:
+            journal = self.load()
+            if journal is None or journal.phase is not PromotionJournalPhase.GENERATION_PROMOTED:
+                raise CohortPromotionError("generation 尚未 promotion")
+            committed = PromotionJournalV1(
+                transaction_id=journal.transaction_id,
+                phase=PromotionJournalPhase.COMMITTED,
+                created_at=journal.created_at,
+                old_pointers=journal.old_pointers,
+                target_pointers=journal.target_pointers,
+            )
+            self._write_journal(committed)
+            self.journal_path.unlink(missing_ok=True)
+        finally:
+            self._transaction_lock.release()
 
     def rollback(self) -> None:
-        journal = self.load()
-        if journal is None:
-            return
-        for role in COHORT_ROLES:
-            self._write_role(role, journal.old_pointers[role])
-        self.journal_path.unlink(missing_ok=True)
-
-    def recover(self) -> str:
-        journal = self.load()
-        if journal is None:
-            return "clean"
-        if journal.phase in {PromotionJournalPhase.GENERATION_PROMOTED, PromotionJournalPhase.COMMITTED}:
-            for role in COHORT_ROLES:
-                self._write_role(role, journal.target_pointers[role])
-            result = "rolled_forward"
-        else:
+        self._require_transaction()
+        try:
+            journal = self.load()
+            if journal is None:
+                return
             for role in COHORT_ROLES:
                 self._write_role(role, journal.old_pointers[role])
-            result = "rolled_back"
-        self.journal_path.unlink(missing_ok=True)
-        return result
+            self.journal_path.unlink(missing_ok=True)
+        finally:
+            self._transaction_lock.release()
+
+    def recover(self) -> str:
+        self._acquire_transaction()
+        try:
+            journal = self.load()
+            if journal is None:
+                return "clean"
+            if journal.phase in {PromotionJournalPhase.GENERATION_PROMOTED, PromotionJournalPhase.COMMITTED}:
+                for role in COHORT_ROLES:
+                    self._write_role(role, journal.target_pointers[role])
+                result = "rolled_forward"
+            else:
+                for role in COHORT_ROLES:
+                    self._write_role(role, journal.old_pointers[role])
+                result = "rolled_back"
+            self.journal_path.unlink(missing_ok=True)
+            return result
+        finally:
+            self._transaction_lock.release()
 
     def consistent_pointers(self) -> dict[str, dict[str, Any]]:
         journal = self.load()

@@ -59,64 +59,6 @@ class RuntimeSupervisorTests(unittest.TestCase):
         finally:
             server.shutdown()
 
-    def test_refresh_action_returns_running_and_completes_async(self):
-        from hextech.bootstrap.supervisor import RuntimeSupervisor
-
-        calls: list[bool] = []
-        release_refresh = threading.Event()
-
-        def refresh_func(force: bool = False):
-            calls.append(force)
-            release_refresh.wait(timeout=5)
-            return {"state": "ready"}
-
-        with tempfile.TemporaryDirectory() as tmp:
-            events_file = Path(tmp) / "events.jsonl"
-            supervisor = RuntimeSupervisor(
-                parent_pid=0,
-                session_nonce="test-nonce",
-                refresh_func=refresh_func,
-                event_log_path=events_file,
-            )
-            server = supervisor.serve_in_thread(port=0)
-            try:
-                base = f"http://127.0.0.1:{server.port}"
-
-                status, lease = _request(base, "POST", "/v1/lease/renew", body={"control_instance_id": "ui-1"})
-                self.assertEqual(status, 200)
-                self.assertEqual(lease["lease"]["control_instance_id"], "ui-1")
-
-                started_at = time.perf_counter()
-                status, action = _request(base, "POST", "/v1/actions/refresh", body={"force": True})
-                elapsed = time.perf_counter() - started_at
-                self.assertEqual(status, 202)
-                self.assertLess(elapsed, 0.5)
-                self.assertEqual(action["status"], "running")
-                action_id = action["action_id"]
-
-                status, duplicate = _request(base, "POST", "/v1/actions/refresh", body={"force": True})
-                self.assertEqual(status, 202)
-                self.assertEqual(duplicate["action_id"], action_id)
-                self.assertEqual(duplicate["status"], "running")
-                self.assertEqual(calls, [True])
-
-                release_refresh.set()
-                deadline = time.time() + 3
-                completed = {}
-                while time.time() < deadline:
-                    _, completed = _request(base, "GET", f"/v1/actions/{action_id}")
-                    if completed["status"] == "completed":
-                        break
-                    time.sleep(0.05)
-                self.assertEqual(completed["status"], "completed")
-                self.assertEqual(completed["result"]["state"], "ready")
-
-                events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines()]
-                self.assertEqual(events[-1]["event"], "refresh.completed")
-            finally:
-                release_refresh.set()
-                server.shutdown()
-
     def test_game_overlay_action_is_async_and_updates_component_status(self):
         from hextech.bootstrap.supervisor import RuntimeSupervisor
 
@@ -1203,10 +1145,8 @@ class RuntimeSupervisorTests(unittest.TestCase):
 
         self.assertEqual(overlay.calls, [])
 
-    def test_supervisor_tick_delays_startup_refresh_and_handles_stale_lease(self):
+    def test_supervisor_tick_handles_stale_lease(self):
         from hextech.bootstrap.supervisor import RuntimeSupervisor
-
-        calls: list[bool] = []
 
         class FakeOverlayRuntime:
             shutdown_reason = ""
@@ -1218,28 +1158,19 @@ class RuntimeSupervisorTests(unittest.TestCase):
             def shutdown(self, reason: str = "shutdown") -> None:
                 self.shutdown_reason = reason
 
-        def refresh_func(force: bool = False):
-            calls.append(force)
-            return {"state": "ready"}
-
         with tempfile.TemporaryDirectory() as tmp:
             overlay = FakeOverlayRuntime()
             supervisor = RuntimeSupervisor(
                 parent_pid=os.getpid(),
                 session_nonce="test-nonce",
-                refresh_func=refresh_func,
                 overlay_runtime=overlay,
                 event_log_path=Path(tmp) / "events.jsonl",
-                refresh_interval_seconds=60.0,
                 lease_timeout_seconds=1.0,
                 orphan_grace_seconds=1.0,
             )
 
             supervisor.tick()
-            self.assertEqual(calls, [])
             self.assertEqual(supervisor.snapshot()["actions"], {})
-            self.assertIsNotNone(supervisor.snapshot()["next_refresh_at"])
-            self.assertGreater(supervisor.snapshot()["next_refresh_at"], time.time())
 
             supervisor.renew_lease({"control_instance_id": "ui-1"})
             with supervisor._lock:
@@ -1249,95 +1180,6 @@ class RuntimeSupervisorTests(unittest.TestCase):
             self.assertTrue(supervisor.wait_for_overlay_shutdown(1.0))
             self.assertEqual(supervisor.snapshot()["shutdown_reason"], "lease_expired")
             self.assertEqual(overlay.shutdown_reason, "lease_expired")
-
-    def test_supervisor_tick_schedules_refresh_when_next_refresh_is_due(self):
-        from hextech.bootstrap.supervisor import RuntimeSupervisor
-
-        calls: list[bool] = []
-
-        def refresh_func(force: bool = False):
-            calls.append(force)
-            return {"state": "ready"}
-
-        supervisor = RuntimeSupervisor(
-            parent_pid=os.getpid(),
-            session_nonce="test-nonce",
-            refresh_func=refresh_func,
-            refresh_interval_seconds=60.0,
-        )
-        with supervisor._lock:
-            supervisor._last_refresh_at = time.time() - 120.0
-            supervisor._next_refresh_at = time.time() - 1.0
-
-        supervisor.tick()
-
-        self.assertEqual(calls, [False])
-        action = next(iter(supervisor.snapshot()["actions"].values()))
-        self.assertIn(action["status"], {"running", "completed"})
-
-    def test_supervisor_tick_defers_due_refresh_while_overlay_is_starting(self):
-        from hextech.bootstrap.supervisor import RuntimeSupervisor
-
-        calls: list[bool] = []
-
-        class FakeOverlayRuntime:
-            def snapshot(self):
-                return {
-                    "desired_enabled": True,
-                    "status": "starting",
-                    "phase": "vision_prewarming",
-                    "cache_status": "building",
-                }
-
-            def set_enabled(self, enabled: bool):
-                raise AssertionError("tick 不应重启 Overlay")
-
-            def shutdown(self, reason: str = "shutdown"):
-                return None
-
-        supervisor = RuntimeSupervisor(
-            parent_pid=os.getpid(),
-            session_nonce="test-nonce",
-            refresh_func=lambda force=False: calls.append(bool(force)),
-            overlay_runtime=FakeOverlayRuntime(),
-        )
-        with supervisor._lock:
-            supervisor._next_refresh_at = time.time() - 1.0
-
-        supervisor.tick()
-
-        self.assertEqual(calls, [])
-        self.assertGreater(supervisor.snapshot()["next_refresh_at"], time.time())
-
-    def test_supervisor_tick_allows_due_refresh_after_overlay_error_even_if_cache_builds(self):
-        from hextech.bootstrap.supervisor import RuntimeSupervisor
-
-        calls: list[bool] = []
-
-        class FakeOverlayRuntime:
-            def snapshot(self):
-                return {
-                    "desired_enabled": True,
-                    "status": "error",
-                    "phase": "failed",
-                    "cache_status": "building",
-                }
-
-            def shutdown(self, reason: str = "shutdown"):
-                return None
-
-        supervisor = RuntimeSupervisor(
-            parent_pid=os.getpid(),
-            session_nonce="test-nonce",
-            refresh_func=lambda force=False: calls.append(bool(force)),
-            overlay_runtime=FakeOverlayRuntime(),
-        )
-        with supervisor._lock:
-            supervisor._next_refresh_at = time.time() - 1.0
-
-        supervisor.tick()
-
-        self.assertEqual(calls, [False])
 
     def test_result_payload_supports_slots_dataclasses(self):
         from hextech.bootstrap.supervisor import RuntimeSupervisor
@@ -1366,6 +1208,47 @@ class RuntimeSupervisorTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 17)
         run_supervisor.assert_called_once_with(["--parent-pid", "123"])
+
+    def test_keyboard_interrupt_requests_shutdown_before_wait_and_server_close(self):
+        from hextech.bootstrap import supervisor as supervisor_module
+
+        calls: list[str] = []
+
+        class FakeServer:
+            port = 12345
+
+            def shutdown(self) -> None:
+                calls.append("server.shutdown")
+
+        class FakeSupervisor:
+            supervisor_instance_id = "sup-test"
+            session_nonce = "nonce-test"
+
+            def serve_in_thread(self, *, port: int = 0):
+                del port
+                return FakeServer()
+
+            def wait_for_shutdown(self, timeout: float) -> bool:
+                del timeout
+                raise KeyboardInterrupt
+
+            def request_shutdown(self, reason: str) -> None:
+                calls.append(f"request_shutdown:{reason}")
+
+            def wait_for_overlay_shutdown(self, timeout: float) -> bool:
+                del timeout
+                calls.append("wait_for_overlay_shutdown")
+                return True
+
+        fake = FakeSupervisor()
+        with mock.patch.object(supervisor_module, "RuntimeSupervisor", return_value=fake):
+            result = supervisor_module.main(["--parent-pid", "0"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            calls,
+            ["request_shutdown:finally", "wait_for_overlay_shutdown", "server.shutdown"],
+        )
 
     def test_desktop_runtime_bootstraps_supervisor_process(self):
         from hextech.interfaces.desktop import runtime as desktop_runtime

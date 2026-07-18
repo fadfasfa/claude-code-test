@@ -27,14 +27,27 @@ def test_generation_pin_keeps_same_view_until_next_epoch() -> None:
     first = _view("generation-1")
     second = _view("generation-2")
     responses = deque([first, second, second])
-    pin = SelectionGenerationPin()
+    clock = [10.0]
+    calls = 0
 
-    assert pin.resolve(_event(), responses.popleft) is first
-    assert pin.resolve(_event(), responses.popleft) is first
+    def open_latest() -> SnapshotViewPort:
+        nonlocal calls
+        calls += 1
+        return responses.popleft()
+
+    pin = SelectionGenerationPin(now=lambda: clock[0])
+
+    assert pin.resolve(_event(), open_latest) is first
+    assert pin.resolve(_event(), open_latest) is first
+    assert calls == 1
+    assert pin.status()["new_generation_available"] is False
+    clock[0] += 1.0
+    assert pin.resolve(_event(), open_latest) is first
+    assert calls == 2
     assert pin.status()["new_generation_available"] is True
     assert pin.status()["new_generation_id"] == "generation-2"
 
-    assert pin.resolve(_event(epoch=2), responses.popleft) is second
+    assert pin.resolve(_event(epoch=2), open_latest) is second
     assert pin.status()["generation_id"] == "generation-2"
     assert pin.status()["new_generation_available"] is False
 

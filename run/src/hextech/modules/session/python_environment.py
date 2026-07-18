@@ -332,7 +332,7 @@ def build_reexec_command(
 
 
 def reexec_current_process(command: Sequence[str]) -> NoReturn:
-    """用目标解释器原地替换当前进程，避免源码态启动留下多层父子 Python。"""
+    """切换到目标解释器，并保证调用方能观察真实生命周期和退出码。"""
 
     parts = [str(part) for part in command if str(part).strip()]
     if not parts:
@@ -342,6 +342,11 @@ def reexec_current_process(command: Sequence[str]) -> NoReturn:
         sys.stderr.flush()
     except Exception:
         pass
+    if sys.platform == "win32":
+        # Windows venv 的 python.exe 是 launcher；对它调用 execv 会让原命令
+        # 提前返回，而真正的应用留在后台。显式等待才能保住 CLI 生命周期。
+        completed = subprocess.run(parts, check=False)
+        raise SystemExit(completed.returncode)
     os.execv(parts[0], parts)
     raise SystemExit("Python re-exec 失败：os.execv 返回了意外结果。")
 

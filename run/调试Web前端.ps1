@@ -7,6 +7,7 @@ param(
     [int]$ReadinessTimeoutSeconds = 30
 )
 
+# 功能：只启动 DataService 与 Web 调试链路；显式 -WithOverlay 时才附加 Overlay。
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "tooling\dev\_common.ps1")

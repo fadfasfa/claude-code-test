@@ -11,6 +11,7 @@ from hextech.contracts import (
     FetchAttempt,
     ItemOutcome,
     SourcePointerV2,
+    SourceRunManifestV2,
 )
 from hextech.modules.acquisition.apex.validation import ApexValidationError, validate_apex_run
 from hextech.modules.acquisition.hextech.validation import HextechSchemaChanged, validate_hextech_frame
@@ -72,6 +73,52 @@ def test_v1_source_pointer_and_catalog_manifest_are_rejected() -> None:
     }
     with pytest.raises(DataContractError, match="catalog schema"):
         CatalogManifestV2.from_mapping(catalog)
+
+
+def test_v2_contracts_reject_invalid_outcomes_and_duplicate_catalog_roles() -> None:
+    with pytest.raises(DataContractError, match="state 无效"):
+        ItemOutcome(item_id="1", state="unknown", stage="fixture")  # type: ignore[arg-type]
+
+    manifest = {
+        "schema_version": 2,
+        "source": "hextech",
+        "run_id": "run-test",
+        "catalog_generation_id": "catalog-test",
+        "catalog_sha256": "a" * 64,
+        "health": "failed",
+        "started_at": "2026-07-18T00:00:00+00:00",
+        "completed_at": "2026-07-18T00:00:01+00:00",
+        "expected_items": 1,
+        "successful_items": 0,
+        "confirmed_empty_items": 0,
+        "failed_items": 1,
+        "artifact": None,
+        "outcomes": {"item_id": "1"},
+    }
+    with pytest.raises(DataContractError, match="outcomes 必须是对象数组"):
+        SourceRunManifestV2.from_mapping(manifest)
+    manifest["outcomes"] = ["not-an-object"]
+    with pytest.raises(DataContractError, match="outcomes 必须是对象数组"):
+        SourceRunManifestV2.from_mapping(manifest)
+
+    duplicate_files = tuple(
+        ArtifactDescriptor(
+            role=role,
+            relative_path=f"{index}.json",
+            sha256=str(index) * 64,
+            record_count=1,
+            content_schema_version=2,
+            size=1,
+        )
+        for index, role in enumerate(("champions", "champions", "augments", "versions"), start=1)
+    )
+    with pytest.raises(DataContractError, match="三个角色"):
+        CatalogManifestV2(
+            catalog_generation_id="catalog-test",
+            created_at="fixture",
+            files=duplicate_files,
+            content_sha256="f" * 64,
+        )
 
 
 def _hextech_frame() -> pd.DataFrame:

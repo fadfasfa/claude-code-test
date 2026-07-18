@@ -26,7 +26,7 @@ from pathlib import Path
 
 import psutil
 
-from hextech.bootstrap.data_service_lock import DataServiceInstanceLock
+from hextech.infrastructure.persistence.file_lock import InterProcessFileLock
 from hextech.bootstrap.data_service_status import sync_startup_snapshot_status as _sync_startup_snapshot_status
 from hextech.contracts import ArtifactDescriptor, SourceProvenance
 from hextech.modules.data.generation import DataSnapshotPublisher
@@ -666,7 +666,7 @@ def main(argv: list[str] | None = None) -> int:
 
     private_enabled = bool(load_ui_feature_flags().get("private_policy_stats_enabled", False))
     publisher = DataSnapshotPublisher()
-    instance_lock = DataServiceInstanceLock(get_var_dir() / "locks" / "data-service.lock")
+    instance_lock = InterProcessFileLock(get_var_dir() / "locks" / "data-service.lock")
     if not instance_lock.acquire():
         print("DataService 已由另一个桌面实例持有。", file=sys.stderr, flush=True)
         return 3
