@@ -8,16 +8,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from tooling.build.rules import (
-    ASSET_DIR,
     BUNDLE_MANIFEST_NAME,
-    CATALOG_DIR,
-    CATALOG_FILES,
     FORBIDDEN_BUNDLE_PATH_PARTS,
     SEED_DIR,
     iter_seed_files,
     iter_source_files,
-    iter_stable_asset_files,
 )
+from tooling.build.resource_manifest import validate_resource_manifest
 
 
 def _iter_manifest_path_strings(value: Any):
@@ -77,7 +74,7 @@ def validate_snapshot_seed(snapshot_root: Path) -> dict[str, Any]:
         "champion_count": manifest.champion_count,
         "augment_count": manifest.augment_count,
         "stat_record_count": manifest.stat_record_count,
-        "private_stats_enabled": manifest.private_stats_enabled,
+        "content_fingerprint": manifest.content_fingerprint,
     }
 
 
@@ -97,22 +94,28 @@ def validate_bundle_manifest(manifest: dict) -> None:
 
 
 def build_bundle_manifest(base_dir: Path, *, verified_snapshot_root: Path | None = None) -> dict:
-    catalog_root = base_dir / CATALOG_DIR
-    asset_root = base_dir / ASSET_DIR
+    resource_report = validate_resource_manifest(base_dir)
+    packaged_resources = set(resource_report["packaged_files"])
     seed_root = (verified_snapshot_root or (base_dir / SEED_DIR)).resolve()
     seed_sources = iter_seed_files(seed_root)
     seed_files = [(SEED_DIR / path.relative_to(seed_root)).as_posix() for path in seed_sources]
+    missing_seed_whitelist = sorted(set(seed_files) - packaged_resources)
+    if missing_seed_whitelist:
+        raise ValueError("v2 seed 未列入 resources manifest：" + ", ".join(missing_seed_whitelist[:5]))
     manifest = {
         "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "catalog_files": [
-            (CATALOG_DIR / name).as_posix() for name in CATALOG_FILES if (catalog_root / name).is_file()
-        ],
-        "asset_files": [path.relative_to(asset_root).as_posix() for path in iter_stable_asset_files(asset_root)],
+        "catalog_files": sorted(path for path in packaged_resources if path.startswith("resources/catalog/")),
+        "asset_files": sorted(
+            path.removeprefix("resources/assets/")
+            for path in packaged_resources
+            if path.startswith("resources/assets/")
+        ),
         "seed_files": seed_files,
         "seed_health": validate_snapshot_seed(seed_root),
         "seed_sha256": {bundled: _sha256(source) for bundled, source in zip(seed_files, seed_sources)},
         "source_files": iter_source_files(base_dir),
+        "unlisted_resource_files": resource_report["unlisted_files"],
     }
     validate_bundle_manifest(manifest)
     return manifest

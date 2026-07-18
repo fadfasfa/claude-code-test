@@ -55,6 +55,7 @@ DIAGNOSTIC_FIXTURE_DIR = os.fspath(PROJECT_ROOT / "tests" / "fixtures" / "diagno
 RUNTIME_DATA_DIR = os.fspath(_var_root())
 RAW_DATA_DIR = os.path.join(RUNTIME_DATA_DIR, "sources")
 VAR_LAYOUT_DIRS = (
+    "catalog",
     "sources",
     "snapshots",
     "state",

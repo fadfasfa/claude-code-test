@@ -20,6 +20,7 @@ from hextech.modules.data.ports import SnapshotViewPort
 @dataclass(frozen=True)
 class RecommendationPolicy:
     sort_champions_by_win_rate: bool = True
+    private_stats_enabled: bool = True
 
 
 class RecommendationService:
@@ -76,9 +77,9 @@ class RecommendationService:
                     "confidence": slot.confidence,
                     "status_code": "DETECTION_FAILED" if slot.state is VisionSlotState.FAILED else "",
                 }
-                if not status.get("private_stats_enabled") and slot.state.value == "ready":
+                if not policy.private_stats_enabled and slot.state.value == "ready":
                     row["status_code"] = "PRIVACY_OFF"
-                private_stats_enabled = status.get("private_stats_enabled") is True
+                private_stats_enabled = policy.private_stats_enabled
                 if slot.augment_id and context.local_champion_id:
                     identity = snapshot.resolve_augment(slot.augment_id)
                     if identity:

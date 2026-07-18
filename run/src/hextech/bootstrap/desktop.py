@@ -40,6 +40,11 @@ def main() -> None:
 
         args = [arg for arg in sys.argv[1:] if arg != "--data-service"]
         raise SystemExit(run_data_service(args))
+    elif "--acquisition-worker" in sys.argv:
+        from hextech.bootstrap.acquisition_worker import main as run_acquisition_worker
+
+        args = [arg for arg in sys.argv[1:] if arg != "--acquisition-worker"]
+        raise SystemExit(run_acquisition_worker(args))
     elif "--game-overlay" in sys.argv:
         from hextech.interfaces.overlay.host import main as run_overlay_main
 

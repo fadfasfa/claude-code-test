@@ -35,7 +35,10 @@ def test_pyproject_exposes_only_bootstrap_commands() -> None:
 def test_resources_and_runtime_are_separated() -> None:
     assert (RUN_DIR / "resources" / "catalog" / "英雄目录.v1.json").is_file()
     assert (RUN_DIR / "resources" / "catalog" / "海克斯资源目录.v1.json").is_file()
-    assert (RUN_DIR / "resources" / "seeds" / "current.v1.json").is_file()
+    assert (RUN_DIR / "resources" / "seeds" / "current.v2.json").is_file()
+    assert not (RUN_DIR / "resources" / "seeds" / "current.v1.json").exists()
+    assert (RUN_DIR / "resources" / "manifest.v2.json").is_file()
+    assert not (RUN_DIR / "resources" / "manifest.v1.json").exists()
     assert not (RUN_DIR / "resources" / "var").exists()
     assert not (RUN_DIR / "var" / "data").exists()
 
@@ -44,7 +47,8 @@ def test_source_packages_follow_modular_monolith_boundaries() -> None:
     root = RUN_DIR / "src" / "hextech"
     for package in ("contracts", "modules", "interfaces", "infrastructure", "runtime", "bootstrap"):
         assert (root / package).is_dir(), package
-    assert (root / "modules" / "acquisition" / "hextech" / "parser.py").is_file()
+    assert (root / "modules" / "acquisition" / "hextech" / "contracts.py").is_file()
+    assert (root / "modules" / "acquisition" / "hextech" / "validation.py").is_file()
     assert (root / "modules" / "acquisition" / "apex" / "parser.py").is_file()
     assert (root / "modules" / "acquisition" / "mayhem" / "merge.py").is_file()
     assert (root / "infrastructure" / "sources" / "hextech" / "service.py").is_file()

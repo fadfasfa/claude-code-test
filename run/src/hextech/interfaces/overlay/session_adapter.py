@@ -144,6 +144,7 @@ def build_runtime_session(
     snapshot_view: SnapshotViewPort | None,
     user_enabled: bool,
     game_present: bool,
+    private_stats_enabled: bool = True,
 ) -> GameSessionState:
     source_value = event.get("source")
     source: Mapping[str, Any] = source_value if isinstance(source_value, Mapping) else {}
@@ -158,7 +159,14 @@ def build_runtime_session(
     if snapshot_view is not None:
         generation_id = GenerationId(str(snapshot_view.status().get("generation_id") or ""))
         if context is not None and context.local_champion_id is not None:
-            recommendation = RecommendationService().build(context, snapshot_view, vision=vision)
+            from hextech.modules.recommendation.service import RecommendationPolicy
+
+            recommendation = RecommendationService().build(
+                context,
+                snapshot_view,
+                vision=vision,
+                policy=RecommendationPolicy(private_stats_enabled=private_stats_enabled),
+            )
     return SessionCoordinator().reduce(
         user_enabled=user_enabled,
         game_present=game_present,

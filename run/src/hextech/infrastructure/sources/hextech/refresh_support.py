@@ -15,6 +15,7 @@ from hextech.infrastructure.observability.logging import log_task_summary
 from hextech.infrastructure.transport.scrapling_client import ScraplingFetchResult, fetch_text
 from hextech.infrastructure.sources.hextech.parsing import HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL
 from hextech.modules.acquisition.common.contracts import ItemOutcome, SourceRunManifest, utc_now_iso
+from hextech.modules.data.catalog.versioned import load_active_catalog
 from hextech.modules.data.source_runs import write_run_diagnostics
 from hextech.modules.data.catalog.runtime_store import (
     build_runtime_state_path,
@@ -380,15 +381,16 @@ def _finish_refresh_failure(
         manifest = SourceRunManifest(
             source="hextech",
             run_id=str(attempt["attempt_id"]),
+            catalog_generation_id=load_active_catalog().generation_id,
+            catalog_sha256=load_active_catalog().content_sha256,
             health=SourceHealth.FAILED,
             started_at=str(attempt.get("started_at") or utc_now_iso()),
-            finished_at=utc_now_iso(),
+            completed_at=utc_now_iso(),
             expected_items=int(attempt.get("total_heroes") or 0),
             successful_items=max(0, int(attempt.get("completed_heroes") or 0) - int(attempt.get("failure_count") or 0)),
             confirmed_empty_items=0,
             failed_items=max(1, int(attempt.get("failure_count") or 0)),
-            record_count=int(attempt.get("success_rows") or 0),
-            artifact="stats.csv",
+            artifact=None,
             outcomes=outcomes,
             metadata={"failure_stage": failure_stage, "reason": reason},
         )

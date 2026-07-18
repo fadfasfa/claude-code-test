@@ -41,7 +41,13 @@ from hextech.interfaces.overlay.session_adapter import build_runtime_session
 from hextech.contracts import GameSessionState, PresentationMode, VisionSlotState
 from hextech.modules.session.evidence import build_evidence_bundle, write_evidence_bundle
 
-from hextech.modules.data.overlay_source import OverlayDataSource, SharedOverlayDataSource, prepare_shared_overlay_data
+from hextech.modules.data.overlay_source import (
+    OverlayDataSource,
+    SharedOverlayDataSource,
+    apply_overlay_display_policy,
+    prepare_shared_overlay_data,
+    source_has_private_stats,
+)
 from .gameflow import probe_gameflow_in_progress
 from .renderer import build_render_model, build_render_model_from_session, draw_overlay_frame
 from hextech.modules.vision.runtime_paths import overlay_runtime_state_path

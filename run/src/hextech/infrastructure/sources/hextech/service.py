@@ -15,9 +15,9 @@ from hextech.infrastructure.sources.version_sync import (
     HEXTECH_AUGMENT_METADATA_URLS,
     HEXTECH_CHAMPION_STATS_URLS,
     build_hextech_detail_urls,
-    load_augment_map,
-    load_champion_core_data,
 )
+from hextech.modules.data.catalog.version_catalog import load_augment_tier_map, load_champion_core_data
+from hextech.modules.data.catalog.versioned import load_active_catalog
 from hextech.infrastructure.transport.scrapling_client import fetch_page
 from hextech.infrastructure.sources.hextech.detail_runner import DETAIL_PASS_RUNNER
 from hextech.infrastructure.sources.hextech.publisher import publish_hextech_run
@@ -295,7 +295,13 @@ def fetch_champion_detail_stats_fast(
     }
 
 
-def main_scraper(stop_event=None, force: bool = False):
+def main_scraper(
+    stop_event=None,
+    force: bool = False,
+    *,
+    promote_current: bool = False,
+    pointer_output: str | os.PathLike[str] | None = None,
+):
     started_at = time.time()
     attempt = _new_attempt_context()
     output_csv = ""
@@ -307,8 +313,9 @@ def main_scraper(stop_event=None, force: bool = False):
         return bool(get_latest_valid_csv())
 
     logging.info("海克斯抓取开始：%s", msg)
-    truth_dict = load_augment_map()
-    core_data = load_champion_core_data()
+    catalog = load_active_catalog()
+    truth_dict = load_augment_tier_map(catalog.root)
+    core_data = load_champion_core_data(catalog.root)
     if not truth_dict or not core_data:
         return _finish_refresh_failure(
             "base_data_missing",
@@ -672,6 +679,8 @@ def main_scraper(stop_event=None, force: bool = False):
                 expected_hero_ids=expected_ids,
                 outcomes=outcomes,
                 started_at=str(attempt["started_at"]),
+                promote_current=promote_current,
+                pointer_output=pointer_output,
             )
         except ValueError as exc:
             logging.error("Hextech 来源发布门禁失败：%s", exc)

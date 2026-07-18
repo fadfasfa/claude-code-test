@@ -215,6 +215,23 @@ def _matched_synergy(hint: Mapping[str, Any], context: Mapping[str, Any] | None)
     return best
 
 
+def _synergy_status(
+    *,
+    matched: Mapping[str, Any] | None,
+    context: Mapping[str, Any] | None,
+    snapshot_state: str,
+    event_generation_id: str = "",
+    snapshot_generation_id: str = "",
+) -> str:
+    if snapshot_state == "unavailable":
+        return "SOURCE_UNAVAILABLE"
+    if event_generation_id and snapshot_generation_id and event_generation_id != snapshot_generation_id:
+        return "GENERATION_MISMATCH"
+    if not (isinstance(context, Mapping) and context.get("ok")):
+        return "CONTEXT_MISSING"
+    return "READY" if isinstance(matched, Mapping) else "NO_MATCH"
+
+
 def build_render_model(
     snapshot: Mapping[str, Any],
     *,
@@ -226,6 +243,11 @@ def build_render_model(
 
     context = _effective_context(context, recent_context)
     slots = snapshot.get("slots") if isinstance(snapshot.get("slots"), list) else []
+    event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+    snapshot_status = hint_cache.get("snapshot") if isinstance(hint_cache, Mapping) else {}
+    snapshot_state = str(snapshot_status.get("state") or "unavailable") if isinstance(snapshot_status, Mapping) else "unavailable"
+    event_generation_id = _clean_text(event_source.get("generation_id"))
+    snapshot_generation_id = _clean_text(snapshot_status.get("generation_id")) if isinstance(snapshot_status, Mapping) else ""
     stats: list[StatPanelModel] = []
     synergies: list[SynergyPanelModel] = []
     for index in range(3):
@@ -253,6 +275,14 @@ def build_render_model(
             stats_text, status_code = "识别中…", "DETECTING"
             winrate_text, pickrate_text, status_text = "", "", "识别中…"
         has_current_stats = status_code in {"READY", "GENERATION_DEGRADED"}
+        matched = _matched_synergy(hint, context) if ready else None
+        synergy_status = _synergy_status(
+            matched=matched,
+            context=context,
+            snapshot_state=snapshot_state,
+            event_generation_id=event_generation_id,
+            snapshot_generation_id=snapshot_generation_id,
+        )
         stats.append(
             {
                 "slot": index,
@@ -266,11 +296,11 @@ def build_render_model(
                 "winrate_text": winrate_text,
                 "pickrate_text": pickrate_text,
                 "status_text": status_text,
+                "synergy_status": synergy_status,
             }
         )
         if not ready:
             continue
-        matched = _matched_synergy(hint, context)
         if not isinstance(matched, Mapping):
             continue
         synergies.append(
@@ -366,10 +396,18 @@ def build_render_model_from_session(
                 "winrate_text": winrate_text,
                 "pickrate_text": pickrate_text,
                 "status_text": status_text,
+                "synergy_status": "SOURCE_UNAVAILABLE",
             }
         )
         hint = _query_hint(row, hint_cache) if ready else {}
         matched = _matched_synergy(hint, context_mapping)
+        stats[-1]["synergy_status"] = _synergy_status(
+            matched=matched,
+            context=context_mapping,
+            snapshot_state="unavailable" if recommendation is None else "ready",
+            event_generation_id=str(state.generation_id),
+            snapshot_generation_id=str(recommendation.generation_id) if recommendation is not None else "",
+        )  # type: ignore[typeddict-item]
         if isinstance(matched, Mapping):
             synergies.append(
                 {

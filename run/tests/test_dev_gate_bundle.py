@@ -170,7 +170,7 @@ def test_packaged_smoke_uses_explicit_feature_flags() -> None:
     assert '"auto_open_browser": False' in smoke_text
     assert "_write_smoke_feature_flags(runtime_root)" in smoke_text
     assert "OVERLAY_ANCHOR_CALIBRATION_FILENAME" in smoke_text
-    assert "package:resources/seeds/current.v1.json" in smoke_text
+    assert "package:resources/seeds/current.v2.json" in smoke_text
     assert "FORBIDDEN_PACKAGE_PATHS" in smoke_text
     assert 'child_env["LOCALAPPDATA"]' in smoke_text
     assert "runtime:data absent" in smoke_text

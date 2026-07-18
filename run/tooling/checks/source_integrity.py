@@ -20,7 +20,7 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import pandas as pd
@@ -37,6 +37,8 @@ from hextech.modules.data.catalog.precomputed_cache import (  # noqa: E402
     load_precomputed_hextech_for_hero,
 )
 from hextech.modules.data.catalog.runtime_store import build_synergy_data_path, get_latest_csv, load_runtime_csv  # noqa: E402
+from hextech.modules.data.catalog.version_catalog import load_augment_tier_map  # noqa: E402
+from hextech.modules.data.catalog.versioned import load_active_catalog  # noqa: E402
 from hextech.infrastructure.sources.hextech import service as hex_scraper  # noqa: E402
 from hextech.infrastructure.sources.hextech import refresh_support as hextech_transport  # noqa: E402
 from hextech.infrastructure.sources.apex import service as synergy_scraper  # noqa: E402
@@ -83,7 +85,7 @@ def _fetch_json_from_candidates(session, urls: tuple[str, ...] | list[str], expe
 
 
 def _build_augment_maps(aug_data: dict) -> tuple[dict[str, str], dict[str, str]]:
-    truth_dict = hex_scraper.load_augment_map()
+    truth_dict = load_augment_tier_map(load_active_catalog().root)
     aug_id_map: dict[str, str] = {}
     aug_tier_map: dict[str, str] = {}
     for raw_key, raw_item in aug_data.items():
@@ -194,7 +196,7 @@ def _source_rows_for_hero(
 
 def _row_id(row: dict | pd.Series) -> str:
     value = row.get("海克斯ID", "")
-    if pd.isna(value):
+    if cast(bool, pd.isna(value)):
         return ""
     text = str(value).strip()
     return text.removesuffix(".0")
@@ -391,7 +393,7 @@ def run(args) -> tuple[int, dict]:
         aug_data = _fetch_json_from_candidates(session, list(HEXTECH_AUGMENT_METADATA_URLS), dict)
         stats_list = _fetch_json_from_candidates(session, list(HEXTECH_CHAMPION_STATS_URLS), list)
     stats_by_id = {str(item.get("championId")): item for item in stats_list if isinstance(item, dict)}
-    truth_dict = hex_scraper.load_augment_map()
+    truth_dict = load_augment_tier_map(load_active_catalog().root)
     aug_id_map, aug_tier_map = _build_augment_maps(aug_data)
 
     latest_csv = get_latest_csv()
@@ -449,7 +451,11 @@ def run(args) -> tuple[int, dict]:
             fixture_source_rows=fixture_source_rows,
             fixture_detail_pages=fixture_detail_pages,
         )
-        csv_rows = df[df["英雄ID"].astype(str) == champ_id].copy() if "英雄ID" in df.columns else pd.DataFrame()
+        csv_rows = (
+            cast(pd.DataFrame, df[df["英雄ID"].astype(str) == champ_id].copy())
+            if "英雄ID" in df.columns
+            else pd.DataFrame()
+        )
         csv_ok, csv_issues = _compare_csv_rows(source_rows, csv_rows)
         hero_report["checks"]["csv"] = {
             "passed": csv_ok,

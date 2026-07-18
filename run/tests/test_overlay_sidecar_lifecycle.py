@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import threading
 import time
@@ -90,6 +91,53 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(RuntimeError, r"token 不匹配.*pid=abc"):
                 lifecycle._wait_for_host_ready(RunningProcess(), ready_path, timeout_seconds=0.1)
+
+    def test_source_host_process_executes_host_runner_module(self):
+        from hextech.interfaces.overlay import lifecycle
+
+        captured_command: list[str] = []
+
+        class FakeProcess:
+            pid = 1203
+
+        def fake_popen(command, **_kwargs):
+            captured_command.extend(command)
+            return FakeProcess()
+
+        with (
+            patch.object(lifecycle.sys, "frozen", False, create=True),
+            patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
+            patch.object(lifecycle, "_wait_for_host_ready", return_value=None),
+        ):
+            process = lifecycle.start_host_process()
+
+        self.assertEqual(process.pid, 1203)
+        self.assertEqual(
+            captured_command,
+            [sys.executable, "-m", "hextech.interfaces.overlay.host_runner"],
+        )
+
+    def test_frozen_host_process_keeps_game_overlay_switch(self):
+        from hextech.interfaces.overlay import lifecycle
+
+        captured_command: list[str] = []
+
+        class FakeProcess:
+            pid = 1204
+
+        def fake_popen(command, **_kwargs):
+            captured_command.extend(command)
+            return FakeProcess()
+
+        with (
+            patch.object(lifecycle.sys, "frozen", True, create=True),
+            patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
+            patch.object(lifecycle, "_wait_for_host_ready", return_value=None),
+        ):
+            process = lifecycle.start_host_process()
+
+        self.assertEqual(process.pid, 1204)
+        self.assertEqual(captured_command, [sys.executable, "--game-overlay"])
 
     def test_lifecycle_waits_for_sidecar_ready_and_sets_exit_signal(self):
         from hextech.interfaces.overlay import lifecycle

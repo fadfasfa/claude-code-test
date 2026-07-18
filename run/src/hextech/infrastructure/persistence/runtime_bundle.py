@@ -121,7 +121,7 @@ def seed_bundled_resources(*, bundle_root: str | Path, runtime_snapshot_dir: str
 
     bundle_base = Path(bundle_root)
     snapshot_dir = Path(runtime_snapshot_dir)
-    if not bundle_base.is_dir() or (snapshot_dir / "current.v1.json").exists():
+    if not bundle_base.is_dir() or (snapshot_dir / "current.v2.json").exists():
         return False
     manifest = _load_bundle_manifest(bundle_base)
     hashes = manifest.get("seed_sha256")
@@ -142,12 +142,12 @@ def seed_bundled_resources(*, bundle_root: str | Path, runtime_snapshot_dir: str
             return False
         relative = seed_path.relative_to(SEED_PREFIX)
         files.append((seed_path, source, snapshot_dir.joinpath(*relative.parts)))
-    if not files or not any(path.name == "current.v1.json" for path, _, _ in files):
+    if not files or not any(path.name == "current.v2.json" for path, _, _ in files):
         return False
 
     copied: list[Path] = []
     try:
-        for seed_path, source, target in sorted(files, key=lambda item: item[0].name == "current.v1.json"):
+        for seed_path, source, target in sorted(files, key=lambda item: item[0].name == "current.v2.json"):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
             copied.append(target)

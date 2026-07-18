@@ -46,6 +46,7 @@ from hextech.modules.data.catalog.runtime_store import (
 )
 from hextech.modules.data.ports.paths import RUNTIME_DATA_DIR, STATIC_DATA_DIR
 from hextech.modules.data.catalog.version_catalog import load_apexlol_slug_map, load_augment_manifest_entries, load_champion_core_data
+from hextech.modules.data.catalog.versioned import load_active_catalog
 from hextech.modules.acquisition.common.icons import normalize_augment_name
 from hextech.infrastructure.transport.scrapling_client import (
     ScraplingFetchResult,
@@ -322,7 +323,7 @@ def _resolve_static_data_path(filename: str) -> Path:
 def _load_json_file(filename: str, expected_kind: str) -> dict:
     file_path = _resolve_static_data_path(filename)
     if filename == "Champion_Core_Data.json":
-        data = load_champion_core_data(STATIC_DATA_PATH)
+        data = load_champion_core_data(load_active_catalog().root)
     elif not file_path.exists():
         raise FileNotFoundError(f"配置文件不存在：{filename}")
     else:

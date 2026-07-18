@@ -4,7 +4,7 @@
 - 统一管理运行时文件定位、CSV 读取优先级和 DataFrame 缓存
 
 核心输入：
-- ``var/sources/*/current.v1.json`` 指向的完整来源 run
+- ``var/sources/*/current.v2.json`` 指向的完整来源 run
 - 源码态或打包内 ``resources/catalog``
 
 核心输出：
@@ -41,8 +41,8 @@ from hextech.modules.data.source_runs import resolve_current_artifact, source_ro
 CSV_ENCODING = "utf-8-sig"
 CSV_FILENAME_PATTERN = "Hextech_Data_*.csv"
 CSV_MIN_VALID_ROWS = 300
-APEX_CURRENT_POINTER_FILENAME = "current.v1.json"
-SOURCE_POINTER_VERSION = 1
+APEX_CURRENT_POINTER_FILENAME = "current.v2.json"
+SOURCE_POINTER_VERSION = 2
 SYNERGY_REFRESH_STATUS_FILENAME = "synergy_refresh_status.json"
 CSV_REQUIRED_COLUMNS = (
     "英雄ID",
@@ -280,7 +280,7 @@ def build_synergy_cleaned_data_path() -> str:
 
 def build_synergy_latest_pointer_path() -> str:
     """返回 Apex 来源 current 指针。"""
-    return str(source_root("apex") / "current.v1.json")
+    return str(source_root("apex") / "current.v2.json")
 
 
 def build_synergy_refresh_status_path() -> str:

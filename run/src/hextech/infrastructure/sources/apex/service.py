@@ -7,8 +7,10 @@ from hextech.infrastructure.sources.apex.common import *
 from hextech.infrastructure.sources.apex.fetcher import ApexSource
 from hextech.infrastructure.sources.apex.extractor import SynergyExtractor
 from hextech.infrastructure.sources.apex.writer import SynergyWriter
-def build_augment_name_map_from_static() -> dict:
+from hextech.modules.data.catalog.versioned import load_active_catalog
+def build_augment_name_map_from_static(catalog_root: Path | None = None) -> dict:
     name_map = {}
+    root = catalog_root or load_active_catalog().root
 
     def add_mapping(raw_key, raw_name):
         key = str(raw_key or "").strip()
@@ -20,10 +22,10 @@ def build_augment_name_map_from_static() -> dict:
             if candidate:
                 name_map.setdefault(candidate, name)
 
-    for raw_name, raw_slug in load_apexlol_slug_map(STATIC_DATA_PATH).items():
+    for raw_name, raw_slug in load_apexlol_slug_map(root).items():
         add_mapping(raw_slug, raw_name)
         add_mapping(raw_name, raw_name)
-    for item in load_augment_manifest_entries(STATIC_DATA_PATH):
+    for item in load_augment_manifest_entries(root):
         name = str(item.get("name") or "").strip()
         filename_stem = Path(str(item.get("filename") or "")).stem
         add_mapping(name, name)
@@ -471,7 +473,13 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
         file_handler.close()
 
 
-def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
+def main(
+    *,
+    dry_run: Optional[bool] = None,
+    output_path: Optional[str] = None,
+    promote_current: bool = False,
+    pointer_output: str | os.PathLike[str] | None = None,
+):
     started_monotonic = time.time()
     started_at = utc_now_iso()
     run_id = f"apex-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
@@ -481,18 +489,20 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
     logger.info("ApexLoL 逐英雄直达抓取开始：run_id=%s dry_run=%s", run_id, dry_run)
 
     try:
+        catalog = load_active_catalog()
         core_data = _load_json_file("Champion_Core_Data.json", "core_data")
         core_info = build_core_info(core_data)
         slug_map = build_champion_slug_map(core_data)
         source = ApexSource()
         extractor = SynergyExtractor(
             champion_lookup=build_champion_lookup(core_info),
-            augment_name_map=build_augment_name_map_from_static(),
+            augment_name_map=build_augment_name_map_from_static(catalog.root),
         )
         combined: dict[str, list[SynergyEntry]] = {}
         delay = max(0.0, float(os.getenv("APEX_ONLINE_FETCH_DELAY_SECONDS", "0") or "0"))
+        ordered_ids = sorted(slug_map, key=lambda value: int(value) if value.isdigit() else value)
 
-        for index, champion_id in enumerate(sorted(slug_map, key=lambda value: int(value) if value.isdigit() else value)):
+        def fetch_champion(champion_id: str):
             champion = core_info[champion_id]
             url = champion_detail_url(source.base_url, slug_map[champion_id])
             resource = source.fetch(url, allow_browser=True)
@@ -503,7 +513,6 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
                     entries, extracted = _extract_champion_entries(extractor, champion, resource)
                 except (TypeError, ValueError, json.JSONDecodeError):
                     entries, extracted = [], {}
-
             page = classify_apex_page(
                 resource.text if resource else "",
                 expected_slug=slug_map[champion_id],
@@ -518,12 +527,32 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
                 status_code=resource.status_code if resource else None,
                 url=url,
             )
-            outcomes.append(outcome)
+            return outcome, extracted, page
+
+        outcomes_by_id = {}
+        for index, champion_id in enumerate(ordered_ids):
+            outcome, extracted, page = fetch_champion(champion_id)
+            outcomes_by_id[champion_id] = outcome
             if page.state is ApexPageState.HAS_SYNERGY:
                 for key, values in extracted.items():
                     combined.setdefault(key, []).extend(values)
-            if delay and index + 1 < len(slug_map):
+            if delay and index + 1 < len(ordered_ids):
                 time.sleep(delay)
+
+        failed_ids = [champion_id for champion_id in ordered_ids if outcomes_by_id[champion_id].state == "failed"]
+        if failed_ids:
+            logger.warning("Apex 首轮失败英雄进入低频尾部重试：count=%s", len(failed_ids))
+            retry_delay = max(0.5, delay)
+            for index, champion_id in enumerate(failed_ids):
+                outcome, extracted, page = fetch_champion(champion_id)
+                outcomes_by_id[champion_id] = outcome
+                if page.state is ApexPageState.HAS_SYNERGY:
+                    for key, values in extracted.items():
+                        combined.setdefault(key, []).extend(values)
+                if index + 1 < len(failed_ids):
+                    time.sleep(retry_delay)
+
+        outcomes = [outcomes_by_id[champion_id] for champion_id in ordered_ids]
 
         combined = SynergyExtractor._dedupe_entries(combined)
         payload = SynergyWriter(core_info).build_payload(combined)
@@ -542,6 +571,8 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
                 outcomes=tuple(outcomes),
                 record_count=stats["synergy_entries"],
                 started_at=started_at,
+                promote_current=promote_current,
+                pointer_output=pointer_output,
             )
             target_path = Path(published_path)
 
@@ -549,15 +580,16 @@ def main(*, dry_run: Optional[bool] = None, output_path: Optional[str] = None):
             manifest = SourceRunManifest(
                 source="apex",
                 run_id=run_id,
+                catalog_generation_id=load_active_catalog().generation_id,
+                catalog_sha256=load_active_catalog().content_sha256,
                 health=SourceHealth.FAILED,
                 started_at=started_at,
-                finished_at=utc_now_iso(),
+                completed_at=utc_now_iso(),
                 expected_items=len(slug_map),
                 successful_items=sum(outcome.state == "success" for outcome in outcomes),
                 confirmed_empty_items=sum(outcome.state == "confirmed_empty" for outcome in outcomes),
                 failed_items=len(failed),
-                record_count=stats["synergy_entries"],
-                artifact="synergy.json",
+                artifact=None,
                 outcomes=tuple(outcomes),
                 metadata={"minimum_non_empty_heroes": min_non_empty},
             )

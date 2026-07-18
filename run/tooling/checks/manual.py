@@ -22,6 +22,7 @@ from hextech.infrastructure.sources.apex.service import (
     build_augment_name_map_from_static, build_champion_lookup, build_core_info,
 )
 from tooling.build.manifest import build_bundle_manifest, manifest_contains_forbidden_path
+from tooling.build.resource_manifest import validate_resource_manifest, write_resource_manifest
 from tooling.build.rules import iter_package_data_entries
 
 RUN_DIR = Path(__file__).resolve().parents[2]
@@ -270,7 +271,7 @@ def validate_bundle_manifest_contract() -> dict[str, Any]:
     manifest = build_bundle_manifest(RUN_DIR)
     assert manifest["seed_health"]["valid"] is True
     assert manifest["seed_health"]["stat_record_count"] > 0
-    assert "resources/seeds/current.v1.json" in manifest["seed_files"]
+    assert "resources/seeds/current.v2.json" in manifest["seed_files"]
     assert "resources/catalog/英雄目录.v1.json" in manifest["catalog_files"]
     assert "resources/catalog/海克斯资源目录.v1.json" in manifest["catalog_files"]
     source_files = manifest.get("source_files", [])
@@ -305,7 +306,7 @@ def validate_bundle_manifest_contract() -> dict[str, Any]:
         fixture_root = Path(tmp_dir) / "fixture"
         fixture_index = fixture_root / "resources" / "catalog"
         fixture_static = fixture_root / "src" / "hextech" / "interfaces" / "web" / "backend" / "static"
-        fixture_assets = fixture_root / "resources" / "assets"
+        fixture_assets = fixture_root / "resources" / "assets" / "champions"
         fixture_index.mkdir(parents=True)
         fixture_static.mkdir(parents=True)
         fixture_assets.mkdir(parents=True)
@@ -316,6 +317,7 @@ def validate_bundle_manifest_contract() -> dict[str, Any]:
         (fixture_index / "英雄目录.v1.json").write_text('{"schema_version":1,"aliases":[]}', encoding="utf-8")
         (fixture_static / "index.html").write_text("<html></html>", encoding="utf-8")
         (fixture_assets / "1.png").write_bytes(b"png")
+        write_resource_manifest(fixture_root)
         manifest_path = Path(tmp_dir) / "bundle_manifest.json"
         manifest_path.write_text("{}", encoding="utf-8")
         entries = iter_package_data_entries(fixture_root, manifest_path)
@@ -323,16 +325,13 @@ def validate_bundle_manifest_contract() -> dict[str, Any]:
         assert ("海克斯资源目录.v1.json", "resources/catalog") in entry_targets
         assert ("英雄目录.v1.json", "resources/catalog") in entry_targets
         assert ("static", "static") in entry_targets
-        assert ("assets", "resources/assets") in entry_targets
+        assert ("1.png", "resources/assets/champions") in entry_targets
         assert ("bundle_manifest.json", ".") in entry_targets
         assert not (Path(tmp_dir) / "build" / "_bundle_runtime").exists()
         (fixture_assets / "debug.tmp").write_text("debug", encoding="utf-8")
-        try:
-            iter_package_data_entries(fixture_root, manifest_path)
-        except ValueError as exc:
-            assert "debug.tmp" in str(exc)
-        else:
-            raise AssertionError("assets 目录含非白名单文件时必须阻断打包规则生成")
+        second_entries = iter_package_data_entries(fixture_root, manifest_path)
+        assert all(entry.source.name != "debug.tmp" for entry in second_entries)
+        assert "resources/assets/champions/debug.tmp" in validate_resource_manifest(fixture_root)["unlisted_files"]
 
     return manifest
 

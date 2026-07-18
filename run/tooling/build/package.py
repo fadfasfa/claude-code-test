@@ -28,7 +28,7 @@ if str(SRC_DIR) not in sys.path:
 
 from tooling.build.manifest import build_bundle_manifest, validate_snapshot_seed  # noqa: E402
 from tooling.diagnostics.cleanup import cleanup_python_caches  # noqa: E402
-from tooling.build.rules import iter_package_data_entries  # noqa: E402
+from tooling.build.rules import iter_package_data_entries, stage_package_data_tree  # noqa: E402
 
 
 REPO_DIR = BASE_DIR.parent
@@ -362,12 +362,13 @@ def build_exe(
         "--specpath",
         str(spec_path),
     ]
-    for entry in iter_package_data_entries(
+    package_entries = iter_package_data_entries(
         BASE_DIR,
         manifest_path,
         verified_snapshot_root=verified_snapshot_root,
-    ):
-        cmd.extend(["--add-data", _add_data_arg(entry.source, entry.target)])
+    )
+    staged_tree = stage_package_data_tree(package_entries, build_root / "package-data")
+    cmd.extend(["--add-data", _add_data_arg(staged_tree.source, staged_tree.target)])
     for source, target in (
         (tcl_runtime_dir, "_tcl_data"),
         (tk_runtime_dir, "_tk_data"),

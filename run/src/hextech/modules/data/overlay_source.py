@@ -79,10 +79,11 @@ class OverlayDataSource(Protocol):
 class SharedOverlayDataSource:
     """只读取 DataService 当前完整 generation，不混入旧共享 cache。"""
 
-    def __init__(self, *, snapshot_client=None) -> None:
+    def __init__(self, *, snapshot_client=None, privacy_provider=None) -> None:
         from hextech.modules.data.generation import DataSnapshotClient
 
         self._snapshot_client = snapshot_client or DataSnapshotClient()
+        self._privacy_provider = privacy_provider or _display_private_stats_enabled
 
     def read_event(self) -> dict[str, Any]:
         from hextech.modules.vision.events import read_overlay_event
@@ -98,7 +99,7 @@ class SharedOverlayDataSource:
             status = snapshot_view.status()
             payload = snapshot_view.get_overlay_hints()
             payload.setdefault("snapshot", {}).update(status)
-            return payload
+            return apply_overlay_display_policy(payload, enabled=bool(self._privacy_provider()))
         status = self._snapshot_client.status()
         return {
             "schema_version": 1,
@@ -129,3 +130,21 @@ def prepare_shared_overlay_data() -> dict[str, Any]:
 def source_has_private_stats(cache: Mapping[str, Any] | None) -> bool:
     source = cache.get("source") if isinstance(cache, Mapping) else None
     return bool(isinstance(source, Mapping) and source.get("private_policy_stats_enabled") is True)
+
+
+def _display_private_stats_enabled() -> bool:
+    from hextech.modules.session.settings import load_ui_feature_flags
+
+    return bool(load_ui_feature_flags().get("private_policy_stats_enabled", False))
+
+
+def apply_overlay_display_policy(payload: Mapping[str, Any], *, enabled: bool | None = None) -> dict[str, Any]:
+    """只覆盖展示策略标记，不修改 canonical generation 内容或 generation ID。"""
+
+    result = dict(payload)
+    source = result.get("source")
+    result["source"] = {
+        **(dict(source) if isinstance(source, Mapping) else {}),
+        "private_policy_stats_enabled": _display_private_stats_enabled() if enabled is None else bool(enabled),
+    }
+    return result

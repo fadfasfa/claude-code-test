@@ -34,21 +34,19 @@ from pathlib import Path
 from hextech.modules.data.catalog.runtime_store import (
     build_runtime_state_path,
     build_synergy_data_path,
-    build_synergy_latest_pointer_path,
     build_synergy_refresh_status_path,
     ensure_private_runtime_dir,
     get_latest_synergy_snapshot_path,
     get_latest_csv,
     get_latest_valid_csv,
-    load_synergy_latest_pointer,
     load_synergy_refresh_status,
 )
 from hextech.modules.data.ports.atomic import atomic_write_json
+from hextech.modules.data.source_runs import load_source_current
 from hextech.infrastructure.observability.logging import write_structured_event
 from hextech.infrastructure.sources.hextech.refresh_support import hextech_refresh_blocked
 from hextech.infrastructure.sources.hextech.service import main_scraper
 from hextech.infrastructure.sources.apex.service import main as run_apex_spider
-from hextech.infrastructure.sources.apex.service import SYNERGY_REFRESH_META_VERSION
 from hextech.modules.data.catalog.precomputed_cache import (
     has_precomputed_hextech_cache,
     load_precomputed_champion_list,
@@ -101,9 +99,7 @@ class RefreshResult:
 
 
 def auto_synergy_refresh_enabled() -> bool:
-    env_enabled = os.getenv("HEXTECH_AUTO_SYNERGY_REFRESH", "0").strip().lower() in {"1", "true", "yes", "on"}
-    # ApexLoL 自动协同刷新仍处于退役状态；Mayhem 增量通过手动清洗脚本生成 cleaned 数据。
-    return False and env_enabled
+    return os.getenv("HEXTECH_AUTO_SYNERGY_REFRESH", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def sanitize_event_message(value: object) -> str:
@@ -268,25 +264,15 @@ def should_refresh_synergy(force: bool, stale_after_seconds: int = SYNERGY_STALE
         return False
     if force:
         return True
+    pointer = load_source_current("apex", verify_hash=True)
     synergy_file = get_latest_synergy_snapshot_path()
-    if not synergy_file or not os.path.exists(synergy_file):
+    if not pointer or not synergy_file or not os.path.exists(synergy_file):
         return True
     try:
-        pointer_path = build_synergy_latest_pointer_path()
-        meta = load_synergy_latest_pointer()
-        healthy = (
-            isinstance(meta, dict)
-            and meta.get("version") == SYNERGY_REFRESH_META_VERSION
-            and os.path.basename(str(synergy_file)) == str(meta.get("filename") or "")
-            and int(meta.get("mapped") or 0) > 0
-            and int(meta.get("non_empty_heroes") or 0) > 0
-            and int(meta.get("synergy_entries") or 0) > 0
-        )
-        if not healthy:
-            return True
         if _synergy_refresh_blocked():
             return False
-        return not (_file_is_fresh(synergy_file, stale_after_seconds) and _file_is_fresh(pointer_path, stale_after_seconds))
+        last_success = _parse_timestamp(pointer.get("last_success_at"))
+        return not (last_success and last_success + stale_after_seconds >= time.time())
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return True
 

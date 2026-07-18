@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import threading
 import time
@@ -23,7 +24,8 @@ from hextech.bootstrap.data_service_runtime import (
     _build_augment_identity_payload,
     _query_payloads_from_dataframe,
 )
-from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher
+from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher, SnapshotValidationError
+from hextech.contracts import SourceProvenance
 
 
 def _build_payload(private_stats_enabled: bool) -> dict[str, object]:
@@ -77,15 +79,20 @@ def test_refresh_and_policy_actions_are_serialized(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
     entered = threading.Event()
     release = threading.Event()
-    observed: list[bool] = []
+    observed: list[str] = []
 
-    def builder(private_stats_enabled: bool) -> DataBuildResult:
-        observed.append(private_stats_enabled)
+    def refresh_action(_force: bool) -> dict[str, object]:
+        observed.append("refresh")
         entered.set()
         release.wait(timeout=2)
-        return DataBuildResult(_build_payload(private_stats_enabled))
+        manifest = _publish(publisher, _build_payload(True), "serialized")
+        return {"state": "ready", "generation_id": manifest.generation_id}
 
-    service = DataServiceCore(publisher=publisher, builder=builder, private_stats_enabled=False)
+    service = DataServiceCore(
+        publisher=publisher,
+        private_stats_enabled=False,
+        refresh_action=refresh_action,
+    )
     refresh_thread = threading.Thread(target=service.refresh)
     refresh_thread.start()
     assert entered.wait(timeout=1)
@@ -96,18 +103,21 @@ def test_refresh_and_policy_actions_are_serialized(tmp_path: Path) -> None:
     refresh_thread.join(timeout=2)
     policy_thread.join(timeout=2)
 
-    assert observed == [False, True]
+    assert observed == ["refresh"]
     client = DataSnapshotClient(tmp_path)
-    assert client.load_manifest().private_stats_enabled is True
-    assert client.get_overlay_hints()["source"]["private_policy_stats_enabled"] is True
+    generation_id = client.load_manifest().generation_id
+    assert service.status()["desired_private_stats_enabled"] is True
+    assert client.load_manifest().generation_id == generation_id
 
 
 def test_private_policy_generation_updates_public_startup_status(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path / "runtime" / "snapshots")
+    manifest = _publish(publisher, _build_payload(True), "policy-status")
     service = DataServiceCore(
         publisher=publisher,
-        builder=lambda private: DataBuildResult(_build_payload(private)),
         private_stats_enabled=True,
+        refresh_action=lambda _force: pytest.fail("展示策略不得触发刷新"),
+        initial_result={"state": "ready", "generation_id": manifest.generation_id},
     )
 
     result = service.set_private_stats(False)
@@ -115,18 +125,19 @@ def test_private_policy_generation_updates_public_startup_status(tmp_path: Path)
 
     assert result["state"] == "ready"
     assert status["data_snapshot"]["generation_id"] == result["generation_id"]
-    assert status["data_snapshot"]["private_stats_enabled"] is False
+    assert service.status()["desired_private_stats_enabled"] is False
+    assert result["generation_id"] == manifest.generation_id
 
 
 def test_failed_refresh_preserves_last_generation(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
     service = DataServiceCore(
         publisher=publisher,
-        builder=lambda private: DataBuildResult(_build_payload(private)),
         private_stats_enabled=True,
+        refresh_action=_publishing_refresh_action(publisher, lambda: _build_payload(True)),
     )
     first = service.refresh()
-    service.builder = lambda private: (_ for _ in ()).throw(RuntimeError("remote failed"))
+    service._refresh_action = lambda _force: (_ for _ in ()).throw(RuntimeError("remote failed"))
 
     failed = service.refresh()
 
@@ -138,12 +149,11 @@ def test_failed_refresh_preserves_last_generation(tmp_path: Path) -> None:
 
 def test_bootstrap_reuses_healthy_runtime_generation(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    current = publisher.publish(_build_payload(False), private_stats_enabled=False)
+    current = _publish(publisher, _build_payload(True), "bootstrap-current")
 
     result = bootstrap_snapshot(
         publisher,
-        False,
-        builder=lambda _private: pytest.fail("healthy current must not be rebuilt"),
+        builder=lambda: pytest.fail("healthy current must not be rebuilt"),
         seed_preparer=lambda: pytest.fail("healthy current must not be seeded"),
     )
 
@@ -154,44 +164,24 @@ def test_bootstrap_reuses_healthy_runtime_generation(tmp_path: Path) -> None:
     }
 
 
-def test_bootstrap_masks_ready_generation_when_saved_privacy_is_disabled(tmp_path: Path) -> None:
+def test_bootstrap_does_not_change_generation_for_display_privacy(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
     payload = _build_payload(True)
     payload["overlay_hints"] = {
         "source": {"private_policy_stats_enabled": True},
         "hints": {"augment-1": {"name": "augment", "winrate": 0.51, "stats_by_champion_id": {"1": {}}}},
     }
-    current = publisher.publish(payload, private_stats_enabled=True)
+    current = _publish(publisher, payload, "privacy-stable")
 
     result = bootstrap_snapshot(
         publisher,
-        False,
-        builder=lambda _private: pytest.fail("关闭隐私统计只需重发固定代"),
+        builder=lambda: pytest.fail("展示隐私不得重建 canonical generation"),
         seed_preparer=lambda: pytest.fail("健康 current 不应重新播种"),
     )
 
     view = DataSnapshotClient(tmp_path).open_view()
-    assert result["reason_code"] == "privacy_policy_masked"
-    assert result["generation_id"] != current.generation_id
-    assert view.status()["private_stats_enabled"] is False
-    hint = view.get_overlay_hints()["hints"]["augment-1"]
-    assert "winrate" not in hint and "stats_by_champion_id" not in hint
-
-
-def test_bootstrap_rebuilds_ready_generation_when_saved_privacy_is_enabled(tmp_path: Path) -> None:
-    publisher = DataSnapshotPublisher(tmp_path)
-    current = publisher.publish(_build_payload(False), private_stats_enabled=False)
-
-    result = bootstrap_snapshot(
-        publisher,
-        True,
-        builder=lambda private: DataBuildResult(_build_payload(private)),
-        seed_preparer=lambda: True,
-    )
-
-    assert result["reason_code"] == "privacy_policy_rebuilt"
-    assert result["generation_id"] != current.generation_id
-    assert DataSnapshotClient(tmp_path).status()["private_stats_enabled"] is True
+    assert result["generation_id"] == current.generation_id
+    assert view.get_overlay_hints()["hints"]["augment-1"]["winrate"] == pytest.approx(0.51)
 
 
 def test_dataframe_fallback_preserves_web_champion_dto_shape() -> None:
@@ -217,45 +207,15 @@ def test_dataframe_fallback_preserves_web_champion_dto_shape() -> None:
     assert set(details) == {"武器大师", "时间刺客"}
 
 
-def test_bootstrap_upgrades_legacy_identity_generation_without_remote_refresh(tmp_path: Path) -> None:
+def test_publisher_rejects_legacy_identity_generation(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
     legacy = _build_payload(False)
     legacy["identities"] = {"champions": {"1": "hero"}, "augments": {"augment-1": "augment"}}
-    previous = publisher.publish(legacy, private_stats_enabled=False)
 
-    result = bootstrap_snapshot(
-        publisher,
-        False,
-        builder=lambda private: DataBuildResult(_build_payload(private)),
-        seed_preparer=lambda: True,
-    )
+    with pytest.raises(SnapshotValidationError, match="identities schema_version"):
+        publisher.publish(legacy, source_files=_complete_provenance("legacy"))
 
-    assert result["state"] == "ready"
-    assert result["reason_code"] == "identity_schema_upgraded"
-    assert result["generation_id"] != previous.generation_id
-    assert DataSnapshotClient(tmp_path).get_identity_indexes()["schema_version"] == 2
-
-
-def test_bootstrap_reports_degraded_when_legacy_identity_upgrade_fails(tmp_path: Path) -> None:
-    publisher = DataSnapshotPublisher(tmp_path)
-    legacy = _build_payload(False)
-    legacy["identities"] = {"champions": {"1": "hero"}, "augments": {"augment-1": "augment"}}
-    previous = publisher.publish(legacy, private_stats_enabled=False)
-
-    result = bootstrap_snapshot(
-        publisher,
-        False,
-        builder=lambda _private: (_ for _ in ()).throw(RuntimeError("local build failed")),
-        seed_preparer=lambda: False,
-    )
-
-    assert result == {
-        "state": "degraded",
-        "generation_id": previous.generation_id,
-        "source": "last_good_fallback",
-        "reason_code": "identity_schema_upgrade_failed",
-        "error_type": "RuntimeError",
-    }
+    assert DataSnapshotClient(tmp_path).status()["state"] == "unavailable"
 
 
 def test_bootstrap_builds_generation_from_startup_seed(tmp_path: Path) -> None:
@@ -264,8 +224,7 @@ def test_bootstrap_builds_generation_from_startup_seed(tmp_path: Path) -> None:
 
     result = bootstrap_snapshot(
         publisher,
-        True,
-        builder=lambda private: DataBuildResult(_build_payload(private)),
+        builder=lambda: DataBuildResult(_build_payload(True), _complete_provenance("bootstrap-build")),
         seed_preparer=lambda: prepared.append(True) or True,
     )
 
@@ -281,29 +240,88 @@ def test_bootstrap_accepts_complete_seed_without_runtime_rebuild(tmp_path: Path)
 
     def prepare_seed() -> bool:
         nonlocal seeded_generation_id
-        manifest = publisher.publish(_build_payload(False), private_stats_enabled=False)
+        manifest = publisher.publish(
+            _build_payload(True),
+            source_files=_complete_provenance("seed"),
+            require_complete_provenance=True,
+        )
         seeded_generation_id = manifest.generation_id
         return True
 
     result = bootstrap_snapshot(
         publisher,
-        False,
-        builder=lambda _private: (_ for _ in ()).throw(AssertionError("完整 seed 不应从运行态重建")),
+        builder=lambda: (_ for _ in ()).throw(AssertionError("完整 seed 不应从运行态重建")),
         seed_preparer=prepare_seed,
     )
 
     assert result == {
         "state": "ready",
         "generation_id": seeded_generation_id,
-        "private_stats_enabled": False,
         "source": "verified_seed",
     }
 
 
+def _provenance(marker: str, *, source: str = "hextech", role: str = "stats") -> SourceProvenance:
+    return SourceProvenance(
+        source=source,  # type: ignore[arg-type]
+        run_id=f"run-{marker}",
+        catalog_generation_id="catalog-test",
+        artifact_role=role,
+        artifact_sha256=hashlib.sha256(f"artifact:{marker}".encode()).hexdigest(),
+        record_count=1,
+        manifest_sha256=hashlib.sha256(f"manifest:{marker}".encode()).hexdigest(),
+        content_schema_version=2,
+    )
+
+
+def _complete_provenance(marker: str) -> tuple[SourceProvenance, ...]:
+    return tuple(
+        _provenance(f"{marker}-{source}-{role}", source=source, role=role)
+        for source, role in (
+            ("catalog", "champions"),
+            ("catalog", "augments"),
+            ("catalog", "versions"),
+            ("hextech", "stats"),
+            ("apex", "synergy"),
+            ("mayhem", "combos"),
+        )
+    )
+
+
+def _publish(
+    publisher: DataSnapshotPublisher,
+    payload: dict[str, object],
+    marker: str,
+    *,
+    source: str = "hextech",
+    role: str = "stats",
+):
+    return publisher.publish(payload, source_files=(_provenance(marker, source=source, role=role),))
+
+
+def _publishing_refresh_action(
+    publisher: DataSnapshotPublisher,
+    payload_factory,
+):
+    counter = 0
+
+    def refresh(force: bool) -> dict[str, object]:
+        nonlocal counter
+        counter += 1
+        manifest = _publish(publisher, payload_factory(), f"refresh-{counter}")
+        return {
+            "state": "ready",
+            "generation_id": manifest.generation_id,
+            "source": "test-refresh",
+            "forced": force,
+        }
+
+    return refresh
+
+
 def test_startup_status_recognizes_current_synergy_artifact(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")
-    source = {"name": "synergy.json", "size": 2, "sha256": "a" * 64, "record_count": 1}
-    publisher.publish(_build_payload(False), private_stats_enabled=False, source_files=(source,))
+    _publish(publisher, _build_payload(True), "synergy", source="apex", role="synergy")
 
     _sync_startup_snapshot_status(publisher, {"state": "ready", "source": "verified_seed"})
 
@@ -317,8 +335,7 @@ def test_bootstrap_failure_never_publishes_partial_generation(tmp_path: Path) ->
 
     result = bootstrap_snapshot(
         publisher,
-        False,
-        builder=lambda _private: (_ for _ in ()).throw(ValueError("incomplete seed")),
+        builder=lambda: (_ for _ in ()).throw(ValueError("incomplete seed")),
         seed_preparer=lambda: True,
     )
 
@@ -328,39 +345,47 @@ def test_bootstrap_failure_never_publishes_partial_generation(tmp_path: Path) ->
 
 
 def test_service_publishes_source_summary(tmp_path: Path) -> None:
-    source = {"name": "remote.csv", "size": 3, "sha256": "a" * 64, "record_count": 1}
+    publisher = DataSnapshotPublisher(tmp_path)
+    source = _provenance("summary")
+
+    def refresh_action(_force: bool) -> dict[str, object]:
+        manifest = publisher.publish(_build_payload(True), source_files=(source,))
+        return {"state": "ready", "generation_id": manifest.generation_id}
+
     service = DataServiceCore(
-        publisher=DataSnapshotPublisher(tmp_path),
-        builder=lambda private: DataBuildResult(_build_payload(private), (source,)),
+        publisher=publisher,
         private_stats_enabled=True,
+        refresh_action=refresh_action,
     )
 
     assert service.refresh()["state"] == "ready"
     assert DataSnapshotClient(tmp_path).load_manifest().source_files == (source,)
 
 
-def test_failed_private_stats_action_rolls_back_desired_policy(tmp_path: Path) -> None:
+def test_private_stats_action_does_not_refresh_or_change_generation(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    manifest = _publish(publisher, _build_payload(True), "privacy-action")
     service = DataServiceCore(
-        publisher=DataSnapshotPublisher(tmp_path),
-        builder=lambda private: DataBuildResult(_build_payload(private)),
+        publisher=publisher,
         private_stats_enabled=False,
+        refresh_action=lambda _force: pytest.fail("展示策略不得触发来源刷新"),
+        initial_result={"state": "ready", "generation_id": manifest.generation_id},
     )
-    service.refresh()
-    service.builder = lambda private: (_ for _ in ()).throw(RuntimeError("remote failed"))
 
     result = service.set_private_stats(True)
 
-    assert result["state"] == "failed"
-    assert result["reason_code"] == "private_stats_update_failed"
-    assert service.status()["desired_private_stats_enabled"] is False
-    assert DataSnapshotClient(tmp_path).load_manifest().private_stats_enabled is False
+    assert result["state"] == "ready"
+    assert result["reason_code"] == "display_policy_updated"
+    assert service.status()["desired_private_stats_enabled"] is True
+    assert DataSnapshotClient(tmp_path).load_manifest().generation_id == manifest.generation_id
 
 
 def test_control_plane_queues_actions_and_requires_nonce(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
     service = DataServiceCore(
-        publisher=DataSnapshotPublisher(tmp_path),
-        builder=lambda private: DataBuildResult(_build_payload(private)),
+        publisher=publisher,
         private_stats_enabled=False,
+        refresh_action=_publishing_refresh_action(publisher, lambda: _build_payload(True)),
     )
     application = DataServiceApplication(core=service, parent_pid=1, nonce="test-nonce")
     server = ThreadingHTTPServer(("127.0.0.1", 0), application.handler())
@@ -433,31 +458,109 @@ def test_private_stats_handle_tracks_the_same_action_until_terminal(monkeypatch:
     assert result == {"state": "ready", "private_stats_enabled": True}
 
 
-def test_refresh_action_is_singleflight_while_running(tmp_path: Path) -> None:
+def test_refresh_action_coalesces_running_triggers_into_one_recheck(tmp_path: Path) -> None:
     entered = threading.Event()
     release = threading.Event()
+    rechecked = threading.Event()
+    calls: list[bool] = []
 
-    def builder(private: bool) -> DataBuildResult:
-        entered.set()
-        release.wait(timeout=2)
-        return DataBuildResult(_build_payload(private))
+    def refresh_action(force: bool) -> dict[str, object]:
+        calls.append(force)
+        if len(calls) == 1:
+            entered.set()
+            release.wait(timeout=2)
+        else:
+            rechecked.set()
+        return {"state": "ready", "generation_id": "test-generation"}
 
     application = DataServiceApplication(
         core=DataServiceCore(
             publisher=DataSnapshotPublisher(tmp_path),
-            builder=builder,
             private_stats_enabled=False,
+            refresh_action=refresh_action,
         ),
         parent_pid=1,
     )
     first = application.submit_action("refresh")
     assert entered.wait(timeout=1)
     second = application.submit_action("refresh")
+    third = application.submit_action("refresh")
     release.set()
-    application.shutdown_requested.set()
+    assert rechecked.wait(timeout=1)
+    application.request_shutdown()
 
     assert first["accepted"] is True
-    assert second == {"accepted": False, "reason_code": "already_queued"}
+    assert second["status"] == "coalesced"
+    assert third["status"] == "coalesced"
+    assert calls == [False, False]
+
+
+def test_force_refresh_upgrades_pending_recheck(tmp_path: Path) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    followed_up = threading.Event()
+    calls: list[bool] = []
+
+    def refresh_action(force: bool) -> dict[str, object]:
+        calls.append(force)
+        if len(calls) == 1:
+            entered.set()
+            release.wait(timeout=2)
+        else:
+            followed_up.set()
+        return {"state": "ready", "generation_id": "test-generation"}
+
+    application = DataServiceApplication(
+        core=DataServiceCore(
+            publisher=DataSnapshotPublisher(tmp_path),
+            private_stats_enabled=False,
+            refresh_action=refresh_action,
+        ),
+        parent_pid=1,
+    )
+    application.submit_action("refresh")
+    assert entered.wait(timeout=1)
+
+    normal = application.submit_action("refresh")
+    forced = application.submit_action("refresh", {"force": True})
+    release.set()
+    assert followed_up.wait(timeout=1)
+    application.request_shutdown()
+
+    assert normal["force"] is False
+    assert forced["force"] is True
+    assert calls == [False, True]
+
+
+def test_shutdown_clears_pending_refresh_without_starting_followup(tmp_path: Path) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[bool] = []
+
+    def refresh_action(force: bool) -> dict[str, object]:
+        calls.append(force)
+        entered.set()
+        release.wait(timeout=2)
+        return {"state": "ready", "generation_id": "test-generation"}
+
+    application = DataServiceApplication(
+        core=DataServiceCore(
+            publisher=DataSnapshotPublisher(tmp_path),
+            private_stats_enabled=False,
+            refresh_action=refresh_action,
+        ),
+        parent_pid=1,
+    )
+    application.submit_action("refresh")
+    assert entered.wait(timeout=1)
+    application.submit_action("refresh", {"force": True})
+
+    application.request_shutdown()
+    release.set()
+    time.sleep(0.05)
+
+    assert calls == [False]
+    assert application.submit_action("refresh") == {"accepted": False, "reason_code": "shutdown_requested"}
 
 
 def test_data_service_instance_lock_is_exclusive(tmp_path: Path) -> None:
@@ -472,26 +575,21 @@ def test_data_service_instance_lock_is_exclusive(tmp_path: Path) -> None:
     second.release()
 
 
-def test_data_service_refresh_skips_query_cache_rebuild(monkeypatch: pytest.MonkeyPatch) -> None:
-    import hextech.bootstrap.data_refresh as refresh
-    import hextech.bootstrap.data_service_runtime as data_service
+def test_data_service_refresh_delegates_force_to_coordinator(tmp_path: Path) -> None:
+    calls: list[bool] = []
+    service = DataServiceCore(
+        publisher=DataSnapshotPublisher(tmp_path),
+        private_stats_enabled=False,
+        refresh_action=lambda force: calls.append(force) or {"state": "ready", "generation_id": "g"},
+    )
 
-    calls: list[dict[str, object]] = []
-
-    def fake_refresh_backend_data(**kwargs):
-        calls.append(kwargs)
-        return type("RefreshResult", (), {"state": "ready", "reason_code": ""})()
-
-    expected = object()
-    monkeypatch.setattr(refresh, "refresh_backend_data", fake_refresh_backend_data)
-    monkeypatch.setattr(data_service, "build_snapshot_from_runtime", lambda _enabled: expected)
-
-    assert data_service._refresh_and_build(True, force_refresh=True) is expected
-    assert calls == [{"force": True, "rebuild_query_cache": False}]
+    assert service.refresh(force=True)["state"] == "ready"
+    assert calls == [True]
 
 
 def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from hextech.modules.data.catalog import precomputed_cache, runtime_store
+    from hextech.modules.data.catalog import versioned as catalog_versioned
     from hextech.modules.data import source_runs
     import hextech.modules.recommendation.hints as overlay_hints
 
@@ -525,6 +623,47 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
     monkeypatch.setattr(runtime_store, "build_synergy_data_path", lambda: str(synergy_path))
     monkeypatch.setattr(overlay_hints, "build_synergy_data_path", lambda: str(synergy_path))
     monkeypatch.setattr(source_runs, "resolve_current_artifact", lambda _source_name: None)
+    catalog_sources = tuple(
+        _provenance(f"catalog-{role}", source="catalog", role=role)
+        for role in ("champions", "augments", "versions")
+    )
+    monkeypatch.setattr(
+        catalog_versioned,
+        "load_active_catalog",
+        lambda: type(
+            "Catalog",
+            (),
+            {
+                "generation_id": "catalog-test",
+                "content_sha256": "c" * 64,
+                "provenance": lambda self: catalog_sources,
+            },
+        )(),
+    )
+
+    def source_pointer(source: str) -> dict[str, object]:
+        role = {"hextech": "stats", "apex": "synergy", "mayhem": "combos"}[source]
+        artifact_hash = hashlib.sha256(f"source:{source}".encode()).hexdigest()
+        return {
+            "schema_version": 2,
+            "source": source,
+            "run_id": f"run-{source}",
+            "catalog_generation_id": "catalog-test",
+            "catalog_sha256": "c" * 64,
+            "manifest_sha256": hashlib.sha256(f"manifest:{source}".encode()).hexdigest(),
+            "artifact": {
+                "role": role,
+                "relative_path": f"{source}.json",
+                "sha256": artifact_hash,
+                "record_count": 1,
+                "content_schema_version": 2,
+                "size": 1,
+            },
+            "completed_at": "2026-07-17T00:00:00+00:00",
+            "last_success_at": "2026-07-17T00:00:00+00:00",
+        }
+
+    monkeypatch.setattr(source_runs, "load_source_current", lambda source, verify_hash=True: source_pointer(source))
     monkeypatch.setattr(
         precomputed_cache,
         "load_precomputed_champion_list",
@@ -556,7 +695,7 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
         },
     )
 
-    build = build_snapshot_from_runtime(True)
+    build = build_snapshot_from_runtime()
     detail = build.payloads["champion_hextech"]["暗裔剑魔"]
 
     assert build.payloads["champions"][0]["id"] == "266"
@@ -564,7 +703,7 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
     assert detail["augments"][0]["id"] == "1322"
     assert detail["augments"][0]["海克斯胜率"] == pytest.approx(0.61)
     assert detail["synergy"]["synergy_items"][0]["content"] == "同代联动"
-    assert [source["record_count"] for source in build.source_files] == [1, 1]
+    assert [source.record_count for source in build.source_files] == [1, 1, 1, 1, 1, 1]
 
 
 def test_service_manager_owns_data_service_lifecycle() -> None:

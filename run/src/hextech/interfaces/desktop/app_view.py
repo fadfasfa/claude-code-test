@@ -464,8 +464,15 @@ class DesktopViewMixin:
         self._start_tracked_thread(self._snapshot_watch_loop, name="hextech-desktop-snapshot-watch")
 
     def on_close(self):
-        print("\n[System] 收到退出信号，正在等待数据安全落盘...")
+        if self._closing:
+            return
         self._closing = True
+        if hasattr(self, "exit_button"):
+            try:
+                self.exit_button.config(state=tk.DISABLED)
+            except tk.TclError:
+                logger.debug("禁用快速退出按钮失败。", exc_info=True)
+        print("\n[System] 收到快速退出信号。")
         self.stop_event.set()
         if self._overlay_status_after_id is not None:
             try:
@@ -473,29 +480,55 @@ class DesktopViewMixin:
                 self._overlay_status_after_id = None
             except tk.TclError:
                 logger.debug("取消 overlay 状态轮询失败。", exc_info=True)
-        with self._threads_lock:
-            threads = list(self.threads)
-        for thread in threads:
-            if thread is threading.current_thread():
-                continue
-            if thread.is_alive():
-                thread.join(timeout=2)
-        # PR 已把 Web 子进程与 overlay 全部下沉到 ServiceManager；这里只做 ui_runtime 与 ServiceManager 收尾，
-        # 顺带保留 main 引入的 overlay 状态轮询 after_id 取消，避免 root.destroy 后回调引发 TclError。
-        ui_runtime.close_companion_browser()
-        ui_runtime.shutdown_desktop_executors(wait=False)
-        service_manager = self._take_service_manager_for_shutdown()
-        if service_manager is not None:
-            try:
-                service_manager.shutdown()
-            finally:
-                with self._service_manager_lock:
-                    if self._service_manager_shutdown_in_progress is service_manager:
-                        self._service_manager_shutdown_in_progress = None
-                        self._service_manager_shutdown_completed = service_manager
         self._supervisor_lease_stop.set()
-        if self._supervisor_lease_thread is not None and self._supervisor_lease_thread.is_alive():
-            self._supervisor_lease_thread.join(timeout=2)
-        ui_runtime.stop_runtime_supervisor_process(self.runtime_supervisor)
-        self.data_service = None
-        self.root.destroy()
+        try:
+            self.root.withdraw()
+            self.root.update_idletasks()
+        except tk.TclError:
+            logger.debug("快速退出隐藏窗口失败。", exc_info=True)
+
+        def cleanup() -> None:
+            deadline = time.monotonic() + 7.5
+            try:
+                with self._threads_lock:
+                    threads = list(self.threads)
+                for thread in threads:
+                    if thread is threading.current_thread() or not thread.is_alive():
+                        continue
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    thread.join(timeout=min(0.2, remaining))
+                ui_runtime.close_companion_browser()
+                ui_runtime.shutdown_desktop_executors(wait=False)
+                service_manager = self._take_service_manager_for_shutdown()
+                if service_manager is not None:
+                    try:
+                        service_manager.shutdown(timeout_seconds=0.5, final_timeout_seconds=4.5)
+                    finally:
+                        with self._service_manager_lock:
+                            if self._service_manager_shutdown_in_progress is service_manager:
+                                self._service_manager_shutdown_in_progress = None
+                                self._service_manager_shutdown_completed = service_manager
+                lease_thread = self._supervisor_lease_thread
+                if lease_thread is not None and lease_thread.is_alive():
+                    lease_thread.join(timeout=max(0.0, min(0.5, deadline - time.monotonic())))
+                supervisor = self.runtime_supervisor
+                if supervisor is not None and time.monotonic() < deadline:
+                    supervisor.stop(timeout=max(0.1, min(1.0, deadline - time.monotonic())))
+                self.data_service = None
+            except Exception:
+                logger.exception("快速退出后台清理失败。")
+            finally:
+                self._shutdown_done_event.set()
+
+        threading.Thread(target=cleanup, name="hextech-fast-exit", daemon=True).start()
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            logger.debug("快速退出销毁窗口失败。", exc_info=True)
+
+    def wait_for_shutdown(self, *, timeout_seconds: float = 8.0) -> bool:
+        """主窗口消失后最多等待后台清理 8 秒，不再阻塞 Tk 主线程。"""
+
+        return self._shutdown_done_event.wait(timeout=max(0.0, float(timeout_seconds)))

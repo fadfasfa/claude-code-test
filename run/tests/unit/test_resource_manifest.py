@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -6,54 +7,57 @@ import pytest
 from tooling.build.resource_manifest import validate_resource_manifest
 
 
-def _write_manifest(root: Path, categories: list[dict[str, object]]) -> None:
-    manifest_path = root / "resources" / "manifest.v1.json"
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_manifest(root: Path, files: list[dict[str, object]]) -> None:
+    manifest_path = root / "resources" / "manifest.v2.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "rules": {
                     "resource_root": "resources",
                     "runtime_root": "var",
                     "runtime_must_not_be_bundled": True,
+                    "unlisted_files_must_not_be_bundled": True,
                 },
-                "categories": categories,
+                "files": files,
             }
         ),
         encoding="utf-8",
     )
 
 
-def test_validate_resource_manifest_resolves_stable_and_forbidden_categories(tmp_path: Path) -> None:
+def _descriptor(root: Path, relative: str, *, role: str = "package") -> dict[str, object]:
+    path = root / relative
+    return {
+        "path": relative,
+        "category": "catalog",
+        "package_role": role,
+        "size": path.stat().st_size,
+        "sha256": _sha256(path),
+    }
+
+
+def test_validate_resource_manifest_resolves_package_and_unlisted_files(tmp_path: Path) -> None:
     catalog_path = tmp_path / "resources" / "catalog" / "champions.json"
     catalog_path.parent.mkdir(parents=True)
     catalog_path.write_text("{}", encoding="utf-8")
-    _write_manifest(
-        tmp_path,
-        [
-            {
-                "name": "catalog",
-                "path": "resources/catalog",
-                "source_globs": ["resources/catalog/*.json"],
-                "package_role": "required",
-            },
-            {
-                "name": "runtime",
-                "path": "var",
-                "source_globs": ["var/**/*"],
-                "package_role": "forbidden",
-            },
-        ],
-    )
+    extra_path = tmp_path / "resources" / "assets" / "champions" / "extra.png"
+    extra_path.parent.mkdir(parents=True)
+    extra_path.write_bytes(b"png")
+    _write_manifest(tmp_path, [_descriptor(tmp_path, "resources/catalog/champions.json")])
 
-    resolved = validate_resource_manifest(tmp_path)
+    report = validate_resource_manifest(tmp_path)
 
-    assert resolved["catalog"] == ["resources/catalog/champions.json"]
-    assert resolved["runtime"] == []
+    assert report["packaged_files"] == ["resources/catalog/champions.json"]
+    assert report["unlisted_files"] == ["resources/assets/champions/extra.png"]
 
 
-def test_validate_resource_manifest_rejects_stable_resource_glob_outside_resources(tmp_path: Path) -> None:
+def test_validate_resource_manifest_rejects_path_outside_resources(tmp_path: Path) -> None:
     fixture_path = tmp_path / "tests" / "fixtures" / "sample.json"
     fixture_path.parent.mkdir(parents=True)
     fixture_path.write_text("{}", encoding="utf-8")
@@ -61,30 +65,40 @@ def test_validate_resource_manifest_rejects_stable_resource_glob_outside_resourc
         tmp_path,
         [
             {
-                "name": "catalog",
-                "path": "resources/catalog",
-                "source_globs": ["tests/fixtures/*.json"],
-                "package_role": "required",
+                "path": "tests/fixtures/sample.json",
+                "category": "fixture",
+                "package_role": "package",
+                "size": fixture_path.stat().st_size,
+                "sha256": _sha256(fixture_path),
             }
         ],
     )
 
-    with pytest.raises(ValueError, match="稳定资源 glob 越界"):
+    with pytest.raises(ValueError, match="必须位于 resources"):
         validate_resource_manifest(tmp_path)
 
 
-def test_validate_resource_manifest_requires_forbidden_role_for_runtime(tmp_path: Path) -> None:
-    _write_manifest(
-        tmp_path,
-        [
-            {
-                "name": "runtime",
-                "path": "var",
-                "source_globs": ["var/**/*"],
-                "package_role": "optional",
-            }
-        ],
-    )
+def test_validate_resource_manifest_rejects_hash_drift(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "resources" / "catalog" / "champions.json"
+    catalog_path.parent.mkdir(parents=True)
+    catalog_path.write_text("{}", encoding="utf-8")
+    descriptor = _descriptor(tmp_path, "resources/catalog/champions.json")
+    _write_manifest(tmp_path, [descriptor])
+    catalog_path.write_text("[]", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="必须标记为 forbidden"):
+    with pytest.raises(ValueError, match="SHA-256 不一致"):
+        validate_resource_manifest(tmp_path)
+
+
+def test_validate_resource_manifest_requires_unlisted_exclusion_rule(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "resources" / "catalog" / "champions.json"
+    catalog_path.parent.mkdir(parents=True)
+    catalog_path.write_text("{}", encoding="utf-8")
+    _write_manifest(tmp_path, [_descriptor(tmp_path, "resources/catalog/champions.json")])
+    manifest_path = tmp_path / "resources" / "manifest.v2.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["rules"]["unlisted_files_must_not_be_bundled"] = False
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="禁止打包未列文件"):
         validate_resource_manifest(tmp_path)

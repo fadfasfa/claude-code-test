@@ -22,7 +22,13 @@ def item_outcome(
         stage="detail",
         record_count=record_count,
         failure_kind=page.failure_kind,
-        details={"backend": backend, "status_code": status_code, "url": url, "evidence": page.evidence},
+        details={
+            "backend": backend,
+            "status_code": status_code,
+            "url": url,
+            "evidence": page.evidence,
+            "page_identity_verified": page.state is not ApexPageState.FAILED,
+        },
     )
 
 

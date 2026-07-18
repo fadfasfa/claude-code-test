@@ -23,6 +23,26 @@ class DesktopControlsMixin:
         # 双击标题栏在 320 px / 80 px 之间切换，便于单屏游戏窗口模式让出主屏视线
         self.title_bar.bind("<Double-Button-1>", self._toggle_collapse)
 
+        self.exit_button = tk.Button(
+            self.title_frame,
+            text="×",
+            command=self.on_close,
+            bg=UI_COLORS["header"],
+            fg=UI_COLORS["red"],
+            activebackground=UI_COLORS["red"],
+            activeforeground=UI_COLORS["base"],
+            relief=tk.FLAT,
+            bd=0,
+            highlightthickness=0,
+            width=2,
+            padx=0,
+            pady=1,
+            font=("Microsoft YaHei", 11, "bold"),
+            cursor="hand2",
+        )
+        # 先 pack 的 RIGHT 控件固定在最右侧；折叠到 80 px 后退出入口仍然可见。
+        self.exit_button.pack(side=tk.RIGHT, padx=(0, 6), pady=5)
+
         self.diagnostics_button = tk.Button(
             self.title_frame,
             text="诊断",

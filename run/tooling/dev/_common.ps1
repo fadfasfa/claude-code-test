@@ -44,7 +44,7 @@ function Resolve-HextechCli {
 }
 
 function Get-HextechGenerationId {
-    $pointer = Join-Path (Get-HextechVarRoot) "snapshots\current.v1.json"
+    $pointer = Join-Path (Get-HextechVarRoot) "snapshots\current.v2.json"
     if (-not (Test-Path -LiteralPath $pointer -PathType Leaf)) {
         return ""
     }
@@ -66,7 +66,7 @@ function Show-HextechDevContext {
 
     Write-Host "Run root:         $script:RunRoot"
     Write-Host "Generation ID:    $generationId"
-    Write-Host "Snapshot pointer: $(Join-Path $varRoot 'snapshots\current.v1.json')"
+    Write-Host "Snapshot pointer: $(Join-Path $varRoot 'snapshots\current.v2.json')"
     Write-Host "Startup status:   $(Join-Path $varRoot 'state\startup_status.json')"
     Write-Host "Web port file:    $(Join-Path $varRoot 'state\web_server_port.txt')"
     Write-Host "Log directory:    $(Join-Path $varRoot 'logs')"

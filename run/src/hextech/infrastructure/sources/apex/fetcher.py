@@ -105,7 +105,23 @@ class ApexSource:
                     resource.error,
                 )
                 return resource
-            if resource.status_code in retryable_status_codes and attempt < MAX_FETCH_RETRIES:
+            error_text = str(resource.error or "").casefold()
+            retryable_transport_error = any(
+                marker in error_text
+                for marker in (
+                    "timed out",
+                    "timeout",
+                    "tls",
+                    "ssl",
+                    "curl: (28)",
+                    "curl: (35)",
+                    "network",
+                    "connection",
+                )
+            )
+            if (
+                resource.status_code in retryable_status_codes or retryable_transport_error
+            ) and attempt < MAX_FETCH_RETRIES:
                 time.sleep(RETRY_BACKOFF_FACTOR * (2 ** attempt))
                 continue
             logger.error(

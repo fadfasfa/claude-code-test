@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher
@@ -30,9 +29,8 @@ def sync_startup_snapshot_status(publisher: DataSnapshotPublisher, result: Mappi
             if isinstance(loaded, dict):
                 payload = loaded
         synergy_ready = any(
-            Path(str(item.get("name") or "")).name == "synergy.json"
+            item.source in {"apex", "mayhem"} and item.record_count > 0
             for item in manifest.source_files
-            if isinstance(item, Mapping)
         )
         payload.update(
             {

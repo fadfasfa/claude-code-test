@@ -1,0 +1,97 @@
+{
+  "generation_id": "20260718T025728-3c69562c51",
+  "created_at": "2026-07-18T02:57:29+00:00",
+  "content_fingerprint": "05dc70b47669cc65c9fedb3a5d903ac5599eb6a39be0e8683fd8527d00a3a1db",
+  "source_files": [
+    {
+      "source": "catalog",
+      "run_id": "catalog-3a3dad68e156ee81d567",
+      "catalog_generation_id": "catalog-3a3dad68e156ee81d567",
+      "artifact_role": "champions",
+      "artifact_sha256": "75eae48d72ec372d35facf25ebc7fb627246e5036e400733bf0f57ec17617d12",
+      "record_count": 173,
+      "manifest_sha256": "5ddb909595dae44b80941bc45fd78da5ff00a5a0231f4c0c270d8dd37b55b0fa",
+      "content_schema_version": 2
+    },
+    {
+      "source": "catalog",
+      "run_id": "catalog-3a3dad68e156ee81d567",
+      "catalog_generation_id": "catalog-3a3dad68e156ee81d567",
+      "artifact_role": "augments",
+      "artifact_sha256": "73910cc003e799807e1c88648be9b75be84271c76a0eb40f17d104f6e95c06d7",
+      "record_count": 637,
+      "manifest_sha256": "5ddb909595dae44b80941bc45fd78da5ff00a5a0231f4c0c270d8dd37b55b0fa",
+      "content_schema_version": 2
+    },
+    {
+      "source": "catalog",
+      "run_id": "catalog-3a3dad68e156ee81d567",
+      "catalog_generation_id": "catalog-3a3dad68e156ee81d567",
+      "artifact_role": "versions",
+      "artifact_sha256": "447dbf513b4b8c9ad887b5a7555bcc114a39830edc0767b27e2837f8f47f37f3",
+      "record_count": 1,
+      "manifest_sha256": "5ddb909595dae44b80941bc45fd78da5ff00a5a0231f4c0c270d8dd37b55b0fa",
+      "content_schema_version": 2
+    },
+    {
+      "source": "hextech",
+      "run_id": "hextech-20260718T024909Z-20140bd9",
+      "catalog_generation_id": "catalog-3a3dad68e156ee81d567",
+      "artifact_role": "stats",
+      "artifact_sha256": "2faae1fed3610bbd2267d009d5c6ef97afa2497b2de9d02e34ea19601c2631ea",
+      "record_count": 21569,
+      "manifest_sha256": "ef7dd594dc15450a5a4cbe179ff31adaaf7a58f4f8c1a0807be5da026f581e6e",
+      "content_schema_version": 2
+    },
+    {
+      "source": "apex",
+      "run_id": "apex-20260718T104946-64679601",
+      "catalog_generation_id": "catalog-3a3dad68e156ee81d567",
+      "artifact_role": "synergy",
+      "artifact_sha256": "28545eaf722aedc1ecedb5de22f52d58dccc03bdfaa7f474abc43c32c41921f8",
+      "record_count": 1271,
+      "manifest_sha256": "847f3d47a95ce3f7751c99f2ee9df2be7239ce3471cf10d204341e7dbee9610b",
+      "content_schema_version": 2
+    },
+    {
+      "source": "mayhem",
+      "run_id": "mayhem-20260718T105723-6f97acac",
+      "catalog_generation_id": "catalog-3a3dad68e156ee81d567",
+      "artifact_role": "combos",
+      "artifact_sha256": "b763d6ecea4beb4388d59c857730d700699eb59df5239b5b10b929ebfefae904",
+      "record_count": 574,
+      "manifest_sha256": "c68e1bba2b5bef7e54b9536b94f59664e84a6e7c95e23c4663ea7020f2300424",
+      "content_schema_version": 2
+    }
+  ],
+  "champion_count": 173,
+  "augment_count": 204,
+  "stat_record_count": 21569,
+  "files": [
+    {
+      "role": "champions",
+      "relative_path": "champions.json",
+      "size": 51711,
+      "sha256": "5784fc02ade870a66d4986e2d1451dda2a8cf742eed28ddf34fb6a897ca33629"
+    },
+    {
+      "role": "champion_hextech",
+      "relative_path": "champion_hextech.json",
+      "size": 18203121,
+      "sha256": "7c703804487de25d3a23f5ca6c2cb16c3adc7e18a5989f363f53a5e67538573c"
+    },
+    {
+      "role": "overlay_hints",
+      "relative_path": "overlay_hints.json",
+      "size": 7246252,
+      "sha256": "ce36de8e765e286b8048e26b80720af81ac37a4e328d1c9d5a41e1d3a81236aa"
+    },
+    {
+      "role": "identities",
+      "relative_path": "identities.json",
+      "size": 126474,
+      "sha256": "385acf7c156d1bfe2ec887918d9c51665352d996ebbfea7fa2efee90ef9c86d7"
+    }
+  ],
+  "schema_version": 2
+}

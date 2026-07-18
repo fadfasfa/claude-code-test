@@ -95,6 +95,7 @@ class HextechUI(DesktopBootstrapMixin, DesktopControlsMixin, DesktopViewMixin):
         self._feature_toggle_busy: set[str] = set()
         self._feature_toggle_lock = threading.Lock()
         self._closing = False
+        self._shutdown_done_event = threading.Event()
 
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
@@ -114,7 +115,9 @@ def run_desktop():
 
     try:
         with DesktopInstanceOwner():
-            HextechUI().root.mainloop()
+            ui = HextechUI()
+            ui.root.mainloop()
+            ui.wait_for_shutdown(timeout_seconds=8.0)
     except DesktopInstanceAlreadyRunning as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc

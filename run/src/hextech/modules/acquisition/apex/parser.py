@@ -21,8 +21,30 @@ class ApexPageOutcome:
     evidence: str = ""
 
 
-_BLOCK_MARKERS = ("cloudflare", "cf-chl-", "access denied", "attention required")
-_EMPTY_MARKERS = ("暂无联动", "暂无关联套装", "还没有关联套装", "no synergies", "no synergy builds")
+_EMPTY_MARKERS = (
+    "暂无联动",
+    "暂无关联套装",
+    "还没有关联套装",
+    "0 条联动",
+    "该英雄暂时还没有联动卡片",
+    "no synergies",
+    "no synergy builds",
+)
+
+
+def _has_block_page_evidence(text: str) -> bool:
+    """只把真实 challenge 或短 access-denied 响应判为阻断页。
+
+    正常 Apex 页面可能包含 Cloudflare 资源名称，单独命中该单词不是封禁证据。
+    """
+    lowered = text[:200_000].casefold()
+    prefix = lowered[:8_000]
+    if "challenges.cloudflare.com" in prefix or "_cf_chl_opt" in prefix:
+        return True
+    if ("attention required" in prefix and "cloudflare" in prefix) or "just a moment" in prefix or "请稍候" in prefix:
+        return True
+    compact = " ".join(lowered.split())
+    return len(text.encode("utf-8", errors="ignore")) <= 2_048 and "access denied" in compact
 
 
 def classify_apex_page(html: str, *, expected_slug: str, entry_count: int, status_code: int | None) -> ApexPageOutcome:
@@ -34,7 +56,7 @@ def classify_apex_page(html: str, *, expected_slug: str, entry_count: int, statu
         return ApexPageOutcome(ApexPageState.FAILED, FailureKind.HTTP_429, "http_status")
     if status_code is not None and 500 <= status_code <= 599:
         return ApexPageOutcome(ApexPageState.FAILED, FailureKind.HTTP_5XX, "http_status")
-    if any(marker in lowered for marker in _BLOCK_MARKERS):
+    if _has_block_page_evidence(text):
         return ApexPageOutcome(ApexPageState.FAILED, FailureKind.HTTP_403, "blocked_page")
     if not text.strip():
         return ApexPageOutcome(ApexPageState.FAILED, FailureKind.INVALID_PAYLOAD, "empty_html")

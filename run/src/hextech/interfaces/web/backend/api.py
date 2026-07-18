@@ -122,11 +122,33 @@ def _loading_hextech_payload(preload_status: dict | None = None) -> dict:
     return payload
 
 
-def _snapshot_hextech_payload(champion_name: str) -> dict:
+def _display_private_stats_enabled() -> bool:
+    from hextech.modules.session.settings import load_ui_feature_flags
+
+    return bool(load_ui_feature_flags().get("private_policy_stats_enabled", False))
+
+
+def _open_snapshot_view(generation_id: str | None = None):
+    requested = str(generation_id or "").strip()
+    return _snapshot_client.open_generation(requested) if requested else _snapshot_client.open_view()
+
+
+def _generation_conflict(generation_id: str) -> JSONResponse:
+    return JSONResponse(
+        content={
+            "error": "generation_conflict",
+            "requested_generation_id": str(generation_id or ""),
+            "current_generation_id": str(_snapshot_client.status().get("generation_id") or ""),
+        },
+        status_code=status.HTTP_409_CONFLICT,
+    )
+
+
+def _snapshot_hextech_payload(champion_name: str, *, generation_id: str | None = None) -> dict:
     """只读查询一代快照，并保持数据未就绪与真实无统计的语义分离。"""
 
     try:
-        snapshot_view = _snapshot_client.open_view()
+        snapshot_view = _open_snapshot_view(generation_id)
     except SnapshotValidationError:
         snapshot_view = None
     snapshot_status = snapshot_view.status() if snapshot_view is not None else _snapshot_client.status()
@@ -139,13 +161,14 @@ def _snapshot_hextech_payload(champion_name: str) -> dict:
             "generation_id": generation_id,
         }
 
-    if snapshot_status.get("private_stats_enabled") is False:
+    private_stats_enabled = _display_private_stats_enabled()
+    if not private_stats_enabled:
         return {
             "comprehensive": [],
             "ready": True,
             "loading": False,
-            "status": "PRIVATE_STATS_DISABLED",
-            "data_status": "PRIVATE_STATS_DISABLED",
+            "status": "PRIVACY_OFF",
+            "data_status": "PRIVACY_OFF",
             "generation_state": state,
             "generation_id": generation_id,
             "private_stats_enabled": False,
@@ -160,7 +183,7 @@ def _snapshot_hextech_payload(champion_name: str) -> dict:
         payload["status"] = "GENERATION_DEGRADED" if state == "degraded" else "READY"
         payload["data_status"] = "READY"
         payload["generation_state"] = state
-        payload["private_stats_enabled"] = bool(snapshot_status.get("private_stats_enabled"))
+        payload["private_stats_enabled"] = True
         return payload
 
     if state == "degraded":
@@ -175,7 +198,7 @@ def _snapshot_hextech_payload(champion_name: str) -> dict:
         "data_status": "NO_STATS",
         "generation_state": state,
         "generation_id": generation_id,
-        "private_stats_enabled": bool(snapshot_status.get("private_stats_enabled")),
+        "private_stats_enabled": private_stats_enabled,
     }
 
 
@@ -348,12 +371,19 @@ def register_routes(app: FastAPI) -> None:
         return JSONResponse(content={"error": "资源未找到"}, status_code=404)
 
     @app.get("/api/champions")
-    async def api_champions():
+    async def api_champions(generation_id: str | None = None):
         try:
-            snapshot_view = _snapshot_client.open_view()
+            snapshot_view = _open_snapshot_view(generation_id)
         except SnapshotValidationError:
-            return JSONResponse(content=[])
-        return JSONResponse(content=snapshot_view.get_champions())
+            return _generation_conflict(generation_id) if generation_id else JSONResponse(content=[])
+        return JSONResponse(
+            content={
+                "generation_id": str(snapshot_view.status().get("generation_id") or ""),
+                "champions": snapshot_view.get_champions(),
+            }
+            if generation_id
+            else snapshot_view.get_champions()
+        )
 
     @app.get("/api/startup_status")
     async def api_startup_status(request: Request):
@@ -380,9 +410,14 @@ def register_routes(app: FastAPI) -> None:
             return JSONResponse(content=[])
 
     @app.get("/api/champion/{name}/hextechs")
-    async def api_champion_hextechs(name: str):
+    async def api_champion_hextechs(name: str, generation_id: str | None = None):
         canonical_name = web_runtime.resolve_canonical_hero_name(name)
-        return JSONResponse(content=_snapshot_hextech_payload(canonical_name))
+        if generation_id:
+            try:
+                _open_snapshot_view(generation_id)
+            except SnapshotValidationError:
+                return _generation_conflict(generation_id)
+        return JSONResponse(content=_snapshot_hextech_payload(canonical_name, generation_id=generation_id))
 
     @app.post("/api/champion/{name}/preload")
     async def api_preload_champion(name: str, request: Request):
@@ -425,10 +460,17 @@ def register_routes(app: FastAPI) -> None:
             return JSONResponse(content={})
 
     @app.get("/api/synergies/{champ_id}")
-    async def api_synergies(champ_id: str):
+    async def api_synergies(champ_id: str, generation_id: str | None = None):
         try:
-            data = _snapshot_client.open_view().get_synergy_data()
-            return JSONResponse(content=_build_synergy_api_payload(data, champ_id))
+            snapshot_view = _open_snapshot_view(generation_id)
+            data = snapshot_view.get_synergy_data()
+            payload = _build_synergy_api_payload(data, champ_id)
+            payload["generation_id"] = str(snapshot_view.status().get("generation_id") or "")
+            return JSONResponse(content=payload)
+        except SnapshotValidationError:
+            return _generation_conflict(generation_id) if generation_id else JSONResponse(
+                content=_empty_synergy_payload(status_text="source_unavailable", message="协同数据未就绪")
+            )
         except Exception as exc:
             web_runtime.logger.warning("协同数据查询失败：%s", exc)
             return JSONResponse(content=_empty_synergy_payload(status_text="error", message="协同数据读取失败"))

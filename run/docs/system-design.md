@@ -6,10 +6,13 @@
 
 ```mermaid
 flowchart LR
-    Contracts["contracts"] --> Modules["modules"]
-    Modules --> Adapters["interfaces / infrastructure"]
-    Adapters --> Runtime["runtime"]
-    Runtime --> Bootstrap["bootstrap"]
+    Modules["modules"] --> Contracts["contracts"]
+    Interfaces["interfaces"] --> Modules
+    Infrastructure["infrastructure"] --> Modules
+    Runtime["runtime"] --> Modules
+    Bootstrap["bootstrap"] --> Interfaces
+    Bootstrap --> Infrastructure
+    Bootstrap --> Runtime
 ```
 
 反向导入由 architecture tests 阻断。模块不得依赖根脚本、旧路径 alias 或转发入口。
@@ -19,21 +22,24 @@ flowchart LR
 ```mermaid
 flowchart LR
     Remote["CDN / Apex / Mayhem"] --> Fetch["Transport + Source"]
-    Catalog["resources/catalog"] --> Parse["Parser + Normalizer"]
+    Catalog["Catalog candidate"] --> Parse["Parser + Normalizer"]
     Fetch --> Parse
     Parse --> Run["var/sources/*/runs/run_id"]
     Run --> Gate["来源完整性门禁"]
-    Gate --> SourceCurrent["source current.v1.json"]
-    SourceCurrent --> DataService["DataService candidate builder"]
+    Gate --> Candidate["source candidate pointers"]
+    Candidate --> Cohort["CohortPromotionStore + journal"]
+    Cohort --> SourceCurrent["catalog/source current.v2.json"]
+    SourceCurrent --> DataService["DataService generation builder"]
     Seed["resources/seeds"] --> DataService
     DataService --> GenerationGate["Schema / 数量 / SHA-256"]
     GenerationGate --> Generation["var/snapshots/generations/id"]
-    Generation --> Current["snapshot current.v1.json"]
+    Generation --> Current["snapshot current.v2.json（最后提交）"]
     Current --> View["固定 DataSnapshotView"]
     View --> UI["Desktop / Web / Overlay"]
 ```
 
-只有 DataService 可以发布 generation。scraper、Web、Desktop 和 Overlay 都没有 snapshot 发布权限。
+只有 DataService 可以提升来源 current 并发布 generation。来源 publisher 只写 immutable run
+和 candidate pointer，显式请求 direct promotion 也会失败；Web、Desktop 和 Overlay 都没有发布权限。
 
 ## 来源门禁
 
@@ -51,5 +57,12 @@ Mayhem 优先解析 manifest JSON，HTML 仅为结构化 fallback。reject 带�
 - Runtime Supervisor：管理 DataService、Web、Overlay host 与 Vision sidecar 的生命周期。
 - DataService：刷新来源、选择 last-good、构建并发布 generation。
 - Web/Overlay：只通过固定 snapshot view 查询，不直接读取来源 run。
+
+DataService 同时只运行一个 refresh cycle。运行中收到的普通触发合并为一次
+`pending_recheck`，force 触发会升级该 recheck；当前周期结束后立即重新计算到期状态。
+shutdown 会拒绝新触发并清除 pending，不启动后续 worker。
+
+Overlay 在有效的 `session_id + selection_epoch` 首次渲染时固定 immutable view。同一轮中
+current 变化只记录 `new_generation_available`，下一 epoch、新 session 或本轮隐藏后才采用新代。
 
 源码态 supervisor 子进程显式继承 `src` import path；冻结态复用同一可执行文件的模式参数。所有运行日志写入 `var/logs`，诊断写入 `var/reports`。

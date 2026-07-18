@@ -61,6 +61,13 @@ StatStatusCode = Literal[
     "CONTEXT_MISSING",
     "CONTEXT_EXPIRED",
 ]
+SynergyStatusCode = Literal[
+    "READY",
+    "NO_MATCH",
+    "CONTEXT_MISSING",
+    "SOURCE_UNAVAILABLE",
+    "GENERATION_MISMATCH",
+]
 
 
 class StatPanelModel(TypedDict):
@@ -73,6 +80,7 @@ class StatPanelModel(TypedDict):
     winrate_text: str
     pickrate_text: str
     status_text: str
+    synergy_status: SynergyStatusCode
 
 
 class SynergyPanelModel(TypedDict):

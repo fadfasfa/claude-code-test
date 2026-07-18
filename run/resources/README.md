@@ -11,7 +11,7 @@
 | `evidence/mayhem/` | 可审计 Mayhem 来源证据 | 维护流程 | parser、离线审计 |
 
 界面不直接拼装这些输入。Desktop、Web 和 Overlay 只通过
-`DataSnapshotView` 读取 `var/snapshots/current.v1.json` 固定的完整 generation。
+`DataSnapshotView` 读取 `var/snapshots/current.v2.json` 固定的完整 generation。
 
-维护时同步检查 `manifest.v1.json`、构建白名单和资源测试。禁止把凭据、cookie、
+维护时同步检查 `manifest.v2.json`、构建白名单和资源测试。禁止把凭据、cookie、
 浏览器 profile、本机缓存或失败 run 当作稳定资源提交。

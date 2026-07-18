@@ -131,7 +131,7 @@ def _packaged_data_root(package_dir: Path) -> Path:
 
 
 def _has_verified_snapshot_seed(package_dir: Path) -> bool:
-    return (_packaged_data_root(package_dir) / "resources" / "seeds" / "current.v1.json").is_file()
+    return (_packaged_data_root(package_dir) / "resources" / "seeds" / "current.v2.json").is_file()
 
 
 def _write_smoke_feature_flags(runtime_root: Path) -> None:
@@ -157,15 +157,15 @@ def _required_paths_ready(package_dir: Path, runtime_root: Path, started_at_wall
     for rel in REQUIRED_PACKAGE_DIRS:
         checks[f"package:{rel}"] = (packaged_data_root / rel).is_dir()
     if _has_verified_snapshot_seed(package_dir):
-        checks["package:resources/seeds/current.v1.json"] = (
-            packaged_data_root / "resources" / "seeds" / "current.v1.json"
+        checks["package:resources/seeds/current.v2.json"] = (
+            packaged_data_root / "resources" / "seeds" / "current.v2.json"
         ).is_file()
     for rel in REQUIRED_RUNTIME_DIRS:
         checks[f"runtime:{rel}"] = (runtime_root / rel).is_dir()
     for rel in REQUIRED_RUNTIME_FILES:
         path = runtime_root / rel
         checks[f"runtime:{rel}"] = path.is_file() and path.stat().st_mtime >= started_at_wall
-    checks["runtime:snapshots/current.v1.json"] = (runtime_root / "snapshots" / "current.v1.json").is_file()
+    checks["runtime:snapshots/current.v2.json"] = (runtime_root / "snapshots" / "current.v2.json").is_file()
     package_roots = [("package", package_dir)]
     if packaged_data_root != package_dir:
         package_roots.append(("_internal", packaged_data_root))

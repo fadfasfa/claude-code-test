@@ -83,6 +83,11 @@ def test_diagnostics_button_is_created_in_title_frame(monkeypatch):
 
     desktop_app.HextechUI._build_ui(dummy)
 
+    assert dummy.exit_button.parent is dummy.title_frame
+    assert dummy.exit_button.kwargs["text"] == "×"
+    assert dummy.exit_button.kwargs["command"] == dummy.on_close
+    assert dummy.exit_button.pack_options["side"] == desktop_app.tk.RIGHT
+    assert dummy.exit_button.kwargs["activebackground"] == desktop_app.UI_COLORS["red"]
     assert dummy.diagnostics_button.parent is dummy.title_frame
     assert dummy.diagnostics_button.kwargs["text"] == "诊断"
     assert dummy.diagnostics_button.kwargs["command"] == dummy._start_user_diagnostics_export

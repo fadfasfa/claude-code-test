@@ -274,7 +274,7 @@ def scan_lcu_process() -> tuple[str | None, str | None]:
 def _default_fetch_response(url: str, headers: dict[str, str]) -> requests.Response:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
-        return requests.get(url, headers=headers, verify=False, timeout=2.5)
+        return requests.get(url, headers=headers, verify=False, timeout=(0.4, 0.8))
 
 
 @lru_cache(maxsize=256)
@@ -432,12 +432,16 @@ def write_current_live_client_overlay_context_once(
 
     headers = {"Accept": "application/json"}
     for endpoint in (LIVE_CLIENT_ACTIVE_PLAYER_ENDPOINT, LIVE_CLIENT_ALL_GAME_DATA_ENDPOINT):
+        if should_write is not None and not should_write():
+            return False
         url = f"{base_url.rstrip('/')}{endpoint}"
         try:
             response = fetch_response(url, headers)
         except Exception:
             logger.debug("Live Client 当前英雄上下文请求失败：%s", endpoint, exc_info=True)
             continue
+        if should_write is not None and not should_write():
+            return False
         status_code = int(getattr(response, "status_code", 0) or 0)
         if status_code != 200:
             continue
@@ -542,6 +546,8 @@ def write_current_lcu_overlay_context_once(
         return False
 
     port, token = credential_provider()
+    if should_write is not None and not should_write():
+        return False
     if not port or not token:
         return write_missing_if_allowed("lcu-unavailable")
     auth = base64.b64encode(f"riot:{token}".encode("utf-8")).decode("ascii")
@@ -552,6 +558,8 @@ def write_current_lcu_overlay_context_once(
     except Exception:
         logger.debug("LCU 当前英雄上下文请求失败。", exc_info=True)
         return write_missing_if_allowed("lcu-error")
+    if should_write is not None and not should_write():
+        return False
     status_code = int(getattr(response, "status_code", 0) or 0)
     if status_code in (401, 403):
         logger.debug("LCU 当前英雄上下文认证失效。")
@@ -617,7 +625,7 @@ class OverlayContextPoller:
     stop_event: threading.Event
     thread: threading.Thread
 
-    def stop(self, timeout_seconds: float = 4.0) -> None:
+    def stop(self, timeout_seconds: float = 1.5) -> None:
         self.stop_event.set()
         self.thread.join(timeout=max(0.0, float(timeout_seconds)))
 

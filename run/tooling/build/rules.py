@@ -7,12 +7,17 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from tooling.build.resource_manifest import MANIFEST_RELATIVE_PATH, load_resource_manifest, validate_resource_manifest
+
 
 CATALOG_FILES = (
+    "manifest.v2.json",
     "英雄目录.v1.json",
     "海克斯资源目录.v1.json",
     "hero_version.txt",
@@ -87,7 +92,7 @@ def iter_seed_files(seed_root: Path) -> list[Path]:
     """只枚举 current 指向的完整 seed generation。"""
 
     root = seed_root.resolve()
-    pointer = root / "current.v1.json"
+    pointer = root / "current.v2.json"
     if not pointer.is_file():
         return []
     try:
@@ -109,6 +114,26 @@ def iter_seed_files(seed_root: Path) -> list[Path]:
     return [pointer, *generation_files]
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _manifest_descriptors(base_dir: Path) -> dict[str, dict]:
+    payload = load_resource_manifest(base_dir)
+    items = payload.get("files")
+    if not isinstance(items, list):
+        raise ValueError("resources manifest v2 缺少 files")
+    return {
+        str(item.get("path") or ""): item
+        for item in items
+        if isinstance(item, dict) and str(item.get("path") or "")
+    }
+
+
 def iter_source_files(base_dir: Path) -> list[str]:
     """生成应用源码审计清单，入口只来自 ``src/hextech``。"""
 
@@ -128,26 +153,79 @@ def iter_package_data_entries(
 ) -> list[PackageData]:
     """返回新布局的打包数据规则，不创建仓库内中间副本。"""
 
+    base_dir = base_dir.resolve()
     seed_root = (verified_snapshot_root or (base_dir / SEED_DIR)).resolve()
     entries: list[PackageData] = []
     static_dir = web_static_dir(base_dir)
     if static_dir.is_dir():
         entries.append(PackageData(static_dir, "static"))
 
-    catalog_dir = base_dir / CATALOG_DIR
-    for filename in CATALOG_FILES:
-        source = catalog_dir / filename
-        if source.is_file():
-            entries.append(PackageData(source, CATALOG_DIR.as_posix()))
+    report = validate_resource_manifest(base_dir)
+    descriptors = _manifest_descriptors(base_dir)
+    packaged_files = report["packaged_files"]
+    seed_prefix = SEED_DIR.as_posix() + "/"
+    for rel_path in packaged_files:
+        source = base_dir / rel_path
+        if rel_path.startswith(seed_prefix):
+            seed_relative = Path(rel_path).relative_to(SEED_DIR)
+            source = seed_root / seed_relative
+            if not source.is_file():
+                raise ValueError(f"verified seed 缺少 manifest 白名单文件：{seed_relative.as_posix()}")
+            expected_hash = str(descriptors[rel_path].get("sha256") or "")
+            if _sha256(source) != expected_hash:
+                raise ValueError(f"verified seed 与 manifest SHA-256 不一致：{seed_relative.as_posix()}")
+        entries.append(PackageData(source, Path(rel_path).parent.as_posix()))
 
-    asset_dir = base_dir / ASSET_DIR
-    if asset_dir.is_dir():
-        validate_asset_dir_for_package(asset_dir)
-        entries.append(PackageData(asset_dir, ASSET_DIR.as_posix()))
-
-    for source in iter_seed_files(seed_root):
-        relative_parent = source.relative_to(seed_root).parent
-        entries.append(PackageData(source, (SEED_DIR / relative_parent).as_posix()))
-
+    entries.append(PackageData(base_dir / MANIFEST_RELATIVE_PATH, RESOURCE_ROOT_DIR.as_posix()))
     entries.append(PackageData(manifest_path, "."))
     return entries
+
+
+def stage_package_data_entries(entries: Iterable[PackageData], staging_root: Path) -> list[PackageData]:
+    """把所有 PyInstaller data 输入复制到仓库外 clean staging。"""
+
+    root = staging_root.resolve()
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True)
+    staged: list[PackageData] = []
+    for index, entry in enumerate(entries):
+        target_root = root / f"entry-{index:04d}"
+        if entry.source.is_dir():
+            destination = target_root / entry.source.name
+            shutil.copytree(entry.source, destination)
+        else:
+            target_root.mkdir(parents=True)
+            destination = target_root / entry.source.name
+            shutil.copy2(entry.source, destination)
+        staged.append(PackageData(destination, entry.target))
+    return staged
+
+
+def stage_package_data_tree(entries: Iterable[PackageData], staging_root: Path) -> PackageData:
+    """把白名单资源合并为一棵 clean tree，避免 Windows 命令行过长。
+
+    输入仍是逐文件 manifest 结果；这里不遍历仓库 assets，未列文件不会
+    被复制到 staging，PyInstaller 只看到最终的白名单树。
+    """
+
+    root = staging_root.resolve()
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True)
+    for entry in entries:
+        target_root = (root / entry.target).resolve()
+        if target_root != root and root not in target_root.parents:
+            raise ValueError(f"打包 staging 目标越界：{entry.target}")
+        if entry.source.is_dir():
+            destination = target_root
+            if destination.exists() and any(destination.iterdir()):
+                raise ValueError(f"打包 staging 目录冲突：{entry.target}")
+            shutil.copytree(entry.source, destination, dirs_exist_ok=True)
+        else:
+            target_root.mkdir(parents=True, exist_ok=True)
+            destination = target_root / entry.source.name
+            if destination.exists():
+                raise ValueError(f"打包 staging 文件冲突：{destination.relative_to(root).as_posix()}")
+            shutil.copy2(entry.source, destination)
+    return PackageData(root, ".")

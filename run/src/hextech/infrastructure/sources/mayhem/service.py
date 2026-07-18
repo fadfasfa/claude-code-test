@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from hextech.contracts import ArtifactDescriptor
 from hextech.modules.data.catalog.runtime_store import build_runtime_state_path
 from hextech.infrastructure.sources.mayhem.source import scrape_mayhem_combos
 from hextech.modules.data.ports.atomic import atomic_write_json
@@ -27,6 +28,7 @@ from hextech.modules.data.source_runs import load_source_current, resolve_curren
 from hextech.modules.acquisition.common.contracts import utc_now_iso
 from hextech.modules.acquisition.mayhem.diagnostics import summarize_rejects
 from hextech.infrastructure.sources.mayhem.publisher import publish_mayhem_run
+from hextech.modules.data.catalog.versioned import load_active_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +167,8 @@ def run_mayhem_refresh(
     scraper: Callable[[], Mapping[str, Any]] | None = None,
     merge: Callable[..., Mapping[str, Any]] | None = None,
     rebuild_hint_cache: Callable[[], None] | None = None,
+    promote_current: bool = False,
+    pointer_output: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     """按 stale 阈值刷新 Mayhem 来源；失败不影响上一份 current。"""
 
@@ -205,7 +209,8 @@ def run_mayhem_refresh(
             )
 
         previous = load_source_current("mayhem")
-        previous_count = int(previous.get("record_count") or 0)
+        previous_descriptor = ArtifactDescriptor.from_mapping(previous["artifact"]) if previous else None
+        previous_count = previous_descriptor.record_count if previous_descriptor is not None else 0
         if previous_count and raw_items < max(1, previous_count // 2):
             return _failure_status(
                 reason="scale_regression",
@@ -222,7 +227,16 @@ def run_mayhem_refresh(
             from hextech.modules.acquisition.mayhem.merge import merge_mayhem_combos
 
             merge_func = merge_mayhem_combos
-        summary = dict(merge_func(mayhem_raw_path=raw_path, write_output=False, validate_only=True))
+        catalog = load_active_catalog()
+        summary = dict(
+            merge_func(
+                mayhem_raw_path=raw_path,
+                augment_manifest_path=catalog.root / "海克斯资源目录.v1.json",
+                core_data_path=catalog.root / "英雄目录.v1.json",
+                write_output=False,
+                validate_only=True,
+            )
+        )
         added_items = int(summary.get("added_items") or 0)
         if int(summary.get("mayhem_valid_items") or 0) <= 0:
             return _failure_status(
@@ -233,11 +247,39 @@ def run_mayhem_refresh(
                 extra={"summary": summary},
             )
 
+        page = raw_payload.get("page") if isinstance(raw_payload.get("page"), Mapping) else {}
+        normalized_payload = {
+            "schema_version": 2,
+            "source": "arammayhem",
+            "source_url": str(raw_payload.get("source_url") or ""),
+            "fetched_at": str(raw_payload.get("fetched_at") or started_at),
+            "items": list(summary.get("normalized_items") or []),
+        }
+        normalized_rejects = [
+            {"reason_code": str(item.get("reason") or "unknown"), **dict(item)}
+            for item in (list(raw_payload.get("rejects") or []) + list(summary.get("clean_rejects") or []))
+            if isinstance(item, Mapping)
+        ]
+        validation_report = {
+            "raw_items": int(summary.get("mayhem_raw_items") or 0),
+            "valid_items": int(summary.get("mayhem_valid_items") or 0),
+            "duplicate_items": int(summary.get("skipped_duplicate_items") or 0),
+            "rejected_items": int(summary.get("reject_items") or 0),
+            "rejects": normalized_rejects[:20],
+            "max_pages": int(raw_payload.get("max_pages") or 0),
+            "parse_mode": str(page.get("parse_mode") or ""),
+            "selected": int(page.get("selected") or 0),
+            "total": int(page.get("total") or 0),
+            "pagination_complete": page.get("pagination_complete") is True,
+            "merge_dry_run": {key: value for key, value in summary.items() if key not in {"merged_payload", "normalized_items"}},
+        }
         published_path, _ = publish_mayhem_run(
-            raw_payload,
+            normalized_payload,
             run_id=run_id,
             started_at=started_at,
-            report={"rejects": reject_report, "merge_dry_run": summary},
+            report=validation_report,
+            promote_current=promote_current,
+            pointer_output=pointer_output,
         )
         return write_mayhem_refresh_status(
             result="success",

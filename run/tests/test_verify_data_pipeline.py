@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -19,13 +20,13 @@ def _payloads() -> dict[str, object]:
             "英雄一": {"hero_id": "1", "augments": [{"id": "a1", "name": "强化一"}]}
         },
         "overlay_hints": {"augments": {"a1": {"name": "强化一"}}},
-        "identities": {"augments": {"a1": "强化一"}},
+        "identities": {"schema_version": 2, "augments": {"a1": "强化一"}},
     }
 
 
 def test_verify_generation_cross_checks_manifest_counts(tmp_path: Path) -> None:
     root = tmp_path / "snapshots"
-    manifest = DataSnapshotPublisher(root).publish(_payloads(), private_stats_enabled=True)
+    manifest = DataSnapshotPublisher(root).publish(_payloads())
 
     result = verify_data_pipeline.verify_generation(root)
 
@@ -36,7 +37,7 @@ def test_verify_generation_cross_checks_manifest_counts(tmp_path: Path) -> None:
 
 def test_verify_generation_rejects_corrupted_payload(tmp_path: Path) -> None:
     root = tmp_path / "snapshots"
-    manifest = DataSnapshotPublisher(root).publish(_payloads(), private_stats_enabled=True)
+    manifest = DataSnapshotPublisher(root).publish(_payloads())
     (root / "generations" / manifest.generation_id / "champions.json").write_text("[]", encoding="utf-8")
 
     with pytest.raises(SnapshotValidationError, match="校验失败"):
@@ -90,3 +91,28 @@ def test_direct_acceptance_script_adds_src_before_late_imports(tmp_path: Path) -
 
     assert completed.returncode == 0, completed.stderr
     assert str(script.parents[2] / "src" / "hextech") in completed.stdout
+
+
+def test_acceptance_report_dir_records_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    DataSnapshotPublisher(tmp_path / "resources" / "seeds").publish(_payloads())
+    report_dir = tmp_path / "reports" / "success"
+    monkeypatch.setattr(verify_data_pipeline, "RUN_DIR", tmp_path)
+
+    exit_code = verify_data_pipeline.main(["--report-dir", str(report_dir)])
+    summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert summary["passed"] is True
+    assert summary["generation"]["champion_count"] == 1
+
+
+def test_acceptance_report_dir_records_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    report_dir = tmp_path / "reports" / "failure"
+    monkeypatch.setattr(verify_data_pipeline, "RUN_DIR", tmp_path)
+
+    exit_code = verify_data_pipeline.main(["--strict-full-chain", "--report-dir", str(report_dir)])
+    summary = json.loads((report_dir / "summary.json").read_text(encoding="utf-8"))
+
+    assert exit_code == 1
+    assert summary["passed"] is False
+    assert summary["error_type"] == "AcceptanceFailure"

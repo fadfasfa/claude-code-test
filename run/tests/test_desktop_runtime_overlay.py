@@ -113,6 +113,15 @@ class DesktopRuntimeOverlayTests(unittest.TestCase):
         self.assertFalse(ui._runtime_services_ready)
         self.assertEqual(manager.shutdown_count, 1)
 
+    def test_on_close_ignores_duplicate_exit_request(self):
+        from hextech.interfaces.desktop import app
+
+        ui = object.__new__(app.HextechUI)
+        ui._closing = True
+        ui.root = SimpleNamespace(destroy=lambda: self.fail("重复退出不得再次销毁窗口"))
+
+        ui.on_close()
+
     def test_service_manager_failed_bootstrap_cleans_published_manager_once(self):
         class FakeServiceManager:
             def __init__(self):

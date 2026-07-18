@@ -209,7 +209,7 @@ def start_host_process() -> subprocess.Popen:
     if getattr(sys, "frozen", False):
         command = [sys.executable, "--game-overlay"]
     else:
-        command = [sys.executable, "-m", "hextech.interfaces.overlay.host"]
+        command = [sys.executable, "-m", "hextech.interfaces.overlay.host_runner"]
     ready_path = Path(build_runtime_state_path(f"game_overlay_host.{uuid.uuid4().hex}.ready.json"))
     exit_path = Path(build_runtime_state_path(f"game_overlay_host.{uuid.uuid4().hex}.exit.json"))
     ready_token = uuid.uuid4().hex

@@ -21,7 +21,7 @@ from hextech.contracts import (
 )
 from hextech.contracts.identifiers import InvalidIdentifierError, champion_id, optional_augment_id
 from hextech.modules.data.generation import DataSnapshotManifest, DataSnapshotView
-from hextech.modules.recommendation import RecommendationService
+from hextech.modules.recommendation import RecommendationPolicy, RecommendationService
 from hextech.modules.session import SessionCoordinator
 from hextech.modules.session.evidence import build_evidence_bundle
 from hextech.modules.vision import GameWindowObservation
@@ -39,12 +39,12 @@ def test_champion_id_rejects_ambiguous_values(value: object) -> None:
         champion_id(value)
 
 
-def _snapshot_view(*, private_stats_enabled: bool = True, degraded: bool = False) -> DataSnapshotView:
+def _snapshot_view(*, degraded: bool = False) -> DataSnapshotView:
     manifest = DataSnapshotManifest(
-        schema_version=1,
+        schema_version=2,
         generation_id="g1",
         created_at="now",
-        private_stats_enabled=private_stats_enabled,
+        content_fingerprint="a" * 64,
         source_files=(),
         champion_count=2,
         augment_count=1,
@@ -191,14 +191,19 @@ def test_privacy_off_never_carries_combo_stats(monkeypatch: pytest.MonkeyPatch) 
         slots=(VisionSlot(0, VisionSlotState.READY, AugmentId("stable_ready")),),
     )
 
-    view = _snapshot_view(private_stats_enabled=False)
+    view = _snapshot_view()
     monkeypatch.setattr(
         view.__class__,
         "get_combo_stats",
         lambda *_args, **_kwargs: pytest.fail("隐私关闭时不得查询组合统计"),
     )
 
-    model = RecommendationService().build(context, view, vision=vision)
+    model = RecommendationService().build(
+        context,
+        view,
+        vision=vision,
+        policy=RecommendationPolicy(private_stats_enabled=False),
+    )
 
     assert model.augment_slots[0]["status_code"] == "PRIVACY_OFF"
     assert model.augment_slots[0]["stats"] == {}

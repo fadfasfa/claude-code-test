@@ -177,7 +177,13 @@ def parse_combo_manifest(payload: dict[str, Any], base_url: str, *, max_pages: i
         elif reject:
             rejects.append(reject)
 
-    return items, rejects, {"page_size": page_size, "total": total, "selected": limit}
+    return items, rejects, {
+        "parse_mode": "manifest",
+        "page_size": page_size,
+        "total": total,
+        "selected": limit,
+        "pagination_complete": max_pages == 0 and limit == total and len(cards) == total,
+    }
 
 
 def parse_combo_html(html: str, base_url: str, *, max_pages: int = 0) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
@@ -194,7 +200,13 @@ def parse_combo_html(html: str, base_url: str, *, max_pages: int = 0) -> tuple[l
             items.append(item)
         elif reject:
             rejects.append(reject)
-    return items, rejects, {"page_size": 30, "total": len(articles), "selected": len(articles)}
+    return items, rejects, {
+        "parse_mode": "html",
+        "page_size": 30,
+        "total": len(articles),
+        "selected": len(articles),
+        "pagination_complete": False,
+    }
 
 
 def scrape_mayhem_combos(

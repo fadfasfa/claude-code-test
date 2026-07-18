@@ -499,7 +499,7 @@ def merge_mayhem_combos(
     added = 0
     skipped_duplicates = 0
     clean_rejects: list[dict[str, Any]] = []
-    valid_mayhem_items = 0
+    normalized_items: list[dict[str, Any]] = []
     for index, raw_item in enumerate(raw_items):
         if not isinstance(raw_item, dict):
             clean_rejects.append({"index": index, "reason": "raw_item_schema_mismatch"})
@@ -523,24 +523,37 @@ def merge_mayhem_combos(
             clean_rejects.append({"index": index, "reason": "unknown_augment", "augment_names": unknown_augments, "source_url": raw_item.get("source_url", "")})
             continue
 
-        valid_mayhem_items += 1
         key = _combo_key(champion.id, augment_names)
-        if key in existing_keys or key in seen_mayhem_keys:
+        if key in seen_mayhem_keys:
+            skipped_duplicates += 1
+            continue
+
+        synergy_item = _build_synergy_item(raw_item, augment_names, augment_tiers)
+        normalized_items.append(
+            {
+                "combo_key": key,
+                "champion_id": champion.id,
+                "champion_name": champion.name,
+                "augment_names": list(augment_names),
+                "synergy_item": synergy_item,
+                "source_url": str(raw_item.get("source_url") or ""),
+            }
+        )
+        seen_mayhem_keys.add(key)
+        if key in existing_keys:
             skipped_duplicates += 1
             continue
 
         hero_payload = _ensure_hero_payload(cleaned, champion)
-        synergy_item = _build_synergy_item(raw_item, augment_names, augment_tiers)
         hero_payload["synergy_items"].append(synergy_item)
         hero_payload["synergies"].append(_flat_synergy_string(synergy_item))
         existing_keys.add(key)
-        seen_mayhem_keys.add(key)
         added += 1
 
     reject_count = len(raw_rejects) + len(clean_rejects)
     if write_output and output_target is None:
         raise ValueError("写入合并结果必须显式提供 output_path")
-    should_write = bool(write_output and output_target is not None and valid_mayhem_items > 0)
+    should_write = bool(write_output and output_target is not None and normalized_items)
     if should_write:
         _atomic_write_json(output_target, cleaned)
 
@@ -558,14 +571,15 @@ def merge_mayhem_combos(
             for value in apex_payload.values()
             if isinstance(value, dict)
         ),
-        "mayhem_raw_items": len(raw_items),
-        "mayhem_valid_items": valid_mayhem_items,
+        "mayhem_raw_items": len(raw_items) + len(raw_rejects),
+        "mayhem_valid_items": len(normalized_items),
         "added_items": added,
         "skipped_duplicate_items": skipped_duplicates,
         "reject_items": reject_count,
         "raw_reject_items": len(raw_rejects),
         "clean_reject_items": len(clean_rejects),
         "clean_rejects": clean_rejects[:20],
+        "normalized_items": normalized_items,
         "merged_payload": cleaned,
     }
 

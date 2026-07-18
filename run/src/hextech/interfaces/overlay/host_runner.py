@@ -5,6 +5,7 @@ from hextech.interfaces.overlay.host_common import *
 from hextech.interfaces.overlay.host_platform import *
 from hextech.interfaces.overlay.host_visibility import *
 from hextech.interfaces.overlay.host_sync import *
+from hextech.interfaces.overlay.generation_pin import SelectionGenerationPin
 
 def resolve_event_render_delay_ms(config: Mapping[str, Any], visibility: Mapping[str, Any]) -> int:
     """根据最近选择态事件选择 overlay host 下一帧轮询间隔。"""
@@ -49,6 +50,7 @@ def _schedule_event_render(
     fast_poll_ms = max(50, int(config.get("fast_event_poll_ms", 60) or 60))
     fast_hold_seconds = max(0.0, float(config.get("fast_event_hold_ms", 1200) or 1200) / 1000.0)
     source = data_source or SharedOverlayDataSource()
+    generation_pin = SelectionGenerationPin()
     failure_count = 0
     render_after_id: str | None = None
 
@@ -120,6 +122,8 @@ def _schedule_event_render(
                     visibility["last_diagnostic_key"] = diagnostic_key
             should_show = _sync_event_visibility(root, config, visibility, snapshot, apply_window=False)
             if not should_show:
+                generation_pin.reset()
+                visibility["pinned_generation"] = generation_pin.status()
                 _sync_event_visibility(
                     root,
                     config,
@@ -153,6 +157,8 @@ def _schedule_event_render(
                 )
                 success = True
                 return
+            snapshot_view = generation_pin.resolve(snapshot, source.open_view)
+            visibility["pinned_generation"] = generation_pin.status()
             context = source.read_context()
             now = time.time()
             recent_context = None
@@ -173,10 +179,10 @@ def _schedule_event_render(
                     if isinstance(cached_context, Mapping) and cached_context.get("ok"):
                         recent_context = cached_context
             effective_context = recent_context if not context.get("ok") and recent_context is not None else context
-            snapshot_view = source.open_view()
             if snapshot_view is not None:
                 hint_cache = snapshot_view.get_overlay_hints()
                 hint_cache.setdefault("snapshot", {}).update(snapshot_view.status())
+                hint_cache = apply_overlay_display_policy(hint_cache)
             else:
                 hint_cache = source.read_hint_cache()
             session_state = build_runtime_session(
@@ -185,6 +191,7 @@ def _schedule_event_render(
                 snapshot_view=snapshot_view,
                 user_enabled=bool(visibility.get("user_enabled")),
                 game_present=bool(visibility.get("target_hwnd")),
+                private_stats_enabled=source_has_private_stats(hint_cache),
             )
             model = build_render_model_from_session(session_state, hint_cache=hint_cache)
             visibility["session_state"] = session_state

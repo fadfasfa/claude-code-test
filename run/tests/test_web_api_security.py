@@ -163,17 +163,20 @@ def test_public_hextech_loading_payload_redacts_startup_status_paths(monkeypatch
 
 
 @pytest.mark.parametrize(
-    ("snapshot_status", "expected_status"),
+    ("snapshot_status", "privacy_enabled", "expected_status"),
     [
-        ({"state": "ready", "generation_id": "g1", "private_stats_enabled": True}, "NO_STATS"),
-        ({"state": "ready", "generation_id": "g1", "private_stats_enabled": False}, "PRIVATE_STATS_DISABLED"),
-        ({"state": "degraded", "generation_id": "g0", "private_stats_enabled": True}, "GENERATION_DEGRADED"),
+        ({"state": "ready", "generation_id": "g1"}, True, "NO_STATS"),
+        ({"state": "ready", "generation_id": "g1"}, False, "PRIVACY_OFF"),
+        ({"state": "degraded", "generation_id": "g0"}, True, "GENERATION_DEGRADED"),
     ],
 )
-def test_public_hextech_empty_states_are_not_conflated(monkeypatch, snapshot_status, expected_status):
+def test_public_hextech_empty_states_are_not_conflated(
+    monkeypatch, snapshot_status, privacy_enabled, expected_status
+):
     client, web_api = _client()
     monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda name: "Garen")
     monkeypatch.setattr(web_api._snapshot_client, "status", lambda: snapshot_status)
+    monkeypatch.setattr(web_api, "_display_private_stats_enabled", lambda: privacy_enabled)
     monkeypatch.setattr(
         web_api._snapshot_client,
         "open_view",
@@ -188,14 +191,15 @@ def test_public_hextech_empty_states_are_not_conflated(monkeypatch, snapshot_sta
 
 def test_private_stats_disabled_does_not_expose_published_detail(monkeypatch):
     client, web_api = _client()
-    status = {"state": "ready", "generation_id": "g1", "private_stats_enabled": False}
+    status = {"state": "ready", "generation_id": "g1"}
     view = _SnapshotView(status, detail={"augments": [{"id": "a1", "win_rate": 0.9}]})
     monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda name: "Garen")
     monkeypatch.setattr(web_api._snapshot_client, "open_view", lambda: view)
+    monkeypatch.setattr(web_api, "_display_private_stats_enabled", lambda: False)
 
     payload = client.get("/api/champion/Garen/hextechs").json()
 
-    assert payload["status"] == "PRIVATE_STATS_DISABLED"
+    assert payload["status"] == "PRIVACY_OFF"
     assert payload["comprehensive"] == []
     assert payload["generation_state"] == "ready"
 
@@ -443,9 +447,8 @@ def test_preloaded_reader_returns_snapshot_copy(monkeypatch, tmp_path):
             "champions": [{"id": "86", "name": "Garen"}],
             "champion_hextech": {"Garen": {"hero_id": "86", "augments": [{"id": "a1", "name": "original"}]}},
             "overlay_hints": {"hints": {}, "augments": {}},
-            "identities": {"champions": {"86": "Garen"}, "augments": {}},
+            "identities": {"schema_version": 2, "champions": {"86": "Garen"}, "augments": {}},
         },
-        private_stats_enabled=True,
     )
     monkeypatch.setattr(runtime, "resolve_canonical_hero_name", lambda name: "Garen")
     monkeypatch.setattr(runtime, "_snapshot_client", DataSnapshotClient(tmp_path))

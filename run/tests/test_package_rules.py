@@ -144,13 +144,20 @@ def test_pyinstaller_collects_scraping_package_data():
 
 
 def test_package_entries_include_verified_snapshot_files(tmp_path):
+    from tooling.build.resource_manifest import write_resource_manifest
     from tooling.build.rules import iter_package_data_entries
 
     snapshot_root = tmp_path / "verified"
     generation_dir = snapshot_root / "generations" / "g1"
     generation_dir.mkdir(parents=True)
-    (snapshot_root / "current.v1.json").write_text('{"current_generation_id":"g1"}', encoding="utf-8")
+    (snapshot_root / "current.v2.json").write_text('{"current_generation_id":"g1"}', encoding="utf-8")
     (generation_dir / "manifest.json").write_text("{}", encoding="utf-8")
+    seed_root = tmp_path / "resources" / "seeds"
+    seed_generation = seed_root / "generations" / "g1"
+    seed_generation.mkdir(parents=True)
+    (seed_root / "current.v2.json").write_bytes((snapshot_root / "current.v2.json").read_bytes())
+    (seed_generation / "manifest.json").write_bytes((generation_dir / "manifest.json").read_bytes())
+    write_resource_manifest(tmp_path)
     manifest_path = tmp_path / "bundle_manifest.json"
     manifest_path.write_text("{}", encoding="utf-8")
 
@@ -161,11 +168,37 @@ def test_package_entries_include_verified_snapshot_files(tmp_path):
     )
     snapshot_entries = [entry for entry in entries if snapshot_root in entry.source.parents]
 
-    assert {entry.source.name for entry in snapshot_entries} == {"current.v1.json", "manifest.json"}
+    assert {entry.source.name for entry in snapshot_entries} == {"current.v2.json", "manifest.json"}
     assert {entry.target for entry in snapshot_entries} == {
         "resources/seeds",
         "resources/seeds/generations/g1",
     }
+
+
+def test_package_entries_exclude_unlisted_png(tmp_path):
+    from tooling.build.resource_manifest import write_resource_manifest
+    from tooling.build.rules import iter_package_data_entries, stage_package_data_tree
+
+    asset_dir = tmp_path / "resources" / "assets" / "champions"
+    asset_dir.mkdir(parents=True)
+    listed = asset_dir / "listed.png"
+    listed.write_bytes(b"listed")
+    write_resource_manifest(tmp_path)
+    unlisted = asset_dir / "unlisted.png"
+    unlisted.write_bytes(b"unlisted")
+    bundle_manifest = tmp_path / "bundle_manifest.json"
+    bundle_manifest.write_text("{}", encoding="utf-8")
+
+    entries = iter_package_data_entries(tmp_path, bundle_manifest)
+    sources = {entry.source.resolve() for entry in entries}
+
+    assert listed.resolve() in sources
+    assert unlisted.resolve() not in sources
+
+    staged = stage_package_data_tree(entries, tmp_path / "clean-package-data")
+    assert staged.target == "."
+    assert (staged.source / "resources" / "assets" / "champions" / "listed.png").is_file()
+    assert not (staged.source / "resources" / "assets" / "champions" / "unlisted.png").exists()
 
 
 def test_pyproject_defines_python_quality_tool_boundaries():

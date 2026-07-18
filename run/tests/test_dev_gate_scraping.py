@@ -173,7 +173,7 @@ def test_hextech_scraper_fallback_contract() -> None:
 
         with (
             patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
-            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
+            patch.object(hextech_scraper, "load_augment_tier_map", return_value={"测试海克斯": "Gold"}),
             patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
             patch("hextech.infrastructure.sources.hextech.refresh_support.fetch_text", side_effect=fetcher),
             patch.object(hextech_scraper, "get_latest_valid_csv", return_value=str(fallback_csv)),
@@ -201,7 +201,7 @@ def test_hextech_scraper_fallback_contract() -> None:
         failed_fetcher = SequenceFetcher()
         with (
             patch.object(hextech_scraper, "check_execution_permission", return_value=(True, "test")),
-            patch.object(hextech_scraper, "load_augment_map", return_value={"测试海克斯": "Gold"}),
+            patch.object(hextech_scraper, "load_augment_tier_map", return_value={"测试海克斯": "Gold"}),
             patch.object(hextech_scraper, "load_champion_core_data", return_value={"1": {"name": "测试英雄"}}),
             patch("hextech.infrastructure.sources.hextech.refresh_support.fetch_text", side_effect=failed_fetcher),
             patch.object(hextech_scraper, "get_latest_valid_csv", return_value=None),

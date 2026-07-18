@@ -1058,7 +1058,7 @@ def test_overlay_context_contract() -> None:
         assert stale_zero_loaded["error"] == "context_missing"
         assert stale_zero_loaded["champion_id"] == ""
         assert stale_zero_loaded["source"] == "lcu-no-champion"
-        assert overlay_context.OverlayContextPoller.stop.__defaults__ == (4.0,)
+        assert overlay_context.OverlayContextPoller.stop.__defaults__ == (1.5,)
 
         context_module_text = (RUN_DIR / "src" / "hextech" / "interfaces" / "overlay" / "context.py").read_text(encoding="utf-8")
         assert "should_write=lambda: not stop_event.is_set()" in context_module_text

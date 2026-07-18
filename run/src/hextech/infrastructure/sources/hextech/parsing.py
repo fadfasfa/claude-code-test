@@ -10,6 +10,8 @@ import traceback
 
 from bs4 import BeautifulSoup
 
+from hextech.modules.acquisition.hextech.contracts import HextechStatRecord
+
 DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = "https://cdn.dtodo.cn/hextech/champion-details"
 HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL = (
     os.getenv("HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL", DEFAULT_HEXTECH_CHAMPION_DETAIL_CDN_BASE_URL).strip()
@@ -392,20 +394,21 @@ def _build_row(
     winrate: float,
     pickrate: float,
 ) -> dict:
-    return {
-        "英雄 ID": champ_id,
-        "英雄名称": champ_name,
-        "英雄评级": champ_data.get('tier', 'T3'),
-        "英雄胜率": float(champ_data.get('winRate', 0)),
-        "英雄出场率": float(champ_data.get('pickRate', 0)),
-        "海克斯ID": str(augment_id),
-        "源站排名": int(source_rank),
-        "源站层级": _source_tier_label(source_tier),
-        "海克斯阶级": local_tier,
-        "海克斯名称": augment_name,
-        "海克斯胜率": winrate,
-        "海克斯出场率": min(1.0, max(0.0, pickrate)),
-    }
+    record = HextechStatRecord(
+        champion_id=str(champ_id),
+        champion_name=str(champ_name),
+        champion_tier=str(champ_data.get("tier", "T3")),
+        champion_win_rate=float(champ_data.get("winRate", 0)),
+        champion_pick_rate=float(champ_data.get("pickRate", 0)),
+        augment_id=str(augment_id),
+        source_rank=int(source_rank),
+        source_tier=_source_tier_label(source_tier),
+        augment_tier=str(local_tier),
+        augment_name=str(augment_name),
+        augment_win_rate=float(winrate),
+        augment_pick_rate=min(1.0, max(0.0, float(pickrate))),
+    )
+    return record.to_csv_row()
 
 
 def _extract_rendered_table_stats(

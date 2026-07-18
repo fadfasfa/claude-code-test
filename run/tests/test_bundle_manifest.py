@@ -69,24 +69,30 @@ def test_validate_bundle_manifest_rejects_empty_critical_fields():
 def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch):
     from hextech.modules.data.generation import DataSnapshotPublisher
     from tooling.build import manifest as bundle_manifest
+    from tooling.build.resource_manifest import write_resource_manifest
+    from tooling.build.rules import CATALOG_FILES
 
-    snapshot_root = tmp_path / "verified-snapshots"
+    snapshot_root = tmp_path / "resources" / "seeds"
     published = DataSnapshotPublisher(snapshot_root).publish(
         {
             "champions": [{"id": "1", "name": "英雄一"}],
             "champion_hextech": {"英雄一": {"hero_id": "1", "augments": [{"id": "a1"}]}},
             "overlay_hints": {"augments": {"a1": {"name": "强化一"}}},
-            "identities": {"champions": {"1": "英雄一"}, "augments": {"a1": "强化一"}},
+            "identities": {
+                "schema_version": 2,
+                "champions": {"1": "英雄一"},
+                "augments": {"a1": "强化一"},
+            },
         },
-        private_stats_enabled=True,
     )
     catalog_dir = tmp_path / "resources" / "catalog"
     catalog_dir.mkdir(parents=True)
-    for name in bundle_manifest.CATALOG_FILES:
+    for name in CATALOG_FILES:
         (catalog_dir / name).write_text("{}", encoding="utf-8")
-    assets = tmp_path / "resources" / "assets"
+    assets = tmp_path / "resources" / "assets" / "champions"
     assets.mkdir(parents=True)
     (assets / "one.png").write_bytes(b"png")
+    write_resource_manifest(tmp_path)
     monkeypatch.setattr(bundle_manifest, "iter_source_files", lambda _base: ["src/hextech/bootstrap/desktop.py"])
 
     manifest = bundle_manifest.build_bundle_manifest(
@@ -95,7 +101,7 @@ def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch)
     )
 
     assert manifest["seed_health"]["generation_id"] == published.generation_id
-    assert "resources/seeds/current.v1.json" in manifest["seed_files"]
+    assert "resources/seeds/current.v2.json" in manifest["seed_files"]
     for relative_name in manifest["seed_files"]:
         assert len(manifest["seed_sha256"][relative_name]) == 64
 
