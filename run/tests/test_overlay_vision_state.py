@@ -1,6 +1,6 @@
 """测试 overlay vision 状态。
 
-调用方: pytest; 关键依赖: hextech.overlay.vision.state。
+调用方: pytest; 关键依赖: hextech.infrastructure.vision.state。
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def _selection_event() -> dict:
 
 class OverlayVisionStateTests(unittest.TestCase):
     def test_single_slot_fails_after_three_seconds_and_can_recover(self):
-        from hextech.overlay.vision import state
+        from hextech.infrastructure.vision import state
 
         tracker = state.SelectionTracker(scene_enter_frames=1)
         partial = _selection_event()
@@ -97,7 +97,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(recovered["slots"][2]["state"], "ready")
 
     def test_wobbling_candidates_also_fail_after_three_seconds(self):
-        from hextech.overlay.vision import state
+        from hextech.infrastructure.vision import state
 
         tracker = state.SelectionTracker(scene_enter_frames=1)
         event_a = _selection_event()
@@ -116,7 +116,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertGreaterEqual(failed["slots"][2]["elapsed_seconds"], 3.0)
 
     def test_weak_reroll_keeps_old_slot_until_replacement_is_stable(self):
-        from hextech.overlay.vision import state
+        from hextech.infrastructure.vision import state
 
         tracker = state.SelectionTracker(scene_enter_frames=1)
         initial = _selection_event()
@@ -154,7 +154,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual([slot["state"] for slot in recovered["slots"][:2]], ["ready", "ready"])
 
     def test_sidecar_template_runtime_entrypoint_delegates_to_cache_module(self):
-        from hextech.overlay.vision import sidecar, template_runtime
+        from hextech.infrastructure.vision import sidecar, template_runtime
 
         expected = object()
         with mock.patch.object(template_runtime, "load_or_build_default_template_runtime", return_value=expected) as delegated:
@@ -174,7 +174,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         )
 
     def test_template_resource_digest_normalizes_windows_path_case_and_separators(self):
-        from hextech.overlay.vision import template_runtime
+        from hextech.infrastructure.vision import template_runtime
 
         stat = SimpleNamespace(st_size=42, st_mtime_ns=123456)
 
@@ -194,7 +194,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(lower_slash, upper_forward)
 
     def test_template_runtime_cache_hits_and_invalidates_by_signature(self):
-        from hextech.overlay.vision import sidecar, template_runtime
+        from hextech.infrastructure.vision import sidecar, template_runtime
 
         entry = sidecar.TemplateEntry(
             augment_id="a0",
@@ -261,7 +261,7 @@ class OverlayVisionStateTests(unittest.TestCase):
             self.assertEqual(load_after_change.call_count, 1)
 
     def test_template_hint_signature_ignores_stats_generation_fields(self):
-        from hextech.overlay.vision import template_runtime
+        from hextech.infrastructure.vision import template_runtime
 
         first = {
             "schema_version": 1,
@@ -284,7 +284,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         )
 
     def test_concurrent_template_runtime_miss_builds_once(self):
-        from hextech.overlay.vision import sidecar, template_runtime
+        from hextech.infrastructure.vision import sidecar, template_runtime
 
         entry = sidecar.TemplateEntry(
             augment_id="a0",
@@ -335,7 +335,7 @@ class OverlayVisionStateTests(unittest.TestCase):
 
         from PIL import Image
 
-        from hextech.overlay.vision import runner, sidecar
+        from hextech.infrastructure.vision import runner, sidecar
 
         class StopLoop(RuntimeError):
             pass
@@ -374,7 +374,7 @@ class OverlayVisionStateTests(unittest.TestCase):
             self.assertEqual(payload["source"]["dpi_scale"], 1.25)
 
     def test_hover_occlusion_keeps_stable_slots_until_cursor_leaves(self):
-        from hextech.overlay.vision.state import SelectionTracker
+        from hextech.infrastructure.vision.state import SelectionTracker
 
         tracker = SelectionTracker()
         tracker.update(_selection_event())
@@ -410,7 +410,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(exited["source"]["scene_state"], "absent")
 
     def test_hover_occlusion_has_finite_hold_when_cursor_never_leaves(self):
-        from hextech.overlay.vision.state import HOVER_HOLD_FRAMES, SelectionTracker
+        from hextech.infrastructure.vision.state import HOVER_HOLD_FRAMES, SelectionTracker
 
         tracker = SelectionTracker()
         tracker.update(_selection_event())
@@ -440,7 +440,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(expired["source"]["slot_states"], [])
 
     def test_post_selection_cursor_residue_exits_without_long_hover_hold(self):
-        from hextech.overlay.vision.state import RESIDUE_HOLD_FRAMES, SelectionTracker
+        from hextech.infrastructure.vision.state import RESIDUE_HOLD_FRAMES, SelectionTracker
 
         tracker = SelectionTracker()
         tracker.update(_selection_event())
@@ -466,7 +466,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(results[0]["source"]["reason"], "selection_completed")
 
     def test_click_arms_selection_completion_and_next_epoch_recovers(self):
-        from hextech.overlay.vision.state import SelectionTracker
+        from hextech.infrastructure.vision.state import SelectionTracker
 
         tracker = SelectionTracker()
         tracker.update(_selection_event())
@@ -486,7 +486,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(recovered["source"]["ready_slots"], 3)
 
     def test_non_hover_residue_still_expires(self):
-        from hextech.overlay.vision.state import SelectionTracker
+        from hextech.infrastructure.vision.state import SelectionTracker
 
         tracker = SelectionTracker()
         tracker.update(_selection_event())
@@ -514,7 +514,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(expired["source"]["reason"], "scene_residue_expired")
 
     def test_selection_active_partial_progress_writes_on_slot_changes(self):
-        from hextech.overlay.vision import sidecar
+        from hextech.infrastructure.vision import sidecar
 
         first_partial = {
             "active": False,

@@ -1,9 +1,0 @@
--r build.txt
-
-# 兼容旧工具的依赖清单索引；实际版本约束由 runtime.txt 和 build.txt 管理。
-# requests>=2.32.3,<3
-# scrapling[fetchers]>=0.4.8,<0.5
-# cloakbrowser>=0.3,<0.4
-# urllib3>=2.2,<3
-# charset-normalizer>=3.3,<4
-# chardet>=5.2,<6

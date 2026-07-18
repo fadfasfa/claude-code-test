@@ -1,6 +1,6 @@
 """测试 用户诊断导出。
 
-调用方: pytest; 关键依赖: hextech.support.user_diagnostics。
+调用方: pytest; 关键依赖: hextech.modules.session.diagnostics。
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def test_export_user_diagnostics_creates_limited_redacted_zip(tmp_path, monkeypatch):
-    from hextech.support import user_diagnostics
+    from hextech.modules.session import diagnostics as user_diagnostics
 
     runtime_root = tmp_path / "runtime"
     state_dir = runtime_root / "state"
@@ -130,7 +130,7 @@ def test_export_user_diagnostics_creates_limited_redacted_zip(tmp_path, monkeypa
 
 
 def test_export_user_diagnostics_filters_tail_by_recent_minutes(tmp_path, monkeypatch):
-    from hextech.support import user_diagnostics
+    from hextech.modules.session import diagnostics as user_diagnostics
 
     runtime_root = tmp_path / "runtime"
     state_dir = runtime_root / "state"
@@ -180,13 +180,13 @@ def test_export_user_diagnostics_filters_tail_by_recent_minutes(tmp_path, monkey
 
 
 def test_export_user_diagnostics_redacts_local_absolute_paths(tmp_path, monkeypatch):
-    from hextech.support import user_diagnostics
+    from hextech.modules.session import diagnostics as user_diagnostics
 
     runtime_root = tmp_path / "runtime"
     state_dir = runtime_root / "state"
     state_dir.mkdir(parents=True)
     local_csv = runtime_root / "raw" / "hextech" / "Hextech_Data_2026-07-05.csv"
-    repo_path = Path("C:/Users/apple/claudecode/run/data/runtime/raw/hextech/Hextech_Data_2026-07-05.csv")
+    repo_path = Path("C:/Users/apple/claudecode/run/var/sources/hextech/runs/example/stats.csv")
 
     (state_dir / "startup_status.json").write_text(
         json.dumps(

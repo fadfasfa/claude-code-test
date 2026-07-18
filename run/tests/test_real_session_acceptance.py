@@ -16,12 +16,12 @@ from hextech.contracts import (
     VisionSlot,
     VisionSlotState,
 )
-from hextech.recommendation import RecommendationService
-from hextech.session import SessionCoordinator
-from hextech.session.evidence import build_evidence_bundle, write_evidence_bundle
+from hextech.modules.recommendation import RecommendationService
+from hextech.modules.session import SessionCoordinator
+from hextech.modules.session.evidence import build_evidence_bundle, write_evidence_bundle
 from tests.test_modular_architecture import _snapshot_view
 
-from tools.acceptance.verify_data_pipeline import AcceptanceFailure, verify_real_session_evidence
+from tooling.acceptance.verify_data_pipeline import AcceptanceFailure, verify_real_session_evidence
 
 
 def _evidence(tmp_path: Path) -> Path:
@@ -80,13 +80,13 @@ def test_real_session_evidence_rejects_synthetic_or_mixed_session(tmp_path: Path
         verify_real_session_evidence(path, expected_generation_id="g1")
 
 
-def test_acceptance_desktop_fallback_uses_champion_dtos() -> None:
+def test_acceptance_reads_only_complete_generation() -> None:
     run_dir = Path(__file__).resolve().parents[1]
-    source = (run_dir / "tools" / "acceptance" / "verify_data_pipeline.py").read_text(encoding="utf-8")
+    source = (run_dir / "tooling" / "acceptance" / "verify_data_pipeline.py").read_text(encoding="utf-8")
 
-    assert "loaded_champions = ui.load_data()" in source
-    assert "loaded_df.empty" not in source
-    assert "_df_lock=threading_module.Lock()" not in source
+    assert "DataSnapshotClient(root).open_view()" in source
+    assert "verify_generation(snapshot_root)" in source
+    assert "publish(" not in source
 
 
 def test_production_evidence_builder_matches_acceptance_verifier(tmp_path: Path) -> None:

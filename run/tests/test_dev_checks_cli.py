@@ -6,14 +6,14 @@ from subprocess import CompletedProcess
 
 import pytest
 
-from tools import dev_checks
+from tooling.checks import dev as dev_checks
 
 
 def test_manual_modes_live_in_dedicated_module_and_health_wrapper_keeps_patch_surface(
     monkeypatch,
     tmp_path,
 ) -> None:
-    from tools import dev_check_manual
+    from tooling.checks import manual as dev_check_manual
 
     sentinel_store = object()
     evidence_dir = tmp_path / "evidence"

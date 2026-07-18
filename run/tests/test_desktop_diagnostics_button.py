@@ -1,6 +1,6 @@
 """测试 桌面诊断按钮。
 
-调用方: pytest; 关键依赖: hextech.display.desktop.app。
+调用方: pytest; 关键依赖: hextech.interfaces.desktop.app。
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 
 def test_diagnostics_button_is_created_in_title_frame(monkeypatch):
-    import hextech.display.desktop.app as desktop_app
+    import hextech.interfaces.desktop.app as desktop_app
 
     class Variable:
         def __init__(self, value=False):
@@ -83,6 +83,11 @@ def test_diagnostics_button_is_created_in_title_frame(monkeypatch):
 
     desktop_app.HextechUI._build_ui(dummy)
 
+    assert dummy.exit_button.parent is dummy.title_frame
+    assert dummy.exit_button.kwargs["text"] == "×"
+    assert dummy.exit_button.kwargs["command"] == dummy.on_close
+    assert dummy.exit_button.pack_options["side"] == desktop_app.tk.RIGHT
+    assert dummy.exit_button.kwargs["activebackground"] == desktop_app.UI_COLORS["red"]
     assert dummy.diagnostics_button.parent is dummy.title_frame
     assert dummy.diagnostics_button.kwargs["text"] == "诊断"
     assert dummy.diagnostics_button.kwargs["command"] == dummy._start_user_diagnostics_export
@@ -91,7 +96,8 @@ def test_diagnostics_button_is_created_in_title_frame(monkeypatch):
 
 
 def test_diagnostics_export_callback_restores_button_on_error(monkeypatch, tmp_path):
-    import hextech.display.desktop.app as desktop_app
+    import hextech.interfaces.desktop.app as desktop_app
+    import hextech.interfaces.desktop.app_controls as desktop_controls
 
     states: list[str] = []
     statuses: list[tuple[str, str]] = []
@@ -119,7 +125,7 @@ def test_diagnostics_export_callback_restores_button_on_error(monkeypatch, tmp_p
     def fail_export():
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(desktop_app, "export_user_diagnostics", fail_export)
+    monkeypatch.setattr(desktop_controls, "export_user_diagnostics", fail_export)
 
     desktop_app.HextechUI._start_user_diagnostics_export(dummy)
 
@@ -130,7 +136,8 @@ def test_diagnostics_export_callback_restores_button_on_error(monkeypatch, tmp_p
 
 
 def test_diagnostics_export_runs_async_callback_and_reports_zip(monkeypatch, tmp_path):
-    import hextech.display.desktop.app as desktop_app
+    import hextech.interfaces.desktop.app as desktop_app
+    import hextech.interfaces.desktop.app_controls as desktop_controls
 
     states: list[str] = []
     statuses: list[tuple[str, str]] = []
@@ -156,7 +163,7 @@ def test_diagnostics_export_runs_async_callback_and_reports_zip(monkeypatch, tmp
     dummy._start_tracked_thread = run_now
     zip_path = tmp_path / "diagnostics.zip"
     monkeypatch.setattr(
-        desktop_app,
+        desktop_controls,
         "export_user_diagnostics",
         lambda: SimpleNamespace(zip_path=zip_path),
     )

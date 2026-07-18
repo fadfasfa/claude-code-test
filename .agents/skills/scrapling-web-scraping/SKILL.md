@@ -1,13 +1,13 @@
 ---
 name: scrapling-web-scraping
-description: 用于本仓评估、维护或扩展 Scrapling 网页抓取、动态页面获取、HTML 优先结构化抽取和现有爬虫替换方案。旧 run/crawler 入口不存在；现行 runtime 位于 run/hextech/scraping/transport，仅在目标工作区和依赖可用时执行。
+description: 用于本仓评估、维护或扩展 Scrapling 网页抓取、动态页面获取、HTML 优先结构化抽取和现有爬虫替换方案。旧 run/crawler 入口不存在；现行 runtime 位于 run/src/hextech/infrastructure/transport，仅在目标工作区和依赖可用时执行。
 ---
 
 # Scrapling 网页抓取评估
 
 ## 当前状态
 
-旧 `run/crawler/` 入口及其命令不存在，不得恢复或引用。当前有效 runtime 位于 `run/hextech/scraping/transport/`，包含 `scrapling_client.py`、`requirements-scrapling.txt` 和 `smoke_scrapling.py`，并已被 Hextech 与 synergy 抓取代码调用。执行前仍需检查目标工作区规则、Python 环境和依赖状态。
+旧 `run/crawler/` 入口及其命令不存在，不得恢复或引用。当前有效 runtime 位于 `run/src/hextech/infrastructure/transport/`，包含 `scrapling_client.py` 和 `smoke_scrapling.py`；依赖由 `run/pyproject.toml` 统一声明，并已被 Hextech 与 synergy 抓取代码调用。执行前仍需检查目标工作区规则、Python 环境和依赖状态。
 
 ## 触发
 
@@ -20,13 +20,13 @@ description: 用于本仓评估、维护或扩展 Scrapling 网页抓取、动�
 2. 明确目标 URL、输出格式、写入位置、网络与依赖边界，以及本轮是评估还是实现。
 3. 优先静态 HTTP/HTML 获取；只有页面确实依赖浏览器渲染时才建议 browser 模式。
 4. stealth/anti-bot 能力只在用户明确要求、目标合规且风险已说明时列为候选。
-5. 维护现有实现时优先复用 `hextech.scraping.transport.scrapling_client`；只有现行 runtime 无法满足已确认需求时，才评估扩展 API 或新增实现。
+5. 维护现有实现时优先复用 `hextech.infrastructure.transport.scrapling_client`；只有现行 runtime 无法满足已确认需求时，才评估扩展 API 或新增实现。
 
 ## 现行入口
 
-- 依赖：`run/hextech/scraping/transport/requirements-scrapling.txt`
-- 客户端：`run/hextech/scraping/transport/scrapling_client.py`
-- 冒烟验证：从 `run/` 执行 `.venv\Scripts\python.exe -m hextech.scraping.transport.smoke_scrapling`
+- 依赖：`run/pyproject.toml`
+- 客户端：`run/src/hextech/infrastructure/transport/scrapling_client.py`
+- 冒烟验证：从 `run/` 执行 `.venv\Scripts\python.exe -m hextech.infrastructure.transport.smoke_scrapling`
 - 以上命令仅在目标工作区规则允许且 `.venv` 与依赖已存在时运行；不要为审查或评估自动安装依赖。
 
 ## 安全边界

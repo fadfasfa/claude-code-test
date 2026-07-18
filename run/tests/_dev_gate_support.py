@@ -49,17 +49,17 @@ import requests
 
 import pandas as pd
 
-WEB_STATIC_DIR = RUN_DIR / "hextech" / "display" / "web" / "static"
+WEB_STATIC_DIR = RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "backend" / "static"
 
-DATA_DIR = RUN_DIR / "data"
+DATA_DIR = RUN_DIR / "resources"
 
-DATA_STATIC_ASSET_DIR = DATA_DIR / "static" / "assets"
+DATA_STATIC_ASSET_DIR = DATA_DIR / "assets"
 
-DATA_STATIC_VERSION_DIR = DATA_DIR / "static" / "version"
+DATA_STATIC_VERSION_DIR = DATA_DIR / "catalog"
 
-DATA_STARTUP_SEED_DIR = DATA_DIR / "seed" / "startup"
+DATA_STARTUP_SEED_DIR = DATA_DIR / "seeds"
 
-DATA_DIAGNOSTIC_DIR = DATA_DIR / "fixtures" / "diagnostics"
+DATA_DIAGNOSTIC_DIR = RUN_DIR / "tests" / "fixtures" / "diagnostics"
 
 DATA_EVIDENCE_DIR = DATA_DIR / "evidence"
 
@@ -73,40 +73,44 @@ HEXTECH_HEALTH_REQUIRED_COLUMNS = (
     "海克斯出场率",
 )
 
-import hextech.core.refresh as orchestrator
+import hextech.bootstrap.data_refresh as orchestrator
 
-import hextech.catalog.aliases as alias_search
+import hextech.modules.data.catalog.aliases as alias_search
 
-import hextech.catalog.precomputed_cache as precomputed_cache
+import hextech.modules.data.catalog.precomputed_cache as precomputed_cache
 
-import hextech.catalog.runtime_store as runtime_store
+import hextech.modules.data.catalog.runtime_store as runtime_store
 
-import hextech.scraping.hextech.scraper as hextech_scraper
+import hextech.infrastructure.sources.hextech.service as hextech_scraper
 
-import hextech.scraping.synergy.scraper as synergy_scraper
+import hextech.infrastructure.sources.apex.service as synergy_scraper
 
-import hextech.scraping.heal_worker as heal_worker
+import hextech.infrastructure.sources.heal_worker as heal_worker
 
-import hextech.scraping.icon_resolver as icon_resolver
+import hextech.modules.acquisition.common.icons as icon_resolver
 
-import hextech.scraping.version_sync as version_sync
+import hextech.infrastructure.sources.version_sync as version_sync
 
-import hextech.scraping.transport.scrapling_client as scrapling_client
+import hextech.infrastructure.transport.scrapling_client as scrapling_client
 
-import hextech.display.web.runtime as web_runtime
+import hextech.interfaces.web.backend.runtime as web_runtime
 
-from hextech.display.web.api import _build_synergy_api_payload, _normalize_synergy_items, _synergy_item_to_compat_string
+from hextech.interfaces.web.backend.synergy_api import (
+    _build_synergy_api_payload,
+    _normalize_synergy_items,
+    _synergy_item_to_display_string,
+)
 
-from hextech.catalog.version_catalog import (
+from hextech.modules.data.catalog.version_catalog import (
     load_augment_manifest_entries,
     load_augment_name_to_icon_map,
 )
 
-from hextech.catalog.view_adapter import process_hextechs_data
+from hextech.modules.data.catalog.view_adapter import process_hextechs_data
 
-from hextech.scraping.hextech.scraper import extract_champion_stats
+from hextech.infrastructure.sources.hextech.parsing import extract_champion_stats
 
-from hextech.scraping.synergy.scraper import (
+from hextech.infrastructure.sources.apex.service import (
     SYNERGY_REFRESH_META_VERSION,
     ChampionInfo,
     FetchedResource,
@@ -123,11 +127,11 @@ from hextech.scraping.synergy.scraper import (
     write_synergy_refresh_meta,
 )
 
-from tools.bundle_manifest import build_bundle_manifest, manifest_contains_forbidden_path
+from tooling.build.manifest import build_bundle_manifest, manifest_contains_forbidden_path
 
-from tools.package_rules import iter_package_data_entries
+from tooling.build.rules import iter_package_data_entries
 
-from hextech.support.log_utils import get_runtime_log_paths, install_runtime_logging, install_summary_logging
+from hextech.infrastructure.observability.logging import get_runtime_log_paths, install_runtime_logging, install_summary_logging
 
 TIER_IDS = ("Prismatic", "Gold", "Silver")
 
@@ -177,6 +181,7 @@ def _probe_clean_import(script_name: str) -> set[str]:
 import json
 import runpy
 import sys
+sys.path.insert(0, {str(RUN_DIR / "src")!r})
 runpy.run_path({script_name!r}, run_name='__hextech_probe__')
 watched = [
     'display',
@@ -202,6 +207,7 @@ def _probe_module_import(module_name: str) -> set[str]:
 import importlib
 import json
 import sys
+sys.path.insert(0, {str(RUN_DIR / "src")!r})
 importlib.import_module({module_name!r})
 watched = [
     'display.web_server',
@@ -268,7 +274,7 @@ def _write_json(path: Path, payload: dict, mtime: int = 1000) -> Path:
 
 def _snapshot(
     temp_dir: str,
-    name: str = "Champion_Synergy_20260519_223505.json",
+    name: str = "synergy.json",
     *,
     mtime: float | None = None,
 ) -> Path:

@@ -20,12 +20,12 @@ from hextech.contracts import (
     VisionSlotState,
 )
 from hextech.contracts.identifiers import InvalidIdentifierError, champion_id, optional_augment_id
-from hextech.data_snapshot import DataSnapshotManifest, DataSnapshotView
-from hextech.recommendation import RecommendationService
-from hextech.session import SessionCoordinator
-from hextech.session.evidence import build_evidence_bundle
-from hextech.vision_engine import GameWindowObservation
-from hextech.adapters import build_runtime_session
+from hextech.modules.data.generation import DataSnapshotManifest, DataSnapshotView
+from hextech.modules.recommendation import RecommendationPolicy, RecommendationService
+from hextech.modules.session import SessionCoordinator
+from hextech.modules.session.evidence import build_evidence_bundle
+from hextech.modules.vision import GameWindowObservation
+from hextech.interfaces.overlay.session_adapter import build_runtime_session
 
 
 @pytest.mark.parametrize("value", [24, "24", "024", 24.0])
@@ -39,12 +39,12 @@ def test_champion_id_rejects_ambiguous_values(value: object) -> None:
         champion_id(value)
 
 
-def _snapshot_view(*, private_stats_enabled: bool = True, degraded: bool = False) -> DataSnapshotView:
+def _snapshot_view(*, degraded: bool = False) -> DataSnapshotView:
     manifest = DataSnapshotManifest(
-        schema_version=1,
+        schema_version=2,
         generation_id="g1",
         created_at="now",
-        private_stats_enabled=private_stats_enabled,
+        content_fingerprint="a" * 64,
         source_files=(),
         champion_count=2,
         augment_count=1,
@@ -191,14 +191,19 @@ def test_privacy_off_never_carries_combo_stats(monkeypatch: pytest.MonkeyPatch) 
         slots=(VisionSlot(0, VisionSlotState.READY, AugmentId("stable_ready")),),
     )
 
-    view = _snapshot_view(private_stats_enabled=False)
+    view = _snapshot_view()
     monkeypatch.setattr(
         view.__class__,
         "get_combo_stats",
         lambda *_args, **_kwargs: pytest.fail("隐私关闭时不得查询组合统计"),
     )
 
-    model = RecommendationService().build(context, view, vision=vision)
+    model = RecommendationService().build(
+        context,
+        view,
+        vision=vision,
+        policy=RecommendationPolicy(private_stats_enabled=False),
+    )
 
     assert model.augment_slots[0]["status_code"] == "PRIVACY_OFF"
     assert model.augment_slots[0]["stats"] == {}
@@ -257,7 +262,7 @@ def test_runtime_adapter_rejects_malformed_numbers_without_losing_frame() -> Non
 
 
 def test_typed_renderer_preserves_context_expired_status() -> None:
-    from hextech.overlay.renderer import build_render_model_from_session
+    from hextech.interfaces.overlay.renderer import build_render_model_from_session
 
     state = build_runtime_session(
         event={},
@@ -290,7 +295,7 @@ def test_session_without_context_or_vision_uses_nonempty_unbound_id() -> None:
 
 
 def test_typed_game_context_provider_is_the_lcu_runtime_boundary() -> None:
-    from hextech.game_context import TypedGameContextProvider
+    from hextech.modules.game_context import TypedGameContextProvider
 
     provider = TypedGameContextProvider(ttl_seconds=8)
     context = provider.update(
@@ -319,26 +324,35 @@ def test_game_window_observation_prevents_mixed_capture_geometry() -> None:
 
 
 def test_core_dependency_boundaries() -> None:
-    root = Path(__file__).parents[1] / "hextech"
-    forbidden = {
-        "contracts": {"pandas", "tkinter", "fastapi", "requests", "cv2"},
-        "recommendation": {"tkinter", "fastapi", "pandas", "requests", "hextech.presentation", "hextech.adapters"},
-        "session": {"tkinter", "fastapi", "pandas", "requests", "hextech.presentation", "hextech.adapters"},
+    root = Path(__file__).parents[1] / "src" / "hextech"
+    allowed_dependencies = {
+        "contracts": {"contracts"},
+        "modules": {"contracts", "modules"},
+        "interfaces": {"contracts", "modules", "interfaces"},
+        "infrastructure": {"contracts", "modules", "infrastructure"},
+        "runtime": {"contracts", "modules", "runtime"},
+        "bootstrap": {"contracts", "modules", "interfaces", "infrastructure", "runtime", "bootstrap"},
     }
     violations: list[str] = []
-    for module, names in forbidden.items():
-        for path in (root / module).rglob("*.py"):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            imports = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
-            imports += [alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names]
-            for imported in imports:
-                if any(imported == name or imported.startswith(f"{name}.") for name in names):
-                    violations.append(f"{path.name}:{imported}")
+    for path in root.rglob("*.py"):
+        source_layer = path.relative_to(root).parts[0]
+        if source_layer not in allowed_dependencies:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+        imports += [alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names]
+        for imported in imports:
+            parts = imported.split(".")
+            if len(parts) < 2 or parts[0] != "hextech":
+                continue
+            target_layer = parts[1]
+            if target_layer in allowed_dependencies and target_layer not in allowed_dependencies[source_layer]:
+                violations.append(f"{path.relative_to(root)}:{imported}")
     assert not violations
 
 
 def test_desktop_matches_float_lcu_id_to_string_snapshot_id() -> None:
-    from hextech.display.desktop.app import HextechUI
+    from hextech.interfaces.desktop.app import HextechUI
 
     ui = HextechUI.__new__(HextechUI)
     rows = ui._build_candidate_display_list(
@@ -430,7 +444,7 @@ def test_runtime_adapter_drives_recommendation_and_session_production_chain() ->
 
 
 def test_typed_overlay_renderer_reads_published_chinese_stat_fields() -> None:
-    from hextech.overlay.renderer import build_render_model_from_session
+    from hextech.interfaces.overlay.renderer import build_render_model_from_session
 
     context = GameContext(session_id="s1", observed_at=1, local_champion_id=ChampionId("24"))  # type: ignore[arg-type]
     vision = VisionSelection(

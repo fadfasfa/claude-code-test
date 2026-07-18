@@ -1,6 +1,6 @@
 """测试 overlay host 可见性。
 
-调用方: pytest; 关键依赖: hextech.overlay.host。
+调用方: pytest; 关键依赖: hextech.interfaces.overlay.host。
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 class OverlayHostVisibilityTests(unittest.TestCase):
     def test_render_failure_retry_uses_base_poll_before_backoff(self):
-        from hextech.overlay.host import RENDER_ERROR_BACKOFF_AFTER, resolve_event_render_retry_delay_ms
+        from hextech.interfaces.overlay.host import RENDER_ERROR_BACKOFF_AFTER, resolve_event_render_retry_delay_ms
 
         config = {"event_poll_ms": 250, "fast_event_poll_ms": 60}
 
@@ -21,7 +21,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(resolve_event_render_retry_delay_ms(config, RENDER_ERROR_BACKOFF_AFTER + 1), 500)
 
     def test_visibility_snapshot_requires_in_progress_foreground_renderable_game(self):
-        from hextech.overlay.host import resolve_overlay_visibility
+        from hextech.interfaces.overlay.host import resolve_overlay_visibility
 
         snapshot = resolve_overlay_visibility(
             user_enabled=True,
@@ -41,7 +41,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(snapshot.updated_at, 1234.5)
 
     def test_visibility_snapshot_hides_when_game_not_foreground(self):
-        from hextech.overlay.host import resolve_overlay_visibility
+        from hextech.interfaces.overlay.host import resolve_overlay_visibility
 
         snapshot = resolve_overlay_visibility(
             user_enabled=True,
@@ -58,7 +58,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(snapshot.reason, "game_not_foreground")
 
     def test_visibility_snapshot_hides_when_game_not_renderable(self):
-        from hextech.overlay.host import resolve_overlay_visibility
+        from hextech.interfaces.overlay.host import resolve_overlay_visibility
 
         snapshot = resolve_overlay_visibility(
             user_enabled=True,
@@ -75,7 +75,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(snapshot.reason, "game_window_not_renderable")
 
     def test_visibility_snapshot_hides_when_gameflow_not_in_progress(self):
-        from hextech.overlay.host import resolve_overlay_visibility
+        from hextech.interfaces.overlay.host import resolve_overlay_visibility
 
         snapshot = resolve_overlay_visibility(
             user_enabled=True,
@@ -92,7 +92,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(snapshot.reason, "gameflow_not_in_progress")
 
     def test_visibility_snapshot_shows_detecting_before_content_ready(self):
-        from hextech.overlay.host import resolve_overlay_visibility
+        from hextech.interfaces.overlay.host import resolve_overlay_visibility
 
         snapshot = resolve_overlay_visibility(
             user_enabled=True,
@@ -109,7 +109,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(snapshot.reason, "visible_detecting")
 
     def test_selection_window_active_shows_detecting_before_content_ready(self):
-        from hextech.overlay.host import decide_visibility
+        from hextech.interfaces.overlay.host import decide_visibility
 
         should_show, reason = decide_visibility(
             user_enabled=True,
@@ -127,7 +127,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(reason, "visible_detecting")
 
     def test_selection_window_active_shows_partial_ready_slots(self):
-        from hextech.overlay.host import decide_visibility
+        from hextech.interfaces.overlay.host import decide_visibility
 
         should_show, reason = decide_visibility(
             user_enabled=True,
@@ -145,7 +145,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(reason, "visible_partial")
 
     def test_scene_blockers_hide_overlay_before_content_rendering(self):
-        from hextech.overlay.host import decide_visibility
+        from hextech.interfaces.overlay.host import decide_visibility
 
         base_args = {
             "user_enabled": True,
@@ -172,7 +172,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
                 self.assertEqual(reason, expected_reason)
 
     def test_inactive_vision_event_hides_overlay_when_game_gate_is_visible(self):
-        from hextech.overlay.host import decide_visibility
+        from hextech.interfaces.overlay.host import decide_visibility
 
         should_show, reason = decide_visibility(
             user_enabled=True,
@@ -191,7 +191,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(reason, "waiting_selection")
 
     def test_expired_event_keeps_waiting_surface_visible_during_game(self):
-        from hextech.overlay.host import decide_visibility
+        from hextech.interfaces.overlay.host import decide_visibility
 
         should_show, reason = decide_visibility(
             user_enabled=True,
@@ -211,7 +211,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(reason, "waiting_selection")
 
     def test_inactive_overlay_event_carries_scene_inactive_source(self):
-        from hextech.overlay.events import build_inactive_overlay_event
+        from hextech.modules.vision.events import build_inactive_overlay_event
 
         event = build_inactive_overlay_event(source_tag="manual-hide")
 
@@ -221,7 +221,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(event["source"]["content_ready"], False)
 
     def test_decide_visibility_defaults_to_missing_game_window_without_hwnd(self):
-        from hextech.overlay.host import decide_visibility
+        from hextech.interfaces.overlay.host import decide_visibility
 
         should_show, reason = decide_visibility(
             user_enabled=True,
@@ -238,7 +238,8 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(reason, "game_window_missing")
 
     def test_sync_event_visibility_reads_cached_gameflow_without_querying_http(self):
-        from hextech.overlay import host
+        from hextech.interfaces.overlay import host
+        from hextech.interfaces.overlay import host_sync
 
         visibility = {
             "user_enabled": True,
@@ -251,9 +252,9 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         snapshot = {"visible": True, "source": {"selection_window_active": True}, "slots": []}
 
         with (
-            patch.object(host, "_is_game_window_foreground", return_value=True),
-            patch.object(host, "is_window_renderable", return_value=True),
-            patch.object(host, "_query_gameflow_in_progress", side_effect=AssertionError("render tick queried gameflow")),
+            patch.object(host_sync, "_is_game_window_foreground", return_value=True),
+            patch.object(host_sync, "is_window_renderable", return_value=True),
+            patch.object(host_sync, "_query_gameflow_in_progress", side_effect=AssertionError("render tick queried gameflow")),
         ):
             should_show = host._sync_event_visibility(
                 object(),
@@ -267,7 +268,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(visibility["visibility_reason"], "visible_detecting")
 
     def test_render_tick_reads_cached_window_without_scanning_processes(self):
-        from hextech.overlay import host
+        from hextech.interfaces.overlay import host
 
         class FakeCanvas:
             def __init__(self):
@@ -318,7 +319,8 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(visibility["visibility_reason"], "game_window_missing")
 
     def test_sync_event_visibility_uses_gameflow_gate(self):
-        from hextech.overlay import host
+        from hextech.interfaces.overlay import host
+        from hextech.interfaces.overlay import host_sync
 
         visibility = {
             "user_enabled": True,
@@ -330,8 +332,8 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         snapshot = {"visible": True, "source": {"selection_window_active": True}, "slots": []}
 
         with (
-            patch.object(host, "_is_game_window_foreground", return_value=True),
-            patch.object(host, "_refresh_gameflow_in_progress", return_value=False),
+            patch.object(host_sync, "_is_game_window_foreground", return_value=True),
+            patch.object(host_sync, "_refresh_gameflow_in_progress", return_value=False),
         ):
             should_show = host._sync_event_visibility(
                 object(),
@@ -345,7 +347,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(visibility["visibility_reason"], "gameflow_not_in_progress")
 
     def test_sync_event_visibility_reports_missing_game_window_before_vision_state(self):
-        from hextech.overlay import host
+        from hextech.interfaces.overlay import host
 
         visibility = {
             "user_enabled": True,
@@ -369,7 +371,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(visibility["visibility_reason"], "game_window_missing")
 
     def test_foreground_event_hook_only_sets_signal_until_tk_drain(self):
-        from hextech.overlay import host
+        from hextech.interfaces.overlay import host
 
         calls = []
 
@@ -386,7 +388,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertTrue(event.is_set())
 
     def test_foreground_event_drain_coalesces_multiple_events(self):
-        from hextech.overlay import host
+        from hextech.interfaces.overlay import host
 
         class FakeRoot:
             def __init__(self):
@@ -413,7 +415,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(root.after_calls[0][0], 50)
 
     def test_visibility_diagnostic_log_is_structured_and_rate_limited(self):
-        from hextech.overlay import host
+        from hextech.interfaces.overlay import host
 
         visibility = {
             "gameflow_in_progress": True,
@@ -451,7 +453,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(payload["decision"]["reason"], "visible_detecting")
 
     def test_visibility_diagnostic_logs_when_context_or_scene_gate_changes(self):
-        from hextech.overlay import host
+        from hextech.interfaces.overlay import host
 
         visibility = {
             "gameflow_in_progress": True,
@@ -497,7 +499,9 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(info.call_count, 3)
 
     def test_sync_event_visibility_writes_host_visibility_state(self):
-        from hextech.overlay import host
+        from hextech.interfaces.overlay import host
+        from hextech.interfaces.overlay import host_sync
+        from hextech.interfaces.overlay import host_visibility
 
         visibility = {
             "user_enabled": True,
@@ -516,10 +520,10 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         writes = []
 
         with (
-            patch.object(host, "_is_game_window_foreground", return_value=True),
-            patch.object(host, "is_window_renderable", return_value=True),
-            patch.object(host, "_refresh_gameflow_in_progress", return_value=True),
-            patch.object(host, "atomic_write_json", side_effect=lambda path, payload: writes.append((Path(path).name, payload))),
+            patch.object(host_sync, "_is_game_window_foreground", return_value=True),
+            patch.object(host_sync, "is_window_renderable", return_value=True),
+            patch.object(host_sync, "_refresh_gameflow_in_progress", return_value=True),
+            patch.object(host_visibility, "atomic_write_json", side_effect=lambda path, payload: writes.append((Path(path).name, payload))),
         ):
             should_show = host._sync_event_visibility(
                 object(),
@@ -540,7 +544,8 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertEqual(payload["decision"]["reason"], "visible_detecting")
 
     def test_host_visibility_state_write_is_change_based(self):
-        from hextech.overlay import host
+        from hextech.interfaces.overlay import host
+        from hextech.interfaces.overlay import host_visibility
 
         visibility = {
             "user_enabled": True,
@@ -551,7 +556,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         }
         snapshot = {"source": {"selection_window_active": False}, "slots": []}
 
-        with patch.object(host, "atomic_write_json") as write_json:
+        with patch.object(host_visibility, "atomic_write_json") as write_json:
             host._write_host_visibility_status(
                 visibility,
                 snapshot,

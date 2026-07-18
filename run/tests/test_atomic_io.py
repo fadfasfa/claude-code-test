@@ -1,17 +1,16 @@
 """测试原子写入工具的并发和落盘边界。
 
-调用方: pytest; 关键依赖: hextech.support.atomic_io。
+调用方: pytest; 关键依赖: hextech.modules.data.ports.atomic。
 """
 from __future__ import annotations
 
 import gc
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 
 def test_atomic_write_fsyncs_temp_file_before_replace(tmp_path):
-    from hextech.support import atomic_io
+    from hextech.modules.data.ports import atomic as atomic_io
 
     calls: list[int] = []
 
@@ -22,7 +21,7 @@ def test_atomic_write_fsyncs_temp_file_before_replace(tmp_path):
 
 
 def test_atomic_write_lock_entry_is_released_after_write(tmp_path):
-    from hextech.support import atomic_io
+    from hextech.modules.data.ports import atomic as atomic_io
 
     target = tmp_path / "state.json"
     key = atomic_io._target_key(str(target))

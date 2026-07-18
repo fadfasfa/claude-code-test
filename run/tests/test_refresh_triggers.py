@@ -1,6 +1,6 @@
 """测试 refresh 触发器。
 
-调用方: pytest; 关键依赖: hextech.display.web.runtime。
+调用方: pytest; 关键依赖: hextech.interfaces.web.backend.runtime。
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from unittest import mock
 
 class RefreshTriggerTests(unittest.IsolatedAsyncioTestCase):
     async def test_web_lifespan_does_not_start_background_refresh(self):
-        from hextech.display.web import runtime
+        from hextech.interfaces.web.backend import runtime
 
         async def _idle_loop():
             await asyncio.Event().wait()
@@ -25,7 +25,7 @@ class RefreshTriggerTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0)
 
     def test_background_refresh_api_is_supervisor_only(self):
-        from hextech.display.web import runtime
+        from hextech.interfaces.web.backend import runtime
 
         result = runtime.request_background_refresh(force=False, source="api")
 
@@ -33,7 +33,7 @@ class RefreshTriggerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reason"], "data_service_required")
 
     async def test_web_helper_does_not_directly_refresh_when_csv_missing(self):
-        from hextech.display.web import runtime
+        from hextech.interfaces.web.backend import runtime
 
         with mock.patch.object(runtime, "get_df") as get_df:
             import pandas as pd
@@ -44,7 +44,7 @@ class RefreshTriggerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.empty)
 
     def test_desktop_background_scraper_starts_only_snapshot_watcher(self):
-        from hextech.display.desktop import app
+        from hextech.interfaces.desktop import app
 
         dummy = object.__new__(app.HextechUI)
         dummy._snapshot_watch_started = False

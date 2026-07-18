@@ -27,7 +27,7 @@
 | 名称 | 状态 | 触发场景 |
 | :--- | :--- | :--- |
 | `cleanup-worktrees` | keep | 显性调用 cleanup-worktrees 或审计/清理 managed worktree |
-| `scrapling-web-scraping` | keep | Scrapling 接入、现有实现维护与爬虫替换评估；现行 runtime 位于 `run/hextech/scraping/transport` |
+| `scrapling-web-scraping` | keep | Scrapling 接入、现有实现维护与爬虫替换评估；现行 runtime 位于 `run/src/hextech/infrastructure/transport` |
 
 ## Claude Code 项目入口
 

@@ -1,6 +1,6 @@
 """测试 overlay 上下文稳定性。
 
-调用方: pytest; 关键依赖: hextech.overlay.renderer。
+调用方: pytest; 关键依赖: hextech.interfaces.overlay.renderer。
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def _alias_hint_cache() -> dict:
 
 class OverlayContextStabilityTests(unittest.TestCase):
     def test_recent_context_prevents_waiting_hero_flicker_on_transient_missing(self):
-        from hextech.overlay import renderer
+        from hextech.interfaces.overlay import renderer
 
         snapshot = {
             "ok": True,
@@ -78,7 +78,7 @@ class OverlayContextStabilityTests(unittest.TestCase):
         self.assertEqual(model["stats"][0]["stats_text"], "胜率 55.0% · 出场 3.0%")
 
     def test_expired_context_does_not_reuse_recent_context(self):
-        from hextech.overlay import renderer
+        from hextech.interfaces.overlay import renderer
 
         snapshot = {
             "ok": True,
@@ -98,7 +98,7 @@ class OverlayContextStabilityTests(unittest.TestCase):
         self.assertEqual(model["stats"][0]["status_text"], "等待当前英雄")
 
     def test_missing_context_status_text_explains_lcu_unavailable(self):
-        from hextech.overlay import renderer
+        from hextech.interfaces.overlay import renderer
 
         model = renderer.build_render_model(
             {
@@ -114,7 +114,7 @@ class OverlayContextStabilityTests(unittest.TestCase):
         self.assertEqual(model["stats"][0]["status_text"], "等待 LCU")
 
     def test_renderer_resolves_augment_name_id_alias_without_slot_name(self):
-        from hextech.overlay import renderer
+        from hextech.interfaces.overlay import renderer
 
         snapshot = {
             "ok": True,
@@ -134,7 +134,7 @@ class OverlayContextStabilityTests(unittest.TestCase):
         self.assertEqual(model["stats"][0]["stats_text"], "胜率 51.0% · 出场 7.0%")
 
     def test_hint_cache_indexes_augment_name_id_alias(self):
-        from hextech.overlay.hints import build_overlay_hint_cache
+        from hextech.modules.recommendation.hints import build_overlay_hint_cache
 
         cache = build_overlay_hint_cache(
             {
@@ -161,7 +161,7 @@ class OverlayContextStabilityTests(unittest.TestCase):
         self.assertIn("aram_getexcited", cache["hints"]["1322"]["aliases"])
 
     def test_hint_cache_indexes_aram_prefixed_alias_for_plain_augment_name_id(self):
-        from hextech.overlay.hints import build_overlay_hint_cache
+        from hextech.modules.recommendation.hints import build_overlay_hint_cache
 
         cache = build_overlay_hint_cache(
             {
@@ -189,9 +189,9 @@ class OverlayContextStabilityTests(unittest.TestCase):
     def test_runtime_csv_cache_keeps_manifest_only_alias_as_no_stats_hint(self):
         import pandas as pd
 
-        from hextech.catalog import runtime_store
-        from hextech.overlay import renderer
-        from hextech.overlay.hints import build_overlay_hint_cache_from_precomputed, query_overlay_hint
+        from hextech.modules.data.catalog import runtime_store
+        from hextech.interfaces.overlay import renderer
+        from hextech.modules.recommendation.hints import build_overlay_hint_cache_from_precomputed, query_overlay_hint
 
         latest_df = pd.DataFrame(
             [
@@ -214,7 +214,7 @@ class OverlayContextStabilityTests(unittest.TestCase):
                 "tier": "黄金",
                 "cdragon_id": 2080,
                 "augment_name_id": "Snowbomb",
-                "icon_url": "/assets/snowbomb_small.png",
+                "icon_url": "/assets/augments/snowbomb_small.png",
                 "tooltip_plain": "在目标位置引爆雪球。",
             },
             "占位强化 A": {
@@ -222,21 +222,21 @@ class OverlayContextStabilityTests(unittest.TestCase):
                 "tier": "白银",
                 "cdragon_id": -1,
                 "augment_name_id": "PlaceholderA",
-                "icon_url": "/assets/placeholdera_small.png",
+                "icon_url": "/assets/augments/placeholdera_small.png",
             },
             "占位强化 B": {
                 "name": "占位强化 B",
                 "tier": "白银",
                 "cdragon_id": -1,
                 "augment_name_id": "PlaceholderB",
-                "icon_url": "/assets/placeholderb_small.png",
+                "icon_url": "/assets/augments/placeholderb_small.png",
             }
         }
 
         with (
             mock.patch.object(runtime_store, "get_latest_csv", return_value="C:/tmp/Hextech_Data_2099-01-01.csv"),
             mock.patch.object(runtime_store, "load_runtime_csv", return_value=latest_df),
-            mock.patch("hextech.scraping.augment_catalog.load_augment_catalog_lookup_read_only", return_value=catalog_lookup),
+            mock.patch("hextech.modules.data.catalog.augment_lookup.load_augment_catalog_lookup_read_only", return_value=catalog_lookup),
         ):
             cache = build_overlay_hint_cache_from_precomputed(include_private_stats=True, source_tag="test")
 

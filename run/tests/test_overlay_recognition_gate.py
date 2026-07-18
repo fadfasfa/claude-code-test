@@ -1,6 +1,6 @@
 """测试 overlay 视觉识别门控。
 
-调用方: pytest; 关键依赖: tools.refresh_overlay_recognition。
+调用方: pytest; 关键依赖: tooling.setup.vision。
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from unittest import mock
 
 class OverlayRecognitionGateTests(unittest.TestCase):
     def test_zero_full_frame_samples_block_validation(self):
-        from tools import refresh_overlay_recognition
+        from tooling.setup import vision as refresh_overlay_recognition
 
         with (
             mock.patch.object(refresh_overlay_recognition, "validate_official_catalog", return_value={

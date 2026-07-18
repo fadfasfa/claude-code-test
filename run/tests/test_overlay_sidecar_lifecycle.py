@@ -1,10 +1,11 @@
 """测试 overlay sidecar 生命周期。
 
-调用方: pytest; 关键依赖: hextech.overlay.lifecycle。
+调用方: pytest; 关键依赖: hextech.interfaces.overlay.lifecycle。
 """
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import threading
 import time
@@ -18,7 +19,7 @@ import numpy as np
 
 class OverlaySidecarLifecycleTests(unittest.TestCase):
     def test_sidecar_run_loop_delegates_to_runner_module(self):
-        from hextech.overlay.vision import runner, sidecar
+        from hextech.infrastructure.vision import runner, sidecar
 
         expected = {"active": False, "source": {"reason": "test"}}
         with patch.object(runner, "run_loop", return_value=expected) as delegated:
@@ -28,7 +29,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         delegated.assert_called_once_with(write_event=True, event_path="test-event.json")
 
     def test_host_ready_timeout_reports_missing_ready_file_without_token(self):
-        from hextech.overlay import lifecycle
+        from hextech.interfaces.overlay import lifecycle
 
         class FakeProcess:
             pid = 9876
@@ -52,7 +53,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertNotIn("secret-token", str(raised.exception))
 
     def test_host_ready_timeout_reports_process_exit_and_token_mismatch(self):
-        from hextech.overlay import lifecycle
+        from hextech.interfaces.overlay import lifecycle
 
         class ExitedProcess:
             pid = 1201
@@ -91,8 +92,55 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, r"token 不匹配.*pid=abc"):
                 lifecycle._wait_for_host_ready(RunningProcess(), ready_path, timeout_seconds=0.1)
 
+    def test_source_host_process_executes_host_runner_module(self):
+        from hextech.interfaces.overlay import lifecycle
+
+        captured_command: list[str] = []
+
+        class FakeProcess:
+            pid = 1203
+
+        def fake_popen(command, **_kwargs):
+            captured_command.extend(command)
+            return FakeProcess()
+
+        with (
+            patch.object(lifecycle.sys, "frozen", False, create=True),
+            patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
+            patch.object(lifecycle, "_wait_for_host_ready", return_value=None),
+        ):
+            process = lifecycle.start_host_process()
+
+        self.assertEqual(process.pid, 1203)
+        self.assertEqual(
+            captured_command,
+            [sys.executable, "-m", "hextech.interfaces.overlay.host_runner"],
+        )
+
+    def test_frozen_host_process_keeps_game_overlay_switch(self):
+        from hextech.interfaces.overlay import lifecycle
+
+        captured_command: list[str] = []
+
+        class FakeProcess:
+            pid = 1204
+
+        def fake_popen(command, **_kwargs):
+            captured_command.extend(command)
+            return FakeProcess()
+
+        with (
+            patch.object(lifecycle.sys, "frozen", True, create=True),
+            patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
+            patch.object(lifecycle, "_wait_for_host_ready", return_value=None),
+        ):
+            process = lifecycle.start_host_process()
+
+        self.assertEqual(process.pid, 1204)
+        self.assertEqual(captured_command, [sys.executable, "--game-overlay"])
+
     def test_lifecycle_waits_for_sidecar_ready_and_sets_exit_signal(self):
-        from hextech.overlay import lifecycle
+        from hextech.interfaces.overlay import lifecycle
 
         captured_env: dict[str, str] = {}
 
@@ -119,7 +167,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertTrue(getattr(process, "_hextech_overlay_exit_file", ""))
 
     def test_sidecar_readiness_wait_responds_to_cancel_signal(self):
-        from hextech.overlay import lifecycle
+        from hextech.interfaces.overlay import lifecycle
 
         class FakeProcess:
             pid = 1002
@@ -140,7 +188,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                 )
 
     def test_sidecar_start_surfaces_cleanup_failure_as_non_retryable(self):
-        from hextech.overlay import lifecycle
+        from hextech.interfaces.overlay import lifecycle
 
         class FakeProcess:
             pid = 1003
@@ -159,7 +207,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertFalse(raised.exception.retryable)
 
     def test_sidecar_writes_ready_and_checks_exit_signal(self):
-        from hextech.overlay.vision import runner, sidecar
+        from hextech.infrastructure.vision import runner, sidecar
 
         statuses: list[tuple[str, dict]] = []
         bootstrap_states: list[tuple[str, dict]] = []
@@ -174,7 +222,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertEqual(bootstrap_states[-1][1]["phase"], "ready")
 
     def test_wait_for_sidecar_ready_surfaces_failed_bootstrap_without_timeout(self):
-        from hextech.overlay import lifecycle
+        from hextech.interfaces.overlay import lifecycle
 
         class FakeProcess:
             pid = 1002
@@ -211,7 +259,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertFalse(raised.exception.retryable)
 
     def test_wait_for_sidecar_ready_marks_permission_error_non_retryable(self):
-        from hextech.overlay import lifecycle
+        from hextech.interfaces.overlay import lifecycle
 
         process = mock.Mock()
         process.poll.return_value = None
@@ -243,7 +291,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertFalse(raised.exception.retryable)
 
     def test_sidecar_main_records_starting_and_failed_bootstrap_state(self):
-        from hextech.overlay.vision import runner, sidecar
+        from hextech.infrastructure.vision import runner, sidecar
 
         bootstrap_states: list[tuple[str, dict]] = []
         with (
@@ -261,7 +309,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertNotIn(r"C:\Users\alice", bootstrap_states[-1][1]["error_message_sanitized"])
 
     def test_sidecar_once_template_missing_records_failed_bootstrap_state(self):
-        from hextech.overlay.vision import runner, sidecar
+        from hextech.infrastructure.vision import runner, sidecar
 
         bootstrap_states: list[tuple[str, dict]] = []
         event = {"source": {"reason": "template_missing"}}
@@ -278,7 +326,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertEqual(bootstrap_states[-1][1]["error_type"], "FileNotFoundError")
 
     def test_sidecar_template_runtime_constants_are_reexports(self):
-        from hextech.overlay.vision import sidecar, template_runtime
+        from hextech.infrastructure.vision import sidecar, template_runtime
 
         self.assertIs(
             sidecar.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
@@ -291,7 +339,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         )
 
     def test_context_poller_failure_degrades_without_blocking_overlay(self):
-        from hextech.overlay.lifecycle import GameOverlayController
+        from hextech.interfaces.overlay.lifecycle import GameOverlayController
 
         class FakeProcess:
             pid = 123
@@ -324,8 +372,8 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertEqual(snapshot["context_poller_status"], "degraded")
         self.assertIn("LCU offline", snapshot["context_poller_error"])
 
-    def test_compat_controller_stop_without_owned_runtime_does_not_write_inactive(self):
-        from hextech.overlay.lifecycle import GameOverlayController
+    def test_controller_stop_without_owned_runtime_does_not_write_inactive(self):
+        from hextech.interfaces.overlay.lifecycle import GameOverlayController
 
         inactive_calls: list[str] = []
         controller = GameOverlayController(
@@ -340,7 +388,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertEqual(controller.snapshot()["status"], "stopped")
 
     def test_context_poller_starts_before_sidecar_cold_start(self):
-        from hextech.overlay.lifecycle import GameOverlayController
+        from hextech.interfaces.overlay.lifecycle import GameOverlayController
 
         calls: list[str] = []
 
@@ -373,7 +421,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertLess(calls.index("context"), calls.index("sidecar"))
 
     def test_template_runtime_signature_ignores_hint_cache_runtime_metadata(self):
-        from hextech.overlay.vision import template_runtime
+        from hextech.infrastructure.vision import template_runtime
 
         base_cache = {
             "schema_version": 1,
@@ -415,8 +463,9 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertNotEqual(template_runtime.template_runtime_hint_signature(base_cache), template_runtime.template_runtime_hint_signature(changed_name_index))
 
     def test_template_runtime_cache_v2_manifest_and_float16_roundtrip(self):
-        from hextech.overlay.vision import template_runtime
-        from hextech.overlay.vision import sidecar
+        from hextech.infrastructure.vision import template_runtime
+        from hextech.infrastructure.vision import sidecar
+        from hextech.infrastructure.vision import sidecar_matching
 
         template_index = [
             sidecar.TemplateEntry(
@@ -446,7 +495,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                 source_icon_filenames=("b.png",),
             ),
         ]
-        with patch.object(sidecar, "_cleaned_name_fingerprint", return_value=None):
+        with patch.object(sidecar_matching, "_cleaned_name_fingerprint", return_value=None):
             matrices = sidecar.rank_template_matrices(template_index)
         signature = {"schema_version": template_runtime.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION, "resource": "fixture"}
 
@@ -490,7 +539,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         np.testing.assert_allclose(restored_matrices.name_matrix, matrices.name_matrix, atol=1e-3)
 
     def test_template_runtime_cache_v2_ready_cleans_default_v1_cache(self):
-        from hextech.overlay.vision import template_runtime
+        from hextech.infrastructure.vision import template_runtime
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

@@ -1,0 +1,32 @@
+{
+  "catalog_generation_id": "catalog-083471feecc6226c7549",
+  "created_at": "2026-07-17T00:00:00+00:00",
+  "files": [
+    {
+      "role": "champions",
+      "relative_path": "英雄目录.v1.json",
+      "sha256": "0ddf067ca8b056e08f10cad9be3df32139c3d0ea8775deef7a616f6f2d50fea0",
+      "record_count": 173,
+      "content_schema_version": 2,
+      "size": 87081
+    },
+    {
+      "role": "augments",
+      "relative_path": "海克斯资源目录.v1.json",
+      "sha256": "73910cc003e799807e1c88648be9b75be84271c76a0eb40f17d104f6e95c06d7",
+      "record_count": 637,
+      "content_schema_version": 2,
+      "size": 496081
+    },
+    {
+      "role": "versions",
+      "relative_path": "hero_version.txt",
+      "sha256": "debafe1b4f72929c4d1f0b11546b40de6a5b9acaf92d3db4bfd2654d011108c5",
+      "record_count": 1,
+      "content_schema_version": 2,
+      "size": 7
+    }
+  ],
+  "content_sha256": "083471feecc6226c7549c8cd47b9576466ee65078dbe69c0a0da316e702bf36b",
+  "schema_version": 2
+}

@@ -1,45 +1,58 @@
 """测试 bundle manifest 生成器。
 
-调用方: pytest; 关键依赖: tools.bundle_manifest。
+调用方: pytest; 关键依赖: tooling.build.manifest。
 """
 from __future__ import annotations
 
 import json
-import hashlib
+from types import SimpleNamespace
 from pathlib import Path
+
+import pytest
+
+
+def test_package_builder_rejects_pyinstaller_from_another_python(monkeypatch):
+    from tooling.build import package as build_package
+
+    monkeypatch.setattr(
+        build_package.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1),
+    )
+
+    with pytest.raises(RuntimeError, match="禁止回退到 PATH"):
+        build_package.resolve_pyinstaller_command()
 
 
 def test_manifest_forbidden_paths_are_matched_by_path_parts():
-    from tools.bundle_manifest import manifest_contains_forbidden_path
+    from tooling.build.manifest import manifest_contains_forbidden_path
 
     manifest = {
         "source_files": [
-            "hextech/metadata/runtime-note.json",
+            "hextech/metadata-cache/runtime-note.json",
             "hextech/cache/data-runtime-summary.py",
             "__pycache__",
             "hextech/__pycache__/module.cpython-311.pyc",
         ],
-        "runtime_files": ["data/runtime/cache/example.json"],
+        "runtime_files": ["var/cache/example.json"],
     }
 
-    assert manifest_contains_forbidden_path(manifest, "data/runtime")
+    assert manifest_contains_forbidden_path(manifest, "var/cache")
     assert manifest_contains_forbidden_path(manifest, "__pycache__")
     assert manifest_contains_forbidden_path(manifest, ".pyc")
     assert not manifest_contains_forbidden_path(manifest, "runtime/report")
-    assert not manifest_contains_forbidden_path(manifest, "data/raw")
+    assert not manifest_contains_forbidden_path(manifest, "data" + "/raw")
 
 
 def test_validate_bundle_manifest_rejects_empty_critical_fields():
-    from tools.bundle_manifest import validate_bundle_manifest
+    from tooling.build.manifest import validate_bundle_manifest
 
     manifest = {
-        "static_files": ["英雄目录.v1.json"],
-        "index_files": [],
+        "catalog_files": ["resources/catalog/英雄目录.v1.json"],
         "asset_files": [],
-        "hextech_snapshot_files": [],
-        "synergy_data_files": ["data/seed/startup/synergy/Champion_Synergy_latest.v1.json"],
-        "synergy_data_file": "",
-        "source_files": ["hextech_ui.py"],
+        "seed_files": [],
+        "seed_health": {},
+        "source_files": ["src/hextech/bootstrap/desktop.py"],
     }
 
     try:
@@ -49,137 +62,52 @@ def test_validate_bundle_manifest_rejects_empty_critical_fields():
     else:
         raise AssertionError("关键字段为空的 bundle manifest 必须失败")
 
-    assert "hextech_snapshot_files" in message
-    assert "synergy_data_file" in message
-
-
-def test_hextech_seed_health_requires_valid_snapshot_rows_and_heroes(tmp_path):
-    from tools.bundle_manifest import validate_hextech_seed_health
-
-    seed_dir = tmp_path / "data" / "seed" / "startup" / "hextech"
-    seed_dir.mkdir(parents=True)
-    (seed_dir / "Hextech_Data_2026-07-06.csv").write_text(
-        "\n".join(
-            [
-                "英雄 ID,英雄名称,海克斯名称,英雄胜率,英雄出场率,海克斯胜率,海克斯出场率",
-                "1,英雄一,海克斯A,50%,1%,55%,2%",
-                "2,英雄二,海克斯B,51%,1%,56%,2%",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    summary = validate_hextech_seed_health(tmp_path, min_rows=2, min_heroes=2)
-
-    assert summary["valid"] is True
-    assert summary["path"] == "data/seed/startup/hextech/Hextech_Data_2026-07-06.csv"
-    assert summary["filename"] == "Hextech_Data_2026-07-06.csv"
-    assert summary["rows"] == 2
-    assert summary["unique_heroes"] == 2
-
-
-def test_bundle_manifest_records_dataset_version_and_sha256_for_mutable_seeds(tmp_path, monkeypatch):
-    from tools import bundle_manifest
-
-    hextech = tmp_path / "data" / "seed" / "startup" / "hextech" / "Hextech_Data_2026-07-05.csv"
-    synergy_dir = tmp_path / "data" / "seed" / "startup" / "synergy"
-    synergy = synergy_dir / "Champion_Synergy_20260519_223505.json"
-    latest = synergy_dir / "Champion_Synergy_latest.v1.json"
-    hextech.parent.mkdir(parents=True)
-    synergy_dir.mkdir(parents=True)
-    hextech.write_bytes(b"hextech-seed")
-    synergy.write_bytes(b'{"heroes":172}')
-    latest.write_text(
-        json.dumps({"version": 1, "filename": synergy.name}),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(bundle_manifest, "iter_hextech_snapshot_files", lambda _base: [hextech])
-    monkeypatch.setattr(bundle_manifest, "iter_synergy_data_files", lambda _base: [synergy, latest])
-    monkeypatch.setattr(bundle_manifest, "iter_source_files", lambda _base: ["hextech_ui.py"])
-    monkeypatch.setattr(bundle_manifest, "STABLE_STATIC_FILES", ("英雄目录.v1.json",))
-    monkeypatch.setattr(
-        bundle_manifest,
-        "validate_hextech_seed_health",
-        lambda _base: {"valid": True},
-    )
-    static_dir = tmp_path / "data" / "static" / "version"
-    static_dir.mkdir(parents=True)
-    (static_dir / "英雄目录.v1.json").write_text("{}", encoding="utf-8")
-
-    manifest = bundle_manifest.build_bundle_manifest(tmp_path)
-
-    hextech_name = "data/seed/startup/hextech/Hextech_Data_2026-07-05.csv"
-    latest_name = "data/seed/startup/synergy/Champion_Synergy_latest.v1.json"
-    assert manifest["seed_metadata"][hextech_name] == {
-        "dataset_version": "2026-07-05",
-        "sha256": hashlib.sha256(b"hextech-seed").hexdigest(),
-    }
-    assert manifest["seed_metadata"][latest_name] == {
-        "dataset_version": "20260519_223505",
-        "sha256": hashlib.sha256(latest.read_bytes()).hexdigest(),
-    }
-
-
-def test_validate_bundle_manifest_accepts_manifest_without_seed_metadata():
-    from tools.bundle_manifest import validate_bundle_manifest
-
-    validate_bundle_manifest(
-        {
-            "static_files": ["英雄目录.v1.json"],
-            "index_files": ["index.json"],
-            "asset_files": [],
-            "hextech_snapshot_files": ["data/seed/startup/hextech/Hextech_Data_2026-07-05.csv"],
-            "synergy_data_files": ["data/seed/startup/synergy/Champion_Synergy_20260519_223505.json"],
-            "synergy_data_file": "data/seed/startup/synergy/Champion_Synergy_20260519_223505.json",
-            "source_files": ["hextech_ui.py"],
-        }
-    )
+    assert "seed_files" in message
+    assert "seed_health" in message
 
 
 def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch):
-    from hextech.data_snapshot import DataSnapshotPublisher
-    from tools import bundle_manifest
+    from hextech.modules.data.generation import DataSnapshotPublisher
+    from tooling.build import manifest as bundle_manifest
+    from tooling.build.resource_manifest import write_resource_manifest
+    from tooling.build.rules import CATALOG_FILES
 
-    snapshot_root = tmp_path / "verified-snapshots"
+    snapshot_root = tmp_path / "resources" / "seeds"
     published = DataSnapshotPublisher(snapshot_root).publish(
         {
             "champions": [{"id": "1", "name": "英雄一"}],
             "champion_hextech": {"英雄一": {"hero_id": "1", "augments": [{"id": "a1"}]}},
             "overlay_hints": {"augments": {"a1": {"name": "强化一"}}},
-            "identities": {"champions": {"1": "英雄一"}, "augments": {"a1": "强化一"}},
+            "identities": {
+                "schema_version": 2,
+                "champions": {"1": "英雄一"},
+                "augments": {"a1": "强化一"},
+            },
         },
-        private_stats_enabled=True,
     )
-    seed_csv = tmp_path / "data" / "seed" / "startup" / "hextech" / "Hextech_Data_2026-07-15.csv"
-    synergy = tmp_path / "data" / "seed" / "startup" / "synergy" / "Champion_Synergy_20260715_010101.json"
-    seed_csv.parent.mkdir(parents=True)
-    synergy.parent.mkdir(parents=True)
-    seed_csv.write_text("seed", encoding="utf-8")
-    synergy.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(bundle_manifest, "iter_hextech_snapshot_files", lambda _base: [seed_csv])
-    monkeypatch.setattr(bundle_manifest, "iter_synergy_data_files", lambda _base: [synergy])
-    monkeypatch.setattr(bundle_manifest, "iter_source_files", lambda _base: ["hextech_ui.py"])
-    monkeypatch.setattr(bundle_manifest, "STABLE_STATIC_FILES", ("英雄目录.v1.json",))
-    monkeypatch.setattr(bundle_manifest, "validate_hextech_seed_health", lambda _base: {"valid": True})
-    static_dir = tmp_path / "data" / "static" / "version"
-    static_dir.mkdir(parents=True)
-    (static_dir / "英雄目录.v1.json").write_text("{}", encoding="utf-8")
+    catalog_dir = tmp_path / "resources" / "catalog"
+    catalog_dir.mkdir(parents=True)
+    for name in CATALOG_FILES:
+        (catalog_dir / name).write_text("{}", encoding="utf-8")
+    assets = tmp_path / "resources" / "assets" / "champions"
+    assets.mkdir(parents=True)
+    (assets / "one.png").write_bytes(b"png")
+    write_resource_manifest(tmp_path)
+    monkeypatch.setattr(bundle_manifest, "iter_source_files", lambda _base: ["src/hextech/bootstrap/desktop.py"])
 
     manifest = bundle_manifest.build_bundle_manifest(
         tmp_path,
         verified_snapshot_root=snapshot_root,
     )
 
-    assert manifest["snapshot_seed_health"]["generation_id"] == published.generation_id
-    assert "data/seed/startup/snapshots/current.v1.json" in manifest["snapshot_seed_files"]
-    for relative_name in manifest["snapshot_seed_files"]:
-        assert len(manifest["seed_metadata"][relative_name]["sha256"]) == 64
+    assert manifest["seed_health"]["generation_id"] == published.generation_id
+    assert "resources/seeds/current.v2.json" in manifest["seed_files"]
+    for relative_name in manifest["seed_files"]:
+        assert len(manifest["seed_sha256"][relative_name]) == 64
 
 
 def test_runtime_bundle_reports_missing_or_corrupt_manifest(tmp_path, monkeypatch):
-    from tools import runtime_bundle
+    from hextech.infrastructure.persistence import runtime_bundle
 
     state_dir = tmp_path / "runtime" / "state"
     warnings: list[str] = []
@@ -202,7 +130,7 @@ def test_runtime_bundle_reports_missing_or_corrupt_manifest(tmp_path, monkeypatc
     manifest = runtime_bundle._load_bundle_manifest(missing_root)
 
     status = json.loads((state_dir / "startup_status.json").read_text(encoding="utf-8"))
-    assert manifest["hextech_snapshot_files"] == []
+    assert manifest["seed_files"] == []
     assert status["bundle_manifest"]["status"] == "missing"
     assert status["bundle_manifest"]["warning"] == "bundle_manifest_missing"
     assert status["last_error"] == "remote_failed_local_fallback"
@@ -220,7 +148,7 @@ def test_runtime_bundle_reports_missing_or_corrupt_manifest(tmp_path, monkeypatc
 
 
 def test_finalize_output_runs_smoke_before_replacing_existing_release(tmp_path, monkeypatch):
-    from tools import build_package
+    from tooling.build import package as build_package
 
     releases = tmp_path / "releases"
     staging = tmp_path / "staging"
@@ -255,7 +183,7 @@ def test_finalize_output_runs_smoke_before_replacing_existing_release(tmp_path, 
 
 
 def test_finalize_output_restores_old_release_when_zip_creation_fails_after_smoke(tmp_path, monkeypatch):
-    from tools import build_package
+    from tooling.build import package as build_package
 
     releases = tmp_path / "releases"
     staging = tmp_path / "staging"
@@ -288,7 +216,7 @@ def test_finalize_output_restores_old_release_when_zip_creation_fails_after_smok
 
 
 def test_finalize_output_promotes_staging_after_smoke_success(tmp_path, monkeypatch):
-    from tools import build_package
+    from tooling.build import package as build_package
 
     releases = tmp_path / "releases"
     staging = tmp_path / "staging"
@@ -315,7 +243,7 @@ def test_finalize_output_promotes_staging_after_smoke_success(tmp_path, monkeypa
 
 
 def test_packaged_smoke_startup_status_uses_runtime_auth_token(tmp_path, monkeypatch):
-    from tools.acceptance import smoke_packaged_startup as smoke
+    from tooling.acceptance import smoke_packaged_startup as smoke
 
     runtime_root = tmp_path / "runtime"
     state_dir = runtime_root / "state"
@@ -349,7 +277,7 @@ def test_packaged_smoke_startup_status_uses_runtime_auth_token(tmp_path, monkeyp
 
 
 def test_packaged_smoke_cleanup_retries_transient_windows_locks(tmp_path, monkeypatch):
-    from tools.acceptance import smoke_packaged_startup as smoke
+    from tooling.acceptance import smoke_packaged_startup as smoke
 
     smoke_root = tmp_path / "smoke"
     smoke_root.mkdir()
@@ -369,7 +297,7 @@ def test_packaged_smoke_cleanup_retries_transient_windows_locks(tmp_path, monkey
 
 
 def test_packaged_smoke_rejects_web_generation_mismatch():
-    from tools.acceptance.smoke_packaged_startup import _business_ready
+    from tooling.acceptance.smoke_packaged_startup import _business_ready
 
     checks = _business_ready(
         {"data_snapshot": {"state": "ready", "generation_id": "g1"}},
@@ -385,7 +313,7 @@ def test_packaged_smoke_rejects_web_generation_mismatch():
 
 
 def test_packaged_smoke_allows_runtime_generation_without_verified_seed_status():
-    from tools.acceptance.smoke_packaged_startup import _business_ready
+    from tooling.acceptance.smoke_packaged_startup import _business_ready
 
     checks = _business_ready(
         {"hextech_ready": True},

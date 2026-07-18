@@ -1,5 +1,25 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hextech-nexus"
+version = "0.1.0"
+requires-python = ">=3.11,<3.12"
+
+[project.scripts]
+hextech-desktop = "hextech.bootstrap.desktop:main"
+hextech-web = "hextech.bootstrap.web:main"
+hextech-overlay = "hextech.bootstrap.overlay:main"
+hextech-data-service = "hextech.bootstrap.data_service:main"
+hextech-supervisor = "hextech.bootstrap.supervisor:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src", "."]
 markers = [
   "dev_gate: 默认开发门禁覆盖的自动化测试",
   "overlay: 游戏内 overlay 相关自动化测试",
@@ -9,30 +29,36 @@ markers = [
 [tool.ruff]
 target-version = "py311"
 line-length = 120
-exclude = ["data", "build", "dist"]
+exclude = ["resources", "var", "build", "dist"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tooling 脚本先补齐 src path 再导入应用包，E402 是直接执行入口的显式边界。
+"tooling/**/*.py" = ["E402"]
+# 终端查询器保留紧凑颜色分支；本次架构重构不改变展示逻辑。
+"src/hextech/modules/data/catalog/query_terminal.py" = ["E701"]
 
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
 include = [
-  "hextech/runtime_supervisor.py",
-  "hextech/overlay/lifecycle.py",
-  "hextech/overlay/vision/sidecar.py",
-  "hextech/overlay/vision/template_runtime.py",
-  "hextech/overlay/vision/runner.py",
-  "hextech/scraping/hextech/detail_runner.py",
-  "tools/build_package.py",
-  "tools/bundle_manifest.py",
-  "tools/runtime_bundle.py",
+  "src/hextech/bootstrap/supervisor.py",
+  "src/hextech/interfaces/overlay/lifecycle.py",
+  "src/hextech/infrastructure/vision/sidecar.py",
+  "src/hextech/infrastructure/vision/template_runtime.py",
+  "src/hextech/infrastructure/vision/runner.py",
+  "src/hextech/infrastructure/sources/hextech/detail_runner.py",
+  "tooling/build/package.py",
+  "tooling/build/manifest.py",
+  "src/hextech/infrastructure/persistence/runtime_bundle.py",
 ]
-exclude = ["data", "build", "dist"]
+exclude = ["resources", "var", "build", "dist"]
 
 [tool.coverage.run]
 branch = true
-source = ["hextech", "tools"]
+source = ["hextech", "tooling"]
 
 [tool.coverage.report]
 show_missing = true

@@ -1,6 +1,6 @@
 """测试 Web 本机 API 的 token 边界和只读 GET 契约。
 
-调用方: pytest; 关键依赖: hextech.display.web.api。
+调用方: pytest; 关键依赖: hextech.interfaces.web.backend.api。
 """
 from __future__ import annotations
 
@@ -37,13 +37,13 @@ class _SnapshotView:
 
 
 def _raise_snapshot_unavailable():
-    from hextech.data_snapshot import SnapshotValidationError
+    from hextech.modules.data.generation import SnapshotValidationError
 
     raise SnapshotValidationError("unavailable")
 
 
 def _client():
-    from hextech.display.web import api as web_api
+    from hextech.interfaces.web.backend import api as web_api
 
     app = FastAPI()
     web_api.register_routes(app)
@@ -124,12 +124,12 @@ def test_public_hextech_loading_payload_redacts_startup_status_paths(monkeypatch
         lambda: {
             "hero_ready": True,
             "hextech_ready": False,
-            "last_error": "failed at C:/Users/apple/claudecode/run/data/runtime/raw/hextech/Hextech_Data.csv",
+            "last_error": "failed at C:/Users/apple/claudecode/run/var/sources/hextech/runs/x/stats.csv",
             "hextech_warning": "check auth_token.txt local.yaml proxies.json accounts.json",
-            "active_hextech_csv": "C:/Users/apple/claudecode/run/data/runtime/raw/hextech/Hextech_Data.csv",
+            "active_hextech_csv": "C:/Users/apple/claudecode/run/var/sources/hextech/runs/x/stats.csv",
             "hextech_refresh": {
                 "reason": "fallback",
-                "active_csv": "C:/Users/apple/claudecode/run/data/seed/startup/hextech/Hextech_Data.csv",
+                "active_csv": "C:/Users/apple/claudecode/run/resources/seeds/generations/x/champion_hextech.json",
             },
             "bundle_manifest": {
                 "status": "error",
@@ -163,17 +163,20 @@ def test_public_hextech_loading_payload_redacts_startup_status_paths(monkeypatch
 
 
 @pytest.mark.parametrize(
-    ("snapshot_status", "expected_status"),
+    ("snapshot_status", "privacy_enabled", "expected_status"),
     [
-        ({"state": "ready", "generation_id": "g1", "private_stats_enabled": True}, "NO_STATS"),
-        ({"state": "ready", "generation_id": "g1", "private_stats_enabled": False}, "PRIVATE_STATS_DISABLED"),
-        ({"state": "degraded", "generation_id": "g0", "private_stats_enabled": True}, "GENERATION_DEGRADED"),
+        ({"state": "ready", "generation_id": "g1"}, True, "NO_STATS"),
+        ({"state": "ready", "generation_id": "g1"}, False, "PRIVACY_OFF"),
+        ({"state": "degraded", "generation_id": "g0"}, True, "GENERATION_DEGRADED"),
     ],
 )
-def test_public_hextech_empty_states_are_not_conflated(monkeypatch, snapshot_status, expected_status):
+def test_public_hextech_empty_states_are_not_conflated(
+    monkeypatch, snapshot_status, privacy_enabled, expected_status
+):
     client, web_api = _client()
     monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda name: "Garen")
     monkeypatch.setattr(web_api._snapshot_client, "status", lambda: snapshot_status)
+    monkeypatch.setattr(web_api, "_display_private_stats_enabled", lambda: privacy_enabled)
     monkeypatch.setattr(
         web_api._snapshot_client,
         "open_view",
@@ -188,20 +191,21 @@ def test_public_hextech_empty_states_are_not_conflated(monkeypatch, snapshot_sta
 
 def test_private_stats_disabled_does_not_expose_published_detail(monkeypatch):
     client, web_api = _client()
-    status = {"state": "ready", "generation_id": "g1", "private_stats_enabled": False}
+    status = {"state": "ready", "generation_id": "g1"}
     view = _SnapshotView(status, detail={"augments": [{"id": "a1", "win_rate": 0.9}]})
     monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda name: "Garen")
     monkeypatch.setattr(web_api._snapshot_client, "open_view", lambda: view)
+    monkeypatch.setattr(web_api, "_display_private_stats_enabled", lambda: False)
 
     payload = client.get("/api/champion/Garen/hextechs").json()
 
-    assert payload["status"] == "PRIVATE_STATS_DISABLED"
+    assert payload["status"] == "PRIVACY_OFF"
     assert payload["comprehensive"] == []
     assert payload["generation_state"] == "ready"
 
 
 def test_detail_loading_branch_requests_authenticated_preload_from_page():
-    detail_js = (RUN_ROOT / "hextech/display/web/static/js/detail.js").read_text(encoding="utf-8")
+    detail_js = (RUN_ROOT / "src/hextech/interfaces/web/backend/static/js/detail.js").read_text(encoding="utf-8")
 
     assert "function requestDetailPreload" in detail_js
     assert "fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/preload`" in detail_js
@@ -215,7 +219,7 @@ def test_detail_loading_retry_stops_after_max_attempts(tmp_path):
     if not node:
         pytest.skip("node required for detail.js retry behavior test")
 
-    detail_path = (RUN_ROOT / "hextech/display/web/static/js/detail.js").as_posix()
+    detail_path = (RUN_ROOT / "src/hextech/interfaces/web/backend/static/js/detail.js").as_posix()
     script = tmp_path / "detail_retry_test.cjs"
     script.write_text(
         f"""
@@ -305,7 +309,7 @@ def test_missing_asset_get_redirects_without_queueing_cache_write(monkeypatch, t
         lambda _entry, _name: "https://raw.communitydragon.org/latest/game/mapped.png",
     )
 
-    response = client.get("/assets/requested.png", follow_redirects=False)
+    response = client.get("/assets/augments/requested.png", follow_redirects=False)
 
     assert response.status_code == 307
     assert response.headers["location"] == "https://raw.communitydragon.org/latest/game/mapped.png"
@@ -330,7 +334,7 @@ def test_uncatalogued_asset_get_redirects_without_queueing_cache_write(monkeypat
         lambda _entry, _name: "https://raw.communitydragon.org/latest/game/fallback.png",
     )
 
-    response = client.get("/assets/fallback.png", follow_redirects=False)
+    response = client.get("/assets/augments/fallback.png", follow_redirects=False)
 
     assert response.status_code == 307
     assert response.headers["location"] == "https://raw.communitydragon.org/latest/game/fallback.png"
@@ -338,7 +342,7 @@ def test_uncatalogued_asset_get_redirects_without_queueing_cache_write(monkeypat
 
 
 def test_authenticated_preload_only_reads_snapshot_and_does_not_queue_assets(monkeypatch):
-    from hextech.display.web import runtime
+    from hextech.interfaces.web.backend import runtime
 
     queued: list[tuple[str, str]] = []
     monkeypatch.setattr(runtime, "resolve_canonical_hero_name", lambda _name: "Garen")
@@ -348,7 +352,7 @@ def test_authenticated_preload_only_reads_snapshot_and_does_not_queue_assets(mon
         "open_view",
         lambda: _SnapshotView(
             {"state": "ready", "generation_id": "g1"},
-            detail={"augments": [{"id": "a1", "icon": "/assets/mapped.png"}]},
+            detail={"augments": [{"id": "a1", "icon": "/assets/augments/mapped.png"}]},
         ),
     )
     monkeypatch.setattr(
@@ -434,18 +438,17 @@ def test_web_runtime_has_no_detail_builder_or_preload_executor(monkeypatch):
     assert payload["preload_status"] == {}
 
 
-def test_preloaded_compat_reader_returns_snapshot_copy(monkeypatch, tmp_path):
-    from hextech.display.web import runtime
-    from hextech.data_snapshot import DataSnapshotClient, DataSnapshotPublisher
+def test_preloaded_reader_returns_snapshot_copy(monkeypatch, tmp_path):
+    from hextech.interfaces.web.backend import runtime
+    from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher
 
     DataSnapshotPublisher(tmp_path).publish(
         {
             "champions": [{"id": "86", "name": "Garen"}],
             "champion_hextech": {"Garen": {"hero_id": "86", "augments": [{"id": "a1", "name": "original"}]}},
             "overlay_hints": {"hints": {}, "augments": {}},
-            "identities": {"champions": {"86": "Garen"}, "augments": {}},
+            "identities": {"schema_version": 2, "champions": {"86": "Garen"}, "augments": {}},
         },
-        private_stats_enabled=True,
     )
     monkeypatch.setattr(runtime, "resolve_canonical_hero_name", lambda name: "Garen")
     monkeypatch.setattr(runtime, "_snapshot_client", DataSnapshotClient(tmp_path))

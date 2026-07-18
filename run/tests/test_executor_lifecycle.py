@@ -1,6 +1,6 @@
 """测试 web executor 生命周期。
 
-调用方: pytest; 关键依赖: hextech.display.web.runtime。
+调用方: pytest; 关键依赖: hextech.interfaces.web.backend.runtime。
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import unittest
 
 class ExecutorLifecycleTests(unittest.TestCase):
     def test_web_executor_health_and_shutdown_contract(self):
-        from hextech.display.web import runtime
+        from hextech.interfaces.web.backend import runtime
 
         runtime.shutdown_web_executors(wait=False)
         initial = runtime.get_web_executor_health()
@@ -28,7 +28,7 @@ class ExecutorLifecycleTests(unittest.TestCase):
         self.assertTrue(stopped["hextech_preload"]["shutdown"])
 
     def test_desktop_preload_status_executor_shutdown_contract(self):
-        from hextech.display.desktop import runtime
+        from hextech.interfaces.desktop import runtime
 
         runtime.shutdown_desktop_executors(wait=False)
         initial = runtime.get_desktop_executor_health()

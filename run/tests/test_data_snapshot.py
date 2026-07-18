@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import threading
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
 import pytest
 
-import hextech.data_snapshot as snapshot_module
-from hextech.data_snapshot import DataSnapshotClient, DataSnapshotPublisher, SnapshotValidationError
+import hextech.modules.data.generation as snapshot_module
+from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher, SnapshotValidationError
+from hextech.contracts import SourceProvenance
 
 
 def _payload(*, marker: str, private: bool = True) -> dict[str, object]:
@@ -21,18 +23,37 @@ def _payload(*, marker: str, private: bool = True) -> dict[str, object]:
             "source": {"private_policy_stats_enabled": private},
             "augments": {"9": {"name": f"augment-{marker}"}},
         },
-        "identities": {"champions": {"1": f"hero-{marker}"}, "augments": {"9": f"augment-{marker}"}},
+        "identities": {
+            "schema_version": 2,
+            "champions": {"1": f"hero-{marker}"},
+            "augments": {"9": f"augment-{marker}"},
+        },
     }
+
+
+def _provenance(marker: str) -> SourceProvenance:
+    artifact_hash = hashlib.sha256(f"artifact:{marker}".encode()).hexdigest()
+    manifest_hash = hashlib.sha256(f"manifest:{marker}".encode()).hexdigest()
+    return SourceProvenance(
+        source="hextech",
+        run_id=f"run-{marker}",
+        catalog_generation_id="catalog-test",
+        artifact_role="stats",
+        artifact_sha256=artifact_hash,
+        record_count=1,
+        manifest_sha256=manifest_hash,
+        content_schema_version=2,
+    )
+
+
+def _publish(publisher: DataSnapshotPublisher, payload: dict[str, object], marker: str):
+    return publisher.publish(payload, source_files=(_provenance(marker),))
 
 
 def test_publish_switches_complete_generation_and_records_manifest(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
 
-    manifest = publisher.publish(
-        _payload(marker="one"),
-        private_stats_enabled=True,
-        source_files=[{"name": "source.csv", "size": 12, "sha256": "a" * 64, "record_count": 1}],
-    )
+    manifest = _publish(publisher, _payload(marker="one"), "one")
 
     client = DataSnapshotClient(tmp_path)
     status = client.status()
@@ -54,6 +75,7 @@ def test_publish_switches_complete_generation_and_records_manifest(tmp_path: Pat
 def test_view_resolves_vision_augment_id_and_preserves_catalog_only_identity(tmp_path: Path) -> None:
     payload = _payload(marker="one")
     payload["identities"] = {
+        "schema_version": 2,
         "champions": {"1": "hero-one"},
         "augments": {"9": "大地苏醒"},
         "augment_aliases": {"aram_earthwake": "9", "大地苏醒": "9"},
@@ -74,7 +96,7 @@ def test_view_resolves_vision_augment_id_and_preserves_catalog_only_identity(tmp
             },
         },
     }
-    DataSnapshotPublisher(tmp_path).publish(payload, private_stats_enabled=True)
+    _publish(DataSnapshotPublisher(tmp_path), payload, "one")
     view = DataSnapshotClient(tmp_path).open_view()
 
     assert view.resolve_augment("ARAM_Earthwake")["canonical_id"] == "9"
@@ -91,13 +113,10 @@ def test_view_resolves_vision_augment_id_and_preserves_catalog_only_identity(tmp
 
 def test_failed_publish_keeps_current_generation(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    first = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    first = _publish(publisher, _payload(marker="one"), "one")
 
     with pytest.raises(SnapshotValidationError):
-        publisher.publish(
-            {**_payload(marker="broken"), "champions": "not-a-list"},
-            private_stats_enabled=False,
-        )
+        _publish(publisher, {**_payload(marker="broken"), "champions": "not-a-list"}, "broken")
 
     client = DataSnapshotClient(tmp_path)
     assert client.status()["generation_id"] == first.generation_id
@@ -106,20 +125,20 @@ def test_failed_publish_keeps_current_generation(tmp_path: Path) -> None:
 
 def test_zero_stat_generation_is_rejected_and_keeps_last_good(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    first = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    first = _publish(publisher, _payload(marker="one"), "one")
     empty = _payload(marker="empty")
     empty["champion_hextech"] = {"hero-empty": {"hero_id": 1, "augments": []}}
 
-    with pytest.raises(SnapshotValidationError, match="0 条"):
-        publisher.publish(empty, private_stats_enabled=True)
+    with pytest.raises(SnapshotValidationError, match="非空统计"):
+        _publish(publisher, empty, "empty")
 
     assert DataSnapshotClient(tmp_path).status()["generation_id"] == first.generation_id
 
 
 def test_client_falls_back_to_whole_previous_generation(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    first = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
-    second = publisher.publish(_payload(marker="two"), private_stats_enabled=False)
+    first = _publish(publisher, _payload(marker="one"), "one")
+    second = _publish(publisher, _payload(marker="two"), "two")
     second_dir = tmp_path / "generations" / second.generation_id
     (second_dir / "overlay_hints.json").write_text("{}", encoding="utf-8")
 
@@ -134,11 +153,11 @@ def test_client_falls_back_to_whole_previous_generation(tmp_path: Path) -> None:
 
 def test_existing_client_observes_new_current_generation(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    _publish(publisher, _payload(marker="one"), "one")
     client = DataSnapshotClient(tmp_path)
     assert client.get_champion(1)["name"] == "hero-one"
 
-    second = publisher.publish(_payload(marker="two"), private_stats_enabled=False)
+    second = _publish(publisher, _payload(marker="two"), "two")
 
     assert client.status()["generation_id"] == second.generation_id
     assert client.get_champion(1)["name"] == "hero-two"
@@ -146,11 +165,11 @@ def test_existing_client_observes_new_current_generation(tmp_path: Path) -> None
 
 def test_open_view_stays_on_one_generation_after_pointer_switch(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    first = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    first = _publish(publisher, _payload(marker="one"), "one")
     client = DataSnapshotClient(tmp_path)
     view = client.open_view()
 
-    second = publisher.publish(_payload(marker="two"), private_stats_enabled=False)
+    second = _publish(publisher, _payload(marker="two"), "two")
 
     assert view.status()["generation_id"] == first.generation_id
     assert view.get_champion(1)["name"] == "hero-one"
@@ -159,9 +178,9 @@ def test_open_view_stays_on_one_generation_after_pointer_switch(tmp_path: Path) 
 
 
 def test_desktop_generation_watcher_loads_first_published_snapshot(tmp_path: Path) -> None:
-    from hextech.display.desktop.app import HextechUI
+    from hextech.interfaces.desktop.app import HextechUI
 
-    DataSnapshotPublisher(tmp_path).publish(_payload(marker="one"), private_stats_enabled=True)
+    _publish(DataSnapshotPublisher(tmp_path), _payload(marker="one"), "one")
 
     class StopAfterOnePass:
         calls = 0
@@ -191,7 +210,7 @@ def test_desktop_generation_watcher_loads_first_published_snapshot(tmp_path: Pat
 
 
 def test_consumer_cannot_mutate_cached_generation(tmp_path: Path) -> None:
-    DataSnapshotPublisher(tmp_path).publish(_payload(marker="one"), private_stats_enabled=True)
+    _publish(DataSnapshotPublisher(tmp_path), _payload(marker="one"), "one")
     client = DataSnapshotClient(tmp_path)
     hints = client.get_overlay_hints()
     hints["augments"]["9"]["name"] = "mutated"
@@ -209,7 +228,7 @@ def test_champion_detail_is_returned_as_unpolluted_copy(tmp_path: Path) -> None:
     hero_detail = details["hero-1"]
     assert isinstance(hero_detail, dict)
     hero_detail["synergy"] = {"synergy_items": [{"name": "pair"}]}
-    DataSnapshotPublisher(tmp_path).publish(payload, private_stats_enabled=True)
+    _publish(DataSnapshotPublisher(tmp_path), payload, "one")
     client = DataSnapshotClient(tmp_path)
 
     detail = client.get_champion_detail(1)
@@ -222,7 +241,7 @@ def test_champion_detail_is_returned_as_unpolluted_copy(tmp_path: Path) -> None:
 
 def test_manifest_rejects_path_escape(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    manifest = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    manifest = _publish(publisher, _payload(marker="one"), "one")
     manifest_path = tmp_path / "generations" / manifest.generation_id / "manifest.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     payload["files"][0]["relative_path"] = "../outside.json"
@@ -236,11 +255,11 @@ def test_manifest_rejects_path_escape(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("champion_count", 99), ("private_stats_enabled", "false")],
+    [("champion_count", 99), ("content_fingerprint", "invalid")],
 )
 def test_manifest_rejects_invalid_counts_and_types(tmp_path: Path, field: str, value: object) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    manifest = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    manifest = _publish(publisher, _payload(marker="one"), "one")
     manifest_path = tmp_path / "generations" / manifest.generation_id / "manifest.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     payload[field] = value
@@ -251,7 +270,7 @@ def test_manifest_rejects_invalid_counts_and_types(tmp_path: Path, field: str, v
 
 def test_manifest_rejects_duplicate_file_roles(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    manifest = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    manifest = _publish(publisher, _payload(marker="one"), "one")
     manifest_path = tmp_path / "generations" / manifest.generation_id / "manifest.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     payload["files"].append(dict(payload["files"][0]))
@@ -262,8 +281,8 @@ def test_manifest_rejects_duplicate_file_roles(tmp_path: Path) -> None:
 
 def test_invalid_utf8_current_manifest_falls_back_to_previous_generation(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    previous = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
-    current = publisher.publish(_payload(marker="two"), private_stats_enabled=True)
+    previous = _publish(publisher, _payload(marker="one"), "one")
+    current = _publish(publisher, _payload(marker="two"), "two")
     manifest_path = tmp_path / "generations" / current.generation_id / "manifest.json"
     manifest_path.write_bytes(b"\xff\xfe\x00")
 
@@ -279,7 +298,7 @@ def test_pointer_write_failure_keeps_current_and_removes_unpublished_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    first = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    first = _publish(publisher, _payload(marker="one"), "one")
     real_write = snapshot_module.atomic_write_json
 
     def fail_current(path: object, payload: object, **kwargs: object) -> None:
@@ -289,7 +308,7 @@ def test_pointer_write_failure_keeps_current_and_removes_unpublished_generation(
 
     monkeypatch.setattr(snapshot_module, "atomic_write_json", fail_current)
     with pytest.raises(OSError, match="pointer unavailable"):
-        publisher.publish(_payload(marker="two"), private_stats_enabled=False)
+        _publish(publisher, _payload(marker="two"), "two")
 
     assert DataSnapshotClient(tmp_path).status()["generation_id"] == first.generation_id
     generation_dirs = [path for path in publisher.generations_dir.iterdir() if path.is_dir()]
@@ -301,14 +320,14 @@ def test_cleanup_failure_does_not_rollback_committed_pointer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    _publish(publisher, _payload(marker="one"), "one")
     monkeypatch.setattr(
         publisher,
         "_remove_unreferenced_generations",
         lambda keep: (_ for _ in ()).throw(OSError("cleanup busy")),
     )
 
-    second = publisher.publish(_payload(marker="two"), private_stats_enabled=False)
+    second = _publish(publisher, _payload(marker="two"), "two")
 
     assert DataSnapshotClient(tmp_path).status()["generation_id"] == second.generation_id
 
@@ -323,11 +342,11 @@ def test_malformed_manifest_is_reported_as_unavailable(
     value: object,
 ) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    manifest = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    manifest = _publish(publisher, _payload(marker="one"), "one")
     manifest_path = tmp_path / "generations" / manifest.generation_id / "manifest.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if field == "source_size":
-        payload["source_files"] = [{"name": "x", "size": value, "record_count": 1, "sha256": "a" * 64}]
+        payload["source_files"][0]["record_count"] = value
     elif field == "relative_path":
         payload["files"][0]["relative_path"] = value
     else:
@@ -337,16 +356,16 @@ def test_malformed_manifest_is_reported_as_unavailable(
     assert DataSnapshotClient(tmp_path).status()["state"] == "unavailable"
 
 
-def test_publisher_keeps_only_current_and_previous_generations(tmp_path: Path) -> None:
+def test_publisher_leaves_generation_retention_to_data_service(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
-    ids = [publisher.publish(_payload(marker=str(index)), private_stats_enabled=True).generation_id for index in range(3)]
+    ids = [_publish(publisher, _payload(marker=str(index)), str(index)).generation_id for index in range(3)]
 
     remaining = {path.name for path in (tmp_path / "generations").iterdir() if path.is_dir()}
-    assert remaining == set(ids[-2:])
+    assert remaining == set(ids)
 
 
 def test_overlay_unavailable_state_does_not_fall_back_to_legacy_cache(tmp_path: Path) -> None:
-    from hextech.overlay.data_source import SharedOverlayDataSource
+    from hextech.modules.data.overlay_source import SharedOverlayDataSource
 
     class UnavailableClient:
         @staticmethod
@@ -366,13 +385,13 @@ def test_overlay_unavailable_state_does_not_fall_back_to_legacy_cache(tmp_path: 
 
 
 def test_overlay_data_source_observes_first_generation_without_restart(tmp_path: Path) -> None:
-    from hextech.overlay.data_source import SharedOverlayDataSource
+    from hextech.modules.data.overlay_source import SharedOverlayDataSource
 
     client = DataSnapshotClient(tmp_path)
     source = SharedOverlayDataSource(snapshot_client=client)
     assert source.read_hint_cache()["snapshot"]["state"] == "unavailable"
 
-    manifest = DataSnapshotPublisher(tmp_path).publish(_payload(marker="hot"), private_stats_enabled=True)
+    manifest = _publish(DataSnapshotPublisher(tmp_path), _payload(marker="hot"), "hot")
     refreshed = source.read_hint_cache()
 
     assert refreshed["snapshot"]["state"] == "ready"
@@ -384,10 +403,10 @@ def test_web_and_overlay_read_the_same_generation(tmp_path: Path, monkeypatch: p
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from hextech.display.web import api as web_api
-    from hextech.overlay.data_source import SharedOverlayDataSource
+    from hextech.interfaces.web.backend import api as web_api
+    from hextech.modules.data.overlay_source import SharedOverlayDataSource
 
-    manifest = DataSnapshotPublisher(tmp_path).publish(_payload(marker="one"), private_stats_enabled=True)
+    manifest = _publish(DataSnapshotPublisher(tmp_path), _payload(marker="one"), "one")
     snapshot_client = DataSnapshotClient(tmp_path)
     monkeypatch.setattr(web_api, "_snapshot_client", snapshot_client)
     monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda _name: "hero-1")
@@ -408,14 +427,14 @@ def test_web_and_overlay_response_stays_pinned_during_pointer_switch(
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from hextech.display.web import api as web_api
-    from hextech.overlay.data_source import SharedOverlayDataSource
+    from hextech.interfaces.web.backend import api as web_api
+    from hextech.modules.data.overlay_source import SharedOverlayDataSource
 
     publisher = DataSnapshotPublisher(tmp_path)
-    first = publisher.publish(_payload(marker="one"), private_stats_enabled=True)
+    first = _publish(publisher, _payload(marker="one"), "one")
     client = DataSnapshotClient(tmp_path)
     pinned = client.open_view()
-    publisher.publish(_payload(marker="two"), private_stats_enabled=True)
+    _publish(publisher, _payload(marker="two"), "two")
     monkeypatch.setattr(client, "open_view", lambda: pinned)
     monkeypatch.setattr(web_api, "_snapshot_client", client)
     monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda _name: "hero-1")

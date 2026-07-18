@@ -1,0 +1,4381 @@
+{
+  "schema_version": 2,
+  "generated_at": "2026-07-18T02:59:27+00:00",
+  "description": "Hextech resources 逐文件完整性与发布白名单。",
+  "rules": {
+    "resource_root": "resources",
+    "runtime_root": "var",
+    "runtime_must_not_be_bundled": true,
+    "unlisted_files_must_not_be_bundled": true
+  },
+  "files": [
+    {
+      "path": "resources/README.md",
+      "category": "documentation",
+      "package_role": "build-only",
+      "size": 1014,
+      "sha256": "78aa3de616a779704dd94d546238c43d8b757b1c64fe34986654ccdea8ce4100"
+    },
+    {
+      "path": "resources/assets/README.md",
+      "category": "documentation",
+      "package_role": "build-only",
+      "size": 467,
+      "sha256": "05ce0e937f8032cad030c321476cbf7ccd22656588c491ea47683649630e5eca"
+    },
+    {
+      "path": "resources/assets/augments/acceleratingsorcery_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 898,
+      "sha256": "c1d744355c2a64d137bf414528c7dcf61da2b2044c28d737721f6d22c431aaab"
+    },
+    {
+      "path": "resources/assets/augments/adamant_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1088,
+      "sha256": "c31cade3f62467e0f2d709e1996b681e5c9321626c13f1f16dd64d97f780048d"
+    },
+    {
+      "path": "resources/assets/augments/adapt_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 945,
+      "sha256": "437cd9d6fb2652d4f5a9bb658073f1f922b8412ceaba0b465793702043c3dd9e"
+    },
+    {
+      "path": "resources/assets/augments/aim_for_the_head_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 999,
+      "sha256": "25fdc882d3a1f3cada2f65ee099a3a9a240a9a1088e1ec21ee988753afa5c09a"
+    },
+    {
+      "path": "resources/assets/augments/allforyou_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 814,
+      "sha256": "29a76b142d921df1de913174bc9808a6da4190afb2a89e735b5e73db89911d53"
+    },
+    {
+      "path": "resources/assets/augments/andmyaxe_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 987,
+      "sha256": "267536c3dc96e4b2175d495e6c3fa7136f4cd761650a32992890cd068718574c"
+    },
+    {
+      "path": "resources/assets/augments/aoesize_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1010,
+      "sha256": "9fe09c00d5d339b4cee4a45e617ca3d3b070ab57c1e63ea2a5f71182114eee00"
+    },
+    {
+      "path": "resources/assets/augments/apexinventor_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1028,
+      "sha256": "64d2d224fa00c84756e58b8df7f3b04124e1efad4bf3061341dc39dfb2f6b110"
+    },
+    {
+      "path": "resources/assets/augments/aram_phenomenalevil_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 815,
+      "sha256": "806ce35483193deee526535e8e58a0c41a1369ca375c668cf732f85a04ad2fd6"
+    },
+    {
+      "path": "resources/assets/augments/archmage_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 795,
+      "sha256": "1ddd094803f90d041e90cc84b81302c33a98546153a6904bf9954b434f32c223"
+    },
+    {
+      "path": "resources/assets/augments/armor_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1130,
+      "sha256": "e8ade8abb97a0b9939f954d894ec0364d22b3adcc553fb4dff3b0669cb127d37"
+    },
+    {
+      "path": "resources/assets/augments/armorup_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3431,
+      "sha256": "45d89e74d5d7cbe68887af18e0061e765d2fd55fa205ece3e01f92c6acd4c656"
+    },
+    {
+      "path": "resources/assets/augments/augment404_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1109,
+      "sha256": "d8c60ab115f590860df197bec6abcc7e1592d83724ac5d83dd93f9de9b1c2568"
+    },
+    {
+      "path": "resources/assets/augments/augment405_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1109,
+      "sha256": "d8c60ab115f590860df197bec6abcc7e1592d83724ac5d83dd93f9de9b1c2568"
+    },
+    {
+      "path": "resources/assets/augments/augmented_power_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1124,
+      "sha256": "9bacda433ae325ce37a89d2a93d14223327bbd0e0e35f788ea108504f9ecf04c"
+    },
+    {
+      "path": "resources/assets/augments/babykitty_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 955,
+      "sha256": "c87cf189745dcf00ffbfd4dffde3310c64d28ecc8e652e87e5badb18688413e4"
+    },
+    {
+      "path": "resources/assets/augments/backtobasics_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1067,
+      "sha256": "3231811cf06462eb1b8087f26154c580f2fceac79a25416329cf9b8814f6427e"
+    },
+    {
+      "path": "resources/assets/augments/bannerofcommand_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 879,
+      "sha256": "9bbad86fb896449d433a591213a71e3858034edd9853cf017b77b084920f32dc"
+    },
+    {
+      "path": "resources/assets/augments/bigbrain_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1130,
+      "sha256": "e8ade8abb97a0b9939f954d894ec0364d22b3adcc553fb4dff3b0669cb127d37"
+    },
+    {
+      "path": "resources/assets/augments/biggestsnowballever_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 908,
+      "sha256": "975d936e563c521be93b322bd89eff5b8d2ec3240d81a5b504692debfed9e8dd"
+    },
+    {
+      "path": "resources/assets/augments/bitesized_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3892,
+      "sha256": "bd84b84c1162ab8dcd53bd67ad4f85db1597eb9a779c2f7075bd37076211ed4d"
+    },
+    {
+      "path": "resources/assets/augments/bladewaltz_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1161,
+      "sha256": "6615a6e8d2d5a52e1648aaf4508d076c243e450aa4070ed7308730ba996ba856"
+    },
+    {
+      "path": "resources/assets/augments/bloodbrother_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1161,
+      "sha256": "6615a6e8d2d5a52e1648aaf4508d076c243e450aa4070ed7308730ba996ba856"
+    },
+    {
+      "path": "resources/assets/augments/bloodmoney2_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 916,
+      "sha256": "4c6eefc990c258edaa4fbfe078d94cf8ebc031f84c491185e0800942742aa5e6"
+    },
+    {
+      "path": "resources/assets/augments/bloodrazor_small.arena_2026_s2_a2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 2625,
+      "sha256": "9a215c31e15d033cdd0cd73ed48e30cbe717f1132f4e509b7eee042b2d1878f1"
+    },
+    {
+      "path": "resources/assets/augments/bluntforce_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1161,
+      "sha256": "6615a6e8d2d5a52e1648aaf4508d076c243e450aa4070ed7308730ba996ba856"
+    },
+    {
+      "path": "resources/assets/augments/bodyguard_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 739,
+      "sha256": "de245da40c2afbc026085fa8426540bfd7deac360e2e4a8b852d259fc58a7856"
+    },
+    {
+      "path": "resources/assets/augments/bonk_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 12527,
+      "sha256": "d6236f3668d075fb4dc5c4067a6904f9a8c3e0052360fcbf5a02acef0a93b434"
+    },
+    {
+      "path": "resources/assets/augments/bravestofthebrave_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 926,
+      "sha256": "28405266b9553e1b1e613e58da5ecb87d1f53a42c0153708e40b5ddc5095e065"
+    },
+    {
+      "path": "resources/assets/augments/bread_sandwhich_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1028,
+      "sha256": "ac68aed315b6c0289352d2a67127341e52d34c52ba940f7bb0cf81a30180bb61"
+    },
+    {
+      "path": "resources/assets/augments/breadandbutter_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1027,
+      "sha256": "645a1b9b29a68620f0824b7b1e4ae351cc1f616ff330aec2ded7cab751d71129"
+    },
+    {
+      "path": "resources/assets/augments/breadandcheese_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1027,
+      "sha256": "645a1b9b29a68620f0824b7b1e4ae351cc1f616ff330aec2ded7cab751d71129"
+    },
+    {
+      "path": "resources/assets/augments/breadandjam_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1027,
+      "sha256": "645a1b9b29a68620f0824b7b1e4ae351cc1f616ff330aec2ded7cab751d71129"
+    },
+    {
+      "path": "resources/assets/augments/brushpower_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 767,
+      "sha256": "cf4c084565cf52c585f57810030c7ecc46d1c973474675d66ad39397e8868b8d"
+    },
+    {
+      "path": "resources/assets/augments/buckleup_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1243,
+      "sha256": "0eddbe0b8311e0b374fb4864efb6423e3b5bffa71c09e62bba0235c650db9423"
+    },
+    {
+      "path": "resources/assets/augments/buffbuddies_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1005,
+      "sha256": "18ac0cd815913f7284e8f8b2c8d1f95a796f9be2ae48f83eff7ed161889116e1"
+    },
+    {
+      "path": "resources/assets/augments/bulletheaven_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1291,
+      "sha256": "67b6ed55ef80e38e2a6f08bfb758cc319f1fad6940cd371e92df0654234cea28"
+    },
+    {
+      "path": "resources/assets/augments/bulletmania_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3322,
+      "sha256": "af587fd600c70f66b7eb7c8289ae81b16dbc0c9b823bf76bf49474440ae9c866"
+    },
+    {
+      "path": "resources/assets/augments/calculated_risk_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 881,
+      "sha256": "47d5239b3675889fa0899b926075ef9a299a3aa96b07f9efbd3befa6998e551b"
+    },
+    {
+      "path": "resources/assets/augments/cannonfodder_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 692,
+      "sha256": "391c764bcf1420ec76d5e06a52a4513c5feb8c83996ad8347cbc7ba0a5091358"
+    },
+    {
+      "path": "resources/assets/augments/canttouchthis_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1191,
+      "sha256": "b371ebc61a28de61f17f906cf42ed42d1e760616344004b27020b284cbf5f239"
+    },
+    {
+      "path": "resources/assets/augments/cardcollector_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3672,
+      "sha256": "25d9b7b3bf6ad73765ad522806ef3351ef81378bb04e5f69fb42fd99bc6cd848"
+    },
+    {
+      "path": "resources/assets/augments/castle_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 771,
+      "sha256": "b662cb1c836868558c08450b28f9e7bbfaab5cb977e0ae6efbb32f0e92abdec6"
+    },
+    {
+      "path": "resources/assets/augments/celebration_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3461,
+      "sha256": "4c7d8fe80efe1c8552a72524a63ccd10c6aaa68c7be64a5e347504dd472f9693"
+    },
+    {
+      "path": "resources/assets/augments/celestialbody_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 961,
+      "sha256": "e808d10b1cf0a4f24ce243eadd1dcb88476237e43365723085720f9084988f09"
+    },
+    {
+      "path": "resources/assets/augments/centeroftheuniverse_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1002,
+      "sha256": "be6667da1262c15d426d445421dcf9852b6bb2f907f3ab82babd73617e11527f"
+    },
+    {
+      "path": "resources/assets/augments/cerberus_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1163,
+      "sha256": "6f40b80692da5f4593b2d672d423d8f1eb0112b14603d1038ded82ead267c4c9"
+    },
+    {
+      "path": "resources/assets/augments/chainlightning_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1123,
+      "sha256": "20ff2ff3facc25ccf58aaaa25222769dc5e17a97a72cf7ea0667caf260d8810f"
+    },
+    {
+      "path": "resources/assets/augments/chauffeur_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 946,
+      "sha256": "84e7148ec37fe3f86c8e4267a7a94c2f6695b03dfae505988fa06e7df00c057b"
+    },
+    {
+      "path": "resources/assets/augments/cheating_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 708,
+      "sha256": "283d019405ba790b5cd49ecbba9316a45d7c2631959af30474b3ed23437e7c1f"
+    },
+    {
+      "path": "resources/assets/augments/chemtechpurifier_small.arena_2026_s2_a2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3677,
+      "sha256": "5c0e846a778d8219d46ad0752d7b83e4c03af9db46a9add7dd80f41f333c3af7"
+    },
+    {
+      "path": "resources/assets/augments/chroma_flux_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1107,
+      "sha256": "ac8d7a9e2e9535a5c180450c3d4a359844b42bd3a62657e79c7f953826c546ef"
+    },
+    {
+      "path": "resources/assets/augments/circleofdeath_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 840,
+      "sha256": "c379d6834f1aab0404df823154c06b9327f9602612f47c9666e3559ba5f1166e"
+    },
+    {
+      "path": "resources/assets/augments/circleofstats_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3665,
+      "sha256": "4f04e991267288642f67e75e48800bf163fb8f588263a4077ed58ef77e9e58e0"
+    },
+    {
+      "path": "resources/assets/augments/clothesline_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 879,
+      "sha256": "9bbad86fb896449d433a591213a71e3858034edd9853cf017b77b084920f32dc"
+    },
+    {
+      "path": "resources/assets/augments/clowncollege_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1284,
+      "sha256": "a564af0525bf2e01f8cb1133c7fd38d436e79ba8d076488c31c9117a6427622a"
+    },
+    {
+      "path": "resources/assets/augments/combination_fried_rice_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1071,
+      "sha256": "08a8800a5e5a28f2579b2e11d22488c1df7253ae61218a467d678d790e84d73a"
+    },
+    {
+      "path": "resources/assets/augments/combomaster_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 854,
+      "sha256": "9bca014d8b8c3a89e05461cd3b99ca8ea7800ec1c0302d62d460a15f9c919f71"
+    },
+    {
+      "path": "resources/assets/augments/contractkiller_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1198,
+      "sha256": "3bf53a30c5d64cc1b6ea4b742dedbc06cc9a26b2b920d82320755ae7fc706f03"
+    },
+    {
+      "path": "resources/assets/augments/cooldown_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1027,
+      "sha256": "645a1b9b29a68620f0824b7b1e4ae351cc1f616ff330aec2ded7cab751d71129"
+    },
+    {
+      "path": "resources/assets/augments/courageofthecolossus_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1088,
+      "sha256": "13b621f4a8b574fee62ddefca6bc15f0c64d3583475af76c6464be3e054b02d0"
+    },
+    {
+      "path": "resources/assets/augments/crackopenthategg_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 843,
+      "sha256": "0268319cf23c86bbe57d3f8cbc15c0181cebf9abfe4b4e351cd664c3e27ebd3e"
+    },
+    {
+      "path": "resources/assets/augments/crafting_prisstatanvil_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1104,
+      "sha256": "dea2aae9a441ac02fcebab284c2615002e1e388e9d155b6d05806d9a0df7482f"
+    },
+    {
+      "path": "resources/assets/augments/crafting_sellaug_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1042,
+      "sha256": "e6afb1989d9fd7393b366d81a9192936dd6308b48c429c0a08ac60a3ce794736"
+    },
+    {
+      "path": "resources/assets/augments/crafting_slot_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 685,
+      "sha256": "4f2ca22c8ff0eceb42140d0ed2c4f0b31542b5d2d01d0687609370f4ba771cfa"
+    },
+    {
+      "path": "resources/assets/augments/critchance_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 918,
+      "sha256": "1ce75da33b368aaee4e175d7c40cf01b5bf428c4e837d18dcb09cff97feb91bf"
+    },
+    {
+      "path": "resources/assets/augments/criticalexpansion_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3824,
+      "sha256": "029efdf3799e33caa99a76627cb45406e9e7e61787a19f03d6d6bfe76fdf2b16"
+    },
+    {
+      "path": "resources/assets/augments/criticalhealing_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 943,
+      "sha256": "ae7b302ff1946b43569aaef2a4b47c2ff5768dc642c3b30f22ab245a58c311b6"
+    },
+    {
+      "path": "resources/assets/augments/criticalmissile_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 859,
+      "sha256": "3d46e9b57263fbe0e99093662867ba56b909e611b3d311bd383dfd7d0914b4fc"
+    },
+    {
+      "path": "resources/assets/augments/criticalrhythm_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 890,
+      "sha256": "09988da2fef5753b7560bd9f9384db892d7e7c0052bf56951907442e9ef04718"
+    },
+    {
+      "path": "resources/assets/augments/critncast_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 940,
+      "sha256": "e20723408cd705b95fc5fc3ab7ecf1d6f9eb0fec22d6113013d3632a447d62f1"
+    },
+    {
+      "path": "resources/assets/augments/cruelty_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1329,
+      "sha256": "37a5df06ecc4b08e97d355fd4166d0f13c148078c721b49d0e73257f536c331b"
+    },
+    {
+      "path": "resources/assets/augments/crystallineflask_small.arena_2026_s2_a2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3539,
+      "sha256": "4a0f28bd43ee458f7ce0ad8eef98fa979080c12babfe9be1389a700c58b486bc"
+    },
+    {
+      "path": "resources/assets/augments/damage_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1260,
+      "sha256": "aa2f5ae9edee4bdfbc927c3db245ea121560529966a62b72b89dde72d3fa9ce5"
+    },
+    {
+      "path": "resources/assets/augments/darkblessing_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1056,
+      "sha256": "4d921b28a9d030d67776236c6f4309687b928f2e96c6cdee481c15dd435b178c"
+    },
+    {
+      "path": "resources/assets/augments/darksteeltalons_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1142,
+      "sha256": "2795c81c2651951973dca3d03aaa79269d0ca7739a08d93df91ef36ed4c411fe"
+    },
+    {
+      "path": "resources/assets/augments/dashing_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1007,
+      "sha256": "1506fdec2884a5d2f05b6131c37ed428c44c948baf2ad8dfbb2eeecddb232c02"
+    },
+    {
+      "path": "resources/assets/augments/dawnbringersresolve_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 905,
+      "sha256": "57d33218e20f1c7c026642009e736cb9c2355d7c33741724b2762d22c0f55db6"
+    },
+    {
+      "path": "resources/assets/augments/death_and_taxes_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 4293,
+      "sha256": "6d3553022286df787e425c5fc1bde74278b53405000453aa6da0586231d66d5e"
+    },
+    {
+      "path": "resources/assets/augments/deathtouch_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1158,
+      "sha256": "85a3ad35065adc466dc5069c43309f12f64cc55c84017331e1db8d19269af681"
+    },
+    {
+      "path": "resources/assets/augments/defensivemaneuvers_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1102,
+      "sha256": "36a80b094849a30f2da56ea537147e64596a551b50ebd5876d50175bcd95a237"
+    },
+    {
+      "path": "resources/assets/augments/deft_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1002,
+      "sha256": "be6667da1262c15d426d445421dcf9852b6bb2f907f3ab82babd73617e11527f"
+    },
+    {
+      "path": "resources/assets/augments/dematerialize_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1015,
+      "sha256": "eb5a49f5402c8b062adaf4e550ebc1af86b2c9351dc3400a6bd2237129fa82bd"
+    },
+    {
+      "path": "resources/assets/augments/dematerializer_small.arena_2026_s2_a2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3420,
+      "sha256": "5b08a5ec524c429b7059246d7c9dbb0dab3427dea7c29868d1e76b9070541fd7"
+    },
+    {
+      "path": "resources/assets/augments/demonic_clasp_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 744,
+      "sha256": "33ce4a1e9d46a1b40c364defaef6304c07af0422289e3add0d230a99092a8d05"
+    },
+    {
+      "path": "resources/assets/augments/demonsdance_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 871,
+      "sha256": "67e6583db2e22061ee6e9d48b1b2a63125b2b6fe36ed6fcd3bf2dce4481ed747"
+    },
+    {
+      "path": "resources/assets/augments/desecrator_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 13816,
+      "sha256": "1d04b98f96f037df2f585310e280e9fca1bb78e877d831791f1172ce0636ddbb"
+    },
+    {
+      "path": "resources/assets/augments/desecrator_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1314,
+      "sha256": "3482564ea981e269ac7f88162ed75a71653f9d34261b76c49a50628d8405a6ee"
+    },
+    {
+      "path": "resources/assets/augments/dieanotherday_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1002,
+      "sha256": "0c31bd1ffb306689deae05d094982e43fef9cca87e061d36e5c16a18111d3028"
+    },
+    {
+      "path": "resources/assets/augments/dimensionscrambler_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3738,
+      "sha256": "5db744a665f254ecdd66700d53300a76c937ad28798a0423195278115853050d"
+    },
+    {
+      "path": "resources/assets/augments/divebomber_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 958,
+      "sha256": "5eaf91d6167800cc38ea82a5d56990d37578f6976a378d90b93bd3592c44953e"
+    },
+    {
+      "path": "resources/assets/augments/donation_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 993,
+      "sha256": "30047471fdbb74f004d02b28605d101c1e4a6fbe75437db07d5ecb5d90afe313"
+    },
+    {
+      "path": "resources/assets/augments/dontblink_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 964,
+      "sha256": "6406272e7a3c6ce7f7fcba475877943387c840c5c0ce4cedb7f3cb157edb09d5"
+    },
+    {
+      "path": "resources/assets/augments/dontchangethechannel_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 998,
+      "sha256": "fe91b2ec181d5d06411e5004f7227de68f8610f152089b791d703953c771c039"
+    },
+    {
+      "path": "resources/assets/augments/dontchase_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 917,
+      "sha256": "d97e979f3b836a766a6a325ac7b97029776d0baceac8de66677a5a48cf61f95f"
+    },
+    {
+      "path": "resources/assets/augments/doomsayer_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1095,
+      "sha256": "278ec7ad93c12dc31341ddb8277cf084f6f758acc464eb1e73b7acff385e6a1b"
+    },
+    {
+      "path": "resources/assets/augments/doubletap_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1162,
+      "sha256": "6323b4a0d653fe9fb381b0c8ccb80454ba5f818c0c9e4d2dffe2636f5fbf7aea"
+    },
+    {
+      "path": "resources/assets/augments/drawyoursword_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1072,
+      "sha256": "5214fb024f5b6a94956cf663b2468f990bf226a65ea9d1c785e4a31b69dec87e"
+    },
+    {
+      "path": "resources/assets/augments/drop_bear_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 889,
+      "sha256": "d371fbee57c8a0f57fe16791766dd5370b95953ff22ace7d2563d1c463f2f070"
+    },
+    {
+      "path": "resources/assets/augments/dropkick_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 898,
+      "sha256": "cba9c6b1bfd115ecf9c2e05a7e8cf5a297bfaeb2cf47e0c3dc91195c9d3607e7"
+    },
+    {
+      "path": "resources/assets/augments/dualwield_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 949,
+      "sha256": "5926329aa19e8ffdfe996dee3863ed34e45b2b66f7c6bbcef94d67f8a4596bec"
+    },
+    {
+      "path": "resources/assets/augments/duration_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1033,
+      "sha256": "97aa54d3d0708b00b576bdc78854ee38006d2442c2e07732e68405d2fc47f322"
+    },
+    {
+      "path": "resources/assets/augments/earthwake_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 917,
+      "sha256": "d97e979f3b836a766a6a325ac7b97029776d0baceac8de66677a5a48cf61f95f"
+    },
+    {
+      "path": "resources/assets/augments/ebbandflow_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3751,
+      "sha256": "7b84dd78b600e328ae2504d1847429e2aa4e3f42b8bffc6f8314f6ed82794c3c"
+    },
+    {
+      "path": "resources/assets/augments/elitebomber_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 4540,
+      "sha256": "e05c0f0ed7d06ef48a488f5764ddcbb6f838afd37fd098a05cdb6d6b84ae8011"
+    },
+    {
+      "path": "resources/assets/augments/empoweredbythefaithful_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 872,
+      "sha256": "18e8f079d2cf9572ed2c865bfdebd1afc0140fefef06522e631c37f7867068cd"
+    },
+    {
+      "path": "resources/assets/augments/empyreampromise_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 894,
+      "sha256": "fd39d694f898b0d880b8a5c9b1e6d820aece3a926951386bfa3fc629afecaa65"
+    },
+    {
+      "path": "resources/assets/augments/endlessdecimate_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 987,
+      "sha256": "267536c3dc96e4b2175d495e6c3fa7136f4cd761650a32992890cd068718574c"
+    },
+    {
+      "path": "resources/assets/augments/energetic_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 886,
+      "sha256": "dddd4193af9bc13bce3598136fab6844528c5667b41a8853fc7aeb9efd58a1ae"
+    },
+    {
+      "path": "resources/assets/augments/equillibrium_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1103,
+      "sha256": "4246bea0abc8274373599dbbefe13e5238dc2e93b5de908c1bae2f3b761ea9b2"
+    },
+    {
+      "path": "resources/assets/augments/erosion_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1065,
+      "sha256": "3f65b902c60710d2ab95b28074d29c750d3fdd193f583b4c2f37db9d2177b99a"
+    },
+    {
+      "path": "resources/assets/augments/escapade_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 945,
+      "sha256": "437cd9d6fb2652d4f5a9bb658073f1f922b8412ceaba0b465793702043c3dd9e"
+    },
+    {
+      "path": "resources/assets/augments/escapeplan_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 795,
+      "sha256": "89d0621c4290e17c9a9988a7681a1d25c79ba0853cae23d8904de541f65611bd"
+    },
+    {
+      "path": "resources/assets/augments/etherealweapon_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 998,
+      "sha256": "c8f1642d458ccadf255be8e45c72fd8d148c8df9411c6f1df815747fd6bb0640"
+    },
+    {
+      "path": "resources/assets/augments/eureka_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 918,
+      "sha256": "c95f04074ef7dab13159020839f62642dd01e7088b483ea05d30285c9834d111"
+    },
+    {
+      "path": "resources/assets/augments/evocation_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 905,
+      "sha256": "57d33218e20f1c7c026642009e736cb9c2355d7c33741724b2762d22c0f55db6"
+    },
+    {
+      "path": "resources/assets/augments/executioner_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 973,
+      "sha256": "1725c7afd07e6f1057a17f5f4f0c8f0f071242b64c70f7c3344c11049b80030e"
+    },
+    {
+      "path": "resources/assets/augments/exp_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 770,
+      "sha256": "c5fbc694ac0cc20cbb15450a46760c13c1656be4220d1cdb20cb97e21fca9c86"
+    },
+    {
+      "path": "resources/assets/augments/extendoarm_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1369,
+      "sha256": "bde4ad80d812bc174f0b0beeb0bf888ddf7f8797768bd588366646b9abd189e4"
+    },
+    {
+      "path": "resources/assets/augments/fallenaegis_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1017,
+      "sha256": "a4d5a4a732cad487f59eaccb09ec9f63e6713aa15e20ae63bbe9e96ec6e9d34a"
+    },
+    {
+      "path": "resources/assets/augments/fanthehammer_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 890,
+      "sha256": "5e94ef8e5b640793237a2a8b4d0f932a3f39ed2e4ef1d47687da73fad86ef340"
+    },
+    {
+      "path": "resources/assets/augments/fast_healer_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3147,
+      "sha256": "3c9524deffdd162b65b1180e93bb1b8d0a5446ffc75ed7942fa069717959b8e3"
+    },
+    {
+      "path": "resources/assets/augments/feeltheburn_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1027,
+      "sha256": "84f2c5e73bf4750b1f6c8139c0abe104b429ec3d930d18c726ab8828a09bc4bb"
+    },
+    {
+      "path": "resources/assets/augments/fetch_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1410,
+      "sha256": "3ab26943da88d855c223f75ee0c1aca92b8f3229749a81aa61a83e1d2eaa280e"
+    },
+    {
+      "path": "resources/assets/augments/feymagic_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1376,
+      "sha256": "85c8166e4c123856e9c1e347adeeef4cb9ab1440b6e1f868c553684c5800deb2"
+    },
+    {
+      "path": "resources/assets/augments/finalform_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 976,
+      "sha256": "38f4fdd2cb9363dfda18cb02e4afbf4f46b93dc470d53ebc9a8c193166e8a49d"
+    },
+    {
+      "path": "resources/assets/augments/firebrand_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1073,
+      "sha256": "15768d5fdde3ff86840c8f2b2ae618ec7620e5484db3cdf6577dd57b4a40e173"
+    },
+    {
+      "path": "resources/assets/augments/firesale_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 847,
+      "sha256": "b9b530a7c8c522dab28df002dea05f5e7c5a6346262231551a250493e5dd7774"
+    },
+    {
+      "path": "resources/assets/augments/firfox_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 842,
+      "sha256": "e3357253d1762ddbebf0b03930ef9cbae261453779fb278e20223014c5c859bc"
+    },
+    {
+      "path": "resources/assets/augments/firstaidkit_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 929,
+      "sha256": "3937b439cf71a905946ed08bca7e4019359d226022f9964536ecf650759f05ed"
+    },
+    {
+      "path": "resources/assets/augments/fishbait_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 888,
+      "sha256": "86930d8f1cf72189c8433ea86f49cc989a7268d3dba5ee6f115aa1a58d67a7ed"
+    },
+    {
+      "path": "resources/assets/augments/flash2_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 708,
+      "sha256": "283d019405ba790b5cd49ecbba9316a45d7c2631959af30474b3ed23437e7c1f"
+    },
+    {
+      "path": "resources/assets/augments/flashbang_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 917,
+      "sha256": "d97e979f3b836a766a6a325ac7b97029776d0baceac8de66677a5a48cf61f95f"
+    },
+    {
+      "path": "resources/assets/augments/flashy_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1007,
+      "sha256": "1506fdec2884a5d2f05b6131c37ed428c44c948baf2ad8dfbb2eeecddb232c02"
+    },
+    {
+      "path": "resources/assets/augments/forgedbythemaster_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 994,
+      "sha256": "99ee0eb7cce425c175a793c76c2689c4c7157c6db47deb9279d58d413e2cd57c"
+    },
+    {
+      "path": "resources/assets/augments/frombeginningtoend_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 954,
+      "sha256": "bb13956282e3917e07ee8d6eb928e8031912e8ec55e83764f5d1fb62308f16be"
+    },
+    {
+      "path": "resources/assets/augments/frostwraith_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1370,
+      "sha256": "ca701c516c7cf9a5366764aa6966d9920b6f64b5fc55493f5178024f7a578311"
+    },
+    {
+      "path": "resources/assets/augments/frozenfoundations_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 709,
+      "sha256": "1485d5b16c2019867e0864757e50b6dc76883007fcab556e4fa3bfa2f38bddc6"
+    },
+    {
+      "path": "resources/assets/augments/frozenmallet_small.arena_2026_s2_a2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3738,
+      "sha256": "a9e10544225d34c051d83a7251104740e65cbf64b14dd4cef0fb89a8e2a29148"
+    },
+    {
+      "path": "resources/assets/augments/fruitarian_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 871,
+      "sha256": "c80956eaff781b1c51a730fd227ba1c31b98c64e491133c39295a1a4e9167270"
+    },
+    {
+      "path": "resources/assets/augments/fullyautomated_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1065,
+      "sha256": "1f93b3a8ae887c6c4344e6afdcb5075383614d04f6326397924819cce06b728b"
+    },
+    {
+      "path": "resources/assets/augments/gain_stat_anvil_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 990,
+      "sha256": "335a21401dae553b787defad32904041cb658193160b5f43d9063df90618ff6d"
+    },
+    {
+      "path": "resources/assets/augments/gaingold_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3762,
+      "sha256": "6a878b3facaba45c0cf09ebe8e1d8dcf3603df8891e6adfd8eae8bd7f777a934"
+    },
+    {
+      "path": "resources/assets/augments/gatheringspeed_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3336,
+      "sha256": "47771c21aef073b24a094e3e6f55be06ea89d650984741c0f851723667ef210d"
+    },
+    {
+      "path": "resources/assets/augments/genericabilityaugmenticon_gold.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1407,
+      "sha256": "7a31ac0fb43bacb4135b6bcd2ff1e2e2b2101d031e2f88b40b15f4b50d853fb2"
+    },
+    {
+      "path": "resources/assets/augments/genericabilityaugmenticon_prismatic.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1478,
+      "sha256": "7b44b9ad23099a79b11e4aac83d76e02b5b7f8761bae8189096270bfafd01319"
+    },
+    {
+      "path": "resources/assets/augments/genericabilityaugmenticon_silver.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1286,
+      "sha256": "3c46d0c81e351049fe1bb911a8e8d13bf46da1d1baefc659acec353247c2a1c9"
+    },
+    {
+      "path": "resources/assets/augments/getexcited_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 890,
+      "sha256": "09988da2fef5753b7560bd9f9384db892d7e7c0052bf56951907442e9ef04718"
+    },
+    {
+      "path": "resources/assets/augments/giantslayer_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 979,
+      "sha256": "1a7af04f00a9cfa2486d135f3d0db5bd243cbe2234833f840d28f1878bcd0b12"
+    },
+    {
+      "path": "resources/assets/augments/glasscannon_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 4289,
+      "sha256": "a01505abbd22046704c96b76f77124de23f1d1652605e3a1fd7dca6f27850958"
+    },
+    {
+      "path": "resources/assets/augments/glasscannon_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1164,
+      "sha256": "faec17577b23701e508dbb6071123b657ee88ac30575f164ee9a499f15658d35"
+    },
+    {
+      "path": "resources/assets/augments/gohsacrificefor_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 880,
+      "sha256": "1866fcd6ade61794ad1670e553f83cd3d46ee6ba978f8a2113e8bbc30d52f6c6"
+    },
+    {
+      "path": "resources/assets/augments/goldensnowball_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1211,
+      "sha256": "fbef1300de3814fd939535ad66da8591cdf51764620a0bf5e1b35d5cbf6b5771"
+    },
+    {
+      "path": "resources/assets/augments/goldrend_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 869,
+      "sha256": "e3bab2c962ded37613fb3ae58bb76bd1b9774ae0bad71782bbdf0792d9f99100"
+    },
+    {
+      "path": "resources/assets/augments/goliath_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1221,
+      "sha256": "0d0398f25136c37a6b64455c12f32989b2b11211517a92913bf4f5b46a4d9233"
+    },
+    {
+      "path": "resources/assets/augments/goredrink_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 905,
+      "sha256": "cced2b968dc1e5e084f78a364bdc5571e9d23a58b190476ce05e9f56cf37cc1a"
+    },
+    {
+      "path": "resources/assets/augments/grandmaschilioil_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 872,
+      "sha256": "dadafe3984040ef1a38844f43e24bb99a0a0aef9d35bead4a0e0204ebd1c6ab2"
+    },
+    {
+      "path": "resources/assets/augments/grevious_venmon_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 892,
+      "sha256": "16a135463bb67762b639c0838f352d4b8c3d55b08f781e7e0854a1d3a7f0fdb6"
+    },
+    {
+      "path": "resources/assets/augments/growthspurt_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 771,
+      "sha256": "b662cb1c836868558c08450b28f9e7bbfaab5cb977e0ae6efbb32f0e92abdec6"
+    },
+    {
+      "path": "resources/assets/augments/guiltypleasure_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 864,
+      "sha256": "7bb833614b56fe94e113660bb48118b81c4ee5aa2e14e63fdd52b3c4dd9707f9"
+    },
+    {
+      "path": "resources/assets/augments/handofbaron_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 866,
+      "sha256": "91ffcb68f69d6feb3ac09ea19559c1e46482d7b2f101d028632f6edea1fdb1db"
+    },
+    {
+      "path": "resources/assets/augments/hatonahat_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1100,
+      "sha256": "69b54f93374a99f6c23ac3137277c2289b864ba2fe5a9536dbdc5cc541c58dda"
+    },
+    {
+      "path": "resources/assets/augments/hattrick_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1109,
+      "sha256": "d8c60ab115f590860df197bec6abcc7e1592d83724ac5d83dd93f9de9b1c2568"
+    },
+    {
+      "path": "resources/assets/augments/healthregeneration_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3147,
+      "sha256": "983fcc89a13251531471ad9bb51e6cf32c31e7265e383413bd0a82f3536133f4"
+    },
+    {
+      "path": "resources/assets/augments/healthregeneration_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 921,
+      "sha256": "7b398966ec38c3acd3fec3eaf4858357b3afbe730b30cccce90b21f8b07d0063"
+    },
+    {
+      "path": "resources/assets/augments/heavy_hitter_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 4289,
+      "sha256": "a01505abbd22046704c96b76f77124de23f1d1652605e3a1fd7dca6f27850958"
+    },
+    {
+      "path": "resources/assets/augments/heavyhitter_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 890,
+      "sha256": "5e94ef8e5b640793237a2a8b4d0f932a3f39ed2e4ef1d47687da73fad86ef340"
+    },
+    {
+      "path": "resources/assets/augments/hellbent_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1083,
+      "sha256": "3c2aa246057da7f9ca1a43ebed8b3dcdf5b1a6d7cabfc1595e6f4edd11609a02"
+    },
+    {
+      "path": "resources/assets/augments/highroller_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 904,
+      "sha256": "2eaf198dae568b6fbab85177815b665c8118f3d92abbe9040700986ec5dc5c96"
+    },
+    {
+      "path": "resources/assets/augments/hive_mind_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 954,
+      "sha256": "18bad9da36bb38833524d95f736e49a7c5af598828c8ceb4fa4e749bc32309ad"
+    },
+    {
+      "path": "resources/assets/augments/hoarder_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3363,
+      "sha256": "9c8b79ea66bb5420e78eecb8e4b65b9aa37f75a6611d30df1f3f8885375cf7f6"
+    },
+    {
+      "path": "resources/assets/augments/holdverystill_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 987,
+      "sha256": "d0fe068f78279061fbc899cd687071ba559a2c227e8fdf5b59438fab871d1e43"
+    },
+    {
+      "path": "resources/assets/augments/holyfire_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 951,
+      "sha256": "5ae3c3471ae9464b40c0f28ee0f65956990bfa29d271c3212aa0c877e3c92af4"
+    },
+    {
+      "path": "resources/assets/augments/homeguard_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 952,
+      "sha256": "7772aaede1269760f8bf33aab45116374a00a1b1e83b0cf41cc42b8099aaa546"
+    },
+    {
+      "path": "resources/assets/augments/hybrid_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1072,
+      "sha256": "d41dbbcd325ab6050e3df2e07a9f2977dbd7513bda871047a57d056726c80699"
+    },
+    {
+      "path": "resources/assets/augments/iamthejuggernaut_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1053,
+      "sha256": "39aaf0abb120e113d1ad6ff8e7cb0b5f1c9cc36c237746d28375ebe30a2eef5b"
+    },
+    {
+      "path": "resources/assets/augments/icecold_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1247,
+      "sha256": "b66e95d323044a41acc525e646c5d0e05a6790d764ebab3ffcb7a53c1f147192"
+    },
+    {
+      "path": "resources/assets/augments/impassable_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1088,
+      "sha256": "6d136749f835ee3972af1323c04edfb18e0fc66d3c57aea94341f4e6637990ff"
+    },
+    {
+      "path": "resources/assets/augments/infernalconduit_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 959,
+      "sha256": "2fd8278a75c326a52e5cda3d28ca00adf6968b64f6d7a6c3e1b1b7fc79ab1519"
+    },
+    {
+      "path": "resources/assets/augments/infernalsoul_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1065,
+      "sha256": "3f65b902c60710d2ab95b28074d29c750d3fdd193f583b4c2f37db9d2177b99a"
+    },
+    {
+      "path": "resources/assets/augments/infiniterecursion_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 873,
+      "sha256": "f1def8e9fcb036f0330016fa7eb89621936797b83cea0000b1ab902fb02e4bdf"
+    },
+    {
+      "path": "resources/assets/augments/itscritical_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 918,
+      "sha256": "381d65d35ed2e7345ccd6e8053fc0c56e347c6eb876d0d1d71d4ed7c3f67c459"
+    },
+    {
+      "path": "resources/assets/augments/itskillingtime_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 976,
+      "sha256": "17f141ae171dc66a4ef3c9bec1ee5fcf94197a56b185a7222b200ace3b0e0a27"
+    },
+    {
+      "path": "resources/assets/augments/jeweledgauntlet_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 970,
+      "sha256": "b7d6383230d1c8fe367689bc43db24e72164d3ba0c8015c89d33cfbda4ec6ed0"
+    },
+    {
+      "path": "resources/assets/augments/juggernaut_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3837,
+      "sha256": "1ab4bfb66f9f1be103ad566f28bf9aa5c14c5b4d18ae6884faeeddfd9b618fa1"
+    },
+    {
+      "path": "resources/assets/augments/juicebox_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 960,
+      "sha256": "43c651afb7076897286e5d3e67799f2a5aa447e487289df6b8ab5aab3a74b2d2"
+    },
+    {
+      "path": "resources/assets/augments/juiced_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 998,
+      "sha256": "afaf2ecbac2c79342feb2f288ec4e0a31e3a4b5ce37d8bb1d9cdd951519ffd04"
+    },
+    {
+      "path": "resources/assets/augments/juicepress_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 890,
+      "sha256": "c047e84e8a98e7a3a97618d31f5c217415b4f2c277d47fd4a2c389404e4cdcc0"
+    },
+    {
+      "path": "resources/assets/augments/keystoneconjurer_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 887,
+      "sha256": "c8436da49231dc58ef7f57114bae84d0e052ab3f04cb75c79965c13741f1d8e5"
+    },
+    {
+      "path": "resources/assets/augments/killsecure_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 789,
+      "sha256": "2294883f5d58deaaee9d3459a2ab7fcfc2c626b13e7c18ba714c926cc080f1bd"
+    },
+    {
+      "path": "resources/assets/augments/kingme_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 879,
+      "sha256": "8c84beb06c01a8ca196baf30895eaf955e08579b4bab416d57b629c9b1c6e240"
+    },
+    {
+      "path": "resources/assets/augments/lamb_small.arena_2026_s2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 6152,
+      "sha256": "fdc3108d5187acf0cfa7776b6b032d6b7ca9881b5fd226822fd894fccdc83e2b"
+    },
+    {
+      "path": "resources/assets/augments/largerthanlife_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 2825,
+      "sha256": "367a84913aaa8eb62e5e2a8c3fda48192820c094d71d1395434abd807f403c74"
+    },
+    {
+      "path": "resources/assets/augments/laseheal_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 906,
+      "sha256": "9151cf81fba7554b9b6e0b20f698baf2c90ae025785dbb3d90e9b8157186e95f"
+    },
+    {
+      "path": "resources/assets/augments/lasereyes_small.kiwi_15_24_content.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1781,
+      "sha256": "5af131b93419922039b3325334bcc7807f9681c9b495776d4307590a0bf9fee3"
+    },
+    {
+      "path": "resources/assets/augments/lasereyes_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1002,
+      "sha256": "be6667da1262c15d426d445421dcf9852b6bb2f907f3ab82babd73617e11527f"
+    },
+    {
+      "path": "resources/assets/augments/legday_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 790,
+      "sha256": "07dd3726f984541544cd690cc4fe6f8f23a166fa1b57ba828fa81291fe373380"
+    },
+    {
+      "path": "resources/assets/augments/lightemup_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 890,
+      "sha256": "5e94ef8e5b640793237a2a8b4d0f932a3f39ed2e4ef1d47687da73fad86ef340"
+    },
+    {
+      "path": "resources/assets/augments/lightningstrikes_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1002,
+      "sha256": "be6667da1262c15d426d445421dcf9852b6bb2f907f3ab82babd73617e11527f"
+    },
+    {
+      "path": "resources/assets/augments/lightwarden_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1064,
+      "sha256": "d639772f00d1bec00541d8fc97edb7b4d6b7744a56f81f5f6b1e694809a68b72"
+    },
+    {
+      "path": "resources/assets/augments/littledevil_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1112,
+      "sha256": "2867426a8c9a6af6c7fa0e912abd378e40bfaeea22a567883d0264177fca8237"
+    },
+    {
+      "path": "resources/assets/augments/longrange_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3842,
+      "sha256": "0f184b552beebb8d85420d26230ec29ff5c5ae181c7c3820638f3ed13f233184"
+    },
+    {
+      "path": "resources/assets/augments/longroad_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 2931,
+      "sha256": "58febaa05cd999b23db53b60e37cb2007c3ca0f16558f3f97c58ec2d091c5478"
+    },
+    {
+      "path": "resources/assets/augments/mad_hatter_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 993,
+      "sha256": "7453e0beca3a4535021f6e61f434a76da390f7b98ebb32f988caddcde9d1f41c"
+    },
+    {
+      "path": "resources/assets/augments/madscientist_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1132,
+      "sha256": "2eed5ef15a074abc283da699daa7fc0bd9e22c8d5ad7e869a510c09569f496e7"
+    },
+    {
+      "path": "resources/assets/augments/magic_girl_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 981,
+      "sha256": "62275313c5c7b16618580ebbf95d7542dcf31b5341bc731944d8a318a98de1f5"
+    },
+    {
+      "path": "resources/assets/augments/magicmissile_small.kiwi.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1611,
+      "sha256": "7d95b7ba362da1a6bb7a8f7d4fc061e5d58ae6d0ace1913639041616499c6e81"
+    },
+    {
+      "path": "resources/assets/augments/magicmissile_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 887,
+      "sha256": "c8436da49231dc58ef7f57114bae84d0e052ab3f04cb75c79965c13741f1d8e5"
+    },
+    {
+      "path": "resources/assets/augments/marksmage_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 890,
+      "sha256": "5e94ef8e5b640793237a2a8b4d0f932a3f39ed2e4ef1d47687da73fad86ef340"
+    },
+    {
+      "path": "resources/assets/augments/masterofduality_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 910,
+      "sha256": "fdf159b0df8d85b9740b7237b3fe1dbb417305cb06860ac35c2eb699e628ebd3"
+    },
+    {
+      "path": "resources/assets/augments/maxhealth_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 867,
+      "sha256": "597462730d79652176184e57efe03b03c98dbd4a642e404af3a6f91f5de21357"
+    },
+    {
+      "path": "resources/assets/augments/mercy_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 862,
+      "sha256": "ac525a95ae2e18cf9d04d0df0573ac5475d56cc5a557212b30e34f6263245e26"
+    },
+    {
+      "path": "resources/assets/augments/metabolicoverdrive_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3492,
+      "sha256": "c293175047e25ad7452023d3722ddc8df66d0528d021b0ee3f472bdd56959345"
+    },
+    {
+      "path": "resources/assets/augments/midnightexpress_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1213,
+      "sha256": "544c30c5bb88e09dfba302cf4b23afc5b39fb212e09fdf1dfe111d283ad60a4e"
+    },
+    {
+      "path": "resources/assets/augments/mightyshield_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1106,
+      "sha256": "66e23a49cb625229e2703a5ca2ec72693d1a5d33652c668298e367125b1ac212"
+    },
+    {
+      "path": "resources/assets/augments/mindtomatter_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1128,
+      "sha256": "a0ab115df25680696f0fb28bcd55b179fe2eea2979e451515c3e780be466e375"
+    },
+    {
+      "path": "resources/assets/augments/minionmancer_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 823,
+      "sha256": "59acd270f0e926c58f07f6f7c8e4acf58a19521c5db96cde5b584f28564abf75"
+    },
+    {
+      "path": "resources/assets/augments/mirrorimage_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 978,
+      "sha256": "5b1d3f3cacfe8cc844666ec44e59574d9620db99452c8224f8b8225532dc093e"
+    },
+    {
+      "path": "resources/assets/augments/missingping_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1084,
+      "sha256": "7c7875adb91138240b47eafbde92f5204df3ee18fd1f13512e28a794d2a5d887"
+    },
+    {
+      "path": "resources/assets/augments/mobiuscoil_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 824,
+      "sha256": "eaec22e5acf490e35797b779c6fe79159e5b46bc4da212779422b7e81b2e5efd"
+    },
+    {
+      "path": "resources/assets/augments/mountainsoul_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1128,
+      "sha256": "a0ab115df25680696f0fb28bcd55b179fe2eea2979e451515c3e780be466e375"
+    },
+    {
+      "path": "resources/assets/augments/movespeed_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 949,
+      "sha256": "ce9cce600ba64439118977dea773e90820567046922930b1e39ffed1a836cf1c"
+    },
+    {
+      "path": "resources/assets/augments/multitool_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1000,
+      "sha256": "9d7e77248ac9e4fd504871505264bde4bd4e4b75e1d3315f85084c1a761e14a5"
+    },
+    {
+      "path": "resources/assets/augments/mysticpunch_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 972,
+      "sha256": "527ffbae930c288ac447d3d1cbcee27b19ffb31987c5569a3eb1d967b19840af"
+    },
+    {
+      "path": "resources/assets/augments/mythical_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1000,
+      "sha256": "d8a2666d43e4ab91843f8ea4e77be92c0c83ea302d050f2368b1b1d5a337329d"
+    },
+    {
+      "path": "resources/assets/augments/natureishealing_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 793,
+      "sha256": "9fcf159f89c113454b499403112a8bf949d2d5f2fdb828b4e438b7a8529732b8"
+    },
+    {
+      "path": "resources/assets/augments/nesting_doll_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1085,
+      "sha256": "b62c27228a14b3ef9212de4e34d3422d21864faf5f38a464f69586de529f7498"
+    },
+    {
+      "path": "resources/assets/augments/nightstalking_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1164,
+      "sha256": "faec17577b23701e508dbb6071123b657ee88ac30575f164ee9a499f15658d35"
+    },
+    {
+      "path": "resources/assets/augments/nocrit_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3409,
+      "sha256": "0bcc12ffe6e42f64497843b1cfe1b0d57ee1686f49a7706b1551d7e97448a9c3"
+    },
+    {
+      "path": "resources/assets/augments/nowyouseeme_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 798,
+      "sha256": "3956cd53059e087d11c44eb5adeeb8f5c1171b9981bb0f2a75bdf0125685eeab"
+    },
+    {
+      "path": "resources/assets/augments/numbtopain_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1130,
+      "sha256": "e8ade8abb97a0b9939f954d894ec0364d22b3adcc553fb4dff3b0669cb127d37"
+    },
+    {
+      "path": "resources/assets/augments/oathsworn_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 771,
+      "sha256": "b662cb1c836868558c08450b28f9e7bbfaab5cb977e0ae6efbb32f0e92abdec6"
+    },
+    {
+      "path": "resources/assets/augments/oceansoul_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1101,
+      "sha256": "a132e68c472157ef5727843ff30e150ee65d97e39913aa4b57252a3730fd3ded"
+    },
+    {
+      "path": "resources/assets/augments/okboomerang_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 987,
+      "sha256": "267536c3dc96e4b2175d495e6c3fa7136f4cd761650a32992890cd068718574c"
+    },
+    {
+      "path": "resources/assets/augments/omnisoul_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 960,
+      "sha256": "43c651afb7076897286e5d3e67799f2a5aa447e487289df6b8ab5aab3a74b2d2"
+    },
+    {
+      "path": "resources/assets/augments/orbitallaser_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1002,
+      "sha256": "be6667da1262c15d426d445421dcf9852b6bb2f907f3ab82babd73617e11527f"
+    },
+    {
+      "path": "resources/assets/augments/outlawsgrit_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 874,
+      "sha256": "43d5fee9abbd31ef77ca1a1986fdfb49a67661fc7dd88cdc6a17d41ef9241e7b"
+    },
+    {
+      "path": "resources/assets/augments/overextender_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 960,
+      "sha256": "ceae1780756424655118cce759d971b90133da100dbbebdbb4d5695f2f1d5525"
+    },
+    {
+      "path": "resources/assets/augments/overflow_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 998,
+      "sha256": "c8f1642d458ccadf255be8e45c72fd8d148c8df9411c6f1df815747fd6bb0640"
+    },
+    {
+      "path": "resources/assets/augments/pandoras_box_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 960,
+      "sha256": "851c5fc89879abf3576b634a1afcf8ba3b5d49b2b11b278a23a3da1d82fec02a"
+    },
+    {
+      "path": "resources/assets/augments/panic_room_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1111,
+      "sha256": "c9d1d9e7b74c7a5e750f6bf595bfaa74f108e48f491030dde03ba8adaa8acb2e"
+    },
+    {
+      "path": "resources/assets/augments/parasiticmutation_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 998,
+      "sha256": "5de8f80c243be52f7a8ed591799e39b3adaa0ba2d74818aee9c73c42ff3104f1"
+    },
+    {
+      "path": "resources/assets/augments/parasiticrelationship_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 871,
+      "sha256": "af242b0c99722628695f2c15b326d0e59701f7464fae8c79640b39a0f39c896c"
+    },
+    {
+      "path": "resources/assets/augments/patontheback_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 979,
+      "sha256": "e136e8a79e3475ce19ba7e739913afe4df5cc56b4426ec56697042754611abdd"
+    },
+    {
+      "path": "resources/assets/augments/perseverance_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 905,
+      "sha256": "57d33218e20f1c7c026642009e736cb9c2355d7c33741724b2762d22c0f55db6"
+    },
+    {
+      "path": "resources/assets/augments/phenomenalevil_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 816,
+      "sha256": "33409e2ee8f2dcbae6e2b327ed6a37a5ebb22376d24463f886e2e1477537df90"
+    },
+    {
+      "path": "resources/assets/augments/pickmeup_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3169,
+      "sha256": "5ee1378dae19c193a88a50ac169bd64d19e55c5a8cb0792162094f5478c94dc4"
+    },
+    {
+      "path": "resources/assets/augments/pickuprange_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 709,
+      "sha256": "1485d5b16c2019867e0864757e50b6dc76883007fcab556e4fa3bfa2f38bddc6"
+    },
+    {
+      "path": "resources/assets/augments/pinballsnowball_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 908,
+      "sha256": "975d936e563c521be93b322bd89eff5b8d2ec3240d81a5b504692debfed9e8dd"
+    },
+    {
+      "path": "resources/assets/augments/pincushion_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 898,
+      "sha256": "cba9c6b1bfd115ecf9c2e05a7e8cf5a297bfaeb2cf47e0c3dc91195c9d3607e7"
+    },
+    {
+      "path": "resources/assets/augments/plaguebearer_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1156,
+      "sha256": "11faeaf073b182cf2de7865ea8730951aa9f4e9c80313a825520e1a7a33da733"
+    },
+    {
+      "path": "resources/assets/augments/pointblank_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3931,
+      "sha256": "faee1d476b3b6ebf6dbbb00598b1547d3900dc13c70612160f1f2e364e915646"
+    },
+    {
+      "path": "resources/assets/augments/poltergeist_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 735,
+      "sha256": "9fa80e88cd577aab2e8241fd509b8e3dcaf7cb82fd483feef69ae15d5a1227dd"
+    },
+    {
+      "path": "resources/assets/augments/poroblast_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1405,
+      "sha256": "512c9d1eee2838f493a977c58d8e3e565c7100f17a8aa2236b618ad777721e30"
+    },
+    {
+      "path": "resources/assets/augments/poroking_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1339,
+      "sha256": "00e35888c857b0c4120e78ed1eb387c34c3f0faedd4f83726a4b4b2f858424ed"
+    },
+    {
+      "path": "resources/assets/augments/power_small.arena_2026_s2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3561,
+      "sha256": "c56f3e6a14eb4f61afc0d664a535cd09be549da8fdbab6240408d403afe9ee9a"
+    },
+    {
+      "path": "resources/assets/augments/projectilecount_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 809,
+      "sha256": "17fe7eb0d709614385a59b99bec9c06b7c903e2dfc16e2b6167f253cb9946733"
+    },
+    {
+      "path": "resources/assets/augments/promqueen_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 917,
+      "sha256": "5a32409b97afad974dee52306b2841685b84db2837648ec863828369b3a1f474"
+    },
+    {
+      "path": "resources/assets/augments/proteinshake_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1063,
+      "sha256": "5daef27a2fb1dc043c16533af3940243084c9b76c53d503e4cce1dbb6c5cec14"
+    },
+    {
+      "path": "resources/assets/augments/puristcaster_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 778,
+      "sha256": "accaf0693e0790bbb5ed6d508bd934d567bde50b7ccd4d99d90629caf89f7998"
+    },
+    {
+      "path": "resources/assets/augments/quantumcomputing_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 987,
+      "sha256": "267536c3dc96e4b2175d495e6c3fa7136f4cd761650a32992890cd068718574c"
+    },
+    {
+      "path": "resources/assets/augments/quest_angelofretribution_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 879,
+      "sha256": "2906ce8ae36923eed650ef9fb2bbcbdeb4e7ba6d1f55506ea3fbbe3b927678eb"
+    },
+    {
+      "path": "resources/assets/augments/quest_prismaticegg_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 988,
+      "sha256": "8b7c9a44dfe544326048991ba516297d4fbfc2e23d0c8f069e5e9c45dcbc3f2d"
+    },
+    {
+      "path": "resources/assets/augments/quest_rite_of_the_forge_god_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1108,
+      "sha256": "8ea49600ea75ec215bdb47233d8ad286b1a281fbbef5d36cd78098ae14c0d7d2"
+    },
+    {
+      "path": "resources/assets/augments/quest_steelyourheart_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1142,
+      "sha256": "2a06ca7fcd4d87ffad4499d16a16a2ca4935ef72421e71a32b0569d0908e925e"
+    },
+    {
+      "path": "resources/assets/augments/quest_urfschampion_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1138,
+      "sha256": "88cf52eba9c7ef4e0afcf277f239f96e3e28411cdbda02a8cea013200d207e29"
+    },
+    {
+      "path": "resources/assets/augments/quest_voidimmolation_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 912,
+      "sha256": "6164a913236a61ccd473376f8685639e75869a6c36a9df290f3b69392d6127f1"
+    },
+    {
+      "path": "resources/assets/augments/quest_woogletswitchcap_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1142,
+      "sha256": "2a06ca7fcd4d87ffad4499d16a16a2ca4935ef72421e71a32b0569d0908e925e"
+    },
+    {
+      "path": "resources/assets/augments/questbangbang_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 863,
+      "sha256": "8f241ce7fec0eb2ae607ea06b7beed0161d21e428ff707e5e0c5812e7c149313"
+    },
+    {
+      "path": "resources/assets/augments/questburstingteeth_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 954,
+      "sha256": "18bad9da36bb38833524d95f736e49a7c5af598828c8ceb4fa4e749bc32309ad"
+    },
+    {
+      "path": "resources/assets/augments/questporocharge_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 954,
+      "sha256": "18bad9da36bb38833524d95f736e49a7c5af598828c8ceb4fa4e749bc32309ad"
+    },
+    {
+      "path": "resources/assets/augments/questpressurecooker_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 825,
+      "sha256": "0431ed629988b3c6e45e9916222bda059513c7a4dd3c3caf5a7e9b81d13dc8fc"
+    },
+    {
+      "path": "resources/assets/augments/questsupportmain_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 984,
+      "sha256": "65c307707ac41567616f6341a2d038c87231c76c496859d0a98a190d9d7ef3a8"
+    },
+    {
+      "path": "resources/assets/augments/rabblerousing_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 899,
+      "sha256": "f162e3ee0fee6386f167cb2fdc005062a873c17dee76224ea1a4897def4013d8"
+    },
+    {
+      "path": "resources/assets/augments/rageengine_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 4076,
+      "sha256": "fd29ef691f727613dc48d4167fe11467d4b5649f6b41d883f3cecdac287e9770"
+    },
+    {
+      "path": "resources/assets/augments/rags_to_riches_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1000,
+      "sha256": "c8938a9a64fa21bd4b46a3fa5833ec325e3ad3b78c98789445f54fbf82e16ef0"
+    },
+    {
+      "path": "resources/assets/augments/raidboss_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 996,
+      "sha256": "2f43c656d7d5b264e79339367767d563ea19aff5d0b77381cf4611137b2a2cf1"
+    },
+    {
+      "path": "resources/assets/augments/rammingspeed_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 4074,
+      "sha256": "6d59d67e8620beec63eccbaf2a89e65877b08f118e255aa1cba5eaaffbe34e8f"
+    },
+    {
+      "path": "resources/assets/augments/recursion_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1027,
+      "sha256": "645a1b9b29a68620f0824b7b1e4ae351cc1f616ff330aec2ded7cab751d71129"
+    },
+    {
+      "path": "resources/assets/augments/redenvelopes_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 903,
+      "sha256": "182fda5351c6f942bb97a76fead86e1330db174288b942587e57c19003c36b34"
+    },
+    {
+      "path": "resources/assets/augments/remnantofthewatchers_small.arena_2026_s2_a2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3943,
+      "sha256": "fae3d70044f8c21686310bc8d96136220a061ca51ed38bd3f7804a1bf5710458"
+    },
+    {
+      "path": "resources/assets/augments/replace_augment_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 823,
+      "sha256": "3171a3fdc3c19655e33fc250d1040ab529dace0e70d1895cedfaa32d50f44126"
+    },
+    {
+      "path": "resources/assets/augments/repulsor_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1207,
+      "sha256": "f162573a4e7a8d4197a83c25b1df349f84b1e360c9d1c6908711a52db24cc91a"
+    },
+    {
+      "path": "resources/assets/augments/restart_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1065,
+      "sha256": "1f93b3a8ae887c6c4344e6afdcb5075383614d04f6326397924819cce06b728b"
+    },
+    {
+      "path": "resources/assets/augments/restlessrestoration_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 763,
+      "sha256": "af5edfab3444a99ff4342035291e33a8a2f46def7be317b3b1553f2b0bc24bc9"
+    },
+    {
+      "path": "resources/assets/augments/rice_and_chicken_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1071,
+      "sha256": "08a8800a5e5a28f2579b2e11d22488c1df7253ae61218a467d678d790e84d73a"
+    },
+    {
+      "path": "resources/assets/augments/rice_and_fish_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1071,
+      "sha256": "08a8800a5e5a28f2579b2e11d22488c1df7253ae61218a467d678d790e84d73a"
+    },
+    {
+      "path": "resources/assets/augments/rice_and_pork_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1071,
+      "sha256": "08a8800a5e5a28f2579b2e11d22488c1df7253ae61218a467d678d790e84d73a"
+    },
+    {
+      "path": "resources/assets/augments/righteous_fury_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 906,
+      "sha256": "9151cf81fba7554b9b6e0b20f698baf2c90ae025785dbb3d90e9b8157186e95f"
+    },
+    {
+      "path": "resources/assets/augments/risk_small.arena_2026_s2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3570,
+      "sha256": "f0ffbf09c657ee0ab33c40f23f4d44e68639c21260c4a5b15e68788b800993f3"
+    },
+    {
+      "path": "resources/assets/augments/scavenger_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1329,
+      "sha256": "4443607d2fafa57a842d8cbd6831b8051c4c0fb755c0abc58d391ba64bd9367b"
+    },
+    {
+      "path": "resources/assets/augments/scopedweapons_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1037,
+      "sha256": "cc318bbef9a660bfd57672427c93c99e7a0268f859fc900ebe75484197675956"
+    },
+    {
+      "path": "resources/assets/augments/scopierweapons_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1037,
+      "sha256": "cc318bbef9a660bfd57672427c93c99e7a0268f859fc900ebe75484197675956"
+    },
+    {
+      "path": "resources/assets/augments/scopiestweapons_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1037,
+      "sha256": "cc318bbef9a660bfd57672427c93c99e7a0268f859fc900ebe75484197675956"
+    },
+    {
+      "path": "resources/assets/augments/searingdawn_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 989,
+      "sha256": "22a584de93ffa6bef270e4c9eee1635190cfdac1dfbfbba5183a43d2a8f84753"
+    },
+    {
+      "path": "resources/assets/augments/selfdestruct_small.mayhem_new_augments.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1053,
+      "sha256": "142ac3e5de3f6bb8828a003db813444b5095d688a9dcda8a24886f7b4267e8dd"
+    },
+    {
+      "path": "resources/assets/augments/selfdestruct_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1053,
+      "sha256": "142ac3e5de3f6bb8828a003db813444b5095d688a9dcda8a24886f7b4267e8dd"
+    },
+    {
+      "path": "resources/assets/augments/servebeyonddeath_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1108,
+      "sha256": "f0079873fb40da410907a444ba0f8e44bd85276b7c28ec190da9fa9ec3124143"
+    },
+    {
+      "path": "resources/assets/augments/shadowrunner_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 924,
+      "sha256": "35771c2a9131665808edfe249f04b329099cf821d074c8b91d8846ea89390854"
+    },
+    {
+      "path": "resources/assets/augments/sharktempest_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 883,
+      "sha256": "8e3e2302cec86d6a4593f95dab5af0541d8be49a1ae3e547cb243692b3fb7ef0"
+    },
+    {
+      "path": "resources/assets/augments/shrinkengine_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 921,
+      "sha256": "adf66eaf18f886f322331386f334b6d600e65d39db72fab98d0cf2441f852d15"
+    },
+    {
+      "path": "resources/assets/augments/shrinkray_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1050,
+      "sha256": "ebc6ce8b4d27e463d79edd7e3425e0f4024d91cb29664e188ba2968900e763a7"
+    },
+    {
+      "path": "resources/assets/augments/silver_spoon_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 755,
+      "sha256": "ecc7e952b310edf80246b351ee8bf99680670611d87c7fa4d3c8c16e7886f3ef"
+    },
+    {
+      "path": "resources/assets/augments/skilledsniper_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 949,
+      "sha256": "d593e95199bf3b55e28ac43ae893f835b3fe41438ae146a3edce52176459e843"
+    },
+    {
+      "path": "resources/assets/augments/skipthebasic_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1065,
+      "sha256": "6ecd6f671b8a8812b3008ea037d954cec0660345c8a34dc49f14f4e592b57ad1"
+    },
+    {
+      "path": "resources/assets/augments/slaparound_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 814,
+      "sha256": "c01c266e2aea892f0bf7c4b3c6cd94fd0af13716b4575f0495477565ec954e5e"
+    },
+    {
+      "path": "resources/assets/augments/slimetime_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 979,
+      "sha256": "87f786d3cc71ea7ad5a17694b57c9cc1b1d56499aad559419e9f64c6cc03b909"
+    },
+    {
+      "path": "resources/assets/augments/slowactingpainkillers_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1169,
+      "sha256": "f82c03f926c7f04f3b769b622c81bd4e7dcf1427f612b50d3963b91f4eaef9a8"
+    },
+    {
+      "path": "resources/assets/augments/slowandsteady_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 949,
+      "sha256": "5926329aa19e8ffdfe996dee3863ed34e45b2b66f7c6bbcef94d67f8a4596bec"
+    },
+    {
+      "path": "resources/assets/augments/slowcooker_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 876,
+      "sha256": "67d8c72fa18ceaa4c0193375fe6e10383c2dc4aebecbc1a806f6f5eac02d9c93"
+    },
+    {
+      "path": "resources/assets/augments/sneakerhead_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 797,
+      "sha256": "bdc1e693e29910abdabbb53cb2e9e104f2c465431c00703708b3010491049c79"
+    },
+    {
+      "path": "resources/assets/augments/snowballfight_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 692,
+      "sha256": "391c764bcf1420ec76d5e06a52a4513c5feb8c83996ad8347cbc7ba0a5091358"
+    },
+    {
+      "path": "resources/assets/augments/snowballupgrade_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 823,
+      "sha256": "ceed3f2de834ba787b6ed0b3f03bb2c28078c25a889c37acc351ae7204cf2d28"
+    },
+    {
+      "path": "resources/assets/augments/snowbomb_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 823,
+      "sha256": "ceed3f2de834ba787b6ed0b3f03bb2c28078c25a889c37acc351ae7204cf2d28"
+    },
+    {
+      "path": "resources/assets/augments/snowday_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 823,
+      "sha256": "ceed3f2de834ba787b6ed0b3f03bb2c28078c25a889c37acc351ae7204cf2d28"
+    },
+    {
+      "path": "resources/assets/augments/sonata_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 956,
+      "sha256": "abf9cba4ec47cf7b44c002d3c8a73dcf62c0ed3ee34520ce2e521023a4bc3900"
+    },
+    {
+      "path": "resources/assets/augments/sonicboom_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 840,
+      "sha256": "c379d6834f1aab0404df823154c06b9327f9602612f47c9666e3559ba5f1166e"
+    },
+    {
+      "path": "resources/assets/augments/souleater_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 851,
+      "sha256": "9283ca1df53439ba15d6ae352d52dbb5b90bad3a511b3428a44e6f8d767cedf2"
+    },
+    {
+      "path": "resources/assets/augments/soulsiphon_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 975,
+      "sha256": "71711ad6b94addaa25fa2e4e99f4a9875b28431579c8f4d93f73686c46e91a53"
+    },
+    {
+      "path": "resources/assets/augments/speeddemon_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1131,
+      "sha256": "cfb7875c592afde248c9a1c8d0ae291ccde0bc96bb6f08d61ee345dd3427442c"
+    },
+    {
+      "path": "resources/assets/augments/spell_craft_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 909,
+      "sha256": "0cb66a244ae07fbea969f6a5a5c7459aed513f146d17e12f2c8ad99f5c1d9d63"
+    },
+    {
+      "path": "resources/assets/augments/spellwake_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 887,
+      "sha256": "c8436da49231dc58ef7f57114bae84d0e052ab3f04cb75c79965c13741f1d8e5"
+    },
+    {
+      "path": "resources/assets/augments/spintowin_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1002,
+      "sha256": "be6667da1262c15d426d445421dcf9852b6bb2f907f3ab82babd73617e11527f"
+    },
+    {
+      "path": "resources/assets/augments/spirit_infusion_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 854,
+      "sha256": "ef9b9b4812add61a207c39267bbda1cf443afc06ae8ea37be399e43ba2b9ed37"
+    },
+    {
+      "path": "resources/assets/augments/spiritbomb_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 921,
+      "sha256": "507807f95fe51f0ddb021154a7cda5e6438f4772efac8114dbb0e91d3b39001a"
+    },
+    {
+      "path": "resources/assets/augments/spiritlink_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1058,
+      "sha256": "757f4f7141f0572d5989a6a01a36f907e658747bd56b76d960e67ef54aae8b35"
+    },
+    {
+      "path": "resources/assets/augments/spiritualpurification_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1165,
+      "sha256": "ea66e5a127cc00b1319fb9fa2267a02447d4608d70618c1b6083a15aa4de0260"
+    },
+    {
+      "path": "resources/assets/augments/sprayandpray_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3324,
+      "sha256": "1fa4ed56bbf795a4db6c678382831c65737919bedadddfdb4136abaac9cacbbb"
+    },
+    {
+      "path": "resources/assets/augments/squishyslappygrab_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 862,
+      "sha256": "ac525a95ae2e18cf9d04d0df0573ac5475d56cc5a557212b30e34f6263245e26"
+    },
+    {
+      "path": "resources/assets/augments/stackosaurusrex_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 755,
+      "sha256": "9a7eeb34bf481559086ca75f1e36af54b57455e318c1c9c3cd1a52d1c9d54da1"
+    },
+    {
+      "path": "resources/assets/augments/stats_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 823,
+      "sha256": "b4840109d096a5400bd6b76be5c104e55174a6d44a658566dc84d013c70fb5a2"
+    },
+    {
+      "path": "resources/assets/augments/statsonstats_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 823,
+      "sha256": "b4840109d096a5400bd6b76be5c104e55174a6d44a658566dc84d013c70fb5a2"
+    },
+    {
+      "path": "resources/assets/augments/statsonstatsonstats_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 823,
+      "sha256": "b4840109d096a5400bd6b76be5c104e55174a6d44a658566dc84d013c70fb5a2"
+    },
+    {
+      "path": "resources/assets/augments/stealessence_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3878,
+      "sha256": "8bb6e50af1aec9b4d7d388d28cc1f9fbc8861b5657a298ca9956a85d8c031c4b"
+    },
+    {
+      "path": "resources/assets/augments/stuckinherewithme_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1242,
+      "sha256": "351801cbcfe1f1e40d1c2bd02b7fe3b04f051927a4dc6715a79042a38534b7f1"
+    },
+    {
+      "path": "resources/assets/augments/summonerrevolution_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 709,
+      "sha256": "1485d5b16c2019867e0864757e50b6dc76883007fcab556e4fa3bfa2f38bddc6"
+    },
+    {
+      "path": "resources/assets/augments/summonersroulette_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 823,
+      "sha256": "b4840109d096a5400bd6b76be5c104e55174a6d44a658566dc84d013c70fb5a2"
+    },
+    {
+      "path": "resources/assets/augments/surgefield_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 976,
+      "sha256": "38f4fdd2cb9363dfda18cb02e4afbf4f46b93dc470d53ebc9a8c193166e8a49d"
+    },
+    {
+      "path": "resources/assets/augments/swiftandsafe_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 688,
+      "sha256": "23f68336ae358f56bd5941afa4209f69cdca452a33b653d471fe039e29b143be"
+    },
+    {
+      "path": "resources/assets/augments/swindlers_orb_item_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 10273,
+      "sha256": "31050edaac3460c2c3eb5955c0bda4f9c8041dab5796422121450d0e9a86f8cf"
+    },
+    {
+      "path": "resources/assets/augments/symbioticmutation_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 998,
+      "sha256": "5de8f80c243be52f7a8ed591799e39b3adaa0ba2d74818aee9c73c42ff3104f1"
+    },
+    {
+      "path": "resources/assets/augments/symphonyofwar_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 837,
+      "sha256": "cb64df366e029adc732a47d171a347d2cf4ac39dcfb36b1fdbc900a6ed5866a7"
+    },
+    {
+      "path": "resources/assets/augments/tank_engine_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 851,
+      "sha256": "851d37238c6b387a7aaaeb996e03f8a25a18fe4125cd3a99cb54917da318a7fa"
+    },
+    {
+      "path": "resources/assets/augments/tankitorleaveit_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 964,
+      "sha256": "eea323aa4e98eb9b756ee5dcd3f977c3bb41e7e9f84a77b0f4393eed8deda6e3"
+    },
+    {
+      "path": "resources/assets/augments/tapdancer_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 795,
+      "sha256": "c501e76918615c0a62ed97663f1c6bd543da29c8742683c570fe985267c5048b"
+    },
+    {
+      "path": "resources/assets/augments/thebrutalizer_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1002,
+      "sha256": "be6667da1262c15d426d445421dcf9852b6bb2f907f3ab82babd73617e11527f"
+    },
+    {
+      "path": "resources/assets/augments/thiefsgloves_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1111,
+      "sha256": "baf58ec23038360b0242320d152c88f1ba26ddfc92c0d14c9840e937b81cf3ef"
+    },
+    {
+      "path": "resources/assets/augments/threadtheneedle_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1002,
+      "sha256": "be6667da1262c15d426d445421dcf9852b6bb2f907f3ab82babd73617e11527f"
+    },
+    {
+      "path": "resources/assets/augments/threesacredtreasures_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1119,
+      "sha256": "8c50a77cbb7ae58e271b6296454d1b55687f89f1b5d3365ffedb225aa29fcc9d"
+    },
+    {
+      "path": "resources/assets/augments/timenotdamage_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3951,
+      "sha256": "2b3b2c82cb6df4ecb5e2117e4869dc68fea7eb44c326db27b8452a8da09bff99"
+    },
+    {
+      "path": "resources/assets/augments/tormentor_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1261,
+      "sha256": "04350d5ae265b7d7d6c59929716d4d9e65a4980661d9943da608ab0879c2bbee"
+    },
+    {
+      "path": "resources/assets/augments/trailblazer_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 746,
+      "sha256": "c9c9989d8539c1b7c79d2027fe39a5a3b488c0993d4a7b74f87463b3869516f2"
+    },
+    {
+      "path": "resources/assets/augments/transmute_silver_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1114,
+      "sha256": "fdb714d7a16edf0a7924d88e411ad12add73f64660d6f0657a6615c957795fde"
+    },
+    {
+      "path": "resources/assets/augments/transmutechaos_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1115,
+      "sha256": "1fea794f6938eeae643093bbf7ded715696c6dd0d58fb6aaaa9824d0e7a74fa9"
+    },
+    {
+      "path": "resources/assets/augments/transmutegold_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1115,
+      "sha256": "1fea794f6938eeae643093bbf7ded715696c6dd0d58fb6aaaa9824d0e7a74fa9"
+    },
+    {
+      "path": "resources/assets/augments/transmuteprismatic_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1115,
+      "sha256": "1fea794f6938eeae643093bbf7ded715696c6dd0d58fb6aaaa9824d0e7a74fa9"
+    },
+    {
+      "path": "resources/assets/augments/trash_treasure_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1042,
+      "sha256": "e6afb1989d9fd7393b366d81a9192936dd6308b48c429c0a08ac60a3ce794736"
+    },
+    {
+      "path": "resources/assets/augments/tricksterdemon_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1110,
+      "sha256": "0a25e9fbbfb44305eb8d518cfbf4dd6e2513048b6795d3fdd7b7706d5c54a2a3"
+    },
+    {
+      "path": "resources/assets/augments/trueshotprodigy_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 979,
+      "sha256": "505cd004e08b89642249e6bc8904a403db0ae5cbf1573cfb212f8184bea0fb6c"
+    },
+    {
+      "path": "resources/assets/augments/twicethrice_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1075,
+      "sha256": "d9fd9df6cefa9b226647a5223a9c21de1d5282d265f8ed084c557ae8cceec60b"
+    },
+    {
+      "path": "resources/assets/augments/twinfire_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 969,
+      "sha256": "731079c6e225238a267cefd22c97bc8a87c7c7eb639bcdd029aa0e041047630e"
+    },
+    {
+      "path": "resources/assets/augments/typhoon_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1075,
+      "sha256": "d9fd9df6cefa9b226647a5223a9c21de1d5282d265f8ed084c557ae8cceec60b"
+    },
+    {
+      "path": "resources/assets/augments/ultimatehaste_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 4046,
+      "sha256": "88863236c969a93a08f4dd1b7dd66ba1db2573a22ce73f8496742d9b5831e357"
+    },
+    {
+      "path": "resources/assets/augments/ultimaterevolution_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1063,
+      "sha256": "742e242bf537db3b92381f29f91772eff102a1e03c7c7473472e5dd2a1af3d7e"
+    },
+    {
+      "path": "resources/assets/augments/ultimateunstoppable_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 863,
+      "sha256": "d6361b0235e554633a780cc0288d606cc4266bda1dac96de7efa0bcf711c7dad"
+    },
+    {
+      "path": "resources/assets/augments/unshackled_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 771,
+      "sha256": "b662cb1c836868558c08450b28f9e7bbfaab5cb977e0ae6efbb32f0e92abdec6"
+    },
+    {
+      "path": "resources/assets/augments/unstabletransmutation_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1115,
+      "sha256": "1fea794f6938eeae643093bbf7ded715696c6dd0d58fb6aaaa9824d0e7a74fa9"
+    },
+    {
+      "path": "resources/assets/augments/upgradecollector_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 943,
+      "sha256": "59995bfe7f13db53360b49b2b125538f40cc868d2d7b36cc7e76833273c37509"
+    },
+    {
+      "path": "resources/assets/augments/upgradecutlass_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 943,
+      "sha256": "59995bfe7f13db53360b49b2b125538f40cc868d2d7b36cc7e76833273c37509"
+    },
+    {
+      "path": "resources/assets/augments/upgradehubris_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 869,
+      "sha256": "e3bab2c962ded37613fb3ae58bb76bd1b9774ae0bad71782bbdf0792d9f99100"
+    },
+    {
+      "path": "resources/assets/augments/upgradeie_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 979,
+      "sha256": "3e3fea84bb46bccda2d8d88a836268867187156d1d1bd1e14eced01cbac7cc58"
+    },
+    {
+      "path": "resources/assets/augments/upgradeimmolate_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1054,
+      "sha256": "e95d7f1d702f774f1c23cab24d780257a9fc612edfe38d03d59e7d363e0bd4a2"
+    },
+    {
+      "path": "resources/assets/augments/upgrademikaelsblessing_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 793,
+      "sha256": "9fcf159f89c113454b499403112a8bf949d2d5f2fdb828b4e438b7a8529732b8"
+    },
+    {
+      "path": "resources/assets/augments/upgradesheen_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 876,
+      "sha256": "8d9442ce8261411ec20a09033497368b746c432316d8de9986fa948a30c85e7e"
+    },
+    {
+      "path": "resources/assets/augments/upgradezh_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 806,
+      "sha256": "c2a1da56322668925503cbbff59cdb052f61826b162222aa6a73630e45868e95"
+    },
+    {
+      "path": "resources/assets/augments/vampired_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 876,
+      "sha256": "8d9442ce8261411ec20a09033497368b746c432316d8de9986fa948a30c85e7e"
+    },
+    {
+      "path": "resources/assets/augments/vanish_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 978,
+      "sha256": "5b1d3f3cacfe8cc844666ec44e59574d9620db99452c8224f8b8225532dc093e"
+    },
+    {
+      "path": "resources/assets/augments/vengeance_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 906,
+      "sha256": "6c27e857e49757d605e94d2081fadec446c96bd4efb86cad85e656e70fa61015"
+    },
+    {
+      "path": "resources/assets/augments/virtuouscycle_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 850,
+      "sha256": "4d5bb632d393066d26f24a275ed9a2cb3dbdc526f0200c7fb7ae38af6d34ff8e"
+    },
+    {
+      "path": "resources/assets/augments/voidrift_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1376,
+      "sha256": "b3f7be90b6f130d9f0132ebc5e59787df8c8a6b75e86d70b1087f388a52c196f"
+    },
+    {
+      "path": "resources/assets/augments/vulnerability_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 983,
+      "sha256": "8627c39436217b09513d334d5df830bb37067d4252dc3c71c24fee8245ebb76d"
+    },
+    {
+      "path": "resources/assets/augments/warlockjuicebox_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 906,
+      "sha256": "9151cf81fba7554b9b6e0b20f698baf2c90ae025785dbb3d90e9b8157186e95f"
+    },
+    {
+      "path": "resources/assets/augments/warmuproutine_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 954,
+      "sha256": "bb13956282e3917e07ee8d6eb928e8031912e8ec55e83764f5d1fb62308f16be"
+    },
+    {
+      "path": "resources/assets/augments/watchoutgrapefruit_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 817,
+      "sha256": "75fbf7b62d252c3a97296d00e44d46e967ee5544cf9c910f64bfb9570c19141e"
+    },
+    {
+      "path": "resources/assets/augments/wealth_large.arena_2026_s2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 300156,
+      "sha256": "6492c0ecbcda91b3b2879179631c5668c28c27489ecfc413fb591d4d23b6b96f"
+    },
+    {
+      "path": "resources/assets/augments/wealth_small.arena_2026_s2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3545,
+      "sha256": "c11f716bbef055929e481ef6318643987de7eaa2f0415e7705015ae858f5b41d"
+    },
+    {
+      "path": "resources/assets/augments/weewooweewoo_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 764,
+      "sha256": "a3cf08dba493f3e770c9eab228e94e7453610cc480eebb1297bbf99795901ac8"
+    },
+    {
+      "path": "resources/assets/augments/weightedpopoffs_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1028,
+      "sha256": "ac68aed315b6c0289352d2a67127341e52d34c52ba940f7bb0cf81a30180bb61"
+    },
+    {
+      "path": "resources/assets/augments/wellberightback_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 936,
+      "sha256": "da220053abd9be5accdd53a96cdc5c264ca82084373cd47335970aace467c8ee"
+    },
+    {
+      "path": "resources/assets/augments/whenthedarknesscomes_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 937,
+      "sha256": "5cc5d4d0ed722dda4e397d98e35450721f9d05492b1ec30f64ab4f0a703e50d7"
+    },
+    {
+      "path": "resources/assets/augments/wild_fire_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1048,
+      "sha256": "ccd51a216313729e349a0afef24c828c3ba137b14ea4add68553dc6af5dfa72b"
+    },
+    {
+      "path": "resources/assets/augments/willingsacrifice_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1058,
+      "sha256": "757f4f7141f0572d5989a6a01a36f907e658747bd56b76d960e67ef54aae8b35"
+    },
+    {
+      "path": "resources/assets/augments/windbeneathblade_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 979,
+      "sha256": "e136e8a79e3475ce19ba7e739913afe4df5cc56b4426ec56697042754611abdd"
+    },
+    {
+      "path": "resources/assets/augments/windspeakersblessing_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1063,
+      "sha256": "5daef27a2fb1dc043c16533af3940243084c9b76c53d503e4cce1dbb6c5cec14"
+    },
+    {
+      "path": "resources/assets/augments/wisdomofages_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 685,
+      "sha256": "40fff6f24993d07a76dde185769350ddefbd09f257fded708ec28441caf791da"
+    },
+    {
+      "path": "resources/assets/augments/witchfulthinking_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 884,
+      "sha256": "b68ce500ba1707c4049e2c6378127e6605e0f76fe3901372ad488e2ba037d584"
+    },
+    {
+      "path": "resources/assets/augments/withhaste_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3918,
+      "sha256": "e42c9e3246d9c08542dd06ed894c83d13e22c11f8e4a4863971fd02f0f8765af"
+    },
+    {
+      "path": "resources/assets/augments/withhaste_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1057,
+      "sha256": "49fde03d5a3932daa1bac399f7b1955b8612db87630f7df89f9ba1c54bc9b08d"
+    },
+    {
+      "path": "resources/assets/augments/wolf_small.arena_2026_s2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 6178,
+      "sha256": "220a9267605bb1bd52661dd4b4c12c41abe3babca807ade78279b08ac0808c9c"
+    },
+    {
+      "path": "resources/assets/augments/xpfanatic_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3633,
+      "sha256": "bed96ebd58270e4cf6261ff2b7d77d69c0ea2303fbb033e516822914ab07eb00"
+    },
+    {
+      "path": "resources/assets/augments/yonedemon_small.arena_2026_s2_a2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 8284,
+      "sha256": "6668d88be1b7fca15db525577f8793f3f86db68c2d289053b9d2feaa8a0223f5"
+    },
+    {
+      "path": "resources/assets/augments/yonehunter_small.arena_2026_s2_a2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 2685,
+      "sha256": "ff77e24b426f54f9ac65d2c1f373d26f0fd6d1ac107fb900e1e2171bbdcfb52a"
+    },
+    {
+      "path": "resources/assets/augments/youchmycoins_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1104,
+      "sha256": "8522725420f4909dfb1cde6859b6693bf0726e075758d872b26331f424879c12"
+    },
+    {
+      "path": "resources/assets/augments/youspinmerightround_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 919,
+      "sha256": "091a34affa22c23c2f5f4db34b30d043a7987e93824a56bcb3858adee2f9c4b8"
+    },
+    {
+      "path": "resources/assets/augments/zealot_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 969,
+      "sha256": "731079c6e225238a267cefd22c97bc8a87c7c7eb639bcdd029aa0e041047630e"
+    },
+    {
+      "path": "resources/assets/augments/zerohour_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 1090,
+      "sha256": "8dcfd9e17f387a06831bf17dedc754154375fda209332db47002ed2c06c9dcad"
+    },
+    {
+      "path": "resources/assets/augments/zhonyasepiphany_small.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 979,
+      "sha256": "5a44b12dcc15436de20e5207e8b91ad7b546d79dfc120214f1db16d46381e3f2"
+    },
+    {
+      "path": "resources/assets/augments/zookeeper_large.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 3905,
+      "sha256": "07512acf79514aea1e39648f140e6dff441580b7d151c5b1ff14104d1ca5f035"
+    },
+    {
+      "path": "resources/assets/champions/1.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30267,
+      "sha256": "97720fcc698033b18382e7475800d4aac6c436712d997d99df4a0ae99f6829e2"
+    },
+    {
+      "path": "resources/assets/champions/10.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24103,
+      "sha256": "63dd90ebddcf8fcda57aa20f6f6b490ceea0958a45f9411946d4b9bd0d1293c6"
+    },
+    {
+      "path": "resources/assets/champions/101.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24656,
+      "sha256": "b204c7007dfe3dd7203c36a65ac6798f39fd96ba10ab981fa82e488aa170ed38"
+    },
+    {
+      "path": "resources/assets/champions/102.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 39720,
+      "sha256": "f65317e9ded51d97ea2e53293984b7a5c640242a7099df7fb3de0aad356594b0"
+    },
+    {
+      "path": "resources/assets/champions/103.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28511,
+      "sha256": "8e93368d97e3d302463c4e83ac5980d1f0a3a0aaf92ac44435730fecbd55b565"
+    },
+    {
+      "path": "resources/assets/champions/104.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28267,
+      "sha256": "6f171c830d729e9b8b23c6a4d772f2bd44f90304101f1e6a299920b4ecda67d9"
+    },
+    {
+      "path": "resources/assets/champions/105.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27947,
+      "sha256": "447fa01c18cc5bdcd0e014825f7825a93f05d32bde8226bb69fdf58fd6412999"
+    },
+    {
+      "path": "resources/assets/champions/106.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29127,
+      "sha256": "36ab730707d6835a6a6fefe216ae3d8bf9d416970fc3223c857f109f404ee5ab"
+    },
+    {
+      "path": "resources/assets/champions/107.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31091,
+      "sha256": "afc37ac7e29cbc58e31e3d127e26a9c1e09f05fcc489adbb512ad6710b63ff5e"
+    },
+    {
+      "path": "resources/assets/champions/11.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29421,
+      "sha256": "1c23534926a7956a260591fb3cee8f38cb6de3d9d4f064fe93fb88c8f76b1b66"
+    },
+    {
+      "path": "resources/assets/champions/110.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28137,
+      "sha256": "1a300d007f9a3bc76342534a16cdf025ac111e733f69667bb4f065869a5ae9f4"
+    },
+    {
+      "path": "resources/assets/champions/111.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28532,
+      "sha256": "6e8dfa2e6ba3d4564745fe69ace7c796898aa023a2af2727b0be127316712c2c"
+    },
+    {
+      "path": "resources/assets/champions/112.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30530,
+      "sha256": "caf7df593c7713892aac575d1031e9693066c57b86c25ff19542f4ca98c2159a"
+    },
+    {
+      "path": "resources/assets/champions/113.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31761,
+      "sha256": "a84f6106746dd2cc0c173e6a995d7310a2ee676c7a22630f041fa1869bc6ef86"
+    },
+    {
+      "path": "resources/assets/champions/114.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28094,
+      "sha256": "b76387ea62f007ece3e06e589ac15bc9bf5452472b70a0d847d096b06f6785b7"
+    },
+    {
+      "path": "resources/assets/champions/115.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28542,
+      "sha256": "cc3ea57671db30642002b5c36c0a6c851aacb7b2d6a5af10069f9f00b00775a9"
+    },
+    {
+      "path": "resources/assets/champions/117.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29539,
+      "sha256": "ca22c4a042d66085ef7794c8b351b57880739be454aa4128fbdd7506c02d1a50"
+    },
+    {
+      "path": "resources/assets/champions/119.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26400,
+      "sha256": "9b62ecd81173ff55d83a7a9e42d7f9553288856e8365cc3bcbbf4ce3bf4091a6"
+    },
+    {
+      "path": "resources/assets/champions/12.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28116,
+      "sha256": "a1b9e0dc85d186fea8b7eccb91b7dc770ea6d3c5d5b53d9698cdf33524879259"
+    },
+    {
+      "path": "resources/assets/champions/120.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28985,
+      "sha256": "ba5b2d3fd406fdd81e52e359231024ef4877009bdcf61c9d7ca389916fe61509"
+    },
+    {
+      "path": "resources/assets/champions/121.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 23545,
+      "sha256": "30007408b2c91e58a8036116f222f70b1d148699b994a109a30eacb4eff6bb63"
+    },
+    {
+      "path": "resources/assets/champions/122.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27666,
+      "sha256": "4c73167413335e00b3ece58fadaa495a0c3fe05184b246b0f8b9af923a0d3d81"
+    },
+    {
+      "path": "resources/assets/champions/126.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 23552,
+      "sha256": "81301e79adf1c92dd700defb5e1ee11cb8b7ef04b7034554aacb067c66256a38"
+    },
+    {
+      "path": "resources/assets/champions/127.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28806,
+      "sha256": "ece7fc0269138d30380dbb0420ccf822e7ca95819d7d911a0e29f7d10cf7445d"
+    },
+    {
+      "path": "resources/assets/champions/13.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25185,
+      "sha256": "abb747c8b8402625d4cc6b5b3c48950b192823216532c74f26d4b5ccf8851290"
+    },
+    {
+      "path": "resources/assets/champions/131.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24762,
+      "sha256": "d967ef71d043a49c60dce6f19725fd17d8e8362ea3c059f9ba38906688905d93"
+    },
+    {
+      "path": "resources/assets/champions/133.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30154,
+      "sha256": "69ac72c21c771fe80492a7a6316dbe7053c0f20f0bb35ecb59d43f6d916d90e4"
+    },
+    {
+      "path": "resources/assets/champions/134.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30524,
+      "sha256": "51424965682912746a4ac1a66c9c7d4e3d08333aaf8a59b9865725166580f7b3"
+    },
+    {
+      "path": "resources/assets/champions/136.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26953,
+      "sha256": "a8888510b555c75b35f291a1474e28f46875a543eafcbf4d3595a71654856d7c"
+    },
+    {
+      "path": "resources/assets/champions/14.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26066,
+      "sha256": "4908e30a48ec3cbdb080de1667833e2d018ea03fb296e9760066a46793adb528"
+    },
+    {
+      "path": "resources/assets/champions/141.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25653,
+      "sha256": "7a7e6e8f8df01879296ed9de5710329a2f3c541418ae277c65175e1ba2212982"
+    },
+    {
+      "path": "resources/assets/champions/142.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27849,
+      "sha256": "2413cb98c5f863b8570a012e1927e4908ee78be0f7619ab3ce471e8c7da56bb2"
+    },
+    {
+      "path": "resources/assets/champions/143.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26347,
+      "sha256": "9993a6caf52f955ad41077e56b56f2472c07c1a589fb4d1c66097ddf775feda4"
+    },
+    {
+      "path": "resources/assets/champions/145.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26828,
+      "sha256": "e0e86ccb7143d20bcbd83f192530f9712bf4b1d6306ec07a06992d4b72676443"
+    },
+    {
+      "path": "resources/assets/champions/147.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27763,
+      "sha256": "87bfe49f6595aa4b3b002f9768487d5d410badf25dfbb0f7bb54de11b0d50254"
+    },
+    {
+      "path": "resources/assets/champions/15.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28166,
+      "sha256": "dd8642cd3fb6df0d85d1837dc94c7128e4292554a93451081a5537d0b888172b"
+    },
+    {
+      "path": "resources/assets/champions/150.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25845,
+      "sha256": "d566858ab7ae4a6887f3490cedcd9a7097f5b5214d78c0b7f1b631567f8d739e"
+    },
+    {
+      "path": "resources/assets/champions/154.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25794,
+      "sha256": "be2426155e937aa048cd22cab2342dd7ecbc591a90c5417d0bd3759ab5876aa6"
+    },
+    {
+      "path": "resources/assets/champions/157.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28213,
+      "sha256": "25a7597bfbd3198740b56d369734542f9e7b2100645d9f1199d969c7e1538ffb"
+    },
+    {
+      "path": "resources/assets/champions/16.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31969,
+      "sha256": "ca2774023350198da7025b950c85be65e3506e2f40947ca4151f0e8df4a8be15"
+    },
+    {
+      "path": "resources/assets/champions/161.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29187,
+      "sha256": "263e174bec40da4a00656390621f4bb7e81677c39527ed98ad63ed12c52308ee"
+    },
+    {
+      "path": "resources/assets/champions/163.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24435,
+      "sha256": "436958c1d99411e473c7065bd969cec65ebdf61702d5b266db7e0720a3937c85"
+    },
+    {
+      "path": "resources/assets/champions/164.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26879,
+      "sha256": "54bfa2dc66fc3885279d4546a4d9651f3a16bd4e4474ceaf2e319bf7f673138a"
+    },
+    {
+      "path": "resources/assets/champions/166.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25518,
+      "sha256": "da9a6cec8d8085b85e35b7ef0f4fb0ef368992b86760ea72a6539095482e5043"
+    },
+    {
+      "path": "resources/assets/champions/17.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 21456,
+      "sha256": "bbf4b7238b1f62dc02b39208db764588d18a712a7ea96205f5932730c08a62ee"
+    },
+    {
+      "path": "resources/assets/champions/18.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30313,
+      "sha256": "9f46e6dd9d49bf8fd2c6dc7397fa4badb35bf0f355334301782c7f9e13f00aa5"
+    },
+    {
+      "path": "resources/assets/champions/19.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24895,
+      "sha256": "f5df0cb82ea9fba63308254d04d68307c09d1b17b1a28426d1550da39d9c79b8"
+    },
+    {
+      "path": "resources/assets/champions/2.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30509,
+      "sha256": "17d439590f461a2d4d5bdacd33d4d2c31009ea8f57b46a6a427b0db96f6bd0ab"
+    },
+    {
+      "path": "resources/assets/champions/20.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27502,
+      "sha256": "dab4f686598e93d0d430db32d824a98f34b5a0055331a654c84ea3759fe6ed6a"
+    },
+    {
+      "path": "resources/assets/champions/200.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25348,
+      "sha256": "9959345f8316af4ff29d9bf68ab6c8450c85a3742ba4f3e6952ab19d4d0057f1"
+    },
+    {
+      "path": "resources/assets/champions/201.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 23674,
+      "sha256": "1ada9222fe928d32cca4b91fc374fb41cacb6157f0122a390ca611c3e2c29daa"
+    },
+    {
+      "path": "resources/assets/champions/202.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25526,
+      "sha256": "dd24ce955ba61995956f1a48cb9b90b9b52936bb23bf05e0cb74cfc9c74a4b0c"
+    },
+    {
+      "path": "resources/assets/champions/203.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29250,
+      "sha256": "a789f7340a9e390c8627be587cb4f236736f55907c8e36b792ca1f6221ade4ed"
+    },
+    {
+      "path": "resources/assets/champions/21.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25963,
+      "sha256": "a8c3048bfb76b4e8b34e00193ed2febe69669918055ffda835ddb24905588733"
+    },
+    {
+      "path": "resources/assets/champions/22.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 32121,
+      "sha256": "423666bdb0685355be4576f78eb6406fd49469b4f6e9f780f1c5eb4349fed91f"
+    },
+    {
+      "path": "resources/assets/champions/221.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28570,
+      "sha256": "5fc4e7ed3b8184495375ea0b8e35a625521cddc7d17d1d6e30e13b683b36100c"
+    },
+    {
+      "path": "resources/assets/champions/222.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27938,
+      "sha256": "2777d44345974b93f8af378430811670566d0451b6410b2caff2984e93797357"
+    },
+    {
+      "path": "resources/assets/champions/223.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27628,
+      "sha256": "138eaa3abe89c804e7ef287f8d3bf69172be797965df958b259663c3d4389e42"
+    },
+    {
+      "path": "resources/assets/champions/23.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31840,
+      "sha256": "e715ed3a7eb5f3a0dcfb6da2a9c8ae05d9c197ef514f959d5a94bff38d4dff48"
+    },
+    {
+      "path": "resources/assets/champions/233.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31369,
+      "sha256": "dbecebf6559e79383b208ea340c1cffeea0867b757dff0b8525dd0e0a751ff1c"
+    },
+    {
+      "path": "resources/assets/champions/234.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28601,
+      "sha256": "582fda91453e711bf45146e75ae7b0db0a2aa148499cffd4919050a1b96e9316"
+    },
+    {
+      "path": "resources/assets/champions/235.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 23661,
+      "sha256": "9ea2bd78c36f3c9b466a0f6df52154007663bb77cab7c07d87496885f0f86683"
+    },
+    {
+      "path": "resources/assets/champions/236.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27998,
+      "sha256": "75e3de3e43f732f815293472167e0022118a0be55a627f10794bc8043e2602cb"
+    },
+    {
+      "path": "resources/assets/champions/238.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28879,
+      "sha256": "3ad3e956e9ad5ca3127d8f685faf69d4251fb726e9b4f0be989764f0027e9c5f"
+    },
+    {
+      "path": "resources/assets/champions/24.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27107,
+      "sha256": "441e8d865d461bc338a2d2d5a2a09f6151bbfdb4795ec8b59e66ee8654eebcca"
+    },
+    {
+      "path": "resources/assets/champions/240.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28478,
+      "sha256": "4d71421e5e0a4fd8092fc9b6d91cc10fb36a067fc8a74b5e2fce2e718d3f2566"
+    },
+    {
+      "path": "resources/assets/champions/245.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26511,
+      "sha256": "6b2219dd6a3888d5572a2b2f2f522c3eeac490578f82f58171adfdf8e647b093"
+    },
+    {
+      "path": "resources/assets/champions/246.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30662,
+      "sha256": "b7bc7f2b7b4acd45b994005e87710c779c1c9bb89343e02f1fd1e98533a1f93f"
+    },
+    {
+      "path": "resources/assets/champions/25.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26025,
+      "sha256": "bd170027904c2e5a354e53dca0f5d50516a4f3d60a4fbb0c286c9eb32d8d8954"
+    },
+    {
+      "path": "resources/assets/champions/254.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 33358,
+      "sha256": "282bd7a3e6a3bdd309f90eebf03b1fb7009a5357e6f53e158dd8c7df8103b4ab"
+    },
+    {
+      "path": "resources/assets/champions/26.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 32671,
+      "sha256": "07c45f7285e5d741f17ebdc07889971c46c67f09846fdb9a3f0f0123aedd8850"
+    },
+    {
+      "path": "resources/assets/champions/266.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25644,
+      "sha256": "852d739fb696684549064266851df91ecd03729e06b1a192dc14af01549b7f3f"
+    },
+    {
+      "path": "resources/assets/champions/267.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28176,
+      "sha256": "f43e652c61cd4998274e966a1e91e00fb3d51cc6202f7e53a5f2c7da160ddd23"
+    },
+    {
+      "path": "resources/assets/champions/268.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25934,
+      "sha256": "fa90e249ef38adeabd757f24fc4069db8caccdf64353868d9683a5a9c4c81a35"
+    },
+    {
+      "path": "resources/assets/champions/27.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27610,
+      "sha256": "0429cad926e909454d99f3286b091a143780b87f67f867b54ab4ee152bdbec99"
+    },
+    {
+      "path": "resources/assets/champions/28.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27174,
+      "sha256": "7b09f45c7350fe57217f6833fb97427ea6cc8312b902f7fb8bbbf2a6d5c2f506"
+    },
+    {
+      "path": "resources/assets/champions/29.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28474,
+      "sha256": "823c7394b6cdc9fcc0b70f0e71578d8fbe1f06533e1010aa7785ebae4d1209ad"
+    },
+    {
+      "path": "resources/assets/champions/3.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24739,
+      "sha256": "25b4acea5a0d8d2b4de819e62fbf7e7bb4afdb94e0d18e8896cb28112a13dc3f"
+    },
+    {
+      "path": "resources/assets/champions/30.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28743,
+      "sha256": "2b7015e102317b52900f9c69adfe462426301ac0f62c54502fdeae518d30392e"
+    },
+    {
+      "path": "resources/assets/champions/31.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 32006,
+      "sha256": "f5381fea0255a8a903381728fec79862dc5c426e25774c5e18def583fb3b1dfb"
+    },
+    {
+      "path": "resources/assets/champions/32.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24683,
+      "sha256": "bb20e52d6f4808d3c3cb5038397fdbff174544ee7c9cf9271deee9240a4b1204"
+    },
+    {
+      "path": "resources/assets/champions/33.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27369,
+      "sha256": "911faa8b6e8a2b5e018fa1c5f36617488036782e163faa8029d1475885cef6ab"
+    },
+    {
+      "path": "resources/assets/champions/34.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27008,
+      "sha256": "f10e316692a616d9f27ff5548a52aa128e794ce736b8daa3e1a2b86217a406d5"
+    },
+    {
+      "path": "resources/assets/champions/35.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28951,
+      "sha256": "83ad990c0196b9b33c06b6cdf672db2d1ab3025cde131961ba767ddfff9c7a8a"
+    },
+    {
+      "path": "resources/assets/champions/350.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28605,
+      "sha256": "63283c06c2b3a4873a83cb9d00b2ee5892f7bcd7cd009fd8b6ff893f92138b9e"
+    },
+    {
+      "path": "resources/assets/champions/36.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30630,
+      "sha256": "496b97ef027d5f90b583329269714623701ad12d013c610ee4c7465916ecb8e0"
+    },
+    {
+      "path": "resources/assets/champions/360.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24690,
+      "sha256": "0a30028f649d72534fddf5c66e713792511dc79cb4ce882b7b7828eeabe35aa7"
+    },
+    {
+      "path": "resources/assets/champions/37.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26340,
+      "sha256": "e77557069fdc32b412190e8218d2df235d89265100758f0fd8a3399e7b585548"
+    },
+    {
+      "path": "resources/assets/champions/38.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29874,
+      "sha256": "a7616e721346eef6a2af65470f98757e4ad184a53685d412edec583dd5989a15"
+    },
+    {
+      "path": "resources/assets/champions/39.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29037,
+      "sha256": "a8cd7e83c7b327516869d67eb9cd96499bcf720d799b814830373cb200a98c9c"
+    },
+    {
+      "path": "resources/assets/champions/4.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24949,
+      "sha256": "5f5944763b0d7c8fc68edad413a908799e2cfcae8a850a6ff746a16afc553670"
+    },
+    {
+      "path": "resources/assets/champions/40.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28129,
+      "sha256": "d0a7b79a9d7673b429fc94bb2718a27bff8cdbbbafe9fac294f1cf0cc1982d83"
+    },
+    {
+      "path": "resources/assets/champions/41.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28742,
+      "sha256": "f2bed51abb3d68897a161e152f03e9c9e0bc13039e6b709f551397a52e5aeb39"
+    },
+    {
+      "path": "resources/assets/champions/412.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26720,
+      "sha256": "27f9bfc32eb28d9e17e42e29f8d555c91110e040991d56577f433ddc9eca6c7e"
+    },
+    {
+      "path": "resources/assets/champions/42.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28457,
+      "sha256": "db997e48b9a4cda57b6e934c131d4718aca559f2b5bdaacc8e81a19d3c2953bb"
+    },
+    {
+      "path": "resources/assets/champions/420.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25338,
+      "sha256": "1334b302ec0fb4895e15033351122427786cfc25c6c30b4f9b43e2a8212314c1"
+    },
+    {
+      "path": "resources/assets/champions/421.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27922,
+      "sha256": "881fcd45ab0566be11312e358b9fe33f61656bbafe5b0ae4c95e5b3ca9cacfc3"
+    },
+    {
+      "path": "resources/assets/champions/427.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25942,
+      "sha256": "a79756ca23f8f93a882f47e4ce5d4228b70bf002a1ea320d5a69fa16491c5df4"
+    },
+    {
+      "path": "resources/assets/champions/429.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28603,
+      "sha256": "3809361a78dfb97d3660fd47345145287d48af10909426d353b451cf52dc093b"
+    },
+    {
+      "path": "resources/assets/champions/43.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30154,
+      "sha256": "e1df55d95c9a90445b59615db2984c3a8a9d8df3578faf968872bbe2e0075bc0"
+    },
+    {
+      "path": "resources/assets/champions/432.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31628,
+      "sha256": "18ee517f6453831c0730d73cbf1628001e53a5acced928d4d78e34a28051094d"
+    },
+    {
+      "path": "resources/assets/champions/44.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27875,
+      "sha256": "3a91b21a88d562717fb78ada18c95a0b7a077e0c3b941d34829ba5e4d7eceaed"
+    },
+    {
+      "path": "resources/assets/champions/45.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26807,
+      "sha256": "ace2c32c06d8a96b4de943228b01812f220adf3a4dfaa396e922f7c696221024"
+    },
+    {
+      "path": "resources/assets/champions/48.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28260,
+      "sha256": "e77d99af3ac328a80a247fafec728df7be4eda7200300a597b38f093fffe234e"
+    },
+    {
+      "path": "resources/assets/champions/497.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28472,
+      "sha256": "b0252249ed33b226421595e5cf4f7a6b4e4fbe9441140e65cee05f82463f87fd"
+    },
+    {
+      "path": "resources/assets/champions/498.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26882,
+      "sha256": "4ecd1e37697ebc5ee54ca05f1914101ee49be334798287bb8a432f8dd42a5b3d"
+    },
+    {
+      "path": "resources/assets/champions/5.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 35410,
+      "sha256": "f70e9570c60a33328b4e0c0437bcb33cc2320056ba0724e0279e553436da5667"
+    },
+    {
+      "path": "resources/assets/champions/50.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24066,
+      "sha256": "9f4550dd903cf19ee587bd0870f630ce90d6f62fac2a2d07fe46bda153db8f9b"
+    },
+    {
+      "path": "resources/assets/champions/51.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25976,
+      "sha256": "f7a515360f30f33dfe5ab4e8886ce59a70c2d333f924252f48f5f9a2fbc6edf4"
+    },
+    {
+      "path": "resources/assets/champions/516.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25086,
+      "sha256": "91374f0919871a6490ac7b8ff9b073efb8b6a797f28302cc3751294c47c58d6e"
+    },
+    {
+      "path": "resources/assets/champions/517.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27292,
+      "sha256": "3e724fcd4fffd0b36ea3dd2a60d7d3ed9aeb20ebc5e2dec2e8019b31c3097647"
+    },
+    {
+      "path": "resources/assets/champions/518.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28615,
+      "sha256": "0fd600e0aeeca36f9245bcbc02ca666a2493b2b68a60ecd298a2ad26c33c8a92"
+    },
+    {
+      "path": "resources/assets/champions/523.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25225,
+      "sha256": "1db20831bdc7a01918adac84c3afffe3ce4ea8e2f2bee54d70dec220bd1ea6fc"
+    },
+    {
+      "path": "resources/assets/champions/526.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29915,
+      "sha256": "47c0724d3b71c8b4d2ae4eed8d3b793550e1f4ef0e2bf3807696c6bf2ebaa91c"
+    },
+    {
+      "path": "resources/assets/champions/53.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29858,
+      "sha256": "753db19576c52ab7af43bd5ec2631023654567ecb2e0d83389d016927610d74c"
+    },
+    {
+      "path": "resources/assets/champions/54.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26063,
+      "sha256": "233005b989ae25fc6e5e22d1325291bce2d64e49767ebb83413c0f91e1b157c6"
+    },
+    {
+      "path": "resources/assets/champions/55.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26732,
+      "sha256": "998f3a479b5441f86f4031aace49bbd70bb83a76c05d39b0697288fe50ba029e"
+    },
+    {
+      "path": "resources/assets/champions/555.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29162,
+      "sha256": "384a69fbcbfed183b2ef591923e51cb56d5f55835a4dae2da716f858cd8a7a6f"
+    },
+    {
+      "path": "resources/assets/champions/56.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27356,
+      "sha256": "b9968b3e2bd60257ed23cede9e69b184ef78096bc196d157c1f6eff9b3d900d5"
+    },
+    {
+      "path": "resources/assets/champions/57.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27854,
+      "sha256": "7e68c320efa332ba9126c6d2d6ccd3a51939d7d1f2b31785fbec8594a0e6f6b3"
+    },
+    {
+      "path": "resources/assets/champions/58.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29409,
+      "sha256": "a3b94121970f7649896ef8c695be265d31c617e33ff9c7c86cff56d1e19724fd"
+    },
+    {
+      "path": "resources/assets/champions/59.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28504,
+      "sha256": "9da74ae808585eff7f130f47ce4c6c3ddab0b302b1d39902e273ae0253592764"
+    },
+    {
+      "path": "resources/assets/champions/6.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25786,
+      "sha256": "35d3f774ca9b1430aa32fcacb9add8daa7cecb51411985a178e0d72d5571ec3d"
+    },
+    {
+      "path": "resources/assets/champions/60.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27566,
+      "sha256": "cb7e3ec0658c4e8cf86f2829b12203af68cfc9ab95b98579957427134d00c6e0"
+    },
+    {
+      "path": "resources/assets/champions/61.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 21902,
+      "sha256": "7d70d8bcb2991de3f3512efb565c453a9d470dca78088c05aec3691d22dd7511"
+    },
+    {
+      "path": "resources/assets/champions/62.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29161,
+      "sha256": "2264db1ffde08659aee3380c8ac5643771d872d95a9c9090951d7f2849e61353"
+    },
+    {
+      "path": "resources/assets/champions/63.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30626,
+      "sha256": "c50bbafb3ed2beea470479b28cd9b2e233a9f88760e61a76cd413d68bafbac52"
+    },
+    {
+      "path": "resources/assets/champions/64.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24979,
+      "sha256": "890f439dd16bfa686b3c6f06f9749eb5477e5b706a8ff85cb8161f91adcff9a8"
+    },
+    {
+      "path": "resources/assets/champions/67.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28367,
+      "sha256": "d9ea091b8d2eddbf7d08001866d7a0798f2649a7067c61dce15ac92fbc3cb723"
+    },
+    {
+      "path": "resources/assets/champions/68.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29584,
+      "sha256": "e14a39464abbdb4aba3ac5827e8f717ff7ce5b13d9c6a932da3fc13caa783f36"
+    },
+    {
+      "path": "resources/assets/champions/69.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26205,
+      "sha256": "da2ad096fc5237e31a1e9d9ebb9b6db6de65e2cab126c9a607c3fa7a36bc8e54"
+    },
+    {
+      "path": "resources/assets/champions/7.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 36027,
+      "sha256": "e48b97ce2451c37d4e4a747b37663bd1095730b4182b2805f397f60fd12c7c5d"
+    },
+    {
+      "path": "resources/assets/champions/711.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29332,
+      "sha256": "aaa93d7fab2d5d469778128ccdbe59bde00e601da065d17e3ae7bce4fe53c758"
+    },
+    {
+      "path": "resources/assets/champions/72.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29500,
+      "sha256": "cefd97204e9634f6d46216b736279b988f5e0f3ce1ca49ed43a519effd6f05c9"
+    },
+    {
+      "path": "resources/assets/champions/74.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 32532,
+      "sha256": "3e54bea65546474fa1154f9ac25c73bd51aff36db5c808377553b1e9f252c56d"
+    },
+    {
+      "path": "resources/assets/champions/75.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29763,
+      "sha256": "80b838812e5f14b1e37900d1c14c54835b535d5bd36af6ace19fd23344989be3"
+    },
+    {
+      "path": "resources/assets/champions/76.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26077,
+      "sha256": "f6291b72f4ea9ea1fa272f61443bc3580e3f61b870be31c0743824a1c25abf33"
+    },
+    {
+      "path": "resources/assets/champions/77.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29169,
+      "sha256": "5fa439ae56b9b7a7bdc2ee35661caf8080c19bf2ef5fc0b87ad0315271ac9b93"
+    },
+    {
+      "path": "resources/assets/champions/777.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26864,
+      "sha256": "cc02f91c39f7336562fb8fa5792eeaeeb1540517a54e7713f7c70732add51c6d"
+    },
+    {
+      "path": "resources/assets/champions/78.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31447,
+      "sha256": "c2cdd3a868b4b9ac5f1f3fef5ca77e930f32b0c98a5c3b83bcb099f75a4b6b7c"
+    },
+    {
+      "path": "resources/assets/champions/79.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28755,
+      "sha256": "06599cb8a6b083a3250c3bcd701b1bab1c8f9dab6ea52c7709ac2c895431f4f6"
+    },
+    {
+      "path": "resources/assets/champions/799.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 20689,
+      "sha256": "ce2bf0adfc1cb9e46430f318e73ec1c0bf257e5afe84b584acb88f15bfdb3646"
+    },
+    {
+      "path": "resources/assets/champions/8.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24626,
+      "sha256": "eebcd73ab4ba404c4c5b45b7665e5f31399515402b36d9ff8953bb02d4d4c0b3"
+    },
+    {
+      "path": "resources/assets/champions/80.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28793,
+      "sha256": "0ab8b436d5d7dd0a4163ec105a4977fc77abfd16757d46a9e958242f2d6858c1"
+    },
+    {
+      "path": "resources/assets/champions/800.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29534,
+      "sha256": "e464fe1e53f45f3c603cdf1bab1cd182ce6a429840e008d30ed41411d4a68ea0"
+    },
+    {
+      "path": "resources/assets/champions/804.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 39524,
+      "sha256": "1502b9641f838af84749a8b10db447942fa8f1661c1fc9c3d43330489427a9d5"
+    },
+    {
+      "path": "resources/assets/champions/805.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 36247,
+      "sha256": "f05b0779ef6873f798d42f0bff433d54a7ba761d487ef36dd3de0c32bdf98d28"
+    },
+    {
+      "path": "resources/assets/champions/81.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31064,
+      "sha256": "676467c4362b8745a27db93a44619179820add83be95583d7b2adcfcb4eb7e35"
+    },
+    {
+      "path": "resources/assets/champions/82.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26259,
+      "sha256": "3d3521dedf02d446ae2a506b8b5395a9fba690567dbf6be3cf4523e8c439d9b8"
+    },
+    {
+      "path": "resources/assets/champions/83.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26344,
+      "sha256": "151b64e886222db394d6397734f5297862ddc4216fcc1db4a6ad5d33d5dc241a"
+    },
+    {
+      "path": "resources/assets/champions/84.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27191,
+      "sha256": "a62acc32c454b5cc39cebd0769f940b34f3d39ddaf157b95acb176027f81e17a"
+    },
+    {
+      "path": "resources/assets/champions/85.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26105,
+      "sha256": "71239ebd9236d5d0fdbccfb8741727e6f13dd007a4d6905e5aa82f6b36aceebd"
+    },
+    {
+      "path": "resources/assets/champions/86.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 30705,
+      "sha256": "53018603962e1867b391071f159bb4c60d57919422585c33bfd36551e97f3752"
+    },
+    {
+      "path": "resources/assets/champions/875.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26531,
+      "sha256": "95823a0688664a52d1d46ebb0392c3cc45e26ab7e7a2510292a4f36239d9eea0"
+    },
+    {
+      "path": "resources/assets/champions/876.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28814,
+      "sha256": "b270de6af7ec29bb2fb91d6effec79f3c0b6d93811315dc54d101ee55f61fb31"
+    },
+    {
+      "path": "resources/assets/champions/887.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31229,
+      "sha256": "a7bba2bc0970bc5098396a4578a2cb72908630125011502bd2c0ee183ceb29d9"
+    },
+    {
+      "path": "resources/assets/champions/888.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27669,
+      "sha256": "59f70a9f29de3a7740594e7f0a635e2d75f7e32b44c04f1d5b2576e91494baf0"
+    },
+    {
+      "path": "resources/assets/champions/89.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31573,
+      "sha256": "d7e170e1d5c37b243663e03d480a4befe727d86d0733e3e411b90297cb192461"
+    },
+    {
+      "path": "resources/assets/champions/893.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 31037,
+      "sha256": "cb291047d565205ffe91bbbd3fc34592452b2f55b7706430a31c8ac188d99a33"
+    },
+    {
+      "path": "resources/assets/champions/895.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 28372,
+      "sha256": "564103bc6f32863242ea0d39fc40eb39c70cf4a1f28297c756f83d44195048b2"
+    },
+    {
+      "path": "resources/assets/champions/897.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25880,
+      "sha256": "d7d62b07df5b66497195c68e3e2bbdc8c3d6078066aa2ed170cfbcb0fc2f5ddf"
+    },
+    {
+      "path": "resources/assets/champions/9.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27884,
+      "sha256": "681544df2412f89a96052e835abe3327cfdd73801868aad20d07576a8157cc32"
+    },
+    {
+      "path": "resources/assets/champions/90.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27604,
+      "sha256": "c0f9eb031b22805d1bbed0cd0ee2a7f148541076c1655271665325e2dbf06911"
+    },
+    {
+      "path": "resources/assets/champions/901.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29635,
+      "sha256": "8a7ffc62f2fe7904aee014201fe75e138b2bf82710d2bc3a6cf34d50d171e076"
+    },
+    {
+      "path": "resources/assets/champions/902.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27199,
+      "sha256": "86517cc10c6c5670dcd6821a2e5c7bbb9e16aac597cda5d04578933bd5861343"
+    },
+    {
+      "path": "resources/assets/champions/904.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 40550,
+      "sha256": "2028854176d35cf2f1f926044f071bcd0b7cc8eed839590296e64852bedd35d4"
+    },
+    {
+      "path": "resources/assets/champions/91.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 26989,
+      "sha256": "fc05e5ae6e6d4705a9db3a842fdbce11f429bf333b278f8183caef1d669919d9"
+    },
+    {
+      "path": "resources/assets/champions/910.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 24613,
+      "sha256": "c8aeb272d4f4990ee87b7b7f857840d214e99f1707c9aebb6529ac6e0bc5f5ff"
+    },
+    {
+      "path": "resources/assets/champions/92.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 27993,
+      "sha256": "4527ba3804c0b78e0127608708b2a425d1c6eef5f95925c5dcfd707f5fa32139"
+    },
+    {
+      "path": "resources/assets/champions/950.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 23851,
+      "sha256": "75a82287766d7bc333305390675eb5bd3a0b7522d0a69a46543e7bdc301a4ed7"
+    },
+    {
+      "path": "resources/assets/champions/96.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29237,
+      "sha256": "a5836dd40801e9f6275c1b74de8ba6de2de09ab2d24ec2e9695f958917348f1a"
+    },
+    {
+      "path": "resources/assets/champions/98.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 25298,
+      "sha256": "6570a91fb958ef079805dadd8c7a628da569d9601883b6b24610f0858bda8239"
+    },
+    {
+      "path": "resources/assets/champions/99.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 29188,
+      "sha256": "64639bea2aa7d622dd07287de7a7820950e567f0993c7dcc422e1e699fd743fd"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9171_holybauble.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 106270,
+      "sha256": "bb7b558dd54e4665cd4818babc3f9bb5e507a49c2cae4ffbbf7e1b1a7dd5e3a2"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9172_twinshadows.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 101982,
+      "sha256": "bd79212ee369b8871aae8ee8f01d4237868df0214c88e98de69807c232369720"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9173_hollowradiance.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 105661,
+      "sha256": "a70c6019eda257f74e4e0b0d191aa9531357c6023206b86f896aa99ca853c9ec"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9174_statikkshiv.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 92919,
+      "sha256": "7591e5b7fd7400224bcdd148f5d61ae8b50865d3b779df9b13e1ae98e7669b24"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9175_crescentstrike.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 110159,
+      "sha256": "c87039d8e8f76065cff835083bef73634e79f261b5f1c1a2aec3c18326f46f63"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9176_gatlinggun.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 103355,
+      "sha256": "9e931a16ae52243b5c128a58bc2a1bc309bcb51065833e3849fb03bc564dc3df"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9177_firestrike.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 99369,
+      "sha256": "cd227ad3d69c76d4a940371a4b18532e33d0ca6720b46bab7c36e078e9c35fa9"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9178_dropthehammer.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 106315,
+      "sha256": "94bf14988f928cb12f4bc51973447324c5053997e886fec2b8a623d6283f7d73"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9179_fanofknives.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 110981,
+      "sha256": "92a9d0d8197f3809a091e728b777d6126fb8354dbf114d872652ff22f240adea"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9180_uwublaster.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 119180,
+      "sha256": "da9a06af2d218babb2e0974a79c709ae71370e4624f0b4bd572d44f8e95eb4be"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9181_neonlotus.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 105875,
+      "sha256": "ee7e6895c79b17b0b9404aef638e74b4ab3b438cb2ac9562dca6ddc54b0901d4"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9183_boomerang.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 102007,
+      "sha256": "b1001c6910f06ceb7594cb849fbba5bc8bf2ccfc8ee637a8d78938b62cf11dd0"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9184_starstrike.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 103535,
+      "sha256": "8dc13e20f46b51d414de1be73648074037c095f5651b6af319b177132d47f882"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9185_firebomb.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 108183,
+      "sha256": "4f03c6b0a41e006bc8369fe135f58e526298c67f2a67755e6e381a60cebba5af"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9187_tibbers.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 117238,
+      "sha256": "07593b2d3396f158b3f0ddab8efa3af917e77454d12e8ddad067b7c0d3c37c1c"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9188_mine.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 109406,
+      "sha256": "5d6f9ff1ea05bd322a1d0d488d807e74e16f70d2f05f5863bd1066d8b5efcddb"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9189_train.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 96416,
+      "sha256": "6fd4b35063f3f1e991246ec4482b666b7bc505211d10af5d18c3545ce0d5bfa7"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9190_scatterarrows.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 106039,
+      "sha256": "f7a51df0d3f362a2bd78368af391c455c8becb87beb2403dc68e4f7189620879"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9192_poisontrail.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 94738,
+      "sha256": "41fb02a1b5aa0dfe3b51cb0a01376760d356b10791aa21fe280c7b2ef9f929e7"
+    },
+    {
+      "path": "resources/assets/modes/mayhem/9193_frostnova.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 95232,
+      "sha256": "a161c8d4dc06cd449b496faa6d384ab978c7863d9308c4be25eeb659e4d46e33"
+    },
+    {
+      "path": "resources/assets/modes/swarm/9300_jinx_weapon.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 82583,
+      "sha256": "1f58ce16cc4e223012054a6b851ffb1f69429ab7d3c6acbf3fa2b67f844ee558"
+    },
+    {
+      "path": "resources/assets/modes/swarm/9301_leona_weapon.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 86509,
+      "sha256": "6a73bcba77ec44af20cd5fc813f15b7dee2b2478ea2ded263b7852f6b21099fb"
+    },
+    {
+      "path": "resources/assets/modes/swarm/9302_seraphine_weapon.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 100163,
+      "sha256": "75e4b71f71a1eae819d828b67a839902628ec451e4f042643c063a17d28d613c"
+    },
+    {
+      "path": "resources/assets/modes/swarm/9303_briar_weapon.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 87512,
+      "sha256": "d35dfc704976e72dd4c7ec85b4ed22759036d23c1f606f70a8d3eb71694edb84"
+    },
+    {
+      "path": "resources/assets/modes/swarm/9304_yasuo_weapon.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 81741,
+      "sha256": "895f3f49b851462dd64778a2a403759a58eda5db9ae14159b9a7ba683ffab0c8"
+    },
+    {
+      "path": "resources/assets/modes/swarm/9305_illaoi_weapon.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 100608,
+      "sha256": "1aa41869691198001125a3a0614294572a138750c702fc2230250c7609048658"
+    },
+    {
+      "path": "resources/assets/modes/swarm/9306_xayah_weapon.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 65137,
+      "sha256": "8548abc5b2cb2bb471f1637a5619e490e395eba91c455f5b8593f505070215e0"
+    },
+    {
+      "path": "resources/assets/modes/swarm/9307_aurora_weapon.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 75971,
+      "sha256": "163284d0841a0111a4cdf0069e6f831cf47aae86e3c5cc66ea5eaf54f8105990"
+    },
+    {
+      "path": "resources/assets/modes/swarm/9308_riven_weapon.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 78952,
+      "sha256": "26ebdc809504d04da9a889abd4efbf2403354cce1b7c2acddb79ac7959abd02a"
+    },
+    {
+      "path": "resources/catalog/hero_version.txt",
+      "category": "catalog",
+      "package_role": "package",
+      "size": 7,
+      "sha256": "debafe1b4f72929c4d1f0b11546b40de6a5b9acaf92d3db4bfd2654d011108c5"
+    },
+    {
+      "path": "resources/catalog/manifest.v2.json",
+      "category": "catalog",
+      "package_role": "package",
+      "size": 992,
+      "sha256": "6045727aacfa270f16470880b06af31788a9b81129d12c1c4eae4a3e5a26d8af"
+    },
+    {
+      "path": "resources/catalog/海克斯资源目录.v1.json",
+      "category": "catalog",
+      "package_role": "package",
+      "size": 496081,
+      "sha256": "73910cc003e799807e1c88648be9b75be84271c76a0eb40f17d104f6e95c06d7"
+    },
+    {
+      "path": "resources/catalog/英雄目录.v1.json",
+      "category": "catalog",
+      "package_role": "package",
+      "size": 87081,
+      "sha256": "0ddf067ca8b056e08f10cad9be3df32139c3d0ea8775deef7a616f6f2d50fea0"
+    },
+    {
+      "path": "resources/evidence/README.md",
+      "category": "evidence",
+      "package_role": "build-only",
+      "size": 395,
+      "sha256": "615b3cb41fa73318a3bb7c52f883d29bfad90db9ec5eca6ef71c9107b3fca907"
+    },
+    {
+      "path": "resources/evidence/mayhem_combos.raw.json",
+      "category": "evidence",
+      "package_role": "build-only",
+      "size": 307601,
+      "sha256": "db6d8db3c4c12fab645f80fec2bd1df1bb9c56c0e068b0ce8adf52a199ff7fbb"
+    },
+    {
+      "path": "resources/seeds/current.v2.json",
+      "category": "seeds",
+      "package_role": "package",
+      "size": 85,
+      "sha256": "03cf01af5eede2bc0bdf718a68a558d2a656575a234187603c28421a963de401"
+    },
+    {
+      "path": "resources/seeds/generations/20260718T025728-3c69562c51/champion_hextech.json",
+      "category": "seeds",
+      "package_role": "package",
+      "size": 18203121,
+      "sha256": "7c703804487de25d3a23f5ca6c2cb16c3adc7e18a5989f363f53a5e67538573c"
+    },
+    {
+      "path": "resources/seeds/generations/20260718T025728-3c69562c51/champions.json",
+      "category": "seeds",
+      "package_role": "package",
+      "size": 51711,
+      "sha256": "5784fc02ade870a66d4986e2d1451dda2a8cf742eed28ddf34fb6a897ca33629"
+    },
+    {
+      "path": "resources/seeds/generations/20260718T025728-3c69562c51/identities.json",
+      "category": "seeds",
+      "package_role": "package",
+      "size": 126474,
+      "sha256": "385acf7c156d1bfe2ec887918d9c51665352d996ebbfea7fa2efee90ef9c86d7"
+    },
+    {
+      "path": "resources/seeds/generations/20260718T025728-3c69562c51/manifest.json",
+      "category": "seeds",
+      "package_role": "package",
+      "size": 3797,
+      "sha256": "3c93582f9ade36b6acb246b49ce018d44ebdbe6f2e1834039a2d500cf306f8e1"
+    },
+    {
+      "path": "resources/seeds/generations/20260718T025728-3c69562c51/overlay_hints.json",
+      "category": "seeds",
+      "package_role": "package",
+      "size": 7246252,
+      "sha256": "ce36de8e765e286b8048e26b80720af81ac37a4e328d1c9d5a41e1d3a81236aa"
+    }
+  ]
+}

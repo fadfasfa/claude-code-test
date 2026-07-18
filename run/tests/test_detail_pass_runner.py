@@ -9,7 +9,7 @@ import pytest
 
 
 def test_detail_pass_runner_rejects_new_run_while_previous_workers_are_draining():
-    from hextech.scraping.hextech.detail_runner import DetailPassRunner
+    from hextech.infrastructure.sources.hextech.detail_runner import DetailPassRunner
 
     release = threading.Event()
     runner = DetailPassRunner()
@@ -52,7 +52,7 @@ def test_detail_pass_runner_rejects_new_run_while_previous_workers_are_draining(
 
 
 def test_detail_pass_runner_reports_worker_exceptions_and_releases_ownership():
-    from hextech.scraping.hextech.detail_runner import DetailPassRunner
+    from hextech.infrastructure.sources.hextech.detail_runner import DetailPassRunner
 
     runner = DetailPassRunner()
 
@@ -75,7 +75,7 @@ def test_detail_pass_runner_reports_worker_exceptions_and_releases_ownership():
 
 
 def test_detail_pass_runner_returns_stopped_when_stop_event_is_set():
-    from hextech.scraping.hextech.detail_runner import DetailPassRunner
+    from hextech.infrastructure.sources.hextech.detail_runner import DetailPassRunner
 
     runner = DetailPassRunner()
     stop_event = threading.Event()
@@ -97,7 +97,7 @@ def test_detail_pass_runner_returns_stopped_when_stop_event_is_set():
 
 
 def test_detail_pass_runner_drains_remaining_workers_after_base_exception():
-    from hextech.scraping.hextech.detail_runner import DetailPassRunner
+    from hextech.infrastructure.sources.hextech.detail_runner import DetailPassRunner
 
     runner = DetailPassRunner()
     release = threading.Event()

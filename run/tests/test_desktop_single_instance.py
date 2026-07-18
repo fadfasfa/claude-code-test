@@ -1,6 +1,6 @@
 """测试 桌面单实例锁。
 
-调用方: pytest; 关键依赖: hextech.display.desktop.single_instance。
+调用方: pytest; 关键依赖: hextech.interfaces.desktop.single_instance。
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 
 class DesktopSingleInstanceTests(unittest.TestCase):
     def test_live_owner_rejects_second_instance(self):
-        from hextech.display.desktop.single_instance import DesktopInstanceAlreadyRunning, DesktopInstanceOwner
+        from hextech.interfaces.desktop.single_instance import DesktopInstanceAlreadyRunning, DesktopInstanceOwner
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -29,7 +29,7 @@ class DesktopSingleInstanceTests(unittest.TestCase):
                 first.release()
 
     def test_stale_owner_is_replaced(self):
-        from hextech.display.desktop.single_instance import DesktopInstanceOwner
+        from hextech.interfaces.desktop.single_instance import DesktopInstanceOwner
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -48,7 +48,7 @@ class DesktopSingleInstanceTests(unittest.TestCase):
                 instance.release()
 
     def test_different_lock_paths_do_not_conflict(self):
-        from hextech.display.desktop.single_instance import DesktopInstanceOwner
+        from hextech.interfaces.desktop.single_instance import DesktopInstanceOwner
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
