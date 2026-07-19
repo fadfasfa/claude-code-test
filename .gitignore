@@ -2,7 +2,10 @@
 .archive/
 .artifacts/
 
-# QuantProject：保留公开行情csv/源码/文档追踪，忽略金融隐私与执行数据
+# QuantProject：仅追踪源码/文档，忽略行情数据、金融隐私与执行数据
+QuantProject/data/*.csv
+QuantProject/data/*.csv.sha256
+QuantProject/data/sync_status.json
 QuantProject/position_history.*
 QuantProject/decision_engine.log*
 QuantProject/output/
