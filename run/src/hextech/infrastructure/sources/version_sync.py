@@ -60,7 +60,7 @@ from hextech.modules.data.ports.paths import (
     var_path,
 )
 from hextech.infrastructure.persistence.runtime_bundle import seed_bundled_resources
-from hextech.modules.data.catalog.versioned import load_active_catalog
+from hextech.modules.data.catalog.versioned import CatalogValidationError, load_active_catalog
 
 ensure_utf8_stdio()
 
@@ -489,7 +489,7 @@ def cleanup_missing_assets(max_retries: int = 3, core_data: Optional[dict] = Non
         version_path = load_active_catalog().root / "hero_version.txt"
         if version_path.is_file():
             version = version_path.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeDecodeError):
+    except (CatalogValidationError, OSError, UnicodeDecodeError):
         logger.debug("无法读取 Catalog 版本，使用 latest 下载头像。")
 
     img_session = get_advanced_session()

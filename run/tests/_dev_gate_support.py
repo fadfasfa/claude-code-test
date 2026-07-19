@@ -83,8 +83,6 @@ import hextech.infrastructure.sources.hextech.service as hextech_scraper
 
 import hextech.infrastructure.sources.apex.service as synergy_scraper
 
-import hextech.infrastructure.sources.heal_worker as heal_worker
-
 import hextech.modules.acquisition.common.icons as icon_resolver
 
 import hextech.infrastructure.sources.version_sync as version_sync
@@ -137,9 +135,8 @@ ORIGINAL_SYNC_HERO_DATA = version_sync.sync_hero_data
 
 VERSION_SYNC_WRITE_GUARDED_CHECKS = frozenset(
     {
-        "test_heal_worker_contract",
         "test_hextech_scraper_fallback_contract",
-        "test_hextech_cooldown_and_heal_fallback",
+        "test_hextech_cooldown_allows_forced_permission",
         "test_hextech_failed_refresh_never_overwrites_csv",
         "test_hextech_success_clears_fallback_state",
     }

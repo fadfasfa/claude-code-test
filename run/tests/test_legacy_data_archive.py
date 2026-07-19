@@ -63,10 +63,15 @@ def test_manifest_treats_suspicious_raw_names_as_opaque(tmp_path: Path, monkeypa
     )
     sensitive_directory = data / "raw" / "sessions"
     authentication_directory = data / "raw" / "authentication-state"
+    processed_session_directory = data / "processed" / "session-store"
     sensitive_directory.mkdir()
     authentication_directory.mkdir()
+    processed_session_directory.mkdir()
     (sensitive_directory / "state.json").write_bytes(b"secret-session")
     (authentication_directory / "state.json").write_bytes(b"secret-auth")
+    (processed_session_directory / "state.json").write_bytes(b"secret-processed")
+    (data / "runtime" / "cookies.json").write_bytes(b"secret-runtime")
+    (data / "static" / "token.json").write_bytes(b"secret-static")
     for path in sensitive_files:
         path.write_bytes(b"secret")
     original_open = Path.open
@@ -81,6 +86,9 @@ def test_manifest_treats_suspicious_raw_names_as_opaque(tmp_path: Path, monkeypa
                 "tokens.json",
                 "/sessions/",
                 "/authentication-state/",
+                "/session-store/",
+                "/runtime/cookies.json",
+                "/static/token.json",
             )
         ):
             raise AssertionError("疑似敏感 raw 内容不得读取")
@@ -90,11 +98,20 @@ def test_manifest_treats_suspicious_raw_names_as_opaque(tmp_path: Path, monkeypa
     manifest = build_manifest(data)
     serialized = str(manifest).lower()
 
-    assert manifest["sensitive_raw"] == {
+    assert manifest["sensitive_entries"] == {
         "opaque": True,
         "present": True,
-        "directory_count": 2,
-        "file_count": 3,
+        "directory_count": 3,
+        "file_count": 5,
     }
-    for token in ("cookies.sqlite", "credentials.json", "tokens.json", "sessions", "authentication"):
+    for token in (
+        "cookies.sqlite",
+        "credentials.json",
+        "tokens.json",
+        "sessions",
+        "authentication",
+        "session-store",
+        "runtime/cookies.json",
+        "static/token.json",
+    ):
         assert token not in serialized

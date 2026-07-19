@@ -15,6 +15,7 @@ from hextech.interfaces.desktop import app_bootstrap
 from hextech.interfaces.desktop import runtime_window
 from hextech.interfaces.web.backend import runtime as web_runtime
 from hextech.modules.data.ports.paths import resource_path, var_path
+from hextech.modules.data.catalog.versioned import CatalogValidationError
 
 
 def test_version_sync_uses_runtime_asset_cache_and_never_refreshes_catalog_directly(tmp_path: Path) -> None:
@@ -31,6 +32,26 @@ def test_version_sync_uses_runtime_asset_cache_and_never_refreshes_catalog_direc
 
     assert Path(version_sync.ASSET_DIR) == var_path("cache", "assets")
     assert resource_path().resolve() not in Path(version_sync.ASSET_DIR).resolve().parents
+
+
+def test_cleanup_missing_assets_uses_latest_when_catalog_is_invalid() -> None:
+    observed_versions: list[str] = []
+    session = SimpleNamespace(headers={})
+    core_data = {"1": {"name": "英雄", "en_name": "Hero"}}
+    with (
+        patch.object(version_sync, "load_active_catalog", side_effect=CatalogValidationError("invalid")),
+        patch.object(version_sync, "get_advanced_session", return_value=session),
+        patch.object(version_sync, "_collect_missing_assets", return_value=[("1", "英雄", "Hero")]),
+        patch.object(
+            version_sync,
+            "_download_champion_image",
+            side_effect=lambda _session, version, _name, _path: observed_versions.append(version) or True,
+        ),
+    ):
+        remaining = version_sync.cleanup_missing_assets(core_data=core_data)
+
+    assert remaining == []
+    assert observed_versions == ["latest"]
 
 
 def test_web_asset_lookup_prefers_runtime_cache_then_readonly_seed(

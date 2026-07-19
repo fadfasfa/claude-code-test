@@ -1,7 +1,7 @@
 """安全归档旧 ``run/data``，且不读取浏览器 profile 内容。
 
 普通文件记录 SHA-256；日志只记录汇总数量和字节数；
-``runtime/profile`` 和 ``raw`` 下疑似敏感项只做不透明移动，不读取、不哈希。
+``runtime/profile`` 和任意位置的疑似敏感项只做不透明移动，不读取、不哈希。
 """
 
 from __future__ import annotations
@@ -49,8 +49,16 @@ def _is_under(path: Path, parent: Path) -> bool:
         return False
 
 
-def _iter_files_without_sensitive(root: Path, opaque_raw: dict[str, int]) -> Iterable[Path]:
-    """枚举可审计文件；绝不进入 profile 或疑似敏感的 raw 目录。"""
+def _contains_sensitive_part(parts: tuple[str, ...]) -> bool:
+    return any(SENSITIVE_PART.search(part) for part in parts)
+
+
+def _is_runtime_log(parts: tuple[str, ...]) -> bool:
+    return len(parts) >= 2 and parts[:2] == ("runtime", "logs")
+
+
+def _iter_files_without_sensitive(root: Path, opaque_sensitive: dict[str, int]) -> Iterable[Path]:
+    """枚举可审计文件；profile 和所有疑似敏感项都不读取、不记录名称。"""
 
     profile = (root / "runtime" / "profile").resolve()
     for current, directories, filenames in os.walk(root):
@@ -65,19 +73,15 @@ def _iter_files_without_sensitive(root: Path, opaque_raw: dict[str, int]) -> Ite
             candidate_parts = (*relative_parts, name.lower())
             if candidate == profile:
                 continue
-            if candidate_parts and candidate_parts[0] == "raw" and any(
-                SENSITIVE_PART.search(part) for part in candidate_parts
-            ):
-                opaque_raw["directory_count"] += 1
+            if not _is_runtime_log(candidate_parts) and _contains_sensitive_part(candidate_parts):
+                opaque_sensitive["directory_count"] += 1
                 continue
             kept_directories.append(name)
         directories[:] = kept_directories
         for filename in filenames:
             file_parts = (*relative_parts, filename.lower())
-            if file_parts and file_parts[0] == "raw" and any(
-                SENSITIVE_PART.search(part) for part in file_parts
-            ):
-                opaque_raw["file_count"] += 1
+            if not _is_runtime_log(file_parts) and _contains_sensitive_part(file_parts):
+                opaque_sensitive["file_count"] += 1
                 continue
             yield current_path / filename
 
@@ -101,8 +105,8 @@ def build_manifest(source: Path) -> dict[str, Any]:
     logs_count = 0
     logs_bytes = 0
     totals: dict[str, dict[str, int]] = {}
-    opaque_raw = {"directory_count": 0, "file_count": 0}
-    for path in _iter_files_without_sensitive(source, opaque_raw):
+    opaque_sensitive = {"directory_count": 0, "file_count": 0}
+    for path in _iter_files_without_sensitive(source, opaque_sensitive):
         kind = _classification(path, source)
         size = path.stat().st_size
         bucket = totals.setdefault(kind, {"file_count": 0, "total_bytes": 0})
@@ -126,10 +130,10 @@ def build_manifest(source: Path) -> dict[str, Any]:
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "source": "run/data",
         "profile": {"opaque": True, "present": profile.is_dir()},
-        "sensitive_raw": {
+        "sensitive_entries": {
             "opaque": True,
-            "present": bool(opaque_raw["directory_count"] or opaque_raw["file_count"]),
-            **opaque_raw,
+            "present": bool(opaque_sensitive["directory_count"] or opaque_sensitive["file_count"]),
+            **opaque_sensitive,
         },
         "logs": {"content_read": False, "file_count": logs_count, "total_bytes": logs_bytes},
         "totals": totals,
@@ -139,7 +143,7 @@ def build_manifest(source: Path) -> dict[str, Any]:
 
 def _verify_manifest(root: Path, manifest: dict[str, Any]) -> None:
     rebuilt = build_manifest(root)
-    for key in ("profile", "sensitive_raw", "logs", "totals", "hashed_files"):
+    for key in ("profile", "sensitive_entries", "logs", "totals", "hashed_files"):
         if rebuilt[key] != manifest[key]:
             raise RuntimeError(f"归档校验失败：{key}")
 

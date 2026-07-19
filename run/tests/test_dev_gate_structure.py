@@ -60,6 +60,7 @@ def test_source_packages_follow_modular_monolith_boundaries() -> None:
         assert (root / package).is_dir(), package
     assert not (root / "runtime").exists(), "禁止恢复无消费者的 runtime 预留空包"
     assert not (root / "bootstrap" / "data_refresh.py").exists(), "禁止恢复旧刷新编排"
+    assert not (root / "infrastructure" / "sources" / "heal_worker.py").exists(), "禁止恢复零调用自愈编排"
     assert (root / "modules" / "acquisition" / "hextech" / "contracts.py").is_file()
     assert (root / "modules" / "acquisition" / "hextech" / "validation.py").is_file()
     assert (root / "modules" / "acquisition" / "apex" / "parser.py").is_file()

@@ -11,6 +11,7 @@ import pytest
 import hextech.modules.data.generation as snapshot_module
 from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher, SnapshotValidationError
 from hextech.contracts import SourceProvenance
+from hextech.modules.data.ports.paths import resource_path
 
 
 def _payload(*, marker: str, private: bool = True) -> dict[str, object]:
@@ -51,6 +52,15 @@ def _provenance(marker: str) -> SourceProvenance:
 
 def _publish(publisher: DataSnapshotPublisher, payload: dict[str, object], marker: str):
     return publisher.publish(payload, source_files=(_provenance(marker),))
+
+
+def test_committed_seed_remains_readable_under_current_validation() -> None:
+    view = DataSnapshotClient(resource_path("seeds")).open_view()
+
+    assert view.manifest.champion_count == 173
+    assert view.manifest.augment_count == 204
+    assert view.manifest.stat_record_count == 21_569
+    assert len(view.get_champions()) == 173
 
 
 def test_publish_switches_complete_generation_and_records_manifest(tmp_path: Path) -> None:

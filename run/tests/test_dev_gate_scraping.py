@@ -13,10 +13,8 @@ from tests._dev_gate_support import (
     _write_runtime_csv,
     datetime,
     extract_champion_stats,
-    heal_worker,
     hextech_scraper,
     json,
-    os,
     patch,
     pd,
     process_hextechs_data,
@@ -154,33 +152,6 @@ def test_cdragon_source_schema_marker() -> None:
 
     foreign = {**raw_entry, "source_schema": "", "source_icon_url": "https://apexlol.info/x.png"}
     assert augment_catalog._is_cdragon_source_item(foreign) is False
-
-def test_heal_worker_contract() -> None:
-    assert hasattr(heal_worker, "heal_missing_artifacts")
-    assert hasattr(heal_worker, "detect_missing_artifacts")
-    with TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"HEXTECH_AUTO_SYNERGY_REFRESH": "1"}):
-        with (
-            patch.object(heal_worker, "LOCK_FILE", Path(temp_dir) / "heal.lock"),
-            patch.object(heal_worker, "_write_startup_status"),
-            patch.object(heal_worker, "_latest_csv_fresh", return_value=True),
-            patch.object(heal_worker, "_core_data_ready", return_value=True),
-            patch.object(heal_worker, "_augment_manifest_ready", return_value=True),
-            patch.object(heal_worker, "_file_is_fresh", return_value=True),
-            patch.object(heal_worker, "_image_assets_ready", return_value=True),
-            patch.object(heal_worker, "is_augment_icon_prefetch_ready", return_value=True),
-            patch.object(heal_worker, "get_latest_csv", return_value="Hextech_Data_2026-06-30.csv"),
-            patch.object(heal_worker, "get_latest_valid_csv", return_value="Hextech_Data_2026-06-30.csv"),
-            patch.object(heal_worker, "hextech_refresh_blocked", return_value=False),
-            patch.object(heal_worker, "_heal_champion_core", return_value=True),
-            patch.object(heal_worker, "_heal_hero_rankings", return_value=True),
-            patch.object(heal_worker, "_heal_augment_catalog", return_value=True),
-            patch.object(heal_worker, "_heal_images", return_value=True),
-        ):
-            missing = heal_worker.detect_missing_artifacts()
-            assert "synergy_data" not in missing
-            report = heal_worker.heal_missing_artifacts(force=True)
-            for field in ("requested", "repaired", "failed"):
-                assert "synergy_data" not in report[field]
 
 def test_hextech_scraper_fallback_contract() -> None:
     """403 必须在英雄并发前熔断；有本地数据则降级可用。"""
@@ -622,7 +593,7 @@ def test_version_sync_startup_resource_guard() -> None:
         version_sync._last_sync_time = 0
         assert ORIGINAL_SYNC_HERO_DATA(allow_remote_check=True) is True
 
-def test_hextech_cooldown_and_heal_fallback() -> None:
+def test_hextech_cooldown_allows_forced_permission() -> None:
     fallback_status = {
         "last_result": "fallback",
         "reason": "http_403",
@@ -637,26 +608,6 @@ def test_hextech_cooldown_and_heal_fallback() -> None:
     ):
         assert hextech_scraper.main_scraper() is True
         assert hextech_scraper.check_execution_permission(force=True)[0] is True
-
-    missing = {
-        "hextech_rankings": True,
-        "augment_catalog": False,
-        "champion_core": False,
-        "images": False,
-        "latest_csv": "valid.csv",
-        "augment_icons_prefetched": True,
-    }
-    with TemporaryDirectory() as temp_dir:
-        with (
-            patch.object(heal_worker, "LOCK_FILE", Path(temp_dir) / "heal.lock"),
-            patch.object(heal_worker, "detect_missing_artifacts", return_value=missing),
-            patch.object(heal_worker, "_write_startup_status"),
-            patch.object(heal_worker, "_heal_hero_rankings", return_value=True),
-            patch.object(heal_worker, "load_scraper_status", return_value=fallback_status),
-        ):
-            report = heal_worker.heal_missing_artifacts()
-        assert report["fallback"] == ["hextech_rankings"]
-        assert report["failed"] == []
 
 def test_hextech_source_parser() -> None:
     aug_id_map, truth_dict = _morgana_maps()

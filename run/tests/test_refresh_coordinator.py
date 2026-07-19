@@ -37,7 +37,7 @@ def test_missing_source_pointer_still_honors_failure_backoff(tmp_path: Path) -> 
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     coordinator = CohortRefreshCoordinator(
         publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=FakeWorkerRunner(),
         now=lambda: now,
@@ -275,7 +275,7 @@ def test_baseline_recovery_normalizes_manifest_hash_but_rejects_different_catalo
     )
     coordinator = CohortRefreshCoordinator(
         publisher=publisher,
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
     )
@@ -289,7 +289,7 @@ def test_cohort_promotes_only_after_all_candidates_succeed(tmp_path) -> None:
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")
     coordinator = CohortRefreshCoordinator(
         publisher=publisher,
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
         now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -309,7 +309,7 @@ def test_failed_candidate_never_changes_formal_pointers(tmp_path) -> None:
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")
     coordinator = CohortRefreshCoordinator(
         publisher=publisher,
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
         now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -328,7 +328,7 @@ def test_failed_source_reuses_same_catalog_last_good_and_publishes_degraded(tmp_
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")
     coordinator = CohortRefreshCoordinator(
         publisher=publisher,
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
         now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -353,7 +353,7 @@ def test_same_content_new_runs_publish_generation_with_matching_provenance(tmp_p
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")
     coordinator = CohortRefreshCoordinator(
         publisher=publisher,
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
         now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -415,7 +415,7 @@ def test_stop_before_active_cancel_registration_reaches_worker(tmp_path: Path) -
 
     coordinator = CohortRefreshCoordinator(
         publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
     )
@@ -446,7 +446,7 @@ def test_stop_after_worker_spawn_publishes_active_cancel(tmp_path: Path) -> None
 
     coordinator = CohortRefreshCoordinator(
         publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
     )
@@ -501,7 +501,7 @@ def test_coordinator_reads_only_v2_hash_verified_pointer_from_its_runtime_root(t
     atomic_write_json(tmp_path / "sources" / "hextech" / "current.v2.json", pointer)
     coordinator = CohortRefreshCoordinator(
         publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=FakeWorkerRunner(),
     )

@@ -7,7 +7,6 @@ Catalog 后通过 promotion journal 切换依赖和 generation。它不拥有抓
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
 import os
 import sys
@@ -48,6 +47,9 @@ SOURCE_TIMEOUTS = {
     "mayhem": 10 * 60,
 }
 
+ContributionMap = Mapping[str, Mapping[str, Any]]
+SnapshotBuilder = Callable[[ContributionMap], Any]
+
 
 def _parse_time(value: str) -> datetime | None:
     try:
@@ -75,7 +77,7 @@ class CohortRefreshCoordinator:
         self,
         *,
         publisher: DataSnapshotPublisher,
-        builder: Callable[[], Any],
+        builder: SnapshotBuilder,
         root: str | Path | None = None,
         process_runner: Callable[..., IsolatedProcessResult] = run_isolated_process,
         now: Callable[[], datetime] | None = None,
@@ -332,6 +334,7 @@ class CohortRefreshCoordinator:
         next_due = _parse_time(state.next_due_at)
         if next_due is not None:
             return current >= next_due
+        # source current 缺失不代表首次尝试；失败后的 backoff 必须先于立即刷新语义。
         if not pointer:
             return True
         success = _parse_time(state.last_success_at or _pointer_success_at(pointer))
@@ -460,13 +463,6 @@ class CohortRefreshCoordinator:
             for item in catalog_items
         ):
             raise RuntimeError("generation Catalog provenance 与 candidate pointer 不一致")
-
-    def _build(self, targets: Mapping[str, Mapping[str, Any]]) -> Any:
-        """兼容旧的零参数测试 builder，新 runtime builder 显式接收 contribution。"""
-
-        if inspect.signature(self.builder).parameters:
-            return self.builder(targets)
-        return self.builder()
 
     def _failure_state(self, previous: RefreshSourceState, payload: Mapping[str, Any]) -> RefreshSourceState:
         now = self.now()
@@ -613,7 +609,7 @@ class CohortRefreshCoordinator:
                 if not self._is_baseline(targets[source]):
                     self.promotion.record_target(source, targets[source])
             self.promotion.promote_dependencies()
-            build = self._build(targets)
+            build = self.builder(targets)
             self._build_matches_targets(build, targets)
             completed = self.now()
             source_status: dict[str, dict[str, Any]] = {}
