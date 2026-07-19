@@ -40,4 +40,3 @@ def test_desktop_keyboard_interrupt_runs_normal_shutdown() -> None:
 
     ui.on_close.assert_called_once_with()
     ui.wait_for_shutdown.assert_called_once_with(timeout_seconds=8.0)
-

@@ -78,4 +78,3 @@ def test_exclusion_zone_prevents_any_panel_from_drawing_over_critical_controls()
     )
 
     assert canvas.draw_calls == 0
-
