@@ -19,7 +19,12 @@ from hextech.bootstrap.refresh_coordinator import CohortRefreshCoordinator, SOUR
 from hextech.contracts import CatalogManifestV2, RefreshSourceState, SourceProvenance
 from hextech.infrastructure.processes import IsolatedProcessResult, run_isolated_process
 from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher
-from hextech.modules.data.catalog.versioned import CATALOG_FILES, build_catalog_manifest, sha256_file
+from hextech.modules.data.catalog.versioned import (
+    CATALOG_FILES,
+    build_catalog_manifest,
+    canonical_json_sha256,
+    sha256_file,
+)
 from hextech.modules.data.ports.atomic import atomic_write_json
 
 
@@ -190,7 +195,10 @@ def _builder(root: Path) -> DataBuildResult:
     )
 
 
-def test_baseline_recovery_rejects_origin_with_different_catalog_provenance(tmp_path: Path) -> None:
+@pytest.mark.parametrize("alter_catalog_artifact", (False, True))
+def test_baseline_recovery_normalizes_manifest_hash_but_rejects_different_catalog_artifacts(
+    tmp_path: Path, alter_catalog_artifact: bool
+) -> None:
     runner = FakeWorkerRunner()
     work = tmp_path / "catalog-work"
     work.mkdir()
@@ -217,15 +225,19 @@ def test_baseline_recovery_rejects_origin_with_different_catalog_provenance(tmp_
             )
         )
     )
+    canonical_manifest_sha256 = canonical_json_sha256(catalog_manifest.to_dict())
+    assert canonical_manifest_sha256 != catalog_pointer["manifest_sha256"]
     catalog_provenance = [
         SourceProvenance(
             source="catalog",
             run_id=catalog_id,
             catalog_generation_id=catalog_id,
             artifact_role=item.role,
-            artifact_sha256="f" * 64 if item.role == "champions" else item.sha256,
+            artifact_sha256=(
+                "f" * 64 if alter_catalog_artifact and item.role == "champions" else item.sha256
+            ),
             record_count=item.record_count,
-            manifest_sha256=catalog_pointer["manifest_sha256"],
+            manifest_sha256=canonical_manifest_sha256,
             content_schema_version=item.content_schema_version,
         )
         for item in catalog_manifest.files
@@ -268,7 +280,8 @@ def test_baseline_recovery_rejects_origin_with_different_catalog_provenance(tmp_
         process_runner=runner,
     )
 
-    assert coordinator._baseline_contributions(catalog_pointer) == {}
+    baseline = coordinator._baseline_contributions(catalog_pointer)
+    assert set(baseline) == (set() if alter_catalog_artifact else {"hextech"})
 
 
 def test_cohort_promotes_only_after_all_candidates_succeed(tmp_path) -> None:

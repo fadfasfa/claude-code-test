@@ -114,7 +114,6 @@ class CohortRefreshCoordinator:
                     item.artifact_role,
                     item.artifact_sha256,
                     item.record_count,
-                    item.manifest_sha256,
                     item.content_schema_version,
                 )
                 for item in view.manifest.source_files
@@ -140,7 +139,7 @@ class CohortRefreshCoordinator:
 
     def _validated_catalog_provenance(
         self, catalog: Mapping[str, Any]
-    ) -> tuple[str, tuple[tuple[str, str, str, str, int, str, int], ...]]:
+    ) -> tuple[str, tuple[tuple[str, str, str, str, int, int], ...]]:
         """验证目标 Catalog 文件，并返回可与 origin generation 精确比较的身份。"""
 
         catalog_id = str(catalog.get("catalog_generation_id") or "")
@@ -163,7 +162,6 @@ class CohortRefreshCoordinator:
                     item.role,
                     item.sha256,
                     item.record_count,
-                    manifest_sha256,
                     item.content_schema_version,
                 )
                 for item in manifest.files
