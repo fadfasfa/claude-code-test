@@ -44,18 +44,6 @@ run/build/
 run/dist/
 run/frontend/node_modules/
 
-# Hextech runtime state
-run/data/runtime/**
-run/data/processed/**
-run/data/raw/**
-!run/data/raw/
-!run/data/raw/synergy/
-!run/data/raw/synergy/Champion_Synergy_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9].json
-!run/data/raw/synergy/Champion_Synergy_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9].json
-!run/data/raw/synergy/Champion_Synergy_latest.v1.json
-# Mayhem raw is a versioned cleaner input, not a runtime snapshot glob.
-!run/data/raw/mayhem_combos.raw.json
-
 # sm2-randomizer rebuildable artifacts
 sm2-randomizer/**/__pycache__/
 sm2-randomizer/pipeline/sources/wiki/node_modules/
@@ -93,9 +81,6 @@ docs/参考资料/本地维护/codex-egress-maintenance.md
 
 # generated per-worktree, not committed to main
 TASK_HANDOFF.md
-
-# 本地按版本重抓生成的英雄核心数据，不入库
-run/data/static/Champion_Core_Data.json
 
 # 一次性 Chrome 扩展策略探针脚本
 .tmp_ext_policy_probe.ps1
