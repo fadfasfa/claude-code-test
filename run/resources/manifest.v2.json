@@ -13,15 +13,15 @@
       "path": "resources/README.md",
       "category": "documentation",
       "package_role": "build-only",
-      "size": 1014,
-      "sha256": "78aa3de616a779704dd94d546238c43d8b757b1c64fe34986654ccdea8ce4100"
+      "size": 1031,
+      "sha256": "8e70c238aaa5d05ea6e5660f150cbffb800a3faa3859320805b5bbb8e2d8bf70"
     },
     {
       "path": "resources/assets/README.md",
       "category": "documentation",
       "package_role": "build-only",
-      "size": 467,
-      "sha256": "05ce0e937f8032cad030c321476cbf7ccd22656588c491ea47683649630e5eca"
+      "size": 476,
+      "sha256": "94d9f11bd67b4ee0549a352ec784eab29a9bcfff4c85373ed255d007438d9d9e"
     },
     {
       "path": "resources/assets/augments/acceleratingsorcery_small.png",
@@ -4304,8 +4304,8 @@
       "path": "resources/catalog/manifest.v2.json",
       "category": "catalog",
       "package_role": "package",
-      "size": 992,
-      "sha256": "6045727aacfa270f16470880b06af31788a9b81129d12c1c4eae4a3e5a26d8af"
+      "size": 1024,
+      "sha256": "17a21684be8d8aa041c824476b19a034ad3edfeb1a3a362dc04535915f57a12d"
     },
     {
       "path": "resources/catalog/海克斯资源目录.v1.json",

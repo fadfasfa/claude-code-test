@@ -243,6 +243,15 @@ def _tier_color(tier: Any) -> str:
     return OVERLAY_THEME["gold"]
 
 
+def _compact_tier_label(tier: Any) -> str:
+    value = _clean_text(tier, limit=24)
+    return {
+        "prismatic": "棱彩",
+        "gold": "黄金",
+        "silver": "白银",
+    }.get(value.casefold(), value)
+
+
 def _chamfered_points(box: tuple[int, int, int, int], inset: int = 0) -> list[int]:
     x0, y0, x1, y1 = box
     x0, y0, x1, y1 = x0 + inset, y0 + inset, x1 - inset, y1 - inset
@@ -524,8 +533,11 @@ def draw_overlay_frame(
     *,
     viewport_size: tuple[int, int] | None = None,
     perf_sink: dict[str, Any] | None = None,
+    expanded: bool = True,
+    show_synergy: bool = True,
+    exclusion_zones: Sequence[tuple[int, int, int, int]] = (),
 ) -> OverlayLayout:
-    """清屏并绘制三统计窗和 0–3 条联动，返回实际几何供验证。"""
+    """绘制安全区外的统计与联动；compact 模式最多显示一条短联动。"""
 
     started_at = time.perf_counter()
     if viewport_size is None:
@@ -534,24 +546,42 @@ def draw_overlay_frame(
     margin = _clamp(8, viewport_width * 0.008, 20)
     rail_width = max(1, viewport_width - margin - int(viewport_width * SYNERGY_X_RANGE[0]))
     minimum_panel_height = _clamp(96, viewport_height * 0.11, 176)
+    synergy_rows = list(model["synergies"] if expanded else model["synergies"][:1]) if show_synergy else []
+    if not expanded and synergy_rows:
+        first = dict(synergy_rows[0])
+        content = _clean_text(first.get("content"), limit=96)
+        first["content"] = content + ("…" if len(str(synergy_rows[0].get("content") or "")) > len(content) else "")
+        synergy_rows = [first]  # type: ignore[list-item]
     synergy_heights = [
         _resolve_synergy_text_layout(
             row,
             rail_width,
             minimum_height=minimum_panel_height,
         )["desired_height"]
-        for row in model["synergies"]
+        for row in synergy_rows
     ]
     layout = resolve_overlay_layout(
         viewport_size,
-        synergy_count=len(model["synergies"]),
+        synergy_count=len(synergy_rows),
         synergy_heights=synergy_heights,
     )
     canvas.delete("all")
+    def safe(box: tuple[int, int, int, int]) -> bool:
+        x0, y0, x1, y1 = box
+        return not any(x0 < rx1 and x1 > rx0 and y0 < ry1 and y1 > ry0 for rx0, ry0, rx1, ry1 in exclusion_zones)
+
     for box, row in zip(layout["stat_boxes"], model["stats"]):
-        _draw_stat_panel(canvas, box, row)
-    for box, row in zip(layout["synergy_boxes"], model["synergies"]):
-        _draw_synergy_panel(canvas, box, row, minimum_height=minimum_panel_height)
+        if safe(box):
+            display_row = row
+            if not expanded and row["status_code"] in {"READY", "GENERATION_DEGRADED"}:
+                tier_label = _compact_tier_label(row.get("tier"))
+                if tier_label:
+                    display_row = dict(row)  # type: ignore[assignment]
+                    display_row["stats_text"] = f"{row['stats_text']} · {tier_label}"  # type: ignore[index]
+            _draw_stat_panel(canvas, box, display_row)
+    for box, row in zip(layout["synergy_boxes"], synergy_rows):
+        if safe(box):
+            _draw_synergy_panel(canvas, box, row, minimum_height=minimum_panel_height)
     if isinstance(perf_sink, dict):
         perf_sink["last_draw_ms"] = (time.perf_counter() - started_at) * 1000.0
     return layout

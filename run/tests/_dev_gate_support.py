@@ -73,8 +73,6 @@ HEXTECH_HEALTH_REQUIRED_COLUMNS = (
     "海克斯出场率",
 )
 
-import hextech.bootstrap.data_refresh as orchestrator
-
 import hextech.modules.data.catalog.aliases as alias_search
 
 import hextech.modules.data.catalog.precomputed_cache as precomputed_cache
@@ -283,13 +281,6 @@ def _snapshot(
     timestamp = time.time() if mtime is None else mtime
     os.utime(path, (timestamp, timestamp))
     return path
-
-def _patch_synergy_dir(temp_dir: str, status: dict | None = None):
-    payload = {} if status is None else status
-    return (
-        patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
-        patch.object(orchestrator, "load_synergy_refresh_status", return_value=payload),
-    )
 
 def _core_info() -> dict[str, ChampionInfo]:
     return {

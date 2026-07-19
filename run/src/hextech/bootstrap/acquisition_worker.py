@@ -17,6 +17,27 @@ from typing import Any, Mapping
 from hextech.modules.data.ports.atomic import atomic_write_json
 
 
+def _reuse_current_when_not_stale(source: str, result: Mapping[str, Any], pointer_output: Path) -> bool:
+    """来源明确无需刷新时，把已验证 current 作为本轮 contribution 返回。"""
+
+    reason = str(result.get("reason") or result.get("reason_code") or "")
+    if reason != "not_stale":
+        return False
+    from hextech.modules.data.ports.paths import get_var_dir
+
+    root = get_var_dir()
+    current = (
+        root / "catalog" / "current.v2.json"
+        if source == "catalog"
+        else root / "sources" / source / "current.v2.json"
+    )
+    if not current.is_file():
+        return False
+    pointer = _load_pointer(current, source)
+    atomic_write_json(pointer_output, pointer, ensure_ascii=False, indent=2)
+    return True
+
+
 def _watch_cancel(path: Path, event: threading.Event) -> None:
     while not event.wait(0.1):
         if path.exists():
@@ -88,7 +109,7 @@ def run_worker(
     if stop_event.is_set():
         raise RuntimeError(f"{source} worker 已取消")
     source_result = dict(result) if isinstance(result, Mapping) else {"success": bool(result)}
-    if not pointer_output.is_file():
+    if not pointer_output.is_file() and not _reuse_current_when_not_stale(source, source_result, pointer_output):
         raise RuntimeError(
             f"{source} 未生成 candidate pointer："
             f"source_result={json.dumps(source_result, ensure_ascii=False, default=str)}"

@@ -156,17 +156,12 @@ def _failure_status(
     )
 
 
-def _rebuild_overlay_hint_cache() -> None:
-    """兼容旧注入点；generation 只由 DataService 在完整构建后发布。"""
-
-
 def run_mayhem_refresh(
     *,
     force: bool = False,
     now: float | None = None,
     scraper: Callable[[], Mapping[str, Any]] | None = None,
     merge: Callable[..., Mapping[str, Any]] | None = None,
-    rebuild_hint_cache: Callable[[], None] | None = None,
     promote_current: bool = False,
     pointer_output: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:

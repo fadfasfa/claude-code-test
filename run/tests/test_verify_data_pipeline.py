@@ -20,7 +20,11 @@ def _payloads() -> dict[str, object]:
             "英雄一": {"hero_id": "1", "augments": [{"id": "a1", "name": "强化一"}]}
         },
         "overlay_hints": {"augments": {"a1": {"name": "强化一"}}},
-        "identities": {"schema_version": 2, "augments": {"a1": "强化一"}},
+        "identities": {
+            "schema_version": 2,
+            "champions": {"1": "英雄一"},
+            "augments": {"a1": "强化一"},
+        },
     }
 
 

@@ -72,6 +72,36 @@ def test_publish_switches_complete_generation_and_records_manifest(tmp_path: Pat
     }
 
 
+def test_same_payload_with_new_provenance_publishes_new_generation(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    payload = _payload(marker="same")
+    first = publisher.publish(
+        payload,
+        source_files=(_provenance("one"),),
+        source_status={"hextech": {"run_id": "run-one", "freshness": "fresh"}},
+    )
+    second = publisher.publish(
+        payload,
+        source_files=(_provenance("two"),),
+        source_status={"hextech": {"run_id": "run-two", "freshness": "fresh"}},
+    )
+
+    assert second.generation_id != first.generation_id
+    assert DataSnapshotClient(tmp_path).load_manifest().source_files == (_provenance("two"),)
+
+
+def test_fully_identical_publish_is_noop(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    payload = _payload(marker="same")
+    kwargs = {
+        "source_files": (_provenance("one"),),
+        "source_status": {"hextech": {"run_id": "run-one", "freshness": "fresh"}},
+    }
+    first = publisher.publish(payload, **kwargs)
+    second = publisher.publish(payload, **kwargs)
+    assert second.generation_id == first.generation_id
+
+
 def test_view_resolves_vision_augment_id_and_preserves_catalog_only_identity(tmp_path: Path) -> None:
     payload = _payload(marker="one")
     payload["identities"] = {

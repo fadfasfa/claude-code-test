@@ -16,12 +16,10 @@ from tests._dev_gate_support import (
     heal_worker,
     hextech_scraper,
     json,
-    orchestrator,
     os,
     patch,
     pd,
     process_hextechs_data,
-    requests,
     scrapling_client,
     sys,
     time,
@@ -183,17 +181,6 @@ def test_heal_worker_contract() -> None:
             report = heal_worker.heal_missing_artifacts(force=True)
             for field in ("requested", "repaired", "failed"):
                 assert "synergy_data" not in report[field]
-
-        with (
-            patch.object(heal_worker, "heal_missing_artifacts", return_value={"requested": ["hextech_rankings"], "repaired": [], "failed": []}),
-            patch(
-                "hextech.infrastructure.sources.mayhem.service.run_mayhem_refresh",
-                side_effect=RuntimeError("mayhem diagnostic failure"),
-            ),
-        ):
-            result = orchestrator.refresh_backend_data(force=False, rebuild_query_cache=False)
-            assert result.state in {"ready", "degraded", "failed"}
-            assert hasattr(result, "correlation_id")
 
 def test_hextech_scraper_fallback_contract() -> None:
     """403 必须在英雄并发前熔断；有本地数据则降级可用。"""
@@ -627,31 +614,13 @@ def test_version_sync_startup_resource_guard() -> None:
             version_sync._last_sync_time = 0
             assert ORIGINAL_SYNC_HERO_DATA() is True
 
-    class ResetSession:
-        def get(self, *_args, **_kwargs):
-            raise requests.ConnectionError(ConnectionResetError(10054, "远程主机强迫关闭了一个现有的连接。"))
-
-    with TemporaryDirectory() as temp_dir:
-        root = Path(temp_dir)
-        core_file = root / "英雄目录.v1.json"
-        manifest_file = root / "海克斯资源目录.v1.json"
-        version_file = root / "hero_version.txt"
-        core_file.write_text("{}", encoding="utf-8")
-        manifest_file.write_text("{}", encoding="utf-8")
-        version_file.write_text("15.13.1", encoding="utf-8")
-        with (
-            patch.object(version_sync, "CORE_DATA_FILE", str(core_file)),
-            patch.object(version_sync, "AUGMENT_MAP_FILE", str(root / "missing-augment-map.json")),
-            patch.object(version_sync, "AUGMENT_ICON_FILE", str(root / "missing-augment-icon.json")),
-            patch.object(version_sync, "AUGMENT_MANIFEST_FILE", str(manifest_file)),
-            patch.object(version_sync, "VERSION_FILE", str(version_file)),
-            patch.object(version_sync, "get_advanced_session", return_value=ResetSession()),
-            patch.object(version_sync.logger, "warning") as warning_log,
-        ):
-            version_sync._last_sync_time = 0
-            assert ORIGINAL_SYNC_HERO_DATA(allow_remote_check=True) is True
-        assert warning_log.call_args is not None
-        assert warning_log.call_args.args[1] == "connection_reset"
+    with patch.object(
+        version_sync,
+        "get_advanced_session",
+        side_effect=AssertionError("Catalog 强制检查也必须由 DataService coordinator 执行"),
+    ):
+        version_sync._last_sync_time = 0
+        assert ORIGINAL_SYNC_HERO_DATA(allow_remote_check=True) is True
 
 def test_hextech_cooldown_and_heal_fallback() -> None:
     fallback_status = {

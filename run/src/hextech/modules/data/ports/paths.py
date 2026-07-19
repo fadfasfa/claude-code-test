@@ -59,7 +59,7 @@ VAR_LAYOUT_DIRS = (
     "sources",
     "snapshots",
     "state",
-    "ipc",
+    "user-data",
     "cache",
     "profiles",
     "logs",

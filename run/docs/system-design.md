@@ -2,17 +2,16 @@
 
 ## 模块边界
 
-源码根为 `src/hextech`。`contracts` 定义跨边界 ID、DTO 和失败分类；`modules` 持有业务用例；`interfaces` 与 `infrastructure` 实现入站和出站适配；`runtime` 是只允许依赖 `contracts/modules` 的预留纯运行时边界；`bootstrap` 是唯一 composition root，负责具体进程与实现组装。当前不为填充 `runtime` 目录制造转发实现。
+源码根为 `src/hextech`。`contracts` 定义跨边界 ID、DTO 和失败分类；`modules` 持有业务用例；`interfaces` 与 `infrastructure` 实现入站和出站适配；`bootstrap` 是唯一 composition root，负责具体进程与实现组装。没有无消费者的预留 package 或旧路径转发入口。
 
 ```mermaid
 flowchart LR
     Modules["modules"] --> Contracts["contracts"]
     Interfaces["interfaces"] --> Modules
     Infrastructure["infrastructure"] --> Modules
-    Runtime["runtime"] --> Modules
     Bootstrap["bootstrap"] --> Interfaces
     Bootstrap --> Infrastructure
-    Bootstrap --> Runtime
+    Bootstrap --> Modules
 ```
 
 反向导入由 architecture tests 阻断。模块不得依赖根脚本、旧路径 alias 或转发入口。
@@ -43,7 +42,8 @@ flowchart LR
 
 ## 来源门禁
 
-Hextech 以 `resources/catalog/英雄目录.v1.json` 为确定全集。每个英雄按 CDN JSON、静态详情页、必要时普通 browser fallback 取数；首轮成功项不重抓，失败项进入低并发尾部重试。缺英雄、串英雄、重复海克斯、字段类型或总行数异常都会使整次 run 失败。
+Hextech 以当前已验证的 Catalog contribution 为确定全集；首次安装可读取
+`resources/catalog` seed。每个英雄按 CDN JSON、静态详情页、必要时普通 browser fallback 取数；首轮成功项不重抓，失败项进入低并发尾部重试。缺英雄、串英雄、重复海克斯、字段类型或总行数异常都会使整次 run 失败。
 
 Apex 由稳定 slug map 直接构造英雄详情 URL。结果必须是 `has_synergy`、有页面身份和明确空态证据的 `confirmed_empty`，或带 `FailureKind` 的失败；未知空结果不能发布。
 

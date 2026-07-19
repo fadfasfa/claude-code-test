@@ -403,11 +403,4 @@ def window_sync_loop(ui: "HextechUI") -> None:
             logger.exception("窗口同步循环异常。")
         time.sleep(0.2)
 
-def start_background_scraper(ui: "HextechUI", refresh_backend_data) -> None:
-    """兼容旧入口；不再启动桌面定时刷新线程。"""
-
-    del refresh_backend_data
-    if not ui.stop_event.is_set():
-        logger.info("桌面定时刷新线程已停用：refresh 由 Runtime Supervisor action 发起。")
-
 __all__ = [name for name in globals() if not name.startswith("__")]

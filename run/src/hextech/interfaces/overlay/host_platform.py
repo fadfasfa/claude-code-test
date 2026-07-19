@@ -14,6 +14,8 @@ def build_overlay_window_config() -> dict[str, Any]:
         "click_through": True,
         "no_activate": True,
         "hotkey": "Alt+H",
+        "mode_hotkey": "Alt+J",
+        "default_display_mode": "compact",
         "alpha": 0.96,
         "transparent_color": "#010203",
         "badge_height": 72,
@@ -153,19 +155,24 @@ def _ensure_overlay_window_styles(root: tk.Tk, config: Mapping[str, Any]) -> boo
 
 
 def _poll_alt_h_hotkey(controller: HotkeyController, user32: Any) -> None:
-    """全局热键被占用时，用按键边沿轮询保留关闭 overlay 的能力。"""
+    """注册失败时轮询 Alt+H/Alt+J 的按键边沿。"""
 
-    was_pressed = False
-    last_toggle_at = 0.0
+    was_pressed = {"H": False, "J": False}
+    last_toggle_at = {"H": 0.0, "J": 0.0}
     while not controller.stop_requested.is_set():
         alt_pressed = bool(int(user32.GetAsyncKeyState(VK_MENU)) & 0x8000)
-        h_pressed = bool(int(user32.GetAsyncKeyState(ord("H"))) & 0x8000)
-        pressed = alt_pressed and h_pressed
         now = time.monotonic()
-        if pressed and not was_pressed and now - last_toggle_at >= HOTKEY_FALLBACK_DEBOUNCE_SECONDS:
-            controller.request_queue.put("toggle")
-            last_toggle_at = now
-        was_pressed = pressed
+        for key, request in (("H", "toggle"), ("J", "toggle_mode")):
+            key_pressed = bool(int(user32.GetAsyncKeyState(ord(key))) & 0x8000)
+            pressed = alt_pressed and key_pressed
+            if (
+                pressed
+                and not was_pressed[key]
+                and now - last_toggle_at[key] >= HOTKEY_FALLBACK_DEBOUNCE_SECONDS
+            ):
+                controller.request_queue.put(request)
+                last_toggle_at[key] = now
+            was_pressed[key] = pressed
         if controller.stop_requested.wait(HOTKEY_FALLBACK_POLL_SECONDS):
             break
 
@@ -180,9 +187,15 @@ def _start_hotkey_thread(request_queue: "queue.Queue[str]") -> HotkeyController:
         controller.thread_id = int(ctypes.windll.kernel32.GetCurrentThreadId())
         msg = MSG()
         user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)
-        if not user32.RegisterHotKey(None, HOTKEY_ID, MOD_ALT, ord("H")):
+        registered_h = bool(user32.RegisterHotKey(None, HOTKEY_ID, MOD_ALT, ord("H")))
+        registered_j = bool(user32.RegisterHotKey(None, HOTKEY_MODE_ID, MOD_ALT, ord("J")))
+        if not registered_h or not registered_j:
+            if registered_h:
+                user32.UnregisterHotKey(None, HOTKEY_ID)
+            if registered_j:
+                user32.UnregisterHotKey(None, HOTKEY_MODE_ID)
             controller.mode = "poll"
-            logger.warning("注册 Alt+H 全局热键失败，降级为按键轮询。")
+            logger.warning("注册 Alt+H/Alt+J 全局热键失败，降级为按键轮询。")
             controller.ready.set()
             _poll_alt_h_hotkey(controller, user32)
             return
@@ -199,9 +212,12 @@ def _start_hotkey_thread(request_queue: "queue.Queue[str]") -> HotkeyController:
                     break
                 if int(msg.message) == WM_HOTKEY and int(msg.wParam) == HOTKEY_ID:
                     request_queue.put("toggle")
+                elif int(msg.message) == WM_HOTKEY and int(msg.wParam) == HOTKEY_MODE_ID:
+                    request_queue.put("toggle_mode")
         finally:
             try:
                 user32.UnregisterHotKey(None, HOTKEY_ID)
+                user32.UnregisterHotKey(None, HOTKEY_MODE_ID)
             except Exception:
                 logger.debug("注销 overlay 热键失败。", exc_info=True)
 

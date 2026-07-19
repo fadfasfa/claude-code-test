@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -19,9 +20,12 @@ from typing import Any, Mapping, Sequence
 
 from hextech.contracts import (
     DataContractError,
+    DataSnapshotCurrentPointerV2,
     DataSnapshotManifestV2,
+    DataSnapshotPreviousPointerV2,
     SnapshotFileDescriptor,
     SourceProvenance,
+    SourceStatusV2,
 )
 from hextech.modules.data.catalog.runtime_store import get_runtime_root_dir
 from hextech.modules.data.ports.atomic import atomic_write_json
@@ -56,6 +60,17 @@ def _read_json(path: Path) -> Any:
         raise SnapshotValidationError(f"快照 JSON 无法读取：{path.name}: {exc}") from exc
 
 
+def _payload_hashes(payloads: Mapping[str, Any]) -> dict[str, str]:
+    """按 publisher 的实际 JSON 编码计算四个消费 payload 摘要。"""
+
+    return {
+        role: hashlib.sha256(
+            json.dumps(payloads.get(role), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        for role in SNAPSHOT_ROLES
+    }
+
+
 _count_records = count_records
 
 
@@ -75,6 +90,10 @@ class DataSnapshotPublisher:
         *,
         source_files: Sequence[SourceProvenance | Mapping[str, Any]] = (),
         require_complete_provenance: bool = False,
+        health: str = "healthy",
+        refreshed_sources: Sequence[str] = (),
+        degraded_sources: Sequence[str] = (),
+        source_status: Mapping[str, Mapping[str, Any] | SourceStatusV2] | None = None,
     ) -> DataSnapshotManifest:
         normalized = {role: payloads.get(role) for role in SNAPSHOT_ROLES}
         champion_count, augment_count, stat_record_count = _count_records(normalized)
@@ -83,9 +102,23 @@ class DataSnapshotPublisher:
             for item in source_files
         )
         fingerprint = content_fingerprint(provenance)
+        candidate_payload_hashes = _payload_hashes(normalized)
+        normalized_source_status = {
+            str(key): value if isinstance(value, SourceStatusV2) else SourceStatusV2.from_mapping(value)
+            for key, value in (source_status or {}).items()
+        }
         try:
             current = DataSnapshotClient(self.root).open_view()
-            if current.manifest.content_fingerprint == fingerprint:
+            current_payload_hashes = {item.role: item.sha256 for item in current.manifest.files}
+            if (
+                current.manifest.content_fingerprint == fingerprint
+                and current.manifest.source_files == provenance
+                and current_payload_hashes == candidate_payload_hashes
+                and current.manifest.health == str(health)
+                and current.manifest.refreshed_sources == tuple(str(item) for item in refreshed_sources)
+                and current.manifest.degraded_sources == tuple(str(item) for item in degraded_sources)
+                and dict(current.manifest.source_status) == normalized_source_status
+            ):
                 return current.manifest
         except SnapshotValidationError:
             pass
@@ -119,6 +152,10 @@ class DataSnapshotPublisher:
                 augment_count=augment_count,
                 stat_record_count=stat_record_count,
                 files=tuple(files),
+                health=str(health),
+                refreshed_sources=tuple(str(item) for item in refreshed_sources),
+                degraded_sources=tuple(str(item) for item in degraded_sources),
+                source_status=normalized_source_status,
             )
             atomic_write_json(staging / "manifest.json", manifest.to_dict(), ensure_ascii=False, indent=2)
             validate_generation_directory(
@@ -135,16 +172,13 @@ class DataSnapshotPublisher:
             if previous_id:
                 atomic_write_json(
                     self.previous_path,
-                    {"schema_version": SNAPSHOT_SCHEMA_VERSION, "generation_id": previous_id},
+                    DataSnapshotPreviousPointerV2(generation_id=previous_id).to_dict(),
                     ensure_ascii=False,
                     indent=2,
                 )
             atomic_write_json(
                 self.current_path,
-                {
-                    "schema_version": SNAPSHOT_SCHEMA_VERSION,
-                    "current_generation_id": generation_id,
-                },
+                DataSnapshotCurrentPointerV2(current_generation_id=generation_id).to_dict(),
                 ensure_ascii=False,
                 indent=2,
             )
@@ -167,7 +201,12 @@ class DataSnapshotPublisher:
         if not self.current_path.exists():
             return ""
         payload = _read_json(self.current_path)
-        return str(payload.get("current_generation_id") or "") if isinstance(payload, Mapping) else ""
+        if not isinstance(payload, Mapping):
+            return ""
+        try:
+            return DataSnapshotCurrentPointerV2.from_mapping(payload).current_generation_id
+        except DataContractError:
+            return ""
 
     def _remove_unreferenced_generations(self, keep: set[str]) -> None:
         if not self.generations_dir.is_dir():
@@ -197,11 +236,15 @@ class DataSnapshotView:
 
     def status(self) -> dict[str, Any]:
         return {
-            "state": "degraded" if self.degraded else "ready",
+            "state": "degraded" if self.degraded or self.manifest.health == "degraded" else "ready",
             "generation_id": self.manifest.generation_id,
             "failed_generation_id": self.failed_generation_id,
             "content_fingerprint": self.manifest.content_fingerprint,
             "created_at": self.manifest.created_at,
+            "health": self.manifest.health,
+            "refreshed_sources": list(self.manifest.refreshed_sources),
+            "degraded_sources": list(self.manifest.degraded_sources),
+            "source_status": {key: value.to_dict() for key, value in self.manifest.source_status.items()},
         }
 
     def get_champions(self) -> list[dict[str, Any]]:
@@ -304,16 +347,6 @@ class DataSnapshotView:
             result["name"] = str(augments.get(result["canonical_id"]) or "")
         return deepcopy(result)
 
-    def get_item(self, item_id: object) -> dict[str, Any] | None:
-        """装备域预留查询；当前 generation 尚未发布装备角色。"""
-
-        return None
-
-    def get_item_recommendations(self, champion_id: object) -> list[dict[str, Any]]:
-        """装备推荐预留查询，未发布时返回稳定空集合。"""
-
-        return []
-
     def get_overlay_hints(self) -> dict[str, Any]:
         return deepcopy(dict(self._payloads["overlay_hints"]))
 
@@ -329,18 +362,24 @@ class DataSnapshotClient:
 
     def _pointer(self) -> Mapping[str, Any]:
         payload = _read_json(self.root / "current.v2.json")
-        if not isinstance(payload, Mapping) or payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
-            raise SnapshotValidationError("current.v2.json 指针无效")
-        return payload
+        try:
+            if not isinstance(payload, Mapping):
+                raise DataContractError("current pointer 必须是对象")
+            return DataSnapshotCurrentPointerV2.from_mapping(payload).to_dict()
+        except DataContractError as exc:
+            raise SnapshotValidationError(f"current.v2.json 指针无效：{exc}") from exc
 
     def _previous_generation_id(self) -> str:
         path = self.root / "previous.v2.json"
         if not path.is_file():
             return ""
         payload = _read_json(path)
-        if not isinstance(payload, Mapping) or payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
-            raise SnapshotValidationError("previous.v2.json 指针无效")
-        return str(payload.get("generation_id") or "")
+        try:
+            if not isinstance(payload, Mapping):
+                raise DataContractError("previous pointer 必须是对象")
+            return DataSnapshotPreviousPointerV2.from_mapping(payload).generation_id
+        except DataContractError as exc:
+            raise SnapshotValidationError(f"previous.v2.json 指针无效：{exc}") from exc
 
     def _load_generation(self, generation_id: str) -> tuple[DataSnapshotManifest, dict[str, Any]]:
         if not _GENERATION_ID_RE.fullmatch(generation_id):

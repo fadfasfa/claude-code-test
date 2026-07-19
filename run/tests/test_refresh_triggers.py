@@ -32,16 +32,12 @@ class RefreshTriggerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["accepted"])
         self.assertEqual(result["reason"], "data_service_required")
 
-    async def test_web_helper_does_not_directly_refresh_when_csv_missing(self):
+    def test_web_runtime_has_no_dataframe_refresh_facade(self):
         from hextech.interfaces.web.backend import runtime
 
-        with mock.patch.object(runtime, "get_df") as get_df:
-            import pandas as pd
-
-            get_df.return_value = pd.DataFrame()
-            result = await runtime.get_df_with_refresh(timeout=0.01)
-
-        self.assertTrue(result.empty)
+        self.assertFalse(hasattr(runtime, "get_df"))
+        self.assertFalse(hasattr(runtime, "get_df_with_refresh"))
+        self.assertFalse(hasattr(runtime, "get_stable_champion_catalog_df"))
 
     def test_desktop_background_scraper_starts_only_snapshot_watcher(self):
         from hextech.interfaces.desktop import app

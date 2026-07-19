@@ -4,8 +4,6 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
 
 
@@ -68,11 +66,11 @@ def test_stable_build_module_help_uses_current_python_environment_module() -> No
 
 def test_offline_build_validation_does_not_call_remote_refresh(monkeypatch):
     from tooling.build import package as build_package
-    from hextech.bootstrap import data_refresh as refresh
+    from hextech.bootstrap import refresh_once
 
     monkeypatch.setattr(
-        refresh,
-        "refresh_backend_data",
+        refresh_once,
+        "refresh_runtime_once",
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("offline build must not refresh")),
     )
     monkeypatch.setattr(
@@ -93,12 +91,12 @@ def test_offline_build_validation_does_not_call_remote_refresh(monkeypatch):
 @pytest.mark.parametrize("state", ["degraded", "failed"])
 def test_explicit_refresh_rejects_non_ready_result(monkeypatch, state):
     from tooling.build import package as build_package
-    from hextech.bootstrap import data_refresh as refresh
+    from hextech.bootstrap import refresh_once
 
     monkeypatch.setattr(
-        refresh,
-        "refresh_backend_data",
-        lambda **_kwargs: SimpleNamespace(state=state, reason_code=f"{state}_reason"),
+        refresh_once,
+        "refresh_runtime_once",
+        lambda **_kwargs: {"state": state, "reason_code": f"{state}_reason"},
     )
     monkeypatch.setattr(build_package, "validate_snapshot_seed", lambda _base: {"valid": True})
 

@@ -35,7 +35,7 @@ from typing import Callable, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from hextech.modules.data.ports.paths import RUNTIME_DATA_DIR, STATIC_DATA_DIR
+from hextech.modules.data.ports.paths import RUNTIME_DATA_DIR
 from hextech.modules.data.source_runs import resolve_current_artifact, source_root
 
 CSV_ENCODING = "utf-8-sig"
@@ -62,12 +62,6 @@ logger = logging.getLogger(__name__)
 _PRIVATE_PERMISSION_WARNING_PATHS: set[str] = set()
 _VALID_CSV_CACHE: dict[tuple[str, int], tuple[int, int, bool]] = {}
 _VALID_CSV_CACHE_LOCK = threading.Lock()
-
-
-def runtime_priority_paths(relative_name: str) -> list[str]:
-    """返回 catalog 唯一事实源；不存在旧目录候选。"""
-    return [str(Path(STATIC_DATA_DIR) / relative_name)]
-
 
 
 def get_runtime_root_dir() -> Path:
@@ -100,9 +94,10 @@ def get_runtime_profile_dir() -> Path:
     return get_runtime_root_dir() / "profiles"
 
 
-def get_runtime_persisted_dir() -> Path:
-    """返回运行态生成型持久化数据目录。"""
-    return get_runtime_root_dir() / "snapshots"
+def get_runtime_user_preferences_dir() -> Path:
+    """返回用户可变偏好目录；不得混入 immutable snapshots。"""
+
+    return get_runtime_root_dir() / "user-data" / "preferences"
 
 
 def _join_under_dir(base_dir: Path, relative_name: str) -> Path:
@@ -234,32 +229,15 @@ def build_runtime_profile_path(dirname: str) -> str:
     return str(_join_under_dir(get_runtime_profile_dir(), dirname))
 
 
-def build_runtime_persisted_path(filename: str) -> str:
-    """生成运行态生成型持久化文件路径。"""
-    return str(_join_under_dir(get_runtime_persisted_dir(), filename))
+def build_runtime_user_preference_path(filename: str) -> str:
+    """生成受控用户偏好文件路径。"""
+
+    return str(_join_under_dir(get_runtime_user_preferences_dir(), filename))
 
 
 def resolve_runtime_data_file(runtime_path: str) -> Optional[str]:
     """解析唯一运行态数据文件。"""
     return runtime_path if os.path.exists(runtime_path) else None
-
-
-def resolve_runtime_file(relative_name: str) -> Optional[str]:
-    """按运行时优先级解析一个文件的实际可用路径。"""
-    for candidate in runtime_priority_paths(relative_name):
-        if os.path.exists(candidate):
-            return candidate
-    return None
-
-
-def get_runtime_data_dir() -> Path:
-    """返回来源 run 根目录。"""
-    return get_runtime_root_dir() / "sources"
-
-
-def _runtime_raw_dirs(subdir: str) -> list[Path]:
-    artifact = resolve_current_artifact("apex" if subdir == "synergy" else subdir)
-    return [artifact.parent] if artifact else []
 
 
 def get_runtime_hextech_data_dir() -> Path:
@@ -296,12 +274,6 @@ def build_synergy_snapshot_path(timestamp_label: str) -> str:
     return str(source_root("apex") / "runs" / safe_label / "synergy.json")
 
 
-def iter_synergy_snapshot_files() -> list[str]:
-    """只暴露 current artifact，避免目录扫描把失败 run 当成已发布数据。"""
-    artifact = resolve_current_artifact("apex")
-    return [str(artifact)] if artifact else []
-
-
 def load_synergy_latest_pointer() -> dict:
     """读取 Apex current 指针；损坏或 hash 不匹配时返回空字典。"""
     from hextech.modules.data.source_runs import load_source_current
@@ -320,16 +292,11 @@ def load_synergy_refresh_status() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def resolve_synergy_snapshot_from_pointer(pointer: dict | None = None) -> Optional[str]:
-    """解析 Apex current 指向的 artifact。"""
-    del pointer
-    artifact = resolve_current_artifact("apex")
-    return str(artifact) if artifact else None
-
-
 def get_latest_synergy_snapshot_path() -> Optional[str]:
     """返回已发布 Apex artifact，不扫描失败 run。"""
-    return resolve_synergy_snapshot_from_pointer()
+
+    artifact = resolve_current_artifact("apex")
+    return str(artifact) if artifact else None
 
 
 def build_raw_synergy_data_path() -> str:
@@ -352,14 +319,6 @@ def build_next_synergy_snapshot_path(timestamp_label: str) -> str:
         if not candidate.exists():
             return str(candidate)
     raise FileExistsError(f"协同快照文件名连续冲突：{base_path.name}")
-
-
-def build_daily_csv_path(date_str: str) -> str:
-    """生成一个 Hextech run artifact 路径。"""
-    safe_date = str(date_str or "").strip()
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:T\d{6}-[a-f0-9]{8})?", safe_date):
-        raise ValueError(f"Hextech run ID 非法：{date_str}")
-    return str(get_runtime_hextech_data_dir() / safe_date / "stats.csv")
 
 
 def iter_runtime_csv_files() -> list[str]:
@@ -559,11 +518,10 @@ __all__ = [
     "CSV_REQUIRED_COLUMNS",
     "CachedDataFrameLoader",
     "DataFrameCache",
-    "build_daily_csv_path",
     "build_runtime_cache_path",
     "build_runtime_debug_path",
     "build_runtime_lock_path",
-    "build_runtime_persisted_path",
+    "build_runtime_user_preference_path",
     "build_runtime_profile_path",
     "build_runtime_state_path",
     "build_next_synergy_snapshot_path",
@@ -582,17 +540,15 @@ __all__ = [
     "get_latest_synergy_snapshot_path",
     "get_runtime_cache_dir",
     "get_runtime_debug_dir",
-    "get_runtime_data_dir",
     "get_runtime_hextech_data_dir",
     "get_runtime_synergy_data_dir",
     "get_runtime_lock_dir",
-    "get_runtime_persisted_dir",
+    "get_runtime_user_preferences_dir",
     "get_runtime_profile_dir",
     "get_runtime_root_dir",
     "get_runtime_state_dir",
     "has_precomputed_hextech_cache",
     "iter_runtime_csv_files",
-    "iter_synergy_snapshot_files",
     "load_latest_runtime_df",
     "load_precomputed_champion_list",
     "load_precomputed_hextech_for_hero",
@@ -601,9 +557,6 @@ __all__ = [
     "load_runtime_csv",
     "normalize_runtime_df",
     "resolve_runtime_data_file",
-    "resolve_runtime_file",
-    "resolve_synergy_snapshot_from_pointer",
-    "runtime_priority_paths",
     "APEX_CURRENT_POINTER_FILENAME",
     "SOURCE_POINTER_VERSION",
     "SYNERGY_REFRESH_STATUS_FILENAME",

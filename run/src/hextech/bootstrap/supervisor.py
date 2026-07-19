@@ -31,7 +31,8 @@ from urllib.parse import urlparse
 import psutil
 
 from hextech.modules.data.catalog.runtime_store import build_runtime_state_path, ensure_private_runtime_dir
-from hextech.bootstrap.data_refresh import sanitize_event_message
+from hextech.infrastructure.transport.loopback_http import LoopbackThreadingHTTPServer
+from hextech.infrastructure.observability.sanitization import sanitize_event_message
 from hextech.interfaces.overlay.runtime_manager import OverlayRuntimeManager
 
 SUPERVISOR_NONCE_HEADER = "X-Hextech-Supervisor-Nonce"
@@ -369,7 +370,7 @@ class RuntimeSupervisor:
 
     def serve_in_thread(self, *, port: int = 0) -> SupervisorHttpServer:
         handler = self._build_handler()
-        server = ThreadingHTTPServer(("127.0.0.1", int(port)), handler)
+        server = LoopbackThreadingHTTPServer(("127.0.0.1", int(port)), handler)
         thread = threading.Thread(target=server.serve_forever, name="hextech-runtime-supervisor", daemon=True)
         thread.start()
         return SupervisorHttpServer(server=server, thread=thread)

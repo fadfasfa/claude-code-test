@@ -428,6 +428,5 @@ def test_entrypoints_install_runtime_logging():
     assert "install_runtime_logging()" in (
         run_dir / "src" / "hextech" / "infrastructure" / "sources" / "version_sync.py"
     ).read_text(encoding="utf-8")
-    assert "write_structured_event(" in (
-        run_dir / "src" / "hextech" / "bootstrap" / "data_refresh.py"
-    ).read_text(encoding="utf-8")
+    supervisor_source = (run_dir / "src" / "hextech" / "bootstrap" / "supervisor.py").read_text(encoding="utf-8")
+    assert "sanitize_event_message" in supervisor_source

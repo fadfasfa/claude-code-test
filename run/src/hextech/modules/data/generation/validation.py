@@ -48,6 +48,7 @@ def count_records(payloads: Mapping[str, Any]) -> tuple[int, int, int]:
         raise SnapshotValidationError("identities schema_version 必须为 2")
 
     champion_ids: set[str] = set()
+    champion_names: dict[str, str] = {}
     for champion in champions:
         if not isinstance(champion, Mapping):
             raise SnapshotValidationError("champions 元素必须是对象")
@@ -58,6 +59,7 @@ def count_records(payloads: Mapping[str, Any]) -> tuple[int, int, int]:
         if champion_id in champion_ids:
             raise SnapshotValidationError(f"champion id 重复：{champion_id}")
         champion_ids.add(champion_id)
+        champion_names[champion_id] = champion_name
     if not champion_ids:
         raise SnapshotValidationError("generation 至少需要一个英雄")
 
@@ -88,6 +90,16 @@ def count_records(payloads: Mapping[str, Any]) -> tuple[int, int, int]:
         raise SnapshotValidationError(
             f"英雄详情覆盖不完整：missing={sorted(champion_ids - detail_ids)} unexpected={sorted(detail_ids - champion_ids)}"
         )
+    identity_champions = identities.get("champions")
+    if not isinstance(identity_champions, Mapping) or {
+        str(key): str(value) for key, value in identity_champions.items()
+    } != champion_names:
+        raise SnapshotValidationError("identities 英雄投影与 champions 不一致")
+    identity_augments = identities.get("augments")
+    if not isinstance(identity_augments, Mapping) or not augment_ids.issubset(
+        {str(key) for key in identity_augments}
+    ):
+        raise SnapshotValidationError("identities 强化投影未覆盖英雄统计")
     hint_augments = hints.get("augments", {})
     if isinstance(hint_augments, Mapping):
         augment_ids.update(str(key) for key in hint_augments)

@@ -92,7 +92,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, r"token 不匹配.*pid=abc"):
                 lifecycle._wait_for_host_ready(RunningProcess(), ready_path, timeout_seconds=0.1)
 
-    def test_source_host_process_executes_host_runner_module(self):
+    def test_source_host_process_executes_overlay_composition_root(self):
         from hextech.interfaces.overlay import lifecycle
 
         captured_command: list[str] = []
@@ -114,7 +114,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertEqual(process.pid, 1203)
         self.assertEqual(
             captured_command,
-            [sys.executable, "-m", "hextech.interfaces.overlay.host_runner"],
+            [sys.executable, "-m", "hextech.bootstrap.overlay"],
         )
 
     def test_frozen_host_process_keeps_game_overlay_switch(self):

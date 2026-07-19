@@ -7,6 +7,7 @@ Catalog 后通过 promotion journal 切换依赖和 generation。它不拥有抓
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import sys
@@ -16,20 +17,28 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from hextech.contracts import CatalogManifestV2, RefreshScheduleV1, RefreshSourceState, SourcePointerV2, utc_now_iso
+from hextech.contracts import (
+    BaselineContributionV2,
+    CatalogManifestV2,
+    RefreshScheduleV1,
+    RefreshSourceState,
+    SourcePointerV2,
+    utc_now_iso,
+)
 from hextech.infrastructure.persistence.cohort import CohortPromotionStore
 from hextech.infrastructure.persistence.refresh_schedule import RefreshScheduleStore, SCHEDULE_SOURCES
 from hextech.infrastructure.persistence.retention import apply_retention
 from hextech.infrastructure.processes import IsolatedProcessResult, run_isolated_process
 from hextech.modules.data.catalog.versioned import sha256_file, validate_catalog_files
 from hextech.modules.data.generation import DataSnapshotPublisher
+from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
 
 
 SOURCE_INTERVALS = {
     "catalog": timedelta(hours=24),
     "hextech": timedelta(hours=4),
-    "apex": timedelta(days=7),
+    "apex": timedelta(hours=72),
     "mayhem": timedelta(hours=72),
 }
 SOURCE_TIMEOUTS = {
@@ -83,6 +92,92 @@ class CohortRefreshCoordinator:
         self._active_cancel: Path | None = None
         self.promotion.recover()
 
+    def _baseline_contributions(self, catalog: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+        """从已验证 generation 提取不落 source current 的 last-good 身份。"""
+
+        from hextech.modules.data.generation import DataSnapshotClient, SnapshotValidationError
+
+        try:
+            view = DataSnapshotClient(self.publisher.root).open_view()
+        except SnapshotValidationError:
+            return {}
+        catalog_id = str(catalog.get("catalog_generation_id") or "")
+        catalog_sha = str(catalog.get("content_sha256") or "")
+        result: dict[str, dict[str, Any]] = {}
+        for item in view.manifest.source_files:
+            if item.source not in {"hextech", "apex", "mayhem"} or item.catalog_generation_id != catalog_id:
+                continue
+            result[item.source] = BaselineContributionV2(
+                source=item.source,
+                origin_generation_id=view.manifest.generation_id,
+                catalog_generation_id=item.catalog_generation_id,
+                catalog_sha256=catalog_sha,
+                created_at=view.manifest.created_at,
+                provenance=item,
+                snapshot_files=view.manifest.files,
+            ).to_dict()
+        return result
+
+    @staticmethod
+    def _is_baseline(pointer: Mapping[str, Any]) -> bool:
+        return pointer.get("kind") == "baseline_generation"
+
+    @staticmethod
+    def _pointer_identity(pointer: Mapping[str, Any]) -> tuple[str, str, str, int, str]:
+        if CohortRefreshCoordinator._is_baseline(pointer):
+            baseline = BaselineContributionV2.from_mapping(pointer)
+            item = baseline.provenance
+            return (
+                item.run_id,
+                item.catalog_generation_id,
+                item.artifact_sha256,
+                item.record_count,
+                item.manifest_sha256,
+            )
+        artifact = pointer.get("artifact") if isinstance(pointer.get("artifact"), Mapping) else {}
+        return (
+            str(pointer.get("run_id") or ""),
+            str(pointer.get("catalog_generation_id") or ""),
+            str(artifact.get("sha256") or ""),
+            int(artifact.get("record_count") or 0),
+            str(pointer.get("manifest_sha256") or ""),
+        )
+
+    def _candidate_path(self, source: str) -> Path:
+        return self.root / "state" / "data-service" / "candidates" / f"{source}.v2.json"
+
+    def _load_saved_candidate(self, source: str, catalog: Mapping[str, Any]) -> dict[str, Any]:
+        path = self._candidate_path(source)
+        if not path.is_file():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            pointer = SourcePointerV2.from_mapping(payload)
+            if (
+                pointer.source != source
+                or pointer.catalog_generation_id != str(catalog.get("catalog_generation_id") or "")
+                or pointer.catalog_sha256 != str(catalog.get("content_sha256") or "")
+            ):
+                return {}
+            run_root = self.root / "sources" / source / "runs" / pointer.run_id
+            artifact = run_root / pointer.artifact.relative_path
+            manifest = run_root / "manifest.json"
+            if (
+                not artifact.is_file()
+                or not manifest.is_file()
+                or sha256_file(artifact) != pointer.artifact.sha256
+                or sha256_file(manifest) != pointer.manifest_sha256
+            ):
+                return {}
+            return pointer.to_dict()
+        except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+
+    def _save_candidate(self, source: str, pointer: Mapping[str, Any]) -> None:
+        """保存已通过 worker 门禁的 immutable run pointer，供后续 refresh cycle 组合。"""
+
+        atomic_write_json(self._candidate_path(source), dict(pointer), ensure_ascii=False, indent=2)
+
     def request_stop(self) -> None:
         self._stop.set()
         with self._cancel_lock:
@@ -95,7 +190,45 @@ class CohortRefreshCoordinator:
         if source == "catalog":
             pointer_path = self.root / "catalog" / "current.v2.json"
             if not pointer_path.is_file():
-                return {}
+                # 旧安装可能只有已验证 generation，没有依赖 pointer；从 generation
+                # manifest 恢复只读 Catalog 身份，不写回 current。
+                try:
+                    snapshot_pointer = json.loads((self.root / "snapshots" / "current.v2.json").read_text(encoding="utf-8"))
+                    generation_id = str(snapshot_pointer.get("current_generation_id") or "")
+                    generation_manifest = json.loads(
+                        (self.root / "snapshots" / "generations" / generation_id / "manifest.json").read_text(encoding="utf-8")
+                    )
+                    items = [item for item in generation_manifest.get("source_files", []) if item.get("source") == "catalog"]
+                    if len(items) != 3:
+                        return {}
+                    catalog_id = str(items[0].get("catalog_generation_id") or "")
+                    catalog_root = self.root / "catalog" / "generations" / catalog_id
+                    manifest_path = catalog_root / "manifest.json"
+                    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    manifest = CatalogManifestV2.from_mapping(manifest_payload)
+                    validate_catalog_files(catalog_root, manifest)
+                    generation_files = {
+                        str(item.get("artifact_role") or ""): (
+                            str(item.get("artifact_sha256") or ""),
+                            int(item.get("record_count") or 0),
+                        )
+                        for item in items
+                    }
+                    if manifest.catalog_generation_id != catalog_id or any(
+                        generation_files.get(item.role) != (item.sha256, item.record_count)
+                        for item in manifest.files
+                    ):
+                        return {}
+                    return {
+                        "schema_version": 2,
+                        "catalog_generation_id": catalog_id,
+                        "content_sha256": str(manifest_payload.get("content_sha256") or ""),
+                        "manifest_sha256": sha256_file(manifest_path),
+                        "completed_at": str(generation_manifest.get("created_at") or ""),
+                        "last_success_at": str(generation_manifest.get("created_at") or ""),
+                    }
+                except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    return {}
             try:
                 payload = json.loads(pointer_path.read_text(encoding="utf-8"))
                 if not isinstance(payload, dict) or payload.get("schema_version") != 2:
@@ -237,8 +370,11 @@ class CohortRefreshCoordinator:
         if not catalog_id or not catalog_sha:
             raise RuntimeError("cohort Catalog pointer 不完整")
         for source in ("hextech", "apex", "mayhem"):
-            pointer = SourcePointerV2.from_mapping(pointers[source])
-            if pointer.catalog_generation_id != catalog_id or pointer.catalog_sha256 != catalog_sha:
+            pointer = pointers[source]
+            if (
+                str(pointer.get("catalog_generation_id") or "") != catalog_id
+                or str(pointer.get("catalog_sha256") or "") != catalog_sha
+            ):
                 raise RuntimeError(f"{source} candidate 未绑定目标 Catalog")
 
     @staticmethod
@@ -248,16 +384,17 @@ class CohortRefreshCoordinator:
             item.source: item for item in provenance if item.source != "catalog"
         }
         for source in ("hextech", "apex", "mayhem"):
-            pointer = SourcePointerV2.from_mapping(pointers[source])
+            pointer = pointers[source]
             item = by_source.get(source)
             if item is None:
                 raise RuntimeError(f"generation 缺少 {source} provenance")
+            run_id, catalog_id, artifact_sha, record_count, manifest_sha = CohortRefreshCoordinator._pointer_identity(pointer)
             if (
-                item.run_id != pointer.run_id
-                or item.catalog_generation_id != pointer.catalog_generation_id
-                or item.artifact_sha256 != pointer.artifact.sha256
-                or item.manifest_sha256 != pointer.manifest_sha256
-                or item.record_count != pointer.artifact.record_count
+                item.run_id != run_id
+                or item.catalog_generation_id != catalog_id
+                or item.artifact_sha256 != artifact_sha
+                or item.manifest_sha256 != manifest_sha
+                or item.record_count != record_count
             ):
                 raise RuntimeError(f"generation {source} provenance 与 candidate pointer 不一致")
         catalog_id = str(pointers["catalog"].get("catalog_generation_id") or "")
@@ -270,6 +407,13 @@ class CohortRefreshCoordinator:
             for item in catalog_items
         ):
             raise RuntimeError("generation Catalog provenance 与 candidate pointer 不一致")
+
+    def _build(self, targets: Mapping[str, Mapping[str, Any]]) -> Any:
+        """兼容旧的零参数测试 builder，新 runtime builder 显式接收 contribution。"""
+
+        if inspect.signature(self.builder).parameters:
+            return self.builder(targets)
+        return self.builder()
 
     def _failure_state(self, previous: RefreshSourceState, payload: Mapping[str, Any]) -> RefreshSourceState:
         now = self.now()
@@ -305,12 +449,22 @@ class CohortRefreshCoordinator:
         work = self.root / "snapshots" / "staging" / f"refresh-{cycle_id}"
         work.mkdir(parents=True, exist_ok=False)
         targets = {source: dict(current[source]) for source in SCHEDULE_SOURCES}
+        baseline = self._baseline_contributions(current["catalog"])
+        for source in ("hextech", "apex", "mayhem"):
+            if not targets[source] and source in baseline:
+                targets[source] = dict(baseline[source])
         results: dict[str, Any] = {}
         failures: dict[str, Any] = {}
 
         catalog_pointer_path: Path | None = (
             self.root / "catalog" / "current.v2.json" if current["catalog"] else None
         )
+        if current["catalog"] and catalog_pointer_path is not None and not catalog_pointer_path.is_file():
+            # recovered baseline pointer 只存在内存中；worker 需要一个受限于本轮 staging
+            # 的 candidate path，不能把它写回正式 current。
+            catalog_pointer_path = work / "catalog.pointer.v2.json"
+            atomic_write_json(catalog_pointer_path, current["catalog"], ensure_ascii=False, indent=2)
+        catalog_changed = False
         if due["catalog"]:
             try:
                 pointer, result = self._run_source("catalog", work, None, force=force)
@@ -322,6 +476,7 @@ class CohortRefreshCoordinator:
                     != str(current["catalog"].get("content_sha256") or "")
                 )
                 if changed:
+                    catalog_changed = True
                     due.update({"hextech": True, "apex": True, "mayhem": True})
             except Exception as exc:
                 failures["catalog"] = {"error_type": exc.__class__.__name__, "error": str(exc)}
@@ -336,11 +491,30 @@ class CohortRefreshCoordinator:
                 pointer, result = self._run_source(source, work, catalog_pointer_path, force=force)
                 targets[source] = pointer
                 results[source] = result
+                self._save_candidate(source, pointer)
             except Exception as exc:
                 failures[source] = {"error_type": exc.__class__.__name__, "error": str(exc)}
 
+        for source in tuple(failures):
+            if source == "catalog":
+                continue
+            saved = self._load_saved_candidate(source, targets["catalog"])
+            if saved and (
+                not current[source]
+                or self._pointer_identity(saved) != self._pointer_identity(current[source])
+            ):
+                targets[source] = saved
+                results[source] = {"state": "ready", "source": source, "reason_code": "saved_candidate"}
+                failures.pop(source, None)
+
         missing = [source for source, pointer in targets.items() if not pointer]
-        if failures or missing:
+        baseline = self._baseline_contributions(targets["catalog"])
+        for source in ("hextech", "apex", "mayhem"):
+            if not targets[source] and source in baseline:
+                targets[source] = dict(baseline[source])
+        missing = [source for source, pointer in targets.items() if not pointer]
+        cannot_fallback = bool(missing or (catalog_changed and failures))
+        if cannot_fallback:
             failure_payload = {"failures": failures, "missing": missing}
             for source in SCHEDULE_SOURCES:
                 if due[source]:
@@ -359,20 +533,71 @@ class CohortRefreshCoordinator:
                 **failure_payload,
             }
 
+        degraded_sources = set(failures)
+        degraded_sources.update(
+            source for source in ("hextech", "apex", "mayhem") if self._is_baseline(targets[source])
+        )
+        # Apex 与 Mayhem 在消费者 payload 中共同构成联动数据；任一降级时两者都复用同一 last-good。
+        if degraded_sources.intersection({"apex", "mayhem"}):
+            degraded_sources.update({"apex", "mayhem"})
+            for source in ("apex", "mayhem"):
+                fallback = current[source] or baseline.get(source, {})
+                if fallback:
+                    targets[source] = dict(fallback)
+
+        refreshed_sources = [
+            source
+            for source in SCHEDULE_SOURCES
+            if source in results and source not in degraded_sources
+        ]
+
         journal_started = False
         try:
             self._cohort_is_bound(targets)
             self.promotion.begin()
             journal_started = True
             for source in SCHEDULE_SOURCES:
-                self.promotion.record_target(source, targets[source])
+                if not self._is_baseline(targets[source]):
+                    self.promotion.record_target(source, targets[source])
             self.promotion.promote_dependencies()
-            build = self.builder()
+            build = self._build(targets)
             self._build_matches_targets(build, targets)
+            completed = self.now()
+            source_status: dict[str, dict[str, Any]] = {}
+            for source in SCHEDULE_SOURCES:
+                target = targets[source]
+                if source == "catalog":
+                    run_id = str(target.get("catalog_generation_id") or "")
+                    artifact_sha = str(target.get("content_sha256") or "")
+                    manifest_sha = str(target.get("manifest_sha256") or "")
+                    record_count = 0
+                else:
+                    run_id, _, artifact_sha, record_count, manifest_sha = self._pointer_identity(target)
+                source_status[source] = {
+                    "catalog_id": str(
+                        target.get("catalog_generation_id")
+                        or targets["catalog"].get("catalog_generation_id")
+                        or ""
+                    ),
+                    "data_at": str(
+                        target.get("last_success_at") or target.get("completed_at") or target.get("created_at") or ""
+                    ),
+                    "checked_at": _iso(completed),
+                    "freshness": "last_good" if source in degraded_sources else "fresh",
+                    "run_id": run_id,
+                    "origin_generation_id": str(target.get("origin_generation_id") or ""),
+                    "artifact_sha256": artifact_sha,
+                    "manifest_sha256": manifest_sha,
+                    "record_count": record_count,
+                }
             manifest = self.publisher.publish(
                 build.payloads,
                 source_files=build.source_files,
                 require_complete_provenance=True,
+                health="degraded" if degraded_sources else "healthy",
+                refreshed_sources=refreshed_sources,
+                degraded_sources=sorted(degraded_sources),
+                source_status=source_status,
             )
             self.promotion.record_generation_promoted(manifest.generation_id)
             self.promotion.commit()
@@ -389,13 +614,20 @@ class CohortRefreshCoordinator:
         for source in SCHEDULE_SOURCES:
             if not due[source]:
                 continue
+            if source in failures:
+                states[source] = self._failure_state(states[source], failures[source])
+                continue
             pointer = targets[source]
             states[source] = RefreshSourceState(
                 last_attempt_at=_iso(completed),
                 last_success_at=str(pointer.get("last_success_at") or _iso(completed)),
                 next_due_at=_iso(completed + SOURCE_INTERVALS[source]),
                 failure_kind="",
-                current_run_id=str(pointer.get("run_id") or pointer.get("catalog_generation_id") or ""),
+                current_run_id=(
+                    self._pointer_identity(pointer)[0]
+                    if source != "catalog"
+                    else str(pointer.get("catalog_generation_id") or "")
+                ),
                 state="ready",
             )
         self.schedule_store.save(
@@ -406,10 +638,11 @@ class CohortRefreshCoordinator:
             )
         )
         return {
-            "state": "ready",
+            "state": "degraded" if degraded_sources else "ready",
             "reason_code": "cohort_promoted",
             "generation_id": manifest.generation_id,
-            "refreshed_sources": [source for source in SCHEDULE_SOURCES if due[source]],
+            "refreshed_sources": refreshed_sources,
+            "degraded_sources": sorted(degraded_sources),
             "source_results": results,
             "retention": retention,
         }

@@ -116,7 +116,11 @@ def run_desktop():
     try:
         with DesktopInstanceOwner():
             ui = HextechUI()
-            ui.root.mainloop()
+            try:
+                ui.root.mainloop()
+            except KeyboardInterrupt:
+                # Windows 控制台退出属于正常关闭请求，不能把 Tk mainloop 误报成崩溃。
+                ui.on_close()
             ui.wait_for_shutdown(timeout_seconds=8.0)
     except DesktopInstanceAlreadyRunning as exc:
         print(str(exc), file=sys.stderr)

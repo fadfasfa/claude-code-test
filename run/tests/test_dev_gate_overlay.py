@@ -3874,7 +3874,8 @@ print(json.dumps(blocked))
     drained_toggles: list[str] = []
     while not debounce_queue.empty():
         drained_toggles.append(debounce_queue.get_nowait())
-    assert drained_toggles == ["toggle", "toggle"]
+    assert drained_toggles[:2] == ["toggle", "toggle"]
+    assert drained_toggles[2:] == ["toggle_mode"]
 
     # 正式与诊断共用同一纯 renderer；快照必须直接输出 PNG，源码不允许 PS fallback。
     renderer_text = (implementation_dir / "renderer.py").read_text(encoding="utf-8").lower()
