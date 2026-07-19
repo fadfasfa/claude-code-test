@@ -312,18 +312,34 @@ def deploy_release(
                 if was_running:
                     _start_install(target / APP_EXE_NAME)
             except Exception as exc:
+                rollback_errors: list[str] = []
+                old_install_available = False
                 if new_installed:
-                    shutdown_existing_install(target / APP_EXE_NAME, timeout=3.0)
-                    _remove_tree(target)
+                    try:
+                        shutdown_existing_install(target / APP_EXE_NAME, timeout=3.0)
+                    except Exception as cleanup_exc:
+                        rollback_errors.append(f"关闭新版本失败：{cleanup_exc}")
+                    try:
+                        _remove_tree(target)
+                    except Exception as cleanup_exc:
+                        rollback_errors.append(f"移除新版本失败：{cleanup_exc}")
                 if old_moved and rollback.exists():
-                    os.replace(rollback, target)
-                if was_running and target.is_dir():
+                    try:
+                        os.replace(rollback, target)
+                        old_install_available = True
+                    except Exception as restore_exc:
+                        rollback_errors.append(f"恢复上一版本失败：{restore_exc}")
+                elif not old_moved and not new_installed and target.is_dir():
+                    old_install_available = True
+                if was_running and old_install_available:
                     try:
                         _start_install(target / APP_EXE_NAME)
                     except Exception as restart_exc:
-                        raise DeploymentError(
-                            f"部署失败且上一版本恢复后无法重启：deploy={exc}; restart={restart_exc}"
-                        ) from exc
+                        rollback_errors.append(f"重启上一版本失败：{restart_exc}")
+                if rollback_errors:
+                    raise DeploymentError(
+                        f"部署失败且回滚不完整：deploy={exc}; rollback={' | '.join(rollback_errors)}"
+                    ) from exc
                 raise
 
             previous_result = None

@@ -109,8 +109,8 @@ def probe_gameflow_state() -> GameflowState:
     """优先用 2999 判断实际对局，再用 LCU；两者不可用时保留 unknown。"""
 
     live_client_state = probe_live_client_in_progress()
-    if live_client_state is not None:
-        return GameflowState.IN_PROGRESS if live_client_state else GameflowState.NOT_IN_PROGRESS
+    if live_client_state is True:
+        return GameflowState.IN_PROGRESS
     lcu_state = probe_lcu_gameflow_in_progress()
     if lcu_state is None:
         return GameflowState.UNKNOWN

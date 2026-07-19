@@ -11,10 +11,9 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw "未找到打包 Python：$python"
 }
 
-$desktopRoot = if ($env:OneDrive) {
-    Join-Path $env:OneDrive 'Desktop'
-} else {
-    [Environment]::GetFolderPath('Desktop')
+$desktopRoot = [Environment]::GetFolderPath('Desktop')
+if (-not (Test-Path -LiteralPath $desktopRoot -PathType Container)) {
+    throw "系统 Desktop 目录不存在：$desktopRoot"
 }
 $shortcut = Join-Path $desktopRoot 'Hextech伴生终端.lnk'
 if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {

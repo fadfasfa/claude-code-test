@@ -159,6 +159,8 @@ def test_deploy_script_updates_only_canonical_existing_shortcut():
     assert "'Hextech伴生终端.lnk'" in script
     assert "'Hextech伴生终端.exe - 快捷方式.lnk'" not in script
     assert "既有快捷方式不存在，拒绝创建重复入口" in script
+    assert "[Environment]::GetFolderPath('Desktop')" in script
+    assert "$env:OneDrive" not in script
 
 
 def test_deploy_release_rolls_back_when_restart_fails(tmp_path, monkeypatch):
@@ -184,6 +186,44 @@ def test_deploy_release_rolls_back_when_restart_fails(tmp_path, monkeypatch):
     assert (target / "old.txt").read_text(encoding="utf-8") == "old"
     assert not (target / "Hextech伴生终端.exe").exists()
     assert not (tmp_path / "HextechCompanion.previous").exists()
+
+
+def test_rollback_continues_after_new_install_shutdown_failure(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    shutdown_calls = 0
+    start_calls = 0
+
+    def shutdown(*_args, **_kwargs):
+        nonlocal shutdown_calls
+        shutdown_calls += 1
+        if shutdown_calls == 1:
+            return True
+        raise OSError("new install is busy")
+
+    def start(executable: Path):
+        nonlocal start_calls
+        start_calls += 1
+        if start_calls == 1:
+            raise deploy.DeploymentError("new start failed")
+        assert executable == target / "Hextech伴生终端.exe"
+        return object()
+
+    monkeypatch.setattr(deploy, "shutdown_existing_install", shutdown)
+    monkeypatch.setattr(deploy, "_start_install", start)
+
+    with pytest.raises(deploy.DeploymentError, match="关闭新版本失败") as raised:
+        deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert isinstance(raised.value.__cause__, deploy.DeploymentError)
+    assert "new start failed" in str(raised.value.__cause__)
+    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
+    assert not (target / "Hextech伴生终端.exe").exists()
+    assert start_calls == 2
 
 
 def test_deploy_rejects_arbitrary_target_directory(tmp_path):
