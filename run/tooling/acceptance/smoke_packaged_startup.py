@@ -284,6 +284,35 @@ def _local_auth_headers(base: str, runtime_root: Path) -> dict[str, str]:
     return {"Origin": base, "X-Hextech-Token": token}
 
 
+def _overlay_self_check(exe: Path, package_dir: Path, env: dict[str, str]) -> dict[str, object]:
+    """在打包目录执行正式 composition-root 自检，覆盖 Host 动态契约。"""
+
+    completed = subprocess.run(
+        [str(exe), "--game-overlay", "--self-check"],
+        cwd=str(package_dir),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=30,
+        check=False,
+    )
+    output = completed.stdout.decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise SmokeFailure(f"Overlay self-check 输出无效：{output[-800:]}") from exc
+    required = (
+        "ok",
+        "window_probe_ok",
+        "context_contract_ok",
+        "visibility_contract_ok",
+        "lcu_scanner_configured",
+    )
+    if completed.returncode != 0 or not isinstance(payload, dict) or not all(payload.get(key) is True for key in required):
+        raise SmokeFailure(f"Overlay self-check 失败：code={completed.returncode} payload={payload}")
+    return payload
+
+
 def _web_ready(port: str, runtime_root: Path, *, require_snapshot_status: bool = False) -> dict[str, object]:
     base = f"http://127.0.0.1:{port}"
     result: dict[str, object] = {}
@@ -407,6 +436,18 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
         last_error = ""
         checks: dict[str, bool] = {}
         web: dict[str, object] = {}
+        try:
+            overlay_self_check = _overlay_self_check(exe, package_dir, child_env)
+        except (OSError, subprocess.TimeoutExpired, SmokeFailure) as exc:
+            return {
+                "ok": False,
+                "elapsed_seconds": round(time.monotonic() - started_at, 2),
+                "package_dir": str(package_dir),
+                "runtime_root": str(runtime_root),
+                "verified_snapshot_seeded": verified_snapshot_seeded,
+                "overlay_self_check": {},
+                "last_error": str(exc),
+            }
         while time.monotonic() - started_at < timeout_seconds:
             checks = _required_paths_ready(package_dir, runtime_root, started_at_wall)
             port = _read_port(runtime_root)
@@ -421,6 +462,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
                         "runtime_root": str(runtime_root),
                         "port": port,
                         "verified_snapshot_seeded": verified_snapshot_seeded,
+                        "overlay_self_check": overlay_self_check,
                         "paths": checks,
                         "web": web,
                     }
@@ -436,6 +478,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
             "package_dir": str(package_dir),
             "runtime_root": str(runtime_root),
             "verified_snapshot_seeded": verified_snapshot_seeded,
+            "overlay_self_check": overlay_self_check,
             "paths": checks,
             "web": web,
             "last_error": last_error,

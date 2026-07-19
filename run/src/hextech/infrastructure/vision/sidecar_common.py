@@ -46,10 +46,12 @@ from hextech.modules.vision.layout import (
 )
 # runner/dev_checks 通过 sidecar 注入按键状态，保留该兼容 re-export。
 from hextech.modules.vision.window import (  # noqa: F401
+    configure_process_dpi_awareness,
     cursor_in_client_boxes,
     find_lol_game_window,
     is_left_mouse_button_down,
     is_scoreboard_key_down,
+    probe_lol_game_window,
     root_window_hwnd,
 )
 from hextech.modules.data.catalog.version_catalog import load_augment_manifest_entries, load_augment_name_to_icon_map

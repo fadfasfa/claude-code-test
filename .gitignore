@@ -41,6 +41,9 @@ __pycache__/
 # 通用打包产物文件夹
 dist/
 build/
+# `run/tooling/build` 是源码包，不得被通用 build 规则隐藏。
+!run/tooling/build/
+!run/tooling/build/*.py
 
 # Hextech local build artifacts
 run/build/

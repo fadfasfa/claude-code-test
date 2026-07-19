@@ -1,13 +1,37 @@
 """Overlay host 的平台无关显隐状态、诊断与窗口展示编排。"""
-# ruff: noqa: F403, F405
 
-from hextech.interfaces.overlay.host_common import *
-from hextech.interfaces.overlay.host_platform import *
+from __future__ import annotations
+
+import json
+import logging
+import os
+import time
+import tkinter as tk
+from pathlib import Path
+from typing import Any, Mapping
+
+from hextech.interfaces.overlay.gameflow import GameflowState, probe_gameflow_state
+from hextech.interfaces.overlay.host_common import (
+    GAME_OVERLAY_VISIBILITY_FILE,
+    HOST_VISIBILITY_STATUS_HEARTBEAT_SECONDS,
+    OVERLAY_EXIT_FILE_ENV,
+    OVERLAY_EXIT_POLL_MS,
+    OVERLAY_READY_FILE_ENV,
+    OVERLAY_READY_TOKEN_ENV,
+    VISIBILITY_DIAGNOSTIC_LOG_SECONDS,
+    GameflowPoller,
+    OverlayVisibilitySnapshot,
+)
+from hextech.interfaces.overlay.host_platform import _apply_overlay_rect, _ensure_overlay_window_styles
+from hextech.modules.data.ports.atomic import atomic_write_json
+
+
+logger = logging.getLogger(__name__)
 
 def resolve_overlay_visibility(
     *,
     user_enabled: bool,
-    gameflow_in_progress: bool,
+    gameflow_in_progress: GameflowState | str | bool,
     game_hwnd: int | None,
     game_rect: tuple[int, int, int, int] | None,
     game_renderable: bool,
@@ -17,11 +41,12 @@ def resolve_overlay_visibility(
 ) -> OverlayVisibilitySnapshot:
     """只按 host 自有信号决定窗口生命周期；视觉事件只影响内容。"""
 
+    gameflow_state = _normalize_gameflow_state(gameflow_in_progress)
     normalized_hwnd = int(game_hwnd) if game_hwnd else None
     normalized_rect = tuple(int(value) for value in game_rect) if game_rect is not None else None
     if not user_enabled:
         visible, reason = False, "user_disabled"
-    elif not gameflow_in_progress:
+    elif gameflow_state is GameflowState.NOT_IN_PROGRESS:
         visible, reason = False, "gameflow_not_in_progress"
     elif not normalized_hwnd:
         visible, reason = False, "game_window_missing"
@@ -29,13 +54,16 @@ def resolve_overlay_visibility(
         visible, reason = False, "game_window_not_renderable"
     elif not game_foreground:
         visible, reason = False, "game_not_foreground"
+    elif gameflow_state is GameflowState.UNKNOWN:
+        visible, reason = True, "waiting_gameflow"
     elif content_ready:
         visible, reason = True, "visible_ready"
     else:
         visible, reason = True, "visible_detecting"
     return OverlayVisibilitySnapshot(
         user_enabled=bool(user_enabled),
-        gameflow_in_progress=bool(gameflow_in_progress),
+        gameflow_in_progress=gameflow_state is GameflowState.IN_PROGRESS,
+        gameflow_state=gameflow_state.value,
         game_hwnd=normalized_hwnd,
         game_rect=normalized_rect,
         game_renderable=bool(game_renderable),
@@ -46,23 +74,41 @@ def resolve_overlay_visibility(
     )
 
 
-def _query_gameflow_in_progress() -> bool:
+def _normalize_gameflow_state(value: GameflowState | str | bool | None) -> GameflowState:
+    if isinstance(value, GameflowState):
+        return value
+    if isinstance(value, bool):
+        return GameflowState.IN_PROGRESS if value else GameflowState.NOT_IN_PROGRESS
+    try:
+        return GameflowState(str(value or "unknown"))
+    except ValueError:
+        return GameflowState.UNKNOWN
+
+
+def _query_gameflow_in_progress() -> GameflowState:
     """优先用 2999 判断实际对局，再用 LCU gameflow 兜底；不读取凭据文件。"""
 
-    return probe_gameflow_in_progress()
+    return probe_gameflow_state()
 
 
-def _refresh_gameflow_in_progress(visibility: dict[str, Any], *, now: float | None = None) -> bool:
+def _refresh_gameflow_in_progress(visibility: dict[str, Any], *, now: float | None = None) -> GameflowState:
     poller = visibility.get("gameflow_poller")
     if isinstance(poller, GameflowPoller):
-        in_progress, checked_at = poller.current()
-        visibility["gameflow_in_progress"] = in_progress
+        state, checked_at = poller.current()
+        visibility["gameflow_state"] = state.value
+        visibility["gameflow_in_progress"] = state is GameflowState.IN_PROGRESS
         visibility["gameflow_checked_at"] = checked_at
-        return in_progress
-    in_progress = bool(visibility.get("gameflow_in_progress", True))
+        visibility["gameflow_probe"] = poller.status()
+        return state
+    raw_state = visibility.get("gameflow_state")
+    if raw_state is None:
+        raw_state = visibility.get("gameflow_in_progress", True)
+    state = _normalize_gameflow_state(raw_state)
+    visibility["gameflow_state"] = state.value
+    visibility["gameflow_in_progress"] = state is GameflowState.IN_PROGRESS
     if "gameflow_checked_at" not in visibility:
         visibility["gameflow_checked_at"] = time.time() if now is None else float(now)
-    return in_progress
+    return state
 
 
 def _target_overlay_geometry(rect: tuple[int, int, int, int], config: dict[str, Any]) -> str:
@@ -215,12 +261,12 @@ def _count_current_context_synergy_hints(hints: Any, context: Mapping[str, Any] 
     )
 
 
-def _signal_overlay_ready() -> None:
-    """Tk 完成 idle 初始化后写 readiness；父进程验证 PID 后才报告 running。"""
+def _signal_overlay_ready() -> bool:
+    """首个健康 Host tick 后写 readiness；失败时允许下一 tick 重试。"""
 
     ready_path = str(os.environ.get(OVERLAY_READY_FILE_ENV) or "").strip()
     if not ready_path:
-        return
+        return True
     try:
         ready_token = str(os.environ.get(OVERLAY_READY_TOKEN_ENV) or "").strip()
         atomic_write_json(
@@ -229,8 +275,10 @@ def _signal_overlay_ready() -> None:
             ensure_ascii=False,
             indent=2,
         )
+        return True
     except Exception:
         logger.exception("写入 game_overlay host readiness 失败。")
+        return False
 
 
 def _schedule_exit_file_watch(root: tk.Tk, exit_path: str | Path | None = None) -> None:
@@ -287,7 +335,7 @@ def decide_visibility(
     game_foreground: bool,
     content_ready: bool,
     selection_window_active: bool | None,
-    gameflow_in_progress: bool = True,
+    gameflow_in_progress: GameflowState | str | bool = True,
     game_hwnd: int | None = None,
     game_rect: tuple[int, int, int, int] | None = None,
     game_renderable: bool = False,
@@ -435,15 +483,49 @@ def _build_visibility_status_payload(
     reason: str,
 ) -> dict[str, Any]:
     source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+    probe = visibility.get("window_probe") if isinstance(visibility.get("window_probe"), Mapping) else {}
+    render_failures = int(visibility.get("consecutive_render_failures") or 0)
+    probe_failures = int(probe.get("consecutive_failures") or 0)
+    try:
+        missing_since = float(visibility.get("active_target_missing_since") or 0.0)
+    except (TypeError, ValueError):
+        missing_since = 0.0
+    failure_reason = ""
+    if render_failures >= 4:
+        functional_status, failure_reason = "failed", "render_loop_failed"
+    elif missing_since > 0.0 and now - missing_since >= 3.0:
+        functional_status, failure_reason = "failed", "active_scene_without_window"
+    elif probe_failures >= 3:
+        functional_status, failure_reason = "degraded", "window_probe_error"
+    elif bool(visibility.get("window_target_desync")):
+        functional_status, failure_reason = "degraded", "window_target_desync"
+    elif source.get("selection_window_active") is True and str(visibility.get("context_error") or ""):
+        functional_status, failure_reason = "degraded", "context_unavailable"
+    else:
+        functional_status, failure_reason = "ready", ""
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "updated_at": float(now),
+        "functional_status": functional_status,
+        "functional_reason": failure_reason,
         "host": {
             "user_enabled": bool(visibility.get("user_enabled")),
             "gameflow": bool(visibility.get("gameflow_in_progress")),
+            "gameflow_state": str(visibility.get("gameflow_state") or "unknown"),
             "hwnd": int(visibility.get("target_hwnd") or 0),
             "renderable": bool(visibility.get("game_renderable")),
             "foreground": bool(visibility.get("game_foreground")),
+        },
+        "window": {
+            "source": str(visibility.get("window_source") or "none"),
+            "host_hwnd": int(visibility.get("host_scan_hwnd") or 0),
+            "sidecar_hwnd": int(visibility.get("sidecar_hwnd") or 0),
+            "desync": bool(visibility.get("window_target_desync")),
+            "probe_status": str(probe.get("probe_status") or "unknown"),
+            "last_probe_at": float(probe.get("last_probe_at") or 0.0),
+            "last_success_at": float(probe.get("last_success_at") or 0.0),
+            "last_error_type": str(probe.get("last_error_type") or ""),
+            "consecutive_failures": probe_failures,
         },
         "scene": {
             "selection_window_active": source.get("selection_window_active"),
@@ -461,6 +543,12 @@ def _build_visibility_status_payload(
         "decision": {
             "window_visible": bool(should_show),
             "reason": str(reason or ""),
+        },
+        "render": {
+            "last_tick_at": float(visibility.get("last_tick_at") or 0.0),
+            "last_presented_at": float(visibility.get("last_presented_at") or 0.0),
+            "last_ready_frame_at": float(visibility.get("last_ready_frame_at") or 0.0),
+            "consecutive_failures": render_failures,
         },
     }
 
@@ -505,7 +593,3 @@ def _write_host_visibility_status(
         return
     visibility["last_visibility_status_key"] = status_key
     visibility["last_visibility_status_written_at"] = float(now)
-
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

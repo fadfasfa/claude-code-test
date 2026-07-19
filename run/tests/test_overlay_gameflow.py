@@ -36,6 +36,20 @@ class OverlayGameflowTests(unittest.TestCase):
         self.assertEqual(get.call_count, 1)
         self.assertIn("https://127.0.0.1:57265/lol-gameflow/v1/gameflow-phase", get.call_args.args[0])
 
+    def test_live_client_non_200_falls_back_to_lcu_gameflow(self):
+        from hextech.interfaces.overlay import gameflow
+
+        class MissingActivePlayerResponse:
+            status_code = 404
+
+        with (
+            patch.object(gameflow, "_http_get", return_value=MissingActivePlayerResponse()),
+            patch.object(gameflow, "probe_lcu_gameflow_in_progress", return_value=True) as lcu_probe,
+        ):
+            self.assertIs(gameflow.probe_gameflow_state(), gameflow.GameflowState.IN_PROGRESS)
+
+        lcu_probe.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

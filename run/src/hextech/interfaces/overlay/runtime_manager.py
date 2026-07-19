@@ -94,6 +94,8 @@ class OverlayRuntimeManager:
         self._startup_hard_deadline = 0.0
         self._startup_session_claimed = False
         self.visible_reason = ""
+        self.functional_status = "unknown"
+        self.functional_reason = ""
         self.last_error = ""
         self.last_start_failure_kind = ""
         self.updated_at = time.time()
@@ -180,22 +182,35 @@ class OverlayRuntimeManager:
             return "running"
         return "degraded" if self.context_error else "stopped"
 
-    def _read_visible_reason(self) -> str:
+    def _read_visibility_health(self) -> dict[str, str]:
         try:
             payload = json.loads(self._visibility_status_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            return ""
-        if not isinstance(payload, Mapping) or int(payload.get("schema_version") or 0) != 1:
-            return ""
+            return {"visible_reason": "", "functional_status": "unknown", "functional_reason": ""}
+        if not isinstance(payload, Mapping) or int(payload.get("schema_version") or 0) not in {1, 2}:
+            return {"visible_reason": "", "functional_status": "unknown", "functional_reason": "unknown_schema"}
         try:
             updated_at = float(payload.get("updated_at") or 0.0)
         except (TypeError, ValueError):
             updated_at = 0.0
         if updated_at <= 0.0 or time.time() - updated_at > OVERLAY_HOST_VISIBILITY_STALE_SECONDS:
-            return ""
+            return {
+                "visible_reason": "",
+                "functional_status": "failed" if self._process_running(self.host_process) else "unknown",
+                "functional_reason": "host_heartbeat_stale",
+            }
         raw_decision = payload.get("decision")
         decision: Mapping[str, Any] = raw_decision if isinstance(raw_decision, Mapping) else {}
-        return str(decision.get("reason") or "").strip()
+        schema_version = int(payload.get("schema_version") or 1)
+        return {
+            "visible_reason": str(decision.get("reason") or "").strip(),
+            "functional_status": (
+                str(payload.get("functional_status") or "unknown").strip()
+                if schema_version >= 2
+                else "ready"
+            ),
+            "functional_reason": str(payload.get("functional_reason") or "").strip(),
+        }
 
     def _template_loader(self) -> Callable[..., Any]:
         if self._load_template_runtime_func is not None:
@@ -587,7 +602,10 @@ class OverlayRuntimeManager:
                     self._mark(status="error", phase="host_exited", error="game_overlay host 意外退出")
                 elif self.sidecar_process is not None and not self._process_running(self.sidecar_process):
                     self._mark(status="error", phase="sidecar_exited", error="game_overlay sidecar 意外退出")
-            self.visible_reason = self._read_visible_reason()
+            visibility_health = self._read_visibility_health()
+            self.visible_reason = visibility_health["visible_reason"]
+            self.functional_status = visibility_health["functional_status"]
+            self.functional_reason = visibility_health["functional_reason"]
             self._refresh_startup_budget_locked()
             startup_elapsed = self._startup_elapsed_locked()
             fallback_recommended = bool(
@@ -620,6 +638,8 @@ class OverlayRuntimeManager:
                 "hard_timeout_reached": hard_timeout_reached,
                 "startup_attempts": [dict(attempt) for attempt in self.startup_attempts],
                 "visible_reason": self.visible_reason,
+                "functional_status": self.functional_status,
+                "functional_reason": self.functional_reason,
                 "last_error": self.last_error,
                 "last_start_failure_kind": self.last_start_failure_kind,
                 "generation": self._generation,

@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import ctypes
 import os
+import time
 from ctypes import wintypes
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from typing import Literal
 
 import psutil
 
@@ -32,6 +35,43 @@ DWMWA_CLOAKED = 14
 GA_ROOT = 2
 VK_TAB = 0x09
 VK_LBUTTON = 0x01
+
+
+WindowProbeStatus = Literal["found", "missing", "error"]
+
+
+@dataclass(frozen=True)
+class WindowProbeResult:
+    """区分正常无窗口与探测异常，避免 Host 把编程错误伪装成 idle。"""
+
+    status: WindowProbeStatus
+    hwnd: int | None = None
+    client_rect: tuple[int, int, int, int] | None = None
+    observed_at: float = 0.0
+    error_type: str = ""
+
+    @property
+    def target(self) -> tuple[int, tuple[int, int, int, int]] | None:
+        if self.status != "found" or not self.hwnd or self.client_rect is None:
+            return None
+        return int(self.hwnd), self.client_rect
+
+
+def configure_process_dpi_awareness() -> str:
+    """统一 Host/Sidecar 的物理像素坐标系，优先启用 Per-Monitor V2。"""
+
+    if not hasattr(ctypes, "windll"):
+        return "unavailable"
+    try:
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return "per_monitor_v2"
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        return "system"
+    except (AttributeError, OSError, TypeError, ValueError):
+        return "unavailable"
 
 
 def root_window_hwnd(hwnd: int | None) -> int:
@@ -209,15 +249,16 @@ def _window_client_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     return _window_rect(hwnd)
 
 
-def find_lol_game_window(
+def probe_lol_game_window(
     *,
     window_titles: Iterable[str] = LOL_GAME_WINDOW_TITLES,
     process_names: Iterable[str] = LOL_GAME_PROCESS_NAMES,
-) -> tuple[int, tuple[int, int, int, int]] | None:
-    """返回当前可渲染的 LoL 游戏 HWND 与 client rect，进程名优先、标题兜底。"""
+) -> WindowProbeResult:
+    """探测 LoL HWND，并保留 missing/error 的差异供健康状态使用。"""
 
-    if win32gui is None:
-        return None
+    gui = win32gui
+    if gui is None:
+        return WindowProbeResult(status="missing", observed_at=time.time())
     accepted_processes = {str(name).strip().casefold() for name in process_names if str(name).strip()}
     accepted_titles = {str(title).strip().casefold() for title in window_titles if str(title).strip()}
     process_match: list[tuple[int, tuple[int, int, int, int]]] = []
@@ -234,7 +275,7 @@ def find_lol_game_window(
             process_match.append(candidate)
             return True
         try:
-            title = str(win32gui.GetWindowText(hwnd) or "").strip().casefold()
+            title = str(gui.GetWindowText(hwnd) or "").strip().casefold()
         except Exception:
             title = ""
         if title in accepted_titles:
@@ -242,7 +283,20 @@ def find_lol_game_window(
         return True
 
     try:
-        win32gui.EnumWindows(collect, None)
-    except Exception:
-        return None
-    return process_match[0] if process_match else (title_match[0] if title_match else None)
+        gui.EnumWindows(collect, None)
+    except Exception as exc:
+        return WindowProbeResult(status="error", observed_at=time.time(), error_type=exc.__class__.__name__)
+    target = process_match[0] if process_match else (title_match[0] if title_match else None)
+    if target is None:
+        return WindowProbeResult(status="missing", observed_at=time.time())
+    return WindowProbeResult(status="found", hwnd=target[0], client_rect=target[1], observed_at=time.time())
+
+
+def find_lol_game_window(
+    *,
+    window_titles: Iterable[str] = LOL_GAME_WINDOW_TITLES,
+    process_names: Iterable[str] = LOL_GAME_PROCESS_NAMES,
+) -> tuple[int, tuple[int, int, int, int]] | None:
+    """兼容旧调用方；新 Host/Sidecar 应使用带状态的 ``probe_lol_game_window``。"""
+
+    return probe_lol_game_window(window_titles=window_titles, process_names=process_names).target

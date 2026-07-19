@@ -1118,7 +1118,11 @@ def test_overlay_context_contract() -> None:
     assert not any(term in module_text for term in forbidden_terms)
     assert "remoting-auth-token" in module_text
     assert "write_current_lcu_overlay_context_once" in module_text
-    assert "from hextech.modules.vision.runtime_paths import overlay_runtime_state_path" in module_text
+    assert "from hextech.modules.game_context.overlay_context import" in module_text
+    canonical_reader_text = (
+        RUN_DIR / "src" / "hextech" / "modules" / "game_context" / "overlay_context.py"
+    ).read_text(encoding="utf-8")
+    assert "from hextech.modules.vision.runtime_paths import overlay_runtime_state_path" in canonical_reader_text
     assert "def _overlay_runtime_root_dir" not in module_text
     assert "def _overlay_runtime_state_path" not in module_text
 
@@ -2658,11 +2662,14 @@ print(json.dumps(blocked))
     assert "prepare_shared_overlay_data" in host_text
     assert "_prepare_host_hint_cache()" in host_text.split("def run_overlay_host", 1)[1]
     assert 'row["status_code"] == "READY"' in host_text
-    assert 'row["status_code"] == "READY"' in main_text
+    assert "hextech.bootstrap.overlay" in main_text
+    assert "from hextech.bootstrap" not in main_text
+    assert "run_self_check" not in main_text
     assert "start_overlay_context_poller" in lifecycle_text
     assert "game_overlay waiting_context=" in host_text
     assert '"context_source": str(context.get("source") or "")' in host_text
-    assert '"process_health": {"host": "self-check", "sidecar": "not-inspected"}' in host_text
+    assert '"host": "self-check-passed" if all(contract_checks.values()) else "self-check-failed"' in host_text
+    assert '"sidecar": "not-inspected"' in host_text
     assert '"state_age_ms": state_age_ms' in host_text
     assert '"ready_slots": event_status["ready_slots"]' in host_text
     assert '"selection_window_active": event_status["selection_window_active"]' in host_text

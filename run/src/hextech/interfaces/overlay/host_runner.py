@@ -1,11 +1,73 @@
 """Overlay host 的进程入口与 Tk 主循环组装。"""
-# ruff: noqa: F403, F405
 
-from hextech.interfaces.overlay.host_common import *
-from hextech.interfaces.overlay.host_platform import *
-from hextech.interfaces.overlay.host_visibility import *
-from hextech.interfaces.overlay.host_sync import *
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import queue
+import threading
+import time
+import tkinter as tk
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+from hextech.interfaces.overlay.gameflow import GameflowState, lcu_scanner_configured
 from hextech.interfaces.overlay.generation_pin import SelectionGenerationPin
+from hextech.interfaces.overlay.host_common import (
+    RECENT_CONTEXT_HOLD_SECONDS,
+    RENDER_ERROR_BACKOFF_AFTER,
+    RENDER_ERROR_BACKOFF_MAX_MS,
+    ForegroundEventHook,
+    GameflowPoller,
+    HotkeyController,
+    WindowTargetPoller,
+)
+from hextech.interfaces.overlay.host_platform import (
+    _ensure_overlay_window_styles,
+    _find_target_game_window,
+    _prepare_host_hint_cache,
+    _register_foreground_event_hook,
+    _schedule_foreground_event_drain,
+    _set_dpi_awareness,
+    _start_hotkey_thread,
+    _stop_foreground_event_hook,
+    _stop_hotkey_thread,
+    build_overlay_window_config,
+)
+from hextech.interfaces.overlay.host_sync import (
+    _drain_hotkey_requests,
+    _draw_waiting_status,
+    _refresh_target_window,
+    _sync_event_visibility,
+    _write_real_session_evidence,
+)
+from hextech.interfaces.overlay.host_visibility import (
+    _apply_transparent_background,
+    _cache_allows_private_stats,
+    _count_current_context_synergy_hints,
+    _draw_diagnostic_status,
+    _extract_event_status,
+    _log_waiting_context_diagnostic,
+    _resolve_initial_overlay_viewport,
+    _schedule_exit_file_watch,
+    _signal_overlay_ready,
+    _snapshot_has_complete_ready_slots,
+    _write_host_visibility_status,
+    decide_visibility,
+)
+from hextech.interfaces.overlay.renderer import build_render_model, build_render_model_from_session, draw_overlay_frame
+from hextech.interfaces.overlay.session_adapter import build_runtime_session
+from hextech.modules.data.overlay_source import (
+    OverlayDataSource,
+    SharedOverlayDataSource,
+    apply_overlay_display_policy,
+    source_has_private_stats,
+)
+from hextech.modules.vision.window import WindowProbeResult, is_scoreboard_key_down
+
+
+logger = logging.getLogger(__name__)
 
 def resolve_event_render_delay_ms(config: Mapping[str, Any], visibility: Mapping[str, Any]) -> int:
     """根据最近选择态事件选择 overlay host 下一帧轮询间隔。"""
@@ -99,9 +161,12 @@ def _schedule_event_render(
         nonlocal failure_count, render_after_id
         render_after_id = None
         success = False
+        snapshot: Mapping[str, Any] = {}
         try:
             _drain_hotkey_requests(hotkey_queue, visibility)
-            _refresh_target_window(root, config, visibility)
+            snapshot = source.read_event()
+            note_fast_event(snapshot)
+            _refresh_target_window(root, config, visibility, snapshot)
             tab_down = is_scoreboard_key_down()
             previous_tab_down = bool(visibility.get("scoreboard_key_down"))
             if tab_down:
@@ -110,8 +175,6 @@ def _schedule_event_render(
                 visibility["scoreboard_key_down"] = False
                 if previous_tab_down:
                     visibility["tab_released_at"] = time.time()
-            snapshot = source.read_event()
-            note_fast_event(snapshot)
             if bool(config.get("diagnostic_mode")):
                 status = _extract_event_status(snapshot)
                 diagnostic_key = tuple(status.get(key) for key in (
@@ -135,6 +198,7 @@ def _schedule_event_render(
                 return
             if bool(config.get("diagnostic_mode")) and not bool(visibility.get("render_full_overlay")):
                 _draw_diagnostic_status(canvas, str(visibility.get("visibility_reason") or ""), snapshot)
+                visibility["last_presented_at"] = time.time()
                 _sync_event_visibility(
                     root,
                     config,
@@ -146,8 +210,14 @@ def _schedule_event_render(
                 return
             if not bool(visibility.get("render_full_overlay")):
                 event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
-                waiting_reason = str(event_source.get("reason") or visibility.get("visibility_reason") or "")
+                visibility_reason = str(visibility.get("visibility_reason") or "")
+                waiting_reason = (
+                    visibility_reason
+                    if visibility_reason == "waiting_gameflow"
+                    else str(event_source.get("reason") or visibility_reason)
+                )
                 _draw_waiting_status(canvas, waiting_reason)
+                visibility["last_presented_at"] = time.time()
                 _sync_event_visibility(
                     root,
                     config,
@@ -215,6 +285,9 @@ def _schedule_event_render(
                 show_synergy=layout_reliable,
                 exclusion_zones=exclusion_zones,
             )
+            visibility["last_presented_at"] = time.time()
+            if _snapshot_has_complete_ready_slots(snapshot):
+                visibility["last_ready_frame_at"] = visibility["last_presented_at"]
             _sync_event_visibility(
                 root,
                 config,
@@ -230,15 +303,36 @@ def _schedule_event_render(
             success = True
         except Exception:
             failure_count += 1
+            visibility["consecutive_render_failures"] = failure_count
             if failure_count <= RENDER_ERROR_BACKOFF_AFTER:
                 logger.exception("overlay 渲染轮询失败；下一 tick 将继续重试。")
             elif failure_count == RENDER_ERROR_BACKOFF_AFTER + 1:
                 logger.exception("overlay 渲染轮询连续失败，开始退避。")
             else:
                 logger.warning("overlay 渲染轮询仍在失败：连续失败=%s，退避中。", failure_count)
+            try:
+                _write_host_visibility_status(
+                    visibility,
+                    snapshot,
+                    now=time.time(),
+                    should_show=bool(visibility.get("window_visible")),
+                    reason="render_loop_error",
+                )
+            except Exception:
+                logger.debug("写入 overlay render failure 状态失败。", exc_info=True)
         finally:
             if success:
                 failure_count = 0
+                visibility["consecutive_render_failures"] = 0
+                visibility["last_tick_at"] = time.time()
+                poller = visibility.get("window_target_poller")
+                poller_status = poller.status() if isinstance(poller, WindowTargetPoller) else {}
+                if (
+                    not visibility.get("readiness_signaled")
+                    and float(poller_status.get("last_probe_at") or 0.0) > 0.0
+                    and str(poller_status.get("probe_status") or "") != "error"
+                ):
+                    visibility["readiness_signaled"] = bool(_signal_overlay_ready())
             schedule_render(retry_delay_ms())
 
     render_once()
@@ -306,7 +400,6 @@ def run_overlay_host(*, diagnostic: bool = False) -> None:
     foreground_hook = _register_foreground_event_hook(foreground_event)
     _schedule_foreground_event_drain(root, foreground_event, request_overlay_render)
     _schedule_exit_file_watch(root)
-    root.after_idle(_signal_overlay_ready)
     logger.info("game_overlay host 已启动：event_poll_ms=%s", config["event_poll_ms"])
 
     try:
@@ -320,7 +413,59 @@ def run_overlay_host(*, diagnostic: bool = False) -> None:
 
 
 def run_self_check() -> dict[str, Any]:
-    """无 GUI 自检：验证冻结态入口、配置和事件读取链路可用。"""
+    """无 GUI 自检：覆盖真实 Poller、composition root 和规范化契约。"""
+
+    first_target = (101, (10, 20, 1930, 1100))
+    recovered_target = (202, (0, 0, 2560, 1600))
+    error_gate = threading.Event()
+    allow_recovery = threading.Event()
+    recovered = threading.Event()
+    calls = 0
+
+    def fake_finder(*, window_titles: list[str]) -> WindowProbeResult | None:
+        nonlocal calls
+        del window_titles
+        calls += 1
+        if calls == 1:
+            return None
+        if calls == 2:
+            return WindowProbeResult(status="found", hwnd=first_target[0], client_rect=first_target[1], observed_at=time.time())
+        if calls == 3:
+            error_gate.set()
+            raise RuntimeError("self_check_probe_error")
+        allow_recovery.wait(timeout=1.0)
+        recovered.set()
+        return WindowProbeResult(
+            status="found",
+            hwnd=recovered_target[0],
+            client_rect=recovered_target[1],
+            observed_at=time.time(),
+        )
+
+    poller = WindowTargetPoller([], finder=fake_finder, interval_seconds=0.1)
+    poller.start()
+    try:
+        error_seen = error_gate.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while error_seen and poller.status()["probe_status"] != "error" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        retained_last_good = poller.current() == first_target
+        error_status = poller.status()
+        allow_recovery.set()
+        recovered.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while poller.current() != recovered_target and time.monotonic() < deadline:
+            time.sleep(0.01)
+        poller_recovered = poller.current() == recovered_target and poller.status()["probe_status"] == "found"
+    finally:
+        allow_recovery.set()
+        poller.stop()
+    window_probe_ok = bool(
+        error_seen
+        and retained_last_good
+        and error_status.get("last_error_type") == "RuntimeError"
+        and poller_recovered
+    )
 
     config = build_overlay_window_config()
     source = SharedOverlayDataSource()
@@ -340,14 +485,39 @@ def run_self_check() -> dict[str, Any]:
         status_code = str(row.get("status_code") or "")
         status_counts[status_code] = status_counts.get(status_code, 0) + 1
     event_status = _extract_event_status(snapshot)
+    context_has_champion = bool(str(context.get("champion_id") or "").strip())
+    context_contract_ok = bool(context.get("ok")) if context_has_champion else bool(context.get("error"))
+    visibility_contract_ok = decide_visibility(
+        user_enabled=True,
+        event_visible=True,
+        game_foreground=True,
+        content_ready=True,
+        selection_window_active=True,
+        gameflow_in_progress=GameflowState.UNKNOWN,
+        game_hwnd=101,
+        game_rect=(0, 0, 1920, 1080),
+        game_renderable=True,
+        ready_slots=3,
+    ) == (True, "waiting_gameflow")
+    scanner_configured = lcu_scanner_configured()
+    contract_checks = {
+        "window_probe_ok": window_probe_ok,
+        "context_contract_ok": context_contract_ok,
+        "visibility_contract_ok": visibility_contract_ok,
+        "lcu_scanner_configured": scanner_configured,
+    }
     try:
         state_age_ms = int(max(0.0, time.time() - float(snapshot.get("generated_at") or 0.0)) * 1000)
     except (TypeError, ValueError):
         state_age_ms = None
     return {
-        "ok": True,
+        "ok": all(contract_checks.values()),
         "title": config["title"],
-        "process_health": {"host": "self-check", "sidecar": "not-inspected"},
+        "process_health": {
+            "host": "self-check-passed" if all(contract_checks.values()) else "self-check-failed",
+            "sidecar": "not-inspected",
+        },
+        **contract_checks,
         "state_age_ms": state_age_ms,
         "event_poll_ms": config["event_poll_ms"],
         "no_activate": bool(config.get("no_activate")),
@@ -465,5 +635,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-__all__ = [name for name in globals() if not name.startswith("__")]
