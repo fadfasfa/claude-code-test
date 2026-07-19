@@ -55,9 +55,6 @@ class DesktopViewMixin:
             with self._champions_lock:
                 self.champions = new_champions
 
-    def _silent_sync(self):
-        logger.info("兼容旧入口：桌面不再直接调用 refresh_backend_data。")
-
     def load_data(self):
         if self._snapshot_client is None:
             return _empty_champions()
@@ -88,7 +85,15 @@ class DesktopViewMixin:
                 self.champions = new_champions
 
             def refresh_ui() -> None:
-                self._set_status("统计快照已更新", UI_COLORS["green"])
+                degraded = [str(item) for item in status.get("degraded_sources") or []]
+                short_generation = generation_id[:18]
+                if degraded:
+                    self._set_status(
+                        f"数据已更新 {short_generation} · 沿用: {', '.join(degraded)}",
+                        UI_COLORS["warn"],
+                    )
+                else:
+                    self._set_status(f"数据已更新 {short_generation}", UI_COLORS["green"])
                 self.update_ui(self.current_candidate_groups)
 
             self._run_on_ui_thread(refresh_ui)

@@ -15,7 +15,15 @@ async def csv_watcher_loop() -> None:
             generation_id = str(status.get("generation_id") or "")
             if generation_id and previous_generation_id and generation_id != previous_generation_id:
                 logger.info("DataService generation 已切换：generation_id=%s", generation_id)
-                await manager.broadcast({"type": "data_updated", "generation_id": generation_id})
+                await manager.broadcast(
+                    {
+                        "type": "data_updated",
+                        "generation_id": generation_id,
+                        "health": str(status.get("health") or "healthy"),
+                        "refreshed_sources": list(status.get("refreshed_sources") or []),
+                        "degraded_sources": list(status.get("degraded_sources") or []),
+                    }
+                )
             previous_generation_id = generation_id or previous_generation_id
         except Exception as exc:
             logger.warning("DataService generation 监视器错误：%s", exc)

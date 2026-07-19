@@ -474,6 +474,12 @@ def _pipe_tail_text(lines: list[str]) -> str:
     return "\n".join(lines)[-500:]
 
 
+def _service_creationflags() -> int:
+    """让长生命周期服务不继承 Desktop 控制台的 Ctrl+C 广播。"""
+
+    return int(subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0
+
+
 def start_runtime_supervisor_process(
     *,
     parent_pid: int | None = None,
@@ -502,6 +508,7 @@ def start_runtime_supervisor_process(
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
+        creationflags=_service_creationflags(),
     )
     deadline = time.time() + float(timeout)
     line = ""
@@ -580,6 +587,7 @@ def start_data_service_process(
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
+        creationflags=_service_creationflags(),
     )
     deadline = time.time() + timeout
     line = ""

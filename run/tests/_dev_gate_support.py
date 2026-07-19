@@ -73,8 +73,6 @@ HEXTECH_HEALTH_REQUIRED_COLUMNS = (
     "海克斯出场率",
 )
 
-import hextech.bootstrap.data_refresh as orchestrator
-
 import hextech.modules.data.catalog.aliases as alias_search
 
 import hextech.modules.data.catalog.precomputed_cache as precomputed_cache
@@ -84,8 +82,6 @@ import hextech.modules.data.catalog.runtime_store as runtime_store
 import hextech.infrastructure.sources.hextech.service as hextech_scraper
 
 import hextech.infrastructure.sources.apex.service as synergy_scraper
-
-import hextech.infrastructure.sources.heal_worker as heal_worker
 
 import hextech.modules.acquisition.common.icons as icon_resolver
 
@@ -139,9 +135,8 @@ ORIGINAL_SYNC_HERO_DATA = version_sync.sync_hero_data
 
 VERSION_SYNC_WRITE_GUARDED_CHECKS = frozenset(
     {
-        "test_heal_worker_contract",
         "test_hextech_scraper_fallback_contract",
-        "test_hextech_cooldown_and_heal_fallback",
+        "test_hextech_cooldown_allows_forced_permission",
         "test_hextech_failed_refresh_never_overwrites_csv",
         "test_hextech_success_clears_fallback_state",
     }
@@ -283,13 +278,6 @@ def _snapshot(
     timestamp = time.time() if mtime is None else mtime
     os.utime(path, (timestamp, timestamp))
     return path
-
-def _patch_synergy_dir(temp_dir: str, status: dict | None = None):
-    payload = {} if status is None else status
-    return (
-        patch.object(runtime_store, "get_runtime_synergy_data_dir", return_value=Path(temp_dir)),
-        patch.object(orchestrator, "load_synergy_refresh_status", return_value=payload),
-    )
 
 def _core_info() -> dict[str, ChampionInfo]:
     return {

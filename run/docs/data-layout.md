@@ -19,10 +19,12 @@ resources/
 │       ├── overlay_hints.json
 │       ├── identities.json
 │       └── manifest.json
-└── evidence/mayhem/
+└── evidence/mayhem_combos.raw.json
 ```
 
-`resources/catalog` 是稳定身份目录，不能被一次抓取失败覆盖。`resources/seeds` 只用于空仓首启，必须是一代可通过 manifest、数量和 SHA-256 校验的完整 generation。
+`resources/**` 在运行时严格只读：`catalog` 是稳定 seed，`assets` 是包内
+fallback，`seeds` 只用于空仓首启。在线 Catalog 与图片分别写入
+`var/catalog/generations` 和 `var/cache/assets`，不得回写 bundle。
 
 ## 本机运行态
 
@@ -34,9 +36,10 @@ var/
 │   ├── apex/{current.v2.json,runs/<run_id>/{synergy.json,manifest.json,report.json}}
 │   └── mayhem/{current.v2.json,runs/<run_id>/{combos.json,manifest.json,report.json}}
 ├── snapshots/{current.v2.json,previous.v2.json,generations/,staging/}
-├── state/{desktop,data-service,supervisor,overlay,web}/
-├── ipc/
-├── cache/{vision,scraping}/
+├── state/                     # 跨进程契约可平铺，服务私有状态使用子目录
+│   └── data-service/{candidates/,refresh_schedule.v1.json,promotion_journal.v1.json}
+├── user-data/preferences/
+├── cache/{overlay_vision,assets}/
 ├── profiles/
 ├── logs/
 ├── reports/
@@ -44,6 +47,10 @@ var/
 ```
 
 冻结包固定写 `%LOCALAPPDATA%/HextechNexus/var`。源码态默认写 `run/var`，测试可通过 `HEXTECH_VAR_DIR` 指向隔离目录。
+
+仓库根 `.archive/hextech-data-v1-*/` 只保存人工归档的旧 `run/data`，不属于
+运行态、资源 fallback 或 retention 扫描范围。旧浏览器 profile 在归档中保持
+不透明，不读取内容、不列文件名、不计算摘要。
 
 ## 指针与写权限
 

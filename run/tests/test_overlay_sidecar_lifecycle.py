@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import runpy
 import sys
 import tempfile
 import threading
@@ -92,7 +93,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, r"token 不匹配.*pid=abc"):
                 lifecycle._wait_for_host_ready(RunningProcess(), ready_path, timeout_seconds=0.1)
 
-    def test_source_host_process_executes_host_runner_module(self):
+    def test_source_host_process_executes_overlay_composition_root(self):
         from hextech.interfaces.overlay import lifecycle
 
         captured_command: list[str] = []
@@ -114,8 +115,24 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertEqual(process.pid, 1203)
         self.assertEqual(
             captured_command,
-            [sys.executable, "-m", "hextech.interfaces.overlay.host_runner"],
+            [sys.executable, "-m", "hextech.bootstrap.overlay"],
         )
+
+    def test_overlay_composition_root_executes_when_run_as_module(self):
+        with (
+            patch("hextech.modules.data.ports.paths.ensure_var_layout") as ensure_layout,
+            patch("hextech.infrastructure.observability.logging.install_runtime_logging") as install_logging,
+            patch("hextech.interfaces.overlay.gameflow.configure_lcu_scanner") as configure_scanner,
+            patch("hextech.interfaces.overlay.host.main", return_value=0) as run_overlay,
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                runpy.run_module("hextech.bootstrap.overlay", run_name="__main__")
+
+        self.assertEqual(raised.exception.code, 0)
+        ensure_layout.assert_called_once_with()
+        install_logging.assert_called_once_with()
+        configure_scanner.assert_called_once()
+        run_overlay.assert_called_once_with(None)
 
     def test_frozen_host_process_keeps_game_overlay_switch(self):
         from hextech.interfaces.overlay import lifecycle

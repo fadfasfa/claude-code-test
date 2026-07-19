@@ -196,7 +196,25 @@ def _schedule_event_render(
             model = build_render_model_from_session(session_state, hint_cache=hint_cache)
             visibility["session_state"] = session_state
             _log_waiting_context_diagnostic(visibility, snapshot, context, model)
-            draw_overlay_frame(canvas, model, perf_sink=visibility)
+            event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+            raw_button_box = event_source.get("button_box")
+            exclusion_zones: list[tuple[int, int, int, int]] = []
+            if isinstance(raw_button_box, list) and len(raw_button_box) == 4:
+                try:
+                    left, top, right, bottom = (int(value) for value in raw_button_box)
+                    margin = max(12, int(canvas.winfo_width() * 0.008))
+                    exclusion_zones.append((left - margin, top - margin, right + margin, bottom + margin))
+                except (TypeError, ValueError):
+                    exclusion_zones = []
+            layout_reliable = bool(str(event_source.get("layout_id") or "") and exclusion_zones)
+            draw_overlay_frame(
+                canvas,
+                model,
+                perf_sink=visibility,
+                expanded=visibility.get("display_mode") == "expanded",
+                show_synergy=layout_reliable,
+                exclusion_zones=exclusion_zones,
+            )
             _sync_event_visibility(
                 root,
                 config,
@@ -267,6 +285,7 @@ def run_overlay_host(*, diagnostic: bool = False) -> None:
         "applied_geometry": initial_geometry if initial_target is not None else "",
         "scoreboard_key_down": False,
         "tab_released_at": 0.0,
+        "display_mode": str(config.get("default_display_mode") or "compact"),
     }
     hotkey_queue: "queue.Queue[str]" = queue.Queue()
     hotkey_controller: HotkeyController | None = None

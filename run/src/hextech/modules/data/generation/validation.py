@@ -48,6 +48,8 @@ def count_records(payloads: Mapping[str, Any]) -> tuple[int, int, int]:
         raise SnapshotValidationError("identities schema_version 必须为 2")
 
     champion_ids: set[str] = set()
+    champion_names: dict[str, str] = {}
+    champion_ids_by_name: dict[str, str] = {}
     for champion in champions:
         if not isinstance(champion, Mapping):
             raise SnapshotValidationError("champions 元素必须是对象")
@@ -57,20 +59,34 @@ def count_records(payloads: Mapping[str, Any]) -> tuple[int, int, int]:
             raise SnapshotValidationError("champion 必须包含非空 id 和 name")
         if champion_id in champion_ids:
             raise SnapshotValidationError(f"champion id 重复：{champion_id}")
+        if champion_name in champion_ids_by_name:
+            raise SnapshotValidationError(f"champion name 重复：{champion_name}")
         champion_ids.add(champion_id)
+        champion_names[champion_id] = champion_name
+        champion_ids_by_name[champion_name] = champion_id
     if not champion_ids:
         raise SnapshotValidationError("generation 至少需要一个英雄")
 
     augment_ids: set[str] = set()
-    detail_ids: set[str] = set()
     stat_records = 0
-    for detail in details.values():
+    detail_names = {str(key).strip() for key in details}
+    if detail_names != set(champion_ids_by_name):
+        raise SnapshotValidationError(
+            "英雄详情名称投影不一致："
+            f"missing={sorted(set(champion_ids_by_name) - detail_names)} "
+            f"unexpected={sorted(detail_names - set(champion_ids_by_name))}"
+        )
+    for detail_name, detail in details.items():
         if not isinstance(detail, Mapping):
             raise SnapshotValidationError("英雄详情必须是对象")
         hero_id = str(detail.get("hero_id") or "").strip()
         if not hero_id:
             raise SnapshotValidationError("英雄详情必须包含非空 hero_id")
-        detail_ids.add(hero_id)
+        expected_hero_id = champion_ids_by_name[str(detail_name).strip()]
+        if hero_id != expected_hero_id:
+            raise SnapshotValidationError(
+                f"英雄详情身份错配：name={detail_name} expected={expected_hero_id} actual={hero_id}"
+            )
         augments = detail.get("augments", [])
         if not isinstance(augments, list) or not augments:
             raise SnapshotValidationError(f"英雄 {hero_id} 必须包含非空统计")
@@ -84,13 +100,45 @@ def count_records(payloads: Mapping[str, Any]) -> tuple[int, int, int]:
             seen.add(augment_id)
             augment_ids.add(augment_id)
             stat_records += 1
-    if champion_ids != detail_ids:
-        raise SnapshotValidationError(
-            f"英雄详情覆盖不完整：missing={sorted(champion_ids - detail_ids)} unexpected={sorted(detail_ids - champion_ids)}"
-        )
-    hint_augments = hints.get("augments", {})
-    if isinstance(hint_augments, Mapping):
-        augment_ids.update(str(key) for key in hint_augments)
+    identity_champions = identities.get("champions")
+    if not isinstance(identity_champions, Mapping) or {
+        str(key): str(value) for key, value in identity_champions.items()
+    } != champion_names:
+        raise SnapshotValidationError("identities 英雄投影与 champions 不一致")
+    identity_augments = identities.get("augments")
+    if not isinstance(identity_augments, Mapping):
+        raise SnapshotValidationError("identities 强化投影必须是对象")
+    normalized_identity_augments = {str(key).strip(): str(value).strip() for key, value in identity_augments.items()}
+    if set(normalized_identity_augments) != augment_ids:
+        raise SnapshotValidationError("identities 强化投影必须与英雄统计 ID 完全一致")
+
+    hint_map = hints.get("hints")
+    name_index = hints.get("name_index")
+    if not isinstance(hint_map, Mapping) or not hint_map:
+        raise SnapshotValidationError("overlay_hints.hints 必须是非空对象")
+    if not isinstance(name_index, Mapping) or not name_index:
+        raise SnapshotValidationError("overlay_hints.name_index 必须是非空对象")
+    normalized_hints: dict[str, Mapping[str, Any]] = {}
+    for raw_id, raw_hint in hint_map.items():
+        hint_id = str(raw_id).strip()
+        if not hint_id or not isinstance(raw_hint, Mapping):
+            raise SnapshotValidationError("overlay hint 必须使用非空 ID 并映射到对象")
+        if str(raw_hint.get("augment_id") or hint_id).strip() != hint_id:
+            raise SnapshotValidationError(f"overlay hint augment_id 与键不一致：{hint_id}")
+        if not str(raw_hint.get("name") or "").strip():
+            raise SnapshotValidationError(f"overlay hint 缺少名称：{hint_id}")
+        normalized_hints[hint_id] = raw_hint
+    hint_ids = set(normalized_hints)
+    index_targets = {str(value).strip() for value in name_index.values()}
+    # 早期 verified seed 含一个空别名键；它不参与查询，但其目标仍须是有效 hint。
+    # 保留该只读基线兼容性，同时继续要求所有 hint 都被索引且不存在悬空目标。
+    if index_targets != hint_ids:
+        raise SnapshotValidationError("overlay_hints.name_index 必须完整且只能指向现有 hint")
+    if not augment_ids.issubset(hint_ids):
+        raise SnapshotValidationError("overlay hints 未覆盖英雄统计强化")
+    for augment_id, augment_name in normalized_identity_augments.items():
+        if str(normalized_hints[augment_id].get("name") or "").strip() != augment_name:
+            raise SnapshotValidationError(f"identities 与 overlay hint 名称不一致：{augment_id}")
     return len(champions), len(augment_ids), stat_records
 
 

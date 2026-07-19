@@ -3,9 +3,12 @@
 from .identifiers import AugmentId, ChampionId, GenerationId, GameSessionId, ItemId, VisionEpoch
 from .data_pipeline import (
     ArtifactDescriptor,
+    BaselineContributionV2,
     CatalogManifestV2,
+    DataSnapshotCurrentPointerV2,
     DataContractError,
     DataSnapshotManifestV2,
+    DataSnapshotPreviousPointerV2,
     FetchAttempt,
     ItemOutcome,
     PromotionJournalPhase,
@@ -16,6 +19,7 @@ from .data_pipeline import (
     SourcePointerV2,
     SourceProvenance,
     SourceRunManifestV2,
+    SourceStatusV2,
     utc_now_iso,
 )
 from .models import (
@@ -37,12 +41,15 @@ from .models import (
 __all__ = [
     "AugmentId",
     "ArtifactDescriptor",
+    "BaselineContributionV2",
     "CatalogManifestV2",
+    "DataSnapshotCurrentPointerV2",
     "ChampionId",
     "GameContext",
     "FailureKind",
     "DataContractError",
     "DataSnapshotManifestV2",
+    "DataSnapshotPreviousPointerV2",
     "FetchAttempt",
     "GameSessionId",
     "GameSessionState",
@@ -62,6 +69,7 @@ __all__ = [
     "SourcePointerV2",
     "SourceProvenance",
     "SourceRunManifestV2",
+    "SourceStatusV2",
     "SnapshotFileDescriptor",
     "VisionEpoch",
     "VisionSceneState",

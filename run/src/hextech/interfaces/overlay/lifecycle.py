@@ -209,7 +209,7 @@ def start_host_process() -> subprocess.Popen:
     if getattr(sys, "frozen", False):
         command = [sys.executable, "--game-overlay"]
     else:
-        command = [sys.executable, "-m", "hextech.interfaces.overlay.host_runner"]
+        command = [sys.executable, "-m", "hextech.bootstrap.overlay"]
     ready_path = Path(build_runtime_state_path(f"game_overlay_host.{uuid.uuid4().hex}.ready.json"))
     exit_path = Path(build_runtime_state_path(f"game_overlay_host.{uuid.uuid4().hex}.exit.json"))
     ready_token = uuid.uuid4().hex
@@ -217,7 +217,13 @@ def start_host_process() -> subprocess.Popen:
     env[OVERLAY_READY_FILE_ENV] = str(ready_path)
     env[OVERLAY_READY_TOKEN_ENV] = ready_token
     env[OVERLAY_EXIT_FILE_ENV] = str(exit_path)
-    process = subprocess.Popen(command, cwd=RUN_DIR, startupinfo=_hidden_startupinfo(), env=env)
+    process = subprocess.Popen(
+        command,
+        cwd=RUN_DIR,
+        startupinfo=_hidden_startupinfo(),
+        env=env,
+        creationflags=int(subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0,
+    )
     setattr(process, "_hextech_overlay_exit_file", str(exit_path))
     try:
         _wait_for_host_ready(process, ready_path, expected_token=ready_token)
@@ -270,7 +276,13 @@ def start_sidecar_process(
     env[OVERLAY_SIDECAR_BOOTSTRAP_FILE_ENV] = str(bootstrap_path)
     env[OVERLAY_GENERATION_ENV] = generation
     env[OVERLAY_EXIT_FILE_ENV] = str(exit_path)
-    process = subprocess.Popen(command, cwd=RUN_DIR, startupinfo=_hidden_startupinfo(), env=env)
+    process = subprocess.Popen(
+        command,
+        cwd=RUN_DIR,
+        startupinfo=_hidden_startupinfo(),
+        env=env,
+        creationflags=int(subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0,
+    )
     try:
         setattr(process, "_hextech_overlay_exit_file", str(exit_path))
         setattr(process, "_hextech_overlay_sidecar_generation", generation)

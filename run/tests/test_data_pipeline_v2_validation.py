@@ -5,13 +5,17 @@ import pytest
 
 from hextech.contracts import (
     ArtifactDescriptor,
+    BaselineContributionV2,
     CatalogManifestV2,
     DataContractError,
     FailureKind,
     FetchAttempt,
     ItemOutcome,
+    SnapshotFileDescriptor,
     SourcePointerV2,
+    SourceProvenance,
     SourceRunManifestV2,
+    SourceStatusV2,
 )
 from hextech.modules.acquisition.apex.validation import ApexValidationError, validate_apex_run
 from hextech.modules.acquisition.hextech.validation import HextechSchemaChanged, validate_hextech_frame
@@ -73,6 +77,50 @@ def test_v1_source_pointer_and_catalog_manifest_are_rejected() -> None:
     }
     with pytest.raises(DataContractError, match="catalog schema"):
         CatalogManifestV2.from_mapping(catalog)
+
+
+def test_baseline_contribution_binds_origin_generation_without_fake_artifact_path() -> None:
+    provenance = SourceProvenance(
+        source="hextech",
+        run_id="run-hextech",
+        catalog_generation_id="catalog-test",
+        artifact_role="stats",
+        artifact_sha256="a" * 64,
+        record_count=10,
+        manifest_sha256="b" * 64,
+        content_schema_version=2,
+    )
+    files = tuple(
+        SnapshotFileDescriptor(
+            role=role,
+            relative_path=f"{role}.json",
+            size=10,
+            sha256=str(index) * 64,
+        )
+        for index, role in enumerate(("champions", "champion_hextech", "overlay_hints", "identities"), start=1)
+    )
+    baseline = BaselineContributionV2(
+        source="hextech",
+        origin_generation_id="20260718T000000-0123456789",
+        catalog_generation_id="catalog-test",
+        catalog_sha256="c" * 64,
+        created_at="2026-07-18T00:00:00+00:00",
+        provenance=provenance,
+        snapshot_files=files,
+    )
+
+    payload = baseline.to_dict()
+
+    assert "artifact" not in payload
+    assert BaselineContributionV2.from_mapping(payload) == baseline
+
+
+def test_source_status_accepts_old_partial_generation_fields_as_unknown() -> None:
+    status = SourceStatusV2.from_mapping({"run_id": "legacy-run"})
+
+    assert status.run_id == "legacy-run"
+    assert status.freshness == "unknown"
+    assert status.record_count == 0
 
 
 def test_v2_contracts_reject_invalid_outcomes_and_duplicate_catalog_roles() -> None:

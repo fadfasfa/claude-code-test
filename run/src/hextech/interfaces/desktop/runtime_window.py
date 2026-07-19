@@ -54,7 +54,7 @@ from hextech.interfaces.overlay import context as overlay_context
 from hextech.interfaces.overlay.gameflow import probe_lcu_gameflow_in_progress, probe_live_client_in_progress
 from hextech.modules.vision.window import find_lol_game_window, is_window_renderable
 from hextech.modules.vision.window_titles import LOL_CLIENT_WINDOW_TITLE
-from hextech.modules.data.ports.paths import BASE_DIR, CHAMPION_ASSET_DIR
+from hextech.modules.data.ports.paths import BASE_DIR, CHAMPION_ASSET_DIR, var_path
 from hextech.modules.vision.image_validation import is_valid_png_bytes
 
 if TYPE_CHECKING:
@@ -133,7 +133,7 @@ def _write_champion_icon_cache(path: str, data: bytes) -> None:
 
 
 def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
-    """加载英雄头像，优先命中本地缓存，缺失时远端下载后回写到本地。"""
+    """按运行缓存、只读 seed 顺序加载头像；远端结果只写 ``var``。"""
     try:
         if not label.winfo_exists():
             return
@@ -147,9 +147,12 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
             ui._run_on_ui_thread(lambda p=cached_photo: _publish_cached(p))
             return
 
-        img_path = os.path.join(CHAMPION_ASSET_DIR, f"{champ_id}.png")
-        if os.path.exists(img_path):
-            with Image.open(img_path) as raw_img:
+        filename = f"{champ_id}.png"
+        cache_path = var_path("cache", "assets", "champions", filename)
+        seed_path = Path(CHAMPION_ASSET_DIR) / filename
+        readable_path = next((path for path in (cache_path, seed_path) if path.is_file()), None)
+        if readable_path is not None:
+            with Image.open(readable_path) as raw_img:
                 img = raw_img.resize((48, 48), Image.Resampling.LANCZOS)
         else:
             if champ_id in ui.downloading_imgs:
@@ -161,7 +164,7 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
                 if res.status_code != 200:
                     return
                 with ui.img_write_lock:
-                    _write_champion_icon_cache(img_path, res.content)
+                    _write_champion_icon_cache(os.fspath(cache_path), res.content)
                 with Image.open(BytesIO(res.content)) as raw_img:
                     img = raw_img.resize((48, 48), Image.Resampling.LANCZOS)
             finally:
@@ -402,12 +405,5 @@ def window_sync_loop(ui: "HextechUI") -> None:
         except Exception:
             logger.exception("窗口同步循环异常。")
         time.sleep(0.2)
-
-def start_background_scraper(ui: "HextechUI", refresh_backend_data) -> None:
-    """兼容旧入口；不再启动桌面定时刷新线程。"""
-
-    del refresh_backend_data
-    if not ui.stop_event.is_set():
-        logger.info("桌面定时刷新线程已停用：refresh 由 Runtime Supervisor action 发起。")
 
 __all__ = [name for name in globals() if not name.startswith("__")]

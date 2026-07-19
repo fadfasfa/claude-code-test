@@ -76,7 +76,6 @@ PYINSTALLER_HIDDEN_IMPORTS = [
     "hextech.interfaces.overlay.lifecycle",
     "hextech.interfaces.overlay.renderer",
     "hextech.infrastructure.vision.sidecar",
-    "hextech.runtime.settings",
     "hextech.bootstrap.data_service_runtime",
     "hextech.modules.data.generation",
 ]
@@ -302,12 +301,12 @@ def prepare_runtime_data_for_package(*, refresh_data: bool) -> None:
 
     if refresh_data:
         print_step("显式刷新运行时数据")
-        from hextech.bootstrap.data_refresh import refresh_backend_data
+        from hextech.bootstrap.refresh_once import refresh_runtime_once
 
-        result = refresh_backend_data(force=True)
-        state = str(getattr(result, "state", "") or "")
+        result = refresh_runtime_once(force=True)
+        state = str(result.get("state") or "")
         if state != "ready":
-            reason_code = str(getattr(result, "reason_code", "") or "unknown")
+            reason_code = str(result.get("reason_code") or "unknown")
             raise RuntimeError(f"构建前数据刷新未达到 ready：state={state or 'unknown'} reason={reason_code}")
         print_check("运行时数据刷新完成：state=ready")
     else:

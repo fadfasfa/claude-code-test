@@ -36,7 +36,8 @@ def _build_payload(private_stats_enabled: bool) -> dict[str, object]:
         },
         "overlay_hints": {
             "source": {"private_policy_stats_enabled": private_stats_enabled},
-            "augments": {"augment-1": {"name": "augment"}},
+            "hints": {"augment-1": {"augment_id": "augment-1", "name": "augment"}},
+            "name_index": {"augment-1": "augment-1", "augment": "augment-1"},
         },
         "identities": {
             "schema_version": 2,
@@ -169,7 +170,15 @@ def test_bootstrap_does_not_change_generation_for_display_privacy(tmp_path: Path
     payload = _build_payload(True)
     payload["overlay_hints"] = {
         "source": {"private_policy_stats_enabled": True},
-        "hints": {"augment-1": {"name": "augment", "winrate": 0.51, "stats_by_champion_id": {"1": {}}}},
+        "hints": {
+            "augment-1": {
+                "augment_id": "augment-1",
+                "name": "augment",
+                "winrate": 0.51,
+                "stats_by_champion_id": {"1": {}},
+            }
+        },
+        "name_index": {"augment-1": "augment-1", "augment": "augment-1"},
     }
     current = _publish(publisher, payload, "privacy-stable")
 
@@ -588,10 +597,13 @@ def test_data_service_refresh_delegates_force_to_coordinator(tmp_path: Path) -> 
 
 
 def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from hextech.modules.data.catalog import precomputed_cache, runtime_store
+    from types import SimpleNamespace
+
+    from hextech.bootstrap import data_service_runtime
+    from hextech.modules.acquisition.mayhem import merge as mayhem_merge
+    from hextech.modules.data.catalog import runtime_store, version_catalog
     from hextech.modules.data.catalog import versioned as catalog_versioned
     from hextech.modules.data import source_runs
-    import hextech.modules.recommendation.hints as overlay_hints
 
     csv_path = tmp_path / "Hextech_Data_2026-07-15.csv"
     dataframe = pd.DataFrame(
@@ -618,13 +630,51 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
         json.dumps({"266": {"synergy_items": [{"content": "同代联动"}]}}, ensure_ascii=False),
         encoding="utf-8",
     )
-    monkeypatch.setattr(runtime_store, "get_latest_valid_csv", lambda: str(csv_path))
+    mayhem_path = tmp_path / "mayhem.json"
+    mayhem_path.write_text(json.dumps({"items": []}), encoding="utf-8")
     monkeypatch.setattr(runtime_store, "load_runtime_csv", lambda _path: dataframe.copy())
-    monkeypatch.setattr(runtime_store, "build_synergy_data_path", lambda: str(synergy_path))
-    monkeypatch.setattr(overlay_hints, "build_synergy_data_path", lambda: str(synergy_path))
-    monkeypatch.setattr(source_runs, "resolve_current_artifact", lambda _source_name: None)
+    monkeypatch.setattr(
+        runtime_store,
+        "get_latest_valid_csv",
+        lambda: pytest.fail("contribution builder 不得读取全局 Hextech current"),
+    )
+    monkeypatch.setattr(
+        runtime_store,
+        "build_synergy_data_path",
+        lambda: pytest.fail("contribution builder 不得读取全局 Apex current"),
+    )
+    monkeypatch.setattr(
+        source_runs,
+        "resolve_current_artifact",
+        lambda _source: pytest.fail("contribution builder 不得解析全局 source current"),
+    )
+    artifacts = {"hextech": csv_path, "apex": synergy_path, "mayhem": mayhem_path}
+    monkeypatch.setattr(
+        data_service_runtime,
+        "_validated_source_artifact",
+        lambda source, _pointer, expected_role: artifacts[source],
+    )
+    monkeypatch.setattr(
+        mayhem_merge,
+        "merge_mayhem_combos",
+        lambda **_kwargs: {"merged_payload": json.loads(synergy_path.read_text(encoding="utf-8"))},
+    )
+    monkeypatch.setattr(
+        version_catalog,
+        "load_champion_core_data",
+        lambda _root=None: {"266": {"name": "暗裔剑魔", "en_name": "Aatrox"}},
+    )
+    monkeypatch.setattr(
+        version_catalog,
+        "load_augment_manifest_entries",
+        lambda _root=None: [{"name": "测试强化", "augment_name_id": "test", "tier": "Gold"}],
+    )
     catalog_sources = tuple(
         _provenance(f"catalog-{role}", source="catalog", role=role)
+        for role in ("champions", "augments", "versions")
+    )
+    catalog_files = tuple(
+        SimpleNamespace(role=role, relative_path=f"{role}.json")
         for role in ("champions", "augments", "versions")
     )
     monkeypatch.setattr(
@@ -633,11 +683,13 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
         lambda: type(
             "Catalog",
             (),
-            {
-                "generation_id": "catalog-test",
-                "content_sha256": "c" * 64,
-                "provenance": lambda self: catalog_sources,
-            },
+                {
+                    "generation_id": "catalog-test",
+                    "content_sha256": "c" * 64,
+                    "root": tmp_path,
+                    "manifest": SimpleNamespace(files=catalog_files),
+                    "provenance": lambda self: catalog_sources,
+                },
         )(),
     )
 
@@ -664,37 +716,6 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
         }
 
     monkeypatch.setattr(source_runs, "load_source_current", lambda source, verify_hash=True: source_pointer(source))
-    monkeypatch.setattr(
-        precomputed_cache,
-        "load_precomputed_champion_list",
-        lambda: [
-            {
-                "英雄 ID": "266",
-                "英雄名称": "暗裔剑魔",
-                "英雄胜率": 0.52,
-                "英雄出场率": 0.08,
-            }
-        ],
-    )
-    monkeypatch.setattr(
-        precomputed_cache,
-        "load_precomputed_hextech_map",
-        lambda: {
-            "暗裔剑魔": {
-                "comprehensive": [
-                    {
-                        "海克斯ID": "1322",
-                        "海克斯名称": "测试强化",
-                        "海克斯阶级": "Gold",
-                        "海克斯胜率": 0.61,
-                        "海克斯出场率": 0.04,
-                        "胜率差": 0.09,
-                    }
-                ]
-            }
-        },
-    )
-
     build = build_snapshot_from_runtime()
     detail = build.payloads["champion_hextech"]["暗裔剑魔"]
 

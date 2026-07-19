@@ -150,6 +150,49 @@ def test_retention_keeps_recent_and_bounded_source_history(tmp_path: Path) -> No
     assert result["source_runs"] == 5
 
 
+def test_retention_protects_saved_candidate_run_and_catalog(tmp_path: Path) -> None:
+    _source_run(tmp_path, "apex", "candidate-run", success=True)
+    _directory(tmp_path / "catalog" / "generations" / "candidate-catalog")
+    _write_json(
+        tmp_path / "state" / "data-service" / "candidates" / "apex.v2.json",
+        {
+            "source": "apex",
+            "run_id": "candidate-run",
+            "catalog_generation_id": "candidate-catalog",
+        },
+    )
+
+    references = protected_references(tmp_path)
+    result = apply_retention(tmp_path, now=NOW)
+
+    assert "apex:candidate-run" in references["source_runs"]
+    assert "candidate-catalog" in references["catalog_generations"]
+    assert (tmp_path / "sources" / "apex" / "runs" / "candidate-run").is_dir()
+    assert (tmp_path / "catalog" / "generations" / "candidate-catalog").is_dir()
+    assert result["source_runs"] == 0
+    assert result["catalog_generations"] == 0
+
+
+def test_retention_protects_baseline_origin_generation_from_source_status(tmp_path: Path) -> None:
+    _write_json(tmp_path / "snapshots" / "current.v2.json", {"current_generation_id": "gen-current"})
+    _generation_manifest(tmp_path, "gen-origin", "run-origin", "catalog-origin")
+    _generation_manifest(tmp_path, "gen-current", "run-current", "catalog-current")
+    current_manifest_path = tmp_path / "snapshots" / "generations" / "gen-current" / "manifest.json"
+    current_manifest = json.loads(current_manifest_path.read_text(encoding="utf-8"))
+    current_manifest["source_status"] = {
+        "hextech": {"freshness": "last_good", "origin_generation_id": "gen-origin"}
+    }
+    _write_json(current_manifest_path, current_manifest)
+    os.utime(current_manifest_path.parent, (OLD.timestamp(), OLD.timestamp()))
+
+    references = protected_references(tmp_path)
+    result = apply_retention(tmp_path, now=NOW)
+
+    assert references["generations"] == {"gen-current", "gen-origin"}
+    assert (tmp_path / "snapshots" / "generations" / "gen-origin").is_dir()
+    assert result["generations"] == 0
+
+
 def test_retention_removes_only_expired_unprotected_catalog_generation_and_staging(tmp_path: Path) -> None:
     _write_json(tmp_path / "catalog" / "current.v2.json", {"catalog_generation_id": "catalog-current"})
     _directory(tmp_path / "catalog" / "generations" / "catalog-current")

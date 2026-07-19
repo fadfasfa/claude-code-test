@@ -876,6 +876,10 @@
                     if (msg.type === 'data_updated') {
                         console.log('收到 CSV 数据更新通知，自动热重载...');
                         loadHextechs();
+                        const degraded = Array.isArray(msg.degraded_sources) ? msg.degraded_sources : [];
+                        if (degraded.length) {
+                            status.innerHTML = `<span class="w-2 h-2 bg-amber-500 rounded-full"></span><span class="text-amber-300">沿用 ${degraded.join('/')}</span>`;
+                        }
                     } else if (msg.type === 'local_player_locked') {
                         const enName = msg.en_name ? `&en=${encodeURIComponent(msg.en_name)}` : '';
                         const detailFirst = msg.detail_first ? '&detailFirst=1' : '';

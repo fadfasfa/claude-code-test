@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from tooling.data.archive_legacy_data import ArchivePaths, archive_legacy_data, build_manifest
+
+
+def _make_legacy_data(root: Path) -> Path:
+    data = root / "run" / "data"
+    (data / "runtime" / "profile").mkdir(parents=True)
+    (data / "runtime" / "logs").mkdir(parents=True)
+    (data / "runtime" / "cache").mkdir(parents=True)
+    (data / "raw").mkdir()
+    (data / "processed").mkdir()
+    (data / "static").mkdir()
+    (data / "runtime" / "profile" / "Cookies").write_bytes(b"do-not-read")
+    (data / "runtime" / "logs" / "private.log").write_bytes(b"log-content")
+    (data / "runtime" / "cache" / "cache.bin").write_bytes(b"cache")
+    (data / "raw" / "source.json").write_bytes(b"raw")
+    (data / "processed" / "result.json").write_bytes(b"processed")
+    (data / "static" / "Champion_Core_Data.json").write_bytes(b"static")
+    return data
+
+
+def test_manifest_never_reads_or_lists_profile_and_logs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _make_legacy_data(tmp_path)
+    original_open = Path.open
+
+    def guarded_open(path: Path, *args, **kwargs):
+        normalized = os.fspath(path).replace("\\", "/")
+        if "/runtime/profile/" in normalized or "/runtime/logs/" in normalized:
+            raise AssertionError("sensitive content must not be opened")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    manifest = build_manifest(data)
+    serialized = str(manifest)
+    assert manifest["profile"] == {"opaque": True, "present": True}
+    assert manifest["logs"] == {"content_read": False, "file_count": 1, "total_bytes": 11}
+    assert "Cookies" not in serialized
+    assert "private.log" not in serialized
+
+
+def test_archive_moves_data_and_verifies_non_sensitive_files(tmp_path: Path) -> None:
+    data = _make_legacy_data(tmp_path)
+    destination = tmp_path / ".archive" / "hextech-data-v1-test"
+    result = archive_legacy_data(ArchivePaths(data, destination))
+    assert result == destination
+    assert not data.exists()
+    assert (destination / "data" / "runtime" / "profile" / "Cookies").is_file()
+    assert (destination / "archive_manifest.v1.json").is_file()
+
+
+def test_manifest_treats_suspicious_raw_names_as_opaque(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _make_legacy_data(tmp_path)
+    sensitive_files = (
+        data / "raw" / "cookies.sqlite",
+        data / "raw" / "credentials.json",
+        data / "raw" / "tokens.json",
+    )
+    sensitive_directory = data / "raw" / "sessions"
+    authentication_directory = data / "raw" / "authentication-state"
+    processed_session_directory = data / "processed" / "session-store"
+    sensitive_directory.mkdir()
+    authentication_directory.mkdir()
+    processed_session_directory.mkdir()
+    (sensitive_directory / "state.json").write_bytes(b"secret-session")
+    (authentication_directory / "state.json").write_bytes(b"secret-auth")
+    (processed_session_directory / "state.json").write_bytes(b"secret-processed")
+    (data / "runtime" / "cookies.json").write_bytes(b"secret-runtime")
+    (data / "static" / "token.json").write_bytes(b"secret-static")
+    for path in sensitive_files:
+        path.write_bytes(b"secret")
+    original_open = Path.open
+
+    def guarded_open(path: Path, *args, **kwargs):
+        normalized = os.fspath(path).replace("\\", "/").lower()
+        if any(
+            token in normalized
+            for token in (
+                "cookies.sqlite",
+                "credentials.json",
+                "tokens.json",
+                "/sessions/",
+                "/authentication-state/",
+                "/session-store/",
+                "/runtime/cookies.json",
+                "/static/token.json",
+            )
+        ):
+            raise AssertionError("疑似敏感 raw 内容不得读取")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    manifest = build_manifest(data)
+    serialized = str(manifest).lower()
+
+    assert manifest["sensitive_entries"] == {
+        "opaque": True,
+        "present": True,
+        "directory_count": 3,
+        "file_count": 5,
+    }
+    for token in (
+        "cookies.sqlite",
+        "credentials.json",
+        "tokens.json",
+        "sessions",
+        "authentication",
+        "session-store",
+        "runtime/cookies.json",
+        "static/token.json",
+    ):
+        assert token not in serialized

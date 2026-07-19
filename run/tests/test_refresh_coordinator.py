@@ -8,19 +8,48 @@ import shutil
 import sys
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import psutil
 import pytest
 
 from hextech.bootstrap.data_service_runtime import DataBuildResult
-from hextech.bootstrap.refresh_coordinator import CohortRefreshCoordinator
-from hextech.contracts import CatalogManifestV2, SourceProvenance
+from hextech.bootstrap.refresh_coordinator import CohortRefreshCoordinator, SOURCE_INTERVALS
+from hextech.contracts import CatalogManifestV2, RefreshSourceState, SourceProvenance
 from hextech.infrastructure.processes import IsolatedProcessResult, run_isolated_process
 from hextech.modules.data.generation import DataSnapshotClient, DataSnapshotPublisher
-from hextech.modules.data.catalog.versioned import CATALOG_FILES, build_catalog_manifest, sha256_file
+from hextech.modules.data.catalog.versioned import (
+    CATALOG_FILES,
+    build_catalog_manifest,
+    canonical_json_sha256,
+    sha256_file,
+)
 from hextech.modules.data.ports.atomic import atomic_write_json
+
+
+def test_apex_and_mayhem_share_72_hour_refresh_interval() -> None:
+    assert SOURCE_INTERVALS["apex"].total_seconds() == 72 * 60 * 60
+    assert SOURCE_INTERVALS["mayhem"].total_seconds() == 72 * 60 * 60
+
+
+def test_missing_source_pointer_still_honors_failure_backoff(tmp_path: Path) -> None:
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    coordinator = CohortRefreshCoordinator(
+        publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=FakeWorkerRunner(),
+        now=lambda: now,
+    )
+    state = RefreshSourceState(
+        next_due_at=(now + timedelta(hours=6)).isoformat(),
+        failure_kind="http_403",
+        state="backoff",
+    )
+
+    assert coordinator._due("apex", state, {}, force=False) is False
+    assert coordinator._due("apex", state, {}, force=True) is True
 
 
 def _arg(command: list[str], name: str) -> Path:
@@ -152,7 +181,10 @@ def _builder(root: Path) -> DataBuildResult:
             "champion_hextech": {
                 "测试英雄": {"hero_id": "1", "augments": [{"id": "10", "name": "测试海克斯"}]}
             },
-            "overlay_hints": {"augments": {"10": "测试海克斯"}, "hints": {}},
+            "overlay_hints": {
+                "hints": {"10": {"augment_id": "10", "name": "测试海克斯"}},
+                "name_index": {"10": "10", "测试海克斯": "10"},
+            },
             "identities": {
                 "schema_version": 2,
                 "champions": {"1": "测试英雄"},
@@ -163,12 +195,101 @@ def _builder(root: Path) -> DataBuildResult:
     )
 
 
+@pytest.mark.parametrize("alter_catalog_artifact", (False, True))
+def test_baseline_recovery_normalizes_manifest_hash_but_rejects_different_catalog_artifacts(
+    tmp_path: Path, alter_catalog_artifact: bool
+) -> None:
+    runner = FakeWorkerRunner()
+    work = tmp_path / "catalog-work"
+    work.mkdir()
+    pointer_path = work / "catalog.pointer.json"
+    result_path = work / "catalog.result.json"
+    runner(
+        [
+            "fixture",
+            "--source",
+            "catalog",
+            "--pointer-output",
+            str(pointer_path),
+            "--result-output",
+            str(result_path),
+        ],
+        env={"HEXTECH_VAR_DIR": str(tmp_path)},
+    )
+    catalog_pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    catalog_id = str(catalog_pointer["catalog_generation_id"])
+    catalog_manifest = CatalogManifestV2.from_mapping(
+        json.loads(
+            (tmp_path / "catalog" / "generations" / catalog_id / "manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+    canonical_manifest_sha256 = canonical_json_sha256(catalog_manifest.to_dict())
+    assert canonical_manifest_sha256 != catalog_pointer["manifest_sha256"]
+    catalog_provenance = [
+        SourceProvenance(
+            source="catalog",
+            run_id=catalog_id,
+            catalog_generation_id=catalog_id,
+            artifact_role=item.role,
+            artifact_sha256=(
+                "f" * 64 if alter_catalog_artifact and item.role == "champions" else item.sha256
+            ),
+            record_count=item.record_count,
+            manifest_sha256=canonical_manifest_sha256,
+            content_schema_version=item.content_schema_version,
+        )
+        for item in catalog_manifest.files
+    ]
+    catalog_provenance.append(
+        SourceProvenance(
+            source="hextech",
+            run_id="hextech-origin",
+            catalog_generation_id=catalog_id,
+            artifact_role="stats",
+            artifact_sha256="a" * 64,
+            record_count=1,
+            manifest_sha256="b" * 64,
+            content_schema_version=2,
+        )
+    )
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    publisher.publish(
+        {
+            "champions": [{"id": "1", "name": "测试英雄"}],
+            "champion_hextech": {
+                "测试英雄": {"hero_id": "1", "augments": [{"id": "10", "name": "测试海克斯"}]}
+            },
+            "overlay_hints": {
+                "hints": {"10": {"augment_id": "10", "name": "测试海克斯"}},
+                "name_index": {"10": "10", "测试海克斯": "10"},
+            },
+            "identities": {
+                "schema_version": 2,
+                "champions": {"1": "测试英雄"},
+                "augments": {"10": "测试海克斯"},
+            },
+        },
+        source_files=tuple(catalog_provenance),
+    )
+    coordinator = CohortRefreshCoordinator(
+        publisher=publisher,
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=runner,
+    )
+
+    baseline = coordinator._baseline_contributions(catalog_pointer)
+    assert set(baseline) == (set() if alter_catalog_artifact else {"hextech"})
+
+
 def test_cohort_promotes_only_after_all_candidates_succeed(tmp_path) -> None:
     runner = FakeWorkerRunner()
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")
     coordinator = CohortRefreshCoordinator(
         publisher=publisher,
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
         now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -188,7 +309,7 @@ def test_failed_candidate_never_changes_formal_pointers(tmp_path) -> None:
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")
     coordinator = CohortRefreshCoordinator(
         publisher=publisher,
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
         now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -202,12 +323,37 @@ def test_failed_candidate_never_changes_formal_pointers(tmp_path) -> None:
     assert not (tmp_path / "snapshots" / "current.v2.json").exists()
 
 
-def test_same_content_new_runs_update_sources_without_replacing_generation(tmp_path) -> None:
+def test_failed_source_reuses_same_catalog_last_good_and_publishes_degraded(tmp_path) -> None:
     runner = FakeWorkerRunner()
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")
     coordinator = CohortRefreshCoordinator(
         publisher=publisher,
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=runner,
+        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    first = coordinator.refresh(force=True)
+    runner.round = 1
+    runner.fail_source = "apex"
+
+    second = coordinator.refresh(force=True)
+
+    assert first["state"] == "ready"
+    assert second["state"] == "degraded"
+    assert set(second["degraded_sources"]) == {"apex", "mayhem"}
+    assert "hextech" in second["refreshed_sources"]
+    status = DataSnapshotClient(tmp_path / "snapshots").status()
+    assert status["health"] == "degraded"
+    assert set(status["degraded_sources"]) == {"apex", "mayhem"}
+
+
+def test_same_content_new_runs_publish_generation_with_matching_provenance(tmp_path) -> None:
+    runner = FakeWorkerRunner()
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    coordinator = CohortRefreshCoordinator(
+        publisher=publisher,
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
         now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -217,12 +363,12 @@ def test_same_content_new_runs_update_sources_without_replacing_generation(tmp_p
 
     second = coordinator.refresh(force=True)
 
-    assert second["generation_id"] == first["generation_id"]
+    assert second["generation_id"] != first["generation_id"]
     hextech = json.loads((tmp_path / "sources" / "hextech" / "current.v2.json").read_text(encoding="utf-8"))
     assert hextech["run_id"] == "hextech-run-1"
     manifest = DataSnapshotClient(tmp_path / "snapshots").load_manifest()
-    old_hextech = next(item for item in manifest.source_files if item.source == "hextech")
-    assert old_hextech.run_id == "hextech-run-0"
+    current_hextech = next(item for item in manifest.source_files if item.source == "hextech")
+    assert current_hextech.run_id == "hextech-run-1"
 
 
 def test_isolated_process_timeout_returns_without_worker_hang(tmp_path) -> None:
@@ -269,7 +415,7 @@ def test_stop_before_active_cancel_registration_reaches_worker(tmp_path: Path) -
 
     coordinator = CohortRefreshCoordinator(
         publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
     )
@@ -300,7 +446,7 @@ def test_stop_after_worker_spawn_publishes_active_cancel(tmp_path: Path) -> None
 
     coordinator = CohortRefreshCoordinator(
         publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=runner,
     )
@@ -355,7 +501,7 @@ def test_coordinator_reads_only_v2_hash_verified_pointer_from_its_runtime_root(t
     atomic_write_json(tmp_path / "sources" / "hextech" / "current.v2.json", pointer)
     coordinator = CohortRefreshCoordinator(
         publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
-        builder=lambda: _builder(tmp_path),
+        builder=lambda _targets: _builder(tmp_path),
         root=tmp_path,
         process_runner=FakeWorkerRunner(),
     )

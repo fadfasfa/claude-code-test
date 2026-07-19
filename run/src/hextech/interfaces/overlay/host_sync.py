@@ -183,6 +183,10 @@ def _drain_hotkey_requests(request_queue: "queue.Queue[str]", visibility: dict[s
             return
         if request == "toggle":
             visibility["user_enabled"] = not bool(visibility.get("user_enabled"))
+        elif request == "toggle_mode":
+            visibility["display_mode"] = (
+                "compact" if visibility.get("display_mode") == "expanded" else "expanded"
+            )
 
 
 def _refresh_target_window(root: tk.Tk, config: Mapping[str, Any], visibility: dict[str, Any]) -> None:

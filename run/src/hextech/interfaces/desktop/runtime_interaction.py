@@ -103,14 +103,6 @@ def run_terminal_loop(ui: "HextechUI") -> None:
         _query_terminal().main_query(shared_df=rows, ui_instance=ui)
 
 
-def run_silent_sync(ui: "HextechUI", refresh_backend_data) -> None:
-    """兼容旧入口；refresh 由 Runtime Supervisor 唯一发起。"""
-
-    del refresh_backend_data
-    if not ui.stop_event.is_set():
-        logger.info("启动阶段静默刷新已停用：refresh 由 Runtime Supervisor action 发起。")
-
-
 def _set_click_status(ui: "HextechUI", text: str, color: str) -> None:
     ui._hero_click_status = text
     ui._run_on_ui_thread(lambda: ui._set_status(text, color))

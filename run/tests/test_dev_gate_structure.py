@@ -41,12 +41,26 @@ def test_resources_and_runtime_are_separated() -> None:
     assert not (RUN_DIR / "resources" / "manifest.v1.json").exists()
     assert not (RUN_DIR / "resources" / "var").exists()
     assert not (RUN_DIR / "var" / "data").exists()
+    for retired in ("ipc", "persisted", "profile", "sources/synergy"):
+        assert not (RUN_DIR / "var" / retired).exists(), retired
+
+
+def test_documented_layout_matches_active_paths() -> None:
+    data_layout = (RUN_DIR / "docs" / "data-layout.md").read_text(encoding="utf-8")
+    system_design = (RUN_DIR / "docs" / "system-design.md").read_text(encoding="utf-8")
+    assert "evidence/mayhem_combos.raw.json" in data_layout
+    assert "cache/{overlay_vision,assets}" in data_layout
+    assert "user-data/preferences" in data_layout
+    assert 'Runtime["runtime"]' not in system_design
 
 
 def test_source_packages_follow_modular_monolith_boundaries() -> None:
     root = RUN_DIR / "src" / "hextech"
-    for package in ("contracts", "modules", "interfaces", "infrastructure", "runtime", "bootstrap"):
+    for package in ("contracts", "modules", "interfaces", "infrastructure", "bootstrap"):
         assert (root / package).is_dir(), package
+    assert not (root / "runtime").exists(), "禁止恢复无消费者的 runtime 预留空包"
+    assert not (root / "bootstrap" / "data_refresh.py").exists(), "禁止恢复旧刷新编排"
+    assert not (root / "infrastructure" / "sources" / "heal_worker.py").exists(), "禁止恢复零调用自愈编排"
     assert (root / "modules" / "acquisition" / "hextech" / "contracts.py").is_file()
     assert (root / "modules" / "acquisition" / "hextech" / "validation.py").is_file()
     assert (root / "modules" / "acquisition" / "apex" / "parser.py").is_file()

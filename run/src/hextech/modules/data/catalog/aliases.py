@@ -12,12 +12,18 @@ import threading
 from typing import Dict, List, Optional
 
 from hextech.modules.data.catalog.alias_utils import dedupe_alias_texts, normalize_alias_token
-from hextech.modules.data.catalog.runtime_store import build_runtime_persisted_path, ensure_private_runtime_dir
+from hextech.modules.data.catalog.runtime_store import (
+    build_runtime_user_preference_path,
+    ensure_private_runtime_dir,
+    get_runtime_root_dir,
+)
 from hextech.modules.data.catalog.version_catalog import HERO_CATALOG_FILENAME, get_hero_catalog_path, load_champion_alias_records
 
 _ALIAS_INDEX_CACHE: tuple[str, float, list[dict]] = ("", 0.0, [])
 CHAMPION_ALIAS_INDEX_FILE = str(get_hero_catalog_path())
-RUNTIME_ALIAS_FILE = build_runtime_persisted_path("aliases.json")
+RUNTIME_ALIAS_FILE = build_runtime_user_preference_path("aliases.json")
+_DEFAULT_RUNTIME_ALIAS_FILE = RUNTIME_ALIAS_FILE
+_LEGACY_RUNTIME_ALIAS_FILE = str(get_runtime_root_dir() / "snapshots" / "aliases.json")
 _RUNTIME_ALIAS_LOCK = threading.Lock()
 
 
@@ -73,11 +79,27 @@ def _coerce_runtime_alias_payload(payload) -> list[dict]:
     return [_normalize_record(item) for item in raw_records if isinstance(item, dict)]
 
 
+def _active_runtime_alias_file() -> str:
+    """一次性迁移旧 snapshot 根文件；测试覆盖可继续替换公开路径常量。"""
+
+    if RUNTIME_ALIAS_FILE != _DEFAULT_RUNTIME_ALIAS_FILE or os.path.exists(RUNTIME_ALIAS_FILE):
+        return RUNTIME_ALIAS_FILE
+    if not os.path.isfile(_LEGACY_RUNTIME_ALIAS_FILE):
+        return RUNTIME_ALIAS_FILE
+    ensure_private_runtime_dir(os.path.dirname(RUNTIME_ALIAS_FILE))
+    try:
+        os.replace(_LEGACY_RUNTIME_ALIAS_FILE, RUNTIME_ALIAS_FILE)
+        return RUNTIME_ALIAS_FILE
+    except OSError:
+        return _LEGACY_RUNTIME_ALIAS_FILE
+
+
 def _load_runtime_alias_index() -> tuple[float, list[dict]]:
-    if not os.path.exists(RUNTIME_ALIAS_FILE):
+    active_file = _active_runtime_alias_file()
+    if not os.path.exists(active_file):
         return 0.0, []
-    current_mtime = os.path.getmtime(RUNTIME_ALIAS_FILE)
-    return current_mtime, _coerce_runtime_alias_payload(_load_json_file(RUNTIME_ALIAS_FILE))
+    current_mtime = os.path.getmtime(active_file)
+    return current_mtime, _coerce_runtime_alias_payload(_load_json_file(active_file))
 
 
 def _merge_alias_records(stable_records: list[dict], runtime_records: list[dict]) -> list[dict]:

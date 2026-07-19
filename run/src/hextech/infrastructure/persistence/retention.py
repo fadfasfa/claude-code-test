@@ -30,11 +30,12 @@ def _mtime(path: Path) -> datetime:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
 
 
-def _generation_provenance(root: Path, generation_id: str) -> tuple[set[str], set[str]]:
+def _generation_provenance(root: Path, generation_id: str) -> tuple[set[str], set[str], set[str]]:
     source_runs: set[str] = set()
     catalog_ids: set[str] = set()
+    origin_generations: set[str] = set()
     if not generation_id:
-        return source_runs, catalog_ids
+        return source_runs, catalog_ids, origin_generations
     manifest = _read_object(root / "snapshots" / "generations" / generation_id / "manifest.json")
     for item in manifest.get("source_files", []):
         if not isinstance(item, Mapping):
@@ -46,7 +47,15 @@ def _generation_provenance(root: Path, generation_id: str) -> tuple[set[str], se
             source_runs.add(f"{source}:{run_id}")
         if catalog_id:
             catalog_ids.add(catalog_id)
-    return source_runs, catalog_ids
+    source_status = manifest.get("source_status")
+    if isinstance(source_status, Mapping):
+        for status in source_status.values():
+            if not isinstance(status, Mapping):
+                continue
+            origin_generation_id = str(status.get("origin_generation_id") or "")
+            if origin_generation_id:
+                origin_generations.add(origin_generation_id)
+    return source_runs, catalog_ids, origin_generations
 
 
 def _journal_references(root: Path) -> tuple[set[str], set[str], set[str]]:
@@ -96,6 +105,18 @@ def protected_references(root: str | Path) -> dict[str, set[str]]:
         if run_id:
             source_runs.add(f"{source}:{run_id}")
 
+    candidates_dir = runtime_root / "state" / "data-service" / "candidates"
+    if candidates_dir.is_dir():
+        for path in candidates_dir.glob("*.v2.json"):
+            pointer = _read_object(path)
+            source = str(pointer.get("source") or path.name.removesuffix(".v2.json"))
+            run_id = str(pointer.get("run_id") or "")
+            catalog_id = str(pointer.get("catalog_generation_id") or "")
+            if source in SOURCE_NAMES and run_id:
+                source_runs.add(f"{source}:{run_id}")
+            if catalog_id:
+                catalog_ids.add(catalog_id)
+
     for filename, field in (("current.v2.json", "current_generation_id"), ("previous.v2.json", "generation_id")):
         pointer = _read_object(runtime_root / "snapshots" / filename)
         generation_id = str(pointer.get(field) or "")
@@ -106,10 +127,19 @@ def protected_references(root: str | Path) -> dict[str, set[str]]:
     source_runs.update(journal_runs)
     catalog_ids.update(journal_catalogs)
     generations.update(journal_generations)
-    for generation_id in tuple(generations):
-        runs, catalogs = _generation_provenance(runtime_root, generation_id)
+    pending_generations = list(generations)
+    inspected_generations: set[str] = set()
+    while pending_generations:
+        generation_id = pending_generations.pop()
+        if generation_id in inspected_generations:
+            continue
+        inspected_generations.add(generation_id)
+        runs, catalogs, origins = _generation_provenance(runtime_root, generation_id)
         source_runs.update(runs)
         catalog_ids.update(catalogs)
+        for origin in origins - generations:
+            generations.add(origin)
+            pending_generations.append(origin)
     return {"source_runs": source_runs, "catalog_generations": catalog_ids, "generations": generations}
 
 

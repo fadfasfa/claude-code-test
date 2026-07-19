@@ -25,7 +25,6 @@ from hextech.modules.data.catalog.version_catalog import (
     catalog_payload,
 )
 from hextech.modules.data.catalog.augment_lookup import load_augment_icon_manifest
-from hextech.modules.data.ports.paths import STATIC_DATA_DIR
 from hextech.modules.session.diagnostics import redact_diagnostic_text
 from . import runtime as web_runtime
 
@@ -301,8 +300,9 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/catalog/{filename:path}")
     async def catalog_file(filename: str):
         projection_files = _CATALOG_PROJECTION_ALLOWLIST | _CATALOG_INDEX_ALLOWLIST
+        catalog_dir = web_runtime.get_catalog_dir()
         return _stable_data_response(
-            STATIC_DATA_DIR,
+            catalog_dir,
             filename,
             lambda name, config_dir: (
                 catalog_payload(name, config_dir)
@@ -327,29 +327,32 @@ def register_routes(app: FastAPI) -> None:
         if not safe_path:
             web_runtime.logger.warning("已阻止目录遍历：%s", asset_path)
             return JSONResponse(content={"error": "禁止访问"}, status_code=403)
-        if os.path.exists(safe_path):
-            return FileResponse(safe_path)
+        local_path = web_runtime.find_local_asset_path(normalized)
+        if local_path:
+            return FileResponse(local_path)
 
         if parts[0] == "augments" and not filename[:-4].isdigit():
             catalog_entry = None
             try:
                 file_stem = unquote(filename[:-4])
-                catalog_entry = web_runtime.find_augment_catalog_entry(file_stem, STATIC_DATA_DIR)
+                catalog_entry = web_runtime.find_augment_catalog_entry(file_stem, web_runtime.get_catalog_dir())
                 if catalog_entry:
                     augment_name = str(catalog_entry.get("name", "")).strip() or file_stem
                     mapped_filename = str(catalog_entry.get("filename", "")).strip()
                     if mapped_filename:
-                        local_mapped = web_runtime.find_existing_augment_asset_filename(assets_dir, mapped_filename)
-                        if local_mapped:
-                            return _safe_asset_response(assets_dir, f"augments/{local_mapped}")
+                        for search_dir in web_runtime.get_asset_search_dirs():
+                            local_mapped = web_runtime.find_existing_augment_asset_filename(search_dir, mapped_filename)
+                            if local_mapped:
+                                return _safe_asset_response(search_dir, f"augments/{local_mapped}")
 
                     remote_icon_url = web_runtime.resolve_remote_augment_icon_url(catalog_entry, augment_name)
                     if remote_icon_url:
                         return RedirectResponse(url=remote_icon_url, status_code=307)
 
-                local_fallback = web_runtime.find_existing_augment_asset_filename(assets_dir, filename)
-                if local_fallback:
-                    return _safe_asset_response(assets_dir, f"augments/{local_fallback}")
+                for search_dir in web_runtime.get_asset_search_dirs():
+                    local_fallback = web_runtime.find_existing_augment_asset_filename(search_dir, filename)
+                    if local_fallback:
+                        return _safe_asset_response(search_dir, f"augments/{local_fallback}")
                 remote_icon_url = web_runtime.resolve_remote_augment_icon_url(catalog_entry, file_stem)
                 if remote_icon_url:
                     return RedirectResponse(url=remote_icon_url, status_code=307)

@@ -934,7 +934,8 @@
                     } else if (message.type === 'data_updated') {
                         console.log('[WS] 数据已更新，重新加载...');
                         loadChampions();
-                        showUpdateToast('数据已刷新');
+                        const degraded = Array.isArray(message.degraded_sources) ? message.degraded_sources : [];
+                        showUpdateToast(degraded.length ? `数据已刷新 · 沿用 ${degraded.join('/')}` : '数据已刷新');
                     } else if (message.type === 'local_player_locked') {
                         const heroName = message.hero_name;
                         const championId = message.champion_id;

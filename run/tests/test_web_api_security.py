@@ -446,8 +446,15 @@ def test_preloaded_reader_returns_snapshot_copy(monkeypatch, tmp_path):
         {
             "champions": [{"id": "86", "name": "Garen"}],
             "champion_hextech": {"Garen": {"hero_id": "86", "augments": [{"id": "a1", "name": "original"}]}},
-            "overlay_hints": {"hints": {}, "augments": {}},
-            "identities": {"schema_version": 2, "champions": {"86": "Garen"}, "augments": {}},
+            "overlay_hints": {
+                "hints": {"a1": {"augment_id": "a1", "name": "original"}},
+                "name_index": {"a1": "a1", "original": "a1"},
+            },
+            "identities": {
+                "schema_version": 2,
+                "champions": {"86": "Garen"},
+                "augments": {"a1": "original"},
+            },
         },
     )
     monkeypatch.setattr(runtime, "resolve_canonical_hero_name", lambda name: "Garen")

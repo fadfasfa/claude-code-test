@@ -26,12 +26,10 @@ class DesktopBootstrapMixin:
             self.startup_timing.mark("background_bootstrap_start")
             from hextech.modules.data.generation import DataSnapshotClient
             from hextech.modules.data.catalog.version_catalog import load_champion_core_data
-            from hextech.modules.data.ports.paths import ASSET_DIR
             from .service_manager import ServiceManager
 
             if self._closing:
                 return
-            os.makedirs(ASSET_DIR, exist_ok=True)
             service_manager = ServiceManager(
                 start_web_func=self._spawn_web_process,
                 start_data_service_func=lambda: ui_runtime.start_data_service_process(parent_pid=os.getpid()),
@@ -181,12 +179,6 @@ class DesktopBootstrapMixin:
             self.web_port_file,
             auto_open_browser=self.feature_flags.get("auto_open_browser", True),
         )
-
-    def _prepare_overlay_hint_cache(self) -> None:
-        """兼容旧调用点；共享数据只能由 DataService 发布。"""
-
-        if self.data_service is not None:
-            self.data_service.refresh()
 
     def _start_web_server(self):
         """后台启动网页服务，避免阻塞界面线程。"""

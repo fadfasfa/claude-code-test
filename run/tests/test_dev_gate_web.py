@@ -118,7 +118,6 @@ def test_api_champions_reads_published_snapshot_without_web_rebuild() -> None:
 
     with (
         patch.object(web_api, "_snapshot_client", SnapshotClient()),
-        patch.object(web_api.web_runtime, "get_df", side_effect=AssertionError("Web 不得读取运行时 CSV")),
         patch.object(web_api.web_runtime, "request_background_refresh", side_effect=AssertionError("Web 不得发起刷新")),
     ):
         response = TestClient(app).get("/api/champions")

@@ -13,9 +13,7 @@ from tests._dev_gate_support import (
     _top_level_import_names,
     _write_runtime_csv,
     alias_search,
-    heal_worker,
     json,
-    orchestrator,
     os,
     patch,
     precomputed_cache,
@@ -87,22 +85,6 @@ def test_latest_valid_runtime_csv_fallback() -> None:
         ):
             assert runtime_store.get_latest_valid_csv() == str(valid)
             assert runtime_store.get_latest_csv() == str(broken)
-
-        with (
-            patch.object(orchestrator, "get_latest_csv", side_effect=AssertionError("refresh must use valid csv")),
-            patch.object(orchestrator, "get_latest_valid_csv", return_value=str(valid)),
-            patch.object(orchestrator, "hextech_refresh_blocked", return_value=False),
-            patch.object(orchestrator, "_file_is_fresh", return_value=True),
-        ):
-            assert orchestrator.should_refresh_hextech(False) is False
-
-        with (
-            patch.object(heal_worker, "get_latest_csv", side_effect=AssertionError("freshness must use valid csv")),
-            patch.object(heal_worker, "get_latest_valid_csv", return_value=str(valid)),
-            patch.object(heal_worker, "_file_is_fresh", return_value=True),
-        ):
-            assert heal_worker._latest_csv_ready() is True
-            assert heal_worker._latest_csv_fresh() is True
 
 def test_precomputed_cache_freshness() -> None:
     with TemporaryDirectory() as temp_dir:

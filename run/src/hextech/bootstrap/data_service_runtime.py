@@ -20,17 +20,25 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from typing import Any
 from pathlib import Path
 
 import psutil
 
 from hextech.infrastructure.persistence.file_lock import InterProcessFileLock
-from hextech.bootstrap.data_service_status import sync_startup_snapshot_status as _sync_startup_snapshot_status
-from hextech.contracts import ArtifactDescriptor, SourceProvenance
+from hextech.infrastructure.transport.loopback_http import LoopbackThreadingHTTPServer
+from hextech.bootstrap.data_service_status import (
+    sync_startup_service_state,
+    sync_startup_snapshot_status as _sync_startup_snapshot_status,
+)
+from hextech.contracts import SourceProvenance
 from hextech.modules.data.generation import DataSnapshotPublisher
 from hextech.modules.data.ports.atomic import atomic_write_json
+from hextech.bootstrap.snapshot_contributions import (
+    open_baseline_view as _open_baseline_view,
+    validated_source_artifact as _validated_source_artifact,
+)
 
 
 @dataclass(frozen=True)
@@ -178,70 +186,52 @@ def _build_augment_identity_payload(
 
 
 def _source_provenance(source: str, pointer: Mapping[str, Any]) -> SourceProvenance:
-    descriptor = ArtifactDescriptor.from_mapping(pointer["artifact"])
+    from hextech.contracts import BaselineContributionV2
+
+    if pointer.get("kind") == "baseline_generation":
+        baseline = BaselineContributionV2.from_mapping(pointer)
+        if baseline.source != source:
+            raise ValueError(f"baseline contribution 来源不匹配：expected={source} actual={baseline.source}")
+        return baseline.provenance
+    artifact = pointer.get("artifact") if isinstance(pointer.get("artifact"), Mapping) else {}
     return SourceProvenance(
         source=source,  # type: ignore[arg-type]
         run_id=str(pointer["run_id"]),
         catalog_generation_id=str(pointer["catalog_generation_id"]),
-        artifact_role=descriptor.role,
-        artifact_sha256=descriptor.sha256,
-        record_count=descriptor.record_count,
+        artifact_role=str(artifact["role"]),
+        artifact_sha256=str(artifact["sha256"]),
+        record_count=int(artifact["record_count"]),
         manifest_sha256=str(pointer["manifest_sha256"]),
-        content_schema_version=descriptor.content_schema_version,
+        content_schema_version=int(artifact["content_schema_version"]),
     )
 
 
-def build_snapshot_from_runtime() -> DataBuildResult:
+def build_snapshot_from_runtime(
+    contributions: Mapping[str, Mapping[str, Any]] | None = None,
+) -> DataBuildResult:
     """从已刷新且签名匹配的运行态数据构建一代完整消费者快照。"""
 
-    from hextech.modules.data.catalog.runtime_store import build_synergy_data_path, get_latest_valid_csv, load_runtime_csv
-    from hextech.modules.data.catalog.precomputed_cache import load_precomputed_champion_list, load_precomputed_hextech_map
-    from hextech.modules.data.catalog.version_catalog import load_augment_manifest_entries
+    from hextech.modules.data.catalog.runtime_store import load_runtime_csv
+    from hextech.modules.data.catalog.version_catalog import load_augment_manifest_entries, load_champion_core_data
     from hextech.modules.recommendation.hints import build_overlay_hint_cache, enrich_overlay_hint_cache_with_catalog
 
-    csv_path = Path(get_latest_valid_csv() or "")
-    if not csv_path.is_file():
-        raise FileNotFoundError("没有可用于 DataService generation 的有效 CSV")
-    dataframe = load_runtime_csv(str(csv_path))
-    if dataframe.empty:
-        raise ValueError("DataService generation 源 CSV 为空")
-    raw_champions = load_precomputed_champion_list()
-    raw_details = load_precomputed_hextech_map()
-    if not raw_champions or not raw_details:
-        raw_champions, raw_details = _query_payloads_from_dataframe(dataframe)
-    champions: list[dict[str, Any]] = []
-    champion_id_by_name: dict[str, str] = {}
-    for item in raw_champions:
-        if not isinstance(item, Mapping):
-            continue
-        champion_id = str(
-            item.get("id") or item.get("英雄ID") or item.get("英雄 ID") or item.get("champion_id") or ""
-        ).strip()
-        champion_name = str(item.get("name") or item.get("英雄名称") or item.get("hero_name") or "").strip()
-        if not champion_id or not champion_name:
-            continue
-        champions.append({**dict(item), "id": champion_id, "name": champion_name})
-        champion_id_by_name[champion_name] = champion_id
-    if not champions:
-        raise ValueError("DataService generation 未生成有效英雄")
+    from hextech.modules.data.catalog.versioned import load_active_catalog, load_runtime_catalog_from_pointer
+    from hextech.modules.data.source_runs import load_source_current
 
-    synergy_path = Path(build_synergy_data_path())
-    if not synergy_path.is_file():
-        raise FileNotFoundError("没有可用于 DataService generation 的联动快照")
-    try:
-        raw_synergy = json.loads(synergy_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"DataService 联动快照无效：{synergy_path.name}") from exc
-    if not isinstance(raw_synergy, Mapping) or not raw_synergy:
-        raise ValueError("DataService 联动快照必须是非空对象")
-    from hextech.modules.data.catalog.versioned import load_active_catalog
-    from hextech.modules.data.source_runs import load_source_current, resolve_current_artifact
-
-    catalog = load_active_catalog()
-    pointers = {source: load_source_current(source, verify_hash=True) for source in ("hextech", "apex", "mayhem")}
+    catalog = None
+    if contributions is not None and isinstance(contributions.get("catalog"), Mapping):
+        catalog = load_runtime_catalog_from_pointer(contributions["catalog"])
+        if catalog is None:
+            raise ValueError("generation Catalog contribution 无效")
+    catalog = catalog or load_active_catalog()
+    pointers = (
+        {source: dict(contributions[source]) for source in ("hextech", "apex", "mayhem")}
+        if contributions is not None
+        else {source: load_source_current(source, verify_hash=True) for source in ("hextech", "apex", "mayhem")}
+    )
     missing = [source for source, pointer in pointers.items() if not pointer]
     if missing:
-        raise FileNotFoundError(f"generation 来源 current 缺失或无效：{', '.join(missing)}")
+        raise FileNotFoundError(f"generation 来源 contribution 缺失：{', '.join(missing)}")
     mismatched = [
         source
         for source, pointer in pointers.items()
@@ -251,27 +241,96 @@ def build_snapshot_from_runtime() -> DataBuildResult:
     if mismatched:
         raise ValueError(f"generation 来源绑定了不同 Catalog：{', '.join(mismatched)}")
 
-    mayhem_path = resolve_current_artifact("mayhem")
-    if mayhem_path:
+    fallback_sources = {
+        source for source, pointer in pointers.items() if pointer.get("kind") == "baseline_generation"
+    }
+    if "hextech" in fallback_sources:
+        _, fallback_view = _open_baseline_view(pointers["hextech"])
+        fallback_champions = fallback_view.get_champions()
+        raw_champions = fallback_champions
+        raw_details = {
+            str(item.get("name") or ""): fallback_view.get_champion_detail(item.get("id") or item.get("name"))
+            for item in fallback_champions
+            if isinstance(item, Mapping)
+        }
+    else:
+        csv_path = _validated_source_artifact("hextech", pointers["hextech"], expected_role="stats")
+        dataframe = load_runtime_csv(str(csv_path))
+        if dataframe.empty:
+            raise ValueError("DataService generation 源 CSV 为空")
+        raw_champions, raw_details = _query_payloads_from_dataframe(dataframe)
+
+    catalog_champions = load_champion_core_data(catalog.root)
+    if not catalog_champions:
+        raise ValueError("Catalog 英雄目录为空")
+    raw_champions_by_id = {
+        str(
+            item.get("id") or item.get("英雄ID") or item.get("英雄 ID") or item.get("champion_id") or ""
+        ).strip(): item
+        for item in raw_champions
+        if isinstance(item, Mapping)
+    }
+    raw_details_by_id = {
+        str(detail.get("hero_id") or "").strip(): detail
+        for detail in raw_details.values()
+        if isinstance(detail, Mapping) and str(detail.get("hero_id") or "").strip()
+    }
+    champions: list[dict[str, Any]] = []
+    champion_id_by_name: dict[str, str] = {}
+    normalized_details: dict[str, Mapping[str, Any]] = {}
+    for raw_id, catalog_item in catalog_champions.items():
+        champion_id = str(raw_id).strip()
+        champion_name = str(catalog_item.get("name") or "").strip() if isinstance(catalog_item, Mapping) else ""
+        if not champion_id or not champion_name:
+            raise ValueError(f"Catalog 英雄身份无效：{raw_id}")
+        stat_item = raw_champions_by_id.get(champion_id, {})
+        detail = raw_details_by_id.get(champion_id) or raw_details.get(champion_name)
+        if not isinstance(detail, Mapping):
+            raise ValueError(f"DataService 英雄详情缺失：{champion_name}")
+        champions.append({**dict(stat_item), "id": champion_id, "name": champion_name})
+        champion_id_by_name[champion_name] = champion_id
+        normalized_details[champion_name] = detail
+
+    synergy_fallback = fallback_sources.intersection({"apex", "mayhem"})
+    if synergy_fallback:
+        if synergy_fallback != {"apex", "mayhem"}:
+            raise ValueError("Apex/Mayhem baseline 必须来自同一完整 generation")
+        apex_baseline, fallback_view = _open_baseline_view(pointers["apex"])
+        mayhem_baseline, _ = _open_baseline_view(pointers["mayhem"])
+        if apex_baseline.origin_generation_id != mayhem_baseline.origin_generation_id:
+            raise ValueError("Apex/Mayhem baseline origin generation 不一致")
+        raw_synergy = fallback_view.get_synergy_data()
+    else:
+        apex_path = _validated_source_artifact("apex", pointers["apex"], expected_role="synergy")
+        mayhem_path = _validated_source_artifact("mayhem", pointers["mayhem"], expected_role="combos")
+        try:
+            raw_synergy = json.loads(apex_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"DataService Apex artifact 无效：{apex_path.name}") from exc
         from hextech.modules.acquisition.mayhem.merge import merge_mayhem_combos
 
+        catalog_files = {item.role: catalog.root / item.relative_path for item in catalog.manifest.files}
         merge_summary = merge_mayhem_combos(
-            apex_path=synergy_path,
+            apex_path=apex_path,
             mayhem_raw_path=mayhem_path,
+            augment_manifest_path=catalog_files["augments"],
+            core_data_path=catalog_files["champions"],
             write_output=False,
         )
         merged = merge_summary.get("merged_payload")
         if not isinstance(merged, Mapping) or not merged:
             raise ValueError("DataService Mayhem dry-run 合并结果无效")
         raw_synergy = merged
+    if not isinstance(raw_synergy, Mapping) or not raw_synergy:
+        raise ValueError("DataService 联动 contribution 必须是非空对象")
     synergy_data = dict(raw_synergy)
     champion_hextech: dict[str, Any] = {}
     for champion in champions:
         name = champion["name"]
-        detail = raw_details.get(name)
+        detail = normalized_details.get(name)
         if not isinstance(detail, Mapping):
             raise ValueError(f"DataService 英雄详情缓存缺失：{name}")
-        cards = detail.get("comprehensive", []) if isinstance(detail, Mapping) else []
+        cards = (detail.get("comprehensive") or detail.get("augments") or []) if isinstance(detail, Mapping) else []
         normalized_augments: list[dict[str, Any]] = []
         for card in cards if isinstance(cards, list) else []:
             if not isinstance(card, Mapping):
@@ -295,7 +354,7 @@ def build_snapshot_from_runtime() -> DataBuildResult:
         source_tag="data-service",
         champion_id_by_name=champion_id_by_name,
     )
-    catalog_entries = load_augment_manifest_entries()
+    catalog_entries = load_augment_manifest_entries(catalog.root)
     augment_identities = _build_augment_identity_payload(overlay_hints, catalog_entries)
     enrich_overlay_hint_cache_with_catalog(overlay_hints, catalog_entries)
     identities = {
@@ -670,7 +729,13 @@ def main(argv: list[str] | None = None) -> int:
     if not instance_lock.acquire():
         print("DataService 已由另一个桌面实例持有。", file=sys.stderr, flush=True)
         return 3
-    bootstrap_result = bootstrap_snapshot(publisher)
+    sync_startup_service_state(publisher, "starting")
+    try:
+        bootstrap_result = bootstrap_snapshot(publisher)
+    except Exception as exc:
+        sync_startup_service_state(publisher, "failed", error_summary=f"{exc.__class__.__name__}: {exc}")
+        instance_lock.release()
+        raise
     coordinator = CohortRefreshCoordinator(
         publisher=publisher,
         builder=build_snapshot_from_runtime,
@@ -683,7 +748,7 @@ def main(argv: list[str] | None = None) -> int:
         initial_result=bootstrap_result,
     )
     application = DataServiceApplication(core=core, parent_pid=args.parent_pid)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), application.handler())
+    server = LoopbackThreadingHTTPServer(("127.0.0.1", 0), application.handler())
     threading.Thread(target=server.serve_forever, name="hextech-data-service-http", daemon=True).start()
     print(
         json.dumps(
@@ -709,6 +774,7 @@ def main(argv: list[str] | None = None) -> int:
                 application.submit_action("refresh")
                 next_refresh_at = time.monotonic() + 15 * 60
     finally:
+        sync_startup_service_state(publisher, "stopping")
         application.request_shutdown()
         coordinator.request_stop()
         server.shutdown()

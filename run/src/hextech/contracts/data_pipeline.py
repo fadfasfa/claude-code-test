@@ -434,6 +434,163 @@ class SnapshotFileDescriptor:
         except (KeyError, TypeError) as exc:
             raise DataContractError(f"snapshot file descriptor 无效：{exc}") from exc
 
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class BaselineContributionV2:
+    """把旧 generation 作为只读 last-good contribution，而不伪造 source artifact 路径。"""
+
+    source: str
+    origin_generation_id: str
+    catalog_generation_id: str
+    catalog_sha256: str
+    created_at: str
+    provenance: SourceProvenance
+    snapshot_files: tuple[SnapshotFileDescriptor, ...]
+    schema_version: int = SNAPSHOT_SCHEMA_VERSION
+    kind: str = "baseline_generation"
+
+    def __post_init__(self) -> None:
+        if self.schema_version != SNAPSHOT_SCHEMA_VERSION or self.kind != "baseline_generation":
+            raise DataContractError("baseline contribution schema 无效")
+        if self.source not in {"hextech", "apex", "mayhem"}:
+            raise DataContractError(f"baseline contribution 来源无效：{self.source}")
+        require_identifier(self.origin_generation_id, field_name="baseline.origin_generation_id")
+        require_identifier(self.catalog_generation_id, field_name="baseline.catalog_generation_id")
+        require_sha256(self.catalog_sha256, field_name="baseline.catalog_sha256")
+        if self.provenance.source != self.source:
+            raise DataContractError("baseline provenance 与来源不一致")
+        if self.provenance.catalog_generation_id != self.catalog_generation_id:
+            raise DataContractError("baseline provenance 与 Catalog 不一致")
+        roles = {item.role for item in self.snapshot_files}
+        if roles != {"champions", "champion_hextech", "overlay_hints", "identities"}:
+            raise DataContractError("baseline contribution 必须绑定完整 generation 文件")
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "BaselineContributionV2":
+        try:
+            files = payload["snapshot_files"]
+            provenance = payload["provenance"]
+            if not isinstance(files, list) or not isinstance(provenance, Mapping):
+                raise TypeError("snapshot_files/provenance 类型无效")
+            return cls(
+                schema_version=payload["schema_version"],
+                kind=str(payload["kind"]),
+                source=str(payload["source"]),
+                origin_generation_id=str(payload["origin_generation_id"]),
+                catalog_generation_id=str(payload["catalog_generation_id"]),
+                catalog_sha256=str(payload["catalog_sha256"]),
+                created_at=str(payload["created_at"]),
+                provenance=SourceProvenance.from_mapping(provenance),
+                snapshot_files=tuple(SnapshotFileDescriptor.from_mapping(item) for item in files),
+            )
+        except (KeyError, TypeError) as exc:
+            raise DataContractError(f"baseline contribution 无效：{exc}") from exc
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "kind": self.kind,
+            "source": self.source,
+            "origin_generation_id": self.origin_generation_id,
+            "catalog_generation_id": self.catalog_generation_id,
+            "catalog_sha256": self.catalog_sha256,
+            "created_at": self.created_at,
+            "provenance": asdict(self.provenance),
+            "snapshot_files": [item.to_dict() for item in self.snapshot_files],
+        }
+
+
+@dataclass(frozen=True)
+class SourceStatusV2:
+    """generation 内逐来源状态；旧 generation 缺失字段时显式归一为 unknown/空值。"""
+
+    catalog_id: str = ""
+    data_at: str = ""
+    checked_at: str = ""
+    freshness: str = "unknown"
+    run_id: str = ""
+    origin_generation_id: str = ""
+    artifact_sha256: str = ""
+    manifest_sha256: str = ""
+    record_count: int = 0
+
+    def __post_init__(self) -> None:
+        if self.freshness not in {"fresh", "last_good", "unknown"}:
+            raise DataContractError(f"source_status freshness 无效：{self.freshness}")
+        _non_negative_int(self.record_count, field_name="source_status.record_count")
+        for field_name in ("artifact_sha256", "manifest_sha256"):
+            value = getattr(self, field_name)
+            if value:
+                require_sha256(value, field_name=f"source_status.{field_name}")
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "SourceStatusV2":
+        try:
+            return cls(
+                catalog_id=str(payload.get("catalog_id") or ""),
+                data_at=str(payload.get("data_at") or ""),
+                checked_at=str(payload.get("checked_at") or ""),
+                freshness=str(payload.get("freshness") or "unknown"),
+                run_id=str(payload.get("run_id") or ""),
+                origin_generation_id=str(payload.get("origin_generation_id") or ""),
+                artifact_sha256=str(payload.get("artifact_sha256") or ""),
+                manifest_sha256=str(payload.get("manifest_sha256") or ""),
+                record_count=payload.get("record_count", 0),
+            )
+        except TypeError as exc:
+            raise DataContractError(f"source_status 无效：{exc}") from exc
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class DataSnapshotCurrentPointerV2:
+    current_generation_id: str
+    schema_version: int = SNAPSHOT_POINTER_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != SNAPSHOT_POINTER_SCHEMA_VERSION:
+            raise DataContractError(f"不支持的 snapshot current schema：{self.schema_version}")
+        require_identifier(self.current_generation_id, field_name="current_generation_id")
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "DataSnapshotCurrentPointerV2":
+        try:
+            return cls(
+                schema_version=payload["schema_version"],
+                current_generation_id=str(payload["current_generation_id"]),
+            )
+        except (KeyError, TypeError) as exc:
+            raise DataContractError(f"snapshot current pointer 无效：{exc}") from exc
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class DataSnapshotPreviousPointerV2:
+    generation_id: str
+    schema_version: int = SNAPSHOT_POINTER_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != SNAPSHOT_POINTER_SCHEMA_VERSION:
+            raise DataContractError(f"不支持的 snapshot previous schema：{self.schema_version}")
+        require_identifier(self.generation_id, field_name="generation_id")
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "DataSnapshotPreviousPointerV2":
+        try:
+            return cls(schema_version=payload["schema_version"], generation_id=str(payload["generation_id"]))
+        except (KeyError, TypeError) as exc:
+            raise DataContractError(f"snapshot previous pointer 无效：{exc}") from exc
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
 
 @dataclass(frozen=True)
 class DataSnapshotManifestV2:
@@ -445,6 +602,10 @@ class DataSnapshotManifestV2:
     augment_count: int
     stat_record_count: int
     files: tuple[SnapshotFileDescriptor, ...]
+    health: str = "healthy"
+    refreshed_sources: tuple[str, ...] = ()
+    degraded_sources: tuple[str, ...] = ()
+    source_status: Mapping[str, SourceStatusV2] = field(default_factory=dict)
     schema_version: int = SNAPSHOT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -454,6 +615,17 @@ class DataSnapshotManifestV2:
         require_sha256(self.content_fingerprint, field_name="content_fingerprint")
         for name in ("champion_count", "augment_count", "stat_record_count"):
             _non_negative_int(getattr(self, name), field_name=name)
+        if self.health not in {"healthy", "degraded"}:
+            raise DataContractError("generation health 必须是 healthy 或 degraded")
+        valid_sources = {"catalog", "hextech", "apex", "mayhem"}
+        if not set(self.refreshed_sources).issubset(valid_sources):
+            raise DataContractError("generation refreshed_sources 包含未知来源")
+        if not set(self.degraded_sources).issubset(valid_sources):
+            raise DataContractError("generation degraded_sources 包含未知来源")
+        if self.health == "healthy" and self.degraded_sources:
+            raise DataContractError("healthy generation 不能声明 degraded_sources")
+        if not set(self.source_status).issubset(valid_sources):
+            raise DataContractError("generation source_status 包含未知来源")
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "DataSnapshotManifestV2":
@@ -468,6 +640,14 @@ class DataSnapshotManifestV2:
                 augment_count=payload["augment_count"],
                 stat_record_count=payload["stat_record_count"],
                 files=tuple(SnapshotFileDescriptor.from_mapping(item) for item in payload["files"]),
+                health=str(payload.get("health") or "healthy"),
+                refreshed_sources=tuple(str(item) for item in payload.get("refreshed_sources", ())),
+                degraded_sources=tuple(str(item) for item in payload.get("degraded_sources", ())),
+                source_status={
+                    str(source): SourceStatusV2.from_mapping(status)
+                    for source, status in payload.get("source_status", {}).items()
+                    if isinstance(status, Mapping)
+                },
             )
         except (KeyError, TypeError) as exc:
             raise DataContractError(f"generation manifest 无效：{exc}") from exc
@@ -576,11 +756,14 @@ def parse_provenance(items: Sequence[Mapping[str, Any]]) -> tuple[SourceProvenan
 
 __all__ = [
     "ArtifactDescriptor",
+    "BaselineContributionV2",
     "CATALOG_SCHEMA_VERSION",
     "CONTENT_FINGERPRINT_SCHEMA_VERSION",
     "CatalogManifestV2",
+    "DataSnapshotCurrentPointerV2",
     "DataContractError",
     "DataSnapshotManifestV2",
+    "DataSnapshotPreviousPointerV2",
     "FetchAttempt",
     "ItemOutcome",
     "ItemState",
@@ -596,6 +779,7 @@ __all__ = [
     "SourcePointerV2",
     "SourceProvenance",
     "SourceRunManifestV2",
+    "SourceStatusV2",
     "parse_provenance",
     "require_identifier",
     "require_relative_path",

@@ -6,7 +6,7 @@
 - 统一管理 LCU 轮询、CSV 监视、冷启动快照和资源缓存回退
 
 核心输入：
-- 本地 `resources/catalog`、`resources/assets` 与 `var/cache` 运行态缓存
+- 已验证 Catalog、只读 `resources/assets` seed 与 `var/cache/assets` 运行态缓存
 - LCU 本地接口、远端快照接口和海克斯图标资源
 
 核心输出：
@@ -14,7 +14,7 @@
 
 主要依赖：
 - `hextech.modules.data.catalog.runtime_store`
-- `hextech.bootstrap.data_refresh`
+- `hextech.modules.data.generation`
 - `hextech.infrastructure.sources.version_sync`
 - `hextech.modules.acquisition.common.icons`
 
@@ -48,7 +48,6 @@ from typing import Any, List, Optional, Set, Tuple
 from urllib.parse import quote, urlparse
 from secrets import token_urlsafe
 
-import pandas as pd
 import psutil
 import requests
 import urllib3
@@ -74,11 +73,12 @@ from hextech.modules.acquisition.common.icons import (
 )
 from hextech.modules.vision.image_validation import is_valid_png_bytes, read_limited_response_bytes
 from hextech.modules.data.catalog.version_catalog import load_champion_core_data
+from hextech.modules.data.catalog.versioned import load_active_catalog
 from hextech.modules.data.ports.paths import (
     ASSET_DIR,
     BASE_DIR,
     BUNDLE_ROOT_DIR,
-    STATIC_DATA_DIR,
+    var_path,
 )
 
 
@@ -91,7 +91,6 @@ def _ensure_utf8_stdio() -> None:
 
 
 _ensure_utf8_stdio()
-VERSION_FILE = os.path.join(STATIC_DATA_DIR, "hero_version.txt")
 
 logger = logging.getLogger(__name__)
 
@@ -210,18 +209,40 @@ def get_static_dir() -> str:
     global _static_dir
     if _static_dir is None:
         _static_dir = _get_resource_path("static")
-        os.makedirs(_static_dir, exist_ok=True)
     return _static_dir
 
 
 def get_assets_dir() -> str:
+    """返回唯一可写图片缓存；只在实际需要缓存时创建。"""
+
     global _assets_dir
     if _assets_dir is None:
-        # 源码态与冻结态都使用 `_paths.ASSET_DIR` 作为可写图片事实源；
-        # 打包内的 `assets` 只作为首启播种输入，不作为运行期写入目录。
-        _assets_dir = ASSET_DIR
+        _assets_dir = os.fspath(var_path("cache", "assets"))
         os.makedirs(_assets_dir, exist_ok=True)
     return _assets_dir
+
+
+def get_asset_search_dirs() -> tuple[str, ...]:
+    """按运行缓存、只读 seed 的顺序返回图片查找根。"""
+
+    roots = (get_assets_dir(), ASSET_DIR)
+    return tuple(dict.fromkeys(os.path.abspath(root) for root in roots))
+
+
+def get_catalog_dir() -> str:
+    """返回已验证 runtime Catalog；不存在时由 loader 回退只读 seed。"""
+
+    return os.fspath(load_active_catalog().root)
+
+
+def find_local_asset_path(relative_path: str) -> Optional[str]:
+    """在受控根目录中查找本地图片，缓存优先且不创建 seed 路径。"""
+
+    for root in get_asset_search_dirs():
+        candidate = safe_join_under_dir(root, relative_path)
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def is_safe_png_asset_name(filename: str) -> bool:
@@ -293,7 +314,7 @@ def resolve_remote_augment_icon_url(catalog_entry: Optional[dict], fallback_name
     else:
         augment_name = fallback_name
 
-    remote_url = resolve_apexlol_hextech_icon_url(augment_name, config_dir=STATIC_DATA_DIR)
+    remote_url = resolve_apexlol_hextech_icon_url(augment_name, config_dir=get_catalog_dir())
     if remote_url and not remote_url.startswith("/assets/") and is_safe_redirect_url(remote_url):
         return remote_url
     return ""
@@ -310,10 +331,11 @@ def download_augment_icon_from_remote(augment_name: str, icon_filename: str) -> 
     if not remote_url:
         return None
 
-    target_path = safe_join_under_dir(get_assets_dir(), safe_filename)
+    target_path = safe_join_under_dir(get_assets_dir(), f"augments/{safe_filename}")
     if not target_path:
         logger.warning("已阻止图标缓存目录穿越：%s", safe_filename)
         return None
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(prefix="augment-", suffix=".tmp", dir=os.path.dirname(target_path))
     os.close(fd)
     try:
@@ -535,7 +557,7 @@ def ensure_champion_cache() -> dict:
     global _champion_core_cache
     if _champion_core_cache is None:
         try:
-            _champion_core_cache = load_champion_core_data()
+            _champion_core_cache = load_champion_core_data(get_catalog_dir())
         except Exception as exc:
             logger.warning("英雄核心数据加载失败：%s", exc)
             _champion_core_cache = {}
@@ -609,32 +631,13 @@ def resolve_champion_id(query: str) -> str:
 
 def get_ddragon_version() -> str:
     try:
-        with open(VERSION_FILE, "r", encoding="utf-8") as f:
+        with open(os.path.join(get_catalog_dir(), "hero_version.txt"), "r", encoding="utf-8") as f:
             version = f.read().strip()
             if version:
                 return version
     except (OSError, IOError):
         logger.debug("无法读取 hero_version.txt，跳过 DDragon 回退。")
     return ""
-
-
-def get_df() -> pd.DataFrame:
-    """兼容旧查询入口；只把当前 generation 英雄榜投影为 DataFrame。"""
-
-    try:
-        return pd.DataFrame(_snapshot_client.get_champions())
-    except Exception as exc:
-        logger.debug("DataSnapshot 英雄榜尚不可用：%s", exc)
-        return pd.DataFrame()
-
-
-def _get_runtime_df_signature() -> Tuple[str, float]:
-    status = _snapshot_client.status()
-    return (str(status.get("generation_id") or ""), 0.0)
-
-
-def clear_preloaded_hextech_payloads() -> None:
-    """兼容旧生命周期调用；generation 客户端无需由 Web 清缓存。"""
 
 
 def get_preloaded_hextech_payload(hero_name: str) -> Optional[dict]:
@@ -676,72 +679,6 @@ def request_preload_hextech_payload_async(hero_name: str) -> bool:
 
 def queue_preload_hextech_payloads(hero_names: List[str]) -> bool:
     return any(request_preload_hextech_payload(name) for name in hero_names)
-
-
-async def get_df_with_refresh(timeout: float = 25.0) -> pd.DataFrame:
-    """CSV 缺失时只等待已有产物出现；数据自愈由 Runtime Supervisor 发起。"""
-    df = get_df()
-    if not df.empty:
-        return df
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        df = get_df()
-        if not df.empty:
-            return df
-        await asyncio.sleep(min(0.5, max(0.0, deadline - time.time())))
-    return df
-
-
-def get_stable_champion_catalog_df() -> pd.DataFrame:
-    """读取 bundle 内稳定英雄目录，作为首页冷启动兜底数据源。"""
-    core_data = load_champion_core_data()
-    rows = []
-    for champ_id, item in core_data.items():
-        if not isinstance(item, dict):
-            continue
-        hero_name = str(item.get("name", "")).strip()
-        if not hero_name:
-            continue
-        rows.append(
-            {
-                "英雄ID": str(champ_id).strip(),
-                "英雄名称": hero_name,
-                "英雄评级": "",
-                "英雄胜率": 0.5,
-                "英雄出场率": 0.001,
-                "海克斯阶级": "",
-                "海克斯名称": "",
-                "海克斯胜率": 0.0,
-                "海克斯出场率": 0.0,
-                "胜率差": 0.0,
-                "综合得分": 0.0,
-            }
-        )
-    if not rows:
-        return pd.DataFrame()
-    return pd.DataFrame(rows)
-
-
-def get_live_champion_snapshot_df(force_refresh: bool = False) -> pd.DataFrame:
-    """兼容旧名称；返回当前 generation 英雄榜，不执行远端请求。"""
-
-    del force_refresh
-    return get_df()
-
-
-def get_live_hextech_snapshot_df(hero_name: str, force_refresh: bool = False) -> pd.DataFrame:
-    """兼容旧名称；返回当前 generation 单英雄详情，不执行远端请求。"""
-
-    del force_refresh
-    hero_name = resolve_canonical_hero_name(hero_name)
-    if not hero_name:
-        return pd.DataFrame()
-    try:
-        return pd.DataFrame(_snapshot_client.get_champion_augments(hero_name))
-    except Exception as exc:
-        logger.debug("DataSnapshot 单英雄详情尚不可用：hero=%s error=%s", hero_name, exc)
-        return pd.DataFrame()
 
 
 def get_synergy_data() -> dict:
