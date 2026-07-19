@@ -30,10 +30,13 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from hextech.modules.vision.window import (
+    WindowProbeResult,
+    configure_process_dpi_awareness,
     find_lol_game_window,
     is_scoreboard_key_down,
     is_window_foreground,
     is_window_renderable,
+    probe_lol_game_window,
 )
 from hextech.modules.vision.window_titles import LOL_GAME_WINDOW_TITLE
 from hextech.modules.data.ports.atomic import atomic_write_json
@@ -48,7 +51,7 @@ from hextech.modules.data.overlay_source import (
     prepare_shared_overlay_data,
     source_has_private_stats,
 )
-from .gameflow import probe_gameflow_in_progress
+from .gameflow import GameflowState, lcu_scanner_configured, probe_gameflow_state
 from .renderer import build_render_model, build_render_model_from_session, draw_overlay_frame
 from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
 
@@ -136,6 +139,7 @@ class OverlayVisibilitySnapshot:
 
     user_enabled: bool
     gameflow_in_progress: bool
+    gameflow_state: str
     game_hwnd: int | None
     game_rect: tuple[int, int, int, int] | None
     game_renderable: bool
@@ -151,7 +155,7 @@ class GameflowPoller:
     def __init__(
         self,
         *,
-        probe: Callable[[], bool] = probe_gameflow_in_progress,
+        probe: Callable[[], GameflowState | bool] = probe_gameflow_state,
         interval_seconds: float = GAMEFLOW_REFRESH_SECONDS,
     ) -> None:
         self._probe = probe
@@ -159,8 +163,10 @@ class GameflowPoller:
         self._lock = threading.Lock()
         self._stop_requested = threading.Event()
         self._thread: threading.Thread | None = None
-        self._in_progress = False
+        self._state = GameflowState.UNKNOWN
         self._checked_at = 0.0
+        self._last_error_type = ""
+        self._consecutive_failures = 0
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -174,21 +180,39 @@ class GameflowPoller:
         if self._thread is not None:
             self._thread.join(timeout=max(0.0, float(timeout_seconds)))
 
-    def current(self) -> tuple[bool, float]:
+    def current(self) -> tuple[GameflowState, float]:
         with self._lock:
-            return self._in_progress, self._checked_at
+            return self._state, self._checked_at
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "state": self._state.value,
+                "checked_at": self._checked_at,
+                "last_error_type": self._last_error_type,
+                "consecutive_failures": self._consecutive_failures,
+            }
 
     def _run(self) -> None:
         while not self._stop_requested.is_set():
             try:
-                in_progress = bool(self._probe())
-            except Exception:
+                raw_state = self._probe()
+                state = raw_state if isinstance(raw_state, GameflowState) else (
+                    GameflowState.IN_PROGRESS if raw_state else GameflowState.NOT_IN_PROGRESS
+                )
+                error_type = ""
+                consecutive_failures = 0
+            except Exception as exc:
                 logger.debug("刷新 gameflow 缓存失败。", exc_info=True)
-                in_progress = False
+                state = GameflowState.UNKNOWN
+                error_type = exc.__class__.__name__
+                consecutive_failures = self._consecutive_failures + 1
             checked_at = time.time()
             with self._lock:
-                self._in_progress = in_progress
+                self._state = state
                 self._checked_at = checked_at
+                self._last_error_type = error_type
+                self._consecutive_failures = consecutive_failures
             self._stop_requested.wait(self._interval_seconds)
 
 
@@ -199,15 +223,22 @@ class WindowTargetPoller:
         self,
         window_titles: list[str],
         *,
+        finder: Callable[..., WindowProbeResult | tuple[int, tuple[int, int, int, int]] | None] = probe_lol_game_window,
         initial_target: tuple[int, tuple[int, int, int, int]] | None = None,
         interval_seconds: float = 0.35,
     ) -> None:
         self._window_titles = list(window_titles)
+        self._finder = finder
         self._interval_seconds = max(0.1, float(interval_seconds))
         self._lock = threading.Lock()
         self._stop_requested = threading.Event()
         self._thread: threading.Thread | None = None
         self._target = initial_target
+        self._probe_status = "found" if initial_target is not None else "missing"
+        self._last_probe_at = 0.0
+        self._last_success_at = 0.0
+        self._last_error_type = ""
+        self._consecutive_failures = 0
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -225,15 +256,49 @@ class WindowTargetPoller:
         with self._lock:
             return self._target
 
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "probe_status": self._probe_status,
+                "target": self._target,
+                "last_probe_at": self._last_probe_at,
+                "last_success_at": self._last_success_at,
+                "last_error_type": self._last_error_type,
+                "consecutive_failures": self._consecutive_failures,
+            }
+
+    @staticmethod
+    def _normalize_probe(
+        value: WindowProbeResult | tuple[int, tuple[int, int, int, int]] | None,
+    ) -> WindowProbeResult:
+        if isinstance(value, WindowProbeResult):
+            return value
+        if value is None:
+            return WindowProbeResult(status="missing", observed_at=time.time())
+        return WindowProbeResult(status="found", hwnd=int(value[0]), client_rect=value[1], observed_at=time.time())
+
     def _run(self) -> None:
         while not self._stop_requested.is_set():
             try:
-                target = find_lol_game_window(self._window_titles)
-            except Exception:
+                probe = self._normalize_probe(self._finder(window_titles=self._window_titles))
+            except Exception as exc:
                 logger.debug("刷新 LoL 游戏窗口缓存失败。", exc_info=True)
-                target = None
+                probe = WindowProbeResult(
+                    status="error",
+                    observed_at=time.time(),
+                    error_type=exc.__class__.__name__,
+                )
             with self._lock:
-                self._target = target
+                self._last_probe_at = float(probe.observed_at or time.time())
+                self._probe_status = probe.status
+                if probe.status == "error":
+                    self._last_error_type = probe.error_type or "WindowProbeError"
+                    self._consecutive_failures += 1
+                else:
+                    self._last_success_at = self._last_probe_at
+                    self._last_error_type = ""
+                    self._consecutive_failures = 0
+                    self._target = probe.target
             self._stop_requested.wait(self._interval_seconds)
 
 
@@ -243,7 +308,3 @@ class ForegroundEventHook:
     def __init__(self, handle: int, callback: Any) -> None:
         self.handle = int(handle or 0)
         self.callback = callback
-
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

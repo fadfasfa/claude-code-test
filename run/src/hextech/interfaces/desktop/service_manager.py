@@ -390,7 +390,8 @@ class ServiceManager:
             return {"ok": False, "error": exc.__class__.__name__, "visible": False, "reason": ""}
         if not isinstance(snapshot, dict):
             return {"ok": False, "error": "visibility_status_invalid", "visible": False, "reason": ""}
-        if int(snapshot.get("schema_version") or 0) != 1:
+        schema_version = int(snapshot.get("schema_version") or 0)
+        if schema_version not in {1, 2}:
             return {"ok": False, "error": "visibility_status_unknown_schema", "visible": False, "reason": ""}
         try:
             updated_at = float(snapshot.get("updated_at") or 0.0)
@@ -402,14 +403,21 @@ class ServiceManager:
         host = snapshot.get("host") if isinstance(snapshot.get("host"), dict) else {}
         scene = snapshot.get("scene") if isinstance(snapshot.get("scene"), dict) else {}
         context = snapshot.get("context") if isinstance(snapshot.get("context"), dict) else {}
+        window = snapshot.get("window") if isinstance(snapshot.get("window"), dict) else {}
+        render = snapshot.get("render") if isinstance(snapshot.get("render"), dict) else {}
         return {
             "ok": True,
+            "schema_version": schema_version,
             "visible": bool(decision.get("window_visible")),
             "reason": str(decision.get("reason") or ""),
+            "functional_status": str(snapshot.get("functional_status") or ("ready" if schema_version == 1 else "unknown")),
+            "functional_reason": str(snapshot.get("functional_reason") or ""),
             "updated_at": updated_at,
             "host": dict(host),
+            "window": dict(window),
             "scene": dict(scene),
             "context": dict(context),
+            "render": dict(render),
         }
 
     @staticmethod

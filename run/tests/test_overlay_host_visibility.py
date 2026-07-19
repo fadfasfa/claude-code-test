@@ -536,7 +536,11 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertTrue(should_show)
         self.assertEqual(writes[0][0], "game_overlay_visibility.v1.json")
         payload = writes[0][1]
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["functional_status"], "degraded")
+        self.assertEqual(payload["functional_reason"], "context_unavailable")
+        self.assertIn("window", payload)
+        self.assertIn("render", payload)
         self.assertEqual(payload["host"]["gameflow"], True)
         self.assertEqual(payload["scene"]["selection_window_active"], True)
         self.assertEqual(payload["context"]["error"], "context_missing")

@@ -12,6 +12,7 @@ DEV_DIR = RUN_DIR / "tooling" / "dev"
 def test_frequent_entrypoints_are_exposed_at_run_root() -> None:
     assert {path.name for path in RUN_DIR.glob("*.ps1")} == {
         "启动Hextech.ps1",
+        "打包并部署Hextech.ps1",
         "调试Web前端.ps1",
     }
     expected_tooling = {

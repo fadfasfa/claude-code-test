@@ -8,60 +8,11 @@
 
 from __future__ import annotations
 
-import json
-import time
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any, Protocol
 
 from hextech.modules.data import SnapshotViewPort
-from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
-
-
-_CONTEXT_SCHEMA_VERSION = 1
-_CONTEXT_MAX_AGE_SECONDS = 6 * 60 * 60.0
-
-
-def _empty_context(error: str) -> dict[str, Any]:
-    return {
-        "schema_version": _CONTEXT_SCHEMA_VERSION,
-        "ok": False,
-        "error": error,
-        "generated_at": 0.0,
-        "champion_id": "",
-        "champion_name": "",
-        "source": "",
-        "session_id": "",
-        "connection_state": "",
-        "health": "degraded",
-    }
-
-
-def _read_overlay_context() -> dict[str, Any]:
-    """只读 Overlay 上下文状态，不引入 UI adapter。"""
-
-    target = Path(overlay_runtime_state_path("game_overlay_context.v1.json"))
-    try:
-        payload = json.loads(target.read_text(encoding="utf-8"))
-    except OSError:
-        return _empty_context("context_missing")
-    except json.JSONDecodeError:
-        return _empty_context("context_damaged")
-    if not isinstance(payload, Mapping):
-        return _empty_context("context_damaged")
-    if payload.get("schema_version") != _CONTEXT_SCHEMA_VERSION:
-        return _empty_context("schema_mismatch")
-    if not str(payload.get("champion_id") or "").strip():
-        return _empty_context("context_missing")
-    try:
-        generated_at = float(payload.get("generated_at") or 0.0)
-    except (TypeError, ValueError):
-        return _empty_context("context_missing")
-    if generated_at <= 0:
-        return _empty_context("context_missing")
-    if time.time() - generated_at > _CONTEXT_MAX_AGE_SECONDS:
-        return _empty_context("context_expired")
-    return dict(payload)
+from hextech.modules.game_context.overlay_context import read_overlay_context
 
 
 class OverlayDataSource(Protocol):
@@ -110,7 +61,7 @@ class SharedOverlayDataSource:
         }
 
     def read_context(self) -> dict[str, Any]:
-        return _read_overlay_context()
+        return read_overlay_context()
 
     def open_view(self) -> SnapshotViewPort | None:
         """固定打开当前 generation；一次 render tick 内不得切换数据代。"""

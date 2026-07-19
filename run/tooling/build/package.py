@@ -2,7 +2,8 @@
 
 打包过程中不在 `run/` 下创建长期 `build/`、`dist/` 或 `_bundle_runtime/`
 资源副本；PyInstaller 的 work/dist/spec 全部落到系统临时目录，最终只把
-便携目录和 zip 移入仓库根 `.artifacts/hextech/releases/`。
+便携目录和 zip 移入仓库根 `.artifacts/hextech/releases/`。只有调用方显式
+传入 ``--deploy`` 时，才会继续更新稳定安装目录。
 
 调用方: build; 关键依赖: bundle_manifest、cleanup_runtime、package_rules。
 """
@@ -27,6 +28,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from tooling.build.manifest import build_bundle_manifest, validate_snapshot_seed  # noqa: E402
+from tooling.build.deploy import default_install_dir, deploy_release  # noqa: E402
 from tooling.diagnostics.cleanup import cleanup_python_caches  # noqa: E402
 from tooling.build.rules import iter_package_data_entries, stage_package_data_tree  # noqa: E402
 
@@ -286,6 +288,27 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="注入已通过真实链路验收的 snapshots 根；仅用于离线构建同代验收包。",
     )
+    parser.add_argument(
+        "--deploy",
+        action="store_true",
+        help="构建和 smoke 成功后部署到稳定安装目录；默认关闭。",
+    )
+    parser.add_argument(
+        "--install-dir",
+        type=Path,
+        help="稳定安装目录；与 --deploy 配合使用，默认是 C:\\HextechCompanion。",
+    )
+    parser.add_argument(
+        "--shortcut",
+        type=Path,
+        help="部署成功后更新的 Windows .lnk 快捷方式。",
+    )
+    parser.add_argument(
+        "--deploy-timeout",
+        type=float,
+        default=12.0,
+        help="等待旧客户端正常退出的秒数，默认 12 秒。",
+    )
     args = parser.parse_args(argv)
     if args.refresh_data and args.verified_snapshot_root is not None:
         parser.error("--refresh-data 与 --verified-snapshot-root 不能同时使用")
@@ -293,6 +316,16 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.verified_snapshot_root = args.verified_snapshot_root.resolve()
         if not args.verified_snapshot_root.is_dir():
             parser.error("--verified-snapshot-root 必须是存在的目录")
+    if not args.deploy and (args.install_dir is not None or args.shortcut is not None):
+        parser.error("--install-dir/--shortcut 只能与 --deploy 一起使用")
+    if args.deploy:
+        if sys.platform != "win32":
+            parser.error("稳定目录部署当前仅支持 Windows")
+        args.install_dir = (args.install_dir or default_install_dir()).resolve(strict=False)
+        if args.shortcut is not None:
+            args.shortcut = args.shortcut.resolve(strict=False)
+        if args.deploy_timeout <= 0:
+            parser.error("--deploy-timeout 必须大于 0")
     return args
 
 
@@ -591,6 +624,22 @@ def main(argv: list[str] | None = None) -> None:
             verified_snapshot_root=args.verified_snapshot_root,
         )
         final_dir, zip_path = finalize_output(exe_dir)
+    deployment = None
+    if args.deploy:
+        print_step("部署稳定客户端")
+        deployment = deploy_release(
+            final_dir,
+            args.install_dir,
+            shortcut_path=args.shortcut,
+            shutdown_timeout=args.deploy_timeout,
+        )
+        print_check(f"稳定安装目录：{deployment.install_dir}")
+        if deployment.previous_dir is not None:
+            print_check(f"上一版本目录：{deployment.previous_dir}")
+        if deployment.shortcut_path is not None:
+            print_check(f"快捷方式：{deployment.shortcut_path}")
+        if deployment.restarted:
+            print_check("旧客户端原本运行，已启动新版本")
     print_step("打包完成")
     print(f"  输出目录：{final_dir}")
     print(f"  主程序：{final_dir / APP_EXE_NAME}")

@@ -43,9 +43,19 @@ select = ["E4", "E7", "E9", "F"]
 [tool.pyright]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
+# Overlay 的 JSON/Tk DTO 仍含大量动态 Mapping；先把整个目录纳入调用签名和
+# 未定义符号门禁，结构化 DTO 的细粒度类型收紧另行推进。
+reportArgumentType = false
+reportAttributeAccessIssue = false
+reportGeneralTypeIssues = false
+reportOptionalIterable = false
+reportOptionalMemberAccess = false
+reportOptionalSubscript = false
+reportReturnType = false
 include = [
   "src/hextech/bootstrap/supervisor.py",
-  "src/hextech/interfaces/overlay/lifecycle.py",
+  "src/hextech/interfaces/overlay",
+  "src/hextech/modules/vision/window.py",
   "src/hextech/infrastructure/vision/sidecar.py",
   "src/hextech/infrastructure/vision/template_runtime.py",
   "src/hextech/infrastructure/vision/runner.py",

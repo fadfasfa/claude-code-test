@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import warnings
 from collections.abc import Callable
+from enum import Enum
 
 LIVE_CLIENT_ACTIVE_PLAYER_ENDPOINT = "https://127.0.0.1:2999/liveclientdata/activeplayer"
 LCU_GAMEFLOW_PHASE_ENDPOINT = "/lol-gameflow/v1/gameflow-phase"
@@ -26,11 +27,25 @@ def _empty_lcu_scanner() -> tuple[None, None]:
 _lcu_scanner: LcuScanner = _empty_lcu_scanner
 
 
+class GameflowState(str, Enum):
+    """Host 使用的三态对局结论；unknown 不能再被隐式转换为未开局。"""
+
+    IN_PROGRESS = "in_progress"
+    NOT_IN_PROGRESS = "not_in_progress"
+    UNKNOWN = "unknown"
+
+
 def configure_lcu_scanner(scanner: LcuScanner) -> None:
     """由 composition root 注入本机 LCU process adapter。"""
 
     global _lcu_scanner
     _lcu_scanner = scanner
+
+
+def lcu_scanner_configured() -> bool:
+    """供 composition-root self-check 验证依赖已注入，不执行 LCU 请求。"""
+
+    return _lcu_scanner is not _empty_lcu_scanner
 
 
 def _http_get(url: str, **kwargs):
@@ -55,7 +70,9 @@ def probe_live_client_in_progress(*, timeout: float = DEFAULT_LIVE_CLIENT_TIMEOU
             )
     except Exception:
         return None
-    return bool(int(getattr(response, "status_code", 0) or 0) == 200)
+    if int(getattr(response, "status_code", 0) or 0) != 200:
+        return None
+    return True
 
 
 def probe_lcu_gameflow_in_progress(*, timeout: float = DEFAULT_LCU_TIMEOUT_SECONDS) -> bool | None:
@@ -88,11 +105,19 @@ def probe_lcu_gameflow_in_progress(*, timeout: float = DEFAULT_LCU_TIMEOUT_SECON
     return str(phase or "").strip() == "InProgress"
 
 
-def probe_gameflow_in_progress() -> bool:
-    """优先用 2999 判断实际对局，再用 LCU gameflow 兜底。"""
+def probe_gameflow_state() -> GameflowState:
+    """优先用 2999 判断实际对局，再用 LCU；两者不可用时保留 unknown。"""
 
     live_client_state = probe_live_client_in_progress()
     if live_client_state is not None:
-        return live_client_state
+        return GameflowState.IN_PROGRESS if live_client_state else GameflowState.NOT_IN_PROGRESS
     lcu_state = probe_lcu_gameflow_in_progress()
-    return bool(lcu_state)
+    if lcu_state is None:
+        return GameflowState.UNKNOWN
+    return GameflowState.IN_PROGRESS if lcu_state else GameflowState.NOT_IN_PROGRESS
+
+
+def probe_gameflow_in_progress() -> bool:
+    """兼容只接受 bool 的旧调用方；Host 必须直接消费三态接口。"""
+
+    return probe_gameflow_state() is GameflowState.IN_PROGRESS

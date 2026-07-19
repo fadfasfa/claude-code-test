@@ -72,6 +72,7 @@ def _format_game_overlay_host_reason(reason: str) -> str:
     return {
         "user_disabled": "已关闭",
         "gameflow_not_in_progress": "等待实际对局",
+        "waiting_gameflow": "等待游戏状态",
         "game_window_missing": "等待游戏窗口",
         "game_window_not_renderable": "游戏窗口不可渲染",
         "game_not_foreground": "切回游戏后显示",
@@ -95,6 +96,8 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
     cache_status = str(overlay.get("cache_status") or "").strip()
     context_status = str(overlay.get("context_status") or "").strip()
     visible_reason = str(overlay.get("visible_reason") or "").strip()
+    functional_status = str(overlay.get("functional_status") or "unknown").strip()
+    functional_reason = str(overlay.get("functional_reason") or "").strip()
     last_error = str(overlay.get("last_error") or "").strip()
     if status == "error":
         return (f"游戏内显示异常: {last_error or phase or '未知错误'}", UI_COLORS["error"])
@@ -118,6 +121,10 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
         return ("游戏内显示: 正在启动", UI_COLORS["warn"])
     if status == "running":
         reason = _format_game_overlay_host_reason(visible_reason) if visible_reason else "等待选择窗口"
+        if functional_status == "failed":
+            return (f"游戏内显示异常: {functional_reason or 'Host 功能不可用'}", UI_COLORS["error"])
+        if functional_status == "degraded":
+            return (f"游戏内显示: {reason} / {functional_reason or '功能降级'}", UI_COLORS["warn"])
         if context_status == "degraded":
             return (f"游戏内显示: {reason} / 上下文降级", UI_COLORS["warn"])
         if cache_status in {"queued", "prewarming", "lookup", "building"}:

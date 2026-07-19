@@ -1,7 +1,61 @@
 """Overlay host 的 Win32 窗口、热键与前台事件适配器。"""
-# ruff: noqa: F403, F405
 
-from hextech.interfaces.overlay.host_common import *
+from __future__ import annotations
+
+import ctypes
+import logging
+import queue
+import threading
+import time
+import tkinter as tk
+from ctypes import wintypes
+from typing import Any, Callable, Mapping
+
+from hextech.interfaces.overlay.host_common import (
+    EVENT_SYSTEM_FOREGROUND,
+    FOREGROUND_EVENT_DRAIN_MS,
+    GA_ROOT,
+    GWL_EXSTYLE,
+    GWL_WNDPROC,
+    HOTKEY_FALLBACK_DEBOUNCE_SECONDS,
+    HOTKEY_FALLBACK_POLL_SECONDS,
+    HOTKEY_ID,
+    HOTKEY_MODE_ID,
+    HWND_TOPMOST,
+    LRESULT,
+    MA_NOACTIVATE,
+    MOD_ALT,
+    MSG,
+    SWP_FRAMECHANGED,
+    SWP_NOACTIVATE,
+    SWP_NOMOVE,
+    SWP_NOSIZE,
+    VK_MENU,
+    WINEVENTPROC,
+    WINEVENT_OUTOFCONTEXT,
+    WINEVENT_SKIPOWNPROCESS,
+    WM_HOTKEY,
+    WM_MOUSEACTIVATE,
+    WM_QUIT,
+    WNDPROC,
+    WS_EX_LAYERED,
+    WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT,
+    ForegroundEventHook,
+    HotkeyController,
+)
+from hextech.modules.data.overlay_source import prepare_shared_overlay_data
+from hextech.modules.vision.window import (
+    configure_process_dpi_awareness,
+    find_lol_game_window,
+    is_window_foreground,
+)
+from hextech.modules.vision.window_titles import LOL_GAME_WINDOW_TITLE
+
+
+logger = logging.getLogger(__name__)
 
 def build_overlay_window_config() -> dict[str, Any]:
     """返回 overlay 的可验收窗口能力配置。"""
@@ -31,10 +85,9 @@ def build_overlay_window_config() -> dict[str, Any]:
 
 
 def _set_dpi_awareness() -> None:
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        logger.debug("设置 overlay DPI 感知失败。", exc_info=True)
+    mode = configure_process_dpi_awareness()
+    if mode == "unavailable":
+        logger.debug("设置 overlay DPI 感知失败。")
 
 
 def _prepare_host_hint_cache() -> str:
@@ -329,7 +382,3 @@ def _find_target_game_rect(window_titles: list[str]) -> tuple[int, int, int, int
 
 def _is_game_window_foreground(hwnd: int | None, *, overlay_hwnd: int | None = None) -> bool:
     return is_window_foreground(hwnd, overlay_hwnd=overlay_hwnd)
-
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]

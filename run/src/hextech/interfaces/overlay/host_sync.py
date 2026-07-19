@@ -1,9 +1,45 @@
 """Overlay host 的事件轮询、窗口目标同步与渲染调度。"""
-# ruff: noqa: F403, F405
 
-from hextech.interfaces.overlay.host_common import *
-from hextech.interfaces.overlay.host_platform import *
-from hextech.interfaces.overlay.host_visibility import *
+from __future__ import annotations
+
+import logging
+import queue
+import time
+import tkinter as tk
+from pathlib import Path
+from typing import Any, Mapping
+
+from hextech.contracts import GameSessionState, PresentationMode, VisionSlotState
+from hextech.interfaces.overlay.gameflow import GameflowState
+from hextech.interfaces.overlay.host_common import WindowTargetPoller
+from hextech.interfaces.overlay.host_platform import (
+    _apply_overlay_rect,
+    _ensure_overlay_window_styles,
+    _is_game_window_foreground,
+    _root_hwnd,
+)
+from hextech.interfaces.overlay.host_visibility import (
+    _log_visibility_diagnostic,
+    _normalize_gameflow_state,
+    _query_gameflow_in_progress,
+    _refresh_gameflow_in_progress,
+    _show_overlay_window,
+    _snapshot_has_complete_ready_slots,
+    _snapshot_ready_slot_count,
+    _snapshot_selection_window_active,
+    _target_overlay_geometry,
+    _write_host_visibility_status,
+    decide_visibility,
+)
+from hextech.modules.session.evidence import build_evidence_bundle, write_evidence_bundle
+from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
+from hextech.modules.vision.window import is_window_renderable
+
+
+logger = logging.getLogger(__name__)
+
+# 兼容旧测试/诊断对该符号的 patch；render tick 只读取缓存，不会调用它。
+__all__ = ["_query_gameflow_in_progress"]
 
 def _sync_event_visibility(
     root: tk.Tk,
@@ -20,7 +56,7 @@ def _sync_event_visibility(
     game_rect = visibility.get("target_rect") if isinstance(visibility.get("target_rect"), tuple) else None
     game_renderable = bool(game_hwnd and is_window_renderable(game_hwnd))
     game_foreground = _is_game_window_foreground(game_hwnd, overlay_hwnd=overlay_hwnd) if game_renderable else False
-    gameflow_in_progress = _refresh_gameflow_in_progress(visibility)
+    gameflow_state = _normalize_gameflow_state(_refresh_gameflow_in_progress(visibility))
     user_enabled = bool(visibility.get("user_enabled"))
     content_ready = _snapshot_has_complete_ready_slots(snapshot)
     ready_slots = _snapshot_ready_slot_count(snapshot)
@@ -46,7 +82,7 @@ def _sync_event_visibility(
             game_foreground=game_foreground,
             content_ready=content_ready,
             selection_window_active=selection_window_active,
-            gameflow_in_progress=gameflow_in_progress,
+            gameflow_in_progress=gameflow_state,
             game_hwnd=game_hwnd,
             game_rect=game_rect,
             game_renderable=game_renderable,
@@ -59,7 +95,8 @@ def _sync_event_visibility(
             stale_event_hold=stale_hold_active,
         )
     visibility["event_visible"] = event_visible
-    visibility["gameflow_in_progress"] = gameflow_in_progress
+    visibility["gameflow_state"] = gameflow_state.value
+    visibility["gameflow_in_progress"] = gameflow_state is GameflowState.IN_PROGRESS
     visibility["game_renderable"] = game_renderable
     visibility["game_foreground"] = game_foreground
     visibility["content_ready"] = content_ready
@@ -69,6 +106,10 @@ def _sync_event_visibility(
     visibility["blocking_modal"] = blocking_modal
     visibility["event_stale_hold_active"] = stale_hold_active
     visibility["visibility_reason"] = reason
+    if selection_window_active is True and not game_hwnd:
+        visibility.setdefault("active_target_missing_since", time.time())
+    else:
+        visibility.pop("active_target_missing_since", None)
     visibility["render_full_overlay"] = bool(
         should_show
         and selection_window_active is not False
@@ -102,6 +143,7 @@ def _draw_waiting_status(canvas: tk.Canvas, reason: str) -> None:
     message = {
         "selection_completed": "海克斯选择已完成，等待下一次选择",
         "waiting_context": "等待英雄上下文",
+        "waiting_gameflow": "等待游戏状态",
     }.get(reason, "等待海克斯选择")
     canvas.delete("all")
     canvas.create_rectangle(8, 8, 420, 42, fill="#010A13", outline="#785A28")
@@ -189,16 +231,54 @@ def _drain_hotkey_requests(request_queue: "queue.Queue[str]", visibility: dict[s
             )
 
 
-def _refresh_target_window(root: tk.Tk, config: Mapping[str, Any], visibility: dict[str, Any]) -> None:
-    """从后台缓存同步 HWND 和 geometry；render tick 不枚举窗口/进程。"""
+def _snapshot_window_target(snapshot: Mapping[str, Any]) -> tuple[int, tuple[int, int, int, int]] | None:
+    """只接受 canonical reader 判定为新鲜的 Sidecar 窗口观察。"""
+
+    if snapshot.get("ok") is not True:
+        return None
+    source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+    raw_hwnd = source.get("window_hwnd")
+    raw_rect = source.get("client_rect")
+    if not raw_hwnd or not isinstance(raw_rect, list) or len(raw_rect) != 4:
+        return None
+    try:
+        hwnd = int(raw_hwnd)
+        rect = tuple(int(value) for value in raw_rect)
+    except (TypeError, ValueError):
+        return None
+    if rect[2] <= rect[0] or rect[3] <= rect[1] or not is_window_renderable(hwnd):
+        return None
+    return hwnd, rect
+
+
+def _refresh_target_window(
+    root: tk.Tk,
+    config: Mapping[str, Any],
+    visibility: dict[str, Any],
+    snapshot: Mapping[str, Any] | None = None,
+) -> None:
+    """Sidecar observation 优先，本地 Poller 仅作启动与失联 fallback。"""
 
     poller = visibility.get("window_target_poller")
     if isinstance(poller, WindowTargetPoller):
-        target = poller.current()
+        host_target = poller.current()
+        poller_status = poller.status()
     else:
         hwnd = visibility.get("target_hwnd")
         rect = visibility.get("target_rect")
-        target = (int(hwnd), rect) if hwnd and isinstance(rect, tuple) and len(rect) == 4 else None
+        host_target = (int(hwnd), rect) if hwnd and isinstance(rect, tuple) and len(rect) == 4 else None
+        poller_status = {}
+    sidecar_target = _snapshot_window_target(snapshot or {})
+    sidecar_hwnd = int(sidecar_target[0]) if sidecar_target is not None else 0
+    host_hwnd = int(host_target[0]) if host_target is not None else 0
+    target = sidecar_target or host_target
+    visibility["sidecar_hwnd"] = sidecar_hwnd
+    visibility["host_scan_hwnd"] = host_hwnd
+    visibility["window_target_desync"] = bool(sidecar_hwnd and host_hwnd and sidecar_hwnd != host_hwnd)
+    visibility["window_source"] = "sidecar" if sidecar_target is not None else (
+        "host_scan" if host_target is not None else "none"
+    )
+    visibility["window_probe"] = dict(poller_status)
     if target is None:
         if isinstance(poller, WindowTargetPoller):
             visibility["target_hwnd"] = None
@@ -215,7 +295,3 @@ def _refresh_target_window(root: tk.Tk, config: Mapping[str, Any], visibility: d
         _apply_overlay_rect(root, rect)
         _ensure_overlay_window_styles(root, config)
         visibility["applied_geometry"] = next_geometry
-
-
-
-__all__ = [name for name in globals() if not name.startswith("__")]
