@@ -17,7 +17,10 @@ def test_verified_generation_is_seeded_before_current_pointer(tmp_path, monkeypa
         {
             "champions": [{"id": "1", "name": "英雄一"}],
             "champion_hextech": {"英雄一": {"hero_id": "1", "augments": [{"id": "a1"}]}},
-            "overlay_hints": {"augments": {"a1": {"name": "强化一"}}},
+            "overlay_hints": {
+                "hints": {"a1": {"augment_id": "a1", "name": "强化一"}},
+                "name_index": {"a1": "a1", "强化一": "a1"},
+            },
             "identities": {
                 "schema_version": 2,
                 "champions": {"1": "英雄一"},

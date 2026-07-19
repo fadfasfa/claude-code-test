@@ -54,8 +54,47 @@ def test_archive_moves_data_and_verifies_non_sensitive_files(tmp_path: Path) -> 
     assert (destination / "archive_manifest.v1.json").is_file()
 
 
-def test_archive_refuses_suspicious_raw_names(tmp_path: Path) -> None:
+def test_manifest_treats_suspicious_raw_names_as_opaque(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data = _make_legacy_data(tmp_path)
-    (data / "raw" / "session-token.json").write_bytes(b"secret")
-    with pytest.raises(RuntimeError, match="疑似敏感命名"):
-        build_manifest(data)
+    sensitive_files = (
+        data / "raw" / "cookies.sqlite",
+        data / "raw" / "credentials.json",
+        data / "raw" / "tokens.json",
+    )
+    sensitive_directory = data / "raw" / "sessions"
+    authentication_directory = data / "raw" / "authentication-state"
+    sensitive_directory.mkdir()
+    authentication_directory.mkdir()
+    (sensitive_directory / "state.json").write_bytes(b"secret-session")
+    (authentication_directory / "state.json").write_bytes(b"secret-auth")
+    for path in sensitive_files:
+        path.write_bytes(b"secret")
+    original_open = Path.open
+
+    def guarded_open(path: Path, *args, **kwargs):
+        normalized = os.fspath(path).replace("\\", "/").lower()
+        if any(
+            token in normalized
+            for token in (
+                "cookies.sqlite",
+                "credentials.json",
+                "tokens.json",
+                "/sessions/",
+                "/authentication-state/",
+            )
+        ):
+            raise AssertionError("疑似敏感 raw 内容不得读取")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    manifest = build_manifest(data)
+    serialized = str(manifest).lower()
+
+    assert manifest["sensitive_raw"] == {
+        "opaque": True,
+        "present": True,
+        "directory_count": 2,
+        "file_count": 3,
+    }
+    for token in ("cookies.sqlite", "credentials.json", "tokens.json", "sessions", "authentication"):
+        assert token not in serialized

@@ -14,19 +14,22 @@ from hextech.contracts import SourceProvenance
 
 
 def _payload(*, marker: str, private: bool = True) -> dict[str, object]:
+    champion_name = f"hero-{marker}"
+    augment_name = f"augment-{marker}"
     return {
-        "champions": [{"id": 1, "name": f"hero-{marker}"}],
+        "champions": [{"id": 1, "name": champion_name}],
         "champion_hextech": {
-            "hero-1": {"hero_id": 1, "augments": [{"id": 9, "win_rate": 0.51}]},
+            champion_name: {"hero_id": 1, "augments": [{"id": 9, "win_rate": 0.51}]},
         },
         "overlay_hints": {
             "source": {"private_policy_stats_enabled": private},
-            "augments": {"9": {"name": f"augment-{marker}"}},
+            "hints": {"9": {"augment_id": "9", "name": augment_name}},
+            "name_index": {"9": "9", augment_name: "9"},
         },
         "identities": {
             "schema_version": 2,
-            "champions": {"1": f"hero-{marker}"},
-            "augments": {"9": f"augment-{marker}"},
+            "champions": {"1": champion_name},
+            "augments": {"9": augment_name},
         },
     }
 
@@ -104,6 +107,10 @@ def test_fully_identical_publish_is_noop(tmp_path: Path) -> None:
 
 def test_view_resolves_vision_augment_id_and_preserves_catalog_only_identity(tmp_path: Path) -> None:
     payload = _payload(marker="one")
+    payload["overlay_hints"] = {
+        "hints": {"9": {"augment_id": "9", "name": "大地苏醒"}},
+        "name_index": {"9": "9", "大地苏醒": "9", "aram_earthwake": "9"},
+    }
     payload["identities"] = {
         "schema_version": 2,
         "champions": {"1": "hero-one"},
@@ -178,7 +185,7 @@ def test_client_falls_back_to_whole_previous_generation(tmp_path: Path) -> None:
     assert status["generation_id"] == first.generation_id
     assert status["failed_generation_id"] == second.generation_id
     assert client.get_champion(1)["name"] == "hero-one"
-    assert client.get_overlay_hints()["augments"]["9"]["name"] == "augment-one"
+    assert client.get_overlay_hints()["hints"]["9"]["name"] == "augment-one"
 
 
 def test_existing_client_observes_new_current_generation(tmp_path: Path) -> None:
@@ -203,7 +210,7 @@ def test_open_view_stays_on_one_generation_after_pointer_switch(tmp_path: Path) 
 
     assert view.status()["generation_id"] == first.generation_id
     assert view.get_champion(1)["name"] == "hero-one"
-    assert view.get_overlay_hints()["augments"]["9"]["name"] == "augment-one"
+    assert view.get_overlay_hints()["hints"]["9"]["name"] == "augment-one"
     assert client.status()["generation_id"] == second.generation_id
 
 
@@ -243,11 +250,11 @@ def test_consumer_cannot_mutate_cached_generation(tmp_path: Path) -> None:
     _publish(DataSnapshotPublisher(tmp_path), _payload(marker="one"), "one")
     client = DataSnapshotClient(tmp_path)
     hints = client.get_overlay_hints()
-    hints["augments"]["9"]["name"] = "mutated"
+    hints["hints"]["9"]["name"] = "mutated"
     champions = client.get_champions()
     champions[0]["name"] = "mutated"
 
-    assert client.get_overlay_hints()["augments"]["9"]["name"] == "augment-one"
+    assert client.get_overlay_hints()["hints"]["9"]["name"] == "augment-one"
     assert client.get_champion(1)["name"] == "hero-one"
 
 
@@ -255,7 +262,7 @@ def test_champion_detail_is_returned_as_unpolluted_copy(tmp_path: Path) -> None:
     payload = _payload(marker="one")
     details = payload["champion_hextech"]
     assert isinstance(details, dict)
-    hero_detail = details["hero-1"]
+    hero_detail = details["hero-one"]
     assert isinstance(hero_detail, dict)
     hero_detail["synergy"] = {"synergy_items": [{"name": "pair"}]}
     _publish(DataSnapshotPublisher(tmp_path), payload, "one")
@@ -426,7 +433,7 @@ def test_overlay_data_source_observes_first_generation_without_restart(tmp_path:
 
     assert refreshed["snapshot"]["state"] == "ready"
     assert refreshed["snapshot"]["generation_id"] == manifest.generation_id
-    assert refreshed["augments"]["9"]["name"] == "augment-hot"
+    assert refreshed["hints"]["9"]["name"] == "augment-hot"
 
 
 def test_web_and_overlay_read_the_same_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -439,11 +446,11 @@ def test_web_and_overlay_read_the_same_generation(tmp_path: Path, monkeypatch: p
     manifest = _publish(DataSnapshotPublisher(tmp_path), _payload(marker="one"), "one")
     snapshot_client = DataSnapshotClient(tmp_path)
     monkeypatch.setattr(web_api, "_snapshot_client", snapshot_client)
-    monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda _name: "hero-1")
+    monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda _name: "hero-one")
     app = FastAPI()
     web_api.register_routes(app)
 
-    web_payload = TestClient(app).get("/api/champion/hero-1/hextechs").json()
+    web_payload = TestClient(app).get("/api/champion/hero-one/hextechs").json()
     overlay_payload = SharedOverlayDataSource(snapshot_client=snapshot_client).read_hint_cache()
 
     assert web_payload["generation_id"] == manifest.generation_id
@@ -467,14 +474,14 @@ def test_web_and_overlay_response_stays_pinned_during_pointer_switch(
     _publish(publisher, _payload(marker="two"), "two")
     monkeypatch.setattr(client, "open_view", lambda: pinned)
     monkeypatch.setattr(web_api, "_snapshot_client", client)
-    monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda _name: "hero-1")
+    monkeypatch.setattr(web_api.web_runtime, "resolve_canonical_hero_name", lambda _name: "hero-one")
     app = FastAPI()
     web_api.register_routes(app)
 
-    web_payload = TestClient(app).get("/api/champion/hero-1/hextechs").json()
+    web_payload = TestClient(app).get("/api/champion/hero-one/hextechs").json()
     overlay_payload = SharedOverlayDataSource(snapshot_client=client).read_hint_cache()
 
     assert web_payload["generation_id"] == first.generation_id
     assert web_payload["augments"][0]["win_rate"] == 0.51
     assert overlay_payload["snapshot"]["generation_id"] == first.generation_id
-    assert overlay_payload["augments"]["9"]["name"] == "augment-one"
+    assert overlay_payload["hints"]["9"]["name"] == "augment-one"

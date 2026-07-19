@@ -102,7 +102,27 @@ class CohortRefreshCoordinator:
         except SnapshotValidationError:
             return {}
         catalog_id = str(catalog.get("catalog_generation_id") or "")
-        catalog_sha = str(catalog.get("content_sha256") or "")
+        try:
+            catalog_sha, expected_catalog_provenance = self._validated_catalog_provenance(catalog)
+        except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        origin_catalog_provenance = tuple(
+            sorted(
+                (
+                    item.run_id,
+                    item.catalog_generation_id,
+                    item.artifact_role,
+                    item.artifact_sha256,
+                    item.record_count,
+                    item.manifest_sha256,
+                    item.content_schema_version,
+                )
+                for item in view.manifest.source_files
+                if item.source == "catalog"
+            )
+        )
+        if origin_catalog_provenance != expected_catalog_provenance:
+            return {}
         result: dict[str, dict[str, Any]] = {}
         for item in view.manifest.source_files:
             if item.source not in {"hextech", "apex", "mayhem"} or item.catalog_generation_id != catalog_id:
@@ -117,6 +137,39 @@ class CohortRefreshCoordinator:
                 snapshot_files=view.manifest.files,
             ).to_dict()
         return result
+
+    def _validated_catalog_provenance(
+        self, catalog: Mapping[str, Any]
+    ) -> tuple[str, tuple[tuple[str, str, str, str, int, str, int], ...]]:
+        """验证目标 Catalog 文件，并返回可与 origin generation 精确比较的身份。"""
+
+        catalog_id = str(catalog.get("catalog_generation_id") or "")
+        catalog_root = self.root / "catalog" / "generations" / catalog_id
+        manifest_path = catalog_root / "manifest.json"
+        manifest = CatalogManifestV2.from_mapping(json.loads(manifest_path.read_text(encoding="utf-8")))
+        manifest_sha256 = sha256_file(manifest_path)
+        if (
+            manifest.catalog_generation_id != catalog_id
+            or manifest.content_sha256 != str(catalog.get("content_sha256") or "")
+            or manifest_sha256 != str(catalog.get("manifest_sha256") or "")
+        ):
+            raise ValueError("Catalog pointer 与 manifest 身份不一致")
+        validate_catalog_files(catalog_root, manifest)
+        provenance = tuple(
+            sorted(
+                (
+                    catalog_id,
+                    catalog_id,
+                    item.role,
+                    item.sha256,
+                    item.record_count,
+                    manifest_sha256,
+                    item.content_schema_version,
+                )
+                for item in manifest.files
+            )
+        )
+        return manifest.content_sha256, provenance
 
     @staticmethod
     def _is_baseline(pointer: Mapping[str, Any]) -> bool:
@@ -275,12 +328,14 @@ class CohortRefreshCoordinator:
         return pointer.to_dict()
 
     def _due(self, source: str, state: RefreshSourceState, pointer: Mapping[str, Any], *, force: bool) -> bool:
-        if force or not pointer:
+        if force:
             return True
         current = self.now()
         next_due = _parse_time(state.next_due_at)
         if next_due is not None:
             return current >= next_due
+        if not pointer:
+            return True
         success = _parse_time(state.last_success_at or _pointer_success_at(pointer))
         return success is None or current >= success + SOURCE_INTERVALS[source]
 

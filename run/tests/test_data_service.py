@@ -36,7 +36,8 @@ def _build_payload(private_stats_enabled: bool) -> dict[str, object]:
         },
         "overlay_hints": {
             "source": {"private_policy_stats_enabled": private_stats_enabled},
-            "augments": {"augment-1": {"name": "augment"}},
+            "hints": {"augment-1": {"augment_id": "augment-1", "name": "augment"}},
+            "name_index": {"augment-1": "augment-1", "augment": "augment-1"},
         },
         "identities": {
             "schema_version": 2,
@@ -169,7 +170,15 @@ def test_bootstrap_does_not_change_generation_for_display_privacy(tmp_path: Path
     payload = _build_payload(True)
     payload["overlay_hints"] = {
         "source": {"private_policy_stats_enabled": True},
-        "hints": {"augment-1": {"name": "augment", "winrate": 0.51, "stats_by_champion_id": {"1": {}}}},
+        "hints": {
+            "augment-1": {
+                "augment_id": "augment-1",
+                "name": "augment",
+                "winrate": 0.51,
+                "stats_by_champion_id": {"1": {}},
+            }
+        },
+        "name_index": {"augment-1": "augment-1", "augment": "augment-1"},
     }
     current = _publish(publisher, payload, "privacy-stable")
 

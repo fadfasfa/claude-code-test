@@ -77,7 +77,10 @@ def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch)
         {
             "champions": [{"id": "1", "name": "英雄一"}],
             "champion_hextech": {"英雄一": {"hero_id": "1", "augments": [{"id": "a1"}]}},
-            "overlay_hints": {"augments": {"a1": {"name": "强化一"}}},
+            "overlay_hints": {
+                "hints": {"a1": {"augment_id": "a1", "name": "强化一"}},
+                "name_index": {"a1": "a1", "强化一": "a1"},
+            },
             "identities": {
                 "schema_version": 2,
                 "champions": {"1": "英雄一"},

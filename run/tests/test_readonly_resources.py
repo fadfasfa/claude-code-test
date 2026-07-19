@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import inspect
+import io
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from hextech.infrastructure.sources import version_sync
 from hextech.interfaces.desktop import app_bootstrap
+from hextech.interfaces.desktop import runtime_window
 from hextech.interfaces.web.backend import runtime as web_runtime
 from hextech.modules.data.ports.paths import resource_path, var_path
 
@@ -71,6 +74,31 @@ def test_desktop_bootstrap_does_not_create_resource_asset_directory() -> None:
     source = inspect.getsource(app_bootstrap.DesktopBootstrapMixin._post_visible_bootstrap)
     assert "ASSET_DIR" not in source
     assert "makedirs" not in source
+
+
+def test_desktop_missing_seed_icon_downloads_only_to_runtime_cache(monkeypatch, tmp_path: Path) -> None:
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGBA", (1, 1), (255, 0, 0, 255)).save(buffer, format="PNG")
+    response = SimpleNamespace(status_code=200, content=buffer.getvalue())
+    seed_root = tmp_path / "readonly-resources" / "assets" / "champions"
+    cache_root = tmp_path / "var"
+    monkeypatch.setattr(runtime_window, "CHAMPION_ASSET_DIR", os.fspath(seed_root))
+    monkeypatch.setattr(runtime_window, "var_path", lambda *parts: cache_root.joinpath(*parts))
+    ui = SimpleNamespace(
+        image_cache={},
+        downloading_imgs=set(),
+        img_write_lock=threading.Lock(),
+        session=SimpleNamespace(get=lambda *_args, **_kwargs: response),
+        _run_on_ui_thread=lambda _func: None,
+    )
+    label = SimpleNamespace(winfo_exists=lambda: True)
+
+    runtime_window.load_and_set_img(ui, "266", label)
+
+    assert (cache_root / "cache" / "assets" / "champions" / "266.png").is_file()
+    assert not seed_root.exists()
 
 
 def test_importing_version_sync_does_not_create_legacy_runtime_directories(tmp_path: Path) -> None:

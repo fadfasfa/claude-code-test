@@ -19,7 +19,10 @@ def _payloads() -> dict[str, object]:
         "champion_hextech": {
             "英雄一": {"hero_id": "1", "augments": [{"id": "a1", "name": "强化一"}]}
         },
-        "overlay_hints": {"augments": {"a1": {"name": "强化一"}}},
+        "overlay_hints": {
+            "hints": {"a1": {"augment_id": "a1", "name": "强化一"}},
+            "name_index": {"a1": "a1", "强化一": "a1"},
+        },
         "identities": {
             "schema_version": 2,
             "champions": {"1": "英雄一"},
@@ -46,6 +49,36 @@ def test_verify_generation_rejects_corrupted_payload(tmp_path: Path) -> None:
 
     with pytest.raises(SnapshotValidationError, match="校验失败"):
         verify_data_pipeline.verify_generation(root)
+
+
+def test_generation_rejects_cross_champion_detail_identity(tmp_path: Path) -> None:
+    payload = _payloads()
+    payload["champion_hextech"] = {
+        "错误英雄名": {"hero_id": "1", "augments": [{"id": "a1", "name": "强化一"}]}
+    }
+
+    with pytest.raises(SnapshotValidationError, match="英雄详情名称投影不一致"):
+        DataSnapshotPublisher(tmp_path / "snapshots").publish(payload)
+
+
+@pytest.mark.parametrize(
+    "overlay_hints",
+    (
+        {"hints": {}, "name_index": {}},
+        {
+            "hints": {"a1": {"augment_id": "a1", "name": "强化一"}},
+            "name_index": {"强化一": "missing"},
+        },
+    ),
+)
+def test_generation_rejects_empty_or_dangling_overlay_projection(
+    tmp_path: Path, overlay_hints: dict[str, object]
+) -> None:
+    payload = _payloads()
+    payload["overlay_hints"] = overlay_hints
+
+    with pytest.raises(SnapshotValidationError, match="overlay_hints"):
+        DataSnapshotPublisher(tmp_path / "snapshots").publish(payload)
 
 
 def test_verify_sources_requires_all_three_valid_currents(monkeypatch: pytest.MonkeyPatch) -> None:
