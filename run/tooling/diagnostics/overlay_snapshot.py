@@ -71,7 +71,7 @@ class PillowCanvas:
 
     def create_text(self, x: int, y: int, **kwargs: Any) -> None:
         font_spec = kwargs.get("font") or ("Microsoft YaHei", 10)
-        size = max(8, int(font_spec[1]))
+        size = max(8, abs(int(font_spec[1])))
         bold = len(font_spec) > 2 and str(font_spec[2]).lower() == "bold"
         font_path = FONT_BOLD if bold and FONT_BOLD.exists() else FONT_REGULAR
         font = ImageFont.truetype(str(font_path), size) if font_path.exists() else ImageFont.load_default()

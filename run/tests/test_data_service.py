@@ -76,6 +76,41 @@ def test_augment_identities_map_vision_ids_without_inventing_source_stats() -> N
     assert identities["catalog_augments"]["weapon_nuke"]["stats_available"] is False
 
 
+def test_augment_identity_names_are_not_first_wins_when_canonical_ids_are_ambiguous() -> None:
+    overlay_hints = {
+        "hints": {
+            "100": {"name": "同名强化"},
+            "200": {"name": "同名强化"},
+        }
+    }
+    catalog = [
+        {"name": "同名强化", "tier": "黄金", "augment_name_id": "Same_Gold", "cdragon_id": 1},
+        {"name": "同名强化", "tier": "棱彩", "augment_name_id": "Same_Prismatic", "cdragon_id": 2},
+    ]
+
+    identities = _build_augment_identity_payload(overlay_hints, catalog)
+
+    assert identities["augment_aliases"]["100"] == "100"
+    assert identities["augment_aliases"]["200"] == "200"
+    assert "同名强化" not in identities["augment_aliases"]
+    assert identities["catalog_augments"]["same_gold"]["canonical_id"] == ""
+    assert identities["catalog_augments"]["same_prismatic"]["canonical_id"] == ""
+
+
+def test_glass_cannon_visual_variants_share_unique_name_statistics() -> None:
+    overlay_hints = {"hints": {"1325": {"name": "玻璃大炮"}}}
+    catalog = [
+        {"name": "玻璃大炮", "tier": "黄金", "augment_name_id": "Special_GlassCannon", "cdragon_id": 33307},
+        {"name": "玻璃大炮", "tier": "棱彩", "augment_name_id": "GlassCannon", "cdragon_id": 1325},
+    ]
+
+    identities = _build_augment_identity_payload(overlay_hints, catalog)
+
+    assert identities["augment_aliases"]["special_glasscannon"] == "1325"
+    assert identities["augment_aliases"]["glasscannon"] == "1325"
+    assert identities["augment_aliases"]["玻璃大炮"] == "1325"
+
+
 def test_refresh_and_policy_actions_are_serialized(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
     entered = threading.Event()

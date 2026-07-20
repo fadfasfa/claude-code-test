@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import hashlib
+import json
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Mapping
 
@@ -42,6 +44,9 @@ class SessionEvidenceBundle:
     vision: Mapping[str, object]
     recommendation: Mapping[str, object]
     final_state: Mapping[str, object]
+    selection_revision: int = 1
+    render_signature: str = ""
+    render: Mapping[str, object] = field(default_factory=dict)
     screenshot: str = ""
     evidence_kind: str = "real_game_session"
 
@@ -75,6 +80,37 @@ class SessionEvidenceBundle:
             raise ValueError("evidence_vision_slots_missing")
         if self.evidence_kind != "real_game_session":
             raise ValueError("evidence_kind_invalid")
+        if self.schema_version >= 2:
+            if self.selection_revision <= 0 or not self.render_signature:
+                raise ValueError("evidence_render_identity_missing")
+            if str(self.render.get("session_id") or "") != self.session_id:
+                raise ValueError("evidence_session_mismatch:render")
+            if str(self.render.get("generation_id") or "") != self.generation_id:
+                raise ValueError("evidence_generation_mismatch:render")
+            if _evidence_int(self.render.get("vision_epoch")) != vision_epoch:
+                raise ValueError("evidence_render_epoch_mismatch")
+            if _evidence_int(self.render.get("selection_revision")) != self.selection_revision:
+                raise ValueError("evidence_render_revision_mismatch")
+            if str(self.render.get("render_signature") or "") != self.render_signature:
+                raise ValueError("evidence_render_signature_mismatch")
+            rows = self.render.get("rows")
+            if not isinstance(rows, list) or len(rows) != 3:
+                raise ValueError("evidence_render_rows_missing")
+
+
+def build_render_signature(state: GameSessionState, render_rows: object) -> str:
+    """绑定实际可见行与 session/epoch/revision，供延迟截图取消陈旧任务。"""
+
+    vision = state.vision
+    payload = {
+        "session_id": str(state.session_id),
+        "generation_id": str(state.generation_id),
+        "vision_epoch": int(vision.epoch) if vision else 0,
+        "selection_revision": max(1, int(vision.selection_revision)) if vision else 1,
+        "rows": render_rows,
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def build_evidence_bundle(
@@ -83,12 +119,39 @@ def build_evidence_bundle(
     lcu_summary: Mapping[str, object],
     window_summary: Mapping[str, object],
     screenshot: str = "",
+    render_summary: Mapping[str, object] | None = None,
+    render_signature: str = "",
 ) -> SessionEvidenceBundle:
     context = state.context
     vision = state.vision
     recommendation = state.recommendation
+    revision = max(1, int(vision.selection_revision)) if vision else 1
+    supplied_render = dict(render_summary or {})
+    if "rows" not in supplied_render:
+        supplied_render["rows"] = (
+            [dict(item) for item in recommendation.augment_slots]
+            if recommendation and len(recommendation.augment_slots) == 3
+            else [
+                {
+                    "slot": slot.index,
+                    "name": slot.name,
+                    "status_code": slot.state.value.upper(),
+                    "stats_text": "",
+                }
+                for slot in (vision.slots if vision else ())
+            ]
+        )
+    render_payload = {
+        "session_id": str(state.session_id),
+        "generation_id": str(state.generation_id),
+        "vision_epoch": int(vision.epoch) if vision else 0,
+        "selection_revision": revision,
+        **supplied_render,
+    }
+    signature = render_signature or build_render_signature(state, render_payload.get("rows", []))
+    render_payload["render_signature"] = signature
     bundle = SessionEvidenceBundle(
-        schema_version=1,
+        schema_version=2,
         generation_id=str(state.generation_id),
         session_id=str(state.session_id),
         observed_at=state.observed_at,
@@ -103,7 +166,10 @@ def build_evidence_bundle(
                     "index": slot.index,
                     "state": slot.state.value,
                     "augment_id": str(slot.augment_id or ""),
+                    "recognition_key": slot.recognition_key,
+                    "visual_variant_id": slot.visual_variant_id,
                     "name": slot.name,
+                    "tier": slot.tier,
                     "confidence": slot.confidence,
                     "error_code": slot.error_code,
                 }
@@ -127,6 +193,9 @@ def build_evidence_bundle(
             "should_show": state.visibility.should_show,
             "local_champion_id": str(context.local_champion_id or "") if context else "",
         },
+        selection_revision=revision,
+        render_signature=signature,
+        render=render_payload,
         screenshot=screenshot,
     )
     bundle.validate_identity()

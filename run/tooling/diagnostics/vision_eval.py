@@ -167,17 +167,24 @@ def _evaluate_sample(
     tracker.update(raw_event)
     event = tracker.update(raw_event)
     source_reason = _clean_text((event.get("source") or {}).get("reason") if isinstance(event.get("source"), Mapping) else "")
-    # 阻塞弹窗的公开事件会清空槽位；匹配准确率仍应检查单帧视觉诊断槽。
-    slots = raw_event.get("slots") if isinstance(raw_event.get("slots"), list) else []
+    # 名称准确率以跨帧门控后的公开事件为准；原始单帧槽仅提供通道诊断。
+    # 这样可以评估“卡名已确认但视觉版本留空”的分层识别结果。
+    slots = event.get("slots") if isinstance(event.get("slots"), list) else []
+    raw_slots = raw_event.get("slots") if isinstance(raw_event.get("slots"), list) else []
     checks: list[dict[str, Any]] = []
+    false_ready: list[dict[str, Any]] = []
     for index, expected in enumerate(sample["expected_slots"]):
+        slot = slots[index] if index < len(slots) and isinstance(slots[index], Mapping) else {}
+        raw_slot = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
+        observed = _clean_text(slot.get("name"))
+        slot_ready = slot.get("state") == "ready"
+        if slot_ready and observed != (expected or ""):
+            false_ready.append({"slot": index, "expected": expected or "", "observed": observed})
         if not expected:
             continue
-        slot = slots[index] if index < len(slots) and isinstance(slots[index], Mapping) else {}
-        observed = _clean_text(slot.get("name"))
-        text_top = _top_name(slot, "text")
-        text_alt_top = _top_name(slot, "text_alt")
-        icon_top = _top_name(slot, "icon")
+        text_top = _top_name(raw_slot, "text")
+        text_alt_top = _top_name(raw_slot, "text_alt")
+        icon_top = _top_name(raw_slot, "icon")
         checks.append(
             {
                 "slot": index,
@@ -185,7 +192,7 @@ def _evaluate_sample(
                 "observed": observed,
                 "matched": observed == expected,
                 "state": _clean_text(slot.get("state")),
-                "diagnostic": _clean_text(slot.get("diagnostic")),
+                "diagnostic": _clean_text(raw_slot.get("diagnostic") or slot.get("diagnostic")),
                 "confidence": slot.get("confidence"),
                 "text_top": text_top,
                 "text_alt_top": text_alt_top,
@@ -243,6 +250,7 @@ def _evaluate_sample(
         "ready_slots_check": ready_slots_check,
         "slot_signature": list(overlay_vision_sidecar._slot_signature(event)),
         "checks": checks,
+        "false_ready": false_ready,
         "_event": raw_event,
     }
 
@@ -492,6 +500,12 @@ def evaluate_truth(
         {key: value for key, value in result.items() if key != "_event"}
         for result in results
     ]
+    false_ready = [
+        item | {"sample_id": result["id"]}
+        for result in evaluated
+        for item in (result.get("false_ready") or [])
+        if isinstance(item, Mapping)
+    ]
     frame_slot_accuracy = (len(checks) - len(slot_failures)) / len(checks) if checks else None
     name_roi_accuracy = (
         (len(name_roi_checks) - len(name_roi_failures)) / len(name_roi_checks)
@@ -510,6 +524,8 @@ def evaluate_truth(
         "expected_name_roi_count": len(name_roi_checks),
         "expected_slot_count": len(checks),
         "matched_slot_count": len(checks) - len(slot_failures),
+        "false_ready_count": len(false_ready),
+        "false_ready": false_ready,
         "expected_active_count": len(active_checks),
         "matched_active_count": len(active_checks) - len(active_failures),
         "expected_ready_slots_count": len(ready_slots_checks),
@@ -552,7 +568,8 @@ def _print_text_summary(summary: Mapping[str, Any]) -> None:
     print(
         "accuracy: "
         f"frame_slot={summary.get('frame_slot_accuracy')}, "
-        f"name_roi={summary.get('name_roi_accuracy')}"
+        f"name_roi={summary.get('name_roi_accuracy')}, "
+        f"false_ready={summary.get('false_ready_count')}"
     )
     if summary["missing_count"]:
         print(f"missing samples: {summary['missing_count']}")
@@ -598,6 +615,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_text_summary(summary)
 
     if summary["failures"]:
+        return 1
+    if summary["false_ready_count"]:
         return 1
     if args.require_existing and summary["missing_count"]:
         return 1

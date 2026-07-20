@@ -6,6 +6,7 @@ import logging
 import queue
 import time
 import tkinter as tk
+import ctypes
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
@@ -32,7 +33,7 @@ from hextech.interfaces.overlay.host_visibility import (
     _write_host_visibility_status,
     decide_visibility,
 )
-from hextech.modules.session.evidence import build_evidence_bundle, write_evidence_bundle
+from hextech.modules.session.evidence import build_evidence_bundle, build_render_signature, write_evidence_bundle
 from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
 from hextech.modules.vision.window import is_window_renderable
 
@@ -196,9 +197,10 @@ def _write_real_session_evidence(
     root: tk.Tk,
     state: GameSessionState,
     snapshot: Mapping[str, Any],
+    model: Mapping[str, Any],
     visibility: dict[str, Any],
 ) -> None:
-    """真实三槽内容稳定后只记录一次同局五联证据。"""
+    """三槽渲染连续稳定两个 tick 后，延迟抓取同 revision 的真实证据。"""
 
     vision = state.vision
     if (
@@ -211,7 +213,17 @@ def _write_real_session_evidence(
         or any(slot.state is not VisionSlotState.READY for slot in vision.slots)
     ):
         return
-    key = (str(state.session_id), str(state.generation_id), int(vision.epoch))
+    revision = max(1, int(vision.selection_revision))
+    rows = [dict(item) for item in model.get("stats", []) if isinstance(item, Mapping)]
+    render_signature = build_render_signature(state, rows)
+    if visibility.get("current_render_signature") == render_signature:
+        visibility["stable_render_ticks"] = int(visibility.get("stable_render_ticks") or 0) + 1
+    else:
+        visibility["current_render_signature"] = render_signature
+        visibility["stable_render_ticks"] = 1
+    if int(visibility.get("stable_render_ticks") or 0) < 2:
+        return
+    key = (str(state.session_id), str(state.generation_id), int(vision.epoch), revision, render_signature)
     if visibility.get("last_evidence_key") == key or visibility.get("evidence_attempt_key") == key:
         return
     source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
@@ -220,36 +232,81 @@ def _write_real_session_evidence(
     if len(client_rect) != 4 or len(capture_size) != 2:
         return
     visibility["evidence_attempt_key"] = key
-    root.update_idletasks()
-    evidence_dir = Path(overlay_runtime_state_path("session_evidence")).resolve()
-    evidence_dir.mkdir(parents=True, exist_ok=True)
-    safe_session = "".join(char for char in str(state.session_id) if char.isalnum())[:32] or "session"
-    screenshot_path = evidence_dir / f"overlay-{safe_session}-e{int(vision.epoch)}.png"
-    from PIL import ImageGrab
+    snapshot_copy = deepcopy(dict(snapshot))
+    source_copy = deepcopy(dict(source))
+    model_copy = deepcopy(dict(model))
 
-    left, top = root.winfo_rootx(), root.winfo_rooty()
-    right, bottom = left + root.winfo_width(), top + root.winfo_height()
-    ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True).convert("RGB").save(screenshot_path)
-    client_size = [int(client_rect[2]) - int(client_rect[0]), int(client_rect[3]) - int(client_rect[1])]
-    context = state.context
-    bundle = build_evidence_bundle(
-        state,
-        lcu_summary={
-            "local_champion_id": str(context.local_champion_id),
-            "teammate_champion_ids": [str(value) for value in context.teammate_champion_ids],
-            "bench_champion_ids": [str(value) for value in context.bench_champion_ids],
-        },
-        window_summary={
-            "hwnd": int(source.get("window_hwnd") or 0),
-            "client_size": client_size,
-            "capture_size": [int(value) for value in capture_size],
-            "dpi_scale": float(source.get("dpi_scale") or 0.0),
-        },
-        screenshot=screenshot_path.name,
-    )
-    write_evidence_bundle(bundle, evidence_dir / "latest_real_session.v1.json")
-    visibility["last_evidence_key"] = key
-    logger.info("game_overlay real_session_evidence=%s", evidence_dir / "latest_real_session.v1.json")
+    def capture() -> None:
+        try:
+            if (
+                not bool(visibility.get("window_visible"))
+                or visibility.get("current_render_signature") != render_signature
+                or visibility.get("evidence_attempt_key") != key
+            ):
+                if visibility.get("evidence_attempt_key") == key:
+                    visibility.pop("evidence_attempt_key", None)
+                return
+            root.update_idletasks()
+            try:
+                ctypes.windll.dwmapi.DwmFlush()
+            except (AttributeError, OSError):
+                pass
+            evidence_dir = Path(overlay_runtime_state_path("session_evidence")).resolve()
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            safe_session = "".join(char for char in str(state.session_id) if char.isalnum())[:32] or "session"
+            stem = f"overlay-{safe_session}-e{int(vision.epoch)}-r{revision}"
+            screenshot_path = evidence_dir / f"{stem}.png"
+            from PIL import ImageGrab
+
+            left, top = root.winfo_rootx(), root.winfo_rooty()
+            right, bottom = left + root.winfo_width(), top + root.winfo_height()
+            ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True).convert("RGB").save(screenshot_path)
+            client_size = [int(client_rect[2]) - int(client_rect[0]), int(client_rect[3]) - int(client_rect[1])]
+            context = state.context
+            event_slots = snapshot_copy.get("slots") if isinstance(snapshot_copy.get("slots"), list) else []
+            render_rows = [dict(item) for item in model_copy.get("stats", []) if isinstance(item, Mapping)]
+            bundle = build_evidence_bundle(
+                state,
+                lcu_summary={
+                    "local_champion_id": str(context.local_champion_id),
+                    "teammate_champion_ids": [str(value) for value in context.teammate_champion_ids],
+                    "bench_champion_ids": [str(value) for value in context.bench_champion_ids],
+                },
+                window_summary={
+                    "hwnd": int(source_copy.get("window_hwnd") or 0),
+                    "client_size": client_size,
+                    "capture_size": [int(value) for value in capture_size],
+                    "dpi_scale": float(source_copy.get("dpi_scale") or 0.0),
+                },
+                screenshot=screenshot_path.name,
+                render_summary={
+                    "rows": render_rows,
+                    "synergies": [
+                        dict(item) for item in model_copy.get("synergies", []) if isinstance(item, Mapping)
+                    ],
+                    "event_slots": [dict(item) for item in event_slots if isinstance(item, Mapping)],
+                    "acceptance_rules": [
+                        str(item)
+                        for item in (
+                            snapshot_copy.get("_acceptance_rules")
+                            if isinstance(snapshot_copy.get("_acceptance_rules"), list)
+                            else []
+                        )
+                    ],
+                },
+                render_signature=render_signature,
+            )
+            evidence_path = write_evidence_bundle(bundle, evidence_dir / f"{stem}.v2.json")
+            write_evidence_bundle(bundle, evidence_dir / "latest_real_session.v2.json")
+            visibility["last_evidence_key"] = key
+            logger.info("game_overlay real_session_evidence=%s", evidence_path)
+        except Exception:
+            logger.warning("延迟写入真实会话验收证据失败。", exc_info=True)
+        finally:
+            if visibility.get("evidence_attempt_key") == key:
+                visibility.pop("evidence_attempt_key", None)
+
+    root.after(100, capture)
 
 
 def _drain_hotkey_requests(request_queue: "queue.Queue[str]", visibility: dict[str, bool]) -> None:

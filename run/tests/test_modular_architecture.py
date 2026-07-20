@@ -66,7 +66,7 @@ def _snapshot_view(*, degraded: bool = False) -> DataSnapshotView:
             "overlay_hints": {},
             "identities": {
                 "augments": {"100": "测试强化"},
-                "augment_aliases": {"stable_ready": "100"},
+                "augment_aliases": {"stable_ready": "100", "测试强化": "100"},
                 "catalog_augments": {
                     "stable_ready": {
                         "vision_id": "stable_ready",
@@ -127,6 +127,39 @@ def test_recommendation_distinguishes_ready_source_missing_and_unresolved_augmen
     ]
     assert model.augment_slots[0]["canonical_augment_id"] == "100"
     assert model.augment_slots[1]["name"] == "源站缺失强化"
+
+
+def test_recommendation_falls_back_to_confirmed_name_without_inventing_visual_tier() -> None:
+    context = GameContext(session_id="s1", observed_at=1, local_champion_id=ChampionId("24"))  # type: ignore[arg-type]
+    vision = VisionSelection(
+        session_id="s1",  # type: ignore[arg-type]
+        epoch=VisionEpoch(1),
+        observed_at=2,
+        scene_state=VisionSceneState.ACTIVE,
+        slots=(
+            VisionSlot(0, VisionSlotState.READY, name="测试强化", recognition_key="测试强化"),
+            VisionSlot(1, VisionSlotState.DETECTING),
+            VisionSlot(2, VisionSlotState.DETECTING),
+        ),
+    )
+
+    model = RecommendationService().build(context, _snapshot_view(), vision=vision)
+
+    assert model.augment_slots[0]["status_code"] == "READY"
+    assert model.augment_slots[0]["canonical_augment_id"] == "100"
+    assert model.augment_slots[0]["tier"] == ""
+
+
+def test_snapshot_name_resolution_does_not_first_win_ambiguous_catalog_variants() -> None:
+    view = _snapshot_view()
+    identities = view._payloads["identities"]  # type: ignore[index]
+    identities["augment_aliases"] = {}
+    identities["catalog_augments"] = {
+        "same_gold": {"name": "同名强化", "tier": "黄金", "canonical_id": "100"},
+        "same_prismatic": {"name": "同名强化", "tier": "棱彩", "canonical_id": "200"},
+    }
+
+    assert view.resolve_augment("同名强化") is None
 
 
 def test_session_keeps_waiting_overlay_visible_when_context_or_vision_missing() -> None:

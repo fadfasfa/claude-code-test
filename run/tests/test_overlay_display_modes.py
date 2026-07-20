@@ -105,6 +105,15 @@ def test_compact_and_expanded_keep_the_same_short_stats_text() -> None:
         assert set(visible_stats) == {expected}
 
 
+def test_canvas_fonts_use_pixel_sizes_to_avoid_windows_dpi_rescaling() -> None:
+    canvas = RecordingCanvas(2560, 1600)
+
+    draw_overlay_frame(canvas, _model(), expanded=True)
+
+    assert canvas.text_calls
+    assert all(int(call["font"][1]) < 0 for call in canvas.text_calls)
+
+
 def test_exclusion_zone_prevents_any_panel_from_drawing_over_critical_controls() -> None:
     canvas = RecordingCanvas(2560, 1440)
     draw_overlay_frame(

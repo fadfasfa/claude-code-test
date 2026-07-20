@@ -44,6 +44,38 @@
       "expected_active": true,
       "expected_ready_slots": 3,
       "notes": "2560×1600 真机完整帧；同时覆盖三槽顺序与右侧系统通知共存场景。"
+    },
+    {
+      "id": "selection-20260720-session-e1",
+      "frame": "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260720_e1/frame.png",
+      "expected_slots": ["狙神飞星", "关键暴击", "威能之追求"],
+      "expected_active": true,
+      "expected_ready_slots": 3,
+      "notes": "2560×1600 真机完整帧；同一真实会话第 1 轮三选。"
+    },
+    {
+      "id": "selection-20260720-session-e2",
+      "frame": "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260720_e2/frame.png",
+      "expected_slots": ["秘术冲拳", "珠光护手", "夺金"],
+      "expected_active": true,
+      "expected_ready_slots": 3,
+      "notes": "2560×1600 真机完整帧；同一真实会话第 2 轮三选。"
+    },
+    {
+      "id": "selection-20260720-session-e3",
+      "frame": "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260720_e3/frame.png",
+      "expected_slots": ["双刀流", "玻璃大炮", "巨人杀手"],
+      "expected_active": true,
+      "expected_ready_slots": 3,
+      "notes": "2560×1600 真机完整帧；覆盖玻璃大炮同名视觉版本。"
+    },
+    {
+      "id": "selection-20260720-session-e4",
+      "frame": "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260720_e4/frame.png",
+      "expected_slots": ["大地苏醒", "你摸不到", "扳机炼狱"],
+      "expected_active": true,
+      "expected_ready_slots": 3,
+      "notes": "2560×1600 真机完整帧；独立真实会话三选证据。"
     }
   ],
   "retired_samples": [

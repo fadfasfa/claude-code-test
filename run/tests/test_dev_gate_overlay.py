@@ -1361,7 +1361,7 @@ def test_overlay_vision_sidecar_contract() -> None:
     from hextech.infrastructure.vision.state import SelectionTracker
     from hextech.modules.vision.window import cursor_in_client_boxes
 
-    assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION == 2
+    assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION == 3
     assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_FILE.name == "template_runtime_cache.v2.npz"
     assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE == np.float16
     assert overlay_vision_sidecar.DEFAULT_LOOP_FRAME_INTERVAL_MS == 80
@@ -1815,10 +1815,12 @@ def test_overlay_vision_sidecar_contract() -> None:
     assert overlay_vision_sidecar._body_shard_scene_present(shard_scores) is True
 
     real_index = overlay_vision_sidecar.load_default_template_index()
-    glass_cannon_template = next((entry for entry in real_index if entry.name == "玻璃大炮"), None)
-    assert glass_cannon_template is not None
-    assert glass_cannon_template.augment_id == "glasscannon"
-    assert glass_cannon_template.tier == "棱彩"
+    glass_cannon_templates = [entry for entry in real_index if entry.name == "玻璃大炮"]
+    assert {(entry.augment_id, entry.tier) for entry in glass_cannon_templates} == {
+        ("special_glasscannon", "黄金"),
+        ("glasscannon", "棱彩"),
+    }
+    assert {entry.name_variant_count for entry in glass_cannon_templates} == {2}
 
     regression_fixture_dir = DATA_DIAGNOSTIC_DIR / "overlay_vision_fixtures" / "hextech_20260622"
     regression_names = ("更万用的瞄准镜", "闪现向前", "大法师")
@@ -2050,7 +2052,7 @@ def test_overlay_vision_sidecar_contract() -> None:
         assert len(progressive_result["slots"]) == 3
     assert progressive_results == [0, 1, 2, 3]
 
-    # 弱文字候选必须跨三帧一致，不能靠单帧降阈值授权。
+    # 弱文字候选即使跨多帧一致也只保留诊断，不能授权 ready。
     weak_event = dict(detection)
     weak_slot = json.loads(json.dumps(detection["_raw_slots"][0], ensure_ascii=False))
     weak_slot["channels"]["text"]["top_candidates"][0]["confidence"] = 0.69
@@ -2064,7 +2066,7 @@ def test_overlay_vision_sidecar_contract() -> None:
     weak_tracker = SelectionTracker(scene_enter_frames=1)
     assert weak_tracker.update(weak_event)["source"]["ready_slots"] == 0
     assert weak_tracker.update(weak_event)["source"]["ready_slots"] == 0
-    assert weak_tracker.update(weak_event)["source"]["ready_slots"] == 1
+    assert weak_tracker.update(weak_event)["source"]["ready_slots"] == 0
 
     def _candidate(name: str, confidence: float, *, augment_id: str | None = None) -> dict[str, Any]:
         return {
@@ -2107,9 +2109,7 @@ def test_overlay_vision_sidecar_contract() -> None:
         },
     }
     temporal_candidate = candidate_from_slot(shortlist_temporal_slot)
-    assert temporal_candidate is not None
-    assert temporal_candidate.rule == "icon_shortlist_temporal"
-    assert temporal_candidate.required_frames == 3
+    assert temporal_candidate is None
 
     shortlist_dual_slot = json.loads(json.dumps(shortlist_temporal_slot, ensure_ascii=False))
     shortlist_dual_slot["channels"]["text_narrowed"] = {
@@ -2150,20 +2150,23 @@ def test_overlay_vision_sidecar_contract() -> None:
     icon_only_shortlist_slot["channels"]["text_narrowed"] = {"margin": 0.0, "top_candidates": []}
     assert candidate_from_slot(icon_only_shortlist_slot) is None
 
-    # 单槽新候选达到稳定门槛前保留旧结果，再原子替换。
+    # 单槽强候选变化时先撤下旧结果，稳定后再显示新卡。
     reroll = dict(detection)
     reroll_raw_slots = [dict(slot) for slot in detection["_raw_slots"]]
     reroll_raw_slots[0] = dict(reroll_raw_slots[1])
     reroll_raw_slots[0]["slot"] = 0
     reroll["_raw_slots"] = reroll_raw_slots
     reroll_first = tracker.update(reroll)
-    assert reroll_first["active"] is True
-    assert reroll_first["source"]["ready_slots"] == 3
-    assert reroll_first["slots"][0]["augment_id"] == "augment_a"
+    assert reroll_first["active"] is False
+    assert reroll_first["source"]["ready_slots"] == 2
+    assert reroll_first["slots"][0]["state"] == "detecting"
+    assert reroll_first["slots"][0]["augment_id"] == ""
     assert [slot["augment_id"] for slot in reroll_first["slots"][1:]] == ["augment_b", "augment_c"]
+    assert reroll_first["source"]["selection_revision"] == 2
     reroll_ready = tracker.update(reroll)
     assert reroll_ready["active"] is True
     assert reroll_ready["slots"][0]["augment_id"] == "augment_b"
+    assert reroll_ready["source"]["selection_revision"] == 2
 
     # 场景/按钮消失两帧后结束 epoch；Tab 与阻塞弹窗必须立即清空。
     tracker.update(blank_detection)

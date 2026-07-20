@@ -488,6 +488,14 @@ def build_template_index(raw_templates: Mapping[str, Mapping[str, Any]]) -> list
     匹配时双通道独立评分再综合判定。
     """
 
+    variant_counts: dict[str, int] = {}
+    for payload in raw_templates.values():
+        if not isinstance(payload, Mapping):
+            continue
+        name_key = normalize_augment_id(str(payload.get("name") or ""))
+        if name_key:
+            variant_counts[name_key] = variant_counts.get(name_key, 0) + 1
+
     index: list[TemplateEntry] = []
     for augment_id, payload in raw_templates.items():
         if not isinstance(payload, Mapping):
@@ -539,6 +547,7 @@ def build_template_index(raw_templates: Mapping[str, Mapping[str, Any]]) -> list
                 name_fingerprint_alt=name_fingerprint_alt,
                 source_icon_filenames=tuple(filenames),
                 text_only_icon_filenames=tuple(text_only_filenames),
+                name_variant_count=max(1, variant_counts.get(normalize_augment_id(name), 1)),
             )
         )
     return index

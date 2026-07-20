@@ -72,6 +72,8 @@ def _empty_slot(index: int, *, state: str = "empty") -> dict[str, Any]:
         "slot": index,
         "state": state,
         "augment_id": "",
+        "recognition_key": "",
+        "visual_variant_id": "",
         "name": "",
         "tier": "",
         "summary": "",
@@ -146,6 +148,8 @@ def _normalize_top_candidates(value: Any) -> list[dict[str, Any]]:
             {
                 "augment_id": candidate_id,
                 "name": candidate_name,
+                "recognition_key": _clean_text(item.get("recognition_key"), limit=80),
+                "visual_variant_id": _clean_text(item.get("visual_variant_id") or candidate_id, limit=80),
                 "confidence": max(0.0, min(1.0, confidence)),
             }
         )
@@ -166,9 +170,13 @@ def normalize_overlay_slot(
     slot_index = _coerce_slot_index(raw_slot.get("slot"), index)
     raw_name = _clean_text(raw_slot.get("name"), limit=48)
     augment_id = _clean_text(raw_slot.get("augment_id") or raw_slot.get("id"), limit=80)
+    layered_identity = "recognition_key" in raw_slot or "visual_variant_id" in raw_slot
     hint = _lookup_hint(augment_id, raw_name, hint_cache)
-    if hint and not augment_id:
+    # 新分层事件显式允许视觉版本为空。只有旧事件完全没有分层字段时，才沿用
+    # hint 反填 augment_id 的兼容行为，避免把同名统计 ID 误当成视觉版本。
+    if hint and not augment_id and not layered_identity:
         augment_id = _clean_text(hint.get("augment_id"), limit=80)
+    visual_variant_id = _clean_text(raw_slot.get("visual_variant_id") or augment_id, limit=80)
 
     name = _clean_text(raw_name or hint.get("name"), limit=48)
     tier = _clean_text(raw_slot.get("tier") or hint.get("tier"), limit=24)
@@ -190,6 +198,10 @@ def normalize_overlay_slot(
         "slot": slot_index,
         "state": state,
         "augment_id": augment_id,
+        "recognition_key": _clean_text(
+            raw_slot.get("recognition_key") or normalize_augment_id(name), limit=80
+        ),
+        "visual_variant_id": visual_variant_id,
         "name": name,
         "tier": tier,
         "summary": summary,

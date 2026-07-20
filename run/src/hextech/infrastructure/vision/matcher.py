@@ -11,10 +11,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from hextech.modules.recommendation.hints import normalize_augment_id
+
 
 # 文字通道阈值：SimHei 单字体 >= 0.74 且 margin 够大 → 强匹配，2 帧稳定
 STRONG_TEXT_CONFIDENCE = 0.74
 STRONG_TEXT_MARGIN = 0.025
+# 同名多视觉版本的文字模板已按卡名聚合；真机玻璃大炮在备选字体通道
+# 置信度很高但 margin 略窄，仅对该类候选开放更严格的窄门。
+MULTI_VARIANT_TEXT_CONFIDENCE = 0.86
+MULTI_VARIANT_TEXT_MARGIN = 0.012
 # 双字体（SimHei + SimSun）同结果 ≥ 0.70 → 直接确认为双字体匹配
 DUAL_FONT_CONFIDENCE = 0.70
 # 弱文字通道阈值：≥ 0.68 且无文字冲突 → 时间确认，3 帧稳定
@@ -27,6 +33,8 @@ HIGH_CONFLICT_ICON_MARGIN = 0.03
 SHORTLIST_DUAL_FONT_CONFIDENCE = 0.66
 SHORTLIST_TEXT_CONFIDENCE = 0.68
 SHORTLIST_TEXT_MARGIN = 0.02
+VARIANT_ICON_CONFIDENCE = 0.80
+VARIANT_ICON_MARGIN = 0.015
 
 
 @dataclass(frozen=True)
@@ -44,16 +52,20 @@ class SlotCandidate:
     diagnostic: str      # 诊断标签（如 v2_dual_font）
     top_candidates: tuple[dict[str, Any], ...]  # 候选 Top-N（最多 3 个）
     channels: dict[str, Any]  # 各通道原始得分
+    recognition_key: str = ""  # 跨帧只跟踪卡名，不跟踪同名视觉版本
+    visual_variant_id: str = ""  # 图标证据充分时解析出的具体 CDragon 版本
 
     @property
     def identity(self) -> str:
-        return self.augment_id or self.name
+        return self.recognition_key or normalize_augment_id(self.name) or self.augment_id
 
     def ready_slot(self) -> dict[str, Any]:
         return {
             "slot": self.slot,
             "state": "ready",
             "augment_id": self.augment_id,
+            "recognition_key": self.recognition_key,
+            "visual_variant_id": self.visual_variant_id,
             "name": self.name,
             "tier": self.tier,
             "summary": self.summary,
@@ -87,7 +99,41 @@ def _number(value: Any) -> float:
 
 
 def _identity(candidate: Mapping[str, Any]) -> str:
-    return str(candidate.get("augment_id") or candidate.get("name") or "").strip()
+    return str(
+        candidate.get("recognition_key")
+        or normalize_augment_id(candidate.get("name"))
+        or candidate.get("augment_id")
+        or ""
+    ).strip()
+
+
+def _visual_variant(
+    slot: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> tuple[str, str]:
+    """卡名唯一时直接取版本；同名多版本必须由强图标证据消歧。"""
+
+    try:
+        variant_count = max(1, int(candidate.get("name_variant_count") or 1))
+    except (TypeError, ValueError):
+        variant_count = 1
+    if variant_count <= 1:
+        return (
+            str(candidate.get("visual_variant_id") or candidate.get("augment_id") or "").strip(),
+            str(candidate.get("tier") or "").strip(),
+        )
+    icon = _channel(slot, "icon")
+    icon_top = _top(icon)
+    if (
+        _identity(icon_top) == _identity(candidate)
+        and _number(icon_top.get("confidence")) >= VARIANT_ICON_CONFIDENCE
+        and _number(icon.get("margin")) >= VARIANT_ICON_MARGIN
+    ):
+        return (
+            str(icon_top.get("visual_variant_id") or icon_top.get("augment_id") or "").strip(),
+            str(icon_top.get("tier") or "").strip(),
+        )
+    return "", ""
 
 
 def _candidate_from_top(
@@ -105,11 +151,12 @@ def _candidate_from_top(
     raw_top = evidence.get("top_candidates") if isinstance(evidence.get("top_candidates"), Sequence) else []
     top_candidates = tuple(dict(item) for item in list(raw_top)[:3] if isinstance(item, Mapping))
     channels = slot.get("channels") if isinstance(slot.get("channels"), Mapping) else {}
+    visual_variant_id, tier = _visual_variant(slot, candidate)
     return SlotCandidate(
         slot=int(slot.get("slot") or 0),
-        augment_id=str(candidate.get("augment_id") or "").strip(),
+        augment_id=visual_variant_id,
         name=str(candidate.get("name") or identity).strip(),
-        tier=str(candidate.get("tier") or "").strip(),
+        tier=tier,
         summary=str(candidate.get("summary") or "").strip(),
         confidence=confidence,
         rule=rule,
@@ -117,18 +164,19 @@ def _candidate_from_top(
         diagnostic=f"v2_{rule}",
         top_candidates=top_candidates,
         channels=dict(channels),
+        recognition_key=identity,
+        visual_variant_id=visual_variant_id,
     )
 
 
 def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
-    """把单帧槽位分数转换为强、双字体或弱候选。
+    """把单帧槽位分数转换为可授权 ready 的强候选。
 
     决策树优先级：
     1. 双字体同结果（dual_font）→ 2 帧稳定
     2. 单字体强匹配（strong_text）→ 2 帧稳定
     3. 图标短名单 + 双字体（icon_shortlist_dual_font）→ 2 帧稳定
-    4. 图标短名单 + 单字体（icon_shortlist_temporal）→ 3 帧稳定
-    5. 弱文字时间确认（temporal_text）→ 3 帧稳定
+    4. 其余弱文字/单字体短名单只保留诊断，不授权 ready
     """
 
     text = _channel(slot, "text")
@@ -230,11 +278,21 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
         key=lambda item: item[3],
         reverse=True,
     ):
+        try:
+            variant_count = max(1, int(candidate.get("name_variant_count") or 1))
+        except (TypeError, ValueError):
+            variant_count = 1
+        multi_variant_strong = bool(
+            variant_count > 1
+            and confidence >= MULTI_VARIANT_TEXT_CONFIDENCE
+            and margin >= MULTI_VARIANT_TEXT_MARGIN
+            and not has_high_icon_conflict(identity)
+        )
         if (
             identity
             and not text_conflict
             and confidence >= STRONG_TEXT_CONFIDENCE
-            and (margin >= STRONG_TEXT_MARGIN or confidence >= 0.92)
+            and (margin >= STRONG_TEXT_MARGIN or confidence >= 0.92 or multi_variant_strong)
         ):
             return _candidate_from_top(
                 slot,
@@ -247,17 +305,6 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
 
     narrowed_confidence = _number(narrowed_top.get("confidence"))
     narrowed_alt_confidence = _number(narrowed_alt_top.get("confidence"))
-    narrowed_margin = _number(text_narrowed.get("margin"))
-    narrowed_alt_margin = _number(text_alt_narrowed.get("margin"))
-    narrowed_conflict = bool(
-        narrowed_identity
-        and narrowed_alt_identity
-        and narrowed_identity != narrowed_alt_identity
-        and narrowed_confidence >= SHORTLIST_DUAL_FONT_CONFIDENCE
-        and narrowed_alt_confidence >= SHORTLIST_DUAL_FONT_CONFIDENCE
-        and narrowed_margin >= SHORTLIST_TEXT_MARGIN
-        and narrowed_alt_margin >= SHORTLIST_TEXT_MARGIN
-    )
     # 优先级 3：图标短名单缩小搜索空间后，双字体同结果 → 2 帧稳定
     if (
         narrowed_identity
@@ -276,58 +323,8 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             required_frames=2,
         )
 
-    # 优先级 4：图标短名单 + 单字体（无冲突），3 帧稳定
-    narrowed_channels = (
-        (text_narrowed, narrowed_top, narrowed_identity, narrowed_confidence, narrowed_margin),
-        (text_alt_narrowed, narrowed_alt_top, narrowed_alt_identity, narrowed_alt_confidence, narrowed_alt_margin),
-    )
-    for evidence, candidate, identity, confidence, margin in sorted(
-        narrowed_channels,
-        key=lambda item: item[3],
-        reverse=True,
-    ):
-        if (
-            identity
-            and identity in shortlist_identities
-            and not narrowed_conflict
-            and confidence >= SHORTLIST_TEXT_CONFIDENCE
-            and margin >= SHORTLIST_TEXT_MARGIN
-            and not has_high_icon_conflict(identity)
-        ):
-            return _candidate_from_top(
-                slot,
-                candidate,
-                evidence=evidence,
-                confidence=confidence,
-                rule="icon_shortlist_temporal",
-                required_frames=3,
-            )
-
-    # 优先级 5：弱文字时间确认（置信度 ≥ 0.68，无冲突，无图标高冲突），3 帧稳定
-    weak_channels = (
-        (text, text_top, text_identity, text_confidence, text_margin, "temporal_text"),
-        (text_alt, alt_top, alt_identity, alt_confidence, alt_margin, "temporal_text_alt"),
-    )
-    for evidence, candidate, identity, confidence, margin, rule in sorted(
-        weak_channels,
-        key=lambda item: item[3],
-        reverse=True,
-    ):
-        if (
-            identity
-            and not text_conflict
-            and confidence >= WEAK_TEXT_CONFIDENCE
-            and margin >= WEAK_TEXT_MARGIN
-            and not has_high_icon_conflict(identity)
-        ):
-            return _candidate_from_top(
-                slot,
-                candidate,
-                evidence=evidence,
-                confidence=confidence,
-                rule=rule,
-                required_frames=3,
-            )
+    # 单字体 shortlist/弱文字仍保留在 channels 供诊断，但不能独立授权 ready。
+    # 真机证据表明连续帧只会重复同一系统性误匹配，并不会增加独立信息。
     return None
 
 

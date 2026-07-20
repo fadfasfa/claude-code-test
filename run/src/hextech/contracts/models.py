@@ -91,8 +91,11 @@ class VisionSlot:
     state: VisionSlotState
     augment_id: AugmentId | None = None
     name: str = ""
+    tier: str = ""
     confidence: float | None = None
     error_code: str = ""
+    recognition_key: str = ""
+    visual_variant_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,7 @@ class VisionSelection:
     source: str = "vision"
     health: HealthState = HealthState.READY
     error_code: str = ""
+    selection_revision: int = 0
     schema_version: int = CONTRACT_SCHEMA_VERSION
 
 

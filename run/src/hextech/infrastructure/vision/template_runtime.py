@@ -27,7 +27,7 @@ from hextech.modules.recommendation.hints import normalize_augment_id, query_ove
 from hextech.modules.data.ports.paths import ASSET_DIR, INDEX_DATA_DIR
 logger = logging.getLogger(__name__)
 
-TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 2
+TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 3
 TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE = np.float16
 TEMPLATE_RUNTIME_CACHE_V1_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v1.npz"))
 TEMPLATE_RUNTIME_CACHE_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v2.npz"))
@@ -129,6 +129,9 @@ class TemplateEntry:
     name_fingerprint_alt: tuple[float, ...] | None = None
     source_icon_filenames: tuple[str, ...] = ()
     text_only_icon_filenames: tuple[str, ...] = ()
+    # 同一中文卡名可能对应多个 CDragon 视觉版本；文字识别只能确认卡名，
+    # 只有唯一版本或图标证据充分时才可把具体 ID 带入后续统计解析。
+    name_variant_count: int = 1
 
 
 class TemplateIndex(list[TemplateEntry]):
@@ -287,6 +290,7 @@ def _template_entry_to_manifest(entry: TemplateEntry, *, row_index: int) -> dict
         "priority": int(entry.priority),
         "source_icon_filenames": list(entry.source_icon_filenames),
         "text_only_icon_filenames": list(entry.text_only_icon_filenames),
+        "name_variant_count": int(entry.name_variant_count),
     }
 
 
@@ -304,6 +308,7 @@ def _template_entry_to_cache(entry: TemplateEntry) -> dict[str, Any]:
         "name_fingerprint_alt": list(entry.name_fingerprint_alt) if entry.name_fingerprint_alt is not None else None,
         "source_icon_filenames": list(entry.source_icon_filenames),
         "text_only_icon_filenames": list(entry.text_only_icon_filenames),
+        "name_variant_count": int(entry.name_variant_count),
     }
 
 
@@ -323,6 +328,7 @@ def _template_entry_from_cache(payload: Any) -> TemplateEntry:
         name_fingerprint_alt=_optional_tuple_float(payload.get("name_fingerprint_alt")),
         source_icon_filenames=_tuple_str(payload.get("source_icon_filenames")),
         text_only_icon_filenames=_tuple_str(payload.get("text_only_icon_filenames")),
+        name_variant_count=max(1, int(payload.get("name_variant_count") or 1)),
     )
 
 
@@ -342,6 +348,7 @@ def _template_entry_from_manifest(payload: Any) -> TemplateEntry:
         name_fingerprint_alt=None,
         source_icon_filenames=_tuple_str(payload.get("source_icon_filenames")),
         text_only_icon_filenames=_tuple_str(payload.get("text_only_icon_filenames")),
+        name_variant_count=max(1, int(payload.get("name_variant_count") or 1)),
     )
 
 
@@ -602,7 +609,7 @@ def load_default_template_index(
 
     manifest_entries = _load_manifest_entries(root, use_runtime_resources=use_runtime_resources)
     manifest_by_name = _load_manifest_entries_by_name(root, use_runtime_resources=use_runtime_resources)
-    raw_templates: dict[str, Mapping[str, Any]] = {}
+    raw_templates: dict[str, dict[str, Any]] = {}
     names = {
         _clean_text(item.get("name"))
         for item in manifest_entries
@@ -611,61 +618,72 @@ def load_default_template_index(
     for name in sorted(names, key=normalize_augment_id):
         clean_name = _clean_text(name)
         manifest_items = manifest_by_name.get(clean_name) or manifest_by_name.get(normalize_augment_id(clean_name)) or []
-        icon_paths = [str(item.get("local_path") or item.get("filename") or "") for item in manifest_items]
         mapped_icon = str(name_to_icon.get(clean_name) or "")
-        if mapped_icon:
-            icon_paths.append(mapped_icon)
-        icon_paths = list(dict.fromkeys(path for path in icon_paths if path))
-        if not clean_name or not icon_paths:
-            continue
-        images: list[Image.Image] = []
-        filenames: list[str] = []
-        loaded_paths: set[Path] = set()
-        allowed_roots = (root.resolve(), asset_dir.resolve())
-        for icon_path in icon_paths:
-            relative_icon = str(icon_path or "").lstrip("/")
-            if relative_icon.startswith("assets/"):
-                path = (asset_dir / relative_icon.removeprefix("assets/")).resolve()
-            else:
-                path = (root / relative_icon).resolve()
-            try:
-                if not any(path == allowed_root or allowed_root in path.parents for allowed_root in allowed_roots):
-                    continue
-                if path in loaded_paths:
-                    continue
-                with Image.open(path) as opened:
-                    images.append(opened.copy())
-                filenames.append(path.name)
-                loaded_paths.add(path)
-            except OSError:
-                continue
-        if not images:
+        if not clean_name:
             continue
         hint_result = query_overlay_hint(hint_cache or {}, clean_name)
         hint_value = hint_result.get("hint")
         hint: Mapping[str, Any] = hint_value if hint_result.get("ok") and isinstance(hint_value, Mapping) else {}
-        manifest_item = _select_manifest_item(manifest_by_name, clean_name, mapped_icon)
-        template_id = normalize_augment_id(
-            manifest_item.get("augment_name_id")
-            or manifest_item.get("cdragon_id")
-            or hint.get("augment_id")
-            or clean_name,
-            clean_name,
-        )
-        existing = raw_templates.get(template_id)
-        if isinstance(existing, Mapping) and _clean_text(existing.get("name")) != clean_name:
-            template_id = normalize_augment_id(clean_name)
-        raw_templates[template_id] = {
-            "name": clean_name,
-            "tier": _clean_text(hint.get("tier") or manifest_item.get("tier"), fallback="Unknown"),
-            "summary": _clean_text(
-                hint.get("summary") or manifest_item.get("tooltip_plain") or manifest_item.get("description"),
-                fallback="本地模板识别结果",
-            ),
-            "images": images,
-            "source_icon_filenames": filenames,
-            "priority": 1 if hint_result.get("ok") else 0,
-        }
+        variants: list[tuple[Mapping[str, Any], list[str]]] = []
+        for manifest_item in manifest_items:
+            icon_path = str(manifest_item.get("local_path") or manifest_item.get("filename") or "")
+            if icon_path:
+                variants.append((manifest_item, [icon_path]))
+        if not variants and mapped_icon:
+            variants.append(({}, [mapped_icon]))
+
+        for manifest_item, icon_paths in variants:
+            images: list[Image.Image] = []
+            filenames: list[str] = []
+            loaded_paths: set[Path] = set()
+            allowed_roots = (root.resolve(), asset_dir.resolve())
+            for icon_path in icon_paths:
+                relative_icon = str(icon_path or "").lstrip("/")
+                if relative_icon.startswith("assets/"):
+                    path = (asset_dir / relative_icon.removeprefix("assets/")).resolve()
+                else:
+                    path = (root / relative_icon).resolve()
+                try:
+                    if not any(path == allowed_root or allowed_root in path.parents for allowed_root in allowed_roots):
+                        continue
+                    if path in loaded_paths:
+                        continue
+                    with Image.open(path) as opened:
+                        images.append(opened.copy())
+                    filenames.append(path.name)
+                    loaded_paths.add(path)
+                except OSError:
+                    continue
+            if not images:
+                continue
+            template_id = normalize_augment_id(
+                manifest_item.get("augment_name_id")
+                or manifest_item.get("cdragon_id")
+                or hint.get("augment_id")
+                or clean_name,
+                clean_name,
+            )
+            existing = raw_templates.get(template_id)
+            if existing is not None and _clean_text(existing.get("name")) != clean_name:
+                template_id = normalize_augment_id(f"{clean_name}_{manifest_item.get('cdragon_id') or ''}", clean_name)
+                existing = raw_templates.get(template_id)
+            if existing is not None:
+                existing["images"] = [*existing.get("images", []), *images]
+                existing["source_icon_filenames"] = list(
+                    dict.fromkeys([*existing.get("source_icon_filenames", []), *filenames])
+                )
+                continue
+            raw_templates[template_id] = {
+                "name": clean_name,
+                "tier": _clean_text(manifest_item.get("tier") or hint.get("tier"), fallback="Unknown"),
+                "summary": _clean_text(
+                    hint.get("summary") or manifest_item.get("tooltip_plain") or manifest_item.get("description"),
+                    fallback="本地模板识别结果",
+                ),
+                "images": images,
+                "source_icon_filenames": filenames,
+                "priority": 1 if hint_result.get("ok") else 0,
+            }
     return build_template_index(raw_templates)
 
 

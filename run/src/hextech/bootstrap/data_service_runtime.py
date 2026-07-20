@@ -137,9 +137,19 @@ def _build_augment_identity_payload(
 
     aliases: dict[str, str] = {}
     for canonical_id, name in augments.items():
-        for alias in (canonical_id, name, normalize_augment_id(name), normalize_augment_name(name)):
+        # 数字 ID 永远无歧义；名称只有唯一 canonical 候选时才可成为 alias。
+        # 旧逻辑用 setdefault 让同名项按遍历顺序 first-wins，会静默绑定错误统计。
+        for alias in (canonical_id,):
             if alias:
                 aliases.setdefault(alias, canonical_id)
+    for normalized_name, candidates in canonical_ids_by_name.items():
+        if len(candidates) != 1:
+            continue
+        canonical_id = next(iter(candidates))
+        name = augments.get(canonical_id, "")
+        for alias in (name, normalize_augment_id(name), normalized_name):
+            if alias:
+                aliases[alias] = canonical_id
 
     catalog_augments: dict[str, dict[str, Any]] = {}
     for entry in catalog_entries:

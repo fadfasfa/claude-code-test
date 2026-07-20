@@ -30,6 +30,7 @@ class OverlayRecognitionGateTests(unittest.TestCase):
             summary = vision_eval.evaluate_truth(Path("truth.json"), min_confidence=0.0)
 
         self.assertIsNone(summary["frame_slot_accuracy"])
+        self.assertEqual(summary["false_ready_count"], 0)
         self.assertIsNone(summary["accuracy"])
         self.assertEqual(summary["name_roi_accuracy"], 1.0)
 

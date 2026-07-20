@@ -315,7 +315,7 @@ def _schedule_event_render(
                 resolved_should_show=True,
             )
             try:
-                _write_real_session_evidence(root, session_state, snapshot, visibility)
+                _write_real_session_evidence(root, session_state, snapshot, model, visibility)
             except Exception:
                 visibility.pop("evidence_attempt_key", None)
                 logger.warning("写入真实会话验收证据失败。", exc_info=True)
@@ -611,6 +611,9 @@ def render_acceptance_screenshot(
     _set_dpi_awareness()
     root = tk.Tk()
     root.title("Hextech Overlay Acceptance")
+    # 验收窗口模拟生产无边框 overlay；否则 Windows 标题栏会吃掉约 30px，
+    # 生成的 2560×1600 请求实际只剩 2560×1570，布局证据失真。
+    root.overrideredirect(True)
     root.geometry(f"{max(640, int(width))}x{max(360, int(height))}+0+0")
     root.attributes("-topmost", True)
     canvas = tk.Canvas(root, bg="#10131A", highlightthickness=0, bd=0)

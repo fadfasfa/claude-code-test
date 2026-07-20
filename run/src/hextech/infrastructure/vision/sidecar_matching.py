@@ -144,9 +144,11 @@ def _rank_name_fingerprint(
         )
     else:
         ranked = _rank_with_matrix(crop_fingerprint, matrices.name_templates, matrices.name_matrix)
+    # 文字只识别卡名。同名视觉版本若按 augment_id 分开参与排序，会把完全相同的
+    # 文字模板当作 runner-up，错误压低 margin。
     best_by_identity: dict[str, tuple[TemplateEntry, float]] = {}
     for template, confidence in ranked:
-        identity = template.augment_id or template.name
+        identity = normalize_augment_id(template.name)
         previous = best_by_identity.get(identity)
         if previous is None or confidence > previous[1]:
             best_by_identity[identity] = (template, confidence)
@@ -177,6 +179,9 @@ def _top_candidates(
         {
             "augment_id": template.augment_id,
             "name": template.name,
+            "recognition_key": normalize_augment_id(template.name),
+            "visual_variant_id": template.augment_id,
+            "name_variant_count": int(template.name_variant_count),
             "tier": template.tier,
             "summary": template.summary,
             "confidence": confidence,

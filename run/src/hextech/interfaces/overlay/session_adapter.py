@@ -118,12 +118,15 @@ def vision_selection_from_runtime(payload: Mapping[str, Any], *, fallback_sessio
                 state=state,
                 augment_id=normalized_augment_id,
                 name=str(raw.get("name") or ""),
+                tier=str(raw.get("tier") or ""),
                 confidence=(
                     _coerce_float(raw.get("confidence"), 0.0)
                     if isinstance(raw.get("confidence"), (int, float, str)) and not isinstance(raw.get("confidence"), bool)
                     else None
                 ),
                 error_code=str(raw.get("diagnostic") or raw.get("error_code") or ""),
+                recognition_key=str(raw.get("recognition_key") or ""),
+                visual_variant_id=str(raw.get("visual_variant_id") or raw.get("augment_id") or ""),
             )
         )
     return VisionSelection(
@@ -134,6 +137,7 @@ def vision_selection_from_runtime(payload: Mapping[str, Any], *, fallback_sessio
         slots=tuple(slots),
         health=HealthState.DEGRADED if any(slot.state is VisionSlotState.FAILED for slot in slots) else HealthState.READY,
         error_code=str(source.get("reason") or ""),
+        selection_revision=_coerce_positive_int(source.get("selection_revision")),
     )
 
 

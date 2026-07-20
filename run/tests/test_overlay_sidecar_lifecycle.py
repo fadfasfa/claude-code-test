@@ -526,12 +526,12 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                 matrices=matrices,
             )
 
-            self.assertEqual(write_stats["schema_version"], 2)
+            self.assertEqual(write_stats["schema_version"], template_runtime.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION)
             self.assertEqual(write_stats["matrix_dtype"], "float16")
             with np.load(cache_file, allow_pickle=False) as payload:
                 manifest = json.loads(np.asarray(payload["manifest_json"], dtype=np.uint8).tobytes().decode("utf-8"))
                 manifest_text = json.dumps(manifest, ensure_ascii=False)
-                self.assertEqual(manifest["schema_version"], 2)
+                self.assertEqual(manifest["schema_version"], template_runtime.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION)
                 self.assertEqual(payload["icon_matrix"].dtype, np.float16)
                 self.assertNotIn("fingerprint", manifest_text)
                 self.assertNotIn("name_fingerprint", manifest_text)
@@ -545,7 +545,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertIsNotNone(runtime)
         assert runtime is not None
         self.assertTrue(runtime.stats["cache_hit"])
-        self.assertEqual(runtime.stats["schema_version"], 2)
+        self.assertEqual(runtime.stats["schema_version"], template_runtime.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION)
         self.assertEqual(runtime.stats["matrix_dtype"], "float16")
         self.assertEqual(runtime.matrices.icon_matrix.dtype, np.float32)
         self.assertEqual(runtime.template_index[0].fingerprint, ())

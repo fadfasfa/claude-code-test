@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -120,6 +121,45 @@ def verify_real_session_evidence(path: Path, *, expected_generation_id: str) -> 
         raise AcceptanceFailure("真实渲染 Vision epoch 不一致")
     if not final_state.get("should_show") or final_state.get("presentation_mode") != "content":
         raise AcceptanceFailure("真实 Overlay 最终未进入可见内容态")
+    schema_version = int(payload.get("schema_version") or 1)
+    selection_revision = 0
+    render_signature = ""
+    if schema_version >= 2:
+        render = payload.get("render")
+        if not isinstance(render, dict):
+            raise AcceptanceFailure("真实 Overlay v2 缺少 render 证据")
+        if str(render.get("session_id") or "") != session_id:
+            raise AcceptanceFailure("真实会话 session 不一致：render")
+        if str(render.get("generation_id") or "") != generation_id:
+            raise AcceptanceFailure("真实渲染 generation 不一致：render")
+        if int(render.get("vision_epoch") or 0) != int(vision.get("epoch") or 0):
+            raise AcceptanceFailure("真实渲染 Vision epoch 不一致：render")
+        selection_revision = int(payload.get("selection_revision") or 0)
+        if selection_revision <= 0 or int(render.get("selection_revision") or 0) != selection_revision:
+            raise AcceptanceFailure("真实渲染 revision 不一致")
+        rows = render.get("rows")
+        if not isinstance(rows, list) or len(rows) != 3:
+            raise AcceptanceFailure("真实 Overlay v2 缺少三槽 render rows")
+        render_signature = str(payload.get("render_signature") or "")
+        if not render_signature or str(render.get("render_signature") or "") != render_signature:
+            raise AcceptanceFailure("真实 Overlay render signature 不一致")
+        signature_payload = {
+            "session_id": session_id,
+            "generation_id": generation_id,
+            "vision_epoch": int(vision.get("epoch") or 0),
+            "selection_revision": selection_revision,
+            "rows": rows,
+        }
+        raw_signature = json.dumps(
+            signature_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        expected_signature = hashlib.sha256(raw_signature.encode("utf-8")).hexdigest()
+        if render_signature != expected_signature:
+            raise AcceptanceFailure("真实 Overlay render signature 无法复算")
     screenshot = Path(str(payload.get("screenshot") or ""))
     screenshot = screenshot if screenshot.is_absolute() else path.parent / screenshot
     if not screenshot.is_file() or screenshot.stat().st_size <= 0:
@@ -128,6 +168,8 @@ def verify_real_session_evidence(path: Path, *, expected_generation_id: str) -> 
         "generation_id": generation_id,
         "session_id": session_id,
         "vision_epoch": int(vision["epoch"]),
+        "selection_revision": selection_revision,
+        "render_signature": render_signature,
         "screenshot": str(screenshot),
     }
 

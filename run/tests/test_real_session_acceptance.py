@@ -121,8 +121,222 @@ def test_production_evidence_builder_matches_acceptance_verifier(tmp_path: Path)
             "dpi_scale": 1.25,
         },
         screenshot=screenshot.name,
+        render_summary={"rows": [{"slot": index, "name": "测试", "status_code": "READY", "stats_text": "胜率 50.0% · 出场 1.0%"} for index in range(3)]},
     )
     path = write_evidence_bundle(bundle, tmp_path / "session.json")
 
     result = verify_real_session_evidence(path, expected_generation_id="g1")
     assert result["session_id"] == "s1"
+    assert result["selection_revision"] == 1
+    assert result["render_signature"] == bundle.render_signature
+
+
+def test_v2_evidence_rejects_render_signature_or_revision_mismatch(tmp_path: Path) -> None:
+    context = GameContext(session_id="s1", observed_at=1, local_champion_id=ChampionId("24"))  # type: ignore[arg-type]
+    vision = VisionSelection(
+        session_id="s1",  # type: ignore[arg-type]
+        epoch=VisionEpoch(2),
+        observed_at=2,
+        scene_state=VisionSceneState.ACTIVE,
+        slots=tuple(VisionSlot(index, VisionSlotState.READY, AugmentId("stable_ready")) for index in range(3)),
+        selection_revision=2,
+    )
+    model = RecommendationService().build(context, _snapshot_view(), vision=vision)
+    state = SessionCoordinator().reduce(
+        user_enabled=True,
+        game_present=True,
+        generation_id=GenerationId("g1"),
+        context=context,
+        vision=vision,
+        recommendation=model,
+    )
+    screenshot = tmp_path / "overlay.png"
+    screenshot.write_bytes(b"png")
+    bundle = build_evidence_bundle(
+        state,
+        lcu_summary={"local_champion_id": "24"},
+        window_summary={
+            "hwnd": 100,
+            "client_size": [2560, 1600],
+            "capture_size": [2560, 1600],
+            "dpi_scale": 1.5,
+        },
+        screenshot=screenshot.name,
+        render_summary={"rows": [{"slot": index, "name": "测试", "status_code": "READY", "stats_text": "胜率 50.0% · 出场 1.0%"} for index in range(3)]},
+    )
+    path = write_evidence_bundle(bundle, tmp_path / "session.v2.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["render"]["selection_revision"] = 3
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(AcceptanceFailure, match="revision"):
+        verify_real_session_evidence(path, expected_generation_id="g1")
+
+    payload["render"]["selection_revision"] = 2
+    payload["render_signature"] = "tampered"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(AcceptanceFailure, match="signature"):
+        verify_real_session_evidence(path, expected_generation_id="g1")
+
+
+def test_real_session_capture_waits_two_ticks_and_cancels_changed_signature(tmp_path: Path, monkeypatch) -> None:
+    from PIL import Image
+
+    from hextech.interfaces.overlay import host_sync
+
+    class FakeRoot:
+        def __init__(self) -> None:
+            self.callbacks: list[tuple[int, object]] = []
+
+        def after(self, delay: int, callback) -> None:
+            self.callbacks.append((delay, callback))
+
+        def update_idletasks(self) -> None:
+            return None
+
+        def winfo_rootx(self) -> int:
+            return 0
+
+        def winfo_rooty(self) -> int:
+            return 0
+
+        def winfo_width(self) -> int:
+            return 800
+
+        def winfo_height(self) -> int:
+            return 500
+
+    context = GameContext(session_id="s1", observed_at=1, local_champion_id=ChampionId("24"))  # type: ignore[arg-type]
+    vision = VisionSelection(
+        session_id="s1",  # type: ignore[arg-type]
+        epoch=VisionEpoch(2),
+        observed_at=2,
+        scene_state=VisionSceneState.ACTIVE,
+        slots=tuple(
+            VisionSlot(index, VisionSlotState.READY, AugmentId("stable_ready"), name=f"卡名 {index}")
+            for index in range(3)
+        ),
+        selection_revision=1,
+    )
+    recommendation = RecommendationService().build(context, _snapshot_view(), vision=vision)
+    state = SessionCoordinator().reduce(
+        user_enabled=True,
+        game_present=True,
+        generation_id=GenerationId("g1"),
+        context=context,
+        vision=vision,
+        recommendation=recommendation,
+    )
+    rows = [
+        {"slot": index, "name": f"卡名 {index}", "status_code": "READY", "stats_text": "胜率 50.0% · 出场 1.0%"}
+        for index in range(3)
+    ]
+    model = {"stats": rows, "synergies": []}
+    snapshot = {
+        "slots": [{"slot": index, "name": f"卡名 {index}"} for index in range(3)],
+        "_acceptance_rules": ["dual_font:2", "dual_font:2", "strong_text:2"],
+        "source": {
+            "window_hwnd": 100,
+            "client_rect": [0, 0, 2560, 1600],
+            "capture_size": [2560, 1600],
+            "dpi_scale": 1.5,
+        },
+    }
+    evidence_dir = tmp_path / "session_evidence"
+    monkeypatch.setattr(host_sync, "overlay_runtime_state_path", lambda _name: evidence_dir)
+    monkeypatch.setattr("PIL.ImageGrab.grab", lambda **_kwargs: Image.new("RGB", (800, 500), "black"))
+    root = FakeRoot()
+    visibility: dict[str, object] = {"window_visible": True}
+
+    host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
+    assert root.callbacks == []
+    host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
+    assert [delay for delay, _callback in root.callbacks] == [100]
+
+    visibility["current_render_signature"] = "changed-before-capture"
+    root.callbacks.pop()[1]()  # type: ignore[operator]
+    assert not evidence_dir.exists()
+    assert "evidence_attempt_key" not in visibility
+
+
+def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: Path, monkeypatch) -> None:
+    from PIL import Image
+
+    from hextech.interfaces.overlay import host_sync
+
+    class FakeRoot:
+        def __init__(self) -> None:
+            self.callbacks: list[object] = []
+
+        def after(self, delay: int, callback) -> None:
+            assert delay == 100
+            self.callbacks.append(callback)
+
+        def update_idletasks(self) -> None:
+            return None
+
+        def winfo_rootx(self) -> int:
+            return 0
+
+        def winfo_rooty(self) -> int:
+            return 0
+
+        def winfo_width(self) -> int:
+            return 800
+
+        def winfo_height(self) -> int:
+            return 500
+
+    evidence_dir = tmp_path / "session_evidence"
+    monkeypatch.setattr(host_sync, "overlay_runtime_state_path", lambda _name: evidence_dir)
+    monkeypatch.setattr("PIL.ImageGrab.grab", lambda **_kwargs: Image.new("RGB", (800, 500), "black"))
+    root = FakeRoot()
+    visibility: dict[str, object] = {"window_visible": True}
+    snapshot = {
+        "slots": [{"slot": index, "name": f"卡名 {index}"} for index in range(3)],
+        "_acceptance_rules": ["dual_font:2"] * 3,
+        "source": {
+            "window_hwnd": 100,
+            "client_rect": [0, 0, 2560, 1600],
+            "capture_size": [2560, 1600],
+            "dpi_scale": 1.5,
+        },
+    }
+
+    for revision in (1, 2):
+        context = GameContext(session_id="s1", observed_at=1, local_champion_id=ChampionId("24"))  # type: ignore[arg-type]
+        vision = VisionSelection(
+            session_id="s1",  # type: ignore[arg-type]
+            epoch=VisionEpoch(2),
+            observed_at=2,
+            scene_state=VisionSceneState.ACTIVE,
+            slots=tuple(
+                VisionSlot(index, VisionSlotState.READY, AugmentId("stable_ready"), name=f"卡名 {index}")
+                for index in range(3)
+            ),
+            selection_revision=revision,
+        )
+        recommendation = RecommendationService().build(context, _snapshot_view(), vision=vision)
+        state = SessionCoordinator().reduce(
+            user_enabled=True,
+            game_present=True,
+            generation_id=GenerationId("g1"),
+            context=context,
+            vision=vision,
+            recommendation=recommendation,
+        )
+        rows = [
+            {"slot": index, "name": f"卡名 {index}", "status_code": "READY", "stats_text": f"胜率 5{revision}.0% · 出场 1.0%"}
+            for index in range(3)
+        ]
+        model = {"stats": rows, "synergies": []}
+        host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
+        host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
+        root.callbacks.pop()()  # type: ignore[operator]
+
+    first = evidence_dir / "overlay-s1-e2-r1.v2.json"
+    second = evidence_dir / "overlay-s1-e2-r2.v2.json"
+    assert first.is_file() and second.is_file()
+    latest = json.loads((evidence_dir / "latest_real_session.v2.json").read_text(encoding="utf-8"))
+    assert latest["selection_revision"] == 2
+    assert latest["render"]["acceptance_rules"] == ["dual_font:2"] * 3
+    assert latest["screenshot"] == "overlay-s1-e2-r2.png"

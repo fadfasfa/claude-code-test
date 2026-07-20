@@ -80,14 +80,42 @@ class RecommendationService:
                 if not policy.private_stats_enabled and slot.state.value == "ready":
                     row["status_code"] = "PRIVACY_OFF"
                 private_stats_enabled = policy.private_stats_enabled
-                if slot.augment_id and context.local_champion_id:
-                    identity = snapshot.resolve_augment(slot.augment_id)
+                lookup_keys = tuple(
+                    dict.fromkeys(
+                        value
+                        for value in (
+                            str(slot.visual_variant_id or "").strip(),
+                            str(slot.augment_id or "").strip(),
+                            str(slot.name or "").strip(),
+                        )
+                        if value
+                    )
+                )
+                if lookup_keys and context.local_champion_id:
+                    identity = None
+                    resolved_key = ""
+                    for key in lookup_keys:
+                        resolved = snapshot.resolve_augment(key)
+                        if resolved:
+                            identity = resolved
+                            resolved_key = key
+                            break
                     if identity:
                         row["name"] = str(identity.get("name") or row["name"])
-                        row["tier"] = str(identity.get("tier") or "")
+                        # tier 属于视觉版本。仅靠卡名 fallback 时不能从同名 catalog
+                        # 随机借用一个版本；有视觉 ID 或 Vision 已给出 tier 才展示。
+                        row["tier"] = str(
+                            slot.tier
+                            or (
+                                identity.get("tier")
+                                if resolved_key != str(slot.name or "").strip()
+                                else ""
+                            )
+                            or ""
+                        )
                         row["canonical_augment_id"] = str(identity.get("canonical_id") or "")
                     stats = (
-                        snapshot.get_combo_stats(context.local_champion_id, slot.augment_id)
+                        snapshot.get_combo_stats(context.local_champion_id, identity.get("canonical_id"))
                         if identity and private_stats_enabled
                         else None
                     )

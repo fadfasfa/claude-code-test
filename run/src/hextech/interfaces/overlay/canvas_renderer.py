@@ -395,6 +395,12 @@ def _draw_shadowed_text(canvas: CanvasLike, x: int, y: int, **kwargs: Any) -> No
     canvas.create_text(x, y, **kwargs)
 
 
+def _pixel_font(family: str, size: int, *styles: str) -> tuple[Any, ...]:
+    """Tk 负数字号表示像素，避免 Windows DPI 把布局字号再次按点缩放。"""
+
+    return (family, -max(1, int(size)), *styles)
+
+
 def _draw_embedded_bar(canvas: CanvasLike, box: tuple[int, int, int, int], *, tier: str = "") -> None:
     """完全透明的统计底条占位，不再绘制任何阻挡原生游戏背景的矩形或线条。"""
     pass
@@ -426,7 +432,7 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
             (y0 + y1) // 2,
             text=row["status_text"],
             fill=status_colors[row["status_code"]],
-            font=(font_family, status_size, "bold"),
+            font=_pixel_font(font_family, status_size, "bold"),
             anchor="center",
         )
         return
@@ -442,7 +448,7 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
         cy,
         text=stats_text,
         fill=OVERLAY_THEME["stat_value"],
-        font=(font_family, value_size, "bold"),
+        font=_pixel_font(font_family, value_size, "bold"),
         anchor="center",
     )
 
@@ -471,7 +477,7 @@ def _draw_synergy_panel(
         y0 + text_layout["title_offset"],
         text=text_layout["header"],
         fill=OVERLAY_THEME["text_primary"],
-        font=(font_family, text_layout["title_size"], "bold"),
+        font=_pixel_font(font_family, text_layout["title_size"], "bold"),
         anchor="nw",
     )
     _draw_shadowed_text(
@@ -480,7 +486,7 @@ def _draw_synergy_panel(
         y0 + text_layout["meta_offset"],
         text=text_layout["meta"],
         fill=_tier_color(row["tier"]),
-        font=(font_family, text_layout["body_size"], "bold"),
+        font=_pixel_font(font_family, text_layout["body_size"], "bold"),
         anchor="nw",
     )
     if text_layout["body_lines"]:
@@ -490,7 +496,7 @@ def _draw_synergy_panel(
             y0 + text_layout["body_offset"],
             text="\n".join(text_layout["body_lines"]),
             fill=OVERLAY_THEME["text_secondary"],
-            font=(font_family, text_layout["body_size"]),
+            font=_pixel_font(font_family, text_layout["body_size"]),
             anchor="nw",
         )
 
@@ -519,7 +525,7 @@ def _draw_compact_synergy_panel(
         (y0 + y1) // 2,
         text=summary,
         fill=OVERLAY_THEME["text_primary"],
-        font=("Microsoft YaHei UI", font_size, "bold"),
+        font=_pixel_font("Microsoft YaHei UI", font_size, "bold"),
         anchor="w",
     )
 

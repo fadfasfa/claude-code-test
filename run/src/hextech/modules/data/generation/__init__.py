@@ -326,15 +326,21 @@ class DataSnapshotView:
                     catalog_item = dict(item)
                     break
             if catalog_item is None:
-                catalog_item = next(
-                    (
-                        dict(item)
-                        for item in catalog.values()
-                        if isinstance(item, Mapping)
-                        and normalize_augment_name(item.get("name")) == normalize_augment_name(raw)
-                    ),
-                    None,
-                )
+                name_matches = [
+                    dict(item)
+                    for item in catalog.values()
+                    if isinstance(item, Mapping)
+                    and normalize_augment_name(item.get("name")) == normalize_augment_name(raw)
+                ]
+                canonical_matches = {
+                    str(item.get("canonical_id") or "").strip()
+                    for item in name_matches
+                    if str(item.get("canonical_id") or "").strip()
+                }
+                # 同名视觉版本只有在唯一 catalog 项，或它们都指向同一统计 ID 时
+                # 才允许名称 fallback；否则保持 unresolved，禁止 first-wins。
+                if len(name_matches) == 1 or len(canonical_matches) == 1:
+                    catalog_item = name_matches[0]
         augments = identities.get("augments", {})
         if not canonical_id and raw.isdecimal():
             canonical_id = raw

@@ -150,10 +150,13 @@ def _public_event_payload(event_payload: Mapping[str, Any]) -> dict[str, Any]:
 def _vision_trace_signature(event_payload: Mapping[str, Any]) -> tuple[str, ...]:
     source = event_payload.get("source") if isinstance(event_payload.get("source"), Mapping) else {}
     raw_slots = event_payload.get("_raw_slots") if isinstance(event_payload.get("_raw_slots"), list) else []
+    selection_active = source.get("selection_window_active") is True
     raw_signature: list[str] = []
     for slot in raw_slots[:SLOT_COUNT]:
         if not isinstance(slot, Mapping):
             raw_signature.append("")
+            continue
+        if not selection_active:
             continue
         channels = slot.get("channels") if isinstance(slot.get("channels"), Mapping) else {}
         for channel_name in ("text", "text_alt", "icon", "text_narrowed", "text_alt_narrowed"):

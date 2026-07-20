@@ -112,10 +112,10 @@ class OverlayVisionStateTests(unittest.TestCase):
             failed = tracker.update(event_a)
 
         self.assertEqual(failed["slots"][2]["state"], "failed")
-        self.assertEqual(failed["slots"][2]["candidate_identity"], "augment_x")
+        self.assertEqual(failed["slots"][2]["candidate_identity"], "候选_x")
         self.assertGreaterEqual(failed["slots"][2]["elapsed_seconds"], 3.0)
 
-    def test_weak_reroll_keeps_old_slot_until_replacement_is_stable(self):
+    def test_strong_reroll_withdraws_old_slot_until_replacement_is_stable(self):
         from hextech.infrastructure.vision import state
 
         tracker = state.SelectionTracker(scene_enter_frames=1)
@@ -148,10 +148,137 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(weak_started["slots"][2]["augment_id"], "augment_c")
         self.assertEqual(wobbling["slots"][2]["augment_id"], "augment_c")
         self.assertEqual(failed["slots"][2]["augment_id"], "augment_c")
-        self.assertEqual(recovering["slots"][2]["augment_id"], "augment_c")
+        self.assertEqual(recovering["slots"][2]["state"], "detecting")
+        self.assertEqual(recovering["slots"][2]["augment_id"], "")
+        self.assertEqual(recovering["source"]["selection_revision"], 2)
         self.assertEqual(recovered["slots"][2]["state"], "ready")
         self.assertEqual(recovered["slots"][2]["augment_id"], "augment_z")
+        self.assertEqual(recovered["source"]["selection_revision"], 2)
         self.assertEqual([slot["state"] for slot in recovered["slots"][:2]], ["ready", "ready"])
+
+    def test_multi_slot_reroll_increments_revision_once_and_keeps_unchanged_slot(self):
+        from hextech.infrastructure.vision import state
+
+        tracker = state.SelectionTracker(scene_enter_frames=1)
+        tracker.update(_selection_event())
+        stable = tracker.update(_selection_event())
+        reroll = _selection_event()
+        reroll["_raw_slots"][0] = _ready_slot(0, "augment_x", "候选 X")
+        reroll["_raw_slots"][2] = _ready_slot(2, "augment_z", "候选 Z")
+
+        changing = tracker.update(reroll)
+        ready = tracker.update(reroll)
+
+        self.assertEqual(stable["source"]["selection_revision"], 1)
+        self.assertEqual(changing["source"]["selection_revision"], 2)
+        self.assertEqual([changing["slots"][index]["state"] for index in (0, 2)], ["detecting", "detecting"])
+        self.assertEqual(changing["slots"][1]["augment_id"], "augment_b")
+        self.assertEqual(ready["source"]["selection_revision"], 2)
+        self.assertEqual(
+            [slot["augment_id"] for slot in ready["slots"]],
+            ["augment_x", "augment_b", "augment_z"],
+        )
+
+    def test_weak_temporal_evidence_never_becomes_ready(self):
+        from hextech.infrastructure.vision import state
+
+        tracker = state.SelectionTracker(scene_enter_frames=1)
+        event = _selection_event()
+        event["_raw_slots"][0] = _weak_slot(0, "weak", "弱候选")
+        observed = [tracker.update(event) for _ in range(5)]
+
+        self.assertTrue(all(item["slots"][0]["state"] != "ready" for item in observed))
+
+    def test_same_name_variants_share_text_identity_and_require_icon_for_visual_id(self):
+        from copy import deepcopy
+        from PIL import Image, ImageDraw
+
+        from hextech.infrastructure.vision import sidecar
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        def icon(shape: str) -> Image.Image:
+            image = Image.new("RGB", (72, 72), "black")
+            draw = ImageDraw.Draw(image)
+            if shape == "gold":
+                draw.rectangle((12, 12, 60, 60), fill="white")
+            else:
+                draw.ellipse((12, 12, 60, 60), fill="white")
+            return image
+
+        index = sidecar.build_template_index(
+            {
+                "special_glasscannon": {"name": "玻璃大炮", "tier": "黄金", "image": icon("gold")},
+                "glasscannon": {"name": "玻璃大炮", "tier": "棱彩", "image": icon("prismatic")},
+                "other": {"name": "其他强化", "tier": "黄金", "image": icon("other")},
+            }
+        )
+        fingerprint = sidecar._name_fingerprint("玻璃大炮")
+        self.assertIsNotNone(fingerprint)
+        ranked = sidecar._rank_name_fingerprint(fingerprint, index, family="primary")
+        self.assertEqual([entry.name for entry, _score in ranked].count("玻璃大炮"), 1)
+        self.assertEqual(ranked[0][0].name, "玻璃大炮")
+
+        text_candidate = {
+            "augment_id": "special_glasscannon",
+            "visual_variant_id": "special_glasscannon",
+            "recognition_key": "玻璃大炮",
+            "name_variant_count": 2,
+            "name": "玻璃大炮",
+            "tier": "黄金",
+            "confidence": 0.91,
+        }
+        prismatic_icon = {
+            **text_candidate,
+            "augment_id": "glasscannon",
+            "visual_variant_id": "glasscannon",
+            "tier": "棱彩",
+            "confidence": 0.90,
+        }
+        slot = {
+            "slot": 0,
+            "channels": {
+                "text": {"margin": 0.05, "top_candidates": [text_candidate]},
+                "text_alt": {"margin": 0.05, "top_candidates": [text_candidate]},
+                "icon": {"margin": 0.03, "top_candidates": [prismatic_icon]},
+            },
+        }
+        resolved = candidate_from_slot(slot)
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.visual_variant_id, "glasscannon")
+        self.assertEqual(resolved.tier, "棱彩")
+
+        resolved_slot = deepcopy(slot)
+        unresolved_slot = deepcopy(slot)
+        unresolved_slot["channels"]["icon"]["margin"] = 0.001
+        unresolved = candidate_from_slot(unresolved_slot)
+        self.assertIsNotNone(unresolved)
+        self.assertEqual(unresolved.name, "玻璃大炮")
+        self.assertEqual(unresolved.visual_variant_id, "")
+        self.assertEqual(unresolved.tier, "")
+
+        base_event = _selection_event()
+        base_event["_raw_slots"][0] = unresolved_slot
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(base_event)
+        name_ready = tracker.update(base_event)
+        self.assertEqual(name_ready["slots"][0]["name"], "玻璃大炮")
+        self.assertEqual(name_ready["slots"][0]["visual_variant_id"], "")
+
+        enriched_event = _selection_event()
+        enriched_event["_raw_slots"][0] = resolved_slot
+        enriched = tracker.update(enriched_event)
+        self.assertEqual(enriched["slots"][0]["visual_variant_id"], "glasscannon")
+        self.assertEqual(enriched["slots"][0]["tier"], "棱彩")
+        self.assertEqual(enriched["source"]["selection_revision"], 1)
+
+        unresolved_slot["channels"]["text"]["top_candidates"][0]["confidence"] = 0.85
+        unresolved_slot["channels"]["text_alt"]["top_candidates"] = [
+            {"name": "其他强化", "recognition_key": "其他强化", "confidence": 0.60}
+        ]
+        unresolved_slot["channels"]["text"]["margin"] = 0.013
+        unresolved_slot["channels"]["text_alt"]["margin"] = 0.013
+        self.assertIsNone(candidate_from_slot(unresolved_slot))
 
     def test_sidecar_template_runtime_entrypoint_delegates_to_cache_module(self):
         from hextech.infrastructure.vision import sidecar, template_runtime

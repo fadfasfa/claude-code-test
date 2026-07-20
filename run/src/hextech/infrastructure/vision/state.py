@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from hextech.modules.vision.events import build_overlay_event
+from hextech.modules.recommendation.hints import normalize_augment_id
 from hextech.infrastructure.vision.matcher import candidate_from_slot, unknown_slot
 
 
@@ -55,12 +56,14 @@ class SelectionTracker:
     absent_frames: int = 0             # 场景连续消失帧数
     scene_active: bool = False         # 场景已激活（≥ SCENE_ENTER_FRAMES）
     epoch: int = 0                     # 选择窗口编号，每次新窗口递增
+    selection_revision: int = 0        # 同一窗口内刷新卡片时递增，防止新卡沿用旧统计
     scene_enter_frames: int = SCENE_ENTER_FRAMES
     scene_exit_frames: int = SCENE_EXIT_FRAMES
     body_shard_latched: bool = False   # 锻体碎片场景锁定中
     body_shard_absent_frames: int = 0  # 锻体场景消失帧计数（退出防抖）
     residue_hold_frames: int = 0       # 非真实场景下沿用上一帧的连续帧数
     selection_click_armed: bool = False  # 场景内卡片点击后，场景消失即确认为本轮选择完成
+    _revision_changed: bool = False
     slots: list[_SlotTrack] = field(default_factory=lambda: [_SlotTrack() for _ in range(SLOT_COUNT)])
 
     def reset(self) -> None:
@@ -71,6 +74,8 @@ class SelectionTracker:
         self.body_shard_absent_frames = 0
         self.residue_hold_frames = 0
         self.selection_click_armed = False
+        self.selection_revision = 0
+        self._revision_changed = False
         for slot in self.slots:
             slot.clear()
 
@@ -84,6 +89,7 @@ class SelectionTracker:
                 "scene_kind": "body_shard",
                 "scene_score": float(source.get("scene_score") or 0.0),
                 "selection_epoch": self.epoch,
+                "selection_revision": self.selection_revision,
                 "selection_window_active": False,
                 "scoreboard_key_down": False,
                 "ready_slots": 0,
@@ -111,6 +117,7 @@ class SelectionTracker:
                 "scene_state": "blocked",
                 "scene_score": 0.0,
                 "selection_epoch": self.epoch,
+                "selection_revision": self.selection_revision,
                 "selection_window_active": False,
                 "scoreboard_key_down": bool(scoreboard_key_down),
                 "ready_slots": 0,
@@ -125,6 +132,7 @@ class SelectionTracker:
         """结束当前 epoch，避免完成选择后继续把空槽解释为 detecting。"""
 
         completed_epoch = self.epoch
+        completed_revision = self.selection_revision
         self.reset()
         event = build_overlay_event([], source_tag="vision-sidecar", selection_type="hextech", active=False)
         event["source"].update(
@@ -135,6 +143,7 @@ class SelectionTracker:
                 "scene_kind": "hextech",
                 "scene_score": float(source.get("scene_score") or 0.0),
                 "selection_epoch": completed_epoch,
+                "selection_revision": completed_revision,
                 "selection_confirmed": True,
                 "selection_window_active": False,
                 "scoreboard_key_down": False,
@@ -199,13 +208,30 @@ class SelectionTracker:
 
         identity = candidate.identity
         if track.stable_slot is not None:
-            stable_identity = str(track.stable_slot.get("augment_id") or track.stable_slot.get("name") or "")
-            if identity == stable_identity:
+            stable_identity = str(
+                track.stable_slot.get("recognition_key")
+                or normalize_augment_id(track.stable_slot.get("name"))
+                or track.stable_slot.get("augment_id")
+                or ""
+            )
+            stable_variant = str(track.stable_slot.get("visual_variant_id") or track.stable_slot.get("augment_id") or "")
+            candidate_variant = str(candidate.visual_variant_id or candidate.augment_id or "")
+            same_variant = not (stable_variant and candidate_variant and stable_variant != candidate_variant)
+            if identity == stable_identity and same_variant:
+                if candidate_variant and not stable_variant:
+                    # 卡名已经稳定后，后续强图标证据可以补齐视觉版本和 tier；
+                    # 这不是候选刷新，不递增 revision，也不撤下名称 fallback 统计。
+                    track.stable_slot = candidate.ready_slot()
                 track.candidate_identity = identity
                 track.candidate_frames = max(track.candidate_frames, candidate.required_frames)
                 track.detecting_since = 0.0
                 track.weak_miss_frames = 0
                 return dict(track.stable_slot)
+            # 只要可靠候选已证明卡片发生变化，就先撤下旧统计；等待新候选稳定期间
+            # 显示 detecting，避免刷新动画中把上一张卡的统计贴到新卡上。
+            track.stable_slot = None
+            track.detecting_since = now
+            self._revision_changed = True
         track.weak_miss_frames = 0
         if identity == track.candidate_identity:
             track.candidate_frames += 1
@@ -247,6 +273,7 @@ class SelectionTracker:
                 if isinstance(source.get("layout_transform"), Mapping)
                 else {},
                 "selection_epoch": self.epoch,
+                "selection_revision": self.selection_revision,
                 "selection_window_active": True,
                 "scoreboard_key_down": False,
                 "ready_slots": ready_slots,
@@ -290,6 +317,7 @@ class SelectionTracker:
         if reason == "body_shard_only":
             if not self.body_shard_latched:
                 self.epoch += 1
+                self.selection_revision = 1
             self.scene_frames = 0
             self.absent_frames = 0
             self.scene_active = False
@@ -346,6 +374,7 @@ class SelectionTracker:
             self.absent_frames = 0
             if self.scene_frames == 0 and not self.scene_active:
                 self.epoch += 1
+                self.selection_revision = 1
                 for slot in self.slots:
                     slot.clear()
             self.scene_frames += 1
@@ -369,6 +398,7 @@ class SelectionTracker:
                         "scene_score": float(source.get("scene_score") or 0.0),
                         "layout_id": str(source.get("layout_id") or ""),
                         "selection_epoch": self.epoch,
+                        "selection_revision": self.selection_revision,
                         "selection_window_active": False,
                         "scoreboard_key_down": False,
                         "ready_slots": 0,
@@ -395,6 +425,9 @@ class SelectionTracker:
             self._update_slot(index, raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {})
             for index in range(SLOT_COUNT)
         ]
+        if self._revision_changed:
+            self.selection_revision = max(1, self.selection_revision + 1)
+            self._revision_changed = False
         ready_slots = sum(slot.get("state") == "ready" for slot in rendered_slots)
         event = build_overlay_event(
             rendered_slots,
@@ -415,6 +448,7 @@ class SelectionTracker:
                 "layout_id": str(source.get("layout_id") or ""),
                 "layout_transform": source.get("layout_transform") if isinstance(source.get("layout_transform"), Mapping) else {},
                 "selection_epoch": self.epoch,
+                "selection_revision": self.selection_revision,
                 "selection_window_active": bool(self.scene_active),
                 "scoreboard_key_down": False,
                 "ready_slots": ready_slots,
