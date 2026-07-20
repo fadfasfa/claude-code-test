@@ -402,6 +402,8 @@ def run_fixture_regression(root: Path) -> dict[str, Any]:
         "fixture_failure_count": len(summary["failures"]),
         "fixture_failures": summary["failures"][:20],
         "fixture_missing": summary["missing"][:20],
+        "fixture_frame_slot_accuracy": summary["frame_slot_accuracy"],
+        "fixture_name_roi_accuracy": summary["name_roi_accuracy"],
         "fixture_accuracy": summary["accuracy"],
     }
 

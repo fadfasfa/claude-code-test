@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hextech.interfaces.overlay.canvas_renderer import draw_overlay_frame
+from hextech.interfaces.overlay.canvas_renderer import OVERLAY_THEME, _tier_color, draw_overlay_frame
 
 
 class RecordingCanvas:
@@ -10,6 +10,7 @@ class RecordingCanvas:
         self.width = width
         self.height = height
         self.draw_calls = 0
+        self.text_calls: list[dict] = []
 
     def winfo_width(self) -> int:
         return self.width
@@ -26,7 +27,10 @@ class RecordingCanvas:
     create_polygon = _draw
     create_line = _draw
     create_rectangle = _draw
-    create_text = _draw
+
+    def create_text(self, *_args, **kwargs) -> None:
+        self.draw_calls += 1
+        self.text_calls.append(kwargs)
 
 
 def _model() -> dict:
@@ -60,12 +64,45 @@ def _model() -> dict:
     return {"stats": stats, "synergies": synergies}
 
 
-def test_compact_shows_one_short_synergy_and_expanded_shows_all() -> None:
+def test_compact_and_expanded_keep_all_synergies_aligned_to_their_slots() -> None:
     compact = draw_overlay_frame(RecordingCanvas(1920, 1080), _model(), expanded=False)
     expanded = draw_overlay_frame(RecordingCanvas(1920, 1080), _model(), expanded=True)
 
-    assert len(compact["synergy_boxes"]) == 1
-    assert len(expanded["synergy_boxes"]) == 3
+    for layout in (compact, expanded):
+        assert len(layout["synergy_boxes"]) == 3
+        for synergy_box, card_box in zip(layout["synergy_boxes"], layout["card_boxes"]):
+            assert synergy_box[0] == card_box[0]
+            assert synergy_box[2] == card_box[2]
+            assert synergy_box[3] < card_box[1]
+
+
+def test_missing_synergy_slot_does_not_shift_other_slots() -> None:
+    model = _model()
+    model["synergies"] = [model["synergies"][1]]
+
+    layout = draw_overlay_frame(RecordingCanvas(1920, 1080), model, expanded=False)
+
+    assert len(layout["synergy_boxes"]) == 1
+    assert layout["synergy_boxes"][0][0] == layout["card_boxes"][1][0]
+    assert layout["synergy_boxes"][0][2] == layout["card_boxes"][1][2]
+
+
+def test_insufficient_vertical_space_hides_synergies() -> None:
+    layout = draw_overlay_frame(RecordingCanvas(640, 360), _model(), expanded=False)
+
+    assert layout["synergy_boxes"] == []
+
+
+def test_compact_and_expanded_keep_the_same_short_stats_text() -> None:
+    expected = "胜率 55.0% · 出场 3.0%"
+    for expanded in (False, True):
+        canvas = RecordingCanvas(2560, 1600)
+        draw_overlay_frame(canvas, _model(), expanded=expanded)
+
+        visible_stats = [call.get("text") for call in canvas.text_calls if str(call.get("text", "")).startswith("胜率")]
+        # 每段文字各绘制一次阴影和一次正文；两种模式都不得改写统计文案。
+        assert len(visible_stats) == 6
+        assert set(visible_stats) == {expected}
 
 
 def test_exclusion_zone_prevents_any_panel_from_drawing_over_critical_controls() -> None:
@@ -78,3 +115,9 @@ def test_exclusion_zone_prevents_any_panel_from_drawing_over_critical_controls()
     )
 
     assert canvas.draw_calls == 0
+
+
+def test_chinese_and_english_tier_aliases_share_colors() -> None:
+    assert _tier_color("白银") == _tier_color("silver") == OVERLAY_THEME["silver"]
+    assert _tier_color("黄金") == _tier_color("gold") == OVERLAY_THEME["gold"]
+    assert _tier_color("棱彩") == _tier_color("Prismatic") == OVERLAY_THEME["prismatic"]

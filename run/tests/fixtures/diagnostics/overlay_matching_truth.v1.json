@@ -36,7 +36,16 @@
       "notes": "装饰星光、近似名称和字体通道分歧的真机回归；三槽文字 top1 必须正确。"
     }
   ],
-  "samples": [],
+  "samples": [
+    {
+      "id": "selection-20260720-110230",
+      "frame": "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260720/frame.png",
+      "expected_slots": ["心灵净化", "不动如山", "贪欲束缚"],
+      "expected_active": true,
+      "expected_ready_slots": 3,
+      "notes": "2560×1600 真机完整帧；同时覆盖三槽顺序与右侧系统通知共存场景。"
+    }
+  ],
   "retired_samples": [
     {
       "id": "selection-20260612-205644",

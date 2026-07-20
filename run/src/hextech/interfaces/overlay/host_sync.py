@@ -6,6 +6,7 @@ import logging
 import queue
 import time
 import tkinter as tk
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -38,6 +39,8 @@ from hextech.modules.vision.window import is_window_renderable
 
 logger = logging.getLogger(__name__)
 
+STALE_EVENT_HOLD_SECONDS = 1.0
+
 # 兼容旧测试/诊断对该符号的 patch；render tick 只读取缓存，不会调用它。
 __all__ = ["_query_gameflow_in_progress"]
 
@@ -50,6 +53,7 @@ def _sync_event_visibility(
     apply_window: bool = True,
     resolved_should_show: bool | None = None,
 ) -> bool:
+    now = time.time()
     event_visible = bool(snapshot.get("visible"))
     overlay_hwnd = _root_hwnd(root) if bool(config.get("no_activate", True)) else None
     game_hwnd = visibility.get("target_hwnd")
@@ -64,6 +68,49 @@ def _sync_event_visibility(
     event_error = str(snapshot.get("error") or "").strip()
     source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
     blocking_modal = bool(source.get("blocking_modal"))
+    stale_hold_active = bool(source.get("stale_event_hold_active"))
+
+    if selection_window_active is True and not event_error and not blocking_modal:
+        if not stale_hold_active:
+            visibility["last_active_event"] = deepcopy(snapshot)
+            visibility.pop("event_stale_hold_until", None)
+    elif selection_window_active is False or blocking_modal:
+        visibility.pop("last_active_event", None)
+        visibility.pop("event_stale_hold_until", None)
+        stale_hold_active = False
+    elif event_error and not stale_hold_active:
+        cached = visibility.get("last_active_event")
+        try:
+            hold_until = float(visibility.get("event_stale_hold_until") or 0.0)
+        except (TypeError, ValueError):
+            hold_until = 0.0
+        if isinstance(cached, Mapping):
+            if hold_until <= 0.0:
+                hold_until = now + STALE_EVENT_HOLD_SECONDS
+                visibility["event_stale_hold_until"] = hold_until
+            if now <= hold_until:
+                held_snapshot = deepcopy(dict(cached))
+                held_source = held_snapshot.get("source") if isinstance(held_snapshot.get("source"), Mapping) else {}
+                held_snapshot["source"] = {
+                    **dict(held_source),
+                    "stale_event_hold_active": True,
+                    "stale_event_error": event_error,
+                    "reason": "stale_event_hold",
+                }
+                held_snapshot["ok"] = True
+                held_snapshot["error"] = ""
+                snapshot.clear()
+                snapshot.update(held_snapshot)
+                event_visible = bool(snapshot.get("visible"))
+                selection_window_active = _snapshot_selection_window_active(snapshot)
+                event_error = ""
+                source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+                stale_hold_active = True
+            else:
+                visibility.pop("last_active_event", None)
+                visibility.pop("event_stale_hold_until", None)
+        else:
+            visibility.pop("event_stale_hold_until", None)
     scoreboard_key_down = bool(visibility.get("scoreboard_key_down"))
     try:
         generated_at = float(snapshot.get("generated_at") or 0.0)
@@ -71,8 +118,6 @@ def _sync_event_visibility(
         generated_at = 0.0
     tab_released_at = float(visibility.get("tab_released_at") or 0.0)
     event_fresh_after_tab = not tab_released_at or generated_at >= tab_released_at
-    stale_hold_active = False
-    visibility.pop("event_stale_hold_until", None)
     should_show = resolved_should_show
     reason = str(visibility.get("visibility_reason") or "")
     if should_show is None:
@@ -110,17 +155,7 @@ def _sync_event_visibility(
         visibility.setdefault("active_target_missing_since", time.time())
     else:
         visibility.pop("active_target_missing_since", None)
-    visibility["render_full_overlay"] = bool(
-        should_show
-        and selection_window_active is not False
-        and (
-            event_visible
-            or stale_hold_active
-            or bool(config.get("diagnostic_mode"))
-            or reason in {"visible_detecting", "visible_partial", "waiting_selection"}
-        )
-    )
-    now = time.time()
+    visibility["render_full_overlay"] = bool(should_show)
     _write_host_visibility_status(visibility, snapshot, now=now, should_show=should_show, reason=reason)
     if not apply_window:
         _log_visibility_diagnostic(visibility, snapshot, now=now, should_show=should_show, reason=reason)

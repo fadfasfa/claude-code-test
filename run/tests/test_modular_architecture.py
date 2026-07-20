@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -479,3 +480,13 @@ def test_typed_overlay_renderer_reads_published_chinese_stat_fields() -> None:
     assert rendered["stats"][0]["pickrate_text"] == "8.0%"
     assert rendered["stats"][1]["status_code"] == "DETECTING"
     assert rendered["stats"][2]["status_code"] == "DETECTION_FAILED"
+
+    degraded_slots = tuple(
+        ({**row, "status_code": "GENERATION_DEGRADED"} if index == 0 else row)
+        for index, row in enumerate(model.augment_slots)
+    )
+    degraded_state = replace(state, recommendation=replace(model, augment_slots=degraded_slots))
+    degraded_rendered = build_render_model_from_session(degraded_state)
+    assert degraded_rendered["stats"][0]["stats_text"] == "胜率 60.0% · 出场 8.0%"
+    assert degraded_rendered["stats"][0]["status_code"] == "GENERATION_DEGRADED"
+    assert degraded_rendered["stats"][0]["status_text"] == "上一代数据"

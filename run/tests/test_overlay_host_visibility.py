@@ -187,10 +187,10 @@ class OverlayHostVisibilityTests(unittest.TestCase):
             game_renderable=True,
         )
 
-        self.assertTrue(should_show)
-        self.assertEqual(reason, "waiting_selection")
+        self.assertFalse(should_show)
+        self.assertEqual(reason, "selection_inactive")
 
-    def test_expired_event_keeps_waiting_surface_visible_during_game(self):
+    def test_expired_event_without_active_hold_hides_overlay(self):
         from hextech.interfaces.overlay.host import decide_visibility
 
         should_show, reason = decide_visibility(
@@ -198,7 +198,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
             event_visible=False,
             game_foreground=True,
             content_ready=False,
-            selection_window_active=False,
+            selection_window_active=None,
             ready_slots=0,
             gameflow_in_progress=True,
             game_hwnd=100,
@@ -207,8 +207,27 @@ class OverlayHostVisibilityTests(unittest.TestCase):
             event_error="event_expired",
         )
 
-        self.assertTrue(should_show)
-        self.assertEqual(reason, "waiting_selection")
+        self.assertFalse(should_show)
+        self.assertEqual(reason, "event_expired")
+
+    def test_diagnostic_mode_does_not_override_inactive_selection(self):
+        from hextech.interfaces.overlay.host import decide_visibility
+
+        should_show, reason = decide_visibility(
+            user_enabled=True,
+            event_visible=False,
+            game_foreground=True,
+            content_ready=False,
+            selection_window_active=False,
+            gameflow_in_progress=True,
+            game_hwnd=100,
+            game_rect=(0, 0, 1920, 1080),
+            game_renderable=True,
+            diagnostic_mode=True,
+        )
+
+        self.assertFalse(should_show)
+        self.assertEqual(reason, "selection_inactive")
 
     def test_inactive_overlay_event_carries_scene_inactive_source(self):
         from hextech.modules.vision.events import build_inactive_overlay_event
@@ -266,6 +285,127 @@ class OverlayHostVisibilityTests(unittest.TestCase):
 
         self.assertTrue(should_show)
         self.assertEqual(visibility["visibility_reason"], "visible_detecting")
+
+    def test_sync_event_visibility_holds_last_active_event_for_one_second(self):
+        from hextech.interfaces.overlay import host, host_sync
+
+        visibility = {
+            "user_enabled": True,
+            "target_hwnd": 100,
+            "target_rect": (0, 0, 1920, 1080),
+            "window_visible": False,
+            "scoreboard_key_down": False,
+        }
+        active = {
+            "ok": True,
+            "visible": True,
+            "active": True,
+            "error": "",
+            "generated_at": 100.0,
+            "source": {"selection_window_active": True, "ready_slots": 3},
+            "slots": [{"slot": index, "state": "ready", "name": f"强化 {index}"} for index in range(3)],
+        }
+
+        common_patches = (
+            patch.object(host_sync, "_is_game_window_foreground", return_value=True),
+            patch.object(host_sync, "is_window_renderable", return_value=True),
+            patch.object(host_sync, "_refresh_gameflow_in_progress", return_value=True),
+            patch.object(host_sync, "_write_host_visibility_status"),
+            patch.object(host_sync, "_log_visibility_diagnostic"),
+        )
+        with common_patches[0], common_patches[1], common_patches[2], common_patches[3], common_patches[4]:
+            with patch.object(host_sync.time, "time", return_value=100.0):
+                self.assertTrue(
+                    host._sync_event_visibility(
+                        object(),
+                        {"diagnostic_mode": False, "no_activate": False},
+                        visibility,
+                        active,
+                        apply_window=False,
+                    )
+                )
+
+            expired = {
+                **active,
+                "ok": False,
+                "visible": False,
+                "error": "event_expired",
+                "generated_at": 97.0,
+            }
+            with patch.object(host_sync.time, "time", return_value=100.2):
+                self.assertTrue(
+                    host._sync_event_visibility(
+                        object(),
+                        {"diagnostic_mode": False, "no_activate": False},
+                        visibility,
+                        expired,
+                        apply_window=False,
+                    )
+                )
+            self.assertEqual(visibility["visibility_reason"], "visible_stale_hold")
+            self.assertTrue(expired["source"]["stale_event_hold_active"])
+            self.assertEqual([slot["name"] for slot in expired["slots"]], ["强化 0", "强化 1", "强化 2"])
+
+            expired_after_hold = {
+                **active,
+                "ok": False,
+                "visible": False,
+                "error": "event_expired",
+                "generated_at": 97.0,
+            }
+            with patch.object(host_sync.time, "time", return_value=101.3):
+                self.assertFalse(
+                    host._sync_event_visibility(
+                        object(),
+                        {"diagnostic_mode": False, "no_activate": False},
+                        visibility,
+                        expired_after_hold,
+                        apply_window=False,
+                    )
+                )
+            self.assertEqual(visibility["visibility_reason"], "event_expired")
+
+    def test_explicit_inactive_event_clears_stale_hold_immediately(self):
+        from hextech.interfaces.overlay import host, host_sync
+
+        visibility = {
+            "user_enabled": True,
+            "target_hwnd": 100,
+            "target_rect": (0, 0, 1920, 1080),
+            "window_visible": False,
+            "scoreboard_key_down": False,
+            "last_active_event": {"visible": True},
+            "event_stale_hold_until": 999.0,
+        }
+        inactive = {
+            "ok": True,
+            "visible": False,
+            "active": False,
+            "error": "",
+            "generated_at": 100.0,
+            "source": {"selection_window_active": False, "reason": "selection_completed"},
+            "slots": [],
+        }
+
+        with (
+            patch.object(host_sync, "_is_game_window_foreground", return_value=True),
+            patch.object(host_sync, "is_window_renderable", return_value=True),
+            patch.object(host_sync, "_refresh_gameflow_in_progress", return_value=True),
+            patch.object(host_sync, "_write_host_visibility_status"),
+            patch.object(host_sync, "_log_visibility_diagnostic"),
+        ):
+            should_show = host._sync_event_visibility(
+                object(),
+                {"diagnostic_mode": False, "no_activate": False},
+                visibility,
+                inactive,
+                apply_window=False,
+            )
+
+        self.assertFalse(should_show)
+        self.assertEqual(visibility["visibility_reason"], "selection_inactive")
+        self.assertNotIn("last_active_event", visibility)
+        self.assertNotIn("event_stale_hold_until", visibility)
 
     def test_render_tick_reads_cached_window_without_scanning_processes(self):
         from hextech.interfaces.overlay import host

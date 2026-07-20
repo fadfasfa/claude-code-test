@@ -171,7 +171,8 @@ def _stats_display(
     if not (winrate and pickrate):
         return text or "统计字段不完整", "NO_STATS", "", "", "统计不完整"
     if snapshot_state == "degraded":
-        return f"上一代 · {text}", "GENERATION_DEGRADED", winrate, pickrate, "上一代数据"
+        # 代际信息保留在状态字段中，避免把诊断前缀挤进卡片内的单行统计。
+        return text, "GENERATION_DEGRADED", winrate, pickrate, "上一代数据"
     return text, "READY", winrate, pickrate, ""
 
 
@@ -371,8 +372,7 @@ def build_render_model_from_session(
         winrate_text = _format_percent(normalized_stats["winrate"])
         pickrate_text = _format_percent(normalized_stats["pickrate"])
         if status_code in {"READY", "GENERATION_DEGRADED"}:
-            raw_text = _format_stats_entry(normalized_stats)
-            stats_text = f"上一代 · {raw_text}" if status_code == "GENERATION_DEGRADED" else raw_text
+            stats_text = _format_stats_entry(normalized_stats)
             status_text = "上一代数据" if status_code == "GENERATION_DEGRADED" else ""
         elif status_code == "DETECTING":
             stats_text, status_text = "识别中…", "识别中…"

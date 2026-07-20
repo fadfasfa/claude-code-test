@@ -492,6 +492,12 @@ def evaluate_truth(
         {key: value for key, value in result.items() if key != "_event"}
         for result in results
     ]
+    frame_slot_accuracy = (len(checks) - len(slot_failures)) / len(checks) if checks else None
+    name_roi_accuracy = (
+        (len(name_roi_checks) - len(name_roi_failures)) / len(name_roi_checks)
+        if name_roi_checks
+        else None
+    )
     return {
         "truth_path": str(path),
         "template_count": len(template_index),
@@ -512,7 +518,10 @@ def evaluate_truth(
         "matched_scene_count": len(scene_checks) - len(scene_failures),
         "expected_stability_count": len(stability_checks),
         "matched_stability_count": len(stability_checks) - len(stability_failures),
-        "accuracy": (len(checks) - len(slot_failures)) / len(checks) if checks else 0.0,
+        "frame_slot_accuracy": frame_slot_accuracy,
+        "name_roi_accuracy": name_roi_accuracy,
+        # 兼容既有诊断消费者；不再用 0.0 冒充“没有完整帧”。
+        "accuracy": frame_slot_accuracy,
         "per_slot_top1": per_slot_top1,
         "failures": failures,
         "missing": missing + name_roi_missing,
@@ -539,6 +548,11 @@ def _print_text_summary(summary: Mapping[str, Any]) -> None:
             f"slot {slot}={counts['matched']}/{counts['expected']}"
             for slot, counts in summary["per_slot_top1"].items()
         )
+    )
+    print(
+        "accuracy: "
+        f"frame_slot={summary.get('frame_slot_accuracy')}, "
+        f"name_roi={summary.get('name_roi_accuracy')}"
     )
     if summary["missing_count"]:
         print(f"missing samples: {summary['missing_count']}")

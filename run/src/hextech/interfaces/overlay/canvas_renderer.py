@@ -8,10 +8,12 @@ from collections.abc import Sequence
 from typing import Any, Literal, Protocol, TypedDict
 
 from hextech.modules.vision.layout import pick_card_panels
-SYNERGY_X_RANGE = (0.825, 0.992)
+
 INNER_BAR_HEIGHT_RATIO = 0.052
 INNER_BAR_TOP_MARGIN_RATIO = 0.825
 INNER_BAR_SIDE_INSET_RATIO = 0.055
+SYNERGY_CARD_GAP_RATIO = 0.010
+COMPACT_SYNERGY_HEIGHT_RATIO = 0.066
 
 OVERLAY_THEME: dict[str, str] = {
     "panel_bg": "#0A1428",
@@ -136,38 +138,6 @@ def _clamp(low: int, value: float, high: int) -> int:
     return max(low, min(high, int(value)))
 
 
-def _allocate_panel_heights(desired: Sequence[int], available: int, *, minimum: int = 80) -> list[int]:
-    """在固定屏幕高度内公平分配面板高度，避免长首项挤掉后续联动。"""
-
-    values = [max(1, int(value)) for value in desired]
-    if not values or available <= 0:
-        return []
-    if sum(values) <= available:
-        return values
-
-    floor = min(max(1, int(minimum)), max(1, available // len(values)))
-    allocated = [min(value, floor) for value in values]
-    remaining = max(0, available - sum(allocated))
-    while remaining:
-        pending = [index for index, value in enumerate(values) if allocated[index] < value]
-        if not pending:
-            break
-        share = max(1, remaining // len(pending))
-        progressed = False
-        for index in pending:
-            addition = min(values[index] - allocated[index], share, remaining)
-            if addition <= 0:
-                continue
-            allocated[index] += addition
-            remaining -= addition
-            progressed = True
-            if remaining <= 0:
-                break
-        if not progressed:
-            break
-    return allocated
-
-
 def _card_panel_ratios(viewport_size: tuple[int, int]) -> tuple[tuple[float, float, float, float], ...]:
     """选择与 vision 识别一致的三卡比例，避免统计层和真实卡片中轴线分离。"""
 
@@ -179,6 +149,7 @@ def resolve_overlay_layout(
     *,
     synergy_count: int = 0,
     synergy_heights: Sequence[int] | None = None,
+    synergy_slots: Sequence[int] | None = None,
 ) -> OverlayLayout:
     width, height = (max(1, int(value)) for value in viewport_size)
     margin = _clamp(8, width * 0.008, 20)
@@ -198,34 +169,36 @@ def resolve_overlay_layout(
         card_boxes.append((x0, panel_y0, x1, panel_y1))
         stat_side_inset = _clamp(10, (x1 - x0) * INNER_BAR_SIDE_INSET_RATIO, 20)
         stat_boxes.append((x0 + stat_side_inset, stat_y0, x1 - stat_side_inset, stat_y1))
-    rail = (int(width * SYNERGY_X_RANGE[0]), card_y0, width - margin, card_y1)
+    synergy_gap = _clamp(8, height * SYNERGY_CARD_GAP_RATIO, 16)
+    synergy_bottom = max(margin + 1, card_y0 - synergy_gap)
+    rail = (card_boxes[0][0], margin, card_boxes[-1][2], synergy_bottom)
     requested_heights = (
         [max(1, int(value)) for value in list(synergy_heights)[:3]]
         if synergy_heights is not None
         else []
     )
     count = len(requested_heights) if synergy_heights is not None else max(0, min(3, int(synergy_count)))
+    raw_slots = list(synergy_slots)[:count] if synergy_slots is not None else list(range(count))
+    slots: list[int] = []
+    for raw_slot in raw_slots:
+        try:
+            slot = int(raw_slot)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= slot < len(card_boxes) and slot not in slots:
+            slots.append(slot)
+    if len(slots) < count:
+        slots.extend(slot for slot in range(len(card_boxes)) if slot not in slots and len(slots) < count)
     boxes: list[tuple[int, int, int, int]] = []
-    if count:
-        rail_height = rail[3] - rail[1]
-        gap = _clamp(8, height * 0.010, 16)
-        desired = _clamp(96, height * 0.11, 176)
+    if slots:
+        available_height = max(1, synergy_bottom - margin)
+        default_height = _clamp(64, height * COMPACT_SYNERGY_HEIGHT_RATIO, 96)
         if not requested_heights:
-            panel_height = min(desired, max(1, (rail_height - gap * (count - 1)) // count))
-            requested_heights = [panel_height] * count
-        requested_group_height = sum(requested_heights) + gap * (count - 1)
-        if requested_group_height <= rail_height:
-            panel_heights = requested_heights
-            y0 = rail[1] + max(0, (rail_height - requested_group_height) // 2)
-        else:
-            safe_bottom = height - margin
-            available = max(count, safe_bottom - rail[1] - gap * (count - 1))
-            panel_heights = _allocate_panel_heights(requested_heights, available)
-            y0 = rail[1]
-        top = y0
-        for panel_height in panel_heights:
-            boxes.append((rail[0], top, rail[2], top + panel_height))
-            top += panel_height + gap
+            requested_heights = [default_height] * len(slots)
+        for slot, requested_height in zip(slots, requested_heights):
+            card_x0, _, card_x1, _ = card_boxes[slot]
+            panel_height = min(max(1, int(requested_height)), available_height)
+            boxes.append((card_x0, synergy_bottom - panel_height, card_x1, synergy_bottom))
     return {
         "stat_boxes": stat_boxes,
         "card_boxes": card_boxes,
@@ -235,21 +208,16 @@ def resolve_overlay_layout(
 
 
 def _tier_color(tier: Any) -> str:
-    value = _clean_text(tier, limit=24).lower()
-    if value == "prismatic":
-        return OVERLAY_THEME["prismatic"]
-    if value == "silver":
-        return OVERLAY_THEME["silver"]
-    return OVERLAY_THEME["gold"]
-
-
-def _compact_tier_label(tier: Any) -> str:
-    value = _clean_text(tier, limit=24)
-    return {
-        "prismatic": "棱彩",
-        "gold": "黄金",
-        "silver": "白银",
-    }.get(value.casefold(), value)
+    value = _clean_text(tier, limit=24).casefold()
+    aliases = {
+        "prismatic": "prismatic",
+        "棱彩": "prismatic",
+        "silver": "silver",
+        "白银": "silver",
+        "gold": "gold",
+        "黄金": "gold",
+    }
+    return OVERLAY_THEME[aliases.get(value, "gold")]
 
 
 def _chamfered_points(box: tuple[int, int, int, int], inset: int = 0) -> list[int]:
@@ -527,6 +495,35 @@ def _draw_synergy_panel(
         )
 
 
+def _draw_compact_synergy_panel(
+    canvas: CanvasLike,
+    box: tuple[int, int, int, int],
+    row: SynergyPanelModel,
+) -> None:
+    """按卡槽绘制一行联动摘要，避免 compact 模式重新占用右侧通知区。"""
+
+    _draw_native_panel(canvas, box, tier=row["tier"])
+    x0, y0, x1, y1 = box
+    width = x1 - x0
+    pad = _clamp(12, width * 0.05, 20)
+    font_size = _clamp(10, width * 0.032, 14)
+    summary = " · ".join(
+        part
+        for part in (row["hero_name"], row["rating"], row["tag"], row["content"])
+        if _clean_text(part)
+    )
+    summary = _ellipsize_visual(summary, max_width=max(40, width - pad * 2), font_size=font_size)
+    _draw_shadowed_text(
+        canvas,
+        x0 + pad,
+        (y0 + y1) // 2,
+        text=summary,
+        fill=OVERLAY_THEME["text_primary"],
+        font=("Microsoft YaHei UI", font_size, "bold"),
+        anchor="w",
+    )
+
+
 def draw_overlay_frame(
     canvas: CanvasLike,
     model: OverlayRenderModel,
@@ -537,33 +534,44 @@ def draw_overlay_frame(
     show_synergy: bool = True,
     exclusion_zones: Sequence[tuple[int, int, int, int]] = (),
 ) -> OverlayLayout:
-    """绘制安全区外的统计与联动；compact 模式最多显示一条短联动。"""
+    """绘制安全区外的统计与按槽位对齐联动。"""
 
     started_at = time.perf_counter()
     if viewport_size is None:
         viewport_size = (max(1, int(canvas.winfo_width())), max(1, int(canvas.winfo_height())))
     viewport_width, viewport_height = viewport_size
+    card_boxes = resolve_overlay_layout(viewport_size)["card_boxes"]
+    card_width = max(1, card_boxes[0][2] - card_boxes[0][0])
+    minimum_panel_height = _clamp(72, viewport_height * 0.085, 120)
+    synergy_rows = list(model["synergies"]) if show_synergy else []
     margin = _clamp(8, viewport_width * 0.008, 20)
-    rail_width = max(1, viewport_width - margin - int(viewport_width * SYNERGY_X_RANGE[0]))
-    minimum_panel_height = _clamp(96, viewport_height * 0.11, 176)
-    synergy_rows = list(model["synergies"] if expanded else model["synergies"][:1]) if show_synergy else []
-    if not expanded and synergy_rows:
-        first = dict(synergy_rows[0])
-        content = _clean_text(first.get("content"), limit=96)
-        first["content"] = content + ("…" if len(str(synergy_rows[0].get("content") or "")) > len(content) else "")
-        synergy_rows = [first]  # type: ignore[list-item]
+    synergy_gap = _clamp(8, viewport_height * SYNERGY_CARD_GAP_RATIO, 16)
+    available_synergy_height = max(0, card_boxes[0][1] - synergy_gap - margin)
+    required_synergy_height = (
+        minimum_panel_height
+        if expanded
+        else _clamp(64, viewport_height * COMPACT_SYNERGY_HEIGHT_RATIO, 96)
+    )
+    if available_synergy_height < required_synergy_height:
+        # 低分辨率或卡片过高时宁可隐藏联动，也不绘制无法阅读的薄框。
+        synergy_rows = []
     synergy_heights = [
-        _resolve_synergy_text_layout(
-            row,
-            rail_width,
-            minimum_height=minimum_panel_height,
-        )["desired_height"]
+        (
+            _resolve_synergy_text_layout(
+                row,
+                card_width,
+                minimum_height=minimum_panel_height,
+            )["desired_height"]
+            if expanded
+            else _clamp(64, viewport_height * COMPACT_SYNERGY_HEIGHT_RATIO, 96)
+        )
         for row in synergy_rows
     ]
     layout = resolve_overlay_layout(
         viewport_size,
         synergy_count=len(synergy_rows),
         synergy_heights=synergy_heights,
+        synergy_slots=[row["slot"] for row in synergy_rows],
     )
     canvas.delete("all")
     def safe(box: tuple[int, int, int, int]) -> bool:
@@ -572,16 +580,13 @@ def draw_overlay_frame(
 
     for box, row in zip(layout["stat_boxes"], model["stats"]):
         if safe(box):
-            display_row = row
-            if not expanded and row["status_code"] in {"READY", "GENERATION_DEGRADED"}:
-                tier_label = _compact_tier_label(row.get("tier"))
-                if tier_label:
-                    display_row = dict(row)  # type: ignore[assignment]
-                    display_row["stats_text"] = f"{row['stats_text']} · {tier_label}"  # type: ignore[index]
-            _draw_stat_panel(canvas, box, display_row)
+            _draw_stat_panel(canvas, box, row)
     for box, row in zip(layout["synergy_boxes"], synergy_rows):
         if safe(box):
-            _draw_synergy_panel(canvas, box, row, minimum_height=minimum_panel_height)
+            if expanded:
+                _draw_synergy_panel(canvas, box, row, minimum_height=minimum_panel_height)
+            else:
+                _draw_compact_synergy_panel(canvas, box, row)
     if isinstance(perf_sink, dict):
         perf_sink["last_draw_ms"] = (time.perf_counter() - started_at) * 1000.0
     return layout

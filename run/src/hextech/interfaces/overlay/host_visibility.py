@@ -142,8 +142,6 @@ def _snapshot_source_reason(snapshot: Mapping[str, Any]) -> str:
 def _snapshot_selection_window_active(snapshot: Mapping[str, Any]) -> bool | None:
     """读取 sidecar 生命周期字段；旧事件返回 None 以启用短暂兼容 hold。"""
 
-    if snapshot.get("ok") is False:
-        return False
     source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
     value = source.get("selection_window_active")
     return value if isinstance(value, bool) else None
@@ -366,14 +364,18 @@ def decide_visibility(
         should_show, reason = False, "scoreboard_key_down"
     elif should_show and not event_fresh_after_tab:
         should_show, reason = False, "event_stale_after_tab"
-    elif should_show and (event_error or selection_window_active is False):
-        # 游戏存在时保持轻量等待面；event/context 暂缺不再让整个 Overlay 静默消失。
-        reason = "waiting_selection"
+    elif should_show and selection_window_active is False:
+        should_show, reason = False, "selection_inactive"
+    elif should_show and selection_window_active is None and not (event_visible or stale_event_hold):
+        should_show, reason = False, (event_error or "selection_state_unavailable")
+    elif should_show and event_error and not stale_event_hold:
+        should_show, reason = False, event_error
+    elif should_show and stale_event_hold:
+        reason = "visible_stale_hold"
     elif should_show and resolved_ready_slots > 0 and resolved_ready_slots < 3:
         reason = "visible_partial"
 
-    if diagnostic_mode and not should_show:
-        return True, f"diagnostic:{reason}"
+    del diagnostic_mode
     return should_show, reason
 
 

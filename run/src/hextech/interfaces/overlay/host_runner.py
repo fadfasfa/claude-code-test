@@ -53,6 +53,8 @@ from hextech.interfaces.overlay.host_visibility import (
     _schedule_exit_file_watch,
     _signal_overlay_ready,
     _snapshot_has_complete_ready_slots,
+    _snapshot_ready_slot_count,
+    _snapshot_selection_window_active,
     _write_host_visibility_status,
     decide_visibility,
 )
@@ -68,6 +70,31 @@ from hextech.modules.vision.window import WindowProbeResult, is_scoreboard_key_d
 
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_overlay_render_options(
+    snapshot: Mapping[str, Any],
+    *,
+    viewport_width: int,
+    display_mode: str,
+) -> dict[str, Any]:
+    """生产与验收共用显示模式和游戏控件禁入区解析。"""
+
+    source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+    raw_button_box = source.get("button_box")
+    exclusion_zones: list[tuple[int, int, int, int]] = []
+    if isinstance(raw_button_box, list) and len(raw_button_box) == 4:
+        try:
+            left, top, right, bottom = (int(value) for value in raw_button_box)
+            margin = max(12, int(max(1, viewport_width) * 0.008))
+            exclusion_zones.append((left - margin, top - margin, right + margin, bottom + margin))
+        except (TypeError, ValueError):
+            exclusion_zones = []
+    return {
+        "expanded": display_mode == "expanded",
+        "show_synergy": bool(str(source.get("layout_id") or "") and exclusion_zones),
+        "exclusion_zones": tuple(exclusion_zones),
+    }
 
 def resolve_event_render_delay_ms(config: Mapping[str, Any], visibility: Mapping[str, Any]) -> int:
     """根据最近选择态事件选择 overlay host 下一帧轮询间隔。"""
@@ -266,24 +293,16 @@ def _schedule_event_render(
             model = build_render_model_from_session(session_state, hint_cache=hint_cache)
             visibility["session_state"] = session_state
             _log_waiting_context_diagnostic(visibility, snapshot, context, model)
-            event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
-            raw_button_box = event_source.get("button_box")
-            exclusion_zones: list[tuple[int, int, int, int]] = []
-            if isinstance(raw_button_box, list) and len(raw_button_box) == 4:
-                try:
-                    left, top, right, bottom = (int(value) for value in raw_button_box)
-                    margin = max(12, int(canvas.winfo_width() * 0.008))
-                    exclusion_zones.append((left - margin, top - margin, right + margin, bottom + margin))
-                except (TypeError, ValueError):
-                    exclusion_zones = []
-            layout_reliable = bool(str(event_source.get("layout_id") or "") and exclusion_zones)
+            render_options = _resolve_overlay_render_options(
+                snapshot,
+                viewport_width=canvas.winfo_width(),
+                display_mode=str(visibility.get("display_mode") or "compact"),
+            )
             draw_overlay_frame(
                 canvas,
                 model,
                 perf_sink=visibility,
-                expanded=visibility.get("display_mode") == "expanded",
-                show_synergy=layout_reliable,
-                exclusion_zones=exclusion_zones,
+                **render_options,
             )
             visibility["last_presented_at"] = time.time()
             if _snapshot_has_complete_ready_slots(snapshot):
@@ -551,8 +570,9 @@ def render_acceptance_screenshot(
     *,
     width: int = 1280,
     height: int = 720,
+    display_mode: str | None = None,
 ) -> dict[str, Any]:
-    """用真实 Tk Canvas 和当前 generation/event/context 生成验收截图。"""
+    """用生产显隐与渲染参数生成当前事件的验收截图。"""
 
     from PIL import ImageGrab
 
@@ -563,6 +583,30 @@ def render_acceptance_screenshot(
     hint_cache = source.read_hint_cache()
     context = source.read_context()
     model = build_render_model(snapshot, hint_cache=hint_cache, context=context)
+    config = build_overlay_window_config()
+    resolved_display_mode = str(display_mode or config.get("default_display_mode") or "compact")
+    if resolved_display_mode not in {"compact", "expanded"}:
+        raise ValueError(f"未知 Overlay 显示模式：{resolved_display_mode}")
+    event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+    should_show, visibility_reason = decide_visibility(
+        user_enabled=True,
+        event_visible=bool(snapshot.get("visible")),
+        game_foreground=True,
+        content_ready=_snapshot_has_complete_ready_slots(snapshot),
+        selection_window_active=_snapshot_selection_window_active(snapshot),
+        gameflow_in_progress=True,
+        game_hwnd=1,
+        game_rect=(0, 0, max(640, int(width)), max(360, int(height))),
+        game_renderable=True,
+        ready_slots=_snapshot_ready_slot_count(snapshot),
+        event_error=str(snapshot.get("error") or ""),
+        blocking_modal=bool(event_source.get("blocking_modal")),
+    )
+    render_options = _resolve_overlay_render_options(
+        snapshot,
+        viewport_width=max(640, int(width)),
+        display_mode=resolved_display_mode,
+    )
 
     _set_dpi_awareness()
     root = tk.Tk()
@@ -576,7 +620,10 @@ def render_acceptance_screenshot(
         root.deiconify()
         root.lift()
         root.update()
-        draw_overlay_frame(canvas, model)
+        if should_show:
+            draw_overlay_frame(canvas, model, **render_options)
+        else:
+            canvas.delete("all")
         root.update_idletasks()
         root.update()
         time.sleep(0.2)
@@ -602,6 +649,10 @@ def render_acceptance_screenshot(
         "generation_id": str(snapshot_status.get("generation_id") or ""),
         "status_counts": status_counts,
         "context_champion_id": str(context.get("champion_id") or ""),
+        "display_mode": resolved_display_mode,
+        "overlay_visible": should_show,
+        "visibility_reason": visibility_reason,
+        "show_synergy": bool(render_options["show_synergy"]),
     }
 
 
@@ -613,6 +664,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--acceptance-screenshot", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-width", type=int, default=1280, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-height", type=int, default=720, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--acceptance-display-mode",
+        choices=("compact", "expanded"),
+        help=argparse.SUPPRESS,
+    )
     return parser
 
 
@@ -626,6 +682,7 @@ def main(argv: list[str] | None = None) -> int:
             args.acceptance_screenshot,
             width=args.acceptance_width,
             height=args.acceptance_height,
+            display_mode=args.acceptance_display_mode,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ok"] else 1

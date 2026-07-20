@@ -3125,7 +3125,8 @@ print(json.dumps(blocked))
     degraded_cache["snapshot"] = {"state": "degraded", "generation_id": "g0"}
     degraded_model = overlay_renderer.build_render_model(snapshot, hint_cache=degraded_cache, context=context)
     assert {row["status_code"] for row in degraded_model["stats"]} == {"GENERATION_DEGRADED"}
-    assert degraded_model["stats"][0]["stats_text"].startswith("上一代 · 胜率")
+    assert degraded_model["stats"][0]["stats_text"] == "胜率 55.0% · 出场 3.0%"
+    assert degraded_model["stats"][0]["status_text"] == "上一代数据"
     context_missing_model = overlay_renderer.build_render_model(
         snapshot,
         hint_cache=hint_cache(),
@@ -3172,7 +3173,7 @@ print(json.dumps(blocked))
         assert len(model["synergies"]) == count
         assert [row["slot"] for row in model["synergies"]] == list(range(count))
 
-    # 三档常见 viewport + 1920×1200：统计条完全内嵌原生卡片且互不重叠；联动组整体居中且按槽位排序。
+    # 三档常见 viewport + 1920×1200：统计条完全内嵌原生卡片；联动按槽位对齐到卡片上方。
     for viewport in ((1366, 768), (1920, 1080), (1920, 1200), (2560, 1600)):
         width, height = viewport
         assert overlay_canvas_renderer._card_panel_ratios(viewport) == pick_card_panels(viewport)
@@ -3192,12 +3193,15 @@ print(json.dumps(blocked))
                 assert left[2] < right[0]
             boxes = layout["synergy_boxes"]
             assert len(boxes) == count
-            assert all(first[3] < second[1] for first, second in zip(boxes, boxes[1:]))
+            assert all(first[1] == second[1] and first[3] == second[3] for first, second in zip(boxes, boxes[1:]))
+            for box, card_box in zip(boxes, layout["card_boxes"]):
+                assert box[0] == card_box[0]
+                assert box[2] == card_box[2]
+                assert box[3] < card_box[1]
             if boxes:
                 rail = layout["synergy_rail"]
-                group_center = (boxes[0][1] + boxes[-1][3]) / 2
-                rail_center = (rail[1] + rail[3]) / 2
-                assert abs(group_center - rail_center) <= 1.0
+                assert rail[0] <= boxes[0][0] <= boxes[-1][2] <= rail[2]
+                assert rail[1] <= boxes[0][1] < boxes[0][3] <= rail[3]
 
     class RecordingCanvas:
         def __init__(self) -> None:
@@ -3273,11 +3277,11 @@ print(json.dumps(blocked))
         long_layout = overlay_renderer.draw_overlay_frame(canvas, long_model, viewport_size=viewport)
         long_boxes = long_layout["synergy_boxes"]
         assert len(long_boxes) == 3
-        assert all(first[3] < second[1] for first, second in zip(long_boxes, long_boxes[1:]))
+        assert all(first[1] == second[1] and first[3] == second[3] for first, second in zip(long_boxes, long_boxes[1:]))
         assert all(0 <= box[0] < box[2] <= width and 0 <= box[1] < box[3] <= height for box in long_boxes)
 
-        rail_width = long_layout["synergy_rail"][2] - long_layout["synergy_rail"][0]
-        minimum_height = overlay_canvas_renderer._clamp(96, height * 0.11, 176)
+        rail_width = long_layout["card_boxes"][0][2] - long_layout["card_boxes"][0][0]
+        minimum_height = overlay_canvas_renderer._clamp(72, height * 0.085, 120)
         for box, row in zip(long_boxes, long_model["synergies"]):
             panel_height = box[3] - box[1]
             text_layout = overlay_canvas_renderer._resolve_synergy_text_layout(
@@ -3300,7 +3304,7 @@ print(json.dumps(blocked))
         assert len(extreme) == 3
         assert all(box[3] <= height for box in extreme)
         assert all(box[3] - box[1] >= 80 for box in extreme)
-        assert all(first[3] < second[1] for first, second in zip(extreme, extreme[1:]))
+        assert all(first[1] == second[1] and first[3] == second[3] for first, second in zip(extreme, extreme[1:]))
 
     real_frame = RUN_DIR / "data" / "runtime" / "debug" / "auto_selection" / "selection-20260612-205839" / "frame.png"
     if real_frame.exists():
@@ -3369,10 +3373,10 @@ print(json.dumps(blocked))
         args.update(overrides)
         return overlay_host.decide_visibility(**args)
 
-    # 显隐矩阵：游戏存在时保持等待面，只有明确主机 gate 或遮挡策略才收窗。
+    # 显隐矩阵：只有选择态允许显示；明确 inactive、错误和切出游戏均收窗。
     assert decide(event_visible=False, content_ready=False) == (True, "visible_detecting")
     assert decide() == (True, "visible_ready")
-    assert decide(selection_window_active=False) == (True, "waiting_selection")
+    assert decide(selection_window_active=False) == (False, "selection_inactive")
     assert decide(selection_window_active=None) == (True, "visible_ready")
     assert decide(content_ready=False, ready_slots=1) == (True, "visible_partial")
     assert decide(content_ready=False, ready_slots=2) == (True, "visible_partial")
@@ -3384,11 +3388,11 @@ print(json.dumps(blocked))
         {"game_renderable": False},
     ):
         assert decide(**overrides)[0] is False
-    assert decide(event_error="event_expired", event_visible=False, stale_event_hold=True) == (True, "waiting_selection")
+    assert decide(event_error="event_expired", event_visible=False, stale_event_hold=True) == (True, "visible_stale_hold")
     assert decide(blocking_modal=True) == (False, "blocking_modal_present")
     assert decide(scoreboard_key_down=True) == (False, "scoreboard_key_down")
     assert decide(event_fresh_after_tab=False) == (False, "event_stale_after_tab")
-    assert decide(game_foreground=False, diagnostic_mode=True) == (True, "diagnostic:game_not_foreground")
+    assert decide(game_foreground=False, diagnostic_mode=True) == (False, "game_not_foreground")
     from hextech.interfaces.desktop import runtime as desktop_runtime
 
     assert desktop_runtime.resolve_client_overlay_policy(
@@ -3549,9 +3553,9 @@ print(json.dumps(blocked))
             queue.Queue(),
             data_source=diagnostic_source,
     )
-    assert diagnostic_visibility["window_visible"] is True
-    assert diagnostic_visibility["visibility_reason"] == "diagnostic:game_window_missing"
-    assert any("Hextech overlay diagnostic" in str(call.get("text")) for call in diagnostic_canvas.text_calls)
+    assert diagnostic_visibility["window_visible"] is False
+    assert diagnostic_visibility["visibility_reason"] == "game_window_missing"
+    assert diagnostic_canvas.text_calls == []
     assert diagnostic_source.hint_reads == 0 and diagnostic_source.context_reads == 0
 
     stale_visibility = {"user_enabled": True, "target_hwnd": 123, "window_visible": True}
@@ -3576,10 +3580,10 @@ print(json.dumps(blocked))
             stale_visibility,
             stale_snapshot,
             apply_window=False,
-        ) is True
-    assert stale_visibility["visibility_reason"] == "waiting_selection"
+        ) is False
+    assert stale_visibility["visibility_reason"] == "event_expired"
     assert stale_visibility["event_stale_hold_active"] is False
-    assert stale_visibility["render_full_overlay"] is True
+    assert stale_visibility["render_full_overlay"] is False
 
     with (
         TemporaryDirectory() as tmp_dir,

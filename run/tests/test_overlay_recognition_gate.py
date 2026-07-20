@@ -5,10 +5,34 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest import mock
 
 
 class OverlayRecognitionGateTests(unittest.TestCase):
+    def test_name_roi_accuracy_does_not_masquerade_as_frame_accuracy(self):
+        from tooling.diagnostics import vision_eval
+
+        roi_result = {
+            "id": "roi-only",
+            "status": "evaluated",
+            "checks": [
+                {"kind": "name_top1", "expected": "尤里卡", "observed": "尤里卡", "matched": True}
+            ],
+        }
+        with (
+            mock.patch.object(vision_eval, "_load_truth", return_value=[]),
+            mock.patch.object(vision_eval, "_load_name_roi_truth", return_value=[{"id": "roi-only"}]),
+            mock.patch.object(vision_eval.overlay_vision_sidecar, "load_default_template_index", return_value=[]),
+            mock.patch.object(vision_eval.overlay_vision_sidecar, "_rank_matrices"),
+            mock.patch.object(vision_eval, "_evaluate_name_roi_sample", return_value=roi_result),
+        ):
+            summary = vision_eval.evaluate_truth(Path("truth.json"), min_confidence=0.0)
+
+        self.assertIsNone(summary["frame_slot_accuracy"])
+        self.assertIsNone(summary["accuracy"])
+        self.assertEqual(summary["name_roi_accuracy"], 1.0)
+
     def test_zero_full_frame_samples_block_validation(self):
         from tooling.setup import vision as refresh_overlay_recognition
 

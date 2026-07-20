@@ -223,6 +223,7 @@ def render_case(
     viewport: tuple[int, int],
     *,
     background: Path | None = None,
+    display_mode: str = "compact",
 ) -> Path:
     fixture = CASES[case_name]()
     canvas = PillowCanvas(*viewport)
@@ -233,7 +234,13 @@ def render_case(
             hint_cache=fixture["hint_cache"],
             context=fixture["context"],
         )
-        draw_overlay_frame(canvas, model, viewport_size=viewport, perf_sink=perf_sink)
+        draw_overlay_frame(
+            canvas,
+            model,
+            viewport_size=viewport,
+            perf_sink=perf_sink,
+            expanded=display_mode == "expanded",
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"overlay_snapshot_{case_name}.png"
     composed = Image.alpha_composite(_background_image(background, viewport), canvas.image)
@@ -249,6 +256,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--width", type=int, help="输出宽度；有背景且未传时使用背景原宽。")
     parser.add_argument("--height", type=int, help="输出高度；有背景且未传时使用背景原高。")
     parser.add_argument("--background", type=Path, help="可选真机截图；会缩放到输出尺寸后合成。")
+    parser.add_argument(
+        "--display-mode",
+        choices=("compact", "expanded"),
+        default="compact",
+        help="复用生产显示模式；默认 compact。",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cases = list(CASES) if args.case == "all" else [args.case]
@@ -267,7 +280,15 @@ def main(argv: list[str] | None = None) -> int:
     summary = [
         {
             "case": name,
-            "path": str(render_case(name, output_dir, viewport, background=args.background)),
+            "path": str(
+                render_case(
+                    name,
+                    output_dir,
+                    viewport,
+                    background=args.background,
+                    display_mode=args.display_mode,
+                )
+            ),
         }
         for name in cases
     ]
