@@ -410,8 +410,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
     exe = _find_exe(package_dir)
     launcher = _find_launcher(package_dir)
     stdout_path = package_dir / "smoke_startup_stdout.log"
-    started_at = time.monotonic()
-    started_at_wall = time.time()
+    overall_started_at = time.monotonic()
     child_env = os.environ.copy()
     appdata_root = package_dir.parent / "appdata"
     child_env["LOCALAPPDATA"] = str(appdata_root / "Local")
@@ -423,6 +422,23 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
         child_env["HEXTECH_DATA_SERVICE_SKIP_AUTO_REFRESH"] = "1"
     runtime_root = _get_packaged_runtime_root(child_env)
     _write_smoke_feature_flags(runtime_root)
+    # 同一个 PyInstaller 控制台 EXE 的 self-check 与 Desktop 并发时，Windows 偶发把
+    # self-check 退出信号传播给 Desktop。先串行验证 Overlay，再启动 Desktop smoke。
+    try:
+        overlay_self_check = _overlay_self_check(exe, package_dir, child_env)
+    except (OSError, subprocess.TimeoutExpired, SmokeFailure) as exc:
+        return {
+            "ok": False,
+            "elapsed_seconds": round(time.monotonic() - overall_started_at, 2),
+            "package_dir": str(package_dir),
+            "runtime_root": str(runtime_root),
+            "verified_snapshot_seeded": verified_snapshot_seeded,
+            "overlay_self_check": {},
+            "last_error": str(exc),
+        }
+
+    started_at = time.monotonic()
+    started_at_wall = time.time()
     with stdout_path.open("wb") as stdout:
         command = ["cmd.exe", "/d", "/c", str(launcher.resolve())] if os.name == "nt" else [str(exe.resolve())]
         proc = subprocess.Popen(
@@ -436,25 +452,13 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
         last_error = ""
         checks: dict[str, bool] = {}
         web: dict[str, object] = {}
-        try:
-            overlay_self_check = _overlay_self_check(exe, package_dir, child_env)
-        except (OSError, subprocess.TimeoutExpired, SmokeFailure) as exc:
-            return {
-                "ok": False,
-                "elapsed_seconds": round(time.monotonic() - started_at, 2),
-                "package_dir": str(package_dir),
-                "runtime_root": str(runtime_root),
-                "verified_snapshot_seeded": verified_snapshot_seeded,
-                "overlay_self_check": {},
-                "last_error": str(exc),
-            }
         while time.monotonic() - started_at < timeout_seconds:
             checks = _required_paths_ready(package_dir, runtime_root, started_at_wall)
             port = _read_port(runtime_root)
             if port and all(checks.values()):
                 try:
                     web = _web_ready(port, runtime_root, require_snapshot_status=verified_snapshot_seeded)
-                    elapsed = time.monotonic() - started_at
+                    elapsed = time.monotonic() - overall_started_at
                     return {
                         "ok": True,
                         "elapsed_seconds": round(elapsed, 2),
@@ -474,7 +478,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
             time.sleep(1)
         return {
             "ok": False,
-            "elapsed_seconds": round(time.monotonic() - started_at, 2),
+            "elapsed_seconds": round(time.monotonic() - overall_started_at, 2),
             "package_dir": str(package_dir),
             "runtime_root": str(runtime_root),
             "verified_snapshot_seeded": verified_snapshot_seeded,

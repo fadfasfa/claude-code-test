@@ -638,6 +638,9 @@ def main(argv: list[str] | None = None) -> None:
             print_check(f"上一版本目录：{deployment.previous_dir}")
         if deployment.shortcut_path is not None:
             print_check(f"快捷方式：{deployment.shortcut_path}")
+            print_check(f"快捷方式唯一性：已移除重复项 {len(deployment.removed_shortcuts)} 个")
+            for removed_shortcut in deployment.removed_shortcuts:
+                print_check(f"已移除重复快捷方式：{removed_shortcut}")
         if deployment.restarted:
             print_check("旧客户端原本运行，已启动新版本")
     print_step("打包完成")

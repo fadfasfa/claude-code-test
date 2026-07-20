@@ -25,7 +25,9 @@ from filelock import FileLock, Timeout
 APP_EXE_NAME = "Hextech伴生终端.exe"
 APP_LAUNCHER_NAME = "启动 Hextech.bat"
 APP_GUIDE_NAME = "README_首次使用.txt"
+APP_SHORTCUT_NAME = "Hextech伴生终端.lnk"
 STABLE_INSTALL_NAME = "HextechCompanion"
+RELEASE_DIR_PREFIX = "HextechCompanion-"
 WM_CLOSE = 0x0010
 
 
@@ -46,6 +48,7 @@ class DeploymentResult:
     install_dir: Path
     previous_dir: Path | None
     shortcut_path: Path | None
+    removed_shortcuts: tuple[Path, ...]
     restarted: bool
 
 
@@ -226,6 +229,125 @@ def validate_shortcut_path(shortcut_path: Path) -> Path:
     return shortcut_path
 
 
+def _desktop_roots(canonical_shortcut: Path) -> tuple[Path, ...]:
+    """返回 Windows 桌面合并视图背后的物理目录，且不递归扫描。"""
+
+    candidates = [canonical_shortcut.parent]
+    user_profile = os.environ.get("USERPROFILE", "").strip()
+    public_profile = os.environ.get("PUBLIC", "").strip()
+    if user_profile:
+        candidates.append(Path(user_profile) / "Desktop")
+    if public_profile:
+        candidates.append(Path(public_profile) / "Desktop")
+
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = _normalized_path(candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if candidate.is_dir():
+            roots.append(candidate.resolve(strict=False))
+    return tuple(roots)
+
+
+def _read_shortcut_target(shortcut_path: Path) -> Path:
+    """只读取既有 ``.lnk`` 的目标；不调用 ``Save``，因此不会创建文件。"""
+
+    try:
+        import win32com.client
+
+        shell = win32com.client.Dispatch("WScript.Shell")
+        shortcut = shell.CreateShortcut(str(shortcut_path))
+        target = str(shortcut.TargetPath or "").strip()
+    except Exception as exc:
+        raise DeploymentError(f"快捷方式目标读取失败：{shortcut_path}: {exc}") from exc
+    if not target:
+        raise DeploymentError(f"快捷方式目标为空：{shortcut_path}")
+    return Path(target).resolve(strict=False)
+
+
+def _is_managed_shortcut_target(target: Path, stable_executable: Path, release_root: Path) -> bool:
+    """仅识别稳定安装 EXE 和本仓 releases 下的正式便携包 EXE。"""
+
+    if _normalized_path(target) == _normalized_path(stable_executable):
+        return True
+    if target.name.casefold() != APP_EXE_NAME.casefold():
+        return False
+    if not target.parent.name.casefold().startswith(RELEASE_DIR_PREFIX.casefold()):
+        return False
+    try:
+        return os.path.commonpath((_normalized_path(target), _normalized_path(release_root))) == _normalized_path(
+            release_root
+        )
+    except ValueError:
+        return False
+
+
+def _looks_like_hextech_shortcut(shortcut_path: Path) -> bool:
+    return "hextech" in shortcut_path.stem.casefold()
+
+
+def _managed_duplicate_shortcuts(
+    canonical_shortcut: Path,
+    stable_executable: Path,
+    release_root: Path,
+) -> tuple[Path, ...]:
+    duplicates: list[Path] = []
+    canonical_normalized = _normalized_path(canonical_shortcut)
+    for root in _desktop_roots(canonical_shortcut):
+        try:
+            shortcuts = tuple(root.glob("*.lnk"))
+        except OSError as exc:
+            raise DeploymentError(f"桌面快捷方式扫描失败：{root}: {exc}") from exc
+        for shortcut_path in shortcuts:
+            if _normalized_path(shortcut_path) == canonical_normalized:
+                continue
+            suspicious_name = _looks_like_hextech_shortcut(shortcut_path)
+            if suspicious_name and _is_reparse_point(shortcut_path):
+                raise DeploymentError(f"拒绝处理 reparse point 快捷方式：{shortcut_path}")
+            try:
+                target = _read_shortcut_target(shortcut_path)
+            except DeploymentError:
+                if suspicious_name:
+                    raise
+                continue
+            if not _is_managed_shortcut_target(target, stable_executable, release_root):
+                continue
+            if _is_reparse_point(shortcut_path):
+                raise DeploymentError(f"拒绝处理 reparse point 快捷方式：{shortcut_path}")
+            duplicates.append(shortcut_path.resolve(strict=False))
+    return tuple(sorted(duplicates, key=lambda path: _normalized_path(path)))
+
+
+def converge_desktop_shortcuts(
+    canonical_shortcut: Path,
+    stable_executable: Path,
+    release_root: Path,
+) -> tuple[Path, ...]:
+    """删除同应用的非规范桌面入口，并在停机前验证唯一性。"""
+
+    canonical_shortcut = validate_shortcut_path(canonical_shortcut)
+    duplicates = _managed_duplicate_shortcuts(canonical_shortcut, stable_executable, release_root)
+    removed: list[Path] = []
+    for duplicate in duplicates:
+        # 删除前再次读取目标，防止扫描后被替换成用户的其他快捷方式。
+        target = _read_shortcut_target(duplicate)
+        if not _is_managed_shortcut_target(target, stable_executable, release_root):
+            raise DeploymentError(f"快捷方式目标在清理前发生变化：{duplicate}")
+        try:
+            duplicate.unlink()
+        except OSError as exc:
+            raise DeploymentError(f"重复快捷方式删除失败：{duplicate}: {exc}") from exc
+        removed.append(duplicate)
+
+    remaining = _managed_duplicate_shortcuts(canonical_shortcut, stable_executable, release_root)
+    if remaining:
+        raise DeploymentError(f"重复快捷方式清理后仍存在：{', '.join(str(path) for path in remaining)}")
+    return tuple(removed)
+
+
 def update_shortcut(shortcut_path: Path, target_exe: Path) -> Path:
     """更新既有快捷方式并保留其余 shell 属性；本函数绝不创建新快捷方式。"""
 
@@ -273,6 +395,7 @@ def deploy_release(
     source = validate_package_dir(package_dir)
     target = validate_install_dir(install_dir)
     resolved_shortcut_input = validate_shortcut_path(shortcut_path) if shortcut_path is not None else None
+    removed_shortcuts: tuple[Path, ...] = ()
     if _normalized_path(source) == _normalized_path(target):
         raise DeploymentError("发布目录不能与稳定安装目录相同")
     lock_file = Path(lock_path or default_deployment_lock())
@@ -294,6 +417,12 @@ def deploy_release(
 
             # 旧 previous 无法收口时应在停机前失败，避免新版本已运行却返回部署失败。
             _remove_tree(previous)
+            if resolved_shortcut_input is not None:
+                removed_shortcuts = converge_desktop_shortcuts(
+                    resolved_shortcut_input,
+                    target / APP_EXE_NAME,
+                    source.parent,
+                )
             was_running = shutdown_existing_install(target / APP_EXE_NAME, timeout=shutdown_timeout)
             old_moved = False
             new_installed = False
@@ -350,6 +479,7 @@ def deploy_release(
                 install_dir=target,
                 previous_dir=previous_result,
                 shortcut_path=resolved_shortcut,
+                removed_shortcuts=removed_shortcuts,
                 restarted=was_running,
             )
     except Timeout as exc:
@@ -362,6 +492,7 @@ __all__ = [
     "APP_EXE_NAME",
     "DeploymentError",
     "DeploymentResult",
+    "converge_desktop_shortcuts",
     "default_install_dir",
     "deploy_release",
     "shutdown_existing_install",
