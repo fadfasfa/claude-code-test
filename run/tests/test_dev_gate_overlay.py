@@ -1103,15 +1103,15 @@ def test_overlay_context_contract() -> None:
                 running_ui,
                 {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
                 source="web",
-            ) is True
-            assert mocked_write_context.call_count == 1
+            ) is False
+            mocked_write_context.assert_not_called()
             assert ui_runtime._write_overlay_context_from_live_state(
                 running_ui,
                 {"local_champion_id": 266, "local_champion_name": "暗裔剑魔"},
                 source="web",
                 context_path=context_path,
             ) is True
-            assert mocked_write_context.call_count == 2
+            assert mocked_write_context.call_count == 1
 
     module_text = (RUN_DIR / "src" / "hextech" / "interfaces" / "overlay" / "context.py").read_text(encoding="utf-8").lower()
     forbidden_terms = ["fastapi", "web_api", "web_runtime", "full_hextech_scraper", "auth.json"]

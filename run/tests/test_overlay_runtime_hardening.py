@@ -71,6 +71,56 @@ def test_sidecar_window_observation_wins_and_records_desync() -> None:
     assert visibility["sidecar_hwnd"] == 200
 
 
+def test_window_poller_identity_reaches_host_sidecar_desync_gate() -> None:
+    from hextech.interfaces.overlay.host_common import WindowTargetPoller
+    from hextech.interfaces.overlay import host_sync
+    from hextech.modules.vision.window import WindowProbeResult
+
+    observed = threading.Event()
+
+    def finder(*, window_titles: list[str]):
+        observed.set()
+        return WindowProbeResult(
+            status="found",
+            hwnd=100,
+            client_rect=(0, 0, 1920, 1080),
+            observed_at=time.time(),
+            process_id=10,
+            process_started_at=100.0,
+            game_instance_id="host-game",
+            identity_quality="process",
+        )
+
+    poller = WindowTargetPoller([], finder=finder, interval_seconds=0.1)
+    poller.start()
+    try:
+        assert observed.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while poller.status()["game_instance_id"] != "host-game" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        status = poller.status()
+        assert status["process_id"] == 10
+        assert status["process_started_at"] == 100.0
+        assert status["identity_quality"] == "process"
+
+        visibility = {"window_visible": False, "window_target_poller": poller}
+        snapshot = {
+            "ok": True,
+            "source": {
+                "window_hwnd": 100,
+                "client_rect": [0, 0, 1920, 1080],
+                "game_instance_id": "sidecar-game",
+            },
+        }
+        with patch.object(host_sync, "is_window_renderable", return_value=True):
+            host_sync._refresh_target_window(object(), {}, visibility, snapshot)
+        assert visibility["host_game_instance_id"] == "host-game"
+        assert visibility["sidecar_game_instance_id"] == "sidecar-game"
+        assert visibility["game_identity_desync"] is True
+    finally:
+        poller.stop()
+
+
 def test_gameflow_unknown_remains_typed_and_uses_waiting_state() -> None:
     from hextech.interfaces.overlay import gameflow
     from hextech.interfaces.overlay.host_visibility import decide_visibility

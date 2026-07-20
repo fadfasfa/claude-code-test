@@ -98,6 +98,27 @@ class SessionEvidenceBundle:
                 raise ValueError("evidence_render_rows_missing")
 
 
+def _rows_with_context_identity(state: GameSessionState, render_rows: object) -> object:
+    """把 Context 身份绑定到证据行；旧 verifier 会连同附加字段一起复算。"""
+
+    if not isinstance(render_rows, list):
+        return render_rows
+    context = state.context
+    identity = {
+        "game_instance_id": str(context.game_instance_id or "") if context else "",
+        "window_hwnd": int(context.window_hwnd or 0) if context else 0,
+        "context_revision": int(context.context_revision or 0) if context else 0,
+        "champion_id": str(context.local_champion_id or "") if context else "",
+        "context_source": str(context.source or "") if context else "",
+    }
+    return [
+        {**dict(row), "context_identity": identity}
+        if isinstance(row, Mapping)
+        else row
+        for row in render_rows
+    ]
+
+
 def build_render_signature(state: GameSessionState, render_rows: object) -> str:
     """绑定实际可见行与 session/epoch/revision，供延迟截图取消陈旧任务。"""
 
@@ -107,7 +128,7 @@ def build_render_signature(state: GameSessionState, render_rows: object) -> str:
         "generation_id": str(state.generation_id),
         "vision_epoch": int(vision.epoch) if vision else 0,
         "selection_revision": max(1, int(vision.selection_revision)) if vision else 1,
-        "rows": render_rows,
+        "rows": _rows_with_context_identity(state, render_rows),
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -141,6 +162,7 @@ def build_evidence_bundle(
                 for slot in (vision.slots if vision else ())
             ]
         )
+    supplied_render["rows"] = _rows_with_context_identity(state, supplied_render.get("rows", []))
     render_payload = {
         "session_id": str(state.session_id),
         "generation_id": str(state.generation_id),

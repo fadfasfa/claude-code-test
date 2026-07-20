@@ -433,6 +433,8 @@ def _log_visibility_diagnostic(
         str(visibility.get("context_champion_id") or ""),
         str(visibility.get("context_source") or ""),
         str(visibility.get("context_error") or ""),
+        str(visibility.get("context_gate_state") or ""),
+        str(visibility.get("context_gate_reason") or ""),
     )
     try:
         last_logged_at = float(visibility.get("last_visibility_diagnostic_logged_at") or 0.0)
@@ -467,6 +469,9 @@ def _log_visibility_diagnostic(
                 "champion_id": str(visibility.get("context_champion_id") or ""),
                 "source": str(visibility.get("context_source") or ""),
                 "error": str(visibility.get("context_error") or ""),
+                "gate_state": str(visibility.get("context_gate_state") or ""),
+                "gate_reason": str(visibility.get("context_gate_reason") or ""),
+                "context_revision": int(visibility.get("context_revision") or 0),
             },
             "decision": {
                 "window_visible": bool(should_show),
@@ -501,7 +506,10 @@ def _build_visibility_status_payload(
         functional_status, failure_reason = "degraded", "window_probe_error"
     elif bool(visibility.get("window_target_desync")):
         functional_status, failure_reason = "degraded", "window_target_desync"
-    elif source.get("selection_window_active") is True and str(visibility.get("context_error") or ""):
+    elif source.get("selection_window_active") is True and (
+        str(visibility.get("context_error") or "")
+        or str(visibility.get("context_gate_state") or "") not in {"", "confirmed", "holding"}
+    ):
         functional_status, failure_reason = "degraded", "context_unavailable"
     else:
         functional_status, failure_reason = "ready", ""
@@ -528,6 +536,8 @@ def _build_visibility_status_payload(
             "last_success_at": float(probe.get("last_success_at") or 0.0),
             "last_error_type": str(probe.get("last_error_type") or ""),
             "consecutive_failures": probe_failures,
+            "game_instance_id": str(visibility.get("game_instance_id") or ""),
+            "identity_desync": bool(visibility.get("game_identity_desync")),
         },
         "scene": {
             "selection_window_active": source.get("selection_window_active"),
@@ -541,6 +551,10 @@ def _build_visibility_status_payload(
             "champion_id": str(visibility.get("context_champion_id") or ""),
             "source": str(visibility.get("context_source") or ""),
             "error": str(visibility.get("context_error") or ""),
+            "gate_state": str(visibility.get("context_gate_state") or ""),
+            "gate_reason": str(visibility.get("context_gate_reason") or ""),
+            "context_revision": int(visibility.get("context_revision") or 0),
+            "held": bool(visibility.get("context_held")),
         },
         "decision": {
             "window_visible": bool(should_show),

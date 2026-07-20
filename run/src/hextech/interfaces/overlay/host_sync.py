@@ -253,8 +253,14 @@ def _write_real_session_evidence(
                 pass
             evidence_dir = Path(overlay_runtime_state_path("session_evidence")).resolve()
             evidence_dir.mkdir(parents=True, exist_ok=True)
+            context = state.context
             safe_session = "".join(char for char in str(state.session_id) if char.isalnum())[:32] or "session"
-            stem = f"overlay-{safe_session}-e{int(vision.epoch)}-r{revision}"
+            context_revision = max(1, int(context.context_revision or 0))
+            signature_prefix = render_signature[:12]
+            stem = (
+                f"overlay-{safe_session}-e{int(vision.epoch)}-r{revision}"
+                f"-c{context_revision}-{signature_prefix}"
+            )
             screenshot_path = evidence_dir / f"{stem}.png"
             from PIL import ImageGrab
 
@@ -262,7 +268,6 @@ def _write_real_session_evidence(
             right, bottom = left + root.winfo_width(), top + root.winfo_height()
             ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True).convert("RGB").save(screenshot_path)
             client_size = [int(client_rect[2]) - int(client_rect[0]), int(client_rect[3]) - int(client_rect[1])]
-            context = state.context
             event_slots = snapshot_copy.get("slots") if isinstance(snapshot_copy.get("slots"), list) else []
             render_rows = [dict(item) for item in model_copy.get("stats", []) if isinstance(item, Mapping)]
             bundle = build_evidence_bundle(
@@ -271,6 +276,12 @@ def _write_real_session_evidence(
                     "local_champion_id": str(context.local_champion_id),
                     "teammate_champion_ids": [str(value) for value in context.teammate_champion_ids],
                     "bench_champion_ids": [str(value) for value in context.bench_champion_ids],
+                    "source": str(context.source or ""),
+                    "game_instance_id": str(context.game_instance_id or ""),
+                    "window_hwnd": int(context.window_hwnd or 0),
+                    "context_revision": int(context.context_revision or 0),
+                    "publication_seq": int(context.publication_seq or 0),
+                    "publisher_instance_id": str(context.publisher_instance_id or ""),
                 },
                 window_summary={
                     "hwnd": int(source_copy.get("window_hwnd") or 0),
@@ -371,6 +382,15 @@ def _refresh_target_window(
         "host_scan" if host_target is not None else "none"
     )
     visibility["window_probe"] = dict(poller_status)
+    snapshot_source = (snapshot or {}).get("source") if isinstance((snapshot or {}).get("source"), Mapping) else {}
+    sidecar_game_instance = str(snapshot_source.get("game_instance_id") or "")
+    host_game_instance = str(poller_status.get("game_instance_id") or "")
+    visibility["sidecar_game_instance_id"] = sidecar_game_instance
+    visibility["host_game_instance_id"] = host_game_instance
+    visibility["game_instance_id"] = sidecar_game_instance or host_game_instance
+    visibility["game_identity_desync"] = bool(
+        sidecar_game_instance and host_game_instance and sidecar_game_instance != host_game_instance
+    )
     if target is None:
         if isinstance(poller, WindowTargetPoller):
             visibility["target_hwnd"] = None

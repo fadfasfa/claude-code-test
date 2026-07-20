@@ -302,8 +302,15 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
         },
     }
 
-    for revision in (1, 2):
-        context = GameContext(session_id="s1", observed_at=1, local_champion_id=ChampionId("24"))  # type: ignore[arg-type]
+    for revision, context_revision in ((1, 1), (1, 2), (2, 2)):
+        context = GameContext(
+            session_id="s1",  # type: ignore[arg-type]
+            observed_at=1,
+            local_champion_id=ChampionId("24"),
+            game_instance_id="s1",
+            window_hwnd=100,
+            context_revision=context_revision,
+        )
         vision = VisionSelection(
             session_id="s1",  # type: ignore[arg-type]
             epoch=VisionEpoch(2),
@@ -325,7 +332,7 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
             recommendation=recommendation,
         )
         rows = [
-            {"slot": index, "name": f"卡名 {index}", "status_code": "READY", "stats_text": f"胜率 5{revision}.0% · 出场 1.0%"}
+            {"slot": index, "name": f"卡名 {index}", "status_code": "READY", "stats_text": f"胜率 5{revision}.0% · 出场 {context_revision}.0%"}
             for index in range(3)
         ]
         model = {"stats": rows, "synergies": []}
@@ -333,10 +340,12 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
         host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
         root.callbacks.pop()()  # type: ignore[operator]
 
-    first = evidence_dir / "overlay-s1-e2-r1.v2.json"
-    second = evidence_dir / "overlay-s1-e2-r2.v2.json"
-    assert first.is_file() and second.is_file()
+    first = list(evidence_dir.glob("overlay-s1-e2-r1-c1-*.v2.json"))
+    context_changed = list(evidence_dir.glob("overlay-s1-e2-r1-c2-*.v2.json"))
+    second = list(evidence_dir.glob("overlay-s1-e2-r2-c2-*.v2.json"))
+    assert len(first) == len(context_changed) == len(second) == 1
     latest = json.loads((evidence_dir / "latest_real_session.v2.json").read_text(encoding="utf-8"))
     assert latest["selection_revision"] == 2
     assert latest["render"]["acceptance_rules"] == ["dual_font:2"] * 3
-    assert latest["screenshot"] == "overlay-s1-e2-r2.png"
+    assert latest["screenshot"].startswith("overlay-s1-e2-r2-c2-")
+    assert latest["screenshot"].endswith(".png")

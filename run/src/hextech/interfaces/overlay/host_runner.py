@@ -14,8 +14,8 @@ from typing import Any, Callable, Mapping
 
 from hextech.interfaces.overlay.gameflow import GameflowState, lcu_scanner_configured
 from hextech.interfaces.overlay.generation_pin import SelectionGenerationPin
+from hextech.interfaces.overlay.context_gate import ContextRenderGate
 from hextech.interfaces.overlay.host_common import (
-    RECENT_CONTEXT_HOLD_SECONDS,
     RENDER_ERROR_BACKOFF_AFTER,
     RENDER_ERROR_BACKOFF_MAX_MS,
     ForegroundEventHook,
@@ -140,6 +140,7 @@ def _schedule_event_render(
     fast_hold_seconds = max(0.0, float(config.get("fast_event_hold_ms", 1200) or 1200) / 1000.0)
     source = data_source or SharedOverlayDataSource()
     generation_pin = SelectionGenerationPin()
+    context_gate = ContextRenderGate()
     failure_count = 0
     render_after_id: str | None = None
 
@@ -257,25 +258,24 @@ def _schedule_event_render(
             snapshot_view = generation_pin.resolve(snapshot, source.open_view)
             visibility["pinned_generation"] = generation_pin.status()
             context = source.read_context()
-            now = time.time()
-            recent_context = None
             visibility["context_ok"] = bool(isinstance(context, Mapping) and context.get("ok"))
             visibility["context_champion_id"] = str(context.get("champion_id") or "") if isinstance(context, Mapping) else ""
             visibility["context_source"] = str(context.get("source") or "") if isinstance(context, Mapping) else ""
             visibility["context_error"] = str(context.get("error") or "") if isinstance(context, Mapping) else "context_missing"
-            if isinstance(context, Mapping) and context.get("ok"):
-                visibility["last_ok_context"] = dict(context)
-                visibility["last_ok_context_seen_at"] = now
-            else:
-                try:
-                    last_seen = float(visibility.get("last_ok_context_seen_at") or 0.0)
-                except (TypeError, ValueError):
-                    last_seen = 0.0
-                if now - last_seen <= RECENT_CONTEXT_HOLD_SECONDS:
-                    cached_context = visibility.get("last_ok_context")
-                    if isinstance(cached_context, Mapping) and cached_context.get("ok"):
-                        recent_context = cached_context
-            effective_context = recent_context if not context.get("ok") and recent_context is not None else context
+            event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+            gate_decision = context_gate.evaluate(
+                context if isinstance(context, Mapping) else {},
+                game_instance_id=str(visibility.get("game_instance_id") or ""),
+                window_hwnd=int(visibility.get("target_hwnd") or 0),
+                vision_game_instance_id=str(event_source.get("game_instance_id") or ""),
+                vision_window_hwnd=int(event_source.get("window_hwnd") or 0),
+                active=bool(event_source.get("selection_window_active") is True),
+            )
+            visibility["context_gate_state"] = gate_decision.state
+            visibility["context_gate_reason"] = gate_decision.reason
+            visibility["context_revision"] = gate_decision.context_revision
+            visibility["context_held"] = gate_decision.held
+            effective_context = gate_decision.payload
             if snapshot_view is not None:
                 hint_cache = snapshot_view.get_overlay_hints()
                 hint_cache.setdefault("snapshot", {}).update(snapshot_view.status())
@@ -582,12 +582,41 @@ def render_acceptance_screenshot(
     snapshot = source.read_event()
     hint_cache = source.read_hint_cache()
     context = source.read_context()
-    model = build_render_model(snapshot, hint_cache=hint_cache, context=context)
+    event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+    game_instance_id = str(event_source.get("game_instance_id") or context.get("game_instance_id") or "")
+    window_hwnd = int(event_source.get("window_hwnd") or context.get("window_hwnd") or 0)
+    acceptance_gate = ContextRenderGate()
+    gate_decision = acceptance_gate.evaluate(
+        context,
+        game_instance_id=game_instance_id,
+        window_hwnd=window_hwnd,
+        vision_game_instance_id=str(event_source.get("game_instance_id") or ""),
+        vision_window_hwnd=int(event_source.get("window_hwnd") or 0),
+        active=bool(event_source.get("selection_window_active") is True),
+    )
+    if gate_decision.state == "pending" and gate_decision.reason == "context_confirming":
+        gate_decision = acceptance_gate.evaluate(
+            context,
+            game_instance_id=game_instance_id,
+            window_hwnd=window_hwnd,
+            vision_game_instance_id=str(event_source.get("game_instance_id") or ""),
+            vision_window_hwnd=int(event_source.get("window_hwnd") or 0),
+            active=bool(event_source.get("selection_window_active") is True),
+        )
+    snapshot_view = source.open_view()
+    session_state = build_runtime_session(
+        event=snapshot,
+        context_payload=gate_decision.payload,
+        snapshot_view=snapshot_view,
+        user_enabled=True,
+        game_present=bool(window_hwnd),
+        private_stats_enabled=source_has_private_stats(hint_cache),
+    )
+    model = build_render_model_from_session(session_state, hint_cache=hint_cache)
     config = build_overlay_window_config()
     resolved_display_mode = str(display_mode or config.get("default_display_mode") or "compact")
     if resolved_display_mode not in {"compact", "expanded"}:
         raise ValueError(f"未知 Overlay 显示模式：{resolved_display_mode}")
-    event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
     should_show, visibility_reason = decide_visibility(
         user_enabled=True,
         event_visible=bool(snapshot.get("visible")),
@@ -653,6 +682,8 @@ def render_acceptance_screenshot(
         "status_counts": status_counts,
         "context_champion_id": str(context.get("champion_id") or ""),
         "display_mode": resolved_display_mode,
+        "context_gate_state": gate_decision.state,
+        "context_gate_reason": gate_decision.reason,
         "overlay_visible": should_show,
         "visibility_reason": visibility_reason,
         "show_synergy": bool(render_options["show_synergy"]),

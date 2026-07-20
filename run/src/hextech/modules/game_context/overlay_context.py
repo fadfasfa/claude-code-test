@@ -17,6 +17,21 @@ from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
 SCHEMA_VERSION = 1
 CONTEXT_MAX_AGE_SECONDS = 6 * 60 * 60.0
 OVERLAY_CONTEXT_FILE = Path(overlay_runtime_state_path("game_overlay_context.v1.json"))
+_BROKER_METADATA_FIELDS = (
+    "publisher",
+    "publisher_instance_id",
+    "publication_seq",
+    "published_at",
+    "game_instance_id",
+    "window_hwnd",
+    "window_process_id",
+    "window_process_started_at",
+    "identity_quality",
+    "source_priority",
+    "source_conflict",
+    "context_revision",
+    "fallback_reason",
+)
 
 
 def clean_context_text(value: Any, *, limit: int = 80) -> str:
@@ -83,8 +98,11 @@ def read_overlay_context(path: str | Path | None = None) -> dict[str, Any]:
         empty["health"] = clean_context_text(payload.get("health"), limit=48) or "degraded"
         if error == "context_unmapped_champion":
             empty["champion_name"] = clean_context_text(payload.get("champion_name"), limit=48)
+        for field in _BROKER_METADATA_FIELDS:
+            if field in payload:
+                empty[field] = payload.get(field)
         return empty
-    return {
+    result = {
         "schema_version": payload.get("schema_version", SCHEMA_VERSION),
         "ok": True,
         "error": "",
@@ -99,6 +117,10 @@ def read_overlay_context(path: str | Path | None = None) -> dict[str, Any]:
         "health": clean_context_text(payload.get("health"), limit=48),
         "session_id": clean_context_text(payload.get("session_id"), limit=64),
     }
+    for field in _BROKER_METADATA_FIELDS:
+        if field in payload:
+            result[field] = payload.get(field)
+    return result
 
 
 __all__ = [

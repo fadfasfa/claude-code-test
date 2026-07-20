@@ -62,6 +62,108 @@ ChampionCoreLoader = Callable[[], Mapping[str, Any]]
 ShouldWriteContext = Callable[[], bool]
 
 
+def read_current_live_client_context_once(
+    *,
+    fetch_response: FetchResponse | None = None,
+    core_data_loader: ChampionCoreLoader | None = None,
+    base_url: str = LIVE_CLIENT_BASE_URL,
+) -> tuple[dict[str, Any] | None, str]:
+    """只采集 Live Client 当前英雄，不直接写 canonical Context。"""
+
+    fetch_response = fetch_response or _default_fetch_response
+    core_data_loader = core_data_loader or load_champion_core_data
+    headers = {"Accept": "application/json"}
+    for endpoint in (LIVE_CLIENT_ACTIVE_PLAYER_ENDPOINT, LIVE_CLIENT_ALL_GAME_DATA_ENDPOINT):
+        try:
+            response = fetch_response(f"{base_url.rstrip('/')}{endpoint}", headers)
+        except Exception:
+            logger.debug("Live Client 当前英雄上下文请求失败：%s", endpoint, exc_info=True)
+            continue
+        if int(getattr(response, "status_code", 0) or 0) != 200:
+            continue
+        try:
+            raw_payload = response.json()
+        except ValueError:
+            continue
+        champion_name = _extract_live_client_champion_name(raw_payload)
+        if not champion_name:
+            continue
+        champion_id = _resolve_champion_id_by_name(champion_name, core_data_loader=core_data_loader)
+        if not champion_id:
+            return None, "context_unmapped_champion"
+        return (
+            build_overlay_context_payload(
+                champion_id=champion_id,
+                champion_name=champion_name,
+                source="live-client-data",
+                phase="in_progress",
+                connection_state="connected",
+                health="ready",
+            ),
+            "",
+        )
+    return None, "live-client-unavailable"
+
+
+def read_current_lcu_context_once(
+    *,
+    credential_provider: CredentialProvider | None = None,
+    fetch_response: FetchResponse | None = None,
+    core_data_loader: ChampionCoreLoader | None = None,
+    base_url_template: str = "https://127.0.0.1:{port}",
+    context_provider: ClientContextProvider | TypedGameContextProvider | None = None,
+) -> tuple[dict[str, Any] | None, str]:
+    """只采集一次 LCU champ-select；缺失状态由 Broker 仲裁，避免采集器抢写文件。"""
+
+    credential_provider = credential_provider or scan_lcu_process
+    fetch_response = fetch_response or _default_fetch_response
+    core_data_loader = core_data_loader or load_champion_core_data
+    port, token = credential_provider()
+    if not port or not token:
+        return None, "lcu-unavailable"
+    auth = base64.b64encode(f"riot:{token}".encode("utf-8")).decode("ascii")
+    headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
+    url = f"{base_url_template.format(port=port)}{LCU_CHAMP_SELECT_SESSION_ENDPOINT}"
+    try:
+        response = fetch_response(url, headers)
+    except Exception:
+        logger.debug("LCU 当前英雄上下文请求失败。", exc_info=True)
+        return None, "lcu-error"
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    if status_code in (401, 403):
+        return None, "lcu-auth"
+    if status_code != 200:
+        return None, "lcu-no-session" if status_code == 404 else "lcu-error"
+    try:
+        raw_payload = response.json()
+    except ValueError:
+        return None, "lcu-error"
+    if not isinstance(raw_payload, Mapping):
+        return None, "lcu-error"
+    client_context = (
+        context_provider.update(raw_payload, source="overlay-lcu")
+        if context_provider is not None
+        else parse_client_context(raw_payload, source="overlay-lcu")
+    )
+    if not client_context.local_champion_id:
+        return None, client_context.error_code or "lcu-no-champion"
+    champion_name = _resolve_champion_name(int(client_context.local_champion_id), core_data_loader=core_data_loader)
+    return (
+        build_overlay_context_payload(
+            champion_id=client_context.local_champion_id,
+            champion_name=champion_name,
+            source="lcu-champ-select",
+            teammate_champion_ids=client_context.teammate_champion_ids,
+            bench_champion_ids=client_context.bench_champion_ids,
+            phase=client_context.phase,
+            connection_state=_context_connection_state(client_context),
+            health=_context_health_value(client_context),
+            session_id=client_context.session_id,
+        ),
+        "",
+    )
+
+
 def _context_health_value(context: Any) -> str:
     """读取新旧上下文的健康状态，不把 health 枚举值混入连接状态字段。"""
 
@@ -563,13 +665,12 @@ def start_overlay_context_poller(
 ) -> OverlayContextPoller:
     stop_event = threading.Event()
     if write_once_func is write_current_lcu_overlay_context_once:
-        context_provider = TypedGameContextProvider()
+        from hextech.interfaces.overlay.context_broker import OverlayContextBroker
+
+        broker = OverlayContextBroker()
 
         def write_current_context() -> bool:
-            return write_current_lcu_overlay_context_once(
-                should_write=lambda: not stop_event.is_set(),
-                context_provider=context_provider,
-            )
+            return broker.poll_once(should_write=lambda: not stop_event.is_set())
 
         write_once_func = write_current_context
     thread = threading.Thread(

@@ -457,7 +457,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(build_count, 1)
         self.assertEqual(sum(not runtime.stats["cache_hit"] for runtime in runtimes), 1)
 
-    def test_runner_uses_lcu_session_id_for_vision_event(self):
+    def test_runner_uses_window_identity_instead_of_lcu_session_id(self):
         import json
 
         from PIL import Image
@@ -495,7 +495,9 @@ class OverlayVisionStateTests(unittest.TestCase):
                     runner.run_loop(write_event=True, event_path=event_path, required_frames=1)
 
             payload = json.loads(event_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["source"]["session_id"], "lcu-session-1")
+            self.assertNotEqual(payload["source"]["session_id"], "lcu-session-1")
+            self.assertEqual(payload["source"]["session_id"], payload["source"]["game_instance_id"])
+            self.assertEqual(payload["source"]["window_hwnd"], 123)
             self.assertEqual(payload["source"]["window_hwnd"], 123)
             self.assertEqual(payload["source"]["capture_size"], [1920, 1080])
             self.assertEqual(payload["source"]["dpi_scale"], 1.25)

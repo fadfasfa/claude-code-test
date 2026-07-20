@@ -87,6 +87,11 @@ def game_context_from_runtime(payload: Mapping[str, Any], *, fallback_session_id
         source=str(payload.get("source") or "runtime_context"),
         health=health,
         error_code=error or ("" if champion_id else "context_missing"),
+        game_instance_id=str(payload.get("game_instance_id") or ""),
+        window_hwnd=_coerce_positive_int(payload.get("window_hwnd")),
+        context_revision=_coerce_positive_int(payload.get("context_revision")),
+        publication_seq=_coerce_positive_int(payload.get("publication_seq")),
+        publisher_instance_id=str(payload.get("publisher_instance_id") or ""),
     )
 
 

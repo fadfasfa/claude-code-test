@@ -12,7 +12,6 @@ import logging
 import os
 import re
 import time
-import uuid
 from pathlib import Path
 from typing import Any, Mapping, cast
 
@@ -21,6 +20,7 @@ from hextech.modules.vision.events import build_overlay_event, write_overlay_eve
 from hextech.modules.data.overlay_source import SharedOverlayDataSource
 from hextech.infrastructure.vision.state import SelectionTracker
 from hextech.modules.data.ports.atomic import atomic_write_json
+from hextech.modules.vision.window import game_window_identity
 
 from hextech.infrastructure.vision.template_runtime import load_or_build_default_template_runtime
 
@@ -277,6 +277,7 @@ def run_loop(
     left_mouse_was_down = False
     active_hwnd = 0
     game_session_id = ""
+    current_game_identity: dict[str, object] = {}
 
     def commit_event(event_payload: dict[str, Any], *, poll_mode: str) -> None:
         nonlocal last_signature, last_write_at
@@ -309,7 +310,11 @@ def run_loop(
         source.update(
             {
                 "session_id": game_session_id,
+                "game_instance_id": str(current_game_identity.get("game_instance_id") or game_session_id),
                 "window_hwnd": int(hwnd),
+                "window_process_id": int(current_game_identity.get("process_id") or 0),
+                "window_process_started_at": float(current_game_identity.get("process_started_at") or 0.0),
+                "identity_quality": str(current_game_identity.get("identity_quality") or "unavailable"),
                 "client_rect": [int(value) for value in rect],
                 "capture_size": [int(value) for value in capture_size] if capture_size else [],
                 "dpi_scale": vision_sidecar._window_dpi_scale(hwnd),
@@ -387,16 +392,14 @@ def run_loop(
             continue
 
         hwnd, rect = target
-        context_payload = data_source.read_context()
-        context_session_id = str(context_payload.get("session_id") or "").strip()
-        if int(hwnd) != active_hwnd:
+        observed_identity = game_window_identity(int(hwnd))
+        observed_game_instance = str(observed_identity.get("game_instance_id") or "")
+        if int(hwnd) != active_hwnd or observed_game_instance != game_session_id:
             tracker.reset()
             left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
             active_hwnd = int(hwnd)
-            game_session_id = context_session_id or uuid.uuid4().hex
-        elif context_session_id and context_session_id != game_session_id:
-            tracker.reset()
-            game_session_id = context_session_id
+            game_session_id = observed_game_instance
+        current_game_identity = observed_identity
         if not vision_sidecar._is_lol_game_foreground(hwnd):
             left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
             event = attach_window_observation(tracker.block("game_not_foreground"), hwnd=hwnd, rect=rect)

@@ -10,6 +10,7 @@ host、Vision sidecar 和桌面伴生窗口得出不同结论。标题只作为�
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 import time
 from ctypes import wintypes
@@ -49,12 +50,59 @@ class WindowProbeResult:
     client_rect: tuple[int, int, int, int] | None = None
     observed_at: float = 0.0
     error_type: str = ""
+    process_id: int = 0
+    process_started_at: float = 0.0
+    game_instance_id: str = ""
+    identity_quality: str = "unavailable"
 
     @property
     def target(self) -> tuple[int, tuple[int, int, int, int]] | None:
         if self.status != "found" or not self.hwnd or self.client_rect is None:
             return None
         return int(self.hwnd), self.client_rect
+
+
+def _window_process_identity(hwnd: int) -> tuple[int, float, str, str]:
+    """返回跨进程可重复计算的游戏身份；读取失败时只降级，不猜测随机 session。"""
+
+    if win32process is None:
+        return 0, 0.0, "", "unavailable"
+    try:
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        process_id = int(pid or 0)
+    except (OSError, TypeError, ValueError):
+        return 0, 0.0, "", "unavailable"
+    if process_id <= 0:
+        return 0, 0.0, "", "unavailable"
+    try:
+        started_at = float(psutil.Process(process_id).create_time())
+    except (psutil.Error, OSError, TypeError, ValueError):
+        started_at = 0.0
+    if started_at > 0:
+        raw = f"lol-process:{process_id}:{started_at:.6f}"
+        quality = "process"
+    else:
+        # PID 可读但进程创建时间受限时，HWND 使同一进程内的窗口重建明确触发重新绑定。
+        raw = f"lol-window:{process_id}:{int(hwnd)}"
+        quality = "window_fallback"
+    return process_id, started_at, hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32], quality
+
+
+def game_window_identity(hwnd: int) -> dict[str, object]:
+    """为 Host、Vision 与 Context Broker 提供同一份窗口身份计算。"""
+
+    process_id, process_started_at, game_instance_id, quality = _window_process_identity(int(hwnd))
+    if not game_instance_id:
+        raw = f"lol-hwnd:{int(hwnd)}"
+        game_instance_id = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+        quality = "hwnd_only"
+    return {
+        "game_instance_id": game_instance_id,
+        "window_hwnd": int(hwnd),
+        "process_id": process_id,
+        "process_started_at": process_started_at,
+        "identity_quality": quality,
+    }
 
 
 def configure_process_dpi_awareness() -> str:
@@ -289,7 +337,17 @@ def probe_lol_game_window(
     target = process_match[0] if process_match else (title_match[0] if title_match else None)
     if target is None:
         return WindowProbeResult(status="missing", observed_at=time.time())
-    return WindowProbeResult(status="found", hwnd=target[0], client_rect=target[1], observed_at=time.time())
+    identity = game_window_identity(target[0])
+    return WindowProbeResult(
+        status="found",
+        hwnd=target[0],
+        client_rect=target[1],
+        observed_at=time.time(),
+        process_id=int(identity["process_id"]),
+        process_started_at=float(identity["process_started_at"]),
+        game_instance_id=str(identity["game_instance_id"]),
+        identity_quality=str(identity["identity_quality"]),
+    )
 
 
 def find_lol_game_window(

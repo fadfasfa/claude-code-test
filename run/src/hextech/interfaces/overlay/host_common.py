@@ -239,6 +239,10 @@ class WindowTargetPoller:
         self._last_success_at = 0.0
         self._last_error_type = ""
         self._consecutive_failures = 0
+        self._game_instance_id = ""
+        self._process_id = 0
+        self._process_started_at = 0.0
+        self._identity_quality = "unavailable"
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -265,6 +269,10 @@ class WindowTargetPoller:
                 "last_success_at": self._last_success_at,
                 "last_error_type": self._last_error_type,
                 "consecutive_failures": self._consecutive_failures,
+                "game_instance_id": self._game_instance_id,
+                "process_id": self._process_id,
+                "process_started_at": self._process_started_at,
+                "identity_quality": self._identity_quality,
             }
 
     @staticmethod
@@ -299,6 +307,10 @@ class WindowTargetPoller:
                     self._last_error_type = ""
                     self._consecutive_failures = 0
                     self._target = probe.target
+                    self._game_instance_id = str(probe.game_instance_id or "")
+                    self._process_id = int(probe.process_id or 0)
+                    self._process_started_at = float(probe.process_started_at or 0.0)
+                    self._identity_quality = str(probe.identity_quality or "unavailable")
             self._stop_requested.wait(self._interval_seconds)
 
 

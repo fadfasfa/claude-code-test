@@ -82,6 +82,11 @@ class GameContext:
     source: str = "lcu"
     health: HealthState = HealthState.READY
     error_code: str = ""
+    game_instance_id: str = ""
+    window_hwnd: int = 0
+    context_revision: int = 0
+    publication_seq: int = 0
+    publisher_instance_id: str = ""
     schema_version: int = CONTRACT_SCHEMA_VERSION
 
 
