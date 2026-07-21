@@ -17,7 +17,7 @@ from typing import Any, Iterable
 MANIFEST_RELATIVE_PATH = Path("resources") / "manifest.v2.json"
 PACKAGE_ROLE = "package"
 BUILD_ONLY_ROLE = "build-only"
-ALLOWED_ASSET_CATEGORIES = ("augments", "champions", "modes", "ui")
+ALLOWED_ASSET_CATEGORIES = ("augments", "champions", "modes", "ui", "vision")
 CATALOG_FILENAMES = (
     "manifest.v2.json",
     "英雄目录.v1.json",

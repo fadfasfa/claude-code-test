@@ -46,6 +46,16 @@ def _rank_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
     name_matrix = _stack_fingerprints([fingerprint_row for _template, fingerprint_row in name_rows])
     alt_name_templates = tuple(template for template, _fingerprint_row in alt_name_rows)
     alt_name_matrix = _stack_fingerprints([fingerprint_row for _template, fingerprint_row in alt_name_rows])
+    observed_name_rows = [
+        (template, fingerprint)
+        for template in template_index
+        for fingerprint in template.observed_name_fingerprints
+        if fingerprint
+    ]
+    observed_name_templates = tuple(template for template, _fingerprint_row in observed_name_rows)
+    observed_name_matrix = _stack_fingerprints(
+        [fingerprint_row for _template, fingerprint_row in observed_name_rows]
+    )
     entry = _RankMatrices(
         template_index,
         icon_templates,
@@ -54,6 +64,8 @@ def _rank_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
         name_matrix,
         alt_name_templates,
         alt_name_matrix,
+        observed_name_templates,
+        observed_name_matrix,
     )
     if key not in _RANK_MATRIX_CACHE and len(_RANK_MATRIX_CACHE) >= _RANK_MATRIX_CACHE_MAX:
         _RANK_MATRIX_CACHE.pop(next(iter(_RANK_MATRIX_CACHE)))
@@ -146,6 +158,27 @@ def _rank_name_fingerprint(
         ranked = _rank_with_matrix(crop_fingerprint, matrices.name_templates, matrices.name_matrix)
     # 文字只识别卡名。同名视觉版本若按 augment_id 分开参与排序，会把完全相同的
     # 文字模板当作 runner-up，错误压低 margin。
+    best_by_identity: dict[str, tuple[TemplateEntry, float]] = {}
+    for template, confidence in ranked:
+        identity = normalize_augment_id(template.name)
+        previous = best_by_identity.get(identity)
+        if previous is None or confidence > previous[1]:
+            best_by_identity[identity] = (template, confidence)
+    return sorted(best_by_identity.values(), key=lambda item: (-item[1], -item[0].priority, item[0].name))
+
+
+def _rank_observed_name_fingerprint(
+    crop_fingerprint: Sequence[float],
+    template_index: Sequence[TemplateEntry],
+) -> list[tuple[TemplateEntry, float]]:
+    """只匹配脱敏真机卡名样本；与图标 shortlist 完全独立。"""
+
+    matrices = _rank_matrices(template_index)
+    ranked = _rank_with_matrix(
+        crop_fingerprint,
+        matrices.observed_name_templates,
+        matrices.observed_name_matrix,
+    )
     best_by_identity: dict[str, tuple[TemplateEntry, float]] = {}
     for template, confidence in ranked:
         identity = normalize_augment_id(template.name)
@@ -255,6 +288,7 @@ def _channels_payload(
     icon_shortlist: Sequence[tuple[TemplateEntry, float]],
     narrowed_name_ranked: Sequence[tuple[TemplateEntry, float]],
     narrowed_alt_name_ranked: Sequence[tuple[TemplateEntry, float]],
+    observed_name_ranked: Sequence[tuple[TemplateEntry, float]],
 ) -> dict[str, Any]:
     return {
         "icon": {
@@ -283,6 +317,10 @@ def _channels_payload(
         "text_alt_narrowed": {
             "margin": round(_candidate_margin(narrowed_alt_name_ranked), 4),
             "top_candidates": _top_candidates(narrowed_alt_name_ranked),
+        },
+        "observed_name": {
+            "margin": round(_candidate_margin(observed_name_ranked), 4),
+            "top_candidates": _top_candidates(observed_name_ranked),
         },
     }
 
@@ -344,9 +382,11 @@ def _detect_slot(
     if name_fingerprint is None:
         name_ranked: list[tuple[TemplateEntry, float]] = []
         alt_name_ranked: list[tuple[TemplateEntry, float]] = []
+        observed_name_ranked: list[tuple[TemplateEntry, float]] = []
     else:
         name_ranked = _rank_name_fingerprint(name_fingerprint, template_index, family="primary")
         alt_name_ranked = _rank_name_fingerprint(name_fingerprint, template_index, family="alt")
+        observed_name_ranked = _rank_observed_name_fingerprint(name_fingerprint, template_index)
     alt_name_crop_std = name_crop_std
     icon_template, icon_confidence = ranked[0] if ranked else (None, 0.0)
     name_template, name_confidence = name_ranked[0] if name_ranked else (None, 0.0)
@@ -369,6 +409,7 @@ def _detect_slot(
         icon_shortlist=icon_shortlist,
         narrowed_name_ranked=narrowed_name_ranked,
         narrowed_alt_name_ranked=narrowed_alt_name_ranked,
+        observed_name_ranked=observed_name_ranked,
     )
     name_box_present = name_box is not None
     has_name_channel = name_box_present and bool(name_ranked)

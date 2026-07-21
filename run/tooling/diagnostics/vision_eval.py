@@ -23,6 +23,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from hextech.infrastructure.vision import sidecar as overlay_vision_sidecar
+from hextech.infrastructure.vision.matcher import OBSERVED_NAME_CONFIDENCE, OBSERVED_NAME_MARGIN
 from hextech.infrastructure.vision.state import SelectionTracker
 
 
@@ -347,7 +348,23 @@ def _evaluate_name_roi_sample(
     observed_names: list[str] = []
     for index, crop in enumerate(crops):
         _std, ranked = overlay_vision_sidecar._rank_name_templates(crop, template_index)
-        observed = ranked[0][0].name if ranked else ""
+        fingerprint = overlay_vision_sidecar._normalized_fingerprint(
+            overlay_vision_sidecar._text_levels(crop)
+        )
+        observed_ranked = (
+            overlay_vision_sidecar._rank_observed_name_fingerprint(fingerprint, template_index)
+            if fingerprint is not None
+            else []
+        )
+        observed_margin = overlay_vision_sidecar._candidate_margin(observed_ranked)
+        if (
+            observed_ranked
+            and observed_ranked[0][1] >= OBSERVED_NAME_CONFIDENCE
+            and observed_margin >= OBSERVED_NAME_MARGIN
+        ):
+            observed = observed_ranked[0][0].name
+        else:
+            observed = ranked[0][0].name if ranked else ""
         observed_names.append(observed)
         expected = sample["expected_names"][index] if index < len(sample["expected_names"]) else None
         if expected:

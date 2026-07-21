@@ -36,9 +36,10 @@ FONT_BOLD = Path("C:/Windows/Fonts/msyhbd.ttc")
 class PillowCanvas:
     """实现 renderer 所需的最小 Canvas-like 接口。"""
 
-    def __init__(self, width: int, height: int) -> None:
+    def __init__(self, width: int, height: int, *, dpi_scale: float = 1.0) -> None:
         self.image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         self._draw = ImageDraw.Draw(self.image)
+        self._dpi_scale = max(0.5, float(dpi_scale))
 
     def winfo_width(self) -> int:
         return self.image.width
@@ -71,7 +72,15 @@ class PillowCanvas:
 
     def create_text(self, x: int, y: int, **kwargs: Any) -> None:
         font_spec = kwargs.get("font") or ("Microsoft YaHei", 10)
-        size = max(8, abs(int(font_spec[1])))
+        raw_size = int(font_spec[1])
+        # Tk 的负数字号表示固定像素，正数字号表示 point。离线图必须复现这一差异，
+        # 否则 150% 缩放的真机关键帧会把 16pt 错画成 16px。
+        size = (
+            abs(raw_size)
+            if raw_size < 0
+            else round(raw_size * (96.0 / 72.0) * self._dpi_scale)
+        )
+        size = max(8, size)
         bold = len(font_spec) > 2 and str(font_spec[2]).lower() == "bold"
         font_path = FONT_BOLD if bold and FONT_BOLD.exists() else FONT_REGULAR
         font = ImageFont.truetype(str(font_path), size) if font_path.exists() else ImageFont.load_default()
@@ -224,9 +233,10 @@ def render_case(
     *,
     background: Path | None = None,
     display_mode: str = "compact",
+    dpi_scale: float = 1.0,
 ) -> Path:
     fixture = CASES[case_name]()
-    canvas = PillowCanvas(*viewport)
+    canvas = PillowCanvas(*viewport, dpi_scale=dpi_scale)
     perf_sink: dict[str, Any] = {}
     if fixture["show"]:
         model = build_render_model(
@@ -256,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--width", type=int, help="输出宽度；有背景且未传时使用背景原宽。")
     parser.add_argument("--height", type=int, help="输出高度；有背景且未传时使用背景原高。")
     parser.add_argument("--background", type=Path, help="可选真机截图；会缩放到输出尺寸后合成。")
+    parser.add_argument("--dpi-scale", type=float, default=1.0, help="真机显示缩放；正数 point 字号按此换算。")
     parser.add_argument(
         "--display-mode",
         choices=("compact", "expanded"),
@@ -287,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
                     viewport,
                     background=args.background,
                     display_mode=args.display_mode,
+                    dpi_scale=args.dpi_scale,
                 )
             ),
         }

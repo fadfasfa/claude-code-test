@@ -496,6 +496,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                 priority=1,
                 name_fingerprint=(0.1, 0.2, -0.1, -0.2),
                 name_fingerprint_alt=(0.2, 0.1, -0.2, -0.1),
+                observed_name_fingerprints=((0.3, -0.3, 0.4, -0.4),),
                 source_icon_filenames=("a.png",),
             ),
             sidecar.TemplateEntry(
@@ -509,6 +510,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                 priority=2,
                 name_fingerprint=(-0.1, -0.2, 0.1, 0.2),
                 name_fingerprint_alt=(-0.2, -0.1, 0.2, 0.1),
+                observed_name_fingerprints=((-0.3, 0.3, -0.4, 0.4),),
                 source_icon_filenames=("b.png",),
             ),
         ]
@@ -533,8 +535,10 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                 manifest_text = json.dumps(manifest, ensure_ascii=False)
                 self.assertEqual(manifest["schema_version"], template_runtime.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION)
                 self.assertEqual(payload["icon_matrix"].dtype, np.float16)
+                self.assertEqual(payload["observed_name_matrix"].dtype, np.float16)
                 self.assertNotIn("fingerprint", manifest_text)
                 self.assertNotIn("name_fingerprint", manifest_text)
+                self.assertNotIn("observed_name_fingerprints", manifest_text)
 
             runtime = template_runtime._read_template_runtime_cache(
                 cache_file,
@@ -554,6 +558,11 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         restored_matrices = sidecar.rank_template_matrices(runtime.template_index)
         self.assertIs(restored_matrices, runtime.matrices)
         np.testing.assert_allclose(restored_matrices.name_matrix, matrices.name_matrix, atol=1e-3)
+        np.testing.assert_allclose(
+            restored_matrices.observed_name_matrix,
+            matrices.observed_name_matrix,
+            atol=1e-3,
+        )
 
     def test_template_runtime_cache_v2_ready_cleans_default_v1_cache(self):
         from hextech.infrastructure.vision import template_runtime

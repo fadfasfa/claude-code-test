@@ -555,10 +555,25 @@ def test_overlay_event_channel_contract() -> None:
         },
     }
     event = overlay_event_channel.build_overlay_event(
-        [{"slot": 0, "augment_id": "augment_001"}],
+        [
+            {
+                "slot": 0,
+                "augment_id": "augment_001",
+                "acceptance_rule": "observed_name",
+                "channels": {
+                    "observed_name": {
+                        "margin": 0.11,
+                        "top_candidates": [
+                            {"augment_id": "augment_001", "name": "珠光护手", "confidence": 0.97}
+                        ],
+                    }
+                },
+            }
+        ],
         source_tag="dev-check",
         hint_cache=hint_cache,
     )
+    event["_acceptance_rules"] = ["observed_name:2", "", ""]
     assert event["schema_version"] == overlay_event_channel.SCHEMA_VERSION
     assert event["source"]["tag"] == "dev-check"
     assert event["active"] is True
@@ -577,6 +592,9 @@ def test_overlay_event_channel_contract() -> None:
         assert snapshot["selection_type"] == "hextech"
         assert len(snapshot["slots"]) == 3
         assert snapshot["slots"][0]["name"] == "珠光护手"
+        assert snapshot["slots"][0]["acceptance_rule"] == "observed_name"
+        assert snapshot["slots"][0]["channels"]["observed_name"]["margin"] == 0.11
+        assert snapshot["_acceptance_rules"] == ["observed_name:2", "", ""]
 
         zero_ready_event = overlay_event_channel.build_overlay_event(
             [
@@ -1361,7 +1379,7 @@ def test_overlay_vision_sidecar_contract() -> None:
     from hextech.infrastructure.vision.state import SelectionTracker
     from hextech.modules.vision.window import cursor_in_client_boxes
 
-    assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION == 3
+    assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION == 4
     assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_FILE.name == "template_runtime_cache.v2.npz"
     assert overlay_vision_sidecar.TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE == np.float16
     assert overlay_vision_sidecar.DEFAULT_LOOP_FRAME_INTERVAL_MS == 80
@@ -2121,9 +2139,18 @@ def test_overlay_vision_sidecar_contract() -> None:
         "top_candidates": [_candidate("正确海克斯", 0.66)],
     }
     dual_candidate = candidate_from_slot(shortlist_dual_slot)
-    assert dual_candidate is not None
-    assert dual_candidate.rule == "icon_shortlist_dual_font"
-    assert dual_candidate.required_frames == 2
+    assert dual_candidate is None
+
+    observed_slot = json.loads(json.dumps(shortlist_dual_slot, ensure_ascii=False))
+    observed_slot["channels"]["observed_name"] = {
+        "margin": 0.10,
+        "top_candidates": [_candidate("正确海克斯", 0.96)],
+    }
+    observed_candidate = candidate_from_slot(observed_slot)
+    assert observed_candidate is not None
+    assert observed_candidate.name == "正确海克斯"
+    assert observed_candidate.rule == "observed_name"
+    assert observed_candidate.required_frames == 2
 
     weak_reroll_tracker = SelectionTracker(scene_enter_frames=1)
     weak_reroll_tracker.update(detection)
@@ -3899,6 +3926,15 @@ print(json.dumps(blocked))
     pillow_canvas = overlay_render_snapshot.PillowCanvas(200, 100)
     pillow_canvas.create_rectangle(10, 10, 60, 40, fill="#123456", outline="")
     assert pillow_canvas.image.getpixel((20, 20))[:3] == (18, 52, 86)
+
+    point_canvas = overlay_render_snapshot.PillowCanvas(240, 120, dpi_scale=1.5)
+    point_canvas.create_text(120, 60, text="胜率 50.0%", font=("Microsoft YaHei UI", 16, "bold"))
+    pixel_canvas = overlay_render_snapshot.PillowCanvas(240, 120, dpi_scale=1.5)
+    pixel_canvas.create_text(120, 60, text="胜率 50.0%", font=("Microsoft YaHei UI", -16, "bold"))
+    point_bbox = point_canvas.image.getchannel("A").getbbox()
+    pixel_bbox = pixel_canvas.image.getchannel("A").getbbox()
+    assert point_bbox is not None and pixel_bbox is not None
+    assert (point_bbox[3] - point_bbox[1]) > (pixel_bbox[3] - pixel_bbox[1])
 
     left_anchor_canvas = overlay_render_snapshot.PillowCanvas(200, 100)
     left_anchor_canvas.create_text(50, 50, text="胜率:", fill="#FFFFFF", anchor="e")

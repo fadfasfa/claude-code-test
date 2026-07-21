@@ -111,6 +111,28 @@ def test_glass_cannon_visual_variants_share_unique_name_statistics() -> None:
     assert identities["augment_aliases"]["玻璃大炮"] == "1325"
 
 
+def test_current_hard_names_resolve_to_the_unique_statistical_ids() -> None:
+    overlay_hints = {
+        "hints": {
+            "1020": {"name": "黎明使者的坚决"},
+            "2089": {"name": "哎哟，我的硬币！"},
+        }
+    }
+    catalog = [
+        {"name": "黎明使者的坚决", "tier": "黄金", "augment_name_id": "ARAM_DawnbringersResolve"},
+        {"name": "黎明使者的坚决", "tier": "黄金", "augment_name_id": "DawnbringersResolve"},
+        {"name": "哎哟，我的硬币！", "tier": "黄金", "augment_name_id": "ARAM_YowchMyCoins"},
+    ]
+
+    identities = _build_augment_identity_payload(overlay_hints, catalog)
+
+    assert identities["augment_aliases"]["黎明使者的坚决"] == "1020"
+    assert identities["augment_aliases"]["aram_dawnbringersresolve"] == "1020"
+    assert identities["augment_aliases"]["dawnbringersresolve"] == "1020"
+    assert identities["augment_aliases"]["哎哟，我的硬币！"] == "2089"
+    assert identities["augment_aliases"]["aram_yowchmycoins"] == "2089"
+
+
 def test_refresh_and_policy_actions_are_serialized(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
     entered = threading.Event()

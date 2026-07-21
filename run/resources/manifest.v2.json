@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-07-18T02:59:27+00:00",
+  "generated_at": "2026-07-21T04:15:28+00:00",
   "description": "Hextech resources 逐文件完整性与发布白名单。",
   "rules": {
     "resource_root": "resources",
@@ -4292,6 +4292,20 @@
       "package_role": "package",
       "size": 78952,
       "sha256": "26ebdc809504d04da9a889abd4efbf2403354cce1b7c2acddb79ac7959abd02a"
+    },
+    {
+      "path": "resources/assets/vision/name_exemplars/aram_dawnbringersresolve__20260721.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 6714,
+      "sha256": "30e490badc51b9181bc7eb7445bbd4a199c71704f5a9f6b43b09294fb194b295"
+    },
+    {
+      "path": "resources/assets/vision/name_exemplars/aram_yowchmycoins__20260721.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 6262,
+      "sha256": "d116be09a28610bf4c19673eed94b34ce368533653acdf5ae738a8ce217bd09f"
     },
     {
       "path": "resources/catalog/hero_version.txt",

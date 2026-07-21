@@ -292,8 +292,32 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
     root = FakeRoot()
     visibility: dict[str, object] = {"window_visible": True}
     snapshot = {
-        "slots": [{"slot": index, "name": f"卡名 {index}"} for index in range(3)],
-        "_acceptance_rules": ["dual_font:2"] * 3,
+        "slots": [
+            {
+                "slot": index,
+                "name": f"卡名 {index}",
+                "acceptance_rule": "observed_name:2",
+                "channels": {
+                    "text": {
+                        "top_candidates": [
+                            {"augment_id": f"candidate-{index}", "name": f"卡名 {index}", "confidence": 0.93}
+                        ],
+                        "margin": 0.09,
+                    },
+                    "text_alt": {"top_candidates": [], "margin": 0.03},
+                    "icon": {"top_candidates": [], "margin": 0.02},
+                    "icon_shortlist": {"top_candidates": [], "group_count": 2},
+                    "observed_name": {
+                        "top_candidates": [
+                            {"augment_id": f"canonical-{index}", "name": f"卡名 {index}", "confidence": 0.97}
+                        ],
+                        "margin": 0.12,
+                    },
+                },
+            }
+            for index in range(3)
+        ],
+        "_acceptance_rules": ["observed_name:2"] * 3,
         "source": {
             "window_hwnd": 100,
             "client_rect": [0, 0, 2560, 1600],
@@ -346,6 +370,22 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
     assert len(first) == len(context_changed) == len(second) == 1
     latest = json.loads((evidence_dir / "latest_real_session.v2.json").read_text(encoding="utf-8"))
     assert latest["selection_revision"] == 2
-    assert latest["render"]["acceptance_rules"] == ["dual_font:2"] * 3
+    assert latest["render"]["acceptance_rules"] == ["observed_name:2"] * 3
+    assert [slot["acceptance_rule"] for slot in latest["render"]["event_slots"]] == [
+        "observed_name:2"
+    ] * 3
+    assert latest["render"]["event_slots"][0]["channels"]["observed_name"] == {
+        "top_candidates": [
+            {"augment_id": "canonical-0", "name": "卡名 0", "confidence": 0.97}
+        ],
+        "margin": 0.12,
+    }
+    assert set(latest["render"]["event_slots"][0]["channels"]) == {
+        "text",
+        "text_alt",
+        "icon",
+        "icon_shortlist",
+        "observed_name",
+    }
     assert latest["screenshot"].startswith("overlay-s1-e2-r2-c2-")
     assert latest["screenshot"].endswith(".png")
