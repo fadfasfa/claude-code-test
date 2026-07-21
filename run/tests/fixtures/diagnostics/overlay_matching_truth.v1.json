@@ -34,6 +34,24 @@
       "expected_body_shard": false,
       "expected_names": ["更万用的瞄准镜", "闪现向前", "大法师"],
       "notes": "装饰星光、近似名称和字体通道分歧的真机回归；三槽文字 top1 必须正确。"
+    },
+    {
+      "id": "roi-20260721-dawnbringersresolve-holdout",
+      "name_crops": [
+        "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260721_hard_names/dawnbringersresolve_holdout.png"
+      ],
+      "expected_body_shard": false,
+      "expected_names": ["黎明使者的坚决"],
+      "notes": "独立真机帧留出样本；不得再被图标短名单误判为砸开那颗蛋。"
+    },
+    {
+      "id": "roi-20260721-yowchmycoins",
+      "name_crops": [
+        "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260721_hard_names/yowchmycoins_observed.png"
+      ],
+      "expected_body_shard": false,
+      "expected_names": ["哎哟，我的硬币！"],
+      "notes": "脱敏真机卡名样本；不得再被图标短名单误判为升级：收集者。"
     }
   ],
   "samples": [

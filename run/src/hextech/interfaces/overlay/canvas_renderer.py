@@ -14,6 +14,7 @@ INNER_BAR_TOP_MARGIN_RATIO = 0.825
 INNER_BAR_SIDE_INSET_RATIO = 0.055
 SYNERGY_CARD_GAP_RATIO = 0.010
 COMPACT_SYNERGY_HEIGHT_RATIO = 0.066
+CARD_TEXT_POINT_SIZE = 16
 
 OVERLAY_THEME: dict[str, str] = {
     "panel_bg": "#0A1428",
@@ -409,9 +410,6 @@ def _draw_embedded_bar(canvas: CanvasLike, box: tuple[int, int, int, int], *, ti
 def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: StatPanelModel) -> None:
     _draw_embedded_bar(canvas, box, tier=row["tier"])
     x0, y0, x1, y1 = box
-    height = y1 - y0
-    value_size = _clamp(13, height * 0.29, 18)
-    status_size = _clamp(10, height * 0.22, 15)
     font_family = "Microsoft YaHei UI"
     if row["status_code"] not in {"READY", "GENERATION_DEGRADED"}:
         status_colors = {
@@ -432,7 +430,9 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
             (y0 + y1) // 2,
             text=row["status_text"],
             fill=status_colors[row["status_code"]],
-            font=_pixel_font(font_family, status_size, "bold"),
+            # 卡内文字沿用用户确认的点字号；联动说明继续使用像素字号，
+            # 避免把此前为联动框设置的 DPI 限制错误应用到核心统计。
+            font=(font_family, CARD_TEXT_POINT_SIZE, "bold"),
             anchor="center",
         )
         return
@@ -448,7 +448,7 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
         cy,
         text=stats_text,
         fill=OVERLAY_THEME["stat_value"],
-        font=_pixel_font(font_family, value_size, "bold"),
+        font=(font_family, CARD_TEXT_POINT_SIZE, "bold"),
         anchor="center",
     )
 

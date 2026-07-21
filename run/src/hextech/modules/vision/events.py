@@ -29,6 +29,15 @@ EVENT_MAX_AGE_SECONDS = EVENT_HEARTBEAT_SECONDS * EVENT_STALE_HEARTBEAT_BUDGET
 ALLOWED_SELECTION_TYPES = {"hextech", "body_shard"}
 VISIBLE_SELECTION_TYPES = {"hextech"}
 ALLOWED_SLOT_STATES = {"ready", "low_confidence", "detecting", "failed", "empty"}
+DIAGNOSTIC_CHANNELS = {
+    "icon",
+    "text",
+    "text_alt",
+    "icon_shortlist",
+    "text_narrowed",
+    "text_alt_narrowed",
+    "observed_name",
+}
 SELECTION_TYPE_LABELS = {
     "hextech": "海克斯选择",
     "body_shard": "锻体碎片选择",
@@ -80,6 +89,8 @@ def _empty_slot(index: int, *, state: str = "empty") -> dict[str, Any]:
         "confidence": None,
         "diagnostic": "",
         "top_candidates": [],
+        "channels": {},
+        "acceptance_rule": "",
         "candidate_identity": "",
         "rejection_reason": "",
         "elapsed_seconds": 0.0,
@@ -156,6 +167,31 @@ def _normalize_top_candidates(value: Any) -> list[dict[str, Any]]:
     return candidates
 
 
+def _normalize_channels(value: Any) -> dict[str, dict[str, Any]]:
+    """保留有限的匹配诊断，避免把无界 sidecar 数据写入长期证据。"""
+
+    if not isinstance(value, Mapping):
+        return {}
+    channels: dict[str, dict[str, Any]] = {}
+    for name in DIAGNOSTIC_CHANNELS:
+        raw = value.get(name)
+        if not isinstance(raw, Mapping):
+            continue
+        channel: dict[str, Any] = {"top_candidates": _normalize_top_candidates(raw.get("top_candidates"))}
+        for field in ("crop_std", "margin"):
+            try:
+                channel[field] = round(float(raw.get(field) or 0.0), 4)
+            except (TypeError, ValueError):
+                channel[field] = 0.0
+        if name == "icon_shortlist":
+            try:
+                channel["group_count"] = max(0, int(raw.get("group_count") or 0))
+            except (TypeError, ValueError):
+                channel["group_count"] = 0
+        channels[name] = channel
+    return channels
+
+
 def normalize_overlay_slot(
     raw_slot: Mapping[str, Any] | None,
     index: int,
@@ -208,6 +244,8 @@ def normalize_overlay_slot(
         "confidence": confidence_value,
         "diagnostic": diagnostic,
         "top_candidates": _normalize_top_candidates(raw_slot.get("top_candidates")),
+        "channels": _normalize_channels(raw_slot.get("channels")),
+        "acceptance_rule": _clean_text(raw_slot.get("acceptance_rule"), limit=80),
         "candidate_identity": _clean_text(raw_slot.get("candidate_identity"), limit=80),
         "rejection_reason": _clean_text(raw_slot.get("rejection_reason"), limit=80),
         "elapsed_seconds": elapsed_seconds,
@@ -310,6 +348,14 @@ def read_overlay_event(path: str | Path | None = None) -> dict[str, Any]:
         "generated_at": payload.get("generated_at", 0.0),
         "source": payload.get("source", {}),
         "slots": normalized_slots,
+        "_acceptance_rules": [
+            _clean_text(item, limit=80)
+            for item in (
+                payload.get("_acceptance_rules")
+                if isinstance(payload.get("_acceptance_rules"), list)
+                else []
+            )[:SLOT_COUNT]
+        ],
     }
 
 

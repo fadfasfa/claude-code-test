@@ -10,6 +10,83 @@ from unittest import mock
 
 
 class OverlayRecognitionGateTests(unittest.TestCase):
+    def test_known_icon_shortlist_confusions_cannot_authorize_ready(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+
+        for expected_name, wrong_name in (
+            ("黎明使者的坚决", "砸开那颗蛋"),
+            ("哎哟，我的硬币！", "升级：收集者"),
+        ):
+            wrong_candidate = {
+                "augment_id": wrong_name,
+                "name": wrong_name,
+                "confidence": 0.74,
+            }
+            slot = {
+                "slot": 0,
+                "channels": {
+                    "text": {"margin": 0.01, "top_candidates": [wrong_candidate]},
+                    "text_alt": {
+                        "margin": 0.01,
+                        "top_candidates": [{**wrong_candidate, "confidence": 0.69}],
+                    },
+                    "icon": {"margin": 0.04, "top_candidates": [wrong_candidate]},
+                    "icon_shortlist": {"top_candidates": [wrong_candidate]},
+                    "text_narrowed": {"margin": 0.04, "top_candidates": [wrong_candidate]},
+                    "text_alt_narrowed": {"margin": 0.04, "top_candidates": [wrong_candidate]},
+                },
+            }
+
+            with self.subTest(expected=expected_name, rejected=wrong_name):
+                self.assertIsNone(candidate_from_slot(slot))
+
+    def test_real_hard_name_exemplars_resolve_to_expected_canonical_ids(self):
+        from PIL import Image
+
+        from hextech.infrastructure.vision import sidecar
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+        from hextech.modules.data.generation import DataSnapshotClient
+
+        run_dir = Path(__file__).resolve().parents[1]
+        template_index = sidecar.load_default_template_index(run_dir)
+        sidecar._rank_matrices(template_index)
+        snapshot = DataSnapshotClient(run_dir / "resources" / "seeds").open_view()
+        cases = (
+            (
+                run_dir
+                / "tests/fixtures/diagnostics/overlay_vision_fixtures"
+                / "hextech_20260721_hard_names/dawnbringersresolve_holdout.png",
+                "黎明使者的坚决",
+                "1020",
+            ),
+            (
+                run_dir
+                / "tests/fixtures/diagnostics/overlay_vision_fixtures"
+                / "hextech_20260721_hard_names/yowchmycoins_observed.png",
+                "哎哟，我的硬币！",
+                "2089",
+            ),
+        )
+
+        for path, expected_name, expected_id in cases:
+            with self.subTest(name=expected_name), Image.open(path) as crop:
+                fingerprint = sidecar._normalized_fingerprint(sidecar._text_levels(crop.convert("RGB")))
+                ranked = sidecar._rank_observed_name_fingerprint(fingerprint, template_index)
+                slot = {
+                    "slot": 2,
+                    "channels": {
+                        "observed_name": {
+                            "margin": sidecar._candidate_margin(ranked),
+                            "top_candidates": sidecar._top_candidates(ranked),
+                        }
+                    },
+                }
+                candidate = candidate_from_slot(slot)
+                self.assertIsNotNone(candidate)
+                self.assertEqual(candidate.name, expected_name)
+                self.assertEqual(candidate.rule, "observed_name")
+                self.assertEqual(snapshot.resolve_augment(candidate.name)["canonical_id"], expected_id)
+
     def test_name_roi_accuracy_does_not_masquerade_as_frame_accuracy(self):
         from tooling.diagnostics import vision_eval
 

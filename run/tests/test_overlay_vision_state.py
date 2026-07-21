@@ -343,6 +343,8 @@ class OverlayVisionStateTests(unittest.TestCase):
                 template_runtime.np.asarray([[0.0, 1.0]], dtype=template_runtime.np.float32),
                 (entry,),
                 template_runtime.np.asarray([[1.0, 0.0]], dtype=template_runtime.np.float32),
+                (entry,),
+                template_runtime.np.asarray([[0.0, 1.0]], dtype=template_runtime.np.float32),
             )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -433,7 +435,17 @@ class OverlayVisionStateTests(unittest.TestCase):
 
         def fake_rank(template_index):
             empty = template_runtime.np.empty((0, 0), dtype=template_runtime.np.float32)
-            return template_runtime._RankMatrices(template_index, (), empty, (), empty, (), empty)
+            return template_runtime._RankMatrices(
+                template_index,
+                (),
+                empty,
+                (),
+                empty,
+                (),
+                empty,
+                (),
+                empty,
+            )
 
         with tempfile.TemporaryDirectory() as tmp:
             cache_file = Path(tmp) / "overlay_vision" / "template_runtime_cache.v2.npz"

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from hextech.interfaces.overlay.canvas_renderer import OVERLAY_THEME, _tier_color, draw_overlay_frame
+from hextech.interfaces.overlay.canvas_renderer import (
+    CARD_TEXT_POINT_SIZE,
+    OVERLAY_THEME,
+    _tier_color,
+    draw_overlay_frame,
+)
 
 
 class RecordingCanvas:
@@ -105,13 +110,34 @@ def test_compact_and_expanded_keep_the_same_short_stats_text() -> None:
         assert set(visible_stats) == {expected}
 
 
-def test_canvas_fonts_use_pixel_sizes_to_avoid_windows_dpi_rescaling() -> None:
+def test_card_text_uses_16_points_while_synergies_keep_pixel_sizes() -> None:
     canvas = RecordingCanvas(2560, 1600)
 
     draw_overlay_frame(canvas, _model(), expanded=True)
 
     assert canvas.text_calls
-    assert all(int(call["font"][1]) < 0 for call in canvas.text_calls)
+    stats_calls = [call for call in canvas.text_calls if str(call.get("text", "")).startswith("胜率")]
+    synergy_calls = [call for call in canvas.text_calls if call not in stats_calls]
+    assert stats_calls
+    assert all(int(call["font"][1]) == CARD_TEXT_POINT_SIZE for call in stats_calls)
+    assert synergy_calls
+    assert all(int(call["font"][1]) < 0 for call in synergy_calls)
+
+
+def test_non_ready_card_status_uses_the_same_16_point_size() -> None:
+    model = _model()
+    model["stats"][0].update(
+        status_code="SOURCE_STATS_MISSING",
+        status_text="源站暂无统计",
+        stats_text="源站暂无该组合统计",
+    )
+    canvas = RecordingCanvas(2560, 1600)
+
+    draw_overlay_frame(canvas, model, expanded=False)
+
+    status_calls = [call for call in canvas.text_calls if call.get("text") == "源站暂无统计"]
+    assert len(status_calls) == 2
+    assert all(int(call["font"][1]) == CARD_TEXT_POINT_SIZE for call in status_calls)
 
 
 def test_exclusion_zone_prevents_any_panel_from_drawing_over_critical_controls() -> None:

@@ -187,6 +187,16 @@ def test_package_entries_include_verified_snapshot_files(tmp_path):
     }
 
 
+def test_observed_name_exemplars_are_in_the_package_whitelist():
+    from tooling.build.resource_manifest import validate_resource_manifest
+
+    packaged = set(validate_resource_manifest(RUN_DIR)["packaged_files"])
+    assert {
+        "resources/assets/vision/name_exemplars/aram_dawnbringersresolve__20260721.png",
+        "resources/assets/vision/name_exemplars/aram_yowchmycoins__20260721.png",
+    } <= packaged
+
+
 def test_package_entries_exclude_unlisted_png(tmp_path):
     from tooling.build.resource_manifest import write_resource_manifest
     from tooling.build.rules import iter_package_data_entries, stage_package_data_tree

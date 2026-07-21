@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -27,7 +27,7 @@ from hextech.modules.recommendation.hints import normalize_augment_id, query_ove
 from hextech.modules.data.ports.paths import ASSET_DIR, INDEX_DATA_DIR
 logger = logging.getLogger(__name__)
 
-TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 3
+TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION = 4
 TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE = np.float16
 TEMPLATE_RUNTIME_CACHE_V1_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v1.npz"))
 TEMPLATE_RUNTIME_CACHE_FILE = Path(build_runtime_cache_path("overlay_vision/template_runtime_cache.v2.npz"))
@@ -113,6 +113,8 @@ class _RankMatrices:
     name_matrix: np.ndarray
     alt_name_templates: tuple[TemplateEntry, ...]
     alt_name_matrix: np.ndarray
+    observed_name_templates: tuple[TemplateEntry, ...]
+    observed_name_matrix: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -127,6 +129,8 @@ class TemplateEntry:
     priority: int = 0
     name_fingerprint: tuple[float, ...] | None = None
     name_fingerprint_alt: tuple[float, ...] | None = None
+    # 仅含游戏内卡名像素的脱敏真机指纹。它是独立文字证据，不能由图标短名单生成。
+    observed_name_fingerprints: tuple[tuple[float, ...], ...] = ()
     source_icon_filenames: tuple[str, ...] = ()
     text_only_icon_filenames: tuple[str, ...] = ()
     # 同一中文卡名可能对应多个 CDragon 视觉版本；文字识别只能确认卡名，
@@ -306,6 +310,7 @@ def _template_entry_to_cache(entry: TemplateEntry) -> dict[str, Any]:
         "priority": int(entry.priority),
         "name_fingerprint": list(entry.name_fingerprint) if entry.name_fingerprint is not None else None,
         "name_fingerprint_alt": list(entry.name_fingerprint_alt) if entry.name_fingerprint_alt is not None else None,
+        "observed_name_fingerprints": [list(item) for item in entry.observed_name_fingerprints],
         "source_icon_filenames": list(entry.source_icon_filenames),
         "text_only_icon_filenames": list(entry.text_only_icon_filenames),
         "name_variant_count": int(entry.name_variant_count),
@@ -326,6 +331,7 @@ def _template_entry_from_cache(payload: Any) -> TemplateEntry:
         priority=int(payload.get("priority") or 0),
         name_fingerprint=_optional_tuple_float(payload.get("name_fingerprint")),
         name_fingerprint_alt=_optional_tuple_float(payload.get("name_fingerprint_alt")),
+        observed_name_fingerprints=_tuple_tuple_float(payload.get("observed_name_fingerprints")),
         source_icon_filenames=_tuple_str(payload.get("source_icon_filenames")),
         text_only_icon_filenames=_tuple_str(payload.get("text_only_icon_filenames")),
         name_variant_count=max(1, int(payload.get("name_variant_count") or 1)),
@@ -346,6 +352,7 @@ def _template_entry_from_manifest(payload: Any) -> TemplateEntry:
         priority=int(payload.get("priority") or 0),
         name_fingerprint=None,
         name_fingerprint_alt=None,
+        observed_name_fingerprints=(),
         source_icon_filenames=_tuple_str(payload.get("source_icon_filenames")),
         text_only_icon_filenames=_tuple_str(payload.get("text_only_icon_filenames")),
         name_variant_count=max(1, int(payload.get("name_variant_count") or 1)),
@@ -417,6 +424,10 @@ def _rank_matrices_from_cache(
     icon_templates = _templates_by_index(template_index, metadata.get("icon_template_indices") or [])
     name_templates = _templates_by_index(template_index, metadata.get("name_template_indices") or [])
     alt_name_templates = _templates_by_index(template_index, metadata.get("alt_name_template_indices") or [])
+    observed_name_templates = _templates_by_index(
+        template_index,
+        metadata.get("observed_name_template_indices") or [],
+    )
     return _RankMatrices(
         template_index,
         icon_templates,
@@ -425,6 +436,8 @@ def _rank_matrices_from_cache(
         _matrix_from_cache(arrays, "name_matrix", name_templates),
         alt_name_templates,
         _matrix_from_cache(arrays, "alt_name_matrix", alt_name_templates),
+        observed_name_templates,
+        _matrix_from_cache(arrays, "observed_name_matrix", observed_name_templates),
     )
 
 
@@ -505,6 +518,7 @@ def _write_template_runtime_cache(
         "icon_template_indices": _template_indices(template_index, matrices.icon_templates),
         "name_template_indices": _template_indices(template_index, matrices.name_templates),
         "alt_name_template_indices": _template_indices(template_index, matrices.alt_name_templates),
+        "observed_name_template_indices": _template_indices(template_index, matrices.observed_name_templates),
         "written_at": time.time(),
     }
     manifest_bytes = _cache_manifest_bytes(manifest)
@@ -516,6 +530,10 @@ def _write_template_runtime_cache(
                 icon_matrix=np.asarray(matrices.icon_matrix, dtype=TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE),
                 name_matrix=np.asarray(matrices.name_matrix, dtype=TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE),
                 alt_name_matrix=np.asarray(matrices.alt_name_matrix, dtype=TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE),
+                observed_name_matrix=np.asarray(
+                    matrices.observed_name_matrix,
+                    dtype=TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE,
+                ),
             )
         os.replace(temp_path, target)
         return {
@@ -587,6 +605,40 @@ def build_template_index(raw_templates: Mapping[str, Mapping[str, Any]]) -> list
     from hextech.infrastructure.vision import sidecar as _sidecar
 
     return _sidecar.build_template_index(raw_templates)
+
+
+def _attach_observed_name_exemplars(
+    template_index: Sequence[TemplateEntry],
+    asset_dir: Path,
+) -> list[TemplateEntry]:
+    """把脱敏真机卡名 ROI 绑定到对应视觉模板，不读取完整游戏截图。"""
+
+    from hextech.infrastructure.vision.sidecar_fingerprints import _normalized_fingerprint, _text_levels
+
+    exemplar_dir = asset_dir / "vision" / "name_exemplars"
+    fingerprints_by_id: dict[str, list[tuple[float, ...]]] = {}
+    if exemplar_dir.is_dir():
+        for path in sorted(exemplar_dir.glob("*.png")):
+            augment_id = normalize_augment_id(path.stem.split("__", 1)[0])
+            if not augment_id:
+                continue
+            try:
+                with Image.open(path) as opened:
+                    fingerprint = _normalized_fingerprint(_text_levels(opened.convert("RGB")))
+            except OSError:
+                continue
+            if fingerprint is not None:
+                fingerprints_by_id.setdefault(augment_id, []).append(fingerprint)
+
+    return [
+        replace(
+            entry,
+            observed_name_fingerprints=tuple(
+                dict.fromkeys(fingerprints_by_id.get(normalize_augment_id(entry.augment_id), ()))
+            ),
+        )
+        for entry in template_index
+    ]
 
 
 def load_default_template_index(
@@ -684,7 +736,7 @@ def load_default_template_index(
                 "source_icon_filenames": filenames,
                 "priority": 1 if hint_result.get("ok") else 0,
             }
-    return build_template_index(raw_templates)
+    return _attach_observed_name_exemplars(build_template_index(raw_templates), asset_dir)
 
 
 def load_or_build_default_template_runtime(

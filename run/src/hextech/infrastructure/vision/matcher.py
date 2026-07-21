@@ -35,6 +35,8 @@ SHORTLIST_TEXT_CONFIDENCE = 0.68
 SHORTLIST_TEXT_MARGIN = 0.02
 VARIANT_ICON_CONFIDENCE = 0.80
 VARIANT_ICON_MARGIN = 0.015
+OBSERVED_NAME_CONFIDENCE = 0.92
+OBSERVED_NAME_MARGIN = 0.08
 
 
 @dataclass(frozen=True)
@@ -175,24 +177,22 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
     决策树优先级：
     1. 双字体同结果（dual_font）→ 2 帧稳定
     2. 单字体强匹配（strong_text）→ 2 帧稳定
-    3. 图标短名单 + 双字体（icon_shortlist_dual_font）→ 2 帧稳定
-    4. 其余弱文字/单字体短名单只保留诊断，不授权 ready
+    3. 脱敏真机卡名指纹（observed_name）→ 2 帧稳定
+    4. 图标短名单与其余弱文字只保留诊断，不授权 ready
     """
 
     text = _channel(slot, "text")
     text_alt = _channel(slot, "text_alt")
     icon = _channel(slot, "icon")
-    icon_shortlist = _channel(slot, "icon_shortlist")
-    text_narrowed = _channel(slot, "text_narrowed")
-    text_alt_narrowed = _channel(slot, "text_alt_narrowed")
+    observed_name = _channel(slot, "observed_name")
     text_top = _top(text)
     alt_top = _top(text_alt)
     icon_top = _top(icon)
-    narrowed_top = _top(text_narrowed)
-    narrowed_alt_top = _top(text_alt_narrowed)
+    observed_top = _top(observed_name)
     text_identity = _identity(text_top)
     alt_identity = _identity(alt_top)
-    if not text_identity and not alt_identity:
+    observed_identity = _identity(observed_top)
+    if not text_identity and not alt_identity and not observed_identity:
         return None
 
     text_confidence = _number(text_top.get("confidence"))
@@ -217,21 +217,11 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
         and text_identity != alt_identity
         and text_confidence >= STRONG_TEXT_CONFIDENCE
         and alt_confidence >= STRONG_TEXT_CONFIDENCE
-        and (text_margin >= STRONG_TEXT_MARGIN or text_confidence >= 0.92)
-        and (alt_margin >= STRONG_TEXT_MARGIN or alt_confidence >= 0.92)
+        # 高绝对分但几乎没有 margin 的通道并不构成独立冲突证据；
+        # 合成回归中的短名称会产生这种“许多候选都很像”的备选字体结果。
+        and text_margin >= STRONG_TEXT_MARGIN
+        and alt_margin >= STRONG_TEXT_MARGIN
     )
-    narrowed_identity = _identity(narrowed_top)
-    narrowed_alt_identity = _identity(narrowed_alt_top)
-    shortlist_candidates = (
-        icon_shortlist.get("top_candidates")
-        if isinstance(icon_shortlist.get("top_candidates"), Sequence)
-        else []
-    )
-    shortlist_identities = {
-        _identity(candidate)
-        for candidate in shortlist_candidates
-        if isinstance(candidate, Mapping) and _identity(candidate)
-    }
     # 优先级 1：双字体（SimHei + SimSun）top1 相同 → 直接确认，2 帧稳定
     if (
         text_identity
@@ -303,27 +293,23 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
                 required_frames=2,
             )
 
-    narrowed_confidence = _number(narrowed_top.get("confidence"))
-    narrowed_alt_confidence = _number(narrowed_alt_top.get("confidence"))
-    # 优先级 3：图标短名单缩小搜索空间后，双字体同结果 → 2 帧稳定
+    observed_confidence = _number(observed_top.get("confidence"))
+    observed_margin = _number(observed_name.get("margin"))
     if (
-        narrowed_identity
-        and narrowed_identity in shortlist_identities
-        and narrowed_alt_identity == narrowed_identity
-        and narrowed_confidence >= SHORTLIST_DUAL_FONT_CONFIDENCE
-        and narrowed_alt_confidence >= SHORTLIST_DUAL_FONT_CONFIDENCE
-        and not has_high_icon_conflict(narrowed_identity)
+        observed_identity
+        and observed_confidence >= OBSERVED_NAME_CONFIDENCE
+        and observed_margin >= OBSERVED_NAME_MARGIN
     ):
         return _candidate_from_top(
             slot,
-            narrowed_top,
-            evidence=text_narrowed,
-            confidence=max(narrowed_confidence, narrowed_alt_confidence),
-            rule="icon_shortlist_dual_font",
+            observed_top,
+            evidence=observed_name,
+            confidence=observed_confidence,
+            rule="observed_name",
             required_frames=2,
         )
 
-    # 单字体 shortlist/弱文字仍保留在 channels 供诊断，但不能独立授权 ready。
+    # shortlist/弱文字仍保留在 channels 供诊断，但不能独立授权 ready。
     # 真机证据表明连续帧只会重复同一系统性误匹配，并不会增加独立信息。
     return None
 
