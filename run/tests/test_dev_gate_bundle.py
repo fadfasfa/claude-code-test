@@ -93,6 +93,7 @@ def test_logging_contract() -> None:
                 root_logger._hextech_runtime_logging_profile = original_profile  # type: ignore[attr-defined]
 
     requirements = (RUN_DIR / "tooling" / "requirements" / "runtime.txt").read_text(encoding="utf-8")
+    pyproject = (RUN_DIR / "pyproject.toml").read_text(encoding="utf-8")
     for dependency in (
         "requests>=2.32.3,<3",
         "scrapling[fetchers]>=0.4.8,<0.5",
@@ -100,7 +101,9 @@ def test_logging_contract() -> None:
         "charset-normalizer>=3.3,<4",
         "chardet>=5.2,<6",
     ):
-        assert dependency in requirements
+        assert dependency in pyproject
+        assert dependency not in requirements
+    assert "-e ." in requirements
     vision_text = (RUN_DIR / "src" / "hextech" / "infrastructure" / "vision" / "sidecar.py").read_text(encoding="utf-8")
     assert 'mode="L"' not in vision_text
 

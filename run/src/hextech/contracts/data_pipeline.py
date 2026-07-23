@@ -516,10 +516,17 @@ class SourceStatusV2:
     artifact_sha256: str = ""
     manifest_sha256: str = ""
     record_count: int = 0
+    # `freshness` 说明 generation 是否复用 last-good；`data_status` 补充本轮
+    # 候选是否因覆盖/上游变化而陈旧，避免 UI 把旧统计静默当成新数据。
+    data_status: str = "unknown"
+    data_reason: str = ""
+    coverage: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.freshness not in {"fresh", "last_good", "unknown"}:
             raise DataContractError(f"source_status freshness 无效：{self.freshness}")
+        if self.data_status not in {"fresh", "data_stale", "unknown"}:
+            raise DataContractError(f"source_status data_status 无效：{self.data_status}")
         _non_negative_int(self.record_count, field_name="source_status.record_count")
         for field_name in ("artifact_sha256", "manifest_sha256"):
             value = getattr(self, field_name)
@@ -539,6 +546,9 @@ class SourceStatusV2:
                 artifact_sha256=str(payload.get("artifact_sha256") or ""),
                 manifest_sha256=str(payload.get("manifest_sha256") or ""),
                 record_count=payload.get("record_count", 0),
+                data_status=str(payload.get("data_status") or "unknown"),
+                data_reason=str(payload.get("data_reason") or ""),
+                coverage=dict(payload.get("coverage") or {}) if isinstance(payload.get("coverage"), Mapping) else {},
             )
         except TypeError as exc:
             raise DataContractError(f"source_status 无效：{exc}") from exc

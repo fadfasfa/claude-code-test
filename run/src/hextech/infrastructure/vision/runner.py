@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any, Mapping, cast
 
+import psutil
+
 from hextech.modules.data.catalog.runtime_store import build_runtime_state_path
 from hextech.modules.vision.events import build_overlay_event, write_overlay_event
 from hextech.modules.data.overlay_source import SharedOverlayDataSource
@@ -41,6 +43,18 @@ SIDECAR_GENERATION_ENV = "HEXTECH_OVERLAY_GENERATION"
 SIDECAR_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
 
 
+def _sidecar_pid_started_at() -> float:
+    """使用 OS 创建时间防止 Supervisor 把 PID 复用误判为原 sidecar。"""
+
+    try:
+        return float(psutil.Process(os.getpid()).create_time())
+    except (psutil.Error, OSError):
+        return time.time()
+
+
+SIDECAR_PID_STARTED_AT = _sidecar_pid_started_at()
+
+
 def _mutable_string_key_mapping(value: object) -> dict[str, Any]:
     """把外部事件字典收窄为可写 source，避免跨模块 Mapping 类型泄漏。"""
 
@@ -54,9 +68,12 @@ def _write_sidecar_status(status: str, **fields: Any) -> None:
     """写入 sidecar 分阶段状态；失败只影响诊断，不阻断识别循环。"""
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": status,
         "pid": os.getpid(),
+        "pid_started_at": SIDECAR_PID_STARTED_AT,
+        "heartbeat_at": time.time(),
+        "generation": str(os.environ.get(SIDECAR_GENERATION_ENV) or ""),
         "updated_at": time.time(),
     }
     payload.update(fields)
@@ -267,6 +284,7 @@ def run_loop(
 
     last_signature: tuple[str, ...] | None = None
     last_write_at = 0.0
+    last_status_heartbeat_at = 0.0
     idle_sleep_seconds = max(0.12, float(idle_interval_seconds))
     scan_frame_interval_ms = max(int(frame_interval_ms), int(scan_frame_interval_ms))
     fast_hold_seconds = max(0.0, float(fast_hold_seconds))
@@ -280,12 +298,20 @@ def run_loop(
     current_game_identity: dict[str, object] = {}
 
     def commit_event(event_payload: dict[str, Any], *, poll_mode: str) -> None:
-        nonlocal last_signature, last_write_at
+        nonlocal last_signature, last_write_at, last_status_heartbeat_at
         source = _mutable_string_key_mapping(event_payload.get("source"))
         source["poll_mode"] = poll_mode
         event_payload["source"] = source
         write_runtime_trace(event_payload)
         now = time.time()
+        if now - last_status_heartbeat_at >= max(0.2, float(heartbeat_seconds)):
+            _write_sidecar_status(
+                "running",
+                phase="loop",
+                poll_mode=poll_mode,
+                event_generation_id=str(source.get("generation_id") or ""),
+            )
+            last_status_heartbeat_at = now
         if write_event and vision_sidecar.should_write_loop_event(
             event_payload,
             last_signature=last_signature,

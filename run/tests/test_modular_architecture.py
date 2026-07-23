@@ -122,7 +122,7 @@ def test_recommendation_distinguishes_ready_source_missing_and_unresolved_augmen
 
     assert [row["status_code"] for row in model.augment_slots] == [
         "READY",
-        "SOURCE_STATS_MISSING",
+        "SOURCE_STAT_MISSING",
         "IDENTITY_UNRESOLVED",
     ]
     assert model.augment_slots[0]["canonical_augment_id"] == "100"
@@ -400,7 +400,7 @@ def test_desktop_matches_float_lcu_id_to_string_snapshot_id() -> None:
     )
 
     assert rows == [
-        {"id": "24", "name": "武器大师", "win": 0.527844, "pick": 0.004588, "tier": "T?", "selection_role": "self"}
+        {"id": "24", "name": "武器大师", "win": 0.527844, "pick": 0.004588, "tier": "T3", "selection_role": "self"}
     ]
 
 
@@ -471,8 +471,8 @@ def test_runtime_adapter_drives_recommendation_and_session_production_chain() ->
     assert state.recommendation.generation_id == GenerationId("g1")
     assert [row["status_code"] for row in state.recommendation.augment_slots] == [
         "READY",
-        "DETECTION_FAILED",
-        "",
+        "RECOGNITION_MISSING",
+        "RECOGNITION_MISSING",
     ]
     assert state.vision is not None and int(state.vision.epoch) == 3
 
@@ -512,7 +512,7 @@ def test_typed_overlay_renderer_reads_published_chinese_stat_fields() -> None:
     assert rendered["stats"][0]["winrate_text"] == "60.0%"
     assert rendered["stats"][0]["pickrate_text"] == "8.0%"
     assert rendered["stats"][1]["status_code"] == "DETECTING"
-    assert rendered["stats"][2]["status_code"] == "DETECTION_FAILED"
+    assert rendered["stats"][2]["status_code"] == "RECOGNITION_MISSING"
 
     degraded_slots = tuple(
         ({**row, "status_code": "GENERATION_DEGRADED"} if index == 0 else row)

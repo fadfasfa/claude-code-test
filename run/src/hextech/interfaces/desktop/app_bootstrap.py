@@ -1,7 +1,12 @@
 """Desktop DesktopBootstrapMixin 职责模块。"""
-# ruff: noqa: F403, F405
+from __future__ import annotations
 
-from hextech.interfaces.desktop.app_shared import *
+from typing import TYPE_CHECKING
+
+from hextech.interfaces.desktop.app_shared import UI_COLORS, _empty_champions, logger, os, threading, ui_runtime
+
+if TYPE_CHECKING:
+    from .service_manager import ServiceManager
 
 
 class DesktopBootstrapMixin:

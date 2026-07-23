@@ -259,8 +259,8 @@ class OverlayContextStabilityTests(unittest.TestCase):
         )
 
         self.assertEqual(model["stats"][0]["name"], "冰雪爆裂")
-        self.assertEqual(model["stats"][0]["status_code"], "SOURCE_STATS_MISSING")
-        self.assertEqual(model["stats"][0]["stats_text"], "源站暂无该组合统计")
+        self.assertEqual(model["stats"][0]["status_code"], "SOURCE_STAT_MISSING")
+        self.assertEqual(model["stats"][0]["stats_text"], "源站暂无该海克斯统计")
         self.assertEqual(model["stats"][0]["status_text"], "源站暂无统计")
 
 

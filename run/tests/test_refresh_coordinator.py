@@ -348,6 +348,34 @@ def test_failed_source_reuses_same_catalog_last_good_and_publishes_degraded(tmp_
     assert set(status["degraded_sources"]) == {"apex", "mayhem"}
 
 
+def test_rejected_hextech_candidate_keeps_last_good_and_marks_data_stale(tmp_path: Path) -> None:
+    """覆盖门禁等候选失败时，消费面必须能识别正在使用的 last-good。"""
+
+    runner = FakeWorkerRunner()
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    coordinator = CohortRefreshCoordinator(
+        publisher=publisher,
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=runner,
+        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    first = coordinator.refresh(force=True)
+    runner.round = 1
+    runner.fail_source = "hextech"
+
+    second = coordinator.refresh(force=True)
+    status = DataSnapshotClient(tmp_path / "snapshots").status()
+    current_hextech = json.loads((tmp_path / "sources" / "hextech" / "current.v2.json").read_text(encoding="utf-8"))
+
+    assert first["state"] == "ready"
+    assert second["state"] == "degraded"
+    assert set(second["degraded_sources"]) == {"hextech"}
+    assert current_hextech["run_id"] == "hextech-run-0"
+    assert status["source_status"]["hextech"]["freshness"] == "last_good"
+    assert status["source_status"]["hextech"]["data_status"] == "data_stale"
+
+
 def test_same_content_new_runs_publish_generation_with_matching_provenance(tmp_path) -> None:
     runner = FakeWorkerRunner()
     publisher = DataSnapshotPublisher(tmp_path / "snapshots")

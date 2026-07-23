@@ -69,8 +69,20 @@ LCU_LOCAL_REQUEST_TIMEOUT_SECONDS = 1.0
 
 
 # ruff: noqa: E402, F401, F403, F405
-from hextech.interfaces.desktop.runtime_processes import *
-from hextech.interfaces.desktop.runtime_services import *
+from hextech.interfaces.desktop.runtime_processes import (
+    _get_preload_status_executor,
+    _query_terminal,
+)
+from hextech.interfaces.desktop.runtime_services import (
+    _append_unique_champion_id,
+    _candidate_groups_to_id_set,
+    _clean_champion_id,
+    _is_safe_local_http_base,
+    _web_auth_headers,
+    _web_frontend_available,
+    poll_lcu_live_ids,
+    resolve_web_base,
+)
 
 def _snapshot_terminal_rows(ui: "HextechUI", *, champion_name: str = "") -> list[dict[str, Any]]:
     """终端兼容层读取固定 generation DTO；Pandas 转换只留在 catalog 查询模块。"""

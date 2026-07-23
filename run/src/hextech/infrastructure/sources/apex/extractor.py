@@ -1,9 +1,41 @@
 """Apex 抓取职责拆分模块。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.sources.apex.common import *
+from hextech.infrastructure.sources.apex.common import (
+    ARCHIVED_BOOL_KEYS,
+    ARCHIVED_STATUS_KEYS,
+    ARCHIVED_SYNERGY_MARKERS,
+    ARCHIVED_TEXT_KEYS,
+    Any,
+    BUNDLE_INTERACTION_SECTION_MARKER,
+    BeautifulSoup,
+    ChampionInfo,
+    FetchedResource,
+    HYDRATION_PATTERN,
+    Iterable,
+    JSON_SCRIPT_PATTERN,
+    Optional,
+    Path,
+    SYNERGY_TAG_LABELS,
+    SynergyEntry,
+    TIER_LABELS,
+    VISIBLE_RATING_PATTERN,
+    VISIBLE_STOP_LINE_PATTERN,
+    _clean_text,
+    _safe_exception_label,
+    _sanitize_url_for_log,
+    ast,
+    json,
+    logger,
+    normalize_augment_name,
+    normalize_name,
+    normalize_slug,
+    normalize_tag,
+    normalize_tier,
+    re,
+    unescape,
+    urlparse,
+)
 class SynergyExtractor:
     """从 HTML/JS/JSON 资源中提取结构化联动对象。"""
 

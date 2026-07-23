@@ -127,7 +127,7 @@ def test_card_text_uses_16_points_while_synergies_keep_pixel_sizes() -> None:
 def test_non_ready_card_status_uses_the_same_16_point_size() -> None:
     model = _model()
     model["stats"][0].update(
-        status_code="SOURCE_STATS_MISSING",
+        status_code="SOURCE_STAT_MISSING",
         status_text="源站暂无统计",
         stats_text="源站暂无该组合统计",
     )

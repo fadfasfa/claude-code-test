@@ -393,9 +393,16 @@ def _finish_refresh_failure(
             failed_items=max(1, int(attempt.get("failure_count") or 0)),
             artifact=None,
             outcomes=outcomes,
-            metadata={"failure_stage": failure_stage, "reason": reason},
+            metadata={
+                "failure_stage": failure_stage,
+                "reason": reason,
+                "coverage": dict(attempt.get("coverage") or {}),
+            },
         )
-        write_run_diagnostics(manifest, report={"failure_samples": samples})
+        write_run_diagnostics(
+            manifest,
+            report={"failure_samples": samples, "coverage": dict(attempt.get("coverage") or {})},
+        )
     if active_csv:
         attempt = _finish_attempt(
             attempt,

@@ -1,10 +1,15 @@
 """Web CSV watcher 与 ASGI 生命周期。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.interfaces.web.backend.runtime import *
-from hextech.interfaces.web.backend.lcu_runtime import *
+from hextech.interfaces.web.backend.runtime_core import (
+    _snapshot_client,
+    asynccontextmanager,
+    asyncio,
+    logger,
+    open_managed_browser,
+    os,
+)
+from hextech.interfaces.web.backend.lcu_runtime import manager
 async def csv_watcher_loop() -> None:
     """监视 DataService generation，并在整代切换后广播数据刷新事件。"""
 
@@ -36,8 +41,12 @@ async def lifespan(_app):
 
     只创建 LCU 与 generation 监视两条长生命周期任务；刷新由 DataService 唯一发起。
     """
-    task1 = asyncio.create_task(lcu_polling_loop())
-    task2 = asyncio.create_task(csv_watcher_loop())
+    # 调用时经由兼容 facade 读取，保留现有集成测试/嵌入方对 runtime 的注入点；
+    # 导入发生在生命周期启动后，不会重新形成模块初始化循环。
+    from hextech.interfaces.web.backend import runtime as runtime_facade
+
+    task1 = asyncio.create_task(runtime_facade.lcu_polling_loop())
+    task2 = asyncio.create_task(runtime_facade.csv_watcher_loop())
     yield
     task1.cancel()
     task2.cancel()
@@ -49,7 +58,7 @@ async def lifespan(_app):
         await task2
     except asyncio.CancelledError:
         pass
-    shutdown_web_executors(wait=False)
+    runtime_facade.shutdown_web_executors(wait=False)
 
 
 def find_available_port(start_port: int = 8000, max_attempts: int = 50) -> int:

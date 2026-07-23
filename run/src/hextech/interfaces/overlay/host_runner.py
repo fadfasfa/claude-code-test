@@ -40,6 +40,7 @@ from hextech.interfaces.overlay.host_sync import (
     _draw_waiting_status,
     _refresh_target_window,
     _sync_event_visibility,
+    _write_overlay_session_report,
     _write_real_session_evidence,
 )
 from hextech.interfaces.overlay.host_visibility import (
@@ -222,6 +223,12 @@ def _schedule_event_render(
                     snapshot,
                     resolved_should_show=False,
                 )
+                _write_overlay_session_report(
+                    snapshot,
+                    None,
+                    visibility,
+                    diagnostic=bool(config.get("diagnostic_mode")),
+                )
                 success = True
                 return
             if bool(config.get("diagnostic_mode")) and not bool(visibility.get("render_full_overlay")):
@@ -233,6 +240,12 @@ def _schedule_event_render(
                     visibility,
                     snapshot,
                     resolved_should_show=True,
+                )
+                _write_overlay_session_report(
+                    snapshot,
+                    None,
+                    visibility,
+                    diagnostic=bool(config.get("diagnostic_mode")),
                 )
                 success = True
                 return
@@ -252,6 +265,12 @@ def _schedule_event_render(
                     visibility,
                     snapshot,
                     resolved_should_show=True,
+                )
+                _write_overlay_session_report(
+                    snapshot,
+                    None,
+                    visibility,
+                    diagnostic=bool(config.get("diagnostic_mode")),
                 )
                 success = True
                 return
@@ -314,8 +333,23 @@ def _schedule_event_render(
                 snapshot,
                 resolved_should_show=True,
             )
+            _write_overlay_session_report(
+                snapshot,
+                model,
+                visibility,
+                context=context if isinstance(context, Mapping) else None,
+                state=session_state,
+                diagnostic=bool(config.get("diagnostic_mode")),
+            )
             try:
-                _write_real_session_evidence(root, session_state, snapshot, model, visibility)
+                _write_real_session_evidence(
+                    root,
+                    session_state,
+                    snapshot,
+                    model,
+                    visibility,
+                    diagnostic=bool(config.get("diagnostic_mode")),
+                )
             except Exception:
                 visibility.pop("evidence_attempt_key", None)
                 logger.warning("写入真实会话验收证据失败。", exc_info=True)
@@ -323,6 +357,17 @@ def _schedule_event_render(
         except Exception:
             failure_count += 1
             visibility["consecutive_render_failures"] = failure_count
+            # 即使本 tick 在上下文、快照或 Tk 绘制阶段失败，也保留最小结构化
+            # 会话结果。真机排查不应依赖“成功渲染过一次”这一前提。
+            try:
+                _write_overlay_session_report(
+                    snapshot,
+                    None,
+                    visibility,
+                    diagnostic=bool(config.get("diagnostic_mode")),
+                )
+            except Exception:
+                logger.debug("写入失败 Overlay 会话报告失败。", exc_info=True)
             if failure_count <= RENDER_ERROR_BACKOFF_AFTER:
                 logger.exception("overlay 渲染轮询失败；下一 tick 将继续重试。")
             elif failure_count == RENDER_ERROR_BACKOFF_AFTER + 1:

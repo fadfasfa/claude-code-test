@@ -23,6 +23,7 @@ from urllib.parse import quote
 
 from hextech.modules.data.catalog.augment_lookup import build_augment_catalog_lookup
 from hextech.modules.acquisition.common.icons import build_local_augment_icon_url, normalize_augment_name
+from hextech.modules.data.catalog.champion_tier import champion_tier_from_score
 from hextech.modules.data.catalog.version_catalog import load_champion_core_data
 
 # 全局缓存。
@@ -215,6 +216,8 @@ def process_champions_data(
                 '英雄出场率': float(row['英雄出场率']) if pd.notna(row['英雄出场率']) else 0.0,
                 '贝叶斯胜率': float(row['贝叶斯胜率']) if pd.notna(row['贝叶斯胜率']) else 0.0,
                 '综合分数': float(row['综合分数']) if pd.notna(row['综合分数']) else 0.0,
+                # 评级只由综合分数推导；不得透传抓取来源的英雄等级。
+                '英雄评级': champion_tier_from_score(row['综合分数']),
                 'Z_贝叶斯胜率': float(row['Z_贝叶斯胜率']) if pd.notna(row['Z_贝叶斯胜率']) else 0.0,
                 'Z_出场率': float(row['Z_出场率']) if pd.notna(row['Z_出场率']) else 0.0
             })

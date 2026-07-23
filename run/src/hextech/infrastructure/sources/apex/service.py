@@ -1,15 +1,62 @@
 """Apex 全量验证、单英雄探测与 CLI 编排。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.sources.apex.common import *
+from hextech.infrastructure.sources.apex.common import (
+    ApexPageState,
+    ChampionInfo,
+    FetchedResource,
+    Optional,
+    Path,
+    RUNTIME_DATA_DIR,
+    RedactingTextFormatter,
+    SourceHealth,
+    SourceRunManifest,
+    SYNERGY_REFRESH_META_VERSION,
+    SynergyEntry,
+    _atomic_write_json,
+    _load_existing_synergy_stats,
+    _load_json_file,
+    _safe_exception_label,
+    _validate_publish_size,
+    argparse,
+    build_champion_lookup,
+    build_champion_slug_map,
+    build_core_info,
+    champion_detail_url,
+    classify_apex_page,
+    csv,
+    datetime,
+    get_latest_csv,
+    item_outcome,
+    load_active_catalog,
+    load_apexlol_slug_map,
+    load_augment_manifest_entries,
+    load_champion_core_data,
+    log_task_summary,
+    logger,
+    logging,
+    normalize_augment_name,
+    normalize_name,
+    normalize_slug,
+    os,
+    publish_apex_run,
+    summarize_synergy_payload,
+    time,
+    utc_now_iso,
+    uuid,
+    write_run_diagnostics,
+    write_synergy_refresh_meta,
+)
 from hextech.infrastructure.sources.apex.fetcher import ApexSource
 from hextech.infrastructure.sources.apex.extractor import SynergyExtractor
 from hextech.infrastructure.sources.apex.writer import SynergyWriter
 from hextech.contracts import FailureKind
 from hextech.modules.acquisition.apex.parser import ApexPageOutcome
-from hextech.modules.data.catalog.versioned import load_active_catalog
+
+# 该模块是旧调用方的稳定 facade；拆分后仍显式保留这两个公开名称。
+__all__ = ["SYNERGY_REFRESH_META_VERSION", "write_synergy_refresh_meta"]
+
+
 def build_augment_name_map_from_static(catalog_root: Path | None = None) -> dict:
     name_map = {}
     root = catalog_root or load_active_catalog().root

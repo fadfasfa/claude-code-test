@@ -1,9 +1,41 @@
 """Apex 抓取职责拆分模块。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.sources.apex.common import *
+from hextech.infrastructure.sources.apex.common import (
+    APEX_ACCESS_DENIED_MARKER,
+    APEX_NEXT_ERROR_MARKERS,
+    APEX_ONLINE_FETCH_DELAY_SECONDS,
+    APEX_ORIGIN_SYNERGY_MARKERS,
+    BUNDLE_APP_JS_PATTERN,
+    CHAMPION_DETAIL_HREF_PATTERN,
+    DEFAULT_APEX_MANUAL_SNAPSHOT_DIR,
+    DEFAULT_APEX_SNAPSHOT_DIR,
+    FetchedResource,
+    Iterable,
+    MAX_FETCH_RETRIES,
+    MAX_JSON_RESOURCE_SIZE,
+    Optional,
+    Path,
+    REQUEST_TIMEOUT_SECONDS,
+    RETRY_BACKOFF_FACTOR,
+    SCRIPT_SRC_PATTERN,
+    ScraplingFetchResult,
+    _safe_exception_label,
+    _sanitize_url_for_log,
+    env_flag,
+    env_int,
+    fetch_browser_page,
+    fetch_text,
+    get_request_user_agent,
+    json,
+    logger,
+    os,
+    re,
+    time,
+    urljoin,
+    urlparse,
+    urlunparse,
+)
 class ApexSource:
     """同源页面/资源获取层。"""
 

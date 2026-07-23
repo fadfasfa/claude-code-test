@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import json
 import queue
 import time
 import tkinter as tk
 import ctypes
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
@@ -34,6 +36,8 @@ from hextech.interfaces.overlay.host_visibility import (
     decide_visibility,
 )
 from hextech.modules.session.evidence import build_evidence_bundle, build_render_signature, write_evidence_bundle
+from hextech.modules.data.ports.atomic import atomic_write_json
+from hextech.modules.data.ports.paths import get_var_dir
 from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
 from hextech.modules.vision.window import is_window_renderable
 
@@ -41,9 +45,19 @@ from hextech.modules.vision.window import is_window_renderable
 logger = logging.getLogger(__name__)
 
 STALE_EVENT_HOLD_SECONDS = 1.0
+OVERLAY_SESSION_REPORT_LIMIT = 20
 
 # 兼容旧测试/诊断对该符号的 patch；render tick 只读取缓存，不会调用它。
 __all__ = ["_query_gameflow_in_progress"]
+
+
+def _string_key_mapping(value: object) -> dict[str, Any]:
+    """将 JSON 边界的任意 Mapping 收窄为本模块可写的字符串键字典。"""
+
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): item for key, item in value.items()}
+
 
 def _sync_event_visibility(
     root: tk.Tk,
@@ -67,7 +81,7 @@ def _sync_event_visibility(
     ready_slots = _snapshot_ready_slot_count(snapshot)
     selection_window_active = _snapshot_selection_window_active(snapshot)
     event_error = str(snapshot.get("error") or "").strip()
-    source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+    source = _string_key_mapping(snapshot.get("source"))
     blocking_modal = bool(source.get("blocking_modal"))
     stale_hold_active = bool(source.get("stale_event_hold_active"))
 
@@ -91,9 +105,9 @@ def _sync_event_visibility(
                 visibility["event_stale_hold_until"] = hold_until
             if now <= hold_until:
                 held_snapshot = deepcopy(dict(cached))
-                held_source = held_snapshot.get("source") if isinstance(held_snapshot.get("source"), Mapping) else {}
+                held_source = _string_key_mapping(held_snapshot.get("source"))
                 held_snapshot["source"] = {
-                    **dict(held_source),
+                    **held_source,
                     "stale_event_hold_active": True,
                     "stale_event_error": event_error,
                     "reason": "stale_event_hold",
@@ -105,7 +119,7 @@ def _sync_event_visibility(
                 event_visible = bool(snapshot.get("visible"))
                 selection_window_active = _snapshot_selection_window_active(snapshot)
                 event_error = ""
-                source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+                source = _string_key_mapping(snapshot.get("source"))
                 stale_hold_active = True
             else:
                 visibility.pop("last_active_event", None)
@@ -199,6 +213,8 @@ def _write_real_session_evidence(
     snapshot: Mapping[str, Any],
     model: Mapping[str, Any],
     visibility: dict[str, Any],
+    *,
+    diagnostic: bool = False,
 ) -> None:
     """三槽渲染连续稳定两个 tick 后，延迟抓取同 revision 的真实证据。"""
 
@@ -226,14 +242,14 @@ def _write_real_session_evidence(
     key = (str(state.session_id), str(state.generation_id), int(vision.epoch), revision, render_signature)
     if visibility.get("last_evidence_key") == key or visibility.get("evidence_attempt_key") == key:
         return
-    source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+    source = _string_key_mapping(snapshot.get("source"))
     client_rect = source.get("client_rect") if isinstance(source.get("client_rect"), list) else []
     capture_size = source.get("capture_size") if isinstance(source.get("capture_size"), list) else []
     if len(client_rect) != 4 or len(capture_size) != 2:
         return
     visibility["evidence_attempt_key"] = key
     snapshot_copy = deepcopy(dict(snapshot))
-    source_copy = deepcopy(dict(source))
+    source_copy = deepcopy(source)
     model_copy = deepcopy(dict(model))
 
     def capture() -> None:
@@ -261,12 +277,15 @@ def _write_real_session_evidence(
                 f"overlay-{safe_session}-e{int(vision.epoch)}-r{revision}"
                 f"-c{context_revision}-{signature_prefix}"
             )
-            screenshot_path = evidence_dir / f"{stem}.png"
-            from PIL import ImageGrab
+            screenshot_name = ""
+            if diagnostic:
+                screenshot_path = evidence_dir / f"{stem}.png"
+                from PIL import ImageGrab
 
-            left, top = root.winfo_rootx(), root.winfo_rooty()
-            right, bottom = left + root.winfo_width(), top + root.winfo_height()
-            ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True).convert("RGB").save(screenshot_path)
+                left, top = root.winfo_rootx(), root.winfo_rooty()
+                right, bottom = left + root.winfo_width(), top + root.winfo_height()
+                ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True).convert("RGB").save(screenshot_path)
+                screenshot_name = screenshot_path.name
             client_size = [int(client_rect[2]) - int(client_rect[0]), int(client_rect[3]) - int(client_rect[1])]
             event_slots = snapshot_copy.get("slots") if isinstance(snapshot_copy.get("slots"), list) else []
             render_rows = [dict(item) for item in model_copy.get("stats", []) if isinstance(item, Mapping)]
@@ -289,7 +308,7 @@ def _write_real_session_evidence(
                     "capture_size": [int(value) for value in capture_size],
                     "dpi_scale": float(source_copy.get("dpi_scale") or 0.0),
                 },
-                screenshot=screenshot_path.name,
+                screenshot=screenshot_name,
                 render_summary={
                     "rows": render_rows,
                     "synergies": [
@@ -318,6 +337,129 @@ def _write_real_session_evidence(
                 visibility.pop("evidence_attempt_key", None)
 
     root.after(100, capture)
+
+
+def _write_overlay_session_report(
+    snapshot: Mapping[str, Any],
+    model: Mapping[str, Any] | None,
+    visibility: dict[str, Any],
+    *,
+    context: Mapping[str, Any] | None = None,
+    state: GameSessionState | None = None,
+    diagnostic: bool = False,
+) -> Path | None:
+    """记录每种真实 Overlay 会话结果，包含缺失原因而不默认保存截图。
+
+    同一事件签名只落盘一次；`latest.json` 始终指向最新结构化结果，历史严格保留
+    最近 20 条，便于真机问题复现而不无限增长运行态。
+    """
+
+    slots = snapshot.get("slots") if isinstance(snapshot.get("slots"), list) else []
+    source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
+    rows = model.get("stats") if isinstance(model, Mapping) and isinstance(model.get("stats"), list) else []
+    def _safe_slot_number(value: object, fallback: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    safe_slots = [
+        {
+            "slot": _safe_slot_number(item.get("slot"), index),
+            "state": str(item.get("state") or ""),
+            "name": str(item.get("name") or "")[:80],
+            "data_status": str(item.get("data_status") or ""),
+            "data_reason": str(item.get("data_reason") or ""),
+            "generation_id": str(item.get("generation_id") or ""),
+            "vision_id": str(item.get("vision_id") or ""),
+            "canonical_id": str(item.get("canonical_id") or ""),
+            "champion_id": str(item.get("champion_id") or ""),
+        }
+        for index, item in enumerate(slots[:3])
+        if isinstance(item, Mapping)
+    ]
+    safe_rows = [
+        {
+            "slot": _safe_slot_number(item.get("slot"), index),
+            "status_code": str(item.get("status_code") or ""),
+            "status_text": str(item.get("status_text") or "")[:80],
+        }
+        for index, item in enumerate(rows[:3])
+        if isinstance(item, Mapping)
+    ]
+    session_id = str(source.get("session_id") or (state.session_id if state is not None else "") or "")
+    generation_id = str(
+        source.get("generation_id") or (state.generation_id if state is not None else "") or ""
+    )
+    signature_payload = {
+        "session_id": session_id,
+        "generation_id": generation_id,
+        "visible_reason": str(visibility.get("visibility_reason") or ""),
+        "event_error": str(snapshot.get("error") or ""),
+        "slots": safe_slots,
+        "rows": safe_rows,
+        "context": str((context or {}).get("error") or "") if isinstance(context, Mapping) else "",
+    }
+    signature = json.dumps(signature_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if visibility.get("last_overlay_session_report_signature") == signature:
+        return None
+    report = {
+        "schema_version": 1,
+        "recorded_at": time.time(),
+        "diagnostic": bool(diagnostic),
+        "session_id": session_id,
+        "generation_id": generation_id,
+        "event": {
+            "schema_version": int(snapshot.get("schema_version") or 0),
+            "ok": bool(snapshot.get("ok")),
+            "visible": bool(snapshot.get("visible")),
+            "active": bool(snapshot.get("active")),
+            "error": str(snapshot.get("error") or ""),
+            "selection_type": str(snapshot.get("selection_type") or ""),
+        },
+        "source": {
+            "tag": str(source.get("tag") or ""),
+            "reason": str(source.get("reason") or ""),
+            "generation_id": generation_id,
+        },
+        "visibility": {
+            "reason": str(visibility.get("visibility_reason") or ""),
+            "context_gate_state": str(visibility.get("context_gate_state") or ""),
+            "context_gate_reason": str(visibility.get("context_gate_reason") or ""),
+        },
+        "context": {
+            "ok": bool((context or {}).get("ok")) if isinstance(context, Mapping) else False,
+            "champion_id": str((context or {}).get("champion_id") or "") if isinstance(context, Mapping) else "",
+            "error": str((context or {}).get("error") or "") if isinstance(context, Mapping) else "",
+        },
+        "slots": safe_slots,
+        "render": {"rows": safe_rows},
+        "screenshot": "",
+    }
+    report_dir = (get_var_dir() / "reports" / "overlay_sessions").resolve()
+    report_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+    # Windows 的 system clock 粒度可能低于纳秒；只截取 time_ns 会在同一 UI tick
+    # 内复用文件名并静默覆盖前一份诊断。每个 host 会话维护单调序号，mtime 相同
+    # 时路径名仍能保留“最近 20 条”的正确顺序；随机 token 则覆盖重启时的极端碰撞。
+    try:
+        sequence = int(visibility.get("session_report_sequence") or 0) + 1
+    except (TypeError, ValueError):
+        sequence = 1
+    visibility["session_report_sequence"] = sequence
+    target = report_dir / f"overlay-session-{stamp}-{time.time_ns():020d}-{sequence:08d}-{uuid.uuid4().hex}.json"
+    atomic_write_json(target, report, ensure_ascii=False, indent=2)
+    atomic_write_json(report_dir / "latest.json", report, ensure_ascii=False, indent=2)
+    reports = sorted(
+        (path for path in report_dir.glob("overlay-session-*.json") if path.is_file()),
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+        reverse=True,
+    )
+    for stale in reports[OVERLAY_SESSION_REPORT_LIMIT:]:
+        if stale.parent.resolve() == report_dir:
+            stale.unlink(missing_ok=True)
+    visibility["last_overlay_session_report_signature"] = signature
+    return target
 
 
 def _drain_hotkey_requests(request_queue: "queue.Queue[str]", visibility: dict[str, bool]) -> None:

@@ -98,9 +98,22 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
     visible_reason = str(overlay.get("visible_reason") or "").strip()
     functional_status = str(overlay.get("functional_status") or "unknown").strip()
     functional_reason = str(overlay.get("functional_reason") or "").strip()
+    sidecar_liveness = overlay.get("sidecar_liveness")
+    sidecar_state = (
+        str(sidecar_liveness.get("status") or "unknown").strip()
+        if isinstance(sidecar_liveness, Mapping)
+        else "unknown"
+    )
+    sidecar_reason = (
+        str(sidecar_liveness.get("reason") or "").strip()
+        if isinstance(sidecar_liveness, Mapping)
+        else ""
+    )
     last_error = str(overlay.get("last_error") or "").strip()
     if status == "error":
         return (f"游戏内显示异常: {last_error or phase or '未知错误'}", UI_COLORS["error"])
+    if status == "stale":
+        return (f"游戏内显示: 识别进程失效 / {sidecar_reason or '等待自动恢复'}", UI_COLORS["warn"])
     if status == "stopping":
         return ("游戏内显示: 正在关闭", UI_COLORS["warn"])
     if status == "stopped":
@@ -121,8 +134,12 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
         return ("游戏内显示: 正在启动", UI_COLORS["warn"])
     if status == "running":
         reason = _format_game_overlay_host_reason(visible_reason) if visible_reason else "等待选择窗口"
+        if sidecar_state in {"stale", "failed"}:
+            return (f"游戏内显示: 识别进程失效 / {sidecar_reason or '等待自动恢复'}", UI_COLORS["warn"])
         if functional_status == "failed":
             return (f"游戏内显示异常: {functional_reason or 'Host 功能不可用'}", UI_COLORS["error"])
+        if context_status == "context_missing":
+            return (f"游戏内显示: {reason} / 等待当前英雄", UI_COLORS["warn"])
         if functional_status == "degraded":
             return (f"游戏内显示: {reason} / {functional_reason or '功能降级'}", UI_COLORS["warn"])
         if context_status == "degraded":

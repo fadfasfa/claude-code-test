@@ -1,14 +1,3 @@
-pandas
-numpy
-requests>=2.32.3,<3
-scrapling[fetchers]>=0.4.8,<0.5
-urllib3>=2.2,<3
-charset-normalizer>=3.3,<4
-chardet>=5.2,<6
-Pillow
-psutil
-pywin32
-selenium
-beautifulsoup4
-fastapi[standard]
-filelock>=3.10,<4
+# 兼容旧的 ``pip install -r tooling/requirements/runtime.txt`` 入口。
+# Runtime dependency 的唯一事实源是 run/pyproject.toml；此文件不得再复制版本表。
+-e .

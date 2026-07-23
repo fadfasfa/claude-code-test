@@ -1,10 +1,16 @@
 """Vision sidecar capture 职责模块。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.vision.sidecar_common import *
-from hextech.infrastructure.vision.sidecar_scene_geometry import *
+from hextech.infrastructure.vision.sidecar_common import (
+    Image,
+    ImageGrab,
+    configure_process_dpi_awareness,
+    ctypes,
+    logger,
+    probe_lol_game_window,
+    root_window_hwnd,
+    win32gui,
+)
 
 def _set_dpi_awareness() -> None:
     mode = configure_process_dpi_awareness()

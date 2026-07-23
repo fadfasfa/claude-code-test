@@ -387,5 +387,5 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
         "icon_shortlist",
         "observed_name",
     }
-    assert latest["screenshot"].startswith("overlay-s1-e2-r2-c2-")
-    assert latest["screenshot"].endswith(".png")
+    assert latest["screenshot"] == ""
+    assert not list(evidence_dir.glob("*.png"))

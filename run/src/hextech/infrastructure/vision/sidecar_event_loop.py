@@ -1,10 +1,21 @@
 """Vision sidecar event_loop 职责模块。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.vision.sidecar_common import *
-from hextech.infrastructure.vision.sidecar_scene_geometry import *
+from hextech.infrastructure.vision.sidecar_common import (
+    Any,
+    DEFAULT_EXIT_UNSTABLE_FRAMES,
+    DEFAULT_LOOP_HEARTBEAT_SECONDS,
+    LayoutTransform,
+    Mapping,
+    Sequence,
+    SLOT_COUNT,
+    apply_transform,
+    build_overlay_event,
+    cursor_in_client_boxes,
+    pick_card_panels,
+    time,
+)
+from hextech.infrastructure.vision.sidecar_scene_geometry import _selection_button_source_fields
 
 def _cursor_over_card_panels(
     client_rect: tuple[int, int, int, int],
@@ -23,6 +34,22 @@ def _cursor_over_card_panels(
     panel_defs = pick_card_panels(frame_size)
     boxes = [apply_transform(box, frame_size, transform) for box in panel_defs]
     return cursor_in_client_boxes(client_rect, boxes)
+
+
+def _slot_ready_for_display(slot: Mapping[str, Any]) -> bool:
+    """统一正式显示判定，避免检测与生命周期对 ready 槽位语义分叉。"""
+
+    return bool(slot.get("state") == "ready" and (slot.get("augment_id") or slot.get("name")))
+
+
+def _ready_slot_count(slots: Sequence[Mapping[str, Any]]) -> int:
+    return sum(1 for slot in list(slots)[:SLOT_COUNT] if _slot_ready_for_display(slot))
+
+
+def _scene_active_from_slots(slots: Sequence[Mapping[str, Any]]) -> bool:
+    """三张卡全部 ready 才具备正式显示条件。"""
+
+    return len(list(slots)[:SLOT_COUNT]) == SLOT_COUNT and _ready_slot_count(slots) == SLOT_COUNT
 
 
 def _slot_signature(event_payload: Mapping[str, Any]) -> tuple[str, ...]:

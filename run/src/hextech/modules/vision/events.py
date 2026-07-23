@@ -18,8 +18,8 @@ from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
 from hextech.modules.data.ports.atomic import atomic_write_json
 
 
-SCHEMA_VERSION = 2
-ACCEPTED_SCHEMA_VERSIONS = {1, 2}
+SCHEMA_VERSION = 3
+ACCEPTED_SCHEMA_VERSIONS = {1, 2, 3}
 SLOT_COUNT = 3
 # sidecar 默认每 1s 写一次 heartbeat；2.5 个 heartbeat 后才判旧事件，host 侧
 # 还会额外做短暂 stale hold，避免单次 I/O 抖动直接让 overlay 闪烁。
@@ -29,6 +29,23 @@ EVENT_MAX_AGE_SECONDS = EVENT_HEARTBEAT_SECONDS * EVENT_STALE_HEARTBEAT_BUDGET
 ALLOWED_SELECTION_TYPES = {"hextech", "body_shard"}
 VISIBLE_SELECTION_TYPES = {"hextech"}
 ALLOWED_SLOT_STATES = {"ready", "low_confidence", "detecting", "failed", "empty"}
+DATA_REASONS = {
+    "recognition_missing",
+    "identity_unresolved",
+    "source_stat_missing",
+    "champion_stat_missing",
+    "context_missing",
+    "snapshot_unavailable",
+}
+_LEGACY_DATA_REASON_MAP = {
+    "DETECTION_FAILED": "recognition_missing",
+    "IDENTITY_UNRESOLVED": "identity_unresolved",
+    "SOURCE_STATS_MISSING": "source_stat_missing",
+    "NO_STATS": "champion_stat_missing",
+    "CONTEXT_MISSING": "context_missing",
+    "CONTEXT_EXPIRED": "context_missing",
+    "DATA_NOT_READY": "snapshot_unavailable",
+}
 DIAGNOSTIC_CHANNELS = {
     "icon",
     "text",
@@ -94,6 +111,12 @@ def _empty_slot(index: int, *, state: str = "empty") -> dict[str, Any]:
         "candidate_identity": "",
         "rejection_reason": "",
         "elapsed_seconds": 0.0,
+        "data_status": "",
+        "data_reason": "",
+        "generation_id": "",
+        "vision_id": "",
+        "canonical_id": "",
+        "champion_id": "",
     }
 
 
@@ -140,6 +163,18 @@ def _normalize_slot_state(value: Any, *, has_name: bool) -> str:
     if state in ALLOWED_SLOT_STATES:
         return state
     return "ready" if has_name else "empty"
+
+
+def _normalize_data_reason(value: Any, legacy_status: Any, *, state: str) -> str:
+    """v3 保留精确原因，v2 仅把已知旧码映射到最接近语义。"""
+
+    reason = _clean_text(value, limit=48).lower()
+    if reason in DATA_REASONS:
+        return reason
+    legacy = _clean_text(legacy_status, limit=48).upper()
+    if legacy in _LEGACY_DATA_REASON_MAP:
+        return _LEGACY_DATA_REASON_MAP[legacy]
+    return "recognition_missing" if state == "failed" else ""
 
 
 def _normalize_top_candidates(value: Any) -> list[dict[str, Any]]:
@@ -219,6 +254,7 @@ def normalize_overlay_slot(
     summary = _clean_text(raw_slot.get("summary") or hint.get("summary"), limit=120)
     state = _normalize_slot_state(raw_slot.get("state"), has_name=bool(name))
     diagnostic = _clean_text(raw_slot.get("diagnostic") or raw_slot.get("reason"), limit=80)
+    data_reason = _normalize_data_reason(raw_slot.get("data_reason"), raw_slot.get("status_code"), state=state)
 
     confidence = raw_slot.get("confidence")
     try:
@@ -249,6 +285,14 @@ def normalize_overlay_slot(
         "candidate_identity": _clean_text(raw_slot.get("candidate_identity"), limit=80),
         "rejection_reason": _clean_text(raw_slot.get("rejection_reason"), limit=80),
         "elapsed_seconds": elapsed_seconds,
+        "data_status": _clean_text(raw_slot.get("data_status"), limit=32),
+        "data_reason": data_reason,
+        "generation_id": _clean_text(raw_slot.get("generation_id"), limit=128),
+        "vision_id": _clean_text(raw_slot.get("vision_id") or raw_slot.get("visual_variant_id"), limit=128),
+        "canonical_id": _clean_text(
+            raw_slot.get("canonical_id") or raw_slot.get("canonical_augment_id"), limit=128
+        ),
+        "champion_id": _clean_text(raw_slot.get("champion_id"), limit=128),
     }
 
 
@@ -260,7 +304,7 @@ def build_overlay_event(
     active: bool = True,
     hint_cache: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """构造三槽位 overlay 事件；v2 中 active 表示选择场景 active。"""
+    """构造三槽位 overlay 事件；v3 每个槽位携带数据代与身份诊断。"""
 
     normalized_slots = [
         normalize_overlay_slot(raw_slot, index, hint_cache=hint_cache)
@@ -360,10 +404,18 @@ def read_overlay_event(path: str | Path | None = None) -> dict[str, Any]:
 
 
 def write_overlay_event(event_payload: Mapping[str, Any], path: str | Path | None = None) -> Path:
-    """原子写入 overlay 事件到运行态 state 目录。"""
+    """原子写入 v3 overlay 事件；输入 v1/v2 会先作兼容归一。"""
 
     target = Path(path) if path is not None else OVERLAY_EVENT_FILE
     payload = dict(event_payload)
+    raw_slots = payload.get("slots") if isinstance(payload.get("slots"), list) else []
+    payload["slots"] = [
+        normalize_overlay_slot(item if isinstance(item, Mapping) else None, index)
+        for index, item in enumerate(raw_slots[:SLOT_COUNT])
+    ]
+    while len(payload["slots"]) < SLOT_COUNT:
+        payload["slots"].append(_empty_slot(len(payload["slots"])))
+    payload["schema_version"] = SCHEMA_VERSION
     timing = payload.get("timing") if isinstance(payload.get("timing"), Mapping) else {}
     payload["timing"] = {**dict(timing), "event_written_at": time.time()}
     atomic_write_json(target, payload, ensure_ascii=False, indent=2)

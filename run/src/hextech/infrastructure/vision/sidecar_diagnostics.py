@@ -1,12 +1,41 @@
 """Vision sidecar diagnostics 职责模块。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.vision.sidecar_common import *
-from hextech.infrastructure.vision.sidecar_scene_geometry import *
-from hextech.infrastructure.vision.sidecar_capture import *
-from hextech.infrastructure.vision.sidecar_event_loop import *
+from hextech.infrastructure.vision.sidecar_common import (
+    BODY_SHARD_STRONG_CONFIDENCE,
+    BODY_SHARD_SUPPORT_CONFIDENCE,
+    BODY_SHARD_VERY_STRONG_CONFIDENCE,
+    DEFAULT_MIN_CONFIDENCE,
+    DEFAULT_MIN_MARGIN,
+    DEFAULT_TEXT_MIN_CONFIDENCE,
+    FLAT_CROP_STD_THRESHOLD,
+    ICON_SHORTLIST_MAX_DELTA,
+    ICON_SHORTLIST_MIN_CONFIDENCE,
+    Any,
+    Image,
+    LayoutTransform,
+    Mapping,
+    OVERLAY_VISION_TRACE_FILE,
+    OVERLAY_VISION_TRACE_HISTORY_FILE,
+    Path,
+    ROI_DIAGNOSTIC_LIMIT,
+    SCENE_SLOT_MIN_CONFIDENCE,
+    SLOT_COUNT,
+    Sequence,
+    V2_BUTTON_SEARCH_REGION,
+    VISION_TRACE_HISTORY_LIMIT,
+    VISION_TRACE_REFRESH_SECONDS,
+    VISION_TRACE_SCHEMA_VERSION,
+    _LAST_VISION_TRACE_SIGNATURES,
+    _LAST_VISION_TRACE_WRITES,
+    apply_transform,
+    atomic_write_json,
+    json,
+    shutil,
+    time,
+)
+from hextech.infrastructure.vision.sidecar_event_loop import _event_ready_slots, _slot_signature
+from hextech.infrastructure.vision.sidecar_scene_geometry import resolve_roi_preset
 
 def _write_roi_diagnostic_dump(
     dump_root: str | Path,

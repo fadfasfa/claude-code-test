@@ -1,10 +1,34 @@
 """Desktop UI 组合类与进程入口。"""
-# ruff: noqa: F403, F405
+from __future__ import annotations
 
-from hextech.interfaces.desktop.app_shared import *
+from hextech.interfaces.desktop.app_shared import (  # noqa: F401 - 保留历史 app 模块导入面
+    DesktopInstanceAlreadyRunning,
+    DesktopInstanceOwner,
+    StartupTimingProbe,
+    UI_COLORS,
+    WEB_PORT_FILE,
+    WINDOW_EXPANDED_GEOMETRY,
+    _format_game_overlay_host_reason,
+    _format_supervisor_game_overlay_status,
+    _selection_role_style,
+    ctypes,
+    load_ui_feature_flags,
+    logger,
+    os,
+    save_ui_feature_flags,
+    sys,
+    threading,
+    time,
+    tk,
+)
 from hextech.interfaces.desktop.app_bootstrap import DesktopBootstrapMixin
 from hextech.interfaces.desktop.app_controls import DesktopControlsMixin
 from hextech.interfaces.desktop.app_view import DesktopViewMixin
+from hextech.interfaces.desktop.service_manager import ServiceManager
+# 保留 app.ui_runtime 兼容注入点，集成测试和嵌入方可替换进程启动函数。
+from hextech.interfaces.desktop import runtime as ui_runtime  # noqa: F401
+
+
 class HextechUI(DesktopBootstrapMixin, DesktopControlsMixin, DesktopViewMixin):
     """桌面伴生主界面，负责持有 UI 状态并协调后台运行时任务。"""
 

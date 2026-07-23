@@ -14,43 +14,32 @@ from hextech.modules.data.catalog.runtime_store import (
 from hextech.infrastructure.sources.version_sync import (
     HEXTECH_AUGMENT_METADATA_URLS,
     HEXTECH_CHAMPION_STATS_URLS,
-    build_hextech_detail_urls,
 )
 from hextech.modules.data.catalog.version_catalog import load_augment_tier_map, load_champion_core_data
 from hextech.modules.data.catalog.versioned import load_active_catalog
-from hextech.infrastructure.transport.scrapling_client import fetch_page
 from hextech.infrastructure.sources.hextech.detail_runner import DETAIL_PASS_RUNNER
+from hextech.infrastructure.sources.hextech.detail_fetch import (
+    fetch_champion_detail_stats_fast,
+)
 from hextech.infrastructure.sources.hextech.publisher import publish_hextech_run
 from hextech.infrastructure.sources.hextech.source import ChampionCatalogMismatch, build_expected_champions
 from hextech.modules.acquisition.common.contracts import ItemOutcome
+from hextech.modules.acquisition.hextech.coverage import HextechCoverageError
 from hextech.infrastructure.observability.logging import log_task_summary
 
 HEXTECH_DETAIL_WORKERS = 4
 HEXTECH_DETAIL_RETRY_WORKERS = 2
 HEXTECH_DETAIL_TIMEOUT_SECONDS = 6
 HEXTECH_DETAIL_RETRY_TIMEOUT_SECONDS = 12
-HEXTECH_DETAIL_RENDER_TIMEOUT_SECONDS = 20
 HEXTECH_DETAIL_POOL_TIMEOUT_SECONDS = 180
 HEXTECH_DETAIL_RETRY_POOL_TIMEOUT_SECONDS = 120
 HEXTECH_HANDSHAKE_RETRIES = 2
 HEXTECH_HANDSHAKE_TIMEOUT_SECONDS = 6
-HEXTECH_BROWSER_DETAIL_FALLBACK_ENABLED = os.getenv("HEXTECH_BROWSER_DETAIL_FALLBACK", "").strip() == "1"
-
-
-from hextech.infrastructure.sources.hextech.parsing import (  # noqa: E402
-    _clean_augment_text,
-    _extract_react_flight_augments,
-    _metadata_tier_from_rarity,
-    _source_total_from_augments,
-    build_hextech_champion_detail_json_url,
-    extract_champion_detail_json_stats,
-    extract_champion_stats,
-)
+from hextech.infrastructure.sources.hextech.parsing import _clean_augment_text, _metadata_tier_from_rarity  # noqa: E402
 from hextech.infrastructure.sources.hextech.refresh_support import (  # noqa: E402
     RemoteFetchError,
     _finish_refresh_failure,
     _is_blocking_remote_failure,
-    _is_deferred_remote_failure,
     _new_attempt_context,
     _record_detail_result,
     _summarize_detail_failures,
@@ -58,232 +47,90 @@ from hextech.infrastructure.sources.hextech.refresh_support import (  # noqa: E4
     fetch_with_retry,
     update_status_file,
 )
-def _rendered_detail_rows(
-    url: str,
-    *,
-    champ_id: str,
-    champ_name: str,
-    champ_data: dict,
-    aug_id_map: dict,
-    truth_dict: dict,
-    aug_tier_map: dict | None,
-) -> list[dict]:
-    result = fetch_page(
-        url,
-        mode="browser",
-        timeout_ms=HEXTECH_DETAIL_RENDER_TIMEOUT_SECONDS * 1000,
-        network_idle=True,
-        max_attempts=1,
+
+
+
+def _upstream_metadata_summary(response: object, payload: object) -> tuple[str, str]:
+    """提取上游版本/日期用于覆盖诊断；缺失时留空而不是虚构版本。"""
+
+    mapping = payload if isinstance(payload, dict) else {}
+    nested = mapping.get("meta") if isinstance(mapping.get("meta"), dict) else {}
+    version = next(
+        (
+            str(value).strip()
+            for value in (
+                mapping.get("version"),
+                mapping.get("patch"),
+                mapping.get("dataVersion"),
+                nested.get("version"),
+            )
+            if str(value or "").strip()
+        ),
+        "",
     )
-    if result.error or result.status_code != 200 or not result.html:
-        logging.warning(
-            "[%s] browser 详情页兜底失败：championId=%s url=%s status=%s reason=%s error=%s",
-            champ_name,
-            champ_id,
-            url,
-            result.status_code,
-            result.error_kind,
-            result.error,
-        )
-        return []
-    return extract_champion_stats(
-        result.html,
-        aug_id_map,
-        truth_dict,
-        champ_id,
-        champ_name,
-        champ_data,
-        aug_tier_map,
+    headers = getattr(response, "headers", {})
+    header_date = headers.get("Last-Modified") if hasattr(headers, "get") else ""
+    date = next(
+        (
+            str(value).strip()
+            for value in (
+                mapping.get("updated_at"),
+                mapping.get("updatedAt"),
+                mapping.get("date"),
+                nested.get("updated_at"),
+                header_date,
+            )
+            if str(value or "").strip()
+        ),
+        "",
     )
+    return version, date
 
 
-def fetch_champion_detail_stats_fast(
-    champ: dict,
-    *,
-    core_data: dict,
-    aug_id_map: dict,
-    truth_dict: dict,
-    aug_tier_map: dict | None,
-    timeout: int,
-    allow_browser_fallback: bool = False,
-) -> dict:
-    """优先使用 CDN JSON 全量快链路；页面和 browser 只作回退。"""
+def _metadata_stat_ids(payload: object) -> list[str]:
+    """只提取实际海克斯条目，排除 metadata 和版本对象。"""
 
-    c_id = str(champ.get("championId", ""))
-    c_name = core_data.get(c_id, {}).get("name", c_id)
-    last_reason = "empty_response"
-    last_status_code = None
-    last_url = ""
-    last_error = ""
-
-    detail_json_url = build_hextech_champion_detail_json_url(c_id)
-    last_url = detail_json_url
-    try:
-        res = fetch_with_retry(
-            detail_json_url,
-            timeout=timeout,
-            quiet=True,
-            raise_on_failure=True,
-            caller="hextech_detail_json",
-            context=f"championId={c_id};champion={c_name}",
+    mapping = payload if isinstance(payload, dict) else {}
+    identifiers: list[str] = []
+    for raw_key, raw_item in mapping.items():
+        if not isinstance(raw_item, dict):
+            continue
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+        has_identity = any(
+            str(raw_item.get(field) or "").strip()
+            for field in ("displayName", "name", "augmentName", "id", "augmentId")
         )
-    except RemoteFetchError as e:
-        last_reason = e.reason
-        last_status_code = e.status_code
-        last_url = e.url or detail_json_url
-        last_error = e.error
-        if _is_deferred_remote_failure(e.reason, e.status_code):
-            return {
-                "champ": champ,
-                "name": c_name,
-                "rows": [],
-                "reason": last_reason,
-                "status_code": last_status_code,
-                "url": last_url,
-                "error": last_error,
-            }
-    else:
-        if res is not None and res.status_code == 200 and res.text:
-            try:
-                rows = extract_champion_detail_json_stats(
-                    res.json(),
-                    aug_id_map,
-                    truth_dict,
-                    c_id,
-                    c_name,
-                    champ,
-                    aug_tier_map,
-                )
-                if rows:
-                    logging.info("[%s] CDN JSON 快链路命中：championId=%s rows=%s", c_name, c_id, len(rows))
-                    return {
-                        "champ": champ,
-                        "name": c_name,
-                        "rows": rows,
-                        "reason": "",
-                        "status_code": res.status_code,
-                        "url": detail_json_url,
-                        "error": "",
-                    }
-                last_reason = "detail_json_no_valid_rows"
-            except (TypeError, ValueError, json.JSONDecodeError):
-                # 如果 CDN 形态变化为 HTML，仍尝试复用页面解析；不直接升级 browser。
-                rows = extract_champion_stats(
-                    res.text,
-                    aug_id_map,
-                    truth_dict,
-                    c_id,
-                    c_name,
-                    champ,
-                    aug_tier_map,
-                )
-                if rows:
-                    logging.warning("[%s] CDN JSON 非 JSON 但页面解析可用：championId=%s rows=%s", c_name, c_id, len(rows))
-                    return {
-                        "champ": champ,
-                        "name": c_name,
-                        "rows": rows,
-                        "reason": "",
-                        "status_code": res.status_code,
-                        "url": detail_json_url,
-                        "error": "",
-                    }
-                last_reason = "detail_json_invalid"
-            last_status_code = res.status_code
-            last_error = res.error
+        if has_identity:
+            identifiers.append(key)
+    return identifiers
 
-    for url in build_hextech_detail_urls(c_id):
-        last_url = url
+
+def probe_hextech_upstream_marker() -> dict[str, str]:
+    """读取既有 metadata 端点的轻量版本标记，不创建独立调度任务。"""
+
+    for url in HEXTECH_AUGMENT_METADATA_URLS:
         try:
-            res = fetch_with_retry(
+            response = fetch_with_retry(
                 url,
-                timeout=timeout,
+                max_retries=1,
+                timeout=HEXTECH_HANDSHAKE_TIMEOUT_SECONDS,
                 quiet=True,
                 raise_on_failure=True,
-                caller="hextech_detail",
-                context=f"championId={c_id};champion={c_name}",
+                caller="hextech_marker_probe",
+                context="augment_metadata",
             )
-        except RemoteFetchError as e:
-            last_reason = e.reason
-            last_status_code = e.status_code
-            last_url = e.url or url
-            last_error = e.error
-            if _is_deferred_remote_failure(e.reason, e.status_code):
-                break
+            if response is None:
+                continue
+            payload = response.json()
+            if isinstance(payload, dict):
+                version, date = _upstream_metadata_summary(response, payload)
+                if version or date:
+                    return {"version": version, "date": date}
+        except (RemoteFetchError, ValueError, TypeError):
             continue
-        if res is None or res.status_code != 200 or not res.text:
-            last_reason = "empty_response"
-            last_status_code = getattr(res, "status_code", None)
-            last_error = getattr(res, "error", "")
-            continue
-        try:
-            rows = extract_champion_stats(
-                res.text,
-                aug_id_map,
-                truth_dict,
-                c_id,
-                c_name,
-                champ,
-                aug_tier_map,
-            )
-            source_total = _source_total_from_augments(_extract_react_flight_augments(res.text, c_id))
-            if rows and source_total > len(rows):
-                logging.warning(
-                    "[%s] HTML 快路径不完整：championId=%s static_rows=%s source_total=%s browser_fallback=%s",
-                    c_name,
-                    c_id,
-                    len(rows),
-                    source_total,
-                    allow_browser_fallback,
-                )
-                if allow_browser_fallback:
-                    rendered_rows = _rendered_detail_rows(
-                        url,
-                        champ_id=c_id,
-                        champ_name=c_name,
-                        champ_data=champ,
-                        aug_id_map=aug_id_map,
-                        truth_dict=truth_dict,
-                        aug_tier_map=aug_tier_map,
-                    )
-                    if len(rendered_rows) > len(rows):
-                        logging.info(
-                            "[%s] browser 小范围兜底补全：championId=%s static_rows=%s rendered_rows=%s source_total=%s",
-                            c_name,
-                            c_id,
-                            len(rows),
-                            len(rendered_rows),
-                            source_total,
-                        )
-                        rows = rendered_rows
-            if rows:
-                return {
-                    "champ": champ,
-                    "name": c_name,
-                    "rows": rows,
-                    "reason": "",
-                    "status_code": res.status_code,
-                    "url": url,
-                    "error": "",
-                }
-        except ValueError as e:
-            logging.warning(f"[{c_name}] aug 解析失败：{e} | URL={url} | 响应长度={len(res.text)}")
-            last_reason = "parse_error"
-            last_status_code = res.status_code
-            continue
-        last_reason = "no_valid_rows"
-        last_status_code = res.status_code
-
-    return {
-        "champ": champ,
-        "name": c_name,
-        "rows": [],
-        "reason": last_reason,
-        "status_code": last_status_code,
-        "url": last_url,
-        "error": last_error,
-    }
-
+    return {}
 
 def _main_scraper_impl(
     stop_event=None,
@@ -350,6 +197,8 @@ def _main_scraper_impl(
                 failure_stage="augment_metadata",
             )
         aug_data = aug_response.json()
+        metadata_ids = _metadata_stat_ids(aug_data)
+        upstream_version, upstream_date = _upstream_metadata_summary(aug_response, aug_data)
 
         aug_id_map = {}
         aug_tier_map = {}
@@ -450,7 +299,6 @@ def _main_scraper_impl(
             truth_dict=truth_dict,
             aug_tier_map=aug_tier_map,
             timeout=timeout,
-            allow_browser_fallback=HEXTECH_BROWSER_DETAIL_FALLBACK_ENABLED,
         )
 
     def run_detail_pass(champs: list[dict], *, workers: int, timeout: int, pool_timeout: int, label: str):
@@ -675,8 +523,21 @@ def _main_scraper_impl(
                 expected_hero_ids=expected_ids,
                 outcomes=outcomes,
                 started_at=str(attempt["started_at"]),
+                metadata_ids=metadata_ids,
+                upstream_version=upstream_version,
+                upstream_date=upstream_date,
                 promote_current=promote_current,
                 pointer_output=pointer_output,
+            )
+        except HextechCoverageError as exc:
+            # 候选代虽不能发布，覆盖报告仍是排查“为何仍显示 last-good”的核心证据。
+            attempt["coverage"] = dict(exc.coverage or {})
+            logging.error("Hextech 来源覆盖门禁失败：%s", exc)
+            return _finish_refresh_failure(
+                "coverage_gate_failed",
+                started_at=started_at,
+                attempt=attempt,
+                failure_stage="coverage_validation",
             )
         except ValueError as exc:
             logging.error("Hextech 来源发布门禁失败：%s", exc)

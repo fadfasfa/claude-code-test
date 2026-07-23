@@ -10,7 +10,23 @@ import pytest
 
 RUN_DIR = Path(__file__).resolve().parents[1]
 TESTS_DIR = RUN_DIR / "tests"
-DOMAINS = ("structure", "web", "overlay", "bundle", "scraping", "synergy", "runtime")
+DOMAIN_TEST_FILES = {
+    "structure": ("test_dev_gate_structure.py",),
+    "web": ("test_dev_gate_web.py",),
+    # Overlay 已按行为主题拆分；这里保留显式清单，防止未来又退回单个巨型测试文件。
+    "overlay": (
+        "test_dev_gate_overlay_basics.py",
+        "test_dev_gate_overlay_context.py",
+        "test_dev_gate_overlay_events.py",
+        "test_dev_gate_overlay_providers.py",
+        "test_dev_gate_overlay_refresh.py",
+        "test_dev_gate_overlay_runtime.py",
+    ),
+    "bundle": ("test_dev_gate_bundle.py",),
+    "scraping": ("test_dev_gate_scraping.py",),
+    "synergy": ("test_dev_gate_synergy.py",),
+    "runtime": ("test_dev_gate_runtime.py",),
+}
 pytestmark = pytest.mark.dev_gate
 
 
@@ -25,9 +41,13 @@ def _top_level_tests(path: Path) -> set[str]:
 
 
 def test_each_dev_gate_domain_owns_test_entities() -> None:
-    for domain in DOMAINS:
-        path = TESTS_DIR / f"test_dev_gate_{domain}.py"
-        assert _top_level_tests(path), f"{path.name} 仍未持有测试实体"
+    for domain, filenames in DOMAIN_TEST_FILES.items():
+        entities: set[str] = set()
+        for filename in filenames:
+            path = TESTS_DIR / filename
+            assert path.is_file(), f"{domain} 缺少测试文件：{filename}"
+            entities.update(_top_level_tests(path))
+        assert entities, f"{domain} 仍未持有测试实体"
 
 
 def test_dev_gate_support_contains_no_tests_or_manual_web_copy() -> None:
