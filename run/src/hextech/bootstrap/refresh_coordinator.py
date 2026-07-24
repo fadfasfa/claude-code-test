@@ -81,6 +81,7 @@ class CohortRefreshCoordinator:
         root: str | Path | None = None,
         process_runner: Callable[..., IsolatedProcessResult] = run_isolated_process,
         now: Callable[[], datetime] | None = None,
+        upstream_marker_probe: Callable[[], Mapping[str, Any]] | None = None,
     ) -> None:
         self.root = Path(root) if root is not None else get_var_dir()
         self.publisher = publisher
@@ -89,6 +90,7 @@ class CohortRefreshCoordinator:
         self.schedule_store = RefreshScheduleStore(self.root)
         self.process_runner = process_runner
         self.now = now or (lambda: datetime.now(timezone.utc))
+        self._upstream_marker_probe = upstream_marker_probe
         self._stop = threading.Event()
         self._cancel_lock = threading.Lock()
         self._active_cancel: Path | None = None
@@ -340,6 +342,46 @@ class CohortRefreshCoordinator:
         success = _parse_time(state.last_success_at or _pointer_success_at(pointer))
         return success is None or current >= success + SOURCE_INTERVALS[source]
 
+    def _source_coverage(self, source: str, pointer: Mapping[str, Any]) -> dict[str, Any]:
+        """从 immutable run 读取覆盖摘要；历史 run 缺失时明确返回空对象。"""
+
+        if source == "catalog" or self._is_baseline(pointer):
+            return {}
+        run_id = str(pointer.get("run_id") or "")
+        if not run_id:
+            return {}
+        path = self.root / "sources" / source / "runs" / run_id / "manifest.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        metadata = payload.get("metadata") if isinstance(payload, Mapping) else {}
+        coverage = metadata.get("coverage") if isinstance(metadata, Mapping) else {}
+        return dict(coverage) if isinstance(coverage, Mapping) else {}
+
+    def _probe_hextech_upstream_change(self, pointer: Mapping[str, Any]) -> tuple[bool, dict[str, Any]]:
+        """仅以稳定上游版本加速候选；日期继续保留为诊断信息。"""
+
+        if self._upstream_marker_probe is None or not pointer:
+            return False, {}
+        try:
+            marker = dict(self._upstream_marker_probe() or {})
+        except Exception:
+            # probe 只负责加速刷新，网络瞬断不能升级为 source 失败。
+            return False, {}
+        version = str(marker.get("version") or "").strip()
+        date = str(marker.get("date") or "").strip()
+        if not version and not date:
+            return False, {}
+        # updated_at / Last-Modified 可能随 CDN 响应变化；只把稳定版本作为提前刷新信号。
+        if not version:
+            return False, {"version": version, "date": date}
+        coverage = self._source_coverage("hextech", pointer)
+        upstream = coverage.get("upstream") if isinstance(coverage.get("upstream"), Mapping) else {}
+        previous_version = str(upstream.get("version") or "").strip()
+        changed = version != previous_version
+        return changed, {"version": version, "date": date}
+
     def _worker_command(self, source: str, work: Path, catalog_pointer: Path | None, *, force: bool) -> list[str]:
         pointer_path = work / f"{source}.pointer.v2.json"
         result_path = work / f"{source}.result.json"
@@ -487,6 +529,13 @@ class CohortRefreshCoordinator:
         states = dict(schedule.sources)
         current = {source: self._current_pointer(source) for source in SCHEDULE_SOURCES}
         due = {source: self._due(source, states[source], current[source], force=force) for source in SCHEDULE_SOURCES}
+        upstream_changed = False
+        upstream_marker: dict[str, Any] = {}
+        # 候选失败后的 backoff 必须优先于 marker 加速，避免相同版本反复全量抓取。
+        if not force and not due["hextech"] and states["hextech"].state != "backoff":
+            upstream_changed, upstream_marker = self._probe_hextech_upstream_change(current["hextech"])
+            if upstream_changed:
+                due["hextech"] = True
         if not any(due.values()):
             return {
                 "state": "ready",
@@ -537,7 +586,12 @@ class CohortRefreshCoordinator:
             if not due[source]:
                 continue
             try:
-                pointer, result = self._run_source(source, work, catalog_pointer_path, force=force)
+                pointer, result = self._run_source(
+                    source,
+                    work,
+                    catalog_pointer_path,
+                    force=force or (source == "hextech" and upstream_changed),
+                )
                 targets[source] = pointer
                 results[source] = result
                 self._save_candidate(source, pointer)
@@ -577,8 +631,11 @@ class CohortRefreshCoordinator:
             )
             return {
                 "state": "degraded" if self.publisher.current_generation_id() else "failed",
-                "reason_code": "cohort_refresh_failed",
+                "reason_code": "data_stale" if self.publisher.current_generation_id() else "cohort_refresh_failed",
                 "generation_id": self.publisher.current_generation_id(),
+                "data_status": "data_stale" if self.publisher.current_generation_id() else "unavailable",
+                "data_reason": "candidate_rejected_last_good_preserved" if self.publisher.current_generation_id() else "no_snapshot",
+                "upstream_marker": upstream_marker,
                 **failure_payload,
             }
 
@@ -638,6 +695,10 @@ class CohortRefreshCoordinator:
                     "artifact_sha256": artifact_sha,
                     "manifest_sha256": manifest_sha,
                     "record_count": record_count,
+                    "data_status": "data_stale" if source in degraded_sources else "fresh",
+                    # UI 只消费稳定诊断码；原始 worker 错误仍保留在本轮 source 诊断中。
+                    "data_reason": "candidate_rejected_last_good_preserved" if source in degraded_sources else "",
+                    "coverage": self._source_coverage(source, target),
                 }
             manifest = self.publisher.publish(
                 build.payloads,
@@ -693,6 +754,7 @@ class CohortRefreshCoordinator:
             "refreshed_sources": refreshed_sources,
             "degraded_sources": sorted(degraded_sources),
             "source_results": results,
+            "upstream_marker": upstream_marker,
             "retention": retention,
         }
 

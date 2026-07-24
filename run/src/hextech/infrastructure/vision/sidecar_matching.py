@@ -1,16 +1,74 @@
 """Vision sidecar matching 职责模块。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.vision.sidecar_common import *
-from hextech.infrastructure.vision.sidecar_scene_geometry import *
-from hextech.infrastructure.vision.sidecar_fingerprints import *
+from hextech.infrastructure.vision.sidecar_common import (
+    Any,
+    DEFAULT_MIN_MARGIN,
+    DEFAULT_TEXT_MIN_CONFIDENCE,
+    DEFAULT_TEXT_MIN_MARGIN,
+    FLAT_CROP_STD_THRESHOLD,
+    ICON_SHORTLIST_MAX_DELTA,
+    ICON_SHORTLIST_MAX_GROUPS,
+    ICON_SHORTLIST_MIN_CONFIDENCE,
+    Image,
+    Mapping,
+    NAME_FINGERPRINT_SIZE,
+    SCENE_SLOT_MIN_CONFIDENCE,
+    TWIN_CONFIDENCE_OVERRIDE,
+    Sequence,
+    TemplateEntry,
+    TemplateIndex,
+    _RankMatrices,
+    normalize_augment_id,
+    np,
+)
+from hextech.infrastructure.vision.sidecar_fingerprints import (
+    _RANK_MATRIX_CACHE,
+    _RANK_MATRIX_CACHE_MAX,
+    _cleaned_name_fingerprint,
+    _grayscale_levels,
+    _icon_fingerprints,
+    _levels_std,
+    _normalized_fingerprint,
+    _text_levels,
+    _text_mask_levels,
+)
 
-def _stack_fingerprints(rows: Sequence[Sequence[float]]) -> np.ndarray:
-    if not rows:
-        return np.empty((0, 0), dtype=np.float32)
-    return np.asarray(rows, dtype=np.float32)
+def _fingerprint_row(value: object) -> np.ndarray | None:
+    """把构建期输入即时压入连续 float16 行，不保留 Python float tuple。"""
+
+    try:
+        row = np.asarray(value, dtype=np.float16)
+    except (TypeError, ValueError):
+        return None
+    if row.ndim != 1 or row.size == 0 or not np.isfinite(row).all():
+        return None
+    return np.ascontiguousarray(row)
+
+
+def _stack_fingerprints(rows: Sequence[object]) -> np.ndarray:
+    prepared = [row for value in rows if (row := _fingerprint_row(value)) is not None]
+    if not prepared:
+        return np.empty((0, 0), dtype=np.float16)
+    widths = sorted({int(row.shape[0]) for row in prepared})
+    if len(widths) != 1:
+        # 模板行和元数据必须一一对应；静默丢弃异宽行会把后续匹配结果映射到错误模板。
+        raise ValueError(f"模板指纹宽度不一致：{widths}")
+    return np.ascontiguousarray(np.stack(prepared), dtype=np.float16)
+
+
+def _unique_fingerprint_rows(values: Sequence[object]) -> list[np.ndarray]:
+    rows: list[np.ndarray] = []
+    seen: set[bytes] = set()
+    for value in values:
+        row = _fingerprint_row(value)
+        if row is None:
+            continue
+        digest = row.tobytes()
+        if digest not in seen:
+            seen.add(digest)
+            rows.append(row)
+    return rows
 
 
 def _rank_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
@@ -21,27 +79,25 @@ def _rank_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
     cached = _RANK_MATRIX_CACHE.get(key)
     if cached is not None and cached.index_ref is template_index:
         return cached
-    icon_rows: list[tuple[TemplateEntry, tuple[float, ...]]] = []
+    icon_rows: list[tuple[TemplateEntry, np.ndarray]] = []
     for template in template_index:
-        variants = tuple(fingerprint for fingerprint in (template.icon_fingerprints or (template.fingerprint,)) if fingerprint)
+        variants = template.icon_fingerprints
+        if not variants and template.fingerprint is not None:
+            variants = (template.fingerprint,)
         icon_rows.extend((template, fingerprint) for fingerprint in variants)
     icon_templates = tuple(template for template, _fingerprint_row in icon_rows)
     icon_matrix = _stack_fingerprints([fingerprint_row for _template, fingerprint_row in icon_rows])
-    name_rows: list[tuple[TemplateEntry, tuple[float, ...]]] = []
-    alt_name_rows: list[tuple[TemplateEntry, tuple[float, ...]]] = []
+    name_rows: list[tuple[TemplateEntry, np.ndarray]] = []
+    alt_name_rows: list[tuple[TemplateEntry, np.ndarray]] = []
     for template in template_index:
-        primary_variants = [
-            fingerprint
-            for fingerprint in (template.name_fingerprint, _cleaned_name_fingerprint(template.name))
-            if fingerprint is not None
-        ]
-        alt_variants = [
-            fingerprint
-            for fingerprint in (template.name_fingerprint_alt, _cleaned_name_fingerprint(template.name, family="alt"))
-            if fingerprint is not None
-        ]
-        name_rows.extend((template, fingerprint) for fingerprint in dict.fromkeys(primary_variants))
-        alt_name_rows.extend((template, fingerprint) for fingerprint in dict.fromkeys(alt_variants))
+        primary_variants = _unique_fingerprint_rows(
+            (template.name_fingerprint, _cleaned_name_fingerprint(template.name))
+        )
+        alt_variants = _unique_fingerprint_rows(
+            (template.name_fingerprint_alt, _cleaned_name_fingerprint(template.name, family="alt"))
+        )
+        name_rows.extend((template, fingerprint) for fingerprint in primary_variants)
+        alt_name_rows.extend((template, fingerprint) for fingerprint in alt_variants)
     name_templates = tuple(template for template, _fingerprint_row in name_rows)
     name_matrix = _stack_fingerprints([fingerprint_row for _template, fingerprint_row in name_rows])
     alt_name_templates = tuple(template for template, _fingerprint_row in alt_name_rows)
@@ -50,7 +106,7 @@ def _rank_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
         (template, fingerprint)
         for template in template_index
         for fingerprint in template.observed_name_fingerprints
-        if fingerprint
+        if fingerprint is not None
     ]
     observed_name_templates = tuple(template for template, _fingerprint_row in observed_name_rows)
     observed_name_matrix = _stack_fingerprints(
@@ -84,10 +140,11 @@ def _rank_with_matrix(
 
     if not templates or matrix.size == 0:
         return []
-    vec = np.asarray(crop_fingerprint, dtype=np.float32)
+    # 矩阵以 float16 常驻以控制内存；乘法累积必须提升到 float32，避免相近模板失去区分度。
+    vec = np.ascontiguousarray(np.asarray(crop_fingerprint, dtype=np.float32))
     if vec.shape[0] != matrix.shape[1]:
         return []
-    correlation = (matrix @ vec) / vec.shape[0]
+    correlation = np.asarray((matrix @ vec) / vec.shape[0], dtype=np.float32)
     confidence = np.clip((correlation + 1.0) / 2.0, 0.0, 1.0)
     # argsort 升序取负 = 置信度降序；stable 保持模板原顺序，与旧 sorted(reverse=True) 对齐。
     order = np.argsort(-confidence, kind="stable")

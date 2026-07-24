@@ -25,13 +25,16 @@
         let activeChampionIds = new Set();
         let ws = null;
 
+        // 视觉样式仍由 Web 负责，但分档只消费 generation 的权威 `英雄评级`。
+        // 阈值唯一维护在 Python 的 champion_tier.py，避免两端随时间漂移。
         const TIERS = [
-            { id: 't0', name: '夯', enName: 'God Tier', cssClass: 'hx-tier-op', minScore: 1.5 },
-            { id: 't1', name: '顶级', enName: 'Top', cssClass: 'hx-tier-s', minScore: 0.8 },
-            { id: 't2', name: '人上人', enName: 'Elite', cssClass: 'hx-tier-a', minScore: 0.3 },
-            { id: 't3', name: 'npc', enName: 'Average', cssClass: 'hx-tier-npc', minScore: -0.3 },
-            { id: 't4', name: '拉', enName: 'Trash', cssClass: 'hx-tier-trash', minScore: -Infinity }
+            { id: 'T1', name: '夯', enName: 'God Tier', cssClass: 'hx-tier-op' },
+            { id: 'T2', name: '顶级', enName: 'Top', cssClass: 'hx-tier-s' },
+            { id: 'T3', name: '人上人', enName: 'Elite', cssClass: 'hx-tier-a' },
+            { id: 'T4', name: 'npc', enName: 'Average', cssClass: 'hx-tier-npc' },
+            { id: 'T5', name: '拉', enName: 'Trash', cssClass: 'hx-tier-trash' }
         ];
+        const TIER_BY_ID = new Map(TIERS.map(tier => [tier.id, tier]));
 
         const CHAMPION_PINYIN = {
             '亚索': 'Yasuo', '永恩': 'Yone', '阿狸': 'Ahri', '阿卡丽': 'Akali',
@@ -92,7 +95,13 @@
                     fetch(`${API_BASE}/api/champion_aliases`).catch(() => null),
                 ]);
                 const res = championRes;
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                if (!res.ok) {
+                    const failure = await res.json().catch(() => ({}));
+                    if (res.status === 503 && failure.error === 'snapshot_unavailable') {
+                        throw new Error('snapshot_unavailable');
+                    }
+                    throw new Error(`HTTP ${res.status}`);
+                }
                 allChampions = await res.json();
                 championCoreIndex = buildChampionCoreIndex(allChampions);
                 championAliasRecords = aliasRes && aliasRes.ok ? await aliasRes.json() : [];
@@ -107,11 +116,12 @@
                 renderTiers(allChampions);
             } catch (err) {
                 console.error('[ERROR] 加载英雄数据失败:', err);
+                const unavailable = err && err.message === 'snapshot_unavailable';
                 document.getElementById('tierContainer').innerHTML = `
-                    <div class="text-center py-20 text-red-400">
-                        <div class="text-4xl mb-4">警告</div>
-                        <div class="font-bold text-xl">数据加载失败</div>
-                        <div class="text-sm mt-2">请确保后端服务已启动</div>
+                    <div class="text-center py-20 ${unavailable ? 'text-slate-300' : 'text-red-400'}">
+                        <div class="text-4xl mb-4">${unavailable ? '等待' : '警告'}</div>
+                        <div class="font-bold text-xl">${unavailable ? '统计快照准备中' : '数据加载失败'}</div>
+                        <div class="text-sm mt-2">${unavailable ? 'DataService 正在生成可用数据，请稍后刷新' : '请确保后端服务已启动'}</div>
                     </div>
                 `;
             }
@@ -140,7 +150,7 @@
             TIERS.forEach(t => tierGroups[t.id] = []);
 
             sorted.forEach(champ => {
-                const tier = getTier(champ['综合分数']);
+                const tier = TIER_BY_ID.get(String(champ['英雄评级'] || '').toUpperCase()) || TIER_BY_ID.get('T3');
                 tierGroups[tier.id].push(champ);
             });
 
@@ -809,13 +819,6 @@
 
         function formatPercent(num) {
             return (num * 100).toFixed(1) + '%';
-        }
-
-        function getTier(score) {
-            for (const tier of TIERS) {
-                if (score >= tier.minScore) return tier;
-            }
-            return TIERS[TIERS.length - 1];
         }
 
         function getPreloadHeaders() {

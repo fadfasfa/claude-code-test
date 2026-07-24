@@ -1,9 +1,17 @@
 """Apex 抓取职责拆分模块。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.sources.apex.common import *
+from hextech.infrastructure.sources.apex.common import (
+    ChampionInfo,
+    Path,
+    SynergyEntry,
+    _atomic_write_json,
+    _output_file_lock,
+    build_champion_lookup,
+    logger,
+    normalize_name,
+    normalize_slug,
+)
 class SynergyWriter:
     def __init__(self, core_info: dict[str, ChampionInfo]):
         self.core_info = core_info

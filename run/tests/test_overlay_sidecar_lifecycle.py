@@ -17,6 +17,8 @@ from unittest.mock import patch
 
 import numpy as np
 
+from support.process_fakes import FakeProcess
+
 
 class OverlaySidecarLifecycleTests(unittest.TestCase):
     def test_sidecar_run_loop_delegates_to_runner_module(self):
@@ -32,12 +34,6 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
     def test_host_ready_timeout_reports_missing_ready_file_without_token(self):
         from hextech.interfaces.overlay import lifecycle
 
-        class FakeProcess:
-            pid = 9876
-
-            def poll(self):
-                return None
-
         with tempfile.TemporaryDirectory() as temp_dir:
             ready_path = Path(temp_dir) / "missing.ready.json"
             with self.assertRaisesRegex(
@@ -45,7 +41,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                 r"ready_file=missing.*pid=9876",
             ) as raised:
                 lifecycle._wait_for_host_ready(
-                    FakeProcess(),
+                    FakeProcess(9876),
                     ready_path,
                     expected_token="secret-token",
                     timeout_seconds=0.01,
@@ -56,23 +52,11 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
     def test_host_ready_timeout_reports_process_exit_and_token_mismatch(self):
         from hextech.interfaces.overlay import lifecycle
 
-        class ExitedProcess:
-            pid = 1201
-
-            def poll(self):
-                return 9
-
-        class RunningProcess:
-            pid = 1202
-
-            def poll(self):
-                return None
-
         with tempfile.TemporaryDirectory() as temp_dir:
             ready_path = Path(temp_dir) / "host.ready.json"
 
             with self.assertRaisesRegex(RuntimeError, r"readiness 前退出.*exit_code=9"):
-                lifecycle._wait_for_host_ready(ExitedProcess(), ready_path, timeout_seconds=0.01)
+                lifecycle._wait_for_host_ready(FakeProcess(1201, exit_code=9), ready_path, timeout_seconds=0.01)
 
             ready_path.write_text(
                 json.dumps({"token": "actual-token", "pid": 1202, "updated_at": time.time()}),
@@ -80,7 +64,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(RuntimeError, r"token 不匹配.*pid=1202"):
                 lifecycle._wait_for_host_ready(
-                    RunningProcess(),
+                    FakeProcess(1202),
                     ready_path,
                     expected_token="expected-token",
                     timeout_seconds=0.1,
@@ -91,19 +75,16 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(RuntimeError, r"token 不匹配.*pid=abc"):
-                lifecycle._wait_for_host_ready(RunningProcess(), ready_path, timeout_seconds=0.1)
+                lifecycle._wait_for_host_ready(FakeProcess(1202), ready_path, timeout_seconds=0.1)
 
     def test_source_host_process_executes_overlay_composition_root(self):
         from hextech.interfaces.overlay import lifecycle
 
         captured_command: list[str] = []
 
-        class FakeProcess:
-            pid = 1203
-
         def fake_popen(command, **_kwargs):
             captured_command.extend(command)
-            return FakeProcess()
+            return FakeProcess(1203)
 
         with (
             patch.object(lifecycle.sys, "frozen", False, create=True),
@@ -139,12 +120,9 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
 
         captured_command: list[str] = []
 
-        class FakeProcess:
-            pid = 1204
-
         def fake_popen(command, **_kwargs):
             captured_command.extend(command)
-            return FakeProcess()
+            return FakeProcess(1204)
 
         with (
             patch.object(lifecycle.sys, "frozen", True, create=True),
@@ -161,15 +139,9 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
 
         captured_env: dict[str, str] = {}
 
-        class FakeProcess:
-            pid = 1001
-
-            def poll(self):
-                return None
-
         def fake_popen(_command, **kwargs):
             captured_env.update(kwargs["env"])
-            return FakeProcess()
+            return FakeProcess(1001)
 
         with (
             patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
@@ -186,18 +158,12 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
     def test_sidecar_readiness_wait_responds_to_cancel_signal(self):
         from hextech.interfaces.overlay import lifecycle
 
-        class FakeProcess:
-            pid = 1002
-
-            def poll(self):
-                return None
-
         cancel_event = threading.Event()
         cancel_event.set()
         with tempfile.TemporaryDirectory() as temp_dir:
             with self.assertRaises(lifecycle.SidecarStartCancelled):
                 lifecycle._wait_for_sidecar_ready(
-                    FakeProcess(),
+                    FakeProcess(1002),
                     Path(temp_dir) / "missing.ready.json",
                     expected_token="expected-token",
                     timeout_seconds=5.0,
@@ -207,14 +173,8 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
     def test_sidecar_start_surfaces_cleanup_failure_as_non_retryable(self):
         from hextech.interfaces.overlay import lifecycle
 
-        class FakeProcess:
-            pid = 1003
-
-            def poll(self):
-                return None
-
         with (
-            patch.object(lifecycle.subprocess, "Popen", return_value=FakeProcess()),
+            patch.object(lifecycle.subprocess, "Popen", return_value=FakeProcess(1003)),
             patch.object(lifecycle, "_wait_for_sidecar_ready", side_effect=TimeoutError("slow bootstrap")),
             patch.object(lifecycle, "stop_process", return_value=False),
         ):
@@ -241,12 +201,6 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
     def test_wait_for_sidecar_ready_surfaces_failed_bootstrap_without_timeout(self):
         from hextech.interfaces.overlay import lifecycle
 
-        class FakeProcess:
-            pid = 1002
-
-            def poll(self):
-                return None
-
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             ready_path = root / "sidecar.ready.json"
@@ -266,7 +220,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
 
             with self.assertRaisesRegex(lifecycle.SidecarBootstrapError, "模板缺失") as raised:
                 lifecycle._wait_for_sidecar_ready(
-                    FakeProcess(),
+                    FakeProcess(1002),
                     ready_path,
                     bootstrap_path=bootstrap_path,
                     expected_token="expected-token",
@@ -358,24 +312,9 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
     def test_context_poller_failure_degrades_without_blocking_overlay(self):
         from hextech.interfaces.overlay.lifecycle import GameOverlayController
 
-        class FakeProcess:
-            pid = 123
-
-            def poll(self):
-                return None
-
-            def terminate(self):
-                return None
-
-            def wait(self, timeout=None):
-                return None
-
-            def kill(self):
-                return None
-
         controller = GameOverlayController(
-            start_host_func=lambda: FakeProcess(),
-            start_sidecar_func=lambda: FakeProcess(),
+            start_host_func=lambda: FakeProcess(123),
+            start_sidecar_func=lambda: FakeProcess(123),
             start_context_poller_func=lambda: (_ for _ in ()).throw(RuntimeError("LCU offline")),
             prepare_data_func=lambda: None,
             write_inactive_func=lambda: None,
@@ -409,24 +348,9 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
 
         calls: list[str] = []
 
-        class FakeProcess:
-            pid = 123
-
-            def poll(self):
-                return None
-
-            def terminate(self):
-                return None
-
-            def wait(self, timeout=None):
-                return None
-
-            def kill(self):
-                return None
-
         controller = GameOverlayController(
-            start_host_func=lambda: (calls.append("host"), FakeProcess())[1],
-            start_sidecar_func=lambda: (calls.append("sidecar"), FakeProcess())[1],
+            start_host_func=lambda: (calls.append("host"), FakeProcess(123))[1],
+            start_sidecar_func=lambda: (calls.append("sidecar"), FakeProcess(123))[1],
             start_context_poller_func=lambda: (calls.append("context"), object())[1],
             prepare_data_func=lambda: calls.append("prepare"),
             write_inactive_func=lambda: calls.append("inactive"),
@@ -479,7 +403,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertNotEqual(template_runtime.template_runtime_hint_signature(base_cache), template_runtime.template_runtime_hint_signature(changed_identity))
         self.assertNotEqual(template_runtime.template_runtime_hint_signature(base_cache), template_runtime.template_runtime_hint_signature(changed_name_index))
 
-    def test_template_runtime_cache_v2_manifest_and_float16_roundtrip(self):
+    def test_template_runtime_cache_round_trip_preserves_float16_matrices(self):
         from hextech.infrastructure.vision import template_runtime
         from hextech.infrastructure.vision import sidecar
         from hextech.infrastructure.vision import sidecar_matching
@@ -551,8 +475,8 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         self.assertTrue(runtime.stats["cache_hit"])
         self.assertEqual(runtime.stats["schema_version"], template_runtime.TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION)
         self.assertEqual(runtime.stats["matrix_dtype"], "float16")
-        self.assertEqual(runtime.matrices.icon_matrix.dtype, np.float32)
-        self.assertEqual(runtime.template_index[0].fingerprint, ())
+        self.assertEqual(runtime.matrices.icon_matrix.dtype, np.float16)
+        self.assertIsNone(runtime.template_index[0].fingerprint)
         np.testing.assert_allclose(runtime.matrices.icon_matrix, matrices.icon_matrix, atol=1e-3)
         sidecar._RANK_MATRIX_CACHE.pop(id(runtime.template_index), None)
         restored_matrices = sidecar.rank_template_matrices(runtime.template_index)

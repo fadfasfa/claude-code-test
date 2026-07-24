@@ -6,6 +6,31 @@ build-backend = "setuptools.build_meta"
 name = "hextech-nexus"
 version = "0.1.0"
 requires-python = ">=3.11,<3.12"
+dependencies = [
+  "pandas",
+  "numpy",
+  "requests>=2.32.3,<3",
+  "scrapling[fetchers]>=0.4.8,<0.5",
+  "urllib3>=2.2,<3",
+  "charset-normalizer>=3.3,<4",
+  "chardet>=5.2,<6",
+  "Pillow",
+  "psutil",
+  "pywin32",
+  "selenium",
+  "beautifulsoup4",
+  "fastapi[standard]",
+  "filelock>=3.10,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff==0.15.11",
+  "pyright==1.1.408",
+  "coverage==7.13.1",
+  "pytest==9.0.2",
+  "pytest-cov==7.0.0",
+]
 
 [project.scripts]
 hextech-desktop = "hextech.bootstrap.desktop:main"

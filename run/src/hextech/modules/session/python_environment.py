@@ -274,6 +274,14 @@ def _run_bootstrap_command(command: Sequence[str], *, action: str) -> None:
         )
 
 
+def _requirements_file_for_packages(require_packages: Sequence[str]) -> Path:
+    """按入口所需能力选择兼容安装入口，运行时依赖仍由 pyproject 声明。"""
+
+    names = {str(package) for package in require_packages}
+    filename = "build.txt" if "PyInstaller" in names else "runtime.txt"
+    return RUN_DIR / "tooling" / "requirements" / filename
+
+
 def bootstrap_default_venv(*, require_packages: Sequence[str] = REQUIRED_RUNTIME_PACKAGES) -> list[str] | None:
     """首次源码态启动时创建/修复默认 run/.venv，并返回可执行 Python 命令。"""
 
@@ -292,16 +300,16 @@ def bootstrap_default_venv(*, require_packages: Sequence[str] = REQUIRED_RUNTIME
 
     missing = missing_required_imports([str(venv_python)], require_packages)
     if missing:
-        requirements = RUN_DIR / "tooling" / "requirements" / "runtime.txt"
+        requirements = _requirements_file_for_packages(require_packages)
         if not requirements.exists():
-            raise SystemExit(f"缺少 tooling/requirements/runtime.txt：{requirements}")
+            raise SystemExit(f"缺少依赖安装入口：{requirements}")
         _run_bootstrap_command(
             [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
             action="升级 pip",
         )
         _run_bootstrap_command(
             [str(venv_python), "-m", "pip", "install", "-r", str(requirements)],
-            action="安装 tooling/requirements/runtime.txt 依赖",
+            action=f"安装 {requirements.relative_to(RUN_DIR).as_posix()} 依赖",
         )
         missing = missing_required_imports([str(venv_python)], require_packages)
         if missing:

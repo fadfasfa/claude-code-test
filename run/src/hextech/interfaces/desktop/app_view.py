@@ -1,7 +1,19 @@
 """Desktop DesktopViewMixin 职责模块。"""
-# ruff: noqa: F403, F405
-
-from hextech.interfaces.desktop.app_shared import *
+from hextech.interfaces.desktop.app_shared import (
+    Mapping,
+    UI_COLORS,
+    WINDOW_COLLAPSED_GEOMETRY,
+    WINDOW_EXPANDED_GEOMETRY,
+    _empty_champions,
+    _render_winrate_bar,
+    _selection_role_style,
+    logger,
+    threading,
+    time,
+    tk,
+    ui_runtime,
+)
+from hextech.modules.data.catalog.champion_tier import normalized_champion_tier
 
 
 class DesktopViewMixin:
@@ -202,7 +214,12 @@ class DesktopViewMixin:
                     "name": row.get("name", row.get("英雄名称", row.get("英雄名", "未知"))),
                     "win": win,
                     "pick": pick,
-                    "tier": row.get("英雄评级", row.get("评级", "T?")),
+                    # 新 generation 已带权威评级；旧快照按同一 Python 规则回退，
+                    # 因而不会向用户暴露含义不明的 T?。
+                    "tier": normalized_champion_tier(
+                        row.get("英雄评级", row.get("评级")),
+                        score=row.get("综合分数"),
+                    ),
                     "selection_role": row.get("selection_role", "bench"),
                 }
             )

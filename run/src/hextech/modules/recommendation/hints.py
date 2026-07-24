@@ -345,7 +345,7 @@ def _merge_display_only_catalog_hints(
     """把 manifest 中有身份但 CSV 暂无统计的海克斯补进 hint cache。
 
     这些条目只负责名称、阶级、图标和别名解析，不伪造胜率/出场率；renderer
-    仍会对当前英雄显示 SOURCE_STATS_MISSING，避免把源数据覆盖缺口误报成 alias 断链。
+    仍会对当前英雄显示 source_stat_missing，避免把源数据覆盖缺口误报成 alias 断链。
     """
 
     hints = cache_payload.get("hints")

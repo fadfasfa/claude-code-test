@@ -40,7 +40,6 @@ from hextech.bootstrap.snapshot_contributions import (
     validated_source_artifact as _validated_source_artifact,
 )
 
-
 @dataclass(frozen=True)
 class DataBuildResult:
     """一次构建的完整消费者数据与可审计来源摘要。"""
@@ -48,11 +47,9 @@ class DataBuildResult:
     payloads: Mapping[str, Any]
     source_files: tuple[SourceProvenance, ...] = ()
 
-
 SnapshotBuilder = Callable[[], DataBuildResult]
 SeedPreparer = Callable[[], bool]
 RefreshAction = Callable[[bool], Mapping[str, Any]]
-
 
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -60,7 +57,6 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
 
 def _query_payloads_from_dataframe(dataframe) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """从已清洗 CSV 直接构造查询 DTO，避免冷启动重建大型兼容缓存。"""
@@ -529,7 +525,11 @@ class DataServiceCore:
 
     def _refresh_locked(self, *, force: bool = False) -> dict[str, Any]:
         try:
-            return dict(self._refresh_action(bool(force)))
+            result = dict(self._refresh_action(bool(force)))
+            if result.get("state") == "degraded" and self.publisher.current_generation_id():
+                result.setdefault("data_status", "data_stale")
+                result.setdefault("data_reason", "candidate_rejected_last_good_preserved")
+            return result
         except Exception as exc:
             current_id = self.publisher.current_generation_id()
             return {
@@ -537,6 +537,8 @@ class DataServiceCore:
                 "generation_id": current_id,
                 "source": "last_good_fallback" if current_id else "remote_refresh",
                 "reason_code": "refresh_failed_last_good_preserved" if current_id else "refresh_failed_no_snapshot",
+                "data_status": "data_stale" if current_id else "unavailable",
+                "data_reason": "refresh_exception_last_good_preserved" if current_id else "no_snapshot",
                 "error_type": exc.__class__.__name__,
             }
 DATA_SERVICE_NONCE_HEADER = "X-Hextech-Data-Service-Nonce"
@@ -732,6 +734,7 @@ def main(argv: list[str] | None = None) -> int:
     from hextech.modules.session.settings import load_ui_feature_flags
     from hextech.bootstrap.refresh_coordinator import CohortRefreshCoordinator
     from hextech.modules.data.ports.paths import get_var_dir
+    from hextech.infrastructure.sources.hextech.service import probe_hextech_upstream_marker
 
     private_enabled = bool(load_ui_feature_flags().get("private_policy_stats_enabled", False))
     publisher = DataSnapshotPublisher()
@@ -750,6 +753,7 @@ def main(argv: list[str] | None = None) -> int:
         publisher=publisher,
         builder=build_snapshot_from_runtime,
         root=get_var_dir(),
+        upstream_marker_probe=probe_hextech_upstream_marker,
     )
     core = DataServiceCore(
         publisher=publisher,
@@ -791,7 +795,6 @@ def main(argv: list[str] | None = None) -> int:
         server.server_close()
         instance_lock.release()
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

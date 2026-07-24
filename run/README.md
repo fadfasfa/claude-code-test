@@ -4,7 +4,7 @@
 
 ## 入口
 
-安装为 editable package 后使用 `pyproject.toml` 的命令：
+运行时依赖以 `pyproject.toml` 为唯一事实源。安装为 editable package 后使用：
 
 ```powershell
 python -m pip install -e .
@@ -13,6 +13,12 @@ hextech-web
 hextech-overlay
 hextech-data-service
 hextech-supervisor
+```
+
+开发门禁工具可额外安装：
+
+```powershell
+python -m pip install -e .[dev]
 ```
 
 开发工具直接以模块运行：

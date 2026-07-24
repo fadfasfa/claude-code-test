@@ -69,7 +69,11 @@ LCU_LOCAL_REQUEST_TIMEOUT_SECONDS = 1.0
 
 
 # ruff: noqa: E402, F401, F403, F405
-from hextech.interfaces.desktop.runtime_processes import *
+from hextech.interfaces.desktop.runtime_processes import (
+    SERVER_PORT,
+    _AUTH_TOKEN_RE,
+    _web_runtime,
+)
 
 
 def _write_overlay_context_from_live_state(*args, **kwargs):

@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+import psutil
+
 from hextech.modules.data.overlay_source import prepare_shared_overlay_data
 from hextech.modules.vision.events import write_inactive_overlay_event
 from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
@@ -34,6 +36,7 @@ OVERLAY_COLD_STARTUP_BUDGET_SECONDS = 60.0
 OVERLAY_CONTINUATION_SECONDS = 120.0
 SIDECAR_ATTEMPT_TIMEOUT_SECONDS = 60.0
 SIDECAR_RETRY_DELAYS_SECONDS = (1.0,)
+SIDECAR_HEARTBEAT_STALE_SECONDS = 10.0
 
 
 class _OverlayStartCancelled(RuntimeError):
@@ -58,8 +61,12 @@ class OverlayRuntimeManager:
         write_inactive_func: Callable[[], Any] = write_inactive_overlay_event,
         load_template_runtime_func: Callable[..., Any] | None = None,
         visibility_status_file: str | Path | None = None,
+        sidecar_status_file: str | Path | None = None,
         prewarm_wait_timeout_seconds: float = TEMPLATE_PREWARM_WAIT_TIMEOUT_SECONDS,
         retry_sleep_func: Callable[[float], Any] | None = None,
+        pid_exists: Callable[[int], bool] = psutil.pid_exists,
+        process_create_time: Callable[[int], float | None] | None = None,
+        now_func: Callable[[], float] = time.time,
     ) -> None:
         self._start_host_func = start_host_func
         self._start_sidecar_func = start_sidecar_func
@@ -68,8 +75,16 @@ class OverlayRuntimeManager:
         self._write_inactive_func = write_inactive_func
         self._load_template_runtime_func = load_template_runtime_func
         self._visibility_status_file = Path(visibility_status_file) if visibility_status_file is not None else Path(overlay_runtime_state_path("game_overlay_visibility.v1.json"))
+        self._sidecar_status_file = (
+            Path(sidecar_status_file)
+            if sidecar_status_file is not None
+            else Path(overlay_runtime_state_path("game_overlay_sidecar_status.json"))
+        )
         self._prewarm_wait_timeout_seconds = max(0.1, float(prewarm_wait_timeout_seconds))
         self._retry_sleep_func = retry_sleep_func
+        self._pid_exists = pid_exists
+        self._process_create_time = process_create_time or self._default_process_create_time
+        self._now_func = now_func
         self._lock = threading.RLock()
         self._operation_lock = threading.Lock()
         self._prewarm_thread: threading.Thread | None = None
@@ -99,6 +114,8 @@ class OverlayRuntimeManager:
         self.last_error = ""
         self.last_start_failure_kind = ""
         self.updated_at = time.time()
+        self._sidecar_started_at = 0.0
+        self._sidecar_liveness: dict[str, Any] = {"status": "unknown", "reason": "not_started"}
 
     def _mark(self, *, status: str | None = None, phase: str | None = None, error: str | None = None) -> None:
         if status is not None:
@@ -148,11 +165,113 @@ class OverlayRuntimeManager:
     def _process_running(process: ProcessLike | None) -> bool:
         return bool(process is not None and process.poll() is None)
 
+    @staticmethod
+    def _default_process_create_time(pid: int) -> float | None:
+        try:
+            return float(psutil.Process(pid).create_time())
+        except (psutil.Error, OSError):
+            return None
+
     def _host_pid(self) -> int | None:
         return getattr(self.host_process, "_hextech_overlay_runtime_pid", None) or getattr(self.host_process, "pid", None)
 
     def _sidecar_pid(self) -> int | None:
         return getattr(self.sidecar_process, "pid", None)
+
+    def _read_sidecar_liveness(self) -> dict[str, Any]:
+        """同时验证进程、PID 创建时间和 heartbeat，避免假 running。"""
+
+        pid = self._sidecar_pid()
+        now = self._now_func()
+        startup_grace_active = bool(
+            self._sidecar_started_at and now - self._sidecar_started_at <= SIDECAR_HEARTBEAT_STALE_SECONDS
+        )
+        if not self._process_running(self.sidecar_process) or not isinstance(pid, int) or pid <= 0:
+            return {"status": "failed", "reason": "process_exited", "pid": pid}
+        try:
+            payload = json.loads(self._sidecar_status_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            if startup_grace_active:
+                return {"status": "starting", "reason": "heartbeat_pending", "pid": pid}
+            return {"status": "stale", "reason": "status_missing", "pid": pid}
+        if not isinstance(payload, Mapping):
+            if startup_grace_active:
+                return {"status": "starting", "reason": "heartbeat_pending", "pid": pid}
+            return {"status": "stale", "reason": "status_invalid", "pid": pid}
+        try:
+            schema_version = int(payload.get("schema_version") or 1)
+            status_pid = int(payload.get("pid") or 0)
+            heartbeat_at = float(payload.get("heartbeat_at") or payload.get("updated_at") or 0.0)
+        except (TypeError, ValueError):
+            if startup_grace_active:
+                return {"status": "starting", "reason": "heartbeat_pending", "pid": pid}
+            return {"status": "stale", "reason": "status_invalid", "pid": pid}
+        if status_pid != pid:
+            # 新进程接管时，上一次 sidecar 的状态文件可能还在磁盘上；在首个
+            # heartbeat 截止前把它当作 pending，而不是把刚启动的真实进程误判 stale。
+            if startup_grace_active:
+                return {
+                    "status": "starting",
+                    "reason": "heartbeat_pending",
+                    "pid": pid,
+                    "reported_pid": status_pid,
+                }
+            return {"status": "stale", "reason": "pid_mismatch", "pid": pid, "reported_pid": status_pid}
+        try:
+            exists = bool(self._pid_exists(pid))
+        except Exception:
+            exists = False
+        if not exists:
+            return {"status": "stale", "reason": "pid_missing", "pid": pid}
+        if schema_version >= 2:
+            try:
+                reported_started_at = float(payload.get("pid_started_at") or 0.0)
+            except (TypeError, ValueError):
+                reported_started_at = 0.0
+            actual_started_at = self._process_create_time(pid)
+            if reported_started_at <= 0.0 or actual_started_at is None:
+                return {"status": "stale", "reason": "pid_start_unavailable", "pid": pid}
+            if abs(float(actual_started_at) - reported_started_at) > 2.0:
+                return {
+                    "status": "stale",
+                    "reason": "pid_reused",
+                    "pid": pid,
+                    "pid_started_at": reported_started_at,
+                    "actual_pid_started_at": actual_started_at,
+                }
+        if heartbeat_at <= 0.0 or now - heartbeat_at > SIDECAR_HEARTBEAT_STALE_SECONDS:
+            return {
+                "status": "stale",
+                "reason": "heartbeat_stale",
+                "pid": pid,
+                "heartbeat_at": heartbeat_at,
+            }
+        return {
+            "status": "running",
+            "reason": "",
+            "pid": pid,
+            "heartbeat_at": heartbeat_at,
+            "generation": str(payload.get("generation") or ""),
+            "schema_version": schema_version,
+        }
+
+    def _sidecar_is_reusable(self) -> bool:
+        liveness = self._read_sidecar_liveness()
+        self._sidecar_liveness = liveness
+        return liveness.get("status") in {"running", "starting"}
+
+    def _mark_sidecar_stale_locked(self) -> None:
+        liveness = self._read_sidecar_liveness()
+        self._sidecar_liveness = liveness
+        if liveness.get("status") not in {"running", "starting"}:
+            # 无论是 PID 已退出、被复用还是 heartbeat 停止，先收敛为 stale。
+            # 这样 Desktop 不会把一个还残留着 ProcessLike 对象的 sidecar 当成可用；
+            # 下一次 enable 再沿用既有的启动重试/退避路径恢复。
+            self._mark(
+                status="stale",
+                phase="sidecar_stale",
+                error=f"Vision sidecar 存活失效：{liveness.get('reason') or 'unknown'}",
+            )
 
     def _start_context_poller(self) -> None:
         if self.context_poller is not None or self._start_context_poller_func is None:
@@ -180,6 +299,8 @@ class OverlayRuntimeManager:
     def _context_status(self) -> str:
         if self.context_poller is not None:
             return "running"
+        if str(self.context_error or "").strip() in {"context_missing", "context_unavailable"}:
+            return "context_missing"
         return "degraded" if self.context_error else "stopped"
 
     def _read_visibility_health(self) -> dict[str, str]:
@@ -323,10 +444,16 @@ class OverlayRuntimeManager:
             return self._stop("disabled")
         with self._operation_lock:
             with self._lock:
-                if self._process_running(self.host_process) and self._process_running(self.sidecar_process):
+                if self._process_running(self.host_process) and self._sidecar_is_reusable():
                     self._start_context_poller()
                     self._mark(status="running", phase="running", error="")
                     return self.snapshot()
+                if self._process_running(self.sidecar_process):
+                    self._mark_sidecar_stale_locked()
+                    if not stop_process(self.sidecar_process):
+                        self._mark(status="error", phase="sidecar_stale_cleanup_failed", error="Vision sidecar stale 后无法停止")
+                        return self.snapshot()
+                    self.sidecar_process = None
                 self._generation += 1
                 generation = self._generation
                 self._start_cancel.set()
@@ -358,7 +485,7 @@ class OverlayRuntimeManager:
     def _start(self, generation: int, cancel_event: threading.Event) -> dict[str, Any]:
         started_at = time.perf_counter()
         with self._lock:
-            if self._process_running(self.host_process) and self._process_running(self.sidecar_process):
+            if self._process_running(self.host_process) and self._sidecar_is_reusable():
                 self._start_context_poller()
                 self._mark(status="running", phase="running", error="")
                 self.last_start_failure_kind = ""
@@ -392,6 +519,7 @@ class OverlayRuntimeManager:
                 self.phase = "sidecar_start"
             if not self._process_running(self.sidecar_process):
                 self.sidecar_process = self._start_sidecar_with_retry(generation, cancel_event)
+                self._sidecar_started_at = self._now_func()
             if not self._process_running(self.sidecar_process):
                 raise RuntimeError("game_overlay sidecar 启动后立即退出")
             self._ensure_start_current(generation, cancel_event)
@@ -600,8 +728,12 @@ class OverlayRuntimeManager:
             if self.status == "running":
                 if not self._process_running(self.host_process):
                     self._mark(status="error", phase="host_exited", error="game_overlay host 意外退出")
-                elif self.sidecar_process is not None and not self._process_running(self.sidecar_process):
-                    self._mark(status="error", phase="sidecar_exited", error="game_overlay sidecar 意外退出")
+                elif self.sidecar_process is not None:
+                    # Process.poll() 只能说明句柄尚未退出，无法识别 PID 复用和
+                    # sidecar 卡死。每次状态快照都检查小型 status 文件的心跳。
+                    self._mark_sidecar_stale_locked()
+            elif self.sidecar_process is not None:
+                self._sidecar_liveness = self._read_sidecar_liveness()
             visibility_health = self._read_visibility_health()
             self.visible_reason = visibility_health["visible_reason"]
             self.functional_status = visibility_health["functional_status"]
@@ -626,6 +758,7 @@ class OverlayRuntimeManager:
                 "phase": self.phase,
                 "host_pid": self._host_pid() if self._process_running(self.host_process) else None,
                 "sidecar_pid": self._sidecar_pid() if self._process_running(self.sidecar_process) else None,
+                "sidecar_liveness": dict(self._sidecar_liveness),
                 "context_status": self._context_status(),
                 "cache_status": self.cache_status,
                 "cache_hit": self.cache_hit,

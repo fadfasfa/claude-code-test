@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from hextech.interfaces.overlay.context import (
     read_current_lcu_context_once,
@@ -59,8 +59,10 @@ class OverlayContextBroker:
         self._game_instance_id = ""
 
     @staticmethod
-    def _valid_context(payload: Mapping[str, Any] | None) -> bool:
-        return bool(payload and str(payload.get("champion_id") or "").strip())
+    def _valid_context(payload: Mapping[str, Any] | None) -> TypeGuard[dict[str, Any]]:
+        """仅在可安全复制为 canonical payload 时收窄为 dict。"""
+
+        return isinstance(payload, dict) and bool(str(payload.get("champion_id") or "").strip())
 
     def _read_lcu(self) -> tuple[dict[str, Any] | None, str]:
         return self.lcu_reader(context_provider=self.context_provider)

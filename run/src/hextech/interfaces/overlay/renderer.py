@@ -130,6 +130,21 @@ def _context_missing_status_text(context: Mapping[str, Any] | None) -> str:
     }.get(key, "等待当前英雄")
 
 
+def _data_reason_display(reason: object) -> tuple[str, StatStatusCode, str, str, str] | None:
+    """v3 槽位原因优先于推测；仅真实来源缺口使用“源站暂无统计”。"""
+
+    normalized = _clean_text(reason, limit=48).lower()
+    mapping: dict[str, tuple[str, StatStatusCode, str, str, str]] = {
+        "recognition_missing": ("未识别到海克斯", "RECOGNITION_MISSING", "", "", "识别未完成"),
+        "identity_unresolved": ("海克斯身份未解析", "IDENTITY_UNRESOLVED", "", "", "身份未解析"),
+        "source_stat_missing": ("源站暂无该海克斯统计", "SOURCE_STAT_MISSING", "", "", "源站暂无统计"),
+        "champion_stat_missing": ("当前英雄暂无该组合统计", "CHAMPION_STAT_MISSING", "", "", "英雄暂无统计"),
+        "context_missing": ("等待当前英雄", "CONTEXT_MISSING", "", "", "等待当前英雄"),
+        "snapshot_unavailable": ("统计数据准备中", "SNAPSHOT_UNAVAILABLE", "", "", "数据准备中"),
+    }
+    return mapping.get(normalized)
+
+
 def _effective_context(
     context: Mapping[str, Any] | None,
     recent_context: Mapping[str, Any] | None,
@@ -153,7 +168,7 @@ def _stats_display(
     snapshot_status = hint_cache.get("snapshot") if isinstance(hint_cache, Mapping) else None
     snapshot_state = str(snapshot_status.get("state") or "") if isinstance(snapshot_status, Mapping) else ""
     if snapshot_state == "unavailable":
-        return "统计数据准备中", "DATA_NOT_READY", "", "", "数据准备中"
+        return "统计数据准备中", "SNAPSHOT_UNAVAILABLE", "", "", "数据准备中"
     source = hint_cache.get("source") if isinstance(hint_cache, Mapping) else None
     if not (isinstance(source, Mapping) and source.get("private_policy_stats_enabled") is True):
         return "已开启隐私模式", "PRIVACY_OFF", "", "", "统计关闭"
@@ -164,7 +179,13 @@ def _stats_display(
         return "等待当前英雄", "CONTEXT_MISSING", "", "", _context_missing_status_text(context)
     stats = _current_champion_stats(hint, context)
     if not isinstance(stats, Mapping):
-        return "源站暂无该组合统计", "SOURCE_STATS_MISSING", "", "", "源站暂无统计"
+        has_source_stats = any(
+            isinstance(hint.get(key), Mapping) and bool(hint.get(key))
+            for key in ("stats_by_champion_id", "stats_by_champion_name")
+        )
+        if has_source_stats:
+            return "当前英雄暂无该组合统计", "CHAMPION_STAT_MISSING", "", "", "英雄暂无统计"
+        return "源站暂无该海克斯统计", "SOURCE_STAT_MISSING", "", "", "源站暂无统计"
     winrate = _format_percent(stats.get("winrate"))
     pickrate = _format_percent(stats.get("pickrate"))
     text = _format_stats_entry(stats)
@@ -259,7 +280,10 @@ def build_render_model(
         hint = _query_hint(slot, hint_cache) if ready else {}
         name = _clean_text(hint.get("name") or slot_name, limit=60)
         tier = _clean_text(hint.get("tier") or slot.get("tier"), limit=24)
-        if ready:
+        explicit_display = _data_reason_display(slot.get("data_reason"))
+        if explicit_display is not None:
+            stats_text, status_code, winrate_text, pickrate_text, status_text = explicit_display
+        elif ready:
             if not hint:
                 stats_text, status_code = "海克斯身份未解析", "IDENTITY_UNRESOLVED"
                 winrate_text, pickrate_text, status_text = "", "", "身份未解析"
@@ -270,8 +294,8 @@ def build_render_model(
                     context,
                 )
         elif state == "failed":
-            stats_text, status_code = "识别失败/重试", "DETECTION_FAILED"
-            winrate_text, pickrate_text, status_text = "", "", "识别失败/重试"
+            stats_text, status_code = "未识别到海克斯", "RECOGNITION_MISSING"
+            winrate_text, pickrate_text, status_text = "", "", "识别未完成"
         else:
             stats_text, status_code = "识别中…", "DETECTING"
             winrate_text, pickrate_text, status_text = "", "", "识别中…"
@@ -336,10 +360,11 @@ def build_render_model_from_session(
     stats: list[StatPanelModel] = []
     synergies: list[SynergyPanelModel] = []
     labels: dict[str, tuple[str, str]] = {
-        "DETECTION_FAILED": ("识别失败/重试", "识别失败/重试"),
-        "DATA_NOT_READY": ("统计数据准备中", "数据准备中"),
+        "RECOGNITION_MISSING": ("未识别到海克斯", "识别未完成"),
+        "SNAPSHOT_UNAVAILABLE": ("统计数据准备中", "数据准备中"),
         "PRIVACY_OFF": ("已开启隐私模式", "统计关闭"),
-        "SOURCE_STATS_MISSING": ("源站暂无该组合统计", "源站暂无统计"),
+        "SOURCE_STAT_MISSING": ("源站暂无该海克斯统计", "源站暂无统计"),
+        "CHAMPION_STAT_MISSING": ("当前英雄暂无该组合统计", "英雄暂无统计"),
         "IDENTITY_UNRESOLVED": ("海克斯身份未解析", "身份未解析"),
         "CONTEXT_MISSING": ("等待当前英雄", "等待英雄上下文"),
         "CONTEXT_EXPIRED": ("等待当前英雄", "等待当前英雄"),
@@ -353,13 +378,14 @@ def build_render_model_from_session(
                 context_error = state.context.error_code if state.context is not None else state.error_code
                 status_code = "CONTEXT_EXPIRED" if context_error == "context_expired" else "CONTEXT_MISSING"
             else:
-                status_code = "DATA_NOT_READY"
+                status_code = "SNAPSHOT_UNAVAILABLE"
         elif slot_state == "failed":
-            status_code = "DETECTION_FAILED"
+            status_code = "RECOGNITION_MISSING"
         elif slot_state != "ready":
             status_code = "DETECTING"
         elif not status_code:
-            status_code = "SOURCE_STATS_MISSING"
+            explicit = _data_reason_display(row.get("data_reason"))
+            status_code = explicit[1] if explicit is not None else "SOURCE_STAT_MISSING"
         stats_payload = row.get("stats") if isinstance(row.get("stats"), Mapping) else {}
         normalized_stats = {
             "winrate": stats_payload.get(

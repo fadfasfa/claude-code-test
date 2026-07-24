@@ -1,9 +1,29 @@
 """Web LCU 连接、候选英雄状态与广播循环。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.interfaces.web.backend.runtime import *
+from hextech.interfaces.web.backend.runtime_core import (
+    AUTO_JUMP_ENABLED,
+    Any,
+    ClientContextProvider,
+    HTTPAdapter,
+    List,
+    Optional,
+    Retry,
+    Set,
+    _lcu_warning_logged,
+    asyncio,
+    base64,
+    dataclass,
+    field,
+    get_champion_info,
+    logger,
+    psutil,
+    requests,
+    threading,
+    time,
+    urllib3,
+    warnings,
+)
 class ConnectionManager:
     """WebSocket 连接池，负责广播实时事件。"""
 

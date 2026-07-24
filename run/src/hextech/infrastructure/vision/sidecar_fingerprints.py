@@ -1,10 +1,39 @@
 """Vision sidecar fingerprints 职责模块。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.vision.sidecar_common import *
-from hextech.infrastructure.vision.sidecar_scene_geometry import *
+from hextech.infrastructure.vision.sidecar_common import (
+    Any,
+    BODY_SHARD_STRONG_CONFIDENCE,
+    BODY_SHARD_SUFFIX,
+    BODY_SHARD_SUFFIX_SIZE,
+    BODY_SHARD_SUFFIX_WIDTH_PERCENTS,
+    BODY_SHARD_SUPPORT_CONFIDENCE,
+    BODY_SHARD_VERY_STRONG_CONFIDENCE,
+    FINGERPRINT_SIZE,
+    INDEX_DATA_DIR,
+    Image,
+    ImageDraw,
+    ImageFilter,
+    ImageFont,
+    Mapping,
+    NAME_FINGERPRINT_SIZE,
+    Path,
+    SLOT_COUNT,
+    Sequence,
+    TEXT_DECORATION_MAX_WIDTH,
+    TEXT_DECORATION_MIN_HEIGHT_RATIO,
+    TemplateEntry,
+    _RankMatrices,
+    _clean_text,
+    _template_runtime_module,
+    hashlib,
+    json,
+    load_augment_manifest_entries,
+    load_augment_name_to_icon_map,
+    lru_cache,
+    normalize_augment_id,
+    np,
+)
 
 def _resampling_lanczos() -> int:
     return getattr(getattr(Image, "Resampling", Image), "LANCZOS")
@@ -515,15 +544,19 @@ def build_template_index(raw_templates: Mapping[str, Mapping[str, Any]]) -> list
             if _clean_text(item)
         ] if isinstance(filenames_value, Sequence) and not isinstance(filenames_value, (str, bytes)) else []
 
-        icon_fingerprints_list: list[tuple[float, ...]] = []
+        icon_fingerprints_list: list[np.ndarray] = []
+        icon_fingerprint_digests: set[bytes] = set()
         text_only_filenames: list[str] = []
         icon_digest = ""
         for image_index, image in enumerate(images):
             image_fingerprints = _icon_fingerprints(image, template=True)
             if image_fingerprints:
                 for fingerprint in image_fingerprints:
-                    if fingerprint not in icon_fingerprints_list:
-                        icon_fingerprints_list.append(fingerprint)
+                    row = np.ascontiguousarray(np.asarray(fingerprint, dtype=np.float16))
+                    digest = row.tobytes()
+                    if digest not in icon_fingerprint_digests:
+                        icon_fingerprint_digests.add(digest)
+                        icon_fingerprints_list.append(row)
                 if not icon_digest:
                     icon_digest = _icon_mask_digest(image, template=True)
             elif image_index < len(filenames):
@@ -539,7 +572,7 @@ def build_template_index(raw_templates: Mapping[str, Mapping[str, Any]]) -> list
                 name=name,
                 tier=_clean_text(payload.get("tier"), fallback="Unknown"),
                 summary=_clean_text(payload.get("summary"), fallback="本地模板识别结果"),
-                fingerprint=icon_fingerprints[0] if icon_fingerprints else (),
+                fingerprint=icon_fingerprints[0] if icon_fingerprints else None,
                 icon_fingerprints=icon_fingerprints,
                 icon_digest=icon_digest,
                 priority=1 if bool(payload.get("priority")) else 0,
@@ -600,7 +633,7 @@ def audit_default_template_index(
         "identity_count": len(expected_identities),
         "variant_count": len(expected_variants),
         "template_count": len(template_index),
-        "text_only_template_count": sum(1 for entry in template_index if not entry.icon_fingerprints),
+        "text_only_template_count": sum(1 for entry in template_index if not entry.icon_variant_count),
         "text_only_variant_count": sum(len(entry.text_only_icon_filenames) for entry in template_index),
         "missing_identity_count": len(missing_identities),
         "missing_variant_count": len(missing_variants),

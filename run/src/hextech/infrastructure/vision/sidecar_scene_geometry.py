@@ -1,9 +1,21 @@
 """Vision sidecar scene_geometry 职责模块。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.vision.sidecar_common import *
+from hextech.infrastructure.vision.sidecar_common import (
+    Any,
+    BUTTON_CENTER_MAX_RATIO,
+    BUTTON_CENTER_MAX_Y_RATIO,
+    BUTTON_CENTER_MIN_RATIO,
+    BUTTON_CENTER_MIN_Y_RATIO,
+    BUTTON_MIN_BLUE_PIXELS,
+    BUTTON_MIN_BLUE_RATIO,
+    BUTTON_MIN_SOLIDITY,
+    BUTTON_SCAN_DOWNSAMPLE,
+    BUTTON_SEARCH_REGION,
+    Image,
+    ROI_PRESETS,
+    RoiPreset,
+)
 
 def resolve_roi_preset(width: int, height: int, *, preset: str = "auto") -> RoiPreset:
     """按捕获尺寸选择 ROI 预设；16:10 2K 优先落到 2560x1600。"""

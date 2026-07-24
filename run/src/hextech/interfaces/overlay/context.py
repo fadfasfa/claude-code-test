@@ -22,8 +22,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import psutil
-import requests
-import urllib3
 
 from hextech.modules.game_context.client import ClientContextProvider, parse_client_context
 from hextech.modules.game_context import TypedGameContextProvider
@@ -299,7 +297,14 @@ def scan_lcu_process() -> tuple[str | None, str | None]:
     return None, None
 
 
-def _default_fetch_response(url: str, headers: dict[str, str]) -> requests.Response:
+def _default_fetch_response(url: str, headers: dict[str, str]) -> Any:
+    """在真正轮询 LCU 时才加载 HTTP 客户端。"""
+
+    # host 只读取已发布 context，不能因为导入 host 就加载 requests。LCU HTTP
+    # 栈留在这个真实请求边界，既不改变请求参数也不让冷启动形成隐式依赖。
+    import requests
+    import urllib3
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
         return requests.get(url, headers=headers, verify=False, timeout=(0.4, 0.8))

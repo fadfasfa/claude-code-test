@@ -75,10 +75,18 @@ class RecommendationService:
                     "augment_id": str(slot.augment_id or ""),
                     "name": slot.name,
                     "confidence": slot.confidence,
-                    "status_code": "DETECTION_FAILED" if slot.state is VisionSlotState.FAILED else "",
+                    "generation_id": str(generation_id),
+                    "vision_id": str(slot.visual_variant_id or slot.augment_id or ""),
+                    "canonical_id": "",
+                    # 旧 overlay/session 调用方仍读取此字段；v3 的权威字段为
+                    # canonical_id，保留别名只为平滑读取，不再参与新逻辑。
+                    "canonical_augment_id": "",
+                    "champion_id": str(context.local_champion_id or ""),
+                    "data_status": "",
+                    "data_reason": "",
+                    "status_code": "",
+                    "stats": {},
                 }
-                if not policy.private_stats_enabled and slot.state.value == "ready":
-                    row["status_code"] = "PRIVACY_OFF"
                 private_stats_enabled = policy.private_stats_enabled
                 lookup_keys = tuple(
                     dict.fromkeys(
@@ -91,7 +99,23 @@ class RecommendationService:
                         if value
                     )
                 )
-                if lookup_keys and context.local_champion_id:
+                if slot.state is not VisionSlotState.READY:
+                    row["data_status"] = "unavailable"
+                    row["data_reason"] = "recognition_missing"
+                    row["status_code"] = "RECOGNITION_MISSING"
+                elif not private_stats_enabled:
+                    # 用户显式关闭隐私统计时，不能被同时存在的暂时上下文/快照缺失吞没。
+                    row["data_status"] = "disabled"
+                    row["status_code"] = "PRIVACY_OFF"
+                elif str(status.get("state") or "") == "unavailable":
+                    row["data_status"] = "unavailable"
+                    row["data_reason"] = "snapshot_unavailable"
+                    row["status_code"] = "SNAPSHOT_UNAVAILABLE"
+                elif not context.local_champion_id:
+                    row["data_status"] = "unavailable"
+                    row["data_reason"] = "context_missing"
+                    row["status_code"] = "CONTEXT_MISSING"
+                elif lookup_keys:
                     identity = None
                     resolved_key = ""
                     for key in lookup_keys:
@@ -113,19 +137,34 @@ class RecommendationService:
                             )
                             or ""
                         )
-                        row["canonical_augment_id"] = str(identity.get("canonical_id") or "")
+                        row["canonical_id"] = str(identity.get("canonical_id") or "")
+                        row["canonical_augment_id"] = row["canonical_id"]
                     stats = (
                         snapshot.get_combo_stats(context.local_champion_id, identity.get("canonical_id"))
                         if identity and private_stats_enabled
                         else None
                     )
                     row["stats"] = stats or {}
-                    if not private_stats_enabled:
-                        row["status_code"] = "PRIVACY_OFF"
-                    elif stats is None and not row["status_code"]:
-                        row["status_code"] = "SOURCE_STATS_MISSING" if identity else "IDENTITY_UNRESOLVED"
-                    elif stats is not None and not row["status_code"]:
+                    if stats is None:
+                        if not identity:
+                            row["data_status"] = "unavailable"
+                            row["data_reason"] = "identity_unresolved"
+                            row["status_code"] = "IDENTITY_UNRESOLVED"
+                        elif _snapshot_has_source_stat(snapshot, identity):
+                            row["data_status"] = "missing"
+                            row["data_reason"] = "champion_stat_missing"
+                            row["status_code"] = "CHAMPION_STAT_MISSING"
+                        else:
+                            row["data_status"] = "missing"
+                            row["data_reason"] = "source_stat_missing"
+                            row["status_code"] = "SOURCE_STAT_MISSING"
+                    else:
+                        row["data_status"] = "degraded" if status.get("state") == "degraded" else "ready"
                         row["status_code"] = "GENERATION_DEGRADED" if status.get("state") == "degraded" else "READY"
+                else:
+                    row["data_status"] = "unavailable"
+                    row["data_reason"] = "identity_unresolved"
+                    row["status_code"] = "IDENTITY_UNRESOLVED"
                 slots.append(row)
 
         health = _max_health(
@@ -164,6 +203,22 @@ def _stable_index(item: dict[str, object]) -> int:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return 0
+
+
+def _snapshot_has_source_stat(snapshot: SnapshotViewPort, identity: dict[str, Any]) -> bool:
+    """区分来源完全没有该统计与仅当前英雄没有该组合。"""
+
+    try:
+        hints = snapshot.get_overlay_hints()
+    except Exception:
+        return False
+    hint_map = hints.get("hints") if isinstance(hints, dict) else {}
+    canonical_id = str(identity.get("canonical_id") or "")
+    hint = hint_map.get(canonical_id) if isinstance(hint_map, dict) else None
+    if not isinstance(hint, dict):
+        return False
+    stats_by_champion = hint.get("stats_by_champion_id")
+    return bool(isinstance(stats_by_champion, dict) and stats_by_champion)
 
 
 def _max_health(*states: HealthState) -> HealthState:

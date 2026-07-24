@@ -69,9 +69,16 @@ LCU_LOCAL_REQUEST_TIMEOUT_SECONDS = 1.0
 
 
 # ruff: noqa: E402, F401, F403, F405
-from hextech.interfaces.desktop.runtime_processes import *
-from hextech.interfaces.desktop.runtime_services import *
-from hextech.interfaces.desktop.runtime_interaction import *
+from hextech.interfaces.desktop.runtime_processes import (
+    resolve_client_overlay_policy,
+)
+from hextech.interfaces.desktop.runtime_services import _web_frontend_available
+from hextech.interfaces.desktop.runtime_interaction import (
+    _drain_preload_pending,
+    _fallback_live_state,
+    _fetch_web_live_state,
+    _sync_candidate_ids,
+)
 
 def lcu_polling_loop(ui: "HextechUI") -> None:
     """优先读取 Web live_state，失败时回退本地 LCU，持续同步可用英雄集合。"""

@@ -190,6 +190,35 @@ def load_source_current(source: str, *, verify_hash: bool = True) -> dict[str, A
     return pointer.to_dict()
 
 
+def load_source_run_manifest(source: str, run_id: str | None = None) -> SourceRunManifestV2 | None:
+    """读取已发布 source run 的 manifest，用于比较 last-good 覆盖报告。
+
+    旧 run 没有 coverage 仍可被读取；调用方据此将状态显式标为缺少覆盖报告，
+    而不是把历史数据误判为覆盖合格。
+    """
+
+    normalized_source = _validate_source(source)
+    resolved_run_id = str(run_id or "").strip()
+    if not resolved_run_id:
+        pointer = load_source_current(normalized_source, verify_hash=True)
+        resolved_run_id = str(pointer.get("run_id") or "")
+    if not resolved_run_id:
+        return None
+    manifest_path = source_run_dir(normalized_source, resolved_run_id) / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping):
+            raise SourceRunValidationError(f"来源 manifest 必须是对象：{manifest_path}")
+        manifest = SourceRunManifestV2.from_mapping(payload)
+    except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SourceRunValidationError(f"来源 manifest 无效：{manifest_path}: {exc}") from exc
+    if manifest.source != normalized_source or manifest.run_id != resolved_run_id:
+        raise SourceRunValidationError(f"来源 manifest 身份错误：{normalized_source}/{resolved_run_id}")
+    return manifest
+
+
 def resolve_current_artifact(source: str, *, verify_hash: bool = True) -> Path | None:
     pointer = load_source_current(source, verify_hash=verify_hash)
     if not pointer:
@@ -225,6 +254,7 @@ __all__ = [
     "SourceRunValidationError",
     "build_artifact_descriptor",
     "build_source_pointer",
+    "load_source_run_manifest",
     "load_source_current",
     "publish_source_run",
     "resolve_current_artifact",

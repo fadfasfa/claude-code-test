@@ -1,7 +1,16 @@
 """Desktop DesktopControlsMixin 职责模块。"""
-# ruff: noqa: F403, F405
-
-from hextech.interfaces.desktop.app_shared import *
+from hextech.interfaces.desktop.app_shared import (
+    Mapping,
+    UI_COLORS,
+    _format_game_overlay_host_reason,
+    _format_supervisor_game_overlay_status,
+    export_user_diagnostics,
+    logger,
+    save_ui_feature_flags,
+    threading,
+    tk,
+    ui_runtime,
+)
 
 
 class DesktopControlsMixin:

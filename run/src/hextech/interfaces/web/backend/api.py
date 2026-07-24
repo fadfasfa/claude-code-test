@@ -378,7 +378,12 @@ def register_routes(app: FastAPI) -> None:
         try:
             snapshot_view = _open_snapshot_view(generation_id)
         except SnapshotValidationError:
-            return _generation_conflict(generation_id) if generation_id else JSONResponse(content=[])
+            if generation_id:
+                return _generation_conflict(generation_id)
+            return JSONResponse(
+                content={"error": "snapshot_unavailable", "generation_id": ""},
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         return JSONResponse(
             content={
                 "generation_id": str(snapshot_view.status().get("generation_id") or ""),

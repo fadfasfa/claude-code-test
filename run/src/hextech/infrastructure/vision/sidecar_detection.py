@@ -1,13 +1,39 @@
 """Vision sidecar detection 职责模块。"""
-# ruff: noqa: F403, F405
-
 from __future__ import annotations
 
-from hextech.infrastructure.vision.sidecar_common import *
-from hextech.infrastructure.vision.sidecar_scene_geometry import *
-from hextech.infrastructure.vision.sidecar_fingerprints import *
-from hextech.infrastructure.vision.sidecar_matching import *
-from hextech.infrastructure.vision.sidecar_event_loop import *
+from hextech.infrastructure.vision.sidecar_common import (
+    BLOCKING_MODAL_BUTTON_REGION,
+    BLOCKING_MODAL_MIN_BUTTON_GOLD_RATIO,
+    BLOCKING_MODAL_MIN_DARK_RATIO,
+    BLOCKING_MODAL_PANEL_REGION,
+    BODY_SHARD_KEYWORDS,
+    DEFAULT_MIN_CONFIDENCE,
+    Any,
+    Image,
+    Mapping,
+    Path,
+    SLOT_COUNT,
+    Sequence,
+    TemplateEntry,
+    apply_transform,
+    build_overlay_event,
+    detect_selection_scene,
+    np,
+    time,
+)
+from hextech.infrastructure.vision.sidecar_event_loop import (
+    _build_loop_inactive_event,
+    _ready_slot_count,
+    _scene_active_from_slots,
+)
+from hextech.infrastructure.vision.sidecar_fingerprints import (
+    _body_shard_name_scores,
+    _body_shard_scene_present,
+    _name_crop_has_residue,
+    _name_text_mask,
+)
+from hextech.infrastructure.vision.sidecar_matching import _detect_slot
+from hextech.infrastructure.vision.sidecar_scene_geometry import _selection_button_source_fields, resolve_roi_preset
 
 def _slots_have_body_shard_keywords(slots: Sequence[Mapping[str, Any]]) -> bool:
     matched = 0
@@ -68,20 +94,6 @@ def _blocking_modal_present(image: Image.Image) -> bool:
         )
     )
     return dark_ratio >= BLOCKING_MODAL_MIN_DARK_RATIO and gold_ratio >= BLOCKING_MODAL_MIN_BUTTON_GOLD_RATIO
-
-
-def _slot_ready_for_display(slot: Mapping[str, Any]) -> bool:
-    return bool(slot.get("state") == "ready" and (slot.get("augment_id") or slot.get("name")))
-
-
-def _ready_slot_count(slots: Sequence[Mapping[str, Any]]) -> int:
-    return sum(1 for slot in list(slots)[:SLOT_COUNT] if _slot_ready_for_display(slot))
-
-
-def _scene_active_from_slots(slots: Sequence[Mapping[str, Any]]) -> bool:
-    """三张卡全部 ready 才具备正式显示条件。"""
-
-    return len(list(slots)[:SLOT_COUNT]) == SLOT_COUNT and _ready_slot_count(slots) == SLOT_COUNT
 
 
 def detect_overlay_choices(

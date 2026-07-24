@@ -1,34 +1,64 @@
 """Vision sidecar 组合面与运行入口。"""
-# ruff: noqa: F403, F405
 
 from __future__ import annotations
 
-from hextech.infrastructure.vision import template_runtime as _template_runtime_module
-from hextech.infrastructure.vision.sidecar_common import *
-from hextech.infrastructure.vision.sidecar_scene_geometry import *
-from hextech.infrastructure.vision.sidecar_fingerprints import *
-from hextech.infrastructure.vision.sidecar_matching import *
-from hextech.infrastructure.vision.sidecar_detection import *
-from hextech.infrastructure.vision.sidecar_event_loop import *
-from hextech.infrastructure.vision.sidecar_capture import *
-from hextech.infrastructure.vision.sidecar_diagnostics import *
-_hash_runtime_resource_stats = _template_runtime_module._hash_runtime_resource_stats
-_runtime_environment_signature = _template_runtime_module._runtime_environment_signature
-_hint_cache_signature = _template_runtime_module._hint_cache_signature
-_template_entry_to_manifest = _template_runtime_module._template_entry_to_manifest
-_template_entry_to_cache = _template_runtime_module._template_entry_to_cache
-_template_entry_from_cache = _template_runtime_module._template_entry_from_cache
-_template_entry_from_manifest = _template_runtime_module._template_entry_from_manifest
-_template_indices = _template_runtime_module._template_indices
-_templates_by_index = _template_runtime_module._templates_by_index
-_matrix_from_cache = _template_runtime_module._matrix_from_cache
-_cache_manifest_bytes = _template_runtime_module._cache_manifest_bytes
-_read_cache_manifest = _template_runtime_module._read_cache_manifest
-_resource_signature_matches = _template_runtime_module._resource_signature_matches
-_rank_matrices_from_cache = _template_runtime_module._rank_matrices_from_cache
-_read_template_runtime_cache = _template_runtime_module._read_template_runtime_cache
-_write_template_runtime_cache = _template_runtime_module._write_template_runtime_cache
-_cleanup_legacy_template_runtime_cache = _template_runtime_module._cleanup_legacy_template_runtime_cache
+from importlib import import_module
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+
+# 这是历史 ``sidecar`` 单文件入口的兼容 facade。职责模块使用显式导入，外部
+# 调用方仍能在这里读取原有的检测和诊断符号，不需要再把所有实现重新聚回一处。
+_FACADE_MODULE_NAMES = (
+    "hextech.infrastructure.vision.sidecar_common",
+    "hextech.infrastructure.vision.sidecar_scene_geometry",
+    "hextech.infrastructure.vision.sidecar_fingerprints",
+    "hextech.infrastructure.vision.sidecar_matching",
+    "hextech.infrastructure.vision.sidecar_detection",
+    "hextech.infrastructure.vision.sidecar_event_loop",
+    "hextech.infrastructure.vision.sidecar_capture",
+    "hextech.infrastructure.vision.sidecar_diagnostics",
+)
+_TEMPLATE_RUNTIME_COMPAT_NAMES = {
+    "_hash_runtime_resource_stats",
+    "_runtime_environment_signature",
+    "_hint_cache_signature",
+    "_template_entry_to_manifest",
+    "_template_entry_to_cache",
+    "_template_entry_from_cache",
+    "_template_entry_from_manifest",
+    "_template_indices",
+    "_templates_by_index",
+    "_matrix_from_cache",
+    "_cache_manifest_bytes",
+    "_read_cache_manifest",
+    "_resource_signature_matches",
+    "_rank_matrices_from_cache",
+    "_read_template_runtime_cache",
+    "_write_template_runtime_cache",
+    "_cleanup_legacy_template_runtime_cache",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """按需转发兼容符号，避免实现模块之间继续使用 ``import *``。"""
+
+    if name in _TEMPLATE_RUNTIME_COMPAT_NAMES:
+        runtime = import_module("hextech.infrastructure.vision.template_runtime")
+        return getattr(runtime, name)
+    for module_name in _FACADE_MODULE_NAMES:
+        module = import_module(module_name)
+        if hasattr(module, name):
+            return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    names = set(globals()) | _TEMPLATE_RUNTIME_COMPAT_NAMES
+    for module_name in _FACADE_MODULE_NAMES:
+        module = import_module(module_name)
+        names.update(getattr(module, "__all__", (name for name in vars(module) if not name.startswith("__"))))
+    return sorted(names)
 
 
 def _forward_template_runtime(name: str):
@@ -51,6 +81,7 @@ def _forward_runner(name: str):
 
 load_default_template_index = _forward_template_runtime("load_default_template_index")
 rank_template_matrices = _forward_template_runtime("rank_template_matrices")
+build_template_index = _forward_template_runtime("build_template_index")
 
 
 def load_or_build_default_template_runtime(
@@ -60,7 +91,7 @@ def load_or_build_default_template_runtime(
     cache_file: str | Path | None = None,
     resource_signature: Mapping[str, Any] | None = None,
     status_callback: Callable[[str, Mapping[str, Any]], None] | None = None,
-) -> TemplateRuntime:
+) -> Any:
     from hextech.infrastructure.vision import template_runtime as _template_runtime
 
     return _template_runtime.load_or_build_default_template_runtime(
@@ -84,6 +115,28 @@ run_once = _forward_runner("run_once")
 run_loop = _forward_runner("run_loop")
 build_parser = _forward_runner("build_parser")
 main = _forward_runner("main")
+
+
+# ``__getattr__`` 仍为旧的点属性调用提供窄兼容层；星号导入则只获得这份经过
+# 审核的 facade，避免把 PIL、numpy 或各职责模块的内部实现重新泄漏成公共 API。
+__all__ = (
+    "_hash_runtime_resource_stats",
+    "_sanitize_bootstrap_error_message",
+    "_sidecar_exit_requested",
+    "_write_sidecar_bootstrap_from_env",
+    "_write_sidecar_ready_from_env",
+    "_write_sidecar_status",
+    "build_parser",
+    "build_template_index",
+    "load_default_template_index",
+    "load_or_build_default_template_runtime",
+    "main",
+    "rank_template_matrices",
+    "run_loop",
+    "run_once",
+    "template_runtime_hint_signature",
+    "template_runtime_resource_signature",
+)
 
 
 if __name__ == "__main__":
