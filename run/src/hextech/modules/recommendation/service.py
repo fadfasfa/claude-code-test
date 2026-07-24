@@ -103,6 +103,10 @@ class RecommendationService:
                     row["data_status"] = "unavailable"
                     row["data_reason"] = "recognition_missing"
                     row["status_code"] = "RECOGNITION_MISSING"
+                elif not private_stats_enabled:
+                    # 用户显式关闭隐私统计时，不能被同时存在的暂时上下文/快照缺失吞没。
+                    row["data_status"] = "disabled"
+                    row["status_code"] = "PRIVACY_OFF"
                 elif str(status.get("state") or "") == "unavailable":
                     row["data_status"] = "unavailable"
                     row["data_reason"] = "snapshot_unavailable"
@@ -111,9 +115,6 @@ class RecommendationService:
                     row["data_status"] = "unavailable"
                     row["data_reason"] = "context_missing"
                     row["status_code"] = "CONTEXT_MISSING"
-                elif not private_stats_enabled:
-                    row["data_status"] = "disabled"
-                    row["status_code"] = "PRIVACY_OFF"
                 elif lookup_keys:
                     identity = None
                     resolved_key = ""

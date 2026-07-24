@@ -50,9 +50,11 @@ def _stack_fingerprints(rows: Sequence[object]) -> np.ndarray:
     prepared = [row for value in rows if (row := _fingerprint_row(value)) is not None]
     if not prepared:
         return np.empty((0, 0), dtype=np.float16)
-    width = int(prepared[0].shape[0])
-    same_width = [row for row in prepared if int(row.shape[0]) == width]
-    return np.ascontiguousarray(np.stack(same_width), dtype=np.float16)
+    widths = sorted({int(row.shape[0]) for row in prepared})
+    if len(widths) != 1:
+        # 模板行和元数据必须一一对应；静默丢弃异宽行会把后续匹配结果映射到错误模板。
+        raise ValueError(f"模板指纹宽度不一致：{widths}")
+    return np.ascontiguousarray(np.stack(prepared), dtype=np.float16)
 
 
 def _unique_fingerprint_rows(values: Sequence[object]) -> list[np.ndarray]:
@@ -138,7 +140,8 @@ def _rank_with_matrix(
 
     if not templates or matrix.size == 0:
         return []
-    vec = np.ascontiguousarray(np.asarray(crop_fingerprint, dtype=matrix.dtype))
+    # 矩阵以 float16 常驻以控制内存；乘法累积必须提升到 float32，避免相近模板失去区分度。
+    vec = np.ascontiguousarray(np.asarray(crop_fingerprint, dtype=np.float32))
     if vec.shape[0] != matrix.shape[1]:
         return []
     correlation = np.asarray((matrix @ vec) / vec.shape[0], dtype=np.float32)

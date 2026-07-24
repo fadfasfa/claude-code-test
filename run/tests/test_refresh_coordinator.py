@@ -374,6 +374,7 @@ def test_rejected_hextech_candidate_keeps_last_good_and_marks_data_stale(tmp_pat
     assert current_hextech["run_id"] == "hextech-run-0"
     assert status["source_status"]["hextech"]["freshness"] == "last_good"
     assert status["source_status"]["hextech"]["data_status"] == "data_stale"
+    assert status["source_status"]["hextech"]["data_reason"] == "candidate_rejected_last_good_preserved"
 
 
 def test_same_content_new_runs_publish_generation_with_matching_provenance(tmp_path) -> None:

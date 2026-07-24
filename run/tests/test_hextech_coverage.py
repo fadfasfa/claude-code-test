@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
@@ -9,6 +10,8 @@ import pandas as pd
 import pytest
 
 from hextech.bootstrap.refresh_coordinator import CohortRefreshCoordinator
+from hextech.contracts import RefreshScheduleV1, RefreshSourceState
+from hextech.infrastructure.persistence.refresh_schedule import SCHEDULE_SOURCES
 from hextech.modules.acquisition.common.contracts import ItemOutcome
 from hextech.modules.acquisition.hextech.coverage import (
     HextechCoverageError,
@@ -125,7 +128,7 @@ def test_catalog_bridge_disappearance_is_a_regression_not_an_ignored_empty_set()
         validate_hextech_coverage_report(report, expected_hero_ids=HERO_IDS, outcomes=_outcomes())
 
 
-def test_upstream_marker_change_forces_next_hextech_candidate(tmp_path: Path) -> None:
+def test_upstream_version_change_forces_next_hextech_candidate(tmp_path: Path) -> None:
     run_root = tmp_path / "sources" / "hextech" / "runs" / "run-old"
     run_root.mkdir(parents=True)
     (run_root / "manifest.json").write_text(
@@ -136,10 +139,70 @@ def test_upstream_marker_change_forces_next_hextech_candidate(tmp_path: Path) ->
         publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
         builder=lambda _targets: None,
         root=tmp_path,
-        upstream_marker_probe=lambda: {"version": "15.14", "date": "2026-07-22"},
+        upstream_marker_probe=lambda: {"version": "15.14", "date": "old"},
     )
 
     changed, marker = coordinator._probe_hextech_upstream_change({"run_id": "run-old"})
 
     assert changed is True
-    assert marker == {"version": "15.14", "date": "2026-07-22"}
+    assert marker == {"version": "15.14", "date": "old"}
+
+
+def test_upstream_date_change_does_not_force_next_hextech_candidate(tmp_path: Path) -> None:
+    run_root = tmp_path / "sources" / "hextech" / "runs" / "run-old"
+    run_root.mkdir(parents=True)
+    (run_root / "manifest.json").write_text(
+        json.dumps({"metadata": {"coverage": {"upstream": {"version": "15.13", "date": "old"}}}}),
+        encoding="utf-8",
+    )
+    coordinator = CohortRefreshCoordinator(
+        publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
+        builder=lambda _targets: None,
+        root=tmp_path,
+        upstream_marker_probe=lambda: {"version": "15.13", "date": "2026-07-22"},
+    )
+
+    changed, marker = coordinator._probe_hextech_upstream_change({"run_id": "run-old"})
+
+    assert changed is False
+    assert marker == {"version": "15.13", "date": "2026-07-22"}
+
+
+def test_hextech_backoff_does_not_probe_upstream_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    probe_calls = 0
+
+    def marker_probe() -> dict[str, str]:
+        nonlocal probe_calls
+        probe_calls += 1
+        return {"version": "15.14"}
+
+    coordinator = CohortRefreshCoordinator(
+        publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
+        builder=lambda _targets: None,
+        root=tmp_path,
+        now=lambda: now,
+        upstream_marker_probe=marker_probe,
+    )
+    monkeypatch.setattr(
+        coordinator,
+        "_current_pointer",
+        lambda source: {"run_id": "run-old"} if source == "hextech" else {},
+    )
+    coordinator.schedule_store.save(
+        RefreshScheduleV1(
+            updated_at=now.isoformat(),
+            sources={
+                source: RefreshSourceState(
+                    next_due_at=(now + timedelta(hours=1)).isoformat(),
+                    state="backoff" if source == "hextech" else "ready",
+                )
+                for source in SCHEDULE_SOURCES
+            },
+        )
+    )
+
+    result = coordinator.refresh()
+
+    assert result["reason_code"] == "not_stale"
+    assert probe_calls == 0

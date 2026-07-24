@@ -243,6 +243,39 @@ def test_privacy_off_never_carries_combo_stats(monkeypatch: pytest.MonkeyPatch) 
     assert model.augment_slots[0]["stats"] == {}
 
 
+def test_privacy_off_has_priority_over_snapshot_and_context_gaps(monkeypatch: pytest.MonkeyPatch) -> None:
+    vision = VisionSelection(
+        session_id="s1",  # type: ignore[arg-type]
+        epoch=VisionEpoch(1),
+        observed_at=2,
+        scene_state=VisionSceneState.ACTIVE,
+        slots=(VisionSlot(0, VisionSlotState.READY, AugmentId("stable_ready")),),
+    )
+    policy = RecommendationPolicy(private_stats_enabled=False)
+    ready_context = GameContext(
+        session_id="s1", observed_at=1, local_champion_id=ChampionId("24")
+    )  # type: ignore[arg-type]
+    original_status = DataSnapshotView.status
+    monkeypatch.setattr(
+        DataSnapshotView,
+        "status",
+        lambda view: {**original_status(view), "state": "unavailable"},
+    )
+
+    unavailable_snapshot = RecommendationService().build(ready_context, _snapshot_view(), vision=vision, policy=policy)
+
+    monkeypatch.undo()
+    missing_context = RecommendationService().build(
+        GameContext(session_id="s1", observed_at=1),  # type: ignore[arg-type]
+        _snapshot_view(),
+        vision=vision,
+        policy=policy,
+    )
+
+    assert unavailable_snapshot.augment_slots[0]["status_code"] == "PRIVACY_OFF"
+    assert missing_context.augment_slots[0]["status_code"] == "PRIVACY_OFF"
+
+
 def test_degraded_snapshot_does_not_lower_unavailable_context_health() -> None:
     context = GameContext(
         session_id="s1",  # type: ignore[arg-type]

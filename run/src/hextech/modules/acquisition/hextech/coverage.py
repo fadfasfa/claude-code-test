@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
@@ -205,11 +206,14 @@ def validate_hextech_coverage_report(
         raise HextechCoverageError(f"Hextech Catalog 投影覆盖相对 last-good 下降：{catalog_delta:.1%}")
     per_hero_delta = delta.get("per_hero_metadata_coverage_ratio") if isinstance(delta, Mapping) else {}
     if isinstance(per_hero_delta, Mapping):
-        regressed = [
-            hero_id for hero_id, value in per_hero_delta.items()
-            if _coverage_value({"value": value}, "value") is not None
-            and float(value) < -MAX_COVERAGE_REGRESSION
-        ]
+        regressed: list[str] = []
+        for hero_id, value in per_hero_delta.items():
+            try:
+                hero_delta = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(hero_delta) and hero_delta < -MAX_COVERAGE_REGRESSION:
+                regressed.append(str(hero_id))
         if regressed:
             raise HextechCoverageError(f"Hextech 英雄覆盖相对 last-good 下降：{sorted(regressed)}")
 

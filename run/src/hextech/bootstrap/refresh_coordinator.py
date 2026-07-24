@@ -360,24 +360,26 @@ class CohortRefreshCoordinator:
         return dict(coverage) if isinstance(coverage, Mapping) else {}
 
     def _probe_hextech_upstream_change(self, pointer: Mapping[str, Any]) -> tuple[bool, dict[str, Any]]:
-        """使用已有刷新循环做轻量 marker 检查，变更才强制生成候选代。"""
+        """仅以稳定上游版本加速候选；日期继续保留为诊断信息。"""
 
         if self._upstream_marker_probe is None or not pointer:
             return False, {}
         try:
             marker = dict(self._upstream_marker_probe() or {})
         except Exception:
-            # probe 是加速刷新，不应覆盖既有 4 小时门禁或把瞬时网络错误升级为失败。
+            # probe 只负责加速刷新，网络瞬断不能升级为 source 失败。
             return False, {}
         version = str(marker.get("version") or "").strip()
         date = str(marker.get("date") or "").strip()
         if not version and not date:
             return False, {}
+        # updated_at / Last-Modified 可能随 CDN 响应变化；只把稳定版本作为提前刷新信号。
+        if not version:
+            return False, {"version": version, "date": date}
         coverage = self._source_coverage("hextech", pointer)
         upstream = coverage.get("upstream") if isinstance(coverage.get("upstream"), Mapping) else {}
         previous_version = str(upstream.get("version") or "").strip()
-        previous_date = str(upstream.get("date") or "").strip()
-        changed = (bool(version) and version != previous_version) or (bool(date) and date != previous_date)
+        changed = version != previous_version
         return changed, {"version": version, "date": date}
 
     def _worker_command(self, source: str, work: Path, catalog_pointer: Path | None, *, force: bool) -> list[str]:
@@ -529,7 +531,8 @@ class CohortRefreshCoordinator:
         due = {source: self._due(source, states[source], current[source], force=force) for source in SCHEDULE_SOURCES}
         upstream_changed = False
         upstream_marker: dict[str, Any] = {}
-        if not force and not due["hextech"]:
+        # 候选失败后的 backoff 必须优先于 marker 加速，避免相同版本反复全量抓取。
+        if not force and not due["hextech"] and states["hextech"].state != "backoff":
             upstream_changed, upstream_marker = self._probe_hextech_upstream_change(current["hextech"])
             if upstream_changed:
                 due["hextech"] = True
@@ -693,11 +696,8 @@ class CohortRefreshCoordinator:
                     "manifest_sha256": manifest_sha,
                     "record_count": record_count,
                     "data_status": "data_stale" if source in degraded_sources else "fresh",
-                    "data_reason": (
-                        str((failures.get(source) or {}).get("error") or "candidate_rejected_last_good_preserved")
-                        if source in degraded_sources
-                        else ""
-                    ),
+                    # UI 只消费稳定诊断码；原始 worker 错误仍保留在本轮 source 诊断中。
+                    "data_reason": "candidate_rejected_last_good_preserved" if source in degraded_sources else "",
                     "coverage": self._source_coverage(source, target),
                 }
             manifest = self.publisher.publish(
