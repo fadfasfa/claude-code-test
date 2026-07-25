@@ -14,6 +14,7 @@ _FACADE_MODULE_NAMES = (
     "hextech.infrastructure.vision.sidecar_scene_geometry",
     "hextech.infrastructure.vision.sidecar_fingerprints",
     "hextech.infrastructure.vision.sidecar_matching",
+    "hextech.infrastructure.vision.sidecar_batch",
     "hextech.infrastructure.vision.sidecar_detection",
     "hextech.infrastructure.vision.sidecar_event_loop",
     "hextech.infrastructure.vision.sidecar_capture",

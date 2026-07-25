@@ -43,9 +43,9 @@ flowchart LR
 ## 来源门禁
 
 Hextech 以当前已验证的 Catalog contribution 为确定全集；首次安装可读取
-`resources/catalog` seed。每个英雄按 CDN JSON、静态详情页、必要时普通 browser fallback 取数；首轮成功项不重抓，失败项进入低并发尾部重试。缺英雄、串英雄、重复海克斯、字段类型或总行数异常都会使整次 run 失败。
+`resources/catalog` seed。每个英雄只通过现有 CDN JSON 和静态 HTTP 详情链路取数；首轮成功项不重抓，失败项进入低并发尾部重试。缺英雄、串英雄、重复海克斯、字段类型或总行数异常都会使整次 run 失败。不接入 browser、stealth、登录态或新的第三方来源。
 
-Apex 由稳定 slug map 直接构造英雄详情 URL。结果必须是 `has_synergy`、有页面身份和明确空态证据的 `confirmed_empty`，或带 `FailureKind` 的失败；未知空结果不能发布。
+Apex 由稳定 slug map 直接构造英雄详情 URL。提取层分别返回结构化结果和有限错误诊断，合法空结果必须继续进入页面分类；结果只能是 `has_synergy`、有页面身份和明确空态证据的 `confirmed_empty`，或带 `FailureKind` 的失败。解析异常和未知空结果不能发布，Apex/Mayhem 只通过同一 cohort 原子晋升。
 
 Mayhem 优先解析 manifest JSON，HTML 仅为结构化 fallback。reject 带稳定原因码和有限样本；空结果、规模回退或 reject 比例越界都保留 last-good。
 
@@ -63,7 +63,15 @@ DataService 同时只运行一个 refresh cycle。运行中收到的普通触发
 `pending_recheck`，force 触发会升级该 recheck；当前周期结束后立即重新计算到期状态。
 shutdown 会拒绝新触发并清除 pending，不启动后续 worker。
 
+存在可用 current generation 时，对局期间的自动刷新和普通手动刷新统一延后；活动 worker 在检测到游戏开始后协作取消。对局结束 30 秒后只恢复一次合并请求，冷启动无 snapshot 时仍允许刷新。延后状态不等同于 stale 或失败，不进入 backoff。
+
 Overlay 在有效的 `session_id + selection_epoch` 首次渲染时固定 immutable view。同一轮中
 current 变化只记录 `new_generation_available`，下一 epoch、新 session 或本轮隐藏后才采用新代。
+
+Vision 使用 FP16 存储矩阵与进程内 FP32 计算镜像的双层结构；Sidecar 启动阶段预热镜像，单帧按四个识别通道批量投影三槽。稳定槽采用 strong/medium/weak 证据分级、首次确认与替换双门槛以及滞回保持：weak 不授权展示，替换已有结果至少需要连续三帧。鼠标只冻结 `cursor_over_slots` 指定的槽，同帧多槽变化只产生一个 selection revision。Host 立即绘制已就绪的部分结果，并严格区分识别、身份、来源、当前英雄、上下文和 snapshot 六类缺失原因。
+
+generation 构建先生成 Hextech hints，再用 Catalog 补全最终身份集，最后把当前 generation 的 Apex/Mayhem 联动按名称、规范化名称和 alias 投影到 hint。Catalog-only 海克斯可携带联动，但不会获得伪造统计。发布前验证联动投影覆盖和 last-good 回退；Overlay 数字行只读取 Hextech freshness，Apex/Mayhem freshness 仅影响联动区域，聚合 health 不再污染行级文案。
+
+会话报告、latest、20 条轮转和 diagnostic 截图由有界单线程写入器异步处理，Tk 主线程只入队。默认不截图。事件、Sidecar、Host 和报告都携带 manifest v3 的 `build_id`，Desktop 会显示构建身份并报告组件不一致。完整运行与验收规则见 [overlay-runtime.md](overlay-runtime.md)。
 
 源码态 supervisor 子进程显式继承 `src` import path；冻结态复用同一可执行文件的模式参数。所有运行日志写入 `var/logs`，诊断写入 `var/reports`。

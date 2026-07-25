@@ -91,6 +91,12 @@ def _format_game_overlay_host_reason(reason: str) -> str:
 def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tuple[str, str]:
     """把 Supervisor overlay 组件状态压成游戏内显示的二级状态短句。"""
 
+    build_id = str(overlay.get("build_id") or "").strip()
+    build_suffix = f" / 构建 {build_id[:18]}" if build_id else ""
+
+    def result(text: str, color: str) -> tuple[str, str]:
+        return (text + build_suffix, color)
+
     status = str(overlay.get("status") or "").strip()
     phase = str(overlay.get("phase") or "").strip()
     cache_status = str(overlay.get("cache_status") or "").strip()
@@ -111,43 +117,45 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
     )
     last_error = str(overlay.get("last_error") or "").strip()
     if status == "error":
-        return (f"游戏内显示异常: {last_error or phase or '未知错误'}", UI_COLORS["error"])
+        return result(f"游戏内显示异常: {last_error or phase or '未知错误'}", UI_COLORS["error"])
     if status == "stale":
-        return (f"游戏内显示: 识别进程失效 / {sidecar_reason or '等待自动恢复'}", UI_COLORS["warn"])
+        return result(f"游戏内显示: 识别进程失效 / {sidecar_reason or '等待自动恢复'}", UI_COLORS["warn"])
     if status == "stopping":
-        return ("游戏内显示: 正在关闭", UI_COLORS["warn"])
+        return result("游戏内显示: 正在关闭", UI_COLORS["warn"])
     if status == "stopped":
         if cache_status in {"queued", "prewarming", "lookup", "building"}:
-            return ("游戏内显示: 海克斯卡识别模板预热中", UI_COLORS["warn"])
+            return result("游戏内显示: 海克斯卡识别模板预热中", UI_COLORS["warn"])
         if cache_status == "ready":
-            return ("游戏内显示: 识别模板已预热", UI_COLORS["muted"])
-        return ("游戏内显示: 已关闭", UI_COLORS["muted"])
+            return result("游戏内显示: 识别模板已预热", UI_COLORS["muted"])
+        return result("游戏内显示: 已关闭", UI_COLORS["muted"])
     if status == "starting":
         if phase == "vision_prewarming":
-            return ("游戏内显示: 窗口已就绪 / 海克斯卡识别模板预热中", UI_COLORS["warn"])
+            return result("游戏内显示: 窗口已就绪 / 海克斯卡识别模板预热中", UI_COLORS["warn"])
         if phase in {"prepare_data", "context_start"}:
-            return ("游戏内显示: 正在准备数据", UI_COLORS["warn"])
+            return result("游戏内显示: 正在准备数据", UI_COLORS["warn"])
         if phase == "sidecar_start":
-            return ("游戏内显示: 正在启动识别", UI_COLORS["warn"])
+            return result("游戏内显示: 正在启动识别", UI_COLORS["warn"])
         if phase == "host_start":
-            return ("游戏内显示: 正在启动窗口", UI_COLORS["warn"])
-        return ("游戏内显示: 正在启动", UI_COLORS["warn"])
+            return result("游戏内显示: 正在启动窗口", UI_COLORS["warn"])
+        return result("游戏内显示: 正在启动", UI_COLORS["warn"])
     if status == "running":
         reason = _format_game_overlay_host_reason(visible_reason) if visible_reason else "等待选择窗口"
         if sidecar_state in {"stale", "failed"}:
-            return (f"游戏内显示: 识别进程失效 / {sidecar_reason or '等待自动恢复'}", UI_COLORS["warn"])
+            return result(f"游戏内显示: 识别进程失效 / {sidecar_reason or '等待自动恢复'}", UI_COLORS["warn"])
+        if bool(overlay.get("build_mismatch")):
+            return result("游戏内显示: 构建身份不一致 / 请重新部署", UI_COLORS["error"])
         if functional_status == "failed":
-            return (f"游戏内显示异常: {functional_reason or 'Host 功能不可用'}", UI_COLORS["error"])
+            return result(f"游戏内显示异常: {functional_reason or 'Host 功能不可用'}", UI_COLORS["error"])
         if context_status == "context_missing":
-            return (f"游戏内显示: {reason} / 等待当前英雄", UI_COLORS["warn"])
+            return result(f"游戏内显示: {reason} / 等待当前英雄", UI_COLORS["warn"])
         if functional_status == "degraded":
-            return (f"游戏内显示: {reason} / {functional_reason or '功能降级'}", UI_COLORS["warn"])
+            return result(f"游戏内显示: {reason} / {functional_reason or '功能降级'}", UI_COLORS["warn"])
         if context_status == "degraded":
-            return (f"游戏内显示: {reason} / 上下文降级", UI_COLORS["warn"])
+            return result(f"游戏内显示: {reason} / 上下文降级", UI_COLORS["warn"])
         if cache_status in {"queued", "prewarming", "lookup", "building"}:
-            return (f"游戏内显示: {reason} / 海克斯卡识别模板预热中", UI_COLORS["warn"])
-        return (f"游戏内显示: {reason} / 识别已就绪", UI_COLORS["green"])
-    return ("游戏内显示: 等待 Supervisor 状态", UI_COLORS["warn"])
+            return result(f"游戏内显示: {reason} / 海克斯卡识别模板预热中", UI_COLORS["warn"])
+        return result(f"游戏内显示: {reason} / 识别已就绪", UI_COLORS["green"])
+    return result("游戏内显示: 等待 Supervisor 状态", UI_COLORS["warn"])
 
 logger = logging.getLogger(__name__)
 

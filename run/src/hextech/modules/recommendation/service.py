@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,56 @@ class RecommendationPolicy:
     private_stats_enabled: bool = True
 
 
+def _source_status(status: Mapping[str, Any], source: str) -> Mapping[str, Any] | None:
+    sources = status.get("source_status")
+    value = sources.get(source) if isinstance(sources, Mapping) else None
+    return value if isinstance(value, Mapping) else None
+
+
+def _hextech_data_state(status: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+    """返回行级状态；旧 generation 才回退到聚合 health。"""
+
+    source = _source_status(status, "hextech")
+    if source is None:
+        degraded = str(status.get("state") or "") == "degraded"
+        return (
+            "degraded" if degraded else "ready",
+            "GENERATION_DEGRADED" if degraded else "READY",
+            "unknown",
+            "",
+            str(status.get("reason") or ""),
+        )
+    freshness = str(source.get("freshness") or "unknown")
+    data_status = str(source.get("data_status") or "unknown")
+    # 只有来源明确 fresh 才允许显示正常行；带 source_status 却仍是 unknown 的
+    # generation 不能冒充新数据，旧 generation 缺整个字段时才走上面的聚合回退。
+    degraded = freshness != "fresh" or data_status == "data_stale"
+    return (
+        "degraded" if degraded else "ready",
+        "GENERATION_DEGRADED" if degraded else "READY",
+        freshness,
+        str(source.get("run_id") or ""),
+        str(source.get("data_reason") or ""),
+    )
+
+
+def _synergy_data_state(status: Mapping[str, Any]) -> tuple[str, str]:
+    sources = [_source_status(status, source) for source in ("apex", "mayhem")]
+    available = [source for source in sources if source is not None]
+    if not available:
+        return ("unknown", "")
+    degraded = any(
+        str(source.get("freshness") or "unknown") == "last_good"
+        or str(source.get("data_status") or "unknown") == "data_stale"
+        for source in available
+    )
+    reason = next(
+        (str(source.get("data_reason") or "") for source in available if source.get("data_reason")),
+        "",
+    )
+    return ("degraded" if degraded else "ready", reason)
+
+
 class RecommendationService:
     def build(
         self,
@@ -33,6 +84,10 @@ class RecommendationService:
         policy: RecommendationPolicy = RecommendationPolicy(),
     ) -> RecommendationModel:
         status = snapshot.status()
+        hextech_data_status, hextech_status_code, hextech_freshness, hextech_run_id, hextech_reason = (
+            _hextech_data_state(status)
+        )
+        synergy_data_status, synergy_data_reason = _synergy_data_state(status)
         generation_id = GenerationId(str(status.get("generation_id") or ""))
         source_order = {
             str(item.get("id") or ""): index
@@ -86,6 +141,10 @@ class RecommendationService:
                     "data_reason": "",
                     "status_code": "",
                     "stats": {},
+                    "source_freshness": hextech_freshness,
+                    "source_run_id": hextech_run_id,
+                    "synergy_data_status": synergy_data_status,
+                    "synergy_data_reason": synergy_data_reason,
                 }
                 private_stats_enabled = policy.private_stats_enabled
                 lookup_keys = tuple(
@@ -159,8 +218,9 @@ class RecommendationService:
                             row["data_reason"] = "source_stat_missing"
                             row["status_code"] = "SOURCE_STAT_MISSING"
                     else:
-                        row["data_status"] = "degraded" if status.get("state") == "degraded" else "ready"
-                        row["status_code"] = "GENERATION_DEGRADED" if status.get("state") == "degraded" else "READY"
+                        row["data_status"] = hextech_data_status
+                        row["data_reason"] = hextech_reason if hextech_data_status == "degraded" else ""
+                        row["status_code"] = hextech_status_code
                 else:
                     row["data_status"] = "unavailable"
                     row["data_reason"] = "identity_unresolved"

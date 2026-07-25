@@ -1,6 +1,9 @@
 """Vision sidecar matching 职责模块。"""
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass
+
 from hextech.infrastructure.vision.sidecar_common import (
     Any,
     DEFAULT_MIN_MARGIN,
@@ -33,6 +36,35 @@ from hextech.infrastructure.vision.sidecar_fingerprints import (
     _text_levels,
     _text_mask_levels,
 )
+
+
+class VisionComputeMemoryError(RuntimeError):
+    """FP32 热计算镜像无法建立；调用方必须显式报告 Sidecar 失败。"""
+
+
+@dataclass(frozen=True)
+class _ComputeRankMatrices:
+    """仅驻留 Sidecar 进程内的连续 FP32 计算镜像。"""
+
+    index_ref: Sequence[TemplateEntry]
+    icon_matrix: np.ndarray
+    name_matrix: np.ndarray
+    alt_name_matrix: np.ndarray
+    observed_name_matrix: np.ndarray
+    warmup_seconds: float
+
+    @property
+    def nbytes(self) -> int:
+        return int(
+            self.icon_matrix.nbytes
+            + self.name_matrix.nbytes
+            + self.alt_name_matrix.nbytes
+            + self.observed_name_matrix.nbytes
+        )
+
+
+_COMPUTE_MATRIX_CACHE: dict[int, _ComputeRankMatrices] = {}
+_COMPUTE_MATRIX_CACHE_MAX = _RANK_MATRIX_CACHE_MAX
 
 def _fingerprint_row(value: object) -> np.ndarray | None:
     """把构建期输入即时压入连续 float16 行，不保留 Python float tuple。"""
@@ -131,6 +163,59 @@ def _rank_matrices(template_index: Sequence[TemplateEntry]) -> _RankMatrices:
     return entry
 
 
+def prepare_compute_rank_matrices(template_index: Sequence[TemplateEntry]) -> dict[str, Any]:
+    """启动阶段一次性建立 FP32 镜像，热路径不得再提升完整矩阵。"""
+
+    attached = getattr(template_index, "compute_rank_matrices", None)
+    if isinstance(attached, _ComputeRankMatrices) and attached.index_ref is template_index:
+        return {
+            "compute_profile": "float32_batched",
+            "compute_matrix_bytes": attached.nbytes,
+            "compute_warmup_seconds": round(attached.warmup_seconds, 6),
+        }
+    storage = _rank_matrices(template_index)
+    started_at = time.perf_counter()
+    try:
+        compute = _ComputeRankMatrices(
+            index_ref=template_index,
+            icon_matrix=np.ascontiguousarray(storage.icon_matrix, dtype=np.float32),
+            name_matrix=np.ascontiguousarray(storage.name_matrix, dtype=np.float32),
+            alt_name_matrix=np.ascontiguousarray(storage.alt_name_matrix, dtype=np.float32),
+            observed_name_matrix=np.ascontiguousarray(storage.observed_name_matrix, dtype=np.float32),
+            warmup_seconds=0.0,
+        )
+    except MemoryError as exc:
+        raise VisionComputeMemoryError("vision_compute_memory_unavailable") from exc
+    object.__setattr__(compute, "warmup_seconds", max(0.0, time.perf_counter() - started_at))
+    try:
+        setattr(template_index, "compute_rank_matrices", compute)
+    except (AttributeError, TypeError):
+        pass
+    key = id(template_index)
+    if key not in _COMPUTE_MATRIX_CACHE and len(_COMPUTE_MATRIX_CACHE) >= _COMPUTE_MATRIX_CACHE_MAX:
+        _COMPUTE_MATRIX_CACHE.pop(next(iter(_COMPUTE_MATRIX_CACHE)))
+    _COMPUTE_MATRIX_CACHE[key] = compute
+    return {
+        "compute_profile": "float32_batched",
+        "compute_matrix_bytes": compute.nbytes,
+        "compute_warmup_seconds": round(compute.warmup_seconds, 6),
+    }
+
+
+def _compute_matrices(template_index: Sequence[TemplateEntry]) -> _ComputeRankMatrices:
+    attached = getattr(template_index, "compute_rank_matrices", None)
+    if not isinstance(attached, _ComputeRankMatrices):
+        attached = _COMPUTE_MATRIX_CACHE.get(id(template_index))
+    if not isinstance(attached, _ComputeRankMatrices) or attached.index_ref is not template_index:
+        prepare_compute_rank_matrices(template_index)
+        attached = getattr(template_index, "compute_rank_matrices", None)
+        if not isinstance(attached, _ComputeRankMatrices):
+            attached = _COMPUTE_MATRIX_CACHE.get(id(template_index))
+    if not isinstance(attached, _ComputeRankMatrices):
+        raise VisionComputeMemoryError("vision_compute_memory_unavailable")
+    return attached
+
+
 def _rank_with_matrix(
     crop_fingerprint: Sequence[float],
     templates: Sequence[TemplateEntry],
@@ -140,7 +225,7 @@ def _rank_with_matrix(
 
     if not templates or matrix.size == 0:
         return []
-    # 矩阵以 float16 常驻以控制内存；乘法累积必须提升到 float32，避免相近模板失去区分度。
+    # 调用方只传启动时建立的 FP32 镜像；这里转换小向量，不得转换完整模板矩阵。
     vec = np.ascontiguousarray(np.asarray(crop_fingerprint, dtype=np.float32))
     if vec.shape[0] != matrix.shape[1]:
         return []
@@ -149,6 +234,40 @@ def _rank_with_matrix(
     # argsort 升序取负 = 置信度降序；stable 保持模板原顺序，与旧 sorted(reverse=True) 对齐。
     order = np.argsort(-confidence, kind="stable")
     return [(templates[int(i)], float(confidence[int(i)])) for i in order]
+
+
+def _rank_batch_with_matrix(
+    crop_fingerprints: Sequence[Sequence[float] | np.ndarray | None],
+    templates: Sequence[TemplateEntry],
+    matrix: np.ndarray,
+) -> list[list[tuple[TemplateEntry, float]]]:
+    """同一通道一次矩阵乘法完成多个槽位/变体排名。"""
+
+    results: list[list[tuple[TemplateEntry, float]]] = [[] for _ in crop_fingerprints]
+    if not templates or matrix.size == 0:
+        return results
+    valid_indices: list[int] = []
+    vectors: list[np.ndarray] = []
+    for index, fingerprint in enumerate(crop_fingerprints):
+        if fingerprint is None:
+            continue
+        vector = np.ascontiguousarray(np.asarray(fingerprint, dtype=np.float32))
+        if vector.ndim != 1 or vector.shape[0] != matrix.shape[1]:
+            continue
+        valid_indices.append(index)
+        vectors.append(vector)
+    if not vectors:
+        return results
+    stacked = np.ascontiguousarray(np.stack(vectors), dtype=np.float32)
+    correlations = (matrix @ stacked.T) / float(matrix.shape[1])
+    confidence = np.clip((correlations + 1.0) / 2.0, 0.0, 1.0)
+    for column, result_index in enumerate(valid_indices):
+        scores = confidence[:, column]
+        order = np.argsort(-scores, kind="stable")
+        results[result_index] = [
+            (templates[int(row)], float(scores[int(row)])) for row in order
+        ]
+    return results
 
 
 def _rank_templates(
@@ -163,12 +282,13 @@ def _rank_templates(
     if not crop_fingerprints:
         return crop_std, []
     matrices = _rank_matrices(template_index)
+    compute = _compute_matrices(template_index)
     best_by_identity: dict[str, tuple[TemplateEntry, float]] = {}
     for crop_fingerprint in crop_fingerprints:
         for template, confidence in _rank_with_matrix(
             crop_fingerprint,
             matrices.icon_templates,
-            matrices.icon_matrix,
+            compute.icon_matrix,
         ):
             identity = template.augment_id or template.name
             previous = best_by_identity.get(identity)
@@ -205,14 +325,15 @@ def _rank_name_fingerprint(
     """同一名称 ROI 只分割一次，再分别投影到 SimHei / SimSun 模板矩阵。"""
 
     matrices = _rank_matrices(template_index)
+    compute = _compute_matrices(template_index)
     if family == "alt":
         ranked = _rank_with_matrix(
             crop_fingerprint,
             matrices.alt_name_templates,
-            matrices.alt_name_matrix,
+            compute.alt_name_matrix,
         )
     else:
-        ranked = _rank_with_matrix(crop_fingerprint, matrices.name_templates, matrices.name_matrix)
+        ranked = _rank_with_matrix(crop_fingerprint, matrices.name_templates, compute.name_matrix)
     # 文字只识别卡名。同名视觉版本若按 augment_id 分开参与排序，会把完全相同的
     # 文字模板当作 runner-up，错误压低 margin。
     best_by_identity: dict[str, tuple[TemplateEntry, float]] = {}
@@ -231,10 +352,11 @@ def _rank_observed_name_fingerprint(
     """只匹配脱敏真机卡名样本；与图标 shortlist 完全独立。"""
 
     matrices = _rank_matrices(template_index)
+    compute = _compute_matrices(template_index)
     ranked = _rank_with_matrix(
         crop_fingerprint,
         matrices.observed_name_templates,
-        matrices.observed_name_matrix,
+        compute.observed_name_matrix,
     )
     best_by_identity: dict[str, tuple[TemplateEntry, float]] = {}
     for template, confidence in ranked:
@@ -419,6 +541,7 @@ def _detect_slot(
     min_margin: float = DEFAULT_MIN_MARGIN,
     min_text_confidence: float = DEFAULT_TEXT_MIN_CONFIDENCE,
     min_text_margin: float = DEFAULT_TEXT_MIN_MARGIN,
+    precomputed: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """单槽位双通道识别：图标指纹匹配 + SimHei/SimSun 双字体文字匹配。
 
@@ -428,22 +551,30 @@ def _detect_slot(
     3. 图标短名单：用图标通道 Top-N 缩窄文字候选空间
     4. 三通道结果汇入 channels 字典，供 matcher.candidate_from_slot 做最终判定
     """
-    crop_std, ranked = _rank_templates(frame.crop(box), template_index)
-    name_levels = (
-        _text_mask_levels(name_mask, NAME_FINGERPRINT_SIZE)
-        if name_mask is not None
-        else (_text_levels(frame.crop(name_box)) if name_box is not None else [])
-    )
-    name_crop_std = _levels_std(name_levels)
-    name_fingerprint = _normalized_fingerprint(name_levels)
-    if name_fingerprint is None:
-        name_ranked: list[tuple[TemplateEntry, float]] = []
-        alt_name_ranked: list[tuple[TemplateEntry, float]] = []
-        observed_name_ranked: list[tuple[TemplateEntry, float]] = []
+    if isinstance(precomputed, Mapping):
+        crop_std = float(precomputed.get("crop_std") or 0.0)
+        ranked = list(precomputed.get("icon_ranked") or [])
+        name_crop_std = float(precomputed.get("name_crop_std") or 0.0)
+        name_ranked = list(precomputed.get("name_ranked") or [])
+        alt_name_ranked = list(precomputed.get("alt_name_ranked") or [])
+        observed_name_ranked = list(precomputed.get("observed_name_ranked") or [])
     else:
-        name_ranked = _rank_name_fingerprint(name_fingerprint, template_index, family="primary")
-        alt_name_ranked = _rank_name_fingerprint(name_fingerprint, template_index, family="alt")
-        observed_name_ranked = _rank_observed_name_fingerprint(name_fingerprint, template_index)
+        crop_std, ranked = _rank_templates(frame.crop(box), template_index)
+        name_levels = (
+            _text_mask_levels(name_mask, NAME_FINGERPRINT_SIZE)
+            if name_mask is not None
+            else (_text_levels(frame.crop(name_box)) if name_box is not None else [])
+        )
+        name_crop_std = _levels_std(name_levels)
+        name_fingerprint = _normalized_fingerprint(name_levels)
+        if name_fingerprint is None:
+            name_ranked = []
+            alt_name_ranked = []
+            observed_name_ranked = []
+        else:
+            name_ranked = _rank_name_fingerprint(name_fingerprint, template_index, family="primary")
+            alt_name_ranked = _rank_name_fingerprint(name_fingerprint, template_index, family="alt")
+            observed_name_ranked = _rank_observed_name_fingerprint(name_fingerprint, template_index)
     alt_name_crop_std = name_crop_std
     icon_template, icon_confidence = ranked[0] if ranked else (None, 0.0)
     name_template, name_confidence = name_ranked[0] if name_ranked else (None, 0.0)
@@ -621,6 +752,19 @@ def _detect_slot(
         summary="候选区分度不足",
     )
 
+
+def _dedupe_ranked(
+    ranked: Sequence[tuple[TemplateEntry, float]],
+    *,
+    by_name: bool,
+) -> list[tuple[TemplateEntry, float]]:
+    best: dict[str, tuple[TemplateEntry, float]] = {}
+    for template, confidence in ranked:
+        identity = normalize_augment_id(template.name) if by_name else (template.augment_id or template.name)
+        previous = best.get(identity)
+        if previous is None or confidence > previous[1]:
+            best[identity] = (template, confidence)
+    return sorted(best.values(), key=lambda item: (-item[1], -item[0].priority, item[0].name))
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

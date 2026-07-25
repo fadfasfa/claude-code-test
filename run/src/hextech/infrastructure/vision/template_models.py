@@ -108,11 +108,14 @@ class TemplateEntry:
 
 
 class TemplateIndex(list[TemplateEntry]):
-    """模板元数据列表，并强持有与其同一索引空间的矩阵。"""
+    """模板元数据列表，并强持有与其同一索引空间的存储/计算矩阵。"""
 
     def __init__(self, entries: Sequence[TemplateEntry] = ()) -> None:
         super().__init__(entries)
         self.rank_matrices: _RankMatrices | None = None
+        # FP32 计算镜像由 sidecar 启动阶段构建；这里使用 object 避免模型层反向
+        # 依赖具体匹配实现，同时确保热路径与模板索引生命周期一致。
+        self.compute_rank_matrices: object | None = None
 
 
 @dataclass(frozen=True)

@@ -229,6 +229,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
             with (
                 mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
                 mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
+                mock.patch.object(runner, "_prepare_compute_runtime"),
                 mock.patch.object(sidecar, "_set_dpi_awareness"),
                 mock.patch.object(sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 1920, 1080))),
                 mock.patch.object(sidecar, "_is_lol_game_foreground", return_value=True),

@@ -218,7 +218,14 @@ def _extract_champion_entries(
     champion: ChampionInfo,
     resource: FetchedResource,
 ) -> tuple[list[SynergyEntry], dict[str, list[SynergyEntry]]]:
-    synergy_map = extractor.extract([resource])
+    diagnostic_extract = getattr(extractor, "extract_with_diagnostics", None)
+    if callable(diagnostic_extract):
+        synergy_map, parse_errors = diagnostic_extract([resource])
+        if parse_errors:
+            raise ValueError(f"联动解析异常；errors={';'.join(parse_errors)}")
+    else:
+        # 兼容测试替身及旧扩展实现；旧接口抛出的异常仍按 schema failure 处理。
+        synergy_map = extractor.extract([resource])
     entries = _find_entries_for_champion(champion, synergy_map)
     if not entries:
         entries = [entry for values in synergy_map.values() for entry in values]
@@ -456,6 +463,9 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
         "synergy_entry_count": 0,
         "archived_filtered_count": 0,
         "archived_filter_samples": [],
+        "page_state": "failed",
+        "page_evidence": "",
+        "page_identity_verified": False,
         "error": "",
     }
     try:
@@ -488,11 +498,9 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
                 champion_lookup=build_champion_lookup(core_info),
                 augment_name_map=build_augment_name_map_from_static(),
             )
-            try:
-                synergy_map = extractor.extract([resource])
-            except Exception as exc:
-                result["error"] = f"schema_changed:{_safe_exception_label(exc)}"
-                synergy_map = {}
+            synergy_map, parse_errors = extractor.extract_with_diagnostics([resource])
+            if parse_errors:
+                result["error"] = f"schema_changed:{';'.join(parse_errors)}"
             for candidate in (normalize_slug(champion_slug), normalize_name(champion_slug)):
                 if candidate and candidate in synergy_map:
                     entries = synergy_map[candidate]
@@ -502,10 +510,25 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
             result["synergy_entry_count"] = len(entries)
             result["archived_filtered_count"] = extractor.archived_filtered_count
             result["archived_filter_samples"] = extractor.archived_filter_samples
+            page = classify_apex_page(
+                html,
+                expected_slug=champion_slug,
+                entry_count=len(entries),
+                status_code=resource.status_code,
+            )
+            result["page_state"] = page.state.value
+            result["page_evidence"] = page.evidence
+            result["page_identity_verified"] = page.state is not ApexPageState.FAILED
+            if page.state is ApexPageState.FAILED and not result["error"]:
+                result["error"] = page.failure_kind.value if page.failure_kind else "schema_changed"
 
         synergy_payload = [_entry_to_report_item(entry) for entry in entries]
         _atomic_write_json(out_dir / "synergy_vi.json", synergy_payload)
-        if result["synergy_entry_count"] == 0 and not result["error"]:
+        if (
+            result["synergy_entry_count"] == 0
+            and result["page_state"] != ApexPageState.CONFIRMED_EMPTY.value
+            and not result["error"]
+        ):
             if result["cf_blocked"]:
                 result["error"] = "cloudflare_block"
             elif not html:

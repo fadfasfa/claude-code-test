@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import unicodedata
 from collections.abc import Sequence
-from typing import Any, Literal, Protocol, TypedDict
+from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
 from hextech.modules.vision.layout import pick_card_panels
 
@@ -67,6 +67,7 @@ StatStatusCode = Literal[
 ]
 SynergyStatusCode = Literal[
     "READY",
+    "SYNERGY_DEGRADED",
     "NO_MATCH",
     "CONTEXT_MISSING",
     "SOURCE_UNAVAILABLE",
@@ -95,6 +96,8 @@ class SynergyPanelModel(TypedDict):
     rating: str
     tag: str
     content: str
+    data_status: NotRequired[SynergyStatusCode]
+    status_text: NotRequired[str]
 
 
 class OverlayRenderModel(TypedDict):
@@ -354,7 +357,7 @@ def _resolve_synergy_text_layout(
         header_parts.append(row["rating"])
     header = _ellipsize_visual(" · ".join(header_parts), max_width=text_width, font_size=title_size)
     meta = _ellipsize_visual(
-        " · ".join(part for part in (row["hero_name"], row["tag"]) if part),
+        " · ".join(part for part in (row["hero_name"], row["tag"], row.get("status_text", "")) if part),
         max_width=text_width,
         font_size=body_size,
     )
@@ -517,7 +520,13 @@ def _draw_compact_synergy_panel(
     font_size = _clamp(10, width * 0.032, 14)
     summary = " · ".join(
         part
-        for part in (row["hero_name"], row["rating"], row["tag"], row["content"])
+        for part in (
+            row["hero_name"],
+            row["rating"],
+            row["tag"],
+            row.get("status_text", ""),
+            row["content"],
+        )
         if _clean_text(part)
     )
     summary = _ellipsize_visual(summary, max_width=max(40, width - pad * 2), font_size=font_size)

@@ -165,6 +165,8 @@ def iter_package_data_entries(
     packaged_files = report["packaged_files"]
     seed_prefix = SEED_DIR.as_posix() + "/"
     for rel_path in packaged_files:
+        if verified_snapshot_root is not None and rel_path.startswith(seed_prefix):
+            continue
         source = base_dir / rel_path
         if rel_path.startswith(seed_prefix):
             seed_relative = Path(rel_path).relative_to(SEED_DIR)
@@ -175,6 +177,23 @@ def iter_package_data_entries(
             if _sha256(source) != expected_hash:
                 raise ValueError(f"verified seed 与 manifest SHA-256 不一致：{seed_relative.as_posix()}")
         entries.append(PackageData(source, Path(rel_path).parent.as_posix()))
+
+    if verified_snapshot_root is not None:
+        try:
+            bundle_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"bundle manifest 无法读取：{manifest_path}") from exc
+        expected_hashes = bundle_manifest.get("seed_sha256") if isinstance(bundle_manifest, dict) else None
+        if not isinstance(expected_hashes, dict):
+            raise ValueError("bundle manifest 缺少 verified seed 哈希")
+        verified_files = iter_seed_files(seed_root)
+        bundled_names = [(SEED_DIR / path.relative_to(seed_root)).as_posix() for path in verified_files]
+        if set(bundled_names) != set(str(key) for key in expected_hashes):
+            raise ValueError("verified seed 文件集与 bundle manifest 不一致")
+        for source, bundled_name in zip(verified_files, bundled_names):
+            if _sha256(source) != str(expected_hashes[bundled_name]):
+                raise ValueError(f"verified seed 与 bundle manifest SHA-256 不一致：{bundled_name}")
+            entries.append(PackageData(source, Path(bundled_name).parent.as_posix()))
 
     entries.append(PackageData(base_dir / MANIFEST_RELATIVE_PATH, RESOURCE_ROOT_DIR.as_posix()))
     entries.append(PackageData(manifest_path, "."))

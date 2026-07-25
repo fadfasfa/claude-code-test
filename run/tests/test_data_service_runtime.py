@@ -14,6 +14,10 @@ from hextech.bootstrap.data_service_runtime import (
     build_snapshot_from_runtime,
 )
 from hextech.contracts import SourceProvenance
+from hextech.modules.recommendation.hints import (
+    enrich_overlay_hint_cache_with_catalog,
+    enrich_overlay_hint_cache_with_synergy,
+)
 
 
 def _provenance(marker: str, *, source: str = "hextech", role: str = "stats") -> SourceProvenance:
@@ -41,6 +45,73 @@ def _complete_provenance(marker: str) -> tuple[SourceProvenance, ...]:
             ("mayhem", "combos"),
         )
     )
+
+
+def test_brand_synergy_projects_all_known_names_and_catalog_only_hint() -> None:
+    """复仇焰魂的 11 条方案必须附着到最终 hint，而不是停在 generation 原始数据。"""
+
+    names = ["虚幻武器", "你肩上的恶魔", *[f"联动海克斯{i}" for i in range(1, 13)]]
+    cache = {
+        "schema_version": 1,
+        "source": {"private_policy_stats_enabled": True},
+        "hints": {
+            "100": {
+                "augment_id": "100",
+                "name": "虚幻武器",
+                "stats_by_champion_id": {"63": {"winrate": 0.55, "pickrate": 0.12}},
+            }
+        },
+        "name_index": {"虚幻武器": "100"},
+    }
+    catalog = [
+        {"augment_name_id": "illusory_weapons", "name": "虚幻武器", "tier": "Gold"},
+        {"augment_name_id": "devil_on_your_shoulder", "name": "你肩上的恶魔", "tier": "Prismatic"},
+        *[
+            {"augment_name_id": f"synergy_{index}", "name": name, "tier": "Gold"}
+            for index, name in enumerate(names[2:], start=1)
+        ],
+    ]
+    enrich_overlay_hint_cache_with_catalog(cache, catalog)
+    items = [
+        {
+            "augment_names": names[index : index + 2],
+            "rating": "S" if index == 0 else "A",
+            "content": f"复仇焰魂方案 {index + 1}",
+        }
+        for index in range(0, 11)
+    ]
+    # 保证测试口径与真机证据一致：11 条方案、14 个唯一名称。
+    items[-1]["augment_names"] = names[10:]
+
+    report = enrich_overlay_hint_cache_with_synergy(
+        cache,
+        {"63": {"name": "复仇焰魂", "synergy_items": items}},
+    )
+
+    assert report["hero_count"] == 1
+    assert report["item_count"] == 11
+    assert report["unique_augment_name_count"] == 14
+    assert report["catalog_resolvable_name_count"] == 14
+    assert report["projected_name_count"] == 14
+    assert report["projection_coverage"] == 1.0
+    virtual = cache["hints"][cache["name_index"]["虚幻武器"]]
+    shoulder = cache["hints"][cache["name_index"]["你肩上的恶魔"]]
+    assert virtual["synergies"][0]["hero_id"] == "63"
+    assert shoulder["synergies"][0]["hero_name"] == "复仇焰魂"
+    assert not shoulder.get("stats_by_champion_id")
+    assert report["catalog_only_hints_with_synergy_count"] >= 1
+
+
+def test_synergy_projection_rejects_empty_or_unresolvable_input() -> None:
+    cache = {"hints": {"known": {"augment_id": "known", "name": "已知"}}, "name_index": {"已知": "known"}}
+
+    with pytest.raises(ValueError, match="输入为空"):
+        enrich_overlay_hint_cache_with_synergy(cache, {"63": {"synergy_items": []}})
+    with pytest.raises(ValueError, match="没有可关联 Catalog"):
+        enrich_overlay_hint_cache_with_synergy(
+            cache,
+            {"63": {"name": "复仇焰魂", "synergy_items": [{"augment_names": ["污染名称"]}]}},
+        )
 
 def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from types import SimpleNamespace
@@ -73,7 +144,17 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
     dataframe.to_csv(csv_path, index=False, encoding="utf-8-sig")
     synergy_path = tmp_path / "synergy.json"
     synergy_path.write_text(
-        json.dumps({"266": {"synergy_items": [{"content": "同代联动"}]}}, ensure_ascii=False),
+        json.dumps(
+            {
+                "266": {
+                    "name": "暗裔剑魔",
+                    "synergy_items": [
+                        {"augment_names": ["测试强化"], "rating": "S", "content": "同代联动"}
+                    ],
+                }
+            },
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     mayhem_path = tmp_path / "mayhem.json"
@@ -170,6 +251,9 @@ def test_runtime_builder_preserves_real_csv_ids_stats_and_synergy(tmp_path: Path
     assert detail["augments"][0]["id"] == "1322"
     assert detail["augments"][0]["海克斯胜率"] == pytest.approx(0.61)
     assert detail["synergy"]["synergy_items"][0]["content"] == "同代联动"
+    hint = build.payloads["overlay_hints"]["hints"]["1322"]
+    assert hint["synergies"][0]["hero_id"] == "266"
+    assert build.payloads["overlay_hints"]["source"]["synergy_projection"]["projection_coverage"] == 1.0
     assert [source.record_count for source in build.source_files] == [1, 1, 1, 1, 1, 1]
 
 

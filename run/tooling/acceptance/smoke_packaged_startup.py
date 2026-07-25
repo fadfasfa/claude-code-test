@@ -22,6 +22,14 @@ import urllib.parse
 import urllib.request
 
 
+RUN_DIR = Path(__file__).resolve().parents[2]
+if str(RUN_DIR) not in sys.path:
+    # package.py 以脚本路径启动 smoke；显式补 run 根，避免依赖调用方 cwd。
+    sys.path.insert(0, str(RUN_DIR))
+
+from tooling.build.manifest import BUNDLE_MANIFEST_SCHEMA_VERSION, RUNTIME_CONTRACT_VERSIONS  # noqa: E402
+
+
 REQUIRED_PACKAGE_DIRS = (
     "resources/catalog",
     "resources/assets",
@@ -58,6 +66,23 @@ SMOKE_FEATURE_FLAGS = {
 
 class SmokeFailure(RuntimeError):
     pass
+
+
+def _validate_bundle_contract(package_dir: Path) -> dict[str, object]:
+    """启动前验证 v3 构建身份，旧包不得通过新 smoke。"""
+
+    manifest_path = _packaged_data_root(package_dir) / "bundle_manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SmokeFailure(f"bundle manifest 无法读取：{exc}") from exc
+    if not isinstance(payload, dict) or int(payload.get("schema_version") or 0) != BUNDLE_MANIFEST_SCHEMA_VERSION:
+        raise SmokeFailure("bundle manifest 必须为 v3")
+    if not str(payload.get("build_id") or "").strip():
+        raise SmokeFailure("bundle manifest 缺少 build_id")
+    if payload.get("runtime_contracts") != RUNTIME_CONTRACT_VERSIONS:
+        raise SmokeFailure("bundle manifest 运行契约不匹配")
+    return payload
 
 
 def _latest_package(dist_dir: Path) -> Path:
@@ -307,9 +332,16 @@ def _overlay_self_check(exe: Path, package_dir: Path, env: dict[str, str]) -> di
         "context_contract_ok",
         "visibility_contract_ok",
         "lcu_scanner_configured",
+        "overlay_event_contract_ok",
+        "sidecar_status_contract_ok",
+        "session_report_contract_ok",
     )
     if completed.returncode != 0 or not isinstance(payload, dict) or not all(payload.get(key) is True for key in required):
         raise SmokeFailure(f"Overlay self-check 失败：code={completed.returncode} payload={payload}")
+    if payload.get("runtime_contracts") != RUNTIME_CONTRACT_VERSIONS:
+        raise SmokeFailure(f"Overlay self-check 运行契约不匹配：{payload.get('runtime_contracts')}")
+    if str(payload.get("build_id") or "") != str(env.get("HEXTECH_EXPECTED_BUILD_ID") or payload.get("build_id") or ""):
+        raise SmokeFailure("Overlay self-check build_id 与候选不一致")
     return payload
 
 
@@ -407,6 +439,7 @@ def _terminate_process_tree(proc: subprocess.Popen[bytes]) -> None:
 
 
 def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
+    bundle_manifest = _validate_bundle_contract(package_dir)
     exe = _find_exe(package_dir)
     launcher = _find_launcher(package_dir)
     stdout_path = package_dir / "smoke_startup_stdout.log"
@@ -417,6 +450,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
     child_env["APPDATA"] = str(appdata_root / "Roaming")
     child_env["PYTHONDONTWRITEBYTECODE"] = "1"
     child_env["HEXTECH_LAUNCHER_WAIT"] = "1"
+    child_env["HEXTECH_EXPECTED_BUILD_ID"] = str(bundle_manifest.get("build_id") or "")
     verified_snapshot_seeded = _has_verified_snapshot_seed(package_dir)
     if verified_snapshot_seeded:
         child_env["HEXTECH_DATA_SERVICE_SKIP_AUTO_REFRESH"] = "1"
@@ -463,6 +497,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
                         "ok": True,
                         "elapsed_seconds": round(elapsed, 2),
                         "package_dir": str(package_dir),
+                        "build_id": str(bundle_manifest.get("build_id") or ""),
                         "runtime_root": str(runtime_root),
                         "port": port,
                         "verified_snapshot_seeded": verified_snapshot_seeded,
@@ -480,6 +515,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
             "ok": False,
             "elapsed_seconds": round(time.monotonic() - overall_started_at, 2),
             "package_dir": str(package_dir),
+            "build_id": str(bundle_manifest.get("build_id") or ""),
             "runtime_root": str(runtime_root),
             "verified_snapshot_seeded": verified_snapshot_seeded,
             "overlay_self_check": overlay_self_check,

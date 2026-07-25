@@ -60,6 +60,7 @@ from hextech.interfaces.overlay.host_visibility import (
     decide_visibility,
 )
 from hextech.interfaces.overlay.renderer import build_render_model, build_render_model_from_session, draw_overlay_frame
+from hextech.interfaces.overlay.report_writer import OverlayReportWriter
 from hextech.interfaces.overlay.session_adapter import build_runtime_session
 from hextech.modules.data.overlay_source import (
     OverlayDataSource,
@@ -68,6 +69,9 @@ from hextech.modules.data.overlay_source import (
     source_has_private_stats,
 )
 from hextech.modules.vision.window import WindowProbeResult, is_scoreboard_key_down
+from hextech.modules.data.ports.paths import get_var_dir
+from hextech.modules.session import build_identity
+from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
 
 
 logger = logging.getLogger(__name__)
@@ -194,6 +198,7 @@ def _schedule_event_render(
         try:
             _drain_hotkey_requests(hotkey_queue, visibility)
             snapshot = source.read_event()
+            visibility["host_read_at"] = time.time()
             note_fast_event(snapshot)
             _refresh_target_window(root, config, visibility, snapshot)
             tab_down = is_scoreboard_key_down()
@@ -232,7 +237,9 @@ def _schedule_event_render(
                 success = True
                 return
             if bool(config.get("diagnostic_mode")) and not bool(visibility.get("render_full_overlay")):
+                visibility["draw_started_at"] = time.time()
                 _draw_diagnostic_status(canvas, str(visibility.get("visibility_reason") or ""), snapshot)
+                visibility["draw_completed_at"] = time.time()
                 visibility["last_presented_at"] = time.time()
                 _sync_event_visibility(
                     root,
@@ -257,7 +264,9 @@ def _schedule_event_render(
                     if visibility_reason == "waiting_gameflow"
                     else str(event_source.get("reason") or visibility_reason)
                 )
+                visibility["draw_started_at"] = time.time()
                 _draw_waiting_status(canvas, waiting_reason)
+                visibility["draw_completed_at"] = time.time()
                 visibility["last_presented_at"] = time.time()
                 _sync_event_visibility(
                     root,
@@ -294,6 +303,7 @@ def _schedule_event_render(
             visibility["context_gate_reason"] = gate_decision.reason
             visibility["context_revision"] = gate_decision.context_revision
             visibility["context_held"] = gate_decision.held
+            visibility["context_confirmed_at"] = time.time()
             effective_context = gate_decision.payload
             if snapshot_view is not None:
                 hint_cache = snapshot_view.get_overlay_hints()
@@ -317,12 +327,14 @@ def _schedule_event_render(
                 viewport_width=canvas.winfo_width(),
                 display_mode=str(visibility.get("display_mode") or "compact"),
             )
+            visibility["draw_started_at"] = time.time()
             draw_overlay_frame(
                 canvas,
                 model,
                 perf_sink=visibility,
                 **render_options,
             )
+            visibility["draw_completed_at"] = time.time()
             visibility["last_presented_at"] = time.time()
             if _snapshot_has_complete_ready_slots(snapshot):
                 visibility["last_ready_frame_at"] = visibility["last_presented_at"]
@@ -351,7 +363,6 @@ def _schedule_event_render(
                     diagnostic=bool(config.get("diagnostic_mode")),
                 )
             except Exception:
-                visibility.pop("evidence_attempt_key", None)
                 logger.warning("写入真实会话验收证据失败。", exc_info=True)
             success = True
         except Exception:
@@ -445,6 +456,12 @@ def run_overlay_host(*, diagnostic: bool = False) -> None:
         "tab_released_at": 0.0,
         "display_mode": str(config.get("default_display_mode") or "compact"),
     }
+    report_writer = OverlayReportWriter(
+        get_var_dir() / "reports" / "overlay_sessions",
+        Path(overlay_runtime_state_path("session_evidence")),
+    )
+    report_writer.start()
+    visibility["report_writer"] = report_writer
     hotkey_queue: "queue.Queue[str]" = queue.Queue()
     hotkey_controller: HotkeyController | None = None
     data_source = SharedOverlayDataSource()
@@ -474,6 +491,7 @@ def run_overlay_host(*, diagnostic: bool = False) -> None:
         _stop_hotkey_thread(hotkey_controller)
         window_target_poller.stop()
         gameflow_poller.stop()
+        report_writer.close(timeout=5.0)
 
 
 def run_self_check() -> dict[str, Any]:
@@ -569,6 +587,9 @@ def run_self_check() -> dict[str, Any]:
         "context_contract_ok": context_contract_ok,
         "visibility_contract_ok": visibility_contract_ok,
         "lcu_scanner_configured": scanner_configured,
+        "overlay_event_contract_ok": build_identity.OVERLAY_EVENT_SCHEMA_VERSION == 3,
+        "sidecar_status_contract_ok": build_identity.SIDECAR_STATUS_SCHEMA_VERSION == 2,
+        "session_report_contract_ok": build_identity.OVERLAY_SESSION_REPORT_SCHEMA_VERSION == 2,
     }
     try:
         state_age_ms = int(max(0.0, time.time() - float(snapshot.get("generated_at") or 0.0)) * 1000)
@@ -576,6 +597,8 @@ def run_self_check() -> dict[str, Any]:
         state_age_ms = None
     return {
         "ok": all(contract_checks.values()),
+        "build_id": build_identity.current_build_id(),
+        "runtime_contracts": dict(build_identity.RUNTIME_CONTRACT_VERSIONS),
         "title": config["title"],
         "process_health": {
             "host": "self-check-passed" if all(contract_checks.values()) else "self-check-failed",

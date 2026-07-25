@@ -32,7 +32,7 @@ from hextech.infrastructure.vision.sidecar_fingerprints import (
     _name_crop_has_residue,
     _name_text_mask,
 )
-from hextech.infrastructure.vision.sidecar_matching import _detect_slot
+from hextech.infrastructure.vision.sidecar_batch import _detect_slots
 from hextech.infrastructure.vision.sidecar_scene_geometry import _selection_button_source_fields, resolve_roi_preset
 
 def _slots_have_body_shard_keywords(slots: Sequence[Mapping[str, Any]]) -> bool:
@@ -203,18 +203,16 @@ def detect_overlay_choices(
         event["_raw_slots"] = []
         return event
 
-    slots = [
-        _detect_slot(
-            image,
-            box,
-            index,
-            template_index,
-            name_box=name_boxes[index] if index < len(name_boxes) else None,
-            name_mask=name_masks[index] if index < len(name_masks) else None,
-            min_confidence=min_confidence,
-        )
-        for index, box in enumerate(slot_boxes)
-    ]
+    slots, matching_timing = _detect_slots(
+        image,
+        slot_boxes,
+        template_index,
+        name_boxes=name_boxes,
+        name_masks=name_masks,
+        min_confidence=min_confidence,
+    )
+    common_source["matching_timing"] = matching_timing
+    common_source["compute_profile"] = "float32_batched"
     if _slots_have_body_shard_keywords(slots):
         event = build_overlay_event([], source_tag="vision-sidecar", selection_type="body_shard", active=False)
         event["source"].update(

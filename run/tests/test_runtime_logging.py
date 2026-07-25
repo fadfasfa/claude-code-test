@@ -95,6 +95,39 @@ def test_packaged_profile_skips_full_debug_jsonl(tmp_path, monkeypatch):
     _reset_hextech_logging()
 
 
+def test_packaged_summary_filters_scrapling_request_noise_but_keeps_aggregate(tmp_path, monkeypatch):
+    from hextech.infrastructure.observability import logging as log_utils
+
+    _reset_hextech_logging()
+    monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
+    log_utils.install_runtime_logging(profile="packaged")
+
+    logging.getLogger("scrapling.fetchers").info("200 GET https://example.invalid/item")
+    logging.getLogger("hextech.transport").info("[Scrapling] Fetched https://example.invalid/item")
+    logging.getLogger("hextech.sources.apex").info("Apex 来源结束：成功 172，失败 0")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+    summary = log_utils.get_runtime_log_paths()["summary"].read_text(encoding="utf-8")
+    assert "example.invalid" not in summary
+    assert "Apex 来源结束：成功 172，失败 0" in summary
+    _reset_hextech_logging()
+
+
+def test_dev_full_log_keeps_scrapling_request_for_diagnostics(tmp_path, monkeypatch):
+    from hextech.infrastructure.observability import logging as log_utils
+
+    _reset_hextech_logging()
+    monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
+    log_utils.install_runtime_logging(profile="dev")
+    logging.getLogger("scrapling.fetchers").info("200 GET https://example.invalid/item")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+    assert "example.invalid" in log_utils.get_runtime_log_paths()["full"].read_text(encoding="utf-8")
+    _reset_hextech_logging()
+
+
 def test_runtime_logging_install_is_idempotent(tmp_path, monkeypatch):
     from hextech.infrastructure.observability import logging as log_utils
 

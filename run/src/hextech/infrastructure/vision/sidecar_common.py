@@ -48,6 +48,7 @@ from hextech.modules.vision.layout import (
 from hextech.modules.vision.window import (  # noqa: F401
     configure_process_dpi_awareness,
     cursor_in_client_boxes,
+    get_cursor_screen_position,
     find_lol_game_window,
     is_left_mouse_button_down,
     is_scoreboard_key_down,

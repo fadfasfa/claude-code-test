@@ -224,9 +224,9 @@ def test_overlay_hint_cache_contract() -> None:
         index = overlay_hint_cache._load_synergy_by_augment_name(good_path)
         assert "珠光护手" in index and index["珠光护手"][0]["hero_name"] == "暗裔剑魔"
         with (
-            patch.object(overlay_hint_cache, "build_synergy_data_path", return_value=str(good_path)),
+            patch.object(runtime_store, "build_synergy_data_path", return_value=str(good_path)),
             patch.object(
-                overlay_hint_cache,
+                runtime_store,
                 "get_latest_synergy_snapshot_path",
                 side_effect=AssertionError("cleaned 默认路径可用时不应回退 raw latest"),
             ),

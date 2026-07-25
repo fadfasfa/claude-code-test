@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from hextech.modules.session.build_identity import current_build_id
+
 import psutil
 
 from hextech.modules.data.overlay_source import prepare_shared_overlay_data
@@ -253,6 +255,7 @@ class OverlayRuntimeManager:
             "heartbeat_at": heartbeat_at,
             "generation": str(payload.get("generation") or ""),
             "schema_version": schema_version,
+            "build_id": str(payload.get("build_id") or ""),
         }
 
     def _sidecar_is_reusable(self) -> bool:
@@ -307,15 +310,16 @@ class OverlayRuntimeManager:
         try:
             payload = json.loads(self._visibility_status_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            return {"visible_reason": "", "functional_status": "unknown", "functional_reason": ""}
+            return {"build_id": "", "visible_reason": "", "functional_status": "unknown", "functional_reason": ""}
         if not isinstance(payload, Mapping) or int(payload.get("schema_version") or 0) not in {1, 2}:
-            return {"visible_reason": "", "functional_status": "unknown", "functional_reason": "unknown_schema"}
+            return {"build_id": "", "visible_reason": "", "functional_status": "unknown", "functional_reason": "unknown_schema"}
         try:
             updated_at = float(payload.get("updated_at") or 0.0)
         except (TypeError, ValueError):
             updated_at = 0.0
         if updated_at <= 0.0 or time.time() - updated_at > OVERLAY_HOST_VISIBILITY_STALE_SECONDS:
             return {
+                "build_id": str(payload.get("build_id") or ""),
                 "visible_reason": "",
                 "functional_status": "failed" if self._process_running(self.host_process) else "unknown",
                 "functional_reason": "host_heartbeat_stale",
@@ -324,6 +328,7 @@ class OverlayRuntimeManager:
         decision: Mapping[str, Any] = raw_decision if isinstance(raw_decision, Mapping) else {}
         schema_version = int(payload.get("schema_version") or 1)
         return {
+            "build_id": str(payload.get("build_id") or ""),
             "visible_reason": str(decision.get("reason") or "").strip(),
             "functional_status": (
                 str(payload.get("functional_status") or "unknown").strip()
@@ -752,7 +757,22 @@ class OverlayRuntimeManager:
                     and startup_elapsed >= self.target_budget_seconds + OVERLAY_CONTINUATION_SECONDS
                 )
             )
+            expected_build_id = current_build_id()
+            host_build_id = str(visibility_health.get("build_id") or "")
+            sidecar_build_id = str(self._sidecar_liveness.get("build_id") or "")
+            observed_build_ids = [value for value in (host_build_id, sidecar_build_id) if value]
+            build_mismatch = bool(
+                any(value != expected_build_id for value in observed_build_ids)
+                or (host_build_id and sidecar_build_id and host_build_id != sidecar_build_id)
+            )
             return {
+                "build_id": expected_build_id,
+                "build_ids": {
+                    "expected": expected_build_id,
+                    "host": host_build_id,
+                    "sidecar": sidecar_build_id,
+                },
+                "build_mismatch": build_mismatch,
                 "desired_enabled": self.desired_enabled,
                 "status": self.status,
                 "phase": self.phase,

@@ -18,9 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from hextech.modules.data.catalog.runtime_store import (
-    build_synergy_data_path,
     build_runtime_cache_path,
-    get_latest_synergy_snapshot_path,
 )
 from hextech.modules.data.ports.atomic import atomic_write_json
 
@@ -112,7 +110,9 @@ def _load_synergy_by_augment_name(
 
     target = Path(snapshot_path) if snapshot_path else None
     if target is None:
-        for resolver in (build_synergy_data_path, get_latest_synergy_snapshot_path):
+        from hextech.modules.data.catalog import runtime_store
+
+        for resolver in (runtime_store.build_synergy_data_path, runtime_store.get_latest_synergy_snapshot_path):
             resolved = resolver()
             if resolved:
                 target = Path(resolved)
@@ -405,6 +405,19 @@ def enrich_overlay_hint_cache_with_catalog(
         if isinstance(entry, Mapping)
     }
     return _merge_display_only_catalog_hints(cache_payload, catalog_lookup)
+
+
+def enrich_overlay_hint_cache_with_synergy(
+    cache_payload: dict[str, Any],
+    synergy_payload: Mapping[str, Any],
+    *,
+    previous_report: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """延迟加载投影实现，避免 hint 构建与 generation 查询形成导入环。"""
+
+    from .synergy_projection import project_generation_synergy
+
+    return project_generation_synergy(cache_payload, synergy_payload, previous_report=previous_report)
 
 
 def _build_hint(

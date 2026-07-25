@@ -7,7 +7,6 @@ refresh 与私用统计切换共用一把锁，避免旧 refresh 在稍后覆盖
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import queue
@@ -39,25 +38,15 @@ from hextech.bootstrap.snapshot_contributions import (
     open_baseline_view as _open_baseline_view,
     validated_source_artifact as _validated_source_artifact,
 )
-
 @dataclass(frozen=True)
 class DataBuildResult:
     """一次构建的完整消费者数据与可审计来源摘要。"""
 
     payloads: Mapping[str, Any]
     source_files: tuple[SourceProvenance, ...] = ()
-
 SnapshotBuilder = Callable[[], DataBuildResult]
 SeedPreparer = Callable[[], bool]
 RefreshAction = Callable[[bool], Mapping[str, Any]]
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file_obj:
-        for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
 def _query_payloads_from_dataframe(dataframe) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """从已清洗 CSV 直接构造查询 DTO，避免冷启动重建大型兼容缓存。"""
 
@@ -219,7 +208,11 @@ def build_snapshot_from_runtime(
 
     from hextech.modules.data.catalog.runtime_store import load_runtime_csv
     from hextech.modules.data.catalog.version_catalog import load_augment_manifest_entries, load_champion_core_data
-    from hextech.modules.recommendation.hints import build_overlay_hint_cache, enrich_overlay_hint_cache_with_catalog
+    from hextech.modules.recommendation.hints import (
+        build_overlay_hint_cache,
+        enrich_overlay_hint_cache_with_catalog,
+        enrich_overlay_hint_cache_with_synergy,
+    )
 
     from hextech.modules.data.catalog.versioned import load_active_catalog, load_runtime_catalog_from_pointer
     from hextech.modules.data.source_runs import load_source_current
@@ -358,11 +351,20 @@ def build_snapshot_from_runtime(
         champion_hextech,
         include_private_stats=True,
         source_tag="data-service",
+        synergy_by_name={},
         champion_id_by_name=champion_id_by_name,
     )
     catalog_entries = load_augment_manifest_entries(catalog.root)
     augment_identities = _build_augment_identity_payload(overlay_hints, catalog_entries)
     enrich_overlay_hint_cache_with_catalog(overlay_hints, catalog_entries)
+    from hextech.modules.recommendation.synergy_projection import load_previous_synergy_projection_report
+
+    previous_projection = load_previous_synergy_projection_report()
+    enrich_overlay_hint_cache_with_synergy(
+        overlay_hints,
+        synergy_data,
+        previous_report=previous_projection,
+    )
     identities = {
         "champions": {champion["id"]: champion["name"] for champion in champions},
         **augment_identities,
@@ -771,12 +773,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         flush=True,
     )
-    skip_auto_refresh = os.getenv("HEXTECH_DATA_SERVICE_SKIP_AUTO_REFRESH", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    skip_auto_refresh = os.getenv("HEXTECH_DATA_SERVICE_SKIP_AUTO_REFRESH", "").strip().lower() in {"1", "true", "yes", "on"}
     if not skip_auto_refresh:
         application.submit_action("refresh", {"force": args.force_initial_refresh})
     next_refresh_at = time.monotonic() + 15 * 60
@@ -784,6 +781,8 @@ def main(argv: list[str] | None = None) -> int:
         while not application.shutdown_requested.wait(0.5):
             if args.parent_pid and not psutil.pid_exists(args.parent_pid):
                 break
+            if (resumed_force := coordinator.poll_deferred_refresh()) is not None:
+                application.submit_action("refresh", {"force": resumed_force, "resumed_after_game": True})
             if time.monotonic() >= next_refresh_at:
                 application.submit_action("refresh")
                 next_refresh_at = time.monotonic() + 15 * 60

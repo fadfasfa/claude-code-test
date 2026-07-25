@@ -23,8 +23,13 @@ from hextech.modules.data.overlay_source import SharedOverlayDataSource
 from hextech.infrastructure.vision.state import SelectionTracker
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.vision.window import game_window_identity
+from hextech.modules.session.build_identity import current_build_id
 
 from hextech.infrastructure.vision.template_runtime import load_or_build_default_template_runtime
+from hextech.infrastructure.vision.sidecar_matching import (
+    VisionComputeMemoryError,
+    prepare_compute_rank_matrices,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,16 +72,19 @@ def _mutable_string_key_mapping(value: object) -> dict[str, Any]:
 def _write_sidecar_status(status: str, **fields: Any) -> None:
     """写入 sidecar 分阶段状态；失败只影响诊断，不阻断识别循环。"""
 
-    payload = {
+    generation = str(fields.get("generation") or os.environ.get(SIDECAR_GENERATION_ENV) or "")
+    payload = dict(fields)
+    # cache/runtime 诊断可能也带 schema_version；进程契约字段最后写入，禁止被覆盖。
+    payload.update({
         "schema_version": 2,
+        "build_id": current_build_id(),
         "status": status,
         "pid": os.getpid(),
         "pid_started_at": SIDECAR_PID_STARTED_AT,
         "heartbeat_at": time.time(),
-        "generation": str(os.environ.get(SIDECAR_GENERATION_ENV) or ""),
+        "generation": generation,
         "updated_at": time.time(),
-    }
-    payload.update(fields)
+    })
     try:
         atomic_write_json(SIDECAR_STATUS_FILE, payload, ensure_ascii=False, indent=2)
     except OSError:
@@ -100,6 +108,7 @@ def _write_sidecar_bootstrap_from_env(state: str, **fields: Any) -> None:
         return
     payload = {
         "schema_version": 1,
+        "build_id": current_build_id(),
         "state": str(state),
         "phase": str(fields.pop("phase", state) or state),
         "pid": os.getpid(),
@@ -130,6 +139,9 @@ def _write_sidecar_ready_from_env(
         template_count=int(template_count),
         startup_seconds=startup_seconds,
         startup_profile=profile,
+        compute_profile=str(profile.get("compute_profile") or ""),
+        compute_matrix_bytes=int(profile.get("compute_matrix_bytes") or 0),
+        compute_warmup_seconds=float(profile.get("compute_warmup_seconds") or 0.0),
     )
     _write_sidecar_bootstrap_from_env(
         "ready",
@@ -160,6 +172,28 @@ def _sidecar_exit_requested() -> bool:
     if not exit_path:
         return False
     return Path(exit_path).exists()
+
+
+def _prepare_compute_runtime(runtime: Any) -> None:
+    """ready 前建立 FP32 热计算镜像；内存失败必须显式终止 Sidecar。"""
+
+    _write_sidecar_status("starting", phase="compute_matrix_warmup")
+    try:
+        profile = prepare_compute_rank_matrices(runtime.template_index)
+    except VisionComputeMemoryError:
+        _write_sidecar_status(
+            "failed",
+            phase="compute_matrix_warmup",
+            error_code="vision_compute_memory_unavailable",
+        )
+        _write_sidecar_bootstrap_from_env(
+            "failed",
+            phase="compute_matrix_warmup",
+            error_code="vision_compute_memory_unavailable",
+        )
+        raise
+    if isinstance(runtime.stats, dict):
+        runtime.stats.update(profile)
 
 
 def run_once(
@@ -193,6 +227,14 @@ def run_once(
         ),
     )
     template_index = runtime.template_index
+    try:
+        _prepare_compute_runtime(runtime)
+    except VisionComputeMemoryError:
+        event = build_overlay_event([], source_tag="vision-sidecar", selection_type="hextech", active=False)
+        event["source"].update({"reason": "vision_compute_memory_unavailable"})
+        if write_event:
+            write_overlay_event(vision_sidecar._public_event_payload(event), event_path)
+        return event
     tracker = SelectionTracker(scene_enter_frames=max(1, int(required_frames)))
     if not template_index:
         event = build_overlay_event([], source_tag="vision-sidecar", selection_type="hextech", active=False)
@@ -225,6 +267,7 @@ def run_once(
             vision_sidecar.write_vision_trace_if_changed(event, vision_sidecar._vision_trace_path_for_event(event_path))
         except OSError:
             logger.debug("写入 Vision trace 失败。", exc_info=True)
+    _write_sidecar_status("stopped", phase="once_complete")
     return event
 
 
@@ -263,6 +306,16 @@ def run_loop(
         ),
     )
     template_index = runtime.template_index
+    try:
+        _prepare_compute_runtime(runtime)
+    except VisionComputeMemoryError:
+        event = vision_sidecar._build_loop_inactive_event(
+            "vision_compute_memory_unavailable",
+            poll_mode="idle",
+        )
+        if write_event:
+            write_overlay_event(vision_sidecar._public_event_payload(event), event_path)
+        return event
     trace_path = vision_sidecar._vision_trace_path_for_event(event_path)
     tracker = SelectionTracker(scene_enter_frames=max(1, int(required_frames)))
 
@@ -310,6 +363,12 @@ def run_loop(
                 phase="loop",
                 poll_mode=poll_mode,
                 event_generation_id=str(source.get("generation_id") or ""),
+                compute_profile=str(source.get("compute_profile") or "float32_batched"),
+                compute_matrix_bytes=int(runtime.stats.get("compute_matrix_bytes") or 0),
+                compute_warmup_seconds=float(runtime.stats.get("compute_warmup_seconds") or 0.0),
+                matching_timing=source.get("matching_timing")
+                if isinstance(source.get("matching_timing"), Mapping)
+                else {},
             )
             last_status_heartbeat_at = now
         if write_event and vision_sidecar.should_write_loop_event(
@@ -452,7 +511,9 @@ def run_loop(
             continue
         tab_was_down = False
 
+        capture_started_at = time.time()
         frame = vision_sidecar._capture_lol_game_rect(rect)
+        captured_at = time.time()
         if frame is None:
             event = attach_window_observation(tracker.block("capture_unavailable"), hwnd=hwnd, rect=rect)
         else:
@@ -483,11 +544,12 @@ def run_loop(
                     "dpi_scale": vision_sidecar._window_dpi_scale(hwnd),
                 }
             )
-            raw_source["cursor_over_cards"] = vision_sidecar._cursor_over_card_panels(
+            raw_source["cursor_over_slots"] = vision_sidecar._cursor_over_card_slots(
                 rect,
                 frame.size,
                 raw_source,
             )
+            raw_source["cursor_over_cards"] = bool(raw_source["cursor_over_slots"])
             left_mouse_down = vision_sidecar.is_left_mouse_button_down()
             raw_source["selection_click"] = bool(
                 left_mouse_down
@@ -497,8 +559,19 @@ def run_loop(
             left_mouse_was_down = left_mouse_down
             raw_event["source"] = raw_source
             event = tracker.update(raw_event)
+            recognition_completed_at = time.time()
             attach_window_observation(event, hwnd=hwnd, rect=rect, capture_size=frame.size)
             maybe_dump(frame, event)
+
+        timing = event.get("timing") if isinstance(event.get("timing"), Mapping) else {}
+        event["timing"] = {
+            **{str(key): value for key, value in timing.items()},
+            "capture_started_at": capture_started_at,
+            "captured_at": captured_at,
+            "recognition_completed_at": (
+                recognition_completed_at if frame is not None else captured_at
+            ),
+        }
 
         poll_mode, sleep_seconds = foreground_sleep_seconds(
             event,

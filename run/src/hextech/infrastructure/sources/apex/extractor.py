@@ -54,8 +54,20 @@ class SynergyExtractor:
             })
 
     def extract(self, resources: Iterable[FetchedResource]) -> dict[str, list[SynergyEntry]]:
+        results, errors = self.extract_with_diagnostics(resources)
+        if results:
+            return results
+
+        raise ValueError("联动解析结果为空" + (f"；errors={';'.join(errors[:6])}" if errors else ""))
+
+    def extract_with_diagnostics(
+        self,
+        resources: Iterable[FetchedResource],
+    ) -> tuple[dict[str, list[SynergyEntry]], tuple[str, ...]]:
+        """返回解析结果与有限错误，让详情页合法空态继续由页面契约判断。"""
+
         results: dict[str, list[SynergyEntry]] = {}
-        errors = []
+        errors: list[str] = []
         for resource in resources:
             try:
                 for entry in self._extract_from_resource(resource):
@@ -64,10 +76,8 @@ class SynergyExtractor:
                 errors.append(f"{Path(urlparse(resource.url).path).name or resource.url}:{_safe_exception_label(exc)}")
                 logger.debug("资源解析失败：%s", _sanitize_url_for_log(resource.url), exc_info=True)
 
-        if results:
-            return self._dedupe_entries(results)
-
-        raise ValueError("联动解析结果为空" + (f"；errors={';'.join(errors[:6])}" if errors else ""))
+        normalized = self._dedupe_entries(results) if results else {}
+        return normalized, tuple(errors[:6])
 
     def _extract_from_resource(self, resource: FetchedResource) -> list[SynergyEntry]:
         text = resource.text or ""

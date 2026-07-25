@@ -21,6 +21,8 @@ from pathlib import Path
 import psutil
 from filelock import FileLock, Timeout
 
+from tooling.build.manifest import BUNDLE_MANIFEST_SCHEMA_VERSION, RUNTIME_CONTRACT_VERSIONS
+
 
 APP_EXE_NAME = "Hextech伴生终端.exe"
 APP_LAUNCHER_NAME = "启动 Hextech.bat"
@@ -50,6 +52,7 @@ class DeploymentResult:
     shortcut_path: Path | None
     removed_shortcuts: tuple[Path, ...]
     restarted: bool
+    build_id: str
 
 
 def default_install_dir() -> Path:
@@ -112,8 +115,12 @@ def validate_package_dir(package_dir: Path) -> Path:
         manifest = json.loads((root / "_internal" / "bundle_manifest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise DeploymentError(f"bundle manifest 无法读取：{exc}") from exc
-    if not isinstance(manifest, dict) or int(manifest.get("schema_version") or 0) < 2:
+    if not isinstance(manifest, dict) or int(manifest.get("schema_version") or 0) != BUNDLE_MANIFEST_SCHEMA_VERSION:
         raise DeploymentError("bundle manifest schema 无效")
+    if not str(manifest.get("build_id") or "").strip():
+        raise DeploymentError("bundle manifest 缺少 build_id")
+    if manifest.get("runtime_contracts") != RUNTIME_CONTRACT_VERSIONS:
+        raise DeploymentError("bundle manifest 运行契约不匹配")
     return root
 
 
@@ -481,6 +488,9 @@ def deploy_release(
                 shortcut_path=resolved_shortcut,
                 removed_shortcuts=removed_shortcuts,
                 restarted=was_running,
+                build_id=str(
+                    json.loads((target / "_internal" / "bundle_manifest.json").read_text(encoding="utf-8"))["build_id"]
+                ),
             )
     except Timeout as exc:
         raise DeploymentError(f"已有部署任务持有锁：{lock_file}") from exc

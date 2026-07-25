@@ -513,8 +513,11 @@ def _build_visibility_status_payload(
         functional_status, failure_reason = "degraded", "context_unavailable"
     else:
         functional_status, failure_reason = "ready", ""
+    from hextech.modules.session.build_identity import current_build_id
+
     return {
         "schema_version": 2,
+        "build_id": current_build_id(),
         "updated_at": float(now),
         "functional_status": functional_status,
         "functional_reason": failure_reason,
@@ -565,6 +568,8 @@ def _build_visibility_status_payload(
             "last_presented_at": float(visibility.get("last_presented_at") or 0.0),
             "last_ready_frame_at": float(visibility.get("last_ready_frame_at") or 0.0),
             "consecutive_failures": render_failures,
+            "report_queue_depth": int(visibility.get("report_queue_depth") or 0),
+            "report_dropped_count": int(visibility.get("report_dropped_count") or 0),
         },
     }
 

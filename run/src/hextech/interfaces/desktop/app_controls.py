@@ -757,7 +757,14 @@ class DesktopControlsMixin:
                 elif watchdog_action == "error":
                     sidecar_text = "识别异常"
                 color = UI_COLORS["green"] if bool(host_visibility.get("visible")) or event_active else UI_COLORS["warn"]
-                self._set_overlay_status_summary(f"游戏内显示: {reason} / {sidecar_text}", color)
+                build_id = str(
+                    host_visibility.get("build_id") or event.get("build_id") or sidecar.get("build_id") or ""
+                ).strip()
+                build_suffix = f" / 构建 {build_id[:18]}" if build_id else ""
+                self._set_overlay_status_summary(
+                    f"游戏内显示: {reason} / {sidecar_text}{build_suffix}",
+                    color,
+                )
         except Exception:
             logger.debug("读取游戏内 overlay 状态失败。", exc_info=True)
         finally:
