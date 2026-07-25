@@ -178,10 +178,9 @@ def test_v2_evidence_rejects_render_signature_or_revision_mismatch(tmp_path: Pat
         verify_real_session_evidence(path, expected_generation_id="g1")
 
 
-def test_real_session_capture_waits_two_ticks_and_cancels_changed_signature(tmp_path: Path, monkeypatch) -> None:
-    from PIL import Image
-
+def test_real_session_capture_waits_two_ticks_and_avoids_tk_io(tmp_path: Path) -> None:
     from hextech.interfaces.overlay import host_sync
+    from hextech.interfaces.overlay.report_writer import OverlayReportWriter
 
     class FakeRoot:
         def __init__(self) -> None:
@@ -242,26 +241,26 @@ def test_real_session_capture_waits_two_ticks_and_cancels_changed_signature(tmp_
         },
     }
     evidence_dir = tmp_path / "session_evidence"
-    monkeypatch.setattr(host_sync, "overlay_runtime_state_path", lambda _name: evidence_dir)
-    monkeypatch.setattr("PIL.ImageGrab.grab", lambda **_kwargs: Image.new("RGB", (800, 500), "black"))
     root = FakeRoot()
-    visibility: dict[str, object] = {"window_visible": True}
+    writer = OverlayReportWriter(tmp_path / "reports", evidence_dir)
+    writer.start()
+    visibility: dict[str, object] = {"window_visible": True, "report_writer": writer}
 
-    host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
-    assert root.callbacks == []
-    host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
-    assert [delay for delay, _callback in root.callbacks] == [100]
+    try:
+        host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
+        assert not evidence_dir.exists()
+        host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
+        assert root.callbacks == []
+        assert writer.wait_empty(timeout=2.0)
+        assert list(evidence_dir.glob("overlay-s1-e2-r1-c1-*.v2.json"))
+        assert not list(evidence_dir.glob("*.png"))
+    finally:
+        writer.close()
 
-    visibility["current_render_signature"] = "changed-before-capture"
-    root.callbacks.pop()[1]()  # type: ignore[operator]
-    assert not evidence_dir.exists()
-    assert "evidence_attempt_key" not in visibility
 
-
-def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: Path, monkeypatch) -> None:
-    from PIL import Image
-
+def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: Path) -> None:
     from hextech.interfaces.overlay import host_sync
+    from hextech.interfaces.overlay.report_writer import OverlayReportWriter
 
     class FakeRoot:
         def __init__(self) -> None:
@@ -287,10 +286,10 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
             return 500
 
     evidence_dir = tmp_path / "session_evidence"
-    monkeypatch.setattr(host_sync, "overlay_runtime_state_path", lambda _name: evidence_dir)
-    monkeypatch.setattr("PIL.ImageGrab.grab", lambda **_kwargs: Image.new("RGB", (800, 500), "black"))
     root = FakeRoot()
-    visibility: dict[str, object] = {"window_visible": True}
+    writer = OverlayReportWriter(tmp_path / "reports", evidence_dir)
+    writer.start()
+    visibility: dict[str, object] = {"window_visible": True, "report_writer": writer}
     snapshot = {
         "slots": [
             {
@@ -362,7 +361,8 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
         model = {"stats": rows, "synergies": []}
         host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
         host_sync._write_real_session_evidence(root, state, snapshot, model, visibility)
-        root.callbacks.pop()()  # type: ignore[operator]
+        assert root.callbacks == []
+        assert writer.wait_empty(timeout=2.0)
 
     first = list(evidence_dir.glob("overlay-s1-e2-r1-c1-*.v2.json"))
     context_changed = list(evidence_dir.glob("overlay-s1-e2-r1-c2-*.v2.json"))
@@ -380,6 +380,7 @@ def test_real_session_capture_writes_each_revision_and_updates_latest(tmp_path: 
         ],
         "margin": 0.12,
     }
+    writer.close()
     assert set(latest["render"]["event_slots"][0]["channels"]) == {
         "text",
         "text_alt",

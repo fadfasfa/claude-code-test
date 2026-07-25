@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 from support.vision_events import ready_slot as _ready_slot
+from support.vision_events import medium_slot as _medium_slot
 from support.vision_events import selection_event as _selection_event
 from support.vision_events import weak_slot as _weak_slot
 
@@ -55,7 +56,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(failed["slots"][2]["candidate_identity"], "候选_x")
         self.assertGreaterEqual(failed["slots"][2]["elapsed_seconds"], 3.0)
 
-    def test_strong_reroll_withdraws_old_slot_until_replacement_is_stable(self):
+    def test_strong_reroll_keeps_old_slot_until_replacement_is_stable(self):
         from hextech.infrastructure.vision import state
 
         tracker = state.SelectionTracker(scene_enter_frames=1)
@@ -73,6 +74,7 @@ class OverlayVisionStateTests(unittest.TestCase):
             + [14.1] * 3
             + [14.2] * 3
             + [14.3] * 3
+            + [14.4] * 3
         )
 
         with mock.patch.object(state.time, "monotonic", side_effect=timeline):
@@ -82,15 +84,16 @@ class OverlayVisionStateTests(unittest.TestCase):
             wobbling = tracker.update(weak_y)
             failed = tracker.update(weak_x)
             recovering = tracker.update(recovered_event)
+            tracker.update(recovered_event)
             recovered = tracker.update(recovered_event)
 
         self.assertEqual(stable["slots"][2]["augment_id"], "augment_c")
         self.assertEqual(weak_started["slots"][2]["augment_id"], "augment_c")
         self.assertEqual(wobbling["slots"][2]["augment_id"], "augment_c")
         self.assertEqual(failed["slots"][2]["augment_id"], "augment_c")
-        self.assertEqual(recovering["slots"][2]["state"], "detecting")
-        self.assertEqual(recovering["slots"][2]["augment_id"], "")
-        self.assertEqual(recovering["source"]["selection_revision"], 2)
+        self.assertEqual(recovering["slots"][2]["state"], "ready")
+        self.assertEqual(recovering["slots"][2]["augment_id"], "augment_c")
+        self.assertEqual(recovering["source"]["selection_revision"], 1)
         self.assertEqual(recovered["slots"][2]["state"], "ready")
         self.assertEqual(recovered["slots"][2]["augment_id"], "augment_z")
         self.assertEqual(recovered["source"]["selection_revision"], 2)
@@ -107,12 +110,17 @@ class OverlayVisionStateTests(unittest.TestCase):
         reroll["_raw_slots"][2] = _ready_slot(2, "augment_z", "候选 Z")
 
         changing = tracker.update(reroll)
+        still_changing = tracker.update(reroll)
         ready = tracker.update(reroll)
 
         self.assertEqual(stable["source"]["selection_revision"], 1)
-        self.assertEqual(changing["source"]["selection_revision"], 2)
-        self.assertEqual([changing["slots"][index]["state"] for index in (0, 2)], ["detecting", "detecting"])
+        self.assertEqual(changing["source"]["selection_revision"], 1)
+        self.assertEqual(
+            [changing["slots"][index]["augment_id"] for index in (0, 2)],
+            ["augment_a", "augment_c"],
+        )
         self.assertEqual(changing["slots"][1]["augment_id"], "augment_b")
+        self.assertEqual(still_changing["source"]["selection_revision"], 1)
         self.assertEqual(ready["source"]["selection_revision"], 2)
         self.assertEqual(
             [slot["augment_id"] for slot in ready["slots"]],
@@ -201,6 +209,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         base_event["_raw_slots"][0] = unresolved_slot
         tracker = SelectionTracker(scene_enter_frames=1)
         tracker.update(base_event)
+        tracker.update(base_event)
         name_ready = tracker.update(base_event)
         self.assertEqual(name_ready["slots"][0]["name"], "玻璃大炮")
         self.assertEqual(name_ready["slots"][0]["visual_variant_id"], "")
@@ -219,3 +228,26 @@ class OverlayVisionStateTests(unittest.TestCase):
         unresolved_slot["channels"]["text"]["margin"] = 0.013
         unresolved_slot["channels"]["text_alt"]["margin"] = 0.013
         self.assertIsNone(candidate_from_slot(unresolved_slot))
+
+    def test_medium_wrong_name_never_flashes_before_strong_correct_candidate(self):
+        """固化真机“不动如山 → 吞噬灵魂”序列，弱相关重复不能直接上屏。"""
+
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        wrong = _selection_event()
+        wrong["_raw_slots"][1] = _medium_slot(1, "immovable", "不动如山")
+        first = tracker.update(wrong)
+        second = tracker.update(wrong)
+
+        correct = _selection_event()
+        correct["_raw_slots"][1] = _ready_slot(1, "consume_soul", "吞噬灵魂")
+        confirming = tracker.update(correct)
+        ready = tracker.update(correct)
+
+        self.assertNotEqual(first["slots"][1].get("name"), "不动如山")
+        self.assertNotEqual(second["slots"][1].get("name"), "不动如山")
+        self.assertNotEqual(confirming["slots"][1].get("name"), "吞噬灵魂")
+        self.assertEqual(ready["slots"][1]["name"], "吞噬灵魂")
+        self.assertEqual(ready["slots"][1]["evidence_grade"], "strong")
+        self.assertEqual(ready["source"]["selection_revision"], 1)

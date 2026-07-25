@@ -16,6 +16,7 @@ from typing import Any, Mapping, Sequence
 from hextech.modules.recommendation.hints import normalize_augment_id, normalize_augment_name
 from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
 from hextech.modules.data.ports.atomic import atomic_write_json
+from hextech.modules.session.build_identity import current_build_id
 
 
 SCHEMA_VERSION = 3
@@ -108,6 +109,10 @@ def _empty_slot(index: int, *, state: str = "empty") -> dict[str, Any]:
         "top_candidates": [],
         "channels": {},
         "acceptance_rule": "",
+        "evidence_grade": "",
+        "required_frames": 0,
+        "observed_frames": 0,
+        "replacement_reason": "",
         "candidate_identity": "",
         "rejection_reason": "",
         "elapsed_seconds": 0.0,
@@ -265,6 +270,14 @@ def normalize_overlay_slot(
         elapsed_seconds = max(0.0, float(raw_slot.get("elapsed_seconds") or 0.0))
     except (TypeError, ValueError):
         elapsed_seconds = 0.0
+    try:
+        required_frames = max(0, int(raw_slot.get("required_frames") or 0))
+    except (TypeError, ValueError):
+        required_frames = 0
+    try:
+        observed_frames = max(0, int(raw_slot.get("observed_frames") or 0))
+    except (TypeError, ValueError):
+        observed_frames = 0
 
     return {
         "slot": slot_index,
@@ -282,6 +295,10 @@ def normalize_overlay_slot(
         "top_candidates": _normalize_top_candidates(raw_slot.get("top_candidates")),
         "channels": _normalize_channels(raw_slot.get("channels")),
         "acceptance_rule": _clean_text(raw_slot.get("acceptance_rule"), limit=80),
+        "evidence_grade": _clean_text(raw_slot.get("evidence_grade"), limit=16),
+        "required_frames": required_frames,
+        "observed_frames": observed_frames,
+        "replacement_reason": _clean_text(raw_slot.get("replacement_reason"), limit=80),
         "candidate_identity": _clean_text(raw_slot.get("candidate_identity"), limit=80),
         "rejection_reason": _clean_text(raw_slot.get("rejection_reason"), limit=80),
         "elapsed_seconds": elapsed_seconds,
@@ -316,6 +333,7 @@ def build_overlay_event(
     generated_at = time.time()
     return {
         "schema_version": SCHEMA_VERSION,
+        "build_id": current_build_id(),
         "generated_at": generated_at,
         "timing": {"event_built_at": generated_at},
         "source": {"tag": _clean_text(source_tag, limit=48) or "local", "kind": "overlay_event"},
@@ -390,6 +408,8 @@ def read_overlay_event(path: str | Path | None = None) -> dict[str, Any]:
         "selection_type": selection_type,
         "selection_label": SELECTION_TYPE_LABELS.get(selection_type, ""),
         "generated_at": payload.get("generated_at", 0.0),
+        "build_id": _clean_text(payload.get("build_id"), limit=128),
+        "timing": dict(payload.get("timing")) if isinstance(payload.get("timing"), Mapping) else {},
         "source": payload.get("source", {}),
         "slots": normalized_slots,
         "_acceptance_rules": [

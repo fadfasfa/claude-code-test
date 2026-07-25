@@ -21,9 +21,9 @@ from hextech.modules.vision.events import (
     ("reason", "status_code", "status_text"),
     [
         ("recognition_missing", "RECOGNITION_MISSING", "识别未完成"),
-        ("identity_unresolved", "IDENTITY_UNRESOLVED", "身份未解析"),
-        ("source_stat_missing", "SOURCE_STAT_MISSING", "源站暂无统计"),
-        ("champion_stat_missing", "CHAMPION_STAT_MISSING", "英雄暂无统计"),
+        ("identity_unresolved", "IDENTITY_UNRESOLVED", "无法关联统计 ID"),
+        ("source_stat_missing", "SOURCE_STAT_MISSING", "公开来源未提供此海克斯统计"),
+        ("champion_stat_missing", "CHAMPION_STAT_MISSING", "该英雄暂无此海克斯样本"),
         ("context_missing", "CONTEXT_MISSING", "等待当前英雄"),
         ("snapshot_unavailable", "SNAPSHOT_UNAVAILABLE", "数据准备中"),
     ],
@@ -86,6 +86,7 @@ def test_v2_event_reads_compatibly_and_writes_as_v3_with_identity_fields(tmp_pat
     slot = persisted["slots"][0]
 
     assert persisted["schema_version"] == SCHEMA_VERSION == 3
+    assert persisted["timing"]["event_written_at"] > 0
     assert slot["data_reason"] == "source_stat_missing"
     assert {
         "data_status",
@@ -95,3 +96,18 @@ def test_v2_event_reads_compatibly_and_writes_as_v3_with_identity_fields(tmp_pat
         "champion_id",
     }.issubset(slot)
     assert slot["vision_id"] == "vision-a"
+
+
+def test_v3_event_preserves_cursor_slots_timing_and_build_identity(tmp_path: Path) -> None:
+    event_path = tmp_path / "event.json"
+    event = build_overlay_event([], selection_type="hextech")
+    event["source"]["cursor_over_slots"] = [0, 2]
+    event["timing"]["captured_at"] = 123.0
+
+    write_overlay_event(event, event_path)
+    read = read_overlay_event(event_path)
+
+    assert read["source"]["cursor_over_slots"] == [0, 2]
+    assert read["timing"]["captured_at"] == 123.0
+    assert read["timing"]["event_written_at"] > 0
+    assert read["build_id"]

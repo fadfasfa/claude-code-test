@@ -634,6 +634,7 @@ def main(argv: list[str] | None = None) -> None:
             shutdown_timeout=args.deploy_timeout,
         )
         print_check(f"稳定安装目录：{deployment.install_dir}")
+        print_check(f"部署构建身份：{deployment.build_id}")
         if deployment.previous_dir is not None:
             print_check(f"上一版本目录：{deployment.previous_dir}")
         if deployment.shortcut_path is not None:

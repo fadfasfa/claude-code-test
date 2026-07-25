@@ -14,7 +14,11 @@ from typing import Any, Mapping
 
 from hextech.modules.vision.events import build_overlay_event
 from hextech.modules.recommendation.hints import normalize_augment_id
-from hextech.infrastructure.vision.matcher import candidate_from_slot, unknown_slot
+from hextech.infrastructure.vision.matcher import (
+    candidate_from_slot,
+    strong_evidence_identities,
+    unknown_slot,
+)
 
 
 SCENE_ENTER_FRAMES = 2  # 场景连续出现 N 帧后判定为"进入"
@@ -227,20 +231,34 @@ class SelectionTracker:
                 track.detecting_since = 0.0
                 track.weak_miss_frames = 0
                 return dict(track.stable_slot)
-            # 只要可靠候选已证明卡片发生变化，就先撤下旧统计；等待新候选稳定期间
-            # 显示 detecting，避免刷新动画中把上一张卡的统计贴到新卡上。
-            track.stable_slot = None
-            track.detecting_since = now
-            self._revision_changed = True
+            # 不同候选只有连续达到自己的稳定帧数后才替换。单帧鼠标遮挡或动画噪声
+            # 不能撤下已经展示的结果，否则三个槽会在真机里反复变空。
+            if (
+                candidate.evidence_grade == "medium"
+                and stable_identity in strong_evidence_identities(raw_slot)
+            ):
+                track.candidate_identity = ""
+                track.candidate_frames = 0
+                return dict(track.stable_slot)
         track.weak_miss_frames = 0
         if identity == track.candidate_identity:
             track.candidate_frames += 1
         else:
             track.candidate_identity = identity
             track.candidate_frames = 1
-        if track.candidate_frames >= candidate.required_frames:
-            track.stable_slot = candidate.ready_slot()
+        replacing_stable = track.stable_slot is not None
+        required_frames = max(3, candidate.required_frames) if replacing_stable else candidate.required_frames
+        if track.candidate_frames >= required_frames:
+            stable_slot = candidate.ready_slot()
+            stable_slot["required_frames"] = required_frames
+            stable_slot["observed_frames"] = track.candidate_frames
+            stable_slot["replacement_reason"] = (
+                "replacement_confirmed" if replacing_stable else f"initial_{candidate.evidence_grade}"
+            )
+            track.stable_slot = stable_slot
             track.detecting_since = 0.0
+            if replacing_stable:
+                self._revision_changed = True
         if track.stable_slot is None:
             if track.detecting_since <= 0.0:
                 track.detecting_since = now
@@ -421,10 +439,24 @@ class SelectionTracker:
                 return event
 
         raw_slots = raw_event.get("_raw_slots") if isinstance(raw_event.get("_raw_slots"), list) else []
-        rendered_slots = [
-            self._update_slot(index, raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {})
-            for index in range(SLOT_COUNT)
-        ]
+        cursor_over_slots = {
+            int(value)
+            for value in (
+                source.get("cursor_over_slots")
+                if isinstance(source.get("cursor_over_slots"), list)
+                else []
+            )
+            if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < SLOT_COUNT
+        }
+        rendered_slots: list[dict[str, Any]] = []
+        for index in range(SLOT_COUNT):
+            if index in cursor_over_slots:
+                # 遮挡槽冻结自己的追踪状态；未遮挡槽仍在同一帧继续识别。
+                stable = self.slots[index].stable_slot
+                rendered_slots.append(dict(stable) if stable is not None else unknown_slot(index))
+                continue
+            raw_slot = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
+            rendered_slots.append(self._update_slot(index, raw_slot))
         if self._revision_changed:
             self.selection_revision = max(1, self.selection_revision + 1)
             self._revision_changed = False
@@ -457,8 +489,11 @@ class SelectionTracker:
                 "stable_frames": self.scene_frames,
                 "blocking_modal": False,
                 "cursor_over_cards": bool(source.get("cursor_over_cards")),
+                "cursor_over_slots": sorted(cursor_over_slots),
                 "card_residue": bool(source.get("card_residue")),
-                "hover_occluded": False,
+                "hover_occluded": any(
+                    self.slots[index].stable_slot is not None for index in cursor_over_slots
+                ),
                 "body_shard_scores": list(source.get("body_shard_scores"))
                 if isinstance(source.get("body_shard_scores"), list)
                 else [],

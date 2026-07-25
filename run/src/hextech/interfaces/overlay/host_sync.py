@@ -7,10 +7,7 @@ import json
 import queue
 import time
 import tkinter as tk
-import ctypes
-import uuid
 from copy import deepcopy
-from pathlib import Path
 from typing import Any, Mapping
 
 from hextech.contracts import GameSessionState, PresentationMode, VisionSlotState
@@ -35,17 +32,18 @@ from hextech.interfaces.overlay.host_visibility import (
     _write_host_visibility_status,
     decide_visibility,
 )
-from hextech.modules.session.evidence import build_evidence_bundle, build_render_signature, write_evidence_bundle
-from hextech.modules.data.ports.atomic import atomic_write_json
-from hextech.modules.data.ports.paths import get_var_dir
-from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
+from hextech.interfaces.overlay.report_writer import OverlayReportWriter
+from hextech.modules.session.build_identity import (
+    OVERLAY_SESSION_REPORT_SCHEMA_VERSION,
+    current_build_id,
+)
+from hextech.modules.session.evidence import build_evidence_bundle, build_render_signature
 from hextech.modules.vision.window import is_window_renderable
 
 
 logger = logging.getLogger(__name__)
 
 STALE_EVENT_HOLD_SECONDS = 1.0
-OVERLAY_SESSION_REPORT_LIMIT = 20
 
 # 兼容旧测试/诊断对该符号的 patch；render tick 只读取缓存，不会调用它。
 __all__ = ["_query_gameflow_in_progress"]
@@ -240,103 +238,77 @@ def _write_real_session_evidence(
     if int(visibility.get("stable_render_ticks") or 0) < 2:
         return
     key = (str(state.session_id), str(state.generation_id), int(vision.epoch), revision, render_signature)
-    if visibility.get("last_evidence_key") == key or visibility.get("evidence_attempt_key") == key:
+    if visibility.get("last_evidence_key") == key:
         return
     source = _string_key_mapping(snapshot.get("source"))
     client_rect = source.get("client_rect") if isinstance(source.get("client_rect"), list) else []
     capture_size = source.get("capture_size") if isinstance(source.get("capture_size"), list) else []
     if len(client_rect) != 4 or len(capture_size) != 2:
         return
-    visibility["evidence_attempt_key"] = key
-    snapshot_copy = deepcopy(dict(snapshot))
-    source_copy = deepcopy(source)
-    model_copy = deepcopy(dict(model))
-
-    def capture() -> None:
-        try:
-            if (
-                not bool(visibility.get("window_visible"))
-                or visibility.get("current_render_signature") != render_signature
-                or visibility.get("evidence_attempt_key") != key
-            ):
-                if visibility.get("evidence_attempt_key") == key:
-                    visibility.pop("evidence_attempt_key", None)
-                return
-            root.update_idletasks()
-            try:
-                ctypes.windll.dwmapi.DwmFlush()
-            except (AttributeError, OSError):
-                pass
-            evidence_dir = Path(overlay_runtime_state_path("session_evidence")).resolve()
-            evidence_dir.mkdir(parents=True, exist_ok=True)
-            context = state.context
-            safe_session = "".join(char for char in str(state.session_id) if char.isalnum())[:32] or "session"
-            context_revision = max(1, int(context.context_revision or 0))
-            signature_prefix = render_signature[:12]
-            stem = (
-                f"overlay-{safe_session}-e{int(vision.epoch)}-r{revision}"
-                f"-c{context_revision}-{signature_prefix}"
-            )
-            screenshot_name = ""
-            if diagnostic:
-                screenshot_path = evidence_dir / f"{stem}.png"
-                from PIL import ImageGrab
-
-                left, top = root.winfo_rootx(), root.winfo_rooty()
-                right, bottom = left + root.winfo_width(), top + root.winfo_height()
-                ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True).convert("RGB").save(screenshot_path)
-                screenshot_name = screenshot_path.name
-            client_size = [int(client_rect[2]) - int(client_rect[0]), int(client_rect[3]) - int(client_rect[1])]
-            event_slots = snapshot_copy.get("slots") if isinstance(snapshot_copy.get("slots"), list) else []
-            render_rows = [dict(item) for item in model_copy.get("stats", []) if isinstance(item, Mapping)]
-            bundle = build_evidence_bundle(
-                state,
-                lcu_summary={
-                    "local_champion_id": str(context.local_champion_id),
-                    "teammate_champion_ids": [str(value) for value in context.teammate_champion_ids],
-                    "bench_champion_ids": [str(value) for value in context.bench_champion_ids],
-                    "source": str(context.source or ""),
-                    "game_instance_id": str(context.game_instance_id or ""),
-                    "window_hwnd": int(context.window_hwnd or 0),
-                    "context_revision": int(context.context_revision or 0),
-                    "publication_seq": int(context.publication_seq or 0),
-                    "publisher_instance_id": str(context.publisher_instance_id or ""),
-                },
-                window_summary={
-                    "hwnd": int(source_copy.get("window_hwnd") or 0),
-                    "client_size": client_size,
-                    "capture_size": [int(value) for value in capture_size],
-                    "dpi_scale": float(source_copy.get("dpi_scale") or 0.0),
-                },
-                screenshot=screenshot_name,
-                render_summary={
-                    "rows": render_rows,
-                    "synergies": [
-                        dict(item) for item in model_copy.get("synergies", []) if isinstance(item, Mapping)
-                    ],
-                    "event_slots": [dict(item) for item in event_slots if isinstance(item, Mapping)],
-                    "acceptance_rules": [
-                        str(item)
-                        for item in (
-                            snapshot_copy.get("_acceptance_rules")
-                            if isinstance(snapshot_copy.get("_acceptance_rules"), list)
-                            else []
-                        )
-                    ],
-                },
-                render_signature=render_signature,
-            )
-            evidence_path = write_evidence_bundle(bundle, evidence_dir / f"{stem}.v2.json")
-            write_evidence_bundle(bundle, evidence_dir / "latest_real_session.v2.json")
-            visibility["last_evidence_key"] = key
-            logger.info("game_overlay real_session_evidence=%s", evidence_path)
-        except Exception:
-            logger.warning("延迟写入真实会话验收证据失败。", exc_info=True)
-        finally:
-            if visibility.get("evidence_attempt_key") == key:
-                visibility.pop("evidence_attempt_key", None)
-
-    root.after(100, capture)
+    writer = visibility.get("report_writer")
+    if not isinstance(writer, OverlayReportWriter):
+        return
+    context = state.context
+    safe_session = "".join(char for char in str(state.session_id) if char.isalnum())[:32] or "session"
+    context_revision = max(1, int(context.context_revision or 0))
+    stem = (
+        f"overlay-{safe_session}-e{int(vision.epoch)}-r{revision}"
+        f"-c{context_revision}-{render_signature[:12]}"
+    )
+    client_size = [int(client_rect[2]) - int(client_rect[0]), int(client_rect[3]) - int(client_rect[1])]
+    event_slots = snapshot.get("slots") if isinstance(snapshot.get("slots"), list) else []
+    render_rows = [dict(item) for item in model.get("stats", []) if isinstance(item, Mapping)]
+    bundle = build_evidence_bundle(
+        state,
+        lcu_summary={
+            "local_champion_id": str(context.local_champion_id),
+            "teammate_champion_ids": [str(value) for value in context.teammate_champion_ids],
+            "bench_champion_ids": [str(value) for value in context.bench_champion_ids],
+            "source": str(context.source or ""),
+            "game_instance_id": str(context.game_instance_id or ""),
+            "window_hwnd": int(context.window_hwnd or 0),
+            "context_revision": int(context.context_revision or 0),
+            "publication_seq": int(context.publication_seq or 0),
+            "publisher_instance_id": str(context.publisher_instance_id or ""),
+        },
+        window_summary={
+            "hwnd": int(source.get("window_hwnd") or 0),
+            "client_size": client_size,
+            "capture_size": [int(value) for value in capture_size],
+            "dpi_scale": float(source.get("dpi_scale") or 0.0),
+        },
+        render_summary={
+            "rows": render_rows,
+            "synergies": [dict(item) for item in model.get("synergies", []) if isinstance(item, Mapping)],
+            "event_slots": [dict(item) for item in event_slots if isinstance(item, Mapping)],
+            "acceptance_rules": [
+                str(item)
+                for item in (
+                    snapshot.get("_acceptance_rules")
+                    if isinstance(snapshot.get("_acceptance_rules"), list)
+                    else []
+                )
+            ],
+        },
+        render_signature=render_signature,
+    )
+    bbox = None
+    screenshot_name = ""
+    if diagnostic:
+        left, top = root.winfo_rootx(), root.winfo_rooty()
+        bbox = (left, top, left + root.winfo_width(), top + root.winfo_height())
+        screenshot_name = f"{stem}.png"
+    if writer.submit_evidence(
+        bundle,
+        key=render_signature,
+        target_name=f"{stem}.v2.json",
+        screenshot_name=screenshot_name,
+        screenshot_bbox=bbox,
+    ):
+        visibility["last_evidence_key"] = key
+    status = writer.status()
+    visibility["report_queue_depth"] = status["queue_depth"]
+    visibility["report_dropped_count"] = status["dropped_count"]
 
 
 def _write_overlay_session_report(
@@ -347,7 +319,7 @@ def _write_overlay_session_report(
     context: Mapping[str, Any] | None = None,
     state: GameSessionState | None = None,
     diagnostic: bool = False,
-) -> Path | None:
+) -> bool:
     """记录每种真实 Overlay 会话结果，包含缺失原因而不默认保存截图。
 
     同一事件签名只落盘一次；`latest.json` 始终指向最新结构化结果，历史严格保留
@@ -374,6 +346,30 @@ def _write_overlay_session_report(
             "vision_id": str(item.get("vision_id") or ""),
             "canonical_id": str(item.get("canonical_id") or ""),
             "champion_id": str(item.get("champion_id") or ""),
+            "visual_variant_id": str(item.get("visual_variant_id") or ""),
+            "acceptance_rule": str(item.get("acceptance_rule") or ""),
+            "evidence_grade": str(item.get("evidence_grade") or ""),
+            "required_frames": item.get("required_frames"),
+            "observed_frames": item.get("observed_frames"),
+            "replacement_reason": str(item.get("replacement_reason") or ""),
+            "channel_margins": {
+                str(channel_name): channel.get("margin")
+                for channel_name, channel in (
+                    item.get("channels") if isinstance(item.get("channels"), Mapping) else {}
+                ).items()
+                if isinstance(channel, Mapping) and channel.get("margin") is not None
+            },
+            "candidates": [
+                {
+                    "vision_id": str(candidate.get("visual_variant_id") or candidate.get("augment_id") or ""),
+                    "name": str(candidate.get("name") or "")[:80],
+                    "confidence": candidate.get("confidence"),
+                }
+                for candidate in (
+                    item.get("top_candidates") if isinstance(item.get("top_candidates"), list) else []
+                )[:3]
+                if isinstance(candidate, Mapping)
+            ],
         }
         for index, item in enumerate(slots[:3])
         if isinstance(item, Mapping)
@@ -402,10 +398,16 @@ def _write_overlay_session_report(
     }
     signature = json.dumps(signature_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if visibility.get("last_overlay_session_report_signature") == signature:
-        return None
+        return False
+    writer = visibility.get("report_writer")
+    if not isinstance(writer, OverlayReportWriter):
+        return False
+    enqueued_at = time.time()
+    event_timing = snapshot.get("timing") if isinstance(snapshot.get("timing"), Mapping) else {}
     report = {
-        "schema_version": 1,
-        "recorded_at": time.time(),
+        "schema_version": OVERLAY_SESSION_REPORT_SCHEMA_VERSION,
+        "build_id": str(snapshot.get("build_id") or current_build_id()),
+        "recorded_at": enqueued_at,
         "diagnostic": bool(diagnostic),
         "session_id": session_id,
         "generation_id": generation_id,
@@ -416,6 +418,9 @@ def _write_overlay_session_report(
             "active": bool(snapshot.get("active")),
             "error": str(snapshot.get("error") or ""),
             "selection_type": str(snapshot.get("selection_type") or ""),
+            "cursor_over_slots": list(source.get("cursor_over_slots"))
+            if isinstance(source.get("cursor_over_slots"), list)
+            else [],
         },
         "source": {
             "tag": str(source.get("tag") or ""),
@@ -434,32 +439,24 @@ def _write_overlay_session_report(
         },
         "slots": safe_slots,
         "render": {"rows": safe_rows},
+        "timing": {
+            **{str(key): value for key, value in event_timing.items()},
+            "host_read_at": float(visibility.get("host_read_at") or 0.0),
+            "context_confirmed_at": float(visibility.get("context_confirmed_at") or 0.0),
+            "draw_started_at": float(visibility.get("draw_started_at") or 0.0),
+            "draw_completed_at": float(visibility.get("draw_completed_at") or 0.0),
+            "presented_at": float(visibility.get("last_presented_at") or 0.0),
+            "report_enqueued_at": enqueued_at,
+        },
         "screenshot": "",
     }
-    report_dir = (get_var_dir() / "reports" / "overlay_sessions").resolve()
-    report_dir.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
-    # Windows 的 system clock 粒度可能低于纳秒；只截取 time_ns 会在同一 UI tick
-    # 内复用文件名并静默覆盖前一份诊断。每个 host 会话维护单调序号，mtime 相同
-    # 时路径名仍能保留“最近 20 条”的正确顺序；随机 token 则覆盖重启时的极端碰撞。
-    try:
-        sequence = int(visibility.get("session_report_sequence") or 0) + 1
-    except (TypeError, ValueError):
-        sequence = 1
-    visibility["session_report_sequence"] = sequence
-    target = report_dir / f"overlay-session-{stamp}-{time.time_ns():020d}-{sequence:08d}-{uuid.uuid4().hex}.json"
-    atomic_write_json(target, report, ensure_ascii=False, indent=2)
-    atomic_write_json(report_dir / "latest.json", report, ensure_ascii=False, indent=2)
-    reports = sorted(
-        (path for path in report_dir.glob("overlay-session-*.json") if path.is_file()),
-        key=lambda path: (path.stat().st_mtime_ns, path.name),
-        reverse=True,
-    )
-    for stale in reports[OVERLAY_SESSION_REPORT_LIMIT:]:
-        if stale.parent.resolve() == report_dir:
-            stale.unlink(missing_ok=True)
-    visibility["last_overlay_session_report_signature"] = signature
-    return target
+    accepted = writer.submit_session(report, key=signature)
+    if accepted:
+        visibility["last_overlay_session_report_signature"] = signature
+    status = writer.status()
+    visibility["report_queue_depth"] = status["queue_depth"]
+    visibility["report_dropped_count"] = status["dropped_count"]
+    return accepted
 
 
 def _drain_hotkey_requests(request_queue: "queue.Queue[str]", visibility: dict[str, bool]) -> None:

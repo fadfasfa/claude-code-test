@@ -32,6 +32,7 @@ from hextech.modules.data.catalog.versioned import sha256_file, validate_catalog
 from hextech.modules.data.generation import DataSnapshotPublisher
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
+from hextech.bootstrap.game_refresh_gate import GameRefreshDeferred, GameRefreshGate
 
 
 SOURCE_INTERVALS = {
@@ -46,7 +47,6 @@ SOURCE_TIMEOUTS = {
     "apex": 60 * 60,
     "mayhem": 10 * 60,
 }
-
 ContributionMap = Mapping[str, Mapping[str, Any]]
 SnapshotBuilder = Callable[[ContributionMap], Any]
 
@@ -82,6 +82,7 @@ class CohortRefreshCoordinator:
         process_runner: Callable[..., IsolatedProcessResult] = run_isolated_process,
         now: Callable[[], datetime] | None = None,
         upstream_marker_probe: Callable[[], Mapping[str, Any]] | None = None,
+        game_state_probe: Callable[[], bool] | None = None,
     ) -> None:
         self.root = Path(root) if root is not None else get_var_dir()
         self.publisher = publisher
@@ -94,6 +95,13 @@ class CohortRefreshCoordinator:
         self._stop = threading.Event()
         self._cancel_lock = threading.Lock()
         self._active_cancel: Path | None = None
+        self._game_cancel_requested = threading.Event()
+        self._game_refresh = GameRefreshGate(
+            root=self.root,
+            current_generation_id=self.publisher.current_generation_id,
+            now=self.now,
+            game_state_probe=game_state_probe,
+        )
         self.promotion.recover()
 
     def _baseline_contributions(self, catalog: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -240,6 +248,21 @@ class CohortRefreshCoordinator:
             if cancel_path is not None:
                 cancel_path.parent.mkdir(parents=True, exist_ok=True)
                 cancel_path.touch()
+
+    def poll_deferred_refresh(self) -> bool | None:
+        """取消对局中 worker，并在赛后 30 秒返回一次合并后的恢复请求。"""
+
+        in_game = self._game_refresh.in_progress()
+        if in_game:
+            with self._cancel_lock:
+                cancel_path = self._active_cancel
+                if cancel_path is not None:
+                    self._game_cancel_requested.set()
+                    cancel_path.parent.mkdir(parents=True, exist_ok=True)
+                    cancel_path.touch()
+            if cancel_path is not None:
+                self._game_refresh.mark_worker_cancelled()
+        return self._game_refresh.poll(in_game=in_game)
 
     def _current_pointer(self, source: str) -> dict[str, Any]:
         if source == "catalog":
@@ -416,6 +439,9 @@ class CohortRefreshCoordinator:
         *,
         force: bool,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if self._game_refresh.in_progress():
+            raise GameRefreshDeferred("game_in_progress")
+        self._game_cancel_requested.clear()
         command = self._worker_command(source, work, catalog_pointer, force=force)
         cancel_path = work / f"{source}.cancel"
         cancel_path.unlink(missing_ok=True)
@@ -438,6 +464,8 @@ class CohortRefreshCoordinator:
             with self._cancel_lock:
                 if self._active_cancel == cancel_path:
                     self._active_cancel = None
+        if self._game_cancel_requested.is_set():
+            raise GameRefreshDeferred("game_in_progress")
         result_path = work / f"{source}.result.json"
         try:
             result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -528,6 +556,8 @@ class CohortRefreshCoordinator:
         schedule = self.schedule_store.load()
         states = dict(schedule.sources)
         current = {source: self._current_pointer(source) for source in SCHEDULE_SOURCES}
+        if self._game_refresh.in_progress():
+            return self._game_refresh.defer_result(force=force)
         due = {source: self._due(source, states[source], current[source], force=force) for source in SCHEDULE_SOURCES}
         upstream_changed = False
         upstream_marker: dict[str, Any] = {}
@@ -576,6 +606,8 @@ class CohortRefreshCoordinator:
                 if changed:
                     catalog_changed = True
                     due.update({"hextech": True, "apex": True, "mayhem": True})
+            except GameRefreshDeferred:
+                return self._game_refresh.defer_result(force=force)
             except Exception as exc:
                 failures["catalog"] = {"error_type": exc.__class__.__name__, "error": str(exc)}
 
@@ -595,6 +627,8 @@ class CohortRefreshCoordinator:
                 targets[source] = pointer
                 results[source] = result
                 self._save_candidate(source, pointer)
+            except GameRefreshDeferred:
+                return self._game_refresh.defer_result(force=force)
             except Exception as exc:
                 failures[source] = {"error_type": exc.__class__.__name__, "error": str(exc)}
 
@@ -759,4 +793,8 @@ class CohortRefreshCoordinator:
         }
 
 
-__all__ = ["CohortRefreshCoordinator", "SOURCE_INTERVALS", "SOURCE_TIMEOUTS"]
+__all__ = [
+    "CohortRefreshCoordinator",
+    "SOURCE_INTERVALS",
+    "SOURCE_TIMEOUTS",
+]

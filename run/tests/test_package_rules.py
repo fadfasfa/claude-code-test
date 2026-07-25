@@ -1,6 +1,8 @@
 """测试构建入口和依赖分层规则。"""
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -171,7 +173,12 @@ def test_package_entries_include_verified_snapshot_files(tmp_path):
     (seed_generation / "manifest.json").write_bytes((generation_dir / "manifest.json").read_bytes())
     write_resource_manifest(tmp_path)
     manifest_path = tmp_path / "bundle_manifest.json"
-    manifest_path.write_text("{}", encoding="utf-8")
+    verified_files = [snapshot_root / "current.v2.json", generation_dir / "manifest.json"]
+    seed_sha256 = {
+        f"resources/seeds/{path.relative_to(snapshot_root).as_posix()}": hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in verified_files
+    }
+    manifest_path.write_text(json.dumps({"seed_sha256": seed_sha256}), encoding="utf-8")
 
     entries = iter_package_data_entries(
         tmp_path,

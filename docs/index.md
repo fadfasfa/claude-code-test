@@ -26,6 +26,7 @@
 | 新增或扩展长期 workflow module、skill、hook、tool、验证脚本或自动化 | `docs/参考资料/策略说明/module-admission.md` |
 | 仓库目录职责、路径生命周期 | `docs/当前规则/50-目录职责.md` |
 | Codex surface、旧 CC-CX 退役、出口维护、Ultraplan | `docs/当前规则/90-退役边界.md` |
+| Hextech、Overlay、Sidecar、打包部署或真机诊断 | `run/docs/README.md`，再按索引读取 `run/docs/overlay-runtime.md` |
 
 ## On Demand
 

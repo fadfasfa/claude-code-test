@@ -26,6 +26,7 @@ from .canvas_renderer import (
     StatPanelModel,
     StatStatusCode,
     SynergyPanelModel,
+    SynergyStatusCode,
     SynergyTextLayout,
     _clean_text,
     _format_percent,
@@ -131,14 +132,14 @@ def _context_missing_status_text(context: Mapping[str, Any] | None) -> str:
 
 
 def _data_reason_display(reason: object) -> tuple[str, StatStatusCode, str, str, str] | None:
-    """v3 槽位原因优先于推测；仅真实来源缺口使用“源站暂无统计”。"""
+    """v3 槽位原因优先于推测；只有真实来源缺口才显示公开来源文案。"""
 
     normalized = _clean_text(reason, limit=48).lower()
     mapping: dict[str, tuple[str, StatStatusCode, str, str, str]] = {
         "recognition_missing": ("未识别到海克斯", "RECOGNITION_MISSING", "", "", "识别未完成"),
-        "identity_unresolved": ("海克斯身份未解析", "IDENTITY_UNRESOLVED", "", "", "身份未解析"),
-        "source_stat_missing": ("源站暂无该海克斯统计", "SOURCE_STAT_MISSING", "", "", "源站暂无统计"),
-        "champion_stat_missing": ("当前英雄暂无该组合统计", "CHAMPION_STAT_MISSING", "", "", "英雄暂无统计"),
+        "identity_unresolved": ("无法关联统计 ID", "IDENTITY_UNRESOLVED", "", "", "无法关联统计 ID"),
+        "source_stat_missing": ("公开来源未提供此海克斯统计", "SOURCE_STAT_MISSING", "", "", "公开来源未提供此海克斯统计"),
+        "champion_stat_missing": ("该英雄暂无此海克斯样本", "CHAMPION_STAT_MISSING", "", "", "该英雄暂无此海克斯样本"),
         "context_missing": ("等待当前英雄", "CONTEXT_MISSING", "", "", "等待当前英雄"),
         "snapshot_unavailable": ("统计数据准备中", "SNAPSHOT_UNAVAILABLE", "", "", "数据准备中"),
     }
@@ -184,14 +185,14 @@ def _stats_display(
             for key in ("stats_by_champion_id", "stats_by_champion_name")
         )
         if has_source_stats:
-            return "当前英雄暂无该组合统计", "CHAMPION_STAT_MISSING", "", "", "英雄暂无统计"
-        return "源站暂无该海克斯统计", "SOURCE_STAT_MISSING", "", "", "源站暂无统计"
+            return "该英雄暂无此海克斯样本", "CHAMPION_STAT_MISSING", "", "", "该英雄暂无此海克斯样本"
+        return "公开来源未提供此海克斯统计", "SOURCE_STAT_MISSING", "", "", "公开来源未提供此海克斯统计"
     winrate = _format_percent(stats.get("winrate"))
     pickrate = _format_percent(stats.get("pickrate"))
     text = _format_stats_entry(stats)
     if not (winrate and pickrate):
         return text or "统计字段不完整", "NO_STATS", "", "", "统计不完整"
-    if snapshot_state == "degraded":
+    if _snapshot_sources_degraded(snapshot_status, ("hextech",)):
         # 代际信息保留在状态字段中，避免把诊断前缀挤进卡片内的单行统计。
         return text, "GENERATION_DEGRADED", winrate, pickrate, "上一代数据"
     return text, "READY", winrate, pickrate, ""
@@ -241,17 +242,44 @@ def _synergy_status(
     *,
     matched: Mapping[str, Any] | None,
     context: Mapping[str, Any] | None,
-    snapshot_state: str,
+    snapshot_status: Mapping[str, Any],
     event_generation_id: str = "",
     snapshot_generation_id: str = "",
-) -> str:
+) -> SynergyStatusCode:
+    snapshot_state = str(snapshot_status.get("state") or "unavailable")
     if snapshot_state == "unavailable":
         return "SOURCE_UNAVAILABLE"
     if event_generation_id and snapshot_generation_id and event_generation_id != snapshot_generation_id:
         return "GENERATION_MISMATCH"
     if not (isinstance(context, Mapping) and context.get("ok")):
         return "CONTEXT_MISSING"
-    return "READY" if isinstance(matched, Mapping) else "NO_MATCH"
+    if not isinstance(matched, Mapping):
+        return "NO_MATCH"
+    if _snapshot_sources_degraded(snapshot_status, ("apex", "mayhem")):
+        return "SYNERGY_DEGRADED"
+    return "READY"
+
+
+def _snapshot_sources_degraded(
+    snapshot_status: Mapping[str, Any] | None,
+    sources: Sequence[str],
+) -> bool:
+    """优先读取逐来源 freshness；旧 snapshot 才兼容聚合 degraded。"""
+
+    if not isinstance(snapshot_status, Mapping):
+        return False
+    source_status = snapshot_status.get("source_status")
+    if isinstance(source_status, Mapping) and any(source in source_status for source in sources):
+        for source in sources:
+            value = source_status.get(source)
+            if not isinstance(value, Mapping):
+                continue
+            if str(value.get("freshness") or "unknown") != "fresh":
+                return True
+            if str(value.get("data_status") or "unknown") == "data_stale":
+                return True
+        return False
+    return str(snapshot_status.get("state") or "") == "degraded"
 
 
 def build_render_model(
@@ -267,7 +295,6 @@ def build_render_model(
     slots = snapshot.get("slots") if isinstance(snapshot.get("slots"), list) else []
     event_source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
     snapshot_status = hint_cache.get("snapshot") if isinstance(hint_cache, Mapping) else {}
-    snapshot_state = str(snapshot_status.get("state") or "unavailable") if isinstance(snapshot_status, Mapping) else "unavailable"
     event_generation_id = _clean_text(event_source.get("generation_id"))
     snapshot_generation_id = _clean_text(snapshot_status.get("generation_id")) if isinstance(snapshot_status, Mapping) else ""
     stats: list[StatPanelModel] = []
@@ -304,7 +331,7 @@ def build_render_model(
         synergy_status = _synergy_status(
             matched=matched,
             context=context,
-            snapshot_state=snapshot_state,
+            snapshot_status=snapshot_status if isinstance(snapshot_status, Mapping) else {},
             event_generation_id=event_generation_id,
             snapshot_generation_id=snapshot_generation_id,
         )
@@ -337,6 +364,8 @@ def build_render_model(
                 "rating": _clean_text(matched.get("rating"), limit=12),
                 "tag": _clean_text(matched.get("tag"), limit=24),
                 "content": _clean_text(matched.get("content"), limit=180),
+                "data_status": synergy_status,
+                "status_text": "联动数据为上一代" if synergy_status == "SYNERGY_DEGRADED" else "",
             }
         )
     return {"stats": stats, "synergies": synergies}
@@ -363,9 +392,9 @@ def build_render_model_from_session(
         "RECOGNITION_MISSING": ("未识别到海克斯", "识别未完成"),
         "SNAPSHOT_UNAVAILABLE": ("统计数据准备中", "数据准备中"),
         "PRIVACY_OFF": ("已开启隐私模式", "统计关闭"),
-        "SOURCE_STAT_MISSING": ("源站暂无该海克斯统计", "源站暂无统计"),
-        "CHAMPION_STAT_MISSING": ("当前英雄暂无该组合统计", "英雄暂无统计"),
-        "IDENTITY_UNRESOLVED": ("海克斯身份未解析", "身份未解析"),
+        "SOURCE_STAT_MISSING": ("公开来源未提供此海克斯统计", "公开来源未提供此海克斯统计"),
+        "CHAMPION_STAT_MISSING": ("该英雄暂无此海克斯样本", "该英雄暂无此海克斯样本"),
+        "IDENTITY_UNRESOLVED": ("无法关联统计 ID", "无法关联统计 ID"),
         "CONTEXT_MISSING": ("等待当前英雄", "等待英雄上下文"),
         "CONTEXT_EXPIRED": ("等待当前英雄", "等待当前英雄"),
     }
@@ -430,11 +459,21 @@ def build_render_model_from_session(
         stats[-1]["synergy_status"] = _synergy_status(
             matched=matched,
             context=context_mapping,
-            snapshot_state="unavailable" if recommendation is None else "ready",
+            snapshot_status={
+                "state": "unavailable" if recommendation is None else "ready",
+                "source_status": {
+                    "apex": {
+                        "freshness": "last_good"
+                        if str(row.get("synergy_data_status") or "") == "degraded"
+                        else "fresh"
+                    }
+                },
+            },
             event_generation_id=str(state.generation_id),
             snapshot_generation_id=str(recommendation.generation_id) if recommendation is not None else "",
         )  # type: ignore[typeddict-item]
         if isinstance(matched, Mapping):
+            synergy_status = stats[-1]["synergy_status"]
             synergies.append(
                 {
                     "slot": index,
@@ -444,6 +483,8 @@ def build_render_model_from_session(
                     "rating": _clean_text(matched.get("rating"), limit=12),
                     "tag": _clean_text(matched.get("tag"), limit=24),
                     "content": _clean_text(matched.get("content"), limit=180),
+                    "data_status": synergy_status,
+                    "status_text": "联动数据为上一代" if synergy_status == "SYNERGY_DEGRADED" else "",
                 }
             )
     return {"stats": stats, "synergies": synergies}

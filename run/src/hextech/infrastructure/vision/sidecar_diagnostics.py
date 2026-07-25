@@ -298,6 +298,9 @@ def _vision_trace_history_entry(event_payload: Mapping[str, Any]) -> dict[str, A
         else [],
         "body_shard_latched": bool(source.get("body_shard_latched")),
         "cursor_over_cards": bool(source.get("cursor_over_cards")),
+        "cursor_over_slots": list(source.get("cursor_over_slots"))
+        if isinstance(source.get("cursor_over_slots"), list)
+        else [],
         "card_residue": bool(source.get("card_residue")),
         "hover_occluded": bool(source.get("hover_occluded")),
         "ready_slots": ready_slots,

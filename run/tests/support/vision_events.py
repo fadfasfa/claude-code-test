@@ -6,7 +6,26 @@ from typing import Any
 
 
 def ready_slot(slot: int, augment_id: str, name: str) -> dict[str, Any]:
-    """返回可展示的高置信度槽位；每次调用都构造独立嵌套对象。"""
+    """返回有图标佐证的 strong 槽位；每次调用都构造独立嵌套对象。"""
+
+    candidate = {
+        "augment_id": augment_id,
+        "name": name,
+        "tier": "Gold",
+        "confidence": 0.91,
+    }
+    return {
+        "slot": slot,
+        "channels": {
+            "text": {"margin": 0.05, "top_candidates": [candidate]},
+            "text_alt": {"margin": 0.05, "top_candidates": [candidate]},
+            "icon": {"margin": 0.03, "top_candidates": [{**candidate, "confidence": 0.86}]},
+        },
+    }
+
+
+def medium_slot(slot: int, augment_id: str, name: str) -> dict[str, Any]:
+    """返回没有独立图标佐证的 medium 双字体槽位。"""
 
     candidate = {
         "augment_id": augment_id,

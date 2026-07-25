@@ -9,6 +9,7 @@
 - 命令、路径、API、错误原文、分支名和技术标识符保持原文。
 - 开始任务先运行 `git status --short`，发现非本轮修改时先报告并避免混入。
 - 先读 `PROJECT.md`、`docs/index.md` 和任务相关 workflow 文档，再选择目标工作区。
+- 选定业务工作区后，必须继续读取该工作区的本地文档索引和任务相关事实源；业务契约只在工作区文档维护，不在本入口复制第二份。
 - Plan 阶段默认走严格只读：只做 `Read` / 搜索 / 对话计划，不使用 `Bash`、`Write`、`Edit`、`MultiEdit`，不写 `.claude/plans/**`；执行前必须切到显式实现入口。
 - 使用 GLM 或非 Anthropic first-party host 时，Plan 阶段必须按更保守口径处理：即使 UI 显示 `plan`，也不把 shell 视为只读保证。
 - Claude Code 与 Codex 均可独立工作；无用户当前轮显性命令时，Claude Code 不调用、委派、审查或触发 Codex / CX。

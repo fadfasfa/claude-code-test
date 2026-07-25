@@ -5,10 +5,49 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from support.vision_events import selection_event as _selection_event
+from support.vision_events import ready_slot as _ready_slot
 
 class OverlayVisionInteractionTests(unittest.TestCase):
+    def test_cursor_over_stable_slot_freezes_only_that_slot(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(_selection_event())
+        stable = tracker.update(_selection_event())
+        changed = _selection_event()
+        changed["source"]["cursor_over_slots"] = [0]
+        changed["source"]["cursor_over_cards"] = True
+        changed["_raw_slots"][0] = _ready_slot(0, "wrong", "瞬时错误")
+        changed["_raw_slots"][1] = _ready_slot(1, "new_b", "新候选 B")
+
+        first = tracker.update(changed)
+        second = tracker.update(changed)
+        third = tracker.update(changed)
+
+        self.assertEqual(first["slots"][0]["augment_id"], stable["slots"][0]["augment_id"])
+        self.assertEqual(second["slots"][0]["augment_id"], stable["slots"][0]["augment_id"])
+        self.assertEqual(second["slots"][1]["augment_id"], stable["slots"][1]["augment_id"])
+        self.assertEqual(third["slots"][1]["augment_id"], "new_b")
+        self.assertEqual(third["source"]["cursor_over_slots"], [0])
+        self.assertTrue(third["source"]["hover_occluded"])
+
+    def test_cursor_slot_probe_returns_actual_slot_indexes(self):
+        from hextech.infrastructure.vision import sidecar_event_loop
+
+        source = {"layout_transform": {}}
+        with mock.patch.object(sidecar_event_loop, "pick_card_panels", return_value=[
+            (0, 0, 100, 100),
+            (100, 0, 200, 100),
+            (200, 0, 300, 100),
+        ]), mock.patch.object(sidecar_event_loop, "apply_transform", side_effect=lambda box, *_args: box), \
+             mock.patch.object(sidecar_event_loop, "get_cursor_screen_position", return_value=(150, 50)):
+            slots = sidecar_event_loop._cursor_over_card_slots((0, 0, 300, 100), (300, 100), source)
+
+        self.assertEqual(slots, [1])
+
     def test_hover_occlusion_keeps_stable_slots_until_cursor_leaves(self):
         from hextech.infrastructure.vision.state import SelectionTracker
 

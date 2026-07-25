@@ -320,6 +320,7 @@ class ServiceManager:
                 "vision_sidecar": {
                     "status": overlay_snapshot["sidecar_status"],
                     "pid": overlay_snapshot["sidecar_pid"],
+                    "build_id": str(overlay_snapshot.get("build_id") or ""),
                     "last_error": overlay_snapshot["last_error"] if overlay_snapshot["status"] == "error" else "",
                     "updated_at": overlay_snapshot["updated_at"],
                 },
@@ -377,6 +378,7 @@ class ServiceManager:
             "error": str(snapshot.get("error") or ""),
             "reason": str(source.get("reason") or ""),
             "selection_type": str(snapshot.get("selection_type") or ""),
+            "build_id": str(snapshot.get("build_id") or ""),
             "updated_at": float(snapshot.get("generated_at") or 0.0),
         }
 
@@ -412,6 +414,7 @@ class ServiceManager:
             "reason": str(decision.get("reason") or ""),
             "functional_status": str(snapshot.get("functional_status") or ("ready" if schema_version == 1 else "unknown")),
             "functional_reason": str(snapshot.get("functional_reason") or ""),
+            "build_id": str(snapshot.get("build_id") or ""),
             "updated_at": updated_at,
             "host": dict(host),
             "window": dict(window),

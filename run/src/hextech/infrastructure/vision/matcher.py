@@ -51,6 +51,7 @@ class SlotCandidate:
     confidence: float    # 匹配置信度 0-1
     rule: str            # 判定规则标签（如 dual_font / strong_text / temporal_text）
     required_frames: int # 该规则要求连续出现多少帧才算稳定
+    evidence_grade: str  # strong / medium；weak 不会生成候选
     diagnostic: str      # 诊断标签（如 v2_dual_font）
     top_candidates: tuple[dict[str, Any], ...]  # 候选 Top-N（最多 3 个）
     channels: dict[str, Any]  # 各通道原始得分
@@ -76,6 +77,8 @@ class SlotCandidate:
             "top_candidates": [dict(item) for item in self.top_candidates],
             "channels": dict(self.channels),
             "acceptance_rule": self.rule,
+            "evidence_grade": self.evidence_grade,
+            "required_frames": self.required_frames,
         }
 
 
@@ -146,6 +149,7 @@ def _candidate_from_top(
     confidence: float,
     rule: str,
     required_frames: int,
+    evidence_grade: str,
 ) -> SlotCandidate | None:
     identity = _identity(candidate)
     if not identity:
@@ -163,6 +167,7 @@ def _candidate_from_top(
         confidence=confidence,
         rule=rule,
         required_frames=required_frames,
+        evidence_grade=evidence_grade,
         diagnostic=f"v2_{rule}",
         top_candidates=top_candidates,
         channels=dict(channels),
@@ -201,6 +206,23 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
     alt_margin = _number(text_alt.get("margin"))
     icon_confidence = _number(icon_top.get("confidence"))
     icon_margin = _number(icon.get("margin"))
+    observed_confidence = _number(observed_top.get("confidence"))
+    observed_margin = _number(observed_name.get("margin"))
+
+    if (
+        observed_identity
+        and observed_confidence >= OBSERVED_NAME_CONFIDENCE
+        and observed_margin >= OBSERVED_NAME_MARGIN
+    ):
+        return _candidate_from_top(
+            slot,
+            observed_top,
+            evidence=observed_name,
+            confidence=observed_confidence,
+            rule="observed_name",
+            required_frames=2,
+            evidence_grade="strong",
+        )
 
     def has_high_icon_conflict(identity: str) -> bool:
         return bool(
@@ -222,20 +244,34 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
         and text_margin >= STRONG_TEXT_MARGIN
         and alt_margin >= STRONG_TEXT_MARGIN
     )
-    # 优先级 1：双字体（SimHei + SimSun）top1 相同 → 直接确认，2 帧稳定
+    # 双字体一致仍分证据等级：没有图标/视觉版本佐证的重复文字属于相关证据，
+    # 不能因为连续两帧就按 strong 提交。
     if (
         text_identity
         and text_identity == alt_identity
         and text_confidence >= DUAL_FONT_CONFIDENCE
         and alt_confidence >= DUAL_FONT_CONFIDENCE
     ):
+        icon_support = bool(
+            _identity(icon_top) == text_identity
+            and icon_confidence >= VARIANT_ICON_CONFIDENCE
+            and icon_margin >= VARIANT_ICON_MARGIN
+        )
+        strong_dual = bool(
+            text_confidence >= 0.90
+            and alt_confidence >= 0.90
+            and text_margin >= STRONG_TEXT_MARGIN
+            and alt_margin >= STRONG_TEXT_MARGIN
+            and icon_support
+        )
         return _candidate_from_top(
             slot,
             text_top,
             evidence=text,
             confidence=max(text_confidence, alt_confidence),
             rule="dual_font",
-            required_frames=2,
+            required_frames=2 if strong_dual else 3,
+            evidence_grade="strong" if strong_dual else "medium",
         )
 
     if text_conflict:
@@ -248,17 +284,23 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             key=lambda item: item[3],
             reverse=True,
         ):
-            if identity and confidence >= 0.95 and confidence - other_confidence >= 0.10:
+            if (
+                identity
+                and confidence >= 0.95
+                and confidence - other_confidence >= 0.10
+                and not has_high_icon_conflict(identity)
+            ):
                 return _candidate_from_top(
                     slot,
                     candidate,
                     evidence=evidence,
                     confidence=confidence,
                     rule=rule,
-                    required_frames=2,
+                    required_frames=3,
+                    evidence_grade="medium",
                 )
 
-    # 优先级 2：单字体强匹配（置信度 ≥ 0.74 且 margin ≥ 0.025），2 帧稳定
+    # 单字体即使绝对分高也只有一条证据链，按 medium 连续三帧确认。
     strong_channels = (
         (text, text_top, text_identity, text_confidence, text_margin, "strong_text"),
         (text_alt, alt_top, alt_identity, alt_confidence, alt_margin, "strong_text_alt"),
@@ -268,21 +310,12 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
         key=lambda item: item[3],
         reverse=True,
     ):
-        try:
-            variant_count = max(1, int(candidate.get("name_variant_count") or 1))
-        except (TypeError, ValueError):
-            variant_count = 1
-        multi_variant_strong = bool(
-            variant_count > 1
-            and confidence >= MULTI_VARIANT_TEXT_CONFIDENCE
-            and margin >= MULTI_VARIANT_TEXT_MARGIN
-            and not has_high_icon_conflict(identity)
-        )
         if (
             identity
             and not text_conflict
-            and confidence >= STRONG_TEXT_CONFIDENCE
-            and (margin >= STRONG_TEXT_MARGIN or confidence >= 0.92 or multi_variant_strong)
+            and confidence >= 0.92
+            and margin >= STRONG_TEXT_MARGIN
+            and not has_high_icon_conflict(identity)
         ):
             return _candidate_from_top(
                 slot,
@@ -290,28 +323,47 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
                 evidence=evidence,
                 confidence=confidence,
                 rule=rule,
-                required_frames=2,
+                required_frames=3,
+                evidence_grade="medium",
             )
-
-    observed_confidence = _number(observed_top.get("confidence"))
-    observed_margin = _number(observed_name.get("margin"))
-    if (
-        observed_identity
-        and observed_confidence >= OBSERVED_NAME_CONFIDENCE
-        and observed_margin >= OBSERVED_NAME_MARGIN
-    ):
-        return _candidate_from_top(
-            slot,
-            observed_top,
-            evidence=observed_name,
-            confidence=observed_confidence,
-            rule="observed_name",
-            required_frames=2,
-        )
 
     # shortlist/弱文字仍保留在 channels 供诊断，但不能独立授权 ready。
     # 真机证据表明连续帧只会重复同一系统性误匹配，并不会增加独立信息。
     return None
+
+
+def strong_evidence_identities(slot: Mapping[str, Any]) -> set[str]:
+    """返回本帧真正具有跨通道/真机样本佐证的身份，供替换滞回使用。"""
+
+    identities: set[str] = set()
+    observed = _channel(slot, "observed_name")
+    observed_top = _top(observed)
+    if (
+        _identity(observed_top)
+        and _number(observed_top.get("confidence")) >= OBSERVED_NAME_CONFIDENCE
+        and _number(observed.get("margin")) >= OBSERVED_NAME_MARGIN
+    ):
+        identities.add(_identity(observed_top))
+
+    text = _channel(slot, "text")
+    alternate = _channel(slot, "text_alt")
+    icon = _channel(slot, "icon")
+    text_top = _top(text)
+    alternate_top = _top(alternate)
+    icon_top = _top(icon)
+    identity = _identity(text_top)
+    if (
+        identity
+        and identity == _identity(alternate_top) == _identity(icon_top)
+        and _number(text_top.get("confidence")) >= 0.90
+        and _number(alternate_top.get("confidence")) >= 0.90
+        and _number(text.get("margin")) >= STRONG_TEXT_MARGIN
+        and _number(alternate.get("margin")) >= STRONG_TEXT_MARGIN
+        and _number(icon_top.get("confidence")) >= VARIANT_ICON_CONFIDENCE
+        and _number(icon.get("margin")) >= VARIANT_ICON_MARGIN
+    ):
+        identities.add(identity)
+    return identities
 
 
 def unknown_slot(slot_index: int, *, diagnostic: str = "v2_detecting") -> dict[str, Any]:

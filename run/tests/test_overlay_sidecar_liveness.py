@@ -64,6 +64,28 @@ def test_sidecar_status_writer_records_liveness_contract(monkeypatch, tmp_path: 
     assert payload["generation"] == "generation-a"
 
 
+def test_sidecar_status_diagnostics_cannot_override_contract_fields(monkeypatch, tmp_path: Path) -> None:
+    from hextech.infrastructure.vision import runner
+
+    target = tmp_path / "sidecar-status.json"
+    monkeypatch.setattr(runner, "SIDECAR_STATUS_FILE", target)
+    runner._write_sidecar_status(
+        "starting",
+        schema_version=5,
+        build_id="cache-build",
+        pid=-1,
+        heartbeat_at=1.0,
+        phase="template_runtime_cache_ready",
+    )
+    payload = json.loads(target.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == 2
+    assert payload["build_id"] != "cache-build"
+    assert payload["pid"] > 0
+    assert payload["heartbeat_at"] > 1.0
+    assert payload["phase"] == "template_runtime_cache_ready"
+
+
 @pytest.mark.parametrize(
     ("overrides", "pid_exists", "create_time", "expected"),
     [

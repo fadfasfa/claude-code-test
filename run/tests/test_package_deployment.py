@@ -9,12 +9,23 @@ import pytest
 
 
 def _package(root: Path, marker: str = "new") -> Path:
+    from tooling.build.manifest import RUNTIME_CONTRACT_VERSIONS
+
     internal = root / "_internal"
     internal.mkdir(parents=True)
     (root / "Hextech伴生终端.exe").write_text(marker, encoding="utf-8")
     (root / "启动 Hextech.bat").write_text("start", encoding="utf-8")
     (root / "README_首次使用.txt").write_text("guide", encoding="utf-8")
-    (internal / "bundle_manifest.json").write_text(json.dumps({"schema_version": 2}), encoding="utf-8")
+    (internal / "bundle_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "build_id": "test-build",
+                "runtime_contracts": RUNTIME_CONTRACT_VERSIONS,
+            }
+        ),
+        encoding="utf-8",
+    )
     return root
 
 
@@ -49,6 +60,7 @@ def test_deploy_release_promotes_verified_copy_and_keeps_one_previous(tmp_path, 
     assert shortcut_calls == [(shortcut, target / "Hextech伴生终端.exe")]
     assert result.removed_shortcuts == ()
     assert result.restarted is False
+    assert result.build_id == "test-build"
 
 
 def test_deploy_validates_candidate_before_stopping_existing_install(tmp_path, monkeypatch):
@@ -436,10 +448,7 @@ def test_build_without_deploy_does_not_call_deployer(tmp_path, monkeypatch):
 def test_packaged_smoke_runs_overlay_self_check_before_desktop(tmp_path, monkeypatch):
     from tooling.acceptance import smoke_packaged_startup as smoke
 
-    package_dir = tmp_path / "HextechCompanion-20260720"
-    package_dir.mkdir()
-    (package_dir / "Hextech伴生终端.exe").write_text("exe", encoding="utf-8")
-    (package_dir / "启动 Hextech.bat").write_text("launcher", encoding="utf-8")
+    package_dir = _package(tmp_path / "HextechCompanion-20260720")
     events: list[str] = []
 
     class FinishedProcess:

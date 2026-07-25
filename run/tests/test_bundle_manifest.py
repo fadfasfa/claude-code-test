@@ -70,24 +70,25 @@ def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch)
     from hextech.modules.data.generation import DataSnapshotPublisher
     from tooling.build import manifest as bundle_manifest
     from tooling.build.resource_manifest import write_resource_manifest
-    from tooling.build.rules import CATALOG_FILES
+    from tooling.build.rules import CATALOG_FILES, iter_package_data_entries
 
     snapshot_root = tmp_path / "resources" / "seeds"
-    published = DataSnapshotPublisher(snapshot_root).publish(
-        {
-            "champions": [{"id": "1", "name": "英雄一"}],
-            "champion_hextech": {"英雄一": {"hero_id": "1", "augments": [{"id": "a1"}]}},
-            "overlay_hints": {
-                "hints": {"a1": {"augment_id": "a1", "name": "强化一"}},
-                "name_index": {"a1": "a1", "强化一": "a1"},
-            },
-            "identities": {
-                "schema_version": 2,
-                "champions": {"1": "英雄一"},
-                "augments": {"a1": "强化一"},
-            },
+    payload = {
+        "champions": [{"id": "1", "name": "英雄一"}],
+        "champion_hextech": {"英雄一": {"hero_id": "1", "augments": [{"id": "a1"}]}},
+        "overlay_hints": {
+            "hints": {"a1": {"augment_id": "a1", "name": "强化一"}},
+            "name_index": {"a1": "a1", "强化一": "a1"},
         },
-    )
+        "identities": {
+            "schema_version": 2,
+            "champions": {"1": "英雄一"},
+            "augments": {"a1": "强化一"},
+        },
+    }
+    DataSnapshotPublisher(snapshot_root).publish(payload)
+    verified_snapshot_root = tmp_path / "verified-snapshots"
+    published = DataSnapshotPublisher(verified_snapshot_root).publish(payload)
     catalog_dir = tmp_path / "resources" / "catalog"
     catalog_dir.mkdir(parents=True)
     for name in CATALOG_FILES:
@@ -95,18 +96,40 @@ def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch)
     assets = tmp_path / "resources" / "assets" / "champions"
     assets.mkdir(parents=True)
     (assets / "one.png").write_bytes(b"png")
+    source_file = tmp_path / "src" / "hextech" / "bootstrap" / "desktop.py"
+    source_file.parent.mkdir(parents=True)
+    source_file.write_text("# test source\n", encoding="utf-8")
     write_resource_manifest(tmp_path)
     monkeypatch.setattr(bundle_manifest, "iter_source_files", lambda _base: ["src/hextech/bootstrap/desktop.py"])
 
     manifest = bundle_manifest.build_bundle_manifest(
         tmp_path,
-        verified_snapshot_root=snapshot_root,
+        verified_snapshot_root=verified_snapshot_root,
+    )
+    generated_manifest = tmp_path / "bundle_manifest.json"
+    generated_manifest.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    entries = iter_package_data_entries(
+        tmp_path,
+        generated_manifest,
+        verified_snapshot_root=verified_snapshot_root,
     )
 
     assert manifest["seed_health"]["generation_id"] == published.generation_id
+    assert manifest["schema_version"] == 3
+    assert manifest["build_id"]
+    assert len(manifest["source_fingerprint"]) == 64
+    assert manifest["runtime_contracts"] == {
+        "overlay_event": 3,
+        "sidecar_status": 2,
+        "overlay_session_report": 2,
+    }
     assert "resources/seeds/current.v2.json" in manifest["seed_files"]
     for relative_name in manifest["seed_files"]:
         assert len(manifest["seed_sha256"][relative_name]) == 64
+    verified_root = verified_snapshot_root.resolve()
+    verified_entries = [entry for entry in entries if entry.target.startswith("resources/seeds")]
+    assert verified_entries
+    assert all(verified_root == entry.source.resolve() or verified_root in entry.source.resolve().parents for entry in verified_entries)
 
 
 def test_runtime_bundle_reports_missing_or_corrupt_manifest(tmp_path, monkeypatch):

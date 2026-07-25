@@ -39,6 +39,10 @@ NOISY_MESSAGE_PATTERNS = (
     "协同数据缓存已刷新",
     "CSV 已更新：",
 )
+PACKAGED_SCRAPLING_REQUEST_PATTERNS = (
+    "[scrapling] fetched",
+    "[scrapling] retry",
+)
 SENSITIVE_KEYWORDS = (
     "auth",
     "authorization",
@@ -75,6 +79,17 @@ class SummaryOnlyFilter(logging.Filter):
             if pattern in message:
                 return False
         return True
+
+
+class PackagedScraplingRequestFilter(logging.Filter):
+    """冻结态摘要只保留来源聚合日志，不记录 Scrapling 的逐请求流水。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage().casefold()
+        logger_name = str(record.name or "").casefold()
+        return "scrapling.fetchers" not in logger_name and not any(
+            pattern in message for pattern in PACKAGED_SCRAPLING_REQUEST_PATTERNS
+        )
 
 
 class SourceNameFilter(logging.Filter):
@@ -396,6 +411,8 @@ def install_runtime_logging(profile: Literal["dev", "packaged", "test"] | None =
         profile=resolved_profile,
     )
     summary_handler.addFilter(SummaryOnlyFilter())
+    if resolved_profile == "packaged":
+        summary_handler.addFilter(PackagedScraplingRequestFilter())
     error_handler = _new_rotating_handler(
         paths["error"],
         name="runtime_error",

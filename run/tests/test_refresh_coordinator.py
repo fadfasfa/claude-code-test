@@ -348,6 +348,46 @@ def test_failed_source_reuses_same_catalog_last_good_and_publishes_degraded(tmp_
     assert set(status["degraded_sources"]) == {"apex", "mayhem"}
 
 
+def test_recovered_apex_promotes_saved_mayhem_candidate_as_fresh_cohort(tmp_path: Path) -> None:
+    runner = FakeWorkerRunner()
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    coordinator = CohortRefreshCoordinator(
+        publisher=publisher,
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=runner,
+        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    assert coordinator.refresh(force=True)["state"] == "ready"
+
+    # 第二轮 Apex 失败时，健康 Mayhem 只能保存在 candidate，正式 cohort 继续使用旧值。
+    runner.round = 1
+    runner.fail_source = "apex"
+    assert coordinator.refresh(force=True)["state"] == "degraded"
+    current_mayhem = json.loads(
+        (tmp_path / "sources" / "mayhem" / "current.v2.json").read_text(encoding="utf-8")
+    )
+    assert current_mayhem["run_id"] == "mayhem-run-0"
+
+    # Apex 恢复后，即使本轮 Mayhem 抓取失败，也应复用同 Catalog 的健康 candidate 原子晋升。
+    runner.round = 2
+    runner.fail_source = "mayhem"
+    result = coordinator.refresh(force=True)
+    status = DataSnapshotClient(tmp_path / "snapshots").status()
+    current_apex = json.loads(
+        (tmp_path / "sources" / "apex" / "current.v2.json").read_text(encoding="utf-8")
+    )
+    current_mayhem = json.loads(
+        (tmp_path / "sources" / "mayhem" / "current.v2.json").read_text(encoding="utf-8")
+    )
+
+    assert result["state"] == "ready"
+    assert current_apex["run_id"] == "apex-run-2"
+    assert current_mayhem["run_id"] == "mayhem-run-1"
+    assert status["source_status"]["apex"]["freshness"] == "fresh"
+    assert status["source_status"]["mayhem"]["freshness"] == "fresh"
+
+
 def test_rejected_hextech_candidate_keeps_last_good_and_marks_data_stale(tmp_path: Path) -> None:
     """覆盖门禁等候选失败时，消费面必须能识别正在使用的 last-good。"""
 
@@ -375,6 +415,120 @@ def test_rejected_hextech_candidate_keeps_last_good_and_marks_data_stale(tmp_pat
     assert status["source_status"]["hextech"]["freshness"] == "last_good"
     assert status["source_status"]["hextech"]["data_status"] == "data_stale"
     assert status["source_status"]["hextech"]["data_reason"] == "candidate_rejected_last_good_preserved"
+
+
+def test_game_in_progress_defers_refresh_without_marking_data_stale(tmp_path: Path) -> None:
+    runner = FakeWorkerRunner()
+    game = {"active": False}
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    coordinator = CohortRefreshCoordinator(
+        publisher=publisher,
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=runner,
+        game_state_probe=lambda: game["active"],
+    )
+    first = coordinator.refresh(force=True)
+    calls_before = list(runner.calls)
+    game["active"] = True
+
+    deferred = coordinator.refresh(force=True)
+
+    assert first["state"] == "ready"
+    assert deferred == {
+        "state": "ready",
+        "refresh_state": "deferred",
+        "deferred_reason": "game_in_progress",
+        "reason_code": "game_in_progress",
+        "generation_id": first["generation_id"],
+    }
+    assert "data_stale" not in json.dumps(deferred)
+    assert runner.calls == calls_before
+
+
+def test_game_in_progress_does_not_block_cold_start_without_snapshot(tmp_path: Path) -> None:
+    runner = FakeWorkerRunner()
+    coordinator = CohortRefreshCoordinator(
+        publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=runner,
+        game_state_probe=lambda: True,
+    )
+
+    result = coordinator.refresh(force=True)
+
+    assert result["state"] == "ready"
+    assert result.get("refresh_state") != "deferred"
+    assert runner.calls == ["catalog", "hextech", "apex", "mayhem"]
+
+
+def test_active_worker_cancelled_by_game_is_deferred_without_backoff(tmp_path: Path) -> None:
+    initial_runner = FakeWorkerRunner()
+    game = {"active": False}
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    coordinator = CohortRefreshCoordinator(
+        publisher=publisher,
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=initial_runner,
+        game_state_probe=lambda: game["active"],
+    )
+    coordinator.refresh(force=True)
+    entered = threading.Event()
+    saw_cancel = threading.Event()
+
+    def blocking_runner(_command, **kwargs):
+        entered.set()
+        cancel_file = Path(kwargs["cancel_file"])
+        if cancel_file.exists() or cancel_file.parent.exists():
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and not cancel_file.exists():
+                time.sleep(0.01)
+        if cancel_file.exists():
+            saw_cancel.set()
+        return IsolatedProcessResult(2, 0.01, False, "", "cancelled")
+
+    coordinator.process_runner = blocking_runner
+    result_holder: dict[str, object] = {}
+    thread = threading.Thread(target=lambda: result_holder.update(coordinator.refresh(force=True)))
+    thread.start()
+    assert entered.wait(2.0)
+    game["active"] = True
+    coordinator.poll_deferred_refresh()
+    thread.join(3.0)
+
+    assert saw_cancel.is_set()
+    assert result_holder["refresh_state"] == "deferred"
+    schedule = coordinator.schedule_store.load()
+    assert all(state.state == "ready" for state in schedule.sources.values())
+
+
+def test_deferred_refresh_resumes_once_thirty_seconds_after_game(tmp_path: Path) -> None:
+    runner = FakeWorkerRunner()
+    game = {"active": False}
+    clock = {"now": datetime(2026, 1, 1, tzinfo=timezone.utc)}
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    coordinator = CohortRefreshCoordinator(
+        publisher=publisher,
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=runner,
+        game_state_probe=lambda: game["active"],
+        now=lambda: clock["now"],
+    )
+    coordinator.refresh(force=True)
+    game["active"] = True
+    coordinator.refresh(force=True)
+    assert coordinator.poll_deferred_refresh() is None
+
+    game["active"] = False
+    assert coordinator.poll_deferred_refresh() is None
+    clock["now"] += timedelta(seconds=29)
+    assert coordinator.poll_deferred_refresh() is None
+    clock["now"] += timedelta(seconds=2)
+    assert coordinator.poll_deferred_refresh() is True
+    assert coordinator.poll_deferred_refresh() is None
 
 
 def test_same_content_new_runs_publish_generation_with_matching_provenance(tmp_path) -> None:

@@ -12,6 +12,7 @@ from hextech.infrastructure.vision.sidecar_common import (
     apply_transform,
     build_overlay_event,
     cursor_in_client_boxes,
+    get_cursor_screen_position,
     pick_card_panels,
     time,
 )
@@ -22,6 +23,16 @@ def _cursor_over_card_panels(
     frame_size: tuple[int, int],
     source: Mapping[str, Any],
 ) -> bool:
+    return bool(_cursor_over_card_slots(client_rect, frame_size, source))
+
+
+def _cursor_over_card_slots(
+    client_rect: tuple[int, int, int, int],
+    frame_size: tuple[int, int],
+    source: Mapping[str, Any],
+) -> list[int]:
+    """返回鼠标实际遮挡的槽位，避免整组三槽一起冻结。"""
+
     raw_transform = source.get("layout_transform") if isinstance(source.get("layout_transform"), Mapping) else {}
     try:
         transform = LayoutTransform(
@@ -31,9 +42,15 @@ def _cursor_over_card_panels(
         )
     except (TypeError, ValueError):
         transform = LayoutTransform()
-    panel_defs = pick_card_panels(frame_size)
-    boxes = [apply_transform(box, frame_size, transform) for box in panel_defs]
-    return cursor_in_client_boxes(client_rect, boxes)
+    boxes = [apply_transform(box, frame_size, transform) for box in pick_card_panels(frame_size)]
+    cursor = get_cursor_screen_position()
+    if cursor is None:
+        return []
+    return [
+        index
+        for index, box in enumerate(boxes[:SLOT_COUNT])
+        if cursor_in_client_boxes(client_rect, [box], cursor_position=cursor)
+    ]
 
 
 def _slot_ready_for_display(slot: Mapping[str, Any]) -> bool:
