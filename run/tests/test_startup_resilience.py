@@ -40,3 +40,20 @@ def test_desktop_keyboard_interrupt_runs_normal_shutdown() -> None:
 
     ui.exit_application.assert_called_once_with()
     ui.wait_for_shutdown.assert_called_once_with(timeout_seconds=8.0)
+
+
+def test_web_server_disables_uvicorn_stdio_logging(monkeypatch) -> None:
+    from hextech.interfaces.web.backend import app as web_app
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(web_app, "find_available_port", lambda _port: 8000)
+    monkeypatch.setattr(web_app, "set_active_web_port", lambda _port: None)
+    monkeypatch.setattr(web_app, "write_active_web_port", lambda _port: None)
+    monkeypatch.setattr(web_app, "write_request_auth_token", lambda: None)
+    monkeypatch.setattr(web_app, "maybe_open_browser", lambda _port: None)
+    monkeypatch.setattr(web_app.uvicorn, "run", lambda _app, **kwargs: captured.update(kwargs))
+
+    web_app.run_web_server()
+
+    assert captured["log_config"] is None
+    assert captured["access_log"] is False

@@ -49,6 +49,9 @@ def run_web_server() -> None:
         reload=False,
         access_log=False,
         log_level="warning",
+        # PyInstaller windowed 进程没有 stdout/stderr；默认 formatter 会在 isatty()
+        # 配置阶段失败。运行日志已由 composition root 写入文件，这里不重复配置。
+        log_config=None,
     )
 if __name__ == "__main__":
     run_web_server()
