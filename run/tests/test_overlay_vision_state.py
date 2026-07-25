@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import unittest
 from unittest import mock
 
@@ -14,7 +15,16 @@ from support.vision_events import weak_slot as _weak_slot
 
 
 class OverlayVisionStateTests(unittest.TestCase):
-    def test_single_slot_fails_after_three_seconds_and_can_recover(self):
+    @staticmethod
+    def _at(event: dict, timestamp: float) -> dict:
+        timed = deepcopy(event)
+        timed["timing"] = {
+            "captured_at": timestamp - 0.1,
+            "recognition_completed_at": timestamp,
+        }
+        return timed
+
+    def test_single_slot_stays_detecting_after_three_seconds_and_can_recover(self):
         from hextech.infrastructure.vision import state
 
         tracker = state.SelectionTracker(scene_enter_frames=1)
@@ -27,17 +37,17 @@ class OverlayVisionStateTests(unittest.TestCase):
         timeline = [10.0] * 3 + [13.1] * 3 + [13.2] * 3 + [13.3] * 3
         with mock.patch.object(state.time, "monotonic", side_effect=timeline):
             detecting = tracker.update(partial)
-            failed = tracker.update(partial)
+            still_detecting = tracker.update(partial)
             tracker.update(_selection_event())
             recovered = tracker.update(_selection_event())
 
         self.assertEqual(detecting["slots"][2]["state"], "detecting")
-        self.assertEqual(failed["slots"][2]["state"], "failed")
-        self.assertEqual(failed["slots"][2]["rejection_reason"], "confidence_below_threshold")
-        self.assertGreaterEqual(failed["slots"][2]["elapsed_seconds"], 3.0)
+        self.assertEqual(still_detecting["slots"][2]["state"], "detecting")
+        self.assertEqual(still_detecting["slots"][2]["temporal_state"], "evidence_pending")
+        self.assertEqual(still_detecting["slots"][2]["rejection_reason"], "confidence_below_threshold")
         self.assertEqual(recovered["slots"][2]["state"], "ready")
 
-    def test_wobbling_candidates_also_fail_after_three_seconds(self):
+    def test_competing_strong_candidates_do_not_publish_a_false_ready(self):
         from hextech.infrastructure.vision import state
 
         tracker = state.SelectionTracker(scene_enter_frames=1)
@@ -45,16 +55,16 @@ class OverlayVisionStateTests(unittest.TestCase):
         event_b = _selection_event()
         event_a["_raw_slots"][2] = _ready_slot(2, "augment_x", "候选 X")
         event_b["_raw_slots"][2] = _ready_slot(2, "augment_y", "候选 Y")
-        timeline = [10.0] * 3 + [11.0] * 3 + [13.1] * 3
+        timeline = [10.0, 11.0, 13.1]
 
         with mock.patch.object(state.time, "monotonic", side_effect=timeline):
             tracker.update(event_a)
             tracker.update(event_b)
-            failed = tracker.update(event_a)
+            competing = tracker.update(event_a)
 
-        self.assertEqual(failed["slots"][2]["state"], "failed")
-        self.assertEqual(failed["slots"][2]["candidate_identity"], "候选_x")
-        self.assertGreaterEqual(failed["slots"][2]["elapsed_seconds"], 3.0)
+        self.assertEqual(competing["slots"][2]["state"], "detecting")
+        self.assertEqual(competing["slots"][2]["candidate_identity"], "候选_x")
+        self.assertEqual(competing["slots"][2]["evidence_hits"], 2)
 
     def test_strong_reroll_keeps_old_slot_until_replacement_is_stable(self):
         from hextech.infrastructure.vision import state
@@ -136,6 +146,76 @@ class OverlayVisionStateTests(unittest.TestCase):
         observed = [tracker.update(event) for _ in range(5)]
 
         self.assertTrue(all(item["slots"][0]["state"] != "ready" for item in observed))
+
+    def test_strong_evidence_confirms_two_of_three_with_a_miss(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        strong = _selection_event()
+        miss = _selection_event()
+        miss["_raw_slots"][0] = _weak_slot(0, "weak", "弱候选")
+
+        first = tracker.update(self._at(strong, 10.0))
+        interrupted = tracker.update(self._at(miss, 10.5))
+        ready = tracker.update(self._at(strong, 11.0))
+
+        self.assertEqual(first["slots"][0]["state"], "detecting")
+        self.assertEqual(interrupted["slots"][0]["state"], "detecting")
+        self.assertEqual(ready["slots"][0]["state"], "ready")
+        self.assertEqual(ready["slots"][0]["evidence_hits"], 2)
+        self.assertEqual(ready["slots"][0]["replacement_reason"], "initial_strong")
+
+    def test_medium_evidence_confirms_three_of_five_with_a_miss(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        medium = _selection_event()
+        medium["_raw_slots"][0] = _medium_slot(0, "medium", "普通候选")
+        miss = _selection_event()
+        miss["_raw_slots"][0] = _weak_slot(0, "weak", "弱候选")
+
+        tracker.update(self._at(medium, 20.0))
+        tracker.update(self._at(miss, 20.4))
+        pending = tracker.update(self._at(medium, 20.8))
+        ready = tracker.update(self._at(medium, 21.2))
+
+        self.assertEqual(pending["slots"][0]["state"], "detecting")
+        self.assertEqual(pending["slots"][0]["evidence_hits"], 2)
+        self.assertEqual(ready["slots"][0]["state"], "ready")
+        self.assertEqual(ready["slots"][0]["evidence_hits"], 3)
+        self.assertEqual(ready["slots"][0]["replacement_reason"], "initial_medium")
+
+    def test_evidence_older_than_time_window_does_not_confirm(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        strong = _selection_event()
+        miss = _selection_event()
+        miss["_raw_slots"][0] = _weak_slot(0, "weak", "弱候选")
+
+        tracker.update(self._at(strong, 30.0))
+        tracker.update(self._at(miss, 37.0))
+        expired = tracker.update(self._at(strong, 37.1))
+
+        self.assertEqual(expired["slots"][0]["state"], "detecting")
+        self.assertEqual(expired["slots"][0]["evidence_hits"], 1)
+        self.assertEqual(expired["slots"][0]["evidence_window"], 1)
+
+    def test_identity_churn_becomes_evidence_starved_without_clearing_ready_slots(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        observed = None
+        for index, timestamp in enumerate((40.0, 40.5, 41.0, 41.5, 42.1), start=1):
+            event = _selection_event()
+            event["_raw_slots"][1] = _medium_slot(1, f"churn-{index}", f"跳变候选 {index}")
+            observed = tracker.update(self._at(event, timestamp))
+
+        self.assertIsNotNone(observed)
+        self.assertEqual(observed["slots"][1]["state"], "detecting")
+        self.assertEqual(observed["slots"][1]["temporal_state"], "evidence_starved")
+        self.assertEqual(observed["slots"][1]["diagnostic"], "evidence_starved")
+        self.assertEqual([observed["slots"][index]["state"] for index in (0, 2)], ["ready", "ready"])
 
     def test_same_name_variants_share_text_identity_and_require_icon_for_visual_id(self):
         from copy import deepcopy

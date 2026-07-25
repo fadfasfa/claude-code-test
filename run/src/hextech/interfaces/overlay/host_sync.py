@@ -390,6 +390,8 @@ def _write_overlay_session_report(
     signature_payload = {
         "session_id": session_id,
         "generation_id": generation_id,
+        "selection_epoch": int(source.get("selection_epoch") or 0),
+        "selection_revision": int(source.get("selection_revision") or 0),
         "visible_reason": str(visibility.get("visibility_reason") or ""),
         "event_error": str(snapshot.get("error") or ""),
         "slots": safe_slots,
@@ -426,6 +428,11 @@ def _write_overlay_session_report(
             "tag": str(source.get("tag") or ""),
             "reason": str(source.get("reason") or ""),
             "generation_id": generation_id,
+            "selection_epoch": int(source.get("selection_epoch") or 0),
+            "selection_revision": int(source.get("selection_revision") or 0),
+            "scene_state": str(source.get("scene_state") or ""),
+            "selection_window_active": bool(source.get("selection_window_active")),
+            "scene_temporal_state": str(source.get("scene_temporal_state") or ""),
         },
         "visibility": {
             "reason": str(visibility.get("visibility_reason") or ""),

@@ -1,6 +1,8 @@
 """Vision sidecar diagnostics 职责模块。"""
 from __future__ import annotations
 
+import hashlib
+
 from hextech.infrastructure.vision.sidecar_common import (
     BODY_SHARD_STRONG_CONFIDENCE,
     BODY_SHARD_SUPPORT_CONFIDENCE,
@@ -26,6 +28,9 @@ from hextech.infrastructure.vision.sidecar_common import (
     VISION_TRACE_HISTORY_LIMIT,
     VISION_TRACE_REFRESH_SECONDS,
     VISION_TRACE_SCHEMA_VERSION,
+    VISION_TIMELINE_DIRNAME,
+    VISION_TIMELINE_EPOCH_LIMIT,
+    VISION_TIMELINE_SCHEMA_VERSION,
     _LAST_VISION_TRACE_SIGNATURES,
     _LAST_VISION_TRACE_WRITES,
     apply_transform,
@@ -37,10 +42,15 @@ from hextech.infrastructure.vision.sidecar_common import (
 from hextech.infrastructure.vision.sidecar_event_loop import _event_ready_slots, _slot_signature
 from hextech.infrastructure.vision.sidecar_scene_geometry import resolve_roi_preset
 
+
+_TIMELINE_SEQUENCES: dict[str, int] = {}
+
 def _write_roi_diagnostic_dump(
     dump_root: str | Path,
     frame: Image.Image,
     event_payload: Mapping[str, Any],
+    *,
+    observation_seq: int | None = None,
 ) -> Path:
     """只保存按钮、图标和卡名 ROI；禁止写入完整游戏帧。"""
 
@@ -67,12 +77,18 @@ def _write_roi_diagnostic_dump(
         image.crop(apply_transform(box, image.size, transform)).save(target / f"icon_{index}.png")
     for index, box in enumerate(preset.name_slots):
         image.crop(apply_transform(box, image.size, transform)).save(target / f"name_{index}.png")
-    atomic_write_json(
-        target / "report.json",
-        build_vision_trace_payload(event_payload),
-        ensure_ascii=False,
-        indent=2,
-    )
+    report = build_vision_trace_payload(event_payload)
+    timing = event_payload.get("timing") if isinstance(event_payload.get("timing"), Mapping) else {}
+    report["observation"] = {
+        "observation_id": target.name,
+        "observation_seq": int(observation_seq or 0),
+        "selection_epoch": int(source.get("selection_epoch") or 0),
+        "selection_revision": int(source.get("selection_revision") or 0),
+        "capture_started_at": timing.get("capture_started_at"),
+        "captured_at": timing.get("captured_at"),
+        "recognition_completed_at": timing.get("recognition_completed_at"),
+    }
+    atomic_write_json(target / "report.json", report, ensure_ascii=False, indent=2)
 
     directories = sorted((path for path in root.glob("roi-*") if path.is_dir()), key=lambda path: path.name)
     for expired in directories[:-ROI_DIAGNOSTIC_LIMIT]:
@@ -314,6 +330,194 @@ def _vision_trace_history_entry(event_payload: Mapping[str, Any]) -> dict[str, A
         "slot_signature": list(_slot_signature(event_payload)),
         "slots": slot_summaries,
     }
+
+
+def _timeline_channel_summary(raw_slot: Mapping[str, Any], channel_name: str) -> dict[str, Any]:
+    """只保留回放所需 Top-1 分数，不把图片或完整候选表写入时间线。"""
+
+    channels = raw_slot.get("channels") if isinstance(raw_slot.get("channels"), Mapping) else {}
+    channel = channels.get(channel_name) if isinstance(channels.get(channel_name), Mapping) else {}
+    candidates = channel.get("top_candidates") if isinstance(channel.get("top_candidates"), list) else []
+    top = candidates[0] if candidates and isinstance(candidates[0], Mapping) else {}
+    return {
+        "augment_id": str(top.get("augment_id") or ""),
+        "name": str(top.get("name") or ""),
+        "confidence": top.get("confidence"),
+        "margin": channel.get("margin"),
+    }
+
+
+def _latency_percentiles(values: list[float]) -> dict[str, float | int | None]:
+    ordered = sorted(values)
+    if not ordered:
+        return {"count": 0, "p50": None, "p95": None}
+    midpoint = len(ordered) // 2
+    p50 = (
+        ordered[midpoint]
+        if len(ordered) % 2
+        else round((ordered[midpoint - 1] + ordered[midpoint]) / 2.0, 3)
+    )
+    p95_index = max(0, min(len(ordered) - 1, int((len(ordered) * 0.95) + 0.999999) - 1))
+    return {"count": len(ordered), "p50": p50, "p95": ordered[p95_index]}
+
+
+def _timeline_epoch_latency_summary(target: Path, current: Mapping[str, Any]) -> dict[str, Any]:
+    """只在 epoch 结束时汇总 JSONL；热识别路径不反复重读历史。"""
+
+    entries: list[Mapping[str, Any]] = []
+    try:
+        lines = target.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        lines = []
+    for line in lines:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, Mapping):
+            entries.append(payload)
+    entries.append(current)
+    result: dict[str, Any] = {}
+    for key in ("capture", "recognition", "total"):
+        values: list[float] = []
+        for entry in entries:
+            latency = entry.get("latency_ms") if isinstance(entry.get("latency_ms"), Mapping) else {}
+            value = latency.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                values.append(float(value))
+        result[key] = _latency_percentiles(values)
+    return result
+
+
+def _selection_timeline_entry(event_payload: Mapping[str, Any], observation_seq: int) -> dict[str, Any]:
+    source = event_payload.get("source") if isinstance(event_payload.get("source"), Mapping) else {}
+    timing = event_payload.get("timing") if isinstance(event_payload.get("timing"), Mapping) else {}
+    raw_slots = event_payload.get("_raw_slots") if isinstance(event_payload.get("_raw_slots"), list) else []
+    rendered_slots = event_payload.get("slots") if isinstance(event_payload.get("slots"), list) else []
+    slots: list[dict[str, Any]] = []
+    for index in range(SLOT_COUNT):
+        raw = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
+        rendered = (
+            rendered_slots[index]
+            if index < len(rendered_slots) and isinstance(rendered_slots[index], Mapping)
+            else {}
+        )
+        slots.append(
+            {
+                "slot": index,
+                "text": _timeline_channel_summary(raw, "text"),
+                "text_alt": _timeline_channel_summary(raw, "text_alt"),
+                "icon": _timeline_channel_summary(raw, "icon"),
+                "candidate_identity": str(rendered.get("candidate_identity") or ""),
+                "evidence_grade": str(rendered.get("evidence_grade") or ""),
+                "evidence_hits": int(rendered.get("evidence_hits") or 0),
+                "evidence_window": int(rendered.get("evidence_window") or 0),
+                "required_hits": int(rendered.get("required_hits") or 0),
+                "temporal_state": str(rendered.get("temporal_state") or ""),
+                "state": str(rendered.get("state") or "detecting"),
+                "augment_id": str(rendered.get("augment_id") or ""),
+                "name": str(rendered.get("name") or ""),
+                "revision": int(source.get("selection_revision") or 0),
+                "diagnostic": str(raw.get("diagnostic") or rendered.get("diagnostic") or ""),
+            }
+        )
+    def duration_ms(end_key: str, start_key: str) -> float | None:
+        try:
+            end = float(timing.get(end_key) or 0.0)
+            start = float(timing.get(start_key) or 0.0)
+        except (TypeError, ValueError):
+            return None
+        return round((end - start) * 1000.0, 3) if end >= start > 0.0 else None
+
+    return {
+        "schema_version": VISION_TIMELINE_SCHEMA_VERSION,
+        "observation_seq": observation_seq,
+        "session_id": str(source.get("session_id") or ""),
+        "selection_epoch": int(source.get("selection_epoch") or 0),
+        "selection_revision": int(source.get("selection_revision") or 0),
+        "captured_at": timing.get("captured_at"),
+        "recognition_completed_at": timing.get("recognition_completed_at"),
+        "capture_started_at": timing.get("capture_started_at"),
+        "latency_ms": {
+            "capture": duration_ms("captured_at", "capture_started_at"),
+            "recognition": duration_ms("recognition_completed_at", "captured_at"),
+            "total": duration_ms("recognition_completed_at", "capture_started_at"),
+        },
+        "source": {"reason": str(source.get("reason") or "")},
+        "source_reason": str(source.get("reason") or ""),
+        "scene_present": bool(source.get("scene_present")),
+        "scene_score": source.get("scene_score"),
+        "selection_button_present": bool(source.get("selection_button_present")),
+        "card_residue": bool(source.get("card_residue")),
+        "name_residue": list(source.get("name_residue"))
+        if isinstance(source.get("name_residue"), list)
+        else [],
+        "cursor_over_slots": list(source.get("cursor_over_slots"))
+        if isinstance(source.get("cursor_over_slots"), list)
+        else [],
+        "selection_click": bool(source.get("selection_click")),
+        "scene_temporal_state": str(source.get("scene_temporal_state") or ""),
+        "scene_state": str(source.get("scene_state") or ""),
+        "public_active": bool(event_payload.get("active")),
+        "slots": slots,
+    }
+
+
+def _selection_timeline_path(event_payload: Mapping[str, Any], trace_path: Path) -> Path | None:
+    source = event_payload.get("source") if isinstance(event_payload.get("source"), Mapping) else {}
+    try:
+        epoch = int(source.get("selection_epoch") or 0)
+    except (TypeError, ValueError):
+        return None
+    scene_state = str(source.get("scene_state") or "")
+    reason = str(source.get("reason") or "")
+    if (
+        epoch <= 0
+        or str(event_payload.get("selection_type") or "") != "hextech"
+        or (
+            scene_state not in {"candidate", "active"}
+            and reason not in {"selection_completed", "scene_loss_confirmed"}
+        )
+    ):
+        return None
+    session_id = str(source.get("session_id") or "unknown")
+    session_key = hashlib.sha256(session_id.encode("utf-8", errors="replace")).hexdigest()[:12]
+    return trace_path.parent / VISION_TIMELINE_DIRNAME / f"selection-{session_key}-e{epoch:04d}.jsonl"
+
+
+def _next_timeline_sequence(target: Path) -> int:
+    key = str(target.resolve())
+    if key not in _TIMELINE_SEQUENCES:
+        try:
+            existing_count = sum(1 for line in target.read_text(encoding="utf-8").splitlines() if line.strip())
+        except (OSError, UnicodeDecodeError):
+            existing_count = 0
+        _TIMELINE_SEQUENCES[key] = existing_count
+    _TIMELINE_SEQUENCES[key] += 1
+    return _TIMELINE_SEQUENCES[key]
+
+
+def write_selection_timeline_observation(
+    event_payload: Mapping[str, Any],
+    trace_path: str | Path | None = None,
+) -> Path | None:
+    """追加真实选择观察并按 epoch 文件轮转；默认永不保存截图。"""
+
+    base_trace = Path(trace_path) if trace_path is not None else OVERLAY_VISION_TRACE_FILE
+    target = _selection_timeline_path(event_payload, base_trace)
+    if target is None:
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    entry = _selection_timeline_entry(event_payload, _next_timeline_sequence(target))
+    if entry["source_reason"] in {"selection_completed", "scene_loss_confirmed"}:
+        entry["epoch_latency_ms"] = _timeline_epoch_latency_summary(target, entry)
+    with target.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+    timelines = sorted(target.parent.glob("selection-*.jsonl"), key=lambda item: item.stat().st_mtime)
+    for expired in timelines[:-VISION_TIMELINE_EPOCH_LIMIT]:
+        expired.unlink(missing_ok=True)
+        _TIMELINE_SEQUENCES.pop(str(expired.resolve()), None)
+    return target
 
 
 def _append_vision_trace_history(

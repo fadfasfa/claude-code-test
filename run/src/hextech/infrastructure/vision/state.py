@@ -15,8 +15,8 @@ from typing import Any, Mapping
 from hextech.modules.vision.events import build_overlay_event
 from hextech.modules.recommendation.hints import normalize_augment_id
 from hextech.infrastructure.vision.matcher import (
+    SlotCandidate,
     candidate_from_slot,
-    strong_evidence_identities,
     unknown_slot,
 )
 
@@ -25,26 +25,45 @@ SCENE_ENTER_FRAMES = 2  # 场景连续出现 N 帧后判定为"进入"
 SCENE_EXIT_FRAMES = 2   # 场景连续消失 N 帧后判定为"退出"
 SLOT_COUNT = 3          # 海克斯三选一槽位数
 RESIDUE_HOLD_FRAMES = 2  # 普通残影只短暂沿用，避免选择结束后长时间残留
-HOVER_HOLD_FRAMES = 30  # 未点击 hover 需给玩家足够阅读时间；真实点击仍立即完成
-SLOT_DETECTION_TIMEOUT_SECONDS = 3.0
+STRONG_WINDOW_SIZE = 3
+STRONG_REQUIRED_HITS = 2
+MEDIUM_WINDOW_SIZE = 5
+MEDIUM_REQUIRED_HITS = 3
+EVIDENCE_MAX_AGE_SECONDS = 6.0
+EVIDENCE_STARVED_OBSERVATIONS = 5
+EVIDENCE_STARVED_SECONDS = 2.0
+PARTIAL_SCENE_GRACE_SECONDS = 6.0
+READY_SCENE_GRACE_SECONDS = 1.5
+
+
+@dataclass(frozen=True)
+class _CandidateEvidence:
+    """单次有效候选观察；miss 不占窗口，但会触发按时间淘汰旧证据。"""
+
+    observed_at: float
+    candidate: SlotCandidate
 
 
 @dataclass
 class _SlotTrack:
-    """单槽位跟踪器：维护候选连续性和稳定输出。"""
+    """单槽位跟踪器：维护最近候选证据和已确认输出。"""
 
-    candidate_identity: str = ""       # 当前帧候选标识（augment_id 或 name）
-    candidate_frames: int = 0          # 同一候选连续出现帧数
+    candidate_identity: str = ""       # 最近一帧有效候选标识
+    candidate_frames: int = 0          # 最近窗口内当前候选命中数，保留供诊断读取
     stable_slot: dict[str, Any] | None = None  # 已稳定确认的槽位输出
-    weak_miss_frames: int = 0          # 候选丢失帧数，仅用于诊断，不撤下同 epoch 已稳定结果
-    detecting_since: float = 0.0       # 当前选择 epoch 内首次无稳定候选的时间
+    weak_miss_frames: int = 0          # 连续 miss 数，仅用于诊断，不撤下同 epoch 已稳定结果
+    observations: list[_CandidateEvidence] = field(default_factory=list)
+    raw_observation_count: int = 0
+    pending_started_at: float = 0.0
 
     def clear(self) -> None:
         self.candidate_identity = ""
         self.candidate_frames = 0
         self.stable_slot = None
         self.weak_miss_frames = 0
-        self.detecting_since = 0.0
+        self.observations.clear()
+        self.raw_observation_count = 0
+        self.pending_started_at = 0.0
 
 
 @dataclass
@@ -67,6 +86,7 @@ class SelectionTracker:
     body_shard_absent_frames: int = 0  # 锻体场景消失帧计数（退出防抖）
     residue_hold_frames: int = 0       # 非真实场景下沿用上一帧的连续帧数
     selection_click_armed: bool = False  # 场景内卡片点击后，场景消失即确认为本轮选择完成
+    scene_lost_at: float = 0.0          # 有稳定槽后场景门丢失的真实观察时间
     _revision_changed: bool = False
     slots: list[_SlotTrack] = field(default_factory=lambda: [_SlotTrack() for _ in range(SLOT_COUNT)])
 
@@ -78,6 +98,7 @@ class SelectionTracker:
         self.body_shard_absent_frames = 0
         self.residue_hold_frames = 0
         self.selection_click_armed = False
+        self.scene_lost_at = 0.0
         self.selection_revision = 0
         self._revision_changed = False
         for slot in self.slots:
@@ -95,6 +116,9 @@ class SelectionTracker:
                 "selection_epoch": self.epoch,
                 "selection_revision": self.selection_revision,
                 "selection_window_active": False,
+                "scene_present": False,
+                "selection_button_present": bool(source.get("selection_button_present")),
+                "selection_click": bool(source.get("selection_click")),
                 "scoreboard_key_down": False,
                 "ready_slots": 0,
                 "content_ready": False,
@@ -105,7 +129,13 @@ class SelectionTracker:
                 else [],
                 "body_shard_latched": True,
                 "cursor_over_cards": bool(source.get("cursor_over_cards")),
+                "cursor_over_slots": list(source.get("cursor_over_slots"))
+                if isinstance(source.get("cursor_over_slots"), list)
+                else [],
                 "card_residue": bool(source.get("card_residue")),
+                "name_residue": list(source.get("name_residue"))
+                if isinstance(source.get("name_residue"), list)
+                else [],
                 "hover_occluded": False,
             }
         )
@@ -132,7 +162,12 @@ class SelectionTracker:
         )
         return event
 
-    def _selection_completed_event(self, source: Mapping[str, Any]) -> dict[str, Any]:
+    def _selection_completed_event(
+        self,
+        source: Mapping[str, Any],
+        *,
+        reason: str = "selection_completed",
+    ) -> dict[str, Any]:
         """结束当前 epoch，避免完成选择后继续把空槽解释为 detecting。"""
 
         completed_epoch = self.epoch
@@ -141,76 +176,130 @@ class SelectionTracker:
         event = build_overlay_event([], source_tag="vision-sidecar", selection_type="hextech", active=False)
         event["source"].update(
             {
-                "reason": "selection_completed",
+                "reason": reason,
                 "gate_state": "inactive",
                 "scene_state": "absent",
                 "scene_kind": "hextech",
                 "scene_score": float(source.get("scene_score") or 0.0),
                 "selection_epoch": completed_epoch,
                 "selection_revision": completed_revision,
-                "selection_confirmed": True,
+                "selection_confirmed": reason == "selection_completed",
                 "selection_window_active": False,
+                "scene_present": False,
+                "selection_button_present": bool(source.get("selection_button_present")),
+                "selection_click": bool(source.get("selection_click")),
                 "scoreboard_key_down": False,
                 "ready_slots": 0,
                 "content_ready": False,
                 "slot_states": [],
                 "stable_frames": 0,
                 "cursor_over_cards": bool(source.get("cursor_over_cards")),
+                "cursor_over_slots": list(source.get("cursor_over_slots"))
+                if isinstance(source.get("cursor_over_slots"), list)
+                else [],
+                "card_residue": bool(source.get("card_residue")),
+                "name_residue": list(source.get("name_residue"))
+                if isinstance(source.get("name_residue"), list)
+                else [],
                 "hover_occluded": False,
+                "scene_temporal_state": "ended",
             }
         )
         return event
 
-    def _update_slot(self, index: int, raw_slot: Mapping[str, Any]) -> dict[str, Any]:
-        """逐槽处理单帧识别结果，累积候选帧数直到达到 required_frames 阈值。
+    @staticmethod
+    def _max_identity_hits(observations: list[_CandidateEvidence]) -> int:
+        counts: dict[str, int] = {}
+        for item in observations:
+            counts[item.candidate.identity] = counts.get(item.candidate.identity, 0) + 1
+        return max(counts.values(), default=0)
 
-        候选判定三态：
-        - candidate 为 None（识别失败）→ 保留同 epoch 已稳定输出
-        - candidate 与当前稳定输出不同 → 旧结果继续显示，替代候选稳定后再原子替换
-        - candidate 与当前追踪一致 → 累加帧数，达到 required_frames 后锁定为稳定输出
+    @staticmethod
+    def _pending_temporal_state(track: _SlotTrack, observed_at: float) -> str:
+        starved = bool(
+            track.raw_observation_count >= EVIDENCE_STARVED_OBSERVATIONS
+            and track.pending_started_at > 0.0
+            and observed_at - track.pending_started_at >= EVIDENCE_STARVED_SECONDS
+            and SelectionTracker._max_identity_hits(track.observations[-MEDIUM_WINDOW_SIZE:]) < 2
+        )
+        return "evidence_starved" if starved else "evidence_pending"
+
+    def _update_slot(
+        self,
+        index: int,
+        raw_slot: Mapping[str, Any],
+        *,
+        observed_at: float,
+    ) -> dict[str, Any]:
+        """按真实时间和 M-of-N 证据窗口确认单槽候选。
+
+        miss 只淘汰过期证据，不会把仍在窗口内的有效观察全部清零；候选不稳定也
+        始终保持 detecting。只有进程、截图或模板等硬故障由上层运行态报告 failed。
         """
-        track = self.slots[index]
-        now = time.monotonic()
-        candidate = candidate_from_slot(raw_slot)
 
-        def failed_slot() -> dict[str, Any]:
-            raw_candidates = raw_slot.get("top_candidates") if isinstance(raw_slot.get("top_candidates"), list) else []
-            top_candidates = (
-                [dict(item) for item in candidate.top_candidates]
-                if candidate is not None
-                else [dict(item) for item in raw_candidates[:3] if isinstance(item, Mapping)]
-            )
-            confidence = candidate.confidence if candidate is not None else (
-                top_candidates[0].get("confidence") if top_candidates else None
-            )
-            return {
-                **unknown_slot(index, diagnostic="detection_timeout"),
-                "state": "failed",
-                "summary": "识别失败/重试",
-                "confidence": confidence,
-                "top_candidates": top_candidates,
-                "candidate_identity": candidate.identity if candidate is not None else "",
-                "rejection_reason": str(
-                    raw_slot.get("diagnostic")
-                    or raw_slot.get("reason")
-                    or (candidate.diagnostic if candidate is not None else "no_stable_candidate")
-                ),
-                "elapsed_seconds": round(now - track.detecting_since, 3),
-            }
+        track = self.slots[index]
+        candidate = candidate_from_slot(raw_slot)
+        track.raw_observation_count += 1
+        if track.pending_started_at <= 0.0 and track.stable_slot is None:
+            track.pending_started_at = observed_at
+        track.observations = [
+            item
+            for item in track.observations
+            if observed_at - item.observed_at <= EVIDENCE_MAX_AGE_SECONDS
+        ][-MEDIUM_WINDOW_SIZE:]
 
         if candidate is None:
-            if track.detecting_since <= 0.0:
-                track.detecting_since = now
             track.candidate_identity = ""
             track.candidate_frames = 0
             track.weak_miss_frames += 1
             if track.stable_slot is not None:
                 return dict(track.stable_slot)
-            if now - track.detecting_since >= SLOT_DETECTION_TIMEOUT_SECONDS:
-                return failed_slot()
-            return unknown_slot(index)
+            temporal_state = self._pending_temporal_state(track, observed_at)
+            pending = unknown_slot(index, diagnostic=temporal_state)
+            pending.update(
+                {
+                    "temporal_state": temporal_state,
+                    "candidate_identity": "",
+                    "evidence_hits": 0,
+                    "evidence_window": len(track.observations),
+                    "required_hits": MEDIUM_REQUIRED_HITS,
+                    "rejection_reason": str(raw_slot.get("diagnostic") or raw_slot.get("reason") or temporal_state),
+                    "observed_at": observed_at,
+                }
+            )
+            return pending
 
-        identity = candidate.identity
+        track.weak_miss_frames = 0
+        track.candidate_identity = candidate.identity
+        track.observations.append(_CandidateEvidence(observed_at=observed_at, candidate=candidate))
+        track.observations = track.observations[-MEDIUM_WINDOW_SIZE:]
+
+        strong_window = track.observations[-STRONG_WINDOW_SIZE:]
+        medium_window = track.observations[-MEDIUM_WINDOW_SIZE:]
+        strong_hits = sum(
+            item.candidate.identity == candidate.identity and item.candidate.evidence_grade == "strong"
+            for item in strong_window
+        )
+        medium_hits = sum(item.candidate.identity == candidate.identity for item in medium_window)
+        conflicting_strong_in_short = any(
+            item.candidate.evidence_grade == "strong" and item.candidate.identity != candidate.identity
+            for item in strong_window
+        )
+        conflicting_strong = any(
+            item.candidate.evidence_grade == "strong" and item.candidate.identity != candidate.identity
+            for item in medium_window
+        )
+        confirmed_as = ""
+        if (
+            candidate.evidence_grade == "strong"
+            and strong_hits >= STRONG_REQUIRED_HITS
+            and not conflicting_strong_in_short
+        ):
+            confirmed_as = "strong"
+        elif medium_hits >= MEDIUM_REQUIRED_HITS and not conflicting_strong:
+            confirmed_as = "medium"
+
+        track.candidate_frames = strong_hits if candidate.evidence_grade == "strong" else medium_hits
         if track.stable_slot is not None:
             stable_identity = str(
                 track.stable_slot.get("recognition_key")
@@ -220,54 +309,74 @@ class SelectionTracker:
             )
             stable_variant = str(track.stable_slot.get("visual_variant_id") or track.stable_slot.get("augment_id") or "")
             candidate_variant = str(candidate.visual_variant_id or candidate.augment_id or "")
-            same_variant = not (stable_variant and candidate_variant and stable_variant != candidate_variant)
-            if identity == stable_identity and same_variant:
-                if candidate_variant and not stable_variant:
-                    # 卡名已经稳定后，后续强图标证据可以补齐视觉版本和 tier；
-                    # 这不是候选刷新，不递增 revision，也不撤下名称 fallback 统计。
-                    track.stable_slot = candidate.ready_slot()
-                track.candidate_identity = identity
-                track.candidate_frames = max(track.candidate_frames, candidate.required_frames)
-                track.detecting_since = 0.0
-                track.weak_miss_frames = 0
+            if candidate.identity == stable_identity:
+                if candidate_variant and (
+                    not stable_variant
+                    or (candidate.evidence_grade == "strong" and candidate_variant != stable_variant)
+                ):
+                    enriched = candidate.ready_slot()
+                    enriched.update(
+                        {
+                            "temporal_state": "confirmed",
+                            "evidence_hits": track.candidate_frames,
+                            "evidence_window": len(medium_window),
+                            "observed_at": observed_at,
+                        }
+                    )
+                    track.stable_slot = enriched
                 return dict(track.stable_slot)
-            # 不同候选只有连续达到自己的稳定帧数后才替换。单帧鼠标遮挡或动画噪声
-            # 不能撤下已经展示的结果，否则三个槽会在真机里反复变空。
-            if (
-                candidate.evidence_grade == "medium"
-                and stable_identity in strong_evidence_identities(raw_slot)
-            ):
-                track.candidate_identity = ""
-                track.candidate_frames = 0
-                return dict(track.stable_slot)
-        track.weak_miss_frames = 0
-        if identity == track.candidate_identity:
-            track.candidate_frames += 1
-        else:
-            track.candidate_identity = identity
-            track.candidate_frames = 1
-        replacing_stable = track.stable_slot is not None
-        required_frames = max(3, candidate.required_frames) if replacing_stable else candidate.required_frames
-        if track.candidate_frames >= required_frames:
+
+        if confirmed_as:
+            replacing_stable = track.stable_slot is not None
             stable_slot = candidate.ready_slot()
-            stable_slot["required_frames"] = required_frames
-            stable_slot["observed_frames"] = track.candidate_frames
-            stable_slot["replacement_reason"] = (
-                "replacement_confirmed" if replacing_stable else f"initial_{candidate.evidence_grade}"
+            required_hits = STRONG_REQUIRED_HITS if confirmed_as == "strong" else MEDIUM_REQUIRED_HITS
+            stable_slot.update(
+                {
+                    "required_frames": required_hits,
+                    "observed_frames": track.candidate_frames,
+                    "replacement_reason": "replacement_confirmed" if replacing_stable else f"initial_{confirmed_as}",
+                    "temporal_state": "confirmed",
+                    "evidence_hits": track.candidate_frames,
+                    "evidence_window": len(strong_window if confirmed_as == "strong" else medium_window),
+                    "observed_at": observed_at,
+                }
             )
             track.stable_slot = stable_slot
-            track.detecting_since = 0.0
+            track.pending_started_at = 0.0
             if replacing_stable:
                 self._revision_changed = True
+
         if track.stable_slot is None:
-            if track.detecting_since <= 0.0:
-                track.detecting_since = now
-            if now - track.detecting_since >= SLOT_DETECTION_TIMEOUT_SECONDS:
-                return failed_slot()
-            return unknown_slot(index)
+            temporal_state = self._pending_temporal_state(track, observed_at)
+            pending = unknown_slot(index, diagnostic=temporal_state)
+            pending.update(
+                {
+                    "temporal_state": temporal_state,
+                    "candidate_identity": candidate.identity,
+                    "confidence": candidate.confidence,
+                    "top_candidates": [dict(item) for item in candidate.top_candidates],
+                    "evidence_grade": candidate.evidence_grade,
+                    "evidence_hits": track.candidate_frames,
+                    "evidence_window": len(strong_window if candidate.evidence_grade == "strong" else medium_window),
+                    "required_hits": STRONG_REQUIRED_HITS
+                    if candidate.evidence_grade == "strong"
+                    else MEDIUM_REQUIRED_HITS,
+                    "rejection_reason": str(raw_slot.get("diagnostic") or candidate.diagnostic),
+                    "observed_at": observed_at,
+                }
+            )
+            return pending
         return dict(track.stable_slot)
 
-    def _residue_event(self, source: Mapping[str, Any], *, hover_occluded: bool) -> dict[str, Any]:
+    def _residue_event(
+        self,
+        source: Mapping[str, Any],
+        *,
+        hover_occluded: bool,
+        reason: str | None = None,
+        grace_seconds: float = 0.0,
+        grace_elapsed_seconds: float = 0.0,
+    ) -> dict[str, Any]:
         rendered_slots = [
             dict(track.stable_slot) if track.stable_slot is not None else unknown_slot(index)
             for index, track in enumerate(self.slots)
@@ -281,7 +390,7 @@ class SelectionTracker:
         )
         event["source"].update(
             {
-                "reason": "hover_occluded" if hover_occluded else "scene_residue_hold",
+                "reason": reason or ("hover_occluded" if hover_occluded else "scene_residue_hold"),
                 "gate_state": "visible_partial" if ready_slots < SLOT_COUNT else "visible_ready",
                 "scene_state": "active",
                 "scene_kind": "hextech",
@@ -293,6 +402,8 @@ class SelectionTracker:
                 "selection_epoch": self.epoch,
                 "selection_revision": self.selection_revision,
                 "selection_window_active": True,
+                "scene_present": bool(source.get("scene_present")),
+                "selection_click": bool(source.get("selection_click")),
                 "scoreboard_key_down": False,
                 "ready_slots": ready_slots,
                 "content_ready": ready_slots == SLOT_COUNT,
@@ -302,13 +413,19 @@ class SelectionTracker:
                 "poll_mode": "high",
                 "selection_button_present": bool(source.get("selection_button_present")),
                 "cursor_over_cards": bool(source.get("cursor_over_cards")),
-                "card_residue": bool(source.get("card_residue")),
-                "hover_occluded": hover_occluded,
-                "panel_scores": list(source.get("panel_scores"))
-                if isinstance(source.get("panel_scores"), list)
+                "cursor_over_slots": list(source.get("cursor_over_slots"))
+                if isinstance(source.get("cursor_over_slots"), list)
                 else [],
+                "card_residue": bool(source.get("card_residue")),
                 "name_residue": list(source.get("name_residue"))
                 if isinstance(source.get("name_residue"), list)
+                else [],
+                "hover_occluded": hover_occluded,
+                "scene_temporal_state": "grace_hold" if grace_seconds > 0.0 else "stable",
+                "scene_grace_seconds": round(max(0.0, grace_seconds), 3),
+                "scene_grace_elapsed_seconds": round(max(0.0, grace_elapsed_seconds), 3),
+                "panel_scores": list(source.get("panel_scores"))
+                if isinstance(source.get("panel_scores"), list)
                 else [],
                 "body_shard_scores": list(source.get("body_shard_scores"))
                 if isinstance(source.get("body_shard_scores"), list)
@@ -331,6 +448,13 @@ class SelectionTracker:
         - 场景消失 → 累积 absent_frames，达到阈值后 reset
         """
         source = raw_event.get("source") if isinstance(raw_event.get("source"), Mapping) else {}
+        timing = raw_event.get("timing") if isinstance(raw_event.get("timing"), Mapping) else {}
+        try:
+            observed_at = float(timing.get("recognition_completed_at") or timing.get("captured_at") or 0.0)
+        except (TypeError, ValueError):
+            observed_at = 0.0
+        if observed_at <= 0.0:
+            observed_at = time.monotonic()
         reason = str(source.get("reason") or "")
         if reason == "body_shard_only":
             if not self.body_shard_latched:
@@ -375,19 +499,38 @@ class SelectionTracker:
         )
         if source.get("selection_confirmed") and self.scene_active and not scene_present:
             return self._selection_completed_event(source)
-        if hover_occluded or scene_residue_hold:
-            self.residue_hold_frames += 1
-            if hover_occluded:
-                if self.selection_click_armed or self.residue_hold_frames > max(1, int(HOVER_HOLD_FRAMES)):
-                    return self._selection_completed_event(source)
+        ready_slot_count = sum(track.stable_slot is not None for track in self.slots)
+        if self.scene_active and not scene_present and ready_slot_count > 0:
+            if self.selection_click_armed:
+                return self._selection_completed_event(source)
+            if self.scene_lost_at <= 0.0:
+                self.scene_lost_at = observed_at
+            grace_seconds = (
+                READY_SCENE_GRACE_SECONDS
+                if ready_slot_count == SLOT_COUNT
+                else PARTIAL_SCENE_GRACE_SECONDS
+            )
+            grace_elapsed = max(0.0, observed_at - self.scene_lost_at)
+            if grace_elapsed <= grace_seconds:
                 self.absent_frames = 0
-                return self._residue_event(source, hover_occluded=True)
+                self.residue_hold_frames += 1
+                return self._residue_event(
+                    source,
+                    hover_occluded=hover_occluded,
+                    reason="hover_occluded" if hover_occluded else "scene_grace_hold",
+                    grace_seconds=grace_seconds,
+                    grace_elapsed_seconds=grace_elapsed,
+                )
+            return self._selection_completed_event(source, reason="scene_loss_confirmed")
+        if scene_residue_hold:
+            self.residue_hold_frames += 1
             if self.residue_hold_frames <= max(1, int(RESIDUE_HOLD_FRAMES)):
                 self.absent_frames = 0
                 return self._residue_event(source, hover_occluded=False)
-            return self.block("scene_residue_expired")
+            return self._selection_completed_event(source, reason="scene_loss_confirmed")
 
         if scene_present:
+            self.scene_lost_at = 0.0
             self.residue_hold_frames = 0
             self.absent_frames = 0
             if self.scene_frames == 0 and not self.scene_active:
@@ -418,6 +561,9 @@ class SelectionTracker:
                         "selection_epoch": self.epoch,
                         "selection_revision": self.selection_revision,
                         "selection_window_active": False,
+                        "scene_present": False,
+                        "selection_button_present": bool(source.get("selection_button_present")),
+                        "selection_click": bool(source.get("selection_click")),
                         "scoreboard_key_down": False,
                         "ready_slots": 0,
                         "content_ready": False,
@@ -429,6 +575,9 @@ class SelectionTracker:
                         else [],
                         "body_shard_latched": False,
                         "cursor_over_cards": bool(source.get("cursor_over_cards")),
+                        "cursor_over_slots": list(source.get("cursor_over_slots"))
+                        if isinstance(source.get("cursor_over_slots"), list)
+                        else [],
                         "card_residue": bool(source.get("card_residue")),
                         "name_residue": list(source.get("name_residue"))
                         if isinstance(source.get("name_residue"), list)
@@ -456,7 +605,7 @@ class SelectionTracker:
                 rendered_slots.append(dict(stable) if stable is not None else unknown_slot(index))
                 continue
             raw_slot = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
-            rendered_slots.append(self._update_slot(index, raw_slot))
+            rendered_slots.append(self._update_slot(index, raw_slot, observed_at=observed_at))
         if self._revision_changed:
             self.selection_revision = max(1, self.selection_revision + 1)
             self._revision_changed = False
@@ -482,6 +631,9 @@ class SelectionTracker:
                 "selection_epoch": self.epoch,
                 "selection_revision": self.selection_revision,
                 "selection_window_active": bool(self.scene_active),
+                "scene_present": bool(scene_present),
+                "scene_temporal_state": "stable",
+                "selection_click": bool(source.get("selection_click")),
                 "scoreboard_key_down": False,
                 "ready_slots": ready_slots,
                 "content_ready": ready_slots == SLOT_COUNT,

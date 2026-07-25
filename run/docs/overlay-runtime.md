@@ -18,10 +18,13 @@
 
 - 模板缓存和权威矩阵保持连续 `float16`；Sidecar ready 前一次性建立连续 `float32` 计算镜像。同一帧三槽按 icon、primary name、alt name、observed name 分组批处理，热路径不得重复转换完整矩阵。FP32 镜像分配失败时 Sidecar 以 `vision_compute_memory_unavailable` 明确失败，不回退到混合精度慢路径。
 - 单帧证据分为 `strong`、`medium`、`weak`。真机名称样本，或双字体高置信度且有一致图标/明确视觉版本，才是 `strong`；相关双字体或无冲突的高置信单字体是 `medium`；其余仅写诊断的候选是 `weak`。
-- 空槽首次确认需要 `strong` 连续 2 帧或 `medium` 连续 3 帧。替换已有稳定槽一律至少连续 3 帧；旧身份仍有 strong 证据时，medium 新候选不能替换。单帧空结果、weak 候选或鼠标遮挡不会撤下稳定槽。
+- 槽位确认只由时序仲裁器负责：`strong` 在最近 3 个有效观察中同身份命中 2 次，`medium` 在最近 5 个有效观察中命中 3 次且窗口内没有其他 `strong` 身份。窗口按真实 `captured_at` / `recognition_completed_at` 排序，不假定固定帧率。单帧 miss、weak 候选或鼠标遮挡只形成空观察，不清空仍在 6 秒证据寿命内的累计。
+- 已确认槽在当前 selection epoch 内持续保留；重随的新身份满足同一确认规则后才原子替换。相同卡名后续获得更强图标证据时只补充 `visual_variant_id` 与 tier，不递增 `selection_revision`。
 - 同一帧一个或多个槽发生真实替换时，`selection_revision` 只增加一次。
 - Sidecar 输出 `cursor_over_slots`。鼠标遮挡的稳定槽保持原结果；未遮挡槽继续识别，不能因为一个槽被遮挡而冻结全部三槽。
-- 已识别槽立即显示。尚未稳定的槽显示“识别中”；持续三秒仍失败时显示“识别失败”。空槽和识别失败都不能推断为来源无数据。
+- 已识别槽立即显示。选择窗口存续期间，尚未稳定、通道分歧或低 margin 的槽始终显示“识别中”；不存在固定 3 秒识别失败。只有模板索引、持续截图或 Sidecar 进程等硬故障才能进入失败态。空槽和硬故障都不能推断为来源无数据。
+- 未稳定槽在至少 5 次原始观察、持续至少 2 秒且任一身份最高命中仍不足 2 次时，诊断为 `evidence_starved`；公共状态仍为 `detecting`，不得生成 `failed` 或 `RECOGNITION_MISSING`。该诊断只说明证据饥饿，不能据此全局放宽 OCR 阈值。
+- 场景门丢失采用真实时间宽限：已有部分稳定槽且仍有待识别槽时保留 6 秒，三槽均 ready 时保留 1.5 秒；场景恢复立即取消宽限并沿用原 epoch、revision 和证据。明确 `selection_click` / `selection_confirmed` 后可立即结束；其他情况只有宽限耗尽才输出 `scene_loss_confirmed`。鼠标遮挡、`card_residue` 和 `name_residue` 只能进入 `scene_grace_hold`，不能按固定两帧清空稳定槽。
 - Sidecar status 暴露 `compute_profile=float32_batched`、计算镜像字节数、预热耗时和单帧各通道耗时；异宽指纹必须直接报错，不能静默丢行。
 
 ## 分来源 freshness 与联动
@@ -38,7 +41,7 @@
 
 | `data_reason` | 含义 | 用户文案 |
 | :--- | :--- | :--- |
-| `recognition_missing` | 图像尚未稳定识别或识别失败 | 识别中 / 识别失败 |
+| `recognition_missing` | 旧事件兼容或识别服务硬故障；普通未稳定槽保持 `detecting` | 识别中 / 识别服务异常 |
 | `identity_unresolved` | 已有视觉候选，但无法关联 canonical 统计 ID | 无法关联统计 ID |
 | `source_stat_missing` | Catalog 可识别，但公开来源没有该统计 ID | 公开来源未提供此海克斯统计 |
 | `champion_stat_missing` | 来源有该 ID，但当前英雄没有样本 | 该英雄暂无此海克斯样本 |
@@ -55,10 +58,16 @@ Host 使用单线程有界队列异步写入报告，Tk 渲染线程不执行 JS
 - 最新报告：`var/reports/overlay_sessions/latest.json`
 - 历史：最多保留 20 个 `overlay-session-*.json`
 - 真实会话证据：`var/state/session_evidence/`
+- 逐选择观察：`var/state/overlay_vision_timelines/selection-*.jsonl`
+- 时间线轮转：最多保留最近 20 个真实 selection epoch；空闲心跳不写入、不占额度
 - 默认模式：不生成 PNG
 - 显式 `--diagnostic`：允许后台线程异步截图
 
-报告 v2 记录捕获、识别完成、事件写入、Host 读取、上下文确认、绘制开始/完成、呈现、报告入队和落盘时间；槽位同时记录 `vision_id`、名称、有限候选、`canonical_id` 和最终缺失原因。排查延迟时按时间链路定位阶段，不用截图文件时间代替阶段证据。
+报告 v2 记录捕获、识别完成、事件写入、Host 读取、上下文确认、绘制开始/完成、呈现、报告入队和落盘时间；`source` 兼容增加 `selection_epoch`、`selection_revision`、`scene_state`、`selection_window_active` 和 `scene_temporal_state`，去重签名包含 epoch/revision，确保重随与结束事件不会被合并。槽位同时记录 `vision_id`、名称、有限候选、`canonical_id` 和最终缺失原因。排查延迟时按时间链路定位阶段，不用截图文件时间代替阶段证据。
+
+Vision 时间线 schema v1 每个 observation 记录独立序号、`capture_started_at` / `captured_at` / `recognition_completed_at`、三槽文字双字体与图标 Top-1、confidence、margin、候选身份、证据等级/计数、公开状态和 revision；场景侧同时记录 `source.reason`、`scene_present`、`scene_score`、选择按钮、卡片/名称残留、鼠标覆盖槽、点击和 `scene_temporal_state`。每个 epoch 分别计算截图、识别和端到端耗时的 P50/P95，默认不包含图片。`vision_eval` 的稳定性门禁只回放时间戳严格递增、ID 唯一的独立 observation，完整静态帧仅验证三通道单帧候选，禁止重复同一截图制造稳定帧。
+
+显式 diagnostic 模式为每个真实 selection epoch 连续保存前 5 个独立 observation 的按钮、三槽图标和三槽卡名 ROI，每组带 observation 序号和三项时间戳；不保存完整游戏截图，并沿用受限轮转。旧 Build 真机报告测得端到端中位数约 207.5 ms、P95 约 259.2 ms；本轮只建立真实指标，若新 Build P95 仍高于 180 ms，应单独优化热路径，不能通过放宽识别规则掩盖。
 
 ## 对局期间的数据刷新
 
@@ -72,7 +81,7 @@ Host 使用单线程有界队列异步写入报告，Tk 渲染线程不执行 JS
 - 再次点击桌面快捷方式不会启动第二套服务；新实例向当前 owner 写入 `desktop_ui_activation.v1.json` 激活请求后以退出码 0 结束，原实例显示窗口并按需恢复服务。请求必须匹配当前 `owner_id`，陈旧或其他 owner 请求会被忽略。
 - 连续 300 秒既无 `LeagueClient.exe` / `LeagueClientUx.exe`，也无 `League of Legends.exe` 时进入轻量待机。客户端即使最小化，只要进程仍在就不待机；单独的 Riot Client launcher 不算 League 活动。
 - 轻量待机停止 DataService、Web、Runtime Supervisor、Overlay host 和 Vision Sidecar，只保留 Desktop、托盘与 5 秒进程探针。League 进程出现、托盘显示、托盘重启识别或快捷方式激活会恢复；手动唤醒后重新计算完整 5 分钟空闲窗口，恢复 Web 时不重复打开浏览器。
-- 识别运行态必须区分 `suspending`、`suspended`、`resuming`、`restart_in_progress`、`resume_failed` 与真实 Sidecar `stale/failed`。主动待机文案为“识别已休眠”，不得显示为“识别失效”。
+- 识别运行态必须区分 `suspending`、`suspended`、`resuming`、`restart_in_progress`、`resume_failed` 与真实 Sidecar `stale/failed`。主动待机文案为“识别已休眠”，不得显示为“识别失效”。Supervisor 发现已启用 Sidecar 存活陈旧时先发布 `starting / sidecar_restart` 并显示“识别重启中”；只有既有恢复预算耗尽后才进入最终错误态。
 - PyInstaller 主程序必须使用 Windows GUI subsystem（`--windowed`）。Supervisor 与 DataService 使用带随机 token 的原子 bootstrap 文件握手；所有本程序 Python 子进程同时使用 `CREATE_NO_WINDOW`，不得依赖 `sys.stdout` 或弹出控制台。桌面快捷方式和 packaged smoke 都直接启动 EXE；便携 BAT 仅为兼容入口，可能短暂闪烁。
 
 ## 打包、部署与旧包防错

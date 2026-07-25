@@ -132,6 +132,9 @@ OVERLAY_VISION_TRACE_FILE = OVERLAY_EVENT_FILE.with_name("overlay_vision_trace.v
 OVERLAY_VISION_TRACE_HISTORY_FILE = OVERLAY_EVENT_FILE.with_name("overlay_vision_trace_history.v1.json")
 VISION_TRACE_HISTORY_LIMIT = 256             # trace 历史最大保留条数
 VISION_TRACE_REFRESH_SECONDS = 1.0           # trace 刷新间隔
+VISION_TIMELINE_SCHEMA_VERSION = 1
+VISION_TIMELINE_DIRNAME = "overlay_vision_timelines"
+VISION_TIMELINE_EPOCH_LIMIT = 20             # 只保留最近 20 个真实选择 epoch
 
 logger = logging.getLogger(__name__)
 _LAST_VISION_TRACE_SIGNATURES: dict[str, tuple[str, ...]] = {}

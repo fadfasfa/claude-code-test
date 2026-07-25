@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "description": "两侧稳定、中央候选持续跳变的脱敏结构化回放。",
+  "observations": [
+    {"observation_id": "starved-001", "capture_started_at": 2000.00, "captured_at": 2000.03, "recognition_completed_at": 2000.24, "slots": [{"candidate": {"augment_id": "night", "name": "夜狩", "grade": "strong"}}, {"candidate": {"augment_id": "snow", "name": "雪球大战", "grade": "medium"}}, {"candidate": {"augment_id": "guts", "name": "狂徒豪气", "grade": "strong"}}]},
+    {"observation_id": "starved-002", "capture_started_at": 2000.50, "captured_at": 2000.53, "recognition_completed_at": 2000.74, "slots": [{"candidate": {"augment_id": "night", "name": "夜狩", "grade": "strong"}}, {"candidate": {"augment_id": "brain", "name": "超强大脑", "grade": "medium"}}, {"candidate": {"augment_id": "guts", "name": "狂徒豪气", "grade": "strong"}}]},
+    {"observation_id": "starved-003", "capture_started_at": 2001.00, "captured_at": 2001.03, "recognition_completed_at": 2001.24, "slots": [{"candidate": {"augment_id": "night", "name": "夜狩", "grade": "strong"}}, {"candidate": {"augment_id": "combo", "name": "连招大师", "grade": "medium"}}, {"candidate": {"augment_id": "guts", "name": "狂徒豪气", "grade": "strong"}}]},
+    {"observation_id": "starved-004", "capture_started_at": 2001.50, "captured_at": 2001.53, "recognition_completed_at": 2001.74, "slots": [{"candidate": {"augment_id": "night", "name": "夜狩", "grade": "strong"}}, {"candidate": {"augment_id": "dizzy", "name": "转得我眩晕了", "grade": "medium"}}, {"candidate": {"augment_id": "guts", "name": "狂徒豪气", "grade": "strong"}}]},
+    {"observation_id": "starved-005", "capture_started_at": 2002.10, "captured_at": 2002.13, "recognition_completed_at": 2002.34, "slots": [{"candidate": {"augment_id": "night", "name": "夜狩", "grade": "strong"}}, {"candidate": {"augment_id": "egg", "name": "砸开那颗蛋", "grade": "medium"}}, {"candidate": {"augment_id": "guts", "name": "狂徒豪气", "grade": "strong"}}]}
+  ]
+}

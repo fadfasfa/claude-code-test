@@ -96,6 +96,31 @@
       "notes": "2560×1600 真机完整帧；独立真实会话三选证据。"
     }
   ],
+  "timeline_samples": [
+    {
+      "id": "temporal-text-icon-disagreement-recovery",
+      "fixture": "tests/fixtures/diagnostics/overlay_vision_timelines/temporal_disagreement_recovery.v1.json",
+      "expected_slots": ["双发快射", "暴击飞弹", "不动如山"],
+      "expected_grades": ["medium", "strong", "strong"],
+      "notes": "由 2026-07-25 真机故障时间线提炼：文字与图标分歧后恢复，不得中途 failed 或错误 ready。"
+    },
+    {
+      "id": "temporal-center-evidence-starved",
+      "fixture": "tests/fixtures/diagnostics/overlay_vision_timelines/center_evidence_starved.v1.json",
+      "expected_slots": ["夜狩", "", "狂徒豪气"],
+      "expected_grades": ["strong", "", "strong"],
+      "expected_final_states": ["ready", "detecting", "ready"],
+      "expected_temporal_states": ["", "evidence_starved", ""],
+      "notes": "左右槽稳定、中央身份持续跳变；中央只能诊断为证据饥饿，不能失败或清空左右槽。"
+    },
+    {
+      "id": "temporal-scene-gate-recovers",
+      "fixture": "tests/fixtures/diagnostics/overlay_vision_timelines/scene_gate_recovers.v1.json",
+      "expected_slots": ["尤里卡", "战争交响乐", "不动如山"],
+      "expected_grades": ["strong", "strong", "strong"],
+      "notes": "三槽确认后场景门短暂丢失并恢复；epoch 内不得清空或产生 scene_residue_expired。"
+    }
+  ],
   "retired_samples": [
     {
       "id": "selection-20260612-205644",

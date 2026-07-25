@@ -353,6 +353,29 @@ class RuntimeSupervisor:
                 self._lease["state"] = "expired"
             self.request_shutdown("lease_expired")
             return
+        try:
+            overlay = self._overlay_runtime.snapshot()
+        except Exception:
+            return
+        should_restart_sidecar = bool(
+            overlay.get("desired_enabled")
+            and overlay.get("status") == "stale"
+            and overlay.get("phase") == "sidecar_stale"
+        )
+        with self._lock:
+            action_running = bool(self._active_overlay_action_id)
+        if should_restart_sidecar and not action_running:
+            prepare_restart = getattr(self._overlay_runtime, "prepare_sidecar_restart", None)
+            if callable(prepare_restart) and not prepare_restart():
+                return
+            self.append_event(
+                {
+                    "event": "game_overlay.sidecar_restart",
+                    "component": "game_overlay",
+                    "level": "WARNING",
+                }
+            )
+            self.run_game_overlay_action({"enabled": True})
 
     def append_event(self, payload: dict[str, Any]) -> None:
         target = self._event_log_path

@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, cast
 
@@ -39,6 +40,7 @@ DEFAULT_LOOP_SCAN_FRAME_INTERVAL_MS = 160
 DEFAULT_LOOP_IDLE_INTERVAL_SECONDS = 0.25
 DEFAULT_LOOP_FAST_HOLD_SECONDS = 1.2
 DEFAULT_LOOP_HEARTBEAT_SECONDS = 1.0
+DIAGNOSTIC_EPOCH_OBSERVATION_LIMIT = 5
 
 SIDECAR_STATUS_FILE = Path(build_runtime_state_path("game_overlay_sidecar_status.json"))
 SIDECAR_READY_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_FILE"
@@ -46,6 +48,32 @@ SIDECAR_READY_TOKEN_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_TOKEN"
 SIDECAR_BOOTSTRAP_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_BOOTSTRAP_FILE"
 SIDECAR_GENERATION_ENV = "HEXTECH_OVERLAY_GENERATION"
 SIDECAR_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
+
+
+@dataclass
+class _DiagnosticEpochSampler:
+    """只为每个真实 selection epoch 编号前几次独立 ROI 观察。"""
+
+    epoch_key: tuple[str, int] | None = None
+    observation_count: int = 0
+
+    def next_observation_seq(self, source: Mapping[str, Any]) -> int | None:
+        try:
+            selection_epoch = int(source.get("selection_epoch") or 0)
+        except (TypeError, ValueError):
+            selection_epoch = 0
+        current_key = (str(source.get("session_id") or ""), selection_epoch)
+        if selection_epoch > 0 and current_key != self.epoch_key:
+            self.epoch_key = current_key
+            self.observation_count = 0
+        if (
+            selection_epoch <= 0
+            or source.get("scene_state") not in {"candidate", "active"}
+            or self.observation_count >= DIAGNOSTIC_EPOCH_OBSERVATION_LIMIT
+        ):
+            return None
+        self.observation_count += 1
+        return self.observation_count
 
 
 def _sidecar_pid_started_at() -> float:
@@ -344,6 +372,7 @@ def run_loop(
     fast_poll_until = 0.0
     dump_root = Path(debug_dump_dir) if debug_dump_dir else None
     last_dump_signature: tuple[str, ...] | None = None
+    diagnostic_sampler = _DiagnosticEpochSampler()
     tab_was_down = False
     left_mouse_was_down = False
     active_hwnd = 0
@@ -356,6 +385,14 @@ def run_loop(
         source["poll_mode"] = poll_mode
         event_payload["source"] = source
         write_runtime_trace(event_payload)
+        try:
+            vision_sidecar.write_selection_timeline_observation(
+                event_payload,
+                vision_sidecar._vision_trace_path_for_event(event_path),
+            )
+        except OSError:
+            # 时间线只用于诊断，磁盘故障不能中断识别与心跳。
+            logger.debug("写入 selection timeline 失败。", exc_info=True)
         now = time.time()
         if now - last_status_heartbeat_at >= max(0.2, float(heartbeat_seconds)):
             _write_sidecar_status(
@@ -436,8 +473,11 @@ def run_loop(
             str(source.get("scoreboard_key_down") or False),
             *top_ids,
         )
+        observation_seq = diagnostic_sampler.next_observation_seq(source)
+        sequential_observation = observation_seq is not None
         should_dump = bool(
-            signature != last_dump_signature
+            sequential_observation
+            or signature != last_dump_signature
             and (
                 source.get("scoreboard_key_down")
                 or source.get("scene_state") in {"active", "candidate"}
@@ -446,7 +486,12 @@ def run_loop(
         )
         if should_dump:
             try:
-                vision_sidecar._write_roi_diagnostic_dump(dump_root, frame, event_payload)
+                vision_sidecar._write_roi_diagnostic_dump(
+                    dump_root,
+                    frame,
+                    event_payload,
+                    observation_seq=observation_seq,
+                )
             except OSError:
                 logger.debug("V2 ROI 诊断转储失败。", exc_info=True)
             last_dump_signature = signature
@@ -558,8 +603,17 @@ def run_loop(
             )
             left_mouse_was_down = left_mouse_down
             raw_event["source"] = raw_source
-            event = tracker.update(raw_event)
             recognition_completed_at = time.time()
+            # 时序仲裁必须消费真实观察时间，不能按配置帧率推断；识别完成时间因此要在
+            # tracker.update() 前写入原始事件。
+            raw_timing = raw_event.get("timing") if isinstance(raw_event.get("timing"), Mapping) else {}
+            raw_event["timing"] = {
+                **{str(key): value for key, value in raw_timing.items()},
+                "capture_started_at": capture_started_at,
+                "captured_at": captured_at,
+                "recognition_completed_at": recognition_completed_at,
+            }
+            event = tracker.update(raw_event)
             attach_window_observation(event, hwnd=hwnd, rect=rect, capture_size=frame.size)
             maybe_dump(frame, event)
 

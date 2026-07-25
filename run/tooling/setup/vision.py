@@ -405,6 +405,8 @@ def run_fixture_regression(root: Path) -> dict[str, Any]:
         "fixture_frame_slot_accuracy": summary["frame_slot_accuracy"],
         "fixture_name_roi_accuracy": summary["name_roi_accuracy"],
         "fixture_accuracy": summary["accuracy"],
+        "fixture_timeline_sample_count": summary["timeline_sample_count"],
+        "fixture_matched_timeline_count": summary["matched_timeline_count"],
     }
 
 

@@ -37,6 +37,60 @@ def _request(base_url: str, method: str, path: str, *, nonce: str = "test-nonce"
 
 
 class RuntimeSupervisorDesktopIntegrationTests(unittest.TestCase):
+    def test_supervisor_restarts_stale_sidecar_without_publishing_failed_state(self):
+        from hextech.bootstrap.supervisor import RuntimeSupervisor
+
+        class FakeOverlayRuntime:
+            def __init__(self):
+                self.calls: list[bool] = []
+                self.release = threading.Event()
+                self.state = {
+                    "desired_enabled": True,
+                    "status": "stale",
+                    "phase": "sidecar_stale",
+                }
+
+            def snapshot(self) -> dict:
+                return dict(self.state)
+
+            def prepare_sidecar_restart(self) -> bool:
+                self.state = {**self.state, "status": "starting", "phase": "sidecar_restart"}
+                return True
+
+            def set_enabled(self, enabled: bool) -> dict:
+                self.calls.append(enabled)
+                self.release.wait(timeout=2)
+                self.state = {
+                    **self.state,
+                    "desired_enabled": enabled,
+                    "status": "running",
+                    "phase": "running",
+                }
+                return self.snapshot()
+
+            def shutdown(self, reason: str = "shutdown") -> None:
+                self.state = {**self.state, "status": "stopped", "phase": reason}
+
+        overlay = FakeOverlayRuntime()
+        with tempfile.TemporaryDirectory() as tmp:
+            supervisor = RuntimeSupervisor(
+                parent_pid=0,
+                overlay_runtime=overlay,
+                event_log_path=Path(tmp) / "events.jsonl",
+            )
+            supervisor.tick()
+
+            restarting = supervisor.snapshot()["components"]["game_overlay"]
+            self.assertEqual(restarting["status"], "starting")
+            self.assertEqual(restarting["phase"], "sidecar_restart")
+            self.assertEqual(overlay.calls, [True])
+
+            overlay.release.set()
+            deadline = time.time() + 1
+            while time.time() < deadline and overlay.snapshot()["status"] != "running":
+                time.sleep(0.01)
+            self.assertEqual(overlay.snapshot()["status"], "running")
+
     def test_supervisor_shutdown_stops_overlay_runtime(self):
         from hextech.bootstrap.supervisor import RuntimeSupervisor
 

@@ -14,25 +14,14 @@ from typing import Any, Mapping, Sequence
 from hextech.modules.recommendation.hints import normalize_augment_id
 
 
-# 文字通道阈值：SimHei 单字体 >= 0.74 且 margin 够大 → 强匹配，2 帧稳定
+# 两个字体通道都达到该分数且 margin 足够时，才把不同 Top-1 视为真实冲突。
 STRONG_TEXT_CONFIDENCE = 0.74
 STRONG_TEXT_MARGIN = 0.025
-# 同名多视觉版本的文字模板已按卡名聚合；真机玻璃大炮在备选字体通道
-# 置信度很高但 margin 略窄，仅对该类候选开放更严格的窄门。
-MULTI_VARIANT_TEXT_CONFIDENCE = 0.86
-MULTI_VARIANT_TEXT_MARGIN = 0.012
-# 双字体（SimHei + SimSun）同结果 ≥ 0.70 → 直接确认为双字体匹配
+# 双字体一致只产生候选；是否对外 ready 统一由时序仲裁器决定。
 DUAL_FONT_CONFIDENCE = 0.70
-# 弱文字通道阈值：≥ 0.68 且无文字冲突 → 时间确认，3 帧稳定
-WEAK_TEXT_CONFIDENCE = 0.68
-WEAK_TEXT_MARGIN = 0.01
 # 图标通道高冲突阈值：图标 top1 与文字 top1 不同且图标置信度 ≥ 0.90 → 拒绝弱候选
 HIGH_CONFLICT_ICON_CONFIDENCE = 0.90
 HIGH_CONFLICT_ICON_MARGIN = 0.03
-# 图标短名单阈值：由图标通道缩窄搜索空间后的文字通道准入条件
-SHORTLIST_DUAL_FONT_CONFIDENCE = 0.66
-SHORTLIST_TEXT_CONFIDENCE = 0.68
-SHORTLIST_TEXT_MARGIN = 0.02
 VARIANT_ICON_CONFIDENCE = 0.80
 VARIANT_ICON_MARGIN = 0.015
 OBSERVED_NAME_CONFIDENCE = 0.92
@@ -50,7 +39,7 @@ class SlotCandidate:
     summary: str         # 效果简述
     confidence: float    # 匹配置信度 0-1
     rule: str            # 判定规则标签（如 dual_font / strong_text / temporal_text）
-    required_frames: int # 该规则要求连续出现多少帧才算稳定
+    required_frames: int # 兼容字段：时序仲裁所需命中数，不表示必须连续
     evidence_grade: str  # strong / medium；weak 不会生成候选
     diagnostic: str      # 诊断标签（如 v2_dual_font）
     top_candidates: tuple[dict[str, Any], ...]  # 候选 Top-N（最多 3 个）
@@ -177,13 +166,15 @@ def _candidate_from_top(
 
 
 def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
-    """把单帧槽位分数转换为可授权 ready 的强候选。
+    """把单帧槽位分数转换为时序仲裁可消费的 observation 候选。
 
     决策树优先级：
-    1. 双字体同结果（dual_font）→ 2 帧稳定
-    2. 单字体强匹配（strong_text）→ 2 帧稳定
-    3. 脱敏真机卡名指纹（observed_name）→ 2 帧稳定
-    4. 图标短名单与其余弱文字只保留诊断，不授权 ready
+    1. 脱敏真机卡名指纹 → strong observation
+    2. 双字体同结果且有可靠图标 → strong observation
+    3. 相关双字体或无冲突单字体 → medium observation
+    4. 图标短名单与其余弱文字只保留诊断，不产生候选
+
+    本函数不决定最终 ready/failed；公开状态只由 SelectionTracker 裁决。
     """
 
     text = _channel(slot, "text")
@@ -300,7 +291,7 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
                     evidence_grade="medium",
                 )
 
-    # 单字体即使绝对分高也只有一条证据链，按 medium 连续三帧确认。
+    # 单字体即使绝对分高也只有一条证据链，只产生 medium observation。
     strong_channels = (
         (text, text_top, text_identity, text_confidence, text_margin, "strong_text"),
         (text_alt, alt_top, alt_identity, alt_confidence, alt_margin, "strong_text_alt"),
@@ -328,7 +319,7 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             )
 
     # shortlist/弱文字仍保留在 channels 供诊断，但不能独立授权 ready。
-    # 真机证据表明连续帧只会重复同一系统性误匹配，并不会增加独立信息。
+    # 真机证据表明重复观察只会复制同一系统性误匹配，并不会增加独立信息。
     return None
 
 

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "description": "场景门短暂丢失后在 ready 宽限内恢复的结构化回放。",
+  "observations": [
+    {"observation_id": "scene-001", "capture_started_at": 3000.00, "captured_at": 3000.03, "recognition_completed_at": 3000.20, "slots": [{"candidate": {"augment_id": "eureka", "name": "尤里卡", "grade": "strong"}}, {"candidate": {"augment_id": "symphony", "name": "战争交响乐", "grade": "strong"}}, {"candidate": {"augment_id": "immovable", "name": "不动如山", "grade": "strong"}}]},
+    {"observation_id": "scene-002", "capture_started_at": 3000.30, "captured_at": 3000.33, "recognition_completed_at": 3000.50, "slots": [{"candidate": {"augment_id": "eureka", "name": "尤里卡", "grade": "strong"}}, {"candidate": {"augment_id": "symphony", "name": "战争交响乐", "grade": "strong"}}, {"candidate": {"augment_id": "immovable", "name": "不动如山", "grade": "strong"}}]},
+    {"observation_id": "scene-003", "capture_started_at": 3000.60, "captured_at": 3000.63, "recognition_completed_at": 3000.80, "source": {"scene_present": false, "selection_window_active": false, "selection_button_present": false, "card_residue": true, "name_residue": [true, true, false]}, "slots": []},
+    {"observation_id": "scene-004", "capture_started_at": 3001.00, "captured_at": 3001.03, "recognition_completed_at": 3001.20, "source": {"scene_present": false, "selection_window_active": false, "selection_button_present": false, "card_residue": true, "name_residue": [true, true, false]}, "slots": []},
+    {"observation_id": "scene-005", "capture_started_at": 3001.30, "captured_at": 3001.33, "recognition_completed_at": 3001.50, "slots": [{"candidate": {"augment_id": "eureka", "name": "尤里卡", "grade": "strong"}}, {"candidate": {"augment_id": "symphony", "name": "战争交响乐", "grade": "strong"}}, {"candidate": {"augment_id": "immovable", "name": "不动如山", "grade": "strong"}}]}
+  ]
+}

@@ -119,9 +119,15 @@ def test_exited_sidecar_marks_runtime_stale_before_restart_policy(tmp_path: Path
     status_file = tmp_path / "status.json"
     manager = _manager(status_file, process=_Process(returncode=9))
     manager.status = "running"
+    manager.desired_enabled = True
     manager.host_process = _Process(pid=9001)
 
     snapshot = manager.snapshot()
 
     assert snapshot["sidecar_liveness"]["reason"] == "process_exited"
     assert snapshot["status"] == "stale"
+
+    assert manager.prepare_sidecar_restart() is True
+    restarting = manager.snapshot()
+    assert restarting["status"] == "starting"
+    assert restarting["phase"] == "sidecar_restart"

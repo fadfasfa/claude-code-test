@@ -30,6 +30,7 @@ from hextech.interfaces.overlay.lifecycle import (
     stop_process,
 )
 from hextech.interfaces.overlay.context import start_overlay_context_poller, write_missing_overlay_context
+from hextech.interfaces.overlay.sidecar_liveness import read_sidecar_liveness
 
 OVERLAY_HOST_VISIBILITY_STALE_SECONDS = 6.0
 TEMPLATE_PREWARM_WAIT_TIMEOUT_SECONDS = 8.0
@@ -38,7 +39,6 @@ OVERLAY_COLD_STARTUP_BUDGET_SECONDS = 60.0
 OVERLAY_CONTINUATION_SECONDS = 120.0
 SIDECAR_ATTEMPT_TIMEOUT_SECONDS = 60.0
 SIDECAR_RETRY_DELAYS_SECONDS = (1.0,)
-SIDECAR_HEARTBEAT_STALE_SECONDS = 10.0
 
 
 class _OverlayStartCancelled(RuntimeError):
@@ -181,82 +181,16 @@ class OverlayRuntimeManager:
         return getattr(self.sidecar_process, "pid", None)
 
     def _read_sidecar_liveness(self) -> dict[str, Any]:
-        """同时验证进程、PID 创建时间和 heartbeat，避免假 running。"""
-
         pid = self._sidecar_pid()
-        now = self._now_func()
-        startup_grace_active = bool(
-            self._sidecar_started_at and now - self._sidecar_started_at <= SIDECAR_HEARTBEAT_STALE_SECONDS
+        return read_sidecar_liveness(
+            self._sidecar_status_file,
+            pid=pid,
+            process_running=self._process_running(self.sidecar_process),
+            sidecar_started_at=self._sidecar_started_at,
+            now=self._now_func(),
+            pid_exists=self._pid_exists,
+            process_create_time=self._process_create_time,
         )
-        if not self._process_running(self.sidecar_process) or not isinstance(pid, int) or pid <= 0:
-            return {"status": "failed", "reason": "process_exited", "pid": pid}
-        try:
-            payload = json.loads(self._sidecar_status_file.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            if startup_grace_active:
-                return {"status": "starting", "reason": "heartbeat_pending", "pid": pid}
-            return {"status": "stale", "reason": "status_missing", "pid": pid}
-        if not isinstance(payload, Mapping):
-            if startup_grace_active:
-                return {"status": "starting", "reason": "heartbeat_pending", "pid": pid}
-            return {"status": "stale", "reason": "status_invalid", "pid": pid}
-        try:
-            schema_version = int(payload.get("schema_version") or 1)
-            status_pid = int(payload.get("pid") or 0)
-            heartbeat_at = float(payload.get("heartbeat_at") or payload.get("updated_at") or 0.0)
-        except (TypeError, ValueError):
-            if startup_grace_active:
-                return {"status": "starting", "reason": "heartbeat_pending", "pid": pid}
-            return {"status": "stale", "reason": "status_invalid", "pid": pid}
-        if status_pid != pid:
-            # 新进程接管时，上一次 sidecar 的状态文件可能还在磁盘上；在首个
-            # heartbeat 截止前把它当作 pending，而不是把刚启动的真实进程误判 stale。
-            if startup_grace_active:
-                return {
-                    "status": "starting",
-                    "reason": "heartbeat_pending",
-                    "pid": pid,
-                    "reported_pid": status_pid,
-                }
-            return {"status": "stale", "reason": "pid_mismatch", "pid": pid, "reported_pid": status_pid}
-        try:
-            exists = bool(self._pid_exists(pid))
-        except Exception:
-            exists = False
-        if not exists:
-            return {"status": "stale", "reason": "pid_missing", "pid": pid}
-        if schema_version >= 2:
-            try:
-                reported_started_at = float(payload.get("pid_started_at") or 0.0)
-            except (TypeError, ValueError):
-                reported_started_at = 0.0
-            actual_started_at = self._process_create_time(pid)
-            if reported_started_at <= 0.0 or actual_started_at is None:
-                return {"status": "stale", "reason": "pid_start_unavailable", "pid": pid}
-            if abs(float(actual_started_at) - reported_started_at) > 2.0:
-                return {
-                    "status": "stale",
-                    "reason": "pid_reused",
-                    "pid": pid,
-                    "pid_started_at": reported_started_at,
-                    "actual_pid_started_at": actual_started_at,
-                }
-        if heartbeat_at <= 0.0 or now - heartbeat_at > SIDECAR_HEARTBEAT_STALE_SECONDS:
-            return {
-                "status": "stale",
-                "reason": "heartbeat_stale",
-                "pid": pid,
-                "heartbeat_at": heartbeat_at,
-            }
-        return {
-            "status": "running",
-            "reason": "",
-            "pid": pid,
-            "heartbeat_at": heartbeat_at,
-            "generation": str(payload.get("generation") or ""),
-            "schema_version": schema_version,
-            "build_id": str(payload.get("build_id") or ""),
-        }
 
     def _sidecar_is_reusable(self) -> bool:
         liveness = self._read_sidecar_liveness()
@@ -275,6 +209,15 @@ class OverlayRuntimeManager:
                 phase="sidecar_stale",
                 error=f"Vision sidecar 存活失效：{liveness.get('reason') or 'unknown'}",
             )
+
+    def prepare_sidecar_restart(self) -> bool:
+        """在 Supervisor 启动恢复线程前先发布非失败态，避免 UI 闪现失效文案。"""
+
+        with self._lock:
+            if not self.desired_enabled or self.status != "stale":
+                return False
+            self._mark(status="starting", phase="sidecar_restart", error="")
+            return True
 
     def _start_context_poller(self) -> None:
         if self.context_poller is not None or self._start_context_poller_func is None:
@@ -454,7 +397,11 @@ class OverlayRuntimeManager:
                     self._mark(status="running", phase="running", error="")
                     return self.snapshot()
                 if self._process_running(self.sidecar_process):
+                    recovering_sidecar = self.status == "starting" and self.phase == "sidecar_restart"
                     self._mark_sidecar_stale_locked()
+                    if recovering_sidecar:
+                        # 清理旧进程期间仍属于恢复预算内，不能让并发状态读取闪现 stale。
+                        self._mark(status="starting", phase="sidecar_restart", error="")
                     if not stop_process(self.sidecar_process):
                         self._mark(status="error", phase="sidecar_stale_cleanup_failed", error="Vision sidecar stale 后无法停止")
                         return self.snapshot()

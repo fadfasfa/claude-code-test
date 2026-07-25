@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "description": "由 2026-07-25 真机故障诊断提炼的脱敏 observation 序列；不包含截图。",
+  "observations": [
+    {
+      "observation_id": "obs-001",
+      "captured_at": 1000.00,
+      "recognition_completed_at": 1000.08,
+      "slots": [
+        {"slot": 0, "diagnostic": "text_icon_disagree", "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "doubletap", "name": "双发快射", "confidence": 0.94}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "doubletap", "name": "双发快射", "confidence": 0.92}]}, "icon": {"margin": 0.03, "top_candidates": [{"augment_id": "wrong-icon", "name": "其他强化", "confidence": 0.76}]}}},
+        {"slot": 1, "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.96}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.95}]}, "icon": {"margin": 0.04, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.91}]}}},
+        {"slot": 2, "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.96}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.95}]}, "icon": {"margin": 0.04, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.91}]}}}
+      ]
+    },
+    {
+      "observation_id": "obs-002",
+      "captured_at": 1000.24,
+      "recognition_completed_at": 1000.31,
+      "slots": [
+        {"slot": 0, "diagnostic": "text_icon_disagree", "channels": {"text": {"margin": 0.06, "top_candidates": [{"augment_id": "doubletap", "name": "双发快射", "confidence": 0.91}]}, "text_alt": {"margin": 0.06, "top_candidates": [{"augment_id": "other", "name": "其他强化", "confidence": 0.90}]}, "icon": {"margin": 0.05, "top_candidates": [{"augment_id": "wrong-icon", "name": "其他强化", "confidence": 0.82}]}}},
+        {"slot": 1, "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.96}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.95}]}, "icon": {"margin": 0.04, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.91}]}}},
+        {"slot": 2, "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.96}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.95}]}, "icon": {"margin": 0.04, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.91}]}}}
+      ]
+    },
+    {
+      "observation_id": "obs-003",
+      "captured_at": 1000.48,
+      "recognition_completed_at": 1000.56,
+      "slots": [
+        {"slot": 0, "diagnostic": "text_icon_disagree", "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "doubletap", "name": "双发快射", "confidence": 0.94}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "doubletap", "name": "双发快射", "confidence": 0.92}]}, "icon": {"margin": 0.03, "top_candidates": [{"augment_id": "wrong-icon", "name": "其他强化", "confidence": 0.76}]}}},
+        {"slot": 1, "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.96}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.95}]}, "icon": {"margin": 0.04, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.91}]}}},
+        {"slot": 2, "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.96}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.95}]}, "icon": {"margin": 0.04, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.91}]}}}
+      ]
+    },
+    {
+      "observation_id": "obs-004",
+      "captured_at": 1000.72,
+      "recognition_completed_at": 1000.80,
+      "slots": [
+        {"slot": 0, "diagnostic": "text_icon_disagree", "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "doubletap", "name": "双发快射", "confidence": 0.94}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "doubletap", "name": "双发快射", "confidence": 0.92}]}, "icon": {"margin": 0.03, "top_candidates": [{"augment_id": "wrong-icon", "name": "其他强化", "confidence": 0.76}]}}},
+        {"slot": 1, "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.96}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.95}]}, "icon": {"margin": 0.04, "top_candidates": [{"augment_id": "criticalmissile", "name": "暴击飞弹", "confidence": 0.91}]}}},
+        {"slot": 2, "channels": {"text": {"margin": 0.08, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.96}]}, "text_alt": {"margin": 0.07, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.95}]}, "icon": {"margin": 0.04, "top_candidates": [{"augment_id": "immovable", "name": "不动如山", "confidence": 0.91}]}}}
+      ]
+    }
+  ]
+}

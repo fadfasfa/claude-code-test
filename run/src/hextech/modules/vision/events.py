@@ -115,6 +115,11 @@ def _empty_slot(index: int, *, state: str = "empty") -> dict[str, Any]:
         "replacement_reason": "",
         "candidate_identity": "",
         "rejection_reason": "",
+        "temporal_state": "",
+        "evidence_hits": 0,
+        "evidence_window": 0,
+        "required_hits": 0,
+        "observed_at": 0.0,
         "elapsed_seconds": 0.0,
         "data_status": "",
         "data_reason": "",
@@ -278,6 +283,16 @@ def normalize_overlay_slot(
         observed_frames = max(0, int(raw_slot.get("observed_frames") or 0))
     except (TypeError, ValueError):
         observed_frames = 0
+    def non_negative_int(key: str) -> int:
+        try:
+            return max(0, int(raw_slot.get(key) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    try:
+        observed_at = max(0.0, float(raw_slot.get("observed_at") or 0.0))
+    except (TypeError, ValueError):
+        observed_at = 0.0
 
     return {
         "slot": slot_index,
@@ -301,6 +316,11 @@ def normalize_overlay_slot(
         "replacement_reason": _clean_text(raw_slot.get("replacement_reason"), limit=80),
         "candidate_identity": _clean_text(raw_slot.get("candidate_identity"), limit=80),
         "rejection_reason": _clean_text(raw_slot.get("rejection_reason"), limit=80),
+        "temporal_state": _clean_text(raw_slot.get("temporal_state"), limit=32),
+        "evidence_hits": non_negative_int("evidence_hits"),
+        "evidence_window": non_negative_int("evidence_window"),
+        "required_hits": non_negative_int("required_hits"),
+        "observed_at": observed_at,
         "elapsed_seconds": elapsed_seconds,
         "data_status": _clean_text(raw_slot.get("data_status"), limit=32),
         "data_reason": data_reason,

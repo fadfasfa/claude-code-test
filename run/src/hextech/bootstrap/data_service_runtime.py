@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import queue
 import secrets
 import shutil
-import sys
 import threading
 import time
 import uuid
@@ -742,7 +742,7 @@ def main(argv: list[str] | None = None) -> int:
     publisher = DataSnapshotPublisher()
     instance_lock = InterProcessFileLock(get_var_dir() / "locks" / "data-service.lock")
     if not instance_lock.acquire():
-        logger.error("DataService 已由另一个桌面实例持有。")
+        logging.getLogger(__name__).error("DataService 已由另一个桌面实例持有。")
         return 3
     sync_startup_service_state(publisher, "starting")
     try:

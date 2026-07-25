@@ -100,6 +100,7 @@ class OverlayRecognitionGateTests(unittest.TestCase):
         with (
             mock.patch.object(vision_eval, "_load_truth", return_value=[]),
             mock.patch.object(vision_eval, "_load_name_roi_truth", return_value=[{"id": "roi-only"}]),
+            mock.patch.object(vision_eval, "_load_timeline_truth", return_value=[]),
             mock.patch.object(vision_eval.overlay_vision_sidecar, "load_default_template_index", return_value=[]),
             mock.patch.object(vision_eval.overlay_vision_sidecar, "_rank_matrices"),
             mock.patch.object(vision_eval, "_evaluate_name_roi_sample", return_value=roi_result),
@@ -110,6 +111,20 @@ class OverlayRecognitionGateTests(unittest.TestCase):
         self.assertEqual(summary["false_ready_count"], 0)
         self.assertIsNone(summary["accuracy"])
         self.assertEqual(summary["name_roi_accuracy"], 1.0)
+
+    def test_temporal_disagreement_fixture_recovers_without_false_failure(self):
+        from tooling.diagnostics import vision_eval
+
+        run_dir = Path(__file__).resolve().parents[1]
+        sample = vision_eval._load_timeline_truth(
+            run_dir / "tests/fixtures/diagnostics/overlay_matching_truth.v1.json"
+        )[0]
+
+        result = vision_eval._evaluate_timeline_sample(sample, run_dir=run_dir)
+
+        self.assertEqual(result["status"], "evaluated")
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(result["ready_at"], [3, 2, 2])
 
     def test_zero_full_frame_samples_block_validation(self):
         from tooling.setup import vision as refresh_overlay_recognition

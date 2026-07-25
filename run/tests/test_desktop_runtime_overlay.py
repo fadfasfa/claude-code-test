@@ -13,6 +13,16 @@ from unittest.mock import patch
 
 
 class DesktopRuntimeOverlayTests(unittest.TestCase):
+    def test_sidecar_restart_phase_uses_recovery_copy(self):
+        from hextech.interfaces.desktop.app_shared import _format_supervisor_game_overlay_status
+
+        text, _color = _format_supervisor_game_overlay_status(
+            {"status": "starting", "phase": "sidecar_restart"}
+        )
+
+        self.assertEqual(text, "游戏内显示: 识别重启中")
+        self.assertNotIn("失效", text)
+
     def test_initialize_core_threads_resolves_split_runtime_owners(self):
         from hextech.interfaces.desktop import runtime_services
 

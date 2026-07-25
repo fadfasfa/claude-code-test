@@ -18,6 +18,11 @@ def _snapshot(index: int) -> dict:
             "tag": "fixture",
             "session_id": f"session-{index}",
             "generation_id": f"generation-{index}",
+            "selection_epoch": index + 1,
+            "selection_revision": 2,
+            "scene_state": "active",
+            "selection_window_active": True,
+            "scene_temporal_state": "stable",
         },
         "slots": [
             {
@@ -75,6 +80,9 @@ def test_overlay_sessions_keep_latest_and_only_twenty_structured_reports(
     assert latest["schema_version"] == 2
     assert latest["build_id"]
     assert latest["slots"][0]["data_reason"] == "champion_stat_missing"
+    assert latest["source"]["selection_epoch"] == 21
+    assert latest["source"]["selection_revision"] == 2
+    assert latest["source"]["scene_temporal_state"] == "stable"
     assert latest["render"]["rows"][0]["status_code"] == "CHAMPION_STAT_MISSING"
     assert latest["screenshot"] == ""
     assert latest["timing"]["report_written_at"] >= latest["timing"]["report_enqueued_at"]
@@ -97,6 +105,21 @@ def test_report_submission_does_not_write_on_calling_thread(tmp_path: Path) -> N
     finally:
         writer.close()
     assert (report_dir / "latest.json").is_file()
+
+
+def test_report_signature_keeps_revision_changes_in_same_epoch(tmp_path: Path) -> None:
+    from hextech.interfaces.overlay import host_sync
+    from hextech.interfaces.overlay.report_writer import OverlayReportWriter
+
+    writer = OverlayReportWriter(tmp_path / "reports", tmp_path / "evidence")
+    visibility: dict[str, object] = {"report_writer": writer}
+    first = _snapshot(1)
+    second = _snapshot(1)
+    second["source"]["selection_revision"] = 3
+
+    assert host_sync._write_overlay_session_report(first, None, visibility)
+    assert host_sync._write_overlay_session_report(second, None, visibility)
+    assert writer.status()["queue_depth"] == 2
 
 
 def test_report_queue_coalesces_duplicates_and_keeps_latest_when_full(tmp_path: Path) -> None:

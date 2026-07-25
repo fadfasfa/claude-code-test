@@ -23,7 +23,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from hextech.infrastructure.vision import sidecar as overlay_vision_sidecar
-from hextech.infrastructure.vision.matcher import OBSERVED_NAME_CONFIDENCE, OBSERVED_NAME_MARGIN
+from hextech.infrastructure.vision.matcher import (
+    OBSERVED_NAME_CONFIDENCE,
+    OBSERVED_NAME_MARGIN,
+    candidate_from_slot,
+)
 from hextech.infrastructure.vision.state import SelectionTracker
 
 
@@ -116,6 +120,48 @@ def _load_name_roi_truth(path: Path) -> list[dict[str, Any]]:
     return result
 
 
+def _load_timeline_truth(path: Path) -> list[dict[str, Any]]:
+    """加载结构化 observation 序列；静态截图不能声明为时序样本。"""
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    samples = payload.get("timeline_samples") if isinstance(payload, Mapping) else None
+    if samples is None:
+        return []
+    if not isinstance(samples, Sequence) or isinstance(samples, (str, bytes)):
+        raise ValueError(f"truth payload timeline_samples must be a list: {path}")
+    result: list[dict[str, Any]] = []
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            continue
+        fixture = _clean_text(sample.get("fixture"))
+        expected_slots = sample.get("expected_slots")
+        expected_grades = sample.get("expected_grades")
+        if (
+            not fixture
+            or not isinstance(expected_slots, Sequence)
+            or isinstance(expected_slots, (str, bytes))
+            or not isinstance(expected_grades, Sequence)
+            or isinstance(expected_grades, (str, bytes))
+        ):
+            continue
+        result.append(
+            {
+                "id": _clean_text(sample.get("id")) or Path(fixture).stem,
+                "fixture": fixture,
+                "expected_slots": [_clean_text(item) for item in list(expected_slots)[:3]],
+                "expected_grades": [_clean_text(item) for item in list(expected_grades)[:3]],
+                "expected_final_states": [
+                    _clean_text(item) for item in list(sample.get("expected_final_states") or ["ready"] * 3)[:3]
+                ],
+                "expected_temporal_states": [
+                    _clean_text(item) for item in list(sample.get("expected_temporal_states") or [""] * 3)[:3]
+                ],
+                "notes": _clean_text(sample.get("notes")),
+            }
+        )
+    return result
+
+
 def _top_name(slot: Mapping[str, Any], channel: str) -> str:
     channels = slot.get("channels") if isinstance(slot.get("channels"), Mapping) else {}
     payload = channels.get(channel) if isinstance(channels.get(channel), Mapping) else {}
@@ -164,37 +210,45 @@ def _evaluate_sample(
             min_confidence=min_confidence,
             calibration_path=Path(tmp_dir) / "overlay_anchor_calibration.v1.json",
         )
-    tracker = SelectionTracker()
-    tracker.update(raw_event)
-    event = tracker.update(raw_event)
-    source_reason = _clean_text((event.get("source") or {}).get("reason") if isinstance(event.get("source"), Mapping) else "")
-    # 名称准确率以跨帧门控后的公开事件为准；原始单帧槽仅提供通道诊断。
-    # 这样可以评估“卡名已确认但视觉版本留空”的分层识别结果。
-    slots = event.get("slots") if isinstance(event.get("slots"), list) else []
-    raw_slots = raw_event.get("slots") if isinstance(raw_event.get("slots"), list) else []
+    source = raw_event.get("source") if isinstance(raw_event.get("source"), Mapping) else {}
+    source_reason = _clean_text(source.get("reason"))
+    # 完整帧只校验单帧候选，不再重复提交同一张图片伪造连续观察。
+    observation_slots = raw_event.get("slots") if isinstance(raw_event.get("slots"), list) else []
+    raw_slots = (
+        raw_event.get("_raw_slots")
+        if isinstance(raw_event.get("_raw_slots"), list)
+        else observation_slots
+    )
     checks: list[dict[str, Any]] = []
     false_ready: list[dict[str, Any]] = []
     for index, expected in enumerate(sample["expected_slots"]):
-        slot = slots[index] if index < len(slots) and isinstance(slots[index], Mapping) else {}
+        observation_slot = (
+            observation_slots[index]
+            if index < len(observation_slots) and isinstance(observation_slots[index], Mapping)
+            else {}
+        )
         raw_slot = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
-        observed = _clean_text(slot.get("name"))
-        slot_ready = slot.get("state") == "ready"
-        if slot_ready and observed != (expected or ""):
+        observed = _clean_text(observation_slot.get("name"))
+        observation_ready = observation_slot.get("state") == "ready"
+        if observation_ready and observed != (expected or ""):
             false_ready.append({"slot": index, "expected": expected or "", "observed": observed})
         if not expected:
             continue
         text_top = _top_name(raw_slot, "text")
         text_alt_top = _top_name(raw_slot, "text_alt")
         icon_top = _top_name(raw_slot, "icon")
+        channel_candidates = tuple(name for name in (text_top, text_alt_top, icon_top) if name)
+        candidate_matched = expected in channel_candidates or observed == expected
+        reported_candidate = observed or (expected if candidate_matched else (channel_candidates[0] if channel_candidates else ""))
         checks.append(
             {
                 "slot": index,
                 "expected": expected,
-                "observed": observed,
-                "matched": observed == expected,
-                "state": _clean_text(slot.get("state")),
-                "diagnostic": _clean_text(raw_slot.get("diagnostic") or slot.get("diagnostic")),
-                "confidence": slot.get("confidence"),
+                "observed": reported_candidate,
+                "matched": candidate_matched,
+                "state": "candidate" if candidate_matched else "detecting",
+                "diagnostic": _clean_text(raw_slot.get("diagnostic")),
+                "confidence": observation_slot.get("confidence"),
                 "text_top": text_top,
                 "text_alt_top": text_alt_top,
                 "icon_top": icon_top,
@@ -204,18 +258,20 @@ def _evaluate_sample(
     active_check = None
     if isinstance(sample.get("expected_active"), bool):
         expected_reason = _clean_text(sample.get("expected_source_reason"))
-        active_matched = bool(event.get("active")) is bool(sample["expected_active"])
+        observed_active = bool(source.get("scene_present") or source.get("selection_window_active"))
+        active_matched = observed_active is bool(sample["expected_active"])
         reason_matched = not expected_reason or source_reason == expected_reason
         active_check = {
             "expected_active": bool(sample["expected_active"]),
-            "observed_active": bool(event.get("active")),
+            "observed_active": observed_active,
             "expected_source_reason": expected_reason,
             "observed_source_reason": source_reason,
             "matched": active_matched and reason_matched,
         }
 
-    ready_slots = _ready_slot_count(event)
-    source = event.get("source") if isinstance(event.get("source"), Mapping) else {}
+    # 历史 manifest 沿用 expected_ready_slots 字段；静态帧门禁现在统计单帧
+    # 三通道 Top-1 中的正确候选数，不要求同一张图直接通过时序 ready。
+    ready_slots = sum(bool(check.get("matched")) for check in checks)
     scene_present = bool(source.get("scene_present") or source.get("selection_window_active"))
     scene_check = None
     if sample.get("expected_active") is True or sample.get("expected_source_reason") == "selection_scene_not_detected":
@@ -242,77 +298,184 @@ def _evaluate_sample(
         "id": sample["id"],
         "frame": str(frame_path),
         "status": "evaluated",
-        "active": bool(event.get("active")),
+        "active": bool(source.get("scene_present") or source.get("selection_window_active")),
         "source_reason": source_reason,
         "ready_slots": ready_slots,
         "scene_present": scene_present,
         "scene_check": scene_check,
         "active_check": active_check,
         "ready_slots_check": ready_slots_check,
-        "slot_signature": list(overlay_vision_sidecar._slot_signature(event)),
+        "slot_signature": [
+            str(check.get("observed") or "")
+            for check in checks
+        ],
         "checks": checks,
         "false_ready": false_ready,
-        "_event": raw_event,
     }
 
 
-def _build_stability_checks(evaluated: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    checks: list[dict[str, Any]] = []
-    active_results = [
-        result
-        for result in evaluated
-        if bool(result.get("active")) and isinstance(result.get("_event"), Mapping)
-    ]
-    for result in active_results:
-        tracker = SelectionTracker()
-        tracker.update(result["_event"])
-        stable = tracker.update(result["_event"])
-        expected_ready_slots = int(result.get("ready_slots") or 0)
-        checks.append(
-            {
-                "sample_id": result["id"],
-                "kind": "partial_timeline",
-                "expected_active": True,
-                "observed_active": bool(stable.get("active")),
-                "matched": bool(stable.get("active"))
-                and _ready_slot_count(stable) == expected_ready_slots
-                and len(stable.get("slots") or []) == 3,
-            }
-        )
+def _evaluate_timeline_sample(sample: Mapping[str, Any], *, run_dir: Path) -> dict[str, Any]:
+    fixture_path = run_dir / str(sample["fixture"])
+    if not fixture_path.is_file():
+        return {"id": sample["id"], "status": "missing_timeline", "failures": [], "fixture": str(fixture_path)}
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+    observations = payload.get("observations") if isinstance(payload, Mapping) else None
+    if not isinstance(observations, list) or not observations:
+        return {
+            "id": sample["id"],
+            "status": "invalid_timeline",
+            "failures": [{"kind": "timeline", "expected": "non-empty observations", "observed": "invalid"}],
+        }
+    tracker = SelectionTracker(scene_enter_frames=1)
+    expected_slots = list(sample["expected_slots"])
+    expected_grades = list(sample["expected_grades"])
+    failures: list[dict[str, Any]] = []
+    ready_at: list[int | None] = [None, None, None]
+    valid_observation_counts = [0, 0, 0]
+    previous_time = 0.0
+    seen_ids: set[str] = set()
 
-    changed_pair = None
-    for left_index, left in enumerate(active_results):
-        for right in active_results[left_index + 1 :]:
-            if left.get("slot_signature") != right.get("slot_signature"):
-                changed_pair = (left, right)
-                break
-        if changed_pair is not None:
-            break
-    if changed_pair is not None:
-        left, right = changed_pair
-        tracker = SelectionTracker()
-        tracker.update(left["_event"])
-        tracker.update(left["_event"])
-        stable = tracker.update(right["_event"])
-        left_signature = list(left.get("slot_signature") or [])
-        right_signature = list(right.get("slot_signature") or [])
-        unchanged_ready = sum(
-            1
-            for index in range(min(3, len(left_signature), len(right_signature)))
-            if left_signature[index] == right_signature[index] and left_signature[index].startswith("ready:")
+    def fixture_slot(raw: Mapping[str, Any], index: int) -> dict[str, Any]:
+        if isinstance(raw.get("channels"), Mapping):
+            return dict(raw)
+        candidate = raw.get("candidate") if isinstance(raw.get("candidate"), Mapping) else {}
+        name = _clean_text(candidate.get("name"))
+        augment_id = _clean_text(candidate.get("augment_id")) or name
+        grade = _clean_text(candidate.get("grade"))
+        if not name or grade not in {"strong", "medium"}:
+            return {"slot": index, "diagnostic": _clean_text(raw.get("diagnostic")) or "no_candidate", "channels": {}}
+        top = {"augment_id": augment_id, "name": name, "confidence": 0.96 if grade == "strong" else 0.86}
+        channels: dict[str, Any] = {
+            "text": {"margin": 0.08, "top_candidates": [top]},
+            "text_alt": {"margin": 0.07, "top_candidates": [dict(top)]},
+        }
+        if grade == "strong":
+            channels["icon"] = {"margin": 0.04, "top_candidates": [{**top, "confidence": 0.91}]}
+        return {"slot": index, "diagnostic": _clean_text(raw.get("diagnostic")), "channels": channels}
+
+    latency_values: dict[str, list[float]] = {"capture": [], "recognition": [], "total": []}
+    for sequence, observation in enumerate(observations, start=1):
+        if not isinstance(observation, Mapping):
+            failures.append({"kind": "timeline", "expected": "object", "observed": f"item {sequence}"})
+            continue
+        observation_id = _clean_text(observation.get("observation_id"))
+        try:
+            observed_at = float(observation.get("recognition_completed_at") or 0.0)
+        except (TypeError, ValueError):
+            observed_at = 0.0
+        if not observation_id or observation_id in seen_ids or observed_at <= previous_time:
+            failures.append(
+                {
+                    "kind": "timeline_order",
+                    "expected": "unique observation_id and increasing timestamp",
+                    "observed": f"{observation_id or '<empty>'}@{observed_at}",
+                }
+            )
+        seen_ids.add(observation_id)
+        previous_time = max(previous_time, observed_at)
+        raw_slots = observation.get("slots") if isinstance(observation.get("slots"), list) else []
+        observation_source = observation.get("source") if isinstance(observation.get("source"), Mapping) else {}
+        try:
+            capture_started_at = float(observation.get("capture_started_at") or 0.0)
+            captured_at = float(observation.get("captured_at") or 0.0)
+        except (TypeError, ValueError):
+            capture_started_at = 0.0
+            captured_at = 0.0
+        for key, start, end in (
+            ("capture", capture_started_at, captured_at),
+            ("recognition", captured_at, observed_at),
+            ("total", capture_started_at, observed_at),
+        ):
+            if end >= start > 0.0:
+                latency_values[key].append(round((end - start) * 1000.0, 3))
+        fixture_slots = [
+            fixture_slot(
+                raw_slots[index]
+                if index < len(raw_slots) and isinstance(raw_slots[index], Mapping)
+                else {},
+                index,
+            )
+            for index in range(3)
+        ]
+        for index, slot in enumerate(fixture_slots):
+            if candidate_from_slot(slot) is not None:
+                valid_observation_counts[index] += 1
+        raw_event = {
+            "active": True,
+            "selection_type": "hextech",
+            "source": {
+                "scene_present": bool(observation_source.get("scene_present", True)),
+                "selection_window_active": bool(observation_source.get("selection_window_active", True)),
+                "selection_button_present": bool(observation_source.get("selection_button_present", True)),
+                "card_residue": bool(observation_source.get("card_residue")),
+                "name_residue": list(observation_source.get("name_residue"))
+                if isinstance(observation_source.get("name_residue"), list)
+                else [],
+                "cursor_over_slots": list(observation_source.get("cursor_over_slots"))
+                if isinstance(observation_source.get("cursor_over_slots"), list)
+                else [],
+                "cursor_over_cards": bool(observation_source.get("cursor_over_cards")),
+                "selection_click": bool(observation_source.get("selection_click")),
+                "selection_confirmed": bool(observation_source.get("selection_confirmed")),
+            },
+            "timing": {
+                "capture_started_at": capture_started_at,
+                "captured_at": captured_at,
+                "recognition_completed_at": observed_at,
+            },
+            "_raw_slots": fixture_slots,
+        }
+        event = tracker.update(raw_event)
+        slots = event.get("slots") if isinstance(event.get("slots"), list) else []
+        for index, expected in enumerate(expected_slots):
+            slot = slots[index] if index < len(slots) and isinstance(slots[index], Mapping) else {}
+            state = str(slot.get("state") or "detecting")
+            observed_name = _clean_text(slot.get("name"))
+            if state == "failed":
+                failures.append({"kind": "false_failed", "slot": index, "expected": "detecting/ready", "observed": state})
+            if state == "ready" and observed_name != expected:
+                failures.append({"kind": "false_ready", "slot": index, "expected": expected, "observed": observed_name})
+            if state == "ready" and ready_at[index] is None:
+                ready_at[index] = valid_observation_counts[index]
+    final_slots = event.get("slots") if isinstance(event.get("slots"), list) else []
+    expected_final_states = list(sample.get("expected_final_states") or ["ready"] * 3)
+    expected_temporal_states = list(sample.get("expected_temporal_states") or [""] * 3)
+    for index, expected in enumerate(expected_slots):
+        slot = final_slots[index] if index < len(final_slots) and isinstance(final_slots[index], Mapping) else {}
+        grade = expected_grades[index] if index < len(expected_grades) else "medium"
+        limit = 3 if grade == "strong" else 5
+        expected_state = expected_final_states[index] if index < len(expected_final_states) else "ready"
+        expected_temporal = expected_temporal_states[index] if index < len(expected_temporal_states) else ""
+        if str(slot.get("state") or "") != expected_state:
+            failures.append({"kind": "final_state", "slot": index, "expected": expected_state, "observed": slot.get("state")})
+        elif expected and _clean_text(slot.get("name")) != expected:
+            failures.append({"kind": "final_ready", "slot": index, "expected": expected, "observed": _clean_text(slot.get("name"))})
+        elif expected_temporal and str(slot.get("temporal_state") or "") != expected_temporal:
+            failures.append({"kind": "final_temporal", "slot": index, "expected": expected_temporal, "observed": slot.get("temporal_state")})
+        elif expected_state == "ready" and (ready_at[index] is None or int(ready_at[index]) > limit):
+            failures.append({"kind": "confirmation_budget", "slot": index, "expected": f"<={limit}", "observed": ready_at[index]})
+
+    def latency_summary(values: list[float]) -> dict[str, float | int | None]:
+        ordered = sorted(values)
+        if not ordered:
+            return {"count": 0, "p50": None, "p95": None}
+        midpoint = len(ordered) // 2
+        p50 = (
+            ordered[midpoint]
+            if len(ordered) % 2
+            else round((ordered[midpoint - 1] + ordered[midpoint]) / 2.0, 3)
         )
-        expected_active = unchanged_ready >= 1
-        checks.append(
-            {
-                "sample_id": f"{left['id']} -> {right['id']}",
-                "kind": "single_slot_reroll",
-                "expected_active": expected_active,
-                "observed_active": bool(stable.get("active")),
-                "matched": bool(stable.get("active")) is expected_active
-                and _ready_slot_count(stable) == unchanged_ready,
-            }
-        )
-    return checks
+        p95_index = max(0, min(len(ordered) - 1, int((len(ordered) * 0.95) + 0.999999) - 1))
+        return {"count": len(ordered), "p50": p50, "p95": ordered[p95_index]}
+    return {
+        "id": sample["id"],
+        "status": "evaluated",
+        "fixture": str(fixture_path),
+        "observation_count": len(observations),
+        "ready_at": ready_at,
+        "latency_ms": {key: latency_summary(values) for key, values in latency_values.items()},
+        "failures": failures,
+    }
 
 
 def _evaluate_name_roi_sample(
@@ -405,6 +568,7 @@ def evaluate_truth(
     """
     samples = _load_truth(path)
     name_roi_samples = _load_name_roi_truth(path)
+    timeline_samples = _load_timeline_truth(path)
     template_index = overlay_vision_sidecar.load_default_template_index(base_dir)
     overlay_vision_sidecar._rank_matrices(template_index)
     results = [
@@ -414,6 +578,10 @@ def evaluate_truth(
     name_roi_results = [
         _evaluate_name_roi_sample(sample, template_index=template_index, run_dir=run_dir)
         for sample in name_roi_samples
+    ]
+    timeline_results = [
+        _evaluate_timeline_sample(sample, run_dir=run_dir)
+        for sample in timeline_samples
     ]
     evaluated = [result for result in results if result["status"] == "evaluated"]
     missing = [result for result in results if result["status"] != "evaluated"]
@@ -480,16 +648,14 @@ def evaluate_truth(
         for result in evaluated
         if isinstance(result.get("scene_check"), Mapping) and not result["scene_check"]["matched"]
     ]
-    stability_checks = _build_stability_checks(evaluated)
-    stability_failures = [
-        {
-            "sample_id": check["sample_id"],
-            "kind": "stability",
-            "expected": f"active={check['expected_active']} ({check['kind']})",
-            "observed": f"active={check['observed_active']}",
-        }
-        for check in stability_checks
-        if not check["matched"]
+    timeline_evaluated = [result for result in timeline_results if result["status"] == "evaluated"]
+    timeline_missing = [result for result in timeline_results if result["status"] != "evaluated"]
+    timeline_matched = [result for result in timeline_evaluated if not result.get("failures")]
+    timeline_failures = [
+        dict(failure) | {"sample_id": result["id"]}
+        for result in timeline_results
+        for failure in result.get("failures", [])
+        if isinstance(failure, Mapping)
     ]
     name_roi_evaluated = [result for result in name_roi_results if result["status"] == "evaluated"]
     name_roi_missing = [result for result in name_roi_results if result["status"] != "evaluated"]
@@ -510,7 +676,7 @@ def evaluate_truth(
         + active_failures
         + ready_slots_failures
         + scene_failures
-        + stability_failures
+        + timeline_failures
         + name_roi_failures
     )
     public_results = [
@@ -532,9 +698,9 @@ def evaluate_truth(
     return {
         "truth_path": str(path),
         "template_count": len(template_index),
-        "sample_count": len(samples) + len(name_roi_samples),
-        "evaluated_count": len(evaluated) + len(name_roi_evaluated),
-        "missing_count": len(missing) + len(name_roi_missing),
+        "sample_count": len(samples) + len(name_roi_samples) + len(timeline_samples),
+        "evaluated_count": len(evaluated) + len(name_roi_evaluated) + len(timeline_evaluated),
+        "missing_count": len(missing) + len(name_roi_missing) + len(timeline_missing),
         "frame_sample_count": len(samples),
         "name_roi_sample_count": len(name_roi_samples),
         "matched_name_roi_count": len(name_roi_checks) - len(name_roi_failures),
@@ -549,17 +715,18 @@ def evaluate_truth(
         "matched_ready_slots_count": len(ready_slots_checks) - len(ready_slots_failures),
         "expected_scene_count": len(scene_checks),
         "matched_scene_count": len(scene_checks) - len(scene_failures),
-        "expected_stability_count": len(stability_checks),
-        "matched_stability_count": len(stability_checks) - len(stability_failures),
+        "timeline_sample_count": len(timeline_samples),
+        "matched_timeline_count": len(timeline_matched),
         "frame_slot_accuracy": frame_slot_accuracy,
         "name_roi_accuracy": name_roi_accuracy,
         # 兼容既有诊断消费者；不再用 0.0 冒充“没有完整帧”。
         "accuracy": frame_slot_accuracy,
         "per_slot_top1": per_slot_top1,
         "failures": failures,
-        "missing": missing + name_roi_missing,
+        "missing": missing + name_roi_missing + timeline_missing,
         "results": public_results,
         "name_roi_results": name_roi_results,
+        "timeline_results": timeline_results,
     }
 
 
@@ -570,7 +737,7 @@ def _print_text_summary(summary: Mapping[str, Any]) -> None:
         f"{summary['matched_active_count']}/{summary['expected_active_count']} active checks matched, "
         f"{summary['matched_ready_slots_count']}/{summary['expected_ready_slots_count']} ready-slot checks matched, "
         f"{summary['matched_scene_count']}/{summary['expected_scene_count']} scene checks matched, "
-        f"{summary['matched_stability_count']}/{summary['expected_stability_count']} stability checks matched, "
+        f"{summary['matched_timeline_count']}/{summary['timeline_sample_count']} timeline samples matched, "
         f"{summary['matched_name_roi_count']}/{summary['expected_name_roi_count']} name-ROI checks matched, "
         f"{summary['evaluated_count']}/{summary['sample_count']} samples evaluated, "
         f"template_count={summary['template_count']}"
@@ -600,7 +767,14 @@ def _print_text_summary(summary: Mapping[str, Any]) -> None:
                 "active",
                 "ready_slots",
                 "scene",
-                "stability",
+                "timeline",
+                "timeline_order",
+                "false_failed",
+                "false_ready",
+                "final_ready",
+                "confirmation_budget",
+                "final_state",
+                "final_temporal",
                 "body_shard",
                 "name_top1",
             }:
