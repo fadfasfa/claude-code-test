@@ -22,6 +22,7 @@ from hextech.interfaces.desktop.app_shared import (  # noqa: F401 - 保留历史
     tk,
 )
 from hextech.interfaces.desktop.app_bootstrap import DesktopBootstrapMixin
+from hextech.interfaces.desktop.background_runtime import DesktopBackgroundRuntimeMixin
 from hextech.interfaces.desktop.app_controls import DesktopControlsMixin
 from hextech.interfaces.desktop.app_view import DesktopViewMixin
 from hextech.interfaces.desktop.service_manager import ServiceManager
@@ -29,7 +30,7 @@ from hextech.interfaces.desktop.service_manager import ServiceManager
 from hextech.interfaces.desktop import runtime as ui_runtime  # noqa: F401
 
 
-class HextechUI(DesktopBootstrapMixin, DesktopControlsMixin, DesktopViewMixin):
+class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopControlsMixin, DesktopViewMixin):
     """桌面伴生主界面，负责持有 UI 状态并协调后台运行时任务。"""
 
     def __init__(self):
@@ -120,6 +121,7 @@ class HextechUI(DesktopBootstrapMixin, DesktopControlsMixin, DesktopViewMixin):
         self._feature_toggle_lock = threading.Lock()
         self._closing = False
         self._shutdown_done_event = threading.Event()
+        self._initialize_background_runtime()
 
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
@@ -127,9 +129,10 @@ class HextechUI(DesktopBootstrapMixin, DesktopControlsMixin, DesktopViewMixin):
         self.root.configure(bg=UI_COLORS["base"])
         self.root.attributes("-alpha", 1.0, "-topmost", False)
         self.root.overrideredirect(True)
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
         self._build_ui()
+        self._start_desktop_tray()
         self.startup_timing.mark("tk_shell_built")
         self.root.after_idle(self._mark_first_idle_visible)
         self.root.after(50, self._schedule_post_visible_bootstrap)
@@ -138,17 +141,18 @@ def run_desktop():
     """启动桌面伴生窗口。"""
 
     try:
-        with DesktopInstanceOwner():
+        with DesktopInstanceOwner() as instance_owner:
             ui = HextechUI()
+            ui.attach_instance_owner(instance_owner)
             try:
                 ui.root.mainloop()
             except KeyboardInterrupt:
                 # Windows 控制台退出属于正常关闭请求，不能把 Tk mainloop 误报成崩溃。
-                ui.on_close()
+                ui.exit_application()
             ui.wait_for_shutdown(timeout_seconds=8.0)
     except DesktopInstanceAlreadyRunning as exc:
-        print(str(exc), file=sys.stderr)
-        raise SystemExit(2) from exc
+        # 第二次点击快捷方式只唤醒已存在的托盘实例；GUI 模式不能依赖 stderr。
+        raise SystemExit(0 if exc.activation_sent else 2) from exc
 
 
 if __name__ == "__main__":

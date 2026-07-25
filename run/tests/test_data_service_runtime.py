@@ -377,7 +377,7 @@ def test_data_service_bootstrap_timeout_is_not_blocked_by_readline(monkeypatch: 
 def test_data_service_bootstrap_keeps_draining_stdout_and_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     from hextech.interfaces.desktop import runtime
 
-    stdout_text = json.dumps({"port": 52001, "session_nonce": "nonce", "pid": 4321}) + "\nextra stdout\n"
+    stdout_text = "extra stdout\n"
     stderr_text = "refresh diagnostic\n" * 10000
 
     class FakeProcess:
@@ -391,7 +391,25 @@ def test_data_service_bootstrap_keeps_draining_stdout_and_stderr(monkeypatch: py
             return self.returncode
 
     process = FakeProcess()
-    monkeypatch.setattr(runtime.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    def fake_popen(*args, **kwargs):
+        del args
+        env = kwargs["env"]
+        bootstrap_path = Path(env["HEXTECH_PROCESS_BOOTSTRAP_FILE"])
+        bootstrap_path.write_text(
+            json.dumps(
+                {
+                    "port": 52001,
+                    "session_nonce": "nonce",
+                    "pid": 4321,
+                    "token": env["HEXTECH_PROCESS_BOOTSTRAP_TOKEN"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return process
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(runtime, "_WindowsJobObject", lambda _process: None)
 
     handle = runtime.start_data_service_process(timeout=1)

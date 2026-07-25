@@ -463,6 +463,7 @@ def test_packaged_smoke_runs_overlay_self_check_before_desktop(tmp_path, monkeyp
         "_overlay_self_check",
         lambda *_args, **_kwargs: events.append("overlay") or {"ok": True},
     )
+    monkeypatch.setattr(smoke, "_validate_windows_gui_subsystem", lambda _exe: None)
     monkeypatch.setattr(
         smoke.subprocess,
         "Popen",

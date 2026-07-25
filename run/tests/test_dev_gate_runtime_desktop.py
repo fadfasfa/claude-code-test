@@ -1,5 +1,8 @@
 """runtime 域 pytest 开发门禁。"""
 
+import os
+import subprocess
+
 import pytest
 
 from tests._dev_gate_support import (
@@ -87,10 +90,11 @@ def test_desktop_ui_feature_switch_contract() -> None:
         def poll(self):
             return None
 
-    def fake_popen(command, startupinfo=None, cwd=None, env=None):
+    def fake_popen(command, startupinfo=None, cwd=None, env=None, creationflags=0):
         captured["command"] = command
         captured["cwd"] = cwd
         captured["env"] = dict(env or {})
+        captured["creationflags"] = creationflags
         return DummyProcess()
 
     with (
@@ -100,6 +104,8 @@ def test_desktop_ui_feature_switch_contract() -> None:
     ):
         ui_runtime.start_web_server_process("unused-port-file.txt", auto_open_browser=True)
     assert captured["env"]["HEXTECH_OPEN_BROWSER"] == "0"
+    if os.name == "nt":
+        assert captured["creationflags"] & subprocess.CREATE_NO_WINDOW
 
     assert hasattr(ui_runtime, "open_companion_browser")
     assert hasattr(ui_runtime, "close_companion_browser")

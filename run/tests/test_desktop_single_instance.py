@@ -25,6 +25,10 @@ class DesktopSingleInstanceTests(unittest.TestCase):
                 with self.assertRaises(DesktopInstanceAlreadyRunning) as raised:
                     DesktopInstanceOwner(lock, owner).acquire()
                 self.assertEqual(int(raised.exception.owner["pid"]), os.getpid())
+                self.assertTrue(raised.exception.activation_sent)
+                request = first.consume_activation_request()
+                self.assertIsNotNone(request)
+                self.assertEqual(request["target_owner_id"], first.owner_id)
             finally:
                 first.release()
 
@@ -60,6 +64,29 @@ class DesktopSingleInstanceTests(unittest.TestCase):
                 second.release()
             finally:
                 first.release()
+
+    def test_activation_for_different_owner_is_ignored(self):
+        from hextech.interfaces.desktop.single_instance import DesktopInstanceOwner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            instance = DesktopInstanceOwner(root / "desktop.lock", root / "owner.json")
+            instance.acquire()
+            try:
+                Path(instance.activation_path).write_text(
+                    json.dumps(
+                        {
+                            "request_id": "wrong-owner",
+                            "target_owner_id": "another-owner",
+                            "requester_pid": 123,
+                            "requested_at": __import__("time").time(),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                self.assertIsNone(instance.consume_activation_request())
+            finally:
+                instance.release()
 
 
 if __name__ == "__main__":

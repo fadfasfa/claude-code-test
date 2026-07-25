@@ -100,6 +100,7 @@ def test_logging_contract() -> None:
         "urllib3>=2.2,<3",
         "charset-normalizer>=3.3,<4",
         "chardet>=5.2,<6",
+        "pystray>=0.19.5,<0.20",
     ):
         assert dependency in pyproject
         assert dependency not in requirements
@@ -131,6 +132,8 @@ def test_packaging_config() -> None:
         "hextech.interfaces.overlay.lifecycle",
     ):
         assert f'"{dependency}"' in build_script
+    for dependency in ("pystray", "pystray._win32"):
+        assert f'"{dependency}"' in build_script
     for dependency in ("scrapling",):
         assert f'"{dependency}"' in build_script
     assert "resolve_tcl_runtime_dirs" in build_script
@@ -139,6 +142,8 @@ def test_packaging_config() -> None:
     assert '"_tk_data"' in build_script
     assert '"tkinter"' in build_script
     assert "def main()" in build_entry_text
+    assert '"--windowed"' in build_script
+    assert '"--console"' not in build_script
     assert not (RUN_DIR / "tooling" / "build" / "build_bundle.py").exists()
     assert not (RUN_DIR / "Hextech伴生终端.spec").exists()
     manifest_script_text = (RUN_DIR / "tooling" / "build" / "manifest.py").read_text(encoding="utf-8")

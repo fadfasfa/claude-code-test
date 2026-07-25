@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -148,6 +149,64 @@ def test_packaged_smoke_requires_unique_root_exe_and_bat(tmp_path):
     (tmp_path / "start.bat").unlink()
     with pytest.raises(SmokeFailure, match="一个根 BAT"):
         _find_launcher(tmp_path)
+
+
+def test_packaged_smoke_rejects_console_subsystem(tmp_path, monkeypatch):
+    from tooling.acceptance import smoke_packaged_startup as smoke
+
+    exe = tmp_path / "Hextech.exe"
+    payload = bytearray(512)
+    payload[0:2] = b"MZ"
+    struct.pack_into("<I", payload, 0x3C, 0x80)
+    payload[0x80:0x84] = b"PE\0\0"
+    subsystem_offset = 0x80 + 4 + 20 + 68
+    struct.pack_into("<H", payload, subsystem_offset, 3)
+    exe.write_bytes(payload)
+    monkeypatch.setattr(smoke.os, "name", "nt")
+
+    with pytest.raises(smoke.SmokeFailure, match="GUI subsystem"):
+        smoke._validate_windows_gui_subsystem(exe)
+
+    struct.pack_into("<H", payload, subsystem_offset, 2)
+    exe.write_bytes(payload)
+    smoke._validate_windows_gui_subsystem(exe)
+
+
+def test_packaged_overlay_self_check_reads_tokenized_file(tmp_path, monkeypatch):
+    from tooling.acceptance import smoke_packaged_startup as smoke
+
+    expected = {
+        "ok": True,
+        "window_probe_ok": True,
+        "context_contract_ok": True,
+        "visibility_contract_ok": True,
+        "lcu_scanner_configured": True,
+        "overlay_event_contract_ok": True,
+        "sidecar_status_contract_ok": True,
+        "session_report_contract_ok": True,
+        "runtime_contracts": smoke.RUNTIME_CONTRACT_VERSIONS,
+        "build_id": "build-test",
+    }
+
+    class Completed:
+        returncode = 0
+        stdout = b""
+
+    def fake_run(_command, *, env, **_kwargs):
+        payload = dict(expected)
+        payload["token"] = env["HEXTECH_PROCESS_BOOTSTRAP_TOKEN"]
+        Path(env["HEXTECH_PROCESS_BOOTSTRAP_FILE"]).write_text(json.dumps(payload), encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+    result = smoke._overlay_self_check(
+        tmp_path / "Hextech.exe",
+        tmp_path,
+        {"HEXTECH_EXPECTED_BUILD_ID": "build-test"},
+    )
+
+    assert result["build_id"] == "build-test"
+    assert result["runtime_contracts"] == smoke.RUNTIME_CONTRACT_VERSIONS
 
 
 def test_pyinstaller_collects_scraping_package_data():

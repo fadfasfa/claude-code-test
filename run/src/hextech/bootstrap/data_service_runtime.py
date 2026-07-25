@@ -742,7 +742,7 @@ def main(argv: list[str] | None = None) -> int:
     publisher = DataSnapshotPublisher()
     instance_lock = InterProcessFileLock(get_var_dir() / "locks" / "data-service.lock")
     if not instance_lock.acquire():
-        print("DataService 已由另一个桌面实例持有。", file=sys.stderr, flush=True)
+        logger.error("DataService 已由另一个桌面实例持有。")
         return 3
     sync_startup_service_state(publisher, "starting")
     try:
@@ -766,12 +766,10 @@ def main(argv: list[str] | None = None) -> int:
     application = DataServiceApplication(core=core, parent_pid=args.parent_pid)
     server = LoopbackThreadingHTTPServer(("127.0.0.1", 0), application.handler())
     threading.Thread(target=server.serve_forever, name="hextech-data-service-http", daemon=True).start()
-    print(
-        json.dumps(
-            {"port": int(server.server_address[1]), "session_nonce": application.nonce, "pid": os.getpid()},
-            ensure_ascii=True,
-        ),
-        flush=True,
+    from hextech.modules.session.process_bootstrap import publish_process_bootstrap
+
+    publish_process_bootstrap(
+        {"port": int(server.server_address[1]), "session_nonce": application.nonce, "pid": os.getpid()}
     )
     skip_auto_refresh = os.getenv("HEXTECH_DATA_SERVICE_SKIP_AUTO_REFRESH", "").strip().lower() in {"1", "true", "yes", "on"}
     if not skip_auto_refresh:

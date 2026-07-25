@@ -15,6 +15,7 @@ dependencies = [
   "charset-normalizer>=3.3,<4",
   "chardet>=5.2,<6",
   "Pillow",
+  "pystray>=0.19.5,<0.20",
   "psutil",
   "pywin32",
   "selenium",

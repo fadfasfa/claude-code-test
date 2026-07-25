@@ -11,15 +11,18 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
+import secrets
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 RUN_DIR = Path(__file__).resolve().parents[2]
@@ -66,6 +69,28 @@ SMOKE_FEATURE_FLAGS = {
 
 class SmokeFailure(RuntimeError):
     pass
+
+
+def _validate_windows_gui_subsystem(exe_path: Path) -> None:
+    """确认 PE 使用 Windows GUI subsystem，防止桌面快捷方式再次弹终端。"""
+
+    if os.name != "nt":
+        return
+    try:
+        with exe_path.open("rb") as stream:
+            if stream.read(2) != b"MZ":
+                raise SmokeFailure("主程序不是有效 PE 文件")
+            stream.seek(0x3C)
+            pe_offset = struct.unpack("<I", stream.read(4))[0]
+            stream.seek(pe_offset)
+            if stream.read(4) != b"PE\0\0":
+                raise SmokeFailure("主程序缺少 PE signature")
+            stream.seek(pe_offset + 4 + 20 + 68)
+            subsystem = struct.unpack("<H", stream.read(2))[0]
+    except (OSError, struct.error) as exc:
+        raise SmokeFailure(f"无法读取主程序 PE subsystem：{exc}") from exc
+    if subsystem != 2:  # IMAGE_SUBSYSTEM_WINDOWS_GUI
+        raise SmokeFailure(f"主程序必须使用 Windows GUI subsystem，实际={subsystem}")
 
 
 def _validate_bundle_contract(package_dir: Path) -> dict[str, object]:
@@ -312,20 +337,28 @@ def _local_auth_headers(base: str, runtime_root: Path) -> dict[str, str]:
 def _overlay_self_check(exe: Path, package_dir: Path, env: dict[str, str]) -> dict[str, object]:
     """在打包目录执行正式 composition-root 自检，覆盖 Host 动态契约。"""
 
-    completed = subprocess.run(
-        [str(exe), "--game-overlay", "--self-check"],
-        cwd=str(package_dir),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=30,
-        check=False,
-    )
-    output = completed.stdout.decode("utf-8", errors="replace")
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as exc:
-        raise SmokeFailure(f"Overlay self-check 输出无效：{output[-800:]}") from exc
+    with TemporaryDirectory(prefix="hextech-overlay-self-check-") as tmp:
+        result_path = Path(tmp) / "result.json"
+        token = secrets.token_urlsafe(24)
+        child_env = dict(env)
+        child_env["HEXTECH_PROCESS_BOOTSTRAP_FILE"] = str(result_path)
+        child_env["HEXTECH_PROCESS_BOOTSTRAP_TOKEN"] = token
+        completed = subprocess.run(
+            [str(exe), "--game-overlay", "--self-check"],
+            cwd=str(package_dir),
+            env=child_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+            check=False,
+        )
+        output = completed.stdout.decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SmokeFailure(f"Overlay self-check 文件结果无效：{output[-800:]}") from exc
+    if not isinstance(payload, dict) or not secrets.compare_digest(str(payload.get("token") or ""), token):
+        raise SmokeFailure("Overlay self-check 文件结果 token 不匹配")
     required = (
         "ok",
         "window_probe_ok",
@@ -441,7 +474,8 @@ def _terminate_process_tree(proc: subprocess.Popen[bytes]) -> None:
 def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
     bundle_manifest = _validate_bundle_contract(package_dir)
     exe = _find_exe(package_dir)
-    launcher = _find_launcher(package_dir)
+    _find_launcher(package_dir)
+    _validate_windows_gui_subsystem(exe)
     stdout_path = package_dir / "smoke_startup_stdout.log"
     overall_started_at = time.monotonic()
     child_env = os.environ.copy()
@@ -456,8 +490,7 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
         child_env["HEXTECH_DATA_SERVICE_SKIP_AUTO_REFRESH"] = "1"
     runtime_root = _get_packaged_runtime_root(child_env)
     _write_smoke_feature_flags(runtime_root)
-    # 同一个 PyInstaller 控制台 EXE 的 self-check 与 Desktop 并发时，Windows 偶发把
-    # self-check 退出信号传播给 Desktop。先串行验证 Overlay，再启动 Desktop smoke。
+    # 先串行验证 Overlay，再启动 Desktop；GUI EXE 与子服务都不应创建控制台窗口。
     try:
         overlay_self_check = _overlay_self_check(exe, package_dir, child_env)
     except (OSError, subprocess.TimeoutExpired, SmokeFailure) as exc:
@@ -474,7 +507,8 @@ def run_smoke(package_dir: Path, timeout_seconds: int) -> dict[str, object]:
     started_at = time.monotonic()
     started_at_wall = time.time()
     with stdout_path.open("wb") as stdout:
-        command = ["cmd.exe", "/d", "/c", str(launcher.resolve())] if os.name == "nt" else [str(exe.resolve())]
+        # smoke 直接启动 EXE，和桌面快捷方式一致；BAT 仅保留便携包人工入口。
+        command = [str(exe.resolve())]
         proc = subprocess.Popen(
             command,
             cwd=str(package_dir.resolve()),

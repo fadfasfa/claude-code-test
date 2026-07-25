@@ -9,12 +9,13 @@ sidecar 进程和低频 LoL 状态监听。它不做抓取或图像识别，只�
 from __future__ import annotations
 
 import json
+import psutil
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 try:
     import win32gui
@@ -131,6 +132,8 @@ class ServiceManager:
             "last_checked_at": 0.0,
             "lol_client_visible": False,
             "lol_game_visible": False,
+            "lol_client_running": False,
+            "lol_game_running": False,
         }
         self._overlay_watchdog: dict[str, Any] = {
             "enabled": False,
@@ -401,12 +404,12 @@ class ServiceManager:
             updated_at = 0.0
         if updated_at <= 0.0 or time.time() - updated_at > OVERLAY_HOST_VISIBILITY_STALE_SECONDS:
             return {"ok": False, "error": "visibility_status_stale", "visible": False, "reason": ""}
-        decision = snapshot.get("decision") if isinstance(snapshot.get("decision"), dict) else {}
-        host = snapshot.get("host") if isinstance(snapshot.get("host"), dict) else {}
-        scene = snapshot.get("scene") if isinstance(snapshot.get("scene"), dict) else {}
-        context = snapshot.get("context") if isinstance(snapshot.get("context"), dict) else {}
-        window = snapshot.get("window") if isinstance(snapshot.get("window"), dict) else {}
-        render = snapshot.get("render") if isinstance(snapshot.get("render"), dict) else {}
+        decision = cast(dict[str, Any], snapshot.get("decision")) if isinstance(snapshot.get("decision"), dict) else {}
+        host = cast(dict[str, Any], snapshot.get("host")) if isinstance(snapshot.get("host"), dict) else {}
+        scene = cast(dict[str, Any], snapshot.get("scene")) if isinstance(snapshot.get("scene"), dict) else {}
+        context = cast(dict[str, Any], snapshot.get("context")) if isinstance(snapshot.get("context"), dict) else {}
+        window = cast(dict[str, Any], snapshot.get("window")) if isinstance(snapshot.get("window"), dict) else {}
+        render = cast(dict[str, Any], snapshot.get("render")) if isinstance(snapshot.get("render"), dict) else {}
         return {
             "ok": True,
             "schema_version": schema_version,
@@ -488,11 +491,30 @@ class ServiceManager:
 
     @staticmethod
     def _poll_lol_window_state() -> dict[str, bool]:
+        client_running = False
+        game_running = False
+        try:
+            for process in psutil.process_iter(["name"]):
+                name = str(process.info.get("name") or "").casefold()
+                client_running = client_running or name in {"leagueclient.exe", "leagueclientux.exe"}
+                game_running = game_running or name == "league of legends.exe"
+                if client_running and game_running:
+                    break
+        except (psutil.Error, OSError):
+            # 诊断探针失败不改变可见窗口结论，也不会触发实际待机。
+            pass
         if win32gui is None:
-            return {"lol_client_visible": False, "lol_game_visible": False}
+            return {
+                "lol_client_visible": False,
+                "lol_game_visible": False,
+                "lol_client_running": client_running,
+                "lol_game_running": game_running,
+            }
         client = win32gui.FindWindow(None, LOL_CLIENT_WINDOW_TITLE)
         game = find_lol_game_window()
         return {
             "lol_client_visible": bool(client and win32gui.IsWindowVisible(client) and not win32gui.IsIconic(client)),
             "lol_game_visible": game is not None,
+            "lol_client_running": client_running,
+            "lol_game_running": game_running,
         }

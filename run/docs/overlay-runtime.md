@@ -66,6 +66,15 @@ Host 使用单线程有界队列异步写入报告，Tk 渲染线程不执行 JS
 
 若刷新过程中进入游戏，协调器通过既有 cancel 文件协作停止 worker，并保留 current/last-good。对局结束后等待 30 秒，只提交一次合并后的刷新请求。没有可用 snapshot 的冷启动不受此策略阻塞。冻结态摘要日志不得记录 Scrapling 单请求成功或重试流水，只保留来源开始、结束、聚合计数和有限失败样本。
 
+## 系统托盘、轻量待机与无终端启动
+
+- Desktop 右上角“×”和 `WM_DELETE_WINDOW` 只隐藏到 Windows 系统托盘，不停止识别或退出进程。完全退出只能使用托盘菜单“退出 Hextech”。托盘还提供“显示 Hextech”“重启识别”和只读运行状态。
+- 再次点击桌面快捷方式不会启动第二套服务；新实例向当前 owner 写入 `desktop_ui_activation.v1.json` 激活请求后以退出码 0 结束，原实例显示窗口并按需恢复服务。请求必须匹配当前 `owner_id`，陈旧或其他 owner 请求会被忽略。
+- 连续 300 秒既无 `LeagueClient.exe` / `LeagueClientUx.exe`，也无 `League of Legends.exe` 时进入轻量待机。客户端即使最小化，只要进程仍在就不待机；单独的 Riot Client launcher 不算 League 活动。
+- 轻量待机停止 DataService、Web、Runtime Supervisor、Overlay host 和 Vision Sidecar，只保留 Desktop、托盘与 5 秒进程探针。League 进程出现、托盘显示、托盘重启识别或快捷方式激活会恢复；手动唤醒后重新计算完整 5 分钟空闲窗口，恢复 Web 时不重复打开浏览器。
+- 识别运行态必须区分 `suspending`、`suspended`、`resuming`、`restart_in_progress`、`resume_failed` 与真实 Sidecar `stale/failed`。主动待机文案为“识别已休眠”，不得显示为“识别失效”。
+- PyInstaller 主程序必须使用 Windows GUI subsystem（`--windowed`）。Supervisor 与 DataService 使用带随机 token 的原子 bootstrap 文件握手；所有本程序 Python 子进程同时使用 `CREATE_NO_WINDOW`，不得依赖 `sys.stdout` 或弹出控制台。桌面快捷方式和 packaged smoke 都直接启动 EXE；便携 BAT 仅为兼容入口，可能短暂闪烁。
+
 ## 打包、部署与旧包防错
 
 打包前运行目标测试、完整 pytest、开发门禁、Pyright 和 packaged startup smoke。构建只允许使用 manifest v3；部署器拒绝缺少构建身份或 `runtime_contracts` 不等于 Overlay v3、Sidecar v2、session report v2 的候选。

@@ -777,7 +777,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.self_check:
-        print(json.dumps(run_self_check(), ensure_ascii=False, indent=2))
+        result = run_self_check()
+        from hextech.modules.session.process_bootstrap import publish_process_bootstrap
+
+        # 冻结 GUI 进程没有可靠 stdout；文件结果是 packaged smoke 的权威通道。
+        publish_process_bootstrap(result)
         return 0
     if args.acceptance_screenshot is not None:
         result = render_acceptance_screenshot(

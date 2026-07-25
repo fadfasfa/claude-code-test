@@ -398,6 +398,15 @@ def window_sync_loop(ui: "HextechUI") -> None:
             overlay_active=overlay_active,
             recent_client_context=_has_recent_client_context(now_ts),
         )
+        manual_visible_until = float(getattr(ui, "_manual_window_visible_until", 0.0) or 0.0)
+        if (
+            not game_hwnd_renderable
+            and not gameflow_in_progress
+            and not live_client_in_progress
+            and time.monotonic() < manual_visible_until
+        ):
+            # 托盘或第二次快捷方式唤醒应可手动查看窗口，但实际对局始终优先隐藏。
+            should_show_overlay, should_keep_topmost = True, False
         _set_overlay_visibility(should_show_overlay, should_keep_topmost, now_ts)
         _sync_for_client(hwnd_client, client_visible, should_show_overlay)
 

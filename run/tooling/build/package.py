@@ -59,6 +59,8 @@ PYINSTALLER_HIDDEN_IMPORTS = [
     "requests",
     "PIL",
     "PIL.ImageTk",
+    "pystray",
+    "pystray._win32",
     "tkinter",
     "_tkinter",
     "tkinter.ttk",
@@ -382,7 +384,9 @@ def build_exe(
         "--name",
         APP_BUILD_NAME,
         "--onedir",
-        "--console",
+        # GUI 子系统从源头消除主进程常驻终端；子服务 bootstrap 已改用状态文件，
+        # 不再依赖 console build 才存在的 sys.stdout。
+        "--windowed",
         "--icon",
         "NONE",
         "--version-file",
@@ -461,7 +465,7 @@ def write_first_run_guide(final_dir: Path) -> Path:
     guide_content = """Hextech 伴生系统 首次使用说明
 
 1. 先把整个压缩包完整解压，不要只拿出单个 exe。
-2. 解压后，直接双击“启动 Hextech.bat”。
+2. 解压后，直接双击“Hextech伴生终端.exe”；这是无终端窗口的推荐启动方式。
 3. 如果系统提示拦截：
    - 这是 Windows 对未签名应用的保护提示，不代表程序本身损坏。
    - 请在提示页里选择“更多信息”后再选择“仍要运行”（如果系统给出这个入口）。
@@ -472,6 +476,9 @@ def write_first_run_guide(final_dir: Path) -> Path:
 说明：
 - 这是未签名的便携版，适合熟人或测试用户使用。
 - 首次运行时，程序会自动补齐部分运行时数据。
+- 右上角“×”只隐藏到系统托盘；请从托盘菜单选择“退出 Hextech”才能完全退出。
+- 连续 5 分钟没有 League 客户端或游戏进程时，程序会进入轻量待机；再次打开客户端、点击托盘“显示 Hextech”或再次双击快捷方式都会恢复。
+- “启动 Hextech.bat”仅为兼容入口，命令窗口可能短暂闪现。
 """
     guide_path.write_text(guide_content, encoding="utf-8")
     return guide_path

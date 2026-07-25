@@ -23,7 +23,7 @@ def test_loopback_http_server_does_not_resolve_fqdn() -> None:
 def test_windows_services_use_independent_process_group() -> None:
     from hextech.interfaces.desktop import runtime_processes
 
-    expected = int(subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0
+    expected = int(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0
     assert runtime_processes._service_creationflags() == expected
 
 
@@ -38,5 +38,5 @@ def test_desktop_keyboard_interrupt_runs_normal_shutdown() -> None:
     ):
         app.run_desktop()
 
-    ui.on_close.assert_called_once_with()
+    ui.exit_application.assert_called_once_with()
     ui.wait_for_shutdown.assert_called_once_with(timeout_seconds=8.0)

@@ -61,6 +61,7 @@ class DesktopBootstrapMixin:
             service_manager.start_low_frequency_listener()
             if not self._publish_service_manager(service_manager):
                 return
+            self.start_background_runtime_monitor()
             self.startup_timing.mark("services_ready")
             self._run_on_ui_thread(self._apply_persisted_feature_flags)
 
@@ -161,6 +162,7 @@ class DesktopBootstrapMixin:
             return
         if self._supervisor_lease_thread is not None and self._supervisor_lease_thread.is_alive():
             return
+        self._supervisor_lease_stop.clear()
 
         def lease_loop() -> None:
             while not self._supervisor_lease_stop.wait(2.0):
@@ -196,7 +198,7 @@ class DesktopBootstrapMixin:
             if self.feature_flags.get("auto_open_browser", True):
                 ui_runtime.open_companion_browser(self.web_port_file)
         except Exception as exc:
-            print(f"\n启动网页服务失败: {exc}")
+            logger.error("启动网页服务失败: %s", exc)
 
     def _init_core_engine(self):
         ui_runtime.initialize_core_threads(self)

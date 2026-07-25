@@ -358,6 +358,11 @@ def start_web_server_process(
         startupinfo=startupinfo,
         cwd=cwd,
         env=child_env,
+        creationflags=(
+            int(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
+            if os.name == "nt"
+            else 0
+        ),
     )
     try:
         _wait_for_web_startup(web_process, web_port_file, timeout=max(1.0, float(timeout)))

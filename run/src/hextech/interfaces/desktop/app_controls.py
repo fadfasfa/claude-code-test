@@ -35,7 +35,7 @@ class DesktopControlsMixin:
         self.exit_button = tk.Button(
             self.title_frame,
             text="×",
-            command=self.on_close,
+            command=self.hide_to_tray,
             bg=UI_COLORS["header"],
             fg=UI_COLORS["red"],
             activebackground=UI_COLORS["red"],
@@ -49,7 +49,7 @@ class DesktopControlsMixin:
             font=("Microsoft YaHei", 11, "bold"),
             cursor="hand2",
         )
-        # 先 pack 的 RIGHT 控件固定在最右侧；折叠到 80 px 后退出入口仍然可见。
+        # 右上角“×”只隐藏到托盘；完全退出必须使用托盘菜单，避免误杀识别进程。
         self.exit_button.pack(side=tk.RIGHT, padx=(0, 6), pady=5)
 
         self.diagnostics_button = tk.Button(
@@ -724,6 +724,17 @@ class DesktopControlsMixin:
         """低频回显游戏内 overlay 状态，避免 running 但不可见时没有反馈。"""
 
         try:
+            runtime_state = str(getattr(self, "_background_runtime_state", "running"))
+            if runtime_state != "running":
+                text = {
+                    "suspending": "游戏内显示: 正在进入轻量待机",
+                    "suspended": "游戏内显示: 识别已休眠",
+                    "resuming": "游戏内显示: 识别恢复中",
+                    "restart_in_progress": "游戏内显示: 识别重启中",
+                    "resume_failed": "游戏内显示: 识别恢复失败",
+                }.get(runtime_state, "游戏内显示: 后台状态未知")
+                self._set_overlay_status_summary(text, UI_COLORS["warn"])
+                return
             overlay_enabled = bool(self.game_overlay_var.get())
             if self.runtime_supervisor is not None:
                 snapshot = self.runtime_supervisor.get_status()

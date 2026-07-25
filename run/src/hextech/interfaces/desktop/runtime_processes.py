@@ -27,8 +27,8 @@ import ctypes
 import json
 import logging
 import os
-import queue
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -56,6 +56,10 @@ from hextech.modules.vision.window import find_lol_game_window, is_window_render
 from hextech.modules.vision.window_titles import LOL_CLIENT_WINDOW_TITLE
 from hextech.modules.data.ports.paths import ASSET_DIR, BASE_DIR
 from hextech.modules.vision.image_validation import is_valid_png_bytes
+from hextech.modules.session.process_bootstrap import (
+    PROCESS_BOOTSTRAP_FILE_ENV,
+    PROCESS_BOOTSTRAP_TOKEN_ENV,
+)
 
 if TYPE_CHECKING:
     from hextech.interfaces.desktop.app import HextechUI
@@ -444,25 +448,16 @@ def _hidden_startupinfo():
 def _drain_process_stream(
     stream,
     *,
-    bootstrap_queue: queue.Queue[str] | None = None,
     tail: list[str] | None = None,
 ) -> None:
     """持续消费子进程文本管道，避免刷新日志填满 Windows pipe。"""
 
-    bootstrap_pending = bootstrap_queue is not None
     try:
         while True:
             raw_line = stream.readline()
             if not raw_line:
                 return
             line = raw_line.rstrip("\r\n")
-            if bootstrap_pending and line:
-                bootstrap_pending = False
-                try:
-                    bootstrap_queue.put_nowait(line)
-                except queue.Full:
-                    pass
-                continue
             if tail is not None and line:
                 tail.append(line)
                 del tail[:-20]
@@ -475,9 +470,69 @@ def _pipe_tail_text(lines: list[str]) -> str:
 
 
 def _service_creationflags() -> int:
-    """让长生命周期服务不继承 Desktop 控制台的 Ctrl+C 广播。"""
+    """隔离 Ctrl+C，并确保源码态 Python 子进程也不会弹出控制台。"""
 
-    return int(subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0
+    if os.name != "nt":
+        return 0
+    return int(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
+
+
+def _prepare_process_bootstrap_env(base_env: dict[str, str] | None = None) -> tuple[dict[str, str], Path, str]:
+    """为一次子进程启动创建不可猜测的文件握手通道。"""
+
+    child_env = dict(base_env or os.environ)
+    token = secrets.token_urlsafe(24)
+    bootstrap_path = Path(tempfile.gettempdir()) / f"hextech-bootstrap-{os.getpid()}-{secrets.token_hex(8)}.json"
+    child_env[PROCESS_BOOTSTRAP_FILE_ENV] = str(bootstrap_path)
+    child_env[PROCESS_BOOTSTRAP_TOKEN_ENV] = token
+    return child_env, bootstrap_path, token
+
+
+def _read_process_bootstrap(
+    bootstrap_path: Path,
+    *,
+    token: str,
+    process: subprocess.Popen,
+    deadline: float,
+    service_name: str,
+    stderr_tail: list[str],
+) -> dict[str, Any]:
+    """等待并校验原子 bootstrap；不依赖 GUI 进程不存在的 stdout。"""
+
+    while time.time() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"{service_name} 提前退出：code={process.returncode}; stderr={_pipe_tail_text(stderr_tail)}"
+            )
+        try:
+            payload = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            time.sleep(0.05)
+            continue
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            # 写端使用原子替换，短暂读取失败仍允许下一轮重试；最终超时会明确失败。
+            time.sleep(0.05)
+            continue
+        if not isinstance(payload, dict) or not secrets.compare_digest(str(payload.get("token") or ""), token):
+            raise RuntimeError(f"{service_name} bootstrap 身份校验失败")
+        try:
+            pid = int(payload.get("pid") or 0)
+            port = int(payload.get("port") or 0)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"{service_name} bootstrap 字段无效") from exc
+        if pid != int(process.pid) or not (1024 <= port <= 65535) or not str(payload.get("session_nonce") or ""):
+            raise RuntimeError(f"{service_name} bootstrap 进程或端口无效")
+        return payload
+    raise TimeoutError(f"{service_name} bootstrap 超时")
+
+
+def _remove_process_bootstrap(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.debug("清理 process bootstrap 文件失败：%s", path, exc_info=True)
 
 
 def start_runtime_supervisor_process(
@@ -486,12 +541,12 @@ def start_runtime_supervisor_process(
     timeout: float = 15.0,
     prewarm_templates: bool = False,
 ) -> RuntimeSupervisorHandle:
-    """启动独立 Runtime Supervisor，并通过 stdout 匿名管道读取 bootstrap JSON。"""
+    """启动独立 Runtime Supervisor，并通过原子文件读取 bootstrap JSON。"""
 
     parent = int(parent_pid or os.getpid())
     if getattr(sys, "frozen", False):
         command = [sys.executable, "--runtime-supervisor", "--parent-pid", str(parent)]
-        child_env = None
+        child_env = os.environ.copy()
     else:
         command = [sys.executable, "-m", "hextech.bootstrap.supervisor", "--parent-pid", str(parent)]
         child_env = os.environ.copy()
@@ -499,6 +554,7 @@ def start_runtime_supervisor_process(
         child_env["PYTHONPATH"] = os.pathsep.join(filter(None, (source_root, child_env.get("PYTHONPATH", ""))))
     if prewarm_templates:
         command.append("--prewarm-templates")
+    child_env, bootstrap_path, bootstrap_token = _prepare_process_bootstrap_env(child_env)
     process = subprocess.Popen(
         command,
         cwd=BASE_DIR,
@@ -511,14 +567,12 @@ def start_runtime_supervisor_process(
         creationflags=_service_creationflags(),
     )
     deadline = time.time() + float(timeout)
-    line = ""
-    line_queue: queue.Queue[str] = queue.Queue(maxsize=1)
     stdout_tail: list[str] = []
     stderr_tail: list[str] = []
     if process.stdout is not None:
         threading.Thread(
             target=_drain_process_stream,
-            kwargs={"stream": process.stdout, "bootstrap_queue": line_queue, "tail": stdout_tail},
+            kwargs={"stream": process.stdout, "tail": stdout_tail},
             name="hextech-supervisor-stdout",
             daemon=True,
         ).start()
@@ -530,20 +584,14 @@ def start_runtime_supervisor_process(
             daemon=True,
         ).start()
     try:
-        while time.time() < deadline:
-            if process.poll() is not None:
-                raise RuntimeError(
-                    f"Runtime Supervisor 提前退出：code={process.returncode}; stderr={_pipe_tail_text(stderr_tail)}"
-                )
-            try:
-                line = line_queue.get(timeout=0.05)
-                break
-            except queue.Empty:
-                pass
-            time.sleep(0.05)
-        if not line:
-            raise TimeoutError("Runtime Supervisor bootstrap 超时")
-        payload = json.loads(line)
+        payload = _read_process_bootstrap(
+            bootstrap_path,
+            token=bootstrap_token,
+            process=process,
+            deadline=deadline,
+            service_name="Runtime Supervisor",
+            stderr_tail=stderr_tail,
+        )
         handle = RuntimeSupervisorHandle(
             process=process,
             supervisor_instance_id=str(payload["supervisor_instance_id"]),
@@ -561,6 +609,8 @@ def start_runtime_supervisor_process(
             except subprocess.TimeoutExpired:
                 process.kill()
         raise
+    finally:
+        _remove_process_bootstrap(bootstrap_path)
 
 
 def start_data_service_process(
@@ -579,9 +629,15 @@ def start_data_service_process(
     )
     if force_initial_refresh:
         command.append("--force-initial-refresh")
+    child_env = os.environ.copy()
+    if not getattr(sys, "frozen", False):
+        source_root = str(Path(__file__).resolve().parents[3])
+        child_env["PYTHONPATH"] = os.pathsep.join(filter(None, (source_root, child_env.get("PYTHONPATH", ""))))
+    child_env, bootstrap_path, bootstrap_token = _prepare_process_bootstrap_env(child_env)
     process = subprocess.Popen(
         command,
         cwd=BASE_DIR,
+        env=child_env,
         startupinfo=_hidden_startupinfo(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -590,14 +646,12 @@ def start_data_service_process(
         creationflags=_service_creationflags(),
     )
     deadline = time.time() + timeout
-    line = ""
-    line_queue: queue.Queue[str] = queue.Queue(maxsize=1)
     stdout_tail: list[str] = []
     stderr_tail: list[str] = []
     if process.stdout is not None:
         threading.Thread(
             target=_drain_process_stream,
-            kwargs={"stream": process.stdout, "bootstrap_queue": line_queue, "tail": stdout_tail},
+            kwargs={"stream": process.stdout, "tail": stdout_tail},
             name="hextech-data-stdout",
             daemon=True,
         ).start()
@@ -609,18 +663,14 @@ def start_data_service_process(
             daemon=True,
         ).start()
     try:
-        while time.time() < deadline:
-            if process.poll() is not None:
-                raise RuntimeError(f"DataService 提前退出：code={process.returncode}; stderr={_pipe_tail_text(stderr_tail)}")
-            try:
-                line = line_queue.get(timeout=0.05)
-                break
-            except queue.Empty:
-                pass
-            time.sleep(0.05)
-        if not line:
-            raise TimeoutError("DataService bootstrap 超时")
-        payload = json.loads(line)
+        payload = _read_process_bootstrap(
+            bootstrap_path,
+            token=bootstrap_token,
+            process=process,
+            deadline=deadline,
+            service_name="DataService",
+            stderr_tail=stderr_tail,
+        )
         handle = DataServiceHandle(
             process=process,
             port=int(payload["port"]),
@@ -637,6 +687,8 @@ def start_data_service_process(
             except subprocess.TimeoutExpired:
                 process.kill()
         raise
+    finally:
+        _remove_process_bootstrap(bootstrap_path)
 
 
 def stop_data_service_process(handle: DataServiceHandle | None) -> None:

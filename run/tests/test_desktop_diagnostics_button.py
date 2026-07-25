@@ -85,7 +85,7 @@ def test_diagnostics_button_is_created_in_title_frame(monkeypatch):
 
     assert dummy.exit_button.parent is dummy.title_frame
     assert dummy.exit_button.kwargs["text"] == "×"
-    assert dummy.exit_button.kwargs["command"] == dummy.on_close
+    assert dummy.exit_button.kwargs["command"] == dummy.hide_to_tray
     assert dummy.exit_button.pack_options["side"] == desktop_app.tk.RIGHT
     assert dummy.exit_button.kwargs["activebackground"] == desktop_app.UI_COLORS["red"]
     assert dummy.diagnostics_button.parent is dummy.title_frame

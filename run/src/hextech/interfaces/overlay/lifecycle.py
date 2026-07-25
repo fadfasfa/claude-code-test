@@ -222,7 +222,11 @@ def start_host_process() -> subprocess.Popen:
         cwd=RUN_DIR,
         startupinfo=_hidden_startupinfo(),
         env=env,
-        creationflags=int(subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0,
+        creationflags=(
+            int(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
+            if os.name == "nt"
+            else 0
+        ),
     )
     setattr(process, "_hextech_overlay_exit_file", str(exit_path))
     try:
@@ -281,7 +285,11 @@ def start_sidecar_process(
         cwd=RUN_DIR,
         startupinfo=_hidden_startupinfo(),
         env=env,
-        creationflags=int(subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0,
+        creationflags=(
+            int(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
+            if os.name == "nt"
+            else 0
+        ),
     )
     try:
         setattr(process, "_hextech_overlay_exit_file", str(exit_path))

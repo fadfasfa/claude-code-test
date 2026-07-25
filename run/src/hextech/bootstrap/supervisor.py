@@ -472,18 +472,15 @@ def main(argv: list[str] | None = None) -> int:
     server = supervisor.serve_in_thread(port=args.port)
     if args.prewarm_templates:
         supervisor.start_overlay_template_prewarm()
-    print(
-        json.dumps(
-            {
-                "supervisor_instance_id": supervisor.supervisor_instance_id,
-                "port": server.port,
-                "session_nonce": supervisor.session_nonce,
-                "pid": os.getpid(),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
-        flush=True,
+    from hextech.modules.session.process_bootstrap import publish_process_bootstrap
+
+    publish_process_bootstrap(
+        {
+            "supervisor_instance_id": supervisor.supervisor_instance_id,
+            "port": server.port,
+            "session_nonce": supervisor.session_nonce,
+            "pid": os.getpid(),
+        }
     )
     try:
         while not supervisor.wait_for_shutdown(0.25):

@@ -48,5 +48,10 @@ def test_overlay_runtime_document_matches_code_contracts() -> None:
         "medium` 连续 3 帧",
         "投影覆盖至少 99%",
         "单帧捕获加识别 P95 ≤ 180 ms",
+        "右上角“×”",
+        "连续 300 秒",
+        "desktop_ui_activation.v1.json",
+        "CREATE_NO_WINDOW",
+        "识别已休眠",
     ):
         assert phrase in handbook

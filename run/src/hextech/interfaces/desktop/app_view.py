@@ -485,16 +485,19 @@ class DesktopViewMixin:
         self._snapshot_watch_started = True
         self._start_tracked_thread(self._snapshot_watch_loop, name="hextech-desktop-snapshot-watch")
 
-    def on_close(self):
+    def exit_application(self):
+        """从托盘执行完全退出；右上角“×”不会进入此路径。"""
+
         if self._closing:
             return
         self._closing = True
+        self.stop_background_runtime()
         if hasattr(self, "exit_button"):
             try:
                 self.exit_button.config(state=tk.DISABLED)
             except tk.TclError:
                 logger.debug("禁用快速退出按钮失败。", exc_info=True)
-        print("\n[System] 收到快速退出信号。")
+        logger.info("收到完全退出信号。")
         self.stop_event.set()
         if self._overlay_status_after_id is not None:
             try:
@@ -549,6 +552,11 @@ class DesktopViewMixin:
             self.root.destroy()
         except tk.TclError:
             logger.debug("快速退出销毁窗口失败。", exc_info=True)
+
+    def on_close(self):
+        """保留历史完全退出入口，供测试和非窗口关闭调用方兼容。"""
+
+        self.exit_application()
 
     def wait_for_shutdown(self, *, timeout_seconds: float = 8.0) -> bool:
         """主窗口消失后最多等待后台清理 8 秒，不再阻塞 Tk 主线程。"""

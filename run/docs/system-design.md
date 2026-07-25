@@ -59,6 +59,8 @@ Mayhem 优先解析 manifest JSON，HTML 仅为结构化 fallback。reject 带�
 - DataService：刷新来源、选择 last-good、构建并发布 generation。
 - Web/Overlay：只通过固定 snapshot view 查询，不直接读取来源 run。
 
+Desktop 同时是轻量托盘 owner。关闭按钮只隐藏窗口；单实例激活文件把重复快捷方式启动转成对既有 owner 的显示/恢复请求。连续五分钟没有 League 客户端或游戏进程时，Desktop 依次停止 Web、DataService 和 Runtime Supervisor（后者负责回收 Overlay host 与 Vision Sidecar），自身与托盘仍常驻并以五秒进程探针等待恢复。最小化的 League 客户端仍算活跃，单独 Riot launcher 不算。
+
 DataService 同时只运行一个 refresh cycle。运行中收到的普通触发合并为一次
 `pending_recheck`，force 触发会升级该 recheck；当前周期结束后立即重新计算到期状态。
 shutdown 会拒绝新触发并清除 pending，不启动后续 worker。
@@ -74,4 +76,4 @@ generation 构建先生成 Hextech hints，再用 Catalog 补全最终身份集�
 
 会话报告、latest、20 条轮转和 diagnostic 截图由有界单线程写入器异步处理，Tk 主线程只入队。默认不截图。事件、Sidecar、Host 和报告都携带 manifest v3 的 `build_id`，Desktop 会显示构建身份并报告组件不一致。完整运行与验收规则见 [overlay-runtime.md](overlay-runtime.md)。
 
-源码态 supervisor 子进程显式继承 `src` import path；冻结态复用同一可执行文件的模式参数。所有运行日志写入 `var/logs`，诊断写入 `var/reports`。
+源码态 supervisor 子进程显式继承 `src` import path；冻结态复用同一 GUI subsystem 可执行文件的模式参数。Supervisor 与 DataService 通过带随机 token 的原子文件发布 bootstrap，所有 Windows 子进程使用 no-window 创建标志，因此主程序和受管服务都不依赖控制台。所有运行日志写入 `var/logs`，诊断写入 `var/reports`。
