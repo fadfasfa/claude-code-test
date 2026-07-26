@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+import sys
+from dataclasses import dataclass
 
 from hextech.infrastructure.vision.sidecar_common import (
     BODY_SHARD_STRONG_CONFIDENCE,
@@ -44,6 +46,51 @@ from hextech.infrastructure.vision.sidecar_scene_geometry import resolve_roi_pre
 
 
 _TIMELINE_SEQUENCES: dict[str, int] = {}
+DIAGNOSTIC_EPOCH_OBSERVATION_LIMIT = 5
+
+
+@dataclass
+class DiagnosticEpochSampler:
+    """只为每个真实 selection epoch 编号前几次独立 ROI 观察。"""
+
+    epoch_key: tuple[str, int] | None = None
+    observation_count: int = 0
+
+    def next_observation_seq(self, source: Mapping[str, Any]) -> int | None:
+        try:
+            selection_epoch = int(source.get("selection_epoch") or 0)
+        except (TypeError, ValueError):
+            selection_epoch = 0
+        current_key = (str(source.get("session_id") or ""), selection_epoch)
+        if selection_epoch > 0 and current_key != self.epoch_key:
+            self.epoch_key = current_key
+            self.observation_count = 0
+        if (
+            selection_epoch <= 0
+            or source.get("scene_state") not in {"candidate", "active"}
+            or self.observation_count >= DIAGNOSTIC_EPOCH_OBSERVATION_LIMIT
+        ):
+            return None
+        self.observation_count += 1
+        return self.observation_count
+
+
+def emit_cli_event(event: Mapping[str, Any]) -> None:
+    """尽力输出 CLI 诊断，但绝不让 GUI 的 stdout 影响 Sidecar 生命周期。
+
+    打包后的 ``--windowed`` 进程没有可靠的 stdout。事件文件和 bootstrap 状态
+    才是 Supervisor 的权威通道，输出失败只能忽略，不能覆盖已落盘的硬故障状态。
+    """
+
+    stream = sys.stdout
+    if stream is None:
+        return
+    try:
+        stream.write(json.dumps(event, ensure_ascii=False, indent=2))
+        stream.write("\n")
+        stream.flush()
+    except (AttributeError, OSError, ValueError):
+        return
 
 def _write_roi_diagnostic_dump(
     dump_root: str | Path,
@@ -362,7 +409,7 @@ def _latency_percentiles(values: list[float]) -> dict[str, float | int | None]:
 
 
 def _timeline_epoch_latency_summary(target: Path, current: Mapping[str, Any]) -> dict[str, Any]:
-    """只在 epoch 结束时汇总 JSONL；热识别路径不反复重读历史。"""
+    """只汇总真实识别 observation，暂停探针不能稀释 P50/P95。"""
 
     entries: list[Mapping[str, Any]] = []
     try:
@@ -381,6 +428,11 @@ def _timeline_epoch_latency_summary(target: Path, current: Mapping[str, Any]) ->
     for key in ("capture", "recognition", "total"):
         values: list[float] = []
         for entry in entries:
+            if (
+                str(entry.get("observation_kind") or "recognition") != "recognition"
+                or str(entry.get("capture_status") or "captured") != "captured"
+            ):
+                continue
             latency = entry.get("latency_ms") if isinstance(entry.get("latency_ms"), Mapping) else {}
             value = latency.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -433,11 +485,14 @@ def _selection_timeline_entry(event_payload: Mapping[str, Any], observation_seq:
         "schema_version": VISION_TIMELINE_SCHEMA_VERSION,
         "observation_seq": observation_seq,
         "session_id": str(source.get("session_id") or ""),
+        "game_instance_id": str(source.get("game_instance_id") or ""),
         "selection_epoch": int(source.get("selection_epoch") or 0),
         "selection_revision": int(source.get("selection_revision") or 0),
+        "observation_kind": str(timing.get("observation_kind") or "recognition"),
         "captured_at": timing.get("captured_at"),
         "recognition_completed_at": timing.get("recognition_completed_at"),
         "capture_started_at": timing.get("capture_started_at"),
+        "capture_status": str(timing.get("capture_status") or "captured"),
         "latency_ms": {
             "capture": duration_ms("captured_at", "capture_started_at"),
             "recognition": duration_ms("recognition_completed_at", "captured_at"),
@@ -475,8 +530,9 @@ def _selection_timeline_path(event_payload: Mapping[str, Any], trace_path: Path)
         epoch <= 0
         or str(event_payload.get("selection_type") or "") != "hextech"
         or (
-            scene_state not in {"candidate", "active"}
-            and reason not in {"selection_completed", "scene_loss_confirmed"}
+            scene_state not in {"candidate", "active", "paused"}
+            and not bool(source.get("transient_pause"))
+            and reason not in {"selection_completed", "scene_loss_confirmed", "gameflow_ended"}
         )
     ):
         return None
@@ -509,7 +565,7 @@ def write_selection_timeline_observation(
         return None
     target.parent.mkdir(parents=True, exist_ok=True)
     entry = _selection_timeline_entry(event_payload, _next_timeline_sequence(target))
-    if entry["source_reason"] in {"selection_completed", "scene_loss_confirmed"}:
+    if entry["source_reason"] in {"selection_completed", "scene_loss_confirmed", "gameflow_ended"}:
         entry["epoch_latency_ms"] = _timeline_epoch_latency_summary(target, entry)
     with target.open("a", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(entry, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")

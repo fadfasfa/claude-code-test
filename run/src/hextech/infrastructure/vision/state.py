@@ -34,14 +34,15 @@ EVIDENCE_STARVED_OBSERVATIONS = 5
 EVIDENCE_STARVED_SECONDS = 2.0
 PARTIAL_SCENE_GRACE_SECONDS = 6.0
 READY_SCENE_GRACE_SECONDS = 1.5
+EMPTY_SCENE_GRACE_SECONDS = 0.75
 
 
 @dataclass(frozen=True)
 class _CandidateEvidence:
-    """单次有效候选观察；miss 不占窗口，但会触发按时间淘汰旧证据。"""
+    """单次原始观察；miss 也占据滑动窗口，避免跳过空帧累计旧证据。"""
 
     observed_at: float
-    candidate: SlotCandidate
+    candidate: SlotCandidate | None
 
 
 @dataclass
@@ -207,11 +208,75 @@ class SelectionTracker:
         )
         return event
 
+    def complete(self, reason: str, *, source: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """以保留刚结束 epoch/revision 的终止事件清空当前选择窗口。"""
+
+        return self._selection_completed_event(source or {}, reason=reason)
+
+    def pause(
+        self,
+        reason: str,
+        *,
+        source: Mapping[str, Any] | None = None,
+        scoreboard_key_down: bool = False,
+    ) -> dict[str, Any]:
+        """短暂不可捕获时隐藏窗口，但保留同一局的识别证据。
+
+        Alt-Tab、计分板和窗口短暂最小化都不是选择结束信号。此事件必须让 Host
+        隐藏 overlay，却不能调用 ``reset()``；返回同一 game instance 后，下一次
+        有效观察会继续原 epoch、revision 与已稳定槽位。
+        """
+
+        raw_source = source if isinstance(source, Mapping) else {}
+        rendered_slots = [
+            dict(track.stable_slot) if track.stable_slot is not None else unknown_slot(index)
+            for index, track in enumerate(self.slots)
+        ]
+        ready_slots = sum(slot.get("state") == "ready" for slot in rendered_slots)
+        event = build_overlay_event(
+            rendered_slots,
+            source_tag="vision-sidecar",
+            selection_type="hextech",
+            active=False,
+        )
+        event["source"].update(
+            {
+                "reason": reason,
+                "gate_state": "transient_pause",
+                "scene_state": "paused",
+                "scene_kind": "hextech",
+                "scene_score": float(raw_source.get("scene_score") or 0.0),
+                "selection_epoch": self.epoch,
+                "selection_revision": self.selection_revision,
+                "selection_window_active": bool(self.scene_active),
+                "scene_present": False,
+                "scene_temporal_state": "transient_pause",
+                "transient_pause": True,
+                "paused_reason": reason,
+                "selection_button_present": bool(raw_source.get("selection_button_present")),
+                "selection_click": False,
+                "scoreboard_key_down": bool(scoreboard_key_down),
+                "ready_slots": ready_slots,
+                "content_ready": ready_slots == SLOT_COUNT,
+                "slot_states": [str(slot.get("state") or "detecting") for slot in rendered_slots],
+                "stable_frames": self.scene_frames,
+                "cursor_over_cards": False,
+                "cursor_over_slots": [],
+                "card_residue": bool(raw_source.get("card_residue")),
+                "name_residue": list(raw_source.get("name_residue"))
+                if isinstance(raw_source.get("name_residue"), list)
+                else [],
+                "hover_occluded": False,
+            }
+        )
+        return event
+
     @staticmethod
     def _max_identity_hits(observations: list[_CandidateEvidence]) -> int:
         counts: dict[str, int] = {}
         for item in observations:
-            counts[item.candidate.identity] = counts.get(item.candidate.identity, 0) + 1
+            if item.candidate is not None:
+                counts[item.candidate.identity] = counts.get(item.candidate.identity, 0) + 1
         return max(counts.values(), default=0)
 
     @staticmethod
@@ -247,6 +312,11 @@ class SelectionTracker:
             for item in track.observations
             if observed_at - item.observed_at <= EVIDENCE_MAX_AGE_SECONDS
         ][-MEDIUM_WINDOW_SIZE:]
+        # M-of-N 的 N 是原始观察数，不是“有候选的帧数”。因此 miss 必须作为空
+        # 观察占据窗口；否则 ``medium, miss, miss, miss, medium, medium`` 会把已
+        # 经离开最近五帧的旧 medium 错误累计成 3/5 ready。
+        track.observations.append(_CandidateEvidence(observed_at=observed_at, candidate=candidate))
+        track.observations = track.observations[-MEDIUM_WINDOW_SIZE:]
 
         if candidate is None:
             track.candidate_identity = ""
@@ -271,22 +341,29 @@ class SelectionTracker:
 
         track.weak_miss_frames = 0
         track.candidate_identity = candidate.identity
-        track.observations.append(_CandidateEvidence(observed_at=observed_at, candidate=candidate))
-        track.observations = track.observations[-MEDIUM_WINDOW_SIZE:]
 
         strong_window = track.observations[-STRONG_WINDOW_SIZE:]
         medium_window = track.observations[-MEDIUM_WINDOW_SIZE:]
         strong_hits = sum(
-            item.candidate.identity == candidate.identity and item.candidate.evidence_grade == "strong"
+            item.candidate is not None
+            and item.candidate.identity == candidate.identity
+            and item.candidate.evidence_grade == "strong"
             for item in strong_window
         )
-        medium_hits = sum(item.candidate.identity == candidate.identity for item in medium_window)
+        medium_hits = sum(
+            item.candidate is not None and item.candidate.identity == candidate.identity
+            for item in medium_window
+        )
         conflicting_strong_in_short = any(
-            item.candidate.evidence_grade == "strong" and item.candidate.identity != candidate.identity
+            item.candidate is not None
+            and item.candidate.evidence_grade == "strong"
+            and item.candidate.identity != candidate.identity
             for item in strong_window
         )
         conflicting_strong = any(
-            item.candidate.evidence_grade == "strong" and item.candidate.identity != candidate.identity
+            item.candidate is not None
+            and item.candidate.evidence_grade == "strong"
+            and item.candidate.identity != candidate.identity
             for item in medium_window
         )
         confirmed_as = ""
@@ -310,10 +387,7 @@ class SelectionTracker:
             stable_variant = str(track.stable_slot.get("visual_variant_id") or track.stable_slot.get("augment_id") or "")
             candidate_variant = str(candidate.visual_variant_id or candidate.augment_id or "")
             if candidate.identity == stable_identity:
-                if candidate_variant and (
-                    not stable_variant
-                    or (candidate.evidence_grade == "strong" and candidate_variant != stable_variant)
-                ):
+                if candidate_variant and candidate.evidence_grade == "strong" and candidate_variant != stable_variant:
                     enriched = candidate.ready_slot()
                     enriched.update(
                         {
@@ -324,6 +398,10 @@ class SelectionTracker:
                         }
                     )
                     track.stable_slot = enriched
+                return dict(track.stable_slot)
+            # 已稳定结果只能被不同身份的 strong 证据替换。medium 仍可累计为
+            # 诊断，但不能用重复的双字体误匹配撤下已展示的正确卡名。
+            if confirmed_as != "strong":
                 return dict(track.stable_slot)
 
         if confirmed_as:
@@ -440,12 +518,12 @@ class SelectionTracker:
 
         状态转换：
         - body_shard_only → 锁定锻体模式，清空槽位，输出 body_shard 事件
-        - blocking_modal_present / scoreboard_key_down → 重置并阻塞
+        - blocking_modal_present → 重置并阻塞；scoreboard_key_down → 非破坏性暂停
         - body_shard_latched + 场景消失 → 防抖退出锻体模式
         - hover_occluded（鼠标遮挡）→ 只要仍能确认卡片残留就沿用上次槽位
-        - scene_residue_hold（普通残留保持）→ 短暂沿用上次槽位后退出
+        - scene_residue_hold（普通残留保持）→ 按真实时间短暂保持后再退出
         - 场景出现 → 累积帧数，达到阈值后 scene_active=True
-        - 场景消失 → 累积 absent_frames，达到阈值后 reset
+        - 场景消失 → 有残留时使用分级时间宽限；无残留才走短帧防抖
         """
         source = raw_event.get("source") if isinstance(raw_event.get("source"), Mapping) else {}
         timing = raw_event.get("timing") if isinstance(raw_event.get("timing"), Mapping) else {}
@@ -468,8 +546,10 @@ class SelectionTracker:
             for slot in self.slots:
                 slot.clear()
             return self._body_shard_event(source)
-        if reason in {"blocking_modal_present", "scoreboard_key_down"}:
-            return self.block(reason, scoreboard_key_down=reason == "scoreboard_key_down")
+        if reason == "scoreboard_key_down":
+            return self.pause(reason, source=source, scoreboard_key_down=True)
+        if reason == "blocking_modal_present":
+            return self.block(reason)
 
         scene_present = bool(source.get("scene_present") or source.get("selection_window_active"))
         if scene_present and source.get("selection_click") and source.get("cursor_over_cards"):
@@ -494,13 +574,16 @@ class SelectionTracker:
         scene_residue_hold = bool(
             self.scene_active
             and not scene_present
-            and source.get("card_residue")
-            and sum(bool(value) for value in name_residue[:SLOT_COUNT]) >= 2
+            and (
+                source.get("card_residue")
+                or any(bool(value) for value in name_residue[:SLOT_COUNT])
+                or source.get("cursor_over_cards")
+            )
         )
         if source.get("selection_confirmed") and self.scene_active and not scene_present:
             return self._selection_completed_event(source)
         ready_slot_count = sum(track.stable_slot is not None for track in self.slots)
-        if self.scene_active and not scene_present and ready_slot_count > 0:
+        if self.scene_active and not scene_present and (ready_slot_count > 0 or scene_residue_hold):
             if self.selection_click_armed:
                 return self._selection_completed_event(source)
             if self.scene_lost_at <= 0.0:
@@ -509,6 +592,8 @@ class SelectionTracker:
                 READY_SCENE_GRACE_SECONDS
                 if ready_slot_count == SLOT_COUNT
                 else PARTIAL_SCENE_GRACE_SECONDS
+                if ready_slot_count > 0
+                else EMPTY_SCENE_GRACE_SECONDS
             )
             grace_elapsed = max(0.0, observed_at - self.scene_lost_at)
             if grace_elapsed <= grace_seconds:
@@ -522,13 +607,6 @@ class SelectionTracker:
                     grace_elapsed_seconds=grace_elapsed,
                 )
             return self._selection_completed_event(source, reason="scene_loss_confirmed")
-        if scene_residue_hold:
-            self.residue_hold_frames += 1
-            if self.residue_hold_frames <= max(1, int(RESIDUE_HOLD_FRAMES)):
-                self.absent_frames = 0
-                return self._residue_event(source, hover_occluded=False)
-            return self._selection_completed_event(source, reason="scene_loss_confirmed")
-
         if scene_present:
             self.scene_lost_at = 0.0
             self.residue_hold_frames = 0

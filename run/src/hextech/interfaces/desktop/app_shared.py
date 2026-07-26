@@ -82,6 +82,7 @@ def _format_game_overlay_host_reason(reason: str) -> str:
         "event_expired": "选择数据已过期",
         "blocking_modal_present": "等待弹窗关闭",
         "scoreboard_key_down": "记分板显示中",
+        "transient_pause": "切回游戏后继续识别",
         "visible_detecting": "检测选择中",
         "visible_partial": "部分识别",
         "visible_ready": "已显示",

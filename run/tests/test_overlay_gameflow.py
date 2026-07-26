@@ -20,6 +20,7 @@ class OverlayGameflowTests(unittest.TestCase):
 
     def test_lcu_gameflow_probe_uses_composition_root_scanner(self):
         from hextech.interfaces.overlay import gameflow
+        from hextech.modules.vision import gameflow as gameflow_core
 
         class FakeResponse:
             status_code = 200
@@ -28,8 +29,8 @@ class OverlayGameflowTests(unittest.TestCase):
                 return "InProgress"
 
         with (
-            patch.object(gameflow, "_lcu_scanner", return_value=(57265, "test-token")),
-            patch.object(gameflow, "_http_get", return_value=FakeResponse()) as get,
+            patch.object(gameflow_core, "_lcu_scanner", return_value=(57265, "test-token")),
+            patch.object(gameflow_core, "_http_get", return_value=FakeResponse()) as get,
         ):
             self.assertTrue(gameflow.probe_lcu_gameflow_in_progress())
 
@@ -38,12 +39,13 @@ class OverlayGameflowTests(unittest.TestCase):
 
     def test_live_client_non_200_falls_back_to_lcu_gameflow(self):
         from hextech.interfaces.overlay import gameflow
+        from hextech.modules.vision import gameflow as gameflow_core
 
         class MissingActivePlayerResponse:
             status_code = 404
 
         with (
-            patch.object(gameflow, "_http_get", return_value=MissingActivePlayerResponse()),
+            patch.object(gameflow_core, "_http_get", return_value=MissingActivePlayerResponse()),
             patch.object(gameflow, "probe_lcu_gameflow_in_progress", return_value=True) as lcu_probe,
         ):
             self.assertIs(gameflow.probe_gameflow_state(), gameflow.GameflowState.IN_PROGRESS)

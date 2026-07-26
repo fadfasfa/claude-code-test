@@ -56,6 +56,7 @@ def test_deploy_release_promotes_verified_copy_and_keeps_one_previous(tmp_path, 
 
     assert (target / "Hextech伴生终端.exe").read_text(encoding="utf-8") == "new"
     assert result.previous_dir == tmp_path / "HextechCompanion.previous"
+    assert result.previous_dir is not None
     assert (result.previous_dir / "old.txt").read_text(encoding="utf-8") == "old"
     assert shortcut_calls == [(shortcut, target / "Hextech伴生终端.exe")]
     assert result.removed_shortcuts == ()
@@ -125,7 +126,7 @@ def test_deploy_rejects_missing_shortcut_before_copy_or_shutdown(tmp_path, monke
     assert (target / "old.txt").read_text(encoding="utf-8") == "old"
 
 
-def test_previous_cleanup_failure_does_not_stop_or_replace_current_install(tmp_path, monkeypatch):
+def test_previous_cleanup_failure_rolls_back_current_install(tmp_path, monkeypatch):
     from tooling.build import deploy
 
     source = _package(tmp_path / "release")
@@ -143,13 +144,121 @@ def test_previous_cleanup_failure_does_not_stop_or_replace_current_install(tmp_p
         real_remove_tree(path)
 
     monkeypatch.setattr(deploy, "_remove_tree", fail_previous_cleanup)
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(OSError, match="previous is busy"):
+        deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
+    assert (previous / "older.txt").read_text(encoding="utf-8") == "older"
+
+
+def test_partial_previous_cleanup_restores_verified_backup(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    previous = tmp_path / "HextechCompanion.previous"
+    previous.mkdir()
+    (previous / "older.txt").write_text("older", encoding="utf-8")
+    real_remove_tree = deploy._remove_tree
+    partial_failure = True
+
+    def remove_previous_partially(path: Path) -> None:
+        nonlocal partial_failure
+        if path == previous and partial_failure:
+            partial_failure = False
+            (previous / "older.txt").unlink()
+            raise OSError("previous cleanup partially failed")
+        real_remove_tree(path)
+
+    monkeypatch.setattr(deploy, "_remove_tree", remove_previous_partially)
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(OSError, match="previous cleanup partially failed"):
+        deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
+    assert (previous / "older.txt").read_text(encoding="utf-8") == "older"
+    assert not list(tmp_path.glob(".HextechCompanion.previous-backup-*"))
+
+
+def test_previous_rotation_rename_failure_restores_install_and_previous(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    previous = tmp_path / "HextechCompanion.previous"
+    previous.mkdir()
+    (previous / "older.txt").write_text("older", encoding="utf-8")
+    real_replace = deploy.os.replace
+
+    def fail_previous_rotation(source_path: Path, target_path: Path) -> None:
+        if source_path.name.startswith(".HextechCompanion.rollback-") and target_path == previous:
+            raise OSError("previous rotation is busy")
+        real_replace(source_path, target_path)
+
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(deploy.os, "replace", fail_previous_rotation)
+
+    with pytest.raises(OSError, match="previous rotation is busy"):
+        deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
+    assert (previous / "older.txt").read_text(encoding="utf-8") == "older"
+    assert not list(tmp_path.glob(".HextechCompanion.previous-backup-*"))
+
+
+def test_previous_backup_copy_failure_cleans_partial_backup(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    previous = tmp_path / "HextechCompanion.previous"
+    previous.mkdir()
+    (previous / "older.txt").write_text("older", encoding="utf-8")
+    real_copytree = deploy.shutil.copytree
+
+    def fail_after_partial_previous_copy(source_path: Path, target_path: Path, *args, **kwargs):
+        copied = real_copytree(source_path, target_path, *args, **kwargs)
+        if source_path == previous:
+            raise OSError("previous backup copy failed")
+        return copied
+
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(deploy.shutil, "copytree", fail_after_partial_previous_copy)
+
+    with pytest.raises(OSError, match="previous backup copy failed"):
+        deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
+    assert (previous / "older.txt").read_text(encoding="utf-8") == "older"
+    assert not list(tmp_path.glob(".HextechCompanion.previous-backup-*"))
+
+
+def test_shutdown_failure_keeps_existing_previous_directory(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    previous = tmp_path / "HextechCompanion.previous"
+    previous.mkdir()
+    (previous / "older.txt").write_text("older", encoding="utf-8")
     monkeypatch.setattr(
         deploy,
         "shutdown_existing_install",
-        lambda *_args, **_kwargs: pytest.fail("previous cleanup failure stopped the current install"),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(deploy.DeploymentError("old client is still running")),
     )
 
-    with pytest.raises(OSError, match="previous is busy"):
+    with pytest.raises(deploy.DeploymentError, match="old client is still running"):
         deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
 
     assert (target / "old.txt").read_text(encoding="utf-8") == "old"
@@ -285,7 +394,7 @@ def test_converge_desktop_shortcuts_rejects_reparse_point(tmp_path, monkeypatch)
     assert duplicate.exists()
 
 
-def test_shortcut_cleanup_failure_happens_before_shutdown_or_replace(tmp_path, monkeypatch):
+def test_shortcut_cleanup_failure_rolls_back_to_existing_install(tmp_path, monkeypatch):
     from tooling.build import deploy
 
     source = _package(tmp_path / "HextechCompanion-20260720")
@@ -299,10 +408,11 @@ def test_shortcut_cleanup_failure_happens_before_shutdown_or_replace(tmp_path, m
         "converge_desktop_shortcuts",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(deploy.DeploymentError("duplicate is busy")),
     )
+    shutdown_calls: list[Path] = []
     monkeypatch.setattr(
         deploy,
         "shutdown_existing_install",
-        lambda *_args, **_kwargs: pytest.fail("shortcut cleanup failure stopped the existing install"),
+        lambda executable, **_kwargs: shutdown_calls.append(executable) or False,
     )
 
     with pytest.raises(deploy.DeploymentError, match="duplicate is busy"):
@@ -315,6 +425,34 @@ def test_shortcut_cleanup_failure_happens_before_shutdown_or_replace(tmp_path, m
 
     assert (target / "old.txt").read_text(encoding="utf-8") == "old"
     assert not (target / deploy.APP_EXE_NAME).exists()
+    # 第一次停旧安装；快捷方式收敛失败后，回滚前还会确认候选安装未在运行。
+    assert shutdown_calls == [target / deploy.APP_EXE_NAME, target / deploy.APP_EXE_NAME]
+
+
+def test_shutdown_failure_does_not_remove_existing_duplicate_shortcuts(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "HextechCompanion-20260720")
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    shortcut = tmp_path / deploy.APP_SHORTCUT_NAME
+    shortcut.write_text("shortcut", encoding="utf-8")
+    monkeypatch.setattr(
+        deploy,
+        "shutdown_existing_install",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(deploy.DeploymentError("old client is still running")),
+    )
+    monkeypatch.setattr(
+        deploy,
+        "converge_desktop_shortcuts",
+        lambda *_args, **_kwargs: pytest.fail("shutdown failure removed desktop shortcuts"),
+    )
+
+    with pytest.raises(deploy.DeploymentError, match="old client is still running"):
+        deploy.deploy_release(source, target, shortcut_path=shortcut, lock_path=tmp_path / "deploy.lock")
+
+    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
 
 
 def test_deploy_script_updates_only_canonical_existing_shortcut():
@@ -423,7 +561,7 @@ def test_build_deploy_arguments_are_explicit(monkeypatch):
         package.parse_build_args(["--shortcut", "client.lnk"])
 
 
-def test_build_without_deploy_does_not_call_deployer(tmp_path, monkeypatch):
+def test_build_without_deploy_does_not_call_deployer(tmp_path, monkeypatch, capsys):
     from tooling.build import package
 
     monkeypatch.setattr(package, "cleanup", lambda: None)
@@ -443,6 +581,8 @@ def test_build_without_deploy_does_not_call_deployer(tmp_path, monkeypatch):
     )
 
     package.main([])
+
+    assert "候选未部署" in capsys.readouterr().out
 
 
 def test_packaged_smoke_runs_overlay_self_check_before_desktop(tmp_path, monkeypatch):

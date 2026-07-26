@@ -7,12 +7,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import re
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, cast
 
@@ -25,8 +23,14 @@ from hextech.infrastructure.vision.state import SelectionTracker
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.vision.window import game_window_identity
 from hextech.modules.session.build_identity import current_build_id
+from hextech.modules.vision.gameflow import probe_gameflow_state
 
 from hextech.infrastructure.vision.template_runtime import load_or_build_default_template_runtime
+from hextech.infrastructure.vision.gameflow_pause import PausedGameflowProbe, pause_identity, resolve_game_visibility_pause
+from hextech.infrastructure.vision.sidecar_diagnostics import (
+    DiagnosticEpochSampler as _DiagnosticEpochSampler,
+    emit_cli_event as _emit_cli_event,
+)
 from hextech.infrastructure.vision.sidecar_matching import (
     VisionComputeMemoryError,
     prepare_compute_rank_matrices,
@@ -40,7 +44,7 @@ DEFAULT_LOOP_SCAN_FRAME_INTERVAL_MS = 160
 DEFAULT_LOOP_IDLE_INTERVAL_SECONDS = 0.25
 DEFAULT_LOOP_FAST_HOLD_SECONDS = 1.2
 DEFAULT_LOOP_HEARTBEAT_SECONDS = 1.0
-DIAGNOSTIC_EPOCH_OBSERVATION_LIMIT = 5
+PERSISTENT_CAPTURE_FAILURE_SECONDS = 3.0
 
 SIDECAR_STATUS_FILE = Path(build_runtime_state_path("game_overlay_sidecar_status.json"))
 SIDECAR_READY_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_FILE"
@@ -48,32 +52,6 @@ SIDECAR_READY_TOKEN_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_TOKEN"
 SIDECAR_BOOTSTRAP_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_BOOTSTRAP_FILE"
 SIDECAR_GENERATION_ENV = "HEXTECH_OVERLAY_GENERATION"
 SIDECAR_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
-
-
-@dataclass
-class _DiagnosticEpochSampler:
-    """只为每个真实 selection epoch 编号前几次独立 ROI 观察。"""
-
-    epoch_key: tuple[str, int] | None = None
-    observation_count: int = 0
-
-    def next_observation_seq(self, source: Mapping[str, Any]) -> int | None:
-        try:
-            selection_epoch = int(source.get("selection_epoch") or 0)
-        except (TypeError, ValueError):
-            selection_epoch = 0
-        current_key = (str(source.get("session_id") or ""), selection_epoch)
-        if selection_epoch > 0 and current_key != self.epoch_key:
-            self.epoch_key = current_key
-            self.observation_count = 0
-        if (
-            selection_epoch <= 0
-            or source.get("scene_state") not in {"candidate", "active"}
-            or self.observation_count >= DIAGNOSTIC_EPOCH_OBSERVATION_LIMIT
-        ):
-            return None
-        self.observation_count += 1
-        return self.observation_count
 
 
 def _sidecar_pid_started_at() -> float:
@@ -378,6 +356,8 @@ def run_loop(
     active_hwnd = 0
     game_session_id = ""
     current_game_identity: dict[str, object] = {}
+    capture_unavailable_started_at = 0.0
+    paused_gameflow = PausedGameflowProbe(probe=probe_gameflow_state)
 
     def commit_event(event_payload: dict[str, Any], *, poll_mode: str) -> None:
         nonlocal last_signature, last_write_at, last_status_heartbeat_at
@@ -515,8 +495,25 @@ def run_loop(
         frame_started_at = time.perf_counter()
         target = vision_sidecar._find_lol_game_window()
         if target is None:
+            # 窗口短暂不可见通常来自 Alt-Tab、最小化或重建；它不能把此前的
+            # 截图失败连续计时带回游戏内，否则返回后的第一张失败帧会被误升格为
+            # 持续硬故障并清空当前 epoch。
+            capture_unavailable_started_at = 0.0
             left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
-            event = tracker.block("game_window_missing")
+            event, gameflow_ended = resolve_game_visibility_pause(
+                tracker,
+                reason="game_window_missing",
+                should_probe=bool(tracker.scene_active or active_hwnd or game_session_id),
+                now=time.monotonic(),
+                gameflow_probe=paused_gameflow,
+                identity_source=pause_identity(game_session_id, current_game_identity),
+            )
+            if gameflow_ended:
+                active_hwnd = 0
+                game_session_id = ""
+                current_game_identity = {}
+                paused_gameflow.reset()
+            vision_sidecar.attach_visibility_probe_timing(event)
             commit_event(event, poll_mode="idle")
             time.sleep(idle_sleep_seconds)
             continue
@@ -524,29 +521,56 @@ def run_loop(
         hwnd, rect = target
         observed_identity = game_window_identity(int(hwnd))
         observed_game_instance = str(observed_identity.get("game_instance_id") or "")
-        if int(hwnd) != active_hwnd or observed_game_instance != game_session_id:
+        # Alt-Tab、最小化或窗口句柄短暂重建并不等于新一局。仅 game instance
+        # 确认变化时才清空 epoch；同一实例返回后必须续用稳定槽和证据窗口。
+        if active_hwnd == 0 or (
+            observed_game_instance
+            and game_session_id
+            and observed_game_instance != game_session_id
+        ):
             tracker.reset()
             left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
-            active_hwnd = int(hwnd)
+        active_hwnd = int(hwnd)
+        if observed_game_instance:
             game_session_id = observed_game_instance
         current_game_identity = observed_identity
         if not vision_sidecar._is_lol_game_foreground(hwnd):
+            capture_unavailable_started_at = 0.0
             left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
-            event = attach_window_observation(tracker.block("game_not_foreground"), hwnd=hwnd, rect=rect)
+            event, gameflow_ended = resolve_game_visibility_pause(
+                tracker,
+                reason="game_not_foreground",
+                should_probe=bool(tracker.scene_active or active_hwnd or game_session_id),
+                now=time.monotonic(),
+                gameflow_probe=paused_gameflow,
+                identity_source=pause_identity(game_session_id, current_game_identity),
+            )
+            event = attach_window_observation(event, hwnd=hwnd, rect=rect)
+            if gameflow_ended:
+                active_hwnd = 0
+                game_session_id = ""
+                current_game_identity = {}
+                paused_gameflow.reset()
+            vision_sidecar.attach_visibility_probe_timing(event)
             commit_event(event, poll_mode="idle")
             time.sleep(idle_sleep_seconds)
             continue
 
+        # 已返回前台时丢弃暂停期的旧结论；下一次暂停必须重新观察 gameflow。
+        paused_gameflow.reset()
+
         tab_down = vision_sidecar.is_scoreboard_key_down()
         if tab_down:
+            capture_unavailable_started_at = 0.0
             event = attach_window_observation(
-                tracker.block("scoreboard_key_down", scoreboard_key_down=True), hwnd=hwnd, rect=rect
+                tracker.pause("scoreboard_key_down", scoreboard_key_down=True), hwnd=hwnd, rect=rect
             )
             if dump_root is not None and not tab_was_down:
                 frame = vision_sidecar._capture_lol_game_rect(rect)
                 if frame is not None:
                     maybe_dump(frame, event)
             tab_was_down = True
+            vision_sidecar.attach_visibility_probe_timing(event)
             poll_mode, sleep_seconds = foreground_sleep_seconds(
                 event,
                 elapsed_seconds=time.perf_counter() - frame_started_at,
@@ -560,12 +584,43 @@ def run_loop(
         frame = vision_sidecar._capture_lol_game_rect(rect)
         captured_at = time.time()
         if frame is None:
-            event = attach_window_observation(tracker.block("capture_unavailable"), hwnd=hwnd, rect=rect)
+            if capture_unavailable_started_at <= 0.0:
+                capture_unavailable_started_at = captured_at
+            if captured_at - capture_unavailable_started_at >= PERSISTENT_CAPTURE_FAILURE_SECONDS:
+                event = tracker.block("capture_unavailable")
+                event["error"] = "capture_unavailable"
+                event["source"]["failure_kind"] = "capture_persistent"
+            else:
+                event = tracker.pause("capture_unavailable")
+            event = attach_window_observation(event, hwnd=hwnd, rect=rect)
+            # 截图没有成功取得，不能让时间线把这次 0ms 的失败路径当作真实 OCR
+            # observation 计入 epoch P50/P95。公共 timing 的三个时间点会在本轮
+            # 尾部统一补齐，这里只标注其性质与不可用状态。
+            event["timing"] = {
+                "observation_kind": "capture_failure",
+                "capture_status": "unavailable",
+            }
         else:
             expected_size = (int(rect[2] - rect[0]), int(rect[3] - rect[1]))
             if tuple(frame.size) != expected_size:
-                event = tracker.block("capture_client_size_mismatch")
-                attach_window_observation(event, hwnd=hwnd, rect=rect, capture_size=frame.size)
+                if capture_unavailable_started_at <= 0.0:
+                    capture_unavailable_started_at = captured_at
+                if captured_at - capture_unavailable_started_at >= PERSISTENT_CAPTURE_FAILURE_SECONDS:
+                    event = tracker.block("capture_client_size_mismatch")
+                    event["error"] = "capture_client_size_mismatch"
+                    event["source"]["failure_kind"] = "capture_client_size_mismatch_persistent"
+                else:
+                    event = tracker.pause("capture_client_size_mismatch")
+                event = attach_window_observation(event, hwnd=hwnd, rect=rect, capture_size=frame.size)
+                # 虽然拿到了位图，但尺寸不能对应当前游戏窗口；它不是可供识别的
+                # captured observation，不能污染真实识别延迟统计。
+                event["timing"] = {
+                    "observation_kind": "capture_failure",
+                    "capture_status": "invalid_size",
+                    "capture_started_at": capture_started_at,
+                    "captured_at": captured_at,
+                    "recognition_completed_at": captured_at,
+                }
                 poll_mode, sleep_seconds = foreground_sleep_seconds(
                     event,
                     elapsed_seconds=time.perf_counter() - frame_started_at,
@@ -573,6 +628,7 @@ def run_loop(
                 commit_event(event, poll_mode=poll_mode)
                 time.sleep(sleep_seconds)
                 continue
+            capture_unavailable_started_at = 0.0
             raw_event = vision_sidecar.detect_overlay_choices(
                 frame,
                 template_index,
@@ -609,6 +665,7 @@ def run_loop(
             raw_timing = raw_event.get("timing") if isinstance(raw_event.get("timing"), Mapping) else {}
             raw_event["timing"] = {
                 **{str(key): value for key, value in raw_timing.items()},
+                "observation_kind": "recognition",
                 "capture_started_at": capture_started_at,
                 "captured_at": captured_at,
                 "recognition_completed_at": recognition_completed_at,
@@ -690,9 +747,10 @@ def main(argv: list[str] | None = None) -> int:
                 frame_interval_ms=args.frame_interval_ms,
                 debug_dump_dir=args.debug_dump or None,
             )
-            print(json.dumps(event, ensure_ascii=False, indent=2))
             if _record_template_missing_failure(event):
+                _emit_cli_event(event)
                 return 1
+            _emit_cli_event(event)
             return 0
         except Exception as exc:
             _write_sidecar_bootstrap_from_env(
@@ -727,7 +785,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if event is None:
         return 0
-    print(json.dumps(event, ensure_ascii=False, indent=2))
     if _record_template_missing_failure(event):
+        _emit_cli_event(event)
         return 1
+    _emit_cli_event(event)
     return 0

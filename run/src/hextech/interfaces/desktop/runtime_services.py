@@ -365,7 +365,9 @@ def start_web_server_process(
         ),
     )
     try:
-        _wait_for_web_startup(web_process, web_port_file, timeout=max(1.0, float(timeout)))
+        # 托盘恢复会把同一个 13 秒 deadline 的剩余时间传到这里；不能把最后的
+        # 0.x 秒强行放大成完整 1 秒，否则“15 秒内恢复”会失去端到端约束。
+        _wait_for_web_startup(web_process, web_port_file, timeout=max(0.1, float(timeout)))
     except Exception:
         try:
             web_process.terminate()

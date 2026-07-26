@@ -14,7 +14,7 @@ def test_overlay_runtime_document_discovery_chain_exists() -> None:
     root_index = (REPO_ROOT / "docs" / "index.md").read_text(encoding="utf-8")
     run_index = (RUN_ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 
-    assert "工作区的本地文档索引" in claude_entry
+    assert "本地文档索引" in claude_entry
     assert "run/docs/README.md" in root_index
     assert "overlay-runtime.md" in run_index
     assert (RUN_ROOT / "docs" / "overlay-runtime.md").is_file()
@@ -44,8 +44,8 @@ def test_overlay_runtime_document_matches_code_contracts() -> None:
         "默认模式：不生成 PNG",
         "对局结束后等待 30 秒",
         "compute_profile=float32_batched",
-        "`strong` 在最近 3 个有效观察中同身份命中 2 次",
-        "`medium` 在最近 5 个有效观察中命中 3 次",
+        "`strong` 在最近 3 个原始观察中同身份命中 2 次",
+        "`medium` 在最近 5 个原始观察中命中 3 次",
         "evidence_starved",
         "已有部分稳定槽且仍有待识别槽时保留 6 秒",
         "三槽均 ready 时保留 1.5 秒",

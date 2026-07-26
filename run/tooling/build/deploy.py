@@ -333,7 +333,7 @@ def converge_desktop_shortcuts(
     stable_executable: Path,
     release_root: Path,
 ) -> tuple[Path, ...]:
-    """删除同应用的非规范桌面入口，并在停机前验证唯一性。"""
+    """删除同应用的非规范桌面入口，并验证最终只保留规范入口。"""
 
     canonical_shortcut = validate_shortcut_path(canonical_shortcut)
     duplicates = _managed_duplicate_shortcuts(canonical_shortcut, stable_executable, release_root)
@@ -389,6 +389,25 @@ def _remove_tree(path: Path) -> None:
         shutil.rmtree(path)
 
 
+def _backup_previous_install(previous: Path, backup: Path) -> bool:
+    """为 `.previous` 建立经校验的临时备份，供轮转失败时恢复。"""
+
+    if not previous.exists():
+        return False
+    if _is_reparse_point(previous):
+        raise DeploymentError(f"拒绝备份 reparse point：{previous}")
+    try:
+        shutil.copytree(previous, backup)
+        if _tree_fingerprint(previous) != _tree_fingerprint(backup):
+            raise DeploymentError("紧急回滚目录备份校验失败")
+    except Exception:
+        # copytree 也可能在半途失败；临时副本不是可用回滚版本，不能残留成
+        # 第二个看似正式的目录。
+        _remove_tree(backup)
+        raise
+    return True
+
+
 def deploy_release(
     package_dir: Path,
     install_dir: Path,
@@ -411,10 +430,11 @@ def deploy_release(
     candidate = target.with_name(f".{target.name}.deploying-{os.getpid()}-{stamp}")
     rollback = target.with_name(f".{target.name}.rollback-{os.getpid()}-{stamp}")
     previous = target.with_name(f"{target.name}.previous")
+    previous_backup = target.with_name(f".{target.name}.previous-backup-{os.getpid()}-{stamp}")
     try:
         lock = FileLock(str(lock_file), timeout=0)
         with lock:
-            if candidate.exists() or rollback.exists():
+            if candidate.exists() or rollback.exists() or previous_backup.exists():
                 raise DeploymentError("部署临时目录已存在")
             # 候选复制、manifest 和逐文件 hash 必须全部通过后，才允许关闭旧客户端。
             shutil.copytree(source, candidate)
@@ -422,18 +442,17 @@ def deploy_release(
             if _tree_fingerprint(source) != _tree_fingerprint(candidate):
                 raise DeploymentError("部署候选复制校验失败")
 
-            # 旧 previous 无法收口时应在停机前失败，避免新版本已运行却返回部署失败。
-            _remove_tree(previous)
-            if resolved_shortcut_input is not None:
-                removed_shortcuts = converge_desktop_shortcuts(
-                    resolved_shortcut_input,
-                    target / APP_EXE_NAME,
-                    source.parent,
-                )
             was_running = shutdown_existing_install(target / APP_EXE_NAME, timeout=shutdown_timeout)
             old_moved = False
             new_installed = False
+            previous_backup_created = False
+            previous_rotated = False
+            previous_rotation_started = False
             try:
+                # `.previous` 是唯一紧急回滚目录。轮转前先复制并校验，避免
+                # Windows 重命名短暂失败时因已删除旧目录而失去最后一个回滚版本。
+                if target.exists():
+                    previous_backup_created = _backup_previous_install(previous, previous_backup)
                 if target.exists():
                     os.replace(target, rollback)
                     old_moved = True
@@ -445,8 +464,29 @@ def deploy_release(
                     if resolved_shortcut_input is not None
                     else None
                 )
+                # 只有候选已完成目录切换与规范快捷方式更新，才移除重复入口。
+                # shutdown 失败时这里尚未执行，因此旧安装与用户桌面保持原状；后续
+                # 清理失败则由下面的回滚路径恢复旧安装。
+                if resolved_shortcut_input is not None:
+                    removed_shortcuts = converge_desktop_shortcuts(
+                        resolved_shortcut_input,
+                        target / APP_EXE_NAME,
+                        source.parent,
+                    )
                 if was_running:
                     _start_install(target / APP_EXE_NAME)
+                # 候选已通过启动验证后才轮转 emergency rollback。若现有 previous
+                # 无法删除，下面的异常路径会恢复 target，不能为了发布先丢掉唯一
+                # 回滚目录。
+                if old_moved and rollback.exists():
+                    previous_rotation_started = previous_backup_created
+                    _remove_tree(previous)
+                    os.replace(rollback, previous)
+                    previous_rotated = True
+                    old_moved = False
+                    if previous_backup_created:
+                        _remove_tree(previous_backup)
+                        previous_backup_created = False
             except Exception as exc:
                 rollback_errors: list[str] = []
                 old_install_available = False
@@ -465,8 +505,50 @@ def deploy_release(
                         old_install_available = True
                     except Exception as restore_exc:
                         rollback_errors.append(f"恢复上一版本失败：{restore_exc}")
+                elif previous_rotated and previous.exists():
+                    try:
+                        # `.previous` 已暂存刚替换下来的正式版本；发布失败时把它
+                        # 移回稳定目录，再由临时备份恢复原 `.previous`。
+                        os.replace(previous, target)
+                        old_install_available = True
+                    except Exception as restore_exc:
+                        rollback_errors.append(f"恢复上一版本失败：{restore_exc}")
                 elif not old_moved and not new_installed and target.is_dir():
                     old_install_available = True
+                if previous_backup_created and previous_rotation_started:
+                    try:
+                        previous_unchanged = previous.exists() and (
+                            _tree_fingerprint(previous) == _tree_fingerprint(previous_backup)
+                        )
+                    except Exception:
+                        previous_unchanged = False
+                    if previous_unchanged:
+                        # 删除在触及文件前失败时，原 `.previous` 仍完整；只清除临时
+                        # 备份即可，避免为一个 busy 目录再次破坏可用回滚版本。
+                        try:
+                            _remove_tree(previous_backup)
+                            previous_backup_created = False
+                        except Exception as cleanup_exc:
+                            rollback_errors.append(f"清理紧急回滚临时备份失败：{cleanup_exc}")
+                    else:
+                        try:
+                            _remove_tree(previous)
+                        except Exception as cleanup_exc:
+                            rollback_errors.append(f"清理不完整紧急回滚目录失败：{cleanup_exc}")
+                        if previous_backup_created and not previous.exists():
+                            try:
+                                os.replace(previous_backup, previous)
+                                previous_backup_created = False
+                            except Exception as restore_exc:
+                                rollback_errors.append(f"恢复原紧急回滚目录失败：{restore_exc}")
+                        elif previous_backup_created:
+                            rollback_errors.append("无法恢复原紧急回滚目录：当前 .previous 仍被占用")
+                elif previous_backup_created:
+                    try:
+                        _remove_tree(previous_backup)
+                        previous_backup_created = False
+                    except Exception as cleanup_exc:
+                        rollback_errors.append(f"清理紧急回滚临时备份失败：{cleanup_exc}")
                 if was_running and old_install_available:
                     try:
                         _start_install(target / APP_EXE_NAME)
@@ -478,10 +560,7 @@ def deploy_release(
                     ) from exc
                 raise
 
-            previous_result = None
-            if old_moved and rollback.exists():
-                os.replace(rollback, previous)
-                previous_result = previous
+            previous_result = previous if previous.exists() else None
             return DeploymentResult(
                 install_dir=target,
                 previous_dir=previous_result,

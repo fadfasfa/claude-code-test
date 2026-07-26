@@ -17,14 +17,16 @@
 ## 识别与展示规则
 
 - 模板缓存和权威矩阵保持连续 `float16`；Sidecar ready 前一次性建立连续 `float32` 计算镜像。同一帧三槽按 icon、primary name、alt name、observed name 分组批处理，热路径不得重复转换完整矩阵。FP32 镜像分配失败时 Sidecar 以 `vision_compute_memory_unavailable` 明确失败，不回退到混合精度慢路径。
-- 单帧证据分为 `strong`、`medium`、`weak`。真机名称样本，或双字体高置信度且有一致图标/明确视觉版本，才是 `strong`；相关双字体或无冲突的高置信单字体是 `medium`；其余仅写诊断的候选是 `weak`。
-- 槽位确认只由时序仲裁器负责：`strong` 在最近 3 个有效观察中同身份命中 2 次，`medium` 在最近 5 个有效观察中命中 3 次且窗口内没有其他 `strong` 身份。窗口按真实 `captured_at` / `recognition_completed_at` 排序，不假定固定帧率。单帧 miss、weak 候选或鼠标遮挡只形成空观察，不清空仍在 6 秒证据寿命内的累计。
+- 单帧证据分为 `strong`、`medium`、`weak`。真机名称样本，或双字体高置信度且有一致图标/明确视觉版本，才是 `strong`；仅“双字体同身份且无可靠图标冲突”才是 `medium`。单字体、优势字体和图标短名单只写诊断，绝不能独立产生 `ready`。
+- 槽位确认只由时序仲裁器负责：`strong` 在最近 3 个原始观察中同身份命中 2 次，`medium` 在最近 5 个原始观察中命中 3 次且窗口内没有其他 `strong` 身份。窗口按真实 `captured_at` / `recognition_completed_at` 排序，不假定固定帧率；单帧 miss、weak 候选或鼠标遮挡作为空观察占据窗口，不能跳过空帧累计旧证据，也不清空仍在 6 秒证据寿命内的累计。
 - 已确认槽在当前 selection epoch 内持续保留；重随的新身份满足同一确认规则后才原子替换。相同卡名后续获得更强图标证据时只补充 `visual_variant_id` 与 tier，不递增 `selection_revision`。
+- 已稳定槽只能由不同身份的 `strong` 证据替换；`medium` 只用于首次确认，避免系统性 OCR 误匹配在连续帧中覆盖已展示结果。
 - 同一帧一个或多个槽发生真实替换时，`selection_revision` 只增加一次。
 - Sidecar 输出 `cursor_over_slots`。鼠标遮挡的稳定槽保持原结果；未遮挡槽继续识别，不能因为一个槽被遮挡而冻结全部三槽。
 - 已识别槽立即显示。选择窗口存续期间，尚未稳定、通道分歧或低 margin 的槽始终显示“识别中”；不存在固定 3 秒识别失败。只有模板索引、持续截图或 Sidecar 进程等硬故障才能进入失败态。空槽和硬故障都不能推断为来源无数据。
 - 未稳定槽在至少 5 次原始观察、持续至少 2 秒且任一身份最高命中仍不足 2 次时，诊断为 `evidence_starved`；公共状态仍为 `detecting`，不得生成 `failed` 或 `RECOGNITION_MISSING`。该诊断只说明证据饥饿，不能据此全局放宽 OCR 阈值。
 - 场景门丢失采用真实时间宽限：已有部分稳定槽且仍有待识别槽时保留 6 秒，三槽均 ready 时保留 1.5 秒；场景恢复立即取消宽限并沿用原 epoch、revision 和证据。明确 `selection_click` / `selection_confirmed` 后可立即结束；其他情况只有宽限耗尽才输出 `scene_loss_confirmed`。鼠标遮挡、`card_residue` 和 `name_residue` 只能进入 `scene_grace_hold`，不能按固定两帧清空稳定槽。
+- `game_not_foreground`、计分板、临时最小化、短暂截图不可用和 client size 抖动使用 `transient_pause`：Host 隐藏窗口，但 Sidecar 保留当前 epoch、revision、稳定槽和证据；同一 `game_instance_id` 返回后继续识别。仅暂停期的低频 gameflow 探测明确确认结束时，才发布携带刚结束 epoch/revision 的 `gameflow_ended` 事件并清空；新游戏实例和明确选择完成也可清空。
 - Sidecar status 暴露 `compute_profile=float32_batched`、计算镜像字节数、预热耗时和单帧各通道耗时；异宽指纹必须直接报错，不能静默丢行。
 
 ## 分来源 freshness 与联动
@@ -65,7 +67,7 @@ Host 使用单线程有界队列异步写入报告，Tk 渲染线程不执行 JS
 
 报告 v2 记录捕获、识别完成、事件写入、Host 读取、上下文确认、绘制开始/完成、呈现、报告入队和落盘时间；`source` 兼容增加 `selection_epoch`、`selection_revision`、`scene_state`、`selection_window_active` 和 `scene_temporal_state`，去重签名包含 epoch/revision，确保重随与结束事件不会被合并。槽位同时记录 `vision_id`、名称、有限候选、`canonical_id` 和最终缺失原因。排查延迟时按时间链路定位阶段，不用截图文件时间代替阶段证据。
 
-Vision 时间线 schema v1 每个 observation 记录独立序号、`capture_started_at` / `captured_at` / `recognition_completed_at`、三槽文字双字体与图标 Top-1、confidence、margin、候选身份、证据等级/计数、公开状态和 revision；场景侧同时记录 `source.reason`、`scene_present`、`scene_score`、选择按钮、卡片/名称残留、鼠标覆盖槽、点击和 `scene_temporal_state`。每个 epoch 分别计算截图、识别和端到端耗时的 P50/P95，默认不包含图片。`vision_eval` 的稳定性门禁只回放时间戳严格递增、ID 唯一的独立 observation，完整静态帧仅验证三通道单帧候选，禁止重复同一截图制造稳定帧。
+Vision 时间线 schema v1 每个 observation 记录独立序号、`capture_started_at` / `captured_at` / `recognition_completed_at`、`capture_status`、会话/游戏实例、三槽文字双字体与图标 Top-1、confidence、margin、候选身份、证据等级/计数、公开状态和 revision；场景侧同时记录 `source.reason`、`scene_present`、`scene_score`、选择按钮、卡片/名称残留、鼠标覆盖槽、点击和 `scene_temporal_state`。`transient_pause` 与携带原 epoch/revision 的 `gameflow_ended` 也写入同一时间线；未截图的事件用同一 wall-clock 时间并标记 `capture_status=not_captured`，后者会产生 epoch 的 P50/P95 结束摘要；空闲心跳仍不写入。每个 epoch 的截图、识别和端到端 P50/P95 只统计 `observation_kind=recognition` 且 `capture_status=captured` 的真实观测，默认不包含图片。`vision_eval` 的稳定性门禁只回放时间戳严格递增、ID 唯一的独立 observation，完整静态帧仅验证三通道单帧候选，禁止重复同一截图制造稳定帧。
 
 显式 diagnostic 模式为每个真实 selection epoch 连续保存前 5 个独立 observation 的按钮、三槽图标和三槽卡名 ROI，每组带 observation 序号和三项时间戳；不保存完整游戏截图，并沿用受限轮转。旧 Build 真机报告测得端到端中位数约 207.5 ms、P95 约 259.2 ms；本轮只建立真实指标，若新 Build P95 仍高于 180 ms，应单独优化热路径，不能通过放宽识别规则掩盖。
 
@@ -80,13 +82,14 @@ Vision 时间线 schema v1 每个 observation 记录独立序号、`capture_star
 - Desktop 右上角“×”和 `WM_DELETE_WINDOW` 只隐藏到 Windows 系统托盘，不停止识别或退出进程。完全退出只能使用托盘菜单“退出 Hextech”。托盘还提供“显示 Hextech”“重启识别”和只读运行状态。
 - 再次点击桌面快捷方式不会启动第二套服务；新实例向当前 owner 写入 `desktop_ui_activation.v1.json` 激活请求后以退出码 0 结束，原实例显示窗口并按需恢复服务。请求必须匹配当前 `owner_id`，陈旧或其他 owner 请求会被忽略。
 - 连续 300 秒既无 `LeagueClient.exe` / `LeagueClientUx.exe`，也无 `League of Legends.exe` 时进入轻量待机。客户端即使最小化，只要进程仍在就不待机；单独的 Riot Client launcher 不算 League 活动。
-- 轻量待机停止 DataService、Web、Runtime Supervisor、Overlay host 和 Vision Sidecar，只保留 Desktop、托盘与 5 秒进程探针。League 进程出现、托盘显示、托盘重启识别或快捷方式激活会恢复；手动唤醒后重新计算完整 5 分钟空闲窗口，恢复 Web 时不重复打开浏览器。
-- 识别运行态必须区分 `suspending`、`suspended`、`resuming`、`restart_in_progress`、`resume_failed` 与真实 Sidecar `stale/failed`。主动待机文案为“识别已休眠”，不得显示为“识别失效”。Supervisor 发现已启用 Sidecar 存活陈旧时先发布 `starting / sidecar_restart` 并显示“识别重启中”；只有既有恢复预算耗尽后才进入最终错误态。
+- 轻量待机停止 DataService、Web、Runtime Supervisor、Overlay host 和 Vision Sidecar，只保留 Desktop、托盘与 1 秒 League 进程探针。真正停止前必须二次探测 League，避免探测后到停机前的竞态；League 客户端或游戏进程出现、托盘显示、托盘重启识别或快捷方式激活会恢复。自动恢复的端到端预算为 13 秒，连同最坏一轮探测仍小于 15 秒；恢复逐项验证 DataService、Supervisor、Host、Sidecar 心跳和 Build ID，失败后 League 仍存在时每 5 秒重试，托盘“退出 Hextech”后则不再自动启动。
+- `var/state/background_runtime_transitions.v1.json` 是独立 schema v1 的有界生命周期诊断，最多保留 200 条状态转换，仅记录原因、匹配进程名、组件结果和错误类型，不记录命令行或敏感信息。
+- 识别运行态必须区分 `suspending`、`suspended`、`resuming`、`restart_in_progress`、`resume_failed`、`resume_cleanup_pending` 与真实 Sidecar `stale/failed`。主动待机文案为“识别已休眠”，不得显示为“识别失效”；`resume_cleanup_pending` 表示先回收上次失败的残留服务，回收未确认时不得并行启动新 Supervisor。Supervisor 发现已启用 Sidecar 存活陈旧时先发布 `starting / sidecar_restart` 并显示“识别重启中”；只有既有恢复预算耗尽后才进入最终错误态。
 - PyInstaller 主程序必须使用 Windows GUI subsystem（`--windowed`）。Supervisor 与 DataService 使用带随机 token 的原子 bootstrap 文件握手；所有本程序 Python 子进程同时使用 `CREATE_NO_WINDOW`，不得依赖 `sys.stdout` 或弹出控制台。桌面快捷方式和 packaged smoke 都直接启动 EXE；便携 BAT 仅为兼容入口，可能短暂闪烁。
 
 ## 打包、部署与旧包防错
 
-打包前运行目标测试、完整 pytest、开发门禁、Pyright 和 packaged startup smoke。构建只允许使用 manifest v3；部署器拒绝缺少构建身份或 `runtime_contracts` 不等于 Overlay v3、Sidecar v2、session report v2 的候选。
+打包前运行目标测试、完整 pytest、开发门禁、Pyright 和 packaged startup smoke。普通打包只生成候选，必须明确标记“候选未部署”；构建只允许使用 manifest v3。部署器拒绝缺少构建身份或 `runtime_contracts` 不等于 Overlay v3、Sidecar v2、session report v2 的候选。
 
 部署到 `C:\HextechCompanion` 后，真机测试前必须核对：
 
@@ -96,6 +99,8 @@ Vision 时间线 schema v1 每个 observation 记录独立序号、`capture_star
 4. Sidecar status 为 v2、Overlay event 为 v3、session report 为 v2。旧状态文件只能作为历史证据，不能证明新进程已启动。
 
 部署过程不得清理 `%LOCALAPPDATA%\HextechNexus\var`、历史报告或用户数据。发现构建身份不一致时先停止验收，确认旧进程已退出并重新部署，不继续分析识别率。
+
+正式部署只更新既有 `C:\Users\apple\OneDrive\Desktop\Hextech伴生终端.lnk` 到 `C:\HextechCompanion\Hextech伴生终端.exe`；仅处理指向稳定安装或本仓 release 的重复快捷方式。`C:\HextechCompanion.previous` 始终保留部署前的一代正式版本，作为唯一紧急回滚目录。
 
 ## 真机验收
 

@@ -185,6 +185,28 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(ready["slots"][0]["evidence_hits"], 3)
         self.assertEqual(ready["slots"][0]["replacement_reason"], "initial_medium")
 
+    def test_medium_evidence_cannot_skip_consecutive_misses_inside_raw_window(self):
+        """miss 必须占据 5 帧窗口，不能让离散 medium 跨空帧直接 ready。"""
+
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        medium = _selection_event()
+        medium["_raw_slots"][0] = _medium_slot(0, "medium", "普通候选")
+        miss = _selection_event()
+        miss["_raw_slots"][0] = _weak_slot(0, "weak", "弱候选")
+
+        tracker.update(self._at(medium, 25.0))
+        tracker.update(self._at(miss, 25.2))
+        tracker.update(self._at(miss, 25.4))
+        tracker.update(self._at(miss, 25.6))
+        tracker.update(self._at(medium, 25.8))
+        pending = tracker.update(self._at(medium, 26.0))
+
+        self.assertEqual(pending["slots"][0]["state"], "detecting")
+        self.assertEqual(pending["slots"][0]["evidence_hits"], 2)
+        self.assertEqual(pending["slots"][0]["evidence_window"], 5)
+
     def test_evidence_older_than_time_window_does_not_confirm(self):
         from hextech.infrastructure.vision.state import SelectionTracker
 
@@ -199,7 +221,7 @@ class OverlayVisionStateTests(unittest.TestCase):
 
         self.assertEqual(expired["slots"][0]["state"], "detecting")
         self.assertEqual(expired["slots"][0]["evidence_hits"], 1)
-        self.assertEqual(expired["slots"][0]["evidence_window"], 1)
+        self.assertEqual(expired["slots"][0]["evidence_window"], 2)
 
     def test_identity_churn_becomes_evidence_starved_without_clearing_ready_slots(self):
         from hextech.infrastructure.vision.state import SelectionTracker
@@ -331,3 +353,83 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(ready["slots"][1]["name"], "吞噬灵魂")
         self.assertEqual(ready["slots"][1]["evidence_grade"], "strong")
         self.assertEqual(ready["source"]["selection_revision"], 1)
+
+    def test_repeated_single_font_observations_never_become_ready(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        single_font = {
+            "slot": 0,
+            "channels": {
+                "text": {
+                    "margin": 0.40,
+                    "top_candidates": [{"augment_id": "wrong", "name": "单字体误匹配", "confidence": 0.99}],
+                }
+            },
+        }
+        self.assertIsNone(candidate_from_slot(single_font))
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        event = _selection_event()
+        event["_raw_slots"][0] = single_font
+        observed = [tracker.update(self._at(event, 60.0 + index * 0.6)) for index in range(5)]
+
+        self.assertTrue(all(item["slots"][0]["state"] == "detecting" for item in observed))
+        self.assertEqual(observed[-1]["slots"][0]["temporal_state"], "evidence_starved")
+
+    def test_medium_observation_cannot_replace_a_stable_slot(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        original = _selection_event()
+        tracker.update(self._at(original, 70.0))
+        stable = tracker.update(self._at(original, 70.4))
+        replacement = _selection_event()
+        replacement["_raw_slots"][0] = _medium_slot(0, "wrong", "重复双字体误匹配")
+
+        observed = [tracker.update(self._at(replacement, 71.0 + index * 0.4)) for index in range(5)]
+
+        self.assertEqual(stable["slots"][0]["augment_id"], "augment_a")
+        self.assertTrue(all(item["slots"][0]["augment_id"] == "augment_a" for item in observed))
+        self.assertTrue(all(item["source"]["selection_revision"] == 1 for item in observed))
+
+    def test_transient_pause_preserves_epoch_revision_and_stable_slots(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(self._at(_selection_event(), 80.0))
+        stable = tracker.update(self._at(_selection_event(), 80.4))
+        paused = tracker.pause("game_not_foreground")
+        recovered = tracker.update(self._at(_selection_event(), 81.0))
+
+        self.assertFalse(paused["active"])
+        self.assertTrue(paused["source"]["transient_pause"])
+        self.assertEqual(paused["source"]["selection_epoch"], stable["source"]["selection_epoch"])
+        self.assertEqual(paused["source"]["selection_revision"], stable["source"]["selection_revision"])
+        self.assertEqual([slot["augment_id"] for slot in paused["slots"]], ["augment_a", "augment_b", "augment_c"])
+        self.assertEqual(recovered["source"]["selection_epoch"], stable["source"]["selection_epoch"])
+        self.assertEqual(recovered["source"]["selection_revision"], stable["source"]["selection_revision"])
+
+    def test_gameflow_end_keeps_epoch_revision_and_identity_for_report_linkage(self):
+        from hextech.infrastructure.vision.gameflow_pause import PausedGameflowProbe, resolve_game_visibility_pause
+        from hextech.infrastructure.vision.state import SelectionTracker
+        from hextech.modules.vision.gameflow import GameflowState
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(self._at(_selection_event(), 90.0))
+        stable = tracker.update(self._at(_selection_event(), 90.4))
+        ended, gameflow_ended = resolve_game_visibility_pause(
+            tracker,
+            reason="game_not_foreground",
+            should_probe=True,
+            now=91.0,
+            gameflow_probe=PausedGameflowProbe(probe=lambda: GameflowState.NOT_IN_PROGRESS),
+            identity_source={"session_id": "game-session-a", "game_instance_id": "game-instance-a"},
+        )
+
+        self.assertTrue(gameflow_ended)
+        self.assertEqual(ended["source"]["reason"], "gameflow_ended")
+        self.assertEqual(ended["source"]["selection_epoch"], stable["source"]["selection_epoch"])
+        self.assertEqual(ended["source"]["selection_revision"], stable["source"]["selection_revision"])
+        self.assertEqual(ended["source"]["session_id"], "game-session-a")
+        self.assertEqual(ended["source"]["game_instance_id"], "game-instance-a")

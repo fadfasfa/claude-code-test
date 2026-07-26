@@ -160,6 +160,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         for overrides, expected_reason in (
             ({"blocking_modal": True}, "blocking_modal_present"),
             ({"scoreboard_key_down": True}, "scoreboard_key_down"),
+            ({"transient_pause": True}, "transient_pause"),
             ({"event_fresh_after_tab": False}, "event_stale_after_tab"),
         ):
             with self.subTest(expected_reason=expected_reason):
@@ -168,6 +169,21 @@ class OverlayHostVisibilityTests(unittest.TestCase):
                 should_show, reason = decide_visibility(**args)
                 self.assertFalse(should_show)
                 self.assertEqual(reason, expected_reason)
+
+    def test_legacy_toggle_request_cannot_change_host_enablement(self):
+        import queue
+
+        from hextech.interfaces.overlay.host_sync import _drain_hotkey_requests
+
+        requests: "queue.Queue[str]" = queue.Queue()
+        requests.put("toggle")
+        requests.put("toggle_mode")
+        visibility = {"user_enabled": True, "display_mode": "compact"}
+
+        _drain_hotkey_requests(requests, visibility)
+
+        self.assertTrue(visibility["user_enabled"])
+        self.assertEqual(visibility["display_mode"], "expanded")
 
     def test_inactive_vision_event_hides_overlay_when_game_gate_is_visible(self):
         from hextech.interfaces.overlay.host import decide_visibility

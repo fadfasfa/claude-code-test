@@ -405,12 +405,205 @@ class RuntimeSupervisorDesktopIntegrationTests(unittest.TestCase):
             self.assertTrue(handle.port > 0)
             self.assertTrue(handle.session_nonce)
             self.assertTrue(handle.supervisor_instance_id.startswith("sup-"))
-            self.assertIsNone(handle.process.poll())
+            self.assertTrue(handle.is_running())
             self.assertTrue(hasattr(handle, "job_object_attached"))
         finally:
             handle.stop()
         self.assertFalse(psutil.pid_exists(wrapper_pid))
         self.assertFalse(psutil.pid_exists(supervisor_pid))
+
+    def test_bootstrap_accepts_interpreter_child_of_venv_launcher(self):
+        from hextech.interfaces.desktop import runtime as desktop_runtime
+
+        class FakeLauncher:
+            pid = 101
+            returncode = None
+
+            def poll(self):
+                return None
+
+        class FakeChild:
+            @staticmethod
+            def parents():
+                return [type("Parent", (), {"pid": 101})()]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "bootstrap.json"
+            target.write_text(
+                json.dumps({"token": "token", "pid": 202, "port": 52001, "session_nonce": "nonce"}),
+                encoding="utf-8",
+            )
+            with mock.patch.object(desktop_runtime.psutil, "Process", return_value=FakeChild()):
+                payload = desktop_runtime._read_process_bootstrap(
+                    target,
+                    token="token",
+                    process=FakeLauncher(),
+                    deadline=time.time() + 1,
+                    service_name="Runtime Supervisor",
+                    stderr_tail=[],
+                )
+
+        self.assertEqual(payload["pid"], 202)
+
+    def test_bootstrap_accepts_live_interpreter_after_venv_launcher_exits(self):
+        from hextech.interfaces.desktop import runtime as desktop_runtime
+
+        class ExitedLauncher:
+            pid = 101
+            returncode = 0
+
+            @staticmethod
+            def poll():
+                return 0
+
+        class ReparentedChild:
+            @staticmethod
+            def parents():
+                return []
+
+            @staticmethod
+            def is_running():
+                return True
+
+            @staticmethod
+            def status():
+                return "running"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "bootstrap.json"
+            target.write_text(
+                json.dumps({"token": "token", "pid": 202, "port": 52001, "session_nonce": "nonce"}),
+                encoding="utf-8",
+            )
+            with mock.patch.object(desktop_runtime.psutil, "Process", return_value=ReparentedChild()):
+                payload = desktop_runtime._read_process_bootstrap(
+                    target,
+                    token="token",
+                    process=ExitedLauncher(),
+                    deadline=time.time() + 1,
+                    service_name="Runtime Supervisor",
+                    stderr_tail=[],
+                )
+
+        self.assertEqual(payload["pid"], 202)
+
+    def test_invalid_bootstrap_after_launcher_exit_terminates_verified_child(self):
+        from hextech.interfaces.desktop import runtime as desktop_runtime
+
+        class ExitedLauncher:
+            pid = 101
+            returncode = 0
+            stdout = None
+            stderr = None
+
+            @staticmethod
+            def poll():
+                return 0
+
+        class Child:
+            alive = True
+
+            @staticmethod
+            def parents():
+                return []
+
+            def is_running(self):
+                return self.alive
+
+            @staticmethod
+            def status():
+                return "running"
+
+            def terminate(self):
+                self.alive = False
+
+            @staticmethod
+            def wait(timeout=None):
+                del timeout
+
+        child = Child()
+
+        def fake_popen(*_args, **kwargs):
+            env = kwargs["env"]
+            Path(env["HEXTECH_PROCESS_BOOTSTRAP_FILE"]).write_text(
+                json.dumps(
+                    {
+                        "token": env["HEXTECH_PROCESS_BOOTSTRAP_TOKEN"],
+                        "pid": 202,
+                        "port": 0,
+                        "session_nonce": "nonce",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return ExitedLauncher()
+
+        with mock.patch.object(desktop_runtime.subprocess, "Popen", side_effect=fake_popen), mock.patch.object(
+            desktop_runtime.psutil, "Process", return_value=child
+        ):
+            with self.assertRaisesRegex(RuntimeError, "进程或端口无效"):
+                desktop_runtime.start_runtime_supervisor_process(parent_pid=os.getpid())
+
+        self.assertFalse(child.alive)
+
+    def test_supervisor_bootstrap_construction_failure_terminates_verified_child(self):
+        from hextech.interfaces.desktop import runtime as desktop_runtime
+
+        class ExitedLauncher:
+            pid = 101
+            returncode = 0
+            stdout = None
+            stderr = None
+
+            @staticmethod
+            def poll():
+                return 0
+
+        class Child:
+            alive = True
+
+            @staticmethod
+            def parents():
+                return []
+
+            def is_running(self):
+                return self.alive
+
+            @staticmethod
+            def status():
+                return "running"
+
+            def terminate(self):
+                self.alive = False
+
+            @staticmethod
+            def wait(timeout=None):
+                del timeout
+
+        child = Child()
+
+        def fake_popen(*_args, **kwargs):
+            env = kwargs["env"]
+            Path(env["HEXTECH_PROCESS_BOOTSTRAP_FILE"]).write_text(
+                json.dumps(
+                    {
+                        "token": env["HEXTECH_PROCESS_BOOTSTRAP_TOKEN"],
+                        "pid": 202,
+                        "port": 52001,
+                        "session_nonce": "nonce",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return ExitedLauncher()
+
+        with mock.patch.object(desktop_runtime.subprocess, "Popen", side_effect=fake_popen), mock.patch.object(
+            desktop_runtime.psutil, "Process", return_value=child
+        ):
+            with self.assertRaises(KeyError):
+                desktop_runtime.start_runtime_supervisor_process(parent_pid=os.getpid())
+
+        self.assertFalse(child.alive)
 
     def test_desktop_runtime_bootstrap_timeout_is_not_blocked_by_readline(self):
         from hextech.interfaces.desktop import runtime as desktop_runtime

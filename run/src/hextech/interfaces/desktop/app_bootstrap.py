@@ -37,7 +37,10 @@ class DesktopBootstrapMixin:
                 return
             service_manager = ServiceManager(
                 start_web_func=self._spawn_web_process,
-                start_data_service_func=lambda: ui_runtime.start_data_service_process(parent_pid=os.getpid()),
+                start_data_service_func=lambda *, timeout=15.0: ui_runtime.start_data_service_process(
+                    parent_pid=os.getpid(),
+                    timeout=float(timeout),
+                ),
                 stop_data_service_func=ui_runtime.stop_data_service_process,
                 manage_overlay_runtime=False,
                 listener_interval_seconds=3.0,
@@ -142,13 +145,23 @@ class DesktopBootstrapMixin:
             except Exception:
                 logger.debug("后台初始化失败后清理 ServiceManager 失败。", exc_info=True)
 
-    def _start_runtime_supervisor(self, *, restore_persisted_game_overlay: bool = True) -> None:
+    def _start_runtime_supervisor(
+        self,
+        *,
+        restore_persisted_game_overlay: bool = True,
+        startup_timeout: float | None = None,
+    ) -> None:
         """启动独立执行面，并用非 UI 线程续租，避免 Tk 主循环卡顿误杀运行态。"""
 
         try:
+            kwargs: dict[str, object] = {
+                "parent_pid": os.getpid(),
+                "prewarm_templates": True,
+            }
+            if startup_timeout is not None:
+                kwargs["timeout"] = float(startup_timeout)
             self.runtime_supervisor = ui_runtime.start_runtime_supervisor_process(
-                parent_pid=os.getpid(),
-                prewarm_templates=True,
+                **kwargs,
             )
             self._start_supervisor_lease_thread()
             if restore_persisted_game_overlay:
@@ -181,11 +194,15 @@ class DesktopBootstrapMixin:
         )
         self._supervisor_lease_thread.start()
 
-    def _spawn_web_process(self):
-        return ui_runtime.start_web_server_process(
-            self.web_port_file,
-            auto_open_browser=self.feature_flags.get("auto_open_browser", True),
-        )
+    def _spawn_web_process(self, *, timeout: float | None = None):
+        """启动 Web 子进程；待机恢复时沿用其唯一总预算。"""
+
+        kwargs: dict[str, object] = {
+            "auto_open_browser": self.feature_flags.get("auto_open_browser", True),
+        }
+        if timeout is not None:
+            kwargs["timeout"] = float(timeout)
+        return ui_runtime.start_web_server_process(self.web_port_file, **kwargs)
 
     def _start_web_server(self):
         """后台启动网页服务，避免阻塞界面线程。"""

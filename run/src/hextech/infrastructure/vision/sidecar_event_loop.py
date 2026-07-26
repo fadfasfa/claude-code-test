@@ -94,7 +94,13 @@ def _loop_event_signature(event_payload: Mapping[str, Any]) -> tuple[str, ...]:
             str(_event_ready_slots(event_payload)),
             *_slot_signature(event_payload),
         )
-    return ("inactive", str(source.get("reason") or "inactive"))
+    # 同一原因可以先是可恢复暂停，随后升级为硬故障；错误类型必须进入签名，
+    # 否则事件节流会让 Host 继续读取上一条“识别中”。
+    return (
+        "inactive",
+        str(source.get("reason") or "inactive"),
+        str(event_payload.get("error") or source.get("failure_kind") or ""),
+    )
 
 
 def _inactive_reason(event_payload: Mapping[str, Any]) -> str:
@@ -192,6 +198,34 @@ def _build_loop_inactive_event(reason: str, *, poll_mode: str = "high") -> dict[
         }
     )
     return event
+
+
+def attach_visibility_probe_timing(event_payload: dict[str, Any]) -> dict[str, Any]:
+    """为未截图的暂停/结束事件补齐可关联的 wall-clock 时间。
+
+    Alt-Tab、窗口暂时消失和计分板遮挡都不应伪装成截图失败，但 timeline 仍需要
+    有序的 observation 时间。真实截图分支会在 runner 中写入精确 timing；此处
+    只由可见性暂停分支调用，三个相同时间明确表示没有截图或 OCR 工作发生。
+    """
+
+    observed_at = time.time()
+    existing_timing = event_payload.get("timing")
+    timing = (
+        {str(key): value for key, value in existing_timing.items()}
+        if isinstance(existing_timing, Mapping)
+        else {}
+    )
+    timing.update(
+        {
+            "capture_started_at": observed_at,
+            "captured_at": observed_at,
+            "recognition_completed_at": observed_at,
+            "observation_kind": "visibility_probe",
+            "capture_status": "not_captured",
+        }
+    )
+    event_payload["timing"] = timing
+    return event_payload
 
 
 def should_write_loop_event(

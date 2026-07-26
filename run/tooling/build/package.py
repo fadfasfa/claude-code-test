@@ -651,6 +651,8 @@ def main(argv: list[str] | None = None) -> None:
                 print_check(f"已移除重复快捷方式：{removed_shortcut}")
         if deployment.restarted:
             print_check("旧客户端原本运行，已启动新版本")
+    else:
+        print_check("候选未部署：稳定安装目录和桌面快捷方式保持不变")
     print_step("打包完成")
     print(f"  输出目录：{final_dir}")
     print(f"  主程序：{final_dir / APP_EXE_NAME}")

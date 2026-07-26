@@ -342,6 +342,7 @@ def decide_visibility(
     event_fresh_after_tab: bool = True,
     event_error: str = "",
     blocking_modal: bool = False,
+    transient_pause: bool = False,
     diagnostic_mode: bool = False,
     stale_event_hold: bool = False,
 ) -> tuple[bool, str]:
@@ -362,6 +363,8 @@ def decide_visibility(
         should_show, reason = False, "blocking_modal_present"
     elif should_show and scoreboard_key_down:
         should_show, reason = False, "scoreboard_key_down"
+    elif should_show and transient_pause:
+        should_show, reason = False, "transient_pause"
     elif should_show and not event_fresh_after_tab:
         should_show, reason = False, "event_stale_after_tab"
     elif should_show and selection_window_active is False:
@@ -428,6 +431,7 @@ def _log_visibility_diagnostic(
         int(visibility.get("ready_slots") or 0),
         bool(visibility.get("blocking_modal")),
         bool(visibility.get("scoreboard_key_down")),
+        bool(visibility.get("transient_pause")),
         str(visibility.get("event_error") or ""),
         bool(visibility.get("context_ok")),
         str(visibility.get("context_champion_id") or ""),
@@ -462,6 +466,7 @@ def _log_visibility_diagnostic(
                 "ready_slots": int(visibility.get("ready_slots") or 0),
                 "blocking_modal": bool(visibility.get("blocking_modal")),
                 "scoreboard": bool(visibility.get("scoreboard_key_down")),
+                "transient_pause": bool(visibility.get("transient_pause")),
                 "event_error": str(visibility.get("event_error") or ""),
             },
             "context": {
@@ -500,7 +505,11 @@ def _build_visibility_status_payload(
     failure_reason = ""
     if render_failures >= 4:
         functional_status, failure_reason = "failed", "render_loop_failed"
-    elif missing_since > 0.0 and now - missing_since >= 3.0:
+    elif (
+        not bool(source.get("transient_pause"))
+        and missing_since > 0.0
+        and now - missing_since >= 3.0
+    ):
         functional_status, failure_reason = "failed", "active_scene_without_window"
     elif probe_failures >= 3:
         functional_status, failure_reason = "degraded", "window_probe_error"
@@ -547,6 +556,7 @@ def _build_visibility_status_payload(
             "ready_slots": int(visibility.get("ready_slots") or 0),
             "blocking_modal": bool(visibility.get("blocking_modal")),
             "scoreboard": bool(visibility.get("scoreboard_key_down")),
+            "transient_pause": bool(source.get("transient_pause")),
             "event_error": str(visibility.get("event_error") or ""),
         },
         "context": {

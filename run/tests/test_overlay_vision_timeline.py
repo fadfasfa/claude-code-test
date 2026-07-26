@@ -79,6 +79,7 @@ def test_selection_timeline_appends_real_observations_without_images(tmp_path: P
     entries = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
     assert [entry["observation_seq"] for entry in entries] == [1, 2]
     assert entries[0]["recognition_completed_at"] == 10.0
+    assert entries[0]["capture_status"] == "captured"
     assert entries[0]["source"] == {"reason": ""}
     assert entries[0]["scene_present"] is True
     assert entries[0]["cursor_over_slots"] == [1]
@@ -167,4 +168,124 @@ def test_selection_timeline_end_event_records_epoch_latency_percentiles(tmp_path
         "capture": {"count": 3, "p50": 30.0, "p95": 30.0},
         "recognition": {"count": 3, "p50": 20.0, "p95": 20.0},
         "total": {"count": 3, "p50": 50.0, "p95": 50.0},
+    }
+
+
+def test_selection_timeline_keeps_pause_and_gameflow_end_in_original_epoch(tmp_path: Path) -> None:
+    trace_path = tmp_path / "state" / "overlay_vision_trace.v1.json"
+    paused = _event(epoch=12, observed_at=40.0, active=False)
+    paused["source"].update(
+        {
+            "reason": "game_not_foreground",
+            "scene_state": "paused",
+            "transient_pause": True,
+            "game_instance_id": "game-a",
+        }
+    )
+    ended = _event(epoch=12, observed_at=40.2, active=False)
+    ended["source"].update(
+        {
+            "reason": "gameflow_ended",
+            "game_instance_id": "game-a",
+        }
+    )
+
+    target = sidecar_diagnostics.write_selection_timeline_observation(paused, trace_path)
+    sidecar_diagnostics.write_selection_timeline_observation(ended, trace_path)
+
+    assert target is not None
+    entries = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
+    assert [entry["source_reason"] for entry in entries] == ["game_not_foreground", "gameflow_ended"]
+    assert [entry["session_id"] for entry in entries] == ["session-a", "session-a"]
+    assert [entry["game_instance_id"] for entry in entries] == ["game-a", "game-a"]
+    assert entries[-1]["epoch_latency_ms"]["total"]["count"] == 2
+
+
+def test_pause_events_use_non_captured_monotonic_timing() -> None:
+    from hextech.infrastructure.vision import sidecar
+
+    paused = {
+        "source": {"reason": "game_not_foreground", "transient_pause": True},
+    }
+    ended = {"source": {"reason": "gameflow_ended"}}
+
+    sidecar.attach_visibility_probe_timing(paused)
+    sidecar.attach_visibility_probe_timing(ended)
+
+    for event in (paused, ended):
+        timing = event["timing"]
+        assert timing["capture_status"] == "not_captured"
+        assert timing["observation_kind"] == "visibility_probe"
+        assert timing["capture_started_at"] <= timing["captured_at"] <= timing["recognition_completed_at"]
+
+
+def test_selection_timeline_marks_zero_duration_visibility_probe(tmp_path: Path) -> None:
+    trace_path = tmp_path / "state" / "overlay_vision_trace.v1.json"
+    paused = _event(epoch=13, observed_at=50.0, active=False)
+    paused["source"].update(
+        {
+            "reason": "game_not_foreground",
+            "scene_state": "paused",
+            "transient_pause": True,
+        }
+    )
+    paused["timing"] = {
+        "observation_kind": "visibility_probe",
+        "capture_started_at": 50.0,
+        "captured_at": 50.0,
+        "recognition_completed_at": 50.0,
+    }
+
+    target = sidecar_diagnostics.write_selection_timeline_observation(paused, trace_path)
+
+    assert target is not None
+    entry = json.loads(target.read_text(encoding="utf-8").strip())
+    assert entry["observation_kind"] == "visibility_probe"
+    assert entry["capture_started_at"] == 50.0
+    assert entry["captured_at"] == 50.0
+    assert entry["recognition_completed_at"] == 50.0
+    assert entry["latency_ms"] == {"capture": 0.0, "recognition": 0.0, "total": 0.0}
+
+
+def test_epoch_latency_excludes_visibility_probes(tmp_path: Path) -> None:
+    trace_path = tmp_path / "state" / "overlay_vision_trace.v1.json"
+    sidecar_diagnostics.write_selection_timeline_observation(_event(epoch=14, observed_at=60.0), trace_path)
+    paused = _event(epoch=14, observed_at=60.1, active=False)
+    paused["source"].update({"reason": "game_not_foreground", "scene_state": "paused", "transient_pause": True})
+    paused["timing"] = {
+        "observation_kind": "visibility_probe",
+        "capture_status": "not_captured",
+        "capture_started_at": 60.1,
+        "captured_at": 60.1,
+        "recognition_completed_at": 60.1,
+    }
+    sidecar_diagnostics.write_selection_timeline_observation(paused, trace_path)
+    capture_failure = _event(epoch=14, observed_at=60.15, active=False)
+    capture_failure["source"]["reason"] = "capture_unavailable"
+    capture_failure["timing"] = {
+        "observation_kind": "capture_failure",
+        "capture_status": "unavailable",
+        "capture_started_at": 60.15,
+        "captured_at": 60.15,
+        "recognition_completed_at": 60.15,
+    }
+    sidecar_diagnostics.write_selection_timeline_observation(capture_failure, trace_path)
+    ended = _event(epoch=14, observed_at=60.2, active=False)
+    ended["source"]["reason"] = "gameflow_ended"
+    ended["timing"] = {
+        "observation_kind": "visibility_probe",
+        "capture_status": "not_captured",
+        "capture_started_at": 60.2,
+        "captured_at": 60.2,
+        "recognition_completed_at": 60.2,
+    }
+
+    target = sidecar_diagnostics.write_selection_timeline_observation(ended, trace_path)
+
+    assert target is not None
+    final = json.loads(target.read_text(encoding="utf-8").splitlines()[-1])
+    assert final["epoch_latency_ms"] == {
+        "capture": {"count": 1, "p50": 30.0, "p95": 30.0},
+        "recognition": {"count": 1, "p50": 20.0, "p95": 20.0},
+        "total": {"count": 1, "p50": 50.0, "p95": 50.0},
     }

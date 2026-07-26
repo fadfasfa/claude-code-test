@@ -81,9 +81,10 @@ def _sync_event_visibility(
     event_error = str(snapshot.get("error") or "").strip()
     source = _string_key_mapping(snapshot.get("source"))
     blocking_modal = bool(source.get("blocking_modal"))
+    transient_pause = bool(source.get("transient_pause"))
     stale_hold_active = bool(source.get("stale_event_hold_active"))
 
-    if selection_window_active is True and not event_error and not blocking_modal:
+    if selection_window_active is True and not event_error and not blocking_modal and not transient_pause:
         if not stale_hold_active:
             visibility["last_active_event"] = deepcopy(snapshot)
             visibility.pop("event_stale_hold_until", None)
@@ -149,6 +150,7 @@ def _sync_event_visibility(
             event_fresh_after_tab=event_fresh_after_tab,
             event_error=event_error,
             blocking_modal=blocking_modal,
+            transient_pause=transient_pause,
             diagnostic_mode=bool(config.get("diagnostic_mode")),
             stale_event_hold=stale_hold_active,
         )
@@ -162,9 +164,10 @@ def _sync_event_visibility(
     visibility["selection_window_active"] = selection_window_active
     visibility["event_error"] = event_error
     visibility["blocking_modal"] = blocking_modal
+    visibility["transient_pause"] = transient_pause
     visibility["event_stale_hold_active"] = stale_hold_active
     visibility["visibility_reason"] = reason
-    if selection_window_active is True and not game_hwnd:
+    if selection_window_active is True and not game_hwnd and not transient_pause:
         visibility.setdefault("active_target_missing_since", time.time())
     else:
         visibility.pop("active_target_missing_since", None)
@@ -466,15 +469,13 @@ def _write_overlay_session_report(
     return accepted
 
 
-def _drain_hotkey_requests(request_queue: "queue.Queue[str]", visibility: dict[str, bool]) -> None:
+def _drain_hotkey_requests(request_queue: "queue.Queue[str]", visibility: dict[str, Any]) -> None:
     while True:
         try:
             request = request_queue.get_nowait()
         except queue.Empty:
             return
-        if request == "toggle":
-            visibility["user_enabled"] = not bool(visibility.get("user_enabled"))
-        elif request == "toggle_mode":
+        if request == "toggle_mode":
             visibility["display_mode"] = (
                 "compact" if visibility.get("display_mode") == "expanded" else "expanded"
             )

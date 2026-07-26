@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import base64
-import ctypes
 import json
 import logging
 import os
@@ -40,7 +39,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import quote, urlparse
 
 import psutil
@@ -60,6 +59,11 @@ from hextech.modules.session.process_bootstrap import (
     PROCESS_BOOTSTRAP_FILE_ENV,
     PROCESS_BOOTSTRAP_TOKEN_ENV,
 )
+from hextech.interfaces.desktop.runtime_process_streams import (
+    drain_process_stream as _drain_process_stream,
+    pipe_tail_text as _pipe_tail_text,
+)
+from hextech.interfaces.desktop.runtime_process_windows import WindowsJobObject as _WindowsJobObject
 
 if TYPE_CHECKING:
     from hextech.interfaces.desktop.app import HextechUI
@@ -166,73 +170,6 @@ SERVER_PORT = _load_server_port()
 _AUTH_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,256}$")
 
 
-class _WindowsJobObject:
-    """Windows kill-on-close Job Object 句柄；非 Windows 不创建。"""
-
-    def __init__(self, process: subprocess.Popen) -> None:
-        self.handle = None
-        self.attached = False
-        if os.name != "nt":
-            return
-        try:
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            handle = kernel32.CreateJobObjectW(None, None)
-            if not handle:
-                return
-            class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-                _fields_ = [
-                    ("PerProcessUserTimeLimit", ctypes.c_longlong),
-                    ("PerJobUserTimeLimit", ctypes.c_longlong),
-                    ("LimitFlags", ctypes.c_uint32),
-                    ("MinimumWorkingSetSize", ctypes.c_size_t),
-                    ("MaximumWorkingSetSize", ctypes.c_size_t),
-                    ("ActiveProcessLimit", ctypes.c_uint32),
-                    ("Affinity", ctypes.c_size_t),
-                    ("PriorityClass", ctypes.c_uint32),
-                    ("SchedulingClass", ctypes.c_uint32),
-                ]
-            class IO_COUNTERS(ctypes.Structure):
-                _fields_ = [
-                    ("ReadOperationCount", ctypes.c_ulonglong),
-                    ("WriteOperationCount", ctypes.c_ulonglong),
-                    ("OtherOperationCount", ctypes.c_ulonglong),
-                    ("ReadTransferCount", ctypes.c_ulonglong),
-                    ("WriteTransferCount", ctypes.c_ulonglong),
-                    ("OtherTransferCount", ctypes.c_ulonglong),
-                ]
-            class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-                _fields_ = [
-                    ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-                    ("IoInfo", IO_COUNTERS),
-                    ("ProcessMemoryLimit", ctypes.c_size_t),
-                    ("JobMemoryLimit", ctypes.c_size_t),
-                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                    ("PeakJobMemoryUsed", ctypes.c_size_t),
-                ]
-
-            info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-            info.BasicLimitInformation.LimitFlags = 0x00002000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-            if not kernel32.SetInformationJobObject(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
-                kernel32.CloseHandle(handle)
-                return
-            if not kernel32.AssignProcessToJobObject(handle, int(process._handle)):
-                kernel32.CloseHandle(handle)
-                return
-            self.handle = handle
-            self._kernel32 = kernel32
-            self.attached = True
-        except Exception:
-            logger.debug("Runtime Supervisor Job Object 绑定失败。", exc_info=True)
-
-    def close(self) -> None:
-        if self.handle:
-            try:
-                self._kernel32.CloseHandle(self.handle)
-            except Exception:
-                logger.debug("Runtime Supervisor Job Object 关闭失败。", exc_info=True)
-            self.handle = None
-
-
 @dataclass
 class RuntimeSupervisorHandle:
     """桌面侧持有的 Runtime Supervisor bootstrap 信息。"""
@@ -243,6 +180,11 @@ class RuntimeSupervisorHandle:
     session_nonce: str
     pid: int
     job_object: _WindowsJobObject | None = None
+
+    def is_running(self) -> bool:
+        """按真实 Supervisor PID 判断存活，兼容已退出的 venv launcher。"""
+
+        return _managed_process_is_running(self.process, self.pid)
 
     @property
     def job_object_attached(self) -> bool:
@@ -265,22 +207,26 @@ class RuntimeSupervisorHandle:
         payload = response.json()
         return payload if isinstance(payload, dict) else {}
 
-    def get_status(self) -> dict:
+    def get_status(self, *, timeout: float = 2.0) -> dict:
+        """读取 Supervisor 状态；后台恢复可把请求限制在剩余总预算内。"""
+
         response = requests.get(
             f"http://127.0.0.1:{self.port}/v1/status",
             headers=self._supervisor_headers(),
-            timeout=2,
+            timeout=max(0.001, float(timeout)),
         )
         response.raise_for_status()
         payload = response.json()
         return payload if isinstance(payload, dict) else {}
 
-    def set_game_overlay_enabled(self, enabled: bool) -> dict:
+    def set_game_overlay_enabled(self, enabled: bool, *, timeout: float = 2.0) -> dict:
+        """设置 Overlay 期望状态；恢复路径不得额外获得固定两秒预算。"""
+
         response = requests.post(
             f"http://127.0.0.1:{self.port}/v1/actions/game-overlay",
             headers=self._supervisor_headers(),
             json={"enabled": bool(enabled)},
-            timeout=2,
+            timeout=max(0.001, float(timeout)),
         )
         response.raise_for_status()
         payload = response.json()
@@ -353,12 +299,18 @@ class DataServiceHandle:
     def poll(self) -> int | None:
         """把受管子进程状态暴露给 ServiceManager。"""
 
-        return self.process.poll()
+        if _managed_process_is_running(self.process, self.pid):
+            return None
+        try:
+            result = self.process.poll()
+        except Exception:
+            return 1
+        return int(result) if result is not None else 1
 
     def close_exited_resources(self) -> bool:
         """仅在子进程已经退出后关闭管道和 Windows Job Object。"""
 
-        if self.process.poll() is None:
+        if self.poll() is None:
             return False
         for stream in (self.process.stdout, self.process.stderr):
             try:
@@ -398,7 +350,7 @@ class DataServiceHandle:
             if isinstance(action, dict):
                 result = action.get("result")
                 return dict(result) if isinstance(result, dict) else {"state": "failed", "reason_code": "missing_result"}
-            if self.process.poll() is not None:
+            if self.poll() is not None:
                 raise RuntimeError(f"DataService action 执行期间退出：code={self.process.returncode}")
             time.sleep(0.2)
         raise TimeoutError(f"DataService action 超时：action_id={action_id}")
@@ -434,7 +386,30 @@ class DataServiceHandle:
                 except subprocess.TimeoutExpired:
                     self.process.kill()
                     self.process.wait(timeout=timeout)
+        self._wait_data_service_pid_exit(timeout=timeout)
         self.close_exited_resources()
+
+    def _wait_data_service_pid_exit(self, *, timeout: float) -> None:
+        """等待或终止已与 launcher 脱离的真实 DataService 子解释器。"""
+
+        if self.pid == _process_pid(self.process):
+            return
+        deadline = time.time() + max(0.1, float(timeout))
+        while time.time() < deadline:
+            if not _pid_is_running(self.pid):
+                return
+            time.sleep(0.05)
+        try:
+            child = psutil.Process(self.pid)
+            child.terminate()
+            child.wait(timeout=1.0)
+        except psutil.TimeoutExpired:
+            try:
+                child.kill()
+            except psutil.Error:
+                pass
+        except psutil.Error:
+            pass
 
 
 def _hidden_startupinfo():
@@ -445,36 +420,43 @@ def _hidden_startupinfo():
     return startupinfo
 
 
-def _drain_process_stream(
-    stream,
-    *,
-    tail: list[str] | None = None,
-) -> None:
-    """持续消费子进程文本管道，避免刷新日志填满 Windows pipe。"""
-
-    try:
-        while True:
-            raw_line = stream.readline()
-            if not raw_line:
-                return
-            line = raw_line.rstrip("\r\n")
-            if tail is not None and line:
-                tail.append(line)
-                del tail[:-20]
-    except (OSError, ValueError):
-        return
-
-
-def _pipe_tail_text(lines: list[str]) -> str:
-    return "\n".join(lines)[-500:]
-
-
 def _service_creationflags() -> int:
     """隔离 Ctrl+C，并确保源码态 Python 子进程也不会弹出控制台。"""
 
     if os.name != "nt":
         return 0
     return int(subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW)
+
+
+def _process_pid(process: object) -> int:
+    try:
+        return int(getattr(process, "pid", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _pid_is_running(pid: int) -> bool:
+    """以真实 PID 检查存活，避免 venv launcher 退出后误判服务死亡。"""
+
+    if int(pid) <= 0:
+        return False
+    try:
+        managed = psutil.Process(int(pid))
+        return bool(managed.is_running() and managed.status() != psutil.STATUS_ZOMBIE)
+    except (psutil.Error, OSError, ValueError, AttributeError):
+        return False
+
+
+def _managed_process_is_running(process: object, managed_pid: int) -> bool:
+    """launcher 与真实解释器 PID 不同时，以真实解释器为生命周期事实源。"""
+
+    launcher_pid = _process_pid(process)
+    if int(managed_pid) > 0 and launcher_pid > 0 and int(managed_pid) != launcher_pid:
+        return _pid_is_running(int(managed_pid))
+    try:
+        return getattr(process, "poll")() is None
+    except Exception:
+        return False
 
 
 def _prepare_process_bootstrap_env(base_env: dict[str, str] | None = None) -> tuple[dict[str, str], Path, str]:
@@ -488,6 +470,69 @@ def _prepare_process_bootstrap_env(base_env: dict[str, str] | None = None) -> tu
     return child_env, bootstrap_path, token
 
 
+def _bootstrap_pid_belongs_to_launcher(process: subprocess.Popen, payload_pid: int) -> bool:
+    """校验 bootstrap PID 属于本次启动的解释器树。
+
+    Windows venv 的 ``python.exe`` 在部分环境中是启动器：``Popen.pid`` 指向
+    launcher，而真正执行 ``-m hextech.bootstrap.*`` 的解释器是其子进程。随机
+    token 已绑定本次启动；这里再确认 payload PID 位于 launcher 子树，既不把
+    venv 运行时误判失败，也不接受同 token 外的无关 PID。
+    """
+
+    if payload_pid == int(process.pid):
+        return True
+    try:
+        return any(int(parent.pid) == int(process.pid) for parent in psutil.Process(payload_pid).parents())
+    except (psutil.Error, OSError, ValueError):
+        return False
+
+
+def _bootstrap_pid_is_accepted(process: subprocess.Popen, payload_pid: int) -> bool:
+    """校验 bootstrap 解释器是 launcher 后代，或 launcher 已退出后的存活子进程。"""
+
+    if _bootstrap_pid_belongs_to_launcher(process, payload_pid):
+        return True
+    try:
+        launcher_exited = process.poll() is not None
+    except Exception:
+        launcher_exited = False
+    # token 是本次启动随机生成并仅通过子进程环境传递；launcher 已退出后，Windows
+    # 可能已将真实解释器重新挂到系统进程，无法再依赖 parents() 链路。
+    return launcher_exited and _pid_is_running(payload_pid)
+
+
+def _terminate_verified_child(pid: int) -> None:
+    """终止已通过 token 与所有权校验的 launcher 后代，避免启动失败后遗留服务。"""
+
+    if not _pid_is_running(pid):
+        return
+    try:
+        child = psutil.Process(pid)
+        child.terminate()
+        try:
+            child.wait(timeout=1.0)
+        except psutil.TimeoutExpired:
+            child.kill()
+    except psutil.Error:
+        logger.debug("清理已验证 bootstrap 子解释器失败：pid=%s", pid, exc_info=True)
+
+
+def _cleanup_failed_bootstrap(process: subprocess.Popen, *, verified_pid: int) -> None:
+    """回收启动异常的 launcher 与已验证真实子解释器。"""
+
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+    except Exception:
+        logger.debug("清理 bootstrap launcher 失败。", exc_info=True)
+    if verified_pid > 0 and verified_pid != _process_pid(process):
+        _terminate_verified_child(verified_pid)
+
+
 def _read_process_bootstrap(
     bootstrap_path: Path,
     *,
@@ -496,17 +541,21 @@ def _read_process_bootstrap(
     deadline: float,
     service_name: str,
     stderr_tail: list[str],
+    on_verified_pid: Callable[[int], None] | None = None,
 ) -> dict[str, Any]:
     """等待并校验原子 bootstrap；不依赖 GUI 进程不存在的 stdout。"""
 
+    launcher_exit_code: int | None = None
     while time.time() < deadline:
-        if process.poll() is not None:
-            raise RuntimeError(
-                f"{service_name} 提前退出：code={process.returncode}; stderr={_pipe_tail_text(stderr_tail)}"
-            )
         try:
             payload = json.loads(bootstrap_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
+            try:
+                exit_code = process.poll()
+            except Exception:
+                exit_code = None
+            if exit_code is not None:
+                launcher_exit_code = int(exit_code)
             time.sleep(0.05)
             continue
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -520,9 +569,21 @@ def _read_process_bootstrap(
             port = int(payload.get("port") or 0)
         except (TypeError, ValueError) as exc:
             raise RuntimeError(f"{service_name} bootstrap 字段无效") from exc
-        if pid != int(process.pid) or not (1024 <= port <= 65535) or not str(payload.get("session_nonce") or ""):
-            raise RuntimeError(f"{service_name} bootstrap 进程或端口无效")
+        pid_accepted = _bootstrap_pid_is_accepted(process, pid)
+        if pid_accepted and on_verified_pid is not None:
+            on_verified_pid(pid)
+        if not pid_accepted or not (1024 <= port <= 65535) or not str(payload.get("session_nonce") or ""):
+            raise RuntimeError(
+                f"{service_name} bootstrap 进程或端口无效："
+                f"expected_pid={process.pid}, payload_pid={pid}, port={port}, "
+                f"has_nonce={bool(str(payload.get('session_nonce') or ''))}"
+            )
         return payload
+    if launcher_exit_code is not None:
+        raise RuntimeError(
+            f"{service_name} launcher 已退出且未收到有效 bootstrap："
+            f"code={launcher_exit_code}; stderr={_pipe_tail_text(stderr_tail)}"
+        )
     raise TimeoutError(f"{service_name} bootstrap 超时")
 
 
@@ -569,6 +630,7 @@ def start_runtime_supervisor_process(
     deadline = time.time() + float(timeout)
     stdout_tail: list[str] = []
     stderr_tail: list[str] = []
+    verified_pid: list[int] = []
     if process.stdout is not None:
         threading.Thread(
             target=_drain_process_stream,
@@ -591,6 +653,7 @@ def start_runtime_supervisor_process(
             deadline=deadline,
             service_name="Runtime Supervisor",
             stderr_tail=stderr_tail,
+            on_verified_pid=verified_pid.append,
         )
         handle = RuntimeSupervisorHandle(
             process=process,
@@ -602,12 +665,7 @@ def start_runtime_supervisor_process(
         handle.job_object = _WindowsJobObject(process)
         return handle
     except Exception:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
+        _cleanup_failed_bootstrap(process, verified_pid=verified_pid[-1] if verified_pid else 0)
         raise
     finally:
         _remove_process_bootstrap(bootstrap_path)
@@ -648,6 +706,7 @@ def start_data_service_process(
     deadline = time.time() + timeout
     stdout_tail: list[str] = []
     stderr_tail: list[str] = []
+    verified_pid: list[int] = []
     if process.stdout is not None:
         threading.Thread(
             target=_drain_process_stream,
@@ -670,6 +729,7 @@ def start_data_service_process(
             deadline=deadline,
             service_name="DataService",
             stderr_tail=stderr_tail,
+            on_verified_pid=verified_pid.append,
         )
         handle = DataServiceHandle(
             process=process,
@@ -680,12 +740,7 @@ def start_data_service_process(
         handle.job_object = _WindowsJobObject(process)
         return handle
     except Exception:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
+        _cleanup_failed_bootstrap(process, verified_pid=verified_pid[-1] if verified_pid else 0)
         raise
     finally:
         _remove_process_bootstrap(bootstrap_path)

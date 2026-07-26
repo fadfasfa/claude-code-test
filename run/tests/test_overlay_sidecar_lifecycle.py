@@ -287,7 +287,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         with (
             patch.object(runner, "_write_sidecar_bootstrap_from_env", side_effect=lambda state, **fields: bootstrap_states.append((state, fields))),
             patch.object(runner, "run_once", return_value=event),
-            patch("builtins.print"),
+            patch("hextech.infrastructure.vision.sidecar_diagnostics.sys.stdout", None),
         ):
             result = sidecar.main(["--once"])
 

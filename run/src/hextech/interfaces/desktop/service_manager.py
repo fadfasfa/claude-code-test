@@ -30,7 +30,7 @@ from hextech.modules.vision.window import find_lol_game_window
 from hextech.modules.vision.window_titles import LOL_CLIENT_WINDOW_TITLE
 
 
-ProcessFactory = Callable[[], Any]
+ProcessFactory = Callable[..., Any]
 OVERLAY_HOST_VISIBILITY_STALE_SECONDS = 6.0
 OVERLAY_VISION_TRACE_FILE = Path(overlay_runtime_state_path("overlay_vision_trace.v1.json"))
 OVERLAY_HOST_VISIBILITY_FILE = Path(overlay_runtime_state_path("game_overlay_visibility.v1.json"))
@@ -145,21 +145,27 @@ class ServiceManager:
             "state_path": str(OVERLAY_VISION_TRACE_FILE),
         }
 
-    def start_web(self) -> None:
+    def start_web(self, *, timeout: float | None = None) -> None:
+        """启动 Web；恢复路径可传入同一端到端 deadline 的剩余预算。"""
+
         with self._lock:
             if self.web.is_running():
                 self.web.mark("running")
                 return
             self.web.mark("starting")
             try:
-                self.web.process = self._start_process(self.web.name, self._start_web_func)
+                factory = self._start_web_func
+                self.web.process = self._start_process(
+                    self.web.name,
+                    factory if timeout is None else lambda: factory(timeout=float(timeout)),
+                )
                 self.web.mark("running")
             except Exception as exc:
                 self.web.process = None
                 self.web.mark("error", error=str(exc))
                 raise
 
-    def start_data_service(self) -> Any:
+    def start_data_service(self, *, timeout: float | None = None) -> Any:
         """启动唯一 DataService，并返回其本机控制面 handle。"""
 
         with self._lock:
@@ -178,9 +184,10 @@ class ServiceManager:
                 raise RuntimeError("ServiceManager 已进入关闭流程，拒绝启动 DataService")
             self.data_service.mark("starting")
             try:
+                factory = self._start_data_service_func
                 self.data_service.process = self._start_process(
                     self.data_service.name,
-                    self._start_data_service_func,
+                    factory if timeout is None else lambda: factory(timeout=float(timeout)),
                 )
                 self.data_service.mark("running")
                 return self.data_service.process

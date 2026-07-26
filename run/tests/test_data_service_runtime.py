@@ -327,6 +327,39 @@ def test_service_manager_restarts_data_service_after_child_exit() -> None:
     assert status["pid"] == 4322
 
 
+def test_data_service_handle_keeps_live_child_when_venv_launcher_has_exited(monkeypatch: pytest.MonkeyPatch) -> None:
+    from hextech.interfaces.desktop import runtime, runtime_processes
+
+    class ExitedLauncher:
+        pid = 101
+        returncode = 0
+        stdout = None
+        stderr = None
+
+        @staticmethod
+        def poll() -> int:
+            return 0
+
+    class JobObject:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    job = JobObject()
+    handle = runtime.DataServiceHandle(ExitedLauncher(), 52001, "nonce", 202, job)
+    child_alive = {"value": True}
+    monkeypatch.setattr(runtime_processes, "_pid_is_running", lambda _pid: child_alive["value"])
+
+    assert handle.poll() is None
+    assert handle.close_exited_resources() is False
+
+    child_alive["value"] = False
+    assert handle.poll() == 0
+    assert handle.close_exited_resources() is True
+    assert job.closed is True
+
+
 def test_data_service_bootstrap_timeout_is_not_blocked_by_readline(monkeypatch: pytest.MonkeyPatch) -> None:
     from hextech.interfaces.desktop import runtime
 

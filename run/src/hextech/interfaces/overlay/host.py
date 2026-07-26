@@ -29,7 +29,7 @@ from hextech.interfaces.overlay.host_platform import (
     _apply_overlay_window_styles,
     _find_target_game_window,
     _is_game_window_foreground,
-    _poll_alt_h_hotkey,
+    _poll_mode_hotkey,
     _register_foreground_event_hook,
     _schedule_foreground_event_drain,
     _start_hotkey_thread,

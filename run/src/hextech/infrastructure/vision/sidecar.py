@@ -118,6 +118,15 @@ build_parser = _forward_runner("build_parser")
 main = _forward_runner("main")
 
 
+def _configure_sidecar_gameflow_scanner() -> None:
+    """源码态 sidecar 也注入本机 LCU 扫描器，避免暂停期只能得到 unknown。"""
+
+    from hextech.infrastructure.lcu.official_overlay import scan_lcu_process
+    from hextech.modules.vision.gameflow import configure_lcu_scanner
+
+    configure_lcu_scanner(scan_lcu_process)
+
+
 # ``__getattr__`` 仍为旧的点属性调用提供窄兼容层；星号导入则只获得这份经过
 # 审核的 facade，避免把 PIL、numpy 或各职责模块的内部实现重新泄漏成公共 API。
 __all__ = (
@@ -141,4 +150,5 @@ __all__ = (
 
 
 if __name__ == "__main__":
+    _configure_sidecar_gameflow_scanner()
     raise SystemExit(main())

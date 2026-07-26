@@ -14,8 +14,6 @@ from typing import Any, Mapping, Sequence
 from hextech.modules.recommendation.hints import normalize_augment_id
 
 
-# 两个字体通道都达到该分数且 margin 足够时，才把不同 Top-1 视为真实冲突。
-STRONG_TEXT_CONFIDENCE = 0.74
 STRONG_TEXT_MARGIN = 0.025
 # 双字体一致只产生候选；是否对外 ready 统一由时序仲裁器决定。
 DUAL_FONT_CONFIDENCE = 0.70
@@ -171,8 +169,8 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
     决策树优先级：
     1. 脱敏真机卡名指纹 → strong observation
     2. 双字体同结果且有可靠图标 → strong observation
-    3. 相关双字体或无冲突单字体 → medium observation
-    4. 图标短名单与其余弱文字只保留诊断，不产生候选
+    3. 双字体同结果且无可靠图标冲突 → medium observation
+    4. 单字体、优势字体、图标短名单与其余弱文字只保留诊断，不产生候选
 
     本函数不决定最终 ready/failed；公开状态只由 SelectionTracker 裁决。
     """
@@ -224,25 +222,17 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             and icon_margin >= HIGH_CONFLICT_ICON_MARGIN
         )
 
-    text_conflict = bool(
-        text_identity
-        and alt_identity
-        and text_identity != alt_identity
-        and text_confidence >= STRONG_TEXT_CONFIDENCE
-        and alt_confidence >= STRONG_TEXT_CONFIDENCE
-        # 高绝对分但几乎没有 margin 的通道并不构成独立冲突证据；
-        # 合成回归中的短名称会产生这种“许多候选都很像”的备选字体结果。
-        and text_margin >= STRONG_TEXT_MARGIN
-        and alt_margin >= STRONG_TEXT_MARGIN
-    )
     # 双字体一致仍分证据等级：没有图标/视觉版本佐证的重复文字属于相关证据，
-    # 不能因为连续两帧就按 strong 提交。
+    # 不能因为连续两帧就按 strong 提交。可靠图标明确指向另一身份时，不能让
+    # 文字通道独立形成 ready；真机中这类系统性误匹配会在连续帧重复出现。
     if (
         text_identity
         and text_identity == alt_identity
         and text_confidence >= DUAL_FONT_CONFIDENCE
         and alt_confidence >= DUAL_FONT_CONFIDENCE
     ):
+        if has_high_icon_conflict(text_identity):
+            return None
         icon_support = bool(
             _identity(icon_top) == text_identity
             and icon_confidence >= VARIANT_ICON_CONFIDENCE
@@ -265,61 +255,8 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             evidence_grade="strong" if strong_dual else "medium",
         )
 
-    if text_conflict:
-        dominant_channels = (
-            (text, text_top, text_identity, text_confidence, alt_confidence, "dominant_text"),
-            (text_alt, alt_top, alt_identity, alt_confidence, text_confidence, "dominant_text_alt"),
-        )
-        for evidence, candidate, identity, confidence, other_confidence, rule in sorted(
-            dominant_channels,
-            key=lambda item: item[3],
-            reverse=True,
-        ):
-            if (
-                identity
-                and confidence >= 0.95
-                and confidence - other_confidence >= 0.10
-                and not has_high_icon_conflict(identity)
-            ):
-                return _candidate_from_top(
-                    slot,
-                    candidate,
-                    evidence=evidence,
-                    confidence=confidence,
-                    rule=rule,
-                    required_frames=3,
-                    evidence_grade="medium",
-                )
-
-    # 单字体即使绝对分高也只有一条证据链，只产生 medium observation。
-    strong_channels = (
-        (text, text_top, text_identity, text_confidence, text_margin, "strong_text"),
-        (text_alt, alt_top, alt_identity, alt_confidence, alt_margin, "strong_text_alt"),
-    )
-    for evidence, candidate, identity, confidence, margin, rule in sorted(
-        strong_channels,
-        key=lambda item: item[3],
-        reverse=True,
-    ):
-        if (
-            identity
-            and not text_conflict
-            and confidence >= 0.92
-            and margin >= STRONG_TEXT_MARGIN
-            and not has_high_icon_conflict(identity)
-        ):
-            return _candidate_from_top(
-                slot,
-                candidate,
-                evidence=evidence,
-                confidence=confidence,
-                rule=rule,
-                required_frames=3,
-                evidence_grade="medium",
-            )
-
-    # shortlist/弱文字仍保留在 channels 供诊断，但不能独立授权 ready。
-    # 真机证据表明重复观察只会复制同一系统性误匹配，并不会增加独立信息。
+    # 单字体、优势字体与 shortlist 仍保留在 channels 供诊断，但不能独立授权
+    # ready。真机证据表明重复观察只会复制同一系统性误匹配，并不会增加独立信息。
     return None
 
 
