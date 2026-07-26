@@ -89,6 +89,24 @@ def test_probe_interval_uses_fast_tier_only_while_waiting_for_league() -> None:
     assert BACKGROUND_PROCESS_PROBE_RUNNING_SECONDS > BACKGROUND_PROCESS_PROBE_SECONDS
 
 
+def test_probe_cadence_reacts_within_one_heartbeat_after_suspend_transition() -> None:
+    """running→suspended 转换后的第一个心跳必须已按 1 秒档执行探测。
+
+    审查实测：一次性给长 wait 选定间隔会把刚挂起的探测窗口冻在 5 秒档，
+    最坏 League→恢复约 18.4 秒，击穿 15 秒验收预算。
+    """
+
+    from hextech.interfaces.desktop.background_runtime import background_probe_due
+
+    # t=0 判定 suspend 的那轮刚探测过（状态仍 running）。
+    assert not background_probe_due("running", last_probe_at=0.0, now=1.0)
+    # t≈0.6 挂起完成置 suspended；t=1.0 的下一个心跳必须立刻恢复 1 秒档探测。
+    assert background_probe_due("suspended", last_probe_at=0.0, now=1.0)
+    # 运行期维持 5 秒节拍，不因心跳变密而增加枚举频率。
+    assert not background_probe_due("running", last_probe_at=0.0, now=4.0)
+    assert background_probe_due("running", last_probe_at=0.0, now=5.0)
+
+
 def test_manual_wake_starts_one_new_five_minute_window() -> None:
     action, idle = resolve_background_runtime_action(
         runtime_state="running",

@@ -193,6 +193,8 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
         def _publish_cached(photo) -> None:
             if label.winfo_exists():
                 label.config(image=photo)
+                # 标记供 keyed 增量渲染判断是否还需补载头像。
+                label._hextech_avatar_loaded = True
 
         if champ_id in ui.image_cache:
             cached_photo = ui.image_cache[champ_id]
@@ -231,6 +233,7 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
             ui.image_cache[champ_id] = photo
             if label.winfo_exists():
                 label.config(image=photo)
+                label._hextech_avatar_loaded = True
 
         ui._run_on_ui_thread(_publish_loaded)
     except Exception:

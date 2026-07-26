@@ -409,6 +409,7 @@ class DesktopViewMixin:
             highlightbackground=role_color if role in {"self", "teammate"} else UI_COLORS["gold"],
         )
         img_label.pack(side=tk.LEFT, padx=(0, scaled(8, scale)))
+        row["img_label"] = img_label
         threading.Thread(
             target=lambda champion_id=item["id"], label=img_label: self._load_and_set_img(champion_id, label),
             daemon=True,
@@ -535,6 +536,16 @@ class DesktopViewMixin:
                     )
                 row["win"] = item["win"]
                 row["pick"] = item["pick"]
+
+            img_label = row.get("img_label")
+            if img_label is not None and not getattr(img_label, "_hextech_avatar_loaded", False):
+                # keyed 复用不再每轮重建卡片；若建卡时头像下载在途被
+                # downloading_imgs 护栏跳过，这里必须补载，否则占位图会
+                # 停留到卡片下一次销毁重建（审查用真实 Tk 复现过该卡死）。
+                threading.Thread(
+                    target=lambda champion_id=item["id"], label=img_label: self._load_and_set_img(champion_id, label),
+                    daemon=True,
+                ).start()
         except tk.TclError:
             logger.debug("原地更新候选卡片失败。", exc_info=True)
 
@@ -592,12 +603,18 @@ class DesktopViewMixin:
             except tk.TclError:
                 logger.debug("更新折叠按钮文本失败。", exc_info=True)
         if self._collapsed:
-            # 折叠态隐藏底部状态栏，保留头像列表本体
+            # 折叠态隐藏底部状态栏与滚动条：112px 预算只留给头像 + T 级徽章，
+            # 8px 滚动条会把徽章挤出视口（滚轮翻页仍可用）。
+            if hasattr(self, "list_scrollbar") and self.list_scrollbar.winfo_exists():
+                self.list_scrollbar.pack_forget()
             if hasattr(self, "status_label") and self.status_label.winfo_exists():
                 self.status_label.pack_forget()
             if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
                 self.overlay_status_label.pack_forget()
         else:
+            if hasattr(self, "list_scrollbar") and self.list_scrollbar.winfo_exists():
+                # pack 次序决定空间分配：必须排在 expand 的 canvas 之前才拿得到宽度。
+                self.list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, before=self.canvas)
             if hasattr(self, "status_label") and self.status_label.winfo_exists():
                 self.status_label.pack(side=tk.BOTTOM, pady=5)
             if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():

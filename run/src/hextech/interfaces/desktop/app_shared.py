@@ -31,7 +31,9 @@ if TYPE_CHECKING:
 WEB_PORT_FILE = str(build_desktop_runtime_state_path("web_server_port.txt"))
 # 悬浮窗宽度基值（px，未乘 DPI）；高度随工作区自适应，折叠/展开只切换宽度。
 WINDOW_EXPANDED_WIDTH = 320
-WINDOW_COLLAPSED_WIDTH = 80
+# 折叠态预算：左 padding 10 + ribbon 3+5 + 头像 48+4(边框) + 间距 8 + T 级徽章 ≈ 102px；
+# 80px 会把头像裁半、徽章挤出视口（审查用真实 Tk 实测确认），留 10px 余量取 112。
+WINDOW_COLLAPSED_WIDTH = 112
 WINDOW_MIN_HEIGHT = 480
 # 取值对齐游戏内 Overlay 的 OVERLAY_THEME（canvas_renderer.py）拳头金蓝系；
 # 刻意不 import overlay 模块，避免与 Overlay 侧实现互相耦合。

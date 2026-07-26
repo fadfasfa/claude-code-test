@@ -73,7 +73,7 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert "游戏内显示: 正在提交启动请求" in ui_text
     assert "游戏内显示启动请求已提交" in ui_text
     assert "WINDOW_EXPANDED_WIDTH = 320" in ui_text
-    assert "WINDOW_COLLAPSED_WIDTH = 80" in ui_text
+    assert "WINDOW_COLLAPSED_WIDTH = 112" in ui_text
     assert "window_dpi_scale" in ui_text
     assert "manage_overlay_runtime=False" in ui_text
     assert "overlay_controller=GameOverlayController(" not in ui_text
@@ -227,3 +227,20 @@ def test_desktop_self_role_has_stronger_visual_priority_than_teammate() -> None:
     assert self_style["marker_width"] > teammate_style["marker_width"] > bench_style["marker_width"]
     assert self_style["accent"] != teammate_style["accent"]
     assert self_style["surface"] != bench_style["surface"]
+
+
+def test_collapsed_width_budget_fits_avatar_and_tier_badge() -> None:
+    """折叠态核心信息（头像 + T 级徽章）必须在基宽预算内完整可见。
+
+    审查用真实 Tk 实测：80px 基宽叠加滚动条后头像被裁半、徽章完全不渲染。
+    预算按 scale=1 常量推导；DPI 缩放各项等比放大，比例关系不变。
+    """
+
+    from hextech.interfaces.desktop.app_shared import WINDOW_COLLAPSED_WIDTH
+
+    left_padding = 10          # list_shell 左侧 padding（折叠态滚动条已隐藏）
+    ribbon = 3 + 5             # 角色色条及其右间距
+    avatar = 48 + 2 * 2        # 头像位图 + 高亮边框
+    avatar_gap = 8
+    badge_min = 24             # "T1" 12pt bold + padx 的保守下限
+    assert WINDOW_COLLAPSED_WIDTH >= left_padding + ribbon + avatar + avatar_gap + badge_min

@@ -27,7 +27,7 @@
 - 未稳定槽在至少 5 次原始观察、持续至少 2 秒且任一身份最高命中仍不足 2 次时，诊断为 `evidence_starved`；公共状态仍为 `detecting`，不得生成 `failed` 或 `RECOGNITION_MISSING`。该诊断只说明证据饥饿，不能据此全局放宽 OCR 阈值。
 - 场景门丢失采用真实时间宽限：已有部分稳定槽且仍有待识别槽时保留 6 秒，三槽均 ready 时保留 1.5 秒；场景恢复立即取消宽限并沿用原 epoch、revision 和证据。明确 `selection_click` / `selection_confirmed` 后可立即结束；其他情况只有宽限耗尽才输出 `scene_loss_confirmed`。鼠标遮挡、`card_residue` 和 `name_residue` 只能进入 `scene_grace_hold`，不能按固定两帧清空稳定槽。
 - `game_not_foreground`、计分板、临时最小化、短暂截图不可用和 client size 抖动使用 `transient_pause`：Host 隐藏窗口，但 Sidecar 保留当前 epoch、revision、稳定槽和证据；同一 `game_instance_id` 返回后继续识别。仅暂停期的低频 gameflow 探测明确确认结束时，才发布携带刚结束 epoch/revision 的 `gameflow_ended` 事件并清空；新游戏实例和明确选择完成也可清空。gameflow 探测在后台 daemon 线程执行并缓存结论，识别循环只读缓存不被本机 HTTP 阻塞；返回前台或换局的 reset 会作废仍在途的旧结论。
-- 联动面板文字按视口高度缩放（视口为游戏窗口物理像素，天然含 DPI）：expanded 标题/正文与 compact 单行都不再使用固定像素上限；面板高度按内容自适应、受卡片上方可用空间约束，超长说明以省略号截断，空间不足时整面板隐藏。评级以 tier 色徽章展示，不再拼进标题文本。
+- 联动面板文字按视口高度缩放（视口为游戏窗口物理像素，天然含 DPI）：expanded 标题/正文与 compact 单行随视口高度线性放大（视口高约 2000px 内不触顶；上限 30/24/22px 仅防超高分辨率下的极端字号）；面板高度按内容自适应、受卡片上方可用空间约束，超长说明以省略号截断，空间不足时整面板隐藏。评级以 tier 色徽章展示，不再拼进标题文本。
 - Sidecar status 暴露 `compute_profile=float32_batched`、计算镜像字节数、预热耗时和单帧各通道耗时；异宽指纹必须直接报错，不能静默丢行。
 
 ## 分来源 freshness 与联动
@@ -94,7 +94,7 @@ Vision 时间线 schema v1 每个 observation 记录独立序号、`capture_star
 
 打包前运行目标测试、完整 pytest、开发门禁、Pyright 和 packaged startup smoke。普通打包只生成候选，必须明确标记“候选未部署”；构建只允许使用 manifest v3。部署器拒绝缺少构建身份或 `runtime_contracts` 不等于 Overlay v3、Sidecar v2、session report v2 的候选。
 
-所有 runtime state 文件（含 `startup_timing.v1.json`）都携带 `build_id` 以自证来源。部署到 `C:\HextechCompanion` 后，真机测试前必须核对：
+参与 Build 一致性核对的 runtime state（`startup_timing.v1.json`、sidecar status、visibility、session report）携带 `build_id` 以自证来源；纯诊断类 state（如 `background_runtime_transitions.v1.json`、trace history、timeline 条目）暂不携带。部署到 `C:\HextechCompanion` 后，真机测试前必须核对：
 
 1. `Hextech伴生终端.exe` 的修改时间、FileVersion 和 SHA-256 属于本次构建。
 2. `_internal\bundle_manifest.json` 的 `build_id`、源码 revision、源码指纹和契约版本完整。

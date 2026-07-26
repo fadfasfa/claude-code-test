@@ -88,6 +88,17 @@ def resolve_background_probe_interval(runtime_state: str) -> float:
     return BACKGROUND_PROCESS_PROBE_RUNNING_SECONDS
 
 
+def background_probe_due(runtime_state: str, *, last_probe_at: float, now: float) -> bool:
+    """恒定 1 秒心跳下判定本轮是否执行昂贵的全进程枚举。
+
+    间隔必须每轮按“当前”状态重算：若在进入长 wait 时一次性选定间隔，
+    running→suspended 的转换会让刚挂起的那个探测窗口沿用 5 秒档，
+    League 出现的最坏响应变成约 5+13 秒，击穿 15 秒唤醒预算。
+    """
+
+    return now - last_probe_at >= resolve_background_probe_interval(runtime_state)
+
+
 def resolve_background_runtime_action(
     *,
     runtime_state: str,
@@ -175,13 +186,22 @@ class DesktopBackgroundRuntimeMixin:
         )
 
     def _background_runtime_loop(self) -> None:
-        while not self._background_runtime_stop.wait(
-            resolve_background_probe_interval(self._background_runtime_state)
-        ):
+        # 心跳恒定 1 秒；昂贵的全进程枚举按“当前”状态节拍执行。长 wait 会把
+        # 进入时采样的状态冻结一个周期，running→suspended 转换后的第一个探测
+        # 窗口就会错用 5 秒档，最坏让 League 唤醒预算 15 秒被击穿。
+        last_probe_at = 0.0
+        while not self._background_runtime_stop.wait(BACKGROUND_PROCESS_PROBE_SECONDS):
             if self._closing:
                 return
+            if not background_probe_due(
+                self._background_runtime_state,
+                last_probe_at=last_probe_at,
+                now=time.monotonic(),
+            ):
+                continue
             process_state = probe_league_process_state()
             now = time.monotonic()
+            last_probe_at = now
             action, idle_started_at = resolve_background_runtime_action(
                 runtime_state=self._background_runtime_state,
                 idle_started_at=self._background_idle_started_at,
@@ -722,6 +742,7 @@ __all__ = [
     "DesktopBackgroundRuntimeMixin",
     "LEAGUE_CLIENT_PROCESS_NAMES",
     "LEAGUE_GAME_PROCESS_NAMES",
+    "background_probe_due",
     "resolve_background_probe_interval",
     "MANUAL_WINDOW_VISIBLE_SECONDS",
     "probe_league_process_state",

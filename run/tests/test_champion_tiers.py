@@ -64,7 +64,9 @@ def test_desktop_fallback_and_web_grouping_never_emit_t_question_mark() -> None:
     assert app_view.normalized_champion_tier("T?", score=1.5) == "T1"
     assert app_view.normalized_champion_tier("", score=-0.31) == "T5"
 
-    index_script = (
+    # ESM 重构后评级渲染在 js/index/ 子模块；断言聚合全部前端脚本，
+    # 同时保证任何模块都不会把未知评级渲染成 "T?"。
+    js_root = (
         Path(__file__).resolve().parents[1]
         / "src"
         / "hextech"
@@ -73,8 +75,10 @@ def test_desktop_fallback_and_web_grouping_never_emit_t_question_mark() -> None:
         / "backend"
         / "static"
         / "js"
-        / "index.js"
-    ).read_text(encoding="utf-8")
-    assert "champ['英雄评级']" in index_script
-    assert "TIER_BY_ID.get('T3')" in index_script
-    assert "T?" not in index_script
+    )
+    combined_scripts = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(js_root.rglob("*.js"))
+    )
+    assert "champ['英雄评级']" in combined_scripts
+    assert "TIER_BY_ID.get('T3')" in combined_scripts
+    assert "T?" not in combined_scripts
