@@ -464,6 +464,19 @@ class DesktopViewMixin:
         )
         name_label.pack(side=tk.LEFT, anchor="w")
         row["name_label"] = name_label
+        # 己方已选英雄的明确标识（真机反馈）：只做名字后的金色小徽章，
+        # 不恢复此前删除的整卡高亮；显隐由 _update_candidate_card 按
+        # selection_role 切换（bench→self 跃迁时 keyed 复用不重建卡片）。
+        selected_badge = tk.Label(
+            title_row,
+            text="已选",
+            font=ui_font(11, bold=True),
+            fg=UI_COLORS["header"],
+            bg=UI_COLORS["gold"],
+            padx=scaled(4, scale),
+        )
+        row["selected_badge"] = selected_badge
+        row["selection_role"] = ""
         pick_label = tk.Label(
             info,
             text="",
@@ -509,6 +522,14 @@ class DesktopViewMixin:
                 display_name = str(item["name"])
                 if row["name_label"].cget("text") != display_name:
                     row["name_label"].config(text=display_name)
+
+            selection_role = str(item.get("selection_role") or "")
+            if row.get("selected_badge") is not None and selection_role != row.get("selection_role"):
+                if selection_role == "self":
+                    row["selected_badge"].pack(side=tk.LEFT, padx=(scaled(4, scale), 0))
+                else:
+                    row["selected_badge"].pack_forget()
+            row["selection_role"] = selection_role
 
             if item["win"] != row.get("win") or item["pick"] != row.get("pick"):
                 win_color = UI_COLORS["green"] if item["win"] >= 0.5 else UI_COLORS["red"]
@@ -589,6 +610,39 @@ class DesktopViewMixin:
         if was_manual:
             self._run_on_ui_thread(lambda: self._set_status("实时数据已挂载", UI_COLORS["green"]))
 
+    def _sync_list_scrollbar(self) -> None:
+        """滚动条只在列表内容溢出可视高度时出现；未溢出时隐藏并回到顶部。
+
+        真机反馈：英雄数量没有溢出时常驻滑块破坏观感；折叠态始终隐藏
+        （112px 预算里滚动条会把徽章挤出视口，滚轮翻页仍可用）。
+        """
+
+        scrollbar = getattr(self, "list_scrollbar", None)
+        canvas = getattr(self, "canvas", None)
+        list_frame = getattr(self, "list_frame", None)
+        if scrollbar is None or canvas is None or list_frame is None:
+            return
+        try:
+            if getattr(self, "_collapsed", False):
+                if scrollbar.winfo_ismapped():
+                    scrollbar.pack_forget()
+                return
+            content_height = int(list_frame.winfo_reqheight())
+            viewport_height = int(canvas.winfo_height())
+            # 首次布局前 winfo_height 为 1，此时不做判定，等 <Configure> 再来。
+            if viewport_height <= 1:
+                return
+            if content_height > viewport_height:
+                if not scrollbar.winfo_ismapped():
+                    # pack 次序决定空间分配：必须排在 expand 的 canvas 之前才拿得到宽度。
+                    scrollbar.pack(side=tk.RIGHT, fill=tk.Y, before=canvas)
+            else:
+                if scrollbar.winfo_ismapped():
+                    scrollbar.pack_forget()
+                canvas.yview_moveto(0.0)
+        except tk.TclError:
+            logger.debug("同步列表滚动条可见性失败。", exc_info=True)
+
     def _toggle_collapse(self, _event=None) -> None:
         """切换悬浮窗折叠态：只切固定宽度基值，高度沿用当前跟随高度。"""
         self._collapsed = not self._collapsed
@@ -611,9 +665,8 @@ class DesktopViewMixin:
             if hasattr(self, "status_bar") and self.status_bar.winfo_exists():
                 self.status_bar.pack_forget()
         else:
-            if hasattr(self, "list_scrollbar") and self.list_scrollbar.winfo_exists():
-                # pack 次序决定空间分配：必须排在 expand 的 canvas 之前才拿得到宽度。
-                self.list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, before=self.canvas)
+            # 展开时滚动条是否出现交给溢出判定，不再无条件恢复。
+            self._sync_list_scrollbar()
             if hasattr(self, "status_bar") and self.status_bar.winfo_exists():
                 self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=(10, 6), pady=(2, 6))
         self._schedule_current_hero_refresh()

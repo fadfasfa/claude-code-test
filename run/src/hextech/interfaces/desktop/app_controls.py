@@ -148,34 +148,49 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             width=scaled(8, scale),
         )
         self.canvas.configure(yscrollcommand=self.list_scrollbar.set)
-        self.list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # 滚动条不在此处 pack：只在内容真正溢出可视高度时由 _sync_list_scrollbar
+        # 显示，未溢出时常驻的滑块会破坏观感（真机反馈）。
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._list_window_id = self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
         # 卡片宽度必须跟随 canvas 实际宽度，否则 fill=X 只能撑到内容自然宽度
         self.canvas.bind(
             "<Configure>",
-            lambda e: self.canvas.itemconfigure(self._list_window_id, width=e.width),
+            lambda e: (
+                self.canvas.itemconfigure(self._list_window_id, width=e.width),
+                self._sync_list_scrollbar(),
+            ),
         )
 
         def _on_mousewheel(event):
-            # 滚轮只在指针位于列表区域内时生效，不再全局拦截整个应用的滚轮
+            # 滚轮只在指针位于列表区域内时生效，不再全局拦截整个应用的滚轮；
+            # 内容未溢出（滚动条隐藏）时不响应，避免无意义的视图抖动。
             node = self.root.winfo_containing(event.x_root, event.y_root)
             while node is not None:
                 if node is self.list_shell:
-                    self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                    if self.list_scrollbar.winfo_ismapped():
+                        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
                     break
                 node = getattr(node, "master", None)
 
         self.root.bind_all("<MouseWheel>", _on_mousewheel)
-        self.list_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.list_frame.bind(
+            "<Configure>",
+            lambda e: (
+                self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+                self._sync_list_scrollbar(),
+            ),
+        )
 
         # 底部单行状态栏：状态点 + 关键短语。旧结构是两条独立 Label，320px 宽度
         # 下长文案（构建号、诊断路径）必然被裁切；收敛为单行后由
         # _render_status_line 按通道优先级合成，细节移入日志与诊断导出。
+        # 点 + 文字放进内层 frame 整体水平居中（真机反馈：左对齐观感差）。
         self.status_bar = tk.Frame(self.root, bg=UI_COLORS["base"])
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=(10, 6), pady=(2, 6))
+        self._status_bar_inner = tk.Frame(self.status_bar, bg=UI_COLORS["base"])
+        self._status_bar_inner.pack()
         self.status_dot = tk.Canvas(
-            self.status_bar,
+            self._status_bar_inner,
             width=10,
             height=10,
             bg=UI_COLORS["base"],
@@ -184,14 +199,13 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
         )
         self.status_dot.pack(side=tk.LEFT, padx=(0, 5))
         self.status_line_label = tk.Label(
-            self.status_bar,
+            self._status_bar_inner,
             text="系统初始化中...",
             bg=UI_COLORS["base"],
             fg=UI_COLORS["muted"],
             font=ui_font(11),
-            anchor="w",
         )
-        self.status_line_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.status_line_label.pack(side=tk.LEFT)
         self._render_status_line()
         self._refresh_feature_toggle_styles()
 

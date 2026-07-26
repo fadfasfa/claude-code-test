@@ -167,3 +167,91 @@ def test_card_update_sets_big_win_label_and_weak_pick_label() -> None:
     assert row["win_label"].text == "48.0%"
     assert row["win_label"].fg == UI_COLORS["red"]
     assert row["ribbon"].kwargs.get("bg") == UI_COLORS["red"]
+
+
+class _PackWidget:
+    """记录 pack/pack_forget 的伪 widget，模拟 Tk 的 mapped 状态。"""
+
+    def __init__(self):
+        self.mapped = False
+        self.pack_calls: list[dict] = []
+
+    def winfo_ismapped(self):
+        return self.mapped
+
+    def pack(self, **kwargs):
+        self.mapped = True
+        self.pack_calls.append(kwargs)
+
+    def pack_forget(self):
+        self.mapped = False
+
+
+def test_selected_badge_toggles_with_selection_role() -> None:
+    """回归：己方已选英雄要有明确标识，且 bench→self 跃迁原地切换不重建卡片。"""
+
+    ui = object.__new__(HextechUI)
+    badge = _PackWidget()
+    row = {
+        "id": "1",
+        "name": "",
+        "tier": "T4",
+        "win": None,
+        "pick": None,
+        "tier_badge": None,
+        "name_label": _Widget(),
+        "win_label": _Widget(),
+        "pick_label": _Widget(),
+        "ribbon": _Widget(),
+        "selected_badge": badge,
+        "selection_role": "",
+    }
+
+    HextechUI._update_candidate_card(
+        ui, row, {"id": "1", "name": "潮汐海灵", "tier": "T4", "win": 0.502, "pick": 0.006, "selection_role": "self"}, 1.0
+    )
+    assert badge.mapped is True
+
+    HextechUI._update_candidate_card(
+        ui, row, {"id": "1", "name": "潮汐海灵", "tier": "T4", "win": 0.502, "pick": 0.006, "selection_role": "bench"}, 1.0
+    )
+    assert badge.mapped is False
+
+
+def _scroll_ui(content_height: int, viewport_height: int, *, collapsed: bool = False):
+    ui = object.__new__(HextechUI)
+    ui._collapsed = collapsed
+    ui.list_scrollbar = _PackWidget()
+    ui.list_frame = SimpleNamespace(winfo_reqheight=lambda: content_height)
+    moves: list[float] = []
+    ui.canvas = SimpleNamespace(
+        winfo_height=lambda: viewport_height,
+        yview_moveto=lambda value: moves.append(value),
+    )
+    ui._yview_moves = moves
+    return ui
+
+
+def test_list_scrollbar_only_appears_on_overflow() -> None:
+    """回归：英雄数量未溢出可视高度时不得出现滚动条（真机观感反馈）。"""
+
+    fits = _scroll_ui(500, 700)
+    HextechUI._sync_list_scrollbar(fits)
+    assert fits.list_scrollbar.mapped is False
+    assert fits._yview_moves == [0.0]
+
+    overflow = _scroll_ui(900, 700)
+    HextechUI._sync_list_scrollbar(overflow)
+    assert overflow.list_scrollbar.mapped is True
+    assert overflow.list_scrollbar.pack_calls[0].get("before") is overflow.canvas
+
+    # 首次布局前 viewport 高度为 1：不做判定，保持现状等下一次 <Configure>。
+    unmeasured = _scroll_ui(500, 1)
+    HextechUI._sync_list_scrollbar(unmeasured)
+    assert unmeasured.list_scrollbar.mapped is False
+    assert unmeasured._yview_moves == []
+
+    collapsed = _scroll_ui(900, 700, collapsed=True)
+    collapsed.list_scrollbar.mapped = True
+    HextechUI._sync_list_scrollbar(collapsed)
+    assert collapsed.list_scrollbar.mapped is False
