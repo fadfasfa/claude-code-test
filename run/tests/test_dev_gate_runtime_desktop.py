@@ -72,7 +72,9 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert "_set_overlay_status_summary" in ui_text
     assert "游戏内显示: 正在提交启动请求" in ui_text
     assert "游戏内显示启动请求已提交" in ui_text
-    assert "WINDOW_EXPANDED_GEOMETRY = \"320x740\"" in ui_text
+    assert "WINDOW_EXPANDED_WIDTH = 320" in ui_text
+    assert "WINDOW_COLLAPSED_WIDTH = 80" in ui_text
+    assert "window_dpi_scale" in ui_text
     assert "manage_overlay_runtime=False" in ui_text
     assert "overlay_controller=GameOverlayController(" not in ui_text
     assert "start_vision_sidecar_process" not in ui_text

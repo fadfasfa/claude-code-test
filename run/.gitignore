@@ -39,5 +39,8 @@ env/
 .venv
 .gitnexus
 
+# Node（Web 前端 Tailwind 构建依赖，产物 tailwind-compiled.css 入库）
+node_modules/
+
 # Runtime state
 var/

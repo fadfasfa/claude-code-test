@@ -1,16 +1,19 @@
 """Desktop DesktopViewMixin 职责模块。"""
 from hextech.interfaces.desktop.app_shared import (
     Mapping,
+    TIER_COLORS,
     UI_COLORS,
-    WINDOW_COLLAPSED_GEOMETRY,
-    WINDOW_EXPANDED_GEOMETRY,
+    WINDOW_COLLAPSED_WIDTH,
+    WINDOW_EXPANDED_WIDTH,
     _empty_champions,
     _render_winrate_bar,
     _selection_role_style,
     logger,
+    scaled,
     threading,
     time,
     tk,
+    ui_font,
     ui_runtime,
 )
 from hextech.modules.data.catalog.champion_tier import normalized_champion_tier
@@ -225,6 +228,68 @@ class DesktopViewMixin:
             )
         return display_list
 
+    def _ui_scale_value(self) -> float:
+        return float(getattr(self, "_ui_scale", 1.0))
+
+    def _ensure_card_state(self) -> None:
+        """兼容轻量测试对象：惰性补齐 keyed 渲染缓存。"""
+
+        if not hasattr(self, "_card_rows"):
+            self._card_rows = {}
+        if not hasattr(self, "_card_order"):
+            self._card_order = []
+        if not hasattr(self, "_list_placeholder"):
+            self._list_placeholder = None
+
+    def _reset_card_cache(self) -> None:
+        self._ensure_card_state()
+        for row in self._card_rows.values():
+            try:
+                row["card"].destroy()
+            except tk.TclError:
+                logger.debug("销毁候选卡片失败。", exc_info=True)
+        self._card_rows = {}
+        self._card_order = []
+
+    def _clear_list_placeholder(self) -> None:
+        if self._list_placeholder is not None:
+            try:
+                self._list_placeholder.destroy()
+            except tk.TclError:
+                logger.debug("销毁空态提示失败。", exc_info=True)
+            self._list_placeholder = None
+
+    def _show_list_placeholder(self, text: str) -> None:
+        scale = self._ui_scale_value()
+        self._reset_card_cache()
+        self._clear_list_placeholder()
+        self._list_placeholder = tk.Label(
+            self.list_frame,
+            text=text,
+            fg=UI_COLORS["warn"],
+            bg=UI_COLORS["base"],
+            font=ui_font(scale, 12),
+        )
+        self._list_placeholder.pack(pady=scaled(20, scale))
+
+    def _avatar_placeholder_image(self):
+        """共享的圆角头像占位图：卡片首绘即占位，异步加载完成后原地替换。"""
+
+        if getattr(self, "_avatar_placeholder_photo", None) is None:
+            from PIL import Image, ImageDraw, ImageTk
+
+            scale = self._ui_scale_value()
+            size = scaled(48, scale)
+            radius = scaled(8, scale)
+            img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            draw.rounded_rectangle((0, 0, size - 1, size - 1), radius=radius, fill=UI_COLORS["surface_alt"])
+            self._avatar_placeholder_photo = ImageTk.PhotoImage(img)
+        return self._avatar_placeholder_photo
+
+    def _tier_badge_style(self, tier: str) -> dict:
+        return TIER_COLORS.get(str(tier or "").upper(), TIER_COLORS["T3"])
+
     def update_ui(self, hero_ids):
         if self._ui_render_in_progress:
             self._pending_ui_refresh = hero_ids
@@ -232,9 +297,7 @@ class DesktopViewMixin:
 
         self._ui_render_in_progress = True
         try:
-            for widget in self.list_frame.winfo_children():
-                widget.destroy()
-
+            self._ensure_card_state()
             with self._champions_lock:
                 current_champions = list(self.champions)
                 is_empty = not current_champions
@@ -255,13 +318,7 @@ class DesktopViewMixin:
             else:
                 empty_message = ""
             if empty_message:
-                tk.Label(
-                    self.list_frame,
-                    text=empty_message,
-                    fg=UI_COLORS["warn"],
-                    bg=UI_COLORS["base"],
-                    font=("Microsoft YaHei", 9),
-                ).pack(pady=20)
+                self._show_list_placeholder(empty_message)
                 return
 
             if connection == "degraded":
@@ -271,133 +328,215 @@ class DesktopViewMixin:
 
             display_list = self._build_candidate_display_list(hero_ids, current_champions)
             if not display_list:
-                tk.Label(
-                    self.list_frame,
-                    text="当前数据集中缺少对应英雄",
-                    fg=UI_COLORS["warn"],
-                    bg=UI_COLORS["base"],
-                    font=("Microsoft YaHei", 9),
-                ).pack(pady=20)
+                self._show_list_placeholder("当前数据集中缺少对应英雄")
                 return
 
-            for item in display_list:
-                role = item.get("selection_role", "bench")
-                role_style = _selection_role_style(str(role))
-                role_color = str(role_style["accent"])
-                card_surface = str(role_style["surface"])
-                card = tk.Frame(
-                    self.list_frame,
-                    bg=card_surface,
-                    highlightthickness=int(role_style["border_width"]),
-                    highlightbackground=role_color,
-                    pady=3,
-                    padx=4,
-                    cursor="hand2",
-                )
-                card.pack(fill=tk.X, pady=3, padx=(0, 10))
-
-                if int(role_style["marker_width"]) > 0:
-                    tk.Frame(card, bg=role_color, width=int(role_style["marker_width"])).pack(side=tk.LEFT, fill=tk.Y, padx=(0, 4))
-
-                ribbon_color = UI_COLORS["green"] if item["win"] >= 0.5 else UI_COLORS["red"]
-                ribbon = tk.Frame(card, bg=ribbon_color, width=3)
-                ribbon.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
-
-                img_label = tk.Label(
-                    card,
-                    bg=card_surface,
-                    highlightthickness=2 if role in {"self", "teammate"} else 1,
-                    highlightbackground=role_color if role in {"self", "teammate"} else UI_COLORS["gold"],
-                )
-                img_label.pack(side=tk.LEFT, padx=(0, 8))
-                threading.Thread(
-                    target=lambda champion_id=item["id"], label=img_label: self._load_and_set_img(champion_id, label),
-                    daemon=True,
-                ).start()
-
-                # 折叠态只渲染头像 + T 级标签，省掉胜率/出场率/胜率条
-                if self._collapsed:
-                    tk.Label(
-                        card,
-                        text=item["tier"],
-                        font=("Microsoft YaHei", 9, "bold"),
-                        fg=UI_COLORS["text"],
-                        bg=card_surface,
-                    ).pack(side=tk.LEFT)
-                    if role in {"self", "teammate"}:
-                        tk.Label(
-                            card,
-                            text="我" if role == "self" else "队友",
-                            font=("Microsoft YaHei", 7, "bold"),
-                            fg=str(role_style["text"]),
-                            bg=role_color,
-                            padx=5 if role == "self" else 3,
-                            pady=1,
-                        ).pack(side=tk.RIGHT)
-
-                    def bind_collapsed_click(widget, cid, name):
-                        widget.bind("<Button-1>", lambda e, c=cid, n=name: self.on_hero_click(c, n))
-                        for child in widget.winfo_children():
-                            bind_collapsed_click(child, cid, name)
-
-                    bind_collapsed_click(card, item["id"], item["name"])
-                    continue
-
-                info = tk.Frame(card, bg=card_surface)
-                info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-                title = self.core_data.get(str(item["id"]), {}).get("title", "")
-                full_name = f"{item['name']} {title}".strip() if title else item["name"]
-
-                title_row = tk.Frame(info, bg=card_surface)
-                title_row.pack(fill=tk.X)
-                tk.Label(
-                    title_row,
-                    text=f"[{item['tier']}] {full_name}",
-                    font=("Microsoft YaHei", 9, "bold"),
-                    fg=UI_COLORS["text"],
-                    bg=card_surface,
-                ).pack(side=tk.LEFT, anchor="w")
-                if role in {"self", "teammate"}:
-                    tk.Label(
-                        title_row,
-                        text="我的英雄" if role == "self" else "队友已选",
-                        font=("Microsoft YaHei", 8, "bold"),
-                        fg=str(role_style["text"]),
-                        bg=role_color,
-                        padx=7 if role == "self" else 5,
-                        pady=1,
-                    ).pack(side=tk.RIGHT)
-                tk.Label(
-                    info,
-                    text=f"胜率: {item['win']:.1%} | 出场: {item['pick']:.1%}",
-                    font=("Microsoft YaHei", 8),
-                    fg=UI_COLORS["muted"],
-                    bg=card_surface,
-                ).pack(anchor="w", pady=(1, 0))
-
-                bar_canvas = tk.Canvas(info, height=3, bg=UI_COLORS["base"], highlightthickness=0)
-                bar_canvas.pack(fill=tk.X, pady=(3, 0))
-                ratio = max(0, min(1, (item["win"] - 0.40) / 0.20))
-
-                # 渐变填充 + 50% 温饱基准线，替代纯红黄绿三色阈值
-                bar_canvas.bind(
-                    "<Configure>",
-                    lambda e, c=bar_canvas, r=ratio: _render_winrate_bar(c, e.width, r),
-                )
-
-                def bind_click(widget, cid, name):
-                    widget.bind("<Button-1>", lambda e, c=cid, n=name: self.on_hero_click(c, n))
-                    for child in widget.winfo_children():
-                        bind_click(child, cid, name)
-
-                bind_click(card, item["id"], item["name"])
+            self._clear_list_placeholder()
+            self._render_candidate_cards(display_list)
         finally:
             self._ui_render_in_progress = False
             if self._pending_ui_refresh is not None:
                 pending = self._pending_ui_refresh
                 self._pending_ui_refresh = None
                 self.root.after_idle(lambda ids=pending: self.update_ui(ids))
+
+    def _render_candidate_cards(self, display_list: list[dict]) -> None:
+        """keyed 增量渲染：同键行原地更新，成员变化才建/销卡片，消除全量重建闪烁。"""
+
+        scale = self._ui_scale_value()
+        desired_keys = [
+            (str(item["id"]), str(item.get("selection_role", "bench")))
+            for item in display_list
+        ]
+        desired_set = set(desired_keys)
+
+        for key in list(self._card_rows):
+            if key not in desired_set:
+                row = self._card_rows.pop(key)
+                try:
+                    row["card"].destroy()
+                except tk.TclError:
+                    logger.debug("销毁移除的候选卡片失败。", exc_info=True)
+
+        for item, key in zip(display_list, desired_keys):
+            row = self._card_rows.get(key)
+            if row is None:
+                self._card_rows[key] = self._build_candidate_card(item, scale)
+            else:
+                self._update_candidate_card(row, item, scale)
+
+        if desired_keys != self._card_order:
+            for key in desired_keys:
+                card = self._card_rows[key]["card"]
+                card.pack_forget()
+                card.pack(fill=tk.X, pady=scaled(3, scale), padx=(0, scaled(10, scale)))
+            self._card_order = desired_keys
+
+    def _build_candidate_card(self, item: dict, scale: float) -> dict:
+        role = str(item.get("selection_role", "bench"))
+        role_style = _selection_role_style(role)
+        role_color = str(role_style["accent"])
+        card_surface = str(role_style["surface"])
+        badge_style = self._tier_badge_style(item["tier"])
+
+        row: dict = {"id": item["id"], "name": item["name"], "tier": item["tier"], "win": None, "pick": None}
+        card = tk.Frame(
+            self.list_frame,
+            bg=card_surface,
+            highlightthickness=int(role_style["border_width"]),
+            highlightbackground=role_color,
+            pady=scaled(3, scale),
+            padx=scaled(4, scale),
+            cursor="hand2",
+        )
+        card.pack(fill=tk.X, pady=scaled(3, scale), padx=(0, scaled(10, scale)))
+        row["card"] = card
+
+        if int(role_style["marker_width"]) > 0:
+            tk.Frame(card, bg=role_color, width=scaled(int(role_style["marker_width"]), scale)).pack(
+                side=tk.LEFT, fill=tk.Y, padx=(0, scaled(4, scale))
+            )
+
+        ribbon = tk.Frame(card, bg=UI_COLORS["green"], width=scaled(3, scale))
+        ribbon.pack(side=tk.LEFT, fill=tk.Y, padx=(0, scaled(5, scale)))
+        row["ribbon"] = ribbon
+
+        img_label = tk.Label(
+            card,
+            bg=card_surface,
+            image=self._avatar_placeholder_image(),
+            highlightthickness=scaled(2, scale) if role in {"self", "teammate"} else scaled(1, scale),
+            highlightbackground=role_color if role in {"self", "teammate"} else UI_COLORS["gold"],
+        )
+        img_label.pack(side=tk.LEFT, padx=(0, scaled(8, scale)))
+        threading.Thread(
+            target=lambda champion_id=item["id"], label=img_label: self._load_and_set_img(champion_id, label),
+            daemon=True,
+        ).start()
+
+        # 折叠态只渲染头像 + T 级徽章，省掉名称/胜率/出场率/胜率条
+        if self._collapsed:
+            badge = tk.Label(
+                card,
+                text=item["tier"],
+                font=ui_font(scale, 12, bold=True),
+                fg=badge_style["fg"],
+                bg=badge_style["bg"],
+                padx=scaled(3, scale),
+            )
+            badge.pack(side=tk.LEFT)
+            row["tier_badge"] = badge
+            if role in {"self", "teammate"}:
+                tk.Label(
+                    card,
+                    text="我" if role == "self" else "队友",
+                    font=ui_font(scale, 9, bold=True),
+                    fg=str(role_style["text"]),
+                    bg=role_color,
+                    padx=scaled(5 if role == "self" else 3, scale),
+                    pady=1,
+                ).pack(side=tk.RIGHT)
+            self._bind_card_click(card, row)
+            self._update_candidate_card(row, item, scale)
+            return row
+
+        info = tk.Frame(card, bg=card_surface)
+        info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        title_row = tk.Frame(info, bg=card_surface)
+        title_row.pack(fill=tk.X)
+        badge = tk.Label(
+            title_row,
+            text=item["tier"],
+            font=ui_font(scale, 11, bold=True),
+            fg=badge_style["fg"],
+            bg=badge_style["bg"],
+            padx=scaled(4, scale),
+        )
+        badge.pack(side=tk.LEFT, padx=(0, scaled(4, scale)))
+        row["tier_badge"] = badge
+        name_label = tk.Label(
+            title_row,
+            text="",
+            font=ui_font(scale, 12, bold=True),
+            fg=UI_COLORS["text"],
+            bg=card_surface,
+        )
+        name_label.pack(side=tk.LEFT, anchor="w")
+        row["name_label"] = name_label
+        if role in {"self", "teammate"}:
+            tk.Label(
+                title_row,
+                text="我的英雄" if role == "self" else "队友已选",
+                font=ui_font(scale, 11, bold=True),
+                fg=str(role_style["text"]),
+                bg=role_color,
+                padx=scaled(7 if role == "self" else 5, scale),
+                pady=1,
+            ).pack(side=tk.RIGHT)
+        stats_label = tk.Label(
+            info,
+            text="",
+            font=ui_font(scale, 11),
+            fg=UI_COLORS["muted"],
+            bg=card_surface,
+        )
+        stats_label.pack(anchor="w", pady=(1, 0))
+        row["stats_label"] = stats_label
+
+        bar_canvas = tk.Canvas(info, height=scaled(3, scale), bg=UI_COLORS["base"], highlightthickness=0)
+        bar_canvas.pack(fill=tk.X, pady=(scaled(3, scale), 0))
+        row["bar_canvas"] = bar_canvas
+        row["ratio"] = 0.0
+        # 渐变填充 + 50% 温饱基准线；ratio 从 row 里读，原地更新后重绘即可
+        bar_canvas.bind(
+            "<Configure>",
+            lambda e, c=bar_canvas, r=row: _render_winrate_bar(c, e.width, r.get("ratio", 0.0), height=scaled(4, scale)),
+        )
+
+        self._bind_card_click(card, row)
+        self._update_candidate_card(row, item, scale)
+        return row
+
+    def _bind_card_click(self, widget, row: dict) -> None:
+        widget.bind("<Button-1>", lambda e: self.on_hero_click(row["id"], row["name"]))
+        for child in widget.winfo_children():
+            self._bind_card_click(child, row)
+
+    def _update_candidate_card(self, row: dict, item: dict, scale: float) -> None:
+        """原地刷新可变字段（名称/评级/胜率），不重建 widget。"""
+
+        row["id"] = item["id"]
+        row["name"] = item["name"]
+        try:
+            if row.get("tier_badge") is not None and item["tier"] != row.get("tier"):
+                badge_style = self._tier_badge_style(item["tier"])
+                row["tier_badge"].config(text=item["tier"], fg=badge_style["fg"], bg=badge_style["bg"])
+            row["tier"] = item["tier"]
+
+            if row.get("name_label") is not None:
+                title = self.core_data.get(str(item["id"]), {}).get("title", "")
+                full_name = f"{item['name']} {title}".strip() if title else item["name"]
+                if row["name_label"].cget("text") != full_name:
+                    row["name_label"].config(text=full_name)
+
+            if item["win"] != row.get("win") or item["pick"] != row.get("pick"):
+                if row.get("stats_label") is not None:
+                    row["stats_label"].config(text=f"胜率: {item['win']:.1%} | 出场: {item['pick']:.1%}")
+                if row.get("ribbon") is not None:
+                    row["ribbon"].config(bg=UI_COLORS["green"] if item["win"] >= 0.5 else UI_COLORS["red"])
+                if row.get("bar_canvas") is not None:
+                    row["ratio"] = max(0, min(1, (item["win"] - 0.40) / 0.20))
+                    _render_winrate_bar(
+                        row["bar_canvas"],
+                        int(row["bar_canvas"].winfo_width()),
+                        row["ratio"],
+                        height=scaled(4, scale),
+                    )
+                row["win"] = item["win"]
+                row["pick"] = item["pick"]
+        except tk.TclError:
+            logger.debug("原地更新候选卡片失败。", exc_info=True)
 
     def window_sync_loop(self):
         ui_runtime.window_sync_loop(self)
@@ -438,17 +577,27 @@ class DesktopViewMixin:
             self._run_on_ui_thread(lambda: self._set_status("实时数据已挂载", UI_COLORS["green"]))
 
     def _toggle_collapse(self, _event=None) -> None:
-        """切换悬浮窗折叠态：展开 320 px / 折叠 80 px。"""
+        """切换悬浮窗折叠态：展开/折叠只切宽度基值（乘 DPI），高度保持自适应值。"""
         self._collapsed = not self._collapsed
+        scale = self._ui_scale_value()
+        width_base = WINDOW_COLLAPSED_WIDTH if self._collapsed else WINDOW_EXPANDED_WIDTH
+        self._overlay_pixel_width = scaled(width_base, scale)
+        height = int(getattr(self, "_window_height_px", 740))
+        self.root.geometry(f"{self._overlay_pixel_width}x{height}")
+        # 折叠/展开布局不同，清空 keyed 缓存强制整批重建
+        self._reset_card_cache()
+        if hasattr(self, "collapse_button"):
+            try:
+                self.collapse_button.config(text="»" if self._collapsed else "«")
+            except tk.TclError:
+                logger.debug("更新折叠按钮文本失败。", exc_info=True)
         if self._collapsed:
-            self.root.geometry(WINDOW_COLLAPSED_GEOMETRY)
             # 折叠态隐藏底部状态栏，保留头像列表本体
             if hasattr(self, "status_label") and self.status_label.winfo_exists():
                 self.status_label.pack_forget()
             if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
                 self.overlay_status_label.pack_forget()
         else:
-            self.root.geometry(WINDOW_EXPANDED_GEOMETRY)
             if hasattr(self, "status_label") and self.status_label.winfo_exists():
                 self.status_label.pack(side=tk.BOTTOM, pady=5)
             if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
