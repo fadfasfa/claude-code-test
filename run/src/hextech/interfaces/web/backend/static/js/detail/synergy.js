@@ -123,10 +123,28 @@ function articleMatchesTier(item, tier, resolveAugment) {
     return resolvedAugment.tier && normalizeTierName(resolvedAugment.tier) === tier;
 }
 
+// 联动数据过期横幅：apex/mayhem 冻结超阈值时按 synergy_data_at 现算年龄如实标注；
+// 时间不可解析时回退通用文案，不虚构年龄。
+export function buildSynergyStaleBanner(synergyMeta, nowMs = Date.now()) {
+    if (!synergyMeta || !synergyMeta.synergy_data_stale) return '';
+    let ageText = '联动数据为上一代';
+    const dataAtMs = synergyMeta.synergy_data_at ? Date.parse(synergyMeta.synergy_data_at) : NaN;
+    if (Number.isFinite(dataAtMs)) {
+        const hours = Math.max(0, Math.floor((nowMs - dataAtMs) / 3600000));
+        if (hours >= 48) {
+            ageText = `联动数据为 ${Math.floor(hours / 24)} 天前`;
+        } else if (hours >= 1) {
+            ageText = `联动数据为 ${hours} 小时前`;
+        }
+    }
+    return `<div class="glass-panel rounded-xl p-2 mb-4 text-center text-xs text-amber-300">${escapeHtml(ageText)}，来源更新恢复前仅供参考</div>`;
+}
+
 // 按当前阶级过滤联动文章并渲染；空态文案区分隔离/失败/无数据三种来源状态。
 export function updateFilteredSynergies({ container, tier, synergyData, synergyMeta, synergyLoaded, resolveAugment }) {
     container.dataset.synergyLoaded = synergyLoaded ? '1' : '0';
     container.dataset.synergyStatus = synergyMeta && synergyMeta.status ? synergyMeta.status : 'ok';
+    const staleBanner = buildSynergyStaleBanner(synergyMeta);
     const normalized = (synergyData || []).map(normalizeSynergyArticle).filter((item) => item.content);
     if (normalized.length === 0) {
         let message = '暂无联动文章';
@@ -144,11 +162,14 @@ export function updateFilteredSynergies({ container, tier, synergyData, synergyM
     const filtered = normalized.filter((item) => articleMatchesTier(item, tier, resolveAugment));
 
     if (filtered.length === 0) {
-        container.innerHTML = '<div class="glass-panel rounded-xl p-4"><div class="text-sm text-gray-400 text-center">该阶级无联动文章</div></div>';
+        container.innerHTML = `${staleBanner}<div class="glass-panel rounded-xl p-4"><div class="text-sm text-gray-400 text-center">该阶级无联动文章</div></div>`;
         return;
     }
 
     renderSynergyArticles(filtered, container, resolveAugment);
+    if (staleBanner) {
+        container.insertAdjacentHTML('afterbegin', staleBanner);
+    }
 }
 
 export function renderSynergyArticles(articles, container, resolveAugment) {

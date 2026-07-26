@@ -417,6 +417,8 @@ def run_full_validation(
             "dry_run": True,
             "archived_filtered_count": extractor.archived_filtered_count,
             "archived_filter_samples": extractor.archived_filter_samples,
+            "noise_filtered_count": extractor.noise_filtered_count,
+            "noise_filter_samples": extractor.noise_filter_samples,
         }
         _atomic_write_json(out_dir / "summary.json", summary)
         _atomic_write_json(out_dir / "per_champion.json", {"items": per_champion})
@@ -463,6 +465,8 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
         "synergy_entry_count": 0,
         "archived_filtered_count": 0,
         "archived_filter_samples": [],
+        "noise_filtered_count": 0,
+        "noise_filter_samples": [],
         "page_state": "failed",
         "page_evidence": "",
         "page_identity_verified": False,
@@ -510,6 +514,8 @@ def run_single_champion_probe(champion_slug: str = "Vi", report_dir: Optional[st
             result["synergy_entry_count"] = len(entries)
             result["archived_filtered_count"] = extractor.archived_filtered_count
             result["archived_filter_samples"] = extractor.archived_filter_samples
+            result["noise_filtered_count"] = extractor.noise_filtered_count
+            result["noise_filter_samples"] = extractor.noise_filter_samples
             page = classify_apex_page(
                 html,
                 expected_slug=champion_slug,
@@ -727,6 +733,8 @@ def main(
             "outcomes": [outcome.to_dict() for outcome in outcomes],
             "archived_filtered_count": extractor.archived_filtered_count,
             "archived_filter_samples": extractor.archived_filter_samples,
+            "noise_filtered_count": extractor.noise_filtered_count,
+            "noise_filter_samples": extractor.noise_filter_samples,
         }
     except Exception as exc:
         logger.warning("ApexLoL 来源 run 失败，current 保持不变：%s", exc)

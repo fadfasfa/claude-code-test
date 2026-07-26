@@ -520,6 +520,9 @@ class SourceStatusV2:
     # 候选是否因覆盖/上游变化而陈旧，避免 UI 把旧统计静默当成新数据。
     data_status: str = "unknown"
     data_reason: str = ""
+    # 数据绝对时效：data_at 距发布时刻超过来源刷新周期阈值时写入超龄秒数，
+    # 否则为 0。可选字段：旧构建 from_mapping 忽略未知键，回滚安全。
+    stale_age_seconds: int = 0
     coverage: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -528,6 +531,7 @@ class SourceStatusV2:
         if self.data_status not in {"fresh", "data_stale", "unknown"}:
             raise DataContractError(f"source_status data_status 无效：{self.data_status}")
         _non_negative_int(self.record_count, field_name="source_status.record_count")
+        _non_negative_int(self.stale_age_seconds, field_name="source_status.stale_age_seconds")
         for field_name in ("artifact_sha256", "manifest_sha256"):
             value = getattr(self, field_name)
             if value:
@@ -548,6 +552,7 @@ class SourceStatusV2:
                 record_count=payload.get("record_count", 0),
                 data_status=str(payload.get("data_status") or "unknown"),
                 data_reason=str(payload.get("data_reason") or ""),
+                stale_age_seconds=payload.get("stale_age_seconds", 0),
                 coverage=dict(payload.get("coverage") or {}) if isinstance(payload.get("coverage"), Mapping) else {},
             )
         except TypeError as exc:

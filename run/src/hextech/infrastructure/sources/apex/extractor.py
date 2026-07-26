@@ -22,6 +22,7 @@ from hextech.infrastructure.sources.apex.common import (
     VISIBLE_RATING_PATTERN,
     VISIBLE_STOP_LINE_PATTERN,
     _clean_text,
+    is_augment_name_shaped,
     _safe_exception_label,
     _sanitize_url_for_log,
     ast,
@@ -44,11 +45,23 @@ class SynergyExtractor:
         self.augment_name_map = augment_name_map
         self.archived_filtered_count = 0
         self.archived_filter_samples: list[dict[str, str]] = []
+        self.noise_filtered_count = 0
+        self.noise_filter_samples: list[dict[str, str]] = []
 
     def _record_archived_filter(self, *, reason: str, sample: str = "") -> None:
         self.archived_filtered_count += 1
         if len(self.archived_filter_samples) < 20:
             self.archived_filter_samples.append({
+                "reason": reason,
+                "sample": _clean_text(sample)[:180],
+            })
+
+    def _record_noise_filter(self, *, reason: str, sample: str = "") -> None:
+        """记录被噪声规则拒绝的兜底名，供重抓后与 unresolved 报告对账。"""
+
+        self.noise_filtered_count += 1
+        if len(self.noise_filter_samples) < 20:
+            self.noise_filter_samples.append({
                 "reason": reason,
                 "sample": _clean_text(sample)[:180],
             })
@@ -134,6 +147,7 @@ class SynergyExtractor:
 
             augment_names = []
             tier = ""
+            has_resolved_name = False
             cursor = index - 1
             while cursor >= 0 and len(augment_names) < 4:
                 current = lines[cursor]
@@ -153,6 +167,7 @@ class SynergyExtractor:
                 resolved_names = self._resolve_known_augment_names(current)
                 if resolved_names and self._looks_like_augment_name(current, resolved_names):
                     augment_names = resolved_names + augment_names
+                    has_resolved_name = True
                     cursor -= 1
                     continue
                 if self._looks_like_visible_augment_name(current):
@@ -162,6 +177,15 @@ class SynergyExtractor:
                 break
 
             if not augment_names:
+                continue
+            # 结构约束：组内没有任何词表可解析名、也没有 tier 标签佐证时，
+            # 这批兜底名多为英雄外号/装备名等回溯污染，整组丢弃；
+            # 带 tier 结构确认的组保留，为真正的新海克斯留通道。
+            if not has_resolved_name and not tier:
+                self._record_noise_filter(
+                    reason="visible_unanchored_group",
+                    sample=" | ".join(augment_names),
+                )
                 continue
 
             rating, tag = self._parse_visible_rating_tag(line, lines[index + 1:index + 6])
@@ -319,7 +343,10 @@ class SynergyExtractor:
             return False
         if re.match(r"^关联\s*\d+\s*个海克斯$", text):
             return False
-        return 1 < len(text) <= 40
+        if VISIBLE_STOP_LINE_PATTERN.match(text):
+            return False
+        # 形状判定收紧兜底路径：UI 控件词、含句读的句子、超长文本都不是海克斯名。
+        return is_augment_name_shaped(text)
 
     def _resolve_known_augment_names(self, raw_name: str) -> list[str]:
         key = str(raw_name or "").strip()
@@ -494,8 +521,11 @@ class SynergyExtractor:
             )
             if resolved:
                 names.append(resolved)
-            elif not key.isdigit() and len(key) > 1:
+            elif not key.isdigit() and is_augment_name_shaped(key):
                 names.append(key)
+            elif not key.isdigit() and len(key) > 1:
+                # 词表解析不到且不具备名称形状：按噪声丢弃并留样本对账。
+                self._record_noise_filter(reason="json_unshaped_name", sample=key)
         return [name for name in dict.fromkeys(names) if name]
 
     def _resolve_rating(self, item: dict) -> str:

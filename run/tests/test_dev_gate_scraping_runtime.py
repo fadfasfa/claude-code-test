@@ -26,6 +26,28 @@ pytestmark = pytest.mark.dev_gate
 
 
 
+def test_response_text_repairs_latin1_mislabeled_utf8() -> None:
+    """回归：无 charset 资源被 Scrapling 误报 ISO-8859-1 时曾丢失中文强化名。"""
+
+    class MislabeledResponse:
+        body = "回归基本功".encode("utf-8")
+        encoding = "ISO-8859-1"
+
+    assert scrapling_client._response_text(MislabeledResponse()) == "回归基本功"
+    assert scrapling_client._response_html(MislabeledResponse()) == "回归基本功"
+
+
+def test_response_text_keeps_declared_encoding_for_real_latin1() -> None:
+    """真 latin-1 字节（非法 UTF-8）仍按声明编码解码，正常路径不回归。"""
+
+    class Latin1Response:
+        body = b"caf\xe9"
+        encoding = "ISO-8859-1"
+
+    assert scrapling_client._response_text(Latin1Response()) == "café"
+    assert scrapling_client._response_html(Latin1Response()) == "café"
+
+
 def test_scrapling_fetch_text_keeps_internal_retry() -> None:
     """短文本抓取也必须保留一次 Scrapling 内部 retry，避免 session 被提前释放。"""
 

@@ -33,7 +33,7 @@
 ## 分来源 freshness 与联动
 
 - generation 的聚合 `health=degraded` 只用于 Desktop 状态页和诊断。Overlay 数字统计只读取 `source_status.hextech`：Hextech 为 `fresh` 时，即使 Apex 或 Mayhem 使用 last-good，也不得显示“上一代数据”。
-- Apex 与 Mayhem 的 freshness 只影响联动区域；任一使用 `last_good` 或 `data_stale` 时，命中的联动显示“联动数据为上一代”，不会污染胜率和出场率。
+- Apex 与 Mayhem 的 freshness 只影响联动区域；任一使用 `last_good` 或 `data_stale` 时，命中的联动显示降级文案，不会污染胜率和出场率。`freshness` 只表达本轮候选来源；数据绝对时效由发布时的 `data_at` 判定：冻结超过 `SOURCE_INTERVALS × 1.25` 时写入 `data_status=data_stale`、`data_reason=source_data_expired` 与 `stale_age_seconds`，联动区显示“联动数据为 X 小时/天前”（年龄渲染时现算）；last-good 或候选被拒仍显示“联动数据为上一代”。
 - DataService 的构建顺序固定为“Hextech 统计 hints → Catalog 补全最终身份集 → 当前 generation 联动投影”。Catalog-only 海克斯可以有联动，但数字区域仍如实显示公开来源缺口。
 - `overlay_hints.source.synergy_projection` v1 记录英雄、条目、唯一名称、Catalog 可解析名称、投影覆盖、含联动 hint、Catalog-only 命中和有限未解析样本。输入联动和 Catalog 可解析集合都必须非空，可解析名称投影覆盖至少 99%，且不能较 last-good 回退超过 5 个百分点。
 - Overlay 只显示当前英雄与当前三槽实际候选命中的最佳联动，不常驻列出英雄的全部联动；未解析污染名称只进入报告，不显示也不补造。

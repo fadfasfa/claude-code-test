@@ -113,6 +113,33 @@ VISIBLE_STOP_LINE_PATTERN = re.compile(
     r"评论|推荐|已弃用|编辑|删除|回复|加载更多|登录|登入)$",
     re.IGNORECASE,
 )
+# 详情页 UI 控件文本：会混进可见文本行，绝不是海克斯名（真机 unresolved 样本证据）。
+VISIBLE_UI_NOISE_LABELS = {
+    "筛选",
+    "排序",
+    "按热度",
+    "按时间",
+    "默认排序",
+    "全部",
+    "热门",
+    "最新",
+}
+
+
+def is_augment_name_shaped(text: str) -> bool:
+    """判断文本是否具有海克斯名的形状：短、无句读、非 UI 控件词。
+
+    只服务"词表解析不到的兜底名"路径——augment_name_map 命中的真实强化
+    不经过本判定，收紧规则不会误杀。感叹号不算句读（"邦！"是真强化名）。
+    """
+
+    candidate = str(text or "").strip()
+    if not candidate or candidate in VISIBLE_UI_NOISE_LABELS:
+        return False
+    # 含句读或过长的是句子/评论/任务标题，不可能是海克斯名。
+    if any(char in candidate for char in "，。？；：、,.?;"):
+        return False
+    return 1 < len(candidate) <= 20
 ARCHIVED_SYNERGY_MARKERS = (
     "已弃用归档",
     "已弃用",

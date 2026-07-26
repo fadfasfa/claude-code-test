@@ -495,7 +495,25 @@ def register_routes(app: FastAPI) -> None:
             snapshot_view = _open_snapshot_view(generation_id)
             data = snapshot_view.get_synergy_data()
             payload = _build_synergy_api_payload(data, champ_id)
-            payload["generation_id"] = str(snapshot_view.status().get("generation_id") or "")
+            status = snapshot_view.status()
+            payload["generation_id"] = str(status.get("generation_id") or "")
+            # 联动数据时效：apex/mayhem 任一 data_stale 时前端展示"联动数据为 X 前"横幅，
+            # 年龄由客户端按 synergy_data_at（最旧一侧）现算，避免服务端冻结年龄失真。
+            source_status = status.get("source_status")
+            synergy_stale = False
+            synergy_data_ats: list[str] = []
+            if isinstance(source_status, dict):
+                for source_name in ("apex", "mayhem"):
+                    value = source_status.get(source_name)
+                    if not isinstance(value, dict):
+                        continue
+                    if str(value.get("data_status") or "") == "data_stale":
+                        synergy_stale = True
+                    data_at = str(value.get("data_at") or "")
+                    if data_at:
+                        synergy_data_ats.append(data_at)
+            payload["synergy_data_stale"] = synergy_stale
+            payload["synergy_data_at"] = min(synergy_data_ats) if synergy_data_ats else ""
             return JSONResponse(content=payload)
         except SnapshotValidationError:
             return _generation_conflict(generation_id) if generation_id else JSONResponse(

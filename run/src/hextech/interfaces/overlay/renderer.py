@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 import unicodedata
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 from typing import Any, Literal, Protocol, TypedDict
 
 from hextech.contracts import GameSessionState
@@ -260,6 +261,50 @@ def _synergy_status(
     return "READY"
 
 
+def _synergy_source_expiry(snapshot_status: Mapping[str, Any] | None) -> tuple[str, str]:
+    """从 apex/mayhem source_status 提取过期诊断码与最旧 data_at。"""
+
+    source_status = snapshot_status.get("source_status") if isinstance(snapshot_status, Mapping) else None
+    if not isinstance(source_status, Mapping):
+        return ("", "")
+    reason = ""
+    data_ats: list[str] = []
+    for source in ("apex", "mayhem"):
+        value = source_status.get(source)
+        if not isinstance(value, Mapping):
+            continue
+        if str(value.get("data_reason") or "") == "source_data_expired":
+            reason = "source_data_expired"
+        data_at = str(value.get("data_at") or "")
+        if data_at:
+            data_ats.append(data_at)
+    return (reason, min(data_ats) if data_ats else "")
+
+
+def _synergy_stale_text(reason: str, data_at: str, *, now: datetime | None = None) -> str:
+    """联动降级文案：数据过期时给出真实年龄；其余降级仍显示"上一代"。
+
+    年龄在渲染时从 data_at 现算，避免使用发布时刻冻结的年龄失真；
+    data_at 不可解析时回退通用文案，不虚构时间。
+    """
+
+    if reason == "source_data_expired" and data_at:
+        try:
+            parsed = datetime.fromisoformat(data_at.replace("Z", "+00:00"))
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            current = now if now is not None else datetime.now(timezone.utc)
+            hours = int(max((current - parsed).total_seconds(), 0) // 3600)
+            if hours >= 48:
+                return f"联动数据为 {hours // 24} 天前"
+            if hours >= 1:
+                return f"联动数据为 {hours} 小时前"
+    return "联动数据为上一代"
+
+
 def _snapshot_sources_degraded(
     snapshot_status: Mapping[str, Any] | None,
     sources: Sequence[str],
@@ -297,6 +342,9 @@ def build_render_model(
     snapshot_status = hint_cache.get("snapshot") if isinstance(hint_cache, Mapping) else {}
     event_generation_id = _clean_text(event_source.get("generation_id"))
     snapshot_generation_id = _clean_text(snapshot_status.get("generation_id")) if isinstance(snapshot_status, Mapping) else ""
+    synergy_stale_reason, synergy_data_at = _synergy_source_expiry(
+        snapshot_status if isinstance(snapshot_status, Mapping) else None
+    )
     stats: list[StatPanelModel] = []
     synergies: list[SynergyPanelModel] = []
     for index in range(3):
@@ -366,7 +414,9 @@ def build_render_model(
                 "tag": _clean_text(matched.get("tag"), limit=24),
                 "content": _clean_text(matched.get("content"), limit=180),
                 "data_status": synergy_status,
-                "status_text": "联动数据为上一代" if synergy_status == "SYNERGY_DEGRADED" else "",
+                "status_text": _synergy_stale_text(synergy_stale_reason, synergy_data_at)
+                if synergy_status == "SYNERGY_DEGRADED"
+                else "",
             }
         )
     return {"stats": stats, "synergies": synergies}
@@ -486,7 +536,12 @@ def build_render_model_from_session(
                     "tag": _clean_text(matched.get("tag"), limit=24),
                     "content": _clean_text(matched.get("content"), limit=180),
                     "data_status": synergy_status,
-                    "status_text": "联动数据为上一代" if synergy_status == "SYNERGY_DEGRADED" else "",
+                    "status_text": _synergy_stale_text(
+                        str(row.get("synergy_data_reason") or ""),
+                        str(row.get("synergy_data_at") or ""),
+                    )
+                    if synergy_status == "SYNERGY_DEGRADED"
+                    else "",
                 }
             )
     return {"stats": stats, "synergies": synergies}

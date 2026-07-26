@@ -47,6 +47,10 @@ SOURCE_TIMEOUTS = {
     "apex": 60 * 60,
     "mayhem": 10 * 60,
 }
+# 数据绝对时效阈值 = 刷新周期 × 1.25：容纳 worker 时长（apex 上限 60min）、
+# 15 分钟调度粒度和一次 30min 非阻断 backoff 的正常抖动；超过即视为数据过期。
+# freshness 仍只表达"本轮候选来源"，过期通过 data_status=data_stale 暴露。
+STALE_AGE_FACTOR = 1.25
 ContributionMap = Mapping[str, Mapping[str, Any]]
 SnapshotBuilder = Callable[[ContributionMap], Any]
 
@@ -383,7 +387,7 @@ class CohortRefreshCoordinator:
         return dict(coverage) if isinstance(coverage, Mapping) else {}
 
     def _probe_hextech_upstream_change(self, pointer: Mapping[str, Any]) -> tuple[bool, dict[str, Any]]:
-        """仅以稳定上游版本加速候选；日期继续保留为诊断信息。"""
+        """以稳定上游版本优先、内容哈希兜底加速候选；日期只保留为诊断信息。"""
 
         if self._upstream_marker_probe is None or not pointer:
             return False, {}
@@ -394,16 +398,22 @@ class CohortRefreshCoordinator:
             return False, {}
         version = str(marker.get("version") or "").strip()
         date = str(marker.get("date") or "").strip()
-        if not version and not date:
+        marker_sha256 = str(marker.get("marker_sha256") or "").strip()
+        if not version and not date and not marker_sha256:
             return False, {}
-        # updated_at / Last-Modified 可能随 CDN 响应变化；只把稳定版本作为提前刷新信号。
-        if not version:
-            return False, {"version": version, "date": date}
+        payload = {"version": version, "date": date, "marker_sha256": marker_sha256}
         coverage = self._source_coverage("hextech", pointer)
         upstream = coverage.get("upstream") if isinstance(coverage.get("upstream"), Mapping) else {}
-        previous_version = str(upstream.get("version") or "").strip()
-        changed = version != previous_version
-        return changed, {"version": version, "date": date}
+        # updated_at / Last-Modified 可能随 CDN 响应变化；稳定版本仍是首选信号。
+        if version:
+            previous_version = str(upstream.get("version") or "").strip()
+            return version != previous_version, payload
+        # aramgg 不提供版本号：退回条目内容哈希比较。要求当前与上一 run 的哈希
+        # 都非空才判变化——升级后首轮无历史哈希时保守不加速，避免虚假强刷。
+        previous_marker = str(upstream.get("marker_sha256") or "").strip()
+        if marker_sha256 and previous_marker:
+            return marker_sha256 != previous_marker, payload
+        return False, payload
 
     def _worker_command(self, source: str, work: Path, catalog_pointer: Path | None, *, force: bool) -> list[str]:
         pointer_path = work / f"{source}.pointer.v2.json"
@@ -713,15 +723,30 @@ class CohortRefreshCoordinator:
                     record_count = 0
                 else:
                     run_id, _, artifact_sha, record_count, manifest_sha = self._pointer_identity(target)
+                data_at_text = str(
+                    target.get("last_success_at") or target.get("completed_at") or target.get("created_at") or ""
+                )
+                # 绝对时效判定：数据时间无法解析时保持不过期，不虚构陈旧状态。
+                # 未 due 被跳过或 saved candidate 复用的源同样按真实 data_at 判定，
+                # 冻结超阈值时通过 data_stale 如实暴露，不再被"本轮无失败"掩盖。
+                data_age = None
+                data_at_parsed = _parse_time(data_at_text)
+                if data_at_parsed is not None:
+                    data_age = completed - data_at_parsed
+                expired = data_age is not None and data_age > SOURCE_INTERVALS[source] * STALE_AGE_FACTOR
+                if source in degraded_sources:
+                    data_reason = "candidate_rejected_last_good_preserved"
+                elif expired:
+                    data_reason = "source_data_expired"
+                else:
+                    data_reason = ""
                 source_status[source] = {
                     "catalog_id": str(
                         target.get("catalog_generation_id")
                         or targets["catalog"].get("catalog_generation_id")
                         or ""
                     ),
-                    "data_at": str(
-                        target.get("last_success_at") or target.get("completed_at") or target.get("created_at") or ""
-                    ),
+                    "data_at": data_at_text,
                     "checked_at": _iso(completed),
                     "freshness": "last_good" if source in degraded_sources else "fresh",
                     "run_id": run_id,
@@ -729,9 +754,10 @@ class CohortRefreshCoordinator:
                     "artifact_sha256": artifact_sha,
                     "manifest_sha256": manifest_sha,
                     "record_count": record_count,
-                    "data_status": "data_stale" if source in degraded_sources else "fresh",
+                    "data_status": "data_stale" if source in degraded_sources or expired else "fresh",
                     # UI 只消费稳定诊断码；原始 worker 错误仍保留在本轮 source 诊断中。
-                    "data_reason": "candidate_rejected_last_good_preserved" if source in degraded_sources else "",
+                    "data_reason": data_reason,
+                    "stale_age_seconds": int(data_age.total_seconds()) if expired and data_age is not None else 0,
                     "coverage": self._source_coverage(source, target),
                 }
             manifest = self.publisher.publish(
