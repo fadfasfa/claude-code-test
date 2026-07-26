@@ -63,10 +63,17 @@ def test_diagnostics_button_is_created_in_title_frame(monkeypatch):
         def create_oval(self, *_args, **_kwargs):
             return None
 
+        def yview(self, *_args):
+            return None
+
+        def set(self, *_args):
+            return None
+
     monkeypatch.setattr(desktop_app.tk, "Frame", Widget)
     monkeypatch.setattr(desktop_app.tk, "Label", Widget)
     monkeypatch.setattr(desktop_app.tk, "Button", Widget)
     monkeypatch.setattr(desktop_app.tk, "Canvas", Widget)
+    monkeypatch.setattr(desktop_app.tk, "Scrollbar", Widget)
     monkeypatch.setattr(desktop_app.tk, "BooleanVar", Variable)
 
     dummy = object.__new__(desktop_app.HextechUI)

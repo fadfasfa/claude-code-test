@@ -7,14 +7,17 @@ from hextech.interfaces.desktop.app_shared import (
     export_user_diagnostics,
     logger,
     save_ui_feature_flags,
+    scaled,
     threading,
     tk,
+    ui_font,
     ui_runtime,
 )
 
 
 class DesktopControlsMixin:
     def _build_ui(self):
+        scale = self._ui_scale_value()
         self.title_frame = tk.Frame(self.root, bg=UI_COLORS["header"])
         self.title_frame.pack(fill=tk.X)
 
@@ -22,14 +25,14 @@ class DesktopControlsMixin:
             self.title_frame,
             text="备战席",
             bg=UI_COLORS["header"],
-            fg=UI_COLORS["text"],
-            font=("Microsoft YaHei", 12, "bold"),
-            pady=8,
+            fg=UI_COLORS["gold"],
+            font=ui_font(scale, 16, bold=True),
+            pady=scaled(8, scale),
         )
-        self.title_bar.pack(side=tk.LEFT, padx=(10, 0))
+        self.title_bar.pack(side=tk.LEFT, padx=(scaled(10, scale), 0))
         self.title_bar.bind("<ButtonPress-1>", self.start_move)
         self.title_bar.bind("<B1-Motion>", self.do_move)
-        # 双击标题栏在 320 px / 80 px 之间切换，便于单屏游戏窗口模式让出主屏视线
+        # 双击标题栏在展开/折叠宽度间切换，便于单屏游戏窗口模式让出主屏视线
         self.title_bar.bind("<Double-Button-1>", self._toggle_collapse)
 
         self.exit_button = tk.Button(
@@ -46,11 +49,31 @@ class DesktopControlsMixin:
             width=2,
             padx=0,
             pady=1,
-            font=("Microsoft YaHei", 11, "bold"),
+            font=ui_font(scale, 15, bold=True),
             cursor="hand2",
         )
         # 右上角“×”只隐藏到托盘；完全退出必须使用托盘菜单，避免误杀识别进程。
         self.exit_button.pack(side=tk.RIGHT, padx=(0, 6), pady=5)
+
+        # 可见折叠按钮：与双击标题等价，「«」收窄 /「»」展开
+        self.collapse_button = tk.Button(
+            self.title_frame,
+            text="«",
+            command=self._toggle_collapse,
+            bg=UI_COLORS["header"],
+            fg=UI_COLORS["muted"],
+            activebackground=UI_COLORS["surface"],
+            activeforeground=UI_COLORS["text"],
+            relief=tk.FLAT,
+            bd=0,
+            highlightthickness=0,
+            width=2,
+            padx=0,
+            pady=1,
+            font=ui_font(scale, 15, bold=True),
+            cursor="hand2",
+        )
+        self.collapse_button.pack(side=tk.RIGHT, padx=(0, 2), pady=5)
 
         self.diagnostics_button = tk.Button(
             self.title_frame,
@@ -62,9 +85,9 @@ class DesktopControlsMixin:
             activeforeground=UI_COLORS["text"],
             relief=tk.FLAT,
             bd=0,
-            padx=8,
-            pady=3,
-            font=("Microsoft YaHei", 8, "bold"),
+            padx=scaled(8, scale),
+            pady=scaled(3, scale),
+            font=ui_font(scale, 11, bold=True),
             cursor="hand2",
         )
         self.diagnostics_button.pack(side=tk.RIGHT, padx=(0, 8), pady=6)
@@ -102,12 +125,37 @@ class DesktopControlsMixin:
         self.feature_frame.grid_columnconfigure(0, weight=1)
         self.feature_frame.grid_columnconfigure(1, weight=1)
 
-        self.canvas = tk.Canvas(self.root, bg=UI_COLORS["base"], highlightthickness=0)
+        self.list_shell = tk.Frame(self.root, bg=UI_COLORS["base"])
+        self.list_shell.pack(fill=tk.BOTH, expand=True, padx=(scaled(10, scale), 0), pady=(6, 4))
+        self.canvas = tk.Canvas(self.list_shell, bg=UI_COLORS["base"], highlightthickness=0)
         self.list_frame = tk.Frame(self.canvas, bg=UI_COLORS["base"])
-        self.canvas.pack(fill=tk.BOTH, expand=True, padx=(10, 0), pady=(6, 4))
-        self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
+        # 细滚动条：给长列表一个可见的位置指示，滚轮行为保持不变
+        self.list_scrollbar = tk.Scrollbar(
+            self.list_shell,
+            orient=tk.VERTICAL,
+            command=self.canvas.yview,
+            width=scaled(8, scale),
+        )
+        self.canvas.configure(yscrollcommand=self.list_scrollbar.set)
+        self.list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._list_window_id = self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
+        # 卡片宽度必须跟随 canvas 实际宽度，否则 fill=X 只能撑到内容自然宽度
+        self.canvas.bind(
+            "<Configure>",
+            lambda e: self.canvas.itemconfigure(self._list_window_id, width=e.width),
+        )
 
-        self.root.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+        def _on_mousewheel(event):
+            # 滚轮只在指针位于列表区域内时生效，不再全局拦截整个应用的滚轮
+            node = self.root.winfo_containing(event.x_root, event.y_root)
+            while node is not None:
+                if node is self.list_shell:
+                    self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                    break
+                node = getattr(node, "master", None)
+
+        self.root.bind_all("<MouseWheel>", _on_mousewheel)
         self.list_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
 
         self.status_label = tk.Label(
@@ -115,7 +163,7 @@ class DesktopControlsMixin:
             text="系统初始化中...",
             bg=UI_COLORS["base"],
             fg=UI_COLORS["muted"],
-            font=("Microsoft YaHei", 8),
+            font=ui_font(scale, 11),
         )
         self.status_label.pack(side=tk.BOTTOM, pady=5)
         self.overlay_status_label = tk.Label(
@@ -123,7 +171,7 @@ class DesktopControlsMixin:
             text="",
             bg=UI_COLORS["base"],
             fg=UI_COLORS["muted"],
-            font=("Microsoft YaHei", 8),
+            font=ui_font(scale, 11),
         )
         self.overlay_status_label.pack(side=tk.BOTTOM, pady=(0, 2))
         self._refresh_feature_toggle_styles()
@@ -136,15 +184,24 @@ class DesktopControlsMixin:
         *,
         accent: str,
     ) -> "tk.Frame":
+        scale = self._ui_scale_value()
         frame = tk.Frame(self.feature_frame, bg=UI_COLORS["base"], cursor="hand2", padx=2, pady=2)
-        dot = tk.Canvas(frame, width=15, height=15, bg=UI_COLORS["base"], highlightthickness=0, bd=0, cursor="hand2")
+        dot = tk.Canvas(
+            frame,
+            width=scaled(15, scale),
+            height=scaled(15, scale),
+            bg=UI_COLORS["base"],
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
         dot.pack(side=tk.LEFT, padx=(0, 5))
         label = tk.Label(
             frame,
             text=text,
             bg=UI_COLORS["base"],
             fg=UI_COLORS["muted"],
-            font=("Microsoft YaHei", 9, "bold"),
+            font=ui_font(scale, 12, bold=True),
             cursor="hand2",
         )
         label.pack(side=tk.LEFT)
@@ -172,6 +229,11 @@ class DesktopControlsMixin:
         return frame
 
     def _refresh_feature_toggle_styles(self) -> None:
+        scale = self._ui_scale_value()
+
+        def px(value: int) -> int:
+            return scaled(value, scale)
+
         for toggle in getattr(self, "_feature_toggle_widgets", []):
             variable = toggle["variable"]
             dot = toggle["dot"]
@@ -183,11 +245,11 @@ class DesktopControlsMixin:
             try:
                 dot.delete("all")
                 if enabled:
-                    dot.create_oval(4, 4, 11, 11, fill=accent, outline=accent)
-                    dot.create_oval(2, 2, 13, 13, outline=accent)
+                    dot.create_oval(px(4), px(4), px(11), px(11), fill=accent, outline=accent)
+                    dot.create_oval(px(2), px(2), px(13), px(13), outline=accent)
                     label.config(fg=UI_COLORS["warn"] if busy else UI_COLORS["text"])
                 else:
-                    dot.create_oval(4, 4, 11, 11, fill="", outline=UI_COLORS["dim"])
+                    dot.create_oval(px(4), px(4), px(11), px(11), fill="", outline=UI_COLORS["dim"])
                     label.config(fg=UI_COLORS["warn"] if busy else UI_COLORS["dim"])
             except tk.TclError:
                 logger.debug("刷新功能开关样式失败。", exc_info=True)

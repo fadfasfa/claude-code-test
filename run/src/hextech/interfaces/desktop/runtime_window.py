@@ -139,11 +139,56 @@ def _write_champion_icon_cache(path: str, data: bytes) -> None:
         raise
 
 
+class _Win32Rect(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+class _Win32MonitorInfo(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("rcMonitor", _Win32Rect),
+        ("rcWork", _Win32Rect),
+        ("dwFlags", ctypes.c_ulong),
+    ]
+
+
+def _monitor_workarea(hwnd: int) -> tuple[int, int, int, int] | None:
+    """返回窗口所在显示器的工作区 (left, top, right, bottom)；失败返回 None。"""
+
+    try:
+        user32 = ctypes.windll.user32
+        # MONITOR_DEFAULTTONEAREST = 2
+        monitor = user32.MonitorFromWindow(int(hwnd), 2)
+        if not monitor:
+            return None
+        info = _Win32MonitorInfo()
+        info.cbSize = ctypes.sizeof(_Win32MonitorInfo)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        work = info.rcWork
+        return (int(work.left), int(work.top), int(work.right), int(work.bottom))
+    except Exception:
+        logger.debug("读取显示器工作区失败。", exc_info=True)
+        return None
+
+
+def _avatar_pixel_size(ui: "HextechUI") -> int:
+    """头像边长按窗口 DPI 缩放，高分屏上不再显得过小。"""
+
+    return max(1, round(48 * float(getattr(ui, "_ui_scale", 1.0))))
+
+
 def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
     """按运行缓存、只读 seed 顺序加载头像；远端结果只写 ``var``。"""
     try:
         if not label.winfo_exists():
             return
+        avatar_px = _avatar_pixel_size(ui)
 
         def _publish_cached(photo) -> None:
             if label.winfo_exists():
@@ -160,7 +205,7 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
         readable_path = next((path for path in (cache_path, seed_path) if path.is_file()), None)
         if readable_path is not None:
             with Image.open(readable_path) as raw_img:
-                img = raw_img.resize((48, 48), Image.Resampling.LANCZOS)
+                img = raw_img.resize((avatar_px, avatar_px), Image.Resampling.LANCZOS)
         else:
             if champ_id in ui.downloading_imgs:
                 return
@@ -173,12 +218,12 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
                 with ui.img_write_lock:
                     _write_champion_icon_cache(os.fspath(cache_path), res.content)
                 with Image.open(BytesIO(res.content)) as raw_img:
-                    img = raw_img.resize((48, 48), Image.Resampling.LANCZOS)
+                    img = raw_img.resize((avatar_px, avatar_px), Image.Resampling.LANCZOS)
             finally:
                 ui.downloading_imgs.discard(champ_id)
 
         # 头像渲染前套圆角遮罩，削弱方框直角的生硬感
-        img = _apply_rounded_corner(img, radius=8)
+        img = _apply_rounded_corner(img, radius=max(1, round(avatar_px / 6)))
         safe_img = img.copy()
 
         def _publish_loaded(image_obj=safe_img) -> None:
@@ -226,10 +271,20 @@ def window_sync_loop(ui: "HextechUI") -> None:
         try:
             client_area = win32gui.GetClientRect(hwnd_client)
             target_x, target_y = win32gui.ClientToScreen(hwnd_client, (client_area[2], 0))
-            return (int(target_x), int(target_y))
+            target = (int(target_x), int(target_y))
         except Exception:
             logger.debug("计算客户端内容区右侧坐标失败，回退到窗口外框。", exc_info=True)
-            return (int(client_rect[2]), int(client_rect[1]))
+            target = (int(client_rect[2]), int(client_rect[1]))
+        # 客户端贴近屏幕右缘时按工作区钳制吸附坐标，防止悬浮窗被推出屏外
+        workarea = _monitor_workarea(hwnd_client)
+        if workarea is not None:
+            left, top, right, bottom = workarea
+            overlay_width = int(getattr(ui, "_overlay_pixel_width", 320))
+            max_x = max(left, right - overlay_width)
+            clamped_x = min(max(target[0], left), max_x)
+            clamped_y = min(max(target[1], top), max(top, bottom - 200))
+            return (clamped_x, clamped_y)
+        return target
 
     def _client_rect_jump_detected(current_rect: tuple[int, int, int, int], previous_rect: tuple[int, int, int, int] | None) -> bool:
         if not previous_rect:
