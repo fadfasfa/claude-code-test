@@ -18,7 +18,7 @@ description: Use when the user invokes /cleanup-worktrees or asks Claude Code to
 ## 审计与合并判定
 
 1. 运行 `git status --short --untracked-files=all`、`git worktree list --porcelain`、`git for-each-ref --format='%(refname:short) %(upstream:short) %(upstream:track)' refs/heads/`。
-2. 解析 `origin/HEAD` 对应 base branch。默认清理模式可定向刷新：`git fetch --no-tags origin refs/heads/<base_branch>:refs/remotes/origin/<base_branch>`；审计模式不得 fetch。
+2. 解析 `origin/HEAD` 对应 base branch。默认清理模式可定向刷新：`git fetch --no-tags origin refs/heads/<base_branch>:refs/remotes/origin/<base_branch>`；审计模式不得 fetch。审计模式下远端 base 与本机不同时只标记 `base-stale-needs-fetch` / `needs-fetch-for-cleanup`；默认清理模式 fetch 失败时标记 `fetch-failed-skip` 并跳过该轮 base 刷新。
 3. 对每个候选解析固定 `candidate_oid`。先运行 `git merge-base --is-ancestor <candidate_oid> <base>`，并用 `git rev-list --left-right --count <base>...<candidate_oid>` 验证 ahead=0；通过时记为祖先合并。
 4. 非祖先候选才调用 `gh pr list --state merged --head <branch> --limit 100 --json number,state,mergedAt,mergeCommit,headRefName,headRefOid,baseRefName`。只保留同时满足以下条件的记录：
    - 返回记录唯一，`state=MERGED` 且 `mergedAt` 非空；

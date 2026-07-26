@@ -28,8 +28,9 @@ POLICY_FILES = SKILL_FILES + (
     REPO_ROOT / "docs" / "当前规则" / "20-Git与高危操作.md",
 )
 
+# PR 修复边界的唯一事实源是 20-Git与高危操作.md；AGENTS.md 只保留触发条件与指针，
+# 不再复述 headRefName / FETCH_HEAD 等细则，因此不在锚定范围内。
 PR_POLICY_FILES = (
-    REPO_ROOT / "AGENTS.md",
     REPO_ROOT / "docs" / "当前规则" / "20-Git与高危操作.md",
 )
 
@@ -137,6 +138,19 @@ class CleanupWorktreesPolicyTextTests(unittest.TestCase):
                     "ref-changed-before-delete",
                 ):
                     self.assertIn(reason, text)
+
+    def test_two_skill_copies_stay_in_sync(self) -> None:
+        """CC 与 Codex 各持一份 SKILL.md 双端执行；除 description 与入口声明行外，
+        正文必须逐行一致，否则两端清理行为会静默漂移。"""
+        def normalized(path: Path) -> list[str]:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            return [
+                line for line in lines
+                if not line.startswith("description:") and "对话入口" not in line
+            ]
+
+        first, second = (normalized(path) for path in SKILL_FILES)
+        self.assertEqual(first, second)
 
     def test_pr_fix_and_review_must_not_create_replacement_branch(self) -> None:
         for path in PR_POLICY_FILES:
