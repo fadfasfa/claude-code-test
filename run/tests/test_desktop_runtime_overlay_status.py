@@ -62,16 +62,23 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         ui = object.__new__(app.HextechUI)
         ui.game_overlay_var = Var()
         ui.runtime_supervisor = SimpleNamespace(get_status=lambda: {"components": {"game_overlay": overlay}})
-        ui.status_label = Label("后台服务已就绪")
-        ui.overlay_status_label = Label("")
+        # 单行收敛层：service 通道文本已过新鲜窗口（at=0），overlay 摘要接管显示。
+        ui._status_channels = {
+            "service": {"text": "后台服务已就绪", "color": app.UI_COLORS["green"], "at": 0.0},
+            "overlay": {"text": "", "color": app.UI_COLORS["muted"], "at": 0.0},
+        }
+        ui._data_created_ts = 0.0
+        ui.status_line_label = Label("")
         ui.stop_event = threading.Event()
         ui.stop_event.set()
 
         ui._refresh_overlay_status_summary()
 
-        self.assertEqual(ui.status_label.text, "后台服务已就绪")
-        self.assertIn("海克斯卡识别模板预热中", ui.overlay_status_label.text)
-        self.assertNotIn("英雄", ui.overlay_status_label.text)
+        # service 通道不被 overlay 轮询覆盖，overlay 通道拿到预热短语并上屏。
+        self.assertEqual(ui._status_channels["service"]["text"], "后台服务已就绪")
+        self.assertIn("模板预热中", ui._overlay_status_text)
+        self.assertEqual(ui.status_line_label.text, "窗口就绪 · 模板预热中")
+        self.assertNotIn("英雄", ui.status_line_label.text)
 
     def test_legacy_overlay_status_polling_uses_secondary_label_without_overriding_primary_ready(self):
         from hextech.interfaces.desktop import app
@@ -102,16 +109,22 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         ui.game_overlay_var = Var()
         ui.runtime_supervisor = None
         ui.service_manager = SimpleNamespace(get_status_snapshot=lambda: snapshot)
-        ui.status_label = Label("实时数据已挂载")
-        ui.overlay_status_label = Label("")
+        ui._status_channels = {
+            "service": {"text": "实时数据已挂载", "color": app.UI_COLORS["green"], "at": 0.0},
+            "overlay": {"text": "", "color": app.UI_COLORS["muted"], "at": 0.0},
+        }
+        ui._data_created_ts = 0.0
+        ui.status_line_label = Label("")
         ui.stop_event = threading.Event()
         ui.stop_event.set()
         ui._kick_game_overlay_watchdog = lambda: None
 
         ui._refresh_overlay_status_summary()
 
-        self.assertEqual(ui.status_label.text, "实时数据已挂载")
-        self.assertIn("游戏内显示: 等待海克斯选择 / 识别运行", ui.overlay_status_label.text)
+        # legacy 路径同样不带构建号后缀，短语落 overlay 通道。
+        self.assertEqual(ui._status_channels["service"]["text"], "实时数据已挂载")
+        self.assertEqual(ui._overlay_status_text, "等待海克斯选择 · 识别运行")
+        self.assertEqual(ui.status_line_label.text, "等待海克斯选择 · 识别运行")
 
     def test_game_overlay_toggle_uses_secondary_label_without_overriding_primary_ready(self):
         from hextech.interfaces.desktop import app
@@ -145,8 +158,12 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         ui.runtime_supervisor = SimpleNamespace(
             set_game_overlay_enabled=lambda enabled: (calls.append(bool(enabled)), {"status": "running"})[1]
         )
-        ui.status_label = Label("后台服务已就绪")
-        ui.overlay_status_label = Label("")
+        ui._status_channels = {
+            "service": {"text": "后台服务已就绪", "color": app.UI_COLORS["green"], "at": 0.0},
+            "overlay": {"text": "", "color": app.UI_COLORS["muted"], "at": 0.0},
+        }
+        ui._data_created_ts = 0.0
+        ui.status_line_label = Label("")
         ui._overlay_status_text = ""
         ui._overlay_status_color = app.UI_COLORS["muted"]
         ui._overlay_operation_lock = threading.Lock()
@@ -160,8 +177,9 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         ui._toggle_game_overlay()
 
         self.assertEqual(calls, [True])
-        self.assertEqual(ui.status_label.text, "后台服务已就绪")
-        self.assertIn("游戏内显示启动请求已提交(running)", ui.overlay_status_label.text)
+        # toggle 瞬态文案原文保留在 overlay 通道；service 通道不受影响。
+        self.assertEqual(ui._status_channels["service"]["text"], "后台服务已就绪")
+        self.assertIn("游戏内显示启动请求已提交(running)", ui._overlay_status_text)
 
     def test_game_overlay_busy_toggle_uses_secondary_status_path(self):
         from hextech.interfaces.desktop import app
@@ -209,10 +227,10 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         self.assertEqual(frame.bindings["<Button-1>"](), "break")
         self.assertEqual(calls, [("游戏内显示: 正在切换中", app.UI_COLORS["warn"])])
 
-    def test_expand_restores_status_labels_in_initial_pack_order(self):
+    def test_expand_restores_status_bar(self):
         from hextech.interfaces.desktop import app
 
-        pack_calls: list[str] = []
+        pack_calls: list[tuple[str, dict]] = []
 
         class FakeRoot:
             def geometry(self, _value):
@@ -224,7 +242,7 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
             def after_cancel(self, _after_id):
                 return None
 
-        class FakeLabel:
+        class FakeWidget:
             def __init__(self, name: str):
                 self.name = name
 
@@ -234,20 +252,21 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
             def pack_forget(self):
                 return None
 
-            def pack(self, **_kwargs):
-                pack_calls.append(self.name)
+            def pack(self, **kwargs):
+                pack_calls.append((self.name, kwargs))
 
         ui = object.__new__(app.HextechUI)
         ui.root = FakeRoot()
         ui._collapsed = True
         ui._collapse_render_after_id = None
-        ui.status_label = FakeLabel("status")
-        ui.overlay_status_label = FakeLabel("overlay")
+        ui.status_bar = FakeWidget("status_bar")
         ui._refresh_current_hero_ids = lambda: None
 
         ui._toggle_collapse()
 
-        self.assertEqual(pack_calls, ["status", "overlay"])
+        # 展开时单一 status_bar 恢复到底部；旧的双标签结构已收敛。
+        self.assertEqual([name for name, _kwargs in pack_calls], ["status_bar"])
+        self.assertEqual(pack_calls[0][1].get("side"), app.tk.BOTTOM)
 
     def test_empty_web_live_state_falls_back_to_lcu(self):
         from hextech.interfaces.desktop import runtime

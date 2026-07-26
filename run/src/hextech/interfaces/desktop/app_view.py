@@ -9,6 +9,7 @@ from hextech.interfaces.desktop.app_shared import (
     _empty_champions,
     _render_winrate_bar,
     logger,
+    parse_generation_created_ts,
     scaled,
     threading,
     time,
@@ -77,7 +78,12 @@ class DesktopViewMixin:
             snapshot_view = self._snapshot_client.open_view()
         except Exception:
             return _empty_champions()
-        self._snapshot_generation_id = str(snapshot_view.status().get("generation_id") or "")
+        status = snapshot_view.status()
+        self._snapshot_generation_id = str(status.get("generation_id") or "")
+        # 顺带更新数据时效（供状态行"数据 X 前"后缀）；解析失败保留旧值不清零。
+        created_ts = parse_generation_created_ts(status.get("created_at"))
+        if created_ts > 0:
+            self._data_created_ts = created_ts
         champions = snapshot_view.get_champions()
         if not champions:
             return _empty_champions()
@@ -101,14 +107,12 @@ class DesktopViewMixin:
 
             def refresh_ui() -> None:
                 degraded = [str(item) for item in status.get("degraded_sources") or []]
-                short_generation = generation_id[:18]
+                # generation 短号只进日志：320px 单行状态栏放不下且用户不消费。
+                logger.info("数据已更新 %s，沿用来源: %s", generation_id, ", ".join(degraded) or "无")
                 if degraded:
-                    self._set_status(
-                        f"数据已更新 {short_generation} · 沿用: {', '.join(degraded)}",
-                        UI_COLORS["warn"],
-                    )
+                    self._set_status("数据已更新 · 部分沿用旧源", UI_COLORS["warn"])
                 else:
-                    self._set_status(f"数据已更新 {short_generation}", UI_COLORS["green"])
+                    self._set_status("数据已更新", UI_COLORS["green"])
                 self.update_ui(self.current_candidate_groups)
 
             self._run_on_ui_thread(refresh_ui)
@@ -268,7 +272,7 @@ class DesktopViewMixin:
             text=text,
             fg=UI_COLORS["warn"],
             bg=UI_COLORS["base"],
-            font=ui_font(scale, 12),
+            font=ui_font(12),
         )
         self._list_placeholder.pack(pady=scaled(20, scale))
 
@@ -322,9 +326,9 @@ class DesktopViewMixin:
                 return
 
             if connection == "degraded":
-                self.status_label.config(text="客户端连接暂时中断，保留最近选择", fg=UI_COLORS["warn"])
+                self._set_status("连接中断 · 保留最近选择", UI_COLORS["warn"])
             else:
-                self.status_label.config(text="实时数据已挂载", fg=UI_COLORS["green"])
+                self._set_status("实时数据已挂载", UI_COLORS["green"])
 
             display_list = self._build_candidate_display_list(hero_ids, current_champions)
             if not display_list:
@@ -413,7 +417,7 @@ class DesktopViewMixin:
             badge = tk.Label(
                 card,
                 text=item["tier"],
-                font=ui_font(scale, 12, bold=True),
+                font=ui_font(12, bold=True),
                 fg=badge_style["fg"],
                 bg=badge_style["bg"],
                 padx=scaled(3, scale),
@@ -424,6 +428,18 @@ class DesktopViewMixin:
             self._update_candidate_card(row, item, scale)
             return row
 
+        # Blitz 式信息层级：大号着色胜率是主视觉，先 pack 到右侧——Tk pack
+        # 空间不足时裁后来者，保证被裁的只能是英雄名，胜率数字永不被挤出。
+        win_label = tk.Label(
+            card,
+            text="",
+            font=ui_font(17, bold=True),
+            fg=UI_COLORS["green"],
+            bg=card_surface,
+        )
+        win_label.pack(side=tk.RIGHT, padx=(scaled(4, scale), scaled(6, scale)))
+        row["win_label"] = win_label
+
         info = tk.Frame(card, bg=card_surface)
         info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -432,7 +448,7 @@ class DesktopViewMixin:
         badge = tk.Label(
             title_row,
             text=item["tier"],
-            font=ui_font(scale, 11, bold=True),
+            font=ui_font(12, bold=True),
             fg=badge_style["fg"],
             bg=badge_style["bg"],
             padx=scaled(4, scale),
@@ -442,21 +458,21 @@ class DesktopViewMixin:
         name_label = tk.Label(
             title_row,
             text="",
-            font=ui_font(scale, 12, bold=True),
+            font=ui_font(12, bold=True),
             fg=UI_COLORS["text"],
             bg=card_surface,
         )
         name_label.pack(side=tk.LEFT, anchor="w")
         row["name_label"] = name_label
-        stats_label = tk.Label(
+        pick_label = tk.Label(
             info,
             text="",
-            font=ui_font(scale, 11),
-            fg=UI_COLORS["muted"],
+            font=ui_font(11),
+            fg=UI_COLORS["dim"],
             bg=card_surface,
         )
-        stats_label.pack(anchor="w", pady=(1, 0))
-        row["stats_label"] = stats_label
+        pick_label.pack(anchor="w", pady=(1, 0))
+        row["pick_label"] = pick_label
 
         bar_canvas = tk.Canvas(info, height=scaled(3, scale), bg=UI_COLORS["base"], highlightthickness=0)
         bar_canvas.pack(fill=tk.X, pady=(scaled(3, scale), 0))
@@ -489,16 +505,19 @@ class DesktopViewMixin:
             row["tier"] = item["tier"]
 
             if row.get("name_label") is not None:
-                title = self.core_data.get(str(item["id"]), {}).get("title", "")
-                full_name = f"{item['name']} {title}".strip() if title else item["name"]
-                if row["name_label"].cget("text") != full_name:
-                    row["name_label"].config(text=full_name)
+                # 只显示英雄名不再拼称号：横向空间让给右侧大号胜率列。
+                display_name = str(item["name"])
+                if row["name_label"].cget("text") != display_name:
+                    row["name_label"].config(text=display_name)
 
             if item["win"] != row.get("win") or item["pick"] != row.get("pick"):
-                if row.get("stats_label") is not None:
-                    row["stats_label"].config(text=f"胜率: {item['win']:.1%} | 出场: {item['pick']:.1%}")
+                win_color = UI_COLORS["green"] if item["win"] >= 0.5 else UI_COLORS["red"]
+                if row.get("win_label") is not None:
+                    row["win_label"].config(text=f"{item['win']:.1%}", fg=win_color)
+                if row.get("pick_label") is not None:
+                    row["pick_label"].config(text=f"出场 {item['pick']:.1%}")
                 if row.get("ribbon") is not None:
-                    row["ribbon"].config(bg=UI_COLORS["green"] if item["win"] >= 0.5 else UI_COLORS["red"])
+                    row["ribbon"].config(bg=win_color)
                 if row.get("bar_canvas") is not None:
                     row["ratio"] = max(0, min(1, (item["win"] - 0.40) / 0.20))
                     _render_winrate_bar(
@@ -589,18 +608,14 @@ class DesktopViewMixin:
             # 8px 滚动条会把徽章挤出视口（滚轮翻页仍可用）。
             if hasattr(self, "list_scrollbar") and self.list_scrollbar.winfo_exists():
                 self.list_scrollbar.pack_forget()
-            if hasattr(self, "status_label") and self.status_label.winfo_exists():
-                self.status_label.pack_forget()
-            if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
-                self.overlay_status_label.pack_forget()
+            if hasattr(self, "status_bar") and self.status_bar.winfo_exists():
+                self.status_bar.pack_forget()
         else:
             if hasattr(self, "list_scrollbar") and self.list_scrollbar.winfo_exists():
                 # pack 次序决定空间分配：必须排在 expand 的 canvas 之前才拿得到宽度。
                 self.list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, before=self.canvas)
-            if hasattr(self, "status_label") and self.status_label.winfo_exists():
-                self.status_label.pack(side=tk.BOTTOM, pady=5)
-            if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
-                self.overlay_status_label.pack(side=tk.BOTTOM, pady=(0, 2))
+            if hasattr(self, "status_bar") and self.status_bar.winfo_exists():
+                self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=(10, 6), pady=(2, 6))
         self._schedule_current_hero_refresh()
 
     def _schedule_current_hero_refresh(self) -> None:

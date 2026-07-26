@@ -22,10 +22,10 @@ class DesktopStartupStatusTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(text, "游戏内显示: 窗口已就绪 / 海克斯卡识别模板预热中")
+        self.assertEqual(text, "窗口就绪 · 模板预热中")
         self.assertEqual(color, UI_COLORS["warn"])
 
-    def test_overlay_status_displays_build_id_and_mismatch(self):
+    def test_overlay_status_reports_build_mismatch_without_build_id_suffix(self):
         from hextech.interfaces.desktop.app import UI_COLORS, _format_supervisor_game_overlay_status
 
         text, color = _format_supervisor_game_overlay_status(
@@ -36,8 +36,9 @@ class DesktopStartupStatusTests(unittest.TestCase):
             }
         )
 
-        self.assertIn("构建身份不一致", text)
-        self.assertIn("构建 20260724T120000Z-a", text)
+        # 构建号不再拼进单行状态栏文案；构建身份仍在状态文件与诊断导出里。
+        self.assertEqual(text, "构建不一致 · 请重新部署")
+        self.assertNotIn("20260724T120000Z", text)
         self.assertEqual(color, UI_COLORS["error"])
 
     def test_startup_timing_flush_never_breaks_startup_on_unexpected_error(self):

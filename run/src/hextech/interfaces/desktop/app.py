@@ -106,6 +106,15 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._overlay_status_after_id = None
         self._overlay_status_text = ""
         self._overlay_status_color = UI_COLORS["muted"]
+        # 单行状态栏的双通道缓存：service 承接原主状态（按钮反馈/错误），
+        # overlay 承接游戏内显示摘要；渲染时按 error 置顶 → service 新鲜窗口 →
+        # overlay → 回落 service 的优先级合成一行。
+        self._status_channels = {
+            "service": {"text": "系统初始化中...", "color": UI_COLORS["muted"], "at": time.monotonic()},
+            "overlay": {"text": "", "color": UI_COLORS["muted"], "at": 0.0},
+        }
+        # 当前 generation created_at 的 epoch 秒；0 表示未知，状态行不显示时效后缀。
+        self._data_created_ts = 0.0
         self._overlay_watchdog_lock = threading.Lock()
         self._overlay_operation_lock = threading.Lock()
         self._web_operation_lock = threading.Lock()
@@ -127,9 +136,9 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
 
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
-        # 按用户要求维持基线"狭长"观感：固定像素密度（缩放锁 1.0，不乘 DPI，
-        # window_dpi_scale 保留在 app_shared 供将来选择性启用），高度基值 740；
-        # 跟随客户端时由 runtime_window 按客户端底缘动态压缩高度。
+        # 几何锁 1.0 维持基线"狭长"观感（窗宽/头像/padding 不乘 DPI，
+        # window_dpi_scale 保留在 app_shared 供将来选择性启用）；字体不走此旋钮，
+        # 由 ui_font 的正数磅值随系统 DPI 隐式放大，几何与字体彻底解耦。
         self._ui_scale = 1.0
         self._window_height_px = WINDOW_BASE_HEIGHT
         self._overlay_pixel_width = WINDOW_EXPANDED_WIDTH

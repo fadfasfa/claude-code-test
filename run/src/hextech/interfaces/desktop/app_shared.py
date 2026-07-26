@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import tkinter as tk
@@ -89,17 +90,50 @@ def scaled(px: int, scale: float) -> int:
     return max(1, round(px * scale))
 
 
-def ui_font(scale: float, size_px: int, bold: bool = False) -> tuple:
-    """构造按 DPI 缩放的字体元组。
+def ui_font(size_px: int, bold: bool = False) -> tuple:
+    """构造随系统 DPI 缩放的字体元组。
 
-    Tk 负数字号表示像素，避免 Windows DPI 把点值字号再次缩放
-    （做法对齐 overlay canvas_renderer 的注释约定）。
+    使用正数磅值（1px@96dpi = 0.75pt）：进程已声明 DPI Aware，Tk 会把磅值按
+    真实 DPI 换算成像素（px × dpi/96），与 main 基线观感逐点一致。字体由 Tk
+    隐式补偿 DPI，几何常量（窗宽/头像/padding）保持物理像素并与 _ui_scale=1.0
+    解耦——上一轮"锁几何时误伤字体"的回归由此被结构性消除。
     """
 
-    size = -scaled(size_px, scale)
+    size = max(1, round(size_px * 0.75))
     if bold:
         return ("Microsoft YaHei", size, "bold")
     return ("Microsoft YaHei", size)
+
+
+def parse_generation_created_ts(created_at: object) -> float:
+    """把 generation 的 created_at（UTC ISO 串）解析为 epoch 秒；失败返回 0.0。
+
+    0.0 表示"时效未知"，状态行据此隐藏"数据 X 前"后缀，不虚构时间。
+    """
+
+    text = str(created_at or "").strip()
+    if not text:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def format_data_age_suffix(created_ts: float, now_ts: float) -> str:
+    """状态行的数据时效后缀：小时级粒度，≥24h 换天，未知返回空串。"""
+
+    if created_ts <= 0:
+        return ""
+    hours = int(max(now_ts - created_ts, 0) // 3600)
+    if hours < 1:
+        return " · 数据刚更新"
+    if hours >= 24:
+        return f" · 数据 {hours // 24} 天前"
+    return f" · 数据 {hours} 小时前"
 
 
 def resolve_overlay_follow_height(
@@ -140,13 +174,11 @@ def _format_game_overlay_host_reason(reason: str) -> str:
 
 
 def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tuple[str, str]:
-    """把 Supervisor overlay 组件状态压成游戏内显示的二级状态短句。"""
+    """把 Supervisor overlay 组件状态压成单行状态栏可容纳的短语。
 
-    build_id = str(overlay.get("build_id") or "").strip()
-    build_suffix = f" / 构建 {build_id[:18]}" if build_id else ""
-
-    def result(text: str, color: str) -> tuple[str, str]:
-        return (text + build_suffix, color)
+    构建号不再拼进文案：320px 窗口装不下整串且用户不消费它，构建身份仍在
+    supervisor 状态文件与诊断导出里；sidecar 细节原因同理留在日志。
+    """
 
     status = str(overlay.get("status") or "").strip()
     phase = str(overlay.get("phase") or "").strip()
@@ -161,54 +193,51 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
         if isinstance(sidecar_liveness, Mapping)
         else "unknown"
     )
-    sidecar_reason = (
-        str(sidecar_liveness.get("reason") or "").strip()
-        if isinstance(sidecar_liveness, Mapping)
-        else ""
-    )
     last_error = str(overlay.get("last_error") or "").strip()
     if status == "error":
-        return result(f"游戏内显示异常: {last_error or phase or '未知错误'}", UI_COLORS["error"])
+        return (f"显示异常 · {last_error or phase or '未知错误'}", UI_COLORS["error"])
     if status == "stale":
-        return result(f"游戏内显示: 识别进程失效 / {sidecar_reason or '等待自动恢复'}", UI_COLORS["warn"])
+        return ("识别失效 · 自动恢复中", UI_COLORS["warn"])
     if status == "stopping":
-        return result("游戏内显示: 正在关闭", UI_COLORS["warn"])
+        return ("正在关闭", UI_COLORS["warn"])
     if status == "stopped":
         if cache_status in {"queued", "prewarming", "lookup", "building"}:
-            return result("游戏内显示: 海克斯卡识别模板预热中", UI_COLORS["warn"])
+            return ("模板预热中", UI_COLORS["warn"])
         if cache_status == "ready":
-            return result("游戏内显示: 识别模板已预热", UI_COLORS["muted"])
-        return result("游戏内显示: 已关闭", UI_COLORS["muted"])
+            return ("模板已预热", UI_COLORS["muted"])
+        return ("已关闭", UI_COLORS["muted"])
     if status == "starting":
         if phase == "sidecar_restart":
-            return result("游戏内显示: 识别重启中", UI_COLORS["warn"])
+            return ("识别重启中", UI_COLORS["warn"])
         if phase == "vision_prewarming":
-            return result("游戏内显示: 窗口已就绪 / 海克斯卡识别模板预热中", UI_COLORS["warn"])
+            return ("窗口就绪 · 模板预热中", UI_COLORS["warn"])
         if phase in {"prepare_data", "context_start"}:
-            return result("游戏内显示: 正在准备数据", UI_COLORS["warn"])
+            return ("准备数据中", UI_COLORS["warn"])
         if phase == "sidecar_start":
-            return result("游戏内显示: 正在启动识别", UI_COLORS["warn"])
+            return ("识别启动中", UI_COLORS["warn"])
         if phase == "host_start":
-            return result("游戏内显示: 正在启动窗口", UI_COLORS["warn"])
-        return result("游戏内显示: 正在启动", UI_COLORS["warn"])
+            return ("窗口启动中", UI_COLORS["warn"])
+        return ("正在启动", UI_COLORS["warn"])
     if status == "running":
         reason = _format_game_overlay_host_reason(visible_reason) if visible_reason else "等待选择窗口"
         if sidecar_state in {"stale", "failed"}:
-            return result(f"游戏内显示: 识别进程失效 / {sidecar_reason or '等待自动恢复'}", UI_COLORS["warn"])
+            return ("识别失效 · 自动恢复中", UI_COLORS["warn"])
         if bool(overlay.get("build_mismatch")):
-            return result("游戏内显示: 构建身份不一致 / 请重新部署", UI_COLORS["error"])
+            return ("构建不一致 · 请重新部署", UI_COLORS["error"])
         if functional_status == "failed":
-            return result(f"游戏内显示异常: {functional_reason or 'Host 功能不可用'}", UI_COLORS["error"])
+            return (f"显示异常 · {functional_reason or 'Host 功能不可用'}", UI_COLORS["error"])
         if context_status == "context_missing":
-            return result(f"游戏内显示: {reason} / 等待当前英雄", UI_COLORS["warn"])
+            return (f"{reason} · 等待英雄", UI_COLORS["warn"])
         if functional_status == "degraded":
-            return result(f"游戏内显示: {reason} / {functional_reason or '功能降级'}", UI_COLORS["warn"])
+            return (f"{reason} · {functional_reason or '功能降级'}", UI_COLORS["warn"])
         if context_status == "degraded":
-            return result(f"游戏内显示: {reason} / 上下文降级", UI_COLORS["warn"])
+            return (f"{reason} · 上下文降级", UI_COLORS["warn"])
         if cache_status in {"queued", "prewarming", "lookup", "building"}:
-            return result(f"游戏内显示: {reason} / 海克斯卡识别模板预热中", UI_COLORS["warn"])
-        return result(f"游戏内显示: {reason} / 识别已就绪", UI_COLORS["green"])
-    return result("游戏内显示: 等待 Supervisor 状态", UI_COLORS["warn"])
+            return (f"{reason} · 模板预热中", UI_COLORS["warn"])
+        if reason == "已显示":
+            return ("游戏内显示中", UI_COLORS["green"])
+        return (f"识别就绪 · {reason}", UI_COLORS["green"])
+    return ("等待识别服务", UI_COLORS["warn"])
 
 logger = logging.getLogger(__name__)
 

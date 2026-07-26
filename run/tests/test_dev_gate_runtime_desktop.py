@@ -75,8 +75,19 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert "WINDOW_EXPANDED_WIDTH = 320" in ui_text
     assert "WINDOW_COLLAPSED_WIDTH = 112" in ui_text
     assert "WINDOW_BASE_HEIGHT = 740" in ui_text
-    # 悬浮窗按用户要求维持基线"狭长"观感：固定像素密度，不乘 DPI
+    # 几何锁 1.0 维持基线"狭长"观感（窗宽/头像/padding 不乘 DPI）；
+    # 字体与几何解耦：ui_font 用正磅值由 Tk 按系统 DPI 隐式放大。
     assert "self._ui_scale = 1.0" in ui_text
+    assert "def ui_font(size_px" in ui_text
+    assert "round(size_px * 0.75)" in ui_text
+    # 禁负像素字体回潮：那条路线曾在锁几何时把 DPI 补偿一并抹掉。
+    assert "-scaled(size_px" not in ui_text
+    # 构建号与长路径不再拼进状态文案；底部收敛为单行状态栏。
+    assert "build_suffix" not in ui_text
+    assert "status_line_label" in ui_text
+    assert "_render_status_line" in ui_text
+    assert "overlay_status_label" not in ui_text
+    assert "self.status_label" not in ui_text
     assert "resolve_overlay_follow_height" in ui_text
     assert "manage_overlay_runtime=False" in ui_text
     assert "overlay_controller=GameOverlayController(" not in ui_text
@@ -252,5 +263,8 @@ def test_collapsed_width_budget_fits_avatar_and_tier_badge() -> None:
     ribbon = 3 + 5             # 胜率色条及其右间距
     avatar = 48 + 2 * 1        # 头像位图 + 统一 1px 边框（高亮描边已删除）
     avatar_gap = 8
-    badge_min = 24             # "T1" 12pt bold + padx 的保守下限
+    # 徽章按 9pt bold（12px 基准）随 DPI 放大：150% 下"T1"+padx 约 30px。
+    # 已知代价：200%+ 缩放下徽章可能被裁 2-6px（窗宽固定而磅值字体无上限），
+    # 本轮接受，不为极端缩放扩大窗宽。
+    badge_min = 30
     assert WINDOW_COLLAPSED_WIDTH >= left_padding + ribbon + avatar + avatar_gap + badge_min
