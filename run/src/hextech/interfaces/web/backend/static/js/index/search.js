@@ -307,7 +307,7 @@ export function createSearchController({ input, assistPanel, overlay, onRender }
                     <button type="button" class="search-assist-tag" data-search-close>收起</button>
                 </div>
                 <div class="search-assist-list">
-                    <div class="px-4 py-6 text-sm text-gray-400">没有匹配到快捷词，可以继续输入。</div>
+                    <div class="px-4 py-6 text-sm text-slate-400">没有匹配到快捷词，可以继续输入。</div>
                 </div>
             `;
         } else {

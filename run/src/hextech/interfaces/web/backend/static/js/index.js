@@ -143,12 +143,12 @@ function connectWS() {
         url: wsUrl() + '/ws',
         onMessage: handleWsMessage,
         onOpen: () => {
-            wsStatus.innerHTML = '<span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span><span class="text-green-400">已连接</span>';
+            wsStatus.innerHTML = '<span class="w-2 h-2 bg-hx-win rounded-full animate-pulse"></span><span class="text-hx-win">已连接</span>';
             // 首次握手成功展示一次新手引导气泡，之后不再打扰
             showOnboardingToastOnce();
         },
         onClose: () => {
-            wsStatus.innerHTML = '<span class="w-2 h-2 bg-red-500 rounded-full"></span><span class="text-red-400">已断开</span>';
+            wsStatus.innerHTML = '<span class="w-2 h-2 bg-hx-loss rounded-full"></span><span class="text-hx-loss">已断开</span>';
         },
     });
 }

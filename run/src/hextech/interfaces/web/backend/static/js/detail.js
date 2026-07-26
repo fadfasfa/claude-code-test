@@ -20,7 +20,16 @@ let dormancy = null;
 
 function renderHeroHeader({ hero, enName, heroId, heroWR, heroPR, isAuto }) {
     if (hero) document.getElementById('heroName').textContent = hero;
-    if (heroWR) document.getElementById('heroWR').textContent = heroWR;
+    if (heroWR) {
+        const wrNode = document.getElementById('heroWR');
+        wrNode.textContent = heroWR;
+        // 与首页/热力一致的阈值着色：>53% 绿、<47% 红、居中中性。
+        const wrValue = parseFloat(String(heroWR)) / 100;
+        wrNode.classList.remove('hx-wr-up', 'hx-wr-down', 'hx-wr-flat');
+        if (Number.isFinite(wrValue)) {
+            wrNode.classList.add(wrValue > 0.53 ? 'hx-wr-up' : (wrValue < 0.47 ? 'hx-wr-down' : 'hx-wr-flat'));
+        }
+    }
     if (heroPR) document.getElementById('heroPR').textContent = heroPR;
 
     if (heroId) {
@@ -64,10 +73,10 @@ function connectWS() {
     wsController = createReconnectingWS({
         url: wsUrl() + '/ws',
         onOpen: () => {
-            status.innerHTML = '<span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span><span class="text-green-400">已连接</span>';
+            status.innerHTML = '<span class="w-2 h-2 bg-hx-win rounded-full animate-pulse"></span><span class="text-hx-win">已连接</span>';
         },
         onClose: () => {
-            status.innerHTML = '<span class="w-2 h-2 bg-red-500 rounded-full"></span><span class="text-red-400">已断开</span>';
+            status.innerHTML = '<span class="w-2 h-2 bg-hx-loss rounded-full"></span><span class="text-hx-loss">已断开</span>';
         },
         onMessage: (msg) => {
             if (msg.type === 'data_updated') {

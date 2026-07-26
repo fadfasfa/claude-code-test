@@ -20,15 +20,27 @@ export function formatPercent(num) {
     return (num * 100).toFixed(1) + '%';
 }
 
+// 胜率强弱着色：与详情页 heat 阈值一致（>53% 绿、<47% 红、居中中性）。
+export function winRateClass(winRate) {
+    const value = Number(winRate);
+    if (!Number.isFinite(value)) return 'hx-wr-flat';
+    if (value > 0.53) return 'hx-wr-up';
+    if (value < 0.47) return 'hx-wr-down';
+    return 'hx-wr-flat';
+}
+
 export function createChampionCard(champion, index, activeIds) {
     const heroId = champion['英雄 ID'] || '';
     const enName = champion['英文名'] || CHAMPION_PINYIN[champion['英雄名称']] || '';
     const wr = formatPercent(champion['英雄胜率']);
+    const pr = formatPercent(champion['英雄出场率']);
     const heroName = String(champion['英雄名称'] || '');
 
-    const detailUrl = `detail.html?hero=${encodeURIComponent(heroName)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(formatPercent(champion['英雄出场率']))}&id=${encodeURIComponent(heroId)}&en=${encodeURIComponent(enName)}`;
+    // detail URL query 契约（hero/wr/pr/id/en）被详情页与自动跳转依赖，逐字不动。
+    const detailUrl = `detail.html?hero=${encodeURIComponent(heroName)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(pr)}&id=${encodeURIComponent(heroId)}&en=${encodeURIComponent(enName)}`;
 
     const isHighlighted = activeIds.has(String(heroId)) ? 'hx-hero-avatar-highlight' : '';
+    const wrClass = winRateClass(champion['英雄胜率']);
 
     let avatarUrl;
     if (heroId) {
@@ -43,29 +55,39 @@ export function createChampionCard(champion, index, activeIds) {
     const safeDetailUrl = escapeHtml(detailUrl);
     const safeAvatarUrl = escapeHtml(avatarUrl);
     const safeWr = escapeHtml(wr);
+    const safePr = escapeHtml(pr);
     const avatarHiddenStyle = avatarUrl ? '' : 'visibility:hidden;';
 
+    // 备战席高亮/预加载的 DOM 契约：.hx-hero-avatar 与 data-hero-id/name
+    // 必须落在同一元素上（updateHighlights/bindChampionPreloads 依赖）。
+    // hover 详情弹卡为纯 CSS，替代原 title 属性避免双 tooltip。
     return `
         <a
             href="${safeDetailUrl}"
-            class="hx-hero-avatar relative rounded-lg overflow-hidden cursor-pointer block flex-shrink-0 ${isHighlighted}"
+            class="hx-hero-card cursor-pointer"
             style="animation-delay: ${index * 30}ms"
-            title="${safeHeroName} (${safeWr})"
-            data-hero-name="${safeHeroName}"
-            data-hero-id="${escapeHtml(String(heroId || ''))}"
             data-en-name="${escapeHtml(String(enName || ''))}"
         >
-            <img loading="lazy" width="60" height="60"
-                src="${safeAvatarUrl}"
-                alt="${safeHeroName}"
-                class="w-full h-full object-cover bg-gray-800"
-                style="${avatarHiddenStyle}"
+            <div class="hx-hero-avatar relative rounded-lg overflow-hidden ${isHighlighted}"
                 data-hero-name="${safeHeroName}"
-                onerror="this.removeAttribute('src'); this.style.visibility='hidden';"
-            />
-            <div class="absolute bottom-0 inset-x-0 bg-black/80 text-center text-[10px] font-bold text-yellow-400 py-0.5 backdrop-blur-sm">
-                ${safeWr}
+                data-hero-id="${escapeHtml(String(heroId || ''))}"
+            >
+                <img loading="lazy" width="60" height="60"
+                    src="${safeAvatarUrl}"
+                    alt="${safeHeroName}"
+                    class="w-full h-full object-cover bg-slate-800"
+                    style="${avatarHiddenStyle}"
+                    data-hero-name="${safeHeroName}"
+                    onerror="this.removeAttribute('src'); this.style.visibility='hidden';"
+                />
+                <div class="hx-hero-wr text-2xs tabular-nums ${wrClass}">${safeWr}</div>
             </div>
+            <span class="hx-hero-name text-2xs">${safeHeroName}</span>
+            <span class="hx-hero-pop" aria-hidden="true">
+                <b>${safeHeroName}</b>
+                <span>胜率 <i class="${wrClass}">${safeWr}</i></span>
+                <span>出场率 ${safePr}</span>
+            </span>
         </a>
     `;
 }
@@ -100,10 +122,10 @@ export function renderTiers(champions, { container, activeIds, onEmpty, afterRen
         if (champs.length === 0) return;
         const champHTML = champs.map((c, i) => createChampionCard(c, i, activeIds)).join('');
         rows.push(`
-            <div class="hx-tier-row hx-tier-group-shell rounded-2xl overflow-hidden">
+            <div class="hx-tier-row hx-tier-group-shell rounded-2xl">
                 <div class="hx-tier-label shrink-0 ${tier.cssClass} flex flex-col items-center justify-center font-bold text-xl shadow-[2px_0_10px_rgba(0,0,0,0.3)] z-10">
                     <span>${tier.name}</span>
-                    <span class="text-[9px] opacity-80 mt-1 uppercase tracking-wider">${tier.enName}</span>
+                    <span class="text-2xs opacity-80 mt-1 uppercase tracking-wider">${tier.enName}</span>
                 </div>
                 <div class="hx-tier-champions flex-1 flex flex-wrap">
                     ${champHTML}

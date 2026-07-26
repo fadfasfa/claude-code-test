@@ -15,23 +15,23 @@
 
     <header class="hero-dashboard-header hx-index-frame mb-4 flex flex-col items-center justify-center space-y-3 mt-2">
         <div class="flex items-center space-x-3">
-            <div class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
-            <span class="font-black text-2xl tracking-[0.28em] text-white">HEXTECH <span class="text-sky-400">NEXUS</span></span>
+            <div class="w-2.5 h-2.5 rounded-full bg-hx-win animate-pulse"></div>
+            <span class="font-black text-2xl tracking-hx text-hx-text-strong">HEXTECH <span class="text-hx-art-gold">NEXUS</span></span>
         </div>
 
         <div class="relative w-full max-w-2xl group">
             <div class="absolute -inset-[1px] rounded-full border border-white/5 opacity-80 pointer-events-none"></div>
             <input type="text" id="searchInput" placeholder="搜英雄看海克斯... (支持拼音如：ys / 外号如：快乐风男)"
-                   class="search-input relative w-full text-lg rounded-full py-4 px-6 pr-32 text-white placeholder-gray-500 transition-all">
-            <span class="absolute right-20 top-4 text-sm tracking-[0.2em] text-slate-400 uppercase">搜索</span>
+                   class="search-input relative w-full text-lg rounded-full py-4 px-6 pr-32 placeholder-slate-500 transition-all">
+            <span class="absolute right-20 top-4 text-sm tracking-hx text-slate-400 uppercase">搜索</span>
             <kbd class="hx-search-hint absolute right-6 top-4" title="按 / 或 Ctrl+K 聚焦搜索">/</kbd>
             <div id="searchAssistPanel" class="search-assist-panel hidden"></div>
         </div>
-        <p class="text-xs text-slate-500 tracking-[0.24em] uppercase">实时数据已应用「微量贝叶斯平滑 + Z-Score」提纯</p>
+        <p class="text-xs text-slate-500 tracking-hx uppercase">实时数据已应用「微量贝叶斯平滑 + Z-Score」提纯</p>
 
         <div id="wsStatus" class="flex items-center space-x-2 text-xs">
-            <span class="w-2 h-2 bg-gray-500 rounded-full"></span>
-            <span class="text-gray-400">WS 待连接</span>
+            <span class="w-2 h-2 bg-slate-500 rounded-full"></span>
+            <span class="text-slate-400">WS 待连接</span>
         </div>
     </header>
 
@@ -44,7 +44,7 @@
                     <div class="orbit-ring orbit-2"></div>
                 </div>
             </div>
-            <div class="text-sky-300 font-bold tracking-[0.24em] uppercase text-sm animate-pulse">加载英雄数据中...</div>
+            <div class="text-hx-accent font-bold tracking-hx uppercase text-sm animate-pulse">加载英雄数据中...</div>
         </div>
     </main>
 

@@ -9,7 +9,7 @@ export function setupHextechTooltip(containers) {
         <div class="hextech-tooltip-header">
             <span class="hextech-tooltip-title" id="tt-title"></span>
         </div>
-        <div class="hextech-tooltip-body text-gray-300 whitespace-pre-wrap text-[13px]" id="tt-body"></div>
+        <div class="hextech-tooltip-body" id="tt-body"></div>
     `;
     document.body.appendChild(tooltipEl);
     const ttTitle = tooltipEl.querySelector('#tt-title');
@@ -20,7 +20,7 @@ export function setupHextechTooltip(containers) {
         containerEl.textContent = '';
         if (!desc) {
             const fallbackSpan = document.createElement('span');
-            fallbackSpan.className = 'text-gray-500 text-xs';
+            fallbackSpan.className = 'text-slate-500 text-xs';
             fallbackSpan.textContent = '暂无详细描述';
             containerEl.appendChild(fallbackSpan);
             return;

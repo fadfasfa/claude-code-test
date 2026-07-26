@@ -104,10 +104,10 @@ export function createHextechCard(hextech, index) {
     let trendArrowMarkup = '';
     if (wrValue > 0.53) {
         heatClass = 'heat-hot';
-        trendArrowMarkup = '<span class="hextech-card-rate-trend text-emerald-300">▲</span>';
+        trendArrowMarkup = '<span class="hextech-card-rate-trend text-hx-win">▲</span>';
     } else if (wrValue < 0.47) {
         heatClass = 'heat-cold';
-        trendArrowMarkup = '<span class="hextech-card-rate-trend text-rose-300">▼</span>';
+        trendArrowMarkup = '<span class="hextech-card-rate-trend text-hx-loss">▼</span>';
     }
 
     const hexInfo = {
@@ -118,8 +118,8 @@ export function createHextechCard(hextech, index) {
     const bindData = encodeURIComponent(JSON.stringify(hexInfo));
 
     return `
-        <div class="hextech-list-card list-row cursor-pointer p-2 rounded border border-[rgba(139,148,158,0.18)] bg-[rgba(19,26,34,0.92)] transition-colors ${heatClass}" data-hex-info="${bindData}">
-            <div class="hextech-card-rank text-xs font-bold text-gray-500">${index + 1}</div>
+        <div class="hextech-list-card list-row cursor-pointer p-2 rounded transition-colors ${heatClass}" data-hex-info="${bindData}">
+            <div class="hextech-card-rank text-xs font-bold text-slate-500">${index + 1}</div>
 
             <div class="hextech-card-icon-group">
                 <div class="w-1.5 h-6 rounded-full ${tierClass}"></div>
@@ -127,7 +127,7 @@ export function createHextechCard(hextech, index) {
             </div>
 
             <div class="hextech-card-title">
-                <div class="text-sm font-bold text-gray-200 truncate" title="${escapeHtml(hextech.海克斯名称)}">${escapeHtml(hextech.海克斯名称)}</div>
+                <div class="text-sm font-bold text-slate-200 truncate" title="${escapeHtml(hextech.海克斯名称)}">${escapeHtml(hextech.海克斯名称)}</div>
             </div>
 
             <div class="hextech-card-rate hextech-card-rate--win">

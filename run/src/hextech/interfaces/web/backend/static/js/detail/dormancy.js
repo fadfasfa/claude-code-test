@@ -19,7 +19,7 @@ export function createDormancyController({ onDormant, onReactivate }) {
                     <div class="dormancy-crystal"></div>
                 </div>
                 <h2 class="text-xl font-bold text-white tracking-widest mb-2">海克斯核心已转移</h2>
-                <p class="text-xs text-gray-400 leading-relaxed mb-6">
+                <p class="text-xs text-slate-400 leading-relaxed mb-6">
                     已在其他悬浮窗/标签页中激活了新的枢纽，当前窗口已自动进入魔法休眠状态，以降低系统资源开销。
                 </p>
                 <div class="dormancy-btn-row">
