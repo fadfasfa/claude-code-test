@@ -2,16 +2,14 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
-      "Read"
+      "Read",
+      "Edit(~/.claude/plans/**)"
     ],
     "deny": [
       "Bash",
-      "Bash(*)",
       "PowerShell",
-      "PowerShell(*)",
       "Agent(general-purpose)",
-      "Edit(/**)",
-      "Write(/**)",
+      "Edit(**)",
       "Read(**/.env)",
       "Read(**/.env.*)",
       "Read(**/auth.json)",

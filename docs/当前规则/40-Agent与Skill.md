@@ -15,8 +15,9 @@
 - Claude Code 和 Codex 都可以独立完成普通仓库任务。
 - Codex standalone mode：用户直接调用 Codex 时，Codex 按 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和用户任务独立执行。
 - Claude Code 入口读取 `CLAUDE.md`、`PROJECT.md`、`docs/index.md`。
-- Claude Code Plan 阶段默认严格只读。项目默认 `.claude/settings.json` 保守为 `plan` + `Read`；严格 Plan 使用 `.claude/settings.plan.json`，显式实现使用 `.claude/settings.implement.json`。
-- Plan 阶段不得把 `Bash` / `PowerShell` 当只读工具；Windows sandbox 不可用时 shell 可以通过重定向、复制、解释器或脚本真实写盘。使用 GLM 或非 Anthropic first-party host 时必须走严格 Plan 入口。
+- 项目默认 `.claude/settings.json` 保守为 `plan` + `Read`。Anthropic first-party Plan 可使用宿主认可的受控只读探索，但不得通过重定向、解释器或脚本间接写盘。
+- `~/.claude/plans/*.md` 是 Plan 阶段唯一允许的写入面：需求基线获批后写入系统分配的正式计划，修订时完整替换，任务结束后保留且默认不提交。
+- GLM 或非 Anthropic first-party host 必须使用 `.claude/settings.plan.json`：`Edit(**)` 禁止当前工作目录写入，`Edit(~/.claude/plans/**)` 单独放行原生计划目录，并禁用 `Bash` / `PowerShell`。
 - 严格 Plan 禁止 `Agent(general-purpose)`；只读 `Explore` / `Plan` agent 可按需使用，且不得把代理消息视为用户实施批准。
 - OpenAI Codex plugin 可以保留启用状态；Claude Code 没有用户当前轮显性点名或命令时不得调用、委派、审查或触发 Codex / CX。
 - plugin 启用不等于 review gate 启用，review gate 默认禁用。
@@ -34,7 +35,8 @@
 - `.claude/commands/cleanup-worktrees.md`：转发到 cleanup skill。
 - `.claude/skills/` 只保留 Claude Code 专用最小 skill，不作为 Codex 白名单。
 - `.claude/settings.json` 只保留 Claude Code 项目默认保守权限、敏感文件 deny 和本机 plugin 可用状态；不注册仓库级编排 hook。
-- `.claude/settings.plan.json` 是严格 Plan 专用设置；`.claude/settings.implement.json` 是显式执行设置。不要在同一会话内把 Plan 草稿确认误当执行授权。
+- `.claude/settings.plan.json` 是严格 Plan 专用设置；`.claude/settings.implement.json` 通过 `Edit(**)` 和 `Bash(*)` 提供当前工作目录的显式实施入口。不要把需求基线或 Plan 草稿确认误当执行授权。
+- VS Code 未自动显示正式计划时，使用 Claude Code 原生 `Ctrl+G` 或计划文件路径审查，不通过 shell 强行打开编辑器。
 
 ## 重复 Skill 维护合同
 

@@ -1,23 +1,24 @@
-# Claude Code 入口
+# Claude Code 仓库入口
 
-本文件只说明 Claude Code 在本仓的入口边界；不可违背规则见 `AGENTS.md`，通用需求澄清、编码纪律和自检由模型与当前规则直接完成。
+本文件只负责把 Claude Code 路由到本仓事实源和正确权限入口；通用协作方式由全局 `CLAUDE.md` 维护，不在这里复制第二份。
 
-## 使用方式
+## 启动顺序
 
-- 默认使用简体中文输出计划、执行进展、问题、风险、验证结果、审查结论和总结；生成计划文档、治理文档或任务总结时正文必须为简体中文，除非用户明确要求其他语言；英文计划视为不合格，交付前必须改为中文。
-- 用户或材料明确要求其他语言时按该要求执行。
-- 命令、路径、API、错误原文、分支名和技术标识符保持原文。
-- 开始任务先运行 `git status --short`，发现非本轮修改时先报告并避免混入。
-- 先读 `PROJECT.md`、`docs/index.md` 和任务相关 workflow 文档，再选择目标工作区。
-- 选定业务工作区后，必须继续读取该工作区的本地文档索引和任务相关事实源；业务契约只在工作区文档维护，不在本入口复制第二份。
-- Plan 阶段默认走严格只读：只做 `Read` / 搜索 / 对话计划，不使用 `Bash`、`Write`、`Edit`、`MultiEdit`，不写 `.claude/plans/**`；执行前必须切到显式实现入口。
-- 使用 GLM 或非 Anthropic first-party host 时，Plan 阶段必须按更保守口径处理：即使 UI 显示 `plan`，也不把 shell 视为只读保证。
-- Claude Code 与 Codex 均可独立工作；无用户当前轮显性命令时，Claude Code 不调用、委派、审查或触发 Codex / CX。
-- Git 授权、敏感文件、worktree、发布、discard 和完成报告规则全部引用 `AGENTS.md`，不得在本文件另写不同口径。
-- `S/M/L` 仅作治理分级，不承担 bridge 执行职责。
-- Git commit 与 PR 的语言与格式遵循 `docs/当前规则/20-Git与高危操作.md`，不在本文件另写口径。
-- 长任务按需要拆分阶段并逐段自检；不因任务规模自动派子智能体或设置 reviewer 门禁。
+- 开始任务先运行 `git status --short`；发现非本轮修改时先报告、绕开且不得混入。
+- 依次读取 `PROJECT.md`、`docs/index.md` 和任务相关短规则，再从 `docs/当前规则/10-工作区登记.md` 选择明确工作区。
+- 进入业务工作区后继续读取其本地文档索引和任务事实源；仓库根目录只承载治理、路由与工具骨架。
+- 默认使用简体中文；技术标识符、路径、命令、API、分支名和错误原文保持原文。
 
-## 退役说明
+## Plan 与实施入口
 
-旧 CC-CX 强编排、Guard 状态机和 break-glass 流程已经退役，不作为 Claude Code 日常入口。
+- Anthropic first-party 使用 Claude Code 原生 Plan：允许受控只读探索，并把正式计划写入系统分配的 `~/.claude/plans/*.md`；不得在 Plan 阶段修改仓库业务文件。
+- GLM 或其他兼容 provider 必须使用 `claude --permission-mode plan --settings .claude/settings.plan.json`；该入口禁用 shell 和业务文件写入，只放行原生计划目录。
+- 需求基线获批后才写正式计划；Plan Review UI 或明确文字批准后，使用 `claude --permission-mode acceptEdits --settings .claude/settings.implement.json` 进入显式实施入口。
+- 同一会话的正式计划在原生文件中完整修订并保留历史，默认不提交。VS Code 未自动打开时使用 `Ctrl+G` 或计划文件路径审查。
+- 不切换或维护 provider、账号池、token、proxy 和认证配置；这类工作必须作为单独任务处理。
+
+## 仓库边界
+
+- Git、高危操作、保护资产、worktree、验证和完成报告遵循 `AGENTS.md` 及 `docs/当前规则/` 对应事实源，不在本文件另写不同口径。
+- Claude Code 与 Codex 均可独立工作；只有用户当前请求明确点名 `Codex`、`CX` 或对应命令时，Claude Code 才可调用或委派。
+- 不恢复旧 CC-CX 强编排、Guard 状态机、通用流程 Skill、hook、wrapper 或自动 reviewer 门禁。
