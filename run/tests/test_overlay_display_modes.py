@@ -156,3 +156,63 @@ def test_chinese_and_english_tier_aliases_share_colors() -> None:
     assert _tier_color("白银") == _tier_color("silver") == OVERLAY_THEME["silver"]
     assert _tier_color("黄金") == _tier_color("gold") == OVERLAY_THEME["gold"]
     assert _tier_color("棱彩") == _tier_color("Prismatic") == OVERLAY_THEME["prismatic"]
+
+
+def _synergy_pixel_sizes(canvas: RecordingCanvas) -> list[int]:
+    """收集负像素字号的绝对值；正数点字号（统计行）不计入。"""
+
+    return [abs(int(call["font"][1])) for call in canvas.text_calls if int(call["font"][1]) < 0]
+
+
+def test_synergy_text_scales_up_with_viewport_resolution() -> None:
+    low = RecordingCanvas(1920, 1080)
+    high = RecordingCanvas(2560, 1600)
+    draw_overlay_frame(low, _model(), expanded=True)
+    draw_overlay_frame(high, _model(), expanded=True)
+
+    low_sizes = _synergy_pixel_sizes(low)
+    high_sizes = _synergy_pixel_sizes(high)
+    assert low_sizes and high_sizes
+    # 1600p 的标题/正文都必须比 1080p 更大，不能再被固定上限钉死在 15/12px。
+    assert max(high_sizes) > max(low_sizes)
+    assert min(high_sizes) > min(low_sizes)
+    # 1600p 正文需与卡下 16pt 统计行同量级（≥18px），保证真机可读。
+    assert max(high_sizes) >= 24
+    assert sorted(set(high_sizes))[0] >= 17
+
+
+def test_long_synergy_content_truncates_inside_available_space() -> None:
+    model = _model()
+    for row in model["synergies"]:
+        row["content"] = "很长的联动说明文本" * 30
+    canvas = RecordingCanvas(2560, 1600)
+
+    layout = draw_overlay_frame(canvas, model, expanded=True)
+
+    for synergy_box, card_box in zip(layout["synergy_boxes"], layout["card_boxes"]):
+        # 面板顶部不得越过屏幕安全边距，底部保持在卡片上方。
+        assert synergy_box[1] >= 8
+        assert synergy_box[3] < card_box[1]
+    assert any("…" in str(call.get("text", "")) for call in canvas.text_calls)
+
+
+def test_expanded_rating_renders_as_standalone_badge_text() -> None:
+    canvas = RecordingCanvas(2560, 1600)
+
+    draw_overlay_frame(canvas, _model(), expanded=True)
+
+    # 评级从标题内文本改为独立徽章文字；标题里不再拼接 "· S"。
+    assert any(call.get("text") == "S" for call in canvas.text_calls)
+    assert not any("· S" in str(call.get("text", "")) for call in canvas.text_calls)
+
+
+def test_compact_synergy_line_scales_with_viewport() -> None:
+    low = RecordingCanvas(1920, 1080)
+    high = RecordingCanvas(2560, 1600)
+    draw_overlay_frame(low, _model(), expanded=False)
+    draw_overlay_frame(high, _model(), expanded=False)
+
+    low_sizes = _synergy_pixel_sizes(low)
+    high_sizes = _synergy_pixel_sizes(high)
+    assert low_sizes and high_sizes
+    assert max(high_sizes) > max(low_sizes)

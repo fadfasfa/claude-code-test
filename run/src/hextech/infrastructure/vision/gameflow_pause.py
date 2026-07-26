@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from hextech.infrastructure.vision.state import SelectionTracker
@@ -28,31 +29,68 @@ def pause_identity(session_id: str, game_identity: Mapping[str, object]) -> dict
     }
 
 
+def _spawn_probe_daemon(target: Callable[[], None]) -> None:
+    """默认在 daemon 线程执行探测；测试可注入内联执行保持确定性。"""
+
+    threading.Thread(target=target, name="hextech-gameflow-pause-probe", daemon=True).start()
+
+
 @dataclass
 class PausedGameflowProbe:
-    """在窗口暂停期间缓存短时 gameflow 结论，避免高频请求本机接口。"""
+    """在窗口暂停期间缓存短时 gameflow 结论，避免高频请求本机接口。
+
+    探测默认在后台 daemon 线程执行：本机 LCU/2999 同步 HTTP 最坏约 0.6 秒，
+    若在识别主循环内直接调用，会拖慢暂停后第一帧的恢复。``observe()`` 只读取
+    最近缓存并按需触发下一次探测，不阻塞调用方；结论最多晚一次调用到达，
+    "只有明确 NOT_IN_PROGRESS 才结束 epoch" 的语义不变。
+    """
 
     probe: Callable[[], GameflowState] = probe_gameflow_state
     interval_seconds: float = GAMEFLOW_PAUSE_PROBE_SECONDS
     last_probe_at: float | None = None
     state: GameflowState = GameflowState.UNKNOWN
+    spawn: Callable[[Callable[[], None]], None] = _spawn_probe_daemon
+    # generation 让 reset() 丢弃仍在途的旧探测结果，防止上一局的结论写回。
+    _generation: int = 0
+    _inflight: bool = False
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def reset(self) -> None:
-        self.last_probe_at = None
-        self.state = GameflowState.UNKNOWN
+        with self._lock:
+            self.last_probe_at = None
+            self.state = GameflowState.UNKNOWN
+            self._generation += 1
+            self._inflight = False
+
+    def _run_probe(self, generation: int) -> None:
+        try:
+            result = self.probe()
+        except Exception:
+            # LCU/2999 瞬断只能降级为 unknown，不能把 Alt-Tab 当成对局结束。
+            logger.debug("暂停期检查 gameflow 失败。", exc_info=True)
+            result = GameflowState.UNKNOWN
+        with self._lock:
+            if generation != self._generation:
+                return
+            self.state = result
+            self._inflight = False
 
     def observe(self, *, should_probe: bool, now: float) -> GameflowState:
         if not should_probe:
             return GameflowState.UNKNOWN
-        if self.last_probe_at is None or now - self.last_probe_at >= self.interval_seconds:
-            self.last_probe_at = now
-            try:
-                self.state = self.probe()
-            except Exception:
-                # LCU/2999 瞬断只能降级为 unknown，不能把 Alt-Tab 当成对局结束。
-                logger.debug("暂停期检查 gameflow 失败。", exc_info=True)
-                self.state = GameflowState.UNKNOWN
-        return self.state
+        generation: int | None = None
+        with self._lock:
+            due = self.last_probe_at is None or now - self.last_probe_at >= self.interval_seconds
+            if due and not self._inflight:
+                self.last_probe_at = now
+                self._inflight = True
+                generation = self._generation
+        if generation is not None:
+            pending_generation = generation
+            # spawn 在锁外执行：内联注入（测试）会同步跑 _run_probe，持锁会死锁。
+            self.spawn(lambda: self._run_probe(pending_generation))
+        with self._lock:
+            return self.state
 
 
 def resolve_game_visibility_pause(

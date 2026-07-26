@@ -50,6 +50,20 @@ class DesktopStartupStatusTests(unittest.TestCase):
 
             self.assertEqual(probe._marks[0]["name"], "first_idle_visible")
 
+    def test_startup_timing_stamps_build_id_for_consistency_checks(self):
+        import json
+
+        from hextech.interfaces.desktop import startup_timing
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "startup_timing.v1.json"
+            with mock.patch.object(startup_timing, "current_build_id", return_value="20260726T000000Z-test"):
+                probe = startup_timing.StartupTimingProbe(output_path=target)
+                probe.mark("init_start")
+
+            payload = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(payload["build_id"], "20260726T000000Z-test")
+
 
 if __name__ == "__main__":
     unittest.main()

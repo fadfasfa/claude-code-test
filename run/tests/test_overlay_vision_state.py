@@ -423,7 +423,10 @@ class OverlayVisionStateTests(unittest.TestCase):
             reason="game_not_foreground",
             should_probe=True,
             now=91.0,
-            gameflow_probe=PausedGameflowProbe(probe=lambda: GameflowState.NOT_IN_PROGRESS),
+            gameflow_probe=PausedGameflowProbe(
+                probe=lambda: GameflowState.NOT_IN_PROGRESS,
+                spawn=lambda target: target(),
+            ),
             identity_source={"session_id": "game-session-a", "game_instance_id": "game-instance-a"},
         )
 
@@ -433,3 +436,39 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(ended["source"]["selection_revision"], stable["source"]["selection_revision"])
         self.assertEqual(ended["source"]["session_id"], "game-session-a")
         self.assertEqual(ended["source"]["game_instance_id"], "game-instance-a")
+
+    def test_paused_gameflow_probe_never_blocks_the_recognition_loop(self):
+        from hextech.infrastructure.vision.gameflow_pause import PausedGameflowProbe
+        from hextech.modules.vision.gameflow import GameflowState
+
+        pending: list = []
+        probe = PausedGameflowProbe(
+            probe=lambda: GameflowState.NOT_IN_PROGRESS,
+            spawn=pending.append,  # 捕获而不执行，模拟慢速 HTTP 仍在途
+        )
+
+        # 首次调用只触发探测并立即返回缓存的 unknown，不等待结果。
+        self.assertIs(probe.observe(should_probe=True, now=10.0), GameflowState.UNKNOWN)
+        self.assertEqual(len(pending), 1)
+        # 在途期间的后续调用不重复起探测。
+        self.assertIs(probe.observe(should_probe=True, now=12.0), GameflowState.UNKNOWN)
+        self.assertEqual(len(pending), 1)
+
+        pending[0]()  # 慢探测完成
+        self.assertIs(probe.observe(should_probe=True, now=12.1), GameflowState.NOT_IN_PROGRESS)
+
+    def test_paused_gameflow_probe_reset_discards_inflight_result(self):
+        from hextech.infrastructure.vision.gameflow_pause import PausedGameflowProbe
+        from hextech.modules.vision.gameflow import GameflowState
+
+        pending: list = []
+        probe = PausedGameflowProbe(
+            probe=lambda: GameflowState.NOT_IN_PROGRESS,
+            spawn=pending.append,
+        )
+        probe.observe(should_probe=True, now=10.0)
+        probe.reset()  # 返回前台/换局：上一局的在途结论必须作废
+        pending[0]()
+
+        self.assertIs(probe.observe(should_probe=False, now=10.5), GameflowState.UNKNOWN)
+        self.assertIs(probe.state, GameflowState.UNKNOWN)

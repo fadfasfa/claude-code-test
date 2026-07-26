@@ -15,6 +15,12 @@ INNER_BAR_SIDE_INSET_RATIO = 0.055
 SYNERGY_CARD_GAP_RATIO = 0.010
 COMPACT_SYNERGY_HEIGHT_RATIO = 0.066
 CARD_TEXT_POINT_SIZE = 16
+# 联动文字按视口高度缩放：视口是游戏窗口物理像素，天然携带 DPI。旧实现按卡宽
+# 上限 15/12px，在 2560×1600 真机上远小于卡下 16pt 统计行，联动几乎不可读。
+SYNERGY_TITLE_HEIGHT_RATIO = 0.015   # 1080→16px，1600→24px
+SYNERGY_BODY_HEIGHT_RATIO = 0.012    # 1080→12px，1600→19px，与统计行同量级
+COMPACT_SYNERGY_TEXT_HEIGHT_RATIO = 0.011
+SYNERGY_PANEL_MIN_HEIGHT_RATIO = 0.085
 
 OVERLAY_THEME: dict[str, str] = {
     "panel_bg": "#0A1428",
@@ -86,6 +92,8 @@ class StatPanelModel(TypedDict):
     pickrate_text: str
     status_text: str
     synergy_status: SynergyStatusCode
+    # 命中 hint 的规范 augment_id；仅供 session report 关联数据层，不参与绘制。
+    hint_id: NotRequired[str]
 
 
 class SynergyPanelModel(TypedDict):
@@ -114,6 +122,8 @@ class OverlayLayout(TypedDict):
 
 class SynergyTextLayout(TypedDict):
     header: str
+    rating: str
+    badge_width: int
     meta: str
     body_lines: list[str]
     title_size: int
@@ -338,24 +348,28 @@ def _resolve_synergy_text_layout(
     row: SynergyPanelModel,
     width: int,
     *,
+    viewport_height: int,
     minimum_height: int,
     panel_height: int | None = None,
 ) -> SynergyTextLayout:
     pad = _clamp(12, width * 0.05, 20)
     text_width = max(40, width - pad * 2)
-    title_size = _clamp(10, width * 0.035, 15)
-    body_size = _clamp(8, width * 0.028, 12)
-    title_line_height = max(title_size + 2, int(round(title_size * 1.22)))
-    line_height = max(body_size + 3, int(round(body_size * 1.35)))
-    title_offset = _clamp(14, width * 0.045, 22)
-    meta_offset = title_offset + title_line_height + 4
-    body_offset = meta_offset + line_height + 6
-    bottom_pad = _clamp(10, width * 0.025, 16)
+    # 字号随视口高度缩放；行高与偏移从字号推导，避免宽度比例的独立 clamp 在
+    # 高分辨率下把文字钉死在小字号。
+    title_size = _clamp(14, viewport_height * SYNERGY_TITLE_HEIGHT_RATIO, 30)
+    body_size = _clamp(11, viewport_height * SYNERGY_BODY_HEIGHT_RATIO, 24)
+    title_line_height = max(title_size + 2, int(round(title_size * 1.25)))
+    line_height = max(body_size + 4, int(round(body_size * 1.35)))
+    title_offset = _clamp(12, title_size * 0.8, 26)
+    meta_offset = title_offset + title_line_height + 6
+    body_offset = meta_offset + line_height + 8
+    bottom_pad = _clamp(10, body_size * 0.8, 20)
 
-    header_parts = [row["augment_name"]]
-    if row["rating"]:
-        header_parts.append(row["rating"])
-    header = _ellipsize_visual(" · ".join(header_parts), max_width=text_width, font_size=title_size)
+    rating = _clean_text(row["rating"], limit=12)
+    # 评级改为右上角 tier 色徽章；标题只留卡名，可用宽度需扣除徽章占位。
+    badge_width = int(_visual_text_width(rating, title_size)) + title_size if rating else 0
+    header_width = max(24, text_width - (badge_width + 8 if badge_width else 0))
+    header = _ellipsize_visual(row["augment_name"], max_width=header_width, font_size=title_size)
     meta = _ellipsize_visual(
         " · ".join(part for part in (row["hero_name"], row["tag"], row.get("status_text", "")) if part),
         max_width=text_width,
@@ -380,6 +394,8 @@ def _resolve_synergy_text_layout(
             truncated = True
     return {
         "header": header,
+        "rating": rating,
+        "badge_width": badge_width,
         "meta": meta,
         "body_lines": body_lines,
         "title_size": title_size,
@@ -463,6 +479,7 @@ def _draw_synergy_panel(
     box: tuple[int, int, int, int],
     row: SynergyPanelModel,
     *,
+    viewport_height: int,
     minimum_height: int,
 ) -> None:
     _draw_native_panel(canvas, box, tier=row["tier"])
@@ -472,6 +489,7 @@ def _draw_synergy_panel(
     text_layout = _resolve_synergy_text_layout(
         row,
         width,
+        viewport_height=viewport_height,
         minimum_height=minimum_height,
         panel_height=height,
     )
@@ -485,6 +503,29 @@ def _draw_synergy_panel(
         font=_pixel_font(font_family, text_layout["title_size"], "bold"),
         anchor="nw",
     )
+    if text_layout["rating"]:
+        # 评级徽章：tier 色底 + 深色文字，右上角与标题同一行，替代原先淹没在
+        # 标题里的 "· S" 文本，让联动强度一眼可读。
+        badge_x1 = x1 - pad
+        badge_x0 = badge_x1 - max(text_layout["badge_width"], text_layout["title_size"])
+        badge_y0 = y0 + text_layout["title_offset"] - 2
+        badge_y1 = badge_y0 + max(text_layout["title_size"] + 6, int(round(text_layout["title_size"] * 1.25)))
+        canvas.create_rectangle(
+            badge_x0,
+            badge_y0,
+            badge_x1,
+            badge_y1,
+            fill=_tier_color(row["tier"]),
+            outline="",
+        )
+        canvas.create_text(
+            (badge_x0 + badge_x1) // 2,
+            (badge_y0 + badge_y1) // 2,
+            text=text_layout["rating"],
+            fill=OVERLAY_THEME["panel_bg"],
+            font=_pixel_font(font_family, text_layout["title_size"] - 2, "bold"),
+            anchor="center",
+        )
     _draw_shadowed_text(
         canvas,
         x0 + pad,
@@ -510,6 +551,8 @@ def _draw_compact_synergy_panel(
     canvas: CanvasLike,
     box: tuple[int, int, int, int],
     row: SynergyPanelModel,
+    *,
+    viewport_height: int,
 ) -> None:
     """按卡槽绘制一行联动摘要，避免 compact 模式重新占用右侧通知区。"""
 
@@ -517,7 +560,7 @@ def _draw_compact_synergy_panel(
     x0, y0, x1, y1 = box
     width = x1 - x0
     pad = _clamp(12, width * 0.05, 20)
-    font_size = _clamp(10, width * 0.032, 14)
+    font_size = _clamp(12, viewport_height * COMPACT_SYNERGY_TEXT_HEIGHT_RATIO, 22)
     summary = " · ".join(
         part
         for part in (
@@ -559,7 +602,8 @@ def draw_overlay_frame(
     viewport_width, viewport_height = viewport_size
     card_boxes = resolve_overlay_layout(viewport_size)["card_boxes"]
     card_width = max(1, card_boxes[0][2] - card_boxes[0][0])
-    minimum_panel_height = _clamp(72, viewport_height * 0.085, 120)
+    # 上限随视口放大：120px 旧上限在 1600p 下容不下放大后的三段文字。
+    minimum_panel_height = _clamp(72, viewport_height * SYNERGY_PANEL_MIN_HEIGHT_RATIO, 200)
     synergy_rows = list(model["synergies"]) if show_synergy else []
     margin = _clamp(8, viewport_width * 0.008, 20)
     synergy_gap = _clamp(8, viewport_height * SYNERGY_CARD_GAP_RATIO, 16)
@@ -577,6 +621,7 @@ def draw_overlay_frame(
             _resolve_synergy_text_layout(
                 row,
                 card_width,
+                viewport_height=viewport_height,
                 minimum_height=minimum_panel_height,
             )["desired_height"]
             if expanded
@@ -601,9 +646,15 @@ def draw_overlay_frame(
     for box, row in zip(layout["synergy_boxes"], synergy_rows):
         if safe(box):
             if expanded:
-                _draw_synergy_panel(canvas, box, row, minimum_height=minimum_panel_height)
+                _draw_synergy_panel(
+                    canvas,
+                    box,
+                    row,
+                    viewport_height=viewport_height,
+                    minimum_height=minimum_panel_height,
+                )
             else:
-                _draw_compact_synergy_panel(canvas, box, row)
+                _draw_compact_synergy_panel(canvas, box, row, viewport_height=viewport_height)
     if isinstance(perf_sink, dict):
         perf_sink["last_draw_ms"] = (time.perf_counter() - started_at) * 1000.0
     return layout

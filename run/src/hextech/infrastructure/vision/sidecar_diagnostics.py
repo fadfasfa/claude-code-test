@@ -265,8 +265,9 @@ def _vision_trace_signature(event_payload: Mapping[str, Any]) -> tuple[str, ...]
         str(source.get("selection_window_active") or ""),
         str(source.get("scene_kind") or ""),
         "body_shard_latched" if source.get("body_shard_latched") else "",
-        "cursor_over_cards" if source.get("cursor_over_cards") else "",
-        "hover_occluded" if source.get("hover_occluded") else "",
+        # cursor_over_cards / hover_occluded 是鼠标位置噪声，不构成状态变化：
+        # 真机中光标划过卡片区域会让二者逐帧翻转，把 256 条历史在 4 分钟内
+        # 全部冲成空闲帧。字段本身仍写入每条 history 条目，仅不参与签名。
         *_slot_signature(event_payload),
         *(str(rule or "") for rule in acceptance_rules[:SLOT_COUNT]),
         *raw_signature,

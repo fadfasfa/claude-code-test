@@ -23,8 +23,11 @@ from hextech.modules.session.build_identity import current_build_id
 logger = logging.getLogger(__name__)
 BACKGROUND_IDLE_TIMEOUT_SECONDS = 300.0
 # League 出现后需在 15 秒内恢复；1 秒探测加 13 秒端到端恢复预算，仍预留约 1 秒
-# 给线程调度。恢复失败的重试另行限制为 5 秒，避免为了快速发现而重复拉起服务。
+# 给线程调度。1 秒档只在待机/恢复失败态使用——这些状态必须尽快发现 League。
 BACKGROUND_PROCESS_PROBE_SECONDS = 1.0
+# 服务已运行时探针只服务于 300 秒空闲判定，5 秒粒度足够；避免对局与大厅期间
+# 每秒全量枚举一次系统进程的常驻开销。
+BACKGROUND_PROCESS_PROBE_RUNNING_SECONDS = 5.0
 BACKGROUND_RESUME_RETRY_SECONDS = 5.0
 MANUAL_WINDOW_VISIBLE_SECONDS = 300.0
 BACKGROUND_RESUME_HEALTH_TIMEOUT_SECONDS = 13.0
@@ -75,6 +78,14 @@ def probe_league_process_state(
         "game_running": game_running,
         "matched_processes": sorted(matched_processes),
     }
+
+
+def resolve_background_probe_interval(runtime_state: str) -> float:
+    """按运行态选择进程探针间隔；只有等待唤醒的状态才需要 1 秒档。"""
+
+    if runtime_state in {"suspended", "resume_failed", "resume_cleanup_pending"}:
+        return BACKGROUND_PROCESS_PROBE_SECONDS
+    return BACKGROUND_PROCESS_PROBE_RUNNING_SECONDS
 
 
 def resolve_background_runtime_action(
@@ -164,7 +175,9 @@ class DesktopBackgroundRuntimeMixin:
         )
 
     def _background_runtime_loop(self) -> None:
-        while not self._background_runtime_stop.wait(BACKGROUND_PROCESS_PROBE_SECONDS):
+        while not self._background_runtime_stop.wait(
+            resolve_background_probe_interval(self._background_runtime_state)
+        ):
             if self._closing:
                 return
             process_state = probe_league_process_state()
@@ -702,12 +715,14 @@ class DesktopBackgroundRuntimeMixin:
 __all__ = [
     "BACKGROUND_IDLE_TIMEOUT_SECONDS",
     "BACKGROUND_PROCESS_PROBE_SECONDS",
+    "BACKGROUND_PROCESS_PROBE_RUNNING_SECONDS",
     "BACKGROUND_RESUME_RETRY_SECONDS",
     "BACKGROUND_RESUME_HEALTH_POLL_SECONDS",
     "BACKGROUND_RESUME_HEALTH_TIMEOUT_SECONDS",
     "DesktopBackgroundRuntimeMixin",
     "LEAGUE_CLIENT_PROCESS_NAMES",
     "LEAGUE_GAME_PROCESS_NAMES",
+    "resolve_background_probe_interval",
     "MANUAL_WINDOW_VISIBLE_SECONDS",
     "probe_league_process_state",
     "resolve_background_runtime_action",

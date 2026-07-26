@@ -349,6 +349,7 @@ def build_render_model(
                 "pickrate_text": pickrate_text,
                 "status_text": status_text,
                 "synergy_status": synergy_status,
+                "hint_id": _clean_text(hint.get("augment_id"), limit=60),
             }
         )
         if not ready:
@@ -455,6 +456,7 @@ def build_render_model_from_session(
             }
         )
         hint = _query_hint(row, hint_cache) if ready else {}
+        stats[-1]["hint_id"] = _clean_text(hint.get("augment_id"), limit=60)
         matched = _matched_synergy(hint, context_mapping)
         stats[-1]["synergy_status"] = _synergy_status(
             matched=matched,

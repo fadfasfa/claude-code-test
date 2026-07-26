@@ -73,6 +73,22 @@ def test_league_auto_wake_budget_leaves_scheduler_headroom() -> None:
     assert BACKGROUND_RESUME_RETRY_SECONDS == 5.0
 
 
+def test_probe_interval_uses_fast_tier_only_while_waiting_for_league() -> None:
+    """1 秒档只服务于待机唤醒；运行期探针只用于空闲判定，5 秒即可。"""
+
+    from hextech.interfaces.desktop.background_runtime import (
+        BACKGROUND_PROCESS_PROBE_RUNNING_SECONDS,
+        resolve_background_probe_interval,
+    )
+
+    for state in ("suspended", "resume_failed", "resume_cleanup_pending"):
+        assert resolve_background_probe_interval(state) == BACKGROUND_PROCESS_PROBE_SECONDS
+    for state in ("running", "suspending", "resuming", "restart_in_progress", ""):
+        assert resolve_background_probe_interval(state) == BACKGROUND_PROCESS_PROBE_RUNNING_SECONDS
+    # 唤醒预算只由 1 秒档参与，慢档不得进入 15 秒验收路径。
+    assert BACKGROUND_PROCESS_PROBE_RUNNING_SECONDS > BACKGROUND_PROCESS_PROBE_SECONDS
+
+
 def test_manual_wake_starts_one_new_five_minute_window() -> None:
     action, idle = resolve_background_runtime_action(
         runtime_state="running",
