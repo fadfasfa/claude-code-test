@@ -102,6 +102,62 @@ def test_web_bootstrap_avoids_load_event_gate() -> None:
     assert "bootstrapIndexPage();" in index_script
     assert "bootstrapDetailPage();" in detail_script
 
+# Tailwind 的纯标记类：本身不产出 CSS 规则，类覆盖门禁必须豁免
+_TAILWIND_MARKER_ONLY_CLASSES = frozenset({"group", "peer"})
+
+
+def _static_frontend_sources() -> list:
+    pages = [WEB_STATIC_DIR / "index.html", WEB_STATIC_DIR / "detail.html"]
+    scripts = sorted((WEB_STATIC_DIR / "js").rglob("*.js"))
+    return pages + scripts
+
+
+def _iter_static_class_tokens() -> set:
+    tokens: set[str] = set()
+    for path in _static_frontend_sources():
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r'class="([^"]*)"', text):
+            for token in match.group(1).split():
+                # 跳过模板插值与三元表达式片段，只校验字面量类名
+                if "$" in token or "{" in token or "'" in token or token in {":", "?"}:
+                    continue
+                tokens.add(token)
+    return tokens
+
+
+def test_static_class_tokens_exist_in_compiled_css() -> None:
+    """HTML/JS 用到的类必须存在于编译产物：漏跑 build:css 时立即红灯。"""
+
+    compiled = (WEB_STATIC_DIR / "css" / "tailwind-compiled.css").read_text(encoding="utf-8")
+    theme = (WEB_STATIC_DIR / "css" / "hextech-theme.css").read_text(encoding="utf-8")
+    # 还原 CSS 选择器转义（Tailwind 对逗号输出 \2c ），使 ".{类名}" 可直接子串匹配
+    decoded = re.sub(r"\\2c\s?", ",", compiled + theme)
+    decoded = re.sub(r"\\(.)", r"\1", decoded)
+
+    missing = sorted(
+        token
+        for token in _iter_static_class_tokens() - _TAILWIND_MARKER_ONLY_CLASSES
+        if ("." + token) not in decoded
+    )
+    assert not missing, (
+        "以下类在 tailwind-compiled.css/hextech-theme.css 中缺失，"
+        f"请在 frontend/ 目录执行 npm run build:css 后重新提交产物：{missing}"
+    )
+
+
+def test_js_asset_urls_use_allowlisted_prefixes() -> None:
+    """前端 /assets/ 字面量必须带资产路由白名单前缀，否则后端一律 404。"""
+
+    allowed_prefixes = ("champions/", "augments/", "modes/", "ui/")
+    for path in _static_frontend_sources():
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"/assets/", text):
+            rest = text[match.end():match.end() + 24]
+            assert rest.startswith(allowed_prefixes), (
+                f"{path.name} 中出现未带白名单前缀的资产路径：/assets/{rest[:16]}…"
+            )
+
+
 def test_api_champions_reads_published_snapshot_without_web_rebuild() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient

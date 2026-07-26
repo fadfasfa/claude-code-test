@@ -121,7 +121,8 @@
         if (heroPR) document.getElementById('heroPR').textContent = heroPR;
 
         if (heroId) {
-            document.getElementById('heroAvatar').src = `/assets/${heroId}.png`;
+            // 资产路由要求 champions/ 前缀；本地缺图时后端会 307 回退 DDragon。
+            document.getElementById('heroAvatar').src = `/assets/champions/${heroId}.png`;
         } else if (enName) {
             document.getElementById('heroAvatar').src = `https://ddragon.leagueoflegends.com/cdn/${ddVersion}/img/champion/${enName}.png`;
         } else {
@@ -187,7 +188,8 @@
                 return iconUrl;
             }
 
-            return `/assets/${encodeURIComponent(hextechName)}.png`;
+            // augments/ 前缀必需；后端会按名称查目录映射真实文件名并兜底远端。
+            return `/assets/augments/${encodeURIComponent(hextechName)}.png`;
         }
 
         function getAugmentTierClass(tier) {
@@ -745,7 +747,7 @@
                         manifest.forEach((item) => {
                             if (!item || !item.name) return;
                             const icon = item.filename
-                                ? `/assets/${encodeURIComponent(item.filename)}`
+                                ? `/assets/augments/${encodeURIComponent(item.filename)}`
                                 : (item.icon_url || augmentIconMap[item.name] || '');
                             const entry = {
                                 name: item.name,
