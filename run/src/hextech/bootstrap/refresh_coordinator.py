@@ -33,6 +33,9 @@ from hextech.modules.data.generation import DataSnapshotPublisher
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
 from hextech.bootstrap.game_refresh_gate import GameRefreshDeferred, GameRefreshGate
+from hextech.bootstrap.source_freshness import (
+    evaluate_source_expiry, is_blocked_failure, iso_utc, parse_refresh_time, pointer_success_at,
+)
 
 
 SOURCE_INTERVALS = {
@@ -47,33 +50,8 @@ SOURCE_TIMEOUTS = {
     "apex": 60 * 60,
     "mayhem": 10 * 60,
 }
-# 数据绝对时效阈值 = 刷新周期 × 1.25：容纳 worker 时长（apex 上限 60min）、
-# 15 分钟调度粒度和一次 30min 非阻断 backoff 的正常抖动；超过即视为数据过期。
-# freshness 仍只表达"本轮候选来源"，过期通过 data_status=data_stale 暴露。
-STALE_AGE_FACTOR = 1.25
 ContributionMap = Mapping[str, Mapping[str, Any]]
 SnapshotBuilder = Callable[[ContributionMap], Any]
-
-
-def _parse_time(value: str) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
-
-
-def _iso(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat(timespec="seconds")
-
-
-def _pointer_success_at(pointer: Mapping[str, Any]) -> str:
-    return str(pointer.get("last_success_at") or "")
-
-
-def _is_blocked_failure(payload: Mapping[str, Any]) -> bool:
-    text = json.dumps(payload, ensure_ascii=True).lower()
-    return any(token in text for token in ("http_403", "http_429", '"status_code": 403', '"status_code": 429'))
 
 
 class CohortRefreshCoordinator:
@@ -360,13 +338,13 @@ class CohortRefreshCoordinator:
         if force:
             return True
         current = self.now()
-        next_due = _parse_time(state.next_due_at)
+        next_due = parse_refresh_time(state.next_due_at)
         if next_due is not None:
             return current >= next_due
         # source current 缺失不代表首次尝试；失败后的 backoff 必须先于立即刷新语义。
         if not pointer:
             return True
-        success = _parse_time(state.last_success_at or _pointer_success_at(pointer))
+        success = parse_refresh_time(state.last_success_at or pointer_success_at(pointer))
         return success is None or current >= success + SOURCE_INTERVALS[source]
 
     def _source_coverage(self, source: str, pointer: Mapping[str, Any]) -> dict[str, Any]:
@@ -546,15 +524,15 @@ class CohortRefreshCoordinator:
 
     def _failure_state(self, previous: RefreshSourceState, payload: Mapping[str, Any]) -> RefreshSourceState:
         now = self.now()
-        blocked = _is_blocked_failure(payload)
+        blocked = is_blocked_failure(payload)
         delay = timedelta(hours=6) if blocked else timedelta(minutes=30)
         if not blocked:
             seed = hashlib.blake2b(json.dumps(payload, sort_keys=True).encode("utf-8"), digest_size=2).digest()
             delay += timedelta(seconds=int.from_bytes(seed, "big") % 301)
         return replace(
             previous,
-            last_attempt_at=_iso(now),
-            next_due_at=_iso(now + delay),
+            last_attempt_at=iso_utc(now),
+            next_due_at=iso_utc(now + delay),
             failure_kind="http_blocked" if blocked else str(payload.get("error_type") or "worker_failed"),
             state="backoff",
         )
@@ -726,14 +704,9 @@ class CohortRefreshCoordinator:
                 data_at_text = str(
                     target.get("last_success_at") or target.get("completed_at") or target.get("created_at") or ""
                 )
-                # 绝对时效判定：数据时间无法解析时保持不过期，不虚构陈旧状态。
-                # 未 due 被跳过或 saved candidate 复用的源同样按真实 data_at 判定，
-                # 冻结超阈值时通过 data_stale 如实暴露，不再被"本轮无失败"掩盖。
-                data_age = None
-                data_at_parsed = _parse_time(data_at_text)
-                if data_at_parsed is not None:
-                    data_age = completed - data_at_parsed
-                expired = data_age is not None and data_age > SOURCE_INTERVALS[source] * STALE_AGE_FACTOR
+                expired, stale_age_seconds = evaluate_source_expiry(
+                    data_at_text, SOURCE_INTERVALS[source], completed
+                )
                 if source in degraded_sources:
                     data_reason = "candidate_rejected_last_good_preserved"
                 elif expired:
@@ -747,7 +720,7 @@ class CohortRefreshCoordinator:
                         or ""
                     ),
                     "data_at": data_at_text,
-                    "checked_at": _iso(completed),
+                    "checked_at": iso_utc(completed),
                     "freshness": "last_good" if source in degraded_sources else "fresh",
                     "run_id": run_id,
                     "origin_generation_id": str(target.get("origin_generation_id") or ""),
@@ -757,7 +730,7 @@ class CohortRefreshCoordinator:
                     "data_status": "data_stale" if source in degraded_sources or expired else "fresh",
                     # UI 只消费稳定诊断码；原始 worker 错误仍保留在本轮 source 诊断中。
                     "data_reason": data_reason,
-                    "stale_age_seconds": int(data_age.total_seconds()) if expired and data_age is not None else 0,
+                    "stale_age_seconds": stale_age_seconds,
                     "coverage": self._source_coverage(source, target),
                 }
             manifest = self.publisher.publish(
@@ -789,9 +762,9 @@ class CohortRefreshCoordinator:
                 continue
             pointer = targets[source]
             states[source] = RefreshSourceState(
-                last_attempt_at=_iso(completed),
-                last_success_at=str(pointer.get("last_success_at") or _iso(completed)),
-                next_due_at=_iso(completed + SOURCE_INTERVALS[source]),
+                last_attempt_at=iso_utc(completed),
+                last_success_at=str(pointer.get("last_success_at") or iso_utc(completed)),
+                next_due_at=iso_utc(completed + SOURCE_INTERVALS[source]),
                 failure_kind="",
                 current_run_id=(
                     self._pointer_identity(pointer)[0]
@@ -802,7 +775,7 @@ class CohortRefreshCoordinator:
             )
         self.schedule_store.save(
             RefreshScheduleV1(
-                updated_at=_iso(completed),
+                updated_at=iso_utc(completed),
                 generation_id=manifest.generation_id,
                 sources=states,
             )

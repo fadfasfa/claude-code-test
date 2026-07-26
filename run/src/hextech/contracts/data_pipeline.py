@@ -516,12 +516,9 @@ class SourceStatusV2:
     artifact_sha256: str = ""
     manifest_sha256: str = ""
     record_count: int = 0
-    # `freshness` 说明 generation 是否复用 last-good；`data_status` 补充本轮
-    # 候选是否因覆盖/上游变化而陈旧，避免 UI 把旧统计静默当成新数据。
+    # freshness=是否复用 last-good；data_status=数据陈旧；stale_age_seconds=过期超龄秒数（可选字段，旧构建忽略未知键，回滚安全）。
     data_status: str = "unknown"
     data_reason: str = ""
-    # 数据绝对时效：data_at 距发布时刻超过来源刷新周期阈值时写入超龄秒数，
-    # 否则为 0。可选字段：旧构建 from_mapping 忽略未知键，回滚安全。
     stale_age_seconds: int = 0
     coverage: Mapping[str, Any] = field(default_factory=dict)
 
