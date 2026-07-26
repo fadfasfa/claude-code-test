@@ -96,7 +96,6 @@ class LCUState:
     connection_state: str = "disconnected"
     local_champ_id: Optional[int] = None
     local_champ_name: Optional[str] = None
-    consecutive_404_count: int = 0
     state_version: int = 0
     updated_at: float = 0.0
 
@@ -288,6 +287,19 @@ def _get_lcu_session(url: str, headers: dict) -> requests.Response:
         return _lcu_session.get(url, headers=headers, verify=False, timeout=3)
 
 
+def _handle_champ_select_not_found() -> None:
+    """champ-select 404 = 连接正常但不在选人（含对局中），是常态而非连接异常。
+
+    历史实现把 404 计满 5 次就重置 port/token 并告警，对局中每 7.6 秒
+    触发一次重扫客户端进程 + warning 刷屏（2026-07-26 真机实测 137 条/18 分钟）。
+    此处只做状态投影（_apply_client_context 已含候选清空与阶段转换）；
+    连接层失效由连接错误与 401/403 路径负责。
+    """
+
+    context = _client_context_provider.not_in_champ_select(source="web-lcu")
+    _apply_client_context(context)
+
+
 async def lcu_polling_loop() -> None:
     """持续轮询 LCU 选人会话，并把英雄可用集与锁定事件广播给前端。"""
     while True:
@@ -327,9 +339,6 @@ async def lcu_polling_loop() -> None:
 
             if res.status_code == 200:
                 data = res.json()
-                with _lcu_state_lock:
-                    _lcu_state.consecutive_404_count = 0
-
                 client_context = _client_context_provider.update(data, source="web-lcu")
                 candidate_groups, state_changed = _apply_client_context(client_context)
                 available_ids = _candidate_groups_to_id_set(candidate_groups)
@@ -377,21 +386,7 @@ async def lcu_polling_loop() -> None:
                     with _lcu_state_lock:
                         _clear_lcu_local_champion_state()
             elif res.status_code == 404:
-                context = _client_context_provider.not_in_champ_select(source="web-lcu")
-                _apply_client_context(context)
-                with _lcu_state_lock:
-                    _lcu_state.consecutive_404_count += 1
-                    _clear_lcu_candidate_state(clear_local=True)
-                    consecutive_404_count = _lcu_state.consecutive_404_count
-                    _lcu_state.context_phase = "not_in_champ_select"
-                    _lcu_state.connection_state = "connected"
-                if consecutive_404_count >= 5:
-                    logger.warning("LCU 连续返回 404 五次，重置连接状态（count=%s）", consecutive_404_count)
-                    with _lcu_state_lock:
-                        _lcu_state.port = None
-                        _lcu_state.token = None
-                        _lcu_state.consecutive_404_count = 0
-                        _clear_lcu_candidate_state(clear_local=True)
+                _handle_champ_select_not_found()
             elif res.status_code in (401, 403):
                 logger.warning("LCU token 失效或未授权（401/403），重置连接状态。")
                 context = _client_context_provider.unavailable("authorization_failed", source="web-lcu")

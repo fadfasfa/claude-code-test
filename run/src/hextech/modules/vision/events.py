@@ -257,7 +257,11 @@ def normalize_overlay_slot(
     # hint 反填 augment_id 的兼容行为，避免把同名统计 ID 误当成视觉版本。
     if hint and not augment_id and not layered_identity:
         augment_id = _clean_text(hint.get("augment_id"), limit=80)
-    visual_variant_id = _clean_text(raw_slot.get("visual_variant_id") or augment_id, limit=80)
+    # 分层事件的视觉版本只认显式字段：augment_id 现在承载规范文本身份
+    # （text_icon_disagree 也会填），不能再反填成"视觉版本"冒充图标证据。
+    visual_variant_id = _clean_text(
+        raw_slot.get("visual_variant_id") or ("" if layered_identity else augment_id), limit=80
+    )
 
     name = _clean_text(raw_name or hint.get("name"), limit=48)
     tier = _clean_text(raw_slot.get("tier") or hint.get("tier"), limit=24)

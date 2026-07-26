@@ -19,7 +19,9 @@ from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.session.evidence import SessionEvidenceBundle, write_evidence_bundle
 
 
-OVERLAY_SESSION_REPORT_LIMIT = 20
+# 一局实测约 58 份报告；20 条会把整局前半段证据冲掉（真机复现：
+# 出问题的 epoch 1-4 报告全部丢失）。200 可完整留住至少 3 局。
+OVERLAY_SESSION_REPORT_LIMIT = 200
 
 
 @dataclass(frozen=True)

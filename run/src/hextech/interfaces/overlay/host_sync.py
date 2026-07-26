@@ -326,7 +326,7 @@ def _write_overlay_session_report(
     """记录每种真实 Overlay 会话结果，包含缺失原因而不默认保存截图。
 
     同一事件签名只落盘一次；`latest.json` 始终指向最新结构化结果，历史严格保留
-    最近 20 条，便于真机问题复现而不无限增长运行态。
+    最近 200 条（约 3 局），便于真机问题复现而不无限增长运行态。
     """
 
     slots = snapshot.get("slots") if isinstance(snapshot.get("slots"), list) else []

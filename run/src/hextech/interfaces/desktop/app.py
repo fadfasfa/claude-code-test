@@ -7,16 +7,14 @@ from hextech.interfaces.desktop.app_shared import (  # noqa: F401 - 保留历史
     StartupTimingProbe,
     UI_COLORS,
     WEB_PORT_FILE,
+    WINDOW_BASE_HEIGHT,
     WINDOW_EXPANDED_WIDTH,
-    WINDOW_MIN_HEIGHT,
     _format_game_overlay_host_reason,
     _format_supervisor_game_overlay_status,
-    _selection_role_style,
     ctypes,
     load_ui_feature_flags,
     logger,
     os,
-    primary_workarea_height,
     save_ui_feature_flags,
     scaled,
     sys,
@@ -87,7 +85,7 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._manual_move_timestamp = 0.0
         self._last_client_rect = None
         self._last_overlay_target_pos = None
-        # 折叠态标记：True 时悬浮窗收成 80 px 极窄列表，让出主屏视线
+        # 折叠态标记：True 时悬浮窗收成 112 px 极窄列表，让出主屏视线
         self._collapsed = False
         # 首次显示是否已完成吸附定位，用于解决"必须先移动客户端窗口才会跟随"的体感问题
         self._overlay_position_initialized = False
@@ -129,14 +127,12 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
 
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
-        # DPI 缩放与自适应高度：宽度按 DPI 放大，高度铺满工作区（留出边距）
-        self._ui_scale = window_dpi_scale(self.root)
-        workarea_height = primary_workarea_height()
-        self._window_height_px = min(
-            workarea_height,
-            max(scaled(WINDOW_MIN_HEIGHT, self._ui_scale), workarea_height - scaled(40, self._ui_scale)),
-        )
-        self._overlay_pixel_width = scaled(WINDOW_EXPANDED_WIDTH, self._ui_scale)
+        # 按用户要求维持基线"狭长"观感：固定像素密度（缩放锁 1.0，不乘 DPI，
+        # window_dpi_scale 保留在 app_shared 供将来选择性启用），高度基值 740；
+        # 跟随客户端时由 runtime_window 按客户端底缘动态压缩高度。
+        self._ui_scale = 1.0
+        self._window_height_px = WINDOW_BASE_HEIGHT
+        self._overlay_pixel_width = WINDOW_EXPANDED_WIDTH
         self.root.geometry(f"{self._overlay_pixel_width}x{self._window_height_px}")
         self.root.configure(bg=UI_COLORS["base"])
         self.root.attributes("-alpha", 1.0, "-topmost", False)

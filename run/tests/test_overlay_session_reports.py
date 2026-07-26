@@ -40,11 +40,18 @@ def _snapshot(index: int) -> dict:
     }
 
 
-def test_overlay_sessions_keep_latest_and_only_twenty_structured_reports(
+def test_overlay_sessions_keep_latest_and_bounded_structured_reports(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     from hextech.interfaces.overlay import host_sync
+    from hextech.interfaces.overlay import report_writer as report_writer_module
     from hextech.interfaces.overlay.report_writer import OverlayReportWriter
+
+    # 真实上限必须容得下整局证据（一局实测约 58 份报告，200 ≥ 3 局）；
+    # 修剪机制本身用小上限验证，避免测试写两百个文件。
+    assert report_writer_module.OVERLAY_SESSION_REPORT_LIMIT == 200
+    monkeypatch.setattr(report_writer_module, "OVERLAY_SESSION_REPORT_LIMIT", 20)
 
     writer = OverlayReportWriter(
         tmp_path / "reports" / "overlay_sessions",

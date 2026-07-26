@@ -178,7 +178,7 @@ def _monitor_workarea(hwnd: int) -> tuple[int, int, int, int] | None:
 
 
 def _avatar_pixel_size(ui: "HextechUI") -> int:
-    """头像边长按窗口 DPI 缩放，高分屏上不再显得过小。"""
+    """头像边长随 UI 缩放推导；缩放当前锁 1.0，即固定 48px 的基线观感。"""
 
     return max(1, round(48 * float(getattr(ui, "_ui_scale", 1.0))))
 
@@ -242,6 +242,9 @@ def load_and_set_img(ui: "HextechUI", champ_id, label) -> None:
 
 def window_sync_loop(ui: "HextechUI") -> None:
     """根据客户端和游戏窗口状态控制伴生窗口显隐、置顶与持续跟随。"""
+    # 函数级导入：app_shared 模块级依赖 runtime → runtime_window，反向导入会成环
+    from hextech.interfaces.desktop.app_shared import resolve_overlay_follow_height
+
     manual_follow_cooldown = 8.0
     hide_grace_seconds = 1.0
     follow_resume_distance = 32
@@ -270,24 +273,31 @@ def window_sync_loop(ui: "HextechUI") -> None:
     def _has_recent_client_context(now_ts: float) -> bool:
         return (now_ts - last_client_interaction_at) < hide_grace_seconds
 
-    def _target_overlay_position(hwnd_client: int, client_rect: tuple[int, int, int, int]) -> tuple[int, int]:
+    def _target_overlay_position(hwnd_client: int, client_rect: tuple[int, int, int, int]) -> tuple[int, int, int]:
+        """吸附目标 (x, y, height)：贴客户端内容区右上角，高度按客户端底缘压缩。"""
         try:
             client_area = win32gui.GetClientRect(hwnd_client)
             target_x, target_y = win32gui.ClientToScreen(hwnd_client, (client_area[2], 0))
+            _, content_bottom = win32gui.ClientToScreen(hwnd_client, (0, client_area[3]))
             target = (int(target_x), int(target_y))
+            client_bottom = int(content_bottom)
         except Exception:
             logger.debug("计算客户端内容区右侧坐标失败，回退到窗口外框。", exc_info=True)
             target = (int(client_rect[2]), int(client_rect[1]))
+            client_bottom = int(client_rect[3])
         # 客户端贴近屏幕右缘时按工作区钳制吸附坐标，防止悬浮窗被推出屏外
         workarea = _monitor_workarea(hwnd_client)
+        workarea_bottom: int | None = None
         if workarea is not None:
             left, top, right, bottom = workarea
             overlay_width = int(getattr(ui, "_overlay_pixel_width", 320))
             max_x = max(left, right - overlay_width)
             clamped_x = min(max(target[0], left), max_x)
             clamped_y = min(max(target[1], top), max(top, bottom - 200))
-            return (clamped_x, clamped_y)
-        return target
+            target = (clamped_x, clamped_y)
+            workarea_bottom = int(bottom)
+        height = resolve_overlay_follow_height(target[1], client_bottom, workarea_bottom)
+        return (target[0], target[1], height)
 
     def _client_rect_jump_detected(current_rect: tuple[int, int, int, int], previous_rect: tuple[int, int, int, int] | None) -> bool:
         if not previous_rect:
@@ -299,8 +309,8 @@ def window_sync_loop(ui: "HextechUI") -> None:
             or abs(current_rect[3] - previous_rect[3]) > follow_resume_distance
         )
 
-    def _update_overlay_position(target_pos: tuple[int, int]) -> None:
-        ui._run_on_ui_thread(lambda pos=target_pos: ui._move_overlay_to(pos[0], pos[1]))
+    def _update_overlay_position(target_pos: tuple[int, int, int]) -> None:
+        ui._run_on_ui_thread(lambda pos=target_pos: ui._move_overlay_to(pos[0], pos[1], height=pos[2]))
 
     def _should_keep_overlay_visible(client_active: bool, overlay_active: bool, now_ts: float) -> bool:
         return client_active or overlay_active or _has_recent_client_context(now_ts)
@@ -318,7 +328,7 @@ def window_sync_loop(ui: "HextechUI") -> None:
         # 下次再次出现时仍能立即吸附而不必等客户端窗口实际位移
         ui._overlay_position_initialized = False
 
-    def _resume_follow_if_ready(client_rect: tuple[int, int, int, int], target_pos: tuple[int, int]) -> None:
+    def _resume_follow_if_ready(client_rect: tuple[int, int, int, int], target_pos: tuple[int, int, int]) -> None:
         client_jump_detected = _client_rect_jump_detected(client_rect, ui._last_client_rect)
         if client_jump_detected and ui._manual_follow_cooldown_elapsed(manual_follow_cooldown):
             ui._resume_auto_follow()

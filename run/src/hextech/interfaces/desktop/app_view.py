@@ -3,11 +3,11 @@ from hextech.interfaces.desktop.app_shared import (
     Mapping,
     TIER_COLORS,
     UI_COLORS,
+    WINDOW_BASE_HEIGHT,
     WINDOW_COLLAPSED_WIDTH,
     WINDOW_EXPANDED_WIDTH,
     _empty_champions,
     _render_winrate_bar,
-    _selection_role_style,
     logger,
     scaled,
     threading,
@@ -344,10 +344,9 @@ class DesktopViewMixin:
         """keyed 增量渲染：同键行原地更新，成员变化才建/销卡片，消除全量重建闪烁。"""
 
         scale = self._ui_scale_value()
-        desired_keys = [
-            (str(item["id"]), str(item.get("selection_role", "bench")))
-            for item in display_list
-        ]
+        # 卡片渲染对 selection_role 已无感（高亮视觉按用户要求删除），
+        # 键只用英雄 id：bench→self 的角色跃迁不再销毁重建卡片。
+        desired_keys = [str(item["id"]) for item in display_list]
         desired_set = set(desired_keys)
 
         for key in list(self._card_rows):
@@ -373,29 +372,23 @@ class DesktopViewMixin:
             self._card_order = desired_keys
 
     def _build_candidate_card(self, item: dict, scale: float) -> dict:
-        role = str(item.get("selection_role", "bench"))
-        role_style = _selection_role_style(role)
-        role_color = str(role_style["accent"])
-        card_surface = str(role_style["surface"])
+        # 所有卡片统一普通样式：己方/队友高亮（描边、色条、深色底、徽章）按用户要求删除，
+        # selection_role 只保留数据侧排序语义。
+        card_surface = UI_COLORS["surface"]
         badge_style = self._tier_badge_style(item["tier"])
 
         row: dict = {"id": item["id"], "name": item["name"], "tier": item["tier"], "win": None, "pick": None}
         card = tk.Frame(
             self.list_frame,
             bg=card_surface,
-            highlightthickness=int(role_style["border_width"]),
-            highlightbackground=role_color,
+            highlightthickness=1,
+            highlightbackground=UI_COLORS["border"],
             pady=scaled(3, scale),
             padx=scaled(4, scale),
             cursor="hand2",
         )
         card.pack(fill=tk.X, pady=scaled(3, scale), padx=(0, scaled(10, scale)))
         row["card"] = card
-
-        if int(role_style["marker_width"]) > 0:
-            tk.Frame(card, bg=role_color, width=scaled(int(role_style["marker_width"]), scale)).pack(
-                side=tk.LEFT, fill=tk.Y, padx=(0, scaled(4, scale))
-            )
 
         ribbon = tk.Frame(card, bg=UI_COLORS["green"], width=scaled(3, scale))
         ribbon.pack(side=tk.LEFT, fill=tk.Y, padx=(0, scaled(5, scale)))
@@ -405,8 +398,8 @@ class DesktopViewMixin:
             card,
             bg=card_surface,
             image=self._avatar_placeholder_image(),
-            highlightthickness=scaled(2, scale) if role in {"self", "teammate"} else scaled(1, scale),
-            highlightbackground=role_color if role in {"self", "teammate"} else UI_COLORS["gold"],
+            highlightthickness=scaled(1, scale),
+            highlightbackground=UI_COLORS["gold"],
         )
         img_label.pack(side=tk.LEFT, padx=(0, scaled(8, scale)))
         row["img_label"] = img_label
@@ -427,16 +420,6 @@ class DesktopViewMixin:
             )
             badge.pack(side=tk.LEFT)
             row["tier_badge"] = badge
-            if role in {"self", "teammate"}:
-                tk.Label(
-                    card,
-                    text="我" if role == "self" else "队友",
-                    font=ui_font(scale, 9, bold=True),
-                    fg=str(role_style["text"]),
-                    bg=role_color,
-                    padx=scaled(5 if role == "self" else 3, scale),
-                    pady=1,
-                ).pack(side=tk.RIGHT)
             self._bind_card_click(card, row)
             self._update_candidate_card(row, item, scale)
             return row
@@ -465,16 +448,6 @@ class DesktopViewMixin:
         )
         name_label.pack(side=tk.LEFT, anchor="w")
         row["name_label"] = name_label
-        if role in {"self", "teammate"}:
-            tk.Label(
-                title_row,
-                text="我的英雄" if role == "self" else "队友已选",
-                font=ui_font(scale, 11, bold=True),
-                fg=str(role_style["text"]),
-                bg=role_color,
-                padx=scaled(7 if role == "self" else 5, scale),
-                pady=1,
-            ).pack(side=tk.RIGHT)
         stats_label = tk.Label(
             info,
             text="",
@@ -567,13 +540,23 @@ class DesktopViewMixin:
         self._manual_move_timestamp = time.time()
 
 
-    def _move_overlay_to(self, x: int, y: int) -> None:
+    def _move_overlay_to(self, x: int, y: int, height: int | None = None) -> None:
+        """移动悬浮窗；height 由跟随逻辑传入客户端底缘限高值，None 表示只挪位置。"""
         try:
             current_pos = (self.root.winfo_x(), self.root.winfo_y())
             target_pos = (int(x), int(y))
-            if current_pos == target_pos:
+            current_height = int(getattr(self, "_window_height_px", WINDOW_BASE_HEIGHT))
+            target_height = current_height if height is None else int(height)
+            if current_pos == target_pos and target_height == current_height:
                 return
-            self.root.geometry(f"+{target_pos[0]}+{target_pos[1]}")
+            if target_height != current_height:
+                # 高度变化必须带宽度一起发完整 geometry，避免 Tk 沿用请求前的旧尺寸
+                self._window_height_px = target_height
+                self.root.geometry(
+                    f"{self._overlay_pixel_width}x{target_height}+{target_pos[0]}+{target_pos[1]}"
+                )
+            else:
+                self.root.geometry(f"+{target_pos[0]}+{target_pos[1]}")
             self._last_overlay_target_pos = target_pos
         except tk.TclError:
             logger.debug("更新悬浮窗位置失败。", exc_info=True)
@@ -588,12 +571,11 @@ class DesktopViewMixin:
             self._run_on_ui_thread(lambda: self._set_status("实时数据已挂载", UI_COLORS["green"]))
 
     def _toggle_collapse(self, _event=None) -> None:
-        """切换悬浮窗折叠态：展开/折叠只切宽度基值（乘 DPI），高度保持自适应值。"""
+        """切换悬浮窗折叠态：只切固定宽度基值，高度沿用当前跟随高度。"""
         self._collapsed = not self._collapsed
-        scale = self._ui_scale_value()
         width_base = WINDOW_COLLAPSED_WIDTH if self._collapsed else WINDOW_EXPANDED_WIDTH
-        self._overlay_pixel_width = scaled(width_base, scale)
-        height = int(getattr(self, "_window_height_px", 740))
+        self._overlay_pixel_width = int(width_base)
+        height = int(getattr(self, "_window_height_px", WINDOW_BASE_HEIGHT))
         self.root.geometry(f"{self._overlay_pixel_width}x{height}")
         # 折叠/展开布局不同，清空 keyed 缓存强制整批重建
         self._reset_card_cache()

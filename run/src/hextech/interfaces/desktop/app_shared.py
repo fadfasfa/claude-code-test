@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 
 import tkinter as tk
 from hextech.modules.session.settings import load_ui_feature_flags, save_ui_feature_flags
@@ -29,12 +29,15 @@ if TYPE_CHECKING:
     from .service_manager import ServiceManager
 
 WEB_PORT_FILE = str(build_desktop_runtime_state_path("web_server_port.txt"))
-# 悬浮窗宽度基值（px，未乘 DPI）；高度随工作区自适应，折叠/展开只切换宽度。
+# 悬浮窗固定几何（px，不乘 DPI）：按用户要求维持基线"狭长"观感；
+# 高度基值 740，跟随客户端时由 runtime_window 按客户端底缘动态压缩。
 WINDOW_EXPANDED_WIDTH = 320
-# 折叠态预算：左 padding 10 + ribbon 3+5 + 头像 48+4(边框) + 间距 8 + T 级徽章 ≈ 102px；
-# 80px 会把头像裁半、徽章挤出视口（审查用真实 Tk 实测确认），留 10px 余量取 112。
+# 折叠态预算：左 padding 10 + 胜率色条 3+5 + 头像 48+2(边框) + 间距 8 + T 级徽章 ≈ 98px；
+# 80px 会把头像裁半、徽章挤出视口（审查用真实 Tk 实测确认），留余量取 112。
 WINDOW_COLLAPSED_WIDTH = 112
-WINDOW_MIN_HEIGHT = 480
+WINDOW_BASE_HEIGHT = 740
+# 跟随限高的下限：极矮客户端下宁可轻微越界也不把窗口压到不可用
+WINDOW_MIN_FOLLOW_HEIGHT = 320
 # 取值对齐游戏内 Overlay 的 OVERLAY_THEME（canvas_renderer.py）拳头金蓝系；
 # 刻意不 import overlay 模块，避免与 Overlay 侧实现互相耦合。
 UI_COLORS = {
@@ -99,45 +102,19 @@ def ui_font(scale: float, size_px: int, bold: bool = False) -> tuple:
     return ("Microsoft YaHei", size)
 
 
-def primary_workarea_height() -> int:
-    """主显示器工作区高度（已扣任务栏）；失败回退 1040。"""
+def resolve_overlay_follow_height(
+    target_y: int, client_bottom: int, workarea_bottom: int | None = None
+) -> int:
+    """跟随客户端时的悬浮窗高度：下端不越过客户端底缘。
 
-    try:
-        class _Rect(ctypes.Structure):
-            _fields_ = [
-                ("left", ctypes.c_long),
-                ("top", ctypes.c_long),
-                ("right", ctypes.c_long),
-                ("bottom", ctypes.c_long),
-            ]
+    以 740 为基值；客户端更矮时压缩到"客户端底缘 - 窗口顶部"（有工作区信息时
+    与工作区底缘取更小者），下限保证极矮客户端下窗口仍可用。
+    """
 
-        rect = _Rect()
-        # SPI_GETWORKAREA = 0x0030
-        if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
-            height = int(rect.bottom - rect.top)
-            if height > 0:
-                return height
-    except Exception:
-        logger.debug("读取工作区高度失败。", exc_info=True)
-    return 1040
-
-
-class _SelectionRoleStyle(TypedDict):
-    accent: str
-    surface: str
-    text: str
-    border_width: int
-    marker_width: int
-
-
-def _selection_role_style(role: str) -> _SelectionRoleStyle:
-    """返回英雄角色的稳定视觉语义；样式不参与排序或卡片布局。"""
-
-    if role == "self":
-        return {"accent": UI_COLORS["cyan"], "surface": "#0D2B33", "text": "#06272E", "border_width": 3, "marker_width": 5}
-    if role == "teammate":
-        return {"accent": UI_COLORS["gold"], "surface": "#2A2312", "text": "#221600", "border_width": 2, "marker_width": 3}
-    return {"accent": UI_COLORS["border"], "surface": UI_COLORS["surface"], "text": UI_COLORS["text"], "border_width": 1, "marker_width": 0}
+    bottom_limit = int(client_bottom)
+    if workarea_bottom is not None:
+        bottom_limit = min(bottom_limit, int(workarea_bottom))
+    return max(WINDOW_MIN_FOLLOW_HEIGHT, min(WINDOW_BASE_HEIGHT, bottom_limit - int(target_y)))
 
 
 def _format_game_overlay_host_reason(reason: str) -> str:

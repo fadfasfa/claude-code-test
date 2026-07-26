@@ -331,6 +331,50 @@ class OverlayVisionStateTests(unittest.TestCase):
         unresolved_slot["channels"]["text_alt"]["margin"] = 0.013
         self.assertIsNone(candidate_from_slot(unresolved_slot))
 
+    def test_text_accepted_candidate_keeps_canonical_augment_id_without_icon_proof(self):
+        """text_icon_disagree 接受必须保留规范 augment_id，报告端 vision_id 不再恒空。
+
+        真机回归（2026-07-26）：icon 高置信误判（台风@0.946，margin 不足高冲突门槛）
+        压不掉正确的双字体文本，卡按 dual_font 接受，但 augment_id 与
+        visual_variant_id 一起被置空，3/10 张 ready 卡诊断链断裂。
+        """
+
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+
+        text_candidate = {
+            "augment_id": "aram_searingdawn",
+            "visual_variant_id": "aram_searingdawn",
+            "recognition_key": "炽烈黎明",
+            "name_variant_count": 2,
+            "name": "炽烈黎明",
+            "confidence": 0.84,
+        }
+        conflicting_icon = {
+            "augment_id": "aram_typhoon",
+            "visual_variant_id": "aram_typhoon",
+            "recognition_key": "台风",
+            "name": "台风",
+            "confidence": 0.946,
+        }
+        slot = {
+            "slot": 0,
+            "channels": {
+                "text": {"margin": 0.05, "top_candidates": [text_candidate]},
+                "text_alt": {"margin": 0.05, "top_candidates": [text_candidate]},
+                # margin 低于 HIGH_CONFLICT_ICON_MARGIN(0.03)：图标不构成高冲突否决
+                "icon": {"margin": 0.01, "top_candidates": [conflicting_icon]},
+            },
+        }
+        candidate = candidate_from_slot(slot)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.rule, "dual_font")
+        # 无强图标证据：具体视觉版本仍不虚构
+        self.assertEqual(candidate.visual_variant_id, "")
+        # 但文本模板携带的规范 id 必须保留并进入 ready 槽位事件
+        self.assertEqual(candidate.augment_id, "aram_searingdawn")
+        self.assertEqual(candidate.ready_slot()["augment_id"], "aram_searingdawn")
+
     def test_medium_wrong_name_never_flashes_before_strong_correct_candidate(self):
         """固化真机“不动如山 → 吞噬灵魂”序列，弱相关重复不能直接上屏。"""
 

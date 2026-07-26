@@ -74,7 +74,10 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert "游戏内显示启动请求已提交" in ui_text
     assert "WINDOW_EXPANDED_WIDTH = 320" in ui_text
     assert "WINDOW_COLLAPSED_WIDTH = 112" in ui_text
-    assert "window_dpi_scale" in ui_text
+    assert "WINDOW_BASE_HEIGHT = 740" in ui_text
+    # 悬浮窗按用户要求维持基线"狭长"观感：固定像素密度，不乘 DPI
+    assert "self._ui_scale = 1.0" in ui_text
+    assert "resolve_overlay_follow_height" in ui_text
     assert "manage_overlay_runtime=False" in ui_text
     assert "overlay_controller=GameOverlayController(" not in ui_text
     assert "start_vision_sidecar_process" not in ui_text
@@ -216,31 +219,38 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert [item["id"] for item in equal_win_list] == ["2", "1"]
 
 
-def test_desktop_self_role_has_stronger_visual_priority_than_teammate() -> None:
-    from hextech.interfaces.desktop import app as desktop_app
+def test_overlay_follow_height_never_exceeds_client_bottom() -> None:
+    """跟随高度以 740 为基值；客户端更矮时压缩到客户端底缘，极矮时保住可用下限。"""
 
-    self_style = desktop_app._selection_role_style("self")
-    teammate_style = desktop_app._selection_role_style("teammate")
-    bench_style = desktop_app._selection_role_style("bench")
+    from hextech.interfaces.desktop.app_shared import (
+        WINDOW_BASE_HEIGHT,
+        WINDOW_MIN_FOLLOW_HEIGHT,
+        resolve_overlay_follow_height,
+    )
 
-    assert self_style["border_width"] == 3
-    assert self_style["marker_width"] > teammate_style["marker_width"] > bench_style["marker_width"]
-    assert self_style["accent"] != teammate_style["accent"]
-    assert self_style["surface"] != bench_style["surface"]
+    # 客户端足够高：维持基值
+    assert resolve_overlay_follow_height(100, 1200) == WINDOW_BASE_HEIGHT
+    # 1280x720 小客户端（窗口顶 y=80、内容区底缘 800）：下端不越过底缘
+    assert resolve_overlay_follow_height(80, 800) == 720
+    # 工作区底缘低于客户端底缘时取更小者（客户端伸到任务栏后面）
+    assert resolve_overlay_follow_height(100, 1200, workarea_bottom=700) == 600
+    # 极矮客户端：宁可轻微越界也保住窗口可用
+    assert resolve_overlay_follow_height(500, 560) == WINDOW_MIN_FOLLOW_HEIGHT
+    assert WINDOW_MIN_FOLLOW_HEIGHT < WINDOW_BASE_HEIGHT
 
 
 def test_collapsed_width_budget_fits_avatar_and_tier_badge() -> None:
     """折叠态核心信息（头像 + T 级徽章）必须在基宽预算内完整可见。
 
     审查用真实 Tk 实测：80px 基宽叠加滚动条后头像被裁半、徽章完全不渲染。
-    预算按 scale=1 常量推导；DPI 缩放各项等比放大，比例关系不变。
+    预算按 scale=1 常量推导（缩放已锁 1.0）。
     """
 
     from hextech.interfaces.desktop.app_shared import WINDOW_COLLAPSED_WIDTH
 
     left_padding = 10          # list_shell 左侧 padding（折叠态滚动条已隐藏）
-    ribbon = 3 + 5             # 角色色条及其右间距
-    avatar = 48 + 2 * 2        # 头像位图 + 高亮边框
+    ribbon = 3 + 5             # 胜率色条及其右间距
+    avatar = 48 + 2 * 1        # 头像位图 + 统一 1px 边框（高亮描边已删除）
     avatar_gap = 8
     badge_min = 24             # "T1" 12pt bold + padx 的保守下限
     assert WINDOW_COLLAPSED_WIDTH >= left_padding + ribbon + avatar + avatar_gap + badge_min

@@ -145,9 +145,14 @@ def _candidate_from_top(
     top_candidates = tuple(dict(item) for item in list(raw_top)[:3] if isinstance(item, Mapping))
     channels = slot.get("channels") if isinstance(slot.get("channels"), Mapping) else {}
     visual_variant_id, tier = _visual_variant(slot, candidate)
+    # 文本身份与视觉版本分离：visual_variant_id 仍必须由强图标证据消歧，但
+    # 候选自带的规范 augment_id 不应随之丢弃——否则 text_icon_disagree 路径
+    # 接受的卡在 session report 里 vision_id 恒空（2026-07-26 真机 3/10 张），
+    # 识别→数据的诊断链断裂。
+    augment_id = str(candidate.get("augment_id") or "").strip() or visual_variant_id
     return SlotCandidate(
         slot=int(slot.get("slot") or 0),
-        augment_id=visual_variant_id,
+        augment_id=augment_id,
         name=str(candidate.get("name") or identity).strip(),
         tier=tier,
         summary=str(candidate.get("summary") or "").strip(),

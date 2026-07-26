@@ -59,7 +59,7 @@ Host 使用单线程有界队列异步写入报告，Tk 渲染线程不执行 JS
 
 - 会话报告：`var/reports/overlay_sessions/`
 - 最新报告：`var/reports/overlay_sessions/latest.json`
-- 历史：最多保留 20 个 `overlay-session-*.json`
+- 历史：最多保留 200 个 `overlay-session-*.json`（一局约 58 份，须容得下至少 3 局完整证据）
 - 真实会话证据：`var/state/session_evidence/`
 - 逐选择观察：`var/state/overlay_vision_timelines/selection-*.jsonl`
 - 时间线轮转：最多保留最近 20 个真实 selection epoch；空闲心跳不写入、不占额度
