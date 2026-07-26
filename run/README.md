@@ -58,6 +58,18 @@ Vision 人工探针：
 .venv\Scripts\python.exe -m hextech.infrastructure.vision.sidecar --loop --preset auto --write-event
 ```
 
+## Web 前端构建
+
+Web 页面样式由 Tailwind CLI 预编译，产物 `src/hextech/interfaces/web/backend/static/css/tailwind-compiled.css` 直接入库；运行时与打包链路不依赖 Node。改动 `backend/static/` 下任意 HTML/JS 或 `frontend/src/styles/input.css` 后必须重编译并把新产物一起提交：
+
+```powershell
+cd src\hextech\interfaces\web\frontend
+npm ci            # 首次或 lock 变更后；依赖仅 tailwindcss（devDependency）
+npm run build:css # 单次编译；持续开发可用 npm run watch:css
+```
+
+漏跑编译不会在运行时报错，只会表现为新样式静默失效；`tests/test_dev_gate_web.py` 的类覆盖门禁（`test_static_class_tokens_exist_in_compiled_css`）会在 `pytest -m dev_gate` 时直接失败并提示重编译。前端资产路径必须带 `/assets/{champions|augments|modes|ui}/` 前缀，同文件中的前缀门禁会拦截回归。
+
 ## 目录
 
 ```text
