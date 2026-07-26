@@ -48,20 +48,20 @@
         <section class="detail-control-panel glass-panel rounded-2xl">
             <div class="detail-control-bar flex flex-wrap items-center border-b border-gray-800">
                 <div class="detail-mode-group">
-                    <button id="btn-comprehensive" onclick="setDisplayMode('comprehensive')"
+                    <button id="btn-comprehensive" data-mode="comprehensive"
                         class="mode-btn hx-tab-active px-4 py-2 rounded-lg text-sm">综合推荐</button>
-                    <button id="btn-winrate" onclick="setDisplayMode('winrate_only')"
+                    <button id="btn-winrate" data-mode="winrate_only"
                         class="mode-btn hx-tab-idle px-4 py-2 rounded-lg font-medium text-sm">纯胜率</button>
                 </div>
                 <div class="flex-1"></div>
                 <div class="detail-tier-group">
-                    <button id="tab-all" onclick="switchView('all')"
+                    <button id="tab-all" data-view="all"
                         class="tab-btn hx-tab-active px-5 py-2 rounded-lg">全部海克斯</button>
-                    <button id="tab-Prismatic" onclick="switchView('Prismatic')"
+                    <button id="tab-Prismatic" data-view="Prismatic"
                         class="tab-btn hx-tab-idle px-5 py-2 rounded-lg font-medium">棱彩</button>
-                    <button id="tab-Gold" onclick="switchView('Gold')"
+                    <button id="tab-Gold" data-view="Gold"
                         class="tab-btn hx-tab-idle px-5 py-2 rounded-lg font-medium">黄金</button>
-                    <button id="tab-Silver" onclick="switchView('Silver')"
+                    <button id="tab-Silver" data-view="Silver"
                         class="tab-btn hx-tab-idle px-5 py-2 rounded-lg font-medium">白银</button>
                 </div>
             </div>
@@ -112,7 +112,7 @@
 
     </main>
 
-    <script defer src="/static/js/detail.js"></script>
+    <script type="module" src="/static/js/detail.js"></script>
 </body>
 
 </html>
