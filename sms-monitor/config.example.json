@@ -33,6 +33,17 @@
       "base_url": "https://sms.kkdos.store"
     }
   ],
+  "msgnest_sources": [
+    {
+      "label": "msgnest",
+      "cdk": "YOUR_MSGNEST_CDK",
+      "base_url": "https://msg-nest.com",
+      "alloc_id": "",
+      "claim_token": "",
+      "fingerprint": "",
+      "phone": ""
+    }
+  ],
   "email_sources": [
     {
       "label": "iCloud",

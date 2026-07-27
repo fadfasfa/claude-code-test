@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -400,6 +401,7 @@ def load_config():
     try:
         cfg["fixed_sources"] = normalize_fixed_sources(cfg.get("fixed_sources", []))
         cfg["kkdos_sources"] = normalize_kkdos_sources(cfg.get("kkdos_sources", []))
+        cfg["msgnest_sources"] = normalize_msgnest_sources(cfg.get("msgnest_sources", []))
         cfg["email_sources"] = normalize_email_sources(cfg.get("email_sources", []))
         cfg["accounts"] = normalize_accounts(cfg.get("accounts", []))
     except ConfigCommandError as e:
@@ -445,6 +447,40 @@ def normalize_kkdos_sources(raw_sources):
         if not cdk:
             raise ConfigCommandError(f"kkdos_sources 第 {index} 项缺少 cdk。")
         sources.append({"label": label, "cdk": cdk, "base_url": base_url})
+    return sources
+
+
+def normalize_msgnest_sources(raw_sources):
+    """校验 msg-nest 动态来源；保留持久化字段（claimToken/allocId/fingerprint/phone）。
+
+    重建 dict 时必须带上持久化字段，否则 normalize 会把 redeem 后写回的
+    claim_token/alloc_id 等运行时状态剥掉，导致每次启动都重新兑换。
+    """
+    if raw_sources is None:
+        return []
+    if not isinstance(raw_sources, list):
+        raise ConfigCommandError("config.json 里的 msgnest_sources 必须是数组。")
+
+    sources = []
+    for index, item in enumerate(raw_sources, start=1):
+        if not isinstance(item, dict):
+            raise ConfigCommandError(f"msgnest_sources 第 {index} 项必须是对象。")
+        label = str(item.get("label") or f"msgnest{index}").strip()
+        cdk = str(item.get("cdk") or "").strip()
+        base_url = str(item.get("base_url") or "https://msg-nest.com").strip().rstrip("/")
+        if not cdk:
+            raise ConfigCommandError(f"msgnest_sources 第 {index} 项缺少 cdk。")
+        sources.append(
+            {
+                "label": label,
+                "cdk": cdk,
+                "base_url": base_url,
+                "fingerprint": str(item.get("fingerprint") or ""),
+                "alloc_id": str(item.get("alloc_id") or ""),
+                "claim_token": str(item.get("claim_token") or ""),
+                "phone": str(item.get("phone") or ""),
+            }
+        )
     return sources
 
 
@@ -520,6 +556,7 @@ def default_config():
         "auto_change_on_expire": True,
         "fixed_sources": [],
         "kkdos_sources": [],
+        "msgnest_sources": [],
         "email_sources": [],
         "accounts": [],
     }
@@ -907,6 +944,19 @@ def ready_check_kkdos_source(cfg, session, request_timeout=3.0):
     return safe_result(label, "kkdos", False, "number_unavailable", "未返回可用号码")
 
 
+def ready_check_msgnest_source(cfg, session, request_timeout=3.0):
+    """msg-nest redeem+verify 能拿到手机号即 ready；不持久化、不启动等码。"""
+    label = cfg.get("label") or "msgnest"
+    source = MsgNestSource(cfg, session, request_timeout)
+    try:
+        source.verify()
+    except MsgNestApiError as e:
+        return safe_result(label, "msgnest", False, "api_not_ready", e.safe_message)
+    if source.phone:
+        return safe_result(label, "msgnest", True, "ready", "已分配可用号码")
+    return safe_result(label, "msgnest", False, "number_unavailable", "未返回可用号码")
+
+
 def ready_check_email_source(cfg, session, request_timeout=3.0):
     """邮箱取件接口 ok=true 即 ready；不要求已有验证码邮件。"""
     label = cfg.get("label") or "email"
@@ -957,6 +1007,7 @@ def validate_config_result(cfg):
     """只验证结构和必要字段，不触发真实网络。"""
     normalize_fixed_sources(cfg.get("fixed_sources", []))
     normalize_kkdos_sources(cfg.get("kkdos_sources", []))
+    normalize_msgnest_sources(cfg.get("msgnest_sources", []))
     normalize_email_sources(cfg.get("email_sources", []))
     normalize_accounts(cfg.get("accounts", []))
     # LuDan 已改为可选来源：key 未配置不再视为配置无效
@@ -980,6 +1031,7 @@ def ready_check_all(cfg, session_factory):
     request_timeout = max(0.5, float(cfg.get("request_timeout", 3.0)))
     fixed_sources = normalize_fixed_sources(cfg.get("fixed_sources", []))
     kkdos_sources = normalize_kkdos_sources(cfg.get("kkdos_sources", []))
+    msgnest_sources = normalize_msgnest_sources(cfg.get("msgnest_sources", []))
     email_sources = normalize_email_sources(cfg.get("email_sources", []))
     accounts = normalize_accounts(cfg.get("accounts", []))
 
@@ -991,10 +1043,12 @@ def ready_check_all(cfg, session_factory):
         results.append(ready_check_fixed_source(source, session_factory(), request_timeout))
     for source in kkdos_sources:
         results.append(ready_check_kkdos_source(source, session_factory(), request_timeout))
+    for source in msgnest_sources:
+        results.append(ready_check_msgnest_source(source, session_factory(), request_timeout))
     for source in email_sources:
         results.append(ready_check_email_source(source, session_factory(), request_timeout))
     for account in accounts:
-        results.append(ready_check_account(account, [*fixed_sources, *kkdos_sources], email_sources))
+        results.append(ready_check_account(account, [*fixed_sources, *kkdos_sources, *msgnest_sources], email_sources))
     return aggregate_results(results)
 
 
@@ -1041,6 +1095,14 @@ def build_config_parser():
     kkdos_parser.add_argument("--cdk-env", required=True)
     kkdos_parser.add_argument("--base-url", default="https://sms.kkdos.store")
 
+    msgnest_parser = subparsers.add_parser("upsert-msgnest")
+    add_common(msgnest_parser)
+    msgnest_parser.add_argument("--label", required=True)
+    msgnest_parser.add_argument("--cdk-env", required=True)
+    msgnest_parser.add_argument("--base-url", default="https://msg-nest.com")
+    msgnest_parser.add_argument("--alloc-id", default="")
+    msgnest_parser.add_argument("--phone", default="")
+
     account_parser = subparsers.add_parser("upsert-account")
     add_common(account_parser)
     account_parser.add_argument("--label", required=True)
@@ -1084,7 +1146,7 @@ def build_config_parser():
     add_common(disable_parser)
     disable_parser.add_argument("--label", required=True)
     disable_parser.add_argument(
-        "--kind", required=True, choices=["ludan", "fixed", "kkdos", "email", "account"]
+        "--kind", required=True, choices=["ludan", "fixed", "kkdos", "msgnest", "email", "account"]
     )
     disable_parser.add_argument("--reason", default="手动禁用")
 
@@ -1092,7 +1154,7 @@ def build_config_parser():
     add_common(enable_parser)
     enable_parser.add_argument("--label", required=True)
     enable_parser.add_argument(
-        "--kind", required=True, choices=["ludan", "fixed", "kkdos", "email", "account"]
+        "--kind", required=True, choices=["ludan", "fixed", "kkdos", "msgnest", "email", "account"]
     )
 
     list_disabled_parser = subparsers.add_parser("list-disabled")
@@ -1182,6 +1244,31 @@ def run_config_command(
         status = upsert_by_label(cfg["kkdos_sources"], item)
         write_config_file_atomic(args.config, cfg)
         return safe_result(args.label, "kkdos", True, status, "kkdos 动态来源已录入")
+
+    if args.command == "upsert-msgnest":
+        cfg = read_config_file(args.config, allow_missing=True)
+        cfg["msgnest_sources"] = normalize_msgnest_sources(cfg.get("msgnest_sources", []))
+        cdk = env_value(env, args.cdk_env, "msg-nest CDK")
+        # 保留已持久化的运行时状态（fingerprint/alloc_id/claim_token/phone），
+        # 除非命令显式传入新值；避免重录 CDK 时丢掉已兑换的 claimToken。
+        existing = {}
+        for item in cfg["msgnest_sources"]:
+            if item.get("label") == args.label.strip():
+                existing = item
+                break
+        item = {
+            "label": args.label.strip(),
+            "cdk": cdk,
+            "base_url": args.base_url.strip().rstrip("/"),
+            "fingerprint": existing.get("fingerprint", ""),
+            "alloc_id": args.alloc_id.strip() or existing.get("alloc_id", ""),
+            "claim_token": existing.get("claim_token", ""),
+            "phone": args.phone.strip() or existing.get("phone", ""),
+        }
+        normalize_msgnest_sources([item])
+        status = upsert_by_label(cfg["msgnest_sources"], item)
+        write_config_file_atomic(args.config, cfg)
+        return safe_result(args.label, "msgnest", True, status, "msg-nest 动态来源已录入")
 
     if args.command == "upsert-account":
         cfg = read_config_file(args.config, allow_missing=True)
@@ -1354,6 +1441,7 @@ def run_config_command(
         list_keys = {
             "fixed": "fixed_sources",
             "kkdos": "kkdos_sources",
+            "msgnest": "msgnest_sources",
             "email": "email_sources",
             "account": "accounts",
         }
@@ -1890,6 +1978,271 @@ class KkdosSource:
         return f"状态:{self.status} | 尝试:{attempt} | 锁定:{locked} | 更新时间:{self.last_checked}"
 
 
+class MsgNestApiError(Exception):
+    """msg-nest 私有接口错误；对外只暴露脱敏诊断。"""
+
+    def __init__(self, safe_message, retryable=False):
+        super().__init__(safe_message)
+        self.safe_message = safe_message
+        self.retryable = retryable
+
+
+class MsgNestSource:
+    """msg-nest 动态号码来源：redeem CDK 换 claimToken，轮询 messages 取验证码。
+
+    与 kkdos 的差异：claimToken 走 ``x-claim-token`` 请求头（非 sessionId），
+    取码用 GET 轮询（非 SSE），claimToken 会过期需 re-redeem。
+    claimToken/allocId/fingerprint 持久化到 config.json，到期或缺失时自动重新兑换。
+    """
+
+    kind = "msgnest"
+    supports_change_number = True
+
+    def __init__(self, cfg, session, request_timeout=3.0, monitor_cfg=None, config_path=None):
+        self.label = cfg["label"]
+        self.cdk = cfg["cdk"]
+        self.base_url = str(cfg.get("base_url") or "https://msg-nest.com").rstrip("/")
+        self.session = session
+        self.request_timeout = request_timeout
+        # 持久化状态：redeem 后写回 config.json；ready-check 不传则只读
+        self.fingerprint = str(cfg.get("fingerprint") or "")
+        self.alloc_id = str(cfg.get("alloc_id") or "")
+        self.claim_token = str(cfg.get("claim_token") or "")
+        self.phone = self._normalize_phone(cfg.get("phone") or "")
+        # 号码已锁定（录入时种子）；redeem 后核对尾号，不符告警不阻断
+        self.expected_phone_tail = self._phone_tail(cfg.get("phone") or "")
+        self._monitor_cfg = monitor_cfg
+        self._config_path = config_path
+
+        self.expires_at = ""
+        self.last_code = ""
+        self.history = deque(maxlen=8)
+        self.status = "等待校验"
+        self.last_checked = "-"
+        self.note = ""
+        self.disabled_reason = ""
+        self.verify_hard_failures = 0
+        self.verify_failure_threshold = 3
+
+    @staticmethod
+    def _normalize_phone(raw):
+        """统一成 10 位北美号码或原始数字串；避免 +1 前缀污染复制区域。"""
+        digits = re.sub(r"\D", "", str(raw or ""))
+        if len(digits) == 11 and digits.startswith("1"):
+            digits = digits[1:]
+        return digits
+
+    @staticmethod
+    def _phone_tail(raw):
+        return re.sub(r"\D", "", str(raw or ""))[-10:]
+
+    @property
+    def phone_parts(self):
+        return split_us_phone(self.phone)
+
+    @property
+    def copy_number(self):
+        return self.phone_parts.local_number
+
+    def _headers(self, with_claim=True):
+        # msg-nest 在 Cloudflare 后，补 browser 头避免被挑战页拦截
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": f"{self.base_url}/",
+        }
+        if with_claim and self.claim_token:
+            headers["x-claim-token"] = self.claim_token
+        return headers
+
+    def _request(self, path, method="GET", body=None, with_claim=True):
+        url = f"{self.base_url}/api/public{path}"
+        headers = self._headers(with_claim)
+        try:
+            if method == "GET":
+                resp = self.session.get(url, headers=headers, timeout=self.request_timeout)
+            else:
+                headers["content-type"] = "application/json"
+                resp = self.session.post(url, headers=headers, json=body, timeout=self.request_timeout)
+        except requests.RequestException as e:
+            raise MsgNestApiError(f"临时网络错误（{e.__class__.__name__}）", retryable=True) from e
+        self.last_checked = now_hms()
+        status_code = getattr(resp, "status_code", 0)
+        if not 200 <= status_code < 300:
+            if status_code == 401:
+                # claimToken 过期：交给上层 ensure_token/verify 重新 redeem
+                raise MsgNestApiError("claimToken 已过期", retryable=True)
+            retryable = status_code not in (403, 404, 410)
+            message = f"临时 HTTP 错误（{status_code}）" if retryable else "msg-nest 认证失败或资源不可用"
+            raise MsgNestApiError(message, retryable=retryable)
+        try:
+            return resp.json()
+        except (AttributeError, ValueError) as e:
+            raise MsgNestApiError("接口返回非 JSON", retryable=True) from e
+
+    def _persist_state(self):
+        """把 fingerprint/alloc_id/claim_token/phone 写回 config.json；仅 redeem 成功后调用。"""
+        if self._monitor_cfg is None or self._config_path is None:
+            return
+        for item in self._monitor_cfg.get("msgnest_sources", []):
+            if item.get("label") == self.label:
+                item["fingerprint"] = self.fingerprint
+                item["alloc_id"] = self.alloc_id
+                item["claim_token"] = self.claim_token
+                item["phone"] = self.phone
+                break
+        write_config_file_atomic(self._config_path, self._monitor_cfg)
+
+    def redeem(self):
+        """POST /cdks/redeem 换取 claimToken 与号码；幂等核对 expected_phone 尾号。"""
+        if not self.fingerprint:
+            self.fingerprint = str(uuid.uuid4())
+        payload = self._request(
+            "/cdks/redeem",
+            method="POST",
+            body={"code": self.cdk, "fingerprint": self.fingerprint},
+            with_claim=False,
+        )
+        data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+        data = data or {}
+        self.alloc_id = str(data.get("allocId") or data.get("allocationId") or self.alloc_id)
+        self.claim_token = str(data.get("claimToken") or self.claim_token)
+        phone = data.get("phone") or data.get("phoneNumber") or ""
+        if phone:
+            self.phone = self._normalize_phone(phone)
+        self.expires_at = str(data.get("expiresAt") or self.expires_at)
+        # 号码核对：与录入种子尾号不符则告警，不阻断（服务端可能已换号）
+        if self.expected_phone_tail:
+            tail = self._phone_tail(self.phone)
+            if tail and tail != self.expected_phone_tail:
+                self.note = f"号码与预期不符（预期 ***{self.expected_phone_tail[-4:]}）"
+            else:
+                self.note = "已兑换"
+        else:
+            self.note = "已兑换"
+        self.status = "已分配号码" if self.phone else "未返回号码"
+        self.verify_hard_failures = 0
+        self._persist_state()
+        return data
+
+    def ensure_token(self):
+        """claimToken 或 allocId 缺失时重新 redeem。"""
+        if not self.claim_token or not self.alloc_id:
+            self.redeem()
+
+    def verify(self):
+        """GET /allocations/{id} 刷新号码/状态；401 时 re-redeem 重试一次。"""
+        self.ensure_token()
+        try:
+            payload = self._request(f"/allocations/{self.alloc_id}")
+        except MsgNestApiError as e:
+            if not e.retryable:
+                self.status = "校验失败"
+                self._record_verify_error(e)
+                raise
+            # 401/临时错误：清 token 重新兑换再查一次
+            self.claim_token = ""
+            self.redeem()
+            payload = self._request(f"/allocations/{self.alloc_id}")
+        data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+        data = data or {}
+        phone = data.get("phone") or data.get("phoneNumber") or ""
+        if phone:
+            self.phone = self._normalize_phone(phone)
+        self.expires_at = str(data.get("expiresAt") or self.expires_at)
+        self.status = "已分配号码" if self.phone else "未返回号码"
+        self.verify_hard_failures = 0
+        return data
+
+    def poll(self):
+        """GET /allocations/{id}/messages 轮询验证码；401 自动 re-redeem。"""
+        try:
+            self.ensure_token()
+        except MsgNestApiError as e:
+            self.status = "兑换失败"
+            self._record_verify_error(e)
+            return None
+        try:
+            payload = self._request(f"/allocations/{self.alloc_id}/messages")
+        except MsgNestApiError as e:
+            if not e.retryable:
+                self.status = "查询失败"
+                self._record_verify_error(e)
+                return None
+            # 401/临时错误：重新兑换后再取一次
+            self.status = "token 过期，重新兑换"
+            try:
+                self.claim_token = ""
+                self.redeem()
+                payload = self._request(f"/allocations/{self.alloc_id}/messages")
+            except MsgNestApiError as e2:
+                self.status = "取码失败"
+                self._record_verify_error(e2)
+                return None
+        data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+        if isinstance(data, dict):
+            messages = data.get("messages") or data.get("sms") or []
+        elif isinstance(data, list):
+            messages = data
+        else:
+            messages = []
+        self.verify_hard_failures = 0
+        if not messages:
+            self.status = "暂无短信"
+            return None
+        for msg in messages:
+            if isinstance(msg, dict):
+                content = str(msg.get("content") or msg.get("body") or msg.get("text") or msg.get("message") or "")
+            else:
+                content = str(msg or "")
+            result = parse_fixed_sms_response(content, allow_generic=True)
+            if result.has_sms and result.code and result.code != self.last_code:
+                self.last_code = result.code
+                self.history.appendleft((now_hms(), result.code, result.content or content))
+                self.status = "收到新验证码"
+                self.note = "收到新验证码"
+                return result.code
+        self.status = "收到短信"
+        self.note = "未提取到新验证码"
+        return None
+
+    def _record_verify_error(self, error):
+        self.note = error.safe_message
+        if error.retryable:
+            self.verify_hard_failures = 0
+            return
+        self.verify_hard_failures += 1
+        if self.verify_hard_failures >= self.verify_failure_threshold:
+            self.disabled_reason = "msg-nest 连续认证失败"
+
+    def change_number(self):
+        if not self.alloc_id:
+            try:
+                self.redeem()
+            except MsgNestApiError as e:
+                self.note = e.safe_message
+                return
+        try:
+            self._request(
+                f"/allocations/{self.alloc_id}/replace-number",
+                method="POST",
+                body={"reason": "manual"},
+            )
+        except MsgNestApiError as e:
+            self.note = f"换号失败：{e.safe_message}"
+            return
+        self.last_code = ""
+        self.status = "已换号"
+        self.note = "已换号（需重新兑换取号）"
+
+    def expire_text(self):
+        return str(self.expires_at)[:19] if self.expires_at else "-"
+
+    def status_text(self):
+        return f"状态:{self.status} | 有效期:{self.expire_text()} | 更新时间:{self.last_checked}"
+
+
 class FixedUrlSource:
     """固定文本 URL 来源，用本地解析规则提取最新验证码。"""
 
@@ -2196,6 +2549,17 @@ class SmsMonitor:
             for item in cfg.get("kkdos_sources", [])
             if not is_disabled(cfg, "kkdos", item.get("label", ""))
         ]
+        self.msgnest_sources = [
+            MsgNestSource(
+                item,
+                requests.Session(),
+                self.request_timeout,
+                monitor_cfg=cfg,
+                config_path=self.config_path,
+            )
+            for item in cfg.get("msgnest_sources", [])
+            if not is_disabled(cfg, "msgnest", item.get("label", ""))
+        ]
         self.email_sources = [
             EmailSource(item, requests.Session(), self.request_timeout)
             for item in cfg.get("email_sources", [])
@@ -2208,7 +2572,7 @@ class SmsMonitor:
         ]
         # 需要后台轮询的验证码来源（账户本身不轮询）；ludan 可能 None
         self.pollables = [
-            s for s in [self.ludan, *self.fixed_sources, *self.kkdos_sources, *self.email_sources]
+            s for s in [self.ludan, *self.fixed_sources, *self.kkdos_sources, *self.msgnest_sources, *self.email_sources]
             if s is not None
         ]
         self._link_accounts()
@@ -2239,7 +2603,7 @@ class SmsMonitor:
     def _link_accounts(self):
         """按电话(去格式比对)与取件邮箱，把轮询来源挂到账户上供聚合卡片展示。"""
         enabled_phone_sources = [
-            source for source in self.pollables if getattr(source, "kind", "") in {"fixed", "kkdos"}
+            source for source in self.pollables if getattr(source, "kind", "") in {"fixed", "kkdos", "msgnest"}
         ]
         enabled_fixed_sources = [
             source for source in enabled_phone_sources if getattr(source, "kind", "") == "fixed"
@@ -2717,6 +3081,14 @@ class SmsMonitor:
                 print(f"{source.label} kkdos 暂不可用，跳过并继续：{e.safe_message}")
                 if not e.retryable:
                     self._disable_runtime("kkdos", source.label, e.safe_message)
+        for source in list(getattr(self, "msgnest_sources", [])):
+            try:
+                print(f"正在校验 {source.label} msg-nest CDK...")
+                source.verify()
+            except MsgNestApiError as e:
+                print(f"{source.label} msg-nest 暂不可用，跳过并继续：{e.safe_message}")
+                if not e.retryable:
+                    self._disable_runtime("msgnest", source.label, e.safe_message)
         self._rebuild_sources()
         if getattr(self, "disabled_display", None):
             print(f"已跳过 {len(self.disabled_display)} 个无效来源/账户；config list-disabled 查看")

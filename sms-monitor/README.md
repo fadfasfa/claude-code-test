@@ -183,6 +183,20 @@ python monitor.py config upsert-account --label sk7398965 --login-email sk739896
 
 - 说明：`phone_source_label` 优先于静态手机号匹配，适合 kkdos 这种动态号码；旧固定来源账户仍可继续只用 `--phone` 自动关联。
 
+### 场景 D：msg-nest 动态号导入
+
+- 适用：msg-nest 卡密/CDK 动态分配手机号，redeem 换 claimToken 后轮询取码（类似 LuDan，但 token 走 `x-claim-token` 请求头、会过期自动重取）。
+- 行为：启动时 `POST /api/public/cdks/redeem` 换 claimToken 并取号；`claim_token`/`alloc_id`/`fingerprint`/`phone` 持久化到 `config.json`，过期或缺失自动重新兑换。每轮 `GET /api/public/allocations/{id}/messages` 轮询验证码，无需手动触发。
+- CC 执行（CDK 走环境变量；已知 allocId 与号码可一并种子化，redeem 后核对尾号）：
+
+```powershell
+$env:MSGNEST_CDK='YOUR_MSGNEST_CDK'
+python monitor.py config upsert-msgnest --label msgnest --cdk-env MSGNEST_CDK --alloc-id alloc_xxx --phone 15550123456 --json
+python monitor.py config upsert-account --label someuser --login-email someuser@example.com --phone-source-label msgnest --json
+```
+
+- 说明：`alloc_id`/`phone` 为可选种子，不传则首次 redeem 写回；redeem 后号码尾号与种子不符会告警但不阻断。`claim_token`/`fingerprint` 由工具自管，不要手填；重录 CDK 时这两个字段会被保留，不会丢失已兑换状态。
+
 ### 多账号
 
 - **逐个串行执行，不要并行**：多账号改同一 `config.json`，read-modify-write 非原子，并行会互相覆盖。
@@ -207,7 +221,7 @@ python monitor.py config ready-check  --all --json
 - 敏感值不进命令行明文、不回显：用 `--*-env` 传环境变量；命令输出只有脱敏预览。
 - `import-freeform` 已支持中文多行和多账户批量导入；结构化 `upsert-*` 命令继续作为自动化和精确更新入口。
 - 手机号原样录入用于关联；明确 `+1` 或 10 位北美号码会拆出 10 位本地号。无 `+` 的其他 11 位号码不再默认当作美国号码。
-- 取码方式覆盖范围：当前支持①固定 URL 直接出码（`fixed_sources`）、②LuDan 动态号（`LuDanSource`）、③kkdos 动态号（`kkdos_sources`，verify 取号、复制后 start/SSE 等码、允许时手动换号）。其他多步取码平台需先确认真实 API 后再扩展。
+- 取码方式覆盖范围：当前支持①固定 URL 直接出码（`fixed_sources`）、②LuDan 动态号（`LuDanSource`）、③kkdos 动态号（`kkdos_sources`，verify 取号、复制后 start/SSE 等码、允许时手动换号）、④msg-nest 动态号（`msgnest_sources`，redeem CDK 换 claimToken 取号、轮询 messages 取码、token 过期自动 re-redeem）。其他多步取码平台需先确认真实 API 后再扩展。
 
 ## 依赖
 
@@ -237,6 +251,7 @@ python monitor.py config ready-check  --all --json
 | `auto_change_on_expire` | 号码过期时是否自动换号 |
 | `fixed_sources` | 固定文本接码链接数组；每项包含 `label`、`phone`、`url` |
 | `kkdos_sources` | kkdos 动态号来源数组；每项含 `label`、`cdk`、`base_url`（默认 `https://sms.kkdos.store`）。启动时 verify 取号，复制号码后 start/SSE 等码 |
+| `msgnest_sources` | msg-nest 动态号来源数组；每项含 `label`、`cdk`、`base_url`（默认 `https://msg-nest.com`），`alloc_id`/`claim_token`/`fingerprint`/`phone` 由工具 redeem 后自动写回。启动时 redeem CDK 换 claimToken 取号，每轮 `GET /allocations/{id}/messages` 轮询取码，token 过期自动 re-redeem |
 | `email_sources` | 邮箱取件来源数组；每项含 `label`、`email`、`provider`（目前仅 `icloud`）、`base_url`（默认 `https://email.nloop.cc`）。走 `POST {base_url}/api/{provider}/query` 拉最新邮件并自动提取验证码 |
 | `accounts` | 账户档案数组；每项含 `label`、`login_email`、`password`、`totp_secret`、`phone`、`phone_source_label`、`email`。面板会用标准库实时计算 6 位 TOTP 并显示剩余秒数，`phone_source_label` 优先显式关联动态/固定短信来源，未配置时继续用 `phone` 匹配固定来源 |
 | `disabled` | 无效来源/账户的持久化标记字典；key 为 `ludan` 或 `<kind>:<label>`，值含 `reason` / `at`。由监控自动写入或 `config disable` / `enable` / `prune` 管理，一般不手改 |

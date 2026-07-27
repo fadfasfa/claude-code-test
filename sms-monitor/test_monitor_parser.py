@@ -24,11 +24,13 @@ from monitor import (
     FixedUrlSource,
     KkdosSource,
     LuDanSource,
+    MsgNestSource,
     SmsMonitor,
     generate_totp,
     normalize_accounts,
     normalize_email_sources,
     normalize_kkdos_sources,
+    normalize_msgnest_sources,
     parse_fixed_sms_response,
     parse_freeform_account_text,
     parse_freeform_accounts,
@@ -38,6 +40,7 @@ from monitor import (
     ready_check_fixed_source,
     ready_check_kkdos_source,
     ready_check_ludan,
+    ready_check_msgnest_source,
     run_cli,
     run_config_command,
     split_us_phone,
@@ -2353,6 +2356,140 @@ class LuDanOptionalTest(unittest.TestCase):
         cfg["key"] = "YOUR_CDK"
         m = SmsMonitor(cfg)
         self.assertIsNone(m.ludan)
+
+
+class MsgNestResponse:
+    """msg-nest 测试响应；支持自定义 status_code 模拟 401 等。"""
+
+    def __init__(self, payload, status_code=200):
+        self.status_code = status_code
+        self.payload = payload
+
+    def json(self):
+        return self.payload
+
+
+class MsgNestFakeSession:
+    """记录 msg-nest GET/POST，按路径与入队顺序返回预设响应。"""
+
+    def __init__(self):
+        self.posts = []
+        self.gets = []
+        self._redeem = []
+        self._alloc = []
+        self._messages = []
+
+    def queue_redeem(self, payload, status=200):
+        self._redeem.append(MsgNestResponse(payload, status))
+
+    def queue_allocation(self, payload, status=200):
+        self._alloc.append(MsgNestResponse(payload, status))
+
+    def queue_messages(self, payload, status=200):
+        self._messages.append(MsgNestResponse(payload, status))
+
+    def post(self, url, headers=None, json=None, timeout=None):
+        self.posts.append((url, json))
+        if self._redeem:
+            return self._redeem.pop(0)
+        return MsgNestResponse({}, 200)
+
+    def get(self, url, headers=None, timeout=None):
+        self.gets.append(url)
+        if url.endswith("/messages"):
+            return self._messages.pop(0) if self._messages else MsgNestResponse({}, 200)
+        return self._alloc.pop(0) if self._alloc else MsgNestResponse({}, 200)
+
+
+class MsgNestSourceTest(unittest.TestCase):
+    """msg-nest 来源：normalize 持久化、redeem 号码核对、poll 取码、401 自愈。"""
+
+    def _entry(self, **overrides):
+        entry = {
+            "label": "sms",
+            "cdk": "TEST-CDK-FAKE-0001",
+            "base_url": "https://msg-nest.com",
+            "alloc_id": "",
+            "claim_token": "",
+            "fingerprint": "",
+            "phone": "5551234567",
+        }
+        entry.update(overrides)
+        return entry
+
+    def test_normalize_preserves_persisted_state(self):
+        out = normalize_msgnest_sources(
+            [self._entry(alloc_id="alloc_1", claim_token="tok", fingerprint="fp")]
+        )
+        self.assertEqual(out[0]["alloc_id"], "alloc_1")
+        self.assertEqual(out[0]["claim_token"], "tok")
+        self.assertEqual(out[0]["fingerprint"], "fp")
+
+    def test_normalize_missing_cdk_raises(self):
+        with self.assertRaises(ConfigCommandError):
+            normalize_msgnest_sources([{"label": "x", "base_url": "https://msg-nest.com"}])
+
+    def test_redeem_phone_match(self):
+        session = MsgNestFakeSession()
+        session.queue_redeem(
+            {"data": {"allocId": "alloc_testfake0001", "claimToken": "tok1", "phone": "+15551234567", "expiresAt": "2026-07-27T15:00:00Z"}}
+        )
+        session.queue_allocation({"data": {"phone": "+15551234567", "expiresAt": "2026-07-27T15:00:00Z"}})
+        ms = MsgNestSource(self._entry(), session, 3.0)
+        ms.verify()
+        self.assertEqual(ms.phone, "5551234567")
+        self.assertEqual(ms.status, "已分配号码")
+        self.assertEqual(ms.note, "已兑换")
+        self.assertEqual(ms.claim_token, "tok1")
+
+    def test_redeem_phone_mismatch_warning(self):
+        session = MsgNestFakeSession()
+        session.queue_redeem({"data": {"allocId": "alloc_x", "claimToken": "t", "phone": "+15559876543"}})
+        session.queue_allocation({"data": {"phone": "+15559876543"}})
+        ms = MsgNestSource(self._entry(), session, 3.0)
+        ms.verify()
+        self.assertIn("号码与预期不符", ms.note)
+
+    def test_poll_extracts_code(self):
+        session = MsgNestFakeSession()
+        session.queue_messages({"data": {"messages": [{"content": "Your verification code is 123456"}]}})
+        ms = MsgNestSource(self._entry(alloc_id="alloc_1", claim_token="tok", fingerprint="fp"), session, 3.0)
+        code = ms.poll()
+        self.assertEqual(code, "123456")
+        self.assertEqual(ms.last_code, "123456")
+        self.assertEqual(ms.status, "收到新验证码")
+
+    def test_poll_401_self_heal(self):
+        session = MsgNestFakeSession()
+        session.queue_messages({"message": "expired"}, status=401)
+        session.queue_redeem({"data": {"allocId": "alloc_1", "claimToken": "fresh", "phone": "+15551234567"}})
+        session.queue_messages({"data": {"messages": [{"content": "code: 987654"}]}})
+        ms = MsgNestSource(self._entry(alloc_id="alloc_1", claim_token="stale", fingerprint="fp"), session, 3.0)
+        code = ms.poll()
+        self.assertEqual(code, "987654")
+        self.assertEqual(ms.claim_token, "fresh")
+        self.assertEqual(len(session.posts), 1)
+
+    def test_ready_check_ready(self):
+        session = MsgNestFakeSession()
+        session.queue_redeem({"data": {"allocId": "a", "claimToken": "t", "phone": "+15551234567"}})
+        session.queue_allocation({"data": {"phone": "+15551234567"}})
+        result = ready_check_msgnest_source(self._entry(), session, 3.0)
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["kind"], "msgnest")
+
+    def test_ready_check_not_ready_on_auth_error(self):
+        session = MsgNestFakeSession()
+        session.queue_redeem({"message": "invalid cdk"}, status=403)
+        result = ready_check_msgnest_source(self._entry(), session, 3.0)
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["status"], "api_not_ready")
+
+    def test_phone_normalization(self):
+        ms = MsgNestSource(self._entry(), MsgNestFakeSession(), 3.0)
+        self.assertEqual(ms._normalize_phone("+15551234567"), "5551234567")
+        self.assertEqual(ms._normalize_phone("15551234567"), "5551234567")
+        self.assertEqual(ms._normalize_phone("5551234567"), "5551234567")
 
 
 if __name__ == "__main__":
