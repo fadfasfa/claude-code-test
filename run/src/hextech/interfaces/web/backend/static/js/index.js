@@ -19,7 +19,6 @@ const wsStatus = document.getElementById('wsStatus');
 
 const search = createSearchController({
     input: document.getElementById('searchInput'),
-    assistPanel: document.getElementById('searchAssistPanel'),
     overlay: document.getElementById('searchOverlay'),
     onRender: renderView,
 });
@@ -28,7 +27,6 @@ function renderView(champions) {
     renderTiers(champions, {
         container: tierContainer,
         activeIds: activeChampionIds,
-        onEmpty: () => search.hideSearchAssistPanel(),
         afterRender: () => bindChampionPreloads(API_BASE),
     });
 }

@@ -85,6 +85,9 @@ def test_selection_timeline_appends_real_observations_without_images(tmp_path: P
     assert entries[0]["cursor_over_slots"] == [1]
     assert entries[0]["latency_ms"] == {"capture": 30.0, "recognition": 20.0, "total": 50.0}
     assert entries[0]["slots"][0]["text"]["name"] == "双发快射"
+    assert entries[0]["slots"][0]["text"]["top_candidates"] == [
+        {"augment_id": "101", "recognition_key": "", "name": "双发快射", "confidence": 0.91}
+    ]
     assert entries[0]["slots"][0]["icon"]["name"] == "错误图标"
     assert not any("image" in key or "frame" in key for key in entries[0])
 

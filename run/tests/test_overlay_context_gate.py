@@ -58,14 +58,12 @@ def _evaluate(gate: ContextRenderGate, payload: dict[str, object], *, hwnd: int 
     )
 
 
-def test_context_gate_requires_two_ticks_after_identity_and_source_checks() -> None:
+def test_context_gate_accepts_first_trusted_publication() -> None:
     gate = ContextRenderGate()
     first = _evaluate(gate, _publication())
-    second = _evaluate(gate, _publication())
 
-    assert first.state == "pending"
-    assert second.state == "confirmed"
-    assert second.payload["champion_id"] == "4"
+    assert first.state == "confirmed"
+    assert first.payload["champion_id"] == "4"
 
 
 def test_low_priority_old_champion_cannot_replace_confirmed_live_client() -> None:
@@ -98,7 +96,6 @@ def test_new_game_or_hwnd_clears_confirmed_context_until_new_publication() -> No
     assert mismatch.reason == "context_game_identity_mismatch"
 
     rebound = _publication(game_instance_id="game-1", hwnd=200, revision=2)
-    assert _evaluate(gate, rebound, hwnd=200).state == "pending"
     assert _evaluate(gate, rebound, hwnd=200).state == "confirmed"
 
 
@@ -135,8 +132,7 @@ def test_confirmed_same_identity_can_hold_but_tombstone_cannot() -> None:
     assert cleared.reason == "context_untrusted_publisher"
     assert not cleared.payload.get("champion_id")
 
-    # 硬拒绝必须丢弃之前的 pending tick，恢复后仍需完整两 tick 确认。
-    assert _evaluate(gate, publication).state == "pending"
+    # 硬拒绝会撤下旧上下文；恢复后的可信 publication 可立即重新确认。
     assert _evaluate(gate, publication).state == "confirmed"
 
 
@@ -153,14 +149,13 @@ def test_context_gate_rejects_replayed_publication_sequence() -> None:
     assert not rejected.payload.get("champion_id")
 
 
-def test_new_publisher_instance_requires_fresh_two_tick_confirmation() -> None:
+def test_new_publisher_instance_accepts_first_fresh_trusted_publication() -> None:
     gate = ContextRenderGate()
     original = _publication()
     _evaluate(gate, original)
     assert _evaluate(gate, original).state == "confirmed"
 
     restarted = _publication(publisher_instance_id="publisher-2")
-    assert _evaluate(gate, restarted).state == "pending"
     assert _evaluate(gate, restarted).state == "confirmed"
 
 

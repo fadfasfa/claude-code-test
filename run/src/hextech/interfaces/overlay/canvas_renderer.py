@@ -410,9 +410,8 @@ def _resolve_synergy_text_layout(
 
 
 def _draw_shadowed_text(canvas: CanvasLike, x: int, y: int, **kwargs: Any) -> None:
-    shadow_kwargs = dict(kwargs)
-    shadow_kwargs["fill"] = OVERLAY_THEME.get("text_shadow", "#000000")
-    canvas.create_text(x + 1, y + 1, **shadow_kwargs)
+    """每段可见文字只创建一个 Canvas item，避免叠层字体产生重影。"""
+
     canvas.create_text(x, y, **kwargs)
 
 

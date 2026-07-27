@@ -12,6 +12,98 @@ from unittest.mock import patch
 
 
 class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
+    def test_render_tick_confirms_context_before_opening_cold_snapshot(self):
+        from types import SimpleNamespace
+        from hextech.interfaces.overlay import host_runner
+
+        calls = []
+
+        class FakeCanvas:
+            def after(self, _delay_ms, _callback):
+                return "after-1"
+
+            def after_cancel(self, _after_id):
+                return None
+
+            def delete(self, *_args):
+                calls.append("clear")
+
+            def update_idletasks(self):
+                calls.append("flush")
+
+            def winfo_width(self):
+                return 1920
+
+        class FakeSource:
+            def read_event(self):
+                return {
+                    "active": True,
+                    "visible": True,
+                    "slots": [{"state": "ready", "augment_id": str(index)} for index in range(3)],
+                    "source": {
+                        "session_id": "session-1",
+                        "selection_epoch": 1,
+                        "selection_window_active": True,
+                        "game_instance_id": "game-1",
+                        "window_hwnd": 100,
+                    },
+                }
+
+            def read_context(self):
+                calls.append("context")
+                return {"ok": True, "champion_id": "4"}
+
+            def open_view(self):
+                calls.append("open_view")
+                return None
+
+            def read_hint_cache(self):
+                return {}
+
+        class FakeGate:
+            def evaluate(self, *_args, **_kwargs):
+                calls.append("gate")
+                return SimpleNamespace(
+                    state="confirmed",
+                    reason="context_confirmed",
+                    context_revision=1,
+                    held=False,
+                    payload={"ok": True, "champion_id": "4"},
+                )
+
+        visibility = {"user_enabled": True, "target_hwnd": 100, "display_mode": "compact"}
+
+        def sync_visibility(*_args, resolved_should_show=None, **_kwargs):
+            visibility["render_full_overlay"] = True
+            return True if resolved_should_show is None else resolved_should_show
+
+        with (
+            patch.object(host_runner, "ContextRenderGate", FakeGate),
+            patch.object(host_runner, "_refresh_target_window"),
+            patch.object(host_runner, "is_scoreboard_key_down", return_value=False),
+            patch.object(host_runner, "_sync_event_visibility", side_effect=sync_visibility),
+            patch.object(host_runner, "build_runtime_session", return_value=object()),
+            patch.object(host_runner, "build_render_model_from_session", return_value={"stats": []}),
+            patch.object(host_runner, "source_has_private_stats", return_value=False),
+            patch.object(host_runner, "draw_overlay_frame"),
+            patch.object(host_runner, "_log_waiting_context_diagnostic"),
+            patch.object(host_runner, "_write_overlay_session_report"),
+            patch.object(host_runner, "_write_real_session_evidence"),
+        ):
+            host_runner._schedule_event_render(
+                object(),
+                FakeCanvas(),
+                {"diagnostic_mode": False, "event_poll_ms": 120},
+                visibility,
+                __import__("queue").Queue(),
+                data_source=FakeSource(),
+            )
+
+        self.assertLess(calls.index("context"), calls.index("open_view"))
+        self.assertLess(calls.index("gate"), calls.index("open_view"))
+        self.assertLess(calls.index("clear"), calls.index("open_view"))
+        self.assertEqual(visibility["rendered_selection_key"], ("session-1", 1))
+
     def test_render_tick_reads_cached_window_without_scanning_processes(self):
         from hextech.interfaces.overlay import host
 

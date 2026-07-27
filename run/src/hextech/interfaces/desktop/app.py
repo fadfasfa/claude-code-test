@@ -87,8 +87,6 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._manual_move_timestamp = 0.0
         self._last_client_rect = None
         self._last_overlay_target_pos = None
-        # 折叠态标记：True 时悬浮窗收成 112 px 极窄列表，让出主屏视线
-        self._collapsed = False
         # 首次显示是否已完成吸附定位，用于解决"必须先移动客户端窗口才会跟随"的体感问题
         self._overlay_position_initialized = False
         self._hero_preload_ready = {}
@@ -104,7 +102,6 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._last_redirect_success_at = 0.0
         self._ui_render_in_progress = False
         self._pending_ui_refresh = None
-        self._collapse_render_after_id = None
         self._overlay_status_after_id = None
         self._overlay_status_text = ""
         self._overlay_status_color = UI_COLORS["muted"]

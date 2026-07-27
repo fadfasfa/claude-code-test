@@ -40,8 +40,6 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
         )
         self.title_bar.bind("<ButtonPress-1>", self.start_move)
         self.title_bar.bind("<B1-Motion>", self.do_move)
-        # 双击标题栏在展开/折叠宽度间切换，便于单屏游戏窗口模式让出主屏视线
-        self.title_bar.bind("<Double-Button-1>", self._toggle_collapse)
 
         self.exit_button = tk.Button(
             self.title_frame,
@@ -63,26 +61,6 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
         # 右上角“×”只隐藏到托盘；完全退出必须使用托盘菜单，避免误杀识别进程。
         self.exit_button.pack(side=tk.RIGHT, padx=(0, 6), pady=5)
 
-        # 可见折叠按钮：与双击标题等价，「«」收窄 /「»」展开
-        self.collapse_button = tk.Button(
-            self.title_frame,
-            text="«",
-            command=self._toggle_collapse,
-            bg=UI_COLORS["header"],
-            fg=UI_COLORS["muted"],
-            activebackground=UI_COLORS["surface"],
-            activeforeground=UI_COLORS["text"],
-            relief=tk.FLAT,
-            bd=0,
-            highlightthickness=0,
-            width=2,
-            padx=0,
-            pady=1,
-            font=ui_font(15, bold=True),
-            cursor="hand2",
-        )
-        self.collapse_button.pack(side=tk.RIGHT, padx=(0, 2), pady=5)
-
         self.diagnostics_button = tk.Button(
             self.title_frame,
             text="诊断",
@@ -99,11 +77,10 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             cursor="hand2",
         )
         self.diagnostics_button.pack(side=tk.RIGHT, padx=(0, 8), pady=6)
-        # 标题文本最后 pack：Tk pack 空间不足时裁后来者，折叠态必须保住右侧
-        # 按钮（尤其「»」展开入口），被裁的只能是标题文字。
+        # 标题文本最后 pack：空间不足时优先保住右侧诊断与关闭按钮。
         self.title_bar.pack(side=tk.LEFT, padx=(scaled(10, scale), 0))
 
-        self.feature_frame = tk.Frame(self.root, bg=UI_COLORS["base"], padx=10, pady=8)
+        self.feature_frame = tk.Frame(self.root, bg=UI_COLORS["base"], padx=6, pady=6)
         self.feature_frame.pack(fill=tk.X)
         self._feature_toggle_widgets = []
         self.web_frontend_var = tk.BooleanVar(value=self.feature_flags["web_frontend_enabled"])
@@ -117,24 +94,25 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             self._toggle_web_frontend,
             accent=UI_COLORS["cyan"],
         )
-        self.web_frontend_check.grid(row=0, column=0, sticky="ew", padx=(0, 8), pady=(0, 4))
+        self.web_frontend_check.grid(row=0, column=0, sticky="ew", padx=(0, 2))
         self.game_overlay_check = self._build_feature_toggle(
             "游戏内显示",
             self.game_overlay_var,
             self._toggle_game_overlay,
             accent=UI_COLORS["cyan"],
         )
-        self.game_overlay_check.grid(row=0, column=1, sticky="ew", pady=(0, 4))
+        self.game_overlay_check.grid(row=0, column=1, sticky="ew", padx=2)
         self.private_stats_check = self._build_feature_toggle(
             "私用统计",
             self.private_stats_var,
             self._toggle_private_policy_stats,
             accent=UI_COLORS["green"],
         )
-        self.private_stats_check.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(2, 0))
+        self.private_stats_check.grid(row=0, column=2, sticky="ew", padx=(2, 0))
 
         self.feature_frame.grid_columnconfigure(0, weight=1)
         self.feature_frame.grid_columnconfigure(1, weight=1)
+        self.feature_frame.grid_columnconfigure(2, weight=1)
 
         self.list_shell = tk.Frame(self.root, bg=UI_COLORS["base"])
         self.list_shell.pack(fill=tk.BOTH, expand=True, padx=(scaled(10, scale), 0), pady=(6, 4))
@@ -219,23 +197,23 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
         accent: str,
     ) -> "tk.Frame":
         scale = self._ui_scale_value()
-        frame = tk.Frame(self.feature_frame, bg=UI_COLORS["base"], cursor="hand2", padx=2, pady=2)
+        frame = tk.Frame(self.feature_frame, bg=UI_COLORS["base"], cursor="hand2", padx=1, pady=2)
         dot = tk.Canvas(
             frame,
-            width=scaled(15, scale),
-            height=scaled(15, scale),
+            width=scaled(13, scale),
+            height=scaled(13, scale),
             bg=UI_COLORS["base"],
             highlightthickness=0,
             bd=0,
             cursor="hand2",
         )
-        dot.pack(side=tk.LEFT, padx=(0, 5))
+        dot.pack(side=tk.LEFT, padx=(0, 3))
         label = tk.Label(
             frame,
             text=text,
             bg=UI_COLORS["base"],
             fg=UI_COLORS["muted"],
-            font=ui_font(12, bold=True),
+            font=ui_font(11, bold=True),
             cursor="hand2",
         )
         label.pack(side=tk.LEFT)

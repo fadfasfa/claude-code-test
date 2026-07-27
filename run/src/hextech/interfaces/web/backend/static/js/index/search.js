@@ -1,5 +1,7 @@
-// 首页搜索控制器：快捷词目录、输入建议面板、未命中引导面板与过滤逻辑。
-// 本轮把此前从未接线的建议面板/未命中面板正式接通（经用户批准）。
+// 首页搜索控制器：快捷词目录、未命中引导面板与过滤逻辑。
+// 输入即过滤（150ms 防抖），不再挂输入建议下拉——浮层会盖住下方英雄列表，
+// 而列表本身已经是实时过滤结果，下拉属于重复信息。快捷词目录保留，
+// 仍供未命中全屏面板的推荐 chips 使用。
 // IME（compositionstart/end）时序与 blur 锁保持历史行为不变。
 
 import { escapeHtml, debounce } from '../shared/dom.js';
@@ -97,7 +99,7 @@ export async function resolveAliasRecords({ apiBase, primaryRecords, champions }
     });
 }
 
-export function createSearchController({ input, assistPanel, overlay, onRender }) {
+export function createSearchController({ input, overlay, onRender }) {
     let allChampions = [];
     let searchShortcutCatalog = [];
     let championSearchIndex = new Map();
@@ -267,109 +269,6 @@ export function createSearchController({ input, assistPanel, overlay, onRender }
                 return (b.popularity || 0) - (a.popularity || 0);
             });
         return ranked.slice(0, limit);
-    }
-
-    function highlightMatchText(text, query) {
-        if (!query) return escapeHtml(text);
-        const normalizedText = String(text || '');
-        const normalizedQuery = normalizeSearchText(query);
-        if (!normalizedQuery) return escapeHtml(normalizedText);
-
-        const idx = normalizedText.toLowerCase().indexOf(normalizedQuery);
-        if (idx !== -1) {
-            const prefix = normalizedText.substring(0, idx);
-            const match = normalizedText.substring(idx, idx + normalizedQuery.length);
-            const suffix = normalizedText.substring(idx + normalizedQuery.length);
-            return `${escapeHtml(prefix)}<span class="text-amber-400 font-extrabold">${escapeHtml(match)}</span>${escapeHtml(suffix)}`;
-        }
-        return escapeHtml(normalizedText);
-    }
-
-    function renderSearchAssistPanel(query) {
-        if (!assistPanel) return;
-
-        const normalizedQuery = normalizeSearchText(query);
-        if (!normalizedQuery) {
-            hideSearchAssistPanel();
-            return;
-        }
-        const suggestions = getSearchSuggestions(query, 10);
-        const title = '快捷匹配';
-        const subtitle = `找到 ${suggestions.length} 个可直接点选的结果`;
-
-        if (suggestions.length === 0) {
-            assistPanel.innerHTML = `
-                <div class="search-assist-header">
-                    <div>
-                        <div class="search-assist-title">${title}</div>
-                        <div class="search-assist-subtitle">${subtitle}</div>
-                    </div>
-                    <button type="button" class="search-assist-tag" data-search-close>收起</button>
-                </div>
-                <div class="search-assist-list">
-                    <div class="px-4 py-6 text-sm text-slate-400">没有匹配到快捷词，可以继续输入。</div>
-                </div>
-            `;
-        } else {
-            assistPanel.innerHTML = `
-                <div class="search-assist-header">
-                    <div>
-                        <div class="search-assist-title">${title}</div>
-                        <div class="search-assist-subtitle">${subtitle}</div>
-                    </div>
-                    <button type="button" class="search-assist-tag" data-search-close>收起</button>
-                </div>
-                <div class="search-assist-list">
-                    ${suggestions.map((item) => `
-                        <button type="button"
-                            class="search-assist-item"
-                            data-search-apply="${escapeHtml(item.query)}"
-                            title="${escapeHtml(item.meta)}">
-                            <div class="search-assist-item-main">
-                                <div class="search-assist-item-title">${highlightMatchText(item.label, query)}</div>
-                                <div class="search-assist-item-meta">${highlightMatchText(item.meta, query)}</div>
-                            </div>
-                            <span class="search-assist-tag">${escapeHtml(item.kind)}</span>
-                        </button>
-                    `).join('')}
-                </div>
-            `;
-        }
-        assistPanel.classList.remove('hidden');
-        assistPanel.classList.add('search-assist-open');
-        bindSearchAssistPanel();
-    }
-
-    function hideSearchAssistPanel() {
-        if (!assistPanel) return;
-        assistPanel.classList.remove('search-assist-open');
-        assistPanel.classList.add('hidden');
-        assistPanel.innerHTML = '';
-    }
-
-    function bindSearchAssistPanel() {
-        if (!assistPanel) return;
-        const closeBtn = assistPanel.querySelector('[data-search-close]');
-        const suggestionButtons = assistPanel.querySelectorAll('[data-search-apply]');
-
-        if (closeBtn) {
-            closeBtn.addEventListener('click', () => {
-                hideSearchAssistPanel();
-            });
-        }
-
-        suggestionButtons.forEach((button) => {
-            // mousedown 抢在 input blur 之前，避免面板先被 blur 收起导致点击丢失
-            button.addEventListener('mousedown', (event) => {
-                event.preventDefault();
-            });
-            button.addEventListener('click', () => {
-                const nextQuery = button.getAttribute('data-search-apply') || '';
-                applySearchQuery(nextQuery);
-                hideSearchAssistPanel();
-                if (input) input.focus();
-            });
-        });
     }
 
     function renderNoResultsPanel(query) {
@@ -583,7 +482,6 @@ export function createSearchController({ input, assistPanel, overlay, onRender }
         // input 路径防抖 150ms；IME 组词与 Enter/blur 保持立即执行
         const debouncedApply = debounce((value) => {
             applySearchQuery(value);
-            renderSearchAssistPanel(value);
         }, SEARCH_DEBOUNCE_MS);
 
         input.addEventListener('compositionstart', () => {
@@ -594,7 +492,6 @@ export function createSearchController({ input, assistPanel, overlay, onRender }
             input.dataset.composing = '';
             window.setTimeout(() => {
                 applySearchQuery(input.value);
-                renderSearchAssistPanel(input.value);
             }, 0);
         });
 
@@ -607,7 +504,6 @@ export function createSearchController({ input, assistPanel, overlay, onRender }
             if (e.key === 'Enter') {
                 debouncedApply.cancel();
                 applySearchQuery(e.target.value);
-                hideSearchAssistPanel();
             }
         });
 
@@ -615,19 +511,6 @@ export function createSearchController({ input, assistPanel, overlay, onRender }
             if (input.dataset.composing === '1') return;
             debouncedApply.cancel();
             applySearchQuery(input.value);
-            window.setTimeout(() => {
-                if (document.activeElement !== input) {
-                    hideSearchAssistPanel();
-                }
-            }, 180);
-        });
-
-        document.addEventListener('click', (e) => {
-            const target = e.target;
-            const insideSearch = target && (target.closest?.('#searchAssistPanel') || target.closest?.('#searchInput'));
-            if (!insideSearch) {
-                hideSearchAssistPanel();
-            }
         });
     }
 
@@ -644,7 +527,6 @@ export function createSearchController({ input, assistPanel, overlay, onRender }
             applySearchQuery(currentSearchQuery);
         },
         filterChampions,
-        hideSearchAssistPanel,
         hideSearchOverlay,
         get currentQuery() {
             return currentSearchQuery;

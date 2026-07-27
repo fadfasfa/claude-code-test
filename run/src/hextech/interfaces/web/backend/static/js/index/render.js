@@ -8,13 +8,20 @@ import { CHAMPION_PINYIN } from './champion_pinyin.js';
 // 视觉样式仍由 Web 负责，但分档只消费 generation 的权威 `英雄评级`。
 // 阈值唯一维护在 Python 的 champion_tier.py，避免两端随时间漂移。
 export const TIERS = [
-    { id: 'T1', name: '夯', enName: 'God Tier', cssClass: 'hx-tier-op' },
-    { id: 'T2', name: '顶级', enName: 'Top', cssClass: 'hx-tier-s' },
-    { id: 'T3', name: '人上人', enName: 'Elite', cssClass: 'hx-tier-a' },
-    { id: 'T4', name: 'npc', enName: 'Average', cssClass: 'hx-tier-npc' },
-    { id: 'T5', name: '拉', enName: 'Trash', cssClass: 'hx-tier-trash' },
+    { id: 'T1', name: '夯', enName: 'God Tier', cssClass: 'hx-tier-op', rowClass: 'hx-tier-row--t1' },
+    { id: 'T2', name: '顶级', enName: 'Top', cssClass: 'hx-tier-s', rowClass: 'hx-tier-row--t2' },
+    { id: 'T3', name: '人上人', enName: 'Elite', cssClass: 'hx-tier-a', rowClass: 'hx-tier-row--t3' },
+    { id: 'T4', name: 'npc', enName: 'Average', cssClass: 'hx-tier-npc', rowClass: 'hx-tier-row--t4' },
+    { id: 'T5', name: '拉', enName: 'Trash', cssClass: 'hx-tier-trash', rowClass: 'hx-tier-row--t5' },
 ];
 const TIER_BY_ID = new Map(TIERS.map((tier) => [tier.id, tier]));
+const CARD_CLASS_BY_TIER = new Map([
+    ['T1', 'hx-hero-card--t1'],
+    ['T2', 'hx-hero-card--t2'],
+    ['T3', 'hx-hero-card--t3'],
+    ['T4', 'hx-hero-card--t4'],
+    ['T5', 'hx-hero-card--t5'],
+]);
 
 export function formatPercent(num) {
     return (num * 100).toFixed(1) + '%';
@@ -29,7 +36,7 @@ export function winRateClass(winRate) {
     return 'hx-wr-flat';
 }
 
-export function createChampionCard(champion, index, activeIds) {
+function championPresentation(champion) {
     const heroId = champion['英雄 ID'] || '';
     const enName = champion['英文名'] || CHAMPION_PINYIN[champion['英雄名称']] || '';
     const wr = formatPercent(champion['英雄胜率']);
@@ -39,24 +46,45 @@ export function createChampionCard(champion, index, activeIds) {
     // detail URL query 契约（hero/wr/pr/id/en）被详情页与自动跳转依赖，逐字不动。
     const detailUrl = `detail.html?hero=${encodeURIComponent(heroName)}&wr=${encodeURIComponent(wr)}&pr=${encodeURIComponent(pr)}&id=${encodeURIComponent(heroId)}&en=${encodeURIComponent(enName)}`;
 
-    const isHighlighted = activeIds.has(String(heroId)) ? 'hx-hero-avatar-highlight' : '';
     const wrClass = winRateClass(champion['英雄胜率']);
 
-    let avatarUrl;
+    let avatarUrl = '';
     if (heroId) {
         avatarUrl = `/assets/champions/${heroId}.png`;
     } else if (enName) {
         avatarUrl = `https://ddragon.leagueoflegends.com/cdn/${peekDdragonVersion()}/img/champion/${enName}.png`;
-    } else {
-        avatarUrl = '';
     }
 
-    const safeHeroName = escapeHtml(heroName);
-    const safeDetailUrl = escapeHtml(detailUrl);
-    const safeAvatarUrl = escapeHtml(avatarUrl);
-    const safeWr = escapeHtml(wr);
-    const safePr = escapeHtml(pr);
-    const avatarHiddenStyle = avatarUrl ? '' : 'visibility:hidden;';
+    return {
+        heroId: String(heroId || ''),
+        enName: String(enName || ''),
+        heroName,
+        wr,
+        pr,
+        wrClass,
+        detailUrl,
+        avatarUrl,
+        loadingUrl: enName ? `https://ddragon.leagueoflegends.com/cdn/img/champion/loading/${enName}_0.jpg` : avatarUrl,
+        splashUrl: enName ? `https://ddragon.leagueoflegends.com/cdn/img/champion/splash/${enName}_0.jpg` : avatarUrl,
+    };
+}
+
+export function createChampionCard(champion, index, activeIds, tierId = 'T3') {
+    const view = championPresentation(champion);
+    const isHighlighted = activeIds.has(view.heroId) ? 'hx-hero-avatar-highlight' : '';
+    const cardClass = CARD_CLASS_BY_TIER.get(String(tierId || '').toUpperCase()) || 'hx-hero-card--t3';
+    const primaryImageUrl = tierId === 'T1' ? view.loadingUrl : view.avatarUrl;
+
+    const safeHeroName = escapeHtml(view.heroName);
+    const safeDetailUrl = escapeHtml(view.detailUrl);
+    const safePrimaryImageUrl = escapeHtml(primaryImageUrl);
+    const safeFallbackUrl = escapeHtml(view.avatarUrl);
+    const safeWr = escapeHtml(view.wr);
+    const safePr = escapeHtml(view.pr);
+    const avatarHiddenStyle = primaryImageUrl ? '' : 'visibility:hidden;';
+    const fallbackHandler = view.avatarUrl && primaryImageUrl !== view.avatarUrl
+        ? `this.onerror=null; this.src=this.dataset.fallbackSrc;`
+        : `this.removeAttribute('src'); this.style.visibility='hidden';`;
 
     // 备战席高亮/预加载的 DOM 契约：.hx-hero-avatar 与 data-hero-id/name
     // 必须落在同一元素上（updateHighlights/bindChampionPreloads 依赖）。
@@ -64,29 +92,64 @@ export function createChampionCard(champion, index, activeIds) {
     return `
         <a
             href="${safeDetailUrl}"
-            class="hx-hero-card cursor-pointer"
+            class="hx-hero-card ${cardClass} cursor-pointer"
             style="animation-delay: ${index * 30}ms"
-            data-en-name="${escapeHtml(String(enName || ''))}"
+            data-en-name="${escapeHtml(view.enName)}"
         >
             <div class="hx-hero-avatar relative rounded-lg overflow-hidden ${isHighlighted}"
                 data-hero-name="${safeHeroName}"
-                data-hero-id="${escapeHtml(String(heroId || ''))}"
+                data-hero-id="${escapeHtml(view.heroId)}"
             >
                 <img loading="lazy" width="60" height="60"
-                    src="${safeAvatarUrl}"
+                    src="${safePrimaryImageUrl}"
+                    data-fallback-src="${safeFallbackUrl}"
                     alt="${safeHeroName}"
                     class="w-full h-full object-cover bg-slate-800"
                     style="${avatarHiddenStyle}"
                     data-hero-name="${safeHeroName}"
-                    onerror="this.removeAttribute('src'); this.style.visibility='hidden';"
+                    onerror="${fallbackHandler}"
                 />
-                <div class="hx-hero-wr text-2xs tabular-nums ${wrClass}">${safeWr}</div>
+                <div class="hx-hero-wr text-2xs tabular-nums ${view.wrClass}">${safeWr}</div>
             </div>
             <span class="hx-hero-name text-2xs">${safeHeroName}</span>
             <span class="hx-hero-pop" aria-hidden="true">
                 <b>${safeHeroName}</b>
-                <span>胜率 <i class="${wrClass}">${safeWr}</i></span>
+                <span>胜率 <i class="${view.wrClass}">${safeWr}</i></span>
                 <span>出场率 ${safePr}</span>
+            </span>
+        </a>
+    `;
+}
+
+function createChampionSpotlight(champion, tier) {
+    const view = championPresentation(champion);
+    const safeHeroName = escapeHtml(view.heroName);
+    const safeEnName = escapeHtml(view.enName);
+    const safeDetailUrl = escapeHtml(view.detailUrl);
+    const safeSplashUrl = escapeHtml(view.splashUrl);
+    const safeFallbackUrl = escapeHtml(view.avatarUrl);
+    const safeWr = escapeHtml(view.wr);
+    const safePr = escapeHtml(view.pr);
+    const safeTierId = escapeHtml(tier.id);
+    const safeTierName = escapeHtml(tier.enName);
+    const fallbackHandler = view.avatarUrl && view.splashUrl !== view.avatarUrl
+        ? `this.onerror=null; this.src=this.dataset.fallbackSrc;`
+        : `this.removeAttribute('src'); this.style.visibility='hidden';`;
+
+    return `
+        <a class="hx-champion-spotlight" href="${safeDetailUrl}" data-hero-name="${safeHeroName}">
+            <img class="hx-spotlight-image" src="${safeSplashUrl}" data-fallback-src="${safeFallbackUrl}"
+                alt="" aria-hidden="true" fetchpriority="high" onerror="${fallbackHandler}" />
+            <span class="hx-spotlight-shade" aria-hidden="true"></span>
+            <span class="hx-spotlight-content">
+                <span class="hx-spotlight-eyebrow">版本焦点 · ${safeTierName} NO.1</span>
+                <strong>${safeHeroName}</strong>
+                <span class="hx-spotlight-en">${safeEnName}</span>
+                <span class="hx-spotlight-stats">
+                    <span><b class="${view.wrClass}">${safeWr}</b><small>胜率</small></span>
+                    <span><b>${safePr}</b><small>出场率</small></span>
+                    <span><b>${safeTierId}</b><small>综合评级</small></span>
+                </span>
             </span>
         </a>
     `;
@@ -120,9 +183,9 @@ export function renderTiers(champions, { container, activeIds, onEmpty, afterRen
     TIERS.forEach((tier) => {
         const champs = tierGroups[tier.id];
         if (champs.length === 0) return;
-        const champHTML = champs.map((c, i) => createChampionCard(c, i, activeIds)).join('');
+        const champHTML = champs.map((c, i) => createChampionCard(c, i, activeIds, tier.id)).join('');
         rows.push(`
-            <div class="hx-tier-row hx-tier-group-shell rounded-2xl">
+            <div class="hx-tier-row ${tier.rowClass} hx-tier-group-shell rounded-2xl">
                 <div class="hx-tier-label shrink-0 ${tier.cssClass} flex flex-col items-center justify-center font-bold text-xl shadow-[2px_0_10px_rgba(0,0,0,0.3)] z-10">
                     <span>${tier.name}</span>
                     <span class="text-2xs opacity-80 mt-1 uppercase tracking-wider">${tier.enName}</span>
@@ -133,7 +196,9 @@ export function renderTiers(champions, { container, activeIds, onEmpty, afterRen
             </div>
         `);
     });
-    container.innerHTML = rows.join('');
+    const spotlightChampion = sorted[0];
+    const spotlightTier = TIER_BY_ID.get(String(spotlightChampion['英雄评级'] || '').toUpperCase()) || TIER_BY_ID.get('T3');
+    container.innerHTML = createChampionSpotlight(spotlightChampion, spotlightTier) + rows.join('');
     if (afterRender) afterRender();
 }
 

@@ -13,7 +13,7 @@ from hextech.interfaces.overlay.context_broker import CONTEXT_BROKER_PUBLISHER
 from hextech.modules.game_context.overlay_context import empty_overlay_context
 
 
-CONFIRM_RENDER_TICKS = 2
+CONFIRM_RENDER_TICKS = 1
 CONFIRMED_CONTEXT_HOLD_SECONDS = 8.0
 TRUSTED_IDENTITY_QUALITIES = frozenset({"process", "window_fallback"})
 

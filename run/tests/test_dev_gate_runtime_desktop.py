@@ -73,8 +73,13 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert "游戏内显示: 正在提交启动请求" in ui_text
     assert "游戏内显示启动请求已提交" in ui_text
     assert "WINDOW_EXPANDED_WIDTH = 320" in ui_text
-    assert "WINDOW_COLLAPSED_WIDTH = 112" in ui_text
     assert "WINDOW_BASE_HEIGHT = 740" in ui_text
+    assert "WINDOW_COLLAPSED_WIDTH" not in ui_text
+    assert "WINDOW_MIN_FOLLOW_HEIGHT" not in ui_text
+    assert "_toggle_collapse" not in ui_text
+    assert "collapse_button" not in ui_text
+    assert "<Double-Button-1>" not in ui_text
+    assert "self.private_stats_check.grid(row=0, column=2" in ui_text
     # 几何锁 1.0 维持基线"狭长"观感（窗宽/头像/padding 不乘 DPI）；
     # 字体与几何解耦：ui_font 用正磅值由 Tk 按系统 DPI 隐式放大。
     assert "self._ui_scale = 1.0" in ui_text
@@ -235,7 +240,6 @@ def test_overlay_follow_height_never_exceeds_client_bottom() -> None:
 
     from hextech.interfaces.desktop.app_shared import (
         WINDOW_BASE_HEIGHT,
-        WINDOW_MIN_FOLLOW_HEIGHT,
         resolve_overlay_follow_height,
     )
 
@@ -245,26 +249,37 @@ def test_overlay_follow_height_never_exceeds_client_bottom() -> None:
     assert resolve_overlay_follow_height(80, 800) == 720
     # 工作区底缘低于客户端底缘时取更小者（客户端伸到任务栏后面）
     assert resolve_overlay_follow_height(100, 1200, workarea_bottom=700) == 600
-    # 极矮客户端：宁可轻微越界也保住窗口可用
-    assert resolve_overlay_follow_height(500, 560) == WINDOW_MIN_FOLLOW_HEIGHT
-    assert WINDOW_MIN_FOLLOW_HEIGHT < WINDOW_BASE_HEIGHT
+    # 极矮客户端仍以底缘为硬上限，不保留会造成越界的最小高度。
+    assert resolve_overlay_follow_height(500, 560) == 60
+    assert resolve_overlay_follow_height(500, 560) <= 560 - 500
 
 
-def test_collapsed_width_budget_fits_avatar_and_tier_badge() -> None:
-    """折叠态核心信息（头像 + T 级徽章）必须在基宽预算内完整可见。
+def test_compact_card_palette_contract() -> None:
+    """强度与角色颜色必须保持已确认的紧凑卡片视觉契约。"""
 
-    审查用真实 Tk 实测：80px 基宽叠加滚动条后头像被裁半、徽章完全不渲染。
-    预算按 scale=1 常量推导（缩放已锁 1.0）。
-    """
+    from hextech.interfaces.desktop.app_shared import TIER_COLORS, UI_COLORS
 
-    from hextech.interfaces.desktop.app_shared import WINDOW_COLLAPSED_WIDTH
+    assert {tier: style["bg"] for tier, style in TIER_COLORS.items()} == {
+        "T1": "#F2C94C",
+        "T2": "#22D3A6",
+        "T3": "#4169E1",
+        "T4": "#7F8C9D",
+        "T5": "#D64550",
+    }
+    assert UI_COLORS["selected"] == "#F2C94C"
+    assert UI_COLORS["teammate"] == "#18D6C4"
 
-    left_padding = 10          # list_shell 左侧 padding（折叠态滚动条已隐藏）
-    avatar = 48 + 2 * 1        # 头像位图 + 统一 1px 边框（高亮描边已删除）
-    avatar_gap = 8
-    # 徽章按 9pt bold（12px 基准）随 DPI 放大：150% 下"T1"+padx 约 30px。
-    # 已知代价：200%+ 缩放下徽章可能被裁 2-6px（窗宽固定而磅值字体无上限），
-    # 本轮接受，不为极端缩放扩大窗宽。
-    badge_min = 30
-    # 左侧胜率色条已删除（真机反馈：与右侧大号胜率数字重复）。
-    assert WINDOW_COLLAPSED_WIDTH >= left_padding + avatar + avatar_gap + badge_min
+
+def test_compact_card_geometry_contract() -> None:
+    """锁定卡片的关键像素预算，避免紧凑布局被无意撑开。"""
+
+    desktop_dir = RUN_DIR / "src" / "hextech" / "interfaces" / "desktop"
+    view_text = (desktop_dir / "app_view.py").read_text(encoding="utf-8")
+    card_body = view_text.split("    def _build_candidate_card", 1)[1].split("    def _bind_card_click", 1)[0]
+
+    assert "size = scaled(48, scale)" in view_text
+    assert "width=scaled(6, scale)" in card_body
+    assert "padx=scaled(6, scale)" in card_body
+    assert "pady=scaled(4, scale)" in card_body
+    assert "width=scaled(72, scale)" in card_body
+    assert "pady=scaled(2, scale)" in card_body

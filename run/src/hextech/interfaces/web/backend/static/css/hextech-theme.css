@@ -8,8 +8,11 @@
     --hx-font-family: "Segoe UI", system-ui, "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
 
     /* 画布与表面：单层顶部辉光是唯一底纹，旧的斜纹/网格/多层压暗退役。 */
-    --hx-bg: #0a1119;
-    --hx-bg-glow: radial-gradient(circle at 50% -12%, rgba(63, 146, 193, 0.10), transparent 58%);
+    --hx-bg: #010a13;
+    --hx-bg-glow:
+        radial-gradient(64rem 26rem at 50% -6%, rgba(214, 178, 108, 0.18), transparent 68%),
+        radial-gradient(76rem 40rem at 50% 116%, rgba(10, 200, 185, 0.08), transparent 62%),
+        radial-gradient(52rem 32rem at 6% 30%, rgba(63, 169, 220, 0.05), transparent 64%);
     --hx-surface: rgba(16, 23, 33, 0.88);
     --hx-surface-strong: rgba(12, 18, 27, 0.97);
     --hx-card: #10171f;

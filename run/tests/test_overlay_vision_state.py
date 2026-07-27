@@ -361,7 +361,7 @@ class OverlayVisionStateTests(unittest.TestCase):
             "channels": {
                 "text": {"margin": 0.05, "top_candidates": [text_candidate]},
                 "text_alt": {"margin": 0.05, "top_candidates": [text_candidate]},
-                # margin 低于 HIGH_CONFLICT_ICON_MARGIN(0.03)：图标不构成高冲突否决
+                # 图标冲突只降低证据等级，不得清空双字体一致候选。
                 "icon": {"margin": 0.01, "top_candidates": [conflicting_icon]},
             },
         }
@@ -374,6 +374,171 @@ class OverlayVisionStateTests(unittest.TestCase):
         # 但文本模板携带的规范 id 必须保留并进入 ready 槽位事件
         self.assertEqual(candidate.augment_id, "aram_searingdawn")
         self.assertEqual(candidate.ready_slot()["augment_id"], "aram_searingdawn")
+
+    def test_dual_font_identity_survives_wrong_high_confidence_icon_as_medium(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        for name, augment_id, text_confidence, alt_confidence in (
+            ("大法师", "aram_archmage", 0.8722, 0.8749),
+            ("冰雪爆裂", "aram_iceblast", 0.8841, 0.8793),
+        ):
+            with self.subTest(name=name):
+                text_candidate = {
+                    "augment_id": augment_id,
+                    "recognition_key": name,
+                    "name": name,
+                    "confidence": text_confidence,
+                }
+                alt_candidate = {**text_candidate, "confidence": alt_confidence}
+                slot = {
+                    "slot": 1,
+                    "channels": {
+                        "text": {"margin": 0.0349, "top_candidates": [text_candidate]},
+                        "text_alt": {"margin": 0.0246, "top_candidates": [alt_candidate]},
+                        "icon": {
+                            "margin": 0.2166,
+                            "top_candidates": [
+                                {
+                                    "augment_id": "wrong-loop",
+                                    "recognition_key": "无限循环往复",
+                                    "name": "无限循环往复",
+                                    "confidence": 0.9159,
+                                }
+                            ],
+                        },
+                    },
+                }
+                candidate = candidate_from_slot(slot)
+                self.assertIsNotNone(candidate)
+                assert candidate is not None
+                self.assertEqual(candidate.evidence_grade, "medium")
+                self.assertEqual(candidate.required_frames, 3)
+
+                tracker = SelectionTracker(scene_enter_frames=1)
+                event = _selection_event()
+                event["_raw_slots"][1] = slot
+                first = tracker.update(self._at(event, 50.0))
+                second = tracker.update(self._at(event, 50.2))
+                ready = tracker.update(self._at(event, 50.4))
+                self.assertEqual(first["slots"][1]["state"], "detecting")
+                self.assertEqual(second["slots"][1]["state"], "detecting")
+                self.assertEqual(ready["slots"][1]["state"], "ready")
+                self.assertEqual(ready["slots"][1]["name"], name)
+
+    def test_duplicate_bang_medium_candidates_across_slots_never_become_ready(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        event = _selection_event()
+        event["_raw_slots"] = [_medium_slot(index, "aram_bang", "邦！") for index in range(3)]
+
+        observations = [tracker.update(self._at(event, 55.0 + index * 0.2)) for index in range(5)]
+
+        self.assertTrue(all(item["source"]["ready_slots"] == 0 for item in observations))
+        self.assertEqual([slot["state"] for slot in observations[-1]["slots"]], ["detecting"] * 3)
+
+    def test_duplicate_identity_keeps_only_the_unique_strong_slot(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        event = _selection_event()
+        event["_raw_slots"] = [
+            _ready_slot(0, "aram_bang", "邦！"),
+            _medium_slot(1, "aram_bang", "邦！"),
+            _medium_slot(2, "aram_bang", "邦！"),
+        ]
+
+        tracker.update(self._at(event, 57.0))
+        ready = tracker.update(self._at(event, 57.2))
+
+        self.assertEqual([slot["state"] for slot in ready["slots"]], ["ready", "detecting", "detecting"])
+
+    def test_dual_font_disagreement_remains_detecting(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        event = _selection_event()
+        event["_raw_slots"][1] = {
+            "slot": 1,
+            "channels": {
+                "text": {
+                    "margin": 0.08,
+                    "top_candidates": [{"augment_id": "a", "name": "大法师", "confidence": 0.96}],
+                },
+                "text_alt": {
+                    "margin": 0.08,
+                    "top_candidates": [{"augment_id": "b", "name": "冰雪爆裂", "confidence": 0.96}],
+                },
+            },
+        }
+
+        observed = [tracker.update(self._at(event, 58.0 + index * 0.2)) for index in range(5)]
+
+        self.assertTrue(all(item["slots"][1]["state"] == "detecting" for item in observed))
+
+    def test_unique_dual_font_shortlist_consensus_confirms_as_medium(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        shared = {"augment_id": "correct", "name": "正确强化", "confidence": 0.88}
+        slot = {
+            "slot": 1,
+            "channels": {
+                "text": {
+                    "margin": 0.02,
+                    "top_candidates": [
+                        {"augment_id": "wrong-a", "name": "错误 A", "confidence": 0.91},
+                        shared,
+                    ],
+                },
+                "text_alt": {
+                    "margin": 0.02,
+                    "top_candidates": [
+                        {"augment_id": "wrong-b", "name": "错误 B", "confidence": 0.90},
+                        {**shared, "confidence": 0.87},
+                    ],
+                },
+            },
+        }
+
+        candidate = candidate_from_slot(slot)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.identity, "正确强化")
+        self.assertEqual(candidate.rule, "dual_font_shortlist")
+        self.assertEqual(candidate.evidence_grade, "medium")
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        event = _selection_event()
+        event["_raw_slots"][1] = slot
+        pending = [tracker.update(self._at(event, 59.0 + index * 0.2)) for index in range(2)]
+        ready = tracker.update(self._at(event, 59.4))
+        self.assertTrue(all(item["slots"][1]["state"] == "detecting" for item in pending))
+        self.assertEqual(ready["slots"][1]["name"], "正确强化")
+
+    def test_ambiguous_dual_font_shortlist_does_not_submit(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+
+        slot = {
+            "slot": 1,
+            "channels": {
+                "text": {
+                    "top_candidates": [
+                        {"augment_id": "a", "name": "候选 A", "confidence": 0.90},
+                        {"augment_id": "b", "name": "候选 B", "confidence": 0.88},
+                    ],
+                },
+                "text_alt": {
+                    "top_candidates": [
+                        {"augment_id": "b", "name": "候选 B", "confidence": 0.90},
+                        {"augment_id": "a", "name": "候选 A", "confidence": 0.89},
+                    ],
+                },
+            },
+        }
+
+        self.assertIsNone(candidate_from_slot(slot))
 
     def test_medium_wrong_name_never_flashes_before_strong_correct_candidate(self):
         """固化真机“不动如山 → 吞噬灵魂”序列，弱相关重复不能直接上屏。"""

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from itertools import combinations
+import tkinter as tk
+
+import pytest
+
 from hextech.interfaces.overlay.canvas_renderer import (
     CARD_TEXT_POINT_SIZE,
     OVERLAY_THEME,
@@ -33,9 +38,9 @@ class RecordingCanvas:
     create_line = _draw
     create_rectangle = _draw
 
-    def create_text(self, *_args, **kwargs) -> None:
+    def create_text(self, *args, **kwargs) -> None:
         self.draw_calls += 1
-        self.text_calls.append(kwargs)
+        self.text_calls.append({**kwargs, "_coords": tuple(args[:2])})
 
 
 def _model() -> dict:
@@ -105,9 +110,18 @@ def test_compact_and_expanded_keep_the_same_short_stats_text() -> None:
         draw_overlay_frame(canvas, _model(), expanded=expanded)
 
         visible_stats = [call.get("text") for call in canvas.text_calls if str(call.get("text", "")).startswith("胜率")]
-        # 每段文字各绘制一次阴影和一次正文；两种模式都不得改写统计文案。
-        assert len(visible_stats) == 6
+        # 每段统计只保留一个 Canvas text item；两种模式都不得改写统计文案。
+        assert len(visible_stats) == 3
         assert set(visible_stats) == {expected}
+
+
+def test_each_visible_text_segment_creates_one_canvas_item() -> None:
+    canvas = RecordingCanvas(2560, 1600)
+
+    draw_overlay_frame(canvas, _model(), expanded=True)
+
+    keys = [(call["_coords"], call.get("text")) for call in canvas.text_calls]
+    assert len(keys) == len(set(keys))
 
 
 def test_card_text_uses_16_points_while_synergies_keep_pixel_sizes() -> None:
@@ -136,7 +150,7 @@ def test_non_ready_card_status_uses_the_same_16_point_size() -> None:
     draw_overlay_frame(canvas, model, expanded=False)
 
     status_calls = [call for call in canvas.text_calls if call.get("text") == "源站暂无统计"]
-    assert len(status_calls) == 2
+    assert len(status_calls) == 1
     assert all(int(call["font"][1]) == CARD_TEXT_POINT_SIZE for call in status_calls)
 
 
@@ -216,3 +230,26 @@ def test_compact_synergy_line_scales_with_viewport() -> None:
     high_sizes = _synergy_pixel_sizes(high)
     assert low_sizes and high_sizes
     assert max(high_sizes) > max(low_sizes)
+
+
+def test_real_tk_text_bboxes_stay_inside_viewport_without_overlap() -> None:
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"Tk display unavailable: {exc}")
+    root.withdraw()
+    canvas = tk.Canvas(root, width=2560, height=1600, highlightthickness=0, bd=0)
+    canvas.pack()
+    try:
+        draw_overlay_frame(canvas, _model(), viewport_size=(2560, 1600), expanded=True)
+        root.update_idletasks()
+        text_boxes = [canvas.bbox(item) for item in canvas.find_all() if canvas.type(item) == "text"]
+        assert text_boxes and all(box is not None for box in text_boxes)
+        concrete_boxes = [box for box in text_boxes if box is not None]
+        assert all(0 <= x0 < x1 <= 2560 and 0 <= y0 < y1 <= 1600 for x0, y0, x1, y1 in concrete_boxes)
+        for left, right in combinations(concrete_boxes, 2):
+            overlap_width = min(left[2], right[2]) - max(left[0], right[0])
+            overlap_height = min(left[3], right[3]) - max(left[1], right[1])
+            assert overlap_width <= 0 or overlap_height <= 0
+    finally:
+        root.destroy()

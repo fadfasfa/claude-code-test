@@ -154,6 +154,37 @@ def test_static_class_tokens_exist_in_compiled_css() -> None:
     )
 
 
+def test_index_hall_of_legends_layout_contract() -> None:
+    """首页精简头部与荣耀殿堂布局必须同时存在于源文件和编译产物。"""
+
+    index_text = (WEB_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    render_text = (WEB_STATIC_DIR / "js" / "index" / "render.js").read_text(encoding="utf-8")
+    style_source = (
+        RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "frontend" / "src" / "styles" / "input.css"
+    ).read_text(encoding="utf-8")
+    compiled_style = (WEB_STATIC_DIR / "css" / "tailwind-compiled.css").read_text(encoding="utf-8")
+
+    assert "微量贝叶斯平滑" not in index_text
+    assert "searchAssistPanel" not in index_text
+    assert "hx-champion-spotlight" in render_text
+    assert "img/champion/splash/" in render_text
+    assert "img/champion/loading/" in render_text
+    assert "data-hero-id" in render_text and "data-hero-name" in render_text
+
+    required_classes = (
+        ".hx-champion-spotlight",
+        ".hx-hero-card--t1",
+        ".hx-hero-card--t2",
+        ".hx-tier-row--t1",
+    )
+    for css in (style_source, compiled_style):
+        for class_name in required_classes:
+            assert class_name in css
+
+    # 窄屏仍保持“左档位牌 + 右英雄区”的横向骨架。
+    assert re.search(r"@media \(max-width: 768px\).*?\.hx-tier-row\s*\{\s*flex-direction: row;", style_source, re.S)
+
+
 def test_js_asset_urls_use_allowlisted_prefixes() -> None:
     """前端 /assets/ 字面量必须带资产路由白名单前缀，否则后端一律 404。"""
 

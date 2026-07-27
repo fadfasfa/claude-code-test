@@ -4,10 +4,7 @@ from hextech.interfaces.desktop.app_shared import (
     TIER_COLORS,
     UI_COLORS,
     WINDOW_BASE_HEIGHT,
-    WINDOW_COLLAPSED_WIDTH,
-    WINDOW_EXPANDED_WIDTH,
     _empty_champions,
-    _render_winrate_bar,
     logger,
     parse_generation_created_ts,
     scaled,
@@ -348,8 +345,7 @@ class DesktopViewMixin:
         """keyed 增量渲染：同键行原地更新，成员变化才建/销卡片，消除全量重建闪烁。"""
 
         scale = self._ui_scale_value()
-        # 卡片渲染对 selection_role 已无感（高亮视觉按用户要求删除），
-        # 键只用英雄 id：bench→self 的角色跃迁不再销毁重建卡片。
+        # 键只用英雄 id：bench→self 的角色跃迁只更新右侧状态位，不销毁重建卡片。
         desired_keys = [str(item["id"]) for item in display_list]
         desired_set = set(desired_keys)
 
@@ -372,12 +368,12 @@ class DesktopViewMixin:
             for key in desired_keys:
                 card = self._card_rows[key]["card"]
                 card.pack_forget()
-                card.pack(fill=tk.X, pady=scaled(3, scale), padx=(0, scaled(10, scale)))
+                card.pack(fill=tk.X, pady=scaled(2, scale), padx=(0, scaled(6, scale)))
             self._card_order = desired_keys
 
     def _build_candidate_card(self, item: dict, scale: float) -> dict:
-        # 所有卡片统一普通样式：己方/队友高亮（描边、色条、深色底、徽章）按用户要求删除，
-        # selection_role 只保留数据侧排序语义。
+        """构建紧凑英雄卡：强度在左、身份居中、角色与胜率固定在右。"""
+
         card_surface = UI_COLORS["surface"]
         badge_style = self._tier_badge_style(item["tier"])
 
@@ -387,57 +383,77 @@ class DesktopViewMixin:
             bg=card_surface,
             highlightthickness=1,
             highlightbackground=UI_COLORS["border"],
-            pady=scaled(3, scale),
-            padx=scaled(4, scale),
+            pady=0,
+            padx=0,
             cursor="hand2",
         )
-        card.pack(fill=tk.X, pady=scaled(3, scale), padx=(0, scaled(10, scale)))
+        card.pack(fill=tk.X, pady=scaled(2, scale), padx=(0, scaled(6, scale)))
         row["card"] = card
 
-        # 左侧胜率色条已删除（真机反馈：与右侧大号着色胜率数字重复，视觉冗余）。
-        img_label = tk.Label(
+        strength_bar = tk.Frame(
+            card,
+            width=scaled(6, scale),
+            bg=badge_style["bg"],
+            cursor="hand2",
+        )
+        strength_bar.pack(side=tk.LEFT, fill=tk.Y)
+        row["strength_bar"] = strength_bar
+
+        content = tk.Frame(
             card,
             bg=card_surface,
+            padx=scaled(6, scale),
+            pady=scaled(4, scale),
+            cursor="hand2",
+        )
+        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        img_label = tk.Label(
+            content,
+            bg=card_surface,
             image=self._avatar_placeholder_image(),
+            bd=0,
             highlightthickness=scaled(1, scale),
             highlightbackground=UI_COLORS["gold"],
         )
-        img_label.pack(side=tk.LEFT, padx=(0, scaled(8, scale)))
+        img_label.pack(side=tk.LEFT, padx=(0, scaled(7, scale)))
         row["img_label"] = img_label
         threading.Thread(
             target=lambda champion_id=item["id"], label=img_label: self._load_and_set_img(champion_id, label),
             daemon=True,
         ).start()
 
-        # 折叠态只渲染头像 + T 级徽章，省掉名称/胜率/出场率/胜率条
-        if self._collapsed:
-            badge = tk.Label(
-                card,
-                text=item["tier"],
-                font=ui_font(12, bold=True),
-                fg=badge_style["fg"],
-                bg=badge_style["bg"],
-                padx=scaled(3, scale),
-            )
-            badge.pack(side=tk.LEFT)
-            row["tier_badge"] = badge
-            self._bind_card_click(card, row)
-            self._update_candidate_card(row, item, scale)
-            return row
-
-        # Blitz 式信息层级：大号着色胜率是主视觉，先 pack 到右侧——Tk pack
-        # 空间不足时裁后来者，保证被裁的只能是英雄名，胜率数字永不被挤出。
-        win_label = tk.Label(
-            card,
+        # 固定指标列避免角色切换时胜率上下跳动；bench 使用同高空白状态位。
+        metric = tk.Frame(content, width=scaled(72, scale), bg=card_surface, cursor="hand2")
+        metric.pack(side=tk.RIGHT, fill=tk.Y)
+        metric.pack_propagate(False)
+        selected_badge = tk.Label(
+            metric,
             text="",
-            font=ui_font(17, bold=True),
+            width=3,
+            font=ui_font(11, bold=True),
+            fg=card_surface,
+            bg=card_surface,
+            bd=0,
+            padx=scaled(3, scale),
+            pady=scaled(1, scale),
+        )
+        selected_badge.pack(anchor="ne")
+        row["selected_badge"] = selected_badge
+        row["selection_role"] = ""
+
+        win_label = tk.Label(
+            metric,
+            text="",
+            font=ui_font(16, bold=True),
             fg=UI_COLORS["green"],
             bg=card_surface,
+            bd=0,
         )
-        win_label.pack(side=tk.RIGHT, padx=(scaled(4, scale), scaled(6, scale)))
+        win_label.pack(side=tk.BOTTOM, anchor="e")
         row["win_label"] = win_label
 
-        info = tk.Frame(card, bg=card_surface)
+        info = tk.Frame(content, bg=card_surface, cursor="hand2")
         info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         title_row = tk.Frame(info, bg=card_surface)
@@ -448,6 +464,7 @@ class DesktopViewMixin:
             font=ui_font(12, bold=True),
             fg=badge_style["fg"],
             bg=badge_style["bg"],
+            bd=0,
             padx=scaled(4, scale),
         )
         badge.pack(side=tk.LEFT, padx=(0, scaled(4, scale)))
@@ -458,42 +475,20 @@ class DesktopViewMixin:
             font=ui_font(12, bold=True),
             fg=UI_COLORS["text"],
             bg=card_surface,
+            bd=0,
         )
         name_label.pack(side=tk.LEFT, anchor="w")
         row["name_label"] = name_label
-        # 已选/队友已选的明确标识（真机反馈）：只做名字后的小徽章，
-        # 不恢复此前删除的整卡高亮；文本与配色由 _update_candidate_card
-        # 按 selection_role 动态切换（self=金色「已选」、teammate=青色「队友」），
-        # bench↔self/teammate 跃迁走 keyed 原地更新，不重建卡片。
-        selected_badge = tk.Label(
-            title_row,
-            text="",
-            font=ui_font(11, bold=True),
-            fg=UI_COLORS["header"],
-            bg=UI_COLORS["gold"],
-            padx=scaled(4, scale),
-        )
-        row["selected_badge"] = selected_badge
-        row["selection_role"] = ""
         pick_label = tk.Label(
             info,
             text="",
             font=ui_font(11),
-            fg=UI_COLORS["dim"],
+            fg=UI_COLORS["muted"],
             bg=card_surface,
+            bd=0,
         )
-        pick_label.pack(anchor="w", pady=(1, 0))
+        pick_label.pack(anchor="w", pady=(scaled(2, scale), 0))
         row["pick_label"] = pick_label
-
-        bar_canvas = tk.Canvas(info, height=scaled(3, scale), bg=UI_COLORS["base"], highlightthickness=0)
-        bar_canvas.pack(fill=tk.X, pady=(scaled(3, scale), 0))
-        row["bar_canvas"] = bar_canvas
-        row["ratio"] = 0.0
-        # 渐变填充 + 50% 温饱基准线；ratio 从 row 里读，原地更新后重绘即可
-        bar_canvas.bind(
-            "<Configure>",
-            lambda e, c=bar_canvas, r=row: _render_winrate_bar(c, e.width, r.get("ratio", 0.0), height=scaled(4, scale)),
-        )
 
         self._bind_card_click(card, row)
         self._update_candidate_card(row, item, scale)
@@ -513,6 +508,8 @@ class DesktopViewMixin:
             if row.get("tier_badge") is not None and item["tier"] != row.get("tier"):
                 badge_style = self._tier_badge_style(item["tier"])
                 row["tier_badge"].config(text=item["tier"], fg=badge_style["fg"], bg=badge_style["bg"])
+                if row.get("strength_bar") is not None:
+                    row["strength_bar"].config(bg=badge_style["bg"])
             row["tier"] = item["tier"]
 
             if row.get("name_label") is not None:
@@ -525,17 +522,16 @@ class DesktopViewMixin:
             # 其余角色（bench）不显示徽章。
             selection_role = str(item.get("selection_role") or "")
             badge_by_role = {
-                "self": ("已选", UI_COLORS["gold"]),
-                "teammate": ("队友", UI_COLORS["cyan"]),
+                "self": ("已选", UI_COLORS["selected"]),
+                "teammate": ("队友", UI_COLORS["teammate"]),
             }
             if row.get("selected_badge") is not None and selection_role != row.get("selection_role"):
                 role_style = badge_by_role.get(selection_role)
                 if role_style is not None:
                     text, bg = role_style
-                    row["selected_badge"].config(text=text, bg=bg)
-                    row["selected_badge"].pack(side=tk.LEFT, padx=(scaled(4, scale), 0))
+                    row["selected_badge"].config(text=text, fg=UI_COLORS["header"], bg=bg)
                 else:
-                    row["selected_badge"].pack_forget()
+                    row["selected_badge"].config(text="", fg=UI_COLORS["surface"], bg=UI_COLORS["surface"])
             row["selection_role"] = selection_role
 
             if item["win"] != row.get("win") or item["pick"] != row.get("pick"):
@@ -544,14 +540,6 @@ class DesktopViewMixin:
                     row["win_label"].config(text=f"{item['win']:.1%}", fg=win_color)
                 if row.get("pick_label") is not None:
                     row["pick_label"].config(text=f"出场 {item['pick']:.1%}")
-                if row.get("bar_canvas") is not None:
-                    row["ratio"] = max(0, min(1, (item["win"] - 0.40) / 0.20))
-                    _render_winrate_bar(
-                        row["bar_canvas"],
-                        int(row["bar_canvas"].winfo_width()),
-                        row["ratio"],
-                        height=scaled(4, scale),
-                    )
                 row["win"] = item["win"]
                 row["pick"] = item["pick"]
 
@@ -618,8 +606,7 @@ class DesktopViewMixin:
     def _sync_list_scrollbar(self) -> None:
         """滚动条只在列表内容溢出可视高度时出现；未溢出时隐藏并回到顶部。
 
-        真机反馈：英雄数量没有溢出时常驻滑块破坏观感；折叠态始终隐藏
-        （112px 预算里滚动条会把徽章挤出视口，滚轮翻页仍可用）。
+        真机反馈：英雄数量没有溢出时常驻滑块破坏观感。
         """
 
         scrollbar = getattr(self, "list_scrollbar", None)
@@ -628,10 +615,6 @@ class DesktopViewMixin:
         if scrollbar is None or canvas is None or list_frame is None:
             return
         try:
-            if getattr(self, "_collapsed", False):
-                if scrollbar.winfo_ismapped():
-                    scrollbar.pack_forget()
-                return
             content_height = int(list_frame.winfo_reqheight())
             viewport_height = int(canvas.winfo_height())
             # 首次布局前 winfo_height 为 1，此时不做判定，等 <Configure> 再来。
@@ -647,47 +630,6 @@ class DesktopViewMixin:
                 canvas.yview_moveto(0.0)
         except tk.TclError:
             logger.debug("同步列表滚动条可见性失败。", exc_info=True)
-
-    def _toggle_collapse(self, _event=None) -> None:
-        """切换悬浮窗折叠态：只切固定宽度基值，高度沿用当前跟随高度。"""
-        self._collapsed = not self._collapsed
-        width_base = WINDOW_COLLAPSED_WIDTH if self._collapsed else WINDOW_EXPANDED_WIDTH
-        self._overlay_pixel_width = int(width_base)
-        height = int(getattr(self, "_window_height_px", WINDOW_BASE_HEIGHT))
-        self.root.geometry(f"{self._overlay_pixel_width}x{height}")
-        # 折叠/展开布局不同，清空 keyed 缓存强制整批重建
-        self._reset_card_cache()
-        if hasattr(self, "collapse_button"):
-            try:
-                self.collapse_button.config(text="»" if self._collapsed else "«")
-            except tk.TclError:
-                logger.debug("更新折叠按钮文本失败。", exc_info=True)
-        if self._collapsed:
-            # 折叠态隐藏底部状态栏与滚动条：112px 预算只留给头像 + T 级徽章，
-            # 8px 滚动条会把徽章挤出视口（滚轮翻页仍可用）。
-            if hasattr(self, "list_scrollbar") and self.list_scrollbar.winfo_exists():
-                self.list_scrollbar.pack_forget()
-            if hasattr(self, "status_bar") and self.status_bar.winfo_exists():
-                self.status_bar.pack_forget()
-        else:
-            # 展开时滚动条是否出现交给溢出判定，不再无条件恢复。
-            self._sync_list_scrollbar()
-            if hasattr(self, "status_bar") and self.status_bar.winfo_exists():
-                self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(2, 6))
-        self._schedule_current_hero_refresh()
-
-    def _schedule_current_hero_refresh(self) -> None:
-        """合并快速折叠/展开触发的重复渲染，降低头像异步加载竞态。"""
-        if self._collapse_render_after_id is not None:
-            try:
-                self.root.after_cancel(self._collapse_render_after_id)
-            except tk.TclError:
-                logger.debug("取消折叠态重渲染失败。", exc_info=True)
-        self._collapse_render_after_id = self.root.after(60, self._refresh_current_hero_ids)
-
-    def _refresh_current_hero_ids(self) -> None:
-        self._collapse_render_after_id = None
-        self.update_ui(self.current_candidate_groups)
 
     def _manual_follow_cooldown_elapsed(self, cooldown_seconds: float) -> bool:
         if self._manual_move_timestamp <= 0:

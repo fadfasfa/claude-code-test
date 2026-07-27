@@ -227,47 +227,6 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         self.assertEqual(frame.bindings["<Button-1>"](), "break")
         self.assertEqual(calls, [("游戏内显示: 正在切换中", app.UI_COLORS["warn"])])
 
-    def test_expand_restores_status_bar(self):
-        from hextech.interfaces.desktop import app
-
-        pack_calls: list[tuple[str, dict]] = []
-
-        class FakeRoot:
-            def geometry(self, _value):
-                return None
-
-            def after(self, _delay, _func):
-                return "after-id"
-
-            def after_cancel(self, _after_id):
-                return None
-
-        class FakeWidget:
-            def __init__(self, name: str):
-                self.name = name
-
-            def winfo_exists(self):
-                return True
-
-            def pack_forget(self):
-                return None
-
-            def pack(self, **kwargs):
-                pack_calls.append((self.name, kwargs))
-
-        ui = object.__new__(app.HextechUI)
-        ui.root = FakeRoot()
-        ui._collapsed = True
-        ui._collapse_render_after_id = None
-        ui.status_bar = FakeWidget("status_bar")
-        ui._refresh_current_hero_ids = lambda: None
-
-        ui._toggle_collapse()
-
-        # 展开时单一 status_bar 恢复到底部；旧的双标签结构已收敛。
-        self.assertEqual([name for name, _kwargs in pack_calls], ["status_bar"])
-        self.assertEqual(pack_calls[0][1].get("side"), app.tk.BOTTOM)
-
     def test_empty_web_live_state_falls_back_to_lcu(self):
         from hextech.interfaces.desktop import runtime
 

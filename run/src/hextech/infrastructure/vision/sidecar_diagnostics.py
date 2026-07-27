@@ -381,7 +381,7 @@ def _vision_trace_history_entry(event_payload: Mapping[str, Any]) -> dict[str, A
 
 
 def _timeline_channel_summary(raw_slot: Mapping[str, Any], channel_name: str) -> dict[str, Any]:
-    """只保留回放所需 Top-1 分数，不把图片或完整候选表写入时间线。"""
+    """保留回放所需 Top-3 分数，不把图片或完整模板表写入时间线。"""
 
     channels = raw_slot.get("channels") if isinstance(raw_slot.get("channels"), Mapping) else {}
     channel = channels.get(channel_name) if isinstance(channels.get(channel_name), Mapping) else {}
@@ -392,6 +392,16 @@ def _timeline_channel_summary(raw_slot: Mapping[str, Any], channel_name: str) ->
         "name": str(top.get("name") or ""),
         "confidence": top.get("confidence"),
         "margin": channel.get("margin"),
+        "top_candidates": [
+            {
+                "augment_id": str(item.get("augment_id") or ""),
+                "recognition_key": str(item.get("recognition_key") or ""),
+                "name": str(item.get("name") or ""),
+                "confidence": item.get("confidence"),
+            }
+            for item in candidates[:3]
+            if isinstance(item, Mapping)
+        ],
     }
 
 

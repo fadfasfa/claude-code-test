@@ -189,10 +189,11 @@ class _PackWidget:
 
 
 def test_selected_badge_toggles_with_selection_role() -> None:
-    """回归：己方/队友已选英雄都要有明确标识且互相区分，bench 跃迁原地切换不重建卡片。"""
+    """角色状态位固定在右栏，bench 跃迁只改内容与颜色，不改变卡片高度。"""
 
     ui = object.__new__(HextechUI)
     badge = _PackWidget()
+    badge.mapped = True
     row = {
         "id": "1",
         "name": "",
@@ -210,27 +211,99 @@ def test_selected_badge_toggles_with_selection_role() -> None:
     HextechUI._update_candidate_card(
         ui, row, {"id": "1", "name": "潮汐海灵", "tier": "T4", "win": 0.502, "pick": 0.006, "selection_role": "self"}, 1.0
     )
-    assert badge.mapped is True
     assert badge.kwargs.get("text") == "已选"
-    assert badge.kwargs.get("bg") == UI_COLORS["gold"]
+    assert badge.kwargs.get("bg") == UI_COLORS["selected"]
 
     # teammate 同样要有明确标识，且与 self 视觉可区分（文本与配色都不同）。
     HextechUI._update_candidate_card(
         ui, row, {"id": "1", "name": "潮汐海灵", "tier": "T4", "win": 0.502, "pick": 0.006, "selection_role": "teammate"}, 1.0
     )
-    assert badge.mapped is True
     assert badge.kwargs.get("text") == "队友"
-    assert badge.kwargs.get("bg") == UI_COLORS["cyan"]
+    assert badge.kwargs.get("bg") == UI_COLORS["teammate"]
 
     HextechUI._update_candidate_card(
         ui, row, {"id": "1", "name": "潮汐海灵", "tier": "T4", "win": 0.502, "pick": 0.006, "selection_role": "bench"}, 1.0
     )
-    assert badge.mapped is False
+    assert badge.mapped is True
+    assert badge.kwargs.get("text") == ""
+    assert badge.kwargs.get("bg") == UI_COLORS["surface"]
 
 
-def _scroll_ui(content_height: int, viewport_height: int, *, collapsed: bool = False):
+def test_tier_change_updates_badge_and_full_height_strength_bar() -> None:
+    """同一卡片评级变化时，T 徽章与左侧强度色条必须同步换色。"""
+
     ui = object.__new__(HextechUI)
-    ui._collapsed = collapsed
+    tier_badge = _Widget()
+    strength_bar = _Widget()
+    row = {
+        "id": "1",
+        "name": "",
+        "tier": "T4",
+        "win": None,
+        "pick": None,
+        "tier_badge": tier_badge,
+        "strength_bar": strength_bar,
+        "name_label": _Widget(),
+        "win_label": _Widget(),
+        "pick_label": _Widget(),
+    }
+
+    HextechUI._update_candidate_card(
+        ui, row, {"id": "1", "name": "潮汐海灵", "tier": "T1", "win": 0.502, "pick": 0.006}, 1.0
+    )
+
+    assert tier_badge.kwargs["text"] == "T1"
+    assert tier_badge.kwargs["bg"] == "#F2C94C"
+    assert strength_bar.kwargs["bg"] == "#F2C94C"
+
+
+def test_real_tk_compact_layout_keeps_long_labels_inside_columns(monkeypatch) -> None:
+    """真实 Tk 字体度量下，最长常见英雄名和角色徽章不得互相挤压或裁字。"""
+
+    monkeypatch.setattr(HextechUI, "_initialize_background_runtime", lambda self: None)
+    monkeypatch.setattr(HextechUI, "_start_desktop_tray", lambda self: None)
+    monkeypatch.setattr(HextechUI, "_schedule_post_visible_bootstrap", lambda self: None)
+    monkeypatch.setattr(HextechUI, "_load_and_set_img", lambda self, _champion_id, _label: None)
+
+    ui = HextechUI()
+    try:
+        ui.root.attributes("-alpha", 0.0)
+        ui.root.update()
+        ui._ensure_card_state()
+        row = ui._build_candidate_card(
+            {
+                "id": "53",
+                "name": "蒸汽机器人",
+                "tier": "T1",
+                "win": 0.519,
+                "pick": 0.005,
+                "selection_role": "self",
+            },
+            1.0,
+        )
+        ui.root.update()
+
+        for toggle in (ui.web_frontend_check, ui.game_overlay_check, ui.private_stats_check):
+            label = toggle.winfo_children()[1]
+            assert label.winfo_width() >= label.winfo_reqwidth()
+        assert ui.private_stats_check.winfo_rootx() + ui.private_stats_check.winfo_width() <= (
+            ui.feature_frame.winfo_rootx() + ui.feature_frame.winfo_width()
+        )
+
+        name_label = row["name_label"]
+        metric = row["win_label"].master
+        assert name_label.winfo_width() >= name_label.winfo_reqwidth()
+        assert name_label.winfo_rootx() + name_label.winfo_width() < metric.winfo_rootx()
+        assert row["selected_badge"].winfo_width() <= metric.winfo_width()
+        assert row["win_label"].winfo_width() <= metric.winfo_width()
+        assert row["img_label"].winfo_width() == 50
+        assert metric.winfo_width() == 72
+    finally:
+        ui.root.destroy()
+
+
+def _scroll_ui(content_height: int, viewport_height: int):
+    ui = object.__new__(HextechUI)
     ui.list_scrollbar = _PackWidget()
     ui.list_frame = SimpleNamespace(winfo_reqheight=lambda: content_height)
     moves: list[float] = []
@@ -260,8 +333,3 @@ def test_list_scrollbar_only_appears_on_overflow() -> None:
     HextechUI._sync_list_scrollbar(unmeasured)
     assert unmeasured.list_scrollbar.mapped is False
     assert unmeasured._yview_moves == []
-
-    collapsed = _scroll_ui(900, 700, collapsed=True)
-    collapsed.list_scrollbar.mapped = True
-    HextechUI._sync_list_scrollbar(collapsed)
-    assert collapsed.list_scrollbar.mapped is False

@@ -33,12 +33,7 @@ WEB_PORT_FILE = str(build_desktop_runtime_state_path("web_server_port.txt"))
 # 悬浮窗固定几何（px，不乘 DPI）：按用户要求维持基线"狭长"观感；
 # 高度基值 740，跟随客户端时由 runtime_window 按客户端底缘动态压缩。
 WINDOW_EXPANDED_WIDTH = 320
-# 折叠态预算：左 padding 10 + 胜率色条 3+5 + 头像 48+2(边框) + 间距 8 + T 级徽章 ≈ 98px；
-# 80px 会把头像裁半、徽章挤出视口（审查用真实 Tk 实测确认），留余量取 112。
-WINDOW_COLLAPSED_WIDTH = 112
 WINDOW_BASE_HEIGHT = 740
-# 跟随限高的下限：极矮客户端下宁可轻微越界也不把窗口压到不可用
-WINDOW_MIN_FOLLOW_HEIGHT = 320
 # 取值对齐游戏内 Overlay 的 OVERLAY_THEME（canvas_renderer.py）拳头金蓝系；
 # 刻意不 import overlay 模块，避免与 Overlay 侧实现互相耦合。
 UI_COLORS = {
@@ -49,6 +44,8 @@ UI_COLORS = {
     "border": "#785A28",
     "gold": "#C8AA6E",
     "cyan": "#0AC8B9",
+    "selected": "#F2C94C",
+    "teammate": "#18D6C4",
     "green": "#3AA17E",
     "red": "#C45D5B",
     "text": "#F0E6D2",
@@ -58,13 +55,13 @@ UI_COLORS = {
     "error": "#F38BA8",
 }
 
-# T1–T5 徽章色阶：金 → 青 → 蓝 → 灰 → 暗红；前景色保证与底色的对比度
+# T1–T5 高饱和电竞色阶：强度色条与徽章共用，前景色保证可读性。
 TIER_COLORS: dict[str, dict[str, str]] = {
-    "T1": {"bg": "#C8AA6E", "fg": "#0A1428"},
-    "T2": {"bg": "#0AC8B9", "fg": "#0A1428"},
-    "T3": {"bg": "#4B7CF3", "fg": "#F0E6D2"},
-    "T4": {"bg": "#5C6B7A", "fg": "#F0E6D2"},
-    "T5": {"bg": "#8C3B45", "fg": "#F0E6D2"},
+    "T1": {"bg": "#F2C94C", "fg": "#07111F"},
+    "T2": {"bg": "#22D3A6", "fg": "#07111F"},
+    "T3": {"bg": "#4169E1", "fg": "#F0E6D2"},
+    "T4": {"bg": "#7F8C9D", "fg": "#07111F"},
+    "T5": {"bg": "#D64550", "fg": "#F0E6D2"},
 }
 
 
@@ -142,13 +139,14 @@ def resolve_overlay_follow_height(
     """跟随客户端时的悬浮窗高度：下端不越过客户端底缘。
 
     以 740 为基值；客户端更矮时压缩到"客户端底缘 - 窗口顶部"（有工作区信息时
-    与工作区底缘取更小者），下限保证极矮客户端下窗口仍可用。
+    与工作区底缘取更小者）。1px 只用于防御异常零高几何；正常跟随目标始终位于
+    客户端底缘上方，因此窗口不会越过客户端或工作区底缘。
     """
 
     bottom_limit = int(client_bottom)
     if workarea_bottom is not None:
         bottom_limit = min(bottom_limit, int(workarea_bottom))
-    return max(WINDOW_MIN_FOLLOW_HEIGHT, min(WINDOW_BASE_HEIGHT, bottom_limit - int(target_y)))
+    return max(1, min(WINDOW_BASE_HEIGHT, bottom_limit - int(target_y)))
 
 
 def _format_game_overlay_host_reason(reason: str) -> str:
@@ -254,46 +252,6 @@ def export_user_diagnostics(*args, **kwargs):
     from hextech.modules.session.diagnostics import export_user_diagnostics as _export_user_diagnostics
 
     return _export_user_diagnostics(*args, **kwargs)
-
-
-def _lerp_hex_color(color_a: str, color_b: str, t: float) -> str:
-    """两端十六进制颜色在 RGB 空间按比例 t 插值，返回 #rrggbb 形式。"""
-    t = max(0.0, min(1.0, t))
-    ar, ag, ab = int(color_a[1:3], 16), int(color_a[3:5], 16), int(color_a[5:7], 16)
-    br, bg, bb = int(color_b[1:3], 16), int(color_b[3:5], 16), int(color_b[5:7], 16)
-    rr = int(ar + (br - ar) * t)
-    rg = int(ag + (bg - ag) * t)
-    rb = int(ab + (bb - ab) * t)
-    return f"#{rr:02x}{rg:02x}{rb:02x}"
-
-
-def _render_winrate_bar(canvas: "tk.Canvas", width: int, ratio: float, height: int = 4) -> None:
-    """绘制胜率条：填充区域使用暗红→中性灰青→青绿三段渐变，并在 50% 处标记温饱基准线。"""
-    canvas.delete("all")
-    if width <= 0:
-        return
-    fill_px = max(0, int(ratio * width))
-    # 三段色板：暗红 → 中性灰青（50% 锚点）→ 青绿
-    color_low = "#5b3037"
-    color_mid = "#5c6d75"
-    color_high = "#3aa17e"
-    segments = 24
-    for i in range(segments):
-        x0 = int(fill_px * i / segments)
-        x1 = int(fill_px * (i + 1) / segments)
-        if x1 <= x0:
-            continue
-        # 段中心点对应的归一化位置（0~1 映射回 0.40~0.60 真实胜率空间）
-        center_ratio = (i + 0.5) / segments * ratio if ratio > 0 else 0
-        if center_ratio < 0.5:
-            seg_color = _lerp_hex_color(color_low, color_mid, center_ratio / 0.5)
-        else:
-            seg_color = _lerp_hex_color(color_mid, color_high, (center_ratio - 0.5) / 0.5)
-        canvas.create_rectangle(x0, 0, x1, height, fill=seg_color, outline="")
-    # 50% 温饱基准线（胜率 0.50 对应归一化 ratio=0.5）
-    baseline_x = int(width * 0.5)
-    canvas.create_line(baseline_x, 0, baseline_x, height, fill="#6c7086", dash=(2, 2))
-
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

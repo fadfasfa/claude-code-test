@@ -17,17 +17,19 @@
 ## 识别与展示规则
 
 - 模板缓存和权威矩阵保持连续 `float16`；Sidecar ready 前一次性建立连续 `float32` 计算镜像。同一帧三槽按 icon、primary name、alt name、observed name 分组批处理，热路径不得重复转换完整矩阵。FP32 镜像分配失败时 Sidecar 以 `vision_compute_memory_unavailable` 明确失败，不回退到混合精度慢路径。
-- 单帧证据分为 `strong`、`medium`、`weak`。真机名称样本，或双字体高置信度且有一致图标/明确视觉版本，才是 `strong`；仅“双字体同身份且无可靠图标冲突”才是 `medium`。单字体、优势字体和图标短名单只写诊断，绝不能独立产生 `ready`。
+- 单帧证据分为 `strong`、`medium`、`weak`。真机名称样本，或双字体高置信度且有一致图标/明确视觉版本，才是 `strong`；双字体同身份但图标缺失或冲突时降为 `medium`。两字体 Top-1 分歧时，只有双方 Top-3 中存在唯一共同身份、两路置信度均至少 0.78、各自距 Top-1 不超过 0.08 且共同候选合并分数领先次名至少 0.04，才产生 `medium`；单字体、优势字体和图标短名单只写诊断，绝不能独立产生 `ready`。
 - 槽位确认只由时序仲裁器负责：`strong` 在最近 3 个原始观察中同身份命中 2 次，`medium` 在最近 5 个原始观察中命中 3 次且窗口内没有其他 `strong` 身份。窗口按真实 `captured_at` / `recognition_completed_at` 排序，不假定固定帧率；单帧 miss、weak 候选或鼠标遮挡作为空观察占据窗口，不能跳过空帧累计旧证据，也不清空仍在 6 秒证据寿命内的累计。
+- 同一帧同一身份出现在多个槽时，只有唯一 `strong` 候选可以进入时序窗口，其余重复候选按空观察处理；没有唯一 `strong` 或出现多个 `strong` 时全部抑制。已经稳定在一个槽的身份不能再在其他槽累计出第二个 `ready`。
 - 已确认槽在当前 selection epoch 内持续保留；重随的新身份满足同一确认规则后才原子替换。相同卡名后续获得更强图标证据时只补充 `visual_variant_id` 与 tier，不递增 `selection_revision`。
 - 已稳定槽只能由不同身份的 `strong` 证据替换；`medium` 只用于首次确认，避免系统性 OCR 误匹配在连续帧中覆盖已展示结果。
 - 同一帧一个或多个槽发生真实替换时，`selection_revision` 只增加一次。
 - Sidecar 输出 `cursor_over_slots`。鼠标遮挡的稳定槽保持原结果；未遮挡槽继续识别，不能因为一个槽被遮挡而冻结全部三槽。
 - 已识别槽立即显示。选择窗口存续期间，尚未稳定、通道分歧或低 margin 的槽始终显示“识别中”；不存在固定 3 秒识别失败。只有模板索引、持续截图或 Sidecar 进程等硬故障才能进入失败态。空槽和硬故障都不能推断为来源无数据。
 - 未稳定槽在至少 5 次原始观察、持续至少 2 秒且任一身份最高命中仍不足 2 次时，诊断为 `evidence_starved`；公共状态仍为 `detecting`，不得生成 `failed` 或 `RECOGNITION_MISSING`。该诊断只说明证据饥饿，不能据此全局放宽 OCR 阈值。
-- 场景门丢失采用真实时间宽限：已有部分稳定槽且仍有待识别槽时保留 6 秒，三槽均 ready 时保留 1.5 秒；场景恢复立即取消宽限并沿用原 epoch、revision 和证据。明确 `selection_click` / `selection_confirmed` 后可立即结束；其他情况只有宽限耗尽才输出 `scene_loss_confirmed`。鼠标遮挡、`card_residue` 和 `name_residue` 只能进入 `scene_grace_hold`，不能按固定两帧清空稳定槽。
+- 场景门丢失采用统一 0.75 秒真实时间宽限，未满三槽与三槽均 ready 不再使用不同延迟；场景恢复立即取消宽限并沿用原 epoch、revision 和证据。明确 `selection_click` / `selection_confirmed` 后可立即结束；其他情况只有宽限耗尽才输出 `scene_loss_confirmed`。鼠标遮挡、`card_residue` 和 `name_residue` 只能进入 `scene_grace_hold`，不能按固定两帧清空稳定槽。
 - `game_not_foreground`、计分板、临时最小化、短暂截图不可用和 client size 抖动使用 `transient_pause`：Host 隐藏窗口，但 Sidecar 保留当前 epoch、revision、稳定槽和证据；同一 `game_instance_id` 返回后继续识别。仅暂停期的低频 gameflow 探测明确确认结束时，才发布携带刚结束 epoch/revision 的 `gameflow_ended` 事件并清空；新游戏实例和明确选择完成也可清空。gameflow 探测在后台 daemon 线程执行并缓存结论，识别循环只读缓存不被本机 HTTP 阻塞；返回前台或换局的 reset 会作废仍在途的旧结论。
 - 联动面板文字按视口高度缩放（视口为游戏窗口物理像素，天然含 DPI）：expanded 标题/正文与 compact 单行随视口高度线性放大（视口高约 2000px 内不触顶；上限 30/24/22px 仅防超高分辨率下的极端字号）；面板高度按内容自适应、受卡片上方可用空间约束，超长说明以省略号截断，空间不足时整面板隐藏。评级以 tier 色徽章展示，不再拼进标题文本。
+- 每段可见文字只创建一个 Canvas text item，不绘制偏移黑色副本文字；可信 Context Broker publication 通过游戏实例、窗口、进程时间和 publication 序号校验后首 tick 即可渲染。
 - Sidecar status 暴露 `compute_profile=float32_batched`、计算镜像字节数、预热耗时和单帧各通道耗时；异宽指纹必须直接报错，不能静默丢行。
 
 ## 分来源 freshness 与联动
@@ -84,6 +86,7 @@ Vision 时间线 schema v1 每个 observation 记录独立序号、`capture_star
 
 - Desktop 右上角“×”和 `WM_DELETE_WINDOW` 只隐藏到 Windows 系统托盘，不停止识别或退出进程。完全退出只能使用托盘菜单“退出 Hextech”。托盘还提供“显示 Hextech”“重启识别”和只读运行状态。
 - 再次点击桌面快捷方式不会启动第二套服务；新实例向当前 owner 写入 `desktop_ui_activation.v1.json` 激活请求后以退出码 0 结束，原实例显示窗口并按需恢复服务。请求必须匹配当前 `owner_id`，陈旧或其他 owner 请求会被忽略。
+- Overlay Host 与 Vision Sidecar 分别持有共享 `var/locks` 下的 OS 独占文件锁；第二实例必须在创建 Tk 窗口或写 bootstrap、status、事件状态前退出，进程异常结束时锁由操作系统自动释放。
 - 连续 300 秒既无 `LeagueClient.exe` / `LeagueClientUx.exe`，也无 `League of Legends.exe` 时进入轻量待机。客户端即使最小化，只要进程仍在就不待机；单独的 Riot Client launcher 不算 League 活动。
 - 轻量待机停止 DataService、Web、Runtime Supervisor、Overlay host 和 Vision Sidecar，只保留 Desktop、托盘与 League 进程探针；探针按运行态分档——待机/恢复失败态 1 秒（保 15 秒唤醒预算），服务运行期 5 秒（仅用于 300 秒空闲判定，避免对局与大厅期间每秒全量枚举进程）。真正停止前必须二次探测 League，避免探测后到停机前的竞态；League 客户端或游戏进程出现、托盘显示、托盘重启识别或快捷方式激活会恢复。自动恢复的端到端预算为 13 秒，连同最坏一轮探测仍小于 15 秒；恢复逐项验证 DataService、Supervisor、Host、Sidecar 心跳和 Build ID，失败后 League 仍存在时每 5 秒重试，托盘“退出 Hextech”后则不再自动启动。
 - `var/state/background_runtime_transitions.v1.json` 是独立 schema v1 的有界生命周期诊断，最多保留 200 条状态转换，仅记录原因、匹配进程名、组件结果和错误类型，不记录命令行或敏感信息。
