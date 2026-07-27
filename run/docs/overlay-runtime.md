@@ -104,7 +104,9 @@ Vision 时间线 schema v1 每个 observation 记录独立序号、`capture_star
 3. Desktop 状态、`game_overlay_sidecar_status.json`、`game_overlay_slots.v1.json`、`game_overlay_visibility.v1.json`、`reports/overlay_sessions/latest.json` 的 `build_id` 与 manifest 一致。
 4. Sidecar status 为 v2、Overlay event 为 v3、session report 为 v2。旧状态文件只能作为历史证据，不能证明新进程已启动。
 
-部署过程不得清理 `%LOCALAPPDATA%\HextechNexus\var`、历史报告或用户数据。发现构建身份不一致时先停止验收，确认旧进程已退出并重新部署，不继续分析识别率。
+部署过程不得清理 `%LOCALAPPDATA%\HextechNexus\var`、历史报告或用户数据。显式部署获准后，部署器不依赖托盘退出或窗口 `WM_CLOSE`：候选复制与 hash 校验完成后，强制结束所有名为 `Hextech伴生终端.exe` 的稳定版、`.previous`、便携版进程，以及源码启动的 Overlay Host / Vision Sidecar；任何残留或权限不足都必须中止目录切换。
+
+新版本落盘后无论旧客户端此前是否运行，都必须直接从 `C:\HextechCompanion\Hextech伴生终端.exe` 启动。部署器只有在以下条件同时成立时才返回成功：Desktop、DataService、Supervisor、Overlay Host、Vision Sidecar 均来自稳定目录且各 1 个；不存在旧目录或源码识别进程；Sidecar status 为 `running` 且 PID 对应唯一 Sidecar；`startup_timing.v1.json`、Sidecar status、Overlay event、visibility 和最新 session report 均由本次启动刷新，协议版本正确且 `build_id` 与 bundle manifest 一致。任一条件超时或不一致都触发部署失败和原子回滚，不得报告部署成功，也不得继续分析识别率。
 
 正式部署只更新既有 `C:\Users\apple\OneDrive\Desktop\Hextech伴生终端.lnk` 到 `C:\HextechCompanion\Hextech伴生终端.exe`；仅处理指向稳定安装或本仓 release 的重复快捷方式。`C:\HextechCompanion.previous` 始终保留部署前的一代正式版本，作为唯一紧急回滚目录。
 

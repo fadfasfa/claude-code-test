@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,28 @@ def _package(root: Path, marker: str = "new") -> Path:
         encoding="utf-8",
     )
     return root
+
+
+@pytest.fixture(autouse=True)
+def _isolate_deployment_runtime(monkeypatch):
+    """目录轮转测试不得启动或检查本机正在运行的正式客户端。"""
+
+    from tooling.build import deploy
+
+    real_start_install = deploy._start_install
+    monkeypatch.setattr(deploy, "_start_install", lambda _executable: object())
+    monkeypatch.setattr(
+        deploy,
+        "verify_deployment",
+        lambda *_args, **_kwargs: {
+            "desktop": 101,
+            "data_service": 102,
+            "supervisor": 103,
+            "overlay_host": 104,
+            "vision_sidecar": 105,
+        },
+    )
+    return real_start_install
 
 
 def test_deploy_release_promotes_verified_copy_and_keeps_one_previous(tmp_path, monkeypatch):
@@ -61,7 +84,221 @@ def test_deploy_release_promotes_verified_copy_and_keeps_one_previous(tmp_path, 
     assert shortcut_calls == [(shortcut, target / "Hextech伴生终端.exe")]
     assert result.removed_shortcuts == ()
     assert result.restarted is False
+    assert result.started is True
+    assert result.verified is True
+    assert dict(result.process_ids) == {
+        "desktop": 101,
+        "data_service": 102,
+        "supervisor": 103,
+        "overlay_host": 104,
+        "vision_sidecar": 105,
+    }
     assert result.build_id == "test-build"
+
+
+def test_deploy_starts_stable_install_and_verifies_even_when_no_old_process_exists(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    events: list[tuple[str, object]] = []
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        deploy,
+        "_start_install",
+        lambda executable: events.append(("start", executable)) or object(),
+    )
+
+    def verify(executable: Path, **kwargs):
+        events.append(("verify", (executable, kwargs["expected_build_id"])))
+        return {
+            "desktop": 1,
+            "data_service": 2,
+            "supervisor": 3,
+            "overlay_host": 4,
+            "vision_sidecar": 5,
+        }
+
+    monkeypatch.setattr(deploy, "verify_deployment", verify)
+
+    result = deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert events[0] == ("start", target / deploy.APP_EXE_NAME)
+    assert events[1] == ("verify", (target / deploy.APP_EXE_NAME, "test-build"))
+    assert result.started is True
+    assert result.verified is True
+
+
+def test_windows_start_install_delegates_to_user_explorer(tmp_path, monkeypatch, _isolate_deployment_runtime):
+    from tooling.build import deploy
+
+    executable = tmp_path / "HextechCompanion" / deploy.APP_EXE_NAME
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(deploy.os, "name", "nt")
+    monkeypatch.setattr(
+        deploy.subprocess,
+        "Popen",
+        lambda command, **kwargs: calls.append((command, kwargs)) or object(),
+    )
+
+    _isolate_deployment_runtime(executable)
+
+    assert calls == [
+        (
+            ["explorer.exe", str(executable)],
+            {
+                "cwd": str(executable.parent),
+                "creationflags": int(deploy.subprocess.CREATE_NEW_PROCESS_GROUP),
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "executable", "command_line"),
+    [
+        ("Hextech伴生终端.exe", r"C:\\HextechCompanion.previous\\Hextech伴生终端.exe", ()),
+        ("python.exe", r"C:\\Python311\\python.exe", ("python", "-m", "hextech.bootstrap.overlay")),
+        (
+            "python.exe",
+            r"C:\\Python311\\python.exe",
+            ("python", "-m", "hextech.infrastructure.vision.sidecar", "--loop"),
+        ),
+    ],
+)
+def test_deployment_process_matcher_includes_old_and_source_overlay_runtimes(name, executable, command_line):
+    from tooling.build import deploy
+
+    assert deploy._is_managed_runtime_process(
+        name=name,
+        executable=executable,
+        command_line=command_line,
+    )
+
+
+def test_shutdown_existing_install_force_kills_every_matching_runtime(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    identities = [
+        deploy.ProcessIdentity(11, 1.0, executable=r"C:\\HextechCompanion.previous\\Hextech伴生终端.exe"),
+        deploy.ProcessIdentity(
+            12,
+            2.0,
+            executable=r"C:\\Python311\\python.exe",
+            command_line=("python", "-m", "hextech.infrastructure.vision.sidecar"),
+        ),
+    ]
+    scans = iter((identities, []))
+    killed: list[int] = []
+    monkeypatch.setattr(deploy, "_matching_deployment_processes", lambda: next(scans))
+    monkeypatch.setattr(deploy, "_kill_process_tree", lambda identity: killed.append(identity.pid))
+    monkeypatch.setattr(deploy.time, "sleep", lambda _seconds: None)
+
+    found = deploy.shutdown_existing_install(tmp_path / deploy.APP_EXE_NAME, timeout=1.0)
+
+    assert found is True
+    assert killed == [11, 12]
+
+
+def test_deployment_process_validation_requires_one_stable_process_per_role(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    executable = tmp_path / "HextechCompanion" / deploy.APP_EXE_NAME
+    role_commands = {
+        "desktop": (str(executable),),
+        "data_service": (str(executable), "--data-service"),
+        "supervisor": (str(executable), "--runtime-supervisor"),
+        "overlay_host": (str(executable), "--game-overlay"),
+        "vision_sidecar": (str(executable), "--overlay-sidecar"),
+    }
+    identities = [
+        deploy.ProcessIdentity(
+            pid=200 + index,
+            create_time=float(index),
+            executable=str(executable),
+            command_line=command_line,
+        )
+        for index, command_line in enumerate(role_commands.values())
+    ]
+    monkeypatch.setattr(deploy, "_matching_deployment_processes", lambda: identities)
+
+    errors, role_pids = deploy._deployment_process_errors(executable)
+
+    assert errors == []
+    assert set(role_pids) == set(role_commands)
+
+    identities.append(
+        deploy.ProcessIdentity(
+            pid=999,
+            create_time=999.0,
+            executable=str(tmp_path / "HextechCompanion.previous" / deploy.APP_EXE_NAME),
+            command_line=(deploy.APP_EXE_NAME, "--game-overlay"),
+        )
+    )
+    errors, _role_pids = deploy._deployment_process_errors(executable)
+    assert any("非稳定目录" in error for error in errors)
+
+
+def test_runtime_build_validation_requires_fresh_matching_states_and_sidecar_pid(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    monkeypatch.setattr(deploy, "_packaged_var_dir", lambda: tmp_path)
+    for relative_path, schema_version in deploy.RUNTIME_BUILD_STATE_SPECS:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"schema_version": schema_version, "build_id": "build-new"}
+        if relative_path.name == "game_overlay_sidecar_status.json":
+            payload.update({"status": "running", "pid": 505})
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    errors = deploy._runtime_build_errors(
+        expected_build_id="build-new",
+        launch_started_at=0.0,
+        sidecar_pid=505,
+    )
+    assert errors == []
+
+    mismatch_path = tmp_path / "state" / "game_overlay_visibility.v1.json"
+    os.utime(mismatch_path, (1.0, 1.0))
+    errors = deploy._runtime_build_errors(
+        expected_build_id="build-new",
+        launch_started_at=100.0,
+        sidecar_pid=505,
+    )
+    assert any("本次启动刷新" in error for error in errors)
+
+    mismatch = json.loads(mismatch_path.read_text(encoding="utf-8"))
+    mismatch["build_id"] = "build-old"
+    mismatch_path.write_text(json.dumps(mismatch), encoding="utf-8")
+    errors = deploy._runtime_build_errors(
+        expected_build_id="build-new",
+        launch_started_at=0.0,
+        sidecar_pid=505,
+    )
+    assert any("Build ID 不一致" in error for error in errors)
+
+
+def test_deploy_rolls_back_when_post_start_verification_fails(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    start_calls: list[Path] = []
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(deploy, "_start_install", lambda executable: start_calls.append(executable) or object())
+    monkeypatch.setattr(
+        deploy,
+        "verify_deployment",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(deploy.DeploymentError("build id mismatch")),
+    )
+
+    with pytest.raises(deploy.DeploymentError, match="build id mismatch"):
+        deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
+    assert start_calls == [target / deploy.APP_EXE_NAME, target / deploy.APP_EXE_NAME]
 
 
 def test_deploy_validates_candidate_before_stopping_existing_install(tmp_path, monkeypatch):

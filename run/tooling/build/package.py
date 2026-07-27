@@ -676,8 +676,10 @@ def main(argv: list[str] | None = None) -> None:
             print_check(f"快捷方式唯一性：已移除重复项 {len(deployment.removed_shortcuts)} 个")
             for removed_shortcut in deployment.removed_shortcuts:
                 print_check(f"已移除重复快捷方式：{removed_shortcut}")
-        if deployment.restarted:
-            print_check("旧客户端原本运行，已启动新版本")
+        print_check(f"新版本已从稳定目录启动：{deployment.install_dir / APP_EXE_NAME}")
+        print_check(f"部署后进程与 Build 身份验收：{'通过' if deployment.verified else '失败'}")
+        for role, pid in deployment.process_ids:
+            print_check(f"运行角色：{role} pid={pid}")
     else:
         print_check("候选未部署：稳定安装目录和桌面快捷方式保持不变")
     print_step("打包完成")

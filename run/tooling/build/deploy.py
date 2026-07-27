@@ -7,7 +7,7 @@ Hextech 用户数据；职责是关闭目标安装中的进程、校验候选目
 
 from __future__ import annotations
 
-import ctypes
+import argparse
 import hashlib
 import json
 import os
@@ -30,11 +30,37 @@ APP_GUIDE_NAME = "README_首次使用.txt"
 APP_SHORTCUT_NAME = "Hextech伴生终端.lnk"
 STABLE_INSTALL_NAME = "HextechCompanion"
 RELEASE_DIR_PREFIX = "HextechCompanion-"
-WM_CLOSE = 0x0010
+DEPLOYMENT_VERIFY_TIMEOUT_SECONDS = 150.0
+SOURCE_RUNTIME_MODULES = frozenset(
+    {
+        "hextech.bootstrap.overlay",
+        "hextech.infrastructure.vision.sidecar",
+        "hextech.interfaces.overlay",
+        "hextech.interfaces.overlay.host",
+    }
+)
+SOURCE_RUNTIME_LAUNCHERS = frozenset({"hextech-overlay.exe", "hextech-overlay"})
+PROCESS_ROLE_FLAGS = {
+    "data_service": "--data-service",
+    "supervisor": "--runtime-supervisor",
+    "overlay_host": "--game-overlay",
+    "vision_sidecar": "--overlay-sidecar",
+}
+RUNTIME_BUILD_STATE_SPECS = (
+    (Path("state/startup_timing.v1.json"), 1),
+    (Path("state/game_overlay_sidecar_status.json"), 2),
+    (Path("state/game_overlay_slots.v1.json"), 3),
+    (Path("state/game_overlay_visibility.v1.json"), 2),
+    (Path("reports/overlay_sessions/latest.json"), 2),
+)
 
 
 class DeploymentError(RuntimeError):
     """部署候选不可安全提升或回滚时抛出。"""
+
+
+def _deployment_step(message: str) -> None:
+    print(f"[deploy] {message}", flush=True)
 
 
 @dataclass(frozen=True)
@@ -43,6 +69,9 @@ class ProcessIdentity:
 
     pid: int
     create_time: float
+    name: str = ""
+    executable: str = ""
+    command_line: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -52,6 +81,9 @@ class DeploymentResult:
     shortcut_path: Path | None
     removed_shortcuts: tuple[Path, ...]
     restarted: bool
+    started: bool
+    verified: bool
+    process_ids: tuple[tuple[str, int], ...]
     build_id: str
 
 
@@ -141,86 +173,114 @@ def _tree_fingerprint(root: Path) -> dict[str, tuple[int, str]]:
     return fingerprint
 
 
-def _matching_processes(executable: Path) -> list[ProcessIdentity]:
-    expected = _normalized_path(executable)
+def _command_tokens(value: object) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item) for item in value)
+    if isinstance(value, str):
+        return (value,)
+    return ()
+
+
+def _is_managed_runtime_process(*, name: str, executable: str, command_line: tuple[str, ...]) -> bool:
+    """只识别本产品 EXE，以及源码启动的 Overlay/Sidecar。"""
+
+    process_name = (Path(executable).name if executable else name).casefold()
+    if process_name == APP_EXE_NAME.casefold():
+        return True
+    if process_name in SOURCE_RUNTIME_LAUNCHERS:
+        return True
+    folded = tuple(token.casefold() for token in command_line)
+    for index, token in enumerate(folded[:-1]):
+        if token == "-m" and folded[index + 1] in SOURCE_RUNTIME_MODULES:
+            return True
+    python_process = process_name in {"python.exe", "pythonw.exe", "python", "pythonw"}
+    return python_process and any(flag in folded for flag in ("--game-overlay", "--overlay-sidecar"))
+
+
+def _matching_deployment_processes() -> list[ProcessIdentity]:
+    """枚举部署必须清空的稳定版、旧版、便携版与源码识别进程。"""
+
     matches: list[ProcessIdentity] = []
-    for process in psutil.process_iter(("pid", "exe", "create_time")):
+    for process in psutil.process_iter(("pid", "name", "exe", "cmdline", "create_time")):
         try:
-            process_exe = str(process.info.get("exe") or "")
-            if process_exe and _normalized_path(process_exe) == expected:
-                matches.append(ProcessIdentity(int(process.pid), float(process.info["create_time"])))
-        except (psutil.Error, OSError, TypeError, ValueError):
+            name = str(process.info.get("name") or "")
+            executable = str(process.info.get("exe") or "")
+            command_line = _command_tokens(process.info.get("cmdline"))
+            if _is_managed_runtime_process(name=name, executable=executable, command_line=command_line):
+                matches.append(
+                    ProcessIdentity(
+                        pid=int(process.pid),
+                        create_time=float(process.info["create_time"]),
+                        name=name,
+                        executable=executable,
+                        command_line=command_line,
+                    )
+                )
+        except (psutil.NoSuchProcess, OSError, TypeError, ValueError):
             continue
+        except psutil.AccessDenied as exc:
+            raise DeploymentError(f"无法检查进程 PID {process.pid}；请以管理员权限部署") from exc
     return matches
 
 
-def _same_process(identity: ProcessIdentity, executable: Path) -> psutil.Process | None:
+def _same_process(identity: ProcessIdentity) -> psutil.Process | None:
     try:
         process = psutil.Process(identity.pid)
         if abs(process.create_time() - identity.create_time) > 0.01:
             return None
-        if _normalized_path(process.exe()) != _normalized_path(executable):
-            return None
         return process
-    except (psutil.Error, OSError):
+    except psutil.NoSuchProcess:
         return None
+    except psutil.AccessDenied as exc:
+        raise DeploymentError(f"无法访问进程 PID {identity.pid}；请以管理员权限部署") from exc
 
 
-def _post_close_to_windows(pids: set[int]) -> int:
-    """向指定 PID 的所有顶层窗口发送 WM_CLOSE，包括被隐藏的 Tk 窗口。"""
-
-    if os.name != "nt" or not pids:
-        return 0
-    user32 = ctypes.windll.user32
-    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-    sent = 0
-
-    def callback(hwnd, _lparam):
-        nonlocal sent
-        pid = ctypes.c_ulong()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        if int(pid.value) in pids:
-            user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
-            sent += 1
-        return True
-
-    user32.EnumWindows(callback_type(callback), 0)
-    return sent
-
-
-def _wait_for_exit(identities: list[ProcessIdentity], executable: Path, timeout: float) -> list[ProcessIdentity]:
-    deadline = time.monotonic() + max(0.0, timeout)
-    remaining = list(identities)
-    while remaining and time.monotonic() < deadline:
-        remaining = [item for item in remaining if _same_process(item, executable) is not None]
-        if remaining:
-            time.sleep(0.1)
-    return remaining
+def _kill_process_tree(identity: ProcessIdentity) -> None:
+    process = _same_process(identity)
+    if process is None:
+        return
+    try:
+        descendants = process.children(recursive=True)
+    except psutil.NoSuchProcess:
+        descendants = []
+    except psutil.AccessDenied as exc:
+        raise DeploymentError(f"无法枚举进程树 PID {identity.pid}；请以管理员权限部署") from exc
+    for child in reversed(descendants):
+        try:
+            child.kill()
+        except psutil.NoSuchProcess:
+            continue
+        except psutil.AccessDenied as exc:
+            raise DeploymentError(f"无法强制结束子进程 PID {child.pid}；请以管理员权限部署") from exc
+    process = _same_process(identity)
+    if process is not None:
+        try:
+            process.kill()
+        except psutil.NoSuchProcess:
+            pass
+        except psutil.AccessDenied as exc:
+            raise DeploymentError(f"无法强制结束进程 PID {identity.pid}；请以管理员权限部署") from exc
 
 
 def shutdown_existing_install(executable: Path, *, timeout: float = 12.0) -> bool:
-    """先请求正常关闭，再只对同路径且同启动时间的残留 PID 升级终止。"""
+    """强制清空所有 Hextech EXE 与源码 Overlay/Sidecar，并拦住回收竞态。"""
 
-    identities = _matching_processes(executable)
-    if not identities:
-        return False
-    _post_close_to_windows({item.pid for item in identities})
-    remaining = _wait_for_exit(identities, executable, timeout)
-    if remaining:
-        for identity in remaining:
-            process = _same_process(identity, executable)
-            if process is not None:
-                process.terminate()
-        remaining = _wait_for_exit(remaining, executable, 3.0)
-    if remaining:
-        for identity in remaining:
-            process = _same_process(identity, executable)
-            if process is not None:
-                process.kill()
-        remaining = _wait_for_exit(remaining, executable, 3.0)
-    if remaining:
-        raise DeploymentError(f"目标程序仍未退出：pids={[item.pid for item in remaining]}")
-    return True
+    if Path(executable).name.casefold() != APP_EXE_NAME.casefold():
+        raise DeploymentError(f"部署关闭目标必须是 {APP_EXE_NAME}")
+    deadline = time.monotonic() + max(0.1, timeout)
+    found = False
+    while True:
+        identities = _matching_deployment_processes()
+        if not identities:
+            return found
+        found = True
+        _deployment_step(f"强制结束旧运行时 pids={[item.pid for item in identities]}")
+        for identity in identities:
+            _kill_process_tree(identity)
+        if time.monotonic() >= deadline:
+            remaining = _matching_deployment_processes()
+            raise DeploymentError(f"旧版或源码运行时仍未退出：pids={[item.pid for item in remaining]}")
+        time.sleep(0.1)
 
 
 def validate_shortcut_path(shortcut_path: Path) -> Path:
@@ -374,12 +434,123 @@ def update_shortcut(shortcut_path: Path, target_exe: Path) -> Path:
 
 
 def _start_install(executable: Path) -> subprocess.Popen[bytes]:
-    creationflags = int(subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0
-    process = subprocess.Popen([str(executable)], cwd=str(executable.parent), creationflags=creationflags)
+    if os.name == "nt":
+        # 部署常因 C:\ 根目录权限而在提权进程中运行；交给当前用户的 Explorer
+        # 启动，避免正式客户端长期继承管理员 token。后续硬验收负责确认真实 EXE。
+        return subprocess.Popen(
+            ["explorer.exe", str(executable)],
+            cwd=str(executable.parent),
+            creationflags=int(subprocess.CREATE_NEW_PROCESS_GROUP),
+        )
+    process = subprocess.Popen([str(executable)], cwd=str(executable.parent))
     time.sleep(1.0)
     if process.poll() is not None:
         raise DeploymentError(f"新客户端启动后提前退出：code={process.returncode}")
     return process
+
+
+def _packaged_var_dir() -> Path:
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return Path(local_app_data) / "HextechNexus" / "var"
+    app_data = os.environ.get("APPDATA", "").strip()
+    if app_data:
+        return Path(app_data) / "HextechNexus" / "var"
+    return Path.home() / ".hextech_nexus" / "var"
+
+
+def _process_role(command_line: tuple[str, ...]) -> str:
+    folded = {token.casefold() for token in command_line}
+    for role, flag in PROCESS_ROLE_FLAGS.items():
+        if flag in folded:
+            return role
+    return "desktop"
+
+
+def _deployment_process_errors(executable: Path) -> tuple[list[str], dict[str, int]]:
+    expected = _normalized_path(executable)
+    errors: list[str] = []
+    role_pids: dict[str, list[int]] = {"desktop": [], **{role: [] for role in PROCESS_ROLE_FLAGS}}
+    for identity in _matching_deployment_processes():
+        if not identity.executable or _normalized_path(identity.executable) != expected:
+            errors.append(
+                f"存在非稳定目录运行时 pid={identity.pid} path={identity.executable or '<unreadable>'}"
+            )
+            continue
+        role_pids[_process_role(identity.command_line)].append(identity.pid)
+    for role, pids in role_pids.items():
+        if len(pids) != 1:
+            errors.append(f"角色数量不一致 role={role} count={len(pids)} pids={pids}")
+    return errors, {role: pids[0] for role, pids in role_pids.items() if len(pids) == 1}
+
+
+def _runtime_build_errors(
+    *,
+    expected_build_id: str,
+    launch_started_at: float,
+    sidecar_pid: int | None,
+) -> list[str]:
+    root = _packaged_var_dir()
+    errors: list[str] = []
+    payloads: dict[Path, dict[str, object]] = {}
+    for relative_path, schema_version in RUNTIME_BUILD_STATE_SPECS:
+        path = root / relative_path
+        try:
+            stat = path.stat()
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"运行态不可读 path={relative_path.as_posix()} error={type(exc).__name__}")
+            continue
+        if not isinstance(payload, dict):
+            errors.append(f"运行态不是对象 path={relative_path.as_posix()}")
+            continue
+        payloads[relative_path] = payload
+        if stat.st_mtime < launch_started_at - 1.0:
+            errors.append(f"运行态未由本次启动刷新 path={relative_path.as_posix()}")
+        if int(payload.get("schema_version") or 0) != schema_version:
+            errors.append(
+                f"运行态协议不一致 path={relative_path.as_posix()} "
+                f"expected={schema_version} actual={payload.get('schema_version')}"
+            )
+        if str(payload.get("build_id") or "") != expected_build_id:
+            errors.append(
+                f"运行态 Build ID 不一致 path={relative_path.as_posix()} "
+                f"actual={payload.get('build_id')}"
+            )
+    sidecar_path = Path("state/game_overlay_sidecar_status.json")
+    sidecar = payloads.get(sidecar_path)
+    if sidecar is not None:
+        if sidecar.get("status") != "running":
+            errors.append(f"Sidecar 尚未运行 status={sidecar.get('status')}")
+        if sidecar_pid is not None and int(sidecar.get("pid") or 0) != sidecar_pid:
+            errors.append(f"Sidecar PID 不一致 state={sidecar.get('pid')} process={sidecar_pid}")
+    return errors
+
+
+def verify_deployment(
+    executable: Path,
+    *,
+    expected_build_id: str,
+    launch_started_at: float,
+    timeout: float = DEPLOYMENT_VERIFY_TIMEOUT_SECONDS,
+) -> dict[str, int]:
+    """等待稳定目录五个角色与五份运行态身份同时收敛，否则部署失败。"""
+
+    deadline = time.monotonic() + max(0.1, timeout)
+    last_errors: list[str] = ["尚未开始验收"]
+    while True:
+        process_errors, role_pids = _deployment_process_errors(executable)
+        runtime_errors = _runtime_build_errors(
+            expected_build_id=expected_build_id,
+            launch_started_at=launch_started_at,
+            sidecar_pid=role_pids.get("vision_sidecar"),
+        )
+        last_errors = process_errors + runtime_errors
+        if not last_errors:
+            return role_pids
+        if time.monotonic() >= deadline:
+            raise DeploymentError(f"部署后验收失败：{' | '.join(last_errors)}")
+        time.sleep(0.25)
 
 
 def _remove_tree(path: Path) -> None:
@@ -416,10 +587,12 @@ def deploy_release(
     shutdown_timeout: float = 12.0,
     lock_path: Path | None = None,
 ) -> DeploymentResult:
-    """先校验候选再切换稳定目录；旧客户端原本运行时才重启。"""
+    """强停全部旧运行时，原子切换后启动稳定目录，并以运行态验收收口。"""
 
     source = validate_package_dir(package_dir)
     target = validate_install_dir(install_dir)
+    source_manifest = json.loads((source / "_internal" / "bundle_manifest.json").read_text(encoding="utf-8"))
+    expected_build_id = str(source_manifest["build_id"])
     resolved_shortcut_input = validate_shortcut_path(shortcut_path) if shortcut_path is not None else None
     removed_shortcuts: tuple[Path, ...] = ()
     if _normalized_path(source) == _normalized_path(target):
@@ -441,24 +614,30 @@ def deploy_release(
             validate_package_dir(candidate)
             if _tree_fingerprint(source) != _tree_fingerprint(candidate):
                 raise DeploymentError("部署候选复制校验失败")
+            _deployment_step(f"候选复制校验通过 build_id={expected_build_id}")
 
             was_running = shutdown_existing_install(target / APP_EXE_NAME, timeout=shutdown_timeout)
+            _deployment_step("旧版、便携版与源码识别进程已全部退出")
             old_moved = False
             new_installed = False
             previous_backup_created = False
             previous_rotated = False
             previous_rotation_started = False
+            verified_process_ids: dict[str, int] = {}
             try:
                 # `.previous` 是唯一紧急回滚目录。轮转前先复制并校验，避免
                 # Windows 重命名短暂失败时因已删除旧目录而失去最后一个回滚版本。
                 if target.exists():
                     previous_backup_created = _backup_previous_install(previous, previous_backup)
+                    _deployment_step("紧急回滚目录备份校验通过")
                 if target.exists():
                     os.replace(target, rollback)
                     old_moved = True
+                    _deployment_step("旧稳定安装已移入部署回滚目录")
                 os.replace(candidate, target)
                 new_installed = True
                 validate_package_dir(target)
+                _deployment_step(f"新版本已落盘：{target}")
                 resolved_shortcut = (
                     update_shortcut(resolved_shortcut_input, target / APP_EXE_NAME)
                     if resolved_shortcut_input is not None
@@ -473,9 +652,17 @@ def deploy_release(
                         target / APP_EXE_NAME,
                         source.parent,
                     )
-                if was_running:
-                    _start_install(target / APP_EXE_NAME)
-                # 候选已通过启动验证后才轮转 emergency rollback。若现有 previous
+                launch_started_at = time.time()
+                _start_install(target / APP_EXE_NAME)
+                _deployment_step(f"已请求从稳定目录启动：{target / APP_EXE_NAME}")
+                verified_process_ids = verify_deployment(
+                    target / APP_EXE_NAME,
+                    expected_build_id=expected_build_id,
+                    launch_started_at=launch_started_at,
+                    timeout=max(DEPLOYMENT_VERIFY_TIMEOUT_SECONDS, shutdown_timeout),
+                )
+                _deployment_step(f"进程、协议与 Build 身份验收通过：{verified_process_ids}")
+                # 候选已通过进程与 Build 身份验收后才轮转 emergency rollback。若现有 previous
                 # 无法删除，下面的异常路径会恢复 target，不能为了发布先丢掉唯一
                 # 回滚目录。
                 if old_moved and rollback.exists():
@@ -567,14 +754,48 @@ def deploy_release(
                 shortcut_path=resolved_shortcut,
                 removed_shortcuts=removed_shortcuts,
                 restarted=was_running,
-                build_id=str(
-                    json.loads((target / "_internal" / "bundle_manifest.json").read_text(encoding="utf-8"))["build_id"]
-                ),
+                started=True,
+                verified=True,
+                process_ids=tuple(sorted(verified_process_ids.items())),
+                build_id=expected_build_id,
             )
     except Timeout as exc:
         raise DeploymentError(f"已有部署任务持有锁：{lock_file}") from exc
     finally:
         _remove_tree(candidate)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """提供可直接 UAC 提权的部署入口，避免外层 PowerShell 控制台中断。"""
+
+    parser = argparse.ArgumentParser(description="部署 Hextech 稳定客户端并执行运行态硬验收")
+    parser.add_argument("--package-dir", type=Path, required=True)
+    parser.add_argument("--install-dir", type=Path, default=default_install_dir())
+    parser.add_argument("--shortcut", type=Path)
+    parser.add_argument("--shutdown-timeout", type=float, default=12.0)
+    args = parser.parse_args(argv)
+    if args.shutdown_timeout <= 0:
+        parser.error("--shutdown-timeout 必须大于 0")
+    result = deploy_release(
+        args.package_dir,
+        args.install_dir,
+        shortcut_path=args.shortcut,
+        shutdown_timeout=args.shutdown_timeout,
+    )
+    print(
+        json.dumps(
+            {
+                "ok": result.verified,
+                "install_dir": str(result.install_dir),
+                "previous_dir": str(result.previous_dir) if result.previous_dir is not None else "",
+                "build_id": result.build_id,
+                "process_ids": dict(result.process_ids),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
+    return 0
 
 
 __all__ = [
@@ -586,7 +807,12 @@ __all__ = [
     "deploy_release",
     "shutdown_existing_install",
     "update_shortcut",
+    "verify_deployment",
     "validate_install_dir",
     "validate_package_dir",
     "validate_shortcut_path",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
