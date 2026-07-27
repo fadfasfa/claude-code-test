@@ -185,8 +185,9 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
         # 下长文案（构建号、诊断路径）必然被裁切；收敛为单行后由
         # _render_status_line 按通道优先级合成，细节移入日志与诊断导出。
         # 点 + 文字放进内层 frame 整体水平居中（真机反馈：左对齐观感差）。
+        # 外层 padx 必须对称：非对称值会让内层居中相对窗口真实中心产生偏移。
         self.status_bar = tk.Frame(self.root, bg=UI_COLORS["base"])
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=(10, 6), pady=(2, 6))
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(2, 6))
         self._status_bar_inner = tk.Frame(self.status_bar, bg=UI_COLORS["base"])
         self._status_bar_inner.pack()
         self.status_dot = tk.Canvas(

@@ -150,7 +150,6 @@ def test_card_update_sets_big_win_label_and_weak_pick_label() -> None:
         "name_label": _Widget(),
         "win_label": _Widget(),
         "pick_label": _Widget(),
-        "ribbon": _Widget(),
     }
 
     HextechUI._update_candidate_card(ui, row, {"id": "1", "name": "逆羽", "tier": "T3", "win": 0.525, "pick": 0.007}, 1.0)
@@ -160,21 +159,20 @@ def test_card_update_sets_big_win_label_and_weak_pick_label() -> None:
     assert row["pick_label"].text == "出场 0.7%"
     # 英雄名不再拼接称号，横向空间让给右侧大号胜率列。
     assert row["name_label"].text == "逆羽"
-    assert row["ribbon"].kwargs.get("bg") == UI_COLORS["green"]
 
     HextechUI._update_candidate_card(ui, row, {"id": "1", "name": "逆羽", "tier": "T3", "win": 0.48, "pick": 0.007}, 1.0)
 
     assert row["win_label"].text == "48.0%"
     assert row["win_label"].fg == UI_COLORS["red"]
-    assert row["ribbon"].kwargs.get("bg") == UI_COLORS["red"]
 
 
 class _PackWidget:
-    """记录 pack/pack_forget 的伪 widget，模拟 Tk 的 mapped 状态。"""
+    """记录 pack/pack_forget/config 的伪 widget，模拟 Tk 的 mapped 状态。"""
 
     def __init__(self):
         self.mapped = False
         self.pack_calls: list[dict] = []
+        self.kwargs: dict = {}
 
     def winfo_ismapped(self):
         return self.mapped
@@ -186,9 +184,12 @@ class _PackWidget:
     def pack_forget(self):
         self.mapped = False
 
+    def config(self, **kwargs):
+        self.kwargs.update(kwargs)
+
 
 def test_selected_badge_toggles_with_selection_role() -> None:
-    """回归：己方已选英雄要有明确标识，且 bench→self 跃迁原地切换不重建卡片。"""
+    """回归：己方/队友已选英雄都要有明确标识且互相区分，bench 跃迁原地切换不重建卡片。"""
 
     ui = object.__new__(HextechUI)
     badge = _PackWidget()
@@ -202,7 +203,6 @@ def test_selected_badge_toggles_with_selection_role() -> None:
         "name_label": _Widget(),
         "win_label": _Widget(),
         "pick_label": _Widget(),
-        "ribbon": _Widget(),
         "selected_badge": badge,
         "selection_role": "",
     }
@@ -211,6 +211,16 @@ def test_selected_badge_toggles_with_selection_role() -> None:
         ui, row, {"id": "1", "name": "潮汐海灵", "tier": "T4", "win": 0.502, "pick": 0.006, "selection_role": "self"}, 1.0
     )
     assert badge.mapped is True
+    assert badge.kwargs.get("text") == "已选"
+    assert badge.kwargs.get("bg") == UI_COLORS["gold"]
+
+    # teammate 同样要有明确标识，且与 self 视觉可区分（文本与配色都不同）。
+    HextechUI._update_candidate_card(
+        ui, row, {"id": "1", "name": "潮汐海灵", "tier": "T4", "win": 0.502, "pick": 0.006, "selection_role": "teammate"}, 1.0
+    )
+    assert badge.mapped is True
+    assert badge.kwargs.get("text") == "队友"
+    assert badge.kwargs.get("bg") == UI_COLORS["cyan"]
 
     HextechUI._update_candidate_card(
         ui, row, {"id": "1", "name": "潮汐海灵", "tier": "T4", "win": 0.502, "pick": 0.006, "selection_role": "bench"}, 1.0

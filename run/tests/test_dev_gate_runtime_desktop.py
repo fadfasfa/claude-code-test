@@ -260,11 +260,11 @@ def test_collapsed_width_budget_fits_avatar_and_tier_badge() -> None:
     from hextech.interfaces.desktop.app_shared import WINDOW_COLLAPSED_WIDTH
 
     left_padding = 10          # list_shell 左侧 padding（折叠态滚动条已隐藏）
-    ribbon = 3 + 5             # 胜率色条及其右间距
     avatar = 48 + 2 * 1        # 头像位图 + 统一 1px 边框（高亮描边已删除）
     avatar_gap = 8
     # 徽章按 9pt bold（12px 基准）随 DPI 放大：150% 下"T1"+padx 约 30px。
     # 已知代价：200%+ 缩放下徽章可能被裁 2-6px（窗宽固定而磅值字体无上限），
     # 本轮接受，不为极端缩放扩大窗宽。
     badge_min = 30
-    assert WINDOW_COLLAPSED_WIDTH >= left_padding + ribbon + avatar + avatar_gap + badge_min
+    # 左侧胜率色条已删除（真机反馈：与右侧大号胜率数字重复）。
+    assert WINDOW_COLLAPSED_WIDTH >= left_padding + avatar + avatar_gap + badge_min

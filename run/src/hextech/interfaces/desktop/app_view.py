@@ -394,10 +394,7 @@ class DesktopViewMixin:
         card.pack(fill=tk.X, pady=scaled(3, scale), padx=(0, scaled(10, scale)))
         row["card"] = card
 
-        ribbon = tk.Frame(card, bg=UI_COLORS["green"], width=scaled(3, scale))
-        ribbon.pack(side=tk.LEFT, fill=tk.Y, padx=(0, scaled(5, scale)))
-        row["ribbon"] = ribbon
-
+        # 左侧胜率色条已删除（真机反馈：与右侧大号着色胜率数字重复，视觉冗余）。
         img_label = tk.Label(
             card,
             bg=card_surface,
@@ -464,12 +461,13 @@ class DesktopViewMixin:
         )
         name_label.pack(side=tk.LEFT, anchor="w")
         row["name_label"] = name_label
-        # 己方已选英雄的明确标识（真机反馈）：只做名字后的金色小徽章，
-        # 不恢复此前删除的整卡高亮；显隐由 _update_candidate_card 按
-        # selection_role 切换（bench→self 跃迁时 keyed 复用不重建卡片）。
+        # 已选/队友已选的明确标识（真机反馈）：只做名字后的小徽章，
+        # 不恢复此前删除的整卡高亮；文本与配色由 _update_candidate_card
+        # 按 selection_role 动态切换（self=金色「已选」、teammate=青色「队友」），
+        # bench↔self/teammate 跃迁走 keyed 原地更新，不重建卡片。
         selected_badge = tk.Label(
             title_row,
-            text="已选",
+            text="",
             font=ui_font(11, bold=True),
             fg=UI_COLORS["header"],
             bg=UI_COLORS["gold"],
@@ -523,9 +521,18 @@ class DesktopViewMixin:
                 if row["name_label"].cget("text") != display_name:
                     row["name_label"].config(text=display_name)
 
+            # self=金色「已选」（我方锁定）、teammate=青色「队友」（队友锁定），
+            # 其余角色（bench）不显示徽章。
             selection_role = str(item.get("selection_role") or "")
+            badge_by_role = {
+                "self": ("已选", UI_COLORS["gold"]),
+                "teammate": ("队友", UI_COLORS["cyan"]),
+            }
             if row.get("selected_badge") is not None and selection_role != row.get("selection_role"):
-                if selection_role == "self":
+                role_style = badge_by_role.get(selection_role)
+                if role_style is not None:
+                    text, bg = role_style
+                    row["selected_badge"].config(text=text, bg=bg)
                     row["selected_badge"].pack(side=tk.LEFT, padx=(scaled(4, scale), 0))
                 else:
                     row["selected_badge"].pack_forget()
@@ -537,8 +544,6 @@ class DesktopViewMixin:
                     row["win_label"].config(text=f"{item['win']:.1%}", fg=win_color)
                 if row.get("pick_label") is not None:
                     row["pick_label"].config(text=f"出场 {item['pick']:.1%}")
-                if row.get("ribbon") is not None:
-                    row["ribbon"].config(bg=win_color)
                 if row.get("bar_canvas") is not None:
                     row["ratio"] = max(0, min(1, (item["win"] - 0.40) / 0.20))
                     _render_winrate_bar(
@@ -668,7 +673,7 @@ class DesktopViewMixin:
             # 展开时滚动条是否出现交给溢出判定，不再无条件恢复。
             self._sync_list_scrollbar()
             if hasattr(self, "status_bar") and self.status_bar.winfo_exists():
-                self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=(10, 6), pady=(2, 6))
+                self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(2, 6))
         self._schedule_current_hero_refresh()
 
     def _schedule_current_hero_refresh(self) -> None:

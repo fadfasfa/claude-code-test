@@ -70,6 +70,8 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._supervisor_lease_thread: threading.Thread | None = None
         self.current_hero_ids = set()
         self.current_candidate_groups = {"selected_champion_ids": [], "bench_champion_ids": []}
+        # champ-select 结束瞬间的己方/队友角色短暂保留缓存，见 _preserve_recent_selection_roles。
+        self._last_known_selection_roles: dict | None = None
         self.image_cache = {}
         self._lcu_port = None
         self._lcu_token = None
