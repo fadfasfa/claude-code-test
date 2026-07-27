@@ -103,7 +103,7 @@ def _identity(candidate: Mapping[str, Any]) -> str:
 def _shortlist_consensus(
     text: Mapping[str, Any],
     alternate: Mapping[str, Any],
-) -> tuple[Mapping[str, Any], float] | None:
+) -> tuple[Mapping[str, Any], Mapping[str, Any], float] | None:
     """返回两字体短名单中唯一且足够接近各自 Top-1 的共同身份。"""
 
     def eligible(channel: Mapping[str, Any]) -> dict[str, tuple[Mapping[str, Any], float]]:
@@ -126,17 +126,28 @@ def _shortlist_consensus(
 
     primary = eligible(text)
     secondary = eligible(alternate)
-    ranked: list[tuple[float, str, Mapping[str, Any]]] = []
+    ranked: list[tuple[float, str, Mapping[str, Any], Mapping[str, Any]]] = []
     for identity in primary.keys() & secondary.keys():
-        candidate, primary_confidence = primary[identity]
-        _, alternate_confidence = secondary[identity]
-        ranked.append(((primary_confidence + alternate_confidence) / 2.0, identity, candidate))
+        primary_candidate, primary_confidence = primary[identity]
+        alternate_candidate, alternate_confidence = secondary[identity]
+        if alternate_confidence > primary_confidence:
+            selected_candidate, selected_channel = alternate_candidate, alternate
+        else:
+            selected_candidate, selected_channel = primary_candidate, text
+        ranked.append(
+            (
+                (primary_confidence + alternate_confidence) / 2.0,
+                identity,
+                selected_candidate,
+                selected_channel,
+            )
+        )
     ranked.sort(key=lambda item: (-item[0], item[1]))
     if not ranked:
         return None
     if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < SHORTLIST_COMBINED_GAP:
         return None
-    return ranked[0][2], ranked[0][0]
+    return ranked[0][2], ranked[0][3], ranked[0][0]
 
 
 def _visual_variant(
@@ -293,11 +304,11 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
     # 共同身份。它仍是相关的 medium 证据，必须经过 3/5 帧，不能升级成单帧猜测。
     shortlist = _shortlist_consensus(text, text_alt)
     if shortlist is not None:
-        shared_candidate, shared_confidence = shortlist
+        shared_candidate, shared_channel, shared_confidence = shortlist
         return _candidate_from_top(
             slot,
             shared_candidate,
-            evidence=text,
+            evidence=shared_channel,
             confidence=shared_confidence,
             rule="dual_font_shortlist",
             required_frames=3,
@@ -337,6 +348,8 @@ def arbitrate_slot_candidates(
             for index in indexes
             if candidates[index] is not None and candidates[index].evidence_grade == "strong"
         ]
+        # 多个 strong 同时声称同一身份时无法仅凭槽序判断真实位置；保留首槽会把
+        # 过渡帧变成确定位置，因此只有“唯一 strong”可以继续累计，其余情况全拒。
         kept_index = strong_indexes[0] if len(strong_indexes) == 1 else None
         for index in indexes:
             if index == kept_index:

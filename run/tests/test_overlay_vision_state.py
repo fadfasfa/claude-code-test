@@ -540,6 +540,45 @@ class OverlayVisionStateTests(unittest.TestCase):
 
         self.assertIsNone(candidate_from_slot(slot))
 
+    def test_dual_font_shortlist_uses_higher_confidence_channel_payload(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+
+        slot = {
+            "slot": 1,
+            "channels": {
+                "text": {
+                    "top_candidates": [
+                        {"augment_id": "wrong-a", "name": "错误 A", "confidence": 0.91},
+                        {
+                            "augment_id": "primary-version",
+                            "recognition_key": "共同身份",
+                            "name": "共同身份",
+                            "confidence": 0.84,
+                        },
+                    ],
+                },
+                "text_alt": {
+                    "top_candidates": [
+                        {"augment_id": "wrong-b", "name": "错误 B", "confidence": 0.92},
+                        {
+                            "augment_id": "alternate-version",
+                            "recognition_key": "共同身份",
+                            "name": "共同身份",
+                            "confidence": 0.89,
+                        },
+                    ],
+                },
+            },
+        }
+
+        candidate = candidate_from_slot(slot)
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.identity, "共同身份")
+        self.assertEqual(candidate.augment_id, "alternate-version")
+        self.assertEqual(candidate.top_candidates[0]["augment_id"], "wrong-b")
+
     def test_medium_wrong_name_never_flashes_before_strong_correct_candidate(self):
         """固化真机“不动如山 → 吞噬灵魂”序列，弱相关重复不能直接上屏。"""
 

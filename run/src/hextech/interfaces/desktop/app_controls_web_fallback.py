@@ -250,4 +250,3 @@ class DesktopOverlayWebFallbackMixin:
                 self._set_overlay_status_summary("游戏内显示: Web 备份已接管 / Overlay 继续启动", UI_COLORS["warn"])
             return True
         return False
-
