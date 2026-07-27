@@ -326,7 +326,7 @@ def _write_overlay_session_report(
     """记录每种真实 Overlay 会话结果，包含缺失原因而不默认保存截图。
 
     同一事件签名只落盘一次；`latest.json` 始终指向最新结构化结果，历史严格保留
-    最近 20 条，便于真机问题复现而不无限增长运行态。
+    最近 200 条（约 3 局），便于真机问题复现而不无限增长运行态。
     """
 
     slots = snapshot.get("slots") if isinstance(snapshot.get("slots"), list) else []
@@ -338,17 +338,27 @@ def _write_overlay_session_report(
         except (TypeError, ValueError):
             return fallback
 
+    # vision 事件槽从不携带数据层字段；报告在此处把三份来源并到一起：
+    # vision 槽（识别身份）、render model 行（数据状态与命中 hint）、context
+    # （当前英雄）。否则这些字段恒为空串，无法从报告诊断“识别到但无数据”。
+    context_champion_id = str(context.get("champion_id") or "") if isinstance(context, Mapping) else ""
+    source_generation_id = str(source.get("generation_id") or "")
+
+    def _model_row(index: int) -> Mapping[str, Any]:
+        row = rows[index] if index < len(rows) else None
+        return row if isinstance(row, Mapping) else {}
+
     safe_slots = [
         {
             "slot": _safe_slot_number(item.get("slot"), index),
             "state": str(item.get("state") or ""),
             "name": str(item.get("name") or "")[:80],
-            "data_status": str(item.get("data_status") or ""),
-            "data_reason": str(item.get("data_reason") or ""),
-            "generation_id": str(item.get("generation_id") or ""),
-            "vision_id": str(item.get("vision_id") or ""),
-            "canonical_id": str(item.get("canonical_id") or ""),
-            "champion_id": str(item.get("champion_id") or ""),
+            "data_status": str(item.get("data_status") or _model_row(index).get("status_code") or ""),
+            "data_reason": str(item.get("data_reason") or _model_row(index).get("status_text") or ""),
+            "generation_id": str(item.get("generation_id") or source_generation_id),
+            "vision_id": str(item.get("vision_id") or item.get("augment_id") or ""),
+            "canonical_id": str(item.get("canonical_id") or _model_row(index).get("hint_id") or ""),
+            "champion_id": str(item.get("champion_id") or context_champion_id),
             "visual_variant_id": str(item.get("visual_variant_id") or ""),
             "acceptance_rule": str(item.get("acceptance_rule") or ""),
             "evidence_grade": str(item.get("evidence_grade") or ""),

@@ -16,7 +16,7 @@ from hextech.modules.vision.events import build_overlay_event
 from hextech.modules.recommendation.hints import normalize_augment_id
 from hextech.infrastructure.vision.matcher import (
     SlotCandidate,
-    candidate_from_slot,
+    arbitrate_slot_candidates,
     unknown_slot,
 )
 
@@ -32,8 +32,8 @@ MEDIUM_REQUIRED_HITS = 3
 EVIDENCE_MAX_AGE_SECONDS = 6.0
 EVIDENCE_STARVED_OBSERVATIONS = 5
 EVIDENCE_STARVED_SECONDS = 2.0
-PARTIAL_SCENE_GRACE_SECONDS = 6.0
-READY_SCENE_GRACE_SECONDS = 1.5
+PARTIAL_SCENE_GRACE_SECONDS = 0.75
+READY_SCENE_GRACE_SECONDS = 0.75
 EMPTY_SCENE_GRACE_SECONDS = 0.75
 
 
@@ -295,6 +295,8 @@ class SelectionTracker:
         raw_slot: Mapping[str, Any],
         *,
         observed_at: float,
+        candidate: SlotCandidate | None,
+        rejection_reason: str = "",
     ) -> dict[str, Any]:
         """按真实时间和 M-of-N 证据窗口确认单槽候选。
 
@@ -303,7 +305,6 @@ class SelectionTracker:
         """
 
         track = self.slots[index]
-        candidate = candidate_from_slot(raw_slot)
         track.raw_observation_count += 1
         if track.pending_started_at <= 0.0 and track.stable_slot is None:
             track.pending_started_at = observed_at
@@ -333,7 +334,12 @@ class SelectionTracker:
                     "evidence_hits": 0,
                     "evidence_window": len(track.observations),
                     "required_hits": MEDIUM_REQUIRED_HITS,
-                    "rejection_reason": str(raw_slot.get("diagnostic") or raw_slot.get("reason") or temporal_state),
+                    "rejection_reason": str(
+                        rejection_reason
+                        or raw_slot.get("diagnostic")
+                        or raw_slot.get("reason")
+                        or temporal_state
+                    ),
                     "observed_at": observed_at,
                 }
             )
@@ -675,6 +681,12 @@ class SelectionTracker:
             )
             if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < SLOT_COUNT
         }
+        candidates, rejection_reasons = arbitrate_slot_candidates(
+            raw_slots,
+            [track.stable_slot for track in self.slots],
+            cursor_over_slots=cursor_over_slots,
+            slot_count=SLOT_COUNT,
+        )
         rendered_slots: list[dict[str, Any]] = []
         for index in range(SLOT_COUNT):
             if index in cursor_over_slots:
@@ -683,7 +695,15 @@ class SelectionTracker:
                 rendered_slots.append(dict(stable) if stable is not None else unknown_slot(index))
                 continue
             raw_slot = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
-            rendered_slots.append(self._update_slot(index, raw_slot, observed_at=observed_at))
+            rendered_slots.append(
+                self._update_slot(
+                    index,
+                    raw_slot,
+                    observed_at=observed_at,
+                    candidate=candidates[index],
+                    rejection_reason=rejection_reasons[index],
+                )
+            )
         if self._revision_changed:
             self.selection_revision = max(1, self.selection_revision + 1)
             self._revision_changed = False

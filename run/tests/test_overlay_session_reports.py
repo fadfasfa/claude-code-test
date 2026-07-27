@@ -40,11 +40,18 @@ def _snapshot(index: int) -> dict:
     }
 
 
-def test_overlay_sessions_keep_latest_and_only_twenty_structured_reports(
+def test_overlay_sessions_keep_latest_and_bounded_structured_reports(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     from hextech.interfaces.overlay import host_sync
+    from hextech.interfaces.overlay import report_writer as report_writer_module
     from hextech.interfaces.overlay.report_writer import OverlayReportWriter
+
+    # 真实上限必须容得下整局证据（一局实测约 58 份报告，200 ≥ 3 局）；
+    # 修剪机制本身用小上限验证，避免测试写两百个文件。
+    assert report_writer_module.OVERLAY_SESSION_REPORT_LIMIT == 200
+    monkeypatch.setattr(report_writer_module, "OVERLAY_SESSION_REPORT_LIMIT", 20)
 
     writer = OverlayReportWriter(
         tmp_path / "reports" / "overlay_sessions",
@@ -86,6 +93,55 @@ def test_overlay_sessions_keep_latest_and_only_twenty_structured_reports(
     assert latest["render"]["rows"][0]["status_code"] == "CHAMPION_STAT_MISSING"
     assert latest["screenshot"] == ""
     assert latest["timing"]["report_written_at"] >= latest["timing"]["report_enqueued_at"]
+
+
+def test_report_slots_fill_data_fields_from_model_and_context(tmp_path: Path) -> None:
+    """生产 vision 槽从不携带数据层字段；报告必须从 model/context 兜底填充。"""
+
+    from hextech.interfaces.overlay import host_sync
+    from hextech.interfaces.overlay.report_writer import OverlayReportWriter
+
+    snapshot = _snapshot(1)
+    # 还原生产形态：vision 槽只有识别身份，没有任何数据层字段。
+    snapshot["slots"] = [
+        {
+            "slot": 0,
+            "state": "ready",
+            "name": "测试海克斯",
+            "augment_id": "vision-augment-a",
+        }
+    ]
+    model = {
+        "stats": [
+            {
+                "slot": 0,
+                "status_code": "READY",
+                "status_text": "",
+                "hint_id": "canonical-augment-a",
+            }
+        ]
+    }
+    writer = OverlayReportWriter(tmp_path / "reports" / "overlay_sessions", tmp_path / "evidence")
+    writer.start()
+    visibility: dict[str, object] = {"report_writer": writer}
+    try:
+        assert host_sync._write_overlay_session_report(
+            snapshot,
+            model,
+            visibility,
+            context={"ok": True, "champion_id": "59"},
+        )
+        assert writer.wait_empty()
+    finally:
+        writer.close()
+
+    latest = json.loads((tmp_path / "reports" / "overlay_sessions" / "latest.json").read_text(encoding="utf-8"))
+    slot = latest["slots"][0]
+    assert slot["vision_id"] == "vision-augment-a"
+    assert slot["canonical_id"] == "canonical-augment-a"
+    assert slot["champion_id"] == "59"
+    assert slot["data_status"] == "READY"
+    assert slot["generation_id"] == "generation-1"
 
 
 def test_report_submission_does_not_write_on_calling_thread(tmp_path: Path) -> None:

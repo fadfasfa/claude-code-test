@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from hextech.interfaces.overlay.gameflow import GameflowState, lcu_scanner_configured
-from hextech.interfaces.overlay.generation_pin import SelectionGenerationPin
+from hextech.interfaces.overlay.generation_pin import SelectionGenerationPin, selection_key
 from hextech.interfaces.overlay.context_gate import ContextRenderGate
 from hextech.interfaces.overlay.host_common import (
     RENDER_ERROR_BACKOFF_AFTER,
@@ -71,11 +71,12 @@ from hextech.modules.data.overlay_source import (
 from hextech.modules.vision.window import WindowProbeResult, is_scoreboard_key_down
 from hextech.modules.data.ports.paths import get_var_dir
 from hextech.modules.session import build_identity
+from hextech.modules.vision.instance_lock import overlay_instance_lock
 from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
 
 
 logger = logging.getLogger(__name__)
-
+HOST_INSTANCE_LOCK_FILE = get_var_dir() / "locks" / "game_overlay_host.lock"
 
 def _resolve_overlay_render_options(
     snapshot: Mapping[str, Any],
@@ -84,7 +85,6 @@ def _resolve_overlay_render_options(
     display_mode: str,
 ) -> dict[str, Any]:
     """生产与验收共用显示模式和游戏控件禁入区解析。"""
-
     source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
     raw_button_box = source.get("button_box")
     exclusion_zones: list[tuple[int, int, int, int]] = []
@@ -103,7 +103,6 @@ def _resolve_overlay_render_options(
 
 def resolve_event_render_delay_ms(config: Mapping[str, Any], visibility: Mapping[str, Any]) -> int:
     """根据最近选择态事件选择 overlay host 下一帧轮询间隔。"""
-
     base_ms = max(50, int(config.get("event_poll_ms", 250) or 250))
     fast_ms = max(50, int(visibility.get("fast_event_poll_ms") or config.get("fast_event_poll_ms", 60) or 60))
     if bool(visibility.get("render_full_overlay")) or bool(visibility.get("selection_window_active")):
@@ -122,7 +121,6 @@ def resolve_event_render_delay_ms(config: Mapping[str, Any], visibility: Mapping
 
 def resolve_event_render_retry_delay_ms(config: Mapping[str, Any], failure_count: int) -> int:
     """渲染失败后的下一次重试间隔；失败路径不进入 fast poll。"""
-
     base_ms = max(50, int(config.get("event_poll_ms", 250) or 250))
     if int(failure_count or 0) <= RENDER_ERROR_BACKOFF_AFTER:
         return base_ms
@@ -140,7 +138,6 @@ def _schedule_event_render(
     data_source: OverlayDataSource | None = None,
 ) -> Callable[[], None]:
     """单一 tick 同步窗口、事件和显隐；隐藏时不加载 hint/context。"""
-
     fast_poll_ms = max(50, int(config.get("fast_event_poll_ms", 60) or 60))
     fast_hold_seconds = max(0.0, float(config.get("fast_event_hold_ms", 1200) or 1200) / 1000.0)
     source = data_source or SharedOverlayDataSource()
@@ -283,8 +280,11 @@ def _schedule_event_render(
                 )
                 success = True
                 return
-            snapshot_view = generation_pin.resolve(snapshot, source.open_view)
-            visibility["pinned_generation"] = generation_pin.status()
+            current_selection_key = selection_key(snapshot)
+            if current_selection_key != visibility.get("rendered_selection_key"):
+                # 新一轮不能在同步打开 snapshot 的冷启动期间继续显示上一轮文字。
+                canvas.delete("all")
+                canvas.update_idletasks()
             context = source.read_context()
             visibility["context_ok"] = bool(isinstance(context, Mapping) and context.get("ok"))
             visibility["context_champion_id"] = str(context.get("champion_id") or "") if isinstance(context, Mapping) else ""
@@ -305,6 +305,9 @@ def _schedule_event_render(
             visibility["context_held"] = gate_decision.held
             visibility["context_confirmed_at"] = time.time()
             effective_context = gate_decision.payload
+            # Context 门禁不依赖数据快照，必须在可能阻塞数秒的冷启动 open_view 前完成。
+            snapshot_view = generation_pin.resolve(snapshot, source.open_view)
+            visibility["pinned_generation"] = generation_pin.status()
             if snapshot_view is not None:
                 hint_cache = snapshot_view.get_overlay_hints()
                 hint_cache.setdefault("snapshot", {}).update(snapshot_view.status())
@@ -336,6 +339,7 @@ def _schedule_event_render(
             )
             visibility["draw_completed_at"] = time.time()
             visibility["last_presented_at"] = time.time()
+            visibility["rendered_selection_key"] = current_selection_key
             if _snapshot_has_complete_ready_slots(snapshot):
                 visibility["last_ready_frame_at"] = visibility["last_presented_at"]
             _sync_event_visibility(
@@ -415,8 +419,15 @@ def _schedule_event_render(
 
 
 def run_overlay_host(*, diagnostic: bool = False) -> None:
-    """启动独立 overlay 窗口；diagnostic 只增加去重日志。"""
+    """持有共享运行态独占锁后启动 overlay，重复实例不创建 Tk 窗口。"""
+    with overlay_instance_lock(HOST_INSTANCE_LOCK_FILE) as acquired:
+        if not acquired:
+            logger.warning("game_overlay host 已有运行实例，本实例退出。")
+            return
+        _run_overlay_host_locked(diagnostic=diagnostic)
 
+
+def _run_overlay_host_locked(*, diagnostic: bool = False) -> None:
     _prepare_host_hint_cache()
     _set_dpi_awareness()
     config = build_overlay_window_config()
@@ -496,7 +507,6 @@ def run_overlay_host(*, diagnostic: bool = False) -> None:
 
 def run_self_check() -> dict[str, Any]:
     """无 GUI 自检：覆盖真实 Poller、composition root 和规范化契约。"""
-
     first_target = (101, (10, 20, 1930, 1100))
     recovered_target = (202, (0, 0, 2560, 1600))
     error_gate = threading.Event()
@@ -641,7 +651,6 @@ def render_acceptance_screenshot(
     display_mode: str | None = None,
 ) -> dict[str, Any]:
     """用生产显隐与渲染参数生成当前事件的验收截图。"""
-
     from PIL import ImageGrab
 
     target = Path(output_path).resolve()
@@ -662,15 +671,6 @@ def render_acceptance_screenshot(
         vision_window_hwnd=int(event_source.get("window_hwnd") or 0),
         active=bool(event_source.get("selection_window_active") is True),
     )
-    if gate_decision.state == "pending" and gate_decision.reason == "context_confirming":
-        gate_decision = acceptance_gate.evaluate(
-            context,
-            game_instance_id=game_instance_id,
-            window_hwnd=window_hwnd,
-            vision_game_instance_id=str(event_source.get("game_instance_id") or ""),
-            vision_window_hwnd=int(event_source.get("window_hwnd") or 0),
-            active=bool(event_source.get("selection_window_active") is True),
-        )
     snapshot_view = source.open_view()
     session_state = build_runtime_session(
         event=snapshot,

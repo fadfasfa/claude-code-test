@@ -38,6 +38,7 @@ def publish_hextech_run(
     metadata_ids: Iterable[object] | None = None,
     upstream_version: str = "",
     upstream_date: str = "",
+    upstream_marker_sha256: str = "",
     catalog_entries: Sequence[Mapping[str, Any]] | None = None,
     last_good_coverage: Mapping[str, Any] | None = None,
     promote_current: bool = False,
@@ -70,6 +71,7 @@ def publish_hextech_run(
         ),
         upstream_version=upstream_version,
         upstream_date=upstream_date,
+        upstream_marker_sha256=upstream_marker_sha256,
         last_good=last_good_coverage,
     )
     try:

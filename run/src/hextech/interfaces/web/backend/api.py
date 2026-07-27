@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import os
-from urllib.parse import quote, unquote
+from urllib.parse import unquote, urlparse
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
@@ -23,8 +23,8 @@ from hextech.modules.data.catalog.version_catalog import (
     HERO_CATALOG_FILENAME,
     catalog_index_payload,
     catalog_payload,
+    load_augment_name_to_icon_map,
 )
-from hextech.modules.data.catalog.augment_lookup import load_augment_icon_manifest
 from hextech.modules.session.diagnostics import redact_diagnostic_text
 from . import runtime as web_runtime
 
@@ -231,6 +231,29 @@ def _require_local_api_access(request: Request, route_label: str) -> JSONRespons
         web_runtime.logger.warning("已拒绝缺少有效 token 的 %s 请求", route_label)
         return JSONResponse(content={"error": "forbidden_token"}, status_code=status.HTTP_403_FORBIDDEN)
     return None
+
+
+# 与 /assets 路由的前缀白名单保持一致；目录 name_to_icon 现存 augments 与 modes 两类。
+_ICON_MAP_LOCAL_PREFIXES = frozenset({"champions", "augments", "modes", "ui"})
+
+
+def _is_safe_icon_map_local_url(url: str) -> bool:
+    """校验 name_to_icon 的本地路径：必须落在 /assets/ 白名单前缀下且为安全 png 文件名。"""
+
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except Exception:
+        return False
+    if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+        return False
+    if not parsed.path.startswith("/assets/"):
+        return False
+    parts = parsed.path[len("/assets/"):].split("/")
+    if len(parts) < 2 or parts[0] not in _ICON_MAP_LOCAL_PREFIXES:
+        return False
+    if any(not part or part in {".", ".."} for part in parts):
+        return False
+    return web_runtime.is_safe_png_asset_name(unquote(parts[-1]))
 
 
 def _safe_asset_response(assets_dir: str, filename: str):
@@ -449,19 +472,18 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/augment_icon_map")
     async def api_augment_icon_map():
+        # 直接下发目录 name_to_icon 的完整本地路径（/assets/augments/... 等）。
+        # 旧实现用扁平 filename 拼 /assets/{filename}，缺子目录前缀，资产路由必 404。
         try:
-            manifest = load_augment_icon_manifest()
+            payload = load_augment_name_to_icon_map(web_runtime.get_catalog_dir())
             data = {}
-            for item in manifest:
-                name = str(item.get("name", "")).strip()
-                filename = str(item.get("filename", "")).strip()
-                remote_icon_url = str(item.get("icon_url", "")).strip()
-                if not name:
+            for name, icon_url in payload.items():
+                normalized_name = str(name or "").strip()
+                url = str(icon_url or "").strip()
+                if not normalized_name or not url:
                     continue
-                if filename and web_runtime.is_safe_png_asset_name(filename):
-                    data[name] = f"/assets/{quote(filename, safe='')}"
-                elif remote_icon_url and web_runtime.is_safe_redirect_url(remote_icon_url):
-                    data[name] = remote_icon_url
+                if _is_safe_icon_map_local_url(url) or web_runtime.is_safe_redirect_url(url):
+                    data[normalized_name] = url
             return JSONResponse(content=data)
         except Exception as exc:
             web_runtime.logger.warning("统一海克斯目录图标映射读取失败：%s", exc)
@@ -473,7 +495,25 @@ def register_routes(app: FastAPI) -> None:
             snapshot_view = _open_snapshot_view(generation_id)
             data = snapshot_view.get_synergy_data()
             payload = _build_synergy_api_payload(data, champ_id)
-            payload["generation_id"] = str(snapshot_view.status().get("generation_id") or "")
+            status = snapshot_view.status()
+            payload["generation_id"] = str(status.get("generation_id") or "")
+            # 联动数据时效：apex/mayhem 任一 data_stale 时前端展示"联动数据为 X 前"横幅，
+            # 年龄由客户端按 synergy_data_at（最旧一侧）现算，避免服务端冻结年龄失真。
+            source_status = status.get("source_status")
+            synergy_stale = False
+            synergy_data_ats: list[str] = []
+            if isinstance(source_status, dict):
+                for source_name in ("apex", "mayhem"):
+                    value = source_status.get(source_name)
+                    if not isinstance(value, dict):
+                        continue
+                    if str(value.get("data_status") or "") == "data_stale":
+                        synergy_stale = True
+                    data_at = str(value.get("data_at") or "")
+                    if data_at:
+                        synergy_data_ats.append(data_at)
+            payload["synergy_data_stale"] = synergy_stale
+            payload["synergy_data_at"] = min(synergy_data_ats) if synergy_data_ats else ""
             return JSONResponse(content=payload)
         except SnapshotValidationError:
             return _generation_conflict(generation_id) if generation_id else JSONResponse(

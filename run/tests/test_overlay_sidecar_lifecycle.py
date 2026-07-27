@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
 import runpy
 import sys
@@ -21,6 +22,55 @@ from support.process_fakes import FakeProcess
 
 
 class OverlaySidecarLifecycleTests(unittest.TestCase):
+    def test_second_host_exits_before_creating_tk_window(self):
+        from hextech.interfaces.overlay import host_runner
+
+        with (
+            patch.object(host_runner, "overlay_instance_lock", return_value=nullcontext(False)),
+            patch.object(host_runner, "_prepare_host_hint_cache") as prepare_cache,
+            patch.object(host_runner.tk, "Tk") as create_tk,
+        ):
+            host_runner.run_overlay_host()
+
+        prepare_cache.assert_not_called()
+        create_tk.assert_not_called()
+
+    def test_second_sidecar_exits_before_writing_shared_runtime_state(self):
+        from hextech.infrastructure.vision import runner, sidecar
+
+        with (
+            patch.object(runner, "overlay_instance_lock", return_value=nullcontext(False)),
+            patch.object(runner, "_write_sidecar_bootstrap_from_env") as write_bootstrap,
+            patch.object(runner, "_write_sidecar_status") as write_status,
+            patch.object(runner, "run_loop") as run_loop,
+        ):
+            result = sidecar.main([])
+
+        self.assertEqual(result, 0)
+        write_bootstrap.assert_not_called()
+        write_status.assert_not_called()
+        run_loop.assert_not_called()
+
+    def test_host_and_sidecar_instance_locks_share_runtime_lock_directory(self):
+        from hextech.infrastructure.vision import runner
+        from hextech.interfaces.overlay import host_runner
+
+        self.assertEqual(host_runner.HOST_INSTANCE_LOCK_FILE.parent, runner.SIDECAR_INSTANCE_LOCK_FILE.parent)
+        self.assertEqual(host_runner.HOST_INSTANCE_LOCK_FILE.parent.name, "locks")
+        self.assertNotEqual(host_runner.HOST_INSTANCE_LOCK_FILE.name, runner.SIDECAR_INSTANCE_LOCK_FILE.name)
+
+    def test_overlay_instance_lock_is_exclusive(self):
+        from hextech.modules.vision.instance_lock import overlay_instance_lock
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_path = Path(temp_dir) / "overlay.lock"
+            with overlay_instance_lock(lock_path) as first:
+                with overlay_instance_lock(lock_path) as second:
+                    self.assertTrue(first)
+                    self.assertFalse(second)
+            with overlay_instance_lock(lock_path) as reacquired:
+                self.assertTrue(reacquired)
+
     def test_sidecar_run_loop_delegates_to_runner_module(self):
         from hextech.infrastructure.vision import runner, sidecar
 

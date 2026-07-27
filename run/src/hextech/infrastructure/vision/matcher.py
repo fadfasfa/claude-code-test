@@ -17,9 +17,10 @@ from hextech.modules.recommendation.hints import normalize_augment_id
 STRONG_TEXT_MARGIN = 0.025
 # 双字体一致只产生候选；是否对外 ready 统一由时序仲裁器决定。
 DUAL_FONT_CONFIDENCE = 0.70
-# 图标通道高冲突阈值：图标 top1 与文字 top1 不同且图标置信度 ≥ 0.90 → 拒绝弱候选
-HIGH_CONFLICT_ICON_CONFIDENCE = 0.90
-HIGH_CONFLICT_ICON_MARGIN = 0.03
+SHORTLIST_LIMIT = 3
+SHORTLIST_CONFIDENCE = 0.78
+SHORTLIST_CHANNEL_GAP = 0.08
+SHORTLIST_COMBINED_GAP = 0.04
 VARIANT_ICON_CONFIDENCE = 0.80
 VARIANT_ICON_MARGIN = 0.015
 OBSERVED_NAME_CONFIDENCE = 0.92
@@ -99,6 +100,56 @@ def _identity(candidate: Mapping[str, Any]) -> str:
     ).strip()
 
 
+def _shortlist_consensus(
+    text: Mapping[str, Any],
+    alternate: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], Mapping[str, Any], float] | None:
+    """返回两字体短名单中唯一且足够接近各自 Top-1 的共同身份。"""
+
+    def eligible(channel: Mapping[str, Any]) -> dict[str, tuple[Mapping[str, Any], float]]:
+        raw = channel.get("top_candidates")
+        candidates = raw if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)) else []
+        top_confidence = _number(candidates[0].get("confidence")) if candidates and isinstance(candidates[0], Mapping) else 0.0
+        result: dict[str, tuple[Mapping[str, Any], float]] = {}
+        for item in list(candidates)[:SHORTLIST_LIMIT]:
+            if not isinstance(item, Mapping):
+                continue
+            identity = _identity(item)
+            confidence = _number(item.get("confidence"))
+            if (
+                identity
+                and confidence >= SHORTLIST_CONFIDENCE
+                and top_confidence - confidence <= SHORTLIST_CHANNEL_GAP
+            ):
+                result.setdefault(identity, (item, confidence))
+        return result
+
+    primary = eligible(text)
+    secondary = eligible(alternate)
+    ranked: list[tuple[float, str, Mapping[str, Any], Mapping[str, Any]]] = []
+    for identity in primary.keys() & secondary.keys():
+        primary_candidate, primary_confidence = primary[identity]
+        alternate_candidate, alternate_confidence = secondary[identity]
+        if alternate_confidence > primary_confidence:
+            selected_candidate, selected_channel = alternate_candidate, alternate
+        else:
+            selected_candidate, selected_channel = primary_candidate, text
+        ranked.append(
+            (
+                (primary_confidence + alternate_confidence) / 2.0,
+                identity,
+                selected_candidate,
+                selected_channel,
+            )
+        )
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    if not ranked:
+        return None
+    if len(ranked) > 1 and ranked[0][0] - ranked[1][0] < SHORTLIST_COMBINED_GAP:
+        return None
+    return ranked[0][2], ranked[0][3], ranked[0][0]
+
+
 def _visual_variant(
     slot: Mapping[str, Any],
     candidate: Mapping[str, Any],
@@ -145,9 +196,14 @@ def _candidate_from_top(
     top_candidates = tuple(dict(item) for item in list(raw_top)[:3] if isinstance(item, Mapping))
     channels = slot.get("channels") if isinstance(slot.get("channels"), Mapping) else {}
     visual_variant_id, tier = _visual_variant(slot, candidate)
+    # 文本身份与视觉版本分离：visual_variant_id 仍必须由强图标证据消歧，但
+    # 候选自带的规范 augment_id 不应随之丢弃——否则 text_icon_disagree 路径
+    # 接受的卡在 session report 里 vision_id 恒空（2026-07-26 真机 3/10 张），
+    # 识别→数据的诊断链断裂。
+    augment_id = str(candidate.get("augment_id") or "").strip() or visual_variant_id
     return SlotCandidate(
         slot=int(slot.get("slot") or 0),
-        augment_id=visual_variant_id,
+        augment_id=augment_id,
         name=str(candidate.get("name") or identity).strip(),
         tier=tier,
         summary=str(candidate.get("summary") or "").strip(),
@@ -157,7 +213,7 @@ def _candidate_from_top(
         evidence_grade=evidence_grade,
         diagnostic=f"v2_{rule}",
         top_candidates=top_candidates,
-        channels=dict(channels),
+        channels={str(key): value for key, value in channels.items()},
         recognition_key=identity,
         visual_variant_id=visual_variant_id,
     )
@@ -213,26 +269,15 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             evidence_grade="strong",
         )
 
-    def has_high_icon_conflict(identity: str) -> bool:
-        return bool(
-            identity
-            and _identity(icon_top)
-            and _identity(icon_top) != identity
-            and icon_confidence >= HIGH_CONFLICT_ICON_CONFIDENCE
-            and icon_margin >= HIGH_CONFLICT_ICON_MARGIN
-        )
-
     # 双字体一致仍分证据等级：没有图标/视觉版本佐证的重复文字属于相关证据，
-    # 不能因为连续两帧就按 strong 提交。可靠图标明确指向另一身份时，不能让
-    # 文字通道独立形成 ready；真机中这类系统性误匹配会在连续帧重复出现。
+    # 不能因为连续两帧就按 strong 提交。图标与双字体冲突时降为 medium，交给
+    # 3/5 时序确认；图标通道不再绝对否决连续一致的两路文字证据。
     if (
         text_identity
         and text_identity == alt_identity
         and text_confidence >= DUAL_FONT_CONFIDENCE
         and alt_confidence >= DUAL_FONT_CONFIDENCE
     ):
-        if has_high_icon_conflict(text_identity):
-            return None
         icon_support = bool(
             _identity(icon_top) == text_identity
             and icon_confidence >= VARIANT_ICON_CONFIDENCE
@@ -255,9 +300,83 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             evidence_grade="strong" if strong_dual else "medium",
         )
 
+    # 两字体 Top-1 分歧时，只接受双方 Top-3 内唯一、各自距 Top-1 足够近的
+    # 共同身份。它仍是相关的 medium 证据，必须经过 3/5 帧，不能升级成单帧猜测。
+    shortlist = _shortlist_consensus(text, text_alt)
+    if shortlist is not None:
+        shared_candidate, shared_channel, shared_confidence = shortlist
+        return _candidate_from_top(
+            slot,
+            shared_candidate,
+            evidence=shared_channel,
+            confidence=shared_confidence,
+            rule="dual_font_shortlist",
+            required_frames=3,
+            evidence_grade="medium",
+        )
+
     # 单字体、优势字体与 shortlist 仍保留在 channels 供诊断，但不能独立授权
     # ready。真机证据表明重复观察只会复制同一系统性误匹配，并不会增加独立信息。
     return None
+
+
+def arbitrate_slot_candidates(
+    raw_slots: Sequence[Any],
+    stable_slots: Sequence[Mapping[str, Any] | None],
+    *,
+    cursor_over_slots: set[int],
+    slot_count: int,
+) -> tuple[list[SlotCandidate | None], list[str]]:
+    """跨槽抑制同身份过渡帧，只让唯一 strong 继续进入时序窗口。"""
+
+    candidates: list[SlotCandidate | None] = []
+    for index in range(slot_count):
+        raw_slot = raw_slots[index] if index < len(raw_slots) and isinstance(raw_slots[index], Mapping) else {}
+        candidates.append(None if index in cursor_over_slots else candidate_from_slot(raw_slot))
+
+    by_identity: dict[str, list[int]] = {}
+    for index, candidate in enumerate(candidates):
+        if candidate is not None:
+            by_identity.setdefault(candidate.identity, []).append(index)
+
+    rejection_reasons = [""] * slot_count
+    for identity, indexes in by_identity.items():
+        if len(indexes) <= 1:
+            continue
+        strong_indexes = [
+            index
+            for index in indexes
+            if candidates[index] is not None and candidates[index].evidence_grade == "strong"
+        ]
+        # 多个 strong 同时声称同一身份时无法仅凭槽序判断真实位置；保留首槽会把
+        # 过渡帧变成确定位置，因此只有“唯一 strong”可以继续累计，其余情况全拒。
+        kept_index = strong_indexes[0] if len(strong_indexes) == 1 else None
+        for index in indexes:
+            if index == kept_index:
+                continue
+            candidates[index] = None
+            rejection_reasons[index] = f"cross_slot_identity_conflict:{identity}"
+
+    stable_owners: dict[str, set[int]] = {}
+    for index, stable in enumerate(stable_slots):
+        if stable is None:
+            continue
+        identity = str(
+            stable.get("recognition_key")
+            or normalize_augment_id(stable.get("name"))
+            or stable.get("augment_id")
+            or ""
+        )
+        if identity:
+            stable_owners.setdefault(identity, set()).add(index)
+    for index, candidate in enumerate(candidates):
+        if candidate is None:
+            continue
+        owners = stable_owners.get(candidate.identity, set())
+        if owners and index not in owners:
+            candidates[index] = None
+            rejection_reasons[index] = f"cross_slot_stable_identity_conflict:{candidate.identity}"
+    return candidates, rejection_reasons
 
 
 def strong_evidence_identities(slot: Mapping[str, Any]) -> set[str]:

@@ -205,76 +205,43 @@ def test_private_stats_disabled_does_not_expose_published_detail(monkeypatch):
 
 
 def test_detail_loading_branch_requests_authenticated_preload_from_page():
-    detail_js = (RUN_ROOT / "src/hextech/interfaces/web/backend/static/js/detail.js").read_text(encoding="utf-8")
+    loading_js = (RUN_ROOT / "src/hextech/interfaces/web/backend/static/js/detail/loading.js").read_text(encoding="utf-8")
 
-    assert "function requestDetailPreload" in detail_js
-    assert "fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/preload`" in detail_js
-    assert "method: 'POST'" in detail_js
-    assert "credentials: 'same-origin'" in detail_js
-    assert "requestDetailPreload();" in detail_js
+    assert "function requestDetailPreload" in loading_js
+    assert "fetch(`${API_BASE}/api/champion/${encodeURIComponent(hero)}/preload`" in loading_js
+    assert "method: 'POST'" in loading_js
+    assert "credentials: 'same-origin'" in loading_js
+    assert "requestDetailPreload();" in loading_js
 
 
 def test_detail_loading_retry_stops_after_max_attempts(tmp_path):
+    """用 Node 真实 import ESM 模块，验证重试上限与提示文案契约。"""
+
     node = shutil.which("node")
     if not node:
-        pytest.skip("node required for detail.js retry behavior test")
+        pytest.skip("node required for detail loading retry behavior test")
 
-    detail_path = (RUN_ROOT / "src/hextech/interfaces/web/backend/static/js/detail.js").as_posix()
-    script = tmp_path / "detail_retry_test.cjs"
+    loading_uri = (RUN_ROOT / "src/hextech/interfaces/web/backend/static/js/detail/loading.js").as_uri()
+    script = tmp_path / "detail_retry_test.mjs"
     script.write_text(
         f"""
-const fs = require('fs');
-const vm = require('vm');
-const source = fs.readFileSync({json.dumps(detail_path)}, 'utf8');
 const tip = {{ textContent: '' }};
 let scheduled = 0;
-const fakeElement = () => ({{
-  textContent: '',
-  innerHTML: '',
-  className: '',
-  style: {{}},
-  dataset: {{}},
-  classList: {{ add: () => {{}}, remove: () => {{}}, contains: () => false }},
-  removeAttribute: () => {{}},
-  appendChild: () => {{}},
-  remove: () => {{}},
-  addEventListener: () => {{}},
-  querySelector: () => fakeElement(),
-}});
-const context = {{
-  console,
-  window: {{
-    location: {{ origin: 'http://127.0.0.1:8211', protocol: 'http:', host: '127.0.0.1:8211', search: '?hero=Garen' }},
-    setTimeout: (_fn, _delay) => {{ scheduled += 1; return scheduled; }},
-    clearTimeout: () => {{}},
-    addEventListener: () => {{}},
-  }},
-  document: {{
-    readyState: 'loading',
-    body: {{ appendChild: () => {{}} }},
-    createElement: () => fakeElement(),
-    getElementById: () => fakeElement(),
-    querySelector: (selector) => {{
-      if (selector === '#noDataTip .text-sm') return tip;
-      return fakeElement();
-    }},
-    querySelectorAll: () => [],
-    addEventListener: () => {{}},
-  }},
-  fetch: () => Promise.resolve({{ json: () => Promise.resolve([]) }}),
-  BroadcastChannel: class {{ constructor() {{}} postMessage() {{}} addEventListener() {{}} }},
-  WebSocket: class {{}},
-  URLSearchParams,
+globalThis.window = {{
   setTimeout: (_fn, _delay) => {{ scheduled += 1; return scheduled; }},
   clearTimeout: () => {{}},
 }};
-context.window.window = context.window;
-vm.createContext(context);
-vm.runInContext(source, context);
-context.scheduleDetailRetry(12);
+globalThis.document = {{
+  querySelector: (selector) => {{
+    if (selector === '#noDataTip .text-sm') return tip;
+    return {{ textContent: '' }};
+  }},
+}};
+const loading = await import({json.dumps(loading_uri)});
+loading.scheduleDetailRetry(12);
 if (scheduled !== 0) throw new Error(`scheduled after max retry: ${{scheduled}}`);
 if (tip.textContent !== '数据准备时间较长，请稍后刷新页面') throw new Error(`unexpected tip: ${{tip.textContent}}`);
-context.scheduleDetailRetry(11);
+loading.scheduleDetailRetry(11);
 if (scheduled !== 1) throw new Error(`expected one scheduled retry, got ${{scheduled}}`);
 """,
         encoding="utf-8",

@@ -3,6 +3,7 @@
 调用方: DataService acquisition、抓取门禁；关键依赖: runtime_store、BeautifulSoup、pandas。
 """
 
+import hashlib
 import json
 import time
 import pandas as pd
@@ -107,6 +108,23 @@ def _metadata_stat_ids(payload: object) -> list[str]:
     return identifiers
 
 
+def _metadata_marker_sha256(payload: object) -> str:
+    """对真实海克斯条目子集计算稳定内容哈希，作为上游变化 marker。
+
+    aramgg 的 metadata 不携带 version/date，纯字段探测永远为空；改用内容哈希后
+    上游条目增删改（补丁日更新）即可被感知。只哈希条目子集、排除顶层易变
+    meta 键，键排序 + 紧凑分隔保证同内容必得同哈希，避免 CDN 抖动造成假变化。
+    """
+
+    mapping = payload if isinstance(payload, dict) else {}
+    stat_ids = _metadata_stat_ids(payload)
+    if not stat_ids:
+        return ""
+    subset = {key: mapping[key] for key in sorted(stat_ids)}
+    canonical = json.dumps(subset, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def probe_hextech_upstream_marker() -> dict[str, str]:
     """读取既有 metadata 端点的轻量版本标记，不创建独立调度任务。"""
 
@@ -126,8 +144,11 @@ def probe_hextech_upstream_marker() -> dict[str, str]:
             payload = response.json()
             if isinstance(payload, dict):
                 version, date = _upstream_metadata_summary(response, payload)
-                if version or date:
-                    return {"version": version, "date": date}
+                marker = _metadata_marker_sha256(payload)
+                # version/date 为空但条目存在时也返回：内容哈希本身就是有效 marker，
+                # 旧行为在此 fall through 到下一顺位 URL，是 404 探针噪声的来源。
+                if version or date or marker:
+                    return {"version": version, "date": date, "marker_sha256": marker}
         except (RemoteFetchError, ValueError, TypeError):
             continue
     return {}
@@ -199,6 +220,7 @@ def _main_scraper_impl(
         aug_data = aug_response.json()
         metadata_ids = _metadata_stat_ids(aug_data)
         upstream_version, upstream_date = _upstream_metadata_summary(aug_response, aug_data)
+        upstream_marker_sha256 = _metadata_marker_sha256(aug_data)
 
         aug_id_map = {}
         aug_tier_map = {}
@@ -526,6 +548,7 @@ def _main_scraper_impl(
                 metadata_ids=metadata_ids,
                 upstream_version=upstream_version,
                 upstream_date=upstream_date,
+                upstream_marker_sha256=upstream_marker_sha256,
                 promote_current=promote_current,
                 pointer_output=pointer_output,
             )

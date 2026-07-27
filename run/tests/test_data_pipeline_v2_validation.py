@@ -121,6 +121,25 @@ def test_source_status_accepts_old_partial_generation_fields_as_unknown() -> Non
     assert status.run_id == "legacy-run"
     assert status.freshness == "unknown"
     assert status.record_count == 0
+    # 旧 payload 无 stale_age_seconds 时取默认 0，保证升级前 generation 可读。
+    assert status.stale_age_seconds == 0
+
+
+def test_source_status_stale_age_round_trips_and_rejects_negative() -> None:
+    status = SourceStatusV2.from_mapping(
+        {
+            "run_id": "run-1",
+            "freshness": "fresh",
+            "data_status": "data_stale",
+            "data_reason": "source_data_expired",
+            "stale_age_seconds": 345600,
+        }
+    )
+
+    assert status.stale_age_seconds == 345600
+    assert SourceStatusV2.from_mapping(status.to_dict()) == status
+    with pytest.raises(DataContractError, match="stale_age_seconds"):
+        SourceStatusV2.from_mapping({"stale_age_seconds": -1})
 
 
 def test_v2_contracts_reject_invalid_outcomes_and_duplicate_catalog_roles() -> None:

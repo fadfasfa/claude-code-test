@@ -57,21 +57,32 @@ def _hextech_data_state(status: Mapping[str, Any]) -> tuple[str, str, str, str, 
     )
 
 
-def _synergy_data_state(status: Mapping[str, Any]) -> tuple[str, str]:
+def _synergy_data_state(status: Mapping[str, Any]) -> tuple[str, str, str]:
+    """返回 (状态, 稳定诊断码, 最旧 data_at)；data_at 供渲染端现算数据年龄。"""
+
     sources = [_source_status(status, source) for source in ("apex", "mayhem")]
     available = [source for source in sources if source is not None]
     if not available:
-        return ("unknown", "")
+        return ("unknown", "", "")
     degraded = any(
         str(source.get("freshness") or "unknown") == "last_good"
         or str(source.get("data_status") or "unknown") == "data_stale"
         for source in available
     )
+    # 过期码优先：last_good 与 expired 并存时，"数据为 X 前"比"上一代"信息量更大。
     reason = next(
+        (
+            str(source.get("data_reason") or "")
+            for source in available
+            if str(source.get("data_reason") or "") == "source_data_expired"
+        ),
+        "",
+    ) or next(
         (str(source.get("data_reason") or "") for source in available if source.get("data_reason")),
         "",
     )
-    return ("degraded" if degraded else "ready", reason)
+    data_at = min((str(source.get("data_at") or "") for source in available), key=lambda value: value or "~")
+    return ("degraded" if degraded else "ready", reason, data_at)
 
 
 class RecommendationService:
@@ -87,7 +98,7 @@ class RecommendationService:
         hextech_data_status, hextech_status_code, hextech_freshness, hextech_run_id, hextech_reason = (
             _hextech_data_state(status)
         )
-        synergy_data_status, synergy_data_reason = _synergy_data_state(status)
+        synergy_data_status, synergy_data_reason, synergy_data_at = _synergy_data_state(status)
         generation_id = GenerationId(str(status.get("generation_id") or ""))
         source_order = {
             str(item.get("id") or ""): index
@@ -145,6 +156,7 @@ class RecommendationService:
                     "source_run_id": hextech_run_id,
                     "synergy_data_status": synergy_data_status,
                     "synergy_data_reason": synergy_data_reason,
+                    "synergy_data_at": synergy_data_at,
                 }
                 private_stats_enabled = policy.private_stats_enabled
                 lookup_keys = tuple(

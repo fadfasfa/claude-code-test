@@ -72,7 +72,28 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert "_set_overlay_status_summary" in ui_text
     assert "游戏内显示: 正在提交启动请求" in ui_text
     assert "游戏内显示启动请求已提交" in ui_text
-    assert "WINDOW_EXPANDED_GEOMETRY = \"320x740\"" in ui_text
+    assert "WINDOW_EXPANDED_WIDTH = 320" in ui_text
+    assert "WINDOW_BASE_HEIGHT = 740" in ui_text
+    assert "WINDOW_COLLAPSED_WIDTH" not in ui_text
+    assert "WINDOW_MIN_FOLLOW_HEIGHT" not in ui_text
+    assert "_toggle_collapse" not in ui_text
+    assert "collapse_button" not in ui_text
+    assert "<Double-Button-1>" not in ui_text
+    assert "self.private_stats_check.grid(row=0, column=2" in ui_text
+    # 几何锁 1.0 维持基线"狭长"观感（窗宽/头像/padding 不乘 DPI）；
+    # 字体与几何解耦：ui_font 用正磅值由 Tk 按系统 DPI 隐式放大。
+    assert "self._ui_scale = 1.0" in ui_text
+    assert "def ui_font(size_px" in ui_text
+    assert "round(size_px * 0.75)" in ui_text
+    # 禁负像素字体回潮：那条路线曾在锁几何时把 DPI 补偿一并抹掉。
+    assert "-scaled(size_px" not in ui_text
+    # 构建号与长路径不再拼进状态文案；底部收敛为单行状态栏。
+    assert "build_suffix" not in ui_text
+    assert "status_line_label" in ui_text
+    assert "_render_status_line" in ui_text
+    assert "overlay_status_label" not in ui_text
+    assert "self.status_label" not in ui_text
+    assert "resolve_overlay_follow_height" in ui_text
     assert "manage_overlay_runtime=False" in ui_text
     assert "overlay_controller=GameOverlayController(" not in ui_text
     assert "start_vision_sidecar_process" not in ui_text
@@ -214,14 +235,51 @@ def test_desktop_ui_feature_switch_contract() -> None:
     assert [item["id"] for item in equal_win_list] == ["2", "1"]
 
 
-def test_desktop_self_role_has_stronger_visual_priority_than_teammate() -> None:
-    from hextech.interfaces.desktop import app as desktop_app
+def test_overlay_follow_height_never_exceeds_client_bottom() -> None:
+    """跟随高度以 740 为基值；客户端更矮时压缩到客户端底缘，极矮时保住可用下限。"""
 
-    self_style = desktop_app._selection_role_style("self")
-    teammate_style = desktop_app._selection_role_style("teammate")
-    bench_style = desktop_app._selection_role_style("bench")
+    from hextech.interfaces.desktop.app_shared import (
+        WINDOW_BASE_HEIGHT,
+        resolve_overlay_follow_height,
+    )
 
-    assert self_style["border_width"] == 3
-    assert self_style["marker_width"] > teammate_style["marker_width"] > bench_style["marker_width"]
-    assert self_style["accent"] != teammate_style["accent"]
-    assert self_style["surface"] != bench_style["surface"]
+    # 客户端足够高：维持基值
+    assert resolve_overlay_follow_height(100, 1200) == WINDOW_BASE_HEIGHT
+    # 1280x720 小客户端（窗口顶 y=80、内容区底缘 800）：下端不越过底缘
+    assert resolve_overlay_follow_height(80, 800) == 720
+    # 工作区底缘低于客户端底缘时取更小者（客户端伸到任务栏后面）
+    assert resolve_overlay_follow_height(100, 1200, workarea_bottom=700) == 600
+    # 极矮客户端仍以底缘为硬上限，不保留会造成越界的最小高度。
+    assert resolve_overlay_follow_height(500, 560) == 60
+    assert resolve_overlay_follow_height(500, 560) <= 560 - 500
+
+
+def test_compact_card_palette_contract() -> None:
+    """强度与角色颜色必须保持已确认的紧凑卡片视觉契约。"""
+
+    from hextech.interfaces.desktop.app_shared import TIER_COLORS, UI_COLORS
+
+    assert {tier: style["bg"] for tier, style in TIER_COLORS.items()} == {
+        "T1": "#F2C94C",
+        "T2": "#22D3A6",
+        "T3": "#4169E1",
+        "T4": "#7F8C9D",
+        "T5": "#D64550",
+    }
+    assert UI_COLORS["selected"] == "#F2C94C"
+    assert UI_COLORS["teammate"] == "#18D6C4"
+
+
+def test_compact_card_geometry_contract() -> None:
+    """锁定卡片的关键像素预算，避免紧凑布局被无意撑开。"""
+
+    desktop_dir = RUN_DIR / "src" / "hextech" / "interfaces" / "desktop"
+    view_text = (desktop_dir / "app_view.py").read_text(encoding="utf-8")
+    card_body = view_text.split("    def _build_candidate_card", 1)[1].split("    def _bind_card_click", 1)[0]
+
+    assert "size = scaled(48, scale)" in view_text
+    assert "width=scaled(6, scale)" in card_body
+    assert "padx=scaled(6, scale)" in card_body
+    assert "pady=scaled(4, scale)" in card_body
+    assert "width=scaled(72, scale)" in card_body
+    assert "pady=scaled(2, scale)" in card_body

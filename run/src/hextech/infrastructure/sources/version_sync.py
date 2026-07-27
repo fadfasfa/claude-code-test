@@ -91,10 +91,10 @@ HEXTECH_PRIMARY_BASE_URL = "https://aramgg.com"
 # hextech.dtodo.cn 实测对所有路径 301 永久重定向回 aramgg.com，已退化为同一源。
 # 保留常量定义为兼容（外部 import 引用），但已从 URL 元组中移除，避免假性多源。
 HEXTECH_FALLBACK_BASE_URL = "https://hextech.dtodo.cn"
-# 海克斯强化元数据：aramgg 主源 + apexlol.info 独立备份（实测可用）。
+# 海克斯强化元数据：aramgg 单源。apexlol.info 备份已 404 下线（2026-07 实测），
+# 保留在顺位里只会让上游探针每轮白打一次 404，故移除；出现新镜像源时再加回。
 HEXTECH_AUGMENT_METADATA_URLS = (
     f"{HEXTECH_PRIMARY_BASE_URL}/data/aram-mayhem-augments.zh_cn.json",
-    "https://apexlol.info/data/aram-mayhem-augments.zh_cn.json",
 )
 # 英雄统计当前只有 aramgg 一个真实源（dtodo 仅为重定向别名，已移除）。
 # 未来若出现独立镜像源可在此加回顺位；fetch_with_retry 自身重试仍在。

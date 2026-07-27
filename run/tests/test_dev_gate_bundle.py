@@ -134,6 +134,11 @@ def test_packaging_config() -> None:
         assert f'"{dependency}"' in build_script
     for dependency in ("pystray", "pystray._win32"):
         assert f'"{dependency}"' in build_script
+    # hidden-import 声明只保证"写了"；构建前必须强校验环境可解析，
+    # 否则 PyInstaller 只警告不报错，产物静默缺模块（pystray 真机翻车回归）。
+    assert "def verify_hidden_imports_importable" in build_script
+    assert "verify_hidden_imports_importable()" in build_script
+    assert "find_spec" in build_script
     for dependency in ("scrapling",):
         assert f'"{dependency}"' in build_script
     assert "resolve_tcl_runtime_dirs" in build_script

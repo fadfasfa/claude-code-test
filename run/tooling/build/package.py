@@ -211,6 +211,32 @@ def write_generated_manifest(build_root: Path, *, verified_snapshot_root: Path |
     return manifest_path
 
 
+def verify_hidden_imports_importable() -> None:
+    """构建前强校验 hidden-import 在当前解释器全部可解析。
+
+    PyInstaller 对收集不到的 hidden-import 只打警告继续构建，产物会静默缺模块；
+    2026-07-26 真机实测：构建 venv 未装 pystray，部署产物托盘每次启动必崩
+    （ModuleNotFoundError），而文本门禁只能看到脚本里声明过、看不到环境缺装。
+    """
+
+    import importlib.util
+
+    missing: list[str] = []
+    for module_name in PYINSTALLER_HIDDEN_IMPORTS:
+        try:
+            spec = importlib.util.find_spec(module_name)
+        except (ImportError, ValueError):
+            spec = None
+        if spec is None:
+            missing.append(module_name)
+    if missing:
+        print_error(
+            "以下 hidden-import 在构建环境不可解析，请先在构建 venv 补齐依赖："
+            + ", ".join(missing)
+        )
+        sys.exit(1)
+
+
 def resolve_pyinstaller_command() -> tuple[list[str], Path]:
     """返回当前解释器的 PyInstaller，禁止跨 Python 版本拼装运行时。"""
 
@@ -370,6 +396,7 @@ def build_exe(
     """执行 PyInstaller 主构建流程，并返回临时原始产物目录。"""
 
     print_step("构建可执行文件")
+    verify_hidden_imports_importable()
     work_path = build_root / "pyinstaller-work"
     dist_path = build_root / "pyinstaller-dist"
     spec_path = work_path

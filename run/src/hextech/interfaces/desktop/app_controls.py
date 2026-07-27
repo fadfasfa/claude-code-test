@@ -1,20 +1,32 @@
 """Desktop DesktopControlsMixin 职责模块。"""
+import time as _time
+
+from hextech.interfaces.desktop.app_controls_web_fallback import DesktopOverlayWebFallbackMixin
 from hextech.interfaces.desktop.app_shared import (
-    Mapping,
     UI_COLORS,
     _format_game_overlay_host_reason,
     _format_supervisor_game_overlay_status,
     export_user_diagnostics,
+    format_data_age_suffix,
     logger,
     save_ui_feature_flags,
+    scaled,
     threading,
     tk,
+    ui_font,
     ui_runtime,
 )
 
+# 状态行合成参数：service 消息（按钮反馈等）在 6 秒新鲜窗口内优先显示，
+# 之后自然让位给 overlay 摘要；单行按 CJK 宽度预算截断（8pt 在 150% 下
+# 约 16px/字，18 字 ≈ 288px，加状态点与边距不超过 320px 窗宽）。
+STATUS_SERVICE_FRESH_SECONDS = 6.0
+STATUS_LINE_MAX_CHARS = 18
 
-class DesktopControlsMixin:
+
+class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
     def _build_ui(self):
+        scale = self._ui_scale_value()
         self.title_frame = tk.Frame(self.root, bg=UI_COLORS["header"])
         self.title_frame.pack(fill=tk.X)
 
@@ -22,15 +34,12 @@ class DesktopControlsMixin:
             self.title_frame,
             text="备战席",
             bg=UI_COLORS["header"],
-            fg=UI_COLORS["text"],
-            font=("Microsoft YaHei", 12, "bold"),
-            pady=8,
+            fg=UI_COLORS["gold"],
+            font=ui_font(16, bold=True),
+            pady=scaled(8, scale),
         )
-        self.title_bar.pack(side=tk.LEFT, padx=(10, 0))
         self.title_bar.bind("<ButtonPress-1>", self.start_move)
         self.title_bar.bind("<B1-Motion>", self.do_move)
-        # 双击标题栏在 320 px / 80 px 之间切换，便于单屏游戏窗口模式让出主屏视线
-        self.title_bar.bind("<Double-Button-1>", self._toggle_collapse)
 
         self.exit_button = tk.Button(
             self.title_frame,
@@ -46,7 +55,7 @@ class DesktopControlsMixin:
             width=2,
             padx=0,
             pady=1,
-            font=("Microsoft YaHei", 11, "bold"),
+            font=ui_font(15, bold=True),
             cursor="hand2",
         )
         # 右上角“×”只隐藏到托盘；完全退出必须使用托盘菜单，避免误杀识别进程。
@@ -62,14 +71,16 @@ class DesktopControlsMixin:
             activeforeground=UI_COLORS["text"],
             relief=tk.FLAT,
             bd=0,
-            padx=8,
-            pady=3,
-            font=("Microsoft YaHei", 8, "bold"),
+            padx=scaled(8, scale),
+            pady=scaled(3, scale),
+            font=ui_font(11, bold=True),
             cursor="hand2",
         )
         self.diagnostics_button.pack(side=tk.RIGHT, padx=(0, 8), pady=6)
+        # 标题文本最后 pack：空间不足时优先保住右侧诊断与关闭按钮。
+        self.title_bar.pack(side=tk.LEFT, padx=(scaled(10, scale), 0))
 
-        self.feature_frame = tk.Frame(self.root, bg=UI_COLORS["base"], padx=10, pady=8)
+        self.feature_frame = tk.Frame(self.root, bg=UI_COLORS["base"], padx=6, pady=6)
         self.feature_frame.pack(fill=tk.X)
         self._feature_toggle_widgets = []
         self.web_frontend_var = tk.BooleanVar(value=self.feature_flags["web_frontend_enabled"])
@@ -83,49 +94,98 @@ class DesktopControlsMixin:
             self._toggle_web_frontend,
             accent=UI_COLORS["cyan"],
         )
-        self.web_frontend_check.grid(row=0, column=0, sticky="ew", padx=(0, 8), pady=(0, 4))
+        self.web_frontend_check.grid(row=0, column=0, sticky="ew", padx=(0, 2))
         self.game_overlay_check = self._build_feature_toggle(
             "游戏内显示",
             self.game_overlay_var,
             self._toggle_game_overlay,
             accent=UI_COLORS["cyan"],
         )
-        self.game_overlay_check.grid(row=0, column=1, sticky="ew", pady=(0, 4))
+        self.game_overlay_check.grid(row=0, column=1, sticky="ew", padx=2)
         self.private_stats_check = self._build_feature_toggle(
             "私用统计",
             self.private_stats_var,
             self._toggle_private_policy_stats,
             accent=UI_COLORS["green"],
         )
-        self.private_stats_check.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(2, 0))
+        self.private_stats_check.grid(row=0, column=2, sticky="ew", padx=(2, 0))
 
         self.feature_frame.grid_columnconfigure(0, weight=1)
         self.feature_frame.grid_columnconfigure(1, weight=1)
+        self.feature_frame.grid_columnconfigure(2, weight=1)
 
-        self.canvas = tk.Canvas(self.root, bg=UI_COLORS["base"], highlightthickness=0)
+        self.list_shell = tk.Frame(self.root, bg=UI_COLORS["base"])
+        self.list_shell.pack(fill=tk.BOTH, expand=True, padx=(scaled(10, scale), 0), pady=(6, 4))
+        self.canvas = tk.Canvas(self.list_shell, bg=UI_COLORS["base"], highlightthickness=0)
         self.list_frame = tk.Frame(self.canvas, bg=UI_COLORS["base"])
-        self.canvas.pack(fill=tk.BOTH, expand=True, padx=(10, 0), pady=(6, 4))
-        self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
+        # 细滚动条：给长列表一个可见的位置指示，滚轮行为保持不变
+        self.list_scrollbar = tk.Scrollbar(
+            self.list_shell,
+            orient=tk.VERTICAL,
+            command=self.canvas.yview,
+            width=scaled(8, scale),
+        )
+        self.canvas.configure(yscrollcommand=self.list_scrollbar.set)
+        # 滚动条不在此处 pack：只在内容真正溢出可视高度时由 _sync_list_scrollbar
+        # 显示，未溢出时常驻的滑块会破坏观感（真机反馈）。
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._list_window_id = self.canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
+        # 卡片宽度必须跟随 canvas 实际宽度，否则 fill=X 只能撑到内容自然宽度
+        self.canvas.bind(
+            "<Configure>",
+            lambda e: (
+                self.canvas.itemconfigure(self._list_window_id, width=e.width),
+                self._sync_list_scrollbar(),
+            ),
+        )
 
-        self.root.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
-        self.list_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        def _on_mousewheel(event):
+            # 滚轮只在指针位于列表区域内时生效，不再全局拦截整个应用的滚轮；
+            # 内容未溢出（滚动条隐藏）时不响应，避免无意义的视图抖动。
+            node = self.root.winfo_containing(event.x_root, event.y_root)
+            while node is not None:
+                if node is self.list_shell:
+                    if self.list_scrollbar.winfo_ismapped():
+                        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                    break
+                node = getattr(node, "master", None)
 
-        self.status_label = tk.Label(
-            self.root,
+        self.root.bind_all("<MouseWheel>", _on_mousewheel)
+        self.list_frame.bind(
+            "<Configure>",
+            lambda e: (
+                self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+                self._sync_list_scrollbar(),
+            ),
+        )
+
+        # 底部单行状态栏：状态点 + 关键短语。旧结构是两条独立 Label，320px 宽度
+        # 下长文案（构建号、诊断路径）必然被裁切；收敛为单行后由
+        # _render_status_line 按通道优先级合成，细节移入日志与诊断导出。
+        # 点 + 文字放进内层 frame 整体水平居中（真机反馈：左对齐观感差）。
+        # 外层 padx 必须对称：非对称值会让内层居中相对窗口真实中心产生偏移。
+        self.status_bar = tk.Frame(self.root, bg=UI_COLORS["base"])
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(2, 6))
+        self._status_bar_inner = tk.Frame(self.status_bar, bg=UI_COLORS["base"])
+        self._status_bar_inner.pack()
+        self.status_dot = tk.Canvas(
+            self._status_bar_inner,
+            width=10,
+            height=10,
+            bg=UI_COLORS["base"],
+            highlightthickness=0,
+            bd=0,
+        )
+        self.status_dot.pack(side=tk.LEFT, padx=(0, 5))
+        self.status_line_label = tk.Label(
+            self._status_bar_inner,
             text="系统初始化中...",
             bg=UI_COLORS["base"],
             fg=UI_COLORS["muted"],
-            font=("Microsoft YaHei", 8),
+            font=ui_font(11),
         )
-        self.status_label.pack(side=tk.BOTTOM, pady=5)
-        self.overlay_status_label = tk.Label(
-            self.root,
-            text="",
-            bg=UI_COLORS["base"],
-            fg=UI_COLORS["muted"],
-            font=("Microsoft YaHei", 8),
-        )
-        self.overlay_status_label.pack(side=tk.BOTTOM, pady=(0, 2))
+        self.status_line_label.pack(side=tk.LEFT)
+        self._render_status_line()
         self._refresh_feature_toggle_styles()
 
     def _build_feature_toggle(
@@ -136,15 +196,24 @@ class DesktopControlsMixin:
         *,
         accent: str,
     ) -> "tk.Frame":
-        frame = tk.Frame(self.feature_frame, bg=UI_COLORS["base"], cursor="hand2", padx=2, pady=2)
-        dot = tk.Canvas(frame, width=15, height=15, bg=UI_COLORS["base"], highlightthickness=0, bd=0, cursor="hand2")
-        dot.pack(side=tk.LEFT, padx=(0, 5))
+        scale = self._ui_scale_value()
+        frame = tk.Frame(self.feature_frame, bg=UI_COLORS["base"], cursor="hand2", padx=1, pady=2)
+        dot = tk.Canvas(
+            frame,
+            width=scaled(13, scale),
+            height=scaled(13, scale),
+            bg=UI_COLORS["base"],
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+        dot.pack(side=tk.LEFT, padx=(0, 3))
         label = tk.Label(
             frame,
             text=text,
             bg=UI_COLORS["base"],
             fg=UI_COLORS["muted"],
-            font=("Microsoft YaHei", 9, "bold"),
+            font=ui_font(11, bold=True),
             cursor="hand2",
         )
         label.pack(side=tk.LEFT)
@@ -172,6 +241,11 @@ class DesktopControlsMixin:
         return frame
 
     def _refresh_feature_toggle_styles(self) -> None:
+        scale = self._ui_scale_value()
+
+        def px(value: int) -> int:
+            return scaled(value, scale)
+
         for toggle in getattr(self, "_feature_toggle_widgets", []):
             variable = toggle["variable"]
             dot = toggle["dot"]
@@ -183,11 +257,11 @@ class DesktopControlsMixin:
             try:
                 dot.delete("all")
                 if enabled:
-                    dot.create_oval(4, 4, 11, 11, fill=accent, outline=accent)
-                    dot.create_oval(2, 2, 13, 13, outline=accent)
+                    dot.create_oval(px(4), px(4), px(11), px(11), fill=accent, outline=accent)
+                    dot.create_oval(px(2), px(2), px(13), px(13), outline=accent)
                     label.config(fg=UI_COLORS["warn"] if busy else UI_COLORS["text"])
                 else:
-                    dot.create_oval(4, 4, 11, 11, fill="", outline=UI_COLORS["dim"])
+                    dot.create_oval(px(4), px(4), px(11), px(11), fill="", outline=UI_COLORS["dim"])
                     label.config(fg=UI_COLORS["warn"] if busy else UI_COLORS["dim"])
             except tk.TclError:
                 logger.debug("刷新功能开关样式失败。", exc_info=True)
@@ -248,8 +322,15 @@ class DesktopControlsMixin:
             def finish() -> None:
                 if hasattr(self, "diagnostics_button"):
                     self.diagnostics_button.config(state=tk.NORMAL)
-                zip_path = result.zip_path
-                self._set_status(f"诊断已导出: {zip_path}", UI_COLORS["green"])
+                zip_path = str(result.zip_path)
+                # 完整路径进剪贴板与日志：320px 单行状态栏装不下长路径。
+                try:
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(zip_path)
+                except tk.TclError:
+                    logger.debug("诊断路径写入剪贴板失败。", exc_info=True)
+                logger.info("诊断已导出: %s", zip_path)
+                self._set_status("诊断已导出 · 路径已复制", UI_COLORS["green"])
 
             self._run_on_ui_thread(finish)
 
@@ -279,241 +360,6 @@ class DesktopControlsMixin:
         """启动失败只回滚控件显示，不把失败态当成新的用户偏好落盘。"""
 
         variable.set(bool(self.feature_flags.get(key)))
-
-    def _sync_web_process_handle(self) -> None:
-        service_manager = self.service_manager
-        self.web_process = service_manager.web.process if service_manager is not None and service_manager.is_web_running() else None
-
-    def _ensure_overlay_fallback_state(self) -> None:
-        """兼容轻量测试对象和旧反序列化实例，惰性补齐 fallback 运行态。"""
-
-        if not hasattr(self, "_web_operation_lock"):
-            self._web_operation_lock = threading.Lock()
-        if not hasattr(self, "_fallback_web_lock"):
-            self._fallback_web_lock = threading.Lock()
-        if not hasattr(self, "_fallback_web_owned"):
-            self._fallback_web_owned = False
-        if not hasattr(self, "_fallback_web_starting"):
-            self._fallback_web_starting = False
-        if not hasattr(self, "_fallback_web_stopping"):
-            self._fallback_web_stopping = False
-        if not hasattr(self, "_fallback_web_cleanup_requested"):
-            self._fallback_web_cleanup_requested = False
-        if not hasattr(self, "_fallback_web_user_adopted"):
-            self._fallback_web_user_adopted = False
-        if not hasattr(self, "_fallback_web_error"):
-            self._fallback_web_error = ""
-        if not hasattr(self, "_fallback_web_generation"):
-            self._fallback_web_generation = 0
-        if not hasattr(self, "_fallback_web_failed_key"):
-            self._fallback_web_failed_key = ""
-
-    def _user_web_enabled(self) -> bool:
-        variable = getattr(self, "web_frontend_var", None)
-        if variable is not None:
-            return bool(variable.get())
-        return bool(getattr(self, "feature_flags", {}).get("web_frontend_enabled", False))
-
-    def _adopt_fallback_web_for_user(self) -> None:
-        """用户主动开启 Web 后转移所有权，后续 Overlay 恢复不得自动关闭。"""
-
-        self._ensure_overlay_fallback_state()
-        with self._fallback_web_lock:
-            self._fallback_web_generation += 1
-            self._fallback_web_owned = False
-            self._fallback_web_cleanup_requested = False
-            self._fallback_web_user_adopted = True
-
-    def _start_overlay_web_fallback(self, fallback_key: str) -> None:
-        self._ensure_overlay_fallback_state()
-        with self._fallback_web_lock:
-            if self._fallback_web_owned or self._fallback_web_starting or self._fallback_web_stopping:
-                return
-            if self._fallback_web_failed_key == fallback_key:
-                return
-            self._fallback_web_generation += 1
-            generation = self._fallback_web_generation
-            self._fallback_web_starting = True
-            self._fallback_web_cleanup_requested = False
-            self._fallback_web_user_adopted = False
-            self._fallback_web_error = ""
-
-        def worker() -> None:
-            error: Exception | None = None
-            browser_opened = True
-            manager = None
-            should_cleanup = False
-            with self._web_operation_lock:
-                with self._fallback_web_lock:
-                    cancelled = bool(
-                        generation != self._fallback_web_generation
-                        or self._fallback_web_user_adopted
-                        or self._closing
-                    )
-                    if cancelled:
-                        self._fallback_web_starting = False
-                if cancelled:
-                    return
-                try:
-                    manager = self.service_manager
-                    if manager is None:
-                        raise RuntimeError("后台服务尚未就绪")
-                    manager.start_web()
-                except Exception as exc:
-                    error = exc
-                if error is None and not self._closing:
-                    try:
-                        browser_opened = ui_runtime.open_companion_browser(self.web_port_file)
-                    except Exception:
-                        browser_opened = False
-                        logger.warning("Overlay Web 备份已启动，但受管浏览器打开失败。", exc_info=True)
-
-                with self._fallback_web_lock:
-                    self._fallback_web_starting = False
-                    user_owned = self._fallback_web_user_adopted or generation != self._fallback_web_generation
-                    should_cleanup = bool(
-                        error is None
-                        and not user_owned
-                        and (self._fallback_web_cleanup_requested or self._closing)
-                    )
-                    self._fallback_web_owned = bool(error is None and not user_owned and not should_cleanup)
-                    self._fallback_web_error = str(error or "")
-                    self._fallback_web_failed_key = fallback_key if error is not None else ""
-                    self._fallback_web_cleanup_requested = False
-
-                if should_cleanup:
-                    ui_runtime.close_companion_browser()
-                    try:
-                        if manager is not None:
-                            manager.stop_web()
-                    except Exception as exc:
-                        error = exc
-                        with self._fallback_web_lock:
-                            self._fallback_web_owned = True
-                            self._fallback_web_error = str(exc)
-
-            self._sync_web_process_handle()
-
-            def finish() -> None:
-                if error is not None:
-                    self._set_overlay_status_summary(
-                        f"游戏内显示: Web 备份启动失败 ({error})",
-                        UI_COLORS["error"],
-                    )
-                elif should_cleanup:
-                    self._set_overlay_status_summary("游戏内显示: Overlay 已恢复", UI_COLORS["green"])
-                elif not browser_opened:
-                    self._set_overlay_status_summary("游戏内显示: Web 备份已接管，浏览器打开失败", UI_COLORS["warn"])
-                else:
-                    self._set_overlay_status_summary("游戏内显示: Web 备份已接管", UI_COLORS["warn"])
-
-            self._run_on_ui_thread(finish)
-
-        self._start_tracked_thread(worker, name="hextech-overlay-web-fallback-start")
-
-    def _request_overlay_web_fallback_cleanup(self) -> None:
-        self._ensure_overlay_fallback_state()
-        with self._fallback_web_lock:
-            if self._fallback_web_starting:
-                self._fallback_web_cleanup_requested = True
-                return
-            if not self._fallback_web_owned or self._fallback_web_stopping:
-                return
-            generation = self._fallback_web_generation
-            self._fallback_web_stopping = True
-
-        def worker() -> None:
-            error: Exception | None = None
-            with self._web_operation_lock:
-                with self._fallback_web_lock:
-                    cancelled = bool(
-                        generation != self._fallback_web_generation
-                        or self._fallback_web_user_adopted
-                    )
-                    if cancelled:
-                        self._fallback_web_stopping = False
-                if cancelled:
-                    return
-                manager = self.service_manager
-                ui_runtime.close_companion_browser()
-                try:
-                    if manager is not None:
-                        manager.stop_web()
-                except Exception as exc:
-                    error = exc
-            with self._fallback_web_lock:
-                self._fallback_web_stopping = False
-                self._fallback_web_owned = error is not None
-                self._fallback_web_error = str(error or "")
-            self._sync_web_process_handle()
-
-            def finish() -> None:
-                if error is None:
-                    self._set_overlay_status_summary("游戏内显示: Overlay 已恢复", UI_COLORS["green"])
-                else:
-                    self._set_overlay_status_summary(
-                        f"游戏内显示: Overlay 已恢复，Web 备份关闭失败 ({error})",
-                        UI_COLORS["warn"],
-                    )
-
-            self._run_on_ui_thread(finish)
-
-        self._start_tracked_thread(worker, name="hextech-overlay-web-fallback-stop")
-
-    def _coordinate_overlay_web_fallback(self, overlay: Mapping[str, object]) -> bool:
-        """根据 Supervisor 状态编排临时 Web；返回是否已输出 fallback 专用状态。"""
-
-        self._ensure_overlay_fallback_state()
-        overlay_enabled = bool(self.game_overlay_var.get())
-        status = str(overlay.get("status") or "")
-        fallback_key = str(overlay.get("generation") or "default")
-        fallback_recommended = bool(overlay.get("fallback_recommended")) or (
-            overlay_enabled and status == "error"
-        )
-        if self._user_web_enabled():
-            self._adopt_fallback_web_for_user()
-        if not overlay_enabled:
-            self._request_overlay_web_fallback_cleanup()
-            return False
-        if status == "running":
-            with self._fallback_web_lock:
-                self._fallback_web_failed_key = ""
-            if not self._user_web_enabled():
-                self._request_overlay_web_fallback_cleanup()
-                with self._fallback_web_lock:
-                    cleanup_active = self._fallback_web_stopping or self._fallback_web_cleanup_requested
-                if cleanup_active:
-                    self._set_overlay_status_summary("游戏内显示: Overlay 已恢复，正在关闭 Web 备份", UI_COLORS["green"])
-                    return True
-            return False
-        if fallback_recommended:
-            if not self._user_web_enabled():
-                self._start_overlay_web_fallback(fallback_key)
-            with self._fallback_web_lock:
-                owned = self._fallback_web_owned
-                starting = self._fallback_web_starting
-                fallback_error = self._fallback_web_error
-            if status == "error":
-                if owned or self._user_web_enabled():
-                    self._set_overlay_status_summary("游戏内显示: Overlay 最终失败 / Web 备份保留", UI_COLORS["error"])
-                elif starting:
-                    self._set_overlay_status_summary("游戏内显示: Overlay 最终失败 / Web 备份启动中", UI_COLORS["error"])
-                else:
-                    self._set_overlay_status_summary(
-                        f"游戏内显示: Overlay 与 Web 备份均启动失败 ({fallback_error or 'unknown'})",
-                        UI_COLORS["error"],
-                    )
-            elif starting:
-                self._set_overlay_status_summary("游戏内显示: Web 备份启动中 / Overlay 继续启动", UI_COLORS["warn"])
-            elif fallback_error:
-                self._set_overlay_status_summary(
-                    f"游戏内显示: Web 备份启动失败，Overlay 继续启动 ({fallback_error})",
-                    UI_COLORS["error"],
-                )
-            else:
-                self._set_overlay_status_summary("游戏内显示: Web 备份已接管 / Overlay 继续启动", UI_COLORS["warn"])
-            return True
-        return False
 
     def _raise_if_service_error(self, service_name: str) -> None:
         if self.service_manager is None:
@@ -681,16 +527,64 @@ class DesktopControlsMixin:
         logger.info("桌面不直接刷新数据：refresh 与 generation 发布由 DataService 负责。")
 
     def _set_status(self, text, color):
-        if hasattr(self, "status_label") and self.status_label.winfo_exists():
-            self.status_label.config(text=text, fg=color)
+        """service 通道写入：调用方语义不变，渲染收敛到单行状态栏。"""
+
+        channels = getattr(self, "_status_channels", None)
+        if channels is None:
+            return
+        channels["service"] = {"text": str(text or ""), "color": color, "at": _time.monotonic()}
+        self._render_status_line()
 
     def _set_overlay_status_summary(self, text: str, color: str) -> None:
-        """只更新游戏内显示的二级状态，不覆盖主服务/英雄状态栏。"""
+        """overlay 通道写入：只更新游戏内显示摘要，不覆盖 service 通道。"""
 
         self._overlay_status_text = str(text or "")
         self._overlay_status_color = color
-        if hasattr(self, "overlay_status_label") and self.overlay_status_label.winfo_exists():
-            self.overlay_status_label.config(text=self._overlay_status_text, fg=color)
+        channels = getattr(self, "_status_channels", None)
+        if channels is None:
+            return
+        channels["overlay"] = {"text": self._overlay_status_text, "color": color, "at": _time.monotonic()}
+        self._render_status_line()
+
+    def _render_status_line(self) -> None:
+        """合成单行状态：error 置顶 → service 新鲜窗口 → overlay → 回落 service。
+
+        时效后缀只在整行放得下时追加（保住主状态不被截断）；widget 缺失时
+        静默跳过，兼容测试里的轻量伪对象。
+        """
+
+        channels = getattr(self, "_status_channels", None)
+        if channels is None:
+            return
+        service = channels["service"]
+        overlay = channels["overlay"]
+        now = _time.monotonic()
+        if service["text"] and service["color"] == UI_COLORS["error"]:
+            chosen = service
+        elif service["text"] and now - float(service["at"]) < STATUS_SERVICE_FRESH_SECONDS:
+            chosen = service
+        elif overlay["text"]:
+            chosen = overlay
+        else:
+            chosen = service
+        text = str(chosen["text"] or "")
+        color = chosen["color"]
+        if color != UI_COLORS["error"]:
+            suffix = format_data_age_suffix(getattr(self, "_data_created_ts", 0.0), _time.time())
+            if suffix and len(text) + len(suffix) <= STATUS_LINE_MAX_CHARS:
+                text += suffix
+        if len(text) > STATUS_LINE_MAX_CHARS:
+            text = text[: STATUS_LINE_MAX_CHARS - 1] + "…"
+        label = getattr(self, "status_line_label", None)
+        if label is not None and label.winfo_exists():
+            label.config(text=text, fg=color)
+        dot = getattr(self, "status_dot", None)
+        if dot is not None and dot.winfo_exists():
+            try:
+                dot.delete("all")
+                dot.create_oval(2, 2, 9, 9, fill=color, outline=color)
+            except tk.TclError:
+                logger.debug("刷新状态点失败。", exc_info=True)
 
     def _start_overlay_status_polling(self) -> None:
         self._overlay_status_after_id = self.root.after(1000, self._refresh_overlay_status_summary)
@@ -727,12 +621,12 @@ class DesktopControlsMixin:
             runtime_state = str(getattr(self, "_background_runtime_state", "running"))
             if runtime_state != "running":
                 text = {
-                    "suspending": "游戏内显示: 正在进入轻量待机",
-                    "suspended": "游戏内显示: 识别已休眠",
-                    "resuming": "游戏内显示: 识别恢复中",
-                    "restart_in_progress": "游戏内显示: 识别重启中",
-                    "resume_failed": "游戏内显示: 识别恢复失败",
-                }.get(runtime_state, "游戏内显示: 后台状态未知")
+                    "suspending": "正在进入轻量待机",
+                    "suspended": "识别已休眠",
+                    "resuming": "识别恢复中",
+                    "restart_in_progress": "识别重启中",
+                    "resume_failed": "识别恢复失败",
+                }.get(runtime_state, "后台状态未知")
                 self._set_overlay_status_summary(text, UI_COLORS["warn"])
                 return
             overlay_enabled = bool(self.game_overlay_var.get())
@@ -768,14 +662,8 @@ class DesktopControlsMixin:
                 elif watchdog_action == "error":
                     sidecar_text = "识别异常"
                 color = UI_COLORS["green"] if bool(host_visibility.get("visible")) or event_active else UI_COLORS["warn"]
-                build_id = str(
-                    host_visibility.get("build_id") or event.get("build_id") or sidecar.get("build_id") or ""
-                ).strip()
-                build_suffix = f" / 构建 {build_id[:18]}" if build_id else ""
-                self._set_overlay_status_summary(
-                    f"游戏内显示: {reason} / {sidecar_text}{build_suffix}",
-                    color,
-                )
+                # 构建号不再拼进文案：构建身份仍在状态文件与诊断导出里。
+                self._set_overlay_status_summary(f"{reason} · {sidecar_text}", color)
         except Exception:
             logger.debug("读取游戏内 overlay 状态失败。", exc_info=True)
         finally:

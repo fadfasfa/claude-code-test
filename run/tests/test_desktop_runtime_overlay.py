@@ -20,7 +20,7 @@ class DesktopRuntimeOverlayTests(unittest.TestCase):
             {"status": "starting", "phase": "sidecar_restart"}
         )
 
-        self.assertEqual(text, "游戏内显示: 识别重启中")
+        self.assertEqual(text, "识别重启中")
         self.assertNotIn("失效", text)
 
     def test_initialize_core_threads_resolves_split_runtime_owners(self):

@@ -65,6 +65,8 @@ class FakeWorkerRunner:
         self.catalog_id = ""
         self.catalog_sha256 = ""
         self.catalog_manifest_sha256 = ""
+        # 按来源覆盖 pointer 成功时间；默认沿用固定日期，供数据时效用例控制 data_at。
+        self.success_at_overrides: dict[str, str] = {}
 
     def __call__(self, command, **_kwargs) -> IsolatedProcessResult:
         source = command[command.index("--source") + 1]
@@ -94,13 +96,14 @@ class FakeWorkerRunner:
             self.catalog_id = manifest.catalog_generation_id
             self.catalog_sha256 = manifest.content_sha256
             self.catalog_manifest_sha256 = sha256_file(manifest_path)
+            success_at = self.success_at_overrides.get(source, "2026-01-01T00:00:00+00:00")
             pointer = {
                 "schema_version": 2,
                 "catalog_generation_id": self.catalog_id,
                 "content_sha256": self.catalog_sha256,
                 "manifest_sha256": self.catalog_manifest_sha256,
-                "completed_at": "2026-01-01T00:00:00+00:00",
-                "last_success_at": "2026-01-01T00:00:00+00:00",
+                "completed_at": success_at,
+                "last_success_at": success_at,
             }
         else:
             role = {"hextech": "stats", "apex": "synergy", "mayhem": "combos"}[source]
@@ -112,6 +115,7 @@ class FakeWorkerRunner:
             artifact_path.write_text(f"fixture-{source}\n", encoding="utf-8")
             manifest_path = run_root / "manifest.json"
             atomic_write_json(manifest_path, {"schema_version": 2, "source": source, "run_id": run_id})
+            success_at = self.success_at_overrides.get(source, "2026-01-01T00:00:00+00:00")
             pointer = {
                 "schema_version": 2,
                 "source": source,
@@ -127,8 +131,8 @@ class FakeWorkerRunner:
                     "content_schema_version": 2,
                     "size": artifact_path.stat().st_size,
                 },
-                "completed_at": "2026-01-01T00:00:00+00:00",
-                "last_success_at": "2026-01-01T00:00:00+00:00",
+                "completed_at": success_at,
+                "last_success_at": success_at,
             }
         atomic_write_json(pointer_path, pointer)
         atomic_write_json(result_path, {"state": "ready", "source": source, "pointer": pointer})
@@ -346,6 +350,108 @@ def test_failed_source_reuses_same_catalog_last_good_and_publishes_degraded(tmp_
     status = DataSnapshotClient(tmp_path / "snapshots").status()
     assert status["health"] == "degraded"
     assert set(status["degraded_sources"]) == {"apex", "mayhem"}
+
+
+def test_expired_data_at_publishes_data_stale_without_degrading_cohort(tmp_path: Path) -> None:
+    """回归：数据冻结超过 interval×1.25 时必须如实标注过期，此前恒报 fresh。"""
+
+    runner = FakeWorkerRunner()
+    # catalog/hextech 数据保持新鲜，apex/mayhem 的 data_at 停在 96h 前（阈值 90h）。
+    runner.success_at_overrides = {
+        "catalog": "2026-01-05T00:00:00+00:00",
+        "hextech": "2026-01-05T00:00:00+00:00",
+    }
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    coordinator = CohortRefreshCoordinator(
+        publisher=publisher,
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=runner,
+        now=lambda: datetime(2026, 1, 5, tzinfo=timezone.utc),
+    )
+
+    result = coordinator.refresh(force=True)
+
+    assert result["state"] == "ready"
+    status = DataSnapshotClient(tmp_path / "snapshots").status()
+    # 过期只写展示字段，不得污染 cohort 健康度与降级集合。
+    assert status["health"] == "healthy"
+    assert status["degraded_sources"] == []
+    for source in ("apex", "mayhem"):
+        source_status = status["source_status"][source]
+        assert source_status["freshness"] == "fresh"
+        assert source_status["data_status"] == "data_stale"
+        assert source_status["data_reason"] == "source_data_expired"
+        assert source_status["stale_age_seconds"] == 96 * 3600
+    for source in ("catalog", "hextech"):
+        source_status = status["source_status"][source]
+        assert source_status["data_status"] == "fresh"
+        assert source_status["data_reason"] == ""
+        assert source_status["stale_age_seconds"] == 0
+
+
+def test_data_age_within_normal_cadence_stays_fresh(tmp_path: Path) -> None:
+    """真机口径：apex 53h（< 72h×1.25=90h）属正常节奏，不得标过期。"""
+
+    runner = FakeWorkerRunner()
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    coordinator = CohortRefreshCoordinator(
+        publisher=publisher,
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=runner,
+        now=lambda: datetime(2026, 1, 3, 5, tzinfo=timezone.utc),
+    )
+
+    result = coordinator.refresh(force=True)
+
+    assert result["state"] == "ready"
+    status = DataSnapshotClient(tmp_path / "snapshots").status()
+    apex_status = status["source_status"]["apex"]
+    assert apex_status["data_status"] == "fresh"
+    assert apex_status["stale_age_seconds"] == 0
+    # hextech 阈值 4h×1.25=5h，53h 已过期——同一时钟下正反两个方向都被覆盖。
+    assert status["source_status"]["hextech"]["data_status"] == "data_stale"
+
+
+def test_saved_candidate_reuse_does_not_hide_expired_age(tmp_path: Path) -> None:
+    """回归：失败被已保存候选"洗白"后 freshness 仍为 fresh，但过期必须依旧可见。"""
+
+    runner = FakeWorkerRunner()
+    publisher = DataSnapshotPublisher(tmp_path / "snapshots")
+    clock = {"now": datetime(2026, 1, 1, tzinfo=timezone.utc)}
+    coordinator = CohortRefreshCoordinator(
+        publisher=publisher,
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=runner,
+        now=lambda: clock["now"],
+    )
+    assert coordinator.refresh(force=True)["state"] == "ready"
+    # 第二轮 mayhem 失败：apex 的 run-1 候选被保存，但 cohort 连坐回 last-good（run-0）。
+    runner.round = 1
+    runner.fail_source = "mayhem"
+    assert coordinator.refresh(force=True)["state"] == "degraded"
+    # 第三轮 120h 后 apex 失败：saved candidate run-1 与 current run-0 不同 → 洗白路径生效。
+    clock["now"] = datetime(2026, 1, 6, tzinfo=timezone.utc)
+    runner.round = 2
+    runner.fail_source = "apex"
+    runner.success_at_overrides = {
+        "catalog": "2026-01-06T00:00:00+00:00",
+        "hextech": "2026-01-06T00:00:00+00:00",
+        "mayhem": "2026-01-06T00:00:00+00:00",
+    }
+
+    result = coordinator.refresh(force=True)
+
+    assert result["state"] == "ready"
+    status = DataSnapshotClient(tmp_path / "snapshots").status()
+    apex_status = status["source_status"]["apex"]
+    # 洗白路径让 freshness 保持 fresh，但 data_at 停在 2026-01-01 → 120h 过期必须暴露。
+    assert apex_status["freshness"] == "fresh"
+    assert apex_status["data_status"] == "data_stale"
+    assert apex_status["data_reason"] == "source_data_expired"
+    assert apex_status["stale_age_seconds"] == 120 * 3600
 
 
 def test_recovered_apex_promotes_saved_mayhem_candidate_as_fresh_cohort(tmp_path: Path) -> None:

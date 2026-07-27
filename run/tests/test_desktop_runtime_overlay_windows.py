@@ -88,7 +88,7 @@ class DesktopRuntimeOverlayWindowTests(unittest.TestCase):
             def _run_on_ui_thread(self, callback):
                 callback()
 
-            def _move_overlay_to(self, _x, _y):
+            def _move_overlay_to(self, _x, _y, height=None):
                 raise AssertionError("stale hwnd must not move overlay")
 
             def _show_overlay(self, *, topmost=False):

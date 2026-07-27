@@ -1,26 +1,64 @@
+/* Hextech Web 主题 token 事实源：只放 :root 变量与 html/body 画布。
+   组件类一律在 frontend/src/styles/input.css（Tailwind 构建产物），本文件
+   不含任何类选择器，因此不会再与编译产物产生双份定义漂移；可脱离 Node
+   直接热调 token。加载顺序保持 theme 先、compiled 后。 */
+
 :root {
-    --hx-font-family: "Microsoft YaHei UI", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-    --hx-bg: #0d1117;
-    --hx-bg-radial: radial-gradient(circle at 50% 0%, rgba(88, 166, 255, 0.08), transparent 54%);
-    --hx-surface: rgba(18, 24, 32, 0.84);
-    --hx-surface-strong: rgba(15, 20, 28, 0.96);
-    --hx-surface-soft: rgba(10, 16, 24, 0.9);
-    --hx-card: #131a22;
+    /* 字体：拉丁/数字走 Segoe UI，中文回落雅黑；不声明未打包的网络字体。 */
+    --hx-font-family: "Segoe UI", system-ui, "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+
+    /* 画布与表面：单层顶部辉光是唯一底纹，旧的斜纹/网格/多层压暗退役。 */
+    --hx-bg: #010a13;
+    --hx-bg-glow:
+        radial-gradient(64rem 26rem at 50% -6%, rgba(214, 178, 108, 0.18), transparent 68%),
+        radial-gradient(76rem 40rem at 50% 116%, rgba(10, 200, 185, 0.08), transparent 62%),
+        radial-gradient(52rem 32rem at 6% 30%, rgba(63, 169, 220, 0.05), transparent 64%);
+    --hx-surface: rgba(16, 23, 33, 0.88);
+    --hx-surface-strong: rgba(12, 18, 27, 0.97);
+    --hx-card: #10171f;
     --hx-card-strong: #0b1118;
-    --hx-border-base: rgba(139, 148, 158, 0.18);
-    --hx-border-strong: rgba(139, 148, 158, 0.3);
-    --hx-border-hover: rgba(88, 166, 255, 0.38);
+
+    /* 边框：面板默认金弱描边；hover 一律指金，消灭"金框蓝 hover"混搭。 */
+    --hx-border-base: rgba(148, 163, 184, 0.16);
+    --hx-border-strong: rgba(148, 163, 184, 0.30);
+    --hx-border-gold: rgba(200, 170, 110, 0.20);
+    --hx-border-gold-strong: rgba(200, 170, 110, 0.45);
+    --hx-border-hover: rgba(200, 170, 110, 0.45);
+
     --hx-shadow-panel: 0 18px 40px rgba(0, 0, 0, 0.32);
     --hx-shadow-card: 0 12px 28px rgba(0, 0, 0, 0.28);
-    --hx-text: #c9d1d9;
-    --hx-text-strong: #f0f6fc;
-    --hx-text-muted: #8b949e;
-    --hx-text-soft: #7d8590;
-    --hx-accent: #58a6ff;
-    --hx-accent-soft: rgba(88, 166, 255, 0.16);
+
+    /* 文字：单条 slate 色阶（gray/slate 双轨并存已收敛）。 */
+    --hx-text-strong: #f1f5f9;
+    --hx-text: #cbd5e1;
+    --hx-text-muted: #94a3b8;
+    --hx-text-soft: #64748b;
+
+    /* 拳头金主色与海克斯魔法蓝辅色（GitHub 蓝 #58a6ff 退役）。 */
+    --hx-art-gold: #c8aa6e;
+    --hx-gold-bright: #e3c16f;
+    --hx-art-bronze: #785a28;
+    --hx-art-line: rgba(200, 170, 110, 0.34);
+    --hx-art-ink: rgba(5, 10, 16, 0.82);
+    --hx-accent: #3fa9dc;
+    --hx-accent-soft: rgba(63, 169, 220, 0.16);
+
+    /* 胜率语义色：全站统一阈值 >53% 绿 / <47% 红 / 居中中性。 */
+    --hx-win: #34d399;
+    --hx-win-soft: rgba(52, 211, 153, 0.14);
+    --hx-loss: #f87171;
+    --hx-loss-soft: rgba(248, 113, 113, 0.14);
+
+    /* 标签语义色（娱乐/陷阱），替代模板层散落的硬编码。 */
+    --hx-fun: #9a73d1;
+    --hx-trap: #e28544;
+
+    /* 滚动条 */
     --hx-scroll-thumb: rgba(110, 118, 129, 0.45);
-    --hx-scroll-thumb-hover: rgba(139, 148, 158, 0.7);
+    --hx-scroll-thumb-hover: rgba(148, 163, 184, 0.70);
     --hx-scroll-track: rgba(0, 0, 0, 0.2);
+
+    /* 海克斯档位色 */
     --hx-tier-prismatic: #22d3ee;
     --hx-tier-prismatic-secondary: #64748b;
     --hx-tier-prismatic-glow: rgba(34, 211, 238, 0.18);
@@ -28,10 +66,6 @@
     --hx-tier-gold-glow: rgba(212, 167, 44, 0.22);
     --hx-tier-silver: #94a3b8;
     --hx-tier-silver-glow: rgba(148, 163, 184, 0.16);
-    --hx-art-gold: #c8aa6e;
-    --hx-art-bronze: #785a28;
-    --hx-art-ink: rgba(5, 10, 16, 0.82);
-    --hx-art-line: rgba(200, 170, 110, 0.34);
 }
 
 html,
@@ -42,470 +76,6 @@ body {
 }
 
 body {
-    background-image:
-        linear-gradient(135deg, rgba(200, 170, 110, 0.055) 0 1px, transparent 1px 74px),
-        radial-gradient(circle at 50% 8%, rgba(47, 128, 165, 0.14), transparent 52%),
-        linear-gradient(180deg, rgba(5, 10, 16, 0.3), rgba(5, 10, 16, 0.88)),
-        var(--hx-bg-radial);
-}
-
-.glass-panel {
-    background:
-        linear-gradient(120deg, rgba(200, 170, 110, 0.045), transparent 34%),
-        var(--hx-surface);
-    border: 1px solid rgba(200, 170, 110, 0.16);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    box-shadow: var(--hx-shadow-panel);
-}
-
-.scroll-container::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-.scroll-container::-webkit-scrollbar-track {
-    background: var(--hx-scroll-track);
-    border-radius: 4px;
-}
-
-.scroll-container::-webkit-scrollbar-thumb {
-    background: var(--hx-scroll-thumb);
-    border-radius: 4px;
-    transition: background 0.2s ease;
-}
-
-.scroll-container::-webkit-scrollbar-thumb:hover {
-    background: var(--hx-scroll-thumb-hover);
-}
-
-.scroll-container {
-    scrollbar-width: thin;
-    scrollbar-color: var(--hx-scroll-thumb) var(--hx-scroll-track);
-}
-
-.hx-tab-idle {
-    color: var(--hx-text-muted);
-    background: transparent;
-    border: 1px solid transparent;
-    transition: all 0.18s ease;
-}
-
-.hx-tab-idle:hover {
-    color: var(--hx-text-strong);
-    background: rgba(40, 33, 22, 0.92);
-    border-color: rgba(200, 170, 110, 0.24);
-}
-
-.hx-tab-active {
-    color: #f8f1df;
-    font-weight: 700;
-    background:
-        linear-gradient(135deg, rgba(200, 170, 110, 0.28), rgba(120, 90, 40, 0.18)),
-        linear-gradient(180deg, #182431, #0d141d);
-    border: 1px solid rgba(200, 170, 110, 0.42);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-    transition: all 0.18s ease;
-}
-
-.hx-surface-card {
-    background:
-        linear-gradient(120deg, rgba(200, 170, 110, 0.08), transparent 24%),
-        linear-gradient(180deg, rgba(11, 18, 25, 0.99), rgba(5, 10, 16, 0.99));
-    border: 1px solid rgba(200, 170, 110, 0.18);
-    box-shadow: var(--hx-shadow-card);
-}
-
-.hx-surface-card:hover {
-    border-color: var(--hx-border-hover);
-}
-
-.hx-tier-group-shell {
-    background:
-        linear-gradient(90deg, rgba(200, 170, 110, 0.06), transparent 18%, transparent 82%, rgba(88, 166, 255, 0.055)),
-        linear-gradient(180deg, rgba(19, 26, 34, 0.98), rgba(7, 13, 20, 0.98));
-    border: 1px solid rgba(200, 170, 110, 0.16);
-    box-shadow: var(--hx-shadow-card);
-}
-
-.hx-hero-avatar {
-    border: 1px solid rgba(200, 170, 110, 0.16);
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
-    transition: all 0.2s ease;
-}
-
-.hx-hero-avatar:hover {
-    border-color: var(--hx-art-gold);
-    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(200, 170, 110, 0.42);
-}
-
-.hx-hero-avatar-highlight {
-    border-color: var(--hx-art-gold) !important;
-    box-shadow: 0 0 0 1px rgba(200, 170, 110, 0.72), 0 0 20px rgba(200, 170, 110, 0.26) !important;
-}
-
-.hx-tier-op {
-    background: linear-gradient(135deg, #f3d17c, #b5893d);
-    color: #0b1118;
-    text-shadow: 0 1px 1px rgba(255, 255, 255, 0.2);
-}
-
-.hx-tier-s {
-    background: linear-gradient(135deg, #00d2ff, #0066ff);
-    color: #f4fbff;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-}
-
-.hx-tier-a {
-    background: linear-gradient(135deg, #10b981, #047857);
-    color: #f4fff9;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-}
-
-.hx-tier-npc {
-    background: linear-gradient(135deg, #334155, #1e293b);
-    color: #cbd5e1;
-}
-
-.hx-tier-trash {
-    background: linear-gradient(135deg, #5c2c2c, #1f0c0c);
-    color: #fca5a5;
-    border-right: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.hx-tier-prismatic-bar {
-    background: linear-gradient(180deg, #67e8f9 0%, var(--hx-tier-prismatic) 55%, var(--hx-tier-prismatic-secondary) 100%);
-    box-shadow: 0 0 12px var(--hx-tier-prismatic-glow);
-}
-
-.hx-tier-gold-bar {
-    background: linear-gradient(180deg, #f1d58a 0%, var(--hx-tier-gold) 100%);
-    box-shadow: 0 0 8px var(--hx-tier-gold-glow);
-}
-
-.hx-tier-silver-bar {
-    background: linear-gradient(180deg, #d8e1ef 0%, var(--hx-tier-silver) 100%);
-    box-shadow: 0 0 8px var(--hx-tier-silver-glow);
-}
-
-.hx-tier-prismatic-text {
-    color: var(--hx-tier-prismatic);
-}
-
-.hx-tier-gold-text {
-    color: var(--hx-tier-gold);
-}
-
-.hx-tier-silver-text {
-    color: var(--hx-tier-silver);
-}
-
-.hx-tooltip {
-    background: rgba(15, 15, 20, 0.88);
-    border: 1px solid var(--hx-border-strong);
-    color: var(--hx-text);
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
-}
-
-/* ==========================================================================
-   海克斯视觉重塑专区：流光动效、高级卡片、水晶加载器与 Tab 优雅休眠
-   ========================================================================== */
-
-/* 1. T0 级 premium 英雄卡片流光扫光特效 */
-@keyframes hxShimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
-}
-
-.hx-card-premium {
-    position: relative;
-    border-color: rgba(243, 209, 124, 0.34) !important;
-    background-size: 200% 100%;
-    animation: hxShimmer 4s infinite linear;
-}
-
-.hx-card-premium::before {
-    content: '';
-    position: absolute;
-    inset: -1px;
-    border-radius: inherit;
-    background: linear-gradient(135deg, rgba(243, 209, 124, 0.28), rgba(181, 137, 61, 0.12), rgba(243, 209, 124, 0.28));
-    z-index: -1;
-    opacity: 0.65;
-    transition: opacity 0.3s ease;
-}
-
-.hx-card-premium:hover::before {
-    opacity: 1;
-    box-shadow: 0 0 16px rgba(243, 209, 124, 0.34);
-}
-
-/* 2. 海克斯水晶共鸣加载器（Hextech Resonance Loader） */
-.hextech-loader-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-}
-
-.hextech-crystal-loader {
-    position: relative;
-    width: 60px;
-    height: 60px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.crystal-core {
-    width: 14px;
-    height: 14px;
-    background: var(--hx-tier-prismatic, #22d3ee);
-    transform: rotate(45deg);
-    box-shadow: 0 0 18px var(--hx-tier-prismatic, #22d3ee);
-    animation: crystalPulse 1.6s infinite ease-in-out;
-}
-
-.orbit-ring {
-    position: absolute;
-    border: 2px solid transparent;
-    border-radius: 50%;
-}
-
-.orbit-1 {
-    width: 44px;
-    height: 44px;
-    border-top-color: rgba(34, 211, 238, 0.45);
-    border-bottom-color: rgba(34, 211, 238, 0.45);
-    animation: spin 2s infinite linear;
-}
-
-.orbit-2 {
-    width: 60px;
-    height: 60px;
-    border-left-color: rgba(212, 167, 44, 0.34);
-    border-right-color: rgba(212, 167, 44, 0.34);
-    animation: spin 3s infinite reverse linear;
-}
-
-@keyframes crystalPulse {
-    0%, 100% { transform: rotate(45deg) scale(0.85); opacity: 0.5; }
-    50% { transform: rotate(45deg) scale(1.2); opacity: 1; }
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-/* 3. 多 Tab 冲突优雅休眠层样式 */
-.dormancy-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 99999;
-    background: rgba(8, 10, 15, 0.94);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
-    animation: dormancyFadeIn 0.3s ease-out;
-}
-
-.dormancy-card {
-    width: min(480px, 100%);
-    border-radius: 1.5rem;
-    padding: 2.5rem 2rem;
-    background: linear-gradient(180deg, rgba(20, 26, 35, 0.98) 0%, rgba(10, 14, 20, 0.99) 100%);
-    border: 1px solid rgba(200, 170, 110, 0.22);
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    text-align: center;
-}
-
-.dormancy-crystal-wrap {
-    margin: 0 auto 1.5rem;
-    width: 72px;
-    height: 72px;
-    background: radial-gradient(circle, rgba(200, 170, 110, 0.16) 0%, transparent 70%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.dormancy-crystal {
-    width: 20px;
-    height: 20px;
-    background: #cbd5e1;
-    transform: rotate(45deg);
-    box-shadow: 0 0 12px rgba(255, 255, 255, 0.2);
-    animation: dormancyFloat 3s infinite ease-in-out;
-}
-
-.dormancy-btn {
-    margin-top: 1.75rem;
-    width: 100%;
-    padding: 0.85rem;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    color: #f8f1df;
-    border-radius: 0.75rem;
-    background: linear-gradient(135deg, rgba(200, 170, 110, 0.3), rgba(120, 90, 40, 0.15));
-    border: 1px solid rgba(200, 170, 110, 0.45);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-    transition: all 0.2s ease;
-    cursor: pointer;
-}
-
-.dormancy-btn:hover {
-    background: linear-gradient(135deg, rgba(200, 170, 110, 0.45), rgba(120, 90, 40, 0.25));
-    border-color: rgba(200, 170, 110, 0.7);
-    box-shadow: 0 0 12px rgba(200, 170, 110, 0.2);
-    transform: translateY(-1px);
-}
-
-/* 休眠卡片内的双按钮布局：主按钮"重新激活" + 次按钮"双开此视口" */
-.dormancy-btn-row {
-    display: flex;
-    gap: 0.6rem;
-    width: 100%;
-    margin-top: 1.75rem;
-}
-.dormancy-btn-row .dormancy-btn {
-    margin-top: 0;
-    flex: 1;
-}
-
-/* 次级按钮：低饱和、暗色调，避免抢夺主按钮视线焦点 */
-.dormancy-btn-secondary {
-    background: linear-gradient(135deg, rgba(88, 166, 255, 0.16), rgba(34, 211, 238, 0.08));
-    border: 1px solid rgba(88, 166, 255, 0.32);
-    color: #cfe7ff;
-}
-.dormancy-btn-secondary:hover {
-    background: linear-gradient(135deg, rgba(88, 166, 255, 0.28), rgba(34, 211, 238, 0.14));
-    border-color: rgba(88, 166, 255, 0.52);
-    box-shadow: 0 0 12px rgba(88, 166, 255, 0.22);
-}
-
-/* 首启引导气泡：右下角更显眼的提示，带图标与关闭按钮 */
-.hx-onboarding-toast {
-    position: fixed;
-    right: 28px;
-    bottom: 28px;
-    z-index: 9999;
-    max-width: 320px;
-    padding: 16px 18px;
-    border-radius: 14px;
-    background: linear-gradient(135deg, rgba(15, 30, 48, 0.95), rgba(8, 18, 32, 0.95));
-    border: 1px solid rgba(88, 166, 255, 0.45);
-    color: #e6f1ff;
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
-    opacity: 0;
-    transform: translateY(8px);
-    transition: opacity 320ms ease, transform 320ms ease;
-}
-.hx-onboarding-toast.is-visible {
-    opacity: 1;
-    transform: translateY(0);
-}
-.hx-onboarding-toast .title {
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    font-size: 13px;
-    color: #aad6ff;
-    margin-bottom: 6px;
-}
-.hx-onboarding-toast .body {
-    font-size: 12px;
-    line-height: 1.6;
-    color: #c9d1d9;
-}
-.hx-onboarding-toast .close {
-    position: absolute;
-    top: 6px;
-    right: 10px;
-    background: transparent;
-    border: 0;
-    color: #8b949e;
-    font-size: 14px;
-    cursor: pointer;
-}
-.hx-onboarding-toast .close:hover {
-    color: #f0f6fc;
-}
-
-@keyframes dormancyFloat {
-    0%, 100% { transform: rotate(45deg) translateY(0); }
-    50% { transform: rotate(45deg) translateY(-8px); }
-}
-
-@keyframes dormancyFadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-}
-
-/* 各梯队卡片悬停时的呼吸式环境光晕：仅在 hover 触发，避免与 T0 流光争夺视线 */
-.hx-tier-s,
-.hx-tier-a,
-.hx-tier-npc,
-.hx-tier-trash {
-    transition: box-shadow 360ms ease;
-}
-.hx-tier-s:hover { box-shadow: 0 6px 22px -8px rgba(47, 155, 181, 0.55); }
-.hx-tier-a:hover { box-shadow: 0 6px 22px -8px rgba(80, 166, 117, 0.45); }
-.hx-tier-npc:hover { box-shadow: 0 6px 22px -8px rgba(150, 160, 180, 0.30); }
-.hx-tier-trash:hover { box-shadow: 0 6px 22px -8px rgba(140, 60, 60, 0.35); }
-
-/* 科幻雷达网格背景：作为 body 伪元素层，与现有对角线 + 径向渐变叠加 */
-body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
-    background-image:
-        linear-gradient(rgba(200, 170, 110, 0.04) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(200, 170, 110, 0.04) 1px, transparent 1px);
-    background-size: 60px 60px;
-}
-
-/* 数据更新气泡：1.5 秒渐入渐出，右上角悬浮，不干扰主内容流 */
-.hx-update-toast {
-    position: fixed;
-    top: 24px;
-    right: 24px;
-    z-index: 9999;
-    padding: 10px 18px;
-    border-radius: 999px;
-    background: rgba(15, 30, 48, 0.92);
-    border: 1px solid rgba(88, 166, 255, 0.45);
-    color: #cfe7ff;
-    font-size: 12px;
-    letter-spacing: 0.16em;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    opacity: 0;
-    transform: translateY(-6px);
-    transition: opacity 240ms ease, transform 240ms ease;
-}
-.hx-update-toast.is-visible {
-    opacity: 1;
-    transform: translateY(0);
-}
-
-/* 搜索框快捷键徽章：仿照 GitHub/Linear 的 kbd 风格 */
-.hx-search-hint {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 22px;
-    height: 22px;
-    padding: 0 6px;
-    border-radius: 6px;
-    border: 1px solid rgba(139, 148, 158, 0.4);
-    background: rgba(15, 20, 28, 0.7);
-    color: #c9d1d9;
-    font-family: var(--hx-font-family);
-    font-size: 12px;
-    line-height: 1;
+    background-image: var(--hx-bg-glow);
+    background-repeat: no-repeat;
 }

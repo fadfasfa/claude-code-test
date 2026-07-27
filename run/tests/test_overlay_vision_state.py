@@ -331,6 +331,254 @@ class OverlayVisionStateTests(unittest.TestCase):
         unresolved_slot["channels"]["text_alt"]["margin"] = 0.013
         self.assertIsNone(candidate_from_slot(unresolved_slot))
 
+    def test_text_accepted_candidate_keeps_canonical_augment_id_without_icon_proof(self):
+        """text_icon_disagree 接受必须保留规范 augment_id，报告端 vision_id 不再恒空。
+
+        真机回归（2026-07-26）：icon 高置信误判（台风@0.946，margin 不足高冲突门槛）
+        压不掉正确的双字体文本，卡按 dual_font 接受，但 augment_id 与
+        visual_variant_id 一起被置空，3/10 张 ready 卡诊断链断裂。
+        """
+
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+
+        text_candidate = {
+            "augment_id": "aram_searingdawn",
+            "visual_variant_id": "aram_searingdawn",
+            "recognition_key": "炽烈黎明",
+            "name_variant_count": 2,
+            "name": "炽烈黎明",
+            "confidence": 0.84,
+        }
+        conflicting_icon = {
+            "augment_id": "aram_typhoon",
+            "visual_variant_id": "aram_typhoon",
+            "recognition_key": "台风",
+            "name": "台风",
+            "confidence": 0.946,
+        }
+        slot = {
+            "slot": 0,
+            "channels": {
+                "text": {"margin": 0.05, "top_candidates": [text_candidate]},
+                "text_alt": {"margin": 0.05, "top_candidates": [text_candidate]},
+                # 图标冲突只降低证据等级，不得清空双字体一致候选。
+                "icon": {"margin": 0.01, "top_candidates": [conflicting_icon]},
+            },
+        }
+        candidate = candidate_from_slot(slot)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.rule, "dual_font")
+        # 无强图标证据：具体视觉版本仍不虚构
+        self.assertEqual(candidate.visual_variant_id, "")
+        # 但文本模板携带的规范 id 必须保留并进入 ready 槽位事件
+        self.assertEqual(candidate.augment_id, "aram_searingdawn")
+        self.assertEqual(candidate.ready_slot()["augment_id"], "aram_searingdawn")
+
+    def test_dual_font_identity_survives_wrong_high_confidence_icon_as_medium(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        for name, augment_id, text_confidence, alt_confidence in (
+            ("大法师", "aram_archmage", 0.8722, 0.8749),
+            ("冰雪爆裂", "aram_iceblast", 0.8841, 0.8793),
+        ):
+            with self.subTest(name=name):
+                text_candidate = {
+                    "augment_id": augment_id,
+                    "recognition_key": name,
+                    "name": name,
+                    "confidence": text_confidence,
+                }
+                alt_candidate = {**text_candidate, "confidence": alt_confidence}
+                slot = {
+                    "slot": 1,
+                    "channels": {
+                        "text": {"margin": 0.0349, "top_candidates": [text_candidate]},
+                        "text_alt": {"margin": 0.0246, "top_candidates": [alt_candidate]},
+                        "icon": {
+                            "margin": 0.2166,
+                            "top_candidates": [
+                                {
+                                    "augment_id": "wrong-loop",
+                                    "recognition_key": "无限循环往复",
+                                    "name": "无限循环往复",
+                                    "confidence": 0.9159,
+                                }
+                            ],
+                        },
+                    },
+                }
+                candidate = candidate_from_slot(slot)
+                self.assertIsNotNone(candidate)
+                assert candidate is not None
+                self.assertEqual(candidate.evidence_grade, "medium")
+                self.assertEqual(candidate.required_frames, 3)
+
+                tracker = SelectionTracker(scene_enter_frames=1)
+                event = _selection_event()
+                event["_raw_slots"][1] = slot
+                first = tracker.update(self._at(event, 50.0))
+                second = tracker.update(self._at(event, 50.2))
+                ready = tracker.update(self._at(event, 50.4))
+                self.assertEqual(first["slots"][1]["state"], "detecting")
+                self.assertEqual(second["slots"][1]["state"], "detecting")
+                self.assertEqual(ready["slots"][1]["state"], "ready")
+                self.assertEqual(ready["slots"][1]["name"], name)
+
+    def test_duplicate_bang_medium_candidates_across_slots_never_become_ready(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        event = _selection_event()
+        event["_raw_slots"] = [_medium_slot(index, "aram_bang", "邦！") for index in range(3)]
+
+        observations = [tracker.update(self._at(event, 55.0 + index * 0.2)) for index in range(5)]
+
+        self.assertTrue(all(item["source"]["ready_slots"] == 0 for item in observations))
+        self.assertEqual([slot["state"] for slot in observations[-1]["slots"]], ["detecting"] * 3)
+
+    def test_duplicate_identity_keeps_only_the_unique_strong_slot(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        event = _selection_event()
+        event["_raw_slots"] = [
+            _ready_slot(0, "aram_bang", "邦！"),
+            _medium_slot(1, "aram_bang", "邦！"),
+            _medium_slot(2, "aram_bang", "邦！"),
+        ]
+
+        tracker.update(self._at(event, 57.0))
+        ready = tracker.update(self._at(event, 57.2))
+
+        self.assertEqual([slot["state"] for slot in ready["slots"]], ["ready", "detecting", "detecting"])
+
+    def test_dual_font_disagreement_remains_detecting(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        event = _selection_event()
+        event["_raw_slots"][1] = {
+            "slot": 1,
+            "channels": {
+                "text": {
+                    "margin": 0.08,
+                    "top_candidates": [{"augment_id": "a", "name": "大法师", "confidence": 0.96}],
+                },
+                "text_alt": {
+                    "margin": 0.08,
+                    "top_candidates": [{"augment_id": "b", "name": "冰雪爆裂", "confidence": 0.96}],
+                },
+            },
+        }
+
+        observed = [tracker.update(self._at(event, 58.0 + index * 0.2)) for index in range(5)]
+
+        self.assertTrue(all(item["slots"][1]["state"] == "detecting" for item in observed))
+
+    def test_unique_dual_font_shortlist_consensus_confirms_as_medium(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        shared = {"augment_id": "correct", "name": "正确强化", "confidence": 0.88}
+        slot = {
+            "slot": 1,
+            "channels": {
+                "text": {
+                    "margin": 0.02,
+                    "top_candidates": [
+                        {"augment_id": "wrong-a", "name": "错误 A", "confidence": 0.91},
+                        shared,
+                    ],
+                },
+                "text_alt": {
+                    "margin": 0.02,
+                    "top_candidates": [
+                        {"augment_id": "wrong-b", "name": "错误 B", "confidence": 0.90},
+                        {**shared, "confidence": 0.87},
+                    ],
+                },
+            },
+        }
+
+        candidate = candidate_from_slot(slot)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.identity, "正确强化")
+        self.assertEqual(candidate.rule, "dual_font_shortlist")
+        self.assertEqual(candidate.evidence_grade, "medium")
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        event = _selection_event()
+        event["_raw_slots"][1] = slot
+        pending = [tracker.update(self._at(event, 59.0 + index * 0.2)) for index in range(2)]
+        ready = tracker.update(self._at(event, 59.4))
+        self.assertTrue(all(item["slots"][1]["state"] == "detecting" for item in pending))
+        self.assertEqual(ready["slots"][1]["name"], "正确强化")
+
+    def test_ambiguous_dual_font_shortlist_does_not_submit(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+
+        slot = {
+            "slot": 1,
+            "channels": {
+                "text": {
+                    "top_candidates": [
+                        {"augment_id": "a", "name": "候选 A", "confidence": 0.90},
+                        {"augment_id": "b", "name": "候选 B", "confidence": 0.88},
+                    ],
+                },
+                "text_alt": {
+                    "top_candidates": [
+                        {"augment_id": "b", "name": "候选 B", "confidence": 0.90},
+                        {"augment_id": "a", "name": "候选 A", "confidence": 0.89},
+                    ],
+                },
+            },
+        }
+
+        self.assertIsNone(candidate_from_slot(slot))
+
+    def test_dual_font_shortlist_uses_higher_confidence_channel_payload(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+
+        slot = {
+            "slot": 1,
+            "channels": {
+                "text": {
+                    "top_candidates": [
+                        {"augment_id": "wrong-a", "name": "错误 A", "confidence": 0.91},
+                        {
+                            "augment_id": "primary-version",
+                            "recognition_key": "共同身份",
+                            "name": "共同身份",
+                            "confidence": 0.84,
+                        },
+                    ],
+                },
+                "text_alt": {
+                    "top_candidates": [
+                        {"augment_id": "wrong-b", "name": "错误 B", "confidence": 0.92},
+                        {
+                            "augment_id": "alternate-version",
+                            "recognition_key": "共同身份",
+                            "name": "共同身份",
+                            "confidence": 0.89,
+                        },
+                    ],
+                },
+            },
+        }
+
+        candidate = candidate_from_slot(slot)
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.identity, "共同身份")
+        self.assertEqual(candidate.augment_id, "alternate-version")
+        self.assertEqual(candidate.top_candidates[0]["augment_id"], "wrong-b")
+
     def test_medium_wrong_name_never_flashes_before_strong_correct_candidate(self):
         """固化真机“不动如山 → 吞噬灵魂”序列，弱相关重复不能直接上屏。"""
 
@@ -423,7 +671,10 @@ class OverlayVisionStateTests(unittest.TestCase):
             reason="game_not_foreground",
             should_probe=True,
             now=91.0,
-            gameflow_probe=PausedGameflowProbe(probe=lambda: GameflowState.NOT_IN_PROGRESS),
+            gameflow_probe=PausedGameflowProbe(
+                probe=lambda: GameflowState.NOT_IN_PROGRESS,
+                spawn=lambda target: target(),
+            ),
             identity_source={"session_id": "game-session-a", "game_instance_id": "game-instance-a"},
         )
 
@@ -433,3 +684,39 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(ended["source"]["selection_revision"], stable["source"]["selection_revision"])
         self.assertEqual(ended["source"]["session_id"], "game-session-a")
         self.assertEqual(ended["source"]["game_instance_id"], "game-instance-a")
+
+    def test_paused_gameflow_probe_never_blocks_the_recognition_loop(self):
+        from hextech.infrastructure.vision.gameflow_pause import PausedGameflowProbe
+        from hextech.modules.vision.gameflow import GameflowState
+
+        pending: list = []
+        probe = PausedGameflowProbe(
+            probe=lambda: GameflowState.NOT_IN_PROGRESS,
+            spawn=pending.append,  # 捕获而不执行，模拟慢速 HTTP 仍在途
+        )
+
+        # 首次调用只触发探测并立即返回缓存的 unknown，不等待结果。
+        self.assertIs(probe.observe(should_probe=True, now=10.0), GameflowState.UNKNOWN)
+        self.assertEqual(len(pending), 1)
+        # 在途期间的后续调用不重复起探测。
+        self.assertIs(probe.observe(should_probe=True, now=12.0), GameflowState.UNKNOWN)
+        self.assertEqual(len(pending), 1)
+
+        pending[0]()  # 慢探测完成
+        self.assertIs(probe.observe(should_probe=True, now=12.1), GameflowState.NOT_IN_PROGRESS)
+
+    def test_paused_gameflow_probe_reset_discards_inflight_result(self):
+        from hextech.infrastructure.vision.gameflow_pause import PausedGameflowProbe
+        from hextech.modules.vision.gameflow import GameflowState
+
+        pending: list = []
+        probe = PausedGameflowProbe(
+            probe=lambda: GameflowState.NOT_IN_PROGRESS,
+            spawn=pending.append,
+        )
+        probe.observe(should_probe=True, now=10.0)
+        probe.reset()  # 返回前台/换局：上一局的在途结论必须作废
+        pending[0]()
+
+        self.assertIs(probe.observe(should_probe=False, now=10.5), GameflowState.UNKNOWN)
+        self.assertIs(probe.state, GameflowState.UNKNOWN)

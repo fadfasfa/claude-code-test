@@ -24,14 +24,22 @@ def test_safe_detail_name_regex() -> None:
     for value in unsafe_names:
         assert not web_runtime._SAFE_NAME_RE.fullmatch(value), value
 
+def _all_static_scripts_text() -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((WEB_STATIC_DIR / "js").rglob("*.js"))
+    )
+
+
 def test_detail_hero_param_uses_text_content() -> None:
     detail_text = (WEB_STATIC_DIR / "detail.html").read_text(encoding="utf-8")
-    detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
+    detail_entry = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
+    all_scripts = _all_static_scripts_text()
 
-    assert '<script defer src="/static/js/detail.js"></script>' in detail_text
-    assert "const urlParams = new URLSearchParams(window.location.search);" in detail_script
-    assert "const hero = urlParams.get('hero');" in detail_script
-    assert "document.getElementById('heroName').textContent = hero" in detail_script
+    assert '<script type="module" src="/static/js/detail.js"></script>' in detail_text
+    assert "const urlParams = new URLSearchParams(window.location.search);" in detail_entry
+    assert "const hero = urlParams.get('hero');" in detail_entry
+    assert "document.getElementById('heroName').textContent = hero" in detail_entry
     forbidden_patterns = [
         r"heroName['\"]\)\.innerHTML\s*=\s*hero",
         r"innerHTML\s*=\s*`[^`]*\$\{hero\}",
@@ -39,17 +47,18 @@ def test_detail_hero_param_uses_text_content() -> None:
     ]
     for pattern in forbidden_patterns:
         assert not re.search(pattern, detail_text), pattern
-        assert not re.search(pattern, detail_script), pattern
+        assert not re.search(pattern, all_scripts), pattern
 
 def test_detail_question_mark_augment_guard() -> None:
     detail_text = (WEB_STATIC_DIR / "detail.html").read_text(encoding="utf-8")
-    detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
-    assert "function isQuestionMarkAugmentName(text)" in detail_script
-    assert "/^[?？]{3,}$/" in detail_script
-    assert "if (isQuestionMarkAugmentName(original))" in detail_script
+    augments_script = (WEB_STATIC_DIR / "js" / "detail" / "augments.js").read_text(encoding="utf-8")
+    synergy_script = (WEB_STATIC_DIR / "js" / "detail" / "synergy.js").read_text(encoding="utf-8")
+    assert "function isQuestionMarkAugmentName(text)" in augments_script
+    assert "/^[?？]{3,}$/" in augments_script
+    assert "if (isQuestionMarkAugmentName(original))" in augments_script
     assert '<span class="${badgeText} opacity-70' not in detail_text
-    assert '<span class="${badgeText} opacity-70' not in detail_script
-    assert "dataset.synergyLoaded" in detail_script
+    assert '<span class="${badgeText} opacity-70' not in synergy_script
+    assert "dataset.synergyLoaded" in synergy_script
     assert re.fullmatch(r"[?？]{3,}", "？？？")
     assert not re.fullmatch(r"[?？]{3,}", "？？？ 提升攻速 25%")
 
@@ -57,7 +66,7 @@ def test_detail_question_mark_augment_guard() -> None:
     assert icon_map.get("？？？") == "/assets/augments/missingping_small.png"
 
 def test_detail_hextech_card_layout_contract() -> None:
-    detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
+    detail_script = _all_static_scripts_text()
     style_source = (
         RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "frontend" / "src" / "styles" / "input.css"
     ).read_text(encoding="utf-8")
@@ -86,21 +95,108 @@ def test_web_bootstrap_avoids_load_event_gate() -> None:
     detail_text = (WEB_STATIC_DIR / "detail.html").read_text(encoding="utf-8")
     index_script = (WEB_STATIC_DIR / "js" / "index.js").read_text(encoding="utf-8")
     detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
+    all_scripts = _all_static_scripts_text()
 
     assert "window.onload =" not in index_text
     assert "window.onload =" not in detail_text
-    assert "window.onload =" not in index_script
-    assert "window.onload =" not in detail_script
+    assert "window.onload =" not in all_scripts
     assert "cdn.tailwindcss.com" not in index_text
     assert "cdn.tailwindcss.com" not in detail_text
     assert 'href="/static/css/tailwind-compiled.css"' in index_text
     assert 'href="/static/css/tailwind-compiled.css"' in detail_text
-    assert '<script defer src="/static/js/index.js"></script>' in index_text
-    assert '<script defer src="/static/js/detail.js"></script>' in detail_text
+    assert '<script type="module" src="/static/js/index.js"></script>' in index_text
+    assert '<script type="module" src="/static/js/detail.js"></script>' in detail_text
     assert "function bootstrapIndexPage()" in index_script
     assert "function bootstrapDetailPage()" in detail_script
     assert "bootstrapIndexPage();" in index_script
     assert "bootstrapDetailPage();" in detail_script
+
+# Tailwind 的纯标记类：本身不产出 CSS 规则，类覆盖门禁必须豁免
+_TAILWIND_MARKER_ONLY_CLASSES = frozenset({"group", "peer"})
+
+
+def _static_frontend_sources() -> list:
+    pages = [WEB_STATIC_DIR / "index.html", WEB_STATIC_DIR / "detail.html"]
+    scripts = sorted((WEB_STATIC_DIR / "js").rglob("*.js"))
+    return pages + scripts
+
+
+def _iter_static_class_tokens() -> set:
+    tokens: set[str] = set()
+    for path in _static_frontend_sources():
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r'class="([^"]*)"', text):
+            for token in match.group(1).split():
+                # 跳过模板插值与三元表达式片段，只校验字面量类名
+                if "$" in token or "{" in token or "'" in token or token in {":", "?"}:
+                    continue
+                tokens.add(token)
+    return tokens
+
+
+def test_static_class_tokens_exist_in_compiled_css() -> None:
+    """HTML/JS 用到的类必须存在于编译产物：漏跑 build:css 时立即红灯。"""
+
+    compiled = (WEB_STATIC_DIR / "css" / "tailwind-compiled.css").read_text(encoding="utf-8")
+    theme = (WEB_STATIC_DIR / "css" / "hextech-theme.css").read_text(encoding="utf-8")
+    # 还原 CSS 选择器转义（Tailwind 对逗号输出 \2c ），使 ".{类名}" 可直接子串匹配
+    decoded = re.sub(r"\\2c\s?", ",", compiled + theme)
+    decoded = re.sub(r"\\(.)", r"\1", decoded)
+
+    missing = sorted(
+        token
+        for token in _iter_static_class_tokens() - _TAILWIND_MARKER_ONLY_CLASSES
+        if ("." + token) not in decoded
+    )
+    assert not missing, (
+        "以下类在 tailwind-compiled.css/hextech-theme.css 中缺失，"
+        f"请在 frontend/ 目录执行 npm run build:css 后重新提交产物：{missing}"
+    )
+
+
+def test_index_hall_of_legends_layout_contract() -> None:
+    """首页精简头部与荣耀殿堂布局必须同时存在于源文件和编译产物。"""
+
+    index_text = (WEB_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    render_text = (WEB_STATIC_DIR / "js" / "index" / "render.js").read_text(encoding="utf-8")
+    style_source = (
+        RUN_DIR / "src" / "hextech" / "interfaces" / "web" / "frontend" / "src" / "styles" / "input.css"
+    ).read_text(encoding="utf-8")
+    compiled_style = (WEB_STATIC_DIR / "css" / "tailwind-compiled.css").read_text(encoding="utf-8")
+
+    assert "微量贝叶斯平滑" not in index_text
+    assert "searchAssistPanel" not in index_text
+    assert "hx-champion-spotlight" in render_text
+    assert "img/champion/splash/" in render_text
+    assert "img/champion/loading/" in render_text
+    assert "data-hero-id" in render_text and "data-hero-name" in render_text
+
+    required_classes = (
+        ".hx-champion-spotlight",
+        ".hx-hero-card--t1",
+        ".hx-hero-card--t2",
+        ".hx-tier-row--t1",
+    )
+    for css in (style_source, compiled_style):
+        for class_name in required_classes:
+            assert class_name in css
+
+    # 窄屏仍保持“左档位牌 + 右英雄区”的横向骨架。
+    assert re.search(r"@media \(max-width: 768px\).*?\.hx-tier-row\s*\{\s*flex-direction: row;", style_source, re.S)
+
+
+def test_js_asset_urls_use_allowlisted_prefixes() -> None:
+    """前端 /assets/ 字面量必须带资产路由白名单前缀，否则后端一律 404。"""
+
+    allowed_prefixes = ("champions/", "augments/", "modes/", "ui/")
+    for path in _static_frontend_sources():
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"/assets/", text):
+            rest = text[match.end():match.end() + 24]
+            assert rest.startswith(allowed_prefixes), (
+                f"{path.name} 中出现未带白名单前缀的资产路径：/assets/{rest[:16]}…"
+            )
+
 
 def test_api_champions_reads_published_snapshot_without_web_rebuild() -> None:
     from fastapi import FastAPI
@@ -229,24 +325,24 @@ def test_redirect_api_handles_invalid_champion_input() -> None:
     assert response.json()["error"] == "invalid_champion"
 
 def test_detail_renders_before_deferred_icon_catalog() -> None:
-    detail_script = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
-    load_start = detail_script.index("async function loadHextechs")
-    load_end = detail_script.index("function connectWS()", load_start)
-    load_body = detail_script[load_start:load_end]
+    loading_script = (WEB_STATIC_DIR / "js" / "detail" / "loading.js").read_text(encoding="utf-8")
+    detail_entry = (WEB_STATIC_DIR / "js" / "detail.js").read_text(encoding="utf-8")
 
+    load_body = loading_script[loading_script.index("async function loadHextechs"):]
     assert "renderCurrentView();" in load_body
     assert "loadAugmentIconMap().then" in load_body
     assert "await loadAugmentIconMap();" not in load_body
     assert load_body.index("renderCurrentView();") < load_body.index("loadAugmentIconMap().then")
-    assert "DETAIL_LOADING_RETRY_BASE_MS" in detail_script
-    assert "DETAIL_LOADING_RETRY_MAX_MS" in detail_script
-    assert "scheduleDetailRetry" in detail_script
-    assert "describeLoadingStatus" in detail_script
-    assert "startup_status" in detail_script
-    assert "preload_status" in detail_script
-    dormant_start = detail_script.index("function dormancyDormant()")
-    dormant_end = detail_script.index("function reactivateTab()", dormant_start)
-    assert "clearDetailRetry();" in detail_script[dormant_start:dormant_end]
+    assert "DETAIL_LOADING_RETRY_BASE_MS" in loading_script
+    assert "DETAIL_LOADING_RETRY_MAX_MS" in loading_script
+    assert "scheduleDetailRetry" in loading_script
+    assert "describeLoadingStatus" in loading_script
+    assert "startup_status" in loading_script
+    assert "preload_status" in loading_script
+    # 休眠回调必须清掉加载中重试，避免休眠标签继续打后端
+    dormant_start = detail_entry.index("onDormant")
+    dormant_end = detail_entry.index("onReactivate", dormant_start)
+    assert "clearDetailRetry();" in detail_entry[dormant_start:dormant_end]
 
 def test_synergy_api_quarantines_duplicate_pollution() -> None:
     polluted_items = [

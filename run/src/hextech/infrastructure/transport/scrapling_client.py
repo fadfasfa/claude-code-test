@@ -148,6 +148,25 @@ def _is_retryable_fetch_error(error_kind: str) -> bool:
         return False
 
 
+def _decode_body(body: bytes, declared_encoding: object) -> str:
+    """解码响应字节：先严格尝试 UTF-8，失败才回退声明编码。
+
+    无 charset 的 JS/JSON 资源常被 Scrapling 误报为 ISO-8859-1，逐字节解码
+    会把合法 UTF-8 中文变成 mojibake（真机曾丢失"回归基本功"等强化名）。
+    含多字节序列的合法 UTF-8 几乎不可能是有意的 latin-1 文本，先验 UTF-8
+    是安全的；真 latin-1 字节（非法 UTF-8）仍走声明编码，正常路径结果不变。
+    """
+
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        encoding = str(declared_encoding or "") or "utf-8"
+        try:
+            return body.decode(encoding, errors="replace")
+        except LookupError:
+            return body.decode("utf-8", errors="replace")
+
+
 def _response_html(response: object) -> str | None:
     """从 Scrapling Response 中取 HTML；body 始终作为 bytes 兜底。"""
     html = getattr(response, "html", None)
@@ -156,8 +175,7 @@ def _response_html(response: object) -> str | None:
 
     body = getattr(response, "body", None)
     if isinstance(body, bytes):
-        encoding = getattr(response, "encoding", None) or "utf-8"
-        return body.decode(encoding, errors="replace")
+        return _decode_body(body, getattr(response, "encoding", None))
     if isinstance(body, str):
         return body
     return None
@@ -168,8 +186,7 @@ def _response_text(response: object) -> str:
     for attr in ("body", "content"):
         value = getattr(response, attr, None)
         if isinstance(value, bytes):
-            encoding = getattr(response, "encoding", None) or "utf-8"
-            return value.decode(encoding, errors="replace")
+            return _decode_body(value, getattr(response, "encoding", None))
         if isinstance(value, str):
             return value
 

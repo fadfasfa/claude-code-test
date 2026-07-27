@@ -265,8 +265,9 @@ def _vision_trace_signature(event_payload: Mapping[str, Any]) -> tuple[str, ...]
         str(source.get("selection_window_active") or ""),
         str(source.get("scene_kind") or ""),
         "body_shard_latched" if source.get("body_shard_latched") else "",
-        "cursor_over_cards" if source.get("cursor_over_cards") else "",
-        "hover_occluded" if source.get("hover_occluded") else "",
+        # cursor_over_cards / hover_occluded 是鼠标位置噪声，不构成状态变化：
+        # 真机中光标划过卡片区域会让二者逐帧翻转，把 256 条历史在 4 分钟内
+        # 全部冲成空闲帧。字段本身仍写入每条 history 条目，仅不参与签名。
         *_slot_signature(event_payload),
         *(str(rule or "") for rule in acceptance_rules[:SLOT_COUNT]),
         *raw_signature,
@@ -380,7 +381,7 @@ def _vision_trace_history_entry(event_payload: Mapping[str, Any]) -> dict[str, A
 
 
 def _timeline_channel_summary(raw_slot: Mapping[str, Any], channel_name: str) -> dict[str, Any]:
-    """只保留回放所需 Top-1 分数，不把图片或完整候选表写入时间线。"""
+    """保留回放所需 Top-3 分数，不把图片或完整模板表写入时间线。"""
 
     channels = raw_slot.get("channels") if isinstance(raw_slot.get("channels"), Mapping) else {}
     channel = channels.get(channel_name) if isinstance(channels.get(channel_name), Mapping) else {}
@@ -391,6 +392,16 @@ def _timeline_channel_summary(raw_slot: Mapping[str, Any], channel_name: str) ->
         "name": str(top.get("name") or ""),
         "confidence": top.get("confidence"),
         "margin": channel.get("margin"),
+        "top_candidates": [
+            {
+                "augment_id": str(item.get("augment_id") or ""),
+                "recognition_key": str(item.get("recognition_key") or ""),
+                "name": str(item.get("name") or ""),
+                "confidence": item.get("confidence"),
+            }
+            for item in candidates[:3]
+            if isinstance(item, Mapping)
+        ],
     }
 
 

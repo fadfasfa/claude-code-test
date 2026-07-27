@@ -49,7 +49,11 @@ import urllib3
 import win32gui
 from PIL import Image, ImageDraw, ImageTk
 
-from hextech.modules.game_context.client import ClientContextProvider, parse_client_context
+from hextech.modules.game_context.client import (
+    DEFAULT_CONTEXT_TTL_SECONDS,
+    ClientContextProvider,
+    parse_client_context,
+)
 from hextech.interfaces.overlay import context as overlay_context
 from hextech.interfaces.overlay.gameflow import probe_lcu_gameflow_in_progress, probe_live_client_in_progress
 from hextech.modules.vision.window import find_lol_game_window, is_window_renderable
@@ -273,6 +277,48 @@ def _resolve_candidate_hero_names(ui: "HextechUI", candidate_groups) -> list[str
     return hero_names
 
 
+def _preserve_recent_selection_roles(ui: "HextechUI", normalized_groups: dict) -> dict:
+    """champ-select 结束瞬间短暂保留己方/队友角色标识，避免"已选"徽章闪断。
+
+    `ClientContextProvider.not_in_champ_select()` 在 LCU 404（锁定完成、进入
+    加载画面等自然过渡）时立即清空 local_champion_id/teammate_champion_ids；
+    这与模块自身文档"短暂断连只保留最近一次未过期上下文"的承诺相悖，桌面
+    是唯一没有补偿这个瞬断的消费方（overlay 渲染层已有等价的 recent_context
+    兜底）。只在角色信息缺失、英雄池仍包含缓存的本地英雄 ID、且未超过与
+    ClientContextProvider 一致的 TTL 时补回缓存值；真正换局或超时后如实清空。
+    """
+
+    local_id = str(normalized_groups.get("local_champion_id") or "")
+    now = time.time()
+    if local_id:
+        ui._last_known_selection_roles = {
+            "local_champion_id": local_id,
+            "teammate_champion_ids": list(normalized_groups.get("teammate_champion_ids") or []),
+            "at": now,
+        }
+        return normalized_groups
+
+    cached = getattr(ui, "_last_known_selection_roles", None)
+    if not cached or now - float(cached.get("at", 0.0)) > DEFAULT_CONTEXT_TTL_SECONDS:
+        return normalized_groups
+
+    cached_local_id = str(cached.get("local_champion_id") or "")
+    known_ids = {
+        *normalized_groups.get("selected_champion_ids", []),
+        *normalized_groups.get("bench_champion_ids", []),
+    }
+    if not cached_local_id or cached_local_id not in known_ids:
+        return normalized_groups
+
+    return {
+        **normalized_groups,
+        "local_champion_id": cached_local_id,
+        "teammate_champion_ids": [
+            value for value in cached.get("teammate_champion_ids", []) if value in known_ids
+        ],
+    }
+
+
 def _apply_candidate_update(ui: "HextechUI", candidate_groups, *, source: str, payload: dict | None = None) -> None:
     if payload and not _is_newer_live_state(ui, payload, source):
         return
@@ -280,6 +326,7 @@ def _apply_candidate_update(ui: "HextechUI", candidate_groups, *, source: str, p
         _store_live_state_marker(ui, payload, source)
         _write_overlay_context_from_live_state(ui, payload, source=source)
     normalized_groups = normalize_candidate_groups(candidate_groups)
+    normalized_groups = _preserve_recent_selection_roles(ui, normalized_groups)
     available_ids = _candidate_groups_to_id_set(normalized_groups)
     hero_names = _resolve_candidate_hero_names(ui, normalized_groups)
     _sync_preload_state_for_candidates(ui, hero_names)

@@ -17,7 +17,9 @@ from typing import Any, Mapping, cast
 import psutil
 
 from hextech.modules.data.catalog.runtime_store import build_runtime_state_path
+from hextech.modules.data.ports.paths import get_var_dir
 from hextech.modules.vision.events import build_overlay_event, write_overlay_event
+from hextech.modules.vision.instance_lock import overlay_instance_lock
 from hextech.modules.data.overlay_source import SharedOverlayDataSource
 from hextech.infrastructure.vision.state import SelectionTracker
 from hextech.modules.data.ports.atomic import atomic_write_json
@@ -27,14 +29,9 @@ from hextech.modules.vision.gameflow import probe_gameflow_state
 
 from hextech.infrastructure.vision.template_runtime import load_or_build_default_template_runtime
 from hextech.infrastructure.vision.gameflow_pause import PausedGameflowProbe, pause_identity, resolve_game_visibility_pause
-from hextech.infrastructure.vision.sidecar_diagnostics import (
-    DiagnosticEpochSampler as _DiagnosticEpochSampler,
-    emit_cli_event as _emit_cli_event,
-)
-from hextech.infrastructure.vision.sidecar_matching import (
-    VisionComputeMemoryError,
-    prepare_compute_rank_matrices,
-)
+from hextech.infrastructure.vision.sidecar_diagnostics import DiagnosticEpochSampler as _DiagnosticEpochSampler
+from hextech.infrastructure.vision.sidecar_diagnostics import emit_cli_event as _emit_cli_event
+from hextech.infrastructure.vision.sidecar_matching import VisionComputeMemoryError, prepare_compute_rank_matrices
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +49,7 @@ SIDECAR_READY_TOKEN_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_TOKEN"
 SIDECAR_BOOTSTRAP_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_BOOTSTRAP_FILE"
 SIDECAR_GENERATION_ENV = "HEXTECH_OVERLAY_GENERATION"
 SIDECAR_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
-
+SIDECAR_INSTANCE_LOCK_FILE = get_var_dir() / "locks" / "game_overlay_sidecar.lock"
 
 def _sidecar_pid_started_at() -> float:
     """使用 OS 创建时间防止 Supervisor 把 PID 复用误判为原 sidecar。"""
@@ -735,6 +732,17 @@ def _record_template_missing_failure(event: Mapping[str, Any] | None) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    with overlay_instance_lock(SIDECAR_INSTANCE_LOCK_FILE) as acquired:
+        if not acquired:
+            # 必须在 bootstrap、status 或事件写入前退出，避免第二套运行时覆盖 owner 状态。
+            logger.warning("Vision sidecar 已有运行实例，本实例退出。")
+            return 0
+        return _run_main_locked(args)
+
+
+def _run_main_locked(args: argparse.Namespace) -> int:
+    """执行已取得单实例锁的 Sidecar CLI。"""
+
     _write_sidecar_bootstrap_from_env("starting", phase="argument_parsed")
     if args.once:
         try:

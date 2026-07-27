@@ -7,19 +7,21 @@ from hextech.interfaces.desktop.app_shared import (  # noqa: F401 - 保留历史
     StartupTimingProbe,
     UI_COLORS,
     WEB_PORT_FILE,
-    WINDOW_EXPANDED_GEOMETRY,
+    WINDOW_BASE_HEIGHT,
+    WINDOW_EXPANDED_WIDTH,
     _format_game_overlay_host_reason,
     _format_supervisor_game_overlay_status,
-    _selection_role_style,
     ctypes,
     load_ui_feature_flags,
     logger,
     os,
     save_ui_feature_flags,
+    scaled,
     sys,
     threading,
     time,
     tk,
+    window_dpi_scale,
 )
 from hextech.interfaces.desktop.app_bootstrap import DesktopBootstrapMixin
 from hextech.interfaces.desktop.background_runtime import DesktopBackgroundRuntimeMixin
@@ -68,6 +70,8 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._supervisor_lease_thread: threading.Thread | None = None
         self.current_hero_ids = set()
         self.current_candidate_groups = {"selected_champion_ids": [], "bench_champion_ids": []}
+        # champ-select 结束瞬间的己方/队友角色短暂保留缓存，见 _preserve_recent_selection_roles。
+        self._last_known_selection_roles: dict | None = None
         self.image_cache = {}
         self._lcu_port = None
         self._lcu_token = None
@@ -83,8 +87,6 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._manual_move_timestamp = 0.0
         self._last_client_rect = None
         self._last_overlay_target_pos = None
-        # 折叠态标记：True 时悬浮窗收成 80 px 极窄列表，让出主屏视线
-        self._collapsed = False
         # 首次显示是否已完成吸附定位，用于解决"必须先移动客户端窗口才会跟随"的体感问题
         self._overlay_position_initialized = False
         self._hero_preload_ready = {}
@@ -100,10 +102,18 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
         self._last_redirect_success_at = 0.0
         self._ui_render_in_progress = False
         self._pending_ui_refresh = None
-        self._collapse_render_after_id = None
         self._overlay_status_after_id = None
         self._overlay_status_text = ""
         self._overlay_status_color = UI_COLORS["muted"]
+        # 单行状态栏的双通道缓存：service 承接原主状态（按钮反馈/错误），
+        # overlay 承接游戏内显示摘要；渲染时按 error 置顶 → service 新鲜窗口 →
+        # overlay → 回落 service 的优先级合成一行。
+        self._status_channels = {
+            "service": {"text": "系统初始化中...", "color": UI_COLORS["muted"], "at": time.monotonic()},
+            "overlay": {"text": "", "color": UI_COLORS["muted"], "at": 0.0},
+        }
+        # 当前 generation created_at 的 epoch 秒；0 表示未知，状态行不显示时效后缀。
+        self._data_created_ts = 0.0
         self._overlay_watchdog_lock = threading.Lock()
         self._overlay_operation_lock = threading.Lock()
         self._web_operation_lock = threading.Lock()
@@ -125,7 +135,13 @@ class HextechUI(DesktopBackgroundRuntimeMixin, DesktopBootstrapMixin, DesktopCon
 
         self.root = tk.Tk()
         self.root.title("Hextech 伴生系统")
-        self.root.geometry(WINDOW_EXPANDED_GEOMETRY)
+        # 几何锁 1.0 维持基线"狭长"观感（窗宽/头像/padding 不乘 DPI，
+        # window_dpi_scale 保留在 app_shared 供将来选择性启用）；字体不走此旋钮，
+        # 由 ui_font 的正数磅值随系统 DPI 隐式放大，几何与字体彻底解耦。
+        self._ui_scale = 1.0
+        self._window_height_px = WINDOW_BASE_HEIGHT
+        self._overlay_pixel_width = WINDOW_EXPANDED_WIDTH
+        self.root.geometry(f"{self._overlay_pixel_width}x{self._window_height_px}")
         self.root.configure(bg=UI_COLORS["base"])
         self.root.attributes("-alpha", 1.0, "-topmost", False)
         self.root.overrideredirect(True)

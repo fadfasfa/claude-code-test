@@ -80,9 +80,9 @@ class OverlayVisionInteractionTests(unittest.TestCase):
         clear_event["source"] = dict(
             hover_event["source"], cursor_over_cards=False, card_residue=False, name_residue=[False, False, False]
         )
-        clear_event["timing"] = {"captured_at": 31.0, "recognition_completed_at": 31.0}
+        clear_event["timing"] = {"captured_at": 30.7, "recognition_completed_at": 30.7}
         held = tracker.update(clear_event)
-        clear_event["timing"] = {"captured_at": 32.0, "recognition_completed_at": 32.0}
+        clear_event["timing"] = {"captured_at": 30.8, "recognition_completed_at": 30.8}
         exited = tracker.update(clear_event)
 
         self.assertTrue(held["active"])
@@ -107,13 +107,13 @@ class OverlayVisionInteractionTests(unittest.TestCase):
         )
         hover_event["_raw_slots"] = []
 
-        for observed_at in (40.0, 40.5, 41.0, 41.5):
+        for observed_at in (40.0, 40.25, 40.5, 40.75):
             hover_event["timing"] = {"captured_at": observed_at, "recognition_completed_at": observed_at}
             held = tracker.update(hover_event)
             self.assertTrue(held["active"])
             self.assertEqual(held["source"]["reason"], "hover_occluded")
 
-        hover_event["timing"] = {"captured_at": 41.6, "recognition_completed_at": 41.6}
+        hover_event["timing"] = {"captured_at": 40.8, "recognition_completed_at": 40.8}
         expired = tracker.update(hover_event)
 
         self.assertFalse(expired["active"])
@@ -188,9 +188,9 @@ class OverlayVisionInteractionTests(unittest.TestCase):
         residue_event["timing"] = {"captured_at": 10.0, "recognition_completed_at": 10.0}
 
         first = tracker.update(residue_event)
-        residue_event["timing"] = {"captured_at": 11.0, "recognition_completed_at": 11.0}
+        residue_event["timing"] = {"captured_at": 10.7, "recognition_completed_at": 10.7}
         second = tracker.update(residue_event)
-        residue_event["timing"] = {"captured_at": 12.0, "recognition_completed_at": 12.0}
+        residue_event["timing"] = {"captured_at": 10.8, "recognition_completed_at": 10.8}
         expired = tracker.update(residue_event)
 
         self.assertTrue(first["active"])
@@ -201,7 +201,7 @@ class OverlayVisionInteractionTests(unittest.TestCase):
         self.assertEqual(expired["source"]["selection_epoch"], first["source"]["selection_epoch"])
         self.assertEqual(expired["source"]["selection_revision"], first["source"]["selection_revision"])
 
-    def test_partial_ready_scene_loss_keeps_epoch_for_six_seconds_and_recovers(self):
+    def test_partial_ready_scene_loss_expires_within_one_point_two_seconds(self):
         from hextech.infrastructure.vision.state import SelectionTracker
 
         tracker = SelectionTracker(scene_enter_frames=1)
@@ -226,20 +226,15 @@ class OverlayVisionInteractionTests(unittest.TestCase):
         missing_scene["_raw_slots"] = []
         missing_scene["timing"] = {"captured_at": 20.4, "recognition_completed_at": 20.4}
         held = tracker.update(missing_scene)
-        missing_scene["timing"] = {"captured_at": 26.0, "recognition_completed_at": 26.0}
-        still_held = tracker.update(missing_scene)
-
-        recovered = _selection_event()
-        recovered["_raw_slots"][1] = {"slot": 1, "diagnostic": "text_icon_disagree", "channels": {}}
-        recovered["timing"] = {"captured_at": 26.2, "recognition_completed_at": 26.2}
-        resumed = tracker.update(recovered)
+        missing_scene["timing"] = {"captured_at": 21.2, "recognition_completed_at": 21.2}
+        expired = tracker.update(missing_scene)
 
         self.assertEqual(held["source"]["reason"], "scene_grace_hold")
-        self.assertEqual(still_held["source"]["reason"], "scene_grace_hold")
+        self.assertEqual(expired["source"]["reason"], "scene_loss_confirmed")
+        self.assertFalse(expired["source"]["selection_window_active"])
         self.assertEqual(held["source"]["selection_epoch"], epoch)
         self.assertEqual([held["slots"][index]["state"] for index in (0, 2)], ["ready", "ready"])
-        self.assertEqual(resumed["source"]["selection_epoch"], epoch)
-        self.assertEqual([resumed["slots"][index]["state"] for index in (0, 2)], ["ready", "ready"])
+        self.assertLessEqual(21.2 - 20.2, 1.2)
 
     def test_selection_active_partial_progress_writes_on_slot_changes(self):
         from hextech.infrastructure.vision import sidecar

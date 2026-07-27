@@ -13,6 +13,7 @@ from typing import Any
 
 from hextech.modules.data.ports.paths import RUNTIME_DATA_DIR
 from hextech.modules.data.ports.atomic import atomic_write_json
+from hextech.modules.session.build_identity import current_build_id
 
 
 def build_desktop_runtime_state_path(filename: str) -> Path:
@@ -36,6 +37,12 @@ class StartupTimingProbe:
         self.wall_started_at = time.time()
         self.output_path = Path(output_path) if output_path is not None else STARTUP_TIMING_FILE
         self._marks: list[dict[str, Any]] = []
+        # Build 一致性核对要求所有 runtime state 都能自证来源；启动即取一次，
+        # 失败降级为空串而不阻塞启动。
+        try:
+            self._build_id = str(current_build_id() or "")
+        except Exception:
+            self._build_id = ""
 
     def mark(self, name: str, **fields: Any) -> None:
         elapsed_ms = round((time.perf_counter() - self.started_at) * 1000.0, 3)
@@ -51,6 +58,7 @@ class StartupTimingProbe:
     def flush(self) -> None:
         data = {
             "schema_version": STARTUP_TIMING_SCHEMA_VERSION,
+            "build_id": self._build_id,
             "generated_at": time.time(),
             "started_at": self.wall_started_at,
             "marks": list(self._marks),

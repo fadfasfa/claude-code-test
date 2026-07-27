@@ -84,6 +84,7 @@ def build_hextech_coverage_report(
     catalog_entries: Sequence[Mapping[str, Any]] = (),
     upstream_version: str = "",
     upstream_date: str = "",
+    upstream_marker_sha256: str = "",
     last_good: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """构造不可变 source run 可携带的覆盖摘要。"""
@@ -110,7 +111,12 @@ def build_hextech_coverage_report(
     metadata_covered = actual_ids.intersection(metadata)
     report: dict[str, Any] = {
         "schema_version": 1,
-        "upstream": {"version": str(upstream_version or ""), "date": str(upstream_date or "")},
+        # marker_sha256 是条目子集内容哈希：version/date 为空的源靠它感知上游变化。
+        "upstream": {
+            "version": str(upstream_version or ""),
+            "date": str(upstream_date or ""),
+            "marker_sha256": str(upstream_marker_sha256 or ""),
+        },
         "metadata": {
             "id_count": len(metadata),
             "actual_stat_id_count": len(actual_ids),

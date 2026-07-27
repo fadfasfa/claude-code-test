@@ -26,8 +26,17 @@ from .runtime import (
     write_request_auth_token,
 )
 
+class NoCacheStaticFiles(StaticFiles):
+    """本机静态资源禁用强缓存：JS/CSS 改版后浏览器立即回源，仍保留 ETag/304 协商。"""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 app = FastAPI(lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=get_static_dir()), name="static")
+app.mount("/static", NoCacheStaticFiles(directory=get_static_dir()), name="static")
 register_routes(app)
 
 

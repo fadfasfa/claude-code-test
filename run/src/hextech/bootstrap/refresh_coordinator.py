@@ -33,6 +33,9 @@ from hextech.modules.data.generation import DataSnapshotPublisher
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
 from hextech.bootstrap.game_refresh_gate import GameRefreshDeferred, GameRefreshGate
+from hextech.bootstrap.source_freshness import (
+    evaluate_source_expiry, is_blocked_failure, iso_utc, parse_refresh_time, pointer_success_at,
+)
 
 
 SOURCE_INTERVALS = {
@@ -49,27 +52,6 @@ SOURCE_TIMEOUTS = {
 }
 ContributionMap = Mapping[str, Mapping[str, Any]]
 SnapshotBuilder = Callable[[ContributionMap], Any]
-
-
-def _parse_time(value: str) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
-
-
-def _iso(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat(timespec="seconds")
-
-
-def _pointer_success_at(pointer: Mapping[str, Any]) -> str:
-    return str(pointer.get("last_success_at") or "")
-
-
-def _is_blocked_failure(payload: Mapping[str, Any]) -> bool:
-    text = json.dumps(payload, ensure_ascii=True).lower()
-    return any(token in text for token in ("http_403", "http_429", '"status_code": 403', '"status_code": 429'))
 
 
 class CohortRefreshCoordinator:
@@ -356,13 +338,13 @@ class CohortRefreshCoordinator:
         if force:
             return True
         current = self.now()
-        next_due = _parse_time(state.next_due_at)
+        next_due = parse_refresh_time(state.next_due_at)
         if next_due is not None:
             return current >= next_due
         # source current 缺失不代表首次尝试；失败后的 backoff 必须先于立即刷新语义。
         if not pointer:
             return True
-        success = _parse_time(state.last_success_at or _pointer_success_at(pointer))
+        success = parse_refresh_time(state.last_success_at or pointer_success_at(pointer))
         return success is None or current >= success + SOURCE_INTERVALS[source]
 
     def _source_coverage(self, source: str, pointer: Mapping[str, Any]) -> dict[str, Any]:
@@ -383,7 +365,7 @@ class CohortRefreshCoordinator:
         return dict(coverage) if isinstance(coverage, Mapping) else {}
 
     def _probe_hextech_upstream_change(self, pointer: Mapping[str, Any]) -> tuple[bool, dict[str, Any]]:
-        """仅以稳定上游版本加速候选；日期继续保留为诊断信息。"""
+        """以稳定上游版本优先、内容哈希兜底加速候选；日期只保留为诊断信息。"""
 
         if self._upstream_marker_probe is None or not pointer:
             return False, {}
@@ -394,16 +376,22 @@ class CohortRefreshCoordinator:
             return False, {}
         version = str(marker.get("version") or "").strip()
         date = str(marker.get("date") or "").strip()
-        if not version and not date:
+        marker_sha256 = str(marker.get("marker_sha256") or "").strip()
+        if not version and not date and not marker_sha256:
             return False, {}
-        # updated_at / Last-Modified 可能随 CDN 响应变化；只把稳定版本作为提前刷新信号。
-        if not version:
-            return False, {"version": version, "date": date}
+        payload = {"version": version, "date": date, "marker_sha256": marker_sha256}
         coverage = self._source_coverage("hextech", pointer)
         upstream = coverage.get("upstream") if isinstance(coverage.get("upstream"), Mapping) else {}
-        previous_version = str(upstream.get("version") or "").strip()
-        changed = version != previous_version
-        return changed, {"version": version, "date": date}
+        # updated_at / Last-Modified 可能随 CDN 响应变化；稳定版本仍是首选信号。
+        if version:
+            previous_version = str(upstream.get("version") or "").strip()
+            return version != previous_version, payload
+        # aramgg 不提供版本号：退回条目内容哈希比较。要求当前与上一 run 的哈希
+        # 都非空才判变化——升级后首轮无历史哈希时保守不加速，避免虚假强刷。
+        previous_marker = str(upstream.get("marker_sha256") or "").strip()
+        if marker_sha256 and previous_marker:
+            return marker_sha256 != previous_marker, payload
+        return False, payload
 
     def _worker_command(self, source: str, work: Path, catalog_pointer: Path | None, *, force: bool) -> list[str]:
         pointer_path = work / f"{source}.pointer.v2.json"
@@ -536,15 +524,15 @@ class CohortRefreshCoordinator:
 
     def _failure_state(self, previous: RefreshSourceState, payload: Mapping[str, Any]) -> RefreshSourceState:
         now = self.now()
-        blocked = _is_blocked_failure(payload)
+        blocked = is_blocked_failure(payload)
         delay = timedelta(hours=6) if blocked else timedelta(minutes=30)
         if not blocked:
             seed = hashlib.blake2b(json.dumps(payload, sort_keys=True).encode("utf-8"), digest_size=2).digest()
             delay += timedelta(seconds=int.from_bytes(seed, "big") % 301)
         return replace(
             previous,
-            last_attempt_at=_iso(now),
-            next_due_at=_iso(now + delay),
+            last_attempt_at=iso_utc(now),
+            next_due_at=iso_utc(now + delay),
             failure_kind="http_blocked" if blocked else str(payload.get("error_type") or "worker_failed"),
             state="backoff",
         )
@@ -713,25 +701,36 @@ class CohortRefreshCoordinator:
                     record_count = 0
                 else:
                     run_id, _, artifact_sha, record_count, manifest_sha = self._pointer_identity(target)
+                data_at_text = str(
+                    target.get("last_success_at") or target.get("completed_at") or target.get("created_at") or ""
+                )
+                expired, stale_age_seconds = evaluate_source_expiry(
+                    data_at_text, SOURCE_INTERVALS[source], completed
+                )
+                if source in degraded_sources:
+                    data_reason = "candidate_rejected_last_good_preserved"
+                elif expired:
+                    data_reason = "source_data_expired"
+                else:
+                    data_reason = ""
                 source_status[source] = {
                     "catalog_id": str(
                         target.get("catalog_generation_id")
                         or targets["catalog"].get("catalog_generation_id")
                         or ""
                     ),
-                    "data_at": str(
-                        target.get("last_success_at") or target.get("completed_at") or target.get("created_at") or ""
-                    ),
-                    "checked_at": _iso(completed),
+                    "data_at": data_at_text,
+                    "checked_at": iso_utc(completed),
                     "freshness": "last_good" if source in degraded_sources else "fresh",
                     "run_id": run_id,
                     "origin_generation_id": str(target.get("origin_generation_id") or ""),
                     "artifact_sha256": artifact_sha,
                     "manifest_sha256": manifest_sha,
                     "record_count": record_count,
-                    "data_status": "data_stale" if source in degraded_sources else "fresh",
+                    "data_status": "data_stale" if source in degraded_sources or expired else "fresh",
                     # UI 只消费稳定诊断码；原始 worker 错误仍保留在本轮 source 诊断中。
-                    "data_reason": "candidate_rejected_last_good_preserved" if source in degraded_sources else "",
+                    "data_reason": data_reason,
+                    "stale_age_seconds": stale_age_seconds,
                     "coverage": self._source_coverage(source, target),
                 }
             manifest = self.publisher.publish(
@@ -763,9 +762,9 @@ class CohortRefreshCoordinator:
                 continue
             pointer = targets[source]
             states[source] = RefreshSourceState(
-                last_attempt_at=_iso(completed),
-                last_success_at=str(pointer.get("last_success_at") or _iso(completed)),
-                next_due_at=_iso(completed + SOURCE_INTERVALS[source]),
+                last_attempt_at=iso_utc(completed),
+                last_success_at=str(pointer.get("last_success_at") or iso_utc(completed)),
+                next_due_at=iso_utc(completed + SOURCE_INTERVALS[source]),
                 failure_kind="",
                 current_run_id=(
                     self._pointer_identity(pointer)[0]
@@ -776,7 +775,7 @@ class CohortRefreshCoordinator:
             )
         self.schedule_store.save(
             RefreshScheduleV1(
-                updated_at=_iso(completed),
+                updated_at=iso_utc(completed),
                 generation_id=manifest.generation_id,
                 sources=states,
             )

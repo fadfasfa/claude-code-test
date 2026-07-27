@@ -74,7 +74,7 @@ def test_complete_candidate_records_upstream_and_catalog_projection_coverage() -
 
     validate_hextech_coverage_report(report, expected_hero_ids=HERO_IDS, outcomes=_outcomes())
 
-    assert report["upstream"] == {"version": "15.14", "date": "2026-07-22"}
+    assert report["upstream"] == {"version": "15.14", "date": "2026-07-22", "marker_sha256": ""}
     assert report["metadata"]["coverage_ratio"] == 1.0
     assert report["catalog_projection"]["coverage_ratio"] == 1.0
     assert {hero["record_count"] for hero in report["heroes"].values()} == {70}
@@ -145,7 +145,7 @@ def test_upstream_version_change_forces_next_hextech_candidate(tmp_path: Path) -
     changed, marker = coordinator._probe_hextech_upstream_change({"run_id": "run-old"})
 
     assert changed is True
-    assert marker == {"version": "15.14", "date": "old"}
+    assert marker == {"version": "15.14", "date": "old", "marker_sha256": ""}
 
 
 def test_upstream_date_change_does_not_force_next_hextech_candidate(tmp_path: Path) -> None:
@@ -165,7 +165,90 @@ def test_upstream_date_change_does_not_force_next_hextech_candidate(tmp_path: Pa
     changed, marker = coordinator._probe_hextech_upstream_change({"run_id": "run-old"})
 
     assert changed is False
-    assert marker == {"version": "15.13", "date": "2026-07-22"}
+    assert marker == {"version": "15.13", "date": "2026-07-22", "marker_sha256": ""}
+
+
+def test_dead_apexlol_backup_metadata_url_removed() -> None:
+    """回归：apexlol.info 备份已 404 下线，留在顺位里每 15 分钟白打一次探针。"""
+
+    from hextech.infrastructure.sources.version_sync import HEXTECH_AUGMENT_METADATA_URLS
+
+    assert all("apexlol.info" not in url for url in HEXTECH_AUGMENT_METADATA_URLS)
+    assert HEXTECH_AUGMENT_METADATA_URLS
+
+
+def test_probe_returns_content_marker_when_version_and_date_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """回归：aramgg 无 version/date 时旧探针返回空并 fall through 打 404。"""
+
+    from hextech.infrastructure.sources.hextech import service as hextech_service
+
+    payload = {"1001": {"displayName": "回归基本功", "rarity": 2}}
+
+    class FakeResponse:
+        headers: dict[str, str] = {}
+
+        def json(self) -> dict:
+            return payload
+
+    calls: list[str] = []
+
+    def fake_fetch(url: str, **_kwargs) -> FakeResponse:
+        calls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr(hextech_service, "fetch_with_retry", fake_fetch)
+
+    marker = hextech_service.probe_hextech_upstream_marker()
+
+    assert marker["version"] == ""
+    assert len(marker["marker_sha256"]) == 64
+    # 首个 URL 已给出有效 marker，不得继续遍历后续顺位（旧行为的 404 来源）。
+    assert len(calls) == 1
+
+
+def _marker_coordinator(tmp_path: Path, *, previous_marker: str, probe_marker: str) -> CohortRefreshCoordinator:
+    run_root = tmp_path / "sources" / "hextech" / "runs" / "run-old"
+    run_root.mkdir(parents=True)
+    upstream: dict[str, str] = {"version": "", "date": ""}
+    if previous_marker:
+        upstream["marker_sha256"] = previous_marker
+    (run_root / "manifest.json").write_text(
+        json.dumps({"metadata": {"coverage": {"upstream": upstream}}}),
+        encoding="utf-8",
+    )
+    return CohortRefreshCoordinator(
+        publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
+        builder=lambda _targets: None,
+        root=tmp_path,
+        upstream_marker_probe=lambda: {"version": "", "date": "", "marker_sha256": probe_marker},
+    )
+
+
+def test_content_marker_change_forces_next_hextech_candidate(tmp_path: Path) -> None:
+    coordinator = _marker_coordinator(tmp_path, previous_marker="a" * 64, probe_marker="b" * 64)
+
+    changed, marker = coordinator._probe_hextech_upstream_change({"run_id": "run-old"})
+
+    assert changed is True
+    assert marker["marker_sha256"] == "b" * 64
+
+
+def test_same_content_marker_does_not_force_candidate(tmp_path: Path) -> None:
+    coordinator = _marker_coordinator(tmp_path, previous_marker="a" * 64, probe_marker="a" * 64)
+
+    changed, _marker = coordinator._probe_hextech_upstream_change({"run_id": "run-old"})
+
+    assert changed is False
+
+
+def test_missing_previous_marker_stays_conservative(tmp_path: Path) -> None:
+    """升级后首轮：上一 run 无哈希时不加速，避免虚假强刷。"""
+
+    coordinator = _marker_coordinator(tmp_path, previous_marker="", probe_marker="a" * 64)
+
+    changed, _marker = coordinator._probe_hextech_upstream_change({"run_id": "run-old"})
+
+    assert changed is False
 
 
 def test_hextech_backoff_does_not_probe_upstream_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

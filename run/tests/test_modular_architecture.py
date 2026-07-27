@@ -384,6 +384,40 @@ def test_typed_game_context_provider_is_the_lcu_runtime_boundary() -> None:
     assert context.source == "overlay-lcu"
 
 
+def test_lcu_champ_select_404_is_normal_state_without_connection_reset() -> None:
+    """对局中 champ-select 404 属常态：不得重置 port/token，也不得刷 warning。
+
+    回归背景：历史实现 404 计满 5 次即重置连接，整局每 7.6 秒重扫客户端
+    进程并产生 137 条 warning/18 分钟（2026-07-26 真机实测）。
+    """
+
+    from unittest import mock
+
+    from hextech.interfaces.web.backend import lcu_runtime
+
+    with lcu_runtime._lcu_state_lock:
+        previous_port = lcu_runtime._lcu_state.port
+        previous_token = lcu_runtime._lcu_state.token
+        lcu_runtime._lcu_state.port = 54321
+        lcu_runtime._lcu_state.token = "lcu-token"
+    try:
+        with mock.patch.object(lcu_runtime.logger, "warning") as warn:
+            for _ in range(10):
+                lcu_runtime._handle_champ_select_not_found()
+        with lcu_runtime._lcu_state_lock:
+            assert lcu_runtime._lcu_state.port == 54321
+            assert lcu_runtime._lcu_state.token == "lcu-token"
+            assert lcu_runtime._lcu_state.context_phase == "not_in_champ_select"
+            assert lcu_runtime._lcu_state.connection_state == "connected"
+        warn.assert_not_called()
+        # 计数式风暴逻辑已整体删除，防止回潮
+        assert not hasattr(lcu_runtime._lcu_state, "consecutive_404_count")
+    finally:
+        with lcu_runtime._lcu_state_lock:
+            lcu_runtime._lcu_state.port = previous_port
+            lcu_runtime._lcu_state.token = previous_token
+
+
 def test_game_window_observation_prevents_mixed_capture_geometry() -> None:
     GameWindowObservation(1, 1, (0, 0, 1920, 1080), (1920, 1080), 1.25, True, (1, 1, 0, 0))
     with pytest.raises(ValueError, match="capture_client_size_mismatch"):

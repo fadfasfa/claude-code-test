@@ -391,7 +391,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
 
         from PIL import Image
 
-        from hextech.infrastructure.vision import runner, sidecar
+        from hextech.infrastructure.vision import gameflow_pause, runner, sidecar
         from hextech.modules.vision.gameflow import GameflowState
 
         class StopLoop(RuntimeError):
@@ -429,6 +429,12 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
             mock.patch.object(runner, "SelectionTracker", return_value=tracker),
             mock.patch.object(runner, "game_window_identity", return_value={"game_instance_id": "game-1"}),
             mock.patch.object(runner, "probe_gameflow_state", return_value=GameflowState.NOT_IN_PROGRESS) as gameflow_probe,
+            # 探测已改为后台线程执行；测试注入内联 spawn 保持结论同步到达。
+            mock.patch.object(
+                runner,
+                "PausedGameflowProbe",
+                lambda **kwargs: gameflow_pause.PausedGameflowProbe(spawn=lambda target: target(), **kwargs),
+            ),
             mock.patch.object(runner, "_write_sidecar_status"),
             mock.patch.object(runner, "_write_sidecar_ready_from_env"),
             mock.patch.object(sidecar, "_set_dpi_awareness"),

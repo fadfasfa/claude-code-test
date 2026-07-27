@@ -63,10 +63,17 @@ def test_diagnostics_button_is_created_in_title_frame(monkeypatch):
         def create_oval(self, *_args, **_kwargs):
             return None
 
+        def yview(self, *_args):
+            return None
+
+        def set(self, *_args):
+            return None
+
     monkeypatch.setattr(desktop_app.tk, "Frame", Widget)
     monkeypatch.setattr(desktop_app.tk, "Label", Widget)
     monkeypatch.setattr(desktop_app.tk, "Button", Widget)
     monkeypatch.setattr(desktop_app.tk, "Canvas", Widget)
+    monkeypatch.setattr(desktop_app.tk, "Scrollbar", Widget)
     monkeypatch.setattr(desktop_app.tk, "BooleanVar", Variable)
 
     dummy = object.__new__(desktop_app.HextechUI)
@@ -147,9 +154,17 @@ def test_diagnostics_export_runs_async_callback_and_reports_zip(monkeypatch, tmp
             if "state" in kwargs:
                 states.append(kwargs["state"])
 
+    clipboard: list[str] = []
+
     class Root:
         def after(self, _delay, callback):
             callback()
+
+        def clipboard_clear(self):
+            clipboard.clear()
+
+        def clipboard_append(self, value):
+            clipboard.append(str(value))
 
     dummy = object.__new__(desktop_app.HextechUI)
     dummy.root = Root()
@@ -171,4 +186,6 @@ def test_diagnostics_export_runs_async_callback_and_reports_zip(monkeypatch, tmp
     desktop_app.HextechUI._start_user_diagnostics_export(dummy)
 
     assert states == [desktop_app.tk.DISABLED, desktop_app.tk.NORMAL]
-    assert statuses[-1][0] == f"诊断已导出: {zip_path}"
+    # 状态行只保留短文案；完整路径进剪贴板（与日志），320px 单行放不下长路径。
+    assert statuses[-1][0] == "诊断已导出 · 路径已复制"
+    assert clipboard == [str(zip_path)]

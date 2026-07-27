@@ -85,6 +85,9 @@ def test_selection_timeline_appends_real_observations_without_images(tmp_path: P
     assert entries[0]["cursor_over_slots"] == [1]
     assert entries[0]["latency_ms"] == {"capture": 30.0, "recognition": 20.0, "total": 50.0}
     assert entries[0]["slots"][0]["text"]["name"] == "双发快射"
+    assert entries[0]["slots"][0]["text"]["top_candidates"] == [
+        {"augment_id": "101", "recognition_key": "", "name": "双发快射", "confidence": 0.91}
+    ]
     assert entries[0]["slots"][0]["icon"]["name"] == "错误图标"
     assert not any("image" in key or "frame" in key for key in entries[0])
 
@@ -289,3 +292,35 @@ def test_epoch_latency_excludes_visibility_probes(tmp_path: Path) -> None:
         "recognition": {"count": 1, "p50": 20.0, "p95": 20.0},
         "total": {"count": 1, "p50": 50.0, "p95": 50.0},
     }
+
+
+def test_trace_history_ignores_cursor_flapping_between_frames(tmp_path: Path) -> None:
+    """光标划过卡片区域逐帧翻转 cursor_over_cards，不得视为状态变化写历史。
+
+    真机曾出现空闲期 4 分钟写满 256 条历史（相邻条目只差 cursor_over_cards），
+    识别期的历史全部被冲掉，排查时零价值。
+    """
+
+    trace_path = tmp_path / "state" / "overlay_vision_trace.v1.json"
+    history_path = tmp_path / "state" / "overlay_vision_trace_history.v1.json"
+    first = _event(epoch=0, observed_at=1.0, active=False)
+    first["source"]["reason"] = "selection_scene_not_detected"
+    first["source"]["cursor_over_cards"] = True
+    first["source"]["hover_occluded"] = False
+    second = _event(epoch=0, observed_at=1.2, active=False)
+    second["source"]["reason"] = "selection_scene_not_detected"
+    second["source"]["cursor_over_cards"] = False
+    second["source"]["hover_occluded"] = True
+
+    sidecar_diagnostics.write_vision_trace_if_changed(first, trace_path, history_path=history_path)
+    sidecar_diagnostics.write_vision_trace_if_changed(second, trace_path, history_path=history_path)
+
+    entries = json.loads(history_path.read_text(encoding="utf-8"))["entries"]
+    assert len(entries) == 1
+
+    changed = _event(epoch=0, observed_at=1.4, active=False)
+    changed["source"]["reason"] = "game_window_missing"
+    sidecar_diagnostics.write_vision_trace_if_changed(changed, trace_path, history_path=history_path)
+
+    entries = json.loads(history_path.read_text(encoding="utf-8"))["entries"]
+    assert len(entries) == 2
