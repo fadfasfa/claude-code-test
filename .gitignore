@@ -24,9 +24,6 @@ QuantProject/output/
 .claude/skills/*
 !.claude/skills/cleanup-worktrees/
 !.claude/skills/cleanup-worktrees/SKILL.md
-!.claude/skills/review/
-.claude/skills/review/*
-!.claude/skills/review/SKILL.md
 
 # Blank placeholder only; do not track local behavior surface
 .claude/worktrees/
