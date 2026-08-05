@@ -152,6 +152,10 @@ def parse_fixed_sms_response(text, allow_generic=True):
 
     if "暂无短信" in normalized:
         return FixedSmsParseResult(False, "", "暂无短信", raw)
+    if "已过期" in normalized:
+        # eSIM88 等平台号码过期时返回纯文本"已过期"；识别为过期状态，避免
+        # 被显示成"未发现验证码"让人以为只是暂无码，实际号码已不可用。
+        return FixedSmsParseResult(False, "", "已过期", raw)
     if lower.startswith("no sms"):
         return FixedSmsParseResult(False, "", "no sms", raw)
 
@@ -177,6 +181,22 @@ def looks_like_html(text):
     这里只认真实标签，纯文本即使被标成 html 也按纯文本处理。
     """
     return bool(re.search(r"</?[a-zA-Z!?][^>]*>", text or ""))
+
+
+def html_to_text(text):
+    """把 HTML 剥离成纯文本，供固定接码链接的正则提取使用。
+
+    icloud-api.top 等网页接码把验证码埋在 HTML 里，"验证码"关键字和数字之间
+    隔着 ``</p>``、换行等标签（实测两者相距数百字符），直接在原始 HTML 上跑
+    CODE_PATTERNS 的 30 字符窗口跨不过去，会漏掉验证码；去标签压成单行纯文本后，
+    关键字模式即可命中。script/style 整段剔除，避免脚本里的数字干扰。
+    """
+    raw = text or ""
+    without_scripts = re.sub(
+        r"<(script|style)[^>]*>.*?</\1>", " ", raw, flags=re.DOTALL | re.IGNORECASE
+    )
+    without_tags = re.sub(r"<[^>]+>", " ", without_scripts)
+    return re.sub(r"\s+", " ", without_tags).strip()
 
 
 def mask_email(value):
@@ -926,8 +946,13 @@ def ready_check_fixed_source(cfg, session, request_timeout=3.0):
     if not 200 <= resp.status_code < 300:
         return safe_result(label, "fixed", False, "http_error", f"HTTP {resp.status_code}")
 
-    allow_generic = not looks_like_html(resp.text)
-    result = parse_fixed_sms_response(resp.text, allow_generic=allow_generic)
+    # 与 FixedUrlSource.poll 保持一致：真 HTML 先去标签再解析，避免网页接码
+    # 因关键字与数字间隔标签而判"未发现验证码"。
+    text = resp.text
+    allow_generic = not looks_like_html(text)
+    if not allow_generic:
+        text = html_to_text(text)
+    result = parse_fixed_sms_response(text, allow_generic=allow_generic)
     return safe_result(label, "fixed", True, "ready", result.status)
 
 
@@ -1825,18 +1850,24 @@ class KkdosSource:
             self._record_history_item(item)
 
     def _record_history_item(self, item):
-        text = ""
         if isinstance(item, dict):
+            # kkdos history 把验证码放在 code 字段（实测确认）；
+            # 旧结构才用 content/data/message 文本，保留 fallback。
+            code = str(item.get("code") or "").strip()
             text = str(item.get("content") or item.get("data") or item.get("message") or "")
         else:
+            code = ""
             text = str(item or "")
-        result = parse_fixed_sms_response(text, allow_generic=True)
-        if not result.has_sms or not result.code:
+        if not code:
+            result = parse_fixed_sms_response(text, allow_generic=True)
+            if not result.has_sms or not result.code:
+                return
+            code = result.code
+            text = result.content or text
+        if any(c == code for _, c, _ in self.history):
             return
-        if any(code == result.code for _, code, _ in self.history):
-            return
-        self.last_code = result.code
-        self.history.appendleft((now_hms(), result.code, result.content or text))
+        self.last_code = code
+        self.history.appendleft((now_hms(), code, text))
 
     def start_waiting_for_code(self):
         self.waiting_for_code = True
@@ -1927,14 +1958,23 @@ class KkdosSource:
             return None
         if event_type == "code":
             content = str(event.get("data") or event.get("content") or "")
-            result = parse_fixed_sms_response(content, allow_generic=True)
-            if result.has_sms and result.code and result.code != self.last_code:
-                self.last_code = result.code
-                self.history.appendleft((now_hms(), result.code, result.content or content))
+            # kkdos SSE 与 history 同源，验证码可能在 code 字段（实测 history 用
+            # code）；保留 data/content 文本解析 fallback，兼容旧结构。
+            code_direct = str(event.get("code") or "").strip()
+            if code_direct:
+                code = code_direct
+                display_content = content or code_direct
+            else:
+                result = parse_fixed_sms_response(content, allow_generic=True)
+                code = result.code if result.has_sms else ""
+                display_content = result.content or content
+            if code and code != self.last_code:
+                self.last_code = code
+                self.history.appendleft((now_hms(), code, display_content))
                 self.status = "收到新验证码"
                 self.note = "收到新验证码"
                 self.waiting_for_code = False
-                return result.code
+                return code
             self.status = "收到短信"
             self.note = "未提取到新验证码"
             return None
@@ -2191,18 +2231,34 @@ class MsgNestSource:
         if not messages:
             self.status = "暂无短信"
             return None
+        # messages 按时间倒序返回（最新在前）。遇到 last_code 即停止遍历：
+        # 否则当最新码已见过时，循环会落到更旧的历史码上，把它当成"新码"
+        # 返回并复制，表现为"收到的不是最新验证码、反而是更旧的"。
         for msg in messages:
             if isinstance(msg, dict):
+                # msg-nest 把验证码直接放在 code 字段（实测确认）；
+                # 旧结构/其他平台才用 content 文本，保留 fallback。
+                code_direct = str(msg.get("code") or "").strip()
                 content = str(msg.get("content") or msg.get("body") or msg.get("text") or msg.get("message") or "")
             else:
+                code_direct = ""
                 content = str(msg or "")
-            result = parse_fixed_sms_response(content, allow_generic=True)
-            if result.has_sms and result.code and result.code != self.last_code:
-                self.last_code = result.code
-                self.history.appendleft((now_hms(), result.code, result.content or content))
-                self.status = "收到新验证码"
-                self.note = "收到新验证码"
-                return result.code
+            if code_direct:
+                code = code_direct
+                display_content = content or code_direct
+            else:
+                result = parse_fixed_sms_response(content, allow_generic=True)
+                code = result.code if result.has_sms else ""
+                display_content = result.content or content
+            if not code:
+                continue
+            if code == self.last_code:
+                break  # 已见过的码，之后的更旧，不再当新码
+            self.last_code = code
+            self.history.appendleft((now_hms(), code, display_content))
+            self.status = "收到新验证码"
+            self.note = "收到新验证码"
+            return code
         self.status = "收到短信"
         self.note = "未提取到新验证码"
         return None
@@ -2313,8 +2369,14 @@ class FixedUrlSource:
         # yuntl 等平台把纯文本错标成 text/html，只看 Content-Type 会误禁用
         # 裸数字兜底，导致 Google 那种"数字在前"的验证码提取不到；改为看响应
         # 内容是否真有 HTML/XML 标签来决定。
-        allow_generic = not looks_like_html(resp.text)
-        result = parse_fixed_sms_response(resp.text, allow_generic=allow_generic)
+        # 真正的 HTML（icloud-api.top 等网页接码）先去标签再解析：原始 HTML 里
+        # "验证码"关键字和数字之间隔着 </p>、换行等标签，正则 30 字符窗口跨不
+        # 过去会漏掉验证码；压成单行纯文本后关键字模式即可命中。
+        text = resp.text
+        allow_generic = not looks_like_html(text)
+        if not allow_generic:
+            text = html_to_text(text)
+        result = parse_fixed_sms_response(text, allow_generic=allow_generic)
         self.status = result.status
         if result.has_sms and result.code != self.last_code:
             self.last_code = result.code

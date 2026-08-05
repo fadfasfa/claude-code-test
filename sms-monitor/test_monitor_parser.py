@@ -327,6 +327,13 @@ class FixedSmsParserTest(unittest.TestCase):
 
         self.assertFalse(result.has_sms)
         self.assertEqual(result.status, "no sms")
+
+    def test_esim_expired_status_isrecognized(self):
+        # eSIM88 号码过期返回纯文本"已过期"，应识别为过期状态而非"未发现验证码"
+        result = parse_fixed_sms_response("已过期")
+
+        self.assertFalse(result.has_sms)
+        self.assertEqual(result.status, "已过期")
         self.assertEqual(result.code, "")
 
     def test_english_code_is_extracted(self):
@@ -395,6 +402,28 @@ class FixedSmsParserTest(unittest.TestCase):
 
         self.assertEqual(source.poll(), "123456")
         self.assertEqual(source.last_code, "123456")
+
+    def test_fixed_source_strips_html_to_extract_code(self):
+        """icloud-api.top 等网页接码：验证码埋在 HTML，关键字和数字间隔标签。
+
+        回归：修复前 FixedUrlSource 直接在原始 HTML 上解析，"验证码"和 896973
+        之间隔着 </p>、换行等标签（超 30 字符），CODE_PATTERNS 跨不过去漏掉
+        验证码，与"浏览器看得到码、监控收不到"现象一致；去标签后纯文本即可命中。
+        """
+        html = (
+            "<html><body>"
+            "<p>您的临时验证码已寄出</p>"
+            "<span>896973</span>"
+            "</body></html>"
+        )
+        source = FixedUrlSource(
+            {"label": "icloud-api", "phone": "4069018283", "url": "https://example.invalid/s"},
+            FixedReadySession(FakeTextResponse(html, content_type="text/html; charset=utf-8")),
+            request_timeout=1,
+        )
+
+        self.assertEqual(source.poll(), "896973")
+        self.assertEqual(source.last_code, "896973")
 
 
 class EmailSourceParserTest(unittest.TestCase):
@@ -2063,6 +2092,23 @@ class KkdosSourceTest(unittest.TestCase):
         self.assertEqual(source.history[0][1], "246810")
         self.assertEqual(session.posts[0][0], "https://sms.kkdos.store/api/cdk/verify")
 
+    def test_verify_history_code_field(self):
+        """实测 kkdos verify 的 history：验证码在 code 字段，无 content 字段。
+
+        回归：修复前 _record_history_item 只读 content/data/message，kkdos
+        history 实际把码放在 code 字段，导致历史码一条都回填不了。
+        """
+        payload = self._verify_payload(
+            history=[{"sessionId": "s1", "state": "succeeded", "code": "651663"}]
+        )
+        session = KkdosFakeSession(verify=payload)
+        source = KkdosSource({"label": "kkdos", "cdk": "SECRET_CDK"}, session, request_timeout=1)
+
+        source.verify()
+
+        self.assertEqual(source.last_code, "651663")
+        self.assertEqual(source.history[0][1], "651663")
+
     def test_poll_starts_session_and_reads_sse_code(self):
         session = KkdosFakeSession(
             verify=self._verify_payload(),
@@ -2077,6 +2123,21 @@ class KkdosSourceTest(unittest.TestCase):
 
         self.assertTrue(session.posts[1][0].endswith("/api/session/sess-123/start"))
         self.assertTrue(session.gets[0][0].endswith("/api/sse/sess-123"))
+        self.assertEqual(source.last_code, "654321")
+        self.assertEqual(source.status, "收到新验证码")
+
+    def test_poll_sse_code_field(self):
+        """kkdos SSE code 事件：验证码可能在 code 字段（与 history 同源）。"""
+        session = KkdosFakeSession(
+            verify=self._verify_payload(history=[]),
+            start={"success": True, "data": {"attempt": 1, "maxAttempts": 3}},
+            sse=[{"type": "connected"}, {"type": "code", "code": "654321"}],
+        )
+        source = KkdosSource({"label": "kkdos", "cdk": "SECRET_CDK"}, session, request_timeout=1)
+        source.verify()
+        source.start_waiting_for_code()
+
+        self.assertEqual(source.poll(), "654321")
         self.assertEqual(source.last_code, "654321")
         self.assertEqual(source.status, "收到新验证码")
 
@@ -2458,6 +2519,49 @@ class MsgNestSourceTest(unittest.TestCase):
         self.assertEqual(code, "123456")
         self.assertEqual(ms.last_code, "123456")
         self.assertEqual(ms.status, "收到新验证码")
+
+    def test_poll_extracts_code_from_code_field(self):
+        """实测 msg-nest messages：验证码在 code 字段，无 content 字段。
+
+        回归：修复前 poll 只读 content/body/text/message，msg-nest 实际把码放在
+        code 字段，导致一条码都提取不到。
+        """
+        session = MsgNestFakeSession()
+        session.queue_messages(
+            {"messages": [{"id": "sms_x", "code": "859325", "receivedAt": "2026-08-04T00:56:00.000Z"}]}
+        )
+        ms = MsgNestSource(self._entry(alloc_id="alloc_1", claim_token="tok", fingerprint="fp"), session, 3.0)
+        code = ms.poll()
+        self.assertEqual(code, "859325")
+        self.assertEqual(ms.last_code, "859325")
+        self.assertEqual(ms.status, "收到新验证码")
+
+    def test_poll_does_not_return_older_code_when_latest_seen(self):
+        """messages 倒序，最新码已见过时不应返回更旧的历史码。
+
+        回归：修复前遍历不会在 last_code 处停止，会把更旧的码当新码返回并
+        复制，表现为"收到的不是最新验证码、反而是更旧的"。
+        """
+        session = MsgNestFakeSession()
+        session.queue_messages({"messages": [{"code": "859325"}, {"code": "181921"}]})
+        ms = MsgNestSource(self._entry(alloc_id="alloc_1", claim_token="tok", fingerprint="fp"), session, 3.0)
+        ms.last_code = "859325"  # 最新码已见过
+
+        self.assertIsNone(ms.poll())
+        self.assertEqual(ms.last_code, "859325")
+        self.assertEqual(ms.status, "收到短信")
+
+    def test_poll_returns_newer_code_when_latest_unseen(self):
+        """最新码未见过时返回最新码，跳过中间更旧的历史码。"""
+        session = MsgNestFakeSession()
+        session.queue_messages(
+            {"messages": [{"code": "999999"}, {"code": "859325"}, {"code": "181921"}]}
+        )
+        ms = MsgNestSource(self._entry(alloc_id="alloc_1", claim_token="tok", fingerprint="fp"), session, 3.0)
+        ms.last_code = "859325"  # 见过 859325，但 999999 是新的
+
+        self.assertEqual(ms.poll(), "999999")
+        self.assertEqual(ms.last_code, "999999")
 
     def test_poll_401_self_heal(self):
         session = MsgNestFakeSession()
