@@ -1,4 +1,4 @@
 interface:
   display_name: "Scrapling Web Scraping"
-  short_description: "Scrapling 网页抓取、动态页面和结构化抽取边界"
+  short_description: "Scrapling 实现、动态抓取与 Firecrawl 取舍边界"
   default_prompt: "Use $scrapling-web-scraping to plan a safe Scrapling webpage extraction workflow."
