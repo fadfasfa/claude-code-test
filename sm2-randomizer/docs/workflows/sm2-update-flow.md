@@ -25,7 +25,9 @@ python scripts/sm2_update_flow.py --headless
 参数选择：
 - 默认（含 wiki 增量抓取）：用户没特别说，或游戏可能版本更新时。
 - `--skip-wiki`：用户明确说"只改了 Excel" / "wiki 不用动"时。秒级完成。
-- `--force-refresh`：怀疑 wiki 增量缓存失效、或用户要强制全量重抓时。
+- `--force-refresh`：怀疑 wiki revision/raw 不同步、或用户要强制全量重抓时。
+
+默认流程会先从 Steam 公开 News API 选取最新的 `Patch Notes` / `Hotfix`，再批量查询 Fandom revision。revision 未变的职业/武器页不下载 HTML，本地天赋和图标也不刷新。
 
 ## 停点（重要）
 
@@ -46,19 +48,21 @@ python scripts/sm2_update_flow.py --headless
 
 ## 退化处理
 
-- `wiki_degraded=True`：软退化（字段选择器失效等），流程仍完成、issue_count 仍可能为 0、可出包，但报告会标退化原因。提示用户排查，不阻断 Excel-only 更新。
+- `wiki_degraded=True`：软退化（字段选择器失效等），流程仍完成、issue_count 仍可能为 0；退化详情保留在内部报告，不混入给用户审查的前端数据变更清单。
 - 校验 `issue_count>0`：硬退化或数据缺失，**不可 apply**，提示用户看 `pipeline/store/reports/runtime/runtime_validation.json`。
 
 ## 输出物
 
-- `pipeline/store/reports/source/update_review.md`：人审报告（主看）。
-- `pipeline/store/reports/source/update_review.json`：机器可读摘要。
+- `pipeline/store/reports/source/update_review.md`：前端数据变更清单（主看），只列职业、职业武器池、天赋、策略词条和策略规则的具体旧值/新值。
+- `pipeline/store/reports/source/update_review.json`：上述前端数据变更清单的机器可读版本。
 - `pipeline/store/reports/source/excel_import_report.json`：Excel 导入明细。
 - `pipeline/tmp_publish/diff_summary.md`：候选 vs 当前 app/data 的逐字段 diff。
 - `pipeline/store/reports/runtime/runtime_validation.json`：校验报告。
 
+数组顺序变化不改变随机池成员，不进入前端人审清单；构建时间、抓取统计、文件路径和实现细节也不进入该清单。
+
 ## 不做的事
 
-- 不自动追版本（版本更新由人工确认）。
+- 自动识别官方版本，但不自动 apply/package，也不绕过版本对齐和人审闸门。
 - 不自动 apply/package（人工显式触发）。
 - 不擅自修 wiki 选择器（退化时报告，由人工/后续任务修）。

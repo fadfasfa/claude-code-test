@@ -95,6 +95,224 @@ def _collect_class_slugs(classes_payload: dict[str, Any]) -> set[str]:
     }
 
 
+def _collect_class_records(classes_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(entry.get("slug", "")).strip(): entry
+        for entry in (classes_payload.get("classes", []) if isinstance(classes_payload, dict) else [])
+        if isinstance(entry, dict) and str(entry.get("slug", "")).strip()
+    }
+
+
+def _collect_loadout_records(classes_payload: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+    result: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for class_entry in classes_payload.get("classes", []) if isinstance(classes_payload, dict) else []:
+        if not isinstance(class_entry, dict):
+            continue
+        class_slug = str(class_entry.get("slug", "")).strip()
+        pools = class_entry.get("loadout_pools")
+        if not class_slug or not isinstance(pools, dict):
+            continue
+        for slot, items in pools.items():
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                weapon_slug = str(item.get("slug", "")).strip()
+                if weapon_slug:
+                    result[(class_slug, str(slot), weapon_slug)] = item
+    return result
+
+
+def _collect_talent_records(talents_payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    for group in talents_payload.get("classes", []) if isinstance(talents_payload, dict) else []:
+        if not isinstance(group, dict):
+            continue
+        class_slug = str(group.get("class_slug", "")).strip()
+        for node in group.get("nodes", []) if isinstance(group.get("nodes"), list) else []:
+            if not isinstance(node, dict):
+                continue
+            talent_slug = str(node.get("talent_slug", "")).strip()
+            if class_slug and talent_slug:
+                result[(class_slug, talent_slug)] = node
+    return result
+
+
+def _serializable_identity(identity: Any) -> Any:
+    return list(identity) if isinstance(identity, tuple) else identity
+
+
+def _frontend_record_label(record: dict[str, Any], identity: Any) -> str:
+    for field in ("name", "label", "talent_name", "title"):
+        value = str(record.get(field, "") or "").strip()
+        if value:
+            return value
+    if isinstance(identity, tuple):
+        return str(identity[-1])
+    return str(identity)
+
+
+def _diff_frontend_records(
+    candidate: dict[Any, dict[str, Any]],
+    current: dict[Any, dict[str, Any]],
+    *,
+    ignored_fields: set[str] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Diff front-end records by stable identity, so array reordering is ignored."""
+    ignored = ignored_fields or set()
+    candidate_keys = set(candidate)
+    current_keys = set(current)
+    added = [
+        {
+            "id": _serializable_identity(key),
+            "label": _frontend_record_label(candidate[key], key),
+            "value": candidate[key],
+        }
+        for key in sorted(candidate_keys - current_keys)
+    ]
+    removed = [
+        {
+            "id": _serializable_identity(key),
+            "label": _frontend_record_label(current[key], key),
+            "value": current[key],
+        }
+        for key in sorted(current_keys - candidate_keys)
+    ]
+    changed: list[dict[str, Any]] = []
+    for key in sorted(candidate_keys & current_keys):
+        candidate_record = candidate[key]
+        current_record = current[key]
+        fields: list[dict[str, Any]] = []
+        for field in sorted((set(candidate_record) | set(current_record)) - ignored):
+            before = current_record.get(field)
+            after = candidate_record.get(field)
+            if _normalize(before) != _normalize(after):
+                fields.append({"field": field, "before": before, "after": after})
+        if fields:
+            changed.append(
+                {
+                    "id": _serializable_identity(key),
+                    "label": _frontend_record_label(candidate_record, key),
+                    "fields": fields,
+                }
+            )
+    return {"added": added, "removed": removed, "changed": changed}
+
+
+def _diff_title_aliases(candidate_rules: dict[str, Any], current_rules: dict[str, Any]) -> dict[str, Any]:
+    candidate = candidate_rules.get("title_aliases", {}) if isinstance(candidate_rules, dict) else {}
+    current = current_rules.get("title_aliases", {}) if isinstance(current_rules, dict) else {}
+    candidate = candidate if isinstance(candidate, dict) else {}
+    current = current if isinstance(current, dict) else {}
+
+    added = {key: candidate[key] for key in sorted(set(candidate) - set(current))}
+    removed = {key: current[key] for key in sorted(set(current) - set(candidate))}
+    changed = [
+        {"alias": key, "before": current[key], "after": candidate[key]}
+        for key in sorted(set(candidate) & set(current))
+        if candidate[key] != current[key]
+    ]
+
+    replacements: list[dict[str, Any]] = []
+    for target in sorted(set(added.values()) & set(removed.values()), key=str):
+        added_aliases = sorted(key for key, value in added.items() if value == target)
+        removed_aliases = sorted(key for key, value in removed.items() if value == target)
+        for before, after in zip(removed_aliases, added_aliases):
+            replacements.append({"target": target, "before": before, "after": after})
+            del added[after]
+            del removed[before]
+
+    return {
+        "added": [{"alias": key, "target": value} for key, value in added.items()],
+        "removed": [{"alias": key, "target": value} for key, value in removed.items()],
+        "changed": changed,
+        "replaced": replacements,
+    }
+
+
+def _build_frontend_changes(
+    candidate_payloads: dict[str, Any],
+    current_payloads: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the human review list from data actually consumed by app/static/main.js."""
+    candidate_classes = candidate_payloads.get("classes.json", {})
+    current_classes = current_payloads.get("classes.json", {})
+    candidate_talents = candidate_payloads.get("talents.json", {})
+    current_talents = current_payloads.get("talents.json", {})
+    candidate_meta = candidate_payloads.get("meta.json", {})
+    current_meta = current_payloads.get("meta.json", {})
+
+    candidate_classes = candidate_classes if isinstance(candidate_classes, dict) else {}
+    current_classes = current_classes if isinstance(current_classes, dict) else {}
+    candidate_talents = candidate_talents if isinstance(candidate_talents, dict) else {}
+    current_talents = current_talents if isinstance(current_talents, dict) else {}
+    candidate_meta = candidate_meta if isinstance(candidate_meta, dict) else {}
+    current_meta = current_meta if isinstance(current_meta, dict) else {}
+
+    classes = _diff_frontend_records(
+        _collect_class_records(candidate_classes),
+        _collect_class_records(current_classes),
+        ignored_fields={"loadout_pools"},
+    )
+    loadouts = _diff_frontend_records(
+        _collect_loadout_records(candidate_classes),
+        _collect_loadout_records(current_classes),
+    )
+    talents = _diff_frontend_records(
+        _collect_talent_records(candidate_talents),
+        _collect_talent_records(current_talents),
+    )
+    positive_modifiers = _diff_frontend_records(
+        _collect_modifier_items(candidate_meta, "positive_modifier_pool"),
+        _collect_modifier_items(current_meta, "positive_modifier_pool"),
+    )
+    negative_modifiers = _diff_frontend_records(
+        _collect_modifier_items(candidate_meta, "negative_modifier_pool"),
+        _collect_modifier_items(current_meta, "negative_modifier_pool"),
+    )
+
+    candidate_rules = candidate_meta.get("negative_modifier_rules", {})
+    current_rules = current_meta.get("negative_modifier_rules", {})
+    candidate_rules = candidate_rules if isinstance(candidate_rules, dict) else {}
+    current_rules = current_rules if isinstance(current_rules, dict) else {}
+    rule_fields = []
+    for field in ("exact_conflicts", "quota_limits"):
+        before = current_rules.get(field)
+        after = candidate_rules.get(field)
+        if _normalize(before) != _normalize(after):
+            rule_fields.append({"field": field, "before": before, "after": after})
+    title_aliases = _diff_title_aliases(candidate_rules, current_rules)
+    detail_changes = {
+        (str(item.get("id")), str(field.get("before")), str(field.get("after")))
+        for item in negative_modifiers.get("changed", [])
+        for field in item.get("fields", [])
+        if field.get("field") == "detail"
+    }
+    for item in title_aliases.get("replaced", []):
+        item["mirrors_modifier_detail"] = (
+            str(item.get("target")), str(item.get("before")), str(item.get("after"))
+        ) in detail_changes
+    modifier_rules = {
+        "changed_fields": rule_fields,
+        "title_aliases": title_aliases,
+    }
+
+    sections = (classes, loadouts, talents, positive_modifiers, negative_modifiers)
+    aliases = modifier_rules["title_aliases"]
+    return {
+        "classes": classes,
+        "loadouts": loadouts,
+        "talents": talents,
+        "positive_modifiers": positive_modifiers,
+        "negative_modifiers": negative_modifiers,
+        "modifier_rules": modifier_rules,
+        "has_changes": any(any(section[key] for key in ("added", "removed", "changed")) for section in sections)
+        or bool(rule_fields)
+        or any(aliases[key] for key in ("added", "removed", "changed", "replaced")),
+    }
+
+
 def _collect_talent_descriptions(talents_payload: dict[str, Any]) -> dict[tuple[str, str], str]:
     result: dict[tuple[str, str], str] = {}
     for group in talents_payload.get("classes", []) if isinstance(talents_payload, dict) else []:
@@ -215,6 +433,7 @@ def _build_semantic_changes(
         "hard_degraded": _has_hard_degradation(cand_meta),
         "version_alignment": _version_alignment(cand_meta),
         "modifier_changes": _build_modifier_changes(cand_meta, cur_meta),
+        "frontend_changes": _build_frontend_changes(candidate_payloads, current_payloads),
         "excel_new_items": discovered_new_items,
         "excel_new_items_count": len(discovered_new_items),
     }

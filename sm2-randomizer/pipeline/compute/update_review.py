@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-"""人审变动报告生成入口。
+"""生成人工审查使用的前端消费数据变更清单。
 
-复用 should_keep_candidate（含版本对齐/退化/待审项）与 build_diff_summary 的
-semantic_changes，汇总 Excel 导入报告与 wiki 增量统计，输出一份分发者可读的
-update_review.md，并返回终端摘要所需的结构化数据。供 scripts/sm2_update_flow.py 调用。
+版本对齐、退化、校验和抓取统计继续保留在内部 summary 供流程控制；人审 Markdown
+与 JSON 只输出职业、武器池、天赋、策略词条和策略规则的实际前端数据变化。
 """
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +82,7 @@ def build_update_review(
             "skipped_count": wiki_inc.get("skipped_count", 0),
             "refetched_count": wiki_inc.get("refetched_count", 0),
             "force_refresh": wiki_inc.get("force_refresh", False),
+            "changed_class_pages": wiki_inc.get("changed_class_pages", []),
         },
         "degradation": wiki_deg,
         "semantic_changes": semantic,
@@ -90,127 +91,135 @@ def build_update_review(
     markdown = _render_markdown(summary)
     UPDATE_REVIEW_MD.parent.mkdir(parents=True, exist_ok=True)
     UPDATE_REVIEW_MD.write_text(markdown, encoding="utf-8")
-    write_json(UPDATE_REVIEW_JSON, summary)
+    write_json(
+        UPDATE_REVIEW_JSON,
+        {"frontend_changes": semantic.get("frontend_changes", {})},
+    )
     return summary
 
 
+_FIELD_LABELS = {
+    "name": "名称",
+    "label": "标题",
+    "detail": "说明",
+    "description": "描述",
+    "image_path": "图片",
+    "icon_path": "图标",
+    "col": "天赋列",
+    "row": "天赋行",
+    "risk_level": "风险等级",
+    "core_tags": "标签",
+    "aliases": "别名",
+    "slot_type": "武器槽位",
+}
+
+
+def _format_value(value: Any) -> str:
+    if isinstance(value, str):
+        return f"“{value}”"
+    return f"`{json.dumps(value, ensure_ascii=False, sort_keys=True)}`"
+
+
+def _format_identity(value: Any) -> str:
+    if isinstance(value, list):
+        return " / ".join(str(item) for item in value)
+    return str(value)
+
+
+def _change_count(section: dict[str, Any]) -> int:
+    return sum(len(section.get(key, [])) for key in ("added", "removed", "changed"))
+
+
+def _append_record_changes(lines: list[str], title: str, section: dict[str, Any]) -> None:
+    if not _change_count(section):
+        return
+    lines.extend(["", f"## {title}", ""])
+    for item in section.get("added", []):
+        lines.append(f"- 新增：{item.get('label')}（`{_format_identity(item.get('id'))}`）")
+        value = item.get("value", {})
+        if isinstance(value, dict):
+            for field_name in ("detail", "description"):
+                if value.get(field_name):
+                    lines.append(f"  - {_FIELD_LABELS[field_name]}：{_format_value(value[field_name])}")
+    for item in section.get("removed", []):
+        lines.append(f"- 移除：{item.get('label')}（`{_format_identity(item.get('id'))}`）")
+        value = item.get("value", {})
+        if isinstance(value, dict):
+            for field_name in ("detail", "description"):
+                if value.get(field_name):
+                    lines.append(f"  - 原{_FIELD_LABELS[field_name]}：{_format_value(value[field_name])}")
+    for item in section.get("changed", []):
+        lines.append(f"- 修改：{item.get('label')}（`{_format_identity(item.get('id'))}`）")
+        for field in item.get("fields", []):
+            field_name = str(field.get("field", ""))
+            display_name = _FIELD_LABELS.get(field_name, field_name)
+            lines.append(
+                f"  - {display_name}：{_format_value(field.get('before'))} → {_format_value(field.get('after'))}"
+            )
+
+
 def _render_markdown(s: dict[str, Any]) -> str:
-    alignment = s.get("version_alignment", {}) or {}
-    excel = s.get("excel", {}) or {}
-    inc = s.get("wiki_incremental", {}) or {}
-    deg = s.get("degradation", {}) or {}
     sem = s.get("semantic_changes", {}) or {}
-    issue_count = s.get("validation_issue_count", 0)
-    aligned = alignment.get("aligned")
-    hard_degraded = bool(s.get("hard_degraded"))
-    can_apply = issue_count == 0 and aligned is not False and not hard_degraded
+    frontend = sem.get("frontend_changes", {}) if isinstance(sem, dict) else {}
+    frontend = frontend if isinstance(frontend, dict) else {}
+    classes = frontend.get("classes", {}) or {}
+    loadouts = frontend.get("loadouts", {}) or {}
+    talents = frontend.get("talents", {}) or {}
+    positive = frontend.get("positive_modifiers", {}) or {}
+    negative = frontend.get("negative_modifiers", {}) or {}
+    rules = frontend.get("modifier_rules", {}) or {}
+    aliases = rules.get("title_aliases", {}) if isinstance(rules, dict) else {}
+    aliases = aliases if isinstance(aliases, dict) else {}
+    visible_replacements = [
+        item for item in aliases.get("replaced", []) if not item.get("mirrors_modifier_detail")
+    ]
+    rule_count = len(rules.get("changed_fields", [])) + sum(
+        len(aliases.get(key, [])) for key in ("added", "removed", "changed")
+    ) + len(visible_replacements)
 
     lines = [
-        "# sm2-randomizer 数据更新人审报告",
+        "# SM2 前端数据变更清单",
         "",
-        "## 概览",
+        "本清单只列出随机抽取器前端实际消费的数据变化；抓取页数、文件路径、构建时间和实现细节不在此列。",
         "",
-        f"- wiki 版本: `{s.get('wiki_version')}`",
-        f"- Excel 版本: `{s.get('excel_version')}`",
-        f"- 版本对齐: `{aligned}` ({alignment.get('reason')})",
-        f"- wiki 本轮跳过: `{s.get('wiki_skipped')}`",
-        f"- wiki 退化: `{s.get('wiki_degraded')}`",
-        f"- wiki 硬退化: `{hard_degraded}`",
-        f"- 校验问题数: `{issue_count}`",
-        f"- 有变动: `{s.get('has_diff')}`",
-        f"- 可安全 apply: `{can_apply}`",
+        "## 汇总",
         "",
-        "## Excel 导入",
-        "",
-        f"- 导入武器数: `{excel.get('imported_count')}`",
-        f"- 失败数: `{excel.get('failure_count')}`",
-        f"- 灰色屏蔽词条数: `{len(excel.get('greyed_excluded', []))}`",
-        f"- 待审新增项数: `{len(excel.get('discovered_new_items', []))}`",
-        f"- 表头告警数: `{len(excel.get('header_warnings', []))}`",
+        f"- 职业：`{_change_count(classes)}` 项",
+        f"- 职业武器池：`{_change_count(loadouts)}` 项",
+        f"- 天赋：`{_change_count(talents)}` 项",
+        f"- 正向策略词条：`{_change_count(positive)}` 项",
+        f"- 负向策略词条：`{_change_count(negative)}` 项",
+        f"- 策略规则：`{rule_count}` 项",
     ]
-    if excel.get("greyed_excluded"):
-        lines.append("- 灰色屏蔽词条:")
-        lines.extend(f"  - `{t}`" for t in excel["greyed_excluded"])
-    if excel.get("discovered_new_items"):
-        lines.append("- 待审新增项:")
-        for item in excel["discovered_new_items"][:20]:
-            lines.append(f"  - `{item.get('slug')}` {item.get('excel_name')} ({item.get('source_sheet')})")
-    if excel.get("header_warnings"):
-        lines.append("- 表头告警:")
-        for w in excel["header_warnings"][:10]:
-            lines.append(f"  - `{w.get('code')}` {w.get('sheet')}: {w.get('message')}")
+    if not frontend.get("has_changes"):
+        lines.extend(["", "本次前端消费数据无变化。"])
+        return "\n".join(lines) + "\n"
 
-    lines.extend([
-        "",
-        "## wiki 抓取",
-        "",
-        f"- 本轮跳过 wiki: `{s.get('wiki_skipped')}`",
-        f"- 增量跳过页数: `{inc.get('skipped_count')}`",
-        f"- 重新抓取页数: `{inc.get('refetched_count')}`",
-        f"- 强制刷新: `{inc.get('force_refresh')}`",
-        f"- 结构退化: `{deg.get('structure_degraded')}`",
-        f"- 天赋退化: `{deg.get('talent_degraded')}`",
-        f"- 软退化: `{deg.get('soft_degraded')}`",
-    ])
-    if deg.get("reasons"):
-        lines.append("- 硬退化原因:")
-        lines.extend(f"  - `{r}`" for r in deg["reasons"])
-    if deg.get("soft_reasons"):
-        lines.append("- 软退化原因:")
-        lines.extend(f"  - `{r}`" for r in deg["soft_reasons"])
-    if deg.get("talent_reasons"):
-        lines.append("- 天赋退化原因:")
-        lines.extend(f"  - `{r}`" for r in deg["talent_reasons"])
-    if s.get("wiki_skipped"):
-        lines.append("- 说明：本轮使用既有 wiki raw，以上 wiki 增量与退化信息不代表本轮重新抓取结果。")
+    _append_record_changes(lines, "负向策略词条", negative)
+    _append_record_changes(lines, "正向策略词条", positive)
+    _append_record_changes(lines, "职业", classes)
+    _append_record_changes(lines, "职业武器池", loadouts)
+    _append_record_changes(lines, "天赋", talents)
 
-    lines.extend([
-        "",
-        "## 语义变更",
-        "",
-        f"- 新增武器: {', '.join(sem.get('added_weapons', [])) or '无'}",
-        f"- 移除武器: {', '.join(sem.get('removed_weapons', [])) or '无'}",
-        f"- 新增职业: {', '.join(sem.get('added_classes', [])) or '无'}",
-        f"- 移除职业: {', '.join(sem.get('removed_classes', [])) or '无'}",
-        f"- 天赋描述变更: `{sem.get('changed_talent_description_count', 0)}` 条",
-        f"- Excel 待审新增项: `{sem.get('excel_new_items_count', 0)}` 条",
-    ])
-    modifiers = sem.get("modifier_changes", {}) if isinstance(sem.get("modifier_changes"), dict) else {}
-    if modifiers:
-        pos = modifiers.get("positive_modifier_pool", {}) or {}
-        neg = modifiers.get("negative_modifier_pool", {}) or {}
-        rules = modifiers.get("negative_modifier_rules", {}) or {}
-        lines.extend([
-            f"- 正向 modifier 变更: +`{pos.get('added_count', 0)}` -`{pos.get('removed_count', 0)}` ~`{pos.get('changed_count', 0)}`",
-            f"- 负向 modifier 变更: +`{neg.get('added_count', 0)}` -`{neg.get('removed_count', 0)}` ~`{neg.get('changed_count', 0)}`",
-            f"- 负向 modifier 规则路径变更: +`{rules.get('added_count', 0)}` -`{rules.get('removed_count', 0)}` ~`{rules.get('changed_count', 0)}`",
-        ])
+    if rule_count:
+        lines.extend(["", "## 策略规则", ""])
+        for field in rules.get("changed_fields", []):
+            field_name = str(field.get("field", ""))
+            display_name = {"exact_conflicts": "冲突规则", "quota_limits": "配额规则"}.get(field_name, field_name)
+            lines.append(
+                f"- {display_name}：{_format_value(field.get('before'))} → {_format_value(field.get('after'))}"
+            )
+        for item in visible_replacements:
+            lines.append(
+                f"- 识别文本更新（`{item.get('target')}`）：{_format_value(item.get('before'))} → {_format_value(item.get('after'))}"
+            )
+        for item in aliases.get("added", []):
+            lines.append(f"- 新增识别文本：{_format_value(item.get('alias'))} → `{item.get('target')}`")
+        for item in aliases.get("removed", []):
+            lines.append(f"- 移除识别文本：{_format_value(item.get('alias'))} → `{item.get('target')}`")
+        for item in aliases.get("changed", []):
+            lines.append(
+                f"- 识别文本映射修改：{_format_value(item.get('alias'))}，`{item.get('before')}` → `{item.get('after')}`"
+            )
 
-    lines.extend(["", "## 结论与下一步", ""])
-    if issue_count > 0:
-        lines.append(f"- ❌ 校验有 `{issue_count}` 个问题，**不可 apply**，请先排查 runtime_validation.json。")
-    elif aligned is False or hard_degraded:
-        command_flags = []
-        if aligned is False:
-            command_flags.append("--accept-version-mismatch")
-            lines.append(f"- ⚠️ 版本不齐 (wiki={alignment.get('wiki_version')} excel={alignment.get('excel_version')})。")
-        if hard_degraded:
-            command_flags.append("--accept-hard-degradation")
-            lines.append("- ⚠️ wiki 硬退化存在，确认后才可显式强制 apply/package。")
-        lines.append("- 确认后可强制 apply：")
-        lines.append("  ```")
-        flags = " ".join(command_flags)
-        lines.append(f"  python build_release.py apply-candidate {flags}".rstrip())
-        lines.append(f"  python build_release.py package-release {flags} [--with-exe]".rstrip())
-        lines.append("  ```")
-    else:
-        lines.append("- ✅ 校验通过、版本对齐，可安全 apply：")
-        lines.append("  ```")
-        lines.append("  python build_release.py apply-candidate")
-        lines.append("  python build_release.py package-release [--with-exe]")
-        lines.append("  ```")
-    if s.get("wiki_degraded"):
-        lines.append("- ⚠️ wiki 处于退化状态，已降级字段并保计数，可出包但建议排查 wiki 抓取（见上方退化原因）。")
-    lines.append("- 若不更新：`python build_release.py clean-candidate`")
-    lines.append("")
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n"

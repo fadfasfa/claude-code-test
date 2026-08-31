@@ -13,12 +13,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from pipeline.collect.excel.import_excel import _is_greyed_strategy_font, _is_stable_weapon_item
-from pipeline.collect.wiki.scrape_wiki import (
-    PAGE_HASHES_VERSION_KEY,
-    SCRAPER_CACHE_VERSION,
-    _page_hash_value,
-    _set_page_hash,
-)
 from pipeline.compute.update_review import _render_markdown
 from pipeline.compute.publish_candidate import _extract_version_number, apply_candidate, build_diff_summary
 from pipeline.common import write_json
@@ -91,13 +85,59 @@ class PublishHardeningTests(unittest.TestCase):
                 },
             )
 
-            modifiers = build_diff_summary(candidate, current)["semantic_changes"]["modifier_changes"]
+            semantic = build_diff_summary(candidate, current)["semantic_changes"]
+            modifiers = semantic["modifier_changes"]
+            frontend = semantic["frontend_changes"]
 
             self.assertTrue(modifiers["has_changes"])
             self.assertEqual(modifiers["positive_modifier_pool"]["added_keys"], ["new-positive"])
             self.assertEqual(modifiers["positive_modifier_pool"]["removed_keys"], ["old-positive"])
             self.assertEqual(modifiers["negative_modifier_pool"]["changed_keys"], ["shared-negative"])
             self.assertGreater(modifiers["negative_modifier_rules"]["changed_count"], 0)
+            self.assertEqual(frontend["positive_modifiers"]["added"][0]["id"], "new-positive")
+            self.assertEqual(frontend["positive_modifiers"]["removed"][0]["id"], "old-positive")
+            self.assertEqual(
+                frontend["negative_modifiers"]["changed"][0]["fields"],
+                [{"field": "label", "before": "Old", "after": "New"}],
+            )
+            self.assertEqual(frontend["modifier_rules"]["changed_fields"][0]["field"], "quota_limits")
+
+    def test_frontend_diff_ignores_loadout_array_reordering(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp_root = Path(temp)
+            current = temp_root / "current"
+            candidate = temp_root / "candidate"
+            self.write_runtime(current)
+            self.write_runtime(candidate)
+            weapons = [
+                {"slug": "bolt-pistol", "name": "爆弹手枪", "slot_type": "secondary"},
+                {"slug": "plasma-pistol", "name": "等离子手枪", "slot_type": "secondary"},
+            ]
+            current_classes = {
+                "classes": [
+                    {
+                        "slug": "tactical",
+                        "name": "战术兵",
+                        "loadout_pools": {"primary": [], "secondary": weapons, "melee": []},
+                    }
+                ]
+            }
+            candidate_classes = {
+                "classes": [
+                    {
+                        "slug": "tactical",
+                        "name": "战术兵",
+                        "loadout_pools": {"primary": [], "secondary": list(reversed(weapons)), "melee": []},
+                    }
+                ]
+            }
+            write_json(current / "classes.json", current_classes)
+            write_json(candidate / "classes.json", candidate_classes)
+
+            frontend = build_diff_summary(candidate, current)["semantic_changes"]["frontend_changes"]
+
+            self.assertFalse(frontend["has_changes"])
+            self.assertEqual(frontend["loadouts"], {"added": [], "removed": [], "changed": []})
 
     def test_greyed_strategy_font_only_matches_explicit_rgb_grey(self):
         self.assertTrue(_is_greyed_strategy_font(FakeColor("rgb", "FF767171")))
@@ -147,7 +187,7 @@ class PublishHardeningTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "尚未应用到 app/data"):
                     build_release._assert_no_stale_candidate_for_package()
 
-    def test_update_review_renders_required_acceptance_flags(self):
+    def test_update_review_renders_only_concrete_frontend_changes(self):
         markdown = _render_markdown(
             {
                 "wiki_version": "Hotfix 13.2",
@@ -166,23 +206,45 @@ class PublishHardeningTests(unittest.TestCase):
                 "excel": {},
                 "wiki_incremental": {},
                 "degradation": {"structure_degraded": True, "reasons": ["required_class_missing:heavy"]},
-                "semantic_changes": {},
+                "semantic_changes": {
+                    "frontend_changes": {
+                        "classes": {"added": [], "removed": [], "changed": []},
+                        "loadouts": {"added": [], "removed": [], "changed": []},
+                        "talents": {"added": [], "removed": [], "changed": []},
+                        "positive_modifiers": {"added": [], "removed": [], "changed": []},
+                        "negative_modifiers": {
+                            "added": [],
+                            "removed": [],
+                            "changed": [
+                                {
+                                    "id": "tidal-onslaught",
+                                    "label": "海啸来袭",
+                                    "fields": [
+                                        {
+                                            "field": "detail",
+                                            "before": "旧说明",
+                                            "after": "新说明",
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                        "modifier_rules": {
+                            "changed_fields": [],
+                            "title_aliases": {"added": [], "removed": [], "changed": [], "replaced": []},
+                        },
+                        "has_changes": True,
+                    }
+                },
             }
         )
 
-        self.assertIn("wiki 本轮跳过: `True`", markdown)
-        self.assertIn("--accept-version-mismatch --accept-hard-degradation", markdown)
-        self.assertIn("可安全 apply: `False`", markdown)
-
-    def test_wiki_page_hash_cache_version_invalidates_old_entries(self):
-        hashes = {"Tactical": "old-hash"}
-
-        self.assertEqual(_page_hash_value(hashes, "Tactical"), "")
-
-        _set_page_hash(hashes, "Tactical", "new-hash")
-
-        self.assertEqual(hashes[PAGE_HASHES_VERSION_KEY], SCRAPER_CACHE_VERSION)
-        self.assertEqual(_page_hash_value(hashes, "Tactical"), "new-hash")
+        self.assertIn("负向策略词条：`1` 项", markdown)
+        self.assertIn("修改：海啸来袭", markdown)
+        self.assertIn("说明：“旧说明” → “新说明”", markdown)
+        self.assertNotIn("wiki 本轮跳过", markdown)
+        self.assertNotIn("--accept-version-mismatch", markdown)
+        self.assertNotIn("可安全 apply", markdown)
 
     def test_version_extraction_keeps_multi_part_versions(self):
         self.assertEqual(_extract_version_number("Hotfix 13.2.1"), "13.2.1")

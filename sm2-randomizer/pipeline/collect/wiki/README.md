@@ -20,6 +20,9 @@
 当前维护口径：
 
 - Python 是长期目标运行时，`scrape_wiki.py` 是推荐入口。
+- 当前版本由 Steam 公开 News API 中最新的 `Patch Notes` / `Hotfix` 自动识别。
+- Fandom 结构抓取先批量查询 revision；revision 未变时不下载页面 HTML，直接复用上次 raw。
+- 只有发生修订的职业页才会刷新天赋与图标；已存在的本地资产默认复用。
 - 现有 `scrape_wiki.js` 仍保留为过渡实现，后续会逐步迁入 Python。
 - `node_modules/` 不属于仓库正式内容，需要时按 `package.json` / `package-lock.json` 重建。
 
@@ -27,7 +30,7 @@
 
 - `scrape_wiki.py`
   - Python 侧推荐入口
-  - 当前负责调度现有 Wiki 结构抓取实现，并为后续单运行时迁移提供稳定命令口径
+  - 负责官方版本发现、Fandom revision 预检、职业/武器结构抓取与审阅产物
 - `scrape_wiki.js`
   - 过渡期的 Wiki 结构抓取实现
   - 抓取职业、武器、官方候选资源、审阅种子
@@ -36,7 +39,14 @@
   - 抓取职业图与天赋图标，下载到 `app/assets/`
   - 同步更新 `pipeline/out/source/wiki/原始抓取数据.json` 与 `pipeline/out/source/catalog/`
 - `source_anchor.json`
-  - 仅保留一个 Wiki 锚点 URL，供未来重建抓取链使用
+  - 保留 Wiki 锚点 URL；官方版本以 Steam News API 的本轮结果为准
+
+## 增量语义
+
+- `skipped_count`：revision 未变，本轮没有下载或解析页面 HTML。
+- `refetched_count`：新页、revision 变更、旧 raw 缺少 revision/必填字段，或使用了 `--force-refresh`。
+- `changed_class_pages`：本轮需要交给 `scrape_perks.py --class` 的职业页；为空时跳过资源刷新。
+- 旧 `page_hashes.json` 不再是运行依赖，但保留在工作区，本流程不会改写或删除它。
 
 ## 约束
 

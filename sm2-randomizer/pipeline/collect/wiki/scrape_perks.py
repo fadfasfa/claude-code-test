@@ -852,6 +852,28 @@ def merge_manual_action_items(
     return preserved + update_items
 
 
+def build_talent_coverage(
+    talent_classes: list[dict[str, Any]],
+    manual_actions: list[dict[str, str]],
+) -> dict[str, int]:
+    """Recompute coverage from the fully merged talent state after a partial refresh."""
+    valid_classes = [entry for entry in talent_classes if isinstance(entry, dict)]
+    talents: list[dict[str, Any]] = []
+    for class_entry in valid_classes:
+        class_talents = class_entry.get("talents")
+        if isinstance(class_talents, list):
+            talents.extend(talent for talent in class_talents if isinstance(talent, dict))
+    return {
+        "talent_class_count": len(valid_classes),
+        "talent_icon_count": len(talents),
+        "talent_icon_downloaded_count": sum(
+            str(talent.get("download_status", "")).strip() in {"ok", "reused-local"}
+            for talent in talents
+        ),
+        "talent_manual_action_count": len([item for item in manual_actions if isinstance(item, dict)]),
+    }
+
+
 def write_manual_action_report(items: list[dict[str, str]]) -> None:
     write_json(MANUAL_ACTION_REPORT, {"items": items})
 
@@ -943,6 +965,7 @@ def main() -> int:
         requested_class_titles=args.class_titles,
     )
     raw_meta["talent_manual_action_items"] = merged_manual_actions
+    raw_meta["talent_coverage"] = build_talent_coverage(raw_payload["talents"], merged_manual_actions)
     # 天赋退化信号：manual_action 表示有天赋图标需手动补，属软退化。与 scrape_wiki
     # 写入的 structure_degraded 合并，供 merge_sources 降级与 candidate-status 展示。
     existing_degradation = raw_meta.get("degradation", {}) if isinstance(raw_meta.get("degradation"), dict) else {}

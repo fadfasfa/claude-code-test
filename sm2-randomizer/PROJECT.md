@@ -103,6 +103,7 @@
 - `pipeline/collect/wiki/`
   - Wiki 抓取脚本与锚点 URL（聚焦职业图/天赋图标与天赋描述）
   - `run.py` 是当前推荐入口；Python 为长期目标运行时
+  - Steam News API 提供官方版本锚点；Fandom revision 未变时直接复用上次 raw
   - 职业页入口固定为 `https://spacemarine2.fandom.com/wiki/<ClassName>`
 - `pipeline/collect/wiki/scrape_perks.py`
   - 负责复用/抓取职业图、天赋图标并刷新 catalog manifest
@@ -293,4 +294,4 @@ python serve_static.py
 - 职业图当前固定使用 `cover.*` 作为默认主图文件名
 - 天赋图标 manifest 坐标标准为 `8 列 x 3 行`，按 `col/row` 记录真实 wiki 图表位置
 - `职业图片清单.json` 与 `按职业分组天赋图标.json` 由抓取脚本直接刷新，供后续 merge 使用
-- Wiki 结构抓取当前仍由 JS 实现主体承担；Python 入口负责稳定命令口径，后续逐步完成单运行时迁移
+- Wiki 结构抓取当前由 Python `scrape_wiki.py` 承担；旧 JS 仅作过渡参考，不是标准更新入口

@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="sm2-randomizer 标准数据更新流程：跑到变动清单即停，不 apply/不打包。")
     parser.add_argument("--skip-wiki", action="store_true", help="跳过 wiki 抓取，只用现有 wiki raw + 重跑 Excel。")
     parser.add_argument("--headless", action="store_true", help="wiki 资源抓取用 headless 浏览器。")
-    parser.add_argument("--force-refresh", action="store_true", help="强制全量重抓 wiki 结构页，绕过 hash 增量。")
+    parser.add_argument("--force-refresh", action="store_true", help="强制全量重抓 wiki 结构页，绕过 revision 增量。")
     return parser.parse_args()
 
 
@@ -83,48 +83,34 @@ def main() -> int:
 
 
 def _print_terminal_summary(s: dict) -> None:
-    excel = s.get("excel", {}) or {}
-    inc = s.get("wiki_incremental", {}) or {}
     sem = s.get("semantic_changes", {}) or {}
-    alignment = s.get("version_alignment", {}) or {}
-    hard_degraded = bool(s.get("hard_degraded"))
+    frontend = sem.get("frontend_changes", {}) if isinstance(sem, dict) else {}
+    frontend = frontend if isinstance(frontend, dict) else {}
+
+    def count(section_name: str) -> int:
+        section = frontend.get(section_name, {}) or {}
+        return sum(len(section.get(key, [])) for key in ("added", "removed", "changed"))
+
+    rules = frontend.get("modifier_rules", {}) or {}
+    aliases = rules.get("title_aliases", {}) if isinstance(rules, dict) else {}
+    aliases = aliases if isinstance(aliases, dict) else {}
+    visible_replacements = [
+        item for item in aliases.get("replaced", []) if not item.get("mirrors_modifier_detail")
+    ]
+    rule_count = len(rules.get("changed_fields", [])) + sum(
+        len(aliases.get(key, [])) for key in ("added", "removed", "changed")
+    ) + len(visible_replacements)
     print("\n" + "=" * 60)
-    print("[update-flow] 终端摘要")
+    print("[update-flow] 前端数据变更摘要")
     print("=" * 60)
-    print(f"[update-flow] excel 导入: imported={excel.get('imported_count')} failures={excel.get('failure_count')} "
-          f"discovered={len(excel.get('discovered_new_items', []))} greyed_excluded={len(excel.get('greyed_excluded', []))}")
-    if s.get("wiki_skipped"):
-        print(f"[update-flow] wiki: 已跳过(--skip-wiki) wiki_degraded={s.get('wiki_degraded')}(沿用上次 raw)")
-    else:
-        print(f"[update-flow] wiki: 增量跳过={inc.get('skipped_count')} 重抓={inc.get('refetched_count')} "
-              f"wiki_degraded={s.get('wiki_degraded')}")
-    print(f"[update-flow] 校验: issue_count={s.get('validation_issue_count')}")
-    print(f"[update-flow] 版本对齐: aligned={alignment.get('aligned')} (wiki={alignment.get('wiki_version')} excel={alignment.get('excel_version')})")
-    print(f"[update-flow] wiki 硬退化: {hard_degraded}")
-    print(f"[update-flow] 变动: +{len(sem.get('added_weapons', []))}武器 -{len(sem.get('removed_weapons', []))}武器 "
-          f"+{len(sem.get('added_classes', []))}职业 -{len(sem.get('removed_classes', []))}职业 "
-          f"天赋描述变更{sem.get('changed_talent_description_count', 0)}条 "
-          f"待审新增{sem.get('excel_new_items_count', 0)}条")
+    print(f"[update-flow] 职业: {count('classes')} 项")
+    print(f"[update-flow] 职业武器池: {count('loadouts')} 项")
+    print(f"[update-flow] 天赋: {count('talents')} 项")
+    print(f"[update-flow] 正向策略词条: {count('positive_modifiers')} 项")
+    print(f"[update-flow] 负向策略词条: {count('negative_modifiers')} 项")
+    print(f"[update-flow] 策略规则: {rule_count} 项")
     print(f"[update-flow] 人审报告: {UPDATE_REVIEW_MD.relative_to(PROJECT_ROOT)}")
-    print("[update-flow] 未 apply、未打包。")
-    aligned = alignment.get("aligned")
-    if s.get("validation_issue_count", 0) != 0:
-        print("[update-flow] 校验有问题，请先排查 pipeline/store/reports/runtime/runtime_validation.json")
-    elif aligned is False or hard_degraded:
-        flags = []
-        if aligned is False:
-            flags.append("--accept-version-mismatch")
-        if hard_degraded:
-            flags.append("--accept-hard-degradation")
-        joined_flags = " ".join(flags)
-        print(
-            "[update-flow] 需人工确认，确认后: "
-            f"python build_release.py apply-candidate {joined_flags} && "
-            f"python build_release.py package-release {joined_flags} [--with-exe]"
-        )
-    else:
-        print("[update-flow] 确认后: python build_release.py apply-candidate && python build_release.py package-release [--with-exe]")
-    print("[update-flow] 不更新则: python build_release.py clean-candidate")
+    print("[update-flow] 已停在 apply/package 前，等待人审。")
     print("=" * 60)
 
 

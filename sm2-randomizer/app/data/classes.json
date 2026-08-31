@@ -12,12 +12,6 @@
         "primary": [],
         "secondary": [
           {
-            "slug": "bolt-carbine-one-handed",
-            "name": "单手爆弹卡宾枪",
-            "slot_type": "secondary",
-            "image_path": "weapons/icons/副手/单手爆弹卡宾枪.png"
-          },
-          {
             "slug": "bolt-pistol",
             "name": "爆弹手枪",
             "slot_type": "secondary",
@@ -28,6 +22,12 @@
             "name": "重爆弹手枪",
             "slot_type": "secondary",
             "image_path": "weapons/icons/副手/重爆弹手枪.png"
+          },
+          {
+            "slug": "plasma-pistol",
+            "name": "等离子手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/等离子手枪.png"
           },
           {
             "slug": "inferno-pistol",
@@ -42,10 +42,10 @@
             "image_path": "weapons/icons/副手/高能爆燃手枪.png"
           },
           {
-            "slug": "plasma-pistol",
-            "name": "等离子手枪",
+            "slug": "bolt-carbine-one-handed",
+            "name": "单手爆弹卡宾枪",
             "slot_type": "secondary",
-            "image_path": "weapons/icons/副手/等离子手枪.png"
+            "image_path": "weapons/icons/副手/单手爆弹卡宾枪.png"
           }
         ],
         "melee": [
@@ -56,10 +56,10 @@
             "image_path": "weapons/icons/近战/链锯剑.png"
           },
           {
-            "slug": "power-axe",
-            "name": "动力斧",
+            "slug": "thunder-hammer",
+            "name": "雷霆锤",
             "slot_type": "melee",
-            "image_path": "weapons/icons/近战/动力斧.png"
+            "image_path": "weapons/icons/近战/雷霆锤.png"
           },
           {
             "slug": "power-fist",
@@ -74,10 +74,10 @@
             "image_path": "weapons/icons/近战/动力剑.png"
           },
           {
-            "slug": "thunder-hammer",
-            "name": "雷霆锤",
+            "slug": "power-axe",
+            "name": "动力斧",
             "slot_type": "melee",
-            "image_path": "weapons/icons/近战/雷霆锤.png"
+            "image_path": "weapons/icons/近战/动力斧.png"
           }
         ]
       }
@@ -94,12 +94,6 @@
         "primary": [],
         "secondary": [
           {
-            "slug": "bolt-carbine-one-handed",
-            "name": "单手爆弹卡宾枪",
-            "slot_type": "secondary",
-            "image_path": "weapons/icons/副手/单手爆弹卡宾枪.png"
-          },
-          {
             "slug": "bolt-pistol",
             "name": "爆弹手枪",
             "slot_type": "secondary",
@@ -112,30 +106,36 @@
             "image_path": "weapons/icons/副手/重爆弹手枪.png"
           },
           {
+            "slug": "plasma-pistol",
+            "name": "等离子手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/等离子手枪.png"
+          },
+          {
             "slug": "neo-volkite-pistol",
             "name": "高能爆燃手枪",
             "slot_type": "secondary",
             "image_path": "weapons/icons/副手/高能爆燃手枪.png"
           },
           {
-            "slug": "plasma-pistol",
-            "name": "等离子手枪",
+            "slug": "bolt-carbine-one-handed",
+            "name": "单手爆弹卡宾枪",
             "slot_type": "secondary",
-            "image_path": "weapons/icons/副手/等离子手枪.png"
+            "image_path": "weapons/icons/副手/单手爆弹卡宾枪.png"
           }
         ],
         "melee": [
+          {
+            "slug": "thunder-hammer",
+            "name": "雷霆锤",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/雷霆锤.png"
+          },
           {
             "slug": "chainsword",
             "name": "链锯剑",
             "slot_type": "melee",
             "image_path": "weapons/icons/近战/链锯剑.png"
-          },
-          {
-            "slug": "power-axe",
-            "name": "动力斧",
-            "slot_type": "melee",
-            "image_path": "weapons/icons/近战/动力斧.png"
           },
           {
             "slug": "power-fist",
@@ -150,10 +150,10 @@
             "image_path": "weapons/icons/近战/动力剑.png"
           },
           {
-            "slug": "thunder-hammer",
-            "name": "雷霆锤",
+            "slug": "power-axe",
+            "name": "动力斧",
             "slot_type": "melee",
-            "image_path": "weapons/icons/近战/雷霆锤.png"
+            "image_path": "weapons/icons/近战/动力斧.png"
           }
         ]
       }
@@ -213,16 +213,16 @@
             "image_path": "weapons/icons/副手/重爆弹手枪.png"
           },
           {
-            "slug": "inferno-pistol",
-            "name": "地狱火手枪",
-            "slot_type": "secondary",
-            "image_path": "weapons/icons/副手/地狱火手枪.png"
-          },
-          {
             "slug": "plasma-pistol",
             "name": "等离子手枪",
             "slot_type": "secondary",
             "image_path": "weapons/icons/副手/等离子手枪.png"
+          },
+          {
+            "slug": "inferno-pistol",
+            "name": "地狱火手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/地狱火手枪.png"
           }
         ],
         "melee": [
@@ -246,16 +246,10 @@
       "loadout_pools": {
         "primary": [
           {
-            "slug": "bolt-carbine",
-            "name": "爆弹卡宾枪",
+            "slug": "stalker-bolt-rifle",
+            "name": "追猎者爆弹步枪",
             "slot_type": "primary",
-            "image_path": "weapons/icons/主武器/爆弹卡宾枪.png"
-          },
-          {
-            "slug": "bolt-sniper-rifle",
-            "name": "爆弹狙击步枪",
-            "slot_type": "primary",
-            "image_path": "weapons/icons/主武器/爆弹狙击步枪.png"
+            "image_path": "weapons/icons/主武器/追猎者爆弹步枪.png"
           },
           {
             "slug": "instigator-bolt-carbine",
@@ -264,16 +258,22 @@
             "image_path": "weapons/icons/主武器/煽动者爆弹卡宾枪.png"
           },
           {
+            "slug": "bolt-sniper-rifle",
+            "name": "爆弹狙击步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/爆弹狙击步枪.png"
+          },
+          {
+            "slug": "bolt-carbine",
+            "name": "爆弹卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/爆弹卡宾枪.png"
+          },
+          {
             "slug": "las-fusil",
             "name": "激光燧发枪",
             "slot_type": "primary",
             "image_path": "weapons/icons/主武器/激光燧发枪.png"
-          },
-          {
-            "slug": "stalker-bolt-rifle",
-            "name": "追猎者爆弹步枪",
-            "slot_type": "primary",
-            "image_path": "weapons/icons/主武器/追猎者爆弹步枪.png"
           },
           {
             "slug": "marksman-bolt-carbine",
@@ -329,12 +329,6 @@
             "image_path": "weapons/icons/主武器/自动爆弹步枪.png"
           },
           {
-            "slug": "bolt-carbine",
-            "name": "爆弹卡宾枪",
-            "slot_type": "primary",
-            "image_path": "weapons/icons/主武器/爆弹卡宾枪.png"
-          },
-          {
             "slug": "bolt-rifle",
             "name": "爆弹步枪",
             "slot_type": "primary",
@@ -347,10 +341,16 @@
             "image_path": "weapons/icons/主武器/重型爆弹步枪.png"
           },
           {
-            "slug": "melta-rifle",
-            "name": "热熔步枪",
+            "slug": "stalker-bolt-rifle",
+            "name": "追猎者爆弹步枪",
             "slot_type": "primary",
-            "image_path": "weapons/icons/主武器/热熔步枪.png"
+            "image_path": "weapons/icons/主武器/追猎者爆弹步枪.png"
+          },
+          {
+            "slug": "bolt-carbine",
+            "name": "爆弹卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/爆弹卡宾枪.png"
           },
           {
             "slug": "plasma-incinerator",
@@ -359,16 +359,16 @@
             "image_path": "weapons/icons/主武器/等离子焚化枪.png"
           },
           {
+            "slug": "melta-rifle",
+            "name": "热熔步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/热熔步枪.png"
+          },
+          {
             "slug": "pyreblaster",
             "name": "焚焰枪",
             "slot_type": "primary",
             "image_path": "weapons/icons/主武器/焚焰枪.png"
-          },
-          {
-            "slug": "stalker-bolt-rifle",
-            "name": "追猎者爆弹步枪",
-            "slot_type": "primary",
-            "image_path": "weapons/icons/主武器/追猎者爆弹步枪.png"
           }
         ],
         "secondary": [
@@ -393,16 +393,16 @@
         ],
         "melee": [
           {
-            "slug": "chainsword",
-            "name": "链锯剑",
-            "slot_type": "melee",
-            "image_path": "weapons/icons/近战/链锯剑.png"
-          },
-          {
             "slug": "combat-knife",
             "name": "战斗匕首",
             "slot_type": "melee",
             "image_path": "weapons/icons/近战/战斗匕首.png"
+          },
+          {
+            "slug": "chainsword",
+            "name": "链锯剑",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/链锯剑.png"
           }
         ]
       }
@@ -436,16 +436,16 @@
             "image_path": "weapons/icons/主武器/重型爆弹步枪.png"
           },
           {
-            "slug": "occulus-bolt-carbine",
-            "name": "全知者爆弹卡宾枪",
-            "slot_type": "primary",
-            "image_path": "weapons/icons/主武器/全知者爆弹卡宾枪.png"
-          },
-          {
             "slug": "plasma-incinerator",
             "name": "等离子焚化枪",
             "slot_type": "primary",
             "image_path": "weapons/icons/主武器/等离子焚化枪.png"
+          },
+          {
+            "slug": "occulus-bolt-carbine",
+            "name": "全知者爆弹卡宾枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/全知者爆弹卡宾枪.png"
           }
         ],
         "secondary": [
@@ -462,6 +462,12 @@
             "image_path": "weapons/icons/副手/重爆弹手枪.png"
           },
           {
+            "slug": "plasma-pistol",
+            "name": "等离子手枪",
+            "slot_type": "secondary",
+            "image_path": "weapons/icons/副手/等离子手枪.png"
+          },
+          {
             "slug": "inferno-pistol",
             "name": "地狱火手枪",
             "slot_type": "secondary",
@@ -472,12 +478,6 @@
             "name": "高能爆燃手枪",
             "slot_type": "secondary",
             "image_path": "weapons/icons/副手/高能爆燃手枪.png"
-          },
-          {
-            "slug": "plasma-pistol",
-            "name": "等离子手枪",
-            "slot_type": "secondary",
-            "image_path": "weapons/icons/副手/等离子手枪.png"
           }
         ],
         "melee": [
@@ -488,10 +488,10 @@
             "image_path": "weapons/icons/近战/战斗匕首.png"
           },
           {
-            "slug": "omnissiah-axe",
-            "name": "欧姆尼赛亚战斧",
+            "slug": "power-sword",
+            "name": "动力剑",
             "slot_type": "melee",
-            "image_path": "weapons/icons/近战/欧姆尼赛亚战斧.png"
+            "image_path": "weapons/icons/近战/动力剑.png"
           },
           {
             "slug": "power-axe",
@@ -500,10 +500,10 @@
             "image_path": "weapons/icons/近战/动力斧.png"
           },
           {
-            "slug": "power-sword",
-            "name": "动力剑",
+            "slug": "omnissiah-axe",
+            "name": "欧姆尼赛亚战斧",
             "slot_type": "melee",
-            "image_path": "weapons/icons/近战/动力剑.png"
+            "image_path": "weapons/icons/近战/欧姆尼赛亚战斧.png"
           }
         ]
       }
@@ -519,28 +519,28 @@
       "loadout_pools": {
         "primary": [
           {
-            "slug": "bolt-carbine",
-            "name": "爆弹卡宾枪",
-            "slot_type": "primary",
-            "image_path": "weapons/icons/主武器/爆弹卡宾枪.png"
-          },
-          {
             "slug": "instigator-bolt-carbine",
             "name": "煽动者爆弹卡宾枪",
             "slot_type": "primary",
             "image_path": "weapons/icons/主武器/煽动者爆弹卡宾枪.png"
           },
           {
-            "slug": "melta-rifle",
-            "name": "热熔步枪",
+            "slug": "bolt-carbine",
+            "name": "爆弹卡宾枪",
             "slot_type": "primary",
-            "image_path": "weapons/icons/主武器/热熔步枪.png"
+            "image_path": "weapons/icons/主武器/爆弹卡宾枪.png"
           },
           {
             "slug": "occulus-bolt-carbine",
             "name": "全知者爆弹卡宾枪",
             "slot_type": "primary",
             "image_path": "weapons/icons/主武器/全知者爆弹卡宾枪.png"
+          },
+          {
+            "slug": "melta-rifle",
+            "name": "热熔步枪",
+            "slot_type": "primary",
+            "image_path": "weapons/icons/主武器/热熔步枪.png"
           }
         ],
         "secondary": [
@@ -571,16 +571,16 @@
         ],
         "melee": [
           {
-            "slug": "chainsword",
-            "name": "链锯剑",
-            "slot_type": "melee",
-            "image_path": "weapons/icons/近战/链锯剑.png"
-          },
-          {
             "slug": "combat-knife",
             "name": "战斗匕首",
             "slot_type": "melee",
             "image_path": "weapons/icons/近战/战斗匕首.png"
+          },
+          {
+            "slug": "chainsword",
+            "name": "链锯剑",
+            "slot_type": "melee",
+            "image_path": "weapons/icons/近战/链锯剑.png"
           },
           {
             "slug": "power-axe",

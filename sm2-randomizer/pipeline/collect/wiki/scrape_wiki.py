@@ -5,11 +5,11 @@ from __future__ import annotations
 职责边界：仅写入 pipeline 的 source/catalog/reports 层，不直接写运行时数据目录。
 """
 
-import hashlib
 import json
 import re
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -24,15 +24,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from pipeline.common import PIPELINE_STORE_CATALOG_DIR, PIPELINE_STORE_RAW_EXCEL_DIR, PIPELINE_STORE_RAW_WIKI_DIR, PIPELINE_STORE_REPORTS_SOURCE_DIR, EXTRACTION_RULES_FILE, ensure_directories, read_json, write_json
 
-VERSION_ANCHOR = "Hotfix 13.2"
-HOTFIX_13_2_URL = "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/409-hotfix-13-2-patch-notes"
-PATCH_13_0_URL = "https://community.focus-entmt.com/focus-entertainment/space-marine-2/blogs/395-patch-notes-13-0"
+STEAM_APP_ID = 2183900
+STEAM_NEWS_API_URL = "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
+FANDOM_API_URL = "https://spacemarine2.fandom.com/api.php"
+OFFICIAL_PATCH_TITLE_PATTERN = re.compile(
+    r"^[\s\u200b]*(?P<label>Patch\s+Notes|Hotfix)\s+(?P<version>\d+(?:\.\d+)*)\b",
+    re.I,
+)
 RAW_OUTPUT_PATH = PIPELINE_STORE_RAW_WIKI_DIR / "原始抓取数据.json"
-# 页面 hash 缓存：跨 run 持久化 {page_title: sha1(html)}，用于增量抓取——
-# 页面内容未变则跳过解析，复用上次 raw 该页记录。--force-refresh 绕过。
-PAGE_HASHES_PATH = PIPELINE_STORE_RAW_WIKI_DIR / "page_hashes.json"
-SCRAPER_CACHE_VERSION = "2026-07-02-role-text-blockquote-v2"
-PAGE_HASHES_VERSION_KEY = "__scraper_cache_version"
 CLASS_WEAPON_MAP_OUTPUT_PATH = PIPELINE_STORE_CATALOG_DIR / "职业武器映射.json"
 TABLE_OUTPUT_PATH = PIPELINE_STORE_REPORTS_SOURCE_DIR / "人工审阅表.md"
 TALENT_IMPORT_PATH = PIPELINE_STORE_RAW_EXCEL_DIR / "天赋技能效果.json"
@@ -160,67 +159,76 @@ def get_html(url: str, *, headers: dict[str, str] | None = None) -> str:
     return _request_get_with_retry(url, headers=headers).text
 
 
-def fetch_official_patch_anchor() -> dict[str, Any]:
-    hotfix_url = HOTFIX_13_2_URL
-    html = get_html(hotfix_url)
-    soup = BeautifulSoup(html, "html.parser")
-    title = normalize_whitespace(soup.title.get_text() if soup.title else "")
-    body_text = normalize_whitespace(soup.get_text(" "))
-    if not re.search(r"Hotfix 13\.2", title, re.I) or not re.search(r"Squad Unity", body_text, re.I):
-        raise RuntimeError("Official Hotfix 13.2 anchor did not confirm the expected strategy modifier changes.")
-
-    weapon_url = PATCH_13_0_URL
-    weapon_html = get_html(weapon_url)
-    weapon_soup = BeautifulSoup(weapon_html, "html.parser")
-    weapon_title = normalize_whitespace(weapon_soup.title.get_text() if weapon_soup.title else "")
-    weapon_body = normalize_whitespace(weapon_soup.get_text(" "))
-    if not re.search(r"Patch Notes 13\.0", weapon_title, re.I) or not re.search(r"Bolt Carbine One-Handed", weapon_body, re.I):
-        raise RuntimeError("Official Patch Notes 13.0 anchor did not confirm Bolt Carbine One-Handed.")
-    if not re.search(r"\bAssault\b", weapon_body, re.I) or not re.search(r"\bBulwark\b", weapon_body, re.I):
-        raise RuntimeError("Official Patch Notes 13.0 anchor did not confirm Assault/Bulwark availability.")
-
-    return {
-        "url": hotfix_url,
-        "title": title,
-        "related_sources": [
-            {
-                "type": "new_weapon",
-                "url": weapon_url,
-                "title": weapon_title,
-            }
-        ],
-    }
-
-
-def _html_hash(html: str) -> str:
-    return hashlib.sha1(str(html or "").encode("utf-8")).hexdigest()
-
-
-def load_page_hashes() -> dict[str, str]:
-    data = read_json(PAGE_HASHES_PATH, {})
-    return data if isinstance(data, dict) else {}
-
-
-def save_page_hashes(hashes: dict[str, str]) -> None:
-    payload = dict(hashes)
-    payload[PAGE_HASHES_VERSION_KEY] = SCRAPER_CACHE_VERSION
-    write_json(PAGE_HASHES_PATH, payload)
-
-
-def _page_hash_value(hashes: dict[str, str], title: str) -> str:
-    if hashes.get(PAGE_HASHES_VERSION_KEY) != SCRAPER_CACHE_VERSION:
+def _published_at_from_unix(value: Any) -> str:
+    try:
+        timestamp = int(value)
+    except (TypeError, ValueError):
         return ""
-    return str(hashes.get(title, "") or "")
+    if timestamp <= 0:
+        return ""
+    try:
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    except (OSError, OverflowError, ValueError):
+        return ""
 
 
-def _set_page_hash(hashes: dict[str, str], title: str, value: str) -> None:
-    hashes[PAGE_HASHES_VERSION_KEY] = SCRAPER_CACHE_VERSION
-    hashes[title] = value
+def select_latest_official_patch(news_items: Any) -> dict[str, Any]:
+    """Select the newest official Patch Notes/Hotfix item from Steam news."""
+    if not isinstance(news_items, list):
+        raise RuntimeError("Steam news payload did not contain a news item list.")
+
+    candidates: list[tuple[int, int, dict[str, Any]]] = []
+    for index, item in enumerate(news_items):
+        if not isinstance(item, dict):
+            continue
+        title = normalize_whitespace(item.get("title", ""))
+        match = OFFICIAL_PATCH_TITLE_PATTERN.search(title)
+        url = normalize_whitespace(item.get("url", ""))
+        if not match or not url:
+            continue
+        raw_published_timestamp = item.get("date")
+        if isinstance(raw_published_timestamp, bool) or not isinstance(raw_published_timestamp, int):
+            continue
+        try:
+            published_timestamp = int(raw_published_timestamp)
+        except (TypeError, ValueError):
+            continue
+        published_at = _published_at_from_unix(published_timestamp)
+        if not published_at:
+            continue
+        candidates.append(
+            (
+                published_timestamp,
+                -index,
+                {
+                    "title": title,
+                    "version": match.group("version"),
+                    "url": url,
+                    "published_at": published_at,
+                    "source": "steam_news",
+                },
+            )
+        )
+
+    if not candidates:
+        raise RuntimeError("Steam news did not contain a current Patch Notes/Hotfix entry.")
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
+
+
+def fetch_official_patch_anchor() -> dict[str, Any]:
+    payload = get_json(
+        STEAM_NEWS_API_URL,
+        params={"appid": STEAM_APP_ID, "count": 50, "maxlength": 0, "format": "json"},
+    )
+    app_news = payload.get("appnews") if isinstance(payload, dict) else None
+    if not isinstance(app_news, dict):
+        raise RuntimeError("Steam news response did not contain appnews.")
+    return select_latest_official_patch(app_news.get("newsitems"))
 
 
 def fetch_fandom_page(title: str) -> dict[str, Any]:
     payload = get_json(
-        "https://spacemarine2.fandom.com/api.php",
+        FANDOM_API_URL,
         params={"action": "parse", "page": title, "prop": "text", "format": "json", "origin": "*"},
     )
     parse = payload.get("parse") or {}
@@ -232,8 +240,75 @@ def fetch_fandom_page(title: str) -> dict[str, Any]:
         "pageId": parse.get("pageid"),
         "url": f"https://spacemarine2.fandom.com/wiki/{quote(title.replace(' ', '_'))}",
         "html": html,
-        "html_hash": _html_hash(html),
     }
+
+
+def fetch_fandom_revisions(titles: list[str]) -> dict[str, dict[str, Any]]:
+    """Fetch current revision metadata without downloading parsed page HTML."""
+    unique_titles = uniq([normalize_whitespace(title) for title in titles])
+    revisions: dict[str, dict[str, Any]] = {}
+    for start in range(0, len(unique_titles), 50):
+        batch = unique_titles[start:start + 50]
+        payload = get_json(
+            FANDOM_API_URL,
+            params={
+                "action": "query",
+                "prop": "revisions",
+                "rvprop": "ids|timestamp|sha1",
+                "titles": "|".join(batch),
+                "redirects": 1,
+                "format": "json",
+                "formatversion": 2,
+                "origin": "*",
+            },
+        )
+        query = payload.get("query") if isinstance(payload, dict) else None
+        pages = query.get("pages") if isinstance(query, dict) else None
+        if not isinstance(pages, list):
+            raise RuntimeError("Fandom revision response did not contain a page list.")
+        for page in pages:
+            if not isinstance(page, dict) or page.get("missing"):
+                continue
+            page_title = normalize_whitespace(page.get("title", ""))
+            page_revisions = page.get("revisions")
+            latest = page_revisions[0] if isinstance(page_revisions, list) and page_revisions else None
+            if not page_title or not isinstance(latest, dict):
+                continue
+            revision_id = latest.get("revid")
+            timestamp = normalize_whitespace(latest.get("timestamp", ""))
+            sha1 = normalize_whitespace(latest.get("sha1", ""))
+            if not isinstance(revision_id, int) or not timestamp or not sha1:
+                continue
+            revisions[page_title] = {"id": revision_id, "timestamp": timestamp, "sha1": sha1}
+
+    missing_titles = [title for title in unique_titles if title not in revisions]
+    if missing_titles:
+        raise RuntimeError(f"Fandom revision API missing pages: {', '.join(missing_titles)}")
+    return revisions
+
+
+def _source_revision_matches(previous: dict[str, Any], current: dict[str, Any]) -> bool:
+    source_revision = previous.get("source_revision") if isinstance(previous, dict) else None
+    if not isinstance(source_revision, dict):
+        return False
+    return (
+        source_revision.get("id") == current.get("id")
+        and str(source_revision.get("timestamp", "")).strip() == str(current.get("timestamp", "")).strip()
+        and str(source_revision.get("sha1", "")).strip() == str(current.get("sha1", "")).strip()
+    )
+
+
+def _record_has_required_fields(record: dict[str, Any], required_fields: tuple[str, ...]) -> bool:
+    if not isinstance(record, dict):
+        return False
+    for field in required_fields:
+        value = record.get(field)
+        if isinstance(value, list):
+            if not value:
+                return False
+        elif not value:
+            return False
+    return True
 
 
 def find_infobox_value(soup: BeautifulSoup, source_name: str):
@@ -364,7 +439,7 @@ def scrape_fandom_class(title: str, page: dict[str, Any] | None = None) -> dict[
 
 def fetch_fandom_weapon_titles() -> list[str]:
     payload = get_json(
-        "https://spacemarine2.fandom.com/api.php",
+        FANDOM_API_URL,
         params={"action": "query", "list": "categorymembers", "cmtitle": "Category:Weapons", "cmlimit": 200, "format": "json", "origin": "*"},
     )
     members = ((payload.get("query") or {}).get("categorymembers")) or []
@@ -497,6 +572,28 @@ def rebuild_class_weapons_from_weapons(classes: list[dict[str, Any]], weapons: l
         entry["weapons"]["primary"] = [] if entry["name"] in {"Assault", "Bulwark"} else uniq(entry["weapons"]["primary"])
         entry["weapons"]["secondary"] = uniq(entry["weapons"]["secondary"])
         entry["weapons"]["melee"] = uniq(entry["weapons"]["melee"])
+
+
+def preserve_class_weapon_order(
+    classes: list[dict[str, Any]],
+    previous_classes: dict[str, dict[str, Any]],
+) -> None:
+    """Keep prior weapon order when membership is unchanged; append real additions."""
+    for class_record in classes:
+        previous = previous_classes.get(str(class_record.get("name", "")))
+        previous_weapons = previous.get("weapons") if isinstance(previous, dict) else None
+        current_weapons = class_record.get("weapons")
+        if not isinstance(previous_weapons, dict) or not isinstance(current_weapons, dict):
+            continue
+        for slot in ("primary", "secondary", "melee"):
+            current_items = current_weapons.get(slot)
+            previous_items = previous_weapons.get(slot)
+            if not isinstance(current_items, list) or not isinstance(previous_items, list):
+                continue
+            current_set = set(current_items)
+            ordered = [item for item in previous_items if item in current_set]
+            ordered.extend(item for item in current_items if item not in ordered)
+            current_weapons[slot] = ordered
 
 
 def cross_check_class_weapon_closure(classes: list[dict[str, Any]], weapons: list[dict[str, Any]]) -> None:
@@ -811,6 +908,7 @@ def to_raw_class_payload(entry: dict[str, Any]) -> dict[str, Any]:
         "parse_warnings": entry["parse_warnings"],
         "parse_degraded": entry["parse_degraded"],
         "missing_fields": entry["missing_fields"],
+        "source_revision": entry["source_revision"],
     }
 
 
@@ -830,6 +928,7 @@ def to_raw_weapon_payload(entry: dict[str, Any]) -> dict[str, Any]:
         "parse_warnings": entry["parse_warnings"],
         "parse_degraded": entry["parse_degraded"],
         "missing_fields": entry["missing_fields"],
+        "source_revision": entry["source_revision"],
     }
 
 
@@ -895,7 +994,7 @@ def build_degradation_summary(raw_classes: list[dict[str, Any]], raw_weapons: li
     }
 
 
-def build_raw_payload(classes: list[dict[str, Any]], weapons: list[dict[str, Any]], official_assets: list[dict[str, Any]], official_anchor: dict[str, str], game8_validation: dict[str, Any]) -> dict[str, Any]:
+def build_raw_payload(classes: list[dict[str, Any]], weapons: list[dict[str, Any]], official_assets: list[dict[str, Any]], official_anchor: dict[str, Any], game8_validation: dict[str, Any]) -> dict[str, Any]:
     raw_classes = [to_raw_class_payload(entry) for entry in classes]
     raw_weapons = [to_raw_weapon_payload(entry) for entry in weapons]
     raw_official_assets = [to_raw_official_asset_payload(entry) for entry in official_assets]
@@ -904,7 +1003,8 @@ def build_raw_payload(classes: list[dict[str, Any]], weapons: list[dict[str, Any
     degradation = build_degradation_summary(raw_classes, raw_weapons)
     return {
         "meta": {
-            "version_anchor": VERSION_ANCHOR,
+            "version_anchor": official_anchor["title"],
+            "official_patch": official_anchor,
             "official_anchor": official_anchor,
             "sources": {
                 "official": official_anchor["url"],
@@ -924,6 +1024,37 @@ def build_raw_payload(classes: list[dict[str, Any]], weapons: list[dict[str, Any
         "official_assets": raw_official_assets,
         "review_seed": build_review_seed(raw_classes, raw_weapons, raw_official_assets),
     }
+
+
+def preserve_existing_talent_state(raw_payload: dict[str, Any], previous_payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep talent data untouched until scrape_perks refreshes changed classes."""
+    previous_talents = previous_payload.get("talents") if isinstance(previous_payload, dict) else None
+    raw_payload["talents"] = previous_talents if isinstance(previous_talents, list) else []
+
+    raw_meta = raw_payload.get("meta", {}) if isinstance(raw_payload.get("meta"), dict) else {}
+    previous_meta = previous_payload.get("meta", {}) if isinstance(previous_payload, dict) else {}
+    if not isinstance(previous_meta, dict):
+        previous_meta = {}
+    for key in ("talent_coverage", "talent_manual_action_items"):
+        if key in previous_meta:
+            raw_meta[key] = previous_meta[key]
+
+    degradation = raw_meta.get("degradation", {}) if isinstance(raw_meta.get("degradation"), dict) else {}
+    previous_degradation = previous_meta.get("degradation", {}) if isinstance(previous_meta.get("degradation"), dict) else {}
+    degradation["talent_degraded"] = bool(previous_degradation.get("talent_degraded"))
+    degradation["talent_reasons"] = (
+        list(previous_degradation.get("talent_reasons", []))
+        if isinstance(previous_degradation.get("talent_reasons"), list)
+        else []
+    )
+    raw_meta["degradation"] = degradation
+    raw_meta["wiki_degraded"] = bool(
+        degradation.get("structure_degraded")
+        or degradation.get("soft_degraded")
+        or degradation.get("talent_degraded")
+    )
+    raw_payload["meta"] = raw_meta
+    return raw_payload
 
 
 def build_markdown_table(raw_payload: dict[str, Any]) -> str:
@@ -972,23 +1103,33 @@ def _scrape_with_increment(
     kind: str,
     scrape_fn: Any,
     previous_raw: dict[str, dict[str, Any]],
-    page_hashes: dict[str, str],
+    revisions: dict[str, dict[str, Any]],
     force_refresh: bool,
     stats: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """增量抓取：fetch HTML → 算 hash → 与上次相同且 raw 有记录则复用，否则解析。
+    """Reuse unchanged raw records; download HTML only for revised or incomplete pages."""
+    required_fields_by_kind = {
+        "class": ("name", "slug_candidate", "image_url", "class_role_text"),
+        "weapon": ("name", "slug_candidate", "slot_type", "allowed_classes"),
+    }
+    required_fields = required_fields_by_kind.get(kind)
+    if required_fields is None:
+        raise ValueError(f"Unsupported incremental scrape kind: {kind}")
 
-    hash 相同仍请求了网络（hash 需 HTML 才能算），省的是解析+下游处理时间。
-    raw 缺该页记录时即使 hash 命中也强制重抓（防 page_hashes 与 raw 不同步）。
-    """
     results: list[dict[str, Any]] = []
     for title in titles:
-        page = fetch_fandom_page(title)
-        new_hash = page["html_hash"]
-        prev_hash = _page_hash_value(page_hashes, title)
+        revision = revisions.get(title)
+        if not isinstance(revision, dict):
+            raise RuntimeError(f"Missing Fandom revision metadata for {title}")
         previous = previous_raw.get(title)
-        if not force_refresh and prev_hash == new_hash and previous is not None:
+        if (
+            not force_refresh
+            and isinstance(previous, dict)
+            and _source_revision_matches(previous, revision)
+            and _record_has_required_fields(previous, required_fields)
+        ):
             reused = dict(previous)
+            reused["source_revision"] = dict(revision)
             reused["reused_unchanged"] = True
             # class 页 HTML 未变，但 weapon 页的 allowed_classes 可能已变，故重置
             # weapons/notes/mode_restriction，让 rebuild_class_weapons_from_weapons
@@ -1000,8 +1141,11 @@ def _scrape_with_increment(
             results.append(reused)
             stats["skipped"].append(title)
             continue
-        results.append(scrape_fn(title, page))
-        _set_page_hash(page_hashes, title, new_hash)
+
+        page = fetch_fandom_page(title)
+        record = scrape_fn(title, page)
+        record["source_revision"] = dict(revision)
+        results.append(record)
         stats["refetched"].append(title)
     return results
 
@@ -1011,18 +1155,19 @@ def main(force_refresh: bool = False) -> int:
     previous_payload = read_json(RAW_OUTPUT_PATH, {})
     previous_classes = {entry.get("name"): entry for entry in (previous_payload.get("classes") or []) if isinstance(entry, dict)}
     previous_weapons = {entry.get("name"): entry for entry in (previous_payload.get("weapons") or []) if isinstance(entry, dict)}
-    page_hashes = load_page_hashes() if not force_refresh else {}
     stats: dict[str, Any] = {"skipped": [], "refetched": []}
+
+    weapon_titles = fetch_fandom_weapon_titles()
+    revisions = fetch_fandom_revisions([*CLASS_TITLES, *weapon_titles])
 
     classes = _scrape_with_increment(
         CLASS_TITLES, kind="class", scrape_fn=scrape_fandom_class,
-        previous_raw=previous_classes, page_hashes=page_hashes,
+        previous_raw=previous_classes, revisions=revisions,
         force_refresh=force_refresh, stats=stats,
     )
-    weapon_titles = fetch_fandom_weapon_titles()
     weapons = _scrape_with_increment(
         weapon_titles, kind="weapon", scrape_fn=scrape_fandom_weapon,
-        previous_raw=previous_weapons, page_hashes=page_hashes,
+        previous_raw=previous_weapons, revisions=revisions,
         force_refresh=force_refresh, stats=stats,
     )
     # 必填项缺失不再 raise 中断 refresh-data：改为由 build_degradation_summary 记录
@@ -1030,23 +1175,27 @@ def main(force_refresh: bool = False) -> int:
     # （fetch_fandom_page 抛错）仍会中断，由 refresh-data --skip-wiki 兜底。
     game8_validation = collect_game8_validation()
     rebuild_class_weapons_from_weapons(classes, weapons)
+    preserve_class_weapon_order(classes, previous_classes)
     attach_validation_notes(classes, weapons, game8_validation)
     cross_check_class_weapon_closure(classes, weapons)
     official_assets = build_official_asset_entries(official_anchor, classes, weapons)
     normalize_raw_entities(classes, weapons, official_assets)
-    talent_payload = build_talent_payload(classes)
-    raw_payload = append_talent_payload(build_raw_payload(classes, weapons, official_assets, official_anchor, game8_validation), talent_payload)
-    raw_payload["meta"]["generated_at"] = __import__("datetime").datetime.now(__import__("datetime").UTC).isoformat()
+    raw_payload = preserve_existing_talent_state(
+        build_raw_payload(classes, weapons, official_assets, official_anchor, game8_validation),
+        previous_payload,
+    )
+    raw_payload["meta"]["generated_at"] = datetime.now(timezone.utc).isoformat()
+    changed_class_pages = [title for title in CLASS_TITLES if title in stats["refetched"]]
     raw_payload["meta"]["incremental"] = {
         "force_refresh": force_refresh,
         "skipped_count": len(stats["skipped"]),
         "refetched_count": len(stats["refetched"]),
         "reused_pages": stats["skipped"],
         "refetched_pages": stats["refetched"],
+        "changed_class_pages": changed_class_pages,
     }
     markdown = build_markdown_table(raw_payload)
     write_outputs(raw_payload, markdown)
-    save_page_hashes(page_hashes)
     print(f"[sm2-randomizer] Wrote raw wiki payload to: {RAW_OUTPUT_PATH}")
     print(f"[sm2-randomizer] Wiki incremental: skipped={len(stats['skipped'])} refetched={len(stats['refetched'])} force_refresh={force_refresh}")
     return 0

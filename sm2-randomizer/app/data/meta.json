@@ -1,8 +1,8 @@
 {
   "build": {
-    "version": "Hotfix 13.2",
-    "excel_version": "13.2",
-    "generated_at": "2026-07-03T04:31:32.726922+00:00",
+    "version": "Hotfix 14.1",
+    "excel_version": "14.1",
+    "generated_at": "2026-08-31T08:33:20.533954+00:00",
     "source_mode": "hybrid_now_wiki_ready",
     "source_coverage": {
       "classes": 7,
@@ -735,7 +735,7 @@
       "key": "tidal-onslaught",
       "label": "海啸来袭",
       "name": "海啸来袭",
-      "detail": "海啸来袭：每次生成敌潮只生成原版设定最大规模的敌潮，但敌潮生成冷却时间增加30%",
+      "detail": "海啸来袭：每次生成敌潮只生成原版设定最大规模的敌潮，但敌潮生成的最低冷却时间增加30%",
       "risk_level": "mid_high_risk",
       "core_tags": [
         "spawnball_chain"
@@ -747,7 +747,7 @@
       "key": "atrophy",
       "label": "机能萎缩",
       "name": "机能萎缩",
-      "detail": "机能萎缩：倒地不会让玩家死亡，但每次倒地都会使玩家减少25%最大生命值25%，最低减少至10%最大生命值",
+      "detail": "机能萎缩：倒地不会让玩家死亡，但每次倒地都会使玩家减少25%最大生命值，最低减少至剩余10%最大生命值",
       "risk_level": "mid_high_risk",
       "core_tags": [
         "death_chain"
@@ -759,7 +759,7 @@
       "key": "tyrant-aura",
       "label": "王霸之气",
       "name": "王霸之气",
-      "detail": "王霸之气：终极敌人增加100%生命值和33%所造成的伤害[乘算]",
+      "detail": "王霸之气：终极/泰坦类别敌人增加100%生命值和33%所造成的伤害[乘算]",
       "risk_level": "mid_high_risk",
       "core_tags": [
         "spawnball_chain"
@@ -771,7 +771,7 @@
       "key": "reinforced-skull",
       "label": "强化头颅",
       "name": "强化头颅",
-      "detail": "强化头颅：敌人免疫爆头伤害，但最大生命值减少35%[乘算]",
+      "detail": "强化头颅：敌人受到的爆头伤害改为躯干伤害，但最大生命值减少35%[乘算]",
       "risk_level": "advisory",
       "core_tags": [],
       "aliases": [],
@@ -1332,13 +1332,13 @@
       "亚空间风暴": "warp-storm",
       "亚空间风暴：地图会每30秒生成一波半径6米的灵能风暴攻击，生成2秒后对范围内所有目标造成3点生命值伤害或1点护甲伤害": "warp-storm",
       "海啸来袭": "tidal-onslaught",
-      "海啸来袭：每次生成敌潮只生成原版设定最大规模的敌潮，但敌潮生成冷却时间增加30%": "tidal-onslaught",
+      "海啸来袭：每次生成敌潮只生成原版设定最大规模的敌潮，但敌潮生成的最低冷却时间增加30%": "tidal-onslaught",
       "机能萎缩": "atrophy",
-      "机能萎缩：倒地不会让玩家死亡，但每次倒地都会使玩家减少25%最大生命值25%，最低减少至10%最大生命值": "atrophy",
+      "机能萎缩：倒地不会让玩家死亡，但每次倒地都会使玩家减少25%最大生命值，最低减少至剩余10%最大生命值": "atrophy",
       "王霸之气": "tyrant-aura",
-      "王霸之气：终极敌人增加100%生命值和33%所造成的伤害[乘算]": "tyrant-aura",
+      "王霸之气：终极/泰坦类别敌人增加100%生命值和33%所造成的伤害[乘算]": "tyrant-aura",
       "强化头颅": "reinforced-skull",
-      "强化头颅：敌人免疫爆头伤害，但最大生命值减少35%[乘算]": "reinforced-skull",
+      "强化头颅：敌人受到的爆头伤害改为躯干伤害，但最大生命值减少35%[乘算]": "reinforced-skull",
       "战场本能": "battlefield-instinct",
       "战场本能：关闭用户界面显示": "battlefield-instinct",
       "致命污染": "lethal-contamination",
