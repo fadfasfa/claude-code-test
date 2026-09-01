@@ -50,6 +50,13 @@
       "provider": "icloud",
       "base_url": "https://email.nloop.cc",
       "email": "example@icloud.com"
+    },
+    {
+      "label": "Songniqu",
+      "provider": "songniqu",
+      "base_url": "https://mail.songniqu.cfd",
+      "email": "example@icloud.com",
+      "mailbox": "example@icloud.com=YOUR_QUERY_KEY"
     }
   ],
   "accounts": [

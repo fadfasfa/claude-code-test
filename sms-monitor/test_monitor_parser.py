@@ -31,6 +31,7 @@ from monitor import (
     normalize_email_sources,
     normalize_kkdos_sources,
     normalize_msgnest_sources,
+    normalize_phone,
     parse_fixed_sms_response,
     parse_freeform_account_text,
     parse_freeform_accounts,
@@ -52,8 +53,8 @@ from monitor import (
 class FakeJsonResponse:
     """测试 LuDan API 解析用的最小响应对象，避免访问真实服务。"""
 
-    def __init__(self, payload):
-        self.status_code = 200
+    def __init__(self, payload, status_code=200):
+        self.status_code = status_code
         self.payload = payload
 
     def json(self):
@@ -133,8 +134,10 @@ class EmailReadySession:
     def __init__(self, response=None, exc=None):
         self.response = response
         self.exc = exc
+        self.calls = []
 
     def post(self, url, json=None, timeout=None):
+        self.calls.append((url, json, timeout))
         if self.exc:
             raise self.exc
         return self.response
@@ -354,6 +357,23 @@ class FixedSmsParserTest(unittest.TestCase):
         self.assertEqual(result.country_code, "+1")
         self.assertEqual(result.local_number, "5550123456")
 
+    def test_normalize_phone_keeps_explicit_plus_one_country_code(self):
+        # 显式 +1 的北美号码必须保留国家码，否则 split_us_phone 无法拆出本地号
+        self.assertEqual(normalize_phone("+15550123456"), "+15550123456")
+        self.assertEqual(normalize_phone("+1 (555) 012-3456"), "+15550123456")
+
+    def test_normalize_phone_does_not_assume_bare_eleven_digit_is_us(self):
+        # 裸 11 位（无 +）可能是其他国家的号码，不默认当作美国号拆分
+        self.assertEqual(normalize_phone("15550123456"), "15550123456")
+
+    def test_normalize_phone_keeps_non_us_digits(self):
+        # 非 +1 的国家码只保留数字串，国家码信息不在导入层强制保留
+        self.assertEqual(normalize_phone("+8613800138000"), "8613800138000")
+
+    def test_normalize_phone_empty(self):
+        self.assertEqual(normalize_phone(""), "")
+        self.assertEqual(normalize_phone(None), "")
+
     def test_generic_fallback_can_be_disabled(self):
         # HTML 页面里的裸数字（如端口号）禁用兜底后不应被当成验证码
         text = "<html><body>service on port 8080</body></html>"
@@ -502,6 +522,33 @@ class NormalizeEmailSourcesTest(unittest.TestCase):
         with self.assertRaises(ConfigCommandError):
             normalize_email_sources([{"email": "a@outlook.com", "provider": "outlook"}])
 
+    def test_songniqu_derives_email_and_uses_provider_default(self):
+        sources = normalize_email_sources(
+            [{"label": "Mail", "provider": "songniqu", "mailbox": "user@example.com=SECRET_KEY"}]
+        )
+
+        self.assertEqual(sources[0]["email"], "user@example.com")
+        self.assertEqual(sources[0]["mailbox"], "user@example.com=SECRET_KEY")
+        self.assertEqual(sources[0]["base_url"], "https://mail.songniqu.cfd")
+
+    def test_songniqu_rejects_bad_or_mismatched_mailbox_without_leaking(self):
+        secret = "user@example.com=SECRET_KEY"
+        stdout = io.StringIO()
+        with redirect_stdout(stdout), self.assertRaises(ConfigCommandError):
+            normalize_email_sources(
+                [
+                    {
+                        "provider": "songniqu",
+                        "email": "other@example.com",
+                        "mailbox": secret,
+                    }
+                ]
+            )
+        self.assertNotIn("SECRET_KEY", stdout.getvalue())
+
+        with self.assertRaises(ConfigCommandError):
+            normalize_email_sources([{"provider": "songniqu", "mailbox": "not-a-mailbox"}])
+
 
 class TotpTest(unittest.TestCase):
     """验证标准库 TOTP 实现符合 RFC6238 SHA1 测试向量。"""
@@ -640,6 +687,117 @@ class AccountSourceTest(unittest.TestCase):
         self.assertEqual(source.poll(), "246810")
         self.assertEqual(source.last_code, "246810")
 
+    def test_songniqu_poll_prefers_top_level_code_and_redacts_history(self):
+        mailbox = "user@example.com=SECRET_KEY"
+        session = EmailReadySession(
+            FakeJsonResponse(
+                {
+                    "ok": True,
+                    "code": "135790",
+                    "mails": [
+                        {
+                            "id": "mail-1",
+                            "subject": f"Code for {mailbox}",
+                            "body": "fallback 246810 SECRET_KEY",
+                        }
+                    ],
+                }
+            )
+        )
+        source = EmailSource(
+            {
+                "label": "Songniqu",
+                "email": "user@example.com",
+                "provider": "songniqu",
+                "base_url": "https://mail.songniqu.cfd",
+                "mailbox": mailbox,
+            },
+            session,
+            request_timeout=1,
+        )
+
+        self.assertEqual(source.poll(), "135790")
+        self.assertEqual(source.copy_number, "user@example.com")
+        self.assertEqual(
+            session.calls[0],
+            (
+                "https://mail.songniqu.cfd/api/receive",
+                {"mailbox": mailbox, "turnstile_token": ""},
+                1,
+            ),
+        )
+        history = json.dumps(list(source.history), ensure_ascii=False)
+        self.assertNotIn(mailbox, history)
+        self.assertNotIn("SECRET_KEY", history)
+
+    def test_songniqu_poll_falls_back_to_mail_code_then_body(self):
+        base = {
+            "label": "Songniqu",
+            "email": "user@example.com",
+            "provider": "songniqu",
+            "base_url": "https://mail.songniqu.cfd",
+            "mailbox": "user@example.com=SECRET_KEY",
+        }
+        direct = EmailSource(
+            base,
+            EmailReadySession(
+                FakeJsonResponse(
+                    {"ok": True, "mails": [{"id": "1", "verification_code": "112233"}]}
+                )
+            ),
+        )
+        parsed = EmailSource(
+            base,
+            EmailReadySession(
+                FakeJsonResponse(
+                    {
+                        "ok": True,
+                        "mails": [{"id": "2", "subject": "Sign in", "body": "Code: 445566"}],
+                    }
+                )
+            ),
+        )
+
+        self.assertEqual(direct.poll(), "112233")
+        self.assertEqual(parsed.poll(), "445566")
+
+    def test_songniqu_empty_mailbox_is_ready_but_has_no_code(self):
+        source = EmailSource(
+            {
+                "label": "Songniqu",
+                "email": "user@example.com",
+                "provider": "songniqu",
+                "base_url": "https://mail.songniqu.cfd",
+                "mailbox": "user@example.com=SECRET_KEY",
+            },
+            EmailReadySession(FakeJsonResponse({"ok": True, "mails": []})),
+        )
+
+        self.assertIsNone(source.poll())
+        self.assertEqual(source.status, "暂无邮件")
+
+    def test_songniqu_failure_states_are_fixed_and_secret_free(self):
+        mailbox = "user@example.com=SECRET_KEY"
+        config = {
+            "label": "Songniqu",
+            "email": "user@example.com",
+            "provider": "songniqu",
+            "base_url": "https://mail.songniqu.cfd",
+            "mailbox": mailbox,
+        }
+        cases = [
+            ({"ok": False, "code": "turnstile_failed", "message": mailbox}, "需要网页验证"),
+            ({"ok": False, "code": "mailbox_bound", "credential": mailbox}, "需要网页绑定"),
+            ({"ok": False, "message": mailbox}, "取件失败"),
+        ]
+        for payload, expected_status in cases:
+            source = EmailSource(config, EmailReadySession(FakeJsonResponse(payload)))
+            self.assertIsNone(source.poll())
+            self.assertEqual(source.status, expected_status)
+            output = f"{source.status} {source.note}"
+            self.assertNotIn(mailbox, output)
+            self.assertNotIn("SECRET_KEY", output)
+
     def test_poll_never_returns_code(self):
         account = AccountSource({"label": "iCloud", "login_email": "a@icloud.com"})
 
@@ -721,6 +879,42 @@ class AccountSourceTest(unittest.TestCase):
 
         self.assertIn("密码：已配置", output.getvalue())
         self.assertNotIn("SECRET_PASSWORD", output.getvalue())
+
+    def test_render_and_copy_show_songniqu_email_but_never_mailbox_key(self):
+        mailbox = "receive@example.com=SECRET_KEY"
+        monitor_instance = SmsMonitor(
+            {
+                "base_url": "https://example.invalid",
+                "key": "",
+                "fixed_sources": [],
+                "email_sources": [
+                    {
+                        "label": "Songniqu",
+                        "provider": "songniqu",
+                        "base_url": "https://mail.songniqu.cfd",
+                        "email": "receive@example.com",
+                        "mailbox": mailbox,
+                    }
+                ],
+                "accounts": [
+                    {
+                        "label": "A",
+                        "login_email": "82@example.com",
+                        "email": "receive@example.com",
+                    }
+                ],
+            }
+        )
+        output = io.StringIO()
+
+        with redirect_stdout(output), patch("monitor.clear_screen"):
+            monitor_instance.render()
+
+        rendered = output.getvalue()
+        self.assertIn("取件邮箱：receive@example.com", rendered)
+        self.assertEqual(monitor_instance.email_sources[0].copy_number, "receive@example.com")
+        self.assertNotIn(mailbox, rendered)
+        self.assertNotIn("SECRET_KEY", rendered)
 
     def test_disable_runtime_unlinks_account_immediately(self):
         monitor = SmsMonitor(
@@ -1562,7 +1756,7 @@ class ConfigCommandTest(unittest.TestCase):
         self.assertEqual(parsed["login_email"], "login@example.com")
         self.assertEqual(parsed["password"], "SECRET_PASSWORD")
         self.assertEqual(parsed["totp_secret"], "JBSWY3DPEHPK3PXP")
-        self.assertEqual(parsed["phone"], "15550123456")
+        self.assertEqual(parsed["phone"], "+15550123456")
         self.assertEqual(parsed["sms_url"], "https://sms.example/api/orders/abc/sms-url?token=SECRET_TOKEN")
         preview = json.dumps(parsed["preview"], ensure_ascii=False)
         self.assertNotIn("SECRET_PASSWORD", preview)
@@ -1607,7 +1801,7 @@ url: https://sms.example/b?token=TOKEN_B"""
         self.assertEqual(items[0]["login_email"], "discarded@example.com")
         self.assertEqual(items[0]["password"], "SECRET_PASSWORD")
         self.assertEqual(items[0]["totp_secret"], "JBSWY3DPEHPK3PXP")
-        self.assertEqual(items[0]["phone"], "15550123456")
+        self.assertEqual(items[0]["phone"], "+15550123456")
         self.assertEqual(items[0]["sms_url"], "https://sms.example/query?token=SECRET_TOKEN")
         self.assertNotIn("2fa.example", json.dumps(items[0]["preview"], ensure_ascii=False))
 
@@ -1895,14 +2089,14 @@ url: https://sms.example/b?token=TOKEN_B"""
             self.assertTrue(result["ready"])
             self.assertEqual(len(cfg["fixed_sources"]), 1)
             self.assertEqual(cfg["fixed_sources"][0]["label"], "ChatGPT-SMS")
-            self.assertEqual(cfg["fixed_sources"][0]["phone"], "15550123456")
+            self.assertEqual(cfg["fixed_sources"][0]["phone"], "+15550123456")
             self.assertEqual(cfg["fixed_sources"][0]["url"], "https://sms.example/api/orders/abc/sms-url?token=SECRET_TOKEN")
             self.assertEqual(len(cfg["accounts"]), 1)
             self.assertEqual(cfg["accounts"][0]["label"], "ChatGPT")
             self.assertEqual(cfg["accounts"][0]["login_email"], "login@example.com")
             self.assertEqual(cfg["accounts"][0]["password"], "SECRET_PASSWORD")
             self.assertEqual(cfg["accounts"][0]["totp_secret"], "JBSWY3DPEHPK3PXP")
-            self.assertEqual(cfg["accounts"][0]["phone"], "15550123456")
+            self.assertEqual(cfg["accounts"][0]["phone"], "+15550123456")
             sanitized = json.dumps(result, ensure_ascii=False)
             self.assertNotIn("SECRET_PASSWORD", sanitized)
             self.assertNotIn("JBSWY3DPEHPK3PXP", sanitized)
@@ -1944,6 +2138,182 @@ url: https://sms.example/b?token=TOKEN_B"""
             self.assertEqual(cfg["fixed_sources"][0]["url"], "https://sms.example/api/orders/abc/sms-url?token=SECRET_TOKEN")
             sanitized = json.dumps(result, ensure_ascii=False)
             self.assertNotIn("SECRET_TOKEN", sanitized)
+
+    def _focus_config(self):
+        return {
+            "base_url": "https://example.invalid",
+            "key": "OLD_LUDAN_KEY",
+            "request_timeout": 1,
+            "fixed_sources": [
+                {"label": "first", "phone": "+15550123456", "url": "https://sms/first?OLD_TOKEN"},
+                {"label": "duplicate", "phone": "+15550123456", "url": "https://sms/duplicate?OLD_TOKEN"},
+                {"label": "other", "phone": "+15550999999", "url": "https://sms/other?OLD_TOKEN"},
+            ],
+            "kkdos_sources": [{"label": "kkdos", "cdk": "OLD_KKDOS"}],
+            "msgnest_sources": [{"label": "msgnest", "cdk": "OLD_MSGNEST"}],
+            "email_sources": [
+                {
+                    "label": "old-mail",
+                    "provider": "icloud",
+                    "email": "old@icloud.com",
+                    "base_url": "https://email.nloop.cc",
+                }
+            ],
+            "accounts": [
+                {
+                    "label": "target",
+                    "login_email": "82target@example.com",
+                    "password": "OLD_PASSWORD",
+                    "totp_secret": "JBSWY3DPEHPK3PXP",
+                    "phone": "+15550123456",
+                    "email": "old@icloud.com",
+                    "note": "keep-me",
+                },
+                {"label": "other", "login_email": "other@example.com"},
+            ],
+            "disabled": {"fixed:other": {"reason": "old", "at": "yesterday"}},
+        }
+
+    @staticmethod
+    def _read_bytes(path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    def test_upsert_songniqu_prompt_is_idempotent_and_secret_free(self):
+        mailbox = "user@example.com=SECRET_KEY"
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            for _ in range(2):
+                result = run_config_command(
+                    [
+                        "upsert-email",
+                        "--config",
+                        config_path,
+                        "--label",
+                        "Songniqu",
+                        "--provider",
+                        "songniqu",
+                        "--mailbox-prompt",
+                    ],
+                    prompt_reader=lambda prompt, secret=False: mailbox,
+                )
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+
+        self.assertEqual(len(cfg["email_sources"]), 1)
+        self.assertEqual(cfg["email_sources"][0]["email"], "user@example.com")
+        self.assertEqual(cfg["email_sources"][0]["mailbox"], mailbox)
+        self.assertNotIn("SECRET_KEY", json.dumps(result, ensure_ascii=False))
+
+    def test_focus_account_dry_run_does_not_prompt_or_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(self._focus_config(), f)
+            before = self._read_bytes(config_path)
+
+            result = run_config_command(
+                ["focus-account", "--config", config_path, "--login-prefix", "82", "--json"],
+                prompt_reader=lambda *args, **kwargs: self.fail("dry-run must not prompt"),
+            )
+            after = self._read_bytes(config_path)
+
+        self.assertEqual(before, after)
+        self.assertEqual(result["status"], "needs_confirmation")
+        self.assertEqual(result["target_email"], "82***@example.com")
+        self.assertEqual(result["phone_source_kind"], "fixed")
+        self.assertEqual(result["counts"]["accounts"], {"before": 2, "after": 1, "removed": 1})
+        serialized = json.dumps(result, ensure_ascii=False)
+        for secret in ("OLD_LUDAN_KEY", "OLD_PASSWORD", "OLD_TOKEN", "OLD_KKDOS", "OLD_MSGNEST"):
+            self.assertNotIn(secret, serialized)
+
+    def test_focus_account_requires_exactly_one_match_without_writing(self):
+        for accounts in (
+            [{"login_email": "other@example.com"}],
+            [{"login_email": "82a@example.com"}, {"login_email": "82b@example.com"}],
+        ):
+            with self.subTest(count=len(accounts)), tempfile.TemporaryDirectory() as tmp:
+                config_path = os.path.join(tmp, "config.json")
+                cfg = self._focus_config()
+                cfg["accounts"] = accounts
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f)
+                before = self._read_bytes(config_path)
+                with self.assertRaises(ConfigCommandError):
+                    run_config_command(
+                        ["focus-account", "--config", config_path, "--login-prefix", "82"]
+                    )
+                self.assertEqual(before, self._read_bytes(config_path))
+
+    def test_focus_account_failed_precheck_keeps_original_config_and_hides_secret(self):
+        mailbox = "new@example.com=SECRET_KEY"
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(self._focus_config(), f)
+            before = self._read_bytes(config_path)
+
+            result = run_config_command(
+                [
+                    "focus-account",
+                    "--config",
+                    config_path,
+                    "--login-prefix",
+                    "82",
+                    "--mailbox-prompt",
+                    "--yes",
+                ],
+                prompt_reader=lambda prompt, secret=False: mailbox,
+                session_factory=lambda: EmailReadySession(
+                    FakeJsonResponse({"ok": False, "message": mailbox})
+                ),
+            )
+            after = self._read_bytes(config_path)
+
+        self.assertEqual(before, after)
+        self.assertEqual(result["status"], "api_not_ready")
+        self.assertNotIn("SECRET_KEY", json.dumps(result, ensure_ascii=False))
+
+    def test_focus_account_success_is_atomic_and_keeps_first_runtime_phone_source(self):
+        mailbox = "new@example.com=SECRET_KEY"
+        session = EmailReadySession(FakeJsonResponse({"ok": True, "mails": []}))
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(self._focus_config(), f)
+
+            result = run_config_command(
+                [
+                    "focus-account",
+                    "--config",
+                    config_path,
+                    "--login-prefix",
+                    "82",
+                    "--mailbox-prompt",
+                    "--yes",
+                ],
+                prompt_reader=lambda prompt, secret=False: mailbox,
+                session_factory=lambda: session,
+            )
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["status"], "focused")
+        self.assertEqual(cfg["key"], "")
+        self.assertEqual(cfg["disabled"], {})
+        self.assertEqual(len(cfg["accounts"]), 1)
+        self.assertEqual(cfg["accounts"][0]["login_email"], "82target@example.com")
+        self.assertEqual(cfg["accounts"][0]["password"], "OLD_PASSWORD")
+        self.assertEqual(cfg["accounts"][0]["note"], "keep-me")
+        self.assertEqual(cfg["accounts"][0]["email"], "new@example.com")
+        self.assertEqual(cfg["accounts"][0]["phone_source_label"], "first")
+        self.assertEqual([item["label"] for item in cfg["fixed_sources"]], ["first"])
+        self.assertEqual(cfg["kkdos_sources"], [])
+        self.assertEqual(cfg["msgnest_sources"], [])
+        self.assertEqual(len(cfg["email_sources"]), 1)
+        self.assertEqual(cfg["email_sources"][0]["mailbox"], mailbox)
+        self.assertNotIn("SECRET_KEY", json.dumps(result, ensure_ascii=False))
 
 
 class ReadyCheckTest(unittest.TestCase):
@@ -2056,6 +2426,63 @@ class ReadyCheckTest(unittest.TestCase):
         self.assertFalse(ok_false["ready"])
         self.assertEqual(ok_false["status"], "api_not_ready")
         self.assertNotIn("secret detail", json.dumps(ok_false, ensure_ascii=False))
+
+    def test_songniqu_ready_uses_receive_contract_without_leaking(self):
+        mailbox = "user@example.com=SECRET_KEY"
+        cfg = {
+            "label": "Songniqu",
+            "provider": "songniqu",
+            "base_url": "https://mail.songniqu.cfd",
+            "email": "user@example.com",
+            "mailbox": mailbox,
+        }
+        session = EmailReadySession(FakeJsonResponse({"ok": True, "mails": []}))
+
+        result = ready_check_email_source(cfg, session, request_timeout=2)
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(
+            session.calls[0],
+            (
+                "https://mail.songniqu.cfd/api/receive",
+                {"mailbox": mailbox, "turnstile_token": ""},
+                2,
+            ),
+        )
+        self.assertNotIn("SECRET_KEY", json.dumps(result, ensure_ascii=False))
+
+    def test_songniqu_ready_failure_codes_are_sanitized(self):
+        mailbox = "user@example.com=SECRET_KEY"
+        cfg = {
+            "label": "Songniqu",
+            "provider": "songniqu",
+            "base_url": "https://mail.songniqu.cfd",
+            "email": "user@example.com",
+            "mailbox": mailbox,
+        }
+        for payload, expected in [
+            ({"ok": False, "code": "turnstile_failed", "message": mailbox}, "turnstile_required"),
+            ({"ok": False, "code": "mailbox_bound", "credential": mailbox}, "mailbox_bound"),
+            ({"ok": False, "message": mailbox}, "api_not_ready"),
+        ]:
+            result = ready_check_email_source(
+                cfg, EmailReadySession(FakeJsonResponse(payload)), request_timeout=1
+            )
+            self.assertFalse(result["ready"])
+            self.assertEqual(result["status"], expected)
+            serialized = json.dumps(result, ensure_ascii=False)
+            self.assertNotIn(mailbox, serialized)
+            self.assertNotIn("SECRET_KEY", serialized)
+
+        forbidden = ready_check_email_source(
+            cfg,
+            EmailReadySession(
+                FakeJsonResponse({"ok": False, "message": mailbox}, status_code=403)
+            ),
+            request_timeout=1,
+        )
+        self.assertEqual(forbidden["status"], "api_not_ready")
+        self.assertNotIn("SECRET_KEY", json.dumps(forbidden, ensure_ascii=False))
 
 
 class KkdosSourceTest(unittest.TestCase):

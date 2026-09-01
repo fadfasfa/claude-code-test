@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 import uuid
+from copy import deepcopy
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -45,6 +46,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 EXAMPLE_PATH = os.path.join(BASE_DIR, "config.example.json")
 PRIVATE_IMPORT_PATH = os.path.join(BASE_DIR, "private-import.txt")
+
+EMAIL_PROVIDER_DEFAULTS = {
+    "icloud": "https://email.nloop.cc",
+    "songniqu": "https://mail.songniqu.cfd",
+}
 
 DATE_TIME_RE = re.compile(
     r"\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?"
@@ -112,6 +118,22 @@ def split_us_phone(phone):
     if len(digits) == 10:
         return PhoneParts(country_code="+1", local_number=digits, raw_digits=digits)
     return PhoneParts(country_code="", local_number=digits, raw_digits=digits)
+
+
+def normalize_phone(raw):
+    """手机号归一化：保留显式 +1 国家码，其余格式只留数字串。
+
+    导入时若只留数字，"+15550123456" 会变成 11 位 "15550123456"，split_us_phone
+    因缺少 "+" 无法拆出国家码，复制区域就变成 11 位；保留 +1 后由
+    split_us_phone 统一拆成国家码与 10 位本地号。
+    """
+    text = str(raw or "").strip()
+    digits = re.sub(r"\D", "", text)
+    if not digits:
+        return ""
+    if text.startswith("+1") and len(digits) == 11:
+        return "+" + digits
+    return digits
 
 
 def generate_totp(secret, digits=6, period=30, timestamp=None):
@@ -222,6 +244,30 @@ def mask_url(value):
     return f"{host}/...<hidden>"
 
 
+def parse_songniqu_mailbox(value):
+    """解析 ``邮箱=Key``，错误信息不包含原始输入。"""
+    text = str(value or "").strip()
+    email, separator, key = text.partition("=")
+    email = email.strip()
+    key = key.strip()
+    if not separator or not EMAIL_RE.fullmatch(email) or not key:
+        raise ConfigCommandError("Songniqu mailbox 格式必须是 邮箱=Key。")
+    return email, f"{email}={key}"
+
+
+def redact_email_secrets(value, mailbox):
+    """清除服务端文本中可能回显的完整 mailbox 或查询 Key。"""
+    text = str(value or "")
+    if not mailbox:
+        return text
+    _, _, key = str(mailbox).partition("=")
+    secrets = sorted({str(mailbox), key}, key=len, reverse=True)
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "<hidden>")
+    return text
+
+
 def split_freeform_chunks(text):
     """按常见分隔符拆自由文本；只用于本地解析，不输出原文。"""
     compact = re.sub(r"\s+", " ", text or "").strip()
@@ -242,9 +288,10 @@ def parse_freeform_account_text(text, label):
 
     phone = ""
     for candidate in re.findall(r"\+?\d[\d\s().-]{8,}\d", without_email):
-        digits = re.sub(r"\D", "", candidate)
+        normalized = normalize_phone(candidate)
+        digits = re.sub(r"\D", "", normalized)
         if 10 <= len(digits) <= 15:
-            phone = digits
+            phone = normalized
     without_phone = without_email
     if phone:
         without_phone = re.sub(r"\+?\d[\d\s().-]{8,}\d", " ", without_phone)
@@ -333,7 +380,7 @@ def _parsed_account(values, fallback_label=""):
     login_email = str(values.get("login_email") or "").strip()
     derived_label = login_email.partition("@")[0] if "@" in login_email else ""
     label = str(values.get("label") or fallback_label or derived_label).strip()
-    phone = re.sub(r"\D", "", str(values.get("phone") or ""))
+    phone = normalize_phone(str(values.get("phone") or ""))
     parsed = {
         "label": label,
         "login_email": login_email,
@@ -505,7 +552,7 @@ def normalize_msgnest_sources(raw_sources):
 
 
 def normalize_email_sources(raw_sources):
-    """校验邮箱接码来源配置；错误信息不打印 email 全文，避免账户泄漏到终端。"""
+    """校验邮箱接码来源配置；错误信息不打印 email、mailbox 或 Key。"""
     if raw_sources is None:
         return []
     if not isinstance(raw_sources, list):
@@ -516,13 +563,33 @@ def normalize_email_sources(raw_sources):
         if not isinstance(item, dict):
             raise ConfigCommandError(f"email_sources 第 {index} 项必须是对象。")
         provider = str(item.get("provider") or "icloud").strip().lower()
-        if provider != "icloud":
+        if provider not in EMAIL_PROVIDER_DEFAULTS:
             raise ConfigCommandError(
-                f"email_sources 第 {index} 项的 provider={provider} 暂不支持，目前只支持 icloud。"
+                f"email_sources 第 {index} 项的 provider={provider} 暂不支持。"
             )
         label = str(item.get("label") or f"邮箱来源{index}").strip()
+        base_url = str(
+            item.get("base_url") or EMAIL_PROVIDER_DEFAULTS[provider]
+        ).strip().rstrip("/")
+        if provider == "songniqu":
+            email, mailbox = parse_songniqu_mailbox(item.get("mailbox"))
+            configured_email = str(item.get("email") or "").strip()
+            if configured_email and configured_email.casefold() != email.casefold():
+                raise ConfigCommandError(
+                    f"email_sources 第 {index} 项的 email 与 mailbox 不一致。"
+                )
+            sources.append(
+                {
+                    "label": label,
+                    "email": email,
+                    "provider": provider,
+                    "base_url": base_url,
+                    "mailbox": mailbox,
+                }
+            )
+            continue
+
         email = str(item.get("email") or "").strip()
-        base_url = str(item.get("base_url") or "https://email.nloop.cc").strip().rstrip("/")
         if not email:
             raise ConfigCommandError(f"email_sources 第 {index} 项缺少 email。")
         sources.append(
@@ -671,7 +738,7 @@ def fill_freeform_missing_fields(parsed, prompt_reader):
         prompt, secret = prompts[field]
         value = prompt_reader(prompt, secret=secret).strip()
         parsed[field] = value
-    parsed["phone"] = re.sub(r"\D", "", parsed.get("phone") or "")
+    parsed["phone"] = normalize_phone(parsed.get("phone") or "")
     parsed["preview"] = {
         "label": parsed["label"],
         "login_email": mask_email(parsed.get("login_email")),
@@ -714,6 +781,134 @@ def upsert_by_label(items, item):
             return "updated"
     items.append(item)
     return "created"
+
+
+def read_songniqu_mailbox(args, env, prompt_reader):
+    """从环境变量或非回显提示读取 Songniqu 凭据。"""
+    if args.mailbox_env and args.mailbox_prompt:
+        raise ConfigCommandError("--mailbox-env 与 --mailbox-prompt 只能选择一个。")
+    if args.mailbox_env:
+        raw = env_value(env, args.mailbox_env, "Songniqu mailbox")
+    elif args.mailbox_prompt:
+        reader = default_prompt_reader if prompt_reader is None else prompt_reader
+        raw = reader("Songniqu 邮箱=Key：", secret=True)
+    else:
+        raise ConfigCommandError("Songniqu 需要 --mailbox-env 或 --mailbox-prompt。")
+    return parse_songniqu_mailbox(raw)
+
+
+def _normalized_phone_source_groups(cfg):
+    return {
+        "fixed": normalize_fixed_sources(cfg.get("fixed_sources", [])),
+        "kkdos": normalize_kkdos_sources(cfg.get("kkdos_sources", [])),
+        "msgnest": normalize_msgnest_sources(cfg.get("msgnest_sources", [])),
+    }
+
+
+def select_account_phone_source(account, source_groups, cfg=None):
+    """复用运行时优先级，返回目标账号实际会绑定的首个电话来源。"""
+    label = str(account.get("phone_source_label") or "").strip()
+    ordered = [
+        (kind, source)
+        for kind in ("fixed", "kkdos", "msgnest")
+        for source in source_groups[kind]
+        if cfg is None or not is_disabled(cfg, kind, source.get("label", ""))
+    ]
+    if label:
+        for kind, source in ordered:
+            if str(source.get("label") or "") == label:
+                return kind, source
+        return None, None
+
+    phone = account.get("phone")
+    if phone:
+        for source in source_groups["fixed"]:
+            if cfg is not None and is_disabled(cfg, "fixed", source.get("label", "")):
+                continue
+            if same_phone(phone, source.get("phone")):
+                return "fixed", source
+    return None, None
+
+
+def focus_account_preview(cfg, login_prefix):
+    """生成单账号收敛候选的非敏感骨架；不读取新邮箱凭据。"""
+    prefix = str(login_prefix or "").strip().casefold()
+    if not prefix:
+        raise ConfigCommandError("--login-prefix 不能为空。")
+    accounts = normalize_accounts(cfg.get("accounts", []))
+    matches = []
+    for account in accounts:
+        login_email = str(account.get("login_email") or "")
+        local_name, separator, _ = login_email.partition("@")
+        if separator and local_name.casefold().startswith(prefix):
+            matches.append(account)
+    if len(matches) != 1:
+        raise ConfigCommandError(
+            f"login_email 前缀匹配必须恰好 1 条，当前命中 {len(matches)} 条。"
+        )
+
+    target = deepcopy(matches[0])
+    source_groups = _normalized_phone_source_groups(cfg)
+    phone_kind, phone_source = select_account_phone_source(target, source_groups, cfg)
+    if phone_source is not None:
+        target["phone_source_label"] = str(phone_source.get("label") or "")
+    else:
+        target["phone_source_label"] = ""
+
+    counts = {
+        "accounts": len(accounts),
+        "fixed": len(source_groups["fixed"]),
+        "kkdos": len(source_groups["kkdos"]),
+        "msgnest": len(source_groups["msgnest"]),
+        "email": len(normalize_email_sources(cfg.get("email_sources", []))),
+        "disabled": len(list_disabled(cfg)),
+    }
+    after = {
+        "accounts": 1,
+        "fixed": 1 if phone_kind == "fixed" else 0,
+        "kkdos": 1 if phone_kind == "kkdos" else 0,
+        "msgnest": 1 if phone_kind == "msgnest" else 0,
+        "email": 1,
+        "disabled": 0,
+    }
+    result = {
+        **safe_result(
+            mask_email(target["login_email"]),
+            "focus",
+            False,
+            "needs_confirmation",
+            "唯一目标已匹配；提供 Songniqu 凭据并加 --yes 后执行原子收敛",
+        ),
+        "target_email": mask_email(target["login_email"]),
+        "phone_source_kind": phone_kind or "none",
+        "counts": {
+            kind: {
+                "before": counts[kind],
+                "after": after[kind],
+                "removed": max(0, counts[kind] - after[kind]),
+            }
+            for kind in counts
+        },
+    }
+    return result, target, source_groups, phone_kind, phone_source
+
+
+def build_focused_config(cfg, target, phone_kind, phone_source, email_item):
+    candidate = deepcopy(cfg)
+    for kind, key in (
+        ("fixed", "fixed_sources"),
+        ("kkdos", "kkdos_sources"),
+        ("msgnest", "msgnest_sources"),
+    ):
+        candidate[key] = [deepcopy(phone_source)] if phone_kind == kind else []
+    target = deepcopy(target)
+    target["email"] = email_item["email"]
+    candidate["accounts"] = [target]
+    candidate["email_sources"] = [deepcopy(email_item)]
+    candidate["key"] = ""
+    candidate["disabled"] = {}
+    validate_config_result(candidate)
+    return candidate
 
 
 def private_template_text(count=1):
@@ -982,23 +1177,83 @@ def ready_check_msgnest_source(cfg, session, request_timeout=3.0):
     return safe_result(label, "msgnest", False, "number_unavailable", "未返回可用号码")
 
 
+def email_request_spec(cfg):
+    """返回邮箱 provider 的请求地址和 JSON；调用方不得打印请求体。"""
+    provider = cfg["provider"]
+    base_url = cfg["base_url"].rstrip("/")
+    if provider == "songniqu":
+        return (
+            f"{base_url}/api/receive",
+            {"mailbox": cfg["mailbox"], "turnstile_token": ""},
+        )
+    return f"{base_url}/api/{provider}/query", {"email": cfg["email"]}
+
+
+def email_api_failure(payload):
+    """把邮箱接口失败映射为固定脱敏状态；成功时返回 ``None``。"""
+    if payload.get("ok"):
+        return None
+    code = str(payload.get("code") or "")
+    if code.startswith("turnstile_"):
+        return "turnstile_required", "需要网页人机验证"
+    if code == "mailbox_bound":
+        return "mailbox_bound", "需要在网页处理邮箱绑定"
+    return "api_not_ready", "取件接口拒绝请求"
+
+
+def email_http_failure(resp):
+    """把邮箱 HTTP 失败转换为固定脱敏结果；绝不返回响应正文。"""
+    if resp.status_code == 429:
+        return "rate_limited", "请求过于频繁"
+    try:
+        payload = resp.json()
+    except (AttributeError, ValueError):
+        payload = None
+    if isinstance(payload, dict):
+        failure = email_api_failure(payload)
+        if failure:
+            return failure
+    return "http_error", f"HTTP {resp.status_code}"
+
+
+def extract_email_payload_code(payload):
+    """按顶层 code、邮件 code、正文解析的顺序提取最新验证码。"""
+    mails = payload.get("mails") or []
+    mail = mails[0] if mails and isinstance(mails[0], dict) else {}
+    direct_candidates = [payload.get("code"), mail.get("verification_code")]
+    for candidate in direct_candidates:
+        code = str(candidate or "").strip()
+        if re.fullmatch(r"\d{4,8}", code):
+            return code, mail
+
+    subject = str(mail.get("subject") or "")
+    body = str(mail.get("body") or mail.get("preview") or "")
+    result = parse_fixed_sms_response(f"{subject} {body}", allow_generic=True)
+    return (result.code if result.has_sms else ""), mail
+
+
 def ready_check_email_source(cfg, session, request_timeout=3.0):
     """邮箱取件接口 ok=true 即 ready；不要求已有验证码邮件。"""
     label = cfg.get("label") or "email"
-    url = f"{cfg['base_url'].rstrip('/')}/api/{cfg['provider']}/query"
+    url, body = email_request_spec(cfg)
     try:
-        resp = session.post(url, json={"email": cfg["email"]}, timeout=request_timeout)
+        resp = session.post(url, json=body, timeout=request_timeout)
     except requests.RequestException as e:
         return safe_result(label, "email", False, "network_error", e.__class__.__name__)
 
     if not 200 <= resp.status_code < 300:
-        return safe_result(label, "email", False, "http_error", f"HTTP {resp.status_code}")
+        status, reason = email_http_failure(resp)
+        return safe_result(label, "email", False, status, reason)
     try:
         payload = resp.json()
     except (AttributeError, ValueError):
         return safe_result(label, "email", False, "bad_response", "接口返回非 JSON")
-    if not payload.get("ok"):
-        return safe_result(label, "email", False, "api_not_ready", "接口返回 ok=false")
+    if not isinstance(payload, dict):
+        return safe_result(label, "email", False, "bad_response", "接口返回结构无效")
+    failure = email_api_failure(payload)
+    if failure:
+        status, reason = failure
+        return safe_result(label, "email", False, status, reason)
     return safe_result(label, "email", True, "ready", "取件接口可用")
 
 
@@ -1110,9 +1365,11 @@ def build_config_parser():
     email_parser = subparsers.add_parser("upsert-email")
     add_common(email_parser)
     email_parser.add_argument("--label", required=True)
-    email_parser.add_argument("--email", required=True)
+    email_parser.add_argument("--email")
     email_parser.add_argument("--provider", default="icloud")
-    email_parser.add_argument("--base-url", default="https://email.nloop.cc")
+    email_parser.add_argument("--base-url")
+    email_parser.add_argument("--mailbox-env")
+    email_parser.add_argument("--mailbox-prompt", action="store_true")
 
     kkdos_parser = subparsers.add_parser("upsert-kkdos")
     add_common(kkdos_parser)
@@ -1188,6 +1445,15 @@ def build_config_parser():
     prune_parser = subparsers.add_parser("prune")
     add_common(prune_parser)
     prune_parser.add_argument("--yes", action="store_true")
+
+    focus_parser = subparsers.add_parser("focus-account")
+    add_common(focus_parser)
+    focus_parser.add_argument("--login-prefix", required=True)
+    focus_parser.add_argument("--mailbox-env")
+    focus_parser.add_argument("--mailbox-prompt", action="store_true")
+    focus_parser.add_argument("--email-label", default="Songniqu")
+    focus_parser.add_argument("--base-url", default=EMAIL_PROVIDER_DEFAULTS["songniqu"])
+    focus_parser.add_argument("--yes", action="store_true")
     return parser
 
 
@@ -1245,13 +1511,29 @@ def run_config_command(
     if args.command == "upsert-email":
         cfg = read_config_file(args.config, allow_missing=True)
         cfg["email_sources"] = normalize_email_sources(cfg.get("email_sources", []))
-        item = {
-            "label": args.label.strip(),
-            "email": args.email.strip(),
-            "provider": args.provider.strip().lower(),
-            "base_url": args.base_url.strip().rstrip("/"),
-        }
-        normalize_email_sources([item])
+        provider = args.provider.strip().lower()
+        base_url = (args.base_url or EMAIL_PROVIDER_DEFAULTS.get(provider) or "").strip().rstrip("/")
+        if provider == "songniqu":
+            email, mailbox = read_songniqu_mailbox(args, env, prompt_reader)
+            if args.email and args.email.strip().casefold() != email.casefold():
+                raise ConfigCommandError("--email 与 Songniqu mailbox 中的邮箱不一致。")
+            item = {
+                "label": args.label.strip(),
+                "email": email,
+                "provider": provider,
+                "base_url": base_url,
+                "mailbox": mailbox,
+            }
+        else:
+            if args.mailbox_env or args.mailbox_prompt:
+                raise ConfigCommandError("只有 songniqu provider 支持 mailbox 输入。")
+            item = {
+                "label": args.label.strip(),
+                "email": str(args.email or "").strip(),
+                "provider": provider,
+                "base_url": base_url,
+            }
+        item = normalize_email_sources([item])[0]
         status = upsert_by_label(cfg["email_sources"], item)
         write_config_file_atomic(args.config, cfg)
         return safe_result(args.label, "email", True, status, "邮箱取件来源已录入")
@@ -1444,6 +1726,48 @@ def run_config_command(
             "status": "no_disabled" if not items else "has_disabled",
             "sanitized_reason": f"共 {len(items)} 个无效项" if items else "无无效项",
             "items": [{"kind": k, "label": l, "reason": r, "at": t} for k, l, r, t in items],
+        }
+
+    if args.command == "focus-account":
+        cfg = read_config_file(args.config, allow_missing=False)
+        preview, target, source_groups, phone_kind, phone_source = focus_account_preview(
+            cfg, args.login_prefix
+        )
+        if not args.yes:
+            return preview
+        email, mailbox = read_songniqu_mailbox(args, env, prompt_reader)
+        email_item = normalize_email_sources(
+            [
+                {
+                    "label": args.email_label.strip() or "Songniqu",
+                    "provider": "songniqu",
+                    "base_url": args.base_url,
+                    "email": email,
+                    "mailbox": mailbox,
+                }
+            ]
+        )[0]
+        candidate = build_focused_config(
+            cfg, target, phone_kind, phone_source, email_item
+        )
+        factory = requests.Session if session_factory is None else session_factory
+        check = ready_check_email_source(
+            email_item,
+            factory(),
+            max(0.5, float(candidate.get("request_timeout", 3.0))),
+        )
+        if not check["ready"]:
+            return {
+                **preview,
+                "status": check["status"],
+                "sanitized_reason": check["sanitized_reason"],
+            }
+        write_config_file_atomic(args.config, candidate)
+        return {
+            **preview,
+            "ready": True,
+            "status": "focused",
+            "sanitized_reason": "Songniqu 已验证，配置已原子收敛为唯一目标账号",
         }
 
     if args.command == "prune":
@@ -2392,7 +2716,7 @@ class FixedUrlSource:
 
 
 class EmailSource:
-    """邮箱接码来源；POST email.nloop.cc 的取件接口，复用本地规则提取验证码。"""
+    """邮箱接码来源；兼容 iCloud query 与 Songniqu mailbox 取件。"""
 
     # 渲染时据此把"可复制号码"文案切换为"邮箱地址"
     is_email = True
@@ -2402,6 +2726,7 @@ class EmailSource:
         self.email = cfg["email"]
         self.provider = cfg["provider"]
         self.base_url = cfg["base_url"]
+        self.mailbox = cfg.get("mailbox", "")
         self.session = session
         self.request_timeout = request_timeout
 
@@ -2434,9 +2759,16 @@ class EmailSource:
 
     def poll(self):
         """取最新一封邮件并提取验证码；按邮件 id 去重，避免重复提示同一封。"""
-        url = f"{self.base_url}/api/{self.provider}/query"
+        url, body = email_request_spec(
+            {
+                "provider": self.provider,
+                "base_url": self.base_url,
+                "email": self.email,
+                "mailbox": self.mailbox,
+            }
+        )
         try:
-            resp = self.session.post(url, json={"email": self.email}, timeout=self.request_timeout)
+            resp = self.session.post(url, json=body, timeout=self.request_timeout)
             self.http_status = str(resp.status_code)
             self.last_checked = now_hms()
             if resp.status_code == 429:
@@ -2445,8 +2777,13 @@ class EmailSource:
                 self.consecutive_hard_failures = 0
                 return
             if not 200 <= resp.status_code < 300:
-                self.status = f"HTTP {resp.status_code}"
-                self.note = "取件失败"
+                failure_status, failure_reason = email_http_failure(resp)
+                self.status = {
+                    "turnstile_required": "需要网页验证",
+                    "mailbox_bound": "需要网页绑定",
+                    "api_not_ready": "取件失败",
+                }.get(failure_status, f"HTTP {resp.status_code}")
+                self.note = failure_reason
                 if resp.status_code in (401, 403, 404, 410):
                     self._record_hard_failure(f"HTTP {resp.status_code}")
                 else:
@@ -2467,33 +2804,46 @@ class EmailSource:
             self.consecutive_hard_failures = 0
             return
 
-        if not payload.get("ok"):
-            self.status = "取件失败"
-            self.note = "接口返回 ok=false"
+        if not isinstance(payload, dict):
+            self.status = "返回结构无效"
+            self.note = "稍后重试"
+            self.consecutive_hard_failures = 0
+            return
+
+        failure = email_api_failure(payload)
+        if failure:
+            status, reason = failure
+            self.status = {
+                "turnstile_required": "需要网页验证",
+                "mailbox_bound": "需要网页绑定",
+            }.get(status, "取件失败")
+            self.note = reason
             # ok=false 通常是临时业务态，不累计硬失败
             self.consecutive_hard_failures = 0
             return
 
         # 取件成功：重置硬失败计数
         self.consecutive_hard_failures = 0
+        code, mail = extract_email_payload_code(payload)
         mails = payload.get("mails") or []
-        if not mails:
+        if not mails and not code:
             self.status = "暂无邮件"
             return
 
-        mail = mails[0]  # latest 模式最新一封在最前
         self.status = "已取件"
-        mail_id = str(mail.get("id") or "")
-        subject = mail.get("subject") or ""
-        body = mail.get("body") or mail.get("preview") or ""
-        result = parse_fixed_sms_response(f"{subject} {body}", allow_generic=True)
-        if result.has_sms and result.code != self.last_code:
-            self.last_code = result.code
+        mail_id = str(mail.get("id") or mail.get("message_id") or "")
+        subject = redact_email_secrets(mail.get("subject") or "", self.mailbox)
+        body = redact_email_secrets(
+            mail.get("body") or mail.get("preview") or "", self.mailbox
+        )
+        if code and code != self.last_code:
+            self.last_code = code
             self.last_mail_id = mail_id
-            self.history.appendleft((now_hms(), result.code, subject or result.content))
+            content = subject or body or "邮箱验证码"
+            self.history.appendleft((now_hms(), code, content))
             self.note = "收到新验证码"
-            return result.code
-        if not result.has_sms:
+            return code
+        if not code:
             self.last_mail_id = mail_id
             self.note = "最新邮件未发现验证码"
         return None
@@ -2637,8 +2987,6 @@ class SmsMonitor:
             s for s in [self.ludan, *self.fixed_sources, *self.kkdos_sources, *self.msgnest_sources, *self.email_sources]
             if s is not None
         ]
-        self._link_accounts()
-        self._rebuild_sources()
         # 账户聚合：把电话/邮箱来源挂到账户卡上，避免顶层重复展示
         self._link_accounts()
         self._rebuild_sources()
@@ -3196,6 +3544,14 @@ def print_config_result(result, as_json=False):
             f"账户总数：{summary.get('total', 0)} | 新增：{summary.get('created', 0)} | "
             f"更新：{summary.get('updated', 0)}"
         )
+    counts = result.get("counts") or {}
+    if counts:
+        print("配置收敛计数：")
+        for kind, values in counts.items():
+            print(
+                f"  {kind}: {values.get('before', 0)} -> {values.get('after', 0)} "
+                f"(移除 {values.get('removed', 0)})"
+            )
     for index, item in enumerate(result.get("items") or [], start=1):
         print(
             f"  [{index}] {item.get('label') or '未命名'} | {item.get('login_email') or '邮箱缺失'} | "
@@ -3241,6 +3597,11 @@ def run_cli(
         return 1
     print_config_result(result, as_json="--json" in argv)
     if result.get("status") == "imported_cleanup_failed":
+        return 1
+    if result.get("kind") == "focus" and result.get("status") not in {
+        "needs_confirmation",
+        "focused",
+    }:
         return 1
     return 0
 
