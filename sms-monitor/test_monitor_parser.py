@@ -531,6 +531,15 @@ class NormalizeEmailSourcesTest(unittest.TestCase):
         self.assertEqual(sources[0]["mailbox"], "user@example.com=SECRET_KEY")
         self.assertEqual(sources[0]["base_url"], "https://mail.songniqu.cfd")
 
+    def test_bananaan_derives_email_and_uses_provider_default(self):
+        sources = normalize_email_sources(
+            [{"label": "Mail", "provider": "bananaan", "mailbox": "user@example.com=SECRET_KEY"}]
+        )
+
+        self.assertEqual(sources[0]["email"], "user@example.com")
+        self.assertEqual(sources[0]["mailbox"], "user@example.com=SECRET_KEY")
+        self.assertEqual(sources[0]["base_url"], "https://inbox.bananaan.com")
+
     def test_songniqu_rejects_bad_or_mismatched_mailbox_without_leaking(self):
         secret = "user@example.com=SECRET_KEY"
         stdout = io.StringIO()
@@ -761,6 +770,42 @@ class AccountSourceTest(unittest.TestCase):
         self.assertEqual(direct.poll(), "112233")
         self.assertEqual(parsed.poll(), "445566")
 
+    def test_bananaan_poll_uses_public_receive_and_redacts_history(self):
+        mailbox = "user@example.com=SECRET_KEY"
+        session = EmailReadySession(
+            FakeJsonResponse(
+                {
+                    "ok": True,
+                    "code": "135790",
+                    "mails": [{"id": "mail-1", "subject": mailbox, "body": "SECRET_KEY"}],
+                }
+            )
+        )
+        source = EmailSource(
+            {
+                "label": "Bananaan",
+                "email": "user@example.com",
+                "provider": "bananaan",
+                "base_url": "https://inbox.bananaan.com",
+                "mailbox": mailbox,
+            },
+            session,
+            request_timeout=1,
+        )
+
+        self.assertEqual(source.poll(), "135790")
+        self.assertEqual(
+            session.calls[0],
+            (
+                "https://inbox.bananaan.com/api/public/receive",
+                {"mailbox": mailbox},
+                1,
+            ),
+        )
+        history = json.dumps(list(source.history), ensure_ascii=False)
+        self.assertNotIn(mailbox, history)
+        self.assertNotIn("SECRET_KEY", history)
+
     def test_songniqu_empty_mailbox_is_ready_but_has_no_code(self):
         source = EmailSource(
             {
@@ -859,6 +904,43 @@ class AccountSourceTest(unittest.TestCase):
         self.assertEqual(monitor.accounts[0].linked_phone_source.label, "YunTL")
         self.assertEqual(monitor.accounts[1].linked_phone_source.label, "ka001")
         self.assertEqual(monitor.accounts[1].linked_email_source.label, "iCloudMail")
+
+    def test_monitor_links_msgnest_and_bananaan_to_same_account(self):
+        monitor = SmsMonitor(
+            {
+                "base_url": "https://example.invalid",
+                "key": "",
+                "fixed_sources": [],
+                "msgnest_sources": [
+                    {
+                        "label": "account-SMS",
+                        "cdk": "SECRET_CDK",
+                        "base_url": "https://msg-nest.com",
+                    }
+                ],
+                "email_sources": [
+                    {
+                        "label": "account-Mail",
+                        "provider": "bananaan",
+                        "base_url": "https://inbox.bananaan.com",
+                        "email": "account@icloud.com",
+                        "mailbox": "account@icloud.com=SECRET_KEY",
+                    }
+                ],
+                "accounts": [
+                    {
+                        "label": "account",
+                        "login_email": "account@icloud.com",
+                        "phone_source_label": "account-SMS",
+                        "email": "account@icloud.com",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(monitor.accounts[0].linked_phone_source.label, "account-SMS")
+        self.assertEqual(monitor.accounts[0].linked_email_source.label, "account-Mail")
+        self.assertEqual([source.label for source in monitor.sources], ["account"])
 
     def test_render_account_never_prints_password(self):
         monitor = SmsMonitor(
@@ -2205,6 +2287,32 @@ url: https://sms.example/b?token=TOKEN_B"""
         self.assertEqual(cfg["email_sources"][0]["mailbox"], mailbox)
         self.assertNotIn("SECRET_KEY", json.dumps(result, ensure_ascii=False))
 
+    def test_upsert_bananaan_prompt_is_idempotent_and_secret_free(self):
+        mailbox = "user@example.com=SECRET_KEY"
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.json")
+            for _ in range(2):
+                result = run_config_command(
+                    [
+                        "upsert-email",
+                        "--config",
+                        config_path,
+                        "--label",
+                        "Bananaan",
+                        "--provider",
+                        "bananaan",
+                        "--mailbox-prompt",
+                    ],
+                    prompt_reader=lambda prompt, secret=False: mailbox,
+                )
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+
+        self.assertEqual(len(cfg["email_sources"]), 1)
+        self.assertEqual(cfg["email_sources"][0]["provider"], "bananaan")
+        self.assertEqual(cfg["email_sources"][0]["base_url"], "https://inbox.bananaan.com")
+        self.assertNotIn("SECRET_KEY", json.dumps(result, ensure_ascii=False))
+
     def test_focus_account_dry_run_does_not_prompt_or_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = os.path.join(tmp, "config.json")
@@ -2450,6 +2558,56 @@ class ReadyCheckTest(unittest.TestCase):
             ),
         )
         self.assertNotIn("SECRET_KEY", json.dumps(result, ensure_ascii=False))
+
+    def test_bananaan_ready_uses_public_receive_contract_without_leaking(self):
+        mailbox = "user@example.com=SECRET_KEY"
+        cfg = {
+            "label": "Bananaan",
+            "provider": "bananaan",
+            "base_url": "https://inbox.bananaan.com",
+            "email": "user@example.com",
+            "mailbox": mailbox,
+        }
+        session = EmailReadySession(FakeJsonResponse({"ok": True, "mails": []}))
+
+        result = ready_check_email_source(cfg, session, request_timeout=2)
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(
+            session.calls[0],
+            (
+                "https://inbox.bananaan.com/api/public/receive",
+                {"mailbox": mailbox},
+                2,
+            ),
+        )
+        self.assertNotIn("SECRET_KEY", json.dumps(result, ensure_ascii=False))
+
+    def test_bananaan_ready_sanitizes_credential_failure(self):
+        mailbox = "user@example.com=SECRET_KEY"
+        cfg = {
+            "label": "Bananaan",
+            "provider": "bananaan",
+            "base_url": "https://inbox.bananaan.com",
+            "email": "user@example.com",
+            "mailbox": mailbox,
+        }
+        result = ready_check_email_source(
+            cfg,
+            EmailReadySession(
+                FakeJsonResponse(
+                    {"ok": False, "message": mailbox},
+                    status_code=403,
+                )
+            ),
+            request_timeout=1,
+        )
+
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["status"], "api_not_ready")
+        serialized = json.dumps(result, ensure_ascii=False)
+        self.assertNotIn(mailbox, serialized)
+        self.assertNotIn("SECRET_KEY", serialized)
 
     def test_songniqu_ready_failure_codes_are_sanitized(self):
         mailbox = "user@example.com=SECRET_KEY"
@@ -2930,6 +3088,34 @@ class MsgNestSourceTest(unittest.TestCase):
         self.assertEqual(ms.note, "已兑换")
         self.assertEqual(ms.claim_token, "tok1")
 
+    def test_redeem_accepts_current_nested_allocation_contract(self):
+        session = MsgNestFakeSession()
+        session.queue_redeem(
+            {
+                "allocation": {
+                    "id": "alloc_current",
+                    "phone": "+15551234567",
+                    "expiresAt": "2026-09-05T15:00:00Z",
+                },
+                "claimToken": "tok-current",
+            }
+        )
+        session.queue_allocation(
+            {
+                "id": "alloc_current",
+                "phone": "+15551234567",
+                "expiresAt": "2026-09-05T15:00:00Z",
+            }
+        )
+        ms = MsgNestSource(self._entry(), session, 3.0)
+
+        ms.verify()
+
+        self.assertEqual(ms.alloc_id, "alloc_current")
+        self.assertEqual(ms.claim_token, "tok-current")
+        self.assertEqual(ms.phone, "5551234567")
+        self.assertEqual(session.gets, ["https://msg-nest.com/api/public/allocations/alloc_current"])
+
     def test_redeem_phone_mismatch_warning(self):
         session = MsgNestFakeSession()
         session.queue_redeem({"data": {"allocId": "alloc_x", "claimToken": "t", "phone": "+15559876543"}})
@@ -3003,8 +3189,13 @@ class MsgNestSourceTest(unittest.TestCase):
 
     def test_ready_check_ready(self):
         session = MsgNestFakeSession()
-        session.queue_redeem({"data": {"allocId": "a", "claimToken": "t", "phone": "+15551234567"}})
-        session.queue_allocation({"data": {"phone": "+15551234567"}})
+        session.queue_redeem(
+            {
+                "allocation": {"id": "a", "phone": "+15551234567"},
+                "claimToken": "t",
+            }
+        )
+        session.queue_allocation({"id": "a", "phone": "+15551234567"})
         result = ready_check_msgnest_source(self._entry(), session, 3.0)
         self.assertTrue(result["ready"])
         self.assertEqual(result["kind"], "msgnest")

@@ -50,7 +50,9 @@ PRIVATE_IMPORT_PATH = os.path.join(BASE_DIR, "private-import.txt")
 EMAIL_PROVIDER_DEFAULTS = {
     "icloud": "https://email.nloop.cc",
     "songniqu": "https://mail.songniqu.cfd",
+    "bananaan": "https://inbox.bananaan.com",
 }
+MAILBOX_CREDENTIAL_PROVIDERS = {"songniqu", "bananaan"}
 
 DATE_TIME_RE = re.compile(
     r"\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?"
@@ -244,14 +246,14 @@ def mask_url(value):
     return f"{host}/...<hidden>"
 
 
-def parse_songniqu_mailbox(value):
+def parse_mailbox_credential(value):
     """解析 ``邮箱=Key``，错误信息不包含原始输入。"""
     text = str(value or "").strip()
     email, separator, key = text.partition("=")
     email = email.strip()
     key = key.strip()
     if not separator or not EMAIL_RE.fullmatch(email) or not key:
-        raise ConfigCommandError("Songniqu mailbox 格式必须是 邮箱=Key。")
+        raise ConfigCommandError("邮箱取件凭据格式必须是 邮箱=Key。")
     return email, f"{email}={key}"
 
 
@@ -571,8 +573,8 @@ def normalize_email_sources(raw_sources):
         base_url = str(
             item.get("base_url") or EMAIL_PROVIDER_DEFAULTS[provider]
         ).strip().rstrip("/")
-        if provider == "songniqu":
-            email, mailbox = parse_songniqu_mailbox(item.get("mailbox"))
+        if provider in MAILBOX_CREDENTIAL_PROVIDERS:
+            email, mailbox = parse_mailbox_credential(item.get("mailbox"))
             configured_email = str(item.get("email") or "").strip()
             if configured_email and configured_email.casefold() != email.casefold():
                 raise ConfigCommandError(
@@ -783,18 +785,18 @@ def upsert_by_label(items, item):
     return "created"
 
 
-def read_songniqu_mailbox(args, env, prompt_reader):
-    """从环境变量或非回显提示读取 Songniqu 凭据。"""
+def read_mailbox_credential(args, env, prompt_reader):
+    """从环境变量或非回显提示读取邮箱取件凭据。"""
     if args.mailbox_env and args.mailbox_prompt:
         raise ConfigCommandError("--mailbox-env 与 --mailbox-prompt 只能选择一个。")
     if args.mailbox_env:
-        raw = env_value(env, args.mailbox_env, "Songniqu mailbox")
+        raw = env_value(env, args.mailbox_env, "邮箱取件凭据")
     elif args.mailbox_prompt:
         reader = default_prompt_reader if prompt_reader is None else prompt_reader
-        raw = reader("Songniqu 邮箱=Key：", secret=True)
+        raw = reader("邮箱=Key：", secret=True)
     else:
-        raise ConfigCommandError("Songniqu 需要 --mailbox-env 或 --mailbox-prompt。")
-    return parse_songniqu_mailbox(raw)
+        raise ConfigCommandError("该邮箱 provider 需要 --mailbox-env 或 --mailbox-prompt。")
+    return parse_mailbox_credential(raw)
 
 
 def _normalized_phone_source_groups(cfg):
@@ -1186,6 +1188,8 @@ def email_request_spec(cfg):
             f"{base_url}/api/receive",
             {"mailbox": cfg["mailbox"], "turnstile_token": ""},
         )
+    if provider == "bananaan":
+        return f"{base_url}/api/public/receive", {"mailbox": cfg["mailbox"]}
     return f"{base_url}/api/{provider}/query", {"email": cfg["email"]}
 
 
@@ -1513,10 +1517,10 @@ def run_config_command(
         cfg["email_sources"] = normalize_email_sources(cfg.get("email_sources", []))
         provider = args.provider.strip().lower()
         base_url = (args.base_url or EMAIL_PROVIDER_DEFAULTS.get(provider) or "").strip().rstrip("/")
-        if provider == "songniqu":
-            email, mailbox = read_songniqu_mailbox(args, env, prompt_reader)
+        if provider in MAILBOX_CREDENTIAL_PROVIDERS:
+            email, mailbox = read_mailbox_credential(args, env, prompt_reader)
             if args.email and args.email.strip().casefold() != email.casefold():
-                raise ConfigCommandError("--email 与 Songniqu mailbox 中的邮箱不一致。")
+                raise ConfigCommandError("--email 与邮箱取件凭据中的邮箱不一致。")
             item = {
                 "label": args.label.strip(),
                 "email": email,
@@ -1526,7 +1530,7 @@ def run_config_command(
             }
         else:
             if args.mailbox_env or args.mailbox_prompt:
-                raise ConfigCommandError("只有 songniqu provider 支持 mailbox 输入。")
+                raise ConfigCommandError("只有 songniqu/bananaan provider 支持 mailbox 输入。")
             item = {
                 "label": args.label.strip(),
                 "email": str(args.email or "").strip(),
@@ -1735,7 +1739,7 @@ def run_config_command(
         )
         if not args.yes:
             return preview
-        email, mailbox = read_songniqu_mailbox(args, env, prompt_reader)
+        email, mailbox = read_mailbox_credential(args, env, prompt_reader)
         email_item = normalize_email_sources(
             [
                 {
@@ -2445,6 +2449,21 @@ class MsgNestSource:
         except (AttributeError, ValueError) as e:
             raise MsgNestApiError("接口返回非 JSON", retryable=True) from e
 
+    @staticmethod
+    def _response_data(payload):
+        """兼容旧 ``data`` 包装与当前 msg-nest 顶层响应。"""
+        if not isinstance(payload, dict):
+            return {}
+        data = payload.get("data")
+        return data if isinstance(data, dict) else payload
+
+    @classmethod
+    def _allocation_data(cls, payload):
+        """兼容当前 ``allocation`` 对象与旧扁平 allocation 字段。"""
+        data = cls._response_data(payload)
+        allocation = data.get("allocation")
+        return data, allocation if isinstance(allocation, dict) else data
+
     def _persist_state(self):
         """把 fingerprint/alloc_id/claim_token/phone 写回 config.json；仅 redeem 成功后调用。"""
         if self._monitor_cfg is None or self._config_path is None:
@@ -2468,14 +2487,18 @@ class MsgNestSource:
             body={"code": self.cdk, "fingerprint": self.fingerprint},
             with_claim=False,
         )
-        data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
-        data = data or {}
-        self.alloc_id = str(data.get("allocId") or data.get("allocationId") or self.alloc_id)
+        data, allocation = self._allocation_data(payload)
+        self.alloc_id = str(
+            allocation.get("id")
+            or data.get("allocId")
+            or data.get("allocationId")
+            or self.alloc_id
+        )
         self.claim_token = str(data.get("claimToken") or self.claim_token)
-        phone = data.get("phone") or data.get("phoneNumber") or ""
+        phone = allocation.get("phone") or allocation.get("phoneNumber") or ""
         if phone:
             self.phone = self._normalize_phone(phone)
-        self.expires_at = str(data.get("expiresAt") or self.expires_at)
+        self.expires_at = str(allocation.get("expiresAt") or self.expires_at)
         # 号码核对：与录入种子尾号不符则告警，不阻断（服务端可能已换号）
         if self.expected_phone_tail:
             tail = self._phone_tail(self.phone)
@@ -2509,15 +2532,14 @@ class MsgNestSource:
             self.claim_token = ""
             self.redeem()
             payload = self._request(f"/allocations/{self.alloc_id}")
-        data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
-        data = data or {}
-        phone = data.get("phone") or data.get("phoneNumber") or ""
+        _, allocation = self._allocation_data(payload)
+        phone = allocation.get("phone") or allocation.get("phoneNumber") or ""
         if phone:
             self.phone = self._normalize_phone(phone)
-        self.expires_at = str(data.get("expiresAt") or self.expires_at)
+        self.expires_at = str(allocation.get("expiresAt") or self.expires_at)
         self.status = "已分配号码" if self.phone else "未返回号码"
         self.verify_hard_failures = 0
-        return data
+        return allocation
 
     def poll(self):
         """GET /allocations/{id}/messages 轮询验证码；401 自动 re-redeem。"""
@@ -2716,7 +2738,7 @@ class FixedUrlSource:
 
 
 class EmailSource:
-    """邮箱接码来源；兼容 iCloud query 与 Songniqu mailbox 取件。"""
+    """邮箱接码来源；兼容 iCloud query 与 Songniqu/Bananaan mailbox 取件。"""
 
     # 渲染时据此把"可复制号码"文案切换为"邮箱地址"
     is_email = True

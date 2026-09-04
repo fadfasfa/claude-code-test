@@ -1,6 +1,6 @@
 # SMS 验证码多来源监控
 
-实时轮询 LuDan SMS 接码平台、kkdos 动态号、固定文本接码链接和邮箱取件接口，终端按来源显示号码/邮箱与最新验证码，并可在同一面板展示本机账户档案。邮箱取件兼容旧 iCloud query 接口和 Songniqu 的 `邮箱=Key` 接口；Songniqu Key 只用于请求，终端和复制菜单只显示等号前的邮箱。
+实时轮询 LuDan SMS 接码平台、kkdos/msg-nest 动态号、固定文本接码链接和邮箱取件接口，终端按来源显示号码/邮箱与最新验证码，并可在同一面板展示本机账户档案。邮箱取件兼容旧 iCloud query 接口，以及 Songniqu/Bananaan 的 `邮箱=Key` 接口；查询 Key 只用于请求，终端和复制菜单只显示等号前的邮箱。
 
 ## 使用
 
@@ -20,8 +20,9 @@
 4. 录入 kkdos 动态来源：`python monitor.py config upsert-kkdos --label kkdos --cdk-env KKDOS_CDK --json`
 5. 录入旧 iCloud 邮箱来源：`python monitor.py config upsert-email --label iCloud --email example@icloud.com --provider icloud --base-url https://email.nloop.cc --json`
 6. 录入 Songniqu 邮箱来源：`python monitor.py config upsert-email --label Songniqu --provider songniqu --mailbox-prompt --json`，再在本机非回显提示中输入完整 `邮箱=Key`。
-7. 录入账户档案：`python monitor.py config upsert-account --label ChatGPT --login-email your-gmail@example.com --password-env ACCOUNT_PASSWORD --totp-secret-env ACCOUNT_TOTP --phone 15550123456 --phone-source-label kkdos --email example@icloud.com --json`
-8. 预备接码检查：`python monitor.py config ready-check --all --json`
+7. 录入 Bananaan 邮箱来源：`python monitor.py config upsert-email --label Bananaan --provider bananaan --mailbox-prompt --json`，再在本机非回显提示中输入完整 `邮箱=Key`。
+8. 录入账户档案：`python monitor.py config upsert-account --label ChatGPT --login-email your-gmail@example.com --password-env ACCOUNT_PASSWORD --totp-secret-env ACCOUNT_TOTP --phone 15550123456 --phone-source-label kkdos --email example@icloud.com --json`
+9. 预备接码检查：`python monitor.py config ready-check --all --json`
 
 手机号可按原始格式录入用于来源匹配，但登录输入或复制时只使用美国 10 位本地号码，不要把 `+1` 等国家码计入目标输入框。
 
@@ -271,7 +272,7 @@ python monitor.py config ready-check  --all --json
 | `fixed_sources` | 固定文本接码链接数组；每项包含 `label`、`phone`、`url` |
 | `kkdos_sources` | kkdos 动态号来源数组；每项含 `label`、`cdk`、`base_url`（默认 `https://sms.kkdos.store`）。启动时 verify 取号，复制号码后 start/SSE 等码 |
 | `msgnest_sources` | msg-nest 动态号来源数组；每项含 `label`、`cdk`、`base_url`（默认 `https://msg-nest.com`），`alloc_id`/`claim_token`/`fingerprint`/`phone` 由工具 redeem 后自动写回。启动时 redeem CDK 换 claimToken 取号，每轮 `GET /allocations/{id}/messages` 轮询取码，token 过期自动 re-redeem |
-| `email_sources` | 邮箱取件来源数组。`icloud` 使用 `email` 和默认 `https://email.nloop.cc/api/icloud/query`；`songniqu` 额外保存敏感 `mailbox=邮箱=Key`，使用默认 `https://mail.songniqu.cfd/api/receive`。两者都只显示和复制 `email`，并自动提取验证码 |
+| `email_sources` | 邮箱取件来源数组。`icloud` 使用 `email` 和默认 `https://email.nloop.cc/api/icloud/query`；`songniqu`、`bananaan` 额外保存敏感 `mailbox=邮箱=Key`，分别使用默认 `https://mail.songniqu.cfd/api/receive` 与 `https://inbox.bananaan.com/api/public/receive`。所有 provider 都只显示和复制 `email`，并自动提取验证码 |
 | `accounts` | 账户档案数组；每项含 `label`、`login_email`、`password`、`totp_secret`、`phone`、`phone_source_label`、`email`。面板会用标准库实时计算 6 位 TOTP 并显示剩余秒数，`phone_source_label` 优先显式关联动态/固定短信来源，未配置时继续用 `phone` 匹配固定来源 |
 | `disabled` | 无效来源/账户的持久化标记字典；key 为 `ludan` 或 `<kind>:<label>`，值含 `reason` / `at`。由监控自动写入或 `config disable` / `enable` / `prune` 管理，一般不手改 |
 
