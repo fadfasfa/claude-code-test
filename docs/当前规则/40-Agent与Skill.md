@@ -4,16 +4,12 @@
 
 ## 语言规则
 
-- Codex 与 Claude Code 在本仓默认使用简体中文输出计划、进展、问题、风险、验证结果、审查结论和最终总结。
-- 生成计划文档、治理文档或任务总结时，正文必须使用简体中文，除非用户明确要求其他语言。
-- 用户或材料明确要求其他语言时按请求执行。
-- 技术标识符、命令、路径、API、协议字段、分支名、错误原文和 Skill 名称保持原文。
-- 生成英文计划视为未满足本仓维护规则，交付前必须改为中文。
+Codex 与 Claude Code 在本仓的输出语言遵循根 `AGENTS.md` 的统一约定，不复制独立的语言检查清单。
 
 ## 执行 surface
 
 - Claude Code 和 Codex 都可以独立完成普通仓库任务。
-- Codex standalone mode：用户直接调用 Codex 时，Codex 按 `AGENTS.md`、`PROJECT.md`、`docs/index.md` 和用户任务独立执行。
+- Codex standalone mode：用户直接调用 Codex 时，按 `AGENTS.md` 和用户任务独立执行；`PROJECT.md` 与 `docs/index.md` 指向的专项规则按任务选读。
 - Claude Code 入口读取 `CLAUDE.md`、`PROJECT.md`、`docs/index.md`。
 - 项目默认 `.claude/settings.json` 保守为 `plan` + `Read`。Anthropic first-party Plan 可使用宿主认可的受控只读探索，但不得通过重定向、解释器或脚本间接写盘。
 - `~/.claude/plans/*.md` 是 Plan 阶段唯一允许的写入面：需求基线获批后写入系统分配的正式计划，修订时完整替换，任务结束后保留且默认不提交。

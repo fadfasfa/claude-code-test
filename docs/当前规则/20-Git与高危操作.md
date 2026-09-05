@@ -1,19 +1,19 @@
 # Git 与高危操作
 
-本文件合并 Git 策略、高危资产、高危操作、worktree 和发布边界。
+本文件合并 Git 策略、高危资产、高危操作、worktree 和发布边界。参考资料或历史材料中的授权表述不得扩展本文件与根 `AGENTS.md` 的授权范围；其中把一般计划批准等同于动作授权的旧表述不适用。
 
 ## 默认 Git 规则
 
 - 默认允许 `git status`、`git diff`、`git log` 等只读命令。
 - 每次任务开始先运行 `git status --short`。
-- Git 写操作必须有当前轮授权或已批准计划；授权已经明确时，agent 直接执行并验证，不重复要求业务层确认。
+- Git 写操作必须有当前任务的明确授权，或满足下文已有开放 PR 修复的授权例外；一般计划批准不替代动作授权。授权已经明确时，agent 直接执行并验证，不重复要求业务层确认。
 - commit 前只能暂存本轮修改文件，禁止 `git add .`。
 - 未获用户明确授权时，不主动执行 `push`、PR、merge、discard、`clean`、`reset`、`rebase`、`stash`、`switch`、`branch` 或 worktree 写入。
 - 不覆盖、不回滚、不清理与当前任务无关的脏树改动。
 
 ## 明确授权
 
-只有用户当前轮明确要求对应动作，或当前轮批准的任务计划已经包含该动作，才执行 commit、push、branch、checkout、switch、merge、rebase、reset、clean、restore、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作。
+commit、push、branch、checkout、switch、merge、rebase、reset、clean、restore、stash、tag、cherry-pick、revert、worktree、remote 或 PR 操作须在用户明确授权的动作与范围内执行。一般计划批准不构成这些动作的独立授权；已有开放 PR 修复仅适用下一节列明的例外。
 
 commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不隐含其他清理动作。用户明确授权 push、PR、merge 或 discard 后，agent 必须按确认范围自行完整执行并验证结果，不得退回为“请你在本机终端执行命令”。
 
@@ -50,7 +50,7 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 
 ## 执行规则
 
-- 破坏性命令必须有当前轮明确授权或已批准计划；授权已经明确时，agent 按范围执行并验证，不重复要求业务层确认。
+- 破坏性命令必须由用户当前轮明确点名动作与目标；一般计划批准不替代该授权。授权已经明确时，agent 按范围执行并验证，不重复要求业务层确认。
 - 删除、覆盖、移动前必须确认目标路径。
 - 需要备份时，先确认备份成功；备份失败即停止。
 - 不通过修改 ACL、绕过沙箱或写入未授权路径来补救失败备份。
