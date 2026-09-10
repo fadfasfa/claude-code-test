@@ -248,4 +248,3 @@ def test_completed_negative_accepts_only_original_recent_observation() -> None:
     assert decision.kind == "conflict"
     assert decision.trusted_slots == (2,)
     assert decision.matched_names == ("迅捷碎片",)
-
