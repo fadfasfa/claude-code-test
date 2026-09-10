@@ -38,12 +38,14 @@ class DesktopTrayController:
         restart_recognition_callback: Callable[[], None],
         exit_callback: Callable[[], None],
         status_text: Callable[[], str],
+        restore_auto_docking_callback: Callable[[], None] | None = None,
     ) -> None:
         self._dispatch = dispatch
         self._show_callback = show_callback
         self._restart_recognition_callback = restart_recognition_callback
         self._exit_callback = exit_callback
         self._status_text = status_text
+        self._restore_auto_docking_callback = restore_auto_docking_callback
         self._icon = None
 
     def start(self) -> bool:
@@ -91,6 +93,10 @@ class DesktopTrayController:
 
     def _restart_recognition(self, _icon=None, _item=None) -> None:
         self._dispatch(self._restart_recognition_callback)
+
+    def _restore_auto_docking(self, _icon=None, _item=None) -> None:
+        if self._restore_auto_docking_callback is not None:
+            self._dispatch(self._restore_auto_docking_callback)
 
     def _exit(self, _icon=None, _item=None) -> None:
         self._dispatch(self._exit_callback)

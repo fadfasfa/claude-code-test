@@ -44,7 +44,7 @@ def _generation_manifest(root: Path, generation_id: str, source_run: str, catalo
         {
             "source_files": [
                 {
-                    "source": "hextech",
+                    "source": "aramkit",
                     "run_id": source_run,
                     "catalog_generation_id": catalog_id,
                 }
@@ -56,7 +56,7 @@ def _generation_manifest(root: Path, generation_id: str, source_run: str, catalo
 
 def test_retention_protects_current_previous_journal_and_provenance(tmp_path: Path) -> None:
     _write_json(tmp_path / "catalog" / "current.v2.json", {"catalog_generation_id": "catalog-current"})
-    _write_json(tmp_path / "sources" / "hextech" / "current.v2.json", {"run_id": "run-current"})
+    _write_json(tmp_path / "sources" / "aramkit" / "current.v2.json", {"run_id": "run-current"})
     _write_json(tmp_path / "snapshots" / "current.v2.json", {"current_generation_id": "gen-current"})
     _write_json(tmp_path / "snapshots" / "previous.v2.json", {"generation_id": "gen-previous"})
     _generation_manifest(tmp_path, "gen-current", "run-from-current", "catalog-from-current")
@@ -72,7 +72,7 @@ def test_retention_protects_current_previous_journal_and_provenance(tmp_path: Pa
         {
             "old_pointers": {
                 "catalog": {"catalog_generation_id": "catalog-old"},
-                "hextech": {"run_id": "run-old"},
+                "aramkit": {"run_id": "run-old"},
                 "apex": {},
                 "mayhem": {},
                 "generation": {
@@ -82,7 +82,7 @@ def test_retention_protects_current_previous_journal_and_provenance(tmp_path: Pa
             },
             "target_pointers": {
                 "catalog": {"catalog_generation_id": "catalog-target"},
-                "hextech": {"run_id": "run-target"},
+                "aramkit": {"run_id": "run-target"},
                 "apex": {},
                 "mayhem": {},
                 "generation": generation_pointer,
@@ -99,7 +99,7 @@ def test_retention_protects_current_previous_journal_and_provenance(tmp_path: Pa
         "run-from-target",
     }
     for run_id in expected_runs:
-        _source_run(tmp_path, "hextech", run_id, success=True)
+        _source_run(tmp_path, "aramkit", run_id, success=True)
     expected_catalogs = {
         "catalog-current",
         "catalog-old",
@@ -114,7 +114,7 @@ def test_retention_protects_current_previous_journal_and_provenance(tmp_path: Pa
     references = protected_references(tmp_path)
     result = apply_retention(tmp_path, now=NOW)
 
-    assert {item.removeprefix("hextech:") for item in references["source_runs"]} == expected_runs
+    assert {item.removeprefix("aramkit:") for item in references["source_runs"]} == expected_runs
     assert references["catalog_generations"] == expected_catalogs
     assert references["generations"] == {"gen-current", "gen-previous", "gen-target"}
     assert result["source_runs"] == 0
@@ -186,11 +186,69 @@ def test_retention_protects_baseline_origin_generation_from_source_status(tmp_pa
     os.utime(current_manifest_path.parent, (OLD.timestamp(), OLD.timestamp()))
 
     references = protected_references(tmp_path)
-    result = apply_retention(tmp_path, now=NOW)
+    apply_retention(tmp_path, now=NOW)
 
     assert references["generations"] == {"gen-current", "gen-origin"}
     assert (tmp_path / "snapshots" / "generations" / "gen-origin").is_dir()
+
+
+def test_retention_keeps_unpointed_legacy_hextech_generation(tmp_path: Path) -> None:
+    generation_id = "legacy-hextech"
+    directory = _directory(tmp_path / "snapshots" / "generations" / generation_id)
+    _write_json(
+        directory / "manifest.json",
+        {
+            "source_files": [
+                {
+                    "source": "hextech",
+                    "artifact_role": "stats",
+                    "run_id": "legacy-run",
+                    "catalog_generation_id": "legacy-catalog",
+                }
+            ]
+        },
+    )
+    _directory(tmp_path / "catalog" / "generations" / "legacy-catalog")
+
+    references = protected_references(tmp_path)
+    result = apply_retention(tmp_path, now=NOW)
+
+    assert generation_id in references["generations"]
+    assert "legacy-catalog" in references["catalog_generations"]
+    assert result["catalog_generations"] == 0
     assert result["generations"] == 0
+
+
+def test_retention_protects_recovery_point_generation_and_direct_dependencies(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "state/data-service/cohort_recovery_point.v1.json",
+        {
+            "schema_version": 1,
+            "generation_id": "gen-high-water",
+            "pointers": {
+                "catalog": {"catalog_generation_id": "catalog-high-water"},
+                "aramkit": {"run_id": "aramkit-high-water"},
+                "blitz": {"run_id": "blitz-high-water"},
+                "apex": {"run_id": "apex-high-water"},
+                "mayhem": {"run_id": "mayhem-high-water"},
+                "generation": {
+                    "current": {"current_generation_id": "gen-high-water"},
+                    "previous": {"generation_id": "gen-before-high-water"},
+                },
+            },
+        },
+    )
+
+    protected = protected_references(tmp_path)
+
+    assert {"gen-high-water", "gen-before-high-water"}.issubset(protected["generations"])
+    assert "catalog-high-water" in protected["catalog_generations"]
+    assert {
+        "aramkit:aramkit-high-water",
+        "blitz:blitz-high-water",
+        "apex:apex-high-water",
+        "mayhem:mayhem-high-water",
+    }.issubset(protected["source_runs"])
 
 
 def test_retention_removes_only_expired_unprotected_catalog_generation_and_staging(tmp_path: Path) -> None:

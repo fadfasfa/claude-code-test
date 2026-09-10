@@ -9,7 +9,30 @@ from pathlib import Path
 import pytest
 
 
-def _package(root: Path, marker: str = "new") -> Path:
+def _cohort_metadata(*, pool_count: int = 236) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "generation_id": "generation-new",
+        "catalog_generation_id": "catalog-new",
+        "source_run_ids": {
+            "aramkit": "aramkit-new",
+            "blitz": "blitz-new",
+            "apex": "apex-new",
+            "mayhem": "mayhem-new",
+        },
+        "production_pool_id": "production-pool-v1-new",
+        "production_pool_count": pool_count,
+        "full_catalog_count": 655,
+        "file_count": 179,
+    }
+
+
+def _package(
+    root: Path,
+    marker: str = "new",
+    *,
+    cohort: dict[str, object] | None = None,
+) -> Path:
     from tooling.build.manifest import RUNTIME_CONTRACT_VERSIONS
 
     internal = root / "_internal"
@@ -17,17 +40,107 @@ def _package(root: Path, marker: str = "new") -> Path:
     (root / "Hextech伴生终端.exe").write_text(marker, encoding="utf-8")
     (root / "启动 Hextech.bat").write_text("start", encoding="utf-8")
     (root / "README_首次使用.txt").write_text("guide", encoding="utf-8")
-    (internal / "bundle_manifest.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 3,
-                "build_id": "test-build",
-                "runtime_contracts": RUNTIME_CONTRACT_VERSIONS,
-            }
-        ),
-        encoding="utf-8",
-    )
+    manifest: dict[str, object] = {
+        "schema_version": 3,
+        "build_id": "test-build",
+        "runtime_contracts": RUNTIME_CONTRACT_VERSIONS,
+    }
+    if cohort is not None:
+        manifest["cohort_seed"] = cohort
+    (internal / "bundle_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
+
+
+def _write_runtime_cohort(root: Path, expected: dict[str, object]) -> None:
+    source_run_ids = expected["source_run_ids"]
+    assert isinstance(source_run_ids, dict)
+    catalog_id = str(expected["catalog_generation_id"])
+    generation_id = str(expected["generation_id"])
+    payloads = {
+        Path("catalog/current.v2.json"): {
+            "schema_version": 2,
+            "catalog_generation_id": catalog_id,
+        },
+        Path("snapshots/current.v2.json"): {
+            "schema_version": 2,
+            "current_generation_id": generation_id,
+        },
+        Path("snapshots/previous.v2.json"): {
+            "schema_version": 2,
+            "generation_id": "generation-old",
+        },
+        **{
+            Path(f"sources/{source}/current.v2.json"): {
+                "schema_version": 2,
+                "source": source,
+                "run_id": str(source_run_ids[source]),
+                "catalog_generation_id": catalog_id,
+            }
+            for source in ("aramkit", "blitz", "apex", "mayhem")
+        },
+        Path("state/data-service/refresh_schedule.v1.json"): {
+            "schema_version": 1,
+            "generation_id": generation_id,
+            "sources": {
+                "catalog": {
+                    "state": "ready",
+                    "failure_kind": "",
+                    "current_run_id": catalog_id,
+                },
+                **{
+                    source: {
+                        "state": "ready",
+                        "failure_kind": "",
+                        "current_run_id": str(source_run_ids[source]),
+                    }
+                    for source in ("aramkit", "blitz", "apex", "mayhem")
+                },
+            },
+        },
+    }
+    for relative, payload in payloads.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _sidecar_pool_status(
+    expected: dict[str, object],
+    *,
+    build_id: str = "test-build",
+) -> dict[str, object]:
+    pool_count = int(expected["production_pool_count"])
+    return {
+        "schema_version": 2,
+        "build_id": build_id,
+        "status": "stopped",
+        "phase": "once_complete",
+        "data_generation_id": expected["generation_id"],
+        "vision_pool_generation_id": expected["generation_id"],
+        "stats_generation_id": "",
+        "generation_roles": {
+            "vision_pool_generation_id": "sidecar_template_runtime",
+            "stats_generation_id": "host_game_session",
+            "data_generation_id": "legacy_vision_pool_compat",
+        },
+        "catalog_generation_id": expected["catalog_generation_id"],
+        "production_pool_id": expected["production_pool_id"],
+        "production_pool_state": "ready",
+        "production_pool_count": pool_count,
+        "full_catalog_count": expected["full_catalog_count"],
+        "rank_identity_count": pool_count,
+        "matrix_rows": {
+            "icon": pool_count,
+            "name": pool_count,
+            "alt_name": pool_count,
+            "observed_name": 2,
+        },
+        "excluded_reason_counts": {
+            "unresolved": 0,
+            "duplicate": 0,
+            "name_conflict": 0,
+        },
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -96,6 +209,36 @@ def test_deploy_release_promotes_verified_copy_and_keeps_one_previous(tmp_path, 
     assert result.build_id == "test-build"
 
 
+def test_deploy_initial_rotation_retries_transient_busy_after_process_exit(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    real_replace = deploy.os.replace
+    target_rotation_attempts = 0
+
+    def transient_busy_once(source_path: Path, target_path: Path) -> None:
+        nonlocal target_rotation_attempts
+        if source_path == target and target_path.name.startswith(".HextechCompanion.rollback-"):
+            target_rotation_attempts += 1
+            if target_rotation_attempts == 1:
+                raise PermissionError("exited process image handle is still draining")
+        real_replace(source_path, target_path)
+
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(deploy.os, "replace", transient_busy_once)
+    monkeypatch.setattr(deploy.time, "sleep", lambda _seconds: None)
+
+    result = deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert result.verified is True
+    assert target_rotation_attempts == 2
+    assert (target / deploy.APP_EXE_NAME).is_file()
+    assert (tmp_path / "HextechCompanion.previous" / "old.txt").read_text(encoding="utf-8") == "old"
+
+
 def test_deploy_starts_stable_install_and_verifies_even_when_no_old_process_exists(tmp_path, monkeypatch):
     from tooling.build import deploy
 
@@ -127,6 +270,35 @@ def test_deploy_starts_stable_install_and_verifies_even_when_no_old_process_exis
     assert events[1] == ("verify", (target / deploy.APP_EXE_NAME, "test-build"))
     assert result.started is True
     assert result.verified is True
+
+
+def test_deploy_preserve_mode_does_not_read_or_write_roi_settings(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        deploy,
+        "_snapshot_diagnostic_settings",
+        lambda: pytest.fail("preserve mode accessed ROI settings"),
+    )
+
+    result = deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert result.verified is True
+
+
+def test_deploy_roi_settings_use_packaged_user_var_not_source_var(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    packaged_var = tmp_path / "localapp" / "HextechNexus" / "var"
+    monkeypatch.setattr(deploy, "_packaged_var_dir", lambda: packaged_var)
+
+    snapshot = deploy._snapshot_diagnostic_settings()
+
+    assert snapshot.path == packaged_var / "state" / "overlay_diagnostic_settings.v1.json"
+    assert snapshot.existed is False
 
 
 def test_windows_start_install_delegates_to_user_explorer(tmp_path, monkeypatch, _isolate_deployment_runtime):
@@ -220,6 +392,15 @@ def test_deployment_process_validation_requires_one_stable_process_per_role(tmp_
         )
         for index, command_line in enumerate(role_commands.values())
     ]
+    # 自动刷新 worker 是受部署器管理的短进程，但不是必须常驻的运行角色。
+    identities.append(
+        deploy.ProcessIdentity(
+            pid=298,
+            create_time=98.0,
+            executable=str(executable),
+            command_line=(str(executable), "--acquisition-worker", "--source", "catalog"),
+        )
+    )
     monkeypatch.setattr(deploy, "_matching_deployment_processes", lambda: identities)
 
     errors, role_pids = deploy._deployment_process_errors(executable)
@@ -248,15 +429,24 @@ def test_runtime_build_validation_requires_fresh_matching_states_and_sidecar_pid
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"schema_version": schema_version, "build_id": "build-new"}
         if relative_path.name == "game_overlay_sidecar_status.json":
-            payload.update({"status": "running", "pid": 505})
+            payload.update({"status": "running", "pid": 505, "debug_dump_enabled": True})
         path.write_text(json.dumps(payload), encoding="utf-8")
 
     errors = deploy._runtime_build_errors(
         expected_build_id="build-new",
         launch_started_at=0.0,
         sidecar_pid=505,
+        expected_debug_dump_enabled=True,
     )
     assert errors == []
+
+    errors = deploy._runtime_build_errors(
+        expected_build_id="build-new",
+        launch_started_at=0.0,
+        sidecar_pid=505,
+        expected_debug_dump_enabled=False,
+    )
+    assert any("ROI 诊断状态不一致" in error for error in errors)
 
     mismatch_path = tmp_path / "state" / "game_overlay_visibility.v1.json"
     os.utime(mismatch_path, (1.0, 1.0))
@@ -276,6 +466,290 @@ def test_runtime_build_validation_requires_fresh_matching_states_and_sidecar_pid
         sidecar_pid=505,
     )
     assert any("Build ID 不一致" in error for error in errors)
+
+
+def test_runtime_cohort_validation_accepts_bound_generation_and_rejects_mixed_catalog(tmp_path):
+    from tooling.build import deploy
+
+    expected = _cohort_metadata()
+    _write_runtime_cohort(tmp_path, expected)
+
+    assert deploy._runtime_cohort_errors(tmp_path, expected) == []
+
+    apex_pointer = tmp_path / "sources" / "apex" / "current.v2.json"
+    apex = json.loads(apex_pointer.read_text(encoding="utf-8"))
+    apex["catalog_generation_id"] = "catalog-old"
+    apex_pointer.write_text(json.dumps(apex), encoding="utf-8")
+
+    errors = deploy._runtime_cohort_errors(tmp_path, expected)
+
+    assert any("cohort source Catalog 不一致" in error and "sources/apex" in error for error in errors)
+
+
+def test_runtime_cohort_allows_due_schedule_and_historical_complete_checkpoint(tmp_path):
+    from tooling.build import deploy
+
+    expected = _cohort_metadata()
+    _write_runtime_cohort(tmp_path, expected)
+    schedule_path = tmp_path / "state/data-service/refresh_schedule.v1.json"
+    schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
+    schedule["sources"]["blitz"]["state"] = "due"
+    schedule_path.write_text(json.dumps(schedule), encoding="utf-8")
+
+    assert deploy._runtime_cohort_errors(tmp_path, expected) == []
+
+    checkpoint_path = tmp_path / "state/data-service/refresh_checkpoint.v1.json"
+    checkpoint_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "complete",
+                "cycle_id": "cycle-historical",
+                "created_at": "2026-09-07T10:00:00+00:00",
+                "updated_at": "2026-09-07T10:01:00+00:00",
+                "scope": "due",
+                "refresh_phase": "complete",
+                "catalog": {"catalog_generation_id": "catalog-historical"},
+                "completed_sources": {},
+                "core_generation_id": "generation-drifted",
+                "pending_sources": [],
+                "failures": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert deploy._runtime_cohort_errors(tmp_path, expected) == []
+
+
+def test_runtime_cohort_rejects_inconsistent_active_refresh_checkpoint(tmp_path):
+    from tooling.build import deploy
+
+    expected = _cohort_metadata()
+    _write_runtime_cohort(tmp_path, expected)
+    checkpoint_path = tmp_path / "state/data-service/refresh_checkpoint.v1.json"
+    checkpoint_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "state": "in_progress",
+                "cycle_id": "cycle-active",
+                "catalog": {"catalog_generation_id": expected["catalog_generation_id"]},
+                "completed_sources": {"aramkit": {"run_id": "aramkit-finished"}},
+                "core_generation_id": "generation-drifted",
+                "pending_sources": ["aramkit", "blitz"],
+                "failures": {"apex": {"reason_code": "not_pending"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = deploy._runtime_cohort_errors(tmp_path, expected)
+
+    assert any("active refresh checkpoint" in error for error in errors)
+
+
+def test_runtime_cohort_accepts_newer_valid_stats_generation_with_same_vision_pool(
+    tmp_path,
+    monkeypatch,
+):
+    from hextech.infrastructure.persistence.cohort_recovery import CohortCandidate
+    from tooling.build import deploy
+
+    expected = _cohort_metadata()
+    actual = json.loads(json.dumps(expected))
+    actual["generation_id"] = "generation-newer"
+    actual["source_run_ids"]["blitz"] = "blitz-newer"
+    _write_runtime_cohort(tmp_path, actual)
+
+    def candidate(metadata, created_at):
+        source_run_ids = metadata["source_run_ids"]
+        pointers = {
+            "catalog": {
+                "catalog_generation_id": metadata["catalog_generation_id"],
+            },
+            **{
+                source: {"run_id": source_run_ids[source]}
+                for source in ("aramkit", "blitz", "apex", "mayhem")
+            },
+        }
+        return CohortCandidate(
+            generation_id=str(metadata["generation_id"]),
+            generation_created_at=created_at,
+            manifest_health="healthy",
+            pointers=pointers,
+            production_pool_id=str(metadata["production_pool_id"]),
+            production_pool_count=int(metadata["production_pool_count"]),
+        )
+
+    candidates = {
+        "generation-new": candidate(expected, "2026-09-04T13:11:11+00:00"),
+        "generation-newer": candidate(actual, "2026-09-04T15:49:21+00:00"),
+    }
+    monkeypatch.setattr(
+        deploy,
+        "validate_generation_cohort",
+        lambda _root, generation_id: candidates[generation_id],
+    )
+
+    resolved, errors = deploy._resolve_runtime_cohort_expected(tmp_path, expected)
+
+    assert errors == []
+    assert resolved["generation_id"] == "generation-newer"
+    resolved_runs = resolved["source_run_ids"]
+    assert isinstance(resolved_runs, dict)
+    assert resolved_runs["blitz"] == "blitz-newer"
+    assert deploy._runtime_cohort_errors(tmp_path, resolved) == []
+
+
+def test_runtime_cohort_waits_while_bundle_seed_is_still_materializing(tmp_path, monkeypatch):
+    from hextech.modules.data.generation.validation import SnapshotValidationError
+    from tooling.build import deploy
+
+    expected = _cohort_metadata()
+    actual = json.loads(json.dumps(expected))
+    actual["generation_id"] = "generation-old"
+    _write_runtime_cohort(tmp_path, actual)
+    monkeypatch.setattr(
+        deploy,
+        "validate_generation_cohort",
+        lambda _root, _generation_id: (_ for _ in ()).throw(
+            SnapshotValidationError("bundle generation 尚未物化")
+        ),
+    )
+
+    resolved, errors = deploy._resolve_runtime_cohort_expected(tmp_path, expected)
+
+    assert resolved == expected
+    assert errors == [
+        "启动刷新后的 runtime generation 未通过完整 cohort 验证："
+        "generation=generation-old error=SnapshotValidationError"
+    ]
+
+
+def test_runtime_build_validation_requires_exact_production_pool_matrix(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    expected = _cohort_metadata()
+    _write_runtime_cohort(tmp_path, expected)
+    monkeypatch.setattr(deploy, "_packaged_var_dir", lambda: tmp_path)
+    for relative_path, schema_version in deploy.RUNTIME_BUILD_STATE_SPECS:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, object] = {"schema_version": schema_version, "build_id": "test-build"}
+        if relative_path.name == "game_overlay_sidecar_status.json":
+            payload = _sidecar_pool_status(expected)
+            payload.update({"status": "running", "phase": "loop", "pid": 505, "debug_dump_enabled": True})
+        elif relative_path.name == "game_overlay_slots.v1.json":
+            payload["source"] = {
+                "data_generation_id": expected["generation_id"],
+                "vision_pool_generation_id": expected["generation_id"],
+            }
+        elif relative_path.name == "game_overlay_visibility.v1.json":
+            payload.update(
+                {
+                    "data_generation_id": expected["generation_id"],
+                    "vision_pool_generation_id": expected["generation_id"],
+                    "stats_generation_id": expected["generation_id"],
+                }
+            )
+        elif relative_path.name == "latest.json":
+            payload.update(
+                {
+                    "generation_id": expected["generation_id"],
+                    "vision_pool_generation_id": expected["generation_id"],
+                    "stats_generation_id": expected["generation_id"],
+                }
+            )
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert deploy._runtime_build_errors(
+        expected_build_id="test-build",
+        launch_started_at=0.0,
+        sidecar_pid=505,
+        expected_debug_dump_enabled=True,
+        expected_cohort=expected,
+    ) == []
+
+    event_path = tmp_path / "state" / "game_overlay_slots.v1.json"
+    event = json.loads(event_path.read_text(encoding="utf-8"))
+    event["selection_type"] = ""
+    event["source"] = {
+        "tag": "manual-hide",
+        "selection_window_active": False,
+    }
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    assert deploy._runtime_build_errors(
+        expected_build_id="test-build",
+        launch_started_at=0.0,
+        sidecar_pid=505,
+        expected_debug_dump_enabled=True,
+        expected_cohort=expected,
+    ) == []
+
+    sidecar_path = tmp_path / "state" / "game_overlay_sidecar_status.json"
+    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    sidecar["rank_identity_count"] = int(expected["full_catalog_count"])
+    sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    errors = deploy._runtime_build_errors(
+        expected_build_id="test-build",
+        launch_started_at=0.0,
+        sidecar_pid=505,
+        expected_debug_dump_enabled=True,
+        expected_cohort=expected,
+    )
+
+    assert any("rank_identity_count" in error for error in errors)
+
+
+def test_runtime_build_validation_rejects_host_stats_generation_mismatch(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    expected = _cohort_metadata()
+    _write_runtime_cohort(tmp_path, expected)
+    monkeypatch.setattr(deploy, "_packaged_var_dir", lambda: tmp_path)
+    for relative_path, schema_version in deploy.RUNTIME_BUILD_STATE_SPECS:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, object] = {"schema_version": schema_version, "build_id": "test-build"}
+        if relative_path.name == "game_overlay_sidecar_status.json":
+            payload = _sidecar_pool_status(expected)
+            payload.update({"status": "running", "pid": 505})
+        elif relative_path.name == "game_overlay_slots.v1.json":
+            payload["source"] = {
+                "data_generation_id": expected["generation_id"],
+                "vision_pool_generation_id": expected["generation_id"],
+            }
+        elif relative_path.name == "game_overlay_visibility.v1.json":
+            payload.update(
+                {
+                    "data_generation_id": "generation-stale",
+                    "vision_pool_generation_id": expected["generation_id"],
+                    "stats_generation_id": "generation-stale",
+                }
+            )
+        elif relative_path.name == "latest.json":
+            payload.update(
+                {
+                    "generation_id": expected["generation_id"],
+                    "vision_pool_generation_id": expected["generation_id"],
+                    "stats_generation_id": expected["generation_id"],
+                }
+            )
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    errors = deploy._runtime_build_errors(
+        expected_build_id="test-build",
+        launch_started_at=0.0,
+        sidecar_pid=505,
+        expected_cohort=expected,
+    )
+
+    assert any(
+        "game_overlay_visibility.v1.json" in error and "stats_generation_id" in error
+        for error in errors
+    )
 
 
 def test_deploy_rolls_back_when_post_start_verification_fails(tmp_path, monkeypatch):
@@ -299,6 +773,183 @@ def test_deploy_rolls_back_when_post_start_verification_fails(tmp_path, monkeypa
 
     assert (target / "old.txt").read_text(encoding="utf-8") == "old"
     assert start_calls == [target / deploy.APP_EXE_NAME, target / deploy.APP_EXE_NAME]
+
+
+def test_deploy_rollback_retries_transient_busy_install_after_process_exit(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    real_remove_tree = deploy._remove_tree
+    target_remove_attempts = 0
+
+    def transient_busy_once(path: Path) -> None:
+        nonlocal target_remove_attempts
+        if path == target:
+            target_remove_attempts += 1
+            if target_remove_attempts == 1:
+                raise PermissionError("new process released but Windows handle is still draining")
+        real_remove_tree(path)
+
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(deploy, "_remove_tree", transient_busy_once)
+    monkeypatch.setattr(deploy.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        deploy,
+        "verify_deployment",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(deploy.DeploymentError("build id mismatch")),
+    )
+
+    with pytest.raises(deploy.DeploymentError, match="^build id mismatch$"):
+        deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert target_remove_attempts == 2
+    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
+
+
+def test_deploy_verification_failure_restores_all_runtime_cohort_state(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    expected = _cohort_metadata()
+    source = _package(tmp_path / "release", cohort=expected)
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    runtime_root = tmp_path / "runtime"
+    original: dict[Path, bytes] = {}
+    for index, relative in enumerate(deploy.RUNTIME_COHORT_STATE_FILES):
+        path = runtime_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"marker": f"old-{index}"}), encoding="utf-8")
+        original[path] = path.read_bytes()
+
+    monkeypatch.setattr(deploy, "_packaged_var_dir", lambda: runtime_root)
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: True)
+
+    def fail_after_candidate_switch(*_args, **_kwargs):
+        _write_runtime_cohort(runtime_root, expected)
+        raise deploy.DeploymentError("cohort verification mismatch")
+
+    monkeypatch.setattr(deploy, "verify_deployment", fail_after_candidate_switch)
+
+    with pytest.raises(deploy.DeploymentError, match="cohort verification mismatch"):
+        deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert all(path.read_bytes() == content for path, content in original.items())
+    assert (target / "old.txt").read_text(encoding="utf-8") == "old"
+
+
+def test_deploy_failure_restores_real_promotion_journal_path_bytes(tmp_path, monkeypatch):
+    from tooling.build import deploy
+
+    expected = _cohort_metadata()
+    source = _package(tmp_path / "release", cohort=expected)
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    runtime_root = tmp_path / "runtime"
+    journal_path = runtime_root / "state/data-service/promotion_journal.v1.json"
+    journal_path.parent.mkdir(parents=True)
+    journal_path.write_bytes(b'{"phase":"old-prepared","marker":"before-deploy"}')
+    before = journal_path.read_bytes()
+
+    monkeypatch.setattr(deploy, "_packaged_var_dir", lambda: runtime_root)
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(deploy, "_start_install", lambda _executable: object())
+
+    def fail_after_candidate_switch(*_args, **_kwargs):
+        journal_path.write_bytes(b'{"phase":"new-prepared","marker":"candidate"}')
+        raise deploy.DeploymentError("promotion journal verification mismatch")
+
+    monkeypatch.setattr(deploy, "verify_deployment", fail_after_candidate_switch)
+
+    with pytest.raises(deploy.DeploymentError, match="promotion journal verification mismatch"):
+        deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
+
+    assert journal_path.read_bytes() == before
+    assert not (runtime_root / "state/data-service/cohort_promotion_journal.v1.json").exists()
+
+
+@pytest.mark.parametrize("previous_content", [None, b"{broken-json"])
+def test_deploy_roi_mode_rolls_back_original_settings_on_failure(
+    tmp_path,
+    monkeypatch,
+    previous_content,
+):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    target.mkdir()
+    (target / "old.txt").write_text("old", encoding="utf-8")
+    settings = tmp_path / "var" / "state" / "overlay_diagnostic_settings.v1.json"
+    if previous_content is not None:
+        settings.parent.mkdir(parents=True)
+        settings.write_bytes(previous_content)
+    monkeypatch.setattr(deploy, "overlay_diagnostic_settings_path", lambda *_args: settings)
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        deploy,
+        "verify_deployment",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(deploy.DeploymentError("diagnostic mismatch")),
+    )
+
+    with pytest.raises(deploy.DeploymentError, match="diagnostic mismatch"):
+        deploy.deploy_release(
+            source,
+            target,
+            roi_dump_mode="on",
+            lock_path=tmp_path / "deploy.lock",
+        )
+
+    if previous_content is None:
+        assert not settings.exists()
+    else:
+        assert settings.read_bytes() == previous_content
+
+
+@pytest.mark.parametrize(("mode", "enabled"), [("on", True), ("off", False)])
+def test_deploy_roi_mode_persists_and_is_part_of_runtime_verification(
+    tmp_path,
+    monkeypatch,
+    mode,
+    enabled,
+):
+    from tooling.build import deploy
+
+    source = _package(tmp_path / "release")
+    target = tmp_path / "HextechCompanion"
+    settings = tmp_path / "var" / "state" / "overlay_diagnostic_settings.v1.json"
+    verification: dict[str, object] = {}
+    monkeypatch.setattr(deploy, "overlay_diagnostic_settings_path", lambda *_args: settings)
+    monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: False)
+
+    def verify(*_args, **kwargs):
+        verification.update(kwargs)
+        return {
+            "desktop": 1,
+            "data_service": 2,
+            "supervisor": 3,
+            "overlay_host": 4,
+            "vision_sidecar": 5,
+        }
+
+    monkeypatch.setattr(deploy, "verify_deployment", verify)
+
+    deploy.deploy_release(
+        source,
+        target,
+        roi_dump_mode=mode,
+        lock_path=tmp_path / "deploy.lock",
+    )
+
+    assert json.loads(settings.read_text(encoding="utf-8")) == {
+        "schema_version": 1,
+        "roi_dump_enabled": enabled,
+    }
+    assert verification["expected_debug_dump_enabled"] is enabled
 
 
 def test_deploy_validates_candidate_before_stopping_existing_install(tmp_path, monkeypatch):
@@ -401,24 +1052,42 @@ def test_partial_previous_cleanup_restores_verified_backup(tmp_path, monkeypatch
     previous.mkdir()
     (previous / "older.txt").write_text("older", encoding="utf-8")
     real_remove_tree = deploy._remove_tree
+    real_replace = deploy.os.replace
     partial_failure = True
+    recovery_remove_busy = True
+    backup_restore_busy = True
 
     def remove_previous_partially(path: Path) -> None:
-        nonlocal partial_failure
+        nonlocal partial_failure, recovery_remove_busy
         if path == previous and partial_failure:
             partial_failure = False
             (previous / "older.txt").unlink()
             raise OSError("previous cleanup partially failed")
+        if path == previous and recovery_remove_busy:
+            recovery_remove_busy = False
+            raise PermissionError("partial previous directory handle is still draining")
         real_remove_tree(path)
 
+    def restore_previous_after_transient_busy(source_path: Path, target_path: Path) -> None:
+        nonlocal backup_restore_busy
+        if source_path.name.startswith(".HextechCompanion.previous-backup-") and target_path == previous:
+            if backup_restore_busy:
+                backup_restore_busy = False
+                raise PermissionError("previous backup handle is still draining")
+        real_replace(source_path, target_path)
+
     monkeypatch.setattr(deploy, "_remove_tree", remove_previous_partially)
+    monkeypatch.setattr(deploy.os, "replace", restore_previous_after_transient_busy)
     monkeypatch.setattr(deploy, "shutdown_existing_install", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(deploy.time, "sleep", lambda _seconds: None)
 
     with pytest.raises(OSError, match="previous cleanup partially failed"):
         deploy.deploy_release(source, target, lock_path=tmp_path / "deploy.lock")
 
     assert (target / "old.txt").read_text(encoding="utf-8") == "old"
     assert (previous / "older.txt").read_text(encoding="utf-8") == "older"
+    assert recovery_remove_busy is False
+    assert backup_restore_busy is False
     assert not list(tmp_path.glob(".HextechCompanion.previous-backup-*"))
 
 
@@ -796,13 +1465,18 @@ def test_build_deploy_arguments_are_explicit(monkeypatch):
 
     with pytest.raises(SystemExit):
         package.parse_build_args(["--shortcut", "client.lnk"])
+    with pytest.raises(SystemExit):
+        package.parse_build_args(["--roi-dump-mode", "on"])
+
+    roi_args = package.parse_build_args(["--deploy", "--roi-dump-mode", "on"])
+    assert roi_args.roi_dump_mode == "on"
 
 
 def test_build_without_deploy_does_not_call_deployer(tmp_path, monkeypatch, capsys):
     from tooling.build import package
 
     monkeypatch.setattr(package, "cleanup", lambda: None)
-    monkeypatch.setattr(package, "prepare_runtime_data_for_package", lambda **_kwargs: None)
+    monkeypatch.setattr(package, "prepare_runtime_data_for_package", lambda **_kwargs: package.BASE_DIR / "resources" / "seeds")
     monkeypatch.setattr(package, "write_generated_manifest", lambda *_args, **_kwargs: tmp_path / "manifest.json")
     monkeypatch.setattr(package, "generate_version_info", lambda *_args, **_kwargs: tmp_path / "version.txt")
     monkeypatch.setattr(package, "build_exe", lambda *_args, **_kwargs: tmp_path / "exe")
@@ -822,7 +1496,7 @@ def test_build_without_deploy_does_not_call_deployer(tmp_path, monkeypatch, caps
     assert "候选未部署" in capsys.readouterr().out
 
 
-def test_packaged_smoke_runs_overlay_self_check_before_desktop(tmp_path, monkeypatch):
+def test_packaged_smoke_runs_overlay_self_check_after_desktop_seed_chain(tmp_path, monkeypatch):
     from tooling.acceptance import smoke_packaged_startup as smoke
 
     package_dir = _package(tmp_path / "HextechCompanion-20260720")
@@ -840,18 +1514,149 @@ def test_packaged_smoke_runs_overlay_self_check_before_desktop(tmp_path, monkeyp
         "_overlay_self_check",
         lambda *_args, **_kwargs: events.append("overlay") or {"ok": True},
     )
+    monkeypatch.setattr(
+        smoke,
+        "_overlay_presentation_smoke",
+        lambda *_args, **_kwargs: events.append("presentation") or {"ok": True},
+    )
+    monkeypatch.setattr(
+        smoke,
+        "_desktop_presentation_smoke",
+        lambda *_args, **_kwargs: events.append("desktop_presentation") or {"state": "ok"},
+    )
     monkeypatch.setattr(smoke, "_validate_windows_gui_subsystem", lambda _exe: None)
+    monkeypatch.setattr(
+        smoke,
+        "_acquisition_worker_import_smoke",
+        lambda *_args, **_kwargs: events.append("acquisition") or {"state": "ready"},
+    )
     monkeypatch.setattr(
         smoke.subprocess,
         "Popen",
         lambda *_args, **_kwargs: events.append("desktop") or FinishedProcess(),
     )
-    monkeypatch.setattr(smoke, "_required_paths_ready", lambda *_args, **_kwargs: {})
-    monkeypatch.setattr(smoke, "_read_port", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(smoke, "_required_paths_ready", lambda *_args, **_kwargs: {"ready": True})
+    monkeypatch.setattr(smoke, "_overlay_chain_status", lambda *_args, **_kwargs: ({"ready": True}, {}))
+    monkeypatch.setattr(smoke, "_wait_for_overlay_heartbeats", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(smoke, "_sidecar_pool_smoke", lambda *_args, **_kwargs: {"state": "ready"})
+    monkeypatch.setattr(
+        smoke,
+        "_diagnostic_retention_smoke",
+        lambda *_args, **_kwargs: events.append("retention") or {"ok": True},
+    )
     monkeypatch.setattr(smoke, "_terminate_process_tree", lambda _proc: None)
 
     result = smoke.run_smoke(package_dir, timeout_seconds=1)
 
-    assert events == ["overlay", "desktop"]
-    assert result["ok"] is False
-    assert result["last_error"] == "进程提前退出：returncode=0"
+    assert events == ["acquisition", "desktop_presentation", "presentation", "desktop", "overlay", "retention"]
+    assert result["ok"] is True
+
+
+def test_packaged_acquisition_worker_import_smoke_requires_all_frozen_imports(
+    tmp_path,
+    monkeypatch,
+):
+    from tooling.acceptance import smoke_packaged_startup as smoke
+
+    package_dir = tmp_path / "package"
+    runtime_root = tmp_path / "runtime"
+    exe = package_dir / "Hextech伴生终端.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"fixture")
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        result_path = Path(command[command.index("--result-output") + 1])
+        result_path.write_text(
+            json.dumps(
+                {
+                    "state": "ready",
+                    "build_id": "build-fixture",
+                    "checks": {
+                        "curl_cffi._wrapper": "ready",
+                        "hextech.infrastructure.sources.aramkit.service": "ready",
+                        "hextech.infrastructure.sources.blitz.service": "ready",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        return smoke.subprocess.CompletedProcess(command, 0, stdout=b"")
+
+    monkeypatch.setattr(smoke.subprocess, "run", run)
+
+    result = smoke._acquisition_worker_import_smoke(
+        exe,
+        package_dir,
+        {},
+        runtime_root,
+        {"build_id": "build-fixture"},
+    )
+
+    assert result["state"] == "ready"
+    assert commands[0][1:3] == ["--acquisition-worker", "--self-check"]
+
+
+def test_packaged_sidecar_pool_smoke_accepts_exact_bound_matrix(tmp_path, monkeypatch):
+    from tooling.acceptance import smoke_packaged_startup as smoke
+
+    expected = _cohort_metadata()
+    package_dir = tmp_path / "package"
+    runtime_root = tmp_path / "runtime"
+    exe = package_dir / "Hextech伴生终端.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"fixture")
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def run(command, **kwargs):
+        status_path = runtime_root / "state" / "game_overlay_sidecar_status.json"
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        status_path.write_text(json.dumps(_sidecar_pool_status(expected)), encoding="utf-8")
+        calls.append((command, kwargs))
+        return smoke.subprocess.CompletedProcess(command, 0, stdout=b"")
+
+    monkeypatch.setattr(smoke.subprocess, "run", run)
+
+    result = smoke._sidecar_pool_smoke(
+        exe,
+        package_dir,
+        {},
+        runtime_root,
+        {"build_id": "test-build", "cohort_seed": expected},
+    )
+
+    assert result["state"] == "ready"
+    assert result["production_pool_count"] == 236
+    assert result["rank_identity_count"] == 236
+    assert calls[0][1]["env"]["HEXTECH_OVERLAY_SIDECAR_DEBUG_DUMP"] == "0"
+
+
+def test_packaged_sidecar_pool_smoke_blocks_full_catalog_ranking(tmp_path, monkeypatch):
+    from tooling.acceptance import smoke_packaged_startup as smoke
+
+    expected = _cohort_metadata()
+    package_dir = tmp_path / "package"
+    runtime_root = tmp_path / "runtime"
+    exe = package_dir / "Hextech伴生终端.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"fixture")
+
+    def run(command, **_kwargs):
+        status = _sidecar_pool_status(expected)
+        status["rank_identity_count"] = expected["full_catalog_count"]
+        status_path = runtime_root / "state" / "game_overlay_sidecar_status.json"
+        status_path.parent.mkdir(parents=True, exist_ok=True)
+        status_path.write_text(json.dumps(status), encoding="utf-8")
+        return smoke.subprocess.CompletedProcess(command, 0, stdout=b"")
+
+    monkeypatch.setattr(smoke.subprocess, "run", run)
+
+    with pytest.raises(smoke.SmokeFailure, match="rank_identity_count"):
+        smoke._sidecar_pool_smoke(
+            exe,
+            package_dir,
+            {},
+            runtime_root,
+            {"build_id": "test-build", "cohort_seed": expected},
+        )

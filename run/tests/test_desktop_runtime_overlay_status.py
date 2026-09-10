@@ -31,6 +31,7 @@ class DesktopRuntimeOverlayStatusTests(unittest.TestCase):
         self.assertEqual(_format_game_overlay_host_reason("event_expired"), "选择数据已过期")
         self.assertEqual(_format_game_overlay_host_reason("blocking_modal_present"), "等待弹窗关闭")
         self.assertEqual(_format_game_overlay_host_reason("scoreboard_key_down"), "记分板显示中")
+        self.assertEqual(_format_game_overlay_host_reason("game_window_mode_unknown"), "")
         self.assertEqual(_format_game_overlay_host_reason("unknown_reason"), "暂不显示")
 
     def test_overlay_status_polling_uses_secondary_label_without_overriding_primary_ready(self):

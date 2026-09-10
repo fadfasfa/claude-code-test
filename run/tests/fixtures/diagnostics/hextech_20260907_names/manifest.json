@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "source_build_id": "20260907T103201Z-673e9dd6a72e",
+  "session_id": "9cf0f1851541dc63bbdd434bc49b38fb",
+  "selection_epoch": 16,
+  "split": "regression",
+  "independent_holdout_available": false,
+  "annotation_source": "agent_visual_inspection_not_model_output",
+  "human_truth_status": "pending",
+  "samples": [
+    {
+      "file": "right_name.png",
+      "source_record_id": "bc8b669088850c17d6d69a0d",
+      "sha256": "9f9b96c9bf2339978f131478b372bb897bc75144ca1b7f99f6c06d3706c681b9",
+      "visible_text": "三重射击",
+      "crop_complete": true
+    },
+    {
+      "file": "left_name_clipped.png",
+      "source_record_id": "e4bd3be969ac0ffb96fd47b9",
+      "sha256": "071f094bb7a7341618d1ed673fc5f5563fefbec436486251ebb38e6583649b07",
+      "visible_text": null,
+      "crop_complete": false,
+      "qualification": "right_edge_clipped_no_full_name_truth"
+    }
+  ]
+}

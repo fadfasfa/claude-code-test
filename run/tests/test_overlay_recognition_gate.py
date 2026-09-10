@@ -6,10 +6,78 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 
 
 class OverlayRecognitionGateTests(unittest.TestCase):
+    def test_strict_observed_name_binding_rejects_unresolved_ambiguous_and_unbound_files(self):
+        from PIL import Image
+
+        from hextech.infrastructure.vision.template_build import _attach_observed_name_exemplars
+        from hextech.infrastructure.vision.template_models import TemplateEntry
+
+        entries = [
+            TemplateEntry(augment_id="1", name="同名强化", tier="", summary=""),
+            TemplateEntry(augment_id="2", name="同名强化", tier="", summary=""),
+        ]
+        cases = (
+            ("unknown__1.png", {}, "unresolved"),
+            ("同名强化__1.png", {}, "ambiguous"),
+            ("shared__1.png", [("shared", "1"), ("shared", "2")], "ambiguous"),
+            ("external__1.png", {"external": "999"}, "unbound"),
+        )
+        for filename, aliases, expected in cases:
+            with self.subTest(expected=expected), TemporaryDirectory() as temp_dir:
+                exemplar_dir = Path(temp_dir) / "vision" / "name_exemplars"
+                exemplar_dir.mkdir(parents=True)
+                Image.new("RGB", (120, 32), "black").save(exemplar_dir / filename)
+
+                with self.assertRaisesRegex(ValueError, rf"{expected}=.*{filename}"):
+                    _attach_observed_name_exemplars(
+                        entries,
+                        Path(temp_dir),
+                        extra_aliases=aliases,
+                        strict=True,
+                    )
+
+    def test_body_shard_suffix_uses_two_rightmost_glyphs_and_quorum(self):
+        from PIL import Image
+
+        from hextech.infrastructure.vision.sidecar_fingerprints import (
+            _body_shard_name_scores,
+            _body_shard_scene_present,
+        )
+
+        root = Path(__file__).resolve().parent / "fixtures/diagnostics/overlay_vision_fixtures"
+        shard = [Image.open(path).convert("RGB") for path in sorted((root / "body_shard_20260621").glob("name_*.png"))]
+        ordinary = [Image.open(path).convert("RGB") for path in sorted((root / "hextech_20260621").glob("name_*.png"))]
+
+        shard_scores = _body_shard_name_scores(shard)
+        ordinary_scores = _body_shard_name_scores(ordinary)
+
+        self.assertTrue(_body_shard_scene_present(shard_scores))
+        self.assertFalse(_body_shard_scene_present(ordinary_scores))
+        self.assertGreaterEqual(sum(score >= 0.80 for score in shard_scores), 2)
+        self.assertLess(max(ordinary_scores), 0.80)
+
+    def test_body_shard_suffix_rejects_single_glyph_and_animation_blob(self):
+        from PIL import Image, ImageDraw
+
+        from hextech.infrastructure.vision.sidecar_fingerprints import (
+            _body_shard_name_scores,
+            _body_shard_scene_present,
+        )
+
+        single = Image.new("RGB", (295, 48), "black")
+        ImageDraw.Draw(single).rectangle((120, 5, 148, 35), fill="white")
+        animation = Image.new("RGB", (295, 48), "white")
+
+        scores = _body_shard_name_scores([single, animation, single])
+
+        self.assertEqual(scores, (0.0, 0.0, 0.0))
+        self.assertFalse(_body_shard_scene_present(scores))
+
     def test_known_icon_shortlist_confusions_cannot_authorize_ready(self):
         from hextech.infrastructure.vision.matcher import candidate_from_slot
 
@@ -40,6 +108,50 @@ class OverlayRecognitionGateTests(unittest.TestCase):
             with self.subTest(expected=expected_name, rejected=wrong_name):
                 self.assertIsNone(candidate_from_slot(slot))
 
+    def test_epoch21_clear_icon_and_one_text_channel_form_only_medium_observation(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+
+        def candidate(augment_id: str, name: str, confidence: float) -> dict[str, object]:
+            return {
+                "augment_id": augment_id,
+                "name": name,
+                "recognition_key": name,
+                "confidence": confidence,
+            }
+
+        slot = {
+            "slot": 2,
+            "channels": {
+                "text": {
+                    "margin": 0.0089,
+                    "top_candidates": [candidate("1390", "超凡邪恶", 0.797174)],
+                },
+                "text_alt": {
+                    "margin": 0.0084,
+                    "top_candidates": [candidate("2032", "鲨鱼诱饵", 0.811479)],
+                },
+                "icon": {
+                    "margin": 0.0778,
+                    "top_candidates": [candidate("1390", "超凡邪恶", 0.756614)],
+                },
+            },
+        }
+
+        observed = candidate_from_slot(slot)
+
+        self.assertIsNotNone(observed)
+        self.assertEqual(observed.name, "超凡邪恶")
+        self.assertEqual(observed.rule, "text_icon_temporal")
+        self.assertEqual(observed.evidence_grade, "medium")
+        self.assertEqual(observed.required_frames, 3)
+
+        # 图标区分度不足或另一路文字不再处于近并列时都必须拒绝。
+        slot["channels"]["icon"]["margin"] = 0.0499
+        self.assertIsNone(candidate_from_slot(slot))
+        slot["channels"]["icon"]["margin"] = 0.0778
+        slot["channels"]["text_alt"]["margin"] = 0.0101
+        self.assertIsNone(candidate_from_slot(slot))
+
     def test_real_hard_name_exemplars_resolve_to_expected_canonical_ids(self):
         from PIL import Image
 
@@ -49,7 +161,12 @@ class OverlayRecognitionGateTests(unittest.TestCase):
 
         run_dir = Path(__file__).resolve().parents[1]
         template_index = sidecar.load_default_template_index(run_dir)
-        sidecar._rank_matrices(template_index)
+        matrices = sidecar._rank_matrices(template_index)
+        self.assertGreaterEqual(matrices.observed_name_matrix.shape[0], 4)
+        self.assertEqual(
+            {entry.augment_id for entry in matrices.observed_name_templates},
+            {"1020", "1045", "1332", "2089"},
+        )
         snapshot = DataSnapshotClient(run_dir / "resources" / "seeds").open_view()
         cases = (
             (
@@ -66,12 +183,28 @@ class OverlayRecognitionGateTests(unittest.TestCase):
                 "哎哟，我的硬币！",
                 "2089",
             ),
+            (
+                run_dir
+                / "tests/fixtures/diagnostics/overlay_vision_fixtures"
+                / "hextech_20260821_hard_names/infernalconduit_holdout.png",
+                "炼狱导管",
+                "1045",
+            ),
+            (
+                run_dir
+                / "tests/fixtures/diagnostics/overlay_vision_fixtures"
+                / "hextech_20260821_hard_names/ominouspact_holdout.png",
+                "不祥契约",
+                "1332",
+            ),
         )
 
         for path, expected_name, expected_id in cases:
             with self.subTest(name=expected_name), Image.open(path) as crop:
                 fingerprint = sidecar._normalized_fingerprint(sidecar._text_levels(crop.convert("RGB")))
                 ranked = sidecar._rank_observed_name_fingerprint(fingerprint, template_index)
+                self.assertGreaterEqual(float(ranked[0][1]), 0.92)
+                self.assertGreaterEqual(sidecar._candidate_margin(ranked), 0.08)
                 slot = {
                     "slot": 2,
                     "channels": {
@@ -124,7 +257,8 @@ class OverlayRecognitionGateTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "evaluated")
         self.assertEqual(result["failures"], [])
-        self.assertEqual(result["ready_at"], [3, 2, 2])
+        # 首槽两路文字在第 1/3 帧形成 strong-dual；低置信冲突 icon 只作诊断。
+        self.assertEqual(result["ready_at"], [2, 2, 2])
 
     def test_zero_full_frame_samples_block_validation(self):
         from tooling.setup import vision as refresh_overlay_recognition

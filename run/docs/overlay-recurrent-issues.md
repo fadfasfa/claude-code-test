@@ -2,7 +2,7 @@
 
 本文归纳 Hextech Overlay 模块 git 历史中反复出现的问题与最新修复方案，供后续迭代避免重犯。规则与运行契约的事实源仍为 [overlay-runtime.md](overlay-runtime.md)，本文是问题史与反模式总结，不重复运行手册的现行规则。文件改动覆盖 [run/src/hextech/interfaces/overlay/](../src/hextech/interfaces/overlay/) 与 [run/src/hextech/infrastructure/vision/](../src/hextech/infrastructure/vision/)。
 
-> 快照时间：截至 2026-07-26，含工作区未提交改动。commit 轨迹从 `a27c0e3`（overlay 初稿）到 `bf2d91d`（最新合并）再到当前未提交的"第二阶段"改动。
+> 快照时间：截至 2026-08-31，含工作区未提交的 v2/v3/v4/v5 修复。commit 轨迹仍以当前分支 HEAD 与不可变候选的 Build/source fingerprint 为身份；下文早期 commit 只用于解释历史演进，不代表当前真机运行版本。
 
 ## 一、总览（按同类修复次数排序）
 
@@ -17,6 +17,9 @@
 | 场景门误清空稳定槽 | 3 | bf2d91d + 未提交 | 帧计数防抖 |
 | 联动投影 / 分来源 freshness | 2 | 8a448e6 | 上下文错配、last-good 误判"上一代" |
 | 报告写入阻塞渲染 | 2 | 8a448e6 | Tk 渲染线程同步写 JSON |
+| 快捷方式/Build 误归因 | 4 | v2–v5 | 点击快捷方式被误当成已切换进程和 Build |
+| 呈现证明失真 | 3 | v3–v5 | Full Screen 下内部 READY/GetPixel 被误当成最终可见 |
+| Timeline 留存与性能竞争 | 2 | v4–v5 | v1 占 v2 配额、writer/retention 双删除、全目录高频扫描 |
 
 ## 二、高频反复问题详述
 
@@ -152,7 +155,7 @@ bf2d91d 是已合并的最新 commit，未提交改动是它的"第二阶段"—
 - 新增诊断模块：有界循环日志（最近 200 条状态转换），写入失败不影响主流程
 
 ### 7. 诊断时间线（sidecar_diagnostics.py）
-- `selection_timeline`：每个真实 epoch 的观察 JSONL，按 epoch 轮转（最近 20 个）
+- `selection_timeline`：每个真实 epoch 的观察 JSONL；v5 起 writer 只 append，唯一 retention owner 只在 v2 集合内保留最近 20 个，v1/未知文件永久 pinned 且不占 v2 数量/字节配额
 - `_DiagnosticEpochSampler`：每 epoch 前 5 次独立观察的 ROI 诊断
 - `timing` 携带 `capture_started_at / captured_at / recognition_completed_at` 供时序仲裁消费真实时间
 
@@ -165,6 +168,9 @@ bf2d91d 是已合并的最新 commit，未提交改动是它的"第二阶段"—
 3. **单通道/单证据独立授权 ready**——主题 A。单字体即使高置信度也会系统性误匹配，重复观察不增加独立信息。只有跨通道佐证（图标 + 文字，或真机指纹）才能 strong。
 4. **生命周期多所有者**——主题 D。ServiceManager 与 RuntimeSupervisor 共管导致 watchdog 冲突。bfc1d7e 确立 RuntimeSupervisor 为唯一所有者。这个边界不可再模糊。
 5. **旧路径/旧缓存残留**——主题 F、G。每次新增 cache/路径都要补"失效条件是否完整"和"旧版本是否清理"。v1 cache 残留、旧目录 fallback 都是反复踩的坑。
+6. **内部状态被当成用户可见**——Full Screen 下的 HWND、READY、Canvas draw 或 Desktop DC 探针不能单独证明最终扫描输出包含 Overlay。外部 layered-window 路线必须把 Borderless/Windowed 作为硬前置条件。
+7. **同一资源存在多个清理所有者**——writer 和 retention 同时轮转必然出现配额误算和并发删除；所有删除必须收口到一个跨进程加锁、带共享节流的所有者。
+8. **统计口径混入非目标 epoch**——candidate、body-shard、blocked、纯 pause 或不足一次 active 的临时 epoch 不能污染 Hextech 三槽覆盖率、首次 Canvas 或 recognition P95。
 
 ## 五、避免重犯检查清单（迭代前对照）
 
@@ -179,9 +185,84 @@ bf2d91d 是已合并的最新 commit，未提交改动是它的"第二阶段"—
 - [ ] 报告/JSON 写入是否走有界队列异步？是否未在 Tk 渲染线程执行？
 - [ ] 上下文是否经 context_gate 门禁？联动是否走 synergy_projection 99% 门禁？
 - [ ] 真机验证是否核对了 EXE/manifest/Desktop/Sidecar/Overlay/session report 的 `build_id` 一致？
+- [ ] 点击快捷方式不等于切换 Build；是否核对 EXE、PID、process start time、manifest 与单实例 owner？
+- [ ] Full Screen 下是否避免把内部 HWND/READY/GetPixel 当作真实可见，并要求用户切换 Borderless？
+- [ ] Borderless/Windowed 下是否在首次映射前回读 `WDA_EXCLUDEFROMCAPTURE=0x11`，且 packaged smoke 用 `ImageGrab` 高对比探针证明未被再次截入？
+- [ ] AOC/BOE 是否按 Vision 变换后的真实卡框缩放文字、面板和间距，而不是直接乘 Windows DPI？
+- [ ] legacy/current schema 的 pinned 文件是否完全不占新 schema 的数量与字节配额？
+- [ ] 同一资源只能有一个清理所有者；跨进程是否有独占锁、共享节流和 active selection skip？
+- [ ] 状态中的“已写入”是否只来自实际 append 成功，而不是仅计算出目标路径？
+- [ ] packaged smoke、离线热测和空 runtime 是否没有替代预填充 runtime 与真实 League 验收？
+- [ ] 部署窗口内到期刷新是否只接受完整校验、单调更新且不改变 Catalog/production pool 的 generation，并在失败时连 checkpoint/recovery/selection 一并回滚？
+- [ ] 更新 runtime 命中 current receipt 时，是否仍先完整物化并验证新 Build 的 bundle baseline，且不倒退 current？失败回滚是否在确认进程退出后有界等待 Windows 句柄释放？
+- [ ] candidate/body-shard epoch 是否从 Hextech 三槽覆盖率、首次 Canvas 和 P95 中排除并单列原因？
+- [ ] 本地 recognition P95 是否没有替代真实 capture+recognition P95，且门槛仍为 180 ms？
+- [ ] Augment/Arena win-rate overlay 是否仅保留为私人本机实验，并明确标为公开分发阻塞项？
 
-## 六、与运行手册的关系
+## 六、2026 年 8 月 v2–v5 问题史
+
+### v2：自动门通过但真机链路身份与可见性未闭环
+
+- 自动测试、Host self-check 和 packaged smoke 证明的是受控进程链与内部合成，不是 League 最终画面。
+- 开发快捷方式可能只唤醒既有稳定版单实例 owner；必须从 `TargetPath → process executable → PID/start time → manifest Build → runtime state Build` 逐层核对。
+- candidate Build 的报告不能与稳定目录进程的报告混用；真实 session 必须绑定当前 Build、Sidecar instance 和 generation。
+
+### v3：识别与 cohort 恢复收紧，但旧身份/旧路径仍需独立证明
+
+- 稳定槽 transition 收口到明确点击、两个独立 content-absent frame 或 OCR exact 3/5，普通候选/fingerprint 漂移不再授权换卡。
+- 冻结 bundle 改为验证完整 cohort 并单调恢复更新的本地 generation；旧 seed、缺 provenance 或伪 generation 必须失败关闭。
+- 这些修复解决“错误/跳变”和代际倒退，不能自动证明 Overlay 在真实全屏链路可见。
+
+### v4：启动和 Build 代际修复有效，最终呈现与 Timeline 留存仍失败
+
+- 现场 `first_idle_visible≈148 ms`、receipt 命中、`data_ready≈2.50 s`，Host/Sidecar/Stats generation 一致，说明启动与代际路线有效。
+- 真实游戏为 `WindowMode=0` Full Screen；把 `GetDC(0)/GetPixel matched` 称作 `presented` 超出了 Desktop DC 探针合同，无法证明最终扫描输出包含外部 Overlay。
+- timeline 目录已有 20 个 v1；旧 retention 把 pinned v1 计入 v2 的 20-epoch/12 MiB 配额，新 v2 被立即删除。writer 与 retention 又同时轮转，产生并发 `FileNotFoundError`。
+- 1043 次完整留存扫描造成 CPU、GIL 与磁盘竞争；70 个真实 captured observations 的 capture P95 为 66.684 ms、recognition P95 为 196.949 ms、total P95 为 263.470 ms，未达到 180 ms 门。
+
+### v5：Borderless 硬门、单一留存所有者与合格 epoch 性能闭环
+
+- 只读当前 League 安装根的 `Config/game.cfg`：Full Screen/unknown 时 Host fail closed，Sidecar 在截图前非破坏性 pause；Borderless/Windowed 后自动恢复，不写配置、不要求重启。
+- `supported` 模式的空 reason 必须保持为空，不能用 `game_window_mode_unknown` 补默认值制造假警告；真实 unknown 仍 fail closed，但只进入结构化诊断与有限日志，不持续占用 Desktop 状态栏。
+- Desktop DC 探针只在受支持模式运行并标记 `probe_contract=dwm_desktop_dc`；显式诊断只留 Overlay 矩形裁剪图，每个 active Hextech epoch 最多一张完整三槽 READY 图。
+- `diagnostic_retention` 成为唯一删除/轮转所有者；v1/未知 timeline 永久 pinned 且不占 v2 配额，跨进程锁、60 秒共享间隔和 active selection skip 消除高频全目录竞争。
+- 性能报告只统计目标 Build、同一 Sidecar instance 的 active Hextech epoch，并分别输出 capture、recognition、total、排除原因和最慢 10 个 observation 的结构化 `matching_timing`。
+- 自动门、packaged smoke 与真实 League 门继续分开；首个 v5 真机若仍失败，保留证据并生成新的不可变 v5-r2，绝不覆盖候选或放宽 180 ms。
+
+### v13：自捕获反馈环、同 epoch 非法换卡与双屏比例收口
+
+- Overlay 映射后若重新进入 Sidecar 的 `ImageGrab` 输入，会压低卡面场景分并形成“显示 → 识别下降 → 0.75 秒后隐藏”的反馈环；顶层 HWND 必须应用并回读 `WDA_EXCLUDEFROMCAPTURE`，无法确认时 fail closed。
+- Desktop DC/GetPixel 在不同系统上可能看见人眼合成像素或返回黑色，不能据此判断 affinity 泄漏；Host surface 用 Canvas 内容与 HWND 状态证明，桌面捕获排除由 packaged smoke 的已知底色高对比探针独立证明。
+- 选择按钮仍存在且卡面/名称有残留时保持同一 epoch；按钮消失后才启动 0.75 秒宽限，明确卡面点击立即结束，重随点击只开启目标槽 replacement。
+- 稳定槽只接受明确槽位点击、两个独立 `content_absent` 帧或不同身份 OCR exact 3/5；重复 strong/双字体候选与 fingerprint 漂移始终保留 last-good。
+- AOC 2560×1440@100% 与 BOE 2560×1600@150% 以变换后真实卡框而非 DPI 为比例事实源；Tk 使用负像素字号，render cache 必须覆盖 viewport、DPI、`layout_transform` 与 geometry scale。
+
+## 七、与运行手册的关系
 
 - [overlay-runtime.md](overlay-runtime.md) 是现行规则与契约的事实源（识别规则、场景门宽限、时序仲裁、分来源 freshness、打包部署、真机验收）。
 - 本文是 git 历史视角的"问题史与反模式"，用于在新一轮迭代前快速回看"哪些坑反复踩过"。
 - 当两者出现冲突时，以 overlay-runtime.md 为准；本文应随规则演进而更新，不再准确的历史结论应及时修订或标注。
+
+## 八、固定屏幕规格、后台准备与碎片回归
+
+- v13 的“逐帧 layout_transform 驱动显示”已经被固定客户区版式替代。真机同一 revision 曾出现 29→32px 和约 29px 位移；保留识别布局也可能保留错误校准，不能作为显示比例事实源。
+- 正常基准排除游戏自带魄罗指引；使用指引关闭的真实截图核对下方统计。顶部联动与游戏指引是不同 UI，不能混为一种数据源。
+- 冷开 snapshot、全量 hint 深复制、scoped 校验放在 Tk 线程会阻塞已排队的映射/合成回调。新实现单后台线程准备数据，窄 hint 保留名称/评级/联动，不复制全英雄历史统计。
+- 保留事件漏传 button_box 曾令已有联动变成 show_synergy=false；新显示禁入区由固定版式提供，不依赖每帧按钮检测。
+- body_shard 曾只按两次漏检解除 latch，且诊断 writer/path 排除碎片，形成回归与证据缺口。现在持续保留到明确结束或真实时间确认，Host 再拒绝同轮旧 READY；碎片 observation/terminal 留存但不计性能分母。
+- 检查新增缓存是否有身份栅栏、容量、关闭路径；同屏不变的内容/识别更新是否不会改框；原生 Tk 文字 bbox 是否真正位于固定面板内；自动 smoke 是否仍与真实游戏验收分开。
+
+## 九、备战席遮挡与首帧占位尺寸
+
+- 桌面空白长窗不是游戏内统计层。仅凭客户端前台显示会在大厅/结算弹出740px空窗；一次性withdraw没有关闭锁，下一tick会重新出现。
+- 右侧不足320px时把x钳制到工作区右缘会覆盖客户端。历史版本曾试过8秒吸回、保持手动位置和邻屏停靠，均不是当前合同。2026-09-09确认继续同屏右贴，以 `desktop-stable28.md` 为唯一行为定义：最低200逻辑像素，不足时仅允许已有合法位置三秒调整宽限；不接受独立位置、不跳邻屏、不覆盖客户端。
+- 后台窗口循环不得直接调用Tk显隐/置顶，必须投递最新观察给GUI owner。提前启动观察后，原先仅mock重服务的Tk测试需隔离新入口并在Destroy停止线程；UI/owner或Canvas/font循环会令Tcl被后台GC回收，不能靠跳过用例掩盖。
+- 1×1是withdraw时的Tk占位，不是游戏尺寸。只记录target_rect而等窗口可见后才应用，会先画出反向统计框和8px字体，应先在隐藏状态应用已确认几何。
+- 历史校准曾采用36px并扩展到卡槽全宽；作者现已选择30px及独立内框安全区，此旧字号方案不再适用。仅超宽行收紧排版空格，不缩字；Pillow的YaHei/YaHei UI字体face不同，离线差异不能直接当作真机字号差异。
+
+## 十、桌面多屏响应式与首次HWND重建
+
+- 固定320px外框加正磅值字体会在混合DPI下比例失衡；只按客户端宽度放大又会把右侧仍有320px空间的场景误判为不可显示。逻辑尺寸、实际右侧空间和最低可读宽度必须分别处理，三档重排不能隐藏英雄指标。
+- Tk首次布局可能重建顶层HWND并丢掉旧句柄的NOACTIVATE，且UpdateWrapper会对首次窗口调用SetActiveWindow。布局、定位和映射使用当前GUI线程短作用域的WH_CBT/HCBT_CREATEWND保护，在新HWND创建时直接设置临时disabled/noactivate样式，返回后恢复并解除。不能在HCBT_ACTIVATE阶段否决，后者可能让旧前台变成NULL；不拦截游戏或其他进程，也不调用SetForegroundWindow把焦点抢回。
+- 隐藏阶段从实际子控件请求尺寸计算最低高度，不提前驱动窗口消息；首次物理定位后才统一映射。映射后有版本校验的25ms回调恢复普通交互，旧回调不能激活新窗口。
+- 原生离屏QA需先处理绘制消息并完整重绘再PrintWindow；缺少这一步可截入旧尺寸残影。此类捕获只针对隔离测试窗口，不是游戏实机图。

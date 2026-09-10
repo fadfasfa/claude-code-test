@@ -111,6 +111,23 @@ def template_runtime_hint_signature(hint_cache: Mapping[str, Any] | None) -> str
         "hints": stable_hints,
         "name_index": stable_name_index,
     }
+    source = hint_cache.get("source")
+    pool = source.get("production_augment_pool") if isinstance(source, Mapping) else None
+    if isinstance(pool, Mapping):
+        payload["production_augment_pool"] = {
+            key: pool.get(key)
+            for key in (
+                "schema_version",
+                "state",
+                "pool_id",
+                "catalog_generation_id",
+                "catalog_sha256",
+                "catalog_manifest_sha256",
+                "metadata_marker_sha256",
+                "canonical_ids",
+                "identities",
+            )
+        }
     try:
         serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
     except TypeError:

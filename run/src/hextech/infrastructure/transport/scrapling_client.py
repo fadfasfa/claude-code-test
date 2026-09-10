@@ -25,6 +25,7 @@ from hextech.modules.acquisition.common.policy import (
 )
 
 FetchMode = Literal["get", "browser"]
+FetchFallback = Literal["none", "requests"]
 
 _CIRCUIT = HostCircuitBreaker()
 _CONCURRENCY = ConcurrencyPolicy()
@@ -72,6 +73,8 @@ class ScraplingFetchResult:
     attempts: int = 1
     elapsed_ms: int = 0
     backend: str = "http"
+    fallback_used: bool = False
+    fallback_from: str = ""
 
     def json(self) -> Any:
         return json.loads(self.text)
@@ -208,6 +211,84 @@ def _response_status(response: object) -> int | None:
     return None
 
 
+def _requests_fetch_text(
+    url: str,
+    *,
+    timeout_ms: int,
+    headers: dict[str, str] | None,
+    caller: str,
+    max_response_bytes: int | None,
+    primary: ScraplingFetchResult,
+) -> ScraplingFetchResult:
+    """仅为已确认的静态 GET TLS/network 故障提供一次标准 HTTP 兜底。"""
+
+    import requests
+
+    started = time.monotonic()
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    try:
+        with requests.get(
+            url,
+            timeout=max(0.001, timeout_ms / 1000),
+            headers=headers,
+            stream=True,
+        ) as response:
+            limit = int(max_response_bytes) if max_response_bytes is not None else None
+            chunks: list[bytes] = []
+            size = 0
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                size += len(chunk)
+                if limit is not None and size > limit:
+                    return ScraplingFetchResult(
+                        url=url,
+                        text="",
+                        status_code=int(response.status_code),
+                        fetched_at=fetched_at,
+                        error="response_too_large",
+                        error_kind=FailureKind.INVALID_PAYLOAD.value,
+                        attempts=primary.attempts + 1,
+                        elapsed_ms=primary.elapsed_ms
+                        + round((time.monotonic() - started) * 1000),
+                        backend="requests_fallback",
+                        fallback_used=True,
+                        fallback_from=primary.error_kind,
+                    )
+                chunks.append(bytes(chunk))
+            text = _decode_body(b"".join(chunks), response.encoding)
+            status_code = int(response.status_code)
+    except requests.RequestException as exc:
+        prefix = f"{caller}: " if caller else ""
+        return ScraplingFetchResult(
+            url=url,
+            text="",
+            status_code=None,
+            fetched_at=fetched_at,
+            error=f"{prefix}{exc}",
+            error_kind=classify_fetch_error(exc),
+            attempts=primary.attempts + 1,
+            elapsed_ms=primary.elapsed_ms + round((time.monotonic() - started) * 1000),
+            backend="requests_fallback",
+            fallback_used=True,
+            fallback_from=primary.error_kind,
+        )
+    failure = classify_response(status_code, text)
+    return ScraplingFetchResult(
+        url=url,
+        text=text,
+        status_code=status_code,
+        fetched_at=fetched_at,
+        error="" if failure is None else failure.value,
+        error_kind="" if failure is None else failure.value,
+        attempts=primary.attempts + 1,
+        elapsed_ms=primary.elapsed_ms + round((time.monotonic() - started) * 1000),
+        backend="requests_fallback",
+        fallback_used=True,
+        fallback_from=primary.error_kind,
+    )
+
+
 def _extract_css(response: object, css_selector: str | None) -> list[str] | None:
     """返回 css_selector 的 getall 结果；未传 selector 时保持 None。"""
     if not css_selector:
@@ -243,9 +324,11 @@ def fetch_page(
 
     _require_scrapling()
 
-    from scrapling.fetchers import DynamicFetcher, Fetcher  # type: ignore
-
     if mode == "get":
+        # 静态 HTTP 路径不得导入浏览器控制器。Scrapling 的 DynamicFetcher 会在
+        # import 时初始化 browserforge；该初始化失败不应拖垮普通 JSON/HTML 抓取。
+        from scrapling.fetchers import Fetcher  # type: ignore
+
         attempts = max(1, int(max_attempts))
         last_error = ""
         last_kind = ""
@@ -303,6 +386,8 @@ def fetch_page(
             attempts=attempt,
             elapsed_ms=round((time.monotonic() - started) * 1000),
         )
+
+    from scrapling.fetchers import DynamicFetcher  # type: ignore
 
     fetched_at = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
@@ -373,12 +458,18 @@ def fetch_text(
     caller: str = "",
     max_attempts: int = 2,
     retry_backoff_seconds: float = 0.35,
+    fallback_backend: FetchFallback = "none",
+    max_response_bytes: int | None = None,
 ) -> ScraplingFetchResult:
     """用 Scrapling Fetcher 普通 HTTP GET 获取原文。"""
     if timeout_ms <= 0:
         raise ValueError("timeout_ms 必须大于 0")
     if max_attempts <= 0:
         raise ValueError("max_attempts 必须大于 0")
+    if fallback_backend not in {"none", "requests"}:
+        raise ValueError(f"不支持的静态 fallback：{fallback_backend!r}")
+    if max_response_bytes is not None and max_response_bytes <= 0:
+        raise ValueError("max_response_bytes 必须大于 0")
 
     _require_scrapling()
 
@@ -390,6 +481,7 @@ def fetch_text(
     fetched_at = ""
     retry_policy = RetryPolicy(max_attempts=attempts, base_delay_seconds=retry_backoff_seconds)
     started = time.monotonic()
+    circuit_open = False
     for attempt in range(1, attempts + 1):
         fetched_at = datetime.now(timezone.utc).isoformat()
         try:
@@ -400,6 +492,17 @@ def fetch_text(
                 response = Fetcher.get(url, timeout=timeout_ms / 1000, headers=headers, retries=1)
             text = _response_text(response)
             status_code = _response_status(response)
+            if max_response_bytes is not None and len(text.encode("utf-8")) > max_response_bytes:
+                return ScraplingFetchResult(
+                    url=url,
+                    text="",
+                    status_code=status_code,
+                    fetched_at=fetched_at,
+                    error="response_too_large",
+                    error_kind=FailureKind.INVALID_PAYLOAD.value,
+                    attempts=attempt,
+                    elapsed_ms=round((time.monotonic() - started) * 1000),
+                )
             failure = classify_response(status_code, text)
             _CIRCUIT.record(url, failure)
             if failure and attempt < attempts and is_retryable(failure):
@@ -418,6 +521,7 @@ def fetch_text(
         except HostCircuitOpen as exc:
             last_error = str(exc)
             last_kind = exc.failure_kind.value
+            circuit_open = True
             break
         except Exception as exc:
             last_error = str(exc)
@@ -428,7 +532,7 @@ def fetch_text(
             break
 
     prefix = f"{caller}: " if caller else ""
-    return ScraplingFetchResult(
+    primary = ScraplingFetchResult(
         url=url,
         text="",
         status_code=None,
@@ -438,6 +542,22 @@ def fetch_text(
         attempts=attempt,
         elapsed_ms=round((time.monotonic() - started) * 1000),
     )
+    remaining_ms = max(0, int(timeout_ms) - primary.elapsed_ms)
+    if (
+        fallback_backend == "requests"
+        and not circuit_open
+        and primary.error_kind in {FailureKind.TLS_ERROR.value, FailureKind.NETWORK_ERROR.value}
+        and remaining_ms > 0
+    ):
+        return _requests_fetch_text(
+            url,
+            timeout_ms=remaining_ms,
+            headers=headers,
+            caller=caller,
+            max_response_bytes=max_response_bytes,
+            primary=primary,
+        )
+    return primary
 
 
 def fetch_json(
@@ -474,6 +594,7 @@ def fetch_json(
 
 __all__ = [
     "FetchResult",
+    "FetchFallback",
     "FetchMode",
     "ScraplingFetchResult",
     "classify_fetch_error",

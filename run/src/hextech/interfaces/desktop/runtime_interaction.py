@@ -221,7 +221,7 @@ def _open_detail_fallback(web_base: str, champ_id, hero_name: str, en_name: str)
     webbrowser.open(url)
 
 
-def normalize_candidate_groups(candidate_groups) -> dict[str, list[str]]:
+def normalize_candidate_groups(candidate_groups) -> dict[str, Any]:
     """兼容旧 set/list 输入，并把候选分组收口到稳定 schema。"""
 
     role_keys = {
@@ -244,7 +244,7 @@ def normalize_candidate_groups(candidate_groups) -> dict[str, list[str]]:
     for value in bench:
         _append_unique_champion_id(bench_ids, value)
     selected_set = set(selected_ids)
-    normalized = {
+    normalized: dict[str, Any] = {
         "selected_champion_ids": selected_ids,
         "bench_champion_ids": [champion_id for champion_id in bench_ids if champion_id not in selected_set],
     }
@@ -335,7 +335,10 @@ def _apply_candidate_update(ui: "HextechUI", candidate_groups, *, source: str, p
         ui.current_candidate_groups = normalized_groups
         if hero_names:
             _queue_ui_preload(ui, hero_names)
-        ui.root.after(0, ui.update_ui, normalized_groups)
+        def apply_current_candidates():
+            if not getattr(ui, "_closing", False) and ui.current_candidate_groups == normalized_groups:
+                ui.update_ui(normalized_groups)
+        ui.root.after(0, apply_current_candidates)
     elif hero_names:
         _queue_ui_preload(ui, hero_names)
 
@@ -456,6 +459,8 @@ def _drain_preload_pending(ui: "HextechUI") -> None:
     with ui._hero_preload_lock:
         pending_names = list(ui._hero_preload_pending)
     for hero_name in pending_names:
+        if getattr(ui, "stop_event", None) is not None and ui.stop_event.is_set():
+            break
         _refresh_preload_ready(ui, hero_name)
 
 

@@ -15,6 +15,10 @@ from hextech.modules.recommendation.hints import normalize_augment_id
 
 
 STRONG_TEXT_MARGIN = 0.025
+STRONG_DUAL_TEXT_CONFIDENCE = 0.92
+STRONG_DUAL_TEXT_MIN_MARGIN = 0.01
+EXPLICIT_ICON_CONFLICT_CONFIDENCE = 0.90
+EXPLICIT_ICON_CONFLICT_MARGIN = 0.03
 # 双字体一致只产生候选；是否对外 ready 统一由时序仲裁器决定。
 DUAL_FONT_CONFIDENCE = 0.70
 SHORTLIST_LIMIT = 3
@@ -23,6 +27,14 @@ SHORTLIST_CHANNEL_GAP = 0.08
 SHORTLIST_COMBINED_GAP = 0.04
 VARIANT_ICON_CONFIDENCE = 0.80
 VARIANT_ICON_MARGIN = 0.015
+# 真机 epoch 21 暴露了一个窄缺口：一套文字与高区分度图标稳定同名，另一套
+# 文字 Top-1 自身 margin 近乎并列。该组合只产生 medium 观察并走 3/5，不能
+# 升级为 strong，也不改变任何现有全局阈值。
+TEXT_ICON_MEDIUM_TEXT_CONFIDENCE = 0.78
+TEXT_ICON_MEDIUM_TEXT_MARGIN = 0.005
+TEXT_ICON_MEDIUM_ICON_CONFIDENCE = 0.75
+TEXT_ICON_MEDIUM_ICON_MARGIN = 0.05
+TEXT_ICON_AMBIGUOUS_OTHER_MARGIN = 0.01
 OBSERVED_NAME_CONFIDENCE = 0.92
 OBSERVED_NAME_MARGIN = 0.08
 
@@ -269,9 +281,9 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             evidence_grade="strong",
         )
 
-    # 双字体一致仍分证据等级：没有图标/视觉版本佐证的重复文字属于相关证据，
-    # 不能因为连续两帧就按 strong 提交。图标与双字体冲突时降为 medium，交给
-    # 3/5 时序确认；图标通道不再绝对否决连续一致的两路文字证据。
+    # 双字体一致仍分证据等级。高置信且有明确 margin 的两路文字是独立于
+    # 图标的强证据；图标 margin 为 0 的共享/并列候选只能作诊断。只有图标
+    # 自身同时高置信且有明确区分度时，身份冲突才阻断文字候选。
     if (
         text_identity
         and text_identity == alt_identity
@@ -283,21 +295,72 @@ def candidate_from_slot(slot: Mapping[str, Any]) -> SlotCandidate | None:
             and icon_confidence >= VARIANT_ICON_CONFIDENCE
             and icon_margin >= VARIANT_ICON_MARGIN
         )
-        strong_dual = bool(
+        explicit_icon_conflict = bool(
+            _identity(icon_top)
+            and _identity(icon_top) != text_identity
+            and icon_confidence >= EXPLICIT_ICON_CONFLICT_CONFIDENCE
+            and icon_margin >= EXPLICIT_ICON_CONFLICT_MARGIN
+        )
+        icon_supported_strong = bool(
             text_confidence >= 0.90
             and alt_confidence >= 0.90
             and text_margin >= STRONG_TEXT_MARGIN
             and alt_margin >= STRONG_TEXT_MARGIN
             and icon_support
         )
+        strong_text_consensus = bool(
+            text_confidence >= STRONG_DUAL_TEXT_CONFIDENCE
+            and alt_confidence >= STRONG_DUAL_TEXT_CONFIDENCE
+            and min(text_margin, alt_margin) >= STRONG_DUAL_TEXT_MIN_MARGIN
+            and max(text_margin, alt_margin) >= STRONG_TEXT_MARGIN
+        )
+        # 明确冲突的强图标只能阻止“双字体快速 READY”。低于 strong-dual
+        # 门槛的双字体一致仍保留为 medium observation，让 3/5 时序自行确认；
+        # 否则一次图标误判会把连续正确文字证据全部抹掉。
+        if explicit_icon_conflict and strong_text_consensus:
+            return None
+        strong_dual = icon_supported_strong or strong_text_consensus
         return _candidate_from_top(
             slot,
             text_top,
             evidence=text,
             confidence=max(text_confidence, alt_confidence),
-            rule="dual_font",
+            rule="strong_dual_text" if strong_text_consensus and not icon_supported_strong else "dual_font",
             required_frames=2 if strong_dual else 3,
             evidence_grade="strong" if strong_dual else "medium",
+        )
+
+    # 两字体分歧时，不允许任一单字体独立投票。只有“其中一套文字 Top-1 与
+    # 高 margin 图标一致，另一套文字自身处于近并列”这一唯一组合可形成 medium；
+    # 仍需 3/5 原始观察，因此一帧图标或文字偶然误匹配不能直接 READY。
+    icon_identity = _identity(icon_top)
+    text_icon_options = (
+        (text_top, text, text_identity, text_confidence, text_margin, alt_identity, alt_margin),
+        (alt_top, text_alt, alt_identity, alt_confidence, alt_margin, text_identity, text_margin),
+    )
+    supported = [
+        (candidate, evidence, confidence)
+        for candidate, evidence, identity, confidence, margin, other_identity, other_margin in text_icon_options
+        if identity
+        and identity == icon_identity
+        and other_identity
+        and other_identity != identity
+        and confidence >= TEXT_ICON_MEDIUM_TEXT_CONFIDENCE
+        and margin >= TEXT_ICON_MEDIUM_TEXT_MARGIN
+        and other_margin <= TEXT_ICON_AMBIGUOUS_OTHER_MARGIN
+        and icon_confidence >= TEXT_ICON_MEDIUM_ICON_CONFIDENCE
+        and icon_margin >= TEXT_ICON_MEDIUM_ICON_MARGIN
+    ]
+    if len(supported) == 1:
+        candidate, evidence, confidence = supported[0]
+        return _candidate_from_top(
+            slot,
+            candidate,
+            evidence=evidence,
+            confidence=confidence,
+            rule="text_icon_temporal",
+            required_frames=3,
+            evidence_grade="medium",
         )
 
     # 两字体 Top-1 分歧时，只接受双方 Top-3 内唯一、各自距 Top-1 足够近的
@@ -377,6 +440,45 @@ def arbitrate_slot_candidates(
             candidates[index] = None
             rejection_reasons[index] = f"cross_slot_stable_identity_conflict:{candidate.identity}"
     return candidates, rejection_reasons
+
+
+def candidate_from_ocr_evidence(slot_index: int, evidence: Mapping[str, Any]) -> SlotCandidate | None:
+    """把已通过 runtime exact/confidence 门的私有 OCR 证据变成 medium 候选。"""
+
+    if str(evidence.get("state") or "") != "admitted":
+        return None
+    canonical_id = str(evidence.get("canonical_id") or "").strip()
+    name = str(evidence.get("name") or "").strip()
+    confidence = _number(evidence.get("confidence"))
+    if (
+        not canonical_id
+        or not name
+        or str(evidence.get("match_rule") or "") != "exact"
+        or confidence < 0.95
+    ):
+        return None
+    top = ({"augment_id": canonical_id, "name": name, "confidence": confidence},)
+    return SlotCandidate(
+        slot=slot_index,
+        augment_id=canonical_id,
+        name=name,
+        tier="",
+        summary="",
+        confidence=confidence,
+        rule="ocr_exact_fallback",
+        required_frames=3,
+        evidence_grade="medium",
+        diagnostic="ocr_exact_fallback",
+        top_candidates=top,
+        channels={
+            "ocr_exact": {
+                "confidence": confidence,
+                "match_rule": "exact",
+                "rgb_sha256": str(evidence.get("rgb_sha256") or ""),
+            }
+        },
+        recognition_key=normalize_augment_id(name) or canonical_id,
+    )
 
 
 def strong_evidence_identities(slot: Mapping[str, Any]) -> set[str]:

@@ -92,3 +92,59 @@ def test_three_slot_batch_matches_per_slot_float32_reference_top_three() -> None
             rtol=0.0,
             atol=1e-4,
         )
+
+
+def test_detect_slots_skips_only_stable_unchanged_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from PIL import Image
+
+    from hextech.infrastructure.vision import sidecar_batch
+
+    storage = SimpleNamespace(
+        icon_templates=(),
+        name_templates=(),
+        alt_name_templates=(),
+        observed_name_templates=(),
+    )
+    compute = SimpleNamespace(
+        icon_matrix=None,
+        name_matrix=None,
+        alt_name_matrix=None,
+        observed_name_matrix=None,
+    )
+    detected: list[int] = []
+    fingerprints = iter(("same-a", "changed-b", "same-c"))
+    monkeypatch.setattr(sidecar_batch, "_rank_matrices", lambda _index: storage)
+    monkeypatch.setattr(sidecar_batch, "_compute_matrices", lambda _index: compute)
+    monkeypatch.setattr(
+        sidecar_batch,
+        "_rank_batch_with_matrix",
+        lambda vectors, _templates, _matrix: [[] for _ in vectors],
+    )
+    monkeypatch.setattr(sidecar_batch, "slot_evidence_fingerprint", lambda *_args: next(fingerprints))
+    monkeypatch.setattr(
+        sidecar_batch,
+        "_detect_slot",
+        lambda _frame, _box, index, _templates, **_kwargs: detected.append(index)
+        or {"slot": index, "diagnostic": "flat_crop"},
+    )
+    frame = Image.new("RGB", (120, 80), "black")
+    boxes = ((0, 0, 20, 20), (20, 0, 40, 20), (40, 0, 60, 20))
+    name_boxes = ((0, 20, 30, 30), (30, 20, 60, 30), (60, 20, 90, 30))
+
+    slots, timing = sidecar_batch._detect_slots(
+        frame,
+        boxes,
+        (),
+        name_boxes=name_boxes,
+        name_masks=(None, None, None),
+        min_confidence=0.8,
+        stable_fingerprints=({"same-a"}, {"old-b"}, {"same-c"}),
+    )
+
+    assert detected == [1]
+    assert [slot.get("recognition_skipped", False) for slot in slots] == [True, False, True]
+    assert slots[1]["transition_observation"] == "content_absent"
+    assert all("transition_observation" not in slots[index] for index in (0, 2))
+    assert timing["skipped_stable_slots"] == 2

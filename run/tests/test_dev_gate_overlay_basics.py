@@ -41,8 +41,9 @@ def test_overlay_performance_probe_contract() -> None:
     }
     assert sample["latency"]["p50_ms"] == 240.0
     assert sample["latency"]["p95_ms"] == 510.0
-    assert sample["targets"]["recognition_p95_ms"] == 300.0
-    assert sample["targets"]["overlay_p95_ms"] == 500.0
+    assert sample["targets"]["recognition_p95_ms"] == 180.0
+    assert sample["targets"]["overlay_p95_ms"] == 900.0
+    assert sample["targets"]["render_p95_ms"] == 100.0
     assert sample["manual_acceptance_required"] is True
 
     module_text = (RUN_DIR / "tooling" / "acceptance" / "overlay_performance_probe.py").read_text(encoding="utf-8").lower()

@@ -19,8 +19,8 @@ from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.session.evidence import SessionEvidenceBundle, write_evidence_bundle
 
 
-# 一局实测约 58 份报告；20 条会把整局前半段证据冲掉（真机复现：
-# 出问题的 epoch 1-4 报告全部丢失）。200 可完整留住至少 3 局。
+# 一局实测约 58 份报告；200 可完整留住至少 3 局。该值保留为公开合同，
+# 实际枚举和淘汰只由 diagnostic_retention 执行，writer 不再扫描报告目录。
 OVERLAY_SESSION_REPORT_LIMIT = 200
 
 
@@ -34,10 +34,18 @@ class _WriteTask:
 class OverlayReportWriter:
     """单线程有界写入器；相同 key 的等待任务会被最新内容替换。"""
 
-    def __init__(self, report_dir: Path, evidence_dir: Path, *, max_queue: int = 8) -> None:
+    def __init__(
+        self,
+        report_dir: Path,
+        evidence_dir: Path,
+        *,
+        max_queue: int = 8,
+        retention_worker: Any | None = None,
+    ) -> None:
         self.report_dir = Path(report_dir)
         self.evidence_dir = Path(evidence_dir)
         self.max_queue = max(1, int(max_queue))
+        self._retention_worker = retention_worker
         self._condition = Condition()
         self._tasks: deque[_WriteTask] = deque()
         self._stopping = False
@@ -136,6 +144,9 @@ class OverlayReportWriter:
                     self._write_session(task.payload)
                 else:
                     self._write_evidence(task.payload)
+                request = getattr(self._retention_worker, "request", None)
+                if callable(request):
+                    request()
                 with self._condition:
                     self._written_count += 1
             except Exception:
@@ -162,14 +173,6 @@ class OverlayReportWriter:
         )
         atomic_write_json(target, report, ensure_ascii=False, indent=2)
         atomic_write_json(self.report_dir / "latest.json", report, ensure_ascii=False, indent=2)
-        reports = sorted(
-            (path for path in self.report_dir.glob("overlay-session-*.json") if path.is_file()),
-            key=lambda path: (path.stat().st_mtime_ns, path.name),
-            reverse=True,
-        )
-        for stale in reports[OVERLAY_SESSION_REPORT_LIMIT:]:
-            if stale.parent.resolve() == self.report_dir.resolve():
-                stale.unlink(missing_ok=True)
 
     def _write_evidence(self, payload: Mapping[str, Any]) -> None:
         bundle = payload.get("bundle")

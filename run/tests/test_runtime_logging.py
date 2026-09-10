@@ -55,8 +55,8 @@ def test_dev_profile_installs_full_summary_error_logs(tmp_path, monkeypatch):
         if getattr(handler, "_hextech_handler_name", "") == "dev_full_jsonl"
     ]
     assert len(full_handlers) == 1
-    assert getattr(full_handlers[0], "maxBytes", 0) == 10 * 1024 * 1024
-    assert getattr(full_handlers[0], "backupCount", 0) == 5
+    assert getattr(full_handlers[0], "maxBytes", 0) == 2 * 1024 * 1024
+    assert getattr(full_handlers[0], "backupCount", 0) == 2
 
     _reset_hextech_logging()
 
@@ -111,6 +111,26 @@ def test_packaged_summary_filters_scrapling_request_noise_but_keeps_aggregate(tm
     summary = log_utils.get_runtime_log_paths()["summary"].read_text(encoding="utf-8")
     assert "example.invalid" not in summary
     assert "Apex 来源结束：成功 172，失败 0" in summary
+    _reset_hextech_logging()
+
+
+def test_packaged_scrapling_filter_covers_logger_hierarchy_and_keeps_warnings(tmp_path, monkeypatch):
+    from hextech.infrastructure.observability import logging as log_utils
+
+    _reset_hextech_logging()
+    monkeypatch.setattr(log_utils, "_runtime_root_dir", lambda: tmp_path)
+    log_utils.install_runtime_logging(profile="packaged")
+
+    logging.getLogger("scrapling").info("Fetched (200) https://example.invalid/root")
+    logging.getLogger("scrapling.fetchers").info("fEtChEd (200) https://example.invalid/child")
+    logging.getLogger("scrapling.retry").info("ReTrY 1 https://example.invalid/retry")
+    logging.getLogger("scrapling").warning("timeout while fetching public source")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+    summary = log_utils.get_runtime_log_paths()["summary"].read_text(encoding="utf-8")
+    assert "example.invalid" not in summary
+    assert "timeout while fetching public source" in summary
     _reset_hextech_logging()
 
 

@@ -29,6 +29,8 @@ from hextech.interfaces.overlay.host_common import (
     SWP_NOACTIVATE,
     SWP_NOMOVE,
     SWP_NOSIZE,
+    SWP_SHOWWINDOW,
+    SW_SHOWNOACTIVATE,
     VK_MENU,
     WINEVENTPROC,
     WINEVENT_OUTOFCONTEXT,
@@ -45,7 +47,7 @@ from hextech.interfaces.overlay.host_common import (
     ForegroundEventHook,
     HotkeyController,
 )
-from hextech.modules.data.overlay_source import prepare_shared_overlay_data
+from hextech.modules.data.overlay_source import OverlayDataSource, SharedOverlayDataSource
 from hextech.modules.vision.window import (
     configure_process_dpi_awareness,
     find_lol_game_window,
@@ -55,6 +57,8 @@ from hextech.modules.vision.window_titles import LOL_GAME_WINDOW_TITLE
 
 
 logger = logging.getLogger(__name__)
+WDA_NONE = 0x00000000
+WDA_EXCLUDEFROMCAPTURE = 0x00000011
 
 def build_overlay_window_config() -> dict[str, Any]:
     """返回 overlay 的可验收窗口能力配置。"""
@@ -75,10 +79,13 @@ def build_overlay_window_config() -> dict[str, Any]:
         "show_missing_synergy_reason": True,
         "follow_window_titles": [LOL_GAME_WINDOW_TITLE],
         "top_offset": 132,
-        "event_poll_ms": 120,
-        "fast_event_poll_ms": 60,
+        # 三档轮询：无游戏窗口 250ms、游戏存在但未选择 50ms、选择期 16ms。
+        "event_poll_ms": 250,
+        "game_event_poll_ms": 50,
+        "fast_event_poll_ms": 16,
         "fast_event_hold_ms": 1200,
         "diagnostic_mode": False,
+        "capture_exclusion_required": True,
     }
 
 
@@ -88,13 +95,15 @@ def _set_dpi_awareness() -> None:
         logger.debug("设置 overlay DPI 感知失败。")
 
 
-def _prepare_host_hint_cache() -> str:
+def _prepare_host_hint_cache(data_source: OverlayDataSource | None = None) -> dict[str, Any]:
+    """用 Host 的同一个数据源预热 generation，并返回首次 Hint 副本。"""
+
+    source = data_source or SharedOverlayDataSource()
     try:
-        prepare_shared_overlay_data()
+        return source.read_hint_cache()
     except Exception as exc:
         logger.warning("overlay host 启动前准备 hint cache 失败：%s", exc, exc_info=True)
-        return exc.__class__.__name__
-    return ""
+        return {}
 
 
 def _root_hwnd(root: tk.Tk) -> int:
@@ -106,19 +115,266 @@ def _root_hwnd(root: tk.Tk) -> int:
     return top_hwnd or raw_hwnd
 
 
-def _apply_overlay_rect(root: tk.Tk, rect: tuple[int, int, int, int]) -> None:
+def _query_overlay_capture_exclusion(
+    hwnd: int,
+    *,
+    user32: Any | None = None,
+) -> dict[str, Any]:
+    """回读窗口捕获排除状态；API 缺失与调用失败保持可区分。"""
+
+    if not hwnd:
+        return {
+            "status": "failed",
+            "requested_affinity": WDA_EXCLUDEFROMCAPTURE,
+            "applied_affinity": WDA_NONE,
+            "set_ok": False,
+            "query_ok": False,
+            "error_code": 0,
+            "reason": "overlay_hwnd_missing",
+        }
+    try:
+        resolved = user32 if user32 is not None else ctypes.windll.user32
+        query = getattr(resolved, "GetWindowDisplayAffinity")
+    except (AttributeError, OSError):
+        return {
+            "status": "unsupported",
+            "requested_affinity": WDA_EXCLUDEFROMCAPTURE,
+            "applied_affinity": WDA_NONE,
+            "set_ok": False,
+            "query_ok": False,
+            "error_code": 0,
+            "reason": "display_affinity_api_unavailable",
+        }
+    affinity = wintypes.DWORD(WDA_NONE)
+    try:
+        query_ok = bool(query(int(hwnd), ctypes.byref(affinity)))
+    except (OSError, TypeError, ValueError):
+        query_ok = False
+    applied = int(affinity.value)
+    return {
+        "status": "applied" if query_ok and applied == WDA_EXCLUDEFROMCAPTURE else "failed",
+        "requested_affinity": WDA_EXCLUDEFROMCAPTURE,
+        "applied_affinity": applied,
+        "set_ok": False,
+        "query_ok": query_ok,
+        "error_code": 0,
+        "reason": "" if query_ok and applied == WDA_EXCLUDEFROMCAPTURE else "display_affinity_readback_mismatch",
+    }
+
+
+def _ensure_overlay_capture_exclusion(
+    root: tk.Tk,
+    *,
+    user32: Any | None = None,
+) -> dict[str, Any]:
+    """在首次映射前设置并回读 WDA_EXCLUDEFROMCAPTURE。"""
+
+    hwnd = _root_hwnd(root)
+    try:
+        resolved = user32 if user32 is not None else ctypes.windll.user32
+        setter = getattr(resolved, "SetWindowDisplayAffinity")
+        getattr(resolved, "GetWindowDisplayAffinity")
+    except (AttributeError, OSError):
+        return _query_overlay_capture_exclusion(hwnd, user32=user32)
+    before = _query_overlay_capture_exclusion(hwnd, user32=resolved)
+    if before.get("status") == "applied":
+        return before
+    try:
+        if hasattr(ctypes, "set_last_error"):
+            ctypes.set_last_error(0)
+        set_ok = bool(setter(int(hwnd), WDA_EXCLUDEFROMCAPTURE))
+        error_code = int(ctypes.get_last_error()) if hasattr(ctypes, "get_last_error") else 0
+    except (OSError, TypeError, ValueError):
+        set_ok = False
+        error_code = 0
+    result = _query_overlay_capture_exclusion(hwnd, user32=resolved)
+    result["set_ok"] = set_ok
+    result["error_code"] = error_code
+    if result.get("status") != "applied" and not result.get("reason"):
+        result["reason"] = "display_affinity_set_failed"
+    return result
+
+
+def _apply_overlay_rect(
+    root: tk.Tk,
+    rect: tuple[int, int, int, int],
+    *,
+    show: bool = False,
+) -> bool:
     """用整数虚拟屏坐标定位 client rect，兼容左侧或上方副屏。"""
 
     left, top, right, bottom = rect
-    ctypes.windll.user32.SetWindowPos(
-        _root_hwnd(root),
-        HWND_TOPMOST,
-        int(left),
-        int(top),
-        max(1, int(right) - int(left)),
-        max(1, int(bottom) - int(top)),
-        SWP_NOACTIVATE,
+    flags = SWP_NOACTIVATE | (SWP_SHOWWINDOW if show else 0)
+    return bool(
+        ctypes.windll.user32.SetWindowPos(
+            _root_hwnd(root),
+            HWND_TOPMOST,
+            int(left),
+            int(top),
+            max(1, int(right) - int(left)),
+            max(1, int(bottom) - int(top)),
+            flags,
+        )
     )
+
+
+def _show_overlay_hwnd(root: tk.Tk, rect: tuple[int, int, int, int] | None) -> int:
+    """以不抢焦点的方式映射 HWND，并显式携带 ``SWP_SHOWWINDOW``。"""
+
+    hwnd = _root_hwnd(root)
+    user32 = ctypes.windll.user32
+    user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
+    if rect is not None:
+        _apply_overlay_rect(root, rect, show=True)
+    else:
+        user32.SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )
+    return hwnd
+
+
+def _window_client_rect_on_screen(hwnd: int) -> tuple[int, int, int, int] | None:
+    """在当前进程 DPI awareness context 内返回窗口 client rect 的屏幕物理坐标。"""
+
+    user32 = ctypes.windll.user32
+    rect = wintypes.RECT()
+    origin = wintypes.POINT(0, 0)
+    if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+        return None
+    if not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
+        return None
+    width = max(0, int(rect.right) - int(rect.left))
+    height = max(0, int(rect.bottom) - int(rect.top))
+    return (int(origin.x), int(origin.y), int(origin.x) + width, int(origin.y) + height)
+
+
+def _query_window_cloaked(hwnd: int) -> tuple[bool | None, str]:
+    """查询 DWM cloak；API 不可用时返回 degraded，而不是伪造失败。"""
+
+    try:
+        dwmapi = ctypes.windll.dwmapi
+        value = wintypes.DWORD(0)
+        result = int(
+            dwmapi.DwmGetWindowAttribute(
+                hwnd,
+                14,  # DWMWA_CLOAKED
+                ctypes.byref(value),
+                ctypes.sizeof(value),
+            )
+        )
+    except (AttributeError, OSError):
+        return None, "unavailable"
+    if result != 0:
+        return None, f"error_{result & 0xFFFFFFFF:08x}"
+    return bool(value.value), "ok"
+
+
+def _probe_overlay_hwnd(
+    root: tk.Tk,
+    config: Mapping[str, Any],
+    expected_rect: tuple[int, int, int, int] | None,
+    *,
+    rect_tolerance: int = 2,
+) -> dict[str, Any]:
+    """读取 mapped/style/client-rect 事实；``WS_VISIBLE`` 只作为其中一个信号。"""
+
+    try:
+        hwnd = _root_hwnd(root)
+        user32 = ctypes.windll.user32
+        valid = bool(hwnd and user32.IsWindow(hwnd))
+        style = _get_window_exstyle(hwnd) if valid else 0
+        actual_rect = _window_client_rect_on_screen(hwnd) if valid else None
+        cloaked, dwm_status = _query_window_cloaked(hwnd) if valid else (None, "not_queried")
+        capture_exclusion = (
+            _query_overlay_capture_exclusion(hwnd, user32=user32)
+            if valid
+            else _query_overlay_capture_exclusion(0, user32=user32)
+        )
+        style_checks = {
+            "topmost": bool(style & WS_EX_TOPMOST),
+            "layered": bool(style & WS_EX_LAYERED),
+            "transparent": bool(style & WS_EX_TRANSPARENT)
+            if bool(config.get("click_through", True))
+            else True,
+            "no_activate": bool(style & WS_EX_NOACTIVATE)
+            if bool(config.get("no_activate", True))
+            else True,
+            "toolwindow": bool(style & WS_EX_TOOLWINDOW),
+        }
+        tolerance = max(0, int(rect_tolerance))
+        rect_matches = bool(
+            expected_rect is not None
+            and actual_rect is not None
+            and all(abs(int(actual) - int(expected)) <= tolerance for actual, expected in zip(actual_rect, expected_rect))
+        )
+        return {
+            "overlay_hwnd": int(hwnd or 0),
+            "valid": valid,
+            "ws_visible": bool(valid and user32.IsWindowVisible(hwnd)),
+            "iconic": bool(valid and user32.IsIconic(hwnd)),
+            "cloaked": cloaked,
+            "dwm_status": dwm_status,
+            "expected_client_rect": list(expected_rect) if expected_rect is not None else [],
+            "actual_rect": list(actual_rect) if actual_rect is not None else [],
+            "rect_matches": rect_matches,
+            "style_checks": style_checks,
+            "style_ok": all(style_checks.values()),
+            "capture_exclusion": capture_exclusion,
+            "error": "",
+        }
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        return {
+            "overlay_hwnd": 0,
+            "valid": False,
+            "ws_visible": False,
+            "iconic": False,
+            "cloaked": None,
+            "dwm_status": "unavailable",
+            "expected_client_rect": list(expected_rect) if expected_rect is not None else [],
+            "actual_rect": [],
+            "rect_matches": False,
+            "style_checks": {},
+            "style_ok": False,
+            "capture_exclusion": {
+                "status": "failed",
+                "requested_affinity": WDA_EXCLUDEFROMCAPTURE,
+                "applied_affinity": WDA_NONE,
+                "set_ok": False,
+                "query_ok": False,
+                "error_code": 0,
+                "reason": type(exc).__name__,
+            },
+            "error": type(exc).__name__,
+        }
+
+
+def _sample_screen_pixels(points: list[tuple[int, int]]) -> list[tuple[int, int, int] | None]:
+    """只读取调用方给定的有限屏幕点；不抓取、不保存任何周边像素。"""
+
+    if not points:
+        return []
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    hdc = user32.GetDC(0)
+    if not hdc:
+        return [None] * len(points)
+    pixels: list[tuple[int, int, int] | None] = []
+    try:
+        for x, y in points:
+            color = int(gdi32.GetPixel(hdc, int(x), int(y))) & 0xFFFFFFFF
+            if color == 0xFFFFFFFF:
+                pixels.append(None)
+            else:
+                pixels.append((color & 0xFF, (color >> 8) & 0xFF, (color >> 16) & 0xFF))
+    finally:
+        user32.ReleaseDC(0, hdc)
+    return pixels
 
 
 def _get_window_exstyle(hwnd: int) -> int:
@@ -198,11 +454,14 @@ def _apply_overlay_window_styles(root: tk.Tk, *, click_through: bool, no_activat
 def _ensure_overlay_window_styles(root: tk.Tk, config: Mapping[str, Any]) -> bool:
     """显示或重定位后再次保证透明点击穿透，防止 Tk 覆盖扩展样式。"""
 
-    return _apply_overlay_window_styles(
+    changed = _apply_overlay_window_styles(
         root,
         click_through=bool(config.get("click_through", True)),
         no_activate=bool(config.get("no_activate", True)),
     )
+    if bool(config.get("capture_exclusion_required", False)):
+        _ensure_overlay_capture_exclusion(root)
+    return changed
 
 
 def _poll_mode_hotkey(controller: HotkeyController, user32: Any) -> None:

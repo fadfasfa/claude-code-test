@@ -27,6 +27,10 @@ def _event(*, epoch: int, observed_at: float, active: bool = True) -> dict:
                 "margin": 0.03,
                 "top_candidates": [{"augment_id": "202", "name": "错误图标", "confidence": 0.74}],
             },
+            "observed_name": {
+                "margin": 0.11,
+                "top_candidates": [{"augment_id": "101", "name": "双发快射", "confidence": 0.96}],
+            },
         },
     }
     return {
@@ -44,7 +48,21 @@ def _event(*, epoch: int, observed_at: float, active: bool = True) -> dict:
             "name_residue": [True, True, True],
             "cursor_over_slots": [1],
             "selection_click": False,
+            "selection_window_active": active,
+            "mouse_event_sequence": 7 if active else 0,
+            "mouse_event_observed_at": observed_at - 0.08 if active else 0.0,
+            "transition_source": "async_mouse_down" if active else "",
+            "transition_slot": 1 if active else None,
             "scene_temporal_state": "grace_hold" if active else "ended",
+            "matching_timing": {
+                "fingerprint_ms": 12.3456,
+                "icon_projection_ms": 20.0,
+                "name_projection_ms": 30.0,
+                "recall_top_k_ms": 4.0,
+                "decision_ms": 5.0,
+                "total_ms": 71.3456,
+                "private_matrix_shape": [516, 4096],
+            },
         },
         "timing": {
             "capture_started_at": observed_at - 0.05,
@@ -80,24 +98,41 @@ def test_selection_timeline_appends_real_observations_without_images(tmp_path: P
     assert [entry["observation_seq"] for entry in entries] == [1, 2]
     assert entries[0]["recognition_completed_at"] == 10.0
     assert entries[0]["capture_status"] == "captured"
+    assert entries[0]["selection_type"] == "hextech"
+    assert entries[0]["selection_window_active"] is True
+    assert entries[0]["mouse_event_sequence"] == 7
+    assert entries[0]["mouse_event_observed_at"] == 9.92
+    assert entries[0]["transition_source"] == "async_mouse_down"
+    assert entries[0]["transition_slot"] == 1
     assert entries[0]["source"] == {"reason": ""}
     assert entries[0]["scene_present"] is True
     assert entries[0]["cursor_over_slots"] == [1]
     assert entries[0]["latency_ms"] == {"capture": 30.0, "recognition": 20.0, "total": 50.0}
+    assert entries[0]["matching_timing"] == {
+        "fingerprint_ms": 12.346,
+        "icon_projection_ms": 20.0,
+        "name_projection_ms": 30.0,
+        "recall_top_k_ms": 4.0,
+        "decision_ms": 5.0,
+        "total_ms": 71.346,
+    }
     assert entries[0]["slots"][0]["text"]["name"] == "双发快射"
     assert entries[0]["slots"][0]["text"]["top_candidates"] == [
         {"augment_id": "101", "recognition_key": "", "name": "双发快射", "confidence": 0.91}
     ]
     assert entries[0]["slots"][0]["icon"]["name"] == "错误图标"
-    assert not any("image" in key or "frame" in key for key in entries[0])
+    assert entries[0]["slots"][0]["observed_name"]["name"] == "双发快射"
+    # 可追溯的标量帧 ID 不包含图像；旧事件无 runner ID 时仍为 0，不伪造证据。
+    assert entries[0]["captured_frame_id"] == 0
+    assert not any("image" in key or "frame" in key for key in entries[0] if key != "captured_frame_id")
 
 
-def test_selection_timeline_ignores_idle_events_and_keeps_latest_twenty_epochs(
+def test_selection_timeline_writer_ignores_idle_and_retention_keeps_latest_twenty_epochs(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
+    from hextech.infrastructure.persistence.diagnostic_retention import apply_diagnostic_retention
+
     trace_path = tmp_path / "state" / "overlay_vision_trace.v1.json"
-    monkeypatch.setattr(sidecar_diagnostics, "VISION_TIMELINE_EPOCH_LIMIT", 20)
 
     assert sidecar_diagnostics.write_selection_timeline_observation(
         _event(epoch=1, observed_at=1.0, active=False), trace_path
@@ -107,7 +142,12 @@ def test_selection_timeline_ignores_idle_events_and_keeps_latest_twenty_epochs(
             _event(epoch=epoch, observed_at=float(epoch)), trace_path
         )
 
-    files = sorted((trace_path.parent / "overlay_vision_timelines").glob("*.jsonl"))
+    timeline_root = trace_path.parent / "overlay_vision_timelines"
+    assert len(list(timeline_root.glob("*.jsonl"))) == 22
+
+    apply_diagnostic_retention(tmp_path, force=True)
+
+    files = sorted(timeline_root.glob("*.jsonl"))
     assert len(files) == 20
     assert not any(path.name.endswith("e0001.jsonl") for path in files)
     assert not any(path.name.endswith("e0002.jsonl") for path in files)
@@ -149,9 +189,19 @@ def test_diagnostic_dump_contains_only_bounded_rois_and_observation_metadata(tmp
         "observation_seq": 3,
         "selection_epoch": 9,
         "selection_revision": 1,
+        "selection_type": "hextech",
+        "selection_window_active": True,
         "capture_started_at": 19.95,
         "captured_at": 19.98,
         "recognition_completed_at": 20.0,
+    }
+    assert report["matching_timing"] == {
+        "fingerprint_ms": 12.346,
+        "icon_projection_ms": 20.0,
+        "name_projection_ms": 30.0,
+        "recall_top_k_ms": 4.0,
+        "decision_ms": 5.0,
+        "total_ms": 71.346,
     }
 
 
@@ -324,3 +374,23 @@ def test_trace_history_ignores_cursor_flapping_between_frames(tmp_path: Path) ->
 
     entries = json.loads(history_path.read_text(encoding="utf-8"))["entries"]
     assert len(entries) == 2
+
+
+def test_timeline_is_bounded_and_reserves_terminal_marker(tmp_path: Path) -> None:
+    trace_path = tmp_path / "state" / "overlay_vision_trace.v1.json"
+    for index in range(600):
+        sidecar_diagnostics.write_selection_timeline_observation(
+            _event(epoch=77, observed_at=100.0 + index / 10.0),
+            trace_path,
+        )
+    ended = _event(epoch=77, observed_at=200.0, active=False)
+    ended["source"].update({"reason": "gameflow_ended", "scene_state": "paused"})
+    ended["timing"]["observation_kind"] = "visibility_probe"
+    target = sidecar_diagnostics.write_selection_timeline_observation(ended, trace_path)
+
+    assert target is not None
+    entries = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
+    assert target.stat().st_size <= 1024 * 1024
+    assert len(entries) <= 512
+    assert sum(entry.get("observation_kind") == "diagnostic_truncated" for entry in entries) == 1
+    assert entries[-1]["source_reason"] == "gameflow_ended"

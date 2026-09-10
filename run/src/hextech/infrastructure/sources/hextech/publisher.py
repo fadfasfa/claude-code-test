@@ -36,9 +36,11 @@ def publish_hextech_run(
     outcomes: tuple[ItemOutcome, ...],
     started_at: str,
     metadata_ids: Iterable[object] | None = None,
+    metadata_entries: Mapping[object, object] | None = None,
     upstream_version: str = "",
     upstream_date: str = "",
     upstream_marker_sha256: str = "",
+    observed_source_ids: Iterable[object] = (),
     catalog_entries: Sequence[Mapping[str, Any]] | None = None,
     last_good_coverage: Mapping[str, Any] | None = None,
     promote_current: bool = False,
@@ -64,6 +66,7 @@ def publish_hextech_run(
     coverage = build_hextech_coverage_report(
         frame,
         metadata_ids=source_ids,
+        metadata_entries=metadata_entries,
         catalog_entries=(
             tuple(catalog_entries)
             if catalog_entries is not None
@@ -72,6 +75,10 @@ def publish_hextech_run(
         upstream_version=upstream_version,
         upstream_date=upstream_date,
         upstream_marker_sha256=upstream_marker_sha256,
+        observed_source_ids=observed_source_ids,
+        catalog_generation_id=catalog.generation_id,
+        catalog_sha256=catalog.content_sha256,
+        catalog_manifest_sha256=catalog.manifest_sha256,
         last_good=last_good_coverage,
     )
     try:

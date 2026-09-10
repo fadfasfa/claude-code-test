@@ -9,7 +9,16 @@ from hextech.infrastructure.persistence.cohort import CohortPromotionError, Coho
 from hextech.modules.data.ports.atomic import atomic_write_json
 
 
-DEPENDENCIES = ("catalog", "hextech", "apex", "mayhem")
+DEPENDENCIES = ("catalog", "aramkit", "blitz", "apex", "mayhem")
+
+
+def test_non_journal_state_writer_uses_same_lock_as_promotion(tmp_path: Path) -> None:
+    seed_writer = CohortPromotionStore(tmp_path)
+    refresh_writer = CohortPromotionStore(tmp_path)
+
+    with seed_writer.exclusive():
+        with pytest.raises(CohortPromotionError, match="另一个进程"):
+            refresh_writer.begin()
 
 
 def _pointer(label: str) -> dict[str, str]:
@@ -124,3 +133,27 @@ def test_generation_id_mismatch_keeps_journal_recoverable(tmp_path: Path) -> Non
     assert store.load().phase.value == "dependencies_promoted"
     store.rollback()
     assert _read(store.pointer_path("generation"))["current_generation_id"] == "old-current"
+
+
+def test_generation_state_rolls_back_schedule_and_recovery_before_phase_commit(tmp_path: Path) -> None:
+    store = _write_initial_pointers(tmp_path)
+    old_schedule = {"schema_version": 1, "generation_id": "old-current", "sources": {}}
+    old_recovery = {"schema_version": 1, "generation_id": "old-current"}
+    atomic_write_json(tmp_path / "state/data-service/refresh_schedule.v1.json", old_schedule)
+    atomic_write_json(tmp_path / "state/data-service/cohort_recovery_point.v1.json", old_recovery)
+
+    store.begin()
+    for role in DEPENDENCIES:
+        store.record_target(role, _pointer(f"new-{role}"))
+    store.promote_dependencies()
+    atomic_write_json(store.pointer_path("generation"), {"current_generation_id": "new-current"})
+    atomic_write_json(tmp_path / "snapshots/previous.v2.json", {"generation_id": "old-current"})
+    store.stage_generation_state(
+        schedule={"schema_version": 1, "generation_id": "new-current", "sources": {}},
+        recovery_point={"schema_version": 1, "generation_id": "new-current"},
+    )
+    store.close()
+
+    assert CohortPromotionStore(tmp_path).recover() == "rolled_back"
+    assert _read(tmp_path / "state/data-service/refresh_schedule.v1.json") == old_schedule
+    assert _read(tmp_path / "state/data-service/cohort_recovery_point.v1.json") == old_recovery

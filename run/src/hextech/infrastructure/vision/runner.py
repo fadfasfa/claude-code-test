@@ -1,40 +1,51 @@
-"""overlay vision sidecar 运行器。
-
-本模块收口 CLI 参数解析、一次性/常驻运行、sidecar 状态写入和 bootstrap 诊断。
-调用方: hextech.infrastructure.vision.sidecar 兼容入口。
-"""
-
+"""Overlay Vision Sidecar 运行器。"""
 from __future__ import annotations
-
-import argparse
 import logging
 import os
-import re
 import time
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, Mapping
 
-import psutil
-
-from hextech.modules.data.catalog.runtime_store import build_runtime_state_path
 from hextech.modules.data.ports.paths import get_var_dir
-from hextech.modules.vision.events import build_overlay_event, write_overlay_event
-from hextech.modules.vision.instance_lock import overlay_instance_lock
+from hextech.modules.vision.events import write_overlay_event
+from hextech.modules.vision import instance_lock as _instance_lock
 from hextech.modules.data.overlay_source import SharedOverlayDataSource
 from hextech.infrastructure.vision.state import SelectionTracker
+from hextech.infrastructure.vision.failure_evidence import FailureEvidenceCollector, FailureEvidenceWriter
+from hextech.infrastructure.vision.diagnostic_writer import VisionDiagnosticWriter
+from hextech.infrastructure.vision.roi_diagnostic_writer import RoiDiagnosticWriter
 from hextech.modules.data.ports.atomic import atomic_write_json
-from hextech.modules.vision.window import game_window_identity
+from hextech.modules.vision.window import game_window_identity, window_display_context
 from hextech.modules.session.build_identity import current_build_id
 from hextech.modules.vision.gameflow import probe_gameflow_state
-
 from hextech.infrastructure.vision.template_runtime import load_or_build_default_template_runtime
 from hextech.infrastructure.vision.gameflow_pause import PausedGameflowProbe, pause_identity, resolve_game_visibility_pause
 from hextech.infrastructure.vision.sidecar_diagnostics import DiagnosticEpochSampler as _DiagnosticEpochSampler
-from hextech.infrastructure.vision.sidecar_diagnostics import emit_cli_event as _emit_cli_event
 from hextech.infrastructure.vision.sidecar_matching import VisionComputeMemoryError, prepare_compute_rank_matrices
+from hextech.infrastructure.vision.ocr_shadow import OcrShadowRuntime
+from hextech.infrastructure.vision.mouse_transition import MouseTransitionObserver
+from hextech.infrastructure.vision.held_scene import HeldSceneEvidence
+from hextech.infrastructure.vision.frame_pipeline import process_captured_frame
+from hextech.infrastructure.vision.diagnostic_capture_control import ExplicitCaptureControl
+from hextech.infrastructure.vision.scene_recovery import SceneRecoveryReference
+from hextech.infrastructure.vision import sidecar_status as _status
+from hextech.infrastructure.vision.runner_lifecycle import run_loop  # noqa: F401 - public facade
+from hextech.infrastructure.vision.runner_helpers import (
+    stable_slot_fingerprints as _stable_slot_fingerprints,  # noqa: F401 - compatibility
+    captured_window_still_current,
+    held_request_for_frame,
+    roi_dump_signature,
+    next_held_scene_evidence,
+    recovery_capture_for_frame,
+    advance_recovery_event,
+    current_snapshot_generation_id as _current_snapshot_generation_id,
+    game_window_mode_pause_reason,
+    game_window_mode_payload,
+    mutable_string_key_mapping as _mutable_string_key_mapping,
+    sanitize_bootstrap_error_message as _sanitize_bootstrap_error_message,  # noqa: F401 - public facade
+)
 
 logger = logging.getLogger(__name__)
-
 DEFAULT_MIN_CONFIDENCE = 0.80
 DEFAULT_LOOP_FRAME_INTERVAL_MS = 80
 DEFAULT_LOOP_SCAN_FRAME_INTERVAL_MS = 160
@@ -43,66 +54,28 @@ DEFAULT_LOOP_FAST_HOLD_SECONDS = 1.2
 DEFAULT_LOOP_HEARTBEAT_SECONDS = 1.0
 PERSISTENT_CAPTURE_FAILURE_SECONDS = 3.0
 
-SIDECAR_STATUS_FILE = Path(build_runtime_state_path("game_overlay_sidecar_status.json"))
+SIDECAR_STATUS_FILE = _status.STATUS_FILE
 SIDECAR_READY_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_FILE"
 SIDECAR_READY_TOKEN_ENV = "HEXTECH_OVERLAY_SIDECAR_READY_TOKEN"
 SIDECAR_BOOTSTRAP_FILE_ENV = "HEXTECH_OVERLAY_SIDECAR_BOOTSTRAP_FILE"
-SIDECAR_GENERATION_ENV = "HEXTECH_OVERLAY_GENERATION"
+SIDECAR_GENERATION_ENV = _status.GENERATION_ENV
 SIDECAR_EXIT_FILE_ENV = "HEXTECH_OVERLAY_EXIT_FILE"
+VISION_TARGET_GENERATION_ENV = "HEXTECH_VISION_TARGET_GENERATION_ID"
 SIDECAR_INSTANCE_LOCK_FILE = get_var_dir() / "locks" / "game_overlay_sidecar.lock"
-
-def _sidecar_pid_started_at() -> float:
-    """使用 OS 创建时间防止 Supervisor 把 PID 复用误判为原 sidecar。"""
-
-    try:
-        return float(psutil.Process(os.getpid()).create_time())
-    except (psutil.Error, OSError):
-        return time.time()
-
-
-SIDECAR_PID_STARTED_AT = _sidecar_pid_started_at()
-
-
-def _mutable_string_key_mapping(value: object) -> dict[str, Any]:
-    """把外部事件字典收窄为可写 source，避免跨模块 Mapping 类型泄漏。"""
-
-    if not isinstance(value, Mapping):
-        return {}
-    source = cast(Mapping[object, Any], value)
-    return {str(key): item for key, item in source.items()}
+_SIDECAR_DEBUG_DUMP_ENABLED = False
+overlay_instance_lock = _instance_lock.overlay_instance_lock
+_publish_runtime_fields = _status.publish_runtime_fields
+SIDECAR_PID_STARTED_AT = _status.PID_STARTED_AT
 
 
 def _write_sidecar_status(status: str, **fields: Any) -> None:
     """写入 sidecar 分阶段状态；失败只影响诊断，不阻断识别循环。"""
-
-    generation = str(fields.get("generation") or os.environ.get(SIDECAR_GENERATION_ENV) or "")
-    payload = dict(fields)
-    # cache/runtime 诊断可能也带 schema_version；进程契约字段最后写入，禁止被覆盖。
-    payload.update({
-        "schema_version": 2,
-        "build_id": current_build_id(),
-        "status": status,
-        "pid": os.getpid(),
-        "pid_started_at": SIDECAR_PID_STARTED_AT,
-        "heartbeat_at": time.time(),
-        "generation": generation,
-        "updated_at": time.time(),
-    })
     try:
-        atomic_write_json(SIDECAR_STATUS_FILE, payload, ensure_ascii=False, indent=2)
+        _status.debug_dump_enabled = _SIDECAR_DEBUG_DUMP_ENABLED
+        _status.STATUS_FILE = SIDECAR_STATUS_FILE
+        _status.write_status(status, **fields)
     except OSError:
         logger.debug("写入 Vision sidecar 状态失败。", exc_info=True)
-
-
-def _sanitize_bootstrap_error_message(value: object) -> str:
-    """bootstrap 仅保留可诊断错误，不暴露本机用户目录。"""
-
-    text = str(value or "").strip()
-    home = str(Path.home())
-    if home:
-        text = text.replace(home, "<home>")
-        text = text.replace(home.replace("\\", "/"), "<home>")
-    return re.sub(r"(?i)\b[a-z]:[\\/][^\s；;,]+", "<path>", text)
 
 
 def _write_sidecar_bootstrap_from_env(state: str, **fields: Any) -> None:
@@ -136,6 +109,7 @@ def _write_sidecar_ready_from_env(
 
     startup_seconds = round(max(0.0, time.perf_counter() - started_at), 3)
     profile = dict(startup_profile or {})
+    _publish_runtime_fields(profile)
     _write_sidecar_status(
         "running",
         phase="ready",
@@ -211,70 +185,23 @@ def run_once(
 ) -> dict[str, Any]:
     """执行一次短窗口识别；无 LoL 窗口时写入 inactive 诊断事件。"""
 
-    from hextech.infrastructure.vision import sidecar as vision_sidecar_module
+    from hextech.infrastructure.vision.runner_once import run_once_impl
 
-    vision_sidecar: Any = vision_sidecar_module
-
-    started_at = time.perf_counter()
-    vision_sidecar._set_dpi_awareness()
-    _write_sidecar_status("starting", phase="hint_cache_load")
-    data_source = SharedOverlayDataSource()
-    hint_cache = data_source.read_hint_cache()
-    runtime = load_or_build_default_template_runtime(
-        hint_cache=hint_cache,
-        status_callback=lambda phase, fields: _write_sidecar_status(
-            "starting",
-            phase=phase,
-            startup_seconds=round(time.perf_counter() - started_at, 3),
-            **dict(fields),
-        ),
+    return run_once_impl(
+        preset=preset,
+        write_event=write_event,
+        event_path=event_path,
+        min_confidence=min_confidence,
+        required_frames=required_frames,
+        frame_interval_ms=frame_interval_ms,
+        debug_dump_dir=debug_dump_dir,
+        write_status=_write_sidecar_status,
+        publish_runtime_fields=_publish_runtime_fields,
+        prepare_compute_runtime=_prepare_compute_runtime,
     )
-    template_index = runtime.template_index
-    try:
-        _prepare_compute_runtime(runtime)
-    except VisionComputeMemoryError:
-        event = build_overlay_event([], source_tag="vision-sidecar", selection_type="hextech", active=False)
-        event["source"].update({"reason": "vision_compute_memory_unavailable"})
-        if write_event:
-            write_overlay_event(vision_sidecar._public_event_payload(event), event_path)
-        return event
-    tracker = SelectionTracker(scene_enter_frames=max(1, int(required_frames)))
-    if not template_index:
-        event = build_overlay_event([], source_tag="vision-sidecar", selection_type="hextech", active=False)
-        event["source"].update({"reason": "template_missing"})
-    else:
-        event = tracker.block("warming_up")
-        for index in range(max(1, int(required_frames))):
-            if vision_sidecar.is_scoreboard_key_down():
-                event = tracker.block("scoreboard_key_down", scoreboard_key_down=True)
-                break
-            frame = vision_sidecar.capture_lol_game_frame()
-            if frame is None:
-                event = tracker.block("capture_unavailable")
-                break
-            raw_event = vision_sidecar.detect_overlay_choices(
-                frame,
-                template_index,
-                preset_name=preset,
-                min_confidence=min_confidence,
-            )
-            event = tracker.update(raw_event)
-            if debug_dump_dir and index == 0:
-                vision_sidecar._write_roi_diagnostic_dump(debug_dump_dir, frame, event)
-            if index + 1 < max(1, int(required_frames)):
-                time.sleep(max(0, int(frame_interval_ms)) / 1000.0)
-
-    if write_event:
-        write_overlay_event(vision_sidecar._public_event_payload(event), event_path)
-        try:
-            vision_sidecar.write_vision_trace_if_changed(event, vision_sidecar._vision_trace_path_for_event(event_path))
-        except OSError:
-            logger.debug("写入 Vision trace 失败。", exc_info=True)
-    _write_sidecar_status("stopped", phase="once_complete")
-    return event
 
 
-def run_loop(
+def _run_loop_impl(
     *,
     preset: str = "auto",
     write_event: bool = False,
@@ -287,9 +214,14 @@ def run_loop(
     debug_dump_dir: str | Path | None = None,
     scan_frame_interval_ms: int = DEFAULT_LOOP_SCAN_FRAME_INTERVAL_MS,
     fast_hold_seconds: float = DEFAULT_LOOP_FAST_HOLD_SECONDS,
+    failure_writer: FailureEvidenceWriter | None = None,
+    diagnostic_writer: VisionDiagnosticWriter | None = None,
+    roi_diagnostic_writer: RoiDiagnosticWriter | None = None,
+    retention_worker: Any | None = None,
+    ocr_shadow_sink: list[OcrShadowRuntime] | None = None,
+    mouse_transition_observer: MouseTransitionObserver | None = None,
 ) -> dict[str, Any] | None:
     """常驻 V2 视觉循环；场景和槽位分别稳定，非前台时低频待机。"""
-
     from hextech.infrastructure.vision import sidecar as vision_sidecar_module
 
     vision_sidecar: Any = vision_sidecar_module
@@ -297,10 +229,13 @@ def run_loop(
     started_at = time.perf_counter()
     vision_sidecar._set_dpi_awareness()
     _write_sidecar_status("starting", phase="hint_cache_load")
-    data_source = SharedOverlayDataSource()
+    data_source = SharedOverlayDataSource(
+        generation_id=str(os.environ.get(VISION_TARGET_GENERATION_ENV) or "")
+    )
     hint_cache = data_source.read_hint_cache()
     runtime = load_or_build_default_template_runtime(
         hint_cache=hint_cache,
+        require_production_pool=True,
         status_callback=lambda phase, fields: _write_sidecar_status(
             "starting",
             phase=phase,
@@ -308,6 +243,7 @@ def run_loop(
             **dict(fields),
         ),
     )
+    _publish_runtime_fields(runtime.stats)
     template_index = runtime.template_index
     try:
         _prepare_compute_runtime(runtime)
@@ -321,22 +257,28 @@ def run_loop(
         return event
     trace_path = vision_sidecar._vision_trace_path_for_event(event_path)
     tracker = SelectionTracker(scene_enter_frames=max(1, int(required_frames)))
-
-    def write_runtime_trace(event_payload: Mapping[str, Any]) -> None:
-        if not write_event:
-            return
-        try:
-            vision_sidecar.write_vision_trace_if_changed(event_payload, trace_path)
-        except OSError:
-            logger.debug("写入 Vision trace 失败。", exc_info=True)
+    mouse_observer = mouse_transition_observer
+    failure_collector = (
+        FailureEvidenceCollector(
+            failure_writer,
+            pool_id=str(runtime.stats.get("production_pool_id") or "production-pool-unavailable"),
+        )
+        if failure_writer is not None
+        else None
+    )
 
     if not template_index:
         event = vision_sidecar._build_loop_inactive_event("template_missing", poll_mode="idle")
         if write_event:
             write_overlay_event(vision_sidecar._public_event_payload(event), event_path)
-            write_runtime_trace(event)
+        if diagnostic_writer is not None:
+            diagnostic_writer.submit(event, trace_path, write_trace=write_event)
         logger.error("Vision sidecar 模板缺失，已退出。")
         return event
+
+    ocr_shadow = OcrShadowRuntime.from_environment(template_index)
+    if ocr_shadow_sink is not None:
+        ocr_shadow_sink.append(ocr_shadow)
 
     last_signature: tuple[str, ...] | None = None
     last_write_at = 0.0
@@ -351,40 +293,48 @@ def run_loop(
     tab_was_down = False
     left_mouse_was_down = False
     active_hwnd = 0
+    frame_id = 0
     game_session_id = ""
     current_game_identity: dict[str, object] = {}
     capture_unavailable_started_at = 0.0
     paused_gameflow = PausedGameflowProbe(probe=probe_gameflow_state)
-
-    def commit_event(event_payload: dict[str, Any], *, poll_mode: str) -> None:
-        nonlocal last_signature, last_write_at, last_status_heartbeat_at
+    held_scene: HeldSceneEvidence | None = None
+    scene_recovery: SceneRecoveryReference | None = None
+    ocr_evidence_not_before = 0.0
+    explicit_capture = ExplicitCaptureControl(get_var_dir(), roi_diagnostic_writer, current_build_id())
+    def commit_event(event_payload: dict[str, Any], *, poll_mode: str, scene_only: bool = False) -> None:
+        nonlocal last_signature, last_write_at, last_status_heartbeat_at, held_scene, scene_recovery
         source = _mutable_string_key_mapping(event_payload.get("source"))
+        if (not tracker.scene_active or tracker.body_shard_latched
+            or source.get("scene_state") in {"paused", "absent", "blocked"}
+            or source.get("transient_pause")):
+            held_scene = None
+            scene_recovery = None
         source["poll_mode"] = poll_mode
+        vision_pool_generation_id = str(
+            runtime.stats.get("vision_pool_generation_id")
+            or runtime.stats.get("data_generation_id")
+            or ""
+        )
+        vision_pool_fingerprint = str(runtime.stats.get("vision_pool_fingerprint") or "")
+        observed_data_generation_id = _current_snapshot_generation_id() or str(
+            runtime.stats.get("observed_data_generation_id") or vision_pool_generation_id
+        )
+        source["vision_pool_generation_id"] = vision_pool_generation_id
+        source["vision_pool_origin_generation_id"] = vision_pool_generation_id
+        source["vision_pool_fingerprint"] = vision_pool_fingerprint
+        source["observed_data_generation_id"] = observed_data_generation_id
+        source.setdefault("data_generation_id", vision_pool_generation_id)
+        source["generation_roles"] = {
+            "vision_pool_generation_id": "sidecar_template_runtime",
+            "stats_generation_id": "host_game_session",
+            "data_generation_id": "legacy_vision_pool_compat",
+        }
+        source["build_id"] = current_build_id()
+        source["sidecar_pid"] = os.getpid()
+        source["sidecar_instance_id"] = _status.SIDECAR_INSTANCE_ID
         event_payload["source"] = source
-        write_runtime_trace(event_payload)
-        try:
-            vision_sidecar.write_selection_timeline_observation(
-                event_payload,
-                vision_sidecar._vision_trace_path_for_event(event_path),
-            )
-        except OSError:
-            # 时间线只用于诊断，磁盘故障不能中断识别与心跳。
-            logger.debug("写入 selection timeline 失败。", exc_info=True)
         now = time.time()
-        if now - last_status_heartbeat_at >= max(0.2, float(heartbeat_seconds)):
-            _write_sidecar_status(
-                "running",
-                phase="loop",
-                poll_mode=poll_mode,
-                event_generation_id=str(source.get("generation_id") or ""),
-                compute_profile=str(source.get("compute_profile") or "float32_batched"),
-                compute_matrix_bytes=int(runtime.stats.get("compute_matrix_bytes") or 0),
-                compute_warmup_seconds=float(runtime.stats.get("compute_warmup_seconds") or 0.0),
-                matching_timing=source.get("matching_timing")
-                if isinstance(source.get("matching_timing"), Mapping)
-                else {},
-            )
-            last_status_heartbeat_at = now
         if write_event and vision_sidecar.should_write_loop_event(
             event_payload,
             last_signature=last_signature,
@@ -395,7 +345,61 @@ def run_loop(
             write_overlay_event(vision_sidecar._public_event_payload(event_payload), event_path)
             last_signature = vision_sidecar._loop_event_signature(event_payload)
             last_write_at = now
-
+        if scene_only:
+            return
+        explicit_capture.observe(None, event_payload, event_payload)
+        if diagnostic_writer is not None:
+            diagnostic_writer.submit(event_payload, trace_path, write_trace=write_event)
+        if failure_writer is not None:
+            for notification in failure_writer.drain_journal_events():
+                logger.warning(
+                    "failure evidence writer=%s slot=%s",
+                    notification.get("detail"),
+                    notification.get("slot_key"),
+                )
+        if now - last_status_heartbeat_at >= max(0.2, float(heartbeat_seconds)):
+            diagnostic_status = (
+                diagnostic_writer.status() if diagnostic_writer is not None else {}
+            )
+            _write_sidecar_status(
+                "running",
+                phase="loop",
+                poll_mode=poll_mode,
+                event_vision_pool_generation_id=vision_pool_generation_id,
+                vision_pool_origin_generation_id=vision_pool_generation_id,
+                vision_pool_fingerprint=vision_pool_fingerprint,
+                observed_data_generation_id=observed_data_generation_id,
+                compute_profile=str(source.get("compute_profile") or "float32_batched"),
+                compute_matrix_bytes=int(runtime.stats.get("compute_matrix_bytes") or 0),
+                compute_warmup_seconds=float(runtime.stats.get("compute_warmup_seconds") or 0.0),
+                matching_timing=source.get("matching_timing")
+                if isinstance(source.get("matching_timing"), Mapping)
+                else {},
+                ocr_shadow=ocr_shadow.status(),
+                explicit_capture=explicit_capture.status(),
+                mouse_transition=mouse_observer.status() if mouse_observer is not None else {},
+                diagnostic_writer=diagnostic_status,
+                current_timeline_path_hash=str(
+                    diagnostic_status.get("current_timeline_path_hash") or ""
+                ),
+                timeline_last_written_at=float(
+                    diagnostic_status.get("timeline_last_written_at") or 0.0
+                ),
+                timeline_epoch=int(diagnostic_status.get("timeline_epoch") or 0),
+                timeline_failed_count=int(
+                    diagnostic_status.get("timeline_failed_count") or 0
+                ),
+                roi_dump_writer=roi_diagnostic_writer.status()
+                if roi_diagnostic_writer is not None
+                else {},
+                failure_evidence_writer=failure_writer.status()
+                if failure_writer is not None
+                else {},
+                diagnostic_retention=retention_worker.status()
+                if retention_worker is not None
+                else {},
+            )
+            last_status_heartbeat_at = now
     def attach_window_observation(
         event_payload: dict[str, Any],
         *,
@@ -414,6 +418,7 @@ def run_loop(
                 "window_process_id": int(current_game_identity.get("process_id") or 0),
                 "window_process_started_at": float(current_game_identity.get("process_started_at") or 0.0),
                 "identity_quality": str(current_game_identity.get("identity_quality") or "unavailable"),
+                "game_window_mode": game_window_mode_payload(current_game_identity),
                 "client_rect": [int(value) for value in rect],
                 "capture_size": [int(value) for value in capture_size] if capture_size else [],
                 "dpi_scale": vision_sidecar._window_dpi_scale(hwnd),
@@ -421,7 +426,6 @@ def run_loop(
         )
         event_payload["source"] = source
         return event_payload
-
     def foreground_sleep_seconds(event_payload: Mapping[str, Any], *, elapsed_seconds: float) -> tuple[str, float]:
         nonlocal fast_poll_until
         now = time.monotonic()
@@ -436,20 +440,7 @@ def run_loop(
         if dump_root is None:
             return
         source = _mutable_string_key_mapping(event_payload.get("source"))
-        raw_slots_value = event_payload.get("_raw_slots")
-        raw_slots = raw_slots_value if isinstance(raw_slots_value, list) else []
-        top_ids: list[str] = []
-        for slot in raw_slots[:vision_sidecar.SLOT_COUNT]:
-            candidates = slot.get("top_candidates") if isinstance(slot, Mapping) and isinstance(slot.get("top_candidates"), list) else []
-            top = candidates[0] if candidates and isinstance(candidates[0], Mapping) else {}
-            top_ids.append(str(top.get("augment_id") or top.get("name") or ""))
-        signature = (
-            str(source.get("scene_state") or ""),
-            str(source.get("reason") or ""),
-            str(source.get("ready_slots") or 0),
-            str(source.get("scoreboard_key_down") or False),
-            *top_ids,
-        )
+        signature = roi_dump_signature(event_payload)
         observation_seq = diagnostic_sampler.next_observation_seq(source)
         sequential_observation = observation_seq is not None
         should_dump = bool(
@@ -461,16 +452,13 @@ def run_loop(
                 or int(source.get("ready_slots") or 0) < vision_sidecar.SLOT_COUNT
             )
         )
-        if should_dump:
-            try:
-                vision_sidecar._write_roi_diagnostic_dump(
-                    dump_root,
-                    frame,
-                    event_payload,
-                    observation_seq=observation_seq,
-                )
-            except OSError:
-                logger.debug("V2 ROI 诊断转储失败。", exc_info=True)
+        if should_dump and roi_diagnostic_writer is not None:
+            roi_diagnostic_writer.submit(
+                dump_root,
+                frame,
+                event_payload,
+                observation_seq=observation_seq,
+            )
             last_dump_signature = signature
 
     logger.info(
@@ -490,13 +478,18 @@ def run_loop(
             logger.info("Vision sidecar 收到 graceful exit 信号，准备退出。")
             return None
         frame_started_at = time.perf_counter()
+        explicit_capture.poll()
         target = vision_sidecar._find_lol_game_window()
         if target is None:
-            # 窗口短暂不可见通常来自 Alt-Tab、最小化或重建；它不能把此前的
-            # 截图失败连续计时带回游戏内，否则返回后的第一张失败帧会被误升格为
-            # 持续硬故障并清空当前 epoch。
             capture_unavailable_started_at = 0.0
             left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
+            if mouse_observer is not None:
+                mouse_observer.update_context(
+                    window_hwnd=0,
+                    game_instance_id="",
+                    selection_epoch=0,
+                    eligible=False,
+                )
             event, gameflow_ended = resolve_game_visibility_pause(
                 tracker,
                 reason="game_window_missing",
@@ -518,22 +511,49 @@ def run_loop(
         hwnd, rect = target
         observed_identity = game_window_identity(int(hwnd))
         observed_game_instance = str(observed_identity.get("game_instance_id") or "")
-        # Alt-Tab、最小化或窗口句柄短暂重建并不等于新一局。仅 game instance
-        # 确认变化时才清空 epoch；同一实例返回后必须续用稳定槽和证据窗口。
         if active_hwnd == 0 or (
             observed_game_instance
             and game_session_id
             and observed_game_instance != game_session_id
         ):
             tracker.reset()
+            if mouse_observer is not None:
+                mouse_observer.clear()
             left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
         active_hwnd = int(hwnd)
         if observed_game_instance:
             game_session_id = observed_game_instance
         current_game_identity = observed_identity
+        window_mode_pause_reason = game_window_mode_pause_reason(observed_identity)
+        if window_mode_pause_reason:
+            capture_unavailable_started_at = 0.0
+            left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
+            if mouse_observer is not None:
+                mouse_observer.update_context(
+                    window_hwnd=int(hwnd),
+                    game_instance_id=game_session_id,
+                    selection_epoch=tracker.epoch,
+                    eligible=False,
+                )
+            event = attach_window_observation(
+                tracker.pause(window_mode_pause_reason),
+                hwnd=hwnd,
+                rect=rect,
+            )
+            vision_sidecar.attach_visibility_probe_timing(event)
+            commit_event(event, poll_mode="idle")
+            time.sleep(idle_sleep_seconds)
+            continue
         if not vision_sidecar._is_lol_game_foreground(hwnd):
             capture_unavailable_started_at = 0.0
             left_mouse_was_down = vision_sidecar.is_left_mouse_button_down()
+            if mouse_observer is not None:
+                mouse_observer.update_context(
+                    window_hwnd=int(hwnd),
+                    game_instance_id=game_session_id,
+                    selection_epoch=tracker.epoch,
+                    eligible=False,
+                )
             event, gameflow_ended = resolve_game_visibility_pause(
                 tracker,
                 reason="game_not_foreground",
@@ -553,12 +573,18 @@ def run_loop(
             time.sleep(idle_sleep_seconds)
             continue
 
-        # 已返回前台时丢弃暂停期的旧结论；下一次暂停必须重新观察 gameflow。
         paused_gameflow.reset()
 
         tab_down = vision_sidecar.is_scoreboard_key_down()
         if tab_down:
             capture_unavailable_started_at = 0.0
+            if mouse_observer is not None:
+                mouse_observer.update_context(
+                    window_hwnd=int(hwnd),
+                    game_instance_id=game_session_id,
+                    selection_epoch=tracker.epoch,
+                    eligible=False,
+                )
             event = attach_window_observation(
                 tracker.pause("scoreboard_key_down", scoreboard_key_down=True), hwnd=hwnd, rect=rect
             )
@@ -576,10 +602,40 @@ def run_loop(
             time.sleep(sleep_seconds)
             continue
         tab_was_down = False
+        if mouse_observer is not None:
+            mouse_observer.update_context(
+                window_hwnd=int(hwnd),
+                game_instance_id=game_session_id,
+                selection_epoch=tracker.epoch,
+                eligible=bool(tracker.scene_active and tracker.epoch > 0),
+            )
 
+        dpi_scale = vision_sidecar._window_dpi_scale(hwnd)
+        capture_binding, scene_recovery, recovery_full_capture = recovery_capture_for_frame(
+            scene_recovery, tracker, game_session_id, hwnd, rect, dpi_scale, now=time.monotonic()
+        )
         capture_started_at = time.time()
-        frame = vision_sidecar._capture_lol_game_rect(rect)
+        capture_display = window_display_context(int(hwnd)) if explicit_capture.session is not None else {}
+        frame = vision_sidecar._capture_lol_game_rect(
+            rect,
+            preset_name=preset,
+            force_full_client=recovery_full_capture or explicit_capture.wants_full_client(),
+        )
         captured_at = time.time()
+        if frame is not None and capture_display:
+            frame.info["hextech_monitor_device"] = str(capture_display.get("monitor_device") or "")
+        if frame is not None and not captured_window_still_current(
+            frame, hwnd=int(hwnd), client_rect=tuple(rect), game_instance_id=game_session_id,
+        ):
+            held_scene = None
+            event = attach_window_observation(tracker.pause("capture_binding_changed"), hwnd=hwnd, rect=rect)
+            event["timing"] = {"observation_kind": "capture_failure", "capture_status": "binding_changed",
+                               "capture_started_at": capture_started_at, "captured_at": captured_at,
+                               "recognition_completed_at": captured_at}
+            poll_mode, sleep_seconds = foreground_sleep_seconds(event, elapsed_seconds=time.perf_counter()-frame_started_at)
+            commit_event(event, poll_mode=poll_mode)
+            time.sleep(sleep_seconds)
+            continue
         if frame is None:
             if capture_unavailable_started_at <= 0.0:
                 capture_unavailable_started_at = captured_at
@@ -590,9 +646,6 @@ def run_loop(
             else:
                 event = tracker.pause("capture_unavailable")
             event = attach_window_observation(event, hwnd=hwnd, rect=rect)
-            # 截图没有成功取得，不能让时间线把这次 0ms 的失败路径当作真实 OCR
-            # observation 计入 epoch P50/P95。公共 timing 的三个时间点会在本轮
-            # 尾部统一补齐，这里只标注其性质与不可用状态。
             event["timing"] = {
                 "observation_kind": "capture_failure",
                 "capture_status": "unavailable",
@@ -609,8 +662,6 @@ def run_loop(
                 else:
                     event = tracker.pause("capture_client_size_mismatch")
                 event = attach_window_observation(event, hwnd=hwnd, rect=rect, capture_size=frame.size)
-                # 虽然拿到了位图，但尺寸不能对应当前游戏窗口；它不是可供识别的
-                # captured observation，不能污染真实识别延迟统计。
                 event["timing"] = {
                     "observation_kind": "capture_failure",
                     "capture_status": "invalid_size",
@@ -626,49 +677,53 @@ def run_loop(
                 time.sleep(sleep_seconds)
                 continue
             capture_unavailable_started_at = 0.0
-            raw_event = vision_sidecar.detect_overlay_choices(
-                frame,
-                template_index,
-                preset_name=preset,
-                min_confidence=min_confidence,
+            frame_id += 1
+            hold_request = held_request_for_frame(held_scene, tracker, capture_binding, frame.size,
+                                                  vision_sidecar._cursor_over_card_slots)
+            if hold_request is None:
+                held_scene = None
+            ocr_shadow.set_production_context(
+                session_id=game_session_id,
+                selection_epoch=capture_binding.selection_epoch,
+                slot_generations=[max(1, track.slot_generation) for track in tracker.slots],
+                captured_frame_id=frame_id,
+                captured_at=captured_at,
             )
-            raw_source = _mutable_string_key_mapping(raw_event.get("source"))
-            raw_source.update(
-                {
-                    "session_id": game_session_id,
-                    "window_hwnd": int(hwnd),
-                    "client_rect": [int(value) for value in rect],
-                    "capture_size": [int(value) for value in frame.size],
-                    "dpi_scale": vision_sidecar._window_dpi_scale(hwnd),
-                }
-            )
-            raw_source["cursor_over_slots"] = vision_sidecar._cursor_over_card_slots(
-                rect,
-                frame.size,
-                raw_source,
-            )
-            raw_source["cursor_over_cards"] = bool(raw_source["cursor_over_slots"])
-            left_mouse_down = vision_sidecar.is_left_mouse_button_down()
-            raw_source["selection_click"] = bool(
-                left_mouse_down
-                and not left_mouse_was_down
-                and raw_source["cursor_over_cards"]
-            )
-            left_mouse_was_down = left_mouse_down
-            raw_event["source"] = raw_source
-            recognition_completed_at = time.time()
-            # 时序仲裁必须消费真实观察时间，不能按配置帧率推断；识别完成时间因此要在
-            # tracker.update() 前写入原始事件。
-            raw_timing = raw_event.get("timing") if isinstance(raw_event.get("timing"), Mapping) else {}
-            raw_event["timing"] = {
-                **{str(key): value for key, value in raw_timing.items()},
-                "observation_kind": "recognition",
-                "capture_started_at": capture_started_at,
-                "captured_at": captured_at,
-                "recognition_completed_at": recognition_completed_at,
-            }
-            event = tracker.update(raw_event)
+            raw_event, event, left_mouse_was_down = process_captured_frame(
+                frame, template_index, sidecar=vision_sidecar, tracker=tracker, ocr=ocr_shadow,
+                binding=capture_binding, frame_id=frame_id, capture_started_at=capture_started_at,
+                captured_at=captured_at, preset=preset, min_confidence=min_confidence, held_scene=hold_request,
+                mouse_observer=mouse_observer, left_mouse_was_down=left_mouse_was_down,
+                minimum_captured_at=ocr_evidence_not_before,
+                publish_scene=lambda feedback: commit_event(feedback, poll_mode="fast", scene_only=True))
+            recognition_completed_at = float(raw_event["timing"]["recognition_completed_at"])
+            scene_recovery, allow_held, cutoff = advance_recovery_event(
+                scene_recovery, hold_request, raw_event, event, tracker, capture_binding,
+                now=time.monotonic(), full_capture_used=recovery_full_capture)
+            ocr_evidence_not_before = max(ocr_evidence_not_before, cutoff)
+            held_scene = next_held_scene_evidence(
+                held_scene, raw_event, event, tracker, capture_binding, allow_confirmed=allow_held)
             attach_window_observation(event, hwnd=hwnd, rect=rect, capture_size=frame.size)
+            explicit_capture.observe(frame, raw_event, event)
+            if mouse_observer is not None:
+                event_source = event.get("source") if isinstance(event.get("source"), Mapping) else {}
+                event_scene_state = str(event_source.get("scene_state") or "")
+                mouse_observer.update_context(
+                    window_hwnd=int(hwnd),
+                    game_instance_id=game_session_id,
+                    selection_epoch=int(event_source.get("selection_epoch") or tracker.epoch),
+                    eligible=bool(
+                        int(event_source.get("selection_epoch") or tracker.epoch) > 0
+                        and event_scene_state in {"candidate", "active"}
+                    ),
+                )
+            if failure_collector is not None:
+                failure_collector.observe(
+                    frame,
+                    raw_event,
+                    event,
+                    slot_generations=[track.slot_generation for track in tracker.slots],
+                )
             maybe_dump(frame, event)
 
         timing = event.get("timing") if isinstance(event.get("timing"), Mapping) else {}
@@ -689,112 +744,11 @@ def run_loop(
         time.sleep(sleep_seconds)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    from hextech.infrastructure.vision import sidecar as vision_sidecar_module
-
-    vision_sidecar: Any = vision_sidecar_module
-
-    parser = argparse.ArgumentParser(description="Hextech overlay Vision sidecar。")
-    parser.add_argument("--once", action="store_true", help="执行一次短窗口识别后退出。")
-    parser.add_argument("--loop", action="store_true", help="常驻自门控识别循环；未指定 --once 时默认启用。")
-    parser.add_argument("--preset", default="auto", help="ROI preset: auto, 1920x1080, 2560x1440, 2560x1600。")
-    parser.add_argument("--write-event", action="store_true", help="把识别结果写入 overlay 事件文件。")
-    parser.add_argument("--event-path", default="", help="调试用事件文件路径；默认写运行态 state。")
-    parser.add_argument("--min-confidence", type=float, default=vision_sidecar.DEFAULT_MIN_CONFIDENCE)
-    parser.add_argument("--required-frames", type=int, default=2)
-    parser.add_argument("--frame-interval-ms", type=int, default=vision_sidecar.DEFAULT_LOOP_FRAME_INTERVAL_MS)
-    parser.add_argument("--scan-frame-interval-ms", type=int, default=vision_sidecar.DEFAULT_LOOP_SCAN_FRAME_INTERVAL_MS)
-    parser.add_argument("--idle-interval-ms", type=int, default=int(vision_sidecar.DEFAULT_LOOP_IDLE_INTERVAL_SECONDS * 1000))
-    parser.add_argument("--fast-hold-ms", type=int, default=int(vision_sidecar.DEFAULT_LOOP_FAST_HOLD_SECONDS * 1000))
-    parser.add_argument("--heartbeat-seconds", type=float, default=vision_sidecar.DEFAULT_LOOP_HEARTBEAT_SECONDS)
-    parser.add_argument(
-        "--debug-dump",
-        default="",
-        help="把单帧、ROI crop 和 top3 候选分数转储到该目录用于校准；--once 转储首帧，--loop 在每个选择窗口首帧自动转储。",
-    )
-    return parser
-
-
-def _record_template_missing_failure(event: Mapping[str, Any] | None) -> bool:
-    if not isinstance(event, Mapping):
-        return False
-    source = event.get("source")
-    if not isinstance(source, Mapping) or source.get("reason") != "template_missing":
-        return False
-    _write_sidecar_bootstrap_from_env(
-        "failed",
-        phase="template_load",
-        error_type="FileNotFoundError",
-        error_message_sanitized="Vision sidecar 模板缺失：template_missing",
-    )
-    return True
+def build_parser():
+    from hextech.infrastructure.vision.runner_cli import build_parser as _build_parser
+    return _build_parser()
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    with overlay_instance_lock(SIDECAR_INSTANCE_LOCK_FILE) as acquired:
-        if not acquired:
-            # 必须在 bootstrap、status 或事件写入前退出，避免第二套运行时覆盖 owner 状态。
-            logger.warning("Vision sidecar 已有运行实例，本实例退出。")
-            return 0
-        return _run_main_locked(args)
-
-
-def _run_main_locked(args: argparse.Namespace) -> int:
-    """执行已取得单实例锁的 Sidecar CLI。"""
-
-    _write_sidecar_bootstrap_from_env("starting", phase="argument_parsed")
-    if args.once:
-        try:
-            event = run_once(
-                preset=args.preset,
-                write_event=args.write_event,
-                event_path=args.event_path or None,
-                min_confidence=args.min_confidence,
-                required_frames=args.required_frames,
-                frame_interval_ms=args.frame_interval_ms,
-                debug_dump_dir=args.debug_dump or None,
-            )
-            if _record_template_missing_failure(event):
-                _emit_cli_event(event)
-                return 1
-            _emit_cli_event(event)
-            return 0
-        except Exception as exc:
-            _write_sidecar_bootstrap_from_env(
-                "failed",
-                phase="run_once",
-                error_type=exc.__class__.__name__,
-                error_message_sanitized=_sanitize_bootstrap_error_message(exc),
-            )
-            return 1
-
-    try:
-        event = run_loop(
-            preset=args.preset,
-            write_event=args.write_event,
-            event_path=args.event_path or None,
-            min_confidence=args.min_confidence,
-            required_frames=args.required_frames,
-            frame_interval_ms=args.frame_interval_ms,
-            idle_interval_seconds=max(0, int(args.idle_interval_ms)) / 1000.0,
-            heartbeat_seconds=args.heartbeat_seconds,
-            debug_dump_dir=args.debug_dump or None,
-            scan_frame_interval_ms=args.scan_frame_interval_ms,
-            fast_hold_seconds=max(0, int(args.fast_hold_ms)) / 1000.0,
-        )
-    except Exception as exc:
-        _write_sidecar_bootstrap_from_env(
-            "failed",
-            phase="run_loop",
-            error_type=exc.__class__.__name__,
-            error_message_sanitized=_sanitize_bootstrap_error_message(exc),
-        )
-        return 1
-    if event is None:
-        return 0
-    if _record_template_missing_failure(event):
-        _emit_cli_event(event)
-        return 1
-    _emit_cli_event(event)
-    return 0
+    from hextech.infrastructure.vision.runner_cli import main as _main
+    return _main(argv)

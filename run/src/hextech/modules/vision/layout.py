@@ -32,6 +32,7 @@ BUTTON_MIN_BLUE_RATIO = 0.15
 BUTTON_MIN_SOLIDITY = 0.42
 BUTTON_SCAN_DOWNSAMPLE = 4
 CARD_MIN_BORDER_GOLD_RATIO = 0.025
+CARD_PANEL_SCORE_DOWNSAMPLE = 2
 
 CARD_PANELS_16_10 = (
     (0.198, 0.175, 0.384, 0.655),
@@ -44,6 +45,9 @@ CARD_PANELS_16_9 = (
     (0.623, 0.155, 0.811, 0.690),
 )
 CARD_PANEL_16_9_MIN_ASPECT = 1.70
+SLOT_REROLL_BUTTON_WIDTH = 0.048
+SLOT_REROLL_BUTTON_HEIGHT = 0.046
+SLOT_REROLL_BUTTON_TOP_GAP = 0.024
 
 
 @dataclass(frozen=True)
@@ -77,6 +81,30 @@ def pick_card_panels(viewport_size: tuple[int, int]) -> tuple[tuple[float, float
     width, height = (max(1, int(value)) for value in viewport_size)
     aspect = width / max(1, height)
     return CARD_PANELS_16_9 if aspect >= CARD_PANEL_16_9_MIN_ASPECT else CARD_PANELS_16_10
+
+
+def pick_slot_interaction_boxes(
+    viewport_size: tuple[int, int],
+) -> tuple[tuple[tuple[float, float, float, float], ...], ...]:
+    """返回每槽卡面与下方重随按钮的归一化命中框。
+
+    真机重随按钮位于卡面之外；只复用 ``pick_card_panels`` 会漏掉完整的
+    down-edge。按钮框由同版式卡面中心派生，避免再维护一套独立横向坐标。
+    """
+
+    interactions: list[tuple[tuple[float, float, float, float], ...]] = []
+    for panel in pick_card_panels(viewport_size):
+        left, _top, right, bottom = panel
+        center_x = (left + right) / 2.0
+        reroll_top = bottom + SLOT_REROLL_BUTTON_TOP_GAP
+        reroll = (
+            center_x - SLOT_REROLL_BUTTON_WIDTH / 2.0,
+            reroll_top,
+            center_x + SLOT_REROLL_BUTTON_WIDTH / 2.0,
+            reroll_top + SLOT_REROLL_BUTTON_HEIGHT,
+        )
+        interactions.append((panel, reroll))
+    return tuple(interactions)
 
 
 def _component_boxes(mask: np.ndarray) -> list[tuple[int, int, int, int, int]]:
@@ -138,13 +166,14 @@ def _button_geometry_valid(
 def detect_expected_button(image: Image.Image) -> tuple[tuple[int, int, int, int] | None, float]:
     """只在底部中央预期区域寻找真实选择按钮。"""
 
-    rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
-    height, width, _ = rgb.shape
+    width, height = image.size
     sx0 = int(round(BUTTON_SEARCH_REGION[0] * width))
     sy0 = int(round(BUTTON_SEARCH_REGION[1] * height))
     sx1 = int(round(BUTTON_SEARCH_REGION[2] * width))
     sy1 = int(round(BUTTON_SEARCH_REGION[3] * height))
-    region = rgb[sy0:sy1:BUTTON_SCAN_DOWNSAMPLE, sx0:sx1:BUTTON_SCAN_DOWNSAMPLE]
+    # 按钮只可能出现在底部中央；避免每帧为这一小块 ROI 复制整张 4K RGB 数组。
+    search = np.asarray(image.crop((sx0, sy0, sx1, sy1)).convert("RGB"), dtype=np.uint8)
+    region = search[::BUTTON_SCAN_DOWNSAMPLE, ::BUTTON_SCAN_DOWNSAMPLE]
     if region.size == 0:
         return None, 0.0
     red, green, blue = region[:, :, 0], region[:, :, 1], region[:, :, 2]
@@ -167,7 +196,7 @@ def detect_expected_button(image: Image.Image) -> tuple[tuple[int, int, int, int
         blue_pixels = count * BUTTON_SCAN_DOWNSAMPLE * BUTTON_SCAN_DOWNSAMPLE
         if not _button_geometry_valid(box, image.size, blue_pixels=blue_pixels):
             continue
-        crop = rgb[box[1] : box[3], box[0] : box[2]]
+        crop = np.asarray(image.crop(box).convert("RGB"), dtype=np.uint8)
         if crop.size == 0:
             continue
         crop_red = crop[:, :, 0].astype(np.int16)
@@ -266,7 +295,17 @@ def _button_transform(
 
 
 def _panel_score(image: Image.Image, box: tuple[int, int, int, int]) -> float:
-    panel = np.asarray(image.crop(box).convert("RGB"), dtype=np.uint8)
+    crop = image.crop(box).convert("RGB")
+    if min(crop.size) >= CARD_PANEL_SCORE_DOWNSAMPLE * 16:
+        resampling = getattr(getattr(Image, "Resampling", Image), "NEAREST")
+        crop = crop.resize(
+            (
+                max(1, crop.width // CARD_PANEL_SCORE_DOWNSAMPLE),
+                max(1, crop.height // CARD_PANEL_SCORE_DOWNSAMPLE),
+            ),
+            resampling,
+        )
+    panel = np.asarray(crop, dtype=np.uint8)
     if panel.size == 0:
         return 0.0
     height, width, _ = panel.shape

@@ -69,6 +69,7 @@ def test_validate_bundle_manifest_rejects_empty_critical_fields():
 def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch):
     from hextech.modules.data.generation import DataSnapshotPublisher
     from tooling.build import manifest as bundle_manifest
+    from tooling.build import rules as build_rules
     from tooling.build.resource_manifest import write_resource_manifest
     from tooling.build.rules import CATALOG_FILES, iter_package_data_entries
 
@@ -101,6 +102,9 @@ def test_verified_snapshot_seed_is_validated_and_recorded(tmp_path, monkeypatch)
     source_file.write_text("# test source\n", encoding="utf-8")
     write_resource_manifest(tmp_path)
     monkeypatch.setattr(bundle_manifest, "iter_source_files", lambda _base: ["src/hextech/bootstrap/desktop.py"])
+    snapshot_only = SimpleNamespace(files=(), metadata={}, bundled_name=lambda _path: "")
+    monkeypatch.setattr(bundle_manifest, "collect_cohort_seed", lambda _root: snapshot_only)
+    monkeypatch.setattr(build_rules, "collect_cohort_seed", lambda _root: snapshot_only)
 
     manifest = bundle_manifest.build_bundle_manifest(
         tmp_path,
@@ -190,8 +194,8 @@ def test_finalize_output_runs_smoke_before_replacing_existing_release(tmp_path, 
     monkeypatch.setattr(build_package, "_release_dir_name", lambda _build_time: "HextechCompanion-20260707")
     monkeypatch.setattr(build_package, "validate_packaged_scraping_data", lambda _package_dir: None)
 
-    def fail_smoke(_package_dir: Path, timeout: int = 60) -> None:
-        assert timeout == 60
+    def fail_smoke(_package_dir: Path, timeout: int = 210) -> None:
+        assert timeout == 210
         raise RuntimeError("smoke failed")
 
     monkeypatch.setattr(build_package, "run_packaged_smoke", fail_smoke)
@@ -206,6 +210,26 @@ def test_finalize_output_runs_smoke_before_replacing_existing_release(tmp_path, 
     assert old_release.is_dir()
     assert (old_release / "old.txt").read_text(encoding="utf-8") == "old"
     assert not (releases / "HextechCompanion-20260707.zip").exists()
+
+
+def test_finalize_output_explicit_release_name_refuses_existing_target(tmp_path, monkeypatch):
+    from tooling.build import package as build_package
+
+    releases = tmp_path / "releases"
+    existing_release = releases / "HextechCompanion-20260707-stage-stats"
+    existing_release.mkdir(parents=True)
+    (existing_release / "old.txt").write_text("old", encoding="utf-8")
+    exe_dir = tmp_path / "pyinstaller-dist" / "Hextech伴生终端"
+    exe_dir.mkdir(parents=True)
+    (exe_dir / "Hextech伴生终端.exe").write_text("exe", encoding="utf-8")
+
+    monkeypatch.setattr(build_package, "RELEASES_DIR", releases)
+
+    with pytest.raises(RuntimeError, match="拒绝覆盖"):
+        build_package.finalize_output(exe_dir, release_name=existing_release.name)
+
+    assert (existing_release / "old.txt").read_text(encoding="utf-8") == "old"
+    assert exe_dir.is_dir()
 
 
 def test_finalize_output_restores_old_release_when_zip_creation_fails_after_smoke(tmp_path, monkeypatch):
@@ -226,7 +250,7 @@ def test_finalize_output_restores_old_release_when_zip_creation_fails_after_smok
     monkeypatch.setattr(build_package, "STAGING_RELEASES_DIR", staging)
     monkeypatch.setattr(build_package, "_release_dir_name", lambda _build_time: "HextechCompanion-20260707")
     monkeypatch.setattr(build_package, "validate_packaged_scraping_data", lambda _package_dir: None)
-    monkeypatch.setattr(build_package, "run_packaged_smoke", lambda _package_dir, timeout=60: None)
+    monkeypatch.setattr(build_package, "run_packaged_smoke", lambda _package_dir, timeout=210: None)
     monkeypatch.setattr(build_package, "create_portable_zip", lambda _final_dir: (_ for _ in ()).throw(RuntimeError("zip failed")))
 
     try:
@@ -255,7 +279,7 @@ def test_finalize_output_promotes_staging_after_smoke_success(tmp_path, monkeypa
     monkeypatch.setattr(build_package, "STAGING_RELEASES_DIR", staging)
     monkeypatch.setattr(build_package, "_release_dir_name", lambda _build_time: "HextechCompanion-20260707")
     monkeypatch.setattr(build_package, "validate_packaged_scraping_data", lambda _package_dir: None)
-    monkeypatch.setattr(build_package, "run_packaged_smoke", lambda package_dir, timeout=60: smoke_calls.append((package_dir, timeout)))
+    monkeypatch.setattr(build_package, "run_packaged_smoke", lambda package_dir, timeout=210: smoke_calls.append((package_dir, timeout)))
 
     final_dir, zip_path = build_package.finalize_output(exe_dir)
 
@@ -265,7 +289,7 @@ def test_finalize_output_promotes_staging_after_smoke_success(tmp_path, monkeypa
     assert zip_path == releases / "HextechCompanion-20260707.zip"
     assert zip_path.is_file()
     assert smoke_calls and smoke_calls[0][0].parent == staging
-    assert smoke_calls[0][1] == 60
+    assert smoke_calls[0][1] == 210
 
 
 def test_packaged_smoke_startup_status_uses_runtime_auth_token(tmp_path, monkeypatch):

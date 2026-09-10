@@ -78,6 +78,18 @@ def _append_augment_icon_audit(record: dict) -> None:
     payload.setdefault("ts", _now_iso())
     line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     with _AUGMENT_ICON_AUDIT_LOCK:
+        try:
+            current_size = os.path.getsize(AUGMENT_ICON_AUDIT_FILE)
+        except OSError:
+            current_size = 0
+        encoded_size = len((line + "\n").encode("utf-8"))
+        if current_size > 0 and current_size + encoded_size > 1024 * 1024:
+            rotated = f"{AUGMENT_ICON_AUDIT_FILE}.1"
+            try:
+                os.unlink(rotated)
+            except FileNotFoundError:
+                pass
+            os.replace(AUGMENT_ICON_AUDIT_FILE, rotated)
         with open(AUGMENT_ICON_AUDIT_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
 

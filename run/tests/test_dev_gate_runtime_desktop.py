@@ -277,7 +277,9 @@ def test_compact_card_geometry_contract() -> None:
     view_text = (desktop_dir / "app_view.py").read_text(encoding="utf-8")
     card_body = view_text.split("    def _build_candidate_card", 1)[1].split("    def _bind_card_click", 1)[0]
 
-    assert "size = scaled(48, scale)" in view_text
+    avatar_text = (desktop_dir / "avatar_loading.py").read_text(encoding="utf-8")
+    assert "return avatar_placeholder_image(self)" in view_text
+    assert "scaled(48, scale)" in avatar_text
     assert "width=scaled(6, scale)" in card_body
     assert "padx=scaled(6, scale)" in card_body
     assert "pady=scaled(4, scale)" in card_body

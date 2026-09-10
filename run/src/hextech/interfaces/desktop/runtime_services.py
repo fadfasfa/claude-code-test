@@ -381,19 +381,33 @@ def start_web_server_process(
     return web_process
 
 
-def initialize_core_threads(ui: "HextechUI") -> None:
-    # 延迟导入拆分后的循环 owner，避免 runtime_window 回引本模块时形成导入环。
-    from hextech.interfaces.desktop.runtime_interaction import run_terminal_loop
-    from hextech.interfaces.desktop.runtime_window import lcu_polling_loop, window_sync_loop
+def initialize_window_threads(ui: "HextechUI") -> None:
+    """在重服务/快照加载前启动窗口与选人观察；整个进程只启动一组。"""
+    from hextech.interfaces.desktop.runtime_window import candidate_update_loop, lcu_polling_loop, window_sync_loop
 
+    if getattr(ui, "_desktop_observers_started", False):
+        return
+    ui._desktop_observers_started = True
     threads = [
-        threading.Thread(target=lcu_polling_loop, args=(ui,), daemon=True),
-        threading.Thread(target=window_sync_loop, args=(ui,), daemon=True),
-        threading.Thread(target=run_terminal_loop, args=(ui,), daemon=True),
+        threading.Thread(target=lcu_polling_loop, args=(ui,), daemon=True, name="desktop-client-context"),
+        threading.Thread(target=window_sync_loop, args=(ui,), daemon=True, name="desktop-window-probe"),
+        threading.Thread(target=candidate_update_loop, args=(ui,), daemon=True, name="desktop-candidates"),
     ]
     ui.threads.extend(threads)
     for thread in threads:
         thread.start()
+
+
+def initialize_core_threads(ui: "HextechUI") -> None:
+    from hextech.interfaces.desktop.runtime_interaction import run_terminal_loop
+
+    initialize_window_threads(ui)
+    if getattr(ui, "_desktop_core_started", False):
+        return
+    ui._desktop_core_started = True
+    thread = threading.Thread(target=run_terminal_loop, args=(ui,), daemon=True)
+    ui.threads.append(thread)
+    thread.start()
 
 
 

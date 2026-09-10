@@ -92,16 +92,20 @@ def load_or_build_default_template_runtime(
     cache_file: str | Path | None = None,
     resource_signature: Mapping[str, Any] | None = None,
     status_callback: Callable[[str, Mapping[str, Any]], None] | None = None,
+    require_production_pool: bool = False,
 ) -> Any:
     from hextech.infrastructure.vision import template_runtime as _template_runtime
 
-    return _template_runtime.load_or_build_default_template_runtime(
-        base_dir=base_dir,
-        hint_cache=hint_cache,
-        cache_file=cache_file,
-        resource_signature=resource_signature,
-        status_callback=status_callback,
-    )
+    kwargs = {
+        "base_dir": base_dir,
+        "hint_cache": hint_cache,
+        "cache_file": cache_file,
+        "resource_signature": resource_signature,
+        "status_callback": status_callback,
+    }
+    if require_production_pool:
+        kwargs["require_production_pool"] = True
+    return _template_runtime.load_or_build_default_template_runtime(**kwargs)
 
 
 template_runtime_resource_signature = _forward_template_runtime("template_runtime_resource_signature")

@@ -62,10 +62,10 @@ def test_refresh_action_coalesces_running_triggers_into_one_recheck(tmp_path: Pa
     entered = threading.Event()
     release = threading.Event()
     rechecked = threading.Event()
-    calls: list[bool] = []
+    calls: list[tuple[bool, str]] = []
 
-    def refresh_action(force: bool) -> dict[str, object]:
-        calls.append(force)
+    def refresh_action(force: bool, scope: str) -> dict[str, object]:
+        calls.append((force, scope))
         if len(calls) == 1:
             entered.set()
             release.wait(timeout=2)
@@ -83,6 +83,9 @@ def test_refresh_action_coalesces_running_triggers_into_one_recheck(tmp_path: Pa
     )
     first = application.submit_action("refresh")
     assert entered.wait(timeout=1)
+    running = application.status()["refresh_status"]
+    assert running["state"] == "running"
+    assert running["scope"] == "due"
     second = application.submit_action("refresh")
     third = application.submit_action("refresh")
     release.set()
@@ -92,17 +95,54 @@ def test_refresh_action_coalesces_running_triggers_into_one_recheck(tmp_path: Pa
     assert first["accepted"] is True
     assert second["status"] == "coalesced"
     assert third["status"] == "coalesced"
-    assert calls == [False, False]
+    assert calls == [(False, "due"), (False, "due")]
+
+
+def test_refresh_status_preserves_deferred_core_scope(tmp_path: Path) -> None:
+    application = DataServiceApplication(
+        core=DataServiceCore(
+            publisher=DataSnapshotPublisher(tmp_path),
+            private_stats_enabled=False,
+            refresh_action=lambda force, scope: {
+                "state": "ready",
+                "refresh_state": "deferred",
+                "reason_code": "game_in_progress",
+                "generation_id": "generation-1",
+                "refresh_scope": scope,
+                "force": force,
+                "refresh_phase": "core",
+                "pending_sources": ["aramkit", "blitz"],
+            },
+        ),
+        parent_pid=1,
+    )
+
+    accepted = application.submit_action("refresh", {"scope": "core", "force": True})
+    deadline = time.monotonic() + 1.0
+    status = application.status()["refresh_status"]
+    while status["state"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.01)
+        status = application.status()["refresh_status"]
+    application.request_shutdown()
+
+    assert accepted["accepted"] is True
+    assert status["state"] == "deferred"
+    assert status["scope"] == "core"
+    assert status["pending_sources"] == ["aramkit", "blitz"]
+    assert application.submit_action("refresh", {"scope": "everything"}) == {
+        "accepted": False,
+        "reason_code": "invalid_refresh_scope",
+    }
 
 
 def test_force_refresh_upgrades_pending_recheck(tmp_path: Path) -> None:
     entered = threading.Event()
     release = threading.Event()
     followed_up = threading.Event()
-    calls: list[bool] = []
+    calls: list[tuple[bool, str]] = []
 
-    def refresh_action(force: bool) -> dict[str, object]:
-        calls.append(force)
+    def refresh_action(force: bool, scope: str) -> dict[str, object]:
+        calls.append((force, scope))
         if len(calls) == 1:
             entered.set()
             release.wait(timeout=2)
@@ -122,23 +162,24 @@ def test_force_refresh_upgrades_pending_recheck(tmp_path: Path) -> None:
     assert entered.wait(timeout=1)
 
     normal = application.submit_action("refresh")
-    forced = application.submit_action("refresh", {"force": True})
+    forced = application.submit_action("refresh", {"force": True, "scope": "core"})
     release.set()
     assert followed_up.wait(timeout=1)
     application.request_shutdown()
 
     assert normal["force"] is False
     assert forced["force"] is True
-    assert calls == [False, True]
+    assert forced["scope"] == "core"
+    assert calls == [(False, "due"), (True, "core")]
 
 
 def test_shutdown_clears_pending_refresh_without_starting_followup(tmp_path: Path) -> None:
     entered = threading.Event()
     release = threading.Event()
-    calls: list[bool] = []
+    calls: list[tuple[bool, str]] = []
 
-    def refresh_action(force: bool) -> dict[str, object]:
-        calls.append(force)
+    def refresh_action(force: bool, scope: str) -> dict[str, object]:
+        calls.append((force, scope))
         entered.set()
         release.wait(timeout=2)
         return {"state": "ready", "generation_id": "test-generation"}
@@ -159,7 +200,7 @@ def test_shutdown_clears_pending_refresh_without_starting_followup(tmp_path: Pat
     release.set()
     time.sleep(0.05)
 
-    assert calls == [False]
+    assert calls == [(False, "due")]
     assert application.submit_action("refresh") == {"accepted": False, "reason_code": "shutdown_requested"}
 
 
@@ -176,12 +217,13 @@ def test_data_service_instance_lock_is_exclusive(tmp_path: Path) -> None:
 
 
 def test_data_service_refresh_delegates_force_to_coordinator(tmp_path: Path) -> None:
-    calls: list[bool] = []
+    calls: list[tuple[bool, str]] = []
     service = DataServiceCore(
         publisher=DataSnapshotPublisher(tmp_path),
         private_stats_enabled=False,
-        refresh_action=lambda force: calls.append(force) or {"state": "ready", "generation_id": "g"},
+        refresh_action=lambda force, scope: calls.append((force, scope))
+        or {"state": "ready", "generation_id": "g"},
     )
 
-    assert service.refresh(force=True)["state"] == "ready"
-    assert calls == [True]
+    assert service.refresh(force=True, scope="core")["state"] == "ready"
+    assert calls == [(True, "core")]

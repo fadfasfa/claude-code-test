@@ -26,30 +26,32 @@ from hextech.modules.acquisition.apex.validation import (
     validate_apex_removal_evidence,
     validate_apex_run,
 )
-from hextech.modules.acquisition.hextech.validation import HEXTECH_REQUIRED_COLUMNS, validate_hextech_frame
+from hextech.infrastructure.sources.aramkit.service import validate_scoped_stats_artifact
+from hextech.infrastructure.sources.blitz.service import validate_blitz_artifact
 from hextech.modules.acquisition.mayhem.validation import (
     validate_mayhem_removal_evidence,
     validate_mayhem_run,
 )
 from hextech.modules.data.catalog.version_catalog import load_champion_core_data
 from hextech.infrastructure.persistence.cohort import CohortPromotionStore
+from hextech.infrastructure.persistence.refresh_checkpoint import CatalogAdoptionCheckpointStore
 from hextech.modules.data.catalog.versioned import load_runtime_catalog_from_pointer, sha256_file
-from hextech.modules.data.generation import DataSnapshotClient, SnapshotValidationError
+from hextech.modules.data.generation import (
+    DataSnapshotClient,
+    SnapshotValidationError,
+    default_snapshot_root,
+)
 from hextech.modules.data.generation.validation import content_fingerprint, validate_complete_provenance
+from hextech.modules.data.freshness import SOURCE_INTERVALS, STALE_AGE_FACTOR
 from hextech.modules.data.source_runs import (
-    KNOWN_SOURCES,
     load_source_current,
     source_run_artifact_path,
     source_run_dir,
 )
 
 
-SOURCE_FRESHNESS = {
-    "hextech": timedelta(hours=4),
-    "apex": timedelta(days=7),
-    "mayhem": timedelta(hours=72),
-}
-CATALOG_FRESHNESS = timedelta(hours=24)
+ACTIVE_SOURCES = ("aramkit", "blitz", "apex", "mayhem")
+OPTIONAL_SOURCES = frozenset({"blitz", "apex", "mayhem"})
 
 
 class AcceptanceFailure(RuntimeError):
@@ -80,6 +82,94 @@ def _assert_fresh(value: object, maximum_age: timedelta, *, label: str, now: dat
     completed = _parse_time(value, field_name=f"{label}.last_success_at")
     if completed > now + timedelta(minutes=5) or now - completed > maximum_age:
         raise AcceptanceFailure(f"{label} 已过期：last_success_at={completed.isoformat()}")
+
+
+def _blocked_adoption_evidence(catalog_pointer: Mapping[str, Any]) -> dict[str, Any]:
+    adoption = CatalogAdoptionCheckpointStore().load()
+    candidate = adoption.get("catalog")
+    completed = adoption.get("completed_sources")
+    pending = adoption.get("pending_sources")
+    if (
+        adoption.get("state") != "blocked"
+        or not isinstance(candidate, Mapping)
+        or not isinstance(completed, Mapping)
+        or not isinstance(pending, list)
+    ):
+        return {}
+    current_identity = (
+        str(catalog_pointer.get("catalog_generation_id") or ""),
+        str(catalog_pointer.get("content_sha256") or ""),
+    )
+    candidate_identity = (
+        str(candidate.get("catalog_generation_id") or ""),
+        str(candidate.get("content_sha256") or ""),
+    )
+    pending_names = {str(source) for source in pending}
+    completed_names = {str(source) for source in completed}
+    if (
+        not all(current_identity)
+        or not all(candidate_identity)
+        or current_identity == candidate_identity
+        or pending_names - set(ACTIVE_SOURCES)
+        or pending_names & completed_names
+        or load_runtime_catalog_from_pointer(candidate) is None
+    ):
+        return {}
+    return {
+        "state": "blocked",
+        "catalog_generation_id": candidate_identity[0],
+        "completed_sources": sorted(completed_names),
+        "pending_sources": sorted(pending_names),
+    }
+
+
+def _validate_generation_freshness(
+    status: Mapping[str, Any],
+    source_report: Mapping[str, Any],
+) -> None:
+    state = str(status.get("state") or "")
+    if state not in {"ready", "degraded"}:
+        raise AcceptanceFailure("strict 验收 generation 不可用")
+    degraded_sources = {
+        str(source)
+        for source in (
+            status.get("effective_degraded_sources")
+            or status.get("degraded_sources")
+            or []
+        )
+    }
+    if degraded_sources - OPTIONAL_SOURCES:
+        raise AcceptanceFailure(
+            "strict 验收只允许 optional 来源降级："
+            + ",".join(sorted(degraded_sources - OPTIONAL_SOURCES))
+        )
+    source_status = status.get("source_status")
+    source_status = source_status if isinstance(source_status, Mapping) else {}
+    aramkit = source_status.get("aramkit")
+    if (
+        not isinstance(aramkit, Mapping)
+        or aramkit.get("freshness") != "fresh"
+        or aramkit.get("data_status") != "fresh"
+    ):
+        raise AcceptanceFailure("strict 验收要求 ARAMKit fresh/fresh")
+    for source in degraded_sources:
+        item = source_status.get(source)
+        if (
+            not isinstance(item, Mapping)
+            or item.get("data_status") == "fresh"
+        ):
+            raise AcceptanceFailure(f"optional 降级来源未 fail closed：{source}")
+    stale_optional = {
+        source
+        for source in OPTIONAL_SOURCES
+        if isinstance(source_report.get(source), Mapping)
+        and source_report[source].get("freshness") == "stale"
+    }
+    if stale_optional - degraded_sources:
+        raise AcceptanceFailure(
+            "过期 optional 来源未标记 degraded："
+            + ",".join(sorted(stale_optional - degraded_sources))
+        )
 
 
 def verify_real_session_evidence(path: Path, *, expected_generation_id: str) -> dict[str, Any]:
@@ -225,21 +315,32 @@ def _source_evidence(
         raise AcceptanceFailure(f"{source} artifact SHA-256 或大小不一致")
     report = _read_object(report_path)
 
-    if source == "hextech":
-        import pandas as pd
-
-        frame = pd.read_csv(artifact_path, encoding="utf-8-sig")
-        validate_hextech_frame(frame, expected_hero_ids)
+    if source == "aramkit":
+        index = validate_scoped_stats_artifact(pointer_payload)
         outcomes = {item.item_id: item for item in manifest.outcomes}
-        if set(outcomes) != set(expected_hero_ids) or any(item.state != "success" for item in outcomes.values()):
-            raise AcceptanceFailure("Hextech outcome 未达到动态 Catalog 全英雄 success")
-        if pointer.artifact.record_count != len(frame):
-            raise AcceptanceFailure("Hextech CSV 行数与 pointer record_count 不一致")
+        if (
+            not outcomes
+            or not set(outcomes).issubset(set(expected_hero_ids))
+            or any(item.state != "success" for item in outcomes.values())
+        ):
+            raise AcceptanceFailure("ARAMKit outcome 未达到完整 success 或包含未知英雄")
+        if pointer.artifact.record_count != int(index.get("record_count") or -1):
+            raise AcceptanceFailure("ARAMKit 索引记录数与 pointer record_count 不一致")
         validation = {
-            "expected_champions": len(expected_hero_ids),
+            "expected_champions": len(outcomes),
             "successful_champions": len(outcomes),
             "confirmed_empty_champions": 0,
-            "record_count": len(frame),
+            "record_count": int(index["record_count"]),
+            "catalog_champion_count": len(expected_hero_ids),
+        }
+    elif source == "blitz":
+        payload = validate_blitz_artifact(pointer_payload)
+        if pointer.artifact.record_count != len(payload["rows"]):
+            raise AcceptanceFailure("Blitz 记录数与 pointer 不一致")
+        validation = {
+            "record_count": len(payload["rows"]),
+            "patch": payload["patch"],
+            "data_date": payload["data_date"],
         }
     elif source == "apex":
         payload = _read_object(artifact_path)
@@ -296,7 +397,18 @@ def verify_sources(
     if strict and catalog is None:
         raise AcceptanceFailure("正式 runtime Catalog current.v2.json 缺失或无效")
     if catalog is not None:
-        _assert_fresh(catalog_pointer.get("last_success_at"), CATALOG_FRESHNESS, label="catalog", now=current_time)
+        adoption_evidence: dict[str, Any] = {}
+        try:
+            _assert_fresh(
+                catalog_pointer.get("last_success_at"),
+                SOURCE_INTERVALS["catalog"] * STALE_AGE_FACTOR,
+                label="catalog",
+                now=current_time,
+            )
+        except AcceptanceFailure:
+            adoption_evidence = _blocked_adoption_evidence(catalog_pointer)
+            if not adoption_evidence:
+                raise
         expected_hero_ids = sorted(load_champion_core_data(catalog.root))
         if not expected_hero_ids:
             raise AcceptanceFailure("Catalog 英雄闭集为空")
@@ -311,7 +423,7 @@ def verify_sources(
     provenance: list[SourceProvenance] = []
     missing: list[str] = []
     source_pointers: dict[str, dict[str, Any]] = {}
-    for source in sorted(KNOWN_SOURCES):
+    for source in ACTIVE_SOURCES:
         pointer = dict(resolved.get(source, {})) if strict else load_source_current(source, verify_hash=True)
         if not pointer:
             missing.append(source)
@@ -326,7 +438,18 @@ def verify_sources(
                 expected_hero_ids=expected_hero_ids,
                 strict=True,
             )
-            _assert_fresh(pointer.get("last_success_at"), SOURCE_FRESHNESS[source], label=source, now=current_time)
+            try:
+                _assert_fresh(
+                    pointer.get("last_success_at"),
+                    SOURCE_INTERVALS[source] * STALE_AGE_FACTOR,
+                    label=source,
+                    now=current_time,
+                )
+                evidence["freshness"] = "fresh"
+            except AcceptanceFailure:
+                if source not in OPTIONAL_SOURCES:
+                    raise
+                evidence["freshness"] = "stale"
             result[source] = evidence
             provenance.append(item)
             source_pointers[source] = pointer
@@ -347,7 +470,10 @@ def verify_sources(
             "content_sha256": catalog.content_sha256,
             "champion_count": len(expected_hero_ids),
             "last_success_at": catalog_pointer.get("last_success_at"),
+            "freshness": "adoption_held" if adoption_evidence else "fresh",
         }
+        if adoption_evidence:
+            result["catalog_adoption"] = adoption_evidence
         result["_provenance"] = [*catalog.provenance(), *provenance]
         result["_catalog_root"] = catalog.root
         result["_expected_hero_ids"] = expected_hero_ids
@@ -374,41 +500,87 @@ def _values_equal(expected: object, actual: object) -> bool:
     )
 
 
-def _verify_hextech_generation(view, artifact_path: Path) -> int:
-    import pandas as pd
-
-    frame = pd.read_csv(artifact_path, encoding="utf-8-sig")
-    expected = {
-        (_normalized_id(row["英雄ID"]), _normalized_id(row["海克斯ID"])): row
-        for row in frame.to_dict(orient="records")
-    }
-    actual: dict[tuple[str, str], tuple[str, Mapping[str, Any]]] = {}
+def _verify_aramkit_champions(view, pointer: SourcePointerV2) -> int:
+    index = validate_scoped_stats_artifact(pointer.to_dict())
+    index_path = source_run_artifact_path(
+        "aramkit",
+        pointer.run_id,
+        pointer.artifact.relative_path,
+    )
+    expected: dict[str, Mapping[str, Any]] = {}
+    for descriptor in index["files"]:
+        payload = _read_object(index_path.parent / str(descriptor["relative_path"]))
+        champion = payload.get("champion")
+        if not isinstance(champion, Mapping):
+            raise AcceptanceFailure("ARAMKit 逐英雄投影无效")
+        champion_id = _normalized_id(champion.get("id"))
+        expected[champion_id] = champion
+    actual: dict[str, Mapping[str, Any]] = {}
     for champion in view.get_champions():
         champion_id = _normalized_id(champion.get("id"))
-        champion_name = str(champion.get("name") or "")
-        detail = view.get_champion_detail(champion_id) or {}
-        for item in detail.get("augments", []):
-            if isinstance(item, Mapping):
-                actual[(champion_id, _normalized_id(item.get("id")))] = (champion_name, item)
+        actual[champion_id] = champion
     if set(actual) != set(expected):
-        raise AcceptanceFailure(
-            f"generation 与 Hextech 行键不一致：missing={len(set(expected) - set(actual))} "
-            f"unexpected={len(set(actual) - set(expected))}"
-        )
+        raise AcceptanceFailure("generation 与 ARAMKit 英雄键不一致")
     for key, row in expected.items():
-        champion_name, item = actual[key]
-        for column in HEXTECH_REQUIRED_COLUMNS:
-            if column == "英雄ID":
-                value = key[0]
-            elif column == "英雄名称":
-                value = champion_name
-            elif column == "海克斯ID":
-                value = key[1]
-            else:
-                value = item.get(column)
-            if not _values_equal(row[column], value):
-                raise AcceptanceFailure(f"generation Hextech 字段不一致：key={key} field={column}")
+        item = actual[key]
+        fields = {
+            "win_rate": item.get("英雄胜率"),
+            "pick_rate": item.get("英雄出场率"),
+            "sample_count": item.get("sample_count"),
+            "source_rank": item.get("source_rank"),
+        }
+        for field, value in fields.items():
+            if not _values_equal(row[field], value):
+                raise AcceptanceFailure(f"generation ARAMKit 英雄字段不一致：key={key} field={field}")
     return len(actual)
+
+
+def _verify_blitz_generation(
+    view,
+    pointer: SourcePointerV2,
+    *,
+    expected_champion_ids: Sequence[str],
+) -> int:
+    payload = validate_blitz_artifact(pointer.to_dict())
+    rows = {str(item["augment_id"]): item for item in payload["rows"]}
+    hints = view.get_overlay_hints()
+    source = hints.get("source") if isinstance(hints.get("source"), Mapping) else {}
+    pool = source.get("production_augment_pool") if isinstance(source, Mapping) else {}
+    pool_ids = {str(value) for value in pool.get("canonical_ids", [])} if isinstance(pool, Mapping) else set()
+    expected_ids = set(rows).intersection(pool_ids)
+    if not expected_ids:
+        raise AcceptanceFailure("Blitz generation 缺少 production 排名")
+    expected_heroes = {_normalized_id(value) for value in expected_champion_ids}
+    if not expected_heroes:
+        raise AcceptanceFailure("Blitz generation 缺少 Catalog 英雄口径")
+    hint_map = hints.get("hints") if isinstance(hints, Mapping) else None
+    if not isinstance(hint_map, Mapping):
+        raise AcceptanceFailure("Blitz generation 缺少 Overlay hint")
+    verified = 0
+    for augment_id in expected_ids:
+        hint = hint_map.get(augment_id)
+        stats_by_champion = hint.get("stats_by_champion_id") if isinstance(hint, Mapping) else None
+        if not isinstance(stats_by_champion, Mapping) or {
+            _normalized_id(value) for value in stats_by_champion
+        } != expected_heroes:
+            raise AcceptanceFailure(f"generation 与 Blitz 英雄投影不一致：augment={augment_id}")
+        row = rows[augment_id]
+        champion_tiers = {str(value["champion_id"]): int(value["tier"]) for value in row["top_champions"]}
+        for champion_id in expected_heroes:
+            item = stats_by_champion.get(champion_id)
+            if not isinstance(item, Mapping):
+                raise AcceptanceFailure(
+                    f"generation Blitz tier 缺失：hero={champion_id} augment={augment_id}"
+                )
+            if (
+                int(item.get("source_tier") or 0) != int(row["tier"])
+                or item.get("champion_tier") != champion_tiers.get(champion_id)
+                or str(item.get("source_patch") or "") != str(payload["patch"])
+                or str(item.get("source_date") or "") != str(payload["data_date"])
+            ):
+                raise AcceptanceFailure(f"generation Blitz tier 字段不一致：hero={champion_id} augment={augment_id}")
+            verified += 1
+    return verified
 
 
 def _verify_synergy_generation(view, apex_path: Path, mayhem_path: Path, catalog_root: Path) -> int:
@@ -490,37 +662,36 @@ def verify_strict_full_chain(snapshot_root: Path, *, now: datetime | None = None
     provenance = source_report.pop("_provenance")
     catalog_root = source_report.pop("_catalog_root")
     raw_pointers = source_report.pop("_source_pointers")
-    source_report.pop("_expected_hero_ids")
+    expected_hero_ids = source_report.pop("_expected_hero_ids")
     if not isinstance(provenance, list) or not all(isinstance(item, SourceProvenance) for item in provenance):
         raise AcceptanceFailure("strict provenance 无效")
     validate_complete_provenance(provenance)
 
     client = DataSnapshotClient(snapshot_root)
     view = client.open_view()
-    if view.status()["state"] != "ready":
-        raise AcceptanceFailure("strict 验收不接受 degraded generation")
+    _validate_generation_freshness(view.status(now=now), source_report)
     validate_complete_provenance(view.manifest.source_files)
     expected_fingerprint = content_fingerprint(provenance)
     if view.manifest.content_fingerprint != expected_fingerprint:
         raise AcceptanceFailure("generation content_fingerprint 与当前 cohort 内容不一致")
 
-    pointers = {source: SourcePointerV2.from_mapping(raw_pointers[source]) for source in KNOWN_SOURCES}
-    hextech_path = source_run_artifact_path(
-        "hextech",
-        pointers["hextech"].run_id,
-        pointers["hextech"].artifact.relative_path,
-    )
+    pointers = {source: SourcePointerV2.from_mapping(raw_pointers[source]) for source in ACTIVE_SOURCES}
     apex_path = source_run_artifact_path("apex", pointers["apex"].run_id, pointers["apex"].artifact.relative_path)
     mayhem_path = source_run_artifact_path(
         "mayhem",
         pointers["mayhem"].run_id,
         pointers["mayhem"].artifact.relative_path,
     )
-    stat_rows = _verify_hextech_generation(view, hextech_path)
+    champion_rows = _verify_aramkit_champions(view, pointers["aramkit"])
+    ranking_rows = _verify_blitz_generation(
+        view,
+        pointers["blitz"],
+        expected_champion_ids=expected_hero_ids,
+    )
     synergy_rows = _verify_synergy_generation(view, apex_path, mayhem_path, Path(catalog_root))
     overlay = _verify_overlay_sample(view)
     generation = verify_generation(snapshot_root)
-    generation.update({"hextech_rows_verified": stat_rows, "synergy_items_verified": synergy_rows})
+    generation.update({"aramkit_champions_verified": champion_rows, "blitz_rankings_verified": ranking_rows, "synergy_items_verified": synergy_rows})
     return {"catalog": source_report.pop("catalog"), "sources": source_report, "generation": generation, "overlay": overlay}
 
 
@@ -545,7 +716,10 @@ def _write_report(report_dir: Path | None, summary: Mapping[str, Any]) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    snapshot_root = RUN_DIR / ("var/snapshots" if args.runtime else "resources/seeds")
+    # ``--runtime`` 必须与 Catalog/source current 使用同一个可变数据根。
+    # 否则设置 HEXTECH_VAR_DIR 后会把真实来源 pointer 与 worktree 的旧
+    # ``var/snapshots`` 交叉比较，制造并不存在的 cohort fingerprint 失败。
+    snapshot_root = default_snapshot_root() if args.runtime else RUN_DIR / "resources/seeds"
     try:
         if args.strict_full_chain:
             if not args.runtime:

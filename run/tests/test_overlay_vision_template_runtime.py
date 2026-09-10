@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import tempfile
 import threading
 import time
@@ -17,7 +18,54 @@ from unittest import mock
 from support.vision_events import selection_event as _selection_event
 
 class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
-    def test_visibility_pauses_write_timeline_timing_without_faking_recognition(self):
+    def test_fullscreen_mode_pauses_before_capture_and_preserves_explicit_reason(self):
+        from hextech.infrastructure.vision import runner, sidecar
+
+        class StopLoop(RuntimeError):
+            pass
+
+        class FakeSource:
+            def read_hint_cache(self):
+                return {"schema_version": 1, "hints": {}, "name_index": {}}
+
+        runtime = SimpleNamespace(template_index=[object()], stats={"cache_hit": True})
+        target = (123, (0, 0, 2560, 1600))
+        with tempfile.TemporaryDirectory() as tmp:
+            event_path = Path(tmp) / "event.json"
+            with (
+                mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
+                mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
+                mock.patch.object(runner, "_prepare_compute_runtime"),
+                mock.patch.object(runner, "_write_sidecar_status"),
+                mock.patch.object(runner, "_write_sidecar_ready_from_env"),
+                mock.patch.object(
+                    runner,
+                    "game_window_identity",
+                    return_value={
+                        "game_instance_id": "game-fullscreen",
+                        "game_window_mode_status": "unsupported",
+                        "game_window_mode": "fullscreen",
+                        "game_window_mode_reason": "unsupported_fullscreen_mode",
+                        "game_window_mode_source": "game_cfg",
+                        "game_window_mode_observed_at": 100.0,
+                    },
+                ),
+                mock.patch.object(sidecar, "_set_dpi_awareness"),
+                mock.patch.object(sidecar, "_find_lol_game_window", return_value=target),
+                mock.patch.object(sidecar, "_capture_lol_game_rect") as capture,
+                mock.patch.object(sidecar, "is_left_mouse_button_down", return_value=False),
+                mock.patch.object(runner.time, "sleep", side_effect=StopLoop()),
+            ):
+                with self.assertRaises(StopLoop):
+                    runner.run_loop(write_event=True, event_path=event_path, required_frames=1)
+
+            payload = json.loads(event_path.read_text(encoding="utf-8"))
+
+        capture.assert_not_called()
+        self.assertEqual(payload["source"]["reason"], "unsupported_fullscreen_mode")
+        self.assertEqual(payload["source"]["game_window_mode"]["mode"], "fullscreen")
+
+    def test_visibility_pauses_before_any_session_do_not_create_timeline(self):
         from hextech.infrastructure.vision import runner, sidecar
 
         class StopLoop(RuntimeError):
@@ -73,17 +121,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
             with self.assertRaises(StopLoop):
                 runner.run_loop(required_frames=1)
 
-        self.assertEqual(
-            [str(event["source"]["reason"]) for event in recorded_events],
-            ["game_window_missing", "game_not_foreground", "scoreboard_key_down"],
-        )
-        for event in recorded_events:
-            timing = event["timing"]
-            self.assertEqual(timing["observation_kind"], "visibility_probe")
-            self.assertEqual(timing["capture_status"], "not_captured")
-            self.assertGreater(float(timing["capture_started_at"]), 0.0)
-            self.assertEqual(timing["capture_started_at"], timing["captured_at"])
-            self.assertEqual(timing["captured_at"], timing["recognition_completed_at"])
+        self.assertEqual(recorded_events, [])
 
     def test_sidecar_template_runtime_entrypoint_delegates_to_cache_module(self):
         from hextech.infrastructure.vision import sidecar, template_runtime
@@ -150,6 +188,13 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
             name_fingerprint=(0.0, 1.0),
             name_fingerprint_alt=(1.0, 0.0),
         )
+        entry_b = sidecar.TemplateEntry(
+            augment_id="a1",
+            name="强化 2",
+            tier="Gold",
+            summary="test",
+            observed_name_fingerprints=((1.0, 0.0),),
+        )
 
         def fake_rank(template_index):
             return template_runtime._RankMatrices(
@@ -160,8 +205,11 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
                 template_runtime.np.asarray([[0.0, 1.0]], dtype=template_runtime.np.float32),
                 (entry,),
                 template_runtime.np.asarray([[1.0, 0.0]], dtype=template_runtime.np.float32),
-                (entry,),
-                template_runtime.np.asarray([[0.0, 1.0]], dtype=template_runtime.np.float32),
+                (entry_b, entry),
+                template_runtime.np.asarray(
+                    [[1.0, 0.0], [0.0, 1.0]],
+                    dtype=template_runtime.np.float32,
+                ),
             )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,7 +218,7 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
             updated_signature = {"schema_version": 1, "asset_digest": "b", "version_digest": "v"}
 
             with (
-                mock.patch.object(template_runtime, "load_default_template_index", return_value=[entry]) as load_index,
+                mock.patch.object(template_runtime, "load_default_template_index", return_value=[entry, entry_b]) as load_index,
                 mock.patch.object(template_runtime, "_rank_matrices", side_effect=fake_rank) as rank,
             ):
                 first = template_runtime.load_or_build_default_template_runtime(
@@ -181,6 +229,10 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
             self.assertFalse(first.stats["cache_hit"])
             self.assertEqual(load_index.call_count, 1)
             self.assertEqual(rank.call_count, 1)
+            self.assertEqual(
+                [item.augment_id for item in first.matrices.observed_name_templates],
+                ["a1", "a0"],
+            )
 
             with (
                 mock.patch.object(template_runtime, "load_default_template_index", side_effect=AssertionError("cache hit should not rebuild")),
@@ -193,9 +245,17 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
                 )
             self.assertTrue(second.stats["cache_hit"])
             self.assertEqual(second.template_index[0].augment_id, "a0")
+            self.assertEqual(
+                [item.augment_id for item in second.matrices.observed_name_templates],
+                ["a1", "a0"],
+            )
+            template_runtime.np.testing.assert_array_equal(
+                second.matrices.observed_name_matrix,
+                first.matrices.observed_name_matrix,
+            )
 
             with (
-                mock.patch.object(template_runtime, "load_default_template_index", return_value=[entry]) as load_after_change,
+                mock.patch.object(template_runtime, "load_default_template_index", return_value=[entry, entry_b]) as load_after_change,
                 mock.patch.object(template_runtime, "_rank_matrices", side_effect=fake_rank),
             ):
                 invalidated = template_runtime.load_or_build_default_template_runtime(
@@ -205,6 +265,61 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
                 )
             self.assertFalse(invalidated.stats["cache_hit"])
             self.assertEqual(load_after_change.call_count, 1)
+
+    def test_template_runtime_cache_hit_keeps_generation_pool_matrix_diagnostics(self):
+        from hextech.infrastructure.vision import sidecar, template_runtime
+
+        entry = sidecar.TemplateEntry(
+            augment_id="7001",
+            name="升级：兹若特传送门",
+            tier="Gold",
+            summary="test",
+            fingerprint=(0.0, 1.0),
+            icon_fingerprints=((0.0, 1.0),),
+            name_fingerprint=(0.0, 1.0),
+            name_fingerprint_alt=(1.0, 0.0),
+        )
+        matrices = template_runtime._RankMatrices(
+            [entry],
+            (entry,),
+            template_runtime.np.asarray([[0.0, 1.0]], dtype=template_runtime.np.float32),
+            (entry,),
+            template_runtime.np.asarray([[0.0, 1.0]], dtype=template_runtime.np.float32),
+            (entry,),
+            template_runtime.np.asarray([[1.0, 0.0]], dtype=template_runtime.np.float32),
+            (),
+            template_runtime.np.empty((0, 0), dtype=template_runtime.np.float32),
+        )
+        hint_cache = {
+            "snapshot": {"generation_id": "snapshot-a"},
+            "source": {
+                "production_augment_pool": {
+                    "state": "ready",
+                    "pool_id": "pool-a",
+                    "catalog_generation_id": "catalog-a",
+                    "canonical_ids": ["7001"],
+                    "identities": [{"canonical_id": "7001"}],
+                    "full_catalog_count": 655,
+                    "disabled_ids": ["1064"],
+                }
+            },
+        }
+        runtime = SimpleNamespace(template_index=[entry], matrices=matrices, stats={"cache_hit": True})
+
+        with mock.patch.object(template_runtime, "_read_template_runtime_cache", return_value=runtime):
+            loaded = template_runtime.load_or_build_default_template_runtime(
+                hint_cache=hint_cache,
+                resource_signature={"schema_version": 1},
+            )
+
+        self.assertEqual(loaded.stats["data_generation_id"], "snapshot-a")
+        self.assertEqual(loaded.stats["catalog_generation_id"], "catalog-a")
+        self.assertEqual(loaded.stats["production_pool_id"], "pool-a")
+        self.assertEqual(loaded.stats["production_pool_count"], 1)
+        self.assertEqual(loaded.stats["full_catalog_count"], 655)
+        self.assertEqual(loaded.stats["rank_identity_count"], 1)
+        self.assertEqual(loaded.stats["matrix_rows"]["icon"], 1)
+        self.assertEqual(loaded.stats["excluded_reason_counts"]["disabled"], 1)
 
     def test_template_hint_signature_ignores_stats_generation_fields(self):
         from hextech.infrastructure.vision import template_runtime
@@ -303,7 +418,10 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
             def read_context(self):
                 return {"session_id": "lcu-session-1"}
 
-        runtime = SimpleNamespace(template_index=[object()], stats={"cache_hit": True})
+        runtime = SimpleNamespace(
+            template_index=[object()],
+            stats={"cache_hit": True, "vision_pool_generation_id": "vision-pool-a"},
+        )
         frame = Image.new("RGB", (1920, 1080), "black")
         with tempfile.TemporaryDirectory() as tmp:
             event_path = Path(tmp) / "event.json"
@@ -311,6 +429,15 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
                 mock.patch.object(runner, "SharedOverlayDataSource", return_value=FakeSource()),
                 mock.patch.object(runner, "load_or_build_default_template_runtime", return_value=runtime),
                 mock.patch.object(runner, "_prepare_compute_runtime"),
+                mock.patch.object(
+                    runner,
+                    "game_window_identity",
+                    return_value={
+                        "game_instance_id": "game-1",
+                        "game_window_mode_status": "supported",
+                        "game_window_mode": "borderless",
+                    },
+                ),
                 mock.patch.object(sidecar, "_set_dpi_awareness"),
                 mock.patch.object(sidecar, "_find_lol_game_window", return_value=(123, (0, 0, 1920, 1080))),
                 mock.patch.object(sidecar, "_is_lol_game_foreground", return_value=True),
@@ -326,6 +453,12 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
 
             payload = json.loads(event_path.read_text(encoding="utf-8"))
             self.assertNotEqual(payload["source"]["session_id"], "lcu-session-1")
+            self.assertEqual(payload["source"]["vision_pool_generation_id"], "vision-pool-a")
+            self.assertNotIn("stats_generation_id", payload["source"])
+            self.assertEqual(
+                payload["source"]["generation_roles"]["stats_generation_id"],
+                "host_game_session",
+            )
             self.assertEqual(payload["source"]["session_id"], payload["source"]["game_instance_id"])
             self.assertEqual(payload["source"]["window_hwnd"], 123)
             self.assertEqual(payload["source"]["window_hwnd"], 123)
@@ -587,3 +720,50 @@ class OverlayVisionTemplateRuntimeTests(unittest.TestCase):
         self.assertFalse(payload["active"])
         self.assertEqual(payload["timing"]["observation_kind"], "capture_failure")
         self.assertEqual(payload["timing"]["capture_status"], "invalid_size")
+
+def test_vision_pool_fingerprint_ignores_stats_generation_but_tracks_pool_identity() -> None:
+    from copy import deepcopy
+
+    from hextech.infrastructure.vision.template_runtime import vision_pool_fingerprint
+
+    base = {
+        "schema_version": 1,
+        "hints": {"1": {"augment_id": "1", "name": "属性！"}},
+        "name_index": {"属性！": "1"},
+        "source": {
+            "production_augment_pool": {
+                "schema_version": 1,
+                "state": "ready",
+                "pool_id": "pool-a",
+                "catalog_generation_id": "catalog-a",
+                "catalog_sha256": "a" * 64,
+                "catalog_manifest_sha256": "b" * 64,
+                "metadata_marker_sha256": "c" * 64,
+                "canonical_ids": ["1"],
+                "identities": [{"canonical_id": "1", "name": "属性！"}],
+            }
+        },
+        "snapshot": {"generation_id": "stats-g1"},
+        "stats": {"win_rate": 0.51},
+    }
+    stats_changed = deepcopy(base)
+    stats_changed["snapshot"]["generation_id"] = "stats-g2"
+    stats_changed["stats"]["win_rate"] = 0.57
+    pool_changed = deepcopy(stats_changed)
+    pool_changed["source"]["production_augment_pool"]["pool_id"] = "pool-b"
+
+    resource_signature = {"schema_version": 1, "digest": "templates"}
+    assert vision_pool_fingerprint(
+        base,
+        resource_signature=resource_signature,
+    ) == vision_pool_fingerprint(
+        stats_changed,
+        resource_signature=resource_signature,
+    )
+    assert vision_pool_fingerprint(
+        base,
+        resource_signature=resource_signature,
+    ) != vision_pool_fingerprint(
+        pool_changed,
+        resource_signature=resource_signature,
+    )

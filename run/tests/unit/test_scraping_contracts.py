@@ -83,5 +83,13 @@ def test_apex_slug_map_rejects_missing_or_duplicate_slug() -> None:
 def test_hextech_expected_set_is_catalog_driven() -> None:
     catalog = {"1": {"name": "A"}, "2": {"name": "B"}}
     assert [item["championId"] for item in build_expected_champions(catalog, [{"championId": "2"}, {"championId": "1"}])] == ["1", "2"]
-    with pytest.raises(ChampionCatalogMismatch):
+    with pytest.raises(ChampionCatalogMismatch) as captured:
         build_expected_champions(catalog, [{"championId": "1"}])
+    assert captured.value.diagnostics() == {
+        "missing_count": 1,
+        "unknown_count": 0,
+        "duplicate_count": 0,
+        "missing_ids": ["2"],
+        "unknown_ids": [],
+        "duplicate_ids": [],
+    }

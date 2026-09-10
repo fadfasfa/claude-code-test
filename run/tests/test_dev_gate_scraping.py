@@ -306,6 +306,15 @@ def test_hextech_champion_detail_json_extracts_full_rows() -> None:
                                 "pick_rate": "0.04",
                                 "total": "3",
                             },
+                            # 上游会为低样本条目保留身份与出场率，但不公开胜率；
+                            # 这类条目应逐项跳过，不能让整份全量 JSON 失效。
+                            "1004": {
+                                "tier": "4",
+                                "rank": "4",
+                                "win_rate": None,
+                                "pick_rate": "0.001",
+                                "total": "4",
+                            },
                         }
                     },
                     ensure_ascii=False,
@@ -315,7 +324,7 @@ def test_hextech_champion_detail_json_extracts_full_rows() -> None:
     }
     rows = extract_champion_detail_json_stats(
         payload,
-        {"1001": "慢链路A", "1002": "快链路B", "1003": "快链路C"},
+        {"1001": "慢链路A", "1002": "快链路B", "1003": "快链路C", "1004": "低样本"},
         {"快链路B": "黄金"},
         "910",
         "异画师",
@@ -376,10 +385,10 @@ def test_hextech_detail_fetch_prefers_cdn_json_without_browser_runtime() -> None
             truth_dict={},
             aug_tier_map={},
             timeout=6,
-        )
+    )
 
     assert len(result["rows"]) == 65
-    assert "champion-details/910.json" in calls[0]
+    assert calls[0] == "https://aramgg.com/data/champion-details/910.json"
     assert result["reason"] == ""
 
 def test_scrapling_tls_error_contract() -> None:

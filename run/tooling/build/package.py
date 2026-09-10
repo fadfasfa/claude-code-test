@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -40,11 +41,13 @@ STAGING_RELEASES_DIR = ARTIFACTS_DIR / "staging"
 APP_EXE_NAME = "Hextech伴生终端.exe"
 APP_BUILD_NAME = "Hextech伴生终端"
 RELEASE_PREFIX = "HextechCompanion"
+RELEASE_NAME_PATTERN = re.compile(
+    rf"{re.escape(RELEASE_PREFIX)}-\d{{8}}(?:T\d{{6}})?(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?"
+)
 LAUNCHER_NAME = "启动 Hextech.bat"
 FIRST_RUN_GUIDE_NAME = "README_首次使用.txt"
 EXCLUDED_MODULES = [
     "tkinter.test",
-    "unittest",
     "pydoc",
     "scipy",
     "matplotlib",
@@ -56,6 +59,10 @@ EXCLUDED_MODULES = [
 PYINSTALLER_HIDDEN_IMPORTS = [
     "pandas",
     "numpy",
+    "onnxruntime",
+    "onnxruntime.capi._pybind_state",
+    "mss.windows",
+    "mss.windows.gdi",
     "requests",
     "PIL",
     "PIL.ImageTk",
@@ -109,6 +116,8 @@ REQUIRED_PACKAGED_SCRAPING_DATA = (
     "headers-order.json",
     "input-network-definition.zip",
 )
+NATIVE_PATH_LIMIT = 259
+NATIVE_BINARY_SUFFIXES = frozenset({".dll", ".pyd"})
 
 
 def print_step(msg: str) -> None:
@@ -244,6 +253,8 @@ def resolve_pyinstaller_command() -> tuple[list[str], Path]:
         [sys.executable, "-m", "PyInstaller", "--version"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if module_probe.returncode == 0:
@@ -317,6 +328,21 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="注入已通过真实链路验收的 snapshots 根；仅用于离线构建同代验收包。",
     )
     parser.add_argument(
+        "--release-name",
+        type=_parse_release_name,
+        help="显式指定独立的日期化候选目录名；目标已存在时拒绝覆盖。",
+    )
+    parser.add_argument(
+        "--artifacts-dir",
+        type=Path,
+        help="显式指定本次 artifacts 根；用于把候选限制在隔离工作目录。",
+    )
+    parser.add_argument(
+        "--smoke-root",
+        type=Path,
+        help="显式指定本次 packaged smoke 副本根，避免复用既有 smoke。",
+    )
+    parser.add_argument(
         "--deploy",
         action="store_true",
         help="构建和 smoke 成功后部署到稳定安装目录；默认关闭。",
@@ -332,6 +358,12 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="部署成功后更新的 Windows .lnk 快捷方式。",
     )
     parser.add_argument(
+        "--roi-dump-mode",
+        choices=("preserve", "on", "off"),
+        default="preserve",
+        help="部署后的受限 ROI 诊断模式；仅与 --deploy 配合使用。",
+    )
+    parser.add_argument(
         "--deploy-timeout",
         type=float,
         default=12.0,
@@ -344,8 +376,16 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
         args.verified_snapshot_root = args.verified_snapshot_root.resolve()
         if not args.verified_snapshot_root.is_dir():
             parser.error("--verified-snapshot-root 必须是存在的目录")
-    if not args.deploy and (args.install_dir is not None or args.shortcut is not None):
-        parser.error("--install-dir/--shortcut 只能与 --deploy 一起使用")
+    if args.artifacts_dir is not None:
+        args.artifacts_dir = args.artifacts_dir.resolve(strict=False)
+    if args.smoke_root is not None:
+        args.smoke_root = args.smoke_root.resolve(strict=False)
+    if not args.deploy and (
+        args.install_dir is not None
+        or args.shortcut is not None
+        or args.roi_dump_mode != "preserve"
+    ):
+        parser.error("--install-dir/--shortcut/--roi-dump-mode 只能与 --deploy 一起使用")
     if args.deploy:
         if sys.platform != "win32":
             parser.error("稳定目录部署当前仅支持 Windows")
@@ -357,8 +397,21 @@ def parse_build_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def prepare_runtime_data_for_package(*, refresh_data: bool) -> None:
-    """可选刷新数据，并校验实际进入发布包的 seed 健康信息。"""
+def configure_artifacts_dir(path: Path) -> None:
+    """把本次 release/staging 定向到显式隔离根。"""
+
+    global ARTIFACTS_DIR, RELEASES_DIR, STAGING_RELEASES_DIR
+    ARTIFACTS_DIR = path.resolve(strict=False)
+    RELEASES_DIR = ARTIFACTS_DIR / "releases"
+    STAGING_RELEASES_DIR = ARTIFACTS_DIR / "staging"
+
+
+def prepare_runtime_data_for_package(
+    *,
+    refresh_data: bool,
+    verified_snapshot_root: Path | None = None,
+) -> Path:
+    """可选刷新数据，并返回实际进入发布包的 snapshot root。"""
 
     if refresh_data:
         print_step("显式刷新运行时数据")
@@ -370,16 +423,21 @@ def prepare_runtime_data_for_package(*, refresh_data: bool) -> None:
             reason_code = str(result.get("reason_code") or "unknown")
             raise RuntimeError(f"构建前数据刷新未达到 ready：state={state or 'unknown'} reason={reason_code}")
         print_check("运行时数据刷新完成：state=ready")
+        from hextech.modules.data.generation import default_snapshot_root
+
+        seed_root = default_snapshot_root().resolve()
     else:
         print_step("离线校验打包 seed")
         print_check("未指定 --refresh-data，跳过远端刷新")
+        seed_root = (verified_snapshot_root or (BASE_DIR / "resources" / "seeds")).resolve()
 
-    seed_health = validate_snapshot_seed(BASE_DIR / "resources" / "seeds")
+    seed_health = validate_snapshot_seed(seed_root)
     print_check(
         "generation seed：id={generation_id} champions={champion_count} augments={augment_count} records={stat_record_count}".format(
             **seed_health
         )
     )
+    return seed_root
 
 
 def _add_data_arg(source: Path, target: str) -> str:
@@ -451,7 +509,15 @@ def build_exe(
     cmd.append(str(BASE_DIR / "src" / "hextech" / "bootstrap" / "desktop.py"))
 
     try:
-        subprocess.run(cmd, cwd=BASE_DIR, capture_output=True, text=True, check=True)
+        subprocess.run(
+            cmd,
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        )
     except subprocess.CalledProcessError as exc:
         print_error(f"构建失败：\n{exc.stderr}")
         sys.exit(1)
@@ -497,8 +563,9 @@ def write_first_run_guide(final_dir: Path) -> Path:
    - 这是 Windows 对未签名应用的保护提示，不代表程序本身损坏。
    - 请在提示页里选择“更多信息”后再选择“仍要运行”（如果系统给出这个入口）。
 4. 如果还是打不开：
-   - 请把整个文件夹放到普通目录后再试，例如 D 盘或你自己新建的工作目录。
+   - 请把整个文件夹放到短且普通的目录后再试，例如 C:\\HextechCompanion-Test。
    - 不要放在只读、受限或同步中的目录里。
+   - 不要在解压目录名中叠加多层任务描述；Windows 原生 DLL 路径必须短于 260 字符。
 
 说明：
 - 这是未签名的便携版，适合熟人或测试用户使用。
@@ -518,6 +585,41 @@ def validate_packaged_scraping_data(final_dir: Path) -> None:
     missing = [name for name in REQUIRED_PACKAGED_SCRAPING_DATA if not (data_dir / name).is_file()]
     if missing:
         raise RuntimeError("打包缺少 Scrapling 指纹数据：" + ", ".join(missing))
+
+
+def validate_packaged_native_paths(
+    final_dir: Path,
+    *,
+    max_path_length: int = NATIVE_PATH_LIMIT,
+) -> dict[str, object]:
+    """冻结候选在实际绝对路径下必须可被 Win32 Loader 加载。"""
+
+    native_files = [
+        path
+        for path in final_dir.rglob("*")
+        if path.is_file() and path.suffix.casefold() in NATIVE_BINARY_SUFFIXES
+    ]
+    measured = sorted(
+        (
+            len(str(path.resolve(strict=False))),
+            path.relative_to(final_dir).as_posix(),
+        )
+        for path in native_files
+    )
+    violations = [item for item in measured if item[0] > int(max_path_length)]
+    if violations:
+        length, relative_path = violations[-1]
+        raise RuntimeError(
+            "冻结包原生 DLL 路径过长："
+            f"length={length} limit={max_path_length} relative={relative_path}"
+        )
+    longest = measured[-1] if measured else (0, "")
+    return {
+        "native_file_count": len(measured),
+        "max_path_length": longest[0],
+        "longest_relative_path": longest[1],
+        "limit": int(max_path_length),
+    }
 
 
 def create_portable_zip(final_dir: Path) -> Path:
@@ -541,19 +643,41 @@ def _release_dir_name(build_time: datetime) -> str:
     return f"{RELEASE_PREFIX}-{build_time.strftime('%Y%m%d')}"
 
 
-def run_packaged_smoke(package_dir: Path, timeout: int = 60) -> None:
+def _parse_release_name(value: str) -> str:
+    """只接受安全的日期化目录名，阻止路径穿越和误覆盖其他产物。"""
+
+    candidate = value.strip()
+    if RELEASE_NAME_PATTERN.fullmatch(candidate) is None:
+        raise argparse.ArgumentTypeError(
+            "--release-name 必须形如 HextechCompanion-YYYYMMDD[-标签] "
+            "或 HextechCompanion-YYYYMMDDTHHMMSS[-标签]"
+        )
+    return candidate
+
+
+def run_packaged_smoke(
+    package_dir: Path,
+    timeout: int = 210,
+    *,
+    smoke_root: Path | None = None,
+) -> None:
     """运行便携包首启 smoke；失败时调用方不得替换正式 release。"""
 
     smoke_script = BASE_DIR / "tooling" / "acceptance" / "smoke_packaged_startup.py"
-    subprocess.run(
-        [
+    command = [
             sys.executable,
             str(smoke_script),
             "--package-dir",
             str(package_dir),
             "--timeout",
             str(timeout),
-        ],
+        ]
+    if smoke_root is not None:
+        command.extend(["--smoke-root", str(smoke_root)])
+    # 候选构建必须保留各 fixture 的自动门证据；后续不得靠重跑覆盖失败现场。
+    command.append("--keep")
+    subprocess.run(
+        command,
         cwd=BASE_DIR,
         text=True,
         check=True,
@@ -601,15 +725,22 @@ def _discard_release_backup(backup_dir: Path | None, backup_zip: Path | None) ->
         backup_zip.unlink()
 
 
-def finalize_output(exe_dir: Path) -> tuple[Path, Path]:
+def finalize_output(
+    exe_dir: Path,
+    *,
+    release_name: str | None = None,
+    smoke_root: Path | None = None,
+) -> tuple[Path, Path]:
     """整理最终输出目录；先 smoke staging，通过后才替换正式 release。"""
 
     print_step("最终优化")
     RELEASES_DIR.mkdir(parents=True, exist_ok=True)
     STAGING_RELEASES_DIR.mkdir(parents=True, exist_ok=True)
     build_time = datetime.now()
-    final_dir = RELEASES_DIR / _release_dir_name(build_time)
+    final_dir = RELEASES_DIR / (release_name or _release_dir_name(build_time))
     zip_path = RELEASES_DIR / f"{final_dir.name}.zip"
+    if release_name is not None and (final_dir.exists() or zip_path.exists()):
+        raise RuntimeError(f"显式 release 名称已存在，拒绝覆盖：{final_dir}")
     staging_dir = STAGING_RELEASES_DIR / f"{final_dir.name}-{build_time.strftime('%H%M%S')}"
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
@@ -617,8 +748,17 @@ def finalize_output(exe_dir: Path) -> tuple[Path, Path]:
     write_portable_launcher(staging_dir)
     write_first_run_guide(staging_dir)
     validate_packaged_scraping_data(staging_dir)
+    native_paths = validate_packaged_native_paths(staging_dir)
+    print_check(
+        "原生 DLL 路径预算：count={native_file_count} max={max_path_length}/{limit}".format(
+            **native_paths
+        )
+    )
     print_check(f"staging 输出目录：{staging_dir}")
-    run_packaged_smoke(staging_dir, timeout=60)
+    if smoke_root is None:
+        run_packaged_smoke(staging_dir, timeout=210)
+    else:
+        run_packaged_smoke(staging_dir, timeout=210, smoke_root=smoke_root)
 
     backup_dir, backup_zip = _move_existing_release_as_backup(final_dir, zip_path, build_time)
     try:
@@ -638,26 +778,43 @@ def main(argv: list[str] | None = None) -> None:
     """打包工具主流程入口。"""
 
     args = parse_build_args(argv)
+    if args.artifacts_dir is not None:
+        configure_artifacts_dir(args.artifacts_dir)
     print("\n" + "=" * 60)
     print("  Hextech 伴生系统打包程序")
     print(f"  构建时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
-    cleanup()
-    prepare_runtime_data_for_package(refresh_data=args.refresh_data)
+    # PyInstaller work/dist/spec 已全部位于隔离临时目录；候选构建不再删除
+    # worktree 的 legacy build/dist 或 Python cache，避免扩大构建授权。
+    print_step("使用隔离构建目录（保留既有生成物与缓存）")
+    package_snapshot_root = prepare_runtime_data_for_package(
+        refresh_data=args.refresh_data,
+        verified_snapshot_root=args.verified_snapshot_root,
+    )
+    injected_snapshot_root = (
+        package_snapshot_root
+        if args.refresh_data or args.verified_snapshot_root is not None
+        else None
+    )
     with TemporaryDirectory(prefix="hextech-build-") as tmp_dir:
         build_root = Path(tmp_dir)
         manifest_path = write_generated_manifest(
             build_root,
-            verified_snapshot_root=args.verified_snapshot_root,
+            verified_snapshot_root=injected_snapshot_root,
         )
         version_file = generate_version_info(build_root)
         exe_dir = build_exe(
             version_file,
             manifest_path,
             build_root,
-            verified_snapshot_root=args.verified_snapshot_root,
+            verified_snapshot_root=injected_snapshot_root,
         )
-        final_dir, zip_path = finalize_output(exe_dir)
+        finalize_kwargs: dict[str, object] = {}
+        if args.release_name is not None:
+            finalize_kwargs["release_name"] = args.release_name
+        if args.smoke_root is not None:
+            finalize_kwargs["smoke_root"] = args.smoke_root
+        final_dir, zip_path = finalize_output(exe_dir, **finalize_kwargs)
     deployment = None
     if args.deploy:
         print_step("部署稳定客户端")
@@ -665,6 +822,7 @@ def main(argv: list[str] | None = None) -> None:
             final_dir,
             args.install_dir,
             shortcut_path=args.shortcut,
+            roi_dump_mode=args.roi_dump_mode,
             shutdown_timeout=args.deploy_timeout,
         )
         print_check(f"稳定安装目录：{deployment.install_dir}")

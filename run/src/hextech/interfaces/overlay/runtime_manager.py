@@ -15,8 +15,6 @@ from typing import Any, Callable, Mapping
 
 from hextech.modules.session.build_identity import current_build_id
 
-import psutil
-
 from hextech.modules.data.overlay_source import prepare_shared_overlay_data
 from hextech.modules.vision.events import write_inactive_overlay_event
 from hextech.modules.vision.runtime_paths import overlay_runtime_state_path
@@ -30,7 +28,7 @@ from hextech.interfaces.overlay.lifecycle import (
     stop_process,
 )
 from hextech.interfaces.overlay.context import start_overlay_context_poller, write_missing_overlay_context
-from hextech.interfaces.overlay.sidecar_liveness import read_sidecar_liveness
+from hextech.interfaces.overlay.vision_handoff import VisionHandoffMixin
 
 OVERLAY_HOST_VISIBILITY_STALE_SECONDS = 6.0
 TEMPLATE_PREWARM_WAIT_TIMEOUT_SECONDS = 8.0
@@ -45,7 +43,7 @@ class _OverlayStartCancelled(RuntimeError):
     """内部控制流：当前启动 generation 已被新的 desired state 取代。"""
 
 
-class OverlayRuntimeManager:
+class OverlayRuntimeManager(VisionHandoffMixin):
     """Supervisor 持有的游戏内显示运行态。
 
     这里刻意只做生命周期编排和状态汇总：host、Vision sidecar、context poller
@@ -62,11 +60,12 @@ class OverlayRuntimeManager:
         prepare_data_func: Callable[[], Mapping[str, Any]] = prepare_shared_overlay_data,
         write_inactive_func: Callable[[], Any] = write_inactive_overlay_event,
         load_template_runtime_func: Callable[..., Any] | None = None,
+        vision_pool_fingerprint_func: Callable[[Mapping[str, Any]], str] | None = None,
         visibility_status_file: str | Path | None = None,
         sidecar_status_file: str | Path | None = None,
         prewarm_wait_timeout_seconds: float = TEMPLATE_PREWARM_WAIT_TIMEOUT_SECONDS,
         retry_sleep_func: Callable[[float], Any] | None = None,
-        pid_exists: Callable[[int], bool] = psutil.pid_exists,
+        pid_exists: Callable[[int], bool] | None = None,
         process_create_time: Callable[[int], float | None] | None = None,
         now_func: Callable[[], float] = time.time,
     ) -> None:
@@ -76,6 +75,7 @@ class OverlayRuntimeManager:
         self._prepare_data_func = prepare_data_func
         self._write_inactive_func = write_inactive_func
         self._load_template_runtime_func = load_template_runtime_func
+        self._vision_pool_fingerprint_func = vision_pool_fingerprint_func or (lambda _cache: "")
         self._visibility_status_file = Path(visibility_status_file) if visibility_status_file is not None else Path(overlay_runtime_state_path("game_overlay_visibility.v1.json"))
         self._sidecar_status_file = (
             Path(sidecar_status_file)
@@ -84,7 +84,9 @@ class OverlayRuntimeManager:
         )
         self._prewarm_wait_timeout_seconds = max(0.1, float(prewarm_wait_timeout_seconds))
         self._retry_sleep_func = retry_sleep_func
-        self._pid_exists = pid_exists
+        import psutil
+
+        self._pid_exists = pid_exists or psutil.pid_exists
         self._process_create_time = process_create_time or self._default_process_create_time
         self._now_func = now_func
         self._lock = threading.RLock()
@@ -106,6 +108,9 @@ class OverlayRuntimeManager:
         self.startup_mode = "unknown"
         self.target_budget_seconds = OVERLAY_COLD_STARTUP_BUDGET_SECONDS
         self.startup_attempts: list[dict[str, Any]] = []
+        self.host_startup_attempts: list[dict[str, Any]] = []
+        self.host_startup_seconds = 0.0
+        self.host_ready_state = "not_started"
         self._startup_started_at = 0.0
         self._startup_finished_at = 0.0
         self._startup_hard_deadline = 0.0
@@ -118,6 +123,7 @@ class OverlayRuntimeManager:
         self.updated_at = time.time()
         self._sidecar_started_at = 0.0
         self._sidecar_liveness: dict[str, Any] = {"status": "unknown", "reason": "not_started"}
+        self._init_vision_handoff_state()
 
     def _mark(self, *, status: str | None = None, phase: str | None = None, error: str | None = None) -> None:
         if status is not None:
@@ -150,6 +156,9 @@ class OverlayRuntimeManager:
         self._startup_finished_at = 0.0
         self._startup_session_claimed = claimed
         self.startup_attempts = []
+        self.host_startup_attempts = []
+        self.host_startup_seconds = 0.0
+        self.host_ready_state = "not_started"
         self._refresh_startup_budget_locked()
 
     def _startup_elapsed_locked(self) -> float:
@@ -162,62 +171,6 @@ class OverlayRuntimeManager:
         if self._startup_started_at > 0.0 and self._startup_finished_at <= 0.0:
             self._startup_finished_at = time.perf_counter()
         self.startup_seconds = self._startup_elapsed_locked()
-
-    @staticmethod
-    def _process_running(process: ProcessLike | None) -> bool:
-        return bool(process is not None and process.poll() is None)
-
-    @staticmethod
-    def _default_process_create_time(pid: int) -> float | None:
-        try:
-            return float(psutil.Process(pid).create_time())
-        except (psutil.Error, OSError):
-            return None
-
-    def _host_pid(self) -> int | None:
-        return getattr(self.host_process, "_hextech_overlay_runtime_pid", None) or getattr(self.host_process, "pid", None)
-
-    def _sidecar_pid(self) -> int | None:
-        return getattr(self.sidecar_process, "pid", None)
-
-    def _read_sidecar_liveness(self) -> dict[str, Any]:
-        pid = self._sidecar_pid()
-        return read_sidecar_liveness(
-            self._sidecar_status_file,
-            pid=pid,
-            process_running=self._process_running(self.sidecar_process),
-            sidecar_started_at=self._sidecar_started_at,
-            now=self._now_func(),
-            pid_exists=self._pid_exists,
-            process_create_time=self._process_create_time,
-        )
-
-    def _sidecar_is_reusable(self) -> bool:
-        liveness = self._read_sidecar_liveness()
-        self._sidecar_liveness = liveness
-        return liveness.get("status") in {"running", "starting"}
-
-    def _mark_sidecar_stale_locked(self) -> None:
-        liveness = self._read_sidecar_liveness()
-        self._sidecar_liveness = liveness
-        if liveness.get("status") not in {"running", "starting"}:
-            # 无论是 PID 已退出、被复用还是 heartbeat 停止，先收敛为 stale。
-            # 这样 Desktop 不会把一个还残留着 ProcessLike 对象的 sidecar 当成可用；
-            # 下一次 enable 再沿用既有的启动重试/退避路径恢复。
-            self._mark(
-                status="stale",
-                phase="sidecar_stale",
-                error=f"Vision sidecar 存活失效：{liveness.get('reason') or 'unknown'}",
-            )
-
-    def prepare_sidecar_restart(self) -> bool:
-        """在 Supervisor 启动恢复线程前先发布非失败态，避免 UI 闪现失效文案。"""
-
-        with self._lock:
-            if not self.desired_enabled or self.status != "stale":
-                return False
-            self._mark(status="starting", phase="sidecar_restart", error="")
-            return True
 
     def _start_context_poller(self) -> None:
         if self.context_poller is not None or self._start_context_poller_func is None:
@@ -306,7 +259,13 @@ class OverlayRuntimeManager:
         try:
             with self._lock:
                 self.cache_status = "prewarming"
-            hint_cache = dict(self._prepare_data_func() or {})
+            with self._lock:
+                pending_hint_cache = self._pending_vision_hint_cache
+            hint_cache = (
+                dict(pending_hint_cache)
+                if isinstance(pending_hint_cache, Mapping)
+                else dict(self._prepare_data_func() or {})
+            )
 
             def _cache_status(phase: str, fields: Mapping[str, Any]) -> None:
                 with self._lock:
@@ -323,7 +282,11 @@ class OverlayRuntimeManager:
                     self.cache_stats = dict(fields)
                     self.startup_seconds = round(time.perf_counter() - started_at, 3)
 
-            runtime = self._template_loader()(hint_cache=hint_cache, status_callback=_cache_status)
+            runtime = self._template_loader()(
+                hint_cache=hint_cache,
+                status_callback=_cache_status,
+                require_production_pool=True,
+            )
             with self._lock:
                 self.cache_status = "ready"
                 if self.cache_hit is not False:
@@ -392,7 +355,11 @@ class OverlayRuntimeManager:
             return self._stop("disabled")
         with self._operation_lock:
             with self._lock:
-                if self._process_running(self.host_process) and self._sidecar_is_reusable():
+                if (
+                    self._process_running(self.host_process)
+                    and self._sidecar_is_reusable()
+                    and not self.pending_vision_pool_fingerprint
+                ):
                     self._start_context_poller()
                     self._mark(status="running", phase="running", error="")
                     return self.snapshot()
@@ -458,7 +425,42 @@ class OverlayRuntimeManager:
             with self._lock:
                 self.phase = "host_start"
             if not self._process_running(self.host_process):
-                self.host_process = self._start_host_func()
+                host_started_at = time.perf_counter()
+                with self._lock:
+                    host_attempt = {
+                        "attempt": 1,
+                        "started_elapsed_seconds": self._startup_elapsed_locked(),
+                        "status": "starting",
+                        "ready_state": "waiting",
+                    }
+                    self.host_startup_attempts.append(host_attempt)
+                    self.host_ready_state = "waiting"
+                try:
+                    host_process = self._start_host_func()
+                except Exception as exc:
+                    observation = getattr(exc, "host_startup_observation", None)
+                    observation = dict(observation) if isinstance(observation, Mapping) else {}
+                    elapsed = round(max(0.0, time.perf_counter() - host_started_at), 3)
+                    with self._lock:
+                        host_attempt.update(observation)
+                        host_attempt["status"] = "failed"
+                        host_attempt["ready_state"] = str(observation.get("ready_state") or "failed")
+                        host_attempt.setdefault("error_type", exc.__class__.__name__)
+                        host_attempt["completed_elapsed_seconds"] = self._startup_elapsed_locked()
+                        self.host_startup_seconds = float(observation.get("elapsed_seconds") or elapsed)
+                        self.host_ready_state = str(host_attempt["ready_state"])
+                    raise
+                observation = getattr(host_process, "_hextech_overlay_host_startup_observation", None)
+                observation = dict(observation) if isinstance(observation, Mapping) else {}
+                elapsed = round(max(0.0, time.perf_counter() - host_started_at), 3)
+                with self._lock:
+                    host_attempt.update(observation)
+                    host_attempt["status"] = "ready"
+                    host_attempt["ready_state"] = "ready"
+                    host_attempt["completed_elapsed_seconds"] = self._startup_elapsed_locked()
+                    self.host_startup_seconds = float(observation.get("elapsed_seconds") or elapsed)
+                    self.host_ready_state = "ready"
+                self.host_process = host_process
             if not self._process_running(self.host_process):
                 raise RuntimeError("game_overlay host 启动后立即退出")
             self._ensure_start_current(generation, cancel_event)
@@ -480,10 +482,32 @@ class OverlayRuntimeManager:
                 self._finish_startup_session_locked()
                 self._mark(status="running", phase="running", error="")
                 self.last_start_failure_kind = ""
+                self.active_vision_pool_fingerprint = str(
+                    getattr(self.sidecar_process, "_hextech_vision_pool_fingerprint", "")
+                    or self.cache_stats.get("vision_pool_fingerprint")
+                    or ""
+                )
+                self.active_vision_origin_generation_id = str(
+                    getattr(self.sidecar_process, "_hextech_vision_origin_generation_id", "")
+                    or self.cache_stats.get("vision_pool_origin_generation_id")
+                    or ""
+                )
+                if self.pending_vision_pool_fingerprint == self.active_vision_pool_fingerprint:
+                    self.pending_vision_pool_fingerprint = ""
+                    self.pending_vision_origin_generation_id = ""
+                    self._pending_vision_hint_cache = None
+                    self.vision_handoff_state = "completed"
+                    self._vision_handoff_in_progress = False
             return self.snapshot()
         except _OverlayStartCancelled:
             return self.snapshot()
         except Exception as exc:
+            if self._vision_handoff_in_progress and self._rollback_vision_handoff(
+                str(exc),
+                generation,
+                cancel_event,
+            ):
+                return self.snapshot()
             self._rollback_failed_start(str(exc))
             raise
 
@@ -541,10 +565,21 @@ class OverlayRuntimeManager:
                 parameters = inspect.signature(self._start_sidecar_func).parameters
                 accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
                 if accepts_kwargs or {"readiness_timeout_seconds", "cancel_event"}.issubset(parameters):
-                    process = self._start_sidecar_func(
-                        readiness_timeout_seconds=timeout_seconds,
-                        cancel_event=cancel_event,
-                    )
+                    start_kwargs: dict[str, Any] = {
+                        "readiness_timeout_seconds": timeout_seconds,
+                        "cancel_event": cancel_event,
+                    }
+                    if accepts_kwargs or "target_generation_id" in parameters:
+                        start_kwargs["target_generation_id"] = str(
+                            self.cache_stats.get("vision_pool_origin_generation_id")
+                            or self.cache_stats.get("vision_pool_generation_id")
+                            or ""
+                        )
+                    if accepts_kwargs or "expected_vision_pool_fingerprint" in parameters:
+                        start_kwargs["expected_vision_pool_fingerprint"] = str(
+                            self.cache_stats.get("vision_pool_fingerprint") or ""
+                        )
+                    process = self._start_sidecar_func(**start_kwargs)
                 else:
                     process = self._start_sidecar_func()
                 try:
@@ -618,6 +653,8 @@ class OverlayRuntimeManager:
         text = str(reason or "")
         if "game_overlay host 启动超时" in text:
             return "host_readiness_timeout"
+        if "game_overlay host 启动失败且进程清理失败" in text:
+            return "host_cleanup_failed"
         if "Vision sidecar" in text or "game_overlay sidecar" in text:
             return "sidecar_failed"
         if "readiness token 不匹配" in text:
@@ -726,6 +763,12 @@ class OverlayRuntimeManager:
                 "host_pid": self._host_pid() if self._process_running(self.host_process) else None,
                 "sidecar_pid": self._sidecar_pid() if self._process_running(self.sidecar_process) else None,
                 "sidecar_liveness": dict(self._sidecar_liveness),
+                "active_vision_pool_fingerprint": self.active_vision_pool_fingerprint,
+                "active_vision_origin_generation_id": self.active_vision_origin_generation_id,
+                "observed_data_generation_id": self.observed_data_generation_id,
+                "pending_vision_pool_fingerprint": self.pending_vision_pool_fingerprint,
+                "pending_vision_origin_generation_id": self.pending_vision_origin_generation_id,
+                "vision_handoff_state": self.vision_handoff_state,
                 "context_status": self._context_status(),
                 "cache_status": self.cache_status,
                 "cache_hit": self.cache_hit,
@@ -737,6 +780,9 @@ class OverlayRuntimeManager:
                 "fallback_recommended": fallback_recommended,
                 "hard_timeout_reached": hard_timeout_reached,
                 "startup_attempts": [dict(attempt) for attempt in self.startup_attempts],
+                "host_startup_seconds": self.host_startup_seconds,
+                "host_ready_state": self.host_ready_state,
+                "host_startup_attempts": [dict(attempt) for attempt in self.host_startup_attempts],
                 "visible_reason": self.visible_reason,
                 "functional_status": self.functional_status,
                 "functional_reason": self.functional_reason,

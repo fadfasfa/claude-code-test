@@ -1,7 +1,7 @@
-"""Overlay 单轮选择的 generation 固定器。
+"""Overlay 单局游戏的统计 generation 固定器。
 
-选择轮由 ``session_id + selection_epoch`` 唯一标识。同一轮只使用首次打开的
-``DataSnapshotView``；current 中途变化只记状态，下一轮才采用新 generation。
+游戏局由 ``session_id`` 唯一标识。同一局的多个 selection epoch 都使用首次
+打开的 ``DataSnapshotView``；current 中途变化只记状态，下一局才采用新 generation。
 """
 
 from __future__ import annotations
@@ -27,6 +27,12 @@ def selection_key(event: Mapping[str, Any]) -> SelectionKey | None:
     return (session_id, epoch) if session_id and epoch > 0 else None
 
 
+def game_session_key(event: Mapping[str, Any]) -> str:
+    source_value = event.get("source")
+    source = source_value if isinstance(source_value, Mapping) else {}
+    return str(source.get("session_id") or "").strip()
+
+
 def _generation_id(view: SnapshotViewPort | None) -> str:
     if view is None:
         return ""
@@ -37,7 +43,7 @@ def _generation_id(view: SnapshotViewPort | None) -> str:
 
 
 class SelectionGenerationPin:
-    """持有当前选择轮的 immutable snapshot view。"""
+    """持有当前游戏局的 immutable stats snapshot view。"""
 
     def __init__(
         self,
@@ -45,7 +51,8 @@ class SelectionGenerationPin:
         now: Callable[[], float] = time.monotonic,
         latest_probe_interval_seconds: float = 1.0,
     ) -> None:
-        self._key: SelectionKey | None = None
+        self._session_id = ""
+        self._selection_key: SelectionKey | None = None
         self._view: SnapshotViewPort | None = None
         self._generation_id = ""
         self._new_generation_id = ""
@@ -54,7 +61,8 @@ class SelectionGenerationPin:
         self._last_latest_probe_at = 0.0
 
     def reset(self) -> None:
-        self._key = None
+        self._session_id = ""
+        self._selection_key = None
         self._view = None
         self._generation_id = ""
         self._new_generation_id = ""
@@ -65,12 +73,14 @@ class SelectionGenerationPin:
         event: Mapping[str, Any],
         open_latest: Callable[[], SnapshotViewPort | None],
     ) -> SnapshotViewPort | None:
-        key = selection_key(event)
-        if key is None:
+        session_id = game_session_key(event)
+        current_selection_key = selection_key(event)
+        if not session_id:
             self.reset()
             return None
-        if key != self._key:
-            self._key = key
+        self._selection_key = current_selection_key
+        if session_id != self._session_id:
+            self._session_id = session_id
             self._new_generation_id = ""
             self._last_latest_probe_at = self._now()
             try:
@@ -80,7 +90,16 @@ class SelectionGenerationPin:
             self._generation_id = _generation_id(self._view)
             return self._view
         if self._view is None:
-            return None
+            now = self._now()
+            if now - self._last_latest_probe_at < self._latest_probe_interval_seconds:
+                return None
+            self._last_latest_probe_at = now
+            try:
+                self._view = open_latest()
+            except Exception:
+                self._view = None
+            self._generation_id = _generation_id(self._view)
+            return self._view
 
         now = self._now()
         if now - self._last_latest_probe_at < self._latest_probe_interval_seconds:
@@ -98,7 +117,14 @@ class SelectionGenerationPin:
 
     def status(self) -> dict[str, Any]:
         return {
-            "selection_key": list(self._key) if self._key is not None else [],
+            "selection_key": (
+                list(self._selection_key) if self._selection_key is not None else []
+            ),
+            "game_session_id": self._session_id,
+            "stats_generation_id": self._generation_id,
+            "new_stats_generation_id": self._new_generation_id,
+            "generation_role": "stats_game_session",
+            # 兼容旧 Host/test 读取；新写入与诊断必须优先使用上面的角色字段。
             "generation_id": self._generation_id,
             "new_generation_available": bool(self._new_generation_id),
             "new_generation_id": self._new_generation_id,
@@ -106,4 +132,4 @@ class SelectionGenerationPin:
         }
 
 
-__all__ = ["SelectionGenerationPin", "selection_key"]
+__all__ = ["SelectionGenerationPin", "game_session_key", "selection_key"]

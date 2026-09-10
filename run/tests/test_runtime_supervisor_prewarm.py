@@ -18,6 +18,84 @@ from hextech.interfaces.overlay import runtime_manager as overlay_runtime_manage
 from support.process_fakes import FakeProcess
 
 
+def test_stats_only_generation_does_not_request_sidecar_handoff_and_vision_change_defers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from copy import deepcopy
+
+    from hextech.infrastructure.vision.template_runtime import vision_pool_fingerprint
+    from hextech.interfaces.overlay.runtime_manager import OverlayRuntimeManager
+    from hextech.modules.data import generation as generation_module
+
+    snapshot_root = tmp_path / "snapshots"
+    snapshot_root.mkdir()
+    monkeypatch.setattr(generation_module, "default_snapshot_root", lambda: snapshot_root)
+    hint = {
+        "schema_version": 1,
+        "hints": {"1": {"augment_id": "1", "name": "属性！"}},
+        "name_index": {"属性！": "1"},
+        "source": {
+            "production_augment_pool": {
+                "schema_version": 1,
+                "state": "ready",
+                "pool_id": "pool-a",
+                "catalog_generation_id": "catalog-a",
+                "catalog_sha256": "a" * 64,
+                "catalog_manifest_sha256": "b" * 64,
+                "metadata_marker_sha256": "c" * 64,
+                "canonical_ids": ["1"],
+                "identities": [{"canonical_id": "1", "name": "属性！"}],
+            }
+        },
+        "snapshot": {"generation_id": "stats-g1"},
+    }
+    current = {"value": hint}
+    visibility_path = tmp_path / "visibility.json"
+    visibility_path.write_text(json.dumps({"scene": {"selection_window_active": False}}))
+    (snapshot_root / "current.v2.json").write_text(
+        json.dumps({"schema_version": 2, "current_generation_id": "stats-g1"})
+    )
+    runtime = OverlayRuntimeManager(
+        start_context_poller_func=None,
+        prepare_data_func=lambda: deepcopy(current["value"]),
+        write_inactive_func=lambda: None,
+        visibility_status_file=visibility_path,
+        sidecar_status_file=tmp_path / "sidecar.json",
+        vision_pool_fingerprint_func=vision_pool_fingerprint,
+    )
+    runtime.desired_enabled = True
+    runtime.status = "running"
+    runtime.active_vision_pool_fingerprint = vision_pool_fingerprint(hint)
+    runtime.active_vision_origin_generation_id = "stats-g1"
+
+    first = runtime.observe_data_generation()
+    assert first["state"] == "stats_only"
+    assert runtime.pending_vision_pool_fingerprint == ""
+
+    current["value"]["snapshot"]["generation_id"] = "stats-g2"
+    (snapshot_root / "current.v2.json").write_text(
+        json.dumps({"schema_version": 2, "current_generation_id": "stats-g2"})
+    )
+    stats_only = runtime.observe_data_generation()
+    assert stats_only["state"] == "stats_only"
+    assert runtime.pending_vision_pool_fingerprint == ""
+
+    current["value"]["snapshot"]["generation_id"] = "vision-g3"
+    current["value"]["source"]["production_augment_pool"]["pool_id"] = "pool-b"
+    (snapshot_root / "current.v2.json").write_text(
+        json.dumps({"schema_version": 2, "current_generation_id": "vision-g3"})
+    )
+    visibility_path.write_text(json.dumps({"scene": {"selection_window_active": True}}))
+    deferred = runtime.observe_data_generation()
+    assert deferred["state"] == "deferred_selection_active"
+    assert runtime.prepare_vision_handoff() is False
+
+    visibility_path.write_text(json.dumps({"scene": {"selection_window_active": False}}))
+    ready = runtime.observe_data_generation()
+    assert ready["state"] == "ready"
+
+
 def _request(base_url: str, method: str, path: str, *, nonce: str = "test-nonce", host: str = "127.0.0.1", body: dict | None = None):
     data = None if body is None else json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
@@ -96,6 +174,8 @@ class RuntimeSupervisorPrewarmTests(unittest.TestCase):
         self.assertIsInstance(captured["cancel_event"], threading.Event)
         self.assertEqual(len(snapshot["startup_attempts"]), 1)
         self.assertEqual(snapshot["startup_attempts"][0]["status"], "ready")
+        self.assertEqual(snapshot["host_ready_state"], "ready")
+        self.assertEqual(snapshot["host_startup_attempts"][0]["status"], "ready")
 
     def test_overlay_runtime_repeated_enable_keeps_completed_startup_session(self):
         from hextech.bootstrap import supervisor as runtime_supervisor
@@ -340,6 +420,8 @@ class RuntimeSupervisorPrewarmTests(unittest.TestCase):
         self.assertEqual(snapshot["phase"], "failed")
         self.assertEqual(snapshot["last_start_failure_kind"], "host_readiness_timeout")
         self.assertIn("ready_file=missing", snapshot["last_error"])
+        self.assertEqual(snapshot["host_ready_state"], "failed")
+        self.assertEqual(snapshot["host_startup_attempts"][0]["status"], "failed")
         self.assertFalse(sidecar_started.is_set())
         self.assertGreaterEqual(len(inactive_events), 2)
 
@@ -353,6 +435,10 @@ class RuntimeSupervisorPrewarmTests(unittest.TestCase):
         self.assertEqual(
             OverlayRuntimeManager._classify_start_failure_kind("game_overlay host readiness token 不匹配"),
             "host_readiness_token_mismatch",
+        )
+        self.assertEqual(
+            OverlayRuntimeManager._classify_start_failure_kind("game_overlay host 启动失败且进程清理失败(pid=1)"),
+            "host_cleanup_failed",
         )
         self.assertEqual(
             OverlayRuntimeManager._classify_start_failure_kind("game_overlay host 启动失败：sidecar cache still warming"),

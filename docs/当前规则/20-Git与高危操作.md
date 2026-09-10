@@ -36,7 +36,6 @@ commit 授权不隐含 push，push 不隐含 PR 或 merge，discard 授权也不
 - `heybox/**` 业务工作区内未授权修改。
 - `subtitle_extractor/**` 业务工作区内未授权修改。
 - `QuantProject/**` 本地私有工作区，默认不发布到 public remote。
-- `qm-run-demo` 示例发布仓库，当前只保留 gitlink，不在普通任务中维护 `.gitmodules` 或子仓内容。
 - 任何业务工作区内未授权修改。
 - `auth.json`、token、cookie、API key、`.env`、`local.yaml`、`proxies.json`。
 - 用户级 `.claude`、`.codex` 和 KB 仓库，除非用户明确纳入范围。

@@ -115,6 +115,44 @@ def test_fully_identical_publish_is_noop(tmp_path: Path) -> None:
     assert second.generation_id == first.generation_id
 
 
+def test_checked_at_stale_age_and_refreshed_sources_do_not_create_generation(tmp_path: Path) -> None:
+    publisher = DataSnapshotPublisher(tmp_path)
+    payload = _payload(marker="same")
+    first = publisher.publish(
+        payload,
+        source_files=(_provenance("one"),),
+        refreshed_sources=("hextech",),
+        source_status={
+            "hextech": {
+                "run_id": "run-one",
+                "freshness": "fresh",
+                "data_status": "fresh",
+                "checked_at": "2026-08-30T10:00:00+00:00",
+                "stale_age_seconds": 1,
+            }
+        },
+    )
+    second = publisher.publish(
+        payload,
+        source_files=(_provenance("one"),),
+        refreshed_sources=(),
+        source_status={
+            "hextech": {
+                "run_id": "run-one",
+                "freshness": "fresh",
+                "data_status": "fresh",
+                "checked_at": "2026-08-30T11:00:00+00:00",
+                "stale_age_seconds": 99,
+            }
+        },
+    )
+
+    assert second.generation_id == first.generation_id
+    assert publisher.last_promotion_disposition == "unchanged"
+    assert not (tmp_path / "previous.v2.json").exists()
+    assert len(list((tmp_path / "generations").iterdir())) == 1
+
+
 def test_view_resolves_vision_augment_id_and_preserves_catalog_only_identity(tmp_path: Path) -> None:
     payload = _payload(marker="one")
     payload["overlay_hints"] = {

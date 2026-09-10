@@ -589,4 +589,4 @@ def test_typed_overlay_renderer_reads_published_chinese_stat_fields() -> None:
     degraded_rendered = build_render_model_from_session(degraded_state)
     assert degraded_rendered["stats"][0]["stats_text"] == "胜率 60.0% · 出场 8.0%"
     assert degraded_rendered["stats"][0]["status_code"] == "GENERATION_DEGRADED"
-    assert degraded_rendered["stats"][0]["status_text"] == "上一代数据"
+    assert degraded_rendered["stats"][0]["status_text"] == ""

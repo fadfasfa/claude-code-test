@@ -71,6 +71,8 @@ SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
+SWP_SHOWWINDOW = 0x0040
+SW_SHOWNOACTIVATE = 4
 HOTKEY_MODE_ID = 0x484A
 MOD_ALT = 0x0001
 VK_MENU = 0x12
@@ -242,6 +244,11 @@ class WindowTargetPoller:
         self._process_id = 0
         self._process_started_at = 0.0
         self._identity_quality = "unavailable"
+        self._game_window_mode_status = "unknown"
+        self._game_window_mode = "unknown"
+        self._game_window_mode_reason = "game_window_mode_unknown"
+        self._game_window_mode_source = "game_cfg"
+        self._game_window_mode_observed_at = 0.0
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -272,6 +279,11 @@ class WindowTargetPoller:
                 "process_id": self._process_id,
                 "process_started_at": self._process_started_at,
                 "identity_quality": self._identity_quality,
+                "game_window_mode_status": self._game_window_mode_status,
+                "game_window_mode": self._game_window_mode,
+                "game_window_mode_reason": self._game_window_mode_reason,
+                "game_window_mode_source": self._game_window_mode_source,
+                "game_window_mode_observed_at": self._game_window_mode_observed_at,
             }
 
     @staticmethod
@@ -282,7 +294,16 @@ class WindowTargetPoller:
             return value
         if value is None:
             return WindowProbeResult(status="missing", observed_at=time.time())
-        return WindowProbeResult(status="found", hwnd=int(value[0]), client_rect=value[1], observed_at=time.time())
+        return WindowProbeResult(
+            status="found",
+            hwnd=int(value[0]),
+            client_rect=value[1],
+            observed_at=time.time(),
+            # 兼容测试/旧 finder 的 tuple 返回；真实 finder 必须携带显式模式。
+            game_window_mode_status="supported",
+            game_window_mode="borderless",
+            game_window_mode_reason="",
+        )
 
     def _run(self) -> None:
         while not self._stop_requested.is_set():
@@ -310,6 +331,21 @@ class WindowTargetPoller:
                     self._process_id = int(probe.process_id or 0)
                     self._process_started_at = float(probe.process_started_at or 0.0)
                     self._identity_quality = str(probe.identity_quality or "unavailable")
+                    mode_status = str(probe.game_window_mode_status or "unknown")
+                    mode_reason = str(probe.game_window_mode_reason or "")
+                    if not mode_reason and mode_status == "unsupported":
+                        mode_reason = "unsupported_fullscreen_mode"
+                    elif not mode_reason and mode_status in {"unknown", "error"}:
+                        mode_reason = "game_window_mode_unknown"
+                    self._game_window_mode_status = mode_status
+                    self._game_window_mode = str(probe.game_window_mode or "unknown")
+                    self._game_window_mode_reason = mode_reason
+                    self._game_window_mode_source = str(
+                        probe.game_window_mode_source or "game_cfg"
+                    )
+                    self._game_window_mode_observed_at = float(
+                        probe.game_window_mode_observed_at or self._last_probe_at
+                    )
             self._stop_requested.wait(self._interval_seconds)
 
 

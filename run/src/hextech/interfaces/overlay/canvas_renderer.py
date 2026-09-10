@@ -3,24 +3,31 @@
 from __future__ import annotations
 
 import time
-import unicodedata
 from collections.abc import Sequence
 from typing import Any, Literal, NotRequired, Protocol, TypedDict
 
-from hextech.modules.vision.layout import pick_card_panels
+from hextech.modules.vision.layout import LayoutTransform, apply_transform
+from .display_geometry import (
+    display_card_panels,
+    display_geometry_metadata,
+    display_stat_boxes,
+)
+from .data_notice import DataNoticeModel
+from .text_metrics import (
+    canvas_text_metrics, _visual_text_width, _ellipsize_visual, _wrap_visual_text,
+    fit_stats_spacing,
+)
+from .synergy_canvas import (
+    draw_compact_synergy_panel as _draw_compact_synergy_panel_impl,
+    draw_expanded_synergy_panel as _draw_expanded_synergy_panel_impl,
+)
+from .typography import (
+    OverlayTypographyMetrics,
+    SynergyTextLayout as SynergyTextLayout,
+    resolve_overlay_typography,
+)
 
-INNER_BAR_HEIGHT_RATIO = 0.052
-INNER_BAR_TOP_MARGIN_RATIO = 0.825
-INNER_BAR_SIDE_INSET_RATIO = 0.055
-SYNERGY_CARD_GAP_RATIO = 0.010
-COMPACT_SYNERGY_HEIGHT_RATIO = 0.066
-CARD_TEXT_POINT_SIZE = 16
-# 联动文字按视口高度缩放：视口是游戏窗口物理像素，天然携带 DPI。旧实现按卡宽
-# 上限 15/12px，在 2560×1600 真机上远小于卡下 16pt 统计行，联动几乎不可读。
-SYNERGY_TITLE_HEIGHT_RATIO = 0.015   # 1080→16px，1600→24px
-SYNERGY_BODY_HEIGHT_RATIO = 0.012    # 1080→12px，1600→19px，与统计行同量级
-COMPACT_SYNERGY_TEXT_HEIGHT_RATIO = 0.011
-SYNERGY_PANEL_MIN_HEIGHT_RATIO = 0.085
+INNER_BAR_TOP_MARGIN_RATIO = 0.829
 
 OVERLAY_THEME: dict[str, str] = {
     "panel_bg": "#0A1428",
@@ -34,6 +41,8 @@ OVERLAY_THEME: dict[str, str] = {
     "text_shadow": "#000000",
     "stat_label": "#F0E6D2",
     "stat_value": "#FFB23E",
+    "stat_low_sample": "#F87171",
+    "stat_aggregate": "#3FA9DC",
     "stat_separator": "#9A7B3F",
     "prismatic": "#F498F5",
     "gold": "#C8AA6E",
@@ -62,6 +71,8 @@ StatStatusCode = Literal[
     "DETECTING",
     "RECOGNITION_MISSING",
     "SNAPSHOT_UNAVAILABLE",
+    "STATS_PREPARING",
+    "STATS_STALE",
     "GENERATION_DEGRADED",
     "PRIVACY_OFF",
     "NO_STATS",
@@ -79,8 +90,6 @@ SynergyStatusCode = Literal[
     "SOURCE_UNAVAILABLE",
     "GENERATION_MISMATCH",
 ]
-
-
 class StatPanelModel(TypedDict):
     slot: int
     state: str
@@ -92,6 +101,11 @@ class StatPanelModel(TypedDict):
     pickrate_text: str
     status_text: str
     synergy_status: SynergyStatusCode
+    stats_tone: NotRequired[Literal["default", "low_sample", "aggregate"]]
+    low_sample_outline: NotRequired[bool]
+    sample_count: NotRequired[int | None]
+    stats_scope: NotRequired[str]
+    fallback_reason: NotRequired[str]
     # 命中 hint 的规范 augment_id；仅供 session report 关联数据层，不参与绘制。
     hint_id: NotRequired[str]
 
@@ -103,14 +117,24 @@ class SynergyPanelModel(TypedDict):
     hero_name: str
     rating: str
     tag: str
-    content: str
+    content: Any
+    raw_content: NotRequired[Any]
+    display_summary: NotRequired[dict[str, Any]]
     data_status: NotRequired[SynergyStatusCode]
     status_text: NotRequired[str]
+
+
+class StageIndicatorModel(TypedDict):
+    stage: int
+    label: str
+    data_notice: NotRequired[DataNoticeModel]
 
 
 class OverlayRenderModel(TypedDict):
     stats: list[StatPanelModel]
     synergies: list[SynergyPanelModel]
+    stage_indicator: NotRequired[StageIndicatorModel]
+    data_notice: NotRequired[DataNoticeModel]
 
 
 class OverlayLayout(TypedDict):
@@ -118,22 +142,9 @@ class OverlayLayout(TypedDict):
     card_boxes: list[tuple[int, int, int, int]]
     synergy_rail: tuple[int, int, int, int]
     synergy_boxes: list[tuple[int, int, int, int]]
-
-
-class SynergyTextLayout(TypedDict):
-    header: str
-    rating: str
-    badge_width: int
-    meta: str
-    body_lines: list[str]
-    title_size: int
-    body_size: int
-    title_offset: int
-    meta_offset: int
-    body_offset: int
-    line_height: int
-    desired_height: int
-    truncated: bool
+    geometry_scale: float
+    stage_indicator_box: NotRequired[tuple[int, int, int, int]]
+    safe_boxes: NotRequired[list[tuple[int, int, int, int]]]
 
 
 def _clean_text(value: Any, *, limit: int = 120) -> str:
@@ -154,37 +165,36 @@ def _clamp(low: int, value: float, high: int) -> int:
 
 
 def _card_panel_ratios(viewport_size: tuple[int, int]) -> tuple[tuple[float, float, float, float], ...]:
-    """选择与 vision 识别一致的三卡比例，避免统计层和真实卡片中轴线分离。"""
+    """显示锚点独立于识别 ROI；二者变化不能互相驱动。"""
 
-    return pick_card_panels(viewport_size)
+    return display_card_panels(viewport_size)
 
 
 def resolve_overlay_layout(
     viewport_size: tuple[int, int],
     *,
+    layout_transform: LayoutTransform | None = None,
     synergy_count: int = 0,
     synergy_heights: Sequence[int] | None = None,
     synergy_slots: Sequence[int] | None = None,
+    expanded: bool = False,
 ) -> OverlayLayout:
-    width, height = (max(1, int(value)) for value in viewport_size)
-    margin = _clamp(8, width * 0.008, 20)
+    width, height = (int(value) for value in viewport_size)
+    if width <= 1 or height <= 1:
+        raise ValueError("overlay viewport is not ready")
+    margin = max(_clamp(8, width * 0.008, 20), int(round(height * .04)))
     card_panels = _card_panel_ratios((width, height))
-    card_y0 = int(height * card_panels[0][1])
-    card_y1 = int(height * card_panels[0][3])
+    # 参数仅保留调用兼容：按钮/名称 ROI 的逐帧变换不再驱动显示几何。
+    transform = LayoutTransform()
+    card_boxes = [apply_transform(panel, (width, height), transform) for panel in card_panels]
+    card_y0 = card_boxes[0][1]
+    card_y1 = card_boxes[0][3]
     card_height = card_y1 - card_y0
-    stat_height = _clamp(46, height * INNER_BAR_HEIGHT_RATIO, 72)
-    stat_top_margin = int(card_height * INNER_BAR_TOP_MARGIN_RATIO)
-    stat_y0 = card_y0 + stat_top_margin
-    stat_y1 = stat_y0 + stat_height
-    card_boxes: list[tuple[int, int, int, int]] = []
-    stat_boxes: list[tuple[int, int, int, int]] = []
-    for left, top, right, bottom in card_panels:
-        x0, x1 = int(width * left), int(width * right)
-        panel_y0, panel_y1 = int(height * top), int(height * bottom)
-        card_boxes.append((x0, panel_y0, x1, panel_y1))
-        stat_side_inset = _clamp(10, (x1 - x0) * INNER_BAR_SIDE_INSET_RATIO, 20)
-        stat_boxes.append((x0 + stat_side_inset, stat_y0, x1 - stat_side_inset, stat_y1))
-    synergy_gap = _clamp(8, height * SYNERGY_CARD_GAP_RATIO, 16)
+    card_width = max(1, card_boxes[0][2] - card_boxes[0][0])
+    geometry_scale = min(card_width / 477.0, card_height / 768.0)
+    geometry_scale = max(0.1, min(2.5, geometry_scale))
+    stat_boxes = list(display_stat_boxes((width, height)))
+    synergy_gap = max(8, int(round(16 * geometry_scale)))
     synergy_bottom = max(margin + 1, card_y0 - synergy_gap)
     rail = (card_boxes[0][0], margin, card_boxes[-1][2], synergy_bottom)
     requested_heights = (
@@ -207,18 +217,20 @@ def resolve_overlay_layout(
     boxes: list[tuple[int, int, int, int]] = []
     if slots:
         available_height = max(1, synergy_bottom - margin)
-        default_height = _clamp(64, height * COMPACT_SYNERGY_HEIGHT_RATIO, 96)
+        default_height = max(64, int(round(96 * geometry_scale)))
         if not requested_heights:
             requested_heights = [default_height] * len(slots)
-        for slot, requested_height in zip(slots, requested_heights):
+        for slot in slots:
             card_x0, _, card_x1, _ = card_boxes[slot]
-            panel_height = min(max(1, int(requested_height)), available_height)
+            panel_height = available_height if expanded else min(default_height, available_height)
             boxes.append((card_x0, synergy_bottom - panel_height, card_x1, synergy_bottom))
     return {
         "stat_boxes": stat_boxes,
+        "safe_boxes": list(stat_boxes),
         "card_boxes": card_boxes,
         "synergy_rail": rail,
         "synergy_boxes": boxes,
+        "geometry_scale": round(geometry_scale, 4),
     }
 
 
@@ -295,124 +307,10 @@ def _draw_native_panel(canvas: CanvasLike, box: tuple[int, int, int, int], *, ti
     canvas.create_rectangle(x1 - 15, y0 + 5, x1 - 13, y0 + 7, fill=tier_color, outline="")
 
 
-def _visual_text_width(value: str, font_size: int) -> float:
-    """按字形类别估算像素宽度；用于纯 renderer 中的稳定换行，不依赖 Tk 状态。"""
-
-    total = 0.0
-    for char in str(value or ""):
-        if unicodedata.combining(char):
-            continue
-        if char.isspace():
-            factor = 0.35
-        elif unicodedata.east_asian_width(char) in {"W", "F", "A"}:
-            factor = 1.0
-        elif char in "ilI.,:;|!'`":
-            factor = 0.36
-        else:
-            factor = 0.62
-        total += max(1, int(font_size)) * factor
-    return total
-
-
-def _ellipsize_visual(value: str, *, max_width: int, font_size: int) -> str:
-    text = str(value or "").rstrip()
-    if _visual_text_width(text, font_size) <= max_width:
-        return text
-    suffix = "…"
-    while text and _visual_text_width(text + suffix, font_size) > max_width:
-        text = text[:-1].rstrip()
-    return (text + suffix) if text else suffix
-
-
-def _wrap_visual_text(value: str, *, max_width: int, font_size: int) -> list[str]:
-    text = _clean_text(value, limit=180)
-    if not text:
-        return []
-    lines: list[str] = []
-    current = ""
-    for char in text:
-        if char.isspace() and not current:
-            continue
-        candidate = current + char
-        if current and _visual_text_width(candidate, font_size) > max_width:
-            lines.append(current.rstrip())
-            current = "" if char.isspace() else char
-        else:
-            current = candidate
-    if current:
-        lines.append(current.rstrip())
-    return [line for line in lines if line]
-
-
-def _resolve_synergy_text_layout(
-    row: SynergyPanelModel,
-    width: int,
-    *,
-    viewport_height: int,
-    minimum_height: int,
-    panel_height: int | None = None,
-) -> SynergyTextLayout:
-    pad = _clamp(12, width * 0.05, 20)
-    text_width = max(40, width - pad * 2)
-    # 字号随视口高度缩放；行高与偏移从字号推导，避免宽度比例的独立 clamp 在
-    # 高分辨率下把文字钉死在小字号。
-    title_size = _clamp(14, viewport_height * SYNERGY_TITLE_HEIGHT_RATIO, 30)
-    body_size = _clamp(11, viewport_height * SYNERGY_BODY_HEIGHT_RATIO, 24)
-    title_line_height = max(title_size + 2, int(round(title_size * 1.25)))
-    line_height = max(body_size + 4, int(round(body_size * 1.35)))
-    title_offset = _clamp(12, title_size * 0.8, 26)
-    meta_offset = title_offset + title_line_height + 6
-    body_offset = meta_offset + line_height + 8
-    bottom_pad = _clamp(10, body_size * 0.8, 20)
-
-    rating = _clean_text(row["rating"], limit=12)
-    # 评级改为右上角 tier 色徽章；标题只留卡名，可用宽度需扣除徽章占位。
-    badge_width = int(_visual_text_width(rating, title_size)) + title_size if rating else 0
-    header_width = max(24, text_width - (badge_width + 8 if badge_width else 0))
-    header = _ellipsize_visual(row["augment_name"], max_width=header_width, font_size=title_size)
-    meta = _ellipsize_visual(
-        " · ".join(part for part in (row["hero_name"], row["tag"], row.get("status_text", "")) if part),
-        max_width=text_width,
-        font_size=body_size,
-    )
-    body_lines = _wrap_visual_text(row["content"], max_width=text_width, font_size=body_size)
-    desired_height = max(
-        max(1, int(minimum_height)),
-        body_offset + len(body_lines) * line_height + bottom_pad,
-    )
-    truncated = False
-    if panel_height is not None and body_lines:
-        available_body_height = max(0, int(panel_height) - body_offset - bottom_pad)
-        max_lines = max(1, available_body_height // line_height)
-        if len(body_lines) > max_lines:
-            body_lines = body_lines[:max_lines]
-            body_lines[-1] = _ellipsize_visual(
-                body_lines[-1] + "…",
-                max_width=text_width,
-                font_size=body_size,
-            )
-            truncated = True
-    return {
-        "header": header,
-        "rating": rating,
-        "badge_width": badge_width,
-        "meta": meta,
-        "body_lines": body_lines,
-        "title_size": title_size,
-        "body_size": body_size,
-        "title_offset": title_offset,
-        "meta_offset": meta_offset,
-        "body_offset": body_offset,
-        "line_height": line_height,
-        "desired_height": desired_height,
-        "truncated": truncated,
-    }
-
-
-def _draw_shadowed_text(canvas: CanvasLike, x: int, y: int, **kwargs: Any) -> None:
+def _draw_shadowed_text(canvas: CanvasLike, x: int, y: int, **kwargs: Any) -> Any:
     """每段可见文字只创建一个 Canvas item，避免叠层字体产生重影。"""
 
-    canvas.create_text(x, y, **kwargs)
+    return canvas.create_text(x, y, **kwargs)
 
 
 def _pixel_font(family: str, size: int, *styles: str) -> tuple[Any, ...]:
@@ -426,10 +324,30 @@ def _draw_embedded_bar(canvas: CanvasLike, box: tuple[int, int, int, int], *, ti
     pass
 
 
-def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: StatPanelModel) -> None:
+def _draw_low_sample_outline(canvas: CanvasLike, box: tuple[int, int, int, int]) -> None:
+    """综合回退时用细红内框保留低样本风险，不覆盖范围蓝字。"""
+
+    canvas.create_polygon(
+        _chamfered_points(box, 2),
+        fill="",
+        outline=OVERLAY_THEME["stat_low_sample"],
+        width=2,
+    )
+
+
+def _draw_stat_panel(
+    canvas: CanvasLike,
+    box: tuple[int, int, int, int],
+    row: StatPanelModel,
+    *,
+    typography: OverlayTypographyMetrics,
+) -> dict[str, Any] | None:
     _draw_embedded_bar(canvas, box, tier=row["tier"])
+    if bool(row.get("low_sample_outline")):
+        _draw_low_sample_outline(canvas, box)
     x0, y0, x1, y1 = box
     font_family = "Microsoft YaHei UI"
+    metrics = canvas_text_metrics(canvas)
     if row["status_code"] not in {"READY", "GENERATION_DEGRADED"}:
         status_colors = {
             "DETECTING": OVERLAY_THEME["highlight_cyan"],
@@ -440,21 +358,28 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
             "CHAMPION_STAT_MISSING": OVERLAY_THEME["text_muted"],
             "IDENTITY_UNRESOLVED": OVERLAY_THEME["text_muted"],
             "SNAPSHOT_UNAVAILABLE": OVERLAY_THEME["text_secondary"],
+            "STATS_PREPARING": OVERLAY_THEME["text_secondary"],
+            "STATS_STALE": OVERLAY_THEME["text_secondary"],
             "GENERATION_DEGRADED": OVERLAY_THEME["stat_value"],
             "CONTEXT_MISSING": OVERLAY_THEME["highlight_cyan"],
             "CONTEXT_EXPIRED": OVERLAY_THEME["highlight_cyan"],
         }
-        _draw_shadowed_text(
-            canvas,
-            (x0 + x1) // 2,
-            (y0 + y1) // 2,
-            text=row["status_text"],
-            fill=status_colors[row["status_code"]],
-            # 卡内文字沿用用户确认的点字号；联动说明继续使用像素字号，
-            # 避免把此前为联动框设置的 DPI 限制错误应用到核心统计。
-            font=(font_family, CARD_TEXT_POINT_SIZE, "bold"),
-            anchor="center",
-        )
+        size = typography["synergy_title_px"]
+        def measure(text: str, px: int) -> float:
+            return metrics.width(text, px, True)
+        lines = _wrap_visual_text(row["status_text"], max_width=max(1, x1 - x0 - 12), font_size=size, measure=measure)
+        line_height = metrics.line_height(size, True)
+        capacity = max(1, (y1 - y0 - 4) // line_height)
+        if len(lines) > capacity:
+            lines = lines[:capacity]
+            lines[-1] = _ellipsize_visual(lines[-1] + "…", max_width=max(1, x1 - x0 - 12), font_size=size, measure=measure)
+        for index, line in enumerate(lines):
+            _draw_shadowed_text(
+                canvas, (x0 + x1) // 2,
+                int(round((y0 + y1) / 2 + (index - (len(lines) - 1) / 2) * line_height)),
+                text=line, fill=status_colors[row["status_code"]],
+                font=_pixel_font(font_family, size, "bold"), anchor="center",
+            )
         return
 
     cx = (x0 + x1) // 2
@@ -462,13 +387,111 @@ def _draw_stat_panel(canvas: CanvasLike, box: tuple[int, int, int, int], row: St
     # 统计必须作为一个整体围绕卡片中轴线居中；拆成固定左右列会因百分位长度不同
     # 产生 5px+ 的视觉偏移，真机帧上尤其明显。
     stats_text = row["stats_text"] or f"胜率 {row['winrate_text']} · 出场 {row['pickrate_text']}"
-    _draw_shadowed_text(
+    tone_colors = {
+        "default": OVERLAY_THEME["stat_value"],
+        "low_sample": OVERLAY_THEME["stat_low_sample"],
+        "aggregate": OVERLAY_THEME["stat_aggregate"],
+    }
+    item = _draw_shadowed_text(
         canvas,
         cx,
         cy,
         text=stats_text,
-        fill=OVERLAY_THEME["stat_value"],
-        font=(font_family, CARD_TEXT_POINT_SIZE, "bold"),
+        fill=tone_colors.get(str(row.get("stats_tone") or "default"), OVERLAY_THEME["stat_value"]),
+        font=_pixel_font(font_family, typography["stats_pixel_size"], "bold"),
+        anchor="center",
+    )
+    bbox = getattr(canvas, "bbox", None)
+    actual: Any = bbox(item) if callable(bbox) and item is not None else None
+    if actual is not None:
+        if not (x0 <= actual[0] <= actual[2] <= x1 and y0 <= actual[1] <= actual[3] <= y1):
+            raise ValueError("stats_text_exceeds_safe_area")
+        return {"slot": row["slot"], "actual_bbox": list(actual)}
+    return None
+
+
+def _stage_indicator_box(
+    viewport_size: tuple[int, int],
+    label: str,
+    warning: str = "",
+    *,
+    typography: OverlayTypographyMetrics,
+) -> tuple[int, int, int, int]:
+    width, height = viewport_size
+    right_margin = _clamp(28, width * 0.012, 40)
+    top = _clamp(64, height * 0.065, 108)
+    font_size = typography["stage_px"]
+    warning_size = typography["stage_warning_px"]
+    padding_x = _clamp(12, width * 0.006, 18)
+    badge_height = _clamp(40, font_size + 18, 54)
+    if warning:
+        badge_height = min(height - top, badge_height + max(24, int(round(font_size * 1.2))))
+    badge_width = max(
+        112,
+        int(
+            round(
+                max(
+                    _visual_text_width(label, font_size),
+                    _visual_text_width(warning, warning_size),
+                )
+            )
+        )
+        + padding_x * 2,
+    )
+    x1 = max(1, width - right_margin)
+    return max(0, x1 - badge_width), top, x1, min(height, top + badge_height)
+
+
+def _draw_stage_indicator(
+    canvas: CanvasLike,
+    box: tuple[int, int, int, int],
+    indicator: StageIndicatorModel,
+    *,
+    typography: OverlayTypographyMetrics,
+) -> None:
+    x0, y0, x1, y1 = box
+    canvas.create_polygon(
+        _chamfered_points(box),
+        fill=OVERLAY_THEME["panel_bg"],
+        outline=OVERLAY_THEME["outer_gold"],
+        width=2,
+    )
+    font_size = typography["stage_px"]
+    notice = indicator.get("data_notice")
+    warning = str(notice.get("text") or "") if isinstance(notice, dict) else ""
+    if warning:
+        label_y = y0 + max(2, int(round((y1 - y0) * 0.30)))
+        warning_y = y0 + max(4, int(round((y1 - y0) * 0.72)))
+        _draw_shadowed_text(
+            canvas,
+            (x0 + x1) // 2,
+            label_y,
+            text=indicator["label"],
+            fill=OVERLAY_THEME["text_primary"],
+            font=_pixel_font("Microsoft YaHei UI", font_size, "bold"),
+            anchor="center",
+        )
+        _draw_shadowed_text(
+            canvas,
+            (x0 + x1) // 2,
+            warning_y,
+            text=warning,
+            fill=OVERLAY_THEME["text_secondary"],
+            font=_pixel_font(
+                "Microsoft YaHei UI",
+                typography["stage_warning_px"],
+                "bold",
+            ),
+            anchor="center",
+        )
+        return
+    _draw_shadowed_text(
+        canvas,
+        (x0 + x1) // 2,
+        (y0 + y1) // 2,
+        text=indicator["label"],
+        fill=OVERLAY_THEME["text_primary"],
+        font=_pixel_font("Microsoft YaHei UI", font_size, "bold"),
         anchor="center",
     )
 
@@ -478,72 +501,24 @@ def _draw_synergy_panel(
     box: tuple[int, int, int, int],
     row: SynergyPanelModel,
     *,
-    viewport_height: int,
+    typography: OverlayTypographyMetrics,
     minimum_height: int,
-) -> None:
-    _draw_native_panel(canvas, box, tier=row["tier"])
-    x0, y0, x1, y1 = box
-    width, height = x1 - x0, y1 - y0
-    pad = _clamp(12, width * 0.05, 20)
-    text_layout = _resolve_synergy_text_layout(
+) -> dict[str, Any]:
+    """兼容 façade：联动正文实现位于独立、无反向导入的绘制模块。"""
+
+    return _draw_expanded_synergy_panel_impl(
+        canvas,
+        box,
         row,
-        width,
-        viewport_height=viewport_height,
+        typography=typography,
         minimum_height=minimum_height,
-        panel_height=height,
+        theme=OVERLAY_THEME,
+        draw_panel=_draw_native_panel,
+        draw_text=_draw_shadowed_text,
+        tier_color=_tier_color,
+        pixel_font=_pixel_font,
     )
-    font_family = "Segoe UI"
-    _draw_shadowed_text(
-        canvas,
-        x0 + pad,
-        y0 + text_layout["title_offset"],
-        text=text_layout["header"],
-        fill=OVERLAY_THEME["text_primary"],
-        font=_pixel_font(font_family, text_layout["title_size"], "bold"),
-        anchor="nw",
-    )
-    if text_layout["rating"]:
-        # 评级徽章：tier 色底 + 深色文字，右上角与标题同一行，替代原先淹没在
-        # 标题里的 "· S" 文本，让联动强度一眼可读。
-        badge_x1 = x1 - pad
-        badge_x0 = badge_x1 - max(text_layout["badge_width"], text_layout["title_size"])
-        badge_y0 = y0 + text_layout["title_offset"] - 2
-        badge_y1 = badge_y0 + max(text_layout["title_size"] + 6, int(round(text_layout["title_size"] * 1.25)))
-        canvas.create_rectangle(
-            badge_x0,
-            badge_y0,
-            badge_x1,
-            badge_y1,
-            fill=_tier_color(row["tier"]),
-            outline="",
-        )
-        canvas.create_text(
-            (badge_x0 + badge_x1) // 2,
-            (badge_y0 + badge_y1) // 2,
-            text=text_layout["rating"],
-            fill=OVERLAY_THEME["panel_bg"],
-            font=_pixel_font(font_family, text_layout["title_size"] - 2, "bold"),
-            anchor="center",
-        )
-    _draw_shadowed_text(
-        canvas,
-        x0 + pad,
-        y0 + text_layout["meta_offset"],
-        text=text_layout["meta"],
-        fill=_tier_color(row["tier"]),
-        font=_pixel_font(font_family, text_layout["body_size"], "bold"),
-        anchor="nw",
-    )
-    if text_layout["body_lines"]:
-        _draw_shadowed_text(
-            canvas,
-            x0 + pad,
-            y0 + text_layout["body_offset"],
-            text="\n".join(text_layout["body_lines"]),
-            fill=OVERLAY_THEME["text_secondary"],
-            font=_pixel_font(font_family, text_layout["body_size"]),
-            anchor="nw",
-        )
+
 
 
 def _draw_compact_synergy_panel(
@@ -551,36 +526,21 @@ def _draw_compact_synergy_panel(
     box: tuple[int, int, int, int],
     row: SynergyPanelModel,
     *,
-    viewport_height: int,
-) -> None:
-    """按卡槽绘制一行联动摘要，避免 compact 模式重新占用右侧通知区。"""
+    typography: OverlayTypographyMetrics,
+) -> dict[str, Any]:
+    """兼容 façade：compact 联动绘制委托给独立实现。"""
 
-    _draw_native_panel(canvas, box, tier=row["tier"])
-    x0, y0, x1, y1 = box
-    width = x1 - x0
-    pad = _clamp(12, width * 0.05, 20)
-    font_size = _clamp(12, viewport_height * COMPACT_SYNERGY_TEXT_HEIGHT_RATIO, 22)
-    summary = " · ".join(
-        part
-        for part in (
-            row["hero_name"],
-            row["rating"],
-            row["tag"],
-            row.get("status_text", ""),
-            row["content"],
-        )
-        if _clean_text(part)
-    )
-    summary = _ellipsize_visual(summary, max_width=max(40, width - pad * 2), font_size=font_size)
-    _draw_shadowed_text(
+    return _draw_compact_synergy_panel_impl(
         canvas,
-        x0 + pad,
-        (y0 + y1) // 2,
-        text=summary,
-        fill=OVERLAY_THEME["text_primary"],
-        font=_pixel_font("Microsoft YaHei UI", font_size, "bold"),
-        anchor="w",
+        box,
+        row,
+        typography=typography,
+        theme=OVERLAY_THEME,
+        draw_panel=_draw_native_panel,
+        draw_text=_draw_shadowed_text,
+        pixel_font=_pixel_font,
     )
+
 
 
 def draw_overlay_frame(
@@ -588,6 +548,8 @@ def draw_overlay_frame(
     model: OverlayRenderModel,
     *,
     viewport_size: tuple[int, int] | None = None,
+    dpi_scale: float = 1.0,
+    layout_transform: LayoutTransform | None = None,
     perf_sink: dict[str, Any] | None = None,
     expanded: bool = True,
     show_synergy: bool = True,
@@ -599,61 +561,190 @@ def draw_overlay_frame(
     if viewport_size is None:
         viewport_size = (max(1, int(canvas.winfo_width())), max(1, int(canvas.winfo_height())))
     viewport_width, viewport_height = viewport_size
-    card_boxes = resolve_overlay_layout(viewport_size)["card_boxes"]
+    base_layout = resolve_overlay_layout(viewport_size, layout_transform=layout_transform)
+    card_boxes = base_layout["card_boxes"]
     card_width = max(1, card_boxes[0][2] - card_boxes[0][0])
+    card_height = max(1, card_boxes[0][3] - card_boxes[0][1])
+    typography = resolve_overlay_typography(
+        dpi_scale,
+        card_size=(card_width, card_height),
+    )
+    metrics = canvas_text_metrics(canvas)
+    size = max(8, int(30 * viewport_width / 2560 + .5))
+    typography["stats_pixel_size"] = size
+    pad = max(2, int(6 * viewport_width / 2560 + .5))
+    prepared_stats: list[StatPanelModel] = []
+    stats_diagnostics: list[dict[str, Any]] = []
+    for row, box in zip(model["stats"], base_layout["stat_boxes"]):
+        prepared = row.copy()
+        if row["status_code"] in {"READY", "GENERATION_DEGRADED"}:
+            text = row["stats_text"] or f"胜率 {row['winrate_text']} · 出场 {row['pickrate_text']}"
+            fitted, spacing = fit_stats_spacing(metrics, text, size, box[2]-box[0]-2*pad)
+            prepared["stats_text"] = fitted
+            stats_diagnostics.append({"slot": row["slot"], "spacing": spacing, "font_px": size,
+                                      "advance_px": metrics.width(fitted, size, True), "safe_box": list(box),
+                                      "padding_px": pad})
+        prepared_stats.append(prepared)
     # 上限随视口放大：120px 旧上限在 1600p 下容不下放大后的三段文字。
-    minimum_panel_height = _clamp(72, viewport_height * SYNERGY_PANEL_MIN_HEIGHT_RATIO, 200)
-    synergy_rows = list(model["synergies"]) if show_synergy else []
-    margin = _clamp(8, viewport_width * 0.008, 20)
-    synergy_gap = _clamp(8, viewport_height * SYNERGY_CARD_GAP_RATIO, 16)
+    minimum_panel_height = typography["expanded_panel_min_px"]
+    proposed_synergy_rows = list(model["synergies"])
+    synergy_rows = list(proposed_synergy_rows) if show_synergy else []
+    suppression_reason = "" if show_synergy else "synergy_display_disabled"
+    margin = max(_clamp(8, viewport_width * 0.008, 20), int(round(viewport_height * .04)))
+    synergy_gap = max(8, int(round(16 * typography["geometry_scale"])))
     available_synergy_height = max(0, card_boxes[0][1] - synergy_gap - margin)
     required_synergy_height = (
         minimum_panel_height
         if expanded
-        else _clamp(64, viewport_height * COMPACT_SYNERGY_HEIGHT_RATIO, 96)
+        else typography["compact_panel_px"]
     )
     if available_synergy_height < required_synergy_height:
-        # 低分辨率或卡片过高时宁可隐藏联动，也不绘制无法阅读的薄框。
+        # 不在薄框里切断条件句；报告必须保留每个未画槽及明确原因。
+        suppression_reason = "insufficient_vertical_space"
         synergy_rows = []
-    synergy_heights = [
-        (
-            _resolve_synergy_text_layout(
-                row,
-                card_width,
-                viewport_height=viewport_height,
-                minimum_height=minimum_panel_height,
-            )["desired_height"]
-            if expanded
-            else _clamp(64, viewport_height * COMPACT_SYNERGY_HEIGHT_RATIO, 96)
-        )
-        for row in synergy_rows
-    ]
+    synergy_heights = [available_synergy_height if expanded else typography["compact_panel_px"]] * len(synergy_rows)
     layout = resolve_overlay_layout(
         viewport_size,
+        layout_transform=layout_transform,
         synergy_count=len(synergy_rows),
         synergy_heights=synergy_heights,
         synergy_slots=[row["slot"] for row in synergy_rows],
+        expanded=expanded,
     )
     canvas.delete("all")
     def safe(box: tuple[int, int, int, int]) -> bool:
         x0, y0, x1, y1 = box
         return not any(x0 < rx1 and x1 > rx0 and y0 < ry1 and y1 > ry0 for rx0, ry0, rx1, ry1 in exclusion_zones)
 
-    for box, row in zip(layout["stat_boxes"], model["stats"]):
+    indicator = model.get("stage_indicator")
+    if not isinstance(indicator, dict):
+        notice = model.get("data_notice")
+        if isinstance(notice, dict) and _clean_text(notice.get("text")):
+            indicator = {
+                "stage": 0,
+                "label": "数据状态",
+                "data_notice": notice,
+            }
+    if isinstance(indicator, dict) and _clean_text(indicator.get("label")):
+        notice_payload = indicator.get("data_notice")
+        warning = _clean_text(notice_payload.get("text"), limit=40) if isinstance(notice_payload, dict) else ""
+        indicator_box = _stage_indicator_box(
+            viewport_size,
+            _clean_text(indicator.get("label"), limit=16),
+            warning,
+            typography=typography,
+        )
+        layout["stage_indicator_box"] = indicator_box
+        if safe(indicator_box):
+            _draw_stage_indicator(canvas, indicator_box, indicator, typography=typography)
+    for box, row in zip(layout["stat_boxes"], prepared_stats):
         if safe(box):
-            _draw_stat_panel(canvas, box, row)
+            audit = _draw_stat_panel(canvas, box, row, typography=typography)
+            if audit is not None:
+                for entry in stats_diagnostics:
+                    if entry["slot"] == audit["slot"]:
+                        entry.update(audit)
+    synergy_audits: dict[int, dict[str, Any]] = {
+        int(row["slot"]): {
+            "slot": int(row["slot"]),
+            "proposed": True,
+            "panel_drawn": False,
+            "content_drawn": False,
+            "content_verified": False,
+            "fallback_drawn": False,
+            "fallback_verified": False,
+            "reason": suppression_reason,
+            "line_count": 0,
+            "original_line_count": 0,
+            "original_char_count": len(str(row.get("raw_content", row.get("content")) or "")),
+            "truncated": False,
+            "source_omitted": bool(suppression_reason),
+            "summary_status": str(
+                (row.get("display_summary") or {}).get("status") or "legacy_unprepared"
+                if isinstance(row.get("display_summary"), dict)
+                else "legacy_unprepared"
+            ),
+            "source_sha256": str(
+                (row.get("display_summary") or {}).get("source_sha256") or ""
+                if isinstance(row.get("display_summary"), dict)
+                else ""
+            ),
+            "rule_version": str(
+                (row.get("display_summary") or {}).get("rule_version") or ""
+                if isinstance(row.get("display_summary"), dict)
+                else ""
+            ),
+            "display_spec": dict((row.get("display_summary") or {}).get("display_spec") or {})
+            if isinstance(row.get("display_summary"), dict)
+            and isinstance((row.get("display_summary") or {}).get("display_spec"), dict)
+            else {},
+            "bbox_available": False,
+            "bbox_verified": False,
+            "actual_bboxes": [],
+        }
+        for row in proposed_synergy_rows
+    }
     for box, row in zip(layout["synergy_boxes"], synergy_rows):
         if safe(box):
             if expanded:
-                _draw_synergy_panel(
+                audit = _draw_synergy_panel(
                     canvas,
                     box,
                     row,
-                    viewport_height=viewport_height,
+                    typography=typography,
                     minimum_height=minimum_panel_height,
                 )
             else:
-                _draw_compact_synergy_panel(canvas, box, row, viewport_height=viewport_height)
+                audit = _draw_compact_synergy_panel(canvas, box, row, typography=typography)
+            synergy_audits[int(row["slot"])] = {
+                **audit,
+                "proposed": True,
+                "panel_drawn": True,
+            }
+        else:
+            synergy_audits[int(row["slot"])]["reason"] = "exclusion_zone_overlap"
+            synergy_audits[int(row["slot"])]["source_omitted"] = True
+    for audit in synergy_audits.values():
+        if not audit["panel_drawn"] and not audit["reason"]:
+            audit["reason"] = "layout_box_missing"
+            audit["source_omitted"] = True
+    panel_drawn_synergy_slots = [
+        int(audit["slot"]) for audit in synergy_audits.values() if audit["panel_drawn"]
+    ]
+    drawn_synergy_slots = [
+        int(audit["slot"]) for audit in synergy_audits.values() if audit["content_verified"]
+    ]
+    fallback_drawn_synergy_slots = [
+        int(audit["slot"]) for audit in synergy_audits.values() if audit["fallback_drawn"]
+    ]
+    missing_synergy_slots = [
+        {"slot": audit["slot"], "reason": audit["reason"] or "content_not_drawn"}
+        for audit in synergy_audits.values()
+        if not audit["panel_drawn"] or not audit["content_verified"]
+    ]
     if isinstance(perf_sink, dict):
         perf_sink["last_draw_ms"] = (time.perf_counter() - started_at) * 1000.0
+        perf_sink["typography"] = dict(typography)
+        perf_sink["drawn_synergy_slots"] = drawn_synergy_slots
+        perf_sink["panel_drawn_synergy_slots"] = panel_drawn_synergy_slots
+        perf_sink["fallback_drawn_synergy_slots"] = fallback_drawn_synergy_slots
+        perf_sink["proposed_synergy_slots"] = [int(row["slot"]) for row in proposed_synergy_rows]
+        perf_sink["missing_synergy_slots"] = missing_synergy_slots
+        perf_sink["synergy_render"] = list(synergy_audits.values())
+        perf_sink["display_layout"] = {
+            "contract": "fixed_card_layout_v2", "viewport": list(viewport_size),
+            **display_geometry_metadata(viewport_size),
+            "stats_text": stats_diagnostics,
+            "safe_boxes": [list(box) for box in layout["stat_boxes"]],
+            "card_boxes": [list(box) for box in layout["card_boxes"]],
+            "stat_boxes": [list(box) for box in layout["stat_boxes"]],
+            "synergy_boxes": [list(box) for box in layout["synergy_boxes"]],
+            "synergy_slots": [row["slot"] for row in synergy_rows],
+            "synergy_proposed_slots": [row["slot"] for row in proposed_synergy_rows],
+            "synergy_panel_drawn_slots": panel_drawn_synergy_slots,
+            "synergy_content_drawn_slots": drawn_synergy_slots,
+            "synergy_fallback_drawn_slots": fallback_drawn_synergy_slots,
+            "synergy_missing_slots": missing_synergy_slots,
+            "synergy_render": list(synergy_audits.values()),
+        }
     return layout

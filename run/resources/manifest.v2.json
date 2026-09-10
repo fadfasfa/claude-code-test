@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-07-21T04:15:28+00:00",
+  "generated_at": "2026-08-21T09:27:21+00:00",
   "description": "Hextech resources 逐文件完整性与发布白名单。",
   "rules": {
     "resource_root": "resources",
@@ -4301,11 +4301,25 @@
       "sha256": "30e490badc51b9181bc7eb7445bbd4a199c71704f5a9f6b43b09294fb194b295"
     },
     {
+      "path": "resources/assets/vision/name_exemplars/aram_infernalconduit__20260821.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 5628,
+      "sha256": "8a7654da49cf6d4b7c65f59ab5990ebc25700c98836421375237e963c2205e29"
+    },
+    {
       "path": "resources/assets/vision/name_exemplars/aram_yowchmycoins__20260721.png",
       "category": "assets",
       "package_role": "package",
       "size": 6262,
       "sha256": "d116be09a28610bf4c19673eed94b34ce368533653acdf5ae738a8ce217bd09f"
+    },
+    {
+      "path": "resources/assets/vision/name_exemplars/ominouspact__20260821.png",
+      "category": "assets",
+      "package_role": "package",
+      "size": 7492,
+      "sha256": "62edb0d9c178d45bfc032528bf22d52fa832eb55d96e2605b6b8782a66abaa92"
     },
     {
       "path": "resources/catalog/hero_version.txt",
@@ -4348,6 +4362,27 @@
       "package_role": "build-only",
       "size": 307601,
       "sha256": "db6d8db3c4c12fab645f80fec2bd1df1bb9c56c0e068b0ce8adf52a199ff7fbb"
+    },
+    {
+      "path": "resources/ocr/LICENSE.apache-2.0.txt",
+      "category": "ocr",
+      "package_role": "package",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "resources/ocr/NOTICE.txt",
+      "category": "ocr",
+      "package_role": "package",
+      "size": 708,
+      "sha256": "5130e194f43eb8040dcef4d18e5c60c4d39760b9a4f6e6696093725abe4d1097"
+    },
+    {
+      "path": "resources/ocr/ch_PP-OCRv4_rec_infer.onnx",
+      "category": "ocr",
+      "package_role": "package",
+      "size": 10857958,
+      "sha256": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b"
     },
     {
       "path": "resources/seeds/current.v2.json",

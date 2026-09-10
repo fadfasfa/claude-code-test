@@ -16,6 +16,7 @@ from tooling.build.rules import (
     iter_source_files,
 )
 from tooling.build.resource_manifest import validate_resource_manifest
+from tooling.build.cohort_seed import collect_cohort_seed
 
 
 BUNDLE_MANIFEST_SCHEMA_VERSION = 3
@@ -74,7 +75,17 @@ def validate_snapshot_seed(snapshot_root: Path) -> dict[str, Any]:
     root = snapshot_root.resolve()
     view = DataSnapshotClient(root).open_view()
     status = view.status()
-    if status.get("state") != "ready":
+    source_status = status.get("source_status") if isinstance(status.get("source_status"), dict) else {}
+    aramkit = source_status.get("aramkit") if isinstance(source_status.get("aramkit"), dict) else {}
+    degraded_sources = set(status.get("degraded_sources") or [])
+    optional_degraded = bool(
+        status.get("state") == "degraded"
+        and str(aramkit.get("freshness") or "") == "fresh"
+        and str(aramkit.get("data_status") or "") == "fresh"
+        and degraded_sources
+        and degraded_sources.issubset({"blitz", "apex", "mayhem"})
+    )
+    if status.get("state") != "ready" and not optional_degraded:
         raise ValueError(f"seed generation invalid: {status.get('reason', 'unknown')}")
     manifest = view.manifest
     return {
@@ -84,6 +95,7 @@ def validate_snapshot_seed(snapshot_root: Path) -> dict[str, Any]:
         "augment_count": manifest.augment_count,
         "stat_record_count": manifest.stat_record_count,
         "content_fingerprint": manifest.content_fingerprint,
+        "optional_degraded": optional_degraded,
     }
 
 
@@ -102,6 +114,8 @@ def validate_bundle_manifest(manifest: dict) -> None:
             missing.append(field)
     if manifest.get("runtime_contracts") != RUNTIME_CONTRACT_VERSIONS:
         missing.append("runtime_contracts")
+    if "ocr_resources" in manifest and not isinstance(manifest.get("ocr_resources"), list):
+        missing.append("ocr_resources")
     if missing:
         raise ValueError("bundle manifest missing critical fields: " + ", ".join(missing))
     for forbidden in FORBIDDEN_BUNDLE_PATH_PARTS:
@@ -149,6 +163,13 @@ def build_bundle_manifest(base_dir: Path, *, verified_snapshot_root: Path | None
     built_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     source_fingerprint = _source_content_fingerprint(base_dir, source_files)
     build_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + source_fingerprint[:12]
+    cohort_seed = collect_cohort_seed(seed_root) if verified_snapshot_root is not None else None
+    cohort_seed_files = (
+        [cohort_seed.bundled_name(path) for path in cohort_seed.files]
+        if cohort_seed is not None
+        else []
+    )
+    ocr_files = sorted(path for path in packaged_resources if path.startswith("resources/ocr/"))
     manifest = {
         "schema_version": BUNDLE_MANIFEST_SCHEMA_VERSION,
         "generated_at": built_at,
@@ -163,9 +184,27 @@ def build_bundle_manifest(base_dir: Path, *, verified_snapshot_root: Path | None
             for path in packaged_resources
             if path.startswith("resources/assets/")
         ),
+        "ocr_resources": [
+            {
+                "path": relative_name,
+                "size": (base_dir / relative_name).stat().st_size,
+                "sha256": _sha256(base_dir / relative_name),
+            }
+            for relative_name in ocr_files
+        ],
         "seed_files": seed_files,
         "seed_health": validate_snapshot_seed(seed_root),
         "seed_sha256": {bundled: _sha256(source) for bundled, source in zip(seed_files, seed_sources)},
+        "cohort_seed": dict(cohort_seed.metadata) if cohort_seed is not None else {},
+        "cohort_seed_files": cohort_seed_files,
+        "cohort_seed_sha256": (
+            {
+                bundled: _sha256(source)
+                for bundled, source in zip(cohort_seed_files, cohort_seed.files)
+            }
+            if cohort_seed is not None
+            else {}
+        ),
         "source_files": source_files,
         "unlisted_resource_files": resource_report["unlisted_files"],
     }

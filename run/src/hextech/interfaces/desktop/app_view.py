@@ -1,4 +1,7 @@
 """Desktop DesktopViewMixin 职责模块。"""
+from .window_activation import suppress_desktop_activation
+from .client_layer import unowned_tk_operation
+from .foreground_layer import DesktopForegroundLayerMixin
 from hextech.interfaces.desktop.app_shared import (
     Mapping,
     TIER_COLORS,
@@ -6,19 +9,29 @@ from hextech.interfaces.desktop.app_shared import (
     WINDOW_BASE_HEIGHT,
     _empty_champions,
     logger,
-    parse_generation_created_ts,
+    snapshot_data_timestamp,
     scaled,
     threading,
     time,
     tk,
-    ui_font,
     ui_runtime,
 )
 from hextech.modules.data.catalog.champion_tier import normalized_champion_tier
 
 
-class DesktopViewMixin:
+class DesktopViewMixin(DesktopForegroundLayerMixin):
     def _run_on_ui_thread(self, callback):
+        callbacks = getattr(self, "_ui_callbacks", None)
+        if callbacks is not None:
+            import queue
+            if getattr(self, "_closing", False):
+                return False
+            try:
+                callbacks.put_nowait(callback)
+                return True
+            except queue.Full:
+                logger.warning("桌面回调队列已满，丢弃过期工作。")
+                return False
         root = getattr(self, "root", None)
         if root is None:
             return False
@@ -29,27 +42,64 @@ class DesktopViewMixin:
             return False
 
     def _set_window_topmost(self, enabled: bool) -> None:
-        if self._window_topmost == enabled:
-            return
-        try:
-            self.root.attributes("-topmost", enabled)
-            if enabled:
-                self.root.lift()
-            self._window_topmost = enabled
-        except tk.TclError:
-            logger.debug("切换窗口置顶状态失败。", exc_info=True)
+        if self._window_topmost:
+            self.root.attributes("-topmost", False)
+        self._window_topmost = False
 
-    def _show_overlay(self, topmost: bool = True) -> None:
+    def _desktop_client_is_foreground(self, hwnd: int) -> bool:
+        from .client_layer import client_is_foreground
+        return client_is_foreground(hwnd)
+
+    def _desktop_foreground_hwnd(self) -> int:
+        return int(ui_runtime.win32gui.GetForegroundWindow() or 0)
+
+    def _desktop_layer_matches(self, client_hwnd: int) -> bool:
+        from .client_layer import client_layer_matches, desktop_wrapper_hwnd
+        return client_layer_matches(desktop_wrapper_hwnd(self.root), client_hwnd)
+
+    def _bind_client_layer(self, client_hwnd: int) -> None:
+        from .client_layer import bind_client_layer, desktop_wrapper_hwnd
+        hwnd = desktop_wrapper_hwnd(self.root)
+        bind_client_layer(hwnd, client_hwnd)
+        if hwnd != getattr(self, "_desktop_hwnd", 0):
+            self._desktop_wrapper_revision = getattr(self, "_desktop_wrapper_revision", 0) + 1
+        self._desktop_hwnd = hwnd
+        self._desktop_owner_hwnd = client_hwnd
+
+    def _show_overlay(self, topmost: bool = False) -> None:
+        if self._window_visible and self.root.winfo_ismapped():
+            return
+        self._map_overlay(topmost=topmost)
+
+    @suppress_desktop_activation()
+    @unowned_tk_operation
+    def _map_overlay(self, topmost: bool = False) -> None:
         try:
-            self.root.deiconify()
-            self._set_window_topmost(topmost)
-            self.root.update_idletasks()
+            if not self._window_visible:
+                self.root.deiconify()
+                self.root.update_idletasks()
+            owner = int(getattr(self, "_desktop_owner_hwnd", 0))
+            if owner:
+                self._bind_client_layer(owner)
             self._window_visible = True
         except tk.TclError:
             logger.debug("显示悬浮窗失败。", exc_info=True)
 
     def _hide_overlay(self) -> None:
+        if getattr(self, "_foreground_layer_lease", None) is not None:
+            self._maintain_foreground_layer(int(getattr(self, "_desktop_owner_hwnd", 0)), eligible=False)
+        if not self._window_visible and not self.root.winfo_ismapped():
+            return
+        self._withdraw_overlay()
+
+    @unowned_tk_operation
+    def _withdraw_overlay(self) -> None:
         try:
+            self._activation_restore_generation = getattr(self, "_activation_restore_generation", 0) + 1
+            tip = getattr(self, "_name_tooltip", None)
+            if tip is not None:
+                tip.destroy()
+                self._name_tooltip = None
             self._set_window_topmost(False)
             self.root.withdraw()
             self._window_visible = False
@@ -78,7 +128,7 @@ class DesktopViewMixin:
         status = snapshot_view.status()
         self._snapshot_generation_id = str(status.get("generation_id") or "")
         # 顺带更新数据时效（供状态行"数据 X 前"后缀）；解析失败保留旧值不清零。
-        created_ts = parse_generation_created_ts(status.get("created_at"))
+        created_ts = snapshot_data_timestamp(status)
         if created_ts > 0:
             self._data_created_ts = created_ts
         champions = snapshot_view.get_champions()
@@ -90,6 +140,9 @@ class DesktopViewMixin:
         """监视 DataService 原子指针，首代或新代发布后刷新桌面列表。"""
 
         while not self.stop_event.wait(1.0):
+            refresh_status_poll = getattr(self, "_poll_data_refresh_status_once", None)
+            if callable(refresh_status_poll):
+                refresh_status_poll()
             if self._snapshot_client is None:
                 continue
             status = self._snapshot_client.status()
@@ -103,7 +156,14 @@ class DesktopViewMixin:
                 self.champions = new_champions
 
             def refresh_ui() -> None:
-                degraded = [str(item) for item in status.get("degraded_sources") or []]
+                degraded = [
+                    str(item)
+                    for item in (
+                        status.get("effective_degraded_sources")
+                        or status.get("degraded_sources")
+                        or []
+                    )
+                ]
                 # generation 短号只进日志：320px 单行状态栏放不下且用户不消费。
                 logger.info("数据已更新 %s，沿用来源: %s", generation_id, ", ".join(degraded) or "无")
                 if degraded:
@@ -269,24 +329,14 @@ class DesktopViewMixin:
             text=text,
             fg=UI_COLORS["warn"],
             bg=UI_COLORS["base"],
-            font=ui_font(12),
+            font=self._ui_font(12),
         )
         self._list_placeholder.pack(pady=scaled(20, scale))
+        self._list_placeholder._hextech_text = text
 
     def _avatar_placeholder_image(self):
-        """共享的圆角头像占位图：卡片首绘即占位，异步加载完成后原地替换。"""
-
-        if getattr(self, "_avatar_placeholder_photo", None) is None:
-            from PIL import Image, ImageDraw, ImageTk
-
-            scale = self._ui_scale_value()
-            size = scaled(48, scale)
-            radius = scaled(8, scale)
-            img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(img)
-            draw.rounded_rectangle((0, 0, size - 1, size - 1), radius=radius, fill=UI_COLORS["surface_alt"])
-            self._avatar_placeholder_photo = ImageTk.PhotoImage(img)
-        return self._avatar_placeholder_photo
+        from .avatar_loading import avatar_placeholder_image
+        return avatar_placeholder_image(self)
 
     def _tier_badge_style(self, tier: str) -> dict:
         return TIER_COLORS.get(str(tier or "").upper(), TIER_COLORS["T3"])
@@ -344,6 +394,21 @@ class DesktopViewMixin:
     def _render_candidate_cards(self, display_list: list[dict]) -> None:
         """keyed 增量渲染：同键行原地更新，成员变化才建/销卡片，消除全量重建闪烁。"""
 
+        content_key = tuple(tuple(sorted(item.items())) for item in display_list)
+        expected_rows = {str(item["id"]) for item in display_list}
+        if content_key == getattr(self, "_candidate_content_key", None) and expected_rows == set(self._card_rows):
+            for row in self._card_rows.values():
+                if not getattr(row["img_label"], "_hextech_avatar_loaded", False):
+                    self._request_avatar(row)
+            return
+        if content_key != getattr(self, "_candidate_content_key", None):
+            self._candidate_content_key = content_key
+            self._candidate_content_revision = getattr(self, "_candidate_content_revision", 0) + 1
+        self._update_candidate_cards_content(display_list)
+
+    @suppress_desktop_activation()
+    @unowned_tk_operation
+    def _update_candidate_cards_content(self, display_list: list[dict]) -> None:
         scale = self._ui_scale_value()
         # 键只用英雄 id：bench→self 的角色跃迁只更新右侧状态位，不销毁重建卡片。
         desired_keys = [str(item["id"]) for item in display_list]
@@ -407,6 +472,7 @@ class DesktopViewMixin:
             cursor="hand2",
         )
         content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        row["content"] = content
 
         img_label = tk.Label(
             content,
@@ -418,20 +484,17 @@ class DesktopViewMixin:
         )
         img_label.pack(side=tk.LEFT, padx=(0, scaled(7, scale)))
         row["img_label"] = img_label
-        threading.Thread(
-            target=lambda champion_id=item["id"], label=img_label: self._load_and_set_img(champion_id, label),
-            daemon=True,
-        ).start()
 
         # 固定指标列避免角色切换时胜率上下跳动；bench 使用同高空白状态位。
         metric = tk.Frame(content, width=scaled(72, scale), bg=card_surface, cursor="hand2")
+        row["metric"] = metric
         metric.pack(side=tk.RIGHT, fill=tk.Y)
         metric.pack_propagate(False)
         selected_badge = tk.Label(
             metric,
             text="",
             width=3,
-            font=ui_font(11, bold=True),
+            font=self._ui_font(11, bold=True),
             fg=card_surface,
             bg=card_surface,
             bd=0,
@@ -445,7 +508,7 @@ class DesktopViewMixin:
         win_label = tk.Label(
             metric,
             text="",
-            font=ui_font(16, bold=True),
+            font=self._ui_font(16, bold=True),
             fg=UI_COLORS["green"],
             bg=card_surface,
             bd=0,
@@ -454,6 +517,7 @@ class DesktopViewMixin:
         row["win_label"] = win_label
 
         info = tk.Frame(content, bg=card_surface, cursor="hand2")
+        row["info"] = info
         info.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         title_row = tk.Frame(info, bg=card_surface)
@@ -461,7 +525,7 @@ class DesktopViewMixin:
         badge = tk.Label(
             title_row,
             text=item["tier"],
-            font=ui_font(12, bold=True),
+            font=self._ui_font(12, bold=True),
             fg=badge_style["fg"],
             bg=badge_style["bg"],
             bd=0,
@@ -472,7 +536,7 @@ class DesktopViewMixin:
         name_label = tk.Label(
             title_row,
             text="",
-            font=ui_font(12, bold=True),
+            font=self._ui_font(12, bold=True),
             fg=UI_COLORS["text"],
             bg=card_surface,
             bd=0,
@@ -482,7 +546,7 @@ class DesktopViewMixin:
         pick_label = tk.Label(
             info,
             text="",
-            font=ui_font(11),
+            font=self._ui_font(11),
             fg=UI_COLORS["muted"],
             bg=card_surface,
             bd=0,
@@ -512,11 +576,12 @@ class DesktopViewMixin:
                     row["strength_bar"].config(bg=badge_style["bg"])
             row["tier"] = item["tier"]
 
-            if row.get("name_label") is not None:
+            if row.get("name_label") is not None and row.get("_source_name") != str(item["name"]):
                 # 只显示英雄名不再拼称号：横向空间让给右侧大号胜率列。
                 display_name = str(item["name"])
                 if row["name_label"].cget("text") != display_name:
                     row["name_label"].config(text=display_name)
+                row["_source_name"] = display_name
 
             # self=金色「已选」（我方锁定）、teammate=青色「队友」（队友锁定），
             # 其余角色（bench）不显示徽章。
@@ -543,15 +608,13 @@ class DesktopViewMixin:
                 row["win"] = item["win"]
                 row["pick"] = item["pick"]
 
+            self._layout_candidate_row(row)
             img_label = row.get("img_label")
             if img_label is not None and not getattr(img_label, "_hextech_avatar_loaded", False):
                 # keyed 复用不再每轮重建卡片；若建卡时头像下载在途被
                 # downloading_imgs 护栏跳过，这里必须补载，否则占位图会
                 # 停留到卡片下一次销毁重建（审查用真实 Tk 复现过该卡死）。
-                threading.Thread(
-                    target=lambda champion_id=item["id"], label=img_label: self._load_and_set_img(champion_id, label),
-                    daemon=True,
-                ).start()
+                self._request_avatar(row)
         except tk.TclError:
             logger.debug("原地更新候选卡片失败。", exc_info=True)
 
@@ -559,37 +622,40 @@ class DesktopViewMixin:
         ui_runtime.window_sync_loop(self)
 
     def start_move(self, event):
-        self.x, self.y = event.x, event.y
-        self._auto_follow_enabled = False
-        self._manual_move_timestamp = time.time()
-        # 在状态栏给出明确的"已挂起自动对齐"提示，避免玩家误以为跟随失灵
-        self._set_status("[手动] 自动对齐已挂起 8s", "#f9e2af")
+        self._set_status("移动客户端可调整贴边位置", "#f9e2af")
 
     def do_move(self, event):
-        next_x = self.root.winfo_x() + (event.x - self.x)
-        next_y = self.root.winfo_y() + (event.y - self.y)
-        self.root.geometry(f"+{next_x}+{next_y}")
-        self._last_overlay_target_pos = (next_x, next_y)
-        self._manual_move_timestamp = time.time()
+        return
 
 
     def _move_overlay_to(self, x: int, y: int, height: int | None = None) -> None:
+        target_height = int(getattr(self, "_window_height_px", WINDOW_BASE_HEIGHT)) if height is None else int(height)
+        if ((self.root.winfo_x(), self.root.winfo_y()) == (int(x), int(y))
+            and self.root.winfo_height() == target_height and self.root.winfo_width() == self._overlay_pixel_width):
+            return
+        self._apply_overlay_position(x, y, height)
+
+    @suppress_desktop_activation()
+    @unowned_tk_operation
+    def _apply_overlay_position(self, x: int, y: int, height: int | None = None) -> None:
         """移动悬浮窗；height 由跟随逻辑传入客户端底缘限高值，None 表示只挪位置。"""
         try:
             current_pos = (self.root.winfo_x(), self.root.winfo_y())
             target_pos = (int(x), int(y))
             current_height = int(getattr(self, "_window_height_px", WINDOW_BASE_HEIGHT))
             target_height = current_height if height is None else int(height)
-            if current_pos == target_pos and target_height == current_height:
+            if current_pos == target_pos and target_height == current_height and self.root.winfo_width() == self._overlay_pixel_width:
                 return
-            if target_height != current_height:
-                # 高度变化必须带宽度一起发完整 geometry，避免 Tk 沿用请求前的旧尺寸
-                self._window_height_px = target_height
-                self.root.geometry(
-                    f"{self._overlay_pixel_width}x{target_height}+{target_pos[0]}+{target_pos[1]}"
-                )
-            else:
-                self.root.geometry(f"+{target_pos[0]}+{target_pos[1]}")
+            from .client_layer import desktop_wrapper_hwnd
+
+            self._window_height_px = target_height
+            self.root.geometry(f"{self._overlay_pixel_width}x{target_height}")
+            self.root.update_idletasks()
+            # Win32 物理位置不会把负坐标解释为 Tk 的“距右边缘偏移”。
+            ui_runtime.win32gui.SetWindowPos(
+                desktop_wrapper_hwnd(self.root), 0, target_pos[0], target_pos[1],
+                self._overlay_pixel_width, target_height, 0x0010 | 0x0004 | 0x0200,
+            )
             self._last_overlay_target_pos = target_pos
         except tk.TclError:
             logger.debug("更新悬浮窗位置失败。", exc_info=True)
@@ -638,7 +704,7 @@ class DesktopViewMixin:
 
     def _restore_from_terminal(self):
         self.pause_event.clear()
-        self._show_overlay(topmost=True)
+        self.request_runtime_resume(reason="terminal_restore", show_window=True)
 
     def start_background_scraper(self):
         """启动 generation 只读 watcher；抓取和发布仍只由 DataService 执行。"""
@@ -654,6 +720,11 @@ class DesktopViewMixin:
         if self._closing:
             return
         self._closing = True
+        from .avatar_loading import close_avatar_loader
+        close_avatar_loader(self)
+        presentation = getattr(self, "_desktop_window_presentation", None)
+        if presentation is not None:
+            presentation.close()
         self.stop_background_runtime()
         if hasattr(self, "exit_button"):
             try:
@@ -670,14 +741,14 @@ class DesktopViewMixin:
                 logger.debug("取消 overlay 状态轮询失败。", exc_info=True)
         self._supervisor_lease_stop.set()
         try:
-            self.root.withdraw()
-            self.root.update_idletasks()
+            self._hide_overlay()
         except tk.TclError:
             logger.debug("快速退出隐藏窗口失败。", exc_info=True)
 
         def cleanup() -> None:
             deadline = time.monotonic() + 7.5
             try:
+                self._close_pending_process_jobs()
                 with self._threads_lock:
                     threads = list(self.threads)
                 for thread in threads:

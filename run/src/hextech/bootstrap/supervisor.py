@@ -34,9 +34,12 @@ from hextech.modules.data.catalog.runtime_store import build_runtime_state_path,
 from hextech.infrastructure.transport.loopback_http import LoopbackThreadingHTTPServer
 from hextech.infrastructure.observability.sanitization import sanitize_event_message
 from hextech.interfaces.overlay.runtime_manager import OverlayRuntimeManager
+from hextech.modules.session.build_identity import current_build_id
 
 SUPERVISOR_NONCE_HEADER = "X-Hextech-Supervisor-Nonce"
 SUPERVISOR_EVENT_SCHEMA_VERSION = 1
+SUPERVISOR_EVENT_ACTIVE_MAX_BYTES = 1 * 1024 * 1024
+SUPERVISOR_EVENT_BACKUP_COUNT = 3
 SAFE_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
 OVERLAY_HOST_VISIBILITY_STALE_SECONDS = 6.0
 TEMPLATE_PREWARM_WAIT_TIMEOUT_SECONDS = 8.0
@@ -94,12 +97,19 @@ class RuntimeSupervisor:
         event_log_path: str | Path | None = None,
         lease_timeout_seconds: float = 6.0,
         orphan_grace_seconds: float = 15.0,
+        retention_worker: Any | None = None,
     ) -> None:
         self.supervisor_instance_id = f"sup-{uuid.uuid4().hex}"
         self.parent_pid = int(parent_pid or 0)
         self.session_nonce = session_nonce or secrets.token_urlsafe(24)
         self._overlay_runtime = overlay_runtime or OverlayRuntimeManager()
         self._event_log_path = Path(event_log_path) if event_log_path is not None else Path(build_runtime_state_path("supervisor_events.v1.jsonl"))
+        if retention_worker is None and event_log_path is None:
+            from hextech.infrastructure.persistence.diagnostic_retention import get_diagnostic_retention_worker
+
+            retention_worker = get_diagnostic_retention_worker()
+        self._retention_worker = retention_worker
+        self._event_write_lock = threading.Lock()
         self._lock = threading.RLock()
         self._started_at = time.time()
         self._lease_timeout_seconds = max(1.0, float(lease_timeout_seconds))
@@ -184,14 +194,6 @@ class RuntimeSupervisor:
                     "control_instance_id": control_instance_id,
                 }
             )
-        else:
-            self.append_event(
-                {
-                    "event": "lease.renewed",
-                    "component": "supervisor",
-                    "control_instance_id": control_instance_id,
-                }
-            )
         return self.snapshot()
 
     def update_desired_state(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -209,7 +211,30 @@ class RuntimeSupervisor:
             return dict(result.__dict__)
         return {"result": bool(result)}
 
+    @staticmethod
+    def _overlay_start_event_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
+        """只复制启动诊断字段；事件不得携带控制面 nonce 或路径。"""
+
+        return {
+            "host_startup_seconds": float(snapshot.get("host_startup_seconds") or 0.0),
+            "host_ready_state": str(snapshot.get("host_ready_state") or "unknown"),
+            "host_startup_attempts": [
+                dict(attempt)
+                for attempt in (
+                    snapshot.get("host_startup_attempts")
+                    if isinstance(snapshot.get("host_startup_attempts"), list)
+                    else []
+                )
+                if isinstance(attempt, dict)
+            ],
+            "host_pid": snapshot.get("host_pid"),
+            "sidecar_pid": snapshot.get("sidecar_pid"),
+            "last_start_failure_kind": str(snapshot.get("last_start_failure_kind") or ""),
+        }
+
     def _execute_game_overlay_action(self, action_id: str, *, enabled: bool, started_at: float) -> None:
+        with self._lock:
+            action_context = dict(self._actions.get(action_id) or {})
         try:
             result_payload = self._result_payload(self._overlay_runtime.set_enabled(enabled))
             status = "completed"
@@ -222,11 +247,16 @@ class RuntimeSupervisor:
                     "desired_enabled": enabled,
                     "result_status": result_payload.get("status", ""),
                     "result_phase": result_payload.get("phase", ""),
+                    **self._overlay_start_event_fields(result_payload),
                 }
             )
         except Exception as exc:
             status = "failed"
             result_payload = {"error_type": exc.__class__.__name__, "error_message": sanitize_event_message(str(exc))}
+            try:
+                failure_snapshot = self._result_payload(self._overlay_runtime.snapshot())
+            except Exception:
+                failure_snapshot = {}
             self.append_event(
                 {
                     "event": "game_overlay.failed",
@@ -236,6 +266,23 @@ class RuntimeSupervisor:
                     "desired_enabled": enabled,
                     "error_type": exc.__class__.__name__,
                     "error_message_sanitized": str(exc),
+                    **self._overlay_start_event_fields(failure_snapshot),
+                }
+            )
+            result_payload["runtime"] = failure_snapshot
+        old_sidecar_pid = int(action_context.get("old_sidecar_pid") or 0)
+        if status == "completed" and old_sidecar_pid:
+            new_sidecar_pid = int(result_payload.get("sidecar_pid") or 0)
+            self.append_event(
+                {
+                    "event": (
+                        "game_overlay.sidecar_restart"
+                        if new_sidecar_pid and new_sidecar_pid != old_sidecar_pid
+                        else "game_overlay.sidecar_recovered"
+                    ),
+                    "component": "game_overlay",
+                    "old_sidecar_pid": old_sidecar_pid,
+                    "sidecar_pid": new_sidecar_pid or old_sidecar_pid,
                 }
             )
         with self._lock:
@@ -268,6 +315,8 @@ class RuntimeSupervisor:
                 "enabled": enabled,
                 "started_at": started_at,
                 "started_at_iso": _utc_now_iso(),
+                "old_sidecar_pid": int(payload.get("old_sidecar_pid") or 0),
+                "action_reason": str(payload.get("action_reason") or ""),
             }
             self._active_overlay_action_id = action_id
         self.append_event(
@@ -357,6 +406,21 @@ class RuntimeSupervisor:
             overlay = self._overlay_runtime.snapshot()
         except Exception:
             return
+        observe_generation = getattr(self._overlay_runtime, "observe_data_generation", None)
+        raw_generation_observation = observe_generation() if callable(observe_generation) else None
+        generation_observation: dict[str, Any] = (
+            dict(raw_generation_observation)
+            if isinstance(raw_generation_observation, dict)
+            else {"changed": False, "state": "unsupported"}
+        )
+        if generation_observation.get("changed"):
+            self.append_event(
+                {
+                    "event": "game_overlay.data_generation_observed",
+                    "component": "game_overlay",
+                    **generation_observation,
+                }
+            )
         should_restart_sidecar = bool(
             overlay.get("desired_enabled")
             and overlay.get("status") == "stale"
@@ -364,18 +428,58 @@ class RuntimeSupervisor:
         )
         with self._lock:
             action_running = bool(self._active_overlay_action_id)
+        if generation_observation.get("state") == "ready" and not action_running:
+            prepare_handoff = getattr(self._overlay_runtime, "prepare_vision_handoff", None)
+            if callable(prepare_handoff) and prepare_handoff():
+                old_sidecar_pid = int(overlay.get("sidecar_pid") or 0)
+                self.append_event(
+                    {
+                        "event": "game_overlay.vision_handoff_started",
+                        "component": "game_overlay",
+                        "old_sidecar_pid": old_sidecar_pid,
+                        "target_generation_id": generation_observation.get(
+                            "observed_data_generation_id", ""
+                        ),
+                        "target_vision_pool_fingerprint": generation_observation.get(
+                            "vision_pool_fingerprint", ""
+                        ),
+                    }
+                )
+                self.run_game_overlay_action(
+                    {
+                        "enabled": True,
+                        "old_sidecar_pid": old_sidecar_pid,
+                        "action_reason": "vision_handoff",
+                    }
+                )
+                return
         if should_restart_sidecar and not action_running:
             prepare_restart = getattr(self._overlay_runtime, "prepare_sidecar_restart", None)
             if callable(prepare_restart) and not prepare_restart():
+                recovered = self._overlay_runtime.snapshot()
+                if recovered.get("phase") == "sidecar_recovered":
+                    self.append_event(
+                        {
+                            "event": "game_overlay.sidecar_recovered",
+                            "component": "game_overlay",
+                            "sidecar_pid": recovered.get("sidecar_pid"),
+                        }
+                    )
                 return
             self.append_event(
                 {
-                    "event": "game_overlay.sidecar_restart",
+                    "event": "game_overlay.sidecar_restart_requested",
                     "component": "game_overlay",
                     "level": "WARNING",
                 }
             )
-            self.run_game_overlay_action({"enabled": True})
+            self.run_game_overlay_action(
+                {
+                    "enabled": True,
+                    "old_sidecar_pid": int(overlay.get("sidecar_pid") or 0),
+                    "action_reason": "sidecar_stale",
+                }
+            )
 
     def append_event(self, payload: dict[str, Any]) -> None:
         target = self._event_log_path
@@ -386,10 +490,30 @@ class RuntimeSupervisor:
         event.setdefault("level", "INFO")
         event.setdefault("supervisor_instance_id", self.supervisor_instance_id)
         event.setdefault("component", "supervisor")
+        event.setdefault("build_id", current_build_id())
         if "error_message_sanitized" in event:
             event["error_message_sanitized"] = sanitize_event_message(event.get("error_message_sanitized"))
-        with open(target, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+        line = json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        encoded_size = len(line.encode("utf-8"))
+        with self._event_write_lock:
+            try:
+                current_size = target.stat().st_size
+            except OSError:
+                current_size = 0
+            if current_size > 0 and current_size + encoded_size > SUPERVISOR_EVENT_ACTIVE_MAX_BYTES:
+                oldest = target.with_name(f"{target.name}.{SUPERVISOR_EVENT_BACKUP_COUNT}")
+                oldest.unlink(missing_ok=True)
+                for index in range(SUPERVISOR_EVENT_BACKUP_COUNT - 1, 0, -1):
+                    source = target.with_name(f"{target.name}.{index}")
+                    destination = target.with_name(f"{target.name}.{index + 1}")
+                    if source.exists():
+                        os.replace(source, destination)
+                os.replace(target, target.with_name(f"{target.name}.1"))
+            with open(target, "a", encoding="utf-8") as f:
+                f.write(line)
+        request = getattr(self._retention_worker, "request", None)
+        if callable(request):
+            request()
 
     def serve_in_thread(self, *, port: int = 0) -> SupervisorHttpServer:
         handler = self._build_handler()
@@ -489,23 +613,30 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     from hextech.infrastructure.vision.sidecar import load_or_build_default_template_runtime
+    from hextech.infrastructure.vision.template_runtime import vision_pool_fingerprint
 
-    overlay_runtime = OverlayRuntimeManager(load_template_runtime_func=load_or_build_default_template_runtime)
+    overlay_runtime = OverlayRuntimeManager(
+        load_template_runtime_func=load_or_build_default_template_runtime,
+        vision_pool_fingerprint_func=vision_pool_fingerprint,
+    )
+    from hextech.modules.session.runtime_role_owner import publish_role_owner, remove_role_owner
+
     supervisor = RuntimeSupervisor(parent_pid=args.parent_pid, overlay_runtime=overlay_runtime)
     server = supervisor.serve_in_thread(port=args.port)
-    if args.prewarm_templates:
-        supervisor.start_overlay_template_prewarm()
-    from hextech.modules.session.process_bootstrap import publish_process_bootstrap
-
-    publish_process_bootstrap(
-        {
-            "supervisor_instance_id": supervisor.supervisor_instance_id,
-            "port": server.port,
-            "session_nonce": supervisor.session_nonce,
-            "pid": os.getpid(),
-        }
-    )
+    publish_role_owner("runtime-supervisor")
     try:
+        if args.prewarm_templates:
+            supervisor.start_overlay_template_prewarm()
+        from hextech.modules.session.process_bootstrap import publish_process_bootstrap
+
+        publish_process_bootstrap(
+            {
+                "supervisor_instance_id": supervisor.supervisor_instance_id,
+                "port": server.port,
+                "session_nonce": supervisor.session_nonce,
+                "pid": os.getpid(),
+            }
+        )
         while not supervisor.wait_for_shutdown(0.25):
             supervisor.tick()
     except KeyboardInterrupt:
@@ -515,6 +646,7 @@ def main(argv: list[str] | None = None) -> int:
         supervisor.request_shutdown("finally")
         supervisor.wait_for_overlay_shutdown(OVERLAY_SHUTDOWN_WAIT_SECONDS)
         server.shutdown()
+        remove_role_owner("runtime-supervisor")
     return 0
 
 

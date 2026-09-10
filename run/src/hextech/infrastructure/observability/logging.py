@@ -15,6 +15,7 @@ import re
 import sys
 import time
 import uuid
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
@@ -42,6 +43,8 @@ NOISY_MESSAGE_PATTERNS = (
 PACKAGED_SCRAPLING_REQUEST_PATTERNS = (
     "[scrapling] fetched",
     "[scrapling] retry",
+    "scrapling fetched (",
+    "scrapling retry",
 )
 SENSITIVE_KEYWORDS = (
     "auth",
@@ -66,6 +69,9 @@ SENSITIVE_KEYWORDS = (
 )
 _RUN_ID = f"run-{uuid.uuid4().hex}"
 _RUNTIME_EVENT_SCHEMA_VERSION = 1
+_STRUCTURED_EVENT_LOCK = threading.Lock()
+_STRUCTURED_EVENT_MAX_BYTES = 1024 * 1024
+_STRUCTURED_EVENT_BACKUP_COUNT = 2
 
 
 def _utc_now_iso() -> str:
@@ -85,11 +91,13 @@ class PackagedScraplingRequestFilter(logging.Filter):
     """冻结态摘要只保留来源聚合日志，不记录 Scrapling 的逐请求流水。"""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
         message = record.getMessage().casefold()
         logger_name = str(record.name or "").casefold()
-        return "scrapling.fetchers" not in logger_name and not any(
-            pattern in message for pattern in PACKAGED_SCRAPLING_REQUEST_PATTERNS
-        )
+        if logger_name == "scrapling" or logger_name.startswith("scrapling."):
+            return False
+        return not any(pattern in message for pattern in PACKAGED_SCRAPLING_REQUEST_PATTERNS)
 
 
 class SourceNameFilter(logging.Filter):
@@ -408,6 +416,7 @@ def install_runtime_logging(profile: Literal["dev", "packaged", "test"] | None =
         name="runtime_summary",
         level=logging.INFO,
         formatter=summary_formatter,
+        backup_count=2,
         profile=resolved_profile,
     )
     summary_handler.addFilter(SummaryOnlyFilter())
@@ -418,6 +427,7 @@ def install_runtime_logging(profile: Literal["dev", "packaged", "test"] | None =
         name="runtime_error",
         level=logging.WARNING,
         formatter=summary_formatter,
+        backup_count=1,
         profile=resolved_profile,
     )
     stream_handler = _new_stream_handler(
@@ -436,8 +446,8 @@ def install_runtime_logging(profile: Literal["dev", "packaged", "test"] | None =
             name="dev_full_jsonl",
             level=logging.DEBUG,
             formatter=json_formatter,
-            max_bytes=10 * 1024 * 1024,
-            backup_count=5,
+            max_bytes=2 * 1024 * 1024,
+            backup_count=2,
             profile=resolved_profile,
         )
         root.addHandler(full_handler)
@@ -523,8 +533,22 @@ def write_structured_event(component: str, event: str, *, target_path: Path | No
     }
     for key, value in fields.items():
         payload[str(key)] = _redact_event_value(str(key), value)
-    with open(target, "a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+    line = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    encoded_size = len(line.encode("utf-8"))
+    with _STRUCTURED_EVENT_LOCK:
+        try:
+            current_size = target.stat().st_size
+        except OSError:
+            current_size = 0
+        if current_size > 0 and current_size + encoded_size > _STRUCTURED_EVENT_MAX_BYTES:
+            target.with_name(f"{target.name}.{_STRUCTURED_EVENT_BACKUP_COUNT}").unlink(missing_ok=True)
+            for index in range(_STRUCTURED_EVENT_BACKUP_COUNT - 1, 0, -1):
+                source = target.with_name(f"{target.name}.{index}")
+                if source.exists():
+                    os.replace(source, target.with_name(f"{target.name}.{index + 1}"))
+            os.replace(target, target.with_name(f"{target.name}.1"))
+        with open(target, "a", encoding="utf-8") as f:
+            f.write(line)
 
 
 def log_task_summary(

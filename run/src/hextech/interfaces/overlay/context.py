@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import math
 import re
 import threading
 import time
@@ -25,6 +26,7 @@ import psutil
 
 from hextech.modules.game_context.client import ClientContextProvider, parse_client_context
 from hextech.modules.game_context import TypedGameContextProvider
+from hextech.modules.game_context.stage_context import coerce_player_level
 from hextech.modules.data.catalog.version_catalog import load_champion_core_data
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.game_context.overlay_context import (
@@ -71,7 +73,10 @@ def read_current_live_client_context_once(
     fetch_response = fetch_response or _default_fetch_response
     core_data_loader = core_data_loader or load_champion_core_data
     headers = {"Accept": "application/json"}
-    for endpoint in (LIVE_CLIENT_ACTIVE_PLAYER_ENDPOINT, LIVE_CLIENT_ALL_GAME_DATA_ENDPOINT):
+    fallback: dict[str, Any] | None = None
+    # allgamedata 同时提供英雄、等级和 gameTime；它是跨局 fence 唯一可独立
+    # 证明游戏 epoch 的 Live Client observation。activeplayer 只保留为内容回退。
+    for endpoint in (LIVE_CLIENT_ALL_GAME_DATA_ENDPOINT, LIVE_CLIENT_ACTIVE_PLAYER_ENDPOINT):
         try:
             response = fetch_response(f"{base_url.rstrip('/')}{endpoint}", headers)
         except Exception:
@@ -83,23 +88,28 @@ def read_current_live_client_context_once(
             raw_payload = response.json()
         except ValueError:
             continue
-        champion_name = _extract_live_client_champion_name(raw_payload)
+        champion_name, player_level = _extract_live_client_player(raw_payload)
+        game_time_seconds = _extract_live_client_game_time(raw_payload)
         if not champion_name:
             continue
         champion_id = _resolve_champion_id_by_name(champion_name, core_data_loader=core_data_loader)
         if not champion_id:
             return None, "context_unmapped_champion"
-        return (
-            build_overlay_context_payload(
+        candidate = build_overlay_context_payload(
                 champion_id=champion_id,
                 champion_name=champion_name,
                 source="live-client-data",
                 phase="in_progress",
                 connection_state="connected",
                 health="ready",
-            ),
-            "",
-        )
+                player_level=player_level,
+                game_time_seconds=game_time_seconds,
+            )
+        if game_time_seconds is not None:
+            return candidate, ""
+        fallback = candidate
+    if fallback is not None:
+        return fallback, ""
     return None, "live-client-unavailable"
 
 
@@ -197,6 +207,8 @@ def build_overlay_context_payload(
     connection_state: str = "",
     health: str = "",
     session_id: str = "",
+    player_level: object = None,
+    game_time_seconds: object = None,
 ) -> dict[str, Any]:
     """构造当前英雄上下文 payload；调用方负责只在明确锁定英雄时传入 ID。"""
 
@@ -208,7 +220,7 @@ def build_overlay_context_payload(
             "degraded": "degraded",
             "disconnected": "unavailable",
         }.get(normalized_connection, "")
-    return {
+    result = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": time.time(),
         "champion_id": _clean_text(champion_id, limit=32),
@@ -225,6 +237,13 @@ def build_overlay_context_payload(
         "health": normalized_health,
         "session_id": _clean_text(session_id, limit=64),
     }
+    normalized_level = coerce_player_level(player_level)
+    if normalized_level is not None:
+        result["player_level"] = normalized_level
+    normalized_game_time = _coerce_game_time_seconds(game_time_seconds)
+    if normalized_game_time is not None:
+        result["game_time_seconds"] = normalized_game_time
+    return result
 
 
 def write_overlay_context(payload: Mapping[str, Any], path: str | Path | None = None) -> Path:
@@ -388,22 +407,21 @@ def _resolve_champion_id_by_name(
     return ""
 
 
-def _extract_live_client_champion_name(payload: Any) -> str:
-    """从 2999 activeplayer/allgamedata 响应提取本机英雄名。"""
+def _extract_live_client_player(payload: Any) -> tuple[str, int | None]:
+    """从同一份 2999 响应提取本机英雄名和等级，不增加请求链。"""
 
     if not isinstance(payload, Mapping):
-        return ""
-    direct_name = _clean_text(payload.get("championName") or payload.get("champion_name"), limit=48)
-    if direct_name:
-        return direct_name
+        return "", None
+    champion_name = _clean_text(payload.get("championName") or payload.get("champion_name"), limit=48)
+    player_level = coerce_player_level(payload.get("level"))
     active_player = payload.get("activePlayer")
     if isinstance(active_player, Mapping):
         active_name = _clean_text(
             active_player.get("championName") or active_player.get("champion_name"),
             limit=48,
         )
-        if active_name:
-            return active_name
+        champion_name = champion_name or active_name
+        player_level = player_level or coerce_player_level(active_player.get("level"))
         active_summoner_name = _clean_text(active_player.get("summonerName"), limit=80)
         all_players = payload.get("allPlayers")
         if active_summoner_name and isinstance(all_players, list):
@@ -416,14 +434,42 @@ def _extract_live_client_champion_name(payload: Any) -> str:
                     player.get("championName") or player.get("champion_name"),
                     limit=48,
                 )
-                if matched_name:
-                    return matched_name
-    return ""
+                champion_name = champion_name or matched_name
+                player_level = player_level or coerce_player_level(player.get("level"))
+                break
+    return champion_name, player_level
+
+
+def _coerce_game_time_seconds(value: object) -> float | None:
+    """只接受有限数值；epoch 归属由 Context Broker 结合进程时间判断。"""
+
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _extract_live_client_game_time(payload: Any) -> float | None:
+    if not isinstance(payload, Mapping):
+        return None
+    game_data = payload.get("gameData")
+    if not isinstance(game_data, Mapping):
+        return None
+    return _coerce_game_time_seconds(game_data.get("gameTime"))
+
+
+def _extract_live_client_champion_name(payload: Any) -> str:
+    """兼容旧调用方；新路径同时读取等级。"""
+
+    return _extract_live_client_player(payload)[0]
 
 
 def _write_live_client_context(
     champion_name: str,
     *,
+    player_level: int | None,
+    game_time_seconds: float | None,
     core_data_loader: ChampionCoreLoader,
     context_path: str | Path | None,
     should_write: ShouldWriteContext | None,
@@ -446,6 +492,8 @@ def _write_live_client_context(
             champion_name=champion_name,
             source="live-client-data",
             session_id=session_id,
+            player_level=player_level,
+            game_time_seconds=game_time_seconds,
         ),
         context_path,
     )
@@ -464,7 +512,8 @@ def write_current_live_client_overlay_context_once(
     """轮询一次 2999 Live Client Data；只在能明确映射当前英雄时写有效上下文。"""
 
     headers = {"Accept": "application/json"}
-    for endpoint in (LIVE_CLIENT_ACTIVE_PLAYER_ENDPOINT, LIVE_CLIENT_ALL_GAME_DATA_ENDPOINT):
+    fallback_observation: tuple[str, int | None, float | None] | None = None
+    for endpoint in (LIVE_CLIENT_ALL_GAME_DATA_ENDPOINT, LIVE_CLIENT_ACTIVE_PLAYER_ENDPOINT):
         if should_write is not None and not should_write():
             return False
         url = f"{base_url.rstrip('/')}{endpoint}"
@@ -482,15 +531,30 @@ def write_current_live_client_overlay_context_once(
             payload = response.json()
         except ValueError:
             continue
-        champion_name = _extract_live_client_champion_name(payload)
+        champion_name, player_level = _extract_live_client_player(payload)
+        game_time_seconds = _extract_live_client_game_time(payload)
         if champion_name:
-            return _write_live_client_context(
-                champion_name,
-                core_data_loader=core_data_loader,
-                context_path=context_path,
-                should_write=should_write,
-                session_id=session_id,
-            )
+            if game_time_seconds is not None:
+                return _write_live_client_context(
+                    champion_name,
+                    player_level=player_level,
+                    game_time_seconds=game_time_seconds,
+                    core_data_loader=core_data_loader,
+                    context_path=context_path,
+                    should_write=should_write,
+                    session_id=session_id,
+                )
+            fallback_observation = (champion_name, player_level, game_time_seconds)
+    if fallback_observation is not None:
+        return _write_live_client_context(
+            fallback_observation[0],
+            player_level=fallback_observation[1],
+            game_time_seconds=fallback_observation[2],
+            core_data_loader=core_data_loader,
+            context_path=context_path,
+            should_write=should_write,
+            session_id=session_id,
+        )
     return False
 
 

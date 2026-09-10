@@ -28,6 +28,7 @@ from hextech.contracts import (
     SourceStatusV2,
 )
 from hextech.modules.data.catalog.runtime_store import get_runtime_root_dir
+from hextech.modules.data.freshness import SOURCE_INTERVALS, evaluate_source_expiry, normalize_utc
 from hextech.modules.data.ports.atomic import atomic_write_json
 from .validation import (
     SNAPSHOT_ROLES,
@@ -71,6 +72,20 @@ def _payload_hashes(payloads: Mapping[str, Any]) -> dict[str, str]:
     }
 
 
+def _semantic_source_status(
+    source_status: Mapping[str, SourceStatusV2],
+) -> dict[str, dict[str, Any]]:
+    """剥离每轮检查时钟；保留会改变消费者语义的降级和身份字段。"""
+
+    result: dict[str, dict[str, Any]] = {}
+    for source, value in source_status.items():
+        payload = value.to_dict()
+        payload.pop("checked_at", None)
+        payload.pop("stale_age_seconds", None)
+        result[str(source)] = payload
+    return result
+
+
 _count_records = count_records
 
 
@@ -83,6 +98,47 @@ class DataSnapshotPublisher:
         self.staging_dir = self.root / "staging"
         self.current_path = self.root / "current.v2.json"
         self.previous_path = self.root / "previous.v2.json"
+        self.last_promotion_disposition = "unknown"
+
+    def matching_current_manifest(
+        self,
+        payloads: Mapping[str, Any],
+        *,
+        source_files: Sequence[SourceProvenance | Mapping[str, Any]] = (),
+        health: str = "healthy",
+        degraded_sources: Sequence[str] = (),
+        source_status: Mapping[str, Mapping[str, Any] | SourceStatusV2] | None = None,
+    ) -> DataSnapshotManifest | None:
+        """返回语义内容完全相同的 current；易变检查时钟不参与比较。"""
+
+        normalized = {role: payloads.get(role) for role in SNAPSHOT_ROLES}
+        provenance = tuple(
+            item if isinstance(item, SourceProvenance) else SourceProvenance.from_mapping(item)
+            for item in source_files
+        )
+        fingerprint = content_fingerprint(provenance)
+        candidate_payload_hashes = _payload_hashes(normalized)
+        normalized_source_status = {
+            str(key): value if isinstance(value, SourceStatusV2) else SourceStatusV2.from_mapping(value)
+            for key, value in (source_status or {}).items()
+        }
+        try:
+            current = DataSnapshotClient(self.root).open_view()
+        except SnapshotValidationError:
+            return None
+        current_payload_hashes = {item.role: item.sha256 for item in current.manifest.files}
+        if (
+            current.manifest.content_fingerprint == fingerprint
+            and current.manifest.source_files == provenance
+            and current_payload_hashes == candidate_payload_hashes
+            and current.manifest.health == str(health)
+            and current.manifest.degraded_sources
+            == tuple(str(item) for item in degraded_sources)
+            and _semantic_source_status(dict(current.manifest.source_status))
+            == _semantic_source_status(normalized_source_status)
+        ):
+            return current.manifest
+        return None
 
     def publish(
         self,
@@ -102,26 +158,20 @@ class DataSnapshotPublisher:
             for item in source_files
         )
         fingerprint = content_fingerprint(provenance)
-        candidate_payload_hashes = _payload_hashes(normalized)
         normalized_source_status = {
             str(key): value if isinstance(value, SourceStatusV2) else SourceStatusV2.from_mapping(value)
             for key, value in (source_status or {}).items()
         }
-        try:
-            current = DataSnapshotClient(self.root).open_view()
-            current_payload_hashes = {item.role: item.sha256 for item in current.manifest.files}
-            if (
-                current.manifest.content_fingerprint == fingerprint
-                and current.manifest.source_files == provenance
-                and current_payload_hashes == candidate_payload_hashes
-                and current.manifest.health == str(health)
-                and current.manifest.refreshed_sources == tuple(str(item) for item in refreshed_sources)
-                and current.manifest.degraded_sources == tuple(str(item) for item in degraded_sources)
-                and dict(current.manifest.source_status) == normalized_source_status
-            ):
-                return current.manifest
-        except SnapshotValidationError:
-            pass
+        current = self.matching_current_manifest(
+            normalized,
+            source_files=provenance,
+            health=health,
+            degraded_sources=degraded_sources,
+            source_status=normalized_source_status,
+        )
+        if current is not None:
+            self.last_promotion_disposition = "unchanged"
+            return current
         generation_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + f"-{uuid.uuid4().hex[:10]}"
         staging = self.staging_dir / generation_id
         final = self.generations_dir / generation_id
@@ -183,6 +233,7 @@ class DataSnapshotPublisher:
                 indent=2,
             )
             pointer_committed = True
+            self.last_promotion_disposition = "published"
             # generation 可能仍被 promotion journal 或历史 provenance 引用。保留策略
             # 由 DataService 在 journal committed 之后统一执行，publisher 不抢先删除。
             return manifest
@@ -234,7 +285,31 @@ class DataSnapshotView:
     degraded: bool = False
     failed_generation_id: str = ""
 
-    def status(self) -> dict[str, Any]:
+    def status(self, now: datetime | None = None) -> dict[str, Any]:
+        observed_at = normalize_utc(now or datetime.now(timezone.utc))
+        source_status: dict[str, dict[str, Any]] = {}
+        effective_degraded_sources = set(self.manifest.degraded_sources)
+        for source, value in self.manifest.source_status.items():
+            projected = value.to_dict()
+            interval = SOURCE_INTERVALS.get(source)
+            raw_data_at = str(projected.get("data_at") or "").strip()
+            data_at = raw_data_at or self.manifest.created_at
+            if not raw_data_at and data_at:
+                # 旧 generation 没有 data_at；统一把 created_at 作为可见回退，
+                # 让推荐、桌面和报告使用同一时间，而不是各自猜测。
+                projected["data_at"] = data_at
+            if interval is not None:
+                expired, age_seconds = evaluate_source_expiry(data_at, interval, observed_at)
+                if expired:
+                    projected["data_status"] = "data_stale"
+                    if not str(projected.get("data_reason") or "").strip():
+                        projected["data_reason"] = "source_data_expired"
+                    projected["stale_age_seconds"] = age_seconds
+            # Catalog 是否过期由 adoption-held 独立门处理；它不是用户统计来源。
+            # manifest 若明确把 Catalog 标为 degraded，初始化集合仍会保留该 lineage。
+            if source != "catalog" and str(projected.get("data_status") or "") != "fresh":
+                effective_degraded_sources.add(source)
+            source_status[source] = projected
         return {
             "state": "degraded" if self.degraded or self.manifest.health == "degraded" else "ready",
             "generation_id": self.manifest.generation_id,
@@ -244,7 +319,10 @@ class DataSnapshotView:
             "health": self.manifest.health,
             "refreshed_sources": list(self.manifest.refreshed_sources),
             "degraded_sources": list(self.manifest.degraded_sources),
-            "source_status": {key: value.to_dict() for key, value in self.manifest.source_status.items()},
+            # manifest 字段是发布时 immutable lineage；effective 字段叠加读取时
+            # 的绝对时效，供 Desktop 与严格验收消费，二者不能互相覆盖。
+            "effective_degraded_sources": sorted(effective_degraded_sources),
+            "source_status": source_status,
         }
 
     def get_champions(self) -> list[dict[str, Any]]:
@@ -356,6 +434,20 @@ class DataSnapshotView:
     def get_overlay_hints(self) -> dict[str, Any]:
         return deepcopy(dict(self._payloads["overlay_hints"]))
 
+    def get_overlay_display_hints(self) -> dict[str, Any]:
+        """Host 只需名称/联动索引；不复制未参与 Canvas 投影的全英雄历史统计。"""
+        payload = self._payloads["overlay_hints"]
+        hints = payload.get("hints", {}) if isinstance(payload, Mapping) else {}
+        return {
+            "schema_version": 1,
+            "source": deepcopy(dict(payload.get("source") or {})),
+            "name_index": deepcopy(dict(payload.get("name_index") or {})),
+            "hints": {
+                str(key): deepcopy({field: row[field] for field in ("augment_id", "name", "tier", "synergies") if field in row})
+                for key, row in hints.items() if isinstance(row, Mapping)
+            },
+        }
+
     def get_identity_indexes(self) -> dict[str, Any]:
         return deepcopy(dict(self._payloads["identities"]))
 
@@ -418,9 +510,9 @@ class DataSnapshotClient:
         self._loaded = (current_id, *result)
         return result
 
-    def status(self) -> dict[str, Any]:
+    def status(self, now: datetime | None = None) -> dict[str, Any]:
         try:
-            return self.open_view().status()
+            return self.open_view().status(now=now)
         except SnapshotValidationError as exc:
             return {"state": "unavailable", "generation_id": "", "reason": str(exc)}
 

@@ -22,12 +22,127 @@ from support.process_fakes import FakeProcess
 
 
 class OverlaySidecarLifecycleTests(unittest.TestCase):
+    def test_roi_dump_setting_precedence_and_invalid_file_fallback(self):
+        from hextech.modules.vision import diagnostic_settings
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings = Path(temp_dir) / "overlay_diagnostic_settings.v1.json"
+            settings.write_text(
+                json.dumps({"schema_version": 1, "roi_dump_enabled": True}),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(
+                diagnostic_settings.resolve_roi_dump_enabled(env={}, settings_path=settings)
+            )
+            self.assertFalse(
+                diagnostic_settings.resolve_roi_dump_enabled(
+                    env={diagnostic_settings.ROI_DUMP_ENV: "0"},
+                    settings_path=settings,
+                )
+            )
+            self.assertTrue(
+                diagnostic_settings.resolve_roi_dump_enabled(
+                    True,
+                    env={diagnostic_settings.ROI_DUMP_ENV: "0"},
+                    settings_path=settings,
+                )
+            )
+            settings.write_text("{broken-json", encoding="utf-8")
+            self.assertFalse(
+                diagnostic_settings.resolve_roi_dump_enabled(env={}, settings_path=settings)
+            )
+            settings.write_text(
+                json.dumps({"schema_version": 2, "roi_dump_enabled": True}),
+                encoding="utf-8",
+            )
+            self.assertFalse(
+                diagnostic_settings.resolve_roi_dump_enabled(env={}, settings_path=settings)
+            )
+            settings.write_text(
+                json.dumps({"schema_version": "invalid", "roi_dump_enabled": True}),
+                encoding="utf-8",
+            )
+            self.assertFalse(
+                diagnostic_settings.resolve_roi_dump_enabled(env={}, settings_path=settings)
+            )
+
+    def test_persistent_roi_setting_adds_debug_dump_to_sidecar_command(self):
+        from hextech.interfaces.overlay import lifecycle
+
+        captured_command: list[str] = []
+
+        def fake_popen(command, **_kwargs):
+            captured_command.extend(command)
+            return FakeProcess(1000)
+
+        with (
+            patch.object(lifecycle, "resolve_roi_dump_enabled", return_value=True),
+            patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
+            patch.object(lifecycle, "_wait_for_sidecar_ready", return_value=None),
+        ):
+            lifecycle.start_sidecar_process()
+
+        self.assertIn("--debug-dump", captured_command)
+
+    def test_sidecar_status_includes_debug_dump_enabled(self):
+        from hextech.infrastructure.vision import runner
+
+        payloads: list[dict] = []
+        with (
+            patch.object(runner, "_SIDECAR_DEBUG_DUMP_ENABLED", True),
+            patch.object(
+                runner._status,
+                "atomic_write_json",
+                side_effect=lambda _path, payload, **_kwargs: payloads.append(payload),
+            ),
+        ):
+            runner._write_sidecar_status("running")
+
+        self.assertTrue(payloads[-1]["debug_dump_enabled"])
+
+    def test_sidecar_status_includes_generation_pool_and_matrix_fields(self):
+        from hextech.infrastructure.vision import runner
+
+        payloads: list[dict] = []
+        runtime_stats = {
+            "vision_pool_generation_id": "snapshot-a",
+            "stats_generation_id": "",
+            "data_generation_id": "snapshot-a",
+            "catalog_generation_id": "catalog-a",
+            "production_pool_id": "pool-a",
+            "production_pool_state": "ready",
+            "production_pool_count": 236,
+            "full_catalog_count": 655,
+            "rank_identity_count": 236,
+            "matrix_rows": {"icon": 236, "name": 472, "alt_name": 472, "observed_name": 0},
+            "excluded_reason_counts": {"disabled": 7, "unresolved": 0},
+        }
+        with (
+            patch.object(runner._status, "runtime_fields", {}),
+            patch.object(
+                runner._status,
+                "atomic_write_json",
+                side_effect=lambda _path, payload, **_kwargs: payloads.append(payload),
+            ),
+        ):
+            runner._publish_runtime_fields(runtime_stats)
+            runner._write_sidecar_status("running", phase="loop")
+
+        payload = payloads[-1]
+        for key, value in runtime_stats.items():
+            self.assertEqual(payload[key], value)
+        self.assertEqual(
+            payload["generation_roles"]["vision_pool_generation_id"],
+            "sidecar_template_runtime",
+        )
+
     def test_second_host_exits_before_creating_tk_window(self):
         from hextech.interfaces.overlay import host_runner
 
         with (
             patch.object(host_runner, "overlay_instance_lock", return_value=nullcontext(False)),
-            patch.object(host_runner, "_prepare_host_hint_cache") as prepare_cache,
+            patch.object(host_runner, "OverlayDataPreparation") as prepare_cache,
             patch.object(host_runner.tk, "Tk") as create_tk,
         ):
             host_runner.run_overlay_host()
@@ -139,7 +254,7 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         with (
             patch.object(lifecycle.sys, "frozen", False, create=True),
             patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
-            patch.object(lifecycle, "_wait_for_host_ready", return_value=None),
+            patch.object(lifecycle, "_wait_for_host_ready", return_value=None) as wait_ready,
         ):
             process = lifecycle.start_host_process()
 
@@ -148,6 +263,8 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
             captured_command,
             [sys.executable, "-m", "hextech.bootstrap.overlay"],
         )
+        self.assertEqual(wait_ready.call_args.kwargs["timeout_seconds"], 5.0)
+        self.assertEqual(getattr(process, "_hextech_overlay_host_startup_observation")["ready_state"], "ready")
 
     def test_overlay_composition_root_executes_when_run_as_module(self):
         with (
@@ -177,12 +294,50 @@ class OverlaySidecarLifecycleTests(unittest.TestCase):
         with (
             patch.object(lifecycle.sys, "frozen", True, create=True),
             patch.object(lifecycle.subprocess, "Popen", side_effect=fake_popen),
-            patch.object(lifecycle, "_wait_for_host_ready", return_value=None),
+            patch.object(lifecycle, "_wait_for_host_ready", return_value=None) as wait_ready,
         ):
             process = lifecycle.start_host_process()
 
         self.assertEqual(process.pid, 1204)
         self.assertEqual(captured_command, [sys.executable, "--game-overlay"])
+        self.assertEqual(wait_ready.call_args.kwargs["timeout_seconds"], 20.0)
+
+    def test_frozen_host_ready_after_source_budget_uses_twenty_second_contract(self):
+        from hextech.interfaces.overlay import lifecycle
+
+        observed: dict[str, float] = {}
+
+        def ready_after_eight_seconds(_process, _ready_path, **kwargs):
+            observed["simulated_ready_at"] = 8.0
+            observed["timeout_seconds"] = float(kwargs["timeout_seconds"])
+            if observed["simulated_ready_at"] >= observed["timeout_seconds"]:
+                raise TimeoutError("simulated frozen host timeout")
+
+        with (
+            patch.object(lifecycle.sys, "frozen", True, create=True),
+            patch.object(lifecycle.subprocess, "Popen", return_value=FakeProcess(1205)),
+            patch.object(lifecycle, "_wait_for_host_ready", side_effect=ready_after_eight_seconds),
+        ):
+            process = lifecycle.start_host_process()
+
+        self.assertEqual(process.pid, 1205)
+        self.assertEqual(observed, {"simulated_ready_at": 8.0, "timeout_seconds": 20.0})
+
+    def test_host_start_surfaces_cleanup_failure_and_records_attempt(self):
+        from hextech.interfaces.overlay import lifecycle
+
+        with (
+            patch.object(lifecycle.subprocess, "Popen", return_value=FakeProcess(1206)),
+            patch.object(lifecycle, "_wait_for_host_ready", side_effect=TimeoutError("slow host")),
+            patch.object(lifecycle, "stop_process", return_value=False),
+        ):
+            with self.assertRaises(lifecycle.HostCleanupError) as raised:
+                lifecycle.start_host_process()
+
+        self.assertFalse(raised.exception.retryable)
+        observation = getattr(raised.exception, "host_startup_observation")
+        self.assertEqual(observation["ready_state"], "timeout")
+        self.assertFalse(observation["cleanup_confirmed"])
 
     def test_lifecycle_waits_for_sidecar_ready_and_sets_exit_signal(self):
         from hextech.interfaces.overlay import lifecycle

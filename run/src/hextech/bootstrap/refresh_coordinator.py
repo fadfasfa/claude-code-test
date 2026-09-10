@@ -1,8 +1,4 @@
-"""DataService 的 cohort 刷新协调器。
-
-协调器串行运行隔离来源 worker、记录 freshness/backoff，并在全部 candidate 绑定同一
-Catalog 后通过 promotion journal 切换依赖和 generation。它不拥有抓取解析规则。
-"""
+"""串行运行来源 worker，并以同一 Catalog 原子晋升 DataService generation。"""
 
 from __future__ import annotations
 
@@ -22,39 +18,37 @@ from hextech.contracts import (
     RefreshScheduleV1,
     RefreshSourceState,
     SourcePointerV2,
-    utc_now_iso,
 )
 from hextech.infrastructure.persistence.cohort import CohortPromotionStore
+from hextech.infrastructure.persistence.cohort_recovery import refresh_recovery_schedule
 from hextech.infrastructure.persistence.refresh_schedule import RefreshScheduleStore, SCHEDULE_SOURCES
-from hextech.infrastructure.persistence.retention import apply_retention
+from hextech.infrastructure.persistence.refresh_checkpoint import (
+    CatalogAdoptionCheckpointStore,
+    RefreshCheckpointStore,
+    checkpoint_failure_evidence,
+)
 from hextech.infrastructure.processes import IsolatedProcessResult, run_isolated_process
 from hextech.modules.data.catalog.versioned import sha256_file, validate_catalog_files
 from hextech.modules.data.generation import DataSnapshotPublisher
+from hextech.modules.data.freshness import SOURCE_INTERVALS, source_reuse_allowed
 from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
-from hextech.bootstrap.game_refresh_gate import GameRefreshDeferred, GameRefreshGate
-from hextech.bootstrap.source_freshness import (
-    evaluate_source_expiry, is_blocked_failure, iso_utc, parse_refresh_time, pointer_success_at,
+from hextech.bootstrap.game_refresh_gate import GameRefreshDeferred, GameRefreshGate, RefreshStopRequested
+from hextech.bootstrap.refresh_cycle import RefreshCycleMixin
+from hextech.bootstrap.refresh_adoption import (
+    blocked_catalog_adoption,
+    migrate_foreign_catalog_checkpoint,
+    normalize_pending_sources,
+    reconcile_active_catalog_schedule,
 )
-
-
-SOURCE_INTERVALS = {
-    "catalog": timedelta(hours=24),
-    "hextech": timedelta(hours=4),
-    "apex": timedelta(hours=72),
-    "mayhem": timedelta(hours=72),
-}
-SOURCE_TIMEOUTS = {
-    "catalog": 5 * 60,
-    "hextech": 30 * 60,
-    "apex": 60 * 60,
-    "mayhem": 10 * 60,
-}
+from hextech.bootstrap.refresh_promotion import promote_targets
+from hextech.bootstrap.source_freshness import is_blocked_failure, iso_utc, parse_refresh_time, pointer_success_at
+from hextech.bootstrap.source_worker_failure import SourceWorkerFailure, refresh_failure_kind
+SOURCE_TIMEOUTS = {"catalog": 5 * 60, "aramkit": 10 * 60, "blitz": 2 * 60, "apex": 60 * 60, "mayhem": 10 * 60}
 ContributionMap = Mapping[str, Mapping[str, Any]]
 SnapshotBuilder = Callable[[ContributionMap], Any]
 
-
-class CohortRefreshCoordinator:
+class CohortRefreshCoordinator(RefreshCycleMixin):
     def __init__(
         self,
         *,
@@ -71,6 +65,8 @@ class CohortRefreshCoordinator:
         self.builder = builder
         self.promotion = CohortPromotionStore(self.root)
         self.schedule_store = RefreshScheduleStore(self.root)
+        self.checkpoint_store = RefreshCheckpointStore(self.root)
+        self.adoption_checkpoint_store = CatalogAdoptionCheckpointStore(self.root)
         self.process_runner = process_runner
         self.now = now or (lambda: datetime.now(timezone.utc))
         self._upstream_marker_probe = upstream_marker_probe
@@ -78,6 +74,7 @@ class CohortRefreshCoordinator:
         self._cancel_lock = threading.Lock()
         self._active_cancel: Path | None = None
         self._game_cancel_requested = threading.Event()
+        self._active_refresh_request = {"force": False, "scope": "due"}
         self._game_refresh = GameRefreshGate(
             root=self.root,
             current_generation_id=self.publisher.current_generation_id,
@@ -85,6 +82,30 @@ class CohortRefreshCoordinator:
             game_state_probe=game_state_probe,
         )
         self.promotion.recover()
+    @staticmethod
+    def _catalog_identity(pointer: Mapping[str, Any]) -> tuple[str, str]:
+        return (
+            str(pointer.get("catalog_generation_id") or ""),
+            str(pointer.get("content_sha256") or ""),
+        )
+    def _normalize_pending_sources(self, payload: Mapping[str, Any]) -> list[str]:
+        return normalize_pending_sources(self, payload)
+
+    def _migrate_foreign_catalog_checkpoint(
+        self,
+        current: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        return migrate_foreign_catalog_checkpoint(self, current)
+
+    def _blocked_catalog_adoption(self, current_catalog: Mapping[str, Any]) -> dict[str, Any]:
+        return blocked_catalog_adoption(self, current_catalog)
+
+    def _reconcile_active_catalog_schedule(
+        self,
+        current: Mapping[str, Mapping[str, Any]],
+        schedule: RefreshScheduleV1,
+    ) -> RefreshScheduleV1:
+        return reconcile_active_catalog_schedule(self, current, schedule)
 
     def _baseline_contributions(self, catalog: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         """从已验证 generation 提取不落 source current 的 last-good 身份。"""
@@ -118,7 +139,7 @@ class CohortRefreshCoordinator:
             return {}
         result: dict[str, dict[str, Any]] = {}
         for item in view.manifest.source_files:
-            if item.source not in {"hextech", "apex", "mayhem"} or item.catalog_generation_id != catalog_id:
+            if item.source not in {"aramkit", "blitz", "apex", "mayhem"} or item.catalog_generation_id != catalog_id:
                 continue
             result[item.source] = BaselineContributionV2(
                 source=item.source,
@@ -197,26 +218,153 @@ class CohortRefreshCoordinator:
             return {}
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            pointer = SourcePointerV2.from_mapping(payload)
-            if (
-                pointer.source != source
-                or pointer.catalog_generation_id != str(catalog.get("catalog_generation_id") or "")
-                or pointer.catalog_sha256 != str(catalog.get("content_sha256") or "")
-            ):
-                return {}
-            run_root = self.root / "sources" / source / "runs" / pointer.run_id
-            artifact = run_root / pointer.artifact.relative_path
-            manifest = run_root / "manifest.json"
-            if (
-                not artifact.is_file()
-                or not manifest.is_file()
-                or sha256_file(artifact) != pointer.artifact.sha256
-                or sha256_file(manifest) != pointer.manifest_sha256
-            ):
-                return {}
-            return pointer.to_dict()
+            return self._validate_source_candidate(source, payload, catalog)
         except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
             return {}
+
+    def _validate_source_candidate(
+        self,
+        source: str,
+        payload: Mapping[str, Any],
+        catalog: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        pointer = SourcePointerV2.from_mapping(payload)
+        if (
+            pointer.source != source
+            or pointer.catalog_generation_id != str(catalog.get("catalog_generation_id") or "")
+            or pointer.catalog_sha256 != str(catalog.get("content_sha256") or "")
+        ):
+            raise ValueError(f"{source} candidate 未绑定 checkpoint Catalog")
+        run_root = (self.root / "sources" / source / "runs" / pointer.run_id).resolve()
+        artifact = (run_root / pointer.artifact.relative_path).resolve()
+        manifest = run_root / "manifest.json"
+        if (
+            run_root not in artifact.parents
+            or not artifact.is_file()
+            or not manifest.is_file()
+            or artifact.stat().st_size != pointer.artifact.size
+            or sha256_file(artifact) != pointer.artifact.sha256
+            or sha256_file(manifest) != pointer.manifest_sha256
+        ):
+            raise ValueError(f"{source} candidate 文件、大小或哈希不匹配")
+        return pointer.to_dict()
+
+    def _validate_catalog_candidate(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        candidate = dict(payload)
+        self._validated_catalog_provenance(candidate)
+        return candidate
+
+    @staticmethod
+    def _ordered_sources(sources: set[str] | list[str] | tuple[str, ...]) -> list[str]:
+        selected = set(sources)
+        return [source for source in SCHEDULE_SOURCES if source in selected]
+
+    def _load_resumable_checkpoint(self, current: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+        raw = self._migrate_foreign_catalog_checkpoint(current)
+        if raw.get("state") != "in_progress":
+            return {}
+        try:
+            catalog_raw = raw.get("catalog")
+            if not isinstance(catalog_raw, Mapping):
+                raise ValueError("checkpoint Catalog 缺失")
+            catalog = self._validate_catalog_candidate(catalog_raw)
+            completed_raw = raw.get("completed_sources")
+            if not isinstance(completed_raw, Mapping):
+                raise ValueError("checkpoint completed_sources 无效")
+            completed: dict[str, dict[str, Any]] = {}
+            for source, pointer in completed_raw.items():
+                source_name = str(source)
+                if source_name not in SCHEDULE_SOURCES or not isinstance(pointer, Mapping):
+                    raise ValueError("checkpoint 包含未知 candidate")
+                if source_name == "catalog":
+                    validated = self._validate_catalog_candidate(pointer)
+                    if (
+                        str(validated.get("catalog_generation_id") or "")
+                        != str(catalog.get("catalog_generation_id") or "")
+                        or str(validated.get("content_sha256") or "")
+                        != str(catalog.get("content_sha256") or "")
+                    ):
+                        raise ValueError("checkpoint Catalog 身份不一致")
+                else:
+                    validated = self._validate_source_candidate(source_name, pointer, catalog)
+                completed[source_name] = validated
+            pending_raw = raw.get("pending_sources")
+            if not isinstance(pending_raw, list):
+                raise ValueError("checkpoint pending_sources 无效")
+            pending = {str(source) for source in pending_raw} - set(completed)
+            if not pending.issubset(set(SCHEDULE_SOURCES)):
+                raise ValueError("checkpoint pending_sources 包含未知来源")
+            core_generation_id = str(raw.get("core_generation_id") or "")
+            if core_generation_id and self.publisher.current_generation_id() != core_generation_id:
+                raise ValueError("checkpoint core generation 已被其他发布替换")
+            current_catalog = current.get("catalog") or {}
+            if (
+                not core_generation_id
+                and "catalog" not in completed
+                and current_catalog
+                and (
+                    str(current_catalog.get("catalog_generation_id") or "")
+                    != str(catalog.get("catalog_generation_id") or "")
+                    or str(current_catalog.get("content_sha256") or "")
+                    != str(catalog.get("content_sha256") or "")
+                )
+            ):
+                raise ValueError("checkpoint Catalog 与 current 不一致")
+            return {
+                **raw,
+                "catalog": catalog,
+                "completed_sources": completed,
+                "pending_sources": self._ordered_sources(pending),
+            }
+        except (OSError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+
+    def _save_refresh_checkpoint(
+        self,
+        *,
+        cycle_id: str,
+        created_at: str,
+        force: bool,
+        scope: str = "due",
+        phase: str,
+        state: str,
+        catalog: Mapping[str, Any],
+        completed_sources: Mapping[str, Mapping[str, Any]],
+        pending_sources: set[str] | list[str] | tuple[str, ...],
+        core_generation_id: str = "",
+        failures: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> None:
+        completed_names = set(completed_sources)
+        normalized_pending = set(pending_sources) - completed_names
+        failure_payloads = failures or {}
+        checkpoint_failures: dict[str, dict[str, Any]] = {}
+        for source in self._ordered_sources(normalized_pending):
+            payload = failure_payloads.get(source)
+            if not isinstance(payload, Mapping):
+                continue
+            evidence = checkpoint_failure_evidence(payload)
+            if evidence:
+                checkpoint_failures[source] = evidence
+        self.checkpoint_store.save(
+            {
+                "state": state,
+                "cycle_id": cycle_id,
+                "created_at": created_at,
+                "updated_at": iso_utc(self.now()),
+                "force": bool(force),
+                "scope": str(scope),
+                "refresh_phase": phase,
+                "catalog": dict(catalog),
+                "completed_sources": {
+                    source: dict(completed_sources[source])
+                    for source in SCHEDULE_SOURCES
+                    if source in completed_sources
+                },
+                "pending_sources": self._ordered_sources(normalized_pending),
+                "core_generation_id": str(core_generation_id or ""),
+                "failures": checkpoint_failures,
+            }
+        )
 
     def _save_candidate(self, source: str, pointer: Mapping[str, Any]) -> None:
         """保存已通过 worker 门禁的 immutable run pointer，供后续 refresh cycle 组合。"""
@@ -229,9 +377,9 @@ class CohortRefreshCoordinator:
             cancel_path = self._active_cancel
             if cancel_path is not None:
                 cancel_path.parent.mkdir(parents=True, exist_ok=True)
-                cancel_path.touch()
+                cancel_path.write_text("shutdown_requested", encoding="utf-8")
 
-    def poll_deferred_refresh(self) -> bool | None:
+    def poll_deferred_refresh(self) -> dict[str, Any] | None:
         """取消对局中 worker，并在赛后 30 秒返回一次合并后的恢复请求。"""
 
         in_game = self._game_refresh.in_progress()
@@ -241,9 +389,9 @@ class CohortRefreshCoordinator:
                 if cancel_path is not None:
                     self._game_cancel_requested.set()
                     cancel_path.parent.mkdir(parents=True, exist_ok=True)
-                    cancel_path.touch()
+                    cancel_path.write_text("game_in_progress", encoding="utf-8")
             if cancel_path is not None:
-                self._game_refresh.mark_worker_cancelled()
+                self._game_refresh.mark_worker_cancelled(**self._active_refresh_request)
         return self._game_refresh.poll(in_game=in_game)
 
     def _current_pointer(self, source: str) -> dict[str, Any]:
@@ -259,7 +407,7 @@ class CohortRefreshCoordinator:
                         (self.root / "snapshots" / "generations" / generation_id / "manifest.json").read_text(encoding="utf-8")
                     )
                     items = [item for item in generation_manifest.get("source_files", []) if item.get("source") == "catalog"]
-                    if len(items) != 3:
+                    if len(items) not in {3, 4}:
                         return {}
                     catalog_id = str(items[0].get("catalog_generation_id") or "")
                     catalog_root = self.root / "catalog" / "generations" / catalog_id
@@ -274,10 +422,12 @@ class CohortRefreshCoordinator:
                         )
                         for item in items
                     }
-                    if manifest.catalog_generation_id != catalog_id or any(
+                    manifest_roles = {item.role for item in manifest.files}
+                    if (set(generation_files) != manifest_roles
+                        or manifest.catalog_generation_id != catalog_id or any(
                         generation_files.get(item.role) != (item.sha256, item.record_count)
                         for item in manifest.files
-                    ):
+                    )):
                         return {}
                     return {
                         "schema_version": 2,
@@ -339,6 +489,27 @@ class CohortRefreshCoordinator:
             return True
         current = self.now()
         next_due = parse_refresh_time(state.next_due_at)
+        # 旧 schedule 可能只有 ``state=backoff`` 而没有 failure_kind；两种
+        # 表示都必须先服从退避窗口，避免时间字段缺失时立即循环重试。
+        if (state.state == "backoff" or state.failure_kind) and next_due is not None and current < next_due:
+            return False
+        if pointer:
+            success_text = state.last_success_at or pointer_success_at(pointer)
+            if not source_reuse_allowed(source, success_text, current):
+                identity_field = "catalog_generation_id" if source == "catalog" else "run_id"
+                expected_run_id = str(pointer.get(identity_field) or "")
+                last_attempt = parse_refresh_time(state.last_attempt_at)
+                recently_checked = bool(
+                    expected_run_id
+                    and state.current_run_id == expected_run_id
+                    and last_attempt is not None
+                    and current < last_attempt + SOURCE_INTERVALS[source]
+                )
+                if recently_checked:
+                    # immutable pointer 的 data_at 可以保持旧值；刚成功确认来源
+                    # 没有新内容时仍须服从固定 cadence，不能在每次启动重复抓取。
+                    return False
+                return True
         if next_due is not None:
             return current >= next_due
         # source current 缺失不代表首次尝试；失败后的 backoff 必须先于立即刷新语义。
@@ -364,8 +535,20 @@ class CohortRefreshCoordinator:
         coverage = metadata.get("coverage") if isinstance(metadata, Mapping) else {}
         return dict(coverage) if isinstance(coverage, Mapping) else {}
 
-    def _probe_hextech_upstream_change(self, pointer: Mapping[str, Any]) -> tuple[bool, dict[str, Any]]:
-        """以稳定上游版本优先、内容哈希兜底加速候选；日期只保留为诊断信息。"""
+    def _source_metadata(self, source: str, pointer: Mapping[str, Any]) -> dict[str, Any]:
+        if source == "catalog" or self._is_baseline(pointer):
+            return {}
+        run_id = str(pointer.get("run_id") or "")
+        path = self.root / "sources" / source / "runs" / run_id / "manifest.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        metadata = payload.get("metadata") if isinstance(payload, Mapping) else {}
+        return dict(metadata) if isinstance(metadata, Mapping) else {}
+
+    def _probe_aramkit_upstream_change(self, pointer: Mapping[str, Any]) -> tuple[bool, dict[str, Any]]:
+        """比较 ARAMKit 固定四字段 marker；probe 失败只取消加速，不污染来源健康。"""
 
         if self._upstream_marker_probe is None or not pointer:
             return False, {}
@@ -374,33 +557,29 @@ class CohortRefreshCoordinator:
         except Exception:
             # probe 只负责加速刷新，网络瞬断不能升级为 source 失败。
             return False, {}
-        version = str(marker.get("version") or "").strip()
-        date = str(marker.get("date") or "").strip()
-        marker_sha256 = str(marker.get("marker_sha256") or "").strip()
-        if not version and not date and not marker_sha256:
+        required = {"version", "dataPath", "buildTimeUnixMs", "allMatches"}
+        if set(marker) != required or not str(marker.get("version") or "").strip() or not str(
+            marker.get("dataPath") or ""
+        ).strip():
             return False, {}
-        payload = {"version": version, "date": date, "marker_sha256": marker_sha256}
-        coverage = self._source_coverage("hextech", pointer)
-        upstream = coverage.get("upstream") if isinstance(coverage.get("upstream"), Mapping) else {}
-        # updated_at / Last-Modified 可能随 CDN 响应变化；稳定版本仍是首选信号。
-        if version:
-            previous_version = str(upstream.get("version") or "").strip()
-            return version != previous_version, payload
-        # aramgg 不提供版本号：退回条目内容哈希比较。要求当前与上一 run 的哈希
-        # 都非空才判变化——升级后首轮无历史哈希时保守不加速，避免虚假强刷。
-        previous_marker = str(upstream.get("marker_sha256") or "").strip()
-        if marker_sha256 and previous_marker:
-            return marker_sha256 != previous_marker, payload
-        return False, payload
+        previous = self._source_metadata("aramkit", pointer).get("marker")
+        return isinstance(previous, Mapping) and dict(previous) != marker, marker
 
-    def _worker_command(self, source: str, work: Path, catalog_pointer: Path | None, *, force: bool) -> list[str]:
+    def _worker_command(
+        self,
+        source: str,
+        work: Path,
+        catalog_pointer: Path | None,
+        *,
+        force: bool,
+        compatibility_catalog_pointer: Path | None = None,
+        coverage_policy: str = "catalog_adoption",
+    ) -> list[str]:
         pointer_path = work / f"{source}.pointer.v2.json"
         result_path = work / f"{source}.result.json"
         cancel_path = work / f"{source}.cancel"
-        if getattr(sys, "frozen", False):
-            command = [sys.executable, "--acquisition-worker"]
-        else:
-            command = [sys.executable, "-m", "hextech.bootstrap.acquisition_worker"]
+        command = ([sys.executable, "--acquisition-worker"] if getattr(sys, "frozen", False)
+                   else [sys.executable, "-m", "hextech.bootstrap.acquisition_worker"])
         command.extend(
             [
                 "--source",
@@ -415,6 +594,12 @@ class CohortRefreshCoordinator:
         )
         if catalog_pointer is not None and source != "catalog":
             command.extend(["--catalog-pointer", os.fspath(catalog_pointer)])
+        if compatibility_catalog_pointer is not None and source in {"aramkit", "blitz"}:
+            command.extend(
+                ["--catalog-compatibility-pointer", os.fspath(compatibility_catalog_pointer)]
+            )
+        if source == "blitz":
+            command.extend(["--coverage-policy", coverage_policy])
         if force:
             command.append("--force")
         return command
@@ -426,18 +611,27 @@ class CohortRefreshCoordinator:
         catalog_pointer: Path | None,
         *,
         force: bool,
+        compatibility_catalog_pointer: Path | None = None,
+        coverage_policy: str = "catalog_adoption",
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if self._game_refresh.in_progress():
             raise GameRefreshDeferred("game_in_progress")
         self._game_cancel_requested.clear()
-        command = self._worker_command(source, work, catalog_pointer, force=force)
+        command = self._worker_command(
+            source,
+            work,
+            catalog_pointer,
+            force=force,
+            compatibility_catalog_pointer=compatibility_catalog_pointer,
+            coverage_policy=coverage_policy,
+        )
         cancel_path = work / f"{source}.cancel"
         cancel_path.unlink(missing_ok=True)
         with self._cancel_lock:
             self._active_cancel = cancel_path
             if self._stop.is_set():
                 cancel_path.parent.mkdir(parents=True, exist_ok=True)
-                cancel_path.touch()
+                cancel_path.write_text("shutdown_requested", encoding="utf-8")
         try:
             worker_env = os.environ.copy()
             worker_env["HEXTECH_VAR_DIR"] = os.fspath(self.root.resolve())
@@ -454,6 +648,11 @@ class CohortRefreshCoordinator:
                     self._active_cancel = None
         if self._game_cancel_requested.is_set():
             raise GameRefreshDeferred("game_in_progress")
+        if execution.cancelled:
+            if execution.cancel_reason == "game_in_progress":
+                raise GameRefreshDeferred("game_in_progress")
+            if self._stop.is_set() or execution.cancel_reason == "shutdown_requested":
+                raise RefreshStopRequested("shutdown_requested")
         result_path = work / f"{source}.result.json"
         try:
             result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -462,8 +661,8 @@ class CohortRefreshCoordinator:
         if execution.timed_out:
             raise TimeoutError(f"{source} worker 超过硬上限")
         if execution.returncode != 0 or not isinstance(result, dict) or result.get("state") != "ready":
-            detail = result or {"stderr": execution.stderr[-2000:]}
-            raise RuntimeError(f"{source} worker 失败：{json.dumps(detail, ensure_ascii=False)}")
+            detail = result or {"error_type": "WorkerFailed", "error": execution.stderr[-2000:]}
+            raise SourceWorkerFailure(source, detail)
         pointer = result.get("pointer")
         if not isinstance(pointer, dict):
             raise RuntimeError(f"{source} worker 未返回 candidate pointer")
@@ -483,7 +682,7 @@ class CohortRefreshCoordinator:
         catalog_sha = str(catalog.get("content_sha256") or "")
         if not catalog_id or not catalog_sha:
             raise RuntimeError("cohort Catalog pointer 不完整")
-        for source in ("hextech", "apex", "mayhem"):
+        for source in ("aramkit", "blitz", "apex", "mayhem"):
             pointer = pointers[source]
             if (
                 str(pointer.get("catalog_generation_id") or "") != catalog_id
@@ -497,7 +696,7 @@ class CohortRefreshCoordinator:
         by_source: dict[str, Any] = {
             item.source: item for item in provenance if item.source != "catalog"
         }
-        for source in ("hextech", "apex", "mayhem"):
+        for source in ("aramkit", "blitz", "apex", "mayhem"):
             pointer = pointers[source]
             item = by_source.get(source)
             if item is None:
@@ -514,7 +713,10 @@ class CohortRefreshCoordinator:
         catalog_id = str(pointers["catalog"].get("catalog_generation_id") or "")
         catalog_manifest_sha = str(pointers["catalog"].get("manifest_sha256") or "")
         catalog_items = [item for item in provenance if item.source == "catalog"]
-        if len(catalog_items) != 3 or any(
+        catalog_roles: set[str] = {item.artifact_role for item in catalog_items}
+        required_catalog_roles = {"champions", "augments", "versions"}
+        valid_catalog_roles = required_catalog_roles.issubset(catalog_roles) and len(catalog_roles) in {3, 4}
+        if not valid_catalog_roles or len(catalog_roles) != len(catalog_items) or catalog_roles - {"champions", "augments", "versions", "augment_assets"} or any(
             item.catalog_generation_id != catalog_id
             or item.run_id != catalog_id
             or item.manifest_sha256 != catalog_manifest_sha
@@ -533,238 +735,48 @@ class CohortRefreshCoordinator:
             previous,
             last_attempt_at=iso_utc(now),
             next_due_at=iso_utc(now + delay),
-            failure_kind="http_blocked" if blocked else str(payload.get("error_type") or "worker_failed"),
+            failure_kind=refresh_failure_kind(payload, blocked=blocked),
             state="backoff",
         )
 
-    def refresh(self, *, force: bool = False) -> dict[str, Any]:
-        if self._stop.is_set():
-            return {"state": "degraded", "reason_code": "shutdown_requested", "generation_id": self.publisher.current_generation_id()}
-        now = self.now()
-        schedule = self.schedule_store.load()
-        states = dict(schedule.sources)
-        current = {source: self._current_pointer(source) for source in SCHEDULE_SOURCES}
-        if self._game_refresh.in_progress():
-            return self._game_refresh.defer_result(force=force)
-        due = {source: self._due(source, states[source], current[source], force=force) for source in SCHEDULE_SOURCES}
-        upstream_changed = False
-        upstream_marker: dict[str, Any] = {}
-        # 候选失败后的 backoff 必须优先于 marker 加速，避免相同版本反复全量抓取。
-        if not force and not due["hextech"] and states["hextech"].state != "backoff":
-            upstream_changed, upstream_marker = self._probe_hextech_upstream_change(current["hextech"])
-            if upstream_changed:
-                due["hextech"] = True
-        if not any(due.values()):
-            return {
-                "state": "ready",
-                "reason_code": "not_stale",
-                "generation_id": self.publisher.current_generation_id(),
-            }
-
-        cycle_id = now.strftime("%Y%m%dT%H%M%S") + "-" + os.urandom(4).hex()
-        work = self.root / "snapshots" / "staging" / f"refresh-{cycle_id}"
-        work.mkdir(parents=True, exist_ok=False)
-        targets = {source: dict(current[source]) for source in SCHEDULE_SOURCES}
-        baseline = self._baseline_contributions(current["catalog"])
-        for source in ("hextech", "apex", "mayhem"):
-            if not targets[source] and source in baseline:
-                targets[source] = dict(baseline[source])
-        results: dict[str, Any] = {}
-        failures: dict[str, Any] = {}
-
-        catalog_pointer_path: Path | None = (
-            self.root / "catalog" / "current.v2.json" if current["catalog"] else None
+    def _promote_targets(
+        self,
+        targets: Mapping[str, Mapping[str, Any]],
+        *,
+        degraded_sources: set[str],
+        pending_sources: set[str],
+        refreshed_sources: list[str],
+    ) -> tuple[Any, dict[str, Any]]:
+        return promote_targets(
+            self,
+            targets,
+            degraded_sources=degraded_sources,
+            pending_sources=pending_sources,
+            refreshed_sources=refreshed_sources,
         )
-        if current["catalog"] and catalog_pointer_path is not None and not catalog_pointer_path.is_file():
-            # recovered baseline pointer 只存在内存中；worker 需要一个受限于本轮 staging
-            # 的 candidate path，不能把它写回正式 current。
-            catalog_pointer_path = work / "catalog.pointer.v2.json"
-            atomic_write_json(catalog_pointer_path, current["catalog"], ensure_ascii=False, indent=2)
-        catalog_changed = False
-        if due["catalog"]:
-            try:
-                pointer, result = self._run_source("catalog", work, None, force=force)
-                targets["catalog"] = pointer
-                results["catalog"] = result
-                catalog_pointer_path = self._candidate_catalog_path(work, pointer)
-                changed = (
-                    str(pointer.get("content_sha256") or "")
-                    != str(current["catalog"].get("content_sha256") or "")
-                )
-                if changed:
-                    catalog_changed = True
-                    due.update({"hextech": True, "apex": True, "mayhem": True})
-            except GameRefreshDeferred:
-                return self._game_refresh.defer_result(force=force)
-            except Exception as exc:
-                failures["catalog"] = {"error_type": exc.__class__.__name__, "error": str(exc)}
 
-        for source in ("hextech", "apex", "mayhem"):
-            if self._stop.is_set():
-                failures[source] = {"error_type": "Cancelled", "error": "shutdown_requested"}
-                continue
-            if not due[source]:
-                continue
-            try:
-                pointer, result = self._run_source(
-                    source,
-                    work,
-                    catalog_pointer_path,
-                    force=force or (source == "hextech" and upstream_changed),
-                )
-                targets[source] = pointer
-                results[source] = result
-                self._save_candidate(source, pointer)
-            except GameRefreshDeferred:
-                return self._game_refresh.defer_result(force=force)
-            except Exception as exc:
-                failures[source] = {"error_type": exc.__class__.__name__, "error": str(exc)}
-
-        for source in tuple(failures):
-            if source == "catalog":
-                continue
-            saved = self._load_saved_candidate(source, targets["catalog"])
-            if saved and (
-                not current[source]
-                or self._pointer_identity(saved) != self._pointer_identity(current[source])
-            ):
-                targets[source] = saved
-                results[source] = {"state": "ready", "source": source, "reason_code": "saved_candidate"}
-                failures.pop(source, None)
-
-        missing = [source for source, pointer in targets.items() if not pointer]
-        baseline = self._baseline_contributions(targets["catalog"])
-        for source in ("hextech", "apex", "mayhem"):
-            if not targets[source] and source in baseline:
-                targets[source] = dict(baseline[source])
-        missing = [source for source, pointer in targets.items() if not pointer]
-        cannot_fallback = bool(missing or (catalog_changed and failures))
-        if cannot_fallback:
-            failure_payload = {"failures": failures, "missing": missing}
-            for source in SCHEDULE_SOURCES:
-                if due[source]:
-                    states[source] = self._failure_state(states[source], failures.get(source, {"error_type": "cohort_incomplete"}))
-            self.schedule_store.save(
-                RefreshScheduleV1(
-                    updated_at=utc_now_iso(),
-                    generation_id=self.publisher.current_generation_id(),
-                    sources=states,
-                )
-            )
-            return {
-                "state": "degraded" if self.publisher.current_generation_id() else "failed",
-                "reason_code": "data_stale" if self.publisher.current_generation_id() else "cohort_refresh_failed",
-                "generation_id": self.publisher.current_generation_id(),
-                "data_status": "data_stale" if self.publisher.current_generation_id() else "unavailable",
-                "data_reason": "candidate_rejected_last_good_preserved" if self.publisher.current_generation_id() else "no_snapshot",
-                "upstream_marker": upstream_marker,
-                **failure_payload,
-            }
-
-        degraded_sources = set(failures)
-        degraded_sources.update(
-            source for source in ("hextech", "apex", "mayhem") if self._is_baseline(targets[source])
-        )
-        # Apex 与 Mayhem 在消费者 payload 中共同构成联动数据；任一降级时两者都复用同一 last-good。
-        if degraded_sources.intersection({"apex", "mayhem"}):
-            degraded_sources.update({"apex", "mayhem"})
-            for source in ("apex", "mayhem"):
-                fallback = current[source] or baseline.get(source, {})
-                if fallback:
-                    targets[source] = dict(fallback)
-
-        refreshed_sources = [
-            source
-            for source in SCHEDULE_SOURCES
-            if source in results and source not in degraded_sources
-        ]
-
-        journal_started = False
-        try:
-            self._cohort_is_bound(targets)
-            self.promotion.begin()
-            journal_started = True
-            for source in SCHEDULE_SOURCES:
-                if not self._is_baseline(targets[source]):
-                    self.promotion.record_target(source, targets[source])
-            self.promotion.promote_dependencies()
-            build = self.builder(targets)
-            self._build_matches_targets(build, targets)
-            completed = self.now()
-            source_status: dict[str, dict[str, Any]] = {}
-            for source in SCHEDULE_SOURCES:
-                target = targets[source]
-                if source == "catalog":
-                    run_id = str(target.get("catalog_generation_id") or "")
-                    artifact_sha = str(target.get("content_sha256") or "")
-                    manifest_sha = str(target.get("manifest_sha256") or "")
-                    record_count = 0
-                else:
-                    run_id, _, artifact_sha, record_count, manifest_sha = self._pointer_identity(target)
-                data_at_text = str(
-                    target.get("last_success_at") or target.get("completed_at") or target.get("created_at") or ""
-                )
-                expired, stale_age_seconds = evaluate_source_expiry(
-                    data_at_text, SOURCE_INTERVALS[source], completed
-                )
-                if source in degraded_sources:
-                    data_reason = "candidate_rejected_last_good_preserved"
-                elif expired:
-                    data_reason = "source_data_expired"
-                else:
-                    data_reason = ""
-                source_status[source] = {
-                    "catalog_id": str(
-                        target.get("catalog_generation_id")
-                        or targets["catalog"].get("catalog_generation_id")
-                        or ""
-                    ),
-                    "data_at": data_at_text,
-                    "checked_at": iso_utc(completed),
-                    "freshness": "last_good" if source in degraded_sources else "fresh",
-                    "run_id": run_id,
-                    "origin_generation_id": str(target.get("origin_generation_id") or ""),
-                    "artifact_sha256": artifact_sha,
-                    "manifest_sha256": manifest_sha,
-                    "record_count": record_count,
-                    "data_status": "data_stale" if source in degraded_sources or expired else "fresh",
-                    # UI 只消费稳定诊断码；原始 worker 错误仍保留在本轮 source 诊断中。
-                    "data_reason": data_reason,
-                    "stale_age_seconds": stale_age_seconds,
-                    "coverage": self._source_coverage(source, target),
-                }
-            manifest = self.publisher.publish(
-                build.payloads,
-                source_files=build.source_files,
-                require_complete_provenance=True,
-                health="degraded" if degraded_sources else "healthy",
-                refreshed_sources=refreshed_sources,
-                degraded_sources=sorted(degraded_sources),
-                source_status=source_status,
-            )
-            self.promotion.record_generation_promoted(manifest.generation_id)
-            self.promotion.commit()
-            try:
-                retention = apply_retention(self.root, now=self.now())
-            except OSError as exc:
-                retention = {"error": exc.__class__.__name__}
-        except Exception:
-            if journal_started:
-                self.promotion.rollback()
-            raise
-
+    def _save_schedule_progress(
+        self,
+        states: dict[str, RefreshSourceState],
+        *,
+        attempted_sources: set[str],
+        failures: Mapping[str, Mapping[str, Any]],
+        targets: Mapping[str, Mapping[str, Any]],
+        generation_id: str,
+    ) -> None:
         completed = self.now()
-        for source in SCHEDULE_SOURCES:
-            if not due[source]:
-                continue
+        for source in self._ordered_sources(attempted_sources):
             if source in failures:
                 states[source] = self._failure_state(states[source], failures[source])
                 continue
-            pointer = targets[source]
+            pointer = targets.get(source) or {}
+            if not pointer:
+                continue
+            normal_due = completed + SOURCE_INTERVALS[source]
             states[source] = RefreshSourceState(
                 last_attempt_at=iso_utc(completed),
                 last_success_at=str(pointer.get("last_success_at") or iso_utc(completed)),
-                next_due_at=iso_utc(completed + SOURCE_INTERVALS[source]),
+                next_due_at=iso_utc(normal_due),
                 failure_kind="",
                 current_run_id=(
                     self._pointer_identity(pointer)[0]
@@ -773,27 +785,16 @@ class CohortRefreshCoordinator:
                 ),
                 state="ready",
             )
-        self.schedule_store.save(
-            RefreshScheduleV1(
-                updated_at=iso_utc(completed),
-                generation_id=manifest.generation_id,
-                sources=states,
-            )
+        schedule = RefreshScheduleV1(
+            updated_at=iso_utc(completed),
+            generation_id=generation_id,
+            sources=states,
         )
-        return {
-            "state": "degraded" if degraded_sources else "ready",
-            "reason_code": "cohort_promoted",
-            "generation_id": manifest.generation_id,
-            "refreshed_sources": refreshed_sources,
-            "degraded_sources": sorted(degraded_sources),
-            "source_results": results,
-            "upstream_marker": upstream_marker,
-            "retention": retention,
-        }
-
-
+        self.schedule_store.save(schedule)
+        refresh_recovery_schedule(self.root, schedule)
 __all__ = [
     "CohortRefreshCoordinator",
+    "RefreshStopRequested",
     "SOURCE_INTERVALS",
     "SOURCE_TIMEOUTS",
 ]

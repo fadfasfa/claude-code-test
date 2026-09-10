@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-SOURCE_NAMES = ("hextech", "apex", "mayhem")
+SOURCE_NAMES = ("aramkit", "blitz", "apex", "mayhem")
 MINIMUM_AGE = timedelta(days=30)
 STAGING_MAX_AGE = timedelta(hours=24)
 
@@ -89,6 +89,62 @@ def _journal_references(root: Path) -> tuple[set[str], set[str], set[str]]:
     return source_runs, catalog_ids, generations
 
 
+def _recovery_references(root: Path) -> tuple[set[str], set[str], set[str]]:
+    """保护单调恢复点直接引用；结构不完整时 generation provenance 仍兜底保留。"""
+
+    point = _read_object(root / "state" / "data-service" / "cohort_recovery_point.v1.json")
+    source_runs: set[str] = set()
+    catalog_ids: set[str] = set()
+    generations: set[str] = set()
+    generation_id = str(point.get("generation_id") or "")
+    if generation_id:
+        generations.add(generation_id)
+    pointers = point.get("pointers")
+    if not isinstance(pointers, Mapping):
+        return source_runs, catalog_ids, generations
+    catalog = pointers.get("catalog")
+    if isinstance(catalog, Mapping):
+        catalog_id = str(catalog.get("catalog_generation_id") or "")
+        if catalog_id:
+            catalog_ids.add(catalog_id)
+    for source in SOURCE_NAMES:
+        pointer = pointers.get(source)
+        if isinstance(pointer, Mapping):
+            run_id = str(pointer.get("run_id") or "")
+            if run_id:
+                source_runs.add(f"{source}:{run_id}")
+    generation = pointers.get("generation")
+    if isinstance(generation, Mapping):
+        for pointer in (generation.get("current"), generation.get("previous")):
+            if isinstance(pointer, Mapping):
+                referenced = str(pointer.get("current_generation_id") or pointer.get("generation_id") or "")
+                if referenced:
+                    generations.add(referenced)
+    return source_runs, catalog_ids, generations
+
+
+def _legacy_generation_ids(root: Path) -> set[str]:
+    """永久保留切源前的 Hextech 统计代，作为显式回滚边界。"""
+
+    generations_root = root / "snapshots" / "generations"
+    if not generations_root.is_dir():
+        return set()
+    result: set[str] = set()
+    for path in generations_root.iterdir():
+        if not path.is_dir():
+            continue
+        manifest = _read_object(path / "manifest.json")
+        source_files = manifest.get("source_files")
+        if isinstance(source_files, list) and any(
+            isinstance(item, Mapping)
+            and item.get("source") == "hextech"
+            and item.get("artifact_role") == "stats"
+            for item in source_files
+        ):
+            result.add(path.name)
+    return result
+
+
 def protected_references(root: str | Path) -> dict[str, set[str]]:
     runtime_root = Path(root)
     source_runs: set[str] = set()
@@ -122,11 +178,26 @@ def protected_references(root: str | Path) -> dict[str, set[str]]:
         generation_id = str(pointer.get(field) or "")
         if generation_id:
             generations.add(generation_id)
+    sidecar_status = _read_object(
+        runtime_root / "state" / "game_overlay_sidecar_status.json"
+    )
+    active_vision_generation = str(
+        sidecar_status.get("vision_pool_origin_generation_id")
+        or sidecar_status.get("vision_pool_generation_id")
+        or ""
+    )
+    if active_vision_generation:
+        generations.add(active_vision_generation)
 
     journal_runs, journal_catalogs, journal_generations = _journal_references(runtime_root)
     source_runs.update(journal_runs)
     catalog_ids.update(journal_catalogs)
     generations.update(journal_generations)
+    recovery_runs, recovery_catalogs, recovery_generations = _recovery_references(runtime_root)
+    source_runs.update(recovery_runs)
+    catalog_ids.update(recovery_catalogs)
+    generations.update(recovery_generations)
+    generations.update(_legacy_generation_ids(runtime_root))
     pending_generations = list(generations)
     inspected_generations: set[str] = set()
     while pending_generations:

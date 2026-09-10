@@ -83,7 +83,8 @@ class PillowCanvas:
         size = max(8, size)
         bold = len(font_spec) > 2 and str(font_spec[2]).lower() == "bold"
         font_path = FONT_BOLD if bold and FONT_BOLD.exists() else FONT_REGULAR
-        font = ImageFont.truetype(str(font_path), size) if font_path.exists() else ImageFont.load_default()
+        font_index = 1 if str(font_spec[0]) == "Microsoft YaHei UI" else 0
+        font = ImageFont.truetype(str(font_path), size, index=font_index) if font_path.exists() else ImageFont.load_default()
         anchor = {
             "center": "mm",
             "nw": "lt",
@@ -248,6 +249,7 @@ def render_case(
             canvas,
             model,
             viewport_size=viewport,
+            dpi_scale=dpi_scale,
             perf_sink=perf_sink,
             expanded=display_mode == "expanded",
         )
