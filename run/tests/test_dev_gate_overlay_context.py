@@ -262,7 +262,7 @@ def test_overlay_context_contract() -> None:
             status_code = 200
 
             def json(self) -> dict[str, Any]:
-                return {"championName": "Aatrox"}
+                return {"championName": "Aatrox", "level": 11}
 
         assert overlay_context.write_current_live_client_overlay_context_once(
             fetch_response=lambda _url, _headers: LiveActivePlayerResponse(),
@@ -274,6 +274,7 @@ def test_overlay_context_contract() -> None:
         assert live_loaded["champion_id"] == "266"
         assert live_loaded["champion_name"] == "Aatrox"
         assert live_loaded["source"] == "live-client-data"
+        assert live_loaded["player_level"] == 11
 
         class LiveApostropheChampionResponse:
             status_code = 200
@@ -299,7 +300,7 @@ def test_overlay_context_contract() -> None:
                     "activePlayer": {"summonerName": "LocalPlayer"},
                     "allPlayers": [
                         {"summonerName": "OtherPlayer", "championName": "Ahri"},
-                        {"summonerName": "LocalPlayer", "championName": "Aatrox"},
+                        {"summonerName": "LocalPlayer", "championName": "Aatrox", "level": 15},
                     ],
                 }
 
@@ -315,6 +316,7 @@ def test_overlay_context_contract() -> None:
         assert all_game_loaded["champion_id"] == "266"
         assert all_game_loaded["champion_name"] == "Aatrox"
         assert all_game_loaded["source"] == "live-client-data"
+        assert all_game_loaded["player_level"] == 15
 
         class UnknownLiveChampionResponse:
             status_code = 200

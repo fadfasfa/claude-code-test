@@ -58,7 +58,16 @@ def project_generation_synergy(
                 continue
             normalized_items += 1
             item_count += 1
-            signature = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            # 去重身份沿用既有规范空白语义，但 append 的条目继续保留首个来源
+            # content 原文；展示摘要不得反向改变 item 数、覆盖率或投影身份。
+            signature_payload = dict(normalized)
+            signature_payload["content"] = _clean_text(signature_payload.get("content"))
+            signature = json.dumps(
+                signature_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             for value in normalized["augment_names"]:
                 raw_name = _clean_text(value)
                 if not raw_name:

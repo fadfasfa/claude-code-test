@@ -30,18 +30,47 @@ def _source_status(status: Mapping[str, Any], source: str) -> Mapping[str, Any] 
     return value if isinstance(value, Mapping) else None
 
 
-def _hextech_data_state(status: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+def _format_numeric_stats(stats: Mapping[str, Any]) -> bool:
+    """确认一行确实携带可展示的百分比，而不是只有 Blitz tier。"""
+
+    winrate = stats.get("winrate", stats.get("win_rate", stats.get("海克斯胜率")))
+    pickrate = stats.get("pickrate", stats.get("pick_rate", stats.get("海克斯出场率")))
+    return winrate is not None and pickrate is not None
+
+
+def _hextech_data_state(
+    status: Mapping[str, Any],
+    *,
+    preferred_source: str | None = None,
+) -> tuple[str, str, str, str, str, str]:
     """返回行级状态；旧 generation 才回退到聚合 health。"""
 
-    source = _source_status(status, "hextech")
+    # ARAMKit 是当前主统计来源；Blitz 仅是无 ARAMKit 统计时的旧兼容回退，
+    # 不能因为 Blitz last-good 过期而污染仍可用的 ARAMKit 百分比。
+    source_name = ""
+    source = None
+    order = tuple(
+        dict.fromkeys(
+            candidate
+            for candidate in (preferred_source, "aramkit", "hextech", "blitz")
+            if candidate
+        )
+    )
+    for candidate in order:
+        value = _source_status(status, candidate)
+        if value is not None:
+            source_name = candidate
+            source = value
+            break
     if source is None:
         degraded = str(status.get("state") or "") == "degraded"
         return (
             "degraded" if degraded else "ready",
-            "GENERATION_DEGRADED" if degraded else "READY",
+            "STATS_STALE" if degraded else "READY",
             "unknown",
             "",
             str(status.get("reason") or ""),
+            "",
         )
     freshness = str(source.get("freshness") or "unknown")
     data_status = str(source.get("data_status") or "unknown")
@@ -50,10 +79,13 @@ def _hextech_data_state(status: Mapping[str, Any]) -> tuple[str, str, str, str, 
     degraded = freshness != "fresh" or data_status == "data_stale"
     return (
         "degraded" if degraded else "ready",
-        "GENERATION_DEGRADED" if degraded else "READY",
+        ("GENERATION_DEGRADED" if source_name == "aramkit" else "STATS_STALE")
+        if degraded
+        else "READY",
         freshness,
         str(source.get("run_id") or ""),
         str(source.get("data_reason") or ""),
+        str(source.get("data_at") or ""),
     )
 
 
@@ -95,9 +127,14 @@ class RecommendationService:
         policy: RecommendationPolicy = RecommendationPolicy(),
     ) -> RecommendationModel:
         status = snapshot.status()
-        hextech_data_status, hextech_status_code, hextech_freshness, hextech_run_id, hextech_reason = (
-            _hextech_data_state(status)
-        )
+        (
+            hextech_data_status,
+            hextech_status_code,
+            hextech_freshness,
+            hextech_run_id,
+            hextech_reason,
+            hextech_data_at,
+        ) = _hextech_data_state(status)
         synergy_data_status, synergy_data_reason, synergy_data_at = _synergy_data_state(status)
         generation_id = GenerationId(str(status.get("generation_id") or ""))
         source_order = {
@@ -154,6 +191,7 @@ class RecommendationService:
                     "stats": {},
                     "source_freshness": hextech_freshness,
                     "source_run_id": hextech_run_id,
+                    "source_data_at": hextech_data_at,
                     "synergy_data_status": synergy_data_status,
                     "synergy_data_reason": synergy_data_reason,
                     "synergy_data_at": synergy_data_at,
@@ -230,9 +268,29 @@ class RecommendationService:
                             row["data_reason"] = "source_stat_missing"
                             row["status_code"] = "SOURCE_STAT_MISSING"
                     else:
-                        row["data_status"] = hextech_data_status
-                        row["data_reason"] = hextech_reason if hextech_data_status == "degraded" else ""
-                        row["status_code"] = hextech_status_code
+                        preferred_source = (
+                            "aramkit"
+                            if _format_numeric_stats(stats)
+                            and _source_status(status, "aramkit") is not None
+                            else "blitz"
+                            if str(stats.get("source_tier") or "").strip()
+                            and _source_status(status, "blitz") is not None
+                            else "hextech"
+                        )
+                        (
+                            row_status,
+                            row_code,
+                            row_freshness,
+                            row_run_id,
+                            row_reason,
+                            row_data_at,
+                        ) = _hextech_data_state(status, preferred_source=preferred_source)
+                        row["data_status"] = row_status
+                        row["data_reason"] = row_reason if row_status == "degraded" else ""
+                        row["status_code"] = row_code
+                        row["source_freshness"] = row_freshness
+                        row["source_run_id"] = row_run_id
+                        row["source_data_at"] = row_data_at
                 else:
                     row["data_status"] = "unavailable"
                     row["data_reason"] = "identity_unresolved"

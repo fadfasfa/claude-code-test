@@ -8,12 +8,12 @@ from hextech.interfaces.desktop.app_shared import (
     _format_supervisor_game_overlay_status,
     export_user_diagnostics,
     format_data_age_suffix,
+    format_data_refresh_status,
     logger,
     save_ui_feature_flags,
     scaled,
     threading,
     tk,
-    ui_font,
     ui_runtime,
 )
 
@@ -35,11 +35,10 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             text="备战席",
             bg=UI_COLORS["header"],
             fg=UI_COLORS["gold"],
-            font=ui_font(16, bold=True),
+            font=self._ui_font(16, bold=True),
             pady=scaled(8, scale),
         )
         self.title_bar.bind("<ButtonPress-1>", self.start_move)
-        self.title_bar.bind("<B1-Motion>", self.do_move)
 
         self.exit_button = tk.Button(
             self.title_frame,
@@ -55,7 +54,7 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             width=2,
             padx=0,
             pady=1,
-            font=ui_font(15, bold=True),
+            font=self._ui_font(15, bold=True),
             cursor="hand2",
         )
         # 右上角“×”只隐藏到托盘；完全退出必须使用托盘菜单，避免误杀识别进程。
@@ -73,10 +72,27 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             bd=0,
             padx=scaled(8, scale),
             pady=scaled(3, scale),
-            font=ui_font(11, bold=True),
+            font=self._ui_font(11, bold=True),
             cursor="hand2",
         )
         self.diagnostics_button.pack(side=tk.RIGHT, padx=(0, 8), pady=6)
+
+        self.refresh_button = tk.Button(
+            self.title_frame,
+            text="刷新",
+            command=self._start_data_refresh,
+            bg=UI_COLORS["surface_alt"],
+            fg=UI_COLORS["cyan"],
+            activebackground=UI_COLORS["surface"],
+            activeforeground=UI_COLORS["text"],
+            relief=tk.FLAT,
+            bd=0,
+            padx=scaled(8, scale),
+            pady=scaled(3, scale),
+            font=self._ui_font(11, bold=True),
+            cursor="hand2",
+        )
+        self.refresh_button.pack(side=tk.RIGHT, padx=(0, 6), pady=6)
         # 标题文本最后 pack：空间不足时优先保住右侧诊断与关闭按钮。
         self.title_bar.pack(side=tk.LEFT, padx=(scaled(10, scale), 0))
 
@@ -182,7 +198,7 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             text="系统初始化中...",
             bg=UI_COLORS["base"],
             fg=UI_COLORS["muted"],
-            font=ui_font(11),
+            font=self._ui_font(11),
         )
         self.status_line_label.pack(side=tk.LEFT)
         self._render_status_line()
@@ -213,7 +229,7 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             text=text,
             bg=UI_COLORS["base"],
             fg=UI_COLORS["muted"],
-            font=ui_font(11, bold=True),
+            font=self._ui_font(11, bold=True),
             cursor="hand2",
         )
         label.pack(side=tk.LEFT)
@@ -369,8 +385,7 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             raise RuntimeError(service.last_error or f"{service_name} 状态异常")
 
     def _apply_persisted_feature_flags(self) -> None:
-        if self.feature_flags.get("web_frontend_enabled"):
-            self._toggle_web_frontend()
+        # Web 已在 bootstrap 线程按持久化配置恢复；这里仅同步依赖 Tk 的控制面状态。
         # 游戏内显示依赖 Runtime Supervisor；Supervisor 延后到首屏绘制后启动，
         # 所以持久化恢复必须等控制面就绪后单独执行。
         self._game_overlay_desired_enabled = bool(self.feature_flags.get("game_overlay_enabled"))
@@ -524,7 +539,100 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
         self._persist_feature_flags_from_controls()
 
     def check_and_sync_data(self):
-        logger.info("桌面不直接刷新数据：refresh 与 generation 发布由 DataService 负责。")
+        """启动时只回显 DataService 状态；自动调度仍由服务端独占。"""
+
+        self._start_tracked_thread(
+            self._poll_data_refresh_status_once,
+            name="hextech-data-refresh-status-initial",
+        )
+
+    def _start_data_refresh(self) -> None:
+        """请求核心来源强刷；重复点击由 DataService 合并为一次 recheck。"""
+
+        if self.data_service is None or not self._runtime_services_ready:
+            self._set_status("数据服务仍在启动中", UI_COLORS["warn"])
+            return
+        self._set_data_refresh_status(
+            {
+                "state": "queued",
+                "scope": "core",
+                "phase": "core",
+                "reason_code": "refresh_queued",
+                "started_at": _time.time(),
+                "completed_at": 0.0,
+            }
+        )
+
+        def worker() -> None:
+            try:
+                accepted = self.data_service.refresh(scope="core", force=True)
+                if not accepted.get("accepted"):
+                    raise RuntimeError(str(accepted.get("reason_code") or "刷新请求未受理"))
+                self._poll_data_refresh_status_once()
+            except Exception:
+                logger.warning("手动数据刷新请求失败。", exc_info=True)
+                self._run_on_ui_thread(
+                    lambda: self._set_data_refresh_status(
+                        {
+                            "state": "failed",
+                            "scope": "core",
+                            "phase": "core",
+                            "reason_code": "refresh_request_failed",
+                            "started_at": 0.0,
+                            "completed_at": _time.time(),
+                        }
+                    )
+                )
+
+        self._start_tracked_thread(worker, name="hextech-manual-data-refresh")
+
+    def _poll_data_refresh_status_once(self) -> None:
+        handle = self.data_service
+        if handle is None:
+            return
+        try:
+            payload = handle.get_status()
+            refresh_status = payload.get("refresh_status")
+            if not isinstance(refresh_status, dict):
+                return
+        except Exception:
+            logger.debug("读取 DataService 刷新状态失败。", exc_info=True)
+            return
+        self._run_on_ui_thread(
+            lambda status=dict(refresh_status): self._set_data_refresh_status(status)
+        )
+
+    def _set_data_refresh_status(self, status: dict) -> None:
+        channels = getattr(self, "_status_channels", None)
+        if channels is None:
+            return
+        text, color = format_data_refresh_status(status)
+        state = str(status.get("state") or "idle")
+        signature = (
+            state,
+            str(status.get("scope") or ""),
+            str(status.get("phase") or ""),
+            str(status.get("reason_code") or ""),
+            str(status.get("generation_id") or ""),
+            tuple(str(item) for item in status.get("pending_sources") or []),
+            float(status.get("started_at") or 0.0),
+            float(status.get("completed_at") or 0.0),
+        )
+        previous = channels.get("refresh") or {}
+        if previous.get("signature") != signature:
+            at = _time.monotonic()
+            completed_at = float(status.get("completed_at") or 0.0)
+            if state in {"completed", "unchanged", "failed"} and completed_at > 0:
+                age = max(0.0, _time.time() - completed_at)
+                at -= age
+            channels["refresh"] = {
+                "text": text,
+                "color": color,
+                "state": state,
+                "at": at,
+                "signature": signature,
+            }
+        self._render_status_line()
 
     def _set_status(self, text, color):
         """service 通道写入：调用方语义不变，渲染收敛到单行状态栏。"""
@@ -558,9 +666,15 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             return
         service = channels["service"]
         overlay = channels["overlay"]
+        refresh = channels.get("refresh") or {}
         now = _time.monotonic()
         if service["text"] and service["color"] == UI_COLORS["error"]:
             chosen = service
+        elif refresh.get("text") and (
+            refresh.get("state") in {"queued", "running", "deferred"}
+            or now - float(refresh.get("at") or 0.0) < STATUS_SERVICE_FRESH_SECONDS
+        ):
+            chosen = refresh
         elif service["text"] and now - float(service["at"]) < STATUS_SERVICE_FRESH_SECONDS:
             chosen = service
         elif overlay["text"]:
@@ -569,11 +683,18 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             chosen = service
         text = str(chosen["text"] or "")
         color = chosen["color"]
-        if color != UI_COLORS["error"]:
+        if color != UI_COLORS["error"] and chosen is not refresh:
             suffix = format_data_age_suffix(getattr(self, "_data_created_ts", 0.0), _time.time())
-            if suffix and len(text) + len(suffix) <= STATUS_LINE_MAX_CHARS:
+            if suffix and (hasattr(getattr(self, "status_line_label", None), "tk") or len(text) + len(suffix) <= STATUS_LINE_MAX_CHARS):
                 text += suffix
-        if len(text) > STATUS_LINE_MAX_CHARS:
+        self._status_full_text = text
+        if hasattr(getattr(self, "status_line_label", None), "tk"):
+            from tkinter.font import Font
+            from .responsive_view import wrap_text
+            font = Font(root=self.root, font=self._ui_font(11))
+            available = max(1, int(getattr(self, "_overlay_pixel_width", 320)) - 36)
+            text = wrap_text(text, font, available)
+        elif len(text) > STATUS_LINE_MAX_CHARS:
             text = text[: STATUS_LINE_MAX_CHARS - 1] + "…"
         label = getattr(self, "status_line_label", None)
         if label is not None and label.winfo_exists():
@@ -655,6 +776,9 @@ class DesktopControlsMixin(DesktopOverlayWebFallbackMixin):
             if should_report:
                 host_reason = str(host_visibility.get("reason") or "").strip() if bool(host_visibility.get("ok")) else ""
                 reason = _format_game_overlay_host_reason(host_reason) if host_reason else ("选择窗口活跃" if event_active else "等待选择")
+                if not reason:
+                    self._set_overlay_status_summary("", UI_COLORS["muted"])
+                    return
                 sidecar_text = "识别运行" if sidecar_status == "running" else "识别待机"
                 watchdog_action = str(watchdog.get("last_action") or "").strip()
                 if watchdog_action == "start_missing_process":

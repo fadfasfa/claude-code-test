@@ -98,6 +98,27 @@ def _versions(*, latest_path: str = DATA_PATH_14) -> dict:
     }
 
 
+def test_versions_accept_removed_data_window_fields(tmp_path: Path) -> None:
+    payload = _versions()
+    for row in payload["versions"]:
+        row.pop("dataStartTimeUnixMs")
+        row.pop("dataEndTimeUnixMs")
+
+    versions_url, rankings_url, detail_urls = _urls("all", DATA_PATH_14, [1])
+    ranking = _ranking(1)
+    transport = FakeTransport(
+        {
+            versions_url: _json_response(payload),
+            rankings_url: _json_response({"rows": [ranking]}),
+            detail_urls[1]: _json_response(_detail(ranking)),
+        }
+    )
+
+    result = run_fetch(FetchConfig(output_root=tmp_path), transport=transport)
+
+    assert result.complete is True
+
+
 def _ranking(champion_id: int, *, win_rate: float = 0.55) -> dict:
     return {
         "id": champion_id,

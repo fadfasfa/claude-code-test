@@ -1,8 +1,8 @@
 """Windows 稳定安装目录部署器。
 
-这个模块只由显式 ``--deploy`` 构建调用。它不负责生成发布包，也不读取
-Hextech 用户数据；职责是关闭目标安装中的进程、校验候选目录并把它切换到
-稳定的 ``HextechCompanion`` 路径。目录切换失败时恢复上一版本。
+这个模块只由显式 ``--deploy`` 构建调用。它不负责生成发布包，也不读取统计正文、
+报告或用户配置；职责是关闭目标安装中的进程、校验候选目录并把它切换到稳定的
+``HextechCompanion`` 路径。目录切换失败时恢复上一版本和部署前 cohort 指针。
 """
 
 from __future__ import annotations
@@ -21,7 +21,18 @@ from pathlib import Path
 import psutil
 from filelock import FileLock, Timeout
 
+from hextech.infrastructure.persistence.cohort_recovery import (
+    CohortCandidate,
+    validate_generation_cohort,
+)
+from hextech.modules.data.generation.validation import SnapshotValidationError
+from hextech.modules.vision.diagnostic_settings import (
+    RoiDumpMode,
+    overlay_diagnostic_settings_path,
+    set_roi_dump_mode,
+)
 from tooling.build.manifest import BUNDLE_MANIFEST_SCHEMA_VERSION, RUNTIME_CONTRACT_VERSIONS
+from tooling.build.deploy_lineage import refresh_checkpoint_errors, validated_launch_generation, validated_game_stats_generation
 
 
 APP_EXE_NAME = "Hextech伴生终端.exe"
@@ -31,6 +42,8 @@ APP_SHORTCUT_NAME = "Hextech伴生终端.lnk"
 STABLE_INSTALL_NAME = "HextechCompanion"
 RELEASE_DIR_PREFIX = "HextechCompanion-"
 DEPLOYMENT_VERIFY_TIMEOUT_SECONDS = 150.0
+ROLLBACK_FILESYSTEM_RETRY_SECONDS = 3.0
+ROLLBACK_FILESYSTEM_RETRY_INTERVAL_SECONDS = 0.1
 SOURCE_RUNTIME_MODULES = frozenset(
     {
         "hextech.bootstrap.overlay",
@@ -46,12 +59,28 @@ PROCESS_ROLE_FLAGS = {
     "overlay_host": "--game-overlay",
     "vision_sidecar": "--overlay-sidecar",
 }
+TRANSIENT_PROCESS_FLAGS = frozenset({"--acquisition-worker"})
 RUNTIME_BUILD_STATE_SPECS = (
     (Path("state/startup_timing.v1.json"), 1),
     (Path("state/game_overlay_sidecar_status.json"), 2),
     (Path("state/game_overlay_slots.v1.json"), 3),
     (Path("state/game_overlay_visibility.v1.json"), 2),
     (Path("reports/overlay_sessions/latest.json"), 2),
+)
+RUNTIME_COHORT_STATE_FILES = (
+    Path("catalog/current.v2.json"),
+    Path("sources/aramkit/current.v2.json"),
+    Path("sources/blitz/current.v2.json"),
+    Path("sources/apex/current.v2.json"),
+    Path("sources/mayhem/current.v2.json"),
+    Path("snapshots/current.v2.json"),
+    Path("snapshots/previous.v2.json"),
+    Path("state/data-service/refresh_schedule.v1.json"),
+    Path("state/data-service/refresh_checkpoint.v1.json"),
+    Path("state/data-service/cohort_recovery_point.v1.json"),
+    Path("state/data-service/cohort_selection.v1.json"),
+    Path("state/data-service/catalog_adoption_checkpoint.v1.json"),
+    Path("state/data-service/promotion_journal.v1.json"),
 )
 
 
@@ -85,6 +114,13 @@ class DeploymentResult:
     verified: bool
     process_ids: tuple[tuple[str, int], ...]
     build_id: str
+
+
+@dataclass(frozen=True)
+class _RuntimeStateFileSnapshot:
+    path: Path
+    existed: bool
+    content: bytes
 
 
 def default_install_dir() -> Path:
@@ -459,8 +495,239 @@ def _packaged_var_dir() -> Path:
     return Path.home() / ".hextech_nexus" / "var"
 
 
-def _process_role(command_line: tuple[str, ...]) -> str:
+def _snapshot_runtime_cohort_state(root: Path | None = None) -> tuple[_RuntimeStateFileSnapshot, ...]:
+    """原样备份部署会切换的小型 pointer/schedule；不读取业务正文。"""
+
+    runtime_root = (root or _packaged_var_dir()).resolve()
+    snapshots: list[_RuntimeStateFileSnapshot] = []
+    for relative in RUNTIME_COHORT_STATE_FILES:
+        path = (runtime_root / relative).resolve()
+        if runtime_root not in path.parents:
+            raise DeploymentError(f"运行态 cohort 备份路径越界：{relative}")
+        try:
+            snapshots.append(_RuntimeStateFileSnapshot(path=path, existed=True, content=path.read_bytes()))
+        except FileNotFoundError:
+            snapshots.append(_RuntimeStateFileSnapshot(path=path, existed=False, content=b""))
+        except OSError as exc:
+            raise DeploymentError(f"运行态 cohort 指针无法备份：{relative}: {exc}") from exc
+    return tuple(snapshots)
+
+
+def _restore_runtime_cohort_state(snapshots: tuple[_RuntimeStateFileSnapshot, ...]) -> None:
+    """原子恢复部署前 pointer/schedule；候选新增 immutable 文件保留为未引用缓存。"""
+
+    for snapshot in snapshots:
+        if not snapshot.existed:
+            snapshot.path.unlink(missing_ok=True)
+            continue
+        snapshot.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = snapshot.path.with_name(f".{snapshot.path.name}.deploy-restore-{os.getpid()}")
+        try:
+            temporary.write_bytes(snapshot.content)
+            os.replace(temporary, snapshot.path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def _expected_cohort(source_manifest: dict[str, object]) -> dict[str, object] | None:
+    cohort = source_manifest.get("cohort_seed")
+    return {**cohort, "_source_fingerprint": source_manifest.get("source_fingerprint", "")} if isinstance(cohort, dict) and cohort else None
+
+
+def _validated_runtime_candidate(
+    root: Path,
+    generation_id: str,
+    cache: dict[tuple[str, str], CohortCandidate] | None,
+) -> CohortCandidate:
+    key = (str(root.resolve()), generation_id)
+    if cache is not None and key in cache:
+        return cache[key]
+    candidate = validate_generation_cohort(root, generation_id)
+    if cache is not None:
+        cache[key] = candidate
+    return candidate
+
+
+def _resolve_runtime_cohort_expected(
+    root: Path,
+    expected: dict[str, object],
+    *,
+    validation_cache: dict[tuple[str, str], CohortCandidate] | None = None,
+) -> tuple[dict[str, object], list[str]]:
+    """允许启动刷新晋升同 Catalog/production pool 的更新完整 generation。"""
+
+    pointer_path = root / "snapshots" / "current.v2.json"
+    try:
+        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return dict(expected), [f"cohort current 不可读 path=snapshots/current.v2.json error={type(exc).__name__}"]
+    actual_generation_id = (
+        str(pointer.get("current_generation_id") or "")
+        if isinstance(pointer, dict)
+        else ""
+    )
+    expected_generation_id = str(expected.get("generation_id") or "")
+    if not actual_generation_id or actual_generation_id == expected_generation_id:
+        return dict(expected), []
+    try:
+        baseline = _validated_runtime_candidate(
+            root,
+            expected_generation_id,
+            validation_cache,
+        )
+        actual = _validated_runtime_candidate(
+            root,
+            actual_generation_id,
+            validation_cache,
+        )
+    except (OSError, TypeError, ValueError, SnapshotValidationError) as exc:
+        return dict(expected), [
+            "启动刷新后的 runtime generation 未通过完整 cohort 验证："
+            f"generation={actual_generation_id} error={type(exc).__name__}"
+        ]
+    if actual.sort_time < baseline.sort_time:
+        return dict(expected), [
+            "runtime generation 早于 bundle seed："
+            f"expected={expected_generation_id} actual={actual_generation_id}"
+        ]
+    catalog_pointer = actual.pointers.get("catalog")
+    actual_catalog_id = (
+        str(catalog_pointer.get("catalog_generation_id") or "")
+        if isinstance(catalog_pointer, dict)
+        else ""
+    )
+    invariants = {
+        "catalog_generation_id": (
+            actual_catalog_id,
+            str(expected.get("catalog_generation_id") or ""),
+        ),
+        "production_pool_id": (
+            actual.production_pool_id,
+            str(expected.get("production_pool_id") or ""),
+        ),
+        "production_pool_count": (
+            actual.production_pool_count,
+            int(expected.get("production_pool_count") or 0),
+        ),
+    }
+    mismatches = [
+        f"{field} expected={wanted} actual={observed}"
+        for field, (observed, wanted) in invariants.items()
+        if observed != wanted
+    ]
+    if mismatches:
+        return dict(expected), [
+            "启动刷新改变了部署候选的 Vision 身份合同：" + " | ".join(mismatches)
+        ]
+    source_run_ids = {
+        source: str(actual.pointers[source].get("run_id") or "")
+        for source in ("aramkit", "blitz", "apex", "mayhem")
+        if source in actual.pointers
+    }
+    if len(source_run_ids) != 4 or any(not value for value in source_run_ids.values()):
+        return dict(expected), ["启动刷新后的完整 cohort 缺少来源 run identity"]
+    return {
+        **expected,
+        "generation_id": actual.generation_id,
+        "catalog_generation_id": actual_catalog_id,
+        "source_run_ids": source_run_ids,
+    }, []
+
+
+def _runtime_cohort_errors(root: Path, expected: dict[str, object]) -> list[str]:
+    """核对五个 current 与调度状态，防止只靠 Sidecar 自报掩盖混合代。"""
+
+    errors: list[str] = []
+    generation_id = str(expected.get("generation_id") or "")
+    catalog_id = str(expected.get("catalog_generation_id") or "")
+    source_run_ids = expected.get("source_run_ids")
+    if not isinstance(source_run_ids, dict):
+        return ["bundle cohort seed 缺少 source_run_ids"]
+    expected_fields = {
+        Path("catalog/current.v2.json"): ("catalog_generation_id", catalog_id),
+        Path("snapshots/current.v2.json"): ("current_generation_id", generation_id),
+        **{
+            Path(f"sources/{source}/current.v2.json"): ("run_id", str(source_run_ids.get(source) or ""))
+            for source in ("aramkit", "blitz", "apex", "mayhem")
+        },
+    }
+    for relative, (field, value) in expected_fields.items():
+        try:
+            payload = json.loads((root / relative).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"cohort current 不可读 path={relative.as_posix()} error={type(exc).__name__}")
+            continue
+        actual = str(payload.get(field) or "") if isinstance(payload, dict) else ""
+        if actual != value:
+            errors.append(f"cohort current 不一致 path={relative.as_posix()} expected={value} actual={actual}")
+        if relative.parts[0] == "sources" and isinstance(payload, dict):
+            actual_catalog = str(payload.get("catalog_generation_id") or "")
+            if actual_catalog != catalog_id:
+                errors.append(
+                    f"cohort source Catalog 不一致 path={relative.as_posix()} expected={catalog_id} actual={actual_catalog}"
+                )
+    schedule_path = root / "state" / "data-service" / "refresh_schedule.v1.json"
+    try:
+        schedule = json.loads(schedule_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"cohort schedule 不可读 error={type(exc).__name__}")
+        return errors
+    if not isinstance(schedule, dict) or str(schedule.get("generation_id") or "") != generation_id:
+        errors.append(f"cohort schedule generation 不一致 actual={getattr(schedule, 'get', lambda *_: '')('generation_id')}")
+        return errors
+    states = schedule.get("sources")
+    if not isinstance(states, dict):
+        errors.append("cohort schedule 缺少 sources")
+        return errors
+    expected_runs = {"catalog": catalog_id, **{key: str(value) for key, value in source_run_ids.items()}}
+    for source, run_id in expected_runs.items():
+        state = states.get(source)
+        if not isinstance(state, dict):
+            errors.append(f"cohort schedule 缺少来源：{source}")
+            continue
+        schedule_state = str(state.get("state") or "")
+        if schedule_state not in {"ready", "due"} or str(state.get("failure_kind") or ""):
+            errors.append(f"cohort schedule 来源状态无效：{source} state={schedule_state}")
+        if str(state.get("current_run_id") or "") != run_id:
+            errors.append(f"cohort schedule run 不一致 source={source}")
+    for relative, field in (
+        (Path("state/data-service/cohort_recovery_point.v1.json"), "generation_id"),
+    ):
+        path = root / relative
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"cohort 状态不可读 path={relative.as_posix()} error={type(exc).__name__}")
+            continue
+        actual = str(payload.get(field) or "") if isinstance(payload, dict) else ""
+        if actual != generation_id:
+            errors.append(
+                f"cohort 状态 generation 不一致 path={relative.as_posix()} "
+                f"expected={generation_id} actual={actual}"
+            )
+    checkpoint_path = root / "state" / "data-service" / "refresh_checkpoint.v1.json"
+    if checkpoint_path.exists():
+        try:
+            checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"refresh checkpoint 不可读 error={type(exc).__name__}")
+        else:
+            errors.extend(
+                refresh_checkpoint_errors(
+                    checkpoint,
+                    catalog_id,
+                    current_generation_id=generation_id,
+                )
+            )
+    return errors
+
+
+def _process_role(command_line: tuple[str, ...]) -> str | None:
     folded = {token.casefold() for token in command_line}
+    if folded & TRANSIENT_PROCESS_FLAGS:
+        return None
     for role, flag in PROCESS_ROLE_FLAGS.items():
         if flag in folded:
             return role
@@ -477,7 +744,9 @@ def _deployment_process_errors(executable: Path) -> tuple[list[str], dict[str, i
                 f"存在非稳定目录运行时 pid={identity.pid} path={identity.executable or '<unreadable>'}"
             )
             continue
-        role_pids[_process_role(identity.command_line)].append(identity.pid)
+        role = _process_role(identity.command_line)
+        if role is not None:
+            role_pids[role].append(identity.pid)
     for role, pids in role_pids.items():
         if len(pids) != 1:
             errors.append(f"角色数量不一致 role={role} count={len(pids)} pids={pids}")
@@ -489,9 +758,29 @@ def _runtime_build_errors(
     expected_build_id: str,
     launch_started_at: float,
     sidecar_pid: int | None,
+    desktop_pid: int | None = None,
+    expected_debug_dump_enabled: bool | None = None,
+    expected_cohort: dict[str, object] | None = None,
+    cohort_validation_cache: dict[tuple[str, str], CohortCandidate] | None = None,
 ) -> list[str]:
     root = _packaged_var_dir()
     errors: list[str] = []
+    effective_cohort = expected_cohort
+    launch_generation_id = ""
+    if expected_cohort is not None:
+        effective_cohort, resolution_errors = _resolve_runtime_cohort_expected(
+            root,
+            expected_cohort,
+            validation_cache=cohort_validation_cache,
+        )
+        errors.extend(resolution_errors)
+        if not resolution_errors:
+            launch_generation_id, launch_errors = validated_launch_generation(
+                root, expected_cohort, build_id=expected_build_id, launch_started_at=launch_started_at,
+                desktop_pid=desktop_pid, current_generation_id=str(effective_cohort.get("generation_id") or ""),
+            )
+            errors.extend(launch_errors)
+            errors.extend(_runtime_cohort_errors(root, effective_cohort))
     payloads: dict[Path, dict[str, object]] = {}
     for relative_path, schema_version in RUNTIME_BUILD_STATE_SPECS:
         path = root / relative_path
@@ -524,6 +813,132 @@ def _runtime_build_errors(
             errors.append(f"Sidecar 尚未运行 status={sidecar.get('status')}")
         if sidecar_pid is not None and int(sidecar.get("pid") or 0) != sidecar_pid:
             errors.append(f"Sidecar PID 不一致 state={sidecar.get('pid')} process={sidecar_pid}")
+        if (
+            expected_debug_dump_enabled is not None
+            and sidecar.get("debug_dump_enabled") is not expected_debug_dump_enabled
+        ):
+            errors.append(
+                "Sidecar ROI 诊断状态不一致 "
+                f"expected={expected_debug_dump_enabled} actual={sidecar.get('debug_dump_enabled')}"
+            )
+        if effective_cohort is not None:
+            expected_pool_count = int(effective_cohort.get("production_pool_count") or 0)
+            accepted_generation_ids = {
+                str(effective_cohort.get("generation_id") or ""),
+                str((expected_cohort or {}).get("generation_id") or ""),
+                launch_generation_id,
+            }
+            accepted_generation_ids.discard("")
+            for field in ("data_generation_id", "vision_pool_generation_id"):
+                actual_generation = str(sidecar.get(field) or "")
+                if actual_generation not in accepted_generation_ids:
+                    errors.append(
+                        "Sidecar cohort 不一致 "
+                        f"field={field} expected_one_of={sorted(accepted_generation_ids)} "
+                        f"actual={actual_generation}"
+                    )
+            expected_fields = {
+                "catalog_generation_id": str(effective_cohort.get("catalog_generation_id") or ""),
+                "production_pool_id": str(effective_cohort.get("production_pool_id") or ""),
+                "production_pool_state": "ready",
+                "production_pool_count": expected_pool_count,
+                "full_catalog_count": int(effective_cohort.get("full_catalog_count") or 0),
+                "rank_identity_count": expected_pool_count,
+            }
+            for field, expected in expected_fields.items():
+                actual = sidecar.get(field)
+                if actual != expected:
+                    errors.append(f"Sidecar cohort 不一致 field={field} expected={expected} actual={actual}")
+            matrix_rows = sidecar.get("matrix_rows")
+            if not isinstance(matrix_rows, dict) or any(
+                int(matrix_rows.get(channel) or 0) < expected_pool_count
+                for channel in ("icon", "name", "alt_name")
+            ):
+                errors.append(f"Sidecar 生产矩阵行数不足：{matrix_rows}")
+            excluded = sidecar.get("excluded_reason_counts")
+            if not isinstance(excluded, dict) or any(
+                int(excluded.get(reason) or 0) != 0
+                for reason in ("unresolved", "duplicate", "name_conflict")
+            ):
+                errors.append(f"Sidecar 生产池仍有未解决身份：{excluded}")
+    if effective_cohort is not None and sidecar is not None:
+        runtime_generation_id = str(effective_cohort.get("generation_id") or "")
+        bundle_generation_id = str((expected_cohort or {}).get("generation_id") or "")
+        accepted_generation_ids = {runtime_generation_id, bundle_generation_id, launch_generation_id}
+        accepted_generation_ids.discard("")
+        vision_generation_id = str(sidecar.get("vision_pool_generation_id") or "")
+        stats_generation_id, pin_errors = validated_game_stats_generation(
+            root, payloads.get(Path("state/game_overlay_visibility.v1.json"), {}),
+            payloads.get(Path("reports/overlay_sessions/latest.json"), {}), runtime_generation_id,
+        )
+        errors.extend(pin_errors)
+        generation_expectations = {
+            Path("state/game_overlay_visibility.v1.json"): {
+                "data_generation_id": stats_generation_id,
+                "stats_generation_id": stats_generation_id,
+                "vision_pool_generation_id": vision_generation_id,
+            },
+            Path("reports/overlay_sessions/latest.json"): {
+                "generation_id": stats_generation_id,
+                "stats_generation_id": stats_generation_id,
+                "vision_pool_generation_id": vision_generation_id,
+            },
+        }
+        for relative, fields in generation_expectations.items():
+            payload = payloads.get(relative)
+            if payload is None:
+                continue
+            for field, expected_value in fields.items():
+                actual_value = str(payload.get(field) or "")
+                if actual_value != expected_value:
+                    errors.append(
+                        "运行态 generation role 不一致 "
+                        f"path={relative.as_posix()} field={field} "
+                        f"expected={expected_value} actual={actual_value}"
+                    )
+        event = payloads.get(Path("state/game_overlay_slots.v1.json"))
+        event_source = event.get("source") if isinstance(event, dict) else None
+        if isinstance(event_source, dict):
+            requires_vision_generation = bool(
+                event_source.get("selection_window_active") is True
+                or str(event.get("selection_type") or "") == "hextech"
+                or event_source.get("data_generation_id")
+                or event_source.get("vision_pool_generation_id")
+            )
+            for field in ("data_generation_id", "vision_pool_generation_id"):
+                actual_value = str(event_source.get(field) or "")
+                if requires_vision_generation and actual_value != vision_generation_id:
+                    errors.append(
+                        "Overlay event Vision generation 不一致 "
+                        f"field={field} expected={vision_generation_id} actual={actual_value}"
+                    )
+        selection_path = root / "state" / "data-service" / "cohort_selection.v1.json"
+        if selection_path.exists():
+            try:
+                selection = json.loads(selection_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                errors.append(f"cohort selection 不可读 error={type(exc).__name__}")
+            else:
+                selected = (
+                    str(selection.get("selected_generation_id") or "")
+                    if isinstance(selection, dict)
+                    else ""
+                )
+                writer_build = (
+                    str(selection.get("writer_build_id") or "")
+                    if isinstance(selection, dict)
+                    else ""
+                )
+                if selected not in accepted_generation_ids:
+                    errors.append(
+                        "cohort selection generation 不一致 "
+                        f"accepted={sorted(accepted_generation_ids)} actual={selected}"
+                    )
+                if writer_build != expected_build_id:
+                    errors.append(
+                        "cohort selection Build 不一致 "
+                        f"expected={expected_build_id} actual={writer_build}"
+                    )
     return errors
 
 
@@ -532,18 +947,25 @@ def verify_deployment(
     *,
     expected_build_id: str,
     launch_started_at: float,
+    expected_debug_dump_enabled: bool | None = None,
+    expected_cohort: dict[str, object] | None = None,
     timeout: float = DEPLOYMENT_VERIFY_TIMEOUT_SECONDS,
 ) -> dict[str, int]:
-    """等待稳定目录五个角色与五份运行态身份同时收敛，否则部署失败。"""
+    """等待稳定目录五个常驻角色与五份运行态身份同时收敛，否则部署失败。"""
 
     deadline = time.monotonic() + max(0.1, timeout)
     last_errors: list[str] = ["尚未开始验收"]
+    cohort_validation_cache: dict[tuple[str, str], CohortCandidate] = {}
     while True:
         process_errors, role_pids = _deployment_process_errors(executable)
         runtime_errors = _runtime_build_errors(
             expected_build_id=expected_build_id,
             launch_started_at=launch_started_at,
             sidecar_pid=role_pids.get("vision_sidecar"),
+            desktop_pid=role_pids.get("desktop"),
+            expected_debug_dump_enabled=expected_debug_dump_enabled,
+            expected_cohort=expected_cohort,
+            cohort_validation_cache=cohort_validation_cache,
         )
         last_errors = process_errors + runtime_errors
         if not last_errors:
@@ -558,6 +980,34 @@ def _remove_tree(path: Path) -> None:
         if _is_reparse_point(path):
             raise DeploymentError(f"拒绝删除 reparse point：{path}")
         shutil.rmtree(path)
+
+
+def _is_transient_windows_filesystem_error(exc: OSError) -> bool:
+    """进程已退出后 Windows 仍可能短暂保留映像或目录句柄。"""
+
+    return isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in {5, 32, 145}
+
+
+def _retry_rollback_filesystem(action) -> None:
+    """只为回滚目录操作提供有界 transient-busy 重试，不吞掉永久错误。"""
+
+    deadline = time.monotonic() + ROLLBACK_FILESYSTEM_RETRY_SECONDS
+    while True:
+        try:
+            action()
+            return
+        except OSError as exc:
+            if not _is_transient_windows_filesystem_error(exc) or time.monotonic() >= deadline:
+                raise
+            time.sleep(ROLLBACK_FILESYSTEM_RETRY_INTERVAL_SECONDS)
+
+
+def _remove_tree_for_rollback(path: Path) -> None:
+    _retry_rollback_filesystem(lambda: _remove_tree(path))
+
+
+def _replace_for_rollback(source: Path, target: Path) -> None:
+    _retry_rollback_filesystem(lambda: os.replace(source, target))
 
 
 def _backup_previous_install(previous: Path, backup: Path) -> bool:
@@ -579,11 +1029,49 @@ def _backup_previous_install(previous: Path, backup: Path) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class _DiagnosticSettingsSnapshot:
+    path: Path
+    existed: bool
+    content: bytes
+
+
+def _snapshot_diagnostic_settings() -> _DiagnosticSettingsSnapshot:
+    """原样保存设置；损坏 JSON 也必须在部署失败时可恢复。"""
+
+    # 部署器运行在源码 Python 中，但目标 EXE 的可写 var 固定在用户目录；不能
+    # 误用源码态 run/var，否则部署验收会看到持久开关仍为关闭。
+    path = overlay_diagnostic_settings_path(_packaged_var_dir())
+    try:
+        return _DiagnosticSettingsSnapshot(path=path, existed=True, content=path.read_bytes())
+    except FileNotFoundError:
+        return _DiagnosticSettingsSnapshot(path=path, existed=False, content=b"")
+    except OSError as exc:
+        raise DeploymentError(f"ROI 诊断设置无法备份：{path}: {exc}") from exc
+
+
+def _restore_diagnostic_settings(snapshot: _DiagnosticSettingsSnapshot) -> None:
+    """原子恢复部署前字节；原文件不存在时只移除本轮创建的设置。"""
+
+    path = snapshot.path
+    if not snapshot.existed:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.restore-{os.getpid()}")
+    try:
+        temporary.write_bytes(snapshot.content)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def deploy_release(
     package_dir: Path,
     install_dir: Path,
     *,
     shortcut_path: Path | None = None,
+    roi_dump_mode: RoiDumpMode = "preserve",
     shutdown_timeout: float = 12.0,
     lock_path: Path | None = None,
 ) -> DeploymentResult:
@@ -593,6 +1081,9 @@ def deploy_release(
     target = validate_install_dir(install_dir)
     source_manifest = json.loads((source / "_internal" / "bundle_manifest.json").read_text(encoding="utf-8"))
     expected_build_id = str(source_manifest["build_id"])
+    expected_cohort = _expected_cohort(source_manifest)
+    if roi_dump_mode not in {"preserve", "on", "off"}:
+        raise DeploymentError(f"ROI dump mode 无效：{roi_dump_mode}")
     resolved_shortcut_input = validate_shortcut_path(shortcut_path) if shortcut_path is not None else None
     removed_shortcuts: tuple[Path, ...] = ()
     if _normalized_path(source) == _normalized_path(target):
@@ -624,6 +1115,9 @@ def deploy_release(
             previous_rotated = False
             previous_rotation_started = False
             verified_process_ids: dict[str, int] = {}
+            diagnostic_settings_changed = roi_dump_mode != "preserve"
+            diagnostic_snapshot = _snapshot_diagnostic_settings() if diagnostic_settings_changed else None
+            cohort_state_snapshot = _snapshot_runtime_cohort_state() if expected_cohort is not None else ()
             try:
                 # `.previous` 是唯一紧急回滚目录。轮转前先复制并校验，避免
                 # Windows 重命名短暂失败时因已删除旧目录而失去最后一个回滚版本。
@@ -631,7 +1125,7 @@ def deploy_release(
                     previous_backup_created = _backup_previous_install(previous, previous_backup)
                     _deployment_step("紧急回滚目录备份校验通过")
                 if target.exists():
-                    os.replace(target, rollback)
+                    _replace_for_rollback(target, rollback)
                     old_moved = True
                     _deployment_step("旧稳定安装已移入部署回滚目录")
                 os.replace(candidate, target)
@@ -652,6 +1146,10 @@ def deploy_release(
                         target / APP_EXE_NAME,
                         source.parent,
                     )
+                if diagnostic_settings_changed:
+                    assert diagnostic_snapshot is not None
+                    set_roi_dump_mode(roi_dump_mode, path=diagnostic_snapshot.path)
+                    _deployment_step(f"Overlay ROI 诊断模式已设置为：{roi_dump_mode}")
                 launch_started_at = time.time()
                 _start_install(target / APP_EXE_NAME)
                 _deployment_step(f"已请求从稳定目录启动：{target / APP_EXE_NAME}")
@@ -659,6 +1157,10 @@ def deploy_release(
                     target / APP_EXE_NAME,
                     expected_build_id=expected_build_id,
                     launch_started_at=launch_started_at,
+                    expected_debug_dump_enabled=(
+                        None if roi_dump_mode == "preserve" else roi_dump_mode == "on"
+                    ),
+                    expected_cohort=expected_cohort,
                     timeout=max(DEPLOYMENT_VERIFY_TIMEOUT_SECONDS, shutdown_timeout),
                 )
                 _deployment_step(f"进程、协议与 Build 身份验收通过：{verified_process_ids}")
@@ -668,7 +1170,7 @@ def deploy_release(
                 if old_moved and rollback.exists():
                     previous_rotation_started = previous_backup_created
                     _remove_tree(previous)
-                    os.replace(rollback, previous)
+                    _replace_for_rollback(rollback, previous)
                     previous_rotated = True
                     old_moved = False
                     if previous_backup_created:
@@ -683,12 +1185,12 @@ def deploy_release(
                     except Exception as cleanup_exc:
                         rollback_errors.append(f"关闭新版本失败：{cleanup_exc}")
                     try:
-                        _remove_tree(target)
+                        _remove_tree_for_rollback(target)
                     except Exception as cleanup_exc:
                         rollback_errors.append(f"移除新版本失败：{cleanup_exc}")
                 if old_moved and rollback.exists():
                     try:
-                        os.replace(rollback, target)
+                        _replace_for_rollback(rollback, target)
                         old_install_available = True
                     except Exception as restore_exc:
                         rollback_errors.append(f"恢复上一版本失败：{restore_exc}")
@@ -696,7 +1198,7 @@ def deploy_release(
                     try:
                         # `.previous` 已暂存刚替换下来的正式版本；发布失败时把它
                         # 移回稳定目录，再由临时备份恢复原 `.previous`。
-                        os.replace(previous, target)
+                        _replace_for_rollback(previous, target)
                         old_install_available = True
                     except Exception as restore_exc:
                         rollback_errors.append(f"恢复上一版本失败：{restore_exc}")
@@ -719,12 +1221,12 @@ def deploy_release(
                             rollback_errors.append(f"清理紧急回滚临时备份失败：{cleanup_exc}")
                     else:
                         try:
-                            _remove_tree(previous)
+                            _remove_tree_for_rollback(previous)
                         except Exception as cleanup_exc:
                             rollback_errors.append(f"清理不完整紧急回滚目录失败：{cleanup_exc}")
                         if previous_backup_created and not previous.exists():
                             try:
-                                os.replace(previous_backup, previous)
+                                _replace_for_rollback(previous_backup, previous)
                                 previous_backup_created = False
                             except Exception as restore_exc:
                                 rollback_errors.append(f"恢复原紧急回滚目录失败：{restore_exc}")
@@ -736,6 +1238,17 @@ def deploy_release(
                         previous_backup_created = False
                     except Exception as cleanup_exc:
                         rollback_errors.append(f"清理紧急回滚临时备份失败：{cleanup_exc}")
+                if diagnostic_settings_changed:
+                    try:
+                        assert diagnostic_snapshot is not None
+                        _restore_diagnostic_settings(diagnostic_snapshot)
+                    except Exception as restore_exc:
+                        rollback_errors.append(f"恢复 ROI 诊断设置失败：{restore_exc}")
+                if cohort_state_snapshot:
+                    try:
+                        _restore_runtime_cohort_state(cohort_state_snapshot)
+                    except Exception as restore_exc:
+                        rollback_errors.append(f"恢复运行态 cohort 指针失败：{restore_exc}")
                 if was_running and old_install_available:
                     try:
                         _start_install(target / APP_EXE_NAME)
@@ -772,6 +1285,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--package-dir", type=Path, required=True)
     parser.add_argument("--install-dir", type=Path, default=default_install_dir())
     parser.add_argument("--shortcut", type=Path)
+    parser.add_argument(
+        "--roi-dump-mode",
+        choices=("preserve", "on", "off"),
+        default="preserve",
+        help="部署后的受限 ROI 诊断模式，默认 preserve。",
+    )
     parser.add_argument("--shutdown-timeout", type=float, default=12.0)
     args = parser.parse_args(argv)
     if args.shutdown_timeout <= 0:
@@ -780,6 +1299,7 @@ def main(argv: list[str] | None = None) -> int:
         args.package_dir,
         args.install_dir,
         shortcut_path=args.shortcut,
+        roi_dump_mode=args.roi_dump_mode,
         shutdown_timeout=args.shutdown_timeout,
     )
     print(

@@ -19,7 +19,7 @@ from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import var_path
 
 
-KNOWN_SOURCES = frozenset({"hextech", "apex", "mayhem"})
+KNOWN_SOURCES = frozenset({"hextech", "aramkit", "blitz", "apex", "mayhem"})
 SOURCE_POINTER_VERSION = 2
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 

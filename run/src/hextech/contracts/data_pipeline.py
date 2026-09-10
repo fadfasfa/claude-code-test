@@ -1,8 +1,7 @@
 """数据链路的版本化稳定契约。
 
-这些 DTO 只描述不可变 Catalog、来源 run、generation provenance 和 promotion
-journal，不负责网络、文件系统或进程管理。所有落盘读取都必须先经过这里的严格
-解析，旧 schema 不会被隐式升级或兼容。
+DTO 只描述不可变 Catalog、来源 run、generation provenance 和 promotion journal；
+不负责网络、文件系统或进程管理，落盘读取必须严格解析。
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ PROMOTION_JOURNAL_SCHEMA_VERSION = 1
 REFRESH_SCHEDULE_SCHEMA_VERSION = 1
 
 ItemState = Literal["success", "confirmed_empty", "failed"]
-SourceName = Literal["catalog", "hextech", "apex", "mayhem"]
+SourceName = Literal["catalog", "hextech", "aramkit", "blitz", "apex", "mayhem"]
 PromotionPhase = Literal["prepared", "dependencies_promoted", "generation_promoted", "committed"]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -213,7 +212,7 @@ class SourceRunManifestV2:
     def __post_init__(self) -> None:
         if self.schema_version != SOURCE_RUN_SCHEMA_VERSION:
             raise DataContractError(f"不支持的 source run schema：{self.schema_version}")
-        if self.source not in {"hextech", "apex", "mayhem"}:
+        if self.source not in {"hextech", "aramkit", "blitz", "apex", "mayhem"}:
             raise DataContractError(f"未知来源：{self.source}")
         require_identifier(self.run_id, field_name="run_id")
         require_identifier(self.catalog_generation_id, field_name="catalog_generation_id")
@@ -302,7 +301,7 @@ class SourcePointerV2:
     def __post_init__(self) -> None:
         if self.schema_version != SOURCE_POINTER_SCHEMA_VERSION:
             raise DataContractError(f"不支持的 source pointer schema：{self.schema_version}")
-        if self.source not in {"hextech", "apex", "mayhem"}:
+        if self.source not in {"hextech", "aramkit", "blitz", "apex", "mayhem"}:
             raise DataContractError(f"未知来源：{self.source}")
         require_identifier(self.run_id, field_name="run_id")
         require_identifier(self.catalog_generation_id, field_name="catalog_generation_id")
@@ -343,7 +342,7 @@ class SourceProvenance:
     content_schema_version: int
 
     def __post_init__(self) -> None:
-        if self.source not in {"catalog", "hextech", "apex", "mayhem"}:
+        if self.source not in {"catalog", "hextech", "aramkit", "blitz", "apex", "mayhem"}:
             raise DataContractError(f"未知 provenance source：{self.source}")
         require_identifier(self.run_id, field_name="provenance.run_id")
         require_identifier(self.catalog_generation_id, field_name="provenance.catalog_generation_id")
@@ -385,8 +384,9 @@ class CatalogManifestV2:
             raise DataContractError(f"不支持的 catalog schema：{self.schema_version}")
         require_identifier(self.catalog_generation_id, field_name="catalog_generation_id")
         require_sha256(self.content_sha256, field_name="catalog.content_sha256")
-        if len(self.files) != 3 or {item.role for item in self.files} != {"champions", "augments", "versions"}:
-            raise DataContractError("Catalog 必须包含 champions、augments、versions 三个角色")
+        roles = {item.role for item in self.files}
+        if len(roles) != len(self.files) or roles not in ({"champions", "augments", "versions"}, {"champions", "augments", "versions", "augment_assets"}):
+            raise DataContractError("Catalog 必须包含三个角色，并可兼容增加 augment_assets")
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "CatalogManifestV2":
@@ -455,7 +455,7 @@ class BaselineContributionV2:
     def __post_init__(self) -> None:
         if self.schema_version != SNAPSHOT_SCHEMA_VERSION or self.kind != "baseline_generation":
             raise DataContractError("baseline contribution schema 无效")
-        if self.source not in {"hextech", "apex", "mayhem"}:
+        if self.source not in {"hextech", "aramkit", "blitz", "apex", "mayhem"}:
             raise DataContractError(f"baseline contribution 来源无效：{self.source}")
         require_identifier(self.origin_generation_id, field_name="baseline.origin_generation_id")
         require_identifier(self.catalog_generation_id, field_name="baseline.catalog_generation_id")
@@ -629,7 +629,7 @@ class DataSnapshotManifestV2:
             _non_negative_int(getattr(self, name), field_name=name)
         if self.health not in {"healthy", "degraded"}:
             raise DataContractError("generation health 必须是 healthy 或 degraded")
-        valid_sources = {"catalog", "hextech", "apex", "mayhem"}
+        valid_sources = {"catalog", "hextech", "aramkit", "blitz", "apex", "mayhem"}
         if not set(self.refreshed_sources).issubset(valid_sources):
             raise DataContractError("generation refreshed_sources 包含未知来源")
         if not set(self.degraded_sources).issubset(valid_sources):
@@ -688,8 +688,8 @@ class PromotionJournalV1:
         if self.schema_version != PROMOTION_JOURNAL_SCHEMA_VERSION:
             raise DataContractError(f"不支持的 promotion journal schema：{self.schema_version}")
         require_identifier(self.transaction_id, field_name="transaction_id")
-        required = {"catalog", "hextech", "apex", "mayhem", "generation"}
-        if set(self.old_pointers) != required or set(self.target_pointers) != required:
+        roles = frozenset(self.old_pointers)
+        if roles not in (frozenset({"catalog", "aramkit", "blitz", "apex", "mayhem", "generation"}), frozenset({"catalog", "aramkit", "apex", "mayhem", "generation"}), frozenset({"catalog", "hextech", "apex", "mayhem", "generation"})) or set(self.target_pointers) != set(self.old_pointers):
             raise DataContractError("promotion journal 指针角色不完整")
 
     def to_dict(self) -> dict[str, Any]:
@@ -734,8 +734,8 @@ class RefreshScheduleV1:
     def __post_init__(self) -> None:
         if self.schema_version != REFRESH_SCHEDULE_SCHEMA_VERSION:
             raise DataContractError(f"不支持的 refresh schedule schema：{self.schema_version}")
-        required = {"catalog", "hextech", "apex", "mayhem"}
-        if set(self.sources) != required:
+        roles = frozenset(self.sources)
+        if roles not in (frozenset({"catalog", "aramkit", "blitz", "apex", "mayhem"}), frozenset({"catalog", "aramkit", "apex", "mayhem"}), frozenset({"catalog", "hextech", "apex", "mayhem"})):
             raise DataContractError("refresh schedule 来源角色不完整")
 
     @classmethod

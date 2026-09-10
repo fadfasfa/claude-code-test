@@ -1,6 +1,7 @@
 """Hextech 核心模块共享的稳定契约。"""
 
 from .identifiers import AugmentId, ChampionId, GenerationId, GameSessionId, ItemId, VisionEpoch
+from .cohort_recovery import CohortRecoveryPointV1
 from .data_pipeline import (
     ArtifactDescriptor,
     BaselineContributionV2,
@@ -43,6 +44,7 @@ __all__ = [
     "ArtifactDescriptor",
     "BaselineContributionV2",
     "CatalogManifestV2",
+    "CohortRecoveryPointV1",
     "DataSnapshotCurrentPointerV2",
     "ChampionId",
     "GameContext",

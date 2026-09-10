@@ -14,13 +14,20 @@ from unittest.mock import patch
 class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
     def test_render_tick_confirms_context_before_opening_cold_snapshot(self):
         from types import SimpleNamespace
-        from hextech.interfaces.overlay import host_runner
+        from hextech.interfaces.overlay import host_render_state, host_runner
 
         calls = []
+        opened = threading.Event()
+        release = threading.Event()
+        data_threads = []
 
         class FakeCanvas:
+            def __init__(self):
+                self.after_calls = []
+
             def after(self, _delay_ms, _callback):
-                return "after-1"
+                self.after_calls.append((_delay_ms, _callback))
+                return f"after-{len(self.after_calls)}"
 
             def after_cancel(self, _after_id):
                 return None
@@ -34,16 +41,22 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
             def winfo_width(self):
                 return 1920
 
+            def winfo_height(self):
+                return 1080
+
         class FakeSource:
             def read_event(self):
                 return {
+                    "selection_type": "hextech",
                     "active": True,
                     "visible": True,
                     "slots": [{"state": "ready", "augment_id": str(index)} for index in range(3)],
                     "source": {
                         "session_id": "session-1",
                         "selection_epoch": 1,
+                        "scene_state": "active",
                         "selection_window_active": True,
+                        "vision_pool_generation_id": "vision-pool-a",
                         "game_instance_id": "game-1",
                         "window_hwnd": 100,
                     },
@@ -55,6 +68,9 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
 
             def open_view(self):
                 calls.append("open_view")
+                data_threads.append(threading.get_ident())
+                opened.set()
+                release.wait(2.0)
                 return None
 
             def read_hint_cache(self):
@@ -72,6 +88,7 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
                 )
 
         visibility = {"user_enabled": True, "target_hwnd": 100, "display_mode": "compact"}
+        canvas = FakeCanvas()
 
         def sync_visibility(*_args, resolved_should_show=None, **_kwargs):
             visibility["render_full_overlay"] = True
@@ -82,27 +99,50 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
             patch.object(host_runner, "_refresh_target_window"),
             patch.object(host_runner, "is_scoreboard_key_down", return_value=False),
             patch.object(host_runner, "_sync_event_visibility", side_effect=sync_visibility),
-            patch.object(host_runner, "build_runtime_session", return_value=object()),
-            patch.object(host_runner, "build_render_model_from_session", return_value={"stats": []}),
-            patch.object(host_runner, "source_has_private_stats", return_value=False),
-            patch.object(host_runner, "draw_overlay_frame"),
+            patch.object(
+                host_render_state,
+                "draw_overlay_frame",
+                side_effect=lambda _canvas, model, **_kwargs: calls.append(
+                    ("draw", [row.get("state") for row in model.get("stats", [])])
+                ),
+            ),
             patch.object(host_runner, "_log_waiting_context_diagnostic"),
             patch.object(host_runner, "_write_overlay_session_report"),
             patch.object(host_runner, "_write_real_session_evidence"),
         ):
             host_runner._schedule_event_render(
                 object(),
-                FakeCanvas(),
+                canvas,
                 {"diagnostic_mode": False, "event_poll_ms": 120},
                 visibility,
                 __import__("queue").Queue(),
                 data_source=FakeSource(),
             )
 
+            self.assertEqual(visibility["vision_pool_generation_id"], "vision-pool-a")
+
+            self.assertIn(("draw", ["detecting", "detecting", "detecting"]), calls)
+            self.assertFalse(opened.is_set())  # 首个shell先呈现，尚未请求后台数据。
+            self.assertEqual(canvas.after_calls[0][0], 16)
+            canvas.after_calls[0][1]()
+            self.assertTrue(opened.wait(1.0))
+            self.assertNotIn(threading.get_ident(), data_threads)
+
+            canvas.after_calls[1][1]()
+            projected_draws = [call for call in calls if isinstance(call, tuple) and call[0] == "draw"]
+            self.assertEqual(len(projected_draws), 1)
+            canvas.after_calls[2][1]()
+            unchanged_draws = [call for call in calls if isinstance(call, tuple) and call[0] == "draw"]
+            self.assertEqual(len(unchanged_draws), 1)
+            release.set()
+            visibility["data_preparation"].close()
+
         self.assertLess(calls.index("context"), calls.index("open_view"))
         self.assertLess(calls.index("gate"), calls.index("open_view"))
-        self.assertLess(calls.index("clear"), calls.index("open_view"))
-        self.assertEqual(visibility["rendered_selection_key"], ("session-1", 1))
+        first_draw = next(index for index, item in enumerate(calls) if isinstance(item, tuple) and item[0] == "draw")
+        self.assertLess(calls.index("context"), first_draw)
+        self.assertNotIn("clear", calls)
+        self.assertNotIn("rendered_selection_key", visibility)
 
     def test_render_tick_reads_cached_window_without_scanning_processes(self):
         from hextech.interfaces.overlay import host
@@ -154,6 +194,8 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
             )
 
         self.assertEqual(visibility["visibility_reason"], "game_window_missing")
+        self.assertIn("stage_context", visibility["pinned_stats_scope"])
+        self.assertIn("scoped_view", visibility["pinned_stats_scope"])
 
     def test_sync_event_visibility_uses_gameflow_gate(self):
         from hextech.interfaces.overlay import host
@@ -348,11 +390,20 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
             "scoreboard_key_down": False,
             "context_ok": False,
             "context_error": "context_missing",
+            "data_generation_id": "generation-test",
+            "stats_generation_id": "generation-test",
+            "vision_pool_generation_id": "vision-generation-test",
+            "capture_exclusion": {
+                "status": "applied",
+                "requested_affinity": 17,
+                "applied_affinity": 17,
+                "query_ok": True,
+            },
         }
         snapshot = {
             "visible": True,
-            "source": {"selection_window_active": True},
-            "slots": [],
+            "source": {"selection_window_active": True, "ready_slots": 1},
+            "slots": [{"slot": 0, "state": "ready", "name": "强化 0"}],
         }
         writes = []
 
@@ -374,6 +425,14 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
         self.assertEqual(writes[0][0], "game_overlay_visibility.v1.json")
         payload = writes[0][1]
         self.assertEqual(payload["schema_version"], 2)
+        self.assertGreater(payload["pid"], 0)
+        self.assertEqual(payload["data_generation_id"], "generation-test")
+        self.assertEqual(payload["stats_generation_id"], "generation-test")
+        self.assertEqual(payload["vision_pool_generation_id"], "vision-generation-test")
+        self.assertEqual(
+            payload["generation_roles"]["stats_generation_id"],
+            "host_game_session",
+        )
         self.assertEqual(payload["functional_status"], "degraded")
         self.assertEqual(payload["functional_reason"], "context_unavailable")
         self.assertIn("window", payload)
@@ -381,8 +440,66 @@ class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
         self.assertEqual(payload["host"]["gameflow"], True)
         self.assertEqual(payload["scene"]["selection_window_active"], True)
         self.assertEqual(payload["context"]["error"], "context_missing")
+        self.assertEqual(payload["decision"]["should_show"], True)
         self.assertEqual(payload["decision"]["window_visible"], True)
-        self.assertEqual(payload["decision"]["reason"], "visible_detecting")
+        self.assertEqual(payload["decision"]["reason"], "visible_partial")
+        self.assertEqual(payload["presentation"]["state"], "hidden")
+        self.assertEqual(payload["presentation"]["capture_exclusion"]["status"], "applied")
+
+    def test_capture_exclusion_failure_is_explicit_functional_failure(self):
+        from hextech.interfaces.overlay.host_visibility import _build_visibility_status_payload
+
+        payload = _build_visibility_status_payload(
+            {
+                "capture_exclusion": {
+                    "status": "failed",
+                    "reason": "display_affinity_readback_mismatch",
+                }
+            },
+            {"source": {}, "slots": []},
+            now=124.0,
+            should_show=False,
+            reason="capture_exclusion_unavailable",
+        )
+
+        self.assertEqual(payload["functional_status"], "failed")
+        self.assertEqual(payload["functional_reason"], "capture_exclusion_unavailable")
+        self.assertEqual(payload["presentation"]["capture_exclusion"]["status"], "failed")
+
+    def test_fullscreen_visibility_payload_is_degraded_and_explicit(self):
+        from hextech.interfaces.overlay.host_visibility import _build_visibility_status_payload
+
+        payload = _build_visibility_status_payload(
+            {
+                "user_enabled": True,
+                "gameflow_in_progress": True,
+                "target_hwnd": 100,
+                "game_renderable": True,
+                "game_foreground": True,
+                "game_window_mode_status": "unsupported",
+                "game_window_mode": "fullscreen",
+                "game_window_mode_reason": "window_mode_fullscreen",
+                "game_window_mode_source": "game_cfg",
+                "game_window_mode_observed_at": 123.0,
+            },
+            {"source": {"selection_window_active": True}, "slots": []},
+            now=124.0,
+            should_show=False,
+            reason="unsupported_fullscreen_mode",
+        )
+
+        self.assertEqual(payload["functional_status"], "degraded")
+        self.assertEqual(payload["functional_reason"], "unsupported_fullscreen_mode")
+        self.assertEqual(
+            payload["game_window_mode"],
+            {
+                "status": "unsupported",
+                "mode": "fullscreen",
+                "reason": "window_mode_fullscreen",
+                "source": "game_cfg",
+                "observed_at": 123.0,
+            },
+        )
 
     def test_host_visibility_state_write_is_change_based(self):
         from hextech.interfaces.overlay import host

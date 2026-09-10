@@ -10,16 +10,12 @@ import argparse
 import json
 import logging
 import os
-import queue
-import secrets
 import shutil
 import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler
 from typing import Any
 from pathlib import Path
 
@@ -38,6 +34,16 @@ from hextech.bootstrap.snapshot_contributions import (
     open_baseline_view as _open_baseline_view,
     validated_source_artifact as _validated_source_artifact,
 )
+from hextech.bootstrap.aramkit_generation import build_aramkit_payloads as _aramkit_payloads
+from hextech.bootstrap.blitz_generation import build_blitz_details as _blitz_details
+from hextech.bootstrap.legacy_generation import query_payloads_from_dataframe as _query_payloads_from_dataframe  # noqa: F401
+from hextech.bootstrap.startup_refresh import StartupRefreshSchedule, initial_auto_refresh_delay_seconds  # noqa: F401
+from hextech.bootstrap.game_refresh_gate import normalize_refresh_scope
+from hextech.bootstrap.data_service_application import (
+    DATA_SERVICE_NONCE_HEADER as _DATA_SERVICE_NONCE_HEADER,
+    DataServiceApplication,
+)
+DATA_SERVICE_NONCE_HEADER = _DATA_SERVICE_NONCE_HEADER
 @dataclass(frozen=True)
 class DataBuildResult:
     """一次构建的完整消费者数据与可审计来源摘要。"""
@@ -46,56 +52,7 @@ class DataBuildResult:
     source_files: tuple[SourceProvenance, ...] = ()
 SnapshotBuilder = Callable[[], DataBuildResult]
 SeedPreparer = Callable[[], bool]
-RefreshAction = Callable[[bool], Mapping[str, Any]]
-def _query_payloads_from_dataframe(dataframe) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    """从已清洗 CSV 直接构造查询 DTO，避免冷启动重建大型兼容缓存。"""
-
-    import pandas as pd
-    from hextech.modules.data.catalog.view_adapter import process_champions_data
-
-    id_column = "英雄ID" if "英雄ID" in dataframe.columns else "英雄 ID"
-    required = {id_column, "英雄名称", "海克斯ID", "海克斯名称"}
-    if not required.issubset(set(dataframe.columns)):
-        raise ValueError("DataService generation 源 CSV schema 不完整")
-
-    def clean_value(value: Any) -> Any:
-        if pd.isna(value):
-            return None
-        if hasattr(value, "item"):
-            return value.item()
-        return value
-
-    id_by_name: dict[str, str] = {}
-    for hero_name, group in dataframe.groupby("英雄名称", sort=False):
-        name = str(hero_name or "").strip()
-        if name:
-            id_by_name[name] = str(int(float(group.iloc[0][id_column])))
-    champions = process_champions_data(dataframe, use_runtime_cache=False, log_columns=False)
-    for champion in champions:
-        name = str(champion.get("英雄名称") or "").strip()
-        champion_id = str(champion.get("英雄 ID") or id_by_name.get(name, "")).strip()
-        champion.update({"英雄 ID": champion_id, "id": champion_id, "name": name})
-
-    details: dict[str, dict[str, Any]] = {}
-    for hero_name, group in dataframe.groupby("英雄名称", sort=False):
-        name = str(hero_name or "").strip()
-        if not name:
-            continue
-        first = group.iloc[0]
-        champion_id = str(int(float(first[id_column])))
-        cards: list[dict[str, Any]] = []
-        for raw in group.to_dict(orient="records"):
-            card = {str(key): clean_value(value) for key, value in raw.items()}
-            augment_id = str(int(float(card["海克斯ID"])))
-            card.update({"id": augment_id, "hero_id": champion_id, "hero_name": name})
-            cards.append(card)
-        if cards:
-            details[name] = {"hero_id": champion_id, "comprehensive": cards}
-    if not champions or any(not item.get("英雄 ID") for item in champions):
-        raise ValueError("DataService 冷启动英雄 DTO 构建不完整")
-    return champions, details
-
-
+RefreshAction = Callable[[bool, str], Mapping[str, Any]]
 def _build_augment_identity_payload(
     overlay_hints: Mapping[str, Any],
     catalog_entries: list[dict[str, Any]],
@@ -201,12 +158,26 @@ def _source_provenance(source: str, pointer: Mapping[str, Any]) -> SourceProvena
     )
 
 
+def _normalized_augment_cards(detail: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """统一 Blitz 详情的 augment ID；缺少 ARAMKit 英雄行时 Overlay 仍可消费排名。"""
+
+    cards = detail.get("comprehensive") or detail.get("augments") or []
+    normalized: list[dict[str, Any]] = []
+    for card in cards if isinstance(cards, list) else []:
+        if not isinstance(card, Mapping):
+            continue
+        augment_id = card.get("id") or card.get("augment_id") or card.get("augmentId") or card.get("海克斯ID")
+        if augment_id is None:
+            continue
+        normalized.append({**dict(card), "id": str(augment_id)})
+    return normalized
+
+
 def build_snapshot_from_runtime(
     contributions: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> DataBuildResult:
     """从已刷新且签名匹配的运行态数据构建一代完整消费者快照。"""
 
-    from hextech.modules.data.catalog.runtime_store import load_runtime_csv
     from hextech.modules.data.catalog.version_catalog import load_augment_manifest_entries, load_champion_core_data
     from hextech.modules.recommendation.hints import (
         build_overlay_hint_cache,
@@ -216,6 +187,7 @@ def build_snapshot_from_runtime(
 
     from hextech.modules.data.catalog.versioned import load_active_catalog, load_runtime_catalog_from_pointer
     from hextech.modules.data.source_runs import load_source_current
+    from hextech.bootstrap.production_pool_binding import bind_production_pool
 
     catalog = None
     if contributions is not None and isinstance(contributions.get("catalog"), Mapping):
@@ -224,9 +196,9 @@ def build_snapshot_from_runtime(
             raise ValueError("generation Catalog contribution 无效")
     catalog = catalog or load_active_catalog()
     pointers = (
-        {source: dict(contributions[source]) for source in ("hextech", "apex", "mayhem")}
+        {source: dict(contributions[source]) for source in ("aramkit", "blitz", "apex", "mayhem")}
         if contributions is not None
-        else {source: load_source_current(source, verify_hash=True) for source in ("hextech", "apex", "mayhem")}
+        else {source: load_source_current(source, verify_hash=True) for source in ("aramkit", "blitz", "apex", "mayhem")}
     )
     missing = [source for source, pointer in pointers.items() if not pointer]
     if missing:
@@ -243,21 +215,20 @@ def build_snapshot_from_runtime(
     fallback_sources = {
         source for source, pointer in pointers.items() if pointer.get("kind") == "baseline_generation"
     }
-    if "hextech" in fallback_sources:
-        _, fallback_view = _open_baseline_view(pointers["hextech"])
-        fallback_champions = fallback_view.get_champions()
-        raw_champions = fallback_champions
+    if "aramkit" in fallback_sources:
+        _, fallback_view = _open_baseline_view(pointers["aramkit"])
+        raw_champions = fallback_view.get_champions()
+    else:
+        raw_champions, _ = _aramkit_payloads(pointers["aramkit"], catalog=catalog)
+    if "blitz" in fallback_sources:
+        _, fallback_view = _open_baseline_view(pointers["blitz"])
         raw_details = {
             str(item.get("name") or ""): fallback_view.get_champion_detail(item.get("id") or item.get("name"))
-            for item in fallback_champions
+            for item in raw_champions
             if isinstance(item, Mapping)
         }
     else:
-        csv_path = _validated_source_artifact("hextech", pointers["hextech"], expected_role="stats")
-        dataframe = load_runtime_csv(str(csv_path))
-        if dataframe.empty:
-            raise ValueError("DataService generation 源 CSV 为空")
-        raw_champions, raw_details = _query_payloads_from_dataframe(dataframe)
+        raw_details = _blitz_details(pointers["blitz"], catalog=catalog)
 
     catalog_champions = load_champion_core_data(catalog.root)
     if not catalog_champions:
@@ -277,11 +248,20 @@ def build_snapshot_from_runtime(
     champions: list[dict[str, Any]] = []
     champion_id_by_name: dict[str, str] = {}
     normalized_details: dict[str, Mapping[str, Any]] = {}
-    for raw_id, catalog_item in catalog_champions.items():
-        champion_id = str(raw_id).strip()
+    for raw_item in raw_champions:
+        if not isinstance(raw_item, Mapping):
+            continue
+        champion_id = str(
+            raw_item.get("id")
+            or raw_item.get("英雄ID")
+            or raw_item.get("英雄 ID")
+            or raw_item.get("champion_id")
+            or ""
+        ).strip()
+        catalog_item = catalog_champions.get(champion_id)
         champion_name = str(catalog_item.get("name") or "").strip() if isinstance(catalog_item, Mapping) else ""
         if not champion_id or not champion_name:
-            raise ValueError(f"Catalog 英雄身份无效：{raw_id}")
+            raise ValueError(f"来源英雄无法绑定 Catalog：{champion_id}")
         stat_item = raw_champions_by_id.get(champion_id, {})
         detail = raw_details_by_id.get(champion_id) or raw_details.get(champion_name)
         if not isinstance(detail, Mapping):
@@ -329,15 +309,7 @@ def build_snapshot_from_runtime(
         detail = normalized_details.get(name)
         if not isinstance(detail, Mapping):
             raise ValueError(f"DataService 英雄详情缓存缺失：{name}")
-        cards = (detail.get("comprehensive") or detail.get("augments") or []) if isinstance(detail, Mapping) else []
-        normalized_augments: list[dict[str, Any]] = []
-        for card in cards if isinstance(cards, list) else []:
-            if not isinstance(card, Mapping):
-                continue
-            augment_id = card.get("id") or card.get("augment_id") or card.get("augmentId") or card.get("海克斯ID")
-            if augment_id is None:
-                continue
-            normalized_augments.append({**dict(card), "id": str(augment_id)})
+        normalized_augments = _normalized_augment_cards(detail)
         if not normalized_augments:
             raise ValueError(f"DataService 英雄统计为空：{name}")
         synergy_entry = synergy_data.get(champion_id_by_name.get(name, "")) or synergy_data.get(name) or {}
@@ -347,16 +319,44 @@ def build_snapshot_from_runtime(
             "augments": normalized_augments,
             "synergy": dict(synergy_entry) if isinstance(synergy_entry, Mapping) else {},
         }
+
+    # ARAMKit 只负责英雄总体榜，缺少单个英雄不能抹掉 Blitz 已提供的 Overlay 排名。
+    # Web 榜单仍只发布真实 ARAMKit 行；额外英雄仅参与 overlay_hints 构建。
+    overlay_hextech = dict(champion_hextech)
+    overlay_champion_ids = dict(champion_id_by_name)
+    for champion_id, catalog_item in catalog_champions.items():
+        champion_name = str(catalog_item.get("name") or "").strip()
+        if not champion_name or champion_name in overlay_hextech:
+            continue
+        detail = raw_details_by_id.get(str(champion_id)) or raw_details.get(champion_name)
+        if not isinstance(detail, Mapping):
+            continue
+        normalized_augments = _normalized_augment_cards(detail)
+        if not normalized_augments:
+            continue
+        overlay_hextech[champion_name] = {
+            **dict(detail),
+            "hero_id": str(champion_id),
+            "augments": normalized_augments,
+            "synergy": {},
+        }
+        overlay_champion_ids[champion_name] = str(champion_id)
     overlay_hints = build_overlay_hint_cache(
-        champion_hextech,
+        overlay_hextech,
         include_private_stats=True,
         source_tag="data-service",
         synergy_by_name={},
-        champion_id_by_name=champion_id_by_name,
+        champion_id_by_name=overlay_champion_ids,
     )
     catalog_entries = load_augment_manifest_entries(catalog.root)
     augment_identities = _build_augment_identity_payload(overlay_hints, catalog_entries)
     enrich_overlay_hint_cache_with_catalog(overlay_hints, catalog_entries)
+    bind_production_pool(
+        overlay_hints,
+        catalog=catalog,
+        stats_pointer=pointers["blitz"],
+        legacy_baseline="blitz" in fallback_sources,
+    )
     from hextech.modules.recommendation.synergy_projection import load_previous_synergy_projection_report
 
     previous_projection = load_previous_synergy_projection_report()
@@ -370,7 +370,7 @@ def build_snapshot_from_runtime(
         **augment_identities,
     }
     sources = [*catalog.provenance()]
-    sources.extend(_source_provenance(source, pointers[source]) for source in ("hextech", "apex", "mayhem"))
+    sources.extend(_source_provenance(source, pointers[source]) for source in ("aramkit", "blitz", "apex", "mayhem"))
     return DataBuildResult(
         {
             "champions": champions,
@@ -494,9 +494,9 @@ class DataServiceCore:
         self._last_result: dict[str, Any] = dict(initial_result or {"state": "starting", "generation_id": ""})
         _sync_startup_snapshot_status(self.publisher, self._last_result)
 
-    def refresh(self, *, force: bool = False) -> dict[str, Any]:
+    def refresh(self, *, force: bool = False, scope: str = "due") -> dict[str, Any]:
         with self._action_lock:
-            self._last_result = self._refresh_locked(force=force)
+            self._last_result = self._refresh_locked(force=force, scope=scope)
             _sync_startup_snapshot_status(self.publisher, self._last_result)
             return dict(self._last_result)
 
@@ -525,12 +525,23 @@ class DataServiceCore:
         result["snapshot"] = snapshot
         return result
 
-    def _refresh_locked(self, *, force: bool = False) -> dict[str, Any]:
+    def _refresh_locked(self, *, force: bool = False, scope: str = "due") -> dict[str, Any]:
+        normalized_scope = normalize_refresh_scope(scope)
         try:
-            result = dict(self._refresh_action(bool(force)))
+            result = dict(self._refresh_action(bool(force), normalized_scope))
+            result.setdefault("refresh_scope", normalized_scope)
+            result.setdefault("force", bool(force))
             if result.get("state") == "degraded" and self.publisher.current_generation_id():
-                result.setdefault("data_status", "data_stale")
-                result.setdefault("data_reason", "candidate_rejected_last_good_preserved")
+                result.setdefault(
+                    "data_status",
+                    "fresh" if result.get("reason_code") == "optional_source_stale" else "data_stale",
+                )
+                result.setdefault(
+                    "data_reason",
+                    "optional_source_stale"
+                    if result.get("reason_code") == "optional_source_stale"
+                    else "candidate_rejected_last_good_preserved",
+                )
             return result
         except Exception as exc:
             current_id = self.publisher.current_generation_id()
@@ -542,192 +553,9 @@ class DataServiceCore:
                 "data_status": "data_stale" if current_id else "unavailable",
                 "data_reason": "refresh_exception_last_good_preserved" if current_id else "no_snapshot",
                 "error_type": exc.__class__.__name__,
+                "refresh_scope": normalized_scope,
+                "force": bool(force),
             }
-DATA_SERVICE_NONCE_HEADER = "X-Hextech-Data-Service-Nonce"
-
-
-class DataServiceApplication:
-    """只绑定 loopback 的 DataService 控制面。"""
-
-    def __init__(self, *, core: DataServiceCore, parent_pid: int, nonce: str | None = None) -> None:
-        self.core = core
-        self.parent_pid = int(parent_pid)
-        self.nonce = nonce or secrets.token_urlsafe(24)
-        self.shutdown_requested = threading.Event()
-        self._actions: queue.Queue[tuple[str, str, dict[str, Any]]] = queue.Queue(maxsize=8)
-        self._action_state_lock = threading.Lock()
-        self._active_action: dict[str, Any] | None = None
-        self._last_action: dict[str, Any] | None = None
-        self._completed_actions: dict[str, dict[str, Any]] = {}
-        self._queued_action_types: set[str] = set()
-        self._pending_refresh_recheck = False
-        self._pending_refresh_force = False
-        threading.Thread(target=self._run_actions, name="hextech-data-actions", daemon=True).start()
-
-    def submit_action(self, action_type: str, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        """提交有界串行 action；HTTP 线程绝不等待真实抓取完成。"""
-
-        if action_type not in {"refresh", "set_private_stats"}:
-            return {"accepted": False, "reason_code": "unsupported_action"}
-        with self._action_state_lock:
-            if self.shutdown_requested.is_set():
-                return {"accepted": False, "reason_code": "shutdown_requested"}
-            active_type = str((self._active_action or {}).get("type") or "")
-            if action_type == "refresh" and (active_type == "refresh" or action_type in self._queued_action_types):
-                self._pending_refresh_recheck = True
-                self._pending_refresh_force = self._pending_refresh_force or bool((payload or {}).get("force"))
-                return {
-                    "accepted": True,
-                    "reason_code": "pending_recheck",
-                    "status": "coalesced",
-                    "force": self._pending_refresh_force,
-                }
-            action_id = uuid.uuid4().hex
-            try:
-                self._actions.put_nowait((action_id, action_type, dict(payload or {})))
-            except queue.Full:
-                return {"accepted": False, "reason_code": "queue_full"}
-            self._queued_action_types.add(action_type)
-        return {"accepted": True, "action_id": action_id, "status": "queued"}
-
-    def status(self) -> dict[str, Any]:
-        status = self.core.status()
-        with self._action_state_lock:
-            status["active_action"] = dict(self._active_action) if self._active_action else None
-            status["last_action"] = dict(self._last_action) if self._last_action else None
-            status["actions"] = {key: dict(value) for key, value in self._completed_actions.items()}
-            status["queued_action_count"] = self._actions.qsize()
-            status["pending_refresh_recheck"] = self._pending_refresh_recheck
-            status["pending_refresh_force"] = self._pending_refresh_force
-        return status
-
-    def request_shutdown(self) -> None:
-        """停止接收 action；pending 只代表本进程后续工作，退出时必须丢弃。"""
-
-        self.shutdown_requested.set()
-        with self._action_state_lock:
-            self._pending_refresh_recheck = False
-            self._pending_refresh_force = False
-
-    def _queue_pending_refresh_locked(self) -> None:
-        if self.shutdown_requested.is_set():
-            self._pending_refresh_recheck = False
-            self._pending_refresh_force = False
-            return
-        if not self._pending_refresh_recheck or "refresh" in self._queued_action_types:
-            return
-        action_id = uuid.uuid4().hex
-        force = self._pending_refresh_force
-        try:
-            self._actions.put_nowait((action_id, "refresh", {"force": force, "recheck": True}))
-        except queue.Full:
-            return
-        self._pending_refresh_recheck = False
-        self._pending_refresh_force = False
-        self._queued_action_types.add("refresh")
-
-    def _run_actions(self) -> None:
-        while not self.shutdown_requested.is_set():
-            try:
-                action_id, action_type, payload = self._actions.get(timeout=0.2)
-            except queue.Empty:
-                continue
-            started_at = time.time()
-            with self._action_state_lock:
-                self._queued_action_types.discard(action_type)
-                self._active_action = {
-                    "action_id": action_id,
-                    "type": action_type,
-                    "status": "running",
-                    "started_at": started_at,
-                }
-            try:
-                if action_type == "refresh":
-                    result = self.core.refresh(force=bool(payload.get("force")))
-                else:
-                    result = self.core.set_private_stats(bool(payload.get("enabled")))
-                final_status = "completed" if result.get("state") in {"ready", "degraded"} else "failed"
-                completed = {
-                    "action_id": action_id,
-                    "type": action_type,
-                    "status": final_status,
-                    "started_at": started_at,
-                    "completed_at": time.time(),
-                    "result": result,
-                }
-            except Exception as exc:
-                completed = {
-                    "action_id": action_id,
-                    "type": action_type,
-                    "status": "failed",
-                    "started_at": started_at,
-                    "completed_at": time.time(),
-                    "result": {"state": "failed", "error_type": exc.__class__.__name__},
-                }
-            finally:
-                with self._action_state_lock:
-                    self._active_action = None
-                    self._last_action = completed
-                    self._completed_actions[action_id] = completed
-                    while len(self._completed_actions) > 16:
-                        self._completed_actions.pop(next(iter(self._completed_actions)))
-                    self._queue_pending_refresh_locked()
-                self._actions.task_done()
-
-    def handler(self):
-        application = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-                return
-
-            def _authorized(self) -> bool:
-                host = self.headers.get("Host", "").split(":", 1)[0].strip("[]").lower()
-                return host in {"127.0.0.1", "localhost", "::1"} and self.headers.get(DATA_SERVICE_NONCE_HEADER) == application.nonce
-
-            def _body(self) -> dict[str, Any]:
-                try:
-                    length = int(self.headers.get("Content-Length") or 0)
-                    payload = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
-                except (ValueError, json.JSONDecodeError):
-                    return {}
-                return payload if isinstance(payload, dict) else {}
-
-            def _send(self, status: int, payload: Mapping[str, Any]) -> None:
-                body = json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self) -> None:  # noqa: N802
-                if not self._authorized():
-                    self._send(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
-                elif self.path == "/v1/status":
-                    self._send(HTTPStatus.OK, application.status())
-                else:
-                    self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
-
-            def do_POST(self) -> None:  # noqa: N802
-                if not self._authorized():
-                    self._send(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
-                    return
-                if self.path == "/v1/actions/refresh":
-                    result = application.submit_action("refresh", self._body())
-                    self._send(HTTPStatus.ACCEPTED if result.get("accepted") else HTTPStatus.CONFLICT, result)
-                elif self.path == "/v1/actions/set-private-stats":
-                    result = application.submit_action("set_private_stats", self._body())
-                    self._send(HTTPStatus.ACCEPTED if result.get("accepted") else HTTPStatus.CONFLICT, result)
-                elif self.path == "/v1/shutdown":
-                    application.request_shutdown()
-                    self._send(HTTPStatus.OK, {"state": "shutting_down"})
-                else:
-                    self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
-
-        return Handler
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Hextech DataService")
     parser.add_argument("--parent-pid", type=int, required=True)
@@ -736,7 +564,8 @@ def main(argv: list[str] | None = None) -> int:
     from hextech.modules.session.settings import load_ui_feature_flags
     from hextech.bootstrap.refresh_coordinator import CohortRefreshCoordinator
     from hextech.modules.data.ports.paths import get_var_dir
-    from hextech.infrastructure.sources.hextech.service import probe_hextech_upstream_marker
+    from hextech.infrastructure.sources.aramkit.service import probe_aramkit_upstream_marker
+    from hextech.bootstrap.game_refresh_gate import probe_production_game_in_progress
 
     private_enabled = bool(load_ui_feature_flags().get("private_policy_stats_enabled", False))
     publisher = DataSnapshotPublisher()
@@ -744,23 +573,28 @@ def main(argv: list[str] | None = None) -> int:
     if not instance_lock.acquire():
         logging.getLogger(__name__).error("DataService 已由另一个桌面实例持有。")
         return 3
+    from hextech.modules.session.runtime_role_owner import publish_role_owner, remove_role_owner
+
+    publish_role_owner("data-service")
     sync_startup_service_state(publisher, "starting")
     try:
         bootstrap_result = bootstrap_snapshot(publisher)
     except Exception as exc:
         sync_startup_service_state(publisher, "failed", error_summary=f"{exc.__class__.__name__}: {exc}")
+        remove_role_owner("data-service")
         instance_lock.release()
         raise
     coordinator = CohortRefreshCoordinator(
         publisher=publisher,
         builder=build_snapshot_from_runtime,
         root=get_var_dir(),
-        upstream_marker_probe=probe_hextech_upstream_marker,
+        upstream_marker_probe=probe_aramkit_upstream_marker,
+        game_state_probe=probe_production_game_in_progress,
     )
     core = DataServiceCore(
         publisher=publisher,
         private_stats_enabled=private_enabled,
-        refresh_action=lambda force: coordinator.refresh(force=force),
+        refresh_action=lambda force, scope: coordinator.refresh(force=force, scope=scope),
         initial_result=bootstrap_result,
     )
     application = DataServiceApplication(core=core, parent_pid=args.parent_pid)
@@ -772,15 +606,22 @@ def main(argv: list[str] | None = None) -> int:
         {"port": int(server.server_address[1]), "session_nonce": application.nonce, "pid": os.getpid()}
     )
     skip_auto_refresh = os.getenv("HEXTECH_DATA_SERVICE_SKIP_AUTO_REFRESH", "").strip().lower() in {"1", "true", "yes", "on"}
-    if not skip_auto_refresh:
+    initial_refresh = StartupRefreshSchedule.create(bootstrap_result, skip=skip_auto_refresh, now=time.monotonic())
+    if initial_refresh.consume_if_due(time.monotonic()):
         application.submit_action("refresh", {"force": args.force_initial_refresh})
     next_refresh_at = time.monotonic() + 15 * 60
     try:
         while not application.shutdown_requested.wait(0.5):
             if args.parent_pid and not psutil.pid_exists(args.parent_pid):
                 break
-            if (resumed_force := coordinator.poll_deferred_refresh()) is not None:
-                application.submit_action("refresh", {"force": resumed_force, "resumed_after_game": True})
+            if initial_refresh.consume_if_due(time.monotonic()):
+                payload = {"force": args.force_initial_refresh, "startup_grace_seconds": initial_refresh.delay_seconds}
+                application.submit_action("refresh", payload)
+            if (resume_request := coordinator.poll_deferred_refresh()) is not None:
+                application.submit_action(
+                    "refresh",
+                    {**resume_request, "resumed_after_game": True},
+                )
             if time.monotonic() >= next_refresh_at:
                 application.submit_action("refresh")
                 next_refresh_at = time.monotonic() + 15 * 60
@@ -790,6 +631,7 @@ def main(argv: list[str] | None = None) -> int:
         coordinator.request_stop()
         server.shutdown()
         server.server_close()
+        remove_role_owner("data-service")
         instance_lock.release()
     return 0
 

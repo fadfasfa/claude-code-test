@@ -121,9 +121,12 @@ class ContextRenderGate:
     ) -> ContextGateDecision:
         timestamp = time.time() if now is None else float(now)
         host_identity = (str(game_instance_id or ""), int(window_hwnd or 0))
-        if not active or not host_identity[0] or host_identity[1] <= 0:
+        if not host_identity[0] or host_identity[1] <= 0:
             self.reset()
             return self._waiting("context_game_identity_missing")
+        if not active:
+            self.reset()
+            return self._waiting("context_selection_inactive", game_instance_id=host_identity[0])
         if self._identity_key is not None and self._identity_key != host_identity:
             self.reset()
         self._identity_key = host_identity

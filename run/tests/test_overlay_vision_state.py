@@ -14,6 +14,121 @@ from support.vision_events import selection_event as _selection_event
 from support.vision_events import weak_slot as _weak_slot
 
 
+def _production_event(
+    frame_id: int,
+    timestamp: float,
+    *,
+    raw_slots: dict[int, dict] | None = None,
+    fingerprints: dict[int, str] | None = None,
+    source_updates: dict | None = None,
+) -> dict:
+    """补齐真机生产路径依赖的 frame/session/fingerprint 绑定。"""
+
+    event = _selection_event()
+    for index, raw_slot in (raw_slots or {}).items():
+        event["_raw_slots"][index] = deepcopy(raw_slot)
+    for index, raw_slot in enumerate(event["_raw_slots"]):
+        raw_slot["evidence_fingerprint"] = (fingerprints or {}).get(index, f"stable-fp-{index}")
+    event["source"].update(
+        {
+            "session_id": "production-session",
+            "frame_id": frame_id,
+            **(source_updates or {}),
+        }
+    )
+    event["timing"] = {
+        "captured_at": timestamp - 0.01,
+        "recognition_completed_at": timestamp,
+    }
+    return event
+
+
+def _ocr_slot(
+    slot_index: int,
+    *,
+    frame_id: int,
+    canonical_id: str,
+    name: str,
+    fingerprint: str,
+    slot_generation: int = 1,
+) -> dict:
+    return {
+        "slot": slot_index,
+        "evidence_fingerprint": fingerprint,
+        "ocr_production": {
+            "schema_version": 1,
+            "state": "admitted",
+            "session_id": "production-session",
+            "selection_epoch": 1,
+            "slot_index": slot_index,
+            "slot_generation": slot_generation,
+            "rgb_sha256": f"{frame_id:064x}",
+            "perceptual_fingerprint": fingerprint,
+            "captured_frame_id": frame_id,
+            "canonical_id": canonical_id,
+            "name": name,
+            "confidence": 0.99,
+            "match_rule": "exact",
+            "acceptance_rule": "ocr_exact_fallback",
+        },
+    }
+
+
+def test_fragment_latch_survives_misses_pause_ocr_and_ends_explicitly():
+    from hextech.infrastructure.vision.state import SelectionTracker
+
+    tracker = SelectionTracker(scene_enter_frames=1)
+    for frame in (1, 2):
+        tracker.update(_production_event(frame, 100 + frame * .1))
+    fragment = _production_event(3, 100.3, source_updates={"reason": "body_shard_only"})
+    blocked = tracker.update(fragment)
+    epoch = tracker.epoch
+    assert blocked["selection_type"] == "body_shard"
+    for frame in range(4, 9):
+        # 碎片期间按钮/卡面短暂漏检，后续模板/OCR 仍可能读到旧普通卡。
+        event = _production_event(frame, 100 + frame * .1, source_updates={
+            "scene_present": False, "selection_window_active": False, "card_residue": False,
+            "name_residue": [False] * 3, "selection_button_present": False,
+        })
+        result = tracker.update(event)
+        assert result["selection_type"] == "body_shard"
+        assert result["source"]["ready_slots"] == 0
+    pause = tracker.pause("game_not_foreground")
+    assert pause["selection_type"] == "body_shard"
+    assert tracker.epoch == epoch
+    assert tracker.scene_lost_at == 0.0
+    after_pause = tracker.update(_production_event(9, 110.0, source_updates={
+        "scene_present": False, "selection_window_active": False, "card_residue": False,
+        "name_residue": [], "selection_button_present": False,
+    }))
+    assert after_pause["selection_type"] == "body_shard"
+    assert tracker.body_shard_latched
+    resumed = tracker.update(_production_event(10, 110.1))
+    assert resumed["selection_type"] == "body_shard"
+    ended = tracker.update(_production_event(11, 110.2, source_updates={"selection_confirmed": True}))
+    assert ended["selection_type"] == "body_shard"
+    assert ended["source"]["reason"] == "selection_completed"
+    assert not tracker.body_shard_latched
+    for frame in (12, 13):
+        ordinary = tracker.update(_production_event(frame, 110 + frame * .1))
+    assert ordinary["selection_type"] == "hextech"
+    assert tracker.epoch > epoch
+
+
+def test_fragment_no_residue_requires_real_time_confirmation():
+    from hextech.infrastructure.vision.state import SelectionTracker
+
+    tracker = SelectionTracker()
+    tracker.update(_production_event(1, 1, source_updates={"reason": "body_shard_only"}))
+    missing = {"scene_present": False, "selection_window_active": False, "card_residue": False,
+               "name_residue": [], "selection_button_present": False}
+    assert tracker.update(_production_event(2, 2, source_updates=missing))["source"]["reason"] == "body_shard_only"
+    assert tracker.update(_production_event(3, 2.74, source_updates=missing))["source"]["reason"] == "body_shard_only"
+    ended = tracker.update(_production_event(4, 2.76, source_updates=missing))
+    assert ended["selection_type"] == "body_shard"
+    assert ended["source"]["reason"] == "scene_loss_confirmed"
+
+
 class OverlayVisionStateTests(unittest.TestCase):
     @staticmethod
     def _at(event: dict, timestamp: float) -> dict:
@@ -23,6 +138,48 @@ class OverlayVisionStateTests(unittest.TestCase):
             "recognition_completed_at": timestamp,
         }
         return timed
+
+    def test_projection_skip_requires_a_ready_last_good_slot(self):
+        from hextech.infrastructure.vision.runner import _stable_slot_fingerprints
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.slots[0].baseline_fingerprints.append("observed-but-detecting")
+        self.assertEqual(_stable_slot_fingerprints(tracker), [set(), set(), set()])
+
+        tracker.slots[0].stable_slot = {"slot": 0, "state": "ready", "augment_id": "augment-a"}
+        self.assertEqual(
+            _stable_slot_fingerprints(tracker),
+            [{"observed-but-detecting"}, set(), set()],
+        )
+
+    def test_tracker_preserves_only_bounded_matching_timing(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        event = _selection_event()
+        event["source"]["matching_timing"] = {
+            "fingerprint_ms": 12.5,
+            "icon_projection_ms": 8,
+            "name_projection_ms": 21.25,
+            "recall_top_k_ms": 3,
+            "decision_ms": 4.5,
+            "total_ms": 49.25,
+            "private_matrix_shape": [516, 4096],
+        }
+
+        tracked = SelectionTracker(scene_enter_frames=1).update(self._at(event, 10.0))
+
+        self.assertEqual(
+            tracked["source"]["matching_timing"],
+            {
+                "fingerprint_ms": 12.5,
+                "icon_projection_ms": 8.0,
+                "name_projection_ms": 21.25,
+                "recall_top_k_ms": 3.0,
+                "decision_ms": 4.5,
+                "total_ms": 49.25,
+            },
+        )
 
     def test_single_slot_stays_detecting_after_three_seconds_and_can_recover(self):
         from hextech.infrastructure.vision import state
@@ -45,6 +202,10 @@ class OverlayVisionStateTests(unittest.TestCase):
         self.assertEqual(still_detecting["slots"][2]["state"], "detecting")
         self.assertEqual(still_detecting["slots"][2]["temporal_state"], "evidence_pending")
         self.assertEqual(still_detecting["slots"][2]["rejection_reason"], "confidence_below_threshold")
+        self.assertTrue(still_detecting["active"])
+        self.assertEqual(still_detecting["source"]["ready_slots"], 2)
+        self.assertFalse(still_detecting["source"]["content_ready"])
+        self.assertEqual(still_detecting["source"]["gate_state"], "visible_partial")
         self.assertEqual(recovered["slots"][2]["state"], "ready")
 
     def test_competing_strong_candidates_do_not_publish_a_false_ready(self):
@@ -136,6 +297,331 @@ class OverlayVisionStateTests(unittest.TestCase):
             [slot["augment_id"] for slot in ready["slots"]],
             ["augment_x", "augment_b", "augment_z"],
         )
+
+    def test_production_fingerprint_drift_cannot_replace_stable_slot_without_transition(self):
+        """普通截图漂移没有换卡授权，重复 strong 误识别也只能保留 last-good。"""
+
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(_production_event(1, 10.0))
+        stable = tracker.update(_production_event(2, 10.2))
+        observed = [
+            tracker.update(
+                _production_event(
+                    frame_id,
+                    10.2 + frame_id * 0.1,
+                    raw_slots={0: _ready_slot(0, "wrong", "错误候选")},
+                    fingerprints={0: f"drift-{frame_id}"},
+                )
+            )
+            for frame_id in range(3, 8)
+        ]
+
+        self.assertEqual(stable["slots"][0]["augment_id"], "augment_a")
+        self.assertTrue(all(item["slots"][0]["augment_id"] == "augment_a" for item in observed))
+        self.assertTrue(all(item["slots"][0]["slot_generation"] == 1 for item in observed))
+        self.assertTrue(all(item["source"]["selection_revision"] == 1 for item in observed))
+
+    def test_slot_click_enters_detecting_then_confirms_one_revision(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(_production_event(1, 20.0))
+        stable = tracker.update(_production_event(2, 20.2))
+        clicked = tracker.update(
+            _production_event(
+                3,
+                20.4,
+                source_updates={
+                    "selection_click": True,
+                    "cursor_over_cards": True,
+                    "cursor_over_slots": [0],
+                },
+            )
+        )
+        confirming = tracker.update(
+            _production_event(
+                4,
+                20.6,
+                raw_slots={0: _ready_slot(0, "new-a", "新强化 A")},
+                fingerprints={0: "new-fp-0"},
+            )
+        )
+        ready = tracker.update(
+            _production_event(
+                5,
+                20.8,
+                raw_slots={0: _ready_slot(0, "new-a", "新强化 A")},
+                fingerprints={0: "new-fp-0"},
+            )
+        )
+
+        self.assertEqual(clicked["slots"][0]["state"], "detecting")
+        self.assertEqual(clicked["slots"][0]["slot_generation"], 2)
+        self.assertEqual(clicked["source"]["selection_revision"], 1)
+        self.assertEqual(confirming["slots"][0]["state"], "detecting")
+        self.assertEqual(confirming["source"]["selection_revision"], 1)
+        self.assertEqual(ready["slots"][0]["augment_id"], "new-a")
+        self.assertEqual(ready["slots"][0]["replacement_reason"], "slot_click_confirmed")
+        self.assertEqual(ready["source"]["selection_revision"], 2)
+        self.assertEqual(ready["slots"][1]["augment_id"], stable["slots"][1]["augment_id"])
+        self.assertEqual(ready["slots"][1]["slot_generation"], 1)
+
+    def test_async_mouse_transition_switches_only_target_slot_without_live_button_state(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(_production_event(1, 21.0))
+        stable = tracker.update(_production_event(2, 21.2))
+        clicked = tracker.update(
+            _production_event(
+                3,
+                21.46,
+                source_updates={
+                    "selection_click": True,
+                    "cursor_over_cards": False,
+                    "cursor_over_slots": [],
+                    "mouse_event_sequence": 9,
+                    "transition_source": "async_mouse_down",
+                    "transition_slot": 1,
+                },
+            )
+        )
+        tracker.update(
+            _production_event(
+                4,
+                21.64,
+                raw_slots={1: _ready_slot(1, "new-b", "新强化 B")},
+                fingerprints={1: "new-fp-1"},
+            )
+        )
+        ready = tracker.update(
+            _production_event(
+                5,
+                21.82,
+                raw_slots={1: _ready_slot(1, "new-b", "新强化 B")},
+                fingerprints={1: "new-fp-1"},
+            )
+        )
+
+        self.assertEqual(clicked["slots"][1]["state"], "detecting")
+        self.assertEqual(clicked["slots"][1]["slot_generation"], 2)
+        self.assertEqual(ready["slots"][1]["augment_id"], "new-b")
+        self.assertEqual(ready["slots"][1]["slot_generation"], 2)
+        self.assertEqual(ready["source"]["selection_revision"], 2)
+        self.assertEqual(ready["slots"][0]["augment_id"], stable["slots"][0]["augment_id"])
+        self.assertEqual(ready["slots"][0]["slot_generation"], 1)
+        self.assertEqual(ready["slots"][2]["augment_id"], stable["slots"][2]["augment_id"])
+        self.assertEqual(ready["slots"][2]["slot_generation"], 1)
+
+    def test_two_content_absent_frames_gate_replacement(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(_production_event(1, 30.0))
+        tracker.update(_production_event(2, 30.2))
+        absent_slot = {"slot": 0, "diagnostic": "flat_crop", "transition_observation": "content_absent"}
+        first_absent = tracker.update(
+            _production_event(3, 30.4, raw_slots={0: absent_slot}, fingerprints={0: "flat-1"})
+        )
+        second_absent = tracker.update(
+            _production_event(4, 30.6, raw_slots={0: absent_slot}, fingerprints={0: "flat-2"})
+        )
+        tracker.update(
+            _production_event(
+                5,
+                30.8,
+                raw_slots={0: _ready_slot(0, "new-a", "新强化 A")},
+                fingerprints={0: "new-fp-0"},
+            )
+        )
+        ready = tracker.update(
+            _production_event(
+                6,
+                31.0,
+                raw_slots={0: _ready_slot(0, "new-a", "新强化 A")},
+                fingerprints={0: "new-fp-0"},
+            )
+        )
+
+        self.assertEqual(first_absent["slots"][0]["augment_id"], "augment_a")
+        self.assertEqual(first_absent["source"]["selection_revision"], 1)
+        self.assertEqual(second_absent["slots"][0]["state"], "detecting")
+        self.assertEqual(second_absent["slots"][0]["slot_generation"], 2)
+        self.assertEqual(second_absent["source"]["selection_revision"], 1)
+        self.assertEqual(ready["slots"][0]["augment_id"], "new-a")
+        self.assertEqual(ready["slots"][0]["replacement_reason"], "content_transition_confirmed")
+        self.assertEqual(ready["source"]["selection_revision"], 2)
+
+    def test_transition_timeout_restores_identity_without_generation_rollback(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(_production_event(1, 40.0))
+        tracker.update(_production_event(2, 40.2))
+        tracker.update(
+            _production_event(
+                3,
+                40.4,
+                source_updates={
+                    "selection_click": True,
+                    "cursor_over_cards": True,
+                    "cursor_over_slots": [0],
+                },
+            )
+        )
+        restored = tracker.update(
+            _production_event(
+                4,
+                42.5,
+                raw_slots={0: _ready_slot(0, "late", "过期新候选")},
+                fingerprints={0: "late-fp"},
+            )
+        )
+
+        self.assertEqual(restored["slots"][0]["augment_id"], "augment_a")
+        self.assertEqual(restored["slots"][0]["slot_generation"], 2)
+        self.assertEqual(restored["slots"][0]["replacement_reason"], "transition_timeout_restored")
+        self.assertEqual(restored["source"]["selection_revision"], 1)
+
+    def test_same_identity_ocr_does_not_change_generation_or_revision(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(_production_event(1, 50.0))
+        tracker.update(_production_event(2, 50.2))
+        observed = []
+        for frame_id in range(3, 6):
+            fingerprint = "ocr-same"
+            observed.append(
+                tracker.update(
+                    _production_event(
+                        frame_id,
+                        50.0 + frame_id * 0.2,
+                        raw_slots={
+                            0: _ocr_slot(
+                                0,
+                                frame_id=frame_id,
+                                canonical_id="augment_a",
+                                name="强化 A",
+                                fingerprint=fingerprint,
+                            )
+                        },
+                        fingerprints={0: fingerprint},
+                    )
+                )
+            )
+
+        self.assertTrue(all(item["slots"][0]["augment_id"] == "augment_a" for item in observed))
+        self.assertTrue(all(item["slots"][0]["slot_generation"] == 1 for item in observed))
+        self.assertTrue(all(item["source"]["selection_revision"] == 1 for item in observed))
+
+    def test_different_identity_ocr_replaces_atomically_after_three_frames(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(_production_event(1, 60.0))
+        tracker.update(_production_event(2, 60.2))
+        observed = []
+        for frame_id in range(3, 6):
+            fingerprint = "ocr-new"
+            observed.append(
+                tracker.update(
+                    _production_event(
+                        frame_id,
+                        60.0 + frame_id * 0.2,
+                        raw_slots={
+                            0: _ocr_slot(
+                                0,
+                                frame_id=frame_id,
+                                canonical_id="ocr-new-a",
+                                name="OCR 新强化",
+                                fingerprint=fingerprint,
+                                slot_generation=1,
+                            )
+                        },
+                        fingerprints={0: fingerprint},
+                    )
+                )
+            )
+
+        self.assertEqual(observed[0]["slots"][0]["augment_id"], "augment_a")
+        self.assertEqual(observed[1]["slots"][0]["augment_id"], "augment_a")
+        self.assertEqual(observed[1]["slots"][0]["slot_generation"], 1)
+        self.assertTrue(all(item["source"]["selection_revision"] == 1 for item in observed[:-1]))
+        self.assertEqual(observed[-1]["slots"][0]["augment_id"], "ocr-new-a")
+        self.assertEqual(observed[-1]["slots"][0]["slot_generation"], 2)
+        self.assertEqual(observed[-1]["slots"][0]["replacement_reason"], "ocr_exact_transition")
+        self.assertEqual(observed[-1]["source"]["selection_revision"], 2)
+
+    def test_repeated_strong_visual_candidate_cannot_replace_without_authorized_transition(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(_production_event(1, 62.0))
+        stable = tracker.update(_production_event(2, 62.2))
+        observed = [
+            tracker.update(
+                _production_event(
+                    frame_id,
+                    62.0 + frame_id * 0.2,
+                    raw_slots={0: _ready_slot(0, "new-a", "新强化 A")},
+                    fingerprints={0: "new-fp"},
+                )
+            )
+            for frame_id in range(3, 9)
+        ]
+
+        self.assertTrue(
+            all(item["slots"][0]["augment_id"] == stable["slots"][0]["augment_id"] for item in observed)
+        )
+        self.assertTrue(all(item["slots"][0]["slot_generation"] == 1 for item in observed))
+        self.assertTrue(all(item["source"]["selection_revision"] == 1 for item in observed))
+
+    def test_two_slots_confirming_same_frame_increment_revision_once(self):
+        from hextech.infrastructure.vision.state import SelectionTracker
+
+        tracker = SelectionTracker(scene_enter_frames=1)
+        tracker.update(_production_event(1, 70.0))
+        stable = tracker.update(_production_event(2, 70.2))
+        clicked = tracker.update(
+            _production_event(
+                3,
+                70.4,
+                source_updates={
+                    "selection_click": True,
+                    "cursor_over_cards": True,
+                    "cursor_over_slots": [0, 1],
+                },
+            )
+        )
+        replacements = {
+            0: _ready_slot(0, "new-a", "新强化 A"),
+            1: _ready_slot(1, "new-b", "新强化 B"),
+        }
+        tracker.update(
+            _production_event(
+                4,
+                70.6,
+                raw_slots=replacements,
+                fingerprints={0: "new-fp-0", 1: "new-fp-1"},
+            )
+        )
+        ready = tracker.update(
+            _production_event(
+                5,
+                70.8,
+                raw_slots=replacements,
+                fingerprints={0: "new-fp-0", 1: "new-fp-1"},
+            )
+        )
+
+        self.assertEqual([slot["state"] for slot in clicked["slots"][:2]], ["detecting", "detecting"])
+        self.assertEqual(ready["source"]["selection_revision"], 2)
+        self.assertEqual([slot["augment_id"] for slot in ready["slots"][:2]], ["new-a", "new-b"])
+        self.assertEqual(ready["slots"][2]["augment_id"], stable["slots"][2]["augment_id"])
+        self.assertEqual(ready["slots"][2]["slot_generation"], 1)
 
     def test_weak_temporal_evidence_never_becomes_ready(self):
         from hextech.infrastructure.vision import state
@@ -426,6 +912,55 @@ class OverlayVisionStateTests(unittest.TestCase):
                 self.assertEqual(ready["slots"][1]["state"], "ready")
                 self.assertEqual(ready["slots"][1]["name"], name)
 
+    def test_strong_dual_text_ignores_ambiguous_icon_but_rejects_explicit_conflict(self):
+        from hextech.infrastructure.vision.matcher import candidate_from_slot
+
+        text_candidate = {
+            "augment_id": "1020",
+            "recognition_key": "黎明使者的决心",
+            "name": "黎明使者的决心",
+            "confidence": 0.95,
+        }
+        base = {
+            "slot": 0,
+            "channels": {
+                "text": {"margin": 0.04, "top_candidates": [text_candidate]},
+                "text_alt": {"margin": 0.02, "top_candidates": [text_candidate]},
+            },
+        }
+        ambiguous_icon = {
+            **base,
+            "channels": {
+                **base["channels"],
+                "icon": {
+                    "margin": 0.0,
+                    "top_candidates": [
+                        {"augment_id": "2089", "name": "痛，太痛了！", "confidence": 0.96}
+                    ],
+                },
+            },
+        }
+        candidate = candidate_from_slot(ambiguous_icon)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.rule, "strong_dual_text")
+        self.assertEqual(candidate.evidence_grade, "strong")
+        self.assertEqual(candidate.required_frames, 2)
+
+        explicit_conflict = {
+            **ambiguous_icon,
+            "channels": {
+                **ambiguous_icon["channels"],
+                "icon": {
+                    "margin": 0.08,
+                    "top_candidates": [
+                        {"augment_id": "2089", "name": "痛，太痛了！", "confidence": 0.96}
+                    ],
+                },
+            },
+        }
+        self.assertIsNone(candidate_from_slot(explicit_conflict))
+
     def test_duplicate_bang_medium_candidates_across_slots_never_become_ready(self):
         from hextech.infrastructure.vision.state import SelectionTracker
 
@@ -436,6 +971,7 @@ class OverlayVisionStateTests(unittest.TestCase):
         observations = [tracker.update(self._at(event, 55.0 + index * 0.2)) for index in range(5)]
 
         self.assertTrue(all(item["source"]["ready_slots"] == 0 for item in observations))
+        self.assertTrue(all(not item["active"] for item in observations))
         self.assertEqual([slot["state"] for slot in observations[-1]["slots"]], ["detecting"] * 3)
 
     def test_duplicate_identity_keeps_only_the_unique_strong_slot(self):

@@ -227,6 +227,7 @@ def _new_attempt_context() -> dict:
         "success_rows": 0,
         "failure_count": 0,
         "failure_samples": [],
+        "failure_diagnostics": {},
         "active_csv": "",
         "fallback_used": False,
         "output_csv": "",
@@ -340,6 +341,7 @@ def _write_scraper_status(
             "slow_path_count": last_attempt.get("slow_path_count", 0),
             "success_rows": last_attempt.get("success_rows", 0),
             "failure_samples": last_attempt.get("failure_samples", []),
+            "failure_diagnostics": dict(last_attempt.get("failure_diagnostics") or {}),
             "fallback_used": bool(active_csv and result == "fallback"),
         }
     )
@@ -397,11 +399,16 @@ def _finish_refresh_failure(
                 "failure_stage": failure_stage,
                 "reason": reason,
                 "coverage": dict(attempt.get("coverage") or {}),
+                "failure_diagnostics": dict(attempt.get("failure_diagnostics") or {}),
             },
         )
         write_run_diagnostics(
             manifest,
-            report={"failure_samples": samples, "coverage": dict(attempt.get("coverage") or {})},
+            report={
+                "failure_samples": samples,
+                "failure_diagnostics": dict(attempt.get("failure_diagnostics") or {}),
+                "coverage": dict(attempt.get("coverage") or {}),
+            },
         )
     if active_csv:
         attempt = _finish_attempt(

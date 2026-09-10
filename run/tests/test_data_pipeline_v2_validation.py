@@ -188,6 +188,44 @@ def test_v2_contracts_reject_invalid_outcomes_and_duplicate_catalog_roles() -> N
         )
 
 
+def test_complete_provenance_accepts_optional_catalog_augment_assets_role() -> None:
+    from hextech.modules.data.generation.validation import validate_complete_provenance
+
+    catalog_id = "catalog-test"
+    entries = [
+        SourceProvenance(
+            source="catalog",
+            run_id=catalog_id,
+            catalog_generation_id=catalog_id,
+            artifact_role=role,
+            artifact_sha256=(str(index) * 64),
+            record_count=1,
+            manifest_sha256="f" * 64,
+            content_schema_version=2,
+        )
+        for index, role in enumerate(("champions", "augments", "versions", "augment_assets"), start=1)
+    ]
+    entries.extend(
+        SourceProvenance(
+            source=source,
+            run_id=f"{source}-run",
+            catalog_generation_id=catalog_id,
+            artifact_role=role,
+            artifact_sha256=digest * 64,
+            record_count=1,
+            manifest_sha256="e" * 64,
+            content_schema_version=2,
+        )
+        for source, role, digest in (
+            ("hextech", "stats", "a"),
+            ("apex", "synergy", "b"),
+            ("mayhem", "combos", "c"),
+        )
+    )
+
+    validate_complete_provenance(entries)
+
+
 def _hextech_frame() -> pd.DataFrame:
     rows = []
     for champion_id, champion_name in (("1", "英雄一"), ("2", "英雄二")):

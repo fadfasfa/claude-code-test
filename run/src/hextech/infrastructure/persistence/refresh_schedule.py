@@ -10,7 +10,7 @@ from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
 
 
-SCHEDULE_SOURCES = ("catalog", "hextech", "apex", "mayhem")
+SCHEDULE_SOURCES = ("catalog", "aramkit", "blitz", "apex", "mayhem")
 
 
 class RefreshScheduleStore:
@@ -23,7 +23,14 @@ class RefreshScheduleStore:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict):
                 raise ValueError("schedule 必须是对象")
-            return RefreshScheduleV1.from_mapping(payload)
+            schedule = RefreshScheduleV1.from_mapping(payload)
+            if set(schedule.sources) != set(SCHEDULE_SOURCES):
+                return RefreshScheduleV1(
+                    updated_at=schedule.updated_at,
+                    generation_id=schedule.generation_id,
+                    sources={source: schedule.sources.get(source, RefreshSourceState()) for source in SCHEDULE_SOURCES},
+                )
+            return schedule
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
             return RefreshScheduleV1(
                 updated_at=utc_now_iso(),

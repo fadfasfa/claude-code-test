@@ -14,6 +14,7 @@ import json
 import math
 import re
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -93,7 +94,9 @@ def _normalize_synergy_item(
         "rating": _clean_text(item.get("rating")),
         "tag": _clean_text(item.get("tag")),
         "tier": _clean_text(item.get("tier")),
-        "content": _clean_text(item.get("content")),
+        # content 是来源原文。展示清洗必须在身份关联、原文去重和覆盖率统计完成
+        # 后生成独立 display_summary，不能在这里改写空白或结构。
+        "content": deepcopy(item.get("content")),
         "augment_names": names,
     }
     for key in ("source", "source_url", "source_rating", "source_tier"):
@@ -261,6 +264,16 @@ def _private_stats_from_card(card: Mapping[str, Any], *, hero_id: str, hero_name
         stats["winrate"] = winrate
     if pickrate is not None:
         stats["pickrate"] = pickrate
+    source_tier = _coerce_int(card.get("source_tier"))
+    champion_tier = _coerce_int(card.get("champion_tier"))
+    if source_tier is not None:
+        stats["source_tier"] = source_tier
+    if champion_tier is not None:
+        stats["champion_tier"] = champion_tier
+    for key in ("stats_scope", "source_patch", "source_date"):
+        value = _clean_text(card.get(key))
+        if value:
+            stats[key] = value
     if hero_id:
         stats["champion_id"] = hero_id
     if hero_name:

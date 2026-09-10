@@ -13,11 +13,20 @@ pytestmark = pytest.mark.dev_gate
 
 
 def test_root_contains_only_supported_layout() -> None:
-    for required in ("src", "resources", "var", "tests", "tooling", "docs", "pyproject.toml", "README.md"):
+    for required in ("src", "resources", "tests", "tooling", "docs", "pyproject.toml", "README.md"):
         assert (RUN_DIR / required).exists(), required
     for removed in ("hextech", "frontend", "data", "to" + "ols", "scripts", "PROJECT.md"):
         assert not (RUN_DIR / removed).exists(), removed
     assert not list(RUN_DIR.glob("*.py")), "根目录不得恢复 Python 转发入口"
+
+
+def test_runtime_layout_is_created_on_demand_outside_source(tmp_path, monkeypatch) -> None:
+    from hextech.modules.data.ports import paths
+    runtime = tmp_path / "runtime"
+    monkeypatch.setattr(paths, "RUNTIME_DATA_DIR", runtime)
+    assert not runtime.exists()
+    assert paths.ensure_var_layout() == runtime
+    assert all((runtime / name).is_dir() for name in paths.VAR_LAYOUT_DIRS)
 
 
 def test_pyproject_exposes_only_bootstrap_commands() -> None:

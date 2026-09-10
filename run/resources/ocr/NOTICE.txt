@@ -1,0 +1,19 @@
+Hextech Overlay OCR Shadow - third-party notice
+
+Resource:
+  ch_PP-OCRv4_rec_infer.onnx
+  Size: 10,857,958 bytes
+  SHA-256: 48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b
+
+The recognition model is distributed by the RapidOCR project and originates
+from PaddleOCR PP-OCRv4. RapidOCR and PaddleOCR identify this material under
+the Apache License, Version 2.0. A copy is bundled as
+LICENSE.apache-2.0.txt in this directory.
+
+Upstream references:
+  https://github.com/RapidAI/RapidOCR
+  https://github.com/PaddlePaddle/PaddleOCR
+
+This bundle uses the model only for CPU-based text recognition on already
+defined card-name regions. It does not include PaddleOCR detection or
+orientation models.

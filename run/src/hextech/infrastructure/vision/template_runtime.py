@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from contextlib import contextmanager
@@ -54,6 +56,33 @@ def template_runtime_hint_signature(hint_cache: Mapping[str, Any] | None) -> str
 
 def _hint_cache_signature(hint_cache: Mapping[str, Any] | None) -> str:
     return template_runtime_hint_signature(hint_cache)
+
+
+def vision_pool_fingerprint(
+    hint_cache: Mapping[str, Any] | None,
+    *,
+    resource_signature: Mapping[str, Any] | None = None,
+) -> str:
+    """只表达 Catalog/pool/模板资产和矩阵合同，不包含 Stats 百分比。"""
+
+    contract = {
+        "hint_signature": template_runtime_hint_signature(hint_cache),
+        "template_resource_signature": dict(
+            resource_signature or template_runtime_resource_signature()
+        ),
+        "rank_matrix_contract": {
+            "schema_version": TEMPLATE_RUNTIME_CACHE_SCHEMA_VERSION,
+            "dtype": np.dtype(TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE).name,
+        },
+    }
+    return hashlib.sha256(
+        json.dumps(
+            contract,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 @contextmanager
@@ -188,8 +217,21 @@ def build_template_index(raw_templates: Mapping[str, Mapping[str, Any]]) -> list
     return _template_build.build_template_index(raw_templates)
 
 
-def _attach_observed_name_exemplars(template_index: Sequence[TemplateEntry], asset_dir: Path) -> list[TemplateEntry]:
-    return _template_build._attach_observed_name_exemplars(template_index, asset_dir)
+def _attach_observed_name_exemplars(
+    template_index: Sequence[TemplateEntry],
+    asset_dir: Path,
+    *,
+    hint_cache: Mapping[str, Any] | None = None,
+    extra_aliases: Mapping[str, str] | Sequence[tuple[str, str]] | None = None,
+    strict: bool = False,
+) -> list[TemplateEntry]:
+    return _template_build._attach_observed_name_exemplars(
+        template_index,
+        asset_dir,
+        hint_cache=hint_cache,
+        extra_aliases=extra_aliases,
+        strict=strict,
+    )
 
 
 def _register_rank_matrices(template_index: TemplateIndex, matrices: _RankMatrices) -> None:
@@ -212,10 +254,15 @@ def load_default_template_index(
     base_dir: str | Path | None = None,
     *,
     hint_cache: Mapping[str, Any] | None = None,
+    require_production_pool: bool = False,
 ) -> TemplateIndex:
     """构建后立即发布 metadata-only index，外部调用不会持有分散指纹数组。"""
 
-    raw_entries = _template_build.load_default_template_entries(base_dir, hint_cache=hint_cache)
+    raw_entries = _template_build.load_default_template_entries(
+        base_dir,
+        hint_cache=hint_cache,
+        require_production_pool=require_production_pool,
+    )
     if not raw_entries:
         return TemplateIndex()
     matrices = _rank_matrices(raw_entries)
@@ -242,6 +289,61 @@ def _runtime_stats_with_memory(stats: Mapping[str, Any], matrices: _RankMatrices
     return result
 
 
+def _production_pool_runtime_stats(
+    hint_cache: Mapping[str, Any] | None,
+    matrices: _RankMatrices,
+    *,
+    resource_signature: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    pool = _template_build._production_pool(hint_cache)
+    identities = pool.get("identities") if isinstance(pool, Mapping) else ()
+    canonical_ids = pool.get("canonical_ids") if isinstance(pool, Mapping) else ()
+    exclusions = {
+        "disabled": len(pool.get("disabled_ids") or ()),
+        "unresolved": len(pool.get("unresolved_ids") or ()),
+        "duplicate": len(pool.get("duplicate_ids") or ()),
+        "name_conflict": len(pool.get("name_conflicts") or ()),
+    } if isinstance(pool, Mapping) else {"production_pool_unavailable": 1}
+    vision_pool_generation_id = (
+        str((hint_cache or {}).get("snapshot", {}).get("generation_id") or "")
+        if isinstance((hint_cache or {}).get("snapshot"), Mapping)
+        else ""
+    )
+    pool_fingerprint = vision_pool_fingerprint(
+        hint_cache,
+        resource_signature=resource_signature,
+    )
+    return {
+        "production_pool_id": str(pool.get("pool_id") or "") if isinstance(pool, Mapping) else "",
+        "production_pool_state": str(pool.get("state") or "unavailable") if isinstance(pool, Mapping) else "unavailable",
+        "production_pool_count": len(canonical_ids) if isinstance(canonical_ids, list) else 0,
+        "catalog_generation_id": str(pool.get("catalog_generation_id") or "") if isinstance(pool, Mapping) else "",
+        "vision_pool_generation_id": vision_pool_generation_id,
+        "vision_pool_origin_generation_id": vision_pool_generation_id,
+        "observed_data_generation_id": vision_pool_generation_id,
+        "vision_pool_fingerprint": pool_fingerprint,
+        # 兼容旧 smoke/诊断读取；这个值只代表构建 Vision pool 时的快照，
+        # 不得再解释为当前 selection epoch 的统计 generation。
+        "data_generation_id": vision_pool_generation_id,
+        "stats_generation_id": "",
+        "generation_roles": {
+            "vision_pool_generation_id": "sidecar_template_runtime",
+            "stats_generation_id": "host_game_session",
+            "data_generation_id": "legacy_vision_pool_compat",
+        },
+        "full_catalog_count": int(pool.get("full_catalog_count") or 0) if isinstance(pool, Mapping) else 0,
+        "rank_identity_count": len({entry.augment_id for entry in matrices.index_ref}),
+        "matrix_rows": {
+            "icon": int(matrices.icon_matrix.shape[0]),
+            "name": int(matrices.name_matrix.shape[0]),
+            "alt_name": int(matrices.alt_name_matrix.shape[0]),
+            "observed_name": int(matrices.observed_name_matrix.shape[0]),
+        },
+        "excluded_reason_counts": exclusions,
+        "pool_identity_count": len(identities) if isinstance(identities, list) else 0,
+    }
+
+
 def load_or_build_default_template_runtime(
     base_dir: str | Path | None = None,
     *,
@@ -249,6 +351,7 @@ def load_or_build_default_template_runtime(
     cache_file: str | Path | None = None,
     resource_signature: Mapping[str, Any] | None = None,
     status_callback: Callable[[str, Mapping[str, Any]], None] | None = None,
+    require_production_pool: bool = False,
 ) -> TemplateRuntime:
     """加载或构建 runtime，整个发布面只保留连续 float16 矩阵与元数据。"""
 
@@ -274,6 +377,13 @@ def load_or_build_default_template_runtime(
             )
         )
         runtime.stats["legacy_v1_cache_removed"] = _cleanup_legacy_template_runtime_cache(target_cache)
+        runtime.stats.update(
+            _production_pool_runtime_stats(
+                hint_cache,
+                runtime.matrices,
+                resource_signature=signature,
+            )
+        )
         if status_callback is not None:
             status_callback("template_runtime_cache_ready", runtime.stats)
         return runtime
@@ -297,6 +407,13 @@ def load_or_build_default_template_runtime(
                     runtime.matrices,
                 )
             )
+            runtime.stats.update(
+                _production_pool_runtime_stats(
+                    hint_cache,
+                    runtime.matrices,
+                    resource_signature=signature,
+                )
+            )
             if status_callback is not None:
                 status_callback("template_runtime_cache_ready", runtime.stats)
             return runtime
@@ -310,7 +427,11 @@ def load_or_build_default_template_runtime(
                     "lock_wait_seconds": lock_wait_seconds,
                 },
             )
-        template_index = load_default_template_index(base_dir, hint_cache=hint_cache)
+        template_index = load_default_template_index(
+            base_dir,
+            hint_cache=hint_cache,
+            require_production_pool=require_production_pool,
+        )
         if status_callback is not None:
             status_callback("rank_matrix_build", {"template_count": len(template_index)})
         matrices = rank_template_matrices(template_index)
@@ -344,6 +465,11 @@ def load_or_build_default_template_runtime(
             "cache_error": cache_error,
             "legacy_v1_cache_removed": _cleanup_legacy_template_runtime_cache(target_cache),
             "template_count": len(template_index),
+            **_production_pool_runtime_stats(
+                hint_cache,
+                matrices,
+                resource_signature=signature,
+            ),
             "matrix_dtype": str(cache_write_stats.get("matrix_dtype") or np.dtype(TEMPLATE_RUNTIME_CACHE_MATRIX_DTYPE).name),
             "build_seconds": round(time.perf_counter() - started_at, 3),
             "load_seconds": 0.0,
@@ -378,4 +504,5 @@ __all__ = (
     "template_runtime_hint_signature",
     "template_runtime_memory_profile",
     "template_runtime_resource_signature",
+    "vision_pool_fingerprint",
 )

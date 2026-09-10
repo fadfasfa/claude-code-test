@@ -70,6 +70,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+PendingJobCallback = Callable[[int, object | None], None]
 _preload_status_executor: ThreadPoolExecutor | None = None
 GAMEFLOW_VISIBILITY_POLL_SECONDS = 1.0
 LCU_LOCAL_REQUEST_TIMEOUT_SECONDS = 1.0
@@ -118,16 +119,21 @@ def resolve_client_overlay_policy(
     client_active: bool,
     overlay_active: bool,
     recent_client_context: bool,
+    phase: str = "",
+    user_hidden: bool = False,
+    right_space_available: bool = True,
+    manual_open: bool = False,
+    display_mode: str = "champ_select_only",
 ) -> tuple[bool, bool]:
-    """统一桌面伴生窗显隐：实际对局中必须隐藏客户端浮窗。"""
+    """桌面显隐粗门；呈现 owner 额外校验阶段身份、时效和物理矩形。"""
 
     game_visible = bool(game_hwnd_renderable or gameflow_in_progress or live_client_in_progress)
-    if game_visible:
+    if game_visible or user_hidden or not right_space_available:
         return False, False
     if not client_visible:
         return False, False
-    should_show = bool(client_active or overlay_active or recent_client_context)
-    return should_show, bool(client_active)
+    should_show = bool(phase == "champ_select" and client_active)
+    return should_show, False
 
 
 def _get_preload_status_executor() -> ThreadPoolExecutor:
@@ -331,9 +337,12 @@ class DataServiceHandle:
         response.raise_for_status()
         return response.json()
 
-    def refresh(self) -> dict:
+    def refresh(self, *, scope: str = "due", force: bool = False) -> dict:
         response = requests.post(
-            f"http://127.0.0.1:{self.port}/v1/actions/refresh", headers=self._headers(), timeout=2
+            f"http://127.0.0.1:{self.port}/v1/actions/refresh",
+            headers=self._headers(),
+            json={"scope": str(scope), "force": bool(force)},
+            timeout=2,
         )
         response.raise_for_status()
         return response.json()
@@ -601,6 +610,7 @@ def start_runtime_supervisor_process(
     parent_pid: int | None = None,
     timeout: float = 15.0,
     prewarm_templates: bool = False,
+    pending_job_callback: PendingJobCallback | None = None,
 ) -> RuntimeSupervisorHandle:
     """启动独立 Runtime Supervisor，并通过原子文件读取 bootstrap JSON。"""
 
@@ -627,6 +637,12 @@ def start_runtime_supervisor_process(
         encoding="utf-8",
         creationflags=_service_creationflags(),
     )
+    job_object = _WindowsJobObject(process)
+    if getattr(sys, "frozen", False) and not job_object.attached:
+        _cleanup_failed_bootstrap(process, verified_pid=0)
+        raise RuntimeError("Runtime Supervisor Windows Job Object 绑定失败")
+    if pending_job_callback is not None:
+        pending_job_callback(int(process.pid), job_object)
     deadline = time.time() + float(timeout)
     stdout_tail: list[str] = []
     stderr_tail: list[str] = []
@@ -662,9 +678,14 @@ def start_runtime_supervisor_process(
             session_nonce=str(payload["session_nonce"]),
             pid=int(payload["pid"]),
         )
-        handle.job_object = _WindowsJobObject(process)
+        handle.job_object = job_object
+        if pending_job_callback is not None:
+            pending_job_callback(int(process.pid), None)
         return handle
     except Exception:
+        job_object.close()
+        if pending_job_callback is not None:
+            pending_job_callback(int(process.pid), None)
         _cleanup_failed_bootstrap(process, verified_pid=verified_pid[-1] if verified_pid else 0)
         raise
     finally:
@@ -676,6 +697,7 @@ def start_data_service_process(
     parent_pid: int | None = None,
     timeout: float = 15.0,
     force_initial_refresh: bool = False,
+    pending_job_callback: PendingJobCallback | None = None,
 ) -> DataServiceHandle:
     """启动独立 DataService；bootstrap 后真实刷新在其后台线程继续。"""
 
@@ -703,6 +725,12 @@ def start_data_service_process(
         encoding="utf-8",
         creationflags=_service_creationflags(),
     )
+    job_object = _WindowsJobObject(process)
+    if getattr(sys, "frozen", False) and not job_object.attached:
+        _cleanup_failed_bootstrap(process, verified_pid=0)
+        raise RuntimeError("DataService Windows Job Object 绑定失败")
+    if pending_job_callback is not None:
+        pending_job_callback(int(process.pid), job_object)
     deadline = time.time() + timeout
     stdout_tail: list[str] = []
     stderr_tail: list[str] = []
@@ -737,9 +765,14 @@ def start_data_service_process(
             session_nonce=str(payload["session_nonce"]),
             pid=int(payload["pid"]),
         )
-        handle.job_object = _WindowsJobObject(process)
+        handle.job_object = job_object
+        if pending_job_callback is not None:
+            pending_job_callback(int(process.pid), None)
         return handle
     except Exception:
+        job_object.close()
+        if pending_job_callback is not None:
+            pending_job_callback(int(process.pid), None)
         _cleanup_failed_bootstrap(process, verified_pid=verified_pid[-1] if verified_pid else 0)
         raise
     finally:

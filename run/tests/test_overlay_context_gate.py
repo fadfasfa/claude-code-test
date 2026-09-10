@@ -66,6 +66,30 @@ def test_context_gate_accepts_first_trusted_publication() -> None:
     assert first.payload["champion_id"] == "4"
 
 
+def test_inactive_selection_is_not_missing_game_identity_and_still_resets() -> None:
+    gate = ContextRenderGate(confirm_ticks=2)
+    _evaluate(gate, _publication())
+    assert _evaluate(gate, _publication()).state == "confirmed"
+    inactive = gate.evaluate(_publication(), game_instance_id="game-1", window_hwnd=100, active=False, now=201)
+    assert inactive.reason == "context_selection_inactive"
+    assert inactive.state == "pending"
+    assert inactive.held is False
+    assert not inactive.payload.get("champion_id")
+    assert inactive.payload["game_instance_id"] == "game-1"
+    assert _evaluate(gate, _publication()).reason == "context_confirming"
+
+
+def test_missing_identity_stays_distinct_even_when_selection_inactive() -> None:
+    for active in (False, True):
+        for game_id, hwnd in (("", 100), ("game-1", 0), ("game-1", -1)):
+            decision = ContextRenderGate().evaluate(
+                _publication(), game_instance_id=game_id, window_hwnd=hwnd, active=active, now=201,
+            )
+            assert decision.reason == "context_game_identity_missing"
+            assert not decision.payload.get("champion_id")
+            assert decision.held is False
+
+
 def test_low_priority_old_champion_cannot_replace_confirmed_live_client() -> None:
     gate = ContextRenderGate()
     _evaluate(gate, _publication())
@@ -181,8 +205,14 @@ def test_broker_live_client_wins_and_revision_only_changes_on_semantic_change(tm
         game_instance_id="game-1",
         identity_quality="process",
     )
-    live = {"champion_id": "4", "champion_name": "崔斯特", "source": "live-client-data"}
-    lcu = {"champion_id": "157", "champion_name": "亚索", "source": "lcu-champ-select"}
+    live = {
+        "champion_id": "4",
+        "champion_name": "崔斯特",
+        "source": "live-client-data",
+        "player_level": 11,
+        "game_time_seconds": 50.0,
+    }
+    lcu = {"champion_id": "4", "champion_name": "崔斯特", "source": "lcu-champ-select"}
     times = iter((base_time, base_time + 1.0))
     broker = OverlayContextBroker(
         context_path=context_path,
@@ -196,13 +226,244 @@ def test_broker_live_client_wins_and_revision_only_changes_on_semantic_change(tm
     first = read_overlay_context(context_path)
     assert first["champion_id"] == "4"
     assert first["source"] == "live-client-data"
-    assert first["source_conflict"] is True
+    assert first["source_conflict"] is False
+    assert first["game_epoch_confirmation"] == "live_game_time"
     assert first["context_revision"] == 1
+    assert first["player_level"] == 11
 
+    live["player_level"] = 15
     assert broker.poll_once()
     second = read_overlay_context(context_path)
     assert second["publication_seq"] == 2
     assert second["context_revision"] == 1
+    assert second["player_level"] == 15
+
+
+def test_broker_fences_old_live_payload_when_new_game_process_appears(tmp_path: Path) -> None:
+    base_time = time.time()
+    probes = iter(
+        (
+            WindowProbeResult(
+                status="found",
+                hwnd=100,
+                client_rect=(0, 0, 1920, 1080),
+                process_id=10,
+                process_started_at=base_time - 100.0,
+                game_instance_id="game-1",
+                identity_quality="process",
+            ),
+            WindowProbeResult(
+                status="found",
+                hwnd=200,
+                client_rect=(0, 0, 1920, 1080),
+                process_id=20,
+                process_started_at=base_time + 1.0,
+                game_instance_id="game-2",
+                identity_quality="process",
+            ),
+            WindowProbeResult(
+                status="found",
+                hwnd=200,
+                client_rect=(0, 0, 1920, 1080),
+                process_id=20,
+                process_started_at=base_time + 1.0,
+                game_instance_id="game-2",
+                identity_quality="process",
+            ),
+        )
+    )
+    live_values = iter(
+        (
+            ({"champion_id": "804", "source": "live-client-data", "game_time_seconds": 50.0}, ""),
+            ({"champion_id": "804", "source": "live-client-data", "game_time_seconds": 1300.0}, ""),
+            ({"champion_id": "8", "source": "live-client-data", "game_time_seconds": 1.0}, ""),
+        )
+    )
+    clock = iter((base_time, base_time + 2.0, base_time + 3.0))
+    context_path = tmp_path / "context.json"
+    broker = OverlayContextBroker(
+        context_path=context_path,
+        window_probe=lambda: next(probes),
+        live_reader=lambda: next(live_values),
+        lcu_reader=lambda **_kwargs: (None, "lcu-no-session"),
+        now=lambda: next(clock),
+    )
+
+    assert broker.poll_once() is True
+    assert read_overlay_context(context_path)["champion_id"] == "804"
+    assert broker.poll_once() is False
+    fenced = read_overlay_context(context_path)
+    assert fenced["game_instance_id"] == "game-2"
+    assert fenced["champion_id"] == ""
+    assert fenced["error"] == "context_game_epoch_unconfirmed"
+    assert broker.poll_once() is True
+    assert read_overlay_context(context_path)["champion_id"] == "8"
+
+
+def test_broker_accepts_same_champion_in_consecutive_games_by_game_time(tmp_path: Path) -> None:
+    base_time = time.time()
+    probes = iter(
+        WindowProbeResult(
+            status="found",
+            hwnd=hwnd,
+            client_rect=(0, 0, 1920, 1080),
+            process_id=process_id,
+            process_started_at=started_at,
+            game_instance_id=game_id,
+            identity_quality="process",
+        )
+        for game_id, hwnd, process_id, started_at in (
+            ("game-1", 100, 10, base_time - 100.0),
+            ("game-2", 200, 20, base_time + 1.0),
+        )
+    )
+    live_values = iter(
+        (
+            ({"champion_id": "8", "source": "live-client-data", "game_time_seconds": 50.0}, ""),
+            ({"champion_id": "8", "source": "live-client-data", "game_time_seconds": 1.0}, ""),
+        )
+    )
+    clock = iter((base_time, base_time + 2.0))
+    context_path = tmp_path / "context.json"
+    broker = OverlayContextBroker(
+        context_path=context_path,
+        window_probe=lambda: next(probes),
+        live_reader=lambda: next(live_values),
+        lcu_reader=lambda **_kwargs: (None, "lcu-no-session"),
+        now=lambda: next(clock),
+    )
+
+    assert broker.poll_once() is True
+    first = read_overlay_context(context_path)
+    assert broker.poll_once() is True
+    second = read_overlay_context(context_path)
+    assert first["champion_id"] == second["champion_id"] == "8"
+    assert first["game_instance_id"] != second["game_instance_id"]
+
+
+def test_broker_game_time_tolerance_boundary_is_inclusive(tmp_path: Path) -> None:
+    base_time = time.time()
+
+    def publication(game_time: float, name: str) -> dict[str, object]:
+        path = tmp_path / name
+        probe = WindowProbeResult(
+            status="found",
+            hwnd=100,
+            client_rect=(0, 0, 1920, 1080),
+            process_id=10,
+            process_started_at=base_time - 10.0,
+            game_instance_id=name,
+            identity_quality="process",
+        )
+        broker = OverlayContextBroker(
+            context_path=path,
+            window_probe=lambda: probe,
+            live_reader=lambda: (
+                {"champion_id": "8", "source": "live-client-data", "game_time_seconds": game_time},
+                "",
+            ),
+            lcu_reader=lambda **_kwargs: (None, "lcu-no-session"),
+            now=lambda: base_time,
+        )
+        broker.poll_once()
+        return read_overlay_context(path)
+
+    assert publication(40.0, "inclusive.json")["champion_id"] == "8"
+    rejected = publication(40.001, "outside.json")
+    assert rejected["champion_id"] == ""
+    assert rejected["error"] == "context_game_epoch_unconfirmed"
+
+
+def test_broker_fails_closed_when_current_lcu_and_live_disagree(tmp_path: Path) -> None:
+    base_time = time.time()
+    probe = WindowProbeResult(
+        status="found",
+        hwnd=100,
+        client_rect=(0, 0, 1920, 1080),
+        process_id=10,
+        process_started_at=base_time - 100.0,
+        game_instance_id="game-1",
+        identity_quality="process",
+    )
+    context_path = tmp_path / "context.json"
+    broker = OverlayContextBroker(
+        context_path=context_path,
+        window_probe=lambda: probe,
+        live_reader=lambda: (
+            {"champion_id": "4", "source": "live-client-data", "game_time_seconds": 50.0},
+            "",
+        ),
+        lcu_reader=lambda **_kwargs: (
+            {"champion_id": "157", "source": "lcu-champ-select"},
+            "",
+        ),
+        now=lambda: base_time,
+    )
+
+    assert broker.poll_once() is False
+    publication = read_overlay_context(context_path)
+    assert publication["champion_id"] == ""
+    assert publication["error"] == "context_source_conflict"
+    assert publication["source_conflict"] is True
+
+
+def test_window_fallback_requires_matching_selection_ticket(tmp_path: Path) -> None:
+    base_time = time.time()
+    probe = WindowProbeResult(
+        status="found",
+        hwnd=100,
+        client_rect=(0, 0, 1920, 1080),
+        process_id=10,
+        process_started_at=0.0,
+        game_instance_id="fallback-game",
+        identity_quality="window_fallback",
+    )
+    live = {"champion_id": "8", "source": "live-client-data", "game_time_seconds": 1.0}
+
+    without_ticket = OverlayContextBroker(
+        context_path=tmp_path / "without.json",
+        window_probe=lambda: probe,
+        live_reader=lambda: (dict(live), ""),
+        lcu_reader=lambda **_kwargs: (None, "lcu-no-session"),
+        now=lambda: base_time,
+    )
+    assert without_ticket.poll_once() is False
+
+    with_ticket = OverlayContextBroker(
+        context_path=tmp_path / "with.json",
+        window_probe=lambda: probe,
+        live_reader=lambda: (dict(live), ""),
+        lcu_reader=lambda **_kwargs: ({"champion_id": "8", "source": "lcu-champ-select"}, ""),
+        now=lambda: base_time,
+    )
+    assert with_ticket.poll_once() is True
+    assert read_overlay_context(tmp_path / "with.json")["game_epoch_confirmation"] == "lcu_selection_ticket"
+
+
+def test_restarted_broker_confirms_mid_game_from_process_age(tmp_path: Path) -> None:
+    base_time = time.time()
+    probe = WindowProbeResult(
+        status="found",
+        hwnd=100,
+        client_rect=(0, 0, 1920, 1080),
+        process_id=10,
+        process_started_at=base_time - 600.0,
+        game_instance_id="game-1",
+        identity_quality="process",
+    )
+    broker = OverlayContextBroker(
+        context_path=tmp_path / "context.json",
+        window_probe=lambda: probe,
+        live_reader=lambda: (
+            {"champion_id": "55", "source": "live-client-data", "game_time_seconds": 590.0},
+            "",
+        ),
+        lcu_reader=lambda **_kwargs: (None, "lcu-no-session"),
+        now=lambda: base_time,
+    )
+
+    assert broker.poll_once() is True
+    assert read_overlay_context(tmp_path / "context.json")["champion_id"] == "55"
 
 
 def test_lcu_selection_ticket_cannot_cross_game_instance(tmp_path: Path) -> None:

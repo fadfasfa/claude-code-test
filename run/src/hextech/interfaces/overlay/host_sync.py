@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import json
 import queue
@@ -14,31 +15,35 @@ from hextech.contracts import GameSessionState, PresentationMode, VisionSlotStat
 from hextech.interfaces.overlay.gameflow import GameflowState
 from hextech.interfaces.overlay.host_common import WindowTargetPoller
 from hextech.interfaces.overlay.host_platform import (
-    _apply_overlay_rect,
-    _ensure_overlay_window_styles,
     _is_game_window_foreground,
     _root_hwnd,
+)
+from hextech.interfaces.overlay.host_presentation import (
+    ensure_overlay_presentation,
+    hide_overlay_presentation,
+    presentation_status,
 )
 from hextech.interfaces.overlay.host_visibility import (
     _log_visibility_diagnostic,
     _normalize_gameflow_state,
     _query_gameflow_in_progress,
     _refresh_gameflow_in_progress,
-    _show_overlay_window,
     _snapshot_has_complete_ready_slots,
     _snapshot_ready_slot_count,
     _snapshot_selection_window_active,
-    _target_overlay_geometry,
     _write_host_visibility_status,
     decide_visibility,
 )
 from hextech.interfaces.overlay.report_writer import OverlayReportWriter
+from hextech.interfaces.overlay.host_render_state import render_diagnostic_payload
 from hextech.modules.session.build_identity import (
     OVERLAY_SESSION_REPORT_SCHEMA_VERSION,
     current_build_id,
 )
 from hextech.modules.session.evidence import build_evidence_bundle, build_render_signature
+from hextech.modules.data.ports.paths import get_var_dir
 from hextech.modules.vision.window import is_window_renderable
+from .host_geometry import refresh_bound_geometry
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +70,7 @@ def _sync_event_visibility(
     *,
     apply_window: bool = True,
     resolved_should_show: bool | None = None,
+    canvas: tk.Canvas | None = None,
 ) -> bool:
     now = time.time()
     event_visible = bool(snapshot.get("visible"))
@@ -84,11 +90,19 @@ def _sync_event_visibility(
     transient_pause = bool(source.get("transient_pause"))
     stale_hold_active = bool(source.get("stale_event_hold_active"))
 
-    if selection_window_active is True and not event_error and not blocking_modal and not transient_pause:
+    if (
+        selection_window_active is True
+        and ready_slots > 0
+        and not event_error
+        and not blocking_modal
+        and not transient_pause
+    ):
         if not stale_hold_active:
             visibility["last_active_event"] = deepcopy(snapshot)
             visibility.pop("event_stale_hold_until", None)
-    elif selection_window_active is False or blocking_modal:
+    elif selection_window_active is False or blocking_modal or (
+        selection_window_active is True and ready_slots <= 0
+    ):
         visibility.pop("last_active_event", None)
         visibility.pop("event_stale_hold_until", None)
         stale_hold_active = False
@@ -153,7 +167,19 @@ def _sync_event_visibility(
             transient_pause=transient_pause,
             diagnostic_mode=bool(config.get("diagnostic_mode")),
             stale_event_hold=stale_hold_active,
+            selection_type=str(snapshot.get("selection_type") or ""),
+            game_window_mode_status=str(
+                visibility.get("game_window_mode_status") or "supported"
+            ),
         )
+    capture_exclusion = visibility.get("capture_exclusion")
+    if (
+        bool(config.get("capture_exclusion_required", False))
+        and isinstance(capture_exclusion, Mapping)
+        and str(capture_exclusion.get("status") or "") != "applied"
+    ):
+        should_show = False
+        reason = "capture_exclusion_unavailable"
     visibility["event_visible"] = event_visible
     visibility["gameflow_state"] = gameflow_state.value
     visibility["gameflow_in_progress"] = gameflow_state is GameflowState.IN_PROGRESS
@@ -172,18 +198,17 @@ def _sync_event_visibility(
     else:
         visibility.pop("active_target_missing_since", None)
     visibility["render_full_overlay"] = bool(should_show)
-    _write_host_visibility_status(visibility, snapshot, now=now, should_show=should_show, reason=reason)
     if not apply_window:
-        _log_visibility_diagnostic(visibility, snapshot, now=now, should_show=should_show, reason=reason)
-        return should_show
-    if visibility.get("window_visible") is should_show:
+        _write_host_visibility_status(visibility, snapshot, now=now, should_show=should_show, reason=reason)
         _log_visibility_diagnostic(visibility, snapshot, now=now, should_show=should_show, reason=reason)
         return should_show
     if should_show:
-        _show_overlay_window(root, config, visibility)
+        ensure_overlay_presentation(root, canvas, config, visibility)
     else:
-        root.withdraw()
+        hide_overlay_presentation(root, visibility)
+    # 兼容旧字段：它只表示本 tick 的显示请求，不代表用户实际看见像素。
     visibility["window_visible"] = should_show
+    _write_host_visibility_status(visibility, snapshot, now=now, should_show=should_show, reason=reason)
     _log_visibility_diagnostic(visibility, snapshot, now=now, should_show=should_show, reason=reason)
     return should_show
 
@@ -217,7 +242,7 @@ def _write_real_session_evidence(
     *,
     diagnostic: bool = False,
 ) -> None:
-    """三槽渲染连续稳定两个 tick 后，延迟抓取同 revision 的真实证据。"""
+    """首个 composed READY revision 立即写 JSON；显式截图仍等待两个稳定 tick。"""
 
     vision = state.vision
     if (
@@ -230,6 +255,8 @@ def _write_real_session_evidence(
         or any(slot.state is not VisionSlotState.READY for slot in vision.slots)
     ):
         return
+    if str(presentation_status(visibility).get("state") or "") != "composed":
+        return
     revision = max(1, int(vision.selection_revision))
     rows = [dict(item) for item in model.get("stats", []) if isinstance(item, Mapping)]
     render_signature = build_render_signature(state, rows)
@@ -238,7 +265,7 @@ def _write_real_session_evidence(
     else:
         visibility["current_render_signature"] = render_signature
         visibility["stable_render_ticks"] = 1
-    if int(visibility.get("stable_render_ticks") or 0) < 2:
+    if diagnostic and int(visibility.get("stable_render_ticks") or 0) < 2:
         return
     key = (str(state.session_id), str(state.generation_id), int(vision.epoch), revision, render_signature)
     if visibility.get("last_evidence_key") == key:
@@ -297,7 +324,10 @@ def _write_real_session_evidence(
     )
     bbox = None
     screenshot_name = ""
-    if diagnostic:
+    screenshot_epoch_key = (str(state.session_id), int(vision.epoch))
+    captured_epochs = visibility.setdefault("diagnostic_screenshot_epochs", set())
+    screenshot_allowed = isinstance(captured_epochs, set) and screenshot_epoch_key not in captured_epochs
+    if diagnostic and screenshot_allowed:
         left, top = root.winfo_rootx(), root.winfo_rooty()
         bbox = (left, top, left + root.winfo_width(), top + root.winfo_height())
         screenshot_name = f"{stem}.png"
@@ -309,6 +339,8 @@ def _write_real_session_evidence(
         screenshot_bbox=bbox,
     ):
         visibility["last_evidence_key"] = key
+        if screenshot_name and isinstance(captured_epochs, set):
+            captured_epochs.add(screenshot_epoch_key)
     status = writer.status()
     visibility["report_queue_depth"] = status["queue_depth"]
     visibility["report_dropped_count"] = status["dropped_count"]
@@ -332,6 +364,11 @@ def _write_overlay_session_report(
     slots = snapshot.get("slots") if isinstance(snapshot.get("slots"), list) else []
     source = snapshot.get("source") if isinstance(snapshot.get("source"), Mapping) else {}
     rows = model.get("stats") if isinstance(model, Mapping) and isinstance(model.get("stats"), list) else []
+    recommendation_rows = (
+        list(state.recommendation.augment_slots)
+        if state is not None and state.recommendation is not None
+        else []
+    )
     def _safe_slot_number(value: object, fallback: int) -> int:
         try:
             return int(value)
@@ -342,10 +379,30 @@ def _write_overlay_session_report(
     # vision 槽（识别身份）、render model 行（数据状态与命中 hint）、context
     # （当前英雄）。否则这些字段恒为空串，无法从报告诊断“识别到但无数据”。
     context_champion_id = str(context.get("champion_id") or "") if isinstance(context, Mapping) else ""
-    source_generation_id = str(source.get("generation_id") or "")
+    vision_pool_generation_id = str(
+        source.get("vision_pool_generation_id")
+        or source.get("data_generation_id")
+        or visibility.get("vision_pool_generation_id")
+        or ""
+    )
+    vision_pool_fingerprint = str(source.get("vision_pool_fingerprint") or "")
+    stats_generation_id = str(
+        visibility.get("stats_generation_id")
+        or (state.generation_id if state is not None else "")
+        or source.get("stats_generation_id")
+        or source.get("generation_id")
+        or ""
+    )
+    observed_data_generation_id = str(
+        source.get("observed_data_generation_id") or stats_generation_id
+    )
 
     def _model_row(index: int) -> Mapping[str, Any]:
         row = rows[index] if index < len(rows) else None
+        return row if isinstance(row, Mapping) else {}
+
+    def _recommendation_row(index: int) -> Mapping[str, Any]:
+        row = recommendation_rows[index] if index < len(recommendation_rows) else None
         return row if isinstance(row, Mapping) else {}
 
     safe_slots = [
@@ -353,18 +410,39 @@ def _write_overlay_session_report(
             "slot": _safe_slot_number(item.get("slot"), index),
             "state": str(item.get("state") or ""),
             "name": str(item.get("name") or "")[:80],
-            "data_status": str(item.get("data_status") or _model_row(index).get("status_code") or ""),
-            "data_reason": str(item.get("data_reason") or _model_row(index).get("status_text") or ""),
-            "generation_id": str(item.get("generation_id") or source_generation_id),
+            "data_status": str(
+                item.get("data_status")
+                or _recommendation_row(index).get("data_status")
+                or _model_row(index).get("status_code")
+                or ""
+            ),
+            "data_reason": str(
+                item.get("data_reason")
+                or _recommendation_row(index).get("data_reason")
+                or _model_row(index).get("status_text")
+                or ""
+            ),
+            "generation_id": str(item.get("generation_id") or stats_generation_id),
+            "vision_pool_generation_id": vision_pool_generation_id,
+            "stats_generation_id": stats_generation_id,
             "vision_id": str(item.get("vision_id") or item.get("augment_id") or ""),
-            "canonical_id": str(item.get("canonical_id") or _model_row(index).get("hint_id") or ""),
+            "canonical_id": str(
+                item.get("canonical_id")
+                or _recommendation_row(index).get("canonical_id")
+                or _model_row(index).get("hint_id")
+                or ""
+            ),
             "champion_id": str(item.get("champion_id") or context_champion_id),
             "visual_variant_id": str(item.get("visual_variant_id") or ""),
             "acceptance_rule": str(item.get("acceptance_rule") or ""),
             "evidence_grade": str(item.get("evidence_grade") or ""),
             "required_frames": item.get("required_frames"),
             "observed_frames": item.get("observed_frames"),
+            "slot_generation": item.get("slot_generation"),
+            "temporal_state": str(item.get("temporal_state") or ""),
             "replacement_reason": str(item.get("replacement_reason") or ""),
+            "rejection_reason": str(item.get("rejection_reason") or ""),
+            "diagnostic": str(item.get("diagnostic") or ""),
             "channel_margins": {
                 str(channel_name): channel.get("margin")
                 for channel_name, channel in (
@@ -392,24 +470,76 @@ def _write_overlay_session_report(
             "slot": _safe_slot_number(item.get("slot"), index),
             "status_code": str(item.get("status_code") or ""),
             "status_text": str(item.get("status_text") or "")[:80],
+            "stats_source": str(_recommendation_row(index).get("stats_source") or ""),
+            "stats_scope": str(_recommendation_row(index).get("stats_scope") or ""),
+            "stats_generation_id": str(
+                _recommendation_row(index).get("stats_generation_id")
+                or stats_generation_id
+            ),
+            "source_run_id": str(_recommendation_row(index).get("source_run_id") or ""),
+            "source_freshness": str(_recommendation_row(index).get("source_freshness") or ""),
+            "data_reason": str(_recommendation_row(index).get("data_reason") or "")[:80],
+            "source_data_at": str(_recommendation_row(index).get("source_data_at") or ""),
+            "requested_stage": _recommendation_row(index).get("requested_stage"),
+            "fallback_reason": str(
+                _recommendation_row(index).get("stats_fallback_reason") or ""
+            )[:80],
+            "sample_count": (
+                (_recommendation_row(index).get("stats") or {}).get("sample_count")
+                if isinstance(_recommendation_row(index).get("stats"), Mapping)
+                else None
+            ),
+            "sample_quality": (
+                str((_recommendation_row(index).get("stats") or {}).get("sample_quality") or "")
+                if isinstance(_recommendation_row(index).get("stats"), Mapping)
+                else ""
+            ),
+            "stats_tone": str(item.get("stats_tone") or "default"),
+            "low_sample_outline": bool(item.get("low_sample_outline")),
         }
         for index, item in enumerate(rows[:3])
         if isinstance(item, Mapping)
     ]
     session_id = str(source.get("session_id") or (state.session_id if state is not None else "") or "")
-    generation_id = str(
-        source.get("generation_id") or (state.generation_id if state is not None else "") or ""
+    generation_id = stats_generation_id
+    presentation = presentation_status(visibility)
+    try:
+        dpi_scale = float(source.get("dpi_scale") or 0.0)
+    except (TypeError, ValueError):
+        dpi_scale = 0.0
+    typography = (
+        dict(visibility.get("typography") or {})
+        if isinstance(visibility.get("typography"), Mapping)
+        else {}
+    )
+    composition_probe = (
+        presentation.get("composition_probe")
+        if isinstance(presentation.get("composition_probe"), Mapping)
+        else {}
     )
     signature_payload = {
         "session_id": session_id,
         "generation_id": generation_id,
+        "vision_pool_generation_id": vision_pool_generation_id,
+        "vision_pool_fingerprint": vision_pool_fingerprint,
+        "observed_data_generation_id": observed_data_generation_id,
+        "stats_generation_id": stats_generation_id,
         "selection_epoch": int(source.get("selection_epoch") or 0),
         "selection_revision": int(source.get("selection_revision") or 0),
+        "dpi_scale": dpi_scale,
+        "typography": typography,
         "visible_reason": str(visibility.get("visibility_reason") or ""),
         "event_error": str(snapshot.get("error") or ""),
         "slots": safe_slots,
         "rows": safe_rows,
         "context": str((context or {}).get("error") or "") if isinstance(context, Mapping) else "",
+        "presentation": {
+            "state": str(presentation.get("state") or "hidden"),
+            "failure_reason": str(presentation.get("failure_reason") or ""),
+            "composition_probe": str(composition_probe.get("state") or "not_run"),
+            "mapped_at": float(presentation.get("mapped_at") or 0.0),
+            "presented_at": float(presentation.get("presented_at") or 0.0),
+        },
     }
     signature = json.dumps(signature_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if visibility.get("last_overlay_session_report_signature") == signature:
@@ -419,13 +549,53 @@ def _write_overlay_session_report(
         return False
     enqueued_at = time.time()
     event_timing = snapshot.get("timing") if isinstance(snapshot.get("timing"), Mapping) else {}
+    diagnostic_contract_error = ""
+    if (
+        str(event_timing.get("observation_kind") or "recognition") == "recognition"
+        and str(event_timing.get("capture_status") or "captured") == "captured"
+        and time.time() - float(event_timing.get("event_written_at") or 0.0) >= 1.0
+    ):
+        epoch = int(source.get("selection_epoch") or 0)
+        sidecar_instance_id = str(source.get("sidecar_instance_id") or "")
+        build_id = str(source.get("build_id") or snapshot.get("build_id") or current_build_id())
+        if session_id and epoch > 0 and sidecar_instance_id:
+            session_key = hashlib.sha256(session_id.encode("utf-8", errors="replace")).hexdigest()[:12]
+            build_key = hashlib.sha256(build_id.encode("utf-8", errors="replace")).hexdigest()[:8]
+            instance_key = hashlib.sha256(
+                sidecar_instance_id.encode("utf-8", errors="replace")
+            ).hexdigest()[:8]
+            timeline = (
+                get_var_dir()
+                / "state"
+                / "overlay_vision_timelines"
+                / f"selection-{session_key}-{build_key}-{instance_key}-e{epoch:04d}.jsonl"
+            )
+            if not timeline.is_file():
+                diagnostic_contract_error = "timeline_missing"
     report = {
         "schema_version": OVERLAY_SESSION_REPORT_SCHEMA_VERSION,
         "build_id": str(snapshot.get("build_id") or current_build_id()),
         "recorded_at": enqueued_at,
         "diagnostic": bool(diagnostic),
+        "diagnostic_contract_error": diagnostic_contract_error,
+        "game_window_mode": {
+            "status": str(visibility.get("game_window_mode_status") or "unknown"),
+            "mode": str(visibility.get("game_window_mode") or "unknown"),
+            "reason": str(visibility.get("game_window_mode_reason") or ""),
+            "source": str(visibility.get("game_window_mode_source") or "game_cfg"),
+            "observed_at": float(visibility.get("game_window_mode_observed_at") or 0.0),
+        },
         "session_id": session_id,
         "generation_id": generation_id,
+        "vision_pool_generation_id": vision_pool_generation_id,
+        "vision_pool_fingerprint": vision_pool_fingerprint,
+        "observed_data_generation_id": observed_data_generation_id,
+        "stats_generation_id": stats_generation_id,
+        "generation_roles": {
+            "vision_pool_generation_id": "sidecar_template_runtime",
+            "stats_generation_id": "host_game_session",
+            "generation_id": "legacy_stats_compat",
+        },
         "event": {
             "schema_version": int(snapshot.get("schema_version") or 0),
             "ok": bool(snapshot.get("ok")),
@@ -441,31 +611,66 @@ def _write_overlay_session_report(
             "tag": str(source.get("tag") or ""),
             "reason": str(source.get("reason") or ""),
             "generation_id": generation_id,
+            "vision_pool_generation_id": vision_pool_generation_id,
+            "vision_pool_fingerprint": vision_pool_fingerprint,
+            "observed_data_generation_id": observed_data_generation_id,
+            "stats_generation_id": stats_generation_id,
             "selection_epoch": int(source.get("selection_epoch") or 0),
             "selection_revision": int(source.get("selection_revision") or 0),
+            "dpi_scale": dpi_scale,
             "scene_state": str(source.get("scene_state") or ""),
             "selection_window_active": bool(source.get("selection_window_active")),
             "scene_temporal_state": str(source.get("scene_temporal_state") or ""),
+            "transition_source": str(source.get("transition_source") or ""),
+            "transition_slot": source.get("transition_slot"),
+            "mouse_event_sequence": int(source.get("mouse_event_sequence") or 0),
+            "mouse_event_observed_at": float(source.get("mouse_event_observed_at") or 0.0),
         },
         "visibility": {
             "reason": str(visibility.get("visibility_reason") or ""),
+            "should_show": bool(visibility.get("window_visible")),
             "context_gate_state": str(visibility.get("context_gate_state") or ""),
             "context_gate_reason": str(visibility.get("context_gate_reason") or ""),
+            "vision_pool_generation_id": vision_pool_generation_id,
+            "stats_generation_id": stats_generation_id,
         },
         "context": {
             "ok": bool((context or {}).get("ok")) if isinstance(context, Mapping) else False,
             "champion_id": str((context or {}).get("champion_id") or "") if isinstance(context, Mapping) else "",
             "error": str((context or {}).get("error") or "") if isinstance(context, Mapping) else "",
+            "player_level": (context or {}).get("player_level") if isinstance(context, Mapping) else None,
         },
+        "stats_scope": dict(visibility.get("pinned_stats_scope") or {})
+        if isinstance(visibility.get("pinned_stats_scope"), Mapping)
+        else {},
+        "presentation": presentation,
         "slots": safe_slots,
-        "render": {"rows": safe_rows},
+        "render": {
+            "rows": safe_rows,
+            "stage_indicator": dict(model.get("stage_indicator") or {})
+            if isinstance(model, Mapping) and isinstance(model.get("stage_indicator"), Mapping)
+            else {},
+            "data_notice": dict(model.get("data_notice") or {})
+            if isinstance(model, Mapping) and isinstance(model.get("data_notice"), Mapping)
+            else {},
+            "typography": typography,
+            **render_diagnostic_payload(model, visibility),
+        },
         "timing": {
             **{str(key): value for key, value in event_timing.items()},
             "host_read_at": float(visibility.get("host_read_at") or 0.0),
             "context_confirmed_at": float(visibility.get("context_confirmed_at") or 0.0),
             "draw_started_at": float(visibility.get("draw_started_at") or 0.0),
             "draw_completed_at": float(visibility.get("draw_completed_at") or 0.0),
-            "presented_at": float(visibility.get("last_presented_at") or 0.0),
+            **(dict(presentation.get("bound_timing") or {}) if presentation.get("state") != "hidden" else {}),
+            "mapped_at": float(presentation.get("mapped_at") or 0.0),
+            "composition_checked_at": float(
+                presentation.get("composition_checked_at") or 0.0
+            ),
+            "presented_at": float(presentation.get("presented_at") or 0.0),
+            "presented_event_written_at": float(
+                presentation.get("event_written_at") or 0.0
+            ),
             "report_enqueued_at": enqueued_at,
         },
         "screenshot": "",
@@ -517,7 +722,7 @@ def _refresh_target_window(
     visibility: dict[str, Any],
     snapshot: Mapping[str, Any] | None = None,
 ) -> None:
-    """Sidecar observation 优先，本地 Poller 仅作启动与失联 fallback。"""
+    """Sidecar 优先绑定身份；几何在绘制前查询同一 HWND，不能沿用事件旧坐标。"""
 
     poller = visibility.get("window_target_poller")
     if isinstance(poller, WindowTargetPoller):
@@ -539,6 +744,23 @@ def _refresh_target_window(
         "host_scan" if host_target is not None else "none"
     )
     visibility["window_probe"] = dict(poller_status)
+    visibility["game_window_mode_status"] = str(
+        poller_status.get("game_window_mode_status") or "supported"
+    )
+    visibility["game_window_mode"] = str(
+        poller_status.get("game_window_mode") or "borderless"
+    )
+    visibility["game_window_mode_reason"] = str(
+        poller_status.get("game_window_mode_reason") or ""
+    )
+    visibility["game_window_mode_source"] = str(
+        poller_status.get("game_window_mode_source") or "game_cfg"
+    )
+    visibility["game_window_mode_observed_at"] = float(
+        poller_status.get("game_window_mode_observed_at")
+        or poller_status.get("last_probe_at")
+        or 0.0
+    )
     snapshot_source = (snapshot or {}).get("source") if isinstance((snapshot or {}).get("source"), Mapping) else {}
     sidecar_game_instance = str(snapshot_source.get("game_instance_id") or "")
     host_game_instance = str(poller_status.get("game_instance_id") or "")
@@ -548,19 +770,4 @@ def _refresh_target_window(
     visibility["game_identity_desync"] = bool(
         sidecar_game_instance and host_game_instance and sidecar_game_instance != host_game_instance
     )
-    if target is None:
-        if isinstance(poller, WindowTargetPoller):
-            visibility["target_hwnd"] = None
-            visibility["target_rect"] = None
-            visibility["pending_geometry"] = ""
-        return
-    hwnd, rect = target
-    visibility["target_hwnd"] = hwnd
-    visibility["target_rect"] = rect
-    next_geometry = _target_overlay_geometry(rect, dict(config))
-    visibility["pending_geometry"] = next_geometry
-    if visibility.get("window_visible") and next_geometry != visibility.get("applied_geometry"):
-        root.geometry(next_geometry)
-        _apply_overlay_rect(root, rect)
-        _ensure_overlay_window_styles(root, config)
-        visibility["applied_geometry"] = next_geometry
+    refresh_bound_geometry(root, config, visibility, target)

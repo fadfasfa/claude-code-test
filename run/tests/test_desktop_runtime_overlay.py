@@ -29,7 +29,7 @@ class DesktopRuntimeOverlayTests(unittest.TestCase):
         targets = []
 
         class FakeThread:
-            def __init__(self, *, target, args, daemon):
+            def __init__(self, *, target, args, daemon, name=None):
                 targets.append((target.__module__, target.__name__, args, daemon))
 
             def start(self):
@@ -38,10 +38,12 @@ class DesktopRuntimeOverlayTests(unittest.TestCase):
         ui = SimpleNamespace(threads=[])
         with patch.object(runtime_services.threading, "Thread", FakeThread):
             runtime_services.initialize_core_threads(ui)
+            runtime_services.initialize_core_threads(ui)
 
         assert [(module, name) for module, name, _args, _daemon in targets] == [
             ("hextech.interfaces.desktop.runtime_window", "lcu_polling_loop"),
             ("hextech.interfaces.desktop.runtime_window", "window_sync_loop"),
+            ("hextech.interfaces.desktop.runtime_window", "candidate_update_loop"),
             ("hextech.interfaces.desktop.runtime_interaction", "run_terminal_loop"),
         ]
         assert all(args == (ui,) and daemon for _module, _name, args, daemon in targets)

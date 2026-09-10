@@ -91,4 +91,12 @@ def read_sidecar_liveness(
         "generation": str(payload.get("generation") or ""),
         "schema_version": schema_version,
         "build_id": str(payload.get("build_id") or ""),
+        "sidecar_instance_id": str(payload.get("sidecar_instance_id") or ""),
+        "vision_pool_fingerprint": str(payload.get("vision_pool_fingerprint") or ""),
+        "vision_pool_origin_generation_id": str(
+            payload.get("vision_pool_origin_generation_id")
+            or payload.get("vision_pool_generation_id")
+            or ""
+        ),
+        "observed_data_generation_id": str(payload.get("observed_data_generation_id") or ""),
     }

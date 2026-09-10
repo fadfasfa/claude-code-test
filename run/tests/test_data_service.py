@@ -136,7 +136,7 @@ def test_refresh_and_policy_actions_are_serialized(tmp_path: Path) -> None:
     release = threading.Event()
     observed: list[str] = []
 
-    def refresh_action(_force: bool) -> dict[str, object]:
+    def refresh_action(_force: bool, _scope: str) -> dict[str, object]:
         observed.append("refresh")
         entered.set()
         release.wait(timeout=2)
@@ -171,7 +171,7 @@ def test_private_policy_generation_updates_public_startup_status(tmp_path: Path)
     service = DataServiceCore(
         publisher=publisher,
         private_stats_enabled=True,
-        refresh_action=lambda _force: pytest.fail("展示策略不得触发刷新"),
+        refresh_action=lambda _force, _scope: pytest.fail("展示策略不得触发刷新"),
         initial_result={"state": "ready", "generation_id": manifest.generation_id},
     )
 
@@ -368,7 +368,7 @@ def _publishing_refresh_action(
 ):
     counter = 0
 
-    def refresh(force: bool) -> dict[str, object]:
+    def refresh(force: bool, _scope: str) -> dict[str, object]:
         nonlocal counter
         counter += 1
         manifest = _publish(publisher, payload_factory(), f"refresh-{counter}")
@@ -411,7 +411,7 @@ def test_service_publishes_source_summary(tmp_path: Path) -> None:
     publisher = DataSnapshotPublisher(tmp_path)
     source = _provenance("summary")
 
-    def refresh_action(_force: bool) -> dict[str, object]:
+    def refresh_action(_force: bool, _scope: str) -> dict[str, object]:
         manifest = publisher.publish(_build_payload(True), source_files=(source,))
         return {"state": "ready", "generation_id": manifest.generation_id}
 
@@ -431,7 +431,7 @@ def test_private_stats_action_does_not_refresh_or_change_generation(tmp_path: Pa
     service = DataServiceCore(
         publisher=publisher,
         private_stats_enabled=False,
-        refresh_action=lambda _force: pytest.fail("展示策略不得触发来源刷新"),
+        refresh_action=lambda _force, _scope: pytest.fail("展示策略不得触发来源刷新"),
         initial_result={"state": "ready", "generation_id": manifest.generation_id},
     )
 

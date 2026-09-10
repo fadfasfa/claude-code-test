@@ -112,6 +112,7 @@ def _empty_slot(index: int, *, state: str = "empty") -> dict[str, Any]:
         "evidence_grade": "",
         "required_frames": 0,
         "observed_frames": 0,
+        "slot_generation": 0,
         "replacement_reason": "",
         "candidate_identity": "",
         "rejection_reason": "",
@@ -317,6 +318,7 @@ def normalize_overlay_slot(
         "evidence_grade": _clean_text(raw_slot.get("evidence_grade"), limit=16),
         "required_frames": required_frames,
         "observed_frames": observed_frames,
+        "slot_generation": non_negative_int("slot_generation"),
         "replacement_reason": _clean_text(raw_slot.get("replacement_reason"), limit=80),
         "candidate_identity": _clean_text(raw_slot.get("candidate_identity"), limit=80),
         "rejection_reason": _clean_text(raw_slot.get("rejection_reason"), limit=80),
@@ -461,7 +463,12 @@ def write_overlay_event(event_payload: Mapping[str, Any], path: str | Path | Non
         payload["slots"].append(_empty_slot(len(payload["slots"])))
     payload["schema_version"] = SCHEMA_VERSION
     timing = payload.get("timing") if isinstance(payload.get("timing"), Mapping) else {}
-    payload["timing"] = {**dict(timing), "event_written_at": time.time()}
+    written_at = time.time()
+    payload["timing"] = {**dict(timing), "event_written_at": written_at}
+    # Sidecar 在写用户事件后才异步提交 timeline；把同一个精确时间回写到
+    # 可变输入，避免 timeline 与落盘事件各自生成近似时间而无法绑定。
+    if isinstance(event_payload, dict):
+        event_payload["timing"] = dict(payload["timing"])
     atomic_write_json(target, payload, ensure_ascii=False, indent=2)
     return target
 

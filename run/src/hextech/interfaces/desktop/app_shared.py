@@ -24,7 +24,12 @@ from hextech.modules.session.settings import load_ui_feature_flags, save_ui_feat
 from . import runtime as ui_runtime
 
 from .startup_timing import StartupTimingProbe, build_desktop_runtime_state_path
-from .single_instance import DesktopInstanceAlreadyRunning, DesktopInstanceOwner
+from .single_instance import (
+    DesktopBuildConflict,
+    DesktopInstanceAlreadyRunning,
+    DesktopInstanceOwner,
+    show_build_conflict_message,
+)
 
 if TYPE_CHECKING:
     from .service_manager import ServiceManager
@@ -120,6 +125,17 @@ def parse_generation_created_ts(created_at: object) -> float:
     return parsed.timestamp()
 
 
+def snapshot_data_timestamp(status: Mapping[str, object]) -> float:
+    """桌面时效优先使用 ARAMKit 的真实 data_at，旧代缺字段才回退 generation。"""
+
+    source_status = status.get("source_status")
+    aramkit = source_status.get("aramkit") if isinstance(source_status, Mapping) else None
+    data_at = aramkit.get("data_at") if isinstance(aramkit, Mapping) else None
+    if str(data_at or "").strip():
+        return parse_generation_created_ts(data_at)
+    return parse_generation_created_ts(status.get("created_at"))
+
+
 def format_data_age_suffix(created_ts: float, now_ts: float) -> str:
     """状态行的数据时效后缀：小时级粒度，≥24h 换天，未知返回空串。"""
 
@@ -131,6 +147,29 @@ def format_data_age_suffix(created_ts: float, now_ts: float) -> str:
     if hours >= 24:
         return f" · 数据 {hours // 24} 天前"
     return f" · 数据 {hours} 小时前"
+
+
+def format_data_refresh_status(status: Mapping[str, object]) -> tuple[str, str]:
+    """把 DataService refresh_status 压成桌面单行状态与颜色。"""
+
+    state = str(status.get("state") or "idle")
+    scope = str(status.get("scope") or "due")
+    reason = str(status.get("reason_code") or "")
+    if state in {"queued", "running"}:
+        if reason == "resumed_after_game":
+            return ("赛后继续刷新", UI_COLORS["warn"])
+        if scope == "core":
+            return ("正在刷新核心数据", UI_COLORS["warn"])
+        return ("正在检查数据更新", UI_COLORS["warn"])
+    if state == "deferred":
+        return ("对局中暂停，赛后继续", UI_COLORS["warn"])
+    if state == "completed":
+        return ("数据已更新", UI_COLORS["green"])
+    if state == "unchanged":
+        return ("数据已检查，无变化", UI_COLORS["green"])
+    if state == "failed":
+        return ("刷新失败，沿用旧数据", UI_COLORS["error"])
+    return ("", UI_COLORS["muted"])
 
 
 def resolve_overlay_follow_height(
@@ -157,6 +196,9 @@ def _format_game_overlay_host_reason(reason: str) -> str:
         "waiting_gameflow": "等待游戏状态",
         "game_window_missing": "等待游戏窗口",
         "game_window_not_renderable": "游戏窗口不可渲染",
+        "unsupported_fullscreen_mode": "请在游戏内切换无边框",
+        # 无法确认时仍由 Host fail-closed；Desktop 不持续占用状态栏催促用户。
+        "game_window_mode_unknown": "",
         "game_not_foreground": "切回游戏后显示",
         "selection_window_inactive": "等待海克斯选择",
         "waiting_selection": "等待海克斯选择",
@@ -222,6 +264,15 @@ def _format_supervisor_game_overlay_status(overlay: Mapping[str, object]) -> tup
             return ("识别失效 · 自动恢复中", UI_COLORS["warn"])
         if bool(overlay.get("build_mismatch")):
             return ("构建不一致 · 请重新部署", UI_COLORS["error"])
+        if functional_reason == "unsupported_fullscreen_mode":
+            return (
+                "游戏当前为全屏模式，请在游戏内视频设置切换为无边框",
+                UI_COLORS["warn"],
+            )
+        if functional_reason == "game_window_mode_unknown" or (
+            not functional_reason and visible_reason == "game_window_mode_unknown"
+        ):
+            return ("", UI_COLORS["muted"])
         if functional_status == "failed":
             return (f"显示异常 · {functional_reason or 'Host 功能不可用'}", UI_COLORS["error"])
         if context_status == "context_missing":

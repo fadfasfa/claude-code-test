@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from hextech.contracts import (
     AugmentId,
     ChampionId,
@@ -15,15 +17,132 @@ from hextech.contracts import (
     VisionSlot,
     VisionSlotState,
 )
-from hextech.interfaces.overlay.renderer import _synergy_stale_text, build_render_model
+from hextech.interfaces.overlay.renderer import _stats_stale_text, _synergy_stale_text, build_render_model
 from hextech.modules.data.generation import DataSnapshotManifest, DataSnapshotView
 from hextech.modules.recommendation import RecommendationService
+
+
+@pytest.mark.parametrize(
+    ("source", "threshold_hours"),
+    (
+        ("catalog", 30.0),
+        ("hextech", 5.0),
+        ("aramkit", 5.0),
+        ("blitz", 2.5),
+        ("apex", 90.0),
+        ("mayhem", 90.0),
+    ),
+)
+def test_frozen_snapshot_projects_source_freshness_at_read_time(
+    source: str,
+    threshold_hours: float,
+) -> None:
+    data_at = datetime(2026, 8, 19, 0, 0, tzinfo=timezone.utc)
+    manifest = DataSnapshotManifest(
+        schema_version=2,
+        generation_id=f"g-{source}",
+        created_at=data_at.isoformat(),
+        content_fingerprint="f" * 64,
+        source_files=(),
+        champion_count=1,
+        augment_count=1,
+        stat_record_count=1,
+        files=(),
+        health="healthy",
+        source_status={
+            source: SourceStatusV2(
+                freshness="fresh",
+                data_status="fresh",
+                data_at=data_at.isoformat(),
+            )
+        },
+    )
+    view = DataSnapshotView(manifest, {})
+    before = manifest.to_dict()
+
+    boundary = view.status(now=data_at + timedelta(hours=threshold_hours))
+    expired = view.status(now=data_at + timedelta(hours=threshold_hours, seconds=1))
+
+    assert boundary["source_status"][source]["data_status"] == "fresh"
+    projected = expired["source_status"][source]
+    assert projected["freshness"] == "fresh"
+    assert projected["data_status"] == "data_stale"
+    assert projected["data_reason"] == "source_data_expired"
+    assert projected["stale_age_seconds"] == int(threshold_hours * 3600) + 1
+    assert expired["effective_degraded_sources"] == ([] if source == "catalog" else [source])
+    assert expired["degraded_sources"] == []
+    assert expired["state"] == "ready"
+    assert manifest.to_dict() == before
+
+
+def test_snapshot_freshness_uses_created_at_only_when_data_at_is_missing() -> None:
+    created_at = datetime(2026, 8, 19, 0, 0, tzinfo=timezone.utc)
+    manifest = DataSnapshotManifest(
+        schema_version=2,
+        generation_id="g-created-at-fallback",
+        created_at=created_at.isoformat(),
+        content_fingerprint="f" * 64,
+        source_files=(),
+        champion_count=1,
+        augment_count=1,
+        stat_record_count=1,
+        files=(),
+        source_status={"aramkit": SourceStatusV2(freshness="fresh", data_status="fresh")},
+    )
+
+    projected = DataSnapshotView(manifest, {}).status(now=created_at + timedelta(hours=6))["source_status"][
+        "aramkit"
+    ]
+
+    assert projected["data_at"] == created_at.isoformat()
+    assert projected["data_status"] == "data_stale"
+    assert projected["stale_age_seconds"] == 6 * 3600
+
+
+def test_snapshot_freshness_preserves_specific_reason_and_invalid_time() -> None:
+    observed_at = datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc)
+    manifest = DataSnapshotManifest(
+        schema_version=2,
+        generation_id="g-reason-preserved",
+        created_at=observed_at.isoformat(),
+        content_fingerprint="f" * 64,
+        source_files=(),
+        champion_count=1,
+        augment_count=1,
+        stat_record_count=1,
+        files=(),
+        health="degraded",
+        degraded_sources=("aramkit",),
+        source_status={
+            "aramkit": SourceStatusV2(
+                freshness="last_good",
+                data_status="data_stale",
+                data_reason="candidate_rejected_last_good_preserved",
+                data_at="2026-08-18T00:00:00+00:00",
+            ),
+            "blitz": SourceStatusV2(
+                freshness="fresh",
+                data_status="fresh",
+                data_at="not-a-time",
+            ),
+        },
+    )
+
+    status = DataSnapshotView(manifest, {}).status(now=observed_at)
+
+    assert status["source_status"]["aramkit"]["data_reason"] == "candidate_rejected_last_good_preserved"
+    assert status["source_status"]["aramkit"]["stale_age_seconds"] == 36 * 3600
+    assert status["source_status"]["blitz"]["data_status"] == "fresh"
+    assert status["health"] == "degraded"
+    assert status["degraded_sources"] == ["aramkit"]
+    assert status["effective_degraded_sources"] == ["aramkit"]
 
 
 def _view(
     *,
     source_status: dict[str, SourceStatusV2] | None,
     degraded: bool = True,
+    ranking_only: bool = False,
 ) -> DataSnapshotView:
     manifest = DataSnapshotManifest(
         schema_version=2,
@@ -45,7 +164,11 @@ def _view(
             "champion_hextech": {
                 "复仇焰魂": {
                     "hero_id": "63",
-                    "augments": [{"id": "100", "winrate": 0.55, "pickrate": 0.12}],
+                    "augments": [
+                        {"id": "100", "source_tier": 3, "champion_tier": 1, "stats_scope": "top_champion_tier"}
+                        if ranking_only
+                        else {"id": "100", "winrate": 0.55, "pickrate": 0.12}
+                    ],
                 }
             },
             "overlay_hints": {},
@@ -98,6 +221,22 @@ def test_generation_degraded_does_not_taint_fresh_hextech_rows() -> None:
     assert row["synergy_data_status"] == "degraded"
 
 
+def test_blitz_ranking_fallback_is_used_when_aramkit_has_no_numeric_stats() -> None:
+    row = _recommend(
+        _view(
+            source_status={
+                "blitz": SourceStatusV2(freshness="fresh", data_status="fresh", run_id="blitz-new"),
+                "aramkit": SourceStatusV2(freshness="last_good", data_status="data_stale", run_id="aram-old"),
+            },
+            ranking_only=True,
+        )
+    )
+
+    assert row["status_code"] == "READY"
+    assert row["source_run_id"] == "blitz-new"
+    assert row["stats"]["source_tier"] == 3
+
+
 def test_hextech_last_good_marks_only_numeric_stats_degraded() -> None:
     row = _recommend(
         _view(
@@ -113,7 +252,7 @@ def test_hextech_last_good_marks_only_numeric_stats_degraded() -> None:
         )
     )
 
-    assert row["status_code"] == "GENERATION_DEGRADED"
+    assert row["status_code"] == "STATS_STALE"
     assert row["data_reason"] == "candidate_rejected_last_good_preserved"
     assert row["synergy_data_status"] == "ready"
 
@@ -121,14 +260,65 @@ def test_hextech_last_good_marks_only_numeric_stats_degraded() -> None:
 def test_old_manifest_without_source_status_falls_back_to_aggregate_health() -> None:
     row = _recommend(_view(source_status=None, degraded=True))
 
-    assert row["status_code"] == "GENERATION_DEGRADED"
+    assert row["status_code"] == "STATS_STALE"
     assert row["source_freshness"] == "unknown"
 
 
 def test_present_but_unknown_hextech_status_never_claims_fresh_data() -> None:
     row = _recommend(_view(source_status={"hextech": SourceStatusV2()}, degraded=False))
 
+    assert row["status_code"] == "STATS_STALE"
+
+
+def test_renderer_keeps_expired_numeric_stats_and_exposes_data_notice() -> None:
+    data_at = (datetime.now(timezone.utc) - timedelta(hours=76, minutes=30)).isoformat(timespec="seconds")
+    model = build_render_model(
+        {
+            "active": True,
+            "source": {"generation_id": "g-stale"},
+            "slots": [{"slot": 0, "state": "ready", "augment_id": "illusory_weapons", "name": "虚幻武器"}],
+        },
+        hint_cache={
+            "snapshot": {
+                "state": "degraded",
+                "generation_id": "g-stale",
+                "source_status": {
+                    "hextech": {
+                        "freshness": "last_good",
+                        "data_status": "data_stale",
+                        "data_reason": "source_data_expired",
+                        "data_at": data_at,
+                    }
+                },
+            },
+            "source": {"private_policy_stats_enabled": True},
+            "hints": {
+                "illusory_weapons": {
+                    "name": "虚幻武器",
+                    "stats_by_champion_id": {"63": {"winrate": 0.55, "pickrate": 0.12}},
+                }
+            },
+        },
+        context={"ok": True, "champion_id": "63", "champion_name": "复仇焰魂"},
+    )
+
+    row = model["stats"][0]
     assert row["status_code"] == "GENERATION_DEGRADED"
+    assert row["stats_text"] == "胜率 55.0% · 出场 12.0%"
+    assert row["status_text"] == ""
+    assert row["winrate_text"] == "55.0%"
+    assert row["pickrate_text"] == "12.0%"
+    assert model["data_notice"]["state"] == "stale"
+    assert model["data_notice"]["source"] == "hextech"
+    assert "统计数据为 3 天前" in model["data_notice"]["text"]
+
+
+def test_stats_stale_text_never_invents_age_for_invalid_or_future_time() -> None:
+    now = datetime(2026, 8, 23, tzinfo=timezone.utc)
+
+    assert _stats_stale_text("source_data_expired", "invalid", now=now) == "统计数据暂非最新"
+    assert _stats_stale_text("source_data_expired", "2026-08-24T00:00:00+00:00", now=now) == "统计数据暂非最新"
+    assert _stats_stale_text("candidate_rejected_last_good_preserved", "2026-08-20T00:00:00+00:00", now=now) == "统计数据暂非最新"
 
 
 def test_renderer_shows_stale_synergy_without_tainting_fresh_hextech_stats() -> None:
@@ -164,6 +354,36 @@ def test_renderer_shows_stale_synergy_without_tainting_fresh_hextech_stats() -> 
     assert model["stats"][0]["status_text"] == ""
     assert model["synergies"][0]["data_status"] == "SYNERGY_DEGRADED"
     assert model["synergies"][0]["status_text"] == "联动数据为上一代"
+
+
+def test_renderer_displays_ranking_without_inventing_percentages() -> None:
+    model = build_render_model(
+        {
+            "active": True,
+            "source": {"generation_id": "g-freshness"},
+            "slots": [{"slot": 0, "state": "ready", "augment_id": "illusory_weapons", "name": "虚幻武器"}],
+        },
+        hint_cache={
+            "snapshot": {
+                "state": "ready",
+                "generation_id": "g-freshness",
+                "source_status": {"blitz": {"freshness": "fresh", "data_status": "fresh"}},
+            },
+            "source": {"private_policy_stats_enabled": True},
+            "hints": {
+                "illusory_weapons": {
+                    "name": "虚幻武器",
+                    "stats_by_champion_id": {"63": {"source_tier": 3, "champion_tier": 1}},
+                }
+            },
+        },
+        context={"ok": True, "champion_id": "63", "champion_name": "复仇焰魂"},
+    )
+
+    assert model["stats"][0]["status_code"] == "READY"
+    assert model["stats"][0]["stats_text"] == "该英雄 T1 · 全局 T3"
+    assert model["stats"][0]["winrate_text"] == ""
+    assert model["stats"][0]["pickrate_text"] == ""
 
 
 def test_expired_synergy_source_marks_degraded_and_exposes_data_age() -> None:

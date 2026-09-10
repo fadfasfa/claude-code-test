@@ -101,6 +101,9 @@ def build_resource_manifest(run_dir: str | Path) -> dict[str, Any]:
     for path in _iter_files(resource_root / "evidence"):
         descriptors.append(_descriptor(root, path, category="evidence", package_role=BUILD_ONLY_ROLE))
 
+    for path in _iter_files(resource_root / "ocr"):
+        descriptors.append(_descriptor(root, path, category="ocr", package_role=PACKAGE_ROLE))
+
     for path in (resource_root / "README.md", resource_root / "assets" / "README.md"):
         if path.is_file():
             descriptors.append(_descriptor(root, path, category="documentation", package_role=BUILD_ONLY_ROLE))

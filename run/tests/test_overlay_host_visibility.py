@@ -106,7 +106,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
         self.assertTrue(snapshot.visible)
         self.assertEqual(snapshot.reason, "visible_detecting")
 
-    def test_selection_window_active_shows_detecting_before_content_ready(self):
+    def test_selection_window_active_shows_detecting_shell_before_first_ready(self):
         from hextech.interfaces.overlay.host import decide_visibility
 
         should_show, reason = decide_visibility(
@@ -141,6 +141,36 @@ class OverlayHostVisibilityTests(unittest.TestCase):
 
         self.assertTrue(should_show)
         self.assertEqual(reason, "visible_partial")
+
+    def test_partial_snapshot_is_visible_without_complete_content(self):
+        from hextech.modules.vision.events import build_overlay_event, read_overlay_event, write_overlay_event
+
+        event = build_overlay_event(
+            [
+                {"slot": 0, "state": "ready", "augment_id": "augment-a", "name": "强化 A"},
+                {"slot": 1, "state": "detecting"},
+                {"slot": 2, "state": "detecting"},
+            ],
+            source_tag="vision-sidecar",
+            selection_type="hextech",
+            active=True,
+        )
+        event["source"].update(
+            {"selection_window_active": True, "ready_slots": 1, "content_ready": False}
+        )
+
+        with self.subTest("public event contract"):
+            from tempfile import TemporaryDirectory
+            from pathlib import Path
+
+            with TemporaryDirectory() as directory:
+                path = Path(directory) / "event.json"
+                write_overlay_event(event, path)
+                snapshot = read_overlay_event(path)
+
+            self.assertTrue(snapshot["active"])
+            self.assertTrue(snapshot["visible"])
+            self.assertFalse(snapshot["source"]["content_ready"])
 
     def test_scene_blockers_hide_overlay_before_content_rendering(self):
         from hextech.interfaces.overlay.host import decide_visibility
@@ -282,7 +312,11 @@ class OverlayHostVisibilityTests(unittest.TestCase):
             "scoreboard_key_down": False,
             "gameflow_in_progress": True,
         }
-        snapshot = {"visible": True, "source": {"selection_window_active": True}, "slots": []}
+        snapshot = {
+            "visible": True,
+            "source": {"selection_window_active": True, "ready_slots": 1},
+            "slots": [{"slot": 0, "state": "ready", "name": "强化 0"}],
+        }
 
         with (
             patch.object(host_sync, "_is_game_window_foreground", return_value=True),
@@ -298,7 +332,7 @@ class OverlayHostVisibilityTests(unittest.TestCase):
             )
 
         self.assertTrue(should_show)
-        self.assertEqual(visibility["visibility_reason"], "visible_detecting")
+        self.assertEqual(visibility["visibility_reason"], "visible_partial")
 
     def test_sync_event_visibility_holds_last_active_event_for_one_second(self):
         from hextech.interfaces.overlay import host, host_sync

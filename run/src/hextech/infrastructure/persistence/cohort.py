@@ -8,7 +8,9 @@ Windows 不提供跨多个 JSON 文件的原子替换，因此 DataService 在�
 from __future__ import annotations
 
 import json
+import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -18,7 +20,7 @@ from hextech.modules.data.ports.atomic import atomic_write_json
 from hextech.modules.data.ports.paths import get_var_dir
 
 
-COHORT_ROLES = ("catalog", "hextech", "apex", "mayhem", "generation")
+COHORT_ROLES = ("catalog", "aramkit", "blitz", "apex", "mayhem", "generation")
 
 
 class CohortPromotionError(RuntimeError):
@@ -31,9 +33,12 @@ class CohortPromotionStore:
         self.journal_path = self.root / "state" / "data-service" / "promotion_journal.v1.json"
         self._transaction_lock = InterProcessFileLock(self.root / "locks" / "cohort-promotion.lock")
 
-    def _acquire_transaction(self) -> None:
-        if not self._transaction_lock.acquire():
-            raise CohortPromotionError("另一个进程正在执行 cohort promotion")
+    def _acquire_transaction(self, *, timeout_seconds: float = 0.0) -> None:
+        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+        while not self._transaction_lock.acquire():
+            if time.monotonic() >= deadline:
+                raise CohortPromotionError("另一个进程正在执行 cohort promotion")
+            time.sleep(0.05)
 
     def _require_transaction(self) -> None:
         if not self._transaction_lock.acquired:
@@ -44,10 +49,20 @@ class CohortPromotionStore:
 
         self._transaction_lock.release()
 
+    @contextmanager
+    def exclusive(self, *, timeout_seconds: float = 0.0):
+        """在不创建 promotion journal 时保护 recovery/schedule 等同域状态。"""
+
+        self._acquire_transaction(timeout_seconds=timeout_seconds)
+        try:
+            yield self
+        finally:
+            self._transaction_lock.release()
+
     def pointer_path(self, role: str) -> Path:
         if role == "catalog":
             return self.root / "catalog" / "current.v2.json"
-        if role in {"hextech", "apex", "mayhem"}:
+        if role in {"hextech", "aramkit", "blitz", "apex", "mayhem"}:
             return self.root / "sources" / role / "current.v2.json"
         if role == "generation":
             return self.root / "snapshots" / "current.v2.json"
@@ -55,6 +70,12 @@ class CohortPromotionStore:
 
     def _previous_generation_path(self) -> Path:
         return self.root / "snapshots" / "previous.v2.json"
+
+    def _schedule_path(self) -> Path:
+        return self.root / "state" / "data-service" / "refresh_schedule.v1.json"
+
+    def _recovery_point_path(self) -> Path:
+        return self.root / "state" / "data-service" / "cohort_recovery_point.v1.json"
 
     @staticmethod
     def _read_object(path: Path) -> dict[str, Any]:
@@ -74,6 +95,8 @@ class CohortPromotionStore:
         return {
             "current": self._read_object(self.pointer_path(role)),
             "previous": self._read_object(self._previous_generation_path()),
+            "schedule": self._read_object(self._schedule_path()),
+            "recovery_point": self._read_object(self._recovery_point_path()),
         }
 
     @staticmethod
@@ -93,12 +116,24 @@ class CohortPromotionStore:
             raise CohortPromotionError("generation journal 必须同时包含 current 和 previous")
         self._restore_file(self.pointer_path(role), current)
         self._restore_file(self._previous_generation_path(), previous)
+        # v1 旧 journal 只有 current/previous。缺少新键时保持现有文件，避免旧恢复
+        # 过程误删升级后生成的 schedule 或单调恢复点。
+        if "schedule" in payload:
+            schedule = payload.get("schedule")
+            if not isinstance(schedule, Mapping):
+                raise CohortPromotionError("generation journal schedule 必须是对象")
+            self._restore_file(self._schedule_path(), schedule)
+        if "recovery_point" in payload:
+            recovery_point = payload.get("recovery_point")
+            if not isinstance(recovery_point, Mapping):
+                raise CohortPromotionError("generation journal recovery_point 必须是对象")
+            self._restore_file(self._recovery_point_path(), recovery_point)
 
     def _write_journal(self, journal: PromotionJournalV1) -> None:
         atomic_write_json(self.journal_path, journal.to_dict(), ensure_ascii=False, indent=2)
 
-    def begin(self) -> PromotionJournalV1:
-        self._acquire_transaction()
+    def begin(self, *, timeout_seconds: float = 0.0) -> PromotionJournalV1:
+        self._acquire_transaction(timeout_seconds=timeout_seconds)
         try:
             if self.journal_path.exists():
                 raise CohortPromotionError("存在未恢复的 promotion journal")
@@ -160,7 +195,7 @@ class CohortPromotionStore:
         journal = self.load()
         if journal is None or journal.phase is not PromotionJournalPhase.PREPARED:
             raise CohortPromotionError("promotion 未处于 prepared")
-        for role in ("catalog", "hextech", "apex", "mayhem"):
+        for role in ("catalog", "aramkit", "blitz", "apex", "mayhem"):
             self._write_role(role, journal.target_pointers[role])
         updated = PromotionJournalV1(
             transaction_id=journal.transaction_id,
@@ -171,6 +206,28 @@ class CohortPromotionStore:
         )
         self._write_journal(updated)
         return updated
+
+    def stage_generation_state(
+        self,
+        *,
+        schedule: Mapping[str, Any],
+        recovery_point: Mapping[str, Any],
+    ) -> None:
+        """在 generation phase 提交前预写同代 schedule/recovery。
+
+        journal 仍停留在 dependencies_promoted；预写后若进程退出，recover 会用
+        old_pointers 整体回滚。独立方法保持 record_generation_promoted(id) 的既有
+        公共形状，兼容旧调用方与故障注入测试。
+        """
+
+        self._require_transaction()
+        journal = self.load()
+        if journal is None or journal.phase is not PromotionJournalPhase.DEPENDENCIES_PROMOTED:
+            raise CohortPromotionError("dependencies 尚未 promotion")
+        generation = self._read_role("generation")
+        generation["schedule"] = dict(schedule)
+        generation["recovery_point"] = dict(recovery_point)
+        self._write_role("generation", generation)
 
     def record_generation_promoted(self, expected_generation_id: str) -> PromotionJournalV1:
         self._require_transaction()

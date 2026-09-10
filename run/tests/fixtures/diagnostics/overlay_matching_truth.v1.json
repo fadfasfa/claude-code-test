@@ -52,6 +52,48 @@
       "expected_body_shard": false,
       "expected_names": ["哎哟，我的硬币！"],
       "notes": "脱敏真机卡名样本；不得再被图标短名单误判为升级：收集者。"
+    },
+    {
+      "id": "roi-20260821-infernalconduit-holdout",
+      "name_crops": [
+        "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260821_hard_names/infernalconduit_holdout.png"
+      ],
+      "expected_body_shard": false,
+      "expected_names": ["炼狱导管"],
+      "notes": "与生产 exemplar 不同 observation、不同像素 SHA 的真机留出样本；不得再被炼狱龙魂和火上浇油压制。"
+    },
+    {
+      "id": "roi-20260821-ominouspact-holdout",
+      "name_crops": [
+        "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260821_hard_names/ominouspact_holdout.png"
+      ],
+      "expected_body_shard": false,
+      "expected_names": ["不祥契约"],
+      "notes": "与生产 exemplar 不同 observation、不同像素 SHA 的真机留出样本；不得再被近似四字卡名压制。"
+    },
+    {
+      "id": "roi-20260830-stats-holdout",
+      "name_crops": [
+        "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260830_hard_names/stats_holdout.png"
+      ],
+      "expected_body_shard": false,
+      "expected_names": ["属性！"],
+      "source_record_id": "48cae7be1ea84b5bcf637b13",
+      "source_sha256": "3e39827526476eea97c6b8ee49d1d4e0e658c789d994bdb3aa0b059a77503a31",
+      "captured_on": "2026-08-30",
+      "notes": "只含卡名的脱敏真机 ROI；用户已确认允许入库。必须与属性叠属性叠属性！严格区分。"
+    },
+    {
+      "id": "roi-20260830-forgedbythemaster-holdout",
+      "name_crops": [
+        "tests/fixtures/diagnostics/overlay_vision_fixtures/hextech_20260830_hard_names/forgedbythemaster_holdout.png"
+      ],
+      "expected_body_shard": false,
+      "expected_names": ["大师铸就"],
+      "source_record_id": "51a0a4bc6d31f9d8c98b3c91",
+      "source_sha256": "3cf591735c9864cc68e1868d0d09e6cca396b8cc326605037561f6d4962aaeb2",
+      "captured_on": "2026-08-30",
+      "notes": "只含卡名的脱敏真机 ROI；用户已确认允许入库。用于 text_icon_disagree 到 OCR exact 3/5 的调度回归。"
     }
   ],
   "samples": [

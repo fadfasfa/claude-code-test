@@ -152,6 +152,7 @@ class DesktopBackgroundRuntimeMixin:
             restart_recognition_callback=self.restart_recognition,
             exit_callback=self.exit_application,
             status_text=self._tray_status_text,
+            restore_auto_docking_callback=lambda: self._desktop_window_presentation.request_restore_auto_docking(),
         )
         if not controller.start():
             return False
@@ -172,7 +173,12 @@ class DesktopBackgroundRuntimeMixin:
             request = owner.consume_activation_request(self._last_activation_request_id)
             if request:
                 self._last_activation_request_id = str(request.get("request_id") or "")
-                self.request_runtime_resume(reason="shortcut_activation", show_window=True)
+                if str(request.get("request_kind") or "") == "build_conflict":
+                    from hextech.interfaces.desktop.single_instance import show_build_conflict_message
+
+                    show_build_conflict_message(owner._read_owner(), request)
+                else:
+                    self.request_runtime_resume(reason="shortcut_activation", show_window=True)
         self._activation_poll_after_id = self.root.after(250, self._poll_instance_activation)
 
     def start_background_runtime_monitor(self) -> None:
@@ -235,7 +241,11 @@ class DesktopBackgroundRuntimeMixin:
             self._set_status("系统托盘不可用，窗口未隐藏", "#F38BA8")
             return
         self._manual_window_visible_until = 0.0
-        self._hide_overlay()
+        presentation = getattr(self, "_desktop_window_presentation", None)
+        if presentation is not None:
+            presentation.request_hide()
+        else:
+            self._hide_overlay()
         tray = self._tray_controller
         if tray is not None:
             tray.refresh()
@@ -247,9 +257,13 @@ class DesktopBackgroundRuntimeMixin:
             return
         if show_window:
             self._manual_window_visible_until = time.monotonic() + MANUAL_WINDOW_VISIBLE_SECONDS
-            process_state = probe_league_process_state()
-            if not process_state["game_running"]:
-                self._show_overlay(topmost=False)
+            presentation = getattr(self, "_desktop_window_presentation", None)
+            if presentation is not None:
+                presentation.request_show(seconds=MANUAL_WINDOW_VISIBLE_SECONDS)
+            else:
+                process_state = probe_league_process_state()
+                if not process_state["game_running"]:
+                    self._show_overlay(topmost=False)
         self._background_idle_started_at = time.monotonic()
         if self._background_runtime_state in {"suspended", "resume_failed", "resume_cleanup_pending"}:
             self._start_tracked_thread(
@@ -708,7 +722,7 @@ class DesktopBackgroundRuntimeMixin:
         self._start_tracked_thread(worker, name="hextech-restart-recognition")
 
     def _tray_status_text(self) -> str:
-        return {
+        status = {
             "running": "状态：后台服务运行中",
             "suspending": "状态：正在进入轻量待机",
             "suspended": "状态：轻量待机（识别已休眠）",
@@ -717,6 +731,26 @@ class DesktopBackgroundRuntimeMixin:
             "resume_failed": "状态：识别恢复失败",
             "resume_cleanup_pending": "状态：正在回收失败的识别进程",
         }.get(self._background_runtime_state, "状态：未知")
+        presentation = getattr(self, "_desktop_window_presentation", None)
+        if presentation is not None:
+            window_status = presentation.status()
+            reason = window_status.get("reason", "")
+            suffix = {
+                "right_space_unavailable": "备战席右侧空间不足",
+                "right_width_insufficient": "备战席右侧宽度不足",
+                "right_height_insufficient": "备战席可用高度不足",
+                "display_context_unavailable": "备战席显示器信息暂不可用",
+                "user_hidden": "备战席已手动隐藏",
+                "not_in_champ_select": "备战席等待选人",
+                "context_unconfirmed": "备战席等待选人状态",
+                "client_not_visible": "备战席等待客户端",
+                "game_state_unknown": "备战席等待游戏状态确认",
+                "waiting_fresh_game_state": "备战席正在确认本次恢复状态",
+            }.get(reason, "")
+            suffix = str(window_status.get("user_message") or suffix)
+            if suffix:
+                status += " · " + suffix
+        return status
 
     def stop_background_runtime(self) -> None:
         self._background_runtime_stop.set()

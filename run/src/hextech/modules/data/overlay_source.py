@@ -30,11 +30,25 @@ class OverlayDataSource(Protocol):
 class SharedOverlayDataSource:
     """只读取 DataService 当前完整 generation，不混入旧共享 cache。"""
 
-    def __init__(self, *, snapshot_client=None, privacy_provider=None) -> None:
+    def __init__(
+        self,
+        *,
+        snapshot_client=None,
+        privacy_provider=None,
+        generation_id: str = "",
+    ) -> None:
         from hextech.modules.data.generation import DataSnapshotClient
 
         self._snapshot_client = snapshot_client or DataSnapshotClient()
         self._privacy_provider = privacy_provider or _display_private_stats_enabled
+        self._generation_id = str(generation_id or "")
+
+    def _open_view(self):
+        return (
+            self._snapshot_client.open_generation(self._generation_id)
+            if self._generation_id
+            else self._snapshot_client.open_view()
+        )
 
     def read_event(self) -> dict[str, Any]:
         from hextech.modules.vision.events import read_overlay_event
@@ -43,7 +57,7 @@ class SharedOverlayDataSource:
 
     def read_hint_cache(self) -> dict[str, Any]:
         try:
-            snapshot_view = self._snapshot_client.open_view()
+            snapshot_view = self._open_view()
         except Exception:
             snapshot_view = None
         if snapshot_view is not None:
@@ -67,7 +81,7 @@ class SharedOverlayDataSource:
         """固定打开当前 generation；一次 render tick 内不得切换数据代。"""
 
         try:
-            return self._snapshot_client.open_view()
+            return self._open_view()
         except Exception:
             return None
 
