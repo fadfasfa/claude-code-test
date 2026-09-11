@@ -28,6 +28,8 @@ def pointer_success_at(pointer: Mapping[str, Any]) -> str:
 
 
 def is_blocked_failure(payload: Mapping[str, Any]) -> bool:
+    if str(payload.get("reason_code") or "").strip().lower() == "blocked":
+        return True
     text = json.dumps(payload, ensure_ascii=True).lower()
     return any(token in text for token in ("http_403", "http_429", '"status_code": 403', '"status_code": 429'))
 

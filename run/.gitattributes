@@ -1,0 +1,3 @@
+# Manifest checksums require identical legal-resource bytes on every platform.
+resources/ocr/LICENSE.apache-2.0.txt text eol=lf
+resources/ocr/NOTICE.txt text eol=lf

@@ -192,6 +192,29 @@ def test_source_failure_reason_code_is_preserved_in_schedule(tmp_path: Path) -> 
     assert state.failure_kind == "schema_changed"
 
 
+@pytest.mark.parametrize("reason_code", ["blocked", "schema_changed"])
+def test_structured_failure_reason_selects_backoff(tmp_path: Path, reason_code: str) -> None:
+    now = datetime(2026, 9, 11, tzinfo=timezone.utc)
+    coordinator = CohortRefreshCoordinator(
+        publisher=DataSnapshotPublisher(tmp_path / "snapshots"),
+        builder=lambda _targets: _builder(tmp_path),
+        root=tmp_path,
+        process_runner=FakeWorkerRunner(),
+        now=lambda: now,
+    )
+    state = coordinator._failure_state(
+        RefreshSourceState(),
+        {"error_type": "SourceRefreshFailed", "reason_code": reason_code},
+    )
+    due = datetime.fromisoformat(state.next_due_at)
+    assert state.failure_kind == ("http_blocked" if reason_code == "blocked" else reason_code)
+    assert state.state == "backoff"
+    if reason_code == "blocked":
+        assert due == now + timedelta(hours=6)
+    else:
+        assert now + timedelta(minutes=30) <= due <= now + timedelta(minutes=35)
+
+
 def test_refresh_checkpoint_keeps_only_bounded_pending_failure_evidence(tmp_path: Path) -> None:
     coordinator = CohortRefreshCoordinator(
         publisher=DataSnapshotPublisher(tmp_path / "snapshots"),

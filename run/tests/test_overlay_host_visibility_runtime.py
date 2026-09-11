@@ -12,6 +12,195 @@ from unittest.mock import patch
 
 
 class OverlayHostVisibilityRuntimeTests(unittest.TestCase):
+    def test_context_rejection_withdraws_cached_ready_stats_immediately(self):
+        from types import SimpleNamespace
+        from hextech.interfaces.overlay import host_runner
+
+        callbacks = []
+        rendered_statuses = []
+        reported_statuses = []
+        event = {
+            "selection_type": "hextech",
+            "active": True,
+            "visible": True,
+            "revision": 1,
+            "source": {
+                "session_id": "session-1",
+                "selection_epoch": 1,
+                "selection_revision": 1,
+                "selection_window_active": True,
+                "scene_state": "active",
+                "game_instance_id": "game-1",
+                "window_hwnd": 100,
+            },
+            "slots": [
+                {
+                    "slot": index,
+                    "slot_generation": 1,
+                    "state": "ready",
+                    "augment_id": str(index),
+                    "name": f"海克斯 {index}",
+                    "tier": "gold",
+                }
+                for index in range(3)
+            ],
+        }
+        ready_model = {
+            "stats": [
+                {
+                    "slot": index,
+                    "state": "matched",
+                    "name": f"海克斯 {index}",
+                    "stats_text": f"统计 {index}",
+                    "status_code": "READY",
+                    "synergy_status": "SOURCE_UNAVAILABLE",
+                }
+                for index in range(3)
+            ],
+            "synergies": [],
+        }
+        prepared = SimpleNamespace(
+            generation={
+                "generation_id": "generation-1",
+                "stats_generation_id": "generation-1",
+                "game_session_id": "session-1",
+            },
+            scope={},
+            scope_key=("stage", 1),
+            content_key="ready-content",
+            state=object(),
+            model=ready_model,
+            event=event,
+            host_read_at=1.0,
+            phase="ready",
+        )
+
+        class Canvas:
+            def after(self, delay_ms, callback):
+                callbacks.append((delay_ms, callback))
+                return f"after-{len(callbacks)}"
+
+            def winfo_width(self):
+                return 1920
+
+            def winfo_height(self):
+                return 1080
+
+        class Source:
+            def read_event(self):
+                return event
+
+            def read_context(self):
+                return {"ok": True, "champion_id": "4"}
+
+        class Gate:
+            def __init__(self):
+                self.calls = 0
+
+            def evaluate(self, *_args, **_kwargs):
+                self.calls += 1
+                if self.calls in {1, 2, 5}:
+                    return SimpleNamespace(
+                        state="holding" if self.calls == 2 else "confirmed",
+                        reason="live-client-unavailable" if self.calls == 2 else "context_confirmed",
+                        context_revision=1,
+                        held=self.calls == 2,
+                        payload={"ok": True, "champion_id": "4"},
+                    )
+                return SimpleNamespace(
+                    state="pending",
+                    reason="context_untrusted_publisher",
+                    context_revision=0,
+                    held=False,
+                    payload={"ok": False, "champion_id": ""},
+                )
+
+        class Preparation:
+            def __init__(self):
+                self.invalidations = 0
+
+            def request(self, _event, context, **_kwargs):
+                return "ready" if context.get("ok") else "rejected"
+
+            def poll(self, key):
+                return prepared if key == "ready" else None
+
+            def status(self):
+                return {"generation": {}}
+
+            def invalidate(self):
+                self.invalidations += 1
+
+        preparation = Preparation()
+        visibility = {
+            "user_enabled": True,
+            "display_mode": "compact",
+            "render_full_overlay": True,
+            "prepared_shell_key": (("session-1", 1), (1, 1, 1)),
+        }
+
+        with (
+            patch.object(host_runner, "ContextRenderGate", Gate),
+            patch.object(host_runner, "_refresh_target_window"),
+            patch.object(host_runner, "is_scoreboard_key_down", return_value=False),
+            patch.object(host_runner, "_sync_event_visibility", return_value=True),
+            patch.object(host_runner, "window_display_context", return_value={}),
+            patch.object(host_runner, "refresh_display_geometry"),
+            patch.object(
+                host_runner,
+                "present_overlay_model",
+                side_effect=lambda _canvas, _config, _visibility, _snapshot, model, **_kwargs:
+                    rendered_statuses.append([row.get("status_code") for row in model.get("stats", [])]),
+            ),
+            patch.object(host_runner, "_log_waiting_context_diagnostic"),
+            patch.object(
+                host_runner,
+                "_write_overlay_session_report",
+                side_effect=lambda _snapshot, model, *_args, **_kwargs: reported_statuses.append(
+                    None if model is None else [row.get("status_code") for row in model.get("stats", [])]
+                ),
+            ),
+            patch.object(host_runner, "_write_real_session_evidence"),
+        ):
+            host_runner._schedule_event_render(
+                object(),
+                Canvas(),
+                {"diagnostic_mode": False, "event_poll_ms": 120},
+                visibility,
+                __import__("queue").Queue(),
+                data_source=Source(),
+                data_preparation=preparation,
+            )
+            self.assertEqual(rendered_statuses[-1], ["READY", "READY", "READY"])
+            self.assertEqual(visibility["context_revision"], 1)
+            # 同身份、可信 broker 的短暂 hold 继续保留 last-good。
+            callbacks.pop(0)[1]()
+            self.assertEqual(rendered_statuses, [["READY", "READY", "READY"]])
+            self.assertEqual(preparation.invalidations, 0)
+            self.assertIn("last_render_model", visibility)
+
+            # 硬拒绝必须在同一 tick 用 detecting shell 覆盖旧 READY。
+            callbacks.pop(0)[1]()
+            self.assertEqual(rendered_statuses[-1], ["DETECTING", "DETECTING", "DETECTING"])
+            self.assertNotIn("last_render_model", visibility)
+            self.assertNotIn("session_state", visibility)
+            self.assertEqual(preparation.invalidations, 1)
+
+            # 拒绝持续时不重复失效；poll(None) 的报告也不能携带旧 READY。
+            callbacks.pop(0)[1]()
+            self.assertEqual(preparation.invalidations, 1)
+            self.assertIsNone(reported_statuses[-1])
+
+            # 同 revision 的可信 Context 恢复后仍会重新准备并绘制 READY。
+            callbacks.pop(0)[1]()
+
+        self.assertEqual(visibility["context_revision"], 1)
+        self.assertEqual(preparation.invalidations, 1)
+        self.assertEqual(visibility["consecutive_render_failures"], 0)
+        self.assertEqual(rendered_statuses[-1], ["READY", "READY", "READY"])
+        self.assertIn("last_render_model", visibility)
+        self.assertIn("session_state", visibility)
+
     def test_render_tick_confirms_context_before_opening_cold_snapshot(self):
         from types import SimpleNamespace
         from hextech.interfaces.overlay import host_render_state, host_runner

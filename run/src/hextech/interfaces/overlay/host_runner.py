@@ -193,6 +193,7 @@ def _schedule_event_render(
             visibility["context_champion_id"] = str(context.get("champion_id") or "") if isinstance(context, Mapping) else ""
             visibility["context_source"] = str(context.get("source") or "") if isinstance(context, Mapping) else ""
             visibility["context_error"] = str(context.get("error") or "") if isinstance(context, Mapping) else "context_missing"
+            previous_context_revision = int(visibility.get("context_revision") or 0)
             gate_decision = context_gate.evaluate(
                 context if isinstance(context, Mapping) else {},
                 game_instance_id=str(visibility.get("game_instance_id") or ""),
@@ -207,6 +208,28 @@ def _schedule_event_render(
             visibility["context_held"] = gate_decision.held
             visibility["context_confirmed_at"] = time.time()
             effective_context = gate_decision.payload
+            if (
+                previous_context_revision > 0
+                and gate_decision.context_revision <= 0
+                and not gate_decision.held
+            ):
+                # Context 信任门硬拒绝后，异步准备尚未产出等待模型的短窗口内也不能
+                # 继续展示或上报上一英雄的 READY 数字。清空当前呈现态并让下方首帧
+                # shell 立即覆盖旧 Canvas；同身份的短暂可信 hold 仍保留 last-good。
+                preparation.invalidate()
+                stage_runtime.reset_scope()
+                slot_render_cache.reset()
+                visibility["pinned_stats_scope"] = stage_runtime.pin.status()
+                for key in (
+                    "prepared_shell_key",
+                    "render_semantic_key",
+                    "rendered_selection_key",
+                    "waiting_render_key",
+                    "last_render_model",
+                    "last_report_context",
+                    "session_state",
+                ):
+                    visibility.pop(key, None)
             current_selection_key = selection_key(snapshot)
             shell_key = (current_selection_key, snapshot_slot_generations(snapshot))
             if (should_show and visibility.get("render_full_overlay")
